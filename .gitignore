@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+.env
+node_modules/
+.temp/
+.claude/worktrees/
+.superpowers/
+.claude/skills/gstack/
