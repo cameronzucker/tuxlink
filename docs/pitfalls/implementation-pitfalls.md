@@ -1,6 +1,6 @@
-# [PROJECT NAME] — Implementation Pitfalls & Review Findings
+# Tuxlink — Implementation Pitfalls & Review Findings
 
-> **Purpose:** Document implementation traps, design flaws, and corrected decisions that would cause production failures, security vulnerabilities, or data correctness bugs if shipped. This document is the primary code review reference for the [project name] codebase.
+> **Purpose:** Document implementation traps, design flaws, and corrected decisions that would cause production failures, security vulnerabilities, data correctness bugs, OR regulatory violations if shipped. This document is the primary code review reference for the tuxlink codebase.
 >
 > **Relationship to testing-pitfalls.md:** This document specifies *what* to implement and *why*. `docs/pitfalls/testing-pitfalls.md` specifies *how to verify* those implementations work correctly. They are complementary — cross-references are noted inline.
 >
@@ -22,15 +22,121 @@ This document serves three audiences. Start here, then go directly to the sectio
 
 ## Table of Contents
 
-<!-- TODO: replace the example rows below with your project's actual domain sections. -->
-
 | § | Section | You're working on... | Entries | Checklist |
 |---|---------|---------------------|---------|-----------|
+| 0 | [Live Radio Network Operations](#0-live-radio-network-operations) | Any code path that can transmit under the project's callsign | RADIO-1 | §0.C |
 | 1 | [EXAMPLE-DOMAIN-1](#1-example-domain-1) | TODO — describe what this section covers | PREFIX-1 – PREFIX-N | §1.C |
 | 2 | [EXAMPLE-DOMAIN-2](#2-example-domain-2) | TODO — describe what this section covers | PREFIX-1 – PREFIX-N | §2.C |
 | — | [Orchestration](#orchestration) | Parallel subagent dispatch and output persistence | ORCH-1 | §Orchestration.C |
 | A | [Historical Changelog](#appendix-a-historical-changelog) | Provenance, validation dates, review process meta-observations | — | — |
 | B | [Unified Summary Table](#appendix-b-unified-summary-table) | All pitfalls at a glance, with severity and status | — | — |
+
+---
+
+# Section 0: Live Radio Network Operations
+
+> **Reader context:** I'm building or reviewing code that could transmit
+> under an amateur radio callsign — Winlink CMS sessions, packet radio
+> TCP bridges, hamlib-driven rig commands, VARA modem sessions, or any
+> code path that ends in an RF or network-bridge packet bearing the
+> licensee's callsign.
+>
+> This section is **§0 because it supersedes every other pitfall.**
+> If you are about to trip RADIO-1, stop. Do not continue reading the
+> other sections. Do not write code. Surface it to the licensee.
+
+---
+
+### RADIO-1: Agent-autonomous transmission under the licensee's callsign
+
+**The Flaw:** A test, script, CI job, scheduled task, or AI agent
+invokes a code path that transmits on the amateur radio network under
+the project's callsign, without the station licensee having given
+explicit, scoped, per-invocation consent at the moment of the run.
+
+Examples of this flaw in the wild:
+- CI runs an integration test against `cms.winlink.org` on every push
+  using credentials stored as a repo secret.
+- A `cargo test` integration test hits real Winlink via an env var
+  that's persisted in the developer's shell profile.
+- An AI agent executing `superpowers:executing-plans` invokes a "run
+  the live CMS smoke test" task that reads credentials from a config
+  file without interactive consent.
+- A `/loop` skill invocation runs a live-CMS smoke every 30 minutes
+  "to monitor for regressions."
+
+**Why It Matters:** Under 47 CFR Part 97, the station licensee is
+personally responsible for every transmission bearing their callsign
+(§ 97.101, § 97.103, § 97.113). Automated or unattended operation is
+tightly constrained (§ 97.213) and does NOT cover "an AI agent decided
+to run a test using cached credentials." Agent-autonomous transmission
+without the licensee exercising real-time control is:
+
+- A Part 97 control-operator violation at minimum.
+- Potentially a third-party-traffic violation depending on content.
+- Grounds for a Winlink CMS acceptable-use suspension from ARSFI,
+  whose infrastructure is volunteer-operated and whose operators read
+  repeated programmatic sessions as abuse.
+- A reputational and legal hazard that attaches personally to the
+  callsign holder, not to "the project."
+
+Losing CMS access or attracting an FCC notice would be a project-level
+operational disaster.
+
+**The Fix:** Implement the full consent-gate protocol documented in
+[`docs/live-cms-testing-policy.md`](../live-cms-testing-policy.md).
+Concretely:
+
+1. Every binary / script that can transmit lives in a dedicated
+   `src-tauri/src/bin/` binary, NOT in `cargo test`-discoverable
+   integration tests. Subagent shells must not be able to invoke it
+   accidentally.
+2. On startup, the binary prints a scoped consent banner: target,
+   session count, expected duration, content, frequency / mode / band.
+3. It reads from stdin and proceeds ONLY on the exact string `go`.
+   Any other input (including EOF from a piped / non-interactive
+   invocation) aborts with exit code 2.
+4. Credentials are read from env vars or a dedicated operator-only
+   keyring entry at run time; never persisted in a way that CI or
+   scheduled agents can reach.
+5. Every run logs to `dev/live-cms-sessions.log` with ISO-8601 UTC
+   timestamp, callsign, test name, planned and actual session counts,
+   outcome, and duration.
+
+**ONE permitted exception:** the first-run wizard's Step 3 test send
+(the "Send test message to SERVICE@winlink.org" button in the
+production Tuxlink app). Rationale: the user just entered credentials
+this session, clicked the button, and the UI clearly stated what would
+happen. This is licensee-in-real-time-control, not agent-autonomous
+operation. Any other exception must be surfaced for review.
+
+**The Lesson:** Amateur radio regulation is not a UX best-practice
+document; it's federal law with a licensee whose name is on the line.
+The bar is not "don't abuse the service" — the bar is "the licensee
+exercises control over every transmission." If you're not sure whether
+a code path transmits, assume it does and apply the fix. The consent
+gate is cheap; the incident is not.
+
+---
+
+### Section 0 Review Checklist
+
+- [ ] **Check derived from RADIO-1** — No `#[test]` or `#[tokio::test]`
+  function, and no `cargo test`-discoverable code path, invokes the
+  real Winlink CMS, Winlink RMS, packet gateway, or any amateur
+  network infrastructure bearing the project callsign. Live-network
+  code lives exclusively in `src-tauri/src/bin/`.
+- [ ] **Check derived from RADIO-1** — No CI workflow, cron schedule,
+  `/loop` invocation, or agent-executable automation calls a binary
+  that transmits. Verify by `grep -rn 'live_cms\|winlink.org\|cms.winlink' .github/ dev/ src-tauri/tests/`.
+- [ ] **Check derived from RADIO-1** — Every transmit-capable binary
+  prints a scoped consent banner and reads `go` from stdin before
+  proceeding. Verify by walking the binary in question.
+- [ ] **Check derived from RADIO-1** — Credentials are passed via env
+  var or operator-interactive keyring prompt, never from committed
+  config, committed secrets, or CI secret store.
+- [ ] **Check derived from RADIO-1** — `dev/live-cms-sessions.log`
+  exists (or the binary creates it) and receives one line per run.
 
 ---
 

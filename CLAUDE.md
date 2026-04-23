@@ -154,6 +154,26 @@ Do NOT run destructive git commands. There is never a legitimate reason for an a
 
 **If you think you need one of these:** the correct action is to surface the situation to the user with a proposed non-destructive alternative.
 
+## Live radio network operations — READ BEFORE ANY TRANSMISSION
+
+No automation, test, subagent, CI job, scheduled task, or AI agent
+initiates a transmission under the project's amateur callsign without
+the station licensee giving explicit, scoped, per-invocation consent at
+the moment of the run. Cached credentials, stored env vars, repo
+secrets, and "the user said yes to this last week" are NOT consent.
+
+This is a Part 97 regulatory requirement, not a style guideline. Full
+rules, rationale, and the required consent-gate protocol live at
+[docs/live-cms-testing-policy.md](docs/live-cms-testing-policy.md) and
+the RADIO-1 entry in
+[docs/pitfalls/implementation-pitfalls.md](docs/pitfalls/implementation-pitfalls.md).
+
+**Subagent rule:** if your task touches any code path that could
+transmit, refuse to run it in your shell. Write the code, commit it,
+let the licensee run it manually. If your task seems to require you to
+run a live-CMS binary to verify completion, your task is misspecified
+— STOP and escalate.
+
 ## Commit and release discipline
 
 - Use conventional commit types: `feat:`, `fix:`, `docs:`, `refactor:`, `test:`, `chore:`, `perf:`, `ci:`, `build:`. Match the commit `type:` to the actual intent. Never use `fix:` for docs fixes or `feat:` for internal refactors.

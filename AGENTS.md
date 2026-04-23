@@ -68,6 +68,15 @@ Pick a moniker (single lowercase word, ctrl+F-friendly, not a human first name) 
 
 See [CLAUDE.md](CLAUDE.md#git-workflow--worktrees-are-banned) and [CLAUDE.md](CLAUDE.md#git-workflow--destructive-commands-are-banned) for the full list and rationale. Summary: all branch work in the main repo, no `git worktree`, no `reset --hard`, no force push, no `--amend` on pushed commits, no `--no-verify`. If you think you need one of these, stop and ask.
 
+## Live radio network operations — READ BEFORE ANY TRANSMISSION
+
+No automation, test, subagent, CI job, scheduled task, or AI agent
+initiates a transmission under the project's amateur callsign without
+explicit, scoped, per-invocation consent from the licensee. Full rules
+at [docs/live-cms-testing-policy.md](docs/live-cms-testing-policy.md)
+and RADIO-1 in [docs/pitfalls/implementation-pitfalls.md](docs/pitfalls/implementation-pitfalls.md).
+This is Part 97 regulatory compliance, not a style rule.
+
 ## Commit and release discipline
 
 Conventional commit types (`feat:`, `fix:`, `docs:`, etc.). Breaking changes get `!` + `BREAKING CHANGE:` footer. Update `dev/implementation-log.md` (once created) after any significant work item.
