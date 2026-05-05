@@ -66,9 +66,9 @@ Implications:
 
 Pick a moniker (single lowercase word, ctrl+F-friendly, not a human first name) at session start and include `Agent: <moniker>` as a commit trailer on every commit. Pass the moniker through to every subagent you dispatch. See [CLAUDE.md](CLAUDE.md#agent-identity--pick-a-moniker-at-session-start) for the full rationale and workflow.
 
-## Git workflow — worktrees are BANNED, destructive commands are BANNED
+## Git workflow — worktrees permitted (ADR 0007); destructive commands BANNED
 
-See [CLAUDE.md](CLAUDE.md#git-workflow--worktrees-are-banned) and [CLAUDE.md](CLAUDE.md#git-workflow--destructive-commands-are-banned) for the full list and rationale. Summary: all branch work in the main repo, no `git worktree`, no `reset --hard`, no force push, no `--amend` on pushed commits, no `--no-verify`. If you think you need one of these, stop and ask.
+See [CLAUDE.md](CLAUDE.md#git-workflow--worktrees-are-permitted-adr-0007), [CLAUDE.md](CLAUDE.md#git-workflow--destructive-commands-are-banned), and [docs/adr/0007-lift-worktree-ban.md](docs/adr/0007-lift-worktree-ban.md) for full context. Summary: `git worktree` is a permitted-but-optional isolation tool (default solo-agent workflow is `git checkout` in the main repo); destructive git commands remain banned — no `reset --hard`, no force push, no `--amend` on pushed commits, no `--no-verify`. The destructive-git rules and commit-discipline hooks apply identically regardless of worktree topology. If you think you need a banned command, stop and ask.
 
 ## Live radio network operations — READ BEFORE ANY TRANSMISSION
 
