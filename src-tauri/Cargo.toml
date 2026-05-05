@@ -1,0 +1,28 @@
+[package]
+name = "tuxlink"
+version = "0.0.1"
+description = "Linux-native full-capability Winlink client"
+authors = ["Cameron Zucker <cameronzucker@gmail.com>"]
+edition = "2021"
+rust-version = "1.75"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-shell = "2"
+tauri-plugin-fs = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+reqwest = { version = "0.12", features = ["json", "blocking"] }
+tokio = { version = "1", features = ["full"] }
+nix = { version = "0.28", features = ["signal", "process"] }
+
+[lib]
+name = "tuxlink_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[[bin]]
+name = "tuxlink"
+path = "src/main.rs"

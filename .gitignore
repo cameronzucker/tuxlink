@@ -4,6 +4,7 @@ __pycache__/
 node_modules/
 .temp/
 .claude/worktrees/
+.claude/scheduled_tasks.lock
 .superpowers/
 .claude/skills/gstack/
 
@@ -11,3 +12,30 @@ node_modules/
 .dolt/
 *.db
 .beads-credential-key
+
+# === Added by Tauri 2 + React + Vite scaffold (Task 1) ===
+# Vite build output
+dist/
+dist-ssr/
+*.local
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Tauri / Rust build artifacts
+src-tauri/target/
+src-tauri/WixTools/
+src-tauri/gen/
+
+# Editor — share .vscode/extensions.json only (recommended-extensions list)
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+*.swp
+*.swo
