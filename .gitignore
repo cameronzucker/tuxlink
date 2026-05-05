@@ -6,3 +6,8 @@ node_modules/
 .claude/worktrees/
 .superpowers/
 .claude/skills/gstack/
+
+# Beads / Dolt files (added by bd init)
+.dolt/
+*.db
+.beads-credential-key

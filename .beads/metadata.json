@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "tuxlink",
+  "project_id": "11b77864-2689-45f1-94da-1d23eee6c99e"
+}
