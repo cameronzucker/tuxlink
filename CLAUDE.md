@@ -185,6 +185,27 @@ run a live-CMS binary to verify completion, your task is misspecified
 
 [AGENTS.md](AGENTS.md) is a deliberate **summary with links** to this file's sections, intended for non-Claude agent harnesses (Codex, etc.) where pulling the whole CLAUDE.md inline would be wasteful. It is NOT a full mirror; the substantive rules live here and AGENTS.md points to them. When changing rules in CLAUDE.md, check whether AGENTS.md's summary line for that section needs a corresponding update.
 
+## Tool referee — which tool owns which job
+
+This project uses both Claude Code's built-in primitives (TodoWrite, auto-memory) and `bd` (Beads). They serve overlapping but **non-redundant** roles. When `bd`'s auto-managed section below (`<!-- BEGIN BEADS INTEGRATION -->`) prescribes a rule that conflicts with the table here, **the table wins.** See [docs/adr/0006-override-bd-claude-md-defaults.md](docs/adr/0006-override-bd-claude-md-defaults.md) for full rationale and watched failure modes.
+
+| Concern | Owns it | Notes |
+|---|---|---|
+| Cross-session task tracking with deps | `bd` | Primary. Use `bd ready` / `bd update --claim` / `bd close`. |
+| In-turn micro-progress within one session | TodoWrite | Claude Code primitive; ephemeral; correct for "read X, edit Y, run Z" lists. |
+| User profile + cross-cutting feedback | Auto-memory at `~/.claude/projects/<slug>/memory/` | Harness-native, auto-loaded each session via `MEMORY.md` index. Already seeded; do not migrate to bd. |
+| Issue-adjacent factoids discovered during a task | `bd remember` | Use for knowledge linked to a specific issue. Cross-project user/feedback stays in auto-memory. |
+| Push timing | Operator | Operator owns push timing. Agents commit, operator pushes — `git push` is not automatic. |
+| Branch model | Per-task branch + squash-merge | See [docs/adr/0004-per-task-branch-model.md](docs/adr/0004-per-task-branch-model.md). |
+
+**Specific overrides of bd's BEADS INTEGRATION block** (rules below the BEADS INTEGRATION marker that this section explicitly supersedes):
+
+- bd says *"do NOT use TodoWrite, TaskCreate, or markdown TODO lists"* → **Override:** TodoWrite is the right primitive for in-turn working memory; bd is the right primitive for cross-session work units. Use both, for their respective layers.
+- bd says *"Use `bd remember` for persistent knowledge — do NOT use MEMORY.md files"* → **Override:** the Claude Code auto-memory directory at `~/.claude/projects/<slug>/memory/` is harness-native and remains canonical for user / feedback / project memory. Use `bd remember` for issue-tracker-adjacent factoids only.
+- bd says *"Work is NOT complete until `git push` succeeds … YOU must push"* → **Override:** the operator owns push timing per ADR 0004 and the Claude Code system prompt's risk-action defaults. End-of-session expectation is "committed locally and operator informed of what's pushable" — not "agent has pushed."
+
+**If you discover a fourth bd directive that conflicts with project commitments:** extend the table above AND ADR 0006's override list. Do NOT silently soften an override.
+
 
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:ca08a54f -->
 ## Beads Issue Tracker

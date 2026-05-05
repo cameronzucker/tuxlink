@@ -1,0 +1,90 @@
+name: Bug report
+description: Tuxlink is misbehaving — something works wrong or doesn't work at all.
+title: "[bug] "
+labels: [bug, triage]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug report. Before submitting, please confirm:
+        - This is **not** a security vulnerability (those go to the [security advisories](https://github.com/cameronzucker/tuxlink/security/advisories/new) page).
+        - This is **not** a question about how to use Tuxlink (those go to [Discussions](https://github.com/cameronzucker/tuxlink/discussions)).
+        - **Do not include your Winlink CMS password** anywhere in this report.
+
+  - type: input
+    id: version
+    attributes:
+      label: Tuxlink version
+      description: Output of `tuxlink --version` or the AppImage filename
+      placeholder: "v0.0.1"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: distro
+    attributes:
+      label: Linux distribution
+      options:
+        - Ubuntu 24.04
+        - Ubuntu 22.04
+        - Debian 12
+        - Fedora 39
+        - Fedora 40
+        - Arch
+        - Other (describe in details)
+    validations:
+      required: true
+
+  - type: input
+    id: webkitgtk
+    attributes:
+      label: WebKitGTK version
+      description: Output of `dpkg -l libwebkit2gtk-4.1-0 2>/dev/null | tail -1` or distro equivalent
+    validations:
+      required: false
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: A clear description of the bug. Include exact error messages if any.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: |
+        Numbered steps. Start from a fresh AppImage launch if possible.
+      placeholder: |
+        1. Launch tuxlink AppImage
+        2. Open Mailbox tab
+        3. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: |
+        Tuxlink writes logs to `$XDG_STATE_HOME/tuxlink/` (default `~/.local/state/tuxlink/`). Pat logs are at `$XDG_STATE_HOME/pat/`. Attach relevant excerpts. **Redact your callsign and password before pasting.**
+      render: shell
+    validations:
+      required: false
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else?
+      description: Screenshots, related issues, suspicions, etc.
+    validations:
+      required: false

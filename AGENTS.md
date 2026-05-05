@@ -83,6 +83,10 @@ This is Part 97 regulatory compliance, not a style rule.
 
 Conventional commit types (`feat:`, `fix:`, `docs:`, etc.). Breaking changes get `!` + `BREAKING CHANGE:` footer. Update `dev/implementation-log.md` (once created) after any significant work item.
 
+## Tool referee (overrides bd's CLAUDE.md defaults)
+
+This project uses bd (Beads) AND Claude Code's built-in primitives (TodoWrite, auto-memory). They are NOT substitutes. When bd's BEADS INTEGRATION section conflicts with project commitments, the `## Tool referee` table in [CLAUDE.md](CLAUDE.md#tool-referee--which-tool-owns-which-job) wins. Specifically: TodoWrite is for in-turn micro-progress; bd is for cross-session work; auto-memory at `~/.claude/projects/<slug>/memory/` is canonical for user/feedback memory; the operator owns push timing. See [docs/adr/0006-override-bd-claude-md-defaults.md](docs/adr/0006-override-bd-claude-md-defaults.md) for rationale.
+
 ## Extended capabilities on this Pi
 
 - **Codex CLI** (adversarial review) — `npx --yes @openai/codex exec "<prompt>"`. Not on `$PATH`; already authenticated. See [CLAUDE.md](CLAUDE.md#openai-codex-cli--for-build-robust-features-at-least-one-adversarial-round-via-codex-requirement) for full usage.

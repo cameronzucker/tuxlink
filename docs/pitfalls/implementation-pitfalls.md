@@ -27,6 +27,7 @@ This document serves three audiences. Start here, then go directly to the sectio
 | 0 | [Live Radio Network Operations](#0-live-radio-network-operations) | Any code path that can transmit under the project's callsign | RADIO-1 | §0.C |
 | 1 | [EXAMPLE-DOMAIN-1](#1-example-domain-1) | TODO — describe what this section covers | PREFIX-1 – PREFIX-N | §1.C |
 | 2 | [EXAMPLE-DOMAIN-2](#2-example-domain-2) | TODO — describe what this section covers | PREFIX-1 – PREFIX-N | §2.C |
+| — | [Tool Integration](#tool-integration) | Conflicts between project commitments and tool-installed defaults | BD-1 | §Tool-Integration.C |
 | — | [Orchestration](#orchestration) | Parallel subagent dispatch and output persistence | ORCH-1 | §Orchestration.C |
 | A | [Historical Changelog](#appendix-a-historical-changelog) | Provenance, validation dates, review process meta-observations | — | — |
 | B | [Unified Summary Table](#appendix-b-unified-summary-table) | All pitfalls at a glance, with severity and status | — | — |
@@ -177,6 +178,51 @@ gate is cheap; the incident is not.
 <!-- TODO: rename, or delete this section if not needed. Duplicate the Section 1 template for each additional domain. -->
 
 TODO.
+
+---
+
+## Tool Integration
+
+> **Reader context:** Pitfalls that arise when a third-party tool (e.g., `bd`/Beads) installs opinionated defaults into project files (`CLAUDE.md`, `AGENTS.md`, `.claude/settings.json`) that conflict with existing project commitments. The hazard is silent drift — an agent reads a tool-installed directive without noticing the override.
+
+---
+
+### BD-1: bd opinionated-tooling overrides
+
+**The Flaw:** `bd` (Beads) installs a CLAUDE.md block on `bd setup claude` that prescribes operational rules ("do NOT use TodoWrite," "do NOT use MEMORY.md files," "Work is NOT complete until `git push` succeeds — YOU must push"). Three of these conflict with tuxlink-wide commitments: TodoWrite is the canonical in-turn working-memory primitive; the auto-memory dir is harness-native and pre-seeded; the operator (not the agent) owns push timing per [ADR 0004](../adr/0004-per-task-branch-model.md).
+
+The override mechanism is documented in CLAUDE.md's `## Tool referee` section + [ADR 0006](../adr/0006-override-bd-claude-md-defaults.md). The drift hazard is that future agents may read bd's directives without noticing the override, OR a `bd setup claude` re-run may regenerate the BEADS INTEGRATION block in ways that affect assumptions.
+
+**Why It Matters:** bd's framing assumes a greenfield where bd is the sole tool. tuxlink isn't greenfield. Following bd literally produces (a) issue spam from micro-todos that should be TodoWrite, (b) loss of the auto-memory dir's automatic context injection, (c) auto-pushes without operator confirmation. None of these is catastrophic individually; collectively they erode the project's deliberate tool-referee design.
+
+**Signature.** Recognize the drift via one or more of:
+
+1. `bd setup claude` reports a hash mismatch on the BEADS INTEGRATION block, or silently regenerates it, OR a fresh agent runs `bd setup claude` reflexively.
+2. Recent session transcripts show `bd create` calls for micro-todos that should have been TodoWrite (e.g., "read file X," "run cargo test").
+3. The auto-memory dir at `~/.claude/projects/<slug>/memory/` stops being read or written by recent sessions while `bd remember` storage grows.
+4. A session auto-pushes to origin without operator confirmation, citing bd's mandatory-push directive.
+5. `bd` version bump (1.x → 2.x) adds new directives in the BEADS INTEGRATION block that aren't yet covered by the override list.
+
+**Fix.**
+
+1. Read [docs/adr/0006-override-bd-claude-md-defaults.md](../adr/0006-override-bd-claude-md-defaults.md) first. It records the original decision and the alternatives considered.
+2. Verify the `## Tool referee` section is intact in CLAUDE.md — restore from git history if missing (`git log -p CLAUDE.md` to find the override-introducing commit).
+3. If a new bd directive (from a version bump) conflicts with an existing commitment: extend the `## Tool referee` table AND ADR 0006's override list. Do NOT silently soften an override; record the new conflict explicitly.
+4. Verify `AGENTS.md` still has its summary pointer to the `## Tool referee` section. Restore if missing.
+5. If `bd setup claude` regenerated the BEADS INTEGRATION block, re-read the contents to check if any new opinionated directives have appeared since the last review. Add to the override list as needed.
+
+**Lesson.** The general pattern: any third-party tool that writes to load-bearing project files (CLAUDE.md, AGENTS.md, settings.json) is a potential source of opinionated drift. The defense is a single explicit *referee* section with override authority — not a per-conflict patch that has to be remembered. Future tools that install similar opinionated blocks (a hypothetical "linter-X integration that says NEVER use editorconfig" or "framework-Y wants tabs not spaces") get the same treatment: extend the referee table, write a brief ADR, document the drift signature in this section.
+
+---
+
+### Tool-Integration Review Checklist
+
+- [ ] **`## Tool referee` section intact in CLAUDE.md.** No edits inside `<!-- BEGIN BEADS INTEGRATION -->` markers (those are bd-managed and may be regenerated).
+- [ ] **`AGENTS.md` summary pointer present** for the `## Tool referee` section.
+- [ ] **ADR 0006's override list matches CLAUDE.md's `## Tool referee` table.** When updating one, update both.
+- [ ] **No agent has filed a `bd create` issue for an in-turn micro-todo.** (Spot-check `bd list --status open` for entries that look like "read file X" / "run cargo test Y" — those should have been TodoWrite.)
+- [ ] **Auto-memory dir is alive.** `ls ~/.claude/projects/<slug>/memory/` shows recent updates from active sessions.
+- [ ] **No agent-initiated push happened in the last session** without operator confirmation. (Check `git log --since="1 day ago"` for unexpected origin updates.)
 
 ---
 

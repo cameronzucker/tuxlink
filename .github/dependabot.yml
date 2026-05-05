@@ -1,0 +1,49 @@
+version: 2
+updates:
+  # Rust dependencies (post-Task-1 scaffold)
+  - package-ecosystem: cargo
+    directory: /src-tauri
+    schedule:
+      interval: weekly
+      day: monday
+      time: "08:00"
+      timezone: America/Phoenix
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "build(cargo)"
+      include: scope
+    labels:
+      - dependencies
+      - rust
+
+  # npm dependencies (Tauri frontend)
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "08:00"
+      timezone: America/Phoenix
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "build(npm)"
+      include: scope
+    labels:
+      - dependencies
+      - npm
+
+  # GitHub Actions
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "08:00"
+      timezone: America/Phoenix
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "ci(actions)"
+      include: scope
+    labels:
+      - dependencies
+      - github-actions
