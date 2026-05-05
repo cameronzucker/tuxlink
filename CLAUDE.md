@@ -125,15 +125,15 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
 
 **If you forget to set a moniker early in the session:** pick one now and apply it to all forward commits. Do not retroactively amend earlier commits (amending shared/recent commits is banned — see below).
 
-## Git workflow — worktrees are BANNED
+## Git workflow — worktrees are permitted (ADR 0007)
 
-Do NOT use `git worktree` in this project. All branch work happens via `git checkout` in the main repo at `/home/administrator/Code/tuxlink`.
+`git worktree` is permitted but not required. The default workflow for solo-agent work remains `git checkout` in the main repo at `/home/administrator/Code/tuxlink`; worktrees are an option when concurrent agents need filesystem isolation, when parallel build artifacts would otherwise collide, or when auto-claude's eventual lease model wants per-worktree leases.
 
-**Rationale:** Carried forward from the Geographica project, where two near-misses in 2026-04 involved subagents `cd`'ing out of a worktree and performing destructive operations on the main repo's branch (one `git reset --hard` wiped 6+ commits from `dev`'s tip pointer; recovered via reflog). Worktree topology multiplies the blast radius of "subagent forgets which checkout it's in" errors.
+**The earlier ban (lifted 2026-05-05) was a behavioral bandaid for the geographica subagent-drift incidents.** The structural mitigations since adopted — [per-task-branch model (ADR 0004)](docs/adr/0004-per-task-branch-model.md), Beads issue tracker, and the `block-destructive-git.sh` + `check-commit-discipline.sh` PreToolUse hooks — address the root cause (destructive ops on integration branches). The topological ban became redundant. See [docs/adr/0007-lift-worktree-ban.md](docs/adr/0007-lift-worktree-ban.md) for full context, the residual auto-claude-lease gap, and watched failure modes.
 
-**If you encounter an existing worktree** (e.g., `.claude/worktrees/<name>/`): do NOT use it. Check out the same branch in the main repo instead, and suggest that the user remove the worktree with `git worktree remove`.
+**When using worktrees:** the per-task-branch model and the destructive-git / commit-discipline hooks still apply. The hooks reject `reset --hard`, force-push, direct commits to `main` / `feat/v0.0.1`, and missing `Agent:` trailers regardless of which checkout the command is issued from. Branches are still `task-NN-<slug>` or `bd-<id>/<slug>` off `feat/v0.0.1` — worktree topology does not change the branch model.
 
-**If a session handoff tells you to "work in the worktree at X"**: override that instruction. Check out the branch in the main repo, and flag the deviation to the user.
+**Worktrees on demand, not by default.** The decision permits them; it does not encourage them. For single-stream work the topology cost of two checkouts buys nothing.
 
 ## Git workflow — destructive commands are BANNED
 
