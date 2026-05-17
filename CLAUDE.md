@@ -199,7 +199,20 @@ Memory entries cite the ADR; they do not restate it. Narrowly-scoped operational
 
 ## Parity with `AGENTS.md`
 
-[AGENTS.md](AGENTS.md) is a deliberate **summary with links** to this file's sections, intended for non-Claude agent harnesses (Codex, etc.) where pulling the whole CLAUDE.md inline would be wasteful. It is NOT a full mirror; the substantive rules live here and AGENTS.md points to them. When changing rules in CLAUDE.md, check whether AGENTS.md's summary line for that section needs a corresponding update.
+[AGENTS.md](AGENTS.md) is a deliberate **summary with links** to this file's sections, intended for non-Claude agent harnesses (Codex CLI, `codex review`, and future tooling that picks up the standard `AGENTS.md` convention) where pulling the whole CLAUDE.md inline would be wasteful. It is NOT a full mirror; the substantive rules live here and AGENTS.md points to them.
+
+**Upkeep discipline.** Every PR that changes a rule in CLAUDE.md MUST also do the AGENTS.md parity check, in the same PR. The check:
+
+1. Locate the AGENTS.md section that summarizes the CLAUDE.md section you changed.
+2. If the change is purely-additive content (clarification, expanded example, new link) AND the AGENTS.md summary line is still accurate, no AGENTS.md update is needed.
+3. If the change adds, removes, or renames a CLAUDE.md section, OR alters the load-bearing summary AGENTS.md was providing, update AGENTS.md in the same PR.
+4. If a CLAUDE.md change introduces a load-bearing rule for non-Claude agents and no AGENTS.md section currently summarizes it, add one.
+
+Drift between CLAUDE.md and AGENTS.md is a defect. It violates the project's propagation contract (see [§"Documentation propagation contract"](#documentation-propagation-contract) above: CLAUDE.md is the source of truth for substantive rules; AGENTS.md is a pointer).
+
+**When in doubt, ship the AGENTS.md update alongside the CLAUDE.md change.** A redundant tweak is cheaper than a drift bug; the parity check is meant to be light, not skipped.
+
+**Cross-project authority:** [`standing-conventions-cross-project.md` §10](https://github.com/cameronzucker/cz-agent-skills/blob/main/docs/standing-conventions-cross-project.md).
 
 ## Tool referee — which tool owns which job
 
