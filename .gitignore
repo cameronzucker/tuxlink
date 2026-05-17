@@ -9,6 +9,13 @@ node_modules/
 .superpowers/
 .claude/skills/gstack/
 
+# Codex (and any future cross-vendor adversarial review) transcripts live
+# locally only — kept off the public repo per the 2026-05-17 "release-ready"
+# cleanliness call. Findings should be summarized in handoff docs / PR
+# bodies / pitfalls entries as appropriate; the raw transcripts are dev
+# scratch space, not project artifacts.
+dev/adversarial/
+
 # Beads / Dolt files (added by bd init)
 .dolt/
 *.db

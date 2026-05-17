@@ -66,7 +66,7 @@ cat spec.md | npx --yes @openai/codex exec -
 - **When to use:** when a workflow (notably `superpowers:build-robust-features`) explicitly calls for "at least one round via Codex." Substitute Claude agents only when this is genuinely unavailable — it isn't unavailable here.
 - **MCP-server mode:** `npx --yes @openai/codex mcp-server` — expose Codex as an MCP server if you want the main loop to call it like a tool.
 
-Write adversarial-review output to `dev/adversarial/<date>-<topic>-codex.md` to match the existing naming pattern once `dev/` is created.
+Write adversarial-review output to `dev/adversarial/<date>-<topic>-codex.md`. **This directory is `.gitignore`d** (per the 2026-05-17 "release-ready public repo" cleanliness call): raw codex/adversarial transcripts stay local-only as dev scratch. Summarize findings + dispositions in handoff docs, PR bodies, or pitfalls entries as appropriate; the raw transcripts are reference material, not project artifacts. If a future operator needs to consult an older review trace, they're on the original author's local disk; don't expect them in the public repo.
 
 ### `url-to-markdown` skill — fetch FULL webpages, not summaries
 
