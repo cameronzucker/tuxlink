@@ -29,6 +29,13 @@ worktrees/
 # scratch space, not project artifacts.
 dev/adversarial/
 
+# Winlink Express / RMS Trimode reference material — third-party Windows
+# binaries audited locally during the 2026-05-17 UX brainstorm (and any
+# subsequent audits). Not redistributable, not project artifacts; raw
+# binaries + extracted contents stay off the public repo. Findings get
+# summarized in design docs and pitfalls entries.
+dev/winlink-reference/
+
 # Beads / Dolt files (added by bd init)
 .dolt/
 *.db
