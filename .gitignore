@@ -3,6 +3,14 @@ __pycache__/
 .env
 node_modules/
 .temp/
+# Worktrees (per ADR 0008) live at <repo>/worktrees/<bd-id-or-slug>/.
+# The directory + its contents are runtime-only and must never be tracked
+# (a worktree is a checkout of the same repo — committing one would create
+# infinite recursion). Per codex 2026-05-17 D4 review: without this entry,
+# first worktree creation pollutes `git status` with thousands of untracked
+# files in the main checkout.
+worktrees/
+
 .claude/worktrees/
 .claude/worktree-archives/
 .claude/scheduled_tasks.lock

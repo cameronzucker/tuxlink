@@ -10,14 +10,16 @@ Without this, every worktree creation is a multi-step manual flow; with this,
 one command satisfies the ownership + path + branch conventions.
 
 Usage:
-  # With a bd issue (preferred per ADR 0008 §2):
+  # Standard form — bd issue REQUIRED per ADR 0008 §2 (every worktree binds to
+  # a bd issue, no exceptions for long-lived worktrees). If you don't have an
+  # issue yet, create one first with `bd create ...`.
   .claude/scripts/new_tuxlink_worktree.py --slug har-saml-fix --issue tuxlink-wkz
 
-  # Throwaway exploration (agent-<moniker>/<slug> branch):
-  .claude/scripts/new_tuxlink_worktree.py --slug quick-fix --moniker cedar
+  # With session moniker recorded in the bd note for forensics:
+  .claude/scripts/new_tuxlink_worktree.py --slug quick-fix --issue tuxlink-wkz --moniker cedar
 
   # Custom base branch:
-  .claude/scripts/new_tuxlink_worktree.py --slug logs --base feat/v0.0.1
+  .claude/scripts/new_tuxlink_worktree.py --slug logs --issue tuxlink-eil --base feat/v0.0.1
 
 Ported from support-tools/.claude/scripts/New-LfstWorktree.ps1 per Decision 3
 of the 2026-05-17 LFST→tuxlink port catalog (Python for cross-platform reuse).
@@ -57,9 +59,17 @@ def run(cmd: list[str], cwd: Path, check: bool = True) -> subprocess.CompletedPr
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--slug", required=True, help="Short slug (lowercase, alphanumeric + dashes)")
-    parser.add_argument("--issue", help="bd issue ID to claim (preferred per ADR 0008 §2)")
+    parser.add_argument(
+        "--issue",
+        required=True,
+        help=(
+            "bd issue ID this worktree binds to. REQUIRED per ADR 0008 §2 — "
+            "every worktree must be claimed by a bd issue (no orphan worktrees). "
+            "If you don't have an issue, create one first with `bd create ...`."
+        ),
+    )
     parser.add_argument("--base", default="feat/v0.0.1", help="Base branch (default: feat/v0.0.1)")
-    parser.add_argument("--moniker", help="Session moniker (used when --issue not provided)")
+    parser.add_argument("--moniker", help="Session moniker — recorded in the bd note for forensics")
     args = parser.parse_args()
 
     if not SLUG_RE.match(args.slug):
@@ -74,15 +84,11 @@ def main() -> int:
         sys.stderr.write(f"Not a git repo: {repo}\n")
         return 2
 
-    if args.issue:
-        worktree_name = f"bd-{args.issue}-{args.slug}"
-        branch_name = f"bd-{args.issue}/{args.slug}"
-    elif args.moniker:
-        worktree_name = f"agent-{args.moniker}-{args.slug}"
-        branch_name = f"agent-{args.moniker}/{args.slug}"
-    else:
-        worktree_name = f"feat-{args.slug}"
-        branch_name = f"feat/{args.slug}"
+    # --issue is now required (per ADR 0008 §2 + codex D4-P2 review). Branch
+    # convention: bd-<id>/<slug> per ADR 0004. Worktree path: worktrees/<name>/
+    # per ADR 0008 §2.3 (worktrees/ is gitignored at project root).
+    worktree_name = f"bd-{args.issue}-{args.slug}"
+    branch_name = f"bd-{args.issue}/{args.slug}"
 
     worktree_path = repo / "worktrees" / worktree_name
     if worktree_path.exists():
@@ -101,35 +107,38 @@ def main() -> int:
         cwd=repo,
     )
 
+    # Claim the bd issue + record the worktree path. Per codex D4-P2 review:
+    # bd remember accepts only one positional argument (the insight string), so
+    # `bd remember <issue> <note>` fails. Use `bd update <id> --append-notes
+    # <note>` instead, which appends to the issue's notes field with newline
+    # separation (preserves any existing notes).
+    print(f"Claiming bd issue {args.issue}...")
     bd_status = ""
-    if args.issue:
-        print(f"Claiming bd issue {args.issue}...")
-        claim = run(["bd", "update", args.issue, "--claim"], cwd=repo, check=False)
-        if claim.returncode != 0:
-            bd_status = (
-                f"⚠ bd update --claim returned exit {claim.returncode}; worktree was created "
-                f"but bd ownership was not recorded.\n  Run manually: bd update {args.issue} --claim"
-            )
+    claim = run(["bd", "update", args.issue, "--claim"], cwd=repo, check=False)
+    if claim.returncode != 0:
+        bd_status = (
+            f"⚠ bd update --claim returned exit {claim.returncode}; worktree was created "
+            f"but the bd issue is NOT claimed.\n  Run manually: bd update {args.issue} --claim"
+        )
+    else:
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+        note = f"Worktree path: {worktree_path}. Branch: {branch_name}. Created {now}"
+        if args.moniker:
+            note += f" by {args.moniker}."
         else:
-            now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-            note = f"Worktree path: {worktree_path}. Branch: {branch_name}. Created {now}"
-            if args.moniker:
-                note += f" by {args.moniker}."
-            else:
-                note += "."
-            remember = run(["bd", "remember", args.issue, note], cwd=repo, check=False)
-            if remember.returncode != 0:
-                bd_status = (
-                    f"⚠ bd remember returned exit {remember.returncode}; worktree path NOT recorded "
-                    f"in issue body.\n  Run manually: bd remember {args.issue} '{note}'"
-                )
+            note += "."
+        notes_result = run(["bd", "update", args.issue, "--append-notes", note], cwd=repo, check=False)
+        if notes_result.returncode != 0:
+            bd_status = (
+                f"⚠ bd update --append-notes returned exit {notes_result.returncode}; worktree path NOT "
+                f"recorded in issue notes.\n  Run manually: bd update {args.issue} --append-notes '{note}'"
+            )
 
     print()
     print("=== Worktree created ===")
     print(f"Path:     {worktree_path}")
     print(f"Branch:   {branch_name} (off origin/{args.base})")
-    if args.issue:
-        print(f"bd issue: {args.issue} (claimed)")
+    print(f"bd issue: {args.issue} (claimed)")
     if bd_status:
         print()
         print(bd_status)
