@@ -6,7 +6,9 @@
 #   2. Every commit has an Agent: <moniker> trailer (CLAUDE.md §Agent identity).
 #   3. No direct commits to main (always blocked).
 #   4. No direct commits to feat/v0.0.1 unless ALLOW_INTEGRATION_COMMIT=1 prefix is present
-#      (carve-out for the legitimate squash-merge step in the per-task-branch model).
+#      (carve-out for the legitimate merge-commit (no-ff) step in the per-task-branch model
+#      per Decision 1 of the 2026-05-17 LFST→tuxlink port catalog: squash-merge is banned;
+#      all PRs into integration branches merge as merge-commits with no fast-forward).
 #
 # Input:  JSON on stdin with .tool_input.command
 # Output: JSON deny on stdout if a check fails; nothing if clean.
@@ -58,7 +60,7 @@ case "$branch" in
         # Allow only if command has ALLOW_INTEGRATION_COMMIT=1 set as an env-var prefix.
         # Match at command start OR after a shell separator (&&, ;, |).
         if ! printf '%s' "$cmd" | grep -qE '(^|[[:space:]&;|])[[:space:]]*ALLOW_INTEGRATION_COMMIT=1[[:space:]]+git'; then
-            deny "Direct commits to '$branch' are blocked per the per-task-branch model (docs/adr/0004). For the legitimate squash-merge step, prefix the command with 'ALLOW_INTEGRATION_COMMIT=1 git commit ...'. For ordinary task work, branch off with 'git checkout -b task-NN-<slug>' first."
+            deny "Direct commits to '$branch' are blocked per the per-task-branch model (docs/adr/0004). For the legitimate merge-commit step (no-ff per Decision 1 of the 2026-05-17 port catalog), prefix the command with 'ALLOW_INTEGRATION_COMMIT=1 git commit ...'. Normal flow uses 'gh pr merge --merge --delete-branch' server-side, which bypasses this hook entirely. For ordinary task work, branch off with 'git checkout -b task-NN-<slug>' first."
         fi
         ;;
 esac
