@@ -144,6 +144,32 @@ A worktree without a bd-issue claim is an anti-pattern. If you encounter one (st
 
 **Full rationale, alternatives considered, and watched failure modes:** [ADR 0008](docs/adr/0008-worktrees-mandatory-under-bd-issue-ownership.md), which supersedes [ADR 0007](docs/adr/0007-lift-worktree-ban.md)'s "permitted but optional" framing. ADR 0007 remains accepted as the historical record of why the original Geographica-era ban was lifted.
 
+### Worktree disposal ritual ([ADR 0009](docs/adr/0009-worktree-disposal-ritual.md))
+
+`git worktree remove` is banned (destructive-git hook denies it per C1). Disposal uses the 4-step ritual:
+
+```bash
+# Step 1 — Inventory (from inside the worktree being disposed)
+git status --short                                          # tracked dirty
+git ls-files --others --exclude-standard                    # untracked
+git ls-files --others --ignored --exclude-standard          # gitignored on disk
+git stash list                                              # worktree-scoped stashes
+
+# Step 2 — Propagate (commit + push) or archive
+#   For propagate: git add ..., git commit -m "...", git push origin <branch>
+#   For archive:   tar czf .claude/worktree-archives/<name>-$(date -u +%Y%m%dT%H%M%SZ).tar.gz <worktree-path>
+
+# Step 3 — Physical remove
+rm -rf <worktree-path>
+
+# Step 4 — Prune git's registry
+git worktree prune
+```
+
+`.claude/worktree-archives/` is `.gitignore`d. The archive directory is per-machine, not pushed to origin. The hook denies `git worktree remove` regardless of how the worktree looks "clean" — `.beads/embeddeddolt/` is the canonical example of gitignored-but-stateful content the git check misses.
+
+**Why no shortcut:** the LFST musing-bhabha incident (May 2026) lost untracked content via `git worktree remove`. The ritual is the replacement; see [ADR 0009](docs/adr/0009-worktree-disposal-ritual.md) for full context and watched failure modes.
+
 ## Git workflow — destructive commands are BANNED
 
 Do NOT run destructive git commands. There is never a legitimate reason for an agent to run these unprompted. If you think you need one, **stop and ask the user**.
@@ -255,7 +281,7 @@ Work is not complete until `git push` succeeds AND a session-end handoff documen
 3. Update issue tracker status (`bd close <id>` / `bd update <id>`).
 4. **`git push`** — mandatory. If push fails, resolve the failure and retry until it succeeds. Do NOT stop before pushing.
 5. Clean up: clear stashes, ensure remote task branches are deleted (`gh pr merge --delete-branch` handles this automatically for landed PRs; manual `git push origin --delete <branch>` for branches that didn't reach merge).
-6. Write a session-end handoff document to `dev/handoffs/<YYYY-MM-DD>-<short-slug>.md` enumerating: branch state, working-tree state, in-flight worktrees + their untracked content (once D-section worktree workflow lands), what was completed, what is in-progress, what is pending decision.
+6. Write a session-end handoff document to `dev/handoffs/<YYYY-MM-DD>-<short-slug>.md` enumerating: branch state, working-tree state, in-flight worktrees + their untracked + gitignored-stateful content (per [ADR 0009](docs/adr/0009-worktree-disposal-ritual.md) §"Handoff documents enumerate worktree state"), what was completed, what is in-progress, what is pending decision.
 
 **Never say "ready to push when you are."** Push is the session's responsibility, not the operator's. The handoff document closes the context loop so the next session — possibly on a different machine — can continue without manual reconstruction from `git log`.
 
