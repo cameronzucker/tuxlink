@@ -222,6 +222,20 @@ This project uses both Claude Code's built-in primitives (TodoWrite, auto-memory
 
 **If you discover a fourth bd directive that conflicts with project commitments:** extend the table above AND ADR 0006's override list. Do NOT silently soften an override.
 
+## Session Completion
+
+Work is not complete until `git push` succeeds AND a session-end handoff document exists. This rule is **unconditional** per [`standing-conventions-cross-project.md` §7](https://github.com/cameronzucker/cz-agent-skills/blob/main/docs/standing-conventions-cross-project.md) and Decision 1 of the 2026-05-17 LFST→tuxlink port catalog. (The Tool referee table's "Push timing | Operator" row above is out of date and will be reconciled in this sprint's cleanup pass; this section is authoritative.)
+
+**Required steps before ending any session:**
+
+1. File issues for remaining work discovered during the session (`bd create ...`).
+2. Run quality gates if code changed (tests, linters, builds).
+3. Update issue tracker status (`bd close <id>` / `bd update <id>`).
+4. **`git push`** — mandatory. If push fails, resolve the failure and retry until it succeeds. Do NOT stop before pushing.
+5. Clean up: clear stashes, ensure remote task branches are deleted (`gh pr merge --delete-branch` handles this automatically for landed PRs; manual `git push origin --delete <branch>` for branches that didn't reach merge).
+6. Write a session-end handoff document to `dev/handoffs/<YYYY-MM-DD>-<short-slug>.md` enumerating: branch state, working-tree state, in-flight worktrees + their untracked content (once D-section worktree workflow lands), what was completed, what is in-progress, what is pending decision.
+
+**Never say "ready to push when you are."** Push is the session's responsibility, not the operator's. The handoff document closes the context loop so the next session — possibly on a different machine — can continue without manual reconstruction from `git log`.
 
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:ca08a54f -->
 ## Beads Issue Tracker
