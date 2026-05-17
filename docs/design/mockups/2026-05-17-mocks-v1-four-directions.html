@@ -1,0 +1,1695 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Tuxlink UX brainstorm — 4 full-fidelity dark mocks</title>
+<style>
+:root {
+  --bg:           #0d1318;
+  --surface:      #141c23;
+  --surface-2:    #1a2330;
+  --elevated:     #1e2832;
+  --border:       #1f2832;
+  --border-strong:#2c3744;
+  --border-soft:  #1a2028;
+  --text:         #e4ebf2;
+  --text-dim:     #94a0ad;
+  --text-faint:   #5d6975;
+  --accent:       #f59f3c;
+  --accent-2:     #ffba6e;
+  --accent-soft:  rgba(245, 159, 60, 0.12);
+  --unread-dot:   #ffd166;
+  --success:      #5dd6a0;
+  --error:        #ee6b6b;
+  --info:         #6bb8ee;
+  --form-tag:     #c084fc;
+  --mono:         "JetBrains Mono", "SF Mono", "Fira Code", Menlo, Consolas, monospace;
+  --sans:         -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif;
+}
+* { box-sizing: border-box; }
+html, body {
+  margin: 0; padding: 0;
+  background: #060a0e;
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+.page {
+  max-width: 1480px;
+  margin: 0 auto;
+  padding: 28px 24px 80px;
+}
+.page-title {
+  font-size: 22px;
+  font-weight: 600;
+  margin: 0 0 4px;
+  color: var(--text);
+}
+.page-subtitle {
+  color: var(--text-dim);
+  font-size: 14px;
+  margin: 0 0 22px;
+}
+.legend {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px 18px;
+  margin-bottom: 36px;
+  font-size: 13px;
+}
+.legend table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.legend th, .legend td {
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--border-soft);
+  text-align: left;
+  vertical-align: top;
+}
+.legend th {
+  font-weight: 600;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-faint);
+}
+.legend tr:last-child td { border-bottom: none; }
+.legend .mock-letter {
+  font-weight: 700;
+  font-size: 14px;
+  color: var(--accent);
+  width: 32px;
+}
+.legend .mock-name { color: var(--text); font-weight: 600; }
+.legend .res { color: var(--text-dim); font-size: 12px; }
+.legend .res strong { color: var(--text); font-weight: 600; }
+
+.mock-section {
+  margin-bottom: 56px;
+  cursor: pointer;
+  border-radius: 12px;
+  transition: outline 0.15s, outline-offset 0.15s;
+  outline: 2px solid transparent;
+  outline-offset: 8px;
+}
+.mock-section.selected {
+  outline-color: var(--accent);
+}
+.mock-section:hover {
+  outline-color: rgba(245, 159, 60, 0.4);
+}
+.mock-header {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  margin-bottom: 14px;
+  padding: 0 4px;
+}
+.mock-letter-big {
+  font-size: 32px;
+  font-weight: 800;
+  color: var(--accent);
+  letter-spacing: -0.02em;
+  line-height: 1;
+}
+.mock-name-big {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text);
+}
+.mock-tagline {
+  color: var(--text-dim);
+  font-size: 14px;
+}
+.mock-tensions {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.mock-tensions code {
+  background: var(--surface-2);
+  color: var(--accent-2);
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0;
+  text-transform: none;
+  margin-left: 4px;
+}
+
+/* ====== APP WINDOW CHROME ====== */
+.app-window {
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  overflow: hidden;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.45), 0 0 0 1px rgba(255,255,255,0.02) inset;
+}
+.titlebar {
+  display: flex;
+  align-items: center;
+  height: 34px;
+  background: linear-gradient(180deg, #1a2229 0%, #131a20 100%);
+  border-bottom: 1px solid var(--border);
+  padding: 0 10px;
+  user-select: none;
+}
+.titlebar .app-icon {
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  background: linear-gradient(135deg, #f59f3c 0%, #d97706 100%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 800;
+  color: #1a0e02;
+  margin-right: 8px;
+}
+.titlebar .app-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+.titlebar .app-subtitle {
+  font-size: 12px;
+  color: var(--text-dim);
+  margin-left: 8px;
+}
+.titlebar .controls {
+  margin-left: auto;
+  display: flex;
+  gap: 8px;
+}
+.titlebar .ctrl {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  display: inline-block;
+}
+.titlebar .ctrl.min { background: #ffbd2e; }
+.titlebar .ctrl.max { background: #28c940; }
+.titlebar .ctrl.close { background: #ff5f56; }
+
+/* ====== MENU BAR ====== */
+.menubar {
+  display: flex;
+  height: 30px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  padding: 0 10px;
+  align-items: center;
+  font-size: 13px;
+  color: var(--text);
+  gap: 2px;
+}
+.menubar .menu {
+  padding: 4px 10px;
+  border-radius: 4px;
+  cursor: default;
+}
+.menubar .menu:hover {
+  background: var(--surface-2);
+}
+.menubar .menu.active {
+  background: var(--accent-soft);
+  color: var(--accent-2);
+}
+
+/* ====== DASHBOARD RIBBON (B and C use this) ====== */
+.dashboard {
+  display: flex;
+  height: 56px;
+  background: linear-gradient(180deg, var(--surface-2) 0%, var(--surface) 100%);
+  border-bottom: 1px solid var(--border);
+  padding: 0 18px;
+  align-items: center;
+  gap: 28px;
+  font-size: 12px;
+}
+.dashboard .dash-item {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+.dashboard .dash-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-faint);
+}
+.dashboard .dash-value {
+  font-family: var(--mono);
+  font-size: 13px;
+  color: var(--text);
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+.dashboard .dash-value.callsign {
+  color: var(--accent-2);
+  font-weight: 700;
+  font-size: 14px;
+}
+.dashboard .dash-value.good {
+  color: var(--success);
+}
+.dashboard .dash-divider {
+  width: 1px;
+  height: 32px;
+  background: var(--border-strong);
+}
+.dashboard .dash-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--success);
+  display: inline-block;
+  margin-right: 6px;
+  vertical-align: middle;
+  box-shadow: 0 0 8px rgba(93, 214, 160, 0.5);
+}
+.dashboard .dash-status-dot.idle { background: var(--text-faint); box-shadow: none; }
+.dashboard .dash-status-dot.connecting { background: var(--accent); animation: pulse 1.4s ease-in-out infinite; }
+.dashboard .dash-status-dot.tx { background: var(--error); animation: pulse 0.8s ease-in-out infinite; }
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+/* ====== TAB STRIP (Inbox / Sent for A and D) ====== */
+.tab-strip {
+  display: flex;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  padding: 0 14px;
+  height: 38px;
+  align-items: flex-end;
+  gap: 4px;
+}
+.tab-strip .tab {
+  padding: 8px 16px 9px;
+  font-size: 13px;
+  color: var(--text-dim);
+  border-bottom: 2px solid transparent;
+  cursor: default;
+  font-weight: 500;
+}
+.tab-strip .tab.active {
+  color: var(--accent-2);
+  border-bottom-color: var(--accent);
+  background: linear-gradient(180deg, transparent 0%, var(--accent-soft) 100%);
+}
+.tab-strip .tab-count {
+  font-size: 11px;
+  color: var(--text-faint);
+  margin-left: 6px;
+  font-variant-numeric: tabular-nums;
+}
+.tab-strip .tab.active .tab-count {
+  color: var(--accent);
+}
+.tab-strip .tab-spacer { flex: 1; }
+.tab-strip .tab-action {
+  padding: 6px 12px;
+  font-size: 12px;
+  color: var(--text-dim);
+  align-self: center;
+  border-radius: 4px;
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  margin-bottom: 4px;
+}
+
+/* ====== SIDEBAR (B and C: folder + connections sidebar) ====== */
+.sidebar {
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  padding: 12px 0;
+  font-size: 13px;
+  min-width: 0;
+  overflow: hidden;
+}
+.sidebar .section-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-faint);
+  padding: 14px 18px 6px;
+  font-weight: 600;
+}
+.sidebar .nav-item {
+  display: flex;
+  align-items: center;
+  padding: 7px 18px;
+  color: var(--text);
+  gap: 10px;
+  cursor: default;
+  border-left: 2px solid transparent;
+}
+.sidebar .nav-item .icon {
+  width: 14px;
+  text-align: center;
+  color: var(--text-faint);
+  font-size: 11px;
+}
+.sidebar .nav-item.active {
+  background: var(--accent-soft);
+  color: var(--accent-2);
+  border-left-color: var(--accent);
+}
+.sidebar .nav-item.active .icon { color: var(--accent); }
+.sidebar .nav-item .count {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+.sidebar .nav-item.disabled {
+  color: var(--text-faint);
+}
+.sidebar .nav-item .v01-badge {
+  font-size: 9px;
+  background: var(--surface-2);
+  color: var(--text-faint);
+  padding: 1px 5px;
+  border-radius: 3px;
+  letter-spacing: 0.04em;
+  margin-left: auto;
+}
+
+/* ====== INBOX ROWS ====== */
+.rows-pane {
+  background: var(--bg);
+  overflow: hidden;
+  border-right: 1px solid var(--border);
+  min-width: 0;
+}
+.row {
+  display: grid;
+  padding: 11px 18px;
+  border-bottom: 1px solid var(--border-soft);
+  cursor: default;
+  gap: 3px 14px;
+  grid-template-columns: 1fr auto;
+  grid-template-rows: auto auto auto;
+  align-items: center;
+}
+.row:hover { background: var(--surface); }
+.row.selected {
+  background: var(--accent-soft);
+  border-bottom-color: rgba(245, 159, 60, 0.25);
+}
+.row.selected:hover { background: rgba(245, 159, 60, 0.16); }
+.row .from {
+  font-size: 13px;
+  color: var(--text);
+  font-weight: 600;
+  grid-column: 1;
+  grid-row: 1;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+.row .from .unread-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--unread-dot);
+  flex: 0 0 auto;
+  box-shadow: 0 0 6px rgba(255, 209, 102, 0.6);
+}
+.row:not(.unread) .from {
+  font-weight: 500;
+  color: var(--text-dim);
+}
+.row .date {
+  grid-column: 2;
+  grid-row: 1;
+  font-size: 12px;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+.row .subject {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  font-size: 14px;
+  color: var(--text);
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.row:not(.unread) .subject {
+  font-weight: 400;
+  color: var(--text-dim);
+}
+.row .preview {
+  grid-column: 1 / -1;
+  grid-row: 3;
+  font-size: 12px;
+  color: var(--text-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-top: 2px;
+}
+.row.selected .preview { color: var(--text-dim); }
+.row .form-tag {
+  font-size: 9px;
+  color: var(--form-tag);
+  background: rgba(192, 132, 252, 0.12);
+  padding: 1px 6px;
+  border-radius: 3px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 700;
+  border: 1px solid rgba(192, 132, 252, 0.3);
+}
+.row .size {
+  font-size: 11px;
+  color: var(--text-faint);
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ====== READING PANE ====== */
+.reading-pane {
+  background: var(--bg);
+  padding: 28px 32px;
+  overflow: auto;
+  min-width: 0;
+}
+.reading-pane h1.subject-line {
+  margin: 0 0 18px;
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: -0.01em;
+  line-height: 1.25;
+}
+.reading-pane .msg-meta {
+  display: grid;
+  grid-template-columns: 60px 1fr;
+  gap: 4px 14px;
+  font-size: 12px;
+  margin-bottom: 22px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid var(--border);
+}
+.reading-pane .msg-meta dt {
+  color: var(--text-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 10px;
+  padding-top: 3px;
+  margin: 0;
+}
+.reading-pane .msg-meta dd {
+  color: var(--text-dim);
+  font-size: 13px;
+  margin: 0;
+}
+.reading-pane .msg-meta dd .addr {
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+.reading-pane .msg-body {
+  font-size: 14.5px;
+  line-height: 1.65;
+  color: var(--text);
+  white-space: pre-wrap;
+  font-family: var(--sans);
+  margin: 0;
+}
+.reading-pane .actions {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 20px;
+}
+.reading-pane .action-btn {
+  padding: 6px 14px;
+  font-size: 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  color: var(--text);
+  border-radius: 5px;
+  font-weight: 500;
+}
+.reading-pane .action-btn.primary {
+  background: var(--accent);
+  color: #1a0e02;
+  border-color: var(--accent);
+}
+
+/* ====== RADIO DOCK (Mock C — 4th pane) ====== */
+.radio-dock {
+  background: var(--surface);
+  border-left: 1px solid var(--border);
+  padding: 16px 18px;
+  font-size: 12px;
+  min-width: 0;
+  overflow: hidden;
+}
+.radio-dock .dock-section {
+  margin-bottom: 18px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--border-soft);
+}
+.radio-dock .dock-section:last-child { border-bottom: none; }
+.radio-dock .dock-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-faint);
+  margin-bottom: 8px;
+}
+.radio-dock .tx-rx-box {
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  padding: 12px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.radio-dock .tx-rx-state {
+  font-family: var(--mono);
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--success);
+}
+.radio-dock .tx-rx-state.tx { color: var(--error); }
+.radio-dock .freq {
+  font-family: var(--mono);
+  font-size: 16px;
+  color: var(--accent-2);
+  font-weight: 600;
+}
+.radio-dock .freq-meta {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-top: 3px;
+}
+.radio-dock .session-info-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 4px 0;
+}
+.radio-dock .session-info-row .k { color: var(--text-dim); }
+.radio-dock .session-info-row .v { color: var(--text); font-family: var(--mono); font-size: 12px; }
+.radio-dock .queue-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 3px 0;
+  font-size: 12px;
+}
+.radio-dock .queue-row .label { color: var(--text-dim); }
+.radio-dock .queue-row .count { color: var(--text); font-weight: 600; }
+.radio-dock .queue-row .count.zero { color: var(--text-faint); font-weight: 400; }
+.radio-dock .signal-bars {
+  display: flex;
+  gap: 2px;
+  align-items: flex-end;
+  height: 16px;
+}
+.radio-dock .signal-bars .bar {
+  width: 5px;
+  background: var(--success);
+  border-radius: 1px;
+}
+
+/* ====== SESSION LOG PANE ====== */
+.session-log {
+  background: #0a0f14;
+  border-top: 1px solid var(--border);
+  padding: 0;
+  font-size: 11.5px;
+  font-family: var(--mono);
+  max-height: 150px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.session-log .log-header {
+  display: flex;
+  align-items: center;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  padding: 6px 14px;
+  font-family: var(--sans);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  height: 26px;
+}
+.session-log .log-header .live-dot {
+  width: 6px;
+  height: 6px;
+  background: var(--success);
+  border-radius: 50%;
+  margin-right: 8px;
+  box-shadow: 0 0 4px var(--success);
+}
+.session-log .log-header .log-toggle {
+  margin-left: auto;
+  background: var(--surface-2);
+  color: var(--text-dim);
+  border: 1px solid var(--border-strong);
+  padding: 2px 8px;
+  font-size: 10px;
+  border-radius: 3px;
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 500;
+}
+.session-log .log-toggle.active {
+  color: var(--accent-2);
+  background: var(--accent-soft);
+  border-color: rgba(245, 159, 60, 0.3);
+}
+.session-log .log-lines {
+  flex: 1;
+  overflow: auto;
+  padding: 8px 14px;
+  color: var(--text-dim);
+  line-height: 1.7;
+}
+.session-log .log-lines .ts {
+  color: var(--text-faint);
+}
+.session-log .log-lines .info { color: var(--info); }
+.session-log .log-lines .send { color: var(--accent-2); }
+.session-log .log-lines .recv { color: var(--success); }
+.session-log .log-lines .err { color: var(--error); }
+
+.session-log.human .log-lines {
+  font-family: var(--sans);
+  font-size: 12.5px;
+  color: var(--text);
+}
+.session-log.human .log-lines .step {
+  display: flex;
+  gap: 12px;
+  padding: 1px 0;
+}
+.session-log.human .log-lines .step .step-ts {
+  color: var(--text-faint);
+  font-family: var(--mono);
+  font-size: 11px;
+  min-width: 60px;
+}
+
+/* ====== STATUS BAR ====== */
+.statusbar {
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  padding: 6px 16px;
+  font-size: 12px;
+  color: var(--text-dim);
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  height: 28px;
+}
+.statusbar .status-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.statusbar .status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-faint);
+}
+.statusbar .status-dot.good { background: var(--success); box-shadow: 0 0 5px var(--success); }
+.statusbar .status-dot.idle { background: var(--text-faint); }
+.statusbar .status-divider {
+  color: var(--text-faint);
+  font-size: 10px;
+}
+.statusbar .status-right {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ====== COMPOSE OVERLAYS ====== */
+.compose-overlay-modal {
+  position: absolute;
+  inset: 0;
+  background: rgba(6, 10, 14, 0.65);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10;
+  border-radius: 10px;
+  pointer-events: none;
+}
+.compose-modal {
+  width: 520px;
+  background: var(--elevated);
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+  overflow: hidden;
+}
+.compose-modal-header {
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+.compose-modal-body { padding: 14px 18px; }
+.compose-window-floating {
+  position: absolute;
+  right: 30px;
+  bottom: 50px;
+  width: 480px;
+  background: var(--elevated);
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.55);
+  overflow: hidden;
+  z-index: 9;
+}
+.compose-window-floating .titlebar {
+  background: linear-gradient(180deg, #232c36 0%, #1a232c 100%);
+}
+.compose-field {
+  display: flex;
+  align-items: center;
+  border-bottom: 1px solid var(--border-soft);
+  padding: 8px 14px;
+}
+.compose-field .label {
+  font-size: 11px;
+  color: var(--text-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  width: 56px;
+}
+.compose-field .value {
+  font-size: 13px;
+  color: var(--text);
+  flex: 1;
+}
+.compose-body-area {
+  padding: 14px;
+  min-height: 140px;
+  font-size: 13px;
+  color: var(--text);
+  line-height: 1.55;
+  background: var(--bg);
+}
+.compose-actions {
+  display: flex;
+  gap: 8px;
+  padding: 10px 14px;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  justify-content: flex-end;
+}
+.compose-actions .btn-send {
+  background: var(--accent);
+  color: #1a0e02;
+  border: 1px solid var(--accent);
+  padding: 5px 14px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.compose-actions .btn-save {
+  background: var(--surface-2);
+  color: var(--text-dim);
+  border: 1px solid var(--border-strong);
+  padding: 5px 14px;
+  border-radius: 4px;
+  font-size: 12px;
+}
+
+/* ====== LAYOUT GRIDS PER MOCK ====== */
+.layout-A, .layout-D {
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  height: 720px;
+}
+.layout-A .panes, .layout-D .panes {
+  display: grid;
+  grid-template-columns: 420px 1fr;
+  min-height: 0;
+}
+.layout-B {
+  display: grid;
+  grid-template-rows: auto 1fr auto auto;
+  height: 760px;
+}
+.layout-B .panes {
+  display: grid;
+  grid-template-columns: 200px 380px 1fr;
+  min-height: 0;
+}
+.layout-C {
+  display: grid;
+  grid-template-rows: auto 1fr auto auto;
+  height: 760px;
+}
+.layout-C .panes {
+  display: grid;
+  grid-template-columns: 180px 360px 1fr 220px;
+  min-height: 0;
+}
+
+.notes {
+  padding: 14px 18px;
+  margin-top: 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.notes strong { color: var(--text); }
+.notes .pros, .notes .cons {
+  display: inline-block;
+  margin-right: 18px;
+}
+.notes .pros::before {
+  content: "+ ";
+  color: var(--success);
+  font-weight: 700;
+}
+.notes .cons::before {
+  content: "− ";
+  color: var(--error);
+  font-weight: 700;
+}
+
+.position-relative { position: relative; }
+.selection-hint {
+  margin-top: 30px;
+  padding: 14px 18px;
+  background: var(--accent-soft);
+  border: 1px solid rgba(245, 159, 60, 0.3);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 13px;
+}
+.selection-hint strong { color: var(--accent-2); }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <h1 class="page-title">Tuxlink v0.0.1 — 4 full-fidelity UX directions</h1>
+  <p class="page-subtitle">Dark mode · Linux desktop · 1366×768 minimum viewport · realistic Winlink content · Mail.app polish bar interpreted through Linux/Tauri</p>
+
+  <div class="legend">
+    <table>
+      <thead>
+        <tr>
+          <th></th>
+          <th>Direction</th>
+          <th>Dashboard scope <code>#1</code></th>
+          <th>Compose <code>#2</code></th>
+          <th>Session log <code>#3</code></th>
+          <th>Layout <code>#4</code></th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="mock-letter">A</td>
+          <td class="mock-name">Plan-conservative</td>
+          <td class="res"><strong>γ</strong> defer; status bar narrow (conn + unread + last-session)</td>
+          <td class="res"><strong>α</strong> Dialog modal</td>
+          <td class="res"><strong>α</strong> raw Pat output, toggleable, default off</td>
+          <td class="res">tabs (Inbox/Sent) + 2-pane below</td>
+        </tr>
+        <tr>
+          <td class="mock-letter">B</td>
+          <td class="mock-name">Principles-faithful</td>
+          <td class="res"><strong>α</strong> dashboard ribbon above panes (callsign · grid · UTC+local · GPS · conn)</td>
+          <td class="res"><strong>β</strong> separate Tauri window (floating)</td>
+          <td class="res"><strong>γ</strong> human-shaped default + raw toggle</td>
+          <td class="res">sidebar (folders + connections) + 2-pane</td>
+        </tr>
+        <tr>
+          <td class="mock-letter">C</td>
+          <td class="mock-name">Emcomm-dense</td>
+          <td class="res"><strong>β</strong> heavy dashboard incl. radio TX/RX</td>
+          <td class="res"><strong>α</strong> Dialog modal</td>
+          <td class="res"><strong>α</strong> raw default-visible (collapsible)</td>
+          <td class="res">4-pane with radio dock on right</td>
+        </tr>
+        <tr>
+          <td class="mock-letter">D</td>
+          <td class="mock-name">Mail.app-minimal</td>
+          <td class="res"><strong>γ</strong> defer entirely; status bar minimal</td>
+          <td class="res"><strong>α</strong> Dialog modal</td>
+          <td class="res"><strong>β</strong> defer Task 15 entirely from v0.0.1; reached via Tools → Diagnostics</td>
+          <td class="res">tabs + maximally minimal 2-pane</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- ================================================== -->
+  <!--               MOCK A — Plan-conservative           -->
+  <!-- ================================================== -->
+  <div class="mock-section" data-choice="mock-a" onclick="toggleSelect(this)">
+    <div class="mock-header">
+      <span class="mock-letter-big">A</span>
+      <span class="mock-name-big">Plan-conservative</span>
+      <span class="mock-tagline">Ships what the plan literally describes. No dashboard expansion, dialog compose, raw log toggleable.</span>
+      <span class="mock-tensions">#1: <code>γ</code> #2: <code>α</code> #3: <code>α</code> #4: <code>tabs+2-pane</code></span>
+    </div>
+    <div class="app-window position-relative">
+      <div class="titlebar">
+        <span class="app-icon">T</span>
+        <span class="app-name">Tuxlink</span>
+        <span class="app-subtitle">— Inbox</span>
+        <span class="controls">
+          <span class="ctrl min"></span><span class="ctrl max"></span><span class="ctrl close"></span>
+        </span>
+      </div>
+      <div class="menubar">
+        <span class="menu">File</span>
+        <span class="menu">Message</span>
+        <span class="menu">Session</span>
+        <span class="menu">Mailbox</span>
+        <span class="menu">View</span>
+        <span class="menu">Tools</span>
+        <span class="menu">Help</span>
+      </div>
+      <div class="layout-A">
+        <div class="tab-strip">
+          <div class="tab active">Inbox <span class="tab-count">3</span></div>
+          <div class="tab">Sent <span class="tab-count">87</span></div>
+          <div class="tab-spacer"></div>
+          <div class="tab-action">Connect (F5)</div>
+        </div>
+        <div class="panes">
+          <div class="rows-pane">
+            <div class="row unread">
+              <div class="from"><span class="unread-dot"></span>WX4MTL@winlink.org</div>
+              <div class="date">12:18</div>
+              <div class="subject">Memphis ARES brief — severe wx expected 18-22Z<span class="size">2.4 KB</span></div>
+              <div class="preview">NWS Memphis has issued a severe thunderstorm watch for Shelby, Tipton, and Fayette counties…</div>
+            </div>
+            <div class="row unread">
+              <div class="from"><span class="unread-dot"></span>K0SWE@winlink.org</div>
+              <div class="date">11:45</div>
+              <div class="subject">Net check-in 7Y3 — 2046Z roll call<span class="size">1.2 KB</span></div>
+              <div class="preview">Roll call for Saturday's training net. Please reply with QSL and your assigned net number…</div>
+            </div>
+            <div class="row unread">
+              <div class="from"><span class="unread-dot"></span>N5VSU@winlink.org</div>
+              <div class="date">10:42</div>
+              <div class="subject"><span class="form-tag">ICS-213</span>INCIDENT 8847 status update<span class="size">980 B</span></div>
+              <div class="preview">[This message contains a Winlink form — form rendering arrives in v0.1]</div>
+            </div>
+            <div class="row">
+              <div class="from">SERVICE@winlink.org</div>
+              <div class="date">09:32</div>
+              <div class="subject">Re: tuxlink setup test<span class="size">412 B</span></div>
+              <div class="preview">Welcome to Winlink. Your test message was received at 2026-05-17 14:32:18 UTC…</div>
+            </div>
+            <div class="row">
+              <div class="from">VE3FUN@winlink.org</div>
+              <div class="date">Yesterday</div>
+              <div class="subject">RE: HF prop tonight<span class="size">340 B</span></div>
+              <div class="preview">20m looks marginal but 40m should open up around 02Z. I'll be on 7.103…</div>
+            </div>
+            <div class="row">
+              <div class="from">EM5KKK@winlink.org</div>
+              <div class="date">Yesterday</div>
+              <div class="subject">Red Cross welfare query — Sarah Chen / Cocoa FL<span class="size">1.6 KB</span></div>
+              <div class="preview">Welfare check requested by family in Toronto. Subject is at 1245 Brevard Ave, Cocoa…</div>
+            </div>
+            <div class="row">
+              <div class="from">KE7VBH@winlink.org</div>
+              <div class="date">2 days ago</div>
+              <div class="subject">Position rpt — Mile 1242 PCT<span class="size">220 B</span></div>
+              <div class="preview">35.2851N 117.9742W · 2300 ft · resupply at Kennedy Meadows tomorrow…</div>
+            </div>
+            <div class="row">
+              <div class="from">SYSTEM@winlink.org</div>
+              <div class="date">3 days ago</div>
+              <div class="subject">Account password expires in 14 days<span class="size">380 B</span></div>
+              <div class="preview">Your Winlink CMS password will expire on 2026-05-31. Reset at https://winlink.org/user…</div>
+            </div>
+          </div>
+          <div class="reading-pane">
+            <div class="actions">
+              <button class="action-btn primary">Reply (⌘R)</button>
+              <button class="action-btn">Reply All</button>
+              <button class="action-btn">Forward</button>
+              <button class="action-btn">Print</button>
+            </div>
+            <h1 class="subject-line">Memphis ARES brief — severe wx expected 18-22Z</h1>
+            <dl class="msg-meta">
+              <dt>From</dt><dd><span class="addr">WX4MTL@winlink.org</span> · James / EC Shelby County</dd>
+              <dt>To</dt><dd><span class="addr">W4PHS@winlink.org</span>, <span class="addr">K0SWE@winlink.org</span>, <span class="addr">MEMPHIS-ARES@winlink.org</span></dd>
+              <dt>Date</dt><dd>2026-05-17 12:18 UTC · 07:18 CDT</dd>
+            </dl>
+            <pre class="msg-body">ARES members,
+
+NWS Memphis has issued a severe thunderstorm watch for
+Shelby, Tipton, and Fayette counties, effective 18:00Z
+through 22:00Z today.
+
+Anticipated impacts:
+  - 60+ mph straight-line winds
+  - Quarter-size hail
+  - Isolated tornado risk (5% within 25 mi)
+
+ARES net activation at 17:45Z on 146.940 MHz (-) PL 100.0.
+Backup: 442.150 MHz (+) PL 100.0. Winlink check-ins to
+WX4MTL with subject line "ARES check-in 5/17".
+
+Station readiness checklist:
+  - Confirm radio + battery backup
+  - GO-kit grab-and-go scenario
+  - 12-hour deployment readiness
+
+73,
+James / WX4MTL
+EC Shelby County ARES</pre>
+          </div>
+        </div>
+        <div class="statusbar">
+          <div class="status-item"><span class="status-dot idle"></span>Idle</div>
+          <span class="status-divider">·</span>
+          <div class="status-item">3 unread</div>
+          <span class="status-divider">·</span>
+          <div class="status-item">last session: 12 min ago</div>
+          <div class="status-right">v0.0.1</div>
+        </div>
+      </div>
+    </div>
+    <div class="notes">
+      <strong>Tradeoffs:</strong>
+      <span class="pros">ships closest to plan — minimal scope creep</span>
+      <span class="pros">information bar at top is plenty for 2-folder world</span>
+      <span class="cons">user doesn't see callsign / grid / UTC at a glance — has to open File→Properties or Tools→Operator Info</span>
+      <span class="cons">"Idle · 3 unread" is information-poor for emcomm scenarios</span>
+      <span class="cons">opening compose blocks the whole inbox</span>
+    </div>
+  </div>
+
+  <!-- ================================================== -->
+  <!--               MOCK B — Principles-faithful         -->
+  <!-- ================================================== -->
+  <div class="mock-section" data-choice="mock-b" onclick="toggleSelect(this)">
+    <div class="mock-header">
+      <span class="mock-letter-big">B</span>
+      <span class="mock-name-big">Principles-faithful</span>
+      <span class="mock-tagline">Adds the principles-doc dashboard ribbon up top. Compose floats as a separate window. Session log is human-shaped.</span>
+      <span class="mock-tensions">#1: <code>α</code> #2: <code>β</code> #3: <code>γ</code> #4: <code>sidebar+2-pane</code></span>
+    </div>
+    <div class="app-window position-relative">
+      <div class="titlebar">
+        <span class="app-icon">T</span>
+        <span class="app-name">Tuxlink</span>
+        <span class="app-subtitle">— Inbox</span>
+        <span class="controls">
+          <span class="ctrl min"></span><span class="ctrl max"></span><span class="ctrl close"></span>
+        </span>
+      </div>
+      <div class="menubar">
+        <span class="menu">File</span>
+        <span class="menu">Message</span>
+        <span class="menu">Session</span>
+        <span class="menu">Mailbox</span>
+        <span class="menu active">View</span>
+        <span class="menu">Tools</span>
+        <span class="menu">Help</span>
+      </div>
+      <div class="dashboard">
+        <div class="dash-item">
+          <div class="dash-label">Callsign</div>
+          <div class="dash-value callsign">W4PHS</div>
+        </div>
+        <div class="dash-divider"></div>
+        <div class="dash-item">
+          <div class="dash-label">Grid</div>
+          <div class="dash-value">EM75xx</div>
+        </div>
+        <div class="dash-divider"></div>
+        <div class="dash-item">
+          <div class="dash-label">Position</div>
+          <div class="dash-value good">GPS · 35.05° -90.04°</div>
+        </div>
+        <div class="dash-divider"></div>
+        <div class="dash-item">
+          <div class="dash-label">UTC / Local</div>
+          <div class="dash-value">19:23z · 14:23 CDT</div>
+        </div>
+        <div class="dash-divider"></div>
+        <div class="dash-item">
+          <div class="dash-label">Connection</div>
+          <div class="dash-value"><span class="dash-status-dot idle"></span>Idle · telnet ready</div>
+        </div>
+      </div>
+      <div class="layout-B">
+        <div class="tab-strip" style="display:none"></div>
+        <div class="panes">
+          <div class="sidebar">
+            <div class="section-label">Mailbox</div>
+            <div class="nav-item active"><span class="icon">▣</span>Inbox<span class="count">3</span></div>
+            <div class="nav-item"><span class="icon">▢</span>Sent<span class="count">87</span></div>
+            <div class="nav-item disabled"><span class="icon">▢</span>Outbox<span class="v01-badge">v0.1</span></div>
+            <div class="nav-item disabled"><span class="icon">▢</span>Archive<span class="v01-badge">v0.1</span></div>
+            <div class="section-label">Connections</div>
+            <div class="nav-item"><span class="icon">●</span>Telnet</div>
+            <div class="nav-item disabled"><span class="icon">○</span>VARA HF<span class="v01-badge">v0.1</span></div>
+            <div class="nav-item disabled"><span class="icon">○</span>VARA FM<span class="v01-badge">v0.1</span></div>
+            <div class="nav-item disabled"><span class="icon">○</span>AX.25<span class="v01-badge">v0.1</span></div>
+          </div>
+          <div class="rows-pane">
+            <div class="row unread">
+              <div class="from"><span class="unread-dot"></span>WX4MTL@winlink.org</div>
+              <div class="date">12:18</div>
+              <div class="subject">Memphis ARES brief — severe wx expected 18-22Z<span class="size">2.4 KB</span></div>
+              <div class="preview">NWS Memphis has issued a severe thunderstorm watch for Shelby, Tipton, and Fayette counties…</div>
+            </div>
+            <div class="row unread">
+              <div class="from"><span class="unread-dot"></span>K0SWE@winlink.org</div>
+              <div class="date">11:45</div>
+              <div class="subject">Net check-in 7Y3 — 2046Z roll call<span class="size">1.2 KB</span></div>
+              <div class="preview">Roll call for Saturday's training net. Please reply with QSL and your assigned net number…</div>
+            </div>
+            <div class="row unread selected">
+              <div class="from"><span class="unread-dot"></span>N5VSU@winlink.org</div>
+              <div class="date">10:42</div>
+              <div class="subject"><span class="form-tag">ICS-213</span>INCIDENT 8847 status update<span class="size">980 B</span></div>
+              <div class="preview">[This message contains a Winlink form — form rendering arrives in v0.1]</div>
+            </div>
+            <div class="row">
+              <div class="from">SERVICE@winlink.org</div>
+              <div class="date">09:32</div>
+              <div class="subject">Re: tuxlink setup test<span class="size">412 B</span></div>
+              <div class="preview">Welcome to Winlink. Your test message was received at 2026-05-17 14:32:18 UTC…</div>
+            </div>
+            <div class="row">
+              <div class="from">VE3FUN@winlink.org</div>
+              <div class="date">Yesterday</div>
+              <div class="subject">RE: HF prop tonight<span class="size">340 B</span></div>
+              <div class="preview">20m looks marginal but 40m should open up around 02Z. I'll be on 7.103…</div>
+            </div>
+            <div class="row">
+              <div class="from">EM5KKK@winlink.org</div>
+              <div class="date">Yesterday</div>
+              <div class="subject">Red Cross welfare query — Sarah Chen / Cocoa FL<span class="size">1.6 KB</span></div>
+              <div class="preview">Welfare check requested by family in Toronto. Subject is at 1245 Brevard Ave, Cocoa…</div>
+            </div>
+            <div class="row">
+              <div class="from">KE7VBH@winlink.org</div>
+              <div class="date">2 days ago</div>
+              <div class="subject">Position rpt — Mile 1242 PCT<span class="size">220 B</span></div>
+              <div class="preview">35.2851N 117.9742W · 2300 ft · resupply at Kennedy Meadows tomorrow…</div>
+            </div>
+          </div>
+          <div class="reading-pane">
+            <div class="actions">
+              <button class="action-btn primary">Reply (⌘R)</button>
+              <button class="action-btn">Reply All</button>
+              <button class="action-btn">Forward</button>
+            </div>
+            <h1 class="subject-line">INCIDENT 8847 status update</h1>
+            <dl class="msg-meta">
+              <dt>From</dt><dd><span class="addr">N5VSU@winlink.org</span> · Maria / Incident Commander</dd>
+              <dt>To</dt><dd><span class="addr">W4PHS@winlink.org</span>, <span class="addr">CHATTANOOGA-CERT@winlink.org</span></dd>
+              <dt>Date</dt><dd>2026-05-17 10:42 UTC · 05:42 CDT</dd>
+              <dt>Form</dt><dd><span style="color:var(--form-tag);font-weight:600">ICS-213</span> · General Message</dd>
+            </dl>
+            <div style="padding:18px;background:rgba(192,132,252,0.08);border:1px solid rgba(192,132,252,0.25);border-radius:6px;font-size:13px;color:var(--text-dim)">
+              <strong style="color:var(--form-tag)">Winlink form attached.</strong> Form rendering arrives in v0.1.<br>
+              <span style="font-size:11px;font-family:var(--mono);color:var(--text-faint)">Form: ICS213 · payload: 980 B XML</span>
+            </div>
+          </div>
+        </div>
+        <div class="session-log human">
+          <div class="log-header">
+            <span class="live-dot"></span>Session log
+            <button class="log-toggle">Raw output</button>
+            <button class="log-toggle active" style="margin-left:6px">Human</button>
+          </div>
+          <div class="log-lines">
+            <div class="step"><span class="step-ts">14:32:14</span><span>Connecting to Winlink CMS via telnet…</span></div>
+            <div class="step"><span class="step-ts">14:32:15</span><span>Connected to CMS gateway <em>1235-2.cms.winlink.org</em></span></div>
+            <div class="step"><span class="step-ts">14:32:18</span><span>Receiving message 4 of 4 from WX4MTL@winlink.org</span></div>
+            <div class="step"><span class="step-ts">14:32:19</span><span style="color:var(--success)">Session complete · 4 received · 1 sent · 7s</span></div>
+          </div>
+        </div>
+        <div class="statusbar">
+          <div class="status-item"><span class="status-dot good"></span>Telnet ready</div>
+          <span class="status-divider">·</span>
+          <div class="status-item">3 unread</div>
+          <div class="status-right">v0.0.1 · Pat 1.0.0</div>
+        </div>
+      </div>
+
+      <!-- Compose as separate window, floating to the lower-right -->
+      <div class="compose-window-floating">
+        <div class="titlebar">
+          <span class="app-icon">T</span>
+          <span class="app-name">New Message</span>
+          <span class="app-subtitle">— draft</span>
+          <span class="controls">
+            <span class="ctrl min"></span><span class="ctrl max"></span><span class="ctrl close"></span>
+          </span>
+        </div>
+        <div class="compose-field">
+          <div class="label">To</div>
+          <div class="value">SERVICE@winlink.org</div>
+        </div>
+        <div class="compose-field">
+          <div class="label">Subject</div>
+          <div class="value">Quick reply re: ARES brief</div>
+        </div>
+        <div class="compose-body-area">QSL on the storm watch. Will be on 146.940 by 17:45Z. Brought the GO-kit in yesterday.
+
+73,
+W4PHS</div>
+        <div class="compose-actions">
+          <button class="btn-save">Save Draft (⌘S)</button>
+          <button class="btn-send">Send (⌘↵)</button>
+        </div>
+      </div>
+    </div>
+    <div class="notes">
+      <strong>Tradeoffs:</strong>
+      <span class="pros">callsign / grid / GPS / UTC always visible — emcomm operator's mental load drops</span>
+      <span class="pros">compose floats — user can read another message while composing (resolves the principles-doc compose concern)</span>
+      <span class="pros">session log says human things by default; raw is one click away for power users</span>
+      <span class="cons">dashboard adds ~56 px chrome — less vertical space for inbox rows</span>
+      <span class="cons">separate-window compose adds Tauri-multi-window complexity (Task 14 currently scoped for Dialog)</span>
+      <span class="cons">human-shaped session log is explicitly v0.1 per plan — adopting it now expands v0.0.1 backend</span>
+    </div>
+  </div>
+
+  <!-- ================================================== -->
+  <!--               MOCK C — Emcomm-dense                -->
+  <!-- ================================================== -->
+  <div class="mock-section" data-choice="mock-c" onclick="toggleSelect(this)">
+    <div class="mock-header">
+      <span class="mock-letter-big">C</span>
+      <span class="mock-name-big">Emcomm-dense</span>
+      <span class="mock-tagline">Codex's "station readiness console" framing. Heavy dashboard, persistent radio dock, raw log default-visible. v0.1+ territory but worth seeing.</span>
+      <span class="mock-tensions">#1: <code>β</code> #2: <code>α</code> #3: <code>α</code> #4: <code>4-pane</code></span>
+    </div>
+    <div class="app-window position-relative">
+      <div class="titlebar">
+        <span class="app-icon">T</span>
+        <span class="app-name">Tuxlink</span>
+        <span class="app-subtitle">— Station Console</span>
+        <span class="controls">
+          <span class="ctrl min"></span><span class="ctrl max"></span><span class="ctrl close"></span>
+        </span>
+      </div>
+      <div class="menubar">
+        <span class="menu">File</span>
+        <span class="menu">Message</span>
+        <span class="menu">Session</span>
+        <span class="menu">Mailbox</span>
+        <span class="menu">View</span>
+        <span class="menu">Tools</span>
+        <span class="menu">Help</span>
+      </div>
+      <div class="dashboard">
+        <div class="dash-item">
+          <div class="dash-label">Callsign</div>
+          <div class="dash-value callsign">W4PHS</div>
+        </div>
+        <div class="dash-divider"></div>
+        <div class="dash-item">
+          <div class="dash-label">Grid · Position</div>
+          <div class="dash-value">EM75xx · 35.05N -90.04W</div>
+        </div>
+        <div class="dash-divider"></div>
+        <div class="dash-item">
+          <div class="dash-label">UTC / Local</div>
+          <div class="dash-value">19:23:14z · 14:23 CDT</div>
+        </div>
+        <div class="dash-divider"></div>
+        <div class="dash-item">
+          <div class="dash-label">Connection</div>
+          <div class="dash-value"><span class="dash-status-dot tx"></span>TX · telnet → CMS</div>
+        </div>
+        <div class="dash-divider"></div>
+        <div class="dash-item">
+          <div class="dash-label">Audio · GPS</div>
+          <div class="dash-value good">−14 dBFS · 8 sats</div>
+        </div>
+        <div class="dash-divider"></div>
+        <div class="dash-item">
+          <div class="dash-label">Battery</div>
+          <div class="dash-value good">12.4V · UPS OK</div>
+        </div>
+      </div>
+      <div class="layout-C">
+        <div class="tab-strip" style="display:none"></div>
+        <div class="panes">
+          <div class="sidebar">
+            <div class="section-label">Mailbox</div>
+            <div class="nav-item active"><span class="icon">▣</span>Inbox<span class="count">3</span></div>
+            <div class="nav-item"><span class="icon">▢</span>Sent<span class="count">87</span></div>
+            <div class="section-label">Frequencies</div>
+            <div class="nav-item"><span class="icon">●</span>2m / 70cm</div>
+            <div class="nav-item disabled"><span class="icon">○</span>HF / VARA<span class="v01-badge">v0.1</span></div>
+          </div>
+          <div class="rows-pane">
+            <div class="row unread">
+              <div class="from"><span class="unread-dot"></span>WX4MTL@winlink.org</div>
+              <div class="date">12:18</div>
+              <div class="subject">Memphis ARES brief — severe wx 18-22Z<span class="size">2.4 KB</span></div>
+              <div class="preview">NWS Memphis has issued a severe thunderstorm watch for Shelby, Tipton, and Fayette…</div>
+            </div>
+            <div class="row unread selected">
+              <div class="from"><span class="unread-dot"></span>K0SWE@winlink.org</div>
+              <div class="date">11:45</div>
+              <div class="subject">Net check-in 7Y3 — 2046Z roll call<span class="size">1.2 KB</span></div>
+              <div class="preview">Roll call for Saturday's training net. Please reply with QSL and your net number…</div>
+            </div>
+            <div class="row unread">
+              <div class="from"><span class="unread-dot"></span>N5VSU@winlink.org</div>
+              <div class="date">10:42</div>
+              <div class="subject"><span class="form-tag">ICS-213</span>INCIDENT 8847 status<span class="size">980 B</span></div>
+              <div class="preview">[Winlink form — v0.1]</div>
+            </div>
+            <div class="row">
+              <div class="from">SERVICE@winlink.org</div>
+              <div class="date">09:32</div>
+              <div class="subject">Re: tuxlink setup test<span class="size">412 B</span></div>
+              <div class="preview">Welcome to Winlink. Your test message was received…</div>
+            </div>
+            <div class="row">
+              <div class="from">VE3FUN@winlink.org</div>
+              <div class="date">Yest.</div>
+              <div class="subject">RE: HF prop tonight<span class="size">340 B</span></div>
+              <div class="preview">20m looks marginal but 40m should open around 02Z…</div>
+            </div>
+            <div class="row">
+              <div class="from">KE7VBH@winlink.org</div>
+              <div class="date">2d</div>
+              <div class="subject">Position rpt — Mile 1242 PCT<span class="size">220 B</span></div>
+              <div class="preview">35.2851N 117.9742W · 2300 ft · resupply…</div>
+            </div>
+          </div>
+          <div class="reading-pane">
+            <div class="actions">
+              <button class="action-btn primary">Reply (⌘R)</button>
+              <button class="action-btn">Reply All</button>
+              <button class="action-btn">Forward</button>
+            </div>
+            <h1 class="subject-line">Net check-in 7Y3 — 2046Z roll call</h1>
+            <dl class="msg-meta">
+              <dt>From</dt><dd><span class="addr">K0SWE@winlink.org</span> · Mike / Net Control</dd>
+              <dt>To</dt><dd><span class="addr">TRI-STATE-NET@winlink.org</span> (47 recipients)</dd>
+              <dt>Date</dt><dd>2026-05-17 11:45 UTC · 06:45 CDT</dd>
+            </dl>
+            <pre class="msg-body">All TRI-STATE-NET stations,
+
+Saturday training net at 20:46Z on 7.235 MHz LSB.
+Backup: 7.103 MHz LSB. Tertiary: 3.943 MHz LSB (after
+local sunset).
+
+Please reply to this message with:
+  - Your callsign and assigned net number (1-47)
+  - QSL or QRX (will-be-late) status
+  - Any traffic to be passed during the net
+
+Roll call begins promptly at 20:50Z. Late check-ins
+accepted until 21:15Z, then we move to traffic.
+
+73,
+Mike / K0SWE
+TRI-STATE-NET Control</pre>
+          </div>
+          <div class="radio-dock">
+            <div class="dock-section">
+              <div class="dock-label">Current Session</div>
+              <div class="tx-rx-box">
+                <div class="tx-rx-state tx">TX</div>
+                <div>
+                  <div class="freq">telnet</div>
+                  <div class="freq-meta">→ CMS gateway 1235-2</div>
+                </div>
+              </div>
+              <div style="margin-top:10px">
+                <div class="session-info-row"><span class="k">Connected</span><span class="v">14:32:15</span></div>
+                <div class="session-info-row"><span class="k">Sent</span><span class="v">1 / 1</span></div>
+                <div class="session-info-row"><span class="k">Received</span><span class="v">3 / 4</span></div>
+                <div class="session-info-row"><span class="k">Duration</span><span class="v">00:00:18</span></div>
+              </div>
+            </div>
+            <div class="dock-section">
+              <div class="dock-label">Audio In</div>
+              <div class="signal-bars">
+                <div class="bar" style="height:30%"></div>
+                <div class="bar" style="height:55%"></div>
+                <div class="bar" style="height:75%"></div>
+                <div class="bar" style="height:65%"></div>
+                <div class="bar" style="height:40%"></div>
+                <div class="bar" style="height:25%"></div>
+                <div class="bar" style="height:50%"></div>
+                <div class="bar" style="height:35%"></div>
+              </div>
+              <div style="font-size:11px;color:var(--text-dim);margin-top:6px">−14 dBFS · USB-C Digirig</div>
+            </div>
+            <div class="dock-section">
+              <div class="dock-label">Outbox queue</div>
+              <div class="queue-row"><span class="label">Pending</span><span class="count">1</span></div>
+              <div class="queue-row"><span class="label">In flight</span><span class="count">1</span></div>
+              <div class="queue-row"><span class="label">Failed</span><span class="count zero">0</span></div>
+            </div>
+            <div class="dock-section">
+              <div class="dock-label">Last Sessions</div>
+              <div class="queue-row" style="font-size:11px"><span class="label">14:32 telnet</span><span class="count" style="color:var(--success)">✓</span></div>
+              <div class="queue-row" style="font-size:11px"><span class="label">11:14 telnet</span><span class="count" style="color:var(--success)">✓</span></div>
+              <div class="queue-row" style="font-size:11px"><span class="label">07:48 telnet</span><span class="count" style="color:var(--success)">✓</span></div>
+            </div>
+          </div>
+        </div>
+        <div class="session-log">
+          <div class="log-header">
+            <span class="live-dot"></span>Session log
+            <button class="log-toggle active">Raw output</button>
+            <button class="log-toggle" style="margin-left:6px">Human</button>
+          </div>
+          <div class="log-lines">
+            <div><span class="ts">14:32:01</span> <span class="info">INFO</span> HTTP server listening on 127.0.0.1:53421</div>
+            <div><span class="ts">14:32:14</span> <span class="info">INFO</span> B2F: connecting to telnet://cms.winlink.org:8772</div>
+            <div><span class="ts">14:32:15</span> <span class="info">INFO</span> B2F: connected</div>
+            <div><span class="ts">14:32:15</span> <span class="send">B2F &gt;</span> [WL2K-5.0-B2FWIHJM$]</div>
+            <div><span class="ts">14:32:15</span> <span class="recv">B2F &lt;</span> [Tuxlink-0.0.1-B2FWIHJM$]</div>
+            <div><span class="ts">14:32:15</span> <span class="send">B2F &gt;</span> ;PQ: 12345</div>
+            <div><span class="ts">14:32:15</span> <span class="recv">B2F &lt;</span> ;PR: 67890</div>
+            <div><span class="ts">14:32:15</span> <span class="recv">B2F &lt;</span> CMS via 1235-2.cms.winlink.org</div>
+            <div><span class="ts">14:32:16</span> <span class="send">B2F &gt;</span> FF</div>
+            <div><span class="ts">14:32:16</span> <span class="recv">B2F &lt;</span> FS YYYY</div>
+            <div><span class="ts">14:32:18</span> <span class="info">INFO</span> Receiving message [4 of 4]</div>
+          </div>
+        </div>
+        <div class="statusbar">
+          <div class="status-item"><span class="status-dot good"></span>TX · telnet</div>
+          <span class="status-divider">·</span>
+          <div class="status-item">3 unread · 1 outbox</div>
+          <div class="status-right">Pat 1.0.0 · Digirig</div>
+        </div>
+      </div>
+    </div>
+    <div class="notes">
+      <strong>Tradeoffs:</strong>
+      <span class="pros">station-readiness gestalt at a glance — Cocoa Beach Red Cross volunteer would love this</span>
+      <span class="pros">radio dock shows TX/RX state, queue depth, audio levels — operator-grade transparency</span>
+      <span class="pros">"operator handoff log" mental model: next person sits down and knows what's happening</span>
+      <span class="cons">v0.0.1 is telnet-only — audio levels and GPS are aspirational, would need fake/disabled state until v0.1</span>
+      <span class="cons">heavy chrome eats inbox real estate — message rows compressed</span>
+      <span class="cons">Codex framed this as "Pandora-project" scope, not v0.0.1</span>
+      <span class="cons">backend complexity: TX/RX state needs session-log parsing, audio levels need DSP — all v0.5+ work</span>
+    </div>
+  </div>
+
+  <!-- ================================================== -->
+  <!--               MOCK D — Mail.app-minimal            -->
+  <!-- ================================================== -->
+  <div class="mock-section" data-choice="mock-d" onclick="toggleSelect(this)">
+    <div class="mock-header">
+      <span class="mock-letter-big">D</span>
+      <span class="mock-name-big">Mail.app-minimal</span>
+      <span class="mock-tagline">Mail.app polish bar taken seriously. No dashboard, no session log surface, no anything until the user asks. Maximum focus on the email.</span>
+      <span class="mock-tensions">#1: <code>γ</code> #2: <code>α</code> #3: <code>β</code> #4: <code>tabs+2-pane</code></span>
+    </div>
+    <div class="app-window position-relative">
+      <div class="titlebar">
+        <span class="app-icon">T</span>
+        <span class="app-name">Tuxlink</span>
+        <span class="app-subtitle">— Inbox · W4PHS</span>
+        <span class="controls">
+          <span class="ctrl min"></span><span class="ctrl max"></span><span class="ctrl close"></span>
+        </span>
+      </div>
+      <div class="menubar">
+        <span class="menu">File</span>
+        <span class="menu">Message</span>
+        <span class="menu">Session</span>
+        <span class="menu">Mailbox</span>
+        <span class="menu">View</span>
+        <span class="menu">Tools</span>
+        <span class="menu">Help</span>
+      </div>
+      <div class="layout-D">
+        <div class="tab-strip">
+          <div class="tab active">Inbox <span class="tab-count">3</span></div>
+          <div class="tab">Sent <span class="tab-count">87</span></div>
+          <div class="tab-spacer"></div>
+        </div>
+        <div class="panes">
+          <div class="rows-pane">
+            <div class="row unread">
+              <div class="from"><span class="unread-dot"></span>WX4MTL@winlink.org</div>
+              <div class="date">12:18</div>
+              <div class="subject">Memphis ARES brief — severe wx expected 18-22Z<span class="size">2.4 KB</span></div>
+              <div class="preview">NWS Memphis has issued a severe thunderstorm watch for Shelby, Tipton, and Fayette counties, effective 18:00Z…</div>
+            </div>
+            <div class="row unread selected">
+              <div class="from"><span class="unread-dot"></span>K0SWE@winlink.org</div>
+              <div class="date">11:45</div>
+              <div class="subject">Net check-in 7Y3 — 2046Z roll call<span class="size">1.2 KB</span></div>
+              <div class="preview">Roll call for Saturday's training net. Please reply with QSL and your assigned net number (1-47)…</div>
+            </div>
+            <div class="row unread">
+              <div class="from"><span class="unread-dot"></span>N5VSU@winlink.org</div>
+              <div class="date">10:42</div>
+              <div class="subject"><span class="form-tag">ICS-213</span>INCIDENT 8847 status update<span class="size">980 B</span></div>
+              <div class="preview">[This message contains a Winlink form — form rendering arrives in v0.1]</div>
+            </div>
+            <div class="row">
+              <div class="from">SERVICE@winlink.org</div>
+              <div class="date">09:32</div>
+              <div class="subject">Re: tuxlink setup test<span class="size">412 B</span></div>
+              <div class="preview">Welcome to Winlink. Your test message was received at 2026-05-17 14:32:18 UTC and processed by gateway 1235-2…</div>
+            </div>
+            <div class="row">
+              <div class="from">VE3FUN@winlink.org</div>
+              <div class="date">Yesterday</div>
+              <div class="subject">RE: HF prop tonight<span class="size">340 B</span></div>
+              <div class="preview">20m looks marginal but 40m should open up around 02Z. I'll be on 7.103 LSB calling CQ DX…</div>
+            </div>
+            <div class="row">
+              <div class="from">EM5KKK@winlink.org</div>
+              <div class="date">Yesterday</div>
+              <div class="subject">Red Cross welfare query — Sarah Chen / Cocoa FL<span class="size">1.6 KB</span></div>
+              <div class="preview">Welfare check requested by family in Toronto. Subject is at 1245 Brevard Ave, Cocoa, FL. Phone offline since…</div>
+            </div>
+            <div class="row">
+              <div class="from">KE7VBH@winlink.org</div>
+              <div class="date">2 days ago</div>
+              <div class="subject">Position rpt — Mile 1242 PCT<span class="size">220 B</span></div>
+              <div class="preview">35.2851N 117.9742W · 2300 ft · resupply at Kennedy Meadows tomorrow morning then 8 more days to Sonora…</div>
+            </div>
+            <div class="row">
+              <div class="from">SYSTEM@winlink.org</div>
+              <div class="date">3 days ago</div>
+              <div class="subject">Account password expires in 14 days<span class="size">380 B</span></div>
+              <div class="preview">Your Winlink CMS password will expire on 2026-05-31. Reset at https://winlink.org/user before that date…</div>
+            </div>
+            <div class="row">
+              <div class="from">K0SWE@winlink.org</div>
+              <div class="date">4 days ago</div>
+              <div class="subject">Field day scheduling — Sat 13-15 local<span class="size">720 B</span></div>
+              <div class="preview">Final field day prep: Sat 0900-1700 setup, 1300-1500 contesting block. Bring antenna analyzer if you have one…</div>
+            </div>
+          </div>
+          <div class="reading-pane">
+            <div class="actions">
+              <button class="action-btn primary">Reply (⌘R)</button>
+              <button class="action-btn">Reply All</button>
+              <button class="action-btn">Forward</button>
+              <button class="action-btn">Print</button>
+            </div>
+            <h1 class="subject-line">Net check-in 7Y3 — 2046Z roll call</h1>
+            <dl class="msg-meta">
+              <dt>From</dt><dd><span class="addr">K0SWE@winlink.org</span> · Mike / Net Control</dd>
+              <dt>To</dt><dd><span class="addr">TRI-STATE-NET@winlink.org</span> (47 recipients)</dd>
+              <dt>Date</dt><dd>2026-05-17 11:45 UTC · 06:45 CDT</dd>
+            </dl>
+            <pre class="msg-body">All TRI-STATE-NET stations,
+
+Saturday training net at 20:46Z on 7.235 MHz LSB.
+Backup: 7.103 MHz LSB. Tertiary: 3.943 MHz LSB (after
+local sunset).
+
+Please reply to this message with:
+  - Your callsign and assigned net number (1-47)
+  - QSL or QRX (will-be-late) status
+  - Any traffic to be passed during the net
+
+Roll call begins promptly at 20:50Z. Late check-ins
+accepted until 21:15Z, then we move to traffic.
+
+Stations with prior commitments — please QRX in your
+reply with anticipated check-in time. We'll hold a
+slot.
+
+73,
+Mike / K0SWE
+TRI-STATE-NET Control</pre>
+          </div>
+        </div>
+        <div class="statusbar">
+          <div class="status-item"><span class="status-dot idle"></span>Idle</div>
+          <span class="status-divider">·</span>
+          <div class="status-item">W4PHS · EM75xx</div>
+          <div class="status-right">v0.0.1</div>
+        </div>
+      </div>
+    </div>
+    <div class="notes">
+      <strong>Tradeoffs:</strong>
+      <span class="pros">cleanest possible v0.0.1 — almost nothing to argue about</span>
+      <span class="pros">inbox + reading pane get maximum vertical real estate</span>
+      <span class="pros">callsign + grid in the status bar (hybrid δ on dashboard) — minimum-viable visibility</span>
+      <span class="cons">no session log pane — operator has no debugging surface when telnet hangs (escape valve: Tools → Diagnostics could open the raw Pat log in a separate window/dialog)</span>
+      <span class="cons">"Idle" is the only state word — no "Connecting…" or "In session" visible without watching the menu bar</span>
+      <span class="cons">misses an opportunity to set tuxlink apart from Pat's web UI / Express — looks like any email client</span>
+    </div>
+  </div>
+
+  <div class="selection-hint">
+    <strong>How to react:</strong> click any mock to mark it; multi-select to indicate hybrids (e.g., "B's dashboard + A's compose + D's no-session-log"). Drop specific feedback in chat — what feels right, what feels wrong, what's missing, what you want to see next at higher fidelity (e.g., the compose window, the wizard, the empty-state, the connecting-in-progress state).
+  </div>
+
+</div>
+
+<script>
+// Multi-select handler — overrides the helper.js single-select for this page
+function toggleSelect(el) {
+  el.classList.toggle('selected');
+  // Also send the click event to helper.js infrastructure if present
+  if (typeof window.helperToggleSelect === 'function') {
+    window.helperToggleSelect(el);
+  }
+}
+</script>
+</body>
+</html>
