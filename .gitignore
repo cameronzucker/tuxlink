@@ -4,6 +4,7 @@ __pycache__/
 node_modules/
 .temp/
 .claude/worktrees/
+.claude/worktree-archives/
 .claude/scheduled_tasks.lock
 .superpowers/
 .claude/skills/gstack/
