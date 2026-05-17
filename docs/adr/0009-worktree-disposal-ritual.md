@@ -36,9 +36,16 @@ The four commands cover the four categories of at-risk content: dirty-tracked, u
 **Step 2 — Propagate or archive.** Anything Step 1 surfaced that is not safe to lose gets either:
 
 - **Propagated forward:** commit + push to a topic branch (`git add`, `git commit -m "..."`, `git push origin <branch>`), OR
-- **Archived locally:** `tar czf .claude/worktree-archives/<worktree-name>-$(date -u +%Y%m%dT%H%M%SZ).tar.gz <full-worktree-path>` (full working tree, including untracked + ignored, to capture the complete state).
+- **Archived locally:** `cd` to the main repo first, then tar from outside the doomed worktree:
 
-The archive is intended for "I'm not sure if I need this; preserving it is cheap; deciding later is fine." `.claude/worktree-archives/` is `.gitignore`d (added in this PR's `.gitignore` update) — archives stay per-machine, not pushed to origin.
+```bash
+cd <main-repo-path>                                                      # CRITICAL: leave the worktree before archiving
+tar czf .claude/worktree-archives/<worktree-name>-$(date -u +%Y%m%dT%H%M%SZ).tar.gz <full-worktree-path>
+```
+
+The `cd` is load-bearing: if you `tar czf .claude/worktree-archives/...` from inside the doomed worktree, the relative path resolves to `<worktree>/.claude/worktree-archives/...` — and Step 3's `rm -rf <worktree>` then deletes the archive along with the worktree. The codex 2026-05-17 D4 review caught this in the original recipe; the cd-back-first formulation is the fix.
+
+The archive captures the full working tree (including untracked + ignored). It is intended for "I'm not sure if I need this; preserving it is cheap; deciding later is fine." `.claude/worktree-archives/` is `.gitignore`d — archives stay per-machine, not pushed to origin.
 
 **Step 3 — Physical remove.** Once Step 1 + 2 are complete:
 

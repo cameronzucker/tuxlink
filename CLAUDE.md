@@ -159,10 +159,11 @@ A worktree without a bd-issue claim is an anti-pattern. If you encounter one (st
 # Step 1 — Inventory (from inside the worktree being disposed)
 git status --short                                          # tracked dirty
 git ls-files --others --exclude-standard                    # untracked
-git ls-files --others --ignored --exclude-standard          # gitignored on disk
+git ls-files --others --ignored --exclude-standard          # gitignored on disk (critical: .beads/embeddeddolt/ class)
 git stash list                                              # worktree-scoped stashes
 
 # Step 2 — Propagate (commit + push) or archive
+cd <main-repo-path>                                         # CRITICAL: leave the worktree before archiving (see note below)
 #   For propagate: git add ..., git commit -m "...", git push origin <branch>
 #   For archive:   tar czf .claude/worktree-archives/<name>-$(date -u +%Y%m%dT%H%M%SZ).tar.gz <worktree-path>
 
@@ -172,6 +173,8 @@ rm -rf <worktree-path>
 # Step 4 — Prune git's registry
 git worktree prune
 ```
+
+The `cd <main-repo-path>` between Step 1 and Step 2 is load-bearing: writing the archive while still cd'd into the doomed worktree resolves the relative `.claude/worktree-archives/...` path INSIDE the worktree, and Step 3's `rm -rf` then deletes the archive along with the worktree. Codex 2026-05-17 D4 review caught this; the fix is to cd back before archiving (or to use an absolute path for the archive destination).
 
 `.claude/worktree-archives/` is `.gitignore`d. The archive directory is per-machine, not pushed to origin. The hook denies `git worktree remove` regardless of how the worktree looks "clean" — `.beads/embeddeddolt/` is the canonical example of gitignored-but-stateful content the git check misses.
 
