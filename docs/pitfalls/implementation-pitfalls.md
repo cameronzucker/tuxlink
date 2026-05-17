@@ -24,7 +24,7 @@ This document serves three audiences. Start here, then go directly to the sectio
 
 | § | Section | You're working on... | Entries | Checklist |
 |---|---------|---------------------|---------|-----------|
-| 0 | [Live Radio Network Operations](#0-live-radio-network-operations) | Any code path that can transmit under the project's callsign | RADIO-1 | §0.C |
+| 0 | [Live Radio Network Operations](#0-live-radio-network-operations) | Any code path that can transmit under the project's callsign, OR any encryption decision touching tuxlink | RADIO-1, RADIO-2 | §0.C |
 | 1 | [EXAMPLE-DOMAIN-1](#1-example-domain-1) | TODO — describe what this section covers | PREFIX-1 – PREFIX-N | §1.C |
 | 2 | [EXAMPLE-DOMAIN-2](#2-example-domain-2) | TODO — describe what this section covers | PREFIX-1 – PREFIX-N | §2.C |
 | — | [Tool Integration](#tool-integration) | Conflicts between project commitments and tool-installed defaults | BD-1 | §Tool-Integration.C |
@@ -120,6 +120,94 @@ gate is cheap; the incident is not.
 
 ---
 
+### RADIO-2: Encryption decisions on RF require operator approval
+
+**The Flaw:** An agent reads documentation about Part 97 encryption
+restrictions (Pat's wiki, web articles, amateur-radio community posts)
+and applies a blanket "no encryption" rule to tuxlink, without
+distinguishing:
+
+- **Traffic over Part 15 internet links** (telnet / CMS-SSL to
+  `cms.winlink.org`, HTTPS to a web service, LAN IPC, localhost-bound
+  services, tuxlink served over AREDN): standard internet security
+  applies — TLS, HTTPS, at-rest encryption are all legal and expected.
+- **Traffic over Part 97 RF links** (over-the-air packet, VARA HF/FM,
+  ARDOP, Pactor, AX.25 on amateur frequencies): regulatory constraints
+  apply with nuance; operator approval required.
+- **Data at rest** (regardless of transport): always encrypt sensitive
+  fields (passwords → OS keyring v0.1+).
+
+Examples in the wild:
+
+- Pat's wiki: *"HTTPS may even be illegal on some networks, such as
+  wireless networks on amateur radio frequency bands"* — true for some
+  RF cases, but blanket-applied to discourage HTTPS even on Part 15
+  paths.
+- A reviewer "fixing" tuxlink's CMS-over-TLS support citing Part 97.
+- Refusing to encrypt CMS passwords at rest because "amateur radio =
+  no encryption."
+
+**Why It Matters:** Amateur-radio software culture has drifted toward
+"encryption is forbidden, period" — this is operator-side
+over-application, NOT regulatory reality. The actual rules in 47 CFR
+Part 97 are narrower than the cultural rule. Blanket-applying it:
+
+- Transmits credentials in cleartext over the internet (security hole).
+- Stores sensitive data unencrypted at rest (privacy violation).
+- Misinterprets a narrow regulatory constraint as a broad prohibition.
+- Reinforces the cultural misinformation that tuxlink exists to NOT
+  propagate.
+
+**The Fix:** Encryption decisions for tuxlink go through this gate:
+
+1. **Determine actual transport path.** If traffic is over the
+   internet (Part 15) — including telnet / CMS-SSL to CMS, web API to
+   non-RF services, local IPC, LAN, **tuxlink served over AREDN** —
+   apply standard internet security practices. Specifically:
+    - **CMS access**: prefer **CMS-SSL on port 8773** (TLS-wrapped,
+      what Winlink Express defaults to) over plaintext telnet on port
+      8772 by default. Fall back to 8772 only when CMS-SSL is
+      unreachable or the operator explicitly chooses plaintext
+      (low-power devices, etc.). Surface the choice to the operator
+      explicitly — see also the corresponding entry in
+      [`docs/ux-anti-patterns.md`](../ux-anti-patterns.md) under
+      "Anti-Patterns Observed in Winlink Express" about Express hiding
+      the CMS-SSL vs telnet decision from the operator.
+    - **tuxlink served over LAN / AREDN** (future headless /
+      Pandora-style architecture): TLS/HTTPS support is
+      **user-configurable** with **encrypted-by-default** for LAN
+      content. Configurable because some AREDN deployments / low-power
+      devices have constraints; default-on because plaintext
+      credentials over LAN is bad practice.
+    - **At-rest encryption** (passwords, tokens, credentials): always
+      encrypt sensitive fields. OS keyring (v0.1+) for passwords;
+      never plaintext in config files.
+2. **If traffic touches RF (Part 97):** STOP. Surface the design
+   question to Cameron (the station licensee) before applying any
+   default rule. Do NOT cite "Part 97 forbids encryption" as gospel.
+   Cameron is the operator-of-record for amateur-radio encryption
+   decisions — qualified as general-class operator, systems engineer,
+   and encryption specialist for web apps at work.
+
+**The Lesson:** Amateur radio is categorically wrong on encryption in
+most cases the average operator encounters. Don't take anything you
+find about encryption on amateur radio as gospel without critically
+evaluating whether the traffic is ACTUALLY going over Part 97 RF links
+AND/OR consulting the station licensee. tuxlink's reason for existing
+includes NOT propagating cultural misinformation.
+
+Notable specific cases this rule covers:
+
+- **Telnet to CMS** (port 8772): plaintext, deprecated but functional;
+  not encrypted because of protocol limitation, not because of Part 97.
+- **CMS-SSL to CMS** (port 8773): TLS-wrapped, what Express uses;
+  tuxlink should prefer this by default.
+- **tuxlink-over-AREDN**: encrypted-by-default for LAN content;
+  user-configurable because some AREDN deployments have constraints.
+- **Any over-RF traffic**: operator gate, no default.
+
+---
+
 ### Section 0 Review Checklist
 
 - [ ] **Check derived from RADIO-1** — No `#[test]` or `#[tokio::test]`
@@ -138,6 +226,18 @@ gate is cheap; the incident is not.
   config, committed secrets, or CI secret store.
 - [ ] **Check derived from RADIO-1** — `dev/live-cms-sessions.log`
   exists (or the binary creates it) and receives one line per run.
+- [ ] **Check derived from RADIO-2** — Every encryption decision in
+  code review distinguishes Part 15 (internet) transport from Part 97
+  (RF) transport. No code path disables TLS / HTTPS / at-rest
+  encryption citing "amateur radio" without identifying actual RF
+  traffic. CMS-SSL (port 8773) is preferred over plaintext telnet
+  (port 8772) by default for CMS access, with the operator able to see
+  and override.
+- [ ] **Check derived from RADIO-2** — Any encryption decision
+  affecting RF-bound traffic has been surfaced to the station licensee
+  (Cameron) for approval. Verify via PR-thread comments or in-code
+  TODO with operator-approval reference. Do NOT silently apply a "no
+  encryption" rule from a documentation source.
 
 ---
 
@@ -250,12 +350,22 @@ Pitfalls that arise when a session dispatches parallel subagents and consolidate
 
 # Appendix A: Historical Changelog
 
-<!-- TODO: Add changelog entries as the document evolves. Format: -->
+<!-- Format: -->
 <!-- ## YYYY-MM-DD — <event> -->
 <!-- - Added PREFIX-N (<title>) — <what and why> -->
 <!-- - Updated PREFIX-M — <what changed> -->
 
-TODO — add entries as this document evolves.
+## 2026-05-17 — Added RADIO-2 (Encryption decisions on RF require operator approval)
+
+Source: client-landscape audit during the v0.0.1 UX brainstorm (bd issue `tuxlink-x5p`, agent `plover-pine-finch`). Two findings combined into one pitfall:
+
+1. **Pat's wiki overcautious framing** of HTTPS-on-amateur-radio led to the realization that amateur-radio software culture broadly conflates "no encryption on Part 97 RF" with "no encryption anywhere in amateur-radio software." This pitfall codifies the distinction — telnet to CMS is Part 15 internet, not Part 97 RF; encryption-in-transit is legal there and CMS-SSL on port 8773 is available.
+2. **Cameron's firsthand audit of Winlink Express** revealed Express auto-selects CMS-SSL but hides this from the operator (session-type dropdown only says "Telnet", settings only show port 8772). The operator — the license holder — has zero visibility into actual transport. This drove a corresponding entry in `docs/ux-anti-patterns.md` ("NEVER hide security-relevant transport choices from the operator") and the RADIO-2 fix step about preferring CMS-SSL with explicit operator visibility.
+
+Companion artifacts:
+- Feedback memory: `~/.claude/projects/-home-administrator-Code-tuxlink/memory/feedback_encryption_part97_eval.md`
+- Anti-pattern entry: `docs/ux-anti-patterns.md` §"Anti-Patterns Observed in Winlink Express" (hide-transport bullet)
+- Principle 7 in `docs/design/v0.0.1-ux-principles.md` (companion privacy-via-precision-reduction)
 
 ---
 
@@ -265,7 +375,10 @@ TODO — add entries as this document evolves.
 
 | ID | Title | Severity | Status | Domain |
 |----|-------|----------|--------|--------|
+| RADIO-1 | Agent-autonomous transmission under the licensee's callsign | CRITICAL | VALIDATED | §0 Live Radio Network Operations |
+| RADIO-2 | Encryption decisions on RF require operator approval | HIGH | VALIDATED | §0 Live Radio Network Operations |
 | ORCH-1 | Analysis Dispatches Must Persist Findings | HIGH | VALIDATED | Orchestration |
+| BD-1 | bd opinionated-tooling overrides | MEDIUM | VALIDATED | Tool Integration |
 | PREFIX-1 | TODO | TODO | TODO | Section 1 |
 
 Severity levels: `CRITICAL` (production data loss / security), `HIGH` (correctness bug under predictable conditions), `MEDIUM` (correctness bug under edge cases), `LOW` (cleanliness / clarity).

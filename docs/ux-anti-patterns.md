@@ -61,6 +61,22 @@ forms feature on 2026-04-22. The user flow was:
   categorization to find a feature.** If a feature is mentioned in
   documentation, a human searching for that phrase in the UI finds it
   within three clicks.
+- **NEVER hide security-relevant transport choices from the operator.**
+  Express auto-selects CMS-SSL (port 8773, TLS-wrapped) when reachable,
+  falling back to plaintext telnet (port 8772) otherwise. But the
+  session-type dropdown only says "Telnet"; the session-settings dialog
+  only exposes port 8772; the CMS-SSL behavior surfaces ONLY in the
+  post-connection session log. The operator — the license holder
+  personally responsible for compliance with amateur-radio encryption
+  regulations — has zero visibility into and zero control over which
+  transport is in use. Per Cameron 2026-05-17 firsthand audit: "For
+  something the community spends every waking second hand-wringing over
+  this is HORRIBLE design." tuxlink: explicitly enumerate transports in
+  the session-type chooser ("Telnet — plaintext, port 8772" vs "CMS-SSL
+  — TLS, port 8773"); show the current connection's transport in the
+  status bar; never auto-select a security-relevant transport silently.
+  Defaults are fine; hiding the decision is not. See also RADIO-2 in
+  `docs/pitfalls/implementation-pitfalls.md`.
 
 ## Anti-Patterns Observed in Pat
 
@@ -89,6 +105,20 @@ barrier for Winlink Express users:
 - **NEVER require the user to understand that tuxlink manages Pat.**
   The Pat daemon is an implementation detail. The user does not know
   Pat exists unless they open About -> Credits.
+
+## Anti-Patterns Observed in WoAD
+
+WoAD (Winlink on Android, sumusltd) is a paid solo-dev Android client. Cameron's direct assessment: "one of the worst UX experiences I've ever seen in a paid app, or any production application — but it's a solo dev project from the pre-AI era. Can't hate on it, but at the same time, we should not emulate it."
+
+The developer's own Play Store description self-documents the anti-patterns we are codifying against.
+
+### DO NOT reproduce any of the following:
+
+- **NEVER write copy that warns the user their experience will be frustrating.** WoAD's Play Store description: *"WoAD, like much of ham radio, is highly technical in nature. For those unfamiliar with packet radio and/or Winlink the learning curve may be steep and frustrating."* Apps that warn users their UX will be hard are advertising failure. The same energy as Winlink Express's "read the help, then read it again" cringe. tuxlink's onboarding NEVER signals "this is hard" — it makes it not-hard.
+
+- **NEVER make community-resources-as-onboarding the first-run answer.** WoAD's first-run guidance is "read the documentation, ask the support group, file a bug report, file a feature request" — a 4-way fork to community deflection instead of an onboarding flow. tuxlink onboarding MUST reach a working state (or a clearly-explained failure mode) without redirecting the user to forums, mailing lists, or GitHub issue trackers.
+
+- **NEVER ship a client with data unencrypted at rest AND no data-deletion path.** WoAD's Play Store data-safety self-disclosure: *"Data isn't encrypted. Data can't be deleted."* These are basic privacy hygiene that any production client must support. tuxlink: encrypt sensitive fields at rest (CMS password → OS keyring at v0.1+), expose explicit data-export + clean-uninstall + reset-account paths from day one. See also RADIO-2 in `docs/pitfalls/implementation-pitfalls.md` for the encryption-decision gate.
 
 ## Desktop-App Migration Commitments (to win the Winlink Express audience)
 
@@ -174,3 +204,6 @@ the chosen implementation avoids it.
 - "I look forward to the day a well-supported Open Source project fixes
   this situation" — Alan, [Turbid Plaque,
   2025-10-21](https://turbidplaque.com/wp/2025/10/21/winlink-and-vara-on-linux-surprisingly-straightforward/).
+- WoAD UX self-disclosure observed in 2026-05-17 client-landscape audit;
+  sourced from official Play Store listing at
+  `play.google.com/store/apps/details?id=com.sumusltd.woad`.
