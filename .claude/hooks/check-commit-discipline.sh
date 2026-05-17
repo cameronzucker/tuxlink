@@ -16,7 +16,10 @@
 
 set -u
 
-REPO="/home/administrator/Code/tuxlink"
+# Resolve repo root from this script's filesystem location (rev-parse-based
+# per D1's hook-resolution discipline; supersedes the prior hardcoded path).
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 input=$(cat)
 cmd=$(printf '%s' "$input" | jq -r '.tool_input.command // ""')
