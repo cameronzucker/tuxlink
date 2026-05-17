@@ -1,7 +1,7 @@
 # 6. Override bd's CLAUDE.md defaults via an external "Tool referee" section
 
 Date: 2026-05-05
-Status: Accepted
+Status: Accepted (push-timing override retired 2026-05-17 per [§Session Completion](../../CLAUDE.md#session-completion) — bd's mandatory-push directive now aligns with project policy; TodoWrite and MEMORY.md overrides remain operative)
 Deciders: cameronzucker, alder
 
 ## Context
@@ -47,7 +47,7 @@ Critically: **do NOT edit inside bd's BEADS INTEGRATION markers.** bd's `hash:ca
 1. **bd version bump introduces a new directive** that conflicts with existing project commitments. → Extend ADR 0006's override list AND the `## Tool referee` table. Do NOT silently soften the override; record the new conflict explicitly.
 2. **An agent files spurious `bd create` micro-issues** for in-turn work that should have been TodoWrite. → bd's TodoWrite ban won the agent's attention. Refresh the override or move the `## Tool referee` section higher in CLAUDE.md.
 3. **The auto-memory dir at `~/.claude/projects/<slug>/memory/` stops growing** while bd-stored knowledge does. → bd's MEMORY.md ban won. Same response.
-4. **A session auto-pushes** to origin without operator confirmation. → bd's mandatory-push directive won. Same response.
+4. ~~**A session auto-pushes** to origin without operator confirmation. → bd's mandatory-push directive won. Same response.~~ — **Superseded 2026-05-17.** Push-at-session-end is now the project policy per [§Session Completion](../../CLAUDE.md#session-completion) and standing-conventions §7; bd's directive on this point now agrees with project policy. Auto-push at session end is the expected behavior, not a failure mode.
 5. **`bd setup claude` reports a hash mismatch** or silently regenerates the BEADS INTEGRATION block. → Expected; the override section survives. If bd's regeneration also touches outside its markers (a bd 2.x change), file an issue and consider Option A migration (edit inside the markers as a fallback).
 
 ## Alternatives considered

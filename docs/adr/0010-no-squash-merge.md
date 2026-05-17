@@ -32,20 +32,26 @@ The repo settings (`allow_squash_merge: false`, `allow_merge_commit: true`, `del
 
 ### 2. Polish-before-push discipline replaces squash's WIP-noise mitigation
 
-The original ADR 0004 squash decision was partly motivated by avoiding noisy WIP commits (`wip:`, `fixup!`, `oops:`) cluttering the integration branch. The replacement: **clean up WIP commits via non-interactive rebase on local un-pushed commits BEFORE `git push`.**
+The original ADR 0004 squash decision was partly motivated by avoiding noisy WIP commits (`wip:`, `fixup!`, `oops:`) cluttering the integration branch. The replacement: **clean up WIP commits via `git reset --soft` on local un-pushed commits BEFORE `git push`.**
 
 ```bash
 # On the task branch, before pushing:
-git rebase <base-branch>                        # linearize against base
-# (interactive rebase is banned per C1's hook update; squash/fixup must be
-# avoided. Use `git commit --fixup=<sha>` + `git rebase --autosquash` if you
-# need that workflow, but only on local un-pushed commits, never on shared
-# history. Per the destructive-git ban, --amend on pushed commits is also
-# blocked.)
-git push -u origin <branch>                     # push the polished history
+# If you accumulated N noisy WIP commits and want to collapse them to one
+# clean commit:
+git reset --soft <earlier-good-sha>            # rewinds HEAD by N commits, keeps changes staged
+git commit -m "<clean message>"                # one fresh commit replaces the N WIP commits
+git push -u origin <branch>                    # push the polished history
+
+# Or, if you have ONE additional commit's worth of cleanup to do on top of
+# the existing series:
+git add <files>
+git commit -m "<clean message>"                # just add another commit; no rewriting
+git push -u origin <branch>
 ```
 
-Once pushed, commits are immutable. The push gates the polish — anything you wanted to clean up needed to happen before the push.
+**Why not `git rebase -i` or `git rebase --autosquash`:** `git rebase -i` is banned by the destructive-git hook (C1) because its editor screen exposes squash/fixup/drop on shared commits — and `git rebase --autosquash` is documented by git itself as "only valid when `--interactive` is used" (implies `-i` internally). So neither is available. **Why not `git commit --amend`:** the destructive-git hook bans `--amend` outright (it can rewrite shared history if the commit has already been pushed; the hook doesn't distinguish local-only vs pushed). **Why `git reset --soft` is safe:** the hook only bans `--hard` (which destroys working-tree state); `--soft` only moves the branch tip, keeping all changes staged. Local un-pushed commits can be reset freely; once pushed, commits are immutable. The push gates the polish.
+
+**Cleanest discipline: compose commits cleanly from the start.** The reset-soft pattern is for cleanup after the fact. If you find yourself doing it often, the upstream fix is to commit fewer, more-coherent commits during work rather than to rely on cleanup at push time.
 
 ### 3. ADR 0004 status: amended in part; superseded clauses called out
 

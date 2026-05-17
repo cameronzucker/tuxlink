@@ -189,18 +189,18 @@ TODO.
 
 ### BD-1: bd opinionated-tooling overrides
 
-**The Flaw:** `bd` (Beads) installs a CLAUDE.md block on `bd setup claude` that prescribes operational rules ("do NOT use TodoWrite," "do NOT use MEMORY.md files," "Work is NOT complete until `git push` succeeds — YOU must push"). Three of these conflict with tuxlink-wide commitments: TodoWrite is the canonical in-turn working-memory primitive; the auto-memory dir is harness-native and pre-seeded; the operator (not the agent) owns push timing per [ADR 0004](../adr/0004-per-task-branch-model.md).
+**The Flaw:** `bd` (Beads) installs a CLAUDE.md block on `bd setup claude` that prescribes operational rules ("do NOT use TodoWrite," "do NOT use MEMORY.md files," "Work is NOT complete until `git push` succeeds — YOU must push"). Originally three of these conflicted with tuxlink-wide commitments; as of 2026-05-17 only the first two still do. The push-timing directive now agrees with project policy ([§Session Completion](../../CLAUDE.md#session-completion)) and is no longer overridden. TodoWrite remains the canonical in-turn working-memory primitive; the auto-memory dir remains harness-native and pre-seeded.
 
 The override mechanism is documented in CLAUDE.md's `## Tool referee` section + [ADR 0006](../adr/0006-override-bd-claude-md-defaults.md). The drift hazard is that future agents may read bd's directives without noticing the override, OR a `bd setup claude` re-run may regenerate the BEADS INTEGRATION block in ways that affect assumptions.
 
-**Why It Matters:** bd's framing assumes a greenfield where bd is the sole tool. tuxlink isn't greenfield. Following bd literally produces (a) issue spam from micro-todos that should be TodoWrite, (b) loss of the auto-memory dir's automatic context injection, (c) auto-pushes without operator confirmation. None of these is catastrophic individually; collectively they erode the project's deliberate tool-referee design.
+**Why It Matters:** bd's framing assumes a greenfield where bd is the sole tool. tuxlink isn't greenfield. Following bd literally on the still-overridden directives produces (a) issue spam from micro-todos that should be TodoWrite, (b) loss of the auto-memory dir's automatic context injection. Neither is catastrophic individually; collectively they erode the project's deliberate tool-referee design.
 
 **Signature.** Recognize the drift via one or more of:
 
 1. `bd setup claude` reports a hash mismatch on the BEADS INTEGRATION block, or silently regenerates it, OR a fresh agent runs `bd setup claude` reflexively.
 2. Recent session transcripts show `bd create` calls for micro-todos that should have been TodoWrite (e.g., "read file X," "run cargo test").
 3. The auto-memory dir at `~/.claude/projects/<slug>/memory/` stops being read or written by recent sessions while `bd remember` storage grows.
-4. A session auto-pushes to origin without operator confirmation, citing bd's mandatory-push directive.
+4. ~~A session auto-pushes to origin without operator confirmation, citing bd's mandatory-push directive.~~ — **Superseded 2026-05-17.** Push-at-session-end is now expected behavior, not a drift signature. See ADR 0006 Watched-Failure-Modes entry #4 (also superseded).
 5. `bd` version bump (1.x → 2.x) adds new directives in the BEADS INTEGRATION block that aren't yet covered by the override list.
 
 **Fix.**

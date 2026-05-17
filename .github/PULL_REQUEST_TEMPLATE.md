@@ -16,7 +16,7 @@ Before opening this PR:
 
 ## Type
 
-<!-- Pick one. Conventional Commit type the squash-merge will use. -->
+<!-- Pick one. Conventional Commit type the merge-commit will use (squash-merge is banned per ADR 0010; the merge commit's subject derives from this PR's title). -->
 
 - [ ] `feat`: new user-visible feature (MINOR bump)
 - [ ] `fix`: bug fix (PATCH bump)
@@ -55,4 +55,4 @@ Before opening this PR:
 
 ## CHANGELOG note
 
-<!-- release-please auto-generates from the squash-merge subject. If your subject doesn't capture the user-visible impact well, add a note here so the maintainer can tweak the merge message. -->
+<!-- release-please auto-generates from the merge commit's subject (which comes from this PR's title; squash-merge is banned per ADR 0010). If your title doesn't capture the user-visible impact well, add a note here so the maintainer can tweak the changelog entry. -->
