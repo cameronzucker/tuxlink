@@ -55,7 +55,7 @@ ${recent_commits}
 \`\`\`${branch_warning}
 
 ### Reminders
-- Pick a session moniker per CLAUDE.md §"Agent identity" — pre-flight against \`grep -ri\` AND \`git log --all --grep="^Agent: <name>" --since="3 days ago"\`.
+- Pick a session moniker via \`python3 .claude/scripts/get_agent_moniker.py\` (3-word hyphenated form, auto-pre-flighted against git history). Legacy single-word monikers in older commits remain valid; the new format applies to forward commits.
 - Per-task branches: \`task-NN-<slug>\` (or \`bd-<id>/<slug>\` once Beads is installed).
 - Commit-discipline hooks will reject: missing \`Agent:\` trailer, unsubstituted \`<SESSION-MONIKER>\` placeholder, direct commits to integration branches.
 EOF

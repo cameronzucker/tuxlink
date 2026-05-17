@@ -100,11 +100,18 @@ Implications:
 
 ## Agent identity — pick a moniker at session start
 
-**At the very start of every session** (after reading CLAUDE.md and the most-recent handoff, before taking any action on the repo), pick a short moniker for yourself and state it in your first user-facing message. The moniker:
+**At the very start of every session** (after reading CLAUDE.md and the most-recent handoff, before taking any action on the repo), generate a moniker via the script and state it in your first user-facing message:
 
-- Must be a single word, lowercase, no spaces, no punctuation.
-- Must be **ctrl+F-friendly** — avoid words that already appear in the codebase/docs (run `grep -rci <name> .` mentally; if there are many hits, pick something else). Plant/animal/geographic nouns work well (`juniper`, `hemlock`, `sparrow`, `flint`).
-- Avoid human first names to prevent confusion with Cameron, beta testers, or co-authors.
+```bash
+python3 .claude/scripts/get_agent_moniker.py
+```
+
+This draws 3 words without replacement from a 100-word pool of plant / animal / geographic nouns and hyphen-joins them (e.g. `towhee-wren-aspen`). Combinatorial space ≈ 970,200 trios; collision probability under 1% across project lifetime. The script pre-flights against `git log --all --grep="^Agent: <candidate>"` automatically; if a collision is detected, it retries up to `--max-attempts` times before giving up. This replaces the prior manual `grep -ri <name> .` + `git log --all --grep` dance.
+
+The moniker:
+
+- Is hyphen-joined three-word form (single-word legacy monikers in commit history — `alder`, `cedar`, etc. — remain valid; the new format applies to forward commits).
+- Is **ctrl+F-friendly** by construction (the pool excludes common code-identifiers and human first names).
 - Persists for the entire session — do not change it mid-session.
 - Passes through to every subagent you dispatch: include `"You are agent <moniker>; use this in your commit trailers."` in each Agent tool prompt so subagent-authored commits are grep-discoverable too.
 

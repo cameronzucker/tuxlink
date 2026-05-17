@@ -64,7 +64,7 @@ Implications:
 
 ## Agent identity
 
-Pick a moniker (single lowercase word, ctrl+F-friendly, not a human first name) at session start and include `Agent: <moniker>` as a commit trailer on every commit. Pass the moniker through to every subagent you dispatch. See [CLAUDE.md](CLAUDE.md#agent-identity--pick-a-moniker-at-session-start) for the full rationale and workflow.
+Generate a moniker via `python3 .claude/scripts/get_agent_moniker.py` at session start (3-word hyphenated form drawn from a 100-word pool of plant / animal / geographic nouns; auto-pre-flighted against git history). Include `Agent: <moniker>` as a commit trailer on every commit. Pass the moniker through to every subagent you dispatch. Legacy single-word monikers in older commits remain valid; the new format applies to forward commits. See [CLAUDE.md](CLAUDE.md#agent-identity--pick-a-moniker-at-session-start) for the full rationale and workflow.
 
 ## Git workflow — worktrees mandatory under bd-issue ownership (ADR 0008); destructive commands BANNED
 
