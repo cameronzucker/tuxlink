@@ -59,7 +59,8 @@ Deciders: <names or session monikers of people involved>
 - [0004 — Per-task branch model with squash-merge](0004-per-task-branch-model.md)
 - [0005 — Rigorous SemVer via release-please](0005-rigorous-semver-via-release-please.md)
 - [0006 — Override bd's CLAUDE.md defaults via Tool referee section](0006-override-bd-claude-md-defaults.md)
-- [0007 — Lift the worktree ban (superseded by per-task-branch model + Beads + hooks)](0007-lift-worktree-ban.md)
+- [0007 — Lift the worktree ban (superseded by per-task-branch model + Beads + hooks)](0007-lift-worktree-ban.md) — *operative rule superseded by 0008; historical record retained*
+- [0008 — Worktrees mandatory under bd-issue ownership](0008-worktrees-mandatory-under-bd-issue-ownership.md)
 
 ## References
 

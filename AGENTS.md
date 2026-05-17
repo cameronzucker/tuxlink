@@ -66,9 +66,9 @@ Implications:
 
 Pick a moniker (single lowercase word, ctrl+F-friendly, not a human first name) at session start and include `Agent: <moniker>` as a commit trailer on every commit. Pass the moniker through to every subagent you dispatch. See [CLAUDE.md](CLAUDE.md#agent-identity--pick-a-moniker-at-session-start) for the full rationale and workflow.
 
-## Git workflow — worktrees permitted (ADR 0007); destructive commands BANNED
+## Git workflow — worktrees mandatory under bd-issue ownership (ADR 0008); destructive commands BANNED
 
-See [CLAUDE.md](CLAUDE.md#git-workflow--worktrees-are-permitted-adr-0007), [CLAUDE.md](CLAUDE.md#git-workflow--destructive-commands-are-banned), and [docs/adr/0007-lift-worktree-ban.md](docs/adr/0007-lift-worktree-ban.md) for full context. Summary: `git worktree` is a permitted-but-optional isolation tool (default solo-agent workflow is `git checkout` in the main repo); destructive git commands remain banned — no `reset --hard`, no force push, no `--amend` on pushed commits, no `--no-verify`. The destructive-git rules and commit-discipline hooks apply identically regardless of worktree topology. If you think you need a banned command, stop and ask.
+See [CLAUDE.md](CLAUDE.md#git-workflow--worktrees-mandatory-under-bd-issue-ownership-adr-0008), [CLAUDE.md](CLAUDE.md#git-workflow--destructive-commands-are-banned), [docs/adr/0008-worktrees-mandatory-under-bd-issue-ownership.md](docs/adr/0008-worktrees-mandatory-under-bd-issue-ownership.md), and [docs/adr/0007-lift-worktree-ban.md](docs/adr/0007-lift-worktree-ban.md) for full context. Summary: when concurrent sessions are live, sessions not holding the main-checkout lease MUST work in a worktree (governed by `.claude/hooks/block-main-checkout-race.sh`); every worktree binds to a bd issue (`bd show <id>` answers "what is `worktrees/X` for?"); solo-session work may stay in the main checkout. Destructive git commands remain banned regardless of worktree topology — no `reset --hard`, no force push, no `--amend` on pushed commits, no `--no-verify`, no `git worktree remove`, no `git rebase -i`. If you think you need a banned command, stop and ask.
 
 ## Live radio network operations — READ BEFORE ANY TRANSMISSION
 
