@@ -6,6 +6,11 @@ node_modules/
 .claude/worktrees/
 .claude/worktree-archives/
 .claude/scheduled_tasks.lock
+# Legacy: pre-Fix-D1 lease location. New hook (post-2026-05-17) writes leases
+# to <git-common-dir>/session-leases/ instead. Existing dev machines may still
+# have orphaned lease files here; gitignore the path so they don't show up as
+# untracked. Fresh clones never see this directory.
+.claude/session-leases/
 .superpowers/
 .claude/skills/gstack/
 
