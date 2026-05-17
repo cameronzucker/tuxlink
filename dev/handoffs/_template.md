@@ -125,3 +125,17 @@ In-progress issues claimed by this session (`bd list --status=in_progress`):
 ---
 
 **If something in this handoff looks wrong tomorrow:** the previous-session agent (`<moniker>`) wasn't perfect; flag it before acting on it. Source of truth for any rule that this handoff restates: the ADRs and CLAUDE.md (per the propagation-contract rule in CLAUDE.md §"Documentation propagation contract").
+
+---
+
+## ⚠️ AGENT REMINDER — Don't end the session yet
+
+After committing this handoff document, **your final user-facing message MUST include a paste-ready "next session's starting prompt" for the operator** per CLAUDE.md §Session Completion step 7. ~10 lines. Format: a single fenced markdown code block. Contents:
+
+- **One sentence** framing what happened this session (so the next session right-sizes its reads-before-action).
+- **A pointer** to this handoff doc by path (`dev/handoffs/<YYYY-MM-DD>-<your-slug>.md`).
+- **The critical first action or gate** the next session must not skip (especially gates that `bd ready` would not surface — e.g., a brainstorm gate, a review requirement, a stakeholder check-in).
+
+The session-start-briefing hook surfaces the most-recent handoff filename automatically; the operator's paste tells the next agent to READ the handoff and emphasizes what's implicit-droppable. Without step 7, the operator types freeform "continue where we left off" and the next agent stumbles into the gates by luck rather than design.
+
+This template's own existence is partly to remind you of step 7. Don't skip it.
