@@ -181,6 +181,22 @@ run a live-CMS binary to verify completion, your task is misspecified
 - Breaking changes: add `!` suffix and a `BREAKING CHANGE:` footer with a one-line user-facing explanation.
 - Update `dev/implementation-log.md` (once created) after any significant work item: plan executed, feature shipped, bug hunt cycle completed, adversarial review completed. Entry goes at the top, reverse-chronological, keyed by date + topic.
 
+## Documentation propagation contract
+
+For any project-policy claim — an ADR, a spec section, an operator decision — the **canonical source is the ADR or spec itself**. CLAUDE.md, AGENTS.md, plan templates, pitfalls docs, and memory entries are **pointers**, not parallel statements.
+
+**Maximum three propagation sites per ADR:**
+
+1. The ADR itself (always).
+2. The spec section it amends, if any.
+3. One operational doc — CLAUDE.md OR plan template OR pitfalls — pick one.
+
+Memory entries cite the ADR; they do not restate it. Narrowly-scoped operational recipes that are inherently a how-to (e.g., the exact JSON shape for `.claude/session-leases/main-checkout.json` once D1 lands, or the worktree-disposal ritual step-by-step) MAY live in CLAUDE.md or pitfalls docs where the operator will look for them. The rule is "don't restate what the spec/ADR already says," not "don't write recipes."
+
+**Why:** Without this contract, ADRs and CLAUDE.md drift apart. The same rule appears in three places with slightly different wording; one place is updated, the others rot. The propagation contract makes the ADR/spec the single canonical source.
+
+**Cross-project authority:** [`standing-conventions-cross-project.md` §9](https://github.com/cameronzucker/cz-agent-skills/blob/main/docs/standing-conventions-cross-project.md) carries the portable version of this rule. The two should stay aligned; if they diverge, the standing-conventions doc wins and this section gets a corrective commit.
+
 ## Parity with `AGENTS.md`
 
 [AGENTS.md](AGENTS.md) is a deliberate **summary with links** to this file's sections, intended for non-Claude agent harnesses (Codex, etc.) where pulling the whole CLAUDE.md inline would be wasteful. It is NOT a full mirror; the substantive rules live here and AGENTS.md points to them. When changing rules in CLAUDE.md, check whether AGENTS.md's summary line for that section needs a corresponding update.
