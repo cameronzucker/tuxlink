@@ -1,0 +1,810 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Tuxlink v0.0.1 — first-run wizard wireframes</title>
+<style>
+:root {
+  --bg:           #0d1318;
+  --surface:      #141c23;
+  --surface-2:    #1a2330;
+  --elevated:     #1e2832;
+  --border:       #1f2832;
+  --border-strong:#2c3744;
+  --border-soft:  #1a2028;
+  --text:         #e4ebf2;
+  --text-dim:     #94a0ad;
+  --text-faint:   #5d6975;
+  --accent:       #f59f3c;
+  --accent-2:     #ffba6e;
+  --accent-soft:  rgba(245, 159, 60, 0.12);
+  --accent-stronger: rgba(245, 159, 60, 0.22);
+  --success:      #5dd6a0;
+  --success-soft: rgba(93, 214, 160, 0.12);
+  --warn:         #ffd166;
+  --warn-soft:    rgba(255, 209, 102, 0.12);
+  --error:        #ee6b6b;
+  --info:         #6bb8ee;
+  --mono:         "JetBrains Mono", "SF Mono", "Fira Code", Menlo, Consolas, monospace;
+  --sans:         -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif;
+}
+* { box-sizing: border-box; }
+html, body {
+  margin: 0; padding: 0;
+  background: #060a0e;
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+.page { max-width: 1480px; margin: 0 auto; padding: 28px 24px 80px; }
+.page-title { font-size: 22px; font-weight: 600; margin: 0 0 4px; }
+.page-subtitle { color: var(--text-dim); font-size: 14px; margin: 0 0 24px; }
+
+.framing {
+  background: linear-gradient(180deg, rgba(245,159,60,0.10) 0%, rgba(245,159,60,0.04) 100%);
+  border: 1px solid rgba(245, 159, 60, 0.35);
+  border-radius: 8px;
+  padding: 16px 20px;
+  margin-bottom: 36px;
+  font-size: 13px;
+}
+.framing h3 { margin: 0 0 8px; color: var(--accent-2); font-size: 14px; font-weight: 700; }
+.framing ul { margin: 6px 0 0; padding-left: 20px; color: var(--text-dim); }
+.framing li { margin: 4px 0; }
+.framing li strong { color: var(--text); }
+.framing .flow-diagram {
+  font-family: var(--mono); font-size: 11px;
+  background: var(--bg); border: 1px solid var(--border-strong);
+  border-radius: 6px; padding: 12px 14px; margin-top: 12px;
+  color: var(--text); line-height: 1.7; white-space: pre;
+  overflow-x: auto;
+}
+
+.mock-section { margin-bottom: 52px; }
+.mock-header {
+  display: flex; align-items: baseline; gap: 12px;
+  margin-bottom: 14px; padding: 0 4px;
+}
+.mock-letter {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 30px; height: 30px; border-radius: 6px;
+  background: var(--accent); color: #1a0e02;
+  font-weight: 800; font-size: 15px;
+}
+.mock-name { font-size: 18px; font-weight: 700; }
+.mock-tag { color: var(--text-dim); font-size: 13px; margin-left: 6px; }
+.mock-meta {
+  margin-left: auto; font-size: 11px;
+  background: var(--surface-2); color: var(--text-dim);
+  border: 1px solid var(--border-strong);
+  padding: 4px 10px; border-radius: 4px; font-family: var(--mono);
+}
+
+/* ===== APP WINDOW ===== */
+.app-window {
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  overflow: hidden;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.45);
+}
+.titlebar {
+  display: flex; align-items: center;
+  height: 34px;
+  background: linear-gradient(180deg, #1a2229 0%, #131a20 100%);
+  border-bottom: 1px solid var(--border);
+  padding: 0 10px; user-select: none;
+}
+.app-icon {
+  width: 18px; height: 18px; border-radius: 4px;
+  background: linear-gradient(135deg, #f59f3c 0%, #d97706 100%);
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 11px; font-weight: 800; color: #1a0e02; margin-right: 8px;
+}
+.app-name { font-size: 13px; font-weight: 600; }
+.app-subtitle { font-size: 12px; color: var(--text-dim); margin-left: 8px; }
+.controls { margin-left: auto; display: flex; gap: 8px; }
+.ctrl { width: 14px; height: 14px; border-radius: 50%; }
+.ctrl.min { background: #ffbd2e; }
+.ctrl.max { background: #28c940; }
+.ctrl.close { background: #ff5f56; }
+.menubar {
+  display: flex; height: 30px;
+  background: var(--surface); border-bottom: 1px solid var(--border);
+  padding: 0 10px; align-items: center;
+  font-size: 13px; gap: 2px;
+}
+.menubar .menu { padding: 4px 10px; border-radius: 4px; color: var(--text-faint); }
+.menubar .menu.enabled { color: var(--text); }
+
+/* ===== WIZARD CONTENT AREA ===== */
+.wizard-area {
+  background: var(--bg);
+  min-height: 580px;
+  display: flex; flex-direction: column;
+}
+.wizard-progress {
+  padding: 16px 28px 10px;
+  display: flex; align-items: center; gap: 14px;
+  border-bottom: 1px solid var(--border-soft);
+  background: linear-gradient(180deg, var(--surface) 0%, transparent 100%);
+}
+.wizard-progress .step-pill {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 22px; height: 22px; border-radius: 50%;
+  font-size: 11px; font-weight: 700; font-family: var(--mono);
+  background: var(--surface-2); color: var(--text-faint);
+  border: 1px solid var(--border-strong);
+}
+.wizard-progress .step-pill.active {
+  background: var(--accent); color: #1a0e02; border-color: var(--accent);
+}
+.wizard-progress .step-pill.done {
+  background: var(--success); color: #052517; border-color: var(--success);
+}
+.wizard-progress .step-line {
+  flex: 0 0 32px; height: 1px; background: var(--border-strong);
+}
+.wizard-progress .step-line.done { background: var(--success); }
+.wizard-progress .step-label {
+  font-size: 11px; color: var(--text-faint);
+  text-transform: uppercase; letter-spacing: 0.06em;
+  margin-left: 4px;
+}
+.wizard-progress .step-spacer { flex: 1; }
+.wizard-progress .step-note {
+  font-size: 11px; color: var(--text-faint);
+}
+
+.wizard-content {
+  flex: 1; display: flex; align-items: flex-start; justify-content: center;
+  padding: 48px 28px 36px;
+  overflow: auto;
+}
+.wizard-card {
+  width: 100%; max-width: 640px;
+}
+.wizard-card h1 {
+  margin: 0 0 8px; font-size: 28px; font-weight: 700;
+  letter-spacing: -0.015em; line-height: 1.2;
+}
+.wizard-card .subtitle {
+  margin: 0 0 32px; font-size: 15px; color: var(--text-dim);
+  line-height: 1.55;
+}
+.wizard-card .label {
+  font-size: 10px; text-transform: uppercase;
+  letter-spacing: 0.08em; color: var(--text-faint);
+  font-weight: 600; margin-bottom: 6px;
+}
+.wizard-card .hero-q {
+  font-size: 16px; color: var(--text); margin: 0 0 14px;
+  font-weight: 500;
+}
+
+.choice-card {
+  display: flex; align-items: flex-start; gap: 14px;
+  padding: 18px 20px;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  cursor: default;
+  margin-bottom: 10px;
+  transition: border 0.12s, background 0.12s;
+}
+.choice-card:hover { border-color: var(--accent); background: var(--surface-2); }
+.choice-card.selected {
+  border-color: var(--accent); background: var(--accent-soft);
+  box-shadow: 0 0 0 3px var(--accent-stronger) inset;
+}
+.choice-card .check {
+  width: 22px; height: 22px; border-radius: 50%;
+  border: 2px solid var(--border-strong);
+  flex: 0 0 22px; margin-top: 2px;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.choice-card.selected .check {
+  background: var(--accent); border-color: var(--accent);
+  color: #1a0e02; font-size: 13px; font-weight: 800;
+}
+.choice-card .copy { flex: 1; min-width: 0; }
+.choice-card .title { font-size: 15px; font-weight: 600; margin: 0 0 4px; }
+.choice-card.selected .title { color: var(--accent-2); }
+.choice-card .desc { font-size: 13px; color: var(--text-dim); margin: 0; }
+.choice-card .examples {
+  font-family: var(--mono); font-size: 11px;
+  color: var(--text-faint); margin-top: 6px;
+}
+
+.field { margin-bottom: 18px; }
+.field .field-label {
+  font-size: 12px; color: var(--text-dim); font-weight: 600;
+  display: flex; align-items: baseline; gap: 8px; margin-bottom: 5px;
+}
+.field .field-label .req { color: var(--accent); font-weight: 700; }
+.field .field-label .opt { color: var(--text-faint); font-weight: 400; font-size: 11px; }
+.field input, .field .fake-input {
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  padding: 10px 12px;
+  font-size: 14px;
+  color: var(--text);
+  font-family: var(--sans);
+}
+.field input:focus { outline: none; border-color: var(--accent); }
+.field .fake-input {
+  display: flex; align-items: center;
+  font-family: var(--mono);
+}
+.field .fake-input .password-mask { letter-spacing: 0.3em; font-size: 13px; }
+.field .fake-input .input-action {
+  margin-left: auto; font-size: 11px; color: var(--accent-2);
+  font-family: var(--sans); cursor: default;
+}
+.field .hint {
+  font-size: 12px; color: var(--text-faint); margin-top: 6px;
+  display: flex; gap: 6px; align-items: flex-start;
+}
+.field .hint.good { color: var(--success); }
+.field .hint.warn { color: var(--warn); }
+.field .hint::before { content: "·"; color: var(--text-faint); }
+.field .hint.good::before { content: "✓"; color: var(--success); }
+.field .hint.warn::before { content: "!"; color: var(--warn); font-weight: 700; }
+
+.field-row {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 14px;
+}
+
+.external-link {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 8px 0; font-size: 13px;
+  color: var(--accent-2); cursor: default; margin: -8px 0 14px;
+}
+.external-link::after { content: "↗"; font-size: 12px; opacity: 0.7; }
+
+.wizard-actions {
+  display: flex; align-items: center; gap: 12px;
+  padding-top: 18px; margin-top: 22px;
+  border-top: 1px solid var(--border-soft);
+}
+.btn-back {
+  background: transparent; border: 1px solid var(--border-strong);
+  color: var(--text-dim);
+  padding: 9px 18px; border-radius: 6px;
+  font-size: 13px; cursor: default;
+}
+.btn-skip {
+  background: transparent; border: none;
+  color: var(--text-faint);
+  padding: 9px 4px;
+  font-size: 12px; cursor: default;
+  text-decoration: underline;
+  text-decoration-color: var(--border-strong);
+}
+.btn-primary {
+  background: var(--accent); border: 1px solid var(--accent);
+  color: #1a0e02;
+  padding: 9px 22px; border-radius: 6px;
+  font-size: 13px; font-weight: 600;
+  cursor: default;
+  margin-left: auto;
+}
+.btn-primary.disabled {
+  background: var(--surface-2); color: var(--text-faint);
+  border-color: var(--border-strong); font-weight: 500;
+}
+
+/* ===== TEST-SEND SUBSTATES ===== */
+.substate-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  margin-bottom: 22px;
+}
+.substate {
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  padding: 22px 22px 20px;
+  display: flex; flex-direction: column;
+  min-height: 200px;
+}
+.substate .substate-label {
+  font-size: 9px; color: var(--text-faint);
+  text-transform: uppercase; letter-spacing: 0.1em;
+  font-weight: 700; margin-bottom: 12px;
+}
+.substate .substate-icon {
+  font-size: 28px; line-height: 1; margin-bottom: 12px;
+}
+.substate.idle .substate-icon { color: var(--text-dim); }
+.substate.sending .substate-icon { color: var(--accent); }
+.substate.success .substate-icon { color: var(--success); }
+.substate.failed .substate-icon { color: var(--warn); }
+.substate .substate-title {
+  font-size: 15px; font-weight: 600; margin: 0 0 6px;
+  color: var(--text);
+}
+.substate .substate-detail {
+  font-size: 12px; color: var(--text-dim); margin: 0 0 14px;
+  line-height: 1.5; flex: 1;
+}
+.substate .substate-detail code {
+  font-family: var(--mono); font-size: 11px;
+  background: var(--bg); padding: 1px 5px; border-radius: 3px;
+}
+.substate .substate-actions {
+  display: flex; gap: 8px; align-items: center;
+  margin-top: auto;
+}
+.substate-btn-primary {
+  background: var(--accent); border: 1px solid var(--accent);
+  color: #1a0e02;
+  padding: 6px 14px; border-radius: 5px;
+  font-size: 12px; font-weight: 600; cursor: default;
+}
+.substate-btn-secondary {
+  background: var(--surface-2); border: 1px solid var(--border-strong);
+  color: var(--text);
+  padding: 6px 14px; border-radius: 5px;
+  font-size: 12px; cursor: default;
+}
+.substate-btn-link {
+  background: transparent; border: none;
+  color: var(--accent-2);
+  padding: 6px 0;
+  font-size: 12px; cursor: default;
+  text-decoration: underline;
+  text-decoration-color: rgba(255, 186, 110, 0.4);
+}
+.spinner {
+  width: 16px; height: 16px; border-radius: 50%;
+  border: 2px solid rgba(245, 159, 60, 0.25);
+  border-top-color: var(--accent);
+  display: inline-block;
+  animation: spin 0.9s linear infinite;
+  margin-right: 8px;
+  vertical-align: -3px;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.notes {
+  padding: 14px 18px; margin-top: 14px;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 8px; font-size: 12px; color: var(--text-dim);
+}
+.notes strong { color: var(--text); }
+.notes .pros, .notes .cons { display: inline-block; margin-right: 16px; }
+.notes .pros::before { content: "+ "; color: var(--success); font-weight: 700; }
+.notes .cons::before { content: "− "; color: var(--text-faint); font-weight: 700; }
+.notes .next::before { content: "→ "; color: var(--accent); font-weight: 700; }
+.notes .scenario {
+  display: block; background: var(--surface-2);
+  border-left: 2px solid var(--accent);
+  padding: 8px 12px; margin: 8px 0; font-size: 12px;
+  border-radius: 0 4px 4px 0;
+}
+.notes .scenario strong { color: var(--accent-2); }
+</style>
+</head>
+<body>
+<div class="page">
+
+<h1 class="page-title">Tuxlink v0.0.1 — first-run wizard wireframes</h1>
+<p class="page-subtitle">Same dark-mode polish as the locked v0.0.1 direction. Branching wizard tree: CMS-optional, offline-friendly, tactical-callsign-friendly, test-send-never-blocking.</p>
+
+<div class="framing">
+  <h3>Branching wizard tree — design call captured from this brainstorm</h3>
+  <ul>
+    <li><strong>Step 1 asks intent, not "do you have an account?"</strong> — "Will this installation connect to the Winlink CMS?" with two paths from the same first screen.</li>
+    <li><strong>CMS-yes path:</strong> Step 1 → Step 2 (credentials, with register link inline) → Step 3 (test-send, never blocking) → inbox.</li>
+    <li><strong>CMS-no path:</strong> Step 1 → Step 2-offline (minimal identity, callsign optional) → inbox. Two-screen wizard for the lab / training / offline-deployment operator.</li>
+    <li><strong>Test-send is informational, not gating</strong> — every substate (idle / sending / success / failed) has a path to the inbox. Plan Task 11 amendment required.</li>
+    <li><strong>Validator loosened to permissive</strong> — non-empty + no whitespace + ≤32 chars. Accepts <code>W4PHS</code>, <code>EOC-1</code>, <code>BAOFENG-FM-01</code>, <code>EMCOMM-NET</code>, <code>K7XYZ/P</code>, etc. CMS authoritates server-side.</li>
+    <li><strong>Aux/tactical callsigns:</strong> wizard takes ONE primary callsign; aux callsigns managed later via Tools → Settings → Callsigns (deferred from v0.0.1).</li>
+    <li><strong>Grid square:</strong> manual entry in v0.0.1; <code>Auto-detect from GPS</code> affordance disabled with "v0.1" badge (matches Express's <code>Update grid square from GPS=True</code> pattern).</li>
+  </ul>
+  <div class="flow-diagram">┌─ STEP 1 ────────────────────┐
+│ Welcome / "Will you connect │
+│   to Winlink CMS?"          │
+└──────────┬──────────────────┘
+           │
+   ┌───────┴────────┐
+   │                │
+   ▼                ▼
+[CMS YES]      [CMS NO — offline]
+   │                │
+   ▼                ▼
+┌── STEP 2 ──┐  ┌── STEP 2-offline ──┐
+│ Credentials│  │ Identity (optional)│
+│ Register ↗ │  │  Callsign? Grid?   │
+└─────┬──────┘  └─────────┬──────────┘
+      │                   │
+      ▼                   │
+┌── STEP 3 ──────┐        │
+│ Test send      │        │
+│ (4 substates;  │        │
+│  never blocks) │        │
+└─────┬──────────┘        │
+      │                   │
+      └─────────┬─────────┘
+                │
+                ▼
+         [TUXLINK INBOX]</div>
+</div>
+
+<!-- ================================================== -->
+<!-- MOCK A — Welcome / connection-type choice         -->
+<!-- ================================================== -->
+<div class="mock-section">
+  <div class="mock-header">
+    <span class="mock-letter">A</span>
+    <span class="mock-name">Welcome — connection-type choice</span>
+    <span class="mock-tag">Step 1 of (2 or 3). First screen the user sees on first launch.</span>
+    <span class="mock-meta">step 1 · branching</span>
+  </div>
+  <div class="app-window">
+    <div class="titlebar">
+      <span class="app-icon">T</span>
+      <span class="app-name">Tuxlink Setup</span>
+      <span class="app-subtitle">— first run</span>
+      <span class="controls"><span class="ctrl min"></span><span class="ctrl max"></span><span class="ctrl close"></span></span>
+    </div>
+    <div class="menubar">
+      <span class="menu">File</span>
+      <span class="menu">Message</span>
+      <span class="menu">Session</span>
+      <span class="menu">Mailbox</span>
+      <span class="menu">View</span>
+      <span class="menu">Tools</span>
+      <span class="menu enabled">Help</span>
+    </div>
+    <div class="wizard-area">
+      <div class="wizard-progress">
+        <div class="step-pill active">1</div>
+        <div class="step-label">Welcome</div>
+        <div class="step-line"></div>
+        <div class="step-pill">2</div>
+        <div class="step-label">Identity</div>
+        <div class="step-line"></div>
+        <div class="step-pill">3</div>
+        <div class="step-label">Verify</div>
+        <div class="step-spacer"></div>
+        <div class="step-note">Step 3 is optional</div>
+      </div>
+      <div class="wizard-content">
+        <div class="wizard-card">
+          <h1>Welcome to Tuxlink</h1>
+          <p class="subtitle">Linux-native Winlink mail. Setup takes 1-3 minutes. You can change anything here later in Settings.</p>
+          <p class="hero-q">Will this installation connect to the Winlink CMS?</p>
+          <div class="choice-card selected">
+            <div class="check">✓</div>
+            <div class="copy">
+              <p class="title">Yes — connect to Winlink CMS</p>
+              <p class="desc">For sending and receiving Winlink mail to/from real Winlink stations. Requires a Winlink account.</p>
+            </div>
+          </div>
+          <div class="choice-card">
+            <div class="check"></div>
+            <div class="copy">
+              <p class="title">No — offline / lab / training</p>
+              <p class="desc">No internet required. For dummy-load testing, training exercises, field deployments without connectivity, or developing without a Winlink account.</p>
+              <p class="examples">Examples: bench test on BAOFENG-FM-01 · ARES training drill · EOC tabletop · <strong style="color:var(--text);font-weight:600">radio-only emcomm deployment when internet is down (Winlink Hybrid Network)</strong> · radio loopback validation</p>
+            </div>
+          </div>
+          <div class="wizard-actions">
+            <span style="font-size:12px;color:var(--text-faint);">You can switch between modes anytime in Settings → Connection.</span>
+            <button class="btn-primary">Continue →</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="notes">
+    <strong>Design notes:</strong>
+    <span class="pros">Question framed as intent, not "have you registered?" — fits both new + experienced users</span>
+    <span class="pros">Step indicator shows 3 steps but flags "Step 3 is optional" — sets expectation</span>
+    <span class="pros">Offline path has concrete examples (BAOFENG-FM-01, ARES, EOC) — emcomm-realistic</span>
+    <span class="cons">Choice cards take vertical space; could be tighter on small viewports</span>
+    <span class="next">Click Continue → branches to Mock B (CMS path) or Mock D (offline path)</span>
+  </div>
+</div>
+
+<!-- ================================================== -->
+<!-- MOCK B — Credentials (CMS path)                    -->
+<!-- ================================================== -->
+<div class="mock-section">
+  <div class="mock-header">
+    <span class="mock-letter">B</span>
+    <span class="mock-name">Credentials — CMS path</span>
+    <span class="mock-tag">Step 2 of 3 (CMS-yes branch). Replaces plan Tasks 9 + 10 combined.</span>
+    <span class="mock-meta">step 2 · CMS path</span>
+  </div>
+  <div class="app-window">
+    <div class="titlebar">
+      <span class="app-icon">T</span>
+      <span class="app-name">Tuxlink Setup</span>
+      <span class="app-subtitle">— first run</span>
+      <span class="controls"><span class="ctrl min"></span><span class="ctrl max"></span><span class="ctrl close"></span></span>
+    </div>
+    <div class="menubar">
+      <span class="menu">File</span>
+      <span class="menu">Message</span>
+      <span class="menu">Session</span>
+      <span class="menu">Mailbox</span>
+      <span class="menu">View</span>
+      <span class="menu">Tools</span>
+      <span class="menu enabled">Help</span>
+    </div>
+    <div class="wizard-area">
+      <div class="wizard-progress">
+        <div class="step-pill done">✓</div>
+        <div class="step-label">Welcome</div>
+        <div class="step-line done"></div>
+        <div class="step-pill active">2</div>
+        <div class="step-label">Identity</div>
+        <div class="step-line"></div>
+        <div class="step-pill">3</div>
+        <div class="step-label">Verify</div>
+        <div class="step-spacer"></div>
+        <div class="step-note">Connecting to Winlink CMS</div>
+      </div>
+      <div class="wizard-content">
+        <div class="wizard-card">
+          <h1>Winlink CMS credentials</h1>
+          <p class="subtitle">Used to authenticate to <code style="font-family:var(--mono);font-size:13px;color:var(--accent-2)">cms.winlink.org</code>. Stored locally; never shared.</p>
+          <a class="external-link">Don't have a Winlink account? Register at winlink.org</a>
+
+          <div class="field">
+            <div class="field-label">Callsign <span class="req">*</span></div>
+            <div class="fake-input"><span style="font-family:var(--mono);">W4PHS</span></div>
+            <div class="hint good">Looks good — CMS will validate on first connection</div>
+          </div>
+
+          <div class="field">
+            <div class="field-label">CMS password <span class="req">*</span></div>
+            <div class="fake-input">
+              <span class="password-mask">●●●●●●●●●●●●</span>
+              <span class="input-action">Show</span>
+            </div>
+            <div class="hint">Your Winlink CMS password (not your forum password). Stored in Pat's config; migrated to OS keyring in v0.1.</div>
+          </div>
+
+          <div class="field-row">
+            <div class="field">
+              <div class="field-label">Maidenhead grid <span class="req">*</span></div>
+              <div class="fake-input"><span style="font-family:var(--mono);">EM75xx</span></div>
+              <div class="hint">Local: 4 or 6 chars · Broadcast: 4-char by default (Principle 7 — change in Settings → Privacy → Position precision) · <span style="color:var(--text-faint)">Auto-detect from GPS · v0.1</span></div>
+            </div>
+            <div class="field">
+              <div class="field-label">Mailbox address <span class="opt">— derived</span></div>
+              <div class="fake-input"><span style="font-family:var(--mono);">W4PHS@winlink.org</span></div>
+              <div class="hint">Edit for tactical / aux callsigns. Send-from address.</div>
+            </div>
+          </div>
+
+          <div class="wizard-actions">
+            <button class="btn-back">← Back</button>
+            <button class="btn-skip">Save credentials and skip verification</button>
+            <button class="btn-primary">Continue →</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="notes">
+    <strong>Design notes:</strong>
+    <span class="pros">Register link inline at top — no separate "do you have an account?" sub-step</span>
+    <span class="pros">All four fields visible at once; field-row groups grid + MBO since they're related</span>
+    <span class="pros">Loosened validator: shows positive "Looks good — CMS will validate" hint instead of regex-rejection (which would block <code>EOC-1</code>, <code>BAOFENG-FM-01</code> etc.)</span>
+    <span class="pros">"Save and skip verification" is a real button — operator with no connectivity right now can still complete setup</span>
+    <span class="pros">v0.1 features (GPS auto-detect, keyring) are visible but disabled — sets future expectations honestly</span>
+    <span class="cons">Mailbox address being editable might confuse new users; could hide behind an "Advanced" toggle</span>
+    <span class="next">Click Continue → Mock C (test-send); click "Save and skip" → straight to inbox</span>
+  </div>
+</div>
+
+<!-- ================================================== -->
+<!-- MOCK C — Test-send 4 substates                     -->
+<!-- ================================================== -->
+<div class="mock-section">
+  <div class="mock-header">
+    <span class="mock-letter">C</span>
+    <span class="mock-name">Verify — test-send with 4 substates</span>
+    <span class="mock-tag">Step 3 of 3 (optional). Every state has a path to the inbox.</span>
+    <span class="mock-meta">step 3 · never blocking</span>
+  </div>
+  <div class="app-window">
+    <div class="titlebar">
+      <span class="app-icon">T</span>
+      <span class="app-name">Tuxlink Setup</span>
+      <span class="app-subtitle">— first run</span>
+      <span class="controls"><span class="ctrl min"></span><span class="ctrl max"></span><span class="ctrl close"></span></span>
+    </div>
+    <div class="menubar">
+      <span class="menu">File</span>
+      <span class="menu">Message</span>
+      <span class="menu">Session</span>
+      <span class="menu">Mailbox</span>
+      <span class="menu">View</span>
+      <span class="menu">Tools</span>
+      <span class="menu enabled">Help</span>
+    </div>
+    <div class="wizard-area">
+      <div class="wizard-progress">
+        <div class="step-pill done">✓</div>
+        <div class="step-label">Welcome</div>
+        <div class="step-line done"></div>
+        <div class="step-pill done">✓</div>
+        <div class="step-label">Identity</div>
+        <div class="step-line done"></div>
+        <div class="step-pill active">3</div>
+        <div class="step-label">Verify</div>
+        <div class="step-spacer"></div>
+        <div class="step-note">Optional — you can skip and open the inbox now</div>
+      </div>
+      <div class="wizard-content" style="max-width:none;padding:36px 28px 28px">
+        <div class="wizard-card" style="max-width:880px">
+          <h1>Verify your setup</h1>
+          <p class="subtitle">Sends a short test message to <code style="font-family:var(--mono);font-size:13px;color:var(--accent-2)">SERVICE@winlink.org</code> (Winlink's autoresponder) and waits for the reply. Confirms your credentials, your network, and the path to CMS. <strong style="color:var(--text)">Skipping is fine — you can run this anytime from Session → Test send.</strong></p>
+          <p style="font-size:12px;color:var(--text-dim);margin:-22px 0 26px;">Transport: prefers <strong style="color:var(--accent-2)">CMS-SSL (port 8773, TLS)</strong> when reachable; falls back to <strong>Telnet (port 8772)</strong> otherwise. Change in Settings → Connection → Transport. (Principle: never auto-select a security-relevant transport silently.)</p>
+
+          <div class="substate-grid">
+            <div class="substate idle">
+              <div class="substate-label">Substate 1 · Idle (initial)</div>
+              <div class="substate-icon">▸</div>
+              <p class="substate-title">Ready to verify</p>
+              <p class="substate-detail">One outbound + one inbound message to <code>SERVICE@winlink.org</code>. Takes 10-30 seconds depending on your network.</p>
+              <div class="substate-actions">
+                <button class="substate-btn-primary">Send test message</button>
+                <button class="substate-btn-link">Skip and open Tuxlink</button>
+              </div>
+            </div>
+
+            <div class="substate sending">
+              <div class="substate-label">Substate 2 · Sending</div>
+              <div class="substate-icon"><span class="spinner"></span></div>
+              <p class="substate-title">Connecting to cms.winlink.org…</p>
+              <p class="substate-detail">Posted message to outbox · Triggered telnet connection · Waiting for SERVICE reply (timeout 30s).</p>
+              <div class="substate-actions">
+                <button class="substate-btn-secondary">Cancel</button>
+              </div>
+            </div>
+
+            <div class="substate success">
+              <div class="substate-label">Substate 3 · Success</div>
+              <div class="substate-icon">✓</div>
+              <p class="substate-title">Verified — reply received in 8s</p>
+              <p class="substate-detail">Connected via CMS-SSL gateway <code>1235-2.cms.winlink.org</code>. Your test message and the autoresponder's reply are in your inbox.</p>
+              <div class="substate-actions">
+                <button class="substate-btn-primary">Open Tuxlink →</button>
+              </div>
+            </div>
+
+            <div class="substate failed">
+              <div class="substate-label">Substate 4 · Failed</div>
+              <div class="substate-icon">!</div>
+              <p class="substate-title">Couldn't reach CMS within 30s</p>
+              <p class="substate-detail">Your credentials are saved. Most likely: no internet, firewall blocking <code>:8773</code>, or CMS busy. <strong style="color:var(--text)">Not a setup error — you can still use Tuxlink.</strong></p>
+              <div class="substate-actions">
+                <button class="substate-btn-secondary">Try again</button>
+                <button class="substate-btn-link">Open Tuxlink anyway</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="wizard-actions" style="border-top:none;margin-top:0;padding-top:0">
+            <button class="btn-back">← Back</button>
+            <span style="margin-left:auto;font-size:12px;color:var(--text-faint)">All four substates lead to the inbox — verification is informational, never blocking</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="notes">
+    <strong>Design notes:</strong>
+    <span class="pros">All 4 substates shown in one mock so the design intent — "never blocking" — is visible at a glance</span>
+    <span class="pros">Failed state uses warning yellow not error red — it's not catastrophic, just informational</span>
+    <span class="pros">Failed state names the most likely causes inline so the operator can act without a help doc</span>
+    <span class="pros">Step note "Optional — you can skip and open the inbox now" reinforces the rule at every visit</span>
+    <span class="cons">Real implementation shows ONE substate at a time; this mock is for design-review only</span>
+    <span class="next">In implementation: idle → sending happens on button click; sending → success/failed happens on server response or 30s timeout</span>
+  </div>
+</div>
+
+<!-- ================================================== -->
+<!-- MOCK D — Offline path identity                     -->
+<!-- ================================================== -->
+<div class="mock-section">
+  <div class="mock-header">
+    <span class="mock-letter">D</span>
+    <span class="mock-name">Offline path — minimal identity</span>
+    <span class="mock-tag">Step 2 of 2 (CMS-no branch). Last screen before inbox.</span>
+    <span class="mock-meta">step 2 · offline path</span>
+  </div>
+  <div class="app-window">
+    <div class="titlebar">
+      <span class="app-icon">T</span>
+      <span class="app-name">Tuxlink Setup</span>
+      <span class="app-subtitle">— first run · offline mode</span>
+      <span class="controls"><span class="ctrl min"></span><span class="ctrl max"></span><span class="ctrl close"></span></span>
+    </div>
+    <div class="menubar">
+      <span class="menu">File</span>
+      <span class="menu">Message</span>
+      <span class="menu">Session</span>
+      <span class="menu">Mailbox</span>
+      <span class="menu">View</span>
+      <span class="menu">Tools</span>
+      <span class="menu enabled">Help</span>
+    </div>
+    <div class="wizard-area">
+      <div class="wizard-progress">
+        <div class="step-pill done">✓</div>
+        <div class="step-label">Welcome</div>
+        <div class="step-line done"></div>
+        <div class="step-pill active">2</div>
+        <div class="step-label">Identity</div>
+        <div class="step-spacer"></div>
+        <div class="step-note">Offline mode — no Step 3</div>
+      </div>
+      <div class="wizard-content">
+        <div class="wizard-card">
+          <h1>Set up your offline station</h1>
+          <p class="subtitle">Tuxlink in offline mode. No CMS connection. For lab work, training exercises, dummy-load testing, or field deployments without internet. You can enable Winlink CMS anytime in Settings → Connection.</p>
+
+          <div class="field">
+            <div class="field-label">Station identifier <span class="opt">— optional</span></div>
+            <div class="fake-input"><span style="font-family:var(--mono);">BAOFENG-FM-01</span></div>
+            <div class="hint">Used in window titles, message headers, and the dashboard. Examples: your callsign, a tactical callsign for an active emcomm deployment (<code style="font-family:var(--mono);font-size:11px">EOC-1</code>, <code style="font-family:var(--mono);font-size:11px">REDCROSS-NET-CONTROL</code>), or a station label (<code style="font-family:var(--mono);font-size:11px">BAOFENG-FM-01</code>).</div>
+          </div>
+
+          <div class="field">
+            <div class="field-label">Maidenhead grid <span class="opt">— optional</span></div>
+            <div class="fake-input"><span style="font-family:var(--mono);color:var(--text-faint)">leave blank for unknown</span></div>
+            <div class="hint">4 or 6 chars · <span style="color:var(--text-faint)">Auto-detect from GPS · v0.1</span></div>
+          </div>
+
+          <div class="wizard-actions">
+            <button class="btn-back">← Back</button>
+            <span style="font-size:12px;color:var(--text-faint)">Both fields are optional — leave blank if testing</span>
+            <button class="btn-primary">Open Tuxlink →</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="notes">
+    <strong>Design notes:</strong>
+    <span class="pros">Both fields optional — bench-test workflow doesn't get blocked on filling them in</span>
+    <span class="pros">Identifier (not "callsign") because the value may not be an actual callsign — accommodates lab equipment naming</span>
+    <span class="pros">Footer note explicitly invites blank submission ("if testing")</span>
+    <span class="pros">Step indicator collapses to 2 steps; "no Step 3" note explains the shorter flow</span>
+    <span class="cons">If user leaves identifier blank, window title falls back to "Tuxlink — unnamed station" — visible by design but worth highlighting in copy</span>
+    <span class="next">Click "Open Tuxlink" → inbox loads in offline mode; Session → Connect items are disabled with "Enable in Settings" tooltips</span>
+  </div>
+</div>
+
+<!-- ================================================== -->
+<!-- Bottom framing — what's next                       -->
+<!-- ================================================== -->
+<div class="framing" style="margin-top: 36px; margin-bottom: 0;">
+  <h3>Plan amendments queued for the design doc (from these wireframes)</h3>
+  <ul>
+    <li><strong>Task 9 (Step 1)</strong> — change "Do you have a Winlink account?" question to "Will this installation connect to the Winlink CMS?" with branching to credentials-or-offline. Register-account link moves to Step 2 as inline reference, not a sub-step.</li>
+    <li><strong>Task 10 (Step 2 credentials)</strong> — loosen callsign validator from <code>^[A-Z0-9]{3,6}$</code> to permissive (non-empty + no whitespace + ≤32 chars). Add "Save credentials and skip verification" button. Update field labels to match wireframes.</li>
+    <li><strong>Task 11 (Step 3 test-send)</strong> — make test-send informational not blocking. Add 4-substate UI (idle / sending / success / failed) with paths to inbox from every state. Add Session → Test send menu item so test can be re-run later.</li>
+    <li><strong>NEW Task 11.5 — offline path</strong> — Step 2-offline component, minimal identity form, no test-send, advances directly to inbox.</li>
+    <li><strong>Schema change</strong> — Config needs <code>connect_to_cms: bool</code> field plus optional <code>identifier: String</code> (for offline path). Callsign field becomes optional when <code>connect_to_cms: false</code>.</li>
+    <li><strong>NEW menu item</strong> — Session → Test send (post-wizard re-run). Tools → Settings → Connection (toggle CMS-on/off post-wizard).</li>
+    <li><strong>NEW v0.1+ — MPS (Message Pickup Station) registration UI</strong> — when v0.1 brings radio-only / Hybrid Network mode, operators need to register 1-3 MPSs (per <em>Radio_Only_Winlink.pdf</em>, ARSFI). New menu: Tools → Connection → Message Pickup Stations. Not in v0.0.1 scope (telnet-only doesn't use MPSs); flagged now so the menu structure has the slot.</li>
+  </ul>
+</div>
+
+</div>
+</body>
+</html>
