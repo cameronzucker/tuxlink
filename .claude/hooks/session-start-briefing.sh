@@ -23,7 +23,13 @@ status_count=$(git status --short 2>/dev/null | wc -l | tr -d ' ')
 
 last_handoff_line=""
 if [[ -d dev/handoffs ]]; then
-    last_handoff_file=$(ls -t dev/handoffs/*.md 2>/dev/null | head -1)
+    # Use find + sort to handle filenames safely (per codex 2026-05-17 D1
+    # SC2012 finding: ls is fragile with non-alphanumeric names).
+    # Pattern: handoff files are date-prefixed (YYYY-MM-DD-*.md) so lexical
+    # sort = chronological sort. _template.md is excluded because it has no
+    # date prefix (sorts last, which is wrong; explicit exclusion via glob).
+    last_handoff_file=$(find dev/handoffs -maxdepth 1 -name '20*-*.md' -type f -print 2>/dev/null \
+        | sort -r | head -1)
     if [[ -n "$last_handoff_file" ]]; then
         last_handoff_line="$(basename "$last_handoff_file")"
     fi

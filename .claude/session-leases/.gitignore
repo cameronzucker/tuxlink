@@ -1,4 +1,0 @@
-# Session-lease files are per-session, per-machine runtime state.
-# Never tracked.
-*.json
-*.jsonl
