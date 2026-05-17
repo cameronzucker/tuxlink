@@ -40,7 +40,7 @@ This keeps the `0.x` trajectory smooth: features land as minor bumps, breakings 
 
 `main` is the release ledger. All tagged versions (`v0.0.1`, `v0.1.0`, `v1.0.0`) are commits on `main`.
 
-The integration branch for in-progress release work is `feat/v0.0.1` (and successor `feat/v0.1.0`, etc.). Per-task branches fork from the integration branch and squash-merge back. See [CONTRIBUTING.md §Branch model](CONTRIBUTING.md#branch-model).
+The integration branch for in-progress release work is `feat/v0.0.1` (and successor `feat/v0.1.0`, etc.). Per-task branches fork from the integration branch and merge back as **merge-commits with no fast-forward** (squash-merge is banned per [ADR 0010](docs/adr/0010-no-squash-merge.md)). See [CONTRIBUTING.md §Branch model](CONTRIBUTING.md#branch-model).
 
 Release branches are escape hatches. A `release/X.Y` branch is created lazily — only when a critical bug is reported against a released version and the affected user cannot safely upgrade to the latest. The branch is forked from the tag, the fix is applied and tagged, and the fix is cherry-picked back to `main`.
 

@@ -80,10 +80,10 @@ Tuxlink uses a **per-task-branch model** during pre-1.0 development:
 1. `main` is the release ledger; tagged versions live there.
 2. `feat/v0.0.1` (and successors) is the integration branch for in-progress release work.
 3. Each task branches from the integration branch: `task-NN-<slug>` or, with [Beads](https://github.com/steveyegge/beads), `bd-<id>/<slug>`.
-4. Task branch → PR against integration branch → review (subagent or human) → squash-merge → delete task branch.
-5. Integration branch → ff-merge into `main` only at the release tag.
+4. Task branch → PR against integration branch → review (subagent or human) → **merge-commit (no fast-forward)** → delete task branch. **Squash-merge is banned** per [ADR 0010](docs/adr/0010-no-squash-merge.md); use `gh pr merge <#> --merge --delete-branch`.
+5. Integration branch → merge into `main` at the release tag (no-ff per ADR 0010; this may or may not be ff-eligible depending on whether dependabot or similar has landed commits directly on `main` between releases).
 
-Direct commits to `main` or `feat/v0.0.1` are rejected by a PreToolUse hook unless the `ALLOW_INTEGRATION_COMMIT=1` env var is set (carve-out for the squash-merge step). See [CLAUDE.md](CLAUDE.md) and [docs/adr/0004-per-task-branch-model.md](docs/adr/0004-per-task-branch-model.md).
+Direct commits to `main` or `feat/v0.0.1` are rejected by a PreToolUse hook unless the `ALLOW_INTEGRATION_COMMIT=1` env var is set (carve-out for the merge-commit step). See [CLAUDE.md](CLAUDE.md), [docs/adr/0004-per-task-branch-model.md](docs/adr/0004-per-task-branch-model.md), and [docs/adr/0010-no-squash-merge.md](docs/adr/0010-no-squash-merge.md).
 
 ## Local verification
 
@@ -120,6 +120,6 @@ Tuxlink currently has one active maintainer + AI agents. Outside contributions a
 2. Create a task branch off `feat/v0.0.1` (or the current integration branch).
 3. Conventional Commits all the way down, with `Agent:` trailer if your harness has a moniker convention; otherwise use `Agent: <github-username>`.
 4. Open PR against the integration branch.
-5. The maintainer (or a review subagent) reviews. Squash-merge after approval.
+5. The maintainer (or a review subagent) reviews. **Merge-commit (no fast-forward) after approval** per [ADR 0010](docs/adr/0010-no-squash-merge.md) — squash-merge is banned.
 
 The one PR that appears automatically is the [`release-please`](https://github.com/googleapis/release-please) Release PR — see [VERSIONING.md](VERSIONING.md).
