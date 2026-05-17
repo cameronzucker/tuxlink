@@ -92,6 +92,20 @@ This project uses bd (Beads) AND Claude Code's built-in primitives (TodoWrite, a
 - **Codex CLI** (adversarial review) — `npx --yes @openai/codex exec "<prompt>"`. Not on `$PATH`; already authenticated. See [CLAUDE.md](CLAUDE.md#openai-codex-cli--for-build-robust-features-at-least-one-adversarial-round-via-codex-requirement) for full usage.
 - **url-to-markdown** skill — prefer over WebFetch for full-page retrieval. See [CLAUDE.md](CLAUDE.md#url-to-markdown-skill--fetch-full-webpages-not-summaries).
 
+## Session Completion
+
+Work is not complete until `git push` succeeds AND a session-end handoff document exists. **Seven required steps** (the BEADS INTEGRATION block below has its own version, superseded by this canonical section):
+
+1. File issues for remaining work.
+2. Run quality gates if code changed.
+3. Update issue tracker status (`bd close <id>` / `bd update <id>`).
+4. `git push` — mandatory; retry until it succeeds.
+5. Clean up stashes + ensure remote task branches are deleted.
+6. Write a session-end handoff at `dev/handoffs/<YYYY-MM-DD>-<short-slug>.md` enumerating branch + working-tree + worktree state per [ADR 0009](docs/adr/0009-worktree-disposal-ritual.md).
+7. **Surface the operator's next-session starting prompt** as your final user-facing message — a ~10-line paste-ready code block with: one-sentence session summary, pointer to the handoff doc, critical-first-action / gate emphasis. Reduces session-change friction.
+
+See [CLAUDE.md §Session Completion](CLAUDE.md#session-completion) for full text + rationale.
+
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:ca08a54f -->
 ## Beads Issue Tracker
 

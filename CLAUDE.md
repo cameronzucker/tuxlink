@@ -284,7 +284,7 @@ This project uses both Claude Code's built-in primitives (TodoWrite, auto-memory
 
 ## Session Completion
 
-Work is not complete until `git push` succeeds AND a session-end handoff document exists. This rule is **unconditional** per [`standing-conventions-cross-project.md` §7](https://github.com/cameronzucker/cz-agent-skills/blob/main/docs/standing-conventions-cross-project.md) and Decision 1 of the 2026-05-17 LFST→tuxlink port catalog. (The Tool referee table's "Push timing | Operator" row above is out of date and will be reconciled in this sprint's cleanup pass; this section is authoritative.)
+Work is not complete until `git push` succeeds AND a session-end handoff document exists. This rule is **unconditional** per [`standing-conventions-cross-project.md` §7](https://github.com/cameronzucker/cz-agent-skills/blob/main/docs/standing-conventions-cross-project.md) and Decision 1 of the 2026-05-17 LFST→tuxlink port catalog.
 
 **Required steps before ending any session:**
 
@@ -294,8 +294,16 @@ Work is not complete until `git push` succeeds AND a session-end handoff documen
 4. **`git push`** — mandatory. If push fails, resolve the failure and retry until it succeeds. Do NOT stop before pushing.
 5. Clean up: clear stashes, ensure remote task branches are deleted (`gh pr merge --delete-branch` handles this automatically for landed PRs; manual `git push origin --delete <branch>` for branches that didn't reach merge).
 6. Write a session-end handoff document to `dev/handoffs/<YYYY-MM-DD>-<short-slug>.md` enumerating: branch state, working-tree state, in-flight worktrees + their untracked + gitignored-stateful content (per [ADR 0009](docs/adr/0009-worktree-disposal-ritual.md) §"Handoff documents enumerate worktree state"), what was completed, what is in-progress, what is pending decision.
+7. **Surface the operator's next-session starting prompt** as your final user-facing message of the session, AFTER step 6's handoff is committed. The prompt is a concise (~10-line) paste-ready code block the operator copies into a fresh Claude Code session's first message. Include:
+   - One sentence framing what happened this session (so the next session's reads-before-action choices are right-sized).
+   - A pointer to the canonical handoff doc by path.
+   - The **critical first action or gate** the next session must not skip — particularly anything implicit-droppable (e.g., a review gate before substantive work, a brainstorm before UI tasks).
+
+   Format: a single ```fenced markdown code-block``` the operator can copy whole. The session-start-briefing hook surfaces the most-recent handoff filename automatically; this prompt tells the next agent to READ the handoff and emphasizes anything the agent might otherwise miss while scanning `bd ready` for the next sequential task.
 
 **Never say "ready to push when you are."** Push is the session's responsibility, not the operator's. The handoff document closes the context loop so the next session — possibly on a different machine — can continue without manual reconstruction from `git log`.
+
+**Why step 7 matters:** without an operator-pasteable starting prompt, the operator must either (a) paste a verbatim block out of the handoff doc (verbose; the doc was written for the next agent, not for paste-time), or (b) type freeform "continue where we left off" (relies on the next agent stumbling into the gate-emphasis correctly). Step 7 gives the operator a 10-second copy-paste with the gate emphasis pre-stated, reducing session-change friction.
 
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:ca08a54f -->
 ## Beads Issue Tracker
