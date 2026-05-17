@@ -63,23 +63,45 @@ assert len(set(POOL)) == 100, "POOL has duplicates"
 
 
 def resolve_repo() -> Path:
-    """Resolve repo root from CLAUDE_PROJECT_DIR env or script-relative fallback."""
+    """Resolve repo root.
+
+    Prefers CLAUDE_PROJECT_DIR IF it points at a directory that is itself a git
+    repo. Otherwise falls back to the script-relative path (..\\..). Per codex
+    2026-05-17 B3 review: previously, a misconfigured CLAUDE_PROJECT_DIR (e.g.,
+    pointing at `/`) would silently make git log fail, and `moniker_taken`
+    would silently treat the failure as "no collision" — letting duplicate
+    monikers through. The fallback here makes a non-git CLAUDE_PROJECT_DIR
+    behave the same as no env var at all.
+    """
     env_repo = os.environ.get("CLAUDE_PROJECT_DIR")
-    if env_repo and Path(env_repo).is_dir():
-        return Path(env_repo).resolve()
+    if env_repo:
+        env_path = Path(env_repo)
+        if env_path.is_dir() and (env_path / ".git").exists():
+            return env_path.resolve()
     script_dir = Path(__file__).resolve().parent
     return (script_dir / ".." / "..").resolve()
 
 
-def moniker_taken(candidate: str, repo: Path, since: str | None) -> bool:
-    """Check git log --all --grep for prior use. Returns True if collision found."""
+def moniker_taken(candidate: str, repo: Path, since: str | None) -> bool | None:
+    """Check git log --all --grep for prior use.
+
+    Returns True if a prior commit's `Agent: <candidate>` trailer matches.
+    Returns False if no match found. Returns **None** if the git log call
+    itself failed (caller must distinguish "no collision" from "check failed"
+    — per codex 2026-05-17 B3 review: silently treating check-failed as
+    no-collision lets duplicate monikers through).
+    """
     cmd = ["git", "log", "--all", f"--grep=^Agent: {re.escape(candidate)}", "--oneline"]
     if since:
         cmd.append(f"--since={since}")
-    result = subprocess.run(cmd, cwd=repo, capture_output=True, text=True)
+    try:
+        result = subprocess.run(cmd, cwd=repo, capture_output=True, text=True)
+    except (FileNotFoundError, OSError):
+        # git binary not on PATH, or other subprocess setup failure
+        return None
     if result.returncode != 0:
-        # Git failure (e.g., not a repo) — bail to "no collision" to allow forward progress.
-        return False
+        # git ran but failed (e.g., not a git repo, ambiguous ref, etc.)
+        return None
     return bool(result.stdout.strip())
 
 
@@ -112,7 +134,20 @@ def main() -> int:
         if args.no_pre_flight:
             print(moniker)
             return 0
-        if not moniker_taken(moniker, repo, args.since):
+        taken = moniker_taken(moniker, repo, args.since)
+        if taken is None:
+            # Pre-flight check itself failed (git missing, repo path wrong, etc.).
+            # Fail closed per codex 2026-05-17 B3 review — refuse to ship an
+            # unchecked moniker; force the operator to choose explicitly.
+            sys.stderr.write(
+                f"Pre-flight check failed at attempt {attempt}: git log returned an error "
+                f"against repo={repo}. Either:\n"
+                f"  - Set CLAUDE_PROJECT_DIR explicitly to a valid git repo path, OR\n"
+                f"  - Verify the script-relative repo path resolves correctly, OR\n"
+                f"  - Re-run with --no-pre-flight to accept the risk of a duplicate moniker.\n"
+            )
+            return 1
+        if not taken:
             print(moniker)
             return 0
         sys.stderr.write(f"# attempt {attempt}: {moniker} already used; retrying\n")
