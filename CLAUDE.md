@@ -125,15 +125,24 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
 
 **If you forget to set a moniker early in the session:** pick one now and apply it to all forward commits. Do not retroactively amend earlier commits (amending shared/recent commits is banned — see below).
 
-## Git workflow — worktrees are permitted (ADR 0007)
+## Git workflow — worktrees mandatory under bd-issue ownership (ADR 0008)
 
-`git worktree` is permitted but not required. The default workflow for solo-agent work remains `git checkout` in the main repo at `/home/administrator/Code/tuxlink`; worktrees are an option when concurrent agents need filesystem isolation, when parallel build artifacts would otherwise collide, or when auto-claude's eventual lease model wants per-worktree leases.
+When two or more Claude Code sessions are simultaneously live against this repository, any session not holding the main-checkout lease MUST perform its write work in a worktree, not in the main checkout. For solo-session work (the typical case today), worktrees remain optional — use `git checkout` in the main repo when no isolation benefit is gained. The lease-detection mechanism is automatic per the `.claude/hooks/block-main-checkout-race.sh` hook (D1); agents do not need to check for concurrency manually.
 
-**The earlier ban (lifted 2026-05-05) was a behavioral bandaid for the geographica subagent-drift incidents.** The structural mitigations since adopted — [per-task-branch model (ADR 0004)](docs/adr/0004-per-task-branch-model.md), Beads issue tracker, and the `block-destructive-git.sh` + `check-commit-discipline.sh` PreToolUse hooks — address the root cause (destructive ops on integration branches). The topological ban became redundant. See [docs/adr/0007-lift-worktree-ban.md](docs/adr/0007-lift-worktree-ban.md) for full context, the residual auto-claude-lease gap, and watched failure modes.
+**Worktree ownership rule.** A worktree is permitted IFF:
 
-**When using worktrees:** the per-task-branch model and the destructive-git / commit-discipline hooks still apply. The hooks reject `reset --hard`, force-push, direct commits to `main` / `feat/v0.0.1`, and missing `Agent:` trailers regardless of which checkout the command is issued from. Branches are still `task-NN-<slug>` or `bd-<id>/<slug>` off `feat/v0.0.1` — worktree topology does not change the branch model.
+1. A **bd issue** is in `in_progress` and claims the worktree (path recorded in the issue body or via `bd remember`). `bd show <id>` is the canonical answer to "what is `worktrees/X` for?"
+2. The branch follows the per-task convention ([ADR 0004](docs/adr/0004-per-task-branch-model.md)): `bd-<id>/<slug>` preferred when the bd issue exists; otherwise `agent-<moniker>/<slug>` or `task-NN-<slug>`.
+3. The worktree path is `worktrees/<bd-id-or-slug>/` at the repo root (`worktrees/` is `.gitignore`d).
+4. The session adheres to all other CLAUDE.md rules (moniker discipline, commit discipline, destructive-git ban, session-end handoff).
 
-**Worktrees on demand, not by default.** The decision permits them; it does not encourage them. For single-stream work the topology cost of two checkouts buys nothing.
+A worktree without a bd-issue claim is an anti-pattern. If you encounter one (stale handoff, prior orphan), either (a) retroactively claim it with a bd issue, or (b) inventory + archive + dispose per the disposal ritual (ADR 0009, forthcoming as part of this sprint's D3).
+
+**Pattern A (harness-spawned ephemeral worktrees** — the `Agent` tool's `isolation: "worktree"` parameter) is uncontroversially permitted; the harness manages create + dispose, no per-worktree bd issue required.
+
+**Multi-worktree coordination via bd dep edges.** When two or more worktrees are simultaneously `in_progress`, maintain the dependency graph via `bd dep add <consumer-id> <provider-id>`. `bd ready` reflects unblocked work at any moment.
+
+**Full rationale, alternatives considered, and watched failure modes:** [ADR 0008](docs/adr/0008-worktrees-mandatory-under-bd-issue-ownership.md), which supersedes [ADR 0007](docs/adr/0007-lift-worktree-ban.md)'s "permitted but optional" framing. ADR 0007 remains accepted as the historical record of why the original Geographica-era ban was lifted.
 
 ## Git workflow — destructive commands are BANNED
 
