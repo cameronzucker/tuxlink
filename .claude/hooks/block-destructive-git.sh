@@ -50,9 +50,24 @@ if printf '%s' "$cmd" | grep -qE '\bgit[[:space:]]+branch[[:space:]]+(-D|--delet
     deny "git branch -D / --delete --force is banned per CLAUDE.md. Use git branch -d (which refuses to delete unmerged branches)."
 fi
 
+# Pattern: git worktree remove
+# Disposal must use the 4-step ritual (inventory -> archive -> physical rm -rf -> git worktree prune).
+# `git worktree remove` direct-unlinks the worktree, bypassing Recycle Bin / trash on platforms where that
+# would otherwise be a safety net; the LFST musing-bhabha incident lost gitignored content this way.
+if printf '%s' "$cmd" | grep -qE '\bgit[[:space:]]+worktree[[:space:]]+remove\b'; then
+    deny "git worktree remove is banned. Use the disposal ritual: inventory ('git status --short' + 'git ls-files --others --exclude-standard' + 'git ls-files --others --ignored --exclude-standard') -> archive if needed -> rm -rf <worktree-path> -> git worktree prune. See docs/adr (worktree disposal ADR, pending D3) and standing-conventions-cross-project.md §4."
+fi
+
 # Pattern: git commit --amend
 if printf '%s' "$cmd" | grep -qE '\bgit[[:space:]]+commit\b.*--amend\b'; then
     deny "git commit --amend is banned per CLAUDE.md. Always create a NEW commit to correct earlier work."
+fi
+
+# Pattern: git rebase -i / --interactive
+# Interactive rebase exposes squash/fixup/drop on the editor screen and detecting the dangerous sub-ops
+# in regex is non-trivial. Ban the interactive mode outright; use non-interactive rebases when needed.
+if printf '%s' "$cmd" | grep -qE '\bgit[[:space:]]+rebase\b.*(-i\b|--interactive\b)'; then
+    deny "git rebase -i / --interactive is banned. The editor screen exposes squash/fixup/drop which are destructive on shared commits, and detecting those sub-operations in this hook is impractical. Use non-interactive rebase ('git rebase <base>') for linear replays, or ask the user before attempting any history manipulation."
 fi
 
 # Pattern: git reflog expire ... --expire=now
