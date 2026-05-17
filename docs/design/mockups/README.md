@@ -44,6 +44,31 @@ Decisions captured here:
 - Dashboard ribbon stays compact in v0.0.1 — heavier C-style signals live in the dock
 - Compose-as-separate-window (per Mock B) — plan Task 14 amendment recorded; surveyed native desktop email clients (Apple Mail, Thunderbird, Spark, Mimestream, Mailspring, Airmail, Geary, Evolution) all use separate windows; Radix Dialog (current plan spec) is the outlier
 
+### `2026-05-17-wizard-wireframes.html`
+
+First-run wizard wireframes — covers plan Tasks 9-11 (and a new Task 11.5 offline branch). Branching tree: CMS-optional, offline-friendly, tactical-callsign-friendly, test-send-never-blocking. Reflects [Principle 7](../v0.0.1-ux-principles.md) (position privacy via precision reduction) and the [transport-visibility anti-pattern](../../ux-anti-patterns.md) (operator sees + controls Telnet vs CMS-SSL).
+
+![Mock A — Welcome / connection-type](images/wizard-a-welcome.png)
+*Mock A · Welcome — reframed question is "Will this installation connect to the Winlink CMS?" with two choice cards (CMS yes / offline). Offline card calls out radio-only emcomm deployment (Winlink Hybrid Network), ARES drills, EOC tabletops, and lab work as legitimate operational modes.*
+
+![Mock B — Credentials (CMS path)](images/wizard-b-credentials.png)
+*Mock B · Credentials (CMS path) — combines plan Tasks 9+10. Register link inline at top (no separate sub-step). Loose validator accepts standard amateur callsigns + tactical-style strings (`EOC-1`, `BAOFENG-FM-01`, etc.) — CMS authoritates server-side. "Save credentials and skip verification" button for offline-now setup. Grid field reflects Principle 7 (4-char broadcast default, opt-in to 6-char in Settings → Privacy).*
+
+![Mock C — Verify / test-send 4 substates](images/wizard-c-test-send.png)
+*Mock C · Verify — 4 substates rendered inline (idle / sending / success / failed). Every state has a path to the inbox; verification is informational, never blocking. Failed state uses warning yellow not error red and names likely causes inline (no internet, firewall blocking `:8773`, CMS busy). Transport paragraph above explains CMS-SSL (port 8773, TLS) preferred over Telnet (port 8772) — per transport-visibility anti-pattern.*
+
+![Mock D — Offline path identity](images/wizard-d-offline.png)
+*Mock D · Offline path — minimal form. Field is "Station identifier" not "Callsign" (accommodates lab equipment naming + tactical callsigns + station labels). Both fields optional; footer explicitly invites blank submission. Step indicator collapses to 2 steps; "no Step 3" note explains the shorter flow. Grid field reflects Principle 7 (4-char broadcast default).*
+
+Plan amendments queued from these wireframes (the canonical design doc will carry them):
+- **Task 9** — change "Do you have a Winlink account?" question to "Will this installation connect to the Winlink CMS?" with branching to credentials-or-offline. Register link moves to Step 2 as inline reference.
+- **Task 10** — loosen callsign validator from `^[A-Z0-9]{3,6}$` to permissive (non-empty + no whitespace + ≤32 chars). Add "Save credentials and skip verification" button.
+- **Task 11** — make test-send informational not blocking. Add 4-substate UI with paths to inbox from every state. Add Session → Test send menu item for post-wizard re-run.
+- **NEW Task 11.5** — offline-path Step 2-offline component, minimal identity form, no test-send.
+- **Schema** — `connect_to_cms: bool` field; optional `identifier: String` for offline path; callsign optional when `connect_to_cms: false`.
+- **NEW menu items** — Session → Test send; Tools → Settings → Connection (toggle CMS-on/off post-wizard); Tools → Settings → Privacy → Position precision.
+- **v0.1+ deferred** — MPS (Message Pickup Station) registration UI for radio-only mode (per ARSFI's Radio_Only_Winlink reference); GPS auto-detect (matches Express's `Update grid square from GPS=True`).
+
 ### `2026-05-17-modem-placements-v05.html`
 
 **v0.5+ modem-console placement** — once VARA-native ships, where does the equivalent of [the VARA FM v4.1.2 console](https://winlink.org/sites/default/files/oe8xyr_vara_fm_v4.1.2.jpg) (analog gauges, throughput chart, OFDM constellation, protocol-state lights) live in tuxlink?
@@ -74,9 +99,10 @@ Decisions captured here:
 | Modem-console placement (v0.5+) | **Captured** — 3-state toggle (Off / Compact / Full); both operator modes served |
 
 Outstanding before the canonical spec gets written:
-- Wizard screens (Tasks 9-11) at dark-mode polish
+- ~~Wizard screens (Tasks 9-11) at dark-mode polish~~ — **LANDED** in `2026-05-17-wizard-wireframes.html` (this PR / a later commit)
 - Compose-window high-fidelity mock (separate window confirmed; needs interior design)
 - Error / empty / connecting states (CMS unreachable, credentials rejected, mid-session disconnect)
+- WINE-Express walkthrough (firsthand audit of the dominant client's first-run flow + validator behavior + test-send blocking semantics) — runbook drafted at `dev/winlink-reference/research/Winlink_Express_WINE_walkthrough.md` (gitignored)
 
 ---
 
