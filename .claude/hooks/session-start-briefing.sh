@@ -11,7 +11,10 @@
 
 set -u
 
-REPO="/home/administrator/Code/tuxlink"
+# Resolve repo root from this script's filesystem location (rev-parse-based
+# per D1's hook-resolution discipline; supersedes the prior hardcoded path).
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO="$(cd "$SCRIPT_DIR/../.." && pwd)"
 cd "$REPO" 2>/dev/null || { echo '{}'; exit 0; }
 
 branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "(unknown)")
@@ -35,7 +38,7 @@ case "$branch" in
         branch_warning=$'\n\n⚠️  You are on \x60main\x60. Direct commits are blocked by the commit-discipline hook. Branch off with \x60git checkout -b task-NN-<slug>\x60 before any work.'
         ;;
     feat/v*)
-        branch_warning=$'\n\n⚠️  You are on the integration branch \x60'"$branch"$'\x60. Direct commits are blocked unless prefixed with \x60ALLOW_INTEGRATION_COMMIT=1\x60 (squash-merge carve-out). For ordinary task work, branch off with \x60git checkout -b task-NN-<slug>\x60.'
+        branch_warning=$'\n\n⚠️  You are on the integration branch \x60'"$branch"$'\x60. Direct commits are blocked unless prefixed with \x60ALLOW_INTEGRATION_COMMIT=1\x60 (merge-commit carve-out per 2026-05-17 port catalog Decision 1; squash-merge is banned). Normal flow uses \x60gh pr merge --merge --delete-branch\x60. For ordinary task work, branch off with \x60git checkout -b task-NN-<slug>\x60.'
         ;;
 esac
 
