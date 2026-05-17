@@ -179,22 +179,24 @@ git worktree prune
 
 ## Git workflow — destructive commands are BANNED
 
-Do NOT run destructive git commands. There is never a legitimate reason for an agent to run these unprompted. If you think you need one, **stop and ask the user**.
+The [`.claude/hooks/block-destructive-git.sh`](.claude/hooks/block-destructive-git.sh) hook denies destructive git operations at the harness layer. **The hook is the canonical enforcement; do not work around it.** If a hook denial surprises you, the right move is to find a non-destructive alternative — never `--no-verify`, never an end-run.
 
-**Banned commands (no exceptions without explicit user authorization for this specific call):**
-- `git reset --hard <ref>` — destroys uncommitted work AND rewinds the branch tip. Use `git revert <commit>` for an additive undo, or ask the user which specific file to restore with `git checkout -- <path>`.
-- `git push --force` / `git push -f` / `git push --force-with-lease` — rewrites remote history. If you need to replace a pushed commit, open a new PR or ask.
-- `git checkout -- .` / `git restore .` / `git clean -f` / `git clean -fd` — wipes entire working-tree state. If you want to discard one file, name it explicitly after checking with the user.
-- `git branch -D <branch>` / `git branch --delete --force` — force-deletes a branch even if unmerged. Use `git branch -d`, which refuses to delete unmerged branches.
-- `git rebase -i` with squash/fixup/drop on shared commits — rewrites history. (`--no-edit` is not a valid `git rebase` flag and should never be passed.)
-- `git commit --amend` on any commit that has been pushed OR that was authored by someone else. Always create a **new** commit to correct earlier work.
-- `git reflog expire --expire=now` / `git gc --prune=now` — strips the safety net that would let us recover from the commands above.
+**Full banned list and rationale:** see the hook source for the regex-precise list, and [standing-conventions §1](https://github.com/cameronzucker/cz-agent-skills/blob/main/docs/standing-conventions-cross-project.md) for the cross-project rule. Quick reference (not the authoritative list — the hook is):
+
+- `git reset --hard <ref>` — use `git revert <commit>` or restore named files.
+- `git push --force` / `-f` / `--force-with-lease` — open a new PR or ask.
+- `git checkout -- .` / `git restore .` / `git clean -f` — name files explicitly.
+- `git branch -D` / `--delete --force` — use `-d`, which refuses unmerged.
+- `git commit --amend` on pushed or other-authored commits — create a new commit.
+- `git rebase -i` / `--interactive` — banned outright per C1; use `git rebase <base>` for non-interactive linear replays.
+- `git worktree remove` — use the disposal ritual ([ADR 0009](docs/adr/0009-worktree-disposal-ritual.md)).
+- `git reflog expire --expire=now` / `git gc --prune=now` — strips the recovery safety net.
 - `git filter-branch` / `git filter-repo` — mass history rewrite.
-- `--no-verify` (skips hooks) / `--no-gpg-sign` / `-c commit.gpgsign=false` — bypasses the project's commit gates. The hooks exist for a reason; if one fails, fix the root cause instead of skipping.
+- `--no-verify` / `--no-gpg-sign` / `-c commit.gpgsign=false` — bypasses the project's gates.
 
-**Rationale:** On 2026-04-20, a subagent in the sister Geographica project ran `git reset --hard feat/noaa-conus` on the main checkout's `dev` branch, wiping 7 commits — including a runtime-validated bug fix that had been shipped to the live stack. Recovery took one `git merge` with manual conflict resolution, but only because all commits were still reachable via reflog; two weeks later and `git gc` would have pruned them permanently. Agents have no legitimate workflow that requires destructive operations; the pattern is always "something went wrong, let me start over" — which is a cue to **ask the user**, not reset.
+**Why hooks, not just prose:** the 2026-04-20 Geographica incident — a subagent ran `git reset --hard feat/noaa-conus` on `dev`, wiping 7 commits including a shipped fix; recovered via reflog only because the regression was caught within the 14-day `git gc` window. Geographica's CLAUDE.md *correctly documented* the rule at the time of the incident. **Prose alone did not prevent it; the hook layer does.**
 
-**If you think you need one of these:** the correct action is to surface the situation to the user with a proposed non-destructive alternative.
+**If you think you need a banned command:** stop and surface the situation to the user with a proposed non-destructive alternative.
 
 ## Live radio network operations — READ BEFORE ANY TRANSMISSION
 
@@ -222,6 +224,7 @@ run a live-CMS binary to verify completion, your task is misspecified
 - Prefer scoped commits (`feat(<scope>): ...`) when the change is localized to one subsystem. Scopes will be defined after office-hours sets the project structure.
 - Breaking changes: add `!` suffix and a `BREAKING CHANGE:` footer with a one-line user-facing explanation.
 - Update `dev/implementation-log.md` (once created) after any significant work item: plan executed, feature shipped, bug hunt cycle completed, adversarial review completed. Entry goes at the top, reverse-chronological, keyed by date + topic.
+- **Polish before push.** Per [ADR 0010](docs/adr/0010-no-squash-merge.md): squash-merge is banned, so the integration branch will preserve every task-branch commit. Clean up WIP / fixup / "oops" commits via non-interactive `git rebase <base>` on **local un-pushed commits** before `git push`. Once pushed, commits are immutable (the destructive-git ban on `--amend` of pushed commits and on `git rebase -i` ensures this). The push gates the polish.
 
 ## Documentation propagation contract
 
@@ -266,14 +269,13 @@ This project uses both Claude Code's built-in primitives (TodoWrite, auto-memory
 | In-turn micro-progress within one session | TodoWrite | Claude Code primitive; ephemeral; correct for "read X, edit Y, run Z" lists. |
 | User profile + cross-cutting feedback | Auto-memory at `~/.claude/projects/<slug>/memory/` | Harness-native, auto-loaded each session via `MEMORY.md` index. Already seeded; do not migrate to bd. |
 | Issue-adjacent factoids discovered during a task | `bd remember` | Use for knowledge linked to a specific issue. Cross-project user/feedback stays in auto-memory. |
-| Push timing | Operator | Operator owns push timing. Agents commit, operator pushes — `git push` is not automatic. |
-| Branch model | Per-task branch + squash-merge | See [docs/adr/0004-per-task-branch-model.md](docs/adr/0004-per-task-branch-model.md). |
+| Branch model | Per-task branch + merge-commit (no-ff) | See [ADR 0004](docs/adr/0004-per-task-branch-model.md) (per-task model) + [ADR 0010](docs/adr/0010-no-squash-merge.md) (no-squash) + [ADR 0008](docs/adr/0008-worktrees-mandatory-under-bd-issue-ownership.md) (worktree-issue ownership). |
 
 **Specific overrides of bd's BEADS INTEGRATION block** (rules below the BEADS INTEGRATION marker that this section explicitly supersedes):
 
 - bd says *"do NOT use TodoWrite, TaskCreate, or markdown TODO lists"* → **Override:** TodoWrite is the right primitive for in-turn working memory; bd is the right primitive for cross-session work units. Use both, for their respective layers.
 - bd says *"Use `bd remember` for persistent knowledge — do NOT use MEMORY.md files"* → **Override:** the Claude Code auto-memory directory at `~/.claude/projects/<slug>/memory/` is harness-native and remains canonical for user / feedback / project memory. Use `bd remember` for issue-tracker-adjacent factoids only.
-- bd says *"Work is NOT complete until `git push` succeeds … YOU must push"* → **Override:** the operator owns push timing per ADR 0004 and the Claude Code system prompt's risk-action defaults. End-of-session expectation is "committed locally and operator informed of what's pushable" — not "agent has pushed."
+- bd says *"Work is NOT complete until `git push` succeeds … YOU must push"* → **No longer overridden** as of 2026-05-17. Per [§Session Completion](#session-completion) and standing-conventions §7, push is now mandatory at session end. bd's directive on this point now agrees with project policy.
 
 **If you discover a fourth bd directive that conflicts with project commitments:** extend the table above AND ADR 0006's override list. Do NOT silently soften an override.
 

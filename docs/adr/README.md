@@ -56,12 +56,13 @@ Deciders: <names or session monikers of people involved>
 - [0001 — Record architecture decisions](0001-record-architecture-decisions.md)
 - [0002 — Tauri 2 + React + single-crate architecture](0002-tauri-react-single-crate.md)
 - [0003 — Pat owns the mailbox; no SQLite in v0.0.1](0003-no-sqlite-pat-owns-mailbox.md)
-- [0004 — Per-task branch model with squash-merge](0004-per-task-branch-model.md)
+- [0004 — Per-task branch model with squash-merge](0004-per-task-branch-model.md) — *squash-merge clause superseded by 0010; per-task-branch model itself remains operative*
 - [0005 — Rigorous SemVer via release-please](0005-rigorous-semver-via-release-please.md)
 - [0006 — Override bd's CLAUDE.md defaults via Tool referee section](0006-override-bd-claude-md-defaults.md)
 - [0007 — Lift the worktree ban (superseded by per-task-branch model + Beads + hooks)](0007-lift-worktree-ban.md) — *operative rule superseded by 0008; historical record retained*
 - [0008 — Worktrees mandatory under bd-issue ownership](0008-worktrees-mandatory-under-bd-issue-ownership.md)
 - [0009 — Worktree disposal ritual (inventory → archive → physical remove → prune)](0009-worktree-disposal-ritual.md)
+- [0010 — No-squash merge for integration branches; merge-commit (no-ff) replaces squash (supersedes 0004's squash clause)](0010-no-squash-merge.md)
 
 ## References
 

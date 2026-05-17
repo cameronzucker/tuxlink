@@ -81,11 +81,11 @@ This is Part 97 regulatory compliance, not a style rule.
 
 ## Commit and release discipline
 
-Conventional commit types (`feat:`, `fix:`, `docs:`, etc.). Breaking changes get `!` + `BREAKING CHANGE:` footer. Update `dev/implementation-log.md` (once created) after any significant work item.
+Conventional commit types (`feat:`, `fix:`, `docs:`, etc.). Breaking changes get `!` + `BREAKING CHANGE:` footer. Update `dev/implementation-log.md` (once created) after any significant work item. **Squash-merge is banned** ([ADR 0010](docs/adr/0010-no-squash-merge.md)); all PRs into integration branches merge as merge-commit (no-ff) via `gh pr merge <#> --merge --delete-branch`. **Polish before push** — clean up WIP commits via non-interactive `git rebase <base>` on local un-pushed commits; once pushed, commits are immutable.
 
 ## Tool referee (overrides bd's CLAUDE.md defaults)
 
-This project uses bd (Beads) AND Claude Code's built-in primitives (TodoWrite, auto-memory). They are NOT substitutes. When bd's BEADS INTEGRATION section conflicts with project commitments, the `## Tool referee` table in [CLAUDE.md](CLAUDE.md#tool-referee--which-tool-owns-which-job) wins. Specifically: TodoWrite is for in-turn micro-progress; bd is for cross-session work; auto-memory at `~/.claude/projects/<slug>/memory/` is canonical for user/feedback memory; the operator owns push timing. See [docs/adr/0006-override-bd-claude-md-defaults.md](docs/adr/0006-override-bd-claude-md-defaults.md) for rationale.
+This project uses bd (Beads) AND Claude Code's built-in primitives (TodoWrite, auto-memory). They are NOT substitutes. When bd's BEADS INTEGRATION section conflicts with project commitments, the `## Tool referee` table in [CLAUDE.md](CLAUDE.md#tool-referee--which-tool-owns-which-job) wins. Specifically: TodoWrite is for in-turn micro-progress; bd is for cross-session work; auto-memory at `~/.claude/projects/<slug>/memory/` is canonical for user/feedback memory. (The prior push-timing override was retired 2026-05-17 — push is now mandatory at session end per the §Session Completion in CLAUDE.md, agreeing with bd's directive.) See [docs/adr/0006-override-bd-claude-md-defaults.md](docs/adr/0006-override-bd-claude-md-defaults.md) for rationale.
 
 ## Extended capabilities on this Pi
 
