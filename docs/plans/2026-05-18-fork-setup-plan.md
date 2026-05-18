@@ -77,8 +77,8 @@ notes and commit messages.
 
 | Phase | Status | Ship SHA(s) | Notes |
 |---|---|---|---|
-| 1 — Operator GH ops (fork + branch protection + Issues) | ⬜ Not started | — | Operator-action-only; no agent commits |
-| 2 — Pre-flight + PR-A (tuxlink-pat README) | ⬜ Not started | — | Blocked until Phase 1 complete |
+| 1 — Operator GH ops (fork + branch protection + Issues) | ✅ Shipped | — (no commit; GH-side) | 2026-05-18; Cameron created fork; agent configured branch protection on `master` per his delegation; Issues enabled |
+| 2 — Pre-flight + PR-A (tuxlink-pat README) | ⬜ Not started | — | Blocked until Cameron approves plan; ready when plan-review gate clears |
 | 3 — Pre-flight + PR-B (tuxlink wiring: submodule + build.rs + tauri.conf + CI + docs) | ⬜ Not started | — | Blocked until Phase 2 PR-A merged |
 | 4 — Operator merges PR-B; tuxlink-84i closes | ⬜ Not started | — | Blocked until Phase 3 complete |
 
@@ -142,11 +142,15 @@ Files this plan does NOT touch:
 
 ## Phase 1 — Operator GH ops
 
-**Execution Status:** ⬜ NOT STARTED
+**Execution Status:** ✅ SHIPPED on 2026-05-18 (no commit; GH-side actions only)
 
-> **LDC banner flip at claim time** (per Living Document Contract bullet 1): when the operator (or coordinating agent) begins Phase 1, flip this banner to `🚧 IN PROGRESS — claimed <YYYY-MM-DD HH:MMZ>` (no branch name; Phase 1 is GH-side, no git branch involved). Update the top-of-plan Execution Status table to match. Banner flips back to ✅ at Phase 1 completion check.
+- Task 1.1: Operator (Cameron) created fork `cameronzucker/tuxlink-pat` via `gh repo fork la5nta/pat --fork-name tuxlink-pat --clone=false`. Verified: `full_name=cameronzucker/tuxlink-pat`, `parent=la5nta/pat`, `default_branch=master`.
+- Task 1.2: Cameron delegated branch-protection configuration to agent (`oak-fjord-swallow`). Agent ran `gh api repos/cameronzucker/tuxlink-pat/branches/master/protection -X PUT` with the spec'd payload. Verified: `allow_force_pushes=false`, `allow_deletions=false`, `required_pull_request_reviews=true`, `enforce_admins=false`. `delete_branch_on_merge=false` was already the fork's default; no PATCH needed.
+- Task 1.3: Agent enabled Issues via `gh api repos/cameronzucker/tuxlink-pat -X PATCH -f has_issues=true`. Verified: `has_issues=true`.
 
-This phase is **operator-action-only**. No agent commits. The agent's role is to provide the exact commands the operator runs and to verify completion via pre-flight gates in Phase 2.
+> **Original LDC banner-flip instruction** (preserved for reference): when the operator begins Phase 1, flip banner ⬜ → 🚧 at claim time + → ✅ at completion. In practice Phase 1 was operator-action-then-agent-delegation; the 🚧 → ✅ transition happened in one session. The Execution Status table reflects the final shipped state.
+
+This phase WAS **operator-action-only**, with one operator-delegated step (Task 1.2 branch protection) handled by the agent per Cameron's explicit "configure branch protection however you see appropriate for main" delegation 2026-05-18.
 
 ### Task 1.1: Operator creates `cameronzucker/tuxlink-pat` fork
 
