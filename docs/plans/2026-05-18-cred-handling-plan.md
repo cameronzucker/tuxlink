@@ -90,7 +90,7 @@ notes and commit messages.
 | Phase | Status | Ship SHA(s) | Notes |
 |---|---|---|---|
 | 1 — Setup: tuxlink-pat worktree + branch (Task 1.3 go.mod collapsed into Phase 2 per Go-tidy semantics) | ✅ Shipped | (state-only; no commit; tasks 1.1 + 1.2 only) | Branch `bd-tuxlink-mib/mib-cred-keyring` on tuxlink-pat (off LOCAL master post upstream-sync); upstream remote added. Per Discovery below, Task 1.3 (dep addition) collapsed into Phase 2 Task 2.1 |
-| 2 — credstore package (NEW; pure TDD) | ✅ Shipped | tuxlink-pat 165e411, 431ee16, 63c7fc9 on bd-tuxlink-mib/mib-cred-keyring | 3 commits by `basin-basalt-sycamore` 2026-05-18; 11 top-level tests + 9 NormalizeAccount subtests = 20 cases passing; zalando/go-keyring v0.2.8 added to go.mod/go.sum via Cluster B's importing-code commit (collapsed-Task-1.3 pattern confirmed working) |
+| 2 — credstore package (NEW; pure TDD) | ✅ Shipped | tuxlink-pat 165e411, 431ee16, 63c7fc9 + dd09e37 (post-Codex fix) on bd-tuxlink-mib/mib-cred-keyring | 4 commits; 22 tests passing (was 20; +2 for ServiceUnknown classification); zalando/go-keyring v0.2.8 added; parent Codex round caught classifyErr gap on `org.freedesktop.secrets not provided by any .service files` shape — fix in dd09e37 |
 | 3 — cfg/config.go modifications | ⬜ Not started | — | Drop SecureLoginPassword; AuxAddr keep MarshalJSON, drop Password field |
 | 4 — api/api.go RedactedPassword removal | ⬜ Not started | — | Verify no other consumers via grep before delete |
 | 5 — app/exchange.go callback + app/app.go cleanup | ⬜ Not started | — | Largest behavioral change; SMTP-proto skip + callback rewrite |
