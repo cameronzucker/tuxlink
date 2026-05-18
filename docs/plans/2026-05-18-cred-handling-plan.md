@@ -85,7 +85,7 @@ notes and commit messages.
 
 ## Execution Status
 
-**Overall:** 5/10 phases shipped; Phase 6 in queue (API handlers + cli/account.go). Intermediate broken-build state on tuxlink-pat (expected per cred-refactor sequencing; full module will not build until Phase 7 completes).
+**Overall:** 6/10 phases shipped; Phase 7 in queue (cli/init.go full handling). Intermediate broken-build state on tuxlink-pat (expected per cred-refactor sequencing; full module will not build until Phase 7 completes).
 
 | Phase | Status | Ship SHA(s) | Notes |
 |---|---|---|---|
@@ -94,7 +94,7 @@ notes and commit messages.
 | 3 — cfg/config.go modifications | ✅ Shipped | tuxlink-pat d89888d on bd-tuxlink-mib/mib-cred-keyring | SecureLoginPassword field deleted; AuxAddr.Password dropped; MarshalJSON/UnmarshalJSON preserved + strip colon-suffix; 1 regression test passing |
 | 4 — api/api.go RedactedPassword removal | ✅ Shipped | tuxlink-pat 7757f63 on bd-tuxlink-mib/mib-cred-keyring | RedactedPassword const + 2 if-blocks deleted; api/ compiles |
 | 5 — app/exchange.go callback + app/app.go cleanup | ✅ Shipped | tuxlink-pat aafec62 on bd-tuxlink-mib/mib-cred-keyring | 1 commit; SetSecureLoginHandleFunc rewritten to delegate to extracted `secureLoginLookup` (testable); SMTP-proto skip + empty-addr skip + normalize-then-credstore.Get + log-and-fall-through on miss/locked/unavailable; NO AuxAddr-fallback-to-primary per §4.7; 7 tests passing including the §4.7 regression test (`AuxMiss_PromptHub_NoFallbackToPrimary`); app/app.go lines 230-233 deleted (in-memory clear obsolete since field doesn't exist). See Deviations for the package-test-run workaround used to get tests to run under the still-broken-build state. |
-| 6 — API handlers + cli/account.go (credstore-explicit-handling) | ⬜ Not started | — | api/winlink_account.go + app/winlink_api.go + cli/account.go |
+| 6 — API handlers + cli/account.go (credstore-explicit-handling) | ✅ Shipped | tuxlink-pat 86f0e4d on bd-tuxlink-mib/mib-cred-keyring | 3 call sites updated with explicit (found, err) handling; SIGINT branch preserved in cli/account.go (R2 F3); app/ + api/ now build clean; only cli/init.go remains (Phase 7 target) |
 | 7 — cli/init.go both password paths redirected | ⬜ Not started | — | Existing-account + new-account flows both → brief redirect |
 | 8 — **DELETE Pat web UI entirely** (`rm -rf web/` + api/api.go cleanup) | ⬜ Not started | — | Post-plan-review scope amendment per spec `046f4b8` + `project_fork_enables_aggressive_deletion` memory; eliminates npm/webpack/Docker chain |
 | 9 — README + CI integration test + PR-A open | ⬜ Not started | — | tuxlink-pat README "Credentials" section + .github/workflows/ + open PR-A |
@@ -1517,7 +1517,7 @@ EOF
 
 ## Phase 6 — API handlers + cli/account.go
 
-**Execution Status:** ⬜ Not started
+**Execution Status:** ✅ Shipped — tuxlink-pat 86f0e4d on bd-tuxlink-mib/mib-cred-keyring. All 3 call sites converted to explicit `(pw, found, err)` handling; SIGINT-handler `select` branch preserved in cli/account.go (R2 F3); app/ + api/ build cleanly; cli/init.go remains the lone Phase-7-target file.
 
 This phase updates the three remaining call sites that referenced `cfg.SecureLoginPassword`: `api/winlink_account.go`, `app/winlink_api.go`, and `cli/account.go`. Each gets explicit `(pw, found, err)` handling per spec §3.5 — NEVER the discard pattern `_, _, _ = credstore.Get(...)` (R4 P2 caught the prior spec's lapse).
 
