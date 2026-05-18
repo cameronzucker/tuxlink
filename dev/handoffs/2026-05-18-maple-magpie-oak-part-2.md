@@ -205,3 +205,64 @@ bd dep edges added:
 - **PR-63 (`tuxlink-cyy`) is safe to merge** anytime; small docs PR; no CI risk.
 - **PR-64 (wizard plan) should NOT be merged as-is.** Apply the plan-review revision first (which incorporates findings + adjusts for tuxlink-4mt + tuxlink-756 as external dependencies), THEN merge.
 - **Memory `feedback_no_carveout_on_cross_provider_adrev` is the load-bearing discipline here.** Don't shortcut the plan-review-cycle even when it feels like extra work. It caught real, production-breaking issues this session.
+
+---
+
+## ADDENDUM (post-handoff-commit): Codex R4 plan-review completed
+
+Codex R4 finished after the main handoff was committed. The full punch-list lives at `dev/adversarial/2026-05-18-wizard-plan-review-R4-cross-provider-codex.md` in this worktree (3933 lines, sandbox-tee'd capture). R4 found **3 P0s + 4 P1s + 4 P2s + 3 P3s** — including 5+ that the 3 Claude rounds missed. Highlights:
+
+### Codex R4 P0s (read these before doing ANYTHING with the wizard plan revision)
+
+1. **Keyring crate dependency + features not pinned.** `cargo add keyring` is insufficient: `keyring 4.x` is sample-oriented; `3.6.x` needs explicit feature flags (`secret-service`, `apple-keychain`, `wincred`). Plan must include compile-proven `Cargo.toml` snippet AND import paths AND init-call BEFORE Phase 1.4 ships. Affects `tuxlink-4mt` indirectly (Task 2 doesn't use keyring but the wizard plan's keyring usage depends on this getting pinned correctly).
+2. **Phase 0 verification too loose.** Grep-for-tokens is unreliable. Phase 0 should assert exact API existence (`grep -nE "fn write_config_atomic" src-tauri/src/config.rs`) + ancestry/merge verification + check `external/tuxlink-pat` submodule SHA matches PR-A merge commit + add a Task 3 PatProcess test proving Pat config is rendered before spawn. Consistent with R1 P0-1 finding (config gap).
+3. **`TUXLINK_TEST_SEND_MOCK=1` fails OPEN — Part 97 safety violation.** My plan's safety gate is opt-in (absence routes to LIVE). R4 recommends INVERTING: mock should be DEFAULT in dev/agent/CI; LIVE should require a positive `TUXLINK_TEST_SEND_LIVE=1` env var AND per-invocation operator consent inside the Rust command before `pat_client.send()`. **This is a sharper Part-97-aligned design than my plan's**. Plan revision must adopt the inverted model. New tests required: env-absence-does-not-transmit; mock-mode-never-calls-pat-client; live-mode-aborts-without-consent.
+
+### Codex R4 P1s the Claude rounds missed
+
+- **Tauri capability JSON shape likely invalid.** My `wizard:allow-get-wizard-completed` permission naming uses plugin-prefix syntax; app-defined commands use a different naming scheme + need `src-tauri/permissions/*.toml` entries + `build.rs` `AppManifest::commands(...)` to be capability-gated for real. The `wizard.json` capability as-drafted might fail schema/build validation OR give a FALSE sense of scoping (commands still callable without capability check).
+- **Snapshot rollback swallows non-NoEntry errors.** `let prior = entry.get_password().ok();` treats every read failure as "no prior credential" — including locked store, backend failure, bad encoding. Should only map `NoEntry → None`; any other error aborts before `set_password` mutates anything.
+- **Frontend TDD cannot start.** `package.json` likely has no `vitest`, `@testing-library/react`, `@testing-library/jest-dom`, or `jsdom`. Plan needs a Phase 1.0 test-harness installation task BEFORE Phase 1.1.
+- **(R4 also confirms R3 P0-1: orphan-keyring recovery has no plan task — cross-platform enumeration is hard.)**
+
+### Codex R4 P2s worth folding in
+
+- TDD pattern degrades in later phases (sketched bodies in Phases 4/5/6 should be tightened to fail→impl→pass→commit).
+- Phase 5 needs a testable boundary around PatClient (currently concrete blocking client; introduce a trait or DI for unit-testability).
+- CI recipe should use `dbus-run-session` not `dbus-launch` (the cred-handling Phase 9 recipe uses `dbus-run-session` for reliable session-bus env propagation).
+- `wizard_run_test_send` is async Tauri command but `pat_client` uses `reqwest::blocking`. Holding the wizard mutex while doing blocking HTTP + 30s poll ties up runtime threads. Either convert to async or wrap in `tauri::async_runtime::spawn_blocking`.
+
+### Updated work order (incorporating R4 P0-3 specifically)
+
+The next-session plan revision MUST flip the test-send safety gate. New shape:
+```
+- LIVE transmission: requires TUXLINK_TEST_SEND_LIVE=1 env var SET
+  + per-invocation consent dialog inside the Rust command (mirroring
+  consent_gate.rs from live_cms_smoke binary)
+- MOCK transmission: DEFAULT when LIVE env var is unset (no opt-in
+  needed; subagents + CI just work mocked without thinking about it)
+- LIVE-mode tests assert: consent gate fires before pat_client.send();
+  if not satisfied, command errors with TestSendOutcome::Failed
+  cause="consent withheld" — NO transmission occurs.
+```
+
+This is functionally equivalent to the `live_cms_smoke` binary's existing consent gate (`consent_gate.rs` per Task 6); the wizard's `wizard_run_test_send` should reuse the same gate or a derivative.
+
+### Net plan-review-cycle status
+
+| Round | Findings | P0 |
+|---|---|---|
+| R1 friction (Claude) | 15 | 3 |
+| R2 contract (Claude) | 12 | 3 |
+| R3 coverage (Claude) | 15 | 5 |
+| R4 cross-provider (Codex) | 14 | 3 |
+| **Total** | **56** | **14** |
+
+Of the 14 P0s, the most critical for next-session sequencing:
+- R1 P0-1/P0-3 + R4 P0-2 → already captured in tuxlink-4mt (Task 2 config impl bd issue)
+- R4 P0-3 (inverted safety gate) → critical plan-revision content
+- R3 P0-1 + R4 P1 (orphan-keyring) → plan-revision new phase or new bd issue
+- R3 P0-4 (RADIO-1 consent in wizard_run_test_send) → SAME as R4 P0-3 from a different angle
+- R4 P1 (Tauri capability ACL shape) → plan-revision Task 3.4 content
+
+The 5 follow-up bd issues from wizard spec §7.3 + the 5 new findings from plan-review = roughly 10 distinct work items beyond the 2 HARD blockers (tuxlink-4mt + tuxlink-756). Next session has substantial work; the wizard impl is at least 3-4 sessions away from starting (Task 2 config impl + Task 3 PatProcess + plan revision + then start subagent-driven-development).
