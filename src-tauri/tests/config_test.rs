@@ -1,56 +1,71 @@
-use tuxlink_lib::config::{Config, CONFIG_SCHEMA_VERSION};
+// Tests for tuxlink-4mt — see docs/superpowers/specs/2026-05-18-task-2-config-impl-design.md §6
+// for the full 24-test matrix and the design rationale.
+
+use tuxlink_lib::config::{validate_identity, validate_identity_describe};
+
+// ============================================================================
+// Phase 1 — validate_identity + describe-helper (loose-validator rules)
+// ============================================================================
 
 #[test]
-fn test_deserialize_minimal_valid_config() {
-    let json = r#"{
-        "schema_version": 1,
-        "callsign": "W4PHS",
-        "grid_square": "EM75xx",
-        "pat_mbo_address": "W4PHS@winlink.org",
-        "winlink_password_present": true,
-        "wizard_completed": true
-    }"#;
-    let config: Config = serde_json::from_str(json).expect("must deserialize");
-    assert_eq!(config.schema_version, CONFIG_SCHEMA_VERSION);
-    assert_eq!(config.callsign, "W4PHS");
-    assert_eq!(config.grid_square, "EM75xx");
-    assert_eq!(config.pat_mbo_address, "W4PHS@winlink.org");
-    assert!(config.winlink_password_present);
-    assert!(config.wizard_completed);
+fn test_validate_identity_loose_rules_accept() {
+    assert!(validate_identity("W4PHS"));
+    assert!(validate_identity("W4PHS-7"));
+    assert!(validate_identity("EOC-1"));
+    assert!(validate_identity("BAOFENG-FM-01"));
+    assert!(validate_identity("LabBench-3"));
+    assert!(validate_identity("W"));                    // 1 char OK
+    assert!(validate_identity(&"X".repeat(32)));        // exactly 32 chars OK
 }
 
 #[test]
-fn test_reject_wrong_schema_version() {
-    let json = r#"{
-        "schema_version": 99,
-        "callsign": "W4PHS",
-        "grid_square": "EM75xx",
-        "pat_mbo_address": "W4PHS@winlink.org",
-        "winlink_password_present": true,
-        "wizard_completed": true
-    }"#;
-    let result: Result<Config, _> = serde_json::from_str(json);
-    assert!(result.is_err(), "unexpected schema version must fail to deserialize");
+fn test_validate_identity_loose_rules_reject_each_class() {
+    assert!(!validate_identity(""), "empty rejected");
+    assert!(!validate_identity("W4 PHS"), "internal whitespace rejected");
+    assert!(!validate_identity(&"X".repeat(33)), ">32 chars rejected");
+    assert!(!validate_identity("W4PHS\x07"), "non-ASCII-printable (BEL) rejected");
+    assert!(!validate_identity("W4PHS\x7F"), "DEL rejected");
+    assert!(!validate_identity("Ünïcödë"), "non-ASCII rejected");
 }
 
 #[test]
-fn test_callsign_must_be_nonempty() {
-    let json = r#"{
-        "schema_version": 1,
-        "callsign": "",
-        "grid_square": "EM75xx",
-        "pat_mbo_address": "W4PHS@winlink.org",
-        "winlink_password_present": true,
-        "wizard_completed": true
-    }"#;
-    let result: Result<Config, _> = serde_json::from_str(json);
-    assert!(result.is_err(), "empty callsign must fail validation");
+fn test_validate_identity_describe_returns_first_rule_violated() {
+    // Rule order per spec §3.2: empty → ASCII → whitespace → length
+    assert_eq!(validate_identity_describe(""), Some("must not be empty"));
+    assert_eq!(validate_identity_describe("Ünï"), Some("must be ASCII-printable"));
+    assert_eq!(validate_identity_describe("W4 PHS"), Some("must not contain whitespace"));
+    assert_eq!(validate_identity_describe(&"X".repeat(33)), Some("must be ≤32 chars"));
 }
 
 #[test]
-fn test_config_path_uses_xdg_config_home_when_set() {
-    std::env::set_var("XDG_CONFIG_HOME", "/tmp/tuxlink-test-xdg");
-    let path = tuxlink_lib::config::config_path();
-    assert_eq!(path, std::path::PathBuf::from("/tmp/tuxlink-test-xdg/tuxlink/config.json"));
-    std::env::remove_var("XDG_CONFIG_HOME");
+fn test_validate_identity_describe_precedence_multi_violation() {
+    // Per plan-review R2 P2-3: test PRECEDENCE — inputs violating multiple rules
+    // should produce the FIRST-rule error. R2 P1-3's actionable-error-first claim
+    // is the load-bearing semantic; regression that swapped rule order (e.g., length
+    // first) would pass single-violation tests but fail these.
+    // 40-char string containing whitespace → whitespace fires before length.
+    let ws_long: String = std::iter::repeat("X ").take(20).collect();
+    assert_eq!(validate_identity_describe(&ws_long), Some("must not contain whitespace"),
+        "whitespace check must fire before length check");
+    // 40-char non-ASCII string → ASCII fires before length.
+    let non_ascii_long: String = std::iter::repeat("Ü").take(40).collect();
+    assert_eq!(validate_identity_describe(&non_ascii_long), Some("must be ASCII-printable"),
+        "ASCII check must fire before length check");
+}
+
+#[test]
+fn test_validate_identity_describe_returns_none_on_accept() {
+    assert_eq!(validate_identity_describe("W4PHS"), None);
+    assert_eq!(validate_identity_describe("EOC-1"), None);
+    assert_eq!(validate_identity_describe(&"X".repeat(32)), None);
+}
+
+#[test]
+fn test_validate_identity_consistency_with_describe() {
+    // validate_identity == validate_identity_describe(s).is_none()
+    for s in &["W4PHS", "EOC-1", "", "W4 PHS", "Ünï", &"X".repeat(33)] {
+        let by_bool = validate_identity(s);
+        let by_describe = validate_identity_describe(s).is_none();
+        assert_eq!(by_bool, by_describe, "consistency violation for input {:?}", s);
+    }
 }

@@ -1,44 +1,30 @@
-use serde::{Deserialize, Deserializer, Serialize};
+//! Tuxlink configuration types + validators + atomic-write surface.
+//!
+//! Spec: docs/superpowers/specs/2026-05-18-task-2-config-impl-design.md
+//! bd issue: tuxlink-4mt
 
-pub const CONFIG_SCHEMA_VERSION: u32 = 1;
+// Phase 1: validate_identity + describe-helper.
+// Phase 2 will add the nested Config struct + sub-structs + helpers.
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Config {
-    #[serde(deserialize_with = "deserialize_schema_version")]
-    pub schema_version: u32,
-    #[serde(deserialize_with = "deserialize_nonempty_string")]
-    pub callsign: String,
-    #[serde(deserialize_with = "deserialize_nonempty_string")]
-    pub grid_square: String,
-    #[serde(deserialize_with = "deserialize_nonempty_string")]
-    pub pat_mbo_address: String,
-    pub winlink_password_present: bool,
-    pub wizard_completed: bool,
+/// Loose identity validator. Matches Express's `hs30.htm` "checked for basic syntax" semantics:
+/// non-empty + ASCII-printable + no internal whitespace + ≤32 chars (in that order so the most
+/// actionable error fires first). The CMS is authoritative for actual callsign / tactical-address
+/// acceptance.
+///
+/// Returns `true` if `s` passes ALL rules; `false` otherwise. Use [`validate_identity_describe`]
+/// to obtain the first-violated-rule slug for error synthesis.
+pub fn validate_identity(s: &str) -> bool {
+    validate_identity_describe(s).is_none()
 }
 
-fn deserialize_schema_version<'de, D>(d: D) -> Result<u32, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let v = u32::deserialize(d)?;
-    if v != CONFIG_SCHEMA_VERSION {
-        return Err(serde::de::Error::custom(format!(
-            "unsupported config schema_version {} (expected {})",
-            v, CONFIG_SCHEMA_VERSION
-        )));
-    }
-    Ok(v)
-}
-
-fn deserialize_nonempty_string<'de, D>(d: D) -> Result<String, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let s = String::deserialize(d)?;
-    if s.is_empty() {
-        return Err(serde::de::Error::custom("field must not be empty"));
-    }
-    Ok(s)
+/// Returns `Some(static-rule-slug)` for the FIRST rule violated, or `None` if input passes all rules.
+/// Rule order: empty → ASCII → whitespace → length (most-actionable first per spec adrev R2 P1-3 + R4 P1-2).
+pub fn validate_identity_describe(s: &str) -> Option<&'static str> {
+    if s.is_empty() { return Some("must not be empty"); }
+    if s.chars().any(|c| !c.is_ascii() || c.is_ascii_control()) { return Some("must be ASCII-printable"); }
+    if s.chars().any(char::is_whitespace) { return Some("must not contain whitespace"); }
+    if s.chars().count() > 32 { return Some("must be ≤32 chars"); }
+    None
 }
 
 /// Resolve the config file path. Honors XDG_CONFIG_HOME, falls back to
