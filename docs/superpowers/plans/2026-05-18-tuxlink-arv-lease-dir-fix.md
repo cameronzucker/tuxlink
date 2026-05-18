@@ -25,9 +25,10 @@
 
 **Files:**
 - Create: `.claude/scripts/tests/__init__.py` (empty, marks the dir as a package)
-- Create: `.claude/scripts/tests/.gitkeep` (NOT needed if `__init__.py` exists; skip)
 
 **Background:** The project's existing test infrastructure is Rust (`src-tauri/tests/`). No Python test runner exists yet. This task establishes the minimal home for safety-stack-script Python tests; future test files in this directory will be picked up by `python3 -m unittest discover`.
+
+**Pre-existing state (per plan review R2 finding #1, 2026-05-18 willow-raven-arroyo diagnostic phase):** A partial test file ALREADY exists at `.claude/scripts/tests/test_get_tuxlink_sessions.py` (untracked, ~85 lines, contains a stub `LeaseDirResolution` + 4 `ParseIsoUtc` tests). The 4 `ParseIsoUtc` tests are CUT per spec §2 YAGNI decision (hypothesis #1 was rejected during diagnosis — defensive locking of rejected hypotheses is noise). **Task 2 below will OVERWRITE this file with the spec-correct content; this is intentional.** If at Task 1 Step 2 you see `ImportError` instead of "Ran 0 tests", that's the pre-existing file — proceed to Task 2. If you want to verify before overwriting: `cat .claude/scripts/tests/test_get_tuxlink_sessions.py` and confirm the imports + class names look like stale prior-art.
 
 - [ ] **Step 1: Create the test directory and empty package marker**
 
@@ -141,6 +142,10 @@ git add .claude/scripts/tests/test_get_tuxlink_sessions.py
 
 **Background:** This is Codex round 5's mutation-killer. It exercises `main()` end-to-end with a controlled lease in a temp git repo + linked worktree. Kills two mutants the unit test misses: (a) helper added but `main()` not wired; (b) helper returns hardcoded `.git/session-leases/` (coincidentally correct from main checkout, broken from linked worktree where `.git` is a file).
 
+**`core.hooksPath` defense (per plan review R2 finding #3, empirically verified):** This project has a `commit-msg` hook that requires `Agent: <moniker>` trailers; bare `git commit --allow-empty -m "init"` in a temp repo will be BLOCKED by the hook. All `git` invocations in setUp MUST pass `-c core.hooksPath=/dev/null` to bypass the project's hooks (the temp repo is throwaway — hooks would be inappropriate). This is non-destructive; only the temp repo is affected.
+
+**`resolve_repo()` env-precedence dependency (per plan review R2 finding #4):** The test sets `CLAUDE_PROJECT_DIR=str(cwd)` via `patch.dict(os.environ, ...)` expecting `main()` to operate on the temp repo. This works because `resolve_repo()` reads `CLAUDE_PROJECT_DIR` first (falling back to script-relative). The test asserts `cwd.is_dir()` in `_run_main_from` to catch a typo'd path before silent fallback to the REAL tuxlink lease dir.
+
 - [ ] **Step 1: Append the MainEndToEnd test to test_get_tuxlink_sessions.py**
 
 Append to `.claude/scripts/tests/test_get_tuxlink_sessions.py` (after the `LeaseDirResolution` class):
@@ -180,16 +185,21 @@ class MainEndToEnd(unittest.TestCase):
             "GIT_AUTHOR_NAME": "test", "GIT_AUTHOR_EMAIL": "t@t",
             "GIT_COMMITTER_NAME": "test", "GIT_COMMITTER_EMAIL": "t@t",
         }
+        # -c core.hooksPath=/dev/null bypasses the project's commit-msg hook
+        # (which requires Agent: trailers) — temp repo doesn't need it.
         subprocess.check_call(
-            ["git", "init", "-b", "main", str(self.main_repo)],
+            ["git", "-c", "core.hooksPath=/dev/null",
+             "init", "-b", "main", str(self.main_repo)],
             stderr=subprocess.DEVNULL,
         )
         subprocess.check_call(
-            ["git", "-C", str(self.main_repo), "commit", "--allow-empty", "-m", "init"],
+            ["git", "-c", "core.hooksPath=/dev/null",
+             "-C", str(self.main_repo), "commit", "--allow-empty", "-m", "init"],
             stderr=subprocess.DEVNULL, env=env,
         )
         subprocess.check_call(
-            ["git", "-C", str(self.main_repo), "worktree", "add",
+            ["git", "-c", "core.hooksPath=/dev/null",
+             "-C", str(self.main_repo), "worktree", "add",
              str(self.wt_path), "-b", "wt-branch"],
             stderr=subprocess.DEVNULL,
         )
@@ -214,6 +224,7 @@ class MainEndToEnd(unittest.TestCase):
 
     def _run_main_from(self, cwd: Path) -> str:
         """Run main() with CLAUDE_PROJECT_DIR=cwd, capture stdout."""
+        assert cwd.is_dir(), f"test setup failed: cwd {cwd} is not a directory"
         captured = StringIO()
         with patch.dict(os.environ, {"CLAUDE_PROJECT_DIR": str(cwd)}):
             with patch("sys.stdout", captured):
@@ -254,44 +265,54 @@ git add .claude/scripts/tests/test_get_tuxlink_sessions.py
 
 ---
 
-### Task 4: Add GlobIgnoresJsonl regression test (immediately GREEN)
+### Task 4: Extend MainEndToEnd to cover the .json/.jsonl glob distinction
 
 **Files:**
-- Modify: `.claude/scripts/tests/test_get_tuxlink_sessions.py` (append a new TestCase)
+- Modify: `.claude/scripts/tests/test_get_tuxlink_sessions.py` (extend `MainEndToEnd` from Task 3)
 
-**Background:** Defensive lockdown for hypothesis #3 from the bd issue (file-extension/glob mismatch). The current code already uses `lease_dir.glob("*.json")` which excludes `denied-attempts.jsonl`. This test locks down the pattern so a future refactor to `*.json*` (which WOULD pick up `.jsonl`) gets caught. This test is RED-skipped (immediately GREEN once the import error in Task 2 + 3 is resolved); the value is regression protection, not test-driven implementation.
+**Background (revised per plan review R2 finding #2):** Previously this task added a separate `GlobIgnoresJsonl` class that called `tmp.glob("*.json")` directly — that was testing CPython's glob library, NOT the script. False safety. Per the spec §3.2 intent ("runs the script's main listing pass, asserts the `.jsonl` is not parsed-or-silently-skipped"), the test must actually exercise `main()`. The cleanest implementation: piggyback on `MainEndToEnd`'s temp-repo setup by dropping a `denied-attempts.jsonl` in the lease dir during setUp + adding one test method that verifies main() processes the .json lease but doesn't choke on the .jsonl.
 
-- [ ] **Step 1: Append the GlobIgnoresJsonl test**
+- [ ] **Step 1: Extend `MainEndToEnd.setUp` to also drop a `denied-attempts.jsonl`**
 
-Append to `.claude/scripts/tests/test_get_tuxlink_sessions.py`:
+In `.claude/scripts/tests/test_get_tuxlink_sessions.py`, find the `MainEndToEnd.setUp` from Task 3. After the existing `lease_dir.mkdir()` and `.write_text(json.dumps(...))` for the .json lease, add:
 
 ```python
-class GlobIgnoresJsonl(unittest.TestCase):
-    """Lockdown for hypothesis #3 from bd issue tuxlink-arv.
-
-    The script uses `lease_dir.glob('*.json')` which correctly EXCLUDES
-    `denied-attempts.jsonl` written to the same dir by the hook. This test
-    pins the behavior so a future refactor to `*.json*` (which would
-    coincidentally match `.jsonl`) is caught by CI.
-    """
-
-    def test_script_glob_pattern_excludes_jsonl_files(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            tmp = Path(tmpdir)
-            (tmp / "lease-aaa.json").write_text("{}")
-            (tmp / "denied-attempts.jsonl").write_text('{"event":"denied"}\n')
-            (tmp / "lease-bbb.json").write_text("{}")
-            files = sorted(p.name for p in tmp.glob("*.json"))
-            self.assertEqual(
-                files, ["lease-aaa.json", "lease-bbb.json"],
-                "glob('*.json') must NOT match denied-attempts.jsonl. "
-                "If this test fails, the script's glob pattern has been "
-                "broadened — verify the lease iteration doesn't try to "
-                "parse the .jsonl file as JSON.",
-            )
+        # Per plan review R2 finding #2 / spec §3.2: also drop a denied-attempts.jsonl
+        # to verify main()'s glob excludes .jsonl (a mutant glob like "*.json*" would
+        # pick this up and silently skip-or-crash on the not-actually-a-lease content).
+        (lease_dir / "denied-attempts.jsonl").write_text(
+            '{"timestamp":"2026-05-18T00:00:00Z","event":"denied","not_a_lease":true}\n'
+        )
 ```
 
-- [ ] **Step 2: Stage**
+- [ ] **Step 2: Add a test method `test_main_skips_jsonl_files_in_lease_dir`**
+
+In the `MainEndToEnd` class, after `test_main_lists_lease_from_linked_worktree`, add:
+
+```python
+    def test_main_skips_jsonl_files_in_lease_dir(self):
+        """A mutant glob like '*.json*' would pick up denied-attempts.jsonl.
+        Verify main() processes only the .json lease (one moniker, no errors
+        from the .jsonl having a different shape). Per plan review R2 + spec §3.2.
+        """
+        output = self._run_main_from(self.main_repo)
+        # The .json lease's moniker appears (lease was processed).
+        self.assertIn(self.moniker, output)
+        # The .jsonl's marker does NOT appear (it was ignored, not parsed-and-skipped).
+        # `not_a_lease` is a unique substring from the .jsonl content that would
+        # NEVER appear in main()'s table output if the file was correctly skipped.
+        self.assertNotIn("not_a_lease", output)
+```
+
+- [ ] **Step 3: Run all tests (4 in MainEndToEnd + 1 in LeaseDirResolution = 5 total)**
+
+```bash
+python3 -m unittest discover .claude/scripts/tests/ -v
+```
+
+Expected: 5 tests pass (assuming Task 5's impl is done; if not, tests still RED at import). If GlobIgnoresJsonl class is anywhere in your test file from earlier iterations, REMOVE it (this task supersedes that approach).
+
+- [ ] **Step 4: Stage**
 
 ```bash
 git add .claude/scripts/tests/test_get_tuxlink_sessions.py
@@ -347,7 +368,7 @@ from pathlib import Path
 
 - [ ] **Step 3: Add the `resolve_lease_dir` function below `resolve_repo`**
 
-After the existing `def resolve_repo() -> Path:` function (around line 30), insert:
+Locate the existing `def resolve_repo() -> Path:` function (symbolic anchor; line numbers will drift after Steps 1-2). Insert the new function AFTER `resolve_repo`'s closing brace and BEFORE `def parse_iso_utc`:
 
 ```python
 
@@ -392,13 +413,7 @@ def resolve_lease_dir(repo: Path) -> Path:
 
 - [ ] **Step 4: Wire `main()` to use `resolve_lease_dir`**
 
-Find this line in `main()` (currently around line 55):
-
-```python
-    lease_dir = repo / ".claude" / "session-leases"
-```
-
-Replace with:
+In `main()`, find the EXACT line `lease_dir = repo / ".claude" / "session-leases"` (use the symbolic match, not a line number — line numbers will have drifted after Steps 1-3). Replace with:
 
 ```python
     lease_dir = resolve_lease_dir(repo)
@@ -462,6 +477,8 @@ cd /tmp && CLAUDE_PROJECT_DIR=/tmp python3 /home/administrator/Code/tuxlink/work
 ```
 
 Expected: stderr warning about `git rev-parse --git-common-dir failed`, followed by stdout `"No active tuxlink sessions (lease directory does not exist yet)."`. No crash.
+
+**Note (per plan review R2 finding #6):** This invocation runs under Claude Code's harness, which means the `PreToolUse` hook `block-main-checkout-race.sh` will fire and write a fresh heartbeat lease to `<git-common-dir>/session-leases/` for the current session. That's benign — the hook is doing its normal job — but unexpected if you see new lease files appear. Don't try to clean them up; they'll TTL out per HOOK-1.
 
 Then `cd` back to the worktree.
 
