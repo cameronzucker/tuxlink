@@ -3,6 +3,8 @@
 Dark-mode HTML mockups of the v0.0.1 (and forward-looking v0.5+) interface, generated during the **2026-05-17 UX brainstorm session** (agent `plover-pine-finch`, bd issue `tuxlink-x5p`, branch `bd-tuxlink-x5p/ux-brainstorm`) per the kestrel-handoff gate before any UI implementation begins on Tasks 9-16.
 
 > **Status:** These are pre-implementation design artifacts. The canonical spec (forthcoming as `docs/design/v0.0.1-ux-mockups.md`) carries the design DECISIONS; these HTML files carry the visual demonstrations that informed them. If the spec and a mockup disagree, the spec wins.
+>
+> **Window chrome:** GNOME/Adwaita-styled (subdued `−` `□` `×` controls on the right, flat headerbar) — reflects tuxlink's actual end state as a Tauri app shipping on Linux. The earlier 2026-05-17 chrome borrowed macOS traffic-light controls inadvertently; refactored 2026-05-18 to match the target environment. Substantive design references to Mail.app (and other macOS / cross-platform clients like Geary, Evolution, Thunderbird) remain in copy where they identify a *polish bar* worth clearing — those are comparators, not implementation targets.
 
 Each file is fully self-contained — no external CSS, no JS dependencies, no images. Open any in a browser to view; screenshot for embedding in slides / chat / email.
 

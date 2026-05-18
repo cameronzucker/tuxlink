@@ -29,8 +29,9 @@
   --modem-trace:  #5dd6a0;
   --modem-dot:    #6df0a6;
   --modem-axis:   #5a8a76;
-  --mono:         "JetBrains Mono", "SF Mono", "Fira Code", Menlo, Consolas, monospace;
-  --sans:         -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif;
+  --mono:         "JetBrains Mono", "Fira Code", "Source Code Pro", "Ubuntu Mono", Consolas, monospace;
+  --sans:         "Inter", "Cantarell", "Ubuntu", "Segoe UI", system-ui, sans-serif;
+  --gnome-red:    #c01c28;
 }
 * { box-sizing: border-box; }
 html, body {
@@ -93,10 +94,11 @@ html, body {
 }
 .titlebar {
   display: flex; align-items: center;
-  height: 34px;
-  background: linear-gradient(180deg, #1a2229 0%, #131a20 100%);
+  height: 38px;
+  background: #242a31;
   border-bottom: 1px solid var(--border);
-  padding: 0 10px; user-select: none;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.03);
+  padding: 0 6px 0 12px; user-select: none;
 }
 .app-icon {
   width: 18px; height: 18px; border-radius: 4px;
@@ -106,11 +108,21 @@ html, body {
 }
 .app-name { font-size: 13px; font-weight: 600; }
 .app-subtitle { font-size: 12px; color: var(--text-dim); margin-left: 8px; }
-.controls { margin-left: auto; display: flex; gap: 8px; }
-.ctrl { width: 14px; height: 14px; border-radius: 50%; }
-.ctrl.min { background: #ffbd2e; }
-.ctrl.max { background: #28c940; }
-.ctrl.close { background: #ff5f56; }
+.controls { margin-left: auto; display: flex; gap: 6px; padding-left: 12px; }
+.ctrl {
+  width: 24px; height: 24px; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--text); font-family: var(--sans);
+  font-size: 13px; line-height: 1; font-weight: 500;
+  cursor: default; transition: background 0.12s;
+}
+.ctrl:hover { background: rgba(255, 255, 255, 0.13); }
+.ctrl.close:hover { background: var(--gnome-red); color: #fff; }
+/* Adwaita-style: − (minimize), □ (maximize), × (close) */
+.ctrl.min::before { content: "−"; font-size: 14px; line-height: 0; margin-top: -2px; }
+.ctrl.max::before { content: "□"; font-size: 11px; line-height: 1; }
+.ctrl.close::before { content: "×"; font-size: 16px; line-height: 0; margin-top: -1px; }
 
 .menubar {
   display: flex; height: 30px;
