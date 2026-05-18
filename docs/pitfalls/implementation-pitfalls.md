@@ -26,7 +26,7 @@ This document serves three audiences. Start here, then go directly to the sectio
 |---|---------|---------------------|---------|-----------|
 | 0 | [Live Radio Network Operations](#0-live-radio-network-operations) | Any code path that can transmit under the project's callsign, OR any encryption decision touching tuxlink | RADIO-1, RADIO-2 | §0.C |
 | 1 | [Scope and Audience Boundaries](#1-scope-and-audience-boundaries) | Any feature, doc, or design decision touching what tuxlink does vs. what is out of scope | SCOPE-1 | §1.C |
-| 2 | [Safety-Stack Coordination](#2-safety-stack-coordination) | Any time a project hook denies a write op, OR you're tempted to add additional "session liveness" signals | HOOK-1, LEASE-1 | §2.C |
+| 2 | [Safety-Stack Coordination and Cross-Component Parity](#2-safety-stack-coordination-and-cross-component-parity) | Any time a project hook denies a write op, OR you're tempted to add additional "session liveness" signals, OR you're writing a script that reads/writes the same state a hook does | HOOK-1, LEASE-1, PARITY-1 | §2.C |
 | — | [Tool Integration](#tool-integration) | Conflicts between project commitments and tool-installed defaults | BD-1 | §Tool-Integration.C |
 | — | [Orchestration](#orchestration) | Parallel subagent dispatch and output persistence | ORCH-1 | §Orchestration.C |
 | A | [Historical Changelog](#appendix-a-historical-changelog) | Provenance, validation dates, review process meta-observations | — | — |
@@ -281,9 +281,9 @@ Examples of this flaw in the wild:
 
 ---
 
-# Section 2: Safety-Stack Coordination
+# Section 2: Safety-Stack Coordination and Cross-Component Parity
 
-> **Reader context:** I'm encountering a project hook that denied a write op, OR I'm thinking about how to detect / track whether other Claude Code sessions are working alongside mine. This section codifies the mental model that has to be in place before you reach for either of those situations.
+> **Reader context:** I'm encountering a project hook that denied a write op, OR I'm thinking about how to detect / track whether other Claude Code sessions are working alongside mine, OR I'm writing a helper script that reads or writes the same state (lease files, denied-attempts logs, lock files, etc.) that a project hook also touches. This section codifies the mental model that has to be in place before you reach for any of those situations.
 >
 > The pitfalls here come from the 2026-05-18 main-checkout-race hook-loop incident (write-up at `dev/incidents/2026-05-18-main-checkout-race-hook-loop.md`; AzDO-grounded diagnosis at `dev/incidents/2026-05-18-main-checkout-race-hook-loop-reviewer-response.md`). They are written for the next agent who is about to do what `salamander-vetch-heron` did wrong: argue with the safety stack.
 
@@ -355,12 +355,41 @@ This pitfall is the codified rejection of the reporting agent's 2026-05-18 propo
 
 ---
 
+### PARITY-1: Script/Hook Path-Resolution Parity
+
+**The Flaw:** A helper script and a hook both read or write the same safety-stack state (lease files, denied-attempts log, lock files, etc.), but they resolve the storage path differently. The script hardcodes one path; the hook computes another from a contextual source (e.g., `git rev-parse --git-common-dir`). When the operator (or an agent) runs the script to inspect what the hook sees, the two views silently diverge.
+
+Examples in the wild:
+
+- 2026-05-18 `tuxlink-arv` (PR #44): `get_tuxlink_sessions.py` resolved leases at `<repo>/.claude/session-leases/`; `block-main-checkout-race.sh` resolved at `<git-common-dir>/session-leases/`. From a linked worktree, those are different directories (`<repo>/.git` is a FILE pointing to the common dir, not a dir). The script reported "no live sessions" while the hook denied. The agent who consulted the script took it as ground truth and started arguing with the hook (textbook HOOK-1 anti-pattern).
+- A future "tail the denied-attempts log" utility that hardcodes `.claude/session-leases/denied-attempts.jsonl` instead of querying git-common-dir — same shape, same drift potential.
+
+**Why It Matters:** When a script that's supposed to MIRROR the hook's view of safety-stack state diverges from it, agents who consult the script as the canonical source get the wrong picture — and may use that picture to override the hook (the HOOK-1 anti-pattern). Even if the agent doesn't override, the operator loses an informational tool: the script's output stops being trustworthy.
+
+The script is supposed to be a *read* of the hook's state. If it can't be that, it should not exist — having a script that disagrees with the hook is worse than having no script, because operators (and agents) treat the script as an authoritative second opinion when it's actually just a buggy first opinion.
+
+**The Fix:**
+
+1. Scripts that read safety-stack state MUST resolve their storage paths via the SAME mechanism the hook uses to write the state. If the hook uses `git rev-parse --git-common-dir`, the script does too. If the hook reads `$XDG_RUNTIME_DIR`, the script does too. Don't compute a "parallel" path that "should be the same" — call the same primitive.
+2. Add a regression test asserting the script's resolved path equals the hook's resolved path under the project's standard invocation (main checkout AND any linked worktree, separately).
+3. When the operator reports "script says X, hook does Y" — believe both. Investigate the divergence; don't pick one as right and the other as wrong by intuition. The TWO-PATHS shape IS the bug; reconciling them is the fix.
+4. Audit: any time a hook reads or writes a new path, check if there's a companion script that reads the same data and verify it uses the same resolution.
+
+**The Lesson:** "Two paths to the same data" is always a bug surface. Even if the paths *coincidentally* agree today (e.g., from the main checkout where `<repo>/.git == <git-common-dir>`), they diverge under other valid contexts (linked worktrees, where `<repo>/.git` is a FILE pointing to the common dir).
+
+**Reinforcement of HOOK-1:** even with parity restored, the worktree recipe (HOOK-1) remains the authoritative response to a hook deny. Fixing the script makes its informational output accurate; it does NOT authorize agents to use the script's output as license to take the lease, delete lease files, or propose hook enhancements. If the script says "another session is live" and the hook denies, the response is the same as if the script were silent: worktree. The hook is the enforcement mechanism; the script is informational.
+
+Codification of the 2026-05-18 incident lives in `dev/incidents/2026-05-18-main-checkout-race-hook-loop.md` (the reporting agent's write-up) and `dev/incidents/2026-05-18-main-checkout-race-hook-loop-reviewer-response.md` (`towhee-wren-aspen`'s AzDO-grounded diagnosis). The structural enabler (a one-sentence CLAUDE.md carve-out) was removed in PR #39. HOOK-1 codified the agent-behavior rule. LEASE-1 codified the single-source-of-truth rule for liveness. This entry (PARITY-1) codifies the script/hook code-structure rule.
+
+---
+
 ### Section 2 Review Checklist
 
 - [ ] **Check derived from HOOK-1** — No PR / commit / proposal attempts to write `.git/session-leases/main-checkout.json` from the agent side, OR deletes other-session lease files, OR adds permission-checking logic to the agent's flow that consults `get_tuxlink_sessions.py` to second-guess a hook deny. Verify by searching the change for `session-leases`, `main-checkout.json`, `get_tuxlink_sessions`, or any string suggesting the agent is adjudicating session liveness.
 - [ ] **Check derived from HOOK-1** — When the agent encountered a `block-main-checkout-race.sh` deny, did the next action in the trace go straight to `new_tuxlink_worktree.py` (correct) or did it instead try to "fix" the lease state (wrong)? Verify by reviewing the PR description / handoff doc for the agent's described workflow when blocked.
 - [ ] **Check derived from LEASE-1** — No code change introduces a second liveness signal (transcript-mtime, `pgrep claude` output, lock files, parallel heartbeat files, etc.) that the hook or `get_tuxlink_sessions.py` consults. Verify by searching for new file paths under `.git/session-leases/`, new env vars referencing liveness, new hook-output JSON keys.
 - [ ] **Check derived from LEASE-1** — If a PR proposes adjusting orphan-lease behavior, does it do so via a single-parameter change (TTL adjustment, `SessionEnd` hook) rather than by introducing a redundant signal? Verify by reading the PR's design rationale.
+- [ ] **Check derived from PARITY-1** — No helper script reads or writes safety-stack state (leases, denied-attempts log, lock files) via a hardcoded path that doesn't match the corresponding hook's resolution. Verify by `grep -RIn "session-leases" .claude/scripts/ .claude/hooks/` and confirming script paths derive from `git rev-parse --git-common-dir` (or whatever resolution the hook uses).
 
 ---
 
@@ -450,6 +479,15 @@ Companion artifacts:
 - Anti-pattern entry: `docs/ux-anti-patterns.md` §"Anti-Patterns Observed in Winlink Express" (hide-transport bullet)
 - Principle 7 in `docs/design/v0.0.1-ux-principles.md` (companion privacy-via-precision-reduction)
 
+## 2026-05-18 — Added PARITY-1 (Script/Hook Path-Resolution Parity)
+
+Source: bd issue `tuxlink-arv` (`get_tuxlink_sessions.py` ↔ `block-main-checkout-race.sh` lease-dir disagreement; script read `<repo>/.claude/session-leases/`, hook wrote `<git-common-dir>/session-leases/`). Diagnosed during the 2026-05-18 main-checkout-race incident chain; structural enabler was a CLAUDE.md carve-out removed in PR #39; the script-fix (PR #44) + this pitfall close the loop. Section 2 title extended from "Safety-Stack Coordination" to "Safety-Stack Coordination and Cross-Component Parity" to reflect PARITY-1's code-structure (rather than purely agent-behavior) focus.
+
+Companion artifacts:
+- Spec: `docs/superpowers/specs/2026-05-18-tuxlink-arv-lease-dir-parity-design.md`
+- Plan: `docs/superpowers/plans/2026-05-18-tuxlink-arv-lease-dir-fix.md`
+- Auto-memory refresh: `~/.claude/projects/-home-administrator-Code-tuxlink/memory/feedback_stale_lease_means_worktree.md` (updated to reflect script accuracy + reinforce worktree authority)
+
 ---
 
 # Appendix B: Unified Summary Table
@@ -460,9 +498,12 @@ Companion artifacts:
 |----|-------|----------|--------|--------|
 | RADIO-1 | Agent-autonomous transmission under the licensee's callsign | CRITICAL | VALIDATED | §0 Live Radio Network Operations |
 | RADIO-2 | Encryption decisions on RF require operator approval | HIGH | VALIDATED | §0 Live Radio Network Operations |
+| SCOPE-1 | Conflating RMS Express (client) with RMS Trimode (gateway) | HIGH | VALIDATED | §1 Scope and Audience Boundaries |
+| HOOK-1 | Arguing with `block-main-checkout-race.sh` instead of routing to a worktree | HIGH | VALIDATED | §2 Safety-Stack Coordination and Cross-Component Parity |
+| LEASE-1 | Adding additional "session liveness" signals beyond the lease | HIGH | VALIDATED | §2 Safety-Stack Coordination and Cross-Component Parity |
+| PARITY-1 | Script/Hook Path-Resolution Parity | HIGH | VALIDATED | §2 Safety-Stack Coordination and Cross-Component Parity |
 | ORCH-1 | Analysis Dispatches Must Persist Findings | HIGH | VALIDATED | Orchestration |
 | BD-1 | bd opinionated-tooling overrides | MEDIUM | VALIDATED | Tool Integration |
-| PREFIX-1 | TODO | TODO | TODO | Section 1 |
 
 Severity levels: `CRITICAL` (production data loss / security), `HIGH` (correctness bug under predictable conditions), `MEDIUM` (correctness bug under edge cases), `LOW` (cleanliness / clarity).
 
