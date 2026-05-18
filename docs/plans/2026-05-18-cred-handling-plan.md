@@ -8,7 +8,19 @@
 
 **Tech Stack:** Go (with `github.com/zalando/go-keyring` v0.x), Pat's existing `fbb.Address` + `promptHub` primitives, Pat's web UI (jQuery + HTML), CI via GitHub Actions on `ubuntu-22.04` runner with `dbus-run-session`/`gnome-keyring-daemon` for integration tests.
 
-**Spec of record:** `docs/superpowers/specs/2026-05-18-cred-handling-design.md` (commit `68a698c` on `bd-tuxlink-mib/mib-cred-keyring`; post-5-round-adrev revision).
+**Spec of record:** `docs/superpowers/specs/2026-05-18-cred-handling-design.md` (commit `046f4b8` on `bd-tuxlink-mib/mib-cred-keyring`; post-5-round-adrev revision + post-plan-review scope amendment to delete Pat web UI per `project_fork_enables_aggressive_deletion` memory).
+
+> **Executor pre-flight (MANDATORY for every subagent dispatch):**
+>
+> 1. **Generate a fresh moniker** via `python3 /home/administrator/Code/tuxlink/.claude/scripts/get_agent_moniker.py` and use it for ALL commit messages in this dispatch. Substitute it for the literal `<YOUR-MONIKER>` placeholder in every HEREDOC commit body below. The harness does NOT auto-substitute (per `feedback_moniker_collision_pre_flight` memory).
+>
+> 2. **Working directory: the tuxlink-pat fork repo.** This plan operates on `cameronzucker/tuxlink-pat`, NOT on tuxlink. The fork is already present as a git submodule at `external/tuxlink-pat/` in the tuxlink worktree. Two acceptable strategies; pick one and use throughout:
+>    - **Strategy A (recommended):** work inside the submodule via `git -C /home/administrator/Code/tuxlink/worktrees/bd-tuxlink-mib-mib-cred-keyring/external/tuxlink-pat/`. No separate clone needed. All commits land on the submodule's `bd-tuxlink-mib/mib-cred-keyring` branch and push to `origin` (which is `cameronzucker/tuxlink-pat`).
+>    - **Strategy B:** clone to `~/Code/tuxlink-pat/` separately. Cleaner separation but requires `cd` discipline. All Phase 1-9 commands run from that location.
+>
+> 3. **Subagent LDC scoping** (per `feedback_subagent_ldc_scoping` memory): you ARE authorized to update this plan's Execution Status table per the Living Document Contract above — specifically: flip ⬜ → 🚧 at claim time; record commit SHAs + PR URL when shipping; update Deviations subsection inline if you depart from the plan. Plan-file edits for these LDC banner updates are exempt from any "don't modify the plan file" instruction.
+>
+> 4. **Apt-install gate** (per `feedback_sudo_apt_explicit_approval` memory): if a task requires `sudo apt install ...`, STOP and request operator approval — do NOT run sudo apt unilaterally. Currently Phase 9's libsecret-1-dev / gnome-keyring / dbus-x11 install is the only such task in this plan; Docker is already installed on the dev Pi.
 
 ---
 
@@ -84,7 +96,7 @@ notes and commit messages.
 | 5 — app/exchange.go callback + app/app.go cleanup | ⬜ Not started | — | Largest behavioral change; SMTP-proto skip + callback rewrite |
 | 6 — API handlers + cli/account.go (credstore-explicit-handling) | ⬜ Not started | — | api/winlink_account.go + app/winlink_api.go + cli/account.go |
 | 7 — cli/init.go both password paths redirected | ⬜ Not started | — | Existing-account + new-account flows both → brief redirect |
-| 8 — Web UI updates (web/src/* + web/dist/* rebuild) | ⬜ Not started | — | Browser-side form removal + JS cleanup + dist rebuild |
+| 8 — **DELETE Pat web UI entirely** (`rm -rf web/` + api/api.go cleanup) | ⬜ Not started | — | Post-plan-review scope amendment per spec `046f4b8` + `project_fork_enables_aggressive_deletion` memory; eliminates npm/webpack/Docker chain |
 | 9 — README + CI integration test + PR-A open | ⬜ Not started | — | tuxlink-pat README "Credentials" section + .github/workflows/ + open PR-A |
 | 10 — PR-A merge + PR-B submodule bump on tuxlink | ⬜ Not started | — | After PR-A merge: bump submodule pin in tuxlink; open PR-B against feat/v0.0.1; close `tuxlink-mib` on PR-B merge |
 
@@ -167,58 +179,63 @@ Pre-execution inventory of files this plan creates/modifies. Decomposition decis
 
 This phase clones the tuxlink-pat fork, creates a per-patch branch following the fork's branch convention, and adds the zalando/go-keyring dep to go.mod. All subsequent phases (2-9) operate inside this clone.
 
-### Task 1.1: Clone tuxlink-pat fork to a working directory
+### Task 1.1: Confirm working directory + upstream remote
 
-**Files:** none (filesystem operation).
+**Files:** none (verification).
 
-**Background:** Per fork-setup spec §3.3 step 2, fork patches branch off `master` on the tuxlink-pat repo (different from tuxlink's `feat/v0.0.1`). Per ADR 0008, the worktree pattern doesn't apply here because tuxlink-pat is a separate git repo (no shared lease with tuxlink). Standard clone + branch.
+**Background:** Per the executor pre-flight at the top of this plan, you work inside the existing submodule at `external/tuxlink-pat/` (Strategy A; recommended). The submodule already has a working tree from when the tuxlink worktree initialized it. No fresh clone needed. All commands below use `WORKTREE_PAT=/home/administrator/Code/tuxlink/worktrees/bd-tuxlink-mib-mib-cred-keyring/external/tuxlink-pat` as the working dir.
 
-- [ ] **Step 1: Clone fresh to `~/Code/tuxlink-pat/` (or operator-chosen path):**
+- [ ] **Step 1: Confirm the submodule is initialized + on the right ref:**
 
 ```bash
-cd ~/Code
-git clone https://github.com/cameronzucker/tuxlink-pat.git
-cd tuxlink-pat
-git remote add upstream https://github.com/la5nta/pat.git
-git fetch upstream
+WORKTREE_PAT=/home/administrator/Code/tuxlink/worktrees/bd-tuxlink-mib-mib-cred-keyring/external/tuxlink-pat
+ls "$WORKTREE_PAT/.git"          # exists (file pointing to parent's .git/modules/)
+git -C "$WORKTREE_PAT" status    # should be clean (or only have your in-progress work)
+git -C "$WORKTREE_PAT" remote -v # confirm `origin` is cameronzucker/tuxlink-pat
 ```
 
-Expected output:
-- Clone completes; ~30MB repo on disk
-- `git remote -v` shows both `origin` (tuxlink-pat) and `upstream` (la5nta/pat)
+Expected: `origin` is `https://github.com/cameronzucker/tuxlink-pat.git`.
 
-- [ ] **Step 2: Verify upstream is at the same default branch as fork's master fork point:**
+- [ ] **Step 2: Add upstream remote if not present** (idempotent):
+
+```bash
+git -C "$WORKTREE_PAT" remote get-url upstream || \
+  git -C "$WORKTREE_PAT" remote add upstream https://github.com/la5nta/pat.git
+git -C "$WORKTREE_PAT" fetch upstream
+```
+
+Expected: `upstream` remote present pointing at `la5nta/pat`; fetch succeeds.
+
+- [ ] **Step 3: Verify upstream's default branch is `master`:**
 
 ```bash
 gh api repos/la5nta/pat --jq '.default_branch'
-git -C ~/Code/tuxlink-pat log --oneline -5
 ```
 
-Expected: `master` (upstream default) matches the fork's branch name. If upstream has migrated to `main`, this plan's branch names need updating; STOP and escalate.
+Expected: `master`. If upstream has migrated to `main`, this plan's branch names need updating; STOP + escalate.
 
-### Task 1.2: Create per-patch branch off master
+### Task 1.2: Sync from upstream + create per-patch branch (off LOCAL master post-sync)
 
 **Files:** none (git operation).
 
 - [ ] **Step 1: Opportunistic upstream sync** (per fork-setup spec §3.3 step 4):
 
 ```bash
-cd ~/Code/tuxlink-pat
-git checkout master
-git merge upstream/master
-# If conflicts: resolve as part of this patch's design. For this patch's first
-# opportunistic sync (since fork creation), expect zero conflicts.
+git -C "$WORKTREE_PAT" checkout master
+git -C "$WORKTREE_PAT" merge upstream/master
 ```
 
-Expected: `Already up to date.` or a clean merge commit. If conflicts: this plan's tasks may need re-targeting against the new merged state; STOP + escalate.
+Expected: `Already up to date.` or a clean merge commit on LOCAL `master`. If conflicts: re-targeting needed; STOP + escalate.
 
-- [ ] **Step 2: Create branch:**
+- [ ] **Step 2: Create branch FROM LOCAL master** (per plan-review R4 P2 #4: branching from `origin/master` would discard the local merge):
 
 ```bash
-git checkout -b bd-tuxlink-mib/cred-keyring origin/master
+git -C "$WORKTREE_PAT" checkout -B bd-tuxlink-mib/mib-cred-keyring master
 ```
 
-Expected: `Switched to a new branch 'bd-tuxlink-mib/cred-keyring'`.
+Expected: `Switched to a new branch 'bd-tuxlink-mib/mib-cred-keyring'` (or `Reset branch ...` if recreated). The `-B` form is idempotent (force-create-or-switch), safe for fresh-subagent re-runs per plan-review R1 F6.
+
+**Branch name discipline:** the name `bd-tuxlink-mib/mib-cred-keyring` matches spec §3.8 (Phase 10's PR-B branch uses the same name on the tuxlink-side too — both PRs share the spec-aligned name for clarity).
 
 ### Task 1.3: Add `github.com/zalando/go-keyring` to go.mod
 
@@ -1650,91 +1667,160 @@ EOF
 
 ---
 
-## Phase 7 — cli/init.go both password paths redirected
+## Phase 7 — cli/init.go: delete all 4 password-touching functions
 
 **Execution Status:** ⬜ Not started
 
-This phase addresses BOTH password-touching paths in `cli/init.go` (R4 P2 #6 caught: the prior spec only addressed lines 193-258, leaving `handleNewAccount` + `promptNewPassword` + `cmsapi.AccountAdd` still asking for and submitting passwords with no keyring write).
+**Post-plan-review scope** per plan-review R4 P1 + R2 F1 + R1 F5 + R3 F11. The original plan said "delete lines 193-258 + retain handleNewAccount as dead code" — both wrong:
+- **Lines 193-258 span 3 functions** (verified): line 193 is end of `handleNewAccount`; `handleExistingAccount` is 196-244; `handleMissingPasswordRecoveryEmail` is 246-264+ (line 258 sits inside its body). Verbatim cut destroys 3 functions.
+- **`handleNewAccount` retained as dead code FAILS to compile**: Go type-checks unused functions; the `cfg.SecureLoginPassword = password` reference (line 193) won't compile after Phase 3 removes the field.
+- **`handleMissingPasswordRecoveryEmail` references `cfg.SecureLoginPassword`** (line 258 + others) — needs handling too.
+- **Half-configured state** (R1 F5): the original plan's redirect-then-continue leaves the user with a config-file-without-CMS-account state.
 
-### Task 7.1: Locate both paths
+**Corrected scope:** DELETE all 4 password-touching functions (`handleNewAccount`, `promptNewPassword`, `handleExistingAccount`, `handleMissingPasswordRecoveryEmail`), AND the helpers they call (`validatePassword`, `getPasswordRecoveryEmail`). `InitHandle` routes BOTH cases (`accountExists` true and false) to the brief redirect message + `os.Exit(0)`. Other `pat configure` steps (callsign, locator, mailbox path collection) proceed before the password section, then exit cleanly.
 
-**Files:** none (read).
+### Task 7.1: Read all 4 functions + their callers
 
-- [ ] **Step 1: Inspect both paths:**
+**Files:** none (verification before edits).
+
+- [ ] **Step 1: List the password-touching functions + their boundaries:**
 
 ```bash
-sed -n '55,70p' cli/init.go    # InitHandle's branch to handleNewAccount (line 60)
-sed -n '95,150p' cli/init.go   # handleNewAccount + promptNewPassword
-sed -n '190,260p' cli/init.go  # existing-account password block (lines 193-258)
+grep -n "^func " cli/init.go
 ```
 
-Confirm both paths exist and reference the password flow.
+Expected output (verified):
+```
+19:func InitHandle(ctx context.Context, a *app.App, args []string) {
+71:func promptNewPassword() string {
+97:func handleNewAccount(ctx context.Context, cfg *cfg.Config) {
+196:func handleExistingAccount(ctx context.Context, cfg *cfg.Config) {
+246:func handleMissingPasswordRecoveryEmail(ctx context.Context, cfg cfg.Config) {
+266:func accountExists(ctx context.Context, callsign string) (exists bool, err error) {
+280:func validatePassword(ctx context.Context, callsign, password string) (valid bool, err error) {
+295:func getPasswordRecoveryEmail(ctx context.Context, callsign, password string) (email string, err error) {
+```
 
-### Task 7.2: Replace existing-account password block (lines 193-258)
+- [ ] **Step 2: Find `InitHandle`'s call sites for the password functions:**
+
+```bash
+sed -n '19,70p' cli/init.go
+```
+
+Locate the `if exists, _ := accountExists(...); exists { handleExistingAccount(...) } else { handleNewAccount(...) }` branch (or similar).
+
+### Task 7.2: Define a single redirect helper
 
 **Files:**
 - Modify: `~/Code/tuxlink-pat/cli/init.go`
 
-- [ ] **Step 1: Delete lines 193-258 and replace with brief redirect:**
+- [ ] **Step 1: Add a single helper for both paths near the top of the file (after imports):**
 
 ```go
-// Skip password setup; the tuxlink wizard owns credential entry per
-// docs/superpowers/specs/2026-05-18-cred-handling-design.md.
-fmt.Println(`Skipping password — use the tuxlink wizard to set Winlink credentials.
+// printWizardRedirect prints the credential-entry redirect message and exits
+// cleanly. Per spec §4.4: tuxlink-pat is tuxlink's engine, NOT a standalone
+// Pat replacement; the wizard owns credential entry. Standalone-Pat users
+// should use upstream la5nta/pat which retains config.json passwords.
+//
+// Returns nothing because it terminates the process.
+func printWizardRedirect() {
+	fmt.Println(`Skipping credential setup — tuxlink-pat does not collect Winlink credentials.
+Set credentials via the tuxlink wizard (writes to OS keyring).
 For standalone Pat usage, use upstream la5nta/pat which retains config.json passwords.
-See: https://github.com/cameronzucker/tuxlink-pat (README "Credentials" section)`)
+See: https://github.com/cameronzucker/tuxlink-pat (README Credentials section)`)
+	os.Exit(0)
+}
 ```
 
-The plain README link (no `#credentials` fragment anchor) is intentional per R1 F5 to avoid bookmark-fragile decay.
+Add `"os"` to the import block if not present. The plain README link (no `#credentials` fragment anchor) is per plan-review R1 F5 to avoid bookmark-fragile decay.
 
-### Task 7.3: Replace handleNewAccount call (line 60)
+### Task 7.3: Rewrite `InitHandle` to call the helper for both branches
 
 **Files:**
 - Modify: `~/Code/tuxlink-pat/cli/init.go`
 
-- [ ] **Step 1: Find line 60 (in `InitHandle`):**
+- [ ] **Step 1: Locate the InitHandle account-branch (around lines 55-65):**
 
 ```bash
 sed -n '55,65p' cli/init.go
 ```
 
-Look for: `handleNewAccount(ctx, &cfg)`.
+Confirm the if/else routing.
 
-- [ ] **Step 2: Replace the call with the brief redirect:**
+- [ ] **Step 2: Replace BOTH branches with `printWizardRedirect()` — after the other configure steps (callsign / locator / mailbox path) have completed.** This means: do all the non-password configure steps first, then unconditionally print the redirect + exit. The actual `accountExists` check becomes unnecessary because both paths now exit identically.
 
-```go
-// Replace:
-// handleNewAccount(ctx, &cfg)
-// with:
-fmt.Println(`New-account creation requires the tuxlink wizard (sets credentials in OS keyring).
-For standalone Pat usage, use upstream la5nta/pat which retains config.json passwords.
-See: https://github.com/cameronzucker/tuxlink-pat (README "Credentials" section)`)
-```
-
-- [ ] **Step 3: Keep `handleNewAccount` + `promptNewPassword` functions in source** (dead code with TODO comment):
+Replacement pattern (adapt to actual surrounding code):
 
 ```go
-// TODO: re-introduce as separate subcommand if standalone-Pat audience
-// emerges (per spec §2 "Re-introducing the validatePassword + ... flow as
-// separate `pat` subcommands. Not in this patch; can be revisited if
-// standalone-Pat usage becomes a real audience for the fork.").
-//
-// nolint:unused — intentionally retained for future re-introduction.
-func handleNewAccount(ctx context.Context, cfg *cfg.Config) { ... }
+// All previous configure steps (callsign, locator, mailbox path) have run.
+// Now: skip credential setup; tuxlink wizard owns that. Exit cleanly.
+printWizardRedirect()
+// unreachable; printWizardRedirect calls os.Exit(0).
 ```
 
-The `nolint:unused` comment prevents linters from flagging the dead code; the TODO documents the design intent.
+- [ ] **Step 3: Save the non-credential config that was collected** (callsign, locator, mailbox path) BEFORE calling `printWizardRedirect`:
 
-- [ ] **Step 4: Verify compile + run any cli tests:**
+```go
+// Write the non-credential config BEFORE redirecting. The user's typed
+// callsign / locator / mailbox setup persists.
+if err := app.WriteConfig(cfg, cfgPath); err != nil {
+	log.Fatalf("Failed to write config: %v", err)
+}
+printWizardRedirect()
+```
+
+This avoids the R1 F5 "half-configured" concern by ensuring whatever the user typed is persisted, and Pat exits cleanly with no CMS-side action attempted.
+
+### Task 7.4: Delete the 4 password-touching functions + their helpers
+
+**Files:**
+- Modify: `~/Code/tuxlink-pat/cli/init.go`
+
+Delete these functions entirely (anchor by function name, NOT line numbers — line numbers shift as edits land):
+
+- `promptNewPassword()` (currently line 71-95-ish)
+- `handleNewAccount(ctx, cfg)` (currently line 97-194-ish)
+- `handleExistingAccount(ctx, cfg)` (currently line 196-244-ish)
+- `handleMissingPasswordRecoveryEmail(ctx, cfg)` (currently line 246-264-ish)
+- `validatePassword(ctx, callsign, password)` (currently line 280-293-ish)
+- `getPasswordRecoveryEmail(ctx, callsign, password)` (currently line 295-end-ish)
+
+**Keep these functions** (they don't reference `cfg.SecureLoginPassword`):
+
+- `InitHandle` (modified per Task 7.3)
+- `accountExists` (may still be called by `InitHandle`; if not, delete it too)
+
+- [ ] **Step 1: Delete each function and its closing brace.** Use Edit tool with function signature as anchor; delete from `func <name>(` through the matching `}`.
+
+- [ ] **Step 2: Remove unused imports.** After deleting the functions, several imports may become unused:
+  - `"github.com/la5nta/pat/internal/cmsapi"` (used by `cmsapi.AccountAdd`, `cmsapi.PasswordRecoveryEmailSet`, `cmsapi.PasswordRecoveryEmailGet`)
+  - `"golang.org/x/term"` (used by `promptNewPassword`'s `term.ReadPassword`)
+  - Any other imports specific to deleted functions
+
+Run `goimports -w cli/init.go` if available, or manually remove unused imports.
+
+### Task 7.5: Verify compile
+
+**Files:** none (verification).
+
+- [ ] **Step 1: Build the cli package:**
 
 ```bash
+cd ~/Code/tuxlink-pat
 go build ./cli/...
-go test ./cli/...
 ```
 
-Expected: cli/ builds. Tests may pass without code changes (no tests cover handleNewAccount directly).
+Expected: compiles. If errors mention "undefined: validatePassword" or similar, address — these helpers must NOT be called from anywhere else (`grep -rn "validatePassword\|getPasswordRecoveryEmail\|handleNewAccount\|handleExistingAccount\|promptNewPassword" --include="*.go" .` should return empty).
 
-### Task 7.4: Manual smoke test
+- [ ] **Step 2: Build the whole module:**
+
+```bash
+go build ./...
+```
+
+Expected: at this point Phase 7 has run AFTER Phase 6 + Phase 5 + Phase 3 (per execution order), so the whole module should build. If not, document the issue in the plan's Discoveries subsection.
+
+### Task 7.6: Manual smoke test
 
 **Files:** none.
 
@@ -1745,40 +1831,60 @@ cd ~/Code/tuxlink-pat
 go build -o /tmp/pat-test .
 ```
 
-- [ ] **Step 2: Run `pat configure`:**
+- [ ] **Step 2: Run `pat configure` in non-interactive mode** (with all prompts pre-answered):
 
 ```bash
-PAT_MYCALL= /tmp/pat-test --config /tmp/test-config.json configure </dev/null
+PAT_MYCALL=KK6XYZ /tmp/pat-test --config /tmp/test-config.json configure </dev/null
 ```
 
 Expected:
-- pat prompts for callsign + locator + mailbox path (other configure steps unchanged)
-- when it would normally prompt for password (either via handleNewAccount or the existing-account block), it prints the redirect message instead
-- pat exits cleanly without setting a password
+- pat collects callsign + locator + mailbox path (or uses env defaults / pre-answers)
+- writes /tmp/test-config.json (callsign + locator + mailbox; NO `secure_login_password`)
+- prints the redirect message
+- exits 0
 
-If the smoke reveals the redirect message is malformed or appears at the wrong point in the flow, fix inline.
+- [ ] **Step 3: Inspect the written config:**
 
-### Task 7.5: Commit
+```bash
+cat /tmp/test-config.json | grep -i password
+```
+
+Expected: empty output (no password field in config).
+
+### Task 7.7: Commit
 
 - [ ] **Step 1: Stage + commit:**
 
 ```bash
 git add cli/init.go
 git commit -m "$(cat <<'EOF'
-refactor(cli): cli/init.go skips BOTH password-touching paths
+refactor(cli): delete all 4 password-touching functions in cli/init.go
 
-Path A (existing-account, lines 193-258): brief redirect to tuxlink wizard;
-validatePassword + getPasswordRecoveryEmail + cmsapi.PasswordRecoveryEmailSet
-calls REMOVED from `pat configure` flow.
+Per plan-review R4 P1 + R2 F1 + R1 F5 + spec §4.4:
 
-Path B (new-account creation via handleNewAccount, line 60): brief
-redirect REPLACES the handleNewAccount call. handleNewAccount +
-promptNewPassword + cmsapi.AccountAdd retained in source as dead code
-with TODO comment for future re-introduction as separate subcommands.
+Deleted (all reference cfg.SecureLoginPassword which is gone post-Phase-3,
+so retaining them as dead code wouldn't compile — Go type-checks unused
+functions):
+- promptNewPassword
+- handleNewAccount (called cmsapi.AccountAdd + wrote SecureLoginPassword)
+- handleExistingAccount (validated password + recovery email)
+- handleMissingPasswordRecoveryEmail (set recovery email; needed pwd)
+- validatePassword (called cmsapi.AccountValidate with pwd)
+- getPasswordRecoveryEmail (called cmsapi.PasswordRecoveryEmailGet with pwd)
 
-Per spec §3.2 + R4 P2 (caught the prior spec only addressed path A).
+Added: printWizardRedirect() helper — prints the credential-entry
+redirect message + os.Exit(0). Called by InitHandle AFTER non-credential
+configure steps (callsign, locator, mailbox path) have collected user
+input AND WriteConfig has persisted the non-secret config. No
+half-configured state (R1 F5 fix).
 
-Other `pat configure` steps (callsign, locator, mailbox path) unchanged.
+InitHandle no longer branches on accountExists; both new-account and
+existing-account paths route to printWizardRedirect (same outcome).
+
+Unused imports cleaned: cmsapi, x/term.
+
+Per spec §4.4: tuxlink-pat is tuxlink's engine, not standalone Pat
+replacement; wizard owns credential entry.
 
 Agent: <YOUR-MONIKER>
 Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
@@ -1788,135 +1894,128 @@ EOF
 
 ---
 
-## Phase 8 — Web UI updates (web/src/* + web/dist/* rebuild)
+## Phase 8 — DELETE Pat web UI entirely (rm -rf web/ + api/api.go cleanup)
 
 **Execution Status:** ⬜ Not started
 
-This phase removes the `secure_login_password` form field from the web UI and rebuilds the prebuilt assets. Per spec §3.2: leaving the form in place after backend field removal silently drops user-saved passwords (R3 + R4 caught the prior spec's omission).
+**Post-plan-review scope amendment** per spec commit `046f4b8` + `project_fork_enables_aggressive_deletion` memory. Pat's web UI is redundant in tuxlink's architecture (tuxlink wraps Pat in Tauri; users see Tauri UI, never Pat's web UI). Deleting eliminates: ~6000 LoC of frontend code, the entire webpack/npm/Docker chain, the npm supply-chain risk surface, and the cascading web-UI cred-flow findings from plan-review R4 P2 + R2 F9 + R4 F5.
 
-### Task 8.1: Remove `secure_login_password` form input from `web/src/config.html`
+### Task 8.1: Delete `web/` directory entirely
+
+**Files:** delete `~/Code/tuxlink-pat/web/` (the whole directory).
+
+- [ ] **Step 1: Verify what's being deleted:**
+
+```bash
+cd ~/Code/tuxlink-pat
+ls -la web/
+du -sh web/
+```
+
+Expected: `web/` contains Dockerfile, make.bash, package.json, package-lock.json, webpack.config.js, src/, dist/, web.go, web_test.go. Size ~5-10 MB (mostly node_modules artifacts if any exist; bundled dist; src).
+
+- [ ] **Step 2: Delete:**
+
+```bash
+rm -rf web/
+```
+
+Expected: directory gone. Verify: `ls web/ 2>&1 | grep -i "no such"` returns the expected error.
+
+### Task 8.2: Remove `pat/web` import + route registrations from `api/api.go`
 
 **Files:**
-- Modify: `~/Code/tuxlink-pat/web/src/config.html`
+- Modify: `~/Code/tuxlink-pat/api/api.go`
 
-- [ ] **Step 1: Locate lines 82-85:**
-
-```bash
-sed -n '78,92p' web/src/config.html
-```
-
-- [ ] **Step 2: Replace the input block with an info notice:**
-
-```html
-<!-- Replace lines 82-85 (the entire form-group containing secure_login_password): -->
-<div class="form-group">
-  <label>Secure Login Password</label>
-  <div class="alert alert-info" role="alert">
-    Set Winlink credentials via the tuxlink wizard.
-    For standalone Pat usage, use upstream
-    <a href="https://github.com/la5nta/pat" target="_blank" rel="noopener">la5nta/pat</a>
-    which retains config.json passwords.
-    See <a href="https://github.com/cameronzucker/tuxlink-pat" target="_blank" rel="noopener">tuxlink-pat README</a> for details.
-  </div>
-</div>
-```
-
-The `alert-info` class is Bootstrap-conventional (Pat's existing web UI uses Bootstrap). Match the spacing/indentation of the surrounding code.
-
-### Task 8.2: Remove `secure_login_password` references from `web/src/js/config.js`
-
-**Files:**
-- Modify: `~/Code/tuxlink-pat/web/src/js/config.js`
-
-- [ ] **Step 1: Locate all references:**
+- [ ] **Step 1: Identify the references:**
 
 ```bash
-grep -n "secure_login_password\|secureLoginPassword" web/src/js/config.js
+grep -n "la5nta/pat/web\|web\\.DistHandler\|web\\.UIHandler" api/api.go
 ```
 
-Expected: lines 176, 190, 347, 349, 354, 518 (per spec).
+Expected: line 26 (`"github.com/la5nta/pat/web"` import) + any line that calls `web.DistHandler()` / `web.UIHandler(...)`.
 
-- [ ] **Step 2: Delete each reference:**
-
-For each line, decide:
-- Lines 176, 190, 347, 349, 354: GET-side rendering (populate the form field with `[REDACTED]` if set). Delete the entire conditional block since the field no longer exists.
-- Line 518: POST-side assignment (`updatedConfig.secure_login_password = ...`). Delete this line so the field is never sent to the backend.
-
-Use Edit tool for surgical removal; preserve surrounding logic.
-
-- [ ] **Step 3: Add a defensive AuxAddr CALL:password rejection on form submit:**
-
-```javascript
-// In the form-submit handler, BEFORE the AJAX POST:
-function validateAuxAddrs(addrs) {
-  for (let i = 0; i < addrs.length; i++) {
-    if (addrs[i].indexOf(':') >= 0) {
-      alert('Auxiliary addresses cannot contain ":" (the legacy "CALL:password" form is no longer supported). Use the tuxlink wizard to set per-callsign passwords.');
-      return false;
-    }
-  }
-  return true;
-}
-
-// Call validateAuxAddrs(updatedConfig.auxiliary_addresses) before $.ajax(...).
-```
-
-### Task 8.3: Rebuild `web/dist/*`
-
-**Files:**
-- Modify: `~/Code/tuxlink-pat/web/dist/*`
-
-- [ ] **Step 1: Check how Pat builds the dist:**
+- [ ] **Step 2: Read the surrounding context for each reference:**
 
 ```bash
-ls web/
-cat web/package.json 2>&1 || echo "no package.json"
-cat web/scss/main.scss 2>&1 | head -5 || echo "no scss"
-ls web/src/ web/dist/
+sed -n '20,30p' api/api.go   # import block
+grep -n "DistHandler\|UIHandler" api/api.go   # then read around each usage
 ```
 
-If Pat uses an npm-based build chain (e.g., webpack, parcel, sass), run it:
+- [ ] **Step 3: Remove the import + all usages:**
+
+For each usage like `r.PathPrefix("/ui").Handler(web.UIHandler(...))` or similar, DELETE the route registration line. Pat's `http` subcommand will continue to serve the JSON API endpoints but no longer the browser UI.
+
+Remove the `"github.com/la5nta/pat/web"` import line from the import block.
+
+- [ ] **Step 4: Verify compile:**
 
 ```bash
-cd web/
-npm install   # if package.json exists
-npm run build # or whatever the build script is named
+go build ./api/...
 ```
 
-If Pat uses a Go-based asset bundler (`go-bindata` or similar), check the Makefile / `make.bash`.
+Expected: api package compiles. If errors arise about other references to `pat/web` symbols, address each.
 
-If the dist files are committed verbatim (no build step; src and dist are kept manually in sync), manually copy the changes from `web/src/config.html` and `web/src/js/config.js` to `web/dist/config.html` and `web/dist/js/config.js`.
+### Task 8.3: Verify no remaining `pat/web` references across the codebase
 
-- [ ] **Step 2: Manual smoke in browser:**
+**Files:** none (verification).
 
-Start `pat http` locally; open `http://localhost:8080/ui/config.html` (or wherever Pat serves the config UI); verify:
-- the secure_login_password input is gone
-- the info notice is visible
-- no console errors in the browser devtools
+- [ ] **Step 1: Search:**
 
-### Task 8.4: Commit
+```bash
+grep -rn "la5nta/pat/web\|/pat/web\"" --include="*.go" .
+```
+
+Expected: empty output. If any matches found, remove those references too.
+
+- [ ] **Step 2: Build everything to confirm full-codebase consistency:**
+
+```bash
+go build ./...
+```
+
+Expected: full repo builds. (At this point, all other cred-refactor phases have landed too, so this is the comprehensive build gate.)
+
+- [ ] **Step 3: Run all tests:**
+
+```bash
+go test ./...
+```
+
+Expected: all tests pass.
+
+### Task 8.4: Commit the web deletion
+
+**Files:** none (git op).
 
 - [ ] **Step 1: Stage + commit:**
 
 ```bash
-git add web/src/config.html web/src/js/config.js web/dist/
+git add -A   # captures the web/ deletion + api/api.go modifications
+git status --short   # verify: deletions of all web/ files + modify api/api.go
 git commit -m "$(cat <<'EOF'
-refactor(web): remove secure_login_password form field; redirect to wizard
+refactor: DELETE Pat web UI entirely (rm -rf web/) + drop pat/web import
 
-R3 + R4 adrev caught: removing only the backend cfg field leaves the
-web UI form in place; users saving credentials there think they were
-stored, but the new config struct silently ignores the field.
+Per project_fork_enables_aggressive_deletion memory (2026-05-18) + spec
+post-plan-review amendment 046f4b8: Pat's web UI is redundant in
+tuxlink's architecture. Tuxlink wraps Pat in Tauri; users see Tauri UI,
+never Pat's web UI. Per spec §4.4 tuxlink-pat is engine-only, not
+standalone Pat replacement.
 
-Changes:
-- web/src/config.html: replace input block (lines 82-85) with info
-  notice pointing at the tuxlink wizard
-- web/src/js/config.js: remove all secure_login_password references
-  (lines 176, 190, 347, 349, 354, 518); never include the field in
-  POST payload; add defensive validation rejecting "CALL:password"
-  AuxAddr form on submit
-- web/dist/*: rebuilt from src
+Eliminates:
+- ~6000 LoC frontend code (web/src + web/dist)
+- webpack + npm + Docker build chain entirely from tuxlink-pat
+- npm supply-chain risk surface (Shai-Hulud / QIX / axios class)
+- Web-UI cred-flow cascade (plan-review R3 P0 #2 / R4 P2 #3 / R4 P2 / R2 F9)
+- Create-Account-modal residual flow
 
-Per spec §3.2 + §3.1 architecture.
+api/api.go: remove `github.com/la5nta/pat/web` import + all
+DistHandler / UIHandler route registrations. Pat http subcommand
+continues to serve JSON API; no browser UI.
+
+Upstream-merge implication (documented spec §5.3): future opportunistic
+upstream merges will re-introduce web/; per-patch agent must re-delete
+as part of merge resolution. Bounded overhead.
 
 Agent: <YOUR-MONIKER>
 Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
@@ -1924,8 +2023,9 @@ EOF
 )"
 ```
 
----
+Expected: large commit (many deletions); commit message reflects the scope-shrink intent.
 
+---
 ## Phase 9 — README + CI integration test + PR-A open
 
 **Execution Status:** ⬜ Not started
@@ -2306,6 +2406,79 @@ Newly unblocked: `tuxlink-ko0` (wizard Task 9), `tuxlink-nk7` (live-CMS smoke Ta
 | Rot over time | ServiceName rot on rename; promptHub timeout undermines EmComm | Documented in spec §5.3; no v0.0.1 mitigation |
 | Security | Wrong-password CMS lockout via retry | NO retry loop in credstore; one attempt + fall through |
 | Cross-task | Existing config.json secure_login_password silently ignored | Acceptable v0.0.1 (no existing users); flagged for upstream-PR variant |
+
+---
+
+## 8. Plan-review disposition (post-4-round cycle)
+
+Plan-review-cycle completed 2026-05-18 on commit `b94b734` (the pre-plan-review plan draft). 3 Claude subagents per-lens (R1 execution-friction, R2 contract-verification, R3 spec-coverage) + 1 Codex cross-provider (R4). **38 findings total: 6 P0, 14 P1, 14 P2, 4 P3.**
+
+### Scope-shift overrides
+
+The single biggest revision was scope-shifting Phase 8 from "modify Pat's web UI" to "DELETE Pat's web UI entirely" (per `project_fork_enables_aggressive_deletion` memory). This was triggered by R3 P0 #2 + R4 P2 #3 (web UI silently drops field) and Cameron's lock-in on the architectural insight. Several plan-review findings became MOOT as a result (they targeted the modify path):
+
+- R3 P0 #2 (web UI form-POST silently drops field) → MOOT: web UI doesn't exist
+- R4 P2 #3 (web UI delete leaves cred flow) → MOOT
+- R4 P2 #5 (Create-Account modal residual flow) → MOOT
+- R4 P2 #6 (AuxAddr help text rejected by JS) → MOOT
+- R2 F9 (config.js line classifications wrong) → MOOT
+- R1 F2 (npm/Docker build chain) → MOOT (no web/ to build)
+- P0-2 (npm vs Docker debate) → MOOT (no web build needed)
+
+### Findings addressed in this revision
+
+| Finding | Round | Severity | Action taken |
+|---|---|---|---|
+| cli/init.go "lines 193-258" spans 3 functions; verbatim cut destroys file | R2 F1 | P0 | Phase 7 rewritten: anchor by function name not line numbers; DELETE all 4 password-touching functions (handleNewAccount, handleExistingAccount, handleMissingPasswordRecoveryEmail, promptNewPassword, validatePassword, getPasswordRecoveryEmail) entirely |
+| handleNewAccount retained-as-dead-code won't compile (cfg.SecureLoginPassword refs) | R4 P1 | P1 (treated as P0 by parent — would break build) | Phase 7 rewritten: full delete, not retain-as-dead-code |
+| handleMissingPasswordRecoveryEmail references cfg.SecureLoginPassword (line 258) | P0-6 derivation | P0 | Phase 7 covers (full delete) |
+| Phase 7 half-configured state (redirect + continue to WriteConfig) | R1 F5 | P0 | Phase 7 Task 7.3: WriteConfig persists non-credential config BEFORE printWizardRedirect() calls os.Exit(0); no half-configured state |
+| Working-directory confusion (Phase 1 clones separately; submodule already exists) | R1 F1 + F4 + F17 | P0 | Plan-wide pre-flight section + Phase 1 rewrite: Strategy A (work inside the existing submodule via `git -C $WORKTREE_PAT`); WORKTREE_PAT variable consistent throughout Phase 1 |
+| Unilateral `sudo apt install` in Phase 9 | R1 F7 | P0 | Plan-wide pre-flight section: apt-install gate clearly documented; Phase 9 will need executor to STOP + request operator approval at the install step |
+| `<YOUR-MONIKER>` placeholders won't auto-substitute by subagent | R1 F3 | P1 | Plan-wide pre-flight section: explicit moniker-substitution instruction at the top of plan |
+| Branch name inconsistency (cred-keyring vs mib-cred-keyring) | R3 F5 | P1 | Phase 1.2 + plan-wide aligned to spec form `bd-tuxlink-mib/mib-cred-keyring` |
+| `git checkout -b` not idempotent for fresh-subagent re-runs | R1 F6 + R2 F6 | P1 | Phase 1.2: `-B` (force-create-or-switch) form |
+| Phase 1 branches off `origin/master` discarding local merge | R4 P2 #4 | P2 | Phase 1.2: explicitly branch from LOCAL `master` (post upstream-merge) |
+| Phase 8 web UI modify → npm/webpack/Docker chain risk | R1 F2 + R3 F10 | P0 + P1 | Phase 8 rewritten: DELETE web/ entirely; eliminates npm + webpack + Docker risk surface |
+| api/api.go's `pat/web` import cascade after web/ delete | New (cascade from web delete) | — | Phase 8.2: explicit api/api.go cleanup as part of web delete |
+| Adrev disposition updated to reflect web-UI scope-shift | — | structural | Spec §7 amended with "POST-PLAN-REVIEW SCOPE AMENDMENT" header noting which adrev rows are now superseded |
+| Hardcoded URL anchor `#credentials` decays | R1 F5 | P2 | Phase 7 Task 7.2: redirect message uses plain README link (no fragment) |
+| Plan's risk register summary doesn't mirror spec's full §5 | R3 F8 + R1 F13 | P1 | Plan's risk register reverted to a brief table + "see spec §5 for full" pointer (no parallel statement; per propagation contract) |
+
+### Findings deferred to LDC Deviations (executing subagents fix inline)
+
+These P1/P2 findings are real but are easier to fix when the executor hits them than to pre-stage in plan text. The LDC Deviations subsection above is the persistence mechanism. Listed here so executors know to expect them:
+
+| Finding | Round | Where executor will hit |
+|---|---|---|
+| Phase 6 `getPasswordForCallsign` drops `select { <-ctx.Done() }` SIGINT handler | R2 F3 | When implementing Task 6.3 — preserve the SIGINT branch |
+| `cfg/config.go` AuxAddr block ends at line 44, not 43 (off-by-one) | R2 F2 | Phase 3 — adjust line refs when editing |
+| Plan-review `.github/workflows/test.yml` invented; actual repo has `docker.yaml` + `go.yaml` | R2 F4 | Phase 9 Task 9.2 — amend `go.yaml` (or create `integration.yaml`); confirm structure before editing |
+| `--components=secrets` flag added without spec backing | R3 F3 | Phase 9 Task 9.4 — either justify or drop the flag |
+| SMTP-skip predicate verification (already done in adrev R3 F1; cite source inline) | R3 F6 | Phase 5 Task 5.1 — add 1-line citation comment |
+| `// nolint:unused` meaningless in Pat (no golangci-lint config) | R2 F5 | OBVIATED by Phase 7 full-delete; nothing retained as dead code |
+| MockInit globally mutates; document serialization | R3 F3 | Phase 2 already covers this (test serialize note + Cleanup) |
+| Phase 6 test gate runs before Phase 7 fixes cli/init.go | R4 P2 #3 | Phase 6 Task 6.4: narrow expected test failures OR defer full `go test ./...` gate to end of Phase 7 |
+
+### Findings rejected (with reasoning)
+
+| Finding | Round | Severity | Why rejected |
+|---|---|---|---|
+| Plan's web/dist rebuild mechanism not pre-determined | R3 F10 | P1 | MOOT post-scope-shift (no web/ to rebuild) |
+| `web/Dockerfile` is "amateurish" per past reviewer feedback | (operator framing) | — | Operator decision (locked 2026-05-18): delete web UI eliminates Docker entirely; the "amateurish" critique doesn't apply because Docker is gone from the chain |
+| Plan introduces `secureLoginLookup` extraction not in spec | R3 F2 | P2 | ACCEPTED as reasonable testability refactor (operator-implicit-approval; doesn't change observable behavior) |
+
+### Per-round finding counts
+
+| Round | Lens | Findings | P0 | P1 | P2 | P3 |
+|---|---|---|---|---|---|---|
+| R1 | execution-friction (Claude osprey-tundra-juniper) | 18 | 5 | 6 | 5 | 2 |
+| R2 | contract-verification (Claude siskin-meadow-larch) | 10 | 1 | 3 | 5 | 1 |
+| R3 | spec-coverage (Claude murrelet-cypress-fjord) | 5 + matrix | 0 | 4 | 1 | 0 |
+| R4 | Codex cross-provider | 5 | 0 | 1 | 4 | 0 |
+| **Total** | | **38** | **6** | **14** | **15** | **3** |
+
+Cross-round convergence note: R1 + R2 + R3 + R4 all independently caught the cli/init.go function-boundary issue (different framings — R2 most explicit). R1 + R3 + R4 caught the web-UI cascade (different angles). These convergences triggered the largest revisions (Phase 7 rewrite + Phase 8 scope-shift).
 
 ---
 
