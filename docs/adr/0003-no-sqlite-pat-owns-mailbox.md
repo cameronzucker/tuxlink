@@ -1,7 +1,7 @@
 # 3. Pat owns the mailbox; no SQLite in Tuxlink v0.0.1
 
 Date: 2026-05-05
-Status: Accepted
+Status: Accepted (amended by [ADR 0011](0011-fork-pat-for-tuxlink.md) — dependency target shifted from upstream `la5nta/pat` to the `tuxlink-pat` fork; the ownership-of-mailbox rule and the no-SQLite-in-tuxlink rule themselves remain operative)
 Deciders: cameronzucker, lichen (during 2026-04-22 office-hours adversarial review round 2)
 
 ## Context
