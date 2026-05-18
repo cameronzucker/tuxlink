@@ -134,7 +134,11 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
 
 ## Git workflow — worktrees mandatory under bd-issue ownership (ADR 0008)
 
-When two or more Claude Code sessions are simultaneously live against this repository, any session not holding the main-checkout lease MUST perform its write work in a worktree, not in the main checkout. For solo-session work (the typical case today), worktrees remain optional — use `git checkout` in the main repo when no isolation benefit is gained. The lease-detection mechanism is automatic per the `.claude/hooks/block-main-checkout-race.sh` hook (D1); agents do not need to check for concurrency manually.
+When the `block-main-checkout-race.sh` hook denies a write op citing "another live session is active," create a worktree per the QUICK FIX in the deny message and re-run your op there. The hook's determination is authoritative; agents do not re-decide it via `get_tuxlink_sessions.py` or any other source. Worktrees are MANDATORY for write work when the hook says another live session is active. Read-only ops and `bd` commands stay free regardless.
+
+When the hook does NOT deny — i.e., it has determined there are no other live sessions — main-checkout writes are fine and worktrees are not required for that case.
+
+Rationale and the 2026-05-18 grounding incident: see [`dev/incidents/2026-05-18-main-checkout-race-hook-loop.md`](dev/incidents/2026-05-18-main-checkout-race-hook-loop.md) (write-up) + [`dev/incidents/2026-05-18-main-checkout-race-hook-loop-reviewer-response.md`](dev/incidents/2026-05-18-main-checkout-race-hook-loop-reviewer-response.md) (AzDO-grounded diagnosis from `towhee-wren-aspen`). Prior tuxlink wording included a "solo-session work, worktrees remain optional" carve-out that invited agents to second-guess the hook by consulting `get_tuxlink_sessions.py`; the LFST source-of-truth never had that carve-out. The framing above restores LFST's posture: the hook is the authority.
 
 **Worktree ownership rule.** A worktree is permitted IFF:
 
