@@ -67,3 +67,4 @@ src-tauri/gen/
 .DS_Store
 *.swp
 *.swo
+.playwright-mcp/
