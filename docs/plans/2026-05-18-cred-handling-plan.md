@@ -85,7 +85,7 @@ notes and commit messages.
 
 ## Execution Status
 
-**Overall:** 7/10 phases shipped; Phase 8 in queue (DELETE Pat web UI entirely). Full module build CLEAN.
+**Overall:** 8/10 phases shipped; Phase 9 in queue (README + CI + PR-A open).
 
 | Phase | Status | Ship SHA(s) | Notes |
 |---|---|---|---|
@@ -96,7 +96,7 @@ notes and commit messages.
 | 5 — app/exchange.go callback + app/app.go cleanup | ✅ Shipped | tuxlink-pat aafec62 on bd-tuxlink-mib/mib-cred-keyring | 1 commit; SetSecureLoginHandleFunc rewritten to delegate to extracted `secureLoginLookup` (testable); SMTP-proto skip + empty-addr skip + normalize-then-credstore.Get + log-and-fall-through on miss/locked/unavailable; NO AuxAddr-fallback-to-primary per §4.7; 7 tests passing including the §4.7 regression test (`AuxMiss_PromptHub_NoFallbackToPrimary`); app/app.go lines 230-233 deleted (in-memory clear obsolete since field doesn't exist). See Deviations for the package-test-run workaround used to get tests to run under the still-broken-build state. |
 | 6 — API handlers + cli/account.go (credstore-explicit-handling) | ✅ Shipped | tuxlink-pat 86f0e4d on bd-tuxlink-mib/mib-cred-keyring | 3 call sites updated with explicit (found, err) handling; SIGINT branch preserved in cli/account.go (R2 F3); app/ + api/ now build clean; only cli/init.go remains (Phase 7 target) |
 | 7 — cli/init.go both password paths redirected | ✅ Shipped | tuxlink-pat 7559db5 on bd-tuxlink-mib/mib-cred-keyring | 6 password-touching functions DELETED entirely (promptNewPassword, handleNewAccount, handleExistingAccount, handleMissingPasswordRecoveryEmail, validatePassword, getPasswordRecoveryEmail) + accountExists also dropped (no longer needed); printWizardRedirect helper added; InitHandle persists non-credential config (callsign/locator) via WriteConfig BEFORE printWizardRedirect (R1 F5 fix — no half-configured state); unused imports cleaned (cmsapi, debug, time); `go build ./...` CLEAN; `go test ./...` all PASS; manual smoke confirmed no `secure_login_password` in written config |
-| 8 — **DELETE Pat web UI entirely** (`rm -rf web/` + api/api.go cleanup) | ⬜ Not started | — | Post-plan-review scope amendment per spec `046f4b8` + `project_fork_enables_aggressive_deletion` memory; eliminates npm/webpack/Docker chain |
+| 8 — **DELETE Pat web UI entirely** (`rm -rf web/` + api/api.go cleanup) | ✅ Shipped | tuxlink-pat 9fc3f03 on bd-tuxlink-mib/mib-cred-keyring | 1 commit; 60 files changed, 20,158 deletions; entire `web/` directory deleted (~6000 LoC frontend + Dockerfile + webpack.config.js + package-lock.json); `pat/web` import removed from `api/api.go` along with 3 route registrations (`/ui`, `/dist`, and the orphaned `/` → `/ui` redirect); `go build ./...` CLEAN; `go test ./...` all PASS; `grep -rn "la5nta/pat/web" --include="*.go"` returns empty; npm/webpack/Docker build chain eliminated from tuxlink-pat |
 | 9 — README + CI integration test + PR-A open | ⬜ Not started | — | tuxlink-pat README "Credentials" section + .github/workflows/ + open PR-A |
 | 10 — PR-A merge + PR-B submodule bump on tuxlink | ⬜ Not started | — | After PR-A merge: bump submodule pin in tuxlink; open PR-B against feat/v0.0.1; close `tuxlink-mib` on PR-B merge |
 
