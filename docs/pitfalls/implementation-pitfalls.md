@@ -27,6 +27,7 @@ This document serves three audiences. Start here, then go directly to the sectio
 | 0 | [Live Radio Network Operations](#0-live-radio-network-operations) | Any code path that can transmit under the project's callsign, OR any encryption decision touching tuxlink | RADIO-1, RADIO-2 | §0.C |
 | 1 | [Scope and Audience Boundaries](#1-scope-and-audience-boundaries) | Any feature, doc, or design decision touching what tuxlink does vs. what is out of scope | SCOPE-1 | §1.C |
 | 2 | [Safety-Stack Coordination and Cross-Component Parity](#2-safety-stack-coordination-and-cross-component-parity) | Any time a project hook denies a write op, OR you're tempted to add additional "session liveness" signals, OR you're writing a script that reads/writes the same state a hook does | HOOK-1, LEASE-1, PARITY-1 | §2.C |
+| 3 | [Plan and Documentation Discipline](#3-plan-and-documentation-discipline) | Any plan / spec amendment, especially when an AMENDMENT marker (AMD-N) lands in a previously-shipped task's plan body | DRIFT-1 | §3.C |
 | — | [Tool Integration](#tool-integration) | Conflicts between project commitments and tool-installed defaults | BD-1 | §Tool-Integration.C |
 | — | [Orchestration](#orchestration) | Parallel subagent dispatch and output persistence | ORCH-1 | §Orchestration.C |
 | A | [Historical Changelog](#appendix-a-historical-changelog) | Provenance, validation dates, review process meta-observations | — | — |
@@ -393,6 +394,36 @@ Codification of the 2026-05-18 incident lives in `dev/incidents/2026-05-18-main-
 
 ---
 
+# Section 3: Plan and Documentation Discipline
+
+> **Reader context:** I'm proposing, reviewing, or amending a plan document (`docs/plans/*.md`, `docs/superpowers/specs/*.md`, `docs/superpowers/plans/*.md`) and I need to know what discipline applies to the amendment lifecycle to prevent the implementation from drifting out of sync with what the plan says.
+
+---
+
+### DRIFT-1: Plan-text AMENDMENT does not auto-cascade to the code it amends
+
+**The Flaw:** A plan amendment (`> AMENDMENT 2026-MM-DD (AMD-N).`) lands in `docs/plans/*.md` documenting a change to a previously-shipped task's contract. The plan body is updated. The code that the prior task shipped is NOT updated — the AMD is a description of intent, not a code change. Subsequent plans that assume the AMD shipped find the codebase in the pre-AMD shape and fail to compile.
+
+**Why It Matters:** AMDs are cheap (a markdown edit + commit). Code amendments are expensive (bd issue + full pipeline). The asymmetry tempts operators to ship the AMD without the bd issue, especially when the AMD is conceptually simple. The gap is invisible until a downstream task tries to use the new contract — at which point a plan-review-cycle catches it (best case, like wizard-cluster R1 P0-1) or impl ships compile-failing code (worst case).
+
+**The Fix:** Every AMD MUST ship with a paired bd issue if the prior task is "shipped." Two acceptable forms:
+1. **Code-bearing AMD:** the AMD body cites the bd issue tracking the code-impl side: "AMD-N. ... Bd issue tracking the code-impl side: tuxlink-XYZ."
+2. **Prose-only AMD:** state explicitly that there's no code surface: "AMD-N (prose-only; no code impact)."
+
+The discipline question is asked at amendment time, not delegated to a future plan-review.
+
+**The Lesson:** The 2026-05-18 wizard-cluster plan-review caught this gap class via R1 P0-1 + R1 P0-3 + Codex R4 P0 #2 (cross-validated across providers). `tuxlink-4mt` retroactively cleared AMD-1 + AMD-11's code-impl gap. The fix is to never accumulate the gap in the first place. Cross-spec amendments inherit the same discipline: when amending a SHIPPED SPEC (e.g., the wizard cluster spec landed via PR #62), file a paired bd issue tracking any consumer that needs updating.
+
+---
+
+### Section 3 Review Checklist
+
+- [ ] **Check derived from DRIFT-1** — Any PR that lands an AMENDMENT in a plan or spec includes either (a) a cited bd issue tracking the code-impl side, or (b) explicit "prose-only; no code impact" framing. Verify by searching the PR body for AMENDMENT markers and confirming each carries the cite or the explicit punt.
+- [ ] **Check derived from DRIFT-1** — When amending a shipped spec (e.g., adding fields to `WizardError` or changing a function signature in `validate_identity`), the PR identifies every downstream consumer (via `grep -r 'consumer-symbol'`) and files paired bd issues for each consumer that needs adaptation.
+- [ ] **Check derived from DRIFT-1** — Pipeline cycles for code amendments inherited from plan amendments use a TRIAGED build-robust-features pipeline — full upstream for hard-to-undo architectural decisions; TDD-direct for plumbing (the bd issue IS the spec). See feedback memory `discipline-triage-rule` for the triage criteria.
+
+---
+
 ## Tool Integration
 
 > **Reader context:** Pitfalls that arise when a third-party tool (e.g., `bd`/Beads) installs opinionated defaults into project files (`CLAUDE.md`, `AGENTS.md`, `.claude/settings.json`) that conflict with existing project commitments. The hazard is silent drift — an agent reads a tool-installed directive without noticing the override.
@@ -502,6 +533,7 @@ Companion artifacts:
 | HOOK-1 | Arguing with `block-main-checkout-race.sh` instead of routing to a worktree | HIGH | VALIDATED | §2 Safety-Stack Coordination and Cross-Component Parity |
 | LEASE-1 | Adding additional "session liveness" signals beyond the lease | HIGH | VALIDATED | §2 Safety-Stack Coordination and Cross-Component Parity |
 | PARITY-1 | Script/Hook Path-Resolution Parity | HIGH | VALIDATED | §2 Safety-Stack Coordination and Cross-Component Parity |
+| DRIFT-1 | Plan-text amendments don't auto-cascade to code | HIGH | VALIDATED | §3 Plan and Documentation Discipline |
 | ORCH-1 | Analysis Dispatches Must Persist Findings | HIGH | VALIDATED | Orchestration |
 | BD-1 | bd opinionated-tooling overrides | MEDIUM | VALIDATED | Tool Integration |
 
