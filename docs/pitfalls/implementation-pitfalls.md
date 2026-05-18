@@ -25,7 +25,7 @@ This document serves three audiences. Start here, then go directly to the sectio
 | § | Section | You're working on... | Entries | Checklist |
 |---|---------|---------------------|---------|-----------|
 | 0 | [Live Radio Network Operations](#0-live-radio-network-operations) | Any code path that can transmit under the project's callsign, OR any encryption decision touching tuxlink | RADIO-1, RADIO-2 | §0.C |
-| 1 | [EXAMPLE-DOMAIN-1](#1-example-domain-1) | TODO — describe what this section covers | PREFIX-1 – PREFIX-N | §1.C |
+| 1 | [Scope and Audience Boundaries](#1-scope-and-audience-boundaries) | Any feature, doc, or design decision touching what tuxlink does vs. what is out of scope | SCOPE-1 | §1.C |
 | 2 | [EXAMPLE-DOMAIN-2](#2-example-domain-2) | TODO — describe what this section covers | PREFIX-1 – PREFIX-N | §2.C |
 | — | [Tool Integration](#tool-integration) | Conflicts between project commitments and tool-installed defaults | BD-1 | §Tool-Integration.C |
 | — | [Orchestration](#orchestration) | Parallel subagent dispatch and output persistence | ORCH-1 | §Orchestration.C |
@@ -241,35 +241,43 @@ Notable specific cases this rule covers:
 
 ---
 
-# Section 1: EXAMPLE-DOMAIN-1
+# Section 1: Scope and Audience Boundaries
 
-<!-- TODO: rename this section to your project's first domain (e.g. "Authentication & Security", "Data Pipeline", "API Handlers"). Delete this comment. -->
-
-> **Reader context:** I'm building or reviewing [what this domain covers].
+> **Reader context:** I'm building a feature, writing docs, or reviewing a design decision and I need to know what tuxlink IS and what it is NOT. This section codifies the foundational scope boundary that touches every other decision.
 >
-> TODO — describe the shape of the pitfalls in this section and why they matter.
+> The pitfalls here aren't about *bugs* in the traditional sense — they're about preventing scope creep into roles that aren't tuxlink's job. Misapplied effort wasted on out-of-scope work is just as harmful as a correctness bug, because it ships the wrong product.
 
 ---
 
-### PREFIX-1: TODO — First Pitfall Title
+### SCOPE-1: Conflating RMS Express (client) with RMS Trimode (gateway)
 
-<!-- TODO: replace this example with a real pitfall entry. Use the Flaw → Why → Fix → Lesson structure for complex findings, or a single condensed paragraph for simple ones. See §How to Add a Pitfall below. -->
+**The Flaw:** A feature proposal, design suggestion, or implementation task treats tuxlink as if it should implement gateway-side functionality (listening for incoming radio connections from other clients, bridging to the Winlink CMS, MPS-style message holding, etc.). This typically arises because an operator's Winlink install carries BOTH `RMS Express/` (the client we're replicating) AND `RMS/RMS Trimode/` (the gateway we are NOT replicating) — and the directory adjacency suggests they're variants of the same product.
 
-**The Flaw:** TODO — what the code does wrong or what's missing.
+Examples of this flaw in the wild:
+- "Tuxlink should let the operator host a Winlink gateway so other clients can connect to them" → that's RMS Trimode's job; out of scope.
+- "When the operator's internet is down, tuxlink should be able to bridge incoming radio sessions from other operators to local-CMS storage" → that's RMS Relay's job (with RMS Trimode/Packet/Pactor as the front-end); out of scope.
+- Reading the `rms-extracted/RMS/RMS Trimode/` directory and assuming its `.ini` / `.dll` shape is part of "Express" (it's not — it's a separate WDT product).
+- Designing a UI feature that exposes "gateway operator mode" or "be a Winlink server" — never. Tuxlink is the client side only.
 
-**Why It Matters:** TODO — the production failure mode. What breaks, for whom, and why it's hard to detect.
+**Why It Matters:** Tuxlink's value proposition is "a Mail.app-quality desktop Winlink client" for the Winlink Express user audience. Implementing gateway functionality would:
+1. **Dilute the product** — gateway operators have different needs, expectations, and operational responsibilities (legal ID, channel management, MPS coordination) than client users; mixing the two surfaces in one app produces a worse experience for both.
+2. **Multiply the regulatory surface** — gateway operation involves additional Part 97 obligations (e.g., § 97.213 automatic-control rules, station-ID timing on outbound carrier) that the project explicitly hasn't taken on. RADIO-1's consent-gate model becomes inadequate for an automated gateway that takes incoming connections 24/7.
+3. **Compete with established products** — RMS Trimode is mature, widely deployed, and actively maintained by the Winlink Development Team. Reimplementing it would burn effort with no marginal benefit to the client user audience.
 
-**The Fix:** TODO — the specific code change or pattern to apply. Include a code example when the fix is non-trivial.
+**The Fix:**
+- When an idea proposes gateway functionality, **stop**. Refer the requestor to RMS Trimode (or its successors) — that's the right tool for the gateway role. Document the deferral in the PR / issue / handoff doc with an explicit reference to this pitfall.
+- When reading a Winlink install directory for prior-art purposes, treat `RMS Express/` (= the renamed-from-RMS-Express Winlink Express client) and `RMS/RMS Trimode/` (= the gateway) as **separate products**. Anything cited as "what Express does" must come from `RMS Express/` files (`.ini`, `.exe`, `.chm`, `Logs/`, etc.), NOT from `RMS/RMS Trimode/` files.
+- Treat the file-naming legacy as a known confusion source: `RMS Express.exe` IS Winlink Express (renamed in June 2016 per the Express CHM `hs10.htm`, kept the legacy name for installation-folder compatibility). `RMS Trimode.exe` is a different product entirely.
 
-**The Lesson:** TODO — the generalizable principle. What should the reader watch for in future code?
+**The Lesson:** "It came in the same install" ≠ "it's the same product." When two adjacent directories belong to the same vendor (the Winlink Development Team) but serve different roles in an architecture (client vs. gateway), conflating them produces design proposals for the wrong tool. The canonical scope statement lives in [`docs/design/v0.0.1-ux-mockups.md`](../design/v0.0.1-ux-mockups.md) §1.1 — this pitfall is the agent-facing reinforcement.
 
 ---
 
-### Review Checklist
+### Section 1 Review Checklist
 
-<!-- TODO: one checkbox per pitfall above. Each item is a pass/fail check. Example format: -->
-
-- [ ] **Check derived from PREFIX-1** — TODO
+- [ ] **Check derived from SCOPE-1** — No PR / issue / design proposal introduces gateway-side functionality (listening for inbound radio connections, MPS hosting, RMS Relay-style local-CMS bridging). Verify by searching the PR description and changed files for terms like "gateway," "incoming connection," "listen," "MPS," "RMS Relay," "inbound session" — any hit warrants explicit reference to this pitfall + a justification of why it's NOT gateway functionality.
+- [ ] **Check derived from SCOPE-1** — Any prior-art analysis citing "what Express does" sources its claims from `rms-extracted/RMS Express/` files (or the Express CHM at `dev/winlink-reference/express-chm/`), NOT from `rms-extracted/RMS/RMS Trimode/`. Verify by checking cited file paths in the design doc, PR descriptions, and handoff docs.
+- [ ] **Check derived from SCOPE-1** — `docs/design/v0.0.1-ux-mockups.md` §1.1 still reads as the canonical scope statement (this pitfall cites that section; if the design doc drifts, this pitfall's accuracy degrades).
 
 ---
 
