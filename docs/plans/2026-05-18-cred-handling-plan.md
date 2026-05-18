@@ -85,7 +85,7 @@ notes and commit messages.
 
 ## Execution Status
 
-**Overall:** 8/10 phases shipped; Phase 9 in queue (README + CI + PR-A open).
+**Overall:** 9/10 phases shipped; Phase 10 awaits operator merge of PR-A.
 
 | Phase | Status | Ship SHA(s) | Notes |
 |---|---|---|---|
@@ -97,7 +97,7 @@ notes and commit messages.
 | 6 — API handlers + cli/account.go (credstore-explicit-handling) | ✅ Shipped | tuxlink-pat 86f0e4d on bd-tuxlink-mib/mib-cred-keyring | 3 call sites updated with explicit (found, err) handling; SIGINT branch preserved in cli/account.go (R2 F3); app/ + api/ now build clean; only cli/init.go remains (Phase 7 target) |
 | 7 — cli/init.go both password paths redirected | ✅ Shipped | tuxlink-pat 7559db5 on bd-tuxlink-mib/mib-cred-keyring | 6 password-touching functions DELETED entirely (promptNewPassword, handleNewAccount, handleExistingAccount, handleMissingPasswordRecoveryEmail, validatePassword, getPasswordRecoveryEmail) + accountExists also dropped (no longer needed); printWizardRedirect helper added; InitHandle persists non-credential config (callsign/locator) via WriteConfig BEFORE printWizardRedirect (R1 F5 fix — no half-configured state); unused imports cleaned (cmsapi, debug, time); `go build ./...` CLEAN; `go test ./...` all PASS; manual smoke confirmed no `secure_login_password` in written config |
 | 8 — **DELETE Pat web UI entirely** (`rm -rf web/` + api/api.go cleanup) | ✅ Shipped | tuxlink-pat 9fc3f03 on bd-tuxlink-mib/mib-cred-keyring | 1 commit; 60 files changed, 20,158 deletions; entire `web/` directory deleted (~6000 LoC frontend + Dockerfile + webpack.config.js + package-lock.json); `pat/web` import removed from `api/api.go` along with 3 route registrations (`/ui`, `/dist`, and the orphaned `/` → `/ui` redirect); `go build ./...` CLEAN; `go test ./...` all PASS; `grep -rn "la5nta/pat/web" --include="*.go"` returns empty; npm/webpack/Docker build chain eliminated from tuxlink-pat |
-| 9 — README + CI integration test + PR-A open | ⬜ Not started | — | tuxlink-pat README "Credentials" section + .github/workflows/ + open PR-A |
+| 9 — README + CI integration test + PR-A open | ✅ Shipped | tuxlink-pat 39199b4 on bd-tuxlink-mib/mib-cred-keyring; PR-A: https://github.com/cameronzucker/tuxlink-pat/pull/2 | README "## Credentials" section added; `.github/workflows/go.yaml` amended (NEW integration job: dbus-run-session + gnome-keyring-daemon `--components=secrets`, runner pinned ubuntu-22.04); `internal/credstore/credstore_integration_test.go` NEW (build-tagged `//go:build integration`); unit tests + integration-tagged vet/build PASS locally; integration tests NOT run locally per pre-flight apt-install gate (CI validates on PR). PR-A open, awaiting Cameron merge for Phase 10. |
 | 10 — PR-A merge + PR-B submodule bump on tuxlink | ⬜ Not started | — | After PR-A merge: bump submodule pin in tuxlink; open PR-B against feat/v0.0.1; close `tuxlink-mib` on PR-B merge |
 
 ### Deviations
@@ -2036,7 +2036,7 @@ Expected: large commit (many deletions); commit message reflects the scope-shrin
 ---
 ## Phase 9 — README + CI integration test + PR-A open
 
-**Execution Status:** ⬜ Not started
+**Execution Status:** ✅ Shipped — tuxlink-pat `39199b4` on `bd-tuxlink-mib/mib-cred-keyring` (2026-05-18, agent `bluff-spruce-sage`). PR-A: https://github.com/cameronzucker/tuxlink-pat/pull/2. README "## Credentials" section added; `.github/workflows/go.yaml` amended with NEW `integration` job (sibling to `build`, dbus-run-session + gnome-keyring-daemon `--components=secrets`, runner pinned `ubuntu-22.04` per R1 F4); `internal/credstore/credstore_integration_test.go` NEW (build-tagged `//go:build integration`, round-trip + delete-cleanup against real OS keyring). Local verification: `go test ./...` PASS, `go vet -tags=integration` + `go test -tags=integration -count=0` PASS (integration tests themselves NOT run locally per pre-flight apt-install gate — CI validates on PR). Phase 10 awaits operator merge of PR-A.
 
 This phase adds the tuxlink-pat README's "Credentials" section, adds the CI integration test workflow, runs the integration tests locally to verify, then opens PR-A against `cameronzucker/tuxlink-pat/master`.
 
