@@ -79,7 +79,7 @@ notes and commit messages.
 |---|---|---|---|
 | 1 — Operator GH ops (fork + branch protection + Issues) | ✅ Shipped | — (no commit; GH-side) | 2026-05-18; Cameron created fork; agent configured branch protection on `master` per his delegation; Issues enabled |
 | 2 — Pre-flight + PR-A (tuxlink-pat README) | ✅ Shipped | PR #1 merged 2026-05-18 by Cameron; `tuxlink-pat/master` now carries README on top of upstream fork point | PR-A by `bison-sequoia-swallow` |
-| 3 — Pre-flight + PR-B (tuxlink wiring: submodule + build.rs + tauri.conf + CI + docs) | 🚧 In progress | — | Claimed 2026-05-18T15:49Z by subagent `sparrow-taiga-esker` on branch `bd-tuxlink-84i/fork-setup` |
+| 3 — Pre-flight + PR-B (tuxlink wiring: submodule + build.rs + tauri.conf + CI + docs) | 🚧 In progress | commit `d7e6c28` on `bd-tuxlink-84i/fork-setup` | PR-B #54 OPEN/CLEAN/MERGEABLE 2026-05-18 by `sparrow-taiga-esker`: https://github.com/cameronzucker/tuxlink/pull/54 — awaiting Cameron review/merge → flips to ✅ |
 | 4 — Operator merges PR-B; tuxlink-84i closes | ⬜ Not started | — | Blocked until Phase 3 complete |
 
 ### Deviations
@@ -665,7 +665,7 @@ Expected: state=MERGED, mergeCommit has a SHA.
 
 ## Phase 3 — Pre-flight + PR-B (tuxlink wiring)
 
-**Execution Status:** 🚧 IN PROGRESS — claimed 2026-05-18T15:49Z by subagent `sparrow-taiga-esker` on branch `bd-tuxlink-84i/fork-setup`. Phase 2 PR-A merged.
+**Execution Status:** 🚧 IN PROGRESS — claimed 2026-05-18T15:49Z by subagent `sparrow-taiga-esker` on branch `bd-tuxlink-84i/fork-setup`. Phase 2 PR-A merged. PR-B #54 opened 2026-05-18 at commit `d7e6c28` (https://github.com/cameronzucker/tuxlink/pull/54); state OPEN/CLEAN/MERGEABLE. Awaiting Cameron review/merge → flips to ✅ on merge (Phase 4).
 
 > **LDC banner flip at claim time** (per Living Document Contract bullet 1): when an executor begins Phase 3, the FIRST action is to flip this banner from `⬜ NOT STARTED` to `🚧 IN PROGRESS — claimed <YYYY-MM-DD HH:MMZ> (branch bd-tuxlink-84i/fork-setup)`. Update the top-of-plan Execution Status table to match.
 
