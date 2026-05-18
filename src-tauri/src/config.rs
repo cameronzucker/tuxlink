@@ -180,3 +180,35 @@ impl Config {
         Ok(())
     }
 }
+
+#[derive(Debug, thiserror::Error)]
+pub enum ConfigReadError {
+    #[error("config file not found at {path}")]
+    NotFound { path: std::path::PathBuf },
+    #[error("io error reading {path}: {source}")]
+    Io { path: std::path::PathBuf, #[source] source: std::io::Error },
+    #[error("config deserialize failed: {source}")]
+    Serde { #[source] source: serde_json::Error },
+    #[error("config failed semantic validation: {source}")]
+    Validation { #[source] source: ConfigValidationError },
+}
+
+/// Read + parse + validate the config at `config_path()`. Returns typed errors per spec §3.5.
+/// Consumers: wizard plan line 525 (wizard_persist_offline) + line 617 (get_wizard_completed) —
+/// both use `.ok()` to fold any error into None (first-run, malformed, etc.) and fall through
+/// to a fresh wizard run.
+pub fn read_config() -> Result<Config, ConfigReadError> {
+    let path = config_path();
+    let bytes = match std::fs::read(&path) {
+        Ok(b) => b,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Err(ConfigReadError::NotFound { path });
+        }
+        Err(e) => return Err(ConfigReadError::Io { path, source: e }),
+    };
+    let config: Config = serde_json::from_slice(&bytes)
+        .map_err(|source| ConfigReadError::Serde { source })?;
+    config.validate()
+        .map_err(|source| ConfigReadError::Validation { source })?;
+    Ok(config)
+}

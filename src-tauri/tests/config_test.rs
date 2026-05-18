@@ -378,3 +378,135 @@ fn test_validation_error_display_strings_stable() {
     let e = ConfigValidationError::InvalidIdentity { field: "callsign", rule: "must not be empty" };
     assert_eq!(e.to_string(), "invalid identity field `callsign`: must not be empty");
 }
+
+// ============================================================================
+// Phase 4 — read_config + ConfigReadError
+// ============================================================================
+
+use tuxlink_lib::config::{read_config, ConfigReadError, config_path};
+
+/// Helper: scope XDG_CONFIG_HOME to a fresh temp dir for the duration of `f`.
+/// Uses RAII guard so prior env value is RESTORED even if `f` panics (per plan-review
+/// R1 P1-1 + R2 P1-3 — panic during a test would otherwise orphan the env var and
+/// cascade failures into subsequent tests). Use with #[serial_test::serial] to avoid
+/// concurrent-process races.
+struct XdgGuard {
+    prior: Option<std::ffi::OsString>,
+    _tmp: tempfile::TempDir,
+}
+impl Drop for XdgGuard {
+    fn drop(&mut self) {
+        match self.prior.take() {
+            Some(p) => std::env::set_var("XDG_CONFIG_HOME", p),
+            None => std::env::remove_var("XDG_CONFIG_HOME"),
+        }
+    }
+}
+
+fn with_xdg_temp<R>(f: impl FnOnce(&std::path::Path) -> R) -> R {
+    let tmp = tempfile::tempdir().expect("must create tempdir");
+    let path = tmp.path().to_owned();
+    let prior = std::env::var_os("XDG_CONFIG_HOME");
+    std::env::set_var("XDG_CONFIG_HOME", &path);
+    let _guard = XdgGuard { prior, _tmp: tmp };
+    f(&path)
+    // _guard drops here, restoring prior env value (even on panic from `f`)
+}
+
+#[test]
+#[serial_test::serial]
+fn test_read_config_not_found_returns_typed_error() {
+    with_xdg_temp(|_| {
+        let err = read_config().unwrap_err();
+        assert!(matches!(err, ConfigReadError::NotFound { .. }));
+    });
+}
+
+#[test]
+#[serial_test::serial]
+fn test_read_config_serde_returns_typed_error_on_malformed_json() {
+    with_xdg_temp(|xdg| {
+        let path = xdg.join("tuxlink").join("config.json");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, b"{ not valid json").unwrap();
+        let err = read_config().unwrap_err();
+        assert!(matches!(err, ConfigReadError::Serde { .. }));
+    });
+}
+
+#[test]
+#[serial_test::serial]
+fn test_read_config_validation_runs_after_deserialize() {
+    with_xdg_temp(|xdg| {
+        let path = xdg.join("tuxlink").join("config.json");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        // Valid JSON shape but offline-with-callsign — should fail validation.
+        std::fs::write(&path, r#"{
+            "schema_version": 1, "wizard_completed": true,
+            "connect": {"connect_to_cms": false, "transport": "CmsSsl"},
+            "identity": {"callsign": "W4PHS", "identifier": null, "grid": null},
+            "privacy": {"gps_state": "Off", "position_precision": "FourCharGrid"},
+            "pat_mbo_address": null
+        }"#).unwrap();
+        let err = read_config().unwrap_err();
+        match err {
+            ConfigReadError::Validation { source: ConfigValidationError::OfflinePathHasCallsign } => {}
+            other => panic!("expected Validation(OfflinePathHasCallsign), got {other:?}"),
+        }
+    });
+}
+
+#[test]
+#[serial_test::serial]
+fn test_read_config_happy_path() {
+    with_xdg_temp(|xdg| {
+        let path = xdg.join("tuxlink").join("config.json");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, r#"{
+            "schema_version": 1, "wizard_completed": true,
+            "connect": {"connect_to_cms": true, "transport": "CmsSsl"},
+            "identity": {"callsign": "W4PHS", "identifier": null, "grid": "EM75"},
+            "privacy": {"gps_state": "Off", "position_precision": "FourCharGrid"},
+            "pat_mbo_address": "W4PHS@winlink.org"
+        }"#).unwrap();
+        let config = read_config().expect("happy path must succeed");
+        assert!(config.wizard_completed);
+        assert_eq!(config.identity.callsign.as_deref(), Some("W4PHS"));
+    });
+}
+
+#[test]
+#[serial_test::serial]
+fn test_config_path_uses_xdg_config_home_when_set() {
+    with_xdg_temp(|xdg| {
+        let path = config_path();
+        assert_eq!(path, xdg.join("tuxlink").join("config.json"));
+    });
+}
+
+#[test]
+#[serial_test::serial]
+#[cfg(unix)]
+fn test_read_config_eacces_returns_io_variant_not_notfound() {
+    // ConfigReadError::Io variant per spec §3.1 — fires when std::fs::read returns
+    // a non-NotFound error (EACCES, EIO, etc). Symmetric with the write-side
+    // ProbeReadFailed coverage. Added per plan-review R3 P0-2.
+    use std::os::unix::fs::PermissionsExt;
+    with_xdg_temp(|xdg| {
+        let path = xdg.join("tuxlink").join("config.json");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, br#"{"schema_version": 1}"#).unwrap();
+        let mut perm = std::fs::metadata(&path).unwrap().permissions();
+        perm.set_mode(0o000);
+        std::fs::set_permissions(&path, perm).unwrap();
+
+        let err = read_config().unwrap_err();
+        assert!(matches!(err, ConfigReadError::Io { .. }),
+            "EACCES on read MUST be Io variant, not NotFound: {err:?}");
+
+        // Restore permissions so tempdir cleanup works.
+        let mut perm = std::fs::metadata(&path).unwrap().permissions();
+        perm.set_mode(0o600);
+        std::fs::set_permissions(&path, perm).unwrap();
+    });
+}
