@@ -85,11 +85,11 @@ notes and commit messages.
 
 ## Execution Status
 
-**Overall:** 0/10 phases shipped; pre-execution.
+**Overall:** 1/10 phases shipped (Phase 1 state-only); Phase 2 in queue (now includes go-keyring dep addition).
 
 | Phase | Status | Ship SHA(s) | Notes |
 |---|---|---|---|
-| 1 — Setup: tuxlink-pat worktree + branch + go.mod | ⬜ Not started | — | Cross-repo setup; new branch on tuxlink-pat repo |
+| 1 — Setup: tuxlink-pat worktree + branch (Task 1.3 go.mod collapsed into Phase 2 per Go-tidy semantics) | ✅ Shipped | (state-only; no commit; tasks 1.1 + 1.2 only) | Branch `bd-tuxlink-mib/mib-cred-keyring` on tuxlink-pat (off LOCAL master post upstream-sync); upstream remote added. Per Discovery below, Task 1.3 (dep addition) collapsed into Phase 2 Task 2.1 |
 | 2 — credstore package (NEW; pure TDD) | ⬜ Not started | — | Densest TDD phase; `internal/credstore/` |
 | 3 — cfg/config.go modifications | ⬜ Not started | — | Drop SecureLoginPassword; AuxAddr keep MarshalJSON, drop Password field |
 | 4 — api/api.go RedactedPassword removal | ⬜ Not started | — | Verify no other consumers via grep before delete |
@@ -102,11 +102,13 @@ notes and commit messages.
 
 ### Deviations
 
-(None yet; populate per LDC as discovered.)
+- **Phase 1 Task 1.3 collapsed into Phase 2 Task 2.1 (2026-05-18):** Task 1.3 as-written (`go get github.com/zalando/go-keyring && go mod tidy` as its own commit) is a Go-idiomatic no-op — `go mod tidy` STRIPS modules that no Go file imports yet. Subagent `sumac-birch-owl` correctly stopped + reported rather than committing inconsistent go.mod state. The dep addition is now part of Phase 2's first commit (which writes `internal/credstore/credstore.go` that imports go-keyring; `go mod tidy` then registers the dep). Phase 1 Task 1.3 is REMOVED from the actionable plan; future executors skip it. Phase 1 ships as state-setup-only (branch + upstream remote; no Go-source commit).
 
 ### Discoveries
 
-(None yet; populate per LDC as discovered.)
+- **Go toolchain absent from dev Pi (pandora) as of 2026-05-18.** Phase 1 Task 1.3 (`go get github.com/zalando/go-keyring`) blocked at first dispatch; subagent `basalt-marsh-sandbar` stopped per `feedback_sudo_apt_explicit_approval` memory. Resolved by operator-approved `sudo apt install -y golang-go` (Debian Pi-OS Trixie package `2:1.24~2` → `go1.24.4 linux/arm64`). Tasks 1.1 + 1.2 completed idempotently before the block (upstream remote added; branch `bd-tuxlink-mib/mib-cred-keyring` created from local master post upstream-sync). The fork-setup plan's Discoveries subsection (2026-05-18) had previously noted this same Go-absent state; the cred-handling plan's pre-flight didn't explicitly call `which go` — a 1-line addition to future fork-patch plans' pre-flight sections would catch this earlier.
+
+- **`go mod tidy` strips no-import deps (Go-idiomatic, plan-spec gap):** Phase 1 Task 1.3's "add dep + commit standalone" pattern is broken under Go's tidy semantics — `go get X && go mod tidy` produces a no-op `go.mod` change if no Go file imports `X`. Subagent `sumac-birch-owl` caught this on the re-dispatch (after Go install). Pattern fix: ALWAYS pair dep addition with the Go file that imports the dep, in one commit. Task 1.3 collapsed into Phase 2 Task 2.1 (which writes credstore.go importing zalando/go-keyring). Plan-review-cycle didn't catch this gap (4 rounds + Codex; Go-specific knowledge gap). Recommended future pattern: every fork-patch plan that adds a Go dep should explicitly note "dep addition pairs with the importing-code commit, NOT a standalone go-get step."
 
 ---
 
