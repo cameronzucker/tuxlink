@@ -212,3 +212,81 @@ pub fn read_config() -> Result<Config, ConfigReadError> {
         .map_err(|source| ConfigReadError::Validation { source })?;
     Ok(config)
 }
+
+#[derive(Debug, thiserror::Error)]
+pub enum ConfigWriteError {
+    #[error("io error: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("config serialize failed: {0}")]
+    Serde(#[from] serde_json::Error),
+    #[error("refuse to overwrite existing config with schema_version {existing} (this binary supports v{ours}): mismatch — either downgrade (existing > ours) or backward-incompat (existing < ours)")]
+    SchemaVersionMismatch { existing: u32, ours: u32 },
+    #[error("refuse to overwrite existing config at {path:?}: file is a symlink (target: {target:?})")]
+    ExistingFileIsSymlink { path: std::path::PathBuf, target: Option<std::path::PathBuf> },
+    #[error("config path {path:?} cannot be probed: {source}")]
+    ProbeReadFailed { path: std::path::PathBuf, #[source] source: std::io::Error },
+    #[error("config path {path:?} has no parent directory")]
+    NoParentDirectory { path: std::path::PathBuf },
+}
+
+/// Atomic single-write of `config` to `config_path()`. Returns typed errors per spec §3.4.
+///
+/// Atomicity contract scope: local POSIX FS (ext4/btrfs/xfs/APFS) where target file +
+/// tempfile are on the same FS AND the same BTRFS subvolume. NFS / FUSE / Lustre semantics
+/// undefined; BTRFS subvolume-boundary case lapses atomicity silently.
+///
+/// Single-instance assumption: ONE tuxlink instance writes at a time. Cross-process
+/// serialization (flock) out of scope for v0.0.1.
+///
+/// Does NOT auto-call `config.validate()` — caller responsibility per spec §3.3.
+pub fn write_config_atomic(config: &Config) -> Result<(), ConfigWriteError> {
+    let path = config_path();
+    let parent = path.parent()
+        .ok_or_else(|| ConfigWriteError::NoParentDirectory { path: path.clone() })?;
+    std::fs::create_dir_all(parent)?;
+
+    // Symlink-detection (spec §3.4 per adrev R4 P0-2): refuse to silently replace a symlink.
+    if let Ok(meta) = std::fs::symlink_metadata(&path) {
+        if meta.file_type().is_symlink() {
+            return Err(ConfigWriteError::ExistingFileIsSymlink {
+                path: path.clone(),
+                target: std::fs::read_link(&path).ok(),
+            });
+        }
+    }
+
+    // Schema-version mismatch refusal (both directions per adrev R4 P1-5).
+    // Tolerates unparseable bytes (first-run + corruption-recovery cases).
+    // Distinguishes NotFound (proceed) from other I/O errors (abort) per adrev R4 P1-4.
+    match std::fs::read(&path) {
+        Ok(bytes) => {
+            if let Ok(probe) = serde_json::from_slice::<SchemaVersionProbe>(&bytes) {
+                if probe.schema_version != CONFIG_SCHEMA_VERSION {
+                    return Err(ConfigWriteError::SchemaVersionMismatch {
+                        existing: probe.schema_version,
+                        ours: CONFIG_SCHEMA_VERSION,
+                    });
+                }
+            }
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => {
+            return Err(ConfigWriteError::ProbeReadFailed { path: path.clone(), source: e });
+        }
+    }
+
+    // Same-directory tempfile → atomic persist on local POSIX FS.
+    let tmp = tempfile::NamedTempFile::new_in(parent)?;
+    serde_json::to_writer_pretty(tmp.as_file(), config)?;
+    tmp.as_file().sync_all()?;
+    tmp.persist(&path).map_err(|e| ConfigWriteError::Io(e.error))?;
+
+    // Parent-dir fsync per adrev R2 P0-3 + R4 P0-1: rename(2) is atomic but not DURABLE
+    // until the parent directory's metadata flushes. tempfile::persist does not do this.
+    let parent_dir = std::fs::File::open(parent)?;
+    parent_dir.sync_all()?;
+    Ok(())
+}
+
+#[derive(serde::Deserialize)]
+struct SchemaVersionProbe { schema_version: u32 }

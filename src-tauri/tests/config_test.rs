@@ -510,3 +510,167 @@ fn test_read_config_eacces_returns_io_variant_not_notfound() {
         std::fs::set_permissions(&path, perm).unwrap();
     });
 }
+
+// ============================================================================
+// Phase 5 — write_config_atomic + ConfigWriteError
+// ============================================================================
+
+use tuxlink_lib::config::{write_config_atomic, ConfigWriteError};
+
+fn make_valid_cms_config() -> Config {
+    serde_json::from_str(r#"{
+        "schema_version": 1, "wizard_completed": true,
+        "connect": {"connect_to_cms": true, "transport": "CmsSsl"},
+        "identity": {"callsign": "W4PHS", "identifier": null, "grid": "EM75"},
+        "privacy": {"gps_state": "Off", "position_precision": "FourCharGrid"},
+        "pat_mbo_address": "W4PHS@winlink.org"
+    }"#).unwrap()
+}
+
+#[test]
+#[serial_test::serial]
+fn test_write_atomic_first_run_creates_file() {
+    with_xdg_temp(|xdg| {
+        let config = make_valid_cms_config();
+        write_config_atomic(&config).expect("first-run write must succeed");
+        let path = xdg.join("tuxlink").join("config.json");
+        assert!(path.exists(), "config file must exist after write");
+        let roundtrip = read_config().expect("written file must read back");
+        assert_eq!(roundtrip.identity.callsign.as_deref(), Some("W4PHS"));
+    });
+}
+
+#[test]
+#[serial_test::serial]
+fn test_write_atomic_overwrites_v1_file() {
+    with_xdg_temp(|xdg| {
+        let path = xdg.join("tuxlink").join("config.json");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, br#"{"schema_version": 1, "old": "value"}"#).unwrap();
+        let config = make_valid_cms_config();
+        write_config_atomic(&config).expect("v1-overwrite must succeed");
+        let roundtrip = read_config().expect("post-overwrite must read back");
+        assert!(roundtrip.wizard_completed);
+    });
+}
+
+#[test]
+#[serial_test::serial]
+fn test_write_atomic_refuses_schema_version_mismatch_future() {
+    with_xdg_temp(|xdg| {
+        let path = xdg.join("tuxlink").join("config.json");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let preserved = br#"{"schema_version": 99, "future": "shape"}"#;
+        std::fs::write(&path, preserved).unwrap();
+        let config = make_valid_cms_config();
+        let err = write_config_atomic(&config).unwrap_err();
+        match err {
+            ConfigWriteError::SchemaVersionMismatch { existing: 99, ours: 1 } => {}
+            other => panic!("expected SchemaVersionMismatch{{99,1}}, got {other:?}"),
+        }
+        // PRESERVATION CONTRACT: original file MUST be untouched.
+        let current = std::fs::read(&path).unwrap();
+        assert_eq!(current, preserved);
+    });
+}
+
+#[test]
+#[serial_test::serial]
+fn test_write_atomic_refuses_schema_version_mismatch_past() {
+    // Spec §3.4 SchemaVersionMismatch covers BOTH directions (renamed from Downgrade
+    // per adrev R4 P1-5). A schema_version=0 file also blocks rather than overwriting.
+    with_xdg_temp(|xdg| {
+        let path = xdg.join("tuxlink").join("config.json");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, br#"{"schema_version": 0, "ancient": "shape"}"#).unwrap();
+        let config = make_valid_cms_config();
+        let err = write_config_atomic(&config).unwrap_err();
+        match err {
+            ConfigWriteError::SchemaVersionMismatch { existing: 0, ours: 1 } => {}
+            other => panic!("expected SchemaVersionMismatch{{0,1}}, got {other:?}"),
+        }
+    });
+}
+
+#[test]
+#[serial_test::serial]
+fn test_write_atomic_overwrites_unparseable_file() {
+    // Corruption-recovery semantics: malformed-JSON existing file does NOT block.
+    with_xdg_temp(|xdg| {
+        let path = xdg.join("tuxlink").join("config.json");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, b"\x00\x01\x02 totally not json").unwrap();
+        let config = make_valid_cms_config();
+        write_config_atomic(&config).expect("unparseable existing file must NOT block");
+        let roundtrip = read_config().expect("post-overwrite must read back");
+        assert!(roundtrip.wizard_completed);
+    });
+}
+
+#[test]
+#[serial_test::serial]
+#[cfg(unix)]
+fn test_write_atomic_refuses_existing_symlink() {
+    use std::os::unix::fs::symlink;
+    with_xdg_temp(|xdg| {
+        let cfg_path = xdg.join("tuxlink").join("config.json");
+        std::fs::create_dir_all(cfg_path.parent().unwrap()).unwrap();
+        let target = xdg.join("dotfiles-config.json");
+        std::fs::write(&target, br#"{"original": "data"}"#).unwrap();
+        symlink(&target, &cfg_path).unwrap();
+        let config = make_valid_cms_config();
+        let err = write_config_atomic(&config).unwrap_err();
+        match err {
+            ConfigWriteError::ExistingFileIsSymlink { path: ref p, target: ref t } => {
+                assert_eq!(p, &cfg_path);
+                assert_eq!(t.as_deref(), Some(target.as_path()));
+            }
+            other => panic!("expected ExistingFileIsSymlink, got {other:?}"),
+        }
+        // PRESERVATION CONTRACT: symlink + target must survive refusal.
+        assert!(
+            std::fs::symlink_metadata(&cfg_path).unwrap().file_type().is_symlink(),
+            "symlink itself must survive refusal"
+        );
+        assert_eq!(
+            std::fs::read_link(&cfg_path).unwrap(),
+            target,
+            "symlink must still point to target"
+        );
+        let target_content = std::fs::read(&target).unwrap();
+        assert_eq!(target_content, br#"{"original": "data"}"#);
+    });
+}
+
+#[test]
+#[serial_test::serial]
+#[cfg(unix)]
+fn test_write_atomic_probe_read_eacces_fails_typed() {
+    use std::os::unix::fs::PermissionsExt;
+    with_xdg_temp(|xdg| {
+        let cfg_path = xdg.join("tuxlink").join("config.json");
+        std::fs::create_dir_all(cfg_path.parent().unwrap()).unwrap();
+        let original = br#"{"schema_version": 1, "preserved": true}"#;
+        std::fs::write(&cfg_path, original).unwrap();
+
+        let mut perm = std::fs::metadata(&cfg_path).unwrap().permissions();
+        perm.set_mode(0o000);
+        std::fs::set_permissions(&cfg_path, perm).unwrap();
+
+        let config = make_valid_cms_config();
+        let err = write_config_atomic(&config).unwrap_err();
+        match err {
+            ConfigWriteError::ProbeReadFailed { path: ref p, .. } => {
+                assert_eq!(p, &cfg_path);
+            }
+            other => panic!("expected ProbeReadFailed, got {other:?}"),
+        }
+
+        // PRESERVATION CONTRACT: original file content unchanged after refusal.
+        let mut perm = std::fs::metadata(&cfg_path).unwrap().permissions();
+        perm.set_mode(0o600);
+        std::fs::set_permissions(&cfg_path, perm).unwrap();
+        let preserved = std::fs::read(&cfg_path).unwrap();
+        assert_eq!(preserved, original, "original file content must be preserved on ProbeReadFailed refusal");
+    });
+}
