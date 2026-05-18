@@ -101,7 +101,8 @@ type WizardAction =
   | { type: 'BEGIN_TEST_SEND' }                                  // guarded: no-op if testSendSubstate !== 'idle' (see invariant below)
   | { type: 'TEST_SEND_LOG_LINE'; line: string }                 // appends to testSendLog; ignored if skipSignaled
   | { type: 'TEST_SEND_RESULT'; outcome: TestSendOutcome }       // folds outcome into 'success' or 'failed'; ignored if skipSignaled
-  | { type: 'SKIP_TEST_SEND' };                                  // sets skipSignaled=true; transitions step to 'complete'
+  | { type: 'SKIP_TEST_SEND' }                                   // sets skipSignaled=true; transitions step to 'complete'
+  | { type: 'RETURN_TO_CREDENTIALS' };                           // [Edit credentials] from failed-substate; transitions step back to 'credentials', clears password field, preserves callsign/grid/MBO (Codex R5 P1 wrong-password recovery)
 
 export function wizardReducer(state: WizardState, action: WizardAction): WizardState { /* … */ }
 ```
@@ -131,10 +132,13 @@ The wizard's two write targets are tuxlink's config.json AND the OS keyring. For
 //      that may not match what the integration test or Pat-side credstore.Get() expects.
 //      This initialization is mandatory at app startup, NOT per-command.
 
-// Per-command flow inside wizard_persist_cms (single-flight mutex guarded; see §3.7):
+// Per-command flow inside wizard_persist_cms (single-flight mutex guarded; see §3.7).
+// NOTE: `connect_to_cms` parameter REMOVED per Codex R5 P2 — wizard_persist_cms ALWAYS
+// writes connect_to_cms=true (CMS path); wizard_persist_offline hardcodes false.
+// Frontend cannot pass a wrong value; this is a footgun-elimination.
 async fn wizard_persist_cms(
     raw_callsign: String, password: String, grid: String,
-    mbo_address: String, connect_to_cms: bool,
+    mbo_address: String,
 ) -> Result<(), WizardError> {
     // 1. Normalize callsign (TrimSpace + ToUpper per cred-handling spec §3.3's normalizeAccount).
     //    This normalization is the COMMAND's responsibility, not the caller's — both
@@ -168,7 +172,11 @@ async fn wizard_persist_cms(
 }
 ```
 
-**Ordering rationale.** Keyring-first means a keyring failure (locked, daemon unavailable, etc.) is reported to the operator BEFORE any persistent state changes. A subsequent config.json write failure (disk full, permissions) triggers a best-effort keyring rollback. If rollback fails too, the operator is told explicitly and given the `secret-tool delete` command to clean up manually (per §3.5's augmented `ErrConfigWrite` message). Inverse ordering (config first, keyring second) leaves a config.json saying "CMS path" without a keyring entry — Pat then can't connect, and the operator has to guess what went wrong.
+**Ordering rationale.** Keyring-first means a keyring failure (locked, daemon unavailable, etc.) is reported to the operator BEFORE any persistent state changes. A subsequent config.json write failure (disk full, permissions) triggers a best-effort **snapshot-and-restore** rollback. If rollback fails too, the operator is told explicitly and given the `secret-tool` command to clean up manually (per §3.5's augmented `ErrConfigWrite` message). Inverse ordering (config first, keyring second) leaves a config.json saying "CMS path" without a keyring entry — Pat then can't connect, and the operator has to guess what went wrong.
+
+**Snapshot-before-overwrite** (Codex R5 P1 — naive rollback can delete an existing valid credential). If a keyring entry ALREADY EXISTS at `(service="tuxlink-pat", account=<callsign>)` when `wizard_persist_cms` runs (e.g., the operator is re-running the wizard with the same callsign to update other fields), step 4 captures the prior password first: `let prior = entry.get_password().ok();`. On config-write failure (step 5), rollback restores `prior` if present (via `entry.set_password(&prior)`) instead of deleting outright. Only delete when no prior value existed. This converts the rollback from a destructive `delete_credential()` into a **compensating transaction** that preserves whatever credential was there before the wizard ran. The augmented `ErrConfigWriteAndRollbackFailed` (§3.5) fires only when BOTH the config write AND the restore-or-delete failed.
+
+**Pat's non-secret config handoff** (Codex R5 P1 — wizard omits Pat's config write). Pat (via the fork) maintains its OWN config.json at `~/.config/pat/config.json` (Pat's default path) carrying non-secret fields: callsign, MBO address, transport selection, etc. The cred-handling refactor removed only the SecureLoginPassword field; everything else Pat still expects in its own config. The wizard does NOT write Pat's config directly — that's Task 3 (`PatProcess`, `tuxlink-b9d`)'s responsibility: when Task 3 spawns Pat, it RENDERS Pat's config from tuxlink's config (the wizard's persisted state) + the keyring callsign convention. If Task 3's current PatProcess does NOT yet render Pat's config (pre-cred-refactor it relied on a pre-existing Pat config + env vars), this is a **required Task 3 amendment** — see §7.3 follow-up bd issue 4. The wizard spec ASSUMES this Task 3 amendment lands (or has landed) so that the wizard's keyring write + tuxlink config write is sufficient for Pat to operate. Without the Task 3 amendment, the wizard's writes have no consumer.
 
 **App-quit during in-flight `wizard_persist_cms` (R3 finding 2).** If the operator quits tuxlink (SIGTERM, window close, Alt-F4) BETWEEN the successful keyring write (step 4) and the config.json commit (step 5), the keyring carries the password but `wizard_completed === false` in the absent/old config.json. The §5.3 claim "nothing persisted" is false in this specific timing window. On re-launch the wizard re-opens at Step 1. Two cases:
 - Same callsign on re-submit: the keyring write overwrites cleanly; no operator-visible artifact.
@@ -202,7 +210,7 @@ Each subsection summarizes the screen; full UX copy + mockups live in `docs/desi
 | `idle` | Initial state on `test_send` step | Explanatory copy + transport-visibility paragraph | [Send test] [Skip] |
 | `sending` | `BEGIN_TEST_SEND` action | Progress indicator + line-by-line session-log preview (the human-shaped projection from design doc §4.4) | [Skip and go to inbox] — always available, never disabled |
 | `success` | `TEST_SEND_RESULT` with success outcome | Green check + "Test send complete. Your CMS account is verified." | Auto-advance to `complete` after 3 s (operator can cancel by clicking anywhere) |
-| `failed` | `TEST_SEND_RESULT` with failure outcome | Yellow warning (NOT red error) + likely-cause list (no internet connection, firewall blocking port 8773, CMS temporarily busy, OR a captive portal / network login page intercepting traffic — per §5.12) + the specific error from `testSendError` | [Retry] (dispatches `BEGIN_TEST_SEND` → re-enters `sending` substate, re-invokes `wizard_run_test_send`) · [Go to inbox] (dispatches `SKIP_TEST_SEND`) · [Open Settings] (out-of-scope nav to the future Settings UI; v0.0.1 may render this disabled with tooltip "Settings UI lands in a later release") |
+| `failed` | `TEST_SEND_RESULT` with failure outcome | Yellow warning (NOT red error) + likely-cause list (no internet connection, firewall blocking port 8773, CMS temporarily busy, OR a captive portal / network login page intercepting traffic — per §5.12) + the specific error from `testSendError` | [Retry] (dispatches `BEGIN_TEST_SEND` → re-enters `sending` substate, re-invokes `wizard_run_test_send`) · **[Edit credentials]** (dispatches a new action `RETURN_TO_CREDENTIALS` that transitions `step` back to `'credentials'` with the password field cleared but callsign/grid/MBO preserved; addresses wrong-password recovery per Codex R5 P1) · [Go to inbox] (dispatches `SKIP_TEST_SEND`) · [Open Settings] (out-of-scope nav to the future Settings UI; v0.0.1 may render this disabled with tooltip "Settings UI lands in a later release") |
 
 Non-blocking principle: every substate has a path to the inbox. Failed test-send is INFORMATION not a wall; the operator's credentials are saved regardless and they can retry from `Session → Test send` post-wizard (the AMD-10 menu item that lands in Task 7).
 
@@ -213,7 +221,7 @@ The wizard handles SIX classes of failure during the credential persist flow. **
 | Failure | When | Operator-visible message | Recovery path |
 |---|---|---|---|
 | `ErrUnavailable` (no daemon / no D-Bus on Linux; equivalent on other platforms is rare) | Wizard submit-credentials → keyring write | "Tuxlink couldn't find a secret-service keyring on your system. Tuxlink uses the OS keyring to store your Winlink CMS password securely (instead of saving it to a config file). Install and start one (e.g., `sudo apt install gnome-keyring`) and re-run the wizard. See [installation docs](#) for distro-specific guidance." | Form stays mounted; operator can copy the message + retry after installing |
-| `ErrLocked` (daemon present but session locked; Linux) | Wizard submit-credentials → keyring write | "Your keyring is currently locked. Unlock it (typically: click the keyring icon in your system tray, OR run `secret-tool lock --collection=default` followed by your login password prompt) and click Retry." | Form stays mounted with a Retry button alongside Continue |
+| `ErrLocked` (daemon present but session locked; Linux) | Wizard submit-credentials → keyring write | "Your keyring is currently locked. Unlock it via your desktop's keyring tool (Seahorse on GNOME: click the locked keyring + enter your login password; kwallet manager on KDE: same flow; minimal-install: run `secret-tool search service tuxlink-pat` once which triggers the unlock prompt automatically) and click Retry." | Form stays mounted with a Retry button alongside Continue |
 | `ErrPermissionDenied` — **Linux**: daemon refused write (rare; check distro config) | Wizard submit-credentials → keyring write on Linux | "The keyring daemon refused the write. This is unusual on Linux; check your distro's keyring permission settings or report the issue at github.com/cameronzucker/tuxlink/issues." | Form stays mounted; suggests filing an issue |
 | `ErrPermissionDenied` — **macOS**: first-access authorization denied (R3 finding 8) | Wizard submit-credentials → keyring write on macOS | "macOS Keychain requires you to authorize tuxlink to store your password. A system dialog should have appeared; if you clicked Deny, click Retry and authorize when prompted." | Form stays mounted; Retry re-triggers the auth prompt |
 | `ErrPermissionDenied` — **Windows**: CredentialManager rejected write (rare) | Wizard submit-credentials → keyring write on Windows | "Windows CredentialManager refused the write. Check that no group policy is blocking generic credential storage, or report the issue at github.com/cameronzucker/tuxlink/issues." | Form stays mounted; suggests filing an issue |
@@ -261,7 +269,7 @@ Four new commands in `src-tauri/src/wizard.rs` (new file) registered in `tauri::
 | Command | Signature | Synchronous? | Side effects |
 |---|---|---|---|
 | `get_wizard_completed` | `() → Result<bool, WizardError>` | Sync (one config.json read on startup) | None; read-only |
-| `wizard_persist_cms` | `(raw_callsign, password, grid, mbo_address, connect_to_cms) → Result<(), WizardError>` | Async (D-Bus call to keyring; disk write) | Keyring write + config.json atomic write |
+| `wizard_persist_cms` | `(raw_callsign, password, grid, mbo_address) → Result<(), WizardError>` (hardcodes `connect.connect_to_cms = true`; no frontend boolean parameter per Codex R5 P2 footgun-elimination) | Async (D-Bus call to keyring; disk write) | Keyring write + config.json atomic write |
 | `wizard_persist_offline` | `(identifier, grid) → Result<(), WizardError>` (hardcodes `connect.connect_to_cms = false` and `connect.transport = "CmsSsl"`; writes `identity.callsign = null`) | Async (disk write only) | Config.json atomic write |
 | `wizard_run_test_send` | `() → Result<TestSendOutcome, WizardError>` | Async (HTTP to Pat + inbox poll) | None (Pat handles the actual TX); emits `wizard:test_send:log` Tauri events for line-by-line streaming to `<Step3TestSend>` per §3.4 |
 
@@ -333,8 +341,19 @@ type TestSendOutcome =
 - Real keyring backend: spawn `gnome-keyring-daemon` + `dbus-launch` in CI per cred-handling spec §3. Verify the wizard's write lands at the exact `(service="tuxlink-pat", account=<callsign>)` shape that Pat's `credstore.Lookup()` finds.
 - The Pat-side read is the cred-handling spec's integration test (already shipped via tuxlink-pat#2). Cross-validating the wizard's write reaches that read is the gate.
 
-**Browser smoke (manual, per memory `feedback_browser_smoke_before_ship`):**
-- `pnpm tauri dev`. Walk: account → credentials → test-send (idle → skip → complete). Walk: account → offline_identity → complete. Walk: account → credentials → test-send (idle → send → failed → retry → success → complete). Confirm config.json + keyring entry match per state.
+**Browser smoke — TWO MODES** (split per Codex R5 P0; per RADIO-1 + `docs/live-cms-testing-policy.md`):
+
+1. **Agent-safe mocked smoke** (default; what subagents run; what CI runs):
+   - `pnpm tauri dev` with `TUXLINK_TEST_SEND_MOCK=1` env var set.
+   - When this env var is set, `wizard_run_test_send` returns mocked outcomes (alternating success/failed/timeout) instead of invoking `pat_client.send()`. No live transmission. A clear UI banner ("Test-send MOCKED — no real Winlink transmission") renders during `sending` substate to make this state operator-visible.
+   - Walks: account → credentials → test-send (idle → skip → complete). account → offline_identity → complete. account → credentials → test-send (idle → send-mock → failed → retry → success → complete). Confirm config.json + keyring entry match per state.
+   - This is the smoke an implementing subagent MUST run before declaring the cluster shippable.
+
+2. **Operator-only live smoke** (licensee runs this manually; never via subagent):
+   - `pnpm tauri dev` with `TUXLINK_TEST_SEND_MOCK` UNSET. Real `pat_client.send()` to `SERVICE@winlink.org`.
+   - Subject to the SAME RADIO-1 consent-gate model as the `live_cms_smoke` binary (Task 6). The wizard's `wizard_run_test_send` displays a consent banner before invoking pat_client when not mocked, mirroring the consent gate in `consent_gate.rs`. Operator types `go` to proceed.
+   - The wizard's test-send is the FIRST time many operators exercise a live CMS round-trip, so this gate is operationally important even though it duplicates the live-CMS-smoke-binary's gate. See `docs/live-cms-testing-policy.md` for the full policy.
+   - Subagents MUST NOT run this mode. If a subagent's test plan ever calls for unmocked test-send, the test plan is misspecified — STOP and escalate per CLAUDE.md's "Subagent rule."
 
 ### 3.9 File inventory
 
@@ -510,7 +529,7 @@ Owner-task distribution is suggestive, not load-bearing — Task 10 (`tuxlink-1r
 | R2 | Contract (do internal interfaces align?) | Claude Sonnet 4.6 subagent | 10 (2 P0, 3 P1, 3 P2, 2 P3) | Both P0 applied (callsign normalization moved into command body §3.2; ErrBusy added to §3.5 + WizardError enum §3.7). P1 applied: `wizard_persist_offline` connect_to_cms hardcoded explicitly; testSendLog field added to WizardState §3.1 + streamed via Tauri event per §3.7; integration test cross-language gate clarified §3.9 (shape-by-protocol, not Go-from-Rust). P2 applied. |
 | R3 | Coverage (missed failure modes / race conditions / security) | Claude Sonnet 4.6 subagent | 12 (3 P0, 5 P1, 3 P2, 1 P3) | All 3 P0 applied: BEGIN_TEST_SEND dedup guard §3.1 + §5.8 (Part 97 critical); app-quit partial-write recovery §3.2 + §5.3 amendment; Tauri capability scope + CSP + system-browser Register link §3.7. All 5 P1 applied as new §5 entries (§5.9 homoglyph, §5.10 macOS first-access, §5.11 Windows blob, §3.5's post-wizard Seahorse-deletion paragraph, §5.7's amended Skip-during-sending). P2 applied (rollback-of-rollback augmented §3.5 message; captive portal added §5.12; multi-window mutex §5.7). P3 (schema version downgrade) applied as §5.13. |
 | R4 | Cross-task (alignment with cred-handling spec + plan AMDs + design doc) | Claude Sonnet 4.6 subagent | 11 (3 P0, 3 P1, 3 P2, 2 P3) | All 3 P0 applied: `use_native_store(true)?` added as step 0 §3.2 + §3.9 lib.rs note; `ErrPermissionDenied` reframed as wizard-internal §3.5 with naming-alignment clarification; `Step1Welcome.tsx` rename applied via global edit §2.1 + §3.9. P1-A (design doc §5.2 staleness) and P1-B (plan Task 11.5 winlink_password_present) and P1-C (plan's hasAccount snippet) are **OUT OF SCOPE for this spec revision**: they require amending docs/design/v0.0.1-ux-mockups.md and docs/plans/2026-04-22-tuxlink-v0.0.1-plan.md respectively, which is a separate AMD/design-doc-update PR. Tracked as a follow-up bd issue (see §7.3). P2-A (cross-language gate clarification) applied §3.9. P2-B (Settings → Reset wizard menu deferral) applied §3.5 last paragraph. P2-C (cite cred-handling §3.3 not AMD-1 for normalization) applied §2.3. P3 applied. |
-| R5 | Cross-provider (Codex; lens-free) | Codex CLI via `npx @openai/codex exec` | **Inconclusive** | Process ran past 600s timeout without producing output (third Codex-CLI session this project that produced empty output; pattern indicates a tool-reliability issue, not a spec issue). Findings file `dev/adversarial/2026-05-18-wizard-cluster-adrev-R5-cross-provider-codex.md` was never created. Spec ships with 4 Claude-round coverage; cross-provider gate not satisfied. **Risk acceptance:** the 4 Claude rounds covered distinct lenses (friction / contract / coverage / cross-task) with high specificity and minimal overlap; the cross-provider lens was the additional check, not the only-novel one. Operator may re-run R5 separately if desired. |
+| R5 | Cross-provider (Codex; lens-free) | Codex CLI via `npx @openai/codex exec` | 10 findings (1 P0, 4 P1, 3 P2, 2 P3) | Codex took ~10 minutes (vs the ~2-4 min the Claude rounds took) and was sandbox-blocked from writing the adrev file to `dev/adversarial/` (likely a Codex CLI default-sandbox issue), but produced findings in stdout. ALL 1 P0 (split agent-safe vs operator-only browser smoke per RADIO-1; the original `pnpm tauri dev` instruction could induce subagent-autonomous live-CMS transmission), 3 of 4 P1 ([Edit credentials] back-button for wrong-password recovery; snapshot-and-restore rollback to avoid deleting existing valid credentials; Pat's non-secret config handoff to Task 3), and the 2 of 3 P2 (footgun-elimination: drop `connect_to_cms` parameter from `wizard_persist_cms`; `secret-tool lock` typo fix in `ErrLocked` copy — original said `lock` which is the opposite of unlock) applied in the revision. 1 P1 (TestSendOutcome side-effect modeling) judged already addressed by the existing `WizardError` vs `TestSendOutcome::Failed` distinction; documented as such here. 1 P2 ("Test send pending" handoff contract) and the 2 P3 (auto-advance cancellation mechanism; MBO clobber) deferred — P3 MBO clobber actually addressed already in §3.1 `WizardState.mboAddress` invariant; P3 auto-advance noted as a design-doc §5.3 deferral. |
 
 ### 7.2 Findings rejected with reasoning
 
@@ -526,11 +545,15 @@ Findings that require changes OUTSIDE this spec — captured here for downstream
 
 3. **AMD on plan Task 9 Step 3+4 code snippets — update `hasAccount: boolean | null` → `connectToCms: boolean | null`.** R4-P1-C. AMD-2 explicitly notes Step 1-7 code snippets aren't updated; this AMD makes the update explicit (or, alternatively, deletes the snippets and points the implementer at this spec's §3.1).
 
-These three can be bundled as a single small "post-cred-handling docs cleanup" PR, separate from the wizard impl plan.
+4. **AMD on plan Task 3 (`PatProcess`, `tuxlink-b9d`) — render Pat's non-secret config (callsign, MBO, transport) at Pat-spawn time from tuxlink's config.** Codex R5 P1. The cred-handling refactor removed `SecureLoginPassword` from Pat's config but Pat still expects its own config.json with the other non-secret fields. Task 3 is the right place to write Pat's config (since Task 3 owns PatProcess spawn). Without this Task 3 amendment, the wizard's keyring write + tuxlink config write is insufficient — Pat would still need a pre-existing config.json from somewhere. This is a HARD prerequisite for the wizard cluster to function end-to-end.
 
-### 7.4 Codex R5 follow-up
+5. **Codex R5 sandbox-write fix.** Codex CLI was sandbox-blocked from writing to `dev/adversarial/` — findings only available via stdout. Either configure Codex's sandbox to allow writes to gitignored dev/ subdirectories (CLAUDE.md update), or pipe Codex's stdout to the adrev file in the invocation (workflow update). Useful for the next Codex round (whenever the next spec needs adrev).
 
-If a fresh attempt at the Codex R5 lens produces findings, those land as a second spec-revision commit (or a planless P1+ patch if no findings are spec-affecting). Tracked as a follow-up bd issue to re-attempt the Codex round outside the current session.
+These five can be bundled as a single small "post-cred-handling docs cleanup + Task 3 amendment" PR, separate from the wizard impl plan. Item 4 is a HARD blocker for impl; items 1/2/3 are soft (docs accuracy); item 5 is tool-hygiene.
+
+### 7.4 Codex R5 — RESOLVED (see updated R5 row in §7.1)
+
+Codex R5 completed after ~10 minutes (originally timed out from main agent's perspective but the npx process kept running in background). Sandbox blocked the file write; findings came via stdout. All P0 + 3 of 4 P1 + 2 of 3 P2 applied in this revision; remaining items either redundant or deferred per the R5 row. The 5th follow-up bd issue in §7.3 covers the sandbox-write fix for future Codex rounds.
 
 ---
 
