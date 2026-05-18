@@ -4,7 +4,7 @@
 **Agent:** shoal-condor-clover
 **bd issue:** `tuxlink-mib` (P1; cred-handling refactor blocks Task 6 resume `tuxlink-nk7`, Task 9 wizard `tuxlink-ko0`, AppImage dep doc `tuxlink-gdo`, plan amendments `tuxlink-54p`)
 **Branch:** `bd-tuxlink-mib/mib-cred-keyring` (worktree at `worktrees/bd-tuxlink-mib-mib-cred-keyring/`)
-**Status:** Pre-adrev draft. To be revised post 5-round cross-provider adversarial review (≥1 Codex round) per ADR 0011 §3.
+**Status:** Revised post 5-round adrev (4 Claude subagents + 1 Codex cross-provider; 50 findings; 8 P0 + 15 P1 + 11 P2 applied in this revision; see §7 for full disposition).
 **Target repo for the patch:** `cameronzucker/tuxlink-pat` (the fork). Tuxlink-side submodule bump lands as a follow-up PR against `cameronzucker/tuxlink/feat/v0.0.1`.
 
 ## 1. Context
@@ -37,18 +37,20 @@ The brainstorm settled the following decisions, captured in §5 with full reason
 
 **In scope:**
 
-1. Replace `cfg.SecureLoginPassword` (and `AuxAddr.Password`) reads in `tuxlink-pat` with OS-keyring reads via a new `internal/credstore` package.
-2. Remove `secure_login_password` JSON field from `cfg/Config`; remove `Password *string` from `cfg/AuxAddr`; remove the custom MarshalJSON/UnmarshalJSON that parse the `"Address:Password"` form.
+1. Replace `cfg.SecureLoginPassword` reads in `tuxlink-pat` with OS-keyring reads via a new `internal/credstore` package.
+2. Remove `secure_login_password` JSON field from `cfg/Config`. Remove `Password *string` from `cfg/AuxAddr` BUT **preserve the custom MarshalJSON/UnmarshalJSON** — the JSON-string form (`"CALL"`) is the on-the-wire schema; we just need to strip-and-drop any legacy password portion from `"CALL:password"` on parse, never re-emit it on marshal. (R1+R3+R4 caught: removing the methods outright breaks all configs with `auxiliary_addresses`, including valid string-only ones.)
 3. Remove the `RedactedPassword` API-redaction machinery from `api/api.go` (the field it protected no longer exists).
-4. Rewrite `app/exchange.go`'s `SetSecureLoginHandleFunc` to: try credstore (primary keyring) → AuxAddr-fallback to primary callsign's keyring entry → fall through to promptHub.
-5. Rewrite `cli/init.go`'s password-write block: emit a brief redirect message ("Skipping password — use the tuxlink wizard..."), continue with non-cred configure steps.
-6. Rewrite `api/winlink_account.go` + `app/winlink_api.go` + `cli/account.go` to pull password from credstore where they currently read `cfg.SecureLoginPassword`. If the keyring miss + promptHub timeout occur in those contexts, return clear errors.
-7. Add `github.com/zalando/go-keyring` to `go.mod`.
-8. Update `tuxlink-pat/README.md` with a new "Credentials" section pointing to the tuxlink wizard.
-9. Update `tuxlink-pat`'s CI to run integration tests under `dbus-launch` for the credstore package (Linux only in v0.0.1).
-10. Add unit tests (`internal/credstore/credstore_test.go`) using zalando's `keyring.MockInit()` test helper.
-11. Add integration tests (`internal/credstore/credstore_integration_test.go`, build-tagged `integration`).
-12. Add config-parse regression tests verifying graceful handling of legacy config.json files containing the removed `secure_login_password` field.
+4. Update the **web config UI** (`web/src/config.html` + `web/src/js/config.js` + rebuild `web/dist/*`) to (a) remove the `secure_login_password` form field + redirect to wizard, and (b) reject any AuxAddr `"CALL:password"` POST payloads with a clear error. (R3+R4 caught: leaving the form in place after backend field removal silently drops user-saved passwords.)
+5. Rewrite `app/exchange.go`'s `SetSecureLoginHandleFunc` to: (a) skip credstore lookup entirely for SMTP-proto addresses (per `fbb.Address` semantics), (b) try credstore via canonical-key normalizer (`normalizeAccount`) for Winlink-namespace addresses, (c) fall through to promptHub on miss/error. **No AuxAddr-fallback-to-primary** (dropped per R2 safety + R5 YAGNI: the fallback served power-users-against-intent and risked auth bypass when `cfg.MyCall` was empty).
+6. Rewrite `cli/init.go` to skip BOTH password-write paths: (a) existing-account `pat configure` path (lines 193-258), AND (b) `handleNewAccount` / `promptNewPassword` / `cmsapi.AccountAdd` new-account creation path (cli/init.go:60-188). Both print the brief redirect ("Skipping password — use the tuxlink wizard..."). Other configure steps unchanged. (R4 caught: removing only 193-258 leaves the new-account creation path still asking for and submitting passwords with no keyring write.)
+7. Rewrite `api/winlink_account.go` + `app/winlink_api.go` + `cli/account.go` to pull password from credstore where they currently read `cfg.SecureLoginPassword`. Handle the `(found bool, err error)` return values explicitly — never the `_, _ = credstore.Get(...)` discard pattern. On miss in non-interactive (API) contexts, return clear errors with `Cannot perform this operation without a keyring-stored password. Use the tuxlink wizard.` (R4 P2 caught the discard pattern hazard.)
+8. Add `internal/credstore/credstore.go` with: `ServiceName = "tuxlink-pat"` constant; `normalizeAccount(callsign) → string` helper (trim + uppercase + reject empty/whitespace); `Get(callsign) → (pw, found, err)` with short-circuit on empty-after-normalize and treat-empty-stored-as-miss; explicit error classification (locked-keyring vs D-Bus-unreachable vs missing-entry).
+9. Add `github.com/zalando/go-keyring` to `go.mod`.
+10. Update `tuxlink-pat/README.md` with a new "Credentials" section pointing to the tuxlink wizard (no fragile URL anchor — just point at the README path).
+11. Update `tuxlink-pat`'s CI to run integration tests via `dbus-run-session -- bash -c "..."` wrapping (per R4 P2: bare `dbus-launch && go test` doesn't carry the session bus into the test process). Linux only in v0.0.1.
+12. Add unit tests (`internal/credstore/credstore_test.go`) using zalando's `keyring.MockInit()` — tests serialize (NOT `t.Parallel()`) because MockInit globally mutates package state (R3 F3 caught).
+13. Add integration tests (`internal/credstore/credstore_integration_test.go`, build-tagged `integration`).
+14. Add ONE config-parse regression test (`TestConfigParse_LegacyAuxAddrPasswordStripped`) — verifies legacy `auxiliary_addresses: ["CALL:password"]` parses without error AND password portion is dropped from in-memory `Address` (NOT exposed). Per R5 YAGNI, the previously-spec'd 3-test legacy-field battery is collapsed; default `json.Unmarshal` permissive behavior is a Go-stdlib guarantee, not test surface.
 
 **Out of scope** (cross-linked to other bd issues):
 
@@ -59,7 +61,9 @@ The brainstorm settled the following decisions, captured in §5 with full reason
 - Upstream PR to `la5nta/pat` (a more-conservative variant; new bd issue post-merge per ADR 0011 §4).
 - macOS / Windows CI integration tests for the keyring backend (future v0.X platform expansion; credstore code compiles on those platforms but is untested in v0.0.1).
 - Multi-account wizard UX in tuxlink (future tuxlink work; this patch supports Pat-side multi-account via AuxAddrs but the wizard handles single account in v0.0.1).
-- `pat configure`'s `validatePassword` + `getPasswordRecoveryEmail` + `cmsapi.PasswordRecoveryEmailSet` integration flow at first-time setup (these required password; removed from `pat configure`'s scope). Future work could re-introduce as separate `pat` subcommands; not in this patch.
+- Re-introducing the `validatePassword` + `getPasswordRecoveryEmail` + `cmsapi.PasswordRecoveryEmailSet` first-time-setup flow as separate `pat` subcommands. Not in this patch; can be revisited if standalone-Pat usage becomes a real audience for the fork.
+- Rebuilding `web/dist/*` as part of this PR — the spec's §3.2 lists the web/src changes; the dist rebuild step is part of the implementation plan, not a design decision. (Mentioned here so reviewers don't ask.)
+- Auto-stripping `secure_login_password` from existing user config files (R2 P2 finding: legacy plaintext persists on-disk if config isn't rewritten). v0.0.1 has no existing users; flagged for upstream-PR variant.
 
 ## 3. Design
 
@@ -72,8 +76,12 @@ The brainstorm settled the following decisions, captured in §5 with full reason
 │  Wizard (Task 9, tuxlink-ko0 — NOT in this patch)                     │
 │     │                                                                 │
 │     │ 1. collect callsign + password from user                        │
-│     │ 2. Rust `keyring` crate:                                        │
-│     │      Entry::new("tuxlink-pat", callsign).set_password(&pw)?     │
+│     │ 2. Rust `keyring` crate (current `keyring-core` API):           │
+│     │      use_native_store(true)?;                                   │
+│     │      let entry = Entry::new("tuxlink-pat",                      │
+│     │                              &normalize(callsign))?;            │
+│     │      entry.set_password(&pw)?;                                  │
+│     │      (normalize = trim + uppercase the bare callsign)           │
 │     │ 3. write ~/.config/pat/config.json (no password field)          │
 │     │                                                                 │
 └────────────────────────────────────┬──────────────────────────────────┘
@@ -82,7 +90,8 @@ The brainstorm settled the following decisions, captured in §5 with full reason
                               ┌─────────────────────┐
                               │  OS keyring         │
                               │  ("tuxlink-pat",    │
-                              │   "<callsign>")     │
+                              │   "<NORMALIZED      │
+                              │    BARE CALLSIGN>") │
                               │     → password      │
                               └──────────┬──────────┘
                                          │ ← reads (service, account)
@@ -92,22 +101,36 @@ The brainstorm settled the following decisions, captured in §5 with full reason
 │                                                                       │
 │  internal/credstore/credstore.go (NEW):                               │
 │      const ServiceName = "tuxlink-pat"                                │
-│      func Get(callsign string) (pw string, found bool, err error)     │
+│      func normalizeAccount(callsign) → string  (trim+upper)           │
+│      func Get(callsign) → (pw, found, err)                            │
+│         (short-circuits empty-after-normalize; treats empty-stored    │
+│          password as miss; classifies error → soft/hard)              │
 │                                                                       │
 │  app/exchange.go — SetSecureLoginHandleFunc callback:                 │
 │      Pat needs password for CMS-bound B2F secure-login                │
-│        ├── credstore.Get(addr.Addr) → hit: use silently               │
-│        ├── miss & addr is AuxAddr → credstore.Get(cfg.MyCall)         │
-│        │   (preserves existing AuxAddr→primary fallback semantic)     │
-│        └── still miss → promptHub.Prompt(PromptKindPassword)          │
+│        ├── if addr.Proto != "" (SMTP-proto, etc.) → skip credstore,   │
+│        │   fall straight to promptHub (R3 caught: addr.Addr for       │
+│        │   SMTP addresses is the FULL email, not a callsign)          │
+│        ├── credstore.Get(normalizeAccount(addr.Addr)) → hit: silent   │
+│        └── miss/error → promptHub.Prompt(PromptKindPassword)          │
 │              (60s prompt; Pat's existing behavior, unchanged)         │
 │                                                                       │
 │  cfg/config.go:                                                       │
 │      DELETE: SecureLoginPassword string `json:"secure_login_password"`│
-│      DELETE: AuxAddr.Password *string + Address:Password marshal      │
+│      MODIFY: AuxAddr — drop Password field; KEEP MarshalJSON/         │
+│         UnmarshalJSON (string-form schema is the on-the-wire          │
+│         contract; legacy "CALL:password" form parses but the password │
+│         portion is stripped + dropped, never re-emitted)              │
 │                                                                       │
 │  cli/init.go:                                                         │
-│      REPLACE password-write block with brief-redirect message         │
+│      REPLACE both password-write paths (existing-account 193-258      │
+│      AND new-account handleNewAccount/promptNewPassword/AccountAdd)   │
+│      with brief-redirect message                                      │
+│                                                                       │
+│  web/src/config.html + web/src/js/config.js + web/dist/*:             │
+│      REMOVE secure_login_password form field + JS handlers;           │
+│      ADD inline "Set Winlink credentials via tuxlink wizard" hint;    │
+│      AuxAddr CALL:password POST payloads rejected at API boundary     │
 │                                                                       │
 └───────────────────────────────────────────────────────────────────────┘
 ```
@@ -116,133 +139,187 @@ The brainstorm settled the following decisions, captured in §5 with full reason
 
 | Component | Owned by | What it does |
 |---|---|---|
-| `internal/credstore/credstore.go` | This patch (NEW) | Pkg-level Go module wrapping `github.com/zalando/go-keyring`. Exports: `Get(callsign string) (pw string, found bool, err error)`. Normalizes `keyring.ErrNotFound` → `found=false, err=nil`. Constant `ServiceName = "tuxlink-pat"`. ~50-80 LoC. |
-| `internal/credstore/credstore_test.go` | This patch (NEW) | Unit tests via `keyring.MockInit()`. Cases: hit, miss, NotFound-is-miss, ServiceName-constant. ~80-120 LoC. Runs cross-platform on any CI. |
-| `internal/credstore/credstore_integration_test.go` | This patch (NEW) | Build-tagged `//go:build integration`. Cases: real-keyring round-trip, locked-keyring soft-error. Runs only with `go test -tags=integration`. ~60-100 LoC. |
-| `cfg/config.go` | This patch (MODIFY) | Delete `SecureLoginPassword` field (line 53). Delete `AuxAddr.Password` field (line 23) + custom MarshalJSON/UnmarshalJSON parsing `Address:Password` form (lines 26-43). `AuxAddr` becomes a struct with just `Address string`. |
-| `app/exchange.go` | This patch (MODIFY) | Rewrite `SetSecureLoginHandleFunc` callback (lines 175-192): credstore-first, AuxAddr-fallback-to-primary, promptHub-as-last-resort. ~25 LoC change. Keyring lookups consistently key by `addr.Addr` (bare callsign of the incoming fbb.Address); `aux.Address` is no longer the keyring account string. |
-| `app/app.go` | This patch (MODIFY) | Delete lines 230-233 (the `if !strings.EqualFold(a.options.MyCall, a.config.MyCall) { a.config.SecureLoginPassword = "" }` block — was clearing the in-memory password when CLI `-mycall` differed from config; obsolete because `cfg.SecureLoginPassword` no longer exists and keyring lookups are naturally keyed by the actual callsign in use). |
-| `app/winlink_api.go` | This patch (MODIFY) | Rewrite line 72: replace `a.Config().SecureLoginPassword` with `credstore.Get(a.Options().MyCall)`. If keyring miss + promptHub-style fallback not available in this code path, return error (password-recovery requires a known password). |
-| `api/winlink_account.go` | This patch (MODIFY) | Rewrite line 65: replace `password = h.Config().SecureLoginPassword` with `password, _, _ = credstore.Get(...)`. Lines 45 (length validation) + 49 (`cmsapi.AccountAdd`) unchanged — they validate + consume the password var. |
-| `api/api.go` | This patch (MODIFY) | Delete lines 414-416 (RedactedPassword set on read) + lines 435-436 (RedactedPassword-to-real swap on write). The field these redacted no longer exists; the redaction machinery has no other consumer in this codebase (verified by grep). |
-| `cli/init.go` | This patch (MODIFY) | Lines 193-258 deleted/replaced. Print brief-redirect: `"Skipping password — use the tuxlink wizard to set Winlink credentials. For standalone Pat usage, use upstream la5nta/pat which retains config.json passwords. See: https://github.com/cameronzucker/tuxlink-pat#credentials"`. `validatePassword` + `getPasswordRecoveryEmail` + `cmsapi.PasswordRecoveryEmailSet` calls REMOVED. Other configure steps (callsign, locator, mailbox path) proceed unchanged. |
-| `cli/account.go` | This patch (MODIFY) | `getPasswordForCallsign` helper: replace `SecureLoginPassword`-first lookup with `credstore.Get`-first lookup. promptHub fallback unchanged. |
+| `internal/credstore/credstore.go` | This patch (NEW) | Pkg-level Go module wrapping `github.com/zalando/go-keyring`. Exports: `const ServiceName = "tuxlink-pat"`; `normalizeAccount(callsign string) (string, bool)` — returns `("CALLSIGN", true)` on a valid callsign (after `TrimSpace` + `ToUpper`), or `("", false)` for empty/whitespace; `Get(callsign string) (pw string, found bool, err error)`. Get short-circuits when `normalizeAccount` returns `false` (no backend call). Get treats empty-stored password as `found=false` (per R3 F4: `Set("")` behavior differs across backends; uniform "treat empty as miss" closes the surface). Get classifies errors: `keyring.ErrNotFound` → `(found=false, err=nil)`; D-Bus-unreachable / no-secret-service → `(found=false, err=ErrUnavailable)`; locked-keyring → `(found=false, err=ErrLocked)`; anything else → `(found=false, err=<raw>)`. Sentinels exported for caller error-classification. ~80-120 LoC. |
+| `internal/credstore/credstore_test.go` | This patch (NEW) | Unit tests via `keyring.MockInit()`. Tests serialize (NOT `t.Parallel()`) because MockInit globally mutates package state (R3 F3). Cases: hit, miss, NotFound-is-miss, ServiceName-constant, empty-callsign-short-circuit, whitespace-callsign-short-circuit, empty-stored-treated-as-miss, casing-normalization (write "kk6xyz"; read "KK6XYZ" → same entry). ~150-200 LoC. Runs cross-platform on any CI. |
+| `internal/credstore/credstore_integration_test.go` | This patch (NEW) | Build-tagged `//go:build integration`. Cases: real-keyring round-trip; locked-keyring soft-error returning `ErrLocked`; no-secret-service returning `ErrUnavailable` (skip if D-Bus is present). Cleanup via `t.Cleanup(func() { keyring.DeleteAll(ServiceName) })`. Runs only with `go test -tags=integration`. ~80-120 LoC. |
+| `cfg/config.go` | This patch (MODIFY) | Delete `SecureLoginPassword` field (line 53). MODIFY `AuxAddr`: drop the `Password *string` field; **PRESERVE** the custom `MarshalJSON`/`UnmarshalJSON` (string-form wire schema) — `MarshalJSON` always emits `a.Address` (never `Address:Password`); `UnmarshalJSON` accepts both `"CALL"` and `"CALL:password"` forms, dropping any colon-suffix portion on parse without populating any password storage. (R1+R3+R4 caught: removing the methods outright breaks all valid `["CALL"]` configs since the wire form is JSON string, not struct.) |
+| `app/exchange.go` | This patch (MODIFY) | Rewrite `SetSecureLoginHandleFunc` callback (lines 175-192): (a) `if addr.Proto != "" { return promptHub.Prompt(...) }` — SMTP-proto addresses skip credstore entirely because `fbb.Address.Addr` for SMTP retains the full email, not a callsign (R3 F1); (b) `account, ok := credstore.NormalizeAccount(addr.Addr); if !ok { promptHub }`; (c) `pw, found, err := credstore.Get(account)` — on hit return silently; on miss/error fall through to promptHub; (d) NO AuxAddr-fallback-to-primary (dropped per R2+R5: auth-bypass risk when `cfg.MyCall` is empty; serves no v0.0.1 wizard-writer path). ~30 LoC change. |
+| `app/app.go` | This patch (MODIFY) | Delete lines 230-233 (the `if !strings.EqualFold(a.options.MyCall, a.config.MyCall) { a.config.SecureLoginPassword = "" }` block — obsolete because the field is gone and keyring lookups are keyed by the active callsign per §3.3). |
+| `app/winlink_api.go` | This patch (MODIFY) | Rewrite line 72: replace `a.Config().SecureLoginPassword` with `pw, found, err := credstore.Get(a.Options().MyCall)`. Handle ALL three return values: on `err != nil` return API error with sentinel-context (Locked/Unavailable/other); on `!found` return clean "no credential" error. Never the discard pattern `_, _, _ = credstore.Get(...)` (R4 P2 caught). |
+| `api/winlink_account.go` | This patch (MODIFY) | Rewrite line 65: replace `password = h.Config().SecureLoginPassword` with explicit `pw, found, err := credstore.Get(...)` handling per the §3.5 per-call-site rules. Lines 45 (length validation) + 49 (`cmsapi.AccountAdd`) unchanged. |
+| `api/api.go` | This patch (MODIFY) | Delete lines 404 (`const RedactedPassword`), 414-416, 435-436 (RedactedPassword machinery). The field these redacted no longer exists; the redaction machinery has no other Go consumer (verified by grep). The web UI's `[REDACTED]` placeholder semantics MOVE to the web-side update (next row). |
+| `cli/init.go` | This patch (MODIFY) | TWO password-touching paths must be addressed (R4 caught: prior spec only addressed one): **(A) Existing-account path** — lines 193-258 replaced with brief redirect message + skip `validatePassword`/`getPasswordRecoveryEmail`/`cmsapi.PasswordRecoveryEmailSet` calls. **(B) New-account-creation path** — `InitHandle` no longer routes nonexistent callsigns into `handleNewAccount` (line 60); the call is replaced with the brief redirect ("Account creation requires the tuxlink wizard; or use upstream la5nta/pat for standalone Pat usage."). `handleNewAccount` + `promptNewPassword` functions are KEPT in the source for future use but become unreferenced — leave with a `// TODO: re-introduce as separate subcommand if standalone-Pat audience emerges (per spec §2)` comment. Other `pat configure` steps (callsign, locator, mailbox path) proceed unchanged. |
+| `cli/account.go` | This patch (MODIFY) | `getPasswordForCallsign` helper: replace `SecureLoginPassword`-first lookup with `credstore.Get`-first lookup using `normalizeAccount`. promptHub fallback unchanged. Handle all 3 credstore return values explicitly. |
 | `cli/prompter.go` | UNCHANGED | `case app.PromptKindPassword` (terminal-prompt handler) stays as-is. It consumes promptHub events; the promptHub call sites are what move. |
-| `go.mod` / `go.sum` | This patch (MODIFY) | + `github.com/zalando/go-keyring vX.Y.Z` and transitive deps. |
-| `README.md` (tuxlink-pat) | This patch (MODIFY) | + new "## Credentials" section: tuxlink wizard is the credentials entry point; for standalone Pat usage, use upstream la5nta/pat; explain the `(service="tuxlink-pat", account="<callsign>")` keyring scheme briefly; note Linux is the v0.0.1 tested platform. |
-| `.github/workflows/test.yml` or equivalent | This patch (MODIFY or CREATE) | Add integration-test job: `apt install libsecret-1-dev`, `dbus-launch -- gnome-keyring-daemon --start ... && go test -tags=integration ./internal/credstore/`. ~40 lines of YAML. |
+| **`web/src/config.html`** | **This patch (MODIFY) — NEW row** | Remove the `<input id="secure_login_password" ...>` form field (lines 82-85). Replace with a static info block: `Set Winlink credentials via the tuxlink wizard. For standalone Pat usage, use upstream la5nta/pat (see README).` |
+| **`web/src/js/config.js`** | **This patch (MODIFY) — NEW row** | Remove all `secure_login_password` references (lines 176, 190, 347, 349, 354, 518). Specifically: line 518's `updatedConfig.secure_login_password = ...` in the POST-payload assembly is removed so the field is never sent to the backend. Add validation step that rejects any AuxAddr `"CALL:password"` form on form submission with an inline error message (defensive). |
+| **`web/dist/*`** | **This patch (MODIFY) — NEW row** | Rebuild the prebuilt web assets (the dist directory is a committed build output in Pat's repo). Implementation plan handles the rebuild step; the design records that dist needs regeneration after src changes. |
+| `go.mod` / `go.sum` | This patch (MODIFY) | + `github.com/zalando/go-keyring vX.Y.Z` (pinned during impl) and transitive deps. Dep count: small (run `go list -m all` post-add and confirm). |
+| `README.md` (tuxlink-pat) | This patch (MODIFY) | + new "## Credentials" section: tuxlink wizard is the credentials entry point; for standalone Pat usage, use upstream la5nta/pat; explain the `(service="tuxlink-pat", account=NORMALIZED-BARE-CALLSIGN)` keyring scheme; note Linux is v0.0.1 tested platform. Plain README path link from `cli/init.go` redirect message (no `#credentials` fragment anchor — fragile to README restructure per R1 F5). |
+| `.github/workflows/*.yml` (test or release) | This patch (MODIFY or CREATE) | Add integration-test job wrapped in **`dbus-run-session -- bash -c "..."`** (R4 P2: bare `dbus-launch && go test` doesn't carry session bus env). Specifically: `apt install libsecret-1-dev gnome-keyring`; `dbus-run-session -- bash -c "echo '' \| gnome-keyring-daemon --unlock --replace --daemonize && go test -tags=integration ./internal/credstore/..."`. CI runner image pinned (R1 F4: floating images = test rot). ~50 lines YAML. |
 
 ### 3.3 Data flow — keyring read path
 
-Keyring entries are keyed by the **bare callsign string** (`addr.Addr` for any session; `cfg.MyCall` for the primary-fallback path). The custom `aux.Address` string (which may carry a host suffix like `CALL@host`) is NOT used as the keyring account — using `addr.Addr` consistently gives one keyring entry per callsign regardless of how `aux.Address` was written in config.
+**Canonical key.** All keyring read+write paths key by `normalizeAccount(addr.Addr)` which is `strings.ToUpper(strings.TrimSpace(callsign))` — same normalization on both writer and reader sides. Pat's existing `app.go:228`'s `strings.ToUpper(a.options.MyCall)` upper-cases the active callsign; the wizard (per `tuxlink-ko0`, OOS for this patch) must perform the same `TrimSpace + ToUpper` when calling `keyring::Entry::new("tuxlink-pat", &normalize(callsign))?`. The custom `aux.Address` string (which may carry a host suffix like `CALL@host`) is NOT used as the keyring account — only the bare callsign field via `addr.Addr`.
+
+**Per-call-site classification.** The promptHub fallback only applies in **interactive** call sites (the `app/exchange.go::SetSecureLoginHandleFunc` callback runs during a session the user initiated). **API / HTTP-handler** call sites (`api/winlink_account.go`, `app/winlink_api.go::passwordRecoveryEmailSet`) cannot reasonably promptHub — they have no terminal attached; they return clear errors on credstore miss/error. The §3.5 per-call-site rules enumerate.
+
+**Interactive read path (`SetSecureLoginHandleFunc` callback):**
 
 For each CMS-bound B2F secure-login event:
 
 1. fbb session needs password for `fbb.Address addr`.
 2. Pat's `SetSecureLoginHandleFunc` callback is invoked.
-3. **Step 1:** `pw, found, err := credstore.Get(addr.Addr)`.
-   - If `found && err == nil` → return `pw` (silent; no log line).
+3. **Pre-check 1 (SMTP-proto skip):** if `addr.Proto != ""` (non-empty Proto indicates SMTP-namespace address per `fbb.AddressFromString`, where `addr.Addr` holds the full email like `someone@example.org`, NOT a callsign), skip credstore entirely and go directly to Step 5 (promptHub). Credstore is for Winlink-namespace callsigns only. (R3 F1 caught.)
+4. **Pre-check 2 (canonicalize):** `account, ok := credstore.NormalizeAccount(addr.Addr)`.
+   - If `!ok` (empty or whitespace-only after trim) → log structured warn + go to Step 5 (promptHub).
+   - Else continue with the normalized `account` string.
+5. **Step 1 (credstore lookup):** `pw, found, err := credstore.Get(account)`.
+   - If `found && err == nil && pw != ""` → return `pw` (silent; no log line). (Empty-pw case can't actually fire here because credstore.Get treats empty-stored as miss internally per §3.2; reasserted for clarity.)
    - If `err != nil`:
-     - Soft error (locked) → `log.Warn(...)` with structured fields → continue to Step 2.
-     - Hard error (D-Bus unreachable, no secret-service) → `log.Error(...)` with structured fields → continue to Step 2.
-4. **Step 2 (AuxAddr fallback to primary):** if `addr.Addr != cfg.MyCall` (i.e., this is an AuxAddr session) AND the AuxAddrs list contains a matching `aux.Address` (via the existing `addr.EqualString(aux.Address)` check), retry: `pw, found, err = credstore.Get(cfg.MyCall)`.
-   - If `found && err == nil` → return `pw` (preserves existing semantic where AuxAddr.Password == nil falls to cfg.SecureLoginPassword).
-   - Otherwise → continue to Step 3.
-5. **Step 3 (promptHub):** `resp := <-promptHub.Prompt(ctx, time.Minute, PromptKindPassword, "Enter secure login password for "+addr.String())`. Return `resp.Value, resp.Err`. Behavior unchanged from Pat 1.0.0.
+     - Soft error (`errors.Is(err, credstore.ErrLocked)`) → `log.Warn(...)` with structured fields → continue to Step 6.
+     - Hard error (`errors.Is(err, credstore.ErrUnavailable)` or other) → `log.Error(...)` with structured fields → continue to Step 6.
+   - If `!found && err == nil` (clean miss) → continue to Step 6 (no log line; consistent with today's silent fall-through).
+6. **Step 2 (promptHub):** `resp := <-promptHub.Prompt(ctx, time.Minute, PromptKindPassword, "Enter secure login password for "+addr.String())`. Return `resp.Value, resp.Err`. Behavior unchanged from Pat 1.0.0.
 
-**Note on v0.0.1 AuxAddr usage:** the v0.0.1 tuxlink wizard does NOT write AuxAddr keyring entries (wizard handles a single callsign only). Multi-account power-users may manually populate `(service="tuxlink-pat", account=AUXCALLSIGN)` keyring entries via OS tools (`secret-tool`, Seahorse) or via a future tuxlink multi-account UX. v0.0.1's Step 1 lookup for AuxAddrs typically misses → Step 2 fallback to primary callsign — same behavior as today's "AuxAddr.Password is nil; use SecureLoginPassword" code path.
+**No AuxAddr-fallback-to-primary.** The previously-spec'd "if AuxAddr keyring entry is missing, try the primary callsign's entry" path is **DROPPED** per the cross-round adrev findings (R2 P0 #3 + R5 F1):
+
+- The fallback served only power-users who manually populated `auxiliary_addresses` entries; the v0.0.1 wizard writes a single primary entry. Falling back to primary is *opposite* the operator's intent for multi-account setups (uses the WRONG password for the AuxAddr session).
+- The fallback created an auth-bypass surface when `cfg.MyCall` was empty (e.g., `pat http` started with no callsign): an unauthenticated AuxAddr session could match an empty primary callsign and inappropriately receive primary's password.
+- Power-users wanting multi-account today have a clean path: manually populate `(service="tuxlink-pat", account=<NORMALIZED-AUX-CALLSIGN>)` via OS keyring tools (Seahorse, `secret-tool`); future tuxlink multi-account wizard UX (post-v0.0.1) will write these entries. Missing AuxAddr entries fall through to promptHub (correct UX).
+
+**API / HTTP-handler read path** (per `api/winlink_account.go` + `app/winlink_api.go::passwordRecoveryEmailSet`):
+
+1. Handler receives request requiring a password for CMS auth (e.g., setting password-recovery email).
+2. `pw, found, err := credstore.Get(normalizeAccount(<callsign-from-handler-context>))`.
+3. If `err != nil` → return API error: `"Cannot perform this operation: keyring <Locked|Unavailable> (set credentials via the tuxlink wizard)"`.
+4. If `!found` → return API error: `"Cannot perform this operation without a keyring-stored password. Use the tuxlink wizard to set credentials."`.
+5. Else → proceed with CMS auth call.
+
+NEVER the discard pattern `password, _, _ = credstore.Get(...)` — explicitly enforced (R4 P2 caught the prior spec's lapse).
+
+**Note on v0.0.1 AuxAddr usage:** the v0.0.1 tuxlink wizard does NOT write AuxAddr keyring entries (wizard handles a single callsign only per Task 9 scope). Multi-account power-users today manually populate `(service="tuxlink-pat", account=AUXCALLSIGN)` keyring entries via OS tools (`secret-tool`, Seahorse). Missing AuxAddr entries fall through to promptHub — operator types the AuxAddr password once per CMS session (graceful degradation, no auto-bypass).
 
 ### 3.4 Data flow — wizard write path (referenced; OUT OF SCOPE for this patch)
 
-Documented here for completeness (this patch unblocks `tuxlink-ko0`):
+Documented here for completeness (this patch unblocks `tuxlink-ko0`); the wizard's actual implementation is `tuxlink-ko0`'s scope, but it MUST honor the canonical-key normalization (§3.3) and the current `keyring`/`keyring-core` Rust API contract (R3 F5 caught the prior spec's wrong syntax):
 
 1. Operator runs tuxlink. Wizard screen 2 collects callsign + password.
-2. Wizard calls Rust `keyring` crate: `keyring::Entry::new("tuxlink-pat", callsign).set_password(&pw)?`.
-3. Wizard writes `~/.config/pat/config.json` containing callsign + non-secret config; `secure_login_password` field is absent.
-4. Wizard completes; tuxlink spawns Pat for test send; Pat reads keyring via §3.3.
+2. Wizard normalizes the callsign: `let account = callsign.trim().to_uppercase();` then validates non-empty.
+3. Wizard initializes the keyring store (one-time at app init): `keyring::use_native_store(true)?` — required by the current `keyring-core` API; the implicit-OS-backend selection of older API versions is deprecated.
+4. Wizard writes the keyring entry:
+   ```rust
+   use keyring_core::Entry;
+   let entry = Entry::new("tuxlink-pat", &account)?;  // Result<Entry>, must ?
+   entry.set_password(&pw)?;
+   ```
+   (R3 F5 caught: the chained-on-constructor syntax from the prior spec `keyring::Entry::new(...).set_password(&pw)?` does NOT compile against the current API — `Entry::new` returns `Result<Entry, Error>` and must be `?`-unwrapped before `.set_password` is callable.)
+5. Wizard writes `~/.config/pat/config.json` containing callsign + non-secret config; `secure_login_password` field is absent; `auxiliary_addresses` (if any) is JSON-string form per AuxAddr's MarshalJSON.
+6. Wizard completes; tuxlink spawns Pat for test send; Pat reads keyring via §3.3.
+
+**Wizard does NOT clear passwords via `set_password("")`.** R3 F4 caught: `keyring.Set("")` is undocumented and per-backend (some store empty, some delete, Windows wincred may reject). The wizard's "clear credentials" UX (if added later) MUST call `entry.delete_credential()` explicitly, not `set_password("")`.
 
 The wizard does NOT use any Pat-side CLI for credential setting. Pat-side `cli/init.go` no longer writes passwords (per this patch).
 
 ### 3.5 Error handling
 
-Per §3.3, the keyring read path has 4 outcomes; only "hit" returns silently. The other 3 all degrade gracefully to promptHub.
+Per §3.3, credstore.Get has 4 outcomes; the disposition depends on **call-site classification** (interactive vs API). The credstore package itself classifies errors via exported sentinels (`ErrLocked`, `ErrUnavailable`); callers use `errors.Is` to dispatch.
 
-**Logging policy:**
+**Logging policy** (operator-confirmed `warn`-vs-`error` split):
 
 - **Hit:** no log line (consistent with today's config.json silent-use).
-- **Miss:** no log line (consistent with today's `SecureLoginPassword == ""` silent fall-through to promptHub).
-- **Soft error** (keyring locked, no password granted): ONE structured `level=warn` log line:
+- **Miss** (`found=false, err=nil`): no log line in interactive contexts (consistent with today's silent fall-through). API contexts log per their handler-error pattern.
+- **Soft error** (`ErrLocked`): ONE structured `level=warn` log line:
   ```
-  level=warn msg="credstore: keyring lookup failed; falling back to prompt"
-        callsign=KK6XYZ err="default keyring is locked"
+  level=warn msg="credstore: keyring locked; falling back to prompt"
+        callsign=KK6XYZ
   ```
-- **Hard error** (D-Bus unreachable, no secret-service installed): ONE structured `level=error` log line. Same format; different level reflects configuration problem (not transient).
+- **Hard error** (`ErrUnavailable` or unclassified): ONE structured `level=error` log line. Same format; different level reflects configuration problem (not transient).
 
-**Explicit NOT-decisions:**
+**Per-call-site error handling (the authoritative rules):**
 
-- No retry-loop on keyring lookup failure. One attempt; fall through.
-- No auto-prompt to unlock the keyring. Operator uses OS tools (Seahorse, Keychain Access).
-- No auto-save of prompted password to keyring. Avoids "did I just save a wrong password?" UX issue; wizard is the sole writer.
-- No "first time?" hint suggesting `tuxlink wizard`. Pat shouldn't reference tuxlink explicitly; the README covers it.
-- No error-class-specific UX path. Whether keyring is missing, locked, or transient-failed, the user-facing experience is "promptHub fires."
+| Call site | Class | On miss | On soft error | On hard error |
+|---|---|---|---|---|
+| `app/exchange.go::SetSecureLoginHandleFunc` callback | Interactive | promptHub | log.Warn + promptHub | log.Error + promptHub |
+| `cli/account.go::getPasswordForCallsign` | Interactive (CLI) | promptHub | log.Warn + promptHub | log.Error + promptHub |
+| `app/winlink_api.go::passwordRecoveryEmailSet` | API | Return `"missing credential"` error | Return `"keyring locked"` error | Return `"keyring unavailable"` error |
+| `api/winlink_account.go::winlinkPasswordRecoveryEmailHandler` | API | Same as above | Same | Same |
 
-**Per-call-site error handling:**
+API-context error messages MUST be operator-actionable: `"Cannot perform this operation: <reason>. Use the tuxlink wizard to set credentials."` — never just an internal-sounding string.
 
-- `app/exchange.go::SetSecureLoginHandleFunc`: as in §3.3. promptHub fallback always available.
-- `app/winlink_api.go::passwordRecoveryEmailSet`: if `credstore.Get` miss → return error to caller (password-recovery flow needs a known password; can't promptHub-fallback here because the caller is an API handler, not an interactive session).
-- `api/winlink_account.go`: same as above — return error to API caller on credstore miss.
-- `cli/account.go::getPasswordForCallsign`: uses existing promptHub fallback (this helper was designed for the SecureLoginPassword-then-prompt pattern).
+**Explicit NOT-decisions** (the load-bearing ones; trimmed per R5):
+
+- **No retry-loop on keyring lookup failure.** One attempt; fall through. (Wrong-password retries against CMS = lockout risk.)
+- **No auto-save of prompted password to keyring.** Avoids "did I just save a wrong password?" UX issue; wizard is the sole writer.
+
+(R5 F5 trimmed 3 prior NOT-decisions — "auto-prompt to unlock," "first-time hint," "error-class-specific UX" — as defensive scaffolding that duplicates positive decisions elsewhere in the spec.)
 
 ### 3.6 Testing
 
 **Layer 1 — Unit tests** (`internal/credstore/credstore_test.go`):
-- Uses zalando's `keyring.MockInit()` (built-in test helper; swaps the backend with an in-memory implementation for the test process).
-- Test cases:
-  - `TestGet_Hit` — Set then Get; verify password matches; verify `found=true, err=nil`.
-  - `TestGet_Miss` — Get for an unset callsign; verify `found=false, err=nil` (NOT a hard error).
-  - `TestGet_NotFoundIsMiss` — verify `keyring.ErrNotFound` is mapped to `found=false, err=nil` (not propagated as hard error).
-  - `TestServiceConstant` — verify `ServiceName == "tuxlink-pat"` (prevents accidental rename).
-  - `TestGet_EmptyCallsign` — verify behavior when called with `""`; should return `found=false, err=nil` (no panic; no keyring lookup with empty account).
-- Runs on any CI runner cross-platform; no D-Bus, no real keyring required.
+- Uses zalando's `keyring.MockInit()` (test helper; swaps backend with in-memory impl).
+- **MockInit is process-global state** (R3 F3 caught): tests serialize — NO `t.Parallel()`. Each test uses `t.Cleanup(func() { keyring.DeleteAll(ServiceName) })` to avoid cross-test pollution.
+- Test cases (~10 cases; ~150-200 LoC):
+  - `TestGet_Hit` — Set then Get; verify password matches; `found=true, err=nil`.
+  - `TestGet_Miss` — Get for an unset account; verify `found=false, err=nil`.
+  - `TestGet_NotFoundIsMiss` — verify `keyring.ErrNotFound` maps to `found=false, err=nil`.
+  - `TestGet_EmptyStoredTreatedAsMiss` — Set("") then Get; verify `found=false, err=nil` (R3 F4 caught: per-backend Set("") semantics).
+  - `TestGet_EmptyCallsign_ShortCircuit` — Get(""); verify `found=false, err=nil` + verify backend NOT invoked.
+  - `TestGet_WhitespaceCallsign_ShortCircuit` — Get("   "); same as above.
+  - `TestGet_CasingNormalization` — Set("KK6XYZ", "pw"); Get("kk6xyz") returns "pw" (R2 F1 caught: wizard may write lowercase; reader uppercase).
+  - `TestNormalizeAccount` — table-driven: `"  kk6xyz  " → "KK6XYZ", ok=true`; `"" → "", ok=false`; `"   " → "", ok=false`.
+  - `TestServiceConstant` — verify `ServiceName == "tuxlink-pat"` (rename-protection).
+  - `TestGet_ErrLockedClassified` / `TestGet_ErrUnavailableClassified` — using `keyring.MockInitWithError(...)` to inject specific errors; verify they propagate as `ErrLocked` / `ErrUnavailable` sentinels callers can `errors.Is`-dispatch.
+- Runs cross-platform on any CI runner; no D-Bus required.
 
 **Layer 2 — Integration tests** (`internal/credstore/credstore_integration_test.go`):
 - Build-tagged: `//go:build integration`. Only runs with `go test -tags=integration`.
 - Test cases:
-  - `TestRealKeyring_RoundTrip` — Set then Get against the real OS keyring (whichever backend is available on the test machine).
-  - `TestRealKeyring_Cleanup` — verify entries can be deleted after test (avoids polluting the runner's keyring).
-- CI: a single Linux job runs the integration tests under `dbus-launch -- gnome-keyring-daemon --start --components=secrets ...`. ~40 lines of YAML; based on aws-vault's pattern.
-- macOS / Windows integration runs are NOT in v0.0.1 scope. Credstore code compiles on those platforms (zalando provides the backends); test coverage on those platforms is a future v0.X CI matrix expansion.
+  - `TestRealKeyring_RoundTrip` — Set then Get against the real OS keyring.
+  - `TestRealKeyring_DeleteCleanup` — verify entries deleted after test.
+- **CI invocation** (R4 P2 caught the prior spec's bare-`dbus-launch && go test` bug — daemon launched in new session but tests run in parent shell):
+  ```yaml
+  - name: install keyring deps
+    run: sudo apt install -y libsecret-1-dev gnome-keyring dbus-x11
+  - name: run integration tests in D-Bus session
+    run: |
+      dbus-run-session -- bash -c '
+        echo "" | gnome-keyring-daemon --unlock --replace --daemonize
+        go test -tags=integration ./internal/credstore/...
+      '
+  ```
+- **CI runner image pinned** (R1 F4): `ubuntu-22.04` (not `ubuntu-latest`). Floating images = silent CI rot when actions or daemons update.
+- macOS / Windows integration runs: NOT in v0.0.1 scope.
 
 **Layer 3 — `app/exchange.go` callback test** (modified existing test if present, else new):
-- Uses credstore's `MockInit`-backed test. Test setup: primary callsign + (optionally) an AuxAddr keyring entry, both keyed by bare callsign per §3.3.
+- Uses credstore's `MockInit`-backed test (serial, with Cleanup).
 - Test cases:
-  - `TestSecureLoginCallback_PrimaryHit` — callback receives primary fbb.Address; credstore has entry for the bare callsign; returns password.
-  - `TestSecureLoginCallback_PrimaryMiss_PromptHub` — callback receives primary; credstore miss; promptHub test-handler returns sentinel; verify sentinel propagates.
-  - `TestSecureLoginCallback_AuxHit` — callback receives AuxAddr's fbb.Address; credstore has an entry for the AuxAddr's bare callsign (manually pre-populated to simulate the future multi-account UX); returns AuxAddr's password.
-  - `TestSecureLoginCallback_AuxMiss_PrimaryFallback` — callback receives AuxAddr; credstore miss for AuxAddr's callsign but hit for primary; returns primary password (the v0.0.1 typical case).
-  - `TestSecureLoginCallback_AllMiss_PromptHub` — both miss; promptHub fires.
-  - `TestSecureLoginCallback_UnknownAddr_PromptHubDirectly` — callback receives an fbb.Address that's neither primary nor in AuxAddrs; skips the fallback path; promptHub fires directly.
+  - `TestSecureLoginCallback_PrimaryHit` — callback receives primary fbb.Address; credstore has entry (keyed by NORMALIZED bare callsign); returns password silently.
+  - `TestSecureLoginCallback_PrimaryMiss_PromptHub` — credstore miss; promptHub test-handler returns sentinel; verify propagation.
+  - `TestSecureLoginCallback_SmtpProtoSkipsCredstore` — callback receives fbb.Address with `Proto="SMTP"` (e.g., `Addr="someone@example.org"`); verify credstore NOT invoked (MockInit's call counter); promptHub fires directly. (R3 F1 caught.)
+  - `TestSecureLoginCallback_EmptyAddrSkipsCredstore` — callback receives fbb.Address with empty `Addr` (or whitespace-only); credstore NOT invoked; promptHub fires.
+  - `TestSecureLoginCallback_AuxHit` — callback receives AuxAddr's fbb.Address; credstore has entry for the AuxAddr's NORMALIZED bare callsign (pre-populated); returns password silently. Covers the manual-multi-account power-user path.
+  - `TestSecureLoginCallback_AuxMiss_PromptHub_NoFallbackToPrimary` — AuxAddr miss but primary has entry; verify the callback DOES NOT return primary's password (the dropped fallback per §3.3); promptHub fires for the AuxAddr. (Regression test for the dropped fallback per R2+R5.)
+  - `TestSecureLoginCallback_KeyringLockedFallsToPrompt` — MockInitWithError(ErrLocked); verify warn-log + promptHub fires.
 
-**Layer 4 — Config-parse regression tests:**
-- `TestConfigParse_NoSecureLoginPassword` — parse a config.json without `secure_login_password` field; verify no error.
-- `TestConfigParse_LegacySecureLoginPassword` — parse a config.json WITH `secure_login_password`; verify the field is silently ignored (json.Unmarshal is permissive about unknown fields by default). Documents in README that the field is no longer honored.
-- `TestConfigParse_LegacyAuxAddrPassword` — parse a config.json with `auxiliary_addresses: ["CALL:password"]` (the old Address:Password marshal form); verify it parses (without throwing) and the password portion is silently dropped (consequence of removing the custom UnmarshalJSON). Document the format change in README.
+**Layer 4 — Config-parse regression test** (one test, simplified per R5 F2):
+- `TestConfigParse_LegacyAuxAddrPasswordStripped` — parse a config.json with `auxiliary_addresses: ["CALL:password"]`; verify it parses without error; verify the AuxAddr's in-memory `Address` field is `"CALL"` (password stripped on parse via custom UnmarshalJSON); verify re-marshal produces `["CALL"]` form (password NEVER re-emitted). Single test covers the legacy-config compatibility surface.
+- (Per R5 F2: the prior 3-test battery for "legacy secure_login_password silently ignored" / "no field" / "with field" was YAGNI — default `json.Unmarshal` permissive behavior is a Go stdlib guarantee, not a test surface. `app/config.go::ReadConfig` uses `json.Unmarshal(data, &config)` without `DisallowUnknownFields` — verified.)
 
-**Layer 5 — Brief-redirect message test:**
-- `TestPatConfigure_BriefRedirectAtPasswordStep` — invoke `cli/init.go::configureHandle` flow; verify the redirect message is printed to stdout; verify subsequent configure steps proceed.
+**Layer 5 — DROPPED** (per R5 F3): the previous `TestPatConfigure_BriefRedirectAtPasswordStep` was anti-test territory (verifying a `fmt.Println` executed). Manual smoke via `pat configure` covers it during the implementation plan.
 
 **Test scope NOT included:**
-
-- End-to-end smoke against live CMS (per RADIO-1; live-CMS is operator-only).
+- End-to-end smoke against live CMS (per RADIO-1; operator-only).
 - macOS / Windows keyring tests (future v0.X scope).
-- tuxlink-side wizard tests (Task 9's responsibility).
+- tuxlink-side wizard tests (Task 9's responsibility; `tuxlink-ko0`).
+- Web UI tests (browser-driven test framework not in tuxlink-pat's CI; manual smoke during implementation).
 
 ### 3.7 Build / deploy impacts
 
 **tuxlink-pat (Go) side:**
-- `go.mod`: + `github.com/zalando/go-keyring vX.Y.Z` (~5-10 transitive deps).
+- `go.mod`: + `github.com/zalando/go-keyring` (version pinned during impl). Dep footprint: small (confirm via `go list -m all` post-add; R1 F9 caught the prior spec's unsourced `~30 transitive deps` figure).
 - `make.bash`: unchanged. Go build chain handles new dep via `go build`.
-- CI workflow on tuxlink-pat: add integration-test job under `dbus-launch`. ~40 lines YAML.
+- CI workflow on tuxlink-pat: add integration-test job using `dbus-run-session -- bash -c "..."` wrapping (per R4 P2; details in §3.6 Layer 2). Pinned runner image (`ubuntu-22.04`, not `ubuntu-latest`).
 - No change to tuxlink-pat binary's runtime entry point.
 
 **tuxlink (Rust/Tauri) side:**
@@ -250,7 +327,7 @@ Per §3.3, the keyring read path has 4 outcomes; only "hit" returns silently. Th
 - Wizard Rust-side keyring write is `tuxlink-ko0`'s scope.
 
 **AppImage build (CI):**
-- `apt install libsecret-1-dev` on CI runners if integration tests run there.
+- `apt install libsecret-1-dev gnome-keyring dbus-x11` on CI runners (libsecret-1-dev for build linkage; gnome-keyring + dbus-x11 for integration-test runtime).
 - Runtime AppImage dep (`libsecret-1-0`) → tracked by `tuxlink-gdo`. NOT in this patch.
 
 **Local dev:**
@@ -372,6 +449,28 @@ This is honest about the v0.0.1 commitment (Linux-tested + supported) without co
 - *Stricter Linux-only via build tags:* exclude macOS/Windows code paths via Go build tags. Forces a conscious "we're adding macOS support" code change at platform expansion time. Rejected: zalando/go-keyring's cross-platform is a no-cost feature; foreclosing it adds work without benefit.
 - *Commit to cross-platform-soon timeline in this spec:* premature; v0.0.1 hasn't shipped. Rejected.
 
+### 4.7 Drop the AuxAddr-fallback-to-primary path (post-adrev decision)
+
+**Decision:** The previously-spec'd "if AuxAddr keyring entry is missing, try the primary callsign's entry" fallback is REMOVED from the design.
+
+**Reasoning:** Cross-round adrev convergence:
+- **R2 P0 #3 (partial-input lens):** when `cfg.MyCall` is empty (legitimate at `pat http` startup with no callsign), the fallback fires `credstore.Get("")`. Combined with R3's normalization gap and the missing empty-check, this becomes an auth-bypass surface where an unauthenticated AuxAddr session could match the empty primary callsign.
+- **R5 F1 (YAGNI lens):** the fallback serves only power-users who manually populated AuxAddr keyring entries. For them, falling back to primary is *opposite* their intent (uses the WRONG password for the AuxAddr session). v0.0.1 wizard writes a single primary entry; no v0.0.1 path benefits from the fallback.
+- Cleaner v0.0.1 model: each callsign owns its own keyring entry; missing entries fall through to promptHub directly (correct UX). No legacy semantic to preserve.
+
+**Replaces:** the original §4.3 mention that "AuxAddr.Password == nil falls to cfg.SecureLoginPassword" preservation. That preservation is dropped; modern callers (wizard + manual multi-account power-users) populate per-callsign entries.
+
+### 4.8 Canonical key normalization (`normalizeAccount`)
+
+**Decision:** All keyring read+write paths key by `normalizeAccount(callsign)` which is `strings.ToUpper(strings.TrimSpace(callsign))`. The function returns `("", false)` for empty-after-trim inputs; `(NORMALIZED, true)` otherwise. credstore.Get short-circuits to `(found=false, err=nil)` when normalization returns `false` — no backend call.
+
+**Reasoning:** Cross-round adrev convergence:
+- **R2 F1 (P0, partial-input):** wizard may write `"kk6xyz"` (operator typed lowercase); Pat reads via `addr.Addr` which is uppercase. libsecret/Keychain do exact-match account lookups; two different entries → silent miss → unexplained promptHub.
+- **R3 F1 (P0, dep-contract):** `fbb.Address.Addr` is the bare callsign for Winlink addresses (uppercased), but is the FULL email for SMTP addresses (NOT uppercased). Normalization on the credstore boundary makes the lookup deterministic regardless of caller surface; SMTP-proto is filtered separately via `addr.Proto != ""` (§3.3).
+- **R4 P2 #2 (Codex):** convergent finding — define a single trimmed/uppercased bare-callsign helper for every read/write.
+
+**Wizard side responsibility** (per `tuxlink-ko0`): the Rust-side `normalize` helper must produce identical output to Go-side `normalizeAccount`. Implementation plan must verify byte-equivalent normalization with a shared test vector.
+
 ## 5. Risks and watched failure modes
 
 ### 5.1 Build-time failures (fail at setup; loud)
@@ -394,6 +493,11 @@ This is honest about the v0.0.1 commitment (Linux-tested + supported) without co
 - **OS-vendor changes secret-service implementation:** zalando handles standard D-Bus interface; should be transparent. If not: fork-side patches credstore package; tuxlink-side unchanged.
 - **Pat's promptHub mechanism changes upstream:** fork-side merge conflict at opportunistic-sync. Per fork-setup spec §3.3 step 4, resolved per-conflict during merge.
 - **AppImage's bundled libsecret divergence from host:** ABI surprises if AppImage bundles older libsecret than host's daemon. Mitigation: pin libsecret version at AppImage build; `tuxlink-gdo` documents runtime dep.
+- **Hardcoded `ServiceName = "tuxlink-pat"` constant** (R1 F1): rots if the fork is ever renamed (e.g., transferred to a `tuxlink-org/tuxlink-pat`). No migration path designed — operators would re-run the wizard to re-populate keyring under the new ServiceName. Acceptable for v0.0.1; flagged for future rename event.
+- **Hardcoded `time.Minute` promptHub timeout in `app/exchange.go:190`** (R3 F10): 60 seconds may not be enough for an EmComm operator whose hands are full (radio in progress) or a user looking up a password in a separate password manager. Not changed by this patch (preserves Pat 1.0.0 behavior). Flagged for follow-up to make configurable via Pat config.
+- **CI runner image floats** (R1 F4): if the CI workflow uses `runs-on: ubuntu-latest` instead of pinned (e.g., `ubuntu-22.04`), action/dependency updates can silently change behavior of `gnome-keyring-daemon`, `dbus-run-session`, etc. Mitigated: §3.6 Layer 2 explicitly pins runner image.
+- **No keyring schema versioning** (R1 F7): if a future tuxlink-pat patch adds a SECOND credential class (e.g., VARA HF station passwords keyed by callsign), the unversioned `(service="tuxlink-pat", account=CALLSIGN)` scheme has no way to coexist with the existing WL2K-password class on the same callsign. Acceptable for v0.0.1 (single class). Flagged for any future multi-class expansion.
+- **Web UI / dist drift** (R3 F2 cascade): if a future Pat upstream merge re-introduces a `secure_login_password` form field (e.g., upstream adds a new variant), the fork's `web/dist/*` rebuild must catch it. Mitigated: integration test verifies `web/src/config.html` has no `secure_login_password` references.
 
 ### 5.4 Security failures
 
@@ -412,11 +516,10 @@ This is honest about the v0.0.1 commitment (Linux-tested + supported) without co
 
 ### 5.6 What's NOT a risk
 
+(Per R5 F6: trimmed to load-bearing items only.)
+
 - **End-user installation:** tuxlink AppImage is the user-facing artifact; keyring is OS-provided; no extra install for the user on Gnome/KDE distros.
-- **Multi-process keyring access:** zalando uses per-call lookups (no held-open file handle); concurrent Pat + tuxlink processes coexist.
 - **Long-running Pat process keyring re-reads:** Pat reads on each CMS-session start; no in-process caching beyond the session. Wizard updates take effect on next Pat session start.
-- **macOS Keychain prompts on first access:** not a v0.0.1 concern (macOS not in scope; documented in §4.6 as future).
-- **Windows CredentialManager UX surprises:** same as above.
 
 ## 6. References
 
@@ -441,4 +544,79 @@ This is honest about the v0.0.1 commitment (Linux-tested + supported) without co
 
 ## 7. Adrev disposition summary
 
-*To be populated after 5-round adversarial review (≥1 cross-provider Codex round) per ADR 0011 §3.*
+5-round adversarial review completed 2026-05-18 on commit `26a0ffb` (the pre-adrev spec draft). 4 Claude subagents per-lens (R1 scale, R2 partial-input, R3 dep-contract-drift, R5 YAGNI) + 1 Codex cross-provider (R4). **50 findings total: 8 P0, 20 P1, 17 P2, 5 P3.**
+
+### Cross-provider / cross-round convergence
+
+The strongest signal in adrev is when findings converge across blind spots. This cycle had **three high-value convergences:**
+
+1. **Removing fields has unforeseen consumers** — R1 F2 (P0, scale: AuxAddr colon-form data destruction), R2 F4 (P0, partial-input: legacy AuxAddr password leaks into Address field), R3 F2 (P0, dep-contract: web UI POST silently drops `secure_login_password`), R3 F6 (P1, dep-contract: cmsapi.PasswordRecoveryEmailSet cascade), R4 P1 #1 (Codex cross-provider: AuxAddr unmarshalling), R4 P2 #3 (Codex: web UI), R4 P2 #6 (Codex: handleNewAccount residual flow). **Six findings across four rounds and two providers** point at the same architectural defect: the prior spec was too aggressive removing field-level types without auditing all consumers. Triggered the largest revision: §3.2 web/src additions, AuxAddr MarshalJSON preservation, handleNewAccount handling, explicit credstore return-value handling at API call sites.
+2. **Keyring keying is wrong without canonicalization** — R2 F1 (P0, case normalization), R3 F1 (P0, addr.Addr SMTP-proto), R4 P2 #2 (Codex, canonicalization). Triggered §4.8 NEW decision (canonical-key normalizer) + §3.3 SMTP-proto skip.
+3. **AuxAddr-fallback path is a real problem** — R2 P0 #3 (empty cfg.MyCall auth-bypass), R5 F1 (P1, YAGNI: serves no v0.0.1 path, opposite power-user intent). Triggered §4.7 NEW decision (drop the fallback).
+
+These convergences are precisely what cross-provider adrev is designed to surface. The cycle earned its keep.
+
+### Findings landed in this revision (all 8 P0 + 15 of 20 P1 + 11 of 17 P2)
+
+| Finding | Round(s) | Severity | Action taken |
+|---|---|---|---|
+| AuxAddr colon-form removal = data destruction on write + legacy parse breakage | R1 F2, R2 F4, R3 P0 #4 (implicit), R4 P1 #1 | P0 / P0 / P1 | §2.2 changed from "remove custom MarshalJSON/UnmarshalJSON" to "preserve marshaling; drop Password field; strip-and-drop colon-suffix on parse, never re-emit"; §3.2 cfg/config.go row rewritten; §3.6 Layer 4 test `TestConfigParse_LegacyAuxAddrPasswordStripped` |
+| Web UI form-POST silently drops secure_login_password after backend removal | R3 P0 #2, R4 P2 #3 | P0 / P2 | §2.4 NEW scope item; §3.2 NEW rows for `web/src/config.html` + `web/src/js/config.js` + `web/dist/*`; §3.1 architecture diagram updated |
+| `addr.Addr` is FULL email for SMTP-proto addresses, NOT a callsign | R3 F1 | P0 | §3.3 SMTP-proto skip in callback; §3.1 architecture diagram updated; §3.6 `TestSecureLoginCallback_SmtpProtoSkipsCredstore` |
+| Callsign case-normalization gap (wizard lowercase vs Pat uppercase) | R2 F1, R4 P2 #2 | P0 / P2 | §4.8 NEW decision (canonical key); `normalizeAccount` added to §3.2 credstore.go; §3.3 normalize-then-lookup; §3.6 `TestGet_CasingNormalization` |
+| Empty/whitespace callsign + AuxAddr-fallback = auth-bypass surface | R2 F2, R2 F3 | P0 / P0 | §4.7 NEW decision (drop AuxAddr fallback); §3.3 step 3 + step 4 short-circuit; §3.6 `TestGet_EmptyCallsign_ShortCircuit` + `TestGet_WhitespaceCallsign_ShortCircuit` |
+| `handleNewAccount` / `promptNewPassword` / `cmsapi.AccountAdd` residual flow in `pat configure` | R4 P2 #6 | P2 (Codex; treated as P0 due to behavior-leak risk) | §2.6 expanded to cover BOTH password-touching paths; §3.2 cli/init.go row rewrites both A + B paths |
+| cmsapi.PasswordRecoveryEmailSet cascading removal (cli/account.go + winlinkPasswordRecoveryEmailHandler) | R3 F6 | P1 | §3.2 cli/account.go + api/winlink_account.go rows handle credstore (found, err) explicitly; §3.5 per-call-site rules table |
+| Rust `keyring` crate API has migrated to `keyring-core`; chained syntax doesn't compile | R3 F5 | P1 | §3.4 wizard write path rewritten with correct `keyring-core` API: `Entry::new(...)?` then `.set_password(...)?`; `use_native_store(true)?` at app init; `entry.delete_credential()` for clear-credential UX (not `set_password("")`) |
+| `MockInit` is process-global, unsafe for t.Parallel() | R3 F3 | P1 | §3.2 credstore_test.go row notes serialization + Cleanup; §3.6 Layer 1 explicit "NO t.Parallel()" |
+| `keyring.Set("")` per-backend semantics: empty-stored treated as miss | R3 F4 | P1 | §3.2 credstore.go contract: empty-stored = miss; §3.6 `TestGet_EmptyStoredTreatedAsMiss` |
+| ErrNotFound mapping not cross-platform contracted; error classification needed | R3 F7 | P1 | §3.2 credstore.go exports `ErrLocked` + `ErrUnavailable` sentinels; §3.5 caller errors.Is dispatch |
+| Don't discard credstore lookup errors (`password, _, _ = credstore.Get(...)`) | R4 P2 #4 | P2 (Codex; treated as P1 due to security impact) | §3.2 + §3.5 explicit "never the discard pattern" rule; §3.3 API-call-site read path mandates explicit handling |
+| CI integration test bare `dbus-launch && go test` doesn't inherit session bus | R4 P2 #5 | P2 (Codex) | §3.6 Layer 2 CI invocation rewritten with `dbus-run-session -- bash -c "..."` wrapping |
+| AuxAddr-fallback-to-primary path serves no v0.0.1 use, creates auth-bypass | R2 F2+F3, R5 F1 | P0 / P0 / P1 | §4.7 NEW decision (dropped); §3.3 no fallback step; §3.6 `TestSecureLoginCallback_AuxMiss_PromptHub_NoFallbackToPrimary` regression test |
+| Layer 4 config-parse 3-test battery is YAGNI (json.Unmarshal permissive is stdlib) | R5 F2 | P1 | §3.6 Layer 4 collapsed to single `TestConfigParse_LegacyAuxAddrPasswordStripped` test |
+| Layer 5 `TestPatConfigure_BriefRedirectAtPasswordStep` is anti-test (tests fmt.Println) | R5 F3 | P1 | §3.6 Layer 5 DROPPED; manual smoke during implementation |
+| §3.5 "Explicit NOT-decisions" 5-bullet list is defensive scaffolding | R5 F5 | P1 | §3.5 trimmed from 5 bullets to 2 (kept load-bearing: no retry, no auto-save) |
+| Hardcoded URL anchor `#credentials` decays through README evolution | R1 F5 | P2 | §3.2 README.md row + §2.10 — drop anchor; plain README link |
+| Unsourced `~30 transitive deps` figure | R1 F9 | P3 | §3.7 — replaced with "small; confirm via `go list -m all` post-add" |
+| `app/app.go:230-233` removal — verify safety | R3 F11 | P2 | §3.2 app/app.go row — added rationale: removal is safe because keyring lookups key by active callsign per §3.3 |
+| Hardcoded ServiceName rots on fork rename | R1 F1 | P1 | §5.3 NEW risk row; no migration designed (acceptable v0.0.1) |
+| Hardcoded 60s promptHub timeout undermines EmComm framing | R3 F10 | P2 | §5.3 NEW risk row; flagged for follow-up to make configurable |
+| CI runner image floats → silent test rot | R1 F4 | P1 | §3.6 Layer 2 + §5.3 — pinned to `ubuntu-22.04` |
+| Unversioned keyring schema locks out future multi-class | R1 F7 | P2 | §5.3 NEW risk row; YAGNI for v0.0.1 |
+| Web UI/dist drift on upstream merge re-introducing the field | R3 F2 follow-on | structural | §5.3 NEW risk row; integration test verifies |
+| §5.6 "NOT a risk" defensive section trimmed | R5 F6 | P2 | §5.6 trimmed from 5 items to 2 |
+
+### Findings rejected (with reasoning)
+
+| Finding | Round | Severity | Why rejected |
+|---|---|---|---|
+| `json.Unmarshal` default-permissive is unverified assumption | R3 F9 | P2 | **VERIFIED via code read**: `app/config.go::ReadConfig` uses `json.Unmarshal(data, &config)` without `DisallowUnknownFields`. The spec's claim holds. No change needed. |
+| Soft-error vs hard-error log-level distinction is unjustified | R5 F4 | P1 | **OPERATOR-CONFIRMED** during brainstorm §3 review: Cameron picked "Approve, but RAISE log level to error on hard failures" as the explicit answer. R5's "collapse to single warn" is overruled by the prior operator decision. |
+| No retry-loop on keyring failure conflates transient vs permanent | R1 F3 | P1 | **REJECTED on safety grounds:** retrying CMS-rejected wrong passwords is a lockout risk. Transient failures (locked keyring) ARE distinguished via the `ErrLocked` sentinel classification (§3.5) and the operator can unlock externally — no retry-loop needed. |
+
+### Findings deferred to follow-up tasks
+
+| Finding | Disposition |
+|---|---|
+| Pat-killed-mid-promptHub context-cancellation edge cases (R2 F12, P3) | Edge case; not exercised in v0.0.1 flows; acceptable as-is. |
+| Auto-strip `secure_login_password` from existing user config (R2 F11, P2) | v0.0.1 has no existing tuxlink-pat users; flagged in §2 out-of-scope. Future upstream-PR variant will add explicit migration. |
+| Hardcoded promptHub timeout configurable (R3 F10, P2) | Acknowledged in §5.3; separate small refactor; not in cred-refactor scope. |
+| Keyring schema versioning (R1 F7, P2) | YAGNI for v0.0.1 single-class; flagged in §5.3 for future multi-class expansion. |
+
+### Findings accepted as P2/P3 not requiring spec changes
+
+(Remaining P2 + P3 findings, ~6 of them.) These were either (a) covered by P0/P1 fixes that addressed the underlying concern, (b) operational details belonging in the implementation plan rather than the spec, or (c) cosmetic/wording suggestions not material to the design. Full per-finding dispositions in the adrev transcripts at `dev/adversarial/2026-05-18-cred-handling-adrev-R{1..5}.md` (gitignored; local-only per CLAUDE.md).
+
+### Per-round finding counts
+
+| Round | Lens | Findings | P0 | P1 | P2 | P3 |
+|---|---|---|---|---|---|---|
+| R1 | scale (Claude rosella-tussock-meadow) | 9 | 1 | 4 | 3 | 1 |
+| R2 | partial-input (Claude juniper-glade-condor) | 12 | 4 | 5 | 2 | 1 |
+| R3 | dep-contract-drift (Claude linnet-bracken-shoal) | 12 | 3 | 5 | 3 | 1 |
+| R4 | cross-provider (Codex GPT-5.5 xhigh) | 6 | 0 | 1 | 5 | 0 |
+| R5 | YAGNI (Claude currant-pelican-thorn) | 11 | 0 | 5 | 4 | 2 |
+| **Total** | | **50** | **8** | **20** | **17** | **5** |
+
+Note: Codex (R4) is structurally more conservative on severity than Claude rounds, which is why R4's P2-tagged findings (e.g., the discard-pattern + handleNewAccount residual flow) were elevated by the parent agent during synthesis based on actual impact (security-significant + functional-correctness-significant respectively). This is the disposition discipline — the round's stated severity is input, not output.
