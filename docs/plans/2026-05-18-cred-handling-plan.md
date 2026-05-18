@@ -85,7 +85,7 @@ notes and commit messages.
 
 ## Execution Status
 
-**Overall:** 4/10 phases shipped; Phase 5 in queue (app/exchange.go callback rewrite). Intermediate broken-build state on tuxlink-pat (expected per cred-refactor sequencing; full module will not build until Phase 7 completes).
+**Overall:** 5/10 phases shipped; Phase 6 in queue (API handlers + cli/account.go). Intermediate broken-build state on tuxlink-pat (expected per cred-refactor sequencing; full module will not build until Phase 7 completes).
 
 | Phase | Status | Ship SHA(s) | Notes |
 |---|---|---|---|
@@ -93,7 +93,7 @@ notes and commit messages.
 | 2 — credstore package (NEW; pure TDD) | ✅ Shipped | tuxlink-pat 165e411, 431ee16, 63c7fc9 + dd09e37 (post-Codex fix) on bd-tuxlink-mib/mib-cred-keyring | 4 commits; 22 tests passing (was 20; +2 for ServiceUnknown classification); zalando/go-keyring v0.2.8 added; parent Codex round caught classifyErr gap on `org.freedesktop.secrets not provided by any .service files` shape — fix in dd09e37 |
 | 3 — cfg/config.go modifications | ✅ Shipped | tuxlink-pat d89888d on bd-tuxlink-mib/mib-cred-keyring | SecureLoginPassword field deleted; AuxAddr.Password dropped; MarshalJSON/UnmarshalJSON preserved + strip colon-suffix; 1 regression test passing |
 | 4 — api/api.go RedactedPassword removal | ✅ Shipped | tuxlink-pat 7757f63 on bd-tuxlink-mib/mib-cred-keyring | RedactedPassword const + 2 if-blocks deleted; api/ compiles |
-| 5 — app/exchange.go callback + app/app.go cleanup | ⬜ Not started | — | Largest behavioral change; SMTP-proto skip + callback rewrite |
+| 5 — app/exchange.go callback + app/app.go cleanup | ✅ Shipped | tuxlink-pat aafec62 on bd-tuxlink-mib/mib-cred-keyring | 1 commit; SetSecureLoginHandleFunc rewritten to delegate to extracted `secureLoginLookup` (testable); SMTP-proto skip + empty-addr skip + normalize-then-credstore.Get + log-and-fall-through on miss/locked/unavailable; NO AuxAddr-fallback-to-primary per §4.7; 7 tests passing including the §4.7 regression test (`AuxMiss_PromptHub_NoFallbackToPrimary`); app/app.go lines 230-233 deleted (in-memory clear obsolete since field doesn't exist). See Deviations for the package-test-run workaround used to get tests to run under the still-broken-build state. |
 | 6 — API handlers + cli/account.go (credstore-explicit-handling) | ⬜ Not started | — | api/winlink_account.go + app/winlink_api.go + cli/account.go |
 | 7 — cli/init.go both password paths redirected | ⬜ Not started | — | Existing-account + new-account flows both → brief redirect |
 | 8 — **DELETE Pat web UI entirely** (`rm -rf web/` + api/api.go cleanup) | ⬜ Not started | — | Post-plan-review scope amendment per spec `046f4b8` + `project_fork_enables_aggressive_deletion` memory; eliminates npm/webpack/Docker chain |
@@ -101,6 +101,8 @@ notes and commit messages.
 | 10 — PR-A merge + PR-B submodule bump on tuxlink | ⬜ Not started | — | After PR-A merge: bump submodule pin in tuxlink; open PR-B against feat/v0.0.1; close `tuxlink-mib` on PR-B merge |
 
 ### Deviations
+
+- **Phase 5 test-run workaround (2026-05-18, `sparrow-sumac-dahlia`):** The `app/` package would not build with `go test ./app/...` because `app/winlink_api.go:72` still references the removed `cfg.SecureLoginPassword` field (Phase 6 scope). To verify Phase 5's 7 tests pass before committing, the executor temporarily edited `app/winlink_api.go:72` to replace the dead field reference with an empty-string literal + `PHASE5_TEMP` comment, ran the tests (all 7 PASS, including the §4.7 `AuxMiss_PromptHub_NoFallbackToPrimary` regression test), then reverted `app/winlink_api.go` to its broken state before staging the Phase 5 commit. The reverted file is what `git diff` reflects in the Phase 5 commit; `aafec62` does NOT contain any temporary `app/winlink_api.go` edit. After Phase 5 commit, `go build ./app/...` still fails on exactly one line (`app/winlink_api.go:72`) — Phase 6 fixes this properly via `credstore.Get(a.Options().MyCall)` with explicit `(found, err)` handling. After Phase 6 ships, `go test ./app/ -run TestSecureLoginCallback -v` runs unmodified and all 7 Phase 5 tests pass (verified locally during Phase 5 via the workaround; Phase 6's PR will re-verify in CI).
 
 - **Phase 1 Task 1.3 collapsed into Phase 2 Task 2.1 (2026-05-18):** Task 1.3 as-written (`go get github.com/zalando/go-keyring && go mod tidy` as its own commit) is a Go-idiomatic no-op — `go mod tidy` STRIPS modules that no Go file imports yet. Subagent `sumac-birch-owl` correctly stopped + reported rather than committing inconsistent go.mod state. The dep addition is now part of Phase 2's first commit (which writes `internal/credstore/credstore.go` that imports go-keyring; `go mod tidy` then registers the dep). Phase 1 Task 1.3 is REMOVED from the actionable plan; future executors skip it. Phase 1 ships as state-setup-only (branch + upstream remote; no Go-source commit).
 
@@ -1159,7 +1161,7 @@ EOF
 
 ## Phase 5 — app/exchange.go callback rewrite + app/app.go cleanup
 
-**Execution Status:** ⬜ Not started
+**Execution Status:** ✅ Shipped — tuxlink-pat `aafec62` on `bd-tuxlink-mib/mib-cred-keyring` (2026-05-18, agent `sparrow-sumac-dahlia`). 1 commit; 7 tests passing including the §4.7 regression test. See top-of-plan Deviations for the test-run workaround used under the still-broken-build state.
 
 This phase is the largest behavioral change: rewriting `SetSecureLoginHandleFunc` to use credstore with SMTP-proto skip, normalization, and NO AuxAddr-fallback-to-primary. Plus a small `app/app.go` cleanup.
 
