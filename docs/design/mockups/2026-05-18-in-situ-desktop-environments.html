@@ -1,0 +1,486 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Tuxlink in-situ — Debian, Raspberry Pi OS, Ubuntu LTS</title>
+<style>
+:root {
+  --sans: "Inter", "Cantarell", "Ubuntu", "Segoe UI", system-ui, sans-serif;
+  --mono: "JetBrains Mono", "Fira Code", "Source Code Pro", "Ubuntu Mono", Consolas, monospace;
+  --page-bg: #060a0e;
+  --text: #e4ebf2;
+  --text-dim: #94a0ad;
+  --text-faint: #5d6975;
+  --accent: #f59f3c;
+  --border: #1f2832;
+  --border-strong: #2c3744;
+  --surface: #141c23;
+}
+* { box-sizing: border-box; }
+html, body {
+  margin: 0; padding: 0;
+  background: var(--page-bg);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+.page { max-width: 1700px; margin: 0 auto; padding: 28px 24px 80px; }
+.page-title { font-size: 22px; font-weight: 600; margin: 0 0 4px; }
+.page-subtitle { color: var(--text-dim); font-size: 14px; margin: 0 0 24px; }
+
+.intro {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px 18px;
+  margin-bottom: 36px;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+.intro p { margin: 0 0 8px; }
+.intro p:last-child { margin: 0; }
+.intro strong { color: var(--text); }
+
+.scene-section { margin-bottom: 48px; }
+.scene-header {
+  display: flex; align-items: baseline; gap: 12px;
+  margin-bottom: 14px; padding: 0 4px;
+}
+.scene-letter {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 30px; height: 30px; border-radius: 6px;
+  background: var(--accent); color: #1a0e02;
+  font-weight: 800; font-size: 15px;
+}
+.scene-name { font-size: 18px; font-weight: 700; }
+.scene-tag { color: var(--text-dim); font-size: 13px; margin-left: 6px; }
+.scene-meta {
+  margin-left: auto; font-size: 11px;
+  background: #1a2330; color: var(--text-dim);
+  border: 1px solid var(--border-strong);
+  padding: 4px 10px; border-radius: 4px; font-family: var(--mono);
+}
+
+/* =========================================
+   SHARED: desktop scene viewport
+   ========================================= */
+.scene {
+  position: relative;
+  width: 1600px;
+  height: 950px;
+  overflow: hidden;
+  border-radius: 10px;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.45);
+  font-family: var(--sans);
+  user-select: none;
+}
+
+/* The tuxlink window image as it sits on each desktop.
+   synthesis-dock-on.png is 1433x787; scaled to 0.74 = 1060x582 */
+.tuxlink-window {
+  position: absolute;
+  width: 1060px;
+  height: auto;
+  border-radius: 10px;
+  box-shadow:
+    0 24px 60px rgba(0, 0, 0, 0.55),
+    0 0 0 1px rgba(255, 255, 255, 0.04);
+  image-rendering: -webkit-optimize-contrast;
+}
+
+/* =========================================
+   SCENE 1: Debian 12 Bookworm — GNOME 43
+   ========================================= */
+.scene-debian {
+  /* "Emerald" — Bookworm's official wallpaper evokes a deep teal/blue gradient */
+  background:
+    radial-gradient(ellipse at 30% 20%, rgba(60, 130, 130, 0.4) 0%, transparent 60%),
+    radial-gradient(ellipse at 75% 80%, rgba(40, 80, 110, 0.55) 0%, transparent 55%),
+    linear-gradient(135deg, #0e2a32 0%, #08171c 50%, #15323a 100%);
+}
+.scene-debian::before {
+  /* subtle "swirl" texture via repeating radial gradient */
+  content: "";
+  position: absolute; inset: 0;
+  background:
+    radial-gradient(circle at 60% 40%, rgba(120, 200, 200, 0.06) 0%, transparent 35%),
+    radial-gradient(circle at 20% 70%, rgba(50, 110, 130, 0.10) 0%, transparent 40%);
+  pointer-events: none;
+}
+.scene-debian .gnome-bar {
+  position: absolute; top: 0; left: 0; right: 0;
+  height: 32px;
+  background: #000;
+  display: flex; align-items: center;
+  padding: 0 16px;
+  font-size: 13px;
+  color: #ffffff;
+  z-index: 10;
+  box-shadow: 0 1px 0 rgba(255,255,255,0.04);
+}
+.scene-debian .gnome-bar .activities {
+  font-weight: 500;
+  padding: 4px 8px;
+  border-radius: 4px;
+  cursor: default;
+}
+.scene-debian .gnome-bar .app-indicator {
+  margin-left: 18px;
+  display: flex; align-items: center; gap: 6px;
+  font-size: 12px;
+  opacity: 0.95;
+}
+.scene-debian .gnome-bar .app-indicator .app-icon {
+  width: 14px; height: 14px; border-radius: 3px;
+  background: linear-gradient(135deg, #f59f3c 0%, #d97706 100%);
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 9px; font-weight: 800; color: #1a0e02;
+}
+.scene-debian .gnome-bar .clock {
+  position: absolute; left: 50%; transform: translateX(-50%);
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+}
+.scene-debian .gnome-bar .indicators {
+  margin-left: auto;
+  display: flex; align-items: center; gap: 14px;
+  font-size: 12px;
+}
+.scene-debian .gnome-bar .indicators .ind { opacity: 0.85; font-family: var(--mono); }
+.scene-debian .tuxlink-window {
+  top: 76px;
+  left: 50%; transform: translateX(-50%);
+}
+
+/* =========================================
+   SCENE 2: Raspberry Pi OS Bookworm — LXDE/Wayfire panel
+   ========================================= */
+.scene-rpios {
+  /* Pi OS Bookworm "Aenea" wallpaper: greens + warm sunset highlights */
+  background:
+    radial-gradient(ellipse at 80% 20%, rgba(255, 180, 100, 0.30) 0%, transparent 50%),
+    radial-gradient(ellipse at 20% 70%, rgba(80, 200, 160, 0.30) 0%, transparent 55%),
+    linear-gradient(160deg, #1a3a4a 0%, #0e2530 40%, #1f4035 100%);
+}
+.scene-rpios::before {
+  content: "";
+  position: absolute; inset: 0;
+  background:
+    radial-gradient(circle at 50% 50%, rgba(255, 220, 180, 0.04) 0%, transparent 40%);
+  pointer-events: none;
+}
+.scene-rpios .pi-panel {
+  position: absolute; top: 0; left: 0; right: 0;
+  height: 36px;
+  background: rgba(40, 40, 40, 0.85);
+  backdrop-filter: blur(10px);
+  display: flex; align-items: center;
+  padding: 0 8px;
+  font-size: 12px;
+  color: #e4e4e4;
+  z-index: 10;
+  border-bottom: 1px solid rgba(0,0,0,0.4);
+}
+.scene-rpios .pi-panel .raspberry {
+  width: 28px; height: 28px; border-radius: 4px;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 17px;
+  margin-right: 4px;
+}
+.scene-rpios .pi-panel .launcher {
+  width: 26px; height: 26px; border-radius: 4px;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 14px;
+  margin: 0 2px;
+  background: transparent;
+  color: #d8d8d8;
+}
+.scene-rpios .pi-panel .launcher:hover { background: rgba(255,255,255,0.1); }
+.scene-rpios .pi-panel .separator {
+  width: 1px; height: 20px; background: rgba(255,255,255,0.15);
+  margin: 0 8px;
+}
+.scene-rpios .pi-panel .taskbar-app {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 3px 10px 3px 6px;
+  border-radius: 4px;
+  background: rgba(255,255,255,0.12);
+  border-bottom: 2px solid #f59f3c;
+  font-size: 11px;
+  color: #fff;
+  font-weight: 500;
+  margin-left: 8px;
+}
+.scene-rpios .pi-panel .taskbar-app .app-icon {
+  width: 14px; height: 14px; border-radius: 3px;
+  background: linear-gradient(135deg, #f59f3c 0%, #d97706 100%);
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 9px; font-weight: 800; color: #1a0e02;
+}
+.scene-rpios .pi-panel .right-tray {
+  margin-left: auto;
+  display: flex; align-items: center; gap: 10px;
+  font-size: 11px;
+  font-family: var(--mono);
+}
+.scene-rpios .pi-panel .right-tray .item { opacity: 0.9; }
+.scene-rpios .pi-panel .right-tray .cpu {
+  background: rgba(0,0,0,0.3);
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 10px;
+}
+.scene-rpios .pi-panel .right-tray .clock {
+  background: rgba(0,0,0,0.3);
+  padding: 3px 8px;
+  border-radius: 3px;
+  font-size: 11px;
+  font-weight: 500;
+}
+.scene-rpios .tuxlink-window {
+  top: 90px;
+  left: 50%; transform: translateX(-50%);
+}
+
+/* =========================================
+   SCENE 3: Ubuntu 24.04 LTS Noble — GNOME 46 + Yaru
+   ========================================= */
+.scene-ubuntu {
+  /* Yaru aubergine/orange — Ubuntu's signature palette */
+  background:
+    radial-gradient(ellipse at 80% 20%, rgba(233, 84, 32, 0.18) 0%, transparent 55%),
+    radial-gradient(ellipse at 25% 75%, rgba(119, 41, 83, 0.45) 0%, transparent 50%),
+    linear-gradient(135deg, #2c0e26 0%, #1a0918 50%, #3a1530 100%);
+}
+.scene-ubuntu::before {
+  content: "";
+  position: absolute; inset: 0;
+  background:
+    radial-gradient(circle at 50% 50%, rgba(233, 84, 32, 0.05) 0%, transparent 50%);
+  pointer-events: none;
+}
+.scene-ubuntu .gnome-bar {
+  position: absolute; top: 0; left: 0; right: 0;
+  height: 32px;
+  background: #1f1f1f;
+  display: flex; align-items: center;
+  padding: 0 16px;
+  font-size: 13px;
+  color: #ffffff;
+  z-index: 10;
+}
+.scene-ubuntu .gnome-bar .activities {
+  font-weight: 500;
+  padding: 4px 8px;
+  border-radius: 4px;
+}
+.scene-ubuntu .gnome-bar .app-indicator {
+  margin-left: 18px;
+  display: flex; align-items: center; gap: 6px;
+  font-size: 12px;
+}
+.scene-ubuntu .gnome-bar .app-indicator .app-icon {
+  width: 14px; height: 14px; border-radius: 3px;
+  background: linear-gradient(135deg, #f59f3c 0%, #d97706 100%);
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 9px; font-weight: 800; color: #1a0e02;
+}
+.scene-ubuntu .gnome-bar .clock {
+  position: absolute; left: 50%; transform: translateX(-50%);
+  font-size: 12px; font-weight: 500;
+}
+.scene-ubuntu .gnome-bar .indicators {
+  margin-left: auto;
+  display: flex; align-items: center; gap: 14px;
+  font-size: 12px; font-family: var(--mono);
+  opacity: 0.85;
+}
+.scene-ubuntu .ubuntu-dock {
+  position: absolute;
+  top: 50%; transform: translateY(-50%);
+  left: 8px;
+  width: 56px;
+  background: rgba(40, 12, 32, 0.75);
+  backdrop-filter: blur(12px);
+  border-radius: 14px;
+  padding: 10px 6px;
+  display: flex; flex-direction: column; gap: 6px;
+  z-index: 9;
+  box-shadow: 0 8px 30px rgba(0,0,0,0.3), 0 0 0 1px rgba(255,255,255,0.05);
+}
+.scene-ubuntu .ubuntu-dock .dock-app {
+  width: 44px; height: 44px;
+  border-radius: 9px;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 22px;
+  color: #fff;
+  background: rgba(255,255,255,0.08);
+  position: relative;
+}
+.scene-ubuntu .ubuntu-dock .dock-app.firefox { background: linear-gradient(135deg, #ff7139 0%, #b833e1 100%); }
+.scene-ubuntu .ubuntu-dock .dock-app.files { background: linear-gradient(135deg, #5fa3d8 0%, #3a7dbf 100%); }
+.scene-ubuntu .ubuntu-dock .dock-app.terminal { background: #2c2c2c; font-family: var(--mono); font-size: 14px; }
+.scene-ubuntu .ubuntu-dock .dock-app.thunderbird { background: linear-gradient(135deg, #2295f9 0%, #1268d6 100%); }
+.scene-ubuntu .ubuntu-dock .dock-app.tuxlink {
+  background: linear-gradient(135deg, #f59f3c 0%, #d97706 100%);
+  color: #1a0e02; font-weight: 800;
+  font-family: var(--sans);
+  font-size: 18px;
+}
+.scene-ubuntu .ubuntu-dock .dock-app.tuxlink::after {
+  /* Running indicator dot (orange, GNOME 46 dash-to-dock style) */
+  content: "";
+  position: absolute;
+  left: -10px; top: 50%; transform: translateY(-50%);
+  width: 4px; height: 18px;
+  border-radius: 2px;
+  background: #e95420;
+  box-shadow: 0 0 6px rgba(233, 84, 32, 0.8);
+}
+.scene-ubuntu .ubuntu-dock .dock-divider {
+  height: 1px; background: rgba(255,255,255,0.12);
+  margin: 4px 6px;
+}
+.scene-ubuntu .ubuntu-dock .dock-app.app-grid {
+  background: rgba(255,255,255,0.05);
+  font-size: 16px;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  grid-template-rows: repeat(3, 1fr);
+  gap: 2px;
+  padding: 9px;
+}
+.scene-ubuntu .ubuntu-dock .dock-app.app-grid .dot {
+  background: rgba(255,255,255,0.6);
+  border-radius: 50%;
+}
+.scene-ubuntu .tuxlink-window {
+  top: 76px;
+  left: 86px;  /* clear of the dock */
+}
+</style>
+</head>
+<body>
+<div class="page">
+
+  <h1 class="page-title">Tuxlink in-situ — Linux desktop environments</h1>
+  <p class="page-subtitle">The canonical tuxlink window (synthesis dock-on shape) shown on three target distributions · 1600×950 viewport · pure CSS desktop chrome (no external assets)</p>
+
+  <div class="intro">
+    <p>Tuxlink is a <strong>native desktop app</strong> built with <strong>Tauri</strong> (Rust backend + WebKitGTK-rendered web frontend, presented as a native window — no browser involved from the user's perspective). These scenes show the same canonical window from <code>synthesis-dock-on.png</code> sitting on each of the three primary target distributions, with that desktop environment's panel, dock, and wallpaper vibe rendered around it.</p>
+    <p>The window draws its <strong>own</strong> headerbar (the Adwaita-style `−` `□` `×` controls), as is convention for cross-platform Tauri / Electron / Chromium-based apps on Linux (Discord, Slack, VS Code, Telegram, etc.). The DE's window manager is configured to <em>not</em> draw additional decorations.</p>
+    <p>Distribution: AppImage (single-file executable, no install required — plan Task 17). The user double-clicks; the app appears as a native window. Compose, settings, and per-callsign windows are <strong>separate native windows</strong> (plan Task 14 amendment per the canonical design doc), not in-page modals.</p>
+  </div>
+
+  <!-- ============================================================== -->
+  <!-- Scene A — Debian 12 Bookworm + GNOME 43                        -->
+  <!-- ============================================================== -->
+  <div class="scene-section">
+    <div class="scene-header">
+      <span class="scene-letter">A</span>
+      <span class="scene-name">Debian 12 (Bookworm)</span>
+      <span class="scene-tag">· GNOME Shell 43 · Adwaita dark · "Emerald" wallpaper</span>
+      <span class="scene-meta">native Tauri window</span>
+    </div>
+    <div class="scene scene-debian">
+      <div class="gnome-bar">
+        <span class="activities">Activities</span>
+        <span class="app-indicator">
+          <span class="app-icon">T</span>
+          Tuxlink
+        </span>
+        <span class="clock">Mon May 18  14:32</span>
+        <span class="indicators">
+          <span class="ind">⠶</span>
+          <span class="ind">≣</span>
+          <span class="ind">▮▮▮▮▯</span>
+          <span class="ind">▼</span>
+        </span>
+      </div>
+      <img class="tuxlink-window" src="images/synthesis-dock-on.png" alt="Tuxlink primary window on Debian GNOME">
+    </div>
+  </div>
+
+  <!-- ============================================================== -->
+  <!-- Scene B — Raspberry Pi OS Bookworm                             -->
+  <!-- ============================================================== -->
+  <div class="scene-section">
+    <div class="scene-header">
+      <span class="scene-letter">B</span>
+      <span class="scene-name">Raspberry Pi OS (Bookworm)</span>
+      <span class="scene-tag">· LXDE-derived desktop · Wayfire compositor · "Aenea" wallpaper</span>
+      <span class="scene-meta">aarch64 · native Tauri window</span>
+    </div>
+    <div class="scene scene-rpios">
+      <div class="pi-panel">
+        <span class="raspberry" title="Raspberry menu" style="color:#c4181f;">🍓</span>
+        <span class="launcher" title="Chromium">🌐</span>
+        <span class="launcher" title="File Manager">📁</span>
+        <span class="launcher" title="Terminal">⌘</span>
+        <span class="launcher" title="Mu / Python">🐍</span>
+        <span class="separator"></span>
+        <span class="taskbar-app">
+          <span class="app-icon">T</span>
+          Tuxlink — Inbox
+        </span>
+        <span class="right-tray">
+          <span class="item cpu">CPU 23%</span>
+          <span class="item">📶</span>
+          <span class="item">🔵</span>
+          <span class="item">🔊</span>
+          <span class="item clock">14:32  Mon, 18 May</span>
+        </span>
+      </div>
+      <img class="tuxlink-window" src="images/synthesis-dock-on.png" alt="Tuxlink primary window on Raspberry Pi OS">
+    </div>
+  </div>
+
+  <!-- ============================================================== -->
+  <!-- Scene C — Ubuntu 24.04 LTS (Noble Numbat)                      -->
+  <!-- ============================================================== -->
+  <div class="scene-section">
+    <div class="scene-header">
+      <span class="scene-letter">C</span>
+      <span class="scene-name">Ubuntu 24.04 LTS (Noble Numbat)</span>
+      <span class="scene-tag">· GNOME 46 + Yaru · dash-to-dock · aubergine palette</span>
+      <span class="scene-meta">native Tauri window</span>
+    </div>
+    <div class="scene scene-ubuntu">
+      <div class="gnome-bar">
+        <span class="activities">Activities</span>
+        <span class="app-indicator">
+          <span class="app-icon">T</span>
+          Tuxlink
+        </span>
+        <span class="clock">Mon May 18  14:32</span>
+        <span class="indicators">
+          <span>EN</span>
+          <span>🔊</span>
+          <span>📶</span>
+          <span>▮▮▮▯</span>
+          <span>⏻</span>
+        </span>
+      </div>
+      <div class="ubuntu-dock">
+        <div class="dock-app firefox" title="Firefox">🦊</div>
+        <div class="dock-app files" title="Files">📁</div>
+        <div class="dock-app terminal" title="Terminal">_</div>
+        <div class="dock-app thunderbird" title="Thunderbird">✉</div>
+        <div class="dock-app tuxlink" title="Tuxlink — running">T</div>
+        <div class="dock-divider"></div>
+        <div class="dock-app app-grid" title="Show Applications">
+          <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+          <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+          <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+        </div>
+      </div>
+      <img class="tuxlink-window" src="images/synthesis-dock-on.png" alt="Tuxlink primary window on Ubuntu 24.04">
+    </div>
+  </div>
+
+</div>
+</body>
+</html>

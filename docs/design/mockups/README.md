@@ -71,6 +71,21 @@ Plan amendments queued from these wireframes (the canonical design doc will carr
 - **NEW menu items** — Session → Test send; Tools → Settings → Connection (toggle CMS-on/off post-wizard); Tools → Settings → Privacy → Position precision.
 - **v0.1+ deferred** — MPS (Message Pickup Station) registration UI for radio-only mode (per ARSFI's Radio_Only_Winlink reference); GPS auto-detect (matches Express's `Update grid square from GPS=True`).
 
+### `2026-05-18-in-situ-desktop-environments.html`
+
+**In-situ desktop scenes** — answers the "wait, does this run in a browser?" reading by showing the canonical tuxlink window (synthesis dock-on shape) sitting on each of the three primary target distributions, with each environment's panel, dock, and wallpaper rendered around it. Pure CSS — no external image assets beyond the tuxlink window screenshot itself.
+
+![In-situ on Debian 12 GNOME](images/in-situ-debian-gnome.png)
+*Scene A · Debian 12 (Bookworm) — GNOME Shell 43, Adwaita dark, "Emerald"-inspired wallpaper. Vanilla GNOME top bar (Activities / app indicator / centered clock / status indicators). No dock — vanilla GNOME uses the Activities overview for app switching.*
+
+![In-situ on Raspberry Pi OS](images/in-situ-raspberry-pi-os.png)
+*Scene B · Raspberry Pi OS (Bookworm) — LXDE-derived desktop, Wayfire compositor, "Aenea"-inspired wallpaper. Top panel with raspberry menu + quick-launch (browser / files / terminal / Python) + active-app taskbar entry + right tray (CPU% / network / clock). aarch64 native — confirming tuxlink runs on the Pi 5 dev environment as a native app, same binary path as the desktop builds.*
+
+![In-situ on Ubuntu 24.04 LTS](images/in-situ-ubuntu-2404.png)
+*Scene C · Ubuntu 24.04 LTS (Noble Numbat) — GNOME 46 + Yaru theme, dash-to-dock on the left, aubergine palette. Tuxlink icon in the dock shows the orange running-indicator stripe (Yaru convention). All other dock apps (Firefox / Files / Terminal / Thunderbird / Show Applications) provide context.*
+
+**Why this gallery exists:** the standard mockup convention floats the app window on a near-black backdrop to isolate the UI from environmental noise. That convention is correct for design conversation but ambiguous for first-time readers — "where does this run?" Tuxlink is a native Tauri app (Rust backend + WebKitGTK frontend, presented as an OS-native window), not a web app served by a browser. These in-situ scenes make the desktop context explicit without altering the canonical mockups.
+
 ### `2026-05-17-modem-placements-v05.html`
 
 **v0.5+ modem-console placement** — once VARA-native ships, where does the equivalent of [the VARA FM v4.1.2 console](https://winlink.org/sites/default/files/oe8xyr_vara_fm_v4.1.2.jpg) (analog gauges, throughput chart, OFDM constellation, protocol-state lights) live in tuxlink?
