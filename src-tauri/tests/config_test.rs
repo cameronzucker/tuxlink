@@ -273,3 +273,108 @@ fn test_empty_string_identity_field_normalizes_to_none() {
     assert!(config.identity.grid.is_none(), "empty grid should normalize to None");
     assert!(config.pat_mbo_address.is_none(), "empty pat_mbo_address should normalize to None");
 }
+
+// ============================================================================
+// Phase 3 — Config::validate (cross-field rules)
+// ============================================================================
+
+use tuxlink_lib::config::ConfigValidationError;
+
+fn make_config(
+    connect_to_cms: bool,
+    callsign: Option<&str>,
+    identifier: Option<&str>,
+) -> Config {
+    // Helper: build a Config via deserialization to ensure all the deserialize
+    // attributes (rename_all, deny_unknown_fields, etc.) are honored.
+    // Empty-string → None happens via deserialize_optional_nonempty_string.
+    let json = format!(r#"{{
+        "schema_version": 1, "wizard_completed": false,
+        "connect": {{"connect_to_cms": {}, "transport": "CmsSsl"}},
+        "identity": {{
+            "callsign": {},
+            "identifier": {},
+            "grid": null
+        }},
+        "privacy": {{"gps_state": "Off", "position_precision": "FourCharGrid"}},
+        "pat_mbo_address": null
+    }}"#,
+        connect_to_cms,
+        match callsign { Some(s) => format!("\"{s}\""), None => "null".into() },
+        match identifier { Some(s) => format!("\"{s}\""), None => "null".into() },
+    );
+    serde_json::from_str(&json).unwrap_or_else(|e| panic!("test fixture must deserialize: {e}\nJSON: {json}"))
+}
+
+#[test]
+fn test_validate_cms_path_requires_callsign() {
+    let config = make_config(true, None, None);
+    let err = config.validate().unwrap_err();
+    assert!(matches!(err, ConfigValidationError::CmsPathMissingCallsign));
+}
+
+#[test]
+fn test_validate_offline_path_rejects_callsign() {
+    let config = make_config(false, Some("W4PHS"), None);
+    let err = config.validate().unwrap_err();
+    assert!(matches!(err, ConfigValidationError::OfflinePathHasCallsign));
+}
+
+#[test]
+fn test_validate_offline_with_identifier_only_accepts() {
+    let config = make_config(false, None, Some("EOC-1"));
+    assert!(config.validate().is_ok());
+}
+
+#[test]
+fn test_validate_cms_with_callsign_accepts() {
+    let config = make_config(true, Some("W4PHS"), None);
+    assert!(config.validate().is_ok());
+}
+
+#[test]
+fn test_validate_invalid_identity_propagates_field() {
+    // Callsign with whitespace → InvalidIdentity { field: "callsign", rule: "must not contain whitespace" }
+    // Note: deserialize_optional_nonempty_string accepts the non-empty whitespace-containing input;
+    // we have to build the Config bypassing the deserializer to construct this case directly.
+    let mut config = make_config(true, Some("W4PHS"), None);
+    config.identity.callsign = Some("W4 PHS".into());
+    let err = config.validate().unwrap_err();
+    match err {
+        ConfigValidationError::InvalidIdentity { field, rule } => {
+            assert_eq!(field, "callsign");
+            assert_eq!(rule, "must not contain whitespace");
+        }
+        other => panic!("expected InvalidIdentity, got {other:?}"),
+    }
+
+    // Identifier with bad char → InvalidIdentity { field: "identifier", rule: "must be ASCII-printable" }
+    let mut config = make_config(false, None, Some("EOC-1"));
+    config.identity.identifier = Some("EOC\x07".into());
+    let err = config.validate().unwrap_err();
+    match err {
+        ConfigValidationError::InvalidIdentity { field, rule } => {
+            assert_eq!(field, "identifier");
+            assert_eq!(rule, "must be ASCII-printable");
+        }
+        other => panic!("expected InvalidIdentity, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_validation_error_display_strings_stable() {
+    // Per spec §3.1: Display strings are STABLE PUBLIC SURFACE for ALL THREE error enums
+    // (ConfigValidationError, ConfigReadError, ConfigWriteError). The wizard interpolates
+    // them into operator-visible messages via format!("{e}"). Any future change is a
+    // breaking change for the wizard's UX tests. Plan-review R2 P0-2 + R3 P1-3 caught
+    // earlier under-coverage (3 of 12 variants tested); v2 of this test covers all 3 enums.
+    let e = ConfigValidationError::CmsPathMissingCallsign;
+    assert_eq!(e.to_string(), "CMS path requires identity.callsign to be set");
+
+    let e = ConfigValidationError::OfflinePathHasCallsign;
+    assert_eq!(e.to_string(),
+        "offline path must NOT have identity.callsign set (use identity.identifier instead)");
+
+    let e = ConfigValidationError::InvalidIdentity { field: "callsign", rule: "must not be empty" };
+    assert_eq!(e.to_string(), "invalid identity field `callsign`: must not be empty");
+}

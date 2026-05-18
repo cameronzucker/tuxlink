@@ -45,11 +45,15 @@ pub enum CmsTransport {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct IdentityConfig {
-    /// Required when connect_to_cms = true (enforced by Config::validate).
-    /// Loose validator per validate_identity(): nonempty + no whitespace + ≤32 + ASCII-printable.
+    /// Required when `connect_to_cms = true` (CMS path requires callsign).
+    /// Must be absent (`None`) when `connect_to_cms = false` (offline path forbids callsign;
+    /// use `identifier` instead). Enforced by `Config::validate`. Loose validator per
+    /// `validate_identity()`: nonempty + no whitespace + ≤32 + ASCII-printable.
     #[serde(deserialize_with = "deserialize_optional_nonempty_string", default)]
     pub callsign: Option<String>,
-    /// Free-form station identifier for offline-mode operators. Same loose-validator rules.
+    /// Free-form station identifier for offline-mode operators (optional).
+    /// Allowed on the offline path (`connect_to_cms = false`); not validated as required
+    /// in v0.0.1. Same loose-validator rules as `callsign`.
     #[serde(deserialize_with = "deserialize_optional_nonempty_string", default)]
     pub identifier: Option<String>,
     /// Maidenhead grid, stored at full 6-char precision when known. Broadcast precision is
@@ -140,4 +144,39 @@ pub fn config_path() -> std::path::PathBuf {
             std::path::PathBuf::from(home).join(".config")
         });
     base.join("tuxlink").join("config.json")
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum ConfigValidationError {
+    #[error("CMS path requires identity.callsign to be set")]
+    CmsPathMissingCallsign,
+    #[error("offline path must NOT have identity.callsign set (use identity.identifier instead)")]
+    OfflinePathHasCallsign,
+    #[error("invalid identity field `{field}`: {rule}")]
+    InvalidIdentity { field: &'static str, rule: &'static str },
+}
+
+impl Config {
+    /// Cross-field semantic validation (can't be expressed via serde deserialize-with).
+    /// Callers (wizard's `wizard_persist_cms`, `read_config`) invoke after deserialization.
+    /// NOT auto-called by `write_config_atomic` — caller responsibility per spec §3.3.
+    pub fn validate(&self) -> Result<(), ConfigValidationError> {
+        if self.connect.connect_to_cms && self.identity.callsign.is_none() {
+            return Err(ConfigValidationError::CmsPathMissingCallsign);
+        }
+        if !self.connect.connect_to_cms && self.identity.callsign.is_some() {
+            return Err(ConfigValidationError::OfflinePathHasCallsign);
+        }
+        if let Some(ref c) = self.identity.callsign {
+            if let Some(rule) = validate_identity_describe(c) {
+                return Err(ConfigValidationError::InvalidIdentity { field: "callsign", rule });
+            }
+        }
+        if let Some(ref i) = self.identity.identifier {
+            if let Some(rule) = validate_identity_describe(i) {
+                return Err(ConfigValidationError::InvalidIdentity { field: "identifier", rule });
+            }
+        }
+        Ok(())
+    }
 }
