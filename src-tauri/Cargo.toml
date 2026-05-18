@@ -21,6 +21,7 @@ nix = { version = "0.28", features = ["signal", "process"] }
 
 [dev-dependencies]
 tempfile = "3"
+mockito = "1.5"
 
 [lib]
 name = "tuxlink_lib"
