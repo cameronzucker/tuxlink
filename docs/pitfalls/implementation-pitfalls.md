@@ -25,8 +25,8 @@ This document serves three audiences. Start here, then go directly to the sectio
 | § | Section | You're working on... | Entries | Checklist |
 |---|---------|---------------------|---------|-----------|
 | 0 | [Live Radio Network Operations](#0-live-radio-network-operations) | Any code path that can transmit under the project's callsign, OR any encryption decision touching tuxlink | RADIO-1, RADIO-2 | §0.C |
-| 1 | [EXAMPLE-DOMAIN-1](#1-example-domain-1) | TODO — describe what this section covers | PREFIX-1 – PREFIX-N | §1.C |
-| 2 | [EXAMPLE-DOMAIN-2](#2-example-domain-2) | TODO — describe what this section covers | PREFIX-1 – PREFIX-N | §2.C |
+| 1 | [Scope and Audience Boundaries](#1-scope-and-audience-boundaries) | Any feature, doc, or design decision touching what tuxlink does vs. what is out of scope | SCOPE-1 | §1.C |
+| 2 | [Safety-Stack Coordination](#2-safety-stack-coordination) | Any time a project hook denies a write op, OR you're tempted to add additional "session liveness" signals | HOOK-1, LEASE-1 | §2.C |
 | — | [Tool Integration](#tool-integration) | Conflicts between project commitments and tool-installed defaults | BD-1 | §Tool-Integration.C |
 | — | [Orchestration](#orchestration) | Parallel subagent dispatch and output persistence | ORCH-1 | §Orchestration.C |
 | A | [Historical Changelog](#appendix-a-historical-changelog) | Provenance, validation dates, review process meta-observations | — | — |
@@ -273,11 +273,86 @@ Notable specific cases this rule covers:
 
 ---
 
-# Section 2: EXAMPLE-DOMAIN-2
+# Section 2: Safety-Stack Coordination
 
-<!-- TODO: rename, or delete this section if not needed. Duplicate the Section 1 template for each additional domain. -->
+> **Reader context:** I'm encountering a project hook that denied a write op, OR I'm thinking about how to detect / track whether other Claude Code sessions are working alongside mine. This section codifies the mental model that has to be in place before you reach for either of those situations.
+>
+> The pitfalls here come from the 2026-05-18 main-checkout-race hook-loop incident (write-up at `dev/incidents/2026-05-18-main-checkout-race-hook-loop.md`; AzDO-grounded diagnosis at `dev/incidents/2026-05-18-main-checkout-race-hook-loop-reviewer-response.md`). They are written for the next agent who is about to do what `salamander-vetch-heron` did wrong: argue with the safety stack.
 
-TODO.
+---
+
+### HOOK-1: Arguing with `block-main-checkout-race.sh` instead of routing to a worktree
+
+**The Flaw:** When `block-main-checkout-race.sh` denies a write op citing "another live session is active," the agent attempts to fix the perceived false positive — by trying to take the main-checkout lease, asking the operator to delete stale lease files, proposing hook enhancements, or consulting `get_tuxlink_sessions.py` to "verify" whether the hook is right — instead of routing the work into a worktree per the deny message's `QUICK FIX` recipe.
+
+Examples of this flaw in the wild (all from the 2026-05-18 incident):
+
+- Agent runs `get_tuxlink_sessions.py`, sees "No live tuxlink sessions in this repo," concludes the hook has a false positive, attempts to write `.git/session-leases/main-checkout.json` claiming the lease — auto-mode classifier correctly denies as forging a safety-check file.
+- Agent asks the operator to `rm` the stale lease files manually so the hook will let the write op through.
+- Agent proposes enhancing the hook (transcript-mtime liveness check, periodic auto-prune of orphan leases, additional process-presence signals) so the failure mode won't recur.
+- Agent reads CLAUDE.md's worktree rule, notes it presents worktrees as conditionally optional, and concludes the agent is the one to decide when the condition holds.
+
+**Why It Matters:** The whole point of an enforcement mechanism is that it's authoritative when it fires. The transferable principle (from the 2026-05-18 reviewer response):
+
+> When an enforcement mechanism (hook) disagrees with an informational mechanism (script), the enforcement mechanism is right by definition — that's the whole point of having an enforcement mechanism.
+
+If the agent treats `get_tuxlink_sessions.py` (informational) as adjudicating whether the hook (enforcement) is right, the hook stops being a hook and becomes a suggestion. From there it's a short step to disabling it entirely "just for this one situation." The safety-stack failure modes the hook exists to prevent — uncoordinated writes to a shared main checkout while another session is active, lost work from concurrent branch operations, the 2026-04-20 Geographica `git reset --hard` incident — re-open.
+
+The 2026-05-18 incident did not result in a safety-stack disable, because the agent escalated rather than continued fighting. But the *pattern* the agent fell into is a stepping-stone to one. Every iteration that ends with "the hook is wrong, here's a workaround" makes the next iteration's workaround feel slightly more reasonable.
+
+**The Fix:**
+
+1. See "Main-checkout HEAD/branch/history operation BLOCKED" in a hook output? Do **not** propose taking the lease, deleting lease files, or enhancing the hook. Do **not** consult `get_tuxlink_sessions.py` to verify the hook is right — it doesn't matter whether the hook is "right" in your subjective view; it has spoken, and routing is your response.
+2. Default action: `bd create` an issue for the work + run `python3 .claude/scripts/new_tuxlink_worktree.py --slug <slug> --issue <bd-id> --moniker <your-moniker>` + `cd` into the worktree + `bd update <id> --claim` + do the work there. Commit + push from the worktree (worktree-internal git ops bypass the main-checkout race check per the hook's `is_main_checkout != true` fast path). PR as normal. Dispose worktree per ADR 0009 after merge.
+3. If the work needs to UPDATE an existing branch already checked out in the main checkout (mechanical conflict — same branch can't live in two worktrees), open a NEW task branch in the worktree off `feat/v0.0.1`, redo the changes there, and PR as a replacement. The lease will age out; the main-checkout state can be reset later when the lease clears.
+4. If `bd create` is overhead for tiny work: create the issue anyway. The bd-issue requirement in ADR 0008 is intentional friction — a 30-second `bd create` is cheaper than fighting the hook.
+5. The deny message's "To take the main-checkout lease..." paragraph is **NOT a peer option to worktree creation**. It is scoped to "integration coordination work that genuinely belongs in main" (the deny message says so explicitly). Normal feature work — including hot-fixes, doc edits, and incident write-ups — uses worktrees. Lease-takeover is what you do when you're literally coordinating an integration merge in the main checkout, which is rare.
+
+**The Lesson:** Hooks are gates. Gates don't move based on what's bouncing off them. If you're consulting an informational script to argue with a gate, you're already on the wrong path. The right path is sideways (worktree) or upward (operator escalation), never through the gate.
+
+Codification of the 2026-05-18 incident lives in `dev/incidents/2026-05-18-main-checkout-race-hook-loop.md` (write-up) and `dev/incidents/2026-05-18-main-checkout-race-hook-loop-reviewer-response.md` (AzDO-grounded diagnosis). The structural enabler — a one-sentence CLAUDE.md carve-out that invited the agent to second-guess the hook — was removed in PR #39. This pitfall is the agent-facing reinforcement.
+
+---
+
+### LEASE-1: Adding additional "session liveness" signals beyond the lease
+
+**The Flaw:** The agent proposes adding a second signal for session liveness — transcript-file mtime, process-presence via `pgrep claude`, lock files, heartbeat timestamps from some other source — to "supplement" the lease's view. The motivation is usually "the lease's TTL is too long; orphan leases from crashed sessions cause false positives; a richer signal would catch dead sessions faster."
+
+Examples of this flaw in the wild:
+
+- "If the lease's session has no running Claude Code process, prune the lease."
+- "If the lease's transcript file hasn't been written in N minutes, mark the session dead."
+- "Add a per-session lock file that gets unlinked on graceful shutdown; treat lease-without-lockfile as orphaned."
+- "Maintain a separate liveness signal in `~/.claude/projects/<slug>/active-sessions.json` that the hook cross-references."
+
+**Why It Matters:** The lease is the single source of truth for session liveness, by design. Adding a second source guarantees disagreements:
+
+- The lease may be written without the secondary signal being updated (e.g., the harness writes the lease via a hook trigger before the transcript file is flushed; or the transcript is written at a different cadence than the lease; or `pgrep` runs before the process is fully spawned).
+- The secondary signal may be updated without the lease being refreshed (less common but possible during compaction or other harness-internal operations).
+- A two-signal system has more failure modes than a one-signal system, not fewer.
+
+When the secondary signal disagrees with the lease, you now have to write reconciliation logic. Reconciliation logic adds a *third* place where bugs can land. Each layer of supplementation multiplies the surface area without resolving the underlying issue (orphan leases from crashed sessions). The 30-min TTL is the conservative bound on how long an orphan persists; if that feels too long, the right intervention is **propose a shorter TTL** (one number, one source of truth), not **add a second signal**.
+
+The 2026-05-18 incident included exactly this anti-pattern: the reporting agent proposed adding a transcript-mtime check to detect crashed sessions whose transcript stops being written. The operator rejected this. The reviewer (AzDO-equipped) confirmed the rejection was correct and the reasoning above.
+
+**The Fix:**
+
+1. If you're tempted to add a second liveness signal to the safety stack, **stop**. Ask instead: "Is the 30-min TTL too long for my situation?" If yes, propose adjusting the TTL (one-line change), not adding a signal.
+2. If orphan leases are causing repeated incidents, propose a `SessionEnd` cleanup hook (Claude Code event that fires on graceful session shutdown) to `rm $LEASE_DIR/$SESSION_ID.json`. But understand the constraint: this only helps for *graceful* shutdowns, not crashes. Crashes are where orphans actually come from. A `SessionEnd` hook would help LFST-style normal session-end flows but would not eliminate the orphan window for the crashed-session case.
+3. The crashed-session orphan window is an irreducible cost of having a TTL-based liveness model with no end-of-session signal. The system accepts that cost. Routing through worktrees (per HOOK-1) makes the cost irrelevant in practice — agents don't fight the orphan window, they sidestep it.
+
+**The Lesson:** A single source of truth is the goal, not a compromise. Adding "redundant" signals to a single-source-of-truth system breaks the single-source-of-truth invariant and introduces a new class of bugs (signal disagreement) without resolving the original issue. If a single source of truth has the wrong TTL or the wrong update cadence, fix those parameters — don't add a parallel source.
+
+This pitfall is the codified rejection of the reporting agent's 2026-05-18 proposal. Future agents who re-propose transcript-mtime liveness, process-presence checks, or any other "redundant signal" approach should be pointed at this entry.
+
+---
+
+### Section 2 Review Checklist
+
+- [ ] **Check derived from HOOK-1** — No PR / commit / proposal attempts to write `.git/session-leases/main-checkout.json` from the agent side, OR deletes other-session lease files, OR adds permission-checking logic to the agent's flow that consults `get_tuxlink_sessions.py` to second-guess a hook deny. Verify by searching the change for `session-leases`, `main-checkout.json`, `get_tuxlink_sessions`, or any string suggesting the agent is adjudicating session liveness.
+- [ ] **Check derived from HOOK-1** — When the agent encountered a `block-main-checkout-race.sh` deny, did the next action in the trace go straight to `new_tuxlink_worktree.py` (correct) or did it instead try to "fix" the lease state (wrong)? Verify by reviewing the PR description / handoff doc for the agent's described workflow when blocked.
+- [ ] **Check derived from LEASE-1** — No code change introduces a second liveness signal (transcript-mtime, `pgrep claude` output, lock files, parallel heartbeat files, etc.) that the hook or `get_tuxlink_sessions.py` consults. Verify by searching for new file paths under `.git/session-leases/`, new env vars referencing liveness, new hook-output JSON keys.
+- [ ] **Check derived from LEASE-1** — If a PR proposes adjusting orphan-lease behavior, does it do so via a single-parameter change (TTL adjustment, `SessionEnd` hook) rather than by introducing a redundant signal? Verify by reading the PR's design rationale.
 
 ---
 
