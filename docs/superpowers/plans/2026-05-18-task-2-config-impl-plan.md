@@ -4,7 +4,9 @@
 
 **Goal:** Update `src-tauri/src/config.rs` to the AMD-1 nested schema + drop `winlink_password_present` per AMD-11 + add `validate_identity`, `Config::validate`, `read_config`, and `write_config_atomic` so the wizard cluster impl (`tuxlink-ln3`) can compile against the post-AMD code surface.
 
-**Architecture:** Single file (`src-tauri/src/config.rs`, ~250 LOC). Public surface = `Config` struct + 4 sub-structs + 3 enums + 3 typed error enums + 4 free functions (`validate_identity`, `validate_identity_describe`, `read_config`, `write_config_atomic`). All consumers use the qualified `tuxlink_lib::config::*` path; no top-level re-exports. Tests in `src-tauri/tests/config_test.rs` (~350 LOC, 24 tests). TDD throughout: red → impl → green → commit.
+**Architecture:** Single file (`src-tauri/src/config.rs`, ~250 LOC). Public surface = `Config` struct + 4 sub-structs + 3 enums + 3 typed error enums + 5 free functions (`validate_identity`, `validate_identity_describe`, `read_config`, `write_config_atomic`, `config_path`). All consumers use the qualified `tuxlink_lib::config::*` path; no top-level re-exports. Tests in `src-tauri/tests/config_test.rs` (~450 LOC, 34 tests). TDD throughout: red → impl → green → commit.
+
+**Plan version:** v2 (post 3-round Claude plan-review-cycle; Codex R4 deferred per ChatGPT quota gotcha — see memory `feedback_codex_quota_gotcha`). Critical P0s applied: DRIFT-1 relocated from §2 (stale stub-assumption) to NEW §3; Rust syntax fixed in Phase 5 tests 20+21; preservation asserts added to refusal tests; RAII XdgGuard for env-var safety; EACCES test added for ConfigReadError::Io; word-boundary grep in Phase 7; testing-pitfalls.md sibling bd issue task added.
 
 **Tech Stack:** Rust 2021, serde 1.x + serde_json 1.x, thiserror 1.x, tempfile 3.x (promoted to runtime), serial_test 3.x (dev-only — gates env-var-mutating tests).
 
@@ -35,16 +37,18 @@ After every PHASE (logical group of tasks): carefully review the batch of work f
 
 ## Pipeline status
 
-| Phase | Status | Notes |
-|---|---|---|
-| 0 — Setup + Cargo.toml | ⬜ Pending | First task; prerequisite for compile-checks |
-| 1 — `validate_identity` + describe-helper | ⬜ Pending | Leaf function; no deps on rest of the file |
-| 2 — Nested `Config` types | ⬜ Pending | Foundation for Phase 3-5 |
-| 3 — `Config::validate` | ⬜ Pending | Depends on Phase 2 |
-| 4 — `read_config` + `ConfigReadError` | ⬜ Pending | Depends on Phase 2 + 3 |
-| 5 — `write_config_atomic` + `ConfigWriteError` | ⬜ Pending | Depends on Phase 2 + 3; most complex |
-| 6 — Pitfalls DRIFT-1 + plan body cite | ⬜ Pending | Docs only |
-| 7 — Final verification + PR | ⬜ Pending | Gate to merge |
+All phases ⬜ Pending; flip to ✅ as each commits.
+
+| Phase | Status | Notes | Test count after phase |
+|---|---|---|---|
+| 0 — Setup + Cargo.toml | ⬜ Pending | First task; prerequisite for compile-checks | (no tests yet) |
+| 1 — `validate_identity` + describe-helper | ⬜ Pending | Leaf function; no deps on rest of the file | 6 |
+| 2 — Nested `Config` types | ⬜ Pending | Foundation for Phase 3-5 | 15 (6 + 9) |
+| 3 — `Config::validate` | ⬜ Pending | Depends on Phase 2 | 21 (+6) |
+| 4 — `read_config` + `ConfigReadError` | ⬜ Pending | Depends on Phase 2 + 3 | 27 (+6 including EACCES) |
+| 5 — `write_config_atomic` + `ConfigWriteError` | ⬜ Pending | Depends on Phase 2 + 3; most complex | 34 (+7) |
+| 6 — Pitfalls DRIFT-1 (§3) + plan body cite | ⬜ Pending | Docs only — DRIFT-1 lands as NEW §3 of implementation-pitfalls.md (NOT replacing the substantive §2 Safety-Stack Coordination) | 34 |
+| 7 — Final verification + PR + sibling bd issue | ⬜ Pending | Gate to merge | 34 |
 
 ---
 
@@ -71,37 +75,38 @@ grep -c 'pub mod config;' src-tauri/src/lib.rs               # should be 1 (modu
 
 If any of those don't match, STOP and investigate — the prerequisite state has drifted.
 
-- [ ] **Step 2: Update Cargo.toml**
+- [ ] **Step 2: Update Cargo.toml (ONLY the two dep tables; leave everything else)**
 
-Read `src-tauri/Cargo.toml`. Modify the `[dependencies]` and `[dev-dependencies]` sections so they match exactly:
+Read `src-tauri/Cargo.toml`. The file has these top-level sections: `[package]`, `[build-dependencies]`, `[dependencies]`, `[dev-dependencies]`, `[lib]`, `[[bin]]`. **DO NOT touch `[package]`, `[build-dependencies]`, `[lib]`, or `[[bin]]`.** Modify ONLY:
 
-```toml
-[dependencies]
-tauri = { version = "2", features = ["tray-icon"] }
-tauri-plugin-shell = "2"
-tauri-plugin-fs = "2"
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-reqwest = { version = "0.12", features = ["json", "blocking", "multipart"] }
-tokio = { version = "1", features = ["full"] }
-nix = { version = "0.28", features = ["signal", "process"] }
-thiserror = "1"
-tempfile = "3"
+1. **In the existing `[dependencies]` table**: ADD two new lines below the existing entries (do not reorder or change existing entries):
+   ```toml
+   thiserror = "1"            # NEW — for ConfigValidationError + ConfigReadError + ConfigWriteError
+   tempfile = "3"             # PROMOTED from [dev-dependencies] below
+   ```
 
-[dev-dependencies]
-mockito = "1.5"
-serial_test = "3"
-```
+2. **In the existing `[dev-dependencies]` table**: REMOVE the line `tempfile = "3"` (it was promoted above), and ADD:
+   ```toml
+   serial_test = "3"          # NEW — gates env-var-mutating tests
+   ```
+   Final `[dev-dependencies]` content:
+   ```toml
+   [dev-dependencies]
+   mockito = "1.5"
+   serial_test = "3"
+   ```
 
-Note: `thiserror` and `tempfile` are NEW in `[dependencies]`. `tempfile` is REMOVED from `[dev-dependencies]` (promoted). `serial_test` is NEW in `[dev-dependencies]`.
+The other tables (`[package]`, `[build-dependencies]`, `[lib]`, `[[bin]]`) MUST remain byte-identical to before. Verify with `git diff src-tauri/Cargo.toml` — the diff should show ONLY adds inside `[dependencies]`, ONLY one removal + one add inside `[dev-dependencies]`, and nothing else.
 
-- [ ] **Step 3: Verify the manifest parses**
+- [ ] **Step 3: Verify the manifest parses (without dep resolution)**
 
 ```bash
-cd src-tauri && cargo check --offline 2>&1 | head -20
+cd src-tauri && cargo metadata --no-deps --format-version 1 > /dev/null 2>&1 && echo "TOML OK" || echo "TOML BROKEN"
 ```
 
-Expected: deps download (or use cache) + cargo successfully parses Cargo.toml. There WILL be a compile error in `config.rs` against the existing tests once we start replacing it; the manifest-parse check just verifies TOML validity. If you see "duplicate key `dependencies`" or "manifest parse error" — fix the TOML structure before proceeding.
+Expected: `TOML OK`. This parses Cargo.toml's structure without resolving any deps (no network, no compile). If you see "duplicate key `dependencies`" or "manifest parse error" — fix the TOML structure before proceeding.
+
+(Why not `cargo check`? `cargo check` triggers dep resolution + compile; on a fresh worktree it'll fail because thiserror/serial_test aren't in the registry cache, masking the actual goal of verifying TOML validity.)
 
 - [ ] **Step 4: Commit**
 
@@ -172,6 +177,22 @@ fn test_validate_identity_describe_returns_first_rule_violated() {
     assert_eq!(validate_identity_describe("Ünï"), Some("must be ASCII-printable"));
     assert_eq!(validate_identity_describe("W4 PHS"), Some("must not contain whitespace"));
     assert_eq!(validate_identity_describe(&"X".repeat(33)), Some("must be ≤32 chars"));
+}
+
+#[test]
+fn test_validate_identity_describe_precedence_multi_violation() {
+    // Per plan-review R2 P2-3: test PRECEDENCE — inputs violating multiple rules
+    // should produce the FIRST-rule error. R2 P1-3's actionable-error-first claim
+    // is the load-bearing semantic; regression that swapped rule order (e.g., length
+    // first) would pass single-violation tests but fail these.
+    // 40-char string containing whitespace → whitespace fires before length.
+    let ws_long: String = std::iter::repeat("X ").take(20).collect();
+    assert_eq!(validate_identity_describe(&ws_long), Some("must not contain whitespace"),
+        "whitespace check must fire before length check");
+    // 40-char non-ASCII string → ASCII fires before length.
+    let non_ascii_long: String = std::iter::repeat("Ü").take(40).collect();
+    assert_eq!(validate_identity_describe(&non_ascii_long), Some("must be ASCII-printable"),
+        "ASCII check must fire before length check");
 }
 
 #[test]
@@ -431,19 +452,28 @@ fn test_deny_unknown_fields_on_each_substruct() {
 }
 
 #[test]
-fn test_cms_transport_telnet_variant_round_trips() {
-    let json = r#"{
-        "schema_version": 1, "wizard_completed": true,
-        "connect": {"connect_to_cms": true, "transport": "Telnet"},
-        "identity": {"callsign": "W4PHS", "identifier": null, "grid": null},
-        "privacy": {"gps_state": "Off", "position_precision": "FourCharGrid"},
-        "pat_mbo_address": null
-    }"#;
-    let config: Config = serde_json::from_str(json).expect("Telnet transport must deserialize");
-    assert_eq!(config.connect.transport, CmsTransport::Telnet);
-    // Round-trip: serialize back to JSON and confirm Telnet appears.
-    let out = serde_json::to_string(&config).unwrap();
-    assert!(out.contains("\"Telnet\""), "serialized form must use PascalCase variant: {out}");
+fn test_cms_transport_both_variants_round_trip() {
+    // Per plan-review R2 P2-2: iterate BOTH variants, not just Telnet.
+    // CmsSsl is implicitly deserialized in many other tests but its SERIALIZE-AS-PascalCase
+    // contract is unlocked without an explicit check.
+    for (variant, name) in [
+        (CmsTransport::CmsSsl, "CmsSsl"),
+        (CmsTransport::Telnet, "Telnet"),
+    ] {
+        let json = format!(r#"{{
+            "schema_version": 1, "wizard_completed": true,
+            "connect": {{"connect_to_cms": true, "transport": "{}"}},
+            "identity": {{"callsign": "W4PHS", "identifier": null, "grid": null}},
+            "privacy": {{"gps_state": "Off", "position_precision": "FourCharGrid"}},
+            "pat_mbo_address": null
+        }}"#, name);
+        let config: Config = serde_json::from_str(&json)
+            .unwrap_or_else(|e| panic!("variant {name} must deserialize: {e}"));
+        assert_eq!(config.connect.transport, variant);
+        let out = serde_json::to_string(&config).unwrap();
+        assert!(out.contains(&format!("\"{name}\"")),
+            "serialized form must use PascalCase variant {name}: {out}");
+    }
 }
 
 #[test]
@@ -761,9 +791,12 @@ fn test_validate_invalid_identity_propagates_field() {
 }
 
 #[test]
-fn test_validate_error_display_strings_stable() {
-    // Per spec §3.1: Display strings are STABLE PUBLIC SURFACE.
-    // The wizard interpolates them into operator-visible messages.
+fn test_validation_error_display_strings_stable() {
+    // Per spec §3.1: Display strings are STABLE PUBLIC SURFACE for ALL THREE error enums
+    // (ConfigValidationError, ConfigReadError, ConfigWriteError). The wizard interpolates
+    // them into operator-visible messages via format!("{e}"). Any future change is a
+    // breaking change for the wizard's UX tests. Plan-review R2 P0-2 + R3 P1-3 caught
+    // earlier under-coverage (3 of 12 variants tested); v2 of this test covers all 3 enums.
     let e = ConfigValidationError::CmsPathMissingCallsign;
     assert_eq!(e.to_string(), "CMS path requires identity.callsign to be set");
 
@@ -771,13 +804,14 @@ fn test_validate_error_display_strings_stable() {
     assert_eq!(e.to_string(),
         "offline path must NOT have identity.callsign set (use identity.identifier instead)");
 
-    let e = ConfigValidationError::InvalidIdentity {
-        field: "callsign",
-        rule: "must not be empty",
-    };
+    let e = ConfigValidationError::InvalidIdentity { field: "callsign", rule: "must not be empty" };
     assert_eq!(e.to_string(), "invalid identity field `callsign`: must not be empty");
 }
 ```
+
+**ADDITIONAL Phase 3 test** — append to the test file in Phase 3 alongside `test_validation_error_display_strings_stable`. Will need imports from Phase 4 + Phase 5 (`ConfigReadError`, `ConfigWriteError`) — since this plan executes phases sequentially and these tests are added in the test file AFTER Phase 5 ships the variants, place this test in Phase 5 instead (at the same time the `ConfigWriteError` variants are added). Same logic for `ConfigReadError` after Phase 4.
+
+(Implementer note: split the Display-stability tests across phases. Phase 3 ships the `ConfigValidationError` test above; Phase 4 ships a `ConfigReadError` Display test; Phase 5 ships a `ConfigWriteError` Display test. Each phase's test asserts only its phase's enum to keep phase-ordering compile-clean.)
 
 - [ ] **Step 2: Run the tests to verify they fail (RED)**
 
@@ -880,13 +914,31 @@ Add to the END of `src-tauri/tests/config_test.rs`:
 use tuxlink_lib::config::{read_config, ConfigReadError, config_path};
 
 /// Helper: scope XDG_CONFIG_HOME to a fresh temp dir for the duration of `f`.
-/// Cleans up env var after. Use with #[serial_test::serial] to avoid races.
+/// Uses RAII guard so prior env value is RESTORED even if `f` panics (per plan-review
+/// R1 P1-1 + R2 P1-3 — panic during a test would otherwise orphan the env var and
+/// cascade failures into subsequent tests). Use with #[serial_test::serial] to avoid
+/// concurrent-process races.
+struct XdgGuard {
+    prior: Option<std::ffi::OsString>,
+    _tmp: tempfile::TempDir,
+}
+impl Drop for XdgGuard {
+    fn drop(&mut self) {
+        match self.prior.take() {
+            Some(p) => std::env::set_var("XDG_CONFIG_HOME", p),
+            None => std::env::remove_var("XDG_CONFIG_HOME"),
+        }
+    }
+}
+
 fn with_xdg_temp<R>(f: impl FnOnce(&std::path::Path) -> R) -> R {
     let tmp = tempfile::tempdir().expect("must create tempdir");
-    std::env::set_var("XDG_CONFIG_HOME", tmp.path());
-    let result = f(tmp.path());
-    std::env::remove_var("XDG_CONFIG_HOME");
-    result
+    let path = tmp.path().to_owned();
+    let prior = std::env::var_os("XDG_CONFIG_HOME");
+    std::env::set_var("XDG_CONFIG_HOME", &path);
+    let _guard = XdgGuard { prior, _tmp: tmp };
+    f(&path)
+    // _guard drops here, restoring prior env value (even on panic from `f`)
 }
 
 #[test]
@@ -957,6 +1009,33 @@ fn test_config_path_uses_xdg_config_home_when_set() {
     with_xdg_temp(|xdg| {
         let path = config_path();
         assert_eq!(path, xdg.join("tuxlink").join("config.json"));
+    });
+}
+
+#[test]
+#[serial_test::serial]
+#[cfg(unix)]
+fn test_read_config_eacces_returns_io_variant_not_notfound() {
+    // ConfigReadError::Io variant per spec §3.1 — fires when std::fs::read returns
+    // a non-NotFound error (EACCES, EIO, etc). Symmetric with the write-side
+    // ProbeReadFailed coverage. Added per plan-review R3 P0-2.
+    use std::os::unix::fs::PermissionsExt;
+    with_xdg_temp(|xdg| {
+        let path = xdg.join("tuxlink").join("config.json");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, br#"{"schema_version": 1}"#).unwrap();
+        let mut perm = std::fs::metadata(&path).unwrap().permissions();
+        perm.set_mode(0o000);
+        std::fs::set_permissions(&path, perm).unwrap();
+
+        let err = read_config().unwrap_err();
+        assert!(matches!(err, ConfigReadError::Io { .. }),
+            "EACCES on read MUST be Io variant, not NotFound: {err:?}");
+
+        // Restore permissions so tempdir cleanup works.
+        let mut perm = std::fs::metadata(&path).unwrap().permissions();
+        perm.set_mode(0o600);
+        std::fs::set_permissions(&path, perm).unwrap();
     });
 }
 ```
@@ -1156,22 +1235,31 @@ fn test_write_atomic_overwrites_unparseable_file() {
 fn test_write_atomic_refuses_existing_symlink() {
     use std::os::unix::fs::symlink;
     with_xdg_temp(|xdg| {
-        let path = xdg.join("tuxlink").join("config.json");
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let cfg_path = xdg.join("tuxlink").join("config.json");
+        std::fs::create_dir_all(cfg_path.parent().unwrap()).unwrap();
         // Create a real target file + a symlink at the config path.
         let target = xdg.join("dotfiles-config.json");
         std::fs::write(&target, br#"{"original": "data"}"#).unwrap();
-        symlink(&target, &path).unwrap();
+        symlink(&target, &cfg_path).unwrap();
         let config = make_valid_cms_config();
         let err = write_config_atomic(&config).unwrap_err();
         match err {
-            ConfigWriteError::ExistingFileIsSymlink { ref path: ref p, ref target: ref t } => {
-                assert_eq!(p, &path);
+            ConfigWriteError::ExistingFileIsSymlink { path: ref p, target: ref t } => {
+                assert_eq!(p, &cfg_path);
                 assert_eq!(t.as_deref(), Some(target.as_path()));
             }
             other => panic!("expected ExistingFileIsSymlink, got {other:?}"),
         }
-        // Symlink + target must both be preserved.
+        // PRESERVATION CONTRACT (spec §6): both the symlink itself AND its target must survive.
+        assert!(
+            std::fs::symlink_metadata(&cfg_path).unwrap().file_type().is_symlink(),
+            "symlink itself must survive refusal"
+        );
+        assert_eq!(
+            std::fs::read_link(&cfg_path).unwrap(),
+            target,
+            "symlink must still point to target"
+        );
         let target_content = std::fs::read(&target).unwrap();
         assert_eq!(target_content, br#"{"original": "data"}"#);
     });
@@ -1183,27 +1271,34 @@ fn test_write_atomic_refuses_existing_symlink() {
 fn test_write_atomic_probe_read_eacces_fails_typed() {
     use std::os::unix::fs::PermissionsExt;
     with_xdg_temp(|xdg| {
-        let path = xdg.join("tuxlink").join("config.json");
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        std::fs::write(&path, br#"{"schema_version": 1}"#).unwrap();
-        // Make it unreadable (chmod 000).
-        let mut perm = std::fs::metadata(&path).unwrap().permissions();
+        let cfg_path = xdg.join("tuxlink").join("config.json");
+        std::fs::create_dir_all(cfg_path.parent().unwrap()).unwrap();
+        let original = br#"{"schema_version": 1, "preserved": true}"#;
+        std::fs::write(&cfg_path, original).unwrap();
+
+        // Capture file content BEFORE the chmod 000 (since we'll need to verify preservation
+        // after the failed write, and chmod 000 means we can't read it then).
+        // Re-open with chmod 0o400, capture, then chmod 0o000 so the probe fails.
+        let mut perm = std::fs::metadata(&cfg_path).unwrap().permissions();
         perm.set_mode(0o000);
-        std::fs::set_permissions(&path, perm).unwrap();
+        std::fs::set_permissions(&cfg_path, perm).unwrap();
 
         let config = make_valid_cms_config();
         let err = write_config_atomic(&config).unwrap_err();
         match err {
-            ConfigWriteError::ProbeReadFailed { ref path: ref p, .. } => {
-                assert_eq!(p, &path);
+            ConfigWriteError::ProbeReadFailed { path: ref p, .. } => {
+                assert_eq!(p, &cfg_path);
             }
             other => panic!("expected ProbeReadFailed, got {other:?}"),
         }
 
-        // Restore permissions so tempdir cleanup works.
-        let mut perm = std::fs::metadata(&path).unwrap().permissions();
+        // PRESERVATION CONTRACT (spec §6): original file content unchanged after refusal.
+        // Restore read permission to verify, then chmod 600 for tempdir cleanup.
+        let mut perm = std::fs::metadata(&cfg_path).unwrap().permissions();
         perm.set_mode(0o600);
-        std::fs::set_permissions(&path, perm).unwrap();
+        std::fs::set_permissions(&cfg_path, perm).unwrap();
+        let preserved = std::fs::read(&cfg_path).unwrap();
+        assert_eq!(preserved, original, "original file content must be preserved on ProbeReadFailed refusal");
     });
 }
 ```
@@ -1244,6 +1339,15 @@ pub enum ConfigWriteError {
 /// Single-instance assumption: ONE tuxlink instance writes at a time. Cross-process
 /// serialization (flock) out of scope for v0.0.1; concurrent writers both return Ok and
 /// the last rename wins.
+///
+/// Backup-tool .tmp visibility: NamedTempFile creates a file like `.tmpXXXXXX` in the
+/// parent directory. Backup tools (Time Machine, rclone, restic) watching the directory
+/// may briefly capture this file. The tempfile is short-lived (microseconds) and removed
+/// atomically by persist's rename. Expected behavior; no startup-cleanup machinery.
+///
+/// NoParentDirectory variant is defensive — config_path()'s `XDG_CONFIG_HOME/tuxlink/...`
+/// composition makes this unreachable in practice; declared for future config_path()
+/// refactors that may relax the path structure.
 ///
 /// Does NOT auto-call `config.validate()` — caller responsibility per spec §3.3.
 pub fn write_config_atomic(config: &Config) -> Result<(), ConfigWriteError> {
@@ -1351,32 +1455,39 @@ EOF
 
 ## Phase 6 — Pitfalls DRIFT-1 + plan body historical-cite
 
-### Task 6.1: Add DRIFT-1 to implementation-pitfalls.md as new §2
+### Task 6.1: Add DRIFT-1 to implementation-pitfalls.md as new §3 (NOT §2; §2 is already substantive)
+
+**CRITICAL CORRECTION from plan-review R1 P0-2 + R2 P2-1 + R3 P0-1:** the spec's §5 framing (which said "replace the EXAMPLE-DOMAIN-2 stub at §2") was based on stale state. Verified 2026-05-18: pitfalls §2 is fully populated with `# Section 2: Safety-Stack Coordination and Cross-Component Parity` (HOOK-1, LEASE-1, PARITY-1; shipped via PR #39). The TOC row + section header + section body for §2 MUST NOT BE TOUCHED. DRIFT-1 lands as a NEW §3.
 
 **Files:**
-- Modify: `docs/pitfalls/implementation-pitfalls.md` (replace EXAMPLE-DOMAIN-2 stub section)
+- Modify: `docs/pitfalls/implementation-pitfalls.md` (ADD a new §3 section + new TOC row + Appendix B summary row)
 
-- [ ] **Step 1: Read the current state**
+- [ ] **Step 1: Verify the current state matches expectations**
 
 ```bash
-grep -n "EXAMPLE-DOMAIN-2\|^# Section 2:\|^## Section 2" docs/pitfalls/implementation-pitfalls.md
+grep -n "^# Section 2:\|^# Section 3:\|EXAMPLE-DOMAIN" docs/pitfalls/implementation-pitfalls.md
 ```
 
-Verify EXAMPLE-DOMAIN-2 stub exists. If not, investigate: the spec assumed it did per the file inspection during Phase 0.
+Expected: ONE hit on `# Section 2: Safety-Stack Coordination and Cross-Component Parity` (around line 284) and ZERO hits on `# Section 3:` or `EXAMPLE-DOMAIN-*`. If the output differs, STOP and investigate — the pitfalls state has changed since plan-write.
 
-- [ ] **Step 2: Replace EXAMPLE-DOMAIN-2 section with §2 Plan & Documentation Discipline**
+- [ ] **Step 2: Add the TOC row for §3**
 
-In `docs/pitfalls/implementation-pitfalls.md`:
+In `docs/pitfalls/implementation-pitfalls.md`, find the table-of-contents row for §2 (around line 29):
+```markdown
+| 2 | [Safety-Stack Coordination and Cross-Component Parity](#2-safety-stack-coordination-and-cross-component-parity) | ... | HOOK-1, LEASE-1, PARITY-1 | §2.C |
+```
 
-1. Find the table-of-contents row for §2 (around line 30): `| 2 | [EXAMPLE-DOMAIN-2](#2-example-domain-2) | TODO ... |` and replace with:
+Insert a NEW row IMMEDIATELY AFTER it:
+```markdown
+| 3 | [Plan and Documentation Discipline](#3-plan-and-documentation-discipline) | Any plan / spec amendment, especially when an AMENDMENT marker (AMD-N) lands in a previously-shipped task's plan body | DRIFT-1 | §3.C |
+```
+
+- [ ] **Step 3: Add the §3 section body AFTER the §2 review checklist**
+
+Find the end of `# Section 2: Safety-Stack Coordination and Cross-Component Parity` — specifically the last `---` separator that follows its review checklist (around line 396). INSERT the entire §3 section AFTER that `---` separator. (Do not modify the §2 content; only add new content following it.) Insert:
+
    ```markdown
-   | 2 | [Plan & Documentation Discipline](#2-plan-and-documentation-discipline) | Any plan / spec amendment, especially when an AMENDMENT marker (AMD-N) lands in a previously-shipped task's plan body | DRIFT-1 | §2.C |
-   ```
-
-2. Find the section header `# Section 2: EXAMPLE-DOMAIN-2` (around line 280-290) and the entire section (header through its review checklist). Replace with:
-
-   ```markdown
-   # Section 2: Plan and Documentation Discipline
+   # Section 3: Plan and Documentation Discipline
 
    > **Reader context:** I'm proposing, reviewing, or amending a plan document (`docs/plans/*.md`, `docs/superpowers/specs/*.md`, `docs/superpowers/plans/*.md`) and I need to know what discipline applies to the amendment lifecycle to prevent the implementation from drifting out of sync with what the plan says.
 
@@ -1398,7 +1509,7 @@ In `docs/pitfalls/implementation-pitfalls.md`:
 
    ---
 
-   ### Section 2 Review Checklist
+   ### Section 3 Review Checklist
 
    - [ ] **Check derived from DRIFT-1** — Any PR that lands an AMENDMENT in a plan or spec includes either (a) a cited bd issue tracking the code-impl side, or (b) explicit "prose-only; no code impact" framing. Verify by searching the PR body for AMENDMENT markers and confirming each carries the cite or the explicit punt.
    - [ ] **Check derived from DRIFT-1** — When amending a shipped spec (e.g., adding fields to `WizardError` or changing a function signature in `validate_identity`), the PR identifies every downstream consumer (via `grep -r 'consumer-symbol'`) and files paired bd issues for each consumer that needs adaptation.
@@ -1407,32 +1518,49 @@ In `docs/pitfalls/implementation-pitfalls.md`:
    ---
    ```
 
-3. Find the "Validated Pitfalls Summary" table at the bottom of the file. If it exists, add a row for DRIFT-1:
-   ```markdown
-   | DRIFT-1 | Plan-text amendments don't auto-cascade to code | HIGH | VALIDATED | §2 Plan & Documentation Discipline |
-   ```
-
-- [ ] **Step 3: Verify the pitfalls file renders without broken anchors**
+- [ ] **Step 4: Add a row to Appendix B's "Validated Pitfalls Summary" table (if present)**
 
 ```bash
-grep -c "DRIFT-1\|Plan & Documentation Discipline\|#2-plan-and-documentation" docs/pitfalls/implementation-pitfalls.md
+grep -n "Unified Summary Table\|Validated Pitfalls Summary" docs/pitfalls/implementation-pitfalls.md
 ```
 
-Expected: at least 4 hits (TOC + section header + entry header + review-checklist mentions).
+If a summary table exists in Appendix B, add a row for DRIFT-1:
+```markdown
+| DRIFT-1 | Plan-text amendments don't auto-cascade to code | HIGH | VALIDATED | §3 Plan and Documentation Discipline |
+```
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 5: Verify the pitfalls file renders without broken anchors**
+
+```bash
+grep -c "DRIFT-1\|Plan and Documentation Discipline\|#3-plan-and-documentation" docs/pitfalls/implementation-pitfalls.md
+```
+
+Expected: at least 4 hits (TOC + section header + entry header + review-checklist mention; +1 more if Appendix B row added). Also verify §2 was NOT modified:
+
+```bash
+grep -c "Safety-Stack Coordination\|HOOK-1\|LEASE-1\|PARITY-1" docs/pitfalls/implementation-pitfalls.md
+```
+
+Expected: same count as before the edit (≥7 — TOC + section header + 3 entry headers + checklist mentions). If lower, §2 was accidentally modified.
+
+- [ ] **Step 6: Commit**
 
 ```bash
 git add docs/pitfalls/implementation-pitfalls.md
 git commit -m "$(cat <<'EOF'
-docs(pitfalls): tuxlink-4mt — DRIFT-1 (Plan & Documentation Discipline) as §2
+docs(pitfalls): tuxlink-4mt — DRIFT-1 (Plan and Documentation Discipline) as §3
 
-Replaces the EXAMPLE-DOMAIN-2 stub section with substantive content codifying
-the AMD-cascade discipline that caused tuxlink-4mt itself. Cross-validated by
-2026-05-18 wizard-cluster plan-review R1 P0-1 + R1 P0-3 + Codex R4 P0 #2:
-plan-text amendments (AMD-N) shipped without paired bd issues for the
-code-impl side, leaving the downstream wizard plan compile-failing against
-the post-AMD code surface.
+ADDS a new §3 (does NOT modify §2 Safety-Stack Coordination, which already
+shipped via PR #39 and remains intact). Codifies the AMD-cascade discipline
+that caused tuxlink-4mt itself. Cross-validated by 2026-05-18 wizard-cluster
+plan-review R1 P0-1 + R1 P0-3 + Codex R4 P0 #2: plan-text amendments (AMD-N)
+shipped without paired bd issues for the code-impl side, leaving the
+downstream wizard plan compile-failing against the post-AMD code surface.
+
+The placement decision (§3, NOT §2 as v1 plan called for) is itself a DRIFT-1
+near-miss: the spec assumed §2 was an EXAMPLE-DOMAIN-2 stub; plan-review
+caught the stale read; this commit corrects to §3 so substantive §2 content
+is preserved.
 
 Discipline going forward: every AMENDMENT marker in a plan/spec body must
 cite either a paired bd issue (for code-bearing AMDs) or "prose-only; no code
@@ -1459,7 +1587,16 @@ Expected: one match, around line 689 of the plan.
 
 - [ ] **Step 2: Append a citation paragraph after the historical-shape JSON block**
 
-In `docs/plans/2026-04-22-tuxlink-v0.0.1-plan.md`, find the paragraph that immediately follows the historical flat-schema JSON block (just before the `---` that ends the Task 2 section, around line 700-705). After "Nesting + optionality solves these without bumping `schema_version` since v0.0.1 has shipped to zero users.", add:
+In `docs/plans/2026-04-22-tuxlink-v0.0.1-plan.md`, find the verbatim sentence anchor (use `grep -n` to locate the exact line; line numbers shift over time so anchor on the sentence text, not the line number):
+
+```bash
+grep -n "Nesting + optionality solves these without bumping" docs/plans/2026-04-22-tuxlink-v0.0.1-plan.md
+```
+
+Expected: one match. The matching paragraph ends with:
+> "Nesting + optionality solves these without bumping `schema_version` since v0.0.1 has shipped to zero users."
+
+Insert a blank line + the following paragraph IMMEDIATELY AFTER that sentence (and before the trailing `---` that ends the Task 2 section):
 
 ```markdown
 
@@ -1502,16 +1639,32 @@ cd ..
 
 Expected: 32 tests pass; `cargo build` produces no warnings/errors. If `cargo build` warns about unused imports or `dead_code`, investigate — the new public surface should be exercised by the tests.
 
-- [ ] **Step 2: Verify no AMD-11 drift remains**
+- [ ] **Step 2: Verify no AMD-11 drift remains + DRIFT-1 + functions present (use word boundaries)**
 
 ```bash
+# AMD-11 drift defense
 grep -c 'winlink_password_present' src-tauri/src/config.rs                                # MUST be 0
-grep -c 'winlink_password_present' src-tauri/tests/config_test.rs                         # MUST be 1 (only in the AMD-11 drift-defense test)
-grep -c 'pub fn validate_identity\|pub fn write_config_atomic\|pub fn read_config' src-tauri/src/config.rs   # MUST be ≥3
+grep -c 'winlink_password_present' src-tauri/tests/config_test.rs                         # MUST be ≥1 (only in the AMD-11 drift-defense test)
+
+# Public function presence — use word boundaries to avoid double-counting (per plan-review R1 P1-4):
+grep -q 'pub fn validate_identity\b' src-tauri/src/config.rs || echo "MISSING: validate_identity"
+grep -q 'pub fn validate_identity_describe\b' src-tauri/src/config.rs || echo "MISSING: validate_identity_describe"
+grep -q 'pub fn read_config\b' src-tauri/src/config.rs || echo "MISSING: read_config"
+grep -q 'pub fn write_config_atomic\b' src-tauri/src/config.rs || echo "MISSING: write_config_atomic"
+grep -q 'pub fn config_path\b' src-tauri/src/config.rs || echo "MISSING: config_path"
 grep -c 'pub mod config;' src-tauri/src/lib.rs                                            # MUST be 1
+
+# DRIFT-1 + Section 3 presence in pitfalls (per plan-review R3 P3-2 — Phase 7 needs to verify docs landed):
+grep -c 'DRIFT-1\|Plan and Documentation Discipline\|#3-plan-and-documentation' docs/pitfalls/implementation-pitfalls.md  # MUST be ≥4
+
+# Plan body historical-cite (per plan-review R3 P3-2):
+grep -c 'tuxlink-4mt' docs/plans/2026-04-22-tuxlink-v0.0.1-plan.md                        # MUST be ≥1
+
+# §2 of pitfalls MUST NOT have been modified (cross-check Safety-Stack content survived):
+grep -c 'Safety-Stack Coordination\|HOOK-1\|LEASE-1\|PARITY-1' docs/pitfalls/implementation-pitfalls.md  # MUST be ≥7
 ```
 
-If any mismatch — STOP and investigate before opening the PR.
+If any check fails — STOP and investigate before opening the PR. Each "MISSING:" echo or count mismatch indicates a gap.
 
 ### Task 7.2: Push branch + open PR
 
@@ -1575,14 +1728,28 @@ EOF
 )"
 ```
 
-### Task 7.3: Close tuxlink-4mt via deliverable
+### Task 7.3: File the testing-pitfalls.md sibling bd issue (per plan-review R3 P0-4)
+
+The spec deferred adding a DRIFT-1 companion entry to `testing-pitfalls.md` ("Add DRIFT-1 verification recipe to testing-pitfalls.md") to a sibling bd issue. The plan-review caught that the spec said "follow-up bd issue" but the bd issue was never actually filed — making the deferral a forgotten intention. File it here before PR merge so the discipline loop closes.
+
+- [ ] **Step 1: Create the sibling bd issue**
+
+```bash
+bd create --title "Add DRIFT-1 verification recipe to testing-pitfalls.md" \
+  --type=task --priority=2 \
+  --description="Per tuxlink-4mt spec §5 + §11 #21: testing-pitfalls.md needs a verification recipe paired with DRIFT-1 in implementation-pitfalls.md (shipped via tuxlink-4mt PR #<NUM>). Likely recipe: 'grep -E \"AMENDMENT [0-9]{4}-[0-9]{2}-[0-9]{2} \\(AMD-\" docs/plans/*.md' should match the number of bd issues whose body cites AMD-N (file or close the gap). Verify testing-pitfalls.md state first — may also be in stub state from project init. Cites tuxlink-4mt as the parent that deferred this companion entry."
+```
+
+Note the returned bd issue ID (e.g., `tuxlink-xyz`). Cite it in the PR body.
+
+### Task 7.4: Close tuxlink-4mt via deliverable
 
 - [ ] **Step 1: After PR merges, close the bd issue**
 
 ```bash
 # Wait for PR to merge (operator action).
 # Then:
-bd close tuxlink-4mt --reason="PR #<NUM> merged at <SHA>. Task 2 config impl (AMD-1 nested schema + AMD-11 drop + validate_identity + Config::validate + read_config + write_config_atomic) + DRIFT-1 pitfalls entry shipped."
+bd close tuxlink-4mt --reason="PR #<NUM> merged at <SHA>. Task 2 config impl (AMD-1 nested schema + AMD-11 drop + validate_identity + Config::validate + read_config + write_config_atomic) + DRIFT-1 pitfalls entry (as §3) shipped. Sibling testing-pitfalls.md companion tracked at tuxlink-xyz."
 ```
 
 - [ ] **Step 2: Verify the bd dep edge is cleared**
