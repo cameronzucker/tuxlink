@@ -47,4 +47,6 @@ Debug builds + `cargo test` skip the Pat build entirely (release-only gate per [
 
 ### AppImage release build
 
-The release CI workflow at `.github/workflows/release.yml` handles the full AppImage build. To run locally, install `cargo-tauri` and run `cargo tauri build --bundles appimage` from `src-tauri/` — but this requires the same Go + libax25 deps as above.
+To build an AppImage locally, install `cargo-tauri` and run `cargo tauri build --bundles appimage` from `src-tauri/` — this requires the same Go + libax25 deps as above.
+
+CI scope today (per `.github/workflows/release.yml`) is a **release-profile Pat-build smoke**: on PRs touching the integration surface and on `v*` tags, CI runs `cargo build --release` from `src-tauri/`, which triggers `build.rs`'s release-only Go-build path and produces the Pat sidecar binary. This validates the end-to-end build path (Go toolchain + submodule + sidecar production) on every relevant PR. CI does NOT yet bundle an AppImage or upload a release artifact — that's deferred to Task 17 (`tuxlink-cs7`).
