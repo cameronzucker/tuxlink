@@ -1,8 +1,12 @@
 #!/usr/bin/env python3
 """get_tuxlink_sessions.py — list live tuxlink Claude Code sessions in this repo.
 
-Reads .claude/session-leases/*.json, filters to live sessions (lastSeenUtc
-within --ttl-minutes), and prints a table.
+Reads <git-common-dir>/session-leases/*.json, filters to live sessions
+(lastSeenUtc within --ttl-minutes), and prints a table. The lease directory
+location MUST match `.claude/hooks/block-main-checkout-race.sh`'s resolution
+(it uses `git rev-parse --git-common-dir`) — disagreement causes the script
+to silently under-report live sessions and gives agents false grounds to
+argue with a hook deny. See bd issue tuxlink-arv for the 2026-05-18 incident.
 
 Usage:
   .claude/scripts/get_tuxlink_sessions.py
@@ -16,6 +20,7 @@ of the 2026-05-17 LFST→tuxlink port catalog (Python for cross-platform reuse).
 import argparse
 import json
 import os
+import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -28,6 +33,44 @@ def resolve_repo() -> Path:
         return Path(env_repo).resolve()
     script_dir = Path(__file__).resolve().parent
     return (script_dir / ".." / "..").resolve()
+
+
+def resolve_lease_dir(repo: Path) -> Path:
+    """Resolve <git-common-dir>/session-leases/ for the given repo path.
+
+    Matches the hook's resolution (.claude/hooks/block-main-checkout-race.sh
+    line 41) so script and hook agree on what is and isn't a live lease. The
+    git-common-dir is the same across the main checkout and all worktrees,
+    making the lease set genuinely repo-scoped rather than per-checkout.
+
+    If `git rev-parse` is unavailable (not a git repo, git missing, OSError),
+    OR returns empty stdout, writes a one-line warning to stderr (so the
+    operator notices when their environment isn't supported) and returns a
+    path that is unlikely to exist — main() will then print the "no sessions"
+    path instead of crashing.
+    """
+    try:
+        common_dir = subprocess.check_output(
+            ["git", "rev-parse", "--git-common-dir"],
+            cwd=repo, text=True, stderr=subprocess.DEVNULL,
+        ).strip()
+    except (subprocess.CalledProcessError, OSError) as e:
+        sys.stderr.write(
+            f"warning: git rev-parse --git-common-dir failed "
+            f"({type(e).__name__}); falling back to {repo}/.git/session-leases "
+            f"(may not exist)\n"
+        )
+        return repo / ".git" / "session-leases"
+    if not common_dir:
+        sys.stderr.write(
+            f"warning: git rev-parse --git-common-dir returned empty; "
+            f"falling back to {repo}/.git/session-leases (may not exist)\n"
+        )
+        return repo / ".git" / "session-leases"
+    cd = Path(common_dir)
+    if not cd.is_absolute():
+        cd = (repo / cd).resolve()
+    return cd / "session-leases"
 
 
 def parse_iso_utc(s: str) -> datetime | None:
@@ -52,7 +95,7 @@ def main() -> int:
     args = parser.parse_args()
 
     repo = resolve_repo()
-    lease_dir = repo / ".claude" / "session-leases"
+    lease_dir = resolve_lease_dir(repo)
     if not lease_dir.exists():
         print("No active tuxlink sessions (lease directory does not exist yet).")
         return 0
