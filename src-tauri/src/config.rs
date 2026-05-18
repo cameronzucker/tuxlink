@@ -3,8 +3,111 @@
 //! Spec: docs/superpowers/specs/2026-05-18-task-2-config-impl-design.md
 //! bd issue: tuxlink-4mt
 
-// Phase 1: validate_identity + describe-helper.
-// Phase 2 will add the nested Config struct + sub-structs + helpers.
+use serde::{Deserialize, Deserializer, Serialize};
+
+pub const CONFIG_SCHEMA_VERSION: u32 = 1;
+
+/// Top-level config struct. `deny_unknown_fields` is the AMD-11 drift defense:
+/// any stale field (e.g. `winlink_password_present` from the pre-AMD-1 flat schema)
+/// hard-fails at deserialize time rather than silently being dropped.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Config {
+    #[serde(deserialize_with = "deserialize_schema_version")]
+    pub schema_version: u32,
+    pub wizard_completed: bool,
+    pub connect: ConnectConfig,
+    pub identity: IdentityConfig,
+    pub privacy: PrivacyConfig,
+    #[serde(deserialize_with = "deserialize_optional_nonempty_string", default)]
+    pub pat_mbo_address: Option<String>,
+    // winlink_password_present REMOVED per AMD-11; deny_unknown_fields catches drift.
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ConnectConfig {
+    /// Set by wizard Task 9. False = offline-only deployment.
+    pub connect_to_cms: bool,
+    /// Per the transport-visibility anti-pattern: always explicit, never auto-selected.
+    pub transport: CmsTransport,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub enum CmsTransport {
+    /// Port 8773, TLS-wrapped. v0.0.1 default.
+    CmsSsl,
+    /// Port 8772, plaintext. For networks blocking port 8773.
+    Telnet,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct IdentityConfig {
+    /// Required when connect_to_cms = true (enforced by Config::validate).
+    /// Loose validator per validate_identity(): nonempty + no whitespace + ≤32 + ASCII-printable.
+    #[serde(deserialize_with = "deserialize_optional_nonempty_string", default)]
+    pub callsign: Option<String>,
+    /// Free-form station identifier for offline-mode operators. Same loose-validator rules.
+    #[serde(deserialize_with = "deserialize_optional_nonempty_string", default)]
+    pub identifier: Option<String>,
+    /// Maidenhead grid, stored at full 6-char precision when known. Broadcast precision is
+    /// governed by PrivacyConfig.position_precision (per Principle 7).
+    #[serde(deserialize_with = "deserialize_optional_nonempty_string", default)]
+    pub grid: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PrivacyConfig {
+    pub gps_state: GpsState,
+    pub position_precision: PositionPrecision,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub enum GpsState {
+    /// No GPS device read at all.
+    Off,
+    /// GPS read locally; never broadcast.
+    LocalUiOnly,
+    /// Default. GPS read + broadcast at the chosen precision.
+    BroadcastAtPrecision,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub enum PositionPrecision {
+    /// Default. Broadcasts 4-char Maidenhead (~1°).
+    FourCharGrid,
+    /// Opt-in. Broadcasts full 6-char (~5km).
+    SixCharGrid,
+}
+
+fn deserialize_schema_version<'de, D>(d: D) -> Result<u32, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let v = u32::deserialize(d)?;
+    if v != CONFIG_SCHEMA_VERSION {
+        return Err(serde::de::Error::custom(format!(
+            "unsupported config schema_version {} (expected {})",
+            v, CONFIG_SCHEMA_VERSION
+        )));
+    }
+    Ok(v)
+}
+
+fn deserialize_optional_nonempty_string<'de, D>(d: D) -> Result<Option<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    // Maps JSON `null` → None; maps JSON `""` → None (treat empty-string as missing);
+    // maps non-empty string → Some(s). Eliminates Some("") ambiguity per spec adrev R4 P1-1.
+    let opt = <Option<String>>::deserialize(d)?;
+    Ok(opt.filter(|s| !s.is_empty()))
+}
 
 /// Loose identity validator. Matches Express's `hs30.htm` "checked for basic syntax" semantics:
 /// non-empty + ASCII-printable + no internal whitespace + ≤32 chars (in that order so the most

@@ -69,3 +69,207 @@ fn test_validate_identity_consistency_with_describe() {
         assert_eq!(by_bool, by_describe, "consistency violation for input {:?}", s);
     }
 }
+
+// ============================================================================
+// Phase 2 — Nested Config types + deserialize + AMD-11 drift defense
+// ============================================================================
+
+use tuxlink_lib::config::{
+    Config,
+    CmsTransport, GpsState, PositionPrecision,
+    CONFIG_SCHEMA_VERSION,
+};
+
+#[test]
+fn test_deserialize_minimal_cms_config() {
+    let json = r#"{
+        "schema_version": 1,
+        "wizard_completed": true,
+        "connect": {"connect_to_cms": true, "transport": "CmsSsl"},
+        "identity": {"callsign": "W4PHS", "identifier": null, "grid": "EM75xx"},
+        "privacy": {"gps_state": "BroadcastAtPrecision", "position_precision": "FourCharGrid"},
+        "pat_mbo_address": "W4PHS@winlink.org"
+    }"#;
+    let config: Config = serde_json::from_str(json).expect("must deserialize");
+    assert_eq!(config.schema_version, CONFIG_SCHEMA_VERSION);
+    assert!(config.wizard_completed);
+    assert!(config.connect.connect_to_cms);
+    assert_eq!(config.connect.transport, CmsTransport::CmsSsl);
+    assert_eq!(config.identity.callsign.as_deref(), Some("W4PHS"));
+    assert!(config.identity.identifier.is_none());
+    assert_eq!(config.identity.grid.as_deref(), Some("EM75xx"));
+    assert_eq!(config.privacy.gps_state, GpsState::BroadcastAtPrecision);
+    assert_eq!(config.privacy.position_precision, PositionPrecision::FourCharGrid);
+    assert_eq!(config.pat_mbo_address.as_deref(), Some("W4PHS@winlink.org"));
+}
+
+#[test]
+fn test_deserialize_offline_config() {
+    let json = r#"{
+        "schema_version": 1,
+        "wizard_completed": true,
+        "connect": {"connect_to_cms": false, "transport": "CmsSsl"},
+        "identity": {"callsign": null, "identifier": "EOC-1", "grid": "EM75"},
+        "privacy": {"gps_state": "BroadcastAtPrecision", "position_precision": "FourCharGrid"},
+        "pat_mbo_address": null
+    }"#;
+    let config: Config = serde_json::from_str(json).expect("offline config must deserialize");
+    assert!(!config.connect.connect_to_cms);
+    assert!(config.identity.callsign.is_none());
+    assert_eq!(config.identity.identifier.as_deref(), Some("EOC-1"));
+    assert!(config.pat_mbo_address.is_none());
+}
+
+#[test]
+fn test_reject_wrong_schema_version() {
+    let json = r#"{
+        "schema_version": 99,
+        "wizard_completed": true,
+        "connect": {"connect_to_cms": true, "transport": "CmsSsl"},
+        "identity": {"callsign": "W4PHS", "identifier": null, "grid": null},
+        "privacy": {"gps_state": "Off", "position_precision": "FourCharGrid"},
+        "pat_mbo_address": null
+    }"#;
+    let result: Result<Config, _> = serde_json::from_str(json);
+    assert!(result.is_err(), "unexpected schema version must fail to deserialize");
+}
+
+#[test]
+fn test_reject_amd11_dropped_field_winlink_password_present() {
+    // Stale top-level field MUST be rejected by deny_unknown_fields on Config.
+    // The pre-AMD-1 flat schema had winlink_password_present at the TOP LEVEL.
+    let json = r#"{
+        "schema_version": 1,
+        "wizard_completed": true,
+        "connect": {"connect_to_cms": true, "transport": "CmsSsl"},
+        "identity": {"callsign": "W4PHS", "identifier": null, "grid": null},
+        "privacy": {"gps_state": "Off", "position_precision": "FourCharGrid"},
+        "pat_mbo_address": null,
+        "winlink_password_present": true
+    }"#;
+    let result: Result<Config, _> = serde_json::from_str(json);
+    assert!(result.is_err(), "AMD-11-dropped field at top level must hard-fail via deny_unknown_fields");
+    let err = result.unwrap_err().to_string();
+    assert!(err.contains("winlink_password_present"),
+        "error message must mention the stale field: {err}");
+}
+
+#[test]
+fn test_deny_unknown_fields_on_each_substruct() {
+    // Unknown field on ConnectConfig must fail.
+    let json_connect = r#"{
+        "schema_version": 1, "wizard_completed": true,
+        "connect": {"connect_to_cms": true, "transport": "CmsSsl", "extra_field": "x"},
+        "identity": {"callsign": "W4PHS", "identifier": null, "grid": null},
+        "privacy": {"gps_state": "Off", "position_precision": "FourCharGrid"},
+        "pat_mbo_address": null
+    }"#;
+    assert!(serde_json::from_str::<Config>(json_connect).is_err(),
+        "unknown field on ConnectConfig must fail");
+
+    // Unknown field on IdentityConfig must fail.
+    let json_id = r#"{
+        "schema_version": 1, "wizard_completed": true,
+        "connect": {"connect_to_cms": true, "transport": "CmsSsl"},
+        "identity": {"callsign": "W4PHS", "identifier": null, "grid": null, "extra": "x"},
+        "privacy": {"gps_state": "Off", "position_precision": "FourCharGrid"},
+        "pat_mbo_address": null
+    }"#;
+    assert!(serde_json::from_str::<Config>(json_id).is_err(),
+        "unknown field on IdentityConfig must fail");
+
+    // Unknown field on PrivacyConfig must fail.
+    let json_priv = r#"{
+        "schema_version": 1, "wizard_completed": true,
+        "connect": {"connect_to_cms": true, "transport": "CmsSsl"},
+        "identity": {"callsign": "W4PHS", "identifier": null, "grid": null},
+        "privacy": {"gps_state": "Off", "position_precision": "FourCharGrid", "extra": "x"},
+        "pat_mbo_address": null
+    }"#;
+    assert!(serde_json::from_str::<Config>(json_priv).is_err(),
+        "unknown field on PrivacyConfig must fail");
+}
+
+#[test]
+fn test_cms_transport_both_variants_round_trip() {
+    // Per plan-review R2 P2-2: iterate BOTH variants, not just Telnet.
+    // CmsSsl is implicitly deserialized in many other tests but its SERIALIZE-AS-PascalCase
+    // contract is unlocked without an explicit check.
+    for (variant, name) in [
+        (CmsTransport::CmsSsl, "CmsSsl"),
+        (CmsTransport::Telnet, "Telnet"),
+    ] {
+        let json = format!(r#"{{
+            "schema_version": 1, "wizard_completed": true,
+            "connect": {{"connect_to_cms": true, "transport": "{}"}},
+            "identity": {{"callsign": "W4PHS", "identifier": null, "grid": null}},
+            "privacy": {{"gps_state": "Off", "position_precision": "FourCharGrid"}},
+            "pat_mbo_address": null
+        }}"#, name);
+        let config: Config = serde_json::from_str(&json)
+            .unwrap_or_else(|e| panic!("variant {name} must deserialize: {e}"));
+        assert_eq!(config.connect.transport, variant);
+        let out = serde_json::to_string(&config).unwrap();
+        assert!(out.contains(&format!("\"{name}\"")),
+            "serialized form must use PascalCase variant {name}: {out}");
+    }
+}
+
+#[test]
+fn test_gps_state_three_variants_round_trip() {
+    for (variant, name) in [
+        (GpsState::Off, "Off"),
+        (GpsState::LocalUiOnly, "LocalUiOnly"),
+        (GpsState::BroadcastAtPrecision, "BroadcastAtPrecision"),
+    ] {
+        let json = format!(r#"{{
+            "schema_version": 1, "wizard_completed": true,
+            "connect": {{"connect_to_cms": false, "transport": "CmsSsl"}},
+            "identity": {{"callsign": null, "identifier": "X", "grid": null}},
+            "privacy": {{"gps_state": "{}", "position_precision": "FourCharGrid"}},
+            "pat_mbo_address": null
+        }}"#, name);
+        let config: Config = serde_json::from_str(&json)
+            .unwrap_or_else(|e| panic!("variant {name} must deserialize: {e}"));
+        assert_eq!(config.privacy.gps_state, variant);
+        let out = serde_json::to_string(&config).unwrap();
+        assert!(out.contains(&format!("\"{name}\"")), "serialize must use PascalCase: {out}");
+    }
+}
+
+#[test]
+fn test_position_precision_two_variants_round_trip() {
+    for (variant, name) in [
+        (PositionPrecision::FourCharGrid, "FourCharGrid"),
+        (PositionPrecision::SixCharGrid, "SixCharGrid"),
+    ] {
+        let json = format!(r#"{{
+            "schema_version": 1, "wizard_completed": true,
+            "connect": {{"connect_to_cms": false, "transport": "CmsSsl"}},
+            "identity": {{"callsign": null, "identifier": "X", "grid": null}},
+            "privacy": {{"gps_state": "Off", "position_precision": "{}"}},
+            "pat_mbo_address": null
+        }}"#, name);
+        let config: Config = serde_json::from_str(&json)
+            .unwrap_or_else(|e| panic!("variant {name} must deserialize: {e}"));
+        assert_eq!(config.privacy.position_precision, variant);
+    }
+}
+
+#[test]
+fn test_empty_string_identity_field_normalizes_to_none() {
+    // Spec §3.1: deserialize_optional_nonempty_string maps "" → None.
+    // This is the offline-mode-when-operator-types-then-clears case.
+    let json = r#"{
+        "schema_version": 1, "wizard_completed": true,
+        "connect": {"connect_to_cms": false, "transport": "CmsSsl"},
+        "identity": {"callsign": "", "identifier": "EOC-1", "grid": ""},
+        "privacy": {"gps_state": "Off", "position_precision": "FourCharGrid"},
+        "pat_mbo_address": ""
+    }"#;
+    let config: Config = serde_json::from_str(json).expect("must deserialize");
+    assert!(config.identity.callsign.is_none(), "empty callsign should normalize to None");
+    assert_eq!(config.identity.identifier.as_deref(), Some("EOC-1"));
+    assert!(config.identity.grid.is_none(), "empty grid should normalize to None");
+    assert!(config.pat_mbo_address.is_none(), "empty pat_mbo_address should normalize to None");
+}
