@@ -85,12 +85,12 @@ notes and commit messages.
 
 ## Execution Status
 
-**Overall:** 1/10 phases shipped (Phase 1 state-only); Phase 2 in queue (now includes go-keyring dep addition).
+**Overall:** 2/10 phases shipped; Phase 3 in queue.
 
 | Phase | Status | Ship SHA(s) | Notes |
 |---|---|---|---|
 | 1 — Setup: tuxlink-pat worktree + branch (Task 1.3 go.mod collapsed into Phase 2 per Go-tidy semantics) | ✅ Shipped | (state-only; no commit; tasks 1.1 + 1.2 only) | Branch `bd-tuxlink-mib/mib-cred-keyring` on tuxlink-pat (off LOCAL master post upstream-sync); upstream remote added. Per Discovery below, Task 1.3 (dep addition) collapsed into Phase 2 Task 2.1 |
-| 2 — credstore package (NEW; pure TDD) | ⬜ Not started | — | Densest TDD phase; `internal/credstore/` |
+| 2 — credstore package (NEW; pure TDD) | ✅ Shipped | tuxlink-pat 165e411, 431ee16, 63c7fc9 on bd-tuxlink-mib/mib-cred-keyring | 3 commits by `basin-basalt-sycamore` 2026-05-18; 11 top-level tests + 9 NormalizeAccount subtests = 20 cases passing; zalando/go-keyring v0.2.8 added to go.mod/go.sum via Cluster B's importing-code commit (collapsed-Task-1.3 pattern confirmed working) |
 | 3 — cfg/config.go modifications | ⬜ Not started | — | Drop SecureLoginPassword; AuxAddr keep MarshalJSON, drop Password field |
 | 4 — api/api.go RedactedPassword removal | ⬜ Not started | — | Verify no other consumers via grep before delete |
 | 5 — app/exchange.go callback + app/app.go cleanup | ⬜ Not started | — | Largest behavioral change; SMTP-proto skip + callback rewrite |
@@ -109,6 +109,10 @@ notes and commit messages.
 - **Go toolchain absent from dev Pi (pandora) as of 2026-05-18.** Phase 1 Task 1.3 (`go get github.com/zalando/go-keyring`) blocked at first dispatch; subagent `basalt-marsh-sandbar` stopped per `feedback_sudo_apt_explicit_approval` memory. Resolved by operator-approved `sudo apt install -y golang-go` (Debian Pi-OS Trixie package `2:1.24~2` → `go1.24.4 linux/arm64`). Tasks 1.1 + 1.2 completed idempotently before the block (upstream remote added; branch `bd-tuxlink-mib/mib-cred-keyring` created from local master post upstream-sync). The fork-setup plan's Discoveries subsection (2026-05-18) had previously noted this same Go-absent state; the cred-handling plan's pre-flight didn't explicitly call `which go` — a 1-line addition to future fork-patch plans' pre-flight sections would catch this earlier.
 
 - **`go mod tidy` strips no-import deps (Go-idiomatic, plan-spec gap):** Phase 1 Task 1.3's "add dep + commit standalone" pattern is broken under Go's tidy semantics — `go get X && go mod tidy` produces a no-op `go.mod` change if no Go file imports `X`. Subagent `sumac-birch-owl` caught this on the re-dispatch (after Go install). Pattern fix: ALWAYS pair dep addition with the Go file that imports the dep, in one commit. Task 1.3 collapsed into Phase 2 Task 2.1 (which writes credstore.go importing zalando/go-keyring). Plan-review-cycle didn't catch this gap (4 rounds + Codex; Go-specific knowledge gap). Recommended future pattern: every fork-patch plan that adds a Go dep should explicitly note "dep addition pairs with the importing-code commit, NOT a standalone go-get step."
+
+- **`go test -race` incompatible with pandora's kernel/VMA on arm64 (2026-05-18, Phase 2 execution):** Subagent `basin-basalt-sycamore` attempted Phase 2's prescribed `go test ./internal/credstore/... -v -race` at the cluster boundary and hit `FATAL: ThreadSanitizer: unsupported VMA range / Found 47 - Supported 48`. Re-ran without `-race` and all tests passed. Known issue with ThreadSanitizer + 47-bit VMA configurations on aarch64 (Pi-OS Trixie 6.18.29 kernel default). Phase 2's tests serialize by design (no `t.Parallel`), so `-race` provides marginal additional safety in this package; Phase 9's CI runner (Ubuntu x86_64 GitHub Actions) will exercise `-race` cleanly. Plan amendment for future Phase-X TDD steps on this Pi: drop `-race` from the local-run cmd, document "CI runs `-race`" in the plan body. tuxlink-pat fork-setup plan should pick up the same caveat in its "running tests locally" section.
+
+- **Git identity must be set per-repo for submodule worktrees (2026-05-18, Phase 2 Cluster A):** First commit attempt in `external/tuxlink-pat/` failed with `Author identity unknown` — the submodule worktree has no inherited git config (CLAUDE.md "NEVER update the git config" is scoped to global; local repo-only identity was acceptable here since prior tuxlink-pat commits already use `Cameron Zucker <cameronzucker@gmail.com>`). Set via `git -C <pat> config user.email/user.name` (no `--global`). Pre-flight addition for future tuxlink-pat dispatches: verify `git -C external/tuxlink-pat config user.email` returns non-empty before the first commit attempt; if empty, set from `git -C <tuxlink-root> config user.email` to match the parent repo's identity.
 
 ---
 
