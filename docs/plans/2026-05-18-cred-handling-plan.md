@@ -2282,7 +2282,7 @@ The plan's Phase 9 banner flips ⬜ → 🚧 → ✅ as work progresses; when PR
 
 ## Phase 10 — PR-A merge + PR-B submodule bump on tuxlink
 
-**Execution Status:** ⬜ Not started
+**Execution Status:** 🚧 In progress — PR-B opened as [tuxlink#59](https://github.com/cameronzucker/tuxlink/pull/59); awaits Cameron's merge to flip to ✅ + close tuxlink-mib
 
 **Pre-requisite:** PR-A merged by Cameron on `cameronzucker/tuxlink-pat/master`. Verify before starting Phase 10.
 
