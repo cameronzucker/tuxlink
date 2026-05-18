@@ -78,7 +78,7 @@ notes and commit messages.
 | Phase | Status | Ship SHA(s) | Notes |
 |---|---|---|---|
 | 1 — Operator GH ops (fork + branch protection + Issues) | ✅ Shipped | — (no commit; GH-side) | 2026-05-18; Cameron created fork; agent configured branch protection on `master` per his delegation; Issues enabled |
-| 2 — Pre-flight + PR-A (tuxlink-pat README) | ⬜ Not started | — | Blocked until Cameron approves plan; ready when plan-review gate clears |
+| 2 — Pre-flight + PR-A (tuxlink-pat README) | 🚧 In progress | `8a6671e` (on `add-fork-readme` branch in tuxlink-pat fork) | PR-A #1 OPEN/CLEAN/MERGEABLE 2026-05-18 by `bison-sequoia-swallow`; awaiting Cameron merge → flips to ✅ |
 | 3 — Pre-flight + PR-B (tuxlink wiring: submodule + build.rs + tauri.conf + CI + docs) | ⬜ Not started | — | Blocked until Phase 2 PR-A merged |
 | 4 — Operator merges PR-B; tuxlink-84i closes | ⬜ Not started | — | Blocked until Phase 3 complete |
 
@@ -297,9 +297,9 @@ Expected output:
 
 ## Phase 2 — Pre-flight + PR-A (tuxlink-pat README)
 
-**Execution Status:** ⬜ NOT STARTED — blocked until Phase 1 complete.
+**Execution Status:** 🚧 IN PROGRESS — claimed 2026-05-18 by subagent `bison-sequoia-swallow`; PR-A #1 OPEN at `8a6671e` on `add-fork-readme` branch of `cameronzucker/tuxlink-pat`; pre-flight gate passed (all 3 checks); README verification passed (87 lines / 6 sections). Awaiting Cameron merge of PR-A → banner flips to ✅.
 
-> **LDC banner flip at claim time** (per Living Document Contract bullet 1): when an executor begins Phase 2, the FIRST action — before Task 2.1 Step 1 — is to flip this banner from `⬜ NOT STARTED` to `🚧 IN PROGRESS — claimed <YYYY-MM-DD HH:MMZ> (branch <name>)`. Update the top-of-plan Execution Status table to match. (R3 P1-B catch: the original plan only said when to update on ship, not on claim.)
+> **LDC banner flip at claim time** (per Living Document Contract bullet 1): when an executor begins Phase 2, the FIRST action — before Task 2.1 Step 1 — is to flip this banner from `⬜ NOT STARTED` to `🚧 IN PROGRESS — claimed <YYYY-MM-DD HH:MMZ> (branch <name>)`. Update the top-of-plan Execution Status table to match. (R3 P1-B catch: the original plan only said when to update on ship, not on claim.) **2026-05-18 execution note:** Phase 2 banner update was done post-hoc by parent agent (oak-fjord-swallow) — Phase 2 subagent dispatch prompt had an over-broad "do not modify the plan file" anti-pattern that blocked the in-flight banner flip. Memory `feedback_subagent_ldc_scoping` captures the lesson for future dispatches.
 
 This phase happens on the `tuxlink-pat` fork, NOT on tuxlink. Agent creates a worktree (or local clone) of `tuxlink-pat`, writes the README, opens PR-A.
 
