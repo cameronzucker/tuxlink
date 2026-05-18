@@ -1,0 +1,3 @@
+[submodule "external/tuxlink-pat"]
+	path = external/tuxlink-pat
+	url = https://github.com/cameronzucker/tuxlink-pat

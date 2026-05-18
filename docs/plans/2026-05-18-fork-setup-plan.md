@@ -73,22 +73,24 @@ notes and commit messages.
 
 ## Execution Status
 
-**Overall:** 0/4 phases shipped, 0 deferred.
+**Overall:** 2/4 phases shipped, 0 deferred; Phase 3 in progress.
 
 | Phase | Status | Ship SHA(s) | Notes |
 |---|---|---|---|
 | 1 — Operator GH ops (fork + branch protection + Issues) | ✅ Shipped | — (no commit; GH-side) | 2026-05-18; Cameron created fork; agent configured branch protection on `master` per his delegation; Issues enabled |
-| 2 — Pre-flight + PR-A (tuxlink-pat README) | 🚧 In progress | `8a6671e` (on `add-fork-readme` branch in tuxlink-pat fork) | PR-A #1 OPEN/CLEAN/MERGEABLE 2026-05-18 by `bison-sequoia-swallow`; awaiting Cameron merge → flips to ✅ |
-| 3 — Pre-flight + PR-B (tuxlink wiring: submodule + build.rs + tauri.conf + CI + docs) | ⬜ Not started | — | Blocked until Phase 2 PR-A merged |
+| 2 — Pre-flight + PR-A (tuxlink-pat README) | ✅ Shipped | PR #1 merged 2026-05-18 by Cameron; `tuxlink-pat/master` now carries README on top of upstream fork point | PR-A by `bison-sequoia-swallow` |
+| 3 — Pre-flight + PR-B (tuxlink wiring: submodule + build.rs + tauri.conf + CI + docs) | 🚧 In progress | — | Claimed 2026-05-18T15:49Z by subagent `sparrow-taiga-esker` on branch `bd-tuxlink-84i/fork-setup` |
 | 4 — Operator merges PR-B; tuxlink-84i closes | ⬜ Not started | — | Blocked until Phase 3 complete |
 
 ### Deviations
 
-(None yet.)
+- **Phase 3 Task 3.4 + 3.10 — `tauri_build::build()` ordering fix (NEW, not in plan):** plan-prescribed build.rs called `tauri_build::build()` FIRST, then gated the Go path on PROFILE=release. In practice, `tauri_build::build()` validates that the `externalBin` sidecar file exists at `sidecars/pat-<TARGET-TRIPLE>` at validation time — before our Go-build path runs. This made even debug + cargo test fail with `resource path 'sidecars/pat-aarch64-unknown-linux-gnu' doesn't exist`. **Applied fix:** added `ensure_sidecar_stub()` helper that creates a 0-byte stub at the expected path under debug + test profiles BEFORE invoking `tauri_build::build()`; release profile produces the real binary then invokes `tauri_build::build()` LAST. The stub is gitignored by the existing `sidecars/pat-*` pattern. Discovered + applied 2026-05-18 by sparrow-taiga-esker; documented in build.rs comments. Spec §3.4 should be amended in a follow-up to call out the ordering constraint.
+- **Phase 3 Task 3.10 — local Go-toolchain release build not executable:** Go is not installed on the dev Pi (no `go` on PATH; not in /usr/local, /usr/lib/go-*, /opt/go*, /home/administrator/go, /snap/bin/go). Installing it requires `sudo apt install golang-go` which per `feedback_sudo_apt_explicit_approval` must be operator-approved first. **Mitigation:** debug + cargo test smokes ran cleanly (all 3 parse_go_version tests + 4 lib tests + 3 pat_client tests + 2 pat_process tests pass; build.rs release-only gate confirmed via debug "skipping Pat sidecar build" warning). Release-profile end-to-end build will be verified by `.github/workflows/release.yml` CI on PR-B (which uses `actions/setup-go@v6` with `go-version-file: 'external/tuxlink-pat/go.mod'` per Task 3.8). Discovered 2026-05-18 by sparrow-taiga-esker.
 
 ### Discoveries
 
-(None yet.)
+- **Tauri 2.x `externalBin` validation runs unconditionally** (not gated on profile), per Task 3.4/3.10 deviation above. Future fork-patch work that touches `bundle.externalBin` should expect the same validation surface. Captured in build.rs's `ensure_sidecar_stub()` doc comment.
+- **Go toolchain absent from dev Pi (pandora) as of 2026-05-18.** Local release-build smokes for any future Pat-related fork patch will require operator-approved `apt install golang-go` first. Spec §6 ("risks") may want a one-line note about this for next-patch readiness.
 
 ---
 
@@ -297,7 +299,7 @@ Expected output:
 
 ## Phase 2 — Pre-flight + PR-A (tuxlink-pat README)
 
-**Execution Status:** 🚧 IN PROGRESS — claimed 2026-05-18 by subagent `bison-sequoia-swallow`; PR-A #1 OPEN at `8a6671e` on `add-fork-readme` branch of `cameronzucker/tuxlink-pat`; pre-flight gate passed (all 3 checks); README verification passed (87 lines / 6 sections). Awaiting Cameron merge of PR-A → banner flips to ✅.
+**Execution Status:** ✅ SHIPPED 2026-05-18 — PR-A #1 merged by Cameron; `tuxlink-pat/master` carries the fork README on top of upstream fork point. Original work by subagent `bison-sequoia-swallow`; pre-flight gate passed (all 3 checks); README verification passed (87 lines / 6 sections).
 
 > **LDC banner flip at claim time** (per Living Document Contract bullet 1): when an executor begins Phase 2, the FIRST action — before Task 2.1 Step 1 — is to flip this banner from `⬜ NOT STARTED` to `🚧 IN PROGRESS — claimed <YYYY-MM-DD HH:MMZ> (branch <name>)`. Update the top-of-plan Execution Status table to match. (R3 P1-B catch: the original plan only said when to update on ship, not on claim.) **2026-05-18 execution note:** Phase 2 banner update was done post-hoc by parent agent (oak-fjord-swallow) — Phase 2 subagent dispatch prompt had an over-broad "do not modify the plan file" anti-pattern that blocked the in-flight banner flip. Memory `feedback_subagent_ldc_scoping` captures the lesson for future dispatches.
 
@@ -663,7 +665,7 @@ Expected: state=MERGED, mergeCommit has a SHA.
 
 ## Phase 3 — Pre-flight + PR-B (tuxlink wiring)
 
-**Execution Status:** ⬜ NOT STARTED — blocked until Phase 2 PR-A merged.
+**Execution Status:** 🚧 IN PROGRESS — claimed 2026-05-18T15:49Z by subagent `sparrow-taiga-esker` on branch `bd-tuxlink-84i/fork-setup`. Phase 2 PR-A merged.
 
 > **LDC banner flip at claim time** (per Living Document Contract bullet 1): when an executor begins Phase 3, the FIRST action is to flip this banner from `⬜ NOT STARTED` to `🚧 IN PROGRESS — claimed <YYYY-MM-DD HH:MMZ> (branch bd-tuxlink-84i/fork-setup)`. Update the top-of-plan Execution Status table to match.
 
