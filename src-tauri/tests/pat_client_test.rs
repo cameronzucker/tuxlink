@@ -27,13 +27,18 @@ fn test_list_inbox_surfaces_http_error() {
 }
 
 #[test]
-fn test_send_message_posts_correct_json() {
+fn test_send_message_posts_multipart_form_data() {
+    // Pat's POST /api/mailbox/out expects multipart/form-data with lowercase
+    // fields to/subject/body/date and returns plain text "Message posted (X.XX kB)"
+    // HTTP 201 — NOT JSON. Verified against la5nta/pat handler 2026-05-18 by
+    // willow-raven-arroyo + Pat-API verification subagent; matches both v1.0.0
+    // and master byte-for-byte.
     let mut server = mockito::Server::new();
     let _mock = server.mock("POST", "/api/mailbox/out")
-        .with_status(200)
-        .with_body(r#"{"MID":"OUTBOX001"}"#)
+        .match_header("content-type", mockito::Matcher::Regex("^multipart/form-data".to_string()))
+        .with_status(201)
+        .with_body("Message posted (0.05 kB)")
         .create();
     let client = PatClient::new(server.url());
-    let mid = client.send(&["SERVICE@winlink.org"], "Test", "body").expect("send");
-    assert_eq!(mid, "OUTBOX001");
+    client.send(&["SERVICE@winlink.org"], "Test", "body", "2026-04-22T15:00:00Z").expect("send");
 }

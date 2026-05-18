@@ -84,28 +84,19 @@ impl PatClient {
         Ok(dtos.into_iter().map(Message::from).collect())
     }
 
-    pub fn send(&self, to: &[&str], subject: &str, body: &str) -> Result<String, PatClientError> {
-        #[derive(serde::Serialize)]
-        struct Out<'a> {
-            #[serde(rename = "To")] to: Vec<Addr<'a>>,
-            #[serde(rename = "Subject")] subject: &'a str,
-            #[serde(rename = "Body")] body: &'a str,
+    pub fn send(&self, to: &[&str], subject: &str, body: &str, date: &str) -> Result<(), PatClientError> {
+        let mut form = reqwest::blocking::multipart::Form::new()
+            .text("subject", subject.to_string())
+            .text("body", body.to_string())
+            .text("date", date.to_string());
+        for addr in to {
+            form = form.text("to", addr.to_string());
         }
-        #[derive(serde::Serialize)]
-        struct Addr<'a> { #[serde(rename = "Addr")] addr: &'a str }
-        #[derive(Deserialize)]
-        struct Resp { #[serde(rename = "MID")] mid: String }
-
-        let msg = Out {
-            to: to.iter().map(|a| Addr { addr: a }).collect(),
-            subject, body,
-        };
         let url = format!("{}/api/mailbox/out", self.base_url);
-        let resp = self.http.post(&url).json(&msg).send().map_err(PatClientError::Http)?;
+        let resp = self.http.post(&url).multipart(form).send().map_err(PatClientError::Http)?;
         if !resp.status().is_success() {
             return Err(PatClientError::Status(resp.status().as_u16()));
         }
-        let body: Resp = resp.json().map_err(PatClientError::Http)?;
-        Ok(body.mid)
+        Ok(())
     }
 }
