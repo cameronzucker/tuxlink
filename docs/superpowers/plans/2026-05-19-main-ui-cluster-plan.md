@@ -13,7 +13,7 @@
 - ⬜ Task 13 — Message reading pane (`tuxlink-y5c`)
 - ⬜ Task 14 — Compose window (separate Tauri window) (`tuxlink-dm8`)
 - ✅ Task 15 — Session log pane (`tuxlink-69z`)
-- ⬜ Task 16 — Dashboard ribbon + minimal status bar (`tuxlink-hvv`)
+- ✅ Task 16 — Dashboard ribbon + minimal status bar (`tuxlink-hvv`)
 
 ## Prerequisites — every subagent reads before starting
 

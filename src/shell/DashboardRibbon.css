@@ -1,0 +1,114 @@
+/**
+ * DashboardRibbon.css — top app chrome (~40px), always visible.
+ *
+ * Design spec: docs/superpowers/specs/2026-05-19-main-ui-cluster-design.md §5.6
+ * Reference UX: docs/design/v0.0.1-ux-mockups.md §5.5 synthesis-dock-off.png
+ *
+ * Mail.app-inspired: clean, high-information density, no clutter.
+ * Dark system appearance assumed (Tauri on Linux defaults to GTK theme).
+ */
+
+.dashboard-ribbon {
+  /* Fixed height, full width, no wrapping */
+  height: 40px;
+  min-height: 40px;
+  max-height: 40px;
+
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 0 12px;
+
+  /* Subtle separator from the content below */
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+
+  /* System dark chrome: slightly lighter than the main background */
+  background-color: rgba(0, 0, 0, 0.15);
+  backdrop-filter: blur(4px);
+
+  /* Prevent user selection on chrome chrome */
+  user-select: none;
+
+  /* Always on top within its grid row */
+  z-index: 10;
+
+  /* Typography */
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: rgba(255, 255, 255, 0.85);
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+/* ============================================================================
+   Individual ribbon items
+   ============================================================================ */
+
+.ribbon-callsign {
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: #ffffff;
+  cursor: default;
+}
+
+.ribbon-grid {
+  color: rgba(255, 255, 255, 0.7);
+  font-family: 'SF Mono', 'Menlo', 'Consolas', 'Liberation Mono', monospace;
+  font-size: 11px;
+  letter-spacing: 0.05em;
+  cursor: default;
+}
+
+.ribbon-gps {
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 11px;
+}
+
+/* UTC / Local time block — pushed toward center */
+.ribbon-time {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  color: rgba(255, 255, 255, 0.75);
+  font-family: 'SF Mono', 'Menlo', 'Consolas', 'Liberation Mono', monospace;
+  font-size: 12px;
+  margin-left: auto; /* flex push toward right */
+}
+
+.ribbon-time-sep {
+  color: rgba(255, 255, 255, 0.35);
+  padding: 0 2px;
+}
+
+/* Connection state — rightmost item */
+.ribbon-connection {
+  margin-left: 8px;
+  padding: 2px 8px;
+  border-radius: 3px;
+  font-size: 11px;
+  font-weight: 500;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: rgba(255, 255, 255, 0.8);
+  cursor: default;
+}
+
+/* Connection state color variants */
+.dashboard-ribbon[data-connection="connected"] .ribbon-connection {
+  background: rgba(52, 199, 89, 0.15);
+  border-color: rgba(52, 199, 89, 0.3);
+  color: #34c759;
+}
+
+.dashboard-ribbon[data-connection="connecting"] .ribbon-connection,
+.dashboard-ribbon[data-connection="disconnecting"] .ribbon-connection {
+  background: rgba(255, 159, 10, 0.12);
+  border-color: rgba(255, 159, 10, 0.25);
+  color: #ff9f0a;
+}
+
+.dashboard-ribbon[data-connection="error"] .ribbon-connection {
+  background: rgba(255, 59, 48, 0.12);
+  border-color: rgba(255, 59, 48, 0.25);
+  color: #ff3b30;
+}
