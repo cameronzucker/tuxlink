@@ -27,6 +27,7 @@ pub fn run() {
     std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_shell::init())
         .manage(crate::wizard::WizardMutex::new())
         .setup(|app| {
             // Build the native OS menu bar (tuxlink-6vi / Task 7) and wire
