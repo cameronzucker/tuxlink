@@ -1,12 +1,33 @@
 # WinlinkBackend Trait — Design Spec
 
 **Spec ID:** tuxlink-z5f
-**Date:** 2026-05-18 (pre-adrev v1)
+**Date:** 2026-05-18 (v2 — post-Codex-R1 revision)
 **Author:** agent `badger-oak-dahlia`
-**Status:** pre-adrev — awaiting Codex cross-provider review (per bd-issue scope: ≥1 round, NOT 5)
+**Status:** revised — Codex R1 (cross-provider) findings applied (3 P0, 4 P1, 4 P2, 1 P3)
 **Branch:** `bd-tuxlink-z5f/winlink-backend-trait` (worktree off `feat/v0.0.1`)
 **Closes via deliverable:** the PR that merges this spec's implementation into `feat/v0.0.1`
 **Discipline:** tightly-scoped `superpowers:build-robust-features` per [memory `feedback_discipline_triage_rule`](../../../.claude/projects/-home-administrator-Code-tuxlink/memory/feedback_discipline_triage_rule.md) — architectural (trait shape constrains every future backend) but bounded (1hr brainstorm, ≥1 Codex round, trivial plan, one PR).
+
+### v2 revision changes from v1
+
+This v2 supersedes v1 (committed `eb85377`) after one Codex cross-provider adrev round (raw transcript at `dev/adversarial/2026-05-18-tuxlink-z5f-winlink-backend-trait-codex-r1.md`, gitignored).
+
+| Severity | Finding | Applied where |
+|---|---|---|
+| P0 | Session contract internally inconsistent (Drop docstring says best-effort disconnect; §3.5 says Drop does nothing). Wrong-backend-session can pass through `disconnect`. | §3.1 + §3.2 + §3.5 — Session carries a backend-instance-id; `BackendError::InvalidSession` added; Drop docstring rewritten as "local cleanup only; explicit `disconnect` is the only guaranteed release path" |
+| P0 | `MessageBody.mime_text: String` bakes UTF-8 into the long-lived boundary; native backend needs byte fidelity for MIME attachments. | §3.2 — changed to `raw_rfc5322: Vec<u8>`; added doc comment about display-decode at Tauri boundary |
+| P0 | `BroadcastStream` named in §3.6 lives in `tokio-stream` crate (not `tokio` or `futures`); §2.1 deps list would not compile. | §2.1 — added `tokio-stream = { version = "0.1", features = ["sync"] }` |
+| P1 | `PatBackend` wraps APIs that don't exist on `PatClient` yet (no `read`, no `Clone`, `send` returns `()` not MID). | §2.1 + new §3.8.0 — pat_client extension prerequisites enumerated; `send_message` trait return changed to `Result<Option<MessageId>, BackendError>` per the [feedback_ai_amateur_radio_reliability memory](../../../.claude/projects/-home-administrator-Code-tuxlink/memory/feedback_ai_amateur_radio_reliability.md) (don't take Codex as authority on "does Pat return MID") |
+| P1 | Only `TransportConfig` is `#[non_exhaustive]`; other public enums harden as soon as multiple backends depend on them. | §3.2 + §3.3 — `#[non_exhaustive]` added to `BackendError`, `BackendStatus`, `LogSource`, `LogLevel`, `MessageMeta`, `MessageBody`, `MailboxFolder` (kept off `OutboundMessage` for caller-construction ergonomics) |
+| P1 | `PatProcess::spawn` consumes stderr inside startup loop; after the break, no reader is left for `stream_log` to broadcast from. | §2.1 + new §3.8.1 — pat_process spawn-signature refactor enumerated (accepts optional log sink) |
+| P1 | `BackendError` collapses too much into `String`; loses source chains. | §3.3 — `BackendUnavailable`, `TransportFailed`, `Internal` made structured with `source: Option<Box<dyn Error + Send + Sync>>` |
+| P2 | Send+Sync correct; add MutexGuard-not-across-await note. | §3.4 — note added |
+| P2 | Date type question mis-framed: it's "where is timestamp validation enforced," not String-vs-chrono. | §3.2 — `date: String` doc updated: "RFC 3339 UTC; backend MUST validate or pass through validated form" |
+| P2 | Note about `async fn in trait` in §3.4 conflated with object-safety blocker. | §3.4 — correction: 1.75 has async-fn-in-trait but `dyn` object-safety is the blocker (not MSRV); `async-trait` stays |
+| P2 | `status()` non-async correct; document that implementations cache + update during ops. | §3.1 docstring updated |
+| P3 | NativeBackend stub returning typed `NotImplemented` correct. | Ratified |
+
+Test count grew from 8 to 10 to cover: backend-instance Session affinity (test #9) + MessageBody byte fidelity (test #10).
 
 ---
 
@@ -29,14 +50,17 @@ This spec defines the trait surface, behavior contract, error model, runtime cho
 ### 2.1 In scope
 
 1. Define `WinlinkBackend` trait in a new module `src-tauri/src/winlink_backend.rs`.
-2. Define supporting types: `MessageId`, `MessageMeta`, `MessageBody`, `OutboundMessage`, `TransportConfig`, `Session`, `BackendStatus`, `LogLine`, `BackendError`.
-3. Re-export or relocate `MailboxFolder` (currently in `pat_client`) so the trait surface doesn't reach into a Pat-specific module.
-4. Implement `PatBackend: WinlinkBackend` — wraps existing `PatClient` + `PatProcess`. Translates `PatClientError` → `BackendError`.
-5. Implement `NativeBackend: WinlinkBackend` as a **stub** — every method returns `BackendError::NotImplemented`. No real native logic in this PR; that's Steps 3–10.
-6. Migrate the **existing internal call site(s)** that consume `PatClient` directly to consume `WinlinkBackend` (if any exist in `src-tauri/src/lib.rs` or the Tauri command handlers). Tauri command surface stays the same; injection point shifts to a `Box<dyn WinlinkBackend>` (or generic `B: WinlinkBackend`) in command setup.
-7. Test surface: 6 trait-contract tests (run against both `PatBackend` and `NativeBackend` where applicable) + 2 type-level tests. **Total: 8 tests** — meets the bd-issue's "5–10" cap.
-8. Add `async-trait = "0.1"` dependency for the trait definition (see §3.4 for runtime choice rationale).
-9. Add `futures = "0.3"` for `Stream` definitions (already pulled transitively by `tokio` but declared explicitly for clarity).
+2. Define supporting types: `MessageId`, `MessageMeta`, `MessageBody`, `OutboundMessage`, `TransportConfig`, `Session` (carries backend-instance id per v2 P0 #1), `BackendStatus`, `LogLine`, `BackendError` (structured-source variants per v2 P1 #7).
+3. Re-export or relocate `MailboxFolder` (currently in `pat_client`) so the trait surface doesn't reach into a Pat-specific module. Mark `#[non_exhaustive]` per v2 P1 #5.
+4. **Extend `PatClient` (per v2 P1 #4):** add `#[derive(Clone)]`, add `read(folder, mid) -> Result<MessageBody, PatClientError>` method, investigate Pat's `/api/mailbox/out` response for MID (if present, return it; else trait returns `None`). See §3.8.0 for full prerequisite list.
+5. **Refactor `PatProcess::spawn` (per v2 P1 #6):** change signature to accept an optional log sink (`Option<std::sync::mpsc::Sender<String>>` in `PatSpawnOptions`); after startup-port-detection, spawn a thread that forwards remaining stderr lines into the sink. Existing callers (test code) pass `None` and behavior is unchanged. See §3.8.1.
+6. Implement `PatBackend: WinlinkBackend` — wraps the extended `PatClient` + the refactored `PatProcess`. Translates `PatClientError` → `BackendError` (table in §3.3).
+7. Implement `NativeBackend: WinlinkBackend` as a **stub** — every method returns `BackendError::NotImplemented`. No real native logic in this PR; that's v0.5 Steps 3–10.
+8. Migrate the **existing internal call site(s)** that consume `PatClient` directly to consume `WinlinkBackend` (if any exist in `src-tauri/src/lib.rs` or the Tauri command handlers). Tauri command surface stays the same; injection point shifts to a `Box<dyn WinlinkBackend>` (or generic `B: WinlinkBackend`) in command setup.
+9. Test surface: 8 trait-contract tests + 2 type-level tests covering Session-backend-affinity + MessageBody byte fidelity. **Total: 10 tests** — at the upper end of the bd-issue's "5–10" cap.
+10. Add `async-trait = "0.1"` dependency for the trait definition (see §3.4 for runtime choice rationale).
+11. Add `futures = "0.3"` for `Stream` definitions.
+12. Add `tokio-stream = { version = "0.1", features = ["sync"] }` for `BroadcastStream` (per v2 P0 #3 — `BroadcastStream` is NOT provided by `tokio` or `futures`).
 
 ### 2.2 Out of scope
 
@@ -79,70 +103,127 @@ pub trait WinlinkBackend: Send + Sync {
     async fn read_message(&self, id: &MessageId)
         -> Result<MessageBody, BackendError>;
 
-    /// Queue an outbound message for the next session. Returns the assigned
-    /// MID. Does NOT open a transport session — that's `connect`.
+    /// Queue an outbound message for the next session. The trait returns
+    /// `Option<MessageId>` to honestly handle backends that DO assign and
+    /// return a MID at queue time (future native backend) vs backends that
+    /// do NOT (current Pat 1.0.0 HTTP API does not — confirmed by code
+    /// inspection of `src-tauri/src/pat_client.rs::PatClient::send`). Does
+    /// NOT open a transport session — that's `connect`.
     async fn send_message(&self, msg: OutboundMessage)
-        -> Result<MessageId, BackendError>;
+        -> Result<Option<MessageId>, BackendError>;
 
-    /// Open a transport session. Returns a `Session` handle; the connection
-    /// remains open until the handle is dropped OR `disconnect` is called.
-    /// Dropping the handle disconnects best-effort (errors silenced).
+    /// Open a transport session. Returns a `Session` handle that carries
+    /// backend-instance identity (so `disconnect` can reject a session
+    /// passed to the wrong backend with `BackendError::InvalidSession`).
+    /// The connection remains open until the handle is dropped OR
+    /// `disconnect` is called.
+    ///
+    /// **Drop semantics:** dropping a `Session` performs LOCAL cleanup
+    /// only — releasing in-process state, NOT a remote-disconnect call.
+    /// Explicit `disconnect` is the only guaranteed remote-release path.
+    /// The reason: backends with async-only remote disconnect (PatBackend
+    /// HTTP) cannot block-on cleanup inside Drop without risking executor
+    /// deadlock. Pat-side orphaned sessions are server-time-out-bounded;
+    /// native-side orphans will close their TCP socket fd via Drop.
     async fn connect(&self, transport: TransportConfig)
         -> Result<Session, BackendError>;
 
     /// Explicit disconnect with error propagation. Consumes the session.
+    /// Returns `BackendError::InvalidSession` if the session was minted
+    /// by a different backend instance.
     async fn disconnect(&self, session: Session)
         -> Result<(), BackendError>;
 
-    /// Snapshot the current backend status. Cheap — does NOT do I/O.
+    /// Snapshot the current backend status. Cheap — MUST NOT do I/O.
+    /// Implementations cache the status internally and update it during
+    /// connect/disconnect/operation flows.
     fn status(&self) -> BackendStatus;
 
-    /// Subscribe to the backend's log stream. The stream emits one `LogLine`
-    /// per backend log event. **Cancellation:** drop the stream to
-    /// unsubscribe. The backend handles lagged subscribers internally
-    /// (oldest log lines are dropped if the consumer falls behind).
+    /// Subscribe to the backend's log stream. The stream emits one
+    /// `LogLine` per backend log event. **Cancellation:** drop the stream
+    /// to unsubscribe. The backend handles lagged subscribers internally
+    /// (oldest log lines are dropped silently if the consumer falls
+    /// behind; this is acceptable because nothing relies on log lines for
+    /// correctness).
     fn stream_log(&self) -> BoxStream<'static, LogLine>;
 }
 ```
+
+**`Send + Sync` discipline (per v2 P2 #8):** implementors MUST NOT hold a
+`std::sync::MutexGuard` across an `.await` point (Rust's mutex guards are
+`!Send`). Long-running blocking work (Pat process lifecycle, sync HTTP)
+belongs in `tokio::task::spawn_blocking`. Where async state must be
+shared across tasks, prefer `tokio::sync::Mutex` (whose guard IS `Send`)
+or design around `Arc<RwLock<...>>` with short-held read/write locks.
 
 ### 3.2 Supporting types
 
 ```rust
 /// Folder selector — re-exported from `pat_client` for trait-level naming
 /// stability. The Pat module retains it for internal use.
+/// `#[non_exhaustive]` per v2 P1 #5 — native backend may add Spam/Drafts.
 pub use crate::pat_client::MailboxFolder;
+// Note: the `#[non_exhaustive]` attribute is added to MailboxFolder
+// in-place at its definition in pat_client.rs.
 
 /// Newtype around the Winlink Message ID (MID) string.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct MessageId(pub String);
 
 /// Light header-only view returned by `list_messages`.
+/// `#[non_exhaustive]` per v2 P1 #5 — future fields (html_subject hint,
+/// has_attachments flag, etc.) added without breaking exhaustive matches.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct MessageMeta {
     pub id: MessageId,
     pub subject: String,
     pub from: String,
-    pub date: String,        // ISO-8601 string (matches Pat's wire format)
+    /// RFC 3339 UTC timestamp. Backend MUST emit canonical form (e.g.,
+    /// `2026-05-18T15:37:27Z`); callers MAY parse with `chrono::DateTime`
+    /// at the Tauri/frontend boundary. Validation lives at the backend
+    /// emit point, not in this type.
+    pub date: String,
     pub unread: bool,
     pub body_size: u64,
 }
 
 /// Full body returned by `read_message`. Headers come from the matching
-/// `MessageMeta` if the caller wants them — `MessageBody` is the bytes only.
+/// `MessageMeta` if the caller wants them — `MessageBody` carries the
+/// bytes.
+///
+/// **Byte fidelity (per v2 P0 #2):** the body is `Vec<u8>` not `String`
+/// because Winlink B2F messages can contain MIME parts with binary
+/// payloads (attachments). Pat's HTTP response is currently text/RFC 5322
+/// but byte-decoded — the conversion to display text (via
+/// `String::from_utf8_lossy` or a MIME parser) happens at the Tauri
+/// command boundary, NOT in the backend trait. Native backend in v0.5+
+/// preserves raw bytes from the B2F wire format.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct MessageBody {
     pub id: MessageId,
-    pub mime_text: String,   // RFC 5322 representation; native backend may add MIME parts in v0.5+
+    pub raw_rfc5322: Vec<u8>,
 }
 
 /// Outbound message — what `send_message` consumes.
+///
+/// Intentionally NOT `#[non_exhaustive]` (per v2 P1 #5 carve-out):
+/// callers construct this type, and `#[non_exhaustive]` would force
+/// `OutboundMessage { ..Default::default() }` syntax that hurts
+/// ergonomics. Adding fields later IS a breaking change for callers,
+/// accepted in exchange for clean construction. Revisit at v1.0.
 #[derive(Debug, Clone)]
 pub struct OutboundMessage {
     pub to: Vec<String>,     // Winlink callsigns or RFC 5322 addresses
     pub cc: Vec<String>,
     pub subject: String,
     pub body: String,
-    pub date: String,        // ISO-8601; caller-provided so backend impls are deterministic in tests
+    /// RFC 3339 UTC timestamp. Caller-provided so backend impls are
+    /// deterministic in tests. Backend MUST validate format and reject
+    /// with `BackendError::MessageRejected("invalid date format")` on
+    /// non-RFC-3339 input.
+    pub date: String,
 }
 
 /// Transport selector for `connect`. Wraps the v0.0.1 enum with
@@ -156,33 +237,55 @@ pub enum TransportConfig {
     // Future: Packet { freq, ... }, Pactor { ... }, VaraHf { ... }, etc.
 }
 
-/// Opaque session handle. `Drop` impl disconnects best-effort; callers
-/// wanting error propagation use `WinlinkBackend::disconnect`.
+/// Opaque session handle carrying backend-instance identity (per v2 P0
+/// #1) so that `disconnect` rejects sessions passed to the wrong backend.
 ///
-/// **Not** `Clone` — sessions are unique resources. `Send` because the
-/// session may live across an `await` point in a Tauri command handler.
+/// **Not** `Clone` — sessions are unique resources. **`Send`** because
+/// the session may live across an `await` point in a Tauri command
+/// handler.
+///
+/// **Drop semantics:** LOCAL cleanup only — releases in-process state
+/// (e.g., a `Mutex` guard count). It does NOT perform a remote-disconnect
+/// call. Callers wanting error-propagating release MUST call
+/// `WinlinkBackend::disconnect`. Rationale: backends with async-only
+/// remote disconnect (PatBackend's HTTP) cannot safely block-on cleanup
+/// inside Drop without executor deadlock risk. Pat-side orphans
+/// auto-time-out server-side; native-side orphans close their socket fd
+/// via the normal Drop chain on the inner TCP stream.
 #[derive(Debug)]
 pub struct Session {
+    pub(crate) backend_id: BackendInstanceId,
     pub(crate) inner: SessionInner,
 }
 
+/// Backend-instance identifier minted at backend construction time
+/// (e.g., via `uuid::Uuid` or a monotonic atomic counter). Embedded in
+/// every `Session` so `disconnect` can validate the session came from
+/// this backend instance. v0.0.1 uses a process-local `AtomicU64`
+/// counter — no UUID dependency needed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct BackendInstanceId(pub(crate) u64);
+
 #[derive(Debug)]
 pub(crate) enum SessionInner {
-    Pat { pat_session_id: String },  // Pat returns a session ID via HTTP
+    Pat { pat_session_id: String },  // Pat-minted session id if/when Pat exposes one
     Native(()),                       // NativeBackend stub never produces one
 }
 
 impl Drop for Session {
     fn drop(&mut self) {
-        // Best-effort: if the backend exposes a synchronous cleanup, call it.
-        // For PatBackend, the HTTP disconnect is async — we cannot block-on
-        // here without risking deadlock in async contexts. The contract:
-        // explicit `disconnect` is the right way to release; Drop is the
-        // safety net for forgotten sessions.
+        // Local cleanup only. See type-level docstring for rationale.
+        // No-op for v0.0.1 PatBackend (Pat sessions are server-tracked).
+        // Future native backend may add `inner.local_cleanup()` calls
+        // here when the SessionInner variant owns OS resources directly.
     }
 }
 
+/// Backend connection status. `#[non_exhaustive]` per v2 P1 #5 — future
+/// states (e.g., `Authenticating`, `RetryBackoff { until_iso }`) added
+/// without breaking exhaustive matches.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum BackendStatus {
     Disconnected,
     Connecting { transport: String },
@@ -191,6 +294,9 @@ pub enum BackendStatus {
     Error { reason: String },
 }
 
+/// Backend log line. `#[non_exhaustive]` is NOT applied because callers
+/// construct test fixtures of this type frequently. Adding fields is a
+/// breaking change; accepted.
 #[derive(Debug, Clone)]
 pub struct LogLine {
     pub timestamp_iso: String,
@@ -200,20 +306,23 @@ pub struct LogLine {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum LogLevel { Trace, Debug, Info, Warn, Error }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum LogSource { Backend, Pat, Transport, Wire }
 ```
 
 ### 3.3 Error model
 
-Single `BackendError` enum for all trait methods. Mirrors the `thiserror`-based pattern from `config.rs`'s `ConfigValidationError` / `ConfigReadError` / `ConfigWriteError`.
+Single `BackendError` enum for all trait methods, **`#[non_exhaustive]`** per v2 P1 #5 (future variants land without breaking matches) with **structured source-preserving variants** per v2 P1 #7 for the cases where retry/debug policy benefits from a source chain. Mirrors the `thiserror`-based pattern from `config.rs`'s `ConfigValidationError` / `ConfigReadError` / `ConfigWriteError`.
 
 ```rust
 use thiserror::Error;
 
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum BackendError {
     #[error("backend not configured: {0}")]
     NotConfigured(String),
@@ -221,17 +330,36 @@ pub enum BackendError {
     #[error("message not found: {0:?}")]
     NotFound(MessageId),
 
-    #[error("authentication failed: {0}")]
-    AuthFailed(String),
+    #[error("authentication failed: {reason}")]
+    AuthFailed { reason: String },
 
-    #[error("transport failed: {0}")]
-    TransportFailed(String),
+    /// Wire-level transport failure (CMS connection dropped, modem
+    /// returned BUSY, etc.). The `source` chain preserves the underlying
+    /// I/O or protocol error for debug + retry policy.
+    #[error("transport failed: {reason}")]
+    TransportFailed {
+        reason: String,
+        #[source]
+        source: Option<Box<dyn std::error::Error + Send + Sync + 'static>>,
+    },
 
     #[error("backend rejected message: {0}")]
     MessageRejected(String),
 
-    #[error("backend unavailable: {0}")]
-    BackendUnavailable(String),
+    /// Backend not reachable (sidecar not running, native daemon down,
+    /// network unreachable to CMS). `source` carries the underlying
+    /// connect-class error when available.
+    #[error("backend unavailable: {reason}")]
+    BackendUnavailable {
+        reason: String,
+        #[source]
+        source: Option<Box<dyn std::error::Error + Send + Sync + 'static>>,
+    },
+
+    /// Session passed to disconnect was minted by a different backend
+    /// instance (per v2 P0 #1).
+    #[error("session does not belong to this backend instance")]
+    InvalidSession,
 
     #[error("operation cancelled")]
     Cancelled,
@@ -242,21 +370,27 @@ pub enum BackendError {
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
 
-    #[error("internal error: {0}")]
-    Internal(String),
+    /// Catch-all. `source` carries the underlying error when available;
+    /// the `msg` describes the context in which it occurred.
+    #[error("internal error: {msg}")]
+    Internal {
+        msg: String,
+        #[source]
+        source: Option<Box<dyn std::error::Error + Send + Sync + 'static>>,
+    },
 }
 ```
 
-**PatBackend translates `PatClientError` → `BackendError`:**
+**PatBackend translates `PatClientError` → `BackendError`** (no string-only loss; `source` chain preserved):
 
 | `PatClientError` | → | `BackendError` |
 |---|---|---|
-| `Http(e) where e.is_connect()` | → | `BackendUnavailable("could not reach Pat HTTP sidecar")` |
-| `Http(e) where e.is_timeout()` | → | `TransportFailed("Pat HTTP request timed out")` |
-| `Http(e) other` | → | `Internal("Pat HTTP client error: {e}")` |
-| `Status(401)` | → | `AuthFailed("Pat returned 401")` |
-| `Status(404)` | → | `NotFound(...)` if context is read_message; otherwise `Internal` |
-| `Status(other)` | → | `Internal("Pat returned status {n}")` |
+| `Http(e) where e.is_connect()` | → | `BackendUnavailable { reason: "could not reach Pat HTTP sidecar", source: Some(Box::new(e)) }` |
+| `Http(e) where e.is_timeout()` | → | `TransportFailed { reason: "Pat HTTP request timed out", source: Some(Box::new(e)) }` |
+| `Http(e)` other | → | `Internal { msg: "Pat HTTP client error", source: Some(Box::new(e)) }` |
+| `Status(401)` | → | `AuthFailed { reason: "Pat returned 401" }` |
+| `Status(404)` | → | `NotFound(...)` when context is `read_message`; otherwise `Internal { msg: format!("Pat returned 404 for {context}"), source: None }` |
+| `Status(other)` | → | `Internal { msg: format!("Pat returned status {n}"), source: None }` |
 
 ### 3.4 Async / runtime choice
 
@@ -268,7 +402,7 @@ pub enum BackendError {
 4. `tokio = "1"` is already a dependency.
 5. `PatBackend` wraps the existing `reqwest::blocking::Client` via `tokio::task::spawn_blocking` — minor PatBackend-only complexity, contained.
 
-**Trait-object compatibility:** `async-trait = "0.1"` macro generates `Box<dyn Future>`-returning trait methods so `Box<dyn WinlinkBackend>` works for runtime dispatch. v0.5+ may move to native `async fn in trait` once MSRV permits, but `async-trait` is the right call for tuxlink's current Rust 1.75 floor (per `Cargo.toml`).
+**Trait-object compatibility:** `async-trait = "0.1"` macro generates `Box<dyn Future>`-returning trait methods so `Box<dyn WinlinkBackend>` works for runtime dispatch. **Correction per v2 P2 #10:** Rust 1.75 DOES ship native `async fn in trait` (RFC 3185), but `dyn Trait` object-safety with native async-fn-in-trait is the actual blocker (the compiler emits "dyn-incompatible" errors); `async-trait` remains the right call for tuxlink regardless of MSRV because the trait must be object-safe to flow through `Box<dyn WinlinkBackend>` in the Tauri command surface.
 
 **Alternative considered: sync trait + `block_on` at call sites.** Rejected — bad ergonomics for Tauri command handlers, deadlock risk under tokio runtime, awkward for `Stream`-returning methods.
 
@@ -313,6 +447,67 @@ pub enum BackendError {
 5. **Future split is non-breaking** — if v0.5+ surfaces a backend that implements only message ops (no transport), we can extract `MessageStore: WinlinkBackend` as a supertrait split. No code change to current callers.
 
 **Alternative considered: `MessageStore` + `SessionControl` + `LogStream` traits with `WinlinkBackend = MessageStore + SessionControl + LogStream` blanket impl.** Rejected — adds boilerplate for no current consumer benefit; revisit if v0.5+ surfaces a backend asymmetry.
+
+### 3.8.0 PatClient extension prerequisites (per v2 P1 #4)
+
+Codex's R1 review correctly flagged that `PatBackend` cannot wrap `PatClient` as-is — the current API surface is too thin. Three extensions land as the first commits of the impl, BEFORE the trait code:
+
+1. **`#[derive(Clone)]` on `PatClient`.** The `reqwest::blocking::Client` field is already `Arc`-backed and `Clone`. The derive is one line. Required because `PatBackend::list_messages` clones the client into a `spawn_blocking` closure.
+
+2. **New `PatClient::read(folder, mid) -> Result<MessageBody, PatClientError>` method.** Wraps Pat's `GET /api/mailbox/{folder}/{mid}` endpoint. Returns the response body as `Vec<u8>` (the trait wraps this into `MessageBody { id, raw_rfc5322 }`). One method, ~15 lines.
+
+3. **`PatClient::send` return-type investigation.** Current signature: `send(...) -> Result<(), PatClientError>` — discards Pat's response body. The Pat 1.0.0 OpenAPI docs SHOULD indicate whether the POST to `/api/mailbox/out` returns the assigned MID. Implementation phase reads Pat's actual response (via integration test against a real Pat 1.0.0 binary). Outcomes:
+   - **If Pat returns MID:** change `PatClient::send` to return `Result<String, PatClientError>` (the MID); `PatBackend::send_message` returns `Ok(Some(MessageId(mid)))`.
+   - **If Pat does NOT return MID:** keep `PatClient::send` returning `Result<(), PatClientError>`; `PatBackend::send_message` returns `Ok(None)`.
+   - Either way, the trait's `Result<Option<MessageId>, BackendError>` signature accommodates the truth as found in code.
+
+These are NOT Codex's authoritative call — per [`feedback_ai_amateur_radio_reliability`](../../../.claude/projects/-home-administrator-Code-tuxlink/memory/feedback_ai_amateur_radio_reliability.md), we don't take AI as authority on Pat HTTP API specifics. The impl-phase investigation IS authoritative.
+
+### 3.8.1 PatProcess::spawn refactor (per v2 P1 #6)
+
+Codex's R1 review flagged that the current `PatProcess::spawn` consumes the Child's stderr in its startup-port-detection loop, drops the `BufReader` when the announce is seen, and leaves no path for `PatBackend` to forward subsequent log lines to subscribers.
+
+**Refactor:** add an optional log sink to `PatSpawnOptions`. After startup-port-detection succeeds, spawn a dedicated thread that drains the remaining stderr into the sink.
+
+```rust
+// In src-tauri/src/pat_process.rs:
+pub struct PatSpawnOptions {
+    pub binary: PathBuf,
+    pub config_path: PathBuf,
+    pub mbox_dir: PathBuf,
+    pub http_listen_port: u16,
+    pub pid_file: PathBuf,
+    /// NEW (per tuxlink-z5f v2 P1 #6): optional log sink. When `Some`,
+    /// stderr lines AFTER the startup-port-detection are forwarded into
+    /// the sender. When `None`, behavior is unchanged from pre-z5f
+    /// (stderr is silently drained by the OS after spawn returns).
+    pub log_sink: Option<std::sync::mpsc::Sender<String>>,
+}
+```
+
+Inside `spawn`, after the startup detection breaks the loop:
+
+```rust
+if let Some(tx) = opts.log_sink {
+    std::thread::spawn(move || {
+        for line in reader.lines() {
+            match line {
+                Ok(l) => {
+                    if tx.send(l).is_err() {
+                        // Receiver dropped; nothing more to do.
+                        break;
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+    });
+}
+```
+
+The existing `pat_process_test.rs` tests pass `log_sink: None` (or `..Default::default()` once `PatSpawnOptions` gets a `Default` impl); their behavior is unchanged.
+
+`PatBackend::spawn` provides the sink. A `tokio::task::spawn_blocking` task on the PatBackend side drains the sync `mpsc::Receiver<String>` into the `tokio::sync::broadcast::Sender<LogLine>` (after parsing each string into a structured `LogLine`).
 
 ### 3.8 PatBackend implementation outline
 
@@ -379,22 +574,24 @@ The stub exists so v0.5 Step 2+ can add real native logic incrementally without 
 
 ---
 
-## 4. Test plan (8 tests)
+## 4. Test plan (10 tests)
 
 Tests live in `src-tauri/tests/winlink_backend_test.rs`. Uses `mockito` for HTTP mocking (same pattern as the existing `PatClient` tests would use if they existed; today the `pat_client` module is untested directly — this spec adds trait-level tests that exercise it transitively).
 
 | # | Test name | What it verifies |
 |---|---|---|
 | 1 | `test_pat_backend_list_messages_returns_mapped_metas` | `PatBackend::list_messages` against a `mockito` server returning the Pat DTO JSON, asserts the returned `Vec<MessageMeta>` is correctly mapped (id, subject, from, date, unread, body_size). |
-| 2 | `test_pat_backend_send_message_posts_multipart` | `PatBackend::send_message` POSTs the expected multipart form to `/api/mailbox/out` and returns the assigned MID. Mockito matches the request body. |
+| 2 | `test_pat_backend_send_message_posts_multipart` | `PatBackend::send_message` POSTs the expected multipart form to `/api/mailbox/out` and returns `Ok(Some(MessageId))` or `Ok(None)` per §3.8.0's send-return-investigation outcome. Mockito matches the request body. |
 | 3 | `test_pat_backend_translates_404_to_not_found_for_read` | `PatBackend::read_message` against a mock returning 404 → returns `BackendError::NotFound(_)`. Validates the error-translation table in §3.3. |
-| 4 | `test_pat_backend_translates_401_to_auth_failed` | Any method against a mock returning 401 → returns `BackendError::AuthFailed(_)`. |
-| 5 | `test_pat_backend_translates_connect_error_to_backend_unavailable` | `PatBackend` pointed at a closed port → returns `BackendError::BackendUnavailable(_)` on any method. |
-| 6 | `test_native_backend_returns_not_implemented_for_every_method` | `NativeBackend::new()`, then call each of `list_messages` / `read_message` / `send_message` / `connect` / `disconnect` → all return `BackendError::NotImplemented`. `status()` returns `Disconnected`. `stream_log()` is an empty stream. |
+| 4 | `test_pat_backend_translates_401_to_auth_failed` | Any method against a mock returning 401 → returns `BackendError::AuthFailed { .. }`. |
+| 5 | `test_pat_backend_translates_connect_error_to_backend_unavailable` | `PatBackend` pointed at a closed port → returns `BackendError::BackendUnavailable { source: Some(_), .. }` on any method. Asserts `source.is_some()` to validate v2 P1 #7 source-preservation. |
+| 6 | `test_native_backend_returns_not_implemented_for_every_method` | `NativeBackend::new()`, then call each of `list_messages` / `read_message` / `send_message` / `connect` / `disconnect` → all return `BackendError::NotImplemented`. `status()` returns `Disconnected`. `stream_log()` is an empty stream. Asserts no panics. |
 | 7 | `test_session_drop_does_not_panic` | Construct a `Session` (via `PatBackend::connect` against a mocked Pat connect endpoint), drop it, assert no panic and that the test completes. Validates the §3.5 Drop contract. |
 | 8 | `test_log_stream_emits_lines_and_handles_drop` | Construct a `PatBackend`, subscribe to `stream_log()`, push 3 fake log events via the internal broadcast sender, assert the stream emits them in order. Drop the stream, assert the backend continues running (no panic on dropped receiver). |
+| 9 | `test_session_from_other_backend_instance_rejected` (new in v2 per P0 #1) | Create two `PatBackend` instances (`a` and `b`). Mint a `Session` from `a.connect(...)`. Pass it to `b.disconnect(session)` → returns `BackendError::InvalidSession`. Validates the backend-instance-id check. |
+| 10 | `test_message_body_preserves_bytes` (new in v2 per P0 #2) | Configure `PatClient::read` mock to return a body with non-UTF-8 bytes (e.g., `[0x48, 0x69, 0xff, 0xfe]`). Assert `PatBackend::read_message` returns `MessageBody { raw_rfc5322: <exact bytes>, .. }`. Validates byte-fidelity at the trait boundary. |
 
-**Why only 8 tests (not 24+):** per [`feedback_discipline_triage_rule`](../../../.claude/projects/-home-administrator-Code-tuxlink/memory/feedback_discipline_triage_rule.md), this is tightly-scoped architectural work. The trait's behavior contract is small (each method has one happy path + one error-class mapping); deeper tests belong to the future native backend (B2F parser tests, state-machine tests, parity-vs-Pat tests). At v0.5 Step 2, the `NativeBackend` stub gets replaced with real logic, and that PR carries the deeper test suite.
+**Why only 10 tests (not 24+):** per [`feedback_discipline_triage_rule`](../../../.claude/projects/-home-administrator-Code-tuxlink/memory/feedback_discipline_triage_rule.md), this is tightly-scoped architectural work. The trait's behavior contract is small (each method has one happy path + one error-class mapping); deeper tests belong to the future native backend (B2F parser tests, state-machine tests, parity-vs-Pat tests). At v0.5 Step 2, the `NativeBackend` stub gets replaced with real logic, and that PR carries the deeper test suite.
 
 ---
 
@@ -410,20 +607,31 @@ These notes document the trait's forward-compat surface so future steps don't re
 
 ---
 
-## 6. Open questions (Codex-converge targets)
+## 6. Open questions — RESOLVED in v2
 
-The Codex cross-provider round (1 round per bd-issue scope) should focus on:
+The 8 open questions enumerated in v1 §6 were the Codex R1 converge targets. All 8 are now resolved; see the v2-revision change table at the top of this document for the disposition of each. The raw Codex R1 transcript is at `dev/adversarial/2026-05-18-tuxlink-z5f-winlink-backend-trait-codex-r1.md` (gitignored).
 
-1. **Send + Sync bounds on the trait.** Are `Send + Sync` correct? `PatBackend` holds `Arc<Mutex<PatProcess>>` which is `Send + Sync` if `PatProcess` is `Send` (it is — owns `Option<Child>` which is `Send`). NativeBackend stub is trivially both. Any future backend with `Rc<RefCell<...>>` internals would break this — flag if forward-compat concern.
-2. **`async-trait` macro overhead.** Generates a `Pin<Box<dyn Future>>` per method call. Acceptable for backend operations (network I/O dwarfs the box allocation) but worth noting if a hot path emerges. Codex: verify no hot path expected.
-3. **`Session` not exposing the backend type.** The session is `pub struct Session { inner: SessionInner }` with `pub(crate) enum SessionInner`. This means callers can `disconnect(session)` against the correct backend but can also (accidentally) try to pass a `PatBackend` session to a `NativeBackend::disconnect`. Codex: should we tighten this with a phantom type parameter `Session<B>` or accept the v0.0.1 looseness (one backend in process)?
-4. **`MessageBody.mime_text: String` vs `Vec<u8>`.** Pat returns RFC 5322 as text. Native backend may need byte-level fidelity (binary attachments). For v0.0.1+v0.5-Step-3, text suffices. Codex: flag if changing to `Vec<u8>` should happen now to avoid a churn later.
-5. **`status() -> BackendStatus` being non-async.** Is the snapshot-cheap contract realistic for both Pat (reads an `RwLock`) and native (also reads an in-memory state)? Codex: verify or surface a counter-example.
-6. **`OutboundMessage.date: String` being caller-provided.** Pat-style — caller passes ISO-8601. Native backend can re-validate. Codex: should this be `chrono::DateTime<Utc>` instead to push validation to the type system? Cost: adds `chrono` dependency.
-7. **`stream_log()` not being `async fn`.** It returns a stream synchronously; the stream itself yields values asynchronously. Standard pattern but worth double-checking with Codex that this matches what callers expect under tokio.
-8. **NativeBackend stub returning `NotImplemented` vs `unimplemented!()`.** The spec chooses typed error. Codex: any reason to prefer panic-on-stub-call instead? (Position: typed error is safer; stubs shouldn't crash the process.)
+Quick summary of dispositions:
 
-Findings from the Codex round land in §7 as "v2 revision" + applied inline.
+| v1 §6 question | Disposition in v2 |
+|---|---|
+| 1. Send + Sync bounds | Ratified; added MutexGuard-not-across-await discipline note (§3.1) |
+| 2. async-trait overhead | Ratified; no hot path expected |
+| 3. Session backend affinity | **Tightened** — Session now carries `BackendInstanceId`; `disconnect` returns `InvalidSession` for cross-backend sessions (§3.2, §3.3, test #9) |
+| 4. MessageBody String vs Vec<u8> | **Changed to `Vec<u8>`** — native backend needs byte fidelity for MIME (§3.2, test #10) |
+| 5. status() non-async | Ratified; added cache-and-update discipline note (§3.1) |
+| 6. date type | Mis-framed per Codex; kept as `String` with RFC 3339 UTC spec + backend-side validation requirement (§3.2) |
+| 7. stream_log() non-async | Ratified; standard `fn -> Stream` pattern |
+| 8. NativeBackend stub typed errors | Ratified |
+
+Plus 3 additional concerns raised by Codex and applied:
+- `BroadcastStream` dependency missing → added `tokio-stream` (§2.1)
+- PatClient gaps → enumerated extension prerequisites (§3.8.0)
+- PatProcess stderr lifecycle → refactor outlined (§3.8.1)
+- Public-type forward-compat → `#[non_exhaustive]` added to BackendError, BackendStatus, LogSource, LogLevel, MessageMeta, MessageBody, MailboxFolder (§3.2, §3.3)
+- BackendError source preservation → structured `source: Option<Box<dyn Error>>` variants (§3.3)
+
+No additional Codex rounds planned — bd-issue scope is "≥1 round, NOT 5"; one round delivered high-signal P0+P1 fixes that justify moving to impl.
 
 ---
 
@@ -432,8 +640,7 @@ Findings from the Codex round land in §7 as "v2 revision" + applied inline.
 | Version | Date | Author | Change summary |
 |---|---|---|---|
 | v1 | 2026-05-18 | badger-oak-dahlia | Initial spec — pre-adrev |
-
-(v2 entry to be added after Codex round.)
+| v2 | 2026-05-18 | badger-oak-dahlia | Codex R1 cross-provider review applied: 3 P0 + 4 P1 + 4 P2 + 1 P3 fixes. Session carries backend-instance id; MessageBody is Vec<u8>; tokio-stream dep added; PatClient + PatProcess prerequisite refactors enumerated; BackendError variants made source-preserving; public enums `#[non_exhaustive]`. Test count grew 8 → 10. |
 
 ---
 
