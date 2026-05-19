@@ -30,6 +30,10 @@ use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent}
 use tauri::{AppHandle, Emitter, Manager, Runtime};
 use tauri::menu::MenuEvent;
 
+/// Tray icon embedded at compile time (RGBA pixels, no runtime file I/O).
+/// `iconAsTemplate` behaviour preserved on macOS via `icon_as_template(true)` below.
+const TRAY_ICON: tauri::image::Image<'_> = tauri::include_image!("icons/tray-icon.png");
+
 /// Pure-function manifest of every tray event ID this module handles.
 /// Test surface for `tests/tray_test.rs`. Order matches the tray menu layout.
 pub fn tray_event_ids() -> Vec<&'static str> {
@@ -52,13 +56,12 @@ pub fn install<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
         .item(&quit)
         .build()?;
 
-    let icon = app
-        .default_window_icon()
-        .cloned()
-        .expect("tray: no window icon configured — add icons/32x32.png to tauri.conf.json bundle.icon");
-
+    // Use the compile-time embedded tray icon. `icon_as_template(true)` preserves the
+    // macOS template-image behaviour that was previously set in tauri.conf.json's
+    // now-removed `app.trayIcon` block (no-op on Linux/Windows; safe to keep).
     let _tray = TrayIconBuilder::new()
-        .icon(icon)
+        .icon(TRAY_ICON)
+        .icon_as_template(true)
         .menu(&menu)
         .show_menu_on_left_click(false) // left-click = show/hide; right-click = menu
         .on_menu_event({

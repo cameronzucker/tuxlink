@@ -46,13 +46,19 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| {
-            // Task 8 — close-to-tray: intercept the window X / Alt-F4 path
-            // and hide instead of closing. The process + Pat child stay alive.
+            // Task 8 — close-to-tray: intercept the window X / Alt-F4 path on
+            // the MAIN window and hide instead of closing. The process + Pat
+            // child stay alive.
             // Only the Quit menu item (menu:file:quit / tray:quit) calls
             // app.exit(0), which bypasses this handler entirely.
-            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                api.prevent_close();
-                let _ = window.hide();
+            //
+            // Guard on "main" so Task 14's compose windows close normally (they
+            // need real close + unsaved-draft handling, not hide-to-tray).
+            if window.label() == "main" {
+                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
             }
         })
         .invoke_handler(tauri::generate_handler![
