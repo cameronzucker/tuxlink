@@ -68,32 +68,94 @@ export function SessionLog({ sessionState = 'Idle' }: SessionLogProps) {
 
   // ---------------------------------------------------------------------------
   // Tauri IPC: seed from snapshot + subscribe to live events
+  //
+  // Race-safety notes:
+  //   1. Subscribe to live events FIRST, then seed from snapshot. This ensures
+  //      lines arriving after subscription but before snapshot resolves are
+  //      captured in state; the merge/dedup below prevents duplicate display.
+  //   2. Listener-leak guard: if the component unmounts before listen()'s
+  //      promise resolves, the cleanup flag causes the late .then() handler to
+  //      immediately call the unlisten fn rather than storing it and leaking.
+  //      All setLines calls are gated behind the mounted ref to prevent
+  //      setState on an unmounted component.
   // ---------------------------------------------------------------------------
 
   useEffect(() => {
-    // Seed from snapshot (late subscriber / pane re-open)
-    invoke<LogLineDto[]>('session_log_snapshot')
+    // mounted ref — false once the cleanup function has run
+    let mounted = true;
+
+    // Subscribe to live line events FIRST (before snapshot fetch), so no
+    // events are missed during the async snapshot window.
+    let unlistenFn: (() => void) | null = null;
+    const listenPromise = listen<LogLineDto>('session_log:line', event => {
+      if (mounted) {
+        setLines(prev => [...prev, event.payload]);
+      }
+    }).then(unlisten => {
+      if (mounted) {
+        // Normal case: component still alive, store the handle.
+        unlistenFn = unlisten;
+      } else {
+        // Late resolution: cleanup already ran; immediately release the
+        // listener so it does not accumulate on remount.
+        unlisten();
+      }
+    });
+
+    // Seed from snapshot AFTER subscribing (late subscriber / pane re-open).
+    // Merge strategy: prepend snapshot lines and deduplicate by timestampIso
+    // so any live lines already in state are not overwritten or duplicated.
+    const snapshotPromise = invoke<LogLineDto[]>('session_log_snapshot')
       .then(snapshot => {
-        if (snapshot.length > 0) {
-          setLines(snapshot);
+        if (mounted && snapshot.length > 0) {
+          setLines(prev => {
+            // Build a set of timestamps already captured via live events
+            const seen = new Set(prev.map(l => l.timestampIso));
+            // Keep snapshot lines not already in live state; prepend them
+            const newFromSnapshot = snapshot.filter(l => !seen.has(l.timestampIso));
+            return newFromSnapshot.length > 0
+              ? [...newFromSnapshot, ...prev]
+              : prev;
+          });
         }
       })
       .catch(() => {
         // Backend not available (offline mode / pre-bootstrap) — start empty
       });
 
-    // Subscribe to live line events
-    let unlistenFn: (() => void) | null = null;
-    listen<LogLineDto>('session_log:line', event => {
-      setLines(prev => [...prev, event.payload]);
-    }).then(unlisten => {
-      unlistenFn = unlisten;
-    });
+    // Suppress unhandled-rejection warnings in tests (both promises are
+    // internally handled; this is a belt-and-suspenders no-op reference).
+    void listenPromise;
+    void snapshotPromise;
 
     return () => {
+      mounted = false;
       if (unlistenFn) unlistenFn();
+      // If unlistenFn is still null here, the listen() .then() hasn't fired
+      // yet — when it does, it will see mounted===false and call unlisten()
+      // immediately (see the .then() handler above).
     };
   }, []);
+
+  // ---------------------------------------------------------------------------
+  // New-session boundary: re-enable auto-scroll when a new session starts.
+  // Spec §5.5: "auto-scroll resumes on scroll-to-bottom OR new session start."
+  // ---------------------------------------------------------------------------
+
+  const prevSessionStateRef = useRef<SessionState>(sessionState);
+  useEffect(() => {
+    const prev = prevSessionStateRef.current;
+    prevSessionStateRef.current = sessionState;
+    // Transition into a new active session (Idle/Disconnecting → Connecting or
+    // Connecting → In-session) re-enables live-tail so the operator always
+    // sees the start of a new session without having to scroll manually.
+    if (
+      prev !== 'In-session' &&
+      sessionState === 'In-session'
+    ) {
+      setStuckToBottom(true);
+    }
+  }, [sessionState]);
 
   // ---------------------------------------------------------------------------
   // Auto-scroll: scroll to bottom when new lines arrive (if stuck)

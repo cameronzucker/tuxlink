@@ -143,6 +143,12 @@ function makeSummaryLine(
  * - Appends a per-session summary after "*** Session ended" (or at end) when
  *   B2F lines were suppressed.
  *
+ * Pat-source keep policy: `pat`-source lines are intentionally kept in the
+ * Human projection. Pat's own session narrative (login banners, message counts,
+ * error reports) is operator-relevant backend/transport signal — it is NOT raw
+ * B2F wire noise. Only non-annotated `wire`-source lines are suppressed.
+ * Summary: keep ***-annotated + backend + transport + pat; drop non-annotated wire.
+ *
  * Pure function — does NOT mutate the input array.
  */
 export function humanProjection(lines: LogLineDto[]): LogLineDto[] {

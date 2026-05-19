@@ -275,25 +275,116 @@ describe('SessionLog — live event delivery', () => {
 
 // ---------------------------------------------------------------------------
 // Test 6: Auto-scroll stuckToBottom state — spec §6 Task 15 item (6)
+//
+// Real scroll-geometry test: set scrollTop/scrollHeight/clientHeight on the
+// scroll container, fire a scroll event, and assert state transitions.
 // ---------------------------------------------------------------------------
 
 describe('SessionLog — auto-scroll logic', () => {
-  it('scroll-to-bottom button is present when not stuck to bottom', async () => {
+  it('auto-scroll is ON by default (scroll-to-bottom button hidden)', async () => {
     await act(async () => {
       render(<SessionLog sessionState="Idle" />);
     });
-    // Simulate scrolling away from bottom by clicking the pause/scroll-up trigger
-    const pauseEl = screen.queryByTestId('scroll-to-bottom');
-    // The button may or may not be visible depending on whether auto-scroll
-    // is already active. This test just verifies the element exists in the DOM
-    // (it's conditionally shown based on stuckToBottom state — so when shown,
-    // it must be findable; when auto-scroll is active the button is hidden).
-    // Since we haven't scrolled up, auto-scroll should be ON and button hidden.
-    // This is a structural check — the button's display state is runtime-only.
-    // We verify it can be queried by test-id when stuckToBottom=false by
-    // checking the component declares it in its render tree.
-    // (Full scroll-up-pause verification is M2 smoke — §9 testing-pitfalls.md)
-    expect(pauseEl === null || pauseEl.textContent !== undefined).toBe(true);
+    // stuckToBottom starts true → "↓ Resume" button is NOT rendered
+    expect(screen.queryByTestId('scroll-to-bottom')).toBeNull();
+  });
+
+  it('pauses auto-scroll when user scrolls up (not at bottom)', async () => {
+    await act(async () => {
+      render(<SessionLog sessionState="Idle" />);
+    });
+
+    const scrollEl = screen.getByTestId('session-log-lines');
+
+    // Simulate a scroll container where the user has scrolled up:
+    // scrollHeight=500, clientHeight=100, scrollTop=100 → 300px from bottom
+    Object.defineProperty(scrollEl, 'scrollHeight', { value: 500, configurable: true });
+    Object.defineProperty(scrollEl, 'clientHeight', { value: 100, configurable: true });
+    Object.defineProperty(scrollEl, 'scrollTop', { value: 100, configurable: true, writable: true });
+
+    await act(async () => {
+      fireEvent.scroll(scrollEl);
+    });
+
+    // stuckToBottom should now be false → "↓ Resume" button appears
+    expect(screen.getByTestId('scroll-to-bottom')).toBeTruthy();
+  });
+
+  it('resumes auto-scroll when user scrolls back to bottom', async () => {
+    await act(async () => {
+      render(<SessionLog sessionState="Idle" />);
+    });
+
+    const scrollEl = screen.getByTestId('session-log-lines');
+
+    // First scroll up to pause
+    Object.defineProperty(scrollEl, 'scrollHeight', { value: 500, configurable: true });
+    Object.defineProperty(scrollEl, 'clientHeight', { value: 100, configurable: true });
+    Object.defineProperty(scrollEl, 'scrollTop', { value: 100, configurable: true, writable: true });
+    await act(async () => {
+      fireEvent.scroll(scrollEl);
+    });
+    expect(screen.getByTestId('scroll-to-bottom')).toBeTruthy();
+
+    // Now scroll to bottom: scrollHeight - scrollTop - clientHeight < 4
+    Object.defineProperty(scrollEl, 'scrollTop', { value: 399, configurable: true, writable: true });
+    await act(async () => {
+      fireEvent.scroll(scrollEl);
+    });
+
+    // stuckToBottom should be true again → "↓ Resume" button gone
+    expect(screen.queryByTestId('scroll-to-bottom')).toBeNull();
+  });
+
+  it('click "↓ Resume" button re-enables auto-scroll', async () => {
+    await act(async () => {
+      render(<SessionLog sessionState="Idle" />);
+    });
+
+    const scrollEl = screen.getByTestId('session-log-lines');
+    Object.defineProperty(scrollEl, 'scrollHeight', { value: 500, configurable: true });
+    Object.defineProperty(scrollEl, 'clientHeight', { value: 100, configurable: true });
+    Object.defineProperty(scrollEl, 'scrollTop', { value: 100, configurable: true, writable: true });
+    await act(async () => {
+      fireEvent.scroll(scrollEl);
+    });
+
+    // Pause state: button visible
+    const resumeBtn = screen.getByTestId('scroll-to-bottom');
+    expect(resumeBtn).toBeTruthy();
+
+    // Click the resume button
+    await act(async () => {
+      fireEvent.click(resumeBtn);
+    });
+
+    // Button should disappear (stuckToBottom = true again)
+    expect(screen.queryByTestId('scroll-to-bottom')).toBeNull();
+  });
+
+  it('auto-scroll resumes on new session start (sessionState → In-session)', async () => {
+    const { rerender } = await act(async () =>
+      render(<SessionLog sessionState="Idle" />)
+    );
+
+    const scrollEl = screen.getByTestId('session-log-lines');
+    Object.defineProperty(scrollEl, 'scrollHeight', { value: 500, configurable: true });
+    Object.defineProperty(scrollEl, 'clientHeight', { value: 100, configurable: true });
+    Object.defineProperty(scrollEl, 'scrollTop', { value: 100, configurable: true, writable: true });
+
+    // Scroll up to pause auto-scroll
+    await act(async () => {
+      fireEvent.scroll(scrollEl);
+    });
+    expect(screen.getByTestId('scroll-to-bottom')).toBeTruthy();
+
+    // New session starts — spec §5.5: auto-scroll resumes on new-session boundary
+    await act(async () => {
+      rerender(<SessionLog sessionState="In-session" />);
+    });
+
+    // stuckToBottom should be re-enabled → button gone
+    expect(screen.queryByTestId('scroll-to-bottom')).toBeNull();
   });
 });
 
