@@ -1,6 +1,7 @@
 pub mod config;
 pub mod pat_client;
 pub mod pat_process;
+pub mod winlink_backend;
 
 #[cfg(test)]
 mod build_support;
