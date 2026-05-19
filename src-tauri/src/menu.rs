@@ -16,7 +16,7 @@
 //! trivially assertable from unit tests, so the event-id manifest is the
 //! tested contract.
 
-use tauri::menu::{Menu, MenuBuilder, MenuItemBuilder, SubmenuBuilder};
+use tauri::menu::{Menu, MenuBuilder, MenuItemBuilder, PredefinedMenuItem, SubmenuBuilder};
 use tauri::{AppHandle, Emitter, Runtime};
 
 /// Pure-function manifest of every menu event ID this module emits. Test
@@ -24,7 +24,12 @@ use tauri::{AppHandle, Emitter, Runtime};
 /// human-readability when diffing.
 pub fn menu_event_ids() -> Vec<&'static str> {
     vec![
-        "menu:file:new", "menu:file:quit",
+        "menu:file:new",
+        // menu:file:quit is intentionally absent — Quit is bound to
+        // PredefinedMenuItem::quit, which Tauri handles natively (it never
+        // fires on_menu_event). Future quit-intercept work (Task 14 unsaved-
+        // draft dialog) should hook tauri::WindowEvent::CloseRequested on the
+        // main window, NOT a menu event.
         "menu:message:reply", "menu:message:reply_all", "menu:message:forward", "menu:message:print",
         "menu:session:connect", "menu:session:disconnect", "menu:session:log",
         "menu:session:test_send",         // AMD-10 wizard half
@@ -46,7 +51,7 @@ pub fn build_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
     let file = SubmenuBuilder::new(app, "File")
         .item(&MenuItemBuilder::with_id("menu:file:new", "New Message").accelerator("CmdOrCtrl+N").build(app)?)
         .separator()
-        .item(&MenuItemBuilder::with_id("menu:file:quit", "Quit").accelerator("CmdOrCtrl+Q").build(app)?)
+        .item(&PredefinedMenuItem::quit(app, Some("Quit"))?)
         .build()?;
 
     let message = SubmenuBuilder::new(app, "Message")
@@ -111,18 +116,15 @@ pub fn build_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
 
 /// Wire menu events to Tauri IPC so the React frontend can listen.
 ///
-/// Quit is special-cased to exit natively because the frontend listener
-/// doesn't exist yet (Tasks 9+ will add it). The event still emits, so a
-/// future listener can observe and — if needed — intercept by calling a
-/// Tauri command to do cleanup (e.g., "discard unsaved draft?" dialog)
-/// before triggering final exit. Apps must always be Quit-able.
+/// Quit is NOT routed through this handler — it's bound to
+/// `PredefinedMenuItem::quit`, which Tauri handles natively. To intercept a
+/// quit attempt later (e.g., Task 14's "discard unsaved draft?" dialog), hook
+/// `tauri::WindowEvent::CloseRequested` on the main window, not the menu
+/// channel.
 pub fn wire_menu_events<R: Runtime>(app: &AppHandle<R>) {
     let app_for_handler = app.clone();
     app.on_menu_event(move |_app, event| {
         let id = event.id().as_ref().to_string();
         let _ = app_for_handler.emit("menu", &id);
-        if id == "menu:file:quit" {
-            app_for_handler.exit(0);
-        }
     });
 }

@@ -15,7 +15,10 @@ use tuxlink_lib::menu;
 fn test_menu_exposes_required_event_ids() {
     let ids = menu::menu_event_ids();
     let required = [
-        "menu:file:new", "menu:file:quit",
+        "menu:file:new",
+        // menu:file:quit deliberately absent — Quit is bound to
+        // PredefinedMenuItem::quit, which Tauri handles natively and never
+        // fires on_menu_event. See menu.rs for the design note.
         "menu:message:reply", "menu:message:reply_all", "menu:message:forward", "menu:message:print",
         "menu:session:connect", "menu:session:disconnect", "menu:session:log",
         "menu:session:test_send",         // AMD-10 wizard half
