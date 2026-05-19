@@ -1,5 +1,6 @@
 pub mod config;
 pub mod pat_client;
+pub mod pat_config;
 pub mod pat_process;
 pub mod winlink_backend;
 

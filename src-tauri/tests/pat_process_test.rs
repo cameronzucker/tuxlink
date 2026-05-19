@@ -1,5 +1,9 @@
 use std::path::PathBuf;
 use std::time::Duration;
+use tuxlink_lib::config::{
+    CmsTransport, Config, ConnectConfig, GpsState, IdentityConfig, PositionPrecision,
+    PrivacyConfig,
+};
 use tuxlink_lib::pat_process::{PatProcess, PatSpawnOptions};
 
 /// This test requires a `pat` binary in PATH or at the path passed in.
@@ -8,6 +12,32 @@ fn pat_binary() -> PathBuf {
     std::env::var_os("PAT_BINARY")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("pat"))
+}
+
+/// Per tuxlink-756: PatSpawnOptions now carries `tuxlink_config` and
+/// PatProcess::spawn renders Pat's config from it. Tests build a minimal
+/// valid CMS-path config to satisfy the render contract; Pat's actual
+/// CMS behavior is not exercised here (any keyring lookup would miss in
+/// the test ENV but these tests only assert spawn + shutdown lifecycle).
+fn minimal_cms_config() -> Config {
+    Config {
+        schema_version: 1,
+        wizard_completed: true,
+        connect: ConnectConfig {
+            connect_to_cms: true,
+            transport: CmsTransport::CmsSsl,
+        },
+        identity: IdentityConfig {
+            callsign: Some("TEST1".to_string()),
+            identifier: None,
+            grid: Some("AA00aa".to_string()),
+        },
+        privacy: PrivacyConfig {
+            gps_state: GpsState::Off,
+            position_precision: PositionPrecision::FourCharGrid,
+        },
+        pat_mbo_address: None,
+    }
 }
 
 #[test]
@@ -20,12 +50,8 @@ fn test_spawn_and_graceful_shutdown() {
         http_listen_port: 0,
         pid_file: tmp.path().join("pat.pid"),
         log_sink: None,
+        tuxlink_config: minimal_cms_config(),
     };
-    std::fs::write(&opts.config_path, r#"{
-        "mycall": "TEST1",
-        "secure_login_password": "x",
-        "locator": "AA00aa"
-    }"#).unwrap();
 
     let mut proc = PatProcess::spawn(opts).expect("spawn");
     assert!(proc.is_running(), "pat must be running after spawn");
@@ -46,12 +72,8 @@ fn test_stale_pid_file_is_cleaned_after_shutdown() {
         http_listen_port: 0,
         pid_file: tmp.path().join("pat.pid"),
         log_sink: None,
+        tuxlink_config: minimal_cms_config(),
     };
-    std::fs::write(&opts.config_path, r#"{
-        "mycall": "TEST1",
-        "secure_login_password": "x",
-        "locator": "AA00aa"
-    }"#).unwrap();
 
     let pid_file = opts.pid_file.clone();
     let mut proc = PatProcess::spawn(opts).unwrap();
