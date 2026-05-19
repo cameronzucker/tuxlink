@@ -3,6 +3,7 @@ pub mod menu;
 pub mod pat_client;
 pub mod pat_config;
 pub mod pat_process;
+pub mod tray;
 pub mod winlink_backend;
 pub mod wizard;
 
@@ -35,7 +36,24 @@ pub fn run() {
             let menu = crate::menu::build_menu(app.handle())?;
             app.set_menu(menu)?;
             crate::menu::wire_menu_events(app.handle());
+
+            // Install system tray icon + menu (tuxlink-rit / Task 8).
+            // Close-to-tray: window close button hides to tray; only
+            // File→Quit / tray→Quit / Ctrl+Q actually exit the process.
+            // This keeps the Pat child process alive mid-ARQ session.
+            crate::tray::install(app.handle())?;
+
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            // Task 8 — close-to-tray: intercept the window X / Alt-F4 path
+            // and hide instead of closing. The process + Pat child stay alive.
+            // Only the Quit menu item (menu:file:quit / tray:quit) calls
+            // app.exit(0), which bypasses this handler entirely.
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+                let _ = window.hide();
+            }
         })
         .invoke_handler(tauri::generate_handler![
             greet,

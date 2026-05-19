@@ -17,6 +17,13 @@
         "height": 600
       }
     ],
+    "trayIcon": {
+      "id": "tuxlink-tray",
+      "iconPath": "icons/tray-icon.png",
+      "iconAsTemplate": true,
+      "menuOnLeftClick": false,
+      "title": "Tuxlink"
+    },
     "security": {
       "csp": null
     }
