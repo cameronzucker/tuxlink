@@ -110,11 +110,24 @@ pub fn build_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
 }
 
 /// Wire menu events to Tauri IPC so the React frontend can listen.
+///
+/// Quit is handled inline here because `PredefinedMenuItem::quit` is
+/// `Linux: Unsupported` in Tauri 2 / muda — it silently no-ops on GTK.
+/// The canonical Linux pattern (per Tauri's own examples) is a custom
+/// MenuItemBuilder + an on_menu_event handler that calls app.exit(0).
+///
+/// To intercept a quit later (e.g., Task 14's unsaved-draft dialog), use
+/// `RunEvent::ExitRequested` with `prevent_exit()` on the app builder —
+/// NOT `WindowEvent::CloseRequested` (which only fires on the window-X /
+/// Alt-F4 path, not on menu-driven app.exit).
 pub fn wire_menu_events<R: Runtime>(app: &AppHandle<R>) {
     let app_for_handler = app.clone();
     app.on_menu_event(move |_app, event| {
         let id = event.id().as_ref().to_string();
-        // Emit a Tauri event the React side listens to.
+        if id == "menu:file:quit" {
+            app_for_handler.exit(0);
+            return;
+        }
         let _ = app_for_handler.emit("menu", &id);
     });
 }
