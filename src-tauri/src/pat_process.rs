@@ -6,6 +6,9 @@ use std::time::{Duration, Instant};
 
 pub struct PatSpawnOptions {
     pub binary: PathBuf,
+    /// Destination path for the Pat config rendered at spawn time. Pre-z5f
+    /// semantics: "existing file Pat reads." Post-tuxlink-756 semantics:
+    /// "where PatProcess WRITES the rendered Pat config before exec."
     pub config_path: PathBuf,
     pub mbox_dir: PathBuf,
     pub http_listen_port: u16, // 0 = ephemeral
@@ -17,6 +20,12 @@ pub struct PatSpawnOptions {
     /// Per tuxlink-z5f v2 P1 #6 — required so `PatBackend::stream_log` can
     /// multiplex Pat's log output to its subscribers.
     pub log_sink: Option<std::sync::mpsc::Sender<String>>,
+    /// Tuxlink's config; rendered into Pat's config.json at `config_path`
+    /// before exec. Per tuxlink-756 v2: post-cred-refactor, the wizard
+    /// writes tuxlink config + keyring entry but NOT Pat's config. This
+    /// field carries the tuxlink config so PatProcess can render Pat's
+    /// config from it via `crate::pat_config::write_pat_config_atomic`.
+    pub tuxlink_config: crate::config::Config,
 }
 
 pub struct PatProcess {
@@ -43,6 +52,28 @@ impl PatProcess {
         if let Some(parent) = opts.pid_file.parent() {
             std::fs::create_dir_all(parent)?;
         }
+
+        // Render Pat's config from tuxlink's config and atomically write to
+        // opts.config_path BEFORE exec. Per tuxlink-756 v2: this fills the
+        // gap left by the cred-handling refactor — the wizard writes
+        // tuxlink config + keyring entry but not Pat's config; without this
+        // step Pat would spawn with no callsign / no locator.
+        //
+        // Error mapping per spec §3.4 (Codex R1 P2 #2): preserve source
+        // chain via std::io::Error::new(kind, e) for non-Io variants.
+        crate::pat_config::write_pat_config_atomic(&opts.tuxlink_config, &opts.config_path)
+            .map_err(|e| match e {
+                crate::pat_config::PatConfigError::Io(io_err) => io_err,
+                e @ crate::pat_config::PatConfigError::MissingRequiredField(_) => {
+                    std::io::Error::new(std::io::ErrorKind::InvalidInput, e)
+                }
+                e @ crate::pat_config::PatConfigError::OfflineModeNoConfigNeeded => {
+                    std::io::Error::new(std::io::ErrorKind::InvalidInput, e)
+                }
+                e @ crate::pat_config::PatConfigError::RenderFailed(_) => {
+                    std::io::Error::new(std::io::ErrorKind::Other, e)
+                }
+            })?;
 
         let actual_port = if opts.http_listen_port == 0 {
             let listener = TcpListener::bind("127.0.0.1:0")?;
