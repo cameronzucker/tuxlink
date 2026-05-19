@@ -1,12 +1,24 @@
 # Pat Config Render at PatProcess Spawn — Design Spec
 
 **Spec ID:** tuxlink-756
-**Date:** 2026-05-19 (pre-adrev v1)
+**Date:** 2026-05-19 (v2 — post-Codex-R1 revision)
 **Author:** agent `badger-oak-dahlia`
-**Status:** pre-adrev — awaiting Codex cross-provider round (no-carveout floor per [`feedback_no_carveout_on_cross_provider_adrev`](../../../.claude/projects/-home-administrator-Code-tuxlink/memory/feedback_no_carveout_on_cross_provider_adrev.md))
+**Status:** revised — Codex R1 (cross-provider) findings applied (0 P0, 3 P1, 2 P2, 2 P3)
 **Branch:** `bd-tuxlink-756/pat-config-render` (worktree off `feat/v0.0.1` post-PR#67-merge)
 **Closes via deliverable:** the PR that merges this spec's implementation into `feat/v0.0.1`
 **Discipline:** tightly-scoped per the bd-issue body's "design is settled by cred-handling spec + AMD-13 + this gap" framing; per-round scope is tight, ≥1 Codex round mandatory.
+
+### v2 revision changes from v1
+
+| Severity | Finding | Applied where |
+|---|---|---|
+| P1 | `write_pat_config_atomic` uses `std::fs::write(tmp.path(), ...)` (no tempfile-handle write, no `tmp.as_file().sync_all()`); swallows parent-dir fsync errors with `let _ = dir.sync_all()`. Doesn't match `config::write_config_atomic`. | §3.2 rewritten to mirror `config.rs:278-289` exactly: `serde_json::to_writer_pretty(tmp.as_file(), &dto)` + `tmp.as_file().sync_all()?` + persist + `File::open(parent)?.sync_all()?` (surfacing fsync errors). |
+| P1 | Spec claimed "CMS-Telnet / CMS-SSL" support but Pat's default `telnet` connect alias resolves to `cms.winlink.org:8772` plaintext; omitting `connect_aliases` does NOT enable CMS-SSL (port 8773 TLS). | §2.2 + §3.1 + new §3.8: scope narrowed to "Pat plaintext-telnet only" for v0.0.1; transport selection (CMS-SSL routing via Pat) is deferred to v0.5 Step 5 (WinlinkBackend `connect` impl with explicit URL). New §3.8 enumerates the deferred-work surface. |
+| P1 | Spec doesn't say to add `pub mod pat_config;` to `src-tauri/src/lib.rs`. | §2.1 explicit: add `pub mod pat_config;` to lib.rs after `pub mod pat_process;`. |
+| P2 | `dest.parent().unwrap_or_else(\|\| Path::new("."))` mishandles basename-only relative paths (returns empty path, not None). | §3.2 helper: `let parent = dest.parent().filter(\|p\| !p.as_os_str().is_empty()).unwrap_or_else(\|\| Path::new("."));` used consistently. |
+| P2 | `PatProcess::spawn` maps non-`Io` `PatConfigError` variants via `format!("{e}")`, dropping the source chain. | §3.4 mapping table: use `std::io::Error::new(kind, e)` form for non-`Io` variants (preserves source); pass `Io(e) -> e` directly (preserves original `ErrorKind`). |
+| P3 | Field mapping is otherwise complete (Codex verified against Pat 1.0.0 `app/app.go`, `app/exchange.go`, `cfg/config.go`, `cli/http.go`). | Ratified; §3.3 unchanged. |
+| P3 | Remaining open questions (service_codes, http_addr, auto_download_size_limit, rename, persist error, no-race) all ratified by Codex with source links to Pat code. | §6 dispositions updated accordingly. |
 
 ---
 
@@ -32,7 +44,7 @@ This spec closes that gap. It introduces a new module `pat_config.rs` that owns 
 
 ### 2.1 In scope
 
-1. New module `src-tauri/src/pat_config.rs` containing:
+1. New module `src-tauri/src/pat_config.rs` (export via `pub mod pat_config;` added to `src-tauri/src/lib.rs` after `pub mod pat_process;` — Codex R1 P1 #3) containing:
    - `render_pat_config(tuxlink_config: &crate::config::Config) -> Result<String, PatConfigError>` — returns Pat's `config.json` as a JSON string. Pure function (no I/O), enables unit-testing.
    - `write_pat_config_atomic(tuxlink_config: &crate::config::Config, dest: &Path) -> Result<(), PatConfigError>` — calls `render_pat_config`, then writes atomically to `dest` (same-directory tempfile + persist + parent-dir fsync; mirrors `config::write_config_atomic`).
    - `PatConfigError` typed-error enum (variants: `MissingRequiredField`, `RenderFailed`, `Io`, `OfflineModeNoConfigNeeded`).
@@ -52,7 +64,8 @@ This spec closes that gap. It introduces a new module `pat_config.rs` that owns 
 - **`external/tuxlink-pat` fork changes.** Pat's cred-refactor (tuxlink-pat#2) is shipped; this spec doesn't touch Go code.
 - **MBO address mapping.** `tuxlink.pat_mbo_address` is the operator's Winlink email address (`<callsign>@winlink.org`); Pat derives this from `MyCall` internally and has NO corresponding field in its `Config` struct (post-refactor `cfg/config.go` confirmed). The field exists in tuxlink config for UI display purposes only. Pat-config render does NOT map it.
 - **AuxAddrs.** v0.0.1 is single-callsign scope per AMD-13. The rendered Pat config has `auxiliary_addresses: []`. Multi-callsign operators provision additional `(service="tuxlink-pat", account=AUXCALLSIGN)` keyring entries manually per AMD-11; their Pat AuxAddrs come from `~/.config/pat/config.json` if they hand-edit it, but tuxlink does not write them.
-- **Radio transports (Hamlib, AX25, AGWPE, SerialTNC, Ardop, Pactor, VaraHF, VaraFM, GPSd, Prediction).** v0.0.1 supports CMS-Telnet / CMS-SSL only. Rendered Pat config leaves these as zero values (their `IsZero()` methods return true → JSON omits them per `omitzero` tags where applicable).
+- **Radio transports (Hamlib, AX25, AGWPE, SerialTNC, Ardop, Pactor, VaraHF, VaraFM, GPSd, Prediction).** v0.0.1 connectivity is via Pat's default plaintext `telnet` connect alias (`cms.winlink.org:8772`). Rendered Pat config leaves these as zero values (their `IsZero()` methods return true → JSON omits them per `omitzero` tags where applicable).
+- **CMS-SSL routing (port 8773 TLS).** Per Codex R1 P1 #2: Pat's default `telnet` alias resolves to plaintext `:8772`; rendering CMS-SSL requires `connect_aliases` AND a tls-aware URL scheme. This is **deferred to v0.5 Step 5** (WinlinkBackend `connect` impl with explicit URL passed to Pat's `/api/connect` endpoint). tuxlink-756 renders the minimum config sufficient for Pat to start + accept the default-telnet plaintext path; the wizard's `connect.transport` field becomes load-bearing in v0.5+ when transport routing arrives. See new §3.8 for the deferred-work surface.
 - **HTTPAddr.** `PatProcess::spawn` already passes `--addr <listen>` which overrides the config-file `http_addr`. Rendered config leaves `http_addr` empty; the CLI flag wins.
 - **MOTD, ConnectAliases, Schedule, VersionReportingDisabled.** Empty/default. Not relevant to v0.0.1 client-side operation.
 - **Offline-mode Pat config.** When `tuxlink_config.connect.connect_to_cms = false`, no Pat should be spawned (tuxlink runs in offline mode). `write_pat_config_atomic` returns `PatConfigError::OfflineModeNoConfigNeeded` if called with an offline config, treating this as a caller bug.
@@ -181,32 +194,41 @@ pub fn render_pat_config(tuxlink_config: &TuxlinkConfig) -> Result<String, PatCo
 }
 
 /// Render and atomically write Pat config to `dest`. Same-directory tempfile
-/// + persist + parent-dir fsync pattern mirroring `crate::config::write_config_atomic`.
+/// + tempfile-handle write + tempfile-fsync + persist + parent-dir-fsync
+/// pattern, mirroring `crate::config::write_config_atomic` (lines 278-289)
+/// exactly per Codex R1 P1 #1.
 ///
 /// Creates `dest`'s parent directory if it does not exist (matches the
-/// `XDG_CONFIG_HOME/pat/` first-run case).
+/// `XDG_CONFIG_HOME/pat/` first-run case). Surfaces parent-dir fsync
+/// errors (per R1 P1 #1: do NOT swallow with `let _ = dir.sync_all()`).
 pub fn write_pat_config_atomic(
     tuxlink_config: &TuxlinkConfig,
     dest: &Path,
 ) -> Result<(), PatConfigError> {
     let json = render_pat_config(tuxlink_config)?;
-    if let Some(parent) = dest.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    let tmp = tempfile::NamedTempFile::new_in(
-        dest.parent().unwrap_or_else(|| Path::new(".")),
-    )?;
-    std::fs::write(tmp.path(), json.as_bytes())?;
-    // Persist (atomic rename). NamedTempFile::persist returns a File on
-    // success; ignore the returned File (drops cleanly).
+
+    // Normalize parent path per R1 P2 #1: filter out empty-string parent
+    // returned for basename-only relative paths (e.g., dest = "pat-config.json").
+    let parent = dest
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+
+    std::fs::create_dir_all(parent)?;
+
+    // Same-directory tempfile → write via tempfile HANDLE (not by path) →
+    // sync the tempfile → persist (atomic rename) → fsync parent dir.
+    let mut tmp = tempfile::NamedTempFile::new_in(parent)?;
+    use std::io::Write;
+    tmp.as_file_mut().write_all(json.as_bytes())?;
+    tmp.as_file().sync_all()?;
     tmp.persist(dest).map_err(|e| PatConfigError::Io(e.error))?;
-    // Best-effort parent-dir fsync to flush the directory entry; matches
-    // config::write_config_atomic discipline (per tuxlink-4mt v2 R4 P0-1).
-    if let Some(parent) = dest.parent() {
-        if let Ok(dir) = std::fs::File::open(parent) {
-            let _ = dir.sync_all();
-        }
-    }
+
+    // Parent-dir fsync per config::write_config_atomic discipline (R1 P1 #1):
+    // rename(2) is atomic but not DURABLE until the parent directory's
+    // metadata flushes. SURFACE errors — do not let _ = ... swallow.
+    let parent_dir = std::fs::File::open(parent)?;
+    parent_dir.sync_all()?;
     Ok(())
 }
 
@@ -263,24 +285,25 @@ pub struct PatSpawnOptions {
 }
 ```
 
-`PatProcess::spawn` modification — add before the `Command::new` line:
+`PatProcess::spawn` modification — add before the `Command::new` line. Per Codex R1 P2 #2: use `std::io::Error::new(kind, e)` form for non-`Io` variants so the source chain is preserved (rather than `format!("{e}")` which drops the source).
 
 ```rust
 crate::pat_config::write_pat_config_atomic(&opts.tuxlink_config, &opts.config_path)
     .map_err(|e| match e {
+        // Io variant: pass the original io::Error through directly to
+        // preserve its ErrorKind + source.
         crate::pat_config::PatConfigError::Io(io_err) => io_err,
-        crate::pat_config::PatConfigError::MissingRequiredField(field) => std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            format!("PatProcess::spawn: tuxlink config missing required field: {field}"),
-        ),
-        crate::pat_config::PatConfigError::OfflineModeNoConfigNeeded => std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            "PatProcess::spawn called with offline-mode tuxlink config; do not spawn Pat in offline mode",
-        ),
-        crate::pat_config::PatConfigError::RenderFailed(serde_err) => std::io::Error::new(
-            std::io::ErrorKind::Other,
-            format!("PatProcess::spawn: Pat config render failed: {serde_err}"),
-        ),
+        // Non-Io variants: wrap in std::io::Error::new(kind, source-bearing-error)
+        // so PatConfigError remains the source on the resulting io::Error.
+        e @ crate::pat_config::PatConfigError::MissingRequiredField(_) => {
+            std::io::Error::new(std::io::ErrorKind::InvalidInput, e)
+        }
+        e @ crate::pat_config::PatConfigError::OfflineModeNoConfigNeeded => {
+            std::io::Error::new(std::io::ErrorKind::InvalidInput, e)
+        }
+        e @ crate::pat_config::PatConfigError::RenderFailed(_) => {
+            std::io::Error::new(std::io::ErrorKind::Other, e)
+        }
     })?;
 ```
 
@@ -311,6 +334,17 @@ When `connect.connect_to_cms = false`:
 - If something does call spawn with an offline config, this spec's defense-in-depth catches it: `render_pat_config` returns `OfflineModeNoConfigNeeded`; `PatProcess::spawn` propagates as `io::Error(InvalidInput)`.
 
 The lifecycle decision ("when do we spawn Pat?") is OUT of scope for this spec — it lives in the future Tauri command surface that mounts/dismounts the WinlinkBackend. The render function just provides a defensive failure mode for an incorrect call.
+
+### 3.8 Deferred-work surface (v0.5 Step 5 — transport selection)
+
+Per Codex R1 P1 #2, v0.0.1 tuxlink-756 renders a Pat config that only enables Pat's default plaintext `telnet` connect alias (`cms.winlink.org:8772`). The wizard exposes a `connect.transport` setting (`CmsSsl` | `Telnet`) but it does NOT flow through to Pat in v0.0.1; the field is captured + persisted in tuxlink config for the future v0.5+ consumer.
+
+When v0.5 Step 5 implements `WinlinkBackend::connect` against Pat's `/api/connect` endpoint, it MUST:
+1. Read `tuxlink_config.connect.transport`.
+2. Build the connect URL: `telnet://cms.winlink.org:8772` for `Telnet`, or the TLS-aware equivalent (TBD — needs `wl2k-go` capability verification) for `CmsSsl`.
+3. POST the URL to Pat's `/api/connect`.
+
+The tuxlink-756 spec deliberately does NOT render `connect_aliases` because the URL scheme for CMS-SSL is not yet verified against `wl2k-go`. Adding aliases speculatively could lock in a wrong URL and silently send plaintext where TLS was intended — a worse outcome than "telnet only, document the gap." A follow-up bd issue will be filed when v0.5 Step 5 starts.
 
 ---
 
@@ -364,8 +398,7 @@ Findings from Codex R1 land in §6 as "v2 revision" + applied inline.
 | Version | Date | Author | Change summary |
 |---|---|---|---|
 | v1 | 2026-05-19 | badger-oak-dahlia | Initial spec — pre-adrev |
-
-(v2 entry added after Codex R1.)
+| v2 | 2026-05-19 | badger-oak-dahlia | Codex R1 cross-provider applied: 0 P0, 3 P1, 2 P2, 2 P3. Atomic write rewritten to mirror `config::write_config_atomic` (tempfile-handle write + fsync, parent-dir fsync surfaces errors). CMS-SSL transport scope narrowed to "plaintext-telnet only" for v0.0.1 (Pat's default telnet alias is port 8772 plaintext; CMS-SSL routing deferred to v0.5 Step 5 — see new §3.8). `pub mod pat_config;` export added to scope. Parent-path normalization fixed for basename-only paths. Error mapping in PatProcess::spawn preserves source chains via `std::io::Error::new(kind, e)`. Codex verified field-mapping completeness against Pat 1.0.0 source (`app/app.go`, `app/exchange.go`, `cfg/config.go`, `cli/http.go`). |
 
 ---
 
