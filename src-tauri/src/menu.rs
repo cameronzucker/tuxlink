@@ -110,11 +110,19 @@ pub fn build_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
 }
 
 /// Wire menu events to Tauri IPC so the React frontend can listen.
+///
+/// Quit is special-cased to exit natively because the frontend listener
+/// doesn't exist yet (Tasks 9+ will add it). The event still emits, so a
+/// future listener can observe and — if needed — intercept by calling a
+/// Tauri command to do cleanup (e.g., "discard unsaved draft?" dialog)
+/// before triggering final exit. Apps must always be Quit-able.
 pub fn wire_menu_events<R: Runtime>(app: &AppHandle<R>) {
     let app_for_handler = app.clone();
     app.on_menu_event(move |_app, event| {
         let id = event.id().as_ref().to_string();
-        // Emit a Tauri event the React side listens to.
         let _ = app_for_handler.emit("menu", &id);
+        if id == "menu:file:quit" {
+            app_for_handler.exit(0);
+        }
     });
 }
