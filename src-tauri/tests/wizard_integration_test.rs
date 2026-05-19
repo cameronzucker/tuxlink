@@ -13,7 +13,12 @@
 // Test cases per spec §3.8:
 // 1. Direct keyring round-trip: Entry::new + set_password + get_password at the
 //    exact (service="tuxlink-pat", account=<callsign>) shape that Pat reads.
-// 2. persist_cms_impl happy path: writes config.json + keyring; reads both back.
+// 2. persist_cms_impl happy path: writes config.json + keyring; reads config back
+//    AND asserts a SEPARATE process (`secret-tool`) reads the password back from
+//    the freedesktop Secret Service — the wizard→Pat cross-process contract. A
+//    secret-tool miss is a hard failure (it means the write went to the keyring
+//    crate's mock store, which Pat's go-keyring cannot see), NOT a best-effort
+//    nicety.
 // 3. Snapshot-and-restore: pre-write a credential, simulate config-write failure,
 //    assert prior credential is restored (not overwritten, not deleted).
 
@@ -99,9 +104,17 @@ async fn integration_keyring_round_trip_at_tuxlink_pat_account_shape() {
 // ──────────────────────────────────────────────────────────────
 
 /// Full persist_cms_impl run against the real gnome-keyring-daemon:
-/// - Writes the password to keyring at (service="tuxlink-pat", account="INTTEST2")
+/// - Writes the password to keyring at (service="tuxlink-pat", username="INTTEST2")
 /// - Writes config.json to a temp dir
 /// - Reads both back and asserts correctness
+///
+/// CONTRACT NOTE: the freedesktop Secret Service attribute that the Rust `keyring`
+/// crate (via `dbus-secret-service`) writes for the entry's account is `username`
+/// (NOT `account`). zalando `go-keyring` — the reader on Pat's side — searches by
+/// exactly `{service, username}` (go-keyring keyring_unix.go: `search := {"username":
+/// user, "service": service}`). So the faithful cross-process read-back uses
+/// `secret-tool lookup service tuxlink-pat username INTTEST2`. Querying `account`
+/// here would model nothing real and would falsely fail.
 #[tokio::test]
 #[ignore]
 #[serial]
@@ -133,25 +146,45 @@ async fn integration_persist_cms_happy_path_real_keyring() {
     assert_eq!(config.pat_mbo_address.as_deref(), Some("INTTEST2@winlink.org"), "MBO address stored");
     assert!(config.identity.identifier.is_none(), "CMS path must not set identifier");
 
-    // Verify via secret-tool if available (cross-language contract check — reads the same
-    // credential that Pat's go-keyring would find via the freedesktop secret-service protocol).
-    // This is best-effort; if secret-tool isn't installed, the keyring round-trip from Case 1
-    // already demonstrates the freedesktop protocol works.
-    if let Ok(output) = std::process::Command::new("secret-tool")
-        .args(["lookup", "service", "tuxlink-pat", "account", "INTTEST2"])
+    // CROSS-PROCESS CONTRACT ASSERTION (the load-bearing check, not best-effort).
+    //
+    // `secret-tool` is a SEPARATE process that reads the freedesktop Secret Service
+    // over D-Bus — the exact same protocol+store that Pat's `go-keyring` reads. If
+    // the wizard's keyring write landed in the crate's in-process mock store (the
+    // bug when no Secret Service feature is enabled), this lookup MISSES and Pat
+    // would never find the credential. Asserting a successful, value-matching
+    // read-back from a separate process IS the wizard→Pat contract. It must
+    // succeed and match — a miss is a contract failure, not "an implementation
+    // detail of the backend."
+    //
+    // We query by `{service, username}` — the EXACT attribute pair zalando
+    // go-keyring searches on Unix (keyring_unix.go), and the exact pair the Rust
+    // keyring crate writes (verified: `attribute.service` + `attribute.username`).
+    // This is the real reader's query, not the freedesktop `account` convention.
+    let output = std::process::Command::new("secret-tool")
+        .args(["lookup", "service", "tuxlink-pat", "username", "INTTEST2"])
         .output()
-    {
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        if output.status.success() {
-            assert_eq!(
-                stdout.trim(), password,
-                "secret-tool cross-check: stored value must match submitted password"
-            );
-        }
-        // If secret-tool fails (key not found in secret service, only in linux-keyutils),
-        // that's acceptable — the keyring crate's choice of backend is an implementation detail.
-        // The cross-language contract is tested in the wizard smoke test (MOCKED mode only).
-    }
+        .expect("secret-tool must be installed for the cross-process contract assertion");
+    assert!(
+        output.status.success(),
+        "secret-tool (separate process) MUST find the credential at \
+         (service=tuxlink-pat, username=INTTEST2) — the exact attribute pair Pat's \
+         go-keyring searches. A miss means the wizard wrote to the keyring crate's \
+         mock store instead of the freedesktop Secret Service, so tuxlink-pat's \
+         go-keyring would never read it. status={:?} stderr={}",
+        output.status,
+        String::from_utf8_lossy(&output.stderr),
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(
+        stdout.trim(),
+        password,
+        "secret-tool cross-process read-back must match the submitted password exactly"
+    );
+
+    // Cleanup: remove the credential persist_cms_impl wrote (separate from Case 1's entry).
+    let _ = keyring::Entry::new("tuxlink-pat", "INTTEST2")
+        .and_then(|e| e.delete_credential());
 }
 
 // ──────────────────────────────────────────────────────────────

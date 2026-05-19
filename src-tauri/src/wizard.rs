@@ -172,8 +172,19 @@ pub async fn persist_cms_impl(
         .map_err(map_keyring_error)?;
 
     // Step 5: Snapshot prior password for rollback (spec §3.2 snapshot-before-overwrite).
-    // If no prior entry exists, prior = None (rollback will delete, not restore).
-    let prior = entry.get_password().ok();
+    //
+    // Only `NoEntry` legitimately means "no prior credential" (→ rollback deletes
+    // what we wrote). Any OTHER read error (keyring unavailable / locked /
+    // permission / platform failure) must NOT be silently treated as "no prior
+    // cred": doing so would make a later config-write failure DELETE an existing
+    // credential we simply failed to read, instead of restoring it. So we abort
+    // here, BEFORE the destructive `set_password` overwrite, surfacing the read
+    // error via the same classifier used for write errors.
+    let prior: Option<String> = match entry.get_password() {
+        Ok(p) => Some(p),
+        Err(keyring::Error::NoEntry) => None,
+        Err(snapshot_err) => return Err(map_keyring_error(snapshot_err)),
+    };
 
     // Step 6: Write password to keyring FIRST.
     // Keyring failure aborts before any persistent disk state changes.
