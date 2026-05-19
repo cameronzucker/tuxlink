@@ -15,11 +15,14 @@ tauri-plugin-shell = "2"
 tauri-plugin-fs = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-reqwest = { version = "0.12", features = ["json", "blocking", "multipart"] }
+reqwest = { version = "0.12", features = ["json", "multipart"] }  # tuxlink-z5f: dropped "blocking" — PatClient is async to avoid runtime-drop panic in #[tokio::test] contexts
 tokio = { version = "1", features = ["full"] }
 nix = { version = "0.28", features = ["signal", "process"] }
 thiserror = "1"            # NEW — for ConfigValidationError + ConfigReadError + ConfigWriteError
 tempfile = "3"             # PROMOTED from [dev-dependencies] below
+async-trait = "0.1"        # NEW (tuxlink-z5f) — WinlinkBackend trait async-fn macro for object-safety
+futures = "0.3"            # NEW (tuxlink-z5f) — Stream + BoxStream for stream_log return type
+tokio-stream = { version = "0.1", features = ["sync"] }  # NEW (tuxlink-z5f) — BroadcastStream wrapper
 
 [dev-dependencies]
 mockito = "1.5"
