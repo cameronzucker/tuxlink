@@ -19,6 +19,7 @@ fn test_spawn_and_graceful_shutdown() {
         mbox_dir: tmp.path().join("mbox"),
         http_listen_port: 0,
         pid_file: tmp.path().join("pat.pid"),
+        log_sink: None,
     };
     std::fs::write(&opts.config_path, r#"{
         "mycall": "TEST1",
@@ -44,6 +45,7 @@ fn test_stale_pid_file_is_cleaned_after_shutdown() {
         mbox_dir: tmp.path().join("mbox"),
         http_listen_port: 0,
         pid_file: tmp.path().join("pat.pid"),
+        log_sink: None,
     };
     std::fs::write(&opts.config_path, r#"{
         "mycall": "TEST1",
