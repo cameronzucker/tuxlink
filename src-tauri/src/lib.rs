@@ -17,6 +17,15 @@ fn greet(name: &str) -> String {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // tuxlink-wfw: on Linux/GTK the webkit2gtk DMA-BUF renderer (Mesa V3D on
+    // Pi-class hardware) paints uninitialized GPU memory on first frame —
+    // the window shows "TV static" until the first repaint. Disabling the
+    // DMA-BUF renderer path fixes it with no discernible regression. Set
+    // before the webview initializes (webkit reads this env var at web-context
+    // creation, during window setup). Edition 2021 → set_var is safe.
+    #[cfg(target_os = "linux")]
+    std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+
     tauri::Builder::default()
         .manage(crate::wizard::WizardMutex::new())
         .setup(|app| {
