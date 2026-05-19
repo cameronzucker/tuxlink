@@ -8,7 +8,7 @@
 
 > Living-document banner. The implementing subagent for a task IS authorized to flip its own task's marker ⬜→✅ as a final commit (`docs(plan): flip main-UI LDC <task>`). Do not edit other tasks' markers.
 
-- ⬜ Task 8 — System tray + window-close-to-tray (`tuxlink-rit`)
+- ✅ Task 8 — System tray + window-close-to-tray (`tuxlink-rit`)
 - ⬜ Task 12 — Folder sidebar + message list + model + backend bootstrap (`tuxlink-zsm`) [ROOT]
 - ⬜ Task 13 — Message reading pane (`tuxlink-y5c`)
 - ⬜ Task 14 — Compose window (separate Tauri window) (`tuxlink-dm8`)
