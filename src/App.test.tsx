@@ -7,19 +7,31 @@ vi.mock('@tauri-apps/api/core', () => ({
 }));
 import { invoke } from '@tauri-apps/api/core';
 
+// AppShell issues a `mailbox_list` invoke on mount (in addition to App's
+// `get_wizard_completed`); route by command so each returns a shape-correct
+// value. Without this, a single blanket resolved-value would feed a boolean
+// to the message list or an array to the wizard router.
+function routeInvoke(wizardCompleted: boolean) {
+  (invoke as ReturnType<typeof vi.fn>).mockImplementation((cmd: string) => {
+    if (cmd === 'get_wizard_completed') return Promise.resolve(wizardCompleted);
+    if (cmd === 'mailbox_list') return Promise.resolve([]);
+    return Promise.resolve(undefined);
+  });
+}
+
 describe('<App>', () => {
   beforeEach(() => vi.clearAllMocks());
 
   it('renders wizard when wizard_completed=false', async () => {
-    (invoke as ReturnType<typeof vi.fn>).mockResolvedValue(false);
+    routeInvoke(false);
     render(<App />);
     await waitFor(() => expect(screen.getByTestId('wizard-root')).toBeInTheDocument());
   });
 
   it('renders main shell when wizard_completed=true', async () => {
-    (invoke as ReturnType<typeof vi.fn>).mockResolvedValue(true);
+    routeInvoke(true);
     render(<App />);
-    await waitFor(() => expect(screen.getByTestId('main-shell-root')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByTestId('app-shell-root')).toBeInTheDocument());
   });
 
   it('falls back to wizard when get_wizard_completed rejects', async () => {
