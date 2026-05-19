@@ -1,4 +1,5 @@
 pub mod config;
+pub mod menu;
 pub mod pat_client;
 pub mod pat_process;
 pub mod winlink_backend;
@@ -15,6 +16,15 @@ fn greet(name: &str) -> String {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .setup(|app| {
+            // Build the native OS menu bar (tuxlink-6vi / Task 7) and wire
+            // its events to Tauri IPC so the React frontend can listen on
+            // the "menu" channel.
+            let menu = crate::menu::build_menu(app.handle())?;
+            app.set_menu(menu)?;
+            crate::menu::wire_menu_events(app.handle());
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![greet])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
