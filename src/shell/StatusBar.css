@@ -1,0 +1,60 @@
+/**
+ * StatusBar.css — bottom app chrome (~24px), toggleable.
+ *
+ * Design spec: docs/superpowers/specs/2026-05-19-main-ui-cluster-design.md §5.6
+ * Design intent: Mail.app-minimal, NOT Express cryptic-strip.
+ *
+ * Structure: flex row, left-side activity, right-side window info,
+ * both optional (empty = hidden).
+ */
+
+.status-bar {
+  /* Fixed height, full width */
+  height: 24px;
+  min-height: 24px;
+  max-height: 24px;
+
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 8px;
+
+  /* Separator from the content above */
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+
+  /* Slightly lighter than the main background chrome */
+  background-color: rgba(0, 0, 0, 0.12);
+
+  /* Prevent user selection */
+  user-select: none;
+
+  /* Typography */
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.5);
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+/* ============================================================================
+   Left / right slots
+   ============================================================================ */
+
+.status-bar-left {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.status-bar-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  padding-left: 8px;
+  color: rgba(255, 255, 255, 0.4);
+  font-variant-numeric: tabular-nums;
+}

@@ -12,8 +12,8 @@
 - ✅ Task 12 — Folder sidebar + message list + model + backend bootstrap (`tuxlink-zsm`) [ROOT] — model/trait/IPC/sidebar/list/AppShell DONE; live Pat bootstrap STUBBED (follow-up, see PR)
 - ⬜ Task 13 — Message reading pane (`tuxlink-y5c`)
 - ⬜ Task 14 — Compose window (separate Tauri window) (`tuxlink-dm8`)
-- ⬜ Task 15 — Session log pane (`tuxlink-69z`)
-- ⬜ Task 16 — Dashboard ribbon + minimal status bar (`tuxlink-hvv`)
+- ✅ Task 15 — Session log pane (`tuxlink-69z`)
+- ✅ Task 16 — Dashboard ribbon + minimal status bar (`tuxlink-hvv`)
 
 ## Prerequisites — every subagent reads before starting
 
