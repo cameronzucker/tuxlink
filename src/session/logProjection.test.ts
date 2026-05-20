@@ -27,6 +27,7 @@ import {
 // ---------------------------------------------------------------------------
 
 const annotated: LogLineDto = {
+  seq: 1,
   timestampIso: '2026-05-19T12:00:00Z',
   level: 'info',
   source: 'wire',
@@ -34,6 +35,7 @@ const annotated: LogLineDto = {
 };
 
 const backendInfo: LogLineDto = {
+  seq: 2,
   timestampIso: '2026-05-19T12:00:01Z',
   level: 'info',
   source: 'backend',
@@ -41,6 +43,7 @@ const backendInfo: LogLineDto = {
 };
 
 const transportDebug: LogLineDto = {
+  seq: 3,
   timestampIso: '2026-05-19T12:00:02Z',
   level: 'debug',
   source: 'transport',
@@ -48,6 +51,7 @@ const transportDebug: LogLineDto = {
 };
 
 const wirePQ: LogLineDto = {
+  seq: 4,
   timestampIso: '2026-05-19T12:00:03Z',
   level: 'debug',
   source: 'wire',
@@ -55,6 +59,7 @@ const wirePQ: LogLineDto = {
 };
 
 const wirePR: LogLineDto = {
+  seq: 5,
   timestampIso: '2026-05-19T12:00:04Z',
   level: 'debug',
   source: 'wire',
@@ -62,6 +67,7 @@ const wirePR: LogLineDto = {
 };
 
 const wireWL2K: LogLineDto = {
+  seq: 6,
   timestampIso: '2026-05-19T12:00:05Z',
   level: 'debug',
   source: 'wire',
@@ -69,6 +75,7 @@ const wireWL2K: LogLineDto = {
 };
 
 const wireFW: LogLineDto = {
+  seq: 7,
   timestampIso: '2026-05-19T12:00:06Z',
   level: 'debug',
   source: 'wire',
@@ -76,6 +83,7 @@ const wireFW: LogLineDto = {
 };
 
 const wireFF: LogLineDto = {
+  seq: 8,
   timestampIso: '2026-05-19T12:00:07Z',
   level: 'debug',
   source: 'wire',
@@ -83,6 +91,7 @@ const wireFF: LogLineDto = {
 };
 
 const wireFQ: LogLineDto = {
+  seq: 9,
   timestampIso: '2026-05-19T12:00:08Z',
   level: 'debug',
   source: 'wire',
@@ -90,6 +99,7 @@ const wireFQ: LogLineDto = {
 };
 
 const wirePlain: LogLineDto = {
+  seq: 10,
   timestampIso: '2026-05-19T12:00:09Z',
   level: 'debug',
   source: 'wire',
@@ -97,6 +107,7 @@ const wirePlain: LogLineDto = {
 };
 
 const backendWarn: LogLineDto = {
+  seq: 11,
   timestampIso: '2026-05-19T12:00:10Z',
   level: 'warn',
   source: 'backend',
@@ -264,13 +275,13 @@ describe('session summary', () => {
   it('Human projection produces a summary line for a session that had B2F traffic', () => {
     // Lines that represent a complete session: annotated open + B2F + close
     const sessionLines: LogLineDto[] = [
-      { timestampIso: '2026-05-19T12:00:00Z', level: 'info', source: 'backend', message: '*** Session started' },
+      { seq: 100, timestampIso: '2026-05-19T12:00:00Z', level: 'info', source: 'backend', message: '*** Session started' },
       wirePQ,
       wirePR,
       wireWL2K,
       wireFW,
       wireFF,
-      { timestampIso: '2026-05-19T12:01:00Z', level: 'info', source: 'backend', message: '*** Session ended' },
+      { seq: 101, timestampIso: '2026-05-19T12:01:00Z', level: 'info', source: 'backend', message: '*** Session ended' },
     ];
     const out = humanProjection(sessionLines);
     // The summary must be present (one line with the session summary info)
@@ -280,11 +291,11 @@ describe('session summary', () => {
 
   it('Human projection summary contains the session B2F line count', () => {
     const sessionLines: LogLineDto[] = [
-      { timestampIso: '2026-05-19T12:00:00Z', level: 'info', source: 'backend', message: '*** Session started' },
+      { seq: 200, timestampIso: '2026-05-19T12:00:00Z', level: 'info', source: 'backend', message: '*** Session started' },
       wirePQ,
       wirePR,
       wireWL2K,
-      { timestampIso: '2026-05-19T12:01:00Z', level: 'info', source: 'backend', message: '*** Session ended' },
+      { seq: 201, timestampIso: '2026-05-19T12:01:00Z', level: 'info', source: 'backend', message: '*** Session ended' },
     ];
     const out = humanProjection(sessionLines);
     const summaryLine = out.find(l => l.message.includes('summary'));
@@ -301,8 +312,9 @@ describe('session summary', () => {
 describe('LogLineDto type validity', () => {
   it('all valid level values are accepted', () => {
     const levels: LogLineDto['level'][] = ['trace', 'debug', 'info', 'warn', 'error'];
-    for (const level of levels) {
+    levels.forEach((level, idx) => {
       const line: LogLineDto = {
+        seq: idx + 1,
         timestampIso: '2026-05-19T00:00:00Z',
         level,
         source: 'backend',
@@ -311,13 +323,14 @@ describe('LogLineDto type validity', () => {
       // rawProjection must pass it through unchanged
       const out = rawProjection([line]);
       expect(out[0].level).toBe(level);
-    }
+    });
   });
 
   it('all valid source values are accepted', () => {
     const sources: LogLineDto['source'][] = ['backend', 'pat', 'transport', 'wire'];
-    for (const source of sources) {
+    sources.forEach((source, idx) => {
       const line: LogLineDto = {
+        seq: idx + 1,
         timestampIso: '2026-05-19T00:00:00Z',
         level: 'info',
         source,
@@ -325,6 +338,6 @@ describe('LogLineDto type validity', () => {
       };
       const out = rawProjection([line]);
       expect(out[0].source).toBe(source);
-    }
+    });
   });
 });

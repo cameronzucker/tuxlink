@@ -5,9 +5,15 @@
  * lives in AppShell.css (`.layout-b .session-log`). Shown by default in Mock B;
  * View → Session Log toggles it.
  *
- * Tauri IPC (real backend): invoke('session_log_snapshot') seeds + listen(
- * 'session_log:line') tails. Human projection summarizes; Raw shows everything.
- * In the dev fixture (no backend), the mock's human steps are shown directly.
+ * Tauri IPC (real backend): subscribe-then-snapshot pattern (adrev #3):
+ *   1. Attach listen('session_log:line') FIRST so no events are lost in the
+ *      window between subscribe and first listen.
+ *   2. THEN fetch invoke('session_log_snapshot') to seed history.
+ *   3. Merge both streams, deduplicating on `seq` (adrev #4 — timestamp
+ *      collisions can drop lines if deduped on timestampIso).
+ *
+ * Human projection summarizes; Raw shows everything. In the dev fixture (no
+ * backend), the mock's human steps are shown directly.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -22,6 +28,29 @@ const HEIGHT_STORAGE_KEY = 'tuxlink.sessionLog.height';
 
 type Projection = 'human' | 'raw';
 
+/**
+ * Merge `incoming` lines into the existing `Map<seq, LogLineDto>`.
+ * Returns a new Map if any lines were added; returns the same reference if
+ * nothing changed (allows React to skip re-renders on no-op updates).
+ */
+function mergeLines(
+  prev: Map<number, LogLineDto>,
+  incoming: LogLineDto[],
+): Map<number, LogLineDto> {
+  let changed = false;
+  let next = prev;
+  for (const line of incoming) {
+    if (!next.has(line.seq)) {
+      if (!changed) {
+        next = new Map(prev); // copy-on-first-write
+        changed = true;
+      }
+      next.set(line.seq, line);
+    }
+  }
+  return next;
+}
+
 /** HH:MM:SS from an ISO timestamp (mock step-ts format). */
 function hhmmss(iso: string): string {
   try {
@@ -32,7 +61,9 @@ function hhmmss(iso: string): string {
 }
 
 export function SessionLog() {
-  const [lines, setLines] = useState<LogLineDto[]>([]);
+  // Internal state is a Map<seq, LogLineDto> for O(1) dedupe on seq.
+  // Sorted array for rendering is derived below.
+  const [lineMap, setLineMap] = useState<Map<number, LogLineDto>>(new Map());
   const [projection, setProjection] = useState<Projection>('human');
   const [stuckToBottom, setStuckToBottom] = useState(true);
   const [height, setHeight] = useState<number>(() => {
@@ -44,30 +75,48 @@ export function SessionLog() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const isResizingRef = useRef(false);
 
-  // IPC seed + tail (real backend only; dev shows fixed mock steps).
+  // IPC subscribe-then-snapshot (real backend only; dev shows fixed mock steps).
+  //
+  // Order is critical (adrev #3):
+  //   Step 1 — attach the live listener FIRST so events in the window between
+  //             subscribe and snapshot arrive are not lost.
+  //   Step 2 — THEN fetch the snapshot (invoke after listen resolves).
+  //   Both streams are deduped on `seq` (adrev #4) via mergeLines().
   useEffect(() => {
     if (DEV_FIXTURE) return;
     let mounted = true;
     let unlistenFn: (() => void) | null = null;
-    listen<LogLineDto>('session_log:line', (event) => {
-      if (mounted) setLines((prev) => [...prev, event.payload]);
-    }).then((un) => {
-      if (mounted) unlistenFn = un;
-      else un();
+
+    // Step 1: subscribe. The Tauri listen() API returns Promise<UnlistenFn>;
+    // the callback is registered synchronously inside listen() before the
+    // promise resolves, so events in the overlap window are captured.
+    const listenPromise = listen<LogLineDto>('session_log:line', (event) => {
+      if (mounted) {
+        setLineMap((prev) => mergeLines(prev, [event.payload]));
+      }
     });
-    invoke<LogLineDto[]>('session_log_snapshot')
-      .then((snap) => {
-        if (mounted && snap.length > 0) {
-          setLines((prev) => {
-            const seen = new Set(prev.map((l) => l.timestampIso));
-            const fresh = snap.filter((l) => !seen.has(l.timestampIso));
-            return fresh.length > 0 ? [...fresh, ...prev] : prev;
-          });
-        }
-      })
-      .catch(() => {
-        /* offline / pre-bootstrap — start empty */
-      });
+
+    listenPromise.then((un) => {
+      if (mounted) {
+        unlistenFn = un;
+      } else {
+        // Component unmounted before the listen resolved — release immediately.
+        un();
+        return;
+      }
+
+      // Step 2: fetch snapshot AFTER the listener is confirmed attached.
+      invoke<LogLineDto[]>('session_log_snapshot')
+        .then((snap) => {
+          if (mounted && snap.length > 0) {
+            setLineMap((prev) => mergeLines(prev, snap));
+          }
+        })
+        .catch(() => {
+          /* offline / pre-bootstrap — start empty */
+        });
+    });
+
     return () => {
       mounted = false;
       unlistenFn?.();
@@ -78,7 +127,7 @@ export function SessionLog() {
     if (stuckToBottom && scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [lines, stuckToBottom]);
+  }, [lineMap, stuckToBottom]);
 
   const handleScroll = useCallback(() => {
     const el = scrollRef.current;
@@ -115,8 +164,10 @@ export function SessionLog() {
 
   // Human steps to render: dev fixture supplies the mock's steps; otherwise the
   // human/raw projection of the real IPC lines.
+  // Derive a sorted array from the Map, ordered by seq ascending.
   const devSteps: DevLogStep[] = DEV_FIXTURE ? DEV_SESSION_LINES : [];
-  const projected = projection === 'human' ? humanProjection(lines) : rawProjection(lines);
+  const sortedLines = Array.from(lineMap.values()).sort((a, b) => a.seq - b.seq);
+  const projected = projection === 'human' ? humanProjection(sortedLines) : rawProjection(sortedLines);
 
   return (
     <div
@@ -163,12 +214,12 @@ export function SessionLog() {
             ))
           : projected.map((line, i) =>
               projection === 'human' ? (
-                <div className="step" key={`${line.timestampIso}-${i}`}>
+                <div className="step" key={line.seq > 0 ? line.seq : `summary-${i}`}>
                   <span className="step-ts">{hhmmss(line.timestampIso)}</span>
                   <span>{line.message}</span>
                 </div>
               ) : (
-                <div key={`${line.timestampIso}-${i}`} data-level={line.level} data-source={line.source}>
+                <div key={line.seq > 0 ? line.seq : `summary-${i}`} data-level={line.level} data-source={line.source}>
                   <span className="ts">{hhmmss(line.timestampIso)}</span> {line.message}
                 </div>
               ),
