@@ -23,6 +23,7 @@ tempfile = "3"             # PROMOTED from [dev-dependencies] below
 async-trait = "0.1"        # NEW (tuxlink-z5f) — WinlinkBackend trait async-fn macro for object-safety
 futures = "0.3"            # NEW (tuxlink-z5f) — Stream + BoxStream for stream_log return type
 tokio-stream = { version = "0.1", features = ["sync"] }  # NEW (tuxlink-z5f) — BroadcastStream wrapper
+mail-parser = "0.9"        # NEW (tuxlink-y5c Task 13) — pure-Rust RFC5322/MIME parser; spec §8
 
 [dev-dependencies]
 mockito = "1.5"
