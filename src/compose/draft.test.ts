@@ -229,13 +229,18 @@ describe('OutboundDraftDto mapping (structural)', () => {
       savedAt: new Date().toISOString(),
     };
 
+    // cc is always [] in v0.0.1 (Pat 1.0.0 drops cc — spec §3.2, Codex F5).
+    // The DTO shape MUST include cc so the field is present in the Rust struct
+    // (spec §6). Codex P3 fix: add cc to this assertion.
     const dto = {
       to: splitAddrs(draft.to),
+      cc: [] as string[],
       subject: draft.subject,
       body: draft.body,
     };
 
     expect(dto.to).toEqual(['W6ABC@winlink.org', 'W7DEF@winlink.org']);
+    expect(dto.cc).toEqual([]);
     expect(dto.subject).toBe('ICS-213 check');
     expect(dto.body).toBe('Body text');
   });

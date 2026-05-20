@@ -67,7 +67,12 @@ pub fn compose_window_open(app: AppHandle, draft_id: String) -> Result<(), Strin
     // `lib.rs`'s `run()` builder (integration commit). The builder does
     // not need to call the plugin explicitly — the plugin's `Builder` hook
     // restores + saves window state automatically once registered.
-    WebviewWindowBuilder::new(
+    //
+    // Race guard (Codex P2): a concurrent call that races past the
+    // `get_webview_window` check above can hit `build()` and receive an
+    // `AlreadyExists` error. Treat that as success — the window exists,
+    // attempt to focus it before returning.
+    let build_result = WebviewWindowBuilder::new(
         &app,
         &label,
         WebviewUrl::App(url.into()),
@@ -77,8 +82,25 @@ pub fn compose_window_open(app: AppHandle, draft_id: String) -> Result<(), Strin
     .min_inner_size(480.0, 360.0)
     .resizable(true)
     .center()
-    .build()
-    .map_err(|e| format!("compose window build failed: {e}"))?;
+    .build();
+
+    match build_result {
+        Ok(_) => {}
+        Err(tauri::Error::WindowLabelAlreadyExists(_))
+        | Err(tauri::Error::WebviewLabelAlreadyExists(_)) => {
+            // Concurrent open race: another call already created the window.
+            // Focus it and return success (same as the sequential-dupe path
+            // handled by `get_webview_window` at the top of this function).
+            // `WebviewWindowBuilder` creates both a window and a webview, so
+            // either variant can be emitted depending on which layer fires
+            // first (Codex P2 fix).
+            if let Some(existing) = app.get_webview_window(&label) {
+                let _ = existing.show();
+                let _ = existing.set_focus();
+            }
+        }
+        Err(e) => return Err(format!("compose window build failed: {e}")),
+    }
 
     Ok(())
 }

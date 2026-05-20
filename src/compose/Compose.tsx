@@ -89,6 +89,9 @@ export function Compose({ draftId }: ComposeProps) {
 
   // Track the "clean" snapshot so we can detect unsaved changes on close
   const savedSnapshotRef = useRef({ to: '', subject: '', body: '', requestAck: false });
+  // Set to true after a successful send — gates the autosave interval so it
+  // cannot recreate the draft that was intentionally cleared (Codex P1).
+  const sentRef = useRef(false);
   // Track if the user has interacted (only prompt on genuine changes)
   const isDirty = useCallback(() => {
     const s = savedSnapshotRef.current;
@@ -126,7 +129,11 @@ export function Compose({ draftId }: ComposeProps) {
 
   useEffect(() => {
     const interval = setInterval(() => {
-      saveDraft({ draftId, to, subject, body, requestAck });
+      // Do NOT autosave after a successful send — the draft was intentionally
+      // cleared and the interval must not recreate it (Codex P1 fix).
+      if (!sentRef.current) {
+        saveDraft({ draftId, to, subject, body, requestAck });
+      }
     }, 2000);
     return () => clearInterval(interval);
   }, [draftId, to, subject, body, requestAck]);
@@ -181,6 +188,9 @@ export function Compose({ draftId }: ComposeProps) {
       // Returns Option<String> (MID). Pat 1.0.0 returns None — treat Ok(_)
       // uniformly as success (spec §3.2 / §5.4).
       await invoke<string | null>('message_send', { draft: dto });
+      // Gate autosave BEFORE clearing the draft so the interval cannot win a
+      // race between the flag set and the next 2s tick (Codex P1 fix).
+      sentRef.current = true;
       setSendState('success');
       clearDraft(draftId);
       savedSnapshotRef.current = { to: '', subject: '', body: '', requestAck: false };
@@ -198,6 +208,36 @@ export function Compose({ draftId }: ComposeProps) {
   // ============================================================================
   // Close handling (spec §5.4: unsaved changes → prompt)
   // ============================================================================
+
+  // Wire the native window-close event (titlebar X / Alt-F4) so it goes
+  // through the same unsaved-changes path as the in-app close button.
+  // Without this, native close would bypass the prompt and silently discard
+  // edits newer than the last autosave (Codex P1 fix — native close path).
+  //
+  // Strategy: intercept the close request, prevent it, then either show the
+  // prompt (dirty) or perform a clean programmatic close (not dirty). The
+  // success state (sentRef.current) always passes as clean — the send already
+  // cleared the draft, so no prompt is needed.
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    import('@tauri-apps/api/window').then(({ getCurrentWindow }) => {
+      getCurrentWindow()
+        .onCloseRequested((event) => {
+          // After a successful send, allow close without a prompt.
+          if (sentRef.current || !isDirty()) {
+            // Let the default close proceed — do not call event.preventDefault().
+            return;
+          }
+          // There are unsaved changes: block the native close and show the
+          // in-app Save/Discard/Cancel dialog.
+          event.preventDefault();
+          setClosePrompt({ open: true, action: 'close' });
+        })
+        .then((fn) => { unlisten = fn; });
+    });
+    return () => { unlisten?.(); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isDirty]);
 
   const handleRequestClose = useCallback(() => {
     if (isDirty()) {
