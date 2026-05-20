@@ -5,7 +5,10 @@
  * Reference UX: docs/design/v0.0.1-ux-mockups.md §5.5 synthesis-dock-off.png
  *
  * Mail.app-inspired: clean, high-information density, no clutter.
- * Dark system appearance assumed (Tauri on Linux defaults to GTK theme).
+ * RECONCILED (tuxlink-cbz): previously used rgba(255,255,255,…) literals and
+ * Apple system colors (#34c759 / #ff9f0a / #ff3b30) for the connection state.
+ * Now consumes the central --tux-* tokens; connection state uses the semantic
+ * success / warn / danger tokens.
  */
 
 .dashboard-ribbon {
@@ -20,13 +23,12 @@
   padding: 0 12px;
 
   /* Subtle separator from the content below */
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  border-bottom: 1px solid var(--tux-border);
 
-  /* System dark chrome: slightly lighter than the main background */
-  background-color: rgba(0, 0, 0, 0.15);
-  backdrop-filter: blur(4px);
+  /* Raised chrome: a touch lighter than the darkest pane background */
+  background-color: var(--tux-surface);
 
-  /* Prevent user selection on chrome chrome */
+  /* Prevent user selection on chrome */
   user-select: none;
 
   /* Always on top within its grid row */
@@ -35,7 +37,7 @@
   /* Typography */
   font-size: 12px;
   font-variant-numeric: tabular-nums;
-  color: rgba(255, 255, 255, 0.85);
+  color: var(--tux-fg-muted);
   white-space: nowrap;
   overflow: hidden;
 }
@@ -47,36 +49,36 @@
 .ribbon-callsign {
   font-weight: 600;
   letter-spacing: 0.04em;
-  color: #ffffff;
+  color: var(--tux-fg);
   cursor: default;
 }
 
 .ribbon-grid {
-  color: rgba(255, 255, 255, 0.7);
-  font-family: 'SF Mono', 'Menlo', 'Consolas', 'Liberation Mono', monospace;
+  color: var(--tux-fg-muted);
+  font-family: var(--tux-mono);
   font-size: 11px;
   letter-spacing: 0.05em;
   cursor: default;
 }
 
 .ribbon-gps {
-  color: rgba(255, 255, 255, 0.6);
+  color: var(--tux-fg-muted);
   font-size: 11px;
 }
 
-/* UTC / Local time block — pushed toward center */
+/* UTC / Local time block — pushed toward the right */
 .ribbon-time {
   display: flex;
   align-items: center;
   gap: 2px;
-  color: rgba(255, 255, 255, 0.75);
-  font-family: 'SF Mono', 'Menlo', 'Consolas', 'Liberation Mono', monospace;
+  color: var(--tux-fg-muted);
+  font-family: var(--tux-mono);
   font-size: 12px;
   margin-left: auto; /* flex push toward right */
 }
 
 .ribbon-time-sep {
-  color: rgba(255, 255, 255, 0.35);
+  color: var(--tux-fg-faint);
   padding: 0 2px;
 }
 
@@ -84,31 +86,28 @@
 .ribbon-connection {
   margin-left: 8px;
   padding: 2px 8px;
-  border-radius: 3px;
+  border-radius: 4px;
   font-size: 11px;
   font-weight: 500;
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  color: rgba(255, 255, 255, 0.8);
+  background: var(--tux-surface-2);
+  border: 1px solid var(--tux-border);
+  color: var(--tux-fg-muted);
   cursor: default;
 }
 
-/* Connection state color variants */
-.dashboard-ribbon[data-connection="connected"] .ribbon-connection {
-  background: rgba(52, 199, 89, 0.15);
-  border-color: rgba(52, 199, 89, 0.3);
-  color: #34c759;
+/* Connection state color variants (semantic tokens). */
+.dashboard-ribbon[data-connection='connected'] .ribbon-connection {
+  border-color: var(--tux-success);
+  color: var(--tux-success);
 }
 
-.dashboard-ribbon[data-connection="connecting"] .ribbon-connection,
-.dashboard-ribbon[data-connection="disconnecting"] .ribbon-connection {
-  background: rgba(255, 159, 10, 0.12);
-  border-color: rgba(255, 159, 10, 0.25);
-  color: #ff9f0a;
+.dashboard-ribbon[data-connection='connecting'] .ribbon-connection,
+.dashboard-ribbon[data-connection='disconnecting'] .ribbon-connection {
+  border-color: var(--tux-warn);
+  color: var(--tux-warn);
 }
 
-.dashboard-ribbon[data-connection="error"] .ribbon-connection {
-  background: rgba(255, 59, 48, 0.12);
-  border-color: rgba(255, 59, 48, 0.25);
-  color: #ff3b30;
+.dashboard-ribbon[data-connection='error'] .ribbon-connection {
+  border-color: var(--tux-danger);
+  color: var(--tux-danger);
 }

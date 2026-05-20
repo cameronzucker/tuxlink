@@ -1,19 +1,191 @@
-/* MessageView — reading pane styles.
+/* MessageView — reading-pane styles.
  *
  * Spec: docs/superpowers/specs/2026-05-19-main-ui-cluster-design.md §5.3
- * bd issue: tuxlink-y5c (Task 13 — reading pane)
+ * bd issue: tuxlink-y5c (Task 13) → tuxlink-cbz (fidelity polish).
  *
- * FIX 3 (Codex finding #4): the body <pre> must wrap long lines so that
- * radio / ICS-form lines don't overflow the pane horizontally.
- * `white-space: pre-wrap` preserves intentional newlines and wraps long
- * lines; `overflow-wrap: anywhere` permits breaking at any character when no
- * natural break point exists (callsigns, Base64 fragments).
+ * Before tuxlink-cbz this file styled ONLY `.message-view__body` (pre-wrap),
+ * so the subject/metadata/attachments rendered unstyled and crammed. This is
+ * the full reading-pane treatment per mock-d: a subject heading, the amber
+ * Reply / Reply All / Forward action bar, a spaced metadata row separated by
+ * middots, a hairline rule, and the body. All colors via --tux-* tokens.
  */
 
+/* ----------------------------------------------------------------------------
+ * States (empty / loading / not-found / parse-error): centered, calm, muted.
+ * NotConfigured renders as MessageViewEmpty (an empty state, not an error).
+ * -------------------------------------------------------------------------- */
+.message-view--empty,
+.message-view--not-found,
+.message-view--error,
+.message-view--loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  padding: 24px;
+  text-align: center;
+  color: var(--tux-fg-muted);
+  font-size: 14px;
+}
+
+.message-view--error {
+  color: var(--tux-danger);
+}
+
+/* ----------------------------------------------------------------------------
+ * Loaded view
+ * -------------------------------------------------------------------------- */
+.message-view--loaded {
+  display: flex;
+  flex-direction: column;
+}
+
+.message-view__header {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-bottom: 14px;
+  margin-bottom: 14px;
+  border-bottom: 1px solid var(--tux-border);
+}
+
+.message-view__subject {
+  margin: 0;
+  font-size: 19px;
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--tux-fg);
+}
+
+/* Action bar: Reply is the amber primary; Reply All / Forward are quiet. */
+.message-view__actions {
+  display: flex;
+  gap: 8px;
+}
+
+.message-view__action {
+  padding: 5px 14px;
+  font-size: 13px;
+  font-weight: 500;
+  border-radius: 6px;
+  border: 1px solid var(--tux-border);
+  background: var(--tux-surface-2);
+  color: var(--tux-fg);
+  cursor: pointer;
+  transition: background-color 0.12s ease, border-color 0.12s ease, filter 0.12s ease;
+}
+
+.message-view__action:hover {
+  background: var(--tux-hover);
+  border-color: var(--tux-accent);
+}
+
+.message-view__action:focus-visible {
+  outline: 2px solid var(--tux-focus-ring);
+  outline-offset: 1px;
+}
+
+.message-view__action--primary {
+  background: var(--tux-accent);
+  color: var(--tux-accent-fg);
+  border-color: var(--tux-accent);
+}
+
+.message-view__action--primary:hover {
+  background: var(--tux-accent-hover);
+  border-color: var(--tux-accent-hover);
+}
+
+/* Metadata row: from · date · routing, middot-separated. */
+.message-view__meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  font-size: 12.5px;
+  color: var(--tux-fg-muted);
+}
+
+.message-view__from {
+  color: var(--tux-fg);
+  font-weight: 500;
+}
+
+.message-view__date {
+  font-variant-numeric: tabular-nums;
+}
+
+.message-view__meta > span:not(:first-child) {
+  margin-left: 8px;
+}
+
+.message-view__meta > span:not(:first-child)::before {
+  content: '·';
+  margin-right: 8px;
+  color: var(--tux-fg-faint);
+}
+
+/* ----------------------------------------------------------------------------
+ * Body — preserve newlines, wrap long radio/Base64 lines (Codex finding #4).
+ * -------------------------------------------------------------------------- */
 .message-view__body {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   margin: 0;
   font-family: inherit;
-  font-size: inherit;
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--tux-fg);
+}
+
+.message-view__form-placeholder {
+  padding: 16px;
+  border: 1px solid var(--tux-border);
+  border-radius: 6px;
+  background: var(--tux-surface);
+  color: var(--tux-fg-muted);
+  font-size: 13px;
+}
+
+/* ----------------------------------------------------------------------------
+ * Attachment strip — names + sizes only (no download/preview in v0.0.1).
+ * -------------------------------------------------------------------------- */
+.message-view__attachments {
+  margin-top: 18px;
+  padding-top: 12px;
+  border-top: 1px solid var(--tux-border);
+}
+
+.message-view__attachments-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--tux-fg-muted);
+}
+
+.message-view__attachment-list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.message-view__attachment-item {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 4px 10px;
+  border: 1px solid var(--tux-border);
+  border-radius: 6px;
+  background: var(--tux-surface-2);
+  font-size: 12px;
+}
+
+.message-view__attachment-name {
+  color: var(--tux-fg);
+}
+
+.message-view__attachment-size {
+  color: var(--tux-fg-faint);
+  font-variant-numeric: tabular-nums;
 }

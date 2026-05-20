@@ -106,18 +106,20 @@
   padding: 0 8px;
 }
 
-/* Message list rows */
+/* Message list rows — compact 2-line (mock-d), tuxlink-cbz.
+ * Grid: a fixed gutter (amber unread dot) + a flexible body that ellipsizes,
+ * so rows never overflow the narrow list pane (the old columnar layout did). */
 .message-list-empty {
   padding: 24px;
-  opacity: 0.7;
+  color: var(--tux-fg-muted, #9aa3ad);
   font-size: 14px;
 }
 .message-row {
   display: grid;
-  grid-template-columns: 130px 160px 160px 1fr 20px 64px;
-  gap: 8px;
-  align-items: baseline;
-  padding: 6px 10px;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: start;
+  gap: 2px;
+  padding: 8px 12px;
   border-bottom: 1px solid var(--tux-border, #30353b);
   cursor: pointer;
 }
@@ -127,25 +129,65 @@
 .message-row.selected {
   background: var(--tux-accent-bg, #2d3742);
 }
-.message-row .col-subject {
+.message-row:focus-visible {
+  outline: 2px solid var(--tux-focus-ring, rgba(232, 146, 58, 0.55));
+  outline-offset: -2px;
+}
+
+/* Gutter holds the amber unread dot; its width is reserved whether or not the
+ * dot renders, so read and unread rows stay left-aligned. */
+.message-row__gutter {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding-top: 6px;
+}
+.message-row__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--tux-accent, #e8923a);
+}
+
+.message-row__body {
+  min-width: 0; /* allow the ellipsis on children */
+}
+.message-row__line {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  justify-content: space-between;
+  min-width: 0;
+}
+.message-row__correspondent {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-.message-row .col-from,
-.message-row .col-to {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  opacity: 0.9;
-}
-.message-row .col-date,
-.message-row .col-size {
-  opacity: 0.7;
-  font-variant-numeric: tabular-nums;
   font-size: 13px;
+  color: var(--tux-fg, #e6e6e6);
 }
-.message-row .col-attach {
-  text-align: center;
-  opacity: 0.8;
+.message-row__date {
+  flex-shrink: 0;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--tux-fg-muted, #9aa3ad);
+}
+.message-row__subject {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  color: var(--tux-fg-muted, #9aa3ad);
+}
+.message-row__attach {
+  flex-shrink: 0;
+  font-size: 11px;
+}
+/* Unread emphasis: brighter, heavier correspondent + subject. */
+.message-row.unread .message-row__correspondent,
+.message-row.unread .message-row__subject {
+  font-weight: 700;
+}
+.message-row.unread .message-row__subject {
+  color: var(--tux-fg, #e6e6e6);
 }

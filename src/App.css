@@ -73,7 +73,22 @@ body,
   --tux-surface-2: #262b31; /* slightly raised (button rest) */
   --tux-accent: #e8923a; /* amber accent — primary action, unread dots */
   --tux-accent-fg: #1a1d21; /* text on the amber accent */
+  --tux-accent-hover: #f2a24f; /* amber lifted on hover (dark-theme: lighten) */
   --tux-focus-ring: rgba(232, 146, 58, 0.55); /* focus outline (amber) */
+
+  /* --- Semantic state tokens ---
+   * Status, validation, and session-log source colors. Deliberately
+   * desaturated to sit inside the warm-neutral dark palette rather than the
+   * punchy Apple/Catppuccin hues the components previously hardcoded. These
+   * canonicalize the connection-state / error / success / warn / log-source
+   * colors that DashboardRibbon, Compose, and SessionLog each invented locally. */
+  --tux-success: #5cb585; /* connected · success · in-session */
+  --tux-warn: #d99a3a; /* connecting · warnings · deferred-feature hints */
+  --tux-danger: #e0617a; /* errors · required fields · destructive actions */
+  --tux-danger-fg: #1a1d21; /* text on a danger fill */
+  --tux-danger-surface: #3a2026; /* error-banner background */
+  --tux-info: #6aa0d8; /* informational accents (session-log backend/pat source) */
+  --tux-fg-faint: #6b727b; /* dimmest text: log timestamps, subtle hints */
 
   /* --- Typography ---
    * Native-desktop system stack (Tauri ships in WebKitGTK on Linux; this

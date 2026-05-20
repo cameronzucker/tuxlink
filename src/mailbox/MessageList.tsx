@@ -1,19 +1,22 @@
 // Virtualized message list (center region of the app shell).
 //
 // Spec: docs/superpowers/specs/2026-05-19-main-ui-cluster-design.md §5.2, §4.2
-// bd issue: tuxlink-zsm (Task 12)
+// bd issue: tuxlink-zsm (Task 12); restructured under tuxlink-cbz (fidelity).
 //
-// Columns: UTC time · From · To · Subject · `#` (attachment) · size (nonzero).
-// Unread rows are bold. Selecting a row calls `onSelect(id)` — it updates
-// SELECTION STATE only; it does NOT remount/route the shell (the
+// ROW DESIGN (tuxlink-cbz, 2026-05-20): the original Express-style columnar
+// row (time·From·To·Subject·#·size) overflowed the narrow list pane and did
+// not match mock-d. Per operator decision (2026-05-20) the rows now use the
+// mock-d COMPACT 2-line layout: an amber unread dot in a fixed gutter, then
+// line 1 = correspondent + UTC time, line 2 = subject + attachment marker.
+// Unread rows are bold (via CSS). Selecting a row calls `onSelect(id)` — it
+// updates SELECTION STATE only; it does NOT remount/route the shell (the
 // no-full-view-swap invariant, spec §4.2). Virtualization via react-virtuoso.
 //
 // Testability: the per-row presentation (`MessageRow`) and the formatters are
 // exported and unit-tested directly. react-virtuoso renders into a
 // zero-height scroller under jsdom, so list-level tests assert the empty
 // state + that the component mounts; row rendering is verified via
-// `MessageRow` (testing-pitfalls: static tests verify logic, not the
-// virtualized widget's pixel output — the live list is an M2 smoke gate).
+// `MessageRow`.
 
 import { Virtuoso } from 'react-virtuoso';
 import type { MailboxFolder, MessageMeta } from './types';
@@ -40,8 +43,9 @@ export function formatListDate(iso: string): string {
   );
 }
 
-/// Human-readable size; empty string when zero (the size column is suppressed
-/// for zero-byte rows per spec §5.2 "size (when nonzero)").
+/// Human-readable size; empty string when zero. Retained as an exported util
+/// (reading-pane / tooltips) though the compact row no longer shows a size
+/// column (mock-d minimalism, operator decision 2026-05-20).
 export function formatSize(bytes: number): string {
   if (!bytes || bytes <= 0) return '';
   if (bytes < 1024) return `${bytes} B`;
@@ -49,13 +53,15 @@ export function formatSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-/// The "To" column label. For Inbox, recipients are typically empty (Pat
-/// degradation) and the sender is the salient party, so show the sender as a
-/// fallback; for Sent/Outbox show the recipient list. Spec §2.1.
-export function toColumnLabel(msg: MessageMeta, folder: MailboxFolder): string {
-  if (msg.to.length > 0) return msg.to.join(', ');
-  if (folder === 'inbox') return msg.from;
-  return '';
+/// The single correspondent shown on a compact row. For Sent/Outbox the
+/// recipient(s) are salient; everywhere else (Inbox/Drafts/Deleted) the sender
+/// is. Unlike the prior `toColumnLabel`, Inbox ALWAYS shows the sender even
+/// when `to` is populated — the reader is looking at who wrote to them.
+export function correspondentLabel(msg: MessageMeta, folder: MailboxFolder): string {
+  if (folder === 'sent' || folder === 'outbox') {
+    return msg.to.length > 0 ? msg.to.join(', ') : msg.from;
+  }
+  return msg.from;
 }
 
 export interface MessageRowProps {
@@ -65,20 +71,17 @@ export interface MessageRowProps {
   onSelect: (id: string) => void;
 }
 
-/// One list row. Pure presentation + a click → `onSelect(id)`. Bold when
-/// unread. Exported for direct unit testing.
+/// One compact list row (mock-d). A fixed-width gutter holds the amber unread
+/// dot (rendered only when unread, but the gutter reserves its width either
+/// way so read/unread rows stay left-aligned). Pure presentation + a click /
+/// Enter → `onSelect(id)`. Exported for direct unit testing.
 export function MessageRow({ message, folder, selected, onSelect }: MessageRowProps) {
-  const size = formatSize(message.bodySize);
   return (
     <div
       role="row"
       aria-selected={selected}
       data-testid={`message-row-${message.id}`}
-      className={[
-        'message-row',
-        message.unread ? 'unread' : 'read',
-        selected ? 'selected' : '',
-      ]
+      className={['message-row', message.unread ? 'unread' : 'read', selected ? 'selected' : '']
         .filter(Boolean)
         .join(' ')}
       onClick={() => onSelect(message.id)}
@@ -89,26 +92,35 @@ export function MessageRow({ message, folder, selected, onSelect }: MessageRowPr
         }
       }}
       tabIndex={0}
-      style={{ fontWeight: message.unread ? 700 : 400 }}
     >
-      <span className="col-date" data-testid="row-date">
-        {formatListDate(message.date)}
-      </span>
-      <span className="col-from" data-testid="row-from">
-        {message.from}
-      </span>
-      <span className="col-to" data-testid="row-to">
-        {toColumnLabel(message, folder)}
-      </span>
-      <span className="col-subject" data-testid="row-subject">
-        {message.subject}
-      </span>
-      <span className="col-attach" data-testid="row-attach" aria-hidden={!message.hasAttachments}>
-        {message.hasAttachments ? '#' : ''}
-      </span>
-      <span className="col-size" data-testid="row-size">
-        {size}
-      </span>
+      <div className="message-row__gutter" aria-hidden="true">
+        {message.unread && <span className="message-row__dot" data-testid="row-unread-dot" />}
+      </div>
+      <div className="message-row__body">
+        <div className="message-row__line message-row__line--top">
+          <span className="message-row__correspondent" data-testid="row-correspondent">
+            {correspondentLabel(message, folder)}
+          </span>
+          <span className="message-row__date" data-testid="row-date">
+            {formatListDate(message.date)}
+          </span>
+        </div>
+        <div className="message-row__line message-row__line--bottom">
+          <span className="message-row__subject" data-testid="row-subject">
+            {message.subject}
+          </span>
+          {message.hasAttachments && (
+            <span
+              className="message-row__attach"
+              data-testid="row-attach"
+              aria-label="has attachment"
+              title="Has attachment"
+            >
+              📎
+            </span>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

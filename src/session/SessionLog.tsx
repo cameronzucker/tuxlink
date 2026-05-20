@@ -261,10 +261,10 @@ export function SessionLog({ sessionState = 'Idle' }: SessionLogProps) {
         flexDirection: 'column',
         height: `${height}px`,
         minHeight: `${MIN_HEIGHT_PX}px`,
-        borderTop: '1px solid #333',
-        background: '#0d0d0d',
-        color: '#d4d4d4',
-        fontFamily: 'monospace',
+        borderTop: '1px solid var(--tux-border)',
+        background: 'var(--tux-bg)',
+        color: 'var(--tux-fg)',
+        fontFamily: 'var(--tux-mono)',
         fontSize: '12px',
         position: 'relative',
         userSelect: isResizingRef.current ? 'none' : 'auto',
@@ -277,7 +277,7 @@ export function SessionLog({ sessionState = 'Idle' }: SessionLogProps) {
         style={{
           height: '4px',
           cursor: 'row-resize',
-          background: '#222',
+          background: 'var(--tux-border)',
           flexShrink: 0,
         }}
         aria-label="Resize session log"
@@ -290,7 +290,7 @@ export function SessionLog({ sessionState = 'Idle' }: SessionLogProps) {
           alignItems: 'center',
           gap: '8px',
           padding: '2px 8px',
-          borderBottom: '1px solid #222',
+          borderBottom: '1px solid var(--tux-border)',
           flexShrink: 0,
           height: '28px',
         }}
@@ -353,7 +353,7 @@ export function SessionLog({ sessionState = 'Idle' }: SessionLogProps) {
             data-source={line.source}
             style={{ color: levelColor(line.level) }}
           >
-            <span style={{ color: '#555' }}>{formatTimestamp(line.timestampIso)}</span>
+            <span style={{ color: 'var(--tux-fg-faint)' }}>{formatTimestamp(line.timestampIso)}</span>
             {' '}
             <span style={{ color: sourceColor(line.source) }}>[{line.source}]</span>
             {' '}
@@ -373,9 +373,9 @@ export function SessionLog({ sessionState = 'Idle' }: SessionLogProps) {
             bottom: '8px',
             right: '8px',
             padding: '4px 8px',
-            background: '#1a1a1a',
-            border: '1px solid #444',
-            color: '#aaa',
+            background: 'var(--tux-surface)',
+            border: '1px solid var(--tux-border)',
+            color: 'var(--tux-fg-muted)',
             cursor: 'pointer',
             fontSize: '11px',
           }}
@@ -391,42 +391,46 @@ export function SessionLog({ sessionState = 'Idle' }: SessionLogProps) {
 // Style helpers (inline — no external CSS dep)
 // ---------------------------------------------------------------------------
 
+// Colors reconciled onto the central --tux-* tokens (tuxlink-cbz). These were
+// previously hardcoded hex that drifted from the app palette (and a #0d0d0d
+// background darker than the rest of the shell). CSS variables resolve inside
+// React inline-style objects, so the projection/state colors stay token-driven.
 function sessionStateColor(state: SessionState): string {
   switch (state) {
-    case 'Idle':          return '#888';
-    case 'Connecting':    return '#f0b429';
-    case 'In-session':    return '#3dd68c';
-    case 'Disconnecting': return '#f0b429';
-    default:              return '#888';
+    case 'Idle':          return 'var(--tux-fg-muted)';
+    case 'Connecting':    return 'var(--tux-warn)';
+    case 'In-session':    return 'var(--tux-success)';
+    case 'Disconnecting': return 'var(--tux-warn)';
+    default:              return 'var(--tux-fg-muted)';
   }
 }
 
 function levelColor(level: LogLineDto['level']): string {
   switch (level) {
-    case 'trace': return '#555';
-    case 'debug': return '#777';
-    case 'info':  return '#d4d4d4';
-    case 'warn':  return '#f0b429';
-    case 'error': return '#e05252';
-    default:      return '#d4d4d4';
+    case 'trace': return 'var(--tux-fg-faint)';
+    case 'debug': return 'var(--tux-fg-faint)';
+    case 'info':  return 'var(--tux-fg)';
+    case 'warn':  return 'var(--tux-warn)';
+    case 'error': return 'var(--tux-danger)';
+    default:      return 'var(--tux-fg)';
   }
 }
 
 function sourceColor(source: LogLineDto['source']): string {
   switch (source) {
-    case 'backend':   return '#5fb3f9';
-    case 'pat':       return '#9d75d8';
-    case 'transport': return '#3dd68c';
-    case 'wire':      return '#555';
-    default:          return '#777';
+    case 'backend':   return 'var(--tux-info)';
+    case 'pat':       return 'var(--tux-accent)';
+    case 'transport': return 'var(--tux-success)';
+    case 'wire':      return 'var(--tux-fg-faint)';
+    default:          return 'var(--tux-fg-muted)';
   }
 }
 
 const toggleStyle = (active: boolean): React.CSSProperties => ({
   padding: '1px 8px',
-  background: active ? '#2a2a2a' : 'transparent',
-  border: active ? '1px solid #555' : '1px solid transparent',
-  color: active ? '#eee' : '#777',
+  background: active ? 'var(--tux-surface-2)' : 'transparent',
+  border: active ? '1px solid var(--tux-border)' : '1px solid transparent',
+  color: active ? 'var(--tux-fg)' : 'var(--tux-fg-muted)',
   cursor: 'pointer',
   fontSize: '11px',
   borderRadius: '2px',
@@ -435,8 +439,8 @@ const toggleStyle = (active: boolean): React.CSSProperties => ({
 const copyButtonStyle: React.CSSProperties = {
   padding: '1px 8px',
   background: 'transparent',
-  border: '1px solid #333',
-  color: '#888',
+  border: '1px solid var(--tux-border)',
+  color: 'var(--tux-fg-muted)',
   cursor: 'pointer',
   fontSize: '11px',
   borderRadius: '2px',

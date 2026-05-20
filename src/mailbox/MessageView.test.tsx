@@ -11,8 +11,8 @@
 // directly. The IPC round-trip is NOT tested here (it's smoke-verified at
 // M2) — only the rendering logic driven by synthetic ParsedMessage data.
 
-import { describe, it, expect, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { render, screen, fireEvent } from '@testing-library/react';
 import {
   MessageViewLoaded,
   MessageViewEmpty,
@@ -30,6 +30,11 @@ vi.mock('./useMessage', () => ({
   useMessage: vi.fn(),
 }));
 import { useMessage } from './useMessage';
+
+// Reply/forward open a compose window via openReplyWindow — mock the side
+// effect so the action-bar tests assert wiring, not Tauri behavior.
+vi.mock('./replyActions', () => ({ openReplyWindow: vi.fn().mockResolvedValue(undefined) }));
+import { openReplyWindow } from './replyActions';
 import type { ParsedMessage } from './types';
 
 function parsed(over: Partial<ParsedMessage> = {}): ParsedMessage {
@@ -122,6 +127,42 @@ describe('<MessageViewLoaded>', () => {
   it('shows UTC sent date', () => {
     render(<MessageViewLoaded message={parsed({ date: '2026-05-19T14:05:00Z' })} />);
     expect(screen.getByTestId('message-date')).toHaveTextContent('2026-05-19');
+  });
+});
+
+// ============================================================================
+// Reading-pane action bar (tuxlink-cbz, operator decision 2026-05-20):
+// amber Reply / Reply All / Forward, wired to openReplyWindow.
+// ============================================================================
+describe('<MessageViewLoaded> reply action bar', () => {
+  beforeEach(() => vi.mocked(openReplyWindow).mockClear());
+
+  it('renders Reply, Reply All, and Forward buttons', () => {
+    render(<MessageViewLoaded message={parsed()} />);
+    expect(screen.getByTestId('reply-btn')).toBeInTheDocument();
+    expect(screen.getByTestId('reply-all-btn')).toBeInTheDocument();
+    expect(screen.getByTestId('forward-btn')).toBeInTheDocument();
+  });
+
+  it('Reply opens a reply compose window for the message', () => {
+    const m = parsed();
+    render(<MessageViewLoaded message={m} />);
+    fireEvent.click(screen.getByTestId('reply-btn'));
+    expect(openReplyWindow).toHaveBeenCalledWith(m, 'reply');
+  });
+
+  it('Reply All opens a reply-all compose window', () => {
+    const m = parsed();
+    render(<MessageViewLoaded message={m} />);
+    fireEvent.click(screen.getByTestId('reply-all-btn'));
+    expect(openReplyWindow).toHaveBeenCalledWith(m, 'replyAll');
+  });
+
+  it('Forward opens a forward compose window', () => {
+    const m = parsed();
+    render(<MessageViewLoaded message={m} />);
+    fireEvent.click(screen.getByTestId('forward-btn'));
+    expect(openReplyWindow).toHaveBeenCalledWith(m, 'forward');
   });
 });
 

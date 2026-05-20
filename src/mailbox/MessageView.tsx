@@ -30,6 +30,7 @@ import './MessageView.css';
 import type { ParsedMessage, AttachmentMeta } from './types';
 import { useMessage, type MessageSelection } from './useMessage';
 import { asUiError, isNotConfigured } from './types';
+import { openReplyWindow, type ReplyMode } from './replyActions';
 
 // ============================================================================
 // Exported constants (used by tests)
@@ -40,6 +41,17 @@ export const NOT_FOUND_COPY = 'Message not found. It may have been deleted or mo
 export const PARSE_ERROR_PREFIX = 'This message could not be parsed';
 export const FORM_PLACEHOLDER =
   'This message contains a Winlink form. Form rendering arrives in v0.1.';
+
+/**
+ * Open a reply / reply-all / forward compose window. Window-open failure is
+ * non-fatal: openReplyWindow has already seeded the prefilled draft into the
+ * store, so it appears in Drafts even if the IPC to spawn the window rejects.
+ */
+function fireReply(message: ParsedMessage, mode: ReplyMode): void {
+  openReplyWindow(message, mode).catch(() => {
+    /* non-fatal — surfaced via Rust logs; draft is saved */
+  });
+}
 
 // ============================================================================
 // Sub-components
@@ -103,10 +115,36 @@ function formatHeaderDate(isoDate: string): string {
 export function MessageViewLoaded({ message }: { message: ParsedMessage }) {
   return (
     <div className="message-view message-view--loaded">
-      {/* Header strip */}
+      {/* Header strip: subject heading → amber action bar → metadata row */}
       <header className="message-view__header">
-        <div className="message-view__subject" data-testid="message-subject">
+        <h2 className="message-view__subject" data-testid="message-subject">
           {message.subject}
+        </h2>
+        <div className="message-view__actions" role="group" aria-label="Message actions">
+          <button
+            type="button"
+            className="message-view__action message-view__action--primary"
+            data-testid="reply-btn"
+            onClick={() => fireReply(message, 'reply')}
+          >
+            Reply
+          </button>
+          <button
+            type="button"
+            className="message-view__action"
+            data-testid="reply-all-btn"
+            onClick={() => fireReply(message, 'replyAll')}
+          >
+            Reply All
+          </button>
+          <button
+            type="button"
+            className="message-view__action"
+            data-testid="forward-btn"
+            onClick={() => fireReply(message, 'forward')}
+          >
+            Forward
+          </button>
         </div>
         <div className="message-view__meta">
           <span className="message-view__from" data-testid="message-from">
