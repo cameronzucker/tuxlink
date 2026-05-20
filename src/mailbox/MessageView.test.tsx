@@ -64,16 +64,27 @@ describe('<MessageViewEmpty>', () => {
 });
 
 // ============================================================================
-// Task-13 test (6): routing shown when present, omitted when null.
+// Reading-pane metadata — Mock D dl is From / To / Date only (no Via/routing row).
 // ============================================================================
 describe('<MessageViewLoaded>', () => {
-  it('shows routing when present', () => {
-    render(<MessageViewLoaded message={parsed({ routing: 'via CMS-SSL' })} />);
-    expect(screen.getByTestId('message-routing')).toHaveTextContent('via CMS-SSL');
+  it('shows From as bare address, plus display name when present (Name <addr>)', () => {
+    const { rerender } = render(<MessageViewLoaded message={parsed({ from: 'W4PHS@winlink.org' })} />);
+    expect(screen.getByTestId('message-from')).toHaveTextContent('W4PHS@winlink.org');
+    rerender(<MessageViewLoaded message={parsed({ from: 'Mike / Net Control <K0SWE@winlink.org>' })} />);
+    // addr in the .addr span; display name rendered alongside.
+    expect(screen.getByTestId('message-from')).toHaveTextContent('K0SWE@winlink.org');
+    expect(screen.getByTestId('message-view-loaded')).toHaveTextContent('Mike / Net Control');
   });
 
-  it('omits routing strip when null', () => {
-    render(<MessageViewLoaded message={parsed({ routing: null })} />);
+  it('shows a "(N recipients)" hint only when there is more than one To', () => {
+    const { rerender } = render(<MessageViewLoaded message={parsed({ to: ['a@x.org'] })} />);
+    expect(screen.getByTestId('message-to')).not.toHaveTextContent('recipients');
+    rerender(<MessageViewLoaded message={parsed({ to: ['a@x.org', 'b@x.org', 'c@x.org'] })} />);
+    expect(screen.getByTestId('message-to')).toHaveTextContent('(3 recipients)');
+  });
+
+  it('does NOT render a routing/Via row (mock dl = From/To/Date)', () => {
+    render(<MessageViewLoaded message={parsed({ routing: 'via CMS-SSL' })} />);
     expect(screen.queryByTestId('message-routing')).toBeNull();
   });
 

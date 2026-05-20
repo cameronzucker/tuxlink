@@ -137,17 +137,25 @@ describe('<AppShell> — Mock D topology', () => {
     expect(screen.queryByTestId('region-dock-reserved')).toBeNull();
   });
 
-  it('shows folder tabs with counts (zero counts suppressed)', () => {
+  it('shows only Inbox + Sent tabs (mock literal), badge = unread count', () => {
     renderShell();
     expect(screen.getByTestId('tab-inbox')).toBeInTheDocument();
-    expect(screen.getByTestId('tab-outbox')).toBeInTheDocument();
     expect(screen.getByTestId('tab-sent')).toBeInTheDocument();
-    expect(screen.getByTestId('tab-drafts')).toBeInTheDocument();
+    // Outbox/Drafts are NOT tabs in the literal Mock D (reached via Mailbox menu).
+    expect(screen.queryByTestId('tab-outbox')).toBeNull();
+    expect(screen.queryByTestId('tab-drafts')).toBeNull();
+    // Inbox fixture msg is unread → badge "1"; Sent msg is read → 0 unread → no badge.
     expect(screen.getByTestId('tab-count-inbox')).toHaveTextContent('1');
-    expect(screen.getByTestId('tab-count-sent')).toHaveTextContent('1');
-    // Outbox + Drafts have 0 → no count badge.
-    expect(screen.queryByTestId('tab-count-outbox')).toBeNull();
-    expect(screen.queryByTestId('tab-count-drafts')).toBeNull();
+    expect(screen.queryByTestId('tab-count-sent')).toBeNull();
+  });
+
+  it('the Mailbox menu switches folders (Outbox/Sent have no-or-one tab)', async () => {
+    renderShell();
+    await act(async () => {
+      h.menuHandler?.({ payload: 'menu:mailbox:sent' });
+    });
+    expect(screen.getByTestId('message-row-SENT1')).toBeInTheDocument();
+    expect(screen.queryByTestId('message-row-INBOX1')).not.toBeInTheDocument();
   });
 
   it('starts on the Inbox tab (active) with the reader showing the empty state', () => {

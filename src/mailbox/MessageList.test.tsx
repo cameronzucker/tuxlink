@@ -38,10 +38,10 @@ describe('formatters', () => {
   // formatRowDate: compact Mail.app-style smart date in UTC (now is injectable).
   describe('formatRowDate', () => {
     const now = new Date('2026-05-20T15:00:00Z');
-    it('today → UTC time-of-day with a Z marker', () => {
-      expect(formatRowDate('2026-05-20T12:18:00Z', now)).toBe('12:18Z');
+    it('today → time-of-day HH:MM (UTC clock, no Z — matches the mock)', () => {
+      expect(formatRowDate('2026-05-20T12:18:00Z', now)).toBe('12:18');
       // a clock-skew future timestamp still reads as time-of-day, not negative
-      expect(formatRowDate('2026-05-20T23:59:00Z', now)).toBe('23:59Z');
+      expect(formatRowDate('2026-05-20T23:59:00Z', now)).toBe('23:59');
     });
     it('yesterday → "Yesterday"', () => {
       expect(formatRowDate('2026-05-19T14:05:00Z', now)).toBe('Yesterday');

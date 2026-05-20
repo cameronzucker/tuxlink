@@ -103,19 +103,36 @@ function formatAttachSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-/** Format a UTC ISO-8601 date-time string to a compact UTC display label. */
+/** Format a UTC ISO-8601 date-time to the mock's "<date> <HH:MM> UTC · <HH:MM tz>"
+ *  (UTC primary for emcomm + the operator's local time, as the mock shows). */
 function formatHeaderDate(isoDate: string): string {
   try {
     const d = new Date(isoDate);
     if (isNaN(d.getTime())) return isoDate;
     const pad = (n: number) => String(n).padStart(2, '0');
-    return (
+    const utc =
       `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())} ` +
-      `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())} UTC`
-    );
+      `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())} UTC`;
+    const local = d.toLocaleTimeString(undefined, {
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+      timeZoneName: 'short',
+    });
+    return `${utc} · ${local}`;
   } catch {
     return isoDate;
   }
+}
+
+/** Split an RFC5322-style address into display name + bare address.
+ *  "Mike / Net Control <K0SWE@winlink.org>" → { name, addr }; a bare address
+ *  → { name: '', addr }. Used so the reading pane can show the mock's
+ *  "K0SWE@winlink.org · Mike / Net Control". */
+function parseAddress(s: string): { name: string; addr: string } {
+  const m = s.match(/^\s*(.*?)\s*<([^>]+)>\s*$/);
+  if (m) return { name: m[1].replace(/^"|"$/g, '').trim(), addr: m[2].trim() };
+  return { name: '', addr: s.trim() };
 }
 
 // ============================================================================
@@ -127,6 +144,8 @@ function formatHeaderDate(isoDate: string): string {
  * directly so tests can inject synthetic data without a Tauri runtime.
  */
 export function MessageViewLoaded({ message }: { message: ParsedMessage }) {
+  const from = parseAddress(message.from);
+  const toAddrs = message.to.map(parseAddress);
   return (
     <div className="reading-pane" data-testid="message-view-loaded">
       {/* 1 — action bar (Reply primary amber · Reply All · Forward · Print) */}
@@ -137,7 +156,7 @@ export function MessageViewLoaded({ message }: { message: ParsedMessage }) {
           data-testid="reply-btn"
           onClick={() => fireReply(message, 'reply')}
         >
-          Reply
+          Reply (⌘R)
         </button>
         <button
           type="button"
@@ -175,31 +194,30 @@ export function MessageViewLoaded({ message }: { message: ParsedMessage }) {
         <dt>From</dt>
         <dd>
           <span className="addr" data-testid="message-from">
-            {message.from}
+            {from.addr}
           </span>
+          {from.name && <span className="from-name"> · {from.name}</span>}
         </dd>
 
         <dt>To</dt>
         <dd data-testid="message-to">
-          {message.to.length > 0
-            ? message.to.map((addr, i) => (
+          {toAddrs.length > 0 ? (
+            <>
+              {toAddrs.map((a, i) => (
                 <span key={i}>
                   {i > 0 && ', '}
-                  <span className="addr">{addr}</span>
+                  <span className="addr">{a.addr}</span>
                 </span>
-              ))
-            : '—'}
+              ))}
+              {toAddrs.length > 1 && ` (${toAddrs.length} recipients)`}
+            </>
+          ) : (
+            '—'
+          )}
         </dd>
 
         <dt>Date</dt>
         <dd data-testid="message-date">{formatHeaderDate(message.date)}</dd>
-
-        {message.routing !== null && message.routing !== undefined && (
-          <>
-            <dt>Via</dt>
-            <dd data-testid="message-routing">{message.routing}</dd>
-          </>
-        )}
       </dl>
 
       {/* 4 — body (form payloads render a placeholder, never raw XML) */}

@@ -3,12 +3,14 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import { TabStrip, SHELL_TABS } from './TabStrip';
 
 describe('<TabStrip>', () => {
-  it('renders the four functional folder tabs', () => {
+  it('renders exactly the two tabs the mock shows (Inbox + Sent)', () => {
     render(<TabStrip selectedFolder="inbox" onSelectFolder={() => {}} />);
     for (const t of SHELL_TABS) {
       expect(screen.getByTestId(`tab-${t.id}`)).toBeInTheDocument();
     }
-    expect(SHELL_TABS.map((t) => t.id)).toEqual(['inbox', 'outbox', 'sent', 'drafts']);
+    expect(SHELL_TABS.map((t) => t.id)).toEqual(['inbox', 'sent']);
+    expect(screen.queryByTestId('tab-outbox')).toBeNull();
+    expect(screen.queryByTestId('tab-drafts')).toBeNull();
   });
 
   it('marks the selected folder active', () => {

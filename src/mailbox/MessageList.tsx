@@ -26,12 +26,11 @@ export const EMPTY_FOLDER_COPY =
 export const NOT_CONNECTED_COPY =
   'Not connected. Complete setup or connect to the CMS to load mail.';
 
-/// Compact, Mail.app-style smart date for the row's date column, kept in UTC
-/// (emcomm correctness — the `Z` suffix signals UTC, never local). Matches the
-/// mock's density: time-of-day today, "Yesterday", "N days ago" within a week,
-/// then the calendar date. `now` is injectable for deterministic tests. Falls
-/// back to the raw string when unparseable so a malformed date never blanks the
-/// row.
+/// Compact, Mail.app-style smart date for the row's date column, matching the
+/// mock literally: `HH:MM` today, "Yesterday", "N days ago" within a week, then
+/// the calendar date. Computed in UTC (emcomm — the day boundary is UTC, never
+/// local). `now` is injectable for deterministic tests. Falls back to the raw
+/// string when unparseable so a malformed date never blanks the row.
 export function formatRowDate(iso: string, now: Date = new Date()): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
@@ -41,8 +40,8 @@ export function formatRowDate(iso: string, now: Date = new Date()): string {
   const diffDays = Math.round((startOfUtcDay(now) - startOfUtcDay(d)) / dayMs);
 
   if (diffDays <= 0) {
-    // Today (or a clock-skew future timestamp) → time of day, UTC.
-    return `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}Z`;
+    // Today (or a clock-skew future timestamp) → time of day (UTC clock).
+    return `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`;
   }
   if (diffDays === 1) return 'Yesterday';
   if (diffDays < 7) return `${diffDays} days ago`;

@@ -26,7 +26,6 @@ import { MessageList } from '../mailbox/MessageList';
 import { useMailbox } from '../mailbox/useMailbox';
 import { isNotConfigured } from '../mailbox/types';
 import type { MailboxFolder } from '../mailbox/types';
-import { listDraftIds } from '../mailbox/draftIds';
 import { DEV_SELECTED } from '../mailbox/devFixture';
 import { TabStrip } from './TabStrip';
 import { StatusBar } from './StatusBar';
@@ -67,15 +66,14 @@ export function AppShell() {
   // non-backend, so useMailbox is a disabled no-op for them.
   const { messages, error } = useMailbox(selectedFolder);
   const inbox = useMailbox('inbox');
-  const outbox = useMailbox('outbox');
   const sent = useMailbox('sent');
   const notConnected = isNotConfigured(error);
 
+  // Tab badges = unread count (Mail.app convention; matches the mock's "Inbox 3").
+  // Only Inbox/Sent are tabs; Outbox is reached via the Mailbox menu.
   const counts: Partial<Record<MailboxFolder, number>> = {
-    inbox: inbox.messages.length,
-    outbox: outbox.messages.length,
-    sent: sent.messages.length,
-    drafts: listDraftIds().length,
+    inbox: inbox.messages.filter((m) => m.unread).length,
+    sent: sent.messages.filter((m) => m.unread).length,
   };
 
   // Status data (callsign / grid / connection state) — a single poll, owned
@@ -102,10 +100,19 @@ export function AppShell() {
     let unlisten: (() => void) | undefined;
     let mounted = true;
     listen<string>('menu', (event) => {
-      if (event.payload === 'menu:view:status_bar') {
+      const p = event.payload;
+      if (p === 'menu:view:status_bar') {
         setShowStatusBar((s) => !s);
-      } else if (event.payload === 'menu:view:session_log') {
+      } else if (p === 'menu:view:session_log') {
         setShowSessionLog((s) => !s);
+      } else if (
+        p === 'menu:mailbox:inbox' ||
+        p === 'menu:mailbox:sent' ||
+        p === 'menu:mailbox:outbox'
+      ) {
+        // Mailbox menu switches folders — Outbox has no tab in the literal Mock D.
+        setSelectedFolder(p.slice('menu:mailbox:'.length) as MailboxFolder);
+        setSelectedMessage(null);
       }
     }).then((fn) => {
       if (mounted) unlisten = fn;

@@ -176,8 +176,14 @@ export const DEV_SENT: MessageMeta[] = [
 
 // Parsed bodies keyed by message id (reading pane). The selected DEV-2 body is
 // the mock's verbatim K0SWE roll-call so the grim shot matches the mock pane.
-const BODIES: Record<string, { body: string; isForm?: boolean; routing?: string | null }> = {
+// `fromDisplay` is the RFC5322 display name; devMessageFor renders the parsed
+// `from` as "Name <addr>" so the reading pane shows "addr · Name" like the mock.
+const BODIES: Record<
+  string,
+  { body: string; isForm?: boolean; routing?: string | null; fromDisplay?: string }
+> = {
   'DEV-2': {
+    fromDisplay: 'Mike / Net Control',
     body: `All TRI-STATE-NET stations,
 
 Saturday training net at 20:46Z on 7.235 MHz LSB.
@@ -202,6 +208,7 @@ TRI-STATE-NET Control`,
     routing: 'CMS via 1235-2.cms.winlink.org',
   },
   'DEV-1': {
+    fromDisplay: 'James / EC Shelby County',
     body: `ARES members,
 
 NWS Memphis has issued a severe thunderstorm watch for
@@ -216,6 +223,7 @@ EC Shelby County ARES`,
     routing: 'CMS via 1235-2.cms.winlink.org',
   },
   'DEV-3': {
+    fromDisplay: 'Maria / Incident Commander',
     body: '',
     isForm: true,
     routing: 'CMS via 1235-2.cms.winlink.org',
@@ -243,7 +251,7 @@ export function devMessageFor(id: string): ParsedMessage | null {
   return {
     id: meta.id,
     subject: meta.subject,
-    from: meta.from,
+    from: extra.fromDisplay ? `${extra.fromDisplay} <${meta.from}>` : meta.from,
     to: meta.to,
     cc: [],
     date: meta.date,
