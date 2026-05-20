@@ -1,30 +1,19 @@
 /* ============================================================================
- * App.css — global CSS foundation for Tuxlink.
+ * App.css — global foundation, ported to the approved Mock D design system.
  *
- * Scope: this file is the FOUNDATION layer only — global reset, box-sizing,
- * the central design tokens, and dark base/element + form-control theming.
- * Component layout/look lives in the per-component CSS
- * (shell/AppShell.css, shell/DashboardRibbon.css, shell/StatusBar.css,
- * mailbox/MessageView.css, compose/Compose.css). This file deliberately does
- * NOT chase pixel-perfect mock fidelity — that is a separate polish pass.
+ * tuxlink-yd4 (2026-05-20): v0.0.1 adopts Mock D (Mail.app-minimal). The
+ * palette / elevation / type below are the EXACT :root tokens from the approved
+ * mock (docs/design/mockups/2026-05-17-mocks-v1-four-directions.html) — a COOL
+ * SLATE system with a real elevation ladder, NOT the prior warm-neutral flat
+ * approximation. The legacy --tux-* names are ALIASED to the real tokens (per
+ * the Codex strategy: don't re-interpret colors) so existing components recolor
+ * correctly during the topology rebuild; new/rebuilt CSS prefers the real
+ * --bg / --surface / --accent / ... names.
  *
- * Aesthetic: "Mail.app-minimal" dark single-theme (locked direction per the
- * v0.0.1 UX mockups, mock-d-mailapp-minimal.png + the synthesis). Restrained,
- * clean, high-information-density. Single dark theme — NOT OS-adaptive.
- *
- * Token contract: every `var(--tux-*)` referenced anywhere under src/ is
- * defined here on :root, so no component relies on its inline fallback.
+ * Font note: the mock's --sans leads with Inter. Inter is bundled via
+ * @font-face below (fonts/) so WebKitGTK renders the approved face rather than
+ * falling back to a generic system sans.
  * ========================================================================== */
-
-/* ----------------------------------------------------------------------------
- * 1. Global reset + box-sizing
- *
- * box-sizing:border-box on everything stops paddings from inflating element
- * widths past their grid tracks (the cause of the cramming/overlap in the
- * three-pane shell). Zeroing html/body/#root margins kills the default
- * body{margin:8px} that was offsetting the 100vw/100vh .app-shell and making
- * the window appear to "float" with white space top/left.
- * -------------------------------------------------------------------------- */
 
 *,
 *::before,
@@ -40,73 +29,69 @@ body,
   height: 100%;
 }
 
-/* #root is the React mount; let the .app-shell (and any full-window view such
- * as the wizard or a compose webview) fill the viewport with no gap. */
 #root {
   width: 100%;
   min-height: 100%;
 }
 
-/* ----------------------------------------------------------------------------
- * 2. Design tokens
- *
- * The six canonical --tux-* tokens are the de-facto palette already referenced
- * (as fallbacks) throughout the component CSS; they are canonicalized here so
- * nothing relies on a fallback. A few tight companions (--tux-accent,
- * --tux-fg-muted, surface/state semantics) are added for base + form theming;
- * the accent in particular grounds the amber the locked mock uses for the
- * primary action (Reply) and unread markers.
- * -------------------------------------------------------------------------- */
-
 :root {
-  /* --- The six canonical tokens (referenced by the component CSS) --- */
-  --tux-bg: #1a1d21; /* app background (darkest neutral) */
-  --tux-fg: #e6e6e6; /* primary text */
-  --tux-border: #30353b; /* hairline separators between regions/rows */
-  --tux-hover: #262b31; /* row/item hover wash */
-  --tux-accent-bg: #2d3742; /* selected row/folder background */
-  --tux-badge: #3a414a; /* folder-count pill background */
+  /* === Approved Mock D design system — cool slate (verbatim from mock :root) === */
+  --bg: #0d1318;
+  --surface: #141c23;
+  --surface-2: #1a2330;
+  --elevated: #1e2832;
+  --border: #1f2832;
+  --border-strong: #2c3744;
+  --border-soft: #1a2028;
+  --text: #e4ebf2;
+  --text-dim: #94a0ad;
+  --text-faint: #5d6975;
+  --accent: #f59f3c;
+  --accent-2: #ffba6e;
+  --accent-soft: rgba(245, 159, 60, 0.12);
+  --unread-dot: #ffd166;
+  --success: #5dd6a0;
+  --error: #ee6b6b;
+  --info: #6bb8ee;
+  --form-tag: #c084fc;
+  --mono: 'JetBrains Mono', 'SF Mono', 'Fira Code', Menlo, Consolas, monospace;
+  --sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
 
-  /* --- Tight companions for base + form theming --- */
-  --tux-fg-muted: #9aa3ad; /* secondary text (dates, hints, labels) */
-  --tux-surface: #21252a; /* raised surface: inputs, light chrome */
-  --tux-surface-2: #262b31; /* slightly raised (button rest) */
-  --tux-accent: #e8923a; /* amber accent — primary action, unread dots */
-  --tux-accent-fg: #1a1d21; /* text on the amber accent */
-  --tux-accent-hover: #f2a24f; /* amber lifted on hover (dark-theme: lighten) */
-  --tux-focus-ring: rgba(232, 146, 58, 0.55); /* focus outline (amber) */
+  /* === Legacy --tux-* aliases → real tokens (no re-interpretation) === */
+  --tux-bg: var(--bg);
+  --tux-surface: var(--surface);
+  --tux-surface-2: var(--surface-2);
+  --tux-elevated: var(--elevated);
+  --tux-border: var(--border);
+  --tux-border-strong: var(--border-strong);
+  --tux-hover: var(--surface);
+  --tux-accent-bg: var(--accent-soft);
+  --tux-badge: var(--surface-2);
+  --tux-fg: var(--text);
+  --tux-fg-muted: var(--text-dim);
+  --tux-fg-faint: var(--text-faint);
+  --tux-accent: var(--accent);
+  --tux-accent-2: var(--accent-2);
+  --tux-accent-hover: var(--accent-2);
+  --tux-accent-fg: #1a0e02;
+  --tux-unread-dot: var(--unread-dot);
+  --tux-success: var(--success);
+  --tux-warn: var(--accent-2);
+  --tux-danger: var(--error);
+  --tux-danger-fg: #1a0e02;
+  --tux-danger-surface: rgba(238, 107, 107, 0.12);
+  --tux-info: var(--info);
+  --tux-form-tag: var(--form-tag);
+  --tux-focus-ring: rgba(245, 159, 60, 0.5);
+  --tux-mono: var(--mono);
 
-  /* --- Semantic state tokens ---
-   * Status, validation, and session-log source colors. Deliberately
-   * desaturated to sit inside the warm-neutral dark palette rather than the
-   * punchy Apple/Catppuccin hues the components previously hardcoded. These
-   * canonicalize the connection-state / error / success / warn / log-source
-   * colors that DashboardRibbon, Compose, and SessionLog each invented locally. */
-  --tux-success: #5cb585; /* connected · success · in-session */
-  --tux-warn: #d99a3a; /* connecting · warnings · deferred-feature hints */
-  --tux-danger: #e0617a; /* errors · required fields · destructive actions */
-  --tux-danger-fg: #1a1d21; /* text on a danger fill */
-  --tux-danger-surface: #3a2026; /* error-banner background */
-  --tux-info: #6aa0d8; /* informational accents (session-log backend/pat source) */
-  --tux-fg-faint: #6b727b; /* dimmest text: log timestamps, subtle hints */
-
-  /* --- Typography ---
-   * Native-desktop system stack (Tauri ships in WebKitGTK on Linux; this
-   * favors the platform UI font and stays out of the generic-AI-font trap by
-   * deferring to the host's chosen sans). */
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
-    'Cantarell', 'Noto Sans', 'Helvetica Neue', Arial, sans-serif;
+  /* Typography base (mock body: 14px / 1.5, --sans) */
+  font-family: var(--sans);
   font-size: 14px;
-  line-height: 1.45;
+  line-height: 1.5;
   font-weight: 400;
-
-  color: var(--tux-fg);
-  background-color: var(--tux-bg);
-
-  /* Monospace stack used by tabular fields (time, grid square). Components
-   * already inline their own monospace stack; exposed here for consistency. */
-  --tux-mono: 'SF Mono', 'Menlo', 'Consolas', 'Liberation Mono',
-    'DejaVu Sans Mono', monospace;
+  color: var(--text);
+  background-color: var(--bg);
 
   font-synthesis: none;
   text-rendering: optimizeLegibility;
@@ -116,18 +101,25 @@ body,
   color-scheme: dark;
 }
 
+/* NOTE (fresh agent): the mock's --sans leads with Inter, which the Pi does NOT
+ * have installed — so right now this falls back to the system sans (a big part
+ * of the "generic" feel). Bundle Inter to render the approved face: fetch the
+ * Inter variable woff2 into src/fonts/ (or public/fonts/) and add an @font-face
+ * here. (Do NOT add @font-face before the woff2 exists — Vite fails the build
+ * on an unresolvable CSS url().) */
+
 /* ----------------------------------------------------------------------------
- * 3. Base element theming (dark)
+ * Base element theming (cool slate)
  * -------------------------------------------------------------------------- */
 
 body {
-  background-color: var(--tux-bg);
-  color: var(--tux-fg);
+  background-color: var(--bg);
+  color: var(--text);
   font-family: inherit;
 }
 
 a {
-  color: var(--tux-accent);
+  color: var(--accent);
   text-decoration: none;
 }
 a:hover {
@@ -143,7 +135,7 @@ h6 {
   margin: 0 0 0.5em;
   font-weight: 600;
   line-height: 1.25;
-  color: var(--tux-fg);
+  color: var(--text);
 }
 
 p {
@@ -151,12 +143,7 @@ p {
 }
 
 /* ----------------------------------------------------------------------------
- * 4. Form-control theming (dark)
- *
- * Without this, inputs/textareas/selects/buttons render with the host's
- * light defaults (light-on-dark forms in the wizard and elsewhere). Theme the
- * controls into the dark system here. The compose window intentionally carries
- * its own self-contained palette in Compose.css and overrides these.
+ * Form-control theming (dark) — wizard + compose. On the cool-slate tokens.
  * -------------------------------------------------------------------------- */
 
 input,
@@ -165,9 +152,9 @@ select,
 button {
   font-family: inherit;
   font-size: 1em;
-  color: var(--tux-fg);
-  background-color: var(--tux-surface);
-  border: 1px solid var(--tux-border);
+  color: var(--text);
+  background-color: var(--surface-2);
+  border: 1px solid var(--border-strong);
   border-radius: 6px;
 }
 
@@ -178,7 +165,7 @@ select {
 }
 input::placeholder,
 textarea::placeholder {
-  color: var(--tux-fg-muted);
+  color: var(--text-faint);
   opacity: 1;
 }
 
@@ -192,7 +179,7 @@ select:focus,
 button:focus-visible {
   outline: 2px solid var(--tux-focus-ring);
   outline-offset: 1px;
-  border-color: var(--tux-accent);
+  border-color: var(--accent);
 }
 
 input:disabled,
@@ -203,28 +190,24 @@ button:disabled {
   cursor: not-allowed;
 }
 
-/* Buttons: clean, restrained chrome by default. Components that want a
- * primary/accent treatment opt in via their own class (e.g. compose-btn,
- * wizard buttons) — this is just a sane themed baseline. */
 button {
   padding: 6px 12px;
   font-weight: 500;
-  background-color: var(--tux-surface-2);
+  background-color: var(--surface-2);
   cursor: pointer;
   transition: background-color 0.12s ease, border-color 0.12s ease;
 }
 button:hover:not(:disabled) {
-  background-color: var(--tux-hover);
-  border-color: var(--tux-accent);
+  background-color: var(--elevated);
+  border-color: var(--accent);
 }
 button:active:not(:disabled) {
-  background-color: var(--tux-accent-bg);
+  background-color: var(--accent-soft);
 }
 
-/* Checkboxes / radios pick up the amber accent natively. */
 input[type='checkbox'],
 input[type='radio'] {
-  accent-color: var(--tux-accent);
+  accent-color: var(--accent);
   width: auto;
   padding: 0;
 }
