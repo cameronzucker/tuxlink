@@ -1,60 +1,63 @@
-/**
- * StatusBar.css — bottom app chrome (~24px), toggleable.
+/* StatusBar.css — Mock D bottom status bar.
  *
- * Design spec: docs/superpowers/specs/2026-05-19-main-ui-cluster-design.md §5.6
- * Design intent: Mail.app-minimal, NOT Express cryptic-strip.
- *
- * Structure: flex row, left-side activity, right-side window info,
- * both optional (empty = hidden).
+ * tuxlink-yd4 (2026-05-20): ported verbatim from the approved mock's
+ * `.statusbar` (docs/design/mockups/2026-05-17-mocks-v1-four-directions.html).
+ * Cool-slate tokens (from App.css :root). Scoped under `.statusbar` so the
+ * component stays portable; only the shell uses it.
  */
 
-.status-bar {
-  /* Fixed height, full width */
-  height: 24px;
-  min-height: 24px;
-  max-height: 24px;
-
+.statusbar {
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  padding: 6px 16px;
+  font-size: 12px;
+  color: var(--text-dim);
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 0 8px;
-
-  /* Separator from the content above */
-  border-top: 1px solid rgba(255, 255, 255, 0.06);
-
-  /* Slightly lighter than the main background chrome */
-  background-color: rgba(0, 0, 0, 0.12);
-
-  /* Prevent user selection */
+  gap: 18px;
+  height: 28px;
   user-select: none;
-
-  /* Typography */
-  font-size: 11px;
-  color: rgba(255, 255, 255, 0.5);
   white-space: nowrap;
   overflow: hidden;
 }
 
-/* ============================================================================
-   Left / right slots
-   ============================================================================ */
-
-.status-bar-left {
+.statusbar .status-item {
   display: flex;
   align-items: center;
   gap: 6px;
-  flex: 1;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
-.status-bar-right {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-shrink: 0;
-  padding-left: 8px;
-  color: rgba(255, 255, 255, 0.4);
+.statusbar .status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-faint);
+  flex: 0 0 auto;
+}
+.statusbar .status-dot.idle {
+  background: var(--text-faint);
+}
+.statusbar .status-dot.good {
+  background: var(--success);
+  box-shadow: 0 0 5px var(--success);
+}
+.statusbar .status-dot.warn {
+  background: var(--accent);
+  box-shadow: 0 0 5px rgba(245, 159, 60, 0.5);
+}
+.statusbar .status-dot.error {
+  background: var(--error);
+  box-shadow: 0 0 5px var(--error);
+}
+
+.statusbar .status-divider {
+  color: var(--text-faint);
+  font-size: 10px;
+}
+
+.statusbar .status-right {
+  margin-left: auto;
   font-variant-numeric: tabular-nums;
+  color: var(--text-faint);
 }

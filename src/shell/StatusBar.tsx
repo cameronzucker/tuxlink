@@ -1,52 +1,51 @@
 /**
- * StatusBar — bottom app chrome, ~24px height, toggleable via View → Toggle Status Bar.
+ * StatusBar — bottom status bar (Mock B `.statusbar`).
  *
- * Spec: docs/superpowers/specs/2026-05-19-main-ui-cluster-design.md §5.6
- * bd issue: tuxlink-hvv
- *
- * Design intent: Mail.app-minimal, NOT Express cryptic-strip.
- * Left side: app activity indicator.
- * Right side: window info (folder + message count when applicable).
- *
- * The status bar is wired into AppShell's "statusbar" CSS grid region in the
- * orchestrator integration commit (spec §4.3). This file is standalone-buildable.
- *
- * Toggle: the parent (AppShell, eventually) passes `show` as a boolean prop.
- * When `show` is false, the component returns null (zero height, no layout impact).
- * The View → Toggle Status Bar menu item controls `show`; AppShell owns that state.
+ * Mock B: ● <connection> · <N> unread                    v0.0.1 · Pat 1.0.0
+ * The rich operator info (callsign/grid/GPS) lives in the DashboardRibbon up
+ * top; this bar carries connection-ready state + unread count + versions.
+ * Toggleable via View → Toggle Status Bar.
  */
 
+import type { StatusTone } from './useStatus';
+import { DEV_FIXTURE, DEV_CONNECTION_STATUS } from '../mailbox/devFixture';
 import './StatusBar.css';
 
-// ============================================================================
-// Props
-// ============================================================================
+const APP_VERSION = 'v0.0.1';
+const PAT_VERSION = 'Pat 1.0.0';
 
 export interface StatusBarProps {
   /** When false, the status bar is hidden (returns null — zero height). */
   show: boolean;
-  /** Activity message for the left side. Empty string = no indicator shown. */
-  activity?: string;
-  /** Informational text for the right side (e.g. "Inbox · 12 messages"). */
-  windowInfo?: string;
+  /** Unread count (Inbox) shown as "N unread". */
+  unread: number;
+  /** Connection state (label + dot tone). */
+  state: { label: string; tone: StatusTone };
 }
 
-// ============================================================================
-// Component
-// ============================================================================
-
-export function StatusBar({ show, activity = '', windowInfo = '' }: StatusBarProps) {
-  // Spec: "toggleable via View→Toggle Status Bar"; hidden = zero height, not invisible.
+export function StatusBar({ show, unread, state }: StatusBarProps) {
   if (!show) return null;
 
+  // Mock B shows "Telnet ready" with a good dot; the dev fixture matches that,
+  // the real app derives from the live connection state.
+  const connLabel = DEV_FIXTURE ? DEV_CONNECTION_STATUS : state.label;
+  const connTone = DEV_FIXTURE ? 'good' : state.tone;
+
   return (
-    <div className="status-bar" data-testid="status-bar" role="status" aria-live="polite">
-      <span className="status-bar-left" data-testid="status-bar-activity">
-        {activity || null}
+    <div className="statusbar" data-testid="status-bar" role="status" aria-live="polite">
+      <div className="status-item" data-testid="status-bar-state">
+        <span className={`status-dot ${connTone}`} data-testid="status-bar-dot" aria-hidden="true" />
+        {connLabel}
+      </div>
+      <span className="status-divider" aria-hidden="true">
+        ·
       </span>
-      <span className="status-bar-right" data-testid="status-bar-window-info">
-        {windowInfo || null}
-      </span>
+      <div className="status-item" data-testid="status-bar-unread">
+        {unread} unread
+      </div>
+      <div className="status-right" data-testid="status-bar-version">
+        {APP_VERSION} · {PAT_VERSION}
+      </div>
     </div>
   );
 }

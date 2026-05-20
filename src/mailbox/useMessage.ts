@@ -17,6 +17,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { useQuery, type UseQueryOptions } from '@tanstack/react-query';
 import type { ParsedMessage, MailboxFolder, UiError } from './types';
+import { DEV_FIXTURE, devMessageFor } from './devFixture';
 
 // ============================================================================
 // Wire types — what the Rust command returns on the wire (camelCase already
@@ -78,5 +79,18 @@ export function buildMessageQueryOptions(
  * Sent messages with the same MID are cached independently.
  */
 export function useMessage(selection: MessageSelection | null) {
-  return useQuery(buildMessageQueryOptions(selection));
+  const result = useQuery(buildMessageQueryOptions(selection));
+
+  // Dev fixture: when the real backend has no data (empty / NotConfigured) and
+  // the dev fixture is active (vite dev server only), surface a sample parsed
+  // message so the reading pane renders for local validation. Off in tests +
+  // production (DEV_FIXTURE is false there), so `result` passes through.
+  if (DEV_FIXTURE && selection && !result.data) {
+    const fixture = devMessageFor(selection.id);
+    if (fixture) {
+      return { ...result, data: fixture, isLoading: false, isError: false, error: null };
+    }
+  }
+
+  return result;
 }

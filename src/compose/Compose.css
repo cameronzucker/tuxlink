@@ -3,8 +3,14 @@
  * Separate Tauri window — no AppShell grid context. Uses a flex-column
  * layout with a fixed header + scrollable body area.
  *
- * Design target: dark, functional, matches the main shell's dark palette.
- * No decorative chrome — compose is a utility surface.
+ * Design target: the same Mail.app-minimal dark system as the main shell.
+ * RECONCILED (tuxlink-cbz, 2026-05-20): this file previously carried a
+ * self-contained Catppuccin Mocha palette (blue primary, purple-tinted
+ * surfaces) that ignored the central tokens. It now consumes the canonical
+ * --tux-* tokens defined in App.css (loaded in the compose window via
+ * App.tsx), so the compose window matches the shell and the amber accent.
+ * Surface hierarchy: --tux-bg (root + writing area) < --tux-surface (chrome
+ * strips, dialog) < --tux-surface-2 (input fields, chips, secondary buttons).
  */
 
 /* ============================================================
@@ -15,9 +21,9 @@
   display: flex;
   flex-direction: column;
   height: 100vh;
-  background: #1e1e2e;
-  color: #cdd6f4;
-  font-family: system-ui, -apple-system, sans-serif;
+  background: var(--tux-bg);
+  color: var(--tux-fg);
+  font-family: inherit;
   font-size: 14px;
   overflow: hidden;
 }
@@ -31,8 +37,8 @@
   align-items: center;
   justify-content: space-between;
   padding: 8px 12px;
-  background: #181825;
-  border-bottom: 1px solid #313244;
+  background: var(--tux-surface);
+  border-bottom: 1px solid var(--tux-border);
   flex-shrink: 0;
   /* Tauri drag region */
   -webkit-app-region: drag;
@@ -41,7 +47,7 @@
 .compose-header__title {
   font-weight: 600;
   font-size: 13px;
-  color: #a6adc8;
+  color: var(--tux-fg-muted);
   user-select: none;
 }
 
@@ -58,7 +64,7 @@
 .compose-fields {
   flex-shrink: 0;
   padding: 8px 12px 4px;
-  border-bottom: 1px solid #313244;
+  border-bottom: 1px solid var(--tux-border);
 }
 
 .compose-field-row {
@@ -72,7 +78,7 @@
 .compose-label {
   font-size: 12px;
   font-weight: 500;
-  color: #a6adc8;
+  color: var(--tux-fg-muted);
   min-width: 72px;
   text-align: right;
   flex-shrink: 0;
@@ -88,15 +94,15 @@
 }
 
 .compose-label__req {
-  color: #f38ba8;
+  color: var(--tux-danger);
 }
 
 .compose-input {
   flex: 1;
-  background: #313244;
-  border: 1px solid #45475a;
+  background: var(--tux-surface-2);
+  border: 1px solid var(--tux-border);
   border-radius: 4px;
-  color: #cdd6f4;
+  color: var(--tux-fg);
   padding: 4px 8px;
   font-size: 13px;
   outline: none;
@@ -104,26 +110,26 @@
 }
 
 .compose-input:focus {
-  border-color: #89b4fa;
-  background: #363649;
+  border-color: var(--tux-accent);
+  box-shadow: 0 0 0 2px var(--tux-focus-ring);
 }
 
 .compose-input--disabled,
 .compose-input[disabled] {
   opacity: 0.45;
   cursor: not-allowed;
-  background: #1e1e2e;
-  border-color: #313244;
+  background: var(--tux-bg);
+  border-color: var(--tux-border);
 }
 
 .compose-hint {
   font-size: 11px;
-  color: #6c7086;
+  color: var(--tux-fg-faint);
   white-space: nowrap;
 }
 
 .compose-hint--warn {
-  color: #fab387;
+  color: var(--tux-warn);
 }
 
 /* ============================================================
@@ -141,11 +147,11 @@
 .compose-textarea {
   flex: 1;
   resize: none;
-  background: #181825;
-  border: 1px solid #313244;
+  background: var(--tux-bg);
+  border: 1px solid var(--tux-border);
   border-radius: 4px;
-  color: #cdd6f4;
-  font-family: 'JetBrains Mono', 'Fira Mono', monospace;
+  color: var(--tux-fg);
+  font-family: var(--tux-mono);
   font-size: 13px;
   padding: 8px;
   outline: none;
@@ -153,7 +159,8 @@
 }
 
 .compose-textarea:focus {
-  border-color: #89b4fa;
+  border-color: var(--tux-accent);
+  box-shadow: 0 0 0 2px var(--tux-focus-ring);
 }
 
 /* ============================================================
@@ -162,17 +169,17 @@
 
 .compose-attachments {
   padding: 6px 12px;
-  border-top: 1px solid #313244;
+  border-top: 1px solid var(--tux-border);
   min-height: 36px;
   display: flex;
   align-items: center;
-  background: #181825;
+  background: var(--tux-surface);
   flex-shrink: 0;
 }
 
 .compose-attachments__hint {
   font-size: 12px;
-  color: #6c7086;
+  color: var(--tux-fg-faint);
 }
 
 .compose-attachments__list {
@@ -185,11 +192,11 @@
 }
 
 .compose-attachments__item {
-  background: #313244;
+  background: var(--tux-surface-2);
   border-radius: 4px;
   padding: 2px 8px;
   font-size: 12px;
-  color: #cdd6f4;
+  color: var(--tux-fg);
 }
 
 /* ============================================================
@@ -198,7 +205,7 @@
 
 .compose-options {
   padding: 4px 12px;
-  border-top: 1px solid #313244;
+  border-top: 1px solid var(--tux-border);
   flex-shrink: 0;
 }
 
@@ -207,7 +214,7 @@
   align-items: center;
   gap: 6px;
   font-size: 13px;
-  color: #a6adc8;
+  color: var(--tux-fg-muted);
   cursor: pointer;
   user-select: none;
 }
@@ -219,10 +226,10 @@
 .compose-error {
   margin: 4px 12px;
   padding: 6px 10px;
-  background: #3c1f1f;
-  border: 1px solid #f38ba8;
+  background: var(--tux-danger-surface);
+  border: 1px solid var(--tux-danger);
   border-radius: 4px;
-  color: #f38ba8;
+  color: var(--tux-danger);
   font-size: 13px;
 }
 
@@ -234,8 +241,8 @@
   display: flex;
   gap: 8px;
   padding: 8px 12px;
-  border-top: 1px solid #313244;
-  background: #181825;
+  border-top: 1px solid var(--tux-border);
+  background: var(--tux-surface);
   flex-shrink: 0;
 }
 
@@ -244,13 +251,13 @@
  * ============================================================ */
 
 .compose-btn {
-  border: none;
+  border: 1px solid transparent;
   border-radius: 4px;
   padding: 5px 12px;
   font-size: 13px;
   font-weight: 500;
   cursor: pointer;
-  transition: background 0.1s, opacity 0.1s;
+  transition: background 0.12s ease, border-color 0.12s ease, filter 0.12s ease;
 }
 
 .compose-btn:disabled,
@@ -261,40 +268,43 @@
 }
 
 .compose-btn--primary {
-  background: #89b4fa;
-  color: #1e1e2e;
+  background: var(--tux-accent);
+  color: var(--tux-accent-fg);
 }
 
 .compose-btn--primary:hover:not(:disabled) {
-  background: #74a8f8;
+  background: var(--tux-accent-hover);
 }
 
 .compose-btn--secondary {
-  background: #313244;
-  color: #cdd6f4;
+  background: var(--tux-surface-2);
+  color: var(--tux-fg);
+  border-color: var(--tux-border);
 }
 
 .compose-btn--secondary:hover:not(:disabled) {
-  background: #45475a;
+  background: var(--tux-hover);
+  border-color: var(--tux-accent);
 }
 
 .compose-btn--ghost {
   background: transparent;
-  color: #a6adc8;
-  border: 1px solid #45475a;
+  color: var(--tux-fg-muted);
+  border: 1px solid var(--tux-border);
 }
 
 .compose-btn--ghost:hover:not(:disabled) {
-  background: #313244;
+  background: var(--tux-surface-2);
+  border-color: var(--tux-accent);
 }
 
 .compose-btn--danger {
-  background: #f38ba8;
-  color: #1e1e2e;
+  background: var(--tux-danger);
+  color: var(--tux-danger-fg);
 }
 
 .compose-btn--danger:hover:not(:disabled) {
-  background: #e07a97;
+  filter: brightness(1.08);
 }
 
 /* ============================================================
@@ -312,8 +322,8 @@
 }
 
 .compose-dialog {
-  background: #1e1e2e;
-  border: 1px solid #45475a;
+  background: var(--tux-surface);
+  border: 1px solid var(--tux-border);
   border-radius: 8px;
   padding: 24px;
   max-width: 320px;
@@ -323,7 +333,7 @@
 .compose-dialog__msg {
   margin: 0 0 16px;
   font-size: 14px;
-  color: #cdd6f4;
+  color: var(--tux-fg);
   text-align: center;
 }
 
@@ -343,20 +353,20 @@
   align-items: center;
   justify-content: center;
   height: 100vh;
-  background: #1e1e2e;
+  background: var(--tux-bg);
   gap: 12px;
 }
 
 .compose-success__msg {
   font-size: 18px;
   font-weight: 600;
-  color: #a6e3a1;
+  color: var(--tux-success);
   margin: 0;
 }
 
 .compose-success__sub {
   font-size: 13px;
-  color: #a6adc8;
+  color: var(--tux-fg-muted);
   margin: 0;
   text-align: center;
   max-width: 280px;

@@ -19,6 +19,15 @@ export interface MessageMeta {
   unread: boolean;
   bodySize: number;
   hasAttachments: boolean;
+  /// Short preview snippet (Mock D row line 3). OPTIONAL — Pat 1.0.0's list DTO
+  /// does not supply a snippet, so this is undefined for live data today and is
+  /// populated only by the dev fixture. Backend `snippet` is a v0.1 follow-up
+  /// (tuxlink-yd4 row work); the row renders nothing when absent.
+  preview?: string;
+  /// Winlink form label for the row's inline form badge (Mock D, e.g.
+  /// "ICS-213"). OPTIONAL — the list DTO has no form-type field today
+  /// (fixture-only; backend follow-up). Absent → no badge.
+  formTag?: string;
 }
 
 /// Reading-pane parsed view (Task 13 produces this from raw RFC5322 at the

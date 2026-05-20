@@ -12,6 +12,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { invoke } from '@tauri-apps/api/core';
 import type { MailboxFolder, MessageMeta } from './types';
+import { devFixtureFor } from './devFixture';
 
 /// Folders that hit a backend command. `drafts` (local store) and `deleted`
 /// (disabled placeholder) are excluded — querying them is a frontend bug the
@@ -51,11 +52,21 @@ export function useMailbox(folder: MailboxFolder): UseMailboxResult {
     enabled,
   });
 
+  const data = query.data ?? [];
+  // Dev fixture: when the real backend yields nothing (empty / NotConfigured)
+  // and the dev fixture is active (vite dev server only — devFixture.ts), fall
+  // back to sample data so the UI is populated for local validation. Off in
+  // tests + production, so this returns [] there and the real result stands.
+  const messages = data.length > 0 ? data : devFixtureFor(folder);
+  const usingFixture = data.length === 0 && messages.length > 0;
+
   return {
-    messages: query.data ?? [],
+    messages,
     // A disabled query is never "loading" from the user's perspective.
-    isLoading: enabled && query.isLoading,
-    isError: query.isError,
-    error: query.error,
+    isLoading: enabled && query.isLoading && !usingFixture,
+    // When the fixture is standing in, suppress the error/NotConfigured signal
+    // so the list renders rows instead of the "not connected" empty state.
+    isError: usingFixture ? false : query.isError,
+    error: usingFixture ? undefined : query.error,
   };
 }

@@ -20,6 +20,7 @@ import {
   formatCallsign,
   formatGrid,
   formatGpsStatus,
+  formatStatusState,
   type ConfigViewDto,
   type StatusDto,
 } from './useStatus';
@@ -228,5 +229,40 @@ describe('status bar visibility', () => {
   it('is visible when showStatusBar is true', () => {
     const showStatusBar = true;
     expect(showStatusBar).toBe(true);
+  });
+});
+
+// ============================================================================
+// formatStatusState — Mock D status-bar short state word + dot tone (tuxlink-yd4)
+// ============================================================================
+describe('formatStatusState — Mock D status bar', () => {
+  it('null backend (v0.0.1 default) reads Idle / idle tone', () => {
+    expect(formatStatusState(null)).toEqual({ label: 'Idle', tone: 'idle' });
+  });
+  it('Disconnected reads Idle / idle tone', () => {
+    expect(formatStatusState({ kind: 'Disconnected' })).toEqual({ label: 'Idle', tone: 'idle' });
+  });
+  it('Connecting reads Connecting / warn tone', () => {
+    expect(formatStatusState({ kind: 'Connecting', transport: 'CMS-Telnet' })).toEqual({
+      label: 'Connecting',
+      tone: 'warn',
+    });
+  });
+  it('Connected reads Connected / good tone', () => {
+    expect(
+      formatStatusState({ kind: 'Connected', transport: 'CMS-Telnet', peer: 'cms', since_iso: '' }),
+    ).toEqual({ label: 'Connected', tone: 'good' });
+  });
+  it('Disconnecting reads Disconnecting / warn tone', () => {
+    expect(formatStatusState({ kind: 'Disconnecting' })).toEqual({
+      label: 'Disconnecting',
+      tone: 'warn',
+    });
+  });
+  it('Error reads Error / error tone', () => {
+    expect(formatStatusState({ kind: 'Error', reason: 'boom' })).toEqual({
+      label: 'Error',
+      tone: 'error',
+    });
   });
 });

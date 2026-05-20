@@ -11,8 +11,8 @@
 // directly. The IPC round-trip is NOT tested here (it's smoke-verified at
 // M2) — only the rendering logic driven by synthetic ParsedMessage data.
 
-import { describe, it, expect, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { render, screen, fireEvent } from '@testing-library/react';
 import {
   MessageViewLoaded,
   MessageViewEmpty,
@@ -30,6 +30,11 @@ vi.mock('./useMessage', () => ({
   useMessage: vi.fn(),
 }));
 import { useMessage } from './useMessage';
+
+// Reply/forward open a compose window via openReplyWindow — mock the side
+// effect so the action-bar tests assert wiring, not Tauri behavior.
+vi.mock('./replyActions', () => ({ openReplyWindow: vi.fn().mockResolvedValue(undefined) }));
+import { openReplyWindow } from './replyActions';
 import type { ParsedMessage } from './types';
 
 function parsed(over: Partial<ParsedMessage> = {}): ParsedMessage {
@@ -59,16 +64,27 @@ describe('<MessageViewEmpty>', () => {
 });
 
 // ============================================================================
-// Task-13 test (6): routing shown when present, omitted when null.
+// Reading-pane metadata — Mock D dl is From / To / Date only (no Via/routing row).
 // ============================================================================
 describe('<MessageViewLoaded>', () => {
-  it('shows routing when present', () => {
-    render(<MessageViewLoaded message={parsed({ routing: 'via CMS-SSL' })} />);
-    expect(screen.getByTestId('message-routing')).toHaveTextContent('via CMS-SSL');
+  it('shows From as bare address, plus display name when present (Name <addr>)', () => {
+    const { rerender } = render(<MessageViewLoaded message={parsed({ from: 'W4PHS@winlink.org' })} />);
+    expect(screen.getByTestId('message-from')).toHaveTextContent('W4PHS@winlink.org');
+    rerender(<MessageViewLoaded message={parsed({ from: 'Mike / Net Control <K0SWE@winlink.org>' })} />);
+    // addr in the .addr span; display name rendered alongside.
+    expect(screen.getByTestId('message-from')).toHaveTextContent('K0SWE@winlink.org');
+    expect(screen.getByTestId('message-view-loaded')).toHaveTextContent('Mike / Net Control');
   });
 
-  it('omits routing strip when null', () => {
-    render(<MessageViewLoaded message={parsed({ routing: null })} />);
+  it('shows all To addresses, comma-separated (mock B)', () => {
+    render(<MessageViewLoaded message={parsed({ to: ['W4PHS@winlink.org', 'CHATTANOOGA-CERT@winlink.org'] })} />);
+    const to = screen.getByTestId('message-to');
+    expect(to).toHaveTextContent('W4PHS@winlink.org');
+    expect(to).toHaveTextContent('CHATTANOOGA-CERT@winlink.org');
+  });
+
+  it('does NOT render a routing/Via row (mock dl = From/To/Date)', () => {
+    render(<MessageViewLoaded message={parsed({ routing: 'via CMS-SSL' })} />);
     expect(screen.queryByTestId('message-routing')).toBeNull();
   });
 
@@ -122,6 +138,49 @@ describe('<MessageViewLoaded>', () => {
   it('shows UTC sent date', () => {
     render(<MessageViewLoaded message={parsed({ date: '2026-05-19T14:05:00Z' })} />);
     expect(screen.getByTestId('message-date')).toHaveTextContent('2026-05-19');
+  });
+});
+
+// ============================================================================
+// Reading-pane action bar (tuxlink-cbz, operator decision 2026-05-20):
+// amber Reply / Reply All / Forward, wired to openReplyWindow.
+// ============================================================================
+describe('<MessageViewLoaded> reply action bar', () => {
+  beforeEach(() => vi.mocked(openReplyWindow).mockClear());
+
+  it('renders Reply, Reply All, Forward (mock B — no Print)', () => {
+    render(<MessageViewLoaded message={parsed()} />);
+    expect(screen.getByTestId('reply-btn')).toBeInTheDocument();
+    expect(screen.getByTestId('reply-all-btn')).toBeInTheDocument();
+    expect(screen.getByTestId('forward-btn')).toBeInTheDocument();
+    expect(screen.queryByTestId('print-btn')).toBeNull();
+  });
+
+  it('Reply is the amber primary action', () => {
+    render(<MessageViewLoaded message={parsed()} />);
+    expect(screen.getByTestId('reply-btn').className).toContain('primary');
+    expect(screen.getByTestId('reply-all-btn').className).not.toContain('primary');
+  });
+
+  it('Reply opens a reply compose window for the message', () => {
+    const m = parsed();
+    render(<MessageViewLoaded message={m} />);
+    fireEvent.click(screen.getByTestId('reply-btn'));
+    expect(openReplyWindow).toHaveBeenCalledWith(m, 'reply');
+  });
+
+  it('Reply All opens a reply-all compose window', () => {
+    const m = parsed();
+    render(<MessageViewLoaded message={m} />);
+    fireEvent.click(screen.getByTestId('reply-all-btn'));
+    expect(openReplyWindow).toHaveBeenCalledWith(m, 'replyAll');
+  });
+
+  it('Forward opens a forward compose window', () => {
+    const m = parsed();
+    render(<MessageViewLoaded message={m} />);
+    fireEvent.click(screen.getByTestId('forward-btn'));
+    expect(openReplyWindow).toHaveBeenCalledWith(m, 'forward');
   });
 });
 
@@ -225,7 +284,7 @@ describe('<MessageView> error routing (integration via mocked useMessage)', () =
 // FIX 3: body pre element carries the wrapping class/style.
 // ============================================================================
 describe('<MessageViewLoaded> body wrap', () => {
-  it('applies the message-view__body--wrap class to the body pre', () => {
+  it('applies the msg-body class to the body pre (CSS sets pre-wrap + overflow-wrap)', () => {
     render(
       <MessageViewLoaded
         message={
@@ -245,7 +304,8 @@ describe('<MessageViewLoaded> body wrap', () => {
       />,
     );
     const pre = screen.getByTestId('message-body');
-    // The pre must carry the CSS class that sets white-space: pre-wrap.
-    expect(pre.className).toContain('message-view__body');
+    // The pre must carry the Mock D class (CSS sets white-space: pre-wrap +
+    // overflow-wrap: anywhere to wrap long radio/Base64 lines — Codex #4).
+    expect(pre.className).toContain('msg-body');
   });
 });

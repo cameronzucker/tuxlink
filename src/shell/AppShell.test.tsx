@@ -1,24 +1,24 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, act } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { MailboxFolder, MessageMeta } from '../mailbox/types';
 
 // ---------------------------------------------------------------------------
-// Tauri IPC mocks. AppShell now mounts the REAL ribbon (config_read /
-// backend_status), session log (session_log_snapshot + listen), reader
-// (useMessage → message_read), and status bar. Stub the IPC so the shell
-// mounts under jsdom without a Tauri runtime. These return benign empties so
-// the wired components render their "no data yet" states.
+// Tauri IPC mocks. The Mock B shell mounts the dashboard ribbon + status bar
+// (useStatusData → config_read/backend_status), the sidebar, the list, the
+// reader (useMessage → message_read), and the human session log
+// (session_log_snapshot + listen). Stub the IPC so the shell mounts in jsdom.
+// The `menu` listener is captured (vi.hoisted) so tests can fire View events.
 // ---------------------------------------------------------------------------
+const h = vi.hoisted(() => ({ menuHandler: null as null | ((e: { payload: string }) => void) }));
+
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: vi.fn(async (cmd: string) => {
-    if (cmd === 'config_read') return null; // ribbon shows empty until config
-    if (cmd === 'backend_status') return null; // null → "Idle · …" fallback
+    if (cmd === 'config_read') return null;
+    if (cmd === 'backend_status') return null;
     if (cmd === 'session_log_snapshot') return [];
     if (cmd === 'message_read') {
-      // A benign ParsedMessage so the reader leaves the empty state without
-      // a TanStack "query returned undefined" warning.
       return {
         id: 'INBOX1',
         subject: 's',
@@ -37,14 +37,16 @@ vi.mock('@tauri-apps/api/core', () => ({
 }));
 
 vi.mock('@tauri-apps/api/event', () => ({
-  // listen returns an unlisten fn; never fires in this suite.
-  listen: vi.fn(async () => () => {}),
+  listen: vi.fn(async (event: string, cb: (e: { payload: string }) => void) => {
+    if (event === 'menu') h.menuHandler = cb;
+    return () => {};
+  }),
 }));
 
-// Mock react-virtuoso so rows actually render in jsdom (the real Virtuoso
-// renders into a zero-height scroller and emits no items under jsdom). The
-// mock renders every item synchronously — fine for asserting selection
-// behavior, which is what this suite covers.
+vi.mock('@tauri-apps/api/window', () => ({
+  getCurrentWindow: () => ({ label: 'main', setTitle: vi.fn(async () => {}) }),
+}));
+
 vi.mock('react-virtuoso', () => ({
   Virtuoso: ({
     data,
@@ -61,9 +63,6 @@ vi.mock('react-virtuoso', () => ({
   ),
 }));
 
-// Mock useMailbox so the shell has deterministic messages per folder without
-// a backend. The hook is called for the selected folder AND for the three
-// backend-folder counts (inbox/outbox/sent).
 const inboxMsgs: MessageMeta[] = [
   {
     id: 'INBOX1',
@@ -102,7 +101,6 @@ vi.mock('../mailbox/useMailbox', () => ({
 import { AppShell } from './AppShell';
 
 function renderShell() {
-  // MessageView's useMessage uses useQuery, which needs a QueryClient.
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={qc}>
@@ -111,34 +109,36 @@ function renderShell() {
   );
 }
 
-describe('<AppShell> selection (no-full-view-swap invariant)', () => {
+describe('<AppShell> — Mock B topology', () => {
   beforeEach(() => {
     globalThis.localStorage?.clear?.();
+    h.menuHandler = null;
   });
 
-  // Integration commit: the shell now mounts the REAL components in each
-  // region (no placeholders). Assert the real components are present.
-  it('renders the shell with all real region components present', () => {
+  it('renders the Mock B regions: dashboard ribbon, sidebar, panes, session log, status bar', () => {
     renderShell();
     expect(screen.getByTestId('app-shell-root')).toBeInTheDocument();
+    expect(screen.getByTestId('dashboard-ribbon')).toBeInTheDocument();
     expect(screen.getByTestId('folder-sidebar')).toBeInTheDocument();
-    expect(screen.getByTestId('dashboard-ribbon')).toBeInTheDocument(); // Task 16
-    expect(screen.getByTestId('session-log-root')).toBeInTheDocument(); // Task 15
-    expect(screen.getByTestId('status-bar')).toBeInTheDocument(); // Task 16
-    expect(screen.getByTestId('region-dock-reserved')).toBeInTheDocument();
-    // Reader shows MessageView's empty state until a message is selected.
+    expect(screen.getByTestId('shell-panes')).toBeInTheDocument();
+    expect(screen.getByTestId('rows-pane')).toBeInTheDocument();
+    expect(screen.getByTestId('session-log-root')).toBeInTheDocument(); // visible by default
+    expect(screen.getByTestId('status-bar')).toBeInTheDocument();
     expect(screen.getByTestId('message-view-empty')).toBeInTheDocument();
   });
 
-  it('starts on Inbox with the reader showing the empty state', () => {
+  it('does NOT render a tab strip (Mock B uses the sidebar for folder nav)', () => {
     renderShell();
-    expect(screen.getByTestId('message-view-empty')).toHaveTextContent(
-      'Select a message to read.',
-    );
+    expect(screen.queryByTestId('tab-strip')).toBeNull();
   });
 
-  // Task-12 test (6): selecting a row updates selection state and does NOT
-  // remount the shell (selection-state change, not a route/full-view-swap).
+  it('sidebar shows Inbox active + counts (Inbox unread, Sent total)', () => {
+    renderShell();
+    expect(screen.getByTestId('folder-inbox')).toHaveAttribute('aria-current', 'true');
+    expect(screen.getByTestId('folder-count-inbox')).toHaveTextContent('1'); // 1 unread
+    expect(screen.getByTestId('folder-count-sent')).toHaveTextContent('1'); // 1 total
+  });
+
   it('selecting a row updates ONLY the reader and does not remount the shell', () => {
     renderShell();
     const shellBefore = screen.getByTestId('app-shell-root');
@@ -146,42 +146,56 @@ describe('<AppShell> selection (no-full-view-swap invariant)', () => {
 
     fireEvent.click(screen.getByTestId('message-row-INBOX1'));
 
-    // Reader is no longer the empty state — a message is selected. (The loaded
-    // view depends on an async message_read; under the mocked IPC it stays in
-    // the loading state, which is enough to prove the selection took effect.)
     expect(screen.queryByTestId('message-view-empty')).not.toBeInTheDocument();
-
-    // The shell root + sidebar are the SAME DOM nodes — no remount/route.
     expect(screen.getByTestId('app-shell-root')).toBe(shellBefore);
     expect(screen.getByTestId('folder-sidebar')).toBe(sidebarBefore);
-    // The list container also persists (not swapped out for a detail view).
     expect(screen.getByTestId('virtuoso-mock')).toBeInTheDocument();
   });
 
   it('selecting a different folder resets the message selection and swaps the list', () => {
     renderShell();
-    // Select an inbox message first.
     fireEvent.click(screen.getByTestId('message-row-INBOX1'));
     expect(screen.queryByTestId('message-view-empty')).not.toBeInTheDocument();
 
-    // Switch to Sent — selection resets to null (reader shows empty again).
     fireEvent.click(screen.getByTestId('folder-sent'));
     expect(screen.getByTestId('message-view-empty')).toBeInTheDocument();
-    // The list now shows the Sent message, not the Inbox one.
+    expect(screen.getByTestId('folder-sent')).toHaveAttribute('aria-current', 'true');
     expect(screen.getByTestId('message-row-SENT1')).toBeInTheDocument();
     expect(screen.queryByTestId('message-row-INBOX1')).not.toBeInTheDocument();
-
-    // And the shell itself never remounted across the folder switch.
-    expect(screen.getByTestId('app-shell-root')).toBeInTheDocument();
   });
 
-  // Codex Task-12 finding 2: the sidebar receives counts for the backend
-  // folders. Inbox has 1 message, Sent has 1 — both render a count badge.
-  it('passes per-folder counts to the sidebar', () => {
+  it('View → Session Log toggles the (default-visible) session log', async () => {
     renderShell();
-    expect(screen.getByTestId('folder-count-inbox')).toHaveTextContent('1');
-    expect(screen.getByTestId('folder-count-sent')).toHaveTextContent('1');
-    // Outbox has 0 messages → no badge (FolderSidebar suppresses zero counts).
-    expect(screen.queryByTestId('folder-count-outbox')).not.toBeInTheDocument();
+    expect(screen.getByTestId('session-log-root')).toBeInTheDocument();
+    await act(async () => {
+      h.menuHandler?.({ payload: 'menu:view:session_log' });
+    });
+    expect(screen.queryByTestId('session-log-root')).toBeNull();
+    await act(async () => {
+      h.menuHandler?.({ payload: 'menu:view:session_log' });
+    });
+    expect(screen.getByTestId('session-log-root')).toBeInTheDocument();
+  });
+
+  it('View → Toggle Status Bar hides and shows the status bar', async () => {
+    renderShell();
+    expect(screen.getByTestId('status-bar')).toBeInTheDocument();
+    await act(async () => {
+      h.menuHandler?.({ payload: 'menu:view:status_bar' });
+    });
+    expect(screen.queryByTestId('status-bar')).toBeNull();
+    await act(async () => {
+      h.menuHandler?.({ payload: 'menu:view:status_bar' });
+    });
+    expect(screen.getByTestId('status-bar')).toBeInTheDocument();
+  });
+
+  it('the Mailbox menu switches folders', async () => {
+    renderShell();
+    await act(async () => {
+      h.menuHandler?.({ payload: 'menu:mailbox:sent' });
+    });
+    expect(screen.getByTestId('message-row-SENT1')).toBeInTheDocument();
+    expect(screen.queryByTestId('message-row-INBOX1')).not.toBeInTheDocument();
   });
 });
