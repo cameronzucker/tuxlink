@@ -1,42 +1,48 @@
-// Main application shell — owns selection state + the CSS-grid layout.
+// Main application shell — Mock D (Mail.app-minimal).
 //
-// Spec: docs/superpowers/specs/2026-05-19-main-ui-cluster-design.md §4
-// bd issue: tuxlink-zsm (Task 12) → tuxlink-8zg (orchestrator integration)
+// tuxlink-yd4 (2026-05-20): v0.0.1 adopts Mock D. This SUPERSEDES the synthesis
+// layout (docs/design/v0.0.1-ux-mockups.md §3 decision #4 — ribbon + folder
+// sidebar + session-log dock + reserved dock column). The shell now renders the
+// mock's `layout-D`: a tab strip (folders), a 420px | 1fr two-pane body
+// (MessageList | MessageView), and a minimal bottom status bar.
 //
-// Grid regions per §4.1: ribbon (top) · sidebar (left) · list (center) ·
-// reader (right) · dock (reserved, renders nothing) · sessionlog (bottom
-// strip) · statusbar (bottom). Task 12 shipped this with INLINE PLACEHOLDER
-// <div>s for ribbon/reader/sessionlog/statusbar; the orchestrator integration
-// commit (spec §4.3) swaps those placeholders for the REAL components —
-// DashboardRibbon (Task 16), MessageView (Task 13), SessionLog (Task 15),
-// StatusBar (Task 16) — concentrating the shared-file edit into one diff to
-// avoid cross-PR conflicts.
+// Dropped from the default composition (component files retained / parked, not
+// deleted): DashboardRibbon, FolderSidebar, the reserved dock column. The
+// callsign / grid / connection state move into the StatusBar (the mock's
+// minimum-viable visibility surface). The SessionLog is deferred entirely from
+// the default pixels and reached via View → Session Log (menu:view:session_log)
+// — the mock's own escape valve so the emcomm debug surface isn't lost.
 //
-// Selection ownership (§4.2): AppShell owns `selectedFolder` and
-// `selectedMessage: {folder, id} | null`. The folder is CARRIED WITH the id
-// (Codex F1) because `message_read`/`read_message_in` both require it — a
-// bare id would recreate the Inbox-only bug. Selecting a different folder
-// resets `selectedMessage` to null. Selecting a row updates ONLY
-// `selectedMessage` (the reader); it never remounts/routes the shell — the
-// no-full-view-swap invariant (§4.2).
-//
-// Counts (§5.2 + Codex Task-12 finding 2): FolderSidebar is fed a `counts`
-// map sourced from per-folder mailbox queries (Inbox/Outbox/Sent). Drafts is
-// local (FolderSidebar reads `listDraftIds()` itself — now backed by Task
-// 14's store via `draftIds.ts`'s re-export).
+// Selection ownership is unchanged from Task 12 (spec §4.2): AppShell owns
+// `selectedFolder` + `selectedMessage: {folder, id} | null`. The folder is
+// carried with the id (both `message_read` and the cache key need it).
+// Selecting a folder resets the selection; selecting a row updates ONLY the
+// reader (no remount / route — the no-full-view-swap invariant).
 
 import { useState, useCallback, useEffect } from 'react';
 import { listen } from '@tauri-apps/api/event';
-import { FolderSidebar } from '../mailbox/FolderSidebar';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 import { MessageList } from '../mailbox/MessageList';
 import { useMailbox } from '../mailbox/useMailbox';
 import { isNotConfigured } from '../mailbox/types';
 import type { MailboxFolder } from '../mailbox/types';
-import { DashboardRibbon } from './DashboardRibbon';
+import { listDraftIds } from '../mailbox/draftIds';
+import { DEV_SELECTED } from '../mailbox/devFixture';
+import { TabStrip } from './TabStrip';
 import { StatusBar } from './StatusBar';
+import { useStatusData } from './useStatus';
 import MessageView from '../mailbox/MessageView';
 import { SessionLog } from '../session/SessionLog';
 import './AppShell.css';
+
+/// Human label for a folder (titlebar + a11y). Mirrors the tab labels.
+const FOLDER_LABELS: Record<MailboxFolder, string> = {
+  inbox: 'Inbox',
+  outbox: 'Outbox',
+  sent: 'Sent',
+  drafts: 'Drafts',
+  deleted: 'Deleted',
+};
 
 export interface SelectedMessage {
   folder: MailboxFolder;
@@ -45,38 +51,61 @@ export interface SelectedMessage {
 
 export function AppShell() {
   const [selectedFolder, setSelectedFolder] = useState<MailboxFolder>('inbox');
-  const [selectedMessage, setSelectedMessage] = useState<SelectedMessage | null>(null);
-  // View → Toggle Status Bar (menu:view:status_bar). Shown by default.
+  // DEV_SELECTED is null outside the vite dev server (devFixture.ts), so this
+  // starts as `null` (the real empty-reading-pane state) in tests + production.
+  const [selectedMessage, setSelectedMessage] = useState<SelectedMessage | null>(DEV_SELECTED);
+  // View → Toggle Status Bar (menu:view:status_bar). Shown by default — in
+  // Mock D the status bar is the only at-a-glance callsign/grid surface.
   const [showStatusBar, setShowStatusBar] = useState(true);
+  // View → Session Log (menu:view:session_log). HIDDEN by default — Mock D
+  // defers the session log entirely; it appears as a bottom strip only when the
+  // operator opts in (debug surface for when telnet hangs).
+  const [showSessionLog, setShowSessionLog] = useState(false);
 
-  // Selected-folder query drives the center list + its empty/not-connected
-  // state. The other two backend folders are queried only for their sidebar
-  // counts (§5.2 / Codex finding 2). `drafts`/`deleted` are non-backend, so
-  // useMailbox is a no-op (disabled) for them.
+  // Selected-folder query drives the list. Inbox/Outbox/Sent are also queried
+  // for their tab counts; Drafts is local (draftIds). `drafts`/`deleted` are
+  // non-backend, so useMailbox is a disabled no-op for them.
   const { messages, error } = useMailbox(selectedFolder);
   const inbox = useMailbox('inbox');
   const outbox = useMailbox('outbox');
   const sent = useMailbox('sent');
   const notConnected = isNotConfigured(error);
 
-  // Per-folder counts for the BACKEND folders (Inbox/Outbox/Sent). Drafts is
-  // local and counted inside FolderSidebar via listDraftIds(); Deleted is a
-  // disabled placeholder (no count). Spec §5.2 / Codex Task-12 finding 2.
   const counts: Partial<Record<MailboxFolder, number>> = {
     inbox: inbox.messages.length,
     outbox: outbox.messages.length,
     sent: sent.messages.length,
+    drafts: listDraftIds().length,
   };
 
-  // View → Toggle Status Bar: the native menu broadcasts `menu:view:status_bar`
-  // on the "menu" channel (menu.rs). Listen for it and flip visibility. (Main
-  // window only renders the shell, so this listener is implicitly main-only.)
+  // Status data (callsign / grid / connection state) — a single poll, owned
+  // here so the window title can reuse the callsign. Passed to StatusBar.
+  const statusData = useStatusData();
+
+  // Native titlebar text, matching the mock's "Tuxlink — Inbox · W4PHS". The
+  // window title tracks the active folder + callsign. Guarded so it's a no-op
+  // outside a Tauri runtime (tests / SSR).
+  useEffect(() => {
+    const station = statusData.callsign ? ` · ${statusData.callsign}` : '';
+    const title = `Tuxlink — ${FOLDER_LABELS[selectedFolder]}${station}`;
+    try {
+      void getCurrentWindow().setTitle(title);
+    } catch {
+      /* no Tauri runtime (tests) — title is cosmetic */
+    }
+  }, [selectedFolder, statusData.callsign]);
+
+  // The native View menu broadcasts `menu:view:status_bar` / `menu:view:session_log`
+  // on the "menu" channel (menu.rs). One listener, switch on the payload. (Main
+  // window only renders the shell, so this is implicitly main-only.)
   useEffect(() => {
     let unlisten: (() => void) | undefined;
     let mounted = true;
     listen<string>('menu', (event) => {
       if (event.payload === 'menu:view:status_bar') {
         setShowStatusBar((s) => !s);
+      } else if (event.payload === 'menu:view:session_log') {
+        setShowSessionLog((s) => !s);
       }
     }).then((fn) => {
       if (mounted) unlisten = fn;
@@ -88,15 +117,11 @@ export function AppShell() {
     };
   }, []);
 
-  // Selecting a folder resets the message selection (the carried folder must
-  // stay consistent with the list being shown). Spec §4.2.
   const onSelectFolder = useCallback((folder: MailboxFolder) => {
     setSelectedFolder(folder);
     setSelectedMessage(null);
   }, []);
 
-  // Selecting a row updates ONLY the reader-pane selection — no route, no
-  // remount (§4.2). The folder is carried alongside the id.
   const onSelectMessage = useCallback(
     (id: string) => {
       setSelectedMessage({ folder: selectedFolder, id });
@@ -104,28 +129,11 @@ export function AppShell() {
     [selectedFolder],
   );
 
-  const windowInfo = `${folderLabel(selectedFolder)} · ${messages.length} message${
-    messages.length === 1 ? '' : 's'
-  }`;
-
   return (
-    <div className="app-shell" data-testid="app-shell-root">
-      {/* ribbon — Task 16 DashboardRibbon (real, integration commit) */}
-      <div className="region-ribbon">
-        <DashboardRibbon />
-      </div>
+    <div className="layout-d" data-testid="app-shell-root">
+      <TabStrip selectedFolder={selectedFolder} onSelectFolder={onSelectFolder} counts={counts} />
 
-      {/* sidebar — Task 12 (real) */}
-      <div className="region-sidebar">
-        <FolderSidebar
-          selectedFolder={selectedFolder}
-          onSelectFolder={onSelectFolder}
-          counts={counts}
-        />
-      </div>
-
-      {/* list — Task 12 (real) */}
-      <div className="region-list">
+      <div className="panes" data-testid="shell-panes">
         <MessageList
           folder={selectedFolder}
           messages={messages}
@@ -133,43 +141,18 @@ export function AppShell() {
           onSelect={onSelectMessage}
           notConnected={notConnected}
         />
-      </div>
-
-      {/* reader — Task 13 MessageView (real, integration commit) */}
-      <div className="region-reader">
         <MessageView selectedMessage={selectedMessage} />
       </div>
 
-      {/* dock — reserved column, renders nothing (Task 16.5 out of scope, §4.1) */}
-      <div className="region-dock" data-testid="region-dock-reserved" aria-hidden="true" />
+      {/* Session log — deferred from default pixels; View → Session Log. */}
+      {showSessionLog && (
+        <div className="shell-sessionlog" data-testid="region-sessionlog">
+          <SessionLog />
+        </div>
+      )}
 
-      {/* sessionlog — Task 15 SessionLog (real, integration commit) */}
-      <div className="region-sessionlog">
-        <SessionLog />
-      </div>
-
-      {/* statusbar — Task 16 StatusBar (real, integration commit). Toggle via
-          View → Toggle Status Bar; when hidden the component returns null. */}
-      <div className="region-statusbar">
-        <StatusBar show={showStatusBar} windowInfo={windowInfo} />
-      </div>
+      {/* Minimal status bar — dot+state · callsign · grid (left), version (right). */}
+      <StatusBar show={showStatusBar} data={statusData} />
     </div>
   );
-}
-
-/// Human label for the status-bar window-info string. Drafts/Deleted are
-/// included for completeness even though the list is empty for them.
-function folderLabel(folder: MailboxFolder): string {
-  switch (folder) {
-    case 'inbox':
-      return 'Inbox';
-    case 'outbox':
-      return 'Outbox';
-    case 'sent':
-      return 'Sent';
-    case 'drafts':
-      return 'Drafts';
-    case 'deleted':
-      return 'Deleted';
-  }
 }

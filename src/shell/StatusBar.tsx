@@ -1,52 +1,62 @@
 /**
- * StatusBar — bottom app chrome, ~24px height, toggleable via View → Toggle Status Bar.
+ * StatusBar — bottom app chrome (Mock D), the minimum-viable visibility surface.
  *
- * Spec: docs/superpowers/specs/2026-05-19-main-ui-cluster-design.md §5.6
- * bd issue: tuxlink-hvv
+ * tuxlink-yd4 (2026-05-20): Mock D defers the dashboard ribbon entirely; the
+ * callsign / grid / connection state live HERE instead. Markup matches the
+ * mock's `.statusbar`:
  *
- * Design intent: Mail.app-minimal, NOT Express cryptic-strip.
- * Left side: app activity indicator.
- * Right side: window info (folder + message count when applicable).
+ *   ● <state>   ·   <callsign> · <grid>                         v0.0.1
  *
- * The status bar is wired into AppShell's "statusbar" CSS grid region in the
- * orchestrator integration commit (spec §4.3). This file is standalone-buildable.
+ * Pure presentation — AppShell owns the single `useStatusData` poll (so the
+ * window title can reuse the callsign) and passes the derived values in. Left:
+ * a tone-colored dot + short state word, then callsign · grid. Right: version.
  *
- * Toggle: the parent (AppShell, eventually) passes `show` as a boolean prop.
- * When `show` is false, the component returns null (zero height, no layout impact).
- * The View → Toggle Status Bar menu item controls `show`; AppShell owns that state.
+ * Toggleable via View → Toggle Status Bar (menu:view:status_bar) — AppShell
+ * owns `show`; when false the component returns null (zero height).
  */
 
+import type { StatusBarData } from './useStatus';
 import './StatusBar.css';
 
-// ============================================================================
-// Props
-// ============================================================================
+/** App version shown at the right of the status bar (matches the mock). */
+const APP_VERSION = 'v0.0.1';
 
 export interface StatusBarProps {
   /** When false, the status bar is hidden (returns null — zero height). */
   show: boolean;
-  /** Activity message for the left side. Empty string = no indicator shown. */
-  activity?: string;
-  /** Informational text for the right side (e.g. "Inbox · 12 messages"). */
-  windowInfo?: string;
+  /** Derived status values from `useStatusData` (owned by AppShell). */
+  data: StatusBarData;
 }
 
-// ============================================================================
-// Component
-// ============================================================================
-
-export function StatusBar({ show, activity = '', windowInfo = '' }: StatusBarProps) {
-  // Spec: "toggleable via View→Toggle Status Bar"; hidden = zero height, not invisible.
+export function StatusBar({ show, data }: StatusBarProps) {
+  // Spec: "toggleable via View→Toggle Status Bar"; hidden = zero height.
   if (!show) return null;
 
+  const { callsign, grid, gridTooltip, state } = data;
+  // Station label: "W4PHS · EM75xx", dropping whichever part is absent.
+  const station = [callsign, grid].filter(Boolean).join(' · ');
+
   return (
-    <div className="status-bar" data-testid="status-bar" role="status" aria-live="polite">
-      <span className="status-bar-left" data-testid="status-bar-activity">
-        {activity || null}
-      </span>
-      <span className="status-bar-right" data-testid="status-bar-window-info">
-        {windowInfo || null}
-      </span>
+    <div className="statusbar" data-testid="status-bar" role="status" aria-live="polite">
+      <div className="status-item" data-testid="status-bar-state">
+        <span className={`status-dot ${state.tone}`} data-testid="status-bar-dot" aria-hidden="true" />
+        {state.label}
+      </div>
+
+      {station && <span className="status-divider" aria-hidden="true">·</span>}
+      {station && (
+        <div
+          className="status-item"
+          data-testid="status-bar-station"
+          title={gridTooltip ?? undefined}
+        >
+          {station}
+        </div>
+      )}
+
+      <div className="status-right" data-testid="status-bar-version">
+        {APP_VERSION}
+      </div>
     </div>
   );
 }

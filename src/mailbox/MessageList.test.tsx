@@ -3,6 +3,7 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import {
   MessageRow,
   MessageList,
+  formatRowDate,
   formatListDate,
   formatSize,
   correspondentLabel,
@@ -34,16 +35,38 @@ describe('formatters', () => {
     expect(formatListDate('not-a-date')).toBe('not-a-date');
   });
 
+  // formatRowDate: compact Mail.app-style smart date in UTC (now is injectable).
+  describe('formatRowDate', () => {
+    const now = new Date('2026-05-20T15:00:00Z');
+    it('today → UTC time-of-day with a Z marker', () => {
+      expect(formatRowDate('2026-05-20T12:18:00Z', now)).toBe('12:18Z');
+      // a clock-skew future timestamp still reads as time-of-day, not negative
+      expect(formatRowDate('2026-05-20T23:59:00Z', now)).toBe('23:59Z');
+    });
+    it('yesterday → "Yesterday"', () => {
+      expect(formatRowDate('2026-05-19T14:05:00Z', now)).toBe('Yesterday');
+    });
+    it('within a week → "N days ago"', () => {
+      expect(formatRowDate('2026-05-18T10:00:00Z', now)).toBe('2 days ago');
+      expect(formatRowDate('2026-05-14T10:00:00Z', now)).toBe('6 days ago');
+    });
+    it('a week or more → calendar date (UTC)', () => {
+      expect(formatRowDate('2026-05-13T10:00:00Z', now)).toBe('2026-05-13');
+      expect(formatRowDate('2020-01-15T09:00:00Z', now)).toBe('2020-01-15');
+    });
+    it('falls back to raw on unparseable input', () => {
+      expect(formatRowDate('not-a-date', now)).toBe('not-a-date');
+    });
+  });
+
   it('formatSize is empty for zero, scales otherwise', () => {
     expect(formatSize(0)).toBe('');
     expect(formatSize(512)).toBe('512 B');
     expect(formatSize(2048)).toBe('2.0 KB');
   });
 
-  // The compact (mock-d) row shows ONE correspondent, not From+To columns:
-  // Inbox/Drafts/Deleted -> the sender is salient; Sent/Outbox -> the
-  // recipient(s). Unlike the old toColumnLabel, Inbox ALWAYS shows the sender
-  // even when `to` is populated.
+  // Mock D rows show ONE correspondent: Inbox/Drafts/Deleted → the sender;
+  // Sent/Outbox → the recipient(s).
   it('correspondentLabel: inbox shows sender, sent shows recipients', () => {
     expect(correspondentLabel(meta({ from: 'KK4OBN', to: [] }), 'inbox')).toBe('KK4OBN');
     expect(correspondentLabel(meta({ from: 'KK4OBN', to: ['W6ABC'] }), 'inbox')).toBe('KK4OBN');
@@ -54,19 +77,53 @@ describe('formatters', () => {
   });
 });
 
-describe('<MessageRow> (compact 2-line, mock-d)', () => {
-  it('renders correspondent, subject, and date', () => {
+describe('<MessageRow> (3-line, Mock D)', () => {
+  it('renders correspondent, subject, date, and size', () => {
     render(
       <MessageRow
-        message={meta({ subject: 'ICS-213', from: 'KK4XYZ', to: [], date: '2026-05-19T14:05:00Z' })}
+        // an old date → stable absolute formatRowDate output
+        message={meta({ subject: 'Net check-in', from: 'KK4XYZ', date: '2024-03-09T14:05:00Z', bodySize: 2458 })}
         folder="inbox"
         selected={false}
         onSelect={() => {}}
       />,
     );
     expect(screen.getByTestId('row-correspondent')).toHaveTextContent('KK4XYZ');
-    expect(screen.getByTestId('row-subject')).toHaveTextContent('ICS-213');
-    expect(screen.getByTestId('row-date')).toHaveTextContent('2026-05-19 14:05Z');
+    expect(screen.getByTestId('row-subject')).toHaveTextContent('Net check-in');
+    expect(screen.getByTestId('row-date')).toHaveTextContent('2024-03-09');
+    expect(screen.getByTestId('row-size')).toHaveTextContent('2.4 KB');
+  });
+
+  it('renders the preview line when present, omits it when absent', () => {
+    const { rerender } = render(
+      <MessageRow
+        message={meta({ preview: 'NWS Memphis has issued a severe thunderstorm watch…' })}
+        folder="inbox"
+        selected={false}
+        onSelect={() => {}}
+      />,
+    );
+    expect(screen.getByTestId('row-preview')).toHaveTextContent('NWS Memphis');
+    rerender(
+      <MessageRow message={meta({ preview: undefined })} folder="inbox" selected={false} onSelect={() => {}} />,
+    );
+    expect(screen.queryByTestId('row-preview')).toBeNull();
+  });
+
+  it('renders the form-tag badge only when formTag is set', () => {
+    const { rerender } = render(
+      <MessageRow message={meta({ formTag: 'ICS-213' })} folder="inbox" selected={false} onSelect={() => {}} />,
+    );
+    expect(screen.getByTestId('row-form-tag')).toHaveTextContent('ICS-213');
+    rerender(
+      <MessageRow message={meta({ formTag: undefined })} folder="inbox" selected={false} onSelect={() => {}} />,
+    );
+    expect(screen.queryByTestId('row-form-tag')).toBeNull();
+  });
+
+  it('omits the size when bodySize is zero', () => {
+    render(<MessageRow message={meta({ bodySize: 0 })} folder="inbox" selected={false} onSelect={() => {}} />);
+    expect(screen.queryByTestId('row-size')).toBeNull();
   });
 
   it('inbox row shows the sender; sent row shows the recipient', () => {
@@ -82,31 +139,22 @@ describe('<MessageRow> (compact 2-line, mock-d)', () => {
   it('unread row carries the unread class and shows the unread dot', () => {
     render(<MessageRow message={meta({ unread: true })} folder="inbox" selected={false} onSelect={() => {}} />);
     const row = screen.getByTestId('message-row-MID1');
+    expect(row.className).toContain('row');
     expect(row.className).toContain('unread');
     expect(screen.getByTestId('row-unread-dot')).toBeInTheDocument();
   });
 
-  it('read row carries the read class and shows no unread dot', () => {
+  it('read row has no unread class and no unread dot', () => {
     render(<MessageRow message={meta({ unread: false })} folder="inbox" selected={false} onSelect={() => {}} />);
     const row = screen.getByTestId('message-row-MID1');
-    expect(row.className).toContain('read');
+    expect(row.className).toContain('row');
+    expect(row.className).not.toContain('unread');
     expect(screen.queryByTestId('row-unread-dot')).toBeNull();
   });
 
   it('selected row carries the selected class', () => {
     render(<MessageRow message={meta()} folder="inbox" selected={true} onSelect={() => {}} />);
     expect(screen.getByTestId('message-row-MID1').className).toContain('selected');
-  });
-
-  it('shows the attachment marker only when hasAttachments', () => {
-    const { rerender } = render(
-      <MessageRow message={meta({ hasAttachments: true })} folder="inbox" selected={false} onSelect={() => {}} />,
-    );
-    expect(screen.getByTestId('row-attach')).toBeInTheDocument();
-    rerender(
-      <MessageRow message={meta({ hasAttachments: false })} folder="inbox" selected={false} onSelect={() => {}} />,
-    );
-    expect(screen.queryByTestId('row-attach')).toBeNull();
   });
 
   it('click and Enter both fire onSelect with the id', () => {
@@ -121,6 +169,11 @@ describe('<MessageRow> (compact 2-line, mock-d)', () => {
 });
 
 describe('<MessageList>', () => {
+  it('renders the rows-pane root', () => {
+    render(<MessageList folder="inbox" messages={[]} selectedId={null} onSelect={() => {}} />);
+    expect(screen.getByTestId('rows-pane')).toBeInTheDocument();
+  });
+
   it('shows the empty-folder copy when there are no messages', () => {
     render(<MessageList folder="inbox" messages={[]} selectedId={null} onSelect={() => {}} />);
     expect(screen.getByTestId('message-list-empty')).toHaveTextContent(EMPTY_FOLDER_COPY);

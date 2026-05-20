@@ -137,11 +137,18 @@ describe('<MessageViewLoaded>', () => {
 describe('<MessageViewLoaded> reply action bar', () => {
   beforeEach(() => vi.mocked(openReplyWindow).mockClear());
 
-  it('renders Reply, Reply All, and Forward buttons', () => {
+  it('renders Reply, Reply All, Forward, and Print buttons (Mock D action bar)', () => {
     render(<MessageViewLoaded message={parsed()} />);
     expect(screen.getByTestId('reply-btn')).toBeInTheDocument();
     expect(screen.getByTestId('reply-all-btn')).toBeInTheDocument();
     expect(screen.getByTestId('forward-btn')).toBeInTheDocument();
+    expect(screen.getByTestId('print-btn')).toBeInTheDocument();
+  });
+
+  it('Reply is the amber primary action', () => {
+    render(<MessageViewLoaded message={parsed()} />);
+    expect(screen.getByTestId('reply-btn').className).toContain('primary');
+    expect(screen.getByTestId('reply-all-btn').className).not.toContain('primary');
   });
 
   it('Reply opens a reply compose window for the message', () => {
@@ -266,7 +273,7 @@ describe('<MessageView> error routing (integration via mocked useMessage)', () =
 // FIX 3: body pre element carries the wrapping class/style.
 // ============================================================================
 describe('<MessageViewLoaded> body wrap', () => {
-  it('applies the message-view__body--wrap class to the body pre', () => {
+  it('applies the msg-body class to the body pre (CSS sets pre-wrap + overflow-wrap)', () => {
     render(
       <MessageViewLoaded
         message={
@@ -286,7 +293,8 @@ describe('<MessageViewLoaded> body wrap', () => {
       />,
     );
     const pre = screen.getByTestId('message-body');
-    // The pre must carry the CSS class that sets white-space: pre-wrap.
-    expect(pre.className).toContain('message-view__body');
+    // The pre must carry the Mock D class (CSS sets white-space: pre-wrap +
+    // overflow-wrap: anywhere to wrap long radio/Base64 lines — Codex #4).
+    expect(pre.className).toContain('msg-body');
   });
 });

@@ -1,167 +1,141 @@
-/* MessageView — reading-pane styles.
+/* MessageView — reading-pane styles (Mock D).
  *
- * Spec: docs/superpowers/specs/2026-05-19-main-ui-cluster-design.md §5.3
- * bd issue: tuxlink-y5c (Task 13) → tuxlink-cbz (fidelity polish).
- *
- * Before tuxlink-cbz this file styled ONLY `.message-view__body` (pre-wrap),
- * so the subject/metadata/attachments rendered unstyled and crammed. This is
- * the full reading-pane treatment per mock-d: a subject heading, the amber
- * Reply / Reply All / Forward action bar, a spaced metadata row separated by
- * middots, a hairline rule, and the body. All colors via --tux-* tokens.
+ * tuxlink-yd4 (2026-05-20): ported VERBATIM from the approved mock's
+ * `.reading-pane` block (docs/design/mockups/2026-05-17-mocks-v1-four-directions.html
+ * lines 505-573). Cool-slate tokens from App.css :root. The component renders
+ * `.reading-pane` as its root; state views reuse it with a `--center` modifier.
  */
 
-/* ----------------------------------------------------------------------------
- * States (empty / loading / not-found / parse-error): centered, calm, muted.
- * NotConfigured renders as MessageViewEmpty (an empty state, not an error).
- * -------------------------------------------------------------------------- */
-.message-view--empty,
-.message-view--not-found,
-.message-view--error,
-.message-view--loading {
+.reading-pane {
+  background: var(--bg);
+  padding: 28px 32px;
+  overflow: auto;
+  min-width: 0;
+}
+
+/* State views (empty / loading / not-found / parse-error): centered + calm. */
+.reading-pane--center {
   display: flex;
   align-items: center;
   justify-content: center;
   height: 100%;
-  padding: 24px;
   text-align: center;
-  color: var(--tux-fg-muted);
+  color: var(--text-dim);
   font-size: 14px;
 }
-
-.message-view--error {
-  color: var(--tux-danger);
+.reading-pane--error {
+  color: var(--error);
 }
 
-/* ----------------------------------------------------------------------------
- * Loaded view
- * -------------------------------------------------------------------------- */
-.message-view--loaded {
-  display: flex;
-  flex-direction: column;
-}
-
-.message-view__header {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  padding-bottom: 14px;
-  margin-bottom: 14px;
-  border-bottom: 1px solid var(--tux-border);
-}
-
-.message-view__subject {
-  margin: 0;
-  font-size: 19px;
-  font-weight: 600;
-  line-height: 1.3;
-  color: var(--tux-fg);
-}
-
-/* Action bar: Reply is the amber primary; Reply All / Forward are quiet. */
-.message-view__actions {
+/* 1 — action bar */
+.reading-pane .actions {
   display: flex;
   gap: 8px;
+  margin-bottom: 20px;
 }
-
-.message-view__action {
-  padding: 5px 14px;
-  font-size: 13px;
+.reading-pane .action-btn {
+  padding: 6px 14px;
+  font-size: 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  color: var(--text);
+  border-radius: 5px;
   font-weight: 500;
-  border-radius: 6px;
-  border: 1px solid var(--tux-border);
-  background: var(--tux-surface-2);
-  color: var(--tux-fg);
   cursor: pointer;
-  transition: background-color 0.12s ease, border-color 0.12s ease, filter 0.12s ease;
+  font-family: inherit;
+  transition: background-color 0.12s ease, border-color 0.12s ease;
 }
-
-.message-view__action:hover {
-  background: var(--tux-hover);
-  border-color: var(--tux-accent);
+.reading-pane .action-btn:hover {
+  background: var(--elevated);
+  border-color: var(--accent);
 }
-
-.message-view__action:focus-visible {
+.reading-pane .action-btn:focus-visible {
   outline: 2px solid var(--tux-focus-ring);
   outline-offset: 1px;
 }
-
-.message-view__action--primary {
-  background: var(--tux-accent);
-  color: var(--tux-accent-fg);
-  border-color: var(--tux-accent);
+.reading-pane .action-btn.primary {
+  background: var(--accent);
+  color: #1a0e02;
+  border-color: var(--accent);
+}
+.reading-pane .action-btn.primary:hover {
+  background: var(--accent-2);
+  border-color: var(--accent-2);
 }
 
-.message-view__action--primary:hover {
-  background: var(--tux-accent-hover);
-  border-color: var(--tux-accent-hover);
+/* 2 — subject heading */
+.reading-pane h1.subject-line {
+  margin: 0 0 18px;
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: -0.01em;
+  line-height: 1.25;
 }
 
-/* Metadata row: from · date · routing, middot-separated. */
-.message-view__meta {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  font-size: 12.5px;
-  color: var(--tux-fg-muted);
+/* 3 — From / To / Date metadata */
+.reading-pane .msg-meta {
+  display: grid;
+  grid-template-columns: 60px 1fr;
+  gap: 4px 14px;
+  font-size: 12px;
+  margin-bottom: 22px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid var(--border);
+}
+.reading-pane .msg-meta dt {
+  color: var(--text-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 10px;
+  padding-top: 3px;
+  margin: 0;
+}
+.reading-pane .msg-meta dd {
+  color: var(--text-dim);
+  font-size: 13px;
+  margin: 0;
+}
+.reading-pane .msg-meta dd .addr {
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 12px;
 }
 
-.message-view__from {
-  color: var(--tux-fg);
-  font-weight: 500;
-}
-
-.message-view__date {
-  font-variant-numeric: tabular-nums;
-}
-
-.message-view__meta > span:not(:first-child) {
-  margin-left: 8px;
-}
-
-.message-view__meta > span:not(:first-child)::before {
-  content: '·';
-  margin-right: 8px;
-  color: var(--tux-fg-faint);
-}
-
-/* ----------------------------------------------------------------------------
- * Body — preserve newlines, wrap long radio/Base64 lines (Codex finding #4).
- * -------------------------------------------------------------------------- */
-.message-view__body {
+/* 4 — body. pre-wrap preserves newlines; overflow-wrap wraps long radio/Base64
+ * lines so they never force horizontal scroll (Codex Task-13 finding #4). */
+.reading-pane .msg-body {
+  font-size: 14.5px;
+  line-height: 1.65;
+  color: var(--text);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+  font-family: var(--sans);
   margin: 0;
-  font-family: inherit;
-  font-size: 13.5px;
-  line-height: 1.5;
-  color: var(--tux-fg);
 }
 
-.message-view__form-placeholder {
-  padding: 16px;
-  border: 1px solid var(--tux-border);
+/* Form payload placeholder (no raw XML) — purple-tinted box (mock B treatment). */
+.reading-pane .form-placeholder {
+  padding: 16px 18px;
+  background: rgba(192, 132, 252, 0.08);
+  border: 1px solid rgba(192, 132, 252, 0.25);
   border-radius: 6px;
-  background: var(--tux-surface);
-  color: var(--tux-fg-muted);
   font-size: 13px;
+  color: var(--text-dim);
 }
 
-/* ----------------------------------------------------------------------------
- * Attachment strip — names + sizes only (no download/preview in v0.0.1).
- * -------------------------------------------------------------------------- */
-.message-view__attachments {
+/* 5 — attachment strip (names + sizes only in v0.0.1) */
+.reading-pane .msg-attachments {
   margin-top: 18px;
   padding-top: 12px;
-  border-top: 1px solid var(--tux-border);
+  border-top: 1px solid var(--border);
 }
-
-.message-view__attachments-label {
+.reading-pane .msg-attachments-label {
   font-size: 12px;
   font-weight: 500;
-  color: var(--tux-fg-muted);
+  color: var(--text-dim);
 }
-
-.message-view__attachment-list {
+.reading-pane .msg-attachment-list {
   list-style: none;
   margin: 8px 0 0;
   padding: 0;
@@ -169,23 +143,20 @@
   flex-wrap: wrap;
   gap: 8px;
 }
-
-.message-view__attachment-item {
+.reading-pane .msg-attachment-item {
   display: flex;
   align-items: baseline;
   gap: 8px;
   padding: 4px 10px;
-  border: 1px solid var(--tux-border);
+  border: 1px solid var(--border-strong);
   border-radius: 6px;
-  background: var(--tux-surface-2);
+  background: var(--surface-2);
   font-size: 12px;
 }
-
-.message-view__attachment-name {
-  color: var(--tux-fg);
+.reading-pane .msg-attachment-name {
+  color: var(--text);
 }
-
-.message-view__attachment-size {
-  color: var(--tux-fg-faint);
+.reading-pane .msg-attachment-size {
+  color: var(--text-faint);
   font-variant-numeric: tabular-nums;
 }

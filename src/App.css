@@ -15,6 +15,20 @@
  * falling back to a generic system sans.
  * ========================================================================== */
 
+/* Inter (variable, latin subset) — bundled locally, NOT a CDN/Google-Fonts
+ * link. The window CSP (tauri.conf.json: default-src 'self', no font-src) only
+ * permits same-origin font files, and the app must work offline. The woff2
+ * lives at src/fonts/ and Vite fingerprints + inlines the url() at build.
+ * tuxlink-yd4 (2026-05-20): materializes the mock's --sans = "Inter, …" face
+ * instead of the generic system sans the Pi was falling back to. */
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url('./fonts/inter-latin-wght-normal.woff2') format('woff2');
+}
+
 *,
 *::before,
 *::after {
@@ -100,13 +114,6 @@ body,
   -webkit-text-size-adjust: 100%;
   color-scheme: dark;
 }
-
-/* NOTE (fresh agent): the mock's --sans leads with Inter, which the Pi does NOT
- * have installed — so right now this falls back to the system sans (a big part
- * of the "generic" feel). Bundle Inter to render the approved face: fetch the
- * Inter variable woff2 into src/fonts/ (or public/fonts/) and add an @font-face
- * here. (Do NOT add @font-face before the woff2 exists — Vite fails the build
- * on an unresolvable CSS url().) */
 
 /* ----------------------------------------------------------------------------
  * Base element theming (cool slate)

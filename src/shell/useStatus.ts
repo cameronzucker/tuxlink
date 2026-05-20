@@ -9,10 +9,13 @@
  * - ConfigViewDto / StatusDto mirror the Rust commands' serialization shapes (spec §3.2).
  * - The `useStatus` React hook (bottom of this file) composes these into a single
  *   query the ribbon consumes. It mocks `invoke` in tests via vitest.mock.
- * - backend_status + config_read commands are NOT registered in lib.rs yet — that lands
- *   in the orchestrator integration commit (spec §4.3). Components are tested against
- *   synthetic DTO values here.
+ * - backend_status + config_read commands ARE registered in lib.rs (orchestrator
+ *   integration commit, spec §4.3). Pure formatters are tested against synthetic
+ *   DTO values; the `useStatusData` hook (bottom) is tested via mocked invoke.
  */
+
+import { useEffect, useState } from 'react';
+import { invoke } from '@tauri-apps/api/core';
 
 // ============================================================================
 // DTOs — mirror the Rust command serialization shapes (spec §3.2)
@@ -153,6 +156,119 @@ export function formatGpsStatus(gpsState: GpsState): string {
     case 'BroadcastAtPrecision':
       return 'GPS on';
   }
+}
+
+// ============================================================================
+// Status-bar state (Mock D — tuxlink-yd4)
+// ============================================================================
+
+export type StatusTone = 'idle' | 'good' | 'warn' | 'error';
+
+/**
+ * Map BackendStatus to the Mock D status-bar's short state word + dot tone.
+ *
+ * Mock D's status bar shows a single state word (`Idle`, `Connecting`, …) with
+ * a colored dot, NOT the ribbon's "Idle · Telnet" transport-qualified label.
+ * `null` (no backend — the v0.0.1 default) and Disconnected both read "Idle".
+ */
+export function formatStatusState(status: StatusDto | null): { label: string; tone: StatusTone } {
+  if (status === null) return { label: 'Idle', tone: 'idle' };
+  switch (status.kind) {
+    case 'Disconnected':
+      return { label: 'Idle', tone: 'idle' };
+    case 'Connecting':
+      return { label: 'Connecting', tone: 'warn' };
+    case 'Connected':
+      return { label: 'Connected', tone: 'good' };
+    case 'Disconnecting':
+      return { label: 'Disconnecting', tone: 'warn' };
+    case 'Error':
+      return { label: 'Error', tone: 'error' };
+  }
+}
+
+// ============================================================================
+// useStatusData — the StatusBar's live data hook (Mock D)
+// ============================================================================
+
+export interface StatusBarData {
+  /** Callsign (or offline identifier); '' until config loads. */
+  callsign: string;
+  /** 4-char broadcast grid; null when unset. */
+  grid: string | null;
+  /** 6-char grid for the tooltip when precision is opted up; else null. */
+  gridTooltip: string | null;
+  /** Short state word + dot tone derived from BackendStatus. */
+  state: { label: string; tone: StatusTone };
+}
+
+/**
+ * Poll config_read (5s) + backend_status (2s) and derive the StatusBar's
+ * display values via the pure formatters above. This is the status fetch that
+ * lived in DashboardRibbon (now parked); Mock D surfaces callsign/grid/state in
+ * the status bar instead of a top ribbon. Both commands degrade gracefully:
+ * config absent → empty callsign/grid; backend None → status null → "Idle".
+ */
+export function useStatusData(): StatusBarData {
+  const [config, setConfig] = useState<ConfigViewDto | null>(null);
+  const [status, setStatus] = useState<StatusDto | null>(null);
+
+  useEffect(() => {
+    let mounted = true;
+    const load = () => {
+      invoke<ConfigViewDto>('config_read')
+        .then((c) => {
+          if (mounted) setConfig(c);
+        })
+        .catch(() => {
+          /* config absent / pre-wizard: status bar shows just the state word */
+        });
+    };
+    load();
+    const id = setInterval(load, 5000);
+    return () => {
+      mounted = false;
+      clearInterval(id);
+    };
+  }, []);
+
+  useEffect(() => {
+    let mounted = true;
+    const load = () => {
+      invoke<StatusDto | null>('backend_status')
+        .then((s) => {
+          if (mounted) setStatus(s ?? null);
+        })
+        .catch(() => {
+          if (mounted) setStatus(null);
+        });
+    };
+    load();
+    const id = setInterval(load, 2000);
+    return () => {
+      mounted = false;
+      clearInterval(id);
+    };
+  }, []);
+
+  const callsign = config
+    ? formatCallsign({
+        connect_to_cms: config.connect_to_cms,
+        callsign: config.callsign,
+        identifier: config.identifier,
+      })
+    : '';
+
+  const gridResult = config
+    ? formatGrid({ grid: config.grid, precision: config.position_precision })
+    : { broadcast: null, tooltip: null };
+
+  return {
+    callsign,
+    grid: gridResult.broadcast,
+    gridTooltip: gridResult.tooltip,
+    state: formatStatusState(status),
+  };
 }
 
 // ============================================================================

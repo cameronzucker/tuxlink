@@ -1,30 +1,22 @@
-// Task 13 — Message reading pane.
+// Message reading pane — the right pane of the Mock D shell.
 //
-// Spec: docs/superpowers/specs/2026-05-19-main-ui-cluster-design.md §5.3, §4.1
-// bd issue: tuxlink-y5c
+// Spec: docs/superpowers/specs/2026-05-19-main-ui-cluster-design.md §5.3, §4.2
+// bd issue: tuxlink-y5c (Task 13); rebuilt to Mock D under tuxlink-yd4.
 //
-// Renders the right-hand reading pane of the main shell. The component is
-// wired into AppShell's `reader` region by the orchestrator integration
-// commit (spec §4.3); until then it is independently unit-testable.
+// DOM matches the approved mock's `.reading-pane`, ported verbatim and in order:
+//   1. `.actions`        — Reply (amber primary) · Reply All · Forward · Print
+//   2. `h1.subject-line` — the subject
+//   3. `dl.msg-meta`     — From / To / Date (+ Via when routing is known)
+//   4. `pre.msg-body`    — the decoded body (form → placeholder box)
+//   5. attachment strip  — names + sizes only (v0.0.1; open/preview is v0.1)
 //
-// State: none beyond the `useMessage(selection)` query; selection comes from
-// AppShell's `selectedMessage: { folder, id } | null` prop.
+// The reply→compose wiring (replyActions.ts) is unchanged — it is sound; only
+// the markup/labels are reshaped to the mock. State (empty/loading/not-found/
+// parse-error) renders inside a centered `.reading-pane` so the pane bg/padding
+// is consistent.
 //
-// Spec §5.3 behaviours:
-//   - No selection → "Select a message to read." empty state.
-//   - Loading → spinner (no flicker on fast responses).
-//   - Error (UiError::NotFound) → "message not found" state.
-//   - Error (UiError::Internal from a parse failure) → "could not parse" state.
-//   - Loaded:
-//       Header strip: sender · UTC sent · routing (omit when null).
-//       Body: `<pre>` with word-wrap.
-//       Form payload (isForm) → placeholder text (no raw XML).
-//       Attachments: names + sizes only; no download/preview (v0.1).
-//
-// Exported sub-components (`MessageViewLoaded`, `MessageViewEmpty`,
-// `MessageViewNotFound`, `MessageViewParseError`) are exposed for unit tests
-// that inject synthetic data without going through the full hook +
-// QueryClientProvider.
+// Exported sub-components are exposed for unit tests that inject synthetic data
+// without the full hook + QueryClientProvider.
 
 import './MessageView.css';
 import type { ParsedMessage, AttachmentMeta } from './types';
@@ -53,14 +45,26 @@ function fireReply(message: ParsedMessage, mode: ReplyMode): void {
   });
 }
 
+/** Print the current message via the webview's native print (Ctrl/Cmd+P parity). */
+function firePrint(): void {
+  try {
+    window.print?.();
+  } catch {
+    /* print unavailable (headless/test) — no-op */
+  }
+}
+
 // ============================================================================
-// Sub-components
+// State sub-components — rendered inside a centered reading-pane
 // ============================================================================
 
 /** Shown when no message is selected. */
 export function MessageViewEmpty() {
   return (
-    <div className="message-view message-view--empty" data-testid="message-view-empty">
+    <div
+      className="reading-pane reading-pane--center"
+      data-testid="message-view-empty"
+    >
       {SELECT_MESSAGE_COPY}
     </div>
   );
@@ -69,7 +73,10 @@ export function MessageViewEmpty() {
 /** Shown when the backend returns UiError::NotFound (deleted / moved message). */
 export function MessageViewNotFound() {
   return (
-    <div className="message-view message-view--not-found" data-testid="message-view-not-found">
+    <div
+      className="reading-pane reading-pane--center"
+      data-testid="message-view-not-found"
+    >
       {NOT_FOUND_COPY}
     </div>
   );
@@ -79,7 +86,10 @@ export function MessageViewNotFound() {
 export function MessageViewParseError({ rawSize }: { rawSize?: number }) {
   const sizeNote = rawSize !== undefined ? ` (raw size ${rawSize} bytes)` : '';
   return (
-    <div className="message-view message-view--error" data-testid="message-parse-error">
+    <div
+      className="reading-pane reading-pane--center reading-pane--error"
+      data-testid="message-parse-error"
+    >
       {PARSE_ERROR_PREFIX}
       {sizeNote}.
     </div>
@@ -93,7 +103,7 @@ function formatAttachSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-/** Format a UTC ISO-8601 date-time string to a compact display label. */
+/** Format a UTC ISO-8601 date-time string to a compact UTC display label. */
 function formatHeaderDate(isoDate: string): string {
   try {
     const d = new Date(isoDate);
@@ -101,93 +111,117 @@ function formatHeaderDate(isoDate: string): string {
     const pad = (n: number) => String(n).padStart(2, '0');
     return (
       `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())} ` +
-      `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}Z`
+      `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())} UTC`
     );
   } catch {
     return isoDate;
   }
 }
 
+// ============================================================================
+// Loaded view
+// ============================================================================
+
 /**
- * Fully-loaded message view. Accepts a `ParsedMessage` directly so tests
- * can inject synthetic data without requiring a Tauri runtime.
+ * Fully-loaded message view (Mock D `.reading-pane`). Accepts a `ParsedMessage`
+ * directly so tests can inject synthetic data without a Tauri runtime.
  */
 export function MessageViewLoaded({ message }: { message: ParsedMessage }) {
   return (
-    <div className="message-view message-view--loaded">
-      {/* Header strip: subject heading → amber action bar → metadata row */}
-      <header className="message-view__header">
-        <h2 className="message-view__subject" data-testid="message-subject">
-          {message.subject}
-        </h2>
-        <div className="message-view__actions" role="group" aria-label="Message actions">
-          <button
-            type="button"
-            className="message-view__action message-view__action--primary"
-            data-testid="reply-btn"
-            onClick={() => fireReply(message, 'reply')}
-          >
-            Reply
-          </button>
-          <button
-            type="button"
-            className="message-view__action"
-            data-testid="reply-all-btn"
-            onClick={() => fireReply(message, 'replyAll')}
-          >
-            Reply All
-          </button>
-          <button
-            type="button"
-            className="message-view__action"
-            data-testid="forward-btn"
-            onClick={() => fireReply(message, 'forward')}
-          >
-            Forward
-          </button>
-        </div>
-        <div className="message-view__meta">
-          <span className="message-view__from" data-testid="message-from">
-            {message.from}
-          </span>
-          <span className="message-view__date" data-testid="message-date">
-            {formatHeaderDate(message.date)}
-          </span>
-          {message.routing !== null && message.routing !== undefined && (
-            <span className="message-view__routing" data-testid="message-routing">
-              {message.routing}
-            </span>
-          )}
-        </div>
-      </header>
-
-      {/* Body / form */}
-      <div className="message-view__body-area">
-        {message.isForm ? (
-          <div
-            className="message-view__form-placeholder"
-            data-testid="message-form-placeholder"
-          >
-            {FORM_PLACEHOLDER}
-          </div>
-        ) : (
-          <pre className="message-view__body" data-testid="message-body">
-            {message.body}
-          </pre>
-        )}
+    <div className="reading-pane" data-testid="message-view-loaded">
+      {/* 1 — action bar (Reply primary amber · Reply All · Forward · Print) */}
+      <div className="actions" role="group" aria-label="Message actions">
+        <button
+          type="button"
+          className="action-btn primary"
+          data-testid="reply-btn"
+          onClick={() => fireReply(message, 'reply')}
+        >
+          Reply
+        </button>
+        <button
+          type="button"
+          className="action-btn"
+          data-testid="reply-all-btn"
+          onClick={() => fireReply(message, 'replyAll')}
+        >
+          Reply All
+        </button>
+        <button
+          type="button"
+          className="action-btn"
+          data-testid="forward-btn"
+          onClick={() => fireReply(message, 'forward')}
+        >
+          Forward
+        </button>
+        <button
+          type="button"
+          className="action-btn"
+          data-testid="print-btn"
+          onClick={firePrint}
+        >
+          Print
+        </button>
       </div>
 
-      {/* Attachment strip — v0.0.1: names + sizes only; no download/preview */}
-      {message.attachments.length > 0 && (
-        <div className="message-view__attachments" data-testid="message-attachments">
-          <span className="message-view__attachments-label">Attachments:</span>
-          <ul className="message-view__attachment-list">
-            {message.attachments.map((a: AttachmentMeta, i: number) => (
-              <li key={i} className="message-view__attachment-item">
-                <span className="message-view__attachment-name">{a.filename}</span>
-                <span className="message-view__attachment-size">
-                  {formatAttachSize(a.size)}
+      {/* 2 — subject heading */}
+      <h1 className="subject-line" data-testid="message-subject">
+        {message.subject}
+      </h1>
+
+      {/* 3 — From / To / Date (+ Via when routing is known) */}
+      <dl className="msg-meta">
+        <dt>From</dt>
+        <dd>
+          <span className="addr" data-testid="message-from">
+            {message.from}
+          </span>
+        </dd>
+
+        <dt>To</dt>
+        <dd data-testid="message-to">
+          {message.to.length > 0
+            ? message.to.map((addr, i) => (
+                <span key={i}>
+                  {i > 0 && ', '}
+                  <span className="addr">{addr}</span>
                 </span>
+              ))
+            : '—'}
+        </dd>
+
+        <dt>Date</dt>
+        <dd data-testid="message-date">{formatHeaderDate(message.date)}</dd>
+
+        {message.routing !== null && message.routing !== undefined && (
+          <>
+            <dt>Via</dt>
+            <dd data-testid="message-routing">{message.routing}</dd>
+          </>
+        )}
+      </dl>
+
+      {/* 4 — body (form payloads render a placeholder, never raw XML) */}
+      {message.isForm ? (
+        <div className="form-placeholder" data-testid="message-form-placeholder">
+          {FORM_PLACEHOLDER}
+        </div>
+      ) : (
+        <pre className="msg-body" data-testid="message-body">
+          {message.body}
+        </pre>
+      )}
+
+      {/* 5 — attachment strip — names + sizes only (no download/preview in v0.0.1) */}
+      {message.attachments.length > 0 && (
+        <div className="msg-attachments" data-testid="message-attachments">
+          <span className="msg-attachments-label">Attachments:</span>
+          <ul className="msg-attachment-list">
+            {message.attachments.map((a: AttachmentMeta, i: number) => (
+              <li key={i} className="msg-attachment-item">
+                <span className="msg-attachment-name">{a.filename}</span>
+                <span className="msg-attachment-size">{formatAttachSize(a.size)}</span>
               </li>
             ))}
           </ul>
@@ -207,12 +241,9 @@ export interface MessageViewProps {
 }
 
 /**
- * Parse the raw byte count from a `UiError::Internal` detail string.
- *
- * The Rust `parse_raw_rfc5322` function emits:
- *   "message too large to parse (N bytes; cap is M bytes)"
- * Extract N via a simple regex; return `undefined` if the detail doesn't
- * contain a size (e.g., an RFC5322 parse failure rather than the cap check).
+ * Parse the raw byte count from a `UiError::Internal` detail string
+ * ("message too large to parse (N bytes; cap is M bytes)"). Returns undefined
+ * when the detail carries no size (e.g. an RFC5322 parse failure).
  */
 function parseRawSizeFromDetail(detail: string | undefined): number | undefined {
   if (!detail) return undefined;
@@ -223,17 +254,9 @@ function parseRawSizeFromDetail(detail: string | undefined): number | undefined 
 }
 
 /**
- * Message reading pane — the `reader` region of the AppShell grid.
- *
- * Delegates data-fetching to `useMessage`; renders one of five states:
- *   1. Empty        — no selection.
- *   2. Loading      — query in flight.
- *   3. Not-found    — UiError::NotFound (deleted / moved message).
- *   4. Parse-error  — UiError::Internal from the Rust parse boundary.
- *   5. Loaded       — full parsed message.
- *
- * Spec §4.3: wired into AppShell's reader region by the orchestrator
- * integration commit; this component does NOT import or reference AppShell.
+ * Reading pane — the right pane of the `.panes` grid. Delegates fetching to
+ * `useMessage`; renders one of five states (empty / loading / not-found /
+ * parse-error / loaded). Selection comes from AppShell's `selectedMessage`.
  */
 export default function MessageView({ selectedMessage }: MessageViewProps) {
   const { data, isLoading, isError, error } = useMessage(selectedMessage);
@@ -245,7 +268,7 @@ export default function MessageView({ selectedMessage }: MessageViewProps) {
   if (isLoading) {
     return (
       <div
-        className="message-view message-view--loading"
+        className="reading-pane reading-pane--center"
         data-testid="message-view-loading"
         aria-label="Loading message..."
       />
@@ -265,8 +288,7 @@ export default function MessageView({ selectedMessage }: MessageViewProps) {
       return <MessageViewNotFound />;
     }
 
-    // Internal (parse failure or oversized message) → show parse-error state
-    // with raw byte count when available in the detail string.
+    // Internal (parse failure or oversized message) → parse-error state.
     const detail =
       uiErr?.kind === 'Internal' ? (uiErr.detail as { detail: string }).detail : undefined;
     const rawSize = parseRawSizeFromDetail(detail);
