@@ -201,6 +201,13 @@ export interface StatusBarData {
   gridTooltip: string | null;
   /** Short state word + dot tone derived from BackendStatus. */
   state: { label: string; tone: StatusTone };
+  /**
+   * Present when the backend is in the Error state.
+   * Carries the full reason string from `StatusDto::Error { reason }` so the
+   * DashboardRibbon can surface it in the connection label instead of
+   * appending the misleading "· telnet ready" suffix (FIX 6, tuxlink-22l R2).
+   */
+  errorReason?: string;
 }
 
 /**
@@ -282,6 +289,9 @@ export function useStatusData(): StatusBarData {
     grid: gridResult.broadcast,
     gridTooltip: gridResult.tooltip,
     state: formatStatusState(status),
+    // Thread the error reason so the DashboardRibbon can surface it
+    // without re-fetching or re-deriving from the raw StatusDto (FIX 6).
+    errorReason: status?.kind === 'Error' ? status.reason : undefined,
   };
 }
 

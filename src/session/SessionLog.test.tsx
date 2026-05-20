@@ -179,6 +179,43 @@ describe('SessionLog (Mock B human-shaped)', () => {
     expect(occurrences).toBe(1);
   });
 
+  // -------------------------------------------------------------------------
+  // FIX 8 — session-log Map must be capped at SESSION_LOG_CAP (500) entries
+  // -------------------------------------------------------------------------
+
+  it('caps the rendered line set at 500 when fed > 500 lines, retaining the newest seqs', async () => {
+    // Feed 600 lines (seq 1..600). The Map must evict the 100 oldest (seq 1..100)
+    // and retain only the newest 500 (seq 101..600).
+    const lines: LogLineDto[] = Array.from({ length: 600 }, (_, i) => ({
+      seq: i + 1,
+      timestampIso: `2026-05-20T12:00:00Z`,
+      level: 'info' as const,
+      source: 'backend' as const,
+      message: `Log line seq ${i + 1}`,
+    }));
+    mockSnapshotLines = lines;
+    await act(async () => {
+      render(<SessionLog />);
+    });
+    // Switch to Raw so all backend lines are visible
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('toggle-raw'));
+    });
+    await waitFor(() =>
+      expect(screen.getByTestId('session-log-lines')).toHaveTextContent('Log line seq 600'),
+    );
+    const logContent = screen.getByTestId('session-log-lines').textContent ?? '';
+    // Newest 500 entries (seq 101..600) must be present
+    expect(logContent).toContain('Log line seq 600');
+    expect(logContent).toContain('Log line seq 101');
+    // Oldest 100 (seq 1..100) must be evicted
+    expect(logContent).not.toContain('Log line seq 1\n');
+    expect(logContent).not.toContain('Log line seq 100');
+    // Verify the total rendered line count is capped at 500
+    const lineCount = (logContent.match(/Log line seq \d+/g) ?? []).length;
+    expect(lineCount).toBe(500);
+  });
+
   it('subscribe-then-snapshot: event arriving before snapshot resolves is captured and merged deduped by seq', async () => {
     // This test simulates the subscribe-then-snapshot window:
     // 1. listen() is attached (captures the callback in capturedListeners).

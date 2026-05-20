@@ -26,12 +26,27 @@ const DEFAULT_HEIGHT_PX = 132;
 const MIN_HEIGHT_PX = 60;
 const HEIGHT_STORAGE_KEY = 'tuxlink.sessionLog.height';
 
+/**
+ * Maximum number of lines retained in the frontend Map.
+ * Matches the backend's ring-buffer capacity (SessionLogState, 500 lines) so
+ * the frontend never grows beyond what the backend would re-send (FIX 8,
+ * tuxlink-22l R2). When the Map exceeds this cap after a merge, the lowest-seq
+ * entries are evicted until the count equals SESSION_LOG_CAP.
+ */
+const SESSION_LOG_CAP = 500;
+
 type Projection = 'human' | 'raw';
 
 /**
  * Merge `incoming` lines into the existing `Map<seq, LogLineDto>`.
- * Returns a new Map if any lines were added; returns the same reference if
- * nothing changed (allows React to skip re-renders on no-op updates).
+ * Returns a new Map if any lines were added or evicted; returns the same
+ * reference if nothing changed (allows React to skip re-renders on no-op
+ * updates).
+ *
+ * After merging, the Map is capped at SESSION_LOG_CAP by evicting the entries
+ * with the lowest seq values. This prevents unbounded growth during long
+ * sessions and matches the backend ring buffer's 500-line limit (FIX 8,
+ * tuxlink-22l R2).
  */
 function mergeLines(
   prev: Map<number, LogLineDto>,
@@ -48,6 +63,19 @@ function mergeLines(
       next.set(line.seq, line);
     }
   }
+
+  // Evict lowest-seq entries when the Map exceeds the cap.
+  if (next.size > SESSION_LOG_CAP) {
+    if (!changed) {
+      next = new Map(prev); // copy-on-first-write (eviction path)
+    }
+    const seqs = Array.from(next.keys()).sort((a, b) => a - b);
+    const evictCount = seqs.length - SESSION_LOG_CAP;
+    for (let i = 0; i < evictCount; i++) {
+      next.delete(seqs[i]);
+    }
+  }
+
   return next;
 }
 
