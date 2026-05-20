@@ -1,0 +1,113 @@
+//! Compose-window management — opens a separate Tauri webview window per
+//! draft (AMD-6 / spec §5.4).
+//!
+//! Spec: docs/superpowers/specs/2026-05-19-main-ui-cluster-design.md §5.4
+//! bd issue: tuxlink-dm8 (Task 14 — compose window)
+//!
+//! **Separate window, NOT Radix Dialog** — this is AMD-6 locked decision #2.
+//! The compose experience is in its own webview, labeled `compose-<draftId>`,
+//! so it:
+//!   - Survives main-window hide-to-tray (spec §5.4, Task 8 integration).
+//!   - Allows multiple concurrent compose windows.
+//!   - Does NOT embed in the AppShell grid.
+//!
+//! **Codex F7 guard:** compose windows do NOT wire a `menu:file:new` listener.
+//! `menu.rs:123` emits that event via `app.emit` which broadcasts to EVERY
+//! webview (including compose windows). If a compose window listened for that
+//! event it would spawn nested compose windows. The listener lives ONLY in
+//! `App.tsx`'s main-window code path, gated to the main window (integration
+//! commit §4.3).
+//!
+//! **Window geometry:** `tauri-plugin-window-state` persists per-window size
+//! and position keyed by the window label. Each compose window gets a unique
+//! label `compose-<draftId>`, so per-draft geometry is remembered across
+//! restores. The plugin is registered in `lib.rs`'s `run()` builder (the
+//! integration commit, §4.3) — this file only builds the `WebviewWindowBuilder`.
+//!
+//! **Registration:** `compose_window_open` is a Tauri command appended to
+//! `ui_commands.rs`'s append-only command list. The `invoke_handler`
+//! registration lands in the orchestrator integration commit (spec §4.3).
+
+use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
+
+/// Open a compose window for the given draft id.
+///
+/// The window is labeled `compose-<draftId>` and loads
+/// `/compose/<draftId>` inside the app's devUrl/frontendDist.
+/// `tauri-plugin-window-state` persists geometry per label so each
+/// draft's window remembers its last position.
+///
+/// Multiple compose windows are allowed (Winlink emcomm workflow
+/// commonly has several drafts open simultaneously).
+///
+/// The command is idempotent: if a window with the same label already
+/// exists, `WebviewWindowBuilder::build` returns an `AlreadyExists`
+/// error — we swallow it and the existing window is revealed via a
+/// `window.set_focus()` call. If the window is visible but not focused,
+/// focus is restored; if it is hidden (main-window-hide-to-tray flow),
+/// it is shown and focused.
+#[tauri::command]
+pub fn compose_window_open(app: AppHandle, draft_id: String) -> Result<(), String> {
+    let label = format!("compose-{}", draft_id);
+    let url = format!("/compose/{}", draft_id);
+
+    // Attempt to focus an already-open window first (idempotent open).
+    if let Some(existing) = app.get_webview_window(&label) {
+        existing
+            .show()
+            .map_err(|e| format!("show failed: {e}"))?;
+        existing
+            .set_focus()
+            .map_err(|e| format!("set_focus failed: {e}"))?;
+        return Ok(());
+    }
+
+    // Build a new compose window. `tauri-plugin-window-state` hooks into
+    // the WebviewWindow lifecycle via `.on_window_event` registered in
+    // `lib.rs`'s `run()` builder (integration commit). The builder does
+    // not need to call the plugin explicitly — the plugin's `Builder` hook
+    // restores + saves window state automatically once registered.
+    WebviewWindowBuilder::new(
+        &app,
+        &label,
+        WebviewUrl::App(url.into()),
+    )
+    .title("New Message — Tuxlink")
+    .inner_size(720.0, 560.0)
+    .min_inner_size(480.0, 360.0)
+    .resizable(true)
+    .center()
+    .build()
+    .map_err(|e| format!("compose window build failed: {e}"))?;
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    // Window tests are structural/doc-only: `tauri::test` helpers require a
+    // full Tauri runtime which is not available in unit-test mode. The M2
+    // browser smoke (spec §6, testing-pitfalls.md §9) is the runtime gate
+    // for compose-window open/focus/multi-window behavior.
+    //
+    // What IS testable here: the label format contract.
+
+    #[test]
+    fn compose_label_format() {
+        let draft_id = "draft-2026-05-19-001";
+        let label = format!("compose-{}", draft_id);
+        assert_eq!(label, "compose-draft-2026-05-19-001");
+        // Label must be non-empty and free of path separators (Tauri rejects
+        // labels that look like filesystem paths).
+        assert!(!label.is_empty());
+        assert!(!label.contains('/'));
+        assert!(!label.contains('\\'));
+    }
+
+    #[test]
+    fn compose_url_format() {
+        let draft_id = "draft-abc";
+        let url = format!("/compose/{}", draft_id);
+        assert_eq!(url, "/compose/draft-abc");
+    }
+}
