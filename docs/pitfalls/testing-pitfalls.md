@@ -96,6 +96,24 @@ The test suite itself is code. It decays if not maintained. Messy test infrastru
 - [ ] **Test doubles are minimal and honest.** A mock that returns fixed data is testing the mock, not the code. Use real implementations where feasible; mock only external boundaries.
 - [ ] **No hardcoded time-of-day or timezone assumptions.** Tests that pass at 09:00 UTC but fail at 23:00 UTC are flaky by design. Use injected clocks for time-sensitive tests.
 - [ ] **No network calls in unit tests.** A unit test that hits a real API is an integration test with a misleading name. Either mock the boundary or move it to the integration suite.
+- [ ] **🔥 Found in tuxlink-cnd: real-keyring tests run in a throwaway HOME, asserted, never the operator's login keyring.** gnome-keyring stores secrets under `$XDG_DATA_HOME` / `$HOME/.local/share/keyrings`. `dbus-run-session` isolates only the D-Bus *bus*, NOT those on-disk files, and isolating `XDG_CONFIG_HOME` (for `config.json`) does NOT cover the keyring. On 2026-05-20 a setup one-liner that ran `gnome-keyring-daemon --unlock` against the real keyring re-keyed the operator's login keyring irrecoverably — breaking secret access for tuxlink AND geographica (shared login keyring) until a reset. The real-keyring tests live in `src-tauri/tests/wizard_integration_test.rs` (`#[ignore]`d) and each now calls `assert_keyring_isolated()` first, which **fails the test closed** unless the resolved keyring dir is under the system temp dir — so a mis-invoked run aborts BEFORE any write. The load-bearing safety is the **ephemeral `HOME` set *before* `dbus-run-session`** (a freshly-activated daemon inherits it and opens a temp keyring); the daemon incantation is convenience, the assert is the backstop. Safe headless recipe:
+  ```bash
+  # Run the #[ignore]d real-keyring tests WITHOUT touching your login keyring.
+  SANDBOX="$(mktemp -d)"                       # lands under $TMPDIR/tmp → assert passes
+  HOME="$SANDBOX" \
+  XDG_DATA_HOME="$SANDBOX/.local/share" \
+  XDG_CONFIG_HOME="$SANDBOX/.config" \
+  dbus-run-session -- bash -c '
+    # Empty-password unlock creates a NEW empty keyring in the sandbox HOME —
+    # never the operator password, never the real keyring.
+    eval "$(printf "\n" | gnome-keyring-daemon --unlock --components=secrets)"
+    export GNOME_KEYRING_CONTROL SSH_AUTH_SOCK
+    cargo test --manifest-path src-tauri/Cargo.toml \
+      --test wizard_integration_test --ignored
+  '
+  rm -rf "$SANDBOX"
+  ```
+  Pass criterion: tests run green and `assert_keyring_isolated()` did not abort. **NEVER** run `gnome-keyring-daemon --unlock` against your real `$HOME`. The safe (non-`#[ignore]`d) unit test `keyring_isolation_guard_detects_sandbox_vs_real_home` runs in normal `cargo test`/CI and regression-guards the assert in both directions.
 
 ---
 
