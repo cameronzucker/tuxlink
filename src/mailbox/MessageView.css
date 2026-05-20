@@ -1,0 +1,19 @@
+/* MessageView — reading pane styles.
+ *
+ * Spec: docs/superpowers/specs/2026-05-19-main-ui-cluster-design.md §5.3
+ * bd issue: tuxlink-y5c (Task 13 — reading pane)
+ *
+ * FIX 3 (Codex finding #4): the body <pre> must wrap long lines so that
+ * radio / ICS-form lines don't overflow the pane horizontally.
+ * `white-space: pre-wrap` preserves intentional newlines and wraps long
+ * lines; `overflow-wrap: anywhere` permits breaking at any character when no
+ * natural break point exists (callsigns, Base64 fragments).
+ */
+
+.message-view__body {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  margin: 0;
+  font-family: inherit;
+  font-size: inherit;
+}

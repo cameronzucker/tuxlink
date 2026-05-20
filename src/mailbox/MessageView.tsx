@@ -13,6 +13,7 @@
 // Spec §5.3 behaviours:
 //   - No selection → "Select a message to read." empty state.
 //   - Loading → spinner (no flicker on fast responses).
+//   - Error (UiError::NotFound) → "message not found" state.
 //   - Error (UiError::Internal from a parse failure) → "could not parse" state.
 //   - Loaded:
 //       Header strip: sender · UTC sent · routing (omit when null).
@@ -21,18 +22,21 @@
 //       Attachments: names + sizes only; no download/preview (v0.1).
 //
 // Exported sub-components (`MessageViewLoaded`, `MessageViewEmpty`,
-// `MessageViewParseError`) are exposed for unit tests that inject synthetic
-// data without going through the full hook + QueryClientProvider.
+// `MessageViewNotFound`, `MessageViewParseError`) are exposed for unit tests
+// that inject synthetic data without going through the full hook +
+// QueryClientProvider.
 
+import './MessageView.css';
 import type { ParsedMessage, AttachmentMeta } from './types';
 import { useMessage, type MessageSelection } from './useMessage';
-import { isNotConfigured } from './types';
+import { asUiError, isNotConfigured } from './types';
 
 // ============================================================================
 // Exported constants (used by tests)
 // ============================================================================
 
 export const SELECT_MESSAGE_COPY = 'Select a message to read.';
+export const NOT_FOUND_COPY = 'Message not found. It may have been deleted or moved.';
 export const PARSE_ERROR_PREFIX = 'This message could not be parsed';
 export const FORM_PLACEHOLDER =
   'This message contains a Winlink form. Form rendering arrives in v0.1.';
@@ -46,6 +50,15 @@ export function MessageViewEmpty() {
   return (
     <div className="message-view message-view--empty" data-testid="message-view-empty">
       {SELECT_MESSAGE_COPY}
+    </div>
+  );
+}
+
+/** Shown when the backend returns UiError::NotFound (deleted / moved message). */
+export function MessageViewNotFound() {
+  return (
+    <div className="message-view message-view--not-found" data-testid="message-view-not-found">
+      {NOT_FOUND_COPY}
     </div>
   );
 }
@@ -156,13 +169,30 @@ export interface MessageViewProps {
 }
 
 /**
+ * Parse the raw byte count from a `UiError::Internal` detail string.
+ *
+ * The Rust `parse_raw_rfc5322` function emits:
+ *   "message too large to parse (N bytes; cap is M bytes)"
+ * Extract N via a simple regex; return `undefined` if the detail doesn't
+ * contain a size (e.g., an RFC5322 parse failure rather than the cap check).
+ */
+function parseRawSizeFromDetail(detail: string | undefined): number | undefined {
+  if (!detail) return undefined;
+  const m = detail.match(/\((\d+)\s+bytes/);
+  if (!m) return undefined;
+  const n = parseInt(m[1], 10);
+  return isNaN(n) ? undefined : n;
+}
+
+/**
  * Message reading pane — the `reader` region of the AppShell grid.
  *
- * Delegates data-fetching to `useMessage`; renders one of four states:
- *   1. Empty  — no selection.
- *   2. Loading — query in flight.
- *   3. Parse-error — UiError::Internal from the Rust parse boundary.
- *   4. Loaded — full parsed message.
+ * Delegates data-fetching to `useMessage`; renders one of five states:
+ *   1. Empty        — no selection.
+ *   2. Loading      — query in flight.
+ *   3. Not-found    — UiError::NotFound (deleted / moved message).
+ *   4. Parse-error  — UiError::Internal from the Rust parse boundary.
+ *   5. Loaded       — full parsed message.
  *
  * Spec §4.3: wired into AppShell's reader region by the orchestrator
  * integration commit; this component does NOT import or reference AppShell.
@@ -185,11 +215,24 @@ export default function MessageView({ selectedMessage }: MessageViewProps) {
   }
 
   if (isError || !data) {
-    // isNotConfigured → "not connected" empty state, same as empty.
+    const uiErr = asUiError(error);
+
+    // NotConfigured → "not connected" empty state (not an error toast).
     if (isNotConfigured(error)) {
       return <MessageViewEmpty />;
     }
-    return <MessageViewParseError />;
+
+    // NotFound → message was deleted or moved; show distinct state.
+    if (uiErr?.kind === 'NotFound') {
+      return <MessageViewNotFound />;
+    }
+
+    // Internal (parse failure or oversized message) → show parse-error state
+    // with raw byte count when available in the detail string.
+    const detail =
+      uiErr?.kind === 'Internal' ? (uiErr.detail as { detail: string }).detail : undefined;
+    const rawSize = parseRawSizeFromDetail(detail);
+    return <MessageViewParseError rawSize={rawSize} />;
   }
 
   return <MessageViewLoaded message={data} />;
