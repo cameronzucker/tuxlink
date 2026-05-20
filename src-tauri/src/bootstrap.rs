@@ -282,6 +282,14 @@ fn spawn_pat(app_handle: &AppHandle, state: &BackendState, cfg: Config) {
     let buffer: Arc<SessionLogState> = (*app_handle.state::<Arc<SessionLogState>>()).clone();
     let drain_buffer = buffer.clone();
 
+    // Start the session-log drain BEFORE the (blocking) spawn (Codex R3 #2).
+    // The drain polls the durable buffer, so it emits whatever lands there on
+    // EITHER outcome: the bridge's live Pat lines on Ok, AND (critically) the
+    // drained Pat stderr diagnostics + synthetic error line on Err. Starting it
+    // only on Ok left a failed spawn's diagnostics un-emitted until a frontend
+    // remount — defeating the three-state "explicit error + reason" surface.
+    start_drain(app_handle.clone(), drain_buffer);
+
     // BLOCKING: waits up to ~10s for Pat's port announce. This is why `run`
     // uses a dedicated std::thread (not a Tokio worker).
     match PatBackend::spawn(
@@ -295,12 +303,11 @@ fn spawn_pat(app_handle: &AppHandle, state: &BackendState, cfg: Config) {
         buffer,
     ) {
         Ok(backend) => {
-            // Install (Ready, Some(backend)) atomically, THEN start the drain.
-            // The drain polls the durable buffer (FIX 1), so it does not need
-            // the backend handle — but installing first keeps status coherent.
+            // Install (Ready, Some(backend)) atomically. The drain (already
+            // running, above) polls the durable buffer, so it needs no backend
+            // handle; installing makes status coherent.
             let arc = Arc::new(backend);
             state.install(arc);
-            start_drain(app_handle.clone(), drain_buffer);
         }
         Err(e) => {
             let reason = e.to_string();
