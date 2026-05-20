@@ -72,11 +72,15 @@ Responsibilities, in order:
 3. Read `process.http_port()`; construct `PatClient::new(format!("http://127.0.0.1:{port}"))`.
 4. **Spawn the log-bridge thread** (§3.2) consuming the `mpsc::Receiver<String>` and
    re-broadcasting `LogLine`s on the existing `broadcast::Sender<LogLine>`.
-5. **Hold the `PatProcess`** in a new field so its `Drop` (SIGTERM→SIGKILL) is the
-   process's lifetime. `from_url` keeps this `None`.
-6. Mint `backend_id`; set initial `status` to `Connected { transport, peer, since }`
-   reflecting the configured transport (Pat's HTTP server is up; CMS connect is
-   lazy/operator-triggered — see §6).
+5. **Hold the `PatProcess`** in a new field so the process's lifetime is the
+   backend's. NOTE: `PatProcess::Drop` today does an *immediate* `child.kill()`
+   (SIGKILL) — graceful SIGTERM lives only in `shutdown(timeout)` (adrev #16).
+   `PatBackend` should implement `Drop` to call `process.shutdown(timeout)` for a
+   graceful stop, falling back to kill. `from_url` keeps this field `None`.
+6. Mint `backend_id`; set initial `status` to **`Disconnected`** (a "backend ready"
+   shape — Pat's HTTP server is up, but NO CMS connection exists yet; `Connected`
+   would be a false claim of a link, see adrev #10 in §10). A real `Connected`
+   status is only minted by an operator-triggered `connect()`.
 
 New field on `PatBackend`: `_process: Option<crate::pat_process::PatProcess>`
 (`None` for `from_url`, `Some` for `spawn`). `PatProcess` is `Send`; `PatBackend`
@@ -106,14 +110,21 @@ start: …") use `source: LogSource::Backend`.
 
 ### 3.3 App-start bootstrap (`lib.rs` `.setup()`)
 
-Runs **on a background thread** so the window paints immediately (the webview must
-not block on Pat's up-to-10s announce). Sequence:
+Runs **off the main thread** so the window paints immediately (the webview must
+not block on Pat's up-to-10s announce). Use `tauri::async_runtime::spawn` (or a
+`std::thread` that owns work and only re-enters Tauri via a cloned `AppHandle`) —
+NOT a raw `tokio::spawn` from a bare `std::thread` (adrev #5: no runtime in scope).
+Move a cloned `AppHandle` into the task (adrev #6). Sequence:
 
-1. `crate::config::read_config()`.
-   - `Err(_)` (pre-wizard / malformed) → leave `None` (**Not connected**). Done.
-   - `Ok(cfg)` with `cfg.connect.connect_to_cms == false` → **Not connected** (offline;
-     no Pat). Done.
-   - `Ok(cfg)` with `connect_to_cms == true` → continue.
+1. `crate::config::read_config()` — classify the result (adrev #15):
+   - `Err(NotFound)` (pre-wizard) → leave `None` (**Not connected**). Done.
+   - `Err(Serde | Validation | Io)` → **Backend error** (`Failed { reason }`); the
+     config exists but is unusable — surface it, don't masquerade as not-connected.
+   - `Ok(cfg)` with `!cfg.wizard_completed` → leave `None` (**Not connected**); the
+     wizard is still rendering (adrev #14). Done.
+   - `Ok(cfg)` with `wizard_completed && !connect.connect_to_cms` → **Not connected**
+     (offline; no Pat). Done.
+   - `Ok(cfg)` with `wizard_completed && connect_to_cms` → continue.
 2. Set bootstrap state → `Spawning` (§3.4); resolve the Pat sidecar path (§3.5) and
    the Pat config/mbox/pid paths (§3.6).
 3. `PatBackend::spawn(...)`:
@@ -138,12 +149,21 @@ pub enum BootstrapState { NotConfigured, Spawning, Ready, Failed { reason: Strin
 pub struct BackendBootstrap(pub RwLock<BootstrapState>);
 ```
 
-`backend_status` reads BOTH `AppBackend` and `BackendBootstrap`: when `AppBackend`
-is `None` it returns a `StatusDto` derived from `BootstrapState` — `Failed` →
-`BackendStatus::Error { reason }` (ribbon shows the error), `NotConfigured`/`Spawning`
-→ the existing not-connected/connecting shapes. This is the smallest change that
-makes the three states distinguishable through the existing polled command.
-**(Flagged for adrev — see §8.1.)**
+**RESOLVED by adrev #9 — single managed state, not two.** Reading `AppBackend` and a
+separate `BackendBootstrap` independently risks torn reads (e.g. `Some` while phase
+still `Spawning`). Instead, ONE managed state holds both behind one lock:
+
+```rust
+pub enum BackendPhase { NotConfigured, Spawning, Ready, Failed { reason: String }, ConfigError { reason: String } }
+pub struct BackendState { inner: RwLock<(BackendPhase, Option<Arc<dyn WinlinkBackend>>)> }
+```
+
+`backend_status` derives its `StatusDto` from one atomic snapshot of `(phase, backend)`:
+`Failed`/`ConfigError` → `BackendStatus::Error { reason }`; `Ready` → the live
+backend's `status()`; `Spawning` → connecting; `NotConfigured` → not-connected. This
+replaces the §3.1/`AppBackend::set` calls with `BackendState` phase transitions, and
+supersedes the prior `AppBackend` shape (or wraps it). Pin the exact migration of the
+existing `AppBackend` managed state in the plan.
 
 ### 3.5 Pat sidecar path resolution
 
@@ -166,11 +186,14 @@ exist (`config::config_path()` is the pattern).
 
 ### 3.7 Session-log drain task
 
-After `AppBackend::set`, spawn a tokio task that holds `backend.stream_log()` and,
-per `LogLine`, emits a `session_log:line` Tauri event carrying the existing
-`LogLineDto` (`ui_commands.rs`) shape. `SessionLog.tsx` already `listen`s for this
-event and seeds from `session_log_snapshot` (which stays empty until the ring-buffer
-follow-up, tuxlink-xx3 — out of scope here).
+After install, start the drain via **`tauri::async_runtime::spawn`** (adrev #5),
+holding `backend.stream_log()`; per `LogLine` it (a) appends to the durable
+`SessionLogState` ring buffer (§11.1) with a monotonic `seq`, and (b) emits a
+`session_log:line` Tauri event carrying `LogLineDto` (now including `seq`, adrev #4).
+`SessionLog.tsx` seeds from `session_log_snapshot` (which reads the ring buffer) and
+tails the event from the snapshot's last `seq` (snapshot-then-tail, adrev #3) — so no
+line is lost in the window between subscribe and first listen, and same-timestamp
+lines are de-duped on `seq`, not timestamp.
 
 ## 4. Data flow
 
@@ -205,9 +228,13 @@ All bootstrap failures are **non-fatal** (the app must launch):
 
 ## 6. Part 97 boundary (RADIO-1)
 
-- **Spawning Pat in `http` mode does NOT transmit.** Pat keys up only on an explicit
-  `/api/connect` or an outbound send to CMS. The bootstrap spawns Pat and serves the
-  local HTTP API; it does **not** auto-connect to CMS.
+- **What tuxlink controls (provable here):** the bootstrap invokes Pat **only** as
+  `pat --config … --mbox … http --addr 127.0.0.1:<port>` and never calls Pat's
+  connect/send APIs. Serving the local HTTP API is not a CMS session and not a
+  transmission. A non-transmit instrumentation test asserts the spawned argv is
+  `http`-only with a loopback addr (adrev #11). We do **not** claim anything about
+  Pat's *internals* — `external/tuxlink-pat` is not in this worktree; the honest
+  scope is "tuxlink does not initiate a connect/send on the bootstrap path."
 - The live CMS round-trip (acceptance point 4: a real CMS:8773 session visible in the
   log) is **operator-triggered** (via the UI / wizard test-send) and **operator-run**.
 - **Implementation rule:** this code is WRITTEN + COMMITTED by the agent; the licensee
@@ -270,3 +297,52 @@ wizard path and whether a single-instance guard is needed for v0.0.1.
 - Structured parsing of Pat log levels/timestamps (minimal mapping ships first).
 - `backend:status` push event to collapse mailbox-populate latency (polling suffices).
 - Backend teardown/disconnect + respawn-on-config-change (v0.0.1 spawns once at start).
+
+## 10. Adversarial review — Codex round 1 (2026-05-20)
+
+Raw transcript: `dev/adversarial/2026-05-20-pat-spawn-bootstrap-codex.md` (gitignored).
+18 findings; dispositions below. Several reshape scope — see §11.
+
+| # | Sev | Finding | Disposition |
+|---|---|---|---|
+| 1 | P0 | Startup logs lost: `PatProcess::spawn` discards stderr through the announce line; bridge starts before drain subscribes; snapshot empty | **ACCEPT.** Add a durable session-log ring buffer (see §11.1); `PatProcess` must expose the pre-announce lines (not discard them). |
+| 2 | P0 | `tokio::broadcast` is the wrong persistence layer (only current subscribers) | **ACCEPT.** Broadcast = live notification only; durable last-N history owned by a managed `SessionLogState` the bridge writes to. |
+| 3 | P1 | Tauri `session_log:line` events also lose lines before the frontend `listen`s | **ACCEPT.** Snapshot-then-tail with a monotonic `seq` cursor; `session_log_snapshot` returns the buffer. |
+| 4 | P1 | `SessionLog.tsx` dedupes by `timestampIso` only — collisions drop lines | **ACCEPT.** Add `seq` to `LogLineDto`; dedupe on `seq`. (Frontend change — coordinate in plan.) |
+| 5 | P1 | `tokio::spawn` from a raw `std::thread` may panic (no runtime in scope) | **ACCEPT.** Use `tauri::async_runtime::spawn` (or capture a `Handle`) for the drain task. Corrected in §3.7. |
+| 6 | P1 | AppHandle use from the bg thread underspecified | **ACCEPT.** Clone `AppHandle`, move into the thread, handle `emit` errors; never move borrowed `app`/`State`. |
+| 7 | P1 | `PatProcess::spawn` 10s timeout not actually enforced (blocking `read_line` can hang forever) | **ACCEPT — pre-existing bug.** File a separate bd issue to fix the announce read (timeout thread / `recv_timeout` / non-blocking). 22l depends on it. |
+| 8 | P1 | Quitting mid-spawn can orphan Pat (child created before owner returns; detached setup thread) | **ACCEPT.** Spawn must be cancellable / the child owned by a supervisor that kills on app-exit; covered by §11.2. |
+| 9 | P1 | Three-state torn read: `backend_status` reads `AppBackend` + `BackendBootstrap` independently | **ACCEPT.** Single managed state holding `{ phase, Option<Arc<backend>> }` under one lock; `backend_status` derives from one atomic snapshot. Replaces §3.4's two-state proposal. |
+| 10 | P1 | `Connected { peer: cms.winlink.org }` is semantically false (no CMS link) | **ACCEPT.** Spawn sets `Disconnected` ("ready"); `Connected` only via operator `connect()`. Corrected in §3.1. |
+| 11 | P1 | Part 97 "Pat never auto-connects" not provable here (`external/tuxlink-pat` absent) | **ACCEPT.** Reword: claim only that *tuxlink's* spawn runs `pat http --addr` and never calls connect/send (§6 rewritten below). Add a non-transmit instrumentation test asserting the spawned argv is `http`-only. |
+| 12 | P1 | Debug sidecar is a 0-byte stub (`build.rs`); bootstrap would try to invoke it | **ACCEPT.** Detect zero-byte/non-executable sidecar → `Failed { reason }` with a clear message; honor a `PAT_BINARY` override for dev/tests. |
+| 13 | P1 | Double-spawn / single-instance not optional (bootstrap ephemeral vs wizard `:8080` vs user Pat vs multi-instance; mbox/pid contention) | **ACCEPT.** Advisory file lock on `mbox_dir`; reconcile wizard test-send (§8.2 → file follow-up). |
+| 14 | P1 | `wizard_completed=false` not handled — could spawn Pat while the wizard renders | **ACCEPT.** Gate = `wizard_completed && connect_to_cms`. Corrected in §3.3. |
+| 15 | P2 | Invalid CMS config (`Serde`/`Validation`) misclassified as "Not connected" | **ACCEPT.** Distinguish `read_config` `NotFound` (pre-wizard → Not connected) from `Serde`/`Validation` (→ explicit config error state). |
+| 16 | P2 | Drop semantics misstated (immediate kill, not SIGTERM→SIGKILL) | **ACCEPT.** Corrected in §3.1; `PatBackend::Drop` calls `shutdown()`. |
+| 17 | P2 | Detached bridge/reader threads unsupervised (no join handles) | **ACCEPT.** Store join handles / a supervisor; on teardown: shutdown Pat → close channels → bounded join. |
+| 18 | P2 | Pat stdout piped but never drained — child can block if it writes enough stdout | **ACCEPT — pre-existing.** Set Pat stdout to `Stdio::null()` (or drain it). Fold into the §11.1 PatProcess work. |
+
+## 11. Scope revision driven by the adrev
+
+The review shows 22l is bigger than "wire two functions." It decomposes into:
+
+1. **§11.1 — PatProcess hardening + session-log durability (NEW dependency).**
+   `PatProcess` must (a) not discard pre-announce stderr, (b) enforce the announce
+   timeout without a hang risk (#7), (c) drain/null stdout (#18). Plus a durable
+   `SessionLogState` ring buffer (last N lines, monotonic `seq`) that `PatBackend`'s
+   bridge writes to and `session_log_snapshot` reads (#1,2,3). This subsumes
+   tuxlink-xx3 (previously "out of scope") — it is now a prerequisite, not a follow-up.
+2. **§11.2 — `PatBackend::spawn` + supervised lifecycle** (#5,6,8,16,17): the bridge,
+   the drain task via `tauri::async_runtime::spawn`, the held+supervised `PatProcess`,
+   graceful Drop.
+3. **§11.3 — bootstrap + single managed state** (#9,12,14,15): `wizard_completed`
+   gate, sidecar-stub detection + `PAT_BINARY` override, config-error classification,
+   the single `{phase, backend}` managed state behind `backend_status`.
+4. **§11.4 — frontend `seq` dedupe** (#4) + snapshot-then-tail cursor (#3).
+5. **Follow-ups (separate bd issues):** wizard test-send/ephemeral-port reconciliation
+   (#13/§8.2); the pre-existing `PatProcess` announce-timeout bug (#7) likely warrants
+   its own issue even though 22l depends on it.
+
+This decomposition is the basis for the implementation plan (writing-plans step).
