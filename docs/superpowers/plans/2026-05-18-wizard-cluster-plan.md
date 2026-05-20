@@ -20,7 +20,7 @@
 | 1 | Wizard infrastructure (types + reducer + context + Tauri command skeletons + App.tsx routing) | ⬜ Not started | `wizardReducer.ts` + `types.ts` + `wizardContext.tsx` + `wizard.rs` skeleton + `get_wizard_completed` command + App.tsx routing |
 | 2 | Step 1 Welcome (Task 9 / tuxlink-ko0) | ⬜ Not started | `Step1Welcome.tsx` + choice-card routing + tests |
 | 3 | Step 2 Credentials + Rust keyring write (Task 10 / tuxlink-1r5) — the HEART of the cluster | ✅ Shipped | `Step2Credentials.tsx` + `validators.ts` + `wizard_persist_cms` + capability + CSP + integration test |
-| 4 | Step 2 Offline Identity (Task 11.5 / tuxlink-d76) | ⬜ Not started | `Step2OfflineIdentity.tsx` + `wizard_persist_offline` + tests |
+| 4 | Step 2 Offline Identity (Task 11.5 / tuxlink-d76) | ✅ Shipped | `Step2OfflineIdentity.tsx` + `wizard_persist_offline` + tests |
 | 5 | Step 3 Test Send 4-substate (Task 11 / tuxlink-e4x) | ⬜ Not started | `Step3TestSend.tsx` + `wizard_run_test_send` (MOCKED via env var by default) + 4-substate UI + Part-97 dedup guard test + log streaming |
 | 6 | CI integration tests + gnome-keyring-daemon setup | ⬜ Not started | `wizard_integration_test.rs` + `dev/scratch/cross-validate-wizard-pat.sh` + `.github/workflows/wizard-test.yml` |
 | 7 | Browser smoke documentation (operator-only LIVE mode + agent-safe MOCKED mode) | ⬜ Not started | `docs/wizard-smoke-testing.md` + cross-link from `docs/live-cms-testing-policy.md` |

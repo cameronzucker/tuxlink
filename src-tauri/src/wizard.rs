@@ -3,6 +3,7 @@
 //! Spec: docs/superpowers/specs/2026-05-18-onboarding-wizard-cluster-design.md
 //! Plan: docs/superpowers/plans/2026-05-18-wizard-cluster-plan.md
 //! bd issues: tuxlink-ko0 (Task 9, wizard infra), tuxlink-1r5 (Task 10, keyring write)
+//!           tuxlink-d76 (Task 11.5, offline-identity path)
 //!
 //! Phase 1+2 shipped: WizardError + TestSendOutcome enums, WizardMutex,
 //! get_wizard_completed command, wizard_persist_offline + wizard_run_test_send skeletons.
@@ -12,6 +13,12 @@
 //!   - snapshot-and-restore rollback per spec §3.2
 //!   - callsign normalization + defense-in-depth validation per §5.9
 //!   - map_keyring_error helper maps keyring::Error to WizardError per §3.5
+//!
+//! Phase 4 (Task 11.5, tuxlink-d76): wizard_persist_offline full body.
+//!   - config-only write (no keyring); connect_to_cms=false hardcoded
+//!   - identifier (free-form, optional) + grid (optional) normalized + stored
+//!   - identity.callsign = null (offline path forbids callsign per §3.6)
+//!   - Busy guard via shared WizardMutex (spec §3.7)
 
 use serde::Serialize;
 use std::sync::Arc;
@@ -237,9 +244,86 @@ pub async fn wizard_persist_cms(
     persist_cms_impl(raw_callsign, password, grid, mbo_address).await
 }
 
+/// Core logic for the offline identity path.
+/// Extracted from the Tauri command so unit tests can call it directly
+/// without constructing a `tauri::State` (which requires the Tauri runtime).
+///
+/// Caller is responsible for holding the WizardMutex before calling this.
+/// Spec §3.3: config-only write; NO keyring touch; connect_to_cms hardcoded false.
+pub async fn persist_offline_impl(
+    identifier: String,
+    grid: String,
+) -> Result<(), WizardError> {
+    // Normalize identifier: trim whitespace. Empty → None (spec §3.6: null in offline path).
+    let identifier_opt: Option<String> = {
+        let trimmed = identifier.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            // Defense-in-depth validation: same loose rules as callsign (no whitespace,
+            // ASCII-printable, ≤32 chars). Identifier accepts tactical strings (EOC-1, etc.)
+            // so we use the same validate_identity() that CMS path uses for callsign.
+            // Consistency per spec §3.2 step 1 analog for the offline path.
+            if let Some(rule) = crate::config::validate_identity_describe(trimmed) {
+                return Err(WizardError::InvalidInput { field: format!("identifier: {rule}") });
+            }
+            Some(trimmed.to_string())
+        }
+    };
+
+    // Normalize grid: trim whitespace. Empty → None.
+    // No format validation at the Rust layer (frontend validator is the UX pass;
+    // the config schema stores whatever the user typed — the CMS/Pat layers don't
+    // interpret grid directly). Consistency with persist_cms_impl's grid handling.
+    let grid_opt: Option<String> = {
+        let trimmed = grid.trim();
+        if trimmed.is_empty() { None } else { Some(trimmed.to_string()) }
+    };
+
+    // Build the offline Config in memory.
+    // Per spec §3.6:
+    //   connect.connect_to_cms = false (offline path; hardcoded)
+    //   connect.transport = CmsSsl (default; harmless in offline; keeps schema shape)
+    //   identity.callsign = null (offline path forbids callsign; Config::validate enforces)
+    //   identity.identifier = from parameter (optional)
+    //   identity.grid = from parameter (optional)
+    //   privacy defaults per Principle 7 (GPS on, FourCharGrid broadcast precision)
+    //   pat_mbo_address = null (not used in offline path)
+    let new_config = crate::config::Config {
+        schema_version: crate::config::CONFIG_SCHEMA_VERSION,
+        wizard_completed: true,
+        connect: crate::config::ConnectConfig {
+            connect_to_cms: false,
+            transport: crate::config::CmsTransport::CmsSsl,
+        },
+        identity: crate::config::IdentityConfig {
+            callsign: None,           // offline path: no callsign (spec §3.6)
+            identifier: identifier_opt,
+            grid: grid_opt,
+        },
+        privacy: crate::config::PrivacyConfig {
+            gps_state: crate::config::GpsState::BroadcastAtPrecision,
+            position_precision: crate::config::PositionPrecision::FourCharGrid,
+        },
+        pat_mbo_address: None,        // offline path: no MBO address
+    };
+
+    // Single atomic write to config.json. No keyring involved.
+    // On failure: nothing to roll back (no prior writes succeeded).
+    crate::config::write_config_atomic(&new_config)
+        .map_err(|e| WizardError::ConfigWrite { detail: format!("{e}") })?;
+
+    Ok(())
+}
+
 /// Writes offline path: tuxlink config.json only (no keyring). See spec §3.3.
 ///
-/// **Skeleton — Task 11.5 (tuxlink-d76) implements the body.**
+/// - Both `identifier` and `grid` are optional (empty string = None in config).
+/// - `connect.connect_to_cms` is hardcoded to `false` (offline path).
+/// - `identity.callsign` is hardcoded to `null` (offline path; Config::validate enforces).
+/// - NO keyring access. NO password. Consistent with spec §3.7 (no keyring footgun).
+/// - Second concurrent invocation returns Busy (shared WizardMutex per §3.7).
+/// - Identifier normalization consistent with Task 10's callsign normalization (trim + validate).
 #[tauri::command]
 pub async fn wizard_persist_offline(
     state: tauri::State<'_, WizardMutex>,
@@ -247,10 +331,7 @@ pub async fn wizard_persist_offline(
     grid: String,
 ) -> Result<(), WizardError> {
     let _guard = state.0.try_lock().map_err(|_| WizardError::Busy)?;
-    let _ = (identifier, grid);
-    Err(WizardError::Other {
-        detail: "wizard_persist_offline not yet implemented (Task 11.5 / tuxlink-d76)".into(),
-    })
+    persist_offline_impl(identifier, grid).await
 }
 
 /// Runs a test send to verify the CMS round-trip. See spec §3.8 for the
@@ -270,6 +351,7 @@ pub async fn wizard_run_test_send(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
 
     #[tokio::test]
     async fn get_wizard_completed_returns_false_when_no_config() {
@@ -285,5 +367,133 @@ mod tests {
     fn wizard_mutex_is_send_sync() {
         fn assert_send_sync<T: Send + Sync>() {}
         assert_send_sync::<WizardMutex>();
+    }
+
+    // ── persist_offline_impl unit tests (Task 11.5 / tuxlink-d76) ────────
+    //
+    // These tests mutate XDG_CONFIG_HOME (process-global env var) and MUST run
+    // serially via #[serial] from the `serial_test` crate to avoid races when
+    // the test harness runs multiple tests concurrently.
+
+    /// RAII guard: redirects XDG_CONFIG_HOME to a temp dir, restores on drop.
+    /// Copy of the pattern in tests/wizard_persist_cms_test.rs.
+    struct XdgGuard {
+        prior: Option<std::ffi::OsString>,
+        _tmp: tempfile::TempDir,
+    }
+
+    impl Drop for XdgGuard {
+        fn drop(&mut self) {
+            match self.prior.take() {
+                Some(p) => unsafe { std::env::set_var("XDG_CONFIG_HOME", p) },
+                None => unsafe { std::env::remove_var("XDG_CONFIG_HOME") },
+            }
+        }
+    }
+
+    fn xdg_temp() -> XdgGuard {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let path = tmp.path().to_owned();
+        let prior = std::env::var_os("XDG_CONFIG_HOME");
+        unsafe { std::env::set_var("XDG_CONFIG_HOME", &path) };
+        XdgGuard { prior, _tmp: tmp }
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn persist_offline_blank_submit_writes_valid_offline_config() {
+        let _xdg = xdg_temp();
+        let result = persist_offline_impl("".to_string(), "".to_string()).await;
+        assert!(result.is_ok(), "blank submit must succeed: {result:?}");
+        let cfg = crate::config::read_config().expect("config readable after blank-submit write");
+
+        assert!(cfg.wizard_completed);
+        assert!(!cfg.connect.connect_to_cms, "offline path must set connect_to_cms=false");
+        assert!(cfg.identity.callsign.is_none(), "offline path must NOT set callsign");
+        assert!(cfg.identity.identifier.is_none(), "blank identifier → None");
+        assert!(cfg.identity.grid.is_none(), "blank grid → None");
+        assert!(cfg.pat_mbo_address.is_none(), "offline path has no MBO address");
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn persist_offline_identifier_and_grid_stored() {
+        let _xdg = xdg_temp();
+        let result = persist_offline_impl("EOC-1".to_string(), "EM75".to_string()).await;
+        assert!(result.is_ok(), "EOC-1 / EM75 submit must succeed: {result:?}");
+        let cfg = crate::config::read_config().expect("config readable");
+
+        assert_eq!(cfg.identity.identifier.as_deref(), Some("EOC-1"));
+        assert_eq!(cfg.identity.grid.as_deref(), Some("EM75"));
+        assert!(cfg.identity.callsign.is_none());
+        assert!(!cfg.connect.connect_to_cms);
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn persist_offline_trims_whitespace_from_identifier() {
+        let _xdg = xdg_temp();
+        let result = persist_offline_impl("  ARES-NET  ".to_string(), "".to_string()).await;
+        assert!(result.is_ok());
+        let cfg = crate::config::read_config().expect("config readable");
+
+        assert_eq!(cfg.identity.identifier.as_deref(), Some("ARES-NET"), "identifier must be trimmed");
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn persist_offline_trims_whitespace_from_grid() {
+        let _xdg = xdg_temp();
+        let result = persist_offline_impl("".to_string(), "  EM75  ".to_string()).await;
+        assert!(result.is_ok());
+        let cfg = crate::config::read_config().expect("config readable");
+
+        assert_eq!(cfg.identity.grid.as_deref(), Some("EM75"), "grid must be trimmed");
+    }
+
+    #[tokio::test]
+    async fn persist_offline_rejects_identifier_with_whitespace() {
+        // An identifier containing internal whitespace after trimming is invalid
+        // (validate_identity rejects internal whitespace). No env var needed — rejects
+        // before any disk write, so no XDG_CONFIG_HOME race possible.
+        let result = persist_offline_impl("EOC 1".to_string(), "".to_string()).await;
+        match result {
+            Err(WizardError::InvalidInput { .. }) => {}
+            other => panic!("expected InvalidInput, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn persist_offline_rejects_identifier_too_long() {
+        let long_id = "A".repeat(33);
+        let result = persist_offline_impl(long_id, "".to_string()).await;
+        match result {
+            Err(WizardError::InvalidInput { .. }) => {}
+            other => panic!("expected InvalidInput for >32 char identifier, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn persist_offline_connect_transport_default_is_cms_ssl() {
+        let _xdg = xdg_temp();
+        persist_offline_impl("".to_string(), "".to_string()).await.expect("ok");
+        let cfg = crate::config::read_config().expect("config readable");
+
+        assert_eq!(cfg.connect.transport, crate::config::CmsTransport::CmsSsl,
+            "offline path must keep transport=CmsSsl (schema-shape consistency per spec §3.2)");
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn persist_offline_privacy_defaults_to_broadcast_four_char_grid() {
+        let _xdg = xdg_temp();
+        persist_offline_impl("".to_string(), "".to_string()).await.expect("ok");
+        let cfg = crate::config::read_config().expect("config readable");
+
+        assert_eq!(cfg.privacy.gps_state, crate::config::GpsState::BroadcastAtPrecision,
+            "offline path must default to BroadcastAtPrecision per Principle 7");
+        assert_eq!(cfg.privacy.position_precision, crate::config::PositionPrecision::FourCharGrid,
+            "offline path must default to FourCharGrid per Principle 7");
     }
 }

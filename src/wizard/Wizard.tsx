@@ -1,6 +1,7 @@
 import { WizardProvider, useWizard } from './wizardContext';
 import { Step1Welcome } from './Step1Welcome';
 import { Step2Credentials } from './Step2Credentials';
+import { Step2OfflineIdentity } from './Step2OfflineIdentity';
 
 function WizardInner() {
   const { state } = useWizard();
@@ -8,12 +9,9 @@ function WizardInner() {
     <div data-testid="wizard-root" className="wizard-root">
       {state.step === 'account' && <Step1Welcome />}
       {state.step === 'credentials' && <Step2Credentials />}
-      {/* Step 2 offline + Step 3 test-send mount here in Tasks 11.5 / 11. */}
-      {state.step === 'offline_identity' && (
-        <p data-testid="wizard-offline-placeholder">
-          Offline identity screen — Task 11.5 (tuxlink-d76) renders here.
-        </p>
-      )}
+      {/* Task 11.5 (tuxlink-d76): offline identity path — wired here. */}
+      {state.step === 'offline_identity' && <Step2OfflineIdentity />}
+      {/* Step 3 test-send mounts here in Task 11 (tuxlink-e4x). */}
       {state.step === 'test_send' && (
         <p data-testid="wizard-test-send-placeholder">
           Test send screen — Task 11 (tuxlink-e4x) renders here.
