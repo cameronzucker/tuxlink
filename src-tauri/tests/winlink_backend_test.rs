@@ -356,6 +356,103 @@ fn ingest_pat_line_appends_and_broadcasts_with_seq() {
 }
 
 // ============================================================================
+// FIX 2 (tuxlink-22l Codex R2) — failed Pat start drains stderr diagnostics
+// into the durable buffer.
+// ============================================================================
+// When `PatProcess::spawn` returns Err, Pat's pre-exit stderr lines were
+// forwarded into the mpsc receiver before EOF, but the bridge thread is not
+// started on the Err path — so without draining, those failure diagnostics are
+// lost. FIX 2 drains the receiver into the durable buffer before returning, so
+// the failure cause survives in `session_log_snapshot` + the buffer-polling
+// drain (FIX 1). This test drives the real `PatBackend::spawn` against a fake
+// `/bin/sh` fixture (Part-97-safe: NOT real Pat, never connects/sends) that
+// prints a diagnostic to stderr and exits non-zero WITHOUT announcing a port —
+// exercising the no-announce error path. It asserts (a) spawn returns
+// BackendUnavailable, and (b) the diagnostic line reached the durable buffer.
+#[test]
+fn spawn_failure_drains_pat_stderr_into_durable_buffer() {
+    use std::os::unix::fs::PermissionsExt;
+    use std::sync::Arc;
+    use tuxlink_lib::config::{
+        CmsTransport, Config, ConnectConfig, GpsState, IdentityConfig, PositionPrecision,
+        PrivacyConfig, CONFIG_SCHEMA_VERSION,
+    };
+    use tuxlink_lib::session_log::SessionLogState;
+    use tuxlink_lib::winlink_backend::{PatBackend, PatBackendSpawnOptions};
+
+    let tmp = tempfile::tempdir().expect("tmpdir");
+
+    // Fake "pat" that emits a recognizable failure diagnostic to stderr and
+    // exits 1 WITHOUT ever printing the listen-address needle. PatProcess's
+    // reader forwards the line, then sees EOF (process exited) → spawn takes the
+    // "exited before announcing" error path. The diagnostic is the line FIX 2
+    // must rescue into the durable buffer.
+    let fixture = tmp.path().join("failing-pat.sh");
+    std::fs::write(
+        &fixture,
+        "#!/bin/sh\necho 'FATAL: bind: address already in use' 1>&2\nexit 1\n",
+    )
+    .expect("write fixture");
+    let mut perms = std::fs::metadata(&fixture).unwrap().permissions();
+    perms.set_mode(0o755);
+    std::fs::set_permissions(&fixture, perms).unwrap();
+
+    let cfg = Config {
+        schema_version: CONFIG_SCHEMA_VERSION,
+        wizard_completed: true,
+        connect: ConnectConfig {
+            connect_to_cms: true,
+            transport: CmsTransport::CmsSsl,
+        },
+        identity: IdentityConfig {
+            callsign: Some("TEST1".into()),
+            identifier: None,
+            grid: Some("AA00aa".into()),
+        },
+        privacy: PrivacyConfig {
+            gps_state: GpsState::Off,
+            position_precision: PositionPrecision::FourCharGrid,
+        },
+        pat_mbo_address: None,
+    };
+
+    let buf = Arc::new(SessionLogState::new(64));
+    let result = PatBackend::spawn(
+        PatBackendSpawnOptions {
+            binary: fixture,
+            config_path: tmp.path().join("config.json"),
+            mbox_dir: tmp.path().join("mbox"),
+            pid_file: tmp.path().join("pat.pid"),
+            tuxlink_config: cfg,
+        },
+        buf.clone(),
+    );
+
+    // (a) spawn fails with BackendUnavailable (Pat failed to start), source kept.
+    match result {
+        Ok(_) => panic!("spawn must fail when Pat exits without announcing"),
+        Err(BackendError::BackendUnavailable { source, .. }) => {
+            assert!(source.is_some(), "BackendUnavailable preserves the io::Error source");
+        }
+        Err(other) => panic!("expected BackendUnavailable, got {other:?}"),
+    }
+
+    // (b) FIX 2: Pat's pre-exit stderr diagnostic was drained into the durable
+    // buffer (so it reaches the UI via snapshot + the polling drain). Without
+    // FIX 2 the buffer would be empty here.
+    let snap = buf.snapshot();
+    assert!(
+        snap.iter().any(|l| l.message.contains("address already in use")),
+        "FIX 2: failed-start stderr diagnostics must land in the durable buffer; got: {:?}",
+        snap.iter().map(|l| &l.message).collect::<Vec<_>>()
+    );
+    assert!(
+        snap.iter().all(|l| l.source == LogSource::Pat),
+        "drained failure lines are LogSource::Pat"
+    );
+}
+
+// ============================================================================
 // Task C (tuxlink-22l §11.2) — PatBackend::spawn against REAL Pat, http mode.
 // ============================================================================
 // Part 97: http mode only; never connect/send. Operator/CI runs this via

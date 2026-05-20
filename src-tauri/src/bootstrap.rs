@@ -276,8 +276,11 @@ fn spawn_pat(app_handle: &AppHandle, state: &BackendState, cfg: Config) {
 
     // Clone the SAME Arc<SessionLogState> the `session_log_snapshot` command
     // reads, so the spawn's bridge thread appends startup lines to the buffer
-    // the UI snapshots (spec §11.1).
+    // the UI snapshots (spec §11.1). Keep a second clone for the drain (FIX 1):
+    // the drain polls THIS durable buffer, so it must outlive the move into
+    // `PatBackend::spawn` below.
     let buffer: Arc<SessionLogState> = (*app_handle.state::<Arc<SessionLogState>>()).clone();
+    let drain_buffer = buffer.clone();
 
     // BLOCKING: waits up to ~10s for Pat's port announce. This is why `run`
     // uses a dedicated std::thread (not a Tokio worker).
@@ -292,11 +295,12 @@ fn spawn_pat(app_handle: &AppHandle, state: &BackendState, cfg: Config) {
         buffer,
     ) {
         Ok(backend) => {
-            // Install (Ready, Some(backend)) atomically, THEN start the drain
-            // holding a clone of the Arc (the drain needs `stream_log()`).
+            // Install (Ready, Some(backend)) atomically, THEN start the drain.
+            // The drain polls the durable buffer (FIX 1), so it does not need
+            // the backend handle — but installing first keeps status coherent.
             let arc = Arc::new(backend);
-            state.install(arc.clone());
-            start_drain(app_handle.clone(), arc);
+            state.install(arc);
+            start_drain(app_handle.clone(), drain_buffer);
         }
         Err(e) => {
             let reason = e.to_string();
@@ -308,21 +312,68 @@ fn spawn_pat(app_handle: &AppHandle, state: &BackendState, cfg: Config) {
     }
 }
 
-/// Start the session-log drain task (spec §3.7, adrev #5). Subscribes to the
-/// backend's live `stream_log()` and emits one `session_log:line` Tauri event
-/// per `LogLine` (the durable buffer append already happened in the spawn's
-/// bridge thread). Dispatched via `tauri::async_runtime::spawn` (Tauri's global
-/// runtime, valid post-setup, callable from this std::thread — NOT a raw
-/// `tokio::spawn`). The stream ends when the backend is dropped, ending the task.
-fn start_drain(app_handle: AppHandle, backend: Arc<PatBackend>) {
-    use crate::winlink_backend::WinlinkBackend;
-    use futures::StreamExt;
+/// Start the session-log drain task (spec §3.7).
+///
+/// **FIX 1 (tuxlink-22l Codex R2): polls the DURABLE buffer, not the broadcast.**
+/// The prior drain subscribed to `PatBackend::stream_log()` (a tokio broadcast)
+/// and emitted only live, post-subscribe events. But the spawn's bridge thread
+/// appends + broadcasts Pat's startup lines DURING the blocking `PatBackend::spawn`
+/// — i.e. BEFORE this drain (started only after spawn returns) can subscribe.
+/// Those early lines were broadcast to zero receivers and lost; the frontend's
+/// one-shot snapshot also ran (empty) during the blocking spawn, so the startup
+/// log never reached the UI (Codex #1). Broadcast lag could also silently drop
+/// events under load (Codex #7).
+///
+/// The durable [`SessionLogState`] ring buffer is the source of truth: every
+/// line the bridge ingests is `append`ed there with a monotonic `seq`, whether
+/// or not anyone is listening. Polling `snapshot_since(last_seq)` therefore
+/// emits EVERY buffered line exactly once, in seq order, immune to both
+/// subscriber-timing and broadcast lag. The frontend already dedupes on `seq`
+/// (and seeds from `session_log_snapshot`), so re-delivery of a line it already
+/// has via snapshot is harmless.
+///
+/// Dispatched via `tauri::async_runtime::spawn` (Tauri's global runtime, valid
+/// post-setup, callable from this std::thread — NOT a raw `tokio::spawn`). The
+/// task runs for the app's lifetime, polling at a 250ms cadence (latency floor
+/// for a backend log line reaching an already-open pane; the snapshot covers
+/// re-opens). `PatBackend::stream_log()`'s broadcast remains available for other
+/// consumers; this drain no longer depends on it.
+fn start_drain(app_handle: AppHandle, buffer: Arc<SessionLogState>) {
     tauri::async_runtime::spawn(async move {
-        let mut stream = backend.stream_log();
-        while let Some(line) = stream.next().await {
-            let _ = app_handle.emit("session_log:line", crate::ui_commands::LogLineDto::from(line));
+        let mut last_seq: u64 = 0;
+        loop {
+            // Pull every line newer than the cursor and advance it. Factored
+            // into `drain_step` so the cursor-advance + emit loop is unit-tested
+            // (the Tauri `emit` is the only un-testable part, injected as a
+            // closure). `drain_step` returns the new cursor.
+            last_seq = drain_step(&buffer, last_seq, |line| {
+                let _ = app_handle
+                    .emit("session_log:line", crate::ui_commands::LogLineDto::from(line));
+            });
+            tokio::time::sleep(std::time::Duration::from_millis(250)).await;
         }
     });
+}
+
+/// One iteration of the buffer-polling drain (FIX 1): emit every buffered line
+/// with `seq > last_seq` (oldest first), advancing the cursor past each.
+/// Returns the updated cursor (the max `seq` emitted, or `last_seq` unchanged if
+/// nothing was newer). `emit` receives each line in seq order exactly once.
+///
+/// Pure w.r.t. the cursor logic (the side effect is the injected `emit`), so the
+/// "emit each new line once, never re-emit, advance monotonically" contract is
+/// unit-tested without a Tauri runtime — see `tests::drain_step_*`.
+fn drain_step(
+    buffer: &SessionLogState,
+    last_seq: u64,
+    mut emit: impl FnMut(LogLine),
+) -> u64 {
+    let mut cursor = last_seq;
+    for line in buffer.snapshot_since(last_seq) {
+        cursor = line.seq;
+        emit(line);
+    }
+    cursor
 }
 
 /// Bundle of the three Pat-process paths the bootstrap derives (spec §3.6).
@@ -605,5 +656,76 @@ mod tests {
             .expect_err("a sidecar resolution error must be an Err");
         assert!(err.starts_with("Pat binary unavailable"));
         assert!(err.contains("current_exe blew up"), "preserves the resolution detail");
+    }
+
+    // ========================================================================
+    // FIX 1 (tuxlink-22l Codex R2) — drain_step: buffer-polling cursor logic
+    // The drain emits EVERY buffered line exactly once, in seq order, advancing
+    // a monotonic cursor — immune to broadcast subscriber-timing/lag because it
+    // reads the durable buffer (source of truth). Tested via a closure sink so
+    // no Tauri runtime is needed.
+    // ========================================================================
+
+    fn log_line(msg: &str) -> LogLine {
+        LogLine {
+            seq: 0, // append() assigns the real seq
+            timestamp_iso: "2026-05-20T00:00:00Z".into(),
+            level: LogLevel::Info,
+            source: LogSource::Pat,
+            message: msg.into(),
+        }
+    }
+
+    // A first poll from cursor 0 emits ALL buffered lines (incl. startup lines
+    // appended during the blocking spawn, BEFORE any drain existed — the Codex
+    // #1 bug) in seq order, and advances the cursor to the last seq.
+    #[test]
+    fn drain_step_first_poll_emits_all_buffered_lines_in_seq_order() {
+        let buf = SessionLogState::new(16);
+        for m in ["startup-a", "startup-b", "startup-c"] {
+            buf.append(log_line(m));
+        }
+        let mut emitted: Vec<(u64, String)> = Vec::new();
+        let new_cursor = drain_step(&buf, 0, |l| emitted.push((l.seq, l.message)));
+
+        assert_eq!(
+            emitted,
+            vec![
+                (1, "startup-a".to_string()),
+                (2, "startup-b".to_string()),
+                (3, "startup-c".to_string()),
+            ],
+            "every pre-existing line is emitted once, oldest-first (Codex #1 fix)"
+        );
+        assert_eq!(new_cursor, 3, "cursor advances to the last emitted seq");
+    }
+
+    // A subsequent poll emits only lines newer than the cursor (no re-emit), and
+    // a poll with nothing new leaves the cursor unchanged and emits nothing.
+    #[test]
+    fn drain_step_advances_cursor_and_never_reemits() {
+        let buf = SessionLogState::new(16);
+        for m in ["a", "b"] {
+            buf.append(log_line(m));
+        }
+        let mut first: Vec<u64> = Vec::new();
+        let cursor = drain_step(&buf, 0, |l| first.push(l.seq));
+        assert_eq!(first, vec![1, 2]);
+        assert_eq!(cursor, 2);
+
+        // Nothing new: empty emit, cursor unchanged.
+        let mut empty: Vec<u64> = Vec::new();
+        let cursor = drain_step(&buf, cursor, |l| empty.push(l.seq));
+        assert!(empty.is_empty(), "no re-emit when nothing is newer than the cursor");
+        assert_eq!(cursor, 2, "cursor unchanged when nothing newer");
+
+        // Append more; next poll emits only the new ones.
+        for m in ["c", "d"] {
+            buf.append(log_line(m));
+        }
+        let mut next: Vec<u64> = Vec::new();
+        let cursor = drain_step(&buf, cursor, |l| next.push(l.seq));
+        assert_eq!(next, vec![3, 4], "only lines newer than the cursor are emitted");
+        assert_eq!(cursor, 4);
     }
 }

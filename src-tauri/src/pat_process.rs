@@ -213,7 +213,19 @@ impl PatProcess {
             }
         }
 
-        std::fs::write(&opts.pid_file, child.id().to_string())?;
+        // Write the pid file. If this fails, the child is ALREADY RUNNING and
+        // has announced — a bare `?` here would return Err while leaking the
+        // live Pat HTTP sidecar, because dropping `std::process::Child` does
+        // NOT kill the process (tuxlink-22l Codex R2 FIX 4). Explicitly
+        // kill + reap the child and best-effort-remove any partial pid file
+        // before propagating the original io::Error. The reader thread then
+        // sees EOF on stderr and exits on its own.
+        if let Err(e) = std::fs::write(&opts.pid_file, child.id().to_string()) {
+            let _ = child.kill();
+            let _ = child.wait();
+            let _ = std::fs::remove_file(&opts.pid_file);
+            return Err(e);
+        }
 
         Ok(PatProcess {
             child: Some(child),

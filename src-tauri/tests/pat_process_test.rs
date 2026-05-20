@@ -231,3 +231,110 @@ sleep 5"#,
         "forwarded lines must be newline-trimmed; got: {got:?}"
     );
 }
+
+/// FIX 4 (tuxlink-22l Codex R2): a pid-file write failure AFTER a successful
+/// announce must NOT leak the live Pat child. The pre-fix code used a bare `?`
+/// on `std::fs::write(&pid_file, ..)`, returning Err while the announced child
+/// kept running (dropping `std::process::Child` does not kill the process).
+/// The fix kills + reaps the child before propagating the io::Error.
+///
+/// Repro: a fixture that announces (echoes the `--addr` value so spawn clears
+/// the announce gate), records its own PID to a sentinel file, then sleeps to
+/// stay alive (mirrors Pat's long-lived http server). We force the pid-file
+/// write to fail by pointing `pid_file` at a path whose PARENT is a regular
+/// FILE, not a directory — `create_dir_all(parent)` then fails (ENOTDIR/EEXIST),
+/// or the subsequent `write` fails, so `spawn` returns Err on the post-announce
+/// pid-file path. We then assert the fixture process is gone (kill(pid, None)
+/// errors with ESRCH once reaped). Part-97-safe: fake `/bin/sh` script, never
+/// real Pat, http-only argv, no transmission.
+#[test]
+fn spawn_pid_file_write_failure_kills_child_no_leak() {
+    use nix::sys::signal::kill;
+    use nix::unistd::Pid;
+
+    let tmp = tempfile::tempdir().expect("tmpdir");
+    let sentinel = tmp.path().join("child.pid");
+
+    // Fixture: echo own PID to the sentinel, announce on stderr (needle is the
+    // `--addr` value = the LAST positional arg), then sleep so it stays alive.
+    let fixture = write_fixture(
+        tmp.path(),
+        "announce-then-sleep.sh",
+        &format!(
+            r#"echo $$ > "{}"
+for a in "$@"; do last="$a"; done
+echo "Starting HTTP service ($last)" 1>&2
+sleep 5"#,
+            sentinel.display()
+        ),
+    );
+
+    // Force the pid-file WRITE (post-announce) to fail, NOT the earlier
+    // `create_dir_all(pid_file.parent())`. `spawn` calls `create_dir_all` on
+    // the pid file's PARENT up front (before exec); if we made the parent a
+    // file, spawn would fail BEFORE announce and never exercise FIX 4. Instead
+    // we make `pid_file` itself an existing DIRECTORY whose parent (`tmp`) is a
+    // real dir: `create_dir_all(tmp)` succeeds, the child spawns + announces,
+    // and then `std::fs::write(&pid_file, ..)` fails with EISDIR — exactly the
+    // post-announce write-failure FIX 4 guards.
+    let pid_file = tmp.path().join("pat.pid");
+    std::fs::create_dir(&pid_file).expect("create pid_file-as-directory");
+
+    let opts = PatSpawnOptions {
+        binary: fixture,
+        config_path: tmp.path().join("pat-config.json"),
+        mbox_dir: tmp.path().join("mbox"),
+        http_listen_port: 0,
+        pid_file,
+        log_sink: None,
+        tuxlink_config: minimal_cms_config(),
+        http_announce_timeout: Duration::from_secs(5),
+    };
+
+    let result = PatProcess::spawn(opts);
+
+    // spawn MUST return Err on the failed pid-file write.
+    assert!(
+        result.is_err(),
+        "spawn must return Err when the pid-file write fails post-announce"
+    );
+
+    // The fixture recorded its PID before announcing; spawn must have killed +
+    // reaped it. Poll kill(pid, None) (signal 0 = liveness probe): once the
+    // child is reaped it is ESRCH (no such process). Bounded poll so a leak
+    // (process still alive) FAILS rather than flakes.
+    let child_pid: i32 = {
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        loop {
+            if let Ok(s) = std::fs::read_to_string(&sentinel) {
+                if let Ok(p) = s.trim().parse::<i32>() {
+                    break p;
+                }
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "fixture never recorded its PID to the sentinel"
+            );
+            std::thread::sleep(Duration::from_millis(25));
+        }
+    };
+
+    let pid = Pid::from_raw(child_pid);
+    let deadline = std::time::Instant::now() + Duration::from_secs(3);
+    loop {
+        match kill(pid, None) {
+            // ESRCH — process is gone (reaped). This is the pass condition.
+            Err(nix::errno::Errno::ESRCH) => break,
+            // Still alive (Ok) or EPERM (alive but not ours): keep polling
+            // until the deadline; if it never dies, the child leaked.
+            _ => {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "FIX 4 regression: Pat child (pid {child_pid}) was leaked — \
+                     still alive after a failed pid-file write"
+                );
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        }
+    }
+}

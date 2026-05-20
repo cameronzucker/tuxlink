@@ -424,6 +424,25 @@ pub fn ingest_pat_line(
     buffer: &SessionLogState,
     log_tx: &broadcast::Sender<LogLine>,
 ) -> LogLine {
+    // Durable append (assigns + sets the monotonic seq, stores the line).
+    let line = append_pat_line(raw, buffer);
+    // Live notify; 0 receivers is fine (durability is in `buffer`).
+    let _ = log_tx.send(line.clone());
+    line
+}
+
+/// Append-only counterpart to [`ingest_pat_line`]: map one raw Pat stderr line
+/// into a `LogSource::Pat` [`LogLine`] and append it to the durable buffer
+/// (which assigns + sets the monotonic `seq`), WITHOUT broadcasting. Returns the
+/// stored line (with `seq` populated).
+///
+/// Used by the `PatBackend::spawn` failure path (tuxlink-22l Codex R2 FIX 2):
+/// when `PatProcess::spawn` returns `Err`, Pat's pre-exit stderr diagnostics may
+/// still be sitting in the mpsc receiver, but the live broadcast has no
+/// subscribers yet (and the backend is never constructed), so a broadcast is
+/// pointless there — durability into the buffer is what carries the lines to the
+/// UI (via the snapshot + the buffer-polling drain).
+fn append_pat_line(raw: String, buffer: &SessionLogState) -> LogLine {
     let mut line = LogLine {
         seq: 0,
         timestamp_iso: now_iso8601_utc(),
@@ -432,10 +451,7 @@ pub fn ingest_pat_line(
         message: raw,
     };
     // `append` assigns + returns the monotonic seq and stores the line.
-    let seq = buffer.append(line.clone());
-    line.seq = seq;
-    // Live notify; 0 receivers is fine (durability is in `buffer`).
-    let _ = log_tx.send(line.clone());
+    line.seq = buffer.append(line.clone());
     line
 }
 
@@ -532,20 +548,40 @@ impl PatBackend {
         // Spawn Pat in HTTP mode on an ephemeral loopback port (http_listen_port
         // = 0). `log_sink: Some(tx)` makes PatProcess forward EVERY stderr line
         // (incl. pre-announce) into our channel (spec §3.1 step 2).
-        let process = crate::pat_process::PatProcess::spawn(crate::pat_process::PatSpawnOptions {
-            binary: opts.binary,
-            config_path: opts.config_path,
-            mbox_dir: opts.mbox_dir,
-            http_listen_port: 0,
-            pid_file: opts.pid_file,
-            log_sink: Some(tx),
-            tuxlink_config: opts.tuxlink_config,
-            http_announce_timeout: Duration::from_secs(10),
-        })
-        .map_err(|e| BackendError::BackendUnavailable {
-            reason: format!("Pat failed to start: {e}"),
-            source: Some(Box::new(e)),
-        })?;
+        let process = match crate::pat_process::PatProcess::spawn(
+            crate::pat_process::PatSpawnOptions {
+                binary: opts.binary,
+                config_path: opts.config_path,
+                mbox_dir: opts.mbox_dir,
+                http_listen_port: 0,
+                pid_file: opts.pid_file,
+                log_sink: Some(tx),
+                tuxlink_config: opts.tuxlink_config,
+                http_announce_timeout: Duration::from_secs(10),
+            },
+        ) {
+            Ok(p) => p,
+            Err(e) => {
+                // FIX 2 (tuxlink-22l Codex R2): Pat may have printed its failure
+                // cause to stderr before exiting; PatProcess's reader thread
+                // forwarded those lines into `rx` before EOF. The bridge thread
+                // is NOT started on this path, so without draining, those
+                // diagnostics are lost. Drain `rx` into the durable buffer so
+                // Pat's failure cause reaches the UI (via the snapshot + the
+                // buffer-polling drain). `PatProcess::spawn`'s error paths all
+                // kill + reap the child first, so the reader thread has hit (or
+                // is about to hit) EOF and will drop its sender — `recv_timeout`
+                // therefore terminates promptly (the timeout is a defensive
+                // bound against a pathological reader, not the expected path).
+                while let Ok(raw) = rx.recv_timeout(Duration::from_secs(1)) {
+                    append_pat_line(raw, &log_buffer);
+                }
+                return Err(BackendError::BackendUnavailable {
+                    reason: format!("Pat failed to start: {e}"),
+                    source: Some(Box::new(e)),
+                });
+            }
+        };
 
         // Wire the HTTP client to the port Pat actually bound (loopback).
         let port = process.http_port();
@@ -612,8 +648,32 @@ impl Drop for PatBackend {
         // the bridge's `rx.recv()` has already returned `Err` (or is about to)
         // — the join is bounded in practice. A `from_url` backend has no bridge
         // thread (`None`), so this is skipped there.
+        //
+        // FIX 3 (tuxlink-22l Codex R2): the join is BOUNDED. An unbounded
+        // `handle.join()` would hang app teardown if the bridge thread never
+        // exits — e.g. a Pat *descendant* inherited and held Pat's stderr write
+        // end open, so the reader (and hence the bridge) never sees EOF despite
+        // Pat itself being reaped. We join on a tiny throwaway joiner thread that
+        // signals completion over an mpsc, and wait at most 2s. On timeout we
+        // DETACH (drop the JoinHandle without joining): a single leaked,
+        // short-lived thread blocked on `recv` is strictly better than a hung
+        // application teardown. (The leaked thread exits on its own whenever the
+        // held-open stderr finally closes.)
         if let Some(handle) = self._bridge_thread.take() {
-            let _ = handle.join();
+            let (done_tx, done_rx) = std::sync::mpsc::channel::<()>();
+            std::thread::spawn(move || {
+                let _ = handle.join();
+                // Receiver may already be gone (we timed out + detached); the
+                // send error is expected and ignored in that case.
+                let _ = done_tx.send(());
+            });
+            match done_rx.recv_timeout(Duration::from_secs(2)) {
+                Ok(()) => { /* bridge thread joined cleanly. */ }
+                Err(_) => {
+                    // Timed out (or joiner disconnected): detach. The bridge
+                    // thread is leaked rather than blocking teardown forever.
+                }
+            }
         }
     }
 }
