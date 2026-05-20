@@ -842,7 +842,11 @@ impl From<LogLine> for LogLineDto {
 /// contract as before, now future-proof.
 #[tauri::command]
 pub async fn session_log_snapshot(
-    state: State<'_, SessionLogState>,
+    // Task C (tuxlink-22l §11.2): the managed buffer is now an
+    // `Arc<SessionLogState>` so `PatBackend::spawn`'s bridge thread can append
+    // to the SAME buffer this command reads. `State` derefs through the `Arc`,
+    // so `state.snapshot()` resolves to `SessionLogState::snapshot` unchanged.
+    state: State<'_, std::sync::Arc<SessionLogState>>,
 ) -> Result<Vec<LogLineDto>, UiError> {
     Ok(state.snapshot().into_iter().map(LogLineDto::from).collect())
 }

@@ -62,11 +62,16 @@ pub fn run() {
         // "not connected" empty state (NOT an error).
         .manage(crate::app_backend::AppBackend::new())
         // Task A (tuxlink-22l): durable session-log ring buffer. The bridge
-        // (Task D) appends here AND broadcasts on `session_log:line`; this
+        // (Task C) appends here AND broadcasts on `session_log:line`; this
         // managed state lets `session_log_snapshot` serve late-mounting UIs
         // without losing Pat's startup lines (spec §11.1 / adrev #1,#2,#3).
         // Cap 500: ≈ one extended Pat CMS session's worth of log lines.
-        .manage(crate::session_log::SessionLogState::new(500))
+        //
+        // Wrapped in an `Arc` (Task C, tuxlink-22l §11.2) so `PatBackend::spawn`
+        // can hold a clone of the SAME buffer its bridge thread appends to —
+        // the buffer `session_log_snapshot` reads. Tauri's `State` derefs
+        // through the `Arc`, so the command sees an identical surface.
+        .manage(std::sync::Arc::new(crate::session_log::SessionLogState::new(500)))
         .setup(|app| {
             // Build the native OS menu bar (tuxlink-6vi / Task 7) and wire
             // its events to Tauri IPC so the React frontend can listen on

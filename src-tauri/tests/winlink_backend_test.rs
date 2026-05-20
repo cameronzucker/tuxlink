@@ -9,8 +9,8 @@
 use futures::StreamExt;
 use tuxlink_lib::config::CmsTransport;
 use tuxlink_lib::winlink_backend::{
-    BackendError, BackendStatus, LogLevel, LogLine, LogSource, MailboxFolder, MessageId,
-    NativeBackend, OutboundMessage, PatBackend, TransportConfig, WinlinkBackend,
+    ingest_pat_line, BackendError, BackendStatus, LogLevel, LogLine, LogSource, MailboxFolder,
+    MessageId, NativeBackend, OutboundMessage, PatBackend, TransportConfig, WinlinkBackend,
 };
 
 // ============================================================================
@@ -323,4 +323,145 @@ async fn test_message_body_preserves_bytes() {
         .expect("read");
     assert_eq!(body.raw_rfc5322, bytes);
     assert_eq!(body.id, MessageId::new("MIDBIN"));
+}
+
+// ============================================================================
+// Task C (tuxlink-22l §11.2) — ingest_pat_line: per-line bridge ingest
+// ============================================================================
+// Maps one raw Pat stderr line → LogLine, appends it to the durable ring
+// buffer (which assigns the monotonic seq), and broadcasts it live. Tested
+// directly (always-runs unit test) so the bridge's per-line behavior is
+// covered without a real Pat process. See spec §3.2 line→LogLine mapping.
+#[test]
+fn ingest_pat_line_appends_and_broadcasts_with_seq() {
+    use tokio::sync::broadcast;
+    use tuxlink_lib::session_log::SessionLogState;
+
+    let buf = SessionLogState::new(8);
+    let (tx, _rx) = broadcast::channel(16);
+
+    let l = ingest_pat_line("starting http".into(), &buf, &tx);
+
+    // The returned LogLine carries the seq assigned by the durable buffer.
+    assert_eq!(l.seq, 1, "first appended line gets seq=1 from the buffer");
+    assert_eq!(l.source, LogSource::Pat, "Pat stderr lines are LogSource::Pat");
+    assert_eq!(l.level, LogLevel::Info, "v0.0.1 maps every Pat line to Info");
+    assert_eq!(l.message, "starting http", "message is the raw line verbatim");
+
+    // The same line landed in the durable buffer with the same seq.
+    let snap = buf.snapshot();
+    assert_eq!(snap.len(), 1, "exactly one line stored");
+    assert_eq!(snap[0].seq, 1, "stored line carries the assigned seq");
+    assert_eq!(snap[0].message, "starting http");
+}
+
+// ============================================================================
+// Task C (tuxlink-22l §11.2) — PatBackend::spawn against REAL Pat, http mode.
+// ============================================================================
+// Part 97: http mode only; never connect/send. Operator/CI runs this via
+// --ignored. This test spawns a real Pat process in HTTP-only mode (no CMS
+// target, no transmission) and asserts the spawn lifecycle: the HTTP client
+// reaches Pat, the stderr bridge delivered Pat's startup lines to the durable
+// buffer, and the freshly-spawned backend reports Disconnected (NOT Connected
+// — Pat's HTTP server being up is not a CMS link; adrev #10). It is #[ignore]d
+// so the always-run suite never launches a real binary; the headless build
+// MUST NOT run it (CLAUDE.md live-radio rule).
+#[tokio::test]
+#[ignore]
+async fn spawn_against_real_pat_http_mode() {
+    use std::path::PathBuf;
+    use std::sync::Arc;
+    use tuxlink_lib::config::{
+        CmsTransport, Config, ConnectConfig, IdentityConfig, PositionPrecision, PrivacyConfig,
+        GpsState, CONFIG_SCHEMA_VERSION,
+    };
+    use tuxlink_lib::session_log::SessionLogState;
+    use tuxlink_lib::winlink_backend::{PatBackend, PatBackendSpawnOptions};
+
+    // Resolve the Pat binary: PAT_BINARY override, else the system default.
+    let binary: PathBuf = std::env::var("PAT_BINARY")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("/usr/bin/pat"));
+
+    // Skip cleanly if the binary is absent or a zero-byte stub (the debug
+    // sidecar is a 0-byte placeholder; adrev #12). No panic — this is the
+    // documented "skips if absent" path.
+    match std::fs::metadata(&binary) {
+        Ok(m) if m.len() == 0 => {
+            eprintln!(
+                "SKIP spawn_against_real_pat_http_mode: {} is a zero-byte stub",
+                binary.display()
+            );
+            return;
+        }
+        Err(_) => {
+            eprintln!(
+                "SKIP spawn_against_real_pat_http_mode: {} not found (set PAT_BINARY)",
+                binary.display()
+            );
+            return;
+        }
+        Ok(_) => {}
+    }
+
+    // Tempdirs for config / mbox / pid so nothing touches operator state.
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let config_path = tmp.path().join("config.json");
+    let mbox_dir = tmp.path().join("mbox");
+    let pid_file = tmp.path().join("pat.pid");
+
+    // CMS config fixture (callsign required on the CMS path). The HTTP mode
+    // serves the local API only; no connect/send is issued by this test.
+    let cfg = Config {
+        schema_version: CONFIG_SCHEMA_VERSION,
+        wizard_completed: true,
+        connect: ConnectConfig {
+            connect_to_cms: true,
+            transport: CmsTransport::CmsSsl,
+        },
+        identity: IdentityConfig {
+            callsign: Some("TUXTEST1".into()),
+            identifier: None,
+            grid: Some("FM18".into()),
+        },
+        privacy: PrivacyConfig {
+            gps_state: GpsState::Off,
+            position_precision: PositionPrecision::FourCharGrid,
+        },
+        pat_mbo_address: None,
+    };
+
+    let buf = Arc::new(SessionLogState::new(64));
+    let backend = PatBackend::spawn(
+        PatBackendSpawnOptions {
+            binary,
+            config_path,
+            mbox_dir,
+            pid_file,
+            tuxlink_config: cfg,
+        },
+        buf.clone(),
+    )
+    .expect("PatBackend::spawn should succeed against a real Pat in http mode");
+
+    // The HTTP client reaches Pat's local API (an empty inbox is Ok).
+    let listed = backend.list_messages(MailboxFolder::Inbox).await;
+    assert!(listed.is_ok(), "list_messages(Inbox) should be Ok, got {listed:?}");
+
+    // The stderr bridge delivered Pat's startup lines into the durable buffer.
+    assert!(
+        !buf.snapshot().is_empty(),
+        "bridge should have appended Pat startup lines to the durable buffer"
+    );
+
+    // A freshly-spawned backend is Disconnected — Pat's HTTP server being up
+    // is NOT a CMS link (adrev #10). Connected only comes from operator connect().
+    assert!(
+        matches!(backend.status(), BackendStatus::Disconnected),
+        "spawned backend must report Disconnected, got {:?}",
+        backend.status()
+    );
+
+    // Drop the backend → graceful shutdown (SIGTERM→reap) of the Pat child.
+    drop(backend);
 }
