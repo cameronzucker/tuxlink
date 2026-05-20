@@ -4,16 +4,23 @@
 //! bd issue: tuxlink-rit
 //!
 //! ## Tray menu
-//! - Show/Hide Window  (`tray:show_hide`)
+//! - Show Window       (`tray:show_hide`)     — unconditional show + unminimize + focus (tuxlink-9zd)
 //! - New Message       (`tray:new_message`)  — shows window + emits `menu` event `menu:file:new`
 //! - ──────────────
 //! - Quit              (`tray:quit`)          — calls `app.exit(0)`
 //!
 //! ## Close-to-tray
-//! `on_window_event` CloseRequested → `window.hide()` + `api.prevent_close()`.
+//! `on_window_event` CloseRequested → `api.prevent_close()` + (Linux) `minimize()`
+//! / (other) `hide()`. See `lib.rs` for the per-OS rationale (tuxlink-9zd).
 //! Only File→Quit / tray→Quit / Ctrl+Q (wired via menu.rs) actually exit the process.
 //! This is load-bearing for emcomm: closing the window mid-ARQ must NOT kill the
 //! Pat child process.
+//!
+//! ## Restore reliability (tuxlink-9zd)
+//! The tray menu's restore item is an **unconditional** "Show Window" — it never
+//! branches on `window.is_visible()` (which is unreliable after a Wayland
+//! hide/minimize and could invert into hiding again). It always
+//! `unminimize() + show() + set_focus()`, so restore works on every cycle.
 //!
 //! ## Quit pattern
 //! `PredefinedMenuItem::quit` is Linux-Unsupported in Tauri 2 / muda (silently
@@ -44,7 +51,9 @@ pub fn tray_event_ids() -> Vec<&'static str> {
 ///
 /// Call from `lib.rs`'s `run()` inside the `.setup()` closure.
 pub fn install<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
-    let show_hide = MenuItemBuilder::with_id("tray:show_hide", "Show/Hide Window").build(app)?;
+    // tuxlink-9zd: an explicit "Show Window" (unconditional show), NOT a
+    // visibility toggle. Event id stays `tray:show_hide` (tray_test.rs manifest).
+    let show_hide = MenuItemBuilder::with_id("tray:show_hide", "Show Window").build(app)?;
     let new_msg = MenuItemBuilder::with_id("tray:new_message", "New Message").build(app)?;
     let sep = PredefinedMenuItem::separator(app)?;
     let quit = MenuItemBuilder::with_id("tray:quit", "Quit").build(app)?;
@@ -73,7 +82,9 @@ pub fn install<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
                         app_clone.exit(0);
                     }
                     "tray:show_hide" => {
-                        toggle_main_window(&app_clone);
+                        // Unconditional show (tuxlink-9zd) — never toggle on the
+                        // unreliable is_visible() state.
+                        show_main_window(&app_clone);
                     }
                     "tray:new_message" => {
                         // Show window first, then emit menu:file:new so the
@@ -103,22 +114,15 @@ pub fn install<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
     Ok(())
 }
 
-/// Show the main window and focus it.
+/// Show the main window and focus it. Unconditional + idempotent: unminimize
+/// first (the Linux close-to-tray path minimizes — tuxlink-9zd), then show
+/// (covers the macOS/Windows hide path), then focus. Safe to call when already
+/// visible. Never branches on is_visible() (unreliable on Wayland after
+/// hide/minimize).
 fn show_main_window<R: Runtime>(app: &AppHandle<R>) {
     if let Some(window) = app.get_webview_window("main") {
+        let _ = window.unminimize();
         let _ = window.show();
         let _ = window.set_focus();
-    }
-}
-
-/// Toggle the main window visibility.
-fn toggle_main_window<R: Runtime>(app: &AppHandle<R>) {
-    if let Some(window) = app.get_webview_window("main") {
-        if window.is_visible().unwrap_or(false) {
-            let _ = window.hide();
-        } else {
-            let _ = window.show();
-            let _ = window.set_focus();
-        }
     }
 }

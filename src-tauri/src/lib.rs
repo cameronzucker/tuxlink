@@ -37,7 +37,21 @@ pub fn run() {
         // save/restore size+position keyed by window label. Registered here
         // (the integration commit, spec §4.3) — `compose_window.rs` only
         // builds the window; the plugin's Builder hook does the persistence.
-        .plugin(tauri_plugin_window_state::Builder::default().build())
+        //
+        // tuxlink-9zd: exclude StateFlags::VISIBLE. The main window's
+        // close-to-tray path leaves it hidden/minimized; persisting visibility
+        // would save `visible=false` on exit and the NEXT launch could start
+        // invisible with no GUI path back (compounding the Wayland tray-absent
+        // strand). Excluding VISIBLE guarantees every launch is visible while
+        // still persisting size/position for the main + compose windows.
+        .plugin(
+            tauri_plugin_window_state::Builder::default()
+                .with_state_flags(
+                    tauri_plugin_window_state::StateFlags::all()
+                        & !tauri_plugin_window_state::StateFlags::VISIBLE,
+                )
+                .build(),
+        )
         .manage(crate::wizard::WizardMutex::new())
         // Task 12 (tuxlink-zsm): the single Winlink-backend handle every UI
         // command consumes (spec §1.1). Starts `None`; the live bootstrap
@@ -98,6 +112,16 @@ pub fn run() {
             if window.label() == "main" {
                 if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                     api.prevent_close();
+                    // tuxlink-9zd: on Linux the SNI tray often does not register
+                    // (e.g. Wayland + wf-panel-pi has no SNI host), so hide()
+                    // would strand the window — process alive, no GUI path back.
+                    // minimize() keeps the window in the compositor's window list
+                    // (always recoverable via the panel/window-switcher) while
+                    // still keeping the process + Pat child alive mid-session.
+                    // macOS/Windows have a reliable tray, so hide() there.
+                    #[cfg(target_os = "linux")]
+                    let _ = window.minimize();
+                    #[cfg(not(target_os = "linux"))]
                     let _ = window.hide();
                 }
             }
