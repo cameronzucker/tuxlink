@@ -124,6 +124,12 @@ pub fn wire_menu_events<R: Runtime>(app: &AppHandle<R>) {
     let app_for_handler = app.clone();
     app.on_menu_event(move |_app, event| {
         let id = event.id().as_ref().to_string();
+        // Guard: only handle menu:* ids here. Tray items (tray:*) have their own
+        // handler in tray.rs; emitting them on the "menu" channel would leak
+        // tray event payloads to frontend listeners expecting only menu:* ids.
+        if !id.starts_with("menu:") {
+            return;
+        }
         if id == "menu:file:quit" {
             app_for_handler.exit(0);
             return;

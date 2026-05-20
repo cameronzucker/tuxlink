@@ -24,9 +24,23 @@ pub struct Message {
     pub mid: String,
     pub subject: String,
     pub from: String,
+    /// Recipient list. Added by Task 12 (tuxlink-zsm) for the list "To"
+    /// column. **Graceful degradation:** Pat 1.0.0's `/api/mailbox` list
+    /// endpoint does NOT include a `To` field (verified against the shipped
+    /// `test_list_inbox_parses_pat_json` fixture, which has no `To`), so this
+    /// defaults to an empty vec via `#[serde(default)]` + a tolerant
+    /// deserializer. If a future Pat exposes recipients, `deser_addr_list`
+    /// parses Pat's address-object array `[{"Addr":"..."}]` without a
+    /// mapping change. Spec §2.1 + §9 item 7.
+    pub to: Vec<String>,
     pub date: String,
     pub unread: bool,
     pub body_size: u64,
+    /// Attachment-presence flag for the list `#` column. Added by Task 12.
+    /// Pat 1.0.0's list DTO has no attachment metadata, so this defaults
+    /// `false` (`#[serde(default)]`). The authoritative attachment list is
+    /// materialized at read time (Task 13 RFC5322 parse). Spec §2.1.
+    pub has_attachments: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -34,19 +48,56 @@ struct PatMessageDto {
     #[serde(rename = "MID")] mid: String,
     #[serde(rename = "Subject")] subject: String,
     #[serde(rename = "From")] from: PatAddr,
+    // `To` is absent from Pat 1.0.0's list DTO. `default` + a tolerant
+    // deserializer means a missing field → empty vec, and a present field
+    // (future Pat / other backend) → parsed recipient list. Spec §2.1.
+    #[serde(rename = "To", default, deserialize_with = "deser_addr_list")] to: Vec<String>,
     #[serde(rename = "Date")] date: String,
     #[serde(rename = "Unread", default)] unread: bool,
     #[serde(rename = "BodySize", default)] body_size: u64,
+    // No attachment metadata in Pat 1.0.0's list DTO. Default `false`;
+    // tolerate either a bool flag or (future) a count that we coerce to a
+    // presence bool. Spec §2.1.
+    #[serde(rename = "Files", default, deserialize_with = "deser_has_attachments")] has_attachments: bool,
 }
 
 #[derive(Debug, Deserialize)]
 struct PatAddr { #[serde(rename = "Addr")] addr: String }
 
+/// Deserialize Pat's recipient array (`[{"Addr":"CALL@..."}]`) into a flat
+/// `Vec<String>` of addresses. Tolerant: a JSON `null` yields an empty vec.
+/// Pat 1.0.0 omits the field entirely, so `#[serde(default)]` handles the
+/// common case and this only runs when `To` IS present.
+fn deser_addr_list<'de, D>(d: D) -> Result<Vec<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let opt = <Option<Vec<PatAddr>>>::deserialize(d)?;
+    Ok(opt.unwrap_or_default().into_iter().map(|a| a.addr).collect())
+}
+
+/// Deserialize an attachment-presence indicator. Pat 1.0.0 omits this, so
+/// `#[serde(default)]` returns `false`. If a future Pat exposes a `Files`
+/// array, a non-empty array → `true`; `null`/absent → `false`. Spec §2.1.
+fn deser_has_attachments<'de, D>(d: D) -> Result<bool, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    // Accept either an array of files (presence = non-empty) or a bool.
+    let v = <Option<serde_json::Value>>::deserialize(d)?;
+    Ok(match v {
+        Some(serde_json::Value::Array(a)) => !a.is_empty(),
+        Some(serde_json::Value::Bool(b)) => b,
+        _ => false,
+    })
+}
+
 impl From<PatMessageDto> for Message {
     fn from(d: PatMessageDto) -> Self {
         Message {
             mid: d.mid, subject: d.subject, from: d.from.addr,
-            date: d.date, unread: d.unread, body_size: d.body_size,
+            to: d.to, date: d.date, unread: d.unread, body_size: d.body_size,
+            has_attachments: d.has_attachments,
         }
     }
 }

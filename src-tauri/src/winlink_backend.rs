@@ -45,10 +45,24 @@ pub struct MessageMeta {
     pub id: MessageId,
     pub subject: String,
     pub from: String,
+    /// Recipient list. Drives the list "To" column (esp. Sent/Outbox).
+    /// Added by Task 12 (tuxlink-zsm). Pat 1.0.0's `/api/mailbox` list DTO
+    /// does NOT expose a To array (verified against the shipped fixture in
+    /// `pat_client_test.rs`), so `PatBackend::list_messages` degrades this to
+    /// an empty vec — see `pat_client::Message::to` and spec §2.1 graceful
+    /// degradation. The field stays on the trait surface so a future Pat
+    /// (or NativeBackend) that DOES provide recipients can populate it.
+    pub to: Vec<String>,
     /// RFC 3339 UTC timestamp. Backend emits canonical form.
     pub date: String,
     pub unread: bool,
     pub body_size: u64,
+    /// Attachment-presence indicator for the list `#` column. Added by Task
+    /// 12 (tuxlink-zsm). Pat 1.0.0's list DTO does not expose attachment
+    /// metadata, so `PatBackend::list_messages` degrades this to `false`
+    /// (spec §2.1). The full attachment list is materialized at read time
+    /// (Task 13's RFC5322 parse), not in the list view.
+    pub has_attachments: bool,
 }
 
 /// Full body returned by `read_message`. Byte fidelity per spec §3.2 v2
@@ -232,8 +246,22 @@ pub trait WinlinkBackend: Send + Sync {
     async fn list_messages(&self, folder: MailboxFolder)
         -> Result<Vec<MessageMeta>, BackendError>;
 
-    async fn read_message(&self, id: &MessageId)
+    /// Read a message from a specific folder. Added by Task 12
+    /// (tuxlink-zsm): reading a Sent/Outbox message requires the folder,
+    /// not just the MID — the prior `read_message` hardcoded Inbox
+    /// (winlink_backend.rs, pre-zsm). `read_message` now delegates here
+    /// with `MailboxFolder::Inbox` for back-compat. Implementors override
+    /// this; `read_message` has a provided default that forwards.
+    async fn read_message_in(&self, folder: MailboxFolder, id: &MessageId)
         -> Result<MessageBody, BackendError>;
+
+    /// Back-compat shim: read from the Inbox folder. Prefer
+    /// [`WinlinkBackend::read_message_in`] when the folder is known
+    /// (spec §2.1). Provided default forwards to `read_message_in(Inbox, id)`.
+    async fn read_message(&self, id: &MessageId)
+        -> Result<MessageBody, BackendError> {
+        self.read_message_in(MailboxFolder::Inbox, id).await
+    }
 
     /// Returns `Ok(Some(id))` when the backend assigns a MID at queue
     /// time, `Ok(None)` when it does not (current Pat 1.0.0 behavior:
@@ -288,7 +316,7 @@ impl WinlinkBackend for NativeBackend {
         Err(BackendError::NotImplemented)
     }
 
-    async fn read_message(&self, _id: &MessageId)
+    async fn read_message_in(&self, _folder: MailboxFolder, _id: &MessageId)
         -> Result<MessageBody, BackendError>
     {
         Err(BackendError::NotImplemented)
@@ -387,22 +415,29 @@ impl WinlinkBackend for PatBackend {
                 id: MessageId(m.mid),
                 subject: m.subject,
                 from: m.from,
+                // Pat 1.0.0's list DTO carries no recipient list nor
+                // attachment metadata; `Message` already degrades these
+                // (pat_client.rs). Carried through faithfully so a future
+                // Pat that exposes them populates the trait without a
+                // mapping change. Spec §2.1 graceful degradation.
+                to: m.to,
                 date: m.date,
                 unread: m.unread,
                 body_size: m.body_size,
+                has_attachments: m.has_attachments,
             })
             .collect())
     }
 
-    async fn read_message(&self, id: &MessageId)
+    async fn read_message_in(&self, folder: MailboxFolder, id: &MessageId)
         -> Result<MessageBody, BackendError>
     {
-        // Pat's API requires a folder param; v0.0.1 defaults to Inbox because
-        // the wizard + reading UI fetch from Inbox in v0.0.1. A future
-        // multi-folder read API can take folder as a param via a typed
-        // ReadOptions, but that's beyond z5f scope.
+        // Task 12 (tuxlink-zsm): folder is now explicit so a Sent/Outbox
+        // message reads from the right folder. The prior impl hardcoded
+        // Inbox; `read_message` retains Inbox semantics via the trait's
+        // default forwarder.
         let bytes = self.client
-            .read(MailboxFolder::Inbox, &id.0)
+            .read(folder, &id.0)
             .await
             .map_err(|e| translate_pat_err_for_read(e, id))?;
         Ok(MessageBody {

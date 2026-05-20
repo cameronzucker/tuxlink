@@ -34,6 +34,9 @@ tokio-stream = { version = "0.1", features = ["sync"] }  # NEW (tuxlink-z5f) —
 # NOTE: keyring 3.6.3 has no `use_native_store()` — backend is a compile-time
 # feature; `Entry::new()` auto-resolves to the selected `default` module.
 keyring = { version = "3.6.3", default-features = false, features = ["sync-secret-service", "crypto-rust"] }
+mail-parser = "0.9"        # NEW (tuxlink-y5c Task 13) — pure-Rust RFC5322/MIME parser; spec §8
+chrono = { version = "0.4", default-features = false, features = ["clock"] }  # NEW (tuxlink-dm8, Task 14) — RFC3339 timestamp for message_send; `serde` unused (Codex fix)
+tauri-plugin-window-state = "2"                            # NEW (tuxlink-dm8, Task 14) — per-compose-window geometry persistence (spec §8)
 
 [dev-dependencies]
 mockito = "1.5"

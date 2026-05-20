@@ -1,0 +1,363 @@
+/* Compose window styles
+ *
+ * Separate Tauri window — no AppShell grid context. Uses a flex-column
+ * layout with a fixed header + scrollable body area.
+ *
+ * Design target: dark, functional, matches the main shell's dark palette.
+ * No decorative chrome — compose is a utility surface.
+ */
+
+/* ============================================================
+ * Root / layout
+ * ============================================================ */
+
+.compose-root {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  background: #1e1e2e;
+  color: #cdd6f4;
+  font-family: system-ui, -apple-system, sans-serif;
+  font-size: 14px;
+  overflow: hidden;
+}
+
+/* ============================================================
+ * Header
+ * ============================================================ */
+
+.compose-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background: #181825;
+  border-bottom: 1px solid #313244;
+  flex-shrink: 0;
+  /* Tauri drag region */
+  -webkit-app-region: drag;
+}
+
+.compose-header__title {
+  font-weight: 600;
+  font-size: 13px;
+  color: #a6adc8;
+  user-select: none;
+}
+
+.compose-header__close {
+  -webkit-app-region: no-drag;
+  font-size: 12px;
+  padding: 2px 6px;
+}
+
+/* ============================================================
+ * Fields
+ * ============================================================ */
+
+.compose-fields {
+  flex-shrink: 0;
+  padding: 8px 12px 4px;
+  border-bottom: 1px solid #313244;
+}
+
+.compose-field-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 3px 0;
+  flex-wrap: wrap;
+}
+
+.compose-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: #a6adc8;
+  min-width: 72px;
+  text-align: right;
+  flex-shrink: 0;
+}
+
+.compose-label--muted {
+  opacity: 0.5;
+}
+
+.compose-label--sr-only {
+  position: absolute;
+  left: -9999px;
+}
+
+.compose-label__req {
+  color: #f38ba8;
+}
+
+.compose-input {
+  flex: 1;
+  background: #313244;
+  border: 1px solid #45475a;
+  border-radius: 4px;
+  color: #cdd6f4;
+  padding: 4px 8px;
+  font-size: 13px;
+  outline: none;
+  min-width: 0;
+}
+
+.compose-input:focus {
+  border-color: #89b4fa;
+  background: #363649;
+}
+
+.compose-input--disabled,
+.compose-input[disabled] {
+  opacity: 0.45;
+  cursor: not-allowed;
+  background: #1e1e2e;
+  border-color: #313244;
+}
+
+.compose-hint {
+  font-size: 11px;
+  color: #6c7086;
+  white-space: nowrap;
+}
+
+.compose-hint--warn {
+  color: #fab387;
+}
+
+/* ============================================================
+ * Body textarea
+ * ============================================================ */
+
+.compose-body-area {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  padding: 4px 12px;
+  min-height: 0;
+}
+
+.compose-textarea {
+  flex: 1;
+  resize: none;
+  background: #181825;
+  border: 1px solid #313244;
+  border-radius: 4px;
+  color: #cdd6f4;
+  font-family: 'JetBrains Mono', 'Fira Mono', monospace;
+  font-size: 13px;
+  padding: 8px;
+  outline: none;
+  min-height: 0;
+}
+
+.compose-textarea:focus {
+  border-color: #89b4fa;
+}
+
+/* ============================================================
+ * Attachments
+ * ============================================================ */
+
+.compose-attachments {
+  padding: 6px 12px;
+  border-top: 1px solid #313244;
+  min-height: 36px;
+  display: flex;
+  align-items: center;
+  background: #181825;
+  flex-shrink: 0;
+}
+
+.compose-attachments__hint {
+  font-size: 12px;
+  color: #6c7086;
+}
+
+.compose-attachments__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.compose-attachments__item {
+  background: #313244;
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-size: 12px;
+  color: #cdd6f4;
+}
+
+/* ============================================================
+ * Options row
+ * ============================================================ */
+
+.compose-options {
+  padding: 4px 12px;
+  border-top: 1px solid #313244;
+  flex-shrink: 0;
+}
+
+.compose-checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: #a6adc8;
+  cursor: pointer;
+  user-select: none;
+}
+
+/* ============================================================
+ * Error banner
+ * ============================================================ */
+
+.compose-error {
+  margin: 4px 12px;
+  padding: 6px 10px;
+  background: #3c1f1f;
+  border: 1px solid #f38ba8;
+  border-radius: 4px;
+  color: #f38ba8;
+  font-size: 13px;
+}
+
+/* ============================================================
+ * Action bar
+ * ============================================================ */
+
+.compose-actions {
+  display: flex;
+  gap: 8px;
+  padding: 8px 12px;
+  border-top: 1px solid #313244;
+  background: #181825;
+  flex-shrink: 0;
+}
+
+/* ============================================================
+ * Buttons
+ * ============================================================ */
+
+.compose-btn {
+  border: none;
+  border-radius: 4px;
+  padding: 5px 12px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.1s, opacity 0.1s;
+}
+
+.compose-btn:disabled,
+.compose-btn--disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+.compose-btn--primary {
+  background: #89b4fa;
+  color: #1e1e2e;
+}
+
+.compose-btn--primary:hover:not(:disabled) {
+  background: #74a8f8;
+}
+
+.compose-btn--secondary {
+  background: #313244;
+  color: #cdd6f4;
+}
+
+.compose-btn--secondary:hover:not(:disabled) {
+  background: #45475a;
+}
+
+.compose-btn--ghost {
+  background: transparent;
+  color: #a6adc8;
+  border: 1px solid #45475a;
+}
+
+.compose-btn--ghost:hover:not(:disabled) {
+  background: #313244;
+}
+
+.compose-btn--danger {
+  background: #f38ba8;
+  color: #1e1e2e;
+}
+
+.compose-btn--danger:hover:not(:disabled) {
+  background: #e07a97;
+}
+
+/* ============================================================
+ * Close-prompt overlay
+ * ============================================================ */
+
+.compose-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+.compose-dialog {
+  background: #1e1e2e;
+  border: 1px solid #45475a;
+  border-radius: 8px;
+  padding: 24px;
+  max-width: 320px;
+  width: 90%;
+}
+
+.compose-dialog__msg {
+  margin: 0 0 16px;
+  font-size: 14px;
+  color: #cdd6f4;
+  text-align: center;
+}
+
+.compose-dialog__actions {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+}
+
+/* ============================================================
+ * Success screen
+ * ============================================================ */
+
+.compose-success {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100vh;
+  background: #1e1e2e;
+  gap: 12px;
+}
+
+.compose-success__msg {
+  font-size: 18px;
+  font-weight: 600;
+  color: #a6e3a1;
+  margin: 0;
+}
+
+.compose-success__sub {
+  font-size: 13px;
+  color: #a6adc8;
+  margin: 0;
+  text-align: center;
+  max-width: 280px;
+}
