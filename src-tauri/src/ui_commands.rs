@@ -32,7 +32,8 @@ use tauri::State;
 use crate::app_backend::AppBackend;
 use crate::config::{self, CmsTransport, GpsState, PositionPrecision};
 use crate::winlink_backend::{
-    BackendError, BackendStatus, MailboxFolder, MessageId, MessageMeta, OutboundMessage,
+    BackendError, BackendStatus, LogLevel, LogLine, LogSource, MailboxFolder, MessageId,
+    MessageMeta, OutboundMessage,
 };
 
 // ============================================================================
@@ -733,6 +734,116 @@ pub async fn backend_status(state: State<'_, AppBackend>) -> Result<Option<Statu
     }
 }
 
+// ============================================================================
+// Task 15 — session_log_snapshot (spec §3.3 / §5.5)
+// bd issue: tuxlink-8zg (integration commit; the snapshot command was specified
+// in §3.3 but not implemented by Task 15 — Codex integration round P1)
+// ============================================================================
+// Appended here per the append-only ownership model (spec §7). Registered in
+// `lib.rs`'s `invoke_handler` by the integration commit (§4.3).
+
+/// Serializable session-log line. Mirrors `LogLineDto` in
+/// `src/session/logProjection.ts` — field names are camelCase on the wire
+/// (`timestampIso`) and the enum values serialize as lowercase strings
+/// (`'trace'|'debug'|'info'|'warn'|'error'`, `'backend'|'pat'|'transport'|
+/// 'wire'`) so the TS model needs no rename/translation layer.
+#[derive(Debug, Serialize, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct LogLineDto {
+    pub timestamp_iso: String,
+    pub level: LogLevelDto,
+    pub source: LogSourceDto,
+    pub message: String,
+}
+
+/// Wire projection of [`LogLevel`]. Lowercase to match the TS union.
+#[derive(Debug, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum LogLevelDto {
+    Trace,
+    Debug,
+    Info,
+    Warn,
+    Error,
+}
+
+impl From<LogLevel> for LogLevelDto {
+    /// Exhaustive over the current variants. `LogLevel` is `#[non_exhaustive]`,
+    /// so a future variant added in `winlink_backend.rs` fails this `match`,
+    /// forcing a deliberate wire projection rather than a silent wildcard.
+    fn from(l: LogLevel) -> Self {
+        match l {
+            LogLevel::Trace => LogLevelDto::Trace,
+            LogLevel::Debug => LogLevelDto::Debug,
+            LogLevel::Info => LogLevelDto::Info,
+            LogLevel::Warn => LogLevelDto::Warn,
+            LogLevel::Error => LogLevelDto::Error,
+        }
+    }
+}
+
+/// Wire projection of [`LogSource`]. Lowercase to match the TS union.
+#[derive(Debug, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum LogSourceDto {
+    Backend,
+    Pat,
+    Transport,
+    Wire,
+}
+
+impl From<LogSource> for LogSourceDto {
+    /// Exhaustive over the current variants; see [`LogLevelDto::from`].
+    fn from(s: LogSource) -> Self {
+        match s {
+            LogSource::Backend => LogSourceDto::Backend,
+            LogSource::Pat => LogSourceDto::Pat,
+            LogSource::Transport => LogSourceDto::Transport,
+            LogSource::Wire => LogSourceDto::Wire,
+        }
+    }
+}
+
+impl From<LogLine> for LogLineDto {
+    fn from(l: LogLine) -> Self {
+        LogLineDto {
+            timestamp_iso: l.timestamp_iso,
+            level: l.level.into(),
+            source: l.source.into(),
+            message: l.message,
+        }
+    }
+}
+
+/// Return the current session-log snapshot for late subscribers / pane re-open
+/// (spec §3.3: "returns the current ring buffer (last N lines)").
+///
+/// **v0.0.1 reality (Codex integration round P1):** the `WinlinkBackend` trait
+/// exposes only `stream_log()` — a live `BoxStream<LogLine>` with NO history
+/// replay — and `PatBackend` forwards over a `tokio::broadcast` channel that
+/// retains no per-line history accessible to a synchronous snapshot call. There
+/// is therefore no ring buffer to read from yet, and at M2 the `AppBackend` is
+/// `None` regardless (the live bootstrap is stubbed — see `lib.rs` `.setup()`).
+///
+/// This command returns an EMPTY snapshot. The contract that matters for the
+/// integration round is satisfied: the invoke SUCCEEDS (no Tauri rejection), so
+/// `SessionLog.tsx` seeds cleanly with `[]` and the live tail continues via the
+/// `session_log:line` event stream. When a history ring buffer is added to the
+/// backend trait (a Task-15 follow-up), this command reads it; the `LogLineDto`
+/// projection above is already in place for that.
+///
+/// `state` is taken so the signature is forward-compatible (and so the absence
+/// of a backend is observable) even though the empty result does not depend on
+/// it today.
+#[tauri::command]
+pub async fn session_log_snapshot(
+    _state: State<'_, AppBackend>,
+) -> Result<Vec<LogLineDto>, UiError> {
+    // No history ring buffer in the v0.0.1 trait (see doc comment). Return an
+    // empty snapshot so the frontend seeds correctly; the event stream tails.
+    Ok(Vec::new())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1021,5 +1132,68 @@ mod tests {
             Some(StatusDto::Disconnected),
             "populated backend → Some(live status)"
         );
+    }
+
+    // ========================================================================
+    // Task 15 — session_log_snapshot DTO shape + projection (integration round)
+    // ========================================================================
+    use crate::winlink_backend::{LogLevel, LogLine, LogSource};
+
+    // LogLineDto serializes camelCase keys (timestampIso) with lowercase enum
+    // values, matching the TS LogLineDto in src/session/logProjection.ts so the
+    // frontend needs no rename layer.
+    #[test]
+    fn log_line_dto_serializes_camel_case_lowercase_enums() {
+        let dto = LogLineDto::from(LogLine {
+            timestamp_iso: "2026-05-19T00:00:00Z".into(),
+            level: LogLevel::Warn,
+            source: LogSource::Transport,
+            message: "*** Session started".into(),
+        });
+        let v = serde_json::to_value(&dto).unwrap();
+        assert_eq!(v["timestampIso"], "2026-05-19T00:00:00Z");
+        assert_eq!(v["level"], "warn");
+        assert_eq!(v["source"], "transport");
+        assert_eq!(v["message"], "*** Session started");
+        // No snake_case key leaks through.
+        assert!(v.get("timestamp_iso").is_none());
+    }
+
+    // Every LogLevel / LogSource variant maps to its lowercase wire string.
+    #[test]
+    fn log_level_and_source_variants_map_lowercase() {
+        for (level, expected) in [
+            (LogLevel::Trace, "trace"),
+            (LogLevel::Debug, "debug"),
+            (LogLevel::Info, "info"),
+            (LogLevel::Warn, "warn"),
+            (LogLevel::Error, "error"),
+        ] {
+            let v = serde_json::to_value(LogLevelDto::from(level)).unwrap();
+            assert_eq!(v, expected);
+        }
+        for (source, expected) in [
+            (LogSource::Backend, "backend"),
+            (LogSource::Pat, "pat"),
+            (LogSource::Transport, "transport"),
+            (LogSource::Wire, "wire"),
+        ] {
+            let v = serde_json::to_value(LogSourceDto::from(source)).unwrap();
+            assert_eq!(v, expected);
+        }
+    }
+
+    // session_log_snapshot returns an empty Vec when no backend / no history
+    // ring buffer (the v0.0.1 reality). The command takes State<'_, AppBackend>
+    // (needs a Tauri app), so the snapshot-shape contract is asserted directly:
+    // an empty Vec<LogLineDto> serializes to a JSON array, so the frontend's
+    // `invoke<LogLineDto[]>('session_log_snapshot')` resolves (no rejection) and
+    // seeds with []. The live IPC round-trip is the M2 smoke gate.
+    #[test]
+    fn session_log_snapshot_empty_is_a_json_array() {
+        let snapshot: Vec<LogLineDto> = Vec::new();
+        let v = serde_json::to_value(&snapshot).unwrap();
+        assert!(v.is_array(), "snapshot serializes as a JSON array");
+        assert_eq!(v.as_array().unwrap().len(), 0);
     }
 }

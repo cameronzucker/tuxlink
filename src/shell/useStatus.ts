@@ -74,7 +74,10 @@ export function formatConnectionState(
 
   switch (status.kind) {
     case 'Disconnected':
-      return 'Disconnected';
+      // Spec §5.6: connection state ALWAYS names the transport. The
+      // Disconnected variant carries no transport string of its own, so fall
+      // back to the configured transport (same source as the Idle label).
+      return `Disconnected · ${formatTransportLabel(configTransport)}`;
     case 'Connecting':
       return `Connecting · ${normalizeTransportLabel(status.transport)}`;
     case 'Connected': {

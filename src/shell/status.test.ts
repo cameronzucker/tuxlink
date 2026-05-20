@@ -76,10 +76,16 @@ describe('formatConnectionState — live BackendStatus', () => {
     expect(result).toContain('Connecting');
   });
 
-  it('returns Disconnected label when Disconnected', () => {
+  it('names the configured transport when Disconnected (spec §5.6: state always names transport)', () => {
     const status: StatusDto = { kind: 'Disconnected' };
     const result = formatConnectionState(status, 'CmsSsl');
-    expect(result).toBe('Disconnected');
+    expect(result).toBe('Disconnected · CMS-SSL');
+  });
+
+  it('names Telnet transport when Disconnected with Telnet configured', () => {
+    const status: StatusDto = { kind: 'Disconnected' };
+    const result = formatConnectionState(status, 'Telnet');
+    expect(result).toBe('Disconnected · Telnet');
   });
 
   it('returns Disconnecting label when Disconnecting', () => {
