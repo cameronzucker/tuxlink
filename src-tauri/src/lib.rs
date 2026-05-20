@@ -1,9 +1,11 @@
 pub mod app_backend;
+pub mod compose_window;
 pub mod config;
 pub mod menu;
 pub mod pat_client;
 pub mod pat_config;
 pub mod pat_process;
+pub mod tray;
 pub mod ui_commands;
 pub mod winlink_backend;
 pub mod wizard;
@@ -45,6 +47,12 @@ pub fn run() {
             app.set_menu(menu)?;
             crate::menu::wire_menu_events(app.handle());
 
+            // Install system tray icon + menu (tuxlink-rit / Task 8).
+            // Close-to-tray: window close button hides to tray; only
+            // File→Quit / tray→Quit / Ctrl+Q actually exit the process.
+            // This keeps the Pat child process alive mid-ARQ session.
+            crate::tray::install(app.handle())?;
+
             // Task 12 backend bootstrap — STUBBED in v0.0.1 (DONE_WITH_CONCERNS).
             //
             // The live path (spec §1.1 / §3.3) is: if a tuxlink config exists
@@ -70,6 +78,22 @@ pub fn run() {
             // (see PR body / handoff). The emit-per-LogLine glue is provided
             // by `crate::ui_commands` consumers once the backend exists.
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            // Task 8 — close-to-tray: intercept the window X / Alt-F4 path on
+            // the MAIN window and hide instead of closing. The process + Pat
+            // child stay alive.
+            // Only the Quit menu item (menu:file:quit / tray:quit) calls
+            // app.exit(0), which bypasses this handler entirely.
+            //
+            // Guard on "main" so Task 14's compose windows close normally (they
+            // need real close + unsaved-draft handling, not hide-to-tray).
+            if window.label() == "main" {
+                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+            }
         })
         .invoke_handler(tauri::generate_handler![
             greet,
