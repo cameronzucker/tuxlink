@@ -56,8 +56,33 @@ function uniqueJoin(addrs: string[]): string {
   return out.join('; ');
 }
 
+// The reader hides Winlink form payloads behind a placeholder and never shows
+// raw XML; a reply/forward must not expose or transmit it either (Codex P2).
+const FORM_QUOTE_PLACEHOLDER =
+  '[Winlink form — the original form content is not included in this draft.]';
+
+/// The text to quote/forward for a message: its body, EXCEPT for form messages
+/// whose body is raw XML — those substitute a safe placeholder so neither the
+/// reply quote nor the forward leaks/transmits the hidden payload.
+function quoteSource(message: ParsedMessage): string {
+  return message.isForm ? FORM_QUOTE_PLACEHOLDER : message.body;
+}
+
+/// A visible note for a forward that cannot carry the original attachments.
+/// v0.0.1 compose has no attachment-send path, so a forward silently dropping
+/// them would violate the project's "never silently drop user data" rule — we
+/// name them instead. Empty string when there are no attachments.
+function attachmentsOmittedNote(message: ParsedMessage): string {
+  if (message.attachments.length === 0) return '';
+  const n = message.attachments.length;
+  const names = message.attachments.map((a) => a.filename).join(', ');
+  return `\n\n[${n} attachment${n === 1 ? '' : 's'} from the original message ${
+    n === 1 ? 'was' : 'were'
+  } not carried into this forward (attachment forwarding arrives in v0.1): ${names}]`;
+}
+
 function replyBody(message: ParsedMessage): string {
-  const quoted = message.body
+  const quoted = quoteSource(message)
     .split('\n')
     .map((line) => `> ${line}`)
     .join('\n');
@@ -74,7 +99,7 @@ function forwardBody(message: ParsedMessage): string {
   ]
     .filter((l): l is string => l !== null)
     .join('\n');
-  return `\n\n${header}\n\n${message.body}\n`;
+  return `\n\n${header}\n\n${quoteSource(message)}\n${attachmentsOmittedNote(message)}`;
 }
 
 /// Pure: derive the To / Subject / Body prefill for a reply, reply-all, or
