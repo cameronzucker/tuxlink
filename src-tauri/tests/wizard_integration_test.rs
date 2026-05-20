@@ -2,13 +2,23 @@
 // Spec: docs/superpowers/specs/2026-05-18-onboarding-wizard-cluster-design.md §3.8
 // Plan: Phase 6 Task 6.1
 //
-// CI-only integration tests that require a real keyring backend (gnome-keyring-daemon
-// + dbus session bus). Run with:
-//   dbus-run-session -- cargo test --test wizard_integration_test --ignored
+// Integration tests that require a real keyring backend (gnome-keyring-daemon
+// + dbus session bus). They write to the freedesktop Secret Service.
+//
+// ⚠ SAFETY (tuxlink-cnd): these MUST run in a THROWAWAY HOME so gnome-keyring
+// uses a temp keyring dir — never the operator's real, cross-project-shared
+// login keyring (the 2026-05-20 incident re-keyed it irrecoverably). Every test
+// calls assert_keyring_isolated() first and FAILS CLOSED if HOME is not a
+// sandbox. Do NOT run them with a bare `dbus-run-session -- cargo test
+// --ignored` against your real HOME. Use the safe recipe:
+//   docs/pitfalls/testing-pitfalls.md → "Headless real-keyring integration tests"
+// In brief: HOME=$(mktemp -d), XDG_DATA_HOME under it, dbus-run-session, an
+// in-sandbox gnome-keyring-daemon --unlock with an EMPTY password, then
+//   cargo test --test wizard_integration_test --ignored
 //
 // All tests are #[ignore]d because they require a live secret-service D-Bus socket
 // (DBUS_SESSION_BUS_ADDRESS must be set + gnome-keyring-daemon must be running).
-// Normal `cargo test` skips them; CI runs them explicitly.
+// Normal `cargo test` skips them (but the SAFE unit test below always runs).
 //
 // Test cases per spec §3.8:
 // 1. Direct keyring round-trip: Entry::new + set_password + get_password at the
@@ -52,6 +62,125 @@ fn xdg_temp() -> XdgGuard {
     XdgGuard { prior, _tmp: tmp }
 }
 
+/// RAII guard for a single env var: sets (or unsets) it, restores the prior
+/// value on drop — even on panic. Used by the isolation-guard unit test so a
+/// failed assertion can't leak a fake HOME into other #[serial] tests.
+struct EnvGuard {
+    key: &'static str,
+    prior: Option<std::ffi::OsString>,
+}
+
+impl EnvGuard {
+    fn set(key: &'static str, val: impl AsRef<std::ffi::OsStr>) -> Self {
+        let prior = std::env::var_os(key);
+        unsafe { std::env::set_var(key, val) };
+        EnvGuard { key, prior }
+    }
+    fn unset(key: &'static str) -> Self {
+        let prior = std::env::var_os(key);
+        unsafe { std::env::remove_var(key) };
+        EnvGuard { key, prior }
+    }
+}
+
+impl Drop for EnvGuard {
+    fn drop(&mut self) {
+        match self.prior.take() {
+            Some(v) => unsafe { std::env::set_var(self.key, v) },
+            None => unsafe { std::env::remove_var(self.key) },
+        }
+    }
+}
+
+/// Resolve the directory the freedesktop Secret Service / gnome-keyring daemon
+/// would use for on-disk keyring storage, from the CURRENT process environment,
+/// per the XDG base-dir spec: `$XDG_DATA_HOME/keyrings`, else
+/// `$HOME/.local/share/keyrings`. Returns None when neither is set (treated as
+/// not-isolated by the guard below — fail closed).
+fn resolve_keyring_dir() -> Option<std::path::PathBuf> {
+    if let Some(data_home) = std::env::var_os("XDG_DATA_HOME") {
+        if !data_home.is_empty() {
+            return Some(std::path::Path::new(&data_home).join("keyrings"));
+        }
+    }
+    let home = std::env::var_os("HOME")?;
+    Some(std::path::Path::new(&home).join(".local/share/keyrings"))
+}
+
+/// True IFF the resolved keyring storage dir lives under the system temp dir —
+/// i.e., a throwaway sandbox HOME/XDG_DATA_HOME (`mktemp -d` lands under
+/// `std::env::temp_dir()`), NOT the operator's real `~/.local/share/keyrings`.
+/// `temp_dir()` is derived from `$TMPDIR`/`/tmp`, independent of `$HOME`, so a
+/// sandboxed env can't masquerade as real and vice-versa.
+fn keyring_is_isolated() -> bool {
+    match resolve_keyring_dir() {
+        Some(dir) => dir.starts_with(std::env::temp_dir()),
+        None => false,
+    }
+}
+
+/// Fail the test CLOSED unless the keyring resolves to a throwaway sandbox dir.
+/// MUST be called first in every real-keyring test, before any keyring op, so a
+/// mis-invoked run aborts BEFORE it can write to the operator's real,
+/// cross-project-shared login keyring (tuxlink-cnd; the 2026-05-20 incident).
+fn assert_keyring_isolated() {
+    assert!(
+        keyring_is_isolated(),
+        "REFUSING to run real-keyring test: keyring would resolve to {:?}, which is NOT under the \
+         system temp dir ({:?}). These tests write to the freedesktop Secret Service and MUST run in \
+         a throwaway HOME so gnome-keyring uses a temp keyring dir — otherwise they write to the \
+         operator's REAL, cross-project-shared login keyring. Run via the safe recipe in \
+         docs/pitfalls/testing-pitfalls.md (\"Headless real-keyring integration tests\"): \
+         throwaway HOME + XDG_DATA_HOME under it + dbus-run-session + an in-sandbox \
+         gnome-keyring-daemon.",
+        resolve_keyring_dir(),
+        std::env::temp_dir(),
+    );
+}
+
+// ──────────────────────────────────────────────────────────────
+// SAFE unit test (NOT #[ignore]d) — the tuxlink-cnd regression guard.
+// Touches NO Secret Service: pure env + path logic, so it runs in normal
+// `cargo test`/CI. If assert_keyring_isolated ever stops rejecting an
+// un-isolated (real-HOME) environment, this fails here — long before any
+// real keyring could be touched by the #[ignore]d integration tests below.
+// ──────────────────────────────────────────────────────────────
+
+#[test]
+#[serial]
+fn keyring_isolation_guard_detects_sandbox_vs_real_home() {
+    // (1) A throwaway XDG_DATA_HOME under the system temp dir → ISOLATED.
+    let tmp = tempfile::tempdir().expect("must create tempdir");
+    {
+        let _data = EnvGuard::set("XDG_DATA_HOME", tmp.path());
+        assert!(
+            keyring_is_isolated(),
+            "a throwaway XDG_DATA_HOME under {:?} must read as isolated; resolved {:?}",
+            std::env::temp_dir(),
+            resolve_keyring_dir(),
+        );
+    }
+
+    // (2) A realistic operator HOME (NOT under temp), XDG_DATA_HOME unset → the
+    //     ~/.local/share/keyrings fallback path → NOT isolated (fail closed).
+    {
+        let _data = EnvGuard::unset("XDG_DATA_HOME");
+        let _home = EnvGuard::set("HOME", "/home/operator-not-a-sandbox");
+        assert!(
+            !keyring_is_isolated(),
+            "a real (non-temp) HOME must read as NOT isolated so the guard fails closed",
+        );
+        // The hard guard must PANIC on the un-isolated case (the abort that
+        // prevents a real-keyring write).
+        let panicked =
+            std::panic::catch_unwind(assert_keyring_isolated).is_err();
+        assert!(
+            panicked,
+            "assert_keyring_isolated must panic when the keyring is not isolated",
+        );
+    }
+}
+
 /// Skip the test if DBUS_SESSION_BUS_ADDRESS is not set (real keyring unavailable).
 /// Returns true if the skip was triggered (caller should return immediately).
 fn skip_if_no_session_bus() -> bool {
@@ -82,6 +211,7 @@ fn skip_if_no_session_bus() -> bool {
 #[serial]
 async fn integration_keyring_round_trip_at_tuxlink_pat_account_shape() {
     if skip_if_no_session_bus() { return; }
+    assert_keyring_isolated();
 
     let callsign = "TUXTEST1";
     let password = "integration-test-password-do-not-use-in-production";
@@ -120,6 +250,7 @@ async fn integration_keyring_round_trip_at_tuxlink_pat_account_shape() {
 #[serial]
 async fn integration_persist_cms_happy_path_real_keyring() {
     if skip_if_no_session_bus() { return; }
+    assert_keyring_isolated();
     let _xdg = xdg_temp();
 
     let callsign = "INTTEST2";
@@ -200,6 +331,7 @@ async fn integration_persist_cms_happy_path_real_keyring() {
 #[serial]
 async fn integration_snapshot_and_restore_on_config_write_failure() {
     if skip_if_no_session_bus() { return; }
+    assert_keyring_isolated();
 
     let callsign = "INTTEST3";
     let original = "original-password";
