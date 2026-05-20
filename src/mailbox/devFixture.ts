@@ -16,8 +16,15 @@
 
 import type { MailboxFolder, MessageMeta, ParsedMessage } from './types';
 
-/** True only under the live vite dev server. */
-export const DEV_FIXTURE = import.meta.env.MODE === 'development';
+/**
+ * True only under the live vite dev server, AND only when the live-backend
+ * smoke escape hatch is NOT set. Set `VITE_TUXLINK_LIVE=1` before `pnpm tauri
+ * dev` to force the fixture OFF so the real Pat bootstrap (tuxlink-22l) drives
+ * the mailbox / status / session-log — i.e. an end-to-end live smoke without a
+ * production build. Unset (the default) keeps the fixture ON for design work.
+ */
+export const DEV_FIXTURE =
+  import.meta.env.MODE === 'development' && !import.meta.env.VITE_TUXLINK_LIVE;
 
 // --- dates RELATIVE to now so formatRowDate renders the mock's labels
 // ("12:18" today, "Yesterday", "N days ago") whenever run. ---
