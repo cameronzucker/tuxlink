@@ -31,6 +31,7 @@ use tauri::State;
 
 use crate::app_backend::AppBackend;
 use crate::config::{self, CmsTransport, GpsState, PositionPrecision};
+use crate::session_log::SessionLogState;
 use crate::winlink_backend::{
     BackendError, BackendStatus, LogLevel, LogLine, LogSource, MailboxFolder, MessageId,
     MessageMeta, OutboundMessage,
@@ -747,9 +748,15 @@ pub async fn backend_status(state: State<'_, AppBackend>) -> Result<Option<Statu
 /// (`timestampIso`) and the enum values serialize as lowercase strings
 /// (`'trace'|'debug'|'info'|'warn'|'error'`, `'backend'|'pat'|'transport'|
 /// 'wire'`) so the TS model needs no rename/translation layer.
+///
+/// `seq` is the monotonic sequence number from `SessionLogState`. The frontend
+/// uses it as a cursor for snapshot-then-tail deduplication (adrev #4): seed
+/// from `session_log_snapshot`, record the last `seq`, then filter live events
+/// by `seq > last_seen_seq` to close the subscribe-before-listen window.
 #[derive(Debug, Serialize, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct LogLineDto {
+    pub seq: u64,
     pub timestamp_iso: String,
     pub level: LogLevelDto,
     pub source: LogSourceDto,
@@ -807,6 +814,7 @@ impl From<LogSource> for LogSourceDto {
 impl From<LogLine> for LogLineDto {
     fn from(l: LogLine) -> Self {
         LogLineDto {
+            seq: l.seq,
             timestamp_iso: l.timestamp_iso,
             level: l.level.into(),
             source: l.source.into(),
@@ -816,32 +824,27 @@ impl From<LogLine> for LogLineDto {
 }
 
 /// Return the current session-log snapshot for late subscribers / pane re-open
-/// (spec §3.3: "returns the current ring buffer (last N lines)").
+/// (spec §3.3 / §11.1: "returns the current ring buffer (last N lines)").
 ///
-/// **v0.0.1 reality (Codex integration round P1):** the `WinlinkBackend` trait
-/// exposes only `stream_log()` — a live `BoxStream<LogLine>` with NO history
-/// replay — and `PatBackend` forwards over a `tokio::broadcast` channel that
-/// retains no per-line history accessible to a synchronous snapshot call. There
-/// is therefore no ring buffer to read from yet, and at M2 the `AppBackend` is
-/// `None` regardless (the live bootstrap is stubbed — see `lib.rs` `.setup()`).
+/// Reads the durable `SessionLogState` ring buffer managed by the app.
+/// Each line carries a monotonic `seq` so the frontend can implement
+/// snapshot-then-tail without losing lines in the subscribe-before-listen
+/// window (adrev #1, #2, #3):
 ///
-/// This command returns an EMPTY snapshot. The contract that matters for the
-/// integration round is satisfied: the invoke SUCCEEDS (no Tauri rejection), so
-/// `SessionLog.tsx` seeds cleanly with `[]` and the live tail continues via the
-/// `session_log:line` event stream. When a history ring buffer is added to the
-/// backend trait (a Task-15 follow-up), this command reads it; the `LogLineDto`
-/// projection above is already in place for that.
+///   1. Call `session_log_snapshot` → seed the pane, record `last_seq`.
+///   2. Listen on `session_log:line` events.
+///   3. On each event, only display lines with `seq > last_seq` to close
+///      the gap and de-duplicate (adrev #4: timestamp collisions possible).
 ///
-/// `state` is taken so the signature is forward-compatible (and so the absence
-/// of a backend is observable) even though the empty result does not depend on
-/// it today.
+/// Task D (the drain task in `lib.rs`) manages the `SessionLogState` and
+/// calls `append` before broadcasting. Until Task D is wired, the managed
+/// state starts empty (cap 500) and this command returns `[]` — the same
+/// contract as before, now future-proof.
 #[tauri::command]
 pub async fn session_log_snapshot(
-    _state: State<'_, AppBackend>,
+    state: State<'_, SessionLogState>,
 ) -> Result<Vec<LogLineDto>, UiError> {
-    // No history ring buffer in the v0.0.1 trait (see doc comment). Return an
-    // empty snapshot so the frontend seeds correctly; the event stream tails.
-    Ok(Vec::new())
+    Ok(state.snapshot().into_iter().map(LogLineDto::from).collect())
 }
 
 #[cfg(test)]
@@ -1145,6 +1148,7 @@ mod tests {
     #[test]
     fn log_line_dto_serializes_camel_case_lowercase_enums() {
         let dto = LogLineDto::from(LogLine {
+            seq: 0,
             timestamp_iso: "2026-05-19T00:00:00Z".into(),
             level: LogLevel::Warn,
             source: LogSource::Transport,
@@ -1183,17 +1187,60 @@ mod tests {
         }
     }
 
-    // session_log_snapshot returns an empty Vec when no backend / no history
-    // ring buffer (the v0.0.1 reality). The command takes State<'_, AppBackend>
-    // (needs a Tauri app), so the snapshot-shape contract is asserted directly:
-    // an empty Vec<LogLineDto> serializes to a JSON array, so the frontend's
-    // `invoke<LogLineDto[]>('session_log_snapshot')` resolves (no rejection) and
-    // seeds with []. The live IPC round-trip is the M2 smoke gate.
+    // ========================================================================
+    // Task A (tuxlink-22l) — session_log_snapshot projection via SessionLogState
+    // ========================================================================
+    use crate::session_log::SessionLogState;
+
+    // Empty buffer → empty JSON array (the v0.0.1 / no-lines-yet path).
+    // The frontend's `invoke<LogLineDto[]>('session_log_snapshot')` must
+    // resolve (no rejection) and seed with [] when no lines exist yet.
     #[test]
     fn session_log_snapshot_empty_is_a_json_array() {
-        let snapshot: Vec<LogLineDto> = Vec::new();
+        let ring = SessionLogState::new(8);
+        let snapshot: Vec<LogLineDto> = ring.snapshot().into_iter().map(LogLineDto::from).collect();
         let v = serde_json::to_value(&snapshot).unwrap();
         assert!(v.is_array(), "snapshot serializes as a JSON array");
         assert_eq!(v.as_array().unwrap().len(), 0);
+    }
+
+    // Appended lines project to LogLineDto with correct seq, message, and
+    // camelCase serialization. This verifies the projection logic used by
+    // `session_log_snapshot` without requiring a live Tauri runtime.
+    #[test]
+    fn session_log_snapshot_projects_seq_and_message_order() {
+        let ring = SessionLogState::new(8);
+        ring.append(LogLine {
+            seq: 0,
+            timestamp_iso: "2026-05-20T00:00:01Z".into(),
+            level: LogLevel::Info,
+            source: LogSource::Pat,
+            message: "Pat HTTP server ready".into(),
+        });
+        ring.append(LogLine {
+            seq: 0,
+            timestamp_iso: "2026-05-20T00:00:02Z".into(),
+            level: LogLevel::Warn,
+            source: LogSource::Backend,
+            message: "CMS connection timeout".into(),
+        });
+
+        let dtos: Vec<LogLineDto> =
+            ring.snapshot().into_iter().map(LogLineDto::from).collect();
+
+        assert_eq!(dtos.len(), 2, "both appended lines project to DTOs");
+        assert_eq!(dtos[0].seq, 1, "first line gets seq=1");
+        assert_eq!(dtos[0].message, "Pat HTTP server ready");
+        assert_eq!(dtos[0].source, LogSourceDto::Pat);
+        assert_eq!(dtos[1].seq, 2, "second line gets seq=2");
+        assert_eq!(dtos[1].message, "CMS connection timeout");
+        assert_eq!(dtos[1].source, LogSourceDto::Backend);
+
+        // Verify camelCase wire shape (the frontend LogLineDto TS type reads
+        // `seq` + `timestampIso`, not `timestamp_iso`).
+        let v = serde_json::to_value(&dtos[0]).unwrap();
+        assert_eq!(v["seq"], 1);
+        assert_eq!(v["timestampIso"], "2026-05-20T00:00:01Z");
+        assert!(v.get("timestamp_iso").is_none(), "no snake_case key on wire");
     }
 }

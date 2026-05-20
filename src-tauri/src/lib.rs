@@ -5,6 +5,7 @@ pub mod menu;
 pub mod pat_client;
 pub mod pat_config;
 pub mod pat_process;
+pub mod session_log;
 pub mod tray;
 pub mod ui_commands;
 pub mod winlink_backend;
@@ -60,6 +61,12 @@ pub fn run() {
         // `mailbox_list` returns `NotConfigured`, which the UI renders as the
         // "not connected" empty state (NOT an error).
         .manage(crate::app_backend::AppBackend::new())
+        // Task A (tuxlink-22l): durable session-log ring buffer. The bridge
+        // (Task D) appends here AND broadcasts on `session_log:line`; this
+        // managed state lets `session_log_snapshot` serve late-mounting UIs
+        // without losing Pat's startup lines (spec §11.1 / adrev #1,#2,#3).
+        // Cap 500: ≈ one extended Pat CMS session's worth of log lines.
+        .manage(crate::session_log::SessionLogState::new(500))
         .setup(|app| {
             // Build the native OS menu bar (tuxlink-6vi / Task 7) and wire
             // its events to Tauri IPC so the React frontend can listen on

@@ -160,6 +160,11 @@ pub enum BackendStatus {
 /// Backend log line emitted via `stream_log()`.
 #[derive(Debug, Clone)]
 pub struct LogLine {
+    /// Monotonic sequence number assigned by `SessionLogState::append`.
+    /// 0 means "not yet assigned" (pre-append). The bridge writes to the
+    /// `SessionLogState` buffer first; `seq` is set by `append`, never
+    /// by the bridge or callers directly.
+    pub seq: u64,
     pub timestamp_iso: String,
     pub level: LogLevel,
     pub source: LogSource,

@@ -245,6 +245,7 @@ async fn test_log_stream_emits_lines_and_handles_drop() {
     // Push 3 events; subscriber should receive them in order.
     for i in 0..3 {
         let n = backend.push_log_line_for_test(LogLine {
+            seq: 0,
             timestamp_iso: format!("2026-05-18T00:00:0{i}Z"),
             level: LogLevel::Info,
             source: LogSource::Pat,
@@ -272,6 +273,7 @@ async fn test_log_stream_emits_lines_and_handles_drop() {
     // Drop the stream; backend continues running (no panic on dropped recv).
     drop(stream);
     let _ = backend.push_log_line_for_test(LogLine {
+        seq: 0,
         timestamp_iso: "2026-05-18T00:00:99Z".to_string(),
         level: LogLevel::Info,
         source: LogSource::Pat,
