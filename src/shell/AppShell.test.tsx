@@ -5,17 +5,18 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { MailboxFolder, MessageMeta } from '../mailbox/types';
 
 // ---------------------------------------------------------------------------
-// Tauri IPC mocks. The Mock D shell mounts the tab strip, the list, the reader
-// (useMessage → message_read), and the status bar (useStatusData → config_read
-// + backend_status). Stub the IPC so the shell mounts under jsdom. The `menu`
-// listener is captured (via vi.hoisted) so tests can fire View-menu events.
+// Tauri IPC mocks. The Mock B shell mounts the dashboard ribbon + status bar
+// (useStatusData → config_read/backend_status), the sidebar, the list, the
+// reader (useMessage → message_read), and the human session log
+// (session_log_snapshot + listen). Stub the IPC so the shell mounts in jsdom.
+// The `menu` listener is captured (vi.hoisted) so tests can fire View events.
 // ---------------------------------------------------------------------------
 const h = vi.hoisted(() => ({ menuHandler: null as null | ((e: { payload: string }) => void) }));
 
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: vi.fn(async (cmd: string) => {
-    if (cmd === 'config_read') return null; // status bar shows just the state word
-    if (cmd === 'backend_status') return null; // null → "Idle"
+    if (cmd === 'config_read') return null;
+    if (cmd === 'backend_status') return null;
     if (cmd === 'session_log_snapshot') return [];
     if (cmd === 'message_read') {
       return {
@@ -46,8 +47,6 @@ vi.mock('@tauri-apps/api/window', () => ({
   getCurrentWindow: () => ({ label: 'main', setTitle: vi.fn(async () => {}) }),
 }));
 
-// Mock react-virtuoso so rows render in jsdom (the real Virtuoso emits no items
-// under jsdom). Renders every item synchronously.
 vi.mock('react-virtuoso', () => ({
   Virtuoso: ({
     data,
@@ -64,7 +63,6 @@ vi.mock('react-virtuoso', () => ({
   ),
 }));
 
-// Deterministic per-folder messages without a backend.
 const inboxMsgs: MessageMeta[] = [
   {
     id: 'INBOX1',
@@ -111,118 +109,93 @@ function renderShell() {
   );
 }
 
-describe('<AppShell> — Mock D topology', () => {
+describe('<AppShell> — Mock B topology', () => {
   beforeEach(() => {
     globalThis.localStorage?.clear?.();
     h.menuHandler = null;
   });
 
-  it('renders the Mock D regions: tab strip, list, reader, status bar', () => {
+  it('renders the Mock B regions: dashboard ribbon, sidebar, panes, session log, status bar', () => {
     renderShell();
     expect(screen.getByTestId('app-shell-root')).toBeInTheDocument();
-    expect(screen.getByTestId('tab-strip')).toBeInTheDocument();
+    expect(screen.getByTestId('dashboard-ribbon')).toBeInTheDocument();
+    expect(screen.getByTestId('folder-sidebar')).toBeInTheDocument();
     expect(screen.getByTestId('shell-panes')).toBeInTheDocument();
     expect(screen.getByTestId('rows-pane')).toBeInTheDocument();
+    expect(screen.getByTestId('session-log-root')).toBeInTheDocument(); // visible by default
     expect(screen.getByTestId('status-bar')).toBeInTheDocument();
-    // Reader shows the empty state until a message is selected.
     expect(screen.getByTestId('message-view-empty')).toBeInTheDocument();
   });
 
-  it('drops the synthesis chrome (no ribbon / sidebar / default session log / dock)', () => {
+  it('does NOT render a tab strip (Mock B uses the sidebar for folder nav)', () => {
     renderShell();
-    expect(screen.queryByTestId('dashboard-ribbon')).toBeNull();
-    expect(screen.queryByTestId('folder-sidebar')).toBeNull();
-    expect(screen.queryByTestId('region-sessionlog')).toBeNull();
+    expect(screen.queryByTestId('tab-strip')).toBeNull();
+  });
+
+  it('sidebar shows Inbox active + counts (Inbox unread, Sent total)', () => {
+    renderShell();
+    expect(screen.getByTestId('folder-inbox')).toHaveAttribute('aria-current', 'true');
+    expect(screen.getByTestId('folder-count-inbox')).toHaveTextContent('1'); // 1 unread
+    expect(screen.getByTestId('folder-count-sent')).toHaveTextContent('1'); // 1 total
+  });
+
+  it('selecting a row updates ONLY the reader and does not remount the shell', () => {
+    renderShell();
+    const shellBefore = screen.getByTestId('app-shell-root');
+    const sidebarBefore = screen.getByTestId('folder-sidebar');
+
+    fireEvent.click(screen.getByTestId('message-row-INBOX1'));
+
+    expect(screen.queryByTestId('message-view-empty')).not.toBeInTheDocument();
+    expect(screen.getByTestId('app-shell-root')).toBe(shellBefore);
+    expect(screen.getByTestId('folder-sidebar')).toBe(sidebarBefore);
+    expect(screen.getByTestId('virtuoso-mock')).toBeInTheDocument();
+  });
+
+  it('selecting a different folder resets the message selection and swaps the list', () => {
+    renderShell();
+    fireEvent.click(screen.getByTestId('message-row-INBOX1'));
+    expect(screen.queryByTestId('message-view-empty')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('folder-sent'));
+    expect(screen.getByTestId('message-view-empty')).toBeInTheDocument();
+    expect(screen.getByTestId('folder-sent')).toHaveAttribute('aria-current', 'true');
+    expect(screen.getByTestId('message-row-SENT1')).toBeInTheDocument();
+    expect(screen.queryByTestId('message-row-INBOX1')).not.toBeInTheDocument();
+  });
+
+  it('View → Session Log toggles the (default-visible) session log', async () => {
+    renderShell();
+    expect(screen.getByTestId('session-log-root')).toBeInTheDocument();
+    await act(async () => {
+      h.menuHandler?.({ payload: 'menu:view:session_log' });
+    });
     expect(screen.queryByTestId('session-log-root')).toBeNull();
-    expect(screen.queryByTestId('region-dock-reserved')).toBeNull();
+    await act(async () => {
+      h.menuHandler?.({ payload: 'menu:view:session_log' });
+    });
+    expect(screen.getByTestId('session-log-root')).toBeInTheDocument();
   });
 
-  it('shows only Inbox + Sent tabs (mock literal), badge = unread count', () => {
+  it('View → Toggle Status Bar hides and shows the status bar', async () => {
     renderShell();
-    expect(screen.getByTestId('tab-inbox')).toBeInTheDocument();
-    expect(screen.getByTestId('tab-sent')).toBeInTheDocument();
-    // Outbox/Drafts are NOT tabs in the literal Mock D (reached via Mailbox menu).
-    expect(screen.queryByTestId('tab-outbox')).toBeNull();
-    expect(screen.queryByTestId('tab-drafts')).toBeNull();
-    // Inbox fixture msg is unread → badge "1"; Sent msg is read → 0 unread → no badge.
-    expect(screen.getByTestId('tab-count-inbox')).toHaveTextContent('1');
-    expect(screen.queryByTestId('tab-count-sent')).toBeNull();
+    expect(screen.getByTestId('status-bar')).toBeInTheDocument();
+    await act(async () => {
+      h.menuHandler?.({ payload: 'menu:view:status_bar' });
+    });
+    expect(screen.queryByTestId('status-bar')).toBeNull();
+    await act(async () => {
+      h.menuHandler?.({ payload: 'menu:view:status_bar' });
+    });
+    expect(screen.getByTestId('status-bar')).toBeInTheDocument();
   });
 
-  it('the Mailbox menu switches folders (Outbox/Sent have no-or-one tab)', async () => {
+  it('the Mailbox menu switches folders', async () => {
     renderShell();
     await act(async () => {
       h.menuHandler?.({ payload: 'menu:mailbox:sent' });
     });
     expect(screen.getByTestId('message-row-SENT1')).toBeInTheDocument();
     expect(screen.queryByTestId('message-row-INBOX1')).not.toBeInTheDocument();
-  });
-
-  it('starts on the Inbox tab (active) with the reader showing the empty state', () => {
-    renderShell();
-    expect(screen.getByTestId('tab-inbox').className).toContain('active');
-    expect(screen.getByTestId('message-view-empty')).toHaveTextContent('Select a message to read.');
-  });
-
-  // Selecting a row updates selection state and does NOT remount the shell.
-  it('selecting a row updates ONLY the reader and does not remount the shell', () => {
-    renderShell();
-    const shellBefore = screen.getByTestId('app-shell-root');
-    const tabsBefore = screen.getByTestId('tab-strip');
-
-    fireEvent.click(screen.getByTestId('message-row-INBOX1'));
-
-    expect(screen.queryByTestId('message-view-empty')).not.toBeInTheDocument();
-    // Same DOM nodes — no remount/route.
-    expect(screen.getByTestId('app-shell-root')).toBe(shellBefore);
-    expect(screen.getByTestId('tab-strip')).toBe(tabsBefore);
-    expect(screen.getByTestId('virtuoso-mock')).toBeInTheDocument();
-  });
-
-  it('switching tabs resets the message selection and swaps the list', () => {
-    renderShell();
-    fireEvent.click(screen.getByTestId('message-row-INBOX1'));
-    expect(screen.queryByTestId('message-view-empty')).not.toBeInTheDocument();
-
-    fireEvent.click(screen.getByTestId('tab-sent'));
-    expect(screen.getByTestId('message-view-empty')).toBeInTheDocument();
-    expect(screen.getByTestId('tab-sent').className).toContain('active');
-    expect(screen.getByTestId('message-row-SENT1')).toBeInTheDocument();
-    expect(screen.queryByTestId('message-row-INBOX1')).not.toBeInTheDocument();
-    expect(screen.getByTestId('app-shell-root')).toBeInTheDocument();
-  });
-
-  // View → Session Log (menu:view:session_log) toggles the bottom log strip,
-  // which is hidden by default in Mock D.
-  it('View → Session Log toggles the (default-hidden) session log strip', async () => {
-    renderShell();
-    expect(screen.queryByTestId('region-sessionlog')).toBeNull();
-
-    await act(async () => {
-      h.menuHandler?.({ payload: 'menu:view:session_log' });
-    });
-    expect(screen.getByTestId('region-sessionlog')).toBeInTheDocument();
-    expect(screen.getByTestId('session-log-root')).toBeInTheDocument();
-
-    await act(async () => {
-      h.menuHandler?.({ payload: 'menu:view:session_log' });
-    });
-    expect(screen.queryByTestId('region-sessionlog')).toBeNull();
-  });
-
-  // View → Toggle Status Bar (menu:view:status_bar) hides/shows the status bar.
-  it('View → Toggle Status Bar hides and shows the status bar', async () => {
-    renderShell();
-    expect(screen.getByTestId('status-bar')).toBeInTheDocument();
-
-    await act(async () => {
-      h.menuHandler?.({ payload: 'menu:view:status_bar' });
-    });
-    expect(screen.queryByTestId('status-bar')).toBeNull();
-
-    await act(async () => {
-      h.menuHandler?.({ payload: 'menu:view:status_bar' });
-    });
-    expect(screen.getByTestId('status-bar')).toBeInTheDocument();
   });
 });

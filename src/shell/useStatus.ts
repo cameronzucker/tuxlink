@@ -16,6 +16,7 @@
 
 import { useEffect, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { DEV_FIXTURE, DEV_CALLSIGN, DEV_GRID } from '../mailbox/devFixture';
 
 // ============================================================================
 // DTOs — mirror the Rust command serialization shapes (spec §3.2)
@@ -214,6 +215,7 @@ export function useStatusData(): StatusBarData {
   const [status, setStatus] = useState<StatusDto | null>(null);
 
   useEffect(() => {
+    if (DEV_FIXTURE) return; // dev fixture supplies fixed config; don't poll
     let mounted = true;
     const load = () => {
       invoke<ConfigViewDto>('config_read')
@@ -233,6 +235,7 @@ export function useStatusData(): StatusBarData {
   }, []);
 
   useEffect(() => {
+    if (DEV_FIXTURE) return; // dev fixture is always "Idle"; don't poll
     let mounted = true;
     const load = () => {
       invoke<StatusDto | null>('backend_status')
@@ -250,6 +253,17 @@ export function useStatusData(): StatusBarData {
       clearInterval(id);
     };
   }, []);
+
+  // Dev fixture: report the mock's fixed station (W4PHS · EM75xx · Idle) so the
+  // status bar + window title reproduce the mock instead of the live config.
+  if (DEV_FIXTURE) {
+    return {
+      callsign: DEV_CALLSIGN,
+      grid: DEV_GRID,
+      gridTooltip: null,
+      state: { label: 'Idle', tone: 'idle' },
+    };
+  }
 
   const callsign = config
     ? formatCallsign({

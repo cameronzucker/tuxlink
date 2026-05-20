@@ -1,43 +1,56 @@
-// Dev-only mailbox fixture (tuxlink-yd4).
+// Dev-only mailbox fixture (the approved design is Mock B — principles-faithful).
 //
 // v0.0.1 ships with the live Pat backend STUBBED (AppBackend = None →
 // mailbox_list returns NotConfigured → empty states), so the rows + reading
-// pane can't be SEEN in the real app without sample data. This module supplies
-// realistic Winlink content — deliberately the SAME content as the approved
-// Mock D so a `grim` screenshot of the dev app is directly comparable to
-// docs/design/mockups/images/mock-d-mailapp-minimal.png.
+// pane + dashboard + session log can't be SEEN without sample data. This module
+// supplies the EXACT content of the approved Mock B so a `grim` screenshot
+// reproduces docs/design/mockups/images/mock-b-principles-faithful.png.
 //
-// ACTIVATION: gated on `import.meta.env.MODE === 'development'`, which is:
-//   - 'development' under the `vite` dev server  → fixture ON (validation)
-//   - 'test'        under vitest                 → fixture OFF (no test pollution)
-//   - 'production'  under `vite build`/`tauri build` → fixture OFF + tree-shaken
-// So this never ships in a release and never affects the test suite.
+// ACTIVATION: gated on `import.meta.env.MODE === 'development'`:
+//   - 'development' under `vite` dev server  → fixture ON (validation)
+//   - 'test'        under vitest             → fixture OFF (no test pollution)
+//   - 'production'  under `vite build`       → fixture OFF + tree-shaken
 //
 // When tuxlink-22l lands the live PatBackend, the fixture stays dormant (it only
-// fills in when the backend yields nothing); refine the gate then if a dev wants
-// to see real empty states.
+// fills in when the backend yields nothing).
 
 import type { MailboxFolder, MessageMeta, ParsedMessage } from './types';
 
-/** True only under the live vite dev server (see module header). */
+/** True only under the live vite dev server. */
 export const DEV_FIXTURE = import.meta.env.MODE === 'development';
 
-// --- date helpers: dates RELATIVE to now so formatRowDate renders the mock's
-// relative labels ("12:18Z" today, "Yesterday", "N days ago") whenever run. ---
+// --- dates RELATIVE to now so formatRowDate renders the mock's labels
+// ("12:18" today, "Yesterday", "N days ago") whenever run. ---
 const DAY_MS = 24 * 60 * 60 * 1000;
-
-/** ISO for today (UTC) at HH:MM. */
 function todayAt(h: number, m: number): string {
   const n = new Date();
   return new Date(Date.UTC(n.getUTCFullYear(), n.getUTCMonth(), n.getUTCDate(), h, m, 0)).toISOString();
 }
-/** ISO for `days` ago (UTC) at HH:MM. */
 function daysAgoAt(days: number, h: number, m: number): string {
-  const t = todayAt(h, m);
-  return new Date(new Date(t).getTime() - days * DAY_MS).toISOString();
+  return new Date(new Date(todayAt(h, m)).getTime() - days * DAY_MS).toISOString();
 }
 
-/** Inbox fixture — mirrors the Mock D inbox rows (content + ordering). */
+// --- Dashboard ribbon + status-bar strings (mock B values) ---
+export const DEV_CALLSIGN = 'W4PHS';
+export const DEV_GRID = 'EM75xx';
+export const DEV_POSITION = 'GPS · 35.05° -90.04°';
+export const DEV_CONNECTION_DASH = 'Idle · telnet ready'; // dashboard Connection
+export const DEV_CONNECTION_STATUS = 'Telnet ready'; // status-bar (good dot)
+
+/** Human session-log steps (mock B), shown by the SessionLog in dev. */
+export interface DevLogStep {
+  ts: string;
+  message: string;
+  ok?: boolean;
+}
+export const DEV_SESSION_LINES: DevLogStep[] = [
+  { ts: '14:32:14', message: 'Connecting to Winlink CMS via telnet…' },
+  { ts: '14:32:15', message: 'Connected to CMS gateway 1235-2.cms.winlink.org' },
+  { ts: '14:32:18', message: 'Receiving message 4 of 4 from WX4MTL@winlink.org' },
+  { ts: '14:32:19', message: 'Session complete · 4 received · 1 sent · 7s', ok: true },
+];
+
+/** Inbox fixture — the Mock B inbox rows (7), content + ordering byte-for-byte. */
 export const DEV_INBOX: MessageMeta[] = [
   {
     id: 'DEV-1',
@@ -49,7 +62,7 @@ export const DEV_INBOX: MessageMeta[] = [
     bodySize: 2458,
     hasAttachments: false,
     preview:
-      'NWS Memphis has issued a severe thunderstorm watch for Shelby, Tipton, and Fayette counties, effective 18:00Z…',
+      'NWS Memphis has issued a severe thunderstorm watch for Shelby, Tipton, and Fayette counties…',
   },
   {
     id: 'DEV-2',
@@ -60,8 +73,7 @@ export const DEV_INBOX: MessageMeta[] = [
     unread: true,
     bodySize: 1229,
     hasAttachments: false,
-    preview:
-      'Roll call for Saturday’s training net. Please reply with QSL and your assigned net number (1-47)…',
+    preview: 'Roll call for Saturday\'s training net. Please reply with QSL and your assigned net number…',
   },
   {
     id: 'DEV-3',
@@ -84,8 +96,7 @@ export const DEV_INBOX: MessageMeta[] = [
     unread: false,
     bodySize: 412,
     hasAttachments: false,
-    preview:
-      'Welcome to Winlink. Your test message was received at 2026-05-17 14:32:18 UTC and processed by gateway 1235-2…',
+    preview: 'Welcome to Winlink. Your test message was received at 2026-05-17 14:32:18 UTC…',
   },
   {
     id: 'DEV-5',
@@ -96,7 +107,7 @@ export const DEV_INBOX: MessageMeta[] = [
     unread: false,
     bodySize: 340,
     hasAttachments: false,
-    preview: '20m looks marginal but 40m should open up around 02Z. I’ll be on 7.103 LSB calling CQ DX…',
+    preview: '20m looks marginal but 40m should open up around 02Z. I\'ll be on 7.103…',
   },
   {
     id: 'DEV-6',
@@ -107,8 +118,7 @@ export const DEV_INBOX: MessageMeta[] = [
     unread: false,
     bodySize: 1638,
     hasAttachments: false,
-    preview:
-      'Welfare check requested by family in Toronto. Subject is at 1245 Brevard Ave, Cocoa, FL. Phone offline since…',
+    preview: 'Welfare check requested by family in Toronto. Subject is at 1245 Brevard Ave, Cocoa…',
   },
   {
     id: 'DEV-7',
@@ -119,37 +129,13 @@ export const DEV_INBOX: MessageMeta[] = [
     unread: false,
     bodySize: 220,
     hasAttachments: false,
-    preview:
-      '35.2851N 117.9742W · 2300 ft · resupply at Kennedy Meadows tomorrow morning then 8 more days to Sonora…',
-  },
-  {
-    id: 'DEV-8',
-    from: 'SYSTEM@winlink.org',
-    to: ['W4PHS@winlink.org'],
-    subject: 'Account password expires in 14 days',
-    date: daysAgoAt(3, 8, 0),
-    unread: false,
-    bodySize: 380,
-    hasAttachments: false,
-    preview:
-      'Your Winlink CMS password will expire on 2026-05-31. Reset at https://winlink.org/user before that date…',
-  },
-  {
-    id: 'DEV-9',
-    from: 'K0SWE@winlink.org',
-    to: ['W4PHS@winlink.org'],
-    subject: 'Field day scheduling — Sat 13-15 local',
-    date: daysAgoAt(4, 14, 10),
-    unread: false,
-    bodySize: 720,
-    hasAttachments: false,
-    preview:
-      'Final field day prep: Sat 0900-1700 setup, 1300-1500 contesting block. Bring antenna analyzer if you have one…',
+    preview: '35.2851N 117.9742W · 2300 ft · resupply at Kennedy Meadows tomorrow…',
   },
 ];
 
-/** Sent fixture — a couple of outbound messages for the Sent tab. */
-export const DEV_SENT: MessageMeta[] = [
+// Sent fixture — the sidebar "Sent" nav-item shows the folder TOTAL (mock: 87),
+// so the fixture carries 87 messages (only the count is visible in the mock).
+const SENT_BASE: MessageMeta[] = [
   {
     id: 'DEV-S1',
     from: 'W4PHS@winlink.org',
@@ -173,15 +159,49 @@ export const DEV_SENT: MessageMeta[] = [
     preview: 'Net control, W4PHS checking in, assigned net number 12. QSL, no traffic. 73…',
   },
 ];
+function buildSent(total: number): MessageMeta[] {
+  const out = [...SENT_BASE];
+  for (let i = out.length; i < total; i++) {
+    out.push({
+      id: `DEV-S${i + 1}`,
+      from: 'W4PHS@winlink.org',
+      to: ['SERVICE@winlink.org'],
+      subject: `Outbound message ${i + 1}`,
+      date: daysAgoAt(2 + (i % 45), 9, (i * 7) % 60),
+      unread: false,
+      bodySize: 300 + ((i * 37) % 600),
+      hasAttachments: false,
+      preview: 'Sent message.',
+    });
+  }
+  return out;
+}
+export const DEV_SENT: MessageMeta[] = buildSent(87);
 
-// Parsed bodies keyed by message id (reading pane). The selected DEV-2 body is
-// the mock's verbatim K0SWE roll-call so the grim shot matches the mock pane.
-// `fromDisplay` is the RFC5322 display name; devMessageFor renders the parsed
-// `from` as "Name <addr>" so the reading pane shows "addr · Name" like the mock.
+// Parsed bodies (reading pane). The selected DEV-3 is the ICS-213 form message
+// the mock shows open. `fromDisplay` → reading pane renders "addr · Name".
+// `formKind` → the "Form" metadata row label.
 const BODIES: Record<
   string,
-  { body: string; isForm?: boolean; routing?: string | null; fromDisplay?: string }
+  {
+    body: string;
+    isForm?: boolean;
+    routing?: string | null;
+    fromDisplay?: string;
+    formKind?: string;
+    formCode?: string;
+    formPayloadBytes?: number;
+  }
 > = {
+  'DEV-3': {
+    fromDisplay: 'Maria / Incident Commander',
+    body: '',
+    isForm: true,
+    formKind: 'ICS-213 · General Message',
+    formCode: 'ICS213',
+    formPayloadBytes: 980,
+    routing: 'CMS via 1235-2.cms.winlink.org',
+  },
   'DEV-2': {
     fromDisplay: 'Mike / Net Control',
     body: `All TRI-STATE-NET stations,
@@ -189,18 +209,6 @@ const BODIES: Record<
 Saturday training net at 20:46Z on 7.235 MHz LSB.
 Backup: 7.103 MHz LSB. Tertiary: 3.943 MHz LSB (after
 local sunset).
-
-Please reply to this message with:
-  - Your callsign and assigned net number (1-47)
-  - QSL or QRX (will-be-late) status
-  - Any traffic to be passed during the net
-
-Roll call begins promptly at 20:50Z. Late check-ins
-accepted until 21:15Z, then we move to traffic.
-
-Stations with prior commitments — please QRX in your
-reply with anticipated check-in time. We'll hold a
-slot.
 
 73,
 Mike / K0SWE
@@ -215,17 +223,9 @@ NWS Memphis has issued a severe thunderstorm watch for
 Shelby, Tipton, and Fayette counties, effective 18:00Z
 through 22:00Z today.
 
-ARES net activation at 17:45Z on 146.940 MHz (-) PL 100.0.
-
 73,
 James / WX4MTL
 EC Shelby County ARES`,
-    routing: 'CMS via 1235-2.cms.winlink.org',
-  },
-  'DEV-3': {
-    fromDisplay: 'Maria / Incident Commander',
-    body: '',
-    isForm: true,
     routing: 'CMS via 1235-2.cms.winlink.org',
   },
 };
@@ -242,6 +242,19 @@ export function devFixtureFor(folder: MailboxFolder): MessageMeta[] {
   return [];
 }
 
+/** Extra reading-pane fields the fixture carries that ParsedMessage doesn't
+ *  (the Mock B "Form" metadata row + form-attached box). Null outside dev. */
+export function devFormMeta(
+  id: string,
+): { formKind: string; formCode: string; payloadBytes: number } | null {
+  if (!DEV_FIXTURE) return null;
+  const b = BODIES[id];
+  if (b?.formKind) {
+    return { formKind: b.formKind, formCode: b.formCode ?? 'FORM', payloadBytes: b.formPayloadBytes ?? 0 };
+  }
+  return null;
+}
+
 /** A parsed message for the reading pane (null unless the fixture is active). */
 export function devMessageFor(id: string): ParsedMessage | null {
   if (!DEV_FIXTURE) return null;
@@ -256,12 +269,14 @@ export function devMessageFor(id: string): ParsedMessage | null {
     cc: [],
     date: meta.date,
     body: extra.body ?? meta.preview ?? '',
-    attachments: meta.hasAttachments ? [{ filename: 'attachment.bin', size: meta.bodySize }] : [],
+    attachments: meta.hasAttachments && !extra.isForm
+      ? [{ filename: 'attachment.bin', size: meta.bodySize }]
+      : [],
     isForm: extra.isForm ?? false,
     routing: extra.routing ?? null,
   };
 }
 
-/** Message the shell pre-selects in dev so the reading pane is visible for
- *  validation — DEV-2 (K0SWE), the message the mock shows open. */
-export const DEV_SELECTED = DEV_FIXTURE ? { folder: 'inbox' as MailboxFolder, id: 'DEV-2' } : null;
+/** Message the shell pre-selects in dev — DEV-3 (N5VSU / ICS-213), the message
+ *  Mock B shows open. */
+export const DEV_SELECTED = DEV_FIXTURE ? { folder: 'inbox' as MailboxFolder, id: 'DEV-3' } : null;

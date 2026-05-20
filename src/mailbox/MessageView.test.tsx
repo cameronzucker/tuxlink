@@ -76,11 +76,11 @@ describe('<MessageViewLoaded>', () => {
     expect(screen.getByTestId('message-view-loaded')).toHaveTextContent('Mike / Net Control');
   });
 
-  it('shows a "(N recipients)" hint only when there is more than one To', () => {
-    const { rerender } = render(<MessageViewLoaded message={parsed({ to: ['a@x.org'] })} />);
-    expect(screen.getByTestId('message-to')).not.toHaveTextContent('recipients');
-    rerender(<MessageViewLoaded message={parsed({ to: ['a@x.org', 'b@x.org', 'c@x.org'] })} />);
-    expect(screen.getByTestId('message-to')).toHaveTextContent('(3 recipients)');
+  it('shows all To addresses, comma-separated (mock B)', () => {
+    render(<MessageViewLoaded message={parsed({ to: ['W4PHS@winlink.org', 'CHATTANOOGA-CERT@winlink.org'] })} />);
+    const to = screen.getByTestId('message-to');
+    expect(to).toHaveTextContent('W4PHS@winlink.org');
+    expect(to).toHaveTextContent('CHATTANOOGA-CERT@winlink.org');
   });
 
   it('does NOT render a routing/Via row (mock dl = From/To/Date)', () => {
@@ -148,12 +148,12 @@ describe('<MessageViewLoaded>', () => {
 describe('<MessageViewLoaded> reply action bar', () => {
   beforeEach(() => vi.mocked(openReplyWindow).mockClear());
 
-  it('renders Reply, Reply All, Forward, and Print buttons (Mock D action bar)', () => {
+  it('renders Reply, Reply All, Forward (mock B — no Print)', () => {
     render(<MessageViewLoaded message={parsed()} />);
     expect(screen.getByTestId('reply-btn')).toBeInTheDocument();
     expect(screen.getByTestId('reply-all-btn')).toBeInTheDocument();
     expect(screen.getByTestId('forward-btn')).toBeInTheDocument();
-    expect(screen.getByTestId('print-btn')).toBeInTheDocument();
+    expect(screen.queryByTestId('print-btn')).toBeNull();
   });
 
   it('Reply is the amber primary action', () => {

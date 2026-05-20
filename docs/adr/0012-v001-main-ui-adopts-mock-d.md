@@ -1,8 +1,8 @@
 # 12. v0.0.1 main UI adopts Mock D (Mail.app-minimal), superseding the synthesis layout
 
 Date: 2026-05-20
-Status: Accepted (supersedes, for v0.0.1, [`docs/design/v0.0.1-ux-mockups.md`](../design/v0.0.1-ux-mockups.md) §3 decisions #1/#3/#4 and [`docs/superpowers/specs/2026-05-19-main-ui-cluster-design.md`](../superpowers/specs/2026-05-19-main-ui-cluster-design.md) §4.1's ribbon/sidebar/sessionlog/dock grid; decisions #2 (compose = separate window) and #5 (modem placement) still stand)
-Deciders: cameronzucker, pika-glade-bluff (decision-locking agent), hemlock-raven-wren (implementing agent)
+Status: **SUPERSEDED by [ADR 0013](0013-v001-main-ui-is-mock-b-not-mock-d.md).** This ADR's premise — that the operator approved Mock D — was incorrect. The approved v0.0.1 design is **Mock B (principles-faithful)**; "Mock D" was a misidentification by the decision-locking session, not an operator decision. Retained as the historical record of that error (see ADR 0013 §Context).
+Deciders: pika-glade-bluff (decision-locking agent — recorded in error), hemlock-raven-wren (implementing agent)
 
 ## Context
 

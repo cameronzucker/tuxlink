@@ -114,14 +114,28 @@
   margin: 0;
 }
 
-/* Form payload placeholder (no raw XML) — purple-tinted box (mock B treatment). */
-.reading-pane .form-placeholder {
-  padding: 16px 18px;
+/* Form-attached box (Mock B) — purple-tinted, no raw XML. */
+.reading-pane .form-attached {
+  padding: 18px;
   background: rgba(192, 132, 252, 0.08);
   border: 1px solid rgba(192, 132, 252, 0.25);
   border-radius: 6px;
   font-size: 13px;
   color: var(--text-dim);
+}
+.reading-pane .form-attached .form-attached-title {
+  color: var(--form-tag);
+}
+.reading-pane .form-attached .form-attached-meta {
+  margin-top: 6px;
+  font-size: 11px;
+  font-family: var(--mono);
+  color: var(--text-faint);
+}
+/* "Form" metadata row — the form code in the form-tag color (mock B). */
+.reading-pane .msg-meta dd .form-kind-code {
+  color: var(--form-tag);
+  font-weight: 600;
 }
 
 /* 5 — attachment strip (names + sizes only in v0.0.1) */

@@ -1,61 +1,50 @@
 /**
- * StatusBar — bottom app chrome (Mock D), the minimum-viable visibility surface.
+ * StatusBar — bottom status bar (Mock B `.statusbar`).
  *
- * tuxlink-yd4 (2026-05-20): Mock D defers the dashboard ribbon entirely; the
- * callsign / grid / connection state live HERE instead. Markup matches the
- * mock's `.statusbar`:
- *
- *   ● <state>   ·   <callsign> · <grid>                         v0.0.1
- *
- * Pure presentation — AppShell owns the single `useStatusData` poll (so the
- * window title can reuse the callsign) and passes the derived values in. Left:
- * a tone-colored dot + short state word, then callsign · grid. Right: version.
- *
- * Toggleable via View → Toggle Status Bar (menu:view:status_bar) — AppShell
- * owns `show`; when false the component returns null (zero height).
+ * Mock B: ● <connection> · <N> unread                    v0.0.1 · Pat 1.0.0
+ * The rich operator info (callsign/grid/GPS) lives in the DashboardRibbon up
+ * top; this bar carries connection-ready state + unread count + versions.
+ * Toggleable via View → Toggle Status Bar.
  */
 
-import type { StatusBarData } from './useStatus';
+import type { StatusTone } from './useStatus';
+import { DEV_FIXTURE, DEV_CONNECTION_STATUS } from '../mailbox/devFixture';
 import './StatusBar.css';
 
-/** App version shown at the right of the status bar (matches the mock). */
 const APP_VERSION = 'v0.0.1';
+const PAT_VERSION = 'Pat 1.0.0';
 
 export interface StatusBarProps {
   /** When false, the status bar is hidden (returns null — zero height). */
   show: boolean;
-  /** Derived status values from `useStatusData` (owned by AppShell). */
-  data: StatusBarData;
+  /** Unread count (Inbox) shown as "N unread". */
+  unread: number;
+  /** Connection state (label + dot tone). */
+  state: { label: string; tone: StatusTone };
 }
 
-export function StatusBar({ show, data }: StatusBarProps) {
-  // Spec: "toggleable via View→Toggle Status Bar"; hidden = zero height.
+export function StatusBar({ show, unread, state }: StatusBarProps) {
   if (!show) return null;
 
-  const { callsign, grid, gridTooltip, state } = data;
-  // Station label: "W4PHS · EM75xx", dropping whichever part is absent.
-  const station = [callsign, grid].filter(Boolean).join(' · ');
+  // Mock B shows "Telnet ready" with a good dot; the dev fixture matches that,
+  // the real app derives from the live connection state.
+  const connLabel = DEV_FIXTURE ? DEV_CONNECTION_STATUS : state.label;
+  const connTone = DEV_FIXTURE ? 'good' : state.tone;
 
   return (
     <div className="statusbar" data-testid="status-bar" role="status" aria-live="polite">
       <div className="status-item" data-testid="status-bar-state">
-        <span className={`status-dot ${state.tone}`} data-testid="status-bar-dot" aria-hidden="true" />
-        {state.label}
+        <span className={`status-dot ${connTone}`} data-testid="status-bar-dot" aria-hidden="true" />
+        {connLabel}
       </div>
-
-      {station && <span className="status-divider" aria-hidden="true">·</span>}
-      {station && (
-        <div
-          className="status-item"
-          data-testid="status-bar-station"
-          title={gridTooltip ?? undefined}
-        >
-          {station}
-        </div>
-      )}
-
+      <span className="status-divider" aria-hidden="true">
+        ·
+      </span>
+      <div className="status-item" data-testid="status-bar-unread">
+        {unread} unread
+      </div>
       <div className="status-right" data-testid="status-bar-version">
-        {APP_VERSION}
+        {APP_VERSION} · {PAT_VERSION}
       </div>
     </div>
   );

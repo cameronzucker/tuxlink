@@ -1,28 +1,22 @@
-/* App-shell CSS — Mock D (Mail.app-minimal) layout.
+/* App-shell CSS — Mock B (Principles-faithful), the APPROVED v0.0.1 design.
  *
- * tuxlink-yd4 (2026-05-20): v0.0.1 adopts Mock D. This SUPERSEDES the prior
- * synthesis grid (ribbon/sidebar/list/reader/dock/sessionlog/statusbar). The
- * structure + values below are ported VERBATIM from the approved mock
- * (docs/design/mockups/2026-05-17-mocks-v1-four-directions.html — the MOCK D
- * `layout-D` block + shared `.tab-strip` / `.rows-pane` / `.row` classes),
- * scoped under `.layout-d` so the generic class names (`.tab`, `.row`, …) can
- * never leak into the wizard / compose surfaces.
+ * Source of truth: docs/design/mockups/images/mock-b-principles-faithful.png +
+ * the MOCK B block (data-choice="mock-b", lines ~1136-1323) and shared classes
+ * in docs/design/mockups/2026-05-17-mocks-v1-four-directions.html. Ported
+ * VERBATIM and scoped under `.layout-b` so the generic class names don't leak.
  *
- * Tauri provides the native titlebar + menu bar (menu.rs), so the webview
- * renders ONLY the mock's `layout-D` part: tab-strip · panes · statusbar.
- * The reading-pane (MessageView.css) and statusbar (StatusBar.css) styles live
- * with their components; everything else is here.
+ * Tauri provides the native titlebar + menu bar (menu.rs). The webview renders:
+ *   dashboard (ribbon) / panes[ sidebar | rows | reader ] / session-log / statusbar
  */
 
 /* ============================================================================
- * Layout grid — tab-strip (auto) | panes (1fr) | statusbar (auto), 100vh.
- * The optional session-log strip (View → Session Log) auto-inserts as an
- * implicit `auto` row between panes and statusbar when toggled on; the panes
- * keep the `1fr` track either way.
+ * Layout grid — dashboard (auto) | panes (1fr) | session-log (auto) | statusbar
+ * (auto), full height. (Mock B's layout-B + the dashboard sibling above it,
+ * combined into one root grid; the mock's hidden tab-strip row is dropped.)
  * ========================================================================== */
-.layout-d {
+.layout-b {
   display: grid;
-  grid-template-rows: auto 1fr auto;
+  grid-template-rows: auto 1fr auto auto;
   height: 100vh;
   width: 100vw;
   overflow: hidden;
@@ -30,76 +24,169 @@
   color: var(--text);
 }
 
-.layout-d .panes {
+.layout-b .panes {
   display: grid;
-  grid-template-columns: 420px 1fr;
+  grid-template-columns: 200px 380px 1fr;
   min-height: 0;
   overflow: hidden;
 }
 
 /* ============================================================================
- * Tab strip (mock .tab-strip / .tab) — folders as tabs, no Connect action
- * (Mock D drops the tab-action that Mock A carries).
+ * Dashboard ribbon (mock .dashboard) — callsign · grid · position · UTC/local
+ * · connection. ~56px across the top.
  * ========================================================================== */
-.layout-d .tab-strip {
+.layout-b .dashboard {
   display: flex;
-  background: var(--surface);
+  height: 56px;
+  background: linear-gradient(180deg, var(--surface-2) 0%, var(--surface) 100%);
   border-bottom: 1px solid var(--border);
-  padding: 0 14px;
-  height: 38px;
-  align-items: flex-end;
-  gap: 4px;
-}
-.layout-d .tab-strip .tab {
-  /* reset the global button chrome (App.css) — tabs are flat */
-  appearance: none;
-  background: none;
-  border: 0;
-  border-radius: 0;
-  border-bottom: 2px solid transparent;
-  padding: 8px 16px 9px;
-  font-family: inherit;
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--text-dim);
-  cursor: pointer;
-  display: inline-flex;
+  padding: 0 18px;
   align-items: center;
-  transition: color 0.12s ease;
+  gap: 28px;
+  font-size: 12px;
 }
-.layout-d .tab-strip .tab:hover:not(.active) {
-  background: none;
-  color: var(--text);
-  border-bottom-color: transparent;
+.layout-b .dashboard .dash-item {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
 }
-.layout-d .tab-strip .tab.active,
-.layout-d .tab-strip .tab.active:hover {
-  color: var(--accent-2);
-  border-bottom-color: var(--accent);
-  background: linear-gradient(180deg, transparent 0%, var(--accent-soft) 100%);
-}
-.layout-d .tab-strip .tab:focus-visible {
-  outline: 2px solid var(--tux-focus-ring);
-  outline-offset: -2px;
-}
-.layout-d .tab-strip .tab-count {
-  font-size: 11px;
+.layout-b .dashboard .dash-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
   color: var(--text-faint);
-  margin-left: 6px;
-  font-variant-numeric: tabular-nums;
 }
-.layout-d .tab-strip .tab.active .tab-count {
-  color: var(--accent);
+.layout-b .dashboard .dash-value {
+  font-family: var(--mono);
+  font-size: 13px;
+  color: var(--text);
+  font-weight: 500;
+  letter-spacing: -0.01em;
 }
-.layout-d .tab-strip .tab-spacer {
-  flex: 1;
+.layout-b .dashboard .dash-value.callsign {
+  color: var(--accent-2);
+  font-weight: 700;
+  font-size: 14px;
+}
+.layout-b .dashboard .dash-value.good {
+  color: var(--success);
+}
+.layout-b .dashboard .dash-divider {
+  width: 1px;
+  height: 32px;
+  background: var(--border-strong);
+}
+.layout-b .dashboard .dash-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--success);
+  display: inline-block;
+  margin-right: 6px;
+  vertical-align: middle;
+  box-shadow: 0 0 8px rgba(93, 214, 160, 0.5);
+}
+.layout-b .dashboard .dash-status-dot.idle {
+  background: var(--text-faint);
+  box-shadow: none;
+}
+.layout-b .dashboard .dash-status-dot.connecting {
+  background: var(--accent);
+  animation: tux-pulse 1.4s ease-in-out infinite;
+}
+.layout-b .dashboard .dash-status-dot.tx {
+  background: var(--error);
+  animation: tux-pulse 0.8s ease-in-out infinite;
+}
+@keyframes tux-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
 }
 
 /* ============================================================================
- * Rows pane (mock .rows-pane) — the left column. MessageList renders this as
- * its root; Virtuoso scrolls inside it.
+ * Folder sidebar (mock .sidebar) — Mailbox + Connections sections, 200px.
  * ========================================================================== */
-.layout-d .rows-pane {
+.layout-b .sidebar {
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  padding: 12px 0;
+  font-size: 13px;
+  min-width: 0;
+  overflow: auto;
+}
+.layout-b .sidebar .section-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-faint);
+  padding: 14px 18px 6px;
+  font-weight: 600;
+}
+.layout-b .sidebar .nav-item {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  padding: 7px 18px;
+  color: var(--text);
+  gap: 10px;
+  border-left: 2px solid transparent;
+  background: none;
+  border-top: 0;
+  border-right: 0;
+  border-bottom: 0;
+  border-radius: 0;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.layout-b .sidebar .nav-item:hover:not(.active):not(.disabled) {
+  background: var(--surface-2);
+}
+.layout-b .sidebar .nav-item .icon {
+  width: 14px;
+  text-align: center;
+  color: var(--text-faint);
+  font-size: 11px;
+  flex: 0 0 auto;
+}
+.layout-b .sidebar .nav-item.active {
+  background: var(--accent-soft);
+  color: var(--accent-2);
+  border-left-color: var(--accent);
+}
+.layout-b .sidebar .nav-item.active .icon {
+  color: var(--accent);
+}
+.layout-b .sidebar .nav-item .count {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+.layout-b .sidebar .nav-item.disabled {
+  color: var(--text-faint);
+  cursor: not-allowed;
+}
+.layout-b .sidebar .nav-item .v01-badge {
+  font-size: 9px;
+  background: var(--surface-2);
+  color: var(--text-faint);
+  padding: 1px 5px;
+  border-radius: 3px;
+  letter-spacing: 0.04em;
+  margin-left: auto;
+}
+
+/* ============================================================================
+ * Rows pane (mock .rows-pane / .row) — the message list (center, 380px).
+ * ========================================================================== */
+.layout-b .rows-pane {
   background: var(--bg);
   border-right: 1px solid var(--border);
   min-width: 0;
@@ -107,25 +194,18 @@
   display: flex;
   flex-direction: column;
 }
-.layout-d .rows-pane .message-list {
+.layout-b .rows-pane .message-list {
   flex: 1 1 auto;
   min-height: 0;
 }
-/* Empty / not-connected copy fills the pane, calm + muted. */
-.layout-d .rows-pane .message-list-empty {
+.layout-b .rows-pane .message-list-empty {
   padding: 24px 18px;
   color: var(--text-dim);
   font-size: 13px;
   line-height: 1.5;
 }
 
-/* ============================================================================
- * Inbox rows (mock .row) — 3-line grid:
- *   row 1: from (unread-dot + sender)     | date (right)
- *   row 2: subject (+ inline form-tag)    | size (right, via margin-left:auto)
- *   row 3: preview (ellipsised)           [spans both columns]
- * ========================================================================== */
-.layout-d .row {
+.layout-b .row {
   display: grid;
   padding: 11px 18px;
   border-bottom: 1px solid var(--border-soft);
@@ -135,21 +215,21 @@
   grid-template-rows: auto auto auto;
   align-items: center;
 }
-.layout-d .row:hover {
+.layout-b .row:hover {
   background: var(--surface);
 }
-.layout-d .row.selected {
+.layout-b .row.selected {
   background: var(--accent-soft);
   border-bottom-color: rgba(245, 159, 60, 0.25);
 }
-.layout-d .row.selected:hover {
+.layout-b .row.selected:hover {
   background: rgba(245, 159, 60, 0.16);
 }
-.layout-d .row:focus-visible {
+.layout-b .row:focus-visible {
   outline: 2px solid var(--tux-focus-ring);
   outline-offset: -2px;
 }
-.layout-d .row .from {
+.layout-b .row .from {
   font-size: 13px;
   color: var(--text);
   font-weight: 600;
@@ -160,12 +240,12 @@
   gap: 7px;
   min-width: 0;
 }
-.layout-d .row .from .from-text {
+.layout-b .row .from .from-text {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.layout-d .row .from .unread-dot {
+.layout-b .row .from .unread-dot {
   width: 7px;
   height: 7px;
   border-radius: 50%;
@@ -173,12 +253,11 @@
   flex: 0 0 auto;
   box-shadow: 0 0 6px rgba(255, 209, 102, 0.6);
 }
-/* Read rows (no .unread) — dimmer, lighter weight. */
-.layout-d .row:not(.unread) .from {
+.layout-b .row:not(.unread) .from {
   font-weight: 500;
   color: var(--text-dim);
 }
-.layout-d .row .date {
+.layout-b .row .date {
   grid-column: 2;
   grid-row: 1;
   font-size: 12px;
@@ -186,7 +265,7 @@
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
-.layout-d .row .subject {
+.layout-b .row .subject {
   grid-column: 1 / -1;
   grid-row: 2;
   font-size: 14px;
@@ -199,16 +278,16 @@
   align-items: center;
   gap: 8px;
 }
-.layout-d .row .subject .subject-text {
+.layout-b .row .subject .subject-text {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.layout-d .row:not(.unread) .subject {
+.layout-b .row:not(.unread) .subject {
   font-weight: 400;
   color: var(--text-dim);
 }
-.layout-d .row .preview {
+.layout-b .row .preview {
   grid-column: 1 / -1;
   grid-row: 3;
   font-size: 12px;
@@ -218,10 +297,10 @@
   text-overflow: ellipsis;
   margin-top: 2px;
 }
-.layout-d .row.selected .preview {
+.layout-b .row.selected .preview {
   color: var(--text-dim);
 }
-.layout-d .row .form-tag {
+.layout-b .row .form-tag {
   font-size: 9px;
   color: var(--form-tag);
   background: rgba(192, 132, 252, 0.12);
@@ -233,7 +312,7 @@
   border: 1px solid rgba(192, 132, 252, 0.3);
   flex: 0 0 auto;
 }
-.layout-d .row .size {
+.layout-b .row .size {
   font-size: 11px;
   color: var(--text-faint);
   margin-left: auto;
@@ -242,12 +321,104 @@
 }
 
 /* ============================================================================
- * Session-log strip (default-hidden; View → Session Log). Rendered as an
- * implicit grid row between panes and statusbar. The SessionLog component owns
- * its internal chrome + resize; this just gives it a top border seam.
+ * Session log (mock .session-log.human) — bottom strip, human-shaped default.
  * ========================================================================== */
-.layout-d .shell-sessionlog {
+.layout-b .session-log {
+  background: #0a0f14;
   border-top: 1px solid var(--border);
+  padding: 0;
+  font-size: 11.5px;
+  font-family: var(--mono);
+  max-height: 150px;
   min-height: 0;
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.layout-b .session-log .log-header {
+  display: flex;
+  align-items: center;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  padding: 6px 14px;
+  font-family: var(--sans);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  height: 26px;
+  flex: 0 0 auto;
+}
+.layout-b .session-log .log-header .live-dot {
+  width: 6px;
+  height: 6px;
+  background: var(--success);
+  border-radius: 50%;
+  margin-right: 8px;
+  box-shadow: 0 0 4px var(--success);
+}
+.layout-b .session-log .log-header .log-toggle {
+  background: var(--surface-2);
+  color: var(--text-dim);
+  border: 1px solid var(--border-strong);
+  padding: 2px 8px;
+  font-size: 10px;
+  border-radius: 3px;
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 500;
+  cursor: pointer;
+}
+.layout-b .session-log .log-header .log-toggle:first-of-type {
+  margin-left: auto;
+}
+.layout-b .session-log .log-header .log-toggle + .log-toggle {
+  margin-left: 6px;
+}
+.layout-b .session-log .log-toggle.active {
+  color: var(--accent-2);
+  background: var(--accent-soft);
+  border-color: rgba(245, 159, 60, 0.3);
+}
+.layout-b .session-log .log-lines {
+  flex: 1;
+  overflow: auto;
+  padding: 8px 14px;
+  color: var(--text-dim);
+  line-height: 1.7;
+}
+.layout-b .session-log .log-lines .ts {
+  color: var(--text-faint);
+}
+.layout-b .session-log .log-lines .info {
+  color: var(--info);
+}
+.layout-b .session-log .log-lines .send {
+  color: var(--accent-2);
+}
+.layout-b .session-log .log-lines .recv {
+  color: var(--success);
+}
+.layout-b .session-log .log-lines .err {
+  color: var(--error);
+}
+.layout-b .session-log.human .log-lines {
+  font-family: var(--sans);
+  font-size: 12.5px;
+  color: var(--text);
+}
+.layout-b .session-log.human .log-lines .step {
+  display: flex;
+  gap: 12px;
+  padding: 1px 0;
+}
+.layout-b .session-log.human .log-lines .step .step-ts {
+  color: var(--text-faint);
+  font-family: var(--mono);
+  font-size: 11px;
+  min-width: 60px;
+}
+.layout-b .session-log.human .log-lines .step .ok {
+  color: var(--success);
 }

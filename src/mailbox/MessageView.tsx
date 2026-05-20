@@ -23,6 +23,7 @@ import type { ParsedMessage, AttachmentMeta } from './types';
 import { useMessage, type MessageSelection } from './useMessage';
 import { asUiError, isNotConfigured } from './types';
 import { openReplyWindow, type ReplyMode } from './replyActions';
+import { devFormMeta } from './devFixture';
 
 // ============================================================================
 // Exported constants (used by tests)
@@ -31,8 +32,7 @@ import { openReplyWindow, type ReplyMode } from './replyActions';
 export const SELECT_MESSAGE_COPY = 'Select a message to read.';
 export const NOT_FOUND_COPY = 'Message not found. It may have been deleted or moved.';
 export const PARSE_ERROR_PREFIX = 'This message could not be parsed';
-export const FORM_PLACEHOLDER =
-  'This message contains a Winlink form. Form rendering arrives in v0.1.';
+export const FORM_PLACEHOLDER = 'Form rendering arrives in v0.1.';
 
 /**
  * Open a reply / reply-all / forward compose window. Window-open failure is
@@ -43,15 +43,6 @@ function fireReply(message: ParsedMessage, mode: ReplyMode): void {
   openReplyWindow(message, mode).catch(() => {
     /* non-fatal — surfaced via Rust logs; draft is saved */
   });
-}
-
-/** Print the current message via the webview's native print (Ctrl/Cmd+P parity). */
-function firePrint(): void {
-  try {
-    window.print?.();
-  } catch {
-    /* print unavailable (headless/test) — no-op */
-  }
 }
 
 // ============================================================================
@@ -140,15 +131,19 @@ function parseAddress(s: string): { name: string; addr: string } {
 // ============================================================================
 
 /**
- * Fully-loaded message view (Mock D `.reading-pane`). Accepts a `ParsedMessage`
+ * Fully-loaded message view (Mock B `.reading-pane`). Accepts a `ParsedMessage`
  * directly so tests can inject synthetic data without a Tauri runtime.
  */
 export function MessageViewLoaded({ message }: { message: ParsedMessage }) {
   const from = parseAddress(message.from);
   const toAddrs = message.to.map(parseAddress);
+  // Form metadata (the Mock B "Form" row + form-attached box). Dev-only today;
+  // ParsedMessage carries `isForm` but not the form kind/payload yet.
+  const formMeta = message.isForm ? devFormMeta(message.id) : null;
+  const [formCode, ...formRest] = (formMeta?.formKind ?? '').split(' · ');
   return (
     <div className="reading-pane" data-testid="message-view-loaded">
-      {/* 1 — action bar (Reply primary amber · Reply All · Forward · Print) */}
+      {/* 1 — action bar (Mock B: Reply primary amber · Reply All · Forward) */}
       <div className="actions" role="group" aria-label="Message actions">
         <button
           type="button"
@@ -174,14 +169,6 @@ export function MessageViewLoaded({ message }: { message: ParsedMessage }) {
         >
           Forward
         </button>
-        <button
-          type="button"
-          className="action-btn"
-          data-testid="print-btn"
-          onClick={firePrint}
-        >
-          Print
-        </button>
       </div>
 
       {/* 2 — subject heading */}
@@ -189,7 +176,7 @@ export function MessageViewLoaded({ message }: { message: ParsedMessage }) {
         {message.subject}
       </h1>
 
-      {/* 3 — From / To / Date (+ Via when routing is known) */}
+      {/* 3 — From / To / Date (+ Form when the message is a Winlink form) */}
       <dl className="msg-meta">
         <dt>From</dt>
         <dd>
@@ -201,29 +188,47 @@ export function MessageViewLoaded({ message }: { message: ParsedMessage }) {
 
         <dt>To</dt>
         <dd data-testid="message-to">
-          {toAddrs.length > 0 ? (
-            <>
-              {toAddrs.map((a, i) => (
+          {toAddrs.length === 0
+            ? '—'
+            : toAddrs.map((a, i) => (
                 <span key={i}>
                   {i > 0 && ', '}
                   <span className="addr">{a.addr}</span>
                 </span>
               ))}
-              {toAddrs.length > 1 && ` (${toAddrs.length} recipients)`}
-            </>
-          ) : (
-            '—'
-          )}
         </dd>
 
         <dt>Date</dt>
         <dd data-testid="message-date">{formatHeaderDate(message.date)}</dd>
+
+        {message.isForm && (
+          <>
+            <dt>Form</dt>
+            <dd data-testid="message-form-kind">
+              {formMeta ? (
+                <>
+                  <span className="form-kind-code">{formCode}</span>
+                  {formRest.length > 0 && ` · ${formRest.join(' · ')}`}
+                </>
+              ) : (
+                'Winlink form'
+              )}
+            </dd>
+          </>
+        )}
       </dl>
 
-      {/* 4 — body (form payloads render a placeholder, never raw XML) */}
+      {/* 4 — body. Form payloads render the Mock B "form attached" box (never raw
+          XML); plain messages render the decoded body. */}
       {message.isForm ? (
-        <div className="form-placeholder" data-testid="message-form-placeholder">
+        <div className="form-attached" data-testid="message-form-placeholder">
+          <strong className="form-attached-title">Winlink form attached.</strong>{' '}
           {FORM_PLACEHOLDER}
+          {formMeta && (
+            <div className="form-attached-meta">
+              Form: {formMeta.formCode} · payload: {formMeta.payloadBytes} B XML
+            </div>
+          )}
         </div>
       ) : (
         <pre className="msg-body" data-testid="message-body">

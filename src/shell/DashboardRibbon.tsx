@@ -1,149 +1,103 @@
 /**
- * DashboardRibbon — top app chrome, always visible, ~40px height.
+ * DashboardRibbon — top operator-info bar (Mock B `.dashboard`).
  *
- * Spec: docs/superpowers/specs/2026-05-19-main-ui-cluster-design.md §5.6
- * bd issue: tuxlink-hvv
- *
- * Displays (left to right):
- *   Callsign · Grid · GPS status · UTC+local time · Connection state (with transport)
- *
- * The ribbon is wired into AppShell's "ribbon" CSS grid region in the
- * orchestrator integration commit (spec §4.3). This file is standalone-
- * buildable and unit-tested against mocked IPC.
- *
- * DESIGN NOTE: The ribbon does NOT edit AppShell.tsx or lib.rs — those
- * changes land in the integration commit (spec §4.3).
- *
- * IPC surface (mocked in tests; registered in integration commit):
- *   - invoke('config_read') → ConfigViewDto
- *   - invoke('backend_status') → StatusDto | null (null when AppBackend is None)
+ * Callsign · Grid · Position (GPS) · UTC/Local · Connection. The approved Mock B
+ * keeps these always-visible up top (the emcomm operator's at-a-glance state).
+ * Styling lives in AppShell.css (`.layout-b .dashboard`). Data comes from the
+ * shared `useStatusData` poll (passed in by AppShell); the live clock is local.
  */
 
 import { useEffect, useState } from 'react';
-import { invoke } from '@tauri-apps/api/core';
-import {
-  formatCallsign,
-  formatConnectionState,
-  formatGpsStatus,
-  formatGrid,
-  type ConfigViewDto,
-  type StatusDto,
-} from './useStatus';
-import './DashboardRibbon.css';
-
-// ============================================================================
-// Internal UTC + local clock hook
-// ============================================================================
+import type { StatusBarData, StatusTone } from './useStatus';
+import { DEV_FIXTURE, DEV_POSITION, DEV_CONNECTION_DASH } from '../mailbox/devFixture';
 
 function useClock() {
   const [now, setNow] = useState(() => new Date());
-
   useEffect(() => {
     const id = setInterval(() => setNow(new Date()), 1000);
     return () => clearInterval(id);
   }, []);
-
   const utc = now.toISOString().substring(11, 16) + 'z';
   const local = now.toLocaleTimeString(undefined, {
     hour: '2-digit',
     minute: '2-digit',
     hour12: false,
+    timeZoneName: 'short',
   });
-
   return { utc, local };
 }
 
-// ============================================================================
-// Main component
-// ============================================================================
+/** Map a status tone to the mock's dash-status-dot variant. */
+function dashDotClass(tone: StatusTone): string {
+  switch (tone) {
+    case 'idle':
+      return 'idle';
+    case 'good':
+      return ''; // default green
+    case 'warn':
+      return 'connecting';
+    case 'error':
+      return 'tx';
+  }
+}
 
-export function DashboardRibbon() {
-  const [config, setConfig] = useState<ConfigViewDto | null>(null);
-  const [status, setStatus] = useState<StatusDto | null>(null);
+export interface DashboardRibbonProps {
+  data: StatusBarData;
+}
+
+export function DashboardRibbon({ data }: DashboardRibbonProps) {
   const { utc, local } = useClock();
-
-  // Load config once on mount (5s refetch per spec §5.6).
-  useEffect(() => {
-    let mounted = true;
-    const load = () => {
-      invoke<ConfigViewDto>('config_read')
-        .then((c) => { if (mounted) setConfig(c); })
-        .catch(() => { /* config absent / pre-wizard: ribbon shows empty */ });
-    };
-    load();
-    const id = setInterval(load, 5000);
-    return () => { mounted = false; clearInterval(id); };
-  }, []);
-
-  // Poll backend_status every 2s when the backend may be alive.
-  useEffect(() => {
-    let mounted = true;
-    const load = () => {
-      invoke<StatusDto | null>('backend_status')
-        .then((s) => { if (mounted) setStatus(s ?? null); })
-        .catch(() => { if (mounted) setStatus(null); });
-    };
-    load();
-    const id = setInterval(load, 2000);
-    return () => { mounted = false; clearInterval(id); };
-  }, []);
-
-  // Derived display values using pure formatters.
-  const callsign = config
-    ? formatCallsign({
-        connect_to_cms: config.connect_to_cms,
-        callsign: config.callsign,
-        identifier: config.identifier,
-      })
-    : '';
-
-  const gridResult = config
-    ? formatGrid({ grid: config.grid, precision: config.position_precision })
-    : { broadcast: null, tooltip: null };
-
-  const gpsLabel = config ? formatGpsStatus(config.gps_state) : '';
-
-  const connectionLabel = config
-    ? formatConnectionState(status, config.transport)
-    : 'Loading…';
+  const { callsign, grid, state } = data;
+  // Position (GPS coords) is a v0.1 data source; the dev fixture shows the mock
+  // value, and the real app omits the item until GPS exists.
+  const position = DEV_FIXTURE ? DEV_POSITION : null;
+  const connection = DEV_FIXTURE ? DEV_CONNECTION_DASH : `${state.label} · telnet ready`;
 
   return (
-    <div className="dashboard-ribbon" data-testid="dashboard-ribbon" role="banner">
-      {callsign && (
-        <span className="ribbon-callsign" data-testid="ribbon-callsign" title="Your callsign">
+    <div className="dashboard" data-testid="dashboard-ribbon" role="banner">
+      <div className="dash-item">
+        <div className="dash-label">Callsign</div>
+        <div className="dash-value callsign" data-testid="ribbon-callsign">
           {callsign}
-        </span>
+        </div>
+      </div>
+      <div className="dash-divider" />
+
+      <div className="dash-item">
+        <div className="dash-label">Grid</div>
+        <div className="dash-value" data-testid="ribbon-grid">
+          {grid}
+        </div>
+      </div>
+      <div className="dash-divider" />
+
+      {position && (
+        <>
+          <div className="dash-item">
+            <div className="dash-label">Position</div>
+            <div className="dash-value good" data-testid="ribbon-position">
+              {position}
+            </div>
+          </div>
+          <div className="dash-divider" />
+        </>
       )}
 
-      {gridResult.broadcast && (
-        <span
-          className="ribbon-grid"
-          data-testid="ribbon-grid"
-          title={gridResult.tooltip ?? gridResult.broadcast}
-        >
-          {gridResult.broadcast}
-        </span>
-      )}
+      <div className="dash-item">
+        <div className="dash-label">UTC / Local</div>
+        <div className="dash-value" data-testid="ribbon-time">
+          {utc} · {local}
+        </div>
+      </div>
+      <div className="dash-divider" />
 
-      {gpsLabel && (
-        <span className="ribbon-gps" data-testid="ribbon-gps">
-          {gpsLabel}
-        </span>
-      )}
-
-      <span className="ribbon-time" data-testid="ribbon-time">
-        <span className="ribbon-time-utc" title="UTC">{utc}</span>
-        <span className="ribbon-time-sep"> / </span>
-        <span className="ribbon-time-local" title="Local">{local}</span>
-      </span>
-
-      <span
-        className="ribbon-connection"
-        data-testid="ribbon-connection"
-        title="Connection state"
-      >
-        {connectionLabel}
-      </span>
+      <div className="dash-item">
+        <div className="dash-label">Connection</div>
+        <div className="dash-value" data-testid="ribbon-connection">
+          <span className={`dash-status-dot ${dashDotClass(state.tone)}`} aria-hidden="true" />
+          {connection}
+        </div>
+      </div>
     </div>
   );
 }
