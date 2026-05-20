@@ -1,0 +1,9 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "wizard",
+  "description": "First-run wizard cluster commands (Tasks 9 + 10 + 11 + 11.5) — scoped to main window only per spec §3.7",
+  "windows": ["main"],
+  "permissions": [
+    "shell:allow-open"
+  ]
+}

@@ -351,8 +351,9 @@ type TestSendOutcome =
 
 2. **Operator-only live smoke** (licensee runs this manually; never via subagent):
    - `pnpm tauri dev` with `TUXLINK_TEST_SEND_MOCK` UNSET. Real `pat_client.send()` to `SERVICE@winlink.org`.
-   - Subject to the SAME RADIO-1 consent-gate model as the `live_cms_smoke` binary (Task 6). The wizard's `wizard_run_test_send` displays a consent banner before invoking pat_client when not mocked, mirroring the consent gate in `consent_gate.rs`. Operator types `go` to proceed.
-   - The wizard's test-send is the FIRST time many operators exercise a live CMS round-trip, so this gate is operationally important even though it duplicates the live-CMS-smoke-binary's gate. See `docs/live-cms-testing-policy.md` for the full policy.
+   - **Consent model (operator ruling, 2026-05-19).** The production wizard's live test-send relies on the pre-send screen + the operator's [Send test] button click as the explicit, scoped, per-invocation consent for the transmission, per the exception in `docs/live-cms-testing-policy.md` §Exceptions ("the first-run wizard's Step 3 ... in the production Tuxlink application"). There is **NO separate typed-"go" gate in the wizard**: the GUI pre-send screen states clearly what will happen, and the operator's click IS the consent. The pre-send screen still MUST clearly state what will happen before the click (the transport-visibility paragraph + idle-substate copy satisfy this).
+   - The typed-"go" `consent_gate.rs` pattern remains in force ONLY for the operator-only `live_cms_smoke` binary (Task 6), which runs outside the wizard's click-driven UI and therefore lacks the GUI pre-send screen the exception is predicated on. The wizard does NOT mirror that gate.
+   - The wizard's test-send is the FIRST time many operators exercise a live CMS round-trip, so the pre-send screen's clarity is operationally important. See `docs/live-cms-testing-policy.md` §Exceptions for the full policy and rationale.
    - Subagents MUST NOT run this mode. If a subagent's test plan ever calls for unmocked test-send, the test plan is misspecified — STOP and escalate per CLAUDE.md's "Subagent rule."
 
 ### 3.9 File inventory

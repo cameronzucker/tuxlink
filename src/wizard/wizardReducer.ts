@@ -53,6 +53,22 @@ export function wizardReducer(state: WizardState, action: WizardAction): WizardS
       if (state.testSendSubstate !== 'idle') return state;
       return { ...state, testSendSubstate: 'sending', testSendLog: [], skipSignaled: false };
 
+    case 'RETRY_TEST_SEND':
+      // Retry path: failed → sending. Strict no-op from any other substate (dedup
+      // invariant — a retry is only meaningful from `failed`). Clears the prior
+      // error + log and resets skipSignaled so the new attempt starts clean.
+      // Routing [Retry] through this transition (instead of bypassing the reducer)
+      // ensures React leaves `failed` BEFORE the invoke, so the Retry control is
+      // absent while a send is in flight — Part 97 one-consent-one-transmission.
+      if (state.testSendSubstate !== 'failed') return state;
+      return {
+        ...state,
+        testSendSubstate: 'sending',
+        testSendError: null,
+        testSendLog: [],
+        skipSignaled: false,
+      };
+
     case 'TEST_SEND_LOG_LINE':
       if (state.skipSignaled) return state;
       return { ...state, testSendLog: [...state.testSendLog, action.line] };

@@ -23,6 +23,17 @@ tempfile = "3"             # PROMOTED from [dev-dependencies] below
 async-trait = "0.1"        # NEW (tuxlink-z5f) — WinlinkBackend trait async-fn macro for object-safety
 futures = "0.3"            # NEW (tuxlink-z5f) — Stream + BoxStream for stream_log return type
 tokio-stream = { version = "0.1", features = ["sync"] }  # NEW (tuxlink-z5f) — BroadcastStream wrapper
+# Linux backend MUST be the freedesktop Secret Service (D-Bus), NOT the crate's
+# mock store. With no features, keyring 3.x falls back to `mock` on Linux
+# (lib.rs `pub use mock as default`) — an in-process store that vanishes and is
+# invisible to tuxlink-pat's go-keyring reader. `sync-secret-service` selects the
+# real Secret Service backend (`secret_service as default`); `crypto-rust` makes
+# the encrypted-session crypto pure-Rust. Both are pure-Rust: no `libsecret`/
+# OpenSSL C dependency. This is the wizard↔Pat cross-process contract per
+# docs/superpowers/specs/2026-05-18-cred-handling-design.md §3.1/§3.3.
+# NOTE: keyring 3.6.3 has no `use_native_store()` — backend is a compile-time
+# feature; `Entry::new()` auto-resolves to the selected `default` module.
+keyring = { version = "3.6.3", default-features = false, features = ["sync-secret-service", "crypto-rust"] }
 mail-parser = "0.9"        # NEW (tuxlink-y5c Task 13) — pure-Rust RFC5322/MIME parser; spec §8
 chrono = { version = "0.4", default-features = false, features = ["clock"] }  # NEW (tuxlink-dm8, Task 14) — RFC3339 timestamp for message_send; `serde` unused (Codex fix)
 tauri-plugin-window-state = "2"                            # NEW (tuxlink-dm8, Task 14) — per-compose-window geometry persistence (spec §8)

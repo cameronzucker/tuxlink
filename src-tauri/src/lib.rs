@@ -31,6 +31,7 @@ pub fn run() {
     std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_shell::init())
         .manage(crate::wizard::WizardMutex::new())
         // Task 12 (tuxlink-zsm): the single Winlink-backend handle every UI
         // command consumes (spec §1.1). Starts `None`; the live bootstrap
@@ -101,6 +102,7 @@ pub fn run() {
             crate::wizard::wizard_persist_cms,
             crate::wizard::wizard_persist_offline,
             crate::wizard::wizard_run_test_send,
+            crate::wizard::wizard_test_send_is_mocked,
             // Task 12 (tuxlink-zsm). Tasks 13/14/16's commands are registered
             // in the orchestrator integration commit (spec §4.3), not here.
             crate::ui_commands::mailbox_list,

@@ -10,8 +10,18 @@ interface WizardContextValue {
 
 const WizardContext = createContext<WizardContextValue | null>(null);
 
-export function WizardProvider({ children }: { children: ReactNode }) {
-  const [state, dispatch] = useReducer(wizardReducer, undefined, initialWizardState);
+interface WizardProviderProps {
+  children: ReactNode;
+  /** Optional initial state override — for testing substates directly. */
+  initialStateOverride?: Partial<WizardState>;
+}
+
+export function WizardProvider({ children, initialStateOverride }: WizardProviderProps) {
+  const baseState = initialWizardState();
+  const mergedState: WizardState = initialStateOverride
+    ? { ...baseState, ...initialStateOverride }
+    : baseState;
+  const [state, dispatch] = useReducer(wizardReducer, mergedState);
   return <WizardContext.Provider value={{ state, dispatch }}>{children}</WizardContext.Provider>;
 }
 
