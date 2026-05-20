@@ -30,7 +30,10 @@ use serde::{Deserialize, Serialize};
 use tauri::State;
 
 use crate::app_backend::AppBackend;
-use crate::winlink_backend::{BackendError, MailboxFolder, MessageId, MessageMeta, OutboundMessage};
+use crate::config::{self, CmsTransport, GpsState, PositionPrecision};
+use crate::winlink_backend::{
+    BackendError, BackendStatus, MailboxFolder, MessageId, MessageMeta, OutboundMessage,
+};
 
 // ============================================================================
 // Error projection (spec §3.1)
@@ -590,6 +593,146 @@ pub async fn message_send(
     Ok(mid.map(|id| id.0))
 }
 
+// ============================================================================
+// Task 16 — config_read + backend_status (spec §3.2, §5.6)
+// bd issue: tuxlink-hvv
+// ============================================================================
+// Appended here per the append-only ownership model (spec §7). The
+// `invoke_handler` registration lands in the orchestrator integration commit
+// (§4.3). `config_read` reads `config.rs` with NO AppBackend dependency
+// (keeping Task 16 independent for build); `backend_status` consumes the live
+// trait `status()` when populated, else `None` (the frontend's
+// `formatConnectionState(null, configTransport)` renders the config-derived
+// "Idle · <transport>" fallback — spec §5.6 + status.test.ts).
+
+/// Flattened, frontend-facing projection of the nested [`config::Config`].
+///
+/// The Rust config is nested (`connect.{connect_to_cms,transport}`,
+/// `identity.{callsign,identifier,grid}`, `privacy.{gps_state,
+/// position_precision}`); the Task-16 ribbon's `useStatus` consumes a FLAT
+/// shape (`src/shell/useStatus.ts` `ConfigViewDto`). This DTO is that flat
+/// mapping. Field names are emitted verbatim (snake_case) to match the TS
+/// `ConfigViewDto` (which is snake_case, NOT camelCase — verified against
+/// `useStatus.ts`). The enum values serialize PascalCase (`CmsSsl`/`Telnet`,
+/// `Off`/`LocalUiOnly`/`BroadcastAtPrecision`, `FourCharGrid`/`SixCharGrid`)
+/// per `config.rs`'s `#[serde(rename_all = "PascalCase")]`, matching the TS
+/// `CmsTransport`/`GpsState`/`PositionPrecision` literal unions.
+#[derive(Debug, Serialize, Clone, PartialEq)]
+pub struct ConfigViewDto {
+    pub connect_to_cms: bool,
+    pub transport: CmsTransport,
+    pub callsign: Option<String>,
+    pub identifier: Option<String>,
+    pub grid: Option<String>,
+    pub gps_state: GpsState,
+    pub position_precision: PositionPrecision,
+}
+
+impl From<&config::Config> for ConfigViewDto {
+    /// Map nested → flat. Pure; no I/O. Drives the unit test
+    /// `config_view_dto_maps_nested_to_flat`.
+    fn from(c: &config::Config) -> Self {
+        ConfigViewDto {
+            connect_to_cms: c.connect.connect_to_cms,
+            transport: c.connect.transport,
+            callsign: c.identity.callsign.clone(),
+            identifier: c.identity.identifier.clone(),
+            grid: c.identity.grid.clone(),
+            gps_state: c.privacy.gps_state,
+            position_precision: c.privacy.position_precision,
+        }
+    }
+}
+
+/// Read the tuxlink config and project it to the flat [`ConfigViewDto`] the
+/// ribbon consumes.
+///
+/// NOT a backend call (spec §3.2) — reads `config.rs` directly so Task 16
+/// stays independent of `AppBackend`. A read/parse/validation failure (incl.
+/// "no config yet", pre-wizard) maps to `UiError::Internal` (spec §3.1
+/// "`config_read` is NOT a backend call — its failures map directly to
+/// `UiError::Internal`"). The ribbon `.catch()`es this and renders empty,
+/// so pre-wizard launches degrade gracefully.
+#[tauri::command]
+pub async fn config_read() -> Result<ConfigViewDto, UiError> {
+    let cfg = config::read_config().map_err(|e| UiError::Internal {
+        detail: e.to_string(),
+    })?;
+    Ok(ConfigViewDto::from(&cfg))
+}
+
+/// Serializable projection of [`BackendStatus`] for the ribbon. Mirrors
+/// `StatusDto` in `src/shell/useStatus.ts` via Tauri's
+/// `#[serde(tag = "kind")]` shape (an INTERNALLY-tagged union — the variant
+/// fields sit alongside `kind`, NOT nested under a `content` key, matching
+/// the TS `{ kind: 'Connected'; transport; peer; since_iso }` shape).
+#[derive(Debug, Serialize, Clone, PartialEq)]
+#[serde(tag = "kind")]
+pub enum StatusDto {
+    Disconnected,
+    Connecting {
+        transport: String,
+    },
+    Connected {
+        transport: String,
+        peer: String,
+        since_iso: String,
+    },
+    Disconnecting,
+    Error {
+        reason: String,
+    },
+}
+
+impl From<BackendStatus> for StatusDto {
+    /// Map the trait status enum → the wire DTO. Exhaustive over the current
+    /// variants; `BackendStatus` is `#[non_exhaustive]`, so a future variant
+    /// added in `winlink_backend.rs` fails this `match` and forces a
+    /// deliberate UI projection rather than a silent wildcard. The `transport`
+    /// string is passed through verbatim (`format!("CMS-{:?}", mode)` →
+    /// `"CMS-CmsSsl"`/`"CMS-Telnet"`); the frontend's `normalizeTransportLabel`
+    /// renders it.
+    fn from(s: BackendStatus) -> Self {
+        match s {
+            BackendStatus::Disconnected => StatusDto::Disconnected,
+            BackendStatus::Connecting { transport } => StatusDto::Connecting { transport },
+            BackendStatus::Connected {
+                transport,
+                peer,
+                since_iso,
+            } => StatusDto::Connected {
+                transport,
+                peer,
+                since_iso,
+            },
+            BackendStatus::Disconnecting => StatusDto::Disconnecting,
+            BackendStatus::Error { reason } => StatusDto::Error { reason },
+        }
+    }
+}
+
+/// Return the live backend status, or `None` when no backend is installed.
+///
+/// Per spec §5.6 (Codex verdict V6): `status()` is sync / non-I/O (the trait
+/// caches it — `winlink_backend.rs`), so it is cheap to poll. When the
+/// `AppBackend` is populated the command returns `Some(StatusDto)` from the
+/// live `status()`; when `None` (offline install / pre-connect) it returns
+/// `Ok(None)`. The ribbon's `formatConnectionState(null, config.transport)`
+/// renders the config-derived "Idle · <transport>" fallback for the `None`
+/// case (`src/shell/useStatus.ts` + `status.test.ts`), so the config-derived
+/// label lives frontend-side, fed by `None` here — keeping `backend_status`
+/// free of any config dependency.
+#[tauri::command]
+pub async fn backend_status(state: State<'_, AppBackend>) -> Result<Option<StatusDto>, UiError> {
+    // `current()` clones the Arc + drops the RwLock guard (spec §1.1); we do
+    // NOT hold the guard. `status()` is sync + non-I/O, so there is no await
+    // with a lock held regardless.
+    match state.current() {
+        Some(backend) => Ok(Some(StatusDto::from(backend.status()))),
+        None => Ok(None),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -701,5 +844,182 @@ mod tests {
         assert!(dto.cc.is_empty());
         assert_eq!(dto.subject, "ICS-213 check-in");
         assert_eq!(dto.body, "Standing by at staging area.");
+    }
+
+    // ========================================================================
+    // Task 16 — config_read DTO mapping (integration commit, spec §5.6 / §6)
+    // ========================================================================
+    use crate::config::{
+        CmsTransport, Config, ConnectConfig, GpsState, IdentityConfig, PositionPrecision,
+        PrivacyConfig, CONFIG_SCHEMA_VERSION,
+    };
+
+    /// Build a CMS-mode config fixture for the mapping tests.
+    fn cms_config_fixture() -> Config {
+        Config {
+            schema_version: CONFIG_SCHEMA_VERSION,
+            wizard_completed: true,
+            connect: ConnectConfig {
+                connect_to_cms: true,
+                transport: CmsTransport::CmsSsl,
+            },
+            identity: IdentityConfig {
+                callsign: Some("W4PHS".into()),
+                identifier: None,
+                grid: Some("EM10ab".into()),
+            },
+            privacy: PrivacyConfig {
+                gps_state: GpsState::BroadcastAtPrecision,
+                position_precision: PositionPrecision::SixCharGrid,
+            },
+            pat_mbo_address: None,
+        }
+    }
+
+    // config_read DTO mapping: nested config.rs struct → flat ConfigViewDto.
+    // Asserts every flattened field is sourced from the right nested location.
+    #[test]
+    fn config_view_dto_maps_nested_to_flat() {
+        let cfg = cms_config_fixture();
+        let dto = ConfigViewDto::from(&cfg);
+        assert!(dto.connect_to_cms);
+        assert_eq!(dto.transport, CmsTransport::CmsSsl);
+        assert_eq!(dto.callsign.as_deref(), Some("W4PHS"));
+        assert_eq!(dto.identifier, None);
+        assert_eq!(dto.grid.as_deref(), Some("EM10ab"));
+        assert_eq!(dto.gps_state, GpsState::BroadcastAtPrecision);
+        assert_eq!(dto.position_precision, PositionPrecision::SixCharGrid);
+    }
+
+    // Offline-mode mapping: callsign None, identifier Some — mirrors the
+    // ribbon's identity.identifier fallback (useStatus.ts formatCallsign).
+    #[test]
+    fn config_view_dto_maps_offline_identity() {
+        let mut cfg = cms_config_fixture();
+        cfg.connect.connect_to_cms = false;
+        cfg.connect.transport = CmsTransport::Telnet;
+        cfg.identity.callsign = None;
+        cfg.identity.identifier = Some("OFFLINE-STATION".into());
+        cfg.privacy.gps_state = GpsState::Off;
+        cfg.privacy.position_precision = PositionPrecision::FourCharGrid;
+
+        let dto = ConfigViewDto::from(&cfg);
+        assert!(!dto.connect_to_cms);
+        assert_eq!(dto.transport, CmsTransport::Telnet);
+        assert_eq!(dto.callsign, None);
+        assert_eq!(dto.identifier.as_deref(), Some("OFFLINE-STATION"));
+        assert_eq!(dto.gps_state, GpsState::Off);
+        assert_eq!(dto.position_precision, PositionPrecision::FourCharGrid);
+    }
+
+    // ConfigViewDto serializes with snake_case keys + PascalCase enum values,
+    // matching the TS ConfigViewDto shape in useStatus.ts (status.test.ts #6).
+    #[test]
+    fn config_view_dto_serializes_snake_case_keys_pascal_enums() {
+        let dto = ConfigViewDto::from(&cms_config_fixture());
+        let v = serde_json::to_value(&dto).unwrap();
+        assert_eq!(v["connect_to_cms"], true);
+        assert_eq!(v["transport"], "CmsSsl");
+        assert_eq!(v["callsign"], "W4PHS");
+        assert_eq!(v["identifier"], serde_json::Value::Null);
+        assert_eq!(v["grid"], "EM10ab");
+        assert_eq!(v["gps_state"], "BroadcastAtPrecision");
+        assert_eq!(v["position_precision"], "SixCharGrid");
+    }
+
+    // ========================================================================
+    // Task 16 — backend_status DTO mapping + populated-vs-None branch logic
+    // ========================================================================
+    use crate::app_backend::AppBackend;
+    use crate::winlink_backend::{BackendStatus, PatBackend};
+    use std::sync::Arc;
+
+    // StatusDto::from maps every BackendStatus variant; transport is verbatim
+    // (frontend normalizeTransportLabel renders "CMS-CmsSsl" → "CMS-SSL").
+    #[test]
+    fn status_dto_maps_all_backend_status_variants() {
+        assert_eq!(
+            StatusDto::from(BackendStatus::Disconnected),
+            StatusDto::Disconnected
+        );
+        assert_eq!(
+            StatusDto::from(BackendStatus::Connecting {
+                transport: "CMS-CmsSsl".into()
+            }),
+            StatusDto::Connecting {
+                transport: "CMS-CmsSsl".into()
+            }
+        );
+        assert_eq!(
+            StatusDto::from(BackendStatus::Connected {
+                transport: "CMS-Telnet".into(),
+                peer: "cms.winlink.org".into(),
+                since_iso: "2026-05-19T00:00:00Z".into(),
+            }),
+            StatusDto::Connected {
+                transport: "CMS-Telnet".into(),
+                peer: "cms.winlink.org".into(),
+                since_iso: "2026-05-19T00:00:00Z".into(),
+            }
+        );
+        assert_eq!(
+            StatusDto::from(BackendStatus::Disconnecting),
+            StatusDto::Disconnecting
+        );
+        assert_eq!(
+            StatusDto::from(BackendStatus::Error {
+                reason: "refused".into()
+            }),
+            StatusDto::Error {
+                reason: "refused".into()
+            }
+        );
+    }
+
+    // StatusDto serializes internally-tagged (kind alongside fields, no
+    // "content" wrapper) — matches the TS StatusDto union in useStatus.ts.
+    #[test]
+    fn status_dto_serializes_internally_tagged() {
+        let connected = serde_json::to_value(StatusDto::Connected {
+            transport: "CMS-CmsSsl".into(),
+            peer: "cms.winlink.org".into(),
+            since_iso: "2026-05-19T00:00:00Z".into(),
+        })
+        .unwrap();
+        assert_eq!(connected["kind"], "Connected");
+        assert_eq!(connected["transport"], "CMS-CmsSsl");
+        assert_eq!(connected["peer"], "cms.winlink.org");
+        assert_eq!(connected["since_iso"], "2026-05-19T00:00:00Z");
+
+        let disc = serde_json::to_value(StatusDto::Disconnected).unwrap();
+        assert_eq!(disc["kind"], "Disconnected");
+    }
+
+    // backend_status branch logic: the command returns Some(StatusDto) when
+    // the AppBackend is populated and None when it is not. The command fn
+    // itself takes `State<'_, AppBackend>` (needs a Tauri app), so the branch
+    // is exercised here against the same `AppBackend::current()` +
+    // `StatusDto::from(status())` chain the command uses (the live IPC
+    // round-trip is the M2 smoke gate).
+    #[test]
+    fn backend_status_none_when_no_backend() {
+        let app = AppBackend::new();
+        // Mirror the command body: None backend → Ok(None).
+        let result: Option<StatusDto> = app.current().map(|b| StatusDto::from(b.status()));
+        assert!(result.is_none(), "no backend → None (frontend renders Idle · <transport>)");
+    }
+
+    #[test]
+    fn backend_status_some_when_backend_populated() {
+        let app = AppBackend::new();
+        app.set(Arc::new(PatBackend::from_url("http://127.0.0.1:9")));
+        // A freshly-constructed PatBackend reports Disconnected (no connect()
+        // has run); the command projects that to Some(StatusDto::Disconnected).
+        let result: Option<StatusDto> = app.current().map(|b| StatusDto::from(b.status()));
+        assert_eq!(
+            result,
+            Some(StatusDto::Disconnected),
+            "populated backend → Some(live status)"
+        );
     }
 }

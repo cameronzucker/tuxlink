@@ -32,6 +32,12 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        // Task 14 (tuxlink-dm8): per-compose-window geometry persistence.
+        // `tauri-plugin-window-state` hooks the WebviewWindow lifecycle to
+        // save/restore size+position keyed by window label. Registered here
+        // (the integration commit, spec §4.3) — `compose_window.rs` only
+        // builds the window; the plugin's Builder hook does the persistence.
+        .plugin(tauri_plugin_window_state::Builder::default().build())
         .manage(crate::wizard::WizardMutex::new())
         // Task 12 (tuxlink-zsm): the single Winlink-backend handle every UI
         // command consumes (spec §1.1). Starts `None`; the live bootstrap
@@ -103,9 +109,17 @@ pub fn run() {
             crate::wizard::wizard_persist_offline,
             crate::wizard::wizard_run_test_send,
             crate::wizard::wizard_test_send_is_mocked,
-            // Task 12 (tuxlink-zsm). Tasks 13/14/16's commands are registered
-            // in the orchestrator integration commit (spec §4.3), not here.
-            crate::ui_commands::mailbox_list,
+            // Main-UI cluster commands. Task 12 (tuxlink-zsm) created
+            // `mailbox_list`; Tasks 13/14/16 appended their command fns to
+            // `ui_commands.rs` but deferred registration to this single
+            // orchestrator integration commit (spec §4.3) to keep the shared
+            // `invoke_handler` edit in one diff.
+            crate::ui_commands::mailbox_list,          // Task 12 (tuxlink-zsm)
+            crate::ui_commands::message_read,          // Task 13 (tuxlink-y5c)
+            crate::ui_commands::message_send,          // Task 14 (tuxlink-dm8)
+            crate::ui_commands::config_read,           // Task 16 (tuxlink-hvv)
+            crate::ui_commands::backend_status,        // Task 16 (tuxlink-hvv)
+            crate::compose_window::compose_window_open, // Task 14 (tuxlink-dm8)
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
