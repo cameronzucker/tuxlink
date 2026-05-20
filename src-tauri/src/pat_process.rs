@@ -2,6 +2,8 @@ use std::io::{BufRead, BufReader};
 use std::net::TcpListener;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
+use std::sync::mpsc::{self, RecvTimeoutError};
+use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 pub struct PatSpawnOptions {
@@ -13,10 +15,13 @@ pub struct PatSpawnOptions {
     pub mbox_dir: PathBuf,
     pub http_listen_port: u16, // 0 = ephemeral
     pub pid_file: PathBuf,
-    /// Optional sink for Pat stderr lines AFTER the startup-port-detection
-    /// completes. When `Some`, a dedicated OS thread is spawned to forward
-    /// remaining stderr lines into the sender (one `send` per line, newline
-    /// trimmed). When `None`, the OS-side stderr buffer drains silently.
+    /// Optional sink for Pat stderr lines. When `Some`, the dedicated reader
+    /// thread forwards EVERY stderr line into the sender (one `send` per line,
+    /// newline trimmed) — including the announce line and any lines emitted
+    /// BEFORE it, so Pat's full startup is visible downstream (tuxlink-22l
+    /// §11.1, adrev #1: pre-announce lines were previously discarded). When
+    /// `None`, the reader thread still drains stderr (so a chatty Pat cannot
+    /// fill the OS pipe buffer and block — adrev #18) but discards the lines.
     /// Per tuxlink-z5f v2 P1 #6 — required so `PatBackend::stream_log` can
     /// multiplex Pat's log output to its subscribers.
     pub log_sink: Option<std::sync::mpsc::Sender<String>>,
@@ -26,12 +31,30 @@ pub struct PatSpawnOptions {
     /// field carries the tuxlink config so PatProcess can render Pat's
     /// config from it via `crate::pat_config::write_pat_config_atomic`.
     pub tuxlink_config: crate::config::Config,
+    /// How long `spawn` waits for Pat to announce its HTTP listen port on
+    /// stderr before giving up (killing the child + returning `TimedOut`).
+    /// The app/bootstrap passes `Duration::from_secs(10)` (the historical
+    /// value); tests pass a short value to exercise the timeout quickly.
+    /// Per tuxlink-22l §11.1 (adrev #7): the deadline is now enforced via
+    /// `mpsc::Receiver::recv_timeout`, which CANNOT block past the deadline
+    /// even if Pat stays alive and never emits a newline — the prior loop
+    /// only re-checked an `Instant` deadline BETWEEN `read_line` calls and
+    /// so hung indefinitely mid-line.
+    pub http_announce_timeout: std::time::Duration,
 }
 
 pub struct PatProcess {
     child: Option<Child>,
     pid_file: PathBuf,
     http_port: u16,
+    /// Handle to the dedicated stderr reader thread (tuxlink-22l §11.1). The
+    /// thread owns the stderr `BufReader` for the whole process lifetime and
+    /// exits on EOF / read error / receiver-drop. We retain the handle rather
+    /// than detaching it so the thread is not silently orphaned; `spawn` does
+    /// NOT join it (it runs as long as Pat does). When the child is killed
+    /// (`shutdown`/`Drop`), Pat's stderr closes → the reader sees EOF → the
+    /// thread exits.
+    _reader_thread: Option<JoinHandle<()>>,
 }
 
 impl PatProcess {
@@ -88,75 +111,106 @@ impl PatProcess {
         // pat 1.0.0 CLI: `--config` and `--mbox` are GLOBAL flags that
         // appear BEFORE the subcommand; the http subcommand uses `--addr`
         // (not `--listen`, which is pat's radio-modes selector).
+        //
+        // stdout is set to `Stdio::null()` (tuxlink-22l §11.1, adrev #18):
+        // pat logs to stderr, and nothing in tuxlink reads its stdout. With
+        // `Stdio::piped()` and no reader draining it, a chatty pat would fill
+        // the OS pipe buffer and block. stderr stays piped — the dedicated
+        // reader thread below drains it.
         let mut cmd = Command::new(&opts.binary);
         cmd.arg("--config").arg(&opts.config_path)
             .arg("--mbox").arg(&opts.mbox_dir)
             .arg("http")
             .arg("--addr").arg(&listen)
-            .stdout(Stdio::piped())
+            .stdout(Stdio::null())
             .stderr(Stdio::piped());
         let mut child = cmd.spawn()?;
 
-        // Read stderr (where pat logs) until we see our listen address
-        // echoed in the "Starting HTTP service ..." line. Uses manual
-        // read_line so the BufReader stays alive past the loop — tuxlink-z5f
-        // v2 P1 #6 needs to forward subsequent log lines into an optional
-        // sink rather than dropping the reader at function end (which would
-        // also drop the OS-side stderr buffer connection).
+        // ONE dedicated reader thread owns the stderr BufReader for the whole
+        // process lifetime (tuxlink-22l §11.1). It is the SOLE reader of
+        // stderr — announce detection happens INSIDE this thread (signalled
+        // via `announce_tx`), not on a second reader. For each line it:
+        //   - forwards the trimmed line to `log_sink` if present (adrev #1:
+        //     EVERY line, pre- AND post-announce, so nothing is discarded);
+        //   - on the first line containing the listen-address needle, signals
+        //     announce ONCE via `announce_tx`, then keeps reading.
+        // It exits on EOF / read error / log-sink receiver-drop.
+        //
+        // The main thread waits on `announce_rx.recv_timeout(..)` — a REAL
+        // deadline that cannot be defeated by a child that stays alive and
+        // never emits a newline (adrev #7: the prior in-loop `Instant`
+        // deadline could not interrupt a blocking `read_line`).
         let stderr = child.stderr.take().expect("piped stderr");
-        let mut reader = BufReader::new(stderr);
         let needle = format!("127.0.0.1:{}", actual_port);
-        let deadline = Instant::now() + Duration::from_secs(10);
-        let mut announced = false;
-        let mut line_buf = String::new();
-        loop {
-            if Instant::now() > deadline {
-                break;
-            }
-            line_buf.clear();
-            match reader.read_line(&mut line_buf) {
-                Ok(0) => break, // EOF
-                Ok(_) => {
-                    if line_buf.contains(&needle) {
-                        announced = true;
-                        break;
-                    }
-                }
-                Err(_) => continue,
-            }
-        }
-        if !announced {
-            let _ = child.kill();
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::TimedOut,
-                "pat did not announce HTTP listen port within 10s",
-            ));
-        }
-
-        // Per tuxlink-z5f v2 §3.8.1: if the caller provided a log_sink,
-        // spawn a dedicated thread to forward remaining stderr lines into
-        // it. The thread takes ownership of `reader`; when the sink's
-        // Receiver is dropped (e.g., PatBackend shutdown), `tx.send`
-        // returns Err and the thread exits cleanly. If `log_sink` is None,
-        // `reader` is dropped here and Pat's stderr drains via the OS
-        // pipe buffer (existing pre-z5f behavior unchanged).
-        if let Some(tx) = opts.log_sink {
-            std::thread::spawn(move || {
-                let mut buf = String::new();
-                loop {
-                    buf.clear();
-                    match reader.read_line(&mut buf) {
-                        Ok(0) => break, // EOF
-                        Ok(_) => {
-                            let line = buf.trim_end_matches('\n').trim_end_matches('\r').to_string();
-                            if tx.send(line).is_err() {
-                                break; // receiver dropped
+        let (announce_tx, announce_rx) = mpsc::channel::<()>();
+        let log_sink = opts.log_sink;
+        let reader_thread = std::thread::spawn(move || {
+            let mut reader = BufReader::new(stderr);
+            let mut announce_tx = Some(announce_tx);
+            let mut buf = String::new();
+            loop {
+                buf.clear();
+                match reader.read_line(&mut buf) {
+                    Ok(0) => break, // EOF — child closed stderr / exited.
+                    Ok(_) => {
+                        // Signal announce once, on the first needle match.
+                        if let Some(tx) = announce_tx.as_ref() {
+                            if buf.contains(&needle) {
+                                // Receiver may already be gone (e.g. spawn
+                                // returned on timeout just before the line
+                                // arrived); ignore the send error and stop
+                                // trying to announce.
+                                let _ = tx.send(());
+                                announce_tx = None;
                             }
                         }
-                        Err(_) => break,
+                        // Forward EVERY line (pre- and post-announce) to the
+                        // sink. Stop forwarding if the receiver is dropped.
+                        if let Some(tx) = log_sink.as_ref() {
+                            let line = buf
+                                .trim_end_matches('\n')
+                                .trim_end_matches('\r')
+                                .to_string();
+                            if tx.send(line).is_err() {
+                                break; // receiver dropped — nothing to do.
+                            }
+                        }
                     }
+                    Err(_) => break, // read error — give up on this stream.
                 }
-            });
+            }
+        });
+
+        // Wait for the announce, bounded by the caller's timeout. This is the
+        // real-timeout fix: `recv_timeout` returns at the deadline regardless
+        // of whether the reader thread is mid-`read_line`.
+        match announce_rx.recv_timeout(opts.http_announce_timeout) {
+            Ok(()) => { /* announced — fall through to pid-file write. */ }
+            Err(RecvTimeoutError::Timeout) => {
+                // Pat is (or may be) alive but never announced. Kill it and
+                // reap so we don't leak a child / zombie; the reader thread
+                // then sees EOF and exits on its own.
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    format!(
+                        "pat did not announce HTTP listen port within {:?}",
+                        opts.http_announce_timeout
+                    ),
+                ));
+            }
+            Err(RecvTimeoutError::Disconnected) => {
+                // The reader thread ended (EOF / read error) before announcing
+                // — Pat exited or closed stderr without ever printing the
+                // listen address. Kill (no-op if already dead) and reap.
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    "pat exited before announcing HTTP listen port",
+                ));
+            }
         }
 
         std::fs::write(&opts.pid_file, child.id().to_string())?;
@@ -165,6 +219,9 @@ impl PatProcess {
             child: Some(child),
             pid_file: opts.pid_file,
             http_port: actual_port,
+            // Retain the reader thread's handle; it runs for the process
+            // lifetime and is NOT joined here (would block spawn).
+            _reader_thread: Some(reader_thread),
         })
     }
 
