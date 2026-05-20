@@ -350,7 +350,9 @@ pub async fn wizard_persist_offline(
 pub async fn run_test_send_impl() -> Result<TestSendOutcome, WizardError> {
     // ── Part 97 mock-gate ──────────────────────────────────────────────────
     // Check env var at call time (not at startup) so tests can set it per-test.
-    if std::env::var("TUXLINK_TEST_SEND_MOCK").is_ok() {
+    // Shares the predicate with `wizard_test_send_is_mocked` so the UI banner and
+    // the actual mock short-circuit can never disagree.
+    if test_send_is_mocked_impl() {
         // Return a mocked Success outcome. The mock always succeeds so that
         // subagent/CI flows exercise the full 4-substate path in the UI.
         // Unit tests override specific outcomes by invoking this function
@@ -534,6 +536,23 @@ pub async fn wizard_run_test_send(
 ) -> Result<TestSendOutcome, WizardError> {
     let _guard = state.0.try_lock().map_err(|_| WizardError::Busy)?;
     run_test_send_impl().await
+}
+
+/// Whether the test-send is running in MOCKED mode (TUXLINK_TEST_SEND_MOCK set).
+/// Pure, read-only, no transmission, no mutex — checked at call time so a fresh
+/// query reflects the current environment.
+pub fn test_send_is_mocked_impl() -> bool {
+    std::env::var("TUXLINK_TEST_SEND_MOCK").is_ok()
+}
+
+/// Reports whether the wizard's test-send will run in MOCKED mode for the current
+/// process environment. The frontend calls this on entering the `sending` substate
+/// to decide whether to render the "Test-send MOCKED — no real Winlink transmission"
+/// banner (spec §3.8). Read-only and idempotent (like `get_wizard_completed`);
+/// NOT mutex-guarded and NEVER transmits.
+#[tauri::command]
+pub async fn wizard_test_send_is_mocked() -> Result<bool, WizardError> {
+    Ok(test_send_is_mocked_impl())
 }
 
 #[cfg(test)]
@@ -808,6 +827,22 @@ mod tests {
         // Verify WizardError::Busy serializes correctly (Tauri will serialize this to JSON).
         let json = serde_json::to_string(&wizard_error).expect("serialize");
         assert!(json.contains("Busy"), "WizardError::Busy must serialize to {{kind:'Busy',...}}");
+    }
+
+    /// FIX 4 (P2): the mock-detection helper reports true iff TUXLINK_TEST_SEND_MOCK
+    /// is set, so the frontend can render the MOCKED banner during `sending`
+    /// (spec §3.8 line 348). It MUST NOT transmit and MUST NOT touch the mutex.
+    #[tokio::test]
+    #[serial]
+    async fn is_test_send_mocked_reflects_env_var() {
+        {
+            let _mock = EnvVarGuard::set("TUXLINK_TEST_SEND_MOCK", "1");
+            assert!(test_send_is_mocked_impl(), "mock env set → mocked=true");
+        }
+        // EnvVarGuard restored on drop; if it was unset before, mocked=false.
+        // Force-unset to make the assertion deterministic regardless of prior state.
+        unsafe { std::env::remove_var("TUXLINK_TEST_SEND_MOCK") };
+        assert!(!test_send_is_mocked_impl(), "mock env unset → mocked=false");
     }
 
     /// Verify the default_likely_causes list has at least 3 entries (spec §3.4 + §5.12

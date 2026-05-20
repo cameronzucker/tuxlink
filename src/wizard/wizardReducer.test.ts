@@ -61,6 +61,46 @@ describe('wizardReducer', () => {
     expect(s2.skipSignaled).toBe(false);
   });
 
+  // FIX 1 (P0a): RETRY_TEST_SEND maps failed → sending so the retry gesture
+  // goes THROUGH the reducer (React leaves `failed` before/at invoke), preserving
+  // one-consent-one-transmission. BEGIN_TEST_SEND remains strictly idle→sending.
+  it('RETRY_TEST_SEND from failed transitions to sending + resets log + clears skipSignaled', () => {
+    const s = { ...initialWizardState(), step: 'test_send' as const, testSendSubstate: 'failed' as const,
+      testSendError: 'connection refused', testSendLog: ['stale'], skipSignaled: true };
+    const s2 = wizardReducer(s, { type: 'RETRY_TEST_SEND' });
+    expect(s2.testSendSubstate).toBe('sending');
+    expect(s2.testSendLog).toEqual([]);
+    expect(s2.skipSignaled).toBe(false);
+    expect(s2.testSendError).toBeNull();
+  });
+
+  // INVARIANT (dedup): RETRY_TEST_SEND from sending/success/idle is a strict no-op.
+  it('RETRY_TEST_SEND while sending is a strict no-op (dedup invariant)', () => {
+    const s = { ...initialWizardState(), step: 'test_send' as const, testSendSubstate: 'sending' as const };
+    const s2 = wizardReducer(s, { type: 'RETRY_TEST_SEND' });
+    expect(s2).toBe(s);
+  });
+
+  it('RETRY_TEST_SEND while success is a strict no-op (dedup invariant)', () => {
+    const s = { ...initialWizardState(), step: 'test_send' as const, testSendSubstate: 'success' as const };
+    const s2 = wizardReducer(s, { type: 'RETRY_TEST_SEND' });
+    expect(s2).toBe(s);
+  });
+
+  it('RETRY_TEST_SEND while idle is a strict no-op (only failed may retry)', () => {
+    const s = { ...initialWizardState(), step: 'test_send' as const, testSendSubstate: 'idle' as const };
+    const s2 = wizardReducer(s, { type: 'RETRY_TEST_SEND' });
+    expect(s2).toBe(s);
+  });
+
+  // INVARIANT: BEGIN_TEST_SEND from failed remains a strict no-op (the retry path
+  // is RETRY_TEST_SEND, not BEGIN_TEST_SEND; BEGIN stays idle-only per §3.1 inv 2).
+  it('BEGIN_TEST_SEND while failed returns state unchanged (idle-only guard preserved)', () => {
+    const s = { ...initialWizardState(), step: 'test_send' as const, testSendSubstate: 'failed' as const, testSendError: 'err' };
+    const s2 = wizardReducer(s, { type: 'BEGIN_TEST_SEND' });
+    expect(s2).toBe(s);
+  });
+
   // INVARIANT: TEST_SEND_RESULT ignored when skipSignaled
   it('TEST_SEND_RESULT after SKIP_TEST_SEND is silently ignored (skipSignaled gate)', () => {
     let s: WizardState = { ...initialWizardState(), step: 'test_send', testSendSubstate: 'sending' };

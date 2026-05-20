@@ -46,6 +46,12 @@ export type WizardAction =
   | { type: 'SUBMIT_OFFLINE_SUCCESS' }
   | { type: 'SUBMIT_FAILURE'; error: WizardError }
   | { type: 'BEGIN_TEST_SEND' }
+  // RETRY_TEST_SEND: failed → sending. Distinct from BEGIN_TEST_SEND (which stays
+  // strictly idle → sending per spec §3.1 invariant 2). Routing the [Retry] gesture
+  // through the reducer makes React leave `failed` and enter `sending` at the moment
+  // of invoke, so the Retry control (rendered only in `failed`) is gone while a send
+  // is in flight — preserving one-consent-one-transmission (Codex P0a fix).
+  | { type: 'RETRY_TEST_SEND' }
   | { type: 'TEST_SEND_LOG_LINE'; line: string }
   | { type: 'TEST_SEND_RESULT'; outcome: TestSendOutcome }
   | { type: 'SKIP_TEST_SEND' }

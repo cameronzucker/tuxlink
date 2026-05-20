@@ -44,6 +44,7 @@ pub fn run() {
             crate::wizard::wizard_persist_cms,
             crate::wizard::wizard_persist_offline,
             crate::wizard::wizard_run_test_send,
+            crate::wizard::wizard_test_send_is_mocked,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

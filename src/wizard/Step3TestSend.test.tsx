@@ -52,10 +52,15 @@ function renderInState(override: Partial<WizardState> = {}) {
 describe('<Step3TestSend>', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    // Default: mock returns success
-    (invoke as ReturnType<typeof vi.fn>).mockResolvedValue({
-      kind: 'Success',
-      detail: { reply_subject: 'Re: test [MOCKED]' },
+    // Default: route by command name.
+    //  - wizard_run_test_send → mocked Success outcome
+    //  - wizard_test_send_is_mocked → false (live mode) unless a test overrides it
+    (invoke as ReturnType<typeof vi.fn>).mockImplementation((cmd: string) => {
+      if (cmd === 'wizard_test_send_is_mocked') return Promise.resolve(false);
+      return Promise.resolve({
+        kind: 'Success',
+        detail: { reply_subject: 'Re: test [MOCKED]' },
+      });
     });
   });
 
@@ -139,9 +144,9 @@ describe('<Step3TestSend>', () => {
   // ── Send test → full flow: idle → sending → success ────────────────────
 
   it('[Send test] click invokes wizard_run_test_send and dispatches TEST_SEND_RESULT on success', async () => {
-    (invoke as ReturnType<typeof vi.fn>).mockResolvedValue({
-      kind: 'Success',
-      detail: { reply_subject: 'Re: test' },
+    (invoke as ReturnType<typeof vi.fn>).mockImplementation((cmd: string) => {
+      if (cmd === 'wizard_test_send_is_mocked') return Promise.resolve(false);
+      return Promise.resolve({ kind: 'Success', detail: { reply_subject: 'Re: test' } });
     });
 
     renderInState();
@@ -159,9 +164,9 @@ describe('<Step3TestSend>', () => {
   });
 
   it('[Send test] click + failed invoke transitions to failed substate', async () => {
-    (invoke as ReturnType<typeof vi.fn>).mockResolvedValue({
-      kind: 'Failed',
-      detail: { cause: 'connection refused', likely_causes_hint: [] },
+    (invoke as ReturnType<typeof vi.fn>).mockImplementation((cmd: string) => {
+      if (cmd === 'wizard_test_send_is_mocked') return Promise.resolve(false);
+      return Promise.resolve({ kind: 'Failed', detail: { cause: 'connection refused', likely_causes_hint: [] } });
     });
 
     renderInState();
@@ -269,23 +274,32 @@ describe('<Step3TestSend>', () => {
 
   // ── invoke error handling via idle→send flow ──────────────────────────
 
-  it('invoke throwing WizardError.Busy transitions to failed substate', async () => {
-    (invoke as ReturnType<typeof vi.fn>).mockRejectedValue({ kind: 'Busy', detail: {} });
+  // FIX 2 (P0b): a Busy (mutex-contended) result is a NO-OP — it MUST NOT flip the
+  // UI to `failed` while a prior live send may still be in flight. The substate
+  // stays whatever it was (here: `sending`, after BEGIN_TEST_SEND).
+  it('invoke rejecting with WizardError.Busy is a NO-OP (stays in sending; does NOT go to failed)', async () => {
+    (invoke as ReturnType<typeof vi.fn>).mockImplementation((cmd: string) => {
+      if (cmd === 'wizard_test_send_is_mocked') return Promise.resolve(false);
+      return Promise.reject({ kind: 'Busy', detail: {} });
+    });
 
     renderInState();
     await act(async () => {
       fireEvent.click(screen.getByTestId('send-test-btn'));
     });
 
-    await waitFor(() => {
-      expect(screen.getByTestId('probe-substate')).toHaveTextContent('failed');
-    }, { timeout: 10000 });
+    // Allow the rejected invoke promise to settle.
+    await act(async () => { await Promise.resolve(); });
+
+    // Busy is swallowed: we entered `sending` via BEGIN_TEST_SEND and stay there.
+    expect(screen.getByTestId('probe-substate')).toHaveTextContent('sending');
+    expect(screen.queryByTestId('substate-failed')).not.toBeInTheDocument();
   });
 
   it('invoke throwing WizardError.Other transitions to failed substate', async () => {
-    (invoke as ReturnType<typeof vi.fn>).mockRejectedValue({
-      kind: 'Other',
-      detail: { detail: 'network unreachable' },
+    (invoke as ReturnType<typeof vi.fn>).mockImplementation((cmd: string) => {
+      if (cmd === 'wizard_test_send_is_mocked') return Promise.resolve(false);
+      return Promise.reject({ kind: 'Other', detail: { detail: 'network unreachable' } });
     });
 
     renderInState();
@@ -320,5 +334,99 @@ describe('<Step3TestSend>', () => {
     renderInState({ testSendSubstate: 'failed', testSendError: 'err' });
     expect(screen.queryByTestId('send-test-btn')).not.toBeInTheDocument();
     expect(screen.getByTestId('retry-btn')).toBeInTheDocument();
+  });
+
+  // ── FIX 1 (P0a): Retry routes THROUGH the reducer (failed → sending) ──────
+  // The retry gesture must leave `failed` and enter `sending` BEFORE/at the invoke,
+  // so the Retry button (only rendered in `failed`) is gone the instant a send is
+  // in flight. This closes the double-transmission-under-one-retry-gesture window.
+
+  it('failed: [Retry] transitions through the reducer to sending (Retry control gone once sending)', async () => {
+    // Hold the invoke pending so we can observe the intermediate `sending` substate
+    // before the result resolves.
+    let resolveSend: (v: unknown) => void = () => {};
+    (invoke as ReturnType<typeof vi.fn>).mockImplementation((cmd: string) => {
+      if (cmd === 'wizard_test_send_is_mocked') return Promise.resolve(false);
+      return new Promise((res) => { resolveSend = res; });
+    });
+
+    renderInState({ testSendSubstate: 'failed', testSendError: 'connection refused' });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('retry-btn'));
+    });
+
+    // We are now in `sending` (reducer-routed), and the Retry/Send activation
+    // surface is UNCONDITIONALLY ABSENT — no second transmission can be triggered.
+    expect(screen.getByTestId('probe-substate')).toHaveTextContent('sending');
+    expect(screen.queryByTestId('retry-btn')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('send-test-btn')).not.toBeInTheDocument();
+
+    // Resolve the in-flight send; UI advances to success.
+    await act(async () => {
+      resolveSend({ kind: 'Success', detail: { reply_subject: 'Re: test' } });
+      await Promise.resolve();
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId('probe-substate')).toHaveTextContent('success');
+    });
+  });
+
+  it('failed: [Retry] then a Busy result is a NO-OP (stays in sending; does NOT bounce to failed)', async () => {
+    (invoke as ReturnType<typeof vi.fn>).mockImplementation((cmd: string) => {
+      if (cmd === 'wizard_test_send_is_mocked') return Promise.resolve(false);
+      return Promise.reject({ kind: 'Busy', detail: {} });
+    });
+
+    renderInState({ testSendSubstate: 'failed', testSendError: 'connection refused' });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('retry-btn'));
+    });
+    await act(async () => { await Promise.resolve(); });
+
+    // Retry routed us to `sending`; the Busy rejection is swallowed → stay in `sending`.
+    expect(screen.getByTestId('probe-substate')).toHaveTextContent('sending');
+  });
+
+  // ── FIX 4 (P2): MOCKED banner reachable during `sending` when mock mode active ──
+  // Spec §3.8 line 348: the MOCKED banner MUST render during `sending` so mock mode
+  // is operator-visible. The component queries wizard_test_send_is_mocked on entering
+  // `sending` and seeds a [MOCKED] line into testSendLog, which drives the banner.
+
+  it('mock mode: MOCKED banner renders during sending when wizard_test_send_is_mocked=true', async () => {
+    // Keep the send pending so we observe `sending` with the banner.
+    (invoke as ReturnType<typeof vi.fn>).mockImplementation((cmd: string) => {
+      if (cmd === 'wizard_test_send_is_mocked') return Promise.resolve(true);
+      return new Promise(() => { /* never resolves: stay in sending */ });
+    });
+
+    renderInState();
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('send-test-btn'));
+    });
+    await act(async () => { await Promise.resolve(); });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('probe-substate')).toHaveTextContent('sending');
+      expect(screen.getByTestId('mock-banner')).toBeInTheDocument();
+      expect(screen.getByTestId('mock-banner').textContent).toMatch(/MOCKED/i);
+    });
+  });
+
+  it('live mode: MOCKED banner is ABSENT during sending when wizard_test_send_is_mocked=false', async () => {
+    (invoke as ReturnType<typeof vi.fn>).mockImplementation((cmd: string) => {
+      if (cmd === 'wizard_test_send_is_mocked') return Promise.resolve(false);
+      return new Promise(() => { /* never resolves */ });
+    });
+
+    renderInState();
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('send-test-btn'));
+    });
+    await act(async () => { await Promise.resolve(); });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('probe-substate')).toHaveTextContent('sending');
+    });
+    expect(screen.queryByTestId('mock-banner')).not.toBeInTheDocument();
   });
 });
