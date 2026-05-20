@@ -1,0 +1,12 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "compose",
+  "description": "Compose windows (label `compose-<draftId>`, Task 14 / spec §5.4). Least-privilege grant: enough core IPC for the close lifecycle the compose frontend drives, nothing more. App commands (e.g. `message_send`) are not ACL-gated in Tauri 2 — they are reachable because this capability gives the compose window an IPC bridge.",
+  "windows": ["compose-*"],
+  "permissions": [
+    "core:window:allow-close",
+    "core:window:allow-destroy",
+    "core:event:allow-listen",
+    "core:event:allow-unlisten"
+  ]
+}

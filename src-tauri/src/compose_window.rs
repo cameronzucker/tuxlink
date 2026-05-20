@@ -28,7 +28,22 @@
 //! `ui_commands.rs`'s append-only command list. The `invoke_handler`
 //! registration lands in the orchestrator integration commit (spec §4.3).
 
-use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
+use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
+
+/// The window label authorized to open compose windows. Only the main window
+/// may spawn compose windows (Codex integration round, defense-in-depth for F7).
+const MAIN_WINDOW_LABEL: &str = "main";
+
+/// Pure guard: is `caller_label` authorized to invoke `compose_window_open`?
+///
+/// Only the `main` window may open compose windows. Extracted as a pure
+/// function so it is unit-testable without a Tauri runtime (the command itself
+/// needs a live `WebviewWindow`, which requires the full runtime — verified at
+/// M2 operator smoke per testing-pitfalls.md §9). Mirrors the `menu_event_ids`
+/// / `tray_event_ids` testable-surface convention.
+pub fn caller_is_authorized(caller_label: &str) -> bool {
+    caller_label == MAIN_WINDOW_LABEL
+}
 
 /// Open a compose window for the given draft id.
 ///
@@ -46,8 +61,29 @@ use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
 /// `window.set_focus()` call. If the window is visible but not focused,
 /// focus is restored; if it is hidden (main-window-hide-to-tray flow),
 /// it is shown and focused.
+///
+/// **Main-window-only guard (Codex integration round, defense-in-depth for
+/// F7).** Now that compose windows carry a Tauri capability (`compose.json`),
+/// they have an IPC bridge and could in principle invoke `compose_window_open`
+/// themselves — recursively spawning nested compose windows. The frontend
+/// already guards this (`App.tsx`: a compose route never listens for
+/// `menu:file:new`), but a malicious/buggy frontend could still issue the
+/// invoke directly. This Rust-side check rejects any call NOT originating from
+/// the `main` window. `caller` is the invoking [`WebviewWindow`], injected by
+/// Tauri's command runtime.
 #[tauri::command]
-pub fn compose_window_open(app: AppHandle, draft_id: String) -> Result<(), String> {
+pub fn compose_window_open(
+    app: AppHandle,
+    caller: WebviewWindow,
+    draft_id: String,
+) -> Result<(), String> {
+    if !caller_is_authorized(caller.label()) {
+        return Err(format!(
+            "compose_window_open may only be invoked from the main window (caller: {})",
+            caller.label()
+        ));
+    }
+
     let label = format!("compose-{}", draft_id);
     let url = format!("/compose/{}", draft_id);
 
@@ -131,5 +167,30 @@ mod tests {
         let draft_id = "draft-abc";
         let url = format!("/compose/{}", draft_id);
         assert_eq!(url, "/compose/draft-abc");
+    }
+
+    // Codex integration round: `compose_window_open` is gated to the main
+    // window so an IPC-enabled compose window cannot recursively spawn nested
+    // compose windows (defense-in-depth for F7). The command's runtime path
+    // needs a live `WebviewWindow`; the authorization decision is factored into
+    // the pure `caller_is_authorized` helper so it is unit-testable here.
+    #[test]
+    fn caller_is_authorized_only_for_main() {
+        assert!(super::caller_is_authorized("main"));
+    }
+
+    #[test]
+    fn caller_is_authorized_rejects_compose_windows() {
+        // A compose window must NOT be able to open further compose windows.
+        assert!(!super::caller_is_authorized("compose-draft-2026-05-19-001"));
+        assert!(!super::caller_is_authorized("compose-draft-abc"));
+    }
+
+    #[test]
+    fn caller_is_authorized_rejects_other_labels() {
+        assert!(!super::caller_is_authorized(""));
+        assert!(!super::caller_is_authorized("wizard"));
+        assert!(!super::caller_is_authorized("MAIN")); // case-sensitive
+        assert!(!super::caller_is_authorized("main "));
     }
 }

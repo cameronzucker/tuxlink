@@ -219,6 +219,13 @@ export function Compose({ draftId }: ComposeProps) {
   // success state (sentRef.current) always passes as clean — the send already
   // cleared the draft, so no prompt is needed.
   useEffect(() => {
+    // Late-resolution guard (mirrors App.tsx's menu listener + SessionLog's
+    // listener): the dynamic import + onCloseRequested() registration is async,
+    // so a fast unmount can run cleanup BEFORE the listener handle resolves.
+    // Without the `mounted` flag we would only `unlisten` an already-assigned
+    // handle and leak the listener registered after cleanup (Codex integration
+    // round P3). The flag causes the late `.then()` to immediately release it.
+    let mounted = true;
     let unlisten: (() => void) | undefined;
     import('@tauri-apps/api/window').then(({ getCurrentWindow }) => {
       getCurrentWindow()
@@ -233,9 +240,20 @@ export function Compose({ draftId }: ComposeProps) {
           event.preventDefault();
           setClosePrompt({ open: true, action: 'close' });
         })
-        .then((fn) => { unlisten = fn; });
+        .then((fn) => {
+          if (mounted) {
+            unlisten = fn;
+          } else {
+            // Cleanup already ran before the listener resolved — release it
+            // immediately so it does not leak / fire on a dead component.
+            fn();
+          }
+        });
     });
-    return () => { unlisten?.(); };
+    return () => {
+      mounted = false;
+      unlisten?.();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isDirty]);
 
