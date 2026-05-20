@@ -23,6 +23,8 @@ tempfile = "3"             # PROMOTED from [dev-dependencies] below
 async-trait = "0.1"        # NEW (tuxlink-z5f) — WinlinkBackend trait async-fn macro for object-safety
 futures = "0.3"            # NEW (tuxlink-z5f) — Stream + BoxStream for stream_log return type
 tokio-stream = { version = "0.1", features = ["sync"] }  # NEW (tuxlink-z5f) — BroadcastStream wrapper
+chrono = { version = "0.4", default-features = false, features = ["clock"] }  # NEW (tuxlink-dm8, Task 14) — RFC3339 timestamp for message_send; `serde` unused (Codex fix)
+tauri-plugin-window-state = "2"                            # NEW (tuxlink-dm8, Task 14) — per-compose-window geometry persistence (spec §8)
 
 [dev-dependencies]
 mockito = "1.5"

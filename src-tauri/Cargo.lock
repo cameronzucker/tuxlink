@@ -3824,6 +3824,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "tauri-plugin-window-state"
+version = "2.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "73736611e14142408d15353e21e3cca2f12a3cfb523ad0ce85999b6d2ef1a704"
+dependencies = [
+ "bitflags 2.11.1",
+ "log",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-plugin",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "tauri-runtime"
 version = "2.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4317,6 +4332,7 @@ name = "tuxlink"
 version = "0.0.1"
 dependencies = [
  "async-trait",
+ "chrono",
  "futures",
  "mockito",
  "nix",
@@ -4328,6 +4344,7 @@ dependencies = [
  "tauri-build",
  "tauri-plugin-fs",
  "tauri-plugin-shell",
+ "tauri-plugin-window-state",
  "tempfile",
  "thiserror 1.0.69",
  "tokio",

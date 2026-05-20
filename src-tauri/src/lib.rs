@@ -1,4 +1,5 @@
 pub mod app_backend;
+pub mod compose_window;
 pub mod config;
 pub mod menu;
 pub mod pat_client;
