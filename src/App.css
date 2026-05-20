@@ -1,116 +1,215 @@
-.logo.vite:hover {
-  filter: drop-shadow(0 0 2em #747bff);
+/* ============================================================================
+ * App.css — global CSS foundation for Tuxlink.
+ *
+ * Scope: this file is the FOUNDATION layer only — global reset, box-sizing,
+ * the central design tokens, and dark base/element + form-control theming.
+ * Component layout/look lives in the per-component CSS
+ * (shell/AppShell.css, shell/DashboardRibbon.css, shell/StatusBar.css,
+ * mailbox/MessageView.css, compose/Compose.css). This file deliberately does
+ * NOT chase pixel-perfect mock fidelity — that is a separate polish pass.
+ *
+ * Aesthetic: "Mail.app-minimal" dark single-theme (locked direction per the
+ * v0.0.1 UX mockups, mock-d-mailapp-minimal.png + the synthesis). Restrained,
+ * clean, high-information-density. Single dark theme — NOT OS-adaptive.
+ *
+ * Token contract: every `var(--tux-*)` referenced anywhere under src/ is
+ * defined here on :root, so no component relies on its inline fallback.
+ * ========================================================================== */
+
+/* ----------------------------------------------------------------------------
+ * 1. Global reset + box-sizing
+ *
+ * box-sizing:border-box on everything stops paddings from inflating element
+ * widths past their grid tracks (the cause of the cramming/overlap in the
+ * three-pane shell). Zeroing html/body/#root margins kills the default
+ * body{margin:8px} that was offsetting the 100vw/100vh .app-shell and making
+ * the window appear to "float" with white space top/left.
+ * -------------------------------------------------------------------------- */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
 }
 
-.logo.react:hover {
-  filter: drop-shadow(0 0 2em #61dafb);
+html,
+body,
+#root {
+  margin: 0;
+  padding: 0;
+  height: 100%;
 }
+
+/* #root is the React mount; let the .app-shell (and any full-window view such
+ * as the wizard or a compose webview) fill the viewport with no gap. */
+#root {
+  width: 100%;
+  min-height: 100%;
+}
+
+/* ----------------------------------------------------------------------------
+ * 2. Design tokens
+ *
+ * The six canonical --tux-* tokens are the de-facto palette already referenced
+ * (as fallbacks) throughout the component CSS; they are canonicalized here so
+ * nothing relies on a fallback. A few tight companions (--tux-accent,
+ * --tux-fg-muted, surface/state semantics) are added for base + form theming;
+ * the accent in particular grounds the amber the locked mock uses for the
+ * primary action (Reply) and unread markers.
+ * -------------------------------------------------------------------------- */
+
 :root {
-  font-family: Inter, Avenir, Helvetica, Arial, sans-serif;
-  font-size: 16px;
-  line-height: 24px;
+  /* --- The six canonical tokens (referenced by the component CSS) --- */
+  --tux-bg: #1a1d21; /* app background (darkest neutral) */
+  --tux-fg: #e6e6e6; /* primary text */
+  --tux-border: #30353b; /* hairline separators between regions/rows */
+  --tux-hover: #262b31; /* row/item hover wash */
+  --tux-accent-bg: #2d3742; /* selected row/folder background */
+  --tux-badge: #3a414a; /* folder-count pill background */
+
+  /* --- Tight companions for base + form theming --- */
+  --tux-fg-muted: #9aa3ad; /* secondary text (dates, hints, labels) */
+  --tux-surface: #21252a; /* raised surface: inputs, light chrome */
+  --tux-surface-2: #262b31; /* slightly raised (button rest) */
+  --tux-accent: #e8923a; /* amber accent — primary action, unread dots */
+  --tux-accent-fg: #1a1d21; /* text on the amber accent */
+  --tux-focus-ring: rgba(232, 146, 58, 0.55); /* focus outline (amber) */
+
+  /* --- Typography ---
+   * Native-desktop system stack (Tauri ships in WebKitGTK on Linux; this
+   * favors the platform UI font and stays out of the generic-AI-font trap by
+   * deferring to the host's chosen sans). */
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+    'Cantarell', 'Noto Sans', 'Helvetica Neue', Arial, sans-serif;
+  font-size: 14px;
+  line-height: 1.45;
   font-weight: 400;
 
-  color: #0f0f0f;
-  background-color: #f6f6f6;
+  color: var(--tux-fg);
+  background-color: var(--tux-bg);
+
+  /* Monospace stack used by tabular fields (time, grid square). Components
+   * already inline their own monospace stack; exposed here for consistency. */
+  --tux-mono: 'SF Mono', 'Menlo', 'Consolas', 'Liberation Mono',
+    'DejaVu Sans Mono', monospace;
 
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   -webkit-text-size-adjust: 100%;
+  color-scheme: dark;
 }
 
-.container {
-  margin: 0;
-  padding-top: 10vh;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  text-align: center;
-}
+/* ----------------------------------------------------------------------------
+ * 3. Base element theming (dark)
+ * -------------------------------------------------------------------------- */
 
-.logo {
-  height: 6em;
-  padding: 1.5em;
-  will-change: filter;
-  transition: 0.75s;
-}
-
-.logo.tauri:hover {
-  filter: drop-shadow(0 0 2em #24c8db);
-}
-
-.row {
-  display: flex;
-  justify-content: center;
+body {
+  background-color: var(--tux-bg);
+  color: var(--tux-fg);
+  font-family: inherit;
 }
 
 a {
-  font-weight: 500;
-  color: #646cff;
-  text-decoration: inherit;
+  color: var(--tux-accent);
+  text-decoration: none;
 }
-
 a:hover {
-  color: #535bf2;
+  text-decoration: underline;
 }
 
-h1 {
-  text-align: center;
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  margin: 0 0 0.5em;
+  font-weight: 600;
+  line-height: 1.25;
+  color: var(--tux-fg);
 }
+
+p {
+  margin: 0 0 0.75em;
+}
+
+/* ----------------------------------------------------------------------------
+ * 4. Form-control theming (dark)
+ *
+ * Without this, inputs/textareas/selects/buttons render with the host's
+ * light defaults (light-on-dark forms in the wizard and elsewhere). Theme the
+ * controls into the dark system here. The compose window intentionally carries
+ * its own self-contained palette in Compose.css and overrides these.
+ * -------------------------------------------------------------------------- */
 
 input,
+textarea,
+select,
 button {
-  border-radius: 8px;
-  border: 1px solid transparent;
-  padding: 0.6em 1.2em;
-  font-size: 1em;
-  font-weight: 500;
   font-family: inherit;
-  color: #0f0f0f;
-  background-color: #ffffff;
-  transition: border-color 0.25s;
-  box-shadow: 0 2px 2px rgba(0, 0, 0, 0.2);
-}
-
-button {
-  cursor: pointer;
-}
-
-button:hover {
-  border-color: #396cd8;
-}
-button:active {
-  border-color: #396cd8;
-  background-color: #e8e8e8;
+  font-size: 1em;
+  color: var(--tux-fg);
+  background-color: var(--tux-surface);
+  border: 1px solid var(--tux-border);
+  border-radius: 6px;
 }
 
 input,
+textarea,
+select {
+  padding: 6px 9px;
+}
+input::placeholder,
+textarea::placeholder {
+  color: var(--tux-fg-muted);
+  opacity: 1;
+}
+
+textarea {
+  resize: vertical;
+}
+
+input:focus,
+textarea:focus,
+select:focus,
+button:focus-visible {
+  outline: 2px solid var(--tux-focus-ring);
+  outline-offset: 1px;
+  border-color: var(--tux-accent);
+}
+
+input:disabled,
+textarea:disabled,
+select:disabled,
+button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* Buttons: clean, restrained chrome by default. Components that want a
+ * primary/accent treatment opt in via their own class (e.g. compose-btn,
+ * wizard buttons) — this is just a sane themed baseline. */
 button {
-  outline: none;
+  padding: 6px 12px;
+  font-weight: 500;
+  background-color: var(--tux-surface-2);
+  cursor: pointer;
+  transition: background-color 0.12s ease, border-color 0.12s ease;
+}
+button:hover:not(:disabled) {
+  background-color: var(--tux-hover);
+  border-color: var(--tux-accent);
+}
+button:active:not(:disabled) {
+  background-color: var(--tux-accent-bg);
 }
 
-#greet-input {
-  margin-right: 5px;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    color: #f6f6f6;
-    background-color: #2f2f2f;
-  }
-
-  a:hover {
-    color: #24c8db;
-  }
-
-  input,
-  button {
-    color: #ffffff;
-    background-color: #0f0f0f98;
-  }
-  button:active {
-    background-color: #0f0f0f69;
-  }
+/* Checkboxes / radios pick up the amber accent natively. */
+input[type='checkbox'],
+input[type='radio'] {
+  accent-color: var(--tux-accent);
+  width: auto;
+  padding: 0;
 }
