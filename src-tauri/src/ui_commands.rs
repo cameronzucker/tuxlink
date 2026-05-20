@@ -22,14 +22,14 @@
 //! every `BackendError` variant (Codex finding 6).
 //!
 //! **Async/lock invariant (spec §1.1):** every command clones the backend
-//! `Arc` and drops the `RwLock` guard via [`AppBackend::current`] BEFORE
+//! `Arc` and drops the `RwLock` guard via [`BackendState::current`] BEFORE
 //! awaiting the trait method — the guard is never held across an await.
 
 use mail_parser::{MimeHeaders, MessageParser};
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
-use crate::app_backend::AppBackend;
+use crate::app_backend::{BackendPhase, BackendState};
 use crate::config::{self, CmsTransport, GpsState, PositionPrecision};
 use crate::session_log::SessionLogState;
 use crate::winlink_backend::{
@@ -187,7 +187,7 @@ pub fn parse_folder(folder: &str) -> Result<MailboxFolder, UiError> {
 #[tauri::command]
 pub async fn mailbox_list(
     folder: String,
-    state: State<'_, AppBackend>,
+    state: State<'_, BackendState>,
 ) -> Result<Vec<MessageMetaDto>, UiError> {
     let parsed = parse_folder(&folder)?;
     let backend = state
@@ -520,7 +520,7 @@ fn days_to_ymd(days: u32) -> (u32, u32, u32) {
 pub async fn message_read(
     folder: String,
     id: String,
-    state: State<'_, AppBackend>,
+    state: State<'_, BackendState>,
 ) -> Result<ParsedMessageDto, UiError> {
     let parsed_folder = parse_folder(&folder)?;
     let mid = MessageId::new(&id);
@@ -572,7 +572,7 @@ pub struct OutboundDraftDto {
 #[tauri::command]
 pub async fn message_send(
     draft: OutboundDraftDto,
-    state: State<'_, AppBackend>,
+    state: State<'_, BackendState>,
 ) -> Result<Option<String>, UiError> {
     let backend = state
         .current()
@@ -601,7 +601,7 @@ pub async fn message_send(
 // ============================================================================
 // Appended here per the append-only ownership model (spec §7). The
 // `invoke_handler` registration lands in the orchestrator integration commit
-// (§4.3). `config_read` reads `config.rs` with NO AppBackend dependency
+// (§4.3). `config_read` reads `config.rs` with NO BackendState dependency
 // (keeping Task 16 independent for build); `backend_status` consumes the live
 // trait `status()` when populated, else `None` (the frontend's
 // `formatConnectionState(null, configTransport)` renders the config-derived
@@ -650,7 +650,7 @@ impl From<&config::Config> for ConfigViewDto {
 /// ribbon consumes.
 ///
 /// NOT a backend call (spec §3.2) — reads `config.rs` directly so Task 16
-/// stays independent of `AppBackend`. A read/parse/validation failure (incl.
+/// stays independent of `BackendState`. A read/parse/validation failure (incl.
 /// "no config yet", pre-wizard) maps to `UiError::Internal` (spec §3.1
 /// "`config_read` is NOT a backend call — its failures map directly to
 /// `UiError::Internal`"). The ribbon `.catch()`es this and renders empty,
@@ -713,26 +713,57 @@ impl From<BackendStatus> for StatusDto {
     }
 }
 
-/// Return the live backend status, or `None` when no backend is installed.
+/// Derive the ribbon's `Option<StatusDto>` from one atomic `BackendState`
+/// snapshot (spec §3.4, adrev #9). Pure — no I/O, no lock; takes the cloned
+/// `(phase, backend)` pair so it is unit-testable without a `tauri::State`
+/// (drives the Task-D `derive_status_*` tests). The three-state model:
+///
+/// - [`BackendPhase::NotConfigured`] → `None`. The ribbon's
+///   `formatConnectionState(null, config.transport)` renders the config-derived
+///   "Idle · <transport>" fallback — the "not connected" empty state, NOT an
+///   error (`src/shell/useStatus.ts`).
+/// - [`BackendPhase::Spawning`] → `Some(Connecting)` — the bootstrap is
+///   launching Pat. `transport` is left empty here (the bootstrap has not yet
+///   established a CMS transport; the ribbon's `normalizeTransportLabel`
+///   tolerates an empty string and the config-derived label fills the gap).
+/// - [`BackendPhase::Ready`] + a backend → the live backend's `status()` mapped
+///   via the existing `From<BackendStatus>` impl. (A `Ready` phase always
+///   carries a backend by the `BackendState` invariant; a defensive `Ready`
+///   with `None` backend degrades to `None`.)
+/// - [`BackendPhase::Failed`] / [`BackendPhase::ConfigError`] → `Some(Error{reason})`
+///   — an EXPLICIT error the ribbon shows loudly (Pat is a core runtime
+///   dependency in CMS mode; its failure is not a benign absence — spec §2).
+pub fn derive_status_dto(
+    phase: BackendPhase,
+    backend: Option<std::sync::Arc<dyn crate::winlink_backend::WinlinkBackend>>,
+) -> Option<StatusDto> {
+    match phase {
+        BackendPhase::NotConfigured => None,
+        BackendPhase::Spawning => Some(StatusDto::Connecting {
+            transport: String::new(),
+        }),
+        BackendPhase::Ready => backend.map(|b| StatusDto::from(b.status())),
+        BackendPhase::Failed { reason } | BackendPhase::ConfigError { reason } => {
+            Some(StatusDto::Error { reason })
+        }
+    }
+}
+
+/// Return the ribbon's three-state status from one atomic [`BackendState`]
+/// snapshot (spec §3.4 / §5.6, adrev #9 — no torn read between phase + backend).
 ///
 /// Per spec §5.6 (Codex verdict V6): `status()` is sync / non-I/O (the trait
-/// caches it — `winlink_backend.rs`), so it is cheap to poll. When the
-/// `AppBackend` is populated the command returns `Some(StatusDto)` from the
-/// live `status()`; when `None` (offline install / pre-connect) it returns
-/// `Ok(None)`. The ribbon's `formatConnectionState(null, config.transport)`
-/// renders the config-derived "Idle · <transport>" fallback for the `None`
-/// case (`src/shell/useStatus.ts` + `status.test.ts`), so the config-derived
-/// label lives frontend-side, fed by `None` here — keeping `backend_status`
-/// free of any config dependency.
+/// caches it — `winlink_backend.rs`), so it is cheap to poll. The derivation is
+/// the pure [`derive_status_dto`]; see it for the full per-phase mapping. In
+/// short: `NotConfigured` → `None` (the ribbon's config-derived "Idle ·
+/// <transport>" fallback); `Spawning` → `Connecting`; `Ready` → the live
+/// backend's `status()`; `Failed`/`ConfigError` → an explicit `Error{reason}`.
 #[tauri::command]
-pub async fn backend_status(state: State<'_, AppBackend>) -> Result<Option<StatusDto>, UiError> {
-    // `current()` clones the Arc + drops the RwLock guard (spec §1.1); we do
-    // NOT hold the guard. `status()` is sync + non-I/O, so there is no await
-    // with a lock held regardless.
-    match state.current() {
-        Some(backend) => Ok(Some(StatusDto::from(backend.status()))),
-        None => Ok(None),
-    }
+pub async fn backend_status(state: State<'_, BackendState>) -> Result<Option<StatusDto>, UiError> {
+    // `snapshot()` clones (phase, backend) under ONE read guard and drops it
+    // (spec §1.1 + adrev #9); we hold NO lock. `status()` is sync + non-I/O.
+    let (phase, backend) = state.snapshot();
+    Ok(derive_status_dto(phase, backend))
 }
 
 // ============================================================================
@@ -930,7 +961,7 @@ mod tests {
     // by verifying that `OutboundDraftDto` serializes correctly and that the
     // None → None path produces a serializable `Option<String>`.
     //
-    // The full async command path (AppBackend + mock backend) cannot be driven
+    // The full async command path (BackendState + mock backend) cannot be driven
     // from a sync unit test without a tokio runtime; the structural contract
     // is tested here (None round-trip) and the command handler is tested at
     // the integration layer (cargo test with tokio::test).
@@ -1048,7 +1079,7 @@ mod tests {
     // ========================================================================
     // Task 16 — backend_status DTO mapping + populated-vs-None branch logic
     // ========================================================================
-    use crate::app_backend::AppBackend;
+    use crate::app_backend::{BackendPhase, BackendState};
     use crate::winlink_backend::{BackendStatus, PatBackend};
     use std::sync::Arc;
 
@@ -1113,31 +1144,92 @@ mod tests {
         assert_eq!(disc["kind"], "Disconnected");
     }
 
-    // backend_status branch logic: the command returns Some(StatusDto) when
-    // the AppBackend is populated and None when it is not. The command fn
-    // itself takes `State<'_, AppBackend>` (needs a Tauri app), so the branch
-    // is exercised here against the same `AppBackend::current()` +
-    // `StatusDto::from(status())` chain the command uses (the live IPC
-    // round-trip is the M2 smoke gate).
+    // ========================================================================
+    // Task D (tuxlink-22l) — three-state backend_status derivation (spec §3.4)
+    // The command fn takes `State<'_, BackendState>` (needs a Tauri app), so
+    // the three-state logic is exercised here against `derive_status_dto`, the
+    // pure helper the command calls on its `snapshot()`. We construct
+    // `BackendState` directly in each phase + a real `PatBackend::from_url`
+    // backend for the Ready case (the live IPC round-trip is the M2 smoke gate).
+    // ========================================================================
+
+    // NotConfigured (pre-wizard / offline) → None: the ribbon renders its
+    // config-derived "Idle · <transport>" empty state, NOT an error.
     #[test]
-    fn backend_status_none_when_no_backend() {
-        let app = AppBackend::new();
-        // Mirror the command body: None backend → Ok(None).
-        let result: Option<StatusDto> = app.current().map(|b| StatusDto::from(b.status()));
-        assert!(result.is_none(), "no backend → None (frontend renders Idle · <transport>)");
+    fn derive_status_not_configured_is_none() {
+        let state = BackendState::new(); // (NotConfigured, None)
+        let (phase, backend) = state.snapshot();
+        assert!(
+            derive_status_dto(phase, backend).is_none(),
+            "NotConfigured → None (frontend renders Idle · <transport>)"
+        );
     }
 
+    // Spawning → Some(Connecting): the bootstrap is launching Pat; the ribbon
+    // shows a connecting state rather than "not connected" or an error.
     #[test]
-    fn backend_status_some_when_backend_populated() {
-        let app = AppBackend::new();
-        app.set(Arc::new(PatBackend::from_url("http://127.0.0.1:9")));
-        // A freshly-constructed PatBackend reports Disconnected (no connect()
-        // has run); the command projects that to Some(StatusDto::Disconnected).
-        let result: Option<StatusDto> = app.current().map(|b| StatusDto::from(b.status()));
+    fn derive_status_spawning_is_connecting() {
+        let state = BackendState::new();
+        state.set_phase(BackendPhase::Spawning);
+        let (phase, backend) = state.snapshot();
         assert_eq!(
-            result,
+            derive_status_dto(phase, backend),
+            Some(StatusDto::Connecting {
+                transport: String::new()
+            }),
+            "Spawning → Some(Connecting)"
+        );
+    }
+
+    // Ready + backend → the live backend's status() mapped. A freshly-spawned
+    // PatBackend reports Disconnected ("backend ready", no CMS link — adrev #10),
+    // which projects to Some(StatusDto::Disconnected).
+    #[test]
+    fn derive_status_ready_maps_backend_status() {
+        let state = BackendState::new();
+        state.install(Arc::new(PatBackend::from_url("http://127.0.0.1:9")));
+        let (phase, backend) = state.snapshot();
+        assert_eq!(
+            derive_status_dto(phase, backend),
             Some(StatusDto::Disconnected),
-            "populated backend → Some(live status)"
+            "Ready + backend → Some(live status())"
+        );
+    }
+
+    // Failed → Some(Error{reason}): CMS configured but Pat spawn/health failed.
+    // The ribbon shows the reason loudly (Pat is a core runtime dependency).
+    #[test]
+    fn derive_status_failed_is_error_with_reason() {
+        let state = BackendState::new();
+        state.set_phase(BackendPhase::Failed {
+            reason: "Pat failed to start: announce timeout".to_string(),
+        });
+        let (phase, backend) = state.snapshot();
+        assert_eq!(
+            derive_status_dto(phase, backend),
+            Some(StatusDto::Error {
+                reason: "Pat failed to start: announce timeout".to_string()
+            }),
+            "Failed → Some(Error{{reason}})"
+        );
+    }
+
+    // ConfigError → Some(Error{reason}): a config file exists but is unusable
+    // (Serde/Validation/Io). Distinct phase from Failed (adrev #15) but also an
+    // explicit error at the ribbon, carrying its own reason.
+    #[test]
+    fn derive_status_config_error_is_error_with_reason() {
+        let state = BackendState::new();
+        state.set_phase(BackendPhase::ConfigError {
+            reason: "config deserialize failed: expected value at line 1".to_string(),
+        });
+        let (phase, backend) = state.snapshot();
+        assert_eq!(
+            derive_status_dto(phase, backend),
+            Some(StatusDto::Error {
+                reason: "config deserialize failed: expected value at line 1".to_string()
+            }),
+            "ConfigError → Some(Error{{reason}})"
         );
     }
 

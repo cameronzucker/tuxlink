@@ -13,7 +13,7 @@
 // These exercise the public surface that the Tauri commands are built from.
 // Command fns take `tauri::State`, which can't be constructed without a
 // running Tauri app, so their logic is covered via their component functions
-// here + the AppBackend unit tests in-crate; the live IPC round-trip is
+// here + the BackendState unit tests in-crate; the live IPC round-trip is
 // smoke-verified at M2 (testing-pitfalls: static tests verify logic, not
 // rendered widgets).
 
@@ -179,7 +179,7 @@ async fn test_read_message_in_uses_requested_folder() {
 
 // ============================================================================
 // Task-12 test (8) component: UiError projection is exhaustive + correct for
-// the variants the command surfaces. (The AppBackend None → NotConfigured
+// the variants the command surfaces. (The BackendState None → NotConfigured
 // path is unit-tested in-crate in app_backend.rs; here we verify the error
 // MAPPING that the command applies via `?`.)
 // ============================================================================
