@@ -24,6 +24,14 @@ use thiserror::Error;
 // Pat-specific module.
 pub use crate::pat_client::MailboxFolder;
 
+// Native backend wiring (see the NativeBackend section below).
+use crate::config::{CmsTransport, Config};
+use crate::native_mailbox::Mailbox;
+use crate::winlink::message::Message;
+use crate::winlink::proposal::Answer;
+use crate::winlink::{compose, session, telnet};
+use std::path::PathBuf;
+
 // ============================================================================
 // Supporting types (spec §3.2)
 // ============================================================================
@@ -289,69 +297,232 @@ pub trait WinlinkBackend: Send + Sync {
 // NativeBackend stub (spec §3.9)
 // ============================================================================
 
-/// v0.5 prep stub. Every method returns [`BackendError::NotImplemented`];
-/// `status()` returns `Disconnected`; `stream_log()` is an empty stream.
-/// Real native logic lands in v0.5 Steps 3–10.
+/// The native Winlink backend: speaks B2F directly (no Pat), stores messages in
+/// its own [`Mailbox`], and connects over plaintext or TLS telnet. `connect`
+/// runs the real CMS exchange on a blocking task; the actual on-air protocol is
+/// validated by `src/bin/native_cms_probe.rs` and the `winlink::*` tests.
 pub struct NativeBackend {
     backend_id: BackendInstanceId,
+    config: Config,
+    mailbox: Arc<Mailbox>,
+    log_tx: broadcast::Sender<LogLine>,
+    status: Arc<RwLock<BackendStatus>>,
 }
 
 impl NativeBackend {
-    pub fn new() -> Self {
-        Self { backend_id: BackendInstanceId::next() }
+    /// Create a backend for `config`, storing messages under `mailbox_root`.
+    pub fn new(config: Config, mailbox_root: impl Into<PathBuf>) -> Self {
+        let (log_tx, _rx) = broadcast::channel(256);
+        Self {
+            backend_id: BackendInstanceId::next(),
+            config,
+            mailbox: Arc::new(Mailbox::new(mailbox_root)),
+            log_tx,
+            status: Arc::new(RwLock::new(BackendStatus::Disconnected)),
+        }
     }
 
-    #[allow(dead_code)] // exposed for v0.5+ session-validity tests
-    pub(crate) fn backend_id(&self) -> BackendInstanceId {
-        self.backend_id
-    }
-}
-
-impl Default for NativeBackend {
-    fn default() -> Self {
-        Self::new()
+    fn set_status(&self, status: BackendStatus) {
+        if let Ok(mut s) = self.status.write() {
+            *s = status;
+        }
     }
 }
 
 #[async_trait]
 impl WinlinkBackend for NativeBackend {
-    async fn list_messages(&self, _folder: MailboxFolder)
-        -> Result<Vec<MessageMeta>, BackendError>
-    {
-        Err(BackendError::NotImplemented)
+    async fn list_messages(&self, folder: MailboxFolder) -> Result<Vec<MessageMeta>, BackendError> {
+        self.mailbox.list(folder)
     }
 
-    async fn read_message_in(&self, _folder: MailboxFolder, _id: &MessageId)
-        -> Result<MessageBody, BackendError>
-    {
-        Err(BackendError::NotImplemented)
+    async fn read_message_in(
+        &self,
+        folder: MailboxFolder,
+        id: &MessageId,
+    ) -> Result<MessageBody, BackendError> {
+        self.mailbox.read(folder, id)
     }
 
-    async fn send_message(&self, _msg: OutboundMessage)
-        -> Result<Option<MessageId>, BackendError>
-    {
-        Err(BackendError::NotImplemented)
+    async fn send_message(
+        &self,
+        msg: OutboundMessage,
+    ) -> Result<Option<MessageId>, BackendError> {
+        let callsign = self
+            .config
+            .identity
+            .callsign
+            .clone()
+            .ok_or_else(|| BackendError::NotConfigured("identity.callsign".into()))?;
+        // The trait carries an RFC 3339 date; fall back to now if unparseable.
+        let unix_secs = parse_rfc3339_secs(&msg.date).unwrap_or_else(now_unix_secs);
+        let to: Vec<&str> = msg.to.iter().map(String::as_str).collect();
+        let cc: Vec<&str> = msg.cc.iter().map(String::as_str).collect();
+        let message =
+            compose::compose_message(&callsign, &to, &cc, &msg.subject, &msg.body, unix_secs);
+        let id = self.mailbox.store(MailboxFolder::Outbox, &message.to_bytes())?;
+        Ok(Some(id))
     }
 
-    async fn connect(&self, _transport: TransportConfig)
-        -> Result<Session, BackendError>
-    {
-        Err(BackendError::NotImplemented)
+    async fn connect(&self, transport: TransportConfig) -> Result<Session, BackendError> {
+        let TransportConfig::Cms { mode } = transport;
+        let config = self.config.clone();
+        let mailbox = self.mailbox.clone();
+
+        self.set_status(BackendStatus::Connecting {
+            transport: format!("{mode:?}"),
+        });
+
+        // The exchange is blocking (sockets + files); run it off the async runtime.
+        let outcome = tokio::task::spawn_blocking(move || native_connect(&config, &mailbox, mode))
+            .await
+            .map_err(|e| BackendError::Internal {
+                msg: format!("native connect task failed: {e}"),
+                source: None,
+            })?;
+
+        match outcome {
+            Ok(()) => {
+                self.set_status(BackendStatus::Connected {
+                    transport: format!("{mode:?}"),
+                    peer: CMS_HOST.to_string(),
+                    since_iso: now_iso8601_utc(),
+                });
+                Ok(Session {
+                    backend_id: self.backend_id,
+                    inner: SessionInner::Native(()),
+                })
+            }
+            Err(e) => {
+                self.set_status(BackendStatus::Error {
+                    reason: e.to_string(),
+                });
+                Err(e)
+            }
+        }
     }
 
-    async fn disconnect(&self, _session: Session)
-        -> Result<(), BackendError>
-    {
-        Err(BackendError::NotImplemented)
+    async fn disconnect(&self, session: Session) -> Result<(), BackendError> {
+        if session.backend_id != self.backend_id {
+            return Err(BackendError::InvalidSession);
+        }
+        self.set_status(BackendStatus::Disconnected);
+        Ok(())
     }
 
     fn status(&self) -> BackendStatus {
-        BackendStatus::Disconnected
+        self.status
+            .read()
+            .map(|s| s.clone())
+            .unwrap_or(BackendStatus::Error {
+                reason: "status RwLock poisoned".to_string(),
+            })
     }
 
     fn stream_log(&self) -> BoxStream<'static, LogLine> {
-        futures::stream::empty().boxed()
+        let rx = self.log_tx.subscribe();
+        BroadcastStream::new(rx)
+            .filter_map(|res| async move { res.ok() })
+            .boxed()
     }
+}
+
+/// The standard Winlink CMS host. Production rejects unregistered client SIDs
+/// (it directs unknown clients to `cms-z.winlink.org`), so a real exchange needs
+/// tuxlink's client name registered with Winlink; until then the dev CMS is
+/// reachable via the `native_cms_probe` env overrides.
+const CMS_HOST: &str = "server.winlink.org";
+
+/// Run one CMS exchange (blocking): build the outbox into proposals, connect over
+/// the chosen transport, accept all offered messages, then file what arrived into
+/// the inbox and move what was sent into the sent folder.
+fn native_connect(
+    config: &Config,
+    mailbox: &Mailbox,
+    mode: CmsTransport,
+) -> Result<(), BackendError> {
+    let callsign = config
+        .identity
+        .callsign
+        .clone()
+        .ok_or_else(|| BackendError::NotConfigured("identity.callsign".into()))?
+        .trim()
+        .to_uppercase();
+    let locator = config.identity.grid.clone().unwrap_or_default();
+    let password = keyring::Entry::new("tuxlink-pat", &callsign)
+        .ok()
+        .and_then(|e| e.get_password().ok())
+        .filter(|p| !p.is_empty());
+
+    let (port, transport) = match mode {
+        CmsTransport::CmsSsl => (8773u16, telnet::Transport::Tls),
+        CmsTransport::Telnet => (8772u16, telnet::Transport::Plaintext),
+    };
+
+    // Turn each queued outbox message into a proposal + compressed body.
+    let mut outbound = Vec::new();
+    for meta in mailbox.list(MailboxFolder::Outbox)? {
+        let body = mailbox.read(MailboxFolder::Outbox, &meta.id)?;
+        if let Ok(message) = Message::from_bytes(&body.raw_rfc5322) {
+            if let Some((proposal, compressed)) = message.to_proposal() {
+                let title = message.header("Subject").unwrap_or_default().to_string();
+                outbound.push(session::OutboundMessage {
+                    proposal,
+                    title,
+                    compressed,
+                });
+            }
+        }
+    }
+
+    let exchange_config = session::ExchangeConfig {
+        mycall: callsign,
+        targetcall: telnet::CMS_TARGET_CALL.to_string(),
+        locator,
+        password,
+    };
+
+    let result = telnet::connect_and_exchange(
+        CMS_HOST,
+        port,
+        transport,
+        &exchange_config,
+        outbound,
+        |proposals| {
+            proposals
+                .iter()
+                .map(|_| Answer::Accept { resume_offset: 0 })
+                .collect()
+        },
+    )
+    .map_err(|e| BackendError::TransportFailed {
+        reason: format!("{e:?}"),
+        source: None,
+    })?;
+
+    // File received messages into the inbox; move delivered ones to sent.
+    for message in &result.received {
+        mailbox.store(MailboxFolder::Inbox, &message.to_bytes())?;
+    }
+    for mid in &result.sent {
+        mailbox.move_to(MailboxFolder::Outbox, MailboxFolder::Sent, &MessageId(mid.clone()))?;
+    }
+    Ok(())
+}
+
+/// Seconds since the Unix epoch, now.
+fn now_unix_secs() -> u64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+/// Parse an RFC 3339 timestamp to seconds since the epoch.
+fn parse_rfc3339_secs(s: &str) -> Option<u64> {
+    chrono::DateTime::parse_from_rfc3339(s)
+        .ok()
+        .map(|dt| dt.timestamp().max(0) as u64)
 }
 
 // ============================================================================

@@ -78,6 +78,27 @@ impl Mailbox {
         })
     }
 
+    /// Move a message from one folder to another (e.g. outbox → sent once it has
+    /// been delivered). No-op-safe if the source file is missing.
+    pub fn move_to(
+        &self,
+        from: MailboxFolder,
+        to: MailboxFolder,
+        id: &MessageId,
+    ) -> Result<(), BackendError> {
+        let src = self.folder_dir(from).join(format!("{}.b2f", id.0));
+        let raw = match fs::read(&src) {
+            Ok(raw) => raw,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(e) => return Err(e.into()),
+        };
+        let dst_dir = self.folder_dir(to);
+        fs::create_dir_all(&dst_dir)?;
+        fs::write(dst_dir.join(format!("{}.b2f", id.0)), raw)?;
+        fs::remove_file(&src)?;
+        Ok(())
+    }
+
     fn folder_dir(&self, folder: MailboxFolder) -> PathBuf {
         let name = match folder {
             MailboxFolder::Inbox => "inbox",
@@ -165,6 +186,20 @@ mod tests {
         mbox.store(MailboxFolder::Outbox, &raw("Out", "x")).unwrap();
         assert_eq!(mbox.list(MailboxFolder::Outbox).unwrap().len(), 1);
         assert!(mbox.list(MailboxFolder::Inbox).unwrap().is_empty());
+    }
+
+    #[test]
+    fn moves_a_message_between_folders() {
+        let dir = tempdir().unwrap();
+        let mbox = Mailbox::new(dir.path());
+        let id = mbox.store(MailboxFolder::Outbox, &raw("Out", "x")).unwrap();
+
+        mbox.move_to(MailboxFolder::Outbox, MailboxFolder::Sent, &id).unwrap();
+
+        assert!(mbox.list(MailboxFolder::Outbox).unwrap().is_empty());
+        assert_eq!(mbox.list(MailboxFolder::Sent).unwrap().len(), 1);
+        // Moving a missing id is a no-op, not an error.
+        mbox.move_to(MailboxFolder::Outbox, MailboxFolder::Sent, &id).unwrap();
     }
 
     #[test]
