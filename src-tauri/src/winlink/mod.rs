@@ -10,8 +10,10 @@
 //! back-and-forth exchange with the CMS, the telnet connection, and the
 //! on-disk mailbox.
 
+pub mod handshake;
 pub mod lzhuf;
 pub mod message;
 pub mod proposal;
 pub mod secure;
 pub mod transfer;
+pub mod wire;
