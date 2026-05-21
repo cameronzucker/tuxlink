@@ -59,6 +59,26 @@ export type StatusDto =
 // ============================================================================
 
 /**
+ * Map a raw backend error reason to a CONCISE, human-readable ribbon label.
+ *
+ * The ribbon is a status strip, not an error console — dumping the raw reason
+ * (`Error: <long telnet/CMS reason>`) reflowed the layout and read as machine
+ * noise (ng3 re-smoke #5). The FULL reason still goes to the session log; this is
+ * the at-a-glance status. Kept short enough to fit the ribbon without truncation.
+ */
+export function humanizeConnectionError(reason: string): string {
+  const r = reason.toLowerCase();
+  if (/not registered|unregistered|unknown client|\bsid\b/.test(r)) return 'Rejected — not registered';
+  if (/timed out|timeout/.test(r)) return 'Connection timed out';
+  if (/refused|unreachable|no route|dns|resolve|connect/.test(r)) return 'CMS unreachable';
+  if (/password|secure login|auth|login|credential/.test(r)) return 'Login failed';
+  if (/\btls\b|\bssl\b|certificate|handshake/.test(r)) return 'Secure-connection error';
+  // Fallback: a trimmed first clause, else a generic label (never the full dump).
+  const first = reason.split(/[\n.;]/)[0].trim();
+  return first.length > 0 && first.length <= 40 ? first : 'Connection failed';
+}
+
+/**
  * Format the connection state label for the ribbon.
  *
  * When the backend is online (`status != null`), renders the live BackendStatus.
@@ -91,7 +111,8 @@ export function formatConnectionState(
     case 'Disconnecting':
       return 'Disconnecting';
     case 'Error':
-      return `Error: ${status.reason}`;
+      // Concise human-readable label (ng3 re-smoke #5); full reason → session log.
+      return humanizeConnectionError(status.reason);
   }
 }
 
