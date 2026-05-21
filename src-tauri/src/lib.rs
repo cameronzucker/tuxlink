@@ -3,7 +3,6 @@ pub mod bootstrap;
 pub mod compose_window;
 pub mod config;
 pub mod consent_gate;
-pub mod menu;
 pub mod native_mailbox;
 pub mod pat_client;
 pub mod pat_config;
@@ -81,13 +80,6 @@ pub fn run() {
         // through the `Arc`, so the command sees an identical surface.
         .manage(std::sync::Arc::new(crate::session_log::SessionLogState::new(500)))
         .setup(|app| {
-            // Build the native OS menu bar (tuxlink-6vi / Task 7) and wire
-            // its events to Tauri IPC so the React frontend can listen on
-            // the "menu" channel.
-            let menu = crate::menu::build_menu(app.handle())?;
-            app.set_menu(menu)?;
-            crate::menu::wire_menu_events(app.handle());
-
             // Install system tray icon + menu (tuxlink-rit / Task 8).
             // Close-to-tray: window close button hides to tray; only
             // File→Quit / tray→Quit / Ctrl+Q actually exit the process.
