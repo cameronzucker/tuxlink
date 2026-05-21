@@ -62,11 +62,19 @@
 .tux-mi.tux-has-sub { position: relative; }
 .tux-submenu {
   display: none;  /* shown on hover of the parent has-sub item (was permanently expanded) */
-  position: absolute; left: 100%; top: -6px; min-width: 215px;
+  /* left:100% put it at the item's right edge — 6px INSIDE the dropdown's
+   * padding+border — so the flyout overlapped the main dropdown's right border.
+   * Push it clear of the dropdown edge (ng3 re-smoke: submenu-overlap regression). */
+  position: absolute; left: calc(100% + 6px); top: -6px; min-width: 215px;
   background: var(--elevated); border: 1px solid var(--border-strong);
   border-radius: 7px; padding: 5px; box-shadow: 0 14px 38px rgba(0,0,0,0.5);
 }
 .tux-mi.tux-has-sub:hover > .tux-submenu { display: block; }
+/* Invisible 6px bridge over the gap (the dropdown's right padding) so moving the
+ * pointer from the parent item into the flyout doesn't drop :hover and close it. */
+.tux-mi.tux-has-sub::after {
+  content: ""; position: absolute; top: 0; right: -6px; width: 6px; height: 100%;
+}
 
 /* ---- Resize handles (borderless window) ---- */
 .tux-resize { position: absolute; z-index: 200; }
