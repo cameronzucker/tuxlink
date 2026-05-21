@@ -37,6 +37,7 @@ keyring = { version = "3.6.3", default-features = false, features = ["sync-secre
 mail-parser = "0.9"        # NEW (tuxlink-y5c Task 13) — pure-Rust RFC5322/MIME parser; spec §8
 chrono = { version = "0.4", default-features = false, features = ["clock"] }  # NEW (tuxlink-dm8, Task 14) — RFC3339 timestamp for message_send; `serde` unused (Codex fix)
 tauri-plugin-window-state = "2"                            # NEW (tuxlink-dm8, Task 14) — per-compose-window geometry persistence (spec §8)
+md-5 = "0.10"              # NEW (tuxlink-0ic) — Winlink secure-login response is MD5 of challenge+password+salt; RustCrypto, pairs with the `digest` crate already present, pure-Rust (no C dep)
 
 [dev-dependencies]
 mockito = "1.5"
