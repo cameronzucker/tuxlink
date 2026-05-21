@@ -1,4 +1,5 @@
 import { getCurrentWindow } from '@tauri-apps/api/window';
+import iconUrl from '../../assets/tuxlink-icon.png';
 import './chrome.css';
 
 interface TitleBarProps {
@@ -15,7 +16,7 @@ export function TitleBar({ folderLabel }: TitleBarProps) {
   return (
     <div className="tux-titlebar">
       <span className="tux-drag" data-tauri-drag-region />
-      <span className="tux-app-icon">T</span>
+      <img className="tux-app-icon" src={iconUrl} alt="" />
       <span className="tux-app-name">Tuxlink</span>
       <span className="tux-app-sub">— {folderLabel}</span>
       <span className="tux-controls">
