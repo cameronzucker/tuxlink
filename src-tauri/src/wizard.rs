@@ -477,6 +477,7 @@ fn spawn_isolated_pat(
         pid_file: tmp.path().join("pat.pid"),
         log_sink: None,
         tuxlink_config: config,
+        http_announce_timeout: std::time::Duration::from_secs(10), // canonical (tuxlink-xyd hardening)
     };
     let proc = PatProcess::spawn(opts).map_err(|e| WizardError::Other {
         detail: format!("could not start Pat: {e}"),
