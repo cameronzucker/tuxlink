@@ -354,7 +354,13 @@ pub async fn run_test_send_impl() -> Result<TestSendOutcome, WizardError> {
     // Check env var at call time (not at startup) so tests can set it per-test.
     // Shares the predicate with `wizard_test_send_is_mocked` so the UI banner and
     // the actual mock short-circuit can never disagree.
-    if test_send_is_mocked_impl() {
+    //
+    // `cfg!(test)` is a fail-CLOSED belt-and-suspenders (Codex pqg adrev P1 #1):
+    // under test compilation the live transmit path is unreachable even if a
+    // future test forgets to set TUXLINK_TEST_SEND_MOCK. Operator semantics are
+    // unchanged — the shipped binary (cfg!(test)==false) still goes live when
+    // the operator runs the wizard without the mock var.
+    if test_send_is_mocked_impl() || cfg!(test) {
         // Return a mocked Success outcome. The mock always succeeds so that
         // subagent/CI flows exercise the full 4-substate path in the UI.
         // Unit tests override specific outcomes by invoking this function
@@ -398,54 +404,76 @@ async fn run_live_test_send() -> Result<TestSendOutcome, WizardError> {
     })?;
 
     // Operator escape hatch: PAT_URL targets an already-running Pat (no spawn,
-    // no shutdown). Otherwise spawn our own ephemeral Pat.
+    // no shutdown). Otherwise spawn our own ephemeral, ISOLATED Pat.
     let pat_url_override = std::env::var("PAT_URL").ok().filter(|s| !s.is_empty());
     let (base_url, spawned) = match pat_url_override {
         Some(url) => (url, None),
         None => {
-            let proc = spawn_ephemeral_pat(&config)?;
+            // PatProcess::spawn BLOCKS (up to the announce deadline). Offload it
+            // to a blocking thread so the Tauri async runtime is not starved
+            // (Codex pqg adrev P1 #6). `_tmp` (the isolated dir) is held
+            // alongside `proc` until shutdown below.
+            let (proc, tmp) = tokio::task::spawn_blocking(move || spawn_isolated_pat(config))
+                .await
+                .map_err(|e| WizardError::Other {
+                    detail: format!("test-send spawn task failed: {e}"),
+                })??;
             let base = format!("http://127.0.0.1:{}", proc.http_port());
-            (base, Some(proc))
+            (base, Some((proc, tmp)))
         }
     };
 
     // Drive the round-trip to a definite outcome (no early return past the
-    // shutdown below — `spawned`'s Drop is the SIGKILL safety net regardless).
+    // shutdown below — the spawned Pat's Drop is the SIGKILL safety net).
     let outcome = test_send_round_trip(&base_url).await;
 
-    // Gracefully stop the Pat we spawned (SIGTERM, then Drop SIGKILLs).
-    if let Some(mut proc) = spawned {
-        let _ = proc.shutdown(std::time::Duration::from_secs(5));
+    // Gracefully stop the Pat we spawned (offloaded — shutdown can block up to
+    // its timeout). The temp dir (`_tmp`) is dropped — and thus deleted — only
+    // after shutdown completes, since it stays bound in this scope.
+    if let Some((mut proc, _tmp)) = spawned {
+        let _ = tokio::task::spawn_blocking(move || {
+            proc.shutdown(std::time::Duration::from_secs(5))
+        })
+        .await;
     }
 
     Ok(outcome)
 }
 
-/// Build spawn options from the persisted config + XDG paths and start an
-/// ephemeral-port Pat. Synchronous (`PatProcess::spawn` blocks up to the
-/// announce deadline); acceptable here because the wizard test-send is a modal,
-/// operator-initiated, one-shot action (cf. tuxlink-22l's bootstrap, which
-/// offloads its always-on spawn to a dedicated thread).
-fn spawn_ephemeral_pat(config: &crate::config::Config) -> Result<PatProcess, WizardError> {
-    let other = |detail: String| WizardError::Other { detail };
+/// Spawn an ephemeral-port Pat into a fresh, ISOLATED temp directory rendered
+/// from the persisted config. Isolation (Codex pqg adrev P1 #4 + #5): a unique
+/// temp config/mbox/pid means the wizard test-send never contends with an
+/// app- or operator-managed Pat's pid/mbox, AND the fresh inbox starts empty so
+/// any `SERVICE@winlink.org` message that arrives is unambiguously *our* reply
+/// (no nonce/recency heuristics needed). The keyring credential is keyed by
+/// callsign (OS-level, not file-path), so the rendered temp config still
+/// authenticates. Returns the `TempDir` so the caller keeps it alive for Pat's
+/// lifetime; dropping it removes the directory.
+///
+/// Synchronous (`PatProcess::spawn` blocks); the caller offloads it via
+/// `spawn_blocking`.
+fn spawn_isolated_pat(
+    config: crate::config::Config,
+) -> Result<(PatProcess, tempfile::TempDir), WizardError> {
+    let tmp = tempfile::tempdir().map_err(|e| WizardError::Other {
+        detail: format!("could not create test-send work dir: {e}"),
+    })?;
     let binary = std::env::var_os("PAT_BINARY")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| std::path::PathBuf::from("pat"));
-    let config_path = crate::pat_paths::pat_config_path().map_err(other)?;
-    let mbox_dir = crate::pat_paths::data_dir().map_err(other)?.join("mbox");
-    let pid_file = crate::pat_paths::state_dir().map_err(other)?.join("pat.pid");
     let opts = PatSpawnOptions {
         binary,
-        config_path,
-        mbox_dir,
+        config_path: tmp.path().join("pat-config.json"),
+        mbox_dir: tmp.path().join("mbox"),
         http_listen_port: 0, // ephemeral; PatProcess pre-binds + reports the port
-        pid_file,
+        pid_file: tmp.path().join("pat.pid"),
         log_sink: None,
-        tuxlink_config: config.clone(),
+        tuxlink_config: config,
     };
-    PatProcess::spawn(opts).map_err(|e| WizardError::Other {
+    let proc = PatProcess::spawn(opts).map_err(|e| WizardError::Other {
         detail: format!("could not start Pat: {e}"),
-    })
+    })?;
+    Ok((proc, tmp))
 }
 
 /// Post the `/test/` message, trigger a telnet CMS connect, and poll the inbox
@@ -477,8 +505,11 @@ async fn test_send_round_trip(base_url: &str) -> TestSendOutcome {
     let deadline = tokio::time::Instant::now()
         + tokio::time::Duration::from_secs(TEST_SEND_TIMEOUT_SECS);
     loop {
+        // The Pat runs against a fresh, isolated mbox (see spawn_isolated_pat),
+        // so the inbox starts empty — any SERVICE@winlink.org message is our
+        // autoresponder reply.
         if let Ok(msgs) = client.list(crate::pat_client::MailboxFolder::Inbox).await {
-            if let Some(reply) = msgs.iter().find(|m| is_autoresponder_reply(&m.from, &m.subject)) {
+            if let Some(reply) = msgs.iter().find(|m| is_autoresponder_reply(&m.from)) {
                 return TestSendOutcome::Success {
                     reply_subject: Some(reply.subject.clone()),
                 };
@@ -506,10 +537,15 @@ async fn trigger_cms_connect(base_url: &str) -> Result<(), String> {
         .timeout(std::time::Duration::from_secs(CONNECT_TIMEOUT_SECS))
         .build()
         .map_err(|e| format!("build connect client: {e}"))?;
+    // Surface a non-2xx connect response as an error (Codex pqg adrev P2 #6):
+    // a 4xx/5xx must NOT be silently treated as a successful connect and later
+    // misreported as "no autoresponder reply".
     http.post(&url)
         .send()
         .await
-        .map_err(|e| format!("trigger connect: {e}"))?;
+        .map_err(|e| format!("trigger connect: {e}"))?
+        .error_for_status()
+        .map_err(|e| format!("CMS connect returned an error status: {e}"))?;
     Ok(())
 }
 
@@ -570,12 +606,17 @@ fn default_likely_causes() -> Vec<String> {
     ]
 }
 
-/// True when an inbox message looks like the CMS autoresponder's reply to the
-/// wizard `/test/` message: either it is from `SERVICE@winlink.org` or its
-/// subject is a reply (`Re:`). Case-insensitive. Pure — the testable core of
-/// the live round-trip's success detection (tuxlink-pqg).
-fn is_autoresponder_reply(from: &str, subject: &str) -> bool {
-    from.to_uppercase().contains("SERVICE@WINLINK.ORG") || subject.to_uppercase().contains("RE:")
+/// True when an inbox message is from the CMS autoresponder
+/// (`SERVICE@winlink.org`, case-insensitive). Pure — the testable core of the
+/// live round-trip's success detection (tuxlink-pqg).
+///
+/// Sender-only by design (Codex pqg adrev P1 #5): the test-send runs against a
+/// fresh, isolated mbox (see `spawn_isolated_pat`), so a SERVICE message can
+/// only be our reply. The prior "subject contains `Re:`" branch was a
+/// false-positive vector — any human "Re:" from any sender would have marked
+/// the test a spurious success.
+fn is_autoresponder_reply(from: &str) -> bool {
+    from.to_uppercase().contains("SERVICE@WINLINK.ORG")
 }
 
 /// How long to poll for the autoresponder reply before declaring failure.
@@ -819,19 +860,20 @@ mod tests {
 
     #[test]
     fn reply_matches_service_sender_case_insensitive() {
-        assert!(is_autoresponder_reply("service@winlink.org", "Tuxlink wizard /test/ verification"));
-        assert!(is_autoresponder_reply("SERVICE@WINLINK.ORG", "anything"));
+        assert!(is_autoresponder_reply("service@winlink.org"));
+        assert!(is_autoresponder_reply("SERVICE@WINLINK.ORG"));
     }
 
     #[test]
-    fn reply_matches_re_subject() {
-        assert!(is_autoresponder_reply("someone@example.com", "Re: Tuxlink wizard /test/ verification"));
-        assert!(is_autoresponder_reply("someone@example.com", "RE: thread"));
+    fn reply_does_not_match_human_re_from_other_sender() {
+        // Codex pqg adrev P1 #5: a human "Re:" from a non-SERVICE sender must
+        // NOT be mistaken for the autoresponder reply.
+        assert!(!is_autoresponder_reply("friend@winlink.org"));
     }
 
     #[test]
-    fn reply_does_not_match_unrelated_message() {
-        assert!(!is_autoresponder_reply("friend@winlink.org", "How are you?"));
+    fn reply_does_not_match_unrelated_sender() {
+        assert!(!is_autoresponder_reply("someone@example.com"));
     }
 
     #[tokio::test]
