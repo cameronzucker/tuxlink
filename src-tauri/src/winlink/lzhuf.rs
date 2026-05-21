@@ -341,6 +341,310 @@ pub fn decompress(input: &[u8]) -> Result<Vec<u8>, LzhufError> {
     Ok(out)
 }
 
+/// The "no node here" marker for the match-finder's trees.
+const NIL: usize = N;
+
+/// Compresses bytes into the FBB B2 lzhuf format.
+///
+/// The match finder is a set of binary search trees over the sliding window
+/// (one tree per leading byte), so each new position can quickly find the
+/// longest earlier run that matches the upcoming bytes. Found runs become
+/// (length, distance) back-references; everything else is a literal byte. Both
+/// kinds are then Huffman-coded by the shared adaptive tree.
+struct Encoder {
+    tree: HuffTree,
+    text_buf: [u8; N + F - 1],
+
+    // The match-finder trees (parent / left child / right child links).
+    dad: [usize; N + 1],
+    lson: [usize; N + 1],
+    rson: [usize; N + 257],
+    match_length: usize,
+    match_position: usize,
+
+    // The output bitstream and the bit-packing accumulator.
+    out: Vec<u8>,
+    putbuf: u64,
+    putlen: u32,
+
+    len: usize,
+    r: usize,
+    s: usize,
+    last_match_length: usize,
+    pre_filled: bool,
+    file_size: u32,
+}
+
+impl Encoder {
+    fn new() -> Self {
+        let mut e = Encoder {
+            tree: HuffTree::new(),
+            text_buf: [0u8; N + F - 1],
+            dad: [0; N + 1],
+            lson: [0; N + 1],
+            rson: [0; N + 257],
+            match_length: 0,
+            match_position: 0,
+            out: Vec::new(),
+            putbuf: 0,
+            putlen: 0,
+            len: 0,
+            r: N - F,
+            s: 0,
+            last_match_length: 0,
+            pre_filled: false,
+            file_size: 0,
+        };
+        // Empty trees: the per-first-byte roots and every node start unlinked.
+        for i in (N + 1)..=(N + 256) {
+            e.rson[i] = NIL;
+        }
+        for i in 0..N {
+            e.dad[i] = NIL;
+        }
+        // The window starts full of spaces, up to the first write position.
+        for i in 0..(N - F) {
+            e.text_buf[i] = b' ';
+        }
+        e
+    }
+
+    /// Add the run starting at window position `pos` to its search tree, and
+    /// record the longest match found along the way in `match_length` /
+    /// `match_position`.
+    fn insert_node(&mut self, pos: usize) {
+        let mut cmp: i32 = 1;
+        let mut p = N + 1 + self.text_buf[pos] as usize;
+        self.rson[pos] = NIL;
+        self.lson[pos] = NIL;
+        self.match_length = 0;
+        let mut i;
+        loop {
+            if cmp >= 0 {
+                if self.rson[p] != NIL {
+                    p = self.rson[p];
+                } else {
+                    self.rson[p] = pos;
+                    self.dad[pos] = p;
+                    return;
+                }
+            } else if self.lson[p] != NIL {
+                p = self.lson[p];
+            } else {
+                self.lson[p] = pos;
+                self.dad[pos] = p;
+                return;
+            }
+            i = 1;
+            while i < F {
+                cmp = self.text_buf[pos + i] as i32 - self.text_buf[p + i] as i32;
+                if cmp != 0 {
+                    break;
+                }
+                i += 1;
+            }
+            if i > THRESHOLD {
+                if i > self.match_length {
+                    self.match_position = (pos.wrapping_sub(p) & (N - 1)).wrapping_sub(1);
+                    self.match_length = i;
+                    if self.match_length >= F {
+                        break;
+                    }
+                }
+                if i == self.match_length {
+                    let c = (pos.wrapping_sub(p) & (N - 1)).wrapping_sub(1);
+                    if c < self.match_position {
+                        self.match_position = c;
+                    }
+                }
+            }
+        }
+        // Replace node p with the new node, inheriting p's links.
+        self.dad[pos] = self.dad[p];
+        self.lson[pos] = self.lson[p];
+        self.rson[pos] = self.rson[p];
+        self.dad[self.lson[p]] = pos;
+        self.dad[self.rson[p]] = pos;
+        if self.rson[self.dad[p]] == p {
+            self.rson[self.dad[p]] = pos;
+        } else {
+            self.lson[self.dad[p]] = pos;
+        }
+        self.dad[p] = NIL;
+    }
+
+    /// Remove the run at window position `p` from its search tree.
+    fn delete_node(&mut self, p: usize) {
+        if self.dad[p] == NIL {
+            return;
+        }
+        let q;
+        if self.rson[p] == NIL {
+            q = self.lson[p];
+        } else if self.lson[p] == NIL {
+            q = self.rson[p];
+        } else {
+            let mut qq = self.lson[p];
+            if self.rson[qq] != NIL {
+                while self.rson[qq] != NIL {
+                    qq = self.rson[qq];
+                }
+                self.rson[self.dad[qq]] = self.lson[qq];
+                self.dad[self.lson[qq]] = self.dad[qq];
+                self.lson[qq] = self.lson[p];
+                self.dad[self.lson[p]] = qq;
+            }
+            self.rson[qq] = self.rson[p];
+            self.dad[self.rson[p]] = qq;
+            q = qq;
+        }
+        self.dad[q] = self.dad[p];
+        if self.rson[self.dad[p]] == p {
+            self.rson[self.dad[p]] = q;
+        } else {
+            self.lson[self.dad[p]] = q;
+        }
+        self.dad[p] = NIL;
+    }
+
+    fn write_all(&mut self, p: &[u8]) {
+        let mut n = 0;
+        // Pre-fill the lookahead buffer before we start emitting.
+        while !self.pre_filled && n < p.len() {
+            self.text_buf[self.r + self.len] = p[n];
+            n += 1;
+            self.file_size += 1;
+            self.len += 1;
+            self.insert_node(self.r - self.len);
+            self.last_match_length = 1;
+            self.pre_filled = self.len == F;
+        }
+        while n < p.len() {
+            let c = p[n];
+            self.advance(Some(c));
+            n += 1;
+            self.file_size += 1;
+        }
+    }
+
+    fn advance(&mut self, c: Option<u8>) {
+        if let Some(c) = c {
+            self.text_buf[self.s] = c;
+            if self.s < F - 1 {
+                self.text_buf[self.s + N] = c;
+            }
+            self.len += 1;
+        }
+        self.insert_node(self.r);
+        self.last_match_length -= 1;
+        if self.last_match_length == 0 {
+            self.encode();
+        }
+        self.delete_node(self.s);
+        self.s = (self.s + 1) & (N - 1);
+        self.r = (self.r + 1) & (N - 1);
+        self.len -= 1;
+    }
+
+    /// Emit one token: either a literal byte, or a (length, position)
+    /// back-reference if the match finder found a worthwhile run.
+    fn encode(&mut self) {
+        if self.len == 0 {
+            return;
+        }
+        if self.match_length > self.len {
+            self.match_length = self.len;
+        }
+        if self.match_length <= THRESHOLD {
+            self.match_length = 1;
+            self.encode_char(self.text_buf[self.r] as usize);
+        } else {
+            self.encode_char(255 - THRESHOLD + self.match_length);
+            self.encode_position(self.match_position);
+        }
+        self.last_match_length = self.match_length;
+    }
+
+    fn encode_char(&mut self, c: usize) {
+        // Walk leaf to root, building the code bit by bit.
+        let mut code: u64 = 0;
+        let mut len: u32 = 0;
+        let mut k = self.tree.prnt[c + T];
+        loop {
+            code >>= 1;
+            len += 1;
+            if k & 1 != 0 {
+                code += 0x8000;
+            }
+            k = self.tree.prnt[k];
+            if k == R {
+                break;
+            }
+        }
+        self.put_code(len, code);
+        self.tree.update(c);
+    }
+
+    fn encode_position(&mut self, c: usize) {
+        // Upper six bits via the table, lower six bits verbatim.
+        let i = c >> 6;
+        self.put_code(P_LEN[i] as u32, (P_CODE[i] as u64) << 8);
+        self.put_code(6, ((c & 0x3f) as u64) << 10);
+    }
+
+    /// Append `l` bits (held in the high end of `c`) to the output bitstream.
+    fn put_code(&mut self, l: u32, c: u64) {
+        self.putbuf |= c >> self.putlen;
+        self.putlen += l;
+        if self.putlen < 8 {
+            return;
+        }
+        self.out.push((self.putbuf >> 8) as u8);
+        self.putlen -= 8;
+        if self.putlen >= 8 {
+            self.out.push(self.putbuf as u8);
+            self.putlen -= 8;
+            self.putbuf = c << (l - self.putlen);
+        } else {
+            self.putbuf <<= 8;
+        }
+    }
+
+    fn encode_end(&mut self) {
+        if self.putlen == 0 {
+            return;
+        }
+        self.out.push((self.putbuf >> 8) as u8);
+    }
+
+    /// Flush remaining bytes and assemble the framed output.
+    fn finish(mut self) -> Vec<u8> {
+        while self.len > 0 {
+            self.advance(None);
+        }
+        self.encode();
+        self.encode_end();
+
+        let size_bytes = self.file_size.to_le_bytes();
+        let mut framed = Vec::with_capacity(2 + 4 + self.out.len());
+        // CRC covers the size bytes and the compressed bytes.
+        let mut crc_input = size_bytes.to_vec();
+        crc_input.extend_from_slice(&self.out);
+        framed.extend_from_slice(&fbb_crc(&crc_input).to_le_bytes());
+        framed.extend_from_slice(&size_bytes);
+        framed.extend_from_slice(&self.out);
+        framed
+    }
+}
+
+/// Compress bytes into the FBB B2 lzhuf format
+/// (`[CRC16][uncompressed size][bitstream]`).
+pub fn compress(input: &[u8]) -> Vec<u8> {
+    let mut encoder = Encoder::new();
+    encoder.write_all(input);
+    encoder.finish()
+}
+
 /// Why an lzhuf stream could not be decompressed.
 #[derive(Debug, PartialEq, Eq)]
 pub enum LzhufError {
@@ -390,5 +694,28 @@ mod tests {
         let last = corrupt.len() - 1;
         corrupt[last] ^= 0xff; // flip bits in the compressed data
         assert_eq!(decompress(&corrupt), Err(LzhufError::BadChecksum));
+    }
+
+    #[test]
+    fn compresses_a_small_text_byte_for_byte_against_the_reference() {
+        assert_eq!(compress(GETTYSBURG_TXT), GETTYSBURG_LZH);
+    }
+
+    #[test]
+    fn compresses_a_large_text_byte_for_byte_against_the_reference() {
+        assert_eq!(compress(PI_TXT), PI_LZH);
+    }
+
+    #[test]
+    fn round_trips_arbitrary_binary_data() {
+        let data: Vec<u8> = (0..5000u32)
+            .map(|i| ((i.wrapping_mul(37).wrapping_add(11)) ^ (i >> 3)) as u8)
+            .collect();
+        assert_eq!(decompress(&compress(&data)).unwrap(), data);
+    }
+
+    #[test]
+    fn round_trips_empty_input() {
+        assert_eq!(decompress(&compress(b"")).unwrap(), b"");
     }
 }
