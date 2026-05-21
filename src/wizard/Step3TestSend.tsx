@@ -39,6 +39,17 @@ import type { TestSendOutcome, WizardError } from './types';
 // Spec §3.4: "auto-advance to complete after 3 seconds (cancellable)."
 const SUCCESS_AUTO_ADVANCE_MS = 3000;
 
+// Watchdog timeout for the `sending` substate (tuxlink-9w8).
+//
+// The backend live test-send polls up to TEST_SEND_TIMEOUT_SECS (30 s per
+// wizard.rs). A GENEROUS margin (15 s) is added so the watchdog never
+// false-fires on a legitimately slow but working send. The watchdog is
+// ONLY a backstop for the stuck case — a Busy result from a *different*
+// mutex holder that means TEST_SEND_RESULT never arrives for this window.
+//
+// 45 000 ms = 30 s (backend limit) + 15 s (front-end margin)
+const SENDING_WATCHDOG_MS = 45_000;
+
 // Narrow an unknown caught value to a discriminated WizardError-by-`kind`.
 // Tauri rejects the invoke promise with the serialized WizardError object.
 function errorKind(err: unknown): WizardError['kind'] | null {
@@ -51,6 +62,13 @@ function errorKind(err: unknown): WizardError['kind'] | null {
 export function Step3TestSend() {
   const { state, dispatch } = useWizard();
   const autoAdvanceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Watchdog timer ref for the `sending` substate (tuxlink-9w8).
+  // Armed when `sending` is entered; cancelled when a result arrives or the
+  // substate leaves `sending` (including unmount cleanup). If the timer fires,
+  // the wizard transitions to a recoverable `failed` state so the operator is
+  // never stuck indefinitely.
+  const sendingWatchdogTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // FIX 4 (P2): MOCKED-mode signal sourced from the Rust backend (the only
   // authority on whether TUXLINK_TEST_SEND_MOCK is set). Queried once we enter
@@ -72,6 +90,60 @@ export function Step3TestSend() {
       if (autoAdvanceTimer.current !== null) {
         clearTimeout(autoAdvanceTimer.current);
         autoAdvanceTimer.current = null;
+      }
+    };
+  }, [state.testSendSubstate, dispatch]);
+
+  // ── Sending-substate watchdog (tuxlink-9w8) ────────────────────────────
+  // Problem: a Busy result from a *different* mutex holder causes the Busy
+  // no-op path to stay in `sending` with no TEST_SEND_RESULT ever arriving,
+  // stranding the wizard indefinitely.
+  //
+  // Fix: arm a watchdog when `sending` is entered. If no result arrives within
+  // SENDING_WATCHDOG_MS, transition to a recoverable `failed` state. Cancel the
+  // watchdog whenever:
+  //   • A TEST_SEND_RESULT arrives (real success/failure — substate leaves `sending`)
+  //   • The operator skips (SKIP_TEST_SEND dispatched, substate leaves `sending`)
+  //   • The component unmounts (effect cleanup)
+  //
+  // Concurrent-retry case: a Busy from a CONCURRENT test-send double-fire means
+  // the OTHER in-flight send will eventually deliver a TEST_SEND_RESULT that
+  // changes the substate, which cancels the watchdog before it fires. The
+  // generous 45 s window ensures the watchdog never false-fires on a slow
+  // legitimate send.
+  useEffect(() => {
+    if (state.testSendSubstate === 'sending') {
+      sendingWatchdogTimer.current = setTimeout(() => {
+        sendingWatchdogTimer.current = null;
+        dispatch({
+          type: 'TEST_SEND_RESULT',
+          outcome: {
+            kind: 'Failed',
+            detail: {
+              cause: 'Send timed out — the system was busy; try again.',
+              likely_causes_hint: [
+                'Another wizard window may be running a test send',
+                'No internet connection',
+                'Firewall blocking port 8773',
+                'CMS temporarily busy',
+              ],
+            },
+          },
+        });
+      }, SENDING_WATCHDOG_MS);
+    } else {
+      // Substate left `sending` (result arrived, skip, or error). Cancel the
+      // watchdog so it does not fire late.
+      if (sendingWatchdogTimer.current !== null) {
+        clearTimeout(sendingWatchdogTimer.current);
+        sendingWatchdogTimer.current = null;
+      }
+    }
+    return () => {
+      // Unmount cleanup: cancel the watchdog so it cannot dispatch after unmount.
+      if (sendingWatchdogTimer.current !== null) {
+        clearTimeout(sendingWatchdogTimer.current);
+        sendingWatchdogTimer.current = null;
       }
     };
   }, [state.testSendSubstate, dispatch]);
