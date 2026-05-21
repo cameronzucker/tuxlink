@@ -21,6 +21,11 @@ use super::{handshake, lzhuf, secure, transfer, wire};
 /// At most this many proposals are offered in a single batch.
 const MAX_BATCH: usize = 5;
 
+/// A safety cap on the number of turns in one exchange, so a misbehaving server
+/// cannot drive an unbounded loop. A real session is a handful of turns; this is
+/// generous headroom for a large mailbox sent in many batches.
+const MAX_TURNS: u32 = 1000;
+
 /// A message prepared for sending: its proposal line, its title (the subject,
 /// which travels in the framed block header), and its compressed body.
 #[derive(Debug, Clone)]
@@ -119,8 +124,13 @@ where
     let mut remaining = outbound;
     let mut remote_no_messages = false;
     let mut my_turn = true; // the client takes the first message turn
+    let mut turns = 0u32;
 
     loop {
+        turns += 1;
+        if turns > MAX_TURNS {
+            return Err(ExchangeError::TooManyTurns);
+        }
         if my_turn {
             let outcome = send_turn(reader, writer, &remaining, remote_no_messages)?;
             result.sent.extend(outcome.sent);
@@ -347,6 +357,8 @@ pub enum ExchangeError {
     /// The remote sent an error line (`*** ...`), e.g. a rejected login or an
     /// unsupported client type.
     RemoteError(String),
+    /// The exchange exceeded its turn cap (a misbehaving or looping server).
+    TooManyTurns,
 }
 
 #[cfg(test)]

@@ -4837,6 +4837,7 @@ dependencies = [
  "mail-parser",
  "md-5",
  "mockito",
+ "native-tls",
  "nix 0.28.0",
  "reqwest 0.12.28",
  "serde",

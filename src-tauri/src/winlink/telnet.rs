@@ -1,9 +1,10 @@
 //! The telnet transport: connect to a Winlink CMS over TCP and run an exchange.
 //!
 //! This is thin glue. The protocol work lives in [`super::session`]; here we
-//! just open the socket, split it into a buffered reader and a writer (a TCP
-//! stream can be cloned so both halves share one connection), and hand them to
-//! the exchange driver.
+//! open the connection — plaintext ([`Transport::Plaintext`]) or TLS-wrapped
+//! ([`Transport::Tls`], the default, like Winlink Express) — present it to the
+//! exchange driver as a read half and a write half, and run the CMS telnet
+//! login before the B2F handshake.
 //!
 //! **Transmission policy.** Calling [`connect_and_exchange`] against the real
 //! CMS connects to the live Winlink network under the station's call sign. Per
@@ -13,8 +14,9 @@
 //! [`super::session`]; the loopback test below exercises only the socket
 //! plumbing against a local mock on `127.0.0.1` (no live network, no RF).
 
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use super::proposal::{Answer, Proposal};
@@ -33,12 +35,53 @@ const CMS_TELNET_PASSWORD: &str = "CMSTelnet";
 /// (wl2k-go's `telnet.CMSTargetCall`).
 pub const CMS_TARGET_CALL: &str = "wl2k";
 
-/// Connect to `host:port` and run a full message exchange.
+/// How to wrap the CMS connection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Transport {
+    /// Plaintext telnet (Winlink CMS port 8772).
+    Plaintext,
+    /// TLS-wrapped telnet (port 8773) — the default, matching Winlink Express.
+    Tls,
+}
+
+/// A connection we can read, write, and move across threads.
+trait ReadWrite: Read + Write + Send {}
+impl<T: Read + Write + Send> ReadWrite for T {}
+
+/// The connection, shared between a read half and a write half. The B2F exchange
+/// is strictly turn-based (it never reads and writes at the same instant), so
+/// locking per operation is contention-free — and it lets a TLS stream, which
+/// cannot be cloned into independent halves the way a `TcpStream` can, back both
+/// halves.
+type Shared = Arc<Mutex<Box<dyn ReadWrite>>>;
+
+struct ReadHalf(Shared);
+struct WriteHalf(Shared);
+
+impl Read for ReadHalf {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        self.0.lock().expect("connection lock").read(buf)
+    }
+}
+
+impl Write for WriteHalf {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().expect("connection lock").write(buf)
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.0.lock().expect("connection lock").flush()
+    }
+}
+
+/// Connect to `host:port` over the chosen transport and run a full message
+/// exchange.
 ///
-/// Operator-run only when `host` is the live CMS — see the module note.
+/// Operator-run when `host` is the live CMS — telnet (incl. TLS) to the CMS is
+/// authorized dev testing; RADIO-1 covers RF transmission, not this.
 pub fn connect_and_exchange<F>(
     host: &str,
     port: u16,
+    transport: Transport,
     config: &ExchangeConfig,
     outbound: Vec<OutboundMessage>,
     decide: F,
@@ -46,14 +89,9 @@ pub fn connect_and_exchange<F>(
 where
     F: Fn(&[Proposal]) -> Vec<Answer>,
 {
-    let stream = TcpStream::connect((host, port)).map_err(TelnetError::Connect)?;
-    stream.set_read_timeout(Some(TIMEOUT)).ok();
-    stream.set_write_timeout(Some(TIMEOUT)).ok();
-
-    // One half reads, the other writes; both refer to the same connection.
-    let read_half = stream.try_clone().map_err(TelnetError::Connect)?;
-    let mut reader = BufReader::new(read_half);
-    let mut writer = stream;
+    let shared: Shared = Arc::new(Mutex::new(connect_stream(host, port, transport)?));
+    let mut reader = BufReader::new(ReadHalf(shared.clone()));
+    let mut writer = WriteHalf(shared);
 
     // The CMS telnet "post office" greets with a callsign/password login that
     // precedes the B2F handshake; clear it first.
@@ -61,6 +99,29 @@ where
 
     session::run_exchange(&mut reader, &mut writer, config, outbound, decide)
         .map_err(TelnetError::Exchange)
+}
+
+/// Open the TCP connection and, for [`Transport::Tls`], complete the TLS
+/// handshake (verifying the server certificate against `host`).
+fn connect_stream(
+    host: &str,
+    port: u16,
+    transport: Transport,
+) -> Result<Box<dyn ReadWrite>, TelnetError> {
+    let tcp = TcpStream::connect((host, port)).map_err(TelnetError::Connect)?;
+    tcp.set_read_timeout(Some(TIMEOUT)).ok();
+    tcp.set_write_timeout(Some(TIMEOUT)).ok();
+    match transport {
+        Transport::Plaintext => Ok(Box::new(tcp)),
+        Transport::Tls => {
+            let connector =
+                native_tls::TlsConnector::new().map_err(|e| TelnetError::Tls(e.to_string()))?;
+            let tls = connector
+                .connect(host, tcp)
+                .map_err(|e| TelnetError::Tls(e.to_string()))?;
+            Ok(Box::new(tls))
+        }
+    }
 }
 
 /// Answer the CMS telnet login: send the call sign at the `Callsign :` prompt
@@ -90,8 +151,10 @@ pub fn telnet_login<R: BufRead, W: Write>(
 /// Why a telnet exchange failed.
 #[derive(Debug)]
 pub enum TelnetError {
-    /// The TCP connection could not be opened (or cloned).
+    /// The TCP connection could not be opened.
     Connect(std::io::Error),
+    /// The TLS handshake failed.
+    Tls(String),
     /// The exchange itself failed once connected.
     Exchange(ExchangeError),
 }
@@ -141,9 +204,15 @@ mod tests {
             locator: "CN87".into(),
             password: None,
         };
-        let result =
-            connect_and_exchange(&addr.ip().to_string(), addr.port(), &config, vec![], |_| vec![])
-                .unwrap();
+        let result = connect_and_exchange(
+            &addr.ip().to_string(),
+            addr.port(),
+            Transport::Plaintext,
+            &config,
+            vec![],
+            |_| vec![],
+        )
+        .unwrap();
 
         assert!(result.received.is_empty());
         assert!(result.sent.is_empty());
