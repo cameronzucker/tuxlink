@@ -4,6 +4,7 @@ pub mod compose_window;
 pub mod config;
 pub mod consent_gate;
 pub mod menu;
+pub mod native_mailbox;
 pub mod pat_client;
 pub mod pat_config;
 pub mod pat_process;

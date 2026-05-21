@@ -89,6 +89,16 @@ impl Message {
             .map(|(_, v)| v.as_str())
     }
 
+    /// All values for a header (case-insensitive key), in order. Repeatable
+    /// headers like `To` and `Cc` can appear more than once.
+    pub fn header_all(&self, key: &str) -> Vec<&str> {
+        self.headers
+            .iter()
+            .filter(|(k, _)| k.eq_ignore_ascii_case(key))
+            .map(|(_, v)| v.as_str())
+            .collect()
+    }
+
     /// The message body bytes.
     pub fn body(&self) -> &[u8] {
         &self.body
