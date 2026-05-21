@@ -6,25 +6,27 @@
 // supplies the EXACT content of the approved Mock B so a `grim` screenshot
 // reproduces docs/design/mockups/images/mock-b-principles-faithful.png.
 //
-// ACTIVATION: gated on `import.meta.env.MODE === 'development'`:
-//   - 'development' under `vite` dev server  → fixture ON (validation)
-//   - 'test'        under vitest             → fixture OFF (no test pollution)
-//   - 'production'  under `vite build`       → fixture OFF + tree-shaken
+// ACTIVATION: OPT-IN. The fixture is OFF by default everywhere — including the
+// `vite` dev server — so `tauri dev` shows the REAL backend (real callsign/grid,
+// the real native mailbox). It is enabled ONLY for deliberate design work by
+// setting `VITE_TUXLINK_FIXTURE=1` before `pnpm tauri dev`.
 //
-// When tuxlink-22l lands the live PatBackend, the fixture stays dormant (it only
-// fills in when the backend yields nothing).
+// Rationale (tuxlink-0ic): the client is now live-CMS-capable, so masking the
+// real station identity with a fictional callsign/grid by default is unsafe — an
+// operator must never see a call sign that isn't theirs on a client that can
+// transmit. The fixture remains available for reproducing the Mock B design
+// (grim screenshots), but never by default.
 
 import type { MailboxFolder, MessageMeta, ParsedMessage } from './types';
 
 /**
- * True only under the live vite dev server, AND only when the live-backend
- * smoke escape hatch is NOT set. Set `VITE_TUXLINK_LIVE=1` before `pnpm tauri
- * dev` to force the fixture OFF so the real Pat bootstrap (tuxlink-22l) drives
- * the mailbox / status / session-log — i.e. an end-to-end live smoke without a
- * production build. Unset (the default) keeps the fixture ON for design work.
+ * True ONLY when explicitly opted in for design work, under the vite dev server.
+ * Set `VITE_TUXLINK_FIXTURE=1` before `pnpm tauri dev` to populate the UI with
+ * the Mock B sample content. Off by default (and in tests + production builds),
+ * so the real backend — real identity, real mailbox — drives the UI.
  */
 export const DEV_FIXTURE =
-  import.meta.env.MODE === 'development' && !import.meta.env.VITE_TUXLINK_LIVE;
+  import.meta.env.MODE === 'development' && import.meta.env.VITE_TUXLINK_FIXTURE === '1';
 
 // --- dates RELATIVE to now so formatRowDate renders the mock's labels
 // ("12:18" today, "Yesterday", "N days ago") whenever run. ---
