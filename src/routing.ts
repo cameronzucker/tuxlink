@@ -33,3 +33,10 @@ export function parseComposeRoute(pathname: string): string | null {
   }
   return draftId.length > 0 ? draftId : null;
 }
+
+/** Fresh draft id for a new compose window. Stable per click. */
+export function newDraftId(): string {
+  const ts = new Date().toISOString().replace(/[:.]/g, '-');
+  const rand = Math.random().toString(36).slice(2, 8);
+  return `draft-${ts}-${rand}`;
+}

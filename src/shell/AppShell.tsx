@@ -14,9 +14,8 @@
 // Compose is a separate floating Tauri window (compose_window.rs), opened from
 // File → New Message and the reading-pane reply actions.
 
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useMemo } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { listen } from '@tauri-apps/api/event';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { useQueryClient } from '@tanstack/react-query';
 import { MessageList } from '../mailbox/MessageList';
@@ -28,9 +27,17 @@ import { FolderSidebar } from '../mailbox/FolderSidebar';
 import { DashboardRibbon } from './DashboardRibbon';
 import { StatusBar } from './StatusBar';
 import { useStatusData } from './useStatus';
-import { applyColorScheme, saveColorScheme, isColorScheme } from './colorScheme';
+import { applyColorScheme, saveColorScheme } from './colorScheme';
 import MessageView from '../mailbox/MessageView';
 import { SessionLog } from '../session/SessionLog';
+import { TitleBar } from './chrome/TitleBar';
+import { MenuBar } from './chrome/MenuBar';
+import { ResizeHandles } from './chrome/ResizeHandles';
+import { useAccelerators } from './chrome/useAccelerators';
+import { dispatchMenuAction, type MenuHandlers } from './chrome/dispatchMenuAction';
+import { useMessage } from '../mailbox/useMessage';
+import { openReplyWindow } from '../mailbox/replyActions';
+import { newDraftId } from '../routing';
 import './AppShell.css';
 
 /// Human label for a folder (titlebar). Mirrors the sidebar labels.
@@ -100,40 +107,30 @@ export function AppShell() {
     }
   }, [selectedFolder]);
 
-  // View menu toggles (menu.rs broadcasts on the "menu" channel).
-  useEffect(() => {
-    let unlisten: (() => void) | undefined;
-    let mounted = true;
-    listen<string>('menu', (event) => {
-      const p = event.payload;
-      if (p === 'menu:view:status_bar') {
-        setShowStatusBar((s) => !s);
-      } else if (p === 'menu:view:session_log') {
-        setShowSessionLog((s) => !s);
-      } else if (
-        p === 'menu:mailbox:inbox' ||
-        p === 'menu:mailbox:sent' ||
-        p === 'menu:mailbox:outbox'
-      ) {
-        setSelectedFolder(p.slice('menu:mailbox:'.length) as MailboxFolder);
-        setSelectedMessage(null);
-      } else if (p.startsWith('menu:view:scheme:')) {
-        // Color scheme picker (tuxlink-8za): apply + persist the chosen scheme.
-        const id = p.slice('menu:view:scheme:'.length);
-        if (isColorScheme(id)) {
-          applyColorScheme(id);
-          saveColorScheme(id);
-        }
-      }
-    }).then((fn) => {
-      if (mounted) unlisten = fn;
-      else fn();
-    });
-    return () => {
-      mounted = false;
-      unlisten?.();
-    };
-  }, []);
+  // The parsed message the reading pane is showing — drives menu/accelerator
+  // Reply/Reply All/Forward. Same query key as MessageView's useMessage, so
+  // TanStack dedupes (no extra IPC). `data` is undefined when nothing is selected.
+  const { data: openMessage } = useMessage(selectedMessage);
+
+  const handlers: MenuHandlers = useMemo(() => ({
+    openCompose: () => { void invoke('compose_window_open', { draftId: newDraftId() }); },
+    connect: onConnect,
+    // Operator decision 2026-05-21 (option b): Reply/Reply All/Forward open a
+    // reply window from the current selection — making good on the reading-pane
+    // button label "Reply (Ctrl+R)". Reuses openReplyWindow (seeds a prefilled
+    // draft + opens a compose window). No-op when nothing is selected.
+    reply: () => { if (openMessage) void openReplyWindow(openMessage, 'reply').catch(() => {}); },
+    replyAll: () => { if (openMessage) void openReplyWindow(openMessage, 'replyAll').catch(() => {}); },
+    forward: () => { if (openMessage) void openReplyWindow(openMessage, 'forward').catch(() => {}); },
+    toggleSessionLog: () => setShowSessionLog((s) => !s),
+    toggleStatusBar: () => setShowStatusBar((s) => !s),
+    selectFolder: (folder) => { setSelectedFolder(folder); setSelectedMessage(null); },
+    setScheme: (id) => { applyColorScheme(id); saveColorScheme(id); },
+    quit: () => { void invoke('app_quit'); },
+  }), [onConnect, openMessage]);
+
+  const onMenuAction = useCallback((id: string) => dispatchMenuAction(id, handlers), [handlers]);
+  useAccelerators(onMenuAction);
 
   const onSelectFolder = useCallback((folder: MailboxFolder) => {
     setSelectedFolder(folder);
@@ -149,6 +146,9 @@ export function AppShell() {
 
   return (
     <div className="layout-b" data-testid="app-shell-root">
+      <TitleBar folderLabel={FOLDER_LABELS[selectedFolder]} />
+      <MenuBar onAction={onMenuAction} />
+      <ResizeHandles />
       <DashboardRibbon data={statusData} onConnect={onConnect} connecting={connecting} />
 
       <div className="panes" data-testid="shell-panes">

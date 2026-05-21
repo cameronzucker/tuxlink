@@ -1,8 +1,6 @@
 import { useEffect, useState } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { invoke } from '@tauri-apps/api/core';
-import { listen } from '@tauri-apps/api/event';
-import { getCurrentWindow } from '@tauri-apps/api/window';
 import { Wizard } from './wizard/Wizard';
 import { AppShell } from './shell/AppShell';
 import { Compose } from './compose/Compose';
@@ -18,16 +16,6 @@ const queryClient = new QueryClient({
   },
 });
 
-/**
- * Generate a fresh draft id for a brand-new compose window. Stable per click;
- * the compose window keys its localStorage draft on this id.
- */
-function newDraftId(): string {
-  const ts = new Date().toISOString().replace(/[:.]/g, '-');
-  const rand = Math.random().toString(36).slice(2, 8);
-  return `draft-${ts}-${rand}`;
-}
-
 export default function App() {
   const [wizardCompleted, setWizardCompleted] = useState<boolean | null>(null);
 
@@ -37,40 +25,6 @@ export default function App() {
   // webview's lifetime (hooks below run unconditionally regardless).
   const composeDraftId = parseComposeRoute(window.location.pathname);
   const isComposeWindow = composeDraftId !== null;
-
-  // Main-window-ONLY: listen for the File → New Message menu event and open a
-  // compose window. Codex F7 (menu.rs:123 broadcasts `menu` to EVERY webview
-  // via app.emit): a compose window must NOT listen, or it recursively spawns
-  // nested compose windows. We guard two ways: (1) skip on a compose route,
-  // and (2) double-check the live window label === "main". This effect is
-  // declared unconditionally (rules of hooks); the guards live inside it.
-  useEffect(() => {
-    if (isComposeWindow) return; // compose window — never listen (F7)
-
-    let unlisten: (() => void) | undefined;
-    let mounted = true;
-
-    // Confirm this is the main window before subscribing (belt-and-suspenders
-    // alongside the route guard — mirrors lib.rs's `window.label() == "main"`
-    // close-to-tray guard).
-    if (getCurrentWindow().label === 'main') {
-      listen<string>('menu', (event) => {
-        if (event.payload === 'menu:file:new') {
-          invoke('compose_window_open', { draftId: newDraftId() }).catch(() => {
-            /* window-open failure is non-fatal; surfaced via Rust logs */
-          });
-        }
-      }).then((fn) => {
-        if (mounted) unlisten = fn;
-        else fn();
-      });
-    }
-
-    return () => {
-      mounted = false;
-      unlisten?.();
-    };
-  }, [isComposeWindow]);
 
   // Wizard-completed probe — only meaningful for the main window. Skipped for
   // compose windows (which render <Compose> below regardless).
