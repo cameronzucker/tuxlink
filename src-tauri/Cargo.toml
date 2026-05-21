@@ -5,6 +5,9 @@ description = "Linux-native full-capability Winlink client"
 authors = ["Cameron Zucker <cameronzucker@gmail.com>"]
 edition = "2021"
 rust-version = "1.75"
+# With the helper bins in src/bin/ (live_cms_smoke, native_cms_probe), a bare
+# `cargo run` / `tauri dev` is ambiguous; name the app binary as the default.
+default-run = "tuxlink"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
