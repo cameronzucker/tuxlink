@@ -196,8 +196,11 @@ export function Step3TestSend() {
       // We stay in the current (`sending`) substate, reflecting reality.
       if (errorKind(err) === 'Busy') return;
 
-      // Any other WizardError is a genuine failure of THIS (the only in-flight)
-      // attempt. Surface it as a failed outcome.
+      // tuxlink-2a7: expected operational failures (CMS timeout, connect
+      // failure, etc.) now arrive as Ok(TestSendOutcome::Failed) and are
+      // dispatched above — they no longer reach this catch. This branch is the
+      // fallback for an UNEXPECTED command-level error (IPC failure, panic):
+      // surface it as a failed outcome so the user is never stuck in `sending`.
       const detail =
         typeof err === 'object' && err !== null && 'detail' in err
           ? String((err as { detail: unknown }).detail)
