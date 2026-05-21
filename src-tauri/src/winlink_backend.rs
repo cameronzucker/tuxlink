@@ -343,6 +343,27 @@ pub struct NativeBackend {
     /// Set by `abort` so the connect's resulting error maps to `Cancelled` (status
     /// `Disconnected`) rather than `Error`.
     aborting: Arc<AtomicBool>,
+    /// Single-flight guard (Codex #1): true while a `connect` is running. A second
+    /// concurrent `connect` is rejected rather than racing on the shared abort
+    /// state and re-sending the outbox. Cleared by a connect-scoped RAII guard so
+    /// it is released on every exit (return, `?`, panic).
+    connect_in_progress: Arc<AtomicBool>,
+}
+
+/// Clears the single-flight + abort state when a `connect` ends, however it ends
+/// (Codex #1 + #7): normal return, early `?`, or a panic in the blocking task.
+struct ConnectGuard {
+    in_progress: Arc<AtomicBool>,
+    handle: Arc<Mutex<Option<TcpStream>>>,
+}
+
+impl Drop for ConnectGuard {
+    fn drop(&mut self) {
+        if let Ok(mut slot) = self.handle.lock() {
+            *slot = None;
+        }
+        self.in_progress.store(false, Ordering::SeqCst);
+    }
 }
 
 impl NativeBackend {
@@ -369,6 +390,7 @@ impl NativeBackend {
             progress,
             abort_handle: Arc::new(Mutex::new(None)),
             aborting: Arc::new(AtomicBool::new(false)),
+            connect_in_progress: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -419,6 +441,26 @@ impl WinlinkBackend for NativeBackend {
 
     async fn connect(&self, transport: TransportConfig) -> Result<Session, BackendError> {
         let TransportConfig::Cms { mode } = transport;
+
+        // Single-flight (Codex #1): refuse a concurrent connect rather than racing
+        // on the shared abort state and re-sending the outbox. The RAII guard
+        // releases the flag + clears the abort handle on EVERY exit — normal
+        // return, early `?`, or a panic in the blocking task (Codex #7).
+        if self
+            .connect_in_progress
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_err()
+        {
+            return Err(BackendError::BackendUnavailable {
+                reason: "a CMS connection is already in progress".to_string(),
+                source: None,
+            });
+        }
+        let _guard = ConnectGuard {
+            in_progress: self.connect_in_progress.clone(),
+            handle: self.abort_handle.clone(),
+        };
+
         let config = self.config.clone();
         let mailbox = self.mailbox.clone();
 
@@ -449,12 +491,8 @@ impl WinlinkBackend for NativeBackend {
             source: None,
         })?;
 
-        // The connect is over; drop the shutdown handle so a later abort is a no-op.
-        if let Ok(mut slot) = self.abort_handle.lock() {
-            *slot = None;
-        }
-
-        // An error after an operator abort is a cancellation, not a failure.
+        // An error after an operator abort is a cancellation, not a failure. The
+        // `_guard` clears the abort handle + single-flight flag when this fn returns.
         match abort_aware_outcome(outcome, self.aborting.load(Ordering::SeqCst)) {
             Ok(()) => {
                 self.set_status(BackendStatus::Connected {
@@ -636,10 +674,16 @@ fn native_connect(
     // the background.
     let register_socket = |sock: &TcpStream| {
         if let Ok(clone) = sock.try_clone() {
-            if aborting.load(Ordering::SeqCst) {
-                let _ = clone.shutdown(Shutdown::Both);
-            } else if let Ok(mut slot) = abort_handle.lock() {
-                *slot = Some(clone);
+            // Check `aborting` INSIDE the abort_handle lock (Codex #2): abort() sets
+            // `aborting` then locks to take the socket, so doing the check + store
+            // under the same lock means whichever side acquires it first, the socket
+            // still ends up shut down if an abort has fired — no TOCTOU window.
+            if let Ok(mut slot) = abort_handle.lock() {
+                if aborting.load(Ordering::SeqCst) {
+                    let _ = clone.shutdown(Shutdown::Both);
+                } else {
+                    *slot = Some(clone);
+                }
             }
         }
     };
@@ -1306,5 +1350,22 @@ mod native_read_state_tests {
         // Nothing in flight: abort must not panic, returns Ok, leaves Disconnected.
         backend.abort().await.unwrap();
         assert!(matches!(backend.status(), BackendStatus::Disconnected));
+    }
+
+    // Codex #1: single-flight. With a connect already in flight, a second connect
+    // is rejected immediately (before any network/config work) rather than racing
+    // on the shared abort state and re-sending the outbox.
+    #[tokio::test]
+    async fn connect_rejects_a_concurrent_connect() {
+        let dir = tempdir().unwrap();
+        let backend = NativeBackend::new(offline_config(), dir.path());
+        backend.connect_in_progress.store(true, Ordering::SeqCst);
+        let result = backend
+            .connect(TransportConfig::Cms { mode: CmsTransport::Telnet })
+            .await;
+        assert!(
+            matches!(result, Err(BackendError::BackendUnavailable { .. })),
+            "a concurrent connect should be rejected, got {result:?}"
+        );
     }
 }

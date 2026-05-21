@@ -86,6 +86,11 @@ export function AppShell() {
   const [connecting, setConnecting] = useState(false);
 
   const onConnect = useCallback(async () => {
+    // Codex #1: don't start a second connect while one is in flight. The Connect
+    // button is disabled, but the F5 / Ctrl+Shift+O accelerator also routes here.
+    // The backend single-flight guard is the hard guarantee; this just avoids a
+    // spurious "already in progress" error line on a double-press.
+    if (connecting) return;
     setConnecting(true);
     try {
       await invoke('cms_connect');
@@ -96,7 +101,7 @@ export function AppShell() {
     } finally {
       setConnecting(false);
     }
-  }, [queryClient]);
+  }, [queryClient, connecting]);
 
   const onAbort = useCallback(() => {
     // Fire-and-forget (tuxlink-9z2): the abort shuts the connecting socket; the
