@@ -27,7 +27,9 @@ use tauri::{AppHandle, Emitter, Manager};
 use crate::app_backend::{BackendPhase, BackendState};
 use crate::config::{Config, ConfigReadError};
 use crate::session_log::SessionLogState;
-use crate::winlink_backend::{LogLevel, LogLine, LogSource, PatBackend, PatBackendSpawnOptions};
+use crate::winlink_backend::{
+    LogLevel, LogLine, LogSource, NativeBackend, PatBackend, PatBackendSpawnOptions,
+};
 
 /// What the bootstrap should do, decided purely from `read_config()`'s result.
 #[derive(Debug)]
@@ -233,18 +235,59 @@ pub fn run(app_handle: AppHandle) {
                 });
                 emit_backend_line(&app_handle, LogLevel::Error, reason);
             }
-            // CMS mode: spawn Pat.
+            // CMS mode: install the native Winlink backend (no Pat). The
+            // BootstrapAction is still named `Spawn` (it gates the same
+            // `wizard_completed && connect_to_cms` config), but as of the native
+            // cutover (tuxlink-0ic) it installs `NativeBackend` rather than
+            // spawning Pat. The Pat path (`spawn_pat`) is retained but unused
+            // until/unless a fallback is wanted.
             BootstrapAction::Spawn(cfg) => {
-                spawn_pat(&app_handle, &state, *cfg);
+                install_native(&app_handle, &state, *cfg);
             }
         }
     });
+}
+
+/// The CMS-mode install path (native cutover, tuxlink-0ic). Constructs the
+/// native Winlink backend over its own on-disk mailbox (`<app_data>/native-mbox`)
+/// and installs it — no Pat process, no blocking spawn, no sidecar. Non-fatal: a
+/// path-resolver failure surfaces as `Failed` + a session-log line.
+///
+/// NOTE: the native client presents the SID `tuxlink`, which the production CMS
+/// rejects until registered with Winlink (it directs unknown clients to
+/// `cms-z.winlink.org`). The backend is installed and the mailbox/compose UI
+/// works regardless; a CMS connect against production needs that registration.
+fn install_native(app_handle: &AppHandle, state: &BackendState, cfg: Config) {
+    let mbox_dir = match app_handle.path().app_data_dir() {
+        Ok(dir) => dir.join("native-mbox"),
+        Err(e) => {
+            let reason = format!("could not resolve app data dir for the native mailbox: {e}");
+            state.set_phase(BackendPhase::Failed {
+                reason: reason.clone(),
+            });
+            emit_backend_line(app_handle, LogLevel::Error, reason);
+            return;
+        }
+    };
+
+    let backend = NativeBackend::new(cfg, mbox_dir);
+    state.install(Arc::new(backend));
+    emit_backend_line(
+        app_handle,
+        LogLevel::Info,
+        "Native Winlink backend ready (no Pat).".to_string(),
+    );
 }
 
 /// The CMS-mode spawn path (spec §3.3 step 2-3, §3.6). Sets `Spawning`,
 /// resolves the sidecar + Pat paths, calls the BLOCKING `PatBackend::spawn`,
 /// installs the backend on success (+ starts the drain), or sets `Failed` +
 /// emits an error line on any failure. All non-fatal.
+///
+/// Retained but UNUSED as of the native cutover (tuxlink-0ic): the bootstrap now
+/// installs `NativeBackend` instead. Kept (not deleted) per "don't delete Pat
+/// until native reaches parity" — easy to re-wire as a fallback.
+#[allow(dead_code)]
 fn spawn_pat(app_handle: &AppHandle, state: &BackendState, cfg: Config) {
     state.set_phase(BackendPhase::Spawning);
 
@@ -345,6 +388,10 @@ fn spawn_pat(app_handle: &AppHandle, state: &BackendState, cfg: Config) {
 /// for a backend log line reaching an already-open pane; the snapshot covers
 /// re-opens). `PatBackend::stream_log()`'s broadcast remains available for other
 /// consumers; this drain no longer depends on it.
+///
+/// Retained but UNUSED as of the native cutover (tuxlink-0ic) — only `spawn_pat`
+/// started it. Native backend logging is wired separately when added.
+#[allow(dead_code)]
 fn start_drain(app_handle: AppHandle, buffer: Arc<SessionLogState>) {
     tauri::async_runtime::spawn(async move {
         let mut last_seq: u64 = 0;
@@ -384,6 +431,8 @@ fn drain_step(
 }
 
 /// Bundle of the three Pat-process paths the bootstrap derives (spec §3.6).
+/// Retained but UNUSED as of the native cutover (tuxlink-0ic).
+#[allow(dead_code)]
 struct PatPaths {
     config_path: PathBuf,
     mbox_dir: PathBuf,
@@ -395,7 +444,8 @@ struct PatPaths {
 /// Pid: `<app_data_dir>/pat.pid`. `PatProcess::spawn` creates the mbox + pid
 /// parent dirs and renders the config; we only compute the paths here. A
 /// path-resolver failure (no home dir, etc.) → `Err` so the caller surfaces a
-/// single `Failed` state.
+/// single `Failed` state. Retained but UNUSED as of the native cutover.
+#[allow(dead_code)]
 fn resolve_pat_paths(app_handle: &AppHandle) -> Result<PatPaths, String> {
     let config_dir = app_handle
         .path()
