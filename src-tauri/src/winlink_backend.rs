@@ -160,6 +160,11 @@ pub enum BackendStatus {
 /// Backend log line emitted via `stream_log()`.
 #[derive(Debug, Clone)]
 pub struct LogLine {
+    /// Monotonic sequence number assigned by `SessionLogState::append`.
+    /// 0 means "not yet assigned" (pre-append). The bridge writes to the
+    /// `SessionLogState` buffer first; `seq` is set by `append`, never
+    /// by the bridge or callers directly.
+    pub seq: u64,
     pub timestamp_iso: String,
     pub level: LogLevel,
     pub source: LogSource,
@@ -354,10 +359,119 @@ impl WinlinkBackend for NativeBackend {
 // ============================================================================
 
 use std::sync::{Arc, RwLock};
+use std::thread::JoinHandle;
+use std::time::Duration;
 use tokio::sync::broadcast;
 use tokio_stream::wrappers::BroadcastStream;
 
 use crate::pat_client::{PatClient, PatClientError};
+use crate::session_log::SessionLogState;
+
+/// Format the current wall-clock instant as an RFC 3339 / ISO-8601 UTC string
+/// (`YYYY-MM-DDTHH:MM:SSZ`). Minimal epoch-based formatter — no `chrono`
+/// dependency in this module. Mirrors the manual formatter in `ui_commands.rs`
+/// (`format_unix_ts`) and `wizard.rs`; precision is whole seconds, which is all
+/// the v0.0.1 session-log ingestion timestamp needs (spec §3.2: ingestion time,
+/// not Pat's own parsed timestamp).
+fn now_iso8601_utc() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let sec = secs % 60;
+    let min = (secs / 60) % 60;
+    let hour = (secs / 3600) % 24;
+    let days = secs / 86400;
+    let (year, month, day) = days_to_ymd(days);
+    format!("{year:04}-{month:02}-{day:02}T{hour:02}:{min:02}:{sec:02}Z")
+}
+
+/// Convert days since 1970-01-01 to (year, month, day) on the proleptic
+/// Gregorian calendar (Howard Hinnant's `civil_from_days`). Same algorithm as
+/// `ui_commands::days_to_ymd`; duplicated locally to keep the two modules'
+/// timestamp helpers self-contained (each is a few lines; a shared util module
+/// is out of scope for v0.0.1).
+fn days_to_ymd(days: u64) -> (u64, u64, u64) {
+    let z = days as i64 + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = (z - era * 146_097) as u64;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146_096) / 365;
+    let y = yoe as i64 + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    (y as u64, m, d)
+}
+
+/// Map one raw Pat stderr line into a [`LogLine`], append it to the durable
+/// `SessionLogState` ring buffer (which assigns the monotonic `seq`), and
+/// broadcast it live on `log_tx`. Returns the `LogLine` actually stored +
+/// broadcast (with `seq` populated by the buffer).
+///
+/// Effects are exactly the append + the broadcast send. The broadcast `send`
+/// failing (0 receivers) is fine — durability is provided by the buffer, the
+/// broadcast is live-notify only (spec §3.2, adrev #2). Unit-tested directly
+/// in `winlink_backend_test.rs` (`ingest_pat_line_appends_and_broadcasts_with_seq`).
+///
+/// `#[doc(hidden) pub]` (mirrors `push_log_line_for_test`) so the integration
+/// test crate can drive it without a real Pat process.
+#[doc(hidden)]
+pub fn ingest_pat_line(
+    raw: String,
+    buffer: &SessionLogState,
+    log_tx: &broadcast::Sender<LogLine>,
+) -> LogLine {
+    // Durable append (assigns + sets the monotonic seq, stores the line).
+    let line = append_pat_line(raw, buffer);
+    // Live notify; 0 receivers is fine (durability is in `buffer`).
+    let _ = log_tx.send(line.clone());
+    line
+}
+
+/// Append-only counterpart to [`ingest_pat_line`]: map one raw Pat stderr line
+/// into a `LogSource::Pat` [`LogLine`] and append it to the durable buffer
+/// (which assigns + sets the monotonic `seq`), WITHOUT broadcasting. Returns the
+/// stored line (with `seq` populated).
+///
+/// Used by the `PatBackend::spawn` failure path (tuxlink-22l Codex R2 FIX 2):
+/// when `PatProcess::spawn` returns `Err`, Pat's pre-exit stderr diagnostics may
+/// still be sitting in the mpsc receiver, but the live broadcast has no
+/// subscribers yet (and the backend is never constructed), so a broadcast is
+/// pointless there — durability into the buffer is what carries the lines to the
+/// UI (via the snapshot + the buffer-polling drain).
+fn append_pat_line(raw: String, buffer: &SessionLogState) -> LogLine {
+    let mut line = LogLine {
+        seq: 0,
+        timestamp_iso: now_iso8601_utc(),
+        level: LogLevel::Info,
+        source: LogSource::Pat,
+        message: raw,
+    };
+    // `append` assigns + returns the monotonic seq and stores the line.
+    line.seq = buffer.append(line.clone());
+    line
+}
+
+/// Options for [`PatBackend::spawn`] — the full-lifecycle constructor.
+/// (spec §3.1). The resolved Pat sidecar path + the Pat config/mbox/pid paths
+/// + tuxlink's config are supplied by the bootstrap (`lib.rs` `.setup()`); see
+/// spec §3.5/§3.6 for path-resolution responsibilities (the bootstrap owns
+/// resolution, not `spawn`).
+pub struct PatBackendSpawnOptions {
+    /// Resolved Pat sidecar binary path.
+    pub binary: std::path::PathBuf,
+    /// Where `PatProcess` renders Pat's config.json before exec.
+    pub config_path: std::path::PathBuf,
+    /// Pat mailbox dir.
+    pub mbox_dir: std::path::PathBuf,
+    /// Pat pid file.
+    pub pid_file: std::path::PathBuf,
+    /// Tuxlink config — `PatProcess` renders Pat's config from it.
+    pub tuxlink_config: crate::config::Config,
+}
 
 /// Wraps the existing [`PatClient`] (HTTP) and forwards Pat's stderr log
 /// stream into a tokio broadcast channel for `stream_log` subscribers.
@@ -372,6 +486,18 @@ pub struct PatBackend {
     client: PatClient,
     log_tx: broadcast::Sender<LogLine>,
     status: Arc<RwLock<BackendStatus>>,
+    /// The supervised Pat child process. `Some` for [`PatBackend::spawn`]
+    /// (the backend owns Pat's lifetime); `None` for [`PatBackend::from_url`]
+    /// (Pat is managed externally / mocked). `Drop` gracefully shuts down a
+    /// `Some` process; a `None` Drop is a no-op (spec §3.1 step 5, adrev #16).
+    /// Wrapped in `Option` so `Drop` can `take()` it (needs `&mut`).
+    _process: Option<crate::pat_process::PatProcess>,
+    /// Join handle for the stderr→LogLine bridge thread (`spawn` only; `None`
+    /// for `from_url`). Stored so the thread is not silently orphaned (adrev
+    /// #17). The thread exits when Pat's stderr closes → `PatProcess`'s reader
+    /// thread drops the mpsc sender → the bridge's `rx.recv()` returns `Err`.
+    /// `Drop` joins it with a bounded wait.
+    _bridge_thread: Option<JoinHandle<()>>,
 }
 
 impl PatBackend {
@@ -387,7 +513,106 @@ impl PatBackend {
             client: PatClient::new(base_url),
             log_tx,
             status: Arc::new(RwLock::new(BackendStatus::Disconnected)),
+            // No spawned process / bridge — Pat is external (spec §3.1).
+            _process: None,
+            _bridge_thread: None,
         }
+    }
+
+    /// Full-lifecycle constructor (spec §3.1, §11.2): spawn Pat in HTTP mode,
+    /// wire a `PatClient` to the announced port, bridge Pat's stderr into BOTH
+    /// the durable `log_buffer` (so `session_log_snapshot` sees startup lines)
+    /// AND the live broadcast, hold + supervise the process, and report a
+    /// truthful initial status of [`BackendStatus::Disconnected`].
+    ///
+    /// **Initial status is `Disconnected`, NOT `Connected`** (adrev #10): Pat's
+    /// local HTTP server being up is NOT a CMS link. A real `Connected` is only
+    /// minted by an operator-triggered `connect()`.
+    ///
+    /// **Part 97 (spec §6):** the spawned argv is `pat … http --addr 127.0.0.1:<port>`
+    /// — HTTP mode only, loopback only; this constructor never calls Pat's
+    /// connect/send APIs. Serving the local HTTP API is not a CMS session and
+    /// not a transmission.
+    ///
+    /// Errors: any `PatProcess::spawn` `io::Error` (binary missing, announce
+    /// timeout, config render failure) maps to
+    /// [`BackendError::BackendUnavailable`] with the source chain preserved.
+    pub fn spawn(
+        opts: PatBackendSpawnOptions,
+        log_buffer: Arc<SessionLogState>,
+    ) -> Result<Self, BackendError> {
+        // Channel for Pat stderr lines: PatProcess's reader thread is the
+        // sender; our bridge thread is the receiver.
+        let (tx, rx) = std::sync::mpsc::channel::<String>();
+
+        // Spawn Pat in HTTP mode on an ephemeral loopback port (http_listen_port
+        // = 0). `log_sink: Some(tx)` makes PatProcess forward EVERY stderr line
+        // (incl. pre-announce) into our channel (spec §3.1 step 2).
+        let process = match crate::pat_process::PatProcess::spawn(
+            crate::pat_process::PatSpawnOptions {
+                binary: opts.binary,
+                config_path: opts.config_path,
+                mbox_dir: opts.mbox_dir,
+                http_listen_port: 0,
+                pid_file: opts.pid_file,
+                log_sink: Some(tx),
+                tuxlink_config: opts.tuxlink_config,
+                http_announce_timeout: Duration::from_secs(10),
+            },
+        ) {
+            Ok(p) => p,
+            Err(e) => {
+                // FIX 2 (tuxlink-22l Codex R2): Pat may have printed its failure
+                // cause to stderr before exiting; PatProcess's reader thread
+                // forwarded those lines into `rx` before EOF. The bridge thread
+                // is NOT started on this path, so without draining, those
+                // diagnostics are lost. Drain `rx` into the durable buffer so
+                // Pat's failure cause reaches the UI (via the snapshot + the
+                // buffer-polling drain). `PatProcess::spawn`'s error paths all
+                // kill + reap the child first, so the reader thread has hit (or
+                // is about to hit) EOF and will drop its sender — `recv_timeout`
+                // therefore terminates promptly (the timeout is a defensive
+                // bound against a pathological reader, not the expected path).
+                while let Ok(raw) = rx.recv_timeout(Duration::from_secs(1)) {
+                    append_pat_line(raw, &log_buffer);
+                }
+                return Err(BackendError::BackendUnavailable {
+                    reason: format!("Pat failed to start: {e}"),
+                    source: Some(Box::new(e)),
+                });
+            }
+        };
+
+        // Wire the HTTP client to the port Pat actually bound (loopback).
+        let port = process.http_port();
+        let client = PatClient::new(format!("http://127.0.0.1:{port}"));
+
+        // Live-notify broadcast channel, same shape as `from_url` (cap 256).
+        let (log_tx, _rx) = broadcast::channel::<LogLine>(256);
+
+        // Bridge thread: drain Pat stderr lines from the mpsc receiver, append
+        // each to the durable buffer (assigns seq) AND broadcast it live
+        // (spec §3.2). A blocking `std::thread` — `mpsc::Receiver::recv` is
+        // blocking, consistent with PatProcess's reader. Exits when the mpsc
+        // sender closes (Pat exits → PatProcess reader drops its sender).
+        let bridge_buffer = log_buffer.clone();
+        let bridge_log_tx = log_tx.clone();
+        let bridge_thread = std::thread::spawn(move || {
+            while let Ok(raw) = rx.recv() {
+                ingest_pat_line(raw, &bridge_buffer, &bridge_log_tx);
+            }
+        });
+
+        Ok(Self {
+            backend_id: BackendInstanceId::next(),
+            client,
+            log_tx,
+            // Initial status is Disconnected ("backend ready"), NOT Connected
+            // — Pat's HTTP server is up but no CMS link exists (adrev #10).
+            status: Arc::new(RwLock::new(BackendStatus::Disconnected)),
+            _process: Some(process),
+            _bridge_thread: Some(bridge_thread),
+        })
     }
 
     /// Test-only: push a synthetic log line into the broadcast channel
@@ -396,6 +621,60 @@ impl PatBackend {
     #[doc(hidden)]
     pub fn push_log_line_for_test(&self, line: LogLine) -> usize {
         self.log_tx.send(line).unwrap_or(0)
+    }
+}
+
+impl Drop for PatBackend {
+    /// Graceful teardown of a spawned Pat (spec §3.1 step 5, adrev #16,#17).
+    ///
+    /// For a `spawn`ed backend (`_process: Some`): call
+    /// `PatProcess::shutdown(5s)` — a SIGTERM→reap→SIGKILL-on-timeout cycle
+    /// (vs `PatProcess`'s own `Drop`, which is an immediate SIGKILL). Killing
+    /// Pat closes its stderr → `PatProcess`'s reader thread sees EOF and exits
+    /// → it drops the mpsc sender → the bridge thread's `rx.recv()` returns
+    /// `Err` → the bridge exits. We then join the bridge with a bounded wait
+    /// so it is not orphaned.
+    ///
+    /// For a `from_url` backend (`_process: None`): a no-op (nothing to stop).
+    fn drop(&mut self) {
+        if let Some(mut process) = self._process.take() {
+            // Graceful stop; ignore the io::Error (best-effort teardown).
+            let _ = process.shutdown(Duration::from_secs(5));
+            // `process` is dropped here, after its child is reaped, closing
+            // stderr for good and unblocking the bridge thread's recv().
+        }
+        // Join the bridge thread so it is not silently orphaned. By the time
+        // shutdown() has returned, Pat is reaped and its stderr is closed, so
+        // the bridge's `rx.recv()` has already returned `Err` (or is about to)
+        // — the join is bounded in practice. A `from_url` backend has no bridge
+        // thread (`None`), so this is skipped there.
+        //
+        // FIX 3 (tuxlink-22l Codex R2): the join is BOUNDED. An unbounded
+        // `handle.join()` would hang app teardown if the bridge thread never
+        // exits — e.g. a Pat *descendant* inherited and held Pat's stderr write
+        // end open, so the reader (and hence the bridge) never sees EOF despite
+        // Pat itself being reaped. We join on a tiny throwaway joiner thread that
+        // signals completion over an mpsc, and wait at most 2s. On timeout we
+        // DETACH (drop the JoinHandle without joining): a single leaked,
+        // short-lived thread blocked on `recv` is strictly better than a hung
+        // application teardown. (The leaked thread exits on its own whenever the
+        // held-open stderr finally closes.)
+        if let Some(handle) = self._bridge_thread.take() {
+            let (done_tx, done_rx) = std::sync::mpsc::channel::<()>();
+            std::thread::spawn(move || {
+                let _ = handle.join();
+                // Receiver may already be gone (we timed out + detached); the
+                // send error is expected and ignored in that case.
+                let _ = done_tx.send(());
+            });
+            match done_rx.recv_timeout(Duration::from_secs(2)) {
+                Ok(()) => { /* bridge thread joined cleanly. */ }
+                Err(_) => {
+                    // Timed out (or joiner disconnected): detach. The bridge
+                    // thread is leaked rather than blocking teardown forever.
+                }
+            }
+        }
     }
 }
 

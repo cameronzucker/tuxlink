@@ -1,4 +1,5 @@
 pub mod app_backend;
+pub mod bootstrap;
 pub mod compose_window;
 pub mod config;
 pub mod consent_gate;
@@ -6,6 +7,7 @@ pub mod menu;
 pub mod pat_client;
 pub mod pat_config;
 pub mod pat_process;
+pub mod session_log;
 pub mod tray;
 pub mod ui_commands;
 pub mod winlink_backend;
@@ -54,13 +56,28 @@ pub fn run() {
                 .build(),
         )
         .manage(crate::wizard::WizardMutex::new())
-        // Task 12 (tuxlink-zsm): the single Winlink-backend handle every UI
-        // command consumes (spec §1.1). Starts `None`; the live bootstrap
-        // (spawn Pat → construct PatBackend → store here → drain stream_log)
-        // is STUBBED in v0.0.1 — see the `.setup()` note below. While `None`,
-        // `mailbox_list` returns `NotConfigured`, which the UI renders as the
-        // "not connected" empty state (NOT an error).
-        .manage(crate::app_backend::AppBackend::new())
+        // Task D (tuxlink-22l): the single Winlink-backend managed state every
+        // UI command + the `backend_status` ribbon consume (spec §3.4, adrev
+        // #9). `BackendState` holds `(phase, Option<Arc<backend>>)` behind ONE
+        // lock — replacing Task 12's `AppBackend(RwLock<Option<…>>)`, which
+        // could not distinguish "offline / not connected" from "configured but
+        // Pat failed". Starts `(NotConfigured, None)`; the `.setup()` bootstrap
+        // below drives the phase (Spawning → Ready / Failed / ConfigError) and
+        // installs the live backend once Pat is up. While `NotConfigured`,
+        // `mailbox_list` returns `NotConfigured` (the UI's "not connected"
+        // empty state) and `backend_status` returns `None`.
+        .manage(crate::app_backend::BackendState::new())
+        // Task A (tuxlink-22l): durable session-log ring buffer. The bridge
+        // (Task C) appends here AND broadcasts on `session_log:line`; this
+        // managed state lets `session_log_snapshot` serve late-mounting UIs
+        // without losing Pat's startup lines (spec §11.1 / adrev #1,#2,#3).
+        // Cap 500: ≈ one extended Pat CMS session's worth of log lines.
+        //
+        // Wrapped in an `Arc` (Task C, tuxlink-22l §11.2) so `PatBackend::spawn`
+        // can hold a clone of the SAME buffer its bridge thread appends to —
+        // the buffer `session_log_snapshot` reads. Tauri's `State` derefs
+        // through the `Arc`, so the command sees an identical surface.
+        .manage(std::sync::Arc::new(crate::session_log::SessionLogState::new(500)))
         .setup(|app| {
             // Build the native OS menu bar (tuxlink-6vi / Task 7) and wire
             // its events to Tauri IPC so the React frontend can listen on
@@ -75,30 +92,29 @@ pub fn run() {
             // This keeps the Pat child process alive mid-ARQ session.
             crate::tray::install(app.handle())?;
 
-            // Task 12 backend bootstrap — STUBBED in v0.0.1 (DONE_WITH_CONCERNS).
+            // Task D (tuxlink-22l) app-start Pat bootstrap (spec §3.3). Runs
+            // OFF the main thread (a dedicated std::thread inside
+            // `bootstrap::run`) so the webview paints immediately rather than
+            // blocking on Pat's up-to-10s announce. The worker:
+            //   - classifies `read_config()` via `bootstrap_decision` (adrev
+            //     #14,#15: pre-wizard + offline → NotConfigured; malformed
+            //     config → ConfigError; only `wizard_completed && connect_to_cms`
+            //     spawns Pat),
+            //   - resolves the Pat sidecar (adrev #12: 0-byte dev stub / missing
+            //     → Failed with an actionable message; `PAT_BINARY` dev override),
+            //   - calls the BLOCKING `PatBackend::spawn`, installs the backend in
+            //     `BackendState` (→ Ready), and starts the session-log drain task
+            //     (`tauri::async_runtime::spawn`, adrev #5) that emits one
+            //     `session_log:line` event per `LogLine`.
+            // ALL paths are non-fatal: the app always launches. A spawn/health
+            // failure shows as an EXPLICIT error in the ribbon + session-log
+            // pane (BackendPhase::Failed), not a silent empty state (spec §2).
             //
-            // The live path (spec §1.1 / §3.3) is: if a tuxlink config exists
-            // AND connect_to_cms == true, locate the Pat sidecar, spawn it via
-            // PatProcess (renders Pat config + reads the keyring credential),
-            // construct a PatBackend over the announced HTTP port, store
-            // Arc<PatBackend> in AppBackend, then spawn a task that drains
-            // `backend.stream_log()` and emits one `session_log:line` Tauri
-            // event per LogLine (payload shape: spec §3.3).
-            //
-            // It is deliberately NOT wired here yet because:
-            //   1. `PatBackend::spawn` (the full-lifecycle constructor) is not
-            //      implemented — only `PatBackend::from_url` exists today.
-            //   2. The spawn path reads keyring credentials and launches a
-            //      process that can initiate a CMS session — a live-Pat /
-            //      Part-97-adjacent surface a headless build must not exercise
-            //      to "verify completion" (CLAUDE.md live-radio rule).
-            //
-            // Leaving AppBackend `None` is the graceful default: every command
-            // degrades to `NotConfigured` → empty state. The model + trait +
-            // commands + sidebar/list + AppShell (the Task-12 gate for Tasks
-            // 13/14) are complete without it; the live spawn is a follow-up
-            // (see PR body / handoff). The emit-per-LogLine glue is provided
-            // by `crate::ui_commands` consumers once the backend exists.
+            // Part 97 (spec §6): the spawned argv is `pat … http --addr
+            // 127.0.0.1:<port>` (HTTP mode, loopback only) and never calls Pat's
+            // connect/send APIs — this code is WRITTEN + COMMITTED here; the
+            // licensee RUNS the spawn path. No agent/CI executes it to "verify."
+            crate::bootstrap::run(app.handle().clone());
             Ok(())
         })
         .on_window_event(|window, event| {

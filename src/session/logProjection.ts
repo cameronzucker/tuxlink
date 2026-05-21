@@ -14,8 +14,17 @@
  * Both accept the same `LogLineDto[]` — NO parallel streams.
  */
 
-/** Mirrors the Tauri event payload from `session_log:line` (spec §3.3). */
+/**
+ * Mirrors the Tauri event payload from `session_log:line` (spec §3.3).
+ *
+ * `seq` is the monotonic sequence number assigned by `SessionLogState::append`
+ * on the Rust side. The frontend uses it as the canonical dedupe key so that
+ * two lines sharing the same `timestampIso` are never dropped (adrev #4).
+ * Synthetic lines created purely for display (e.g. the Human-projection session
+ * summary) use `seq: 0`.
+ */
 export interface LogLineDto {
+  seq: number;
   timestampIso: string;
   level: 'trace' | 'debug' | 'info' | 'warn' | 'error';
   source: 'backend' | 'pat' | 'transport' | 'wire';
@@ -125,6 +134,7 @@ function makeSummaryLine(
   insertTimestamp: string,
 ): LogLineDto {
   return {
+    seq: 0, // synthetic display-only line; 0 is never assigned by the ring buffer
     timestampIso: insertTimestamp,
     level: 'info',
     source: 'backend',
