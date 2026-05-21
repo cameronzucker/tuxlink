@@ -1,0 +1,215 @@
+//! Compose an outbound Winlink message from plain fields.
+//!
+//! Turns a "send this to these people" request into a complete Winlink message
+//! with the headers the CMS expects: a generated message id, the date, the
+//! sender, the recipients, and the body. The result is a [`Message`] ready to
+//! be offered as a proposal and sent.
+//!
+//! Mirrors the message construction in `wl2k-go/fbb` (`NewMessage` +
+//! `SetDate`/`SetFrom`/`AddTo`/`SetBody`); no Go ships. The message id format is
+//! our own (a 12-character base32 digest) — ids only need to be unique, not
+//! byte-identical to any other client.
+
+use md5::{Digest, Md5};
+
+use super::message::Message;
+
+/// Build a Private text message ready to send.
+///
+/// `mycall` is the sending station's call sign. `to`/`cc` are recipient
+/// addresses (bare call signs, `CALL@winlink.org`, or full email addresses).
+/// `unix_secs` is the send time (seconds since the epoch) — it sets the `Date`
+/// header and seeds the message id, and is taken as a parameter so the result is
+/// reproducible.
+pub fn compose_message(
+    mycall: &str,
+    to: &[&str],
+    cc: &[&str],
+    subject: &str,
+    body: &str,
+    unix_secs: u64,
+) -> Message {
+    let mut msg = Message::new();
+    let station = normalize_address(mycall);
+
+    msg.set_header("Mid", &generate_mid(mycall, unix_secs));
+    msg.set_header("Date", &format_winlink_date(unix_secs));
+    msg.set_header("Type", "Private");
+    msg.set_header("From", &station);
+    msg.set_header("Mbo", &station);
+    for addr in to {
+        msg.add_header("To", &normalize_address(addr));
+    }
+    for addr in cc {
+        msg.add_header("Cc", &normalize_address(addr));
+    }
+    msg.set_header("Subject", subject);
+    msg.set_header("Content-Transfer-Encoding", "8bit");
+    msg.set_header("Content-Type", "text/plain; charset=ISO-8859-1");
+    msg.set_body(encode_body(body));
+    msg
+}
+
+/// Generate a 12-character message id from the call sign and the send time.
+///
+/// The id is the base32 of an MD5 digest, truncated — unique in practice, and
+/// the CMS only requires uniqueness, not a particular derivation.
+pub fn generate_mid(callsign: &str, unix_secs: u64) -> String {
+    let payload = format!("{unix_secs}-{callsign}");
+    let digest = Md5::digest(payload.as_bytes());
+    base32_encode(&digest).chars().take(12).collect()
+}
+
+/// Encode the body: normalize line endings to CRLF, then map to Latin-1 bytes
+/// (the Winlink default charset). Characters outside Latin-1 become `?`.
+fn encode_body(text: &str) -> Vec<u8> {
+    let crlf = text.replace("\r\n", "\n").replace('\n', "\r\n");
+    crlf.chars()
+        .map(|c| if (c as u32) <= 0xff { c as u8 } else { b'?' })
+        .collect()
+}
+
+/// Normalize a recipient/sender address the way Winlink expects: a bare call
+/// sign is upper-cased; `CALL@winlink.org` becomes the bare upper-cased call
+/// sign; any other email address is prefixed `SMTP:`.
+fn normalize_address(addr: &str) -> String {
+    // An already-qualified `proto:addr` form is kept as-is.
+    if let Some((proto, rest)) = addr.split_once(':') {
+        if !proto.is_empty() && !rest.contains(':') {
+            return format!("{proto}:{rest}");
+        }
+    }
+    match addr.split_once('@') {
+        None => addr.to_uppercase(),
+        Some((local, domain)) if domain.eq_ignore_ascii_case("winlink.org") => {
+            local.to_uppercase()
+        }
+        Some(_) => format!("SMTP:{addr}"),
+    }
+}
+
+/// Format `unix_secs` as the Winlink date header `YYYY/MM/DD HH:MM` in UTC.
+fn format_winlink_date(unix_secs: u64) -> String {
+    let minute = (unix_secs / 60) % 60;
+    let hour = (unix_secs / 3600) % 24;
+    let (year, month, day) = days_to_ymd(unix_secs / 86_400);
+    format!("{year:04}/{month:02}/{day:02} {hour:02}:{minute:02}")
+}
+
+/// Convert days since 1970-01-01 to (year, month, day) on the Gregorian calendar
+/// (Howard Hinnant's `civil_from_days`).
+fn days_to_ymd(days: u64) -> (u64, u64, u64) {
+    let z = days as i64 + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = (z - era * 146_097) as u64;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146_096) / 365;
+    let y = yoe as i64 + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    (y as u64, m, d)
+}
+
+/// Standard base32 (RFC 4648, no padding), upper-case alphabet.
+fn base32_encode(data: &[u8]) -> String {
+    const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+    let mut out = String::new();
+    let mut buffer: u32 = 0;
+    let mut bits: u32 = 0;
+    for &byte in data {
+        buffer = (buffer << 8) | u32::from(byte);
+        bits += 8;
+        while bits >= 5 {
+            bits -= 5;
+            out.push(ALPHABET[((buffer >> bits) & 0x1f) as usize] as char);
+        }
+        buffer &= (1u32 << bits) - 1; // keep only the unconsumed low bits
+    }
+    if bits > 0 {
+        out.push(ALPHABET[((buffer << (5 - bits)) & 0x1f) as usize] as char);
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const BASE32_ALPHABET: &str = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+
+    #[test]
+    fn generates_a_twelve_character_message_id() {
+        // Anchored to an independently computed base32(md5("1716200000-N7CPZ")).
+        assert_eq!(generate_mid("N7CPZ", 1_716_200_000), "LIHHQU663POB");
+    }
+
+    #[test]
+    fn message_ids_vary_by_time_and_call_sign() {
+        let base = generate_mid("N7CPZ", 1_716_200_000);
+        assert_eq!(base.len(), 12);
+        assert!(base.chars().all(|c| BASE32_ALPHABET.contains(c)));
+        assert_ne!(base, generate_mid("N7CPZ", 1_716_200_001));
+        assert_ne!(base, generate_mid("W1AW", 1_716_200_000));
+    }
+
+    #[test]
+    fn composes_a_message_with_the_standard_headers() {
+        let msg = compose_message(
+            "N7CPZ",
+            &["W1AW"],
+            &[],
+            "Field report",
+            "All clear.",
+            1_716_200_000,
+        );
+        assert_eq!(msg.header("Mid"), Some("LIHHQU663POB"));
+        assert_eq!(msg.header("Date"), Some("2024/05/20 10:13"));
+        assert_eq!(msg.header("Type"), Some("Private"));
+        assert_eq!(msg.header("From"), Some("N7CPZ"));
+        assert_eq!(msg.header("Mbo"), Some("N7CPZ"));
+        assert_eq!(msg.header("To"), Some("W1AW"));
+        assert_eq!(msg.header("Subject"), Some("Field report"));
+        assert_eq!(msg.header("Content-Transfer-Encoding"), Some("8bit"));
+        assert_eq!(
+            msg.header("Content-Type"),
+            Some("text/plain; charset=ISO-8859-1")
+        );
+        assert_eq!(msg.body(), b"All clear.");
+        assert_eq!(msg.header("Body"), Some("10"));
+    }
+
+    #[test]
+    fn normalizes_sender_and_recipient_addresses() {
+        let msg = compose_message(
+            "n7cpz",
+            &["w1aw@winlink.org", "ann@example.com"],
+            &[],
+            "Hi",
+            "x",
+            1_716_200_000,
+        );
+        assert_eq!(msg.header("From"), Some("N7CPZ")); // bare call upper-cased
+        assert_eq!(msg.header("To"), Some("W1AW")); // @winlink.org stripped
+                                                     // The full email is kept with an SMTP prefix (second To line).
+        assert!(msg
+            .to_bytes()
+            .windows(20)
+            .any(|w| w == b"To: SMTP:ann@example"));
+    }
+
+    #[test]
+    fn normalizes_crlf_line_endings_in_the_body() {
+        let msg = compose_message("N7CPZ", &["W1AW"], &[], "S", "line1\nline2", 1_716_200_000);
+        assert_eq!(msg.body(), b"line1\r\nline2");
+    }
+
+    #[test]
+    fn a_composed_message_can_become_a_proposal() {
+        let msg = compose_message("N7CPZ", &["W1AW"], &[], "Test", "hello", 1_716_200_000);
+        let (proposal, compressed) = msg.to_proposal().unwrap();
+        assert_eq!(proposal.mid, "LIHHQU663POB");
+        assert!(!compressed.is_empty());
+    }
+}

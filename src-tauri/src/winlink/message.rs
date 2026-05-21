@@ -35,6 +35,13 @@ impl Message {
         self.headers.push((key.to_string(), value.to_string()));
     }
 
+    /// Add a header line without removing existing ones for the same key. Used
+    /// for repeatable headers like `To` and `Cc`, which appear once per
+    /// recipient on the wire.
+    pub fn add_header(&mut self, key: &str, value: &str) {
+        self.headers.push((key.to_string(), value.to_string()));
+    }
+
     /// Set the body bytes. Also sets the `Body` header to the body's byte
     /// length, which is how the wire form announces how many body bytes follow.
     pub fn set_body(&mut self, body: Vec<u8>) {
