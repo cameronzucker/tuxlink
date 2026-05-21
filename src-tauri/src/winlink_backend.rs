@@ -441,11 +441,14 @@ impl WinlinkBackend for NativeBackend {
     }
 }
 
-/// The standard Winlink CMS host. Production rejects unregistered client SIDs
-/// (it directs unknown clients to `cms-z.winlink.org`), so a real exchange needs
-/// tuxlink's client name registered with Winlink; until then the dev CMS is
-/// reachable via the `native_cms_probe` env overrides.
-const CMS_HOST: &str = "server.winlink.org";
+/// The Winlink CMS host. **DEV DEFAULT = `cms-z.winlink.org`** (2026-05-21,
+/// operator directive): production (`server.winlink.org`) rejects unregistered
+/// client SIDs, and tuxlink is not yet registered — so cms-z (which accepts the
+/// unregistered client) is the only working target. `TUXLINK_CMS_HOST` still
+/// overrides this.
+/// TODO(register): revert the default to `server.winlink.org` once tuxlink's
+/// client name is registered with Winlink (the production blocker).
+const CMS_HOST: &str = "cms-z.winlink.org";
 
 /// Run one CMS exchange (blocking): build the outbox into proposals, connect over
 /// the chosen transport, accept all offered messages, then file what arrived into
