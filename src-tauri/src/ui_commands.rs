@@ -646,11 +646,35 @@ pub async fn cms_connect(
             emit_session_line(&app, &log, LogLevel::Info, "CMS exchange complete.".to_string());
             Ok(())
         }
+        Err(BackendError::Cancelled) => {
+            // Operator-initiated abort (tuxlink-9z2) — not a failure.
+            emit_session_line(&app, &log, LogLevel::Warn, "CMS connection aborted.".to_string());
+            Err(BackendError::Cancelled.into())
+        }
         Err(e) => {
             emit_session_line(&app, &log, LogLevel::Error, format!("CMS connect failed: {e}"));
             Err(e.into())
         }
     }
+}
+
+/// Abort an in-flight [`cms_connect`] (tuxlink-9z2): shut down the connecting
+/// socket so a slow TLS/login/exchange phase unblocks, returning the backend to
+/// Disconnected. The aborted `cms_connect` resolves with a `Cancelled` error its
+/// caller swallows. A no-op when nothing is connecting.
+#[tauri::command]
+pub async fn cms_abort(
+    app: AppHandle,
+    state: State<'_, BackendState>,
+    log: State<'_, std::sync::Arc<SessionLogState>>,
+) -> Result<(), UiError> {
+    let backend = state
+        .current()
+        .ok_or_else(|| UiError::NotConfigured("backend offline".to_string()))?;
+
+    emit_session_line(&app, &log, LogLevel::Info, "Aborting CMS connection…".to_string());
+    backend.abort().await?;
+    Ok(())
 }
 
 /// Append a session-log line to the durable buffer (assigning its `seq`) and emit

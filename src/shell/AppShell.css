@@ -142,6 +142,22 @@
 .layout-b .dashboard .connect-button:hover:not(:disabled) {
   filter: brightness(1.12);
 }
+/* Abort control (tuxlink-9z2): a secondary, warning-toned button shown beside
+   the disabled "Connecting…" button while a connect is in flight. */
+.layout-b .dashboard .abort-button {
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--error, #e5534b);
+  background: transparent;
+  border: 1px solid var(--error, #e5534b);
+  border-radius: 4px;
+  padding: 5px 14px;
+  cursor: pointer;
+}
+.layout-b .dashboard .abort-button:hover {
+  background: color-mix(in srgb, var(--error, #e5534b) 16%, transparent);
+}
 @keyframes tux-pulse {
   0%,
   100% {

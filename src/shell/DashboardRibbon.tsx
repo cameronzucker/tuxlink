@@ -50,9 +50,13 @@ export interface DashboardRibbonProps {
    *  "Connecting…" label). The result/error is surfaced in the session log,
    *  not beside the button. */
   connecting?: boolean;
+  /** Cancel an in-flight connection (tuxlink-9z2). The Abort control is rendered
+   *  only while `connecting`; it shuts the connecting socket so a slow TLS/login/
+   *  exchange phase unblocks, returning the backend to Disconnected. */
+  onAbort?: () => void;
 }
 
-export function DashboardRibbon({ data, onConnect, connecting }: DashboardRibbonProps) {
+export function DashboardRibbon({ data, onConnect, connecting, onAbort }: DashboardRibbonProps) {
   const { utc, local } = useClock();
   const { callsign, grid, state, connection: connectionFromData } = data;
   // Position (GPS coords) is a v0.1 data source; the dev fixture shows the mock
@@ -125,6 +129,16 @@ export function DashboardRibbon({ data, onConnect, connecting }: DashboardRibbon
             >
               {connecting ? 'Connecting…' : 'Connect'}
             </button>
+            {connecting && onAbort && (
+              <button
+                type="button"
+                className="abort-button"
+                onClick={onAbort}
+                data-testid="abort-button"
+              >
+                Abort
+              </button>
+            )}
           </div>
         </>
       )}

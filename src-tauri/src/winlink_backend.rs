@@ -17,7 +17,8 @@
 
 use async_trait::async_trait;
 use futures::stream::{BoxStream, StreamExt};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::net::{Shutdown, TcpStream};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use thiserror::Error;
 
 // Re-export MailboxFolder so the trait surface doesn't reach into the
@@ -299,6 +300,15 @@ pub trait WinlinkBackend: Send + Sync {
     async fn disconnect(&self, session: Session)
         -> Result<(), BackendError>;
 
+    /// Abort an in-flight [`WinlinkBackend::connect`] (tuxlink-9z2): shut down the
+    /// connecting socket to unblock a slow TLS/login/exchange phase and return the
+    /// backend to `Disconnected`. The aborted `connect` resolves to
+    /// [`BackendError::Cancelled`]. Default is a no-op `Ok` for backends with no
+    /// in-flight socket to cancel (e.g. `PatBackend`). Safe to call when idle.
+    async fn abort(&self) -> Result<(), BackendError> {
+        Ok(())
+    }
+
     fn status(&self) -> BackendStatus;
 
     fn stream_log(&self) -> BoxStream<'static, LogLine>;
@@ -326,6 +336,13 @@ pub struct NativeBackend {
     log_tx: broadcast::Sender<LogLine>,
     status: Arc<RwLock<BackendStatus>>,
     progress: ProgressSink,
+    /// Shutdown handle for the in-flight connect socket (tuxlink-9z2): a clone of
+    /// the connecting `TcpStream`, set once TCP connects, taken + shut down by
+    /// [`WinlinkBackend::abort`] to unblock a slow TLS/login/exchange phase.
+    abort_handle: Arc<Mutex<Option<TcpStream>>>,
+    /// Set by `abort` so the connect's resulting error maps to `Cancelled` (status
+    /// `Disconnected`) rather than `Error`.
+    aborting: Arc<AtomicBool>,
 }
 
 impl NativeBackend {
@@ -350,6 +367,8 @@ impl NativeBackend {
             log_tx,
             status: Arc::new(RwLock::new(BackendStatus::Disconnected)),
             progress,
+            abort_handle: Arc::new(Mutex::new(None)),
+            aborting: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -403,23 +422,40 @@ impl WinlinkBackend for NativeBackend {
         let config = self.config.clone();
         let mailbox = self.mailbox.clone();
 
+        // Fresh abort epoch: clear any stale flag/handle from a prior connect so
+        // an earlier abort can't bleed into this one (tuxlink-9z2).
+        self.aborting.store(false, Ordering::SeqCst);
+        if let Ok(mut slot) = self.abort_handle.lock() {
+            *slot = None;
+        }
+
         self.set_status(BackendStatus::Connecting {
             transport: format!("{mode:?}"),
         });
 
         // The exchange is blocking (sockets + files); run it off the async runtime.
-        // `progress` (an Arc) crosses into the blocking task to surface per-step
-        // connect progress in the session log (tuxlink-gqo).
+        // `progress` surfaces per-step connect progress in the session log
+        // (tuxlink-gqo); `abort_handle` receives the connecting socket so abort can
+        // shut it down (tuxlink-9z2). Both are Arcs cloned into the blocking task.
         let progress = self.progress.clone();
-        let outcome =
-            tokio::task::spawn_blocking(move || native_connect(&config, &mailbox, mode, &*progress))
-                .await
-                .map_err(|e| BackendError::Internal {
-                    msg: format!("native connect task failed: {e}"),
-                    source: None,
-                })?;
+        let abort_handle = self.abort_handle.clone();
+        let aborting = self.aborting.clone();
+        let outcome = tokio::task::spawn_blocking(move || {
+            native_connect(&config, &mailbox, mode, &*progress, &abort_handle, &aborting)
+        })
+        .await
+        .map_err(|e| BackendError::Internal {
+            msg: format!("native connect task failed: {e}"),
+            source: None,
+        })?;
 
-        match outcome {
+        // The connect is over; drop the shutdown handle so a later abort is a no-op.
+        if let Ok(mut slot) = self.abort_handle.lock() {
+            *slot = None;
+        }
+
+        // An error after an operator abort is a cancellation, not a failure.
+        match abort_aware_outcome(outcome, self.aborting.load(Ordering::SeqCst)) {
             Ok(()) => {
                 self.set_status(BackendStatus::Connected {
                     transport: format!("{mode:?}"),
@@ -430,6 +466,10 @@ impl WinlinkBackend for NativeBackend {
                     backend_id: self.backend_id,
                     inner: SessionInner::Native(()),
                 })
+            }
+            Err(BackendError::Cancelled) => {
+                self.set_status(BackendStatus::Disconnected);
+                Err(BackendError::Cancelled)
             }
             Err(e) => {
                 self.set_status(BackendStatus::Error {
@@ -443,6 +483,20 @@ impl WinlinkBackend for NativeBackend {
     async fn disconnect(&self, session: Session) -> Result<(), BackendError> {
         if session.backend_id != self.backend_id {
             return Err(BackendError::InvalidSession);
+        }
+        self.set_status(BackendStatus::Disconnected);
+        Ok(())
+    }
+
+    async fn abort(&self) -> Result<(), BackendError> {
+        // Mark the abort (so the in-flight connect's error maps to Cancelled), shut
+        // down the connecting socket to unblock a slow TLS/login/exchange phase, and
+        // return to Disconnected. A no-op if nothing is in flight (handle is None).
+        self.aborting.store(true, Ordering::SeqCst);
+        if let Ok(mut slot) = self.abort_handle.lock() {
+            if let Some(sock) = slot.take() {
+                let _ = sock.shutdown(Shutdown::Both);
+            }
         }
         self.set_status(BackendStatus::Disconnected);
         Ok(())
@@ -501,6 +555,19 @@ fn resolve_cms_endpoint(
     (port_override.unwrap_or(default_port), transport)
 }
 
+/// Map a raw connect outcome to the caller-facing result (tuxlink-9z2): an error
+/// that follows an operator abort becomes `Cancelled`; a success stands (the
+/// connect completed before the abort landed); a non-aborted error stands.
+fn abort_aware_outcome(
+    outcome: Result<(), BackendError>,
+    aborted: bool,
+) -> Result<(), BackendError> {
+    match outcome {
+        Err(_) if aborted => Err(BackendError::Cancelled),
+        other => other,
+    }
+}
+
 /// Run one CMS exchange (blocking): build the outbox into proposals, connect over
 /// the chosen transport, accept all offered messages, then file what arrived into
 /// the inbox and move what was sent into the sent folder.
@@ -509,6 +576,8 @@ fn native_connect(
     mailbox: &Mailbox,
     mode: CmsTransport,
     progress: &dyn Fn(&str),
+    abort_handle: &Mutex<Option<TcpStream>>,
+    aborting: &AtomicBool,
 ) -> Result<(), BackendError> {
     let callsign = config
         .identity
@@ -559,6 +628,22 @@ fn native_connect(
     // dev (e.g. `cms-z.winlink.org`, which accepts the unregistered client).
     let host = std::env::var("TUXLINK_CMS_HOST").unwrap_or_else(|_| CMS_HOST.to_string());
 
+    // Hand each freshly-connected socket to the abort handle (tuxlink-9z2) so an
+    // operator abort can `.shutdown()` it. A clone failure just leaves abort a
+    // no-op for this attempt — connect proceeds normally. If an abort already
+    // landed during the (un-abortable) TCP-connect window, shut this socket down
+    // immediately so the connect fails fast instead of running to completion in
+    // the background.
+    let register_socket = |sock: &TcpStream| {
+        if let Ok(clone) = sock.try_clone() {
+            if aborting.load(Ordering::SeqCst) {
+                let _ = clone.shutdown(Shutdown::Both);
+            } else if let Ok(mut slot) = abort_handle.lock() {
+                *slot = Some(clone);
+            }
+        }
+    };
+
     let result = telnet::connect_and_exchange(
         &host,
         port,
@@ -566,6 +651,7 @@ fn native_connect(
         &exchange_config,
         outbound,
         progress,
+        &register_socket,
         |proposals| {
             proposals
                 .iter()
@@ -608,7 +694,7 @@ fn parse_rfc3339_secs(s: &str) -> Option<u64> {
 // PatBackend (spec §3.8)
 // ============================================================================
 
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 use std::thread::JoinHandle;
 use std::time::Duration;
 use tokio::sync::broadcast;
@@ -1185,5 +1271,40 @@ mod native_read_state_tests {
             resolve_cms_endpoint(CmsTransport::CmsSsl, true, Some(2323)),
             (2323, telnet::Transport::Plaintext)
         );
+    }
+
+    // tuxlink-9z2: an error that follows an operator abort is a cancellation;
+    // otherwise the raw outcome stands (success keeps, real error keeps).
+    #[test]
+    fn abort_aware_outcome_maps_error_to_cancelled_when_aborted() {
+        let mapped = abort_aware_outcome(
+            Err(BackendError::TransportFailed { reason: "socket shutdown".into(), source: None }),
+            true,
+        );
+        assert!(matches!(mapped, Err(BackendError::Cancelled)));
+    }
+
+    #[test]
+    fn abort_aware_outcome_preserves_real_error_when_not_aborted() {
+        let mapped = abort_aware_outcome(
+            Err(BackendError::TransportFailed { reason: "real failure".into(), source: None }),
+            false,
+        );
+        assert!(matches!(mapped, Err(BackendError::TransportFailed { .. })));
+    }
+
+    #[test]
+    fn abort_aware_outcome_preserves_success_even_if_aborted() {
+        // The connect completed before the abort landed — keep the success.
+        assert!(abort_aware_outcome(Ok(()), true).is_ok());
+    }
+
+    #[tokio::test]
+    async fn native_backend_abort_is_safe_with_no_inflight_connect() {
+        let dir = tempdir().unwrap();
+        let backend = NativeBackend::new(offline_config(), dir.path());
+        // Nothing in flight: abort must not panic, returns Ok, leaves Disconnected.
+        backend.abort().await.unwrap();
+        assert!(matches!(backend.status(), BackendStatus::Disconnected));
     }
 }

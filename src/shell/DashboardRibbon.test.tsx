@@ -9,8 +9,8 @@
  * DEV_FIXTURE is false under vitest, so the component renders from `data`.
  */
 
-import { describe, it, expect } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { describe, it, expect, vi } from 'vitest';
+import { render, screen, fireEvent } from '@testing-library/react';
 import { DashboardRibbon } from './DashboardRibbon';
 import type { StatusBarData, StatusTone } from './useStatus';
 
@@ -86,5 +86,25 @@ describe('<DashboardRibbon> — transport label accuracy (tuxlink-989)', () => {
     );
     const el = screen.getByTestId('ribbon-connection');
     expect(el.textContent).toContain('Error: connection refused');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// tuxlink-9z2: Abort control appears while connecting and cancels the connect
+// ---------------------------------------------------------------------------
+
+describe('<DashboardRibbon> — abort control (tuxlink-9z2)', () => {
+  it('shows an Abort button while connecting and calls onAbort when clicked', () => {
+    const onAbort = vi.fn();
+    render(
+      <DashboardRibbon data={makeData()} onConnect={() => {}} onAbort={onAbort} connecting />,
+    );
+    fireEvent.click(screen.getByTestId('abort-button'));
+    expect(onAbort).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not render an Abort button when not connecting', () => {
+    render(<DashboardRibbon data={makeData()} onConnect={() => {}} onAbort={() => {}} />);
+    expect(screen.queryByTestId('abort-button')).toBeNull();
   });
 });

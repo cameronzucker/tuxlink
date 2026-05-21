@@ -64,6 +64,7 @@ fn main() {
         &exchange_config,
         Vec::new(),
         &|msg: &str| println!("  · {msg}"),
+        &|_| {},
         |proposals| {
             if !proposals.is_empty() {
                 println!("CMS offered {} message(s); deferring all", proposals.len());

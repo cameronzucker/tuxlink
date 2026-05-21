@@ -92,12 +92,19 @@ pub fn connect_and_exchange<F>(
     config: &ExchangeConfig,
     outbound: Vec<OutboundMessage>,
     progress: &dyn Fn(&str),
+    register_socket: &dyn Fn(&TcpStream),
     decide: F,
 ) -> Result<ExchangeResult, TelnetError>
 where
     F: Fn(&[Proposal]) -> Vec<Answer>,
 {
-    let shared: Shared = Arc::new(Mutex::new(connect_stream(host, port, transport, progress)?));
+    let shared: Shared = Arc::new(Mutex::new(connect_stream(
+        host,
+        port,
+        transport,
+        progress,
+        register_socket,
+    )?));
     let mut reader = BufReader::new(ReadHalf(shared.clone()));
     let mut writer = WriteHalf(shared);
 
@@ -118,9 +125,14 @@ fn connect_stream(
     port: u16,
     transport: Transport,
     progress: &dyn Fn(&str),
+    register_socket: &dyn Fn(&TcpStream),
 ) -> Result<Box<dyn ReadWrite>, TelnetError> {
     let addrs = (host, port).to_socket_addrs().map_err(TelnetError::Connect)?;
     let tcp = connect_with_timeout(addrs, CONNECT_TIMEOUT).map_err(TelnetError::Connect)?;
+    // Hand the freshly-connected socket to the caller BEFORE TLS wrapping moves it,
+    // so an abort can `.shutdown()` it to unblock a slow TLS/login/exchange phase
+    // (tuxlink-9z2). The initial connect itself is bounded by CONNECT_TIMEOUT above.
+    register_socket(&tcp);
     progress("TCP connection established.");
     tcp.set_read_timeout(Some(TIMEOUT)).ok();
     tcp.set_write_timeout(Some(TIMEOUT)).ok();
@@ -246,6 +258,7 @@ mod tests {
             &config,
             vec![],
             &|_| {},
+            &|_| {},
             |_| vec![],
         )
         .unwrap();
@@ -321,6 +334,7 @@ mod tests {
             &config,
             vec![],
             &|msg: &str| recorded.borrow_mut().push(msg.to_string()),
+            &|_| {},
             |_| vec![],
         )
         .unwrap();

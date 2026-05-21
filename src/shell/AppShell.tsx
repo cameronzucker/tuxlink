@@ -98,6 +98,13 @@ export function AppShell() {
     }
   }, [queryClient]);
 
+  const onAbort = useCallback(() => {
+    // Fire-and-forget (tuxlink-9z2): the abort shuts the connecting socket; the
+    // in-flight cms_connect promise then resolves (Cancelled) and its `finally`
+    // clears `connecting`. The session log carries the "Aborting…" line.
+    void invoke('cms_abort');
+  }, []);
+
   // Native titlebar: mock B shows "Tuxlink — Inbox". Track the active folder.
   useEffect(() => {
     try {
@@ -149,7 +156,12 @@ export function AppShell() {
       <TitleBar folderLabel={FOLDER_LABELS[selectedFolder]} />
       <MenuBar onAction={onMenuAction} />
       <ResizeHandles />
-      <DashboardRibbon data={statusData} onConnect={onConnect} connecting={connecting} />
+      <DashboardRibbon
+        data={statusData}
+        onConnect={onConnect}
+        connecting={connecting}
+        onAbort={onAbort}
+      />
 
       <div className="panes" data-testid="shell-panes">
         <FolderSidebar
