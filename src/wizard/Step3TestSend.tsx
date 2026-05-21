@@ -149,28 +149,30 @@ export function Step3TestSend() {
   }, [state.testSendSubstate, dispatch]);
 
   // ── MOCKED-mode detection ───────────────────────────────────────────────
-  // FIX 4 (P2): when we enter `sending`, ask the Rust backend whether the
-  // test-send is mocked, so the MOCKED banner can render during that substate
-  // (spec §3.8). Reset to null when back at `idle` so a later live attempt
-  // (e.g. after RETURN_TO_CREDENTIALS) re-queries. A query failure is treated
-  // as live (banner absent — fail safe: never falsely claim a live send is mocked).
+  // FIX 4 (P2) + tuxlink-fzm: ask the Rust backend whether the test-send is
+  // mocked, so the MOCKED banner can render during `sending` (spec §3.8).
+  //
+  // Queried ONCE on mount (not on entering `sending`): the mock signal
+  // (TUXLINK_TEST_SEND_MOCK) is a STATIC process env var that cannot change
+  // during the wizard, so resolving it at mount means `isMocked` is known well
+  // before any send. The prior per-`sending` query raced a fast mocked send —
+  // the send could return (leaving `sending`, cancelling the effect) before the
+  // query resolved, so the banner never appeared. No idle-reset is needed
+  // (the signal is immutable). A query failure → live (banner absent — fail
+  // safe: never falsely claim a live send is mocked; Part 97).
   useEffect(() => {
     let cancelled = false;
-    if (state.testSendSubstate === 'sending') {
-      invoke<boolean>('wizard_test_send_is_mocked')
-        .then((mocked) => {
-          if (!cancelled) setIsMocked(mocked);
-        })
-        .catch(() => {
-          if (!cancelled) setIsMocked(false);
-        });
-    } else if (state.testSendSubstate === 'idle') {
-      setIsMocked(null);
-    }
+    invoke<boolean>('wizard_test_send_is_mocked')
+      .then((mocked) => {
+        if (!cancelled) setIsMocked(mocked);
+      })
+      .catch(() => {
+        if (!cancelled) setIsMocked(false);
+      });
     return () => {
       cancelled = true;
     };
-  }, [state.testSendSubstate]);
+  }, []);
 
   // ── Send handler ───────────────────────────────────────────────────────
   // Part 97: only reachable when testSendSubstate === 'idle' (button absent otherwise).
