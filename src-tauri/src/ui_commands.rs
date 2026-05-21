@@ -960,6 +960,21 @@ pub async fn session_log_snapshot(
     Ok(state.snapshot().into_iter().map(LogLineDto::from).collect())
 }
 
+// ============================================================================
+// tuxlink-ng3 — app_quit (HTML chrome File→Quit / Ctrl+Q)
+// ============================================================================
+
+/// Exit the application (tuxlink-ng3). With the native menu removed, File → Quit
+/// and the Ctrl+Q accelerator invoke this. Mirrors the native menu's old inline
+/// `app.exit(0)` (menu.rs) — `PredefinedMenuItem::quit` is unsupported on
+/// Linux/muda, so an explicit command is the canonical pattern. This is the ONLY
+/// path that exits the process; the window close button keeps the app alive
+/// (lib.rs CloseRequested handler).
+#[tauri::command]
+pub fn app_quit(app: tauri::AppHandle) {
+    app.exit(0);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
