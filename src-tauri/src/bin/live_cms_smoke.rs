@@ -208,7 +208,9 @@ async fn main() {
     let plan = TransmissionPlan {
         target: TARGET.into(),
         session_count: 1,
-        expected_duration_s: 30,
+        // Honest worst-case airtime: /api/connect may hold the CMS session for
+        // up to the 60s connect cap in run_smoke (tuxlink-22l).
+        expected_duration_s: 60,
         content: format!(
             "tuxlink live_cms_smoke {} (v0.0.1 verification; transport={})",
             start_utc.to_rfc3339(),
@@ -261,13 +263,25 @@ async fn run_smoke(config: &Config, plan: &TransmissionPlan) -> Result<u32, Stri
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("pat"));
 
+    // Stream Pat's own stderr to the console (prefixed `[pat]`) so a failed
+    // connect surfaces Pat's reason (CMS unreachable, port blocked, auth, …)
+    // instead of an opaque client-side error. The reader thread ends when Pat's
+    // stderr closes (on shutdown). (tuxlink-22l: the prior `log_sink: None`
+    // discarded all of this, making the round-trip a black box.)
+    let (log_tx, log_rx) = std::sync::mpsc::channel::<String>();
+    std::thread::spawn(move || {
+        for line in log_rx {
+            eprintln!("[pat] {line}");
+        }
+    });
+
     let opts = PatSpawnOptions {
         binary,
         config_path,
         mbox_dir,
         http_listen_port: 0, // ephemeral; PatProcess pre-binds + reports the port
         pid_file,
-        log_sink: None,
+        log_sink: Some(log_tx),
         tuxlink_config: config.clone(),
         // Same 10s announce deadline the app/bootstrap uses (pat_process.rs
         // §adrev #7); live_cms_smoke spawns a real Pat the same way the app does.
@@ -287,24 +301,30 @@ async fn run_smoke(config: &Config, plan: &TransmissionPlan) -> Result<u32, Stri
         return Err(format!("send to outbox: {e}"));
     }
 
-    // Trigger a telnet connect via Pat's HTTP API. `reqwest::blocking` is not
-    // available (the "blocking" feature is dropped — PatClient is async), so
-    // use an async client here too.
+    // Trigger a telnet connect via Pat's HTTP API. Pat's `/api/connect` runs the
+    // CMS session and MAY block for its full duration, so allow a generous 60s
+    // (vs the old 30s, which cut a blocking connect off and reported a bare
+    // "trigger connect" error). A request-level error here is NON-FATAL: the
+    // session may still have run (Pat's streamed `[pat]` log shows what
+    // happened), and the inbox poll below is the authoritative success signal.
     let connect_url = format!("http://127.0.0.1:{port}/api/connect?url=telnet");
-    let http = match reqwest::Client::builder().timeout(Duration::from_secs(30)).build() {
-        Ok(h) => h,
+    match reqwest::Client::builder().timeout(Duration::from_secs(60)).build() {
+        Ok(http) => {
+            if let Err(e) = http.post(&connect_url).send().await {
+                eprintln!(
+                    "[connect] request to {connect_url} did not complete cleanly: {e}\n\
+                     [connect] continuing to poll the inbox — see the [pat] log above for the cause"
+                );
+            }
+        }
         Err(e) => {
             let _ = proc.shutdown(Duration::from_secs(5));
             return Err(format!("build connect client: {e}"));
         }
-    };
-    if let Err(e) = http.post(&connect_url).send().await {
-        let _ = proc.shutdown(Duration::from_secs(5));
-        return Err(format!("trigger connect: {e}"));
     }
 
-    // Poll the inbox up to 30s for a reply from the target.
-    let deadline = Instant::now() + Duration::from_secs(30);
+    // Poll the inbox up to 60s for a reply from the target.
+    let deadline = Instant::now() + Duration::from_secs(60);
     loop {
         match client.list(MailboxFolder::Inbox).await {
             Ok(msgs) => {
@@ -321,7 +341,9 @@ async fn run_smoke(config: &Config, plan: &TransmissionPlan) -> Result<u32, Stri
         }
         if Instant::now() > deadline {
             let _ = proc.shutdown(Duration::from_secs(5));
-            return Err(format!("no reply from {TARGET} within 30s"));
+            return Err(format!(
+                "no reply from {TARGET} within 60s (see the [pat] log above for what Pat did)"
+            ));
         }
         tokio::time::sleep(Duration::from_millis(500)).await;
     }
