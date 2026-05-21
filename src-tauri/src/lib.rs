@@ -10,6 +10,7 @@ pub mod pat_process;
 pub mod session_log;
 pub mod tray;
 pub mod ui_commands;
+pub mod winlink;
 pub mod winlink_backend;
 pub mod wizard;
 
