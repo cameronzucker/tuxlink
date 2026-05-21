@@ -2,14 +2,14 @@ import { describe, it, expect } from 'vitest';
 import { matchAccelerator } from './useAccelerators';
 
 describe('matchAccelerator', () => {
-  it('matches Ctrl+N → file:new', () => {
+  it('matches Ctrl+N → message:new', () => {
     expect(matchAccelerator({ key: 'n', ctrlKey: true, metaKey: false, shiftKey: false }))
-      .toBe('menu:file:new');
+      .toBe('menu:message:new');
   });
 
   it('treats Meta as Ctrl (CmdOrCtrl)', () => {
     expect(matchAccelerator({ key: 'n', ctrlKey: false, metaKey: true, shiftKey: false }))
-      .toBe('menu:file:new');
+      .toBe('menu:message:new');
   });
 
   it('distinguishes Ctrl+R from Ctrl+Shift+R', () => {

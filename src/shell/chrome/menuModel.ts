@@ -21,11 +21,11 @@ export interface TopMenu {
 
 export const MENU_TREE: TopMenu[] = [
   { label: 'File', items: [
-    { id: 'menu:file:new', label: 'New Message', accel: 'Ctrl+N' },
-    { separator: true },
     { id: 'menu:file:quit', label: 'Quit', accel: 'Ctrl+Q' },
   ] },
   { label: 'Message', items: [
+    { id: 'menu:message:new', label: 'New Message', accel: 'Ctrl+N' },
+    { separator: true },
     { id: 'menu:message:reply', label: 'Reply', accel: 'Ctrl+R' },
     { id: 'menu:message:reply_all', label: 'Reply All', accel: 'Ctrl+Shift+R' },
     { id: 'menu:message:forward', label: 'Forward' },
@@ -101,7 +101,7 @@ export interface Accelerator {
 
 // Operator-locked set (2026-05-21). F5 and Ctrl+Shift+O both fire connect.
 export const ACCELERATORS: Accelerator[] = [
-  { combo: 'Ctrl+N', key: 'n', ctrl: true, shift: false, id: 'menu:file:new' },
+  { combo: 'Ctrl+N', key: 'n', ctrl: true, shift: false, id: 'menu:message:new' },
   { combo: 'Ctrl+R', key: 'r', ctrl: true, shift: false, id: 'menu:message:reply' },
   { combo: 'Ctrl+Shift+R', key: 'r', ctrl: true, shift: true, id: 'menu:message:reply_all' },
   { combo: 'Ctrl+P', key: 'p', ctrl: true, shift: false, id: 'menu:message:print' },

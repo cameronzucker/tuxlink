@@ -17,9 +17,9 @@ function handlers(): MenuHandlers {
 }
 
 describe('dispatchMenuAction', () => {
-  it('routes file:new to openCompose', () => {
+  it('routes message:new to openCompose', () => {
     const h = handlers();
-    dispatchMenuAction('menu:file:new', h);
+    dispatchMenuAction('menu:message:new', h);
     expect(h.openCompose).toHaveBeenCalledOnce();
   });
 

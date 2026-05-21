@@ -13,9 +13,9 @@ describe('MenuBar', () => {
   it('opens a dropdown on click and fires onAction for a leaf', () => {
     const onAction = vi.fn();
     render(<MenuBar onAction={onAction} />);
-    fireEvent.click(screen.getByRole('button', { name: 'File' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Message' }));
     fireEvent.click(screen.getByRole('button', { name: /New Message/ }));
-    expect(onAction).toHaveBeenCalledWith('menu:file:new');
+    expect(onAction).toHaveBeenCalledWith('menu:message:new');
   });
 
   it('reveals a submenu leaf (View → Color scheme → Night)', () => {

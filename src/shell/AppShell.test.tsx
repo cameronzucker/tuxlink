@@ -207,9 +207,9 @@ describe('<AppShell> — Mock B topology', () => {
     expect(screen.queryByTestId('message-row-INBOX1')).not.toBeInTheDocument();
   });
 
-  it('File → New Message opens a compose window', () => {
+  it('Message → New Message opens a compose window', () => {
     renderShell();
-    clickMenu('File', /New Message/);
+    clickMenu('Message', /New Message/);
     expect(invoke).toHaveBeenCalledWith(
       'compose_window_open',
       expect.objectContaining({ draftId: expect.any(String) }),

@@ -24,7 +24,7 @@ export interface MenuHandlers {
  */
 export function dispatchMenuAction(id: MenuActionId, h: MenuHandlers): void {
   switch (id) {
-    case 'menu:file:new': h.openCompose(); return;
+    case 'menu:message:new': h.openCompose(); return;
     case 'menu:file:quit': h.quit(); return;
     case 'menu:session:connect': h.connect(); return;
     case 'menu:message:reply': h.reply(); return;
