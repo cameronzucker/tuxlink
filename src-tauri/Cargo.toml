@@ -49,3 +49,10 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 [[bin]]
 name = "tuxlink"
 path = "src/main.rs"
+
+# Operator-only live-CMS smoke test (tuxlink-nk7, Task 6). NOT a test target —
+# `cargo test` does not discover or run it. Transmits under the operator's
+# amateur callsign; the licensee runs it manually with runtime consent.
+[[bin]]
+name = "live_cms_smoke"
+path = "src/bin/live_cms_smoke.rs"
