@@ -107,13 +107,25 @@ impl From<PatMessageDto> for Message {
 pub enum PatClientError {
     Http(reqwest::Error),
     Status(u16),
+    /// The response body exceeded the read byte cap — rejected before fully
+    /// buffering (tuxlink-f1a). Carries the cap for the error message.
+    TooLarge { cap: usize },
 }
+
+/// Hard cap on a single message body buffered from Pat. Aligns with the parser
+/// cap (`ui_commands::MAX_RFC5322_BYTES`); enforced HERE on the read side so an
+/// oversized/buggy Pat response cannot force unbounded memory/network work
+/// before the parser cap trips (tuxlink-f1a, Codex Task-13 finding 3).
+pub const MAX_MESSAGE_BYTES: usize = 2 * 1024 * 1024;
 
 impl std::fmt::Display for PatClientError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             PatClientError::Http(e) => write!(f, "HTTP error: {}", e),
             PatClientError::Status(s) => write!(f, "Pat returned status {}", s),
+            PatClientError::TooLarge { cap } => {
+                write!(f, "message body exceeded the {}-byte read cap", cap)
+            }
         }
     }
 }
@@ -133,6 +145,8 @@ impl std::error::Error for PatClientError {}
 pub struct PatClient {
     base_url: String,
     http: reqwest::Client,
+    /// Per-message read byte cap (tuxlink-f1a). Defaults to `MAX_MESSAGE_BYTES`.
+    max_read_bytes: usize,
 }
 
 impl PatClient {
@@ -140,7 +154,15 @@ impl PatClient {
         let http = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(5))
             .build().expect("reqwest build");
-        PatClient { base_url: base_url.into(), http }
+        PatClient { base_url: base_url.into(), http, max_read_bytes: MAX_MESSAGE_BYTES }
+    }
+
+    /// Override the per-message read byte cap. Primarily for tests (a tiny cap
+    /// exercises the limit without a multi-MiB fixture); callers may also lower
+    /// it for constrained environments (tuxlink-f1a).
+    pub fn with_max_read_bytes(mut self, cap: usize) -> Self {
+        self.max_read_bytes = cap;
+        self
     }
 
     pub async fn list(&self, folder: MailboxFolder) -> Result<Vec<Message>, PatClientError> {
@@ -159,12 +181,27 @@ impl PatClient {
     /// `WinlinkBackend::read_message` wraps this into a `MessageBody`.
     pub async fn read(&self, folder: MailboxFolder, mid: &str) -> Result<Vec<u8>, PatClientError> {
         let url = format!("{}/api/mailbox/{}/{}", self.base_url, folder.as_path(), mid);
-        let resp = self.http.get(&url).send().await.map_err(PatClientError::Http)?;
+        let mut resp = self.http.get(&url).send().await.map_err(PatClientError::Http)?;
         if !resp.status().is_success() {
             return Err(PatClientError::Status(resp.status().as_u16()));
         }
-        let bytes = resp.bytes().await.map_err(PatClientError::Http)?;
-        Ok(bytes.to_vec())
+        // tuxlink-f1a: bound memory BEFORE buffering the whole body. First reject
+        // a declared-oversize body (Content-Length), then stream chunks and abort
+        // the moment the running total would exceed the cap — so a buggy/oversized
+        // (or chunked, no-Content-Length) Pat response cannot force unbounded work.
+        if let Some(len) = resp.content_length() {
+            if len > self.max_read_bytes as u64 {
+                return Err(PatClientError::TooLarge { cap: self.max_read_bytes });
+            }
+        }
+        let mut buf: Vec<u8> = Vec::new();
+        while let Some(chunk) = resp.chunk().await.map_err(PatClientError::Http)? {
+            if buf.len().saturating_add(chunk.len()) > self.max_read_bytes {
+                return Err(PatClientError::TooLarge { cap: self.max_read_bytes });
+            }
+            buf.extend_from_slice(&chunk);
+        }
+        Ok(buf)
     }
 
     pub async fn send(&self, to: &[&str], subject: &str, body: &str, date: &str) -> Result<(), PatClientError> {
