@@ -15,5 +15,6 @@ pub mod lzhuf;
 pub mod message;
 pub mod proposal;
 pub mod secure;
+pub mod session;
 pub mod transfer;
 pub mod wire;

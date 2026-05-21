@@ -14,6 +14,7 @@
 use super::proposal::Proposal;
 
 /// A Winlink message being built (and, later, parsed).
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Message {
     /// Headers in the order they were set. Order here does not matter — the
     /// wire form is always `Mid` first, then the rest sorted alphabetically.
