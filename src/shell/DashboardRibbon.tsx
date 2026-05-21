@@ -47,11 +47,13 @@ export interface DashboardRibbonProps {
 
 export function DashboardRibbon({ data }: DashboardRibbonProps) {
   const { utc, local } = useClock();
-  const { callsign, grid, state } = data;
+  const { callsign, grid, state, connection: connectionFromData } = data;
   // Position (GPS coords) is a v0.1 data source; the dev fixture shows the mock
   // value, and the real app omits the item until GPS exists.
   const position = DEV_FIXTURE ? DEV_POSITION : null;
-  const connection = DEV_FIXTURE ? DEV_CONNECTION_DASH : `${state.label} · telnet ready`;
+  // connection string is pre-formatted by useStatusData via formatConnectionState,
+  // so it always names the real configured/active transport (tuxlink-989 fix).
+  const connection = DEV_FIXTURE ? DEV_CONNECTION_DASH : connectionFromData;
 
   return (
     <div className="dashboard" data-testid="dashboard-ribbon" role="banner">

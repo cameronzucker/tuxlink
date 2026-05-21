@@ -201,6 +201,13 @@ export interface StatusBarData {
   gridTooltip: string | null;
   /** Short state word + dot tone derived from BackendStatus. */
   state: { label: string; tone: StatusTone };
+  /**
+   * Full ribbon connection string — e.g. "Idle · CMS-SSL", "Connected · CMS-SSL",
+   * "Error: <reason>". Derived from formatConnectionState(status, configTransport)
+   * so the transport label always reflects the real configured/active transport
+   * rather than a hardcoded suffix.
+   */
+  connection: string;
 }
 
 /**
@@ -262,6 +269,7 @@ export function useStatusData(): StatusBarData {
       grid: DEV_GRID,
       gridTooltip: null,
       state: { label: 'Idle', tone: 'idle' },
+      connection: 'Idle · CMS-SSL',
     };
   }
 
@@ -277,11 +285,17 @@ export function useStatusData(): StatusBarData {
     ? formatGrid({ grid: config.grid, precision: config.position_precision })
     : { broadcast: null, tooltip: null };
 
+  // Use the configured transport when building the connection string.  When
+  // config hasn't loaded yet, fall back to 'CmsSsl' so the label is
+  // informative (it will be correct once the first poll completes).
+  const configTransport: CmsTransport = config?.transport ?? 'CmsSsl';
+
   return {
     callsign,
     grid: gridResult.broadcast,
     gridTooltip: gridResult.tooltip,
     state: formatStatusState(status),
+    connection: formatConnectionState(status, configTransport),
   };
 }
 
