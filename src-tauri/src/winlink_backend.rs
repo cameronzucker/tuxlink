@@ -17,12 +17,21 @@
 
 use async_trait::async_trait;
 use futures::stream::{BoxStream, StreamExt};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::net::{Shutdown, TcpStream};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use thiserror::Error;
 
 // Re-export MailboxFolder so the trait surface doesn't reach into the
 // Pat-specific module.
 pub use crate::pat_client::MailboxFolder;
+
+// Native backend wiring (see the NativeBackend section below).
+use crate::config::{CmsTransport, Config};
+use crate::native_mailbox::Mailbox;
+use crate::winlink::message::Message;
+use crate::winlink::proposal::Answer;
+use crate::winlink::{compose, session, telnet};
+use std::path::PathBuf;
 
 // ============================================================================
 // Supporting types (spec §3.2)
@@ -268,6 +277,17 @@ pub trait WinlinkBackend: Send + Sync {
         self.read_message_in(MailboxFolder::Inbox, id).await
     }
 
+    /// Mark a message read. Best-effort: backends with no read-state (e.g.
+    /// `PatBackend`, which delegates read-state to Pat's own store) inherit
+    /// this no-op default. `NativeBackend` overrides it to drop a read-marker
+    /// in its store. A failure here MUST NOT fail the read that triggered it —
+    /// the caller (`message_read`) treats read-state as best-effort
+    /// (tuxlink-xgn).
+    async fn mark_read(&self, _folder: MailboxFolder, _id: &MessageId)
+        -> Result<(), BackendError> {
+        Ok(())
+    }
+
     /// Returns `Ok(Some(id))` when the backend assigns a MID at queue
     /// time, `Ok(None)` when it does not (current Pat 1.0.0 behavior:
     /// returns a plain-text confirmation, no MID).
@@ -280,6 +300,15 @@ pub trait WinlinkBackend: Send + Sync {
     async fn disconnect(&self, session: Session)
         -> Result<(), BackendError>;
 
+    /// Abort an in-flight [`WinlinkBackend::connect`] (tuxlink-9z2): shut down the
+    /// connecting socket to unblock a slow TLS/login/exchange phase and return the
+    /// backend to `Disconnected`. The aborted `connect` resolves to
+    /// [`BackendError::Cancelled`]. Default is a no-op `Ok` for backends with no
+    /// in-flight socket to cancel (e.g. `PatBackend`). Safe to call when idle.
+    async fn abort(&self) -> Result<(), BackendError> {
+        Ok(())
+    }
+
     fn status(&self) -> BackendStatus;
 
     fn stream_log(&self) -> BoxStream<'static, LogLine>;
@@ -289,76 +318,427 @@ pub trait WinlinkBackend: Send + Sync {
 // NativeBackend stub (spec §3.9)
 // ============================================================================
 
-/// v0.5 prep stub. Every method returns [`BackendError::NotImplemented`];
-/// `status()` returns `Disconnected`; `stream_log()` is an empty stream.
-/// Real native logic lands in v0.5 Steps 3–10.
+/// A sink for per-step connect progress messages (tuxlink-gqo). The connect path
+/// runs in `spawn_blocking`, so the sink must be `Send + Sync`; production wires
+/// it (in `bootstrap::install_native`) to append a `LogSource::Transport` line to
+/// the session log and emit it live. Decoupled from the `LogLine` machinery on
+/// purpose — `winlink::telnet` only ever calls it with a `&str` phase message.
+pub type ProgressSink = Arc<dyn Fn(&str) + Send + Sync>;
+
+/// The native Winlink backend: speaks B2F directly (no Pat), stores messages in
+/// its own [`Mailbox`], and connects over plaintext or TLS telnet. `connect`
+/// runs the real CMS exchange on a blocking task; the actual on-air protocol is
+/// validated by `src/bin/native_cms_probe.rs` and the `winlink::*` tests.
 pub struct NativeBackend {
     backend_id: BackendInstanceId,
+    config: Config,
+    mailbox: Arc<Mailbox>,
+    log_tx: broadcast::Sender<LogLine>,
+    status: Arc<RwLock<BackendStatus>>,
+    progress: ProgressSink,
+    /// Shutdown handle for the in-flight connect socket (tuxlink-9z2): a clone of
+    /// the connecting `TcpStream`, set once TCP connects, taken + shut down by
+    /// [`WinlinkBackend::abort`] to unblock a slow TLS/login/exchange phase.
+    abort_handle: Arc<Mutex<Option<TcpStream>>>,
+    /// Set by `abort` so the connect's resulting error maps to `Cancelled` (status
+    /// `Disconnected`) rather than `Error`.
+    aborting: Arc<AtomicBool>,
+    /// Single-flight guard (Codex #1): true while a `connect` is running. A second
+    /// concurrent `connect` is rejected rather than racing on the shared abort
+    /// state and re-sending the outbox. Cleared by a connect-scoped RAII guard so
+    /// it is released on every exit (return, `?`, panic).
+    connect_in_progress: Arc<AtomicBool>,
+}
+
+/// Clears the single-flight + abort state when a `connect` ends, however it ends
+/// (Codex #1 + #7): normal return, early `?`, or a panic in the blocking task.
+struct ConnectGuard {
+    in_progress: Arc<AtomicBool>,
+    handle: Arc<Mutex<Option<TcpStream>>>,
+}
+
+impl Drop for ConnectGuard {
+    fn drop(&mut self) {
+        if let Ok(mut slot) = self.handle.lock() {
+            *slot = None;
+        }
+        self.in_progress.store(false, Ordering::SeqCst);
+    }
 }
 
 impl NativeBackend {
-    pub fn new() -> Self {
-        Self { backend_id: BackendInstanceId::next() }
+    /// Create a backend for `config`, storing messages under `mailbox_root`, with
+    /// a no-op progress sink. Production uses [`NativeBackend::with_progress`] to
+    /// surface connect progress in the session log; tests use this no-op form.
+    pub fn new(config: Config, mailbox_root: impl Into<PathBuf>) -> Self {
+        Self::with_progress(config, mailbox_root, Arc::new(|_: &str| {}))
     }
 
-    #[allow(dead_code)] // exposed for v0.5+ session-validity tests
-    pub(crate) fn backend_id(&self) -> BackendInstanceId {
-        self.backend_id
+    /// Like [`NativeBackend::new`] but with a connect-progress sink (tuxlink-gqo).
+    pub fn with_progress(
+        config: Config,
+        mailbox_root: impl Into<PathBuf>,
+        progress: ProgressSink,
+    ) -> Self {
+        let (log_tx, _rx) = broadcast::channel(256);
+        Self {
+            backend_id: BackendInstanceId::next(),
+            config,
+            mailbox: Arc::new(Mailbox::new(mailbox_root)),
+            log_tx,
+            status: Arc::new(RwLock::new(BackendStatus::Disconnected)),
+            progress,
+            abort_handle: Arc::new(Mutex::new(None)),
+            aborting: Arc::new(AtomicBool::new(false)),
+            connect_in_progress: Arc::new(AtomicBool::new(false)),
+        }
     }
-}
 
-impl Default for NativeBackend {
-    fn default() -> Self {
-        Self::new()
+    fn set_status(&self, status: BackendStatus) {
+        if let Ok(mut s) = self.status.write() {
+            *s = status;
+        }
     }
 }
 
 #[async_trait]
 impl WinlinkBackend for NativeBackend {
-    async fn list_messages(&self, _folder: MailboxFolder)
-        -> Result<Vec<MessageMeta>, BackendError>
-    {
-        Err(BackendError::NotImplemented)
+    async fn list_messages(&self, folder: MailboxFolder) -> Result<Vec<MessageMeta>, BackendError> {
+        self.mailbox.list(folder)
     }
 
-    async fn read_message_in(&self, _folder: MailboxFolder, _id: &MessageId)
-        -> Result<MessageBody, BackendError>
-    {
-        Err(BackendError::NotImplemented)
+    async fn read_message_in(
+        &self,
+        folder: MailboxFolder,
+        id: &MessageId,
+    ) -> Result<MessageBody, BackendError> {
+        self.mailbox.read(folder, id)
     }
 
-    async fn send_message(&self, _msg: OutboundMessage)
-        -> Result<Option<MessageId>, BackendError>
-    {
-        Err(BackendError::NotImplemented)
+    async fn mark_read(&self, folder: MailboxFolder, id: &MessageId) -> Result<(), BackendError> {
+        self.mailbox.mark_read(folder, id)
     }
 
-    async fn connect(&self, _transport: TransportConfig)
-        -> Result<Session, BackendError>
-    {
-        Err(BackendError::NotImplemented)
+    async fn send_message(
+        &self,
+        msg: OutboundMessage,
+    ) -> Result<Option<MessageId>, BackendError> {
+        let callsign = self
+            .config
+            .identity
+            .callsign
+            .clone()
+            .ok_or_else(|| BackendError::NotConfigured("identity.callsign".into()))?;
+        // The trait carries an RFC 3339 date; fall back to now if unparseable.
+        let unix_secs = parse_rfc3339_secs(&msg.date).unwrap_or_else(now_unix_secs);
+        let to: Vec<&str> = msg.to.iter().map(String::as_str).collect();
+        let cc: Vec<&str> = msg.cc.iter().map(String::as_str).collect();
+        let message =
+            compose::compose_message(&callsign, &to, &cc, &msg.subject, &msg.body, unix_secs);
+        let id = self.mailbox.store(MailboxFolder::Outbox, &message.to_bytes())?;
+        Ok(Some(id))
     }
 
-    async fn disconnect(&self, _session: Session)
-        -> Result<(), BackendError>
-    {
-        Err(BackendError::NotImplemented)
+    async fn connect(&self, transport: TransportConfig) -> Result<Session, BackendError> {
+        let TransportConfig::Cms { mode } = transport;
+
+        // Single-flight (Codex #1): refuse a concurrent connect rather than racing
+        // on the shared abort state and re-sending the outbox. The RAII guard
+        // releases the flag + clears the abort handle on EVERY exit — normal
+        // return, early `?`, or a panic in the blocking task (Codex #7).
+        if self
+            .connect_in_progress
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_err()
+        {
+            return Err(BackendError::BackendUnavailable {
+                reason: "a CMS connection is already in progress".to_string(),
+                source: None,
+            });
+        }
+        let _guard = ConnectGuard {
+            in_progress: self.connect_in_progress.clone(),
+            handle: self.abort_handle.clone(),
+        };
+
+        let config = self.config.clone();
+        let mailbox = self.mailbox.clone();
+
+        // Fresh abort epoch: clear any stale flag/handle from a prior connect so
+        // an earlier abort can't bleed into this one (tuxlink-9z2).
+        self.aborting.store(false, Ordering::SeqCst);
+        if let Ok(mut slot) = self.abort_handle.lock() {
+            *slot = None;
+        }
+
+        self.set_status(BackendStatus::Connecting {
+            transport: format!("{mode:?}"),
+        });
+
+        // The exchange is blocking (sockets + files); run it off the async runtime.
+        // `progress` surfaces per-step connect progress in the session log
+        // (tuxlink-gqo); `abort_handle` receives the connecting socket so abort can
+        // shut it down (tuxlink-9z2). Both are Arcs cloned into the blocking task.
+        let progress = self.progress.clone();
+        let abort_handle = self.abort_handle.clone();
+        let aborting = self.aborting.clone();
+        let outcome = tokio::task::spawn_blocking(move || {
+            native_connect(&config, &mailbox, mode, &*progress, &abort_handle, &aborting)
+        })
+        .await
+        .map_err(|e| BackendError::Internal {
+            msg: format!("native connect task failed: {e}"),
+            source: None,
+        })?;
+
+        // An error after an operator abort is a cancellation, not a failure. The
+        // `_guard` clears the abort handle + single-flight flag when this fn returns.
+        match abort_aware_outcome(outcome, self.aborting.load(Ordering::SeqCst)) {
+            Ok(()) => {
+                self.set_status(BackendStatus::Connected {
+                    transport: format!("{mode:?}"),
+                    peer: CMS_HOST.to_string(),
+                    since_iso: now_iso8601_utc(),
+                });
+                Ok(Session {
+                    backend_id: self.backend_id,
+                    inner: SessionInner::Native(()),
+                })
+            }
+            Err(BackendError::Cancelled) => {
+                self.set_status(BackendStatus::Disconnected);
+                Err(BackendError::Cancelled)
+            }
+            Err(e) => {
+                self.set_status(BackendStatus::Error {
+                    reason: e.to_string(),
+                });
+                Err(e)
+            }
+        }
+    }
+
+    async fn disconnect(&self, session: Session) -> Result<(), BackendError> {
+        if session.backend_id != self.backend_id {
+            return Err(BackendError::InvalidSession);
+        }
+        self.set_status(BackendStatus::Disconnected);
+        Ok(())
+    }
+
+    async fn abort(&self) -> Result<(), BackendError> {
+        // Mark the abort (so the in-flight connect's error maps to Cancelled), shut
+        // down the connecting socket to unblock a slow TLS/login/exchange phase, and
+        // return to Disconnected. A no-op if nothing is in flight (handle is None).
+        self.aborting.store(true, Ordering::SeqCst);
+        if let Ok(mut slot) = self.abort_handle.lock() {
+            if let Some(sock) = slot.take() {
+                let _ = sock.shutdown(Shutdown::Both);
+            }
+        }
+        self.set_status(BackendStatus::Disconnected);
+        Ok(())
     }
 
     fn status(&self) -> BackendStatus {
-        BackendStatus::Disconnected
+        self.status
+            .read()
+            .map(|s| s.clone())
+            .unwrap_or(BackendStatus::Error {
+                reason: "status RwLock poisoned".to_string(),
+            })
     }
 
     fn stream_log(&self) -> BoxStream<'static, LogLine> {
-        futures::stream::empty().boxed()
+        let rx = self.log_tx.subscribe();
+        BroadcastStream::new(rx)
+            .filter_map(|res| async move { res.ok() })
+            .boxed()
     }
+}
+
+/// The Winlink CMS host. **DEV DEFAULT = `cms-z.winlink.org`** (2026-05-21,
+/// operator directive): production (`server.winlink.org`) rejects unregistered
+/// client SIDs, and tuxlink is not yet registered — so cms-z (which accepts the
+/// unregistered client) is the only working target. `TUXLINK_CMS_HOST` still
+/// overrides this.
+/// TODO(register): revert the default to `server.winlink.org` once tuxlink's
+/// client name is registered with Winlink (the production blocker).
+const CMS_HOST: &str = "cms-z.winlink.org";
+
+/// Resolve the CMS `(port, transport)` from the configured `mode` plus optional
+/// dev overrides (tuxlink-gqo). `TUXLINK_CMS_PLAINTEXT` forces plaintext telnet —
+/// the dev escape hatch for hosts that expose no TLS (the dev default cms-z has no
+/// 8773 TLS listener, while production `server.winlink.org` does); `TUXLINK_CMS_PORT`
+/// overrides the port. With no overrides the configured transport stands, so the
+/// persisted/production CmsSsl default keeps its 8773 TLS endpoint. Mirrors the
+/// `bin/native_cms_probe` env contract so the app and the probe agree.
+fn resolve_cms_endpoint(
+    mode: CmsTransport,
+    plaintext_override: bool,
+    port_override: Option<u16>,
+) -> (u16, telnet::Transport) {
+    let transport = if plaintext_override {
+        telnet::Transport::Plaintext
+    } else {
+        match mode {
+            CmsTransport::CmsSsl => telnet::Transport::Tls,
+            CmsTransport::Telnet => telnet::Transport::Plaintext,
+        }
+    };
+    let default_port = match transport {
+        telnet::Transport::Tls => 8773,
+        telnet::Transport::Plaintext => 8772,
+    };
+    (port_override.unwrap_or(default_port), transport)
+}
+
+/// Map a raw connect outcome to the caller-facing result (tuxlink-9z2): an error
+/// that follows an operator abort becomes `Cancelled`; a success stands (the
+/// connect completed before the abort landed); a non-aborted error stands.
+fn abort_aware_outcome(
+    outcome: Result<(), BackendError>,
+    aborted: bool,
+) -> Result<(), BackendError> {
+    match outcome {
+        Err(_) if aborted => Err(BackendError::Cancelled),
+        other => other,
+    }
+}
+
+/// Run one CMS exchange (blocking): build the outbox into proposals, connect over
+/// the chosen transport, accept all offered messages, then file what arrived into
+/// the inbox and move what was sent into the sent folder.
+fn native_connect(
+    config: &Config,
+    mailbox: &Mailbox,
+    mode: CmsTransport,
+    progress: &dyn Fn(&str),
+    abort_handle: &Mutex<Option<TcpStream>>,
+    aborting: &AtomicBool,
+) -> Result<(), BackendError> {
+    let callsign = config
+        .identity
+        .callsign
+        .clone()
+        .ok_or_else(|| BackendError::NotConfigured("identity.callsign".into()))?
+        .trim()
+        .to_uppercase();
+    let locator = config.identity.grid.clone().unwrap_or_default();
+    let password = keyring::Entry::new("tuxlink-pat", &callsign)
+        .ok()
+        .and_then(|e| e.get_password().ok())
+        .filter(|p| !p.is_empty());
+
+    // Dev overrides (tuxlink-gqo) mirror `bin/native_cms_probe`: TUXLINK_CMS_PLAINTEXT
+    // forces plaintext (cms-z exposes no 8773 TLS), TUXLINK_CMS_PORT overrides the
+    // port. Absent both, the configured transport stands (production = CmsSsl/8773).
+    let plaintext_override = std::env::var("TUXLINK_CMS_PLAINTEXT").is_ok();
+    let port_override = std::env::var("TUXLINK_CMS_PORT")
+        .ok()
+        .and_then(|s| s.parse::<u16>().ok());
+    let (port, transport) = resolve_cms_endpoint(mode, plaintext_override, port_override);
+
+    // Turn each queued outbox message into a proposal + compressed body.
+    let mut outbound = Vec::new();
+    for meta in mailbox.list(MailboxFolder::Outbox)? {
+        let body = mailbox.read(MailboxFolder::Outbox, &meta.id)?;
+        if let Ok(message) = Message::from_bytes(&body.raw_rfc5322) {
+            if let Some((proposal, compressed)) = message.to_proposal() {
+                let title = message.header("Subject").unwrap_or_default().to_string();
+                outbound.push(session::OutboundMessage {
+                    proposal,
+                    title,
+                    compressed,
+                });
+            }
+        }
+    }
+
+    let exchange_config = session::ExchangeConfig {
+        mycall: callsign,
+        targetcall: telnet::CMS_TARGET_CALL.to_string(),
+        locator,
+        password,
+    };
+
+    // The CMS host defaults to production; `TUXLINK_CMS_HOST` overrides it for
+    // dev (e.g. `cms-z.winlink.org`, which accepts the unregistered client).
+    let host = std::env::var("TUXLINK_CMS_HOST").unwrap_or_else(|_| CMS_HOST.to_string());
+
+    // Hand each freshly-connected socket to the abort handle (tuxlink-9z2) so an
+    // operator abort can `.shutdown()` it. A clone failure just leaves abort a
+    // no-op for this attempt — connect proceeds normally. If an abort already
+    // landed during the (un-abortable) TCP-connect window, shut this socket down
+    // immediately so the connect fails fast instead of running to completion in
+    // the background.
+    let register_socket = |sock: &TcpStream| {
+        if let Ok(clone) = sock.try_clone() {
+            // Check `aborting` INSIDE the abort_handle lock (Codex #2): abort() sets
+            // `aborting` then locks to take the socket, so doing the check + store
+            // under the same lock means whichever side acquires it first, the socket
+            // still ends up shut down if an abort has fired — no TOCTOU window.
+            if let Ok(mut slot) = abort_handle.lock() {
+                if aborting.load(Ordering::SeqCst) {
+                    let _ = clone.shutdown(Shutdown::Both);
+                } else {
+                    *slot = Some(clone);
+                }
+            }
+        }
+    };
+
+    let result = telnet::connect_and_exchange(
+        &host,
+        port,
+        transport,
+        &exchange_config,
+        outbound,
+        progress,
+        &register_socket,
+        |proposals| {
+            proposals
+                .iter()
+                .map(|_| Answer::Accept { resume_offset: 0 })
+                .collect()
+        },
+    )
+    .map_err(|e| BackendError::TransportFailed {
+        reason: format!("{e:?}"),
+        source: None,
+    })?;
+
+    // File received messages into the inbox; move delivered ones to sent.
+    for message in &result.received {
+        mailbox.store(MailboxFolder::Inbox, &message.to_bytes())?;
+    }
+    for mid in &result.sent {
+        mailbox.move_to(MailboxFolder::Outbox, MailboxFolder::Sent, &MessageId(mid.clone()))?;
+    }
+    Ok(())
+}
+
+/// Seconds since the Unix epoch, now.
+fn now_unix_secs() -> u64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+/// Parse an RFC 3339 timestamp to seconds since the epoch.
+fn parse_rfc3339_secs(s: &str) -> Option<u64> {
+    chrono::DateTime::parse_from_rfc3339(s)
+        .ok()
+        .map(|dt| dt.timestamp().max(0) as u64)
 }
 
 // ============================================================================
 // PatBackend (spec §3.8)
 // ============================================================================
 
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 use std::thread::JoinHandle;
 use std::time::Duration;
 use tokio::sync::broadcast;
@@ -848,5 +1228,144 @@ fn translate_pat_err_for_read(err: PatClientError, id: &MessageId) -> BackendErr
     match err {
         PatClientError::Status(404) => BackendError::NotFound(id.clone()),
         other => translate_pat_err(other, "read_message"),
+    }
+}
+
+#[cfg(test)]
+mod native_read_state_tests {
+    use super::*;
+    use crate::config::{
+        CmsTransport, Config, ConnectConfig, GpsState, IdentityConfig, PositionPrecision,
+        PrivacyConfig, CONFIG_SCHEMA_VERSION,
+    };
+    use crate::native_mailbox::Mailbox;
+    use crate::winlink::compose::compose_message;
+    use tempfile::tempdir;
+
+    fn offline_config() -> Config {
+        Config {
+            schema_version: CONFIG_SCHEMA_VERSION,
+            wizard_completed: true,
+            connect: ConnectConfig { connect_to_cms: false, transport: CmsTransport::Telnet },
+            identity: IdentityConfig { callsign: None, identifier: None, grid: None },
+            privacy: PrivacyConfig {
+                gps_state: GpsState::Off,
+                position_precision: PositionPrecision::FourCharGrid,
+            },
+            pat_mbo_address: None,
+        }
+    }
+
+    // tuxlink-xgn: the NativeBackend override of `mark_read` flips a message
+    // from unread to read as observed through `list_messages` (the surface the
+    // mailbox_list command consumes). Seeding goes through a sibling Mailbox at
+    // the same root — the backend's `mailbox` field is private, so sharing the
+    // on-disk root is the public seam (no test-only production code).
+    #[tokio::test]
+    async fn native_backend_mark_read_flips_unread_seen_via_list() {
+        let dir = tempdir().unwrap();
+        let seed = Mailbox::new(dir.path());
+        let raw = compose_message("N7CPZ", &["W1AW"], &[], "Hi", "body", 1_716_200_000).to_bytes();
+        let id = seed.store(MailboxFolder::Inbox, &raw).unwrap();
+
+        let backend = NativeBackend::new(offline_config(), dir.path());
+        assert!(
+            backend.list_messages(MailboxFolder::Inbox).await.unwrap()[0].unread,
+            "seeded inbox message should start unread"
+        );
+
+        backend.mark_read(MailboxFolder::Inbox, &id).await.unwrap();
+
+        assert!(
+            !backend.list_messages(MailboxFolder::Inbox).await.unwrap()[0].unread,
+            "after mark_read the message should be read"
+        );
+    }
+
+    // tuxlink-gqo: the dev transport resolver. With no env overrides the configured
+    // transport stands (production keeps CmsSsl/8773); TUXLINK_CMS_PLAINTEXT forces
+    // plaintext/8772 so the app can reach cms-z (which exposes no 8773 TLS).
+    #[test]
+    fn resolve_cms_endpoint_defaults_to_configured_transport() {
+        assert_eq!(
+            resolve_cms_endpoint(CmsTransport::CmsSsl, false, None),
+            (8773, telnet::Transport::Tls)
+        );
+        assert_eq!(
+            resolve_cms_endpoint(CmsTransport::Telnet, false, None),
+            (8772, telnet::Transport::Plaintext)
+        );
+    }
+
+    #[test]
+    fn resolve_cms_endpoint_plaintext_override_forces_plaintext_8772() {
+        assert_eq!(
+            resolve_cms_endpoint(CmsTransport::CmsSsl, true, None),
+            (8772, telnet::Transport::Plaintext)
+        );
+    }
+
+    #[test]
+    fn resolve_cms_endpoint_honors_explicit_port_override() {
+        assert_eq!(
+            resolve_cms_endpoint(CmsTransport::CmsSsl, false, Some(8774)),
+            (8774, telnet::Transport::Tls)
+        );
+        assert_eq!(
+            resolve_cms_endpoint(CmsTransport::CmsSsl, true, Some(2323)),
+            (2323, telnet::Transport::Plaintext)
+        );
+    }
+
+    // tuxlink-9z2: an error that follows an operator abort is a cancellation;
+    // otherwise the raw outcome stands (success keeps, real error keeps).
+    #[test]
+    fn abort_aware_outcome_maps_error_to_cancelled_when_aborted() {
+        let mapped = abort_aware_outcome(
+            Err(BackendError::TransportFailed { reason: "socket shutdown".into(), source: None }),
+            true,
+        );
+        assert!(matches!(mapped, Err(BackendError::Cancelled)));
+    }
+
+    #[test]
+    fn abort_aware_outcome_preserves_real_error_when_not_aborted() {
+        let mapped = abort_aware_outcome(
+            Err(BackendError::TransportFailed { reason: "real failure".into(), source: None }),
+            false,
+        );
+        assert!(matches!(mapped, Err(BackendError::TransportFailed { .. })));
+    }
+
+    #[test]
+    fn abort_aware_outcome_preserves_success_even_if_aborted() {
+        // The connect completed before the abort landed — keep the success.
+        assert!(abort_aware_outcome(Ok(()), true).is_ok());
+    }
+
+    #[tokio::test]
+    async fn native_backend_abort_is_safe_with_no_inflight_connect() {
+        let dir = tempdir().unwrap();
+        let backend = NativeBackend::new(offline_config(), dir.path());
+        // Nothing in flight: abort must not panic, returns Ok, leaves Disconnected.
+        backend.abort().await.unwrap();
+        assert!(matches!(backend.status(), BackendStatus::Disconnected));
+    }
+
+    // Codex #1: single-flight. With a connect already in flight, a second connect
+    // is rejected immediately (before any network/config work) rather than racing
+    // on the shared abort state and re-sending the outbox.
+    #[tokio::test]
+    async fn connect_rejects_a_concurrent_connect() {
+        let dir = tempdir().unwrap();
+        let backend = NativeBackend::new(offline_config(), dir.path());
+        backend.connect_in_progress.store(true, Ordering::SeqCst);
+        let result = backend
+            .connect(TransportConfig::Cms { mode: CmsTransport::Telnet })
+            .await;
+        assert!(
+            matches!(result, Err(BackendError::BackendUnavailable { .. })),
+            "a concurrent connect should be rejected, got {result:?}"
+        );
     }
 }

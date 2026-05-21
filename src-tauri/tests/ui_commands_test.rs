@@ -156,6 +156,21 @@ async fn test_read_message_in_inbox_matches_read_message_back_compat() {
 }
 
 // ============================================================================
+// tuxlink-xgn: the trait's default mark_read is a best-effort no-op. Backends
+// with no read-state of their own (PatBackend) inherit it and MUST NOT error,
+// so message_read can mark-read without risking the read it just served.
+// ============================================================================
+#[tokio::test]
+async fn test_mark_read_default_is_a_successful_noop() {
+    // No server: the default never touches the network or disk.
+    let backend = PatBackend::from_url("http://127.0.0.1:9".to_string());
+    backend
+        .mark_read(MailboxFolder::Inbox, &MessageId::new("ANY"))
+        .await
+        .expect("default mark_read is a no-op that succeeds");
+}
+
+// ============================================================================
 // read_message_in reads from the requested folder (not always Inbox) — the
 // whole point of the generalization. A Sent read must hit /api/mailbox/sent.
 // ============================================================================

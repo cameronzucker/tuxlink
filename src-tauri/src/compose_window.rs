@@ -11,12 +11,12 @@
 //!   - Allows multiple concurrent compose windows.
 //!   - Does NOT embed in the AppShell grid.
 //!
-//! **Codex F7 guard:** compose windows do NOT wire a `menu:file:new` listener.
-//! `menu.rs:123` emits that event via `app.emit` which broadcasts to EVERY
-//! webview (including compose windows). If a compose window listened for that
-//! event it would spawn nested compose windows. The listener lives ONLY in
-//! `App.tsx`'s main-window code path, gated to the main window (integration
-//! commit §4.3).
+//! **F7 guard:** compose windows do NOT open further compose windows.
+//! The native menu and its `app.emit` broadcast were removed in ng3
+//! (`lib.rs` + `menu.rs` deleted); the `caller_is_authorized` guard below now
+//! stands as pure defense-in-depth — a misbehaving frontend that somehow
+//! invokes `compose_window_open` from a compose context is rejected at the
+//! Rust layer regardless of frontend guards.
 //!
 //! **Window geometry:** `tauri-plugin-window-state` persists per-window size
 //! and position keyed by the window label. Each compose window gets a unique
@@ -87,15 +87,13 @@ pub fn validate_draft_id(draft_id: &str) -> Result<(), String> {
 /// focus is restored; if it is hidden (main-window-hide-to-tray flow),
 /// it is shown and focused.
 ///
-/// **Main-window-only guard (Codex integration round, defense-in-depth for
-/// F7).** Now that compose windows carry a Tauri capability (`compose.json`),
-/// they have an IPC bridge and could in principle invoke `compose_window_open`
-/// themselves — recursively spawning nested compose windows. The frontend
-/// already guards this (`App.tsx`: a compose route never listens for
-/// `menu:file:new`), but a malicious/buggy frontend could still issue the
-/// invoke directly. This Rust-side check rejects any call NOT originating from
-/// the `main` window. `caller` is the invoking [`WebviewWindow`], injected by
-/// Tauri's command runtime.
+/// **Main-window-only guard (defense-in-depth, ng3).** Compose windows carry a
+/// Tauri capability (`compose.json`) and therefore have an IPC bridge; a
+/// malicious/buggy frontend could invoke `compose_window_open` directly to
+/// spawn nested compose windows. The native-menu broadcast that previously
+/// triggered this was removed in ng3 (`menu.rs` deleted), but this Rust-side
+/// check remains as a pure structural guard. `caller` is the invoking
+/// [`WebviewWindow`], injected by Tauri's command runtime.
 #[tauri::command]
 pub fn compose_window_open(
     app: AppHandle,
@@ -136,6 +134,12 @@ pub fn compose_window_open(
     // `get_webview_window` check above can hit `build()` and receive an
     // `AlreadyExists` error. Treat that as success — the window exists,
     // attempt to focus it before returning.
+    // Centered placement. A Gmail-style bottom-right DOCK was attempted (ng3
+    // smoke #8) but the Pi's labwc/Wayland compositor owns window placement —
+    // a client can neither set nor query a separate window's absolute position,
+    // so `.position()` is ignored and the window lands center regardless.
+    // Operator accepted centered for v0.0.1; the true in-window docked panel
+    // (which CAN position itself, and is also faster) is filed for revisit.
     let build_result = WebviewWindowBuilder::new(
         &app,
         &label,
@@ -145,6 +149,7 @@ pub fn compose_window_open(
     .inner_size(720.0, 560.0)
     .min_inner_size(480.0, 360.0)
     .resizable(true)
+    .decorations(false)
     .center()
     .build();
 

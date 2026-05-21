@@ -14,8 +14,9 @@
 // The `buildMessageQueryKey` and `buildMessageQueryOptions` exports are
 // factored out for unit testing without requiring a QueryClientProvider.
 
+import { useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { useQuery, type UseQueryOptions } from '@tanstack/react-query';
+import { useQuery, useQueryClient, type UseQueryOptions } from '@tanstack/react-query';
 import type { ParsedMessage, MailboxFolder, UiError } from './types';
 import { DEV_FIXTURE, devMessageFor } from './devFixture';
 
@@ -80,6 +81,19 @@ export function buildMessageQueryOptions(
  */
 export function useMessage(selection: MessageSelection | null) {
   const result = useQuery(buildMessageQueryOptions(selection));
+  const queryClient = useQueryClient();
+
+  // Opening an inbox message marks it read server-side (message_read →
+  // mark_read). Refresh the mailbox lists so the unread badge updates promptly
+  // instead of waiting for the 10s poll. Inbox-only — Sent/Outbox have no unread
+  // concept. `selection.id` + `dataUpdatedAt` key the effect to each successful
+  // (re)load so it fires once per opened message, not on every render.
+  const inboxLoaded = result.isSuccess && selection?.folder === 'inbox';
+  useEffect(() => {
+    if (inboxLoaded) {
+      void queryClient.invalidateQueries({ queryKey: ['mailbox'] });
+    }
+  }, [inboxLoaded, selection?.id, result.dataUpdatedAt, queryClient]);
 
   // Dev fixture: when the real backend has no data (empty / NotConfigured) and
   // the dev fixture is active (vite dev server only), surface a sample parsed

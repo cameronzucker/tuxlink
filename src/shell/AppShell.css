@@ -5,23 +5,30 @@
  * in docs/design/mockups/2026-05-17-mocks-v1-four-directions.html. Ported
  * VERBATIM and scoped under `.layout-b` so the generic class names don't leak.
  *
- * Tauri provides the native titlebar + menu bar (menu.rs). The webview renders:
- *   dashboard (ribbon) / panes[ sidebar | rows | reader ] / session-log / statusbar
+ * tuxlink-ng3: the webview now renders its OWN chrome (custom HTML titlebar +
+ * menu bar; native decorations are off). The webview renders, top to bottom:
+ *   titlebar / menu bar / dashboard (ribbon) / panes[ sidebar | rows | reader ]
+ *   / session-log / statusbar
  */
 
 /* ============================================================================
- * Layout grid — dashboard (auto) | panes (1fr) | session-log (auto) | statusbar
- * (auto), full height. (Mock B's layout-B + the dashboard sibling above it,
- * combined into one root grid; the mock's hidden tab-strip row is dropped.)
+ * Layout grid — titlebar (auto) | menu bar (auto) | dashboard (auto) |
+ * panes (1fr) | session-log (auto) | statusbar (auto), full height.
+ * NOTE (ng3): the FIRST THREE rows are the HTML chrome added in AppShell's JSX
+ * (TitleBar, MenuBar) + the ribbon; `panes` MUST be the 1fr row. The row count
+ * is tied to the in-flow child order in AppShell.tsx — ResizeHandles is
+ * position:absolute so it does NOT consume a grid row. If you reorder the shell's
+ * children, re-check which row gets 1fr.
  * ========================================================================== */
 .layout-b {
   display: grid;
-  grid-template-rows: auto 1fr auto auto;
+  grid-template-rows: auto auto auto 1fr auto auto;
   height: 100vh;
   width: 100vw;
   overflow: hidden;
   background: var(--bg);
   color: var(--text);
+  position: relative; /* anchor the absolute ResizeHandles to the window */
 }
 
 .layout-b .panes {
@@ -44,6 +51,17 @@
   align-items: center;
   gap: 28px;
   font-size: 12px;
+  /* ng3 smoke #6: never let a long connection/rejection string reflow the ribbon
+   * or push the right-pinned Connect button off-screen. */
+  overflow: hidden;
+}
+/* The connection value can be a long failure reason; clamp it (full text on hover
+ * + in the session log) so the ribbon stays fixed-layout (ng3 smoke #6). */
+.layout-b .dashboard .dash-connection {
+  max-width: 260px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .layout-b .dashboard .dash-item {
   display: flex;
@@ -98,6 +116,47 @@
 .layout-b .dashboard .dash-status-dot.tx {
   background: var(--error);
   animation: tux-pulse 0.8s ease-in-out infinite;
+}
+/* Connect control (tuxlink-0ic): right-aligned action in the ribbon. */
+.layout-b .dashboard .dash-connect {
+  margin-left: auto;
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+}
+.layout-b .dashboard .connect-button {
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--bg);
+  background: var(--accent);
+  border: none;
+  border-radius: 4px;
+  padding: 6px 16px;
+  cursor: pointer;
+}
+.layout-b .dashboard .connect-button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.layout-b .dashboard .connect-button:hover:not(:disabled) {
+  filter: brightness(1.12);
+}
+/* Abort control (tuxlink-9z2): a secondary, warning-toned button shown beside
+   the disabled "Connecting…" button while a connect is in flight. */
+.layout-b .dashboard .abort-button {
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--error, #e5534b);
+  background: transparent;
+  border: 1px solid var(--error, #e5534b);
+  border-radius: 4px;
+  padding: 5px 14px;
+  cursor: pointer;
+}
+.layout-b .dashboard .abort-button:hover {
+  background: color-mix(in srgb, var(--error, #e5534b) 16%, transparent);
 }
 @keyframes tux-pulse {
   0%,

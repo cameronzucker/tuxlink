@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/tuxlink_icon.png" alt="Tuxlink logo" width="120" height="120">
+</p>
+
 # Tuxlink
 
 A Linux desktop Winlink client for amateur-radio emergency communications — wraps

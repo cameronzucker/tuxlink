@@ -155,59 +155,75 @@ async fn test_pat_backend_translates_connect_error_to_backend_unavailable() {
 }
 
 // ============================================================================
-// Test 6: NativeBackend stub — every method returns NotImplemented (or empty
-// stream / Disconnected for the snapshot methods). Validates spec §3.9 and
-// asserts no panic on stub paths (v2 P3 #12 ratified).
+// Test 6: NativeBackend store-backed methods — send queues to the outbox, and
+// list/read see it; status starts Disconnected. (The on-air `connect` path is
+// validated by the winlink::* tests + src/bin/native_cms_probe.rs, not here.)
 // ============================================================================
 #[tokio::test]
-async fn test_native_backend_returns_not_implemented_for_every_method() {
-    let backend = NativeBackend::new();
+async fn test_native_backend_send_then_list_and_read() {
+    let cfg = native_test_config();
+    let tmp = tempfile::tempdir().expect("tmpdir");
+    let backend = NativeBackend::new(cfg, tmp.path());
 
-    matches_not_implemented(backend.list_messages(MailboxFolder::Inbox).await);
-    matches_not_implemented(
-        backend
-            .read_message(&MessageId::new("ANY"))
-            .await
-            .map(|_| ()),
-    );
-    matches_not_implemented(
-        backend
-            .send_message(OutboundMessage {
-                to: vec![],
-                cc: vec![],
-                subject: "".to_string(),
-                body: "".to_string(),
-                date: "".to_string(),
-            })
-            .await
-            .map(|_| ()),
-    );
-    matches_not_implemented(
-        backend
-            .connect(TransportConfig::Cms { mode: CmsTransport::CmsSsl })
-            .await
-            .map(|_| ()),
-    );
-    // disconnect needs a Session; mint one from NativeBackend's instance to
-    // satisfy the type (the backend won't ever produce one, so synthesize
-    // via a separate constructor path through PatBackend ISN'T possible —
-    // skip disconnect for NativeBackend; covered by test #9 for the
-    // backend-affinity check).
-
+    // Fresh mailbox: status Disconnected, inbox empty.
     match backend.status() {
         BackendStatus::Disconnected => {}
-        other => panic!("NativeBackend.status() must be Disconnected, got {:?}", other),
+        other => panic!("NativeBackend.status() must start Disconnected, got {:?}", other),
     }
+    assert!(backend.list_messages(MailboxFolder::Inbox).await.unwrap().is_empty());
 
-    // stream_log() must be a stream that ends immediately (empty).
-    let mut stream = backend.stream_log();
-    assert!(stream.next().await.is_none(), "NativeBackend.stream_log() must be empty");
+    // Send queues a composed message into the outbox.
+    let id = backend
+        .send_message(OutboundMessage {
+            to: vec!["W1AW".to_string()],
+            cc: vec![],
+            subject: "Net check-in".to_string(),
+            body: "All stations clear.".to_string(),
+            date: "2024-05-20T10:13:00Z".to_string(),
+        })
+        .await
+        .unwrap()
+        .expect("native backend assigns a MID at queue time");
+
+    // It is now listable + readable from the outbox.
+    let outbox = backend.list_messages(MailboxFolder::Outbox).await.unwrap();
+    assert_eq!(outbox.len(), 1);
+    assert_eq!(outbox[0].id, id);
+    assert_eq!(outbox[0].subject, "Net check-in");
+    assert_eq!(outbox[0].from, "N7CPZ");
+
+    let body = backend
+        .read_message_in(MailboxFolder::Outbox, &id)
+        .await
+        .unwrap();
+    assert_eq!(body.id, id);
+    assert!(!body.raw_rfc5322.is_empty());
+
+    // stream_log is a live (initially idle) stream.
+    let _ = backend.stream_log();
 }
 
-fn matches_not_implemented<T: std::fmt::Debug>(result: Result<T, BackendError>) {
-    match result {
-        Err(BackendError::NotImplemented) => {}
-        other => panic!("expected NotImplemented, got {:?}", other),
+fn native_test_config() -> tuxlink_lib::config::Config {
+    use tuxlink_lib::config::{
+        Config, ConnectConfig, GpsState, IdentityConfig, PositionPrecision, PrivacyConfig,
+    };
+    Config {
+        schema_version: 1,
+        wizard_completed: true,
+        connect: ConnectConfig {
+            connect_to_cms: true,
+            transport: CmsTransport::CmsSsl,
+        },
+        identity: IdentityConfig {
+            callsign: Some("N7CPZ".to_string()),
+            identifier: None,
+            grid: Some("DM33".to_string()),
+        },
+        privacy: PrivacyConfig {
+            gps_state: GpsState::BroadcastAtPrecision,
+            position_precision: PositionPrecision::FourCharGrid,
+        },
+        pat_mbo_address: None,
     }
 }
 

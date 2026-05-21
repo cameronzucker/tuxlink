@@ -151,7 +151,7 @@ export function MessageViewLoaded({ message }: { message: ParsedMessage }) {
           data-testid="reply-btn"
           onClick={() => fireReply(message, 'reply')}
         >
-          Reply (⌘R)
+          Reply (Ctrl+R)
         </button>
         <button
           type="button"

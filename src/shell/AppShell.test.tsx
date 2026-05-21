@@ -1,18 +1,17 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, act } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { MailboxFolder, MessageMeta } from '../mailbox/types';
 
 // ---------------------------------------------------------------------------
-// Tauri IPC mocks. The Mock B shell mounts the dashboard ribbon + status bar
-// (useStatusData → config_read/backend_status), the sidebar, the list, the
-// reader (useMessage → message_read), and the human session log
-// (session_log_snapshot + listen). Stub the IPC so the shell mounts in jsdom.
-// The `menu` listener is captured (vi.hoisted) so tests can fire View events.
+// Tauri IPC mocks. The Mock B shell mounts the HTML chrome (TitleBar + MenuBar
+// + ResizeHandles), the dashboard ribbon + status bar (useStatusData →
+// config_read/backend_status), the sidebar, the list, the reader (useMessage →
+// message_read), and the human session log (session_log_snapshot + listen).
+// Stub the IPC so the shell mounts in jsdom. Menu actions are now driven
+// in-process through the rendered <MenuBar> (no `listen('menu')` channel).
 // ---------------------------------------------------------------------------
-const h = vi.hoisted(() => ({ menuHandler: null as null | ((e: { payload: string }) => void) }));
-
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: vi.fn(async (cmd: string) => {
     if (cmd === 'config_read') return null;
@@ -36,15 +35,23 @@ vi.mock('@tauri-apps/api/core', () => ({
   }),
 }));
 
+// SessionLog still subscribes to its own event channel; the mock keeps the
+// shell mounting under jsdom. The menu no longer uses an event channel.
 vi.mock('@tauri-apps/api/event', () => ({
-  listen: vi.fn(async (event: string, cb: (e: { payload: string }) => void) => {
-    if (event === 'menu') h.menuHandler = cb;
-    return () => {};
-  }),
+  listen: vi.fn(async () => () => {}),
 }));
 
+// TitleBar + ResizeHandles now mount in the shell and call window controls.
 vi.mock('@tauri-apps/api/window', () => ({
-  getCurrentWindow: () => ({ label: 'main', setTitle: vi.fn(async () => {}) }),
+  getCurrentWindow: () => ({
+    label: 'main',
+    setTitle: vi.fn(async () => {}),
+    minimize: vi.fn(async () => {}),
+    toggleMaximize: vi.fn(async () => {}),
+    close: vi.fn(async () => {}),
+    startResizeDragging: vi.fn(async () => {}),
+  }),
+  ResizeDirection: { North:'North',South:'South',East:'East',West:'West',NorthEast:'NorthEast',NorthWest:'NorthWest',SouthEast:'SouthEast',SouthWest:'SouthWest' },
 }));
 
 vi.mock('react-virtuoso', () => ({
@@ -98,6 +105,7 @@ vi.mock('../mailbox/useMailbox', () => ({
   isBackendFolder: (f: MailboxFolder) => f === 'inbox' || f === 'outbox' || f === 'sent',
 }));
 
+import { invoke } from '@tauri-apps/api/core';
 import { AppShell } from './AppShell';
 
 function renderShell() {
@@ -112,7 +120,7 @@ function renderShell() {
 describe('<AppShell> — Mock B topology', () => {
   beforeEach(() => {
     globalThis.localStorage?.clear?.();
-    h.menuHandler = null;
+    vi.mocked(invoke).mockClear();
   });
 
   it('renders the Mock B regions: dashboard ribbon, sidebar, panes, session log, status bar', () => {
@@ -164,38 +172,68 @@ describe('<AppShell> — Mock B topology', () => {
     expect(screen.queryByTestId('message-row-INBOX1')).not.toBeInTheDocument();
   });
 
-  it('View → Session Log toggles the (default-visible) session log', async () => {
+  // Drive a menu action through the rendered <MenuBar>: open the top menu, then
+  // click the leaf item (mirrors MenuBar.test.tsx's interaction model). Scoped
+  // to the menubar so item labels (e.g. "Reply") don't collide with the
+  // reading-pane action buttons ("Reply (Ctrl+R)").
+  function clickMenu(top: string, item: RegExp) {
+    const menubar = screen.getByRole('menubar');
+    fireEvent.click(within(menubar).getByRole('button', { name: top }));
+    fireEvent.click(within(menubar).getByRole('button', { name: item }));
+  }
+
+  it('View → Toggle Session Log toggles the (default-visible) session log', () => {
     renderShell();
     expect(screen.getByTestId('session-log-root')).toBeInTheDocument();
-    await act(async () => {
-      h.menuHandler?.({ payload: 'menu:view:session_log' });
-    });
+    clickMenu('View', /Toggle Session Log/);
     expect(screen.queryByTestId('session-log-root')).toBeNull();
-    await act(async () => {
-      h.menuHandler?.({ payload: 'menu:view:session_log' });
-    });
+    clickMenu('View', /Toggle Session Log/);
     expect(screen.getByTestId('session-log-root')).toBeInTheDocument();
   });
 
-  it('View → Toggle Status Bar hides and shows the status bar', async () => {
+  it('View → Toggle Status Bar hides and shows the status bar', () => {
     renderShell();
     expect(screen.getByTestId('status-bar')).toBeInTheDocument();
-    await act(async () => {
-      h.menuHandler?.({ payload: 'menu:view:status_bar' });
-    });
+    clickMenu('View', /Toggle Status Bar/);
     expect(screen.queryByTestId('status-bar')).toBeNull();
-    await act(async () => {
-      h.menuHandler?.({ payload: 'menu:view:status_bar' });
-    });
+    clickMenu('View', /Toggle Status Bar/);
     expect(screen.getByTestId('status-bar')).toBeInTheDocument();
   });
 
-  it('the Mailbox menu switches folders', async () => {
+  it('the Mailbox menu switches folders', () => {
     renderShell();
-    await act(async () => {
-      h.menuHandler?.({ payload: 'menu:mailbox:sent' });
-    });
+    clickMenu('Mailbox', /^Sent$/);
     expect(screen.getByTestId('message-row-SENT1')).toBeInTheDocument();
     expect(screen.queryByTestId('message-row-INBOX1')).not.toBeInTheDocument();
+  });
+
+  it('Message → New Message opens a compose window', () => {
+    renderShell();
+    clickMenu('Message', /New Message/);
+    expect(invoke).toHaveBeenCalledWith(
+      'compose_window_open',
+      expect.objectContaining({ draftId: expect.any(String) }),
+    );
+  });
+
+  // Option (b): with a message selected, Message → Reply opens a reply window.
+  // openReplyWindow seeds a draft then opens a compose window via
+  // compose_window_open. The message_read mock resolves so useMessage's
+  // openMessage is defined and the reply handler is not a no-op.
+  it('Message → Reply opens a reply window for the selected message', async () => {
+    renderShell();
+    fireEvent.click(screen.getByTestId('message-row-INBOX1'));
+    // Wait for useMessage to resolve the selected message (message_read mock).
+    await screen.findByTestId('message-view-loaded');
+    vi.mocked(invoke).mockClear();
+    // The Reply menu item's accessible name is "ReplyCtrl+R" (label + accel
+    // span, no separating space) — anchored regex picks it over "Reply All".
+    clickMenu('Message', /^ReplyCtrl/);
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith(
+        'compose_window_open',
+        expect.objectContaining({ draftId: expect.any(String) }),
+      ),
+    );
   });
 });

@@ -17,6 +17,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   formatConnectionState,
+  humanizeConnectionError,
   formatCallsign,
   formatGrid,
   formatGpsStatus,
@@ -95,10 +96,28 @@ describe('formatConnectionState — live BackendStatus', () => {
     expect(result).toBe('Disconnecting');
   });
 
-  it('returns Error label when Error', () => {
-    const status: StatusDto = { kind: 'Error', reason: 'connection refused' };
+  it('returns a concise human-readable label when Error (ng3 #5 — not the raw reason)', () => {
+    const status: StatusDto = { kind: 'Error', reason: 'connection refused by server' };
     const result = formatConnectionState(status, 'CmsSsl');
-    expect(result).toContain('Error');
+    expect(result).toBe('CMS unreachable');
+    // The raw reason must NOT leak into the ribbon (it goes to the session log).
+    expect(result).not.toContain('refused');
+  });
+});
+
+describe('humanizeConnectionError (ng3 #5)', () => {
+  it('maps an unregistered-SID rejection', () => {
+    expect(humanizeConnectionError('client SID tuxlink-0.0.1 is not registered')).toBe('Rejected — not registered');
+  });
+  it('maps a timeout', () => {
+    expect(humanizeConnectionError('read timed out after 30s')).toBe('Connection timed out');
+  });
+  it('maps an auth failure', () => {
+    expect(humanizeConnectionError('secure login failed: bad password')).toBe('Login failed');
+  });
+  it('falls back to a short clause, else a generic label', () => {
+    expect(humanizeConnectionError('Weird short thing')).toBe('Weird short thing');
+    expect(humanizeConnectionError('x'.repeat(80))).toBe('Connection failed');
   });
 });
 

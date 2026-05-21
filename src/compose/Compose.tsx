@@ -35,6 +35,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { clearDraft, loadDraft, saveDraft, splitAddrs } from './useDraft';
+import { ComposeTitleBar } from './ComposeTitleBar';
 import './Compose.css';
 
 // ============================================================================
@@ -340,21 +341,13 @@ export function Compose({ draftId }: ComposeProps) {
   return (
     <div className="compose-root" data-testid="compose-root">
       {/* ------------------------------------------------------------------ */}
-      {/* Header                                                              */}
+      {/* Custom title bar (tuxlink-ng3: decorations:false, closes msr)      */}
       {/* ------------------------------------------------------------------ */}
-      <div className="compose-header">
-        <span className="compose-header__title">New Message — Tuxlink</span>
-        <button
-          className="compose-btn compose-btn--ghost compose-header__close"
-          aria-label="Close compose window"
-          onClick={handleRequestClose}
-        >
-          ✕
-        </button>
-      </div>
+      <ComposeTitleBar onClose={handleRequestClose} />
 
       {/* ------------------------------------------------------------------ */}
-      {/* Fields                                                              */}
+      {/* Fields (the duplicate in-form header was removed — ComposeTitleBar  */}
+      {/* is the single title bar + close, tuxlink-ng3 smoke #4)              */}
       {/* ------------------------------------------------------------------ */}
       <div className="compose-fields">
 

@@ -3,13 +3,14 @@ pub mod bootstrap;
 pub mod compose_window;
 pub mod config;
 pub mod consent_gate;
-pub mod menu;
+pub mod native_mailbox;
 pub mod pat_client;
 pub mod pat_config;
 pub mod pat_process;
 pub mod session_log;
 pub mod tray;
 pub mod ui_commands;
+pub mod winlink;
 pub mod winlink_backend;
 pub mod wizard;
 
@@ -79,13 +80,6 @@ pub fn run() {
         // through the `Arc`, so the command sees an identical surface.
         .manage(std::sync::Arc::new(crate::session_log::SessionLogState::new(500)))
         .setup(|app| {
-            // Build the native OS menu bar (tuxlink-6vi / Task 7) and wire
-            // its events to Tauri IPC so the React frontend can listen on
-            // the "menu" channel.
-            let menu = crate::menu::build_menu(app.handle())?;
-            app.set_menu(menu)?;
-            crate::menu::wire_menu_events(app.handle());
-
             // Install system tray icon + menu (tuxlink-rit / Task 8).
             // Close-to-tray: window close button hides to tray; only
             // File→Quit / tray→Quit / Ctrl+Q actually exit the process.
@@ -158,11 +152,14 @@ pub fn run() {
             crate::ui_commands::mailbox_list,          // Task 12 (tuxlink-zsm)
             crate::ui_commands::message_read,          // Task 13 (tuxlink-y5c)
             crate::ui_commands::message_send,          // Task 14 (tuxlink-dm8)
+            crate::ui_commands::cms_connect,           // tuxlink-0ic (native connect)
+            crate::ui_commands::cms_abort,             // tuxlink-9z2 (abort in-flight connect)
             crate::ui_commands::config_read,           // Task 16 (tuxlink-hvv)
             crate::ui_commands::backend_status,        // Task 16 (tuxlink-hvv)
             crate::ui_commands::session_log_snapshot,  // Task 15 (tuxlink-8zg integration round)
             crate::compose_window::compose_window_open, // Task 14 (tuxlink-dm8)
             crate::compose_window::compose_close_self,  // tuxlink-h2y (self-only close)
+            crate::ui_commands::app_quit,             // tuxlink-ng3 (HTML File→Quit / Ctrl+Q)
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

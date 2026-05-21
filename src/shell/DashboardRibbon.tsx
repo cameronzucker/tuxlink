@@ -43,9 +43,20 @@ function dashDotClass(tone: StatusTone): string {
 
 export interface DashboardRibbonProps {
   data: StatusBarData;
+  /** Trigger a CMS connection (send outbox + receive). When omitted, the
+   *  Connect control is not rendered (keeps the ribbon's unit tests prop-free). */
+  onConnect?: () => void;
+  /** True while a connection is in progress (disables the button + shows a
+   *  "Connecting…" label). The result/error is surfaced in the session log,
+   *  not beside the button. */
+  connecting?: boolean;
+  /** Cancel an in-flight connection (tuxlink-9z2). The Abort control is rendered
+   *  only while `connecting`; it shuts the connecting socket so a slow TLS/login/
+   *  exchange phase unblocks, returning the backend to Disconnected. */
+  onAbort?: () => void;
 }
 
-export function DashboardRibbon({ data }: DashboardRibbonProps) {
+export function DashboardRibbon({ data, onConnect, connecting, onAbort }: DashboardRibbonProps) {
   const { utc, local } = useClock();
   const { callsign, grid, state, connection: connectionFromData } = data;
   // Position (GPS coords) is a v0.1 data source; the dev fixture shows the mock
@@ -95,11 +106,42 @@ export function DashboardRibbon({ data }: DashboardRibbonProps) {
 
       <div className="dash-item">
         <div className="dash-label">Connection</div>
-        <div className="dash-value" data-testid="ribbon-connection">
+        <div
+          className="dash-value dash-connection"
+          data-testid="ribbon-connection"
+          title={typeof connection === 'string' ? connection : undefined}
+        >
           <span className={`dash-status-dot ${dashDotClass(state.tone)}`} aria-hidden="true" />
           {connection}
         </div>
       </div>
+
+      {onConnect && (
+        <>
+          <div className="dash-divider" />
+          <div className="dash-item dash-connect">
+            <button
+              type="button"
+              className="connect-button"
+              onClick={onConnect}
+              disabled={connecting}
+              data-testid="connect-button"
+            >
+              {connecting ? 'Connecting…' : 'Connect'}
+            </button>
+            {connecting && onAbort && (
+              <button
+                type="button"
+                className="abort-button"
+                onClick={onAbort}
+                data-testid="abort-button"
+              >
+                Abort
+              </button>
+            )}
+          </div>
+        </>
+      )}
     </div>
   );
 }

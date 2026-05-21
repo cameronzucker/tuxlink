@@ -27,14 +27,14 @@
 
 use mail_parser::{MimeHeaders, MessageParser};
 use serde::{Deserialize, Serialize};
-use tauri::State;
+use tauri::{AppHandle, Emitter, State};
 
 use crate::app_backend::{BackendPhase, BackendState};
 use crate::config::{self, CmsTransport, GpsState, PositionPrecision};
 use crate::session_log::SessionLogState;
 use crate::winlink_backend::{
     BackendError, BackendStatus, LogLevel, LogLine, LogSource, MailboxFolder, MessageId,
-    MessageMeta, OutboundMessage,
+    MessageMeta, OutboundMessage, TransportConfig,
 };
 
 // ============================================================================
@@ -528,6 +528,11 @@ pub async fn message_read(
         .current()
         .ok_or_else(|| UiError::NotConfigured("backend offline".to_string()))?;
     let body = backend.read_message_in(parsed_folder, &mid).await?;
+    // Opening a message marks it read (tuxlink-xgn). Best-effort: a marker-write
+    // failure must not fail the read the user just performed, so the error is
+    // discarded (the message simply stays unread and self-heals on the next
+    // open). For backends without read-state this is the trait's no-op default.
+    let _ = backend.mark_read(parsed_folder, &mid).await;
     parse_raw_rfc5322(&id, &body.raw_rfc5322)
 }
 
@@ -593,6 +598,103 @@ pub async fn message_send(
     // PatBackend impl. Map Option<MessageId> → Option<String> for IPC.
     let mid = backend.send_message(msg).await?;
     Ok(mid.map(|id| id.0))
+}
+
+/// Run one CMS connection: send everything queued in the outbox and download any
+/// waiting messages (tuxlink-0ic). Drives the backend's `connect` over the
+/// configured transport, then drops the session (the native exchange completes
+/// within the call). The frontend refreshes the mailbox on success.
+///
+/// Progress and the result (including any failure reason) are surfaced in the
+/// session log via `session_log:line` events — NOT returned for display beside
+/// the button. The command still returns `Err` so the caller can stop its
+/// spinner / skip the mailbox refresh, but the human-facing detail lives in the
+/// log + the connection-status ribbon.
+///
+/// On the native backend this performs the real on-air exchange; against the
+/// production CMS it currently fails with the client-type rejection until
+/// "tuxlink" is registered with Winlink (set `TUXLINK_CMS_HOST=cms-z.winlink.org`
+/// to exercise it against the dev CMS in the meantime).
+#[tauri::command]
+pub async fn cms_connect(
+    app: AppHandle,
+    state: State<'_, BackendState>,
+    log: State<'_, std::sync::Arc<SessionLogState>>,
+) -> Result<(), UiError> {
+    let backend = state
+        .current()
+        .ok_or_else(|| UiError::NotConfigured("backend offline".to_string()))?;
+
+    let cfg = config::read_config().map_err(|e| UiError::Internal {
+        detail: e.to_string(),
+    })?;
+
+    emit_session_line(
+        &app,
+        &log,
+        LogLevel::Info,
+        format!("Connecting to the CMS ({:?})…", cfg.connect.transport),
+    );
+
+    match backend
+        .connect(TransportConfig::Cms {
+            mode: cfg.connect.transport,
+        })
+        .await
+    {
+        Ok(_session) => {
+            emit_session_line(&app, &log, LogLevel::Info, "CMS exchange complete.".to_string());
+            Ok(())
+        }
+        Err(BackendError::Cancelled) => {
+            // Operator-initiated abort (tuxlink-9z2) — not a failure.
+            emit_session_line(&app, &log, LogLevel::Warn, "CMS connection aborted.".to_string());
+            Err(BackendError::Cancelled.into())
+        }
+        Err(e) => {
+            emit_session_line(&app, &log, LogLevel::Error, format!("CMS connect failed: {e}"));
+            Err(e.into())
+        }
+    }
+}
+
+/// Abort an in-flight [`cms_connect`] (tuxlink-9z2): shut down the connecting
+/// socket so a slow TLS/login/exchange phase unblocks, returning the backend to
+/// Disconnected. The aborted `cms_connect` resolves with a `Cancelled` error its
+/// caller swallows. A no-op when nothing is connecting.
+#[tauri::command]
+pub async fn cms_abort(
+    app: AppHandle,
+    state: State<'_, BackendState>,
+    log: State<'_, std::sync::Arc<SessionLogState>>,
+) -> Result<(), UiError> {
+    let backend = state
+        .current()
+        .ok_or_else(|| UiError::NotConfigured("backend offline".to_string()))?;
+
+    emit_session_line(&app, &log, LogLevel::Info, "Aborting CMS connection…".to_string());
+    backend.abort().await?;
+    Ok(())
+}
+
+/// Append a session-log line to the durable buffer (assigning its `seq`) and emit
+/// it live on `session_log:line`, so it lands in the bottom progress log
+/// (snapshot + tail). Used for connect progress/results (tuxlink-0ic).
+fn emit_session_line(
+    app: &AppHandle,
+    buffer: &SessionLogState,
+    level: LogLevel,
+    message: String,
+) {
+    let mut line = LogLine {
+        seq: 0,
+        timestamp_iso: chrono::Utc::now().to_rfc3339(),
+        level,
+        source: LogSource::Transport,
+        message,
+    };
+    line.seq = buffer.append(line.clone());
+    let _ = app.emit("session_log:line", LogLineDto::from(line));
 }
 
 // ============================================================================
@@ -880,6 +982,21 @@ pub async fn session_log_snapshot(
     state: State<'_, std::sync::Arc<SessionLogState>>,
 ) -> Result<Vec<LogLineDto>, UiError> {
     Ok(state.snapshot().into_iter().map(LogLineDto::from).collect())
+}
+
+// ============================================================================
+// tuxlink-ng3 — app_quit (HTML chrome File→Quit / Ctrl+Q)
+// ============================================================================
+
+/// Exit the application (tuxlink-ng3). With the native menu removed, File → Quit
+/// and the Ctrl+Q accelerator invoke this. Mirrors the native menu's old inline
+/// `app.exit(0)` (menu.rs) — `PredefinedMenuItem::quit` is unsupported on
+/// Linux/muda, so an explicit command is the canonical pattern. This is the ONLY
+/// path that exits the process; the window close button keeps the app alive
+/// (lib.rs CloseRequested handler).
+#[tauri::command]
+pub fn app_quit(app: tauri::AppHandle) {
+    app.exit(0);
 }
 
 #[cfg(test)]

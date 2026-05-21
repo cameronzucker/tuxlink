@@ -2,9 +2,10 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, waitFor, screen } from '@testing-library/react';
 
 // --- Tauri IPC mocks --------------------------------------------------------
-// App.tsx now also imports @tauri-apps/api/event (listen) and
-// @tauri-apps/api/window (getCurrentWindow), and the real AppShell mounts the
-// ribbon (config_read/backend_status) + session log (session_log_snapshot).
+// App.tsx no longer subscribes to the "menu" channel (tuxlink-ng3 Task 10), but
+// the trees it mounts still need these stubs: the real AppShell mounts the HTML
+// chrome (getCurrentWindow), the ribbon (config_read/backend_status), and the
+// session log (session_log_snapshot + listen); Compose uses onCloseRequested.
 // Route invoke by command so each consumer gets a shape-correct value.
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
 let currentLabel = 'main';
@@ -76,31 +77,15 @@ describe('<App> main-window routing', () => {
     await waitFor(() => expect(screen.getByTestId('wizard-root')).toBeInTheDocument());
   });
 
-  // Main window subscribes to the "menu" channel for the menu:file:new →
-  // compose-window-open wiring (spec §4.3).
-  it('main window subscribes to the menu channel', async () => {
-    routeInvoke(false);
+  // tuxlink-ng3 (Task 10): App no longer subscribes to the app-global "menu"
+  // event channel. The File → New Message path now dispatches in-process inside
+  // AppShell (see AppShell.test.tsx "File → New Message opens a compose
+  // window"); the broadcast listener — the Codex F7 recursion source — is gone.
+  it('main window does NOT subscribe to the menu channel', async () => {
+    routeInvoke(true);
     render(<App />);
-    await waitFor(() => expect(listenMock).toHaveBeenCalledWith('menu', expect.any(Function)));
-  });
-
-  // Clicking File→New Message opens a compose window via compose_window_open.
-  it('a menu:file:new event opens a compose window', async () => {
-    routeInvoke(false);
-    let menuHandler: ((e: { payload: string }) => void) | undefined;
-    listenMock.mockImplementation(async (_evt: unknown, cb: unknown) => {
-      menuHandler = cb as (e: { payload: string }) => void;
-      return () => {};
-    });
-    render(<App />);
-    await waitFor(() => expect(menuHandler).toBeDefined());
-    menuHandler!({ payload: 'menu:file:new' });
-    await waitFor(() =>
-      expect(invoke).toHaveBeenCalledWith(
-        'compose_window_open',
-        expect.objectContaining({ draftId: expect.any(String) }),
-      ),
-    );
+    await waitFor(() => expect(screen.getByTestId('app-shell-root')).toBeInTheDocument());
+    expect(listenMock).not.toHaveBeenCalledWith('menu', expect.any(Function));
   });
 });
 
@@ -122,8 +107,11 @@ describe('<App> compose-window routing (spec §5.4 / Codex F7)', () => {
     expect(screen.queryByTestId('app-shell-root')).not.toBeInTheDocument();
   });
 
-  // Codex F7: a compose window must NOT listen for menu:file:new (the event
-  // broadcasts to every webview), or it recursively spawns compose windows.
+  // Codex F7 regression guard: a compose window must NOT subscribe to the
+  // "menu" channel. The app-global broadcast (the recursion source) was removed
+  // in tuxlink-ng3 Task 10 — App no longer subscribes from any window — so this
+  // now holds trivially; the assertion stays as a guard against reintroducing
+  // a per-window menu listener.
   it('compose window does NOT subscribe to the menu channel', async () => {
     currentLabel = 'compose-draft-xyz';
     setPath('/compose/draft-xyz');
