@@ -355,12 +355,18 @@ pub async fn run_test_send_impl() -> Result<TestSendOutcome, WizardError> {
     // Shares the predicate with `wizard_test_send_is_mocked` so the UI banner and
     // the actual mock short-circuit can never disagree.
     //
-    // `cfg!(test)` is a fail-CLOSED belt-and-suspenders (Codex pqg adrev P1 #1):
-    // under test compilation the live transmit path is unreachable even if a
-    // future test forgets to set TUXLINK_TEST_SEND_MOCK. Operator semantics are
-    // unchanged — the shipped binary (cfg!(test)==false) still goes live when
-    // the operator runs the wizard without the mock var.
-    if test_send_is_mocked_impl() || cfg!(test) {
+    // Fail-CLOSED belt-and-suspenders (Codex pqg adrev P1 #1 + R2 #1):
+    // - `cfg!(test)` covers this crate's UNIT tests.
+    // - the `CI` env var covers INTEGRATION tests run under CI (where
+    //   `cfg!(test)` is false because the lib links as a normal dependency).
+    // The live transmit path is unreachable in either context even if a test
+    // forgets TUXLINK_TEST_SEND_MOCK. Operator semantics are unchanged — the
+    // shipped binary (no `CI`, cfg!(test)==false) still goes live. Residual:
+    // a local integration test with neither var set could reach the live path,
+    // but test envs lack a Pat binary + keyring credential, so the spawn fails
+    // before any transmission (near-nil real risk; RADIO-1 policy + this fn's
+    // doc instruct test authors to set the mock var regardless).
+    if test_send_is_mocked_impl() || cfg!(test) || std::env::var_os("CI").is_some() {
         // Return a mocked Success outcome. The mock always succeeds so that
         // subagent/CI flows exercise the full 4-substate path in the UI.
         // Unit tests override specific outcomes by invoking this function
@@ -615,6 +621,15 @@ fn default_likely_causes() -> Vec<String> {
 /// only be our reply. The prior "subject contains `Re:`" branch was a
 /// false-positive vector — any human "Re:" from any sender would have marked
 /// the test a spurious success.
+///
+/// Residual (Codex pqg adrev R2 #2, P2, tracked as a follow-up): a SERVICE
+/// message already pending on the CMS for this callsign (or, on the `PAT_URL`
+/// path, old SERVICE mail in the operator's existing mbox) would also match,
+/// reporting success before *this* `/test/` reply arrives. The robust fix is a
+/// per-send nonce in the subject correlated against the reply — deferred until
+/// the Winlink autoresponder's subject-echo behavior is confirmed firsthand
+/// (we don't guess Winlink internals; see the AI-amateur-radio-reliability
+/// note). Pending unrelated SERVICE mail is uncommon for the fresh-mbox path.
 fn is_autoresponder_reply(from: &str) -> bool {
     from.to_uppercase().contains("SERVICE@WINLINK.ORG")
 }
