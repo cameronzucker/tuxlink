@@ -11,7 +11,7 @@
 //   - Skip dispatches SKIP_TEST_SEND → step = complete
 //   - RETURN_TO_CREDENTIALS from failed clears password + navigates back
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { WizardProvider } from './wizardContext';
 import { Step3TestSend } from './Step3TestSend';
@@ -428,5 +428,108 @@ describe('<Step3TestSend>', () => {
       expect(screen.getByTestId('probe-substate')).toHaveTextContent('sending');
     });
     expect(screen.queryByTestId('mock-banner')).not.toBeInTheDocument();
+  });
+
+  // ── tuxlink-9w8: sending-substate watchdog ────────────────────────────
+  // Scenario: a Busy result from a *different* holder means TEST_SEND_RESULT
+  // never arrives. The watchdog must fire and transition to a recoverable `failed`
+  // state so the operator is never stuck in `sending` indefinitely.
+  //
+  // Watchdog timeout: 45 000 ms — generous enough to never false-fire on a
+  // legitimately slow live send (backend polls up to 30 s per wizard.rs
+  // TEST_SEND_TIMEOUT_SECS). The watchdog is only the backstop for the
+  // genuinely-stuck case.
+
+  describe('sending-substate watchdog (tuxlink-9w8)', () => {
+    // Use fake timers for the whole watchdog block so we can advance time without
+    // real 45-second waits.
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('watchdog: no TEST_SEND_RESULT within 45 s → transitions to recoverable failed state', async () => {
+      // Keep the invoke permanently pending (simulates a Busy from a different
+      // holder — the real wizard_run_test_send call that holds the mutex never
+      // delivers a TEST_SEND_RESULT to THIS window).
+      (invoke as ReturnType<typeof vi.fn>).mockImplementation((cmd: string) => {
+        if (cmd === 'wizard_test_send_is_mocked') return Promise.resolve(false);
+        return new Promise(() => { /* never resolves — simulates stuck-in-sending */ });
+      });
+
+      renderInState({ testSendSubstate: 'sending' });
+
+      // Before the watchdog fires, we are still in `sending`.
+      expect(screen.getByTestId('probe-substate')).toHaveTextContent('sending');
+
+      // Advance fake clock past the 45-second watchdog.
+      await act(async () => {
+        vi.advanceTimersByTime(45_001);
+      });
+
+      // Watchdog fired: must be in `failed` with a clear "timed out / busy" message.
+      expect(screen.getByTestId('probe-substate')).toHaveTextContent('failed');
+      // The error copy must mention timeout so the operator knows it is recoverable.
+      expect(screen.getByTestId('failed-error')).toBeInTheDocument();
+      expect(screen.getByTestId('failed-error').textContent).toMatch(/timed out|busy/i);
+      // Operator must not be stuck — the [Retry] control must be present.
+      expect(screen.getByTestId('retry-btn')).toBeInTheDocument();
+    });
+
+    it('watchdog: TEST_SEND_RESULT arrives before 45 s → watchdog cancelled (no spurious timeout-failure)', async () => {
+      // The invoke resolves quickly — legitimate fast send.
+      (invoke as ReturnType<typeof vi.fn>).mockImplementation((cmd: string) => {
+        if (cmd === 'wizard_test_send_is_mocked') return Promise.resolve(false);
+        return Promise.resolve({ kind: 'Success', detail: { reply_subject: 'Re: test' } });
+      });
+
+      renderInState();
+      await act(async () => {
+        fireEvent.click(screen.getByTestId('send-test-btn'));
+      });
+      await act(async () => { await Promise.resolve(); });
+
+      // Already in `success` — the watchdog should have been cancelled.
+      expect(screen.getByTestId('probe-substate')).toHaveTextContent('success');
+
+      // Advance way past the watchdog window — if the timer was NOT cancelled this
+      // would fire and transition us back to `failed`, which we must not see.
+      await act(async () => {
+        vi.advanceTimersByTime(90_000);
+      });
+
+      // Still in `success` (or `complete` if auto-advance also ran) — NOT `failed`.
+      const substate = screen.getByTestId('probe-substate').textContent;
+      expect(substate).not.toBe('failed');
+    });
+
+    it('watchdog: leaving `sending` via Skip cancels the watchdog (no late transition after unmount / substate change)', async () => {
+      // Keep the invoke permanently pending.
+      (invoke as ReturnType<typeof vi.fn>).mockImplementation((cmd: string) => {
+        if (cmd === 'wizard_test_send_is_mocked') return Promise.resolve(false);
+        return new Promise(() => { /* never resolves */ });
+      });
+
+      renderInState({ testSendSubstate: 'sending' });
+
+      // Operator skips while the watchdog is running — leaves `sending`.
+      await act(async () => {
+        fireEvent.click(screen.getByTestId('skip-and-go-btn'));
+      });
+
+      expect(screen.getByTestId('probe-step')).toHaveTextContent('complete');
+
+      // Now advance past the watchdog window — if not cancelled, the watchdog
+      // would fire a late dispatch (possibly a setState-after-unmount React warning,
+      // and certainly a wrong `failed` transition).
+      await act(async () => {
+        vi.advanceTimersByTime(90_000);
+      });
+
+      // Must still be `complete` (step), NOT `failed`.
+      expect(screen.getByTestId('probe-step')).toHaveTextContent('complete');
+    });
   });
 });
