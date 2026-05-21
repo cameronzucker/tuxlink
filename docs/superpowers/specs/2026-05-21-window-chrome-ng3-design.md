@@ -125,6 +125,15 @@ Locked set (operator-approved 2026-05-21):
 `CmdOrCtrl` convention from the native definitions carries over). `F5` and `Ctrl+Shift+O`
 both map to the single `menu:session:connect` action.
 
+**Reply wiring (operator decision 2026-05-21, option b).** `Ctrl+R` / Message → Reply
+(and Reply All / Forward) now genuinely **open a reply window from the current
+selection** — the menu/accelerator path was previously a dead event (nothing consumed
+`menu:message:reply`), even though the reading-pane button advertises "Reply (Ctrl+R)".
+The dispatcher's reply handlers call the existing `openReplyWindow(message, mode)`
+(`replyActions.ts`), reading the parsed selected message from `useMessage` (shared
+react-query cache with the reading pane). No-op when nothing is selected. This is a
+small scope addition beyond pure chrome, approved at the plan execution gate.
+
 **Compose window shortcuts are untouched.** The compose window already self-manages
 `Ctrl+S` (save draft) and `Ctrl+Enter` (send) — [`Compose.tsx:25`](../../../src/compose/Compose.tsx#L25).
 ng3 must preserve them; it adds no main-window accelerators to the compose window.
@@ -212,8 +221,10 @@ capabilities"). This spec is the brainstorm output; `writing-plans` is next.
 - **macOS/Windows chrome.** Linux-first; if ever needed, those platforms keep native
   decorations rather than the Adwaita HTML controls.
 - **New menu actions / completing stubs.** ng3 changes the chrome and the action
-  *producer*; it does not add features or complete any stubbed action (e.g. Print stays
-  whatever it is today).
+  *producer*; it does not add features or complete stubbed actions (Print, Templates,
+  Preferences, etc. stay whatever they are today). **Exception (operator-approved, §3):**
+  the Reply / Reply All / Forward accelerators + menu items are wired to open a reply
+  window — a deliberate small scope addition, not a stub completion.
 - **Custom color-scheme editor.** Deferred (its own issue, per the tuxlink-8za handoff).
 - **Compose-window accelerators beyond the existing `Ctrl+S`/`Ctrl+Enter`.**
 

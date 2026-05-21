@@ -1122,43 +1122,47 @@ Render the chrome, route the menu through the dispatcher + accelerators, and rem
 
 In `src/shell/AppShell.tsx`:
 
-(a) Add imports:
+(a) Add imports (`invoke` is already imported at AppShell.tsx:18 — do not duplicate):
 ```tsx
 import { TitleBar } from './chrome/TitleBar';
 import { MenuBar } from './chrome/MenuBar';
 import { ResizeHandles } from './chrome/ResizeHandles';
 import { useAccelerators } from './chrome/useAccelerators';
 import { dispatchMenuAction, type MenuHandlers } from './chrome/dispatchMenuAction';
-import { invoke } from '@tauri-apps/api/core';
+import { useMessage } from '../mailbox/useMessage';
+import { openReplyWindow } from '../mailbox/replyActions';
 import { newDraftId } from '../routing'; // see Step 1d
 ```
 
-(b) Replace the existing `useEffect` that calls `listen('menu', …)` ([AppShell.tsx:104-136](../../../src/shell/AppShell.tsx#L104-L136)) with a handlers object + dispatcher + accelerators:
+(b) Read the currently-open parsed message (shares the reading pane's react-query cache by key — no double-fetch), then replace the existing `useEffect` that calls `listen('menu', …)` ([AppShell.tsx:104-136](../../../src/shell/AppShell.tsx#L104-L136)) with a handlers object + dispatcher + accelerators:
 ```tsx
+  // The parsed message the reading pane is showing — drives menu/accelerator
+  // Reply/Reply All/Forward. Same query key as MessageView's useMessage, so
+  // TanStack dedupes (no extra IPC). `data` is undefined when nothing is selected.
+  const { data: openMessage } = useMessage(selectedMessage);
+
   const handlers: MenuHandlers = useMemo(() => ({
     openCompose: () => { void invoke('compose_window_open', { draftId: newDraftId() }); },
     connect: onConnect,
-    // Reply/Reply All/Forward stay no-ops: the menu never drove reply (AppShell's
-    // old listen('menu') ignored menu:message:reply; openReplyWindow needs the
-    // PARSED selected message, held only by the reading pane). Reply happens from
-    // the reading-pane buttons (MessageView). Keeping these no-ops = no regression.
-    // Making Ctrl+R/Reply actually open a reply window is a small ENHANCEMENT
-    // (lift the parsed message to AppShell) — operator decision at the execution gate.
-    reply: () => {},
-    replyAll: () => {},
-    forward: () => {},
+    // Operator decision 2026-05-21 (option b): Reply/Reply All/Forward open a
+    // reply window from the current selection — making good on the reading-pane
+    // button label "Reply (Ctrl+R)". Reuses openReplyWindow (seeds a prefilled
+    // draft + opens a compose window). No-op when nothing is selected.
+    reply: () => { if (openMessage) void openReplyWindow(openMessage, 'reply').catch(() => {}); },
+    replyAll: () => { if (openMessage) void openReplyWindow(openMessage, 'replyAll').catch(() => {}); },
+    forward: () => { if (openMessage) void openReplyWindow(openMessage, 'forward').catch(() => {}); },
     toggleSessionLog: () => setShowSessionLog((s) => !s),
     toggleStatusBar: () => setShowStatusBar((s) => !s),
     selectFolder: (folder) => { setSelectedFolder(folder); setSelectedMessage(null); },
     setScheme: (id) => { applyColorScheme(id); saveColorScheme(id); },
     quit: () => { void invoke('app_quit'); },
-  }), [onConnect]);
+  }), [onConnect, openMessage]);
 
   const onMenuAction = useCallback((id: string) => dispatchMenuAction(id, handlers), [handlers]);
   useAccelerators(onMenuAction);
 ```
 
-> **Decision (decisive):** `reply`/`replyAll`/`forward` are documented no-ops in ng3 — this preserves current behavior exactly (menu-driven reply was never wired; `openReplyWindow(message, mode)` in `replyActions.ts` needs the parsed selected message that only the reading pane holds). The reading-pane reply buttons remain the reply path. Wiring `Ctrl+R`/Reply to actually open a reply window is a separate small enhancement surfaced to the operator at the execution gate.
+> **Decision (operator-approved 2026-05-21, option b):** `Ctrl+R` / Message→Reply (and Reply All / Forward) now genuinely open a reply window from the current selection via the existing `openReplyWindow(message, mode)` (`ReplyMode = 'reply' | 'replyAll' | 'forward'`). When nothing is selected they are a safe no-op. This makes the reading-pane button's advertised "Reply (Ctrl+R)" shortcut real. The reading-pane buttons remain and call the same path.
 
 (c) Render the chrome at the top of the returned JSX, before `<DashboardRibbon>`:
 ```tsx
@@ -1205,6 +1209,8 @@ vi.mock('@tauri-apps/api/window', () => ({
 }));
 ```
 Update the "View menu toggles session log/status bar" tests to click through `<MenuBar>` instead of calling `h.menuHandler`. Remove the now-unused `h.menuHandler` hoist if no test needs it.
+
+Add a reply-wiring test: with a message selected (the existing fixture/selection machinery), click **Message → Reply**, then assert `invoke` was called with `'compose_window_open'` (openReplyWindow seeds a draft then opens a compose window). This proves option (b) — the menu/accelerator reply path actually opens a window. The `invoke` mock already returns a `message_read` payload, so `useMessage` resolves `openMessage`.
 
 - [ ] **Step 4: Run the frontend suite**
 
@@ -1447,6 +1453,6 @@ Add a top entry to `dev/implementation-log.md` (date + topic + gates + smoke res
 
 **Spec coverage:** §2.1 decorations → Task 11/12; §2.2 native-menu removal + vocabulary → Tasks 3, 11; §2.3 components → Tasks 7,8,9; §2.4 dispatcher + broadcast removal → Tasks 4, 10; §2.5 app_quit → Task 1; §3 accelerators → Tasks 3, 5; §4 compose chrome → Task 12; §5 controls/drag/resize + capabilities → Tasks 2, 8, 9; §6 tokens → Task 6; §7 testing → every task + Task 13; §8 process → Task 13 Step 2. All sections covered.
 
-**Placeholder scan:** the `reply/replyAll/forward` handler bodies in Task 10 are decisive no-ops (preserve current behavior; menu-driven reply was never wired) with the enhancement surfaced to the operator at the execution gate — not a hidden TODO. No other placeholders.
+**Placeholder scan:** the `reply/replyAll/forward` handlers in Task 10 are fully wired (operator-approved option b) to `openReplyWindow(openMessage, mode)`, guarded on a selection — complete code, not a TODO. No other placeholders.
 
 **Type consistency:** `MenuActionId`, `MENU_ACTION_IDS`, `MENU_TREE`, `ACCELERATORS`, `MenuHandlers`, `dispatchMenuAction`, `matchAccelerator`, `useAccelerators`, `MenuBar`, `TitleBar`, `ResizeHandles`, `ComposeTitleBar`, `app_quit` are used consistently across tasks. `ColorScheme` + `isColorScheme` confirmed against `colorScheme.ts`'s actual exports.
