@@ -16,7 +16,7 @@ use std::io::{BufRead, Write};
 
 use super::message::{self, Message};
 use super::proposal::{self, Answer, Proposal};
-use super::{lzhuf, transfer, wire};
+use super::{handshake, lzhuf, secure, transfer, wire};
 
 /// At most this many proposals are offered in a single batch.
 const MAX_BATCH: usize = 5;
@@ -53,6 +53,94 @@ pub struct ReceiveOutcome {
     pub remote_quit: bool,
     /// True if the other side had no more messages to offer.
     pub remote_no_messages: bool,
+}
+
+/// What the caller must supply to run a full exchange.
+#[derive(Debug, Clone)]
+pub struct ExchangeConfig {
+    /// Our call sign.
+    pub mycall: String,
+    /// The station we are connecting to (a CMS gateway call, or `SERVICE`).
+    pub targetcall: String,
+    /// Our grid locator, e.g. `CN87`.
+    pub locator: String,
+    /// The station password, used only if the server sends a challenge. Supplied
+    /// by the caller (from the OS keyring); never stored here.
+    pub password: Option<String>,
+}
+
+/// The result of a whole exchange.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct ExchangeResult {
+    pub received: Vec<Message>,
+    pub sent: Vec<String>,
+    pub rejected: Vec<String>,
+    pub deferred: Vec<String>,
+}
+
+/// Run a full exchange over an already-connected transport: read the server's
+/// handshake, answer it (with a secure-login token if challenged), then
+/// alternate turns until either side quits.
+///
+/// The transport is split into a reader and a writer so this is exercised with
+/// scripted in-memory streams; the telnet layer supplies a TCP socket. The
+/// client speaks second in the handshake but takes the first message turn, which
+/// is why an empty mailbox first sends `FF` and only later `FQ`.
+pub fn run_exchange<R, W, F>(
+    reader: &mut R,
+    writer: &mut W,
+    config: &ExchangeConfig,
+    outbound: Vec<OutboundMessage>,
+    decide: F,
+) -> Result<ExchangeResult, ExchangeError>
+where
+    R: BufRead,
+    W: Write,
+    F: Fn(&[Proposal]) -> Vec<Answer>,
+{
+    // The server speaks first.
+    let remote = handshake::read_remote_handshake(reader).map_err(ExchangeError::Handshake)?;
+    let token = match (&remote.challenge, &config.password) {
+        (Some(challenge), Some(password)) => {
+            Some(secure::secure_login_response(challenge, password))
+        }
+        (Some(_), None) => return Err(ExchangeError::PasswordRequired),
+        (None, _) => None,
+    };
+    let our_handshake = handshake::build_handshake(
+        &config.mycall,
+        &config.targetcall,
+        &config.locator,
+        token.as_deref(),
+    );
+    write_bytes(writer, &our_handshake)?;
+
+    let mut result = ExchangeResult::default();
+    let mut remaining = outbound;
+    let mut remote_no_messages = false;
+    let mut my_turn = true; // the client takes the first message turn
+
+    loop {
+        if my_turn {
+            let outcome = send_turn(reader, writer, &remaining, remote_no_messages)?;
+            result.sent.extend(outcome.sent);
+            result.rejected.extend(outcome.rejected);
+            result.deferred.extend(outcome.deferred);
+            remaining.clear(); // each message is offered once
+            if outcome.quit_sent {
+                break;
+            }
+        } else {
+            let outcome = receive_turn(reader, writer, &decide)?;
+            result.received.extend(outcome.messages);
+            remote_no_messages = outcome.remote_no_messages;
+            if outcome.remote_quit {
+                break;
+            }
+        }
+        my_turn = !my_turn;
+    }
+    Ok(result)
 }
 
 /// Our turn: offer the pending messages, read the answers, send the accepted
@@ -240,6 +328,10 @@ pub enum ExchangeError {
     Decompress(lzhuf::LzhufError),
     /// A decompressed message could not be parsed.
     Parse(message::ParseError),
+    /// The handshake with the server failed.
+    Handshake(handshake::HandshakeError),
+    /// The server asked for a password but none was provided.
+    PasswordRequired,
 }
 
 #[cfg(test)]
@@ -382,6 +474,85 @@ mod tests {
         assert!(outcome.remote_no_messages);
         assert!(outcome.messages.is_empty());
         assert!(writer.is_empty());
+    }
+
+    #[test]
+    fn a_session_with_no_traffic_handshakes_then_quits() {
+        let mut server = Vec::new();
+        server.extend_from_slice(b"[WL2K-5.0-B2FHM$]\r;PQ: 12345678\rCMS>\r");
+        server.extend_from_slice(b"FF\r"); // the server's one turn: no messages
+        let mut reader = Cursor::new(server);
+        let mut writer = Vec::new();
+
+        let config = ExchangeConfig {
+            mycall: "N7CPZ".into(),
+            targetcall: "SERVICE".into(),
+            locator: "CN87".into(),
+            password: Some("MYPASS".into()),
+        };
+        let result = run_exchange(&mut reader, &mut writer, &config, vec![], |_| vec![]).unwrap();
+
+        assert!(result.received.is_empty());
+        assert!(result.sent.is_empty());
+
+        // We answer the challenge, then signal no-more (FF), then quit (FQ).
+        let token = crate::winlink::secure::secure_login_response("12345678", "MYPASS");
+        let mut expected =
+            crate::winlink::handshake::build_handshake("N7CPZ", "SERVICE", "CN87", Some(&token));
+        expected.extend_from_slice(b"FF\r");
+        expected.extend_from_slice(b"FQ\r");
+        assert_eq!(writer, expected);
+    }
+
+    #[test]
+    fn a_session_receives_an_offered_message() {
+        let mut msg = Message::new();
+        msg.set_header("Mid", "SRVMSG000001");
+        msg.set_header("Subject", "Weather");
+        msg.set_body(b"Wind calm.\r\n".to_vec());
+        let (proposal, compressed) = msg.to_proposal().unwrap();
+
+        let mut server = Vec::new();
+        server.extend_from_slice(b"[WL2K-5.0-B2FHM$]\rCMS>\r"); // no challenge
+        server.extend_from_slice(proposal.line().as_bytes());
+        server.push(b'\r');
+        server.extend_from_slice(batch_checksum_line(&[proposal]).as_bytes());
+        server.push(b'\r');
+        server.extend_from_slice(&transfer::frame_block("Weather", 0, &compressed));
+        server.extend_from_slice(b"FF\r"); // the server's next turn: no more
+
+        let mut reader = Cursor::new(server);
+        let mut writer = Vec::new();
+        let config = ExchangeConfig {
+            mycall: "N7CPZ".into(),
+            targetcall: "SERVICE".into(),
+            locator: "CN87".into(),
+            password: None,
+        };
+        let result = run_exchange(&mut reader, &mut writer, &config, vec![], |_| {
+            vec![Answer::Accept { resume_offset: 0 }]
+        })
+        .unwrap();
+
+        assert_eq!(result.received.len(), 1);
+        assert_eq!(result.received[0].header("Mid"), Some("SRVMSG000001"));
+        assert_eq!(result.received[0].body(), b"Wind calm.\r\n");
+    }
+
+    #[test]
+    fn a_challenge_with_no_password_is_an_error() {
+        let mut reader = Cursor::new(b"[WL2K-5.0-B2FHM$]\r;PQ: 12345678\rCMS>\r".to_vec());
+        let mut writer = Vec::new();
+        let config = ExchangeConfig {
+            mycall: "N7CPZ".into(),
+            targetcall: "SERVICE".into(),
+            locator: "CN87".into(),
+            password: None,
+        };
+        assert_eq!(
+            run_exchange(&mut reader, &mut writer, &config, vec![], |_| vec![]),
+            Err(ExchangeError::PasswordRequired)
+        );
     }
 
     #[test]
