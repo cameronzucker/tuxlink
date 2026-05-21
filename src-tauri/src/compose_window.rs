@@ -134,18 +134,35 @@ pub fn compose_window_open(
     // `get_webview_window` check above can hit `build()` and receive an
     // `AlreadyExists` error. Treat that as success — the window exists,
     // attempt to focus it before returning.
-    let build_result = WebviewWindowBuilder::new(
-        &app,
-        &label,
-        WebviewUrl::App(url.into()),
-    )
-    .title("New Message — Tuxlink")
-    .inner_size(720.0, 560.0)
-    .min_inner_size(480.0, 360.0)
-    .resizable(true)
-    .decorations(false)
-    .center()
-    .build();
+    // tuxlink-ng3 smoke #8: dock the compose window to the MAIN window's
+    // bottom-right (Gmail-style placement) rather than screen-center. This is
+    // the first-open default; `tauri-plugin-window-state` restores a saved
+    // position on later opens of the SAME label (each new draft has a unique
+    // label, so new composes get the dock). Falls back to `.center()` if the
+    // main window's geometry can't be read.
+    const COMPOSE_W: f64 = 720.0;
+    const COMPOSE_H: f64 = 560.0;
+    const DOCK_MARGIN: f64 = 24.0;
+    let mut builder = WebviewWindowBuilder::new(&app, &label, WebviewUrl::App(url.into()))
+        .title("New Message — Tuxlink")
+        .inner_size(COMPOSE_W, COMPOSE_H)
+        .min_inner_size(480.0, 360.0)
+        .resizable(true)
+        .decorations(false);
+    builder = match app.get_webview_window(MAIN_WINDOW_LABEL).and_then(|m| {
+        // outer_position/size are PHYSICAL px; convert to LOGICAL (what
+        // `.position()` expects) via the main window's scale factor.
+        let pos = m.outer_position().ok()?;
+        let size = m.outer_size().ok()?;
+        let scale = m.scale_factor().ok()?;
+        let x = pos.x as f64 / scale + size.width as f64 / scale - COMPOSE_W - DOCK_MARGIN;
+        let y = pos.y as f64 / scale + size.height as f64 / scale - COMPOSE_H - DOCK_MARGIN;
+        Some((x.max(0.0), y.max(0.0)))
+    }) {
+        Some((x, y)) => builder.position(x, y),
+        None => builder.center(),
+    };
+    let build_result = builder.build();
 
     match build_result {
         Ok(_) => {}

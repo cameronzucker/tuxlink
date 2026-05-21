@@ -346,21 +346,8 @@ export function Compose({ draftId }: ComposeProps) {
       <ComposeTitleBar onClose={handleRequestClose} />
 
       {/* ------------------------------------------------------------------ */}
-      {/* Header                                                              */}
-      {/* ------------------------------------------------------------------ */}
-      <div className="compose-header">
-        <span className="compose-header__title">New Message — Tuxlink</span>
-        <button
-          className="compose-btn compose-btn--ghost compose-header__close"
-          aria-label="Close compose window"
-          onClick={handleRequestClose}
-        >
-          ✕
-        </button>
-      </div>
-
-      {/* ------------------------------------------------------------------ */}
-      {/* Fields                                                              */}
+      {/* Fields (the duplicate in-form header was removed — ComposeTitleBar  */}
+      {/* is the single title bar + close, tuxlink-ng3 smoke #4)              */}
       {/* ------------------------------------------------------------------ */}
       <div className="compose-fields">
 
