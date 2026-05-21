@@ -11,3 +11,4 @@
 //! on-disk mailbox.
 
 pub mod message;
+pub mod proposal;
