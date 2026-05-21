@@ -528,6 +528,11 @@ pub async fn message_read(
         .current()
         .ok_or_else(|| UiError::NotConfigured("backend offline".to_string()))?;
     let body = backend.read_message_in(parsed_folder, &mid).await?;
+    // Opening a message marks it read (tuxlink-xgn). Best-effort: a marker-write
+    // failure must not fail the read the user just performed, so the error is
+    // discarded (the message simply stays unread and self-heals on the next
+    // open). For backends without read-state this is the trait's no-op default.
+    let _ = backend.mark_read(parsed_folder, &mid).await;
     parse_raw_rfc5322(&id, &body.raw_rfc5322)
 }
 

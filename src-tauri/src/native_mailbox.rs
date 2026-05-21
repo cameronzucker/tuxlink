@@ -58,7 +58,14 @@ impl Mailbox {
             }
             let raw = fs::read(&path)?;
             if let Ok(msg) = Message::from_bytes(&raw) {
-                metas.push(meta_from_message(&msg));
+                let mut meta = meta_from_message(&msg);
+                // Unread is a received-mail concept: only the Inbox surfaces it
+                // (the Mock B sidebar shows Sent as a total, not an unread
+                // count). A message is unread until a `<mid>.read` sidecar marks
+                // it read.
+                meta.unread =
+                    folder == MailboxFolder::Inbox && !path.with_extension("read").exists();
+                metas.push(meta);
             }
         }
         Ok(metas)
@@ -96,6 +103,28 @@ impl Mailbox {
         fs::create_dir_all(&dst_dir)?;
         fs::write(dst_dir.join(format!("{}.b2f", id.0)), raw)?;
         fs::remove_file(&src)?;
+        // Carry the read-marker so read-state follows the message and no orphan
+        // marker is left behind in the source folder.
+        let src_marker = self.folder_dir(from).join(format!("{}.read", id.0));
+        if src_marker.exists() {
+            fs::write(dst_dir.join(format!("{}.read", id.0)), [])?;
+            fs::remove_file(&src_marker)?;
+        }
+        Ok(())
+    }
+
+    /// Mark a message read by dropping an empty `<mid>.read` sidecar next to its
+    /// `<mid>.b2f`. Tolerant: a message with no file on disk is a no-op (it may
+    /// have been moved or removed between the list view and the open), never an
+    /// error. Read-state is only *surfaced* for the Inbox (see [`Mailbox::list`]),
+    /// but the marker is written for whatever folder is given so it can travel
+    /// with the message in [`Mailbox::move_to`].
+    pub fn mark_read(&self, folder: MailboxFolder, id: &MessageId) -> Result<(), BackendError> {
+        let dir = self.folder_dir(folder);
+        if !dir.join(format!("{}.b2f", id.0)).exists() {
+            return Ok(());
+        }
+        fs::write(dir.join(format!("{}.read", id.0)), [])?;
         Ok(())
     }
 
@@ -123,7 +152,9 @@ fn meta_from_message(msg: &Message) -> MessageMeta {
         // Native populates recipients (Pat's list DTO can't) — one per To line.
         to: msg.header_all("To").iter().map(|s| s.to_string()).collect(),
         date: winlink_date_to_rfc3339(msg.header("Date").unwrap_or_default()),
-        unread: false, // read-state tracking is a later refinement
+        // Placeholder; the real value is set by `list`, which is the only
+        // caller and knows the folder + read-marker state (tuxlink-xgn).
+        unread: false,
         body_size,
         has_attachments: false, // attachment parsing is a later step
     }
@@ -208,5 +239,88 @@ mod tests {
         let mbox = Mailbox::new(dir.path());
         let err = mbox.read(MailboxFolder::Inbox, &MessageId::new("NOPE")).unwrap_err();
         assert!(matches!(err, BackendError::NotFound(_)));
+    }
+
+    // ---- read/unread state (tuxlink-xgn) -----------------------------------
+
+    #[test]
+    fn an_inbox_message_is_unread_until_marked() {
+        let dir = tempdir().unwrap();
+        let mbox = Mailbox::new(dir.path());
+        mbox.store(MailboxFolder::Inbox, &raw("Hello", "Body text")).unwrap();
+
+        let metas = mbox.list(MailboxFolder::Inbox).unwrap();
+        assert!(metas[0].unread, "a freshly stored inbox message should be unread");
+    }
+
+    #[test]
+    fn non_inbox_folders_never_report_unread() {
+        // Unread is a received-mail (Inbox) concept; the Mock B sidebar shows
+        // Sent as a total, not an unread count. Sent/Outbox/Archive must always
+        // report unread = false even with no read-marker on disk.
+        let dir = tempdir().unwrap();
+        let mbox = Mailbox::new(dir.path());
+        mbox.store(MailboxFolder::Sent, &raw("S", "x")).unwrap();
+        mbox.store(MailboxFolder::Outbox, &raw("O", "y")).unwrap();
+
+        assert!(!mbox.list(MailboxFolder::Sent).unwrap()[0].unread);
+        assert!(!mbox.list(MailboxFolder::Outbox).unwrap()[0].unread);
+    }
+
+    #[test]
+    fn marking_an_inbox_message_read_flips_it() {
+        let dir = tempdir().unwrap();
+        let mbox = Mailbox::new(dir.path());
+        let id = mbox.store(MailboxFolder::Inbox, &raw("Hello", "Body text")).unwrap();
+        assert!(mbox.list(MailboxFolder::Inbox).unwrap()[0].unread);
+
+        mbox.mark_read(MailboxFolder::Inbox, &id).unwrap();
+
+        assert!(!mbox.list(MailboxFolder::Inbox).unwrap()[0].unread);
+    }
+
+    #[test]
+    fn read_state_persists_across_mailbox_instances() {
+        let dir = tempdir().unwrap();
+        let id = {
+            let mbox = Mailbox::new(dir.path());
+            let id = mbox.store(MailboxFolder::Inbox, &raw("Hello", "Body text")).unwrap();
+            mbox.mark_read(MailboxFolder::Inbox, &id).unwrap();
+            id
+        };
+        // A fresh Mailbox over the same root must still see the message as read.
+        let reopened = Mailbox::new(dir.path());
+        let metas = reopened.list(MailboxFolder::Inbox).unwrap();
+        assert_eq!(metas[0].id, id);
+        assert!(!metas[0].unread, "read state must persist on disk");
+    }
+
+    #[test]
+    fn marking_a_missing_message_read_is_not_an_error() {
+        let dir = tempdir().unwrap();
+        let mbox = Mailbox::new(dir.path());
+        // No such message; marking read is a tolerant no-op (the message may
+        // have been moved/removed between list and open).
+        mbox.mark_read(MailboxFolder::Inbox, &MessageId::new("NOPE")).unwrap();
+    }
+
+    #[test]
+    fn moving_a_message_carries_its_read_marker() {
+        let dir = tempdir().unwrap();
+        let mbox = Mailbox::new(dir.path());
+        let id = mbox.store(MailboxFolder::Inbox, &raw("Hello", "x")).unwrap();
+        mbox.mark_read(MailboxFolder::Inbox, &id).unwrap();
+
+        mbox.move_to(MailboxFolder::Inbox, MailboxFolder::Archive, &id).unwrap();
+
+        // The marker follows the message; no orphan is left in the source.
+        assert!(
+            !dir.path().join("inbox").join(format!("{}.read", id.0)).exists(),
+            "source read-marker should not be orphaned"
+        );
+        assert!(
+            dir.path().join("archive").join(format!("{}.read", id.0)).exists(),
+            "read-marker should travel with the message"
+        );
     }
 }

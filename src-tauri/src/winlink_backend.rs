@@ -276,6 +276,17 @@ pub trait WinlinkBackend: Send + Sync {
         self.read_message_in(MailboxFolder::Inbox, id).await
     }
 
+    /// Mark a message read. Best-effort: backends with no read-state (e.g.
+    /// `PatBackend`, which delegates read-state to Pat's own store) inherit
+    /// this no-op default. `NativeBackend` overrides it to drop a read-marker
+    /// in its store. A failure here MUST NOT fail the read that triggered it —
+    /// the caller (`message_read`) treats read-state as best-effort
+    /// (tuxlink-xgn).
+    async fn mark_read(&self, _folder: MailboxFolder, _id: &MessageId)
+        -> Result<(), BackendError> {
+        Ok(())
+    }
+
     /// Returns `Ok(Some(id))` when the backend assigns a MID at queue
     /// time, `Ok(None)` when it does not (current Pat 1.0.0 behavior:
     /// returns a plain-text confirmation, no MID).
@@ -341,6 +352,10 @@ impl WinlinkBackend for NativeBackend {
         id: &MessageId,
     ) -> Result<MessageBody, BackendError> {
         self.mailbox.read(folder, id)
+    }
+
+    async fn mark_read(&self, folder: MailboxFolder, id: &MessageId) -> Result<(), BackendError> {
+        self.mailbox.mark_read(folder, id)
     }
 
     async fn send_message(
@@ -1023,5 +1038,57 @@ fn translate_pat_err_for_read(err: PatClientError, id: &MessageId) -> BackendErr
     match err {
         PatClientError::Status(404) => BackendError::NotFound(id.clone()),
         other => translate_pat_err(other, "read_message"),
+    }
+}
+
+#[cfg(test)]
+mod native_read_state_tests {
+    use super::*;
+    use crate::config::{
+        CmsTransport, Config, ConnectConfig, GpsState, IdentityConfig, PositionPrecision,
+        PrivacyConfig, CONFIG_SCHEMA_VERSION,
+    };
+    use crate::native_mailbox::Mailbox;
+    use crate::winlink::compose::compose_message;
+    use tempfile::tempdir;
+
+    fn offline_config() -> Config {
+        Config {
+            schema_version: CONFIG_SCHEMA_VERSION,
+            wizard_completed: true,
+            connect: ConnectConfig { connect_to_cms: false, transport: CmsTransport::Telnet },
+            identity: IdentityConfig { callsign: None, identifier: None, grid: None },
+            privacy: PrivacyConfig {
+                gps_state: GpsState::Off,
+                position_precision: PositionPrecision::FourCharGrid,
+            },
+            pat_mbo_address: None,
+        }
+    }
+
+    // tuxlink-xgn: the NativeBackend override of `mark_read` flips a message
+    // from unread to read as observed through `list_messages` (the surface the
+    // mailbox_list command consumes). Seeding goes through a sibling Mailbox at
+    // the same root — the backend's `mailbox` field is private, so sharing the
+    // on-disk root is the public seam (no test-only production code).
+    #[tokio::test]
+    async fn native_backend_mark_read_flips_unread_seen_via_list() {
+        let dir = tempdir().unwrap();
+        let seed = Mailbox::new(dir.path());
+        let raw = compose_message("N7CPZ", &["W1AW"], &[], "Hi", "body", 1_716_200_000).to_bytes();
+        let id = seed.store(MailboxFolder::Inbox, &raw).unwrap();
+
+        let backend = NativeBackend::new(offline_config(), dir.path());
+        assert!(
+            backend.list_messages(MailboxFolder::Inbox).await.unwrap()[0].unread,
+            "seeded inbox message should start unread"
+        );
+
+        backend.mark_read(MailboxFolder::Inbox, &id).await.unwrap();
+
+        assert!(
+            !backend.list_messages(MailboxFolder::Inbox).await.unwrap()[0].unread,
+            "after mark_read the message should be read"
+        );
     }
 }
