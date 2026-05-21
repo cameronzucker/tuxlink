@@ -3,7 +3,7 @@
  *
  * The ribbon must NEVER show a hardcoded "telnet ready" suffix. It must
  * reflect the actual configured or active transport. Bug was confirmed during
- * the tuxlink-22l live smoke (operator N7CPZ, CmsSsl config → showed
+ * the tuxlink-22l live smoke (operator N0CALL, CmsSsl config → showed
  * "Idle · telnet ready").
  *
  * DEV_FIXTURE is false under vitest, so the component renders from `data`.
@@ -20,7 +20,7 @@ import type { StatusBarData, StatusTone } from './useStatus';
 
 function makeData(overrides: Partial<StatusBarData> = {}): StatusBarData {
   return {
-    callsign: 'N7CPZ',
+    callsign: 'N0CALL',
     grid: 'DN31',
     gridTooltip: null,
     state: { label: 'Idle', tone: 'idle' as StatusTone },
