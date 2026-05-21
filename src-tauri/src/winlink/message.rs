@@ -11,6 +11,8 @@
 //! Header keys are case-insensitive. Attachment handling is added in a later
 //! step; this step covers building a message and writing the header+body form.
 
+use super::proposal::Proposal;
+
 /// A Winlink message being built (and, later, parsed).
 pub struct Message {
     /// Headers in the order they were set. Order here does not matter — the
@@ -84,6 +86,28 @@ impl Message {
         &self.body
     }
 
+    /// Prepare this message for sending: the proposal line that offers it, and
+    /// the compressed bytes that will travel in the framed block.
+    ///
+    /// The whole serialized message (headers + body) is compressed; the proposal
+    /// reports both the uncompressed and compressed sizes so the other side
+    /// knows what it is accepting. Returns `None` if the message has no `Mid`,
+    /// which every sendable message must carry. Uses the standard compressed
+    /// format (`C`).
+    pub fn to_proposal(&self) -> Option<(Proposal, Vec<u8>)> {
+        let mid = self.header("Mid")?.to_string();
+        let bytes = self.to_bytes();
+        let compressed = crate::winlink::lzhuf::compress(&bytes);
+        let proposal = Proposal {
+            code: 'C',
+            msg_type: "EM".to_string(),
+            mid,
+            size: bytes.len(),
+            compressed_size: compressed.len(),
+        };
+        Some((proposal, compressed))
+    }
+
     /// Parse a message from the Winlink wire format (header block + body).
     ///
     /// Attachments are handled in a later step; this reads the header lines and
@@ -139,6 +163,61 @@ pub enum ParseError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::winlink::{lzhuf, transfer};
+
+    #[test]
+    fn builds_a_proposal_and_compressed_body_from_a_message() {
+        let mut msg = Message::new();
+        msg.set_header("Mid", "TESTMID12345");
+        msg.set_header("Subject", "Hello");
+        msg.set_header("From", "N7CPZ");
+        msg.set_body(b"Body text".to_vec());
+
+        let (proposal, compressed) = msg.to_proposal().unwrap();
+
+        assert_eq!(proposal.code, 'C');
+        assert_eq!(proposal.msg_type, "EM");
+        assert_eq!(proposal.mid, "TESTMID12345");
+        assert_eq!(proposal.size, msg.to_bytes().len());
+        assert_eq!(proposal.compressed_size, compressed.len());
+    }
+
+    #[test]
+    fn a_message_without_a_mid_cannot_become_a_proposal() {
+        let mut msg = Message::new();
+        msg.set_header("Subject", "No id");
+        msg.set_body(b"x".to_vec());
+        assert!(msg.to_proposal().is_none());
+    }
+
+    #[test]
+    fn a_message_survives_the_whole_send_then_receive_path() {
+        // Build a message, turn it into a proposal + compressed body, frame it
+        // for sending, read the frame back, decompress, and parse — the message
+        // that comes out the far end must match the one that went in.
+        let mut msg = Message::new();
+        msg.set_header("Mid", "ROUNDTRIP001");
+        msg.set_header("Subject", "Field report");
+        msg.set_header("From", "N7CPZ");
+        msg.set_header("To", "SERVICE@winlink.org");
+        msg.set_body(b"All stations operational. Net control standing by.\r\n".to_vec());
+
+        let (_proposal, compressed) = msg.to_proposal().unwrap();
+        let framed = transfer::frame_block("Field report", 0, &compressed);
+
+        let mut cursor = std::io::Cursor::new(framed);
+        let block = transfer::read_block(&mut cursor).unwrap();
+        let decompressed = lzhuf::decompress(&block.data).unwrap();
+        let received = Message::from_bytes(&decompressed).unwrap();
+
+        assert_eq!(received.header("Mid"), Some("ROUNDTRIP001"));
+        assert_eq!(received.header("Subject"), Some("Field report"));
+        assert_eq!(received.header("To"), Some("SERVICE@winlink.org"));
+        assert_eq!(
+            received.body(),
+            b"All stations operational. Net control standing by.\r\n"
+        );
+    }
 
     #[test]
     fn serializes_with_mid_first_then_alphabetical_headers_then_body() {
