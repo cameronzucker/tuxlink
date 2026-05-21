@@ -13,3 +13,4 @@
 pub mod lzhuf;
 pub mod message;
 pub mod proposal;
+pub mod transfer;
