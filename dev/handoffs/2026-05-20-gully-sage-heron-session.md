@@ -5,6 +5,35 @@
 
 > **Startup note for the next agent:** the local main checkout (`task-amd-main-ui`) is STALE vs the remote — the `fen-sycamore-falcon`/`grouse-esker-juniper` work lives on `origin/feat/v0.0.1` + open PRs, not in the local working tree or `git log`. If a handoff/ADR "doesn't exist locally," it's un-pulled remote state, not lost work. Verify with `gh pr list` before concluding anything is missing (that cost me the first 10 minutes).
 
+## 0a. CONTINUATION — after operator "stop handing off early, keep going"
+
+I initially wrapped after #88+pqg, calling the rest of the wave "gated." The operator pushed back; I then chipped **every remaining clean agent-doable `bd ready` item**. Full set of PRs opened this session (merge in this order — stacks first):
+
+| PR | issue | what | base | gate to merge |
+|---|---|---|---|---|
+| **#95** | pqg | wizard test-send spawns own isolated tempfile Pat + /api/connect | feat/v0.0.1 | review (+ operator live round-trip anytime) |
+| **#97** | 2a7 | live-fail → `Ok(TestSendOutcome::Failed)` (drop JSON hack) | **#95** | after #95 |
+| **#101** | fzm | query MOCKED signal on mount (banner race) | **#97** | after #97 |
+| **#98** | h2y | `compose_close_self` self-only command + drop window-class grants | feat/v0.0.1 | **operator GUI close-flow smoke** |
+| **#99** | g3d | validate `draft_id` charset/length in `compose_window_open` | **#98** | after #98 |
+| **#100** | f1a | read-side byte cap in `PatClient::read` (Content-Length + stream abort) | feat/v0.0.1 | review |
+| **#102** | 8zt | doc: correct stale keyring-core/use_native_store → keyring 3.6.3 | feat/v0.0.1 | review |
+| #88 | 22l | live Pat bootstrap (DRAFT) | feat/v0.0.1 | **operator Part-97 round-trip** |
+| #96 | khe | this handoff | feat/v0.0.1 | review |
+
+**Two wizard stacks + standalone PRs.** pqg→2a7→fzm is a 3-deep stack (#95←#97←#101); h2y→g3d is 2-deep (#98←#99). f1a/8zt/88 are independent. As each base merges, retarget the stacked PR's base to feat/v0.0.1 (GitHub usually auto-retargets on base merge).
+
+All built TDD-first; pqg got 2 Codex rounds (R1 7 findings → temp-dir redesign retired 2 P1s; R2 verify + CI fail-closed). Every gate green (cargo test, vitest, tsc+build, no warnings) on each branch.
+
+**Genuinely remaining (all gated/blocked/design/out-of-scope — NOT agent-doable now):**
+- `xyd` (P1) + `xx3` (P2) — implemented on #88's branch; close on #88 merge.
+- `a1i` (P3) — depends on xx3's ring buffer → blocked until #88 merges.
+- `b2s` (P2) — frontend CI workflow fully designed in its bd note; committing `.github/workflows/*.yml` trips the `security_reminder` hook → **operator adds it** (do NOT end-run the hook).
+- `cs7` (P2) — AppImage config already complete (`bundle.targets:"all"` + `externalBin`); needs the **operator's machine** to build + launch-smoke + SHA256.
+- `qn8` (P2) — wizard locked-keyring in-app guidance: a UX feature needing a **design/brainstorm pass + GUI smoke**.
+- `8za` (P2) — selectable color schemes: **out of v0.0.1 scope** per ADR 0013 (theme system deferred).
+- `zzk` (P3) — wizard test-send nonce correlation: **blocked** on confirming firsthand whether the Winlink autoresponder echoes the subject (don't guess Winlink internals).
+
 ## 1. ⚠️ CRITICAL GATES — unchanged, do not skip
 1. **Part 97:** never run a live-CMS/transmit path. WRITE + COMMIT only; the round-trip (`live_cms_smoke`, wizard test-send) is **operator-run**. The mock gate (`TUXLINK_TEST_SEND_MOCK`) + `#[ignore]`d real-Pat tests keep CI/tests TX-free.
 2. **PII / placeholders:** `N0CALL` etc. only — never real callsigns/grids in commits/PRs/bd/tests.
