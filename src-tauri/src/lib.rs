@@ -160,6 +160,7 @@ pub fn run() {
             crate::ui_commands::mailbox_list,          // Task 12 (tuxlink-zsm)
             crate::ui_commands::message_read,          // Task 13 (tuxlink-y5c)
             crate::ui_commands::message_send,          // Task 14 (tuxlink-dm8)
+            crate::ui_commands::cms_connect,           // tuxlink-0ic (native connect)
             crate::ui_commands::config_read,           // Task 16 (tuxlink-hvv)
             crate::ui_commands::backend_status,        // Task 16 (tuxlink-hvv)
             crate::ui_commands::session_log_snapshot,  // Task 15 (tuxlink-8zg integration round)

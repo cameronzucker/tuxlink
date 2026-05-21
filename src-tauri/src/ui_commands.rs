@@ -34,7 +34,7 @@ use crate::config::{self, CmsTransport, GpsState, PositionPrecision};
 use crate::session_log::SessionLogState;
 use crate::winlink_backend::{
     BackendError, BackendStatus, LogLevel, LogLine, LogSource, MailboxFolder, MessageId,
-    MessageMeta, OutboundMessage,
+    MessageMeta, OutboundMessage, TransportConfig,
 };
 
 // ============================================================================
@@ -593,6 +593,33 @@ pub async fn message_send(
     // PatBackend impl. Map Option<MessageId> → Option<String> for IPC.
     let mid = backend.send_message(msg).await?;
     Ok(mid.map(|id| id.0))
+}
+
+/// Run one CMS connection: send everything queued in the outbox and download any
+/// waiting messages (tuxlink-0ic). Drives the backend's `connect` over the
+/// configured transport, then drops the session (the native exchange completes
+/// within the call). The frontend refreshes the mailbox on success.
+///
+/// On the native backend this performs the real on-air exchange; against the
+/// production CMS it currently fails with the client-type rejection until
+/// "tuxlink" is registered with Winlink (set `TUXLINK_CMS_HOST=cms-z.winlink.org`
+/// to exercise it against the dev CMS in the meantime).
+#[tauri::command]
+pub async fn cms_connect(state: State<'_, BackendState>) -> Result<(), UiError> {
+    let backend = state
+        .current()
+        .ok_or_else(|| UiError::NotConfigured("backend offline".to_string()))?;
+
+    let cfg = config::read_config().map_err(|e| UiError::Internal {
+        detail: e.to_string(),
+    })?;
+
+    let _session = backend
+        .connect(TransportConfig::Cms {
+            mode: cfg.connect.transport,
+        })
+        .await?;
+    Ok(())
 }
 
 // ============================================================================

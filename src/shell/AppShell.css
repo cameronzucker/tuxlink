@@ -99,6 +99,39 @@
   background: var(--error);
   animation: tux-pulse 0.8s ease-in-out infinite;
 }
+/* Connect control (tuxlink-0ic): right-aligned action in the ribbon. */
+.layout-b .dashboard .dash-connect {
+  margin-left: auto;
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+}
+.layout-b .dashboard .connect-button {
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--bg);
+  background: var(--accent);
+  border: none;
+  border-radius: 4px;
+  padding: 6px 16px;
+  cursor: pointer;
+}
+.layout-b .dashboard .connect-button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.layout-b .dashboard .connect-button:hover:not(:disabled) {
+  filter: brightness(1.12);
+}
+.layout-b .dashboard .dash-connect-msg {
+  font-size: 11px;
+  color: var(--text-faint);
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 @keyframes tux-pulse {
   0%,
   100% {

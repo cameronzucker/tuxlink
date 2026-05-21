@@ -481,8 +481,12 @@ fn native_connect(
         password,
     };
 
+    // The CMS host defaults to production; `TUXLINK_CMS_HOST` overrides it for
+    // dev (e.g. `cms-z.winlink.org`, which accepts the unregistered client).
+    let host = std::env::var("TUXLINK_CMS_HOST").unwrap_or_else(|_| CMS_HOST.to_string());
+
     let result = telnet::connect_and_exchange(
-        CMS_HOST,
+        &host,
         port,
         transport,
         &exchange_config,

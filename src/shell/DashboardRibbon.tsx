@@ -43,9 +43,21 @@ function dashDotClass(tone: StatusTone): string {
 
 export interface DashboardRibbonProps {
   data: StatusBarData;
+  /** Trigger a CMS connection (send outbox + receive). When omitted, the
+   *  Connect control is not rendered (keeps the ribbon's unit tests prop-free). */
+  onConnect?: () => void;
+  /** True while a connection is in progress (disables the button). */
+  connecting?: boolean;
+  /** Last connect result/error to show beside the button, if any. */
+  connectMessage?: string | null;
 }
 
-export function DashboardRibbon({ data }: DashboardRibbonProps) {
+export function DashboardRibbon({
+  data,
+  onConnect,
+  connecting,
+  connectMessage,
+}: DashboardRibbonProps) {
   const { utc, local } = useClock();
   const { callsign, grid, state, connection: connectionFromData } = data;
   // Position (GPS coords) is a v0.1 data source; the dev fixture shows the mock
@@ -100,6 +112,28 @@ export function DashboardRibbon({ data }: DashboardRibbonProps) {
           {connection}
         </div>
       </div>
+
+      {onConnect && (
+        <>
+          <div className="dash-divider" />
+          <div className="dash-item dash-connect">
+            <button
+              type="button"
+              className="connect-button"
+              onClick={onConnect}
+              disabled={connecting}
+              data-testid="connect-button"
+            >
+              {connecting ? 'Connecting…' : 'Connect'}
+            </button>
+            {connectMessage && (
+              <div className="dash-connect-msg" data-testid="connect-result">
+                {connectMessage}
+              </div>
+            )}
+          </div>
+        </>
+      )}
     </div>
   );
 }

@@ -15,8 +15,10 @@
 // File → New Message and the reading-pane reply actions.
 
 import { useState, useCallback, useEffect } from 'react';
+import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { getCurrentWindow } from '@tauri-apps/api/window';
+import { useQueryClient } from '@tanstack/react-query';
 import { MessageList } from '../mailbox/MessageList';
 import { useMailbox } from '../mailbox/useMailbox';
 import { isNotConfigured } from '../mailbox/types';
@@ -67,6 +69,26 @@ export function AppShell() {
   // Status data (callsign / grid / connection) — single poll, shared by the
   // dashboard ribbon, the status bar, and the window title.
   const statusData = useStatusData();
+
+  // CMS connect: run one exchange (send outbox + receive), then refresh the
+  // mailbox so any downloaded messages appear. The button lives in the ribbon.
+  const queryClient = useQueryClient();
+  const [connecting, setConnecting] = useState(false);
+  const [connectMessage, setConnectMessage] = useState<string | null>(null);
+
+  const onConnect = useCallback(async () => {
+    setConnecting(true);
+    setConnectMessage(null);
+    try {
+      await invoke('cms_connect');
+      setConnectMessage('Synced');
+      await queryClient.invalidateQueries({ queryKey: ['mailbox'] });
+    } catch (e) {
+      setConnectMessage(formatConnectError(e));
+    } finally {
+      setConnecting(false);
+    }
+  }, [queryClient]);
 
   // Native titlebar: mock B shows "Tuxlink — Inbox". Track the active folder.
   useEffect(() => {
@@ -119,7 +141,12 @@ export function AppShell() {
 
   return (
     <div className="layout-b" data-testid="app-shell-root">
-      <DashboardRibbon data={statusData} />
+      <DashboardRibbon
+        data={statusData}
+        onConnect={onConnect}
+        connecting={connecting}
+        connectMessage={connectMessage}
+      />
 
       <div className="panes" data-testid="shell-panes">
         <FolderSidebar
@@ -142,4 +169,20 @@ export function AppShell() {
       <StatusBar show={showStatusBar} unread={counts.inbox ?? 0} state={statusData.state} />
     </div>
   );
+}
+
+/// Render a `cms_connect` rejection for the operator. The Tauri layer serializes
+/// `UiError` as `{ kind, detail }`; pull out the most specific human text.
+function formatConnectError(e: unknown): string {
+  if (e && typeof e === 'object') {
+    const obj = e as { kind?: string; detail?: unknown };
+    const detail = obj.detail;
+    if (detail && typeof detail === 'object') {
+      const reason = (detail as { reason?: string }).reason;
+      if (reason) return reason;
+    }
+    if (typeof detail === 'string' && detail) return detail;
+    if (obj.kind) return `Connect failed: ${obj.kind}`;
+  }
+  return `Connect failed: ${String(e)}`;
 }
