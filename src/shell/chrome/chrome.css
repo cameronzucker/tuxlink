@@ -10,7 +10,7 @@
 }
 .tux-titlebar .tux-drag { position: absolute; inset: 0; }   /* data-tauri-drag-region */
 .tux-titlebar .tux-app-icon {
-  width: 18px; height: 18px; margin-right: 8px; z-index: 1;
+  width: 26px; height: 26px; margin-right: 9px; z-index: 1;
   object-fit: contain; display: block; /* tuxlink-ng3: real app icon (transparent PNG) */
 }
 .tux-titlebar .tux-app-name { font-size: 13px; font-weight: 600; color: var(--text); z-index: 1; }
@@ -31,13 +31,19 @@
   border-bottom: 1px solid var(--border); padding: 0 8px; align-items: center;
   font-size: 13px; color: var(--text); gap: 2px; position: relative; z-index: 50;
 }
-.tux-menu { padding: 4px 10px; border-radius: 4px; cursor: default; position: relative; }
-.tux-menu:hover { background: var(--surface-2); }
-.tux-menu.tux-open { background: var(--accent-soft); color: var(--accent-2); }
+.tux-menu { position: relative; }
+/* The top-level menu label is a <button> (for a11y/testing) but must read as a
+ * plain menubar item — reset the browser button chrome and put the visual on it. */
+.tux-menu > button {
+  font: inherit; color: inherit; background: none; border: none;
+  padding: 4px 10px; border-radius: 4px; cursor: pointer; line-height: 1;
+}
+.tux-menu > button:hover { background: var(--surface-2); }
+.tux-menu.tux-open > button { background: var(--accent-soft); color: var(--accent-2); }
 
 /* ---- Dropdowns ---- */
 .tux-dropdown {
-  position: absolute; top: 30px; left: 0; min-width: 230px;
+  position: absolute; top: calc(100% + 4px); left: 0; min-width: 230px;
   background: var(--elevated); border: 1px solid var(--border-strong);
   border-radius: 7px; padding: 5px; box-shadow: 0 14px 38px rgba(0,0,0,0.5); z-index: 100;
 }
@@ -52,10 +58,12 @@
 .tux-sep { height: 1px; background: var(--border); margin: 5px 6px; }
 .tux-mi.tux-has-sub { position: relative; }
 .tux-submenu {
+  display: none;  /* shown on hover of the parent has-sub item (was permanently expanded) */
   position: absolute; left: 100%; top: -6px; min-width: 215px;
   background: var(--elevated); border: 1px solid var(--border-strong);
   border-radius: 7px; padding: 5px; box-shadow: 0 14px 38px rgba(0,0,0,0.5);
 }
+.tux-mi.tux-has-sub:hover > .tux-submenu { display: block; }
 
 /* ---- Resize handles (borderless window) ---- */
 .tux-resize { position: absolute; z-index: 200; }
