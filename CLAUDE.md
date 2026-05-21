@@ -66,7 +66,9 @@ cat spec.md | npx --yes @openai/codex exec -
 - **When to use:** when a workflow (notably `superpowers:build-robust-features`) explicitly calls for "at least one round via Codex." Substitute Claude agents only when this is genuinely unavailable — it isn't unavailable here.
 - **MCP-server mode:** `npx --yes @openai/codex mcp-server` — expose Codex as an MCP server if you want the main loop to call it like a tool.
 
-Write adversarial-review output to `dev/adversarial/<date>-<topic>-codex.md` to match the existing naming pattern once `dev/` is created.
+Write adversarial-review output to `dev/adversarial/<date>-<topic>-codex.md`. **This directory is `.gitignore`d** (per the 2026-05-17 "release-ready public repo" cleanliness call): raw codex/adversarial transcripts stay local-only as dev scratch. Summarize findings + dispositions in handoff docs, PR bodies, or pitfalls entries as appropriate; the raw transcripts are reference material, not project artifacts. If a future operator needs to consult an older review trace, they're on the original author's local disk; don't expect them in the public repo.
+
+**Codex's default sandbox blocks writes to `dev/adversarial/` (2026-05-18 wizard-cluster spec R5 incident).** When you tell Codex to write its findings to a file via `apply_patch`, Codex's default `read_only` sandbox-mode rejects the write — the patch attempt is silently swallowed in some Codex CLI versions but writes to stdout in others. The 2026-05-18 R5 round only produced findings because Codex dumped them to stdout after the file-write failed; if you only read the expected output file, you'd think Codex produced nothing. **Workaround:** pipe Codex's stdout to the adrev file alongside the in-process file write so you have a stdout fallback. Example: `npx --yes @openai/codex exec '...' 2>&1 | tee dev/adversarial/<date>-<topic>-codex.md`. Alternative: pass `-c sandbox_permissions='["disk-full-write-access"]'` to Codex to authorize the write (less defensive — gives Codex broader filesystem access than the adrev dir alone). Read process stdout, not just the expected file, when Codex doesn't produce the file you asked for.
 
 ### `url-to-markdown` skill — fetch FULL webpages, not summaries
 
@@ -100,11 +102,18 @@ Implications:
 
 ## Agent identity — pick a moniker at session start
 
-**At the very start of every session** (after reading CLAUDE.md and the most-recent handoff, before taking any action on the repo), pick a short moniker for yourself and state it in your first user-facing message. The moniker:
+**At the very start of every session** (after reading CLAUDE.md and the most-recent handoff, before taking any action on the repo), generate a moniker via the script and state it in your first user-facing message:
 
-- Must be a single word, lowercase, no spaces, no punctuation.
-- Must be **ctrl+F-friendly** — avoid words that already appear in the codebase/docs (run `grep -rci <name> .` mentally; if there are many hits, pick something else). Plant/animal/geographic nouns work well (`juniper`, `hemlock`, `sparrow`, `flint`).
-- Avoid human first names to prevent confusion with Cameron, beta testers, or co-authors.
+```bash
+python3 .claude/scripts/get_agent_moniker.py
+```
+
+This draws 3 words without replacement from a 100-word pool of plant / animal / geographic nouns and hyphen-joins them (e.g. `towhee-wren-aspen`). Combinatorial space ≈ 970,200 trios; collision probability under 1% across project lifetime. The script pre-flights against `git log --all --grep="^Agent: <candidate>"` automatically; if a collision is detected, it retries up to `--max-attempts` times before giving up. This replaces the prior manual `grep -ri <name> .` + `git log --all --grep` dance.
+
+The moniker:
+
+- Is hyphen-joined three-word form (single-word legacy monikers in commit history — `alder`, `cedar`, etc. — remain valid; the new format applies to forward commits).
+- Is **ctrl+F-friendly** by construction (the pool excludes common code-identifiers and human first names).
 - Persists for the entire session — do not change it mid-session.
 - Passes through to every subagent you dispatch: include `"You are agent <moniker>; use this in your commit trailers."` in each Agent tool prompt so subagent-authored commits are grep-discoverable too.
 
@@ -125,34 +134,78 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
 
 **If you forget to set a moniker early in the session:** pick one now and apply it to all forward commits. Do not retroactively amend earlier commits (amending shared/recent commits is banned — see below).
 
-## Git workflow — worktrees are BANNED
+## Git workflow — worktrees mandatory under bd-issue ownership (ADR 0008)
 
-Do NOT use `git worktree` in this project. All branch work happens via `git checkout` in the main repo at `/home/administrator/Code/tuxlink`.
+When the `block-main-checkout-race.sh` hook denies a write op citing "another live session is active," create a worktree per the QUICK FIX in the deny message and re-run your op there. The hook's determination is authoritative; agents do not re-decide it via `get_tuxlink_sessions.py` or any other source. Worktrees are MANDATORY for write work when the hook says another live session is active. Read-only ops and `bd` commands stay free regardless.
 
-**Rationale:** Carried forward from the Geographica project, where two near-misses in 2026-04 involved subagents `cd`'ing out of a worktree and performing destructive operations on the main repo's branch (one `git reset --hard` wiped 6+ commits from `dev`'s tip pointer; recovered via reflog). Worktree topology multiplies the blast radius of "subagent forgets which checkout it's in" errors.
+When the hook does NOT deny — i.e., it has determined there are no other live sessions — main-checkout writes are fine and worktrees are not required for that case.
 
-**If you encounter an existing worktree** (e.g., `.claude/worktrees/<name>/`): do NOT use it. Check out the same branch in the main repo instead, and suggest that the user remove the worktree with `git worktree remove`.
+Rationale and the 2026-05-18 grounding incident: see [`dev/incidents/2026-05-18-main-checkout-race-hook-loop.md`](dev/incidents/2026-05-18-main-checkout-race-hook-loop.md) (write-up) + [`dev/incidents/2026-05-18-main-checkout-race-hook-loop-reviewer-response.md`](dev/incidents/2026-05-18-main-checkout-race-hook-loop-reviewer-response.md) (AzDO-grounded diagnosis from `towhee-wren-aspen`). Prior tuxlink wording included a "solo-session work, worktrees remain optional" carve-out that invited agents to second-guess the hook by consulting `get_tuxlink_sessions.py`; the LFST source-of-truth never had that carve-out. The framing above restores LFST's posture: the hook is the authority.
 
-**If a session handoff tells you to "work in the worktree at X"**: override that instruction. Check out the branch in the main repo, and flag the deviation to the user.
+**Worktree ownership rule.** A worktree is permitted IFF:
+
+1. A **bd issue** is in `in_progress` and claims the worktree (path recorded in the issue body or via `bd remember`). `bd show <id>` is the canonical answer to "what is `worktrees/X` for?"
+2. The branch follows the per-task convention ([ADR 0004](docs/adr/0004-per-task-branch-model.md)): `bd-<id>/<slug>` preferred when the bd issue exists; otherwise `agent-<moniker>/<slug>` or `task-NN-<slug>`.
+3. The worktree path is `worktrees/<bd-id-or-slug>/` at the repo root (`worktrees/` is `.gitignore`d).
+4. The session adheres to all other CLAUDE.md rules (moniker discipline, commit discipline, destructive-git ban, session-end handoff).
+
+A worktree without a bd-issue claim is an anti-pattern. If you encounter one (stale handoff, prior orphan), either (a) retroactively claim it with a bd issue, or (b) inventory + archive + dispose per the disposal ritual (ADR 0009, forthcoming as part of this sprint's D3).
+
+**Pattern A (harness-spawned ephemeral worktrees** — the `Agent` tool's `isolation: "worktree"` parameter) is uncontroversially permitted; the harness manages create + dispose, no per-worktree bd issue required.
+
+**Multi-worktree coordination via bd dep edges.** When two or more worktrees are simultaneously `in_progress`, maintain the dependency graph via `bd dep add <consumer-id> <provider-id>`. `bd ready` reflects unblocked work at any moment.
+
+**Full rationale, alternatives considered, and watched failure modes:** [ADR 0008](docs/adr/0008-worktrees-mandatory-under-bd-issue-ownership.md), which supersedes [ADR 0007](docs/adr/0007-lift-worktree-ban.md)'s "permitted but optional" framing. ADR 0007 remains accepted as the historical record of why the original Geographica-era ban was lifted.
+
+### Worktree disposal ritual ([ADR 0009](docs/adr/0009-worktree-disposal-ritual.md))
+
+`git worktree remove` is banned (destructive-git hook denies it per C1). Disposal uses the 4-step ritual:
+
+```bash
+# Step 1 — Inventory (from inside the worktree being disposed)
+git status --short                                          # tracked dirty
+git ls-files --others --exclude-standard                    # untracked
+git ls-files --others --ignored --exclude-standard          # gitignored on disk (critical: .beads/embeddeddolt/ class)
+git stash list                                              # worktree-scoped stashes
+
+# Step 2 — Propagate (commit + push) or archive
+cd <main-repo-path>                                         # CRITICAL: leave the worktree before archiving (see note below)
+#   For propagate: git add ..., git commit -m "...", git push origin <branch>
+#   For archive:   tar czf .claude/worktree-archives/<name>-$(date -u +%Y%m%dT%H%M%SZ).tar.gz <worktree-path>
+
+# Step 3 — Physical remove
+rm -rf <worktree-path>
+
+# Step 4 — Prune git's registry
+git worktree prune
+```
+
+The `cd <main-repo-path>` between Step 1 and Step 2 is load-bearing: writing the archive while still cd'd into the doomed worktree resolves the relative `.claude/worktree-archives/...` path INSIDE the worktree, and Step 3's `rm -rf` then deletes the archive along with the worktree. Codex 2026-05-17 D4 review caught this; the fix is to cd back before archiving (or to use an absolute path for the archive destination).
+
+`.claude/worktree-archives/` is `.gitignore`d. The archive directory is per-machine, not pushed to origin. The hook denies `git worktree remove` regardless of how the worktree looks "clean" — `.beads/embeddeddolt/` is the canonical example of gitignored-but-stateful content the git check misses.
+
+**Why no shortcut:** the LFST musing-bhabha incident (May 2026) lost untracked content via `git worktree remove`. The ritual is the replacement; see [ADR 0009](docs/adr/0009-worktree-disposal-ritual.md) for full context and watched failure modes.
 
 ## Git workflow — destructive commands are BANNED
 
-Do NOT run destructive git commands. There is never a legitimate reason for an agent to run these unprompted. If you think you need one, **stop and ask the user**.
+The [`.claude/hooks/block-destructive-git.sh`](.claude/hooks/block-destructive-git.sh) hook denies destructive git operations at the harness layer. **The hook is the canonical enforcement; do not work around it.** If a hook denial surprises you, the right move is to find a non-destructive alternative — never `--no-verify`, never an end-run.
 
-**Banned commands (no exceptions without explicit user authorization for this specific call):**
-- `git reset --hard <ref>` — destroys uncommitted work AND rewinds the branch tip. Use `git revert <commit>` for an additive undo, or ask the user which specific file to restore with `git checkout -- <path>`.
-- `git push --force` / `git push -f` / `git push --force-with-lease` — rewrites remote history. If you need to replace a pushed commit, open a new PR or ask.
-- `git checkout -- .` / `git restore .` / `git clean -f` / `git clean -fd` — wipes entire working-tree state. If you want to discard one file, name it explicitly after checking with the user.
-- `git branch -D <branch>` / `git branch --delete --force` — force-deletes a branch even if unmerged. Use `git branch -d`, which refuses to delete unmerged branches.
-- `git rebase -i` with squash/fixup/drop on shared commits — rewrites history. (`--no-edit` is not a valid `git rebase` flag and should never be passed.)
-- `git commit --amend` on any commit that has been pushed OR that was authored by someone else. Always create a **new** commit to correct earlier work.
-- `git reflog expire --expire=now` / `git gc --prune=now` — strips the safety net that would let us recover from the commands above.
+**Full banned list and rationale:** see the hook source for the regex-precise list, and [standing-conventions §1](https://github.com/cameronzucker/cz-agent-skills/blob/main/docs/standing-conventions-cross-project.md) for the cross-project rule. Quick reference (not the authoritative list — the hook is):
+
+- `git reset --hard <ref>` — use `git revert <commit>` or restore named files.
+- `git push --force` / `-f` / `--force-with-lease` — open a new PR or ask.
+- `git checkout -- .` / `git restore .` / `git clean -f` — name files explicitly.
+- `git branch -D` / `--delete --force` — use `-d`, which refuses unmerged.
+- `git commit --amend` on pushed or other-authored commits — create a new commit.
+- `git rebase -i` / `--interactive` — banned outright per C1; use `git rebase <base>` for non-interactive linear replays.
+- `git worktree remove` — use the disposal ritual ([ADR 0009](docs/adr/0009-worktree-disposal-ritual.md)).
+- `git reflog expire --expire=now` / `git gc --prune=now` — strips the recovery safety net.
 - `git filter-branch` / `git filter-repo` — mass history rewrite.
-- `--no-verify` (skips hooks) / `--no-gpg-sign` / `-c commit.gpgsign=false` — bypasses the project's commit gates. The hooks exist for a reason; if one fails, fix the root cause instead of skipping.
+- `--no-verify` / `--no-gpg-sign` / `-c commit.gpgsign=false` — bypasses the project's gates.
 
-**Rationale:** On 2026-04-20, a subagent in the sister Geographica project ran `git reset --hard feat/noaa-conus` on the main checkout's `dev` branch, wiping 7 commits — including a runtime-validated bug fix that had been shipped to the live stack. Recovery took one `git merge` with manual conflict resolution, but only because all commits were still reachable via reflog; two weeks later and `git gc` would have pruned them permanently. Agents have no legitimate workflow that requires destructive operations; the pattern is always "something went wrong, let me start over" — which is a cue to **ask the user**, not reset.
+**Why hooks, not just prose:** the 2026-04-20 Geographica incident — a subagent ran `git reset --hard feat/noaa-conus` on `dev`, wiping 7 commits including a shipped fix; recovered via reflog only because the regression was caught within the 14-day `git gc` window. Geographica's CLAUDE.md *correctly documented* the rule at the time of the incident. **Prose alone did not prevent it; the hook layer does.**
 
-**If you think you need one of these:** the correct action is to surface the situation to the user with a proposed non-destructive alternative.
+**If you think you need a banned command:** stop and surface the situation to the user with a proposed non-destructive alternative.
 
 ## Live radio network operations — READ BEFORE ANY TRANSMISSION
 
@@ -180,10 +233,40 @@ run a live-CMS binary to verify completion, your task is misspecified
 - Prefer scoped commits (`feat(<scope>): ...`) when the change is localized to one subsystem. Scopes will be defined after office-hours sets the project structure.
 - Breaking changes: add `!` suffix and a `BREAKING CHANGE:` footer with a one-line user-facing explanation.
 - Update `dev/implementation-log.md` (once created) after any significant work item: plan executed, feature shipped, bug hunt cycle completed, adversarial review completed. Entry goes at the top, reverse-chronological, keyed by date + topic.
+- **Polish before push.** Per [ADR 0010](docs/adr/0010-no-squash-merge.md): squash-merge is banned, so the integration branch will preserve every task-branch commit. Clean up WIP / fixup / "oops" commits via non-interactive `git rebase <base>` on **local un-pushed commits** before `git push`. Once pushed, commits are immutable (the destructive-git ban on `--amend` of pushed commits and on `git rebase -i` ensures this). The push gates the polish.
+
+## Documentation propagation contract
+
+For any project-policy claim — an ADR, a spec section, an operator decision — the **canonical source is the ADR or spec itself**. CLAUDE.md, AGENTS.md, plan templates, pitfalls docs, and memory entries are **pointers**, not parallel statements.
+
+**Maximum three propagation sites per ADR:**
+
+1. The ADR itself (always).
+2. The spec section it amends, if any.
+3. One operational doc — CLAUDE.md OR plan template OR pitfalls — pick one.
+
+Memory entries cite the ADR; they do not restate it. Narrowly-scoped operational recipes that are inherently a how-to (e.g., the exact JSON shape for `.claude/session-leases/main-checkout.json` once D1 lands, or the worktree-disposal ritual step-by-step) MAY live in CLAUDE.md or pitfalls docs where the operator will look for them. The rule is "don't restate what the spec/ADR already says," not "don't write recipes."
+
+**Why:** Without this contract, ADRs and CLAUDE.md drift apart. The same rule appears in three places with slightly different wording; one place is updated, the others rot. The propagation contract makes the ADR/spec the single canonical source.
+
+**Cross-project authority:** [`standing-conventions-cross-project.md` §9](https://github.com/cameronzucker/cz-agent-skills/blob/main/docs/standing-conventions-cross-project.md) carries the portable version of this rule. The two should stay aligned; if they diverge, the standing-conventions doc wins and this section gets a corrective commit.
 
 ## Parity with `AGENTS.md`
 
-[AGENTS.md](AGENTS.md) is a deliberate **summary with links** to this file's sections, intended for non-Claude agent harnesses (Codex, etc.) where pulling the whole CLAUDE.md inline would be wasteful. It is NOT a full mirror; the substantive rules live here and AGENTS.md points to them. When changing rules in CLAUDE.md, check whether AGENTS.md's summary line for that section needs a corresponding update.
+[AGENTS.md](AGENTS.md) is a deliberate **summary with links** to this file's sections, intended for non-Claude agent harnesses (Codex CLI, `codex review`, and future tooling that picks up the standard `AGENTS.md` convention) where pulling the whole CLAUDE.md inline would be wasteful. It is NOT a full mirror; the substantive rules live here and AGENTS.md points to them.
+
+**Upkeep discipline.** Every PR that changes a rule in CLAUDE.md MUST also do the AGENTS.md parity check, in the same PR. The check:
+
+1. Locate the AGENTS.md section that summarizes the CLAUDE.md section you changed.
+2. If the change is purely-additive content (clarification, expanded example, new link) AND the AGENTS.md summary line is still accurate, no AGENTS.md update is needed.
+3. If the change adds, removes, or renames a CLAUDE.md section, OR alters the load-bearing summary AGENTS.md was providing, update AGENTS.md in the same PR.
+4. If a CLAUDE.md change introduces a load-bearing rule for non-Claude agents and no AGENTS.md section currently summarizes it, add one.
+
+Drift between CLAUDE.md and AGENTS.md is a defect. It violates the project's propagation contract (see [§"Documentation propagation contract"](#documentation-propagation-contract) above: CLAUDE.md is the source of truth for substantive rules; AGENTS.md is a pointer).
+
+**When in doubt, ship the AGENTS.md update alongside the CLAUDE.md change.** A redundant tweak is cheaper than a drift bug; the parity check is meant to be light, not skipped.
+
+**Cross-project authority:** [`standing-conventions-cross-project.md` §10](https://github.com/cameronzucker/cz-agent-skills/blob/main/docs/standing-conventions-cross-project.md).
 
 ## Tool referee — which tool owns which job
 
@@ -195,17 +278,38 @@ This project uses both Claude Code's built-in primitives (TodoWrite, auto-memory
 | In-turn micro-progress within one session | TodoWrite | Claude Code primitive; ephemeral; correct for "read X, edit Y, run Z" lists. |
 | User profile + cross-cutting feedback | Auto-memory at `~/.claude/projects/<slug>/memory/` | Harness-native, auto-loaded each session via `MEMORY.md` index. Already seeded; do not migrate to bd. |
 | Issue-adjacent factoids discovered during a task | `bd remember` | Use for knowledge linked to a specific issue. Cross-project user/feedback stays in auto-memory. |
-| Push timing | Operator | Operator owns push timing. Agents commit, operator pushes — `git push` is not automatic. |
-| Branch model | Per-task branch + squash-merge | See [docs/adr/0004-per-task-branch-model.md](docs/adr/0004-per-task-branch-model.md). |
+| Branch model | Per-task branch + merge-commit (no-ff) | See [ADR 0004](docs/adr/0004-per-task-branch-model.md) (per-task model) + [ADR 0010](docs/adr/0010-no-squash-merge.md) (no-squash) + [ADR 0008](docs/adr/0008-worktrees-mandatory-under-bd-issue-ownership.md) (worktree-issue ownership). |
 
 **Specific overrides of bd's BEADS INTEGRATION block** (rules below the BEADS INTEGRATION marker that this section explicitly supersedes):
 
 - bd says *"do NOT use TodoWrite, TaskCreate, or markdown TODO lists"* → **Override:** TodoWrite is the right primitive for in-turn working memory; bd is the right primitive for cross-session work units. Use both, for their respective layers.
 - bd says *"Use `bd remember` for persistent knowledge — do NOT use MEMORY.md files"* → **Override:** the Claude Code auto-memory directory at `~/.claude/projects/<slug>/memory/` is harness-native and remains canonical for user / feedback / project memory. Use `bd remember` for issue-tracker-adjacent factoids only.
-- bd says *"Work is NOT complete until `git push` succeeds … YOU must push"* → **Override:** the operator owns push timing per ADR 0004 and the Claude Code system prompt's risk-action defaults. End-of-session expectation is "committed locally and operator informed of what's pushable" — not "agent has pushed."
+- bd says *"Work is NOT complete until `git push` succeeds … YOU must push"* → **No longer overridden** as of 2026-05-17. Per [§Session Completion](#session-completion) and standing-conventions §7, push is now mandatory at session end. bd's directive on this point now agrees with project policy.
 
 **If you discover a fourth bd directive that conflicts with project commitments:** extend the table above AND ADR 0006's override list. Do NOT silently soften an override.
 
+## Session Completion
+
+Work is not complete until `git push` succeeds AND a session-end handoff document exists. This rule is **unconditional** per [`standing-conventions-cross-project.md` §7](https://github.com/cameronzucker/cz-agent-skills/blob/main/docs/standing-conventions-cross-project.md) and Decision 1 of the 2026-05-17 LFST→tuxlink port catalog.
+
+**Required steps before ending any session:**
+
+1. File issues for remaining work discovered during the session (`bd create ...`).
+2. Run quality gates if code changed (tests, linters, builds).
+3. Update issue tracker status (`bd close <id>` / `bd update <id>`).
+4. **`git push`** — mandatory. If push fails, resolve the failure and retry until it succeeds. Do NOT stop before pushing.
+5. Clean up: clear stashes, ensure remote task branches are deleted (`gh pr merge --delete-branch` handles this automatically for landed PRs; manual `git push origin --delete <branch>` for branches that didn't reach merge).
+6. Write a session-end handoff document to `dev/handoffs/<YYYY-MM-DD>-<short-slug>.md` enumerating: branch state, working-tree state, in-flight worktrees + their untracked + gitignored-stateful content (per [ADR 0009](docs/adr/0009-worktree-disposal-ritual.md) §"Handoff documents enumerate worktree state"), what was completed, what is in-progress, what is pending decision.
+7. **Surface the operator's next-session starting prompt** as your final user-facing message of the session, AFTER step 6's handoff is committed. The prompt is a concise (~10-line) paste-ready code block the operator copies into a fresh Claude Code session's first message. Include:
+   - One sentence framing what happened this session (so the next session's reads-before-action choices are right-sized).
+   - A pointer to the canonical handoff doc by path.
+   - The **critical first action or gate** the next session must not skip — particularly anything implicit-droppable (e.g., a review gate before substantive work, a brainstorm before UI tasks).
+
+   Format: a single ```fenced markdown code-block``` the operator can copy whole. The session-start-briefing hook surfaces the most-recent handoff filename automatically; this prompt tells the next agent to READ the handoff and emphasizes anything the agent might otherwise miss while scanning `bd ready` for the next sequential task.
+
+**Never say "ready to push when you are."** Push is the session's responsibility, not the operator's. The handoff document closes the context loop so the next session — possibly on a different machine — can continue without manual reconstruction from `git log`.
+
+**Why step 7 matters:** without an operator-pasteable starting prompt, the operator must either (a) paste a verbatim block out of the handoff doc (verbose; the doc was written for the next agent, not for paste-time), or (b) type freeform "continue where we left off" (relies on the next agent stumbling into the gate-emphasis correctly). Step 7 gives the operator a 10-second copy-paste with the gate emphasis pre-stated, reducing session-change friction.
 
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:ca08a54f -->
 ## Beads Issue Tracker

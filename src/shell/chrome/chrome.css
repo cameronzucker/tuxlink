@@ -1,0 +1,97 @@
+/* tuxlink-ng3 custom window chrome. Token-driven so the tuxlink-8za color
+ * schemes recolor it with zero per-scheme CSS. Ported from the operator-approved
+ * prototype (2026-05-21). */
+
+/* ---- Titlebar (drag region) ---- */
+.tux-titlebar {
+  display: flex; align-items: center; height: 38px;
+  background: var(--surface-2); border-bottom: 1px solid var(--border);
+  padding: 0 6px 0 12px; user-select: none; position: relative;
+}
+.tux-titlebar .tux-drag { position: absolute; inset: 0; }   /* data-tauri-drag-region */
+.tux-titlebar .tux-app-icon {
+  width: 26px; height: 26px; margin-right: 9px; z-index: 1;
+  object-fit: contain; display: block; /* tuxlink-ng3: real app icon (transparent PNG) */
+}
+.tux-titlebar .tux-app-name { font-size: 13px; font-weight: 600; color: var(--text); z-index: 1; }
+.tux-titlebar .tux-app-sub { font-size: 12px; color: var(--text-dim); margin-left: 8px; z-index: 1; }
+.tux-controls { margin-left: auto; display: flex; gap: 6px; z-index: 1; }
+.tux-ctrl {
+  width: 24px; height: 24px; border-radius: 50%; border: none;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: rgba(255, 255, 255, 0.07); color: var(--text);
+  font-size: 13px; line-height: 1; cursor: pointer; transition: background .12s;
+}
+.tux-ctrl:hover { background: rgba(255, 255, 255, 0.14); }
+.tux-ctrl.tux-close:hover { background: var(--tux-danger); color: #fff; }
+
+/* ---- Menubar ---- */
+.tux-menubar {
+  display: flex; height: 30px; background: var(--surface);
+  border-bottom: 1px solid var(--border); padding: 0 8px; align-items: center;
+  font-size: 13px; color: var(--text); gap: 2px; position: relative; z-index: 50;
+}
+.tux-menu { position: relative; }
+/* The top-level menu label is a <button> (for a11y/testing) but must read as a
+ * plain menubar item — reset the browser button chrome and put the visual on it. */
+.tux-menu > button {
+  font: inherit; color: inherit; background: none; border: none;
+  padding: 4px 10px; border-radius: 4px; cursor: pointer; line-height: 1;
+}
+/* Visible hover (surface-2 over surface was imperceptible on the dark palette) —
+ * a light overlay reads clearly on any scheme; distinct from the amber open state. */
+.tux-menu > button:hover { background: rgba(255, 255, 255, 0.09); }
+.tux-menu.tux-open > button { background: var(--accent-soft); color: var(--accent-2); }
+/* Dropdown items already use accent-soft on hover (.tux-mi:hover) — keep that. */
+
+/* ---- Dropdowns ---- */
+.tux-dropdown {
+  position: absolute; top: calc(100% + 4px); left: 0; min-width: 230px;
+  background: var(--elevated); border: 1px solid var(--border-strong);
+  border-radius: 7px; padding: 5px; box-shadow: 0 14px 38px rgba(0,0,0,0.5); z-index: 100;
+}
+.tux-mi {
+  display: flex; align-items: center; gap: 14px; padding: 7px 10px;
+  border-radius: 5px; cursor: default; white-space: nowrap; color: var(--text);
+  background: none; border: none; width: 100%; text-align: left; font: inherit;
+}
+.tux-mi:hover, .tux-mi.tux-sub-open { background: var(--accent-soft); color: var(--accent-2); }
+.tux-mi .tux-accel { margin-left: auto; color: var(--text-faint); font-size: 12px; font-family: var(--mono); }
+.tux-mi .tux-chev { margin-left: auto; color: var(--text-faint); }
+.tux-sep { height: 1px; background: var(--border); margin: 5px 6px; }
+.tux-mi.tux-has-sub { position: relative; }
+.tux-submenu {
+  display: none;  /* shown on hover of the parent has-sub item (was permanently expanded) */
+  /* left:100% put it at the item's right edge — 6px INSIDE the dropdown's
+   * padding+border — so the flyout overlapped the main dropdown's right border.
+   * Push it clear of the dropdown edge (ng3 re-smoke: submenu-overlap regression). */
+  position: absolute; left: calc(100% + 6px); top: -6px; min-width: 215px;
+  background: var(--elevated); border: 1px solid var(--border-strong);
+  border-radius: 7px; padding: 5px; box-shadow: 0 14px 38px rgba(0,0,0,0.5);
+}
+.tux-mi.tux-has-sub:hover > .tux-submenu { display: block; }
+/* Invisible 6px bridge over the gap (the dropdown's right padding) so moving the
+ * pointer from the parent item into the flyout doesn't drop :hover and close it. */
+.tux-mi.tux-has-sub::after {
+  content: ""; position: absolute; top: 0; right: -6px; width: 6px; height: 100%;
+}
+
+/* ---- Resize handles (borderless window) ---- */
+.tux-resize { position: absolute; z-index: 200; }
+.tux-resize.n { top: 0; left: 6px; right: 6px; height: 4px; cursor: ns-resize; }
+.tux-resize.s { bottom: 0; left: 6px; right: 6px; height: 4px; cursor: ns-resize; }
+.tux-resize.e { top: 6px; bottom: 6px; right: 0; width: 4px; cursor: ew-resize; }
+.tux-resize.w { top: 6px; bottom: 6px; left: 0; width: 4px; cursor: ew-resize; }
+.tux-resize.ne { top: 0; right: 0; width: 8px; height: 8px; cursor: nesw-resize; }
+.tux-resize.nw { top: 0; left: 0; width: 8px; height: 8px; cursor: nwse-resize; }
+.tux-resize.se { bottom: 0; right: 0; width: 8px; height: 8px; cursor: nwse-resize; }
+.tux-resize.sw { bottom: 0; left: 0; width: 8px; height: 8px; cursor: nesw-resize; }
+
+/* ---- Compose minimal title bar ---- */
+.tux-compose-titlebar {
+  display: flex; align-items: center; height: 34px;
+  background: var(--surface-2); border-bottom: 1px solid var(--border);
+  padding: 0 6px 0 12px; user-select: none; position: relative;
+}
+.tux-compose-titlebar .tux-drag { position: absolute; inset: 0; }
+.tux-compose-titlebar .tux-app-name { font-size: 13px; font-weight: 600; color: var(--text); z-index: 1; }

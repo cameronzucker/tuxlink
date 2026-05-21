@@ -96,20 +96,76 @@ The test suite itself is code. It decays if not maintained. Messy test infrastru
 - [ ] **Test doubles are minimal and honest.** A mock that returns fixed data is testing the mock, not the code. Use real implementations where feasible; mock only external boundaries.
 - [ ] **No hardcoded time-of-day or timezone assumptions.** Tests that pass at 09:00 UTC but fail at 23:00 UTC are flaky by design. Use injected clocks for time-sensitive tests.
 - [ ] **No network calls in unit tests.** A unit test that hits a real API is an integration test with a misleading name. Either mock the boundary or move it to the integration suite.
+- [ ] **🔥 Found in tuxlink-cnd: real-keyring tests run in a throwaway HOME, asserted, never the operator's login keyring.** gnome-keyring stores secrets under `$XDG_DATA_HOME` / `$HOME/.local/share/keyrings`. `dbus-run-session` isolates only the D-Bus *bus*, NOT those on-disk files, and isolating `XDG_CONFIG_HOME` (for `config.json`) does NOT cover the keyring. On 2026-05-20 a setup one-liner that ran `gnome-keyring-daemon --unlock` against the real keyring re-keyed the operator's login keyring irrecoverably — breaking secret access for tuxlink AND geographica (shared login keyring) until a reset. The real-keyring tests live in `src-tauri/tests/wizard_integration_test.rs` (`#[ignore]`d) and each now calls `assert_keyring_isolated()` first, which **fails the test closed** unless the resolved keyring dir is under the system temp dir — so a mis-invoked run aborts BEFORE any write. The load-bearing safety is the **ephemeral `HOME` set *before* `dbus-run-session`** (a freshly-activated daemon inherits it and opens a temp keyring); the daemon incantation is convenience, the assert is the backstop. Safe headless recipe:
+  ```bash
+  # Run the #[ignore]d real-keyring tests WITHOUT touching your login keyring.
+  SANDBOX="$(mktemp -d)"                       # lands under $TMPDIR/tmp → assert passes
+  HOME="$SANDBOX" \
+  XDG_DATA_HOME="$SANDBOX/.local/share" \
+  XDG_CONFIG_HOME="$SANDBOX/.config" \
+  dbus-run-session -- bash -c '
+    # Empty-password unlock creates a NEW empty keyring in the sandbox HOME —
+    # never the operator password, never the real keyring.
+    eval "$(printf "\n" | gnome-keyring-daemon --unlock --components=secrets)"
+    export GNOME_KEYRING_CONTROL SSH_AUTH_SOCK
+    cargo test --manifest-path src-tauri/Cargo.toml \
+      --test wizard_integration_test --ignored
+  '
+  rm -rf "$SANDBOX"
+  ```
+  Pass criterion: tests run green and `assert_keyring_isolated()` did not abort. **NEVER** run `gnome-keyring-daemon --unlock` against your real `$HOME`. The safe (non-`#[ignore]`d) unit test `keyring_isolation_guard_detects_sandbox_vs_real_home` runs in normal `cargo test`/CI and regression-guards the assert in both directions.
 
 ---
 
-## 8. TODO — Project-Specific Topic
+## 8. Plan & Documentation Discipline (DRIFT-1 verification)
 
-<!-- TODO: add topic sections as the project surfaces specific testing disciplines. Examples from other projects:
-- AOT Correctness (for .NET AOT-compiled code)
-- Serialization Boundary (round-trip JSON tests)
-- Sandbox Bindings (JS sandbox API coverage)
-- Cross-Platform (tests that must pass on Windows and Linux)
-Each section follows the same [ ] checkbox format as the sections above.
-Delete this placeholder when you add real content. -->
+Pairs with [implementation-pitfalls.md §3](implementation-pitfalls.md#3-plan-and-documentation-discipline) (DRIFT-1: plan-text AMENDMENT does not auto-cascade to the code it amends). These recipes are runnable checks a PR reviewer or CI job can execute to verify the discipline holds at amendment time, not lazily-at-impl-time.
 
-TODO — project-specific topic.
+The implementation pitfall says: "Every AMD MUST ship with a paired bd issue if the prior task is shipped. Two acceptable forms: code-bearing (cite the bd issue) OR prose-only (state explicitly)." These recipes verify that contract.
+
+- [ ] **Every AMD marker is either bd-cited or marked prose-only.** Recipe:
+  ```bash
+  # List every AMENDMENT marker location across all plan files.
+  grep -nE "AMENDMENT 20[0-9]{2}-[0-9]{2}-[0-9]{2} \(AMD-[0-9]+" docs/plans/*.md
+  # For each line, manually verify the surrounding paragraph either
+  # (a) cites a bd issue ID matching tuxlink-XXX, OR
+  # (b) contains the literal phrase "prose-only" with a no-code-impact rationale.
+  ```
+  Pass criterion: every marker matches one of the two patterns. A marker with no cite + no prose-only tag is a DRIFT-1 violation — file the missing bd issue or add the prose-only tag.
+
+- [ ] **AMD-N count is consistent across plan + bd issue tracker.** Recipe:
+  ```bash
+  # Set of AMD numbers referenced in plan documents.
+  grep -hoE "AMD-[0-9]+" docs/plans/*.md | sort -u > /tmp/plan_amds.txt
+  # Set of AMD numbers referenced in bd issue bodies.
+  bd list --json 2>/dev/null | grep -oE "AMD-[0-9]+" | sort -u > /tmp/bd_amds.txt
+  # Any AMD in plans that is NOT referenced by any bd issue is suspicious —
+  # verify it's prose-only (acceptable) or file the missing tracking issue.
+  comm -23 /tmp/plan_amds.txt /tmp/bd_amds.txt
+  ```
+  Pass criterion: the `comm -23` diff lists ONLY AMDs explicitly tagged prose-only in the plan body. Any unexplained entry is a gap.
+
+- [ ] **No `SUPERSEDED / supersede` wording without a paired AMD marker.** Recipe:
+  ```bash
+  # Find supersede-wording paragraphs in plan files.
+  grep -nE "SUPERSED|supersed" docs/plans/*.md
+  # Verify each is inside an AMENDMENT block — superseding existing plan
+  # text without an AMD marker means the plan body is silently rewritten
+  # and the audit trail is lost.
+  ```
+  Pass criterion: every supersede-wording match is within ~10 lines of an `AMENDMENT 20XX-MM-DD (AMD-N)` marker. Loose superseding text is a DRIFT-1-adjacent violation: even prose-only supersedes should be tagged.
+
+- [ ] **PR description names the amended task + every consumer bd-issue.** Manual review — when reviewing a PR that lands a plan AMD, search the PR description for `AMD-N` and verify:
+  1. The PR body lists every paired bd issue OR states "prose-only; no code impact."
+  2. If the AMD changes a function signature / config field / API surface of a shipped task, the PR description identifies every downstream consumer (via `grep -r '<symbol>'`) and confirms each has a paired bd issue.
+
+  Pass criterion: a PR landing an AMD that updates a code-bearing contract WITHOUT a consumer audit is the exact failure mode wizard-cluster R1 caught. Reviewer rejects until the audit ships.
+
+- [ ] **Pipeline triage matches `feedback_discipline_triage_rule`.** Manual review — when a downstream bd-issue ships impl code in response to an AMD, verify the pipeline matches the memory criteria:
+  - **Full upstream pipeline** (brainstorm → 5-round adrev → spec → plan-review → TDD) for hard-to-undo architectural decisions (trait shapes, error model design, cross-cutting refactors).
+  - **TDD-direct against the spec** for plumbing where the bd-issue body IS the spec (config refactors, helpers, render functions, mechanical wire-up).
+
+  Pass criterion: the PR body justifies its pipeline choice with a one-liner ("plumbing-class per discipline-triage-rule; bd issue IS spec" or "architectural per discipline-triage-rule; full pipeline + Codex round"). See feedback memory `feedback_discipline_triage_rule`.
 
 ---
 

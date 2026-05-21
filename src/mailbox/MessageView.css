@@ -1,0 +1,176 @@
+/* MessageView — reading-pane styles (Mock D).
+ *
+ * tuxlink-yd4 (2026-05-20): ported VERBATIM from the approved mock's
+ * `.reading-pane` block (docs/design/mockups/2026-05-17-mocks-v1-four-directions.html
+ * lines 505-573). Cool-slate tokens from App.css :root. The component renders
+ * `.reading-pane` as its root; state views reuse it with a `--center` modifier.
+ */
+
+.reading-pane {
+  background: var(--bg);
+  padding: 28px 32px;
+  overflow: auto;
+  min-width: 0;
+}
+
+/* State views (empty / loading / not-found / parse-error): centered + calm. */
+.reading-pane--center {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  text-align: center;
+  color: var(--text-dim);
+  font-size: 14px;
+}
+.reading-pane--error {
+  color: var(--error);
+}
+
+/* 1 — action bar */
+.reading-pane .actions {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 20px;
+}
+.reading-pane .action-btn {
+  padding: 6px 14px;
+  font-size: 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  color: var(--text);
+  border-radius: 5px;
+  font-weight: 500;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background-color 0.12s ease, border-color 0.12s ease;
+}
+.reading-pane .action-btn:hover {
+  background: var(--elevated);
+  border-color: var(--accent);
+}
+.reading-pane .action-btn:focus-visible {
+  outline: 2px solid var(--tux-focus-ring);
+  outline-offset: 1px;
+}
+.reading-pane .action-btn.primary {
+  background: var(--accent);
+  color: #1a0e02;
+  border-color: var(--accent);
+}
+.reading-pane .action-btn.primary:hover {
+  background: var(--accent-2);
+  border-color: var(--accent-2);
+}
+
+/* 2 — subject heading */
+.reading-pane h1.subject-line {
+  margin: 0 0 18px;
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: -0.01em;
+  line-height: 1.25;
+}
+
+/* 3 — From / To / Date metadata */
+.reading-pane .msg-meta {
+  display: grid;
+  grid-template-columns: 60px 1fr;
+  gap: 4px 14px;
+  font-size: 12px;
+  margin-bottom: 22px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid var(--border);
+}
+.reading-pane .msg-meta dt {
+  color: var(--text-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 10px;
+  padding-top: 3px;
+  margin: 0;
+}
+.reading-pane .msg-meta dd {
+  color: var(--text-dim);
+  font-size: 13px;
+  margin: 0;
+}
+.reading-pane .msg-meta dd .addr {
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+/* 4 — body. pre-wrap preserves newlines; overflow-wrap wraps long radio/Base64
+ * lines so they never force horizontal scroll (Codex Task-13 finding #4). */
+.reading-pane .msg-body {
+  font-size: 14.5px;
+  line-height: 1.65;
+  color: var(--text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: var(--sans);
+  margin: 0;
+}
+
+/* Form-attached box (Mock B) — purple-tinted, no raw XML. */
+.reading-pane .form-attached {
+  padding: 18px;
+  background: rgba(192, 132, 252, 0.08);
+  border: 1px solid rgba(192, 132, 252, 0.25);
+  border-radius: 6px;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+.reading-pane .form-attached .form-attached-title {
+  color: var(--form-tag);
+}
+.reading-pane .form-attached .form-attached-meta {
+  margin-top: 6px;
+  font-size: 11px;
+  font-family: var(--mono);
+  color: var(--text-faint);
+}
+/* "Form" metadata row — the form code in the form-tag color (mock B). */
+.reading-pane .msg-meta dd .form-kind-code {
+  color: var(--form-tag);
+  font-weight: 600;
+}
+
+/* 5 — attachment strip (names + sizes only in v0.0.1) */
+.reading-pane .msg-attachments {
+  margin-top: 18px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+.reading-pane .msg-attachments-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-dim);
+}
+.reading-pane .msg-attachment-list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.reading-pane .msg-attachment-item {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 4px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--surface-2);
+  font-size: 12px;
+}
+.reading-pane .msg-attachment-name {
+  color: var(--text);
+}
+.reading-pane .msg-attachment-size {
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}

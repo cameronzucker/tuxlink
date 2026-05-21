@@ -1,0 +1,980 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Modem console — compact-in-dock vs full-overlay placements (v0.5+)</title>
+<style>
+:root {
+  --bg:           #0d1318;
+  --surface:      #141c23;
+  --surface-2:    #1a2330;
+  --elevated:     #1e2832;
+  --border:       #1f2832;
+  --border-strong:#2c3744;
+  --border-soft:  #1a2028;
+  --text:         #e4ebf2;
+  --text-dim:     #94a0ad;
+  --text-faint:   #5d6975;
+  --accent:       #f59f3c;
+  --accent-2:     #ffba6e;
+  --accent-soft:  rgba(245, 159, 60, 0.12);
+  --unread-dot:   #ffd166;
+  --success:      #5dd6a0;
+  --error:        #ee6b6b;
+  --warn:         #ffd166;
+  --info:         #6bb8ee;
+  --form-tag:     #c084fc;
+  --modem-bg:     #0a1410;
+  --modem-grid:   #1d4d3c;
+  --modem-trace:  #5dd6a0;
+  --modem-dot:    #6df0a6;
+  --modem-axis:   #5a8a76;
+  --mono:         "JetBrains Mono", "Fira Code", "Source Code Pro", "Ubuntu Mono", Consolas, monospace;
+  --sans:         "Inter", "Cantarell", "Ubuntu", "Segoe UI", system-ui, sans-serif;
+  --gnome-red:    #c01c28;
+}
+* { box-sizing: border-box; }
+html, body {
+  margin: 0; padding: 0;
+  background: #060a0e;
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+.page { max-width: 1480px; margin: 0 auto; padding: 28px 24px 80px; }
+.page-title { font-size: 22px; font-weight: 600; margin: 0 0 4px; }
+.page-subtitle { color: var(--text-dim); font-size: 14px; margin: 0 0 24px; }
+
+.framing {
+  background: linear-gradient(180deg, rgba(245,159,60,0.10) 0%, rgba(245,159,60,0.04) 100%);
+  border: 1px solid rgba(245, 159, 60, 0.35);
+  border-radius: 8px;
+  padding: 16px 20px;
+  margin-bottom: 36px;
+  font-size: 13px;
+}
+.framing h3 {
+  margin: 0 0 8px;
+  color: var(--accent-2);
+  font-size: 14px; font-weight: 700;
+}
+.framing ul { margin: 6px 0 0; padding-left: 20px; color: var(--text-dim); }
+.framing li { margin: 4px 0; }
+.framing li strong { color: var(--text); }
+
+.section { margin-bottom: 48px; }
+.section-head {
+  display: flex; align-items: baseline; gap: 12px;
+  margin-bottom: 14px; padding: 0 4px;
+}
+.section-letter {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 30px; height: 30px; border-radius: 6px;
+  background: var(--accent); color: #1a0e02;
+  font-weight: 800; font-size: 15px;
+}
+.section-name { font-size: 18px; font-weight: 700; }
+.section-tag { color: var(--text-dim); font-size: 13px; margin-left: 6px; }
+.section-mode {
+  margin-left: auto; font-size: 11px;
+  background: var(--surface-2); color: var(--text-dim);
+  border: 1px solid var(--border-strong);
+  padding: 4px 10px; border-radius: 4px; font-family: var(--mono);
+}
+
+/* ===== APP WINDOW ===== */
+.app-window {
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  overflow: hidden;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.45);
+}
+.titlebar {
+  display: flex; align-items: center;
+  height: 38px;
+  background: #242a31;
+  border-bottom: 1px solid var(--border);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.03);
+  padding: 0 6px 0 12px; user-select: none;
+}
+.app-icon {
+  width: 18px; height: 18px; border-radius: 4px;
+  background: linear-gradient(135deg, #f59f3c 0%, #d97706 100%);
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 11px; font-weight: 800; color: #1a0e02; margin-right: 8px;
+}
+.app-name { font-size: 13px; font-weight: 600; }
+.app-subtitle { font-size: 12px; color: var(--text-dim); margin-left: 8px; }
+.controls { margin-left: auto; display: flex; gap: 6px; padding-left: 12px; }
+.ctrl {
+  width: 24px; height: 24px; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--text); font-family: var(--sans);
+  font-size: 13px; line-height: 1; font-weight: 500;
+  cursor: default; transition: background 0.12s;
+}
+.ctrl:hover { background: rgba(255, 255, 255, 0.13); }
+.ctrl.close:hover { background: var(--gnome-red); color: #fff; }
+/* Adwaita-style: − (minimize), □ (maximize), × (close) */
+.ctrl.min::before { content: "−"; font-size: 14px; line-height: 0; margin-top: -2px; }
+.ctrl.max::before { content: "□"; font-size: 11px; line-height: 1; }
+.ctrl.close::before { content: "×"; font-size: 16px; line-height: 0; margin-top: -1px; }
+
+.menubar {
+  display: flex; height: 30px;
+  background: var(--surface); border-bottom: 1px solid var(--border);
+  padding: 0 10px; align-items: center;
+  font-size: 13px; gap: 2px;
+}
+.menubar .menu { padding: 4px 10px; border-radius: 4px; }
+.menubar .menu.active { background: var(--accent-soft); color: var(--accent-2); }
+
+.dashboard {
+  display: flex; height: 56px;
+  background: linear-gradient(180deg, var(--surface-2) 0%, var(--surface) 100%);
+  border-bottom: 1px solid var(--border);
+  padding: 0 18px; align-items: center; gap: 28px;
+  font-size: 12px;
+}
+.dash-item { display: flex; flex-direction: column; gap: 1px; }
+.dash-label {
+  font-size: 10px; text-transform: uppercase;
+  letter-spacing: 0.08em; color: var(--text-faint);
+}
+.dash-value {
+  font-family: var(--mono); font-size: 13px;
+  color: var(--text); font-weight: 500;
+}
+.dash-value.callsign { color: var(--accent-2); font-weight: 700; font-size: 14px; }
+.dash-value.good { color: var(--success); }
+.dash-value.tx { color: var(--error); font-weight: 600; }
+.dash-divider { width: 1px; height: 32px; background: var(--border-strong); }
+.dash-status-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--success); display: inline-block;
+  margin-right: 6px; vertical-align: middle;
+  box-shadow: 0 0 8px rgba(93, 214, 160, 0.5);
+}
+.dash-status-dot.tx { background: var(--error); box-shadow: 0 0 8px rgba(238, 107, 107, 0.7); }
+
+.sidebar {
+  background: var(--surface); border-right: 1px solid var(--border);
+  padding: 12px 0; font-size: 13px;
+}
+.sidebar .section-label {
+  font-size: 10px; text-transform: uppercase;
+  letter-spacing: 0.08em; color: var(--text-faint);
+  padding: 14px 18px 6px; font-weight: 600;
+}
+.sidebar .nav-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 7px 18px; color: var(--text);
+  border-left: 2px solid transparent;
+}
+.sidebar .nav-item .icon { width: 14px; text-align: center; color: var(--text-faint); font-size: 11px; }
+.sidebar .nav-item.active {
+  background: var(--accent-soft); color: var(--accent-2);
+  border-left-color: var(--accent);
+}
+.sidebar .nav-item.active .icon { color: var(--accent); }
+.sidebar .nav-item .count { margin-left: auto; font-size: 11px; color: var(--text-faint); }
+.sidebar .nav-item.disabled { color: var(--text-faint); }
+
+.rows-pane {
+  background: var(--bg); overflow: hidden;
+  border-right: 1px solid var(--border);
+}
+.row {
+  display: grid; padding: 11px 18px;
+  border-bottom: 1px solid var(--border-soft);
+  gap: 3px 14px;
+  grid-template-columns: 1fr auto;
+  grid-template-rows: auto auto auto;
+}
+.row.selected { background: var(--accent-soft); }
+.row .from {
+  font-size: 13px; color: var(--text); font-weight: 600;
+  grid-column: 1; grid-row: 1;
+  display: flex; align-items: center; gap: 7px;
+}
+.row .from .unread-dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--unread-dot); flex: 0 0 auto;
+  box-shadow: 0 0 6px rgba(255, 209, 102, 0.6);
+}
+.row:not(.unread) .from { font-weight: 500; color: var(--text-dim); }
+.row .date {
+  grid-column: 2; grid-row: 1;
+  font-size: 12px; color: var(--text-faint);
+}
+.row .subject {
+  grid-column: 1 / -1; grid-row: 2;
+  font-size: 14px; color: var(--text); font-weight: 600;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.row:not(.unread) .subject { font-weight: 400; color: var(--text-dim); }
+.row .preview {
+  grid-column: 1 / -1; grid-row: 3;
+  font-size: 12px; color: var(--text-faint);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.row .size {
+  font-size: 11px; color: var(--text-faint); margin-left: 8px;
+}
+
+.reading-pane {
+  background: var(--bg); padding: 24px 28px;
+  overflow: auto;
+}
+.reading-pane h1 {
+  margin: 0 0 14px; font-size: 20px; font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.reading-pane .msg-meta {
+  display: grid; grid-template-columns: 60px 1fr;
+  gap: 4px 14px; font-size: 12px;
+  margin-bottom: 18px; padding-bottom: 14px;
+  border-bottom: 1px solid var(--border);
+}
+.reading-pane .msg-meta dt {
+  color: var(--text-faint); text-transform: uppercase;
+  letter-spacing: 0.06em; font-size: 10px; margin: 0;
+}
+.reading-pane .msg-meta dd { color: var(--text-dim); font-size: 13px; margin: 0; }
+.reading-pane .msg-meta dd .addr {
+  color: var(--text); font-family: var(--mono); font-size: 12px;
+}
+.reading-pane .msg-body {
+  font-size: 14px; line-height: 1.6; color: var(--text);
+  white-space: pre-wrap; font-family: var(--sans); margin: 0;
+}
+
+/* ===== MODEM CONSOLE COMPONENTS ===== */
+.modem-pane {
+  background: linear-gradient(180deg, #07120e 0%, #050d0a 100%);
+  border-left: 1px solid var(--border);
+  padding: 12px;
+  display: flex; flex-direction: column; gap: 10px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text);
+  overflow: hidden;
+}
+.modem-pane .modem-label {
+  font-family: var(--sans); font-size: 10px;
+  color: var(--modem-trace); text-transform: uppercase;
+  letter-spacing: 0.08em; font-weight: 700;
+  display: flex; align-items: center; gap: 6px;
+}
+.modem-pane .modem-label .dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--modem-trace); box-shadow: 0 0 4px var(--modem-trace);
+}
+.modem-pane .modem-section {
+  background: var(--modem-bg);
+  border: 1px solid #1a2e26;
+  border-radius: 5px;
+  padding: 10px;
+}
+
+/* Constellation diagram (mini) */
+.constellation-mini {
+  width: 100%; height: 110px;
+  background: var(--modem-bg);
+  background-image:
+    linear-gradient(to right, var(--modem-grid) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--modem-grid) 1px, transparent 1px);
+  background-size: 16.66% 16.66%;
+  border-radius: 4px;
+  position: relative;
+  border: 1px solid #1a2e26;
+}
+.constellation-mini::after {
+  content: "CONST · 16-QAM";
+  position: absolute; top: 4px; left: 6px;
+  font-size: 9px; color: var(--modem-axis);
+  letter-spacing: 0.06em;
+}
+.const-dot {
+  position: absolute;
+  width: 3px; height: 3px;
+  background: var(--modem-dot);
+  border-radius: 50%;
+  box-shadow: 0 0 3px var(--modem-dot);
+}
+
+/* Throughput chart (mini) */
+.throughput-mini {
+  width: 100%; height: 90px;
+  background: var(--modem-bg);
+  border: 1px solid #1a2e26;
+  border-radius: 4px;
+  position: relative;
+  overflow: hidden;
+}
+.throughput-mini::before {
+  content: "TX/RX bps";
+  position: absolute; top: 4px; left: 6px;
+  font-size: 9px; color: var(--modem-axis);
+  letter-spacing: 0.06em; z-index: 2;
+}
+.throughput-mini::after {
+  content: "14144";
+  position: absolute; top: 4px; right: 6px;
+  font-size: 10px; color: var(--modem-trace);
+  font-weight: 700; z-index: 2;
+}
+.throughput-fill {
+  position: absolute; bottom: 0; left: 0; right: 0; height: 60%;
+  background: linear-gradient(180deg,
+    rgba(93, 214, 160, 0.5) 0%,
+    rgba(93, 214, 160, 0.15) 100%);
+  border-top: 1.5px solid var(--modem-trace);
+}
+
+/* Gauge */
+.gauge {
+  width: 100%;
+  display: flex; align-items: center; gap: 8px;
+}
+.gauge-arc {
+  position: relative;
+  width: 56px; height: 32px;
+  flex: 0 0 56px;
+}
+.gauge-arc svg { width: 100%; height: 100%; }
+.gauge-arc .arc-bg { stroke: #1a2e26; stroke-width: 3; fill: none; }
+.gauge-arc .arc-fg { stroke: var(--modem-trace); stroke-width: 3; fill: none; }
+.gauge-arc .arc-fg.warn { stroke: var(--warn); }
+.gauge-arc .arc-fg.bad { stroke: var(--error); }
+.gauge-arc .needle { stroke: var(--text); stroke-width: 1.5; }
+.gauge-info { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.gauge-info .name {
+  font-size: 9px; color: var(--modem-axis);
+  text-transform: uppercase; letter-spacing: 0.05em;
+}
+.gauge-info .val {
+  font-size: 12px; color: var(--text);
+  font-weight: 600; font-family: var(--mono);
+}
+.gauge-info .val.good { color: var(--modem-trace); }
+.gauge-info .val.warn { color: var(--warn); }
+
+/* Protocol state lights */
+.state-lights {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 4px;
+}
+.state-light {
+  background: #0d1f18;
+  border: 1px solid #1a2e26;
+  color: var(--modem-axis);
+  font-size: 9px;
+  text-align: center;
+  padding: 5px 0;
+  border-radius: 3px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+.state-light.on {
+  background: var(--modem-trace);
+  color: #062014;
+  box-shadow: 0 0 6px rgba(93, 214, 160, 0.45);
+  border-color: var(--modem-trace);
+}
+.state-light.warn-on {
+  background: var(--warn); color: #2a1e00;
+  box-shadow: 0 0 6px rgba(255, 209, 102, 0.45);
+  border-color: var(--warn);
+}
+
+/* Modem status strip */
+.modem-status-strip {
+  background: var(--modem-bg);
+  border: 1px solid #1a2e26;
+  border-radius: 4px;
+  padding: 6px 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  font-size: 10px;
+  color: var(--text-dim);
+}
+.modem-status-strip .strip-item .k { color: var(--modem-axis); }
+.modem-status-strip .strip-item .v { color: var(--text); font-weight: 600; }
+
+/* ===== SESSION LOG / STATUS BAR ===== */
+.session-log {
+  background: var(--surface); border-top: 1px solid var(--border);
+  max-height: 70px; overflow: hidden;
+  display: flex; flex-direction: column;
+}
+.session-log .log-header {
+  display: flex; align-items: center;
+  background: var(--surface); border-bottom: 1px solid var(--border);
+  padding: 5px 14px;
+  font-family: var(--sans); font-size: 11px;
+  font-weight: 600; color: var(--text-dim);
+  text-transform: uppercase; letter-spacing: 0.06em;
+  height: 24px;
+}
+.session-log .live-dot {
+  width: 6px; height: 6px; background: var(--success);
+  border-radius: 50%; margin-right: 8px; box-shadow: 0 0 4px var(--success);
+}
+.session-log .log-lines {
+  flex: 1; overflow: auto; padding: 4px 14px;
+  font-size: 12px; line-height: 1.6;
+}
+.session-log .step { display: flex; gap: 12px; }
+.session-log .step .step-ts {
+  color: var(--text-faint); font-family: var(--mono);
+  font-size: 11px; min-width: 60px;
+}
+.session-log .step .ok { color: var(--success); }
+
+.statusbar {
+  background: var(--surface); border-top: 1px solid var(--border);
+  padding: 6px 16px; font-size: 12px; color: var(--text-dim);
+  display: flex; align-items: center; gap: 18px; height: 28px;
+}
+.statusbar .status-dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--text-faint);
+}
+.statusbar .status-dot.good { background: var(--success); box-shadow: 0 0 5px var(--success); }
+.statusbar .status-dot.tx { background: var(--error); box-shadow: 0 0 5px var(--error); }
+.statusbar .status-right { margin-left: auto; font-variant-numeric: tabular-nums; }
+.statusbar .status-divider { color: var(--text-faint); font-size: 10px; }
+
+/* ===== LAYOUTS ===== */
+.layout-compact {
+  display: grid;
+  grid-template-rows: auto auto 1fr auto auto;
+  height: 720px;
+}
+.layout-compact .panes {
+  display: grid;
+  grid-template-columns: 180px 320px 1fr 240px;
+  min-height: 0;
+}
+.layout-full {
+  display: grid;
+  grid-template-rows: auto auto 1fr auto auto;
+  height: 720px;
+}
+.layout-full .panes {
+  display: grid;
+  grid-template-columns: 180px 300px 1fr;
+  min-height: 0;
+}
+
+.notes {
+  padding: 14px 18px; margin-top: 14px;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 8px; font-size: 12px; color: var(--text-dim);
+}
+.notes strong { color: var(--text); }
+.notes .scenario {
+  display: inline-block;
+  background: var(--surface-2);
+  border-left: 2px solid var(--accent);
+  padding: 8px 12px;
+  margin: 8px 0;
+  font-size: 12px;
+  border-radius: 0 4px 4px 0;
+}
+.notes .scenario strong { color: var(--accent-2); }
+</style>
+</head>
+<body>
+<div class="page">
+
+<h1 class="page-title">Modem console placements — compact-in-dock vs full-overlay</h1>
+<p class="page-subtitle">v0.5+ surface. Showing both placements satisfies the two-mode operator workflow you identified.</p>
+
+<div class="framing">
+  <h3>Operator-mode design call captured</h3>
+  <ul>
+    <li><strong>Mode 1 (high-volume / good conditions):</strong> reduced visual clutter, more space for composing/tracking. Compact dock with glanceable modem health.</li>
+    <li><strong>Mode 2 (marginal / QRP / troubleshooting):</strong> full diagnostic visibility while actively adjusting band / power / target / antenna. Full-overlay pane with constellation, throughput chart, all gauges.</li>
+    <li><strong>Same View → Show Modem Console toggle, three-state:</strong> Off · Compact (in dock) · Full (overlay pane). Operator switches mode based on conditions; tool serves both.</li>
+    <li><strong>Aesthetic tension noted:</strong> instrument-panel green-on-dark for the modem-specific elements; Mail.app polish for everything else. The transition zone is the dock/pane border — clean.</li>
+  </ul>
+</div>
+
+<!-- =================== COMPACT IN DOCK =================== -->
+<div class="section">
+  <div class="section-head">
+    <span class="section-letter">1</span>
+    <span class="section-name">Compact — modem inside the right dock</span>
+    <span class="section-tag">Mode 1 — high-volume / good conditions / "let me work"</span>
+    <span class="section-mode">View → Show Modem Console: <strong style="color:var(--success)">Compact</strong></span>
+  </div>
+  <div class="app-window">
+    <div class="titlebar">
+      <span class="app-icon">T</span>
+      <span class="app-name">Tuxlink</span>
+      <span class="app-subtitle">— Inbox · W4PHS · in session</span>
+      <span class="controls"><span class="ctrl min"></span><span class="ctrl max"></span><span class="ctrl close"></span></span>
+    </div>
+    <div class="menubar">
+      <span class="menu">File</span><span class="menu">Message</span><span class="menu">Session</span>
+      <span class="menu">Mailbox</span><span class="menu">View</span><span class="menu">Tools</span><span class="menu">Help</span>
+    </div>
+    <div class="layout-compact">
+      <div class="dashboard">
+        <div class="dash-item">
+          <div class="dash-label">Callsign</div>
+          <div class="dash-value callsign">W4PHS</div>
+        </div>
+        <div class="dash-divider"></div>
+        <div class="dash-item">
+          <div class="dash-label">Grid</div>
+          <div class="dash-value">EM75xx</div>
+        </div>
+        <div class="dash-divider"></div>
+        <div class="dash-item">
+          <div class="dash-label">UTC / Local</div>
+          <div class="dash-value">19:23z · 14:23 CDT</div>
+        </div>
+        <div class="dash-divider"></div>
+        <div class="dash-item">
+          <div class="dash-label">Connection</div>
+          <div class="dash-value good"><span class="dash-status-dot"></span>VARA HF · OE8LSR</div>
+        </div>
+        <div class="dash-divider"></div>
+        <div class="dash-item">
+          <div class="dash-label">Throughput</div>
+          <div class="dash-value good">14.1 kbps · S/N +23.1 dB</div>
+        </div>
+      </div>
+      <div></div>
+      <div class="panes">
+        <div class="sidebar">
+          <div class="section-label">Mailbox</div>
+          <div class="nav-item active"><span class="icon">▣</span>Inbox<span class="count">3</span></div>
+          <div class="nav-item"><span class="icon">▢</span>Sent<span class="count">142</span></div>
+          <div class="nav-item"><span class="icon">▢</span>Outbox<span class="count">2</span></div>
+          <div class="nav-item"><span class="icon">▢</span>Archive</div>
+          <div class="section-label">Connections</div>
+          <div class="nav-item"><span class="icon">●</span>Telnet</div>
+          <div class="nav-item active"><span class="icon">●</span>VARA HF</div>
+          <div class="nav-item"><span class="icon">●</span>VARA FM</div>
+        </div>
+        <div class="rows-pane">
+          <div class="row unread selected">
+            <div class="from"><span class="unread-dot"></span>WX4MTL@winlink.org</div>
+            <div class="date">12:18</div>
+            <div class="subject">Memphis ARES brief — severe wx 18-22Z<span class="size">2.4 KB</span></div>
+            <div class="preview">NWS Memphis has issued a severe thunderstorm watch…</div>
+          </div>
+          <div class="row unread">
+            <div class="from"><span class="unread-dot"></span>K0SWE@winlink.org</div>
+            <div class="date">11:45</div>
+            <div class="subject">Net check-in 7Y3 — 2046Z roll call<span class="size">1.2 KB</span></div>
+            <div class="preview">Roll call for Saturday's training net…</div>
+          </div>
+          <div class="row unread">
+            <div class="from"><span class="unread-dot"></span>N5VSU@winlink.org</div>
+            <div class="date">10:42</div>
+            <div class="subject">INCIDENT 8847 status update<span class="size">980 B</span></div>
+            <div class="preview">[Winlink form]</div>
+          </div>
+          <div class="row">
+            <div class="from">SERVICE@winlink.org</div>
+            <div class="date">09:32</div>
+            <div class="subject">Re: tuxlink setup test<span class="size">412 B</span></div>
+            <div class="preview">Welcome to Winlink…</div>
+          </div>
+          <div class="row">
+            <div class="from">VE3FUN@winlink.org</div>
+            <div class="date">Yest.</div>
+            <div class="subject">RE: HF prop tonight<span class="size">340 B</span></div>
+            <div class="preview">20m looks marginal but 40m should open around 02Z…</div>
+          </div>
+          <div class="row">
+            <div class="from">EM5KKK@winlink.org</div>
+            <div class="date">Yest.</div>
+            <div class="subject">Red Cross welfare query — Sarah Chen<span class="size">1.6 KB</span></div>
+            <div class="preview">Welfare check requested by family in Toronto…</div>
+          </div>
+        </div>
+        <div class="reading-pane">
+          <h1>Memphis ARES brief — severe wx expected 18-22Z</h1>
+          <dl class="msg-meta">
+            <dt>From</dt><dd><span class="addr">WX4MTL@winlink.org</span> · James / EC Shelby County</dd>
+            <dt>To</dt><dd><span class="addr">W4PHS@winlink.org</span>, <span class="addr">MEMPHIS-ARES@winlink.org</span> (+1)</dd>
+            <dt>Date</dt><dd>2026-05-17 12:18 UTC · 07:18 CDT</dd>
+          </dl>
+          <pre class="msg-body">ARES members,
+
+NWS Memphis has issued a severe thunderstorm watch for
+Shelby, Tipton, and Fayette counties, effective 18:00Z
+through 22:00Z today.
+
+Anticipated impacts:
+  - 60+ mph straight-line winds
+  - Quarter-size hail
+  - Isolated tornado risk (5% within 25 mi)
+
+ARES net activation at 17:45Z on 146.940 MHz (-) PL 100.0.
+Backup: 442.150 MHz (+) PL 100.0. Winlink check-ins to
+WX4MTL with subject line "ARES check-in 5/17".
+
+73,
+James / WX4MTL
+EC Shelby County ARES</pre>
+        </div>
+
+        <!-- COMPACT MODEM DOCK -->
+        <div class="modem-pane">
+          <div class="modem-label"><span class="dot"></span>MODEM · VARA HF</div>
+
+          <div class="state-lights">
+            <div class="state-light on">DATA</div>
+            <div class="state-light">ACK</div>
+            <div class="state-light">NACK</div>
+            <div class="state-light on">REQ</div>
+            <div class="state-light">IDLE</div>
+            <div class="state-light">BREAK</div>
+            <div class="state-light">QRT</div>
+            <div class="state-light on">RX</div>
+            <div class="state-light">TX</div>
+          </div>
+
+          <div class="gauge">
+            <div class="gauge-arc">
+              <svg viewBox="0 0 56 32">
+                <path class="arc-bg" d="M 4 28 A 24 24 0 0 1 52 28" />
+                <path class="arc-fg" d="M 4 28 A 24 24 0 0 1 42 12" />
+                <line class="needle" x1="28" y1="28" x2="42" y2="14" />
+              </svg>
+            </div>
+            <div class="gauge-info">
+              <div class="name">S/N</div>
+              <div class="val good">+23.1 dB</div>
+            </div>
+          </div>
+
+          <div class="gauge">
+            <div class="gauge-arc">
+              <svg viewBox="0 0 56 32">
+                <path class="arc-bg" d="M 4 28 A 24 24 0 0 1 52 28" />
+                <path class="arc-fg" d="M 4 28 A 24 24 0 0 1 36 9" />
+                <line class="needle" x1="28" y1="28" x2="38" y2="12" />
+              </svg>
+            </div>
+            <div class="gauge-info">
+              <div class="name">VU input</div>
+              <div class="val good">−14 dBFS</div>
+            </div>
+          </div>
+
+          <div class="gauge">
+            <div class="gauge-arc">
+              <svg viewBox="0 0 56 32">
+                <path class="arc-bg" d="M 4 28 A 24 24 0 0 1 52 28" />
+                <path class="arc-fg warn" d="M 4 28 A 24 24 0 0 1 28 4" />
+                <line class="needle" x1="28" y1="28" x2="28" y2="6" />
+              </svg>
+            </div>
+            <div class="gauge-info">
+              <div class="name">CPU</div>
+              <div class="val warn">23%</div>
+            </div>
+          </div>
+
+          <div class="modem-status-strip">
+            <div class="strip-item"><span class="k">Peer</span> <span class="v">OE8LSR</span></div>
+            <div class="strip-item"><span class="k">bps</span> <span class="v">14144</span></div>
+            <div class="strip-item"><span class="k">RX bytes</span> <span class="v">82.5 KB</span></div>
+            <div class="strip-item"><span class="k">Width</span> <span class="v">WIDE</span></div>
+            <div class="strip-item"><span class="k">TX delay</span> <span class="v">21 ms</span></div>
+          </div>
+
+          <div style="font-size:9px;color:var(--text-faint);text-align:center;padding-top:4px;font-family:var(--sans);">
+            View → Show Modem Console → <strong style="color:var(--accent-2)">Full</strong> for constellation + throughput chart
+          </div>
+        </div>
+      </div>
+      <div class="session-log">
+        <div class="log-header">
+          <span class="live-dot"></span>Session log
+        </div>
+        <div class="log-lines">
+          <div class="step"><span class="step-ts">14:23:01</span><span>Connected to OE8LSR via VARA HF on 14.105 MHz USB</span></div>
+          <div class="step"><span class="step-ts">14:23:14</span><span>Receiving message 3 of 6 from K7XYZ@winlink.org</span></div>
+        </div>
+      </div>
+      <div class="statusbar">
+        <div style="display:flex;align-items:center;gap:6px"><span class="status-dot good"></span>VARA HF · in session</div>
+        <span class="status-divider">·</span>
+        <div>3 unread · 14.1 kbps</div>
+        <div class="status-right">Pat 1.0.0 · Digirig</div>
+      </div>
+    </div>
+  </div>
+  <div class="notes">
+    <strong>Compact dock contents (~240 px wide):</strong> protocol-state lights grid (DATA/ACK/NACK/REQ/IDLE/BREAK/QRT + RX/TX), three mini analog gauges (S/N, VU input, CPU), modem status strip (peer callsign, bps, RX bytes, width, TX delay). Drops the constellation and throughput chart — those need width to be useful.
+    <div class="scenario"><strong>Mode-1 operator scenario:</strong> Cameron is passing 6 messages back-to-back on a clean 14 MHz VARA HF link to a regional gateway. S/N is +23 dB — solid. He's actively reading and composing; modem health is glanceable in the corner. If S/N drops below +12 or CPU pegs, the gauges shift color (green → yellow → red) and he'd flip to Full mode.</div>
+  </div>
+</div>
+
+<!-- =================== FULL OVERLAY =================== -->
+<div class="section">
+  <div class="section-head">
+    <span class="section-letter">2</span>
+    <span class="section-name">Full overlay — modem replaces the reading pane</span>
+    <span class="section-tag">Mode 2 — marginal conditions / QRP / actively troubleshooting</span>
+    <span class="section-mode">View → Show Modem Console: <strong style="color:var(--warn)">Full</strong></span>
+  </div>
+  <div class="app-window">
+    <div class="titlebar">
+      <span class="app-icon">T</span>
+      <span class="app-name">Tuxlink</span>
+      <span class="app-subtitle">— Modem · W4PHS · 10W QRP</span>
+      <span class="controls"><span class="ctrl min"></span><span class="ctrl max"></span><span class="ctrl close"></span></span>
+    </div>
+    <div class="menubar">
+      <span class="menu">File</span><span class="menu">Message</span><span class="menu">Session</span>
+      <span class="menu">Mailbox</span><span class="menu active">View</span><span class="menu">Tools</span><span class="menu">Help</span>
+    </div>
+    <div class="layout-full">
+      <div class="dashboard">
+        <div class="dash-item">
+          <div class="dash-label">Callsign</div>
+          <div class="dash-value callsign">W4PHS</div>
+        </div>
+        <div class="dash-divider"></div>
+        <div class="dash-item">
+          <div class="dash-label">Grid</div>
+          <div class="dash-value">EM75xx</div>
+        </div>
+        <div class="dash-divider"></div>
+        <div class="dash-item">
+          <div class="dash-label">UTC / Local</div>
+          <div class="dash-value">19:23z · 14:23 CDT</div>
+        </div>
+        <div class="dash-divider"></div>
+        <div class="dash-item">
+          <div class="dash-label">Connection</div>
+          <div class="dash-value tx"><span class="dash-status-dot tx"></span>VARA HF · TX · 10W</div>
+        </div>
+        <div class="dash-divider"></div>
+        <div class="dash-item">
+          <div class="dash-label">Throughput · S/N</div>
+          <div class="dash-value" style="color:var(--warn)">680 bps · +6.3 dB</div>
+        </div>
+      </div>
+      <div></div>
+      <div class="panes">
+        <div class="sidebar">
+          <div class="section-label">Mailbox</div>
+          <div class="nav-item"><span class="icon">▣</span>Inbox<span class="count">3</span></div>
+          <div class="nav-item"><span class="icon">▢</span>Sent<span class="count">142</span></div>
+          <div class="nav-item"><span class="icon">▢</span>Outbox<span class="count">2</span></div>
+          <div class="section-label">Connections</div>
+          <div class="nav-item"><span class="icon">●</span>Telnet</div>
+          <div class="nav-item active"><span class="icon">●</span>VARA HF</div>
+          <div class="section-label">Modem</div>
+          <div class="nav-item active"><span class="icon">▣</span>Console</div>
+        </div>
+        <div class="rows-pane">
+          <div class="row unread">
+            <div class="from"><span class="unread-dot"></span>WX4MTL@winlink.org</div>
+            <div class="date">12:18</div>
+            <div class="subject">Memphis ARES brief<span class="size">2.4 KB</span></div>
+            <div class="preview">NWS Memphis has issued a severe thunderstorm watch…</div>
+          </div>
+          <div class="row unread">
+            <div class="from"><span class="unread-dot"></span>K0SWE@winlink.org</div>
+            <div class="date">11:45</div>
+            <div class="subject">Net check-in 7Y3 — 2046Z roll call<span class="size">1.2 KB</span></div>
+            <div class="preview">Roll call for Saturday's training net…</div>
+          </div>
+          <div class="row unread">
+            <div class="from"><span class="unread-dot"></span>N5VSU@winlink.org</div>
+            <div class="date">10:42</div>
+            <div class="subject">INCIDENT 8847 status update<span class="size">980 B</span></div>
+            <div class="preview">[Winlink form]</div>
+          </div>
+          <div class="row">
+            <div class="from">SERVICE@winlink.org</div>
+            <div class="date">09:32</div>
+            <div class="subject">Re: tuxlink setup test<span class="size">412 B</span></div>
+            <div class="preview">Welcome to Winlink…</div>
+          </div>
+          <div class="row">
+            <div class="from">VE3FUN@winlink.org</div>
+            <div class="date">Yest.</div>
+            <div class="subject">RE: HF prop tonight<span class="size">340 B</span></div>
+            <div class="preview">20m looks marginal but 40m should open around 02Z…</div>
+          </div>
+        </div>
+
+        <!-- FULL MODEM PANE: takes the reading-pane area -->
+        <div class="modem-pane" style="padding: 16px 18px; gap: 14px;">
+          <div style="display:flex;align-items:baseline;gap:12px">
+            <div class="modem-label" style="font-size:13px"><span class="dot"></span>MODEM CONSOLE · VARA HF v4.1.2 · OE8XYR</div>
+            <div style="margin-left:auto;font-size:11px;color:var(--text-faint);font-family:var(--sans)">
+              <a style="color:var(--accent-2);text-decoration:none">⊟ Back to reading pane</a>
+            </div>
+          </div>
+
+          <!-- Two big info displays side by side -->
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+            <!-- Throughput chart -->
+            <div style="background:var(--modem-bg);border:1px solid #1a2e26;border-radius:5px;padding:10px;position:relative;height:170px">
+              <div style="font-family:var(--sans);font-size:10px;color:var(--modem-axis);position:absolute;top:8px;left:10px;letter-spacing:0.06em;text-transform:uppercase;font-weight:600">Throughput · bps</div>
+              <div style="font-family:var(--mono);font-size:14px;color:var(--warn);position:absolute;top:8px;right:10px;font-weight:700">680 bps</div>
+              <!-- Y axis labels -->
+              <div style="position:absolute;left:6px;top:32px;bottom:18px;display:flex;flex-direction:column;justify-content:space-between;font-family:var(--mono);font-size:8px;color:var(--modem-axis)">
+                <span>16000</span><span>12000</span><span>8000</span><span>4000</span><span>0</span>
+              </div>
+              <!-- Chart area -->
+              <div style="position:absolute;left:42px;right:10px;top:30px;bottom:18px;
+                background-image:
+                  linear-gradient(to right, var(--modem-grid) 1px, transparent 1px),
+                  linear-gradient(to bottom, var(--modem-grid) 1px, transparent 1px);
+                background-size: 16.66% 25%;border:1px solid #1a2e26;">
+                <!-- previous high throughput history then drop -->
+                <div style="position:absolute;left:0;top:18%;bottom:0;width:50%;
+                  background: linear-gradient(180deg, rgba(93,214,160,0.4) 0%, rgba(93,214,160,0.12) 100%);
+                  border-top: 1.5px solid var(--modem-trace);"></div>
+                <!-- Drop to current low throughput -->
+                <div style="position:absolute;left:50%;top:78%;bottom:0;width:50%;
+                  background: linear-gradient(180deg, rgba(255,209,102,0.35) 0%, rgba(255,209,102,0.1) 100%);
+                  border-top: 1.5px solid var(--warn);"></div>
+              </div>
+              <div style="position:absolute;bottom:4px;right:10px;font-family:var(--mono);font-size:9px;color:var(--text-faint)">last 60 s</div>
+            </div>
+
+            <!-- Constellation diagram -->
+            <div style="background:var(--modem-bg);border:1px solid #1a2e26;border-radius:5px;padding:10px;position:relative;height:170px">
+              <div style="font-family:var(--sans);font-size:10px;color:var(--modem-axis);position:absolute;top:8px;left:10px;letter-spacing:0.06em;text-transform:uppercase;font-weight:600">Constellation · QPSK</div>
+              <div style="font-family:var(--mono);font-size:11px;color:var(--warn);position:absolute;top:8px;right:10px">scattered</div>
+              <!-- Grid -->
+              <div style="position:absolute;left:10px;right:10px;top:30px;bottom:14px;
+                background-image:
+                  linear-gradient(to right, var(--modem-grid) 1px, transparent 1px),
+                  linear-gradient(to bottom, var(--modem-grid) 1px, transparent 1px);
+                background-size: 16.66% 16.66%;
+                border:1px solid #1a2e26;position:relative;">
+                <!-- Scattered constellation dots (poor SNR, spread out) -->
+                <div style="position:absolute;left:18%;top:22%;width:3px;height:3px;background:var(--modem-dot);border-radius:50%;box-shadow:0 0 3px var(--modem-dot)"></div>
+                <div style="position:absolute;left:22%;top:18%;width:3px;height:3px;background:var(--modem-dot);border-radius:50%"></div>
+                <div style="position:absolute;left:25%;top:24%;width:3px;height:3px;background:var(--modem-dot);border-radius:50%"></div>
+                <div style="position:absolute;left:75%;top:24%;width:3px;height:3px;background:var(--modem-dot);border-radius:50%;box-shadow:0 0 3px var(--modem-dot)"></div>
+                <div style="position:absolute;left:78%;top:20%;width:3px;height:3px;background:var(--modem-dot);border-radius:50%"></div>
+                <div style="position:absolute;left:73%;top:27%;width:3px;height:3px;background:var(--modem-dot);border-radius:50%"></div>
+                <div style="position:absolute;left:24%;top:75%;width:3px;height:3px;background:var(--modem-dot);border-radius:50%;box-shadow:0 0 3px var(--modem-dot)"></div>
+                <div style="position:absolute;left:20%;top:78%;width:3px;height:3px;background:var(--modem-dot);border-radius:50%"></div>
+                <div style="position:absolute;left:27%;top:80%;width:3px;height:3px;background:var(--modem-dot);border-radius:50%"></div>
+                <div style="position:absolute;left:78%;top:78%;width:3px;height:3px;background:var(--modem-dot);border-radius:50%;box-shadow:0 0 3px var(--modem-dot)"></div>
+                <div style="position:absolute;left:74%;top:73%;width:3px;height:3px;background:var(--modem-dot);border-radius:50%"></div>
+                <div style="position:absolute;left:80%;top:76%;width:3px;height:3px;background:var(--modem-dot);border-radius:50%"></div>
+                <!-- Some outliers (poor SNR) -->
+                <div style="position:absolute;left:42%;top:48%;width:2px;height:2px;background:var(--warn);border-radius:50%;opacity:0.7"></div>
+                <div style="position:absolute;left:55%;top:38%;width:2px;height:2px;background:var(--warn);border-radius:50%;opacity:0.6"></div>
+                <div style="position:absolute;left:48%;top:62%;width:2px;height:2px;background:var(--warn);border-radius:50%;opacity:0.5"></div>
+                <div style="position:absolute;left:65%;top:55%;width:2px;height:2px;background:var(--warn);border-radius:50%;opacity:0.6"></div>
+                <div style="position:absolute;left:35%;top:55%;width:2px;height:2px;background:var(--warn);border-radius:50%;opacity:0.5"></div>
+              </div>
+              <div style="position:absolute;bottom:0;right:10px;font-family:var(--mono);font-size:9px;color:var(--text-faint)">200 sym</div>
+            </div>
+          </div>
+
+          <!-- Gauge row -->
+          <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px">
+            <div style="background:var(--modem-bg);border:1px solid #1a2e26;border-radius:5px;padding:10px;text-align:center">
+              <div style="font-family:var(--sans);font-size:9px;color:var(--modem-axis);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:4px">S/N</div>
+              <div style="font-family:var(--mono);font-size:18px;color:var(--warn);font-weight:700">+6.3 dB</div>
+              <div style="font-family:var(--mono);font-size:9px;color:var(--text-faint);margin-top:2px">marginal</div>
+            </div>
+            <div style="background:var(--modem-bg);border:1px solid #1a2e26;border-radius:5px;padding:10px;text-align:center">
+              <div style="font-family:var(--sans);font-size:9px;color:var(--modem-axis);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:4px">VU Input</div>
+              <div style="font-family:var(--mono);font-size:18px;color:var(--modem-trace);font-weight:700">−16 dBFS</div>
+              <div style="font-family:var(--mono);font-size:9px;color:var(--text-faint);margin-top:2px">in range</div>
+            </div>
+            <div style="background:var(--modem-bg);border:1px solid #1a2e26;border-radius:5px;padding:10px;text-align:center">
+              <div style="font-family:var(--sans);font-size:9px;color:var(--modem-axis);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:4px">CPU</div>
+              <div style="font-family:var(--mono);font-size:18px;color:var(--warn);font-weight:700">38%</div>
+              <div style="font-family:var(--mono);font-size:9px;color:var(--text-faint);margin-top:2px">working hard</div>
+            </div>
+            <div style="background:var(--modem-bg);border:1px solid #1a2e26;border-radius:5px;padding:10px;text-align:center">
+              <div style="font-family:var(--sans);font-size:9px;color:var(--modem-axis);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:4px">TX delay</div>
+              <div style="font-family:var(--mono);font-size:18px;color:var(--modem-trace);font-weight:700">21 ms</div>
+              <div style="font-family:var(--mono);font-size:9px;color:var(--text-faint);margin-top:2px">acceptable</div>
+            </div>
+          </div>
+
+          <!-- Protocol state -->
+          <div style="display:grid;grid-template-columns:repeat(9,1fr);gap:4px">
+            <div class="state-light on">DATA</div>
+            <div class="state-light">ACK</div>
+            <div class="state-light warn-on">NACK</div>
+            <div class="state-light on">REQ</div>
+            <div class="state-light">IDLE</div>
+            <div class="state-light">BREAK</div>
+            <div class="state-light">QRT</div>
+            <div class="state-light">RX</div>
+            <div class="state-light on">TX</div>
+          </div>
+
+          <!-- Status strip -->
+          <div style="display:grid;grid-template-columns:repeat(6,auto);gap:14px;background:var(--modem-bg);border:1px solid #1a2e26;border-radius:5px;padding:8px 12px;font-size:10px;font-family:var(--mono)">
+            <div><span style="color:var(--modem-axis)">PEER</span> <span style="color:var(--text);font-weight:600">OE8LSR</span></div>
+            <div><span style="color:var(--modem-axis)">FREQ</span> <span style="color:var(--accent-2);font-weight:600">14.105 MHz USB</span></div>
+            <div><span style="color:var(--modem-axis)">PWR</span> <span style="color:var(--warn);font-weight:600">10 W (QRP)</span></div>
+            <div><span style="color:var(--modem-axis)">WIDTH</span> <span style="color:var(--text);font-weight:600">500 Hz NARROW</span></div>
+            <div><span style="color:var(--modem-axis)">RX BYTES</span> <span style="color:var(--text);font-weight:600">12842</span></div>
+            <div><span style="color:var(--modem-axis)">TX BYTES</span> <span style="color:var(--text);font-weight:600">4128</span></div>
+          </div>
+
+          <!-- Action row: troubleshooting affordances -->
+          <div style="display:flex;gap:8px;margin-top:auto">
+            <button style="background:var(--surface-2);border:1px solid var(--border-strong);color:var(--text);padding:6px 12px;border-radius:5px;font-size:12px;font-family:var(--sans)">Change band</button>
+            <button style="background:var(--surface-2);border:1px solid var(--border-strong);color:var(--text);padding:6px 12px;border-radius:5px;font-size:12px;font-family:var(--sans)">Increase power</button>
+            <button style="background:var(--surface-2);border:1px solid var(--border-strong);color:var(--text);padding:6px 12px;border-radius:5px;font-size:12px;font-family:var(--sans)">Try different gateway</button>
+            <button style="background:var(--surface-2);border:1px solid var(--border-strong);color:var(--text);padding:6px 12px;border-radius:5px;font-size:12px;font-family:var(--sans)">Modem settings…</button>
+            <button style="background:var(--accent);border:1px solid var(--accent);color:#1a0e02;padding:6px 12px;border-radius:5px;font-size:12px;font-family:var(--sans);font-weight:600;margin-left:auto">Disconnect</button>
+          </div>
+        </div>
+      </div>
+      <div class="session-log">
+        <div class="log-header"><span class="live-dot"></span>Session log</div>
+        <div class="log-lines">
+          <div class="step"><span class="step-ts">14:18:42</span><span>Connecting to OE8LSR via VARA HF on 14.105 MHz USB (10 W QRP)…</span></div>
+          <div class="step"><span class="step-ts">14:19:01</span><span>Connected · negotiating bandwidth</span></div>
+          <div class="step"><span class="step-ts">14:21:14</span><span style="color:var(--warn)">S/N dropped from +18 dB to +6 dB · bandwidth renegotiated to 500 Hz NARROW</span></div>
+        </div>
+      </div>
+      <div class="statusbar">
+        <div style="display:flex;align-items:center;gap:6px"><span class="status-dot tx"></span>VARA HF · TX 10W · +6 dB</div>
+        <span class="status-divider">·</span>
+        <div>3 unread · 680 bps</div>
+        <div class="status-right">Pat 1.0.0 · Digirig</div>
+      </div>
+    </div>
+  </div>
+  <div class="notes">
+    <strong>Full pane contents:</strong> throughput chart (60s history, color-shifts when SNR drops), constellation diagram (QPSK scatter, warning dots for outliers), four big gauges (S/N, VU, CPU, TX delay), full protocol state lights (9-wide), comprehensive status strip (peer / freq / power / bandwidth / RX-TX bytes), troubleshooting action buttons (Change band / Increase power / Try different gateway / Modem settings… / Disconnect). The reading pane is hidden; rows pane stays so user can still navigate messages.
+    <div class="scenario"><strong>Mode-2 operator scenario:</strong> Cameron is on 10W QRP in a deployment, S/N was solid at +18 dB but the link is degrading — now +6 dB and bandwidth has auto-renegotiated to 500 Hz NARROW. Throughput dropped from 14k to 680 bps. The constellation has spread out (visible scatter, some yellow outliers). He needs to decide: bump power, change band, try a different gateway, or accept the slow link. The full-overlay pane gives him every signal he needs without context-switching to a separate VARA window.</div>
+  </div>
+</div>
+
+<div style="margin-top:36px;padding:18px 22px;background:var(--accent-soft);border:1px solid rgba(245,159,60,0.35);border-radius:8px;font-size:13px">
+  <h3 style="margin:0 0 8px;color:var(--accent-2);font-size:14px;font-weight:700">Captured for the design doc</h3>
+  <p style="margin:0 0 8px;color:var(--text-dim)">v0.5+ modem-console placement supports both operator modes. Same toggle (View → Show Modem Console), three states (Off · Compact · Full). Compact lives in the right dock; Full replaces the reading pane.</p>
+  <p style="margin:8px 0 0;color:var(--text-dim)">This is a v0.5+ surface — not in v0.0.1 scope. v0.0.1 dock contents stay light (session timer, outbox queue, last sessions) with the modem section labeled "v0.5+" in mocks-v2's stub area. Confirm and we move on to wizard wireframes (Tasks 9-11), which are v0.0.1 scope and need the same dark-mode treatment.</p>
+</div>
+
+</div>
+</body>
+</html>

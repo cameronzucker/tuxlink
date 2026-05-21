@@ -11,7 +11,10 @@
 
 set -u
 
-REPO="/home/administrator/Code/tuxlink"
+# Resolve repo root from this script's filesystem location (rev-parse-based
+# per D1's hook-resolution discipline; supersedes the prior hardcoded path).
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO="$(cd "$SCRIPT_DIR/../.." && pwd)"
 cd "$REPO" 2>/dev/null || { echo '{}'; exit 0; }
 
 branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "(unknown)")
@@ -20,7 +23,13 @@ status_count=$(git status --short 2>/dev/null | wc -l | tr -d ' ')
 
 last_handoff_line=""
 if [[ -d dev/handoffs ]]; then
-    last_handoff_file=$(ls -t dev/handoffs/*.md 2>/dev/null | head -1)
+    # Use find + sort to handle filenames safely (per codex 2026-05-17 D1
+    # SC2012 finding: ls is fragile with non-alphanumeric names).
+    # Pattern: handoff files are date-prefixed (YYYY-MM-DD-*.md) so lexical
+    # sort = chronological sort. _template.md is excluded because it has no
+    # date prefix (sorts last, which is wrong; explicit exclusion via glob).
+    last_handoff_file=$(find dev/handoffs -maxdepth 1 -name '20*-*.md' -type f -print 2>/dev/null \
+        | sort -r | head -1)
     if [[ -n "$last_handoff_file" ]]; then
         last_handoff_line="$(basename "$last_handoff_file")"
     fi
@@ -35,7 +44,7 @@ case "$branch" in
         branch_warning=$'\n\n⚠️  You are on \x60main\x60. Direct commits are blocked by the commit-discipline hook. Branch off with \x60git checkout -b task-NN-<slug>\x60 before any work.'
         ;;
     feat/v*)
-        branch_warning=$'\n\n⚠️  You are on the integration branch \x60'"$branch"$'\x60. Direct commits are blocked unless prefixed with \x60ALLOW_INTEGRATION_COMMIT=1\x60 (squash-merge carve-out). For ordinary task work, branch off with \x60git checkout -b task-NN-<slug>\x60.'
+        branch_warning=$'\n\n⚠️  You are on the integration branch \x60'"$branch"$'\x60. Direct commits are blocked unless prefixed with \x60ALLOW_INTEGRATION_COMMIT=1\x60 (merge-commit carve-out per 2026-05-17 port catalog Decision 1; squash-merge is banned). Normal flow uses \x60gh pr merge --merge --delete-branch\x60. For ordinary task work, branch off with \x60git checkout -b task-NN-<slug>\x60.'
         ;;
 esac
 
@@ -52,7 +61,7 @@ ${recent_commits}
 \`\`\`${branch_warning}
 
 ### Reminders
-- Pick a session moniker per CLAUDE.md §"Agent identity" — pre-flight against \`grep -ri\` AND \`git log --all --grep="^Agent: <name>" --since="3 days ago"\`.
+- Pick a session moniker via \`python3 .claude/scripts/get_agent_moniker.py\` (3-word hyphenated form, auto-pre-flighted against git history). Legacy single-word monikers in older commits remain valid; the new format applies to forward commits.
 - Per-task branches: \`task-NN-<slug>\` (or \`bd-<id>/<slug>\` once Beads is installed).
 - Commit-discipline hooks will reject: missing \`Agent:\` trailer, unsubstituted \`<SESSION-MONIKER>\` placeholder, direct commits to integration branches.
 EOF

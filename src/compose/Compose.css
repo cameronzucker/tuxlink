@@ -1,0 +1,373 @@
+/* Compose window styles
+ *
+ * Separate Tauri window — no AppShell grid context. Uses a flex-column
+ * layout with a fixed header + scrollable body area.
+ *
+ * Design target: the same Mail.app-minimal dark system as the main shell.
+ * RECONCILED (tuxlink-cbz, 2026-05-20): this file previously carried a
+ * self-contained Catppuccin Mocha palette (blue primary, purple-tinted
+ * surfaces) that ignored the central tokens. It now consumes the canonical
+ * --tux-* tokens defined in App.css (loaded in the compose window via
+ * App.tsx), so the compose window matches the shell and the amber accent.
+ * Surface hierarchy: --tux-bg (root + writing area) < --tux-surface (chrome
+ * strips, dialog) < --tux-surface-2 (input fields, chips, secondary buttons).
+ */
+
+/* ============================================================
+ * Root / layout
+ * ============================================================ */
+
+.compose-root {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  background: var(--tux-bg);
+  color: var(--tux-fg);
+  font-family: inherit;
+  font-size: 14px;
+  overflow: hidden;
+}
+
+/* ============================================================
+ * Header
+ * ============================================================ */
+
+.compose-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background: var(--tux-surface);
+  border-bottom: 1px solid var(--tux-border);
+  flex-shrink: 0;
+  /* Tauri drag region */
+  -webkit-app-region: drag;
+}
+
+.compose-header__title {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--tux-fg-muted);
+  user-select: none;
+}
+
+.compose-header__close {
+  -webkit-app-region: no-drag;
+  font-size: 12px;
+  padding: 2px 6px;
+}
+
+/* ============================================================
+ * Fields
+ * ============================================================ */
+
+.compose-fields {
+  flex-shrink: 0;
+  padding: 8px 12px 4px;
+  border-bottom: 1px solid var(--tux-border);
+}
+
+.compose-field-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 3px 0;
+  flex-wrap: wrap;
+}
+
+.compose-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--tux-fg-muted);
+  min-width: 72px;
+  text-align: right;
+  flex-shrink: 0;
+}
+
+.compose-label--muted {
+  opacity: 0.5;
+}
+
+.compose-label--sr-only {
+  position: absolute;
+  left: -9999px;
+}
+
+.compose-label__req {
+  color: var(--tux-danger);
+}
+
+.compose-input {
+  flex: 1;
+  background: var(--tux-surface-2);
+  border: 1px solid var(--tux-border);
+  border-radius: 4px;
+  color: var(--tux-fg);
+  padding: 4px 8px;
+  font-size: 13px;
+  outline: none;
+  min-width: 0;
+}
+
+.compose-input:focus {
+  border-color: var(--tux-accent);
+  box-shadow: 0 0 0 2px var(--tux-focus-ring);
+}
+
+.compose-input--disabled,
+.compose-input[disabled] {
+  opacity: 0.45;
+  cursor: not-allowed;
+  background: var(--tux-bg);
+  border-color: var(--tux-border);
+}
+
+.compose-hint {
+  font-size: 11px;
+  color: var(--tux-fg-faint);
+  white-space: nowrap;
+}
+
+.compose-hint--warn {
+  color: var(--tux-warn);
+}
+
+/* ============================================================
+ * Body textarea
+ * ============================================================ */
+
+.compose-body-area {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  padding: 4px 12px;
+  min-height: 0;
+}
+
+.compose-textarea {
+  flex: 1;
+  resize: none;
+  background: var(--tux-bg);
+  border: 1px solid var(--tux-border);
+  border-radius: 4px;
+  color: var(--tux-fg);
+  font-family: var(--tux-mono);
+  font-size: 13px;
+  padding: 8px;
+  outline: none;
+  min-height: 0;
+}
+
+.compose-textarea:focus {
+  border-color: var(--tux-accent);
+  box-shadow: 0 0 0 2px var(--tux-focus-ring);
+}
+
+/* ============================================================
+ * Attachments
+ * ============================================================ */
+
+.compose-attachments {
+  padding: 6px 12px;
+  border-top: 1px solid var(--tux-border);
+  min-height: 36px;
+  display: flex;
+  align-items: center;
+  background: var(--tux-surface);
+  flex-shrink: 0;
+}
+
+.compose-attachments__hint {
+  font-size: 12px;
+  color: var(--tux-fg-faint);
+}
+
+.compose-attachments__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.compose-attachments__item {
+  background: var(--tux-surface-2);
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-size: 12px;
+  color: var(--tux-fg);
+}
+
+/* ============================================================
+ * Options row
+ * ============================================================ */
+
+.compose-options {
+  padding: 4px 12px;
+  border-top: 1px solid var(--tux-border);
+  flex-shrink: 0;
+}
+
+.compose-checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--tux-fg-muted);
+  cursor: pointer;
+  user-select: none;
+}
+
+/* ============================================================
+ * Error banner
+ * ============================================================ */
+
+.compose-error {
+  margin: 4px 12px;
+  padding: 6px 10px;
+  background: var(--tux-danger-surface);
+  border: 1px solid var(--tux-danger);
+  border-radius: 4px;
+  color: var(--tux-danger);
+  font-size: 13px;
+}
+
+/* ============================================================
+ * Action bar
+ * ============================================================ */
+
+.compose-actions {
+  display: flex;
+  gap: 8px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--tux-border);
+  background: var(--tux-surface);
+  flex-shrink: 0;
+}
+
+/* ============================================================
+ * Buttons
+ * ============================================================ */
+
+.compose-btn {
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 5px 12px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease, filter 0.12s ease;
+}
+
+.compose-btn:disabled,
+.compose-btn--disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+.compose-btn--primary {
+  background: var(--tux-accent);
+  color: var(--tux-accent-fg);
+}
+
+.compose-btn--primary:hover:not(:disabled) {
+  background: var(--tux-accent-hover);
+}
+
+.compose-btn--secondary {
+  background: var(--tux-surface-2);
+  color: var(--tux-fg);
+  border-color: var(--tux-border);
+}
+
+.compose-btn--secondary:hover:not(:disabled) {
+  background: var(--tux-hover);
+  border-color: var(--tux-accent);
+}
+
+.compose-btn--ghost {
+  background: transparent;
+  color: var(--tux-fg-muted);
+  border: 1px solid var(--tux-border);
+}
+
+.compose-btn--ghost:hover:not(:disabled) {
+  background: var(--tux-surface-2);
+  border-color: var(--tux-accent);
+}
+
+.compose-btn--danger {
+  background: var(--tux-danger);
+  color: var(--tux-danger-fg);
+}
+
+.compose-btn--danger:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+
+/* ============================================================
+ * Close-prompt overlay
+ * ============================================================ */
+
+.compose-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+.compose-dialog {
+  background: var(--tux-surface);
+  border: 1px solid var(--tux-border);
+  border-radius: 8px;
+  padding: 24px;
+  max-width: 320px;
+  width: 90%;
+}
+
+.compose-dialog__msg {
+  margin: 0 0 16px;
+  font-size: 14px;
+  color: var(--tux-fg);
+  text-align: center;
+}
+
+.compose-dialog__actions {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+}
+
+/* ============================================================
+ * Success screen
+ * ============================================================ */
+
+.compose-success {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100vh;
+  background: var(--tux-bg);
+  gap: 12px;
+}
+
+.compose-success__msg {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--tux-success);
+  margin: 0;
+}
+
+.compose-success__sub {
+  font-size: 13px;
+  color: var(--tux-fg-muted);
+  margin: 0;
+  text-align: center;
+  max-width: 280px;
+}

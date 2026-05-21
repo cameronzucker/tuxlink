@@ -1,7 +1,7 @@
 # 4. Per-task branch model with squash-merge
 
 Date: 2026-05-05
-Status: Accepted
+Status: Accepted (squash-merge clause superseded by [ADR 0010](0010-no-squash-merge.md) 2026-05-17; the per-task-branch model itself, branch naming, post-PR delete, and the per-task wrap conventions remain accepted)
 Deciders: cameronzucker, alder
 
 ## Context

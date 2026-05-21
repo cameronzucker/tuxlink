@@ -1,0 +1,63 @@
+/* StatusBar.css — Mock D bottom status bar.
+ *
+ * tuxlink-yd4 (2026-05-20): ported verbatim from the approved mock's
+ * `.statusbar` (docs/design/mockups/2026-05-17-mocks-v1-four-directions.html).
+ * Cool-slate tokens (from App.css :root). Scoped under `.statusbar` so the
+ * component stays portable; only the shell uses it.
+ */
+
+.statusbar {
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  padding: 6px 16px;
+  font-size: 12px;
+  color: var(--text-dim);
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  height: 28px;
+  user-select: none;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.statusbar .status-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.statusbar .status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-faint);
+  flex: 0 0 auto;
+}
+.statusbar .status-dot.idle {
+  background: var(--text-faint);
+}
+.statusbar .status-dot.good {
+  background: var(--success);
+  box-shadow: 0 0 5px var(--success);
+}
+.statusbar .status-dot.warn {
+  background: var(--accent);
+  box-shadow: 0 0 5px rgba(245, 159, 60, 0.5);
+}
+.statusbar .status-dot.error {
+  background: var(--error);
+  box-shadow: 0 0 5px var(--error);
+}
+
+.statusbar .status-divider {
+  color: var(--text-faint);
+  font-size: 10px;
+}
+
+.statusbar .status-right {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-faint);
+}

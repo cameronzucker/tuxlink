@@ -1,0 +1,11 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "compose",
+  "description": "Compose windows (label `compose-<draftId>`, Task 14 / spec §5.4). Least-privilege grant: ONLY the event IPC the compose frontend needs. tuxlink-h2y: the window-class `core:window:allow-close` + `allow-destroy` grants were dropped — every close path now routes through the `compose_close_self` app command (a self-only Rust `destroy()`), so a compromised compose window can no longer close/destroy OTHER windows (e.g. main). App commands (e.g. `message_send`, `compose_close_self`) are not ACL-gated in Tauri 2 — they are reachable because this capability gives the compose window an IPC bridge.",
+  "windows": ["compose-*"],
+  "permissions": [
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
+    "core:window:allow-start-dragging"
+  ]
+}
