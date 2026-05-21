@@ -59,6 +59,10 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
+# Exception: the live-CMS audit log is a git-tracked artifact (tuxlink-nk7,
+# Task 6). Every live_cms_smoke invocation appends one audit line; the file is
+# committed (with only its header) so the audit trail has a stable home.
+!dev/live-cms-sessions.log
 
 # Tauri / Rust build artifacts
 src-tauri/target/

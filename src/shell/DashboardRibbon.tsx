@@ -47,18 +47,13 @@ export interface DashboardRibbonProps {
 
 export function DashboardRibbon({ data }: DashboardRibbonProps) {
   const { utc, local } = useClock();
-  const { callsign, grid, state, errorReason } = data;
+  const { callsign, grid, state, connection: connectionFromData } = data;
   // Position (GPS coords) is a v0.1 data source; the dev fixture shows the mock
   // value, and the real app omits the item until GPS exists.
   const position = DEV_FIXTURE ? DEV_POSITION : null;
-  // FIX 6 (tuxlink-22l R2): when the backend is in an error state, surface the
-  // reason and suppress the misleading "· telnet ready" suffix.
-  // Non-error states keep their existing label + transport behavior.
-  const connection = DEV_FIXTURE
-    ? DEV_CONNECTION_DASH
-    : state.tone === 'error'
-      ? `${state.label}: ${errorReason ?? 'unknown error'}`
-      : `${state.label} · telnet ready`;
+  // connection string is pre-formatted by useStatusData via formatConnectionState,
+  // so it always names the real configured/active transport (tuxlink-989 fix).
+  const connection = DEV_FIXTURE ? DEV_CONNECTION_DASH : connectionFromData;
 
   return (
     <div className="dashboard" data-testid="dashboard-ribbon" role="banner">

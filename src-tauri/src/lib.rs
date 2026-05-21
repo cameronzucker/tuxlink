@@ -2,6 +2,7 @@ pub mod app_backend;
 pub mod bootstrap;
 pub mod compose_window;
 pub mod config;
+pub mod consent_gate;
 pub mod menu;
 pub mod pat_client;
 pub mod pat_config;

@@ -1,89 +1,90 @@
 /**
- * DashboardRibbon tests — FIX 6: error reason surfaced in connection label.
+ * DashboardRibbon — connection string transport accuracy tests (tuxlink-989).
  *
- * Spec: docs/superpowers/specs/2026-05-20-pat-spawn-bootstrap-design.md §2
- * Three-state requirement: "Backend error → explicit error + reason in the
- * ribbon status". The ribbon must show the reason and NEVER append
- * "· telnet ready" during an error state.
+ * The ribbon must NEVER show a hardcoded "telnet ready" suffix. It must
+ * reflect the actual configured or active transport. Bug was confirmed during
+ * the tuxlink-22l live smoke (operator N0CALL, CmsSsl config → showed
+ * "Idle · telnet ready").
  *
- * DEV_FIXTURE is false under vitest (MODE=test), so the component renders
- * the data prop directly — not the dev fixture strings.
+ * DEV_FIXTURE is false under vitest, so the component renders from `data`.
  */
 
 import { describe, it, expect } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { DashboardRibbon } from './DashboardRibbon';
-import type { StatusBarData } from './useStatus';
+import type { StatusBarData, StatusTone } from './useStatus';
 
 // ---------------------------------------------------------------------------
-// FIX 6 — [P1] Error reason surfaced; "· telnet ready" absent in error state
+// Helpers
 // ---------------------------------------------------------------------------
 
-describe('DashboardRibbon — error state (FIX 6)', () => {
-  it('shows the error reason in the connection label when state tone is error', () => {
-    const data: StatusBarData = {
-      callsign: 'W4PHS',
-      grid: 'EM75',
-      gridTooltip: null,
-      state: { label: 'Error', tone: 'error' },
-      errorReason: 'Pat failed: X',
-    };
-    render(<DashboardRibbon data={data} />);
-    const conn = screen.getByTestId('ribbon-connection');
-    expect(conn.textContent).toContain('Pat failed: X');
+function makeData(overrides: Partial<StatusBarData> = {}): StatusBarData {
+  return {
+    callsign: 'N0CALL',
+    grid: 'DN31',
+    gridTooltip: null,
+    state: { label: 'Idle', tone: 'idle' as StatusTone },
+    connection: 'Idle · CMS-SSL',
+    ...overrides,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// tuxlink-989: ribbon connection field must reflect the real transport
+// ---------------------------------------------------------------------------
+
+describe('<DashboardRibbon> — transport label accuracy (tuxlink-989)', () => {
+  it('CmsSsl config: ribbon shows "CMS-SSL" not "telnet" when idle', () => {
+    render(<DashboardRibbon data={makeData({ connection: 'Idle · CMS-SSL' })} />);
+    const el = screen.getByTestId('ribbon-connection');
+    expect(el.textContent?.toLowerCase()).not.toContain('telnet');
+    expect(el.textContent).toContain('CMS-SSL');
   });
 
-  it('does NOT show "telnet ready" when state tone is error', () => {
-    const data: StatusBarData = {
-      callsign: 'W4PHS',
-      grid: 'EM75',
-      gridTooltip: null,
-      state: { label: 'Error', tone: 'error' },
-      errorReason: 'Pat binary unavailable: the bundled sidecar is a 0-byte dev stub',
-    };
-    render(<DashboardRibbon data={data} />);
-    const conn = screen.getByTestId('ribbon-connection');
-    expect(conn.textContent).not.toContain('telnet ready');
+  it('Telnet config: ribbon shows "Telnet" when idle', () => {
+    render(<DashboardRibbon data={makeData({ connection: 'Idle · Telnet' })} />);
+    const el = screen.getByTestId('ribbon-connection');
+    expect(el.textContent).toContain('Telnet');
   });
 
-  it('shows the full reason string in the connection label', () => {
-    const data: StatusBarData = {
-      callsign: 'W4PHS',
-      grid: 'EM75',
-      gridTooltip: null,
-      state: { label: 'Error', tone: 'error' },
-      errorReason: 'Pat binary unavailable: the bundled sidecar is a 0-byte dev stub',
-    };
-    render(<DashboardRibbon data={data} />);
-    const conn = screen.getByTestId('ribbon-connection');
-    expect(conn.textContent).toContain(
-      'Pat binary unavailable: the bundled sidecar is a 0-byte dev stub',
+  it('CmsSsl config + Disconnected status: ribbon shows "CMS-SSL" not "telnet"', () => {
+    render(
+      <DashboardRibbon
+        data={makeData({
+          state: { label: 'Idle', tone: 'idle' },
+          connection: 'Disconnected · CMS-SSL',
+        })}
+      />,
     );
+    const el = screen.getByTestId('ribbon-connection');
+    expect(el.textContent?.toLowerCase()).not.toContain('telnet');
+    expect(el.textContent).toContain('CMS-SSL');
   });
 
-  it('shows "· telnet ready" suffix for non-error states (idle)', () => {
-    const data: StatusBarData = {
-      callsign: 'W4PHS',
-      grid: 'EM75',
-      gridTooltip: null,
-      state: { label: 'Idle', tone: 'idle' },
-    };
-    render(<DashboardRibbon data={data} />);
-    const conn = screen.getByTestId('ribbon-connection');
-    expect(conn.textContent).toContain('Idle');
-    expect(conn.textContent).toContain('telnet ready');
+  it('Connected CmsSsl: ribbon shows "Connected · CMS-SSL"', () => {
+    render(
+      <DashboardRibbon
+        data={makeData({
+          state: { label: 'Connected', tone: 'good' },
+          connection: 'Connected · CMS-SSL',
+        })}
+      />,
+    );
+    const el = screen.getByTestId('ribbon-connection');
+    expect(el.textContent).toContain('Connected');
+    expect(el.textContent).toContain('CMS-SSL');
   });
 
-  it('shows "· telnet ready" suffix for Connected state', () => {
-    const data: StatusBarData = {
-      callsign: 'W4PHS',
-      grid: 'EM75',
-      gridTooltip: null,
-      state: { label: 'Connected', tone: 'good' },
-    };
-    render(<DashboardRibbon data={data} />);
-    const conn = screen.getByTestId('ribbon-connection');
-    expect(conn.textContent).toContain('Connected');
-    expect(conn.textContent).toContain('telnet ready');
+  it('Error state: ribbon shows the error reason, not a transport suffix', () => {
+    render(
+      <DashboardRibbon
+        data={makeData({
+          state: { label: 'Error', tone: 'error' },
+          connection: 'Error: connection refused',
+        })}
+      />,
+    );
+    const el = screen.getByTestId('ribbon-connection');
+    expect(el.textContent).toContain('Error: connection refused');
   });
 });

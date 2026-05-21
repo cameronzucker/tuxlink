@@ -202,12 +202,12 @@ export interface StatusBarData {
   /** Short state word + dot tone derived from BackendStatus. */
   state: { label: string; tone: StatusTone };
   /**
-   * Present when the backend is in the Error state.
-   * Carries the full reason string from `StatusDto::Error { reason }` so the
-   * DashboardRibbon can surface it in the connection label instead of
-   * appending the misleading "· telnet ready" suffix (FIX 6, tuxlink-22l R2).
+   * Full ribbon connection string — e.g. "Idle · CMS-SSL", "Connected · CMS-SSL",
+   * "Error: <reason>". Derived from formatConnectionState(status, configTransport)
+   * so the transport label always reflects the real configured/active transport
+   * rather than a hardcoded suffix.
    */
-  errorReason?: string;
+  connection: string;
 }
 
 /**
@@ -269,6 +269,7 @@ export function useStatusData(): StatusBarData {
       grid: DEV_GRID,
       gridTooltip: null,
       state: { label: 'Idle', tone: 'idle' },
+      connection: 'Idle · CMS-SSL',
     };
   }
 
@@ -284,14 +285,17 @@ export function useStatusData(): StatusBarData {
     ? formatGrid({ grid: config.grid, precision: config.position_precision })
     : { broadcast: null, tooltip: null };
 
+  // Use the configured transport when building the connection string.  When
+  // config hasn't loaded yet, fall back to 'CmsSsl' so the label is
+  // informative (it will be correct once the first poll completes).
+  const configTransport: CmsTransport = config?.transport ?? 'CmsSsl';
+
   return {
     callsign,
     grid: gridResult.broadcast,
     gridTooltip: gridResult.tooltip,
     state: formatStatusState(status),
-    // Thread the error reason so the DashboardRibbon can surface it
-    // without re-fetching or re-deriving from the raw StatusDto (FIX 6).
-    errorReason: status?.kind === 'Error' ? status.reason : undefined,
+    connection: formatConnectionState(status, configTransport),
   };
 }
 

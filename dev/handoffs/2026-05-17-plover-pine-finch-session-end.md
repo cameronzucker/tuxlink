@@ -96,7 +96,7 @@ Worktree is current branch holder (see below).
   - **`dev/winlink-reference/` — 323 MB total.** Contains:
     - `Winlink_Express_install_1-7-31-0.zip` (41 MB) — official Express installer downloaded from `downloads.winlink.org`
     - `winlink-express-extracted/Winlink_Express_install.exe` (41 MB) — same installer, extracted from the zip wrapper, Inno Setup 6.4 format
-    - `RMS.zip` (74 MB) — **Cameron's personal install** scp'd from his Windows machine; includes full RMS Express + RMS Trimode with N7CPZ data (his real address, phone, hashed password, aux callsigns, friends' callsigns, real log files, real mailbox — never commit any of this verbatim)
+    - `RMS.zip` (74 MB) — **Cameron's personal install** scp'd from his Windows machine; includes full RMS Express + RMS Trimode with <redacted-callsign> data (his real address, phone, hashed password, aux callsigns, friends' callsigns, real log files, real mailbox — never commit any of this verbatim)
     - `rms-extracted/` — extracted RMS.zip with `RMS Express/` (975 files) and `RMS/RMS Trimode/`
     - `express-chm/` — Express help extracted via archmage (30+ HTML pages + arch_contents.html TOC index + hsca20.hhc original CHM index)
     - `research/` — 9 markdown research files + 1 PDF + 1 text extract + 1 walkthrough runbook
