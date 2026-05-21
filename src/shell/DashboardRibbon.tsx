@@ -46,18 +46,13 @@ export interface DashboardRibbonProps {
   /** Trigger a CMS connection (send outbox + receive). When omitted, the
    *  Connect control is not rendered (keeps the ribbon's unit tests prop-free). */
   onConnect?: () => void;
-  /** True while a connection is in progress (disables the button). */
+  /** True while a connection is in progress (disables the button + shows a
+   *  "Connecting…" label). The result/error is surfaced in the session log,
+   *  not beside the button. */
   connecting?: boolean;
-  /** Last connect result/error to show beside the button, if any. */
-  connectMessage?: string | null;
 }
 
-export function DashboardRibbon({
-  data,
-  onConnect,
-  connecting,
-  connectMessage,
-}: DashboardRibbonProps) {
+export function DashboardRibbon({ data, onConnect, connecting }: DashboardRibbonProps) {
   const { utc, local } = useClock();
   const { callsign, grid, state, connection: connectionFromData } = data;
   // Position (GPS coords) is a v0.1 data source; the dev fixture shows the mock
@@ -126,11 +121,6 @@ export function DashboardRibbon({
             >
               {connecting ? 'Connecting…' : 'Connect'}
             </button>
-            {connectMessage && (
-              <div className="dash-connect-msg" data-testid="connect-result">
-                {connectMessage}
-              </div>
-            )}
           </div>
         </>
       )}

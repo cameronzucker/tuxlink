@@ -27,7 +27,7 @@
 
 use mail_parser::{MimeHeaders, MessageParser};
 use serde::{Deserialize, Serialize};
-use tauri::State;
+use tauri::{AppHandle, Emitter, State};
 
 use crate::app_backend::{BackendPhase, BackendState};
 use crate::config::{self, CmsTransport, GpsState, PositionPrecision};
@@ -600,12 +600,22 @@ pub async fn message_send(
 /// configured transport, then drops the session (the native exchange completes
 /// within the call). The frontend refreshes the mailbox on success.
 ///
+/// Progress and the result (including any failure reason) are surfaced in the
+/// session log via `session_log:line` events — NOT returned for display beside
+/// the button. The command still returns `Err` so the caller can stop its
+/// spinner / skip the mailbox refresh, but the human-facing detail lives in the
+/// log + the connection-status ribbon.
+///
 /// On the native backend this performs the real on-air exchange; against the
 /// production CMS it currently fails with the client-type rejection until
 /// "tuxlink" is registered with Winlink (set `TUXLINK_CMS_HOST=cms-z.winlink.org`
 /// to exercise it against the dev CMS in the meantime).
 #[tauri::command]
-pub async fn cms_connect(state: State<'_, BackendState>) -> Result<(), UiError> {
+pub async fn cms_connect(
+    app: AppHandle,
+    state: State<'_, BackendState>,
+    log: State<'_, std::sync::Arc<SessionLogState>>,
+) -> Result<(), UiError> {
     let backend = state
         .current()
         .ok_or_else(|| UiError::NotConfigured("backend offline".to_string()))?;
@@ -614,12 +624,48 @@ pub async fn cms_connect(state: State<'_, BackendState>) -> Result<(), UiError> 
         detail: e.to_string(),
     })?;
 
-    let _session = backend
+    emit_session_line(
+        &app,
+        &log,
+        LogLevel::Info,
+        format!("Connecting to the CMS ({:?})…", cfg.connect.transport),
+    );
+
+    match backend
         .connect(TransportConfig::Cms {
             mode: cfg.connect.transport,
         })
-        .await?;
-    Ok(())
+        .await
+    {
+        Ok(_session) => {
+            emit_session_line(&app, &log, LogLevel::Info, "CMS exchange complete.".to_string());
+            Ok(())
+        }
+        Err(e) => {
+            emit_session_line(&app, &log, LogLevel::Error, format!("CMS connect failed: {e}"));
+            Err(e.into())
+        }
+    }
+}
+
+/// Append a session-log line to the durable buffer (assigning its `seq`) and emit
+/// it live on `session_log:line`, so it lands in the bottom progress log
+/// (snapshot + tail). Used for connect progress/results (tuxlink-0ic).
+fn emit_session_line(
+    app: &AppHandle,
+    buffer: &SessionLogState,
+    level: LogLevel,
+    message: String,
+) {
+    let mut line = LogLine {
+        seq: 0,
+        timestamp_iso: chrono::Utc::now().to_rfc3339(),
+        level,
+        source: LogSource::Transport,
+        message,
+    };
+    line.seq = buffer.append(line.clone());
+    let _ = app.emit("session_log:line", LogLineDto::from(line));
 }
 
 // ============================================================================

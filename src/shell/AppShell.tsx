@@ -71,20 +71,20 @@ export function AppShell() {
   const statusData = useStatusData();
 
   // CMS connect: run one exchange (send outbox + receive), then refresh the
-  // mailbox so any downloaded messages appear. The button lives in the ribbon.
+  // mailbox so any downloaded messages appear. The button lives in the ribbon;
+  // progress + any failure reason surface in the session log (emitted by the
+  // backend), not beside the button.
   const queryClient = useQueryClient();
   const [connecting, setConnecting] = useState(false);
-  const [connectMessage, setConnectMessage] = useState<string | null>(null);
 
   const onConnect = useCallback(async () => {
     setConnecting(true);
-    setConnectMessage(null);
     try {
       await invoke('cms_connect');
-      setConnectMessage('Synced');
       await queryClient.invalidateQueries({ queryKey: ['mailbox'] });
-    } catch (e) {
-      setConnectMessage(formatConnectError(e));
+    } catch {
+      // The result and any failure reason are shown in the session log + the
+      // connection-status ribbon by the backend — nothing inline here.
     } finally {
       setConnecting(false);
     }
@@ -141,12 +141,7 @@ export function AppShell() {
 
   return (
     <div className="layout-b" data-testid="app-shell-root">
-      <DashboardRibbon
-        data={statusData}
-        onConnect={onConnect}
-        connecting={connecting}
-        connectMessage={connectMessage}
-      />
+      <DashboardRibbon data={statusData} onConnect={onConnect} connecting={connecting} />
 
       <div className="panes" data-testid="shell-panes">
         <FolderSidebar
@@ -169,20 +164,4 @@ export function AppShell() {
       <StatusBar show={showStatusBar} unread={counts.inbox ?? 0} state={statusData.state} />
     </div>
   );
-}
-
-/// Render a `cms_connect` rejection for the operator. The Tauri layer serializes
-/// `UiError` as `{ kind, detail }`; pull out the most specific human text.
-function formatConnectError(e: unknown): string {
-  if (e && typeof e === 'object') {
-    const obj = e as { kind?: string; detail?: unknown };
-    const detail = obj.detail;
-    if (detail && typeof detail === 'object') {
-      const reason = (detail as { reason?: string }).reason;
-      if (reason) return reason;
-    }
-    if (typeof detail === 'string' && detail) return detail;
-    if (obj.kind) return `Connect failed: ${obj.kind}`;
-  }
-  return `Connect failed: ${String(e)}`;
 }

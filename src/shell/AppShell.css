@@ -124,14 +124,6 @@
 .layout-b .dashboard .connect-button:hover:not(:disabled) {
   filter: brightness(1.12);
 }
-.layout-b .dashboard .dash-connect-msg {
-  font-size: 11px;
-  color: var(--text-faint);
-  max-width: 320px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 @keyframes tux-pulse {
   0%,
   100% {
