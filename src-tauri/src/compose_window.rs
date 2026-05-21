@@ -45,6 +45,31 @@ pub fn caller_is_authorized(caller_label: &str) -> bool {
     caller_label == MAIN_WINDOW_LABEL
 }
 
+/// Upper bound on a `draft_id`'s length. Generated ids (`newDraftId` in
+/// App.tsx) are `draft-<iso-ts>-<base36>` (~37 chars); 128 is a generous bound.
+const MAX_DRAFT_ID_LEN: usize = 128;
+
+/// Pure guard: is `draft_id` safe to interpolate into the window label
+/// (`compose-<id>`) and route (`/compose/<id>`)?
+///
+/// Generated ids are strictly `[A-Za-z0-9-]`. An IPC caller passing `/`, `?`,
+/// `#`, `%`, or other characters could otherwise build a label/URL that mounts
+/// the wrong draft — or no draft (tuxlink-g3d, Codex integration-round P2).
+/// Reject anything outside the generated charset / length bound rather than
+/// silently building a malformed label. Pure → unit-testable without a runtime.
+pub fn validate_draft_id(draft_id: &str) -> Result<(), String> {
+    if draft_id.is_empty() {
+        return Err("draft_id must not be empty".into());
+    }
+    if draft_id.len() > MAX_DRAFT_ID_LEN {
+        return Err(format!("draft_id too long (max {MAX_DRAFT_ID_LEN})"));
+    }
+    if !draft_id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-') {
+        return Err("draft_id must be ASCII alphanumeric or '-'".into());
+    }
+    Ok(())
+}
+
 /// Open a compose window for the given draft id.
 ///
 /// The window is labeled `compose-<draftId>` and loads
@@ -83,6 +108,9 @@ pub fn compose_window_open(
             caller.label()
         ));
     }
+
+    // tuxlink-g3d: reject a draft_id that would build a malformed label/route.
+    validate_draft_id(&draft_id)?;
 
     let label = format!("compose-{}", draft_id);
     let url = format!("/compose/{}", draft_id);
@@ -188,6 +216,40 @@ mod tests {
         let draft_id = "draft-abc";
         let url = format!("/compose/{}", draft_id);
         assert_eq!(url, "/compose/draft-abc");
+    }
+
+    // ── validate_draft_id (tuxlink-g3d) — pure charset/length guard ──────────
+
+    #[test]
+    fn validate_draft_id_accepts_generated_ids() {
+        // Shape of newDraftId(): draft-<iso-ts-with-:.replaced>-<base36>
+        assert!(super::validate_draft_id("draft-2026-05-20T19-30-00-000Z-a1b2c3").is_ok());
+        assert!(super::validate_draft_id("draft-abc").is_ok());
+        assert!(super::validate_draft_id("ABC123").is_ok());
+    }
+
+    #[test]
+    fn validate_draft_id_rejects_empty() {
+        assert!(super::validate_draft_id("").is_err());
+    }
+
+    #[test]
+    fn validate_draft_id_rejects_path_and_url_metachars() {
+        // '/' and '\\' (label/path injection), '?' '#' (route/query), '%' (encoding)
+        for bad in ["a/b", "../etc", "a\\b", "a?b", "a#b", "a%2f", "a b", "a.b", "a:b"] {
+            assert!(
+                super::validate_draft_id(bad).is_err(),
+                "expected reject for {bad:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_draft_id_rejects_too_long() {
+        let long = "a".repeat(super::MAX_DRAFT_ID_LEN + 1);
+        assert!(super::validate_draft_id(&long).is_err());
+        // boundary: exactly MAX is allowed
+        assert!(super::validate_draft_id(&"a".repeat(super::MAX_DRAFT_ID_LEN)).is_ok());
     }
 
     // Codex integration round: `compose_window_open` is gated to the main
