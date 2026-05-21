@@ -24,6 +24,7 @@ fn test_menu_exposes_required_event_ids() {
         "menu:view:session_log", "menu:view:status_bar",
         "menu:view:raw_log",              // AMD-10 runtime half
         "menu:view:radio_dock",           // AMD-10 runtime half
+        "menu:view:scheme:default", "menu:view:scheme:night-red", "menu:view:scheme:grayscale",  // tuxlink-8za
         "menu:tools:templates", "menu:tools:rig_control", "menu:tools:preferences",
         "menu:tools:settings_connection",         // AMD-10 runtime half
         "menu:tools:settings_privacy_gps",        // AMD-10 runtime half

@@ -33,6 +33,7 @@ pub fn menu_event_ids() -> Vec<&'static str> {
         "menu:view:session_log", "menu:view:status_bar",
         "menu:view:raw_log",              // AMD-10 runtime half
         "menu:view:radio_dock",           // AMD-10 runtime half
+        "menu:view:scheme:default", "menu:view:scheme:night-red", "menu:view:scheme:grayscale",  // tuxlink-8za
         "menu:tools:templates", "menu:tools:rig_control", "menu:tools:preferences",
         "menu:tools:settings_connection",         // AMD-10 runtime half
         "menu:tools:settings_privacy_gps",        // AMD-10 runtime half
@@ -71,11 +72,22 @@ pub fn build_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
         .item(&MenuItemBuilder::with_id("menu:mailbox:outbox", "Outbox").build(app)?)
         .build()?;
 
+    // Color scheme picker (tuxlink-8za). Emits menu:view:scheme:<id>; the
+    // frontend (AppShell) applies + persists via colorScheme.ts. The <id> tail
+    // is the CSS data-theme value verbatim ('default' | 'night-red' | 'grayscale').
+    let color_scheme = SubmenuBuilder::new(app, "Color scheme")
+        .item(&MenuItemBuilder::with_id("menu:view:scheme:default", "Default").build(app)?)
+        .item(&MenuItemBuilder::with_id("menu:view:scheme:night-red", "Night / tactical (red)").build(app)?)
+        .item(&MenuItemBuilder::with_id("menu:view:scheme:grayscale", "Grayscale").build(app)?)
+        .build()?;
+
     let view = SubmenuBuilder::new(app, "View")
         .item(&MenuItemBuilder::with_id("menu:view:session_log", "Toggle Session Log").accelerator("CmdOrCtrl+Shift+L").build(app)?)
         .item(&MenuItemBuilder::with_id("menu:view:raw_log", "Show Raw Session Log").build(app)?)        // AMD-10
         .item(&MenuItemBuilder::with_id("menu:view:status_bar", "Toggle Status Bar").build(app)?)
         .item(&MenuItemBuilder::with_id("menu:view:radio_dock", "Show Radio Dock").accelerator("CmdOrCtrl+Shift+M").build(app)?)  // AMD-10
+        .separator()
+        .item(&color_scheme)
         .build()?;
 
     // Settings submenu under Tools (AMD-10) — nested for the Connection / Privacy

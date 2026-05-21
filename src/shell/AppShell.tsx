@@ -28,6 +28,7 @@ import { FolderSidebar } from '../mailbox/FolderSidebar';
 import { DashboardRibbon } from './DashboardRibbon';
 import { StatusBar } from './StatusBar';
 import { useStatusData } from './useStatus';
+import { applyColorScheme, saveColorScheme, isColorScheme } from './colorScheme';
 import MessageView from '../mailbox/MessageView';
 import { SessionLog } from '../session/SessionLog';
 import './AppShell.css';
@@ -116,6 +117,13 @@ export function AppShell() {
       ) {
         setSelectedFolder(p.slice('menu:mailbox:'.length) as MailboxFolder);
         setSelectedMessage(null);
+      } else if (p.startsWith('menu:view:scheme:')) {
+        // Color scheme picker (tuxlink-8za): apply + persist the chosen scheme.
+        const id = p.slice('menu:view:scheme:'.length);
+        if (isColorScheme(id)) {
+          applyColorScheme(id);
+          saveColorScheme(id);
+        }
       }
     }).then((fn) => {
       if (mounted) unlisten = fn;
