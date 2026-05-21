@@ -5,23 +5,30 @@
  * in docs/design/mockups/2026-05-17-mocks-v1-four-directions.html. Ported
  * VERBATIM and scoped under `.layout-b` so the generic class names don't leak.
  *
- * Tauri provides the native titlebar + menu bar (menu.rs). The webview renders:
- *   dashboard (ribbon) / panes[ sidebar | rows | reader ] / session-log / statusbar
+ * tuxlink-ng3: the webview now renders its OWN chrome (custom HTML titlebar +
+ * menu bar; native decorations are off). The webview renders, top to bottom:
+ *   titlebar / menu bar / dashboard (ribbon) / panes[ sidebar | rows | reader ]
+ *   / session-log / statusbar
  */
 
 /* ============================================================================
- * Layout grid — dashboard (auto) | panes (1fr) | session-log (auto) | statusbar
- * (auto), full height. (Mock B's layout-B + the dashboard sibling above it,
- * combined into one root grid; the mock's hidden tab-strip row is dropped.)
+ * Layout grid — titlebar (auto) | menu bar (auto) | dashboard (auto) |
+ * panes (1fr) | session-log (auto) | statusbar (auto), full height.
+ * NOTE (ng3): the FIRST THREE rows are the HTML chrome added in AppShell's JSX
+ * (TitleBar, MenuBar) + the ribbon; `panes` MUST be the 1fr row. The row count
+ * is tied to the in-flow child order in AppShell.tsx — ResizeHandles is
+ * position:absolute so it does NOT consume a grid row. If you reorder the shell's
+ * children, re-check which row gets 1fr.
  * ========================================================================== */
 .layout-b {
   display: grid;
-  grid-template-rows: auto 1fr auto auto;
+  grid-template-rows: auto auto auto 1fr auto auto;
   height: 100vh;
   width: 100vw;
   overflow: hidden;
   background: var(--bg);
   color: var(--text);
+  position: relative; /* anchor the absolute ResizeHandles to the window */
 }
 
 .layout-b .panes {
