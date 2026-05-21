@@ -44,6 +44,17 @@
   align-items: center;
   gap: 28px;
   font-size: 12px;
+  /* ng3 smoke #6: never let a long connection/rejection string reflow the ribbon
+   * or push the right-pinned Connect button off-screen. */
+  overflow: hidden;
+}
+/* The connection value can be a long failure reason; clamp it (full text on hover
+ * + in the session log) so the ribbon stays fixed-layout (ng3 smoke #6). */
+.layout-b .dashboard .dash-connection {
+  max-width: 260px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .layout-b .dashboard .dash-item {
   display: flex;

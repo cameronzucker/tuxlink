@@ -102,7 +102,11 @@ export function DashboardRibbon({ data, onConnect, connecting }: DashboardRibbon
 
       <div className="dash-item">
         <div className="dash-label">Connection</div>
-        <div className="dash-value" data-testid="ribbon-connection">
+        <div
+          className="dash-value dash-connection"
+          data-testid="ribbon-connection"
+          title={typeof connection === 'string' ? connection : undefined}
+        >
           <span className={`dash-status-dot ${dashDotClass(state.tone)}`} aria-hidden="true" />
           {connection}
         </div>
