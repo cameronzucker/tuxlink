@@ -35,6 +35,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { clearDraft, loadDraft, saveDraft, splitAddrs } from './useDraft';
+import { ComposeTitleBar } from './ComposeTitleBar';
 import './Compose.css';
 
 // ============================================================================
@@ -339,6 +340,11 @@ export function Compose({ draftId }: ComposeProps) {
 
   return (
     <div className="compose-root" data-testid="compose-root">
+      {/* ------------------------------------------------------------------ */}
+      {/* Custom title bar (tuxlink-ng3: decorations:false, closes msr)      */}
+      {/* ------------------------------------------------------------------ */}
+      <ComposeTitleBar onClose={handleRequestClose} />
+
       {/* ------------------------------------------------------------------ */}
       {/* Header                                                              */}
       {/* ------------------------------------------------------------------ */}
