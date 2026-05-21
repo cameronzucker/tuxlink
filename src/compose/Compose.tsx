@@ -230,14 +230,16 @@ export function Compose({ draftId }: ComposeProps) {
     import('@tauri-apps/api/window').then(({ getCurrentWindow }) => {
       getCurrentWindow()
         .onCloseRequested((event) => {
-          // After a successful send, allow close without a prompt.
+          // tuxlink-h2y: route EVERY close through compose_close_self (a
+          // self-only Rust destroy), so compose.json needs no window-class JS
+          // grants. ALWAYS block the native close, then either close via the
+          // command (clean / already-sent) or show the unsaved-changes prompt.
+          event.preventDefault();
           if (sentRef.current || !isDirty()) {
-            // Let the default close proceed — do not call event.preventDefault().
+            invoke('compose_close_self').catch(() => {/* ignore */});
             return;
           }
-          // There are unsaved changes: block the native close and show the
-          // in-app Save/Discard/Cancel dialog.
-          event.preventDefault();
+          // There are unsaved changes: show the in-app Save/Discard/Cancel dialog.
           setClosePrompt({ open: true, action: 'close' });
         })
         .then((fn) => {
@@ -267,10 +269,10 @@ export function Compose({ draftId }: ComposeProps) {
   }, [isDirty]);
 
   const closeWindow = () => {
-    // Tauri v2: close the current window
-    import('@tauri-apps/api/window').then(({ getCurrentWindow }) => {
-      getCurrentWindow().close().catch(() => {/* ignore */});
-    });
+    // tuxlink-h2y: close via the self-only Rust command (compose_close_self
+    // destroys ONLY the calling window) instead of the window-class JS
+    // window.close(), so compose.json can drop allow-close/allow-destroy.
+    invoke('compose_close_self').catch(() => {/* ignore */});
   };
 
   const handleSaveAndClose = useCallback(() => {

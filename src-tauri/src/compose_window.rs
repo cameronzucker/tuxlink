@@ -141,6 +141,27 @@ pub fn compose_window_open(
     Ok(())
 }
 
+/// Close ONLY the calling window (tuxlink-h2y). The compose frontend invokes
+/// this for every close path (the in-app Close button + the native titlebar X
+/// via `onCloseRequested`) instead of the JS `window.close()` / `window.destroy()`
+/// APIs. Those JS APIs take a caller-supplied label resolved server-side, so
+/// they are window-CLASS — an XSS'd compose window could close/destroy the main
+/// window. Here `window` is the INVOKING window, injected by Tauri, so the
+/// surface is scoped to self by construction.
+///
+/// `destroy()` (force-close) is used rather than `close()` so it does NOT
+/// re-fire `CloseRequested` (which the frontend intercepts) — avoiding a close
+/// loop. Routing every close path through this command lets compose.json drop
+/// the window-class `core:window:allow-close` + `allow-destroy` grants (Codex
+/// integration-round P3). Self-close is always safe, so — unlike
+/// `compose_window_open` — no caller-authorization guard is needed.
+#[tauri::command]
+pub fn compose_close_self(window: WebviewWindow) -> Result<(), String> {
+    window
+        .destroy()
+        .map_err(|e| format!("compose_close_self: destroy failed: {e}"))
+}
+
 #[cfg(test)]
 mod tests {
     // Window tests are structural/doc-only: `tauri::test` helpers require a

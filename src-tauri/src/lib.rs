@@ -146,6 +146,7 @@ pub fn run() {
             crate::ui_commands::backend_status,        // Task 16 (tuxlink-hvv)
             crate::ui_commands::session_log_snapshot,  // Task 15 (tuxlink-8zg integration round)
             crate::compose_window::compose_window_open, // Task 14 (tuxlink-dm8)
+            crate::compose_window::compose_close_self,  // tuxlink-h2y (self-only close)
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
