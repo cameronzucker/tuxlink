@@ -40,6 +40,7 @@ use std::time::{Duration, Instant};
 use tuxlink_lib::config::{self, CmsTransport, Config};
 use tuxlink_lib::consent_gate::{check_consent, ConsentOutcome, TransmissionPlan};
 use tuxlink_lib::pat_client::{MailboxFolder, PatClient};
+use tuxlink_lib::pat_paths::{data_dir, pat_config_path, state_dir};
 use tuxlink_lib::pat_process::{PatProcess, PatSpawnOptions};
 
 const KEYRING_SERVICE: &str = "tuxlink-pat";
@@ -126,33 +127,8 @@ fn print_keyring_remedy(callsign: &str, cat: &KeyringPrecondition) {
     }
 }
 
-/// `~/.config/pat/config.json` (honoring XDG_CONFIG_HOME) — where PatProcess
-/// WRITES the rendered Pat config before exec.
-fn pat_config_path() -> Result<PathBuf, String> {
-    let base = std::env::var_os("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
-        .ok_or("neither XDG_CONFIG_HOME nor HOME is set")?;
-    Ok(base.join("pat").join("config.json"))
-}
-
-/// `~/.local/share/tuxlink/...` (honoring XDG_DATA_HOME).
-fn data_dir() -> Result<PathBuf, String> {
-    let base = std::env::var_os("XDG_DATA_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local").join("share")))
-        .ok_or("neither XDG_DATA_HOME nor HOME is set")?;
-    Ok(base.join("tuxlink"))
-}
-
-/// `~/.local/state/tuxlink/...` (honoring XDG_STATE_HOME).
-fn state_dir() -> Result<PathBuf, String> {
-    let base = std::env::var_os("XDG_STATE_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local").join("state")))
-        .ok_or("neither XDG_STATE_HOME nor HOME is set")?;
-    Ok(base.join("tuxlink"))
-}
+// pat_config_path / data_dir / state_dir are shared via tuxlink_lib::pat_paths
+// (tuxlink-pqg) so the wizard test-send resolves identical Pat locations.
 
 #[tokio::main]
 async fn main() {

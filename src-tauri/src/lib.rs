@@ -5,6 +5,7 @@ pub mod consent_gate;
 pub mod menu;
 pub mod pat_client;
 pub mod pat_config;
+pub mod pat_paths;
 pub mod pat_process;
 pub mod tray;
 pub mod ui_commands;

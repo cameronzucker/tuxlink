@@ -24,6 +24,8 @@ use serde::Serialize;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
+use crate::pat_process::{PatProcess, PatSpawnOptions};
+
 /// Discriminated union mirrored as `WizardError` in src/wizard/types.ts.
 /// Tauri's `#[serde(tag = "kind", content = "detail")]` produces the same
 /// shape on both sides; the frontend pattern-matches by `kind`.
@@ -362,86 +364,153 @@ pub async fn run_test_send_impl() -> Result<TestSendOutcome, WizardError> {
     }
 
     // ── Live path (operator-only; never run by subagents or CI) ───────────
-    // Spec §3.8: sends to SERVICE@winlink.org with /test/ subject token.
-    // Pat's HTTP API handles the actual CMS connection + RF/telnet/TLS.
-    // Poll inbox for autoresponder reply up to TEST_SEND_TIMEOUT_SECS.
-    let base_url = resolve_pat_base_url();
-    let client = crate::pat_client::PatClient::new(&base_url);
+    // Spec §3.8: spawn our OWN ephemeral Pat from the persisted config (wizard
+    // Step 2 wrote it), queue the /test/ message, trigger a CMS connect, then
+    // poll the inbox for the autoresponder reply. tuxlink-pqg: the prior code
+    // assumed a Pat already listening on a hardcoded :8080 and never triggered
+    // /api/connect, so it could never complete. Mirrors live_cms_smoke.
+    //
+    // Failures map to Err(Other { detail: json }) per the existing frontend
+    // contract; tuxlink-2a7 will replace that with a structured Failed outcome.
+    match run_live_test_send().await {
+        Ok(outcome @ TestSendOutcome::Success { .. }) => Ok(outcome),
+        Ok(failed) => Err(live_path_outcome_to_wizard_error(failed)),
+        Err(wiz_err) => Err(wiz_err),
+    }
+}
 
-    // Step 1: Post the test message to Pat's outbox.
-    // Use system time for the date field; Pat accepts RFC3339/ISO-8601 format.
-    let now_utc = {
-        use std::time::{SystemTime, UNIX_EPOCH};
-        let secs = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
-        // Format as ISO-8601 UTC — Pat's HTTP API accepts this shape.
-        // Trivial manual formatter: YYYY-MM-DDTHH:MM:SSZ from epoch seconds.
-        let s = secs;
-        let sec = s % 60;
-        let min = (s / 60) % 60;
-        let hr = (s / 3600) % 24;
-        let days = s / 86400;
-        // Day 0 = 1970-01-01; approximate calendar arithmetic (Pat uses this only
-        // for display; precision beyond ±1 day is not contractual here).
-        let year = 1970 + days / 365;
-        let doy = days % 365;
-        let month = doy / 30 + 1;
-        let day = doy % 30 + 1;
-        format!("{year:04}-{month:02}-{day:02}T{hr:02}:{min:02}:{sec:02}Z")
+/// Operator-only live round-trip backing `run_test_send_impl`. Spawns an
+/// ephemeral Pat from the persisted config (or targets an operator-supplied
+/// `PAT_URL`), queues the `/test/` message, triggers a telnet CMS connect, and
+/// polls the inbox for the autoresponder reply. Returns `Failed` (not `Err`)
+/// for expected operational failures so the caller maps them uniformly.
+///
+/// **Part 97 (RADIO-1):** this transmits. It is NEVER reached from tests/CI —
+/// `run_test_send_impl`'s mock gate short-circuits before it. There is no
+/// automated test for this path (it needs a real Pat + a real CMS session); it
+/// is operator-verified, exactly like `live_cms_smoke`. The unit-tested nucleus
+/// is `is_autoresponder_reply` (success detection).
+async fn run_live_test_send() -> Result<TestSendOutcome, WizardError> {
+    // The persisted config carries callsign/grid/transport; Pat reads the
+    // Winlink password from the keyring entry wizard Step 2 wrote.
+    let config = crate::config::read_config().map_err(|e| WizardError::Other {
+        detail: format!("cannot read config for test-send: {e}"),
+    })?;
+
+    // Operator escape hatch: PAT_URL targets an already-running Pat (no spawn,
+    // no shutdown). Otherwise spawn our own ephemeral Pat.
+    let pat_url_override = std::env::var("PAT_URL").ok().filter(|s| !s.is_empty());
+    let (base_url, spawned) = match pat_url_override {
+        Some(url) => (url, None),
+        None => {
+            let proc = spawn_ephemeral_pat(&config)?;
+            let base = format!("http://127.0.0.1:{}", proc.http_port());
+            (base, Some(proc))
+        }
     };
-    let subject = "Tuxlink wizard /test/ verification";
-    client
-        .send(&["SERVICE@winlink.org"], subject, "Tuxlink wizard test send.", &now_utc)
+
+    // Drive the round-trip to a definite outcome (no early return past the
+    // shutdown below — `spawned`'s Drop is the SIGKILL safety net regardless).
+    let outcome = test_send_round_trip(&base_url).await;
+
+    // Gracefully stop the Pat we spawned (SIGTERM, then Drop SIGKILLs).
+    if let Some(mut proc) = spawned {
+        let _ = proc.shutdown(std::time::Duration::from_secs(5));
+    }
+
+    Ok(outcome)
+}
+
+/// Build spawn options from the persisted config + XDG paths and start an
+/// ephemeral-port Pat. Synchronous (`PatProcess::spawn` blocks up to the
+/// announce deadline); acceptable here because the wizard test-send is a modal,
+/// operator-initiated, one-shot action (cf. tuxlink-22l's bootstrap, which
+/// offloads its always-on spawn to a dedicated thread).
+fn spawn_ephemeral_pat(config: &crate::config::Config) -> Result<PatProcess, WizardError> {
+    let other = |detail: String| WizardError::Other { detail };
+    let binary = std::env::var_os("PAT_BINARY")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from("pat"));
+    let config_path = crate::pat_paths::pat_config_path().map_err(other)?;
+    let mbox_dir = crate::pat_paths::data_dir().map_err(other)?.join("mbox");
+    let pid_file = crate::pat_paths::state_dir().map_err(other)?.join("pat.pid");
+    let opts = PatSpawnOptions {
+        binary,
+        config_path,
+        mbox_dir,
+        http_listen_port: 0, // ephemeral; PatProcess pre-binds + reports the port
+        pid_file,
+        log_sink: None,
+        tuxlink_config: config.clone(),
+    };
+    PatProcess::spawn(opts).map_err(|e| WizardError::Other {
+        detail: format!("could not start Pat: {e}"),
+    })
+}
+
+/// Post the `/test/` message, trigger a telnet CMS connect, and poll the inbox
+/// for the autoresponder reply. Always resolves to a `TestSendOutcome`.
+async fn test_send_round_trip(base_url: &str) -> TestSendOutcome {
+    let client = crate::pat_client::PatClient::new(base_url);
+    let date = chrono::Utc::now().to_rfc3339();
+
+    if let Err(e) = client
+        .send(&["SERVICE@winlink.org"], TEST_SEND_SUBJECT, TEST_SEND_BODY, &date)
         .await
-        .map_err(|e| TestSendOutcome::Failed {
+    {
+        return TestSendOutcome::Failed {
             cause: format!("Could not queue message in Pat outbox: {e}"),
             likely_causes_hint: default_likely_causes(),
-        })
-        .map_err(live_path_outcome_to_wizard_error)?;
+        };
+    }
 
-    // Step 2: Poll inbox for autoresponder reply (timeout per spec §5.4).
+    // This is what actually transmits. v0.0.1 uses telnet regardless of the
+    // configured transport, mirroring the reviewed live_cms_smoke; a
+    // transport-aware connect is a follow-up.
+    if let Err(e) = trigger_cms_connect(base_url).await {
+        return TestSendOutcome::Failed {
+            cause: format!("Could not trigger CMS connect: {e}"),
+            likely_causes_hint: default_likely_causes(),
+        };
+    }
+
     let deadline = tokio::time::Instant::now()
         + tokio::time::Duration::from_secs(TEST_SEND_TIMEOUT_SECS);
-
     loop {
+        if let Ok(msgs) = client.list(crate::pat_client::MailboxFolder::Inbox).await {
+            if let Some(reply) = msgs.iter().find(|m| is_autoresponder_reply(&m.from, &m.subject)) {
+                return TestSendOutcome::Success {
+                    reply_subject: Some(reply.subject.clone()),
+                };
+            }
+        }
+        // A transient list error is tolerated; the deadline below bounds it.
         if tokio::time::Instant::now() >= deadline {
-            return Err(WizardError::Other {
-                detail: format!(
-                    "{{\"outcome\":\"failed\",\"cause\":\"CMS didn't reply within {} seconds \
-                     (no autoresponder). Likely cause: CMS busy or your network's outbound \
-                     port 8773 is blocked.\",\"likely_causes_hint\":[{}]}}",
-                    TEST_SEND_TIMEOUT_SECS,
-                    default_likely_causes()
-                        .iter()
-                        .map(|s| format!("\"{}\"", s))
-                        .collect::<Vec<_>>()
-                        .join(",")
+            return TestSendOutcome::Failed {
+                cause: format!(
+                    "CMS didn't reply within {TEST_SEND_TIMEOUT_SECS} seconds (no \
+                     autoresponder). Likely cause: CMS busy or your network's outbound \
+                     port 8773 is blocked."
                 ),
-            });
+                likely_causes_hint: default_likely_causes(),
+            };
         }
-
-        match client.list(crate::pat_client::MailboxFolder::Inbox).await {
-            Ok(msgs) => {
-                // Look for a message from SERVICE@winlink.org (autoresponder).
-                let reply = msgs
-                    .iter()
-                    .find(|m| m.from.to_uppercase().contains("SERVICE@WINLINK.ORG")
-                        || m.subject.to_uppercase().contains("RE:"));
-                if let Some(msg) = reply {
-                    return Ok(TestSendOutcome::Success {
-                        reply_subject: Some(msg.subject.clone()),
-                    });
-                }
-            }
-            Err(_) => {
-                // Poll failure is transient; the deadline check above handles the timeout case.
-            }
-        }
-
         tokio::time::sleep(tokio::time::Duration::from_secs(POLL_INTERVAL_SECS)).await;
     }
+}
+
+/// POST `<base>/api/connect?url=telnet` to trigger Pat's CMS session.
+async fn trigger_cms_connect(base_url: &str) -> Result<(), String> {
+    let url = format!("{base_url}/api/connect?url=telnet");
+    let http = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(CONNECT_TIMEOUT_SECS))
+        .build()
+        .map_err(|e| format!("build connect client: {e}"))?;
+    http.post(&url)
+        .send()
+        .await
+        .map_err(|e| format!("trigger connect: {e}"))?;
+    Ok(())
 }
 
 /// Produce the mocked outcome for agent/CI/test contexts.
@@ -501,10 +570,12 @@ fn default_likely_causes() -> Vec<String> {
     ]
 }
 
-/// Pat API base URL. Reads PAT_URL env var first (for operator overrides),
-/// falls back to the standard local Pat sidecar address.
-fn resolve_pat_base_url() -> String {
-    std::env::var("PAT_URL").unwrap_or_else(|_| "http://127.0.0.1:8080".into())
+/// True when an inbox message looks like the CMS autoresponder's reply to the
+/// wizard `/test/` message: either it is from `SERVICE@winlink.org` or its
+/// subject is a reply (`Re:`). Case-insensitive. Pure — the testable core of
+/// the live round-trip's success detection (tuxlink-pqg).
+fn is_autoresponder_reply(from: &str, subject: &str) -> bool {
+    from.to_uppercase().contains("SERVICE@WINLINK.ORG") || subject.to_uppercase().contains("RE:")
 }
 
 /// How long to poll for the autoresponder reply before declaring failure.
@@ -512,6 +583,16 @@ const TEST_SEND_TIMEOUT_SECS: u64 = 30;
 
 /// Polling interval for inbox checks.
 const POLL_INTERVAL_SECS: u64 = 3;
+
+/// HTTP timeout for the one-shot `/api/connect` POST.
+const CONNECT_TIMEOUT_SECS: u64 = 30;
+
+/// Subject of the wizard verification message (carries the `/test/` token the
+/// CMS autoresponder keys on).
+const TEST_SEND_SUBJECT: &str = "Tuxlink wizard /test/ verification";
+
+/// Body of the wizard verification message.
+const TEST_SEND_BODY: &str = "Tuxlink wizard test send.";
 
 /// Runs a test send to verify the CMS round-trip. See spec §3.8 for the
 /// 4-substate state machine + Part 97 mock-gate (`TUXLINK_TEST_SEND_MOCK=1`).
@@ -731,6 +812,26 @@ mod tests {
                 Err(_) => unsafe { std::env::remove_var(self.key) },
             }
         }
+    }
+
+    // ── is_autoresponder_reply (tuxlink-pqg) — pure reply-detection predicate ──
+    // No env mutation, no transmission: safe to run without #[serial].
+
+    #[test]
+    fn reply_matches_service_sender_case_insensitive() {
+        assert!(is_autoresponder_reply("service@winlink.org", "Tuxlink wizard /test/ verification"));
+        assert!(is_autoresponder_reply("SERVICE@WINLINK.ORG", "anything"));
+    }
+
+    #[test]
+    fn reply_matches_re_subject() {
+        assert!(is_autoresponder_reply("someone@example.com", "Re: Tuxlink wizard /test/ verification"));
+        assert!(is_autoresponder_reply("someone@example.com", "RE: thread"));
+    }
+
+    #[test]
+    fn reply_does_not_match_unrelated_message() {
+        assert!(!is_autoresponder_reply("friend@winlink.org", "How are you?"));
     }
 
     #[tokio::test]
