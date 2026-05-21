@@ -76,8 +76,8 @@ The brainstorm settled the following decisions, captured in §5 with full reason
 │  Wizard (Task 9, tuxlink-ko0 — NOT in this patch)                     │
 │     │                                                                 │
 │     │ 1. collect callsign + password from user                        │
-│     │ 2. Rust `keyring` crate (current `keyring-core` API):           │
-│     │      use_native_store(true)?;                                   │
+│     │ 2. Rust `keyring` crate (keyring 3.6.3 — see §3.4):             │
+│     │      // backend chosen at COMPILE time (Cargo)                  │
 │     │      let entry = Entry::new("tuxlink-pat",                      │
 │     │                              &normalize(callsign))?;            │
 │     │      entry.set_password(&pw)?;                                  │
@@ -202,18 +202,24 @@ NEVER the discard pattern `password, _, _ = credstore.Get(...)` — explicitly e
 
 ### 3.4 Data flow — wizard write path (referenced; OUT OF SCOPE for this patch)
 
-Documented here for completeness (this patch unblocks `tuxlink-ko0`); the wizard's actual implementation is `tuxlink-ko0`'s scope, but it MUST honor the canonical-key normalization (§3.3) and the current `keyring`/`keyring-core` Rust API contract (R3 F5 caught the prior spec's wrong syntax):
+Documented here for completeness (this patch unblocks `tuxlink-ko0`); the wizard's actual implementation is `tuxlink-ko0`'s scope, but it MUST honor the canonical-key normalization (§3.3) and the **keyring 3.6.3** Rust API contract (R3 F5 + PR #75 / commit 5f269d9 caught the prior spec's wrong `keyring-core` syntax):
 
 1. Operator runs tuxlink. Wizard screen 2 collects callsign + password.
 2. Wizard normalizes the callsign: `let account = callsign.trim().to_uppercase();` then validates non-empty.
-3. Wizard initializes the keyring store (one-time at app init): `keyring::use_native_store(true)?` — required by the current `keyring-core` API; the implicit-OS-backend selection of older API versions is deprecated.
+3. **No runtime store initialization.** keyring 3.6.3 has NO `use_native_store()` function — the backend is selected at **compile time via Cargo features**, not a runtime call. tuxlink-pat's keyring-writing crate declares (PR #75 / commit 5f269d9):
+   ```toml
+   keyring = { version = "3", default-features = false, features = ["sync-secret-service", "crypto-rust"] }
+   ```
+   `sync-secret-service` selects the Linux Secret Service backend (v0.0.1's tested platform); `crypto-rust` keeps the encrypted-session crypto pure-Rust (no system OpenSSL). With no features, keyring 3.x falls back to an in-process `mock` store on Linux — which is why `default-features = false` + explicit features is required. There is no `use_native_store` call to make.
 4. Wizard writes the keyring entry:
    ```rust
-   use keyring_core::Entry;
+   use keyring::Entry;
    let entry = Entry::new("tuxlink-pat", &account)?;  // Result<Entry>, must ?
    entry.set_password(&pw)?;
    ```
-   (R3 F5 caught: the chained-on-constructor syntax from the prior spec `keyring::Entry::new(...).set_password(&pw)?` does NOT compile against the current API — `Entry::new` returns `Result<Entry, Error>` and must be `?`-unwrapped before `.set_password` is callable.)
+   (R3 F5 caught: the chained-on-constructor syntax from the prior spec `keyring::Entry::new(...).set_password(&pw)?` does NOT compile — `Entry::new` returns `Result<Entry, Error>` and must be `?`-unwrapped before `.set_password` is callable. The type path is `keyring::Entry`, not `keyring_core::Entry`.)
+
+   **Cross-process Secret Service attribute contract (verified, PR #75).** On the Secret Service backend the Rust `keyring` crate stores the account under the attribute key **`username`** (NOT `account`) — i.e. the item attributes are `{ service: "tuxlink-pat", username: "<NORMALIZED CALLSIGN>" }`. Pat (zalando/go-keyring) reads with the same `service` + `username` attribute pair, so the wizard-writer and Pat-reader agree across processes. The `account=<callsign>` phrasing elsewhere in this spec (§4.2, the diagram) is the *conceptual* keyring key (the `keyring::Entry::new(service, account)` second argument); the on-the-wire Secret Service attribute it maps to is `username`.
 5. Wizard writes `~/.config/pat/config.json` containing callsign + non-secret config; `secure_login_password` field is absent; `auxiliary_addresses` (if any) is JSON-string form per AuxAddr's MarshalJSON.
 6. Wizard completes; tuxlink spawns Pat for test send; Pat reads keyring via §3.3.
 
@@ -574,7 +580,7 @@ These convergences are precisely what cross-provider adrev is designed to surfac
 | Empty/whitespace callsign + AuxAddr-fallback = auth-bypass surface | R2 F2, R2 F3 | P0 / P0 | §4.7 NEW decision (drop AuxAddr fallback); §3.3 step 3 + step 4 short-circuit; §3.6 `TestGet_EmptyCallsign_ShortCircuit` + `TestGet_WhitespaceCallsign_ShortCircuit` |
 | `handleNewAccount` / `promptNewPassword` / `cmsapi.AccountAdd` residual flow in `pat configure` | R4 P2 #6 | P2 (Codex; treated as P0 due to behavior-leak risk) | §2.6 expanded to cover BOTH password-touching paths; §3.2 cli/init.go row rewrites both A + B paths |
 | cmsapi.PasswordRecoveryEmailSet cascading removal (cli/account.go + winlinkPasswordRecoveryEmailHandler) | R3 F6 | P1 | §3.2 cli/account.go + api/winlink_account.go rows handle credstore (found, err) explicitly; §3.5 per-call-site rules table |
-| Rust `keyring` crate API has migrated to `keyring-core`; chained syntax doesn't compile | R3 F5 | P1 | §3.4 wizard write path rewritten with correct `keyring-core` API: `Entry::new(...)?` then `.set_password(...)?`; `use_native_store(true)?` at app init; `entry.delete_credential()` for clear-credential UX (not `set_password("")`) |
+| Rust `keyring` crate chained-constructor syntax doesn't compile | R3 F5 | P1 | §3.4 wizard write path rewritten with the correct **keyring 3.6.3** API: `keyring::Entry::new(...)?` then `.set_password(...)?`; backend selected at compile time via Cargo features (`default-features=false` + `sync-secret-service`,`crypto-rust`) — there is NO `use_native_store()` (corrected per PR #75 / commit 5f269d9; the prior `keyring-core` + `use_native_store(true)` framing was stale — tuxlink-8zt); `entry.delete_credential()` for clear-credential UX (not `set_password("")`) |
 | `MockInit` is process-global, unsafe for t.Parallel() | R3 F3 | P1 | §3.2 credstore_test.go row notes serialization + Cleanup; §3.6 Layer 1 explicit "NO t.Parallel()" |
 | `keyring.Set("")` per-backend semantics: empty-stored treated as miss | R3 F4 | P1 | §3.2 credstore.go contract: empty-stored = miss; §3.6 `TestGet_EmptyStoredTreatedAsMiss` |
 | ErrNotFound mapping not cross-platform contracted; error classification needed | R3 F7 | P1 | §3.2 credstore.go exports `ErrLocked` + `ErrUnavailable` sentinels; §3.5 caller errors.Is dispatch |
