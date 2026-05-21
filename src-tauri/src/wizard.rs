@@ -382,13 +382,15 @@ pub async fn run_test_send_impl() -> Result<TestSendOutcome, WizardError> {
     // assumed a Pat already listening on a hardcoded :8080 and never triggered
     // /api/connect, so it could never complete. Mirrors live_cms_smoke.
     //
-    // Failures map to Err(Other { detail: json }) per the existing frontend
-    // contract; tuxlink-2a7 will replace that with a structured Failed outcome.
-    match run_live_test_send().await {
-        Ok(outcome @ TestSendOutcome::Success { .. }) => Ok(outcome),
-        Ok(failed) => Err(live_path_outcome_to_wizard_error(failed)),
-        Err(wiz_err) => Err(wiz_err),
-    }
+    // tuxlink-2a7: an expected operational failure is returned as
+    // Ok(TestSendOutcome::Failed { cause, likely_causes_hint }) — the SAME
+    // structured shape the mock path produces (produce_mock_outcome) and the
+    // frontend's TEST_SEND_RESULT handler already consumes. `Err(WizardError)`
+    // is now reserved for genuine command-level errors (Busy from the mutex,
+    // a config-read/spawn-task failure). This replaces the prior
+    // Err(Other { detail: json }) hack, which surfaced raw JSON in the UI's
+    // failure `cause` and required hand-rolled JSON escaping (Codex pqg R1 #7).
+    run_live_test_send().await
 }
 
 /// Operator-only live round-trip backing `run_test_send_impl`. Spawns an
@@ -571,34 +573,6 @@ pub fn produce_mock_outcome() -> TestSendOutcome {
                 "Re: Tuxlink wizard /test/ verification [MOCKED]".into(),
             ),
         }
-    }
-}
-
-/// Convert a live-path `TestSendOutcome::Failed` into a `WizardError::Other`
-/// so the Tauri command can return `Result<TestSendOutcome, WizardError>`.
-/// The failed outcome is embedded as a JSON-encoded detail so the frontend
-/// can inspect it via the usual `Other { detail }` pattern.
-fn live_path_outcome_to_wizard_error(outcome: TestSendOutcome) -> WizardError {
-    match outcome {
-        TestSendOutcome::Failed { cause, likely_causes_hint } => {
-            let hints = likely_causes_hint
-                .iter()
-                .map(|s| format!("\"{}\"", s))
-                .collect::<Vec<_>>()
-                .join(",");
-            WizardError::Other {
-                detail: format!(
-                    "{{\"outcome\":\"failed\",\"cause\":\"{}\",\"likely_causes_hint\":[{}]}}",
-                    cause.replace('"', "\\\""),
-                    hints
-                ),
-            }
-        }
-        // Success on the "send" step is not an error; this arm is unreachable
-        // from the send_error path (send() returns Err, not Ok).
-        TestSendOutcome::Success { .. } => WizardError::Other {
-            detail: "Unexpected success in live_path_outcome_to_wizard_error".into(),
-        },
     }
 }
 
