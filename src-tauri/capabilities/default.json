@@ -1,9 +1,15 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Capability for the main window",
+  "description": "Capability for the main window. tuxlink-ng3: custom HTML chrome (decorations:false) needs the window-manipulation commands the native titlebar used to perform — minimize/toggle-maximize/close (controls), start-dragging (data-tauri-drag-region), start-resize-dragging (borderless resize handles), is-maximized (control icon state).",
   "windows": ["main"],
   "permissions": [
-    "core:default"
+    "core:default",
+    "core:window:allow-minimize",
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-close",
+    "core:window:allow-start-dragging",
+    "core:window:allow-start-resize-dragging",
+    "core:window:allow-is-maximized"
   ]
 }
