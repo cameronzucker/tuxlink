@@ -835,6 +835,10 @@ fn translate_pat_err(err: PatClientError, context: &'static str) -> BackendError
             msg: format!("Pat returned status {n} in {context}"),
             source: None,
         },
+        PatClientError::TooLarge { cap } => BackendError::Internal {
+            msg: format!("Pat message exceeded the {cap}-byte read cap in {context}"),
+            source: None,
+        },
     }
 }
 

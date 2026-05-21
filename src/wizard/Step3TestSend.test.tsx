@@ -114,6 +114,39 @@ describe('<Step3TestSend>', () => {
     });
   });
 
+  // ── MOCKED banner (tuxlink-fzm) ─────────────────────────────────────────
+
+  it('queries wizard_test_send_is_mocked on mount (not gated on sending)', async () => {
+    // tuxlink-fzm: the mock signal is a static process env var, so it must be
+    // queried on mount — resolved before any send — so a fast mocked send
+    // cannot return before the banner signal is known. The prior code queried
+    // only on entering `sending`, racing a fast mock return.
+    renderInState(); // idle
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith('wizard_test_send_is_mocked');
+    });
+  });
+
+  it('MOCKED banner is visible in sending when the backend reports mocked', async () => {
+    (invoke as ReturnType<typeof vi.fn>).mockImplementation((cmd: string) => {
+      if (cmd === 'wizard_test_send_is_mocked') return Promise.resolve(true);
+      return Promise.resolve({ kind: 'Success', detail: { reply_subject: 'Re: [MOCKED]' } });
+    });
+    renderInState({ testSendSubstate: 'sending' });
+    await waitFor(() => {
+      expect(screen.getByTestId('mock-banner')).toBeInTheDocument();
+    });
+  });
+
+  it('MOCKED banner is absent in sending when live (is_mocked false)', async () => {
+    // Default beforeEach mock returns is_mocked → false.
+    renderInState({ testSendSubstate: 'sending' });
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith('wizard_test_send_is_mocked');
+    });
+    expect(screen.queryByTestId('mock-banner')).not.toBeInTheDocument();
+  });
+
   // ── sending substate — directly mounted via initialStateOverride ─────────
 
   it('sending: [Send test] button is ABSENT (Part 97 §5.8 dedup guard)', () => {

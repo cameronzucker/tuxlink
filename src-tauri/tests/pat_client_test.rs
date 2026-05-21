@@ -2,7 +2,7 @@
 // spawns an inner tokio runtime that panics if dropped in async test context).
 // All HTTP-touching tests use #[tokio::test] + Server::new_async + .await.
 
-use tuxlink_lib::pat_client::{PatClient, MailboxFolder};
+use tuxlink_lib::pat_client::{MailboxFolder, PatClient, PatClientError};
 
 #[tokio::test]
 async fn test_list_inbox_parses_pat_json() {
@@ -126,4 +126,40 @@ fn test_mailbox_folder_clone_copy_and_debug_are_derived() {
     let f3 = f; // Copy semantics — f is not consumed by this line.
     let _ = format!("{:?}", f3);
     let _ = format!("{:?}", f); // f still usable after Copy.
+}
+
+// ── tuxlink-f1a: read-side byte cap ──────────────────────────────────────────
+
+#[tokio::test]
+async fn test_read_rejects_body_over_cap() {
+    let mut server = mockito::Server::new_async().await;
+    let _mock = server
+        .mock("GET", "/api/mailbox/in/BIG")
+        .with_status(200)
+        .with_body("x".repeat(100)) // 100 bytes
+        .create_async()
+        .await;
+
+    // Tiny cap so we don't need a multi-MiB fixture.
+    let client = PatClient::new(server.url()).with_max_read_bytes(16);
+    let result = client.read(MailboxFolder::Inbox, "BIG").await;
+    assert!(
+        matches!(result, Err(PatClientError::TooLarge { cap: 16 })),
+        "expected TooLarge {{ cap: 16 }}, got {result:?}"
+    );
+}
+
+#[tokio::test]
+async fn test_read_accepts_body_within_cap() {
+    let mut server = mockito::Server::new_async().await;
+    let _mock = server
+        .mock("GET", "/api/mailbox/in/OK")
+        .with_status(200)
+        .with_body("hello")
+        .create_async()
+        .await;
+
+    let client = PatClient::new(server.url()).with_max_read_bytes(1024);
+    let body = client.read(MailboxFolder::Inbox, "OK").await.expect("read within cap");
+    assert_eq!(body, b"hello");
 }
