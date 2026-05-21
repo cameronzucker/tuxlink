@@ -25,8 +25,8 @@ tutorial, and the Winlink CMS password never touches a config file on disk.
 ## v0.0.1 features
 
 - **Desktop GUI** — Tauri 2.x + React 18 frontend; native OS menu bar and system
-  tray; AppShell with dashboard ribbon, folder sidebar (Inbox / Outbox / Sent /
-  Drafts / Deleted), message list, reading pane, session log strip, and status bar.
+  tray; AppShell with dashboard ribbon, folder sidebar (Inbox / Sent / Outbox /
+  Archive), message list, reading pane, session log strip, and status bar.
 - **Onboarding wizard** — guides the operator through CMS-connected setup (callsign
   + Winlink CMS password → stored in the OS keyring, never on disk) or offline /
   radio-only setup. Optional test-send to verify the round-trip before entering the
