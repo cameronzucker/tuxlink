@@ -38,8 +38,11 @@
   font: inherit; color: inherit; background: none; border: none;
   padding: 4px 10px; border-radius: 4px; cursor: pointer; line-height: 1;
 }
-.tux-menu > button:hover { background: var(--surface-2); }
+/* Visible hover (surface-2 over surface was imperceptible on the dark palette) —
+ * a light overlay reads clearly on any scheme; distinct from the amber open state. */
+.tux-menu > button:hover { background: rgba(255, 255, 255, 0.09); }
 .tux-menu.tux-open > button { background: var(--accent-soft); color: var(--accent-2); }
+/* Dropdown items already use accent-soft on hover (.tux-mi:hover) — keep that. */
 
 /* ---- Dropdowns ---- */
 .tux-dropdown {
