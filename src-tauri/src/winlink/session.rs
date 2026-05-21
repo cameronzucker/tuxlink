@@ -176,6 +176,9 @@ pub fn send_turn<R: BufRead, W: Write>(
     // Read the answer line, skipping comment / pending-message lines.
     let answers = loop {
         let line = read_line(reader)?;
+        if let Some(message) = remote_error(&line) {
+            return Err(ExchangeError::RemoteError(message));
+        }
         if line.starts_with("FS ") {
             break proposal::parse_answers(&line).map_err(ExchangeError::BadAnswer)?;
         } else if line.starts_with(';') {
@@ -222,6 +225,9 @@ where
 
     loop {
         let line = read_line(reader)?;
+        if let Some(message) = remote_error(&line) {
+            return Err(ExchangeError::RemoteError(message));
+        }
         if line.is_empty() || line.starts_with(';') {
             continue; // comment, pending-message info, or blank
         }
@@ -295,6 +301,12 @@ fn answer_line(answers: &[Answer]) -> String {
     line
 }
 
+/// If `line` is a remote error line (`*** message`), return the message. The
+/// CMS reports failures this way (e.g. authentication or client-type rejection).
+fn remote_error(line: &str) -> Option<String> {
+    line.strip_prefix("***").map(|rest| rest.trim().to_string())
+}
+
 fn write_bytes<W: Write>(writer: &mut W, bytes: &[u8]) -> Result<(), ExchangeError> {
     writer
         .write_all(bytes)
@@ -332,6 +344,9 @@ pub enum ExchangeError {
     Handshake(handshake::HandshakeError),
     /// The server asked for a password but none was provided.
     PasswordRequired,
+    /// The remote sent an error line (`*** ...`), e.g. a rejected login or an
+    /// unsupported client type.
+    RemoteError(String),
 }
 
 #[cfg(test)]
@@ -553,6 +568,27 @@ mod tests {
             run_exchange(&mut reader, &mut writer, &config, vec![], |_| vec![]),
             Err(ExchangeError::PasswordRequired)
         );
+    }
+
+    #[test]
+    fn a_remote_error_line_is_surfaced_while_receiving() {
+        // The CMS rejects with a "*** ..." line (seen live: unknown client type).
+        let mut reader = Cursor::new(
+            b"*** Unknown client types are not allowed on production servers - Disconnecting\r"
+                .to_vec(),
+        );
+        let mut writer = Vec::new();
+        let result = receive_turn(&mut reader, &mut writer, |_| vec![]);
+        assert!(matches!(result, Err(ExchangeError::RemoteError(_))));
+    }
+
+    #[test]
+    fn a_remote_error_line_is_surfaced_while_sending() {
+        let (out, _) = outbound_message("ERR000000001", "Test", b"hi");
+        let mut reader = Cursor::new(b"*** Secure login failed\r".to_vec());
+        let mut writer = Vec::new();
+        let result = send_turn(&mut reader, &mut writer, std::slice::from_ref(&out), false);
+        assert!(matches!(result, Err(ExchangeError::RemoteError(_))));
     }
 
     #[test]
