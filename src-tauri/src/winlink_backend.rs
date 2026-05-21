@@ -308,6 +308,13 @@ pub trait WinlinkBackend: Send + Sync {
 // NativeBackend stub (spec §3.9)
 // ============================================================================
 
+/// A sink for per-step connect progress messages (tuxlink-gqo). The connect path
+/// runs in `spawn_blocking`, so the sink must be `Send + Sync`; production wires
+/// it (in `bootstrap::install_native`) to append a `LogSource::Transport` line to
+/// the session log and emit it live. Decoupled from the `LogLine` machinery on
+/// purpose — `winlink::telnet` only ever calls it with a `&str` phase message.
+pub type ProgressSink = Arc<dyn Fn(&str) + Send + Sync>;
+
 /// The native Winlink backend: speaks B2F directly (no Pat), stores messages in
 /// its own [`Mailbox`], and connects over plaintext or TLS telnet. `connect`
 /// runs the real CMS exchange on a blocking task; the actual on-air protocol is
@@ -318,11 +325,23 @@ pub struct NativeBackend {
     mailbox: Arc<Mailbox>,
     log_tx: broadcast::Sender<LogLine>,
     status: Arc<RwLock<BackendStatus>>,
+    progress: ProgressSink,
 }
 
 impl NativeBackend {
-    /// Create a backend for `config`, storing messages under `mailbox_root`.
+    /// Create a backend for `config`, storing messages under `mailbox_root`, with
+    /// a no-op progress sink. Production uses [`NativeBackend::with_progress`] to
+    /// surface connect progress in the session log; tests use this no-op form.
     pub fn new(config: Config, mailbox_root: impl Into<PathBuf>) -> Self {
+        Self::with_progress(config, mailbox_root, Arc::new(|_: &str| {}))
+    }
+
+    /// Like [`NativeBackend::new`] but with a connect-progress sink (tuxlink-gqo).
+    pub fn with_progress(
+        config: Config,
+        mailbox_root: impl Into<PathBuf>,
+        progress: ProgressSink,
+    ) -> Self {
         let (log_tx, _rx) = broadcast::channel(256);
         Self {
             backend_id: BackendInstanceId::next(),
@@ -330,6 +349,7 @@ impl NativeBackend {
             mailbox: Arc::new(Mailbox::new(mailbox_root)),
             log_tx,
             status: Arc::new(RwLock::new(BackendStatus::Disconnected)),
+            progress,
         }
     }
 
@@ -388,12 +408,16 @@ impl WinlinkBackend for NativeBackend {
         });
 
         // The exchange is blocking (sockets + files); run it off the async runtime.
-        let outcome = tokio::task::spawn_blocking(move || native_connect(&config, &mailbox, mode))
-            .await
-            .map_err(|e| BackendError::Internal {
-                msg: format!("native connect task failed: {e}"),
-                source: None,
-            })?;
+        // `progress` (an Arc) crosses into the blocking task to surface per-step
+        // connect progress in the session log (tuxlink-gqo).
+        let progress = self.progress.clone();
+        let outcome =
+            tokio::task::spawn_blocking(move || native_connect(&config, &mailbox, mode, &*progress))
+                .await
+                .map_err(|e| BackendError::Internal {
+                    msg: format!("native connect task failed: {e}"),
+                    source: None,
+                })?;
 
         match outcome {
             Ok(()) => {
@@ -450,6 +474,33 @@ impl WinlinkBackend for NativeBackend {
 /// client name is registered with Winlink (the production blocker).
 const CMS_HOST: &str = "cms-z.winlink.org";
 
+/// Resolve the CMS `(port, transport)` from the configured `mode` plus optional
+/// dev overrides (tuxlink-gqo). `TUXLINK_CMS_PLAINTEXT` forces plaintext telnet —
+/// the dev escape hatch for hosts that expose no TLS (the dev default cms-z has no
+/// 8773 TLS listener, while production `server.winlink.org` does); `TUXLINK_CMS_PORT`
+/// overrides the port. With no overrides the configured transport stands, so the
+/// persisted/production CmsSsl default keeps its 8773 TLS endpoint. Mirrors the
+/// `bin/native_cms_probe` env contract so the app and the probe agree.
+fn resolve_cms_endpoint(
+    mode: CmsTransport,
+    plaintext_override: bool,
+    port_override: Option<u16>,
+) -> (u16, telnet::Transport) {
+    let transport = if plaintext_override {
+        telnet::Transport::Plaintext
+    } else {
+        match mode {
+            CmsTransport::CmsSsl => telnet::Transport::Tls,
+            CmsTransport::Telnet => telnet::Transport::Plaintext,
+        }
+    };
+    let default_port = match transport {
+        telnet::Transport::Tls => 8773,
+        telnet::Transport::Plaintext => 8772,
+    };
+    (port_override.unwrap_or(default_port), transport)
+}
+
 /// Run one CMS exchange (blocking): build the outbox into proposals, connect over
 /// the chosen transport, accept all offered messages, then file what arrived into
 /// the inbox and move what was sent into the sent folder.
@@ -457,6 +508,7 @@ fn native_connect(
     config: &Config,
     mailbox: &Mailbox,
     mode: CmsTransport,
+    progress: &dyn Fn(&str),
 ) -> Result<(), BackendError> {
     let callsign = config
         .identity
@@ -471,10 +523,14 @@ fn native_connect(
         .and_then(|e| e.get_password().ok())
         .filter(|p| !p.is_empty());
 
-    let (port, transport) = match mode {
-        CmsTransport::CmsSsl => (8773u16, telnet::Transport::Tls),
-        CmsTransport::Telnet => (8772u16, telnet::Transport::Plaintext),
-    };
+    // Dev overrides (tuxlink-gqo) mirror `bin/native_cms_probe`: TUXLINK_CMS_PLAINTEXT
+    // forces plaintext (cms-z exposes no 8773 TLS), TUXLINK_CMS_PORT overrides the
+    // port. Absent both, the configured transport stands (production = CmsSsl/8773).
+    let plaintext_override = std::env::var("TUXLINK_CMS_PLAINTEXT").is_ok();
+    let port_override = std::env::var("TUXLINK_CMS_PORT")
+        .ok()
+        .and_then(|s| s.parse::<u16>().ok());
+    let (port, transport) = resolve_cms_endpoint(mode, plaintext_override, port_override);
 
     // Turn each queued outbox message into a proposal + compressed body.
     let mut outbound = Vec::new();
@@ -509,6 +565,7 @@ fn native_connect(
         transport,
         &exchange_config,
         outbound,
+        progress,
         |proposals| {
             proposals
                 .iter()
@@ -1092,6 +1149,41 @@ mod native_read_state_tests {
         assert!(
             !backend.list_messages(MailboxFolder::Inbox).await.unwrap()[0].unread,
             "after mark_read the message should be read"
+        );
+    }
+
+    // tuxlink-gqo: the dev transport resolver. With no env overrides the configured
+    // transport stands (production keeps CmsSsl/8773); TUXLINK_CMS_PLAINTEXT forces
+    // plaintext/8772 so the app can reach cms-z (which exposes no 8773 TLS).
+    #[test]
+    fn resolve_cms_endpoint_defaults_to_configured_transport() {
+        assert_eq!(
+            resolve_cms_endpoint(CmsTransport::CmsSsl, false, None),
+            (8773, telnet::Transport::Tls)
+        );
+        assert_eq!(
+            resolve_cms_endpoint(CmsTransport::Telnet, false, None),
+            (8772, telnet::Transport::Plaintext)
+        );
+    }
+
+    #[test]
+    fn resolve_cms_endpoint_plaintext_override_forces_plaintext_8772() {
+        assert_eq!(
+            resolve_cms_endpoint(CmsTransport::CmsSsl, true, None),
+            (8772, telnet::Transport::Plaintext)
+        );
+    }
+
+    #[test]
+    fn resolve_cms_endpoint_honors_explicit_port_override() {
+        assert_eq!(
+            resolve_cms_endpoint(CmsTransport::CmsSsl, false, Some(8774)),
+            (8774, telnet::Transport::Tls)
+        );
+        assert_eq!(
+            resolve_cms_endpoint(CmsTransport::CmsSsl, true, Some(2323)),
+            (2323, telnet::Transport::Plaintext)
         );
     }
 }

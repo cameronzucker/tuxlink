@@ -15,7 +15,7 @@
 //! plumbing against a local mock on `127.0.0.1` (no live network, no RF).
 
 use std::io::{BufRead, BufReader, Read, Write};
-use std::net::TcpStream;
+use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -25,6 +25,13 @@ use super::wire;
 
 /// How long to wait on a single read or write before giving up.
 const TIMEOUT: Duration = Duration::from_secs(60);
+
+/// How long to wait for the TCP connect (per resolved address) before giving up.
+/// Without this, `TcpStream::connect` rides the OS SYN-retry default (~75-130s on
+/// Linux), so a filtered/black-holed CMS endpoint reads as a silent stall rather
+/// than a fast, legible failure (tuxlink-gqo: cms-z exposes no TLS on 8773, so a
+/// CmsSsl connect there hung ~75-130s before ETIMEDOUT).
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// The fixed, public password the CMS telnet "post office" login expects. It is
 /// NOT the station's Winlink password — that one answers the B2F secure-login
@@ -84,19 +91,22 @@ pub fn connect_and_exchange<F>(
     transport: Transport,
     config: &ExchangeConfig,
     outbound: Vec<OutboundMessage>,
+    progress: &dyn Fn(&str),
     decide: F,
 ) -> Result<ExchangeResult, TelnetError>
 where
     F: Fn(&[Proposal]) -> Vec<Answer>,
 {
-    let shared: Shared = Arc::new(Mutex::new(connect_stream(host, port, transport)?));
+    let shared: Shared = Arc::new(Mutex::new(connect_stream(host, port, transport, progress)?));
     let mut reader = BufReader::new(ReadHalf(shared.clone()));
     let mut writer = WriteHalf(shared);
 
     // The CMS telnet "post office" greets with a callsign/password login that
     // precedes the B2F handshake; clear it first.
     telnet_login(&mut reader, &mut writer, &config.mycall)?;
+    progress("CMS login complete.");
 
+    progress("Negotiating messages…");
     session::run_exchange(&mut reader, &mut writer, config, outbound, decide)
         .map_err(TelnetError::Exchange)
 }
@@ -107,8 +117,11 @@ fn connect_stream(
     host: &str,
     port: u16,
     transport: Transport,
+    progress: &dyn Fn(&str),
 ) -> Result<Box<dyn ReadWrite>, TelnetError> {
-    let tcp = TcpStream::connect((host, port)).map_err(TelnetError::Connect)?;
+    let addrs = (host, port).to_socket_addrs().map_err(TelnetError::Connect)?;
+    let tcp = connect_with_timeout(addrs, CONNECT_TIMEOUT).map_err(TelnetError::Connect)?;
+    progress("TCP connection established.");
     tcp.set_read_timeout(Some(TIMEOUT)).ok();
     tcp.set_write_timeout(Some(TIMEOUT)).ok();
     match transport {
@@ -119,9 +132,31 @@ fn connect_stream(
             let tls = connector
                 .connect(host, tcp)
                 .map_err(|e| TelnetError::Tls(e.to_string()))?;
+            progress("TLS handshake complete.");
             Ok(Box::new(tls))
         }
     }
+}
+
+/// Connect to the first reachable address, bounding each attempt by `timeout` so a
+/// filtered/black-holed endpoint fails fast instead of riding the OS SYN-retry
+/// default (the "silent stall", tuxlink-gqo). Tries each resolved address in turn;
+/// returns the first success, or the last error if all fail, or a `NotFound` error
+/// if `addrs` is empty (host resolved to nothing).
+fn connect_with_timeout(
+    addrs: impl Iterator<Item = SocketAddr>,
+    timeout: Duration,
+) -> std::io::Result<TcpStream> {
+    let mut last_err = None;
+    for addr in addrs {
+        match TcpStream::connect_timeout(&addr, timeout) {
+            Ok(stream) => return Ok(stream),
+            Err(e) => last_err = Some(e),
+        }
+    }
+    Err(last_err.unwrap_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::NotFound, "no addresses resolved for host")
+    }))
 }
 
 /// Answer the CMS telnet login: send the call sign at the `Callsign :` prompt
@@ -210,6 +245,7 @@ mod tests {
             Transport::Plaintext,
             &config,
             vec![],
+            &|_| {},
             |_| vec![],
         )
         .unwrap();
@@ -217,5 +253,87 @@ mod tests {
         assert!(result.received.is_empty());
         assert!(result.sent.is_empty());
         server.join().unwrap();
+    }
+
+    #[test]
+    fn connect_with_timeout_errors_when_no_addresses() {
+        // Host resolved to nothing → a clean error, never a hang.
+        let err = connect_with_timeout(std::iter::empty(), Duration::from_secs(1)).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
+    }
+
+    #[test]
+    fn connect_with_timeout_fails_fast_on_a_refused_port() {
+        // Bind to claim a free port, then drop the listener so nothing is
+        // listening; connecting is then refused (RST) — fast, deterministic,
+        // loopback-only (no external network, per testing-pitfalls).
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        drop(listener);
+        let err =
+            connect_with_timeout(std::iter::once(addr), Duration::from_secs(5)).unwrap_err();
+        assert_eq!(
+            err.kind(),
+            std::io::ErrorKind::ConnectionRefused,
+            "expected refused on a dead port, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn connect_with_timeout_connects_to_a_live_listener() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let stream = connect_with_timeout(std::iter::once(addr), Duration::from_secs(5)).unwrap();
+        assert_eq!(stream.peer_addr().unwrap(), addr);
+    }
+
+    #[test]
+    fn connect_and_exchange_reports_connection_progress() {
+        // A local mock that completes the telnet login + an empty exchange while a
+        // recording progress sink captures the per-step phase lines. Loopback
+        // only — no live network, no RF. The progress callback fires synchronously
+        // on this thread, so a RefCell recorder (no Arc/Mutex) is sufficient.
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = thread::spawn(move || {
+            let (mut sock, _) = listener.accept().unwrap();
+            sock.write_all(b"Callsign :\rPassword :\r[WL2K-5.0-B2FHM$]\rCMS>\rFQ\r")
+                .unwrap();
+            let mut buf = [0u8; 256];
+            while let Ok(n) = sock.read(&mut buf) {
+                if n == 0 {
+                    break;
+                }
+            }
+        });
+
+        let config = ExchangeConfig {
+            mycall: "N7CPZ".into(),
+            targetcall: "SERVICE".into(),
+            locator: "CN87".into(),
+            password: None,
+        };
+        let recorded = std::cell::RefCell::new(Vec::<String>::new());
+        connect_and_exchange(
+            &addr.ip().to_string(),
+            addr.port(),
+            Transport::Plaintext,
+            &config,
+            vec![],
+            &|msg: &str| recorded.borrow_mut().push(msg.to_string()),
+            |_| vec![],
+        )
+        .unwrap();
+        server.join().unwrap();
+
+        let lines = recorded.into_inner();
+        assert!(
+            lines.iter().any(|l| l.contains("TCP")),
+            "expected a TCP-connected progress line, got {lines:?}"
+        );
+        assert!(
+            lines.iter().any(|l| l.to_lowercase().contains("login")),
+            "expected a login-complete progress line, got {lines:?}"
+        );
     }
 }

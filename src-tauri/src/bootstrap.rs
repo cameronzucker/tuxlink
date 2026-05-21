@@ -28,7 +28,7 @@ use crate::app_backend::{BackendPhase, BackendState};
 use crate::config::{Config, ConfigReadError};
 use crate::session_log::SessionLogState;
 use crate::winlink_backend::{
-    LogLevel, LogLine, LogSource, NativeBackend, PatBackend, PatBackendSpawnOptions,
+    LogLevel, LogLine, LogSource, NativeBackend, PatBackend, PatBackendSpawnOptions, ProgressSink,
 };
 
 /// What the bootstrap should do, decided purely from `read_config()`'s result.
@@ -270,7 +270,26 @@ fn install_native(app_handle: &AppHandle, state: &BackendState, cfg: Config) {
         }
     };
 
-    let backend = NativeBackend::new(cfg, mbox_dir);
+    // Per-step connect progress (tuxlink-gqo): the native connect runs in a
+    // blocking task with no `AppHandle`, so it reports each phase through this
+    // sink, which appends a `LogSource::Transport` line to the session log (so it
+    // survives in the snapshot) and emits it live. Mirrors `emit_backend_line`,
+    // but tagged Transport rather than Backend.
+    let progress_app = app_handle.clone();
+    let progress: ProgressSink = Arc::new(move |msg: &str| {
+        let buffer = progress_app.state::<Arc<SessionLogState>>();
+        let mut line = LogLine {
+            seq: 0,
+            timestamp_iso: now_iso8601_utc(),
+            level: LogLevel::Info,
+            source: LogSource::Transport,
+            message: msg.to_string(),
+        };
+        line.seq = buffer.append(line.clone());
+        let _ = progress_app.emit("session_log:line", crate::ui_commands::LogLineDto::from(line));
+    });
+
+    let backend = NativeBackend::with_progress(cfg, mbox_dir, progress);
     state.install(Arc::new(backend));
     emit_backend_line(
         app_handle,

@@ -63,6 +63,7 @@ fn main() {
         transport,
         &exchange_config,
         Vec::new(),
+        &|msg: &str| println!("  · {msg}"),
         |proposals| {
             if !proposals.is_empty() {
                 println!("CMS offered {} message(s); deferring all", proposals.len());
