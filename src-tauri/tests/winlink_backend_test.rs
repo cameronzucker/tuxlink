@@ -222,6 +222,7 @@ fn native_test_config() -> tuxlink_lib::config::Config {
         privacy: PrivacyConfig {
             gps_state: GpsState::BroadcastAtPrecision,
             position_precision: PositionPrecision::FourCharGrid,
+            position_source: tuxlink_lib::config::PositionSource::Gps,
         },
         pat_mbo_address: None,
     }
@@ -428,6 +429,7 @@ fn spawn_failure_drains_pat_stderr_into_durable_buffer() {
         privacy: PrivacyConfig {
             gps_state: GpsState::Off,
             position_precision: PositionPrecision::FourCharGrid,
+            position_source: tuxlink_lib::config::PositionSource::Gps,
         },
         pat_mbo_address: None,
     };
@@ -540,6 +542,7 @@ async fn spawn_against_real_pat_http_mode() {
         privacy: PrivacyConfig {
             gps_state: GpsState::Off,
             position_precision: PositionPrecision::FourCharGrid,
+            position_source: tuxlink_lib::config::PositionSource::Gps,
         },
         pat_mbo_address: None,
     };

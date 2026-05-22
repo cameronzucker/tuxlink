@@ -31,6 +31,7 @@ fn cms_config() -> Config {
         privacy: PrivacyConfig {
             gps_state: GpsState::Off,
             position_precision: PositionPrecision::FourCharGrid,
+            position_source: tuxlink_lib::config::PositionSource::Gps,
         },
         pat_mbo_address: Some("W4PHS@winlink.org".to_string()),
     }
