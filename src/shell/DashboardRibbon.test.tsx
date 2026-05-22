@@ -119,6 +119,7 @@ describe('DashboardRibbon — packet connection', () => {
   const data: StatusBarData = {
     callsign: 'N7CPZ', grid: 'CN85', gridTooltip: null,
     state: { label: 'Idle', tone: 'idle' as StatusTone }, connection: 'Idle · CMS-SSL',
+    position_source: 'Gps', // required since the tuxlink-686 merge (was missing → tsc-only error)
   };
   const packet: PacketUiState = {
     active: true, listening: true, connected: false, effectiveCall: 'N7CPZ-7', linkLabel: 'KISS-TCP Dire Wolf',
