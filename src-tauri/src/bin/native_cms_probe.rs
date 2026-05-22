@@ -64,6 +64,9 @@ fn main() {
         &exchange_config,
         Vec::new(),
         &|msg: &str| println!("  · {msg}"),
+        // tuxlink-nki: print the raw B2F wire lines so the probe shows the real
+        // protocol dialogue, not just the human progress summary.
+        &|line: &str| println!("    {line}"),
         &|_| {},
         |proposals| {
             if !proposals.is_empty() {

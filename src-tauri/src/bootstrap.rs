@@ -29,6 +29,7 @@ use crate::config::{Config, ConfigReadError};
 use crate::session_log::SessionLogState;
 use crate::winlink_backend::{
     LogLevel, LogLine, LogSource, NativeBackend, PatBackend, PatBackendSpawnOptions, ProgressSink,
+    WireSink,
 };
 
 /// What the bootstrap should do, decided purely from `read_config()`'s result.
@@ -289,13 +290,35 @@ fn install_native(app_handle: &AppHandle, state: &BackendState, cfg: Config) {
         let _ = progress_app.emit("session_log:line", crate::ui_commands::LogLineDto::from(line));
     });
 
+    // tuxlink-nki: raw B2F wire lines. The native connect tees every on-wire
+    // protocol line (both directions) into this sink, which appends a
+    // `LogSource::Wire` line to the session log + emits it live — so the operator
+    // can watch the real `[WL2K-...]`/`;FW`/`FF`/`FQ` dialogue under "Raw output"
+    // (the Human view suppresses wire lines). LogLevel::Trace — verbose detail.
+    // Mirrors the progress sink above, tagged Wire rather than Transport.
+    let wire_app = app_handle.clone();
+    let wire: WireSink = Arc::new(move |msg: &str| {
+        let buffer = wire_app.state::<Arc<SessionLogState>>();
+        let mut line = LogLine {
+            seq: 0,
+            timestamp_iso: now_iso8601_utc(),
+            level: LogLevel::Trace,
+            source: LogSource::Wire,
+            message: msg.to_string(),
+        };
+        line.seq = buffer.append(line.clone());
+        let _ = wire_app.emit("session_log:line", crate::ui_commands::LogLineDto::from(line));
+    });
+
     // tuxlink-686: inject the live PositionArbiter so the on-air CMS locator is
     // the arbiter's broadcast_grid() (live + precision-reduced) rather than the
     // stale config snapshot the backend was constructed with. The arbiter is
     // managed state registered in lib.rs::run() above the .setup() call; the Arc
     // ref-count is incremented here, not moved, so the lib.rs binding stays alive.
     let arbiter = (*app_handle.state::<Arc<crate::position::PositionArbiter>>()).clone();
-    let backend = NativeBackend::with_progress(cfg, mbox_dir, progress).with_position(arbiter);
+    let backend = NativeBackend::with_progress(cfg, mbox_dir, progress)
+        .with_wire_log(wire)
+        .with_position(arbiter);
     state.install(Arc::new(backend));
     emit_backend_line(
         app_handle,
