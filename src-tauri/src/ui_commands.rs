@@ -999,6 +999,70 @@ pub fn app_quit(app: tauri::AppHandle) {
     app.exit(0);
 }
 
+// ============================================================================
+// Task 5 (tuxlink-686) — config_set_grid + validate_grid_input
+// bd issue: tuxlink-686
+// ============================================================================
+
+/// Validate a user-supplied Maidenhead grid string.
+///
+/// **Precondition:** caller must trim whitespace before calling; this function
+/// operates on the argument as-given.
+///
+/// Delegates to [`crate::position::grid_to_lat_lon`], which operates on
+/// `as_bytes()` and is panic-safe for arbitrary UTF-8 input (no unsafe
+/// char-indexing on `&str`). Returns `Some(message)` when the input is invalid,
+/// `None` when it is a valid 4- or 6-char Maidenhead locator.
+pub(crate) fn validate_grid_input(s: &str) -> Option<&'static str> {
+    crate::position::grid_to_lat_lon(s)
+        .is_none()
+        .then_some("Grid must be a 4- or 6-char Maidenhead locator (e.g. EM75 or EM75xx).")
+}
+
+/// Persist a manually-set grid to the config file and pin the [`PositionArbiter`].
+///
+/// - Validates the input with [`validate_grid_input`]; invalid → `Rejected`.
+/// - Reads the current config, updates `identity.grid` + `privacy.position_source`,
+///   and writes atomically. Both I/O errors map to `UiError::Internal` (same
+///   pattern as `config_read` + `cms_connect`).
+/// - Calls `arbiter.set_manual` to pin the in-memory arbiter to Manual
+///   immediately; the arbiter is the runtime source of truth for broadcast
+///   position (spec §position-686).
+///
+/// The arbiter is managed as an `Arc<PositionArbiter>` so it is shared between
+/// this command and (Task 11) the gpsd task.
+///
+/// NOTE (test coverage): the full validate → persist → pin round-trip is NOT
+/// unit-tested here. `config::config_path()` resolves via the process-global
+/// `XDG_CONFIG_HOME`, so an isolated round-trip test would race under parallel
+/// `cargo test`. The persist+pin path is covered by the Task 8 operator browser
+/// smoke + a future integration test; the validator and the arbiter's set_manual
+/// stickiness are unit-tested in isolation.
+///
+/// NOTE (empty string): this command is never invoked with an empty string — the
+/// Task 8 `GridEdit` UI validates client-side first; the backend correctly
+/// rejects empty as invalid.
+#[tauri::command]
+pub async fn config_set_grid(
+    grid: String,
+    arbiter: tauri::State<'_, std::sync::Arc<crate::position::PositionArbiter>>,
+) -> Result<(), UiError> {
+    let g = grid.trim().to_string();
+    if let Some(msg) = validate_grid_input(&g) {
+        return Err(UiError::Rejected(msg.to_string()));
+    }
+    let mut cfg = config::read_config().map_err(|e| UiError::Internal {
+        detail: e.to_string(),
+    })?;
+    cfg.identity.grid = Some(g.clone());
+    cfg.privacy.position_source = config::PositionSource::Manual;
+    config::write_config_atomic(&cfg).map_err(|e| UiError::Internal {
+        detail: e.to_string(),
+    })?;
+    arbiter.set_manual(&g);
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1399,6 +1463,52 @@ mod tests {
             let v = serde_json::to_value(LogSourceDto::from(source)).unwrap();
             assert_eq!(v, expected);
         }
+    }
+
+    // ========================================================================
+    // Task 5 (tuxlink-686) — config_set_grid validator + arbiter pin
+    // ========================================================================
+
+    // Step 1 — failing test: invalid Maidenhead is rejected.
+    #[test]
+    fn config_set_grid_rejects_invalid_maidenhead() {
+        let err = validate_grid_input("NOTAGRID");
+        assert!(err.is_some()); // returns the validation message
+    }
+
+    // Step 4a — valid grids pass validation; set_manual pins arbiter to Manual.
+    #[test]
+    fn validate_grid_accepts_valid_four_and_six_char() {
+        assert!(validate_grid_input("EM75").is_none(), "4-char Maidenhead should be valid");
+        assert!(validate_grid_input("EM75xx").is_none(), "6-char Maidenhead should be valid");
+        // Rejection path
+        assert!(validate_grid_input("ZZ99").is_some(), "ZZ out-of-range field");
+        assert!(validate_grid_input("").is_some(), "empty string should be invalid");
+        assert!(validate_grid_input("EM7").is_some(), "3-char should be invalid");
+    }
+
+    // Step 4b — arbiter primitive: set_manual pins source to Manual.
+    #[test]
+    fn arbiter_set_manual_pins_manual_source() {
+        use crate::config::{PositionPrecision, PositionSource};
+        use crate::position::PositionArbiter;
+
+        let arbiter = PositionArbiter::new(PositionSource::Gps, None, PositionPrecision::FourCharGrid);
+        assert_eq!(arbiter.source(), PositionSource::Gps);
+        arbiter.set_manual("EM75");
+        assert_eq!(arbiter.source(), PositionSource::Manual);
+        assert_eq!(arbiter.active_grid().as_deref(), Some("EM75"));
+    }
+
+    // Step 4c — multibyte UTF-8 input must not panic and must return Some (invalid).
+    #[test]
+    fn validate_grid_multibyte_does_not_panic() {
+        // "ABé" has byte-len 4 (é is 2 bytes) but is NOT valid Maidenhead.
+        // A naive s[2..4] byte-slice on &str would panic at the é boundary.
+        // Delegating to grid_to_lat_lon (as_bytes()) is panic-safe.
+        assert!(validate_grid_input("ABé").is_some());
+        // Also a longer multibyte string
+        assert!(validate_grid_input("EM75é1").is_some());
     }
 
     // ========================================================================
