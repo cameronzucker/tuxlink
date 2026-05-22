@@ -1,2 +1,96 @@
-//! KISS byte-pipe transports.
-use serialport as _; // dependency presence check; removed/used properly in Task 3
+//! KISS byte-pipe transports for AX.25: a `ByteLink` over TCP (Dire Wolf /
+//! SoundModem KISS port) or a serial device (USB COM port, or a Bluetooth RFCOMM
+//! `/dev/rfcommN` opened identically). The state machine in `datalink.rs` drives a
+//! `ByteLink` through the KISS framer; this layer is dumb byte plumbing.
+//!
+//! **No RF here.** The TCP arm is exercised against a loopback `TcpListener`. The
+//! serial arm (Task 4) is exercised by the operator on hardware (RADIO-1 / spec §6);
+//! the agent verifies only that it compiles and opens a device path.
+
+use std::io::{Read, Write};
+use std::net::TcpStream;
+use std::time::Duration;
+
+/// How long a single read/write on the KISS link may block before failing (mirrors
+/// `telnet.rs`'s TIMEOUT — a hung modem must fail legibly, not stall forever).
+const LINK_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// Which KISS byte-pipe to open. Bluetooth uses the `Serial` variant with an
+/// rfcomm device path (e.g. `/dev/rfcomm0`); there is no in-app BlueZ dependency.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum KissLinkConfig {
+    /// KISS-over-TCP, e.g. Dire Wolf / SoundModem listening on `127.0.0.1:8001`.
+    Tcp { host: String, port: u16 },
+    /// KISS-over-serial: a USB COM device (`/dev/ttyUSB0`) OR a Bluetooth RFCOMM
+    /// device (`/dev/rfcomm0`). `baud` is the host↔modem link rate (distinct from
+    /// the 1200-baud over-air rate).
+    Serial { device: String, baud: u32 },
+}
+
+/// A bidirectional, thread-movable byte stream — the KISS pipe the AX.25 state
+/// machine reads framed bytes from and writes framed bytes to. Blanket-implemented
+/// for any `Read + Write + Send` (so `TcpStream`, a `serialport` handle, and the
+/// in-memory test peer all qualify).
+pub trait ByteLink: Read + Write + Send {}
+impl<T: Read + Write + Send> ByteLink for T {}
+
+/// Open a KISS byte-pipe per `cfg`. The returned `Box<dyn ByteLink>` is handed to
+/// `datalink::connect` / `datalink::answer`.
+pub fn connect_link(cfg: &KissLinkConfig) -> std::io::Result<Box<dyn ByteLink>> {
+    match cfg {
+        KissLinkConfig::Tcp { host, port } => {
+            let stream = TcpStream::connect((host.as_str(), *port))?;
+            stream.set_read_timeout(Some(LINK_TIMEOUT)).ok();
+            stream.set_write_timeout(Some(LINK_TIMEOUT)).ok();
+            Ok(Box::new(stream))
+        }
+        KissLinkConfig::Serial { .. } => connect_serial(cfg),
+    }
+}
+
+/// TEMPORARY stub — replaced by the real serial open in Task 4.
+fn connect_serial(_cfg: &KissLinkConfig) -> std::io::Result<Box<dyn ByteLink>> {
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "serial KISS link not yet implemented (Task 4)",
+    ))
+}
+
+#[cfg(test)]
+mod link_tcp_tests {
+    use super::*;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::thread;
+
+    #[test]
+    fn tcp_link_round_trips_bytes_over_loopback() {
+        // A loopback KISS modem stand-in: echoes one chunk back. 127.0.0.1 only —
+        // no RF, no external network (per testing-pitfalls).
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = thread::spawn(move || {
+            let (mut sock, _) = listener.accept().unwrap();
+            let mut buf = [0u8; 4];
+            let n = sock.read(&mut buf).unwrap();
+            sock.write_all(&buf[..n]).unwrap();
+        });
+
+        let cfg = KissLinkConfig::Tcp { host: addr.ip().to_string(), port: addr.port() };
+        let mut link = connect_link(&cfg).unwrap();
+        link.write_all(&[0xC0, 0x00, 0x42, 0xC0]).unwrap();
+        let mut back = [0u8; 4];
+        link.read_exact(&mut back).unwrap();
+        assert_eq!(back, [0xC0, 0x00, 0x42, 0xC0]);
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn tcp_connect_to_a_dead_port_errors_not_hangs() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        drop(listener); // nothing listening ⇒ connection refused
+        let cfg = KissLinkConfig::Tcp { host: addr.ip().to_string(), port: addr.port() };
+        assert!(connect_link(&cfg).is_err());
+    }
+}
