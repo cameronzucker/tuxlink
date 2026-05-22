@@ -120,14 +120,32 @@ impl<'a, T> WireTap<'a, T> {
     fn observe(&mut self, bytes: &[u8]) {
         for &b in bytes {
             if b == b'\r' {
-                let text = wire::clean_line(&String::from_utf8_lossy(&self.line)).to_string();
-                self.line.clear();
-                if !text.is_empty() {
-                    (self.sink)(&format!("{} {}", self.dir, text));
-                }
-            } else if b != b'\n' {
+                self.flush();
+            } else {
                 self.line.push(b);
             }
+        }
+    }
+
+    /// Emit the buffered line. B2F protocol lines are ASCII and logged verbatim;
+    /// a chunk containing non-ASCII bytes is a binary payload (e.g. an
+    /// LZHUF-compressed message body) and is summarized as a byte count — never
+    /// dumped as mojibake (tuxlink-nki re-smoke finding).
+    fn flush(&mut self) {
+        let raw = std::mem::take(&mut self.line);
+        if raw.is_empty() {
+            return;
+        }
+        let is_ascii_text = raw
+            .iter()
+            .all(|&b| b == b'\t' || b == b'\n' || (0x20..=0x7e).contains(&b));
+        if is_ascii_text {
+            let text = wire::clean_line(&String::from_utf8_lossy(&raw)).to_string();
+            if !text.is_empty() {
+                (self.sink)(&format!("{} {}", self.dir, text));
+            }
+        } else {
+            (self.sink)(&format!("{} <{} bytes binary>", self.dir, raw.len()));
         }
     }
 }
@@ -638,6 +656,27 @@ mod tests {
         assert!(
             lines.iter().any(|l| l.starts_with('>') && l.contains(";FW: N7CPZ")),
             "expected the sent ;FW handshake line in the wire log, got {lines:?}"
+        );
+    }
+
+    #[test]
+    fn wire_tap_summarizes_binary_payloads_instead_of_mojibake() {
+        // tuxlink-nki re-smoke: a `\r`-framed chunk with non-ASCII bytes (an
+        // LZHUF-compressed message body) must log as a byte-count summary, not
+        // garbage — while ASCII protocol lines stay readable.
+        let recorded = std::cell::RefCell::new(Vec::<String>::new());
+        let sink = |l: &str| recorded.borrow_mut().push(l.to_string());
+        let mut tap = WireTap::new(std::io::sink(), &sink, '<');
+        tap.observe(b";FW: N7CPZ\r"); // ASCII protocol line
+        tap.observe(&[0x00, 0xff, 0x9a, 0x1b, 0xc3, b'\r']); // 5-byte binary payload
+        let lines = recorded.into_inner();
+        assert!(
+            lines.iter().any(|l| l == "< ;FW: N7CPZ"),
+            "ASCII protocol line should stay readable, got {lines:?}"
+        );
+        assert!(
+            lines.iter().any(|l| l == "< <5 bytes binary>"),
+            "binary payload should be summarized, not dumped, got {lines:?}"
         );
     }
 }
