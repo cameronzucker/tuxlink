@@ -94,3 +94,88 @@ mod address_encode_tests {
         assert_eq!(b[6], 0xEE);
     }
 }
+
+// ── Control field (mod-8) ─────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Control {
+    Sabm { pf: bool },
+    Disc { pf: bool },
+    Ua { pf: bool },
+    Dm { pf: bool },
+    Rr { nr: u8, pf: bool },
+    Rnr { nr: u8, pf: bool },
+    Rej { nr: u8, pf: bool },
+    I { ns: u8, nr: u8, pf: bool },
+}
+
+impl Control {
+    pub fn encode(&self) -> u8 {
+        let pf = |b: bool| if b { 0x10 } else { 0 };
+        match *self {
+            Control::Sabm { pf: p } => 0x2F | pf(p),
+            Control::Disc { pf: p } => 0x43 | pf(p),
+            Control::Ua { pf: p } => 0x63 | pf(p),
+            Control::Dm { pf: p } => 0x0F | pf(p),
+            Control::Rr { nr, pf: p } => (nr << 5) | pf(p) | 0x01,
+            Control::Rnr { nr, pf: p } => (nr << 5) | pf(p) | 0x05,
+            Control::Rej { nr, pf: p } => (nr << 5) | pf(p) | 0x09,
+            Control::I { ns, nr, pf: p } => (nr << 5) | pf(p) | ((ns & 0x07) << 1),
+        }
+    }
+    pub fn decode(b: u8) -> Result<Control, FrameError> {
+        let pf = b & 0x10 != 0;
+        let nr = (b >> 5) & 0x07;
+        if b & 0x01 == 0 {
+            // I-frame
+            return Ok(Control::I { ns: (b >> 1) & 0x07, nr, pf });
+        }
+        if b & 0x03 == 0x01 {
+            // S-frame: bits 2-3 select type
+            return match b & 0x0C {
+                0x00 => Ok(Control::Rr { nr, pf }),
+                0x04 => Ok(Control::Rnr { nr, pf }),
+                0x08 => Ok(Control::Rej { nr, pf }),
+                _ => Err(FrameError::UnknownControl(b)),
+            };
+        }
+        // U-frame: mask off the P/F bit, match the type bits
+        match b & !0x10 {
+            0x2F => Ok(Control::Sabm { pf }),
+            0x43 => Ok(Control::Disc { pf }),
+            0x63 => Ok(Control::Ua { pf }),
+            0x0F => Ok(Control::Dm { pf }),
+            _ => Err(FrameError::UnknownControl(b)),
+        }
+    }
+    /// True for I and UI frames (which carry a PID + info). P1 has no UI yet.
+    pub fn has_info(&self) -> bool {
+        matches!(self, Control::I { .. })
+    }
+}
+
+#[cfg(test)]
+mod control_tests {
+    use super::*;
+    #[test]
+    fn encodes_u_and_s_and_i_frames() {
+        assert_eq!(Control::Sabm { pf: true }.encode(), 0x3F);   // 0x2F|0x10
+        assert_eq!(Control::Ua { pf: true }.encode(), 0x73);     // 0x63|0x10
+        assert_eq!(Control::Disc { pf: false }.encode(), 0x43);
+        assert_eq!(Control::Dm { pf: true }.encode(), 0x1F);     // 0x0F|0x10
+        assert_eq!(Control::Rr { nr: 3, pf: false }.encode(), 0x61); // (3<<5)|0x01
+        assert_eq!(Control::Rej { nr: 2, pf: true }.encode(), 0x59); // (2<<5)|0x10|0x09
+        assert_eq!(Control::I { ns: 2, nr: 3, pf: false }.encode(), 0x64); // (3<<5)|(2<<1)
+    }
+    #[test]
+    fn round_trips_each_variant() {
+        for c in [
+            Control::Sabm { pf: true }, Control::Disc { pf: false },
+            Control::Ua { pf: true }, Control::Dm { pf: false },
+            Control::Rr { nr: 5, pf: true }, Control::Rnr { nr: 0, pf: false },
+            Control::Rej { nr: 7, pf: false }, Control::I { ns: 1, nr: 6, pf: true },
+        ] {
+            assert_eq!(Control::decode(c.encode()).unwrap(), c);
+        }
+    }
+}
