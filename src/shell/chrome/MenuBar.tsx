@@ -22,8 +22,24 @@ function MenuItems({ items, onPick }: { items: MenuNode[]; onPick: (id: MenuActi
             </div>
           );
         }
+        if (node.disabled) {
+          // Not-yet-wired: disabled + badged so it reads as "coming", not broken.
+          return (
+            <button
+              key={node.id}
+              type="button"
+              className="tux-mi tux-disabled"
+              disabled
+              aria-disabled="true"
+              title="Coming in a future release"
+            >
+              {node.label}
+              <span className="tux-v01" aria-hidden="true">v0.1</span>
+            </button>
+          );
+        }
         return (
-          <button key={node.id} className="tux-mi" onClick={() => node.id && onPick(node.id)}>
+          <button key={node.id} type="button" className="tux-mi" onClick={() => node.id && onPick(node.id)}>
             {node.label}
             {node.accel && <span className="tux-accel">{node.accel}</span>}
           </button>

@@ -54,8 +54,21 @@
   display: flex; align-items: center; gap: 14px; padding: 7px 10px;
   border-radius: 5px; cursor: default; white-space: nowrap; color: var(--text);
   background: none; border: none; width: 100%; text-align: left; font: inherit;
+  /* Explicit line-height so leaf <button> items and the has-sub <div> render at
+   * the SAME height (UA button line-height differed → "wonky" Settings spacing). */
+  line-height: 1.4;
 }
 .tux-mi:hover, .tux-mi.tux-sub-open { background: var(--accent-soft); color: var(--accent-2); }
+/* Not-yet-wired items: greyed + non-interactive, with a "v0.1" badge so they read
+ * as "coming" rather than broken (tuxlink-39b). */
+.tux-mi.tux-disabled, .tux-mi:disabled { color: var(--text-faint); cursor: default; }
+.tux-mi.tux-disabled:hover { background: none; color: var(--text-faint); }
+.tux-mi .tux-v01 {
+  margin-left: auto; font-size: 10px; font-family: var(--mono);
+  color: var(--text-faint); background: var(--surface-2);
+  border: 1px solid var(--border-strong); border-radius: 3px;
+  padding: 0 5px; letter-spacing: 0.02em;
+}
 .tux-mi .tux-accel { margin-left: auto; color: var(--text-faint); font-size: 12px; font-family: var(--mono); }
 .tux-mi .tux-chev { margin-left: auto; color: var(--text-faint); }
 .tux-sep { height: 1px; background: var(--border); margin: 5px 6px; }

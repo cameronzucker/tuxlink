@@ -13,7 +13,6 @@ const EXPECTED_IDS = [
   'menu:view:scheme:default', 'menu:view:scheme:night-red', 'menu:view:scheme:grayscale',
   'menu:tools:templates', 'menu:tools:rig_control',
   'menu:tools:settings_connection', 'menu:tools:settings_privacy',
-  'menu:tools:preferences',
   'menu:help:about', 'menu:help:docs', 'menu:help:report_issue',
 ];
 
