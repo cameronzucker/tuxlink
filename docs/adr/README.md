@@ -66,6 +66,7 @@ Deciders: <names or session monikers of people involved>
 - [0011 — Fork Pat as `tuxlink-pat`; refactor cred-handling first; refactor other limits as discovered (amends 0003's dependency target)](0011-fork-pat-for-tuxlink.md)
 - [0012 — v0.0.1 main UI adopts Mock D (Mail.app-minimal)](0012-v001-main-ui-adopts-mock-d.md) — *SUPERSEDED by 0013; its premise (operator approved Mock D) was a misidentification — retained as the historical record*
 - [0013 — v0.0.1 main UI is Mock B (principles-faithful), not Mock D (supersedes 0012)](0013-v001-main-ui-is-mock-b-not-mock-d.md) — *the approved design is Mock B; agent-authored records are not the spec — the operator's approved artifact is*
+- [0014 — Design the v0.5+ modem clean-sheet; do not examine VARA's internals (preserve the independent-creation defense)](0014-clean-sheet-modem-no-prior-art-examination.md) — *bright line: no decompilation, no RE write-ups, no black-box on-air of VARA, from any source*
 
 ## References
 
