@@ -48,12 +48,47 @@ pub fn connect_link(cfg: &KissLinkConfig) -> std::io::Result<Box<dyn ByteLink>> 
     }
 }
 
-/// TEMPORARY stub — replaced by the real serial open in Task 4.
-fn connect_serial(_cfg: &KissLinkConfig) -> std::io::Result<Box<dyn ByteLink>> {
-    Err(std::io::Error::new(
-        std::io::ErrorKind::Unsupported,
-        "serial KISS link not yet implemented (Task 4)",
-    ))
+#[cfg(test)]
+mod link_serial_tests {
+    use super::*;
+    #[test]
+    fn serial_open_of_a_nonexistent_device_errors_cleanly() {
+        // No hardware, no RF: opening a device that does not exist must return a
+        // clean Err, never panic or hang. A real device open is operator-only
+        // (RADIO-1 / spec §6 — exercised on hardware by the licensee).
+        let cfg = KissLinkConfig::Serial {
+            device: "/dev/tuxlink-no-such-device".into(),
+            baud: 9600,
+        };
+        let result = connect_link(&cfg);
+        let err = result.err().expect("expected a clean open error, got Ok");
+        // serialport surfaces a NotFound/Other for a missing device path.
+        assert!(
+            matches!(err.kind(), std::io::ErrorKind::NotFound | std::io::ErrorKind::Other),
+            "expected a clean open error, got {err:?}"
+        );
+    }
+}
+
+/// Open a KISS-over-serial byte-pipe (USB COM port or Bluetooth RFCOMM device).
+/// `serialport` returns its own error type; map it to `std::io::Error` so the
+/// `connect_link` signature stays `io::Result`.
+fn connect_serial(cfg: &KissLinkConfig) -> std::io::Result<Box<dyn ByteLink>> {
+    let (device, baud) = match cfg {
+        KissLinkConfig::Serial { device, baud } => (device, *baud),
+        // connect_link only routes the Serial variant here.
+        KissLinkConfig::Tcp { .. } => unreachable!("connect_serial called with a Tcp config"),
+    };
+    let port = serialport::new(device, baud)
+        .timeout(LINK_TIMEOUT)
+        .open()
+        .map_err(|e| match e.kind() {
+            serialport::ErrorKind::NoDevice => {
+                std::io::Error::new(std::io::ErrorKind::NotFound, e.to_string())
+            }
+            _ => std::io::Error::new(std::io::ErrorKind::Other, e.to_string()),
+        })?;
+    Ok(Box::new(port))
 }
 
 #[cfg(test)]
