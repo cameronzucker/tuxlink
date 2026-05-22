@@ -237,6 +237,12 @@ export interface StatusBarData {
   connection: string;
   /** Active position source (tuxlink-686). Task 8 renders a source chip from this. */
   position_source: PositionSource;
+  /**
+   * Whether a usable GPS fix is currently available (tuxlink-686, Task 11).
+   * Optional — Task 11 populates it; until then it is `undefined` which the
+   * GridEdit consumer treats as `false` (GPS-ready affordance stays hidden).
+   */
+  gpsReady?: boolean;
 }
 
 /**

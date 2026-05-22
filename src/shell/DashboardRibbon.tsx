@@ -8,7 +8,9 @@
  */
 
 import { useEffect, useState } from 'react';
+import { invoke } from '@tauri-apps/api/core';
 import type { StatusBarData, StatusTone } from './useStatus';
+import { GridEdit } from './GridEdit';
 import { DEV_FIXTURE, DEV_POSITION, DEV_CONNECTION_DASH } from '../mailbox/devFixture';
 
 function useClock() {
@@ -78,9 +80,13 @@ export function DashboardRibbon({ data, onConnect, connecting, onAbort }: Dashbo
 
       <div className="dash-item">
         <div className="dash-label">Grid</div>
-        <div className="dash-value" data-testid="ribbon-grid">
-          {grid}
-        </div>
+        <GridEdit
+          grid={grid}
+          source={data.position_source}
+          gpsReady={data.gpsReady ?? false}
+          onCommit={(g) => invoke('config_set_grid', { grid: g })}
+          onUseGps={() => invoke('position_set_source', { source: 'Gps' })}
+        />
       </div>
       <div className="dash-divider" />
 
