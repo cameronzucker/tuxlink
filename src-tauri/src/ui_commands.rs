@@ -2266,6 +2266,7 @@ mod tests {
                 position_source: PositionSource::Gps,
             },
             pat_mbo_address: None,
+            packet: crate::config::PacketConfig::default(),
         }
     }
 
