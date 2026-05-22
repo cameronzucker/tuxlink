@@ -413,6 +413,117 @@ impl Write for Ax25Stream {
     }
 }
 
+impl Ax25Stream {
+    /// Wait for V(A) to reach at least `target` (mod-8, measured as count of frames
+    /// acked from the wait's start), retransmitting the oldest unacked frame each T1
+    /// up to N2 times. Returns `TimedOut` if N2 is exhausted without progress (spec §5).
+    fn await_ack(&mut self, target_in_flight_drained_to: usize) -> std::io::Result<()> {
+        let mut retries = 0u8;
+        loop {
+            self.pump_acks()?;
+            if self.in_flight() <= target_in_flight_drained_to {
+                return Ok(());
+            }
+            if retries >= self.params.n2_retries {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "no acknowledgement after N2 retransmits (T1 timeout)",
+                ));
+            }
+            // T1 expired with frames still unacked: retransmit the oldest, bump retry.
+            if let Some((&ns, info)) = self.unacked.iter().next() {
+                let info = info.clone();
+                let f = Frame {
+                    path: self.out_path(),
+                    control: Control::I { ns, nr: self.vr, pf: true }, // P=1 polls for an RR
+                    info,
+                };
+                self.send_frame(&f)?;
+            }
+            retries += 1;
+            std::thread::sleep(self.params.t1);
+        }
+    }
+}
+
+#[cfg(test)]
+mod recovery_tests {
+    use super::test_peer::ScriptedPeer;
+    use super::*;
+
+    fn call(c: &str, ssid: u8) -> Address { Address { call: c.into(), ssid } }
+
+    fn connected(peer: &ScriptedPeer, params: Ax25Params) -> Ax25Stream {
+        let mine = call("N7CPZ", 7);
+        let target = call("W7AUX", 10);
+        Ax25Stream {
+            link: Box::new(peer.clone()),
+            decoder: KissDecoder::new(),
+            mycall: mine, peer: target, digis: vec![], params,
+            vs: 0, vr: 0, va: 0,
+            pending_frames: std::collections::VecDeque::new(),
+            inbound: std::collections::VecDeque::new(),
+            unacked: std::collections::BTreeMap::new(),
+            closed: false,
+        }
+    }
+
+    fn peer_s(mycall: &Address, peer: &Address, control: Control) -> Vec<u8> {
+        let f = Frame { path: Path { dest: mycall.clone(), src: peer.clone(), digis: vec![] }, control, info: vec![] };
+        kiss_data_frame(&f.encode().unwrap())
+    }
+
+    #[test]
+    fn rej_retransmits_from_the_rejected_sequence() {
+        let peer = ScriptedPeer::new();
+        let mine = call("N7CPZ", 7);
+        let target = call("W7AUX", 10);
+        let mut s = connected(&peer, Ax25Params { paclen: 1, maxframe: 4, ..Ax25Params::default() });
+        // Send 3 frames (N(S) 0,1,2) — no acks fed, so they stay unacked.
+        s.send_i(b"A").unwrap();
+        s.send_i(b"B").unwrap();
+        s.send_i(b"C").unwrap();
+        let _ = peer.drain_tx(); // discard the originals
+        // Peer rejects at N(R)=1 ⇒ retransmit frames 1 and 2 (B, C), not 0.
+        peer.feed(&peer_s(&mine, &target, Control::Rej { nr: 1, pf: false }));
+        s.pump_acks().unwrap();
+        let frames = { let mut d = KissDecoder::new(); d.push(&peer.drain_tx()) };
+        let resent: Vec<Vec<u8>> = frames.iter().map(|b| Frame::decode(b).unwrap().info).collect();
+        assert_eq!(resent, vec![b"B".to_vec(), b"C".to_vec()]);
+        assert_eq!(s.va, 1, "REJ N(R)=1 acknowledged frame 0");
+    }
+
+    #[test]
+    fn t1_timeout_retransmits_then_fails_after_n2() {
+        let peer = ScriptedPeer::new(); // never acks
+        let mut s = connected(&peer, Ax25Params { paclen: 1, maxframe: 1, t1: Duration::from_millis(10), n2_retries: 2, ..Ax25Params::default() });
+        s.send_i(b"Z").unwrap();
+        let _ = peer.drain_tx();
+        // await_ack must retransmit up to N2 times, then TimedOut.
+        let err = s.await_ack(0).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::TimedOut);
+        let frames = { let mut d = KissDecoder::new(); d.push(&peer.drain_tx()) };
+        // n2_retries=2 ⇒ exactly 2 retransmissions of frame Z.
+        assert_eq!(frames.len(), 2, "expected N2=2 retransmits, got {}", frames.len());
+        assert!(frames.iter().all(|b| Frame::decode(b).unwrap().info == b"Z"));
+    }
+
+    #[test]
+    fn t1_retransmit_stops_once_acked() {
+        let peer = ScriptedPeer::new();
+        let mine = call("N7CPZ", 7);
+        let target = call("W7AUX", 10);
+        let mut s = connected(&peer, Ax25Params { paclen: 1, maxframe: 1, t1: Duration::from_millis(10), n2_retries: 5, ..Ax25Params::default() });
+        s.send_i(b"Q").unwrap();
+        let _ = peer.drain_tx();
+        // Ack arrives before N2 is hit ⇒ await_ack returns Ok.
+        peer.feed(&peer_s(&mine, &target, Control::Rr { nr: 1, pf: false }));
+        s.await_ack(0).unwrap();
+        assert_eq!(s.va, 1);
+        assert_eq!(s.in_flight(), 0);
+    }
+}
+
 #[cfg(test)]
 mod write_tests {
     use super::test_peer::ScriptedPeer;
