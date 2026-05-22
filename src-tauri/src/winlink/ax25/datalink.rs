@@ -518,6 +518,60 @@ impl Drop for Ax25Stream {
 }
 
 #[cfg(test)]
+mod tcp_integration_tests {
+    use super::*;
+    use crate::winlink::ax25::link::{connect_link, KissLinkConfig};
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::thread;
+
+    fn call(c: &str, ssid: u8) -> Address { Address { call: c.into(), ssid } }
+
+    #[test]
+    fn connect_over_loopback_tcp_completes_sabm_ua() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let mine = call("N7CPZ", 7);
+        let target = call("W7AUX", 10);
+
+        // The loopback "modem": read until it has a full KISS frame containing a SABM,
+        // then reply a KISS-wrapped UA addressed back to N7CPZ-7. 127.0.0.1 only.
+        let mine_s = mine.clone();
+        let target_s = target.clone();
+        let server = thread::spawn(move || {
+            let (mut sock, _) = listener.accept().unwrap();
+            let mut decoder = KissDecoder::new();
+            let mut buf = [0u8; 256];
+            loop {
+                let n = sock.read(&mut buf).unwrap();
+                if n == 0 { return; }
+                for body in decoder.push(&buf[..n]) {
+                    if let Ok(f) = Frame::decode(&body) {
+                        if matches!(f.control, Control::Sabm { .. }) {
+                            let ua = Frame {
+                                path: Path { dest: mine_s.clone(), src: target_s.clone(), digis: vec![] },
+                                control: Control::Ua { pf: true },
+                                info: vec![],
+                            };
+                            sock.write_all(&kiss_data_frame(&ua.encode().unwrap())).unwrap();
+                            return;
+                        }
+                    }
+                }
+            }
+        });
+
+        let cfg = KissLinkConfig::Tcp { host: addr.ip().to_string(), port: addr.port() };
+        let link = connect_link(&cfg).unwrap();
+        // Non-blocking-ish: the loopback server replies promptly; a generous T1 covers scheduling.
+        let params = Ax25Params { t1: Duration::from_secs(2), n2_retries: 1, ..Ax25Params::default() };
+        let stream = connect(link, mine, target.clone(), &[], &params).unwrap();
+        assert_eq!(stream.peer, target);
+        server.join().unwrap();
+    }
+}
+
+#[cfg(test)]
 mod lifecycle_tests {
     use super::test_peer::ScriptedPeer;
     use super::*;
