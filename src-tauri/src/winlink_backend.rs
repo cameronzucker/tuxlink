@@ -2257,4 +2257,109 @@ mod native_read_state_tests {
             ExchangeRole::Answer
         );
     }
+
+    // =========================================================================
+    // tuxlink-3wh: REAL end-to-end integration chain (no mocks, no RF).
+    //
+    // Two production NativeBackend instances connect to EACH OTHER over a real
+    // TCP socket pair. One runs Listen (Answer role = FBB master), the other
+    // DialTo (Dial role = slave/dialer). Every layer is the shipping code:
+    // connect_link (real TcpStream) -> KISS framing -> AX.25 SABM/UA connect ->
+    // Ax25Stream ARQ -> B2F run_exchange_with_role. The only non-tuxlink piece
+    // is `kiss_wire`, a transparent byte relay that stands in for the
+    // TNC->RF->TNC path (the TNC is transparent to AX.25 frames above the KISS
+    // boundary, and RADIO-1 bars us from running the RF PHY anyway). 127.0.0.1
+    // only; nothing is transmitted.
+    // =========================================================================
+
+    /// A transparent KISS byte-wire: accepts the two backends' TCP connections
+    /// and cross-pipes their bytes, exactly as a TNC+RF+TNC link would carry the
+    /// AX.25 frames between two hosts. Returns the address both peers dial.
+    fn spawn_kiss_wire() -> std::net::SocketAddr {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            let peer_a = match listener.accept() {
+                Ok((s, _)) => s,
+                Err(_) => return,
+            };
+            let peer_b = match listener.accept() {
+                Ok((s, _)) => s,
+                Err(_) => return,
+            };
+            let a_rd = peer_a.try_clone().unwrap();
+            let mut a_wr = peer_a;
+            let b_rd = peer_b.try_clone().unwrap();
+            let mut b_wr = peer_b;
+            let t1 = std::thread::spawn(move || {
+                let mut r = a_rd;
+                let _ = std::io::copy(&mut r, &mut b_wr);
+            });
+            let t2 = std::thread::spawn(move || {
+                let mut r = b_rd;
+                let _ = std::io::copy(&mut r, &mut a_wr);
+            });
+            let _ = t1.join();
+            let _ = t2.join();
+        });
+        addr
+    }
+
+    fn config_with_call(call: &str) -> Config {
+        let mut cfg = offline_config();
+        cfg.identity.callsign = Some(call.to_string());
+        cfg.identity.grid = Some("CN87".to_string());
+        cfg
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn packet_two_real_peers_complete_a_connect_and_b2f_over_tcp_kiss() {
+        let wire = spawn_kiss_wire();
+
+        // Dialer (N7CPZ-7) has one outbound message; answerer (W7AUX-7) listens.
+        let dialer_dir = tempdir().unwrap();
+        let answerer_dir = tempdir().unwrap();
+        let seed = Mailbox::new(dialer_dir.path());
+        let raw =
+            compose_message("N7CPZ", &["W7AUX"], &[], "AX25-E2E", "hello over packet", 1_716_200_000)
+                .to_bytes();
+        seed.store(MailboxFolder::Outbox, &raw).unwrap();
+
+        let dialer = NativeBackend::new(config_with_call("N7CPZ"), dialer_dir.path());
+        let answerer = NativeBackend::new(config_with_call("W7AUX"), answerer_dir.path());
+
+        let listen = TransportConfig::Packet {
+            link: KissLinkConfig::Tcp { host: wire.ip().to_string(), port: wire.port() },
+            ssid: 7,
+            role: PacketRole::Listen,
+        };
+        let dial = TransportConfig::Packet {
+            link: KissLinkConfig::Tcp { host: wire.ip().to_string(), port: wire.port() },
+            ssid: 7,
+            role: PacketRole::DialTo { call: "W7AUX-7".into(), path: vec![] },
+        };
+
+        // Watchdog: a handshake/connect deadlock must fail the test, not hang cargo.
+        let outcome = tokio::time::timeout(std::time::Duration::from_secs(15), async {
+            tokio::join!(answerer.connect(listen), dialer.connect(dial))
+        })
+        .await;
+
+        let (ans_res, dial_res) =
+            outcome.expect("end-to-end packet exchange timed out (connect/handshake deadlock?)");
+        ans_res.expect("answerer (Listen/Answer role) connect+exchange failed");
+        dial_res.expect("dialer (DialTo/Dial role) connect+exchange failed");
+
+        // The dialer's outbound message must have crossed the real TCP+KISS+AX.25
+        // wire into the answerer's inbox (proves the full chain ran).
+        let inbox = Mailbox::new(answerer_dir.path()).list(MailboxFolder::Inbox).unwrap();
+        assert_eq!(
+            inbox.len(),
+            1,
+            "answerer inbox should hold the one message that crossed the wire; got {inbox:?}"
+        );
+        // ...and the dialer must have filed it as Sent (proves the proposal was acked).
+        let sent = Mailbox::new(dialer_dir.path()).list(MailboxFolder::Sent).unwrap();
+        assert_eq!(sent.len(), 1, "dialer Sent should hold the acked message; got {sent:?}");
+    }
 }

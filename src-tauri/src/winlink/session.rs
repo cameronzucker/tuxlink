@@ -152,20 +152,20 @@ where
             true // the dialer/slave takes the first message turn
         }
         ExchangeRole::Answer => {
-            // Master: WE speak first; clients never challenge, so no `;PR:` token.
-            let our_handshake = handshake::build_handshake(
+            // Master: WE speak first, sending the master handshake (SID + the FBB
+            // `>` prompt that signals the slave our handshake is complete). Clients
+            // never challenge, so no `;PQ`; we never answer one, so no `;PR`.
+            let our_handshake = handshake::build_master_handshake(
                 &config.mycall,
                 &config.targetcall,
                 &config.locator,
-                None,
             );
             write_bytes(writer, &our_handshake)?;
-            // Read the remote (slave) handshake; a peer never challenges us, so a
-            // PasswordRequired here would be a misbehaving peer — treat any
-            // challenge as ignorable (we send no token). We still parse it to
-            // consume the bytes up to the prompt.
+            // Read the remote (slave) handshake. A slave sends no `>` prompt, so the
+            // master detects its end by the start of the slave's message turn
+            // (an `F`-prefixed line); `read_slave_handshake` handles that.
             let _remote =
-                handshake::read_remote_handshake(reader).map_err(ExchangeError::Handshake)?;
+                handshake::read_slave_handshake(reader).map_err(ExchangeError::Handshake)?;
             false // the remote/slave takes the first message turn
         }
     };
@@ -706,13 +706,14 @@ mod tests {
 
     #[test]
     fn answer_role_sends_handshake_first_then_remote_takes_first_turn() {
-        // We are master. The scripted peer is slave: it does NOT speak a handshake
-        // first (we do). It replies with its own handshake (no `>` prompt needed — we
-        // read until a prompt, so the peer ends its handshake with one), then, on its
-        // turn, offers one message and quits.
+        // We are master. The scripted peer is slave: WE speak the handshake first; it
+        // replies with its own handshake which — like a real dialing station — carries
+        // NO `>` prompt and ends with its `DE` line. The master detects the end of the
+        // slave handshake by the start of its message turn (the `FC` proposal line),
+        // exactly as wl2k-go does (tuxlink-3wh).
         let mut peer = Vec::new();
-        // The peer's handshake reply: a forwarding line, an identifier, and a prompt.
-        peer.extend_from_slice(b";FW: W7AUX\r[RMS-1.0-B2FHM$]\rW7AUX>\r");
+        // The peer's (slave) handshake reply: forwarding line, identifier, DE line — no prompt.
+        peer.extend_from_slice(b";FW: W7AUX\r[RMS-1.0-B2FHM$]\r; N7CPZ DE W7AUX (CN87)\r");
         // The peer (slave) takes the first message turn: one offered message.
         let mut msg = Message::new();
         msg.set_header("Mid", "PEERMSG00001");
@@ -750,13 +751,13 @@ mod tests {
         assert_eq!(result.received[0].header("Mid"), Some("PEERMSG00001"));
         assert_eq!(result.received[0].body(), b"Direct peer message.\r\n");
 
-        // We spoke the handshake FIRST (no `;PR:` token — no challenge in P2P), then
-        // accepted (`FS +`), then on our turn signalled no-more (FF) → quit (FQ).
+        // We spoke the MASTER handshake FIRST (SID + `>` prompt; no `;PQ`/`;PR` in P2P),
+        // then accepted (`FS +`), then on our turn signalled no-more (FF) → quit (FQ).
         let our_handshake =
-            crate::winlink::handshake::build_handshake("N7CPZ", "W7AUX", "CN87", None);
+            crate::winlink::handshake::build_master_handshake("N7CPZ", "W7AUX", "CN87");
         assert!(
             writer.starts_with(&our_handshake),
-            "master must send its handshake before anything else; wrote {:?}",
+            "master must send its master handshake (with `>` prompt) before anything else; wrote {:?}",
             String::from_utf8_lossy(&writer)
         );
         // After the handshake, we accept the peer's batch (`FS +\r`), then on our
