@@ -28,6 +28,9 @@ export type GpsState = 'Off' | 'LocalUiOnly' | 'BroadcastAtPrecision';
 
 export type PositionPrecision = 'FourCharGrid' | 'SixCharGrid';
 
+/** Mirrors PositionSource from config.rs (tuxlink-686). Default `Gps`. */
+export type PositionSource = 'Manual' | 'Gps';
+
 /** Mirrors the Rust ConfigViewDto returned by the config_read command. */
 export interface ConfigViewDto {
   connect_to_cms: boolean;
@@ -41,6 +44,9 @@ export interface ConfigViewDto {
   grid: string | null;
   gps_state: GpsState;
   position_precision: PositionPrecision;
+  /** Active position source (tuxlink-686): `Gps` (default) or `Manual` when
+   * the operator has pinned a grid square. Task 8 renders a source chip. */
+  position_source: PositionSource;
 }
 
 /**
@@ -229,6 +235,8 @@ export interface StatusBarData {
    * rather than a hardcoded suffix.
    */
   connection: string;
+  /** Active position source (tuxlink-686). Task 8 renders a source chip from this. */
+  position_source: PositionSource;
 }
 
 /**
@@ -291,6 +299,7 @@ export function useStatusData(): StatusBarData {
       gridTooltip: null,
       state: { label: 'Idle', tone: 'idle' },
       connection: 'Idle · CMS-SSL',
+      position_source: 'Gps',
     };
   }
 
@@ -317,6 +326,7 @@ export function useStatusData(): StatusBarData {
     gridTooltip: gridResult.tooltip,
     state: formatStatusState(status),
     connection: formatConnectionState(status, configTransport),
+    position_source: config?.position_source ?? 'Gps',
   };
 }
 

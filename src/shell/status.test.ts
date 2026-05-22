@@ -14,7 +14,9 @@
  * rendered widgets are NOT tested here — the M2 operator smoke is the runtime gate.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import { renderHook, act } from '@testing-library/react';
+import { invoke } from '@tauri-apps/api/core';
 import {
   formatConnectionState,
   humanizeConnectionError,
@@ -22,9 +24,18 @@ import {
   formatGrid,
   formatGpsStatus,
   formatStatusState,
+  useStatusData,
   type ConfigViewDto,
   type StatusDto,
 } from './useStatus';
+
+// ---------------------------------------------------------------------------
+// Module-level invoke mock for useStatusData tests (below).
+// vi.mock is hoisted; the factory runs before any imports.
+// ---------------------------------------------------------------------------
+vi.mock('@tauri-apps/api/core', () => ({
+  invoke: vi.fn(),
+}));
 
 // ============================================================================
 // (1) formatStatus idle — backend absent, offline mode
@@ -213,6 +224,7 @@ describe('ConfigViewDto shape', () => {
       grid: 'EM10ab',
       gps_state: 'BroadcastAtPrecision',
       position_precision: 'SixCharGrid',
+      position_source: 'Gps',
     };
     expect(config.callsign).toBe('W4PHS');
     expect(config.transport).toBe('CmsSsl');
@@ -228,6 +240,7 @@ describe('ConfigViewDto shape', () => {
       grid: 'EM10',
       gps_state: 'Off',
       position_precision: 'FourCharGrid',
+      position_source: 'Manual',
     };
     expect(config.callsign).toBeNull();
     expect(config.identifier).toBe('OFFLINE-STATION');
@@ -248,6 +261,51 @@ describe('status bar visibility', () => {
   it('is visible when showStatusBar is true', () => {
     const showStatusBar = true;
     expect(showStatusBar).toBe(true);
+  });
+});
+
+// ============================================================================
+// useStatusData — position_source surfaced in StatusBarData (tuxlink-686 Task 7)
+// ============================================================================
+
+describe('useStatusData — position_source mapping (tuxlink-686)', () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('surfaces position_source from config_read DTO — Manual value passes through', async () => {
+    const dto: ConfigViewDto = {
+      connect_to_cms: true,
+      transport: 'CmsSsl',
+      callsign: 'W4PHS',
+      identifier: null,
+      grid: 'EM10ab',
+      gps_state: 'BroadcastAtPrecision',
+      position_precision: 'FourCharGrid',
+      position_source: 'Manual',
+    };
+    vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+      if (cmd === 'config_read') return dto;
+      if (cmd === 'backend_status') return null;
+      return null;
+    });
+
+    const { result } = renderHook(() => useStatusData());
+    // Wait for the async config_read effect to resolve and re-render.
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+
+    expect(result.current.position_source).toBe('Manual');
+  });
+
+  it('defaults position_source to Gps when config has not yet loaded', () => {
+    // invoke never resolves — simulates the pre-load state where config is null.
+    vi.mocked(invoke).mockImplementation(() => new Promise(() => {}));
+
+    const { result } = renderHook(() => useStatusData());
+    // Synchronously: config is still null → default 'Gps' is applied.
+    expect(result.current.position_source).toBe('Gps');
   });
 });
 

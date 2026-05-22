@@ -30,7 +30,7 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, State};
 
 use crate::app_backend::{BackendPhase, BackendState};
-use crate::config::{self, CmsTransport, GpsState, PositionPrecision};
+use crate::config::{self, CmsTransport, GpsState, PositionPrecision, PositionSource};
 use crate::session_log::SessionLogState;
 use crate::winlink_backend::{
     BackendError, BackendStatus, LogLevel, LogLine, LogSource, MailboxFolder, MessageId,
@@ -718,9 +718,10 @@ fn emit_session_line(
 /// mapping. Field names are emitted verbatim (snake_case) to match the TS
 /// `ConfigViewDto` (which is snake_case, NOT camelCase — verified against
 /// `useStatus.ts`). The enum values serialize PascalCase (`CmsSsl`/`Telnet`,
-/// `Off`/`LocalUiOnly`/`BroadcastAtPrecision`, `FourCharGrid`/`SixCharGrid`)
-/// per `config.rs`'s `#[serde(rename_all = "PascalCase")]`, matching the TS
-/// `CmsTransport`/`GpsState`/`PositionPrecision` literal unions.
+/// `Off`/`LocalUiOnly`/`BroadcastAtPrecision`, `FourCharGrid`/`SixCharGrid`,
+/// `Manual`/`Gps`) per `config.rs`'s `#[serde(rename_all = "PascalCase")]`,
+/// matching the TS `CmsTransport`/`GpsState`/`PositionPrecision`/`PositionSource`
+/// literal unions.
 #[derive(Debug, Serialize, Clone, PartialEq)]
 pub struct ConfigViewDto {
     pub connect_to_cms: bool,
@@ -730,6 +731,10 @@ pub struct ConfigViewDto {
     pub grid: Option<String>,
     pub gps_state: GpsState,
     pub position_precision: PositionPrecision,
+    /// Active position source (tuxlink-686): `Gps` (default) or `Manual` (operator
+    /// has pinned a grid square). Mirrors `PrivacyConfig.position_source` in
+    /// config.rs. Task 8 renders a source chip from this field.
+    pub position_source: PositionSource,
 }
 
 impl From<&config::Config> for ConfigViewDto {
@@ -744,6 +749,7 @@ impl From<&config::Config> for ConfigViewDto {
             grid: c.identity.grid.clone(),
             gps_state: c.privacy.gps_state,
             position_precision: c.privacy.position_precision,
+            position_source: c.privacy.position_source,
         }
     }
 }
@@ -1220,6 +1226,8 @@ mod tests {
         assert_eq!(dto.grid.as_deref(), Some("EM10ab"));
         assert_eq!(dto.gps_state, GpsState::BroadcastAtPrecision);
         assert_eq!(dto.position_precision, PositionPrecision::SixCharGrid);
+        // tuxlink-686 Task 7: position_source is surfaced in the DTO.
+        assert_eq!(dto.position_source, PositionSource::Gps);
     }
 
     // Offline-mode mapping: callsign None, identifier Some — mirrors the
@@ -1256,6 +1264,8 @@ mod tests {
         assert_eq!(v["grid"], "EM10ab");
         assert_eq!(v["gps_state"], "BroadcastAtPrecision");
         assert_eq!(v["position_precision"], "SixCharGrid");
+        // tuxlink-686 Task 7: position_source key is snake_case; value is PascalCase.
+        assert_eq!(v["position_source"], "Gps");
     }
 
     // ========================================================================
