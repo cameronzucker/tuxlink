@@ -27,6 +27,7 @@ import {
   useStatusData,
   type ConfigViewDto,
   type StatusDto,
+  type PositionStatusDto,
 } from './useStatus';
 
 // ---------------------------------------------------------------------------
@@ -306,6 +307,68 @@ describe('useStatusData — position_source mapping (tuxlink-686)', () => {
     const { result } = renderHook(() => useStatusData());
     // Synchronously: config is still null → default 'Gps' is applied.
     expect(result.current.position_source).toBe('Gps');
+  });
+});
+
+// ============================================================================
+// useStatusData — gpsReady from position_status (tuxlink-686, Task 11)
+// ============================================================================
+
+describe('useStatusData — gpsReady (tuxlink-686 Task 11)', () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('surfaces gpsReady=true when position_status resolves { gps_ready: true }', async () => {
+    const configDto: ConfigViewDto = {
+      connect_to_cms: false,
+      transport: 'CmsSsl',
+      callsign: null,
+      identifier: 'MYSTATION',
+      grid: 'CN87',
+      gps_state: 'BroadcastAtPrecision',
+      position_precision: 'FourCharGrid',
+      position_source: 'Gps',
+    };
+    const positionDto: PositionStatusDto = { gps_ready: true };
+
+    vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+      if (cmd === 'config_read') return configDto;
+      if (cmd === 'backend_status') return null;
+      if (cmd === 'position_status') return positionDto;
+      return null;
+    });
+
+    const { result } = renderHook(() => useStatusData());
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+
+    expect(result.current.gpsReady).toBe(true);
+  });
+
+  it('defaults gpsReady=false when position_status rejects (gpsd unavailable)', async () => {
+    vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+      if (cmd === 'position_status') throw new Error('gpsd unavailable');
+      return null;
+    });
+
+    const { result } = renderHook(() => useStatusData());
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+
+    // position_status rejection → catch → positionStatus stays null → gpsReady false
+    expect(result.current.gpsReady).toBe(false);
+  });
+
+  it('defaults gpsReady=false before position_status resolves (pre-load state)', () => {
+    // invoke never resolves — simulates the pre-load state.
+    vi.mocked(invoke).mockImplementation(() => new Promise(() => {}));
+
+    const { result } = renderHook(() => useStatusData());
+    // Synchronously: positionStatus is null → gpsReady defaults false.
+    expect(result.current.gpsReady).toBe(false);
   });
 });
 

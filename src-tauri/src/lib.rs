@@ -101,6 +101,7 @@ pub fn run() {
         // through the `Arc`, so the command sees an identical surface.
         .manage(std::sync::Arc::new(crate::session_log::SessionLogState::new(500)))
         .setup(|app| {
+            use tauri::Manager as _;  // brings .state() into scope for the setup closure
             // Install system tray icon + menu (tuxlink-rit / Task 8).
             // Close-to-tray: window close button hides to tray; only
             // File→Quit / tray→Quit / Ctrl+Q actually exit the process.
@@ -130,6 +131,18 @@ pub fn run() {
             // connect/send APIs — this code is WRITTEN + COMMITTED here; the
             // licensee RUNS the spawn path. No agent/CI executes it to "verify."
             crate::bootstrap::run(app.handle().clone());
+
+            // tuxlink-686 Task 11: spawn the gpsd watch task (RECEIVE-ONLY; feeds
+            // the arbiter's last_fix — active only when source==Gps). Unconditional:
+            // even while Manual, a fresh fix lights the ribbon's "GPS ready — tap to
+            // switch" affordance. `arbiter` was captured by the closure (built above
+            // the Builder, managed with `.clone()` — the outer binding stays live for
+            // exactly this purpose). Clone increments the Arc ref-count; the task
+            // holds its own Arc for its lifetime.
+            let arbiter_for_gpsd =
+                (*app.state::<std::sync::Arc<crate::position::PositionArbiter>>()).clone();
+            crate::position::gpsd::spawn_gpsd_client(arbiter_for_gpsd);
+
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -182,6 +195,8 @@ pub fn run() {
             crate::compose_window::compose_close_self,  // tuxlink-h2y (self-only close)
             crate::ui_commands::app_quit,             // tuxlink-ng3 (HTML File→Quit / Ctrl+Q)
             crate::ui_commands::config_set_grid,      // Task 5 (tuxlink-686)
+            crate::ui_commands::position_set_source,  // Task 11 (tuxlink-686)
+            crate::ui_commands::position_status,      // Task 11 (tuxlink-686)
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -49,6 +49,12 @@ export interface ConfigViewDto {
   position_source: PositionSource;
 }
 
+/** Mirrors PositionStatusDto from ui_commands.rs (tuxlink-686, Task 11).
+ * Live arbiter state — NOT config. Polled at 2s by useStatusData. */
+export interface PositionStatusDto {
+  gps_ready: boolean;
+}
+
 /**
  * Mirrors BackendStatus from winlink_backend.rs.
  * Uses a discriminated union on `kind` (matching the Rust serde tag).
@@ -255,6 +261,7 @@ export interface StatusBarData {
 export function useStatusData(): StatusBarData {
   const [config, setConfig] = useState<ConfigViewDto | null>(null);
   const [status, setStatus] = useState<StatusDto | null>(null);
+  const [positionStatus, setPositionStatus] = useState<PositionStatusDto | null>(null);
 
   useEffect(() => {
     if (DEV_FIXTURE) return; // dev fixture supplies fixed config; don't poll
@@ -296,6 +303,29 @@ export function useStatusData(): StatusBarData {
     };
   }, []);
 
+  // tuxlink-686 Task 11: poll position_status (live arbiter, NOT config) at 2s.
+  // Populates gpsReady for the ribbon's "GPS ready — tap to switch" affordance.
+  // Degrades gracefully on error (catch → leave null → gpsReady: false).
+  useEffect(() => {
+    if (DEV_FIXTURE) return;
+    let mounted = true;
+    const load = () => {
+      invoke<PositionStatusDto>('position_status')
+        .then((ps) => {
+          if (mounted) setPositionStatus(ps);
+        })
+        .catch(() => {
+          // gpsd error/blip: keep the last known value (don't clear — avoids flashing the affordance off on a single missed poll)
+        });
+    };
+    load();
+    const id = setInterval(load, 2000);
+    return () => {
+      mounted = false;
+      clearInterval(id);
+    };
+  }, []);
+
   // Dev fixture: report the mock's fixed station (W4PHS · EM75xx · Idle) so the
   // status bar + window title reproduce the mock instead of the live config.
   if (DEV_FIXTURE) {
@@ -306,6 +336,7 @@ export function useStatusData(): StatusBarData {
       state: { label: 'Idle', tone: 'idle' },
       connection: 'Idle · CMS-SSL',
       position_source: 'Gps',
+      gpsReady: false,
     };
   }
 
@@ -333,6 +364,7 @@ export function useStatusData(): StatusBarData {
     state: formatStatusState(status),
     connection: formatConnectionState(status, configTransport),
     position_source: config?.position_source ?? 'Gps',
+    gpsReady: positionStatus?.gps_ready ?? false,
   };
 }
 

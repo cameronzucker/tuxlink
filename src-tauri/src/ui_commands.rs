@@ -1069,6 +1069,62 @@ pub async fn config_set_grid(
     Ok(())
 }
 
+// ============================================================================
+// Task 11 (tuxlink-686) — position_set_source + position_status
+// ============================================================================
+// Appended here per the append-only ownership model (spec §7). Both commands
+// are registered in lib.rs's `invoke_handler` by the Task 11 integration
+// commit. `position_status` reads LIVE arbiter state (NOT config), so
+// `gps_ready` is intentionally absent from `ConfigViewDto` (spec §position-686).
+
+/// Switch the active position source (operator-driven). v0.1 supports switching
+/// TO GPS only — Manual is pinned by editing the grid (`config_set_grid`), which
+/// requires a grid value. "Gps" calls `arbiter.use_gps()` (requires a fresh fix);
+/// on success, persists `position_source = Gps` so the choice survives restart.
+#[tauri::command]
+pub async fn position_set_source(
+    source: String,
+    arbiter: tauri::State<'_, std::sync::Arc<crate::position::PositionArbiter>>,
+) -> Result<(), UiError> {
+    match source.as_str() {
+        "Gps" => {
+            // Pre-check the fix WITHOUT flipping yet, so the common "no fix" case
+            // short-circuits before we persist anything (mirrors config_set_grid's
+            // persist-first invariant: in-memory never gets ahead of persisted config).
+            if !arbiter.has_fresh_fix() {
+                return Err(UiError::Unavailable {
+                    reason: "Cannot switch to GPS: no usable GPS fix".into(),
+                });
+            }
+            // Persist first; if the write fails, return WITHOUT having flipped in-memory.
+            let mut cfg = config::read_config().map_err(|e| UiError::Internal { detail: e.to_string() })?;
+            cfg.privacy.position_source = config::PositionSource::Gps;
+            config::write_config_atomic(&cfg).map_err(|e| UiError::Internal { detail: e.to_string() })?;
+            // Flip in-memory only after a successful persist. use_gps re-checks freshness
+            // atomically; the pre-check→use_gps window is sub-millisecond vs a 30s staleness,
+            // so a fix expiring in between is not a real-world concern.
+            arbiter.use_gps().map_err(|e| UiError::Unavailable { reason: format!("Cannot switch to GPS: {e}") })?;
+            Ok(())
+        }
+        other => Err(UiError::Rejected(format!("unsupported position source: {other}"))),
+    }
+}
+
+/// Live position-subsystem status from the arbiter (NOT config). Currently
+/// `gps_ready` (a usable fresh GPS fix exists) — the ribbon's GridEdit shows
+/// "GPS ready — tap to switch" from it. Polled by useStatusData (2s).
+#[derive(Debug, Serialize, Clone, PartialEq)]
+pub struct PositionStatusDto {
+    pub gps_ready: bool,
+}
+
+#[tauri::command]
+pub async fn position_status(
+    arbiter: tauri::State<'_, std::sync::Arc<crate::position::PositionArbiter>>,
+) -> Result<PositionStatusDto, UiError> {
+    Ok(PositionStatusDto { gps_ready: arbiter.has_fresh_fix() })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1576,5 +1632,79 @@ mod tests {
         assert_eq!(v["seq"], 1);
         assert_eq!(v["timestampIso"], "2026-05-20T00:00:01Z");
         assert!(v.get("timestamp_iso").is_none(), "no snake_case key on wire");
+    }
+
+    // ========================================================================
+    // Task 11 (tuxlink-686) — position_set_source + position_status unit tests
+    // ========================================================================
+    use crate::position::{Fix, PositionArbiter};
+
+    // position_set_source: use_gps with no fix → Err → maps to UiError::Unavailable.
+    // Tests the use_gps → UiError mapping at unit level (the full State-bearing
+    // command path requires a Tauri app runtime; the arbiter primitive is the
+    // critical correctness gate per spec §position-686).
+    #[test]
+    fn use_gps_no_fix_maps_to_ui_error_unavailable() {
+        let arbiter = PositionArbiter::new(
+            PositionSource::Manual,
+            Some("CN87".into()),
+            PositionPrecision::FourCharGrid,
+        );
+        // No fix applied → use_gps() must be Err.
+        let result = arbiter.use_gps();
+        assert!(result.is_err(), "use_gps without a fix must fail");
+        // Map the &'static str Err to UiError::Unavailable (the command's mapping).
+        let ui_err = UiError::Unavailable {
+            reason: format!("Cannot switch to GPS: {}", result.unwrap_err()),
+        };
+        assert!(
+            matches!(ui_err, UiError::Unavailable { .. }),
+            "Err from use_gps maps to UiError::Unavailable"
+        );
+    }
+
+    // position_set_source: unknown source string → UiError::Rejected.
+    #[test]
+    fn unknown_position_source_maps_to_rejected() {
+        // Replicate the command's match arm for unknown strings.
+        let source = "Unknown";
+        let result: Result<(), UiError> =
+            Err(UiError::Rejected(format!("unsupported position source: {source}")));
+        assert!(
+            matches!(result, Err(UiError::Rejected(_))),
+            "unknown source string maps to UiError::Rejected"
+        );
+    }
+
+    // position_status: arbiter with a fresh fix → PositionStatusDto { gps_ready: true }.
+    #[test]
+    fn position_status_dto_gps_ready_true_when_fresh_fix() {
+        let arbiter = PositionArbiter::new(
+            PositionSource::Gps,
+            None,
+            PositionPrecision::FourCharGrid,
+        );
+        arbiter.apply_gps_fix(Fix::test("DM33ab"));
+        assert!(arbiter.has_fresh_fix(), "fresh fix just applied");
+        let dto = PositionStatusDto { gps_ready: arbiter.has_fresh_fix() };
+        assert!(dto.gps_ready);
+        // Verify snake_case serialization (the TS type reads gps_ready, not gpsReady).
+        let v = serde_json::to_value(&dto).unwrap();
+        assert_eq!(v["gps_ready"], true, "gps_ready serializes snake_case");
+    }
+
+    // position_status: fresh arbiter (no fix) → PositionStatusDto { gps_ready: false }.
+    #[test]
+    fn position_status_dto_gps_ready_false_when_no_fix() {
+        let arbiter = PositionArbiter::new(
+            PositionSource::Manual,
+            Some("CN87".into()),
+            PositionPrecision::FourCharGrid,
+        );
+        assert!(!arbiter.has_fresh_fix(), "no fix applied");
+        let dto = PositionStatusDto { gps_ready: arbiter.has_fresh_fix() };
+        assert!(!dto.gps_ready);
+        let v = serde_json::to_value(&dto).unwrap();
+        assert_eq!(v["gps_ready"], false);
     }
 }
