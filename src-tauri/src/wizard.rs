@@ -159,6 +159,9 @@ pub async fn persist_cms_impl(
         connect: crate::config::ConnectConfig {
             connect_to_cms: true,
             transport: crate::config::CmsTransport::CmsSsl,
+            // tuxlink-3o0: wizard seeds the default host; the operator switches it
+            // later in the inline SettingsPanel (config_set_connect).
+            host: crate::config::default_cms_host(),
         },
         identity: crate::config::IdentityConfig {
             callsign: Some(callsign.clone()),
@@ -299,6 +302,9 @@ pub async fn persist_offline_impl(
         connect: crate::config::ConnectConfig {
             connect_to_cms: false,
             transport: crate::config::CmsTransport::CmsSsl,
+            // tuxlink-3o0: offline path still seeds the default host (harmless; the
+            // host is only dialed when connect_to_cms is true).
+            host: crate::config::default_cms_host(),
         },
         identity: crate::config::IdentityConfig {
             callsign: None,           // offline path: no callsign (spec §3.6)

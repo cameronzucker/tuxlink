@@ -36,6 +36,9 @@ export interface ConfigViewDto {
   connect_to_cms: boolean;
   /** CmsTransport enum value from config.rs */
   transport: CmsTransport;
+  /** CMS server host the operator dials (tuxlink-3o0). The inline SettingsPanel
+   * loads this into its host text input on open. */
+  host: string;
   /** Present when connect_to_cms=true; null for offline installs */
   callsign: string | null;
   /** Free-form station identifier for offline-mode operators */

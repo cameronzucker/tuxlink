@@ -110,3 +110,49 @@
   color: var(--text-faint);
   line-height: 1.4;
 }
+
+/* tuxlink-3o0 — CMS Server host field + quick-picks */
+.tux-settings-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px 12px;
+}
+.tux-settings-field-label {
+  font-size: 13px;
+  color: var(--text);
+}
+.tux-settings-host-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 7px 9px;
+  font-family: var(--mono, monospace);
+  font-size: 13px;
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+}
+.tux-settings-host-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.tux-settings-quickpicks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.tux-settings-quickpick {
+  font-family: var(--sans);
+  font-size: 11px;
+  color: var(--text-dim);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+.tux-settings-quickpick:hover {
+  color: var(--text);
+  border-color: var(--border-strong);
+}

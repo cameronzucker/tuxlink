@@ -11,7 +11,13 @@ beforeEach(() => {
   invokeMock.mockReset();
   invokeMock.mockImplementation(async (cmd: string) => {
     if (cmd === 'config_read') {
-      return { gps_state: 'BroadcastAtPrecision', position_precision: 'FourCharGrid' };
+      return {
+        gps_state: 'BroadcastAtPrecision',
+        position_precision: 'FourCharGrid',
+        // tuxlink-3o0: the CMS Server fieldset loads host + transport from config_read.
+        host: 'cms-z.winlink.org',
+        transport: 'Telnet',
+      };
     }
     return undefined;
   });
@@ -62,5 +68,50 @@ describe('SettingsPanel', () => {
     expect(onClose).toHaveBeenCalledTimes(1);
     fireEvent.keyDown(document, { key: 'Escape' });
     expect(onClose).toHaveBeenCalledTimes(2);
+  });
+
+  // tuxlink-3o0 — CMS Server fieldset
+  it('renders the CMS Server fieldset and loads the configured host + transport', async () => {
+    render(<SettingsPanel open onClose={vi.fn()} />);
+    const hostInput = (await screen.findByTestId('conn-host')) as HTMLInputElement;
+    expect(hostInput.value).toBe('cms-z.winlink.org');
+    // Transport radios mirror the GPS radios; the configured Telnet (Plaintext) is
+    // checked. Match the unique label prefix (the Plaintext option's help text
+    // mentions "TLS", so a bare /tls/ would match both radios).
+    expect(screen.getByRole('radio', { name: /Plaintext · 8772/ })).toBeChecked();
+    expect(screen.getByRole('radio', { name: /TLS · 8773/ })).not.toBeChecked();
+  });
+
+  it('fills the host input from a quick-pick button', async () => {
+    render(<SettingsPanel open onClose={vi.fn()} />);
+    const hostInput = (await screen.findByTestId('conn-host')) as HTMLInputElement;
+    // The production quick-pick fills the input with server.winlink.org.
+    fireEvent.click(screen.getByRole('button', { name: /server\.winlink\.org \(production\)/i }));
+    expect(hostInput.value).toBe('server.winlink.org');
+  });
+
+  it('persists a transport change via config_set_connect (keeps the current host)', async () => {
+    render(<SettingsPanel open onClose={vi.fn()} />);
+    const tls = await screen.findByRole('radio', { name: /TLS · 8773/ });
+    fireEvent.click(tls);
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith('config_set_connect', {
+        host: 'cms-z.winlink.org',
+        transport: 'CmsSsl',
+      });
+    });
+  });
+
+  it('persists a host change (on blur) via config_set_connect (keeps the current transport)', async () => {
+    render(<SettingsPanel open onClose={vi.fn()} />);
+    const hostInput = (await screen.findByTestId('conn-host')) as HTMLInputElement;
+    fireEvent.change(hostInput, { target: { value: 'server.winlink.org' } });
+    fireEvent.blur(hostInput);
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith('config_set_connect', {
+        host: 'server.winlink.org',
+        transport: 'Telnet',
+      });
+    });
   });
 });
