@@ -16,8 +16,10 @@
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
+use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::thread;
+use std::time::{Duration, Instant};
 
 use super::proposal::{Answer, Proposal};
 use super::session::{self, ExchangeConfig, ExchangeError, ExchangeResult, OutboundMessage};
@@ -26,12 +28,27 @@ use super::wire;
 /// How long to wait on a single read or write before giving up.
 const TIMEOUT: Duration = Duration::from_secs(60);
 
-/// How long to wait for the TCP connect (per resolved address) before giving up.
-/// Without this, `TcpStream::connect` rides the OS SYN-retry default (~75-130s on
-/// Linux), so a filtered/black-holed CMS endpoint reads as a silent stall rather
-/// than a fast, legible failure (tuxlink-gqo: cms-z exposes no TLS on 8773, so a
-/// CmsSsl connect there hung ~75-130s before ETIMEDOUT).
+/// How long to wait for the TCP connect to a *single* resolved address before
+/// giving up. Without this, `TcpStream::connect` rides the OS SYN-retry default
+/// (~75-130s on Linux), so a filtered/black-holed CMS endpoint reads as a silent
+/// stall rather than a fast, legible failure (tuxlink-gqo: cms-z exposes no TLS on
+/// 8773, so a CmsSsl connect there hung ~75-130s before ETIMEDOUT).
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// Total wall-clock budget for the whole connect sweep across *all* resolved
+/// addresses (tuxlink-lbg #4). Each address still gets up to [`CONNECT_TIMEOUT`],
+/// but the sum is bounded here so a host that resolves to many black-holed A/AAAA
+/// records can't stack to N×[`CONNECT_TIMEOUT`]. Larger than one [`CONNECT_TIMEOUT`]
+/// so a dual-stack host whose first family is dead can still fail over to a working
+/// second address.
+const CONNECT_TOTAL_DEADLINE: Duration = Duration::from_secs(30);
+
+/// How long to wait for DNS resolution before giving up (tuxlink-lbg #3).
+/// `ToSocketAddrs` is synchronous and otherwise unbounded; a hung/black-holed
+/// resolver would reintroduce the silent stall gqo fixed for connect — and worse,
+/// no socket exists yet, so an operator Abort can't unblock it. Resolution runs on
+/// a worker thread bounded by this timeout.
+const RESOLVE_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// The fixed, public password the CMS telnet "post office" login expects. It is
 /// NOT the station's Winlink password — that one answers the B2F secure-login
@@ -127,8 +144,14 @@ fn connect_stream(
     progress: &dyn Fn(&str),
     register_socket: &dyn Fn(&TcpStream),
 ) -> Result<Box<dyn ReadWrite>, TelnetError> {
-    let addrs = (host, port).to_socket_addrs().map_err(TelnetError::Connect)?;
-    let tcp = connect_with_timeout(addrs, CONNECT_TIMEOUT).map_err(TelnetError::Connect)?;
+    // Resolve under a bounded timeout (tuxlink-lbg #3): a hung resolver must fail
+    // fast, not silently stall before any socket exists to abort.
+    let addrs = resolve_with_timeout(host, port, RESOLVE_TIMEOUT).map_err(TelnetError::Connect)?;
+    // Bound each attempt by CONNECT_TIMEOUT AND the whole sweep by a total deadline
+    // (tuxlink-lbg #4) so a many-address host can't stack to N×CONNECT_TIMEOUT.
+    let deadline = Instant::now() + CONNECT_TOTAL_DEADLINE;
+    let tcp = connect_with_deadline(addrs.into_iter(), CONNECT_TIMEOUT, deadline)
+        .map_err(TelnetError::Connect)?;
     // Hand the freshly-connected socket to the caller BEFORE TLS wrapping moves it,
     // so an abort can `.shutdown()` it to unblock a slow TLS/login/exchange phase
     // (tuxlink-9z2). The initial connect itself is bounded by CONNECT_TIMEOUT above.
@@ -150,25 +173,93 @@ fn connect_stream(
     }
 }
 
-/// Connect to the first reachable address, bounding each attempt by `timeout` so a
-/// filtered/black-holed endpoint fails fast instead of riding the OS SYN-retry
-/// default (the "silent stall", tuxlink-gqo). Tries each resolved address in turn;
-/// returns the first success, or the last error if all fail, or a `NotFound` error
-/// if `addrs` is empty (host resolved to nothing).
-fn connect_with_timeout(
-    addrs: impl Iterator<Item = SocketAddr>,
+/// Resolve `(host, port)` to socket addresses under a bounded `timeout`
+/// (tuxlink-lbg #3). `ToSocketAddrs` is synchronous and unbounded; a black-holed
+/// resolver would otherwise reintroduce the silent stall — and unlike a TCP
+/// connect, no socket exists yet for an operator Abort to shut down. Resolution
+/// runs on a worker thread; if it outruns `timeout` we return `TimedOut` and let
+/// the now-orphaned worker finish (or die with the process) on its own.
+fn resolve_with_timeout(
+    host: &str,
+    port: u16,
     timeout: Duration,
+) -> std::io::Result<Vec<SocketAddr>> {
+    let host = host.to_string();
+    resolve_with_deadline_inner(
+        move || (host.as_str(), port).to_socket_addrs().map(|it| it.collect()),
+        timeout,
+    )
+}
+
+/// The timeout core of [`resolve_with_timeout`], generic over the resolve closure
+/// so the timeout path is unit-testable without a real hung resolver.
+fn resolve_with_deadline_inner<F>(resolve: F, timeout: Duration) -> std::io::Result<Vec<SocketAddr>>
+where
+    F: FnOnce() -> std::io::Result<Vec<SocketAddr>> + Send + 'static,
+{
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
+        // The receiver may already be gone (we timed out); ignore the send error.
+        let _ = tx.send(resolve());
+    });
+    match rx.recv_timeout(timeout) {
+        Ok(result) => result,
+        Err(mpsc::RecvTimeoutError::Timeout) => Err(std::io::Error::new(
+            std::io::ErrorKind::TimedOut,
+            format!("DNS resolution timed out after {timeout:?}"),
+        )),
+        Err(mpsc::RecvTimeoutError::Disconnected) => Err(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            "DNS resolver thread terminated without a result",
+        )),
+    }
+}
+
+/// Connect to the first reachable address, bounding each attempt by `per_attempt`
+/// so a filtered/black-holed endpoint fails fast instead of riding the OS SYN-retry
+/// default (the "silent stall", tuxlink-gqo), and bounding the whole sweep by
+/// `deadline` so a many-address host can't stack to N×`per_attempt` (tuxlink-lbg
+/// #4). Tries each resolved address in turn; returns the first success, a `NotFound`
+/// error if `addrs` is empty (host resolved to nothing), or — when every address
+/// fails — an error naming EVERY address tried and why (tuxlink-lbg #6), carrying
+/// the first failure's `ErrorKind` (a `ConnectionRefused` is more actionable than a
+/// later `TimedOut`).
+fn connect_with_deadline(
+    addrs: impl Iterator<Item = SocketAddr>,
+    per_attempt: Duration,
+    deadline: Instant,
 ) -> std::io::Result<TcpStream> {
-    let mut last_err = None;
+    let mut errors: Vec<String> = Vec::new();
+    let mut first_kind: Option<std::io::ErrorKind> = None;
+    let mut tried_any = false;
     for addr in addrs {
+        tried_any = true;
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            first_kind.get_or_insert(std::io::ErrorKind::TimedOut);
+            errors.push(format!("{addr}: total connect deadline exceeded before attempt"));
+            break;
+        }
+        // The last address gets whatever budget is left, never more than per_attempt.
+        let timeout = remaining.min(per_attempt);
         match TcpStream::connect_timeout(&addr, timeout) {
             Ok(stream) => return Ok(stream),
-            Err(e) => last_err = Some(e),
+            Err(e) => {
+                first_kind.get_or_insert(e.kind());
+                errors.push(format!("{addr}: {e}"));
+            }
         }
     }
-    Err(last_err.unwrap_or_else(|| {
-        std::io::Error::new(std::io::ErrorKind::NotFound, "no addresses resolved for host")
-    }))
+    if !tried_any {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "no addresses resolved for host",
+        ));
+    }
+    Err(std::io::Error::new(
+        first_kind.unwrap_or(std::io::ErrorKind::TimedOut),
+        errors.join("; "),
+    ))
 }
 
 /// Answer the CMS telnet login: send the call sign at the `Callsign :` prompt
@@ -268,23 +359,30 @@ mod tests {
         server.join().unwrap();
     }
 
+    /// A deadline far enough out that the per-attempt timeout, not the total budget,
+    /// governs these single-address tests.
+    fn far_deadline() -> Instant {
+        Instant::now() + Duration::from_secs(30)
+    }
+
     #[test]
-    fn connect_with_timeout_errors_when_no_addresses() {
+    fn connect_with_deadline_errors_when_no_addresses() {
         // Host resolved to nothing → a clean error, never a hang.
-        let err = connect_with_timeout(std::iter::empty(), Duration::from_secs(1)).unwrap_err();
+        let err = connect_with_deadline(std::iter::empty(), Duration::from_secs(1), far_deadline())
+            .unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
     }
 
     #[test]
-    fn connect_with_timeout_fails_fast_on_a_refused_port() {
+    fn connect_with_deadline_fails_fast_on_a_refused_port() {
         // Bind to claim a free port, then drop the listener so nothing is
         // listening; connecting is then refused (RST) — fast, deterministic,
         // loopback-only (no external network, per testing-pitfalls).
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
         drop(listener);
-        let err =
-            connect_with_timeout(std::iter::once(addr), Duration::from_secs(5)).unwrap_err();
+        let err = connect_with_deadline(std::iter::once(addr), Duration::from_secs(5), far_deadline())
+            .unwrap_err();
         assert_eq!(
             err.kind(),
             std::io::ErrorKind::ConnectionRefused,
@@ -293,11 +391,88 @@ mod tests {
     }
 
     #[test]
-    fn connect_with_timeout_connects_to_a_live_listener() {
+    fn connect_with_deadline_connects_to_a_live_listener() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
-        let stream = connect_with_timeout(std::iter::once(addr), Duration::from_secs(5)).unwrap();
+        let stream =
+            connect_with_deadline(std::iter::once(addr), Duration::from_secs(5), far_deadline())
+                .unwrap();
         assert_eq!(stream.peer_addr().unwrap(), addr);
+    }
+
+    #[test]
+    fn connect_with_deadline_names_every_failed_address() {
+        // tuxlink-lbg #6: a multi-address total failure must surface EVERY address
+        // tried, not just the last — and keep the first (most actionable) ErrorKind.
+        let l1 = TcpListener::bind("127.0.0.1:0").unwrap();
+        let a1 = l1.local_addr().unwrap();
+        drop(l1);
+        let l2 = TcpListener::bind("127.0.0.1:0").unwrap();
+        let a2 = l2.local_addr().unwrap();
+        drop(l2);
+        let err = connect_with_deadline([a1, a2].into_iter(), Duration::from_secs(5), far_deadline())
+            .unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains(&a1.to_string()), "missing first addr in {msg:?}");
+        assert!(msg.contains(&a2.to_string()), "missing second addr in {msg:?}");
+        assert_eq!(err.kind(), std::io::ErrorKind::ConnectionRefused);
+    }
+
+    #[test]
+    fn connect_with_deadline_stops_when_total_budget_is_spent() {
+        // tuxlink-lbg #4: once the total deadline has passed, remaining addresses are
+        // skipped rather than each adding another per-attempt timeout. A past deadline
+        // exercises this deterministically — no real network wait.
+        let addr: SocketAddr = "127.0.0.1:9".parse().unwrap();
+        let past = Instant::now() - Duration::from_secs(1);
+        let start = Instant::now();
+        let err =
+            connect_with_deadline(std::iter::once(addr), Duration::from_secs(15), past).unwrap_err();
+        assert!(
+            start.elapsed() < Duration::from_secs(1),
+            "a passed deadline must return promptly, took {:?}",
+            start.elapsed()
+        );
+        assert_eq!(err.kind(), std::io::ErrorKind::TimedOut);
+        assert!(err.to_string().contains("deadline"), "got {err}");
+    }
+
+    #[test]
+    fn resolve_with_deadline_inner_returns_addresses() {
+        // tuxlink-lbg #3: the happy path passes the resolver's result straight through.
+        let addr: SocketAddr = "127.0.0.1:8772".parse().unwrap();
+        let got = resolve_with_deadline_inner(move || Ok(vec![addr]), Duration::from_secs(5))
+            .unwrap();
+        assert_eq!(got, vec![addr]);
+    }
+
+    #[test]
+    fn resolve_with_deadline_inner_times_out_on_a_slow_resolver() {
+        // tuxlink-lbg #3: a resolver that outruns the budget yields TimedOut promptly,
+        // not a hang — the bug a black-holed DNS server would otherwise cause.
+        let start = Instant::now();
+        let err = resolve_with_deadline_inner(
+            || {
+                thread::sleep(Duration::from_secs(3));
+                Ok(vec![])
+            },
+            Duration::from_millis(100),
+        )
+        .unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::TimedOut);
+        assert!(
+            start.elapsed() < Duration::from_secs(2),
+            "timeout must fire well before the slow resolver finishes, took {:?}",
+            start.elapsed()
+        );
+    }
+
+    #[test]
+    fn resolve_with_timeout_resolves_localhost() {
+        // Real resolution of a name guaranteed present locally (no external DNS).
+        let addrs = resolve_with_timeout("localhost", 8772, Duration::from_secs(5)).unwrap();
+        assert!(!addrs.is_empty(), "localhost should resolve to at least one address");
+        assert!(addrs.iter().all(|a| a.port() == 8772));
     }
 
     #[test]
