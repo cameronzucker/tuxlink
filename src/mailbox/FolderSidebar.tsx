@@ -2,11 +2,18 @@
 //
 // Source: the MOCK B sidebar (2026-05-17-mocks-v1-four-directions.html lines
 // 1190-1201). v0.0.1 functional folders are Inbox + Sent; Outbox + Archive are
-// disabled (v0.1). The Connections section is informational (Telnet live;
-// VARA HF/FM + AX.25 are v0.1). Selecting a functional folder calls
-// `onSelectFolder(folder)`. Styling lives in AppShell.css (`.layout-b .sidebar`).
+// disabled (v0.1). The Connections section has informational static items
+// (Telnet, VARA HF/FM) plus a selectable Packet (AX.25) item. Selecting a
+// functional folder calls `onSelectFolder(folder)`. Selecting the Packet item
+// calls `onSelectConnection('packet')`. Styling lives in AppShell.css.
 
 import type { MailboxFolder } from './types';
+
+/** Selectable connection key (drives the reading-pane connection panel). */
+export type ConnectionKey = 'packet';
+
+/** Packet transport dot state for the sidebar indicator. */
+export type PacketDotState = 'off' | 'listening' | 'connected';
 
 interface MailboxItem {
   id?: MailboxFolder; // present → a functional folder
@@ -24,13 +31,13 @@ const MAILBOX_ITEMS: readonly MailboxItem[] = [
   { label: 'Archive', icon: '▢', enabled: false, v01: true },
 ];
 
-/// Connections section (mock B) — informational, not folders. Telnet is live;
-/// the rest are v0.1.
+/// Connections section (mock B) — static informational items + selectable Packet.
+/// Telnet is live; VARA HF/FM are v0.1 (informational). AX.25 is replaced by
+/// the interactive Packet (AX.25) button below.
 const CONNECTION_ITEMS: readonly { label: string; icon: string; v01?: boolean }[] = [
   { label: 'Telnet', icon: '●' },
   { label: 'VARA HF', icon: '○', v01: true },
   { label: 'VARA FM', icon: '○', v01: true },
-  { label: 'AX.25', icon: '○', v01: true },
 ];
 
 export interface FolderSidebarProps {
@@ -38,9 +45,22 @@ export interface FolderSidebarProps {
   onSelectFolder: (folder: MailboxFolder) => void;
   /// Per-folder counts (Inbox = unread, Sent = total). Missing/zero → no count.
   counts?: Partial<Record<MailboxFolder, number>>;
+  /** Currently selected connection (drives the reading-pane connection panel). */
+  selectedConnection?: ConnectionKey | null;
+  /** Select a connection (opens its reading-pane panel). */
+  onSelectConnection?: (conn: ConnectionKey) => void;
+  /** Packet transport dot state (green = listening/connected). */
+  packetState?: PacketDotState;
 }
 
-export function FolderSidebar({ selectedFolder, onSelectFolder, counts = {} }: FolderSidebarProps) {
+export function FolderSidebar({
+  selectedFolder,
+  onSelectFolder,
+  counts = {},
+  selectedConnection = null,
+  onSelectConnection,
+  packetState = 'off',
+}: FolderSidebarProps) {
   return (
     <nav className="sidebar" data-testid="folder-sidebar" aria-label="Mailbox and connections">
       <div className="section-label">Mailbox</div>
@@ -91,6 +111,24 @@ export function FolderSidebar({ selectedFolder, onSelectFolder, counts = {} }: F
           {c.v01 && <span className="v01-badge">v0.1</span>}
         </div>
       ))}
+
+      {/* Selectable Packet (AX.25) entry with transport-state dot */}
+      <button
+        type="button"
+        className={['nav-item', 'conn-packet-item', selectedConnection === 'packet' ? 'active' : '']
+          .filter(Boolean)
+          .join(' ')}
+        data-testid="conn-packet"
+        aria-current={selectedConnection === 'packet' ? 'true' : undefined}
+        onClick={() => onSelectConnection?.('packet')}
+      >
+        <span
+          className={`conn-dot ${packetState}`}
+          data-testid="conn-packet-dot"
+          aria-hidden="true"
+        />
+        Packet (AX.25)
+      </button>
     </nav>
   );
 }

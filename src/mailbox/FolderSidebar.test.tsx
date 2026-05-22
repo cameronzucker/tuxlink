@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { FolderSidebar } from './FolderSidebar';
+import type { ConnectionKey } from './FolderSidebar';
 
 describe('<FolderSidebar> (Mock B)', () => {
   it('renders the Mailbox + Connections sections with their items', () => {
@@ -50,5 +51,46 @@ describe('<FolderSidebar> (Mock B)', () => {
     );
     expect(screen.getByTestId('folder-count-inbox')).toHaveTextContent('3');
     expect(screen.getByTestId('folder-count-sent')).toHaveTextContent('87');
+  });
+});
+
+describe('FolderSidebar — Packet connection entry', () => {
+  it('renders a selectable Packet (AX.25) item with a state dot', () => {
+    render(
+      <FolderSidebar
+        selectedFolder="inbox"
+        onSelectFolder={() => {}}
+        packetState="listening"
+      />,
+    );
+    const item = screen.getByTestId('conn-packet');
+    expect(item).toHaveTextContent('Packet (AX.25)');
+    expect(screen.getByTestId('conn-packet-dot').className).toContain('listening');
+  });
+
+  it('clicking Packet (AX.25) calls onSelectConnection("packet")', () => {
+    const onSelectConnection = vi.fn();
+    render(
+      <FolderSidebar
+        selectedFolder="inbox"
+        onSelectFolder={() => {}}
+        onSelectConnection={onSelectConnection}
+        packetState="off"
+      />,
+    );
+    fireEvent.click(screen.getByTestId('conn-packet'));
+    expect(onSelectConnection).toHaveBeenCalledWith('packet');
+  });
+
+  it('marks Packet active when selectedConnection is "packet"', () => {
+    render(
+      <FolderSidebar
+        selectedFolder="inbox"
+        onSelectFolder={() => {}}
+        selectedConnection="packet"
+        packetState="connected"
+      />,
+    );
+    expect(screen.getByTestId('conn-packet')).toHaveClass('active');
   });
 });
