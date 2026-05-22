@@ -34,11 +34,10 @@ export function dispatchMenuAction(id: MenuActionId, h: MenuHandlers): void {
     case 'menu:message:forward': h.forward(); return;
     case 'menu:view:session_log': h.toggleSessionLog(); return;
     case 'menu:view:status_bar': h.toggleStatusBar(); return;
-    // tuxlink-39b: the GPS/privacy settings items open the inline Settings panel
-    // (previously dead no-op stubs found in the post-merge smoke of #113).
-    case 'menu:tools:settings_privacy_gps':
-    case 'menu:tools:settings_privacy_position':
-    case 'menu:tools:settings_gps':
+    // tuxlink-39b: the consolidated GPS & Privacy settings item opens the inline
+    // Settings panel (previously a cluster of dead no-op stubs found in the
+    // post-merge smoke of #113).
+    case 'menu:tools:settings_privacy':
       h.openSettings(); return;
     case 'menu:mailbox:inbox':
     case 'menu:mailbox:sent':

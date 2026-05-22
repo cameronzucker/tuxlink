@@ -62,11 +62,10 @@ export const MENU_TREE: TopMenu[] = [
     { separator: true },
     { label: 'Settings', submenu: [
       { id: 'menu:tools:settings_connection', label: 'Connection' },
-      { label: 'Privacy', submenu: [
-        { id: 'menu:tools:settings_privacy_gps', label: 'GPS state' },
-        { id: 'menu:tools:settings_privacy_position', label: 'Position precision' },
-      ] },
-      { id: 'menu:tools:settings_gps', label: 'GPS' },
+      // tuxlink-39b: one entry opens the GPS/privacy settings panel (gps_state +
+      // position precision). The former granular leaves (GPS state / Position
+      // precision / a duplicate GPS) all opened the same box — consolidated.
+      { id: 'menu:tools:settings_privacy', label: 'GPS & Privacy…' },
     ] },
     { id: 'menu:tools:preferences', label: 'Preferences' },
   ] },

@@ -72,13 +72,11 @@ describe('dispatchMenuAction', () => {
     expect(() => dispatchMenuAction('menu:help:about', h)).not.toThrow();
   });
 
-  // tuxlink-39b: the three GPS/privacy settings items must open the Settings
-  // panel (previously dead no-op stubs).
-  it('routes the GPS/privacy settings items to openSettings', () => {
+  // tuxlink-39b: the consolidated GPS & Privacy settings item opens the panel
+  // (previously a cluster of dead no-op stubs).
+  it('routes the GPS & Privacy settings item to openSettings', () => {
     const h = handlers();
-    dispatchMenuAction('menu:tools:settings_privacy_gps', h);
-    dispatchMenuAction('menu:tools:settings_privacy_position', h);
-    dispatchMenuAction('menu:tools:settings_gps', h);
-    expect(h.openSettings).toHaveBeenCalledTimes(3);
+    dispatchMenuAction('menu:tools:settings_privacy', h);
+    expect(h.openSettings).toHaveBeenCalledOnce();
   });
 });
