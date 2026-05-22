@@ -1253,7 +1253,7 @@ mod native_read_state_tests {
     use super::*;
     use crate::config::{
         CmsTransport, Config, ConnectConfig, GpsState, IdentityConfig, PositionPrecision,
-        PrivacyConfig, CONFIG_SCHEMA_VERSION,
+        PositionSource, PrivacyConfig, CONFIG_SCHEMA_VERSION,
     };
     use crate::native_mailbox::Mailbox;
     use crate::winlink::compose::compose_message;
@@ -1268,6 +1268,7 @@ mod native_read_state_tests {
             privacy: PrivacyConfig {
                 gps_state: GpsState::Off,
                 position_precision: PositionPrecision::FourCharGrid,
+                position_source: PositionSource::Gps,
             },
             pat_mbo_address: None,
         }
