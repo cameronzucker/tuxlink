@@ -518,6 +518,65 @@ impl Drop for Ax25Stream {
 }
 
 #[cfg(test)]
+mod lifecycle_tests {
+    use super::test_peer::ScriptedPeer;
+    use super::*;
+
+    fn call(c: &str, ssid: u8) -> Address { Address { call: c.into(), ssid } }
+
+    fn wrap(f: &Frame) -> Vec<u8> { kiss_data_frame(&f.encode().unwrap()) }
+
+    #[test]
+    fn full_session_direct_path() {
+        let peer = ScriptedPeer::new();
+        let mine = call("N7CPZ", 7);
+        let target = call("W7AUX", 10);
+        let back = |dest: &Address, src: &Address, c: Control, info: Vec<u8>| {
+            wrap(&Frame { path: Path { dest: dest.clone(), src: src.clone(), digis: vec![] }, control: c, info })
+        };
+        // Pre-script the peer's whole side: UA (connect), RR(1) (ack our I-frame),
+        // one inbound I-frame, then UA (disconnect).
+        peer.feed(&back(&mine, &target, Control::Ua { pf: true }, vec![]));
+        peer.feed(&back(&mine, &target, Control::Rr { nr: 1, pf: false }, vec![]));
+        peer.feed(&back(&mine, &target, Control::I { ns: 0, nr: 1, pf: false }, b"HI".to_vec()));
+        peer.feed(&back(&mine, &target, Control::Ua { pf: true }, vec![]));
+
+        let mut s = connect(Box::new(peer.clone()), mine.clone(), target.clone(), &[], &Ax25Params::default()).unwrap();
+        assert_eq!(s.write(b"PING").unwrap(), 4);
+        let mut buf = [0u8; 16];
+        let n = s.read(&mut buf).unwrap();
+        assert_eq!(&buf[..n], b"HI");
+        s.disconnect().unwrap();
+
+        // Our side, decoded: SABM, then an I-frame "PING", an RR for the inbound, a DISC.
+        let frames = { let mut d = KissDecoder::new(); d.push(&peer.drain_tx()) };
+        let controls: Vec<Control> = frames.iter().map(|b| Frame::decode(b).unwrap().control).collect();
+        assert!(controls.iter().any(|c| matches!(c, Control::Sabm { .. })));
+        assert!(controls.iter().any(|c| matches!(c, Control::I { ns: 0, .. })));
+        assert!(controls.iter().any(|c| matches!(c, Control::Disc { .. })));
+    }
+
+    #[test]
+    fn connect_via_one_digipeater_carries_the_relay() {
+        // Spec §6: the digipeated (≥1-relay) path must be exercised before release.
+        let peer = ScriptedPeer::new();
+        let mine = call("N7CPZ", 7);
+        let target = call("W7AUX", 10);
+        let digi = call("W7RPT", 1);
+        // The UA comes back addressed to us (the modem strips the path on the reply
+        // surface for our purposes); recv_frame only checks dest == mycall.
+        let ua = Frame { path: Path { dest: mine.clone(), src: target.clone(), digis: vec![] }, control: Control::Ua { pf: true }, info: vec![] };
+        peer.feed(&wrap(&ua));
+        let s = connect(Box::new(peer.clone()), mine.clone(), target.clone(), std::slice::from_ref(&digi), &Ax25Params::default()).unwrap();
+        assert_eq!(s.digis, vec![digi.clone()]);
+        // Our SABM must carry the digi in its path.
+        let frames = { let mut d = KissDecoder::new(); d.push(&peer.drain_tx()) };
+        let sabm = frames.iter().map(|b| Frame::decode(b).unwrap()).find(|f| matches!(f.control, Control::Sabm { .. })).unwrap();
+        assert_eq!(sabm.path.digis, vec![digi]);
+    }
+}
+
+#[cfg(test)]
 mod disconnect_tests {
     use super::test_peer::ScriptedPeer;
     use super::*;
