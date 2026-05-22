@@ -181,28 +181,38 @@ describe('<PacketConnectionPanel> — connect block', () => {
 describe('<PacketConnectionPanel> — device picker', () => {
   beforeEach(() => {
     vi.mocked(invoke).mockImplementation(async (cmd: string) =>
-      cmd === 'packet_list_serial_devices' ? ['/dev/ttyUSB0', '/dev/rfcomm0'] : undefined,
+      cmd === 'packet_list_serial_devices'
+        ? [
+            { path: '/dev/ttyUSB0', kind: 'usb', label: 'USB serial' },
+            { path: '/dev/rfcomm0', kind: 'bluetooth', label: 'Bluetooth (RFCOMM)' },
+          ]
+        : undefined,
     );
   });
   afterEach(() => {
     vi.mocked(invoke).mockImplementation(async () => undefined);
   });
 
-  it('lists discovered serial/RFCOMM devices in a dropdown when USB is selected', async () => {
+  it('USB tab lists only USB/serial devices (labeled), not the Bluetooth one', async () => {
     render(<PacketConnectionPanel config={cfg} baseCall="N7CPZ" />);
     fireEvent.click(screen.getByTestId('modem-seg-usb'));
     expect(invoke).toHaveBeenCalledWith('packet_list_serial_devices');
     await waitFor(() => {
-      expect(screen.getByRole('option', { name: '/dev/ttyUSB0' })).toBeInTheDocument();
-      expect(screen.getByRole('option', { name: '/dev/rfcomm0' })).toBeInTheDocument();
+      expect(
+        screen.getByRole('option', { name: /\/dev\/ttyUSB0 — USB serial/ }),
+      ).toBeInTheDocument();
     });
+    // No conflation: the Bluetooth device must NOT appear under the USB tab.
+    expect(screen.queryByRole('option', { name: /rfcomm0/ })).toBeNull();
   });
 
-  it('selecting a device persists a Serial link with that path (not an IP)', async () => {
+  it('Bluetooth tab lists only RFCOMM devices; selecting one persists a Serial link', async () => {
     const onLinkPersist = vi.fn();
     render(<PacketConnectionPanel config={cfg} baseCall="N7CPZ" onLinkPersist={onLinkPersist} />);
     fireEvent.click(screen.getByTestId('modem-seg-bt'));
-    await waitFor(() => screen.getByRole('option', { name: '/dev/rfcomm0' }));
+    await waitFor(() => screen.getByRole('option', { name: /\/dev\/rfcomm0/ }));
+    // No conflation: the USB device must NOT appear under the Bluetooth tab.
+    expect(screen.queryByRole('option', { name: /ttyUSB0/ })).toBeNull();
     fireEvent.change(screen.getByTestId('modem-device-select'), {
       target: { value: '/dev/rfcomm0' },
     });

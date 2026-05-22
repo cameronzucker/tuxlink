@@ -1128,41 +1128,69 @@ pub async fn packet_config_set(dto: PacketConfigDto) -> Result<(), UiError> {
     Ok(())
 }
 
-/// Device-name prefixes that denote a KISS-capable serial / RFCOMM port on Linux:
-/// USB-serial adapters (`ttyUSB`, `ttyACM`), bound Bluetooth RFCOMM (`rfcomm`,
-/// appears once the operator pairs+binds at the OS — spec §4.1), and on-board
-/// UARTs (`ttyAMA`, `ttyS`, e.g. the Pi's GPIO serial).
-const SERIAL_DEVICE_PREFIXES: &[&str] = &["ttyUSB", "ttyACM", "rfcomm", "ttyAMA", "ttyS"];
+/// A discovered serial/RFCOMM device + its transport kind, so the UI can show
+/// USB and Bluetooth devices SEPARATELY (and tell the operator what each is)
+/// rather than dumping one undifferentiated `/dev` list into both pickers.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SerialDeviceDto {
+    /// Full device path, e.g. `/dev/ttyUSB0`.
+    pub path: String,
+    /// Transport class: `"usb"` | `"bluetooth"` | `"uart"`. The picker shows only
+    /// the kind(s) matching the selected transport tab.
+    pub kind: String,
+    /// Human label, e.g. `"USB serial"` / `"Bluetooth (RFCOMM)"` / `"On-board UART"`.
+    pub label: String,
+}
+
+/// Classify a `/dev` node name into (kind, label) for a KISS-capable port, or
+/// `None` if it isn't one. USB-serial adapters (`ttyUSB`/`ttyACM`); bound
+/// Bluetooth RFCOMM (`rfcomm`, appears once the operator pairs+binds — spec
+/// §4.1); on-board UARTs (`ttyAMA`/`ttyS`, e.g. the Pi's GPIO serial). The
+/// suffix check excludes a bare prefix with no instance number.
+fn classify_serial_device(name: &str) -> Option<(&'static str, &'static str)> {
+    let has_suffix = |p: &str| name.starts_with(p) && name.len() > p.len();
+    if has_suffix("ttyUSB") || has_suffix("ttyACM") {
+        Some(("usb", "USB serial"))
+    } else if has_suffix("rfcomm") {
+        Some(("bluetooth", "Bluetooth (RFCOMM)"))
+    } else if has_suffix("ttyAMA") || has_suffix("ttyS") {
+        Some(("uart", "On-board UART"))
+    } else {
+        None
+    }
+}
 
 /// Scan `dev_dir` (normally `/dev`) for serial/RFCOMM device nodes a KISS TNC
-/// might use. Pure + dir-injected so it is unit-testable without real hardware.
-/// Returns full device paths, sorted + deduped. Plain `std::fs` — no libudev,
+/// might use, classified by kind. Pure + dir-injected so it is unit-testable
+/// without real hardware. Sorted by path, deduped. Plain `std::fs` — no libudev,
 /// no new system deps. This only ENUMERATES candidates; the operator confirms
 /// the right one (and a real open is exercised on-air, RADIO-1).
-pub fn discover_serial_devices(dev_dir: &std::path::Path) -> Vec<String> {
-    let mut found: Vec<String> = match std::fs::read_dir(dev_dir) {
+pub fn discover_serial_devices(dev_dir: &std::path::Path) -> Vec<SerialDeviceDto> {
+    let mut found: Vec<SerialDeviceDto> = match std::fs::read_dir(dev_dir) {
         Ok(entries) => entries
             .filter_map(|e| e.ok())
             .filter_map(|e| e.file_name().into_string().ok())
-            .filter(|name| {
-                SERIAL_DEVICE_PREFIXES
-                    .iter()
-                    .any(|p| name.starts_with(p) && name.len() > p.len())
+            .filter_map(|name| {
+                classify_serial_device(&name).map(|(kind, label)| SerialDeviceDto {
+                    path: dev_dir.join(&name).to_string_lossy().into_owned(),
+                    kind: kind.to_string(),
+                    label: label.to_string(),
+                })
             })
-            .map(|name| dev_dir.join(name).to_string_lossy().into_owned())
             .collect(),
         Err(_) => Vec::new(),
     };
-    found.sort();
+    found.sort_by(|a, b| a.path.cmp(&b.path));
     found.dedup();
     found
 }
 
-/// List serial/RFCOMM devices a KISS TNC might use (USB adapters, bound
-/// Bluetooth RFCOMM, on-board UARTs) by scanning `/dev`. An empty list means
+/// List serial/RFCOMM devices a KISS TNC might use, classified by transport
+/// (USB / Bluetooth / on-board UART), by scanning `/dev`. An empty list means
 /// none are present — plug in a TNC or bind an rfcomm device, then refresh.
 #[tauri::command]
-pub async fn packet_list_serial_devices() -> Result<Vec<String>, UiError> {
+pub async fn packet_list_serial_devices() -> Result<Vec<SerialDeviceDto>, UiError> {
     Ok(discover_serial_devices(std::path::Path::new("/dev")))
 }
 
@@ -1274,25 +1302,36 @@ mod tests {
     use crate::winlink_backend::MessageId;
 
     #[test]
-    fn discover_serial_devices_lists_serial_and_rfcomm_only() {
+    fn discover_serial_devices_classifies_usb_bluetooth_uart_and_excludes_others() {
         let tmp = tempfile::tempdir().unwrap();
         let dev = tmp.path();
         for name in ["ttyUSB0", "ttyACM0", "rfcomm0", "ttyAMA0", "ttyS0", "null", "sda1", "tty"] {
             std::fs::write(dev.join(name), b"").unwrap();
         }
         let found = discover_serial_devices(dev);
-        let names: Vec<String> = found
-            .iter()
-            .map(|p| p.rsplit('/').next().unwrap().to_string())
-            .collect();
-        for want in ["ttyUSB0", "ttyACM0", "rfcomm0", "ttyAMA0", "ttyS0"] {
-            assert!(names.contains(&want.to_string()), "missing {want} in {names:?}");
-        }
+        let by_name = |n: &str| {
+            found
+                .iter()
+                .find(|d| d.path.rsplit('/').next().unwrap() == n)
+                .cloned()
+        };
+        // USB-serial adapters → kind "usb".
+        assert_eq!(by_name("ttyUSB0").unwrap().kind, "usb");
+        assert_eq!(by_name("ttyACM0").unwrap().kind, "usb");
+        // Bound Bluetooth RFCOMM → kind "bluetooth" (NOT conflated with USB).
+        assert_eq!(by_name("rfcomm0").unwrap().kind, "bluetooth");
+        // On-board UARTs → kind "uart".
+        assert_eq!(by_name("ttyAMA0").unwrap().kind, "uart");
+        assert_eq!(by_name("ttyS0").unwrap().kind, "uart");
+        // Non-serial nodes + a bare "tty" (no instance number) are excluded.
         for skip in ["null", "sda1", "tty"] {
-            assert!(!names.contains(&skip.to_string()), "should not list {skip}");
+            assert!(by_name(skip).is_none(), "should not list {skip}");
         }
+        // Every entry carries a human label.
+        assert!(found.iter().all(|d| !d.label.is_empty()));
+        // Sorted by path.
         let mut sorted = found.clone();
-        sorted.sort();
+        sorted.sort_by(|a, b| a.path.cmp(&b.path));
         assert_eq!(found, sorted);
     }
 

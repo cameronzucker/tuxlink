@@ -25,6 +25,15 @@ export type ModemLinkFields = Pick<
   'linkKind' | 'tcpHost' | 'tcpPort' | 'serialDevice' | 'serialBaud'
 >;
 
+/** A discovered serial/RFCOMM device from the packet_list_serial_devices command.
+ *  `kind` ("usb" | "bluetooth" | "uart") lets the picker show USB and Bluetooth
+ *  devices in their own tabs instead of one undifferentiated list. */
+interface SerialDevice {
+  path: string;
+  kind: string;
+  label: string;
+}
+
 /** Derive the initial UI segment from the config link kind. TCP → 'tcp'; any
  *  Serial link defaults to 'usb' (USB is the common case; operator switches to
  *  BT — both produce linkKind:'Serial'). null → 'tcp' (default). */
@@ -276,9 +285,9 @@ function PacketModemBlock({
   // packet_list_serial_devices backend command. Loaded when those transports are
   // selected; the operator can Refresh after plugging in / binding a device.
   // Promise.resolve() tolerates a non-promise mock in unit tests.
-  const [devices, setDevices] = useState<string[]>([]);
+  const [devices, setDevices] = useState<SerialDevice[]>([]);
   const loadDevices = () => {
-    void Promise.resolve(invoke<string[]>('packet_list_serial_devices'))
+    void Promise.resolve(invoke<SerialDevice[]>('packet_list_serial_devices'))
       .then((list) => setDevices(Array.isArray(list) ? list : []))
       .catch(() => setDevices([]));
   };
@@ -286,6 +295,11 @@ function PacketModemBlock({
     if (segment === 'usb' || segment === 'bt') loadDevices();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [segment]);
+  // Show only devices for the selected transport — USB tab → USB serial +
+  // on-board UART; Bluetooth tab → RFCOMM. Never conflate USB and Bluetooth.
+  const segDevices = devices.filter((d) =>
+    segment === 'bt' ? d.kind === 'bluetooth' : d.kind === 'usb' || d.kind === 'uart',
+  );
 
   // Build + persist the KISS link for a given transport from current fields.
   const persist = (seg: ModemSegment) => {
@@ -392,7 +406,7 @@ function PacketModemBlock({
                   <select
                     className="packet-inp"
                     data-testid="modem-device-select"
-                    value={devices.includes(device) ? device : ''}
+                    value={segDevices.some((d) => d.path === device) ? device : ''}
                     onChange={(e) => {
                       const v = e.target.value;
                       setDevice(v);
@@ -408,11 +422,15 @@ function PacketModemBlock({
                     }}
                   >
                     <option value="">
-                      {devices.length ? '— select a device —' : '— no devices found —'}
+                      {segDevices.length
+                        ? '— select a device —'
+                        : segment === 'bt'
+                          ? '— no Bluetooth devices (pair + bind one at the OS, then Refresh) —'
+                          : '— no USB/serial devices (plug one in, then Refresh) —'}
                     </option>
-                    {devices.map((d) => (
-                      <option key={d} value={d}>
-                        {d}
+                    {segDevices.map((d) => (
+                      <option key={d.path} value={d.path}>
+                        {d.path} — {d.label}
                       </option>
                     ))}
                   </select>
