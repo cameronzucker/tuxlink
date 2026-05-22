@@ -161,6 +161,10 @@ pub fn run() {
             crate::compose_window::compose_window_open, // Task 14 (tuxlink-dm8)
             crate::compose_window::compose_close_self,  // tuxlink-h2y (self-only close)
             crate::ui_commands::app_quit,             // tuxlink-ng3 (HTML File→Quit / Ctrl+Q)
+            crate::ui_commands::packet_config_get,    // tuxlink-7fr (packet config read)
+            crate::ui_commands::packet_config_set,    // tuxlink-7fr (packet config write)
+            crate::ui_commands::packet_connect,       // tuxlink-7fr (packet dial)
+            crate::ui_commands::packet_set_listen,    // tuxlink-7fr (sticky listen)
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
