@@ -62,11 +62,29 @@ pub struct IdentityConfig {
     pub grid: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub enum PositionSource {
+    /// Operator has manually entered a grid square; GPS is not used for position.
+    Manual,
+    /// Default. Position is derived from the GPS receiver.
+    Gps,
+}
+
+fn default_position_source() -> PositionSource {
+    PositionSource::Gps
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PrivacyConfig {
     pub gps_state: GpsState,
     pub position_precision: PositionPrecision,
+    /// Active position source (tuxlink-686). Default `Gps` (GPS-on-by-default
+    /// convention); a deliberate manual grid entry pins this to `Manual` at runtime.
+    /// `#[serde(default)]` migrates pre-686 configs transparently (additive field).
+    #[serde(default = "default_position_source")]
+    pub position_source: PositionSource,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -308,6 +326,33 @@ struct SchemaVersionProbe { schema_version: u32 }
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // tuxlink-686: position_source defaults to Gps when the field is absent from an
+    // existing (schema_version 1) config. This is the additive-migration test: old
+    // config files that predate the field must load without error and resolve Gps.
+    #[test]
+    fn position_source_defaults_to_gps_when_absent_from_config() {
+        let json = format!(
+            r#"{{
+                "schema_version": {ver},
+                "wizard_completed": true,
+                "connect": {{ "connect_to_cms": false, "transport": "Telnet" }},
+                "identity": {{ "callsign": null, "identifier": "W1TEST", "grid": null }},
+                "privacy": {{
+                    "gps_state": "BroadcastAtPrecision",
+                    "position_precision": "FourCharGrid"
+                }}
+            }}"#,
+            ver = CONFIG_SCHEMA_VERSION
+        );
+        let config: Config = serde_json::from_str(&json)
+            .expect("config without position_source should deserialize");
+        assert_eq!(
+            config.privacy.position_source,
+            PositionSource::Gps,
+            "missing position_source must default to Gps"
+        );
+    }
 
     // tuxlink-882: the privacy boundary. The grid is stored full; what may go on
     // air is reduced to the configured precision — 4 chars by default, 6 on opt-in.
