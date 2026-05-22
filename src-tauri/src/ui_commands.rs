@@ -1110,19 +1110,34 @@ pub async fn position_set_source(
     }
 }
 
-/// Live position-subsystem status from the arbiter (NOT config). Currently
-/// `gps_ready` (a usable fresh GPS fix exists) — the ribbon's GridEdit shows
-/// "GPS ready — tap to switch" from it. Polled by useStatusData (2s).
+/// Live position-subsystem status from the arbiter (NOT config).
+///
+/// - `gps_ready`: a usable fresh GPS fix exists — the ribbon's GridEdit shows
+///   "GPS ready — tap to switch" from it.
+/// - `broadcast_grid`: the EFFECTIVE on-air locator computed by
+///   [`crate::position::effective_broadcast_locator`], honoring both precision and
+///   the `gps_state` privacy control. The ribbon displays this so it always shows
+///   exactly what is/would be transmitted (Codex P1-B). Empty string = no grid.
+///
+/// Polled by useStatusData (2s).
 #[derive(Debug, Serialize, Clone, PartialEq)]
 pub struct PositionStatusDto {
     pub gps_ready: bool,
+    /// The precision-reduced grid that WILL be broadcast on air (honoring
+    /// gps_state). Empty string when no grid is available. Serializes as
+    /// `broadcast_grid` (snake_case) matching the TS PositionStatusDto.
+    pub broadcast_grid: String,
 }
 
 #[tauri::command]
 pub async fn position_status(
     arbiter: tauri::State<'_, std::sync::Arc<crate::position::PositionArbiter>>,
 ) -> Result<PositionStatusDto, UiError> {
-    Ok(PositionStatusDto { gps_ready: arbiter.has_fresh_fix() })
+    let cfg = config::read_config().map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    Ok(PositionStatusDto {
+        gps_ready: arbiter.has_fresh_fix(),
+        broadcast_grid: crate::position::effective_broadcast_locator(&cfg, Some(&arbiter)),
+    })
 }
 
 #[cfg(test)]
@@ -1676,7 +1691,29 @@ mod tests {
         );
     }
 
-    // position_status: arbiter with a fresh fix → PositionStatusDto { gps_ready: true }.
+    // Helpers for position_status DTO unit tests.
+    fn make_config_for_position_status(gps_state: GpsState, grid: Option<&str>) -> config::Config {
+        use crate::config::{ConnectConfig, CmsTransport, IdentityConfig, PrivacyConfig, CONFIG_SCHEMA_VERSION};
+        config::Config {
+            schema_version: CONFIG_SCHEMA_VERSION,
+            wizard_completed: true,
+            connect: ConnectConfig { connect_to_cms: false, transport: CmsTransport::Telnet },
+            identity: IdentityConfig {
+                callsign: None,
+                identifier: None,
+                grid: grid.map(|s| s.to_string()),
+            },
+            privacy: PrivacyConfig {
+                gps_state,
+                position_precision: PositionPrecision::FourCharGrid,
+                position_source: PositionSource::Gps,
+            },
+            pat_mbo_address: None,
+        }
+    }
+
+    // position_status: arbiter with a fresh fix + BroadcastAtPrecision
+    // → PositionStatusDto { gps_ready: true, broadcast_grid: "DM33" }.
     #[test]
     fn position_status_dto_gps_ready_true_when_fresh_fix() {
         let arbiter = PositionArbiter::new(
@@ -1686,11 +1723,17 @@ mod tests {
         );
         arbiter.apply_gps_fix(Fix::test("DM33ab"));
         assert!(arbiter.has_fresh_fix(), "fresh fix just applied");
-        let dto = PositionStatusDto { gps_ready: arbiter.has_fresh_fix() };
+        let cfg = make_config_for_position_status(GpsState::BroadcastAtPrecision, None);
+        let dto = PositionStatusDto {
+            gps_ready: arbiter.has_fresh_fix(),
+            broadcast_grid: crate::position::effective_broadcast_locator(&cfg, Some(&arbiter)),
+        };
         assert!(dto.gps_ready);
-        // Verify snake_case serialization (the TS type reads gps_ready, not gpsReady).
+        assert_eq!(dto.broadcast_grid, "DM33", "GPS fix grid must appear in broadcast_grid");
+        // Verify snake_case serialization.
         let v = serde_json::to_value(&dto).unwrap();
         assert_eq!(v["gps_ready"], true, "gps_ready serializes snake_case");
+        assert_eq!(v["broadcast_grid"], "DM33", "broadcast_grid serializes snake_case");
     }
 
     // position_status: fresh arbiter (no fix) → PositionStatusDto { gps_ready: false }.
@@ -1702,9 +1745,37 @@ mod tests {
             PositionPrecision::FourCharGrid,
         );
         assert!(!arbiter.has_fresh_fix(), "no fix applied");
-        let dto = PositionStatusDto { gps_ready: arbiter.has_fresh_fix() };
+        let cfg = make_config_for_position_status(GpsState::BroadcastAtPrecision, None);
+        let dto = PositionStatusDto {
+            gps_ready: arbiter.has_fresh_fix(),
+            broadcast_grid: crate::position::effective_broadcast_locator(&cfg, Some(&arbiter)),
+        };
         assert!(!dto.gps_ready);
         let v = serde_json::to_value(&dto).unwrap();
         assert_eq!(v["gps_ready"], false);
+        // Manual arbiter with "CN87" → broadcast_grid = "CN87".
+        assert_eq!(v["broadcast_grid"], "CN87");
+    }
+
+    // Codex P1-B: position_status broadcast_grid respects gps_state.
+    // source=Gps + gps_state=Off + config grid "DM33" + GPS fix "CN87ux"
+    // → broadcast_grid is "DM33" (config grid, not the GPS fix).
+    #[test]
+    fn position_status_dto_broadcast_grid_respects_gps_state_off() {
+        let arbiter = PositionArbiter::new(
+            PositionSource::Gps,
+            None,
+            PositionPrecision::FourCharGrid,
+        );
+        arbiter.apply_gps_fix(Fix::test("CN87ux"));
+        let cfg = make_config_for_position_status(GpsState::Off, Some("DM33"));
+        let dto = PositionStatusDto {
+            gps_ready: arbiter.has_fresh_fix(),
+            broadcast_grid: crate::position::effective_broadcast_locator(&cfg, Some(&arbiter)),
+        };
+        assert_eq!(
+            dto.broadcast_grid, "DM33",
+            "gps_state=Off: broadcast_grid must be config grid, NOT the GPS fix"
+        );
     }
 }

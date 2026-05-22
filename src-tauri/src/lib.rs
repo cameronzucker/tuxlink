@@ -132,16 +132,20 @@ pub fn run() {
             // licensee RUNS the spawn path. No agent/CI executes it to "verify."
             crate::bootstrap::run(app.handle().clone());
 
-            // tuxlink-686 Task 11: spawn the gpsd watch task (RECEIVE-ONLY; feeds
-            // the arbiter's last_fix — active only when source==Gps). Unconditional:
-            // even while Manual, a fresh fix lights the ribbon's "GPS ready — tap to
-            // switch" affordance. `arbiter` was captured by the closure (built above
-            // the Builder, managed with `.clone()` — the outer binding stays live for
-            // exactly this purpose). Clone increments the Arc ref-count; the task
-            // holds its own Arc for its lifetime.
-            let arbiter_for_gpsd =
-                (*app.state::<std::sync::Arc<crate::position::PositionArbiter>>()).clone();
-            crate::position::gpsd::spawn_gpsd_client(arbiter_for_gpsd);
+            // tuxlink-686 Task 11 / Codex P1-A defense-in-depth: only spawn the
+            // gpsd reader when GPS is permitted. gps_state=Off means the operator
+            // has disabled GPS entirely — we must not even open the gpsd socket.
+            // LocalUiOnly + BroadcastAtPrecision both read; the broadcast gate is
+            // in effective_broadcast_locator. Pre-wizard (no config file) defaults
+            // to running (GPS-on-by-default convention; wizard completes the config).
+            let gps_permitted = crate::config::read_config()
+                .map(|c| c.privacy.gps_state != crate::config::GpsState::Off)
+                .unwrap_or(true);
+            if gps_permitted {
+                let arbiter_for_gpsd =
+                    (*app.state::<std::sync::Arc<crate::position::PositionArbiter>>()).clone();
+                crate::position::gpsd::spawn_gpsd_client(arbiter_for_gpsd);
+            }
 
             Ok(())
         })

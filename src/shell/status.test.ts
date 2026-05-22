@@ -330,7 +330,7 @@ describe('useStatusData — gpsReady (tuxlink-686 Task 11)', () => {
       position_precision: 'FourCharGrid',
       position_source: 'Gps',
     };
-    const positionDto: PositionStatusDto = { gps_ready: true };
+    const positionDto: PositionStatusDto = { gps_ready: true, broadcast_grid: 'CN87' };
 
     vi.mocked(invoke).mockImplementation(async (cmd: string) => {
       if (cmd === 'config_read') return configDto;
@@ -369,6 +369,69 @@ describe('useStatusData — gpsReady (tuxlink-686 Task 11)', () => {
     const { result } = renderHook(() => useStatusData());
     // Synchronously: positionStatus is null → gpsReady defaults false.
     expect(result.current.gpsReady).toBe(false);
+  });
+
+  // Codex P1-B: ribbon grid sources from live broadcast_grid when present.
+  it('sources ribbon grid from position_status.broadcast_grid when present (Codex P1-B)', async () => {
+    const configDto: ConfigViewDto = {
+      connect_to_cms: false,
+      transport: 'CmsSsl',
+      callsign: null,
+      identifier: 'MYSTATION',
+      // Config grid is DM33 (stale config snapshot); live broadcast grid differs.
+      grid: 'DM33',
+      gps_state: 'BroadcastAtPrecision',
+      position_precision: 'FourCharGrid',
+      position_source: 'Gps',
+    };
+    // Live position_status returns the effective on-air locator = CN87 (GPS fix).
+    const positionDto: PositionStatusDto = { gps_ready: true, broadcast_grid: 'CN87' };
+
+    vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+      if (cmd === 'config_read') return configDto;
+      if (cmd === 'backend_status') return null;
+      if (cmd === 'position_status') return positionDto;
+      return null;
+    });
+
+    const { result } = renderHook(() => useStatusData());
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+
+    // Ribbon must show the live broadcast_grid, not the stale config grid.
+    expect(result.current.grid).toBe('CN87');
+  });
+
+  // Codex P1-B: fallback to config grid when broadcast_grid is empty string (no GPS fix).
+  it('falls back to config grid when broadcast_grid is empty (no position)', async () => {
+    const configDto: ConfigViewDto = {
+      connect_to_cms: false,
+      transport: 'CmsSsl',
+      callsign: null,
+      identifier: 'MYSTATION',
+      grid: 'DM33',
+      gps_state: 'BroadcastAtPrecision',
+      position_precision: 'FourCharGrid',
+      position_source: 'Gps',
+    };
+    // Empty broadcast_grid = no position available.
+    const positionDto: PositionStatusDto = { gps_ready: false, broadcast_grid: '' };
+
+    vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+      if (cmd === 'config_read') return configDto;
+      if (cmd === 'backend_status') return null;
+      if (cmd === 'position_status') return positionDto;
+      return null;
+    });
+
+    const { result } = renderHook(() => useStatusData());
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+
+    // Empty broadcast_grid → fall back to config-derived grid "DM33".
+    expect(result.current.grid).toBe('DM33');
   });
 });
 

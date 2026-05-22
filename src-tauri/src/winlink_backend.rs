@@ -636,19 +636,17 @@ fn cms_locator(config: &Config) -> String {
         .unwrap_or_default()
 }
 
-/// The on-air locator: the live arbiter's broadcast grid when present
-/// (authoritative — reflects runtime Manual/GPS changes the backend's `config`
-/// snapshot does not), else the (startup) config grid reduced to precision.
-/// `broadcast_grid()` already applies `position_precision`, so the Some case is
-/// reduced. Empty string only when the arbiter has NO position at all (no manual
-/// grid AND no usable fix); a GPS source with a stale fix still falls back to the
-/// manual grid (see `PositionArbiter::active_grid`). The arbiter is authoritative —
-/// we do NOT fall back to a possibly-stale config grid when the arbiter is present.
+/// The on-air locator: delegates to [`crate::position::effective_broadcast_locator`],
+/// which is the single source of truth for the on-air grid (honoring both precision
+/// AND the `gps_state` privacy control). This thin wrapper exists only for callers
+/// that already hold a `Config` reference and an optional arbiter in the
+/// winlink_backend context.
+///
+/// GPS-derived positions go on air ONLY when `gps_state == BroadcastAtPrecision`;
+/// under `Off` or `LocalUiOnly` the on-air locator falls back to the stored
+/// config grid. A hand-set Manual grid broadcasts regardless of `gps_state`.
 fn resolve_locator(config: &Config, position: Option<&crate::position::PositionArbiter>) -> String {
-    match position {
-        Some(a) => a.broadcast_grid().unwrap_or_default(),
-        None => cms_locator(config),
-    }
+    crate::position::effective_broadcast_locator(config, position)
 }
 
 /// Run one CMS exchange (blocking): build the outbox into proposals, connect over
@@ -670,11 +668,11 @@ fn native_connect(
         .ok_or_else(|| BackendError::NotConfigured("identity.callsign".into()))?
         .trim()
         .to_uppercase();
-    // tuxlink-686: resolve the on-air locator from the live arbiter when present
-    // (authoritative — reflects runtime Manual/GPS changes the backend's `config`
-    // snapshot does not), else fall back to the startup config grid (tuxlink-882
-    // precision reduction applies in both paths).
-    let locator = resolve_locator(config, position);
+    // tuxlink-686 / Codex P1-A: resolve the on-air locator via the single shared
+    // helper that honors BOTH precision (tuxlink-882) AND the gps_state privacy
+    // control. GPS grids go on air only when gps_state == BroadcastAtPrecision;
+    // Off/LocalUiOnly fall back to the config grid. Manual broadcasts regardless.
+    let locator = crate::position::effective_broadcast_locator(config, position);
     let password = keyring::Entry::new("tuxlink-pat", &callsign)
         .ok()
         .and_then(|e| e.get_password().ok())
@@ -1394,21 +1392,45 @@ mod native_read_state_tests {
         );
     }
 
-    // Arbiter authoritative when empty (no position): resolve_locator returns ""
-    // and does NOT fall back to the config grid.
+    // Codex P1-A retrofit: arbiter source=Gps with no fix; gps_state=Off.
+    // Old behavior (pre-P1-A): arbiter authoritative when present → return "".
+    // New behavior: gps_state=Off + source=Gps → fall back to config grid regardless
+    // of whether the arbiter has a fix. The GPS grid must NEVER go on air under Off.
+    // cfg_with_grid uses offline_config() which has gps_state=Off.
     #[test]
-    fn resolve_locator_arbiter_authoritative_when_empty() {
-        let cfg = cfg_with_grid("CN87ux"); // config has a grid
-        // Arbiter with GPS source but no fix yet — broadcast_grid() returns None.
+    fn resolve_locator_arbiter_gps_no_fix_with_gps_off_falls_back_to_config_grid() {
+        let cfg = cfg_with_grid("CN87ux"); // config has a grid; gps_state=Off
+        // Arbiter with GPS source but no fix yet.
         let arbiter = crate::position::PositionArbiter::new(
             PositionSource::Gps,
             None, // no manual grid fallback either
             PositionPrecision::FourCharGrid,
         );
+        // gps_state=Off: must return config grid (precision-reduced), not "".
+        assert_eq!(
+            resolve_locator(&cfg, Some(&arbiter)),
+            "CN87",
+            "gps_state=Off with no fix: must fall back to config grid, never broadcast GPS"
+        );
+    }
+
+    // Complementary: arbiter source=Gps, BroadcastAtPrecision, NO fix yet → "".
+    // With BroadcastAtPrecision, we go through the arbiter path; arbiter has no
+    // position → broadcast_grid() returns None → unwrap_or_default() → "".
+    #[test]
+    fn resolve_locator_arbiter_gps_no_fix_with_broadcast_at_precision_returns_empty() {
+        let mut cfg = cfg_with_grid("CN87ux");
+        cfg.privacy.gps_state = GpsState::BroadcastAtPrecision;
+        let arbiter = crate::position::PositionArbiter::new(
+            PositionSource::Gps,
+            None,
+            PositionPrecision::FourCharGrid,
+        );
+        // BroadcastAtPrecision + no fix: arbiter path taken; arbiter has nothing → "".
         assert_eq!(
             resolve_locator(&cfg, Some(&arbiter)),
             "",
-            "when the arbiter has no position it must return '' — NOT fall back to the config grid"
+            "BroadcastAtPrecision with no GPS fix: arbiter returns empty (no fallback to config)"
         );
     }
 
@@ -1426,6 +1448,90 @@ mod native_read_state_tests {
             "CN87ux",
             "SixCharGrid opt-in must broadcast the full 6-char grid"
         );
+    }
+
+    // ========================================================================
+    // Codex P1-A: gps_state privacy gating — GPS grid must NEVER go on air
+    // when gps_state is Off or LocalUiOnly. These tests cover resolve_locator
+    // (which now delegates to effective_broadcast_locator in position/mod.rs).
+    // ========================================================================
+
+    fn cfg_with_grid_and_gps_state(grid: &str, gps_state: GpsState) -> Config {
+        let mut cfg = offline_config();
+        cfg.identity.grid = Some(grid.to_string());
+        cfg.privacy.gps_state = gps_state;
+        cfg.privacy.position_precision = PositionPrecision::FourCharGrid;
+        cfg
+    }
+
+    // source=Gps + gps_state=Off + config.grid=Some("DM33") + GPS fix "CN87ux"
+    // → result is the CONFIG grid ("DM33"), NOT "CN87".
+    #[test]
+    fn resolve_locator_gps_off_never_broadcasts_gps_grid() {
+        let cfg = cfg_with_grid_and_gps_state("DM33", GpsState::Off);
+        let arbiter = crate::position::PositionArbiter::new(
+            PositionSource::Gps,
+            None,
+            PositionPrecision::FourCharGrid,
+        );
+        arbiter.apply_gps_fix(crate::position::Fix::test("CN87ux"));
+        let locator = resolve_locator(&cfg, Some(&arbiter));
+        assert_eq!(
+            locator, "DM33",
+            "gps_state=Off: GPS fix must NOT go on air (got {locator}; expected DM33)"
+        );
+    }
+
+    // source=Gps + gps_state=LocalUiOnly → config grid (no GPS on air).
+    #[test]
+    fn resolve_locator_gps_local_ui_only_never_broadcasts_gps_grid() {
+        let cfg = cfg_with_grid_and_gps_state("DM33", GpsState::LocalUiOnly);
+        let arbiter = crate::position::PositionArbiter::new(
+            PositionSource::Gps,
+            None,
+            PositionPrecision::FourCharGrid,
+        );
+        arbiter.apply_gps_fix(crate::position::Fix::test("CN87ux"));
+        let locator = resolve_locator(&cfg, Some(&arbiter));
+        assert_eq!(
+            locator, "DM33",
+            "gps_state=LocalUiOnly: GPS fix must NOT go on air (got {locator}; expected DM33)"
+        );
+    }
+
+    // source=Gps + gps_state=BroadcastAtPrecision → the arbiter's GPS grid ("CN87").
+    #[test]
+    fn resolve_locator_gps_broadcast_at_precision_sends_gps_grid() {
+        let cfg = cfg_with_grid_and_gps_state("DM33", GpsState::BroadcastAtPrecision);
+        let arbiter = crate::position::PositionArbiter::new(
+            PositionSource::Gps,
+            None,
+            PositionPrecision::FourCharGrid,
+        );
+        arbiter.apply_gps_fix(crate::position::Fix::test("CN87ux"));
+        let locator = resolve_locator(&cfg, Some(&arbiter));
+        assert_eq!(
+            locator, "CN87",
+            "gps_state=BroadcastAtPrecision: live GPS grid must go on air (got {locator})"
+        );
+    }
+
+    // source=Manual + gps_state=Off → arbiter's manual grid (broadcasts regardless).
+    #[test]
+    fn resolve_locator_manual_broadcasts_regardless_of_gps_state() {
+        for gps_state in [GpsState::Off, GpsState::LocalUiOnly, GpsState::BroadcastAtPrecision] {
+            let cfg = cfg_with_grid_and_gps_state("DM33", gps_state);
+            let arbiter = crate::position::PositionArbiter::new(
+                PositionSource::Manual,
+                Some("CN87ux".into()),
+                PositionPrecision::FourCharGrid,
+            );
+            let locator = resolve_locator(&cfg, Some(&arbiter));
+            assert_eq!(
+                locator, "CN87",
+                "Manual source must broadcast regardless of gps_state={gps_state:?} (got {locator})"
+            );
+        }
     }
 
     // tuxlink-xgn: the NativeBackend override of `mark_read` flips a message

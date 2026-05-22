@@ -49,10 +49,15 @@ export interface ConfigViewDto {
   position_source: PositionSource;
 }
 
-/** Mirrors PositionStatusDto from ui_commands.rs (tuxlink-686, Task 11).
- * Live arbiter state — NOT config. Polled at 2s by useStatusData. */
+/** Mirrors PositionStatusDto from ui_commands.rs (tuxlink-686, Task 11 + Codex P1-B).
+ * Live arbiter state — NOT config. Polled at 2s by useStatusData.
+ * `broadcast_grid` is the effective on-air locator (honoring gps_state) — the
+ * ribbon shows this so it always matches what is/would be transmitted. Empty
+ * string means no grid is available. */
 export interface PositionStatusDto {
   gps_ready: boolean;
+  /** Effective on-air locator (honoring gps_state + precision). Empty = no grid. */
+  broadcast_grid: string;
 }
 
 /**
@@ -357,9 +362,19 @@ export function useStatusData(): StatusBarData {
   // informative (it will be correct once the first poll completes).
   const configTransport: CmsTransport = config?.transport ?? 'CmsSsl';
 
+  // Codex P1-B: source the ribbon's grid from the LIVE position_status
+  // broadcast_grid (the effective on-air locator, honoring gps_state). Falls
+  // back to the config-derived grid when position_status has not yet loaded or
+  // returns an empty string (pre-wizard, gpsd unavailable, etc.). This ensures
+  // the ribbon always shows exactly what is/would be transmitted.
+  const liveGrid = positionStatus?.broadcast_grid
+    ? positionStatus.broadcast_grid
+    : null;
+  const ribbonGrid = liveGrid ?? gridResult.broadcast;
+
   return {
     callsign,
-    grid: gridResult.broadcast,
+    grid: ribbonGrid,
     gridTooltip: gridResult.tooltip,
     state: formatStatusState(status),
     connection: formatConnectionState(status, configTransport),
