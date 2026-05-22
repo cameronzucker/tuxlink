@@ -248,6 +248,11 @@ impl Drop for Session {
 pub enum BackendStatus {
     Disconnected,
     Connecting { transport: String },
+    /// Packet armed-but-idle: the AX.25 layer is listening to answer an inbound
+    /// SABM, but no session is up. Distinct from `Connecting` (an active dial)
+    /// and `Disconnected` (not armed). Carries the transport so the ribbon can
+    /// render "Listening · Packet 1200". (tuxlink-orj)
+    Listening { transport: String },
     Connected { transport: String, peer: String, since_iso: String },
     Disconnecting,
     Error { reason: String },
@@ -705,6 +710,9 @@ impl NativeBackend {
             .callsign
             .clone()
             .ok_or_else(|| BackendError::NotConfigured("identity.callsign".into()))?;
+        // Decide the armed-state status before `role` is moved into resolve
+        // (tuxlink-orj): Listen → Listening (armed), DialTo → Connecting (dial).
+        let initial_status = initial_packet_status(&role, ssid);
         let resolved = resolve_packet_endpoint(&base, ssid, role)?;
 
         let config = self.config.clone();
@@ -713,9 +721,7 @@ impl NativeBackend {
         let abort_handle = self.abort_handle.clone();
         let aborting = self.aborting.clone();
 
-        self.set_status(BackendStatus::Connecting {
-            transport: format!("Packet-{ssid}"),
-        });
+        self.set_status(initial_status);
 
         let outcome = tokio::task::spawn_blocking(move || {
             native_packet_connect(&config, &mailbox, link, resolved, &*progress, &abort_handle, &aborting)
@@ -1013,6 +1019,20 @@ fn native_packet_connect(
                 progress,
             )
         }
+    }
+}
+
+/// The `BackendStatus` a packet connection STARTS in, by role (tuxlink-orj).
+/// `Listen` is armed-but-idle → `Listening`; `DialTo` is an active dial →
+/// `Connecting`. Pure (no I/O) so the role→status decision is unit-tested
+/// without a KISS link. Set before `spawn_blocking`, it persists for the whole
+/// armed wait (the ribbon polls `status()`), so an armed Listen reads honestly
+/// as "Listening · Packet 1200" instead of a misleading "Connecting".
+fn initial_packet_status(role: &PacketRole, ssid: u8) -> BackendStatus {
+    let transport = format!("Packet-{ssid}");
+    match role {
+        PacketRole::Listen => BackendStatus::Listening { transport },
+        PacketRole::DialTo { .. } => BackendStatus::Connecting { transport },
     }
 }
 
@@ -2303,6 +2323,29 @@ mod native_read_state_tests {
             resolve_packet_endpoint("N7CPZ", 7, PacketRole::Listen).unwrap().role,
             ExchangeRole::Answer
         );
+    }
+
+    // tuxlink-orj: arming Listen must report Listening (armed, waiting for an
+    // inbound call), NOT Connecting (which implies an active dial). This is the
+    // honest-state fix — the prior code set Connecting for both roles, so the UI
+    // refused to trust it and hard-coded "not connected".
+    #[test]
+    fn listen_role_initial_status_is_listening_not_connecting() {
+        assert!(matches!(
+            initial_packet_status(&PacketRole::Listen, 7),
+            BackendStatus::Listening { transport } if transport == "Packet-7"
+        ));
+    }
+
+    #[test]
+    fn dial_role_initial_status_is_connecting() {
+        assert!(matches!(
+            initial_packet_status(
+                &PacketRole::DialTo { call: "W7AUX".into(), path: vec![] },
+                3
+            ),
+            BackendStatus::Connecting { transport } if transport == "Packet-3"
+        ));
     }
 
     // =========================================================================

@@ -781,6 +781,11 @@ pub enum StatusDto {
     Connecting {
         transport: String,
     },
+    /// Packet armed-but-idle (listening to answer an inbound call). Renders as
+    /// "Listening · <transport>" in the ribbon. (tuxlink-orj)
+    Listening {
+        transport: String,
+    },
     Connected {
         transport: String,
         peer: String,
@@ -804,6 +809,7 @@ impl From<BackendStatus> for StatusDto {
         match s {
             BackendStatus::Disconnected => StatusDto::Disconnected,
             BackendStatus::Connecting { transport } => StatusDto::Connecting { transport },
+            BackendStatus::Listening { transport } => StatusDto::Listening { transport },
             BackendStatus::Connected {
                 transport,
                 peer,
@@ -1780,6 +1786,17 @@ mod tests {
             }),
             StatusDto::Connecting {
                 transport: "CMS-CmsSsl".into()
+            }
+        );
+        // Listening (packet armed-but-idle): distinct from Connecting (which
+        // implies an active dial). Carries the transport so the ribbon can
+        // render "Listening · Packet 1200". (tuxlink-orj)
+        assert_eq!(
+            StatusDto::from(BackendStatus::Listening {
+                transport: "Packet-7".into()
+            }),
+            StatusDto::Listening {
+                transport: "Packet-7".into()
             }
         );
         assert_eq!(

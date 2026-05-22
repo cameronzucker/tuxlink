@@ -2,7 +2,34 @@
 // Pure formatters for the packet transport indicator (ribbon + status bar).
 // Returns null when packet is inactive so host components fall back to the
 // existing CMS connection labels. `tone` reuses useStatus.ts's StatusTone.
-import type { StatusTone } from '../shell/useStatus';
+import type { StatusTone, StatusDto } from '../shell/useStatus';
+
+/**
+ * Derive the packet indicator state from the LIVE backend status (tuxlink-orj).
+ *
+ * Replaces the prior hard-coded `listening:false, connected:false` placeholder
+ * that the UI used because there was no real feed. `Listening` is a packet-only
+ * backend state (CMS never listens), so it maps unambiguously. `Connected` is
+ * shared with CMS, so it counts as a *packet* connection only when the transport
+ * string is a packet one ("Packet-7"). `active` is true when the operator has
+ * the packet panel selected OR there is a live packet state — so an armed Listen
+ * shows honestly in the ribbon even while another panel is in view.
+ */
+export function derivePacketUiState(
+  status: StatusDto | null,
+  panelSelected: boolean,
+  effectiveCall: string,
+): PacketUiState {
+  const listening = status?.kind === 'Listening';
+  const connected = status?.kind === 'Connected' && status.transport.startsWith('Packet');
+  return {
+    active: panelSelected || listening || connected,
+    listening,
+    connected,
+    effectiveCall,
+    linkLabel: '',
+  };
+}
 
 export interface PacketUiState {
   /** Packet selected/configured as the active transport. */

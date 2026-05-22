@@ -41,7 +41,7 @@ import { openReplyWindow } from '../mailbox/replyActions';
 import { newDraftId } from '../routing';
 import { PacketConnectionPanelContainer } from '../packet/PacketConnectionPanel';
 import { effectiveCall } from '../packet/packetConfig';
-import type { PacketUiState } from '../packet/packetStatus';
+import { derivePacketUiState, type PacketUiState } from '../packet/packetStatus';
 import './AppShell.css';
 
 /// Human label for a folder (titlebar). Mirrors the sidebar labels.
@@ -170,19 +170,22 @@ export function AppShell() {
     [selectedFolder],
   );
 
-  // Derive the packet UI state for the ribbon + status bar indicators.
-  // The panel being open means packet is the SELECTED transport — it does NOT
-  // mean we are listening or connected. There is no live packet-session feed yet,
-  // so we never assert "Listening"/"Connected" here (that would lie about on-air
-  // state — unacceptable for EmComm). listening/connected stay false until a real
-  // backend status feed lands; the indicator then shows an honest "not connected".
-  const packetUi: PacketUiState = useMemo(() => ({
-    active: selectedConnection === 'packet',
-    listening: false,
-    connected: false,
-    effectiveCall: effectiveCall(statusData.callsign, 0), // v0.1 placeholder SSID
-    linkLabel: '',
-  }), [selectedConnection, statusData.callsign]);
+  // Derive the packet UI state for the ribbon + status bar indicators from the
+  // LIVE backend status (tuxlink-orj). The real feed has landed: the backend now
+  // reports Listening (armed) / Connected for packet, so the indicator reflects
+  // what the link is actually doing instead of the prior hard-coded placeholder.
+  // Honesty is preserved by construction — derivePacketUiState only claims
+  // listening/connected when the backend status says so (Listening, or Connected
+  // with a packet transport), never from panel selection alone.
+  const packetUi: PacketUiState = useMemo(
+    () =>
+      derivePacketUiState(
+        statusData.status ?? null,
+        selectedConnection === 'packet',
+        effectiveCall(statusData.callsign, 0), // v0.1 placeholder SSID
+      ),
+    [statusData.status, selectedConnection, statusData.callsign],
+  );
 
   return (
     <div className="layout-b" data-testid="app-shell-root">
