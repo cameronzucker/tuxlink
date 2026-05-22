@@ -115,25 +115,82 @@ describe('<PacketConnectionPanel> — my station / SSID', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Task 6: Listen toggle
+// Task 6: real Listen action + honest armed state
 // ---------------------------------------------------------------------------
-describe('<PacketConnectionPanel> — listen toggle', () => {
+describe('<PacketConnectionPanel> — Listen action', () => {
   beforeEach(() => {
-    vi.mocked(invoke).mockClear();
+    // A controllable packet_listen: resolves only when we let it, so the armed
+    // state is observable while the call is "in flight" (cms_abort/complete clear it).
+    vi.mocked(invoke).mockImplementation(async () => undefined);
+  });
+  afterEach(() => {
+    vi.mocked(invoke).mockImplementation(async () => undefined);
   });
 
-  it('reflects listenDefault and shows the effective call in the listen label', () => {
+  it('is NOT listening by default — the label never claims "Listening" until armed', () => {
     render(<PacketConnectionPanel config={cfg} baseCall="N7CPZ" />);
-    const sw = screen.getByTestId('listen-switch');
-    expect(sw).toHaveAttribute('aria-checked', 'true');
-    expect(screen.getByTestId('listen-label')).toHaveTextContent('Listening as N7CPZ-7');
+    const action = screen.getByTestId('listen-action');
+    expect(action).toHaveAttribute('aria-pressed', 'false');
+    expect(screen.getByTestId('listen-label')).toHaveTextContent('Listen for an incoming call');
+    // The honest-state guard: idle must NOT say "Listening as ...".
+    expect(screen.getByTestId('listen-label')).not.toHaveTextContent(/Listening as/);
+    expect(screen.getByTestId('listen-label')).not.toHaveTextContent(/Waiting for a call/);
   });
 
-  it('toggling off calls packet_set_listen(false)', () => {
+  it('clicking arm invokes packet_listen and reflects the armed/waiting state', async () => {
+    // Hold packet_listen pending so we can observe the armed state.
+    let resolveListen!: () => void;
+    vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+      if (cmd === 'packet_listen') {
+        return new Promise<void>((res) => {
+          resolveListen = () => res(undefined);
+        });
+      }
+      return undefined;
+    });
     render(<PacketConnectionPanel config={cfg} baseCall="N7CPZ" />);
-    fireEvent.click(screen.getByTestId('listen-switch'));
-    expect(screen.getByTestId('listen-switch')).toHaveAttribute('aria-checked', 'false');
+    fireEvent.click(screen.getByTestId('listen-action'));
+    expect(invoke).toHaveBeenCalledWith('packet_listen');
+    await waitFor(() => {
+      expect(screen.getByTestId('listen-action')).toHaveAttribute('aria-pressed', 'true');
+      expect(screen.getByTestId('listen-label')).toHaveTextContent(
+        'Waiting for a call as N7CPZ-7 — Stop',
+      );
+    });
+    // Completing the exchange disarms (honest: no longer waiting).
+    resolveListen();
+    await waitFor(() => {
+      expect(screen.getByTestId('listen-action')).toHaveAttribute('aria-pressed', 'false');
+    });
+  });
+
+  it('clicking Stop while armed invokes the abort command (cms_abort) and disarms', async () => {
+    vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+      if (cmd === 'packet_listen') {
+        return new Promise<void>(() => {}); // never resolves on its own
+      }
+      return undefined;
+    });
+    render(<PacketConnectionPanel config={cfg} baseCall="N7CPZ" />);
+    fireEvent.click(screen.getByTestId('listen-action')); // arm
+    await waitFor(() =>
+      expect(screen.getByTestId('listen-action')).toHaveAttribute('aria-pressed', 'true'),
+    );
+    fireEvent.click(screen.getByTestId('listen-action')); // Stop
+    expect(invoke).toHaveBeenCalledWith('cms_abort');
+    await waitFor(() =>
+      expect(screen.getByTestId('listen-action')).toHaveAttribute('aria-pressed', 'false'),
+    );
+  });
+
+  it('listenDefault is a preference (auto-arm on startup), not a live-state claim', () => {
+    render(<PacketConnectionPanel config={cfg} baseCall="N7CPZ" />);
+    const pref = screen.getByTestId('listen-default-toggle');
+    expect(pref).toBeChecked(); // cfg.listenDefault = true
+    fireEvent.click(pref);
     expect(invoke).toHaveBeenCalledWith('packet_set_listen', { enabled: false });
+    // Toggling the preference must NOT arm the live listener.
+    expect(screen.getByTestId('listen-action')).toHaveAttribute('aria-pressed', 'false');
   });
 });
 

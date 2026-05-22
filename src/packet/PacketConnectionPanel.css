@@ -157,51 +157,40 @@
 }
 
 /* Listen toggle (success-toned) */
-.packet-panel .packet-listen {
+/* The real Listen action button. Idle = neutral surface ("not listening");
+   armed = active/highlighted ("waiting for a call — Stop"). */
+.packet-panel .packet-listen-btn {
   all: unset;
   display: flex;
   align-items: center;
   gap: 11px;
   width: 100%;
   box-sizing: border-box;
-  background: rgba(93, 214, 160, 0.15);
-  border: 1px solid rgba(93, 214, 160, 0.35);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
   border-radius: 8px;
   padding: 10px 12px;
   cursor: pointer;
 }
 
-.packet-panel .packet-listen.off {
-  background: var(--surface-2);
-  border-color: var(--border);
+.packet-panel .packet-listen-btn.armed {
+  background: rgba(93, 214, 160, 0.15);
+  border-color: rgba(93, 214, 160, 0.35);
+  box-shadow: 0 0 8px rgba(93, 214, 160, 0.25);
 }
 
-.packet-panel .packet-switch {
-  width: 36px;
-  height: 21px;
-  border-radius: 11px;
-  background: var(--text-faint);
-  position: relative;
-  flex: none;
+/* listenDefault preference checkbox — clearly secondary to the action above. */
+.packet-panel .packet-listen-pref {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--text-dim);
+  cursor: pointer;
 }
 
-.packet-panel .packet-switch.on {
-  background: var(--success);
-  box-shadow: 0 0 8px rgba(93, 214, 160, 0.4);
-}
-
-.packet-panel .packet-switch i {
-  position: absolute;
-  top: 2px;
-  left: 2px;
-  width: 17px;
-  height: 17px;
-  border-radius: 50%;
-  background: #fff;
-  transition: left 0.12s ease;
-}
-
-.packet-panel .packet-switch.on i { left: 17px; }
+.packet-panel .packet-listen-pref input { flex: none; }
 
 .packet-panel .packet-listen-text { display: flex; flex-direction: column; }
 .packet-panel .packet-listen-title { font-weight: 600; color: var(--text); font-size: 13px; }

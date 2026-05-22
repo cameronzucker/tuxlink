@@ -69,11 +69,17 @@ export function PacketConnectionPanel({ config, baseCall, onSsidPersist, onLinkP
     }
   }, [config?.ssid]);
 
-  // Listen state — re-synced when config loads
-  const [listening, setListening] = useState<boolean>(config?.listenDefault ?? true);
+  // Armed = a real `packet_listen` is in flight (the station is actually waiting
+  // to answer an inbound call). This is LIVE state, NOT a preference — it only
+  // becomes true after `packet_listen` is invoked, and clears on Stop/complete.
+  const [armed, setArmed] = useState<boolean>(false);
+
+  // listenDefault is a *preference* ("auto-arm on startup"), not a live-state
+  // claim — re-synced when config loads. Persisted via packet_set_listen.
+  const [listenDefault, setListenDefault] = useState<boolean>(config?.listenDefault ?? true);
   useEffect(() => {
     if (config !== null) {
-      setListening(config.listenDefault);
+      setListenDefault(config.listenDefault);
     }
   }, [config?.listenDefault]);
 
@@ -81,11 +87,32 @@ export function PacketConnectionPanel({ config, baseCall, onSsidPersist, onLinkP
   const [target, setTarget] = useState('');
   const [relays, setRelays] = useState<string[]>([]);
 
-  const onToggleListen = () => {
-    const next = !listening;
-    setListening(next);
+  // Real Listen action: arm → invoke packet_listen (which blocks in ax25::answer
+  // until a call arrives or we abort). The promise resolves when the exchange
+  // completes or the connection is aborted; either way we disarm. Clicking again
+  // while armed invokes the backend abort (cms_abort) to stop listening.
+  const onListen = () => {
+    if (armed) {
+      // Stop: shut the link so a blocked answer() unwinds (Cancelled).
+      void invoke('cms_abort').catch(() => {});
+      setArmed(false);
+      return;
+    }
+    setArmed(true);
+    void invoke('packet_listen')
+      .catch(() => {})
+      .finally(() => {
+        // Whether the call was answered, the exchange completed, or it was
+        // stopped, we're no longer waiting.
+        setArmed(false);
+      });
+  };
+
+  const onToggleListenDefault = () => {
+    const next = !listenDefault;
+    setListenDefault(next);
     void invoke('packet_set_listen', { enabled: next }).catch(() => {
-      setListening((v) => !v);
+      setListenDefault((v) => !v);
     });
   };
 
@@ -154,29 +181,44 @@ export function PacketConnectionPanel({ config, baseCall, onSsidPersist, onLinkP
         </p>
       </div>
 
-      {/* Status / listen toggle */}
+      {/* Status / real Listen action */}
       <div className="packet-blk" data-testid="status-block">
         <div className="packet-blk-h"><span>Status</span></div>
+        {/* The real Listen control: idle = "not listening"; armed = "waiting for
+            a call". The label NEVER claims "Listening" until packet_listen has
+            actually been invoked (armed). Clicking while armed aborts (Stop). */}
         <button
           type="button"
-          className={`packet-listen ${listening ? 'on' : 'off'}`}
-          data-testid="listen-switch"
-          role="switch"
-          aria-checked={listening}
-          onClick={onToggleListen}
+          className={`packet-listen-btn ${armed ? 'armed' : 'idle'}`}
+          data-testid="listen-action"
+          aria-pressed={armed}
+          onClick={onListen}
         >
-          <span className={`packet-switch ${listening ? 'on' : ''}`} aria-hidden="true">
-            <i />
-          </span>
           <span className="packet-listen-text">
             <span className="packet-listen-title" data-testid="listen-label">
-              {listening ? `Listening as ${effectiveCall(baseCall, ssid)}` : `Listen disabled`}
+              {armed
+                ? `Waiting for a call as ${effectiveCall(baseCall, ssid)} — Stop`
+                : 'Listen for an incoming call'}
             </span>
-            <span className="packet-listen-sub">
-              Answers incoming packet calls when idle (default on)
+            <span className="packet-listen-sub" data-testid="listen-sub">
+              {armed
+                ? 'Armed — will auto-answer the next inbound packet call (transmits a UA under your call).'
+                : 'Not listening. Arm the station to answer an inbound packet call.'}
             </span>
           </span>
         </button>
+
+        {/* listenDefault is a PREFERENCE (auto-arm on startup), clearly distinct
+            from the live armed state above — it does not imply live listening. */}
+        <label className="packet-listen-pref" data-testid="listen-default-pref">
+          <input
+            type="checkbox"
+            data-testid="listen-default-toggle"
+            checked={listenDefault}
+            onChange={onToggleListenDefault}
+          />
+          <span>Auto-arm Listen on startup (preference, not a live state)</span>
+        </label>
       </div>
 
       {/* Connect block */}
