@@ -37,6 +37,9 @@ pub struct Ax25Stream {
     vr: u8,
     /// V(A): last sequence number acknowledged by the peer (mod 8).
     va: u8,
+    /// Decoded KISS/AX.25 frame bodies not yet dispatched by recv_frame (buffered
+    /// because a single link read can complete multiple KISS frames at once).
+    pending_frames: std::collections::VecDeque<Vec<u8>>,
     /// Reassembled inbound bytes not yet handed to the caller's `read`.
     inbound: std::collections::VecDeque<u8>,
     /// Sent-but-unacked I-frame info payloads, keyed by their N(S), for retransmit.
@@ -65,6 +68,7 @@ pub fn connect(
         vs: 0,
         vr: 0,
         va: 0,
+        pending_frames: std::collections::VecDeque::new(),
         inbound: std::collections::VecDeque::new(),
         unacked: std::collections::BTreeMap::new(),
         closed: false,
@@ -117,22 +121,43 @@ impl Ax25Stream {
     /// Pull bytes from the link into the KISS decoder and return the next decoded,
     /// successfully-parsed AX.25 frame, if any is available right now. Returns
     /// `Ok(None)` when the pipe is momentarily empty (WouldBlock) — NOT an error.
+    ///
+    /// Multiple KISS frames can complete in a single `link.read()` call (e.g. two
+    /// small RR frames pre-buffered together). `pending_frames` holds any surplus so
+    /// a subsequent `recv_frame` call sees them without another link read.
     fn recv_frame(&mut self) -> std::io::Result<Option<Frame>> {
+        // Drain surplus frames from the previous read before hitting the link again.
+        while let Some(body) = self.pending_frames.pop_front() {
+            if let Ok(frame) = Frame::decode(&body) {
+                if frame.path.dest.call == self.mycall.call
+                    && frame.path.dest.ssid == self.mycall.ssid
+                {
+                    return Ok(Some(frame));
+                }
+            }
+        }
         let mut buf = [0u8; 512];
         match self.link.read(&mut buf) {
             Ok(0) => Ok(None),
             Ok(n) => {
-                for body in self.decoder.push(&buf[..n]) {
+                let mut completed = self.decoder.push(&buf[..n]);
+                // Buffer all but the first (which we return immediately if addressed to us).
+                let mut result = None;
+                for body in completed.drain(..) {
                     if let Ok(frame) = Frame::decode(&body) {
-                        // Only deliver frames addressed to us (dest == mycall).
                         if frame.path.dest.call == self.mycall.call
                             && frame.path.dest.ssid == self.mycall.ssid
                         {
-                            return Ok(Some(frame));
+                            if result.is_none() {
+                                result = Some(frame);
+                            } else {
+                                // Buffer surplus for the next recv_frame call.
+                                self.pending_frames.push_back(body);
+                            }
                         }
                     }
                 }
-                Ok(None)
+                Ok(result)
             }
             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => Ok(None),
             Err(e) => Err(e),
@@ -243,6 +268,7 @@ pub fn answer(
         vs: 0,
         vr: 0,
         va: 0,
+        pending_frames: std::collections::VecDeque::new(),
         inbound: std::collections::VecDeque::new(),
         unacked: std::collections::BTreeMap::new(),
         closed: false,
@@ -264,6 +290,212 @@ pub fn answer(
             // Ignore non-SABM frames while listening.
         }
         std::thread::sleep(POLL_INTERVAL);
+    }
+}
+
+impl Ax25Stream {
+    /// Drain any pending S-frames (RR/RNR/REJ) and I-frames from the link, updating
+    /// V(A) on acknowledgements, queuing inbound info, and handling REJ/T1 retransmit.
+    /// Returns once the pipe is momentarily empty. `expect_progress` bounds how long
+    /// we wait for V(A) to advance before a T1 retransmit fires.
+    fn pump_acks(&mut self) -> std::io::Result<()> {
+        while let Some(frame) = self.recv_frame()? {
+            match frame.control {
+                Control::Rr { nr, .. } | Control::Rnr { nr, .. } => self.ack_through(nr),
+                Control::Rej { nr, .. } => {
+                    self.ack_through(nr);
+                    self.retransmit_from(nr)?;
+                }
+                Control::I { ns, nr, pf } => {
+                    self.ack_through(nr);
+                    self.accept_inbound_i(ns, pf, &frame.info)?;
+                }
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+
+    /// Mark all I-frames with N(S) < nr (mod 8) as acknowledged; advance V(A).
+    fn ack_through(&mut self, nr: u8) {
+        // Remove every unacked entry the peer has now confirmed (sequence numbers
+        // strictly before nr, walking forward from V(A) mod 8).
+        let mut s = self.va;
+        while s != nr {
+            self.unacked.remove(&s);
+            s = (s + 1) % 8;
+        }
+        self.va = nr;
+    }
+
+    /// Retransmit every still-unacked I-frame from N(S)=nr forward (REJ recovery).
+    fn retransmit_from(&mut self, nr: u8) -> std::io::Result<()> {
+        let payloads: Vec<(u8, Vec<u8>)> = self
+            .unacked
+            .range(nr..)
+            .chain(self.unacked.range(..nr).filter(|_| false)) // mod-8 wrap handled by callers; v0.1 windows are small
+            .map(|(k, v)| (*k, v.clone()))
+            .collect();
+        for (ns, info) in payloads {
+            let f = Frame {
+                path: self.out_path(),
+                control: Control::I { ns, nr: self.vr, pf: false },
+                info,
+            };
+            self.send_frame(&f)?;
+        }
+        Ok(())
+    }
+
+    /// Send one I-frame carrying `info` (≤ paclen) and record it as unacked.
+    fn send_i(&mut self, info: &[u8]) -> std::io::Result<()> {
+        let ns = self.vs;
+        let f = Frame {
+            path: self.out_path(),
+            control: Control::I { ns, nr: self.vr, pf: false },
+            info: info.to_vec(),
+        };
+        self.send_frame(&f)?;
+        self.unacked.insert(ns, info.to_vec());
+        self.vs = (self.vs + 1) % 8;
+        Ok(())
+    }
+
+    /// Number of I-frames currently in flight (sent, not yet acked).
+    fn in_flight(&self) -> usize {
+        self.unacked.len()
+    }
+
+    /// TEMPORARY (full reassembly + RR-reply in Task 10): queue an in-order I-frame's
+    /// info and advance V(R).
+    fn accept_inbound_i(&mut self, ns: u8, _pf: bool, info: &[u8]) -> std::io::Result<()> {
+        if ns == self.vr {
+            self.inbound.extend(info.iter().copied());
+            self.vr = (self.vr + 1) % 8;
+        }
+        Ok(())
+    }
+}
+
+impl Write for Ax25Stream {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        if self.closed {
+            return Err(std::io::Error::new(std::io::ErrorKind::NotConnected, "link closed"));
+        }
+        let paclen = self.params.paclen.max(1);
+        let maxframe = self.params.maxframe as usize;
+        for chunk in buf.chunks(paclen) {
+            // Block until the window has room, draining acks (bounded by N2×T1 so a
+            // dead peer surfaces as an error, never a silent hang — spec §5).
+            let mut attempts = 0u32;
+            while self.in_flight() >= maxframe {
+                self.pump_acks()?;
+                if self.in_flight() < maxframe {
+                    break;
+                }
+                attempts += 1;
+                if attempts as u8 > self.params.n2_retries {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::TimedOut,
+                        "window stalled — no acknowledgement (N2 exceeded)",
+                    ));
+                }
+                std::thread::sleep(self.params.t1);
+            }
+            self.send_i(chunk)?;
+        }
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        // Drain any pending acks so a subsequent read/disconnect sees current state.
+        self.pump_acks()
+    }
+}
+
+#[cfg(test)]
+mod write_tests {
+    use super::test_peer::ScriptedPeer;
+    use super::*;
+
+    fn call(c: &str, ssid: u8) -> Address { Address { call: c.into(), ssid } }
+
+    /// A connected stream with a fresh peer, bypassing the connect handshake.
+    fn connected(peer: &ScriptedPeer, params: Ax25Params) -> Ax25Stream {
+        let mine = call("N7CPZ", 7);
+        let target = call("W7AUX", 10);
+        Ax25Stream {
+            link: Box::new(peer.clone()),
+            decoder: KissDecoder::new(),
+            mycall: mine,
+            peer: target,
+            digis: vec![],
+            params,
+            vs: 0, vr: 0, va: 0,
+            pending_frames: std::collections::VecDeque::new(),
+            inbound: std::collections::VecDeque::new(),
+            unacked: std::collections::BTreeMap::new(),
+            closed: false,
+        }
+    }
+
+    /// Build the KISS-wrapped RR the peer sends to acknowledge through `nr`.
+    fn peer_rr(mycall: &Address, peer: &Address, nr: u8) -> Vec<u8> {
+        let f = Frame {
+            path: Path { dest: mycall.clone(), src: peer.clone(), digis: vec![] },
+            control: Control::Rr { nr, pf: false },
+            info: vec![],
+        };
+        kiss_data_frame(&f.encode().unwrap())
+    }
+
+    #[test]
+    fn write_under_paclen_sends_one_i_frame() {
+        let peer = ScriptedPeer::new();
+        let mut s = connected(&peer, Ax25Params::default());
+        let n = s.write(b"HELLO").unwrap();
+        assert_eq!(n, 5);
+        let frames = { let mut d = KissDecoder::new(); d.push(&peer.drain_tx()) };
+        assert_eq!(frames.len(), 1);
+        let f = Frame::decode(&frames[0]).unwrap();
+        assert!(matches!(f.control, Control::I { ns: 0, nr: 0, pf: false }));
+        assert_eq!(f.info, b"HELLO");
+        assert_eq!(s.vs, 1);
+    }
+
+    #[test]
+    fn write_over_paclen_is_segmented() {
+        let peer = ScriptedPeer::new();
+        // Pre-feed enough RRs so the window never stalls.
+        let mine = call("N7CPZ", 7);
+        let target = call("W7AUX", 10);
+        for nr in 1..=4u8 {
+            peer.feed(&peer_rr(&mine, &target, nr));
+        }
+        let mut s = connected(&peer, Ax25Params { paclen: 4, maxframe: 4, ..Ax25Params::default() });
+        let n = s.write(b"ABCDEFG").unwrap(); // 7 bytes / paclen 4 ⇒ 2 segments (4 + 3)
+        assert_eq!(n, 7);
+        let frames = { let mut d = KissDecoder::new(); d.push(&peer.drain_tx()) };
+        let infos: Vec<Vec<u8>> = frames.iter().map(|b| Frame::decode(b).unwrap().info).collect();
+        assert_eq!(infos, vec![b"ABCD".to_vec(), b"EFG".to_vec()]);
+    }
+
+    #[test]
+    fn write_blocks_until_the_window_drains_then_completes() {
+        let peer = ScriptedPeer::new();
+        let mine = call("N7CPZ", 7);
+        let target = call("W7AUX", 10);
+        // maxframe 2, paclen 1 ⇒ "XYZ" needs 3 frames but only 2 fit; an RR through 2
+        // must free the window so the 3rd sends.
+        peer.feed(&peer_rr(&mine, &target, 2));
+        peer.feed(&peer_rr(&mine, &target, 3));
+        let params = Ax25Params { paclen: 1, maxframe: 2, t1: Duration::from_millis(20), ..Ax25Params::default() };
+        let mut s = connected(&peer, params);
+        let n = s.write(b"XYZ").unwrap();
+        assert_eq!(n, 3);
+        let frames = { let mut d = KissDecoder::new(); d.push(&peer.drain_tx()) };
+        assert_eq!(frames.len(), 3, "all three segments must eventually be sent");
+        assert_eq!(s.va, 3, "V(A) advanced as RRs arrived");
     }
 }
 
