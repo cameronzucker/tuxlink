@@ -83,14 +83,23 @@ pub struct ExchangeResult {
     pub deferred: Vec<String>,
 }
 
-/// Run a full exchange over an already-connected transport: read the server's
-/// handshake, answer it (with a secure-login token if challenged), then
-/// alternate turns until either side quits.
+/// Which side of the FBB master/slave split this exchange plays.
 ///
-/// The transport is split into a reader and a writer so this is exercised with
-/// scripted in-memory streams; the telnet layer supplies a TCP socket. The
-/// client speaks second in the handshake but takes the first message turn, which
-/// is why an empty mailbox first sends `FF` and only later `FQ`.
+/// `Dial` (slave/dialer): the remote speaks first (sends its handshake +
+/// optional `;PQ` challenge); we read it, answer, then take the first message
+/// turn. This is the gateway-dial and peer-dial case.
+///
+/// `Answer` (master/answerer): WE speak first (send our handshake; clients never
+/// challenge), the remote reads it and replies, then the *remote* (slave) takes
+/// the first message turn. This is the P2P-listen case.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExchangeRole {
+    Dial,
+    Answer,
+}
+
+/// Back-compat entry point: a slave-role (`Dial`) exchange. Existing callers
+/// (telnet) and tests use this; new packet callers use [`run_exchange_with_role`].
 pub fn run_exchange<R, W, F>(
     reader: &mut R,
     writer: &mut W,
@@ -103,27 +112,68 @@ where
     W: Write,
     F: Fn(&[Proposal]) -> Vec<Answer>,
 {
-    // The server speaks first.
-    let remote = handshake::read_remote_handshake(reader).map_err(ExchangeError::Handshake)?;
-    let token = match (&remote.challenge, &config.password) {
-        (Some(challenge), Some(password)) => {
-            Some(secure::secure_login_response(challenge, password))
+    run_exchange_with_role(reader, writer, ExchangeRole::Dial, config, outbound, decide)
+}
+
+/// Run a full exchange in the given [`ExchangeRole`]. See the enum docs for the
+/// role split. The turn loop after the handshake is identical for both roles.
+pub fn run_exchange_with_role<R, W, F>(
+    reader: &mut R,
+    writer: &mut W,
+    role: ExchangeRole,
+    config: &ExchangeConfig,
+    outbound: Vec<OutboundMessage>,
+    decide: F,
+) -> Result<ExchangeResult, ExchangeError>
+where
+    R: BufRead,
+    W: Write,
+    F: Fn(&[Proposal]) -> Vec<Answer>,
+{
+    let my_turn = match role {
+        ExchangeRole::Dial => {
+            // Slave: the remote speaks first; answer its challenge if present.
+            let remote =
+                handshake::read_remote_handshake(reader).map_err(ExchangeError::Handshake)?;
+            let token = match (&remote.challenge, &config.password) {
+                (Some(challenge), Some(password)) => {
+                    Some(secure::secure_login_response(challenge, password))
+                }
+                (Some(_), None) => return Err(ExchangeError::PasswordRequired),
+                (None, _) => None,
+            };
+            let our_handshake = handshake::build_handshake(
+                &config.mycall,
+                &config.targetcall,
+                &config.locator,
+                token.as_deref(),
+            );
+            write_bytes(writer, &our_handshake)?;
+            true // the dialer/slave takes the first message turn
         }
-        (Some(_), None) => return Err(ExchangeError::PasswordRequired),
-        (None, _) => None,
+        ExchangeRole::Answer => {
+            // Master: WE speak first; clients never challenge, so no `;PR:` token.
+            let our_handshake = handshake::build_handshake(
+                &config.mycall,
+                &config.targetcall,
+                &config.locator,
+                None,
+            );
+            write_bytes(writer, &our_handshake)?;
+            // Read the remote (slave) handshake; a peer never challenges us, so a
+            // PasswordRequired here would be a misbehaving peer — treat any
+            // challenge as ignorable (we send no token). We still parse it to
+            // consume the bytes up to the prompt.
+            let _remote =
+                handshake::read_remote_handshake(reader).map_err(ExchangeError::Handshake)?;
+            false // the remote/slave takes the first message turn
+        }
     };
-    let our_handshake = handshake::build_handshake(
-        &config.mycall,
-        &config.targetcall,
-        &config.locator,
-        token.as_deref(),
-    );
-    write_bytes(writer, &our_handshake)?;
 
     let mut result = ExchangeResult::default();
     let mut remaining = outbound;
     let mut remote_no_messages = false;
-    let mut my_turn = true; // the client takes the first message turn
+    let mut my_turn = my_turn;
     let mut turns = 0u32;
 
     loop {
@@ -501,6 +551,40 @@ mod tests {
         assert!(outcome.remote_no_messages);
         assert!(outcome.messages.is_empty());
         assert!(writer.is_empty());
+    }
+
+    #[test]
+    fn dial_role_preserves_server_speaks_first_behaviour() {
+        // Identical to a_session_with_no_traffic_handshakes_then_quits, but via the
+        // role-parameterized entry point. Dial = today's slave behaviour.
+        let mut server = Vec::new();
+        server.extend_from_slice(b"[WL2K-5.0-B2FHM$]\r;PQ: 12345678\rCMS>\r");
+        server.extend_from_slice(b"FF\r");
+        let mut reader = Cursor::new(server);
+        let mut writer = Vec::new();
+        let config = ExchangeConfig {
+            mycall: "N7CPZ".into(),
+            targetcall: "SERVICE".into(),
+            locator: "CN87".into(),
+            password: Some("MYPASS".into()),
+        };
+        let result = run_exchange_with_role(
+            &mut reader,
+            &mut writer,
+            ExchangeRole::Dial,
+            &config,
+            vec![],
+            |_| vec![],
+        )
+        .unwrap();
+        assert!(result.received.is_empty() && result.sent.is_empty());
+
+        let token = crate::winlink::secure::secure_login_response("12345678", "MYPASS");
+        let mut expected =
+            crate::winlink::handshake::build_handshake("N7CPZ", "SERVICE", "CN87", Some(&token));
+        expected.extend_from_slice(b"FF\r");
+        expected.extend_from_slice(b"FQ\r");
+        assert_eq!(writer, expected);
     }
 
     #[test]
