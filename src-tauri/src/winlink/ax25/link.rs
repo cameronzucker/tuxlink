@@ -10,6 +10,8 @@
 use serde::{Deserialize, Serialize};
 use std::io::{Read, Write};
 use std::net::TcpStream;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 /// How long a single read on the KISS link may block before returning (a short
@@ -48,6 +50,38 @@ pub enum KissLinkConfig {
 pub trait ByteLink: Read + Write + Send {}
 impl<T: Read + Write + Send> ByteLink for T {}
 
+/// Wraps a `ByteLink` so a shared abort flag can unwind a blocked read. A serial
+/// KISS link (unlike TCP) has no socket to shut down, so `answer()`/`connect()`
+/// can't be aborted by closing the pipe; instead a Stop sets the flag, and the
+/// next `read` returns `ConnectionAborted` — which `recv_frame` already maps to an
+/// abort, unwinding the poll loop. The serial read's short poll timeout
+/// (`LINK_POLL_TIMEOUT`) bounds how soon the flag is observed (tuxlink-nj1).
+struct AbortableByteLink {
+    inner: Box<dyn ByteLink>,
+    abort: Arc<AtomicBool>,
+}
+
+impl Read for AbortableByteLink {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        if self.abort.load(Ordering::SeqCst) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::ConnectionAborted,
+                "packet listen aborted",
+            ));
+        }
+        self.inner.read(buf)
+    }
+}
+
+impl Write for AbortableByteLink {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.inner.write(buf)
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.inner.flush()
+    }
+}
+
 /// Open a KISS byte-pipe per `cfg`. The returned `Box<dyn ByteLink>` is handed to
 /// `datalink::connect` / `datalink::answer`.
 pub fn connect_link(cfg: &KissLinkConfig) -> std::io::Result<Box<dyn ByteLink>> {
@@ -62,27 +96,37 @@ pub fn connect_link(cfg: &KissLinkConfig) -> std::io::Result<Box<dyn ByteLink>> 
     }
 }
 
-/// Like `connect_link`, but also returns a handle the orchestration layer can use
-/// to abort a blocked connect/answer by closing the link. TCP yields a try_clone'd
-/// `TcpStream` (caller shuts it down → reads return 0 → the state machine errors out).
-/// Serial yields `None` (clean serial abort is a follow-up).
+/// Like `connect_link`, but wires the orchestration layer's abort signal into the
+/// link so a blocked connect/answer can be Stopped. TCP yields a try_clone'd
+/// `TcpStream` whose `shutdown()` makes reads return 0 (the immediate fast path).
+/// Serial has no socket, so it wraps the link in `AbortableByteLink` keyed on the
+/// shared `abort` flag: setting the flag makes the next read return
+/// `ConnectionAborted`, unwinding the state machine (tuxlink-nj1) — so serial yields
+/// `None` for the socket handle, with abort delivered via the flag instead.
 pub fn connect_link_with_abort(
     cfg: &KissLinkConfig,
+    abort: Arc<AtomicBool>,
 ) -> std::io::Result<(Box<dyn ByteLink>, Option<std::net::TcpStream>)> {
     match cfg {
         KissLinkConfig::Tcp { host, port } => {
             let stream = TcpStream::connect((host.as_str(), *port))?;
             stream.set_read_timeout(Some(LINK_POLL_TIMEOUT)).ok();
             stream.set_write_timeout(Some(LINK_WRITE_TIMEOUT)).ok();
-            // Clone the handle for the abort path: a `shutdown()` on the clone makes the
-            // boxed original's `read` return 0 (FIN), which `recv_frame` now maps to
-            // ConnectionAborted, unwinding a blocked answer()/connect() poll loop.
-            let abort = stream.try_clone()?;
-            Ok((Box::new(stream), Some(abort)))
+            // TCP keeps the immediate socket-shutdown fast path: a `shutdown()` on the
+            // clone makes the boxed original's `read` return 0 (FIN), which `recv_frame`
+            // maps to ConnectionAborted, unwinding a blocked answer()/connect(). The
+            // `abort` flag is unused on this arm (the FIN, not the flag, does the work).
+            let abort_sock = stream.try_clone()?;
+            Ok((Box::new(stream), Some(abort_sock)))
         }
-        // Serial has no try_clone equivalent; a clean serial abort is a follow-up
-        // (the operator can power-cycle/disconnect the TNC in the meantime).
-        KissLinkConfig::Serial { .. } => Ok((connect_serial(cfg)?, None)),
+        // Serial has no try_clone/shutdown equivalent, so route abort through the
+        // shared flag (tuxlink-nj1): AbortableByteLink turns a set flag into a
+        // ConnectionAborted read on the next poll, unwinding a blocked answer()/
+        // connect(). No TCP socket handle to return.
+        KissLinkConfig::Serial { .. } => {
+            let inner = connect_serial(cfg)?;
+            Ok((Box::new(AbortableByteLink { inner, abort }), None))
+        }
     }
 }
 
@@ -183,7 +227,7 @@ mod link_tcp_tests {
         });
 
         let cfg = KissLinkConfig::Tcp { host: addr.ip().to_string(), port: addr.port() };
-        let (mut link, abort) = connect_link_with_abort(&cfg).unwrap();
+        let (mut link, abort) = connect_link_with_abort(&cfg, Arc::new(AtomicBool::new(false))).unwrap();
         // TCP must yield Some(_) abort handle.
         let abort = abort.expect("TCP arm must yield a Some(TcpStream) abort handle");
 
@@ -230,12 +274,30 @@ mod link_tcp_tests {
             device: "/dev/tuxlink-no-such-device".into(),
             baud: 9600,
         };
-        let err = connect_link_with_abort(&cfg)
+        let err = connect_link_with_abort(&cfg, Arc::new(AtomicBool::new(false)))
             .err()
             .expect("expected a clean open error, got Ok");
         assert!(
             matches!(err.kind(), std::io::ErrorKind::NotFound | std::io::ErrorKind::Other),
             "expected a clean open error, got {err:?}"
         );
+    }
+
+    #[test]
+    fn abortable_link_read_returns_connectionaborted_once_the_flag_is_set() {
+        // tuxlink-nj1: a serial KISS link has no socket to shut down, so a Stop
+        // sets a shared flag that AbortableByteLink turns into a ConnectionAborted
+        // read — which recv_frame already maps to "abort", unwinding a blocked
+        // answer()/connect() poll loop. Before the flag, reads pass through.
+        let flag = Arc::new(AtomicBool::new(false));
+        let inner: Box<dyn ByteLink> = Box::new(std::io::Cursor::new(vec![0xC0u8, 0x00, 0x42, 0xC0]));
+        let mut link = AbortableByteLink { inner, abort: flag.clone() };
+        let mut buf = [0u8; 4];
+        assert_eq!(link.read(&mut buf).unwrap(), 4, "reads pass through before Stop");
+        flag.store(true, Ordering::SeqCst);
+        let err = link
+            .read(&mut buf)
+            .expect_err("after Stop, read must abort (not EOF, not inner data)");
+        assert_eq!(err.kind(), std::io::ErrorKind::ConnectionAborted);
     }
 }

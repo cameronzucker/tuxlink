@@ -276,6 +276,32 @@ mod connect_tests {
             .err().expect("expected ConnectionRefused error");
         assert_eq!(err.kind(), std::io::ErrorKind::ConnectionRefused);
     }
+
+    #[test]
+    fn answer_unwinds_with_connectionaborted_when_the_link_read_aborts() {
+        // tuxlink-nj1: a serial listen Stop sets a flag that AbortableByteLink
+        // (link.rs) turns into a ConnectionAborted read. This locks the OTHER half of
+        // that chain — answer()'s poll loop must unwind promptly (not spin forever)
+        // when the link read aborts and no SABM ever arrives. No socket, no hardware.
+        struct AbortingLink;
+        impl std::io::Read for AbortingLink {
+            fn read(&mut self, _buf: &mut [u8]) -> std::io::Result<usize> {
+                Err(std::io::Error::new(std::io::ErrorKind::ConnectionAborted, "stopped"))
+            }
+        }
+        impl std::io::Write for AbortingLink {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                Ok(buf.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        let err = answer(Box::new(AbortingLink), call("N7CPZ", 7), &Ax25Params::default())
+            .err()
+            .expect("answer must unwind, not block, when the link read aborts");
+        assert_eq!(err.kind(), std::io::ErrorKind::ConnectionAborted);
+    }
 }
 
 /// Await an inbound SABM addressed to `mycall`, reply UA, and surface the calling

@@ -744,7 +744,7 @@ impl NativeBackend {
         self.set_status(initial_status);
 
         let outcome = tokio::task::spawn_blocking(move || {
-            native_packet_connect(&config, &mailbox, link, resolved, &*progress, &abort_handle, &aborting)
+            native_packet_connect(&config, &mailbox, link, resolved, &*progress, &abort_handle, aborting)
         })
         .await
         .map_err(|e| BackendError::Internal {
@@ -940,7 +940,7 @@ fn native_packet_connect(
     resolved: ResolvedPacket,
     progress: &dyn Fn(&str),
     abort_handle: &Mutex<Option<TcpStream>>,
-    aborting: &AtomicBool,
+    aborting: Arc<AtomicBool>,
 ) -> Result<(), BackendError> {
     let params = config.packet.params.clone().into_params();
     let locator = cms_locator(config);
@@ -956,10 +956,12 @@ fn native_packet_connect(
     // native_connect's register_socket). The TCP arm yields a try_clone'd TcpStream
     // the operator's abort() can `.shutdown()`; shutting it makes the link's read
     // return 0 (FIN), which recv_frame maps to ConnectionAborted, unwinding a blocked
-    // answer()/connect() poll loop. Serial yields None (clean serial abort is a
-    // follow-up — abort() is then a no-op on the packet serial link).
-    let (bytelink, abort_socket) = crate::winlink::ax25::connect_link_with_abort(&link)
-        .map_err(|e| BackendError::TransportFailed { reason: format!("KISS link: {e}"), source: None })?;
+    // answer()/connect() poll loop. The SERIAL arm has no socket, so it wraps the link
+    // in AbortableByteLink keyed on the SAME `aborting` flag: abort() sets the flag and
+    // the next serial read returns ConnectionAborted, unwinding the loop (tuxlink-nj1).
+    let (bytelink, abort_socket) =
+        crate::winlink::ax25::connect_link_with_abort(&link, aborting.clone())
+            .map_err(|e| BackendError::TransportFailed { reason: format!("KISS link: {e}"), source: None })?;
     if let Some(sock) = abort_socket {
         // Check `aborting` INSIDE the abort_handle lock (mirrors native_connect /
         // Codex #2): abort() sets `aborting` then locks to take the socket, so doing
