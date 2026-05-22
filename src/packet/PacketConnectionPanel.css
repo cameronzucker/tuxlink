@@ -261,3 +261,36 @@
 }
 
 .packet-panel .packet-connect-btn:hover { filter: brightness(1.12); }
+
+/* Bluetooth guided setup disclosure (tuxlink-jvp) — collapsed by default. */
+.packet-bt-setup {
+  margin-top: 6px;
+  font-size: 11.5px;
+  color: var(--text-faint);
+}
+.packet-bt-setup > summary {
+  cursor: pointer;
+  color: var(--accent-2);
+  user-select: none;
+}
+.packet-bt-steps {
+  margin: 7px 0 4px;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  line-height: 1.5;
+}
+.packet-bt-setup code {
+  font-family: var(--mono);
+  font-size: 11px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0 4px;
+  color: var(--text-dim);
+}
+.packet-bt-teardown {
+  margin: 6px 0 0;
+  color: var(--text-faint);
+}

@@ -503,9 +503,45 @@ function PacketModemBlock({
             {segment === 'tcp'
               ? 'KISS over TCP — Dire Wolf (default 8001) / SoundModem. The software modem listens on a LOCAL TCP socket (127.0.0.1); this is not the internet.'
               : segment === 'bt'
-                ? 'Pair + bind the BT TNC at the OS first (e.g. /dev/rfcomm0), then enter its device path here; tuxlink opens it as a serial device.'
+                ? 'Bluetooth TNCs appear as a serial device once paired + bound at the OS. New to this radio? Expand the setup steps below.'
                 : 'USB KISS TNC as a serial device (e.g. /dev/ttyUSB0). Host-link baud is separate from the 1200-baud over-air rate.'}
           </p>
+          {segment === 'bt' && (
+            // Guided OS pair+bind flow (tuxlink-jvp). Inline + collapsed by default
+            // (no window clutter); spec §4.1 keeps pairing in the OS, not in-app BlueZ.
+            // Names the two gotchas that strand operators: the headset-profile disable
+            // and the mandatory rfcomm bind channel (the UV-Pro requires `1`).
+            <details className="packet-bt-setup" data-testid="bt-setup-help">
+              <summary>Bluetooth setup — pair &amp; bind at the OS (one time)</summary>
+              <ol className="packet-bt-steps">
+                <li>
+                  If the radio enumerates as a <em>headset</em> (e.g. the BTECH UV-Pro),
+                  disable that profile or RFCOMM won&apos;t bind: add{' '}
+                  <code>Disable=Headset</code> under <code>[General]</code> in{' '}
+                  <code>/etc/bluetooth/input.conf</code>, then{' '}
+                  <code>sudo systemctl restart bluetooth</code>.
+                </li>
+                <li>
+                  Put the radio in pairing mode, then pair + trust:{' '}
+                  <code>bluetoothctl</code> → <code>scan on</code> →{' '}
+                  <code>pair &lt;MAC&gt;</code> → <code>trust &lt;MAC&gt;</code>.
+                </li>
+                <li>
+                  Bind it to a serial node:{' '}
+                  <code>sudo rfcomm bind /dev/rfcomm0 &lt;MAC&gt; 1</code>. The trailing
+                  channel matters — the UV-Pro requires <code>1</code>.
+                </li>
+                <li>
+                  Click <strong>Refresh</strong> above and select{' '}
+                  <code>/dev/rfcomm0</code>.
+                </li>
+              </ol>
+              <p className="packet-bt-teardown">
+                Release after use: <code>sudo rfcomm release 0</code>. Baud is ignored
+                for Bluetooth RFCOMM — the TNC adapts to the host rate.
+              </p>
+            </details>
+          )}
         </>
       )}
     </div>

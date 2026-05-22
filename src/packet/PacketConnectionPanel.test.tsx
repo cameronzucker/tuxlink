@@ -73,6 +73,24 @@ describe('<PacketConnectionPanel> — modem block', () => {
     expect(device).toHaveAttribute('placeholder', '/dev/rfcomm0');
   });
 
+  it('Bluetooth segment offers guided setup help with the two gotchas (tuxlink-jvp)', () => {
+    // The prior one-line "pair + bind at the OS" hint stranded operators: it
+    // omitted the headset-profile disable and the mandatory rfcomm bind channel
+    // (which cost an experienced ham days). The guided setup must name both.
+    render(<PacketConnectionPanel config={cfg} baseCall="N7CPZ" />);
+    fireEvent.click(screen.getByTestId('modem-seg-bt'));
+    const help = screen.getByTestId('bt-setup-help');
+    expect(help).toHaveTextContent(/rfcomm bind/i);
+    expect(help).toHaveTextContent(/Disable=Headset/i);
+  });
+
+  it('does NOT show the Bluetooth setup help on the USB or TCP segments (tuxlink-jvp)', () => {
+    render(<PacketConnectionPanel config={cfg} baseCall="N7CPZ" />);
+    expect(screen.queryByTestId('bt-setup-help')).toBeNull(); // TCP active by default
+    fireEvent.click(screen.getByTestId('modem-seg-usb'));
+    expect(screen.queryByTestId('bt-setup-help')).toBeNull();
+  });
+
   it("shows a serial link's device when config.linkKind is Serial", () => {
     const serialCfg: PacketConfigDto = {
       ...cfg,
