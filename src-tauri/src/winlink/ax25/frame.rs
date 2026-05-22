@@ -292,6 +292,23 @@ pub struct Frame {
 pub const PID_NO_L3: u8 = 0xF0;
 
 impl Frame {
+    pub fn decode(bytes: &[u8]) -> Result<Frame, FrameError> {
+        let (path, off) = Path::decode(bytes)?;
+        if bytes.len() < off + 1 {
+            return Err(FrameError::Truncated);
+        }
+        let control = Control::decode(bytes[off])?;
+        let mut info = Vec::new();
+        if control.has_info() {
+            // skip the PID byte, take the rest as info
+            if bytes.len() < off + 2 {
+                return Err(FrameError::Truncated);
+            }
+            info = bytes[off + 2..].to_vec();
+        }
+        Ok(Frame { path, control, info })
+    }
+
     pub fn encode(&self) -> Result<Vec<u8>, FrameError> {
         if !self.info.is_empty() && !self.control.has_info() {
             return Err(FrameError::UnknownControl(self.control.encode()));
@@ -340,5 +357,29 @@ mod frame_encode_tests {
     fn rejects_info_on_non_info_frame() {
         let f = Frame { path: sample_path(), control: Control::Ua { pf: true }, info: b"x".to_vec() };
         assert!(f.encode().is_err());
+    }
+}
+
+#[cfg(test)]
+mod frame_decode_tests {
+    use super::*;
+    #[test]
+    fn round_trips_sabm_and_i_frame() {
+        let path = Path {
+            dest: Address { call: "W7AUX".into(), ssid: 10 },
+            src: Address { call: "N7CPZ".into(), ssid: 7 },
+            digis: vec![Address { call: "W7RPT".into(), ssid: 1 }],
+        };
+        for f in [
+            Frame { path: path.clone(), control: Control::Sabm { pf: true }, info: vec![] },
+            Frame { path: path.clone(), control: Control::I { ns: 1, nr: 2, pf: false }, info: b"B2F DATA".to_vec() },
+        ] {
+            let bytes = f.encode().unwrap();
+            assert_eq!(Frame::decode(&bytes).unwrap(), f);
+        }
+    }
+    #[test]
+    fn rejects_truncated() {
+        assert!(Frame::decode(&[0x9C, 0x6E]).is_err());
     }
 }
