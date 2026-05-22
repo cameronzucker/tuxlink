@@ -7,6 +7,7 @@ pub mod native_mailbox;
 pub mod pat_client;
 pub mod pat_config;
 pub mod pat_process;
+pub mod position;
 pub mod session_log;
 pub mod tray;
 pub mod ui_commands;
