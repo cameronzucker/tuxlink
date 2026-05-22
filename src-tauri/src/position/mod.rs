@@ -1,4 +1,5 @@
 pub mod arbiter;
+pub mod gpsd;
 pub mod maidenhead;
 pub use arbiter::{Fix, PositionArbiter};
 pub use crate::config::PositionSource;
