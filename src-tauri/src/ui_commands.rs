@@ -1117,7 +1117,7 @@ mod tests {
     // ========================================================================
     use crate::config::{
         CmsTransport, Config, ConnectConfig, GpsState, IdentityConfig, PositionPrecision,
-        PrivacyConfig, CONFIG_SCHEMA_VERSION,
+        PositionSource, PrivacyConfig, CONFIG_SCHEMA_VERSION,
     };
 
     /// Build a CMS-mode config fixture for the mapping tests.
@@ -1137,6 +1137,7 @@ mod tests {
             privacy: PrivacyConfig {
                 gps_state: GpsState::BroadcastAtPrecision,
                 position_precision: PositionPrecision::SixCharGrid,
+                position_source: PositionSource::Gps,
             },
             pat_mbo_address: None,
         }

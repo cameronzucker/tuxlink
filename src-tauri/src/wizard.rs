@@ -168,6 +168,7 @@ pub async fn persist_cms_impl(
         privacy: crate::config::PrivacyConfig {
             gps_state: crate::config::GpsState::BroadcastAtPrecision,
             position_precision: crate::config::PositionPrecision::FourCharGrid,
+            position_source: crate::config::PositionSource::Gps,
         },
         pat_mbo_address: if mbo_address.trim().is_empty() {
             None
@@ -306,6 +307,7 @@ pub async fn persist_offline_impl(
         privacy: crate::config::PrivacyConfig {
             gps_state: crate::config::GpsState::BroadcastAtPrecision,
             position_precision: crate::config::PositionPrecision::FourCharGrid,
+            position_source: crate::config::PositionSource::Gps,
         },
         pat_mbo_address: None,        // offline path: no MBO address
     };

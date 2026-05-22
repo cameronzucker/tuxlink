@@ -540,7 +540,7 @@ mod tests {
     use super::*;
     use crate::config::{
         CmsTransport, Config, ConfigReadError, ConfigValidationError, ConnectConfig, GpsState,
-        IdentityConfig, PositionPrecision, PrivacyConfig, CONFIG_SCHEMA_VERSION,
+        IdentityConfig, PositionPrecision, PositionSource, PrivacyConfig, CONFIG_SCHEMA_VERSION,
     };
 
     /// CMS-mode config fixture (`wizard_completed = true`, `connect_to_cms =
@@ -561,6 +561,7 @@ mod tests {
             privacy: PrivacyConfig {
                 gps_state: GpsState::BroadcastAtPrecision,
                 position_precision: PositionPrecision::FourCharGrid,
+                position_source: PositionSource::Gps,
             },
             pat_mbo_address: None,
         }
