@@ -104,3 +104,41 @@ mod kiss_decode_tests {
         assert_eq!(frames, vec![vec![0x42]]); // only the port-0 data frame
     }
 }
+
+#[derive(Debug, Clone, Copy)]
+pub enum KissParam {
+    TxDelay = 0x01,
+    Persistence = 0x02,
+    SlotTime = 0x03,
+    TxTail = 0x04,
+    FullDuplex = 0x05,
+}
+
+/// Build a KISS parameter-set command frame (port 0).
+pub fn kiss_param(param: KissParam, value: u8) -> Vec<u8> {
+    let mut out = vec![FEND, param as u8];
+    match value {
+        FEND => out.extend_from_slice(&[FESC, TFEND]),
+        FESC => out.extend_from_slice(&[FESC, TFESC]),
+        v => out.push(v),
+    }
+    out.push(FEND);
+    out
+}
+
+#[cfg(test)]
+mod kiss_param_tests {
+    use super::*;
+    #[test]
+    fn builds_txdelay_and_persistence_frames() {
+        assert_eq!(kiss_param(KissParam::TxDelay, 30), vec![FEND, 0x01, 30, FEND]);
+        assert_eq!(kiss_param(KissParam::Persistence, 63), vec![FEND, 0x02, 63, FEND]);
+        assert_eq!(kiss_param(KissParam::SlotTime, 10), vec![FEND, 0x03, 10, FEND]);
+        assert_eq!(kiss_param(KissParam::FullDuplex, 0), vec![FEND, 0x05, 0, FEND]);
+    }
+    #[test]
+    fn value_byte_is_escaped_if_it_collides_with_fend() {
+        // value 0xC0 (FEND) must be escaped in the body
+        assert_eq!(kiss_param(KissParam::TxDelay, 0xC0), vec![FEND, 0x01, FESC, TFEND, FEND]);
+    }
+}
