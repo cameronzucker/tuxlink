@@ -51,12 +51,16 @@
   border-radius: 7px; padding: 5px; box-shadow: 0 14px 38px rgba(0,0,0,0.5); z-index: 100;
 }
 .tux-mi {
-  display: flex; align-items: center; gap: 14px; padding: 7px 10px;
+  display: flex; align-items: center; gap: 10px;
+  /* Fixed row height + zero vertical padding so EVERY item is the SAME height,
+   * regardless of its content (accelerator / chevron / v0.1 badge / nothing).
+   * Height was previously content-driven (padding + tallest child), so rows with
+   * trailing elements sat at slightly different heights than bare-label rows —
+   * the "random" per-option menu spacing across every menu (tuxlink-39b). */
+  min-height: 30px; padding: 0 10px;
   border-radius: 5px; cursor: default; white-space: nowrap; color: var(--text);
   background: none; border: none; width: 100%; text-align: left; font: inherit;
-  /* Explicit line-height so leaf <button> items and the has-sub <div> render at
-   * the SAME height (UA button line-height differed → "wonky" Settings spacing). */
-  line-height: 1.4;
+  line-height: 1.2;
 }
 .tux-mi:hover, .tux-mi.tux-sub-open { background: var(--accent-soft); color: var(--accent-2); }
 /* Not-yet-wired items: greyed + non-interactive, with a "v0.1" badge so they read
