@@ -150,7 +150,16 @@ impl Ax25Stream {
         }
         let mut buf = [0u8; 512];
         match self.link.read(&mut buf) {
-            Ok(0) => Ok(None),
+            // A 0-byte read is a genuine close, NOT "no data". TCP returns 0 only on
+            // FIN (peer/our shutdown); a serial idle line returns TimedOut, mapped to
+            // Ok(None) below — so this arm fires only on a real link close. Surfacing
+            // ConnectionAborted lets a blocked `answer()`/`connect()` (whose poll loop
+            // does `recv_frame()?`) unwind when the P3 listen lifecycle shuts the link
+            // to Stop, and fixes the previously-flagged Read-EOF contract.
+            Ok(0) => Err(std::io::Error::new(
+                std::io::ErrorKind::ConnectionAborted,
+                "link closed",
+            )),
             Ok(n) => {
                 let mut completed = self.decoder.push(&buf[..n]);
                 // Buffer all but the first (which we return immediately if addressed to us).

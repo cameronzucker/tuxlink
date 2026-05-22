@@ -849,8 +849,8 @@ fn native_packet_connect(
     link: KissLinkConfig,
     resolved: ResolvedPacket,
     progress: &dyn Fn(&str),
-    _abort_handle: &Mutex<Option<TcpStream>>,
-    _aborting: &AtomicBool,
+    abort_handle: &Mutex<Option<TcpStream>>,
+    aborting: &AtomicBool,
 ) -> Result<(), BackendError> {
     let params = config.packet.params.clone().into_params();
     let locator = cms_locator(config);
@@ -862,8 +862,29 @@ fn native_packet_connect(
         .filter(|p| !p.is_empty());
 
     progress("Opening KISS link…");
-    let bytelink = crate::winlink::ax25::connect_link(&link)
+    // Open the KISS link with an abort handle (tuxlink-9z2 pattern, mirroring
+    // native_connect's register_socket). The TCP arm yields a try_clone'd TcpStream
+    // the operator's abort() can `.shutdown()`; shutting it makes the link's read
+    // return 0 (FIN), which recv_frame maps to ConnectionAborted, unwinding a blocked
+    // answer()/connect() poll loop. Serial yields None (clean serial abort is a
+    // follow-up — abort() is then a no-op on the packet serial link).
+    let (bytelink, abort_socket) = crate::winlink::ax25::connect_link_with_abort(&link)
         .map_err(|e| BackendError::TransportFailed { reason: format!("KISS link: {e}"), source: None })?;
+    if let Some(sock) = abort_socket {
+        // Check `aborting` INSIDE the abort_handle lock (mirrors native_connect /
+        // Codex #2): abort() sets `aborting` then locks to take the socket, so doing
+        // the check + store under the same lock means whichever side acquires it
+        // first, the socket still ends up shut down if an abort has already fired —
+        // no TOCTOU window. If an abort landed during the (un-abortable) TCP-connect
+        // window, shut the socket down now so answer()/connect() fails fast.
+        if let Ok(mut slot) = abort_handle.lock() {
+            if aborting.load(Ordering::SeqCst) {
+                let _ = sock.shutdown(Shutdown::Both);
+            } else {
+                *slot = Some(sock);
+            }
+        }
+    }
 
     // Controller directive L: push KISS TNC params before connect/answer.
     // The straightforward approach is to call kiss_param inside the link before

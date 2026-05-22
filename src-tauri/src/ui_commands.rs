@@ -1221,6 +1221,25 @@ pub fn packet_transport_from_config(
     })
 }
 
+/// Build the Listen-role packet transport (no dial target) from config.
+/// Returns `NotConfigured` if no KISS link is set yet (the UI must configure
+/// one first via `packet_config_set`). Mirrors `packet_transport_from_config`
+/// but resolves to the Listen role — arm the station to answer an inbound call.
+pub fn packet_listen_transport_from_config(
+    cfg: &config::Config,
+) -> Result<TransportConfig, UiError> {
+    let link = cfg
+        .packet
+        .link
+        .clone()
+        .ok_or_else(|| UiError::NotConfigured("no KISS link configured".into()))?;
+    Ok(TransportConfig::Packet {
+        link,
+        ssid: cfg.packet.ssid,
+        role: crate::winlink_backend::PacketRole::Listen,
+    })
+}
+
 /// Flip the sticky idle-listen default on a config (the mutation
 /// `packet_set_listen` persists). Pure; the command wraps read → mutate → write.
 pub fn apply_listen_default(cfg: &mut config::Config, enabled: bool) {
@@ -1279,6 +1298,71 @@ pub async fn packet_connect(
                 &log,
                 LogLevel::Error,
                 format!("Packet connect failed: {e}"),
+            );
+            Err(e.into())
+        }
+    }
+}
+
+/// Arm the station to answer an inbound packet call (Listen role). Builds the
+/// Listen `TransportConfig` from config and drives `backend.connect`, which
+/// blocks in `ax25::answer` polling the link until a SABM arrives (then replies
+/// UA and runs the exchange) or the operator aborts (via `cms_abort`, which
+/// shuts the link → `answer()` unwinds → `Cancelled`).
+///
+/// RADIO-1: arming Listen means the station auto-answers an inbound call — which
+/// TRANSMITS a UA under the operator's callsign. The agent NEVER runs this
+/// command against a real link; the operator runs it on real hardware.
+#[tauri::command]
+pub async fn packet_listen(
+    app: AppHandle,
+    state: State<'_, BackendState>,
+    log: State<'_, std::sync::Arc<SessionLogState>>,
+) -> Result<(), UiError> {
+    let backend = state
+        .current()
+        .ok_or_else(|| UiError::NotConfigured("backend offline".into()))?;
+    let cfg =
+        config::read_config().map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    let transport = packet_listen_transport_from_config(&cfg)?;
+    // Effective call = <callsign>-<ssid> (the SSID'd link address we answer on).
+    let effective = cfg
+        .identity
+        .callsign
+        .as_deref()
+        .map(|c| format!("{}-{}", c.trim().to_uppercase(), cfg.packet.ssid))
+        .unwrap_or_else(|| format!("(no callsign)-{}", cfg.packet.ssid));
+    emit_session_line(
+        &app,
+        &log,
+        LogLevel::Info,
+        format!("Listening for an incoming packet call as {effective}…"),
+    );
+    match backend.connect(transport).await {
+        Ok(_session) => {
+            emit_session_line(
+                &app,
+                &log,
+                LogLevel::Info,
+                "Answered an incoming call; packet exchange complete.".into(),
+            );
+            Ok(())
+        }
+        Err(BackendError::Cancelled) => {
+            emit_session_line(
+                &app,
+                &log,
+                LogLevel::Warn,
+                "Stopped listening.".into(),
+            );
+            Err(BackendError::Cancelled.into())
+        }
+        Err(e) => {
+            emit_session_line(
+                &app,
+                &log,
+                LogLevel::Error,
+                format!("Packet listen failed: {e}"),
             );
             Err(e.into())
         }
@@ -1909,5 +1993,26 @@ mod tests {
         assert!(!cfg.packet.listen_default);
         apply_listen_default(&mut cfg, true);
         assert!(cfg.packet.listen_default);
+    }
+
+    #[test]
+    fn packet_listen_transport_from_config_builds_listen_role_with_ssid() {
+        let mut cfg = config_with_packet_link();
+        cfg.packet.ssid = 7;
+        let tc = packet_listen_transport_from_config(&cfg).unwrap();
+        match tc {
+            TransportConfig::Packet { ssid, role, .. } => {
+                assert_eq!(ssid, 7);
+                assert_eq!(role, crate::winlink_backend::PacketRole::Listen);
+            }
+            _ => panic!("expected a Packet transport"),
+        }
+    }
+
+    #[test]
+    fn packet_listen_transport_from_config_with_no_link_is_not_configured() {
+        let cfg = config_with_packet_defaults();
+        let err = packet_listen_transport_from_config(&cfg).unwrap_err();
+        assert!(matches!(err, UiError::NotConfigured(_)));
     }
 }

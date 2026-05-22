@@ -164,6 +164,7 @@ pub fn run() {
             crate::ui_commands::packet_config_get,    // tuxlink-7fr (packet config read)
             crate::ui_commands::packet_config_set,    // tuxlink-7fr (packet config write)
             crate::ui_commands::packet_connect,       // tuxlink-7fr (packet dial)
+            crate::ui_commands::packet_listen,        // tuxlink-7fr (arm Listen — answer inbound)
             crate::ui_commands::packet_set_listen,    // tuxlink-7fr (sticky listen)
             crate::ui_commands::packet_list_serial_devices, // tuxlink-7fr (USB/BT device picker)
         ])

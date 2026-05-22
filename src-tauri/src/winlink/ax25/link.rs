@@ -62,6 +62,30 @@ pub fn connect_link(cfg: &KissLinkConfig) -> std::io::Result<Box<dyn ByteLink>> 
     }
 }
 
+/// Like `connect_link`, but also returns a handle the orchestration layer can use
+/// to abort a blocked connect/answer by closing the link. TCP yields a try_clone'd
+/// `TcpStream` (caller shuts it down → reads return 0 → the state machine errors out).
+/// Serial yields `None` (clean serial abort is a follow-up).
+pub fn connect_link_with_abort(
+    cfg: &KissLinkConfig,
+) -> std::io::Result<(Box<dyn ByteLink>, Option<std::net::TcpStream>)> {
+    match cfg {
+        KissLinkConfig::Tcp { host, port } => {
+            let stream = TcpStream::connect((host.as_str(), *port))?;
+            stream.set_read_timeout(Some(LINK_POLL_TIMEOUT)).ok();
+            stream.set_write_timeout(Some(LINK_WRITE_TIMEOUT)).ok();
+            // Clone the handle for the abort path: a `shutdown()` on the clone makes the
+            // boxed original's `read` return 0 (FIN), which `recv_frame` now maps to
+            // ConnectionAborted, unwinding a blocked answer()/connect() poll loop.
+            let abort = stream.try_clone()?;
+            Ok((Box::new(stream), Some(abort)))
+        }
+        // Serial has no try_clone equivalent; a clean serial abort is a follow-up
+        // (the operator can power-cycle/disconnect the TNC in the meantime).
+        KissLinkConfig::Serial { .. } => Ok((connect_serial(cfg)?, None)),
+    }
+}
+
 #[cfg(test)]
 mod link_serial_tests {
     use super::*;
@@ -143,5 +167,75 @@ mod link_tcp_tests {
         drop(listener); // nothing listening ⇒ connection refused
         let cfg = KissLinkConfig::Tcp { host: addr.ip().to_string(), port: addr.port() };
         assert!(connect_link(&cfg).is_err());
+    }
+
+    #[test]
+    fn connect_link_with_abort_yields_a_tcp_abort_handle_that_closes_the_link() {
+        // A loopback KISS modem stand-in that holds the connection open until the
+        // client side is shut down (no RF, 127.0.0.1 only).
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = thread::spawn(move || {
+            let (mut sock, _) = listener.accept().unwrap();
+            // Block until the peer's FIN arrives, then return.
+            let mut sink = Vec::new();
+            let _ = sock.read_to_end(&mut sink);
+        });
+
+        let cfg = KissLinkConfig::Tcp { host: addr.ip().to_string(), port: addr.port() };
+        let (mut link, abort) = connect_link_with_abort(&cfg).unwrap();
+        // TCP must yield Some(_) abort handle.
+        let abort = abort.expect("TCP arm must yield a Some(TcpStream) abort handle");
+
+        // Shutting the returned clone makes the boxed original's read return 0 (FIN).
+        // Use a longer read timeout on the original so the post-shutdown read returns 0
+        // (FIN) rather than the short poll-timeout TimedOut.
+        link.write_all(&[0xC0]).unwrap(); // ensure the link is live before aborting
+        abort.shutdown(std::net::Shutdown::Both).unwrap();
+        // Read until we observe a 0-byte read (the FIN), tolerating any interim
+        // timeouts from the short LINK_POLL_TIMEOUT.
+        let mut buf = [0u8; 8];
+        let mut saw_zero = false;
+        for _ in 0..50 {
+            match link.read(&mut buf) {
+                Ok(0) => {
+                    saw_zero = true;
+                    break;
+                }
+                Ok(_) => continue,
+                Err(e)
+                    if matches!(
+                        e.kind(),
+                        std::io::ErrorKind::WouldBlock
+                            | std::io::ErrorKind::TimedOut
+                            | std::io::ErrorKind::NotConnected
+                            | std::io::ErrorKind::BrokenPipe
+                    ) =>
+                {
+                    continue
+                }
+                Err(e) => panic!("unexpected read error after shutdown: {e:?}"),
+            }
+        }
+        assert!(saw_zero, "expected the shut-down clone to make the original read return 0 (FIN)");
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn connect_link_with_abort_serial_open_errors_cleanly() {
+        // Serial arm: a missing device path still errors cleanly (no None panic).
+        // (When it DOES open, the abort handle is None — a clean serial abort is a
+        // follow-up; here we only assert the open-error path matches connect_link.)
+        let cfg = KissLinkConfig::Serial {
+            device: "/dev/tuxlink-no-such-device".into(),
+            baud: 9600,
+        };
+        let err = connect_link_with_abort(&cfg)
+            .err()
+            .expect("expected a clean open error, got Ok");
+        assert!(
+            matches!(err.kind(), std::io::ErrorKind::NotFound | std::io::ErrorKind::Other),
+            "expected a clean open error, got {err:?}"
+        );
     }
 }
