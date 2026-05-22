@@ -179,3 +179,102 @@ mod control_tests {
         }
     }
 }
+
+// ── Address Path ──────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Path {
+    pub dest: Address,
+    pub src: Address,
+    pub digis: Vec<Address>, // 0..=2
+}
+
+impl Path {
+    pub fn encode(&self) -> Result<Vec<u8>, FrameError> {
+        if self.digis.len() > 2 {
+            return Err(FrameError::BadAddressLength);
+        }
+        let mut out = Vec::with_capacity(7 * (2 + self.digis.len()));
+        // dest (cr=true for a command frame; refined in P2), src, digis.
+        out.extend_from_slice(&self.dest.encode(true, false));
+        let src_last = self.digis.is_empty();
+        out.extend_from_slice(&self.src.encode(false, src_last));
+        for (i, d) in self.digis.iter().enumerate() {
+            let last = i == self.digis.len() - 1;
+            out.extend_from_slice(&d.encode(false, last)); // H bit (cr) = 0 on TX
+        }
+        Ok(out)
+    }
+    /// Decode the address path, returning the path and the number of bytes consumed.
+    pub fn decode(bytes: &[u8]) -> Result<(Path, usize), FrameError> {
+        let mut addrs = Vec::new();
+        let mut off = 0;
+        loop {
+            if bytes.len() < off + 7 {
+                return Err(FrameError::Truncated);
+            }
+            let (a, _cr, last) = Address::decode(&bytes[off..off + 7])?;
+            addrs.push(a);
+            off += 7;
+            if last {
+                break;
+            }
+            if addrs.len() >= 4 {
+                // dest + src + 2 digis max
+                return Err(FrameError::BadAddressLength);
+            }
+        }
+        if addrs.len() < 2 {
+            return Err(FrameError::BadAddressLength);
+        }
+        let dest = addrs.remove(0);
+        let src = addrs.remove(0);
+        Ok((Path { dest, src, digis: addrs }, off))
+    }
+}
+
+#[cfg(test)]
+mod path_tests {
+    use super::*;
+    #[test]
+    fn encodes_direct_path_sets_last_bit_on_src() {
+        let p = Path {
+            dest: Address { call: "W7AUX".into(), ssid: 10 },
+            src: Address { call: "N7CPZ".into(), ssid: 7 },
+            digis: vec![],
+        };
+        let bytes = p.encode().unwrap();
+        assert_eq!(bytes.len(), 14); // 2 addresses * 7
+        assert_eq!(bytes[6] & 0x01, 0x00, "dest is not last");
+        assert_eq!(bytes[13] & 0x01, 0x01, "src is last (direct)");
+    }
+    #[test]
+    fn encodes_one_digi_last_bit_moves_to_digi() {
+        let p = Path {
+            dest: Address { call: "W7AUX".into(), ssid: 10 },
+            src: Address { call: "N7CPZ".into(), ssid: 7 },
+            digis: vec![Address { call: "W7RPT".into(), ssid: 1 }],
+        };
+        let bytes = p.encode().unwrap();
+        assert_eq!(bytes.len(), 21);
+        assert_eq!(bytes[13] & 0x01, 0x00, "src not last when a digi follows");
+        assert_eq!(bytes[20] & 0x01, 0x01, "digi is last");
+        // round-trip
+        let (decoded, used) = Path::decode(&bytes).unwrap();
+        assert_eq!(decoded, p);
+        assert_eq!(used, 21);
+    }
+    #[test]
+    fn rejects_more_than_two_digis() {
+        let p = Path {
+            dest: Address { call: "A".into(), ssid: 0 },
+            src: Address { call: "B".into(), ssid: 0 },
+            digis: vec![
+                Address { call: "C".into(), ssid: 0 },
+                Address { call: "D".into(), ssid: 0 },
+                Address { call: "E".into(), ssid: 0 },
+            ],
+        };
+        assert!(p.encode().is_err());
+    }
+}
