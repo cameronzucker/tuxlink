@@ -26,6 +26,7 @@ function makeData(overrides: Partial<StatusBarData> = {}): StatusBarData {
     gridTooltip: null,
     state: { label: 'Idle', tone: 'idle' as StatusTone },
     connection: 'Idle · CMS-SSL',
+    position_source: 'Gps',
     ...overrides,
   };
 }

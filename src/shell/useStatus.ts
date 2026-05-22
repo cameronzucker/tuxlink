@@ -28,6 +28,9 @@ export type GpsState = 'Off' | 'LocalUiOnly' | 'BroadcastAtPrecision';
 
 export type PositionPrecision = 'FourCharGrid' | 'SixCharGrid';
 
+/** Mirrors PositionSource from config.rs (tuxlink-686). Default `Gps`. */
+export type PositionSource = 'Manual' | 'Gps';
+
 /** Mirrors the Rust ConfigViewDto returned by the config_read command. */
 export interface ConfigViewDto {
   connect_to_cms: boolean;
@@ -41,6 +44,20 @@ export interface ConfigViewDto {
   grid: string | null;
   gps_state: GpsState;
   position_precision: PositionPrecision;
+  /** Active position source (tuxlink-686): `Gps` (default) or `Manual` when
+   * the operator has pinned a grid square. Task 8 renders a source chip. */
+  position_source: PositionSource;
+}
+
+/** Mirrors PositionStatusDto from ui_commands.rs (tuxlink-686, Task 11 + Codex P1-B).
+ * Live arbiter state — NOT config. Polled at 2s by useStatusData.
+ * `broadcast_grid` is the effective on-air locator (honoring gps_state) — the
+ * ribbon shows this so it always matches what is/would be transmitted. Empty
+ * string means no grid is available. */
+export interface PositionStatusDto {
+  gps_ready: boolean;
+  /** Effective on-air locator (honoring gps_state + precision). Empty = no grid. */
+  broadcast_grid: string;
 }
 
 /**
@@ -229,6 +246,14 @@ export interface StatusBarData {
    * rather than a hardcoded suffix.
    */
   connection: string;
+  /** Active position source (tuxlink-686). Task 8 renders a source chip from this. */
+  position_source: PositionSource;
+  /**
+   * Whether a usable GPS fix is currently available (tuxlink-686, Task 11).
+   * Optional — Task 11 populates it; until then it is `undefined` which the
+   * GridEdit consumer treats as `false` (GPS-ready affordance stays hidden).
+   */
+  gpsReady?: boolean;
 }
 
 /**
@@ -241,6 +266,7 @@ export interface StatusBarData {
 export function useStatusData(): StatusBarData {
   const [config, setConfig] = useState<ConfigViewDto | null>(null);
   const [status, setStatus] = useState<StatusDto | null>(null);
+  const [positionStatus, setPositionStatus] = useState<PositionStatusDto | null>(null);
 
   useEffect(() => {
     if (DEV_FIXTURE) return; // dev fixture supplies fixed config; don't poll
@@ -282,6 +308,29 @@ export function useStatusData(): StatusBarData {
     };
   }, []);
 
+  // tuxlink-686 Task 11: poll position_status (live arbiter, NOT config) at 2s.
+  // Populates gpsReady for the ribbon's "GPS ready — tap to switch" affordance.
+  // Degrades gracefully on error (catch → leave null → gpsReady: false).
+  useEffect(() => {
+    if (DEV_FIXTURE) return;
+    let mounted = true;
+    const load = () => {
+      invoke<PositionStatusDto>('position_status')
+        .then((ps) => {
+          if (mounted) setPositionStatus(ps);
+        })
+        .catch(() => {
+          // gpsd error/blip: keep the last known value (don't clear — avoids flashing the affordance off on a single missed poll)
+        });
+    };
+    load();
+    const id = setInterval(load, 2000);
+    return () => {
+      mounted = false;
+      clearInterval(id);
+    };
+  }, []);
+
   // Dev fixture: report the mock's fixed station (W4PHS · EM75xx · Idle) so the
   // status bar + window title reproduce the mock instead of the live config.
   if (DEV_FIXTURE) {
@@ -291,6 +340,8 @@ export function useStatusData(): StatusBarData {
       gridTooltip: null,
       state: { label: 'Idle', tone: 'idle' },
       connection: 'Idle · CMS-SSL',
+      position_source: 'Gps',
+      gpsReady: false,
     };
   }
 
@@ -311,12 +362,24 @@ export function useStatusData(): StatusBarData {
   // informative (it will be correct once the first poll completes).
   const configTransport: CmsTransport = config?.transport ?? 'CmsSsl';
 
+  // Codex P1-B: source the ribbon's grid from the LIVE position_status
+  // broadcast_grid (the effective on-air locator, honoring gps_state). Falls
+  // back to the config-derived grid when position_status has not yet loaded or
+  // returns an empty string (pre-wizard, gpsd unavailable, etc.). This ensures
+  // the ribbon always shows exactly what is/would be transmitted.
+  const liveGrid = positionStatus?.broadcast_grid
+    ? positionStatus.broadcast_grid
+    : null;
+  const ribbonGrid = liveGrid ?? gridResult.broadcast;
+
   return {
     callsign,
-    grid: gridResult.broadcast,
+    grid: ribbonGrid,
     gridTooltip: gridResult.tooltip,
     state: formatStatusState(status),
     connection: formatConnectionState(status, configTransport),
+    position_source: config?.position_source ?? 'Gps',
+    gpsReady: positionStatus?.gps_ready ?? false,
   };
 }
 

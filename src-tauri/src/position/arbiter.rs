@@ -27,6 +27,20 @@ struct Inner {
     precision: PositionPrecision,
 }
 
+impl Inner {
+    /// Active full-precision grid from already-locked state (Manual → manual_grid;
+    /// Gps → fresh fix, else fall back to manual_grid so the ribbon never blanks).
+    fn active_grid(&self) -> Option<String> {
+        match self.source {
+            PositionSource::Manual => self.manual_grid.clone(),
+            PositionSource::Gps => match &self.last_fix {
+                Some(f) if f.is_fresh(FIX_STALENESS) => Some(f.grid.clone()),
+                _ => self.manual_grid.clone(),
+            },
+        }
+    }
+}
+
 impl PositionArbiter {
     pub fn new(source: PositionSource, manual_grid: Option<String>, precision: PositionPrecision) -> Self {
         Self { inner: Mutex::new(Inner { source, manual_grid, last_fix: None, precision }) }
@@ -57,20 +71,16 @@ impl PositionArbiter {
     /// The active grid at full precision (Manual -> manual_grid; Gps -> fresh fix, else
     /// fall back to manual_grid so the ribbon never goes blank).
     pub fn active_grid(&self) -> Option<String> {
-        let i = self.inner.lock().unwrap();
-        match i.source {
-            PositionSource::Manual => i.manual_grid.clone(),
-            PositionSource::Gps => match &i.last_fix {
-                Some(f) if f.is_fresh(FIX_STALENESS) => Some(f.grid.clone()),
-                _ => i.manual_grid.clone(),
-            },
-        }
+        self.inner.lock().unwrap().active_grid()
     }
 
     /// The active grid reduced to broadcast precision — the ONLY value that goes on air.
+    /// Reads both the active grid and the precision under a single lock to close the
+    /// TOCTOU window on the privacy boundary.
     pub fn broadcast_grid(&self) -> Option<String> {
-        let precision = self.inner.lock().unwrap().precision;
-        self.active_grid().map(|g| broadcast_grid(&g, precision))
+        let i = self.inner.lock().unwrap();
+        let precision = i.precision;
+        i.active_grid().map(|g| broadcast_grid(&g, precision))
     }
 
     pub fn has_fresh_fix(&self) -> bool {

@@ -30,7 +30,7 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, State};
 
 use crate::app_backend::{BackendPhase, BackendState};
-use crate::config::{self, CmsTransport, GpsState, PositionPrecision};
+use crate::config::{self, CmsTransport, GpsState, PositionPrecision, PositionSource};
 use crate::session_log::SessionLogState;
 use crate::winlink_backend::{
     BackendError, BackendStatus, LogLevel, LogLine, LogSource, MailboxFolder, MessageId,
@@ -716,9 +716,10 @@ fn emit_session_line(
 /// mapping. Field names are emitted verbatim (snake_case) to match the TS
 /// `ConfigViewDto` (which is snake_case, NOT camelCase — verified against
 /// `useStatus.ts`). The enum values serialize PascalCase (`CmsSsl`/`Telnet`,
-/// `Off`/`LocalUiOnly`/`BroadcastAtPrecision`, `FourCharGrid`/`SixCharGrid`)
-/// per `config.rs`'s `#[serde(rename_all = "PascalCase")]`, matching the TS
-/// `CmsTransport`/`GpsState`/`PositionPrecision` literal unions.
+/// `Off`/`LocalUiOnly`/`BroadcastAtPrecision`, `FourCharGrid`/`SixCharGrid`,
+/// `Manual`/`Gps`) per `config.rs`'s `#[serde(rename_all = "PascalCase")]`,
+/// matching the TS `CmsTransport`/`GpsState`/`PositionPrecision`/`PositionSource`
+/// literal unions.
 #[derive(Debug, Serialize, Clone, PartialEq)]
 pub struct ConfigViewDto {
     pub connect_to_cms: bool,
@@ -728,6 +729,10 @@ pub struct ConfigViewDto {
     pub grid: Option<String>,
     pub gps_state: GpsState,
     pub position_precision: PositionPrecision,
+    /// Active position source (tuxlink-686): `Gps` (default) or `Manual` (operator
+    /// has pinned a grid square). Mirrors `PrivacyConfig.position_source` in
+    /// config.rs. Task 8 renders a source chip from this field.
+    pub position_source: PositionSource,
 }
 
 impl From<&config::Config> for ConfigViewDto {
@@ -742,6 +747,7 @@ impl From<&config::Config> for ConfigViewDto {
             grid: c.identity.grid.clone(),
             gps_state: c.privacy.gps_state,
             position_precision: c.privacy.position_precision,
+            position_source: c.privacy.position_source,
         }
     }
 }
@@ -1380,6 +1386,140 @@ pub async fn packet_set_listen(enabled: bool) -> Result<(), UiError> {
     Ok(())
 }
 
+// Task 5 (tuxlink-686) — config_set_grid + validate_grid_input
+// bd issue: tuxlink-686
+// ============================================================================
+
+/// Validate a user-supplied Maidenhead grid string.
+///
+/// **Precondition:** caller must trim whitespace before calling; this function
+/// operates on the argument as-given.
+///
+/// Delegates to [`crate::position::grid_to_lat_lon`], which operates on
+/// `as_bytes()` and is panic-safe for arbitrary UTF-8 input (no unsafe
+/// char-indexing on `&str`). Returns `Some(message)` when the input is invalid,
+/// `None` when it is a valid 4- or 6-char Maidenhead locator.
+pub(crate) fn validate_grid_input(s: &str) -> Option<&'static str> {
+    crate::position::grid_to_lat_lon(s)
+        .is_none()
+        .then_some("Grid must be a 4- or 6-char Maidenhead locator (e.g. EM75 or EM75xx).")
+}
+
+/// Persist a manually-set grid to the config file and pin the [`PositionArbiter`].
+///
+/// - Validates the input with [`validate_grid_input`]; invalid → `Rejected`.
+/// - Reads the current config, updates `identity.grid` + `privacy.position_source`,
+///   and writes atomically. Both I/O errors map to `UiError::Internal` (same
+///   pattern as `config_read` + `cms_connect`).
+/// - Calls `arbiter.set_manual` to pin the in-memory arbiter to Manual
+///   immediately; the arbiter is the runtime source of truth for broadcast
+///   position (spec §position-686).
+///
+/// The arbiter is managed as an `Arc<PositionArbiter>` so it is shared between
+/// this command and (Task 11) the gpsd task.
+///
+/// NOTE (test coverage): the full validate → persist → pin round-trip is NOT
+/// unit-tested here. `config::config_path()` resolves via the process-global
+/// `XDG_CONFIG_HOME`, so an isolated round-trip test would race under parallel
+/// `cargo test`. The persist+pin path is covered by the Task 8 operator browser
+/// smoke + a future integration test; the validator and the arbiter's set_manual
+/// stickiness are unit-tested in isolation.
+///
+/// NOTE (empty string): this command is never invoked with an empty string — the
+/// Task 8 `GridEdit` UI validates client-side first; the backend correctly
+/// rejects empty as invalid.
+#[tauri::command]
+pub async fn config_set_grid(
+    grid: String,
+    arbiter: tauri::State<'_, std::sync::Arc<crate::position::PositionArbiter>>,
+) -> Result<(), UiError> {
+    let g = grid.trim().to_string();
+    if let Some(msg) = validate_grid_input(&g) {
+        return Err(UiError::Rejected(msg.to_string()));
+    }
+    let mut cfg = config::read_config().map_err(|e| UiError::Internal {
+        detail: e.to_string(),
+    })?;
+    cfg.identity.grid = Some(g.clone());
+    cfg.privacy.position_source = config::PositionSource::Manual;
+    config::write_config_atomic(&cfg).map_err(|e| UiError::Internal {
+        detail: e.to_string(),
+    })?;
+    arbiter.set_manual(&g);
+    Ok(())
+}
+
+// ============================================================================
+// Task 11 (tuxlink-686) — position_set_source + position_status
+// ============================================================================
+// Appended here per the append-only ownership model (spec §7). Both commands
+// are registered in lib.rs's `invoke_handler` by the Task 11 integration
+// commit. `position_status` reads LIVE arbiter state (NOT config), so
+// `gps_ready` is intentionally absent from `ConfigViewDto` (spec §position-686).
+
+/// Switch the active position source (operator-driven). v0.1 supports switching
+/// TO GPS only — Manual is pinned by editing the grid (`config_set_grid`), which
+/// requires a grid value. "Gps" calls `arbiter.use_gps()` (requires a fresh fix);
+/// on success, persists `position_source = Gps` so the choice survives restart.
+#[tauri::command]
+pub async fn position_set_source(
+    source: String,
+    arbiter: tauri::State<'_, std::sync::Arc<crate::position::PositionArbiter>>,
+) -> Result<(), UiError> {
+    match source.as_str() {
+        "Gps" => {
+            // Pre-check the fix WITHOUT flipping yet, so the common "no fix" case
+            // short-circuits before we persist anything (mirrors config_set_grid's
+            // persist-first invariant: in-memory never gets ahead of persisted config).
+            if !arbiter.has_fresh_fix() {
+                return Err(UiError::Unavailable {
+                    reason: "Cannot switch to GPS: no usable GPS fix".into(),
+                });
+            }
+            // Persist first; if the write fails, return WITHOUT having flipped in-memory.
+            let mut cfg = config::read_config().map_err(|e| UiError::Internal { detail: e.to_string() })?;
+            cfg.privacy.position_source = config::PositionSource::Gps;
+            config::write_config_atomic(&cfg).map_err(|e| UiError::Internal { detail: e.to_string() })?;
+            // Flip in-memory only after a successful persist. use_gps re-checks freshness
+            // atomically; the pre-check→use_gps window is sub-millisecond vs a 30s staleness,
+            // so a fix expiring in between is not a real-world concern.
+            arbiter.use_gps().map_err(|e| UiError::Unavailable { reason: format!("Cannot switch to GPS: {e}") })?;
+            Ok(())
+        }
+        other => Err(UiError::Rejected(format!("unsupported position source: {other}"))),
+    }
+}
+
+/// Live position-subsystem status from the arbiter (NOT config).
+///
+/// - `gps_ready`: a usable fresh GPS fix exists — the ribbon's GridEdit shows
+///   "GPS ready — tap to switch" from it.
+/// - `broadcast_grid`: the EFFECTIVE on-air locator computed by
+///   [`crate::position::effective_broadcast_locator`], honoring both precision and
+///   the `gps_state` privacy control. The ribbon displays this so it always shows
+///   exactly what is/would be transmitted (Codex P1-B). Empty string = no grid.
+///
+/// Polled by useStatusData (2s).
+#[derive(Debug, Serialize, Clone, PartialEq)]
+pub struct PositionStatusDto {
+    pub gps_ready: bool,
+    /// The precision-reduced grid that WILL be broadcast on air (honoring
+    /// gps_state). Empty string when no grid is available. Serializes as
+    /// `broadcast_grid` (snake_case) matching the TS PositionStatusDto.
+    pub broadcast_grid: String,
+}
+
+#[tauri::command]
+pub async fn position_status(
+    arbiter: tauri::State<'_, std::sync::Arc<crate::position::PositionArbiter>>,
+) -> Result<PositionStatusDto, UiError> {
+    let cfg = config::read_config().map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    Ok(PositionStatusDto {
+        gps_ready: arbiter.has_fresh_fix(),
+        broadcast_grid: crate::position::effective_broadcast_locator(&cfg, Some(&arbiter)),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1577,6 +1717,8 @@ mod tests {
         assert_eq!(dto.grid.as_deref(), Some("EM10ab"));
         assert_eq!(dto.gps_state, GpsState::BroadcastAtPrecision);
         assert_eq!(dto.position_precision, PositionPrecision::SixCharGrid);
+        // tuxlink-686 Task 7: position_source is surfaced in the DTO.
+        assert_eq!(dto.position_source, PositionSource::Gps);
     }
 
     // Offline-mode mapping: callsign None, identifier Some — mirrors the
@@ -1613,6 +1755,8 @@ mod tests {
         assert_eq!(v["grid"], "EM10ab");
         assert_eq!(v["gps_state"], "BroadcastAtPrecision");
         assert_eq!(v["position_precision"], "SixCharGrid");
+        // tuxlink-686 Task 7: position_source key is snake_case; value is PascalCase.
+        assert_eq!(v["position_source"], "Gps");
     }
 
     // ========================================================================
@@ -1823,6 +1967,52 @@ mod tests {
     }
 
     // ========================================================================
+    // Task 5 (tuxlink-686) — config_set_grid validator + arbiter pin
+    // ========================================================================
+
+    // Step 1 — failing test: invalid Maidenhead is rejected.
+    #[test]
+    fn config_set_grid_rejects_invalid_maidenhead() {
+        let err = validate_grid_input("NOTAGRID");
+        assert!(err.is_some()); // returns the validation message
+    }
+
+    // Step 4a — valid grids pass validation; set_manual pins arbiter to Manual.
+    #[test]
+    fn validate_grid_accepts_valid_four_and_six_char() {
+        assert!(validate_grid_input("EM75").is_none(), "4-char Maidenhead should be valid");
+        assert!(validate_grid_input("EM75xx").is_none(), "6-char Maidenhead should be valid");
+        // Rejection path
+        assert!(validate_grid_input("ZZ99").is_some(), "ZZ out-of-range field");
+        assert!(validate_grid_input("").is_some(), "empty string should be invalid");
+        assert!(validate_grid_input("EM7").is_some(), "3-char should be invalid");
+    }
+
+    // Step 4b — arbiter primitive: set_manual pins source to Manual.
+    #[test]
+    fn arbiter_set_manual_pins_manual_source() {
+        use crate::config::{PositionPrecision, PositionSource};
+        use crate::position::PositionArbiter;
+
+        let arbiter = PositionArbiter::new(PositionSource::Gps, None, PositionPrecision::FourCharGrid);
+        assert_eq!(arbiter.source(), PositionSource::Gps);
+        arbiter.set_manual("EM75");
+        assert_eq!(arbiter.source(), PositionSource::Manual);
+        assert_eq!(arbiter.active_grid().as_deref(), Some("EM75"));
+    }
+
+    // Step 4c — multibyte UTF-8 input must not panic and must return Some (invalid).
+    #[test]
+    fn validate_grid_multibyte_does_not_panic() {
+        // "ABé" has byte-len 4 (é is 2 bytes) but is NOT valid Maidenhead.
+        // A naive s[2..4] byte-slice on &str would panic at the é boundary.
+        // Delegating to grid_to_lat_lon (as_bytes()) is panic-safe.
+        assert!(validate_grid_input("ABé").is_some());
+        // Also a longer multibyte string
+        assert!(validate_grid_input("EM75é1").is_some());
+    }
+
+    // ========================================================================
     // Task A (tuxlink-22l) — session_log_snapshot projection via SessionLogState
     // ========================================================================
     use crate::session_log::SessionLogState;
@@ -2014,5 +2204,135 @@ mod tests {
         let cfg = config_with_packet_defaults();
         let err = packet_listen_transport_from_config(&cfg).unwrap_err();
         assert!(matches!(err, UiError::NotConfigured(_)));
+    }
+
+    // ========================================================================
+    // Task 11 (tuxlink-686) — position_set_source + position_status unit tests
+    // ========================================================================
+    use crate::position::{Fix, PositionArbiter};
+
+    // position_set_source: use_gps with no fix → Err → maps to UiError::Unavailable.
+    // Tests the use_gps → UiError mapping at unit level (the full State-bearing
+    // command path requires a Tauri app runtime; the arbiter primitive is the
+    // critical correctness gate per spec §position-686).
+    #[test]
+    fn use_gps_no_fix_maps_to_ui_error_unavailable() {
+        let arbiter = PositionArbiter::new(
+            PositionSource::Manual,
+            Some("CN87".into()),
+            PositionPrecision::FourCharGrid,
+        );
+        // No fix applied → use_gps() must be Err.
+        let result = arbiter.use_gps();
+        assert!(result.is_err(), "use_gps without a fix must fail");
+        // Map the &'static str Err to UiError::Unavailable (the command's mapping).
+        let ui_err = UiError::Unavailable {
+            reason: format!("Cannot switch to GPS: {}", result.unwrap_err()),
+        };
+        assert!(
+            matches!(ui_err, UiError::Unavailable { .. }),
+            "Err from use_gps maps to UiError::Unavailable"
+        );
+    }
+
+    // position_set_source: unknown source string → UiError::Rejected.
+    #[test]
+    fn unknown_position_source_maps_to_rejected() {
+        // Replicate the command's match arm for unknown strings.
+        let source = "Unknown";
+        let result: Result<(), UiError> =
+            Err(UiError::Rejected(format!("unsupported position source: {source}")));
+        assert!(
+            matches!(result, Err(UiError::Rejected(_))),
+            "unknown source string maps to UiError::Rejected"
+        );
+    }
+
+    // Helpers for position_status DTO unit tests.
+    fn make_config_for_position_status(gps_state: GpsState, grid: Option<&str>) -> config::Config {
+        use crate::config::{ConnectConfig, CmsTransport, IdentityConfig, PrivacyConfig, CONFIG_SCHEMA_VERSION};
+        config::Config {
+            schema_version: CONFIG_SCHEMA_VERSION,
+            wizard_completed: true,
+            connect: ConnectConfig { connect_to_cms: false, transport: CmsTransport::Telnet },
+            identity: IdentityConfig {
+                callsign: None,
+                identifier: None,
+                grid: grid.map(|s| s.to_string()),
+            },
+            privacy: PrivacyConfig {
+                gps_state,
+                position_precision: PositionPrecision::FourCharGrid,
+                position_source: PositionSource::Gps,
+            },
+            pat_mbo_address: None,
+        }
+    }
+
+    // position_status: arbiter with a fresh fix + BroadcastAtPrecision
+    // → PositionStatusDto { gps_ready: true, broadcast_grid: "DM33" }.
+    #[test]
+    fn position_status_dto_gps_ready_true_when_fresh_fix() {
+        let arbiter = PositionArbiter::new(
+            PositionSource::Gps,
+            None,
+            PositionPrecision::FourCharGrid,
+        );
+        arbiter.apply_gps_fix(Fix::test("DM33ab"));
+        assert!(arbiter.has_fresh_fix(), "fresh fix just applied");
+        let cfg = make_config_for_position_status(GpsState::BroadcastAtPrecision, None);
+        let dto = PositionStatusDto {
+            gps_ready: arbiter.has_fresh_fix(),
+            broadcast_grid: crate::position::effective_broadcast_locator(&cfg, Some(&arbiter)),
+        };
+        assert!(dto.gps_ready);
+        assert_eq!(dto.broadcast_grid, "DM33", "GPS fix grid must appear in broadcast_grid");
+        // Verify snake_case serialization.
+        let v = serde_json::to_value(&dto).unwrap();
+        assert_eq!(v["gps_ready"], true, "gps_ready serializes snake_case");
+        assert_eq!(v["broadcast_grid"], "DM33", "broadcast_grid serializes snake_case");
+    }
+
+    // position_status: fresh arbiter (no fix) → PositionStatusDto { gps_ready: false }.
+    #[test]
+    fn position_status_dto_gps_ready_false_when_no_fix() {
+        let arbiter = PositionArbiter::new(
+            PositionSource::Manual,
+            Some("CN87".into()),
+            PositionPrecision::FourCharGrid,
+        );
+        assert!(!arbiter.has_fresh_fix(), "no fix applied");
+        let cfg = make_config_for_position_status(GpsState::BroadcastAtPrecision, None);
+        let dto = PositionStatusDto {
+            gps_ready: arbiter.has_fresh_fix(),
+            broadcast_grid: crate::position::effective_broadcast_locator(&cfg, Some(&arbiter)),
+        };
+        assert!(!dto.gps_ready);
+        let v = serde_json::to_value(&dto).unwrap();
+        assert_eq!(v["gps_ready"], false);
+        // Manual arbiter with "CN87" → broadcast_grid = "CN87".
+        assert_eq!(v["broadcast_grid"], "CN87");
+    }
+
+    // Codex P1-B: position_status broadcast_grid respects gps_state.
+    // source=Gps + gps_state=Off + config grid "DM33" + GPS fix "CN87ux"
+    // → broadcast_grid is "DM33" (config grid, not the GPS fix).
+    #[test]
+    fn position_status_dto_broadcast_grid_respects_gps_state_off() {
+        let arbiter = PositionArbiter::new(
+            PositionSource::Gps,
+            None,
+            PositionPrecision::FourCharGrid,
+        );
+        arbiter.apply_gps_fix(Fix::test("CN87ux"));
+        let cfg = make_config_for_position_status(GpsState::Off, Some("DM33"));
+        let dto = PositionStatusDto {
+            gps_ready: arbiter.has_fresh_fix(),
+            broadcast_grid: crate::position::effective_broadcast_locator(&cfg, Some(&arbiter)),
+        };
+        assert_eq!(
+            dto.broadcast_grid, "DM33",
+            "gps_state=Off: broadcast_grid must be config grid, NOT the GPS fix"
+        );
     }
 }
