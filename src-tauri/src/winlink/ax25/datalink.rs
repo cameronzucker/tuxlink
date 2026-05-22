@@ -224,6 +224,86 @@ mod connect_tests {
     }
 }
 
+/// Await an inbound SABM addressed to `mycall`, reply UA, and surface the calling
+/// peer. Blocks (polling the link) until a SABM arrives. The caller (P3 listen
+/// lifecycle) governs when to arm this and how to abort it via the link shutdown
+/// hook. The reply UA echoes the SABM's source as the new path's dest.
+pub fn answer(
+    link: Box<dyn ByteLink>,
+    mycall: Address,
+    params: &Ax25Params,
+) -> std::io::Result<(Address, Ax25Stream)> {
+    let mut stream = Ax25Stream {
+        link,
+        decoder: KissDecoder::new(),
+        mycall: mycall.clone(),
+        peer: mycall.clone(), // placeholder until the SABM names the caller
+        digis: vec![],
+        params: params.clone(),
+        vs: 0,
+        vr: 0,
+        va: 0,
+        inbound: std::collections::VecDeque::new(),
+        unacked: std::collections::BTreeMap::new(),
+        closed: false,
+    };
+    loop {
+        if let Some(frame) = stream.recv_frame()? {
+            if let Control::Sabm { pf } = frame.control {
+                // The caller is the SABM's source.
+                let peer = frame.path.src.clone();
+                stream.peer = peer.clone();
+                let ua = Frame {
+                    path: Path { dest: peer.clone(), src: mycall.clone(), digis: vec![] },
+                    control: Control::Ua { pf },
+                    info: vec![],
+                };
+                stream.send_frame(&ua)?;
+                return Ok((peer, stream));
+            }
+            // Ignore non-SABM frames while listening.
+        }
+        std::thread::sleep(POLL_INTERVAL);
+    }
+}
+
+#[cfg(test)]
+mod answer_tests {
+    use super::test_peer::ScriptedPeer;
+    use super::*;
+
+    fn call(c: &str, ssid: u8) -> Address {
+        Address { call: c.into(), ssid }
+    }
+
+    #[test]
+    fn answer_replies_ua_to_an_inbound_sabm_and_names_the_peer() {
+        let peer = ScriptedPeer::new();
+        let mine = call("N7CPZ", 7);
+        let caller = call("W7AUX", 10);
+        // The peer dials us: a SABM addressed to N7CPZ-7 from W7AUX-10.
+        let sabm = Frame {
+            path: Path { dest: mine.clone(), src: caller.clone(), digis: vec![] },
+            control: Control::Sabm { pf: true },
+            info: vec![],
+        };
+        peer.feed(&kiss_data_frame(&sabm.encode().unwrap()));
+
+        let (got_peer, stream) =
+            answer(Box::new(peer.clone()), mine.clone(), &Ax25Params::default()).unwrap();
+        assert_eq!(got_peer, caller);
+        assert_eq!(stream.peer, caller);
+
+        // We replied a UA addressed back to the caller.
+        let tx = peer.drain_tx();
+        let frames = { let mut d = KissDecoder::new(); d.push(&tx) };
+        let ua = Frame::decode(frames.last().unwrap()).unwrap();
+        assert!(matches!(ua.control, Control::Ua { pf: true }));
+        assert_eq!(ua.path.dest, caller);
+        assert_eq!(ua.path.src, mine);
+    }
+}
+
 #[cfg(test)]
 mod test_peer {
     use std::io::{Read, Write};
