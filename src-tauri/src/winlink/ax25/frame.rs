@@ -278,3 +278,67 @@ mod path_tests {
         assert!(p.encode().is_err());
     }
 }
+
+// ── Full Frame ────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Frame {
+    pub path: Path,
+    pub control: Control,
+    pub info: Vec<u8>, // empty unless control.has_info()
+}
+
+/// PID for "no layer 3 protocol" — used for Winlink B2F payload over I-frames.
+pub const PID_NO_L3: u8 = 0xF0;
+
+impl Frame {
+    pub fn encode(&self) -> Result<Vec<u8>, FrameError> {
+        if !self.info.is_empty() && !self.control.has_info() {
+            return Err(FrameError::UnknownControl(self.control.encode()));
+        }
+        let mut out = self.path.encode()?;
+        out.push(self.control.encode());
+        if self.control.has_info() {
+            out.push(PID_NO_L3);
+            out.extend_from_slice(&self.info);
+        }
+        Ok(out)
+    }
+}
+
+#[cfg(test)]
+mod frame_encode_tests {
+    use super::*;
+    fn sample_path() -> Path {
+        Path {
+            dest: Address { call: "W7AUX".into(), ssid: 10 },
+            src: Address { call: "N7CPZ".into(), ssid: 7 },
+            digis: vec![],
+        }
+    }
+    #[test]
+    fn sabm_has_no_pid_or_info() {
+        let f = Frame { path: sample_path(), control: Control::Sabm { pf: true }, info: vec![] };
+        let bytes = f.encode().unwrap();
+        // 14 (path) + 1 (control) = 15, no PID, no info, no FCS.
+        assert_eq!(bytes.len(), 15);
+        assert_eq!(bytes[14], 0x3F); // SABM+P
+    }
+    #[test]
+    fn i_frame_carries_pid_then_info() {
+        let f = Frame {
+            path: sample_path(),
+            control: Control::I { ns: 0, nr: 0, pf: false },
+            info: b"HELLO".to_vec(),
+        };
+        let bytes = f.encode().unwrap();
+        assert_eq!(bytes.len(), 14 + 1 + 1 + 5);
+        assert_eq!(bytes[15], 0xF0); // PID no-layer-3
+        assert_eq!(&bytes[16..], b"HELLO");
+    }
+    #[test]
+    fn rejects_info_on_non_info_frame() {
+        let f = Frame { path: sample_path(), control: Control::Ua { pf: true }, info: b"x".to_vec() };
+        assert!(f.encode().is_err());
+    }
+}
