@@ -12,6 +12,9 @@ export interface MenuNode {
   accel?: string;
   separator?: boolean;
   submenu?: MenuNode[];
+  /** Not-yet-wired item: rendered disabled with a "v0.1" badge so it reads as
+   *  "coming" rather than broken (tuxlink-39b). Keeps its id in the vocabulary. */
+  disabled?: boolean;
 }
 
 export interface TopMenu {
@@ -57,18 +60,18 @@ export const MENU_TREE: TopMenu[] = [
     ] },
   ] },
   { label: 'Tools', items: [
-    { id: 'menu:tools:templates', label: 'Templates' },
-    { id: 'menu:tools:rig_control', label: 'Rig Control' },
+    // Not-yet-wired (v0.0.1): disabled + badged so they read as "coming", not broken.
+    { id: 'menu:tools:templates', label: 'Templates', disabled: true },
+    { id: 'menu:tools:rig_control', label: 'Rig Control', disabled: true },
     { separator: true },
     { label: 'Settings', submenu: [
-      { id: 'menu:tools:settings_connection', label: 'Connection' },
-      { label: 'Privacy', submenu: [
-        { id: 'menu:tools:settings_privacy_gps', label: 'GPS state' },
-        { id: 'menu:tools:settings_privacy_position', label: 'Position precision' },
-      ] },
-      { id: 'menu:tools:settings_gps', label: 'GPS' },
+      { id: 'menu:tools:settings_connection', label: 'Connection', disabled: true },
+      // tuxlink-39b: one entry opens the GPS/privacy settings panel (gps_state +
+      // position precision). The former granular leaves (GPS state / Position
+      // precision / a duplicate GPS) all opened the same box — consolidated.
+      { id: 'menu:tools:settings_privacy', label: 'GPS & Privacy…' },
     ] },
-    { id: 'menu:tools:preferences', label: 'Preferences' },
+    // "Preferences" removed — it duplicated "Settings" (operator call 2026-05-22).
   ] },
   { label: 'Help', items: [
     { id: 'menu:help:about', label: 'About Tuxlink' },

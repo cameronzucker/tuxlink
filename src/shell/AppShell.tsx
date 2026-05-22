@@ -26,6 +26,7 @@ import { DEV_SELECTED } from '../mailbox/devFixture';
 import { FolderSidebar } from '../mailbox/FolderSidebar';
 import type { ConnectionKey } from '../mailbox/FolderSidebar';
 import { DashboardRibbon } from './DashboardRibbon';
+import { SettingsPanel } from './SettingsPanel';
 import { StatusBar } from './StatusBar';
 import { useStatusData } from './useStatus';
 import { applyColorScheme, saveColorScheme } from './colorScheme';
@@ -66,6 +67,8 @@ export function AppShell() {
   // Mock B shows the session log + status bar by default; View → toggles them.
   const [showSessionLog, setShowSessionLog] = useState(true);
   const [showStatusBar, setShowStatusBar] = useState(true);
+  // Inline GPS/privacy settings overlay (tuxlink-39b), opened from Tools→Settings.
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   // Connection panel: null = no panel; 'packet' = reading-pane shows PacketConnectionPanel.
   const [selectedConnection, setSelectedConnection] = useState<ConnectionKey | null>(null);
@@ -145,6 +148,7 @@ export function AppShell() {
     toggleStatusBar: () => setShowStatusBar((s) => !s),
     selectFolder: (folder) => { setSelectedFolder(folder); setSelectedMessage(null); setSelectedConnection(null); },
     setScheme: (id) => { applyColorScheme(id); saveColorScheme(id); },
+    openSettings: () => setSettingsOpen(true),
     quit: () => { void invoke('app_quit'); },
   }), [onConnect, openMessage]);
 
@@ -226,6 +230,8 @@ export function AppShell() {
       {showSessionLog && <SessionLog />}
 
       <StatusBar show={showStatusBar} unread={counts.inbox ?? 0} state={statusData.state} packet={packetUi} />
+
+      <SettingsPanel open={settingsOpen} onClose={() => setSettingsOpen(false)} />
     </div>
   );
 }

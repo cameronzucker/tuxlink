@@ -51,11 +51,28 @@
   border-radius: 7px; padding: 5px; box-shadow: 0 14px 38px rgba(0,0,0,0.5); z-index: 100;
 }
 .tux-mi {
-  display: flex; align-items: center; gap: 14px; padding: 7px 10px;
+  display: flex; align-items: center; gap: 10px;
+  /* Fixed row height + zero vertical padding so EVERY item is the SAME height,
+   * regardless of its content (accelerator / chevron / v0.1 badge / nothing).
+   * Height was previously content-driven (padding + tallest child), so rows with
+   * trailing elements sat at slightly different heights than bare-label rows —
+   * the "random" per-option menu spacing across every menu (tuxlink-39b). */
+  min-height: 30px; padding: 0 10px;
   border-radius: 5px; cursor: default; white-space: nowrap; color: var(--text);
   background: none; border: none; width: 100%; text-align: left; font: inherit;
+  line-height: 1.2;
 }
 .tux-mi:hover, .tux-mi.tux-sub-open { background: var(--accent-soft); color: var(--accent-2); }
+/* Not-yet-wired items: greyed + non-interactive, with a "v0.1" badge so they read
+ * as "coming" rather than broken (tuxlink-39b). */
+.tux-mi.tux-disabled, .tux-mi:disabled { color: var(--text-faint); cursor: default; }
+.tux-mi.tux-disabled:hover { background: none; color: var(--text-faint); }
+.tux-mi .tux-v01 {
+  margin-left: auto; font-size: 10px; font-family: var(--mono);
+  color: var(--text-faint); background: var(--surface-2);
+  border: 1px solid var(--border-strong); border-radius: 3px;
+  padding: 0 5px; letter-spacing: 0.02em;
+}
 .tux-mi .tux-accel { margin-left: auto; color: var(--text-faint); font-size: 12px; font-family: var(--mono); }
 .tux-mi .tux-chev { margin-left: auto; color: var(--text-faint); }
 .tux-sep { height: 1px; background: var(--border); margin: 5px 6px; }

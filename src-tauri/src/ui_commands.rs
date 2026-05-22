@@ -1526,6 +1526,46 @@ pub async fn position_status(
     })
 }
 
+// ============================================================================
+// tuxlink-39b — config_set_privacy (GPS-state + precision control surface)
+// ============================================================================
+// Closes the gap found in the post-merge smoke of #113: gps_state +
+// position_precision were ENFORCED (effective_broadcast_locator) but had NO
+// setter — the Tools→Settings items were dead no-op stubs. This is the write
+// path the inline Settings panel calls.
+
+/// Persist the GPS privacy controls (state + broadcast precision) and sync the
+/// arbiter. Mirrors `config_set_grid`'s persist-before-mutate ordering:
+/// read → set both privacy fields → write atomically → sync the arbiter's
+/// broadcast precision.
+///
+/// `gps_state` lives only in config (the on-air gate `effective_broadcast_locator`
+/// reads it directly), so it just persists. `position_precision` lives in BOTH
+/// config (the config-fallback path) AND the arbiter (the GPS-broadcast path),
+/// so after persisting we call `arbiter.set_precision` to keep them consistent.
+///
+/// NOTE (test coverage): like `config_set_grid`, the full read→write round-trip
+/// is NOT unit-tested — `config::config_path()` resolves via the process-global
+/// `XDG_CONFIG_HOME`, so an isolated round-trip races under parallel `cargo test`.
+/// The novel logic (arbiter precision sync) IS unit-tested
+/// (`position::arbiter::tests::set_precision_changes_broadcast_reduction`); the
+/// persist path is identical to `config_set_grid`'s and is operator-smoke-covered.
+/// Both args are typed enums — any deserializable value is valid by construction,
+/// so no string validation is needed (unlike grids).
+#[tauri::command]
+pub async fn config_set_privacy(
+    gps_state: GpsState,
+    position_precision: PositionPrecision,
+    arbiter: tauri::State<'_, std::sync::Arc<crate::position::PositionArbiter>>,
+) -> Result<(), UiError> {
+    let mut cfg = config::read_config().map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    cfg.privacy.gps_state = gps_state;
+    cfg.privacy.position_precision = position_precision;
+    config::write_config_atomic(&cfg).map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    arbiter.set_precision(position_precision);
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -89,6 +89,7 @@ export function GridEdit({ grid, source, gpsReady, onCommit, onUseGps }: GridEdi
           className="dash-value dash-grid-input"
           data-testid="grid-input"
           aria-label="Grid locator"
+          placeholder="e.g. DM33xx"
           value={inputValue}
           autoFocus
           onChange={(e) => {
@@ -118,9 +119,13 @@ export function GridEdit({ grid, source, gpsReady, onCommit, onUseGps }: GridEdi
       >
         {grid ?? '—'}
       </button>
-      {/* Source chip */}
+      {/* Source chip. GPS gets a `locked` modifier when a fix is live so it
+          reads as ACTIVE (green) rather than greyed-out-as-if-disabled (tuxlink-39b). */}
       <span
-        className={`dash-source-chip ${source === 'Manual' ? 'manual' : 'gps'}`}
+        className={`dash-source-chip ${source === 'Manual' ? 'manual' : 'gps'}${
+          source === 'Gps' && gpsReady ? ' locked' : ''
+        }`}
+        data-testid="source-chip"
         aria-label={`Position source: ${source}`}
       >
         {source === 'Manual' ? 'MANUAL' : 'GPS'}
