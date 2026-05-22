@@ -7,6 +7,13 @@ pub struct Address {
     pub ssid: u8,     // 0–15
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub enum FrameError {
+    BadAddressLength,
+    Truncated,
+    UnknownControl(u8),
+}
+
 impl Address {
     /// Encode to the 7-byte AX.25 address field. `cr` sets bit7 (command/response
     /// or has-been-repeated); `last` sets bit0 (final address in the path).
@@ -19,6 +26,49 @@ impl Address {
         }
         out[6] = (if cr { 0x80 } else { 0 }) | 0x60 | ((self.ssid & 0x0F) << 1) | (if last { 1 } else { 0 });
         out
+    }
+
+    /// Decode a 7-byte address field. Returns (address, cr_bit, last_bit).
+    pub fn decode(bytes: &[u8]) -> Result<(Address, bool, bool), FrameError> {
+        if bytes.len() != 7 {
+            return Err(FrameError::BadAddressLength);
+        }
+        let mut call = String::with_capacity(6);
+        for &b in &bytes[0..6] {
+            let c = (b >> 1) as char;
+            call.push(c);
+        }
+        let call = call.trim_end().to_string();
+        let ssid_octet = bytes[6];
+        let ssid = (ssid_octet >> 1) & 0x0F;
+        let cr = ssid_octet & 0x80 != 0;
+        let last = ssid_octet & 0x01 != 0;
+        Ok((Address { call, ssid }, cr, last))
+    }
+}
+
+#[cfg(test)]
+mod address_decode_tests {
+    use super::*;
+    #[test]
+    fn round_trips_encode_decode() {
+        let a = Address { call: "N7CPZ".into(), ssid: 7 };
+        let bytes = a.encode(false, true);
+        let (decoded, cr, last) = Address::decode(&bytes).unwrap();
+        assert_eq!(decoded, a);
+        assert_eq!(cr, false);
+        assert_eq!(last, true);
+    }
+    #[test]
+    fn trims_trailing_spaces_from_call() {
+        let bytes = Address { call: "W1AW".into(), ssid: 0 }.encode(false, false);
+        let (d, _, last) = Address::decode(&bytes).unwrap();
+        assert_eq!(d.call, "W1AW"); // no trailing spaces
+        assert_eq!(last, false);
+    }
+    #[test]
+    fn rejects_wrong_length() {
+        assert!(Address::decode(&[0u8; 6]).is_err());
     }
 }
 
