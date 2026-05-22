@@ -14,7 +14,9 @@
  * rendered widgets are NOT tested here — the M2 operator smoke is the runtime gate.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import { renderHook, act } from '@testing-library/react';
+import { invoke } from '@tauri-apps/api/core';
 import {
   formatConnectionState,
   humanizeConnectionError,
@@ -22,9 +24,19 @@ import {
   formatGrid,
   formatGpsStatus,
   formatStatusState,
+  useStatusData,
   type ConfigViewDto,
   type StatusDto,
+  type PositionStatusDto,
 } from './useStatus';
+
+// ---------------------------------------------------------------------------
+// Module-level invoke mock for useStatusData tests (below).
+// vi.mock is hoisted; the factory runs before any imports.
+// ---------------------------------------------------------------------------
+vi.mock('@tauri-apps/api/core', () => ({
+  invoke: vi.fn(),
+}));
 
 // ============================================================================
 // (1) formatStatus idle — backend absent, offline mode
@@ -213,6 +225,7 @@ describe('ConfigViewDto shape', () => {
       grid: 'EM10ab',
       gps_state: 'BroadcastAtPrecision',
       position_precision: 'SixCharGrid',
+      position_source: 'Gps',
     };
     expect(config.callsign).toBe('W4PHS');
     expect(config.transport).toBe('CmsSsl');
@@ -228,6 +241,7 @@ describe('ConfigViewDto shape', () => {
       grid: 'EM10',
       gps_state: 'Off',
       position_precision: 'FourCharGrid',
+      position_source: 'Manual',
     };
     expect(config.callsign).toBeNull();
     expect(config.identifier).toBe('OFFLINE-STATION');
@@ -248,6 +262,176 @@ describe('status bar visibility', () => {
   it('is visible when showStatusBar is true', () => {
     const showStatusBar = true;
     expect(showStatusBar).toBe(true);
+  });
+});
+
+// ============================================================================
+// useStatusData — position_source surfaced in StatusBarData (tuxlink-686 Task 7)
+// ============================================================================
+
+describe('useStatusData — position_source mapping (tuxlink-686)', () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('surfaces position_source from config_read DTO — Manual value passes through', async () => {
+    const dto: ConfigViewDto = {
+      connect_to_cms: true,
+      transport: 'CmsSsl',
+      callsign: 'W4PHS',
+      identifier: null,
+      grid: 'EM10ab',
+      gps_state: 'BroadcastAtPrecision',
+      position_precision: 'FourCharGrid',
+      position_source: 'Manual',
+    };
+    vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+      if (cmd === 'config_read') return dto;
+      if (cmd === 'backend_status') return null;
+      return null;
+    });
+
+    const { result } = renderHook(() => useStatusData());
+    // Wait for the async config_read effect to resolve and re-render.
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+
+    expect(result.current.position_source).toBe('Manual');
+  });
+
+  it('defaults position_source to Gps when config has not yet loaded', () => {
+    // invoke never resolves — simulates the pre-load state where config is null.
+    vi.mocked(invoke).mockImplementation(() => new Promise(() => {}));
+
+    const { result } = renderHook(() => useStatusData());
+    // Synchronously: config is still null → default 'Gps' is applied.
+    expect(result.current.position_source).toBe('Gps');
+  });
+});
+
+// ============================================================================
+// useStatusData — gpsReady from position_status (tuxlink-686, Task 11)
+// ============================================================================
+
+describe('useStatusData — gpsReady (tuxlink-686 Task 11)', () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('surfaces gpsReady=true when position_status resolves { gps_ready: true }', async () => {
+    const configDto: ConfigViewDto = {
+      connect_to_cms: false,
+      transport: 'CmsSsl',
+      callsign: null,
+      identifier: 'MYSTATION',
+      grid: 'CN87',
+      gps_state: 'BroadcastAtPrecision',
+      position_precision: 'FourCharGrid',
+      position_source: 'Gps',
+    };
+    const positionDto: PositionStatusDto = { gps_ready: true, broadcast_grid: 'CN87' };
+
+    vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+      if (cmd === 'config_read') return configDto;
+      if (cmd === 'backend_status') return null;
+      if (cmd === 'position_status') return positionDto;
+      return null;
+    });
+
+    const { result } = renderHook(() => useStatusData());
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+
+    expect(result.current.gpsReady).toBe(true);
+  });
+
+  it('defaults gpsReady=false when position_status rejects (gpsd unavailable)', async () => {
+    vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+      if (cmd === 'position_status') throw new Error('gpsd unavailable');
+      return null;
+    });
+
+    const { result } = renderHook(() => useStatusData());
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+
+    // position_status rejection → catch → positionStatus stays null → gpsReady false
+    expect(result.current.gpsReady).toBe(false);
+  });
+
+  it('defaults gpsReady=false before position_status resolves (pre-load state)', () => {
+    // invoke never resolves — simulates the pre-load state.
+    vi.mocked(invoke).mockImplementation(() => new Promise(() => {}));
+
+    const { result } = renderHook(() => useStatusData());
+    // Synchronously: positionStatus is null → gpsReady defaults false.
+    expect(result.current.gpsReady).toBe(false);
+  });
+
+  // Codex P1-B: ribbon grid sources from live broadcast_grid when present.
+  it('sources ribbon grid from position_status.broadcast_grid when present (Codex P1-B)', async () => {
+    const configDto: ConfigViewDto = {
+      connect_to_cms: false,
+      transport: 'CmsSsl',
+      callsign: null,
+      identifier: 'MYSTATION',
+      // Config grid is DM33 (stale config snapshot); live broadcast grid differs.
+      grid: 'DM33',
+      gps_state: 'BroadcastAtPrecision',
+      position_precision: 'FourCharGrid',
+      position_source: 'Gps',
+    };
+    // Live position_status returns the effective on-air locator = CN87 (GPS fix).
+    const positionDto: PositionStatusDto = { gps_ready: true, broadcast_grid: 'CN87' };
+
+    vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+      if (cmd === 'config_read') return configDto;
+      if (cmd === 'backend_status') return null;
+      if (cmd === 'position_status') return positionDto;
+      return null;
+    });
+
+    const { result } = renderHook(() => useStatusData());
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+
+    // Ribbon must show the live broadcast_grid, not the stale config grid.
+    expect(result.current.grid).toBe('CN87');
+  });
+
+  // Codex P1-B: fallback to config grid when broadcast_grid is empty string (no GPS fix).
+  it('falls back to config grid when broadcast_grid is empty (no position)', async () => {
+    const configDto: ConfigViewDto = {
+      connect_to_cms: false,
+      transport: 'CmsSsl',
+      callsign: null,
+      identifier: 'MYSTATION',
+      grid: 'DM33',
+      gps_state: 'BroadcastAtPrecision',
+      position_precision: 'FourCharGrid',
+      position_source: 'Gps',
+    };
+    // Empty broadcast_grid = no position available.
+    const positionDto: PositionStatusDto = { gps_ready: false, broadcast_grid: '' };
+
+    vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+      if (cmd === 'config_read') return configDto;
+      if (cmd === 'backend_status') return null;
+      if (cmd === 'position_status') return positionDto;
+      return null;
+    });
+
+    const { result } = renderHook(() => useStatusData());
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+
+    // Empty broadcast_grid → fall back to config-derived grid "DM33".
+    expect(result.current.grid).toBe('DM33');
   });
 });
 

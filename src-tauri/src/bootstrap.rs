@@ -289,7 +289,13 @@ fn install_native(app_handle: &AppHandle, state: &BackendState, cfg: Config) {
         let _ = progress_app.emit("session_log:line", crate::ui_commands::LogLineDto::from(line));
     });
 
-    let backend = NativeBackend::with_progress(cfg, mbox_dir, progress);
+    // tuxlink-686: inject the live PositionArbiter so the on-air CMS locator is
+    // the arbiter's broadcast_grid() (live + precision-reduced) rather than the
+    // stale config snapshot the backend was constructed with. The arbiter is
+    // managed state registered in lib.rs::run() above the .setup() call; the Arc
+    // ref-count is incremented here, not moved, so the lib.rs binding stays alive.
+    let arbiter = (*app_handle.state::<Arc<crate::position::PositionArbiter>>()).clone();
+    let backend = NativeBackend::with_progress(cfg, mbox_dir, progress).with_position(arbiter);
     state.install(Arc::new(backend));
     emit_backend_line(
         app_handle,
