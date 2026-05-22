@@ -201,6 +201,7 @@ pub fn run() {
             crate::ui_commands::config_set_grid,      // Task 5 (tuxlink-686)
             crate::ui_commands::position_set_source,  // Task 11 (tuxlink-686)
             crate::ui_commands::position_status,      // Task 11 (tuxlink-686)
+            crate::ui_commands::config_set_privacy,    // tuxlink-39b (GPS privacy control surface)
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

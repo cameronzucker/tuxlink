@@ -12,6 +12,7 @@ function handlers(): MenuHandlers {
     toggleStatusBar: vi.fn(),
     selectFolder: vi.fn(),
     setScheme: vi.fn(),
+    openSettings: vi.fn(),
     quit: vi.fn(),
   };
 }
@@ -69,5 +70,15 @@ describe('dispatchMenuAction', () => {
     const h = handlers();
     expect(() => dispatchMenuAction('menu:tools:preferences', h)).not.toThrow();
     expect(() => dispatchMenuAction('menu:help:about', h)).not.toThrow();
+  });
+
+  // tuxlink-39b: the three GPS/privacy settings items must open the Settings
+  // panel (previously dead no-op stubs).
+  it('routes the GPS/privacy settings items to openSettings', () => {
+    const h = handlers();
+    dispatchMenuAction('menu:tools:settings_privacy_gps', h);
+    dispatchMenuAction('menu:tools:settings_privacy_position', h);
+    dispatchMenuAction('menu:tools:settings_gps', h);
+    expect(h.openSettings).toHaveBeenCalledTimes(3);
   });
 });
