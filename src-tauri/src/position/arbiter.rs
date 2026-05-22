@@ -59,6 +59,12 @@ impl PositionArbiter {
         self.inner.lock().unwrap().last_fix = Some(fix);
     }
 
+    /// Update the broadcast precision (operator changed it in Settings, tuxlink-39b).
+    /// Keeps the arbiter's GPS-broadcast path in sync with `config.privacy.position_precision`.
+    pub fn set_precision(&self, precision: PositionPrecision) {
+        self.inner.lock().unwrap().precision = precision;
+    }
+
     /// Switch to GPS — only if a fresh fix exists. Err with a reason otherwise.
     pub fn use_gps(&self) -> Result<(), &'static str> {
         let mut i = self.inner.lock().unwrap();
@@ -124,5 +130,16 @@ mod tests {
         assert!(a.use_gps().is_ok());
         assert_eq!(a.source(), PositionSource::Gps);
         assert_eq!(a.active_grid().as_deref(), Some("DM33ab"));
+    }
+
+    // tuxlink-39b: changing precision at runtime (settings UI) must change the
+    // broadcast reduction. The arbiter holds its own `precision` (used on the
+    // GPS-broadcast path), so config_set_privacy must keep it in sync.
+    #[test]
+    fn set_precision_changes_broadcast_reduction() {
+        let a = PositionArbiter::new(PositionSource::Manual, Some("CN87ux".into()), PositionPrecision::FourCharGrid);
+        assert_eq!(a.broadcast_grid().as_deref(), Some("CN87")); // 4-char default
+        a.set_precision(PositionPrecision::SixCharGrid);
+        assert_eq!(a.broadcast_grid().as_deref(), Some("CN87ux")); // full 6-char after change
     }
 }

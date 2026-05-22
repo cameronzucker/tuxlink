@@ -90,6 +90,14 @@ describe('formatConnectionState — live BackendStatus', () => {
     expect(result).toContain('Connecting');
   });
 
+  it('renders Listening (packet armed) with the "Packet 1200" label (tuxlink-orj)', () => {
+    const status: StatusDto = { kind: 'Listening', transport: 'Packet-7' };
+    const result = formatConnectionState(status, 'CmsSsl');
+    // Armed Listen reads honestly as "Listening", NOT "Connecting"; the packet
+    // transport renders as "Packet 1200" per spec §4.6.
+    expect(result).toBe('Listening · Packet 1200');
+  });
+
   it('names the configured transport when Disconnected (spec §5.6: state always names transport)', () => {
     const status: StatusDto = { kind: 'Disconnected' };
     const result = formatConnectionState(status, 'CmsSsl');
@@ -455,6 +463,12 @@ describe('formatStatusState — Mock D status bar', () => {
     expect(
       formatStatusState({ kind: 'Connected', transport: 'CMS-Telnet', peer: 'cms', since_iso: '' }),
     ).toEqual({ label: 'Connected', tone: 'good' });
+  });
+  it('Listening (packet armed) reads Listening / good tone (tuxlink-orj)', () => {
+    expect(formatStatusState({ kind: 'Listening', transport: 'Packet-7' })).toEqual({
+      label: 'Listening',
+      tone: 'good',
+    });
   });
   it('Disconnecting reads Disconnecting / warn tone', () => {
     expect(formatStatusState({ kind: 'Disconnecting' })).toEqual({

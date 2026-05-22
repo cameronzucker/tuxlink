@@ -207,10 +207,17 @@
   border: 1px solid rgba(245, 159, 60, 0.3);
 }
 .layout-b .dashboard .dash-source-chip.gps {
-  /* Outlined neutral — understated when GPS is the default */
+  /* GPS selected but no live fix: outlined neutral (acquiring / no-fix). */
   color: var(--text-faint);
   background: transparent;
   border: 1px solid var(--border-strong);
+}
+.layout-b .dashboard .dash-source-chip.gps.locked {
+  /* GPS is the active source AND a fix is locked → green (success), so it reads
+     as live/working rather than greyed-out-as-if-disabled (tuxlink-39b). */
+  color: var(--success);
+  background: rgba(93, 214, 160, 0.12);
+  border-color: rgba(93, 214, 160, 0.4);
 }
 /* GPS-ready affordance: a subtle inline prompt to switch while Manual */
 .layout-b .dashboard .dash-use-gps {
@@ -244,7 +251,7 @@
   border: 1px solid var(--accent);
   border-radius: 3px;
   padding: 1px 6px;
-  width: 7ch;
+  width: 10ch; /* fits a full 6-char locator + cursor comfortably (tuxlink-39b) */
   outline: none;
 }
 .layout-b .dashboard .dash-grid-input:focus {
@@ -582,4 +589,23 @@
 }
 .layout-b .session-log.human .log-lines .step .ok {
   color: var(--success);
+}
+
+/* ============================================================================
+ * Packet connection state dot (sidebar Connections section) — Task 10
+ * ============================================================================ */
+.layout-b .sidebar .conn-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-faint);
+  flex: 0 0 auto;
+  display: inline-block;
+  margin-right: 4px;
+}
+.layout-b .sidebar .conn-dot.off { background: var(--text-faint); }
+.layout-b .sidebar .conn-dot.listening,
+.layout-b .sidebar .conn-dot.connected {
+  background: var(--success);
+  box-shadow: 0 0 6px rgba(93, 214, 160, 0.5);
 }

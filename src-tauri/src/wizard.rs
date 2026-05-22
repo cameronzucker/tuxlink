@@ -175,6 +175,7 @@ pub async fn persist_cms_impl(
         } else {
             Some(mbo_address.trim().to_string())
         },
+        packet: crate::config::PacketConfig::default(),
     };
 
     // Step 4: Create keyring entry handle.
@@ -310,6 +311,7 @@ pub async fn persist_offline_impl(
             position_source: crate::config::PositionSource::Gps,
         },
         pat_mbo_address: None,        // offline path: no MBO address
+        packet: crate::config::PacketConfig::default(),
     };
 
     // Single atomic write to config.json. No keyring involved.
@@ -874,10 +876,10 @@ mod tests {
         // TUXLINK_TEST_SEND_MOCK set → run_test_send_impl short-circuits to mocked success.
         // MUST NOT TRANSMIT. The mock gate is the Part 97 / RADIO-1 safety net for automated tests.
         let _mock = EnvVarGuard::set("TUXLINK_TEST_SEND_MOCK", "1");
-        let _no_fail = {
+        {
             // Remove TUXLINK_TEST_SEND_MOCK_FAIL if set from a prior test.
             unsafe { std::env::remove_var("TUXLINK_TEST_SEND_MOCK_FAIL") };
-        };
+        }
 
         let result = run_test_send_impl().await;
         match result {

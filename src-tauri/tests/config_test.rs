@@ -44,11 +44,11 @@ fn test_validate_identity_describe_precedence_multi_violation() {
     // is the load-bearing semantic; regression that swapped rule order (e.g., length
     // first) would pass single-violation tests but fail these.
     // 40-char string containing whitespace → whitespace fires before length.
-    let ws_long: String = std::iter::repeat("X ").take(20).collect();
+    let ws_long: String = "X ".repeat(20);
     assert_eq!(validate_identity_describe(&ws_long), Some("must not contain whitespace"),
         "whitespace check must fire before length check");
     // 40-char non-ASCII string → ASCII fires before length.
-    let non_ascii_long: String = std::iter::repeat("Ü").take(40).collect();
+    let non_ascii_long: String = "Ü".repeat(40);
     assert_eq!(validate_identity_describe(&non_ascii_long), Some("must be ASCII-printable"),
         "ASCII check must fire before length check");
 }

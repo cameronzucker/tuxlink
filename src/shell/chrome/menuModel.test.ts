@@ -12,9 +12,7 @@ const EXPECTED_IDS = [
   'menu:view:session_log', 'menu:view:raw_log', 'menu:view:status_bar', 'menu:view:radio_dock',
   'menu:view:scheme:default', 'menu:view:scheme:night-red', 'menu:view:scheme:grayscale',
   'menu:tools:templates', 'menu:tools:rig_control',
-  'menu:tools:settings_connection', 'menu:tools:settings_privacy_gps',
-  'menu:tools:settings_privacy_position', 'menu:tools:settings_gps',
-  'menu:tools:preferences',
+  'menu:tools:settings_connection', 'menu:tools:settings_privacy',
   'menu:help:about', 'menu:help:docs', 'menu:help:report_issue',
 ];
 

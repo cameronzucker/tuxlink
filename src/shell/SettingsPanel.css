@@ -1,0 +1,112 @@
+/* SettingsPanel — inline (in-webview) overlay for GPS/privacy settings (tuxlink-39b).
+   Uses theme tokens so it follows the active color scheme (default/night/grayscale). */
+
+.tux-settings-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.55);
+}
+
+.tux-settings-panel {
+  width: min(520px, calc(100vw - 48px));
+  max-height: calc(100vh - 96px);
+  overflow-y: auto;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+  font-family: var(--sans);
+  color: var(--text);
+}
+
+.tux-settings-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border);
+}
+
+.tux-settings-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.tux-settings-close {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 4px;
+}
+.tux-settings-close:hover {
+  color: var(--text);
+}
+
+.tux-settings-error {
+  margin: 12px 18px 0;
+  padding: 8px 10px;
+  border-radius: 4px;
+  font-size: 12px;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border: 1px solid rgba(245, 159, 60, 0.3);
+}
+
+.tux-settings-group {
+  border: none;
+  margin: 0;
+  padding: 14px 18px;
+}
+.tux-settings-group + .tux-settings-group {
+  border-top: 1px solid var(--border-soft);
+}
+.tux-settings-group legend {
+  padding: 0;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--text-dim);
+  margin-bottom: 10px;
+}
+
+.tux-settings-opt {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.tux-settings-opt:hover {
+  background: var(--surface-2);
+}
+.tux-settings-opt input[type='radio'] {
+  margin-top: 2px;
+  accent-color: var(--accent);
+  flex: 0 0 auto;
+}
+
+.tux-settings-opt-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.tux-settings-opt-label {
+  font-size: 13px;
+  color: var(--text);
+}
+.tux-settings-opt-help {
+  font-size: 11px;
+  color: var(--text-faint);
+  line-height: 1.4;
+}
