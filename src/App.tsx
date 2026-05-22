@@ -50,6 +50,8 @@ export default function App() {
       <AppShell />
     </QueryClientProvider>
   ) : (
-    <Wizard />
+    // tuxlink-eh7: hand off to the shell the moment onboarding finishes — no
+    // app restart needed (App.tsx otherwise reads wizard_completed only once).
+    <Wizard onComplete={() => setWizardCompleted(true)} />
   );
 }
