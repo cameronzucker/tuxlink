@@ -36,3 +36,71 @@ mod kiss_encode_tests {
         assert_eq!(out, vec![FEND, 0x00, FESC, TFEND, FESC, TFESC, 0xAA, FEND]);
     }
 }
+
+/// Incremental KISS decoder. Feed it arbitrary byte chunks; it returns the
+/// de-escaped bodies of any *data* frames (command/port nibble 0x00) completed
+/// by that chunk. Non-data commands (param frames) and empty frames are dropped.
+pub struct KissDecoder {
+    buf: Vec<u8>,
+    in_frame: bool,
+    escaped: bool,
+}
+
+impl KissDecoder {
+    pub fn new() -> Self {
+        KissDecoder { buf: Vec::new(), in_frame: false, escaped: false }
+    }
+    pub fn push(&mut self, chunk: &[u8]) -> Vec<Vec<u8>> {
+        let mut out = Vec::new();
+        for &b in chunk {
+            match b {
+                FEND => {
+                    if self.in_frame && !self.buf.is_empty() {
+                        // first buffered byte is the command/port nibble
+                        if self.buf[0] == 0x00 {
+                            out.push(self.buf[1..].to_vec());
+                        }
+                    }
+                    self.buf.clear();
+                    self.in_frame = true;
+                    self.escaped = false;
+                }
+                FESC if self.in_frame => self.escaped = true,
+                _ if self.in_frame => {
+                    let v = if self.escaped {
+                        self.escaped = false;
+                        match b { TFEND => FEND, TFESC => FESC, other => other }
+                    } else {
+                        b
+                    };
+                    self.buf.push(v);
+                }
+                _ => {} // bytes outside a frame (before the first FEND) are ignored
+            }
+        }
+        out
+    }
+}
+
+#[cfg(test)]
+mod kiss_decode_tests {
+    use super::*;
+    #[test]
+    fn decodes_a_full_frame_across_two_chunks() {
+        let framed = kiss_data_frame(&[FEND, FESC, 0xAA, 0xBB]);
+        let (a, b) = framed.split_at(3);
+        let mut d = KissDecoder::new();
+        assert!(d.push(a).is_empty());
+        let frames = d.push(b);
+        assert_eq!(frames, vec![vec![FEND, FESC, 0xAA, 0xBB]]);
+    }
+    #[test]
+    fn ignores_empty_frames_and_non_data_commands() {
+        let mut d = KissDecoder::new();
+        // FEND FEND (empty) then a param frame (cmd 0x01) then a data frame.
+        let mut bytes = vec![FEND, FEND, 0x01, 0x10, FEND];
+        bytes.extend(kiss_data_frame(&[0x42]));
+        let frames = d.push(&bytes);
+        assert_eq!(frames, vec![vec![0x42]]); // only the port-0 data frame
+    }
+}
