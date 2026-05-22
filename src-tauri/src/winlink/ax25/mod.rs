@@ -3,8 +3,11 @@
 //! KISS invariant: the TNC owns FCS/flags/bit-stuffing; the host frames carry
 //! only [address-path][control][PID?][info?].
 
+pub mod datalink;
 pub mod frame;
 pub mod kiss;
+pub mod link;
+pub mod params;
 
 #[cfg(test)]
 mod module_smoke {
