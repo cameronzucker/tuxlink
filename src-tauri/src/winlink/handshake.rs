@@ -108,8 +108,14 @@ fn read_handshake<R: BufRead>(
         if master {
             // Peek (don't consume): an `F`-prefixed line is the slave's first
             // protocol command — its handshake is over (wl2k-go readHandshake).
+            // B2F over packet is CR-only, but tolerate a stray LF left by a CRLF
+            // link so framing residue can't mask the `F` peek (Codex 2026-05-22).
             match reader.fill_buf() {
                 Ok(buf) if buf.is_empty() => return Err(HandshakeError::ConnectionClosed),
+                Ok(buf) if buf[0] == b'\n' => {
+                    reader.consume(1);
+                    continue;
+                }
                 Ok(buf) if buf[0] == b'F' => break,
                 Ok(_) => {}
                 Err(_) => return Err(HandshakeError::ConnectionClosed),

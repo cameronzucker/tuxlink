@@ -79,9 +79,7 @@ pub fn connect(
         closed: false,
     };
     // Push the KISS TNC params from the timing config. CSMA itself is the modem's job.
-    stream.link.write_all(&kiss_param(KissParam::TxDelay, params.txdelay))?;
-    stream.link.write_all(&kiss_param(KissParam::Persistence, params.persistence))?;
-    stream.link.write_all(&kiss_param(KissParam::SlotTime, params.slot_time))?;
+    stream.push_kiss_params()?;
 
     // Send SABM (P=1) and await UA, bounded by N2 retransmits of T1.
     let sabm = Frame { path: path.clone(), control: Control::Sabm { pf: true }, info: vec![] };
@@ -309,6 +307,10 @@ pub fn answer(
         remote_busy: false,
         closed: false,
     };
+    // Push the KISS TNC timing params so the answering station keys its modem with
+    // the configured TXDELAY/persistence/slot, not stale defaults — matching connect()
+    // (Codex adversarial round 2026-05-22: answer() previously skipped this).
+    stream.push_kiss_params()?;
     loop {
         if let Some(frame) = stream.recv_frame()? {
             if let Control::Sabm { pf } = frame.control {
@@ -612,6 +614,24 @@ impl Ax25Stream {
 }
 
 impl Ax25Stream {
+    /// Push the KISS TNC timing params (TXDELAY / persistence / slot time) to the
+    /// modem. Both `connect()` and `answer()` call this so a station keys its TNC
+    /// with the configured timing whether it dials or answers. CSMA itself is the
+    /// modem's job; these just set its parameters.
+    fn push_kiss_params(&mut self) -> std::io::Result<()> {
+        self.link.write_all(&kiss_param(KissParam::TxDelay, self.params.txdelay))?;
+        self.link.write_all(&kiss_param(KissParam::Persistence, self.params.persistence))?;
+        self.link.write_all(&kiss_param(KissParam::SlotTime, self.params.slot_time))?;
+        Ok(())
+    }
+
+    /// Whether the link has been closed by an inbound DISC (or our own teardown).
+    /// Lets the B2F blocking adapter distinguish a genuine EOF from the transient
+    /// `Ok(0)` that `read` returns when no data is buffered yet (defect-J contract).
+    pub fn is_closed(&self) -> bool {
+        self.closed
+    }
+
     /// Tear down the link: flush pending acks, send DISC (P=1), await UA (best-effort,
     /// bounded by one T1). Idempotent — a second call after the link is closed is a no-op.
     pub fn disconnect(&mut self) -> std::io::Result<()> {

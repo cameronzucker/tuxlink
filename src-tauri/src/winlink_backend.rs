@@ -779,6 +779,53 @@ struct PacketConnectCtx<'a> {
     locator: &'a str,
 }
 
+/// Streams whose `read()` returns `Ok(0)` for "no data yet" rather than EOF (the
+/// `Ax25Stream` defect-J contract) expose closed-ness here so [`BlockingB2fStream`]
+/// can tell a transient idle read from a genuine end-of-link.
+trait MaybeClosed {
+    fn is_closed(&self) -> bool;
+}
+impl MaybeClosed for crate::winlink::ax25::Ax25Stream {
+    fn is_closed(&self) -> bool {
+        crate::winlink::ax25::Ax25Stream::is_closed(self)
+    }
+}
+
+/// Adapts an `Ax25Stream` to the `std::io::Read` EOF contract for the B2F layer.
+///
+/// `Ax25Stream::read` returns `Ok(0)` for "no data buffered yet" (defect-J), but
+/// `BufReader`/`read_until` — which `wire::read_line` is built on — treat `Ok(0)`
+/// as **EOF**. So on a real RF link, the first inter-frame gap longer than the
+/// link poll window would abort the handshake/exchange as `ConnectionClosed`.
+/// This adapter blocks until ≥1 byte arrives, the link genuinely closes (`Ok(0)`
+/// while `is_closed()`, e.g. an inbound DISC), or an error — making `Ok(0)` mean
+/// EOF as the contract requires. Found by a Codex adversarial round (2026-05-22);
+/// the localhost TCP-relay e2e test masked it because bytes arrive instantly.
+struct BlockingB2fStream<S>(S);
+
+impl<S: std::io::Read + MaybeClosed> std::io::Read for BlockingB2fStream<S> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        loop {
+            let n = self.0.read(buf)?;
+            // n > 0: data. n == 0 && closed: genuine EOF. n == 0 && open: no data
+            // yet — loop. `Ax25Stream::read` naps a poll interval when idle, so
+            // this is a poll, not a busy-spin.
+            if n > 0 || self.0.is_closed() {
+                return Ok(n);
+            }
+        }
+    }
+}
+
+impl<S: std::io::Write> std::io::Write for BlockingB2fStream<S> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.write(buf)
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.0.flush()
+    }
+}
+
 /// Identity split (spec §4.4): `base_mycall` is the B2F call (no SSID); the
 /// SSID rode the AX.25 link address in the `connect`/`answer` call that
 /// produced `stream`. `locator` is the operator's grid reduced to the
@@ -929,7 +976,7 @@ fn native_packet_connect(
                 source: None,
             })?;
             native_packet_exchange(
-                stream,
+                BlockingB2fStream(stream),
                 PacketConnectCtx {
                     base_mycall: &base,
                     targetcall: &target.call,
@@ -954,7 +1001,7 @@ fn native_packet_connect(
             })?;
             progress(&format!("Answered {}.", peer.call));
             native_packet_exchange(
-                stream,
+                BlockingB2fStream(stream),
                 PacketConnectCtx {
                     base_mycall: &base,
                     targetcall: &peer.call,
@@ -2361,5 +2408,52 @@ mod native_read_state_tests {
         // ...and the dialer must have filed it as Sent (proves the proposal was acked).
         let sent = Mailbox::new(dialer_dir.path()).list(MailboxFolder::Sent).unwrap();
         assert_eq!(sent.len(), 1, "dialer Sent should hold the acked message; got {sent:?}");
+    }
+
+    // A reader that mimics Ax25Stream's defect-J behaviour: it returns Ok(0) for
+    // "no data yet" `idle` times (link open), then delivers `payload` once, then
+    // reports closed so a further Ok(0) is a genuine EOF.
+    struct IdleThenData {
+        idle_left: usize,
+        payload: Vec<u8>,
+        delivered: bool,
+    }
+    impl std::io::Read for IdleThenData {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            if self.idle_left > 0 {
+                self.idle_left -= 1;
+                return Ok(0); // no data yet — link still open
+            }
+            if !self.delivered {
+                self.delivered = true;
+                let n = buf.len().min(self.payload.len());
+                buf[..n].copy_from_slice(&self.payload[..n]);
+                return Ok(n);
+            }
+            Ok(0) // no more data; is_closed() is now true → genuine EOF
+        }
+    }
+    impl MaybeClosed for IdleThenData {
+        fn is_closed(&self) -> bool {
+            self.delivered
+        }
+    }
+
+    #[test]
+    fn blocking_b2f_stream_loops_past_transient_ok0_then_reports_eof() {
+        // Regression for the Codex 2026-05-22 BLOCKER: a transient Ok(0) from
+        // Ax25Stream (no data yet, link open) must NOT be read as EOF by the B2F
+        // BufReader; the adapter loops until real data, then surfaces a closed-link
+        // Ok(0) as a genuine EOF.
+        let mut s = BlockingB2fStream(IdleThenData {
+            idle_left: 3,
+            payload: b"FF\r".to_vec(),
+            delivered: false,
+        });
+        let mut buf = [0u8; 8];
+        let n = std::io::Read::read(&mut s, &mut buf).unwrap();
+        assert_eq!(&buf[..n], b"FF\r", "must block through transient Ok(0), not EOF early");
+        let n2 = std::io::Read::read(&mut s, &mut buf).unwrap();
+        assert_eq!(n2, 0, "Ok(0) while the link is closed must surface as a real EOF");
     }
 }
