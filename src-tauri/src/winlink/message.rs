@@ -22,6 +22,12 @@ pub struct Message {
     body: Vec<u8>,
 }
 
+impl Default for Message {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Message {
     /// A new, empty message.
     pub fn new() -> Self {

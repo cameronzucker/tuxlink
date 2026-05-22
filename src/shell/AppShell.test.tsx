@@ -31,6 +31,24 @@ vi.mock('@tauri-apps/api/core', () => ({
         routing: null,
       };
     }
+    if (cmd === 'packet_config_get') {
+      return {
+        ssid: 7,
+        listenDefault: true,
+        linkKind: 'Tcp',
+        tcpHost: '127.0.0.1',
+        tcpPort: 8001,
+        serialDevice: null,
+        serialBaud: null,
+        txdelay: 30,
+        persistence: 63,
+        slotTime: 10,
+        paclen: 128,
+        maxframe: 4,
+        t1Ms: 3000,
+        n2Retries: 10,
+      };
+    }
     return undefined;
   }),
 }));
@@ -235,5 +253,25 @@ describe('<AppShell> — Mock B topology', () => {
         expect.objectContaining({ draftId: expect.any(String) }),
       ),
     );
+  });
+
+  it('selecting the Packet connection swaps the reader for the packet panel', async () => {
+    renderShell();
+    expect(screen.getByTestId('message-view-empty')).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('conn-packet'));
+    expect(await screen.findByTestId('packet-panel-root')).toBeInTheDocument();
+    expect(screen.queryByTestId('message-view-empty')).toBeNull();
+    // The full-width session log + status bar stay put.
+    expect(screen.getByTestId('session-log-root')).toBeInTheDocument();
+    expect(screen.getByTestId('status-bar')).toBeInTheDocument();
+  });
+
+  it('selecting a folder clears the packet panel back to the reader', async () => {
+    renderShell();
+    fireEvent.click(screen.getByTestId('conn-packet'));
+    await screen.findByTestId('packet-panel-root');
+    fireEvent.click(screen.getByTestId('folder-sent'));
+    expect(screen.queryByTestId('packet-panel-root')).toBeNull();
+    expect(screen.getByTestId('message-view-empty')).toBeInTheDocument();
   });
 });

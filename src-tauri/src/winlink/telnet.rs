@@ -102,6 +102,7 @@ impl Write for WriteHalf {
 ///
 /// Operator-run when `host` is the live CMS — telnet (incl. TLS) to the CMS is
 /// authorized dev testing; RADIO-1 covers RF transmission, not this.
+#[allow(clippy::too_many_arguments)]
 pub fn connect_and_exchange<F>(
     host: &str,
     port: u16,
@@ -208,8 +209,7 @@ where
             std::io::ErrorKind::TimedOut,
             format!("DNS resolution timed out after {timeout:?}"),
         )),
-        Err(mpsc::RecvTimeoutError::Disconnected) => Err(std::io::Error::new(
-            std::io::ErrorKind::Other,
+        Err(mpsc::RecvTimeoutError::Disconnected) => Err(std::io::Error::other(
             "DNS resolver thread terminated without a result",
         )),
     }

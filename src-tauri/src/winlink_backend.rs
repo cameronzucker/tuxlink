@@ -28,8 +28,10 @@ pub use crate::pat_client::MailboxFolder;
 // Native backend wiring (see the NativeBackend section below).
 use crate::config::{broadcast_grid, CmsTransport, Config};
 use crate::native_mailbox::Mailbox;
+use crate::winlink::ax25::{Address, KissLinkConfig};
 use crate::winlink::message::Message;
 use crate::winlink::proposal::Answer;
+use crate::winlink::session::ExchangeRole;
 use crate::winlink::{compose, session, telnet};
 use std::path::PathBuf;
 
@@ -105,6 +107,91 @@ pub struct OutboundMessage {
 pub enum TransportConfig {
     /// CMS Telnet (plain or TLS), per existing `config::CmsTransport`.
     Cms { mode: crate::config::CmsTransport },
+    /// AX.25 1200-baud packet over a KISS link (TCP / serial). The SSID rides
+    /// the AX.25 *link* address; the B2F identity uses the base call (spec §4.4).
+    Packet {
+        link: KissLinkConfig,
+        ssid: u8,
+        role: PacketRole,
+    },
+}
+
+/// What a packet connection does. `DialTo` is the operator pressing "Connect to"
+/// (gateway OR peer — tuxlink reacts to the challenge, not a mode flag); `Listen`
+/// is the idle armed-to-answer state (spec §2, §4.5).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PacketRole {
+    DialTo { call: String, path: Vec<String> },
+    Listen,
+}
+
+/// What a `PacketRole` + identity resolves into for the lifecycle: the SSID'd
+/// link address, the base B2F call, the exchange role, and (for a dial) the
+/// target + digipeater addresses. Mirrors `resolve_cms_endpoint`'s "config →
+/// concrete endpoint" job for the packet transport.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedPacket {
+    pub link_mycall: Address,
+    pub base_mycall: String,
+    pub role: ExchangeRole,
+    /// `Some((target, digis))` for a dial; `None` for listen.
+    pub dial: Option<(Address, Vec<Address>)>,
+}
+
+/// Parse a `CALL` or `CALL-SSID` string into an [`Address`]. A bare call has
+/// SSID 0. Rejects an SSID outside 0–15 or a malformed token.
+fn parse_call_ssid(s: &str) -> Result<Address, BackendError> {
+    let (call, ssid) = match s.rsplit_once('-') {
+        Some((c, s_part)) => {
+            let n: u8 = s_part
+                .parse()
+                .map_err(|_| BackendError::NotConfigured(format!("bad SSID in '{s_part}'")))?;
+            (c, n)
+        }
+        None => (s, 0),
+    };
+    if ssid > 15 || call.is_empty() {
+        return Err(BackendError::NotConfigured(format!("bad call/ssid '{s}'")));
+    }
+    Ok(Address { call: call.to_uppercase(), ssid })
+}
+
+/// Resolve identity + role into the concrete addresses + exchange role. Enforces
+/// the 0–2 digipeater cap (spec §1) and the identity split (spec §4.4).
+pub fn resolve_packet_endpoint(
+    base_mycall: &str,
+    ssid: u8,
+    role: PacketRole,
+) -> Result<ResolvedPacket, BackendError> {
+    let base = base_mycall.trim().to_uppercase();
+    let link_mycall = Address { call: base.clone(), ssid };
+    match role {
+        PacketRole::Listen => Ok(ResolvedPacket {
+            link_mycall,
+            base_mycall: base,
+            role: ExchangeRole::Answer,
+            dial: None,
+        }),
+        PacketRole::DialTo { call, path } => {
+            if path.len() > 2 {
+                return Err(BackendError::NotConfigured(format!(
+                    "at most 2 digipeaters allowed (got {})",
+                    path.len()
+                )));
+            }
+            let target = parse_call_ssid(&call)?;
+            let digis = path
+                .iter()
+                .map(|p| parse_call_ssid(p))
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(ResolvedPacket {
+                link_mycall,
+                base_mycall: base,
+                role: ExchangeRole::Dial,
+                dial: Some((target, digis)),
+            })
+        }
+    }
 }
 
 /// Backend-instance identifier minted at backend construction time. Embedded
@@ -161,6 +248,11 @@ impl Drop for Session {
 pub enum BackendStatus {
     Disconnected,
     Connecting { transport: String },
+    /// Packet armed-but-idle: the AX.25 layer is listening to answer an inbound
+    /// SABM, but no session is up. Distinct from `Connecting` (an active dial)
+    /// and `Disconnected` (not armed). Carries the transport so the ribbon can
+    /// render "Listening · Packet 1200". (tuxlink-orj)
+    Listening { transport: String },
     Connected { transport: String, peer: String, since_iso: String },
     Disconnecting,
     Error { reason: String },
@@ -453,7 +545,14 @@ impl WinlinkBackend for NativeBackend {
     }
 
     async fn connect(&self, transport: TransportConfig) -> Result<Session, BackendError> {
-        let TransportConfig::Cms { mode } = transport;
+        // Dispatch to per-transport paths.
+        if let TransportConfig::Packet { link, ssid, role } = transport {
+            return self.packet_connect_inner(link, ssid, role).await;
+        }
+        let mode = match transport {
+            TransportConfig::Cms { mode } => mode,
+            _ => return Err(BackendError::NotImplemented),
+        };
 
         // Single-flight (Codex #1): refuse a concurrent connect rather than racing
         // on the shared abort state and re-sending the outbox. The RAII guard
@@ -571,6 +670,369 @@ impl WinlinkBackend for NativeBackend {
         BroadcastStream::new(rx)
             .filter_map(|res| async move { res.ok() })
             .boxed()
+    }
+}
+
+impl NativeBackend {
+    /// Packet-transport connect path (Task 5/6): resolve the endpoint, open the
+    /// KISS link, connect/answer, and run the exchange. Wired here from the
+    /// `WinlinkBackend::connect` dispatch above.
+    async fn packet_connect_inner(
+        &self,
+        link: KissLinkConfig,
+        ssid: u8,
+        role: PacketRole,
+    ) -> Result<Session, BackendError> {
+        // Single-flight guard (same as the CMS arm).
+        if self
+            .connect_in_progress
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_err()
+        {
+            return Err(BackendError::BackendUnavailable {
+                reason: "a connection is already in progress".to_string(),
+                source: None,
+            });
+        }
+        let _guard = ConnectGuard {
+            in_progress: self.connect_in_progress.clone(),
+            handle: self.abort_handle.clone(),
+        };
+
+        self.aborting.store(false, Ordering::SeqCst);
+        if let Ok(mut slot) = self.abort_handle.lock() {
+            *slot = None;
+        }
+
+        let base = self
+            .config
+            .identity
+            .callsign
+            .clone()
+            .ok_or_else(|| BackendError::NotConfigured("identity.callsign".into()))?;
+        // Decide the armed-state status before `role` is moved into resolve
+        // (tuxlink-orj): Listen → Listening (armed), DialTo → Connecting (dial).
+        let initial_status = initial_packet_status(&role, ssid);
+        let resolved = resolve_packet_endpoint(&base, ssid, role)?;
+
+        let config = self.config.clone();
+        let mailbox = self.mailbox.clone();
+        let progress = self.progress.clone();
+        let abort_handle = self.abort_handle.clone();
+        let aborting = self.aborting.clone();
+
+        self.set_status(initial_status);
+
+        let outcome = tokio::task::spawn_blocking(move || {
+            native_packet_connect(&config, &mailbox, link, resolved, &*progress, &abort_handle, &aborting)
+        })
+        .await
+        .map_err(|e| BackendError::Internal {
+            msg: format!("packet connect task failed: {e}"),
+            source: None,
+        })?;
+
+        match abort_aware_outcome(outcome, self.aborting.load(Ordering::SeqCst)) {
+            Ok(()) => {
+                self.set_status(BackendStatus::Connected {
+                    transport: format!("Packet-{ssid}"),
+                    peer: "packet".to_string(),
+                    since_iso: now_iso8601_utc(),
+                });
+                Ok(Session {
+                    backend_id: self.backend_id,
+                    inner: SessionInner::Native(()),
+                })
+            }
+            Err(BackendError::Cancelled) => {
+                self.set_status(BackendStatus::Disconnected);
+                Err(BackendError::Cancelled)
+            }
+            Err(e) => {
+                self.set_status(BackendStatus::Error {
+                    reason: e.to_string(),
+                });
+                Err(e)
+            }
+        }
+    }
+}
+
+// ============================================================================
+// Packet-transport functions (native_packet_exchange + native_packet_connect)
+// Stubs — fully implemented in Tasks 5 and 6.
+// ============================================================================
+
+/// Run one B2F exchange over an already-connected AX.25 stream. By-value
+/// ownership: the stream is consumed + dropped on return (DISC fires from
+/// `Ax25Stream::drop`). Generic over `Read + Write` so it is fully
+/// unit-tested with an in-memory `FakeAx25Stream` — no network, no RF.
+///
+/// Session-identity context for a packet exchange. Groups the per-session
+/// identity parameters (`base_mycall`, `targetcall`, `password`, `role`,
+/// `locator`) to keep `native_packet_exchange` under the clippy
+/// `too_many_arguments` threshold (7).
+struct PacketConnectCtx<'a> {
+    /// B2F identity call (base callsign, no SSID; spec §4.4).
+    base_mycall: &'a str,
+    /// Peer callsign (gateway or P2P peer).
+    targetcall: &'a str,
+    /// Winlink password for gateway secure-login (None for P2P).
+    password: Option<String>,
+    /// Exchange role: Dial (slave) for DialTo, Answer (master) for Listen.
+    role: ExchangeRole,
+    /// Grid locator at configured broadcast precision.
+    locator: &'a str,
+}
+
+/// Streams whose `read()` returns `Ok(0)` for "no data yet" rather than EOF (the
+/// `Ax25Stream` defect-J contract) expose closed-ness here so [`BlockingB2fStream`]
+/// can tell a transient idle read from a genuine end-of-link.
+trait MaybeClosed {
+    fn is_closed(&self) -> bool;
+}
+impl MaybeClosed for crate::winlink::ax25::Ax25Stream {
+    fn is_closed(&self) -> bool {
+        crate::winlink::ax25::Ax25Stream::is_closed(self)
+    }
+}
+
+/// Adapts an `Ax25Stream` to the `std::io::Read` EOF contract for the B2F layer.
+///
+/// `Ax25Stream::read` returns `Ok(0)` for "no data buffered yet" (defect-J), but
+/// `BufReader`/`read_until` — which `wire::read_line` is built on — treat `Ok(0)`
+/// as **EOF**. So on a real RF link, the first inter-frame gap longer than the
+/// link poll window would abort the handshake/exchange as `ConnectionClosed`.
+/// This adapter blocks until ≥1 byte arrives, the link genuinely closes (`Ok(0)`
+/// while `is_closed()`, e.g. an inbound DISC), or an error — making `Ok(0)` mean
+/// EOF as the contract requires. Found by a Codex adversarial round (2026-05-22);
+/// the localhost TCP-relay e2e test masked it because bytes arrive instantly.
+struct BlockingB2fStream<S>(S);
+
+impl<S: std::io::Read + MaybeClosed> std::io::Read for BlockingB2fStream<S> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        loop {
+            let n = self.0.read(buf)?;
+            // n > 0: data. n == 0 && closed: genuine EOF. n == 0 && open: no data
+            // yet — loop. `Ax25Stream::read` naps a poll interval when idle, so
+            // this is a poll, not a busy-spin.
+            if n > 0 || self.0.is_closed() {
+                return Ok(n);
+            }
+        }
+    }
+}
+
+impl<S: std::io::Write> std::io::Write for BlockingB2fStream<S> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.write(buf)
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.0.flush()
+    }
+}
+
+/// Identity split (spec §4.4): `base_mycall` is the B2F call (no SSID); the
+/// SSID rode the AX.25 link address in the `connect`/`answer` call that
+/// produced `stream`. `locator` is the operator's grid reduced to the
+/// configured broadcast precision (pass `cms_locator(config)`, already exists).
+fn native_packet_exchange<S: std::io::Read + std::io::Write + Send + 'static>(
+    stream: S,
+    ctx: PacketConnectCtx<'_>,
+    mailbox: &Mailbox,
+    progress: &dyn Fn(&str),
+) -> Result<(), BackendError> {
+    let PacketConnectCtx { base_mycall, targetcall, password, role, locator } = ctx;
+    // Split the owned stream into simultaneous read + write halves via a shared
+    // Arc<Mutex> (the same pattern as telnet's shared-socket approach). The
+    // exchange is strictly turn-based so the lock is never contended.
+    use std::sync::{Arc, Mutex};
+    trait RW: std::io::Read + std::io::Write + Send {}
+    impl<T: std::io::Read + std::io::Write + Send> RW for T {}
+
+    let shared: Arc<Mutex<Box<dyn RW>>> = Arc::new(Mutex::new(Box::new(stream)));
+
+    struct ReadHalf(Arc<Mutex<Box<dyn RW>>>);
+    struct WriteHalf(Arc<Mutex<Box<dyn RW>>>);
+    impl std::io::Read for ReadHalf {
+        fn read(&mut self, b: &mut [u8]) -> std::io::Result<usize> {
+            self.0.lock().expect("ax25 lock").read(b)
+        }
+    }
+    impl std::io::Write for WriteHalf {
+        fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().expect("ax25 lock").write(b)
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            self.0.lock().expect("ax25 lock").flush()
+        }
+    }
+    let mut reader = std::io::BufReader::new(ReadHalf(shared.clone()));
+    let mut writer = WriteHalf(shared.clone());
+
+    // Build outbox proposals (mirrors native_connect).
+    let mut outbound = Vec::new();
+    for meta in mailbox.list(MailboxFolder::Outbox)? {
+        let body = mailbox.read(MailboxFolder::Outbox, &meta.id)?;
+        if let Ok(message) = Message::from_bytes(&body.raw_rfc5322) {
+            if let Some((proposal, compressed)) = message.to_proposal() {
+                let title = message.header("Subject").unwrap_or_default().to_string();
+                outbound.push(session::OutboundMessage { proposal, title, compressed });
+            }
+        }
+    }
+
+    let exchange_config = session::ExchangeConfig {
+        mycall: base_mycall.to_string(), // BASE call — no SSID in B2F identity
+        targetcall: targetcall.to_string(),
+        locator: locator.to_string(), // config-derived locator (controller directive)
+        password,
+    };
+
+    progress("AX.25 connected; negotiating messages…");
+    let result = session::run_exchange_with_role(
+        &mut reader,
+        &mut writer,
+        role,
+        &exchange_config,
+        outbound,
+        |proposals| proposals.iter().map(|_| Answer::Accept { resume_offset: 0 }).collect(),
+    )
+    .map_err(|e| BackendError::TransportFailed { reason: format!("{e:?}"), source: None })?;
+
+    for message in &result.received {
+        mailbox.store(MailboxFolder::Inbox, &message.to_bytes())?;
+    }
+    for mid in &result.sent {
+        mailbox.move_to(MailboxFolder::Outbox, MailboxFolder::Sent, &MessageId(mid.clone()))?;
+    }
+    // `shared` drops here → stream drops → DISC fires (Ax25Stream::drop).
+    Ok(())
+}
+
+/// Open the KISS link, connect (dial) or answer (listen), and run the exchange.
+/// Per RADIO-1, the agent never runs this against a real KISS modem — tests
+/// exercise `native_packet_exchange` with `FakeAx25Stream` only.
+fn native_packet_connect(
+    config: &Config,
+    mailbox: &Arc<Mailbox>,
+    link: KissLinkConfig,
+    resolved: ResolvedPacket,
+    progress: &dyn Fn(&str),
+    abort_handle: &Mutex<Option<TcpStream>>,
+    aborting: &AtomicBool,
+) -> Result<(), BackendError> {
+    let params = config.packet.params.clone().into_params();
+    let locator = cms_locator(config);
+    let base = resolved.base_mycall.clone();
+    // Password lookup for the gateway dial (challenge is conditional; peer ignores it).
+    let password = keyring::Entry::new("tuxlink-pat", &base)
+        .ok()
+        .and_then(|e| e.get_password().ok())
+        .filter(|p| !p.is_empty());
+
+    progress("Opening KISS link…");
+    // Open the KISS link with an abort handle (tuxlink-9z2 pattern, mirroring
+    // native_connect's register_socket). The TCP arm yields a try_clone'd TcpStream
+    // the operator's abort() can `.shutdown()`; shutting it makes the link's read
+    // return 0 (FIN), which recv_frame maps to ConnectionAborted, unwinding a blocked
+    // answer()/connect() poll loop. Serial yields None (clean serial abort is a
+    // follow-up — abort() is then a no-op on the packet serial link).
+    let (bytelink, abort_socket) = crate::winlink::ax25::connect_link_with_abort(&link)
+        .map_err(|e| BackendError::TransportFailed { reason: format!("KISS link: {e}"), source: None })?;
+    if let Some(sock) = abort_socket {
+        // Check `aborting` INSIDE the abort_handle lock (mirrors native_connect /
+        // Codex #2): abort() sets `aborting` then locks to take the socket, so doing
+        // the check + store under the same lock means whichever side acquires it
+        // first, the socket still ends up shut down if an abort has already fired —
+        // no TOCTOU window. If an abort landed during the (un-abortable) TCP-connect
+        // window, shut the socket down now so answer()/connect() fails fast.
+        if let Ok(mut slot) = abort_handle.lock() {
+            if aborting.load(Ordering::SeqCst) {
+                let _ = sock.shutdown(Shutdown::Both);
+            } else {
+                *slot = Some(sock);
+            }
+        }
+    }
+
+    // Controller directive L: push KISS TNC params before connect/answer.
+    // The straightforward approach is to call kiss_param inside the link before
+    // handing it to ax25::connect/answer. However, `connect_link` returns
+    // Box<dyn ByteLink> with no kiss_param accessor on the trait surface (P2's
+    // ByteLink is bare Read+Write). Pushing params through the `Ax25Params`
+    // passed to `connect`/`answer` is the P2 design — `connect` calls
+    // `kiss_param` internally on the link for txdelay/persistence/slot_time
+    // (per datalink.rs connect implementation). So no separate param-push is
+    // needed here; the P2 `connect`/`answer` call owns it. Follow-up filed as
+    // bd issue if P2 does NOT push params in answer() (see Task 6 commit body).
+
+    match resolved.dial {
+        Some((target, digis)) => {
+            progress(&format!("Connecting to {}…", target.call));
+            let stream = crate::winlink::ax25::connect(
+                bytelink,
+                resolved.link_mycall,
+                target.clone(),
+                &digis,
+                &params,
+            )
+            .map_err(|e| BackendError::TransportFailed {
+                reason: format!("AX.25 connect: {e}"),
+                source: None,
+            })?;
+            native_packet_exchange(
+                BlockingB2fStream(stream),
+                PacketConnectCtx {
+                    base_mycall: &base,
+                    targetcall: &target.call,
+                    password,
+                    role: ExchangeRole::Dial,
+                    locator: &locator,
+                },
+                mailbox,
+                progress,
+            )
+        }
+        None => {
+            progress("Listening for an inbound peer…");
+            let (peer, stream) = crate::winlink::ax25::answer(
+                bytelink,
+                resolved.link_mycall,
+                &params,
+            )
+            .map_err(|e| BackendError::TransportFailed {
+                reason: format!("AX.25 answer: {e}"),
+                source: None,
+            })?;
+            progress(&format!("Answered {}.", peer.call));
+            native_packet_exchange(
+                BlockingB2fStream(stream),
+                PacketConnectCtx {
+                    base_mycall: &base,
+                    targetcall: &peer.call,
+                    password: None,
+                    role: ExchangeRole::Answer,
+                    locator: &locator,
+                },
+                mailbox,
+                progress,
+            )
+        }
+    }
+}
+
+/// The `BackendStatus` a packet connection STARTS in, by role (tuxlink-orj).
+/// `Listen` is armed-but-idle → `Listening`; `DialTo` is an active dial →
+/// `Connecting`. Pure (no I/O) so the role→status decision is unit-tested
+/// without a KISS link. Set before `spawn_blocking`, it persists for the whole
+/// armed wait (the ribbon polls `status()`), so an armed Listen reads honestly
+/// as "Listening · Packet 1200" instead of a misleading "Connecting".
+fn initial_packet_status(role: &PacketRole, ssid: u8) -> BackendStatus {
+    let transport = format!("Packet-{ssid}");
+    match role {
+        PacketRole::Listen => BackendStatus::Listening { transport },
+        PacketRole::DialTo { .. } => BackendStatus::Connecting { transport },
     }
 }
 
@@ -883,11 +1345,12 @@ fn append_pat_line(raw: String, buffer: &SessionLogState) -> LogLine {
     line
 }
 
-/// Options for [`PatBackend::spawn`] — the full-lifecycle constructor.
-/// (spec §3.1). The resolved Pat sidecar path + the Pat config/mbox/pid paths
-/// + tuxlink's config are supplied by the bootstrap (`lib.rs` `.setup()`); see
-/// spec §3.5/§3.6 for path-resolution responsibilities (the bootstrap owns
-/// resolution, not `spawn`).
+/// Options for [`PatBackend::spawn`] — the full-lifecycle constructor (spec §3.1).
+///
+/// The resolved Pat sidecar path, the Pat config/mbox/pid paths, and tuxlink's
+/// config are supplied by the bootstrap (`lib.rs` `.setup()`); see spec §3.5/§3.6
+/// for path-resolution responsibilities (the bootstrap owns resolution, not
+/// `spawn`).
 pub struct PatBackendSpawnOptions {
     /// Resolved Pat sidecar binary path.
     pub binary: std::path::PathBuf,
@@ -1181,6 +1644,7 @@ impl WinlinkBackend for PatBackend {
         // session handle the caller can later pass to disconnect.
         let transport_label = match &transport {
             TransportConfig::Cms { mode } => format!("CMS-{:?}", mode),
+            TransportConfig::Packet { ssid, .. } => format!("Packet-{ssid}"),
         };
         {
             let mut s = self.status.write().map_err(|_| BackendError::Internal {
@@ -1283,8 +1747,8 @@ fn translate_pat_err_for_read(err: PatClientError, id: &MessageId) -> BackendErr
 mod native_read_state_tests {
     use super::*;
     use crate::config::{
-        CmsTransport, Config, ConnectConfig, GpsState, IdentityConfig, PositionPrecision,
-        PositionSource, PrivacyConfig, CONFIG_SCHEMA_VERSION,
+        CmsTransport, Config, ConnectConfig, GpsState, IdentityConfig, PacketConfig,
+        PositionPrecision, PositionSource, PrivacyConfig, CONFIG_SCHEMA_VERSION,
     };
     use crate::native_mailbox::Mailbox;
     use crate::winlink::compose::compose_message;
@@ -1302,6 +1766,7 @@ mod native_read_state_tests {
                 position_source: PositionSource::Gps,
             },
             pat_mbo_address: None,
+            packet: PacketConfig::default(),
         }
     }
 
@@ -1645,5 +2110,393 @@ mod native_read_state_tests {
             matches!(result, Err(BackendError::BackendUnavailable { .. })),
             "a concurrent connect should be rejected, got {result:?}"
         );
+    }
+
+    // =========================================================================
+    // Task 4: resolve_packet_endpoint tests (spec §4.4 identity split)
+    // =========================================================================
+
+    #[test]
+    fn resolve_packet_endpoint_dial_builds_ssidd_link_addr_and_base_b2f_call() {
+        // Identity split (spec §4.4): the AX.25 link addr carries the SSID; the B2F
+        // identity is the BASE call. Dial role → ExchangeRole::Dial + a target.
+        let resolved = resolve_packet_endpoint(
+            "N7CPZ",
+            7,
+            PacketRole::DialTo { call: "W7AUX".into(), path: vec!["RELAY-1".into()] },
+        )
+        .unwrap();
+        assert_eq!(resolved.link_mycall, Address { call: "N7CPZ".into(), ssid: 7 });
+        assert_eq!(resolved.base_mycall, "N7CPZ");
+        assert_eq!(resolved.role, ExchangeRole::Dial);
+        let (target, digis) = resolved.dial.unwrap();
+        assert_eq!(target, Address { call: "W7AUX".into(), ssid: 0 });
+        assert_eq!(digis, vec![Address { call: "RELAY".into(), ssid: 1 }]);
+    }
+
+    #[test]
+    fn resolve_packet_endpoint_listen_yields_answer_role_and_no_target() {
+        let resolved = resolve_packet_endpoint("N7CPZ", 7, PacketRole::Listen).unwrap();
+        assert_eq!(resolved.link_mycall, Address { call: "N7CPZ".into(), ssid: 7 });
+        assert_eq!(resolved.base_mycall, "N7CPZ");
+        assert_eq!(resolved.role, ExchangeRole::Answer);
+        assert!(resolved.dial.is_none());
+    }
+
+    #[test]
+    fn resolve_packet_endpoint_rejects_more_than_two_digipeaters() {
+        let err = resolve_packet_endpoint(
+            "N7CPZ",
+            0,
+            PacketRole::DialTo {
+                call: "W7AUX".into(),
+                path: vec!["A-1".into(), "B-2".into(), "C-3".into()],
+            },
+        )
+        .unwrap_err();
+        assert!(matches!(err, BackendError::NotConfigured(_)));
+    }
+
+    // =========================================================================
+    // Task 5: native_packet_exchange tests
+    // FakeAx25Stream: reads from inbound Cursor, writes into a shared Vec.
+    // =========================================================================
+
+    struct FakeAx25Stream {
+        inbound: std::io::Cursor<Vec<u8>>,
+        outbound: std::sync::Arc<std::sync::Mutex<Vec<u8>>>,
+    }
+    impl std::io::Read for FakeAx25Stream {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            self.inbound.read(buf)
+        }
+    }
+    impl std::io::Write for FakeAx25Stream {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.outbound.lock().expect("fake outbound").extend_from_slice(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> { Ok(()) }
+    }
+
+    #[test]
+    fn native_packet_exchange_dials_a_gateway_with_secure_login() {
+        use crate::winlink::secure::secure_login_response;
+        // A scripted gateway: speaks first, challenges, then quits (empty mailbox).
+        let mut server = Vec::new();
+        server.extend_from_slice(b"[WL2K-5.0-B2FHM$]\r;PQ: 12345678\rCMS>\r");
+        server.extend_from_slice(b"FF\r");
+        let outbound_spy = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let stream = FakeAx25Stream {
+            inbound: std::io::Cursor::new(server),
+            outbound: outbound_spy.clone(),
+        };
+
+        let mailbox = Mailbox::new(tempdir().unwrap().path());
+        let result = native_packet_exchange(
+            stream,
+            PacketConnectCtx {
+                base_mycall: "N7CPZ",   // base B2F call (NO ssid)
+                targetcall: "W7AUX",    // target call (gateway)
+                password: Some("MYPASS".into()),
+                role: ExchangeRole::Dial,
+                locator: "CN87",        // controller directive: pass cms_locator
+            },
+            &mailbox,
+            &|_| {},
+        );
+        assert!(result.is_ok(), "gateway dial must succeed, got {result:?}");
+
+        // The secure-login token must appear in the written bytes.
+        let token = secure_login_response("12345678", "MYPASS");
+        let written = outbound_spy.lock().unwrap();
+        assert!(
+            written.windows(token.len()).any(|w| w == token.as_bytes()),
+            "the secure-login token must appear in our handshake; wrote {:?}",
+            String::from_utf8_lossy(&written)
+        );
+    }
+
+    #[test]
+    fn native_packet_exchange_answers_a_peer_and_receives_a_message() {
+        use crate::winlink::message::Message as WMessage;
+        use crate::winlink::proposal::batch_checksum_line;
+        use crate::winlink::transfer;
+
+        let mut peer = Vec::new();
+        peer.extend_from_slice(b";FW: W7AUX\r[RMS-1.0-B2FHM$]\rW7AUX>\r");
+        let mut msg = WMessage::new();
+        msg.set_header("Mid", "PEERMSG00009");
+        msg.set_header("Subject", "P2P");
+        msg.set_body(b"hello from the field\r\n".to_vec());
+        let (proposal, compressed) = msg.to_proposal().unwrap();
+        peer.extend_from_slice(proposal.line().as_bytes());
+        peer.push(b'\r');
+        peer.extend_from_slice(batch_checksum_line(&[proposal]).as_bytes());
+        peer.push(b'\r');
+        peer.extend_from_slice(&transfer::frame_block("P2P", 0, &compressed));
+        peer.extend_from_slice(b"FQ\r");
+
+        let outbound_spy = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let stream = FakeAx25Stream {
+            inbound: std::io::Cursor::new(peer),
+            outbound: outbound_spy.clone(),
+        };
+
+        let dir = tempdir().unwrap();
+        let mailbox = Mailbox::new(dir.path());
+        let result = native_packet_exchange(
+            stream,
+            PacketConnectCtx {
+                base_mycall: "N7CPZ",
+                targetcall: "W7AUX",
+                password: None,
+                role: ExchangeRole::Answer,
+                locator: "CN87",
+            },
+            &mailbox,
+            &|_| {},
+        );
+        assert!(result.is_ok(), "answer exchange must succeed, got {result:?}");
+
+        // The received peer message was filed into the inbox.
+        let inbox = mailbox.list(MailboxFolder::Inbox).unwrap();
+        assert!(
+            inbox.iter().any(|m| m.id.0 == "PEERMSG00009"),
+            "PEERMSG00009 must be in the inbox; got {inbox:?}"
+        );
+    }
+
+    // =========================================================================
+    // Task 6: packet lifecycle branch selection + no-link fast-fail
+    // =========================================================================
+
+    fn offline_config_with_callsign() -> Config {
+        Config {
+            schema_version: CONFIG_SCHEMA_VERSION,
+            wizard_completed: true,
+            connect: ConnectConfig { connect_to_cms: true, transport: CmsTransport::Telnet },
+            identity: IdentityConfig { callsign: Some("N7CPZ".into()), identifier: None, grid: None },
+            privacy: PrivacyConfig {
+                gps_state: GpsState::Off,
+                position_precision: PositionPrecision::FourCharGrid,
+                position_source: PositionSource::Gps,
+            },
+            pat_mbo_address: None,
+            packet: PacketConfig::default(),
+        }
+    }
+
+    #[tokio::test]
+    async fn connect_packet_with_no_reachable_link_is_transport_failed() {
+        // A NativeBackend with a callsign set but a KISS link that no listener is on.
+        // connect_link fails fast (connection refused) → TransportFailed.
+        // Per RADIO-1: we use a definitely-closed loopback port (bind then drop).
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        drop(listener); // nothing listening → connection refused
+
+        let backend = NativeBackend::new(offline_config_with_callsign(), tempdir().unwrap().path());
+        let err = backend
+            .connect(TransportConfig::Packet {
+                link: KissLinkConfig::Tcp { host: addr.ip().to_string(), port: addr.port() },
+                ssid: 7,
+                role: PacketRole::DialTo { call: "W7AUX".into(), path: vec![] },
+            })
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, BackendError::TransportFailed { .. }),
+            "expected TransportFailed, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn packet_dial_selects_dial_role_and_listen_selects_answer_role() {
+        assert_eq!(
+            resolve_packet_endpoint("N7CPZ", 7, PacketRole::DialTo { call: "W7AUX".into(), path: vec![] })
+                .unwrap()
+                .role,
+            ExchangeRole::Dial
+        );
+        assert_eq!(
+            resolve_packet_endpoint("N7CPZ", 7, PacketRole::Listen).unwrap().role,
+            ExchangeRole::Answer
+        );
+    }
+
+    // tuxlink-orj: arming Listen must report Listening (armed, waiting for an
+    // inbound call), NOT Connecting (which implies an active dial). This is the
+    // honest-state fix — the prior code set Connecting for both roles, so the UI
+    // refused to trust it and hard-coded "not connected".
+    #[test]
+    fn listen_role_initial_status_is_listening_not_connecting() {
+        assert!(matches!(
+            initial_packet_status(&PacketRole::Listen, 7),
+            BackendStatus::Listening { transport } if transport == "Packet-7"
+        ));
+    }
+
+    #[test]
+    fn dial_role_initial_status_is_connecting() {
+        assert!(matches!(
+            initial_packet_status(
+                &PacketRole::DialTo { call: "W7AUX".into(), path: vec![] },
+                3
+            ),
+            BackendStatus::Connecting { transport } if transport == "Packet-3"
+        ));
+    }
+
+    // =========================================================================
+    // tuxlink-3wh: REAL end-to-end integration chain (no mocks, no RF).
+    //
+    // Two production NativeBackend instances connect to EACH OTHER over a real
+    // TCP socket pair. One runs Listen (Answer role = FBB master), the other
+    // DialTo (Dial role = slave/dialer). Every layer is the shipping code:
+    // connect_link (real TcpStream) -> KISS framing -> AX.25 SABM/UA connect ->
+    // Ax25Stream ARQ -> B2F run_exchange_with_role. The only non-tuxlink piece
+    // is `kiss_wire`, a transparent byte relay that stands in for the
+    // TNC->RF->TNC path (the TNC is transparent to AX.25 frames above the KISS
+    // boundary, and RADIO-1 bars us from running the RF PHY anyway). 127.0.0.1
+    // only; nothing is transmitted.
+    // =========================================================================
+
+    /// A transparent KISS byte-wire: accepts the two backends' TCP connections
+    /// and cross-pipes their bytes, exactly as a TNC+RF+TNC link would carry the
+    /// AX.25 frames between two hosts. Returns the address both peers dial.
+    fn spawn_kiss_wire() -> std::net::SocketAddr {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            let peer_a = match listener.accept() {
+                Ok((s, _)) => s,
+                Err(_) => return,
+            };
+            let peer_b = match listener.accept() {
+                Ok((s, _)) => s,
+                Err(_) => return,
+            };
+            let a_rd = peer_a.try_clone().unwrap();
+            let mut a_wr = peer_a;
+            let b_rd = peer_b.try_clone().unwrap();
+            let mut b_wr = peer_b;
+            let t1 = std::thread::spawn(move || {
+                let mut r = a_rd;
+                let _ = std::io::copy(&mut r, &mut b_wr);
+            });
+            let t2 = std::thread::spawn(move || {
+                let mut r = b_rd;
+                let _ = std::io::copy(&mut r, &mut a_wr);
+            });
+            let _ = t1.join();
+            let _ = t2.join();
+        });
+        addr
+    }
+
+    fn config_with_call(call: &str) -> Config {
+        let mut cfg = offline_config();
+        cfg.identity.callsign = Some(call.to_string());
+        cfg.identity.grid = Some("CN87".to_string());
+        cfg
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn packet_two_real_peers_complete_a_connect_and_b2f_over_tcp_kiss() {
+        let wire = spawn_kiss_wire();
+
+        // Dialer (N7CPZ-7) has one outbound message; answerer (W7AUX-7) listens.
+        let dialer_dir = tempdir().unwrap();
+        let answerer_dir = tempdir().unwrap();
+        let seed = Mailbox::new(dialer_dir.path());
+        let raw =
+            compose_message("N7CPZ", &["W7AUX"], &[], "AX25-E2E", "hello over packet", 1_716_200_000)
+                .to_bytes();
+        seed.store(MailboxFolder::Outbox, &raw).unwrap();
+
+        let dialer = NativeBackend::new(config_with_call("N7CPZ"), dialer_dir.path());
+        let answerer = NativeBackend::new(config_with_call("W7AUX"), answerer_dir.path());
+
+        let listen = TransportConfig::Packet {
+            link: KissLinkConfig::Tcp { host: wire.ip().to_string(), port: wire.port() },
+            ssid: 7,
+            role: PacketRole::Listen,
+        };
+        let dial = TransportConfig::Packet {
+            link: KissLinkConfig::Tcp { host: wire.ip().to_string(), port: wire.port() },
+            ssid: 7,
+            role: PacketRole::DialTo { call: "W7AUX-7".into(), path: vec![] },
+        };
+
+        // Watchdog: a handshake/connect deadlock must fail the test, not hang cargo.
+        let outcome = tokio::time::timeout(std::time::Duration::from_secs(15), async {
+            tokio::join!(answerer.connect(listen), dialer.connect(dial))
+        })
+        .await;
+
+        let (ans_res, dial_res) =
+            outcome.expect("end-to-end packet exchange timed out (connect/handshake deadlock?)");
+        ans_res.expect("answerer (Listen/Answer role) connect+exchange failed");
+        dial_res.expect("dialer (DialTo/Dial role) connect+exchange failed");
+
+        // The dialer's outbound message must have crossed the real TCP+KISS+AX.25
+        // wire into the answerer's inbox (proves the full chain ran).
+        let inbox = Mailbox::new(answerer_dir.path()).list(MailboxFolder::Inbox).unwrap();
+        assert_eq!(
+            inbox.len(),
+            1,
+            "answerer inbox should hold the one message that crossed the wire; got {inbox:?}"
+        );
+        // ...and the dialer must have filed it as Sent (proves the proposal was acked).
+        let sent = Mailbox::new(dialer_dir.path()).list(MailboxFolder::Sent).unwrap();
+        assert_eq!(sent.len(), 1, "dialer Sent should hold the acked message; got {sent:?}");
+    }
+
+    // A reader that mimics Ax25Stream's defect-J behaviour: it returns Ok(0) for
+    // "no data yet" `idle` times (link open), then delivers `payload` once, then
+    // reports closed so a further Ok(0) is a genuine EOF.
+    struct IdleThenData {
+        idle_left: usize,
+        payload: Vec<u8>,
+        delivered: bool,
+    }
+    impl std::io::Read for IdleThenData {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            if self.idle_left > 0 {
+                self.idle_left -= 1;
+                return Ok(0); // no data yet — link still open
+            }
+            if !self.delivered {
+                self.delivered = true;
+                let n = buf.len().min(self.payload.len());
+                buf[..n].copy_from_slice(&self.payload[..n]);
+                return Ok(n);
+            }
+            Ok(0) // no more data; is_closed() is now true → genuine EOF
+        }
+    }
+    impl MaybeClosed for IdleThenData {
+        fn is_closed(&self) -> bool {
+            self.delivered
+        }
+    }
+
+    #[test]
+    fn blocking_b2f_stream_loops_past_transient_ok0_then_reports_eof() {
+        // Regression for the Codex 2026-05-22 BLOCKER: a transient Ok(0) from
+        // Ax25Stream (no data yet, link open) must NOT be read as EOF by the B2F
+        // BufReader; the adapter loops until real data, then surfaces a closed-link
+        // Ok(0) as a genuine EOF.
+        let mut s = BlockingB2fStream(IdleThenData {
+            idle_left: 3,
+            payload: b"FF\r".to_vec(),
+            delivered: false,
+        });
+        let mut buf = [0u8; 8];
+        let n = std::io::Read::read(&mut s, &mut buf).unwrap();
+        assert_eq!(&buf[..n], b"FF\r", "must block through transient Ok(0), not EOF early");
+        let n2 = std::io::Read::read(&mut s, &mut buf).unwrap();
+        assert_eq!(n2, 0, "Ok(0) while the link is closed must surface as a real EOF");
     }
 }
