@@ -366,14 +366,49 @@ impl Ax25Stream {
         self.unacked.len()
     }
 
-    /// TEMPORARY (full reassembly + RR-reply in Task 10): queue an in-order I-frame's
-    /// info and advance V(R).
+    /// Process an inbound I-frame. In order (N(S)==V(R)): queue its info, advance
+    /// V(R), reply RR(V(R)) acknowledging it. Out of order (gap): drop it and reply
+    /// REJ(V(R)) to request retransmission from the expected sequence. Reassembly
+    /// across PACLEN segments is implicit — every accepted info chunk is appended to
+    /// the inbound byte queue, which `read` drains in order.
     fn accept_inbound_i(&mut self, ns: u8, _pf: bool, info: &[u8]) -> std::io::Result<()> {
         if ns == self.vr {
             self.inbound.extend(info.iter().copied());
             self.vr = (self.vr + 1) % 8;
+            let rr = Frame {
+                path: self.out_path(),
+                control: Control::Rr { nr: self.vr, pf: false },
+                info: vec![],
+            };
+            self.send_frame(&rr)?;
+        } else {
+            // Sequence gap: reject, asking the peer to resend from V(R).
+            let rej = Frame {
+                path: self.out_path(),
+                control: Control::Rej { nr: self.vr, pf: false },
+                info: vec![],
+            };
+            self.send_frame(&rej)?;
         }
         Ok(())
+    }
+}
+
+impl Read for Ax25Stream {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        // Drain the link first so any freshly-arrived I-frames are queued + acked.
+        self.pump_acks()?;
+        // If nothing queued and the peer hasn't sent anything, poll once more so a
+        // caller in a read loop makes progress without busy-spinning.
+        if self.inbound.is_empty() && !self.closed {
+            std::thread::sleep(POLL_INTERVAL);
+            self.pump_acks()?;
+        }
+        let n = buf.len().min(self.inbound.len());
+        for b in buf.iter_mut().take(n) {
+            *b = self.inbound.pop_front().unwrap();
+        }
+        Ok(n)
     }
 }
 
@@ -443,6 +478,89 @@ impl Ax25Stream {
             retries += 1;
             std::thread::sleep(self.params.t1);
         }
+    }
+}
+
+#[cfg(test)]
+mod read_tests {
+    use super::test_peer::ScriptedPeer;
+    use super::*;
+
+    fn call(c: &str, ssid: u8) -> Address { Address { call: c.into(), ssid } }
+
+    fn connected(peer: &ScriptedPeer) -> Ax25Stream {
+        let mine = call("N7CPZ", 7);
+        let target = call("W7AUX", 10);
+        Ax25Stream {
+            link: Box::new(peer.clone()),
+            decoder: KissDecoder::new(),
+            mycall: mine, peer: target, digis: vec![],
+            params: Ax25Params::default(),
+            vs: 0, vr: 0, va: 0,
+            pending_frames: std::collections::VecDeque::new(),
+            inbound: std::collections::VecDeque::new(),
+            unacked: std::collections::BTreeMap::new(),
+            closed: false,
+        }
+    }
+
+    /// An inbound I-frame from the peer to us, with N(S)=ns carrying `info`.
+    fn peer_i(mycall: &Address, peer: &Address, ns: u8, info: &[u8]) -> Vec<u8> {
+        let f = Frame {
+            path: Path { dest: mycall.clone(), src: peer.clone(), digis: vec![] },
+            control: Control::I { ns, nr: 0, pf: false },
+            info: info.to_vec(),
+        };
+        kiss_data_frame(&f.encode().unwrap())
+    }
+
+    #[test]
+    fn read_delivers_in_order_i_frames_and_replies_rr() {
+        let peer = ScriptedPeer::new();
+        let mine = call("N7CPZ", 7);
+        let target = call("W7AUX", 10);
+        // Two in-order I-frames reassemble into one byte stream.
+        peer.feed(&peer_i(&mine, &target, 0, b"FOO"));
+        peer.feed(&peer_i(&mine, &target, 1, b"BAR"));
+        let mut s = connected(&peer);
+        let mut got = Vec::new();
+        let mut buf = [0u8; 16];
+        // Two reads drain both queued frames.
+        let n1 = s.read(&mut buf).unwrap();
+        got.extend_from_slice(&buf[..n1]);
+        let n2 = s.read(&mut buf).unwrap();
+        got.extend_from_slice(&buf[..n2]);
+        assert_eq!(got, b"FOOBAR");
+        assert_eq!(s.vr, 2, "V(R) advanced past both frames");
+        // We replied RR for each.
+        let frames = { let mut d = KissDecoder::new(); d.push(&peer.drain_tx()) };
+        let rrs: Vec<u8> = frames
+            .iter()
+            .filter_map(|b| match Frame::decode(b).unwrap().control {
+                Control::Rr { nr, .. } => Some(nr),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(rrs, vec![1, 2], "RR(1) then RR(2)");
+    }
+
+    #[test]
+    fn out_of_order_i_frame_triggers_rej() {
+        let peer = ScriptedPeer::new();
+        let mine = call("N7CPZ", 7);
+        let target = call("W7AUX", 10);
+        // We expect N(S)=0 but the peer sends N(S)=1 ⇒ gap ⇒ REJ(0), no delivery.
+        peer.feed(&peer_i(&mine, &target, 1, b"OOPS"));
+        let mut s = connected(&peer);
+        let mut buf = [0u8; 16];
+        let n = s.read(&mut buf).unwrap();
+        assert_eq!(n, 0, "out-of-order frame is not delivered");
+        assert_eq!(s.vr, 0, "V(R) unchanged on a gap");
+        let frames = { let mut d = KissDecoder::new(); d.push(&peer.drain_tx()) };
+        assert!(
+            frames.iter().any(|b| matches!(Frame::decode(b).unwrap().control, Control::Rej { nr: 0, .. })),
+            "expected a REJ(0)"
+        );
     }
 }
 
