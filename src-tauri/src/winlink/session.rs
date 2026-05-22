@@ -703,4 +703,68 @@ mod tests {
             Err(ExchangeError::ChecksumMismatch)
         );
     }
+
+    #[test]
+    fn answer_role_sends_handshake_first_then_remote_takes_first_turn() {
+        // We are master. The scripted peer is slave: it does NOT speak a handshake
+        // first (we do). It replies with its own handshake (no `>` prompt needed — we
+        // read until a prompt, so the peer ends its handshake with one), then, on its
+        // turn, offers one message and quits.
+        let mut peer = Vec::new();
+        // The peer's handshake reply: a forwarding line, an identifier, and a prompt.
+        peer.extend_from_slice(b";FW: W7AUX\r[RMS-1.0-B2FHM$]\rW7AUX>\r");
+        // The peer (slave) takes the first message turn: one offered message.
+        let mut msg = Message::new();
+        msg.set_header("Mid", "PEERMSG00001");
+        msg.set_header("Subject", "Hi");
+        msg.set_body(b"Direct peer message.\r\n".to_vec());
+        let (proposal, compressed) = msg.to_proposal().unwrap();
+        peer.extend_from_slice(proposal.line().as_bytes());
+        peer.push(b'\r');
+        peer.extend_from_slice(batch_checksum_line(&[proposal]).as_bytes());
+        peer.push(b'\r');
+        peer.extend_from_slice(&transfer::frame_block("Hi", 0, &compressed));
+        // After our accept + our (empty) turn, the peer is done.
+        peer.extend_from_slice(b"FQ\r");
+
+        let mut reader = Cursor::new(peer);
+        let mut writer = Vec::new();
+        let config = ExchangeConfig {
+            mycall: "N7CPZ".into(), // base call — NO ssid in the B2F identity
+            targetcall: "W7AUX".into(),
+            locator: "CN87".into(),
+            password: None, // peers never challenge; no secret in P2P
+        };
+        let result = run_exchange_with_role(
+            &mut reader,
+            &mut writer,
+            ExchangeRole::Answer,
+            &config,
+            vec![],
+            |_| vec![Answer::Accept { resume_offset: 0 }],
+        )
+        .unwrap();
+
+        // We received the peer's message.
+        assert_eq!(result.received.len(), 1);
+        assert_eq!(result.received[0].header("Mid"), Some("PEERMSG00001"));
+        assert_eq!(result.received[0].body(), b"Direct peer message.\r\n");
+
+        // We spoke the handshake FIRST (no `;PR:` token — no challenge in P2P), then
+        // accepted (`FS +`), then on our turn signalled no-more (FF) → quit (FQ).
+        let our_handshake =
+            crate::winlink::handshake::build_handshake("N7CPZ", "W7AUX", "CN87", None);
+        assert!(
+            writer.starts_with(&our_handshake),
+            "master must send its handshake before anything else; wrote {:?}",
+            String::from_utf8_lossy(&writer)
+        );
+        // After the handshake, we accept the peer's batch (`FS +\r`), then on our
+        // turn we have nothing to send and the remote is not yet signalled done →
+        // `FF\r`. The peer then sends `FQ\r` (inbound), which breaks the loop before
+        // we write anything more — so our writes after the handshake are just
+        // `FS +\r` then `FF\r`.
+        let tail = &writer[our_handshake.len()..];
+        assert_eq!(tail, b"FS +\rFF\r");
+    }
 }
