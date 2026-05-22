@@ -246,8 +246,7 @@ async fn test_session_drop_does_not_panic() {
         .expect("connect should succeed in v0.0.1 stub");
     drop(session);
     // If Drop panicked, the test process would die here. Reaching this
-    // assertion proves Drop was a no-panic local cleanup.
-    assert!(true);
+    // line proves Drop was a no-panic local cleanup.
 }
 
 // ============================================================================

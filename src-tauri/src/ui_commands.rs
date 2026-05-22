@@ -437,12 +437,10 @@ fn extract_routing(msg: &mail_parser::Message<'_>) -> Option<String> {
         "X-Pat-Transport",
     ];
     for &header_name in TRANSPORT_HEADERS {
-        if let Some(hv) = msg.header(header_name) {
-            // msg.header() returns Option<&HeaderValue> directly.
-            if let mail_parser::HeaderValue::Text(s) = hv {
-                if !s.is_empty() {
-                    return Some(s.to_string());
-                }
+        // msg.header() returns Option<&HeaderValue> directly.
+        if let Some(mail_parser::HeaderValue::Text(s)) = msg.header(header_name) {
+            if !s.is_empty() {
+                return Some(s.to_string());
             }
         }
     }

@@ -876,10 +876,10 @@ mod tests {
         // TUXLINK_TEST_SEND_MOCK set → run_test_send_impl short-circuits to mocked success.
         // MUST NOT TRANSMIT. The mock gate is the Part 97 / RADIO-1 safety net for automated tests.
         let _mock = EnvVarGuard::set("TUXLINK_TEST_SEND_MOCK", "1");
-        let _no_fail = {
+        {
             // Remove TUXLINK_TEST_SEND_MOCK_FAIL if set from a prior test.
             unsafe { std::env::remove_var("TUXLINK_TEST_SEND_MOCK_FAIL") };
-        };
+        }
 
         let result = run_test_send_impl().await;
         match result {

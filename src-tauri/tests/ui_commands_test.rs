@@ -230,7 +230,7 @@ fn test_ui_error_maps_all_backend_error_variants() {
         UiError::Internal { detail: "invalid session".into() }
     );
     // Io → Internal carrying the io error's Display.
-    match UiError::from(BackendError::Io(IoError::new(ErrorKind::Other, "disk gone"))) {
+    match UiError::from(BackendError::Io(IoError::other("disk gone"))) {
         UiError::Internal { detail } => assert!(detail.contains("disk gone")),
         other => panic!("expected Internal for Io, got {other:?}"),
     }

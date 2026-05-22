@@ -26,7 +26,7 @@ use thiserror::Error;
 pub use crate::pat_client::MailboxFolder;
 
 // Native backend wiring (see the NativeBackend section below).
-use crate::config::{broadcast_grid, CmsTransport, Config, PacketConfig};
+use crate::config::{broadcast_grid, CmsTransport, Config};
 use crate::native_mailbox::Mailbox;
 use crate::winlink::ax25::{Address, KissLinkConfig};
 use crate::winlink::message::Message;
@@ -745,20 +745,34 @@ impl NativeBackend {
 /// `Ax25Stream::drop`). Generic over `Read + Write` so it is fully
 /// unit-tested with an in-memory `FakeAx25Stream` — no network, no RF.
 ///
+/// Session-identity context for a packet exchange. Groups the per-session
+/// identity parameters (`base_mycall`, `targetcall`, `password`, `role`,
+/// `locator`) to keep `native_packet_exchange` under the clippy
+/// `too_many_arguments` threshold (7).
+struct PacketConnectCtx<'a> {
+    /// B2F identity call (base callsign, no SSID; spec §4.4).
+    base_mycall: &'a str,
+    /// Peer callsign (gateway or P2P peer).
+    targetcall: &'a str,
+    /// Winlink password for gateway secure-login (None for P2P).
+    password: Option<String>,
+    /// Exchange role: Dial (slave) for DialTo, Answer (master) for Listen.
+    role: ExchangeRole,
+    /// Grid locator at configured broadcast precision.
+    locator: &'a str,
+}
+
 /// Identity split (spec §4.4): `base_mycall` is the B2F call (no SSID); the
 /// SSID rode the AX.25 link address in the `connect`/`answer` call that
 /// produced `stream`. `locator` is the operator's grid reduced to the
 /// configured broadcast precision (pass `cms_locator(config)`, already exists).
 fn native_packet_exchange<S: std::io::Read + std::io::Write + Send + 'static>(
     stream: S,
-    base_mycall: &str,
-    targetcall: &str,
-    password: Option<String>,
-    role: ExchangeRole,
+    ctx: PacketConnectCtx<'_>,
     mailbox: &Mailbox,
     progress: &dyn Fn(&str),
-    locator: &str,
 ) -> Result<(), BackendError> {
+    let PacketConnectCtx { base_mycall, targetcall, password, role, locator } = ctx;
     // Split the owned stream into simultaneous read + write halves via a shared
     // Arc<Mutex> (the same pattern as telnet's shared-socket approach). The
     // exchange is strictly turn-based so the lock is never contended.
@@ -878,13 +892,15 @@ fn native_packet_connect(
             })?;
             native_packet_exchange(
                 stream,
-                &base,
-                &target.call,
-                password,
-                ExchangeRole::Dial,
+                PacketConnectCtx {
+                    base_mycall: &base,
+                    targetcall: &target.call,
+                    password,
+                    role: ExchangeRole::Dial,
+                    locator: &locator,
+                },
                 mailbox,
                 progress,
-                &locator,
             )
         }
         None => {
@@ -901,13 +917,15 @@ fn native_packet_connect(
             progress(&format!("Answered {}.", peer.call));
             native_packet_exchange(
                 stream,
-                &base,
-                &peer.call,
-                None,
-                ExchangeRole::Answer,
+                PacketConnectCtx {
+                    base_mycall: &base,
+                    targetcall: &peer.call,
+                    password: None,
+                    role: ExchangeRole::Answer,
+                    locator: &locator,
+                },
                 mailbox,
                 progress,
-                &locator,
             )
         }
     }
@@ -1208,11 +1226,12 @@ fn append_pat_line(raw: String, buffer: &SessionLogState) -> LogLine {
     line
 }
 
-/// Options for [`PatBackend::spawn`] — the full-lifecycle constructor.
-/// (spec §3.1). The resolved Pat sidecar path + the Pat config/mbox/pid paths
-/// + tuxlink's config are supplied by the bootstrap (`lib.rs` `.setup()`); see
-/// spec §3.5/§3.6 for path-resolution responsibilities (the bootstrap owns
-/// resolution, not `spawn`).
+/// Options for [`PatBackend::spawn`] — the full-lifecycle constructor (spec §3.1).
+///
+/// The resolved Pat sidecar path, the Pat config/mbox/pid paths, and tuxlink's
+/// config are supplied by the bootstrap (`lib.rs` `.setup()`); see spec §3.5/§3.6
+/// for path-resolution responsibilities (the bootstrap owns resolution, not
+/// `spawn`).
 pub struct PatBackendSpawnOptions {
     /// Resolved Pat sidecar binary path.
     pub binary: std::path::PathBuf,
@@ -1609,8 +1628,8 @@ fn translate_pat_err_for_read(err: PatClientError, id: &MessageId) -> BackendErr
 mod native_read_state_tests {
     use super::*;
     use crate::config::{
-        CmsTransport, Config, ConnectConfig, GpsState, IdentityConfig, PositionPrecision,
-        PositionSource, PrivacyConfig, CONFIG_SCHEMA_VERSION,
+        CmsTransport, Config, ConnectConfig, GpsState, IdentityConfig, PacketConfig,
+        PositionPrecision, PositionSource, PrivacyConfig, CONFIG_SCHEMA_VERSION,
     };
     use crate::native_mailbox::Mailbox;
     use crate::winlink::compose::compose_message;
@@ -1847,13 +1866,15 @@ mod native_read_state_tests {
         let mailbox = Mailbox::new(tempdir().unwrap().path());
         let result = native_packet_exchange(
             stream,
-            "N7CPZ",      // base B2F call (NO ssid)
-            "W7AUX",      // target call (gateway)
-            Some("MYPASS".into()),
-            ExchangeRole::Dial,
+            PacketConnectCtx {
+                base_mycall: "N7CPZ",   // base B2F call (NO ssid)
+                targetcall: "W7AUX",    // target call (gateway)
+                password: Some("MYPASS".into()),
+                role: ExchangeRole::Dial,
+                locator: "CN87",        // controller directive: pass cms_locator
+            },
             &mailbox,
             &|_| {},
-            "CN87",       // locator — controller directive: pass cms_locator
         );
         assert!(result.is_ok(), "gateway dial must succeed, got {result:?}");
 
@@ -1897,13 +1918,15 @@ mod native_read_state_tests {
         let mailbox = Mailbox::new(dir.path());
         let result = native_packet_exchange(
             stream,
-            "N7CPZ",
-            "W7AUX",
-            None,
-            ExchangeRole::Answer,
+            PacketConnectCtx {
+                base_mycall: "N7CPZ",
+                targetcall: "W7AUX",
+                password: None,
+                role: ExchangeRole::Answer,
+                locator: "CN87",
+            },
             &mailbox,
             &|_| {},
-            "CN87",
         );
         assert!(result.is_ok(), "answer exchange must succeed, got {result:?}");
 

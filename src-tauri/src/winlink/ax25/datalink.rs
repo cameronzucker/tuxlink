@@ -501,7 +501,7 @@ impl Write for Ax25Stream {
         let paclen = self.params.paclen.max(1);
         // Fix F: clamp the effective window to the mod-8 ceiling. MAXFRAME > 7 would
         // alias N(S) keys in the `unacked` BTreeMap and break `in_flight()`.
-        let maxframe = (self.params.maxframe as usize).min(7).max(1);
+        let maxframe = (self.params.maxframe as usize).clamp(1, 7);
         for chunk in buf.chunks(paclen) {
             // Only enter the (pumping) wait when the window is actually full or the
             // peer is flow-controlling us (RNR). Pumping unconditionally before the
@@ -1396,7 +1396,7 @@ mod hardening_tests {
         let mut s = connected(&peer, Ax25Params::default());
         peer.feed(&peer_i(&mine, &target, 0, 0, true, b"HI"));
         let mut buf = [0u8; 16];
-        s.read(&mut buf).unwrap();
+        let _ = s.read(&mut buf).unwrap();
         let controls = tx_controls(&peer);
         assert!(
             controls.iter().any(|c| matches!(c, Control::Rr { pf: true, .. })),
@@ -1412,7 +1412,7 @@ mod hardening_tests {
         let mut s = connected(&peer, Ax25Params::default());
         peer.feed(&peer_i(&mine, &target, 0, 0, false, b"HI"));
         let mut buf = [0u8; 16];
-        s.read(&mut buf).unwrap();
+        let _ = s.read(&mut buf).unwrap();
         let controls = tx_controls(&peer);
         let rr = controls.iter().find(|c| matches!(c, Control::Rr { .. })).unwrap();
         assert!(matches!(rr, Control::Rr { pf: false, .. }), "P=0 ⇒ RR F=0, got {rr:?}");
@@ -1495,7 +1495,7 @@ mod hardening_tests {
         let params2 = Ax25Params { paclen: 1, maxframe: 4, t1: Duration::from_millis(10), n2_retries: 5, ..Ax25Params::default() };
         let mut s2 = connected(&peer2, params2);
         s2.remote_busy = true;
-        s2.write(b"Q").unwrap();
+        let _ = s2.write(b"Q").unwrap();
         assert!(!s2.remote_busy, "the pending RR cleared remote_busy");
         let infos2 = tx_i_infos(&peer2);
         assert_eq!(infos2.len(), 1, "one I-frame sent after busy cleared");

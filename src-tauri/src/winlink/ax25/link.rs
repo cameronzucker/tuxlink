@@ -102,7 +102,7 @@ fn connect_serial(cfg: &KissLinkConfig) -> std::io::Result<Box<dyn ByteLink>> {
             serialport::ErrorKind::NoDevice => {
                 std::io::Error::new(std::io::ErrorKind::NotFound, e.to_string())
             }
-            _ => std::io::Error::new(std::io::ErrorKind::Other, e.to_string()),
+            _ => std::io::Error::other(e.to_string()),
         })?;
     Ok(Box::new(port))
 }

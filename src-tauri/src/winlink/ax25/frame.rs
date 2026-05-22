@@ -81,15 +81,15 @@ mod address_decode_tests {
         let bytes = a.encode(false, true);
         let (decoded, cr, last) = Address::decode(&bytes).unwrap();
         assert_eq!(decoded, a);
-        assert_eq!(cr, false);
-        assert_eq!(last, true);
+        assert!(!cr);
+        assert!(last);
     }
     #[test]
     fn trims_trailing_spaces_from_call() {
         let bytes = Address { call: "W1AW".into(), ssid: 0 }.encode(false, false);
         let (d, _, last) = Address::decode(&bytes).unwrap();
         assert_eq!(d.call, "W1AW"); // no trailing spaces
-        assert_eq!(last, false);
+        assert!(!last);
     }
     #[test]
     fn rejects_wrong_length() {
