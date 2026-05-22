@@ -44,6 +44,10 @@ pub struct Ax25Stream {
     inbound: std::collections::VecDeque<u8>,
     /// Sent-but-unacked I-frame info payloads, keyed by their N(S), for retransmit.
     unacked: std::collections::BTreeMap<u8, Vec<u8>>,
+    /// Peer-flow-control flag: set by an inbound RNR (remote receiver busy), cleared
+    /// by RR. While true, `write` must not send new I-frames (AX.25 v2.2 §6.4.6;
+    /// reference `Connection.cs` `remoteBusy`).
+    remote_busy: bool,
     closed: bool,
 }
 
@@ -71,6 +75,7 @@ pub fn connect(
         pending_frames: std::collections::VecDeque::new(),
         inbound: std::collections::VecDeque::new(),
         unacked: std::collections::BTreeMap::new(),
+        remote_busy: false,
         closed: false,
     };
     // Push the KISS TNC params from the timing config. CSMA itself is the modem's job.
@@ -85,6 +90,13 @@ pub fn connect(
         let deadline = Instant::now() + params.t1;
         while Instant::now() < deadline {
             if let Some(frame) = stream.recv_frame()? {
+                // Fix D/H: only accept UA/DM from the station we dialed; a foreign
+                // frame addressed to our call must not complete or refuse this connect.
+                if frame.path.src.call != stream.peer.call
+                    || frame.path.src.ssid != stream.peer.ssid
+                {
+                    continue;
+                }
                 match frame.control {
                     Control::Ua { .. } => return Ok(stream),
                     Control::Dm { .. } => {
@@ -159,7 +171,17 @@ impl Ax25Stream {
                 }
                 Ok(result)
             }
-            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => Ok(None),
+            // A short read-poll timeout (TCP `set_read_timeout` / serialport timeout)
+            // surfaces as WouldBlock (Unix `EAGAIN`) or TimedOut depending on the
+            // transport — both mean "no frame yet", not a broken link (fix H).
+            Err(e)
+                if matches!(
+                    e.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                ) =>
+            {
+                Ok(None)
+            }
             Err(e) => Err(e),
         }
     }
@@ -253,6 +275,10 @@ mod connect_tests {
 /// peer. Blocks (polling the link) until a SABM arrives. The caller (P3 listen
 /// lifecycle) governs when to arm this and how to abort it via the link shutdown
 /// hook. The reply UA echoes the SABM's source as the new path's dest.
+///
+/// Defect L: unlike `connect`, `answer` does NOT push KISS TNC params (TXdelay /
+/// persistence / slot) — the P3 listen lifecycle pushes them once when it arms the
+/// link, so re-pushing on every accepted SABM would be redundant.
 pub fn answer(
     link: Box<dyn ByteLink>,
     mycall: Address,
@@ -271,6 +297,7 @@ pub fn answer(
         pending_frames: std::collections::VecDeque::new(),
         inbound: std::collections::VecDeque::new(),
         unacked: std::collections::BTreeMap::new(),
+        remote_busy: false,
         closed: false,
     };
     loop {
@@ -300,15 +327,46 @@ impl Ax25Stream {
     /// we wait for V(A) to advance before a T1 retransmit fires.
     fn pump_acks(&mut self) -> std::io::Result<()> {
         while let Some(frame) = self.recv_frame()? {
+            // Fix D: on a shared RF channel any station may emit a frame addressed to
+            // our call; processing a foreign station's S/I-frame would corrupt our
+            // window and inbound state. Only frames from our connected peer count.
+            // (The connect/answer handshakes route by their own peer checks; this
+            // guard governs the CONNECTED data path. The reference routes by the
+            // reversed connection path.)
+            if frame.path.src.call != self.peer.call || frame.path.src.ssid != self.peer.ssid {
+                continue;
+            }
             match frame.control {
-                Control::Rr { nr, .. } | Control::Rnr { nr, .. } => self.ack_through(nr),
+                // Fix I: RNR is remote-busy backpressure — ack through, but mark the
+                // peer busy so `write` stops sending new I-frames until an RR clears it.
+                Control::Rnr { nr, .. } => {
+                    self.ack_through(nr);
+                    self.remote_busy = true;
+                }
+                Control::Rr { nr, .. } => {
+                    self.ack_through(nr);
+                    self.remote_busy = false;
+                }
                 Control::Rej { nr, .. } => {
                     self.ack_through(nr);
+                    self.remote_busy = false;
                     self.retransmit_from(nr)?;
                 }
                 Control::I { ns, nr, pf } => {
                     self.ack_through(nr);
                     self.accept_inbound_i(ns, pf, &frame.info)?;
+                }
+                // Fix H: the peer hung up. Reply UA and mark the link closed so the
+                // owner notices (reference `DoConnectedStateRemote`: DISC ⇒ reply UA,
+                // DisconnectIndication, state Disconnected).
+                Control::Disc { pf } => {
+                    let ua = Frame {
+                        path: self.out_path(),
+                        control: Control::Ua { pf },
+                        info: vec![],
+                    };
+                    self.send_frame(&ua)?;
+                    self.closed = true;
                 }
                 _ => {}
             }
@@ -317,9 +375,18 @@ impl Ax25Stream {
     }
 
     /// Mark all I-frames with N(S) < nr (mod 8) as acknowledged; advance V(A).
+    ///
+    /// A valid cumulative N(R) acknowledges no more than the count outstanding:
+    /// `(nr - va) mod 8 <= (vs - va) mod 8`. An out-of-window N(R) (a buggy or
+    /// foreign frame) is ignored entirely — we neither walk the window nor move
+    /// V(A) (fix B; reference `Connection.cs::ErrorRecovery`, which restarts the
+    /// link on this condition; we conservatively drop the frame).
     fn ack_through(&mut self, nr: u8) {
-        // Remove every unacked entry the peer has now confirmed (sequence numbers
-        // strictly before nr, walking forward from V(A) mod 8).
+        let acked = (nr + 8 - self.va) % 8;
+        let outstanding = (self.vs + 8 - self.va) % 8;
+        if acked > outstanding {
+            return; // out-of-window N(R): ignore
+        }
         let mut s = self.va;
         while s != nr {
             self.unacked.remove(&s);
@@ -328,21 +395,22 @@ impl Ax25Stream {
         self.va = nr;
     }
 
-    /// Retransmit every still-unacked I-frame from N(S)=nr forward (REJ recovery).
+    /// Retransmit every still-unacked I-frame from N(S)=nr forward through V(S),
+    /// walking mod-8 so a window that has wrapped past 7→0 resends in N(S) order
+    /// (REJ recovery; AX.25 v2.2 §6.4.7). The prior `.range(nr..)` body silently
+    /// dropped the wrapped frames — fix A.
     fn retransmit_from(&mut self, nr: u8) -> std::io::Result<()> {
-        let payloads: Vec<(u8, Vec<u8>)> = self
-            .unacked
-            .range(nr..)
-            .chain(self.unacked.range(..nr).filter(|_| false)) // mod-8 wrap handled by callers; v0.1 windows are small
-            .map(|(k, v)| (*k, v.clone()))
-            .collect();
-        for (ns, info) in payloads {
-            let f = Frame {
-                path: self.out_path(),
-                control: Control::I { ns, nr: self.vr, pf: false },
-                info,
-            };
-            self.send_frame(&f)?;
+        let mut s = nr;
+        while s != self.vs {
+            if let Some(info) = self.unacked.get(&s).cloned() {
+                let f = Frame {
+                    path: self.out_path(),
+                    control: Control::I { ns: s, nr: self.vr, pf: false },
+                    info,
+                };
+                self.send_frame(&f)?;
+            }
+            s = (s + 1) % 8;
         }
         Ok(())
     }
@@ -371,21 +439,26 @@ impl Ax25Stream {
     /// REJ(V(R)) to request retransmission from the expected sequence. Reassembly
     /// across PACLEN segments is implicit — every accepted info chunk is appended to
     /// the inbound byte queue, which `read` drains in order.
-    fn accept_inbound_i(&mut self, ns: u8, _pf: bool, info: &[u8]) -> std::io::Result<()> {
+    fn accept_inbound_i(&mut self, ns: u8, pf: bool, info: &[u8]) -> std::io::Result<()> {
+        // Fix G: a polled (P=1) I-frame requires an F=1 reply; echo the incoming poll
+        // bit into the Final bit of our RR/REJ (reference calls `EnquiryResponse(1)`
+        // when pfBit == 1).
         if ns == self.vr {
             self.inbound.extend(info.iter().copied());
             self.vr = (self.vr + 1) % 8;
             let rr = Frame {
                 path: self.out_path(),
-                control: Control::Rr { nr: self.vr, pf: false },
+                control: Control::Rr { nr: self.vr, pf },
                 info: vec![],
             };
             self.send_frame(&rr)?;
         } else {
-            // Sequence gap: reject, asking the peer to resend from V(R).
+            // Sequence gap: reject, asking the peer to resend from V(R). REJ is sent
+            // per out-of-order frame here — no REJSent dedup (acceptable for v0.1;
+            // future optimization, defect K).
             let rej = Frame {
                 path: self.out_path(),
-                control: Control::Rej { nr: self.vr, pf: false },
+                control: Control::Rej { nr: self.vr, pf },
                 info: vec![],
             };
             self.send_frame(&rej)?;
@@ -395,6 +468,14 @@ impl Ax25Stream {
 }
 
 impl Read for Ax25Stream {
+    /// Read reassembled inbound bytes.
+    ///
+    /// **Contract (defect J — settled at P4 wiring):** `Ok(0)` here means "no data
+    /// available right now" (the link is still open), NOT end-of-stream. The P4 B2F
+    /// driver (`run_exchange`) MUST NOT treat `Ok(0)` as EOF; it must loop/retry
+    /// until the session completes (peer DISC, our disconnect, or a higher-layer
+    /// end-of-message marker). A genuinely closed link is signalled by `self.closed`
+    /// (set on an inbound DISC) plus an empty inbound queue, not by `Ok(0)` alone.
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         // Drain the link first so any freshly-arrived I-frames are queued + acked.
         self.pump_acks()?;
@@ -418,24 +499,19 @@ impl Write for Ax25Stream {
             return Err(std::io::Error::new(std::io::ErrorKind::NotConnected, "link closed"));
         }
         let paclen = self.params.paclen.max(1);
-        let maxframe = self.params.maxframe as usize;
+        // Fix F: clamp the effective window to the mod-8 ceiling. MAXFRAME > 7 would
+        // alias N(S) keys in the `unacked` BTreeMap and break `in_flight()`.
+        let maxframe = (self.params.maxframe as usize).min(7).max(1);
         for chunk in buf.chunks(paclen) {
-            // Block until the window has room, draining acks (bounded by N2×T1 so a
-            // dead peer surfaces as an error, never a silent hang — spec §5).
-            let mut attempts = 0u32;
-            while self.in_flight() >= maxframe {
-                self.pump_acks()?;
-                if self.in_flight() < maxframe {
-                    break;
-                }
-                attempts += 1;
-                if attempts as u8 > self.params.n2_retries {
-                    return Err(std::io::Error::new(
-                        std::io::ErrorKind::TimedOut,
-                        "window stalled — no acknowledgement (N2 exceeded)",
-                    ));
-                }
-                std::thread::sleep(self.params.t1);
+            // Only enter the (pumping) wait when the window is actually full or the
+            // peer is flow-controlling us (RNR). Pumping unconditionally before the
+            // first send would consume an ack the peer cannot legitimately have sent
+            // yet (it acks frames not yet transmitted), and fix B's out-of-window
+            // guard would correctly drop it — losing the ack. Fix E + I: when blocked,
+            // `await_window` drives T1 recovery (retransmit + N2 cap → TimedOut), so a
+            // lost RR or a stuck-busy peer fails legibly, never hangs.
+            if self.remote_busy || self.in_flight() >= maxframe {
+                self.await_window(maxframe)?;
             }
             self.send_i(chunk)?;
         }
@@ -449,9 +525,23 @@ impl Write for Ax25Stream {
 }
 
 impl Ax25Stream {
-    /// Wait for V(A) to reach at least `target` (mod-8, measured as count of frames
-    /// acked from the wait's start), retransmitting the oldest unacked frame each T1
-    /// up to N2 times. Returns `TimedOut` if N2 is exhausted without progress (spec §5).
+    /// Wait for the in-flight count to drain to `target_in_flight_drained_to`,
+    /// performing T1 recovery: each round we pump acks, and if frames remain, sleep
+    /// one T1 then retransmit ALL outstanding I-frames from V(A) forward (mod-8).
+    /// Returns `TimedOut` once N2 retransmit rounds are exhausted without progress
+    /// (spec §5 — "no answer" must fail legibly, never hang).
+    ///
+    /// Fix C: the prior body retransmitted only `unacked.iter().next()` (lowest map
+    /// key — the wrong frame across a mod-8 wrap) and retransmitted *before* any T1
+    /// wait. Now the wait precedes the retransmit, and `retransmit_from(self.va)`
+    /// resends the whole outstanding window in N(S) order.
+    ///
+    /// `write` drives its stall recovery through `await_window` (which also honours
+    /// the RNR busy flag). `await_ack` is the narrower "drain the in-flight window"
+    /// primitive — retained as the directly-tested T1-recovery routine (the fix-C
+    /// regression test + `recovery_tests`) and as the explicit flush/teardown drain
+    /// path; hence `allow(dead_code)` for non-test builds where only `write` calls in.
+    #[allow(dead_code)]
     fn await_ack(&mut self, target_in_flight_drained_to: usize) -> std::io::Result<()> {
         let mut retries = 0u8;
         loop {
@@ -465,18 +555,49 @@ impl Ax25Stream {
                     "no acknowledgement after N2 retransmits (T1 timeout)",
                 ));
             }
-            // T1 expired with frames still unacked: retransmit the oldest, bump retry.
-            if let Some((&ns, info)) = self.unacked.iter().next() {
-                let info = info.clone();
-                let f = Frame {
-                    path: self.out_path(),
-                    control: Control::I { ns, nr: self.vr, pf: true }, // P=1 polls for an RR
-                    info,
-                };
-                self.send_frame(&f)?;
+            // T1 expired with frames still unacked: wait one T1, re-pump (an ack may
+            // have arrived), then retransmit the whole outstanding window.
+            std::thread::sleep(self.params.t1);
+            self.pump_acks()?;
+            if self.in_flight() <= target_in_flight_drained_to {
+                return Ok(());
+            }
+            self.retransmit_from(self.va)?;
+            retries += 1;
+        }
+    }
+
+    /// Block until the send window has room for a new I-frame: the in-flight count is
+    /// below `maxframe` AND the peer is not flow-controlling us (RNR / `remote_busy`).
+    /// Bounded by N2 rounds of T1 — a lost RR or a peer stuck in RNR surfaces as
+    /// `TimedOut` rather than a silent hang (spec §5; fix E + I). Each T1 round
+    /// re-pumps acks (which may clear busy or advance V(A)) and, if there are still
+    /// outstanding frames, retransmits the whole window from V(A) (mod-8).
+    fn await_window(&mut self, maxframe: usize) -> std::io::Result<()> {
+        let mut retries = 0u8;
+        loop {
+            self.pump_acks()?;
+            if !self.remote_busy && self.in_flight() < maxframe {
+                return Ok(());
+            }
+            if retries >= self.params.n2_retries {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "send window stalled — peer busy or no acknowledgement (N2 exceeded)",
+                ));
+            }
+            std::thread::sleep(self.params.t1);
+            self.pump_acks()?;
+            if !self.remote_busy && self.in_flight() < maxframe {
+                return Ok(());
+            }
+            // Outstanding frames may have been lost; retransmit them. (When the stall
+            // is pure RNR with nothing outstanding, this is a no-op and we simply wait
+            // out the N2 rounds for the busy condition to lift.)
+            if self.in_flight() > 0 {
+                self.retransmit_from(self.va)?;
             }
             retries += 1;
-            std::thread::sleep(self.params.t1);
         }
     }
 }
@@ -496,17 +617,21 @@ impl Ax25Stream {
             info: vec![],
         };
         self.send_frame(&disc)?;
-        // Await UA for one T1; a peer that has already vanished must not hang teardown.
+        // Await a teardown response for one T1; a peer that has already vanished must
+        // not hang teardown. Fix D/H: accept UA OR DM (with F=1) from the intended
+        // peer only (reference `DoDisconnectPendingStateRemote`: UA or DM ⇒ Disconnected).
         let deadline = Instant::now() + self.params.t1;
         while Instant::now() < deadline {
             if let Some(frame) = self.recv_frame()? {
-                if matches!(frame.control, Control::Ua { .. }) {
+                let from_peer = frame.path.src.call == self.peer.call
+                    && frame.path.src.ssid == self.peer.ssid;
+                if from_peer && matches!(frame.control, Control::Ua { .. } | Control::Dm { .. }) {
                     return Ok(());
                 }
             }
             std::thread::sleep(POLL_INTERVAL);
         }
-        Ok(()) // best-effort: DISC sent even if no UA came back
+        Ok(()) // best-effort: DISC sent even if no teardown response came back
     }
 }
 
@@ -646,6 +771,7 @@ mod disconnect_tests {
             mycall: mine, peer: target, digis: vec![],
             params: Ax25Params { t1: Duration::from_millis(20), ..Ax25Params::default() },
             vs: 0, vr: 0, va: 0,
+            remote_busy: false,
             pending_frames: std::collections::VecDeque::new(),
             inbound: std::collections::VecDeque::new(),
             unacked: std::collections::BTreeMap::new(),
@@ -724,6 +850,7 @@ mod read_tests {
             mycall: mine, peer: target, digis: vec![],
             params: Ax25Params::default(),
             vs: 0, vr: 0, va: 0,
+            remote_busy: false,
             pending_frames: std::collections::VecDeque::new(),
             inbound: std::collections::VecDeque::new(),
             unacked: std::collections::BTreeMap::new(),
@@ -806,6 +933,7 @@ mod recovery_tests {
             decoder: KissDecoder::new(),
             mycall: mine, peer: target, digis: vec![], params,
             vs: 0, vr: 0, va: 0,
+            remote_busy: false,
             pending_frames: std::collections::VecDeque::new(),
             inbound: std::collections::VecDeque::new(),
             unacked: std::collections::BTreeMap::new(),
@@ -888,6 +1016,7 @@ mod write_tests {
             digis: vec![],
             params,
             vs: 0, vr: 0, va: 0,
+            remote_busy: false,
             pending_frames: std::collections::VecDeque::new(),
             inbound: std::collections::VecDeque::new(),
             unacked: std::collections::BTreeMap::new(),
@@ -951,7 +1080,425 @@ mod write_tests {
         assert_eq!(n, 3);
         let frames = { let mut d = KissDecoder::new(); d.push(&peer.drain_tx()) };
         assert_eq!(frames.len(), 3, "all three segments must eventually be sent");
-        assert_eq!(s.va, 3, "V(A) advanced as RRs arrived");
+        // V(A) lands at 2, not 3: when the window stalls after frames 0,1, the pump
+        // drains both pre-fed RRs in one pass — RR(2) is valid (va 0→2), but RR(3) is
+        // out-of-window at that instant (frame 2 isn't sent yet), so fix B's guard
+        // correctly drops it. Frame 2 then sends and stays unacked. (Previously this
+        // asserted 3, encoding the pre-fix mass-ack behavior that walked past V(S).)
+        assert_eq!(s.va, 2, "RR(2) advanced V(A); the premature RR(3) is out-of-window when pumped");
+    }
+}
+
+#[cfg(test)]
+mod hardening_tests {
+    //! Regression tests for the P2 correctness defects A–I found by code review +
+    //! the cross-provider Codex adversarial round. Each test reproduces a concrete
+    //! bug (mod-8 wrap, out-of-window ack, T1 ordering, foreign-station corruption,
+    //! window stall without recovery, MAXFRAME aliasing, P/F echo, DISC/DM teardown,
+    //! RNR backpressure). Cross-checked vs `TNCKissInterface.dll` (`Connection.cs`).
+    use super::test_peer::ScriptedPeer;
+    use super::*;
+
+    fn call(c: &str, ssid: u8) -> Address {
+        Address { call: c.into(), ssid }
+    }
+
+    /// A connected stream with explicit window state, bypassing the handshake.
+    fn connected(peer: &ScriptedPeer, params: Ax25Params) -> Ax25Stream {
+        Ax25Stream {
+            link: Box::new(peer.clone()),
+            decoder: KissDecoder::new(),
+            mycall: call("N7CPZ", 7),
+            peer: call("W7AUX", 10),
+            digis: vec![],
+            params,
+            vs: 0,
+            vr: 0,
+            va: 0,
+            remote_busy: false,
+            pending_frames: std::collections::VecDeque::new(),
+            inbound: std::collections::VecDeque::new(),
+            unacked: std::collections::BTreeMap::new(),
+            closed: false,
+        }
+    }
+
+    /// Build a KISS-wrapped S-frame the peer sends to us (src defaults to the peer).
+    fn peer_s(mycall: &Address, src: &Address, control: Control) -> Vec<u8> {
+        let f = Frame {
+            path: Path { dest: mycall.clone(), src: src.clone(), digis: vec![] },
+            control,
+            info: vec![],
+        };
+        kiss_data_frame(&f.encode().unwrap())
+    }
+
+    /// Build a KISS-wrapped I-frame the peer sends to us.
+    fn peer_i(mycall: &Address, src: &Address, ns: u8, nr: u8, pf: bool, info: &[u8]) -> Vec<u8> {
+        let f = Frame {
+            path: Path { dest: mycall.clone(), src: src.clone(), digis: vec![] },
+            control: Control::I { ns, nr, pf },
+            info: info.to_vec(),
+        };
+        kiss_data_frame(&f.encode().unwrap())
+    }
+
+    /// Decode every KISS frame the stream wrote and return the controls.
+    fn tx_controls(peer: &ScriptedPeer) -> Vec<Control> {
+        let frames = { let mut d = KissDecoder::new(); d.push(&peer.drain_tx()) };
+        frames.iter().map(|b| Frame::decode(b).unwrap().control).collect()
+    }
+
+    /// Decode every KISS frame the stream wrote and return the I-frame info payloads
+    /// in N(S) wire order.
+    fn tx_i_infos(peer: &ScriptedPeer) -> Vec<(u8, Vec<u8>)> {
+        let frames = { let mut d = KissDecoder::new(); d.push(&peer.drain_tx()) };
+        frames
+            .iter()
+            .filter_map(|b| {
+                let f = Frame::decode(b).unwrap();
+                match f.control {
+                    Control::I { ns, .. } => Some((ns, f.info)),
+                    _ => None,
+                }
+            })
+            .collect()
+    }
+
+    // ── A: retransmit_from must walk mod-8 through the wrap ────────────────────
+
+    #[test]
+    fn rej_retransmits_all_unacked_across_mod8_wrap() {
+        // va=6, vs=2, window {6:A,7:B,0:C,1:D}. REJ(6) ⇒ resend A,B,C,D in N(S)
+        // order 6,7,0,1. The old `.range(nr..)` body only resent 6,7 (dropped the
+        // wrapped 0,1) — the bug this test pins.
+        let peer = ScriptedPeer::new();
+        let mine = call("N7CPZ", 7);
+        let target = call("W7AUX", 10);
+        let mut s = connected(&peer, Ax25Params { paclen: 1, maxframe: 7, ..Ax25Params::default() });
+        s.va = 6;
+        s.vs = 2;
+        s.unacked.insert(6, b"A".to_vec());
+        s.unacked.insert(7, b"B".to_vec());
+        s.unacked.insert(0, b"C".to_vec());
+        s.unacked.insert(1, b"D".to_vec());
+
+        peer.feed(&peer_s(&mine, &target, Control::Rej { nr: 6, pf: false }));
+        s.pump_acks().unwrap();
+
+        let resent = tx_i_infos(&peer);
+        assert_eq!(
+            resent,
+            vec![
+                (6u8, b"A".to_vec()),
+                (7u8, b"B".to_vec()),
+                (0u8, b"C".to_vec()),
+                (1u8, b"D".to_vec()),
+            ],
+            "REJ(6) must resend the full wrapped window in 6,7,0,1 order"
+        );
+    }
+
+    #[test]
+    fn rej_acks_then_retransmits_across_wrap() {
+        // Same window; REJ(7) ⇒ acks 6 (va→7), resends 7,0,1.
+        let peer = ScriptedPeer::new();
+        let mine = call("N7CPZ", 7);
+        let target = call("W7AUX", 10);
+        let mut s = connected(&peer, Ax25Params { paclen: 1, maxframe: 7, ..Ax25Params::default() });
+        s.va = 6;
+        s.vs = 2;
+        s.unacked.insert(6, b"A".to_vec());
+        s.unacked.insert(7, b"B".to_vec());
+        s.unacked.insert(0, b"C".to_vec());
+        s.unacked.insert(1, b"D".to_vec());
+
+        peer.feed(&peer_s(&mine, &target, Control::Rej { nr: 7, pf: false }));
+        s.pump_acks().unwrap();
+
+        assert_eq!(s.va, 7, "REJ(7) acknowledged frame 6");
+        assert!(!s.unacked.contains_key(&6), "frame 6 is acked, dropped from window");
+        let resent = tx_i_infos(&peer);
+        assert_eq!(
+            resent,
+            vec![(7u8, b"B".to_vec()), (0u8, b"C".to_vec()), (1u8, b"D".to_vec())],
+        );
+    }
+
+    // ── B: ack_through must ignore out-of-window N(R) ──────────────────────────
+
+    #[test]
+    fn ack_through_ignores_out_of_window_nr() {
+        // va=4, vs=6, window {4,5}. RR(3) acks 7 frames (4→3 mod-8) which is more
+        // than the 2 outstanding ⇒ out of window ⇒ IGNORE. The old walk-from-va
+        // loop would have walked 4,5,6,7,0,1,2 removing live keys and set va=3.
+        let peer = ScriptedPeer::new();
+        let mine = call("N7CPZ", 7);
+        let target = call("W7AUX", 10);
+        let mut s = connected(&peer, Ax25Params { paclen: 1, maxframe: 7, ..Ax25Params::default() });
+        s.va = 4;
+        s.vs = 6;
+        s.unacked.insert(4, b"A".to_vec());
+        s.unacked.insert(5, b"B".to_vec());
+
+        peer.feed(&peer_s(&mine, &target, Control::Rr { nr: 3, pf: false }));
+        s.pump_acks().unwrap();
+
+        assert_eq!(s.va, 4, "out-of-window RR(3) must not advance V(A)");
+        assert!(s.unacked.contains_key(&4) && s.unacked.contains_key(&5), "window unchanged");
+        assert_eq!(s.unacked.len(), 2);
+    }
+
+    #[test]
+    fn ack_through_accepts_in_window_nr() {
+        // va=4, vs=6; RR(5) acks 1 frame ⇒ valid ⇒ va→5, key 4 removed.
+        let peer = ScriptedPeer::new();
+        let mine = call("N7CPZ", 7);
+        let target = call("W7AUX", 10);
+        let mut s = connected(&peer, Ax25Params { paclen: 1, maxframe: 7, ..Ax25Params::default() });
+        s.va = 4;
+        s.vs = 6;
+        s.unacked.insert(4, b"A".to_vec());
+        s.unacked.insert(5, b"B".to_vec());
+
+        peer.feed(&peer_s(&mine, &target, Control::Rr { nr: 5, pf: false }));
+        s.pump_acks().unwrap();
+
+        assert_eq!(s.va, 5);
+        assert!(!s.unacked.contains_key(&4));
+        assert!(s.unacked.contains_key(&5));
+    }
+
+    // ── C: await_ack retransmits ALL outstanding from V(A) in mod-8 order ──────
+
+    #[test]
+    fn await_ack_retransmits_all_outstanding_across_wrap() {
+        // Wrapped window {6:A,7:B,0:C}, va=6, vs=1, no acks, n2=1, tiny T1.
+        // await_ack must retransmit A,B,C (all three, in 6,7,0 order) exactly once,
+        // then TimedOut. The old code resent only `unacked.iter().next()` (lowest
+        // map key = 0 ⇒ "C"), which is the wrong frame across the wrap.
+        let peer = ScriptedPeer::new();
+        let mut s = connected(
+            &peer,
+            Ax25Params { paclen: 1, maxframe: 7, t1: Duration::from_millis(10), n2_retries: 1, ..Ax25Params::default() },
+        );
+        s.va = 6;
+        s.vs = 1;
+        s.unacked.insert(6, b"A".to_vec());
+        s.unacked.insert(7, b"B".to_vec());
+        s.unacked.insert(0, b"C".to_vec());
+
+        let err = s.await_ack(0).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::TimedOut);
+        let resent = tx_i_infos(&peer);
+        assert_eq!(
+            resent,
+            vec![(6u8, b"A".to_vec()), (7u8, b"B".to_vec()), (0u8, b"C".to_vec())],
+            "one retransmit round resends the full wrapped window in 6,7,0 order"
+        );
+    }
+
+    // ── D: connected stream must only process frames from its peer ─────────────
+
+    #[test]
+    fn foreign_station_ack_is_ignored() {
+        // Connected to W7AUX with unacked {0,1}; a DIFFERENT station W1AAA sends an
+        // RR(2) addressed to us. recv_frame's dest==mycall filter would let it in
+        // and corrupt the window; pump_acks must reject it on src != peer.
+        let peer = ScriptedPeer::new();
+        let mine = call("N7CPZ", 7);
+        let foreign = call("W1AAA", 0);
+        let mut s = connected(&peer, Ax25Params { paclen: 1, maxframe: 7, ..Ax25Params::default() });
+        s.send_i(b"A").unwrap();
+        s.send_i(b"B").unwrap();
+        let _ = peer.drain_tx();
+        assert_eq!(s.unacked.len(), 2);
+
+        peer.feed(&peer_s(&mine, &foreign, Control::Rr { nr: 2, pf: false }));
+        s.pump_acks().unwrap();
+
+        assert_eq!(s.va, 0, "foreign RR must not advance V(A)");
+        assert_eq!(s.unacked.len(), 2, "foreign RR must not clear the window");
+    }
+
+    #[test]
+    fn foreign_station_i_frame_is_not_delivered() {
+        let peer = ScriptedPeer::new();
+        let mine = call("N7CPZ", 7);
+        let foreign = call("W1AAA", 0);
+        let mut s = connected(&peer, Ax25Params::default());
+        peer.feed(&peer_i(&mine, &foreign, 0, 0, false, b"INTRUDER"));
+        let mut buf = [0u8; 16];
+        let n = s.read(&mut buf).unwrap();
+        assert_eq!(n, 0, "a foreign I-frame must not be delivered to read()");
+        assert_eq!(s.vr, 0, "V(R) unchanged by a foreign I-frame");
+    }
+
+    // ── E: write() window-stall must drive T1 recovery ─────────────────────────
+
+    #[test]
+    fn write_window_stall_retransmits_then_times_out() {
+        // paclen 1, maxframe 2, tiny T1, n2=3; RR is lost (nothing fed). write must
+        // retransmit the stalled frame(s) and ultimately return TimedOut — the old
+        // stall loop only pumped+slept (never retransmitted) and the `as u8` cast
+        // could mis-cap N2.
+        let peer = ScriptedPeer::new();
+        let params = Ax25Params { paclen: 1, maxframe: 2, t1: Duration::from_millis(10), n2_retries: 3, ..Ax25Params::default() };
+        let mut s = connected(&peer, params);
+        let err = s.write(b"XYZ").unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::TimedOut, "lost RR must surface as TimedOut, not hang");
+        // We must have retransmitted (more than the 2 original sends present).
+        let resent = tx_i_infos(&peer);
+        assert!(resent.len() > 2, "stall must retransmit, got {} I-frames", resent.len());
+    }
+
+    #[test]
+    fn write_completes_when_rrs_arrive_late() {
+        // Positive case: feed RR(2) so the window drains and the 3rd segment sends;
+        // write completes Ok. Note: with fix B's out-of-window guard, the pre-fed
+        // RR(3) is *correctly* dropped when pumped — at that moment only frames 0,1
+        // are in flight, so an N(R)=3 acks more than is outstanding. The write still
+        // succeeds (RR(2) freed the window); frame 2 stays unacked until a later RR.
+        let peer = ScriptedPeer::new();
+        let mine = call("N7CPZ", 7);
+        let target = call("W7AUX", 10);
+        peer.feed(&peer_s(&mine, &target, Control::Rr { nr: 2, pf: false }));
+        peer.feed(&peer_s(&mine, &target, Control::Rr { nr: 3, pf: false }));
+        let params = Ax25Params { paclen: 1, maxframe: 2, t1: Duration::from_millis(20), n2_retries: 3, ..Ax25Params::default() };
+        let mut s = connected(&peer, params);
+        assert_eq!(s.write(b"XYZ").unwrap(), 3);
+        assert_eq!(s.va, 2, "RR(2) advanced V(A); the premature RR(3) is out-of-window when pumped");
+        assert_eq!(s.vs, 3, "all three segments were sent");
+    }
+
+    // ── F: clamp maxframe to ≤7 so N(S) keys never alias ───────────────────────
+
+    #[test]
+    fn maxframe_clamped_to_seven() {
+        // params with maxframe=9; writing 8 one-byte segments with no acks must
+        // block at 7 in flight (mod-8 ceiling), never alias keys in the BTreeMap.
+        let peer = ScriptedPeer::new();
+        let params = Ax25Params { paclen: 1, maxframe: 9, t1: Duration::from_millis(5), n2_retries: 0, ..Ax25Params::default() };
+        let mut s = connected(&peer, params);
+        // 8 bytes, no acks: the 8th cannot fit a mod-8 window ⇒ stall ⇒ TimedOut.
+        let err = s.write(b"ABCDEFGH").unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::TimedOut);
+        assert!(s.in_flight() <= 7, "never more than 7 unacked in flight, got {}", s.in_flight());
+    }
+
+    // ── G: a polled (P=1) inbound I-frame requires an F=1 reply ────────────────
+
+    #[test]
+    fn in_order_i_frame_with_poll_gets_final_reply() {
+        let peer = ScriptedPeer::new();
+        let mine = call("N7CPZ", 7);
+        let target = call("W7AUX", 10);
+        let mut s = connected(&peer, Ax25Params::default());
+        peer.feed(&peer_i(&mine, &target, 0, 0, true, b"HI"));
+        let mut buf = [0u8; 16];
+        s.read(&mut buf).unwrap();
+        let controls = tx_controls(&peer);
+        assert!(
+            controls.iter().any(|c| matches!(c, Control::Rr { pf: true, .. })),
+            "P=1 I-frame must get an RR with F=1, got {controls:?}"
+        );
+    }
+
+    #[test]
+    fn in_order_i_frame_without_poll_gets_non_final_reply() {
+        let peer = ScriptedPeer::new();
+        let mine = call("N7CPZ", 7);
+        let target = call("W7AUX", 10);
+        let mut s = connected(&peer, Ax25Params::default());
+        peer.feed(&peer_i(&mine, &target, 0, 0, false, b"HI"));
+        let mut buf = [0u8; 16];
+        s.read(&mut buf).unwrap();
+        let controls = tx_controls(&peer);
+        let rr = controls.iter().find(|c| matches!(c, Control::Rr { .. })).unwrap();
+        assert!(matches!(rr, Control::Rr { pf: false, .. }), "P=0 ⇒ RR F=0, got {rr:?}");
+    }
+
+    // ── H: inbound DISC + DM teardown ──────────────────────────────────────────
+
+    #[test]
+    fn inbound_disc_replies_ua_and_closes() {
+        let peer = ScriptedPeer::new();
+        let mine = call("N7CPZ", 7);
+        let target = call("W7AUX", 10);
+        let mut s = connected(&peer, Ax25Params::default());
+        peer.feed(&peer_s(&mine, &target, Control::Disc { pf: true }));
+        s.pump_acks().unwrap();
+        assert!(s.closed, "an inbound DISC must close the stream");
+        let controls = tx_controls(&peer);
+        assert!(
+            controls.iter().any(|c| matches!(c, Control::Ua { .. })),
+            "we must reply UA to an inbound DISC, got {controls:?}"
+        );
+    }
+
+    #[test]
+    fn disconnect_accepts_dm_as_teardown() {
+        // Peer replies DM (not UA) to our DISC ⇒ disconnect returns Ok, bounded.
+        let peer = ScriptedPeer::new();
+        let mine = call("N7CPZ", 7);
+        let target = call("W7AUX", 10);
+        let dm = Frame {
+            path: Path { dest: mine.clone(), src: target.clone(), digis: vec![] },
+            control: Control::Dm { pf: true },
+            info: vec![],
+        };
+        peer.feed(&kiss_data_frame(&dm.encode().unwrap()));
+        let mut s = connected(&peer, Ax25Params { t1: Duration::from_millis(50), ..Ax25Params::default() });
+        let start = Instant::now();
+        s.disconnect().unwrap();
+        assert!(start.elapsed() < Duration::from_secs(1), "DM teardown must be bounded");
+    }
+
+    // ── I: RNR remote-busy backpressure ─────────────────────────────────────────
+
+    #[test]
+    fn rnr_sets_remote_busy_on_pump() {
+        // An inbound RNR(0) marks the peer busy; a subsequent RR(0) clears it. This is
+        // the receive-path half of fix I (the flag `write` then consults).
+        let peer = ScriptedPeer::new();
+        let mine = call("N7CPZ", 7);
+        let target = call("W7AUX", 10);
+        let mut s = connected(&peer, Ax25Params::default());
+        peer.feed(&peer_s(&mine, &target, Control::Rnr { nr: 0, pf: false }));
+        s.pump_acks().unwrap();
+        assert!(s.remote_busy, "RNR must set remote_busy");
+        peer.feed(&peer_s(&mine, &target, Control::Rr { nr: 0, pf: false }));
+        s.pump_acks().unwrap();
+        assert!(!s.remote_busy, "RR must clear remote_busy");
+    }
+
+    #[test]
+    fn rnr_blocks_writes_until_rr_clears_busy() {
+        // `remote_busy` is persistent stream state (set by an earlier pump on an
+        // inbound RNR). While busy, write must send NO new I-frame and — since no RR
+        // arrives to lift it — eventually TimedOut (a stuck-busy peer fails legibly).
+        let peer = ScriptedPeer::new();
+        let params = Ax25Params { paclen: 1, maxframe: 4, t1: Duration::from_millis(10), n2_retries: 1, ..Ax25Params::default() };
+        let mut s = connected(&peer, params);
+        s.remote_busy = true; // carried over from a prior RNR pump
+        let err = s.write(b"Z").unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::TimedOut, "a stuck-busy peer must fail legibly");
+        let infos = tx_i_infos(&peer);
+        assert!(infos.is_empty(), "no new I-frame may be sent while remote is busy, got {infos:?}");
+
+        // Positive case: an RR is pending when write runs ⇒ the wait's pump clears
+        // busy and the write proceeds, sending exactly one I-frame.
+        let peer2 = ScriptedPeer::new();
+        let mine = call("N7CPZ", 7);
+        let target = call("W7AUX", 10);
+        peer2.feed(&peer_s(&mine, &target, Control::Rr { nr: 0, pf: false }));
+        let params2 = Ax25Params { paclen: 1, maxframe: 4, t1: Duration::from_millis(10), n2_retries: 5, ..Ax25Params::default() };
+        let mut s2 = connected(&peer2, params2);
+        s2.remote_busy = true;
+        s2.write(b"Q").unwrap();
+        assert!(!s2.remote_busy, "the pending RR cleared remote_busy");
+        let infos2 = tx_i_infos(&peer2);
+        assert_eq!(infos2.len(), 1, "one I-frame sent after busy cleared");
     }
 }
 

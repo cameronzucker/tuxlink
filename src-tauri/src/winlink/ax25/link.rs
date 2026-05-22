@@ -11,9 +11,22 @@ use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::time::Duration;
 
-/// How long a single read/write on the KISS link may block before failing (mirrors
-/// `telnet.rs`'s TIMEOUT — a hung modem must fail legibly, not stall forever).
-const LINK_TIMEOUT: Duration = Duration::from_secs(60);
+/// How long a single read on the KISS link may block before returning (a short
+/// poll interval, NOT a session timeout). The AX.25 state machine's poll/T1 loops
+/// (`recv_frame`, `await_ack`, `await_window`, the connect/disconnect waits) call
+/// `read` repeatedly and treat a timeout as "no frame yet" (WouldBlock); a real
+/// `TcpStream`/serial `read` must therefore return promptly when idle, or those
+/// loops would each block up to a full socket timeout per poll. The "fail legibly
+/// on a hung modem" guarantee comes from the N2×T1 logic in the state machine, not
+/// from this socket timeout. (Fix H — was 60 s, which defeated the poll/T1 model on
+/// real links.)
+const LINK_POLL_TIMEOUT: Duration = Duration::from_millis(200);
+
+/// How long a single `write` on the KISS link may block before failing. Writes are
+/// not part of the poll loop, so this stays a generous "the socket is wedged" bound
+/// rather than the short read-poll interval (a normal KISS frame write completes
+/// instantly; this only trips if the OS send buffer never drains).
+const LINK_WRITE_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Which KISS byte-pipe to open. Bluetooth uses the `Serial` variant with an
 /// rfcomm device path (e.g. `/dev/rfcomm0`); there is no in-app BlueZ dependency.
@@ -40,8 +53,8 @@ pub fn connect_link(cfg: &KissLinkConfig) -> std::io::Result<Box<dyn ByteLink>> 
     match cfg {
         KissLinkConfig::Tcp { host, port } => {
             let stream = TcpStream::connect((host.as_str(), *port))?;
-            stream.set_read_timeout(Some(LINK_TIMEOUT)).ok();
-            stream.set_write_timeout(Some(LINK_TIMEOUT)).ok();
+            stream.set_read_timeout(Some(LINK_POLL_TIMEOUT)).ok();
+            stream.set_write_timeout(Some(LINK_WRITE_TIMEOUT)).ok();
             Ok(Box::new(stream))
         }
         KissLinkConfig::Serial { .. } => connect_serial(cfg),
@@ -80,7 +93,9 @@ fn connect_serial(cfg: &KissLinkConfig) -> std::io::Result<Box<dyn ByteLink>> {
         KissLinkConfig::Tcp { .. } => unreachable!("connect_serial called with a Tcp config"),
     };
     let port = serialport::new(device, baud)
-        .timeout(LINK_TIMEOUT)
+        // Short read-poll timeout so `recv_frame` returns promptly when the line is
+        // idle (the state machine's N2×T1 logic owns the hung-modem guarantee).
+        .timeout(LINK_POLL_TIMEOUT)
         .open()
         .map_err(|e| match e.kind() {
             serialport::ErrorKind::NoDevice => {
