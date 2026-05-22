@@ -171,15 +171,18 @@ export function AppShell() {
   );
 
   // Derive the packet UI state for the ribbon + status bar indicators.
-  // v0.1: active when the packet connection panel is selected; SSID placeholder
-  // (0) + empty linkLabel until a dedicated packet-status IPC feed is wired.
+  // The panel being open means packet is the SELECTED transport — it does NOT
+  // mean we are listening or connected. There is no live packet-session feed yet,
+  // so we never assert "Listening"/"Connected" here (that would lie about on-air
+  // state — unacceptable for EmComm). listening/connected stay false until a real
+  // backend status feed lands; the indicator then shows an honest "not connected".
   const packetUi: PacketUiState = useMemo(() => ({
     active: selectedConnection === 'packet',
-    listening: selectedConnection === 'packet',
-    connected: statusData.state.tone === 'good',
+    listening: false,
+    connected: false,
     effectiveCall: effectiveCall(statusData.callsign, 0), // v0.1 placeholder SSID
     linkLabel: '',
-  }), [selectedConnection, statusData.callsign, statusData.state.tone]);
+  }), [selectedConnection, statusData.callsign]);
 
   return (
     <div className="layout-b" data-testid="app-shell-root">

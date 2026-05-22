@@ -1128,6 +1128,44 @@ pub async fn packet_config_set(dto: PacketConfigDto) -> Result<(), UiError> {
     Ok(())
 }
 
+/// Device-name prefixes that denote a KISS-capable serial / RFCOMM port on Linux:
+/// USB-serial adapters (`ttyUSB`, `ttyACM`), bound Bluetooth RFCOMM (`rfcomm`,
+/// appears once the operator pairs+binds at the OS — spec §4.1), and on-board
+/// UARTs (`ttyAMA`, `ttyS`, e.g. the Pi's GPIO serial).
+const SERIAL_DEVICE_PREFIXES: &[&str] = &["ttyUSB", "ttyACM", "rfcomm", "ttyAMA", "ttyS"];
+
+/// Scan `dev_dir` (normally `/dev`) for serial/RFCOMM device nodes a KISS TNC
+/// might use. Pure + dir-injected so it is unit-testable without real hardware.
+/// Returns full device paths, sorted + deduped. Plain `std::fs` — no libudev,
+/// no new system deps. This only ENUMERATES candidates; the operator confirms
+/// the right one (and a real open is exercised on-air, RADIO-1).
+pub fn discover_serial_devices(dev_dir: &std::path::Path) -> Vec<String> {
+    let mut found: Vec<String> = match std::fs::read_dir(dev_dir) {
+        Ok(entries) => entries
+            .filter_map(|e| e.ok())
+            .filter_map(|e| e.file_name().into_string().ok())
+            .filter(|name| {
+                SERIAL_DEVICE_PREFIXES
+                    .iter()
+                    .any(|p| name.starts_with(p) && name.len() > p.len())
+            })
+            .map(|name| dev_dir.join(name).to_string_lossy().into_owned())
+            .collect(),
+        Err(_) => Vec::new(),
+    };
+    found.sort();
+    found.dedup();
+    found
+}
+
+/// List serial/RFCOMM devices a KISS TNC might use (USB adapters, bound
+/// Bluetooth RFCOMM, on-board UARTs) by scanning `/dev`. An empty list means
+/// none are present — plug in a TNC or bind an rfcomm device, then refresh.
+#[tauri::command]
+pub async fn packet_list_serial_devices() -> Result<Vec<String>, UiError> {
+    Ok(discover_serial_devices(std::path::Path::new("/dev")))
+}
+
 // ============================================================================
 // Task 8 (tuxlink-7fr) — packet_connect / packet_set_listen
 // ============================================================================
@@ -1234,6 +1272,34 @@ pub async fn packet_set_listen(enabled: bool) -> Result<(), UiError> {
 mod tests {
     use super::*;
     use crate::winlink_backend::MessageId;
+
+    #[test]
+    fn discover_serial_devices_lists_serial_and_rfcomm_only() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dev = tmp.path();
+        for name in ["ttyUSB0", "ttyACM0", "rfcomm0", "ttyAMA0", "ttyS0", "null", "sda1", "tty"] {
+            std::fs::write(dev.join(name), b"").unwrap();
+        }
+        let found = discover_serial_devices(dev);
+        let names: Vec<String> = found
+            .iter()
+            .map(|p| p.rsplit('/').next().unwrap().to_string())
+            .collect();
+        for want in ["ttyUSB0", "ttyACM0", "rfcomm0", "ttyAMA0", "ttyS0"] {
+            assert!(names.contains(&want.to_string()), "missing {want} in {names:?}");
+        }
+        for skip in ["null", "sda1", "tty"] {
+            assert!(!names.contains(&skip.to_string()), "should not list {skip}");
+        }
+        let mut sorted = found.clone();
+        sorted.sort();
+        assert_eq!(found, sorted);
+    }
+
+    #[test]
+    fn discover_serial_devices_empty_when_dir_missing() {
+        assert!(discover_serial_devices(std::path::Path::new("/no/such/dir/xyzzy")).is_empty());
+    }
 
     // MessageMetaDto serializes camelCase (bodySize, hasAttachments) so the
     // TS `MessageMeta` model needs no rename layer. In-crate because

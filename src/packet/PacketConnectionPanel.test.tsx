@@ -1,5 +1,5 @@
 // src/packet/PacketConnectionPanel.test.tsx
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn(async () => undefined) }));
@@ -52,12 +52,25 @@ describe('<PacketConnectionPanel> — modem block', () => {
     expect(screen.getByTestId('modem-port')).toHaveValue('8001');
   });
 
-  it('selecting USB serial swaps host:port for a device input', () => {
+  it('selecting USB serial swaps host:port for a device input (no 127.0.0.1 leak)', () => {
     render(<PacketConnectionPanel config={cfg} baseCall="N7CPZ" />);
     fireEvent.click(screen.getByTestId('modem-seg-usb'));
     expect(screen.getByTestId('modem-seg-usb')).toHaveAttribute('aria-pressed', 'true');
     expect(screen.queryByTestId('modem-host')).toBeNull();
-    expect(screen.getByTestId('modem-device')).toBeInTheDocument();
+    const device = screen.getByTestId('modem-device');
+    expect(device).toBeInTheDocument();
+    // Regression (the bug the operator hit): the TCP host (127.0.0.1) must NOT
+    // leak into the device field when switching transports. Controlled inputs.
+    expect(device).toHaveValue('');
+    expect(device).toHaveAttribute('placeholder', '/dev/ttyUSB0');
+  });
+
+  it('Bluetooth shows an rfcomm device path placeholder, not an IP', () => {
+    render(<PacketConnectionPanel config={cfg} baseCall="N7CPZ" />);
+    fireEvent.click(screen.getByTestId('modem-seg-bt'));
+    const device = screen.getByTestId('modem-device');
+    expect(device).toHaveValue('');
+    expect(device).toHaveAttribute('placeholder', '/dev/rfcomm0');
   });
 
   it("shows a serial link's device when config.linkKind is Serial", () => {
@@ -144,8 +157,10 @@ describe('<PacketConnectionPanel> — connect block', () => {
     fireEvent.change(screen.getByTestId('relay-input-0'), { target: { value: 'W7RPT-1' } });
     fireEvent.click(screen.getByTestId('add-relay'));
     fireEvent.change(screen.getByTestId('relay-input-1'), { target: { value: 'W7XYZ-2' } });
-    expect(screen.getByTestId('relay-chip-0')).toHaveTextContent('W7RPT-1');
-    expect(screen.getByTestId('relay-chip-1')).toHaveTextContent('W7XYZ-2');
+    // The value lives in the chip's <input> (no duplicate label span — that
+    // double-printed the operator's text). Assert on the input value.
+    expect(screen.getByTestId('relay-input-0')).toHaveValue('W7RPT-1');
+    expect(screen.getByTestId('relay-input-1')).toHaveValue('W7XYZ-2');
     expect(screen.queryByTestId('add-relay')).toBeNull(); // capped at 2
   });
 
@@ -156,6 +171,44 @@ describe('<PacketConnectionPanel> — connect block', () => {
     fireEvent.change(screen.getByTestId('relay-input-0'), { target: { value: 'W7RPT-1' } });
     fireEvent.click(screen.getByTestId('packet-connect-btn'));
     expect(invoke).toHaveBeenCalledWith('packet_connect', { call: 'W7AUX-10', path: ['W7RPT-1'] });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Device picker (USB / Bluetooth) — enumerates real devices from the backend,
+// never an IP. Regression coverage for the "no real device selector" gap.
+// ---------------------------------------------------------------------------
+describe('<PacketConnectionPanel> — device picker', () => {
+  beforeEach(() => {
+    vi.mocked(invoke).mockImplementation(async (cmd: string) =>
+      cmd === 'packet_list_serial_devices' ? ['/dev/ttyUSB0', '/dev/rfcomm0'] : undefined,
+    );
+  });
+  afterEach(() => {
+    vi.mocked(invoke).mockImplementation(async () => undefined);
+  });
+
+  it('lists discovered serial/RFCOMM devices in a dropdown when USB is selected', async () => {
+    render(<PacketConnectionPanel config={cfg} baseCall="N7CPZ" />);
+    fireEvent.click(screen.getByTestId('modem-seg-usb'));
+    expect(invoke).toHaveBeenCalledWith('packet_list_serial_devices');
+    await waitFor(() => {
+      expect(screen.getByRole('option', { name: '/dev/ttyUSB0' })).toBeInTheDocument();
+      expect(screen.getByRole('option', { name: '/dev/rfcomm0' })).toBeInTheDocument();
+    });
+  });
+
+  it('selecting a device persists a Serial link with that path (not an IP)', async () => {
+    const onLinkPersist = vi.fn();
+    render(<PacketConnectionPanel config={cfg} baseCall="N7CPZ" onLinkPersist={onLinkPersist} />);
+    fireEvent.click(screen.getByTestId('modem-seg-bt'));
+    await waitFor(() => screen.getByRole('option', { name: '/dev/rfcomm0' }));
+    fireEvent.change(screen.getByTestId('modem-device-select'), {
+      target: { value: '/dev/rfcomm0' },
+    });
+    expect(onLinkPersist).toHaveBeenCalledWith(
+      expect.objectContaining({ linkKind: 'Serial', serialDevice: '/dev/rfcomm0' }),
+    );
   });
 });
 

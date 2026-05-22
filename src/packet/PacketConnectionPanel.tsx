@@ -19,6 +19,12 @@ import type { PacketConfigDto } from './packetTypes';
 
 type ModemSegment = 'tcp' | 'usb' | 'bt';
 
+/** The flat link fields the modem editor writes back into PacketConfigDto. */
+export type ModemLinkFields = Pick<
+  PacketConfigDto,
+  'linkKind' | 'tcpHost' | 'tcpPort' | 'serialDevice' | 'serialBaud'
+>;
+
 /** Derive the initial UI segment from the config link kind. TCP → 'tcp'; any
  *  Serial link defaults to 'usb' (USB is the common case; operator switches to
  *  BT — both produce linkKind:'Serial'). null → 'tcp' (default). */
@@ -37,13 +43,15 @@ export interface PacketConnectionPanelProps {
   baseCall: string;
   /** Persist a new SSID (container wires this to packet_config_set). */
   onSsidPersist?: (ssid: number) => void;
+  /** Persist the modem link fields (container wires this to packet_config_set). */
+  onLinkPersist?: (fields: ModemLinkFields) => void;
 }
 
 // ---------------------------------------------------------------------------
 // Main component
 // ---------------------------------------------------------------------------
 
-export function PacketConnectionPanel({ config, baseCall, onSsidPersist }: PacketConnectionPanelProps) {
+export function PacketConnectionPanel({ config, baseCall, onSsidPersist, onLinkPersist }: PacketConnectionPanelProps) {
   // SSID state — seeded from config, re-synced when config loads from null
   const [ssid, setSsid] = useState<number>(config?.ssid ?? 0);
   useEffect(() => {
@@ -100,7 +108,7 @@ export function PacketConnectionPanel({ config, baseCall, onSsidPersist }: Packe
       </p>
 
       {/* Modem block */}
-      <PacketModemBlock config={config} />
+      <PacketModemBlock config={config} onPersistLink={onLinkPersist} />
 
       {/* My station block */}
       <div className="packet-blk" data-testid="station-block">
@@ -186,8 +194,6 @@ export function PacketConnectionPanel({ config, baseCall, onSsidPersist }: Packe
           <div className="packet-chips" data-testid="relay-chips">
             {relays.map((r, i) => (
               <span className="packet-chip" key={i} data-testid={`relay-chip-${i}`}>
-                {/* chip label (visible text) — toHaveTextContent asserts on this */}
-                <span className="packet-chip-label">{r}</span>
                 <input
                   className="packet-chip-input"
                   data-testid={`relay-input-${i}`}
@@ -239,69 +245,209 @@ export function PacketConnectionPanel({ config, baseCall, onSsidPersist }: Packe
 // Modem sub-component (Tasks 3-4)
 // ---------------------------------------------------------------------------
 
-function PacketModemBlock({ config }: { config: PacketConfigDto | null }) {
+function PacketModemBlock({
+  config,
+  onPersistLink,
+}: {
+  config: PacketConfigDto | null;
+  onPersistLink?: (fields: ModemLinkFields) => void;
+}) {
+  // Controlled state, seeded from config. (Uncontrolled `defaultValue` inputs let
+  // React reuse a DOM node across the TCP↔serial swap, leaking the TCP host into
+  // the device field — that was the "127.0.0.1 for USB/Bluetooth" bug.)
   const [segment, setSegment] = useState<ModemSegment>(() => initialSegment(config));
-  const host = config?.linkKind === 'Tcp' ? (config.tcpHost ?? '127.0.0.1') : '127.0.0.1';
-  const port = config?.linkKind === 'Tcp' ? String(config.tcpPort ?? 8001) : '8001';
-  const device = config?.linkKind === 'Serial' ? (config.serialDevice ?? '') : '';
+  const [host, setHost] = useState(config?.tcpHost ?? '127.0.0.1');
+  const [port, setPort] = useState(String(config?.tcpPort ?? 8001));
+  const [device, setDevice] = useState(config?.serialDevice ?? '');
+  const [expanded, setExpanded] = useState(true);
+  const baud = config?.serialBaud ?? 9600;
+
+  // Re-seed when config loads (null → loaded) or changes underneath us.
+  useEffect(() => {
+    if (!config) return;
+    setSegment(initialSegment(config));
+    setHost(config.tcpHost ?? '127.0.0.1');
+    setPort(String(config.tcpPort ?? 8001));
+    setDevice(config.serialDevice ?? '');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [config?.linkKind, config?.tcpHost, config?.tcpPort, config?.serialDevice]);
+
+  // Discovered serial/RFCOMM devices for the USB/Bluetooth picker, from the
+  // packet_list_serial_devices backend command. Loaded when those transports are
+  // selected; the operator can Refresh after plugging in / binding a device.
+  // Promise.resolve() tolerates a non-promise mock in unit tests.
+  const [devices, setDevices] = useState<string[]>([]);
+  const loadDevices = () => {
+    void Promise.resolve(invoke<string[]>('packet_list_serial_devices'))
+      .then((list) => setDevices(Array.isArray(list) ? list : []))
+      .catch(() => setDevices([]));
+  };
+  useEffect(() => {
+    if (segment === 'usb' || segment === 'bt') loadDevices();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [segment]);
+
+  // Build + persist the KISS link for a given transport from current fields.
+  const persist = (seg: ModemSegment) => {
+    if (!onPersistLink) return;
+    if (seg === 'tcp') {
+      onPersistLink({
+        linkKind: 'Tcp',
+        tcpHost: host.trim() || '127.0.0.1',
+        tcpPort: Number(port) || 8001,
+        serialDevice: null,
+        serialBaud: null,
+      });
+    } else {
+      onPersistLink({
+        linkKind: 'Serial',
+        serialDevice: device.trim(),
+        serialBaud: baud,
+        tcpHost: null,
+        tcpPort: null,
+      });
+    }
+  };
+
+  const selectSegment = (seg: ModemSegment) => {
+    setSegment(seg);
+    persist(seg);
+  };
+
+  const summary =
+    segment === 'tcp'
+      ? `Network (TCP) · ${host || '127.0.0.1'}:${port || '8001'}`
+      : segment === 'bt'
+        ? `Bluetooth · ${device || '(no device set)'}`
+        : `USB serial · ${device || '(no device set)'}`;
 
   return (
     <div className="packet-blk" data-testid="modem-block">
       <div className="packet-blk-h">
         <span>Modem connection</span>
-        <button type="button" className="packet-change" data-testid="modem-change">
-          Change ▾
+        <button
+          type="button"
+          className="packet-change"
+          data-testid="modem-change"
+          aria-expanded={expanded}
+          onClick={() => setExpanded((v) => !v)}
+        >
+          {expanded ? 'Hide ▴' : 'Change ▾'}
         </button>
       </div>
-      <div className="packet-seg" role="group" aria-label="Modem transport">
-        {([
-          ['tcp', 'Network (TCP)'],
-          ['usb', 'USB serial'],
-          ['bt', 'Bluetooth'],
-        ] as [ModemSegment, string][]).map(([seg, label]) => (
-          <button
-            key={seg}
-            type="button"
-            className={`packet-seg-btn ${segment === seg ? 'on' : ''}`.trim()}
-            data-testid={`modem-seg-${seg}`}
-            aria-pressed={segment === seg}
-            onClick={() => setSegment(seg)}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
-      {segment === 'tcp' ? (
-        <div className="packet-row2">
-          <label className="packet-f">
-            Host
-            <input className="packet-inp" data-testid="modem-host" defaultValue={host} />
-          </label>
-          <label className="packet-f">
-            Port
-            <input className="packet-inp" data-testid="modem-port" defaultValue={port} />
-          </label>
-        </div>
+
+      {!expanded ? (
+        <p className="packet-hint" data-testid="modem-summary">
+          {summary}
+        </p>
       ) : (
-        <div className="packet-f">
-          <label>
-            {segment === 'bt' ? 'Bluetooth device (RFCOMM)' : 'Serial device'}
-            <input
-              className="packet-inp"
-              data-testid="modem-device"
-              defaultValue={device}
-              placeholder={segment === 'bt' ? '/dev/rfcomm0' : '/dev/ttyUSB0'}
-            />
-          </label>
-        </div>
+        <>
+          <div className="packet-seg" role="group" aria-label="Modem transport">
+            {([
+              ['tcp', 'Network (TCP)'],
+              ['usb', 'USB serial'],
+              ['bt', 'Bluetooth'],
+            ] as [ModemSegment, string][]).map(([seg, label]) => (
+              <button
+                key={seg}
+                type="button"
+                className={`packet-seg-btn ${segment === seg ? 'on' : ''}`.trim()}
+                data-testid={`modem-seg-${seg}`}
+                aria-pressed={segment === seg}
+                onClick={() => selectSegment(seg)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          {segment === 'tcp' ? (
+            <div className="packet-row2">
+              <label className="packet-f">
+                Host
+                <input
+                  className="packet-inp"
+                  data-testid="modem-host"
+                  value={host}
+                  onChange={(e) => setHost(e.target.value)}
+                  onBlur={() => persist('tcp')}
+                />
+              </label>
+              <label className="packet-f">
+                Port
+                <input
+                  className="packet-inp"
+                  data-testid="modem-port"
+                  value={port}
+                  inputMode="numeric"
+                  onChange={(e) => setPort(e.target.value)}
+                  onBlur={() => persist('tcp')}
+                />
+              </label>
+            </div>
+          ) : (
+            <div className="packet-f">
+              <label className="packet-device-pick">
+                {segment === 'bt' ? 'Bluetooth device (RFCOMM)' : 'Serial device'}
+                <div className="packet-device-row">
+                  <select
+                    className="packet-inp"
+                    data-testid="modem-device-select"
+                    value={devices.includes(device) ? device : ''}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setDevice(v);
+                      if (onPersistLink && v) {
+                        onPersistLink({
+                          linkKind: 'Serial',
+                          serialDevice: v,
+                          serialBaud: baud,
+                          tcpHost: null,
+                          tcpPort: null,
+                        });
+                      }
+                    }}
+                  >
+                    <option value="">
+                      {devices.length ? '— select a device —' : '— no devices found —'}
+                    </option>
+                    {devices.map((d) => (
+                      <option key={d} value={d}>
+                        {d}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    className="packet-change"
+                    data-testid="modem-device-refresh"
+                    onClick={loadDevices}
+                  >
+                    Refresh
+                  </button>
+                </div>
+              </label>
+              <label className="packet-device-manual">
+                or enter a path manually
+                <input
+                  className="packet-inp"
+                  data-testid="modem-device"
+                  value={device}
+                  placeholder={segment === 'bt' ? '/dev/rfcomm0' : '/dev/ttyUSB0'}
+                  onChange={(e) => setDevice(e.target.value)}
+                  onBlur={() => persist(segment)}
+                />
+              </label>
+            </div>
+          )}
+          <p className="packet-hint">
+            {segment === 'tcp'
+              ? 'KISS over TCP — Dire Wolf (default 8001) / SoundModem. The software modem listens on a LOCAL TCP socket (127.0.0.1); this is not the internet.'
+              : segment === 'bt'
+                ? 'Pair + bind the BT TNC at the OS first (e.g. /dev/rfcomm0), then enter its device path here; tuxlink opens it as a serial device.'
+                : 'USB KISS TNC as a serial device (e.g. /dev/ttyUSB0). Host-link baud is separate from the 1200-baud over-air rate.'}
+          </p>
+        </>
       )}
-      <p className="packet-hint">
-        {segment === 'tcp'
-          ? 'KISS over TCP — Dire Wolf (default 8001) / SoundModem. Modem does AFSK + framing; tuxlink runs the AX.25 link layer.'
-          : segment === 'bt'
-            ? 'Pair + bind the BT TNC at the OS (e.g. /dev/rfcomm0); tuxlink opens it as a serial device.'
-            : 'USB KISS TNC as a serial device. Host-link baud is separate from the 1200-baud over-air rate.'}
-      </p>
     </div>
   );
 }
@@ -331,6 +477,22 @@ export function PacketConnectionPanelContainer({ baseCall }: { baseCall: string 
     });
   };
 
-  return <PacketConnectionPanel config={config} baseCall={baseCall} onSsidPersist={onSsidPersist} />;
+  const onLinkPersist = (fields: ModemLinkFields) => {
+    setConfig((c) => {
+      if (!c) return c;
+      const next = { ...c, ...fields };
+      void invoke('packet_config_set', { dto: next }).catch(() => {});
+      return next;
+    });
+  };
+
+  return (
+    <PacketConnectionPanel
+      config={config}
+      baseCall={baseCall}
+      onSsidPersist={onSsidPersist}
+      onLinkPersist={onLinkPersist}
+    />
+  );
 }
 
