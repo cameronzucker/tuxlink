@@ -83,14 +83,23 @@ pub struct ExchangeResult {
     pub deferred: Vec<String>,
 }
 
-/// Run a full exchange over an already-connected transport: read the server's
-/// handshake, answer it (with a secure-login token if challenged), then
-/// alternate turns until either side quits.
+/// Which side of the FBB master/slave split this exchange plays.
 ///
-/// The transport is split into a reader and a writer so this is exercised with
-/// scripted in-memory streams; the telnet layer supplies a TCP socket. The
-/// client speaks second in the handshake but takes the first message turn, which
-/// is why an empty mailbox first sends `FF` and only later `FQ`.
+/// `Dial` (slave/dialer): the remote speaks first (sends its handshake +
+/// optional `;PQ` challenge); we read it, answer, then take the first message
+/// turn. This is the gateway-dial and peer-dial case.
+///
+/// `Answer` (master/answerer): WE speak first (send our handshake; clients never
+/// challenge), the remote reads it and replies, then the *remote* (slave) takes
+/// the first message turn. This is the P2P-listen case.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExchangeRole {
+    Dial,
+    Answer,
+}
+
+/// Back-compat entry point: a slave-role (`Dial`) exchange. Existing callers
+/// (telnet) and tests use this; new packet callers use [`run_exchange_with_role`].
 pub fn run_exchange<R, W, F>(
     reader: &mut R,
     writer: &mut W,
@@ -103,27 +112,68 @@ where
     W: Write,
     F: Fn(&[Proposal]) -> Vec<Answer>,
 {
-    // The server speaks first.
-    let remote = handshake::read_remote_handshake(reader).map_err(ExchangeError::Handshake)?;
-    let token = match (&remote.challenge, &config.password) {
-        (Some(challenge), Some(password)) => {
-            Some(secure::secure_login_response(challenge, password))
+    run_exchange_with_role(reader, writer, ExchangeRole::Dial, config, outbound, decide)
+}
+
+/// Run a full exchange in the given [`ExchangeRole`]. See the enum docs for the
+/// role split. The turn loop after the handshake is identical for both roles.
+pub fn run_exchange_with_role<R, W, F>(
+    reader: &mut R,
+    writer: &mut W,
+    role: ExchangeRole,
+    config: &ExchangeConfig,
+    outbound: Vec<OutboundMessage>,
+    decide: F,
+) -> Result<ExchangeResult, ExchangeError>
+where
+    R: BufRead,
+    W: Write,
+    F: Fn(&[Proposal]) -> Vec<Answer>,
+{
+    let my_turn = match role {
+        ExchangeRole::Dial => {
+            // Slave: the remote speaks first; answer its challenge if present.
+            let remote =
+                handshake::read_remote_handshake(reader).map_err(ExchangeError::Handshake)?;
+            let token = match (&remote.challenge, &config.password) {
+                (Some(challenge), Some(password)) => {
+                    Some(secure::secure_login_response(challenge, password))
+                }
+                (Some(_), None) => return Err(ExchangeError::PasswordRequired),
+                (None, _) => None,
+            };
+            let our_handshake = handshake::build_handshake(
+                &config.mycall,
+                &config.targetcall,
+                &config.locator,
+                token.as_deref(),
+            );
+            write_bytes(writer, &our_handshake)?;
+            true // the dialer/slave takes the first message turn
         }
-        (Some(_), None) => return Err(ExchangeError::PasswordRequired),
-        (None, _) => None,
+        ExchangeRole::Answer => {
+            // Master: WE speak first, sending the master handshake (SID + the FBB
+            // `>` prompt that signals the slave our handshake is complete). Clients
+            // never challenge, so no `;PQ`; we never answer one, so no `;PR`.
+            let our_handshake = handshake::build_master_handshake(
+                &config.mycall,
+                &config.targetcall,
+                &config.locator,
+            );
+            write_bytes(writer, &our_handshake)?;
+            // Read the remote (slave) handshake. A slave sends no `>` prompt, so the
+            // master detects its end by the start of the slave's message turn
+            // (an `F`-prefixed line); `read_slave_handshake` handles that.
+            let _remote =
+                handshake::read_slave_handshake(reader).map_err(ExchangeError::Handshake)?;
+            false // the remote/slave takes the first message turn
+        }
     };
-    let our_handshake = handshake::build_handshake(
-        &config.mycall,
-        &config.targetcall,
-        &config.locator,
-        token.as_deref(),
-    );
-    write_bytes(writer, &our_handshake)?;
 
     let mut result = ExchangeResult::default();
     let mut remaining = outbound;
     let mut remote_no_messages = false;
-    let mut my_turn = true; // the client takes the first message turn
+    let mut my_turn = my_turn;
     let mut turns = 0u32;
 
     loop {
@@ -504,6 +554,40 @@ mod tests {
     }
 
     #[test]
+    fn dial_role_preserves_server_speaks_first_behaviour() {
+        // Identical to a_session_with_no_traffic_handshakes_then_quits, but via the
+        // role-parameterized entry point. Dial = today's slave behaviour.
+        let mut server = Vec::new();
+        server.extend_from_slice(b"[WL2K-5.0-B2FHM$]\r;PQ: 12345678\rCMS>\r");
+        server.extend_from_slice(b"FF\r");
+        let mut reader = Cursor::new(server);
+        let mut writer = Vec::new();
+        let config = ExchangeConfig {
+            mycall: "N7CPZ".into(),
+            targetcall: "SERVICE".into(),
+            locator: "CN87".into(),
+            password: Some("MYPASS".into()),
+        };
+        let result = run_exchange_with_role(
+            &mut reader,
+            &mut writer,
+            ExchangeRole::Dial,
+            &config,
+            vec![],
+            |_| vec![],
+        )
+        .unwrap();
+        assert!(result.received.is_empty() && result.sent.is_empty());
+
+        let token = crate::winlink::secure::secure_login_response("12345678", "MYPASS");
+        let mut expected =
+            crate::winlink::handshake::build_handshake("N7CPZ", "SERVICE", "CN87", Some(&token));
+        expected.extend_from_slice(b"FF\r");
+        expected.extend_from_slice(b"FQ\r");
+        assert_eq!(writer, expected);
+    }
+
+    #[test]
     fn a_session_with_no_traffic_handshakes_then_quits() {
         let mut server = Vec::new();
         server.extend_from_slice(b"[WL2K-5.0-B2FHM$]\r;PQ: 12345678\rCMS>\r");
@@ -618,5 +702,70 @@ mod tests {
             receive_turn(&mut reader, &mut writer, |_| vec![Answer::Accept { resume_offset: 0 }]),
             Err(ExchangeError::ChecksumMismatch)
         );
+    }
+
+    #[test]
+    fn answer_role_sends_handshake_first_then_remote_takes_first_turn() {
+        // We are master. The scripted peer is slave: WE speak the handshake first; it
+        // replies with its own handshake which — like a real dialing station — carries
+        // NO `>` prompt and ends with its `DE` line. The master detects the end of the
+        // slave handshake by the start of its message turn (the `FC` proposal line),
+        // exactly as wl2k-go does (tuxlink-3wh).
+        let mut peer = Vec::new();
+        // The peer's (slave) handshake reply: forwarding line, identifier, DE line — no prompt.
+        peer.extend_from_slice(b";FW: W7AUX\r[RMS-1.0-B2FHM$]\r; N7CPZ DE W7AUX (CN87)\r");
+        // The peer (slave) takes the first message turn: one offered message.
+        let mut msg = Message::new();
+        msg.set_header("Mid", "PEERMSG00001");
+        msg.set_header("Subject", "Hi");
+        msg.set_body(b"Direct peer message.\r\n".to_vec());
+        let (proposal, compressed) = msg.to_proposal().unwrap();
+        peer.extend_from_slice(proposal.line().as_bytes());
+        peer.push(b'\r');
+        peer.extend_from_slice(batch_checksum_line(&[proposal]).as_bytes());
+        peer.push(b'\r');
+        peer.extend_from_slice(&transfer::frame_block("Hi", 0, &compressed));
+        // After our accept + our (empty) turn, the peer is done.
+        peer.extend_from_slice(b"FQ\r");
+
+        let mut reader = Cursor::new(peer);
+        let mut writer = Vec::new();
+        let config = ExchangeConfig {
+            mycall: "N7CPZ".into(), // base call — NO ssid in the B2F identity
+            targetcall: "W7AUX".into(),
+            locator: "CN87".into(),
+            password: None, // peers never challenge; no secret in P2P
+        };
+        let result = run_exchange_with_role(
+            &mut reader,
+            &mut writer,
+            ExchangeRole::Answer,
+            &config,
+            vec![],
+            |_| vec![Answer::Accept { resume_offset: 0 }],
+        )
+        .unwrap();
+
+        // We received the peer's message.
+        assert_eq!(result.received.len(), 1);
+        assert_eq!(result.received[0].header("Mid"), Some("PEERMSG00001"));
+        assert_eq!(result.received[0].body(), b"Direct peer message.\r\n");
+
+        // We spoke the MASTER handshake FIRST (SID + `>` prompt; no `;PQ`/`;PR` in P2P),
+        // then accepted (`FS +`), then on our turn signalled no-more (FF) → quit (FQ).
+        let our_handshake =
+            crate::winlink::handshake::build_master_handshake("N7CPZ", "W7AUX", "CN87");
+        assert!(
+            writer.starts_with(&our_handshake),
+            "master must send its master handshake (with `>` prompt) before anything else; wrote {:?}",
+            String::from_utf8_lossy(&writer)
+        );
+        // After the handshake, we accept the peer's batch (`FS +\r`), then on our
+        // turn we have nothing to send and the remote is not yet signalled done →
+        // `FF\r`. The peer then sends `FQ\r` (inbound), which breaks the loop before
+        // we write anything more — so our writes after the handshake are just
+        // `FS +\r` then `FF\r`.
+        let tail = &writer[our_handshake.len()..];
+        assert_eq!(tail, b"FS +\rFF\r");
     }
 }

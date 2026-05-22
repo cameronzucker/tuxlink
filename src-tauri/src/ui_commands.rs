@@ -437,12 +437,10 @@ fn extract_routing(msg: &mail_parser::Message<'_>) -> Option<String> {
         "X-Pat-Transport",
     ];
     for &header_name in TRANSPORT_HEADERS {
-        if let Some(hv) = msg.header(header_name) {
-            // msg.header() returns Option<&HeaderValue> directly.
-            if let mail_parser::HeaderValue::Text(s) = hv {
-                if !s.is_empty() {
-                    return Some(s.to_string());
-                }
+        // msg.header() returns Option<&HeaderValue> directly.
+        if let Some(mail_parser::HeaderValue::Text(s)) = msg.header(header_name) {
+            if !s.is_empty() {
+                return Some(s.to_string());
             }
         }
     }
@@ -783,6 +781,11 @@ pub enum StatusDto {
     Connecting {
         transport: String,
     },
+    /// Packet armed-but-idle (listening to answer an inbound call). Renders as
+    /// "Listening · <transport>" in the ribbon. (tuxlink-orj)
+    Listening {
+        transport: String,
+    },
     Connected {
         transport: String,
         peer: String,
@@ -806,6 +809,7 @@ impl From<BackendStatus> for StatusDto {
         match s {
             BackendStatus::Disconnected => StatusDto::Disconnected,
             BackendStatus::Connecting { transport } => StatusDto::Connecting { transport },
+            BackendStatus::Listening { transport } => StatusDto::Listening { transport },
             BackendStatus::Connected {
                 transport,
                 peer,
@@ -1006,6 +1010,388 @@ pub fn app_quit(app: tauri::AppHandle) {
 }
 
 // ============================================================================
+// Task 7 (tuxlink-7fr) — packet_config_get / packet_config_set
+// ============================================================================
+// `packet_config_get` reads `config.rs` directly (no BackendState dependency,
+// like `config_read`); `packet_config_set` reads the current config, applies
+// the DTO's packet fields, validates (SSID range), and writes atomically.
+//
+// The DTO is flat / camelCase on the wire to match the TS PacketConfigDto shape.
+// `link_kind` is `"Tcp"` | `"Serial"` | absent; tcp_*/serial_* fields carry
+// whichever set applies.
+
+/// Flat, frontend-facing projection of `config::PacketConfig` (the `[packet]`
+/// section). camelCase on the wire to match the TS model. `link_kind` is
+/// `"Tcp"` | `"Serial"` | absent; the tcp_*/serial_* fields carry whichever set
+/// applies (the other is `None`).
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PacketConfigDto {
+    pub ssid: u8,
+    pub listen_default: bool,
+    pub link_kind: Option<String>,
+    pub tcp_host: Option<String>,
+    pub tcp_port: Option<u16>,
+    pub serial_device: Option<String>,
+    pub serial_baud: Option<u32>,
+    pub txdelay: u8,
+    pub persistence: u8,
+    pub slot_time: u8,
+    pub paclen: u16,
+    pub maxframe: u8,
+    pub t1_ms: u64,
+    pub n2_retries: u8,
+}
+
+impl From<&config::PacketConfig> for PacketConfigDto {
+    fn from(p: &config::PacketConfig) -> Self {
+        use crate::winlink::ax25::KissLinkConfig;
+        let (link_kind, tcp_host, tcp_port, serial_device, serial_baud) = match &p.link {
+            Some(KissLinkConfig::Tcp { host, port }) => {
+                (Some("Tcp".into()), Some(host.clone()), Some(*port), None, None)
+            }
+            Some(KissLinkConfig::Serial { device, baud }) => {
+                (Some("Serial".into()), None, None, Some(device.clone()), Some(*baud))
+            }
+            None => (None, None, None, None, None),
+        };
+        PacketConfigDto {
+            ssid: p.ssid,
+            listen_default: p.listen_default,
+            link_kind,
+            tcp_host,
+            tcp_port,
+            serial_device,
+            serial_baud,
+            txdelay: p.params.txdelay,
+            persistence: p.params.persistence,
+            slot_time: p.params.slot_time,
+            paclen: p.params.paclen,
+            maxframe: p.params.maxframe,
+            t1_ms: p.params.t1_ms,
+            n2_retries: p.params.n2_retries,
+        }
+    }
+}
+
+impl PacketConfigDto {
+    /// Build a `PacketConfig` from the DTO. Validates the link-kind/field
+    /// coherence (`Tcp` needs host+port; `Serial` needs device+baud).
+    pub fn into_packet_config(self) -> Result<config::PacketConfig, UiError> {
+        use crate::winlink::ax25::KissLinkConfig;
+        let link = match self.link_kind.as_deref() {
+            Some("Tcp") => Some(KissLinkConfig::Tcp {
+                host: self
+                    .tcp_host
+                    .ok_or_else(|| UiError::Internal { detail: "Tcp link needs tcp_host".into() })?,
+                port: self
+                    .tcp_port
+                    .ok_or_else(|| UiError::Internal { detail: "Tcp link needs tcp_port".into() })?,
+            }),
+            Some("Serial") => Some(KissLinkConfig::Serial {
+                device: self.serial_device.ok_or_else(|| UiError::Internal {
+                    detail: "Serial link needs serial_device".into(),
+                })?,
+                baud: self.serial_baud.ok_or_else(|| UiError::Internal {
+                    detail: "Serial link needs serial_baud".into(),
+                })?,
+            }),
+            None => None,
+            Some(other) => {
+                return Err(UiError::Internal {
+                    detail: format!("unknown link_kind '{other}'"),
+                })
+            }
+        };
+        Ok(config::PacketConfig {
+            ssid: self.ssid,
+            link,
+            params: config::Ax25ParamsConfig {
+                txdelay: self.txdelay,
+                persistence: self.persistence,
+                slot_time: self.slot_time,
+                paclen: self.paclen,
+                maxframe: self.maxframe,
+                t1_ms: self.t1_ms,
+                n2_retries: self.n2_retries,
+            },
+            listen_default: self.listen_default,
+        })
+    }
+}
+
+/// Read the `[packet]` config section as a flat DTO. Reads `config.rs` directly
+/// (no BackendState), like `config_read`.
+#[tauri::command]
+pub async fn packet_config_get() -> Result<PacketConfigDto, UiError> {
+    let cfg = config::read_config().map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    Ok(PacketConfigDto::from(&cfg.packet))
+}
+
+/// Apply the `[packet]` section from a DTO: read the current config, swap in
+/// the new packet section, validate (SSID range), and write atomically.
+#[tauri::command]
+pub async fn packet_config_set(dto: PacketConfigDto) -> Result<(), UiError> {
+    let mut cfg =
+        config::read_config().map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    cfg.packet = dto.into_packet_config()?;
+    cfg.validate().map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    config::write_config_atomic(&cfg).map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    Ok(())
+}
+
+/// A discovered serial/RFCOMM device + its transport kind, so the UI can show
+/// USB and Bluetooth devices SEPARATELY (and tell the operator what each is)
+/// rather than dumping one undifferentiated `/dev` list into both pickers.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SerialDeviceDto {
+    /// Full device path, e.g. `/dev/ttyUSB0`.
+    pub path: String,
+    /// Transport class: `"usb"` | `"bluetooth"` | `"uart"`. The picker shows only
+    /// the kind(s) matching the selected transport tab.
+    pub kind: String,
+    /// Human label, e.g. `"USB serial"` / `"Bluetooth (RFCOMM)"` / `"On-board UART"`.
+    pub label: String,
+}
+
+/// Classify a `/dev` node name into (kind, label) for a KISS-capable port, or
+/// `None` if it isn't one. USB-serial adapters (`ttyUSB`/`ttyACM`); bound
+/// Bluetooth RFCOMM (`rfcomm`, appears once the operator pairs+binds — spec
+/// §4.1); on-board UARTs (`ttyAMA`/`ttyS`, e.g. the Pi's GPIO serial). The
+/// suffix check excludes a bare prefix with no instance number.
+fn classify_serial_device(name: &str) -> Option<(&'static str, &'static str)> {
+    let has_suffix = |p: &str| name.starts_with(p) && name.len() > p.len();
+    if has_suffix("ttyUSB") || has_suffix("ttyACM") {
+        Some(("usb", "USB serial"))
+    } else if has_suffix("rfcomm") {
+        Some(("bluetooth", "Bluetooth (RFCOMM)"))
+    } else if has_suffix("ttyAMA") || has_suffix("ttyS") {
+        Some(("uart", "On-board UART"))
+    } else {
+        None
+    }
+}
+
+/// Scan `dev_dir` (normally `/dev`) for serial/RFCOMM device nodes a KISS TNC
+/// might use, classified by kind. Pure + dir-injected so it is unit-testable
+/// without real hardware. Sorted by path, deduped. Plain `std::fs` — no libudev,
+/// no new system deps. This only ENUMERATES candidates; the operator confirms
+/// the right one (and a real open is exercised on-air, RADIO-1).
+pub fn discover_serial_devices(dev_dir: &std::path::Path) -> Vec<SerialDeviceDto> {
+    let mut found: Vec<SerialDeviceDto> = match std::fs::read_dir(dev_dir) {
+        Ok(entries) => entries
+            .filter_map(|e| e.ok())
+            .filter_map(|e| e.file_name().into_string().ok())
+            .filter_map(|name| {
+                classify_serial_device(&name).map(|(kind, label)| SerialDeviceDto {
+                    path: dev_dir.join(&name).to_string_lossy().into_owned(),
+                    kind: kind.to_string(),
+                    label: label.to_string(),
+                })
+            })
+            .collect(),
+        Err(_) => Vec::new(),
+    };
+    found.sort_by(|a, b| a.path.cmp(&b.path));
+    found.dedup();
+    found
+}
+
+/// List serial/RFCOMM devices a KISS TNC might use, classified by transport
+/// (USB / Bluetooth / on-board UART), by scanning `/dev`. An empty list means
+/// none are present — plug in a TNC or bind an rfcomm device, then refresh.
+#[tauri::command]
+pub async fn packet_list_serial_devices() -> Result<Vec<SerialDeviceDto>, UiError> {
+    Ok(discover_serial_devices(std::path::Path::new("/dev")))
+}
+
+// ============================================================================
+// Task 8 (tuxlink-7fr) — packet_connect / packet_set_listen
+// ============================================================================
+// Pure builders (`packet_transport_from_config`, `apply_listen_default`) are
+// split out so they are unit-testable without `tauri::State`, matching the
+// `parse_raw_rfc5322` / `derive_status_dto` pattern in this file.
+
+/// Build the packet `TransportConfig` from config + the operator's dial args.
+/// Returns `NotConfigured` if no KISS link is set yet (the UI must configure
+/// one first via `packet_config_set`).
+pub fn packet_transport_from_config(
+    cfg: &config::Config,
+    call: String,
+    path: Vec<String>,
+) -> Result<TransportConfig, UiError> {
+    let link = cfg
+        .packet
+        .link
+        .clone()
+        .ok_or_else(|| UiError::NotConfigured("no KISS link configured".into()))?;
+    Ok(TransportConfig::Packet {
+        link,
+        ssid: cfg.packet.ssid,
+        role: crate::winlink_backend::PacketRole::DialTo { call, path },
+    })
+}
+
+/// Build the Listen-role packet transport (no dial target) from config.
+/// Returns `NotConfigured` if no KISS link is set yet (the UI must configure
+/// one first via `packet_config_set`). Mirrors `packet_transport_from_config`
+/// but resolves to the Listen role — arm the station to answer an inbound call.
+pub fn packet_listen_transport_from_config(
+    cfg: &config::Config,
+) -> Result<TransportConfig, UiError> {
+    let link = cfg
+        .packet
+        .link
+        .clone()
+        .ok_or_else(|| UiError::NotConfigured("no KISS link configured".into()))?;
+    Ok(TransportConfig::Packet {
+        link,
+        ssid: cfg.packet.ssid,
+        role: crate::winlink_backend::PacketRole::Listen,
+    })
+}
+
+/// Flip the sticky idle-listen default on a config (the mutation
+/// `packet_set_listen` persists). Pure; the command wraps read → mutate → write.
+pub fn apply_listen_default(cfg: &mut config::Config, enabled: bool) {
+    cfg.packet.listen_default = enabled;
+}
+
+/// Dial a packet station (gateway or peer — tuxlink reacts to the challenge,
+/// not a mode flag; spec §2). Builds the packet TransportConfig from config +
+/// args and drives `backend.connect`, surfacing progress/result on the session
+/// log like `cms_connect`.
+///
+/// RADIO-1: operator-run on real hardware; the agent never runs this command
+/// against a real link or modem.
+#[tauri::command]
+pub async fn packet_connect(
+    app: AppHandle,
+    state: State<'_, BackendState>,
+    log: State<'_, std::sync::Arc<SessionLogState>>,
+    call: String,
+    path: Vec<String>,
+) -> Result<(), UiError> {
+    let backend = state
+        .current()
+        .ok_or_else(|| UiError::NotConfigured("backend offline".into()))?;
+    let cfg =
+        config::read_config().map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    let transport = packet_transport_from_config(&cfg, call.clone(), path)?;
+    emit_session_line(
+        &app,
+        &log,
+        LogLevel::Info,
+        format!("Connecting to {call} over packet…"),
+    );
+    match backend.connect(transport).await {
+        Ok(_session) => {
+            emit_session_line(
+                &app,
+                &log,
+                LogLevel::Info,
+                "Packet exchange complete.".into(),
+            );
+            Ok(())
+        }
+        Err(BackendError::Cancelled) => {
+            emit_session_line(
+                &app,
+                &log,
+                LogLevel::Warn,
+                "Packet connection aborted.".into(),
+            );
+            Err(BackendError::Cancelled.into())
+        }
+        Err(e) => {
+            emit_session_line(
+                &app,
+                &log,
+                LogLevel::Error,
+                format!("Packet connect failed: {e}"),
+            );
+            Err(e.into())
+        }
+    }
+}
+
+/// Arm the station to answer an inbound packet call (Listen role). Builds the
+/// Listen `TransportConfig` from config and drives `backend.connect`, which
+/// blocks in `ax25::answer` polling the link until a SABM arrives (then replies
+/// UA and runs the exchange) or the operator aborts (via `cms_abort`, which
+/// shuts the link → `answer()` unwinds → `Cancelled`).
+///
+/// RADIO-1: arming Listen means the station auto-answers an inbound call — which
+/// TRANSMITS a UA under the operator's callsign. The agent NEVER runs this
+/// command against a real link; the operator runs it on real hardware.
+#[tauri::command]
+pub async fn packet_listen(
+    app: AppHandle,
+    state: State<'_, BackendState>,
+    log: State<'_, std::sync::Arc<SessionLogState>>,
+) -> Result<(), UiError> {
+    let backend = state
+        .current()
+        .ok_or_else(|| UiError::NotConfigured("backend offline".into()))?;
+    let cfg =
+        config::read_config().map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    let transport = packet_listen_transport_from_config(&cfg)?;
+    // Effective call = <callsign>-<ssid> (the SSID'd link address we answer on).
+    let effective = cfg
+        .identity
+        .callsign
+        .as_deref()
+        .map(|c| format!("{}-{}", c.trim().to_uppercase(), cfg.packet.ssid))
+        .unwrap_or_else(|| format!("(no callsign)-{}", cfg.packet.ssid));
+    emit_session_line(
+        &app,
+        &log,
+        LogLevel::Info,
+        format!("Listening for an incoming packet call as {effective}…"),
+    );
+    match backend.connect(transport).await {
+        Ok(_session) => {
+            emit_session_line(
+                &app,
+                &log,
+                LogLevel::Info,
+                "Answered an incoming call; packet exchange complete.".into(),
+            );
+            Ok(())
+        }
+        Err(BackendError::Cancelled) => {
+            emit_session_line(
+                &app,
+                &log,
+                LogLevel::Warn,
+                "Stopped listening.".into(),
+            );
+            Err(BackendError::Cancelled.into())
+        }
+        Err(e) => {
+            emit_session_line(
+                &app,
+                &log,
+                LogLevel::Error,
+                format!("Packet listen failed: {e}"),
+            );
+            Err(e.into())
+        }
+    }
+}
+
+/// Persist the sticky idle-listen default (spec §4.5, §4.6 panel toggle + the
+/// Settings selector write the same value).
+#[tauri::command]
+pub async fn packet_set_listen(enabled: bool) -> Result<(), UiError> {
+    let mut cfg =
+        config::read_config().map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    apply_listen_default(&mut cfg, enabled);
+    config::write_config_atomic(&cfg).map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    Ok(())
+}
+
 // Task 5 (tuxlink-686) — config_set_grid + validate_grid_input
 // bd issue: tuxlink-686
 // ============================================================================
@@ -1185,6 +1571,45 @@ mod tests {
     use super::*;
     use crate::winlink_backend::MessageId;
 
+    #[test]
+    fn discover_serial_devices_classifies_usb_bluetooth_uart_and_excludes_others() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dev = tmp.path();
+        for name in ["ttyUSB0", "ttyACM0", "rfcomm0", "ttyAMA0", "ttyS0", "null", "sda1", "tty"] {
+            std::fs::write(dev.join(name), b"").unwrap();
+        }
+        let found = discover_serial_devices(dev);
+        let by_name = |n: &str| {
+            found
+                .iter()
+                .find(|d| d.path.rsplit('/').next().unwrap() == n)
+                .cloned()
+        };
+        // USB-serial adapters → kind "usb".
+        assert_eq!(by_name("ttyUSB0").unwrap().kind, "usb");
+        assert_eq!(by_name("ttyACM0").unwrap().kind, "usb");
+        // Bound Bluetooth RFCOMM → kind "bluetooth" (NOT conflated with USB).
+        assert_eq!(by_name("rfcomm0").unwrap().kind, "bluetooth");
+        // On-board UARTs → kind "uart".
+        assert_eq!(by_name("ttyAMA0").unwrap().kind, "uart");
+        assert_eq!(by_name("ttyS0").unwrap().kind, "uart");
+        // Non-serial nodes + a bare "tty" (no instance number) are excluded.
+        for skip in ["null", "sda1", "tty"] {
+            assert!(by_name(skip).is_none(), "should not list {skip}");
+        }
+        // Every entry carries a human label.
+        assert!(found.iter().all(|d| !d.label.is_empty()));
+        // Sorted by path.
+        let mut sorted = found.clone();
+        sorted.sort_by(|a, b| a.path.cmp(&b.path));
+        assert_eq!(found, sorted);
+    }
+
+    #[test]
+    fn discover_serial_devices_empty_when_dir_missing() {
+        assert!(discover_serial_devices(std::path::Path::new("/no/such/dir/xyzzy")).is_empty());
+    }
+
     // MessageMetaDto serializes camelCase (bodySize, hasAttachments) so the
     // TS `MessageMeta` model needs no rename layer. In-crate because
     // `MessageMeta` is `#[non_exhaustive]` (can't be struct-literal-built
@@ -1297,8 +1722,8 @@ mod tests {
     // Task 16 — config_read DTO mapping (integration commit, spec §5.6 / §6)
     // ========================================================================
     use crate::config::{
-        CmsTransport, Config, ConnectConfig, GpsState, IdentityConfig, PositionPrecision,
-        PositionSource, PrivacyConfig, CONFIG_SCHEMA_VERSION,
+        CmsTransport, Config, ConnectConfig, GpsState, IdentityConfig, PacketConfig,
+        PositionPrecision, PositionSource, PrivacyConfig, CONFIG_SCHEMA_VERSION,
     };
 
     /// Build a CMS-mode config fixture for the mapping tests.
@@ -1321,6 +1746,7 @@ mod tests {
                 position_source: PositionSource::Gps,
             },
             pat_mbo_address: None,
+            packet: PacketConfig::default(),
         }
     }
 
@@ -1400,6 +1826,17 @@ mod tests {
             }),
             StatusDto::Connecting {
                 transport: "CMS-CmsSsl".into()
+            }
+        );
+        // Listening (packet armed-but-idle): distinct from Connecting (which
+        // implies an active dial). Carries the transport so the ribbon can
+        // render "Listening · Packet 1200". (tuxlink-orj)
+        assert_eq!(
+            StatusDto::from(BackendStatus::Listening {
+                transport: "Packet-7".into()
+            }),
+            StatusDto::Listening {
+                transport: "Packet-7".into()
             }
         );
         assert_eq!(
@@ -1690,6 +2127,143 @@ mod tests {
     }
 
     // ========================================================================
+    // Task 7 (tuxlink-7fr) — PacketConfigDto round-trip + serialization
+    // ========================================================================
+
+    // Helper: valid Config with packet.link = Tcp 127.0.0.1:8001, ssid = 7.
+    fn config_with_packet_link() -> config::Config {
+        use crate::winlink::ax25::KissLinkConfig;
+        let mut cfg = cms_config_fixture();
+        cfg.packet = config::PacketConfig {
+            ssid: 7,
+            link: Some(KissLinkConfig::Tcp {
+                host: "127.0.0.1".into(),
+                port: 8001,
+            }),
+            params: config::Ax25ParamsConfig::default(),
+            listen_default: true,
+        };
+        cfg
+    }
+
+    // Helper: valid Config with packet.link = None (defaults).
+    fn config_with_packet_defaults() -> config::Config {
+        let mut cfg = cms_config_fixture();
+        cfg.packet = config::PacketConfig::default();
+        cfg
+    }
+
+    #[test]
+    fn packet_config_dto_round_trips_through_packet_config() {
+        use crate::winlink::ax25::KissLinkConfig;
+        let pc = config::PacketConfig {
+            ssid: 7,
+            link: Some(KissLinkConfig::Tcp {
+                host: "127.0.0.1".into(),
+                port: 8001,
+            }),
+            params: config::Ax25ParamsConfig {
+                paclen: 128,
+                maxframe: 4,
+                ..Default::default()
+            },
+            listen_default: false,
+        };
+        let dto = PacketConfigDto::from(&pc);
+        assert_eq!(dto.ssid, 7);
+        assert!(!dto.listen_default);
+        assert_eq!(dto.link_kind.as_deref(), Some("Tcp"));
+        assert_eq!(dto.tcp_host.as_deref(), Some("127.0.0.1"));
+        assert_eq!(dto.tcp_port, Some(8001));
+        assert_eq!(dto.paclen, 128);
+
+        let back = dto.into_packet_config().unwrap();
+        assert_eq!(back, pc);
+    }
+
+    #[test]
+    fn packet_config_dto_with_no_link_maps_to_none() {
+        let pc = config::PacketConfig::default();
+        let dto = PacketConfigDto::from(&pc);
+        assert_eq!(dto.link_kind, None);
+        assert!(dto.listen_default); // default-on
+        assert_eq!(dto.into_packet_config().unwrap().link, None);
+    }
+
+    #[test]
+    fn packet_config_dto_serializes_camel_case_for_the_frontend() {
+        let dto = PacketConfigDto::from(&config::PacketConfig::default());
+        let v = serde_json::to_value(&dto).unwrap();
+        assert!(
+            v.get("listenDefault").is_some(),
+            "expected camelCase listenDefault"
+        );
+        assert!(v.get("ssid").is_some());
+    }
+
+    // ========================================================================
+    // Task 8 (tuxlink-7fr) — packet_transport_from_config + apply_listen_default
+    // ========================================================================
+
+    #[test]
+    fn packet_transport_from_config_builds_dialto_with_ssid_and_path() {
+        let mut cfg = config_with_packet_link();
+        cfg.packet.ssid = 7;
+        let tc =
+            packet_transport_from_config(&cfg, "W7AUX".into(), vec!["RELAY-1".into()]).unwrap();
+        match tc {
+            TransportConfig::Packet { ssid, role, .. } => {
+                assert_eq!(ssid, 7);
+                assert_eq!(
+                    role,
+                    crate::winlink_backend::PacketRole::DialTo {
+                        call: "W7AUX".into(),
+                        path: vec!["RELAY-1".into()],
+                    }
+                );
+            }
+            _ => panic!("expected a Packet transport"),
+        }
+    }
+
+    #[test]
+    fn packet_transport_from_config_with_no_link_is_not_configured() {
+        let cfg = config_with_packet_defaults();
+        let err = packet_transport_from_config(&cfg, "W7AUX".into(), vec![]).unwrap_err();
+        assert!(matches!(err, UiError::NotConfigured(_)));
+    }
+
+    #[test]
+    fn set_listen_default_writes_the_sticky_flag() {
+        let mut cfg = config_with_packet_defaults(); // listen_default = true
+        apply_listen_default(&mut cfg, false);
+        assert!(!cfg.packet.listen_default);
+        apply_listen_default(&mut cfg, true);
+        assert!(cfg.packet.listen_default);
+    }
+
+    #[test]
+    fn packet_listen_transport_from_config_builds_listen_role_with_ssid() {
+        let mut cfg = config_with_packet_link();
+        cfg.packet.ssid = 7;
+        let tc = packet_listen_transport_from_config(&cfg).unwrap();
+        match tc {
+            TransportConfig::Packet { ssid, role, .. } => {
+                assert_eq!(ssid, 7);
+                assert_eq!(role, crate::winlink_backend::PacketRole::Listen);
+            }
+            _ => panic!("expected a Packet transport"),
+        }
+    }
+
+    #[test]
+    fn packet_listen_transport_from_config_with_no_link_is_not_configured() {
+        let cfg = config_with_packet_defaults();
+        let err = packet_listen_transport_from_config(&cfg).unwrap_err();
+        assert!(matches!(err, UiError::NotConfigured(_)));
+    }
+
+    // ========================================================================
     // Task 11 (tuxlink-686) — position_set_source + position_status unit tests
     // ========================================================================
     use crate::position::{Fix, PositionArbiter};
@@ -1749,6 +2323,7 @@ mod tests {
                 position_source: PositionSource::Gps,
             },
             pat_mbo_address: None,
+            packet: crate::config::PacketConfig::default(),
         }
     }
 

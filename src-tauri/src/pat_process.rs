@@ -94,7 +94,7 @@ impl PatProcess {
                     std::io::Error::new(std::io::ErrorKind::InvalidInput, e)
                 }
                 e @ crate::pat_config::PatConfigError::RenderFailed(_) => {
-                    std::io::Error::new(std::io::ErrorKind::Other, e)
+                    std::io::Error::other(e)
                 }
             })?;
 
@@ -206,8 +206,7 @@ impl PatProcess {
                 // listen address. Kill (no-op if already dead) and reap.
                 let _ = child.kill();
                 let _ = child.wait();
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::Other,
+                return Err(std::io::Error::other(
                     "pat exited before announcing HTTP listen port",
                 ));
             }

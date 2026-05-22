@@ -162,7 +162,7 @@ impl HuffTree {
         let mut j = 0;
         for i in 0..T {
             if self.son[i] >= T {
-                self.freq[j] = (self.freq[i] + 1) / 2;
+                self.freq[j] = self.freq[i].div_ceil(2);
                 self.son[j] = self.son[i];
                 j += 1;
             }

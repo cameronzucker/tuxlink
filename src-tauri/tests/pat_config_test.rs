@@ -7,7 +7,7 @@
 
 use serde_json::Value;
 use tuxlink_lib::config::{
-    CmsTransport, Config, ConnectConfig, GpsState, IdentityConfig, PositionPrecision,
+    CmsTransport, Config, ConnectConfig, GpsState, IdentityConfig, PacketConfig, PositionPrecision,
     PrivacyConfig,
 };
 use tuxlink_lib::pat_config::{
@@ -31,8 +31,10 @@ fn cms_config() -> Config {
         privacy: PrivacyConfig {
             gps_state: GpsState::Off,
             position_precision: PositionPrecision::FourCharGrid,
+            position_source: tuxlink_lib::config::PositionSource::Gps,
         },
         pat_mbo_address: Some("W4PHS@winlink.org".to_string()),
+        packet: PacketConfig::default(),
     }
 }
 

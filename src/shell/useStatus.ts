@@ -67,6 +67,9 @@ export interface PositionStatusDto {
 export type StatusDto =
   | { kind: 'Disconnected' }
   | { kind: 'Connecting'; transport: string }
+  // Packet armed-but-idle (listening to answer an inbound call). Distinct from
+  // Connecting (an active dial). Renders "Listening · Packet 1200". (tuxlink-orj)
+  | { kind: 'Listening'; transport: string }
   | { kind: 'Connected'; transport: string; peer: string; since_iso: string }
   | { kind: 'Disconnecting' }
   | { kind: 'Error'; reason: string };
@@ -121,6 +124,9 @@ export function formatConnectionState(
       return `Disconnected · ${formatTransportLabel(configTransport)}`;
     case 'Connecting':
       return `Connecting · ${normalizeTransportLabel(status.transport)}`;
+    case 'Listening':
+      // Packet armed-but-idle — honest "Listening", not the prior "Connecting" lie.
+      return `Listening · ${normalizeTransportLabel(status.transport)}`;
     case 'Connected': {
       const label = normalizeTransportLabel(status.transport);
       return `Connected · ${label}`;
@@ -219,6 +225,9 @@ export function formatStatusState(status: StatusDto | null): { label: string; to
       return { label: 'Connecting', tone: 'warn' };
     case 'Connected':
       return { label: 'Connected', tone: 'good' };
+    case 'Listening':
+      // Armed + ready to answer → healthy state (green dot, spec §4.6).
+      return { label: 'Listening', tone: 'good' };
     case 'Disconnecting':
       return { label: 'Disconnecting', tone: 'warn' };
     case 'Error':
@@ -254,6 +263,13 @@ export interface StatusBarData {
    * GridEdit consumer treats as `false` (GPS-ready affordance stays hidden).
    */
   gpsReady?: boolean;
+  /**
+   * Raw live backend status (or null when no backend / pre-wizard). Exposed so
+   * transport-specific indicators (e.g. the packet ribbon item, tuxlink-orj) can
+   * derive their own state from the same poll the CMS labels use, rather than
+   * re-polling. The CMS-facing fields above are pre-derived from this.
+   */
+  status?: StatusDto | null;
 }
 
 /**
@@ -342,6 +358,7 @@ export function useStatusData(): StatusBarData {
       connection: 'Idle · CMS-SSL',
       position_source: 'Gps',
       gpsReady: false,
+      status: null,
     };
   }
 
@@ -380,6 +397,7 @@ export function useStatusData(): StatusBarData {
     connection: formatConnectionState(status, configTransport),
     position_source: config?.position_source ?? 'Gps',
     gpsReady: positionStatus?.gps_ready ?? false,
+    status,
   };
 }
 
@@ -407,6 +425,8 @@ function formatTransportLabel(transport: CmsTransport): string {
 function normalizeTransportLabel(transport: string): string {
   if (transport.includes('CmsSsl') || transport.includes('Ssl')) return 'CMS-SSL';
   if (transport.includes('Telnet')) return 'Telnet';
+  // Packet transport ("Packet-7" etc.) → fixed 1200-baud label (spec §4.6).
+  if (transport.startsWith('Packet')) return 'Packet 1200';
   // Unknown transport string: pass through as-is
   return transport;
 }

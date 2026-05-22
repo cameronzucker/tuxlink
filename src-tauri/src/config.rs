@@ -3,6 +3,7 @@
 //! Spec: docs/superpowers/specs/2026-05-18-task-2-config-impl-design.md
 //! bd issue: tuxlink-4mt
 
+use crate::winlink::ax25::KissLinkConfig;
 use serde::{Deserialize, Deserializer, Serialize};
 
 pub const CONFIG_SCHEMA_VERSION: u32 = 1;
@@ -22,6 +23,10 @@ pub struct Config {
     #[serde(deserialize_with = "deserialize_optional_nonempty_string", default)]
     pub pat_mbo_address: Option<String>,
     // winlink_password_present REMOVED per AMD-11; deny_unknown_fields catches drift.
+    /// AX.25 packet transport settings (additive; defaults when absent). See
+    /// `PacketConfig`. `#[serde(default)]` is the migration for old files.
+    #[serde(default)]
+    pub packet: PacketConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -107,6 +112,79 @@ pub enum PositionPrecision {
     SixCharGrid,
 }
 
+/// Serde-friendly mirror of P2's `winlink::ax25::Ax25Params` (which carries a
+/// `Duration` that does not round-trip JSON cleanly). Persisted form stores the
+/// T1 timer as milliseconds; `into_params()` converts to the runtime type.
+/// Defaults are the 1200-baud values (match `Ax25Params::default`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct Ax25ParamsConfig {
+    pub txdelay: u8,
+    pub persistence: u8,
+    pub slot_time: u8,
+    pub paclen: u16,
+    pub maxframe: u8,
+    pub t1_ms: u64,
+    pub n2_retries: u8,
+}
+
+impl Default for Ax25ParamsConfig {
+    fn default() -> Self {
+        // 1200-baud defaults; cross-checked against P2's Ax25Params::default.
+        Ax25ParamsConfig {
+            txdelay: 30,
+            persistence: 63,
+            slot_time: 10,
+            paclen: 128,
+            maxframe: 4,
+            t1_ms: 3000,
+            n2_retries: 10,
+        }
+    }
+}
+
+impl Ax25ParamsConfig {
+    /// Convert to P2's runtime `Ax25Params` type.
+    pub fn into_params(self) -> crate::winlink::ax25::Ax25Params {
+        crate::winlink::ax25::Ax25Params {
+            txdelay: self.txdelay,
+            persistence: self.persistence,
+            slot_time: self.slot_time,
+            paclen: self.paclen as usize,
+            maxframe: self.maxframe,
+            t1: std::time::Duration::from_millis(self.t1_ms),
+            n2_retries: self.n2_retries,
+        }
+    }
+}
+
+/// The `[packet]` config section (spec §4.5): the AX.25 packet transport's
+/// sticky, persisted settings. Global station SSID is sticky across restarts.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct PacketConfig {
+    /// Global, sticky station SSID (0–15). Operate as `<callsign>-<ssid>`.
+    pub ssid: u8,
+    /// The last KISS link the operator used (TCP host:port or serial device+baud).
+    /// `None` until the operator configures one.
+    pub link: Option<KissLinkConfig>,
+    /// AX.25 timing/windowing knobs (1200-baud defaults).
+    pub params: Ax25ParamsConfig,
+    /// Idle-listening default-on (spec §4.5): arm `answer()` when not dialing.
+    pub listen_default: bool,
+}
+
+impl Default for PacketConfig {
+    fn default() -> Self {
+        PacketConfig {
+            ssid: 0,
+            link: None,
+            params: Ax25ParamsConfig::default(),
+            listen_default: true, // spec §4.5: listen is default-on
+        }
+    }
+}
+
 /// Reduce a grid stored at full precision to the form that may leave the
 /// application on air (tuxlink-882). The grid is *stored* at full 6-char
 /// precision; this is the privacy boundary: `FourCharGrid` (default) yields the
@@ -186,6 +264,8 @@ pub enum ConfigValidationError {
     OfflinePathHasCallsign,
     #[error("invalid identity field `{field}`: {rule}")]
     InvalidIdentity { field: &'static str, rule: &'static str },
+    #[error("packet.ssid {ssid} is out of the 0–15 AX.25 range")]
+    PacketSsidOutOfRange { ssid: u8 },
 }
 
 impl Config {
@@ -208,6 +288,9 @@ impl Config {
             if let Some(rule) = validate_identity_describe(i) {
                 return Err(ConfigValidationError::InvalidIdentity { field: "identifier", rule });
             }
+        }
+        if self.packet.ssid > 15 {
+            return Err(ConfigValidationError::PacketSsidOutOfRange { ssid: self.packet.ssid });
         }
         Ok(())
     }
@@ -376,5 +459,66 @@ mod tests {
     #[test]
     fn broadcast_grid_handles_empty() {
         assert_eq!(broadcast_grid("", PositionPrecision::FourCharGrid), "");
+    }
+
+    fn sample_config_json_without_packet() -> String {
+        // A v1-shaped config with NO `packet` key — proves the field defaults.
+        serde_json::json!({
+            "schema_version": CONFIG_SCHEMA_VERSION,
+            "wizard_completed": true,
+            "connect": { "connect_to_cms": false, "transport": "Telnet" },
+            "identity": { "callsign": null, "identifier": "FIELD-1", "grid": "CN87" },
+            "privacy": { "gps_state": "Off", "position_precision": "FourCharGrid" },
+            "pat_mbo_address": null
+        })
+        .to_string()
+    }
+
+    #[test]
+    fn config_defaults_packet_section_when_absent() {
+        let json = sample_config_json_without_packet();
+        let cfg: Config = serde_json::from_str(&json).unwrap();
+        let packet = cfg.packet;
+        assert_eq!(packet.ssid, 0, "SSID defaults to 0");
+        assert!(packet.listen_default, "listen is default-on (spec §4.5)");
+        assert!(packet.link.is_none(), "no last KISS link until the operator sets one");
+    }
+
+    #[test]
+    fn packet_config_round_trips_with_sticky_ssid_and_link() {
+        // Persist an SSID + a TCP KISS link + tuned params, reload, assert sticky.
+        let mut cfg: Config = serde_json::from_str(&sample_config_json_without_packet()).unwrap();
+        cfg.packet = PacketConfig {
+            ssid: 7,
+            link: Some(KissLinkConfig::Tcp {
+                host: "127.0.0.1".into(),
+                port: 8001,
+            }),
+            params: Ax25ParamsConfig { paclen: 128, maxframe: 4, ..Default::default() },
+            listen_default: false,
+        };
+        let serialized = serde_json::to_string(&cfg).unwrap();
+        let reloaded: Config = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(reloaded.packet.ssid, 7);
+        assert!(!reloaded.packet.listen_default);
+        assert_eq!(reloaded.packet.params.paclen, 128);
+        match reloaded.packet.link {
+            Some(KissLinkConfig::Tcp { host, port }) => {
+                assert_eq!(host, "127.0.0.1");
+                assert_eq!(port, 8001);
+            }
+            other => panic!("expected a TCP KISS link, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn packet_ssid_above_15_is_rejected() {
+        let mut cfg: Config = serde_json::from_str(&sample_config_json_without_packet()).unwrap();
+        cfg.packet.ssid = 16;
+        let err = cfg.validate().unwrap_err();
+        assert!(
+            matches!(err, ConfigValidationError::PacketSsidOutOfRange { ssid: 16 }),
+            "expected PacketSsidOutOfRange, got {err:?}"
+        );
     }
 }

@@ -62,6 +62,7 @@ fn main() {
 /// Touch a 0-byte sidecar stub at sidecars/pat-<TARGET-TRIPLE> so that
 /// tauri_build::build()'s externalBin path-validation passes under debug
 /// + cargo test profiles, which intentionally skip the Go-build path.
+///
 /// The stub is overwritten by the real binary in release builds.
 fn ensure_sidecar_stub() -> Result<(), String> {
     let target = std::env::var("TARGET").map_err(|e| {
