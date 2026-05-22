@@ -28,8 +28,10 @@ pub use crate::pat_client::MailboxFolder;
 // Native backend wiring (see the NativeBackend section below).
 use crate::config::{broadcast_grid, CmsTransport, Config, PacketConfig};
 use crate::native_mailbox::Mailbox;
+use crate::winlink::ax25::{Address, KissLinkConfig};
 use crate::winlink::message::Message;
 use crate::winlink::proposal::Answer;
+use crate::winlink::session::ExchangeRole;
 use crate::winlink::{compose, session, telnet};
 use std::path::PathBuf;
 
@@ -105,6 +107,91 @@ pub struct OutboundMessage {
 pub enum TransportConfig {
     /// CMS Telnet (plain or TLS), per existing `config::CmsTransport`.
     Cms { mode: crate::config::CmsTransport },
+    /// AX.25 1200-baud packet over a KISS link (TCP / serial). The SSID rides
+    /// the AX.25 *link* address; the B2F identity uses the base call (spec §4.4).
+    Packet {
+        link: KissLinkConfig,
+        ssid: u8,
+        role: PacketRole,
+    },
+}
+
+/// What a packet connection does. `DialTo` is the operator pressing "Connect to"
+/// (gateway OR peer — tuxlink reacts to the challenge, not a mode flag); `Listen`
+/// is the idle armed-to-answer state (spec §2, §4.5).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PacketRole {
+    DialTo { call: String, path: Vec<String> },
+    Listen,
+}
+
+/// What a `PacketRole` + identity resolves into for the lifecycle: the SSID'd
+/// link address, the base B2F call, the exchange role, and (for a dial) the
+/// target + digipeater addresses. Mirrors `resolve_cms_endpoint`'s "config →
+/// concrete endpoint" job for the packet transport.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedPacket {
+    pub link_mycall: Address,
+    pub base_mycall: String,
+    pub role: ExchangeRole,
+    /// `Some((target, digis))` for a dial; `None` for listen.
+    pub dial: Option<(Address, Vec<Address>)>,
+}
+
+/// Parse a `CALL` or `CALL-SSID` string into an [`Address`]. A bare call has
+/// SSID 0. Rejects an SSID outside 0–15 or a malformed token.
+fn parse_call_ssid(s: &str) -> Result<Address, BackendError> {
+    let (call, ssid) = match s.rsplit_once('-') {
+        Some((c, s_part)) => {
+            let n: u8 = s_part
+                .parse()
+                .map_err(|_| BackendError::NotConfigured(format!("bad SSID in '{s_part}'")))?;
+            (c, n)
+        }
+        None => (s, 0),
+    };
+    if ssid > 15 || call.is_empty() {
+        return Err(BackendError::NotConfigured(format!("bad call/ssid '{s}'")));
+    }
+    Ok(Address { call: call.to_uppercase(), ssid })
+}
+
+/// Resolve identity + role into the concrete addresses + exchange role. Enforces
+/// the 0–2 digipeater cap (spec §1) and the identity split (spec §4.4).
+pub fn resolve_packet_endpoint(
+    base_mycall: &str,
+    ssid: u8,
+    role: PacketRole,
+) -> Result<ResolvedPacket, BackendError> {
+    let base = base_mycall.trim().to_uppercase();
+    let link_mycall = Address { call: base.clone(), ssid };
+    match role {
+        PacketRole::Listen => Ok(ResolvedPacket {
+            link_mycall,
+            base_mycall: base,
+            role: ExchangeRole::Answer,
+            dial: None,
+        }),
+        PacketRole::DialTo { call, path } => {
+            if path.len() > 2 {
+                return Err(BackendError::NotConfigured(format!(
+                    "at most 2 digipeaters allowed (got {})",
+                    path.len()
+                )));
+            }
+            let target = parse_call_ssid(&call)?;
+            let digis = path
+                .iter()
+                .map(|p| parse_call_ssid(p))
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(ResolvedPacket {
+                link_mycall,
+                base_mycall: base,
+                role: ExchangeRole::Dial,
+                dial: Some((target, digis)),
+            })
+        }
+    }
 }
 
 /// Backend-instance identifier minted at backend construction time. Embedded
@@ -440,7 +527,14 @@ impl WinlinkBackend for NativeBackend {
     }
 
     async fn connect(&self, transport: TransportConfig) -> Result<Session, BackendError> {
-        let TransportConfig::Cms { mode } = transport;
+        // Dispatch to per-transport paths.
+        if let TransportConfig::Packet { link, ssid, role } = transport {
+            return self.packet_connect_inner(link, ssid, role).await;
+        }
+        let mode = match transport {
+            TransportConfig::Cms { mode } => mode,
+            _ => return Err(BackendError::NotImplemented),
+        };
 
         // Single-flight (Codex #1): refuse a concurrent connect rather than racing
         // on the shared abort state and re-sending the outbox. The RAII guard
@@ -555,6 +649,125 @@ impl WinlinkBackend for NativeBackend {
             .filter_map(|res| async move { res.ok() })
             .boxed()
     }
+}
+
+impl NativeBackend {
+    /// Packet-transport connect path (Task 5/6): resolve the endpoint, open the
+    /// KISS link, connect/answer, and run the exchange. Wired here from the
+    /// `WinlinkBackend::connect` dispatch above.
+    async fn packet_connect_inner(
+        &self,
+        link: KissLinkConfig,
+        ssid: u8,
+        role: PacketRole,
+    ) -> Result<Session, BackendError> {
+        // Single-flight guard (same as the CMS arm).
+        if self
+            .connect_in_progress
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_err()
+        {
+            return Err(BackendError::BackendUnavailable {
+                reason: "a connection is already in progress".to_string(),
+                source: None,
+            });
+        }
+        let _guard = ConnectGuard {
+            in_progress: self.connect_in_progress.clone(),
+            handle: self.abort_handle.clone(),
+        };
+
+        self.aborting.store(false, Ordering::SeqCst);
+        if let Ok(mut slot) = self.abort_handle.lock() {
+            *slot = None;
+        }
+
+        let base = self
+            .config
+            .identity
+            .callsign
+            .clone()
+            .ok_or_else(|| BackendError::NotConfigured("identity.callsign".into()))?;
+        let resolved = resolve_packet_endpoint(&base, ssid, role)?;
+
+        let config = self.config.clone();
+        let mailbox = self.mailbox.clone();
+        let progress = self.progress.clone();
+        let abort_handle = self.abort_handle.clone();
+        let aborting = self.aborting.clone();
+
+        self.set_status(BackendStatus::Connecting {
+            transport: format!("Packet-{ssid}"),
+        });
+
+        let outcome = tokio::task::spawn_blocking(move || {
+            native_packet_connect(&config, &mailbox, link, resolved, &*progress, &abort_handle, &aborting)
+        })
+        .await
+        .map_err(|e| BackendError::Internal {
+            msg: format!("packet connect task failed: {e}"),
+            source: None,
+        })?;
+
+        match abort_aware_outcome(outcome, self.aborting.load(Ordering::SeqCst)) {
+            Ok(()) => {
+                self.set_status(BackendStatus::Connected {
+                    transport: format!("Packet-{ssid}"),
+                    peer: "packet".to_string(),
+                    since_iso: now_iso8601_utc(),
+                });
+                Ok(Session {
+                    backend_id: self.backend_id,
+                    inner: SessionInner::Native(()),
+                })
+            }
+            Err(BackendError::Cancelled) => {
+                self.set_status(BackendStatus::Disconnected);
+                Err(BackendError::Cancelled)
+            }
+            Err(e) => {
+                self.set_status(BackendStatus::Error {
+                    reason: e.to_string(),
+                });
+                Err(e)
+            }
+        }
+    }
+}
+
+// ============================================================================
+// Packet-transport functions (native_packet_exchange + native_packet_connect)
+// Stubs — fully implemented in Tasks 5 and 6.
+// ============================================================================
+
+/// Run one B2F exchange over an already-connected AX.25 stream. Mirrors
+/// `native_connect`'s mailbox handling but the transport is a packet link
+/// and the role may be `Dial` or `Answer`. Generic over `Read + Write` so it
+/// is fully unit-tested with an in-memory `FakeAx25Stream` — no network, no RF.
+fn native_packet_exchange<S: std::io::Read + std::io::Write>(
+    _stream: S,
+    _base_mycall: &str,
+    _targetcall: &str,
+    _password: Option<String>,
+    _role: ExchangeRole,
+    _mailbox: &Mailbox,
+    _progress: &dyn Fn(&str),
+    _locator: &str,
+) -> Result<(), BackendError> {
+    Err(BackendError::NotImplemented)
+}
+
+/// Open the KISS link, connect (dial) or answer (listen), and run the exchange.
+fn native_packet_connect(
+    _config: &Config,
+    _mailbox: &Arc<Mailbox>,
+    _link: KissLinkConfig,
+    _resolved: ResolvedPacket,
+    _progress: &dyn Fn(&str),
+    _abort_handle: &Mutex<Option<TcpStream>>,
+    _aborting: &AtomicBool,
+) -> Result<(), BackendError> {
+    Err(BackendError::NotImplemented)
 }
 
 /// The Winlink CMS host. **DEV DEFAULT = `cms-z.winlink.org`** (2026-05-21,
@@ -1150,6 +1363,8 @@ impl WinlinkBackend for PatBackend {
         // session handle the caller can later pass to disconnect.
         let transport_label = match &transport {
             TransportConfig::Cms { mode } => format!("CMS-{:?}", mode),
+            TransportConfig::Packet { ssid, .. } => format!("Packet-{ssid}"),
+            _ => "Unknown".to_string(),
         };
         {
             let mut s = self.status.write().map_err(|_| BackendError::Internal {
@@ -1405,5 +1620,50 @@ mod native_read_state_tests {
             matches!(result, Err(BackendError::BackendUnavailable { .. })),
             "a concurrent connect should be rejected, got {result:?}"
         );
+    }
+
+    // =========================================================================
+    // Task 4: resolve_packet_endpoint tests (spec §4.4 identity split)
+    // =========================================================================
+
+    #[test]
+    fn resolve_packet_endpoint_dial_builds_ssidd_link_addr_and_base_b2f_call() {
+        // Identity split (spec §4.4): the AX.25 link addr carries the SSID; the B2F
+        // identity is the BASE call. Dial role → ExchangeRole::Dial + a target.
+        let resolved = resolve_packet_endpoint(
+            "N7CPZ",
+            7,
+            PacketRole::DialTo { call: "W7AUX".into(), path: vec!["RELAY-1".into()] },
+        )
+        .unwrap();
+        assert_eq!(resolved.link_mycall, Address { call: "N7CPZ".into(), ssid: 7 });
+        assert_eq!(resolved.base_mycall, "N7CPZ");
+        assert_eq!(resolved.role, ExchangeRole::Dial);
+        let (target, digis) = resolved.dial.unwrap();
+        assert_eq!(target, Address { call: "W7AUX".into(), ssid: 0 });
+        assert_eq!(digis, vec![Address { call: "RELAY".into(), ssid: 1 }]);
+    }
+
+    #[test]
+    fn resolve_packet_endpoint_listen_yields_answer_role_and_no_target() {
+        let resolved = resolve_packet_endpoint("N7CPZ", 7, PacketRole::Listen).unwrap();
+        assert_eq!(resolved.link_mycall, Address { call: "N7CPZ".into(), ssid: 7 });
+        assert_eq!(resolved.base_mycall, "N7CPZ");
+        assert_eq!(resolved.role, ExchangeRole::Answer);
+        assert!(resolved.dial.is_none());
+    }
+
+    #[test]
+    fn resolve_packet_endpoint_rejects_more_than_two_digipeaters() {
+        let err = resolve_packet_endpoint(
+            "N7CPZ",
+            0,
+            PacketRole::DialTo {
+                call: "W7AUX".into(),
+                path: vec!["A-1".into(), "B-2".into(), "C-3".into()],
+            },
+        )
+        .unwrap_err();
+        assert!(matches!(err, BackendError::NotConfigured(_)));
     }
 }
