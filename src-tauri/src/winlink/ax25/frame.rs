@@ -7,12 +7,37 @@ pub struct Address {
     pub ssid: u8,     // 0–15
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FrameError {
     BadAddressLength,
     Truncated,
     UnknownControl(u8),
+    /// `Frame::encode` was called with `info` bytes on a frame whose control
+    /// field does not carry info (e.g. SABM, UA, RR). The control byte is valid;
+    /// this is a caller usage-contract violation, not an unknown control type.
+    InfoOnNonInfoFrame,
 }
+
+impl std::fmt::Display for FrameError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            FrameError::BadAddressLength => {
+                write!(f, "AX.25 address field must be exactly 7 bytes (or a path must have 2–4 addresses)")
+            }
+            FrameError::Truncated => {
+                write!(f, "AX.25 frame is truncated — not enough bytes to decode")
+            }
+            FrameError::UnknownControl(b) => {
+                write!(f, "unknown AX.25 control byte: 0x{b:02X}")
+            }
+            FrameError::InfoOnNonInfoFrame => {
+                write!(f, "info bytes supplied for a non-info frame (I/UI only carry info)")
+            }
+        }
+    }
+}
+
+impl std::error::Error for FrameError {}
 
 impl Address {
     /// Encode to the 7-byte AX.25 address field. `cr` sets bit7 (command/response
@@ -22,7 +47,7 @@ impl Address {
         let call = self.call.as_bytes();
         for i in 0..6 {
             let c = if i < call.len() { call[i] } else { b' ' };
-            out[i] = c << 1;
+            out[i] = c.wrapping_shl(1);
         }
         out[6] = (if cr { 0x80 } else { 0 }) | 0x60 | ((self.ssid & 0x0F) << 1) | (if last { 1 } else { 0 });
         out
@@ -117,10 +142,10 @@ impl Control {
             Control::Disc { pf: p } => 0x43 | pf(p),
             Control::Ua { pf: p } => 0x63 | pf(p),
             Control::Dm { pf: p } => 0x0F | pf(p),
-            Control::Rr { nr, pf: p } => (nr << 5) | pf(p) | 0x01,
-            Control::Rnr { nr, pf: p } => (nr << 5) | pf(p) | 0x05,
-            Control::Rej { nr, pf: p } => (nr << 5) | pf(p) | 0x09,
-            Control::I { ns, nr, pf: p } => (nr << 5) | pf(p) | ((ns & 0x07) << 1),
+            Control::Rr { nr, pf: p } => ((nr & 0x07) << 5) | pf(p) | 0x01,
+            Control::Rnr { nr, pf: p } => ((nr & 0x07) << 5) | pf(p) | 0x05,
+            Control::Rej { nr, pf: p } => ((nr & 0x07) << 5) | pf(p) | 0x09,
+            Control::I { ns, nr, pf: p } => ((nr & 0x07) << 5) | pf(p) | ((ns & 0x07) << 1),
         }
     }
     pub fn decode(b: u8) -> Result<Control, FrameError> {
@@ -281,6 +306,15 @@ mod path_tests {
 
 // ── Full Frame ────────────────────────────────────────────────────────────────
 
+/// An AX.25 connected-mode frame (address path + control + optional info).
+///
+/// **P1 PID assumption — Winlink B2F only (0xF0 / no layer 3):**
+/// Every Winlink B2F I-frame uses PID 0xF0 ("no layer 3"), so `decode` discards
+/// the PID byte from the wire (it is not retained in this struct) and `encode`
+/// always emits 0xF0. Frames that carry a non-0xF0 PID will decode without error
+/// but the PID is silently dropped; re-encoding will emit 0xF0. If non-Winlink
+/// frames that must round-trip PID values are needed in a future phase, add a
+/// `pid: u8` field and update `decode`/`encode` accordingly — deferred to P2.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Frame {
     pub path: Path,
@@ -311,7 +345,7 @@ impl Frame {
 
     pub fn encode(&self) -> Result<Vec<u8>, FrameError> {
         if !self.info.is_empty() && !self.control.has_info() {
-            return Err(FrameError::UnknownControl(self.control.encode()));
+            return Err(FrameError::InfoOnNonInfoFrame);
         }
         let mut out = self.path.encode()?;
         out.push(self.control.encode());

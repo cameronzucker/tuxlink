@@ -46,6 +46,12 @@ pub struct KissDecoder {
     escaped: bool,
 }
 
+impl Default for KissDecoder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl KissDecoder {
     pub fn new() -> Self {
         KissDecoder { buf: Vec::new(), in_frame: false, escaped: false }

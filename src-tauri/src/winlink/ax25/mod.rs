@@ -8,8 +8,11 @@ pub mod kiss;
 
 #[cfg(test)]
 mod module_smoke {
+    use super::{frame, kiss};
     #[test]
-    fn module_is_wired() {
-        assert_eq!(2 + 2, 4);
+    fn public_surface_is_reachable() {
+        // Compile-touches public items from both submodules to confirm they are
+        // exported and reachable from the parent.
+        let _ = (frame::PID_NO_L3, kiss::FEND);
     }
 }
