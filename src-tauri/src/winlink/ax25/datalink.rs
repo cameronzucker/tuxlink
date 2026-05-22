@@ -481,6 +481,120 @@ impl Ax25Stream {
     }
 }
 
+impl Ax25Stream {
+    /// Tear down the link: flush pending acks, send DISC (P=1), await UA (best-effort,
+    /// bounded by one T1). Idempotent — a second call after the link is closed is a no-op.
+    pub fn disconnect(&mut self) -> std::io::Result<()> {
+        if self.closed {
+            return Ok(());
+        }
+        self.closed = true;
+        let _ = self.pump_acks(); // best-effort drain; teardown proceeds regardless
+        let disc = Frame {
+            path: self.out_path(),
+            control: Control::Disc { pf: true },
+            info: vec![],
+        };
+        self.send_frame(&disc)?;
+        // Await UA for one T1; a peer that has already vanished must not hang teardown.
+        let deadline = Instant::now() + self.params.t1;
+        while Instant::now() < deadline {
+            if let Some(frame) = self.recv_frame()? {
+                if matches!(frame.control, Control::Ua { .. }) {
+                    return Ok(());
+                }
+            }
+            std::thread::sleep(POLL_INTERVAL);
+        }
+        Ok(()) // best-effort: DISC sent even if no UA came back
+    }
+}
+
+impl Drop for Ax25Stream {
+    fn drop(&mut self) {
+        // A dropped stream always tries to release the link; ignore teardown errors.
+        let _ = self.disconnect();
+    }
+}
+
+#[cfg(test)]
+mod disconnect_tests {
+    use super::test_peer::ScriptedPeer;
+    use super::*;
+
+    fn call(c: &str, ssid: u8) -> Address { Address { call: c.into(), ssid } }
+
+    fn connected(peer: &ScriptedPeer) -> Ax25Stream {
+        let mine = call("N7CPZ", 7);
+        let target = call("W7AUX", 10);
+        Ax25Stream {
+            link: Box::new(peer.clone()),
+            decoder: KissDecoder::new(),
+            mycall: mine, peer: target, digis: vec![],
+            params: Ax25Params { t1: Duration::from_millis(20), ..Ax25Params::default() },
+            vs: 0, vr: 0, va: 0,
+            pending_frames: std::collections::VecDeque::new(),
+            inbound: std::collections::VecDeque::new(),
+            unacked: std::collections::BTreeMap::new(),
+            closed: false,
+        }
+    }
+
+    #[test]
+    fn disconnect_sends_disc_and_returns_on_ua() {
+        let peer = ScriptedPeer::new();
+        let mine = call("N7CPZ", 7);
+        let target = call("W7AUX", 10);
+        let ua = Frame {
+            path: Path { dest: mine.clone(), src: target.clone(), digis: vec![] },
+            control: Control::Ua { pf: true },
+            info: vec![],
+        };
+        peer.feed(&kiss_data_frame(&ua.encode().unwrap()));
+        let mut s = connected(&peer);
+        s.disconnect().unwrap();
+        let frames = { let mut d = KissDecoder::new(); d.push(&peer.drain_tx()) };
+        assert!(
+            frames.iter().any(|b| matches!(Frame::decode(b).unwrap().control, Control::Disc { pf: true })),
+            "expected a DISC frame"
+        );
+    }
+
+    #[test]
+    fn disconnect_is_best_effort_when_peer_is_gone() {
+        let peer = ScriptedPeer::new(); // never replies UA
+        let mut s = connected(&peer);
+        // Must not hang — bounded by one (tiny) T1.
+        let start = Instant::now();
+        s.disconnect().unwrap();
+        assert!(start.elapsed() < Duration::from_secs(1), "teardown must be bounded");
+    }
+
+    #[test]
+    fn disconnect_is_idempotent() {
+        let peer = ScriptedPeer::new();
+        let mut s = connected(&peer);
+        s.disconnect().unwrap();
+        let _ = peer.drain_tx();
+        s.disconnect().unwrap(); // second call: no-op, sends nothing
+        assert!(peer.drain_tx().is_empty(), "a closed link sends no further DISC");
+    }
+
+    #[test]
+    fn drop_sends_disc() {
+        let peer = ScriptedPeer::new();
+        {
+            let _s = connected(&peer);
+            // dropped at end of scope ⇒ Drop calls disconnect
+        }
+        let frames = { let mut d = KissDecoder::new(); d.push(&peer.drain_tx()) };
+        assert!(
+            frames.iter().any(|b| matches!(Frame::decode(b).unwrap().control, Control::Disc { .. })),
+            "Drop must send DISC"
+        );
+    }
+}
+
 #[cfg(test)]
 mod read_tests {
     use super::test_peer::ScriptedPeer;
