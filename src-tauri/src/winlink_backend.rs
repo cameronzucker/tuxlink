@@ -348,6 +348,11 @@ pub struct NativeBackend {
     /// state and re-sending the outbox. Cleared by a connect-scoped RAII guard so
     /// it is released on every exit (return, `?`, panic).
     connect_in_progress: Arc<AtomicBool>,
+    /// Live position source-of-truth (tuxlink-686). When present, the on-air
+    /// locator is `arbiter.broadcast_grid()` — live + precision-reduced —
+    /// superseding the stale `config` snapshot's grid. `None` in tests / the
+    /// no-arbiter path, where `cms_locator(config)` is the fallback.
+    position: Option<Arc<crate::position::PositionArbiter>>,
 }
 
 /// Clears the single-flight + abort state when a `connect` ends, however it ends
@@ -391,7 +396,15 @@ impl NativeBackend {
             abort_handle: Arc::new(Mutex::new(None)),
             aborting: Arc::new(AtomicBool::new(false)),
             connect_in_progress: Arc::new(AtomicBool::new(false)),
+            position: None,
         }
+    }
+
+    /// Attach the live position arbiter (tuxlink-686). Builder-style so existing
+    /// constructors and tests are unaffected.
+    pub fn with_position(mut self, arbiter: Arc<crate::position::PositionArbiter>) -> Self {
+        self.position = Some(arbiter);
+        self
     }
 
     fn set_status(&self, status: BackendStatus) {
@@ -479,11 +492,15 @@ impl WinlinkBackend for NativeBackend {
         // `progress` surfaces per-step connect progress in the session log
         // (tuxlink-gqo); `abort_handle` receives the connecting socket so abort can
         // shut it down (tuxlink-9z2). Both are Arcs cloned into the blocking task.
+        // `position` is the live arbiter clone (tuxlink-686): when present,
+        // `native_connect` uses the arbiter's `broadcast_grid()` as the on-air
+        // locator, superseding the stale `config` snapshot's grid.
         let progress = self.progress.clone();
         let abort_handle = self.abort_handle.clone();
         let aborting = self.aborting.clone();
+        let position = self.position.clone();
         let outcome = tokio::task::spawn_blocking(move || {
-            native_connect(&config, &mailbox, mode, &*progress, &abort_handle, &aborting)
+            native_connect(&config, &mailbox, mode, &*progress, &abort_handle, &aborting, position.as_deref())
         })
         .await
         .map_err(|e| BackendError::Internal {
@@ -619,6 +636,21 @@ fn cms_locator(config: &Config) -> String {
         .unwrap_or_default()
 }
 
+/// The on-air locator: the live arbiter's broadcast grid when present
+/// (authoritative — reflects runtime Manual/GPS changes the backend's `config`
+/// snapshot does not), else the (startup) config grid reduced to precision.
+/// `broadcast_grid()` already applies `position_precision`, so the Some case is
+/// reduced. Empty string only when the arbiter has NO position at all (no manual
+/// grid AND no usable fix); a GPS source with a stale fix still falls back to the
+/// manual grid (see `PositionArbiter::active_grid`). The arbiter is authoritative —
+/// we do NOT fall back to a possibly-stale config grid when the arbiter is present.
+fn resolve_locator(config: &Config, position: Option<&crate::position::PositionArbiter>) -> String {
+    match position {
+        Some(a) => a.broadcast_grid().unwrap_or_default(),
+        None => cms_locator(config),
+    }
+}
+
 /// Run one CMS exchange (blocking): build the outbox into proposals, connect over
 /// the chosen transport, accept all offered messages, then file what arrived into
 /// the inbox and move what was sent into the sent folder.
@@ -629,6 +661,7 @@ fn native_connect(
     progress: &dyn Fn(&str),
     abort_handle: &Mutex<Option<TcpStream>>,
     aborting: &AtomicBool,
+    position: Option<&crate::position::PositionArbiter>,
 ) -> Result<(), BackendError> {
     let callsign = config
         .identity
@@ -637,11 +670,11 @@ fn native_connect(
         .ok_or_else(|| BackendError::NotConfigured("identity.callsign".into()))?
         .trim()
         .to_uppercase();
-    // tuxlink-882: reduce the grid to the configured broadcast precision BEFORE it
-    // goes on air in the CMS handshake. position_precision is a privacy boundary, not
-    // just a display setting — the stored grid is full-precision; only the broadcast
-    // copy is reduced (4-char default, 6-char opt-in).
-    let locator = cms_locator(config);
+    // tuxlink-686: resolve the on-air locator from the live arbiter when present
+    // (authoritative — reflects runtime Manual/GPS changes the backend's `config`
+    // snapshot does not), else fall back to the startup config grid (tuxlink-882
+    // precision reduction applies in both paths).
+    let locator = resolve_locator(config, position);
     let password = keyring::Entry::new("tuxlink-pat", &callsign)
         .ok()
         .and_then(|e| e.get_password().ok())
@@ -1291,6 +1324,108 @@ mod native_read_state_tests {
     #[test]
     fn cms_locator_empty_when_no_grid() {
         assert_eq!(cms_locator(&offline_config()), "");
+    }
+
+    // ========================================================================
+    // tuxlink-686: resolve_locator — arbiter-sourced locator tests
+    // ========================================================================
+
+    fn cfg_with_grid(grid: &str) -> Config {
+        let mut cfg = offline_config();
+        cfg.identity.grid = Some(grid.to_string());
+        cfg.privacy.position_precision = PositionPrecision::FourCharGrid;
+        cfg
+    }
+
+    // No-arbiter fallback: resolve_locator(cfg, None) == cms_locator(cfg).
+    #[test]
+    fn resolve_locator_no_arbiter_falls_back_to_config() {
+        let cfg = cfg_with_grid("CN87ux");
+        assert_eq!(
+            resolve_locator(&cfg, None),
+            cms_locator(&cfg),
+            "no arbiter: resolve_locator must equal cms_locator"
+        );
+        assert_eq!(
+            resolve_locator(&cfg, None),
+            "CN87",
+            "config fallback must apply 4-char reduction"
+        );
+    }
+
+    // Arbiter reduces to precision.
+    #[test]
+    fn resolve_locator_arbiter_reduces_to_precision() {
+        let cfg = offline_config();
+        let arbiter = crate::position::PositionArbiter::new(
+            PositionSource::Manual,
+            Some("CN87ux".into()),
+            PositionPrecision::FourCharGrid,
+        );
+        assert_eq!(
+            resolve_locator(&cfg, Some(&arbiter)),
+            "CN87",
+            "arbiter with FourCharGrid precision must broadcast 4-char grid"
+        );
+    }
+
+    // ★ KEY TEST: arbiter SUPERSEDES a stale config grid.
+    // This proves that a runtime grid change (or GPS fix) reaches the air
+    // even though the backend's config snapshot was taken at construction time.
+    #[test]
+    fn resolve_locator_arbiter_supersedes_stale_config_grid() {
+        // Config was baked at startup with DM33; arbiter has been updated to CN87ux.
+        let cfg = cfg_with_grid("DM33"); // stale startup snapshot
+        let arbiter = crate::position::PositionArbiter::new(
+            PositionSource::Manual,
+            Some("CN87ux".into()),
+            PositionPrecision::FourCharGrid,
+        );
+        let locator = resolve_locator(&cfg, Some(&arbiter));
+        // Must be the live arbiter's grid, NOT the stale config grid.
+        assert_eq!(
+            locator, "CN87",
+            "arbiter must supersede the stale config snapshot (got {}; expected CN87, not DM33)",
+            locator
+        );
+        assert_ne!(
+            locator, "DM33",
+            "stale config grid must NOT reach the air when the arbiter is present"
+        );
+    }
+
+    // Arbiter authoritative when empty (no position): resolve_locator returns ""
+    // and does NOT fall back to the config grid.
+    #[test]
+    fn resolve_locator_arbiter_authoritative_when_empty() {
+        let cfg = cfg_with_grid("CN87ux"); // config has a grid
+        // Arbiter with GPS source but no fix yet — broadcast_grid() returns None.
+        let arbiter = crate::position::PositionArbiter::new(
+            PositionSource::Gps,
+            None, // no manual grid fallback either
+            PositionPrecision::FourCharGrid,
+        );
+        assert_eq!(
+            resolve_locator(&cfg, Some(&arbiter)),
+            "",
+            "when the arbiter has no position it must return '' — NOT fall back to the config grid"
+        );
+    }
+
+    // SixCharGrid opt-in: arbiter passes the full 6-char grid through to the air.
+    #[test]
+    fn resolve_locator_arbiter_respects_six_char_precision() {
+        let cfg = offline_config();
+        let arbiter = crate::position::PositionArbiter::new(
+            PositionSource::Manual,
+            Some("CN87ux".into()),
+            PositionPrecision::SixCharGrid,
+        );
+        assert_eq!(
+            resolve_locator(&cfg, Some(&arbiter)),
+            "CN87ux",
+            "SixCharGrid opt-in must broadcast the full 6-char grid"
+        );
     }
 
     // tuxlink-xgn: the NativeBackend override of `mark_read` flips a message
