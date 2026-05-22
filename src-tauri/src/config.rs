@@ -89,6 +89,20 @@ pub enum PositionPrecision {
     SixCharGrid,
 }
 
+/// Reduce a grid stored at full precision to the form that may leave the
+/// application on air (tuxlink-882). The grid is *stored* at full 6-char
+/// precision; this is the privacy boundary: `FourCharGrid` (default) yields the
+/// first 4 characters, `SixCharGrid` (opt-in) the first 6. Char-based truncation
+/// is safe for ASCII Maidenhead locators. Any broadcast surface (the CMS handshake
+/// locator today) MUST pass through this rather than the raw stored grid.
+pub fn broadcast_grid(grid: &str, precision: PositionPrecision) -> String {
+    let keep = match precision {
+        PositionPrecision::FourCharGrid => 4,
+        PositionPrecision::SixCharGrid => 6,
+    };
+    grid.chars().take(keep).collect()
+}
+
 fn deserialize_schema_version<'de, D>(d: D) -> Result<u32, D::Error>
 where
     D: Deserializer<'de>,
@@ -290,3 +304,32 @@ pub fn write_config_atomic(config: &Config) -> Result<(), ConfigWriteError> {
 
 #[derive(serde::Deserialize)]
 struct SchemaVersionProbe { schema_version: u32 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // tuxlink-882: the privacy boundary. The grid is stored full; what may go on
+    // air is reduced to the configured precision — 4 chars by default, 6 on opt-in.
+    #[test]
+    fn broadcast_grid_default_four_char_reduces_six_char_stored_grid() {
+        assert_eq!(broadcast_grid("CN87ux", PositionPrecision::FourCharGrid), "CN87");
+    }
+
+    #[test]
+    fn broadcast_grid_six_char_optin_keeps_full_precision() {
+        assert_eq!(broadcast_grid("CN87ux", PositionPrecision::SixCharGrid), "CN87ux");
+    }
+
+    #[test]
+    fn broadcast_grid_is_a_noop_when_stored_grid_already_short() {
+        // A 4-char stored grid stays 4-char under either setting (nothing to reveal).
+        assert_eq!(broadcast_grid("CN87", PositionPrecision::FourCharGrid), "CN87");
+        assert_eq!(broadcast_grid("CN87", PositionPrecision::SixCharGrid), "CN87");
+    }
+
+    #[test]
+    fn broadcast_grid_handles_empty() {
+        assert_eq!(broadcast_grid("", PositionPrecision::FourCharGrid), "");
+    }
+}

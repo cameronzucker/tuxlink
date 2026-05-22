@@ -26,7 +26,7 @@ use thiserror::Error;
 pub use crate::pat_client::MailboxFolder;
 
 // Native backend wiring (see the NativeBackend section below).
-use crate::config::{CmsTransport, Config};
+use crate::config::{broadcast_grid, CmsTransport, Config};
 use crate::native_mailbox::Mailbox;
 use crate::winlink::message::Message;
 use crate::winlink::proposal::Answer;
@@ -606,6 +606,19 @@ fn abort_aware_outcome(
     }
 }
 
+/// The grid locator advertised in the CMS handshake, reduced to the configured
+/// broadcast precision (tuxlink-882). Empty when no grid is set. This is the single
+/// on-air position surface today; it MUST go through `broadcast_grid` so a stored
+/// 6-char grid never leaks past a 4-char privacy setting.
+fn cms_locator(config: &Config) -> String {
+    config
+        .identity
+        .grid
+        .as_deref()
+        .map(|g| broadcast_grid(g, config.privacy.position_precision))
+        .unwrap_or_default()
+}
+
 /// Run one CMS exchange (blocking): build the outbox into proposals, connect over
 /// the chosen transport, accept all offered messages, then file what arrived into
 /// the inbox and move what was sent into the sent folder.
@@ -624,7 +637,11 @@ fn native_connect(
         .ok_or_else(|| BackendError::NotConfigured("identity.callsign".into()))?
         .trim()
         .to_uppercase();
-    let locator = config.identity.grid.clone().unwrap_or_default();
+    // tuxlink-882: reduce the grid to the configured broadcast precision BEFORE it
+    // goes on air in the CMS handshake. position_precision is a privacy boundary, not
+    // just a display setting — the stored grid is full-precision; only the broadcast
+    // copy is reduced (4-char default, 6-char opt-in).
+    let locator = cms_locator(config);
     let password = keyring::Entry::new("tuxlink-pat", &callsign)
         .ok()
         .and_then(|e| e.get_password().ok())
@@ -1254,6 +1271,25 @@ mod native_read_state_tests {
             },
             pat_mbo_address: None,
         }
+    }
+
+    // tuxlink-882: the CMS handshake locator must be reduced to the configured
+    // broadcast precision — a stored 6-char grid never leaks past a 4-char setting.
+    #[test]
+    fn cms_locator_reduces_to_broadcast_precision() {
+        let mut cfg = offline_config();
+        cfg.identity.grid = Some("CN87ux".to_string());
+
+        cfg.privacy.position_precision = PositionPrecision::FourCharGrid;
+        assert_eq!(cms_locator(&cfg), "CN87", "default precision must broadcast 4-char");
+
+        cfg.privacy.position_precision = PositionPrecision::SixCharGrid;
+        assert_eq!(cms_locator(&cfg), "CN87ux", "opt-in precision broadcasts 6-char");
+    }
+
+    #[test]
+    fn cms_locator_empty_when_no_grid() {
+        assert_eq!(cms_locator(&offline_config()), "");
     }
 
     // tuxlink-xgn: the NativeBackend override of `mark_read` flips a message
