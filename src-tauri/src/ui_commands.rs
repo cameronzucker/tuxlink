@@ -1116,8 +1116,8 @@ mod tests {
     // Task 16 — config_read DTO mapping (integration commit, spec §5.6 / §6)
     // ========================================================================
     use crate::config::{
-        CmsTransport, Config, ConnectConfig, GpsState, IdentityConfig, PositionPrecision,
-        PositionSource, PrivacyConfig, CONFIG_SCHEMA_VERSION,
+        CmsTransport, Config, ConnectConfig, GpsState, IdentityConfig, PacketConfig,
+        PositionPrecision, PositionSource, PrivacyConfig, CONFIG_SCHEMA_VERSION,
     };
 
     /// Build a CMS-mode config fixture for the mapping tests.
@@ -1140,6 +1140,7 @@ mod tests {
                 position_source: PositionSource::Gps,
             },
             pat_mbo_address: None,
+            packet: PacketConfig::default(),
         }
     }
 

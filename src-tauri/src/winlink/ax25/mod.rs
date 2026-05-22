@@ -9,6 +9,13 @@ pub mod kiss;
 pub mod link;
 pub mod params;
 
+// P3 public surface (consumed by config.rs, winlink_backend.rs, ui_commands.rs)
+pub use frame::Address;
+pub use link::KissLinkConfig;
+pub use params::Ax25Params;
+pub use datalink::{connect, answer, Ax25Stream};
+pub use link::connect_link;
+
 #[cfg(test)]
 mod module_smoke {
     use super::{frame, kiss};

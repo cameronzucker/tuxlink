@@ -26,7 +26,7 @@ use thiserror::Error;
 pub use crate::pat_client::MailboxFolder;
 
 // Native backend wiring (see the NativeBackend section below).
-use crate::config::{broadcast_grid, CmsTransport, Config};
+use crate::config::{broadcast_grid, CmsTransport, Config, PacketConfig};
 use crate::native_mailbox::Mailbox;
 use crate::winlink::message::Message;
 use crate::winlink::proposal::Answer;
@@ -1271,6 +1271,7 @@ mod native_read_state_tests {
                 position_source: PositionSource::Gps,
             },
             pat_mbo_address: None,
+            packet: PacketConfig::default(),
         }
     }
 

@@ -7,6 +7,7 @@
 //! serial arm (Task 4) is exercised by the operator on hardware (RADIO-1 / spec §6);
 //! the agent verifies only that it compiles and opens a device path.
 
+use serde::{Deserialize, Serialize};
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::time::Duration;
@@ -30,7 +31,7 @@ const LINK_WRITE_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Which KISS byte-pipe to open. Bluetooth uses the `Serial` variant with an
 /// rfcomm device path (e.g. `/dev/rfcomm0`); there is no in-app BlueZ dependency.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum KissLinkConfig {
     /// KISS-over-TCP, e.g. Dire Wolf / SoundModem listening on `127.0.0.1:8001`.
     Tcp { host: String, port: u16 },

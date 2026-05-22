@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tuxlink_lib::config::{
-    CmsTransport, Config, ConnectConfig, GpsState, IdentityConfig, PositionPrecision,
+    CmsTransport, Config, ConnectConfig, GpsState, IdentityConfig, PacketConfig, PositionPrecision,
     PrivacyConfig,
 };
 use tuxlink_lib::pat_process::{PatProcess, PatSpawnOptions};
@@ -58,6 +58,7 @@ fn minimal_cms_config() -> Config {
             position_source: tuxlink_lib::config::PositionSource::Gps,
         },
         pat_mbo_address: None,
+        packet: PacketConfig::default(),
     }
 }
 

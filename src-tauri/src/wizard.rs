@@ -175,6 +175,7 @@ pub async fn persist_cms_impl(
         } else {
             Some(mbo_address.trim().to_string())
         },
+        packet: crate::config::PacketConfig::default(),
     };
 
     // Step 4: Create keyring entry handle.
@@ -310,6 +311,7 @@ pub async fn persist_offline_impl(
             position_source: crate::config::PositionSource::Gps,
         },
         pat_mbo_address: None,        // offline path: no MBO address
+        packet: crate::config::PacketConfig::default(),
     };
 
     // Single atomic write to config.json. No keyring involved.

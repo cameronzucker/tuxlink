@@ -7,7 +7,7 @@
 // bd-issue's "5-10" cap. Each test maps to one row of the §4 test matrix.
 
 use futures::StreamExt;
-use tuxlink_lib::config::CmsTransport;
+use tuxlink_lib::config::{CmsTransport, PacketConfig};
 use tuxlink_lib::winlink_backend::{
     ingest_pat_line, BackendError, BackendStatus, LogLevel, LogLine, LogSource, MailboxFolder,
     MessageId, NativeBackend, OutboundMessage, PatBackend, TransportConfig, WinlinkBackend,
@@ -225,6 +225,7 @@ fn native_test_config() -> tuxlink_lib::config::Config {
             position_source: tuxlink_lib::config::PositionSource::Gps,
         },
         pat_mbo_address: None,
+        packet: PacketConfig::default(),
     }
 }
 
@@ -391,8 +392,8 @@ fn spawn_failure_drains_pat_stderr_into_durable_buffer() {
     use std::os::unix::fs::PermissionsExt;
     use std::sync::Arc;
     use tuxlink_lib::config::{
-        CmsTransport, Config, ConnectConfig, GpsState, IdentityConfig, PositionPrecision,
-        PrivacyConfig, CONFIG_SCHEMA_VERSION,
+        CmsTransport, Config, ConnectConfig, GpsState, IdentityConfig, PacketConfig,
+        PositionPrecision, PrivacyConfig, CONFIG_SCHEMA_VERSION,
     };
     use tuxlink_lib::session_log::SessionLogState;
     use tuxlink_lib::winlink_backend::{PatBackend, PatBackendSpawnOptions};
@@ -432,6 +433,7 @@ fn spawn_failure_drains_pat_stderr_into_durable_buffer() {
             position_source: tuxlink_lib::config::PositionSource::Gps,
         },
         pat_mbo_address: None,
+        packet: PacketConfig::default(),
     };
 
     let buf = Arc::new(SessionLogState::new(64));
@@ -487,8 +489,8 @@ async fn spawn_against_real_pat_http_mode() {
     use std::path::PathBuf;
     use std::sync::Arc;
     use tuxlink_lib::config::{
-        CmsTransport, Config, ConnectConfig, IdentityConfig, PositionPrecision, PrivacyConfig,
-        GpsState, CONFIG_SCHEMA_VERSION,
+        CmsTransport, Config, ConnectConfig, GpsState, IdentityConfig, PacketConfig,
+        PositionPrecision, PrivacyConfig, CONFIG_SCHEMA_VERSION,
     };
     use tuxlink_lib::session_log::SessionLogState;
     use tuxlink_lib::winlink_backend::{PatBackend, PatBackendSpawnOptions};
@@ -545,6 +547,7 @@ async fn spawn_against_real_pat_http_mode() {
             position_source: tuxlink_lib::config::PositionSource::Gps,
         },
         pat_mbo_address: None,
+        packet: PacketConfig::default(),
     };
 
     let buf = Arc::new(SessionLogState::new(64));
