@@ -12,6 +12,7 @@ import { invoke } from '@tauri-apps/api/core';
 import type { StatusBarData, StatusTone } from './useStatus';
 import { GridEdit } from './GridEdit';
 import { DEV_FIXTURE, DEV_POSITION, DEV_CONNECTION_DASH } from '../mailbox/devFixture';
+import { formatPacketConnection, type PacketUiState } from '../packet/packetStatus';
 
 function useClock() {
   const [now, setNow] = useState(() => new Date());
@@ -56,9 +57,11 @@ export interface DashboardRibbonProps {
    *  only while `connecting`; it shuts the connecting socket so a slow TLS/login/
    *  exchange phase unblocks, returning the backend to Disconnected. */
   onAbort?: () => void;
+  /** Packet transport state; when active, overrides the CMS connection label. */
+  packet?: PacketUiState;
 }
 
-export function DashboardRibbon({ data, onConnect, connecting, onAbort }: DashboardRibbonProps) {
+export function DashboardRibbon({ data, onConnect, connecting, onAbort, packet }: DashboardRibbonProps) {
   const { utc, local } = useClock();
   const { callsign, grid, state, connection: connectionFromData } = data;
   // Position (GPS coords) is a v0.1 data source; the dev fixture shows the mock
@@ -67,6 +70,11 @@ export function DashboardRibbon({ data, onConnect, connecting, onAbort }: Dashbo
   // connection string is pre-formatted by useStatusData via formatConnectionState,
   // so it always names the real configured/active transport (tuxlink-989 fix).
   const connection = DEV_FIXTURE ? DEV_CONNECTION_DASH : connectionFromData;
+
+  // Packet override: when packet is active, replace the connection label + tone.
+  const packetConn = packet ? formatPacketConnection(packet) : null;
+  const connectionLabel = packetConn ? packetConn.label : connection;
+  const connectionTone = packetConn ? packetConn.tone : state.tone;
 
   return (
     <div className="dashboard" data-testid="dashboard-ribbon" role="banner">
@@ -115,10 +123,10 @@ export function DashboardRibbon({ data, onConnect, connecting, onAbort }: Dashbo
         <div
           className="dash-value dash-connection"
           data-testid="ribbon-connection"
-          title={typeof connection === 'string' ? connection : undefined}
+          title={typeof connectionLabel === 'string' ? connectionLabel : undefined}
         >
-          <span className={`dash-status-dot ${dashDotClass(state.tone)}`} aria-hidden="true" />
-          {connection}
+          <span className={`dash-status-dot ${dashDotClass(connectionTone)}`} aria-hidden="true" />
+          {connectionLabel}
         </div>
       </div>
 

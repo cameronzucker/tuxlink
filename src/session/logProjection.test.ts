@@ -341,3 +341,46 @@ describe('LogLineDto type validity', () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// Task 13: Packet/AX.25 session-log projection contract
+// ---------------------------------------------------------------------------
+
+describe('logProjection — packet/AX.25 lines', () => {
+  const inbound: LogLineDto = {
+    seq: 100, timestampIso: '2026-05-22T14:28:31Z', level: 'info', source: 'transport',
+    message: '◀ Inbound packet call from W7AUX-10 — 1 message received',
+  };
+  const outbound: LogLineDto = {
+    seq: 101, timestampIso: '2026-05-22T13:48:10Z', level: 'info', source: 'transport',
+    message: '▶ Connected W7AUX-10 via W7RPT-1 — 2 sent, 0 received',
+  };
+  const linkEvt: LogLineDto = {
+    seq: 102, timestampIso: '2026-05-22T13:47:55Z', level: 'info', source: 'transport',
+    message: 'Link established (SABM → UA), path N7CPZ-7 → W7RPT-1 → W7AUX-10',
+  };
+  const ax25Raw: LogLineDto = {
+    seq: 103, timestampIso: '2026-05-22T13:47:55Z', level: 'debug', source: 'wire',
+    message: 'KISS C0 00 ... AX.25 SABM C/R=1 N(S)=0 N(R)=0',
+  };
+
+  it('Human keeps shaped transport lines (◀ inbound, ▶ outbound, SABM→UA)', () => {
+    const out = humanProjection([inbound, outbound, linkEvt]);
+    const text = out.map((l) => l.message).join('\n');
+    expect(text).toContain('◀ Inbound packet call from W7AUX-10');
+    expect(text).toContain('▶ Connected W7AUX-10 via W7RPT-1');
+    expect(text).toContain('Link established (SABM → UA)');
+  });
+
+  it('Human suppresses raw AX.25/KISS wire frame dumps', () => {
+    const out = humanProjection([linkEvt, ax25Raw]);
+    const text = out.map((l) => l.message).join('\n');
+    expect(text).not.toContain('AX.25 SABM C/R=1');
+  });
+
+  it('Raw reveals the AX.25/KISS frame detail', () => {
+    const out = rawProjection([linkEvt, ax25Raw]);
+    const text = out.map((l) => l.message).join('\n');
+    expect(text).toContain('AX.25 SABM C/R=1');
+  });
+});

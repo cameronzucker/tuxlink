@@ -1,0 +1,263 @@
+/* src/packet/PacketConnectionPanel.css — panel-local styles, dark/amber tokens
+ * from App.css :root. Scoped under .packet-panel so it stays portable. */
+
+.packet-panel {
+  overflow: auto;
+}
+
+.packet-panel .packet-panel-head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-bottom: 4px;
+}
+
+.packet-panel .packet-panel-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.packet-panel .packet-panel-badge {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border: 1px solid var(--accent);
+  padding: 2px 8px;
+  border-radius: 20px;
+}
+
+.packet-panel .packet-panel-sub {
+  font-size: 11.5px;
+  color: var(--text-faint);
+  margin: 0 0 16px;
+}
+
+.packet-panel .packet-blk {
+  margin-bottom: 16px;
+}
+
+.packet-panel .packet-blk-h {
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  margin-bottom: 8px;
+  display: flex;
+  justify-content: space-between;
+}
+
+/* Modem block */
+.packet-panel .packet-change {
+  all: unset;
+  color: var(--accent-2);
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.packet-panel .packet-seg {
+  display: inline-flex;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 3px;
+  gap: 3px;
+}
+
+.packet-panel .packet-seg-btn {
+  all: unset;
+  cursor: pointer;
+  padding: 6px 12px;
+  border-radius: 4px;
+  font-size: 12.5px;
+  color: var(--text-dim);
+}
+
+.packet-panel .packet-seg-btn.on {
+  background: var(--surface-2);
+  color: var(--text);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+}
+
+.packet-panel .packet-row2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 9px;
+}
+
+.packet-panel .packet-f label,
+.packet-panel .packet-f {
+  font-size: 11px;
+  color: var(--text-dim);
+  display: block;
+  margin-top: 9px;
+}
+
+.packet-panel .packet-inp {
+  width: 100%;
+  margin-top: 4px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 7px 10px;
+  color: var(--text);
+  font-size: 13px;
+  font-family: var(--mono);
+  box-sizing: border-box;
+}
+
+.packet-panel .packet-inp:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+.packet-panel .packet-hint {
+  font-size: 10.5px;
+  color: var(--text-faint);
+  margin: 5px 0 0;
+}
+
+.packet-panel .packet-hint b { color: var(--accent-2); }
+
+/* My station block */
+.packet-panel .packet-new {
+  font-size: 9.5px;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: 10px;
+  padding: 1px 6px;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.packet-panel .packet-ssidwrap {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+}
+
+.packet-panel .packet-ssidwrap .packet-base { flex: 1; }
+
+.packet-panel .packet-ssidsel {
+  width: 78px;
+  margin-top: 4px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 7px 8px;
+  color: var(--accent-2);
+  font-family: var(--mono);
+  font-weight: 600;
+}
+
+/* Listen toggle (success-toned) */
+/* The real Listen action button. Idle = neutral surface ("not listening");
+   armed = active/highlighted ("waiting for a call — Stop"). */
+.packet-panel .packet-listen-btn {
+  all: unset;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  cursor: pointer;
+}
+
+.packet-panel .packet-listen-btn.armed {
+  background: rgba(93, 214, 160, 0.15);
+  border-color: rgba(93, 214, 160, 0.35);
+  box-shadow: 0 0 8px rgba(93, 214, 160, 0.25);
+}
+
+/* listenDefault preference checkbox — clearly secondary to the action above. */
+.packet-panel .packet-listen-pref {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.packet-panel .packet-listen-pref input { flex: none; }
+
+.packet-panel .packet-listen-text { display: flex; flex-direction: column; }
+.packet-panel .packet-listen-title { font-weight: 600; color: var(--text); font-size: 13px; }
+.packet-panel .packet-listen-sub { font-size: 11px; color: var(--text-dim); }
+
+/* Connect block */
+.packet-panel .packet-relays { margin-top: 11px; }
+.packet-panel .packet-relays-label { font-size: 11px; color: var(--text-dim); }
+.packet-panel .packet-faint { color: var(--text-faint); }
+
+.packet-panel .packet-chips {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+
+.packet-panel .packet-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  padding: 4px 9px;
+  border-radius: 16px;
+  font-size: 12px;
+  font-family: var(--mono);
+}
+
+.packet-panel .packet-chip-input {
+  all: unset;
+  width: 70px;
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.packet-panel .packet-chip-x { color: var(--text-faint); cursor: pointer; background: none; border: none; }
+
+.packet-panel .packet-chip-add {
+  border-style: dashed;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-family: inherit;
+  background: none;
+}
+
+.packet-panel .packet-path { font-size: 10.5px; color: var(--text-faint); margin: 7px 0 0; }
+.packet-panel .packet-path code {
+  color: var(--text);
+  background: var(--bg);
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+
+.packet-panel .packet-connect-btn {
+  margin-top: 14px;
+  width: 100%;
+  background: var(--accent);
+  color: var(--bg);
+  border: none;
+  border-radius: 7px;
+  padding: 10px;
+  font-weight: 700;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.packet-panel .packet-connect-btn:hover { filter: brightness(1.12); }

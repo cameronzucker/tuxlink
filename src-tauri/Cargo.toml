@@ -42,6 +42,7 @@ chrono = { version = "0.4", default-features = false, features = ["clock"] }  # 
 tauri-plugin-window-state = "2"                            # NEW (tuxlink-dm8, Task 14) — per-compose-window geometry persistence (spec §8)
 md-5 = "0.10"              # NEW (tuxlink-0ic) — Winlink secure-login response is MD5 of challenge+password+salt; RustCrypto, pairs with the `digest` crate already present, pure-Rust (no C dep)
 native-tls = "0.2"         # NEW (tuxlink-0ic) — TLS-wrapped telnet to the CMS (CmsSsl, port 8773), the default transport like Winlink Express; reuses the OpenSSL already pulled in by reqwest's default-tls
+serialport = "4"           # NEW (tuxlink-7fr P2) — KISS over USB-serial COM and Bluetooth RFCOMM (/dev/rfcommN); pure-Rust, no libudev C dep needed for open/read/write
 
 [dev-dependencies]
 mockito = "1.5"

@@ -13,6 +13,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { DashboardRibbon } from './DashboardRibbon';
 import type { StatusBarData, StatusTone } from './useStatus';
+import type { PacketUiState } from '../packet/packetStatus';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -107,5 +108,29 @@ describe('<DashboardRibbon> — abort control (tuxlink-9z2)', () => {
   it('does not render an Abort button when not connecting', () => {
     render(<DashboardRibbon data={makeData()} onConnect={() => {}} onAbort={() => {}} />);
     expect(screen.queryByTestId('abort-button')).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task 12: packet transport indicator in the ribbon Connection item
+// ---------------------------------------------------------------------------
+
+describe('DashboardRibbon — packet connection', () => {
+  const data: StatusBarData = {
+    callsign: 'N7CPZ', grid: 'CN85', gridTooltip: null,
+    state: { label: 'Idle', tone: 'idle' as StatusTone }, connection: 'Idle · CMS-SSL',
+    position_source: 'Gps', // required since the tuxlink-686 merge (was missing → tsc-only error)
+  };
+  const packet: PacketUiState = {
+    active: true, listening: true, connected: false, effectiveCall: 'N7CPZ-7', linkLabel: 'KISS-TCP Dire Wolf',
+  };
+
+  it('shows the packet connection label when packet is active', () => {
+    render(<DashboardRibbon data={data} packet={packet} />);
+    expect(screen.getByTestId('ribbon-connection')).toHaveTextContent('Listening · Packet 1200');
+  });
+  it('falls back to the CMS connection string when packet is inactive', () => {
+    render(<DashboardRibbon data={data} packet={{ ...packet, active: false }} />);
+    expect(screen.getByTestId('ribbon-connection')).toHaveTextContent('Idle · CMS-SSL');
   });
 });

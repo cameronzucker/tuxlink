@@ -121,6 +121,7 @@ fn test_mailbox_folder_clone_copy_and_debug_are_derived() {
     // so the trait's MailboxFolder re-export carries useful semantics.
     // No tokio runtime needed — purely a type-level check.
     let f = MailboxFolder::Inbox;
+    #[allow(clippy::clone_on_copy)]
     let f2 = f.clone();
     let _ = format!("{:?}", f2);
     let f3 = f; // Copy semantics — f is not consumed by this line.

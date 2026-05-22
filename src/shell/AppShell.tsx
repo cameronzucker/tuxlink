@@ -24,7 +24,9 @@ import { isNotConfigured } from '../mailbox/types';
 import type { MailboxFolder } from '../mailbox/types';
 import { DEV_SELECTED } from '../mailbox/devFixture';
 import { FolderSidebar } from '../mailbox/FolderSidebar';
+import type { ConnectionKey } from '../mailbox/FolderSidebar';
 import { DashboardRibbon } from './DashboardRibbon';
+import { SettingsPanel } from './SettingsPanel';
 import { StatusBar } from './StatusBar';
 import { useStatusData } from './useStatus';
 import { applyColorScheme, saveColorScheme } from './colorScheme';
@@ -38,6 +40,9 @@ import { dispatchMenuAction, type MenuHandlers } from './chrome/dispatchMenuActi
 import { useMessage } from '../mailbox/useMessage';
 import { openReplyWindow } from '../mailbox/replyActions';
 import { newDraftId } from '../routing';
+import { PacketConnectionPanelContainer } from '../packet/PacketConnectionPanel';
+import { effectiveCall } from '../packet/packetConfig';
+import { derivePacketUiState, type PacketUiState } from '../packet/packetStatus';
 import './AppShell.css';
 
 /// Human label for a folder (titlebar). Mirrors the sidebar labels.
@@ -62,6 +67,11 @@ export function AppShell() {
   // Mock B shows the session log + status bar by default; View → toggles them.
   const [showSessionLog, setShowSessionLog] = useState(true);
   const [showStatusBar, setShowStatusBar] = useState(true);
+  // Inline GPS/privacy settings overlay (tuxlink-39b), opened from Tools→Settings.
+  const [settingsOpen, setSettingsOpen] = useState(false);
+
+  // Connection panel: null = no panel; 'packet' = reading-pane shows PacketConnectionPanel.
+  const [selectedConnection, setSelectedConnection] = useState<ConnectionKey | null>(null);
 
   const { messages, error } = useMailbox(selectedFolder);
   const inbox = useMailbox('inbox');
@@ -136,8 +146,9 @@ export function AppShell() {
     forward: () => { if (openMessage) void openReplyWindow(openMessage, 'forward').catch(() => {}); },
     toggleSessionLog: () => setShowSessionLog((s) => !s),
     toggleStatusBar: () => setShowStatusBar((s) => !s),
-    selectFolder: (folder) => { setSelectedFolder(folder); setSelectedMessage(null); },
+    selectFolder: (folder) => { setSelectedFolder(folder); setSelectedMessage(null); setSelectedConnection(null); },
     setScheme: (id) => { applyColorScheme(id); saveColorScheme(id); },
+    openSettings: () => setSettingsOpen(true),
     quit: () => { void invoke('app_quit'); },
   }), [onConnect, openMessage]);
 
@@ -147,13 +158,37 @@ export function AppShell() {
   const onSelectFolder = useCallback((folder: MailboxFolder) => {
     setSelectedFolder(folder);
     setSelectedMessage(null);
+    setSelectedConnection(null);
+  }, []);
+
+  const onSelectConnection = useCallback((conn: ConnectionKey) => {
+    setSelectedConnection(conn);
+    setSelectedMessage(null);
   }, []);
 
   const onSelectMessage = useCallback(
     (id: string) => {
       setSelectedMessage({ folder: selectedFolder, id });
+      setSelectedConnection(null);
     },
     [selectedFolder],
+  );
+
+  // Derive the packet UI state for the ribbon + status bar indicators from the
+  // LIVE backend status (tuxlink-orj). The real feed has landed: the backend now
+  // reports Listening (armed) / Connected for packet, so the indicator reflects
+  // what the link is actually doing instead of the prior hard-coded placeholder.
+  // Honesty is preserved by construction — derivePacketUiState only claims
+  // listening/connected when the backend status says so (Listening, or Connected
+  // with a packet transport), never from panel selection alone.
+  const packetUi: PacketUiState = useMemo(
+    () =>
+      derivePacketUiState(
+        statusData.status ?? null,
+        selectedConnection === 'packet',
+        effectiveCall(statusData.callsign, 0), // v0.1 placeholder SSID
+      ),
+    [statusData.status, selectedConnection, statusData.callsign],
   );
 
   return (
@@ -166,6 +201,7 @@ export function AppShell() {
         onConnect={onConnect}
         connecting={connecting}
         onAbort={onAbort}
+        packet={packetUi}
       />
 
       <div className="panes" data-testid="shell-panes">
@@ -173,6 +209,9 @@ export function AppShell() {
           selectedFolder={selectedFolder}
           onSelectFolder={onSelectFolder}
           counts={counts}
+          selectedConnection={selectedConnection}
+          onSelectConnection={onSelectConnection}
+          packetState={packetUi.connected ? 'connected' : packetUi.listening ? 'listening' : 'off'}
         />
         <MessageList
           folder={selectedFolder}
@@ -181,12 +220,18 @@ export function AppShell() {
           onSelect={onSelectMessage}
           notConnected={notConnected}
         />
-        <MessageView selectedMessage={selectedMessage} />
+        {selectedConnection === 'packet' ? (
+          <PacketConnectionPanelContainer baseCall={statusData.callsign} />
+        ) : (
+          <MessageView selectedMessage={selectedMessage} />
+        )}
       </div>
 
       {showSessionLog && <SessionLog />}
 
-      <StatusBar show={showStatusBar} unread={counts.inbox ?? 0} state={statusData.state} />
+      <StatusBar show={showStatusBar} unread={counts.inbox ?? 0} state={statusData.state} packet={packetUi} />
+
+      <SettingsPanel open={settingsOpen} onClose={() => setSettingsOpen(false)} />
     </div>
   );
 }
