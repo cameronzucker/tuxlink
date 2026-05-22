@@ -11,7 +11,7 @@ import { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { ssidOptions, effectiveCall, pathPreview, withSsid } from './packetConfig';
 import './PacketConnectionPanel.css';
-import type { PacketConfigDto, PacketLinkKind } from './packetTypes';
+import type { PacketConfigDto } from './packetTypes';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -334,5 +334,3 @@ export function PacketConnectionPanelContainer({ baseCall }: { baseCall: string 
   return <PacketConnectionPanel config={config} baseCall={baseCall} onSsidPersist={onSsidPersist} />;
 }
 
-// Suppress unused import warning — PacketLinkKind is referenced in comments / type cast
-void (undefined as unknown as PacketLinkKind);

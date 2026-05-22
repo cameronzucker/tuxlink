@@ -1,7 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { FolderSidebar } from './FolderSidebar';
-import type { ConnectionKey } from './FolderSidebar';
 
 describe('<FolderSidebar> (Mock B)', () => {
   it('renders the Mailbox + Connections sections with their items', () => {
