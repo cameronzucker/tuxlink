@@ -325,6 +325,13 @@ pub trait WinlinkBackend: Send + Sync {
 /// purpose — `winlink::telnet` only ever calls it with a `&str` phase message.
 pub type ProgressSink = Arc<dyn Fn(&str) + Send + Sync>;
 
+/// A sink for raw B2F wire lines (tuxlink-nki). The connect path tees every
+/// on-wire protocol line (both directions) into this; `bootstrap::install_native`
+/// wires it to append a `LogSource::Wire` line to the session log + emit it live,
+/// so the operator can watch the real `[WL2K-...]`/`;FW`/`FF`/`FQ` dialogue under
+/// the "Raw output" view. No-op by default (tests + the no-progress path).
+pub type WireSink = Arc<dyn Fn(&str) + Send + Sync>;
+
 /// The native Winlink backend: speaks B2F directly (no Pat), stores messages in
 /// its own [`Mailbox`], and connects over plaintext or TLS telnet. `connect`
 /// runs the real CMS exchange on a blocking task; the actual on-air protocol is
@@ -336,6 +343,10 @@ pub struct NativeBackend {
     log_tx: broadcast::Sender<LogLine>,
     status: Arc<RwLock<BackendStatus>>,
     progress: ProgressSink,
+    /// Sink for raw B2F wire lines (tuxlink-nki): tees the on-wire dialogue into
+    /// the session log as `LogSource::Wire` so it surfaces under "Raw output". No-op
+    /// by default; production wires it in `bootstrap::install_native`.
+    wire: WireSink,
     /// Shutdown handle for the in-flight connect socket (tuxlink-9z2): a clone of
     /// the connecting `TcpStream`, set once TCP connects, taken + shut down by
     /// [`WinlinkBackend::abort`] to unblock a slow TLS/login/exchange phase.
@@ -393,6 +404,7 @@ impl NativeBackend {
             log_tx,
             status: Arc::new(RwLock::new(BackendStatus::Disconnected)),
             progress,
+            wire: Arc::new(|_: &str| {}),
             abort_handle: Arc::new(Mutex::new(None)),
             aborting: Arc::new(AtomicBool::new(false)),
             connect_in_progress: Arc::new(AtomicBool::new(false)),
@@ -404,6 +416,13 @@ impl NativeBackend {
     /// constructors and tests are unaffected.
     pub fn with_position(mut self, arbiter: Arc<crate::position::PositionArbiter>) -> Self {
         self.position = Some(arbiter);
+        self
+    }
+
+    /// Attach a raw-wire log sink (tuxlink-nki). Builder-style so existing
+    /// constructors and tests are unaffected; no-op by default.
+    pub fn with_wire_log(mut self, wire: WireSink) -> Self {
+        self.wire = wire;
         self
     }
 
@@ -496,11 +515,12 @@ impl WinlinkBackend for NativeBackend {
         // `native_connect` uses the arbiter's `broadcast_grid()` as the on-air
         // locator, superseding the stale `config` snapshot's grid.
         let progress = self.progress.clone();
+        let wire = self.wire.clone();
         let abort_handle = self.abort_handle.clone();
         let aborting = self.aborting.clone();
         let position = self.position.clone();
         let outcome = tokio::task::spawn_blocking(move || {
-            native_connect(&config, &mailbox, mode, &*progress, &abort_handle, &aborting, position.as_deref())
+            native_connect(&config, &mailbox, mode, &*progress, &*wire, &abort_handle, &aborting, position.as_deref())
         })
         .await
         .map_err(|e| BackendError::Internal {
@@ -657,6 +677,7 @@ fn native_connect(
     mailbox: &Mailbox,
     mode: CmsTransport,
     progress: &dyn Fn(&str),
+    wire_log: &dyn Fn(&str),
     abort_handle: &Mutex<Option<TcpStream>>,
     aborting: &AtomicBool,
     position: Option<&crate::position::PositionArbiter>,
@@ -743,6 +764,7 @@ fn native_connect(
         &exchange_config,
         outbound,
         progress,
+        wire_log,
         &register_socket,
         |proposals| {
             proposals

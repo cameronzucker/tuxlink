@@ -97,6 +97,60 @@ impl Write for WriteHalf {
     }
 }
 
+/// A read/write tap that mirrors each `\r`-terminated protocol line to a sink
+/// (tuxlink-nki), so the session log can surface the raw B2F wire dialogue —
+/// `[WL2K-...]`, `;PQ`, `;FW`, the client SID, `FF`/`FQ`, etc. — under the
+/// "Raw output" view, instead of only the human progress summary. The CMS speaks
+/// `\r`-terminated lines (see [`wire::read_line`]); we frame on `\r` to match, and
+/// reuse [`wire::clean_line`] so logged lines match what the parser sees.
+struct WireTap<'a, T> {
+    inner: T,
+    sink: &'a dyn Fn(&str),
+    /// Direction marker prefixed to each logged line: `'<'` received, `'>'` sent.
+    dir: char,
+    line: Vec<u8>,
+}
+
+impl<'a, T> WireTap<'a, T> {
+    fn new(inner: T, sink: &'a dyn Fn(&str), dir: char) -> Self {
+        Self { inner, sink, dir, line: Vec::new() }
+    }
+
+    /// Accumulate observed bytes; emit each completed (`\r`-terminated) line.
+    fn observe(&mut self, bytes: &[u8]) {
+        for &b in bytes {
+            if b == b'\r' {
+                let text = wire::clean_line(&String::from_utf8_lossy(&self.line)).to_string();
+                self.line.clear();
+                if !text.is_empty() {
+                    (self.sink)(&format!("{} {}", self.dir, text));
+                }
+            } else if b != b'\n' {
+                self.line.push(b);
+            }
+        }
+    }
+}
+
+impl<'a, T: Read> Read for WireTap<'a, T> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let n = self.inner.read(buf)?;
+        self.observe(&buf[..n]);
+        Ok(n)
+    }
+}
+
+impl<'a, T: Write> Write for WireTap<'a, T> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let n = self.inner.write(buf)?;
+        self.observe(&buf[..n]);
+        Ok(n)
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.inner.flush()
+    }
+}
+
 /// Connect to `host:port` over the chosen transport and run a full message
 /// exchange.
 ///
@@ -109,6 +163,7 @@ pub fn connect_and_exchange<F>(
     config: &ExchangeConfig,
     outbound: Vec<OutboundMessage>,
     progress: &dyn Fn(&str),
+    wire_log: &dyn Fn(&str),
     register_socket: &dyn Fn(&TcpStream),
     decide: F,
 ) -> Result<ExchangeResult, TelnetError>
@@ -122,8 +177,11 @@ where
         progress,
         register_socket,
     )?));
-    let mut reader = BufReader::new(ReadHalf(shared.clone()));
-    let mut writer = WriteHalf(shared);
+    // Tee both directions of the wire to `wire_log` so the raw B2F dialogue
+    // (`[WL2K-...]`, `;PQ`, `;FW`, the client SID, `FF`/`FQ`) is visible in the
+    // session log's Raw output, not just the human progress summary (tuxlink-nki).
+    let mut reader = BufReader::new(WireTap::new(ReadHalf(shared.clone()), wire_log, '<'));
+    let mut writer = WireTap::new(WriteHalf(shared), wire_log, '>');
 
     // The CMS telnet "post office" greets with a callsign/password login that
     // precedes the B2F handshake; clear it first.
@@ -350,6 +408,7 @@ mod tests {
             vec![],
             &|_| {},
             &|_| {},
+            &|_| {},
             |_| vec![],
         )
         .unwrap();
@@ -510,6 +569,7 @@ mod tests {
             vec![],
             &|msg: &str| recorded.borrow_mut().push(msg.to_string()),
             &|_| {},
+            &|_| {},
             |_| vec![],
         )
         .unwrap();
@@ -523,6 +583,61 @@ mod tests {
         assert!(
             lines.iter().any(|l| l.to_lowercase().contains("login")),
             "expected a login-complete progress line, got {lines:?}"
+        );
+    }
+
+    #[test]
+    fn connect_and_exchange_tees_raw_wire_lines() {
+        // tuxlink-nki: the wire tap must surface the raw B2F dialogue in BOTH
+        // directions so "Raw output" can show the real protocol exchange. Loopback
+        // mock, no live network: the CMS sends a banner + CMS> + FQ; the client
+        // sends its login + handshake (;FW:). The wire sink fires synchronously on
+        // this thread, so a RefCell recorder suffices.
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = thread::spawn(move || {
+            let (mut sock, _) = listener.accept().unwrap();
+            sock.write_all(b"Callsign :\rPassword :\r[WL2K-5.0-B2FHM$]\rCMS>\rFQ\r")
+                .unwrap();
+            let mut buf = [0u8; 256];
+            while let Ok(n) = sock.read(&mut buf) {
+                if n == 0 {
+                    break;
+                }
+            }
+        });
+
+        let config = ExchangeConfig {
+            mycall: "N7CPZ".into(),
+            targetcall: "SERVICE".into(),
+            locator: "CN87".into(),
+            password: None,
+        };
+        let wire = std::cell::RefCell::new(Vec::<String>::new());
+        connect_and_exchange(
+            &addr.ip().to_string(),
+            addr.port(),
+            Transport::Plaintext,
+            &config,
+            vec![],
+            &|_| {},
+            &|line: &str| wire.borrow_mut().push(line.to_string()),
+            &|_| {},
+            |_| vec![],
+        )
+        .unwrap();
+        server.join().unwrap();
+
+        let lines = wire.into_inner();
+        // Received lines are prefixed '<': the CMS banner must be captured.
+        assert!(
+            lines.iter().any(|l| l.starts_with('<') && l.contains("[WL2K-5.0-B2FHM$]")),
+            "expected the received CMS banner in the wire log, got {lines:?}"
+        );
+        // Sent lines are prefixed '>': the client's B2F forward line must be captured.
+        assert!(
+            lines.iter().any(|l| l.starts_with('>') && l.contains(";FW: N7CPZ")),
+            "expected the sent ;FW handshake line in the wire log, got {lines:?}"
         );
     }
 }
