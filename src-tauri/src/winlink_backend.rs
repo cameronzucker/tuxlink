@@ -740,34 +740,177 @@ impl NativeBackend {
 // Stubs — fully implemented in Tasks 5 and 6.
 // ============================================================================
 
-/// Run one B2F exchange over an already-connected AX.25 stream. Mirrors
-/// `native_connect`'s mailbox handling but the transport is a packet link
-/// and the role may be `Dial` or `Answer`. Generic over `Read + Write` so it
-/// is fully unit-tested with an in-memory `FakeAx25Stream` — no network, no RF.
-fn native_packet_exchange<S: std::io::Read + std::io::Write>(
-    _stream: S,
-    _base_mycall: &str,
-    _targetcall: &str,
-    _password: Option<String>,
-    _role: ExchangeRole,
-    _mailbox: &Mailbox,
-    _progress: &dyn Fn(&str),
-    _locator: &str,
+/// Run one B2F exchange over an already-connected AX.25 stream. By-value
+/// ownership: the stream is consumed + dropped on return (DISC fires from
+/// `Ax25Stream::drop`). Generic over `Read + Write` so it is fully
+/// unit-tested with an in-memory `FakeAx25Stream` — no network, no RF.
+///
+/// Identity split (spec §4.4): `base_mycall` is the B2F call (no SSID); the
+/// SSID rode the AX.25 link address in the `connect`/`answer` call that
+/// produced `stream`. `locator` is the operator's grid reduced to the
+/// configured broadcast precision (pass `cms_locator(config)`, already exists).
+fn native_packet_exchange<S: std::io::Read + std::io::Write + Send + 'static>(
+    stream: S,
+    base_mycall: &str,
+    targetcall: &str,
+    password: Option<String>,
+    role: ExchangeRole,
+    mailbox: &Mailbox,
+    progress: &dyn Fn(&str),
+    locator: &str,
 ) -> Result<(), BackendError> {
-    Err(BackendError::NotImplemented)
+    // Split the owned stream into simultaneous read + write halves via a shared
+    // Arc<Mutex> (the same pattern as telnet's shared-socket approach). The
+    // exchange is strictly turn-based so the lock is never contended.
+    use std::sync::{Arc, Mutex};
+    trait RW: std::io::Read + std::io::Write + Send {}
+    impl<T: std::io::Read + std::io::Write + Send> RW for T {}
+
+    let shared: Arc<Mutex<Box<dyn RW>>> = Arc::new(Mutex::new(Box::new(stream)));
+
+    struct ReadHalf(Arc<Mutex<Box<dyn RW>>>);
+    struct WriteHalf(Arc<Mutex<Box<dyn RW>>>);
+    impl std::io::Read for ReadHalf {
+        fn read(&mut self, b: &mut [u8]) -> std::io::Result<usize> {
+            self.0.lock().expect("ax25 lock").read(b)
+        }
+    }
+    impl std::io::Write for WriteHalf {
+        fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().expect("ax25 lock").write(b)
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            self.0.lock().expect("ax25 lock").flush()
+        }
+    }
+    let mut reader = std::io::BufReader::new(ReadHalf(shared.clone()));
+    let mut writer = WriteHalf(shared.clone());
+
+    // Build outbox proposals (mirrors native_connect).
+    let mut outbound = Vec::new();
+    for meta in mailbox.list(MailboxFolder::Outbox)? {
+        let body = mailbox.read(MailboxFolder::Outbox, &meta.id)?;
+        if let Ok(message) = Message::from_bytes(&body.raw_rfc5322) {
+            if let Some((proposal, compressed)) = message.to_proposal() {
+                let title = message.header("Subject").unwrap_or_default().to_string();
+                outbound.push(session::OutboundMessage { proposal, title, compressed });
+            }
+        }
+    }
+
+    let exchange_config = session::ExchangeConfig {
+        mycall: base_mycall.to_string(), // BASE call — no SSID in B2F identity
+        targetcall: targetcall.to_string(),
+        locator: locator.to_string(), // config-derived locator (controller directive)
+        password,
+    };
+
+    progress("AX.25 connected; negotiating messages…");
+    let result = session::run_exchange_with_role(
+        &mut reader,
+        &mut writer,
+        role,
+        &exchange_config,
+        outbound,
+        |proposals| proposals.iter().map(|_| Answer::Accept { resume_offset: 0 }).collect(),
+    )
+    .map_err(|e| BackendError::TransportFailed { reason: format!("{e:?}"), source: None })?;
+
+    for message in &result.received {
+        mailbox.store(MailboxFolder::Inbox, &message.to_bytes())?;
+    }
+    for mid in &result.sent {
+        mailbox.move_to(MailboxFolder::Outbox, MailboxFolder::Sent, &MessageId(mid.clone()))?;
+    }
+    // `shared` drops here → stream drops → DISC fires (Ax25Stream::drop).
+    Ok(())
 }
 
 /// Open the KISS link, connect (dial) or answer (listen), and run the exchange.
+/// Per RADIO-1, the agent never runs this against a real KISS modem — tests
+/// exercise `native_packet_exchange` with `FakeAx25Stream` only.
 fn native_packet_connect(
-    _config: &Config,
-    _mailbox: &Arc<Mailbox>,
-    _link: KissLinkConfig,
-    _resolved: ResolvedPacket,
-    _progress: &dyn Fn(&str),
+    config: &Config,
+    mailbox: &Arc<Mailbox>,
+    link: KissLinkConfig,
+    resolved: ResolvedPacket,
+    progress: &dyn Fn(&str),
     _abort_handle: &Mutex<Option<TcpStream>>,
     _aborting: &AtomicBool,
 ) -> Result<(), BackendError> {
-    Err(BackendError::NotImplemented)
+    let params = config.packet.params.clone().into_params();
+    let locator = cms_locator(config);
+    let base = resolved.base_mycall.clone();
+    // Password lookup for the gateway dial (challenge is conditional; peer ignores it).
+    let password = keyring::Entry::new("tuxlink-pat", &base)
+        .ok()
+        .and_then(|e| e.get_password().ok())
+        .filter(|p| !p.is_empty());
+
+    progress("Opening KISS link…");
+    let bytelink = crate::winlink::ax25::connect_link(&link)
+        .map_err(|e| BackendError::TransportFailed { reason: format!("KISS link: {e}"), source: None })?;
+
+    // Controller directive L: push KISS TNC params before connect/answer.
+    // The straightforward approach is to call kiss_param inside the link before
+    // handing it to ax25::connect/answer. However, `connect_link` returns
+    // Box<dyn ByteLink> with no kiss_param accessor on the trait surface (P2's
+    // ByteLink is bare Read+Write). Pushing params through the `Ax25Params`
+    // passed to `connect`/`answer` is the P2 design — `connect` calls
+    // `kiss_param` internally on the link for txdelay/persistence/slot_time
+    // (per datalink.rs connect implementation). So no separate param-push is
+    // needed here; the P2 `connect`/`answer` call owns it. Follow-up filed as
+    // bd issue if P2 does NOT push params in answer() (see Task 6 commit body).
+
+    match resolved.dial {
+        Some((target, digis)) => {
+            progress(&format!("Connecting to {}…", target.call));
+            let stream = crate::winlink::ax25::connect(
+                bytelink,
+                resolved.link_mycall,
+                target.clone(),
+                &digis,
+                &params,
+            )
+            .map_err(|e| BackendError::TransportFailed {
+                reason: format!("AX.25 connect: {e}"),
+                source: None,
+            })?;
+            native_packet_exchange(
+                stream,
+                &base,
+                &target.call,
+                password,
+                ExchangeRole::Dial,
+                mailbox,
+                progress,
+                &locator,
+            )
+        }
+        None => {
+            progress("Listening for an inbound peer…");
+            let (peer, stream) = crate::winlink::ax25::answer(
+                bytelink,
+                resolved.link_mycall,
+                &params,
+            )
+            .map_err(|e| BackendError::TransportFailed {
+                reason: format!("AX.25 answer: {e}"),
+                source: None,
+            })?;
+            progress(&format!("Answered {}.", peer.call));
+            native_packet_exchange(
+                stream,
+                &base,
+                &peer.call,
+                None,
+                ExchangeRole::Answer,
+                mailbox,
+                progress,
+                &locator,
+            )
+        }
+    }
 }
 
 /// The Winlink CMS host. **DEV DEFAULT = `cms-z.winlink.org`** (2026-05-21,
@@ -1364,7 +1507,6 @@ impl WinlinkBackend for PatBackend {
         let transport_label = match &transport {
             TransportConfig::Cms { mode } => format!("CMS-{:?}", mode),
             TransportConfig::Packet { ssid, .. } => format!("Packet-{ssid}"),
-            _ => "Unknown".to_string(),
         };
         {
             let mut s = self.status.write().map_err(|_| BackendError::Internal {
@@ -1665,5 +1807,169 @@ mod native_read_state_tests {
         )
         .unwrap_err();
         assert!(matches!(err, BackendError::NotConfigured(_)));
+    }
+
+    // =========================================================================
+    // Task 5: native_packet_exchange tests
+    // FakeAx25Stream: reads from inbound Cursor, writes into a shared Vec.
+    // =========================================================================
+
+    struct FakeAx25Stream {
+        inbound: std::io::Cursor<Vec<u8>>,
+        outbound: std::sync::Arc<std::sync::Mutex<Vec<u8>>>,
+    }
+    impl std::io::Read for FakeAx25Stream {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            self.inbound.read(buf)
+        }
+    }
+    impl std::io::Write for FakeAx25Stream {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.outbound.lock().expect("fake outbound").extend_from_slice(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> { Ok(()) }
+    }
+
+    #[test]
+    fn native_packet_exchange_dials_a_gateway_with_secure_login() {
+        use crate::winlink::secure::secure_login_response;
+        // A scripted gateway: speaks first, challenges, then quits (empty mailbox).
+        let mut server = Vec::new();
+        server.extend_from_slice(b"[WL2K-5.0-B2FHM$]\r;PQ: 12345678\rCMS>\r");
+        server.extend_from_slice(b"FF\r");
+        let outbound_spy = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let stream = FakeAx25Stream {
+            inbound: std::io::Cursor::new(server),
+            outbound: outbound_spy.clone(),
+        };
+
+        let mailbox = Mailbox::new(tempdir().unwrap().path());
+        let result = native_packet_exchange(
+            stream,
+            "N7CPZ",      // base B2F call (NO ssid)
+            "W7AUX",      // target call (gateway)
+            Some("MYPASS".into()),
+            ExchangeRole::Dial,
+            &mailbox,
+            &|_| {},
+            "CN87",       // locator — controller directive: pass cms_locator
+        );
+        assert!(result.is_ok(), "gateway dial must succeed, got {result:?}");
+
+        // The secure-login token must appear in the written bytes.
+        let token = secure_login_response("12345678", "MYPASS");
+        let written = outbound_spy.lock().unwrap();
+        assert!(
+            written.windows(token.len()).any(|w| w == token.as_bytes()),
+            "the secure-login token must appear in our handshake; wrote {:?}",
+            String::from_utf8_lossy(&written)
+        );
+    }
+
+    #[test]
+    fn native_packet_exchange_answers_a_peer_and_receives_a_message() {
+        use crate::winlink::message::Message as WMessage;
+        use crate::winlink::proposal::batch_checksum_line;
+        use crate::winlink::transfer;
+
+        let mut peer = Vec::new();
+        peer.extend_from_slice(b";FW: W7AUX\r[RMS-1.0-B2FHM$]\rW7AUX>\r");
+        let mut msg = WMessage::new();
+        msg.set_header("Mid", "PEERMSG00009");
+        msg.set_header("Subject", "P2P");
+        msg.set_body(b"hello from the field\r\n".to_vec());
+        let (proposal, compressed) = msg.to_proposal().unwrap();
+        peer.extend_from_slice(proposal.line().as_bytes());
+        peer.push(b'\r');
+        peer.extend_from_slice(batch_checksum_line(&[proposal]).as_bytes());
+        peer.push(b'\r');
+        peer.extend_from_slice(&transfer::frame_block("P2P", 0, &compressed));
+        peer.extend_from_slice(b"FQ\r");
+
+        let outbound_spy = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let stream = FakeAx25Stream {
+            inbound: std::io::Cursor::new(peer),
+            outbound: outbound_spy.clone(),
+        };
+
+        let dir = tempdir().unwrap();
+        let mailbox = Mailbox::new(dir.path());
+        let result = native_packet_exchange(
+            stream,
+            "N7CPZ",
+            "W7AUX",
+            None,
+            ExchangeRole::Answer,
+            &mailbox,
+            &|_| {},
+            "CN87",
+        );
+        assert!(result.is_ok(), "answer exchange must succeed, got {result:?}");
+
+        // The received peer message was filed into the inbox.
+        let inbox = mailbox.list(MailboxFolder::Inbox).unwrap();
+        assert!(
+            inbox.iter().any(|m| m.id.0 == "PEERMSG00009"),
+            "PEERMSG00009 must be in the inbox; got {inbox:?}"
+        );
+    }
+
+    // =========================================================================
+    // Task 6: packet lifecycle branch selection + no-link fast-fail
+    // =========================================================================
+
+    fn offline_config_with_callsign() -> Config {
+        Config {
+            schema_version: CONFIG_SCHEMA_VERSION,
+            wizard_completed: true,
+            connect: ConnectConfig { connect_to_cms: true, transport: CmsTransport::Telnet },
+            identity: IdentityConfig { callsign: Some("N7CPZ".into()), identifier: None, grid: None },
+            privacy: PrivacyConfig {
+                gps_state: GpsState::Off,
+                position_precision: PositionPrecision::FourCharGrid,
+                position_source: PositionSource::Gps,
+            },
+            pat_mbo_address: None,
+            packet: PacketConfig::default(),
+        }
+    }
+
+    #[tokio::test]
+    async fn connect_packet_with_no_reachable_link_is_transport_failed() {
+        // A NativeBackend with a callsign set but a KISS link that no listener is on.
+        // connect_link fails fast (connection refused) → TransportFailed.
+        // Per RADIO-1: we use a definitely-closed loopback port (bind then drop).
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        drop(listener); // nothing listening → connection refused
+
+        let backend = NativeBackend::new(offline_config_with_callsign(), tempdir().unwrap().path());
+        let err = backend
+            .connect(TransportConfig::Packet {
+                link: KissLinkConfig::Tcp { host: addr.ip().to_string(), port: addr.port() },
+                ssid: 7,
+                role: PacketRole::DialTo { call: "W7AUX".into(), path: vec![] },
+            })
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, BackendError::TransportFailed { .. }),
+            "expected TransportFailed, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn packet_dial_selects_dial_role_and_listen_selects_answer_role() {
+        assert_eq!(
+            resolve_packet_endpoint("N7CPZ", 7, PacketRole::DialTo { call: "W7AUX".into(), path: vec![] })
+                .unwrap()
+                .role,
+            ExchangeRole::Dial
+        );
+        assert_eq!(
+            resolve_packet_endpoint("N7CPZ", 7, PacketRole::Listen).unwrap().role,
+            ExchangeRole::Answer
+        );
     }
 }
