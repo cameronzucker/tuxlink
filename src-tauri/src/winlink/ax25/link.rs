@@ -83,6 +83,10 @@ impl Write for AbortableByteLink {
         // connect()'s push_kiss_params + each SABM go through here; a Cancel set before
         // the write means the radio is NEVER keyed. The 2026-05-22 incident keyed for
         // ~110 s because only read() checked the flag — write() forwarded unconditionally.
+        // RESIDUAL (tuxlink-0ja): this is check-then-write — a Cancel landing between the
+        // load and `inner.write` can still leak ONE in-flight frame. Bounded (the connect
+        // loop is hard-capped at ≤2 SABMs), not a runaway; the complete fix disarms the
+        // transport on abort. Until then this flag gate is the load-bearing stop.
         if self.abort.load(Ordering::SeqCst) {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::ConnectionAborted,
