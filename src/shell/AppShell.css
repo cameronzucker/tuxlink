@@ -609,3 +609,20 @@
   background: var(--success);
   box-shadow: 0 0 6px rgba(93, 214, 160, 0.5);
 }
+
+/* ============================================================================
+ * Session-type accordion protocol rows — indented under the session header.
+ * ========================================================================== */
+.layout-b .sidebar .nav-item.proto {
+  padding-left: 28px;
+  font-size: 12px;
+}
+.layout-b .sidebar .nav-item.proto .v01-badge {
+  font-size: 9px;
+  background: var(--surface-2);
+  color: var(--text-faint);
+  padding: 1px 5px;
+  border-radius: 3px;
+  letter-spacing: 0.04em;
+  margin-left: auto;
+}

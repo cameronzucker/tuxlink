@@ -2,15 +2,17 @@
 //
 // Source: the MOCK B sidebar (2026-05-17-mocks-v1-four-directions.html lines
 // 1190-1201). v0.0.1 functional folders are Inbox + Sent; Outbox + Archive are
-// disabled (v0.1). The Connections section has informational static items
-// (Telnet, VARA HF/FM) plus a selectable Packet (AX.25) item. Selecting a
-// functional folder calls `onSelectFolder(folder)`. Selecting the Packet item
-// calls `onSelectConnection('packet')`. Styling lives in AppShell.css.
+// disabled (v0.1). The Connections section is a session-type accordion driven
+// by SESSION_TYPES. Selecting a built protocol calls
+// `onSelectConnection({ sessionType, protocol })`. Styling lives in AppShell.css.
 
+import { useState } from 'react';
 import type { MailboxFolder } from './types';
+import { SESSION_TYPES } from '../connections/sessionTypes';
+import type { SessionTypeId, ConnectionKey } from '../connections/sessionTypes';
 
-/** Selectable connection key (drives the reading-pane connection panel). */
-export type ConnectionKey = 'packet';
+// Re-export ConnectionKey so existing importers (AppShell.tsx, etc.) keep resolving.
+export type { ConnectionKey } from '../connections/sessionTypes';
 
 /** Packet transport dot state for the sidebar indicator. */
 export type PacketDotState = 'off' | 'listening' | 'connected';
@@ -29,15 +31,6 @@ const MAILBOX_ITEMS: readonly MailboxItem[] = [
   { id: 'sent', label: 'Sent', icon: '▢', enabled: true },
   { label: 'Outbox', icon: '▢', enabled: false, v01: true },
   { label: 'Archive', icon: '▢', enabled: false, v01: true },
-];
-
-/// Connections section (mock B) — static informational items + selectable Packet.
-/// Telnet is live; VARA HF/FM are v0.1 (informational). AX.25 is replaced by
-/// the interactive Packet (AX.25) button below.
-const CONNECTION_ITEMS: readonly { label: string; icon: string; v01?: boolean }[] = [
-  { label: 'Telnet', icon: '●' },
-  { label: 'VARA HF', icon: '○', v01: true },
-  { label: 'VARA FM', icon: '○', v01: true },
 ];
 
 export interface FolderSidebarProps {
@@ -61,6 +54,8 @@ export function FolderSidebar({
   onSelectConnection,
   packetState = 'off',
 }: FolderSidebarProps) {
+  const [expanded, setExpanded] = useState<Partial<Record<SessionTypeId, boolean>>>({});
+
   return (
     <nav className="sidebar" data-testid="folder-sidebar" aria-label="Mailbox and connections">
       <div className="section-label">Mailbox</div>
@@ -98,37 +93,55 @@ export function FolderSidebar({
       })}
 
       <div className="section-label">Connections</div>
-      {CONNECTION_ITEMS.map((c) => (
-        <div
-          key={c.label}
-          className={['nav-item', c.v01 ? 'disabled' : ''].filter(Boolean).join(' ')}
-          data-testid={`conn-${c.label.toLowerCase().replace(/[^a-z0-9]/g, '')}`}
-        >
-          <span className="icon" aria-hidden="true">
-            {c.icon}
-          </span>
-          {c.label}
-          {c.v01 && <span className="v01-badge">v0.1</span>}
+      {SESSION_TYPES.map((s) => (
+        <div key={s.id}>
+          {/* Session-type header (accordion toggle) */}
+          <button
+            type="button"
+            data-testid={`sess-${s.id}`}
+            className="nav-item"
+            aria-expanded={!!expanded[s.id]}
+            onClick={() => setExpanded((e) => ({ ...e, [s.id]: !e[s.id] }))}
+          >
+            <span aria-hidden="true">{expanded[s.id] ? '▾' : '▸'}</span>
+            {s.label}
+          </button>
+
+          {/* Protocol rows (only shown when expanded) */}
+          {expanded[s.id] &&
+            s.protocols.map((p) => {
+              const isActive =
+                selectedConnection?.sessionType === s.id &&
+                selectedConnection?.protocol === p.id;
+              const isPacketRow = p.id === 'packet';
+
+              return (
+                <button
+                  key={p.id}
+                  type="button"
+                  data-testid={`proto-${s.id}-${p.id}`}
+                  className={['nav-item', 'proto', isActive ? 'active' : '']
+                    .filter(Boolean)
+                    .join(' ')}
+                  disabled={!p.built}
+                  aria-current={isActive ? 'true' : undefined}
+                  onClick={() => onSelectConnection?.({ sessionType: s.id, protocol: p.id })}
+                >
+                  {/* Transport-state dot for the active packet row */}
+                  {isPacketRow && (
+                    <span
+                      className={`conn-dot ${packetState}`}
+                      data-testid="conn-packet-dot"
+                      aria-hidden="true"
+                    />
+                  )}
+                  {p.label}
+                  {!p.built && <span className="v01-badge">soon</span>}
+                </button>
+              );
+            })}
         </div>
       ))}
-
-      {/* Selectable Packet (AX.25) entry with transport-state dot */}
-      <button
-        type="button"
-        className={['nav-item', 'conn-packet-item', selectedConnection === 'packet' ? 'active' : '']
-          .filter(Boolean)
-          .join(' ')}
-        data-testid="conn-packet"
-        aria-current={selectedConnection === 'packet' ? 'true' : undefined}
-        onClick={() => onSelectConnection?.('packet')}
-      >
-        <span
-          className={`conn-dot ${packetState}`}
-          data-testid="conn-packet-dot"
-          aria-hidden="true"
-        />
-        Packet (AX.25)
-      </button>
     </nav>
   );
 }

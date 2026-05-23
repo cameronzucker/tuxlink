@@ -43,6 +43,9 @@ import { newDraftId } from '../routing';
 import { PacketConnectionPanelContainer } from '../packet/PacketConnectionPanel';
 import { effectiveCall } from '../packet/packetConfig';
 import { derivePacketUiState, type PacketUiState } from '../packet/packetStatus';
+import { isBuilt } from '../connections/sessionTypes';
+import { TelnetCmsPanelContainer } from '../connections/TelnetCmsPanel';
+import { StubPanel } from '../connections/StubPanel';
 import './AppShell.css';
 
 /// Human label for a folder (titlebar). Mirrors the sidebar labels.
@@ -185,7 +188,7 @@ export function AppShell() {
     () =>
       derivePacketUiState(
         statusData.status ?? null,
-        selectedConnection === 'packet',
+        selectedConnection?.protocol === 'packet',
         effectiveCall(statusData.callsign, 0), // v0.1 placeholder SSID
       ),
     [statusData.status, selectedConnection, statusData.callsign],
@@ -220,11 +223,26 @@ export function AppShell() {
           onSelect={onSelectMessage}
           notConnected={notConnected}
         />
-        {selectedConnection === 'packet' ? (
-          <PacketConnectionPanelContainer baseCall={statusData.callsign} />
-        ) : (
-          <MessageView selectedMessage={selectedMessage} />
-        )}
+        {(() => {
+          if (selectedConnection === null) {
+            return <MessageView selectedMessage={selectedMessage} />;
+          }
+          if (!isBuilt(selectedConnection)) {
+            return <StubPanel sessionType={selectedConnection.sessionType} protocol={selectedConnection.protocol} />;
+          }
+          const { sessionType, protocol } = selectedConnection;
+          if (sessionType === 'cms' && protocol === 'telnet') {
+            return <TelnetCmsPanelContainer />;
+          }
+          if (sessionType === 'cms' && protocol === 'packet') {
+            return <PacketConnectionPanelContainer baseCall={statusData.callsign} intent="cms-gateway" />;
+          }
+          if (sessionType === 'p2p' && protocol === 'packet') {
+            return <PacketConnectionPanelContainer baseCall={statusData.callsign} intent="p2p" />;
+          }
+          // Built but unhandled — defensive stub
+          return <StubPanel sessionType={sessionType} protocol={protocol} />;
+        })()}
       </div>
 
       {showSessionLog && <SessionLog />}
