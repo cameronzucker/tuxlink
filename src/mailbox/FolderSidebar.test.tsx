@@ -95,7 +95,7 @@ describe('FolderSidebar — Packet connection entry (accordion)', () => {
         packetState="connected"
       />,
     );
-    fireEvent.click(screen.getByTestId('sess-cms'));
+    // The accordion auto-expands because selectedConnection is pre-set — no manual click needed.
     expect(screen.getByTestId('proto-cms-packet')).toHaveClass('active');
   });
 });
@@ -129,5 +129,21 @@ describe('FolderSidebar — Connections accordion', () => {
     expect(vara).toBeDisabled();
     fireEvent.click(vara);
     expect(onSelectConnection).not.toHaveBeenCalled();
+  });
+
+  it('auto-expands the session type of a pre-set selectedConnection (selection always visible)', () => {
+    render(
+      <FolderSidebar
+        selectedFolder="inbox"
+        onSelectFolder={vi.fn()}
+        selectedConnection={{ sessionType: 'cms', protocol: 'telnet' }}
+        onSelectConnection={vi.fn()}
+      />,
+    );
+    // No manual click on sess-cms — the row must already be present + active:
+    const row = screen.getByTestId('proto-cms-telnet');
+    expect(row).toBeInTheDocument();
+    expect(row).toHaveAttribute('aria-current', 'true');
+    expect(screen.getByTestId('sess-cms')).toHaveAttribute('aria-expanded', 'true');
   });
 });

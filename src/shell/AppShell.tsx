@@ -73,7 +73,7 @@ export function AppShell() {
   // Inline GPS/privacy settings overlay (tuxlink-39b), opened from Tools→Settings.
   const [settingsOpen, setSettingsOpen] = useState(false);
 
-  // Connection panel: null = no panel; 'packet' = reading-pane shows PacketConnectionPanel.
+  // Connection panel: null = no panel; a {sessionType, protocol} key selects the reading-pane connection pane.
   const [selectedConnection, setSelectedConnection] = useState<ConnectionKey | null>(null);
 
   const { messages, error } = useMailbox(selectedFolder);

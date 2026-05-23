@@ -6,7 +6,7 @@
 // by SESSION_TYPES. Selecting a built protocol calls
 // `onSelectConnection({ sessionType, protocol })`. Styling lives in AppShell.css.
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import type { MailboxFolder } from './types';
 import { SESSION_TYPES } from '../connections/sessionTypes';
 import type { SessionTypeId, ConnectionKey } from '../connections/sessionTypes';
@@ -55,6 +55,15 @@ export function FolderSidebar({
   packetState = 'off',
 }: FolderSidebarProps) {
   const [expanded, setExpanded] = useState<Partial<Record<SessionTypeId, boolean>>>({});
+
+  // Ensure the selected session type is always visible — auto-expand its accordion
+  // section whenever selectedConnection is set (or changes). Never collapses anything
+  // the user opened; only ensures the active section is open.
+  useEffect(() => {
+    if (selectedConnection) {
+      setExpanded((e) => (e[selectedConnection.sessionType] ? e : { ...e, [selectedConnection.sessionType]: true }));
+    }
+  }, [selectedConnection]);
 
   return (
     <nav className="sidebar" data-testid="folder-sidebar" aria-label="Mailbox and connections">
