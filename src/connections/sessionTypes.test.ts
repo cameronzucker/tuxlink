@@ -23,4 +23,11 @@ describe('session-type catalog', () => {
     expect(isBuilt({ sessionType: 'cms', protocol: 'packet' })).toBe(true);
     expect(isBuilt({ sessionType: 'p2p', protocol: 'packet' })).toBe(true);
   });
+  it('protocolsFor returns correct list for known id and [] for unknown id', () => {
+    expect(protocolsFor('cms' as any).map((p) => p.id)).toContain('telnet');
+    expect(protocolsFor('bogus' as any)).toEqual([]);
+  });
+  it('isBuilt is false when protocol is not listed under the intent (network-po + vara-hf)', () => {
+    expect(isBuilt({ sessionType: 'network-po', protocol: 'vara-hf' })).toBe(false);
+  });
 });
