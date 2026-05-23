@@ -401,6 +401,14 @@ pub trait WinlinkBackend: Send + Sync {
         Ok(())
     }
 
+    /// Refresh the live config the connect paths read (tuxlink-ka7 / tuxlink-p5u).
+    /// `NativeBackend` originally froze its `config` at construction, so the connect
+    /// path read that stale snapshot — a UI host/transport/packet-param change only
+    /// took effect after an app restart. The config-writing UI commands call this
+    /// after persisting, so the NEXT connect honors the change restart-free. Default
+    /// no-op for backends that hold no config snapshot (e.g. `PatBackend`).
+    fn set_config(&self, _config: Config) {}
+
     fn status(&self) -> BackendStatus;
 
     fn stream_log(&self) -> BoxStream<'static, LogLine>;
@@ -430,7 +438,11 @@ pub type WireSink = Arc<dyn Fn(&str) + Send + Sync>;
 /// validated by `src/bin/native_cms_probe.rs` and the `winlink::*` tests.
 pub struct NativeBackend {
     backend_id: BackendInstanceId,
-    config: Config,
+    /// Live config, refreshable via [`WinlinkBackend::set_config`] (tuxlink-ka7 /
+    /// tuxlink-p5u). Behind a `RwLock` so a UI host/transport/packet-param change
+    /// reaches the connect + send paths without an app restart; reads clone through
+    /// [`Self::live_config`].
+    config: RwLock<Config>,
     mailbox: Arc<Mailbox>,
     log_tx: broadcast::Sender<LogLine>,
     status: Arc<RwLock<BackendStatus>>,
@@ -491,7 +503,7 @@ impl NativeBackend {
         let (log_tx, _rx) = broadcast::channel(256);
         Self {
             backend_id: BackendInstanceId::next(),
-            config,
+            config: RwLock::new(config),
             mailbox: Arc::new(Mailbox::new(mailbox_root)),
             log_tx,
             status: Arc::new(RwLock::new(BackendStatus::Disconnected)),
@@ -516,6 +528,17 @@ impl NativeBackend {
     pub fn with_wire_log(mut self, wire: WireSink) -> Self {
         self.wire = wire;
         self
+    }
+
+    /// Clone the live config (tuxlink-ka7 / tuxlink-p5u). The connect + send paths
+    /// read through here so a [`WinlinkBackend::set_config`] refresh applies on the
+    /// next operation without an app restart. Recovers a poisoned lock's inner value
+    /// rather than panicking — a poisoned config lock must not brick every connect.
+    fn live_config(&self) -> Config {
+        self.config
+            .read()
+            .map(|c| c.clone())
+            .unwrap_or_else(|poisoned| poisoned.into_inner().clone())
     }
 
     fn set_status(&self, status: BackendStatus) {
@@ -548,10 +571,9 @@ impl WinlinkBackend for NativeBackend {
         msg: OutboundMessage,
     ) -> Result<Option<MessageId>, BackendError> {
         let callsign = self
-            .config
+            .live_config()
             .identity
             .callsign
-            .clone()
             .ok_or_else(|| BackendError::NotConfigured("identity.callsign".into()))?;
         // The trait carries an RFC 3339 date; fall back to now if unparseable.
         let unix_secs = parse_rfc3339_secs(&msg.date).unwrap_or_else(now_unix_secs);
@@ -592,7 +614,7 @@ impl WinlinkBackend for NativeBackend {
             handle: self.abort_handle.clone(),
         };
 
-        let config = self.config.clone();
+        let config = self.live_config();
         let mailbox = self.mailbox.clone();
 
         // Fresh abort epoch: clear any stale flag/handle from a prior connect so
@@ -636,7 +658,7 @@ impl WinlinkBackend for NativeBackend {
                     // tuxlink-3o0: the peer is the host actually dialed (the
                     // operator's configured host, or the TUXLINK_CMS_HOST override)
                     // — no longer a hardcoded const.
-                    peer: resolve_cms_host(&self.config),
+                    peer: resolve_cms_host(&self.live_config()),
                     since_iso: now_iso8601_utc(),
                 });
                 Ok(Session {
@@ -677,6 +699,18 @@ impl WinlinkBackend for NativeBackend {
         }
         self.set_status(BackendStatus::Disconnected);
         Ok(())
+    }
+
+    /// Refresh the live config the connect + send paths read (tuxlink-ka7 /
+    /// tuxlink-p5u). Called by the config-writing UI commands after they persist, so
+    /// the next connect honors a host/transport/packet-param change restart-free.
+    /// Recovers a poisoned lock rather than panicking — a failed write must not wedge
+    /// the backend.
+    fn set_config(&self, config: Config) {
+        match self.config.write() {
+            Ok(mut slot) => *slot = config,
+            Err(poisoned) => *poisoned.into_inner() = config,
+        }
     }
 
     fn status(&self) -> BackendStatus {
@@ -728,17 +762,16 @@ impl NativeBackend {
         }
 
         let base = self
-            .config
+            .live_config()
             .identity
             .callsign
-            .clone()
             .ok_or_else(|| BackendError::NotConfigured("identity.callsign".into()))?;
         // Decide the armed-state status before `role` is moved into resolve
         // (tuxlink-orj): Listen → Listening (armed), DialTo → Connecting (dial).
         let initial_status = initial_packet_status(&role, ssid);
         let resolved = resolve_packet_endpoint(&base, ssid, role)?;
 
-        let config = self.config.clone();
+        let config = self.live_config();
         let mailbox = self.mailbox.clone();
         let progress = self.progress.clone();
         let abort_handle = self.abort_handle.clone();
@@ -2462,6 +2495,48 @@ mod native_read_state_tests {
         assert!(
             matches!(err, BackendError::TransportFailed { .. }),
             "expected TransportFailed, got {err:?}"
+        );
+    }
+
+    // tuxlink-ka7 / tuxlink-p5u: a config change via `set_config` must reach the
+    // LIVE backend so the NEXT connect honors it WITHOUT an app restart. Regression
+    // guard for the "selector host/transport (and packet params) only apply after
+    // restart" bug — the backend cached `config` at construction and the connect
+    // path read that stale snapshot. Proven via the shared callsign gate (BOTH
+    // native_connect and packet_connect_inner reject a missing callsign FIRST):
+    // start with NO callsign, refresh to one WITH a callsign, then connect — a
+    // stale snapshot fails NotConfigured(callsign); a live snapshot gets PAST that
+    // gate and fails at link-open (TransportFailed). No RF, no real CMS (RADIO-1):
+    // a closed loopback port refuses the connect fast.
+    #[tokio::test]
+    async fn set_config_refreshes_the_live_config_used_by_connect() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        drop(listener); // nothing listening → connection refused
+
+        // Construct with NO callsign (the stale snapshot the bug would freeze in).
+        let backend = NativeBackend::new(offline_config(), tempdir().unwrap().path());
+        // Operator picks a callsign in the UI → config_set_* persists + refreshes.
+        backend.set_config(config_with_call("N7CPZ"));
+
+        let err = backend
+            .connect(TransportConfig::Packet {
+                link: KissLinkConfig::Tcp { host: addr.ip().to_string(), port: addr.port() },
+                ssid: 7,
+                role: PacketRole::DialTo { call: "W7AUX".into(), path: vec![] },
+            })
+            .await
+            .unwrap_err();
+
+        assert!(
+            !matches!(&err, BackendError::NotConfigured(field) if field.contains("callsign")),
+            "connect must read the LIVE config (callsign set via set_config), not the \
+             construction-time snapshot; got {err:?}"
+        );
+        assert!(
+            matches!(err, BackendError::TransportFailed { .. }),
+            "with a live callsign, connect should reach link-open and fail \
+             TransportFailed; got {err:?}"
         );
     }
 
