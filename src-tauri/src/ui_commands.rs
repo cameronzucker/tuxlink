@@ -1034,6 +1034,10 @@ pub struct PacketConfigDto {
     pub tcp_port: Option<u16>,
     pub serial_device: Option<String>,
     pub serial_baud: Option<u32>,
+    /// Radio MAC for `linkKind: "Bluetooth"` (tuxlink-nx2 RFCOMM-socket transport).
+    /// `#[serde(default)]` so a payload from an older frontend (no `btMac`) still loads.
+    #[serde(default)]
+    pub bt_mac: Option<String>,
     pub txdelay: u8,
     pub persistence: u8,
     pub slot_time: u8,
@@ -1046,14 +1050,17 @@ pub struct PacketConfigDto {
 impl From<&config::PacketConfig> for PacketConfigDto {
     fn from(p: &config::PacketConfig) -> Self {
         use crate::winlink::ax25::KissLinkConfig;
-        let (link_kind, tcp_host, tcp_port, serial_device, serial_baud) = match &p.link {
+        let (link_kind, tcp_host, tcp_port, serial_device, serial_baud, bt_mac) = match &p.link {
             Some(KissLinkConfig::Tcp { host, port }) => {
-                (Some("Tcp".into()), Some(host.clone()), Some(*port), None, None)
+                (Some("Tcp".into()), Some(host.clone()), Some(*port), None, None, None)
             }
             Some(KissLinkConfig::Serial { device, baud }) => {
-                (Some("Serial".into()), None, None, Some(device.clone()), Some(*baud))
+                (Some("Serial".into()), None, None, Some(device.clone()), Some(*baud), None)
             }
-            None => (None, None, None, None, None),
+            Some(KissLinkConfig::Bluetooth { mac }) => {
+                (Some("Bluetooth".into()), None, None, None, None, Some(mac.clone()))
+            }
+            None => (None, None, None, None, None, None),
         };
         PacketConfigDto {
             ssid: p.ssid,
@@ -1063,6 +1070,7 @@ impl From<&config::PacketConfig> for PacketConfigDto {
             tcp_port,
             serial_device,
             serial_baud,
+            bt_mac,
             txdelay: p.params.txdelay,
             persistence: p.params.persistence,
             slot_time: p.params.slot_time,
@@ -1094,6 +1102,11 @@ impl PacketConfigDto {
                 })?,
                 baud: self.serial_baud.ok_or_else(|| UiError::Internal {
                     detail: "Serial link needs serial_baud".into(),
+                })?,
+            }),
+            Some("Bluetooth") => Some(KissLinkConfig::Bluetooth {
+                mac: self.bt_mac.ok_or_else(|| UiError::Internal {
+                    detail: "Bluetooth link needs bt_mac".into(),
                 })?,
             }),
             None => None,
