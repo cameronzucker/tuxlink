@@ -79,6 +79,16 @@ impl Read for AbortableByteLink {
 
 impl Write for AbortableByteLink {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        // tuxlink-2y4 RADIO-1: gate every transmit on the abort flag, mirroring read().
+        // connect()'s push_kiss_params + each SABM go through here; a Cancel set before
+        // the write means the radio is NEVER keyed. The 2026-05-22 incident keyed for
+        // ~110 s because only read() checked the flag — write() forwarded unconditionally.
+        if self.abort.load(Ordering::SeqCst) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::ConnectionAborted,
+                "packet transmit aborted",
+            ));
+        }
         self.inner.write(buf)
     }
     fn flush(&mut self) -> std::io::Result<()> {
@@ -175,6 +185,45 @@ mod link_serial_tests {
         assert!(
             matches!(err.kind(), std::io::ErrorKind::NotFound | std::io::ErrorKind::Other),
             "expected a clean open error, got {err:?}"
+        );
+    }
+
+    // tuxlink-2y4 RADIO-1: a set abort flag must make write() return ConnectionAborted
+    // WITHOUT forwarding to the inner link — so connect()'s SABM + push_kiss_params
+    // never key the radio after Cancel. read() already gated; write() did NOT — the
+    // runaway-keying hole (the 2026-05-22 ~110 s incident). No hardware, no RF.
+    #[test]
+    fn abortable_link_write_refuses_to_key_after_abort() {
+        use std::sync::Mutex;
+        struct Recording(Arc<Mutex<Vec<u8>>>);
+        impl Read for Recording {
+            fn read(&mut self, _b: &mut [u8]) -> std::io::Result<usize> {
+                Ok(0)
+            }
+        }
+        impl Write for Recording {
+            fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(b);
+                Ok(b.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        let written = Arc::new(Mutex::new(Vec::new()));
+        let mut link = AbortableByteLink {
+            inner: Box::new(Recording(written.clone())),
+            abort: Arc::new(AtomicBool::new(true)), // already cancelled
+        };
+        // Both write() and write_all() (what send_frame/push_kiss_params use) must fail.
+        assert_eq!(
+            link.write(b"SABM").unwrap_err().kind(),
+            std::io::ErrorKind::ConnectionAborted
+        );
+        assert!(link.write_all(b"params").is_err());
+        assert!(
+            written.lock().unwrap().is_empty(),
+            "no bytes may reach the radio after abort"
         );
     }
 }

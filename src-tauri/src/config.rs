@@ -162,25 +162,12 @@ impl Default for Ax25ParamsConfig {
     }
 }
 
-/// Minimum runtime T1 retransmit timer, in milliseconds (tuxlink-uhc).
-///
-/// The AX.25 connect (SABM→UA) and steady-state I-frame retransmit both wait one
-/// T1 before resending. A real RF connect round-trip to a gateway — TXDELAY, the
-/// over-the-air SABM, gateway turnaround, and the over-the-air reply — is several
-/// seconds (on-air to W7MOT-6 the DM landed ~7 s after the connect). A T1 shorter
-/// than that re-keys the radio with a second SABM before the first can be answered:
-/// the "rapid re-key" the operator observed, and a likely cause of the duplicate
-/// connect the gateway refused. So `into_params` floors the runtime T1 here.
-///
-/// Flooring is zero-downside: T1 only bounds *retransmit-on-silence*; a successful
-/// connect or exchange returns the instant the reply arrives, regardless of T1. A
-/// configured value at or above this floor is honored verbatim — this only raises a
-/// stored value that is too short for RF.
-pub const MIN_RF_T1_MS: u64 = 10_000;
-
 impl Ax25ParamsConfig {
-    /// Convert to P2's runtime `Ax25Params` type. The T1 timer is floored to
-    /// [`MIN_RF_T1_MS`] so a too-short persisted value cannot make connect re-key.
+    /// Convert to P2's runtime `Ax25Params` type. T1 is honored verbatim — tuxlink-2y4
+    /// REVERTED the uhc RF floor (`MIN_RF_T1_MS`): it tripled worst-case airtime
+    /// (3 s → 10 s per retransmit) and was the wrong lever. Runaway connect airtime is
+    /// now bounded by the connect cap (`Ax25Params::connect_timeout` + a ≤2-SABM key
+    /// limit in `datalink::connect`), not by inflating the retransmit timer.
     pub fn into_params(self) -> crate::winlink::ax25::Ax25Params {
         crate::winlink::ax25::Ax25Params {
             txdelay: self.txdelay,
@@ -188,8 +175,11 @@ impl Ax25ParamsConfig {
             slot_time: self.slot_time,
             paclen: self.paclen as usize,
             maxframe: self.maxframe,
-            t1: std::time::Duration::from_millis(self.t1_ms.max(MIN_RF_T1_MS)),
+            t1: std::time::Duration::from_millis(self.t1_ms),
             n2_retries: self.n2_retries,
+            // connect_timeout (the RADIO-1 airtime ceiling) is a fixed safety default,
+            // not yet operator-tunable from the persisted [packet] section.
+            ..Default::default()
         }
     }
 }
@@ -726,35 +716,43 @@ mod tests {
         );
     }
 
-    // --- tuxlink-uhc: AX.25 connect TX timing ---------------------------------
-    // On-air (UV-Pro → W7MOT-6) the connect re-keyed the radio 2–3 times in fast
-    // succession before the gateway could answer: with T1 = 3 s the SABM retransmit
-    // loop fired again at ~3 s and ~6 s while the gateway's reply (DM) didn't land
-    // until ~7 s. A real RF connect round-trip is far longer than 3 s, so the
-    // runtime T1 must be floored to an RF-realistic minimum at the config→runtime
-    // boundary. The configured value is still honored whenever it is above the floor.
+    // --- tuxlink-2y4: AX.25 connect T1 is honored verbatim (uhc floor reverted) ---
+    // The uhc RF floor (MIN_RF_T1_MS = 10 s) tripled worst-case airtime and was the
+    // wrong lever for the runaway-keying incident; 2y4 reverted it. Runaway airtime is
+    // bounded by datalink::connect's ≤2-SABM key limit + connect_timeout cap, NOT by
+    // inflating the retransmit timer. into_params now passes T1 through unchanged.
 
     #[test]
-    fn into_params_floors_a_too_short_t1_to_the_rf_minimum() {
-        // A persisted 3 s T1 (the historical auto-default) is shorter than a real RF
-        // connect round-trip; into_params must raise it so connect sends ONE SABM and
-        // waits a full round-trip before any retransmit (no rapid re-key).
+    fn into_params_honors_a_short_t1_verbatim_no_floor() {
+        // The historical 3 s auto-default is passed through as-is — NOT floored to 10 s
+        // (tuxlink-2y4 reverted the uhc floor).
         let cfg = Ax25ParamsConfig { t1_ms: 3000, ..Ax25ParamsConfig::default() };
-        assert!(
-            cfg.into_params().t1 >= std::time::Duration::from_secs(10),
-            "a 3 s T1 must be floored to the RF-realistic connect minimum"
+        assert_eq!(
+            cfg.into_params().t1,
+            std::time::Duration::from_millis(3000),
+            "T1 must be honored verbatim — the uhc RF floor was reverted (2y4)"
         );
     }
 
     #[test]
-    fn into_params_honors_a_configured_t1_above_the_rf_minimum() {
-        // A configured T1 longer than the floor is the operator's choice — passed
-        // through verbatim, never clamped down.
+    fn into_params_honors_a_long_configured_t1_verbatim() {
+        // A longer configured T1 is the operator's choice — passed through verbatim.
         let cfg = Ax25ParamsConfig { t1_ms: 15_000, ..Ax25ParamsConfig::default() };
         assert_eq!(
             cfg.into_params().t1,
             std::time::Duration::from_millis(15_000),
-            "a configured T1 above the floor must be honored verbatim"
+            "a configured T1 must be honored verbatim"
+        );
+    }
+
+    #[test]
+    fn into_params_sets_the_radio1_connect_timeout_ceiling() {
+        // tuxlink-2y4: every runtime params carries the RADIO-1 connect airtime ceiling.
+        let cfg = Ax25ParamsConfig::default();
+        assert_eq!(
+            cfg.into_params().connect_timeout,
+            std::time::Duration::from_secs(25),
+            "into_params must carry the connect_timeout safety ceiling"
         );
     }
 }
