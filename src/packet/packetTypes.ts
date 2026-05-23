@@ -14,10 +14,13 @@
 //   packet_connect(call: string, path: string[]) → void
 //   packet_set_listen(enabled: boolean) → void
 
-/** KISS link kind. "Tcp" | "Serial" | null (no link configured).
- *  USB serial AND Bluetooth-RFCOMM both use "Serial" — the UI 3-segment
- *  (TCP/USB/BT) is a UI affordance; only two wire kinds exist. */
-export type PacketLinkKind = 'Tcp' | 'Serial';
+/** KISS link kind. "Tcp" | "Serial" | "Bluetooth" | null (no link configured).
+ *  - "Serial": USB COM device (/dev/ttyUSB0).
+ *  - "Bluetooth": in-app RFCOMM socket to a radio MAC (tuxlink-nx2) — no
+ *    rfcomm bind / no /dev/rfcommN. The SPP channel is resolved from SDP at
+ *    connect time. (Replaces the old "BT = Serial + /dev/rfcomm0" affordance,
+ *    whose serialport TTY open the radio tore down → "Broken pipe".) */
+export type PacketLinkKind = 'Tcp' | 'Serial' | 'Bluetooth';
 
 /** Flat, camelCase-on-wire P3 PacketConfigDto.
  *  Matches Rust #[serde(rename_all = "camelCase")] PacketConfigDto. */
@@ -37,6 +40,11 @@ export interface PacketConfigDto {
   /** Serial host-link baud rate (non-null when linkKind === "Serial";
    *  distinct from over-air 1200 baud). */
   serialBaud: number | null;
+  /** Radio Bluetooth MAC, e.g. "38:D2:00:01:55:5C" (non-null when
+   *  linkKind === "Bluetooth"). The RFCOMM socket connects directly to this.
+   *  Optional on the wire: an older payload without `btMac` still parses
+   *  (backend uses `#[serde(default)]`); the panel selector is a follow-up. */
+  btMac?: string | null;
   /** AX.25 TXDELAY (units: 10 ms). */
   txdelay: number;
   /** AX.25 persistence parameter. */
