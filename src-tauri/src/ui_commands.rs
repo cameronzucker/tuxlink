@@ -1148,12 +1148,21 @@ pub async fn packet_config_get() -> Result<PacketConfigDto, UiError> {
 /// Apply the `[packet]` section from a DTO: read the current config, swap in
 /// the new packet section, validate (SSID range), and write atomically.
 #[tauri::command]
-pub async fn packet_config_set(dto: PacketConfigDto) -> Result<(), UiError> {
+pub async fn packet_config_set(
+    state: State<'_, BackendState>,
+    dto: PacketConfigDto,
+) -> Result<(), UiError> {
     let mut cfg =
         config::read_config().map_err(|e| UiError::Internal { detail: e.to_string() })?;
     cfg.packet = dto.into_packet_config()?;
     cfg.validate().map_err(|e| UiError::Internal { detail: e.to_string() })?;
     config::write_config_atomic(&cfg).map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    // tuxlink-p5u: refresh the LIVE backend so a packet link/SSID/timing change
+    // applies on the NEXT connect without an app restart (the packet connect path
+    // reads the backend's live config for the callsign + Ax25 params).
+    if let Some(backend) = state.current() {
+        backend.set_config(cfg);
+    }
     Ok(())
 }
 
@@ -1455,6 +1464,7 @@ pub(crate) fn validate_grid_input(s: &str) -> Option<&'static str> {
 pub async fn config_set_grid(
     grid: String,
     arbiter: tauri::State<'_, std::sync::Arc<crate::position::PositionArbiter>>,
+    state: State<'_, BackendState>,
 ) -> Result<(), UiError> {
     let g = grid.trim().to_string();
     if let Some(msg) = validate_grid_input(&g) {
@@ -1469,6 +1479,12 @@ pub async fn config_set_grid(
         detail: e.to_string(),
     })?;
     arbiter.set_manual(&g);
+    // tuxlink-ka7/p5u: refresh the live backend (config_set_* wildcard). The grid
+    // feeds effective_broadcast_locator's config fallback, so a stale snapshot would
+    // broadcast the old grid until restart.
+    if let Some(backend) = state.current() {
+        backend.set_config(cfg);
+    }
     Ok(())
 }
 
@@ -1488,6 +1504,7 @@ pub async fn config_set_grid(
 pub async fn position_set_source(
     source: String,
     arbiter: tauri::State<'_, std::sync::Arc<crate::position::PositionArbiter>>,
+    state: State<'_, BackendState>,
 ) -> Result<(), UiError> {
     match source.as_str() {
         "Gps" => {
@@ -1507,6 +1524,10 @@ pub async fn position_set_source(
             // atomically; the pre-check→use_gps window is sub-millisecond vs a 30s staleness,
             // so a fix expiring in between is not a real-world concern.
             arbiter.use_gps().map_err(|e| UiError::Unavailable { reason: format!("Cannot switch to GPS: {e}") })?;
+            // tuxlink-ka7/p5u: refresh the live backend (config_set_* wildcard).
+            if let Some(backend) = state.current() {
+                backend.set_config(cfg);
+            }
             Ok(())
         }
         other => Err(UiError::Rejected(format!("unsupported position source: {other}"))),
@@ -1574,12 +1595,20 @@ pub async fn config_set_privacy(
     gps_state: GpsState,
     position_precision: PositionPrecision,
     arbiter: tauri::State<'_, std::sync::Arc<crate::position::PositionArbiter>>,
+    state: State<'_, BackendState>,
 ) -> Result<(), UiError> {
     let mut cfg = config::read_config().map_err(|e| UiError::Internal { detail: e.to_string() })?;
     cfg.privacy.gps_state = gps_state;
     cfg.privacy.position_precision = position_precision;
     config::write_config_atomic(&cfg).map_err(|e| UiError::Internal { detail: e.to_string() })?;
     arbiter.set_precision(position_precision);
+    // tuxlink-ka7/p5u: refresh the live backend (config_set_* wildcard). gps_state
+    // is read directly from config by effective_broadcast_locator's on-air gate, so
+    // a stale snapshot would keep broadcasting (or suppressing) per the OLD privacy
+    // setting until an app restart.
+    if let Some(backend) = state.current() {
+        backend.set_config(cfg);
+    }
     Ok(())
 }
 
@@ -1607,6 +1636,7 @@ pub async fn config_set_privacy(
 /// `winlink_backend::tests::config_host_and_transport_dial_a_real_local_socket`.
 #[tauri::command]
 pub async fn config_set_connect(
+    state: State<'_, BackendState>,
     host: String,
     transport: CmsTransport,
 ) -> Result<(), UiError> {
@@ -1617,6 +1647,14 @@ pub async fn config_set_connect(
     cfg.connect.host = host;
     cfg.connect.transport = transport;
     config::write_config_atomic(&cfg).map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    // tuxlink-ka7: refresh the LIVE backend so this host/transport selection applies
+    // on the NEXT connect without an app restart. The connect path reads the
+    // backend's live config (not the disk), so persisting alone is not enough — the
+    // split-brain that hit production (fresh transport mode + stale cached host) was
+    // exactly this gap.
+    if let Some(backend) = state.current() {
+        backend.set_config(cfg);
+    }
     Ok(())
 }
 
