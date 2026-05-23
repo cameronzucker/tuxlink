@@ -46,6 +46,7 @@ fn minimal_cms_config() -> Config {
         connect: ConnectConfig {
             connect_to_cms: true,
             transport: CmsTransport::CmsSsl,
+            host: tuxlink_lib::config::default_cms_host(),
         },
         identity: IdentityConfig {
             callsign: Some("TEST1".to_string()),

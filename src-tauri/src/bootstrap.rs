@@ -582,6 +582,7 @@ mod tests {
             connect: ConnectConfig {
                 connect_to_cms: true,
                 transport: CmsTransport::CmsSsl,
+                host: crate::config::default_cms_host(),
             },
             identity: IdentityConfig {
                 callsign: Some("W4PHS".into()),

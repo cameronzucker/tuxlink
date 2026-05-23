@@ -213,6 +213,7 @@ fn native_test_config() -> tuxlink_lib::config::Config {
         connect: ConnectConfig {
             connect_to_cms: true,
             transport: CmsTransport::CmsSsl,
+            host: tuxlink_lib::config::default_cms_host(),
         },
         identity: IdentityConfig {
             callsign: Some("N7CPZ".to_string()),
@@ -420,6 +421,7 @@ fn spawn_failure_drains_pat_stderr_into_durable_buffer() {
         connect: ConnectConfig {
             connect_to_cms: true,
             transport: CmsTransport::CmsSsl,
+            host: tuxlink_lib::config::default_cms_host(),
         },
         identity: IdentityConfig {
             callsign: Some("TEST1".into()),
@@ -534,6 +536,7 @@ async fn spawn_against_real_pat_http_mode() {
         connect: ConnectConfig {
             connect_to_cms: true,
             transport: CmsTransport::CmsSsl,
+            host: tuxlink_lib::config::default_cms_host(),
         },
         identity: IdentityConfig {
             callsign: Some("TUXTEST1".into()),

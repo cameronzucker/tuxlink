@@ -724,6 +724,9 @@ fn emit_session_line(
 pub struct ConfigViewDto {
     pub connect_to_cms: bool,
     pub transport: CmsTransport,
+    /// CMS server host the operator dials (tuxlink-3o0). Surfaced so the inline
+    /// SettingsPanel can load the current host into its text input on open.
+    pub host: String,
     pub callsign: Option<String>,
     pub identifier: Option<String>,
     pub grid: Option<String>,
@@ -742,6 +745,7 @@ impl From<&config::Config> for ConfigViewDto {
         ConfigViewDto {
             connect_to_cms: c.connect.connect_to_cms,
             transport: c.connect.transport,
+            host: c.connect.host.clone(),
             callsign: c.identity.callsign.clone(),
             identifier: c.identity.identifier.clone(),
             grid: c.identity.grid.clone(),
@@ -1566,6 +1570,59 @@ pub async fn config_set_privacy(
     Ok(())
 }
 
+// ============================================================================
+// tuxlink-3o0 — config_set_connect (user-switchable CMS server endpoint)
+// ============================================================================
+// Replaces the former hardcoded `winlink_backend::CMS_HOST` const + hidden
+// `TUXLINK_CMS_HOST` env var with an inline-SettingsPanel control. The env var
+// stays a dev override on top of the persisted host (see
+// `winlink_backend::resolve_cms_host`).
+
+/// Persist the CMS server endpoint (host + transport) the operator dials.
+/// Mirrors `config_set_privacy`'s read → mutate → persist ordering and its
+/// `UiError` handling exactly. Validates `host` (nonempty + no whitespace —
+/// the same shape `validate_identity` enforces for callsigns; the CMS DNS layer
+/// is authoritative for actual reachability). `transport` is a typed enum, so any
+/// deserializable value is valid by construction (no string validation needed).
+///
+/// NOTE (test coverage): like `config_set_privacy` / `config_set_grid`, the full
+/// read→write round-trip is NOT unit-tested here — `config::config_path()`
+/// resolves via the process-global `XDG_CONFIG_HOME`, so an isolated round-trip
+/// races under parallel `cargo test`. The validation logic IS unit-tested
+/// (`validate_cms_host`); the persist path is identical to `config_set_privacy`'s
+/// and is operator-smoke-covered. The host→socket flow is proved by
+/// `winlink_backend::tests::config_host_and_transport_dial_a_real_local_socket`.
+#[tauri::command]
+pub async fn config_set_connect(
+    host: String,
+    transport: CmsTransport,
+) -> Result<(), UiError> {
+    if let Some(msg) = validate_cms_host(&host) {
+        return Err(UiError::Rejected(msg.to_string()));
+    }
+    let mut cfg = config::read_config().map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    cfg.connect.host = host;
+    cfg.connect.transport = transport;
+    config::write_config_atomic(&cfg).map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    Ok(())
+}
+
+/// Validate a user-supplied CMS host. Returns `Some(message)` for the FIRST rule
+/// violated, `None` when valid. Rules (most-actionable first, mirroring
+/// `config::validate_identity_describe`): nonempty → no whitespace. A hostname's
+/// finer syntax (labels, TLD) is left to the DNS resolver — `connect_stream`'s
+/// `resolve_with_timeout` surfaces an unresolvable host as a connect error.
+pub(crate) fn validate_cms_host(host: &str) -> Option<&'static str> {
+    let h = host.trim();
+    if h.is_empty() {
+        return Some("CMS host must not be empty");
+    }
+    if host.chars().any(char::is_whitespace) {
+        return Some("CMS host must not contain whitespace");
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1734,6 +1791,7 @@ mod tests {
             connect: ConnectConfig {
                 connect_to_cms: true,
                 transport: CmsTransport::CmsSsl,
+                host: config::default_cms_host(),
             },
             identity: IdentityConfig {
                 callsign: Some("W4PHS".into()),
@@ -1758,6 +1816,8 @@ mod tests {
         let dto = ConfigViewDto::from(&cfg);
         assert!(dto.connect_to_cms);
         assert_eq!(dto.transport, CmsTransport::CmsSsl);
+        // tuxlink-3o0: host is surfaced in the DTO (sourced from connect.host).
+        assert_eq!(dto.host, "cms-z.winlink.org");
         assert_eq!(dto.callsign.as_deref(), Some("W4PHS"));
         assert_eq!(dto.identifier, None);
         assert_eq!(dto.grid.as_deref(), Some("EM10ab"));
@@ -1774,6 +1834,7 @@ mod tests {
         let mut cfg = cms_config_fixture();
         cfg.connect.connect_to_cms = false;
         cfg.connect.transport = CmsTransport::Telnet;
+        cfg.connect.host = "server.winlink.org".into();
         cfg.identity.callsign = None;
         cfg.identity.identifier = Some("OFFLINE-STATION".into());
         cfg.privacy.gps_state = GpsState::Off;
@@ -1782,6 +1843,8 @@ mod tests {
         let dto = ConfigViewDto::from(&cfg);
         assert!(!dto.connect_to_cms);
         assert_eq!(dto.transport, CmsTransport::Telnet);
+        // tuxlink-3o0: a non-default host maps through verbatim.
+        assert_eq!(dto.host, "server.winlink.org");
         assert_eq!(dto.callsign, None);
         assert_eq!(dto.identifier.as_deref(), Some("OFFLINE-STATION"));
         assert_eq!(dto.gps_state, GpsState::Off);
@@ -1796,6 +1859,8 @@ mod tests {
         let v = serde_json::to_value(&dto).unwrap();
         assert_eq!(v["connect_to_cms"], true);
         assert_eq!(v["transport"], "CmsSsl");
+        // tuxlink-3o0: host serializes as a snake_case string key.
+        assert_eq!(v["host"], "cms-z.winlink.org");
         assert_eq!(v["callsign"], "W4PHS");
         assert_eq!(v["identifier"], serde_json::Value::Null);
         assert_eq!(v["grid"], "EM10ab");
@@ -2070,6 +2135,33 @@ mod tests {
     }
 
     // ========================================================================
+    // tuxlink-3o0 — config_set_connect host validator
+    // ========================================================================
+
+    // The host validator mirrors validate_identity's nonempty + no-whitespace
+    // shape: a typical hostname passes; empty and whitespace-bearing inputs are
+    // rejected with the most-actionable message first (empty before whitespace).
+    #[test]
+    fn validate_cms_host_accepts_typical_hosts_and_rejects_empty_or_whitespace() {
+        assert!(validate_cms_host("cms-z.winlink.org").is_none(), "dev host should be valid");
+        assert!(validate_cms_host("server.winlink.org").is_none(), "production host should be valid");
+        assert!(validate_cms_host("127.0.0.1").is_none(), "an IP literal should be valid");
+        // Rejection paths.
+        assert_eq!(validate_cms_host(""), Some("CMS host must not be empty"));
+        assert_eq!(validate_cms_host("   "), Some("CMS host must not be empty"),
+            "whitespace-only trims to empty → empty message (most actionable first)");
+        assert_eq!(
+            validate_cms_host("cms z.winlink.org"),
+            Some("CMS host must not contain whitespace"),
+            "an internal space is rejected"
+        );
+        assert_eq!(
+            validate_cms_host("host\twith\ttabs"),
+            Some("CMS host must not contain whitespace")
+        );
+    }
+
+    // ========================================================================
     // Task A (tuxlink-22l) — session_log_snapshot projection via SessionLogState
     // ========================================================================
     use crate::session_log::SessionLogState;
@@ -2311,7 +2403,7 @@ mod tests {
         config::Config {
             schema_version: CONFIG_SCHEMA_VERSION,
             wizard_completed: true,
-            connect: ConnectConfig { connect_to_cms: false, transport: CmsTransport::Telnet },
+            connect: ConnectConfig { connect_to_cms: false, transport: CmsTransport::Telnet, host: config::default_cms_host() },
             identity: IdentityConfig {
                 callsign: None,
                 identifier: None,
