@@ -54,13 +54,19 @@ export interface PacketConnectionPanelProps {
   onSsidPersist?: (ssid: number) => void;
   /** Persist the modem link fields (container wires this to packet_config_set). */
   onLinkPersist?: (fields: ModemLinkFields) => void;
+  /**
+   * Session intent — governs which controls render.
+   * - `'cms-gateway'`: outbound-only (CMS over packet); Listen block is hidden.
+   * - `'p2p'` (default): peer-to-peer; Listen block is shown.
+   */
+  intent?: 'cms-gateway' | 'p2p';
 }
 
 // ---------------------------------------------------------------------------
 // Main component
 // ---------------------------------------------------------------------------
 
-export function PacketConnectionPanel({ config, baseCall, onSsidPersist, onLinkPersist }: PacketConnectionPanelProps) {
+export function PacketConnectionPanel({ config, baseCall, onSsidPersist, onLinkPersist, intent = 'p2p' }: PacketConnectionPanelProps) {
   // SSID state — seeded from config, re-synced when config loads from null
   const [ssid, setSsid] = useState<number>(config?.ssid ?? 0);
   useEffect(() => {
@@ -181,8 +187,8 @@ export function PacketConnectionPanel({ config, baseCall, onSsidPersist, onLinkP
         </p>
       </div>
 
-      {/* Status / real Listen action */}
-      <div className="packet-blk" data-testid="status-block">
+      {/* Status / real Listen action — hidden for cms-gateway (connect-only; no inbound calls) */}
+      {intent !== 'cms-gateway' && <div className="packet-blk" data-testid="status-block">
         <div className="packet-blk-h"><span>Status</span></div>
         {/* The real Listen control: idle = "not listening"; armed = "waiting for
             a call". The label NEVER claims "Listening" until packet_listen has
@@ -219,7 +225,7 @@ export function PacketConnectionPanel({ config, baseCall, onSsidPersist, onLinkP
           />
           <span>Auto-arm Listen on startup (preference, not a live state)</span>
         </label>
-      </div>
+      </div>}
 
       {/* Connect block */}
       <div className="packet-blk" data-testid="connect-block">
@@ -517,7 +523,13 @@ function PacketModemBlock({
 // ---------------------------------------------------------------------------
 
 /** Container: loads packet config on mount, persists SSID changes (global sticky). */
-export function PacketConnectionPanelContainer({ baseCall }: { baseCall: string }) {
+export function PacketConnectionPanelContainer({
+  baseCall,
+  intent = 'p2p',
+}: {
+  baseCall: string;
+  intent?: 'cms-gateway' | 'p2p';
+}) {
   const [config, setConfig] = useState<PacketConfigDto | null>(null);
 
   useEffect(() => {
@@ -552,6 +564,7 @@ export function PacketConnectionPanelContainer({ baseCall }: { baseCall: string 
       baseCall={baseCall}
       onSsidPersist={onSsidPersist}
       onLinkPersist={onLinkPersist}
+      intent={intent}
     />
   );
 }
