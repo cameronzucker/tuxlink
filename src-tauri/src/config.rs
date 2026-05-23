@@ -202,12 +202,29 @@ pub struct PacketConfig {
     /// Global, sticky station SSID (0–15). Operate as `<callsign>-<ssid>`.
     pub ssid: u8,
     /// The last KISS link the operator used (TCP host:port or serial device+baud).
-    /// `None` until the operator configures one.
+    /// `None` until the operator configures one. Deserialized leniently (tuxlink-efo):
+    /// an unrecognized variant degrades to `None` instead of bricking the whole read.
+    #[serde(default, deserialize_with = "deserialize_lenient_link")]
     pub link: Option<KissLinkConfig>,
     /// AX.25 timing/windowing knobs (1200-baud defaults).
     pub params: Ax25ParamsConfig,
     /// Idle-listening default-on (spec §4.5): arm `answer()` when not dialing.
     pub listen_default: bool,
+}
+
+/// Deserialize `packet.link` leniently (tuxlink-efo): an unrecognized variant
+/// (forward/sideways schema skew across concurrent dev builds — the original symptom
+/// was a Bluetooth-aware build's config bricking a non-Bluetooth build) degrades to
+/// `None` rather than erroring the whole config read. Reads the value as a generic
+/// JSON value first (always succeeds for valid JSON), then tries to convert it to a
+/// `KissLinkConfig`; any failure (unknown variant, missing/extra fields) yields
+/// `None` so the rest of the config still loads.
+fn deserialize_lenient_link<'de, D>(de: D) -> Result<Option<KissLinkConfig>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = Option::<serde_json::Value>::deserialize(de)?;
+    Ok(value.and_then(|v| serde_json::from_value::<KissLinkConfig>(v).ok()))
 }
 
 impl Default for PacketConfig {
@@ -280,13 +297,35 @@ pub fn validate_identity_describe(s: &str) -> Option<&'static str> {
     None
 }
 
-/// Resolve the config file path. Honors XDG_CONFIG_HOME, falls back to
-/// ~/.config/tuxlink/config.json.
+/// Resolve the config file path. Precedence: `TUXLINK_CONFIG_DIR` (tuxlink-efo dev
+/// override) > `XDG_CONFIG_HOME` > `~/.config`, ending in `.../tuxlink/config.json`
+/// (or `<TUXLINK_CONFIG_DIR>/config.json`).
 pub fn config_path() -> std::path::PathBuf {
-    let base = std::env::var_os("XDG_CONFIG_HOME")
+    resolve_config_path(
+        std::env::var_os("TUXLINK_CONFIG_DIR"),
+        std::env::var_os("XDG_CONFIG_HOME"),
+        std::env::var_os("HOME"),
+    )
+}
+
+/// Pure resolver behind [`config_path`] (testable without process-global env).
+/// `TUXLINK_CONFIG_DIR` (tuxlink-efo) is a tuxlink-specific override so a per-worktree
+/// dev build points at its OWN config dir — concurrent builds then stop contaminating
+/// one shared `~/.config/tuxlink/config.json` (the dev cousin of the Vite :1420
+/// collision). The dir holds `config.json` directly. Falls back to `XDG_CONFIG_HOME`,
+/// then `~/.config`.
+fn resolve_config_path(
+    tuxlink_config_dir: Option<std::ffi::OsString>,
+    xdg_config_home: Option<std::ffi::OsString>,
+    home: Option<std::ffi::OsString>,
+) -> std::path::PathBuf {
+    if let Some(dir) = tuxlink_config_dir {
+        return std::path::PathBuf::from(dir).join("config.json");
+    }
+    let base = xdg_config_home
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| {
-            let home = std::env::var_os("HOME").expect("HOME must be set");
+            let home = home.expect("HOME must be set");
             std::path::PathBuf::from(home).join(".config")
         });
     base.join("tuxlink").join("config.json")
@@ -524,6 +563,82 @@ mod tests {
         let reserialized = serde_json::to_string(&config).unwrap();
         let reloaded: Config = serde_json::from_str(&reserialized).unwrap();
         assert_eq!(reloaded.connect.host, "server.winlink.org");
+    }
+
+    // tuxlink-efo: a packet.link variant THIS build doesn't know (forward/sideways
+    // schema skew across concurrent dev builds — the original symptom was a
+    // Bluetooth-aware build's config bricking a non-Bluetooth build) must NOT brick
+    // app-open. read_config degrades the unparseable link to None; the rest of the
+    // config is preserved.
+    #[test]
+    fn unknown_packet_link_variant_degrades_to_none_not_brick() {
+        let json = format!(
+            r#"{{
+                "schema_version": {ver},
+                "wizard_completed": true,
+                "connect": {{ "connect_to_cms": false, "transport": "Telnet" }},
+                "identity": {{ "callsign": null, "identifier": "W1TEST", "grid": null }},
+                "privacy": {{ "gps_state": "BroadcastAtPrecision", "position_precision": "FourCharGrid" }},
+                "packet": {{ "ssid": 7, "link": {{ "Telepathy": {{ "mac": "00:11:22" }} }} }}
+            }}"#,
+            ver = CONFIG_SCHEMA_VERSION
+        );
+        let config: Config = serde_json::from_str(&json)
+            .expect("an unknown packet.link variant must degrade to None, not error the whole read");
+        assert_eq!(config.packet.link, None, "the unknown link variant degrades to None");
+        assert_eq!(config.packet.ssid, 7, "the rest of the packet section is preserved");
+        assert_eq!(
+            config.identity.identifier.as_deref(),
+            Some("W1TEST"),
+            "identity (and the rest of the config) is preserved through the degradation"
+        );
+    }
+
+    // tuxlink-efo regression guard: a KNOWN link variant still parses to Some — the
+    // lenient degradation must not swallow valid links.
+    #[test]
+    fn known_packet_link_variant_still_parses_to_some() {
+        let json = format!(
+            r#"{{
+                "schema_version": {ver},
+                "wizard_completed": true,
+                "connect": {{ "connect_to_cms": false, "transport": "Telnet" }},
+                "identity": {{ "callsign": null, "identifier": "W1TEST", "grid": null }},
+                "privacy": {{ "gps_state": "BroadcastAtPrecision", "position_precision": "FourCharGrid" }},
+                "packet": {{ "ssid": 7, "link": {{ "Bluetooth": {{ "mac": "38:D2:00:01:55:5C" }} }} }}
+            }}"#,
+            ver = CONFIG_SCHEMA_VERSION
+        );
+        let config: Config = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            config.packet.link,
+            Some(KissLinkConfig::Bluetooth { mac: "38:D2:00:01:55:5C".into() }),
+            "a known link variant must round-trip to Some, not degrade"
+        );
+    }
+
+    // tuxlink-efo: a tuxlink-specific config-dir override so a per-worktree dev build
+    // points at its OWN config and concurrent builds stop contaminating one shared
+    // ~/.config/tuxlink/config.json. Takes precedence over XDG_CONFIG_HOME; the dir
+    // holds config.json directly. Tested via the pure resolver (no process-global env).
+    #[test]
+    fn resolve_config_path_prefers_tuxlink_config_dir() {
+        assert_eq!(
+            resolve_config_path(Some("/tmp/wt-a".into()), Some("/xdg".into()), Some("/home/u".into())),
+            std::path::PathBuf::from("/tmp/wt-a/config.json")
+        );
+    }
+
+    #[test]
+    fn resolve_config_path_falls_back_to_xdg_then_home() {
+        assert_eq!(
+            resolve_config_path(None, Some("/xdg".into()), Some("/home/u".into())),
+            std::path::PathBuf::from("/xdg/tuxlink/config.json")
+        );
+        assert_eq!(
+            resolve_config_path(None, None, Some("/home/u".into())),
+            std::path::PathBuf::from("/home/u/.config/tuxlink/config.json")
+        );
     }
 
     // tuxlink-882: the privacy boundary. The grid is stored full; what may go on
