@@ -24,6 +24,13 @@ pub struct Ax25Params {
     pub t1: Duration,
     /// N2: max retransmissions of a frame before declaring the link failed.
     pub n2_retries: u8,
+    /// Hard ceiling on the connect (SABM→UA) handshake's total elapsed time
+    /// (tuxlink-2y4 RADIO-1). Independent of `n2_retries` (which governs DATA I-frame
+    /// retransmits): the connect keys at most [`CONNECT_MAX_SABMS`] SABMs, then
+    /// LISTENS — without re-keying — for a (possibly slow) gateway UA/DM until this
+    /// deadline. Bounds worst-case airtime so a runaway connect can't key the radio
+    /// indefinitely (the 2026-05-22 ~110 s incident).
+    pub connect_timeout: Duration,
 }
 
 impl Default for Ax25Params {
@@ -36,6 +43,9 @@ impl Default for Ax25Params {
             maxframe: 4,
             t1: Duration::from_secs(3),
             n2_retries: 10,
+            // tuxlink-2y4: ~25 s connect ceiling — long enough for a slow gateway's
+            // ~7 s round-trip, bounded enough that a stuck connect can't run away.
+            connect_timeout: Duration::from_secs(25),
         }
     }
 }
@@ -53,6 +63,7 @@ mod params_tests {
         assert_eq!(p.maxframe, 4);
         assert_eq!(p.t1, Duration::from_secs(3));
         assert_eq!(p.n2_retries, 10);
+        assert_eq!(p.connect_timeout, Duration::from_secs(25));
     }
     #[test]
     fn maxframe_fits_mod8_window() {
