@@ -255,10 +255,11 @@ describe('<AppShell> — Mock B topology', () => {
     );
   });
 
-  it('selecting the Packet connection swaps the reader for the packet panel', async () => {
+  it('selecting the CMS Packet connection swaps the reader for the packet panel', async () => {
     renderShell();
     expect(screen.getByTestId('message-view-empty')).toBeInTheDocument();
-    fireEvent.click(screen.getByTestId('conn-packet'));
+    fireEvent.click(screen.getByTestId('sess-cms'));
+    fireEvent.click(screen.getByTestId('proto-cms-packet'));
     expect(await screen.findByTestId('packet-panel-root')).toBeInTheDocument();
     expect(screen.queryByTestId('message-view-empty')).toBeNull();
     // The full-width session log + status bar stay put.
@@ -268,10 +269,23 @@ describe('<AppShell> — Mock B topology', () => {
 
   it('selecting a folder clears the packet panel back to the reader', async () => {
     renderShell();
-    fireEvent.click(screen.getByTestId('conn-packet'));
+    fireEvent.click(screen.getByTestId('sess-cms'));
+    fireEvent.click(screen.getByTestId('proto-cms-packet'));
     await screen.findByTestId('packet-panel-root');
     fireEvent.click(screen.getByTestId('folder-sent'));
     expect(screen.queryByTestId('packet-panel-root')).toBeNull();
     expect(screen.getByTestId('message-view-empty')).toBeInTheDocument();
+  });
+
+  it('renders the Telnet-CMS pane when cms+telnet is selected', async () => {
+    renderShell();
+    fireEvent.click(screen.getByTestId('sess-cms'));
+    fireEvent.click(screen.getByTestId('proto-cms-telnet'));
+    expect(await screen.findByTestId('telnet-cms-panel-root')).toBeInTheDocument();
+  });
+  it('disables unbuilt protocol rows (radio-only+telnet)', () => {
+    renderShell();
+    fireEvent.click(screen.getByTestId('sess-radio-only'));
+    expect(screen.getByTestId('proto-radio-only-telnet')).toBeDisabled();
   });
 });

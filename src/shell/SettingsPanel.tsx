@@ -48,7 +48,7 @@ const PRECISION_OPTIONS: { value: PositionPrecision; label: string; help: string
   },
 ];
 
-interface PrivacyView {
+interface SettingsView {
   gps_state: GpsState;
   position_precision: PositionPrecision;
 }
@@ -68,7 +68,7 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
     if (!open) return;
     let mounted = true;
     setError(null);
-    invoke<PrivacyView>('config_read')
+    invoke<SettingsView>('config_read')
       .then((c) => {
         if (!mounted) return;
         setGpsState(c.gps_state);
@@ -121,7 +121,7 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
         onClick={(e) => e.stopPropagation()}
       >
         <div className="tux-settings-header">
-          <h2 className="tux-settings-title">Settings · GPS &amp; Privacy</h2>
+          <h2 className="tux-settings-title">Settings</h2>
           <button
             type="button"
             className="tux-settings-close"

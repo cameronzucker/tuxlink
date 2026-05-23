@@ -36,6 +36,25 @@ pub struct ConnectConfig {
     pub connect_to_cms: bool,
     /// Per the transport-visibility anti-pattern: always explicit, never auto-selected.
     pub transport: CmsTransport,
+    /// CMS server host the operator dials (tuxlink-3o0). User-switchable in the
+    /// inline SettingsPanel, replacing the former hardcoded `CMS_HOST` const +
+    /// hidden `TUXLINK_CMS_HOST` env var (env stays a dev override on top of this).
+    /// Default `cms-z.winlink.org` (the dev target that accepts the unregistered
+    /// client; production `server.winlink.org` rejects it until tuxlink is
+    /// registered). `#[serde(default)]` migrates pre-3o0 configs (no `host` key)
+    /// transparently — `host` is now a KNOWN field, so `deny_unknown_fields` is
+    /// satisfied.
+    #[serde(default = "default_cms_host")]
+    pub host: String,
+}
+
+/// The default CMS host (tuxlink-3o0). `cms-z.winlink.org` is the dev target that
+/// accepts tuxlink's unregistered client SID; production `server.winlink.org`
+/// rejects it until tuxlink is registered with Winlink. Mirrors the former
+/// `winlink_backend::CMS_HOST` const value. `pub` so the wizard (first-run config
+/// construction) and tests can reference the single canonical default.
+pub fn default_cms_host() -> String {
+    "cms-z.winlink.org".into()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -435,6 +454,59 @@ mod tests {
             PositionSource::Gps,
             "missing position_source must default to Gps"
         );
+    }
+
+    // tuxlink-3o0: the additive-migration test for `connect.host`. An OLD
+    // ConnectConfig JSON (only `connect_to_cms` + `transport`, NO `host` key —
+    // the pre-3o0 shape) must deserialize with `host` defaulting to
+    // cms-z.winlink.org. `host` is now a KNOWN field, so the struct's
+    // `deny_unknown_fields` is satisfied; `#[serde(default = "default_cms_host")]`
+    // supplies the value when the key is absent.
+    #[test]
+    fn connect_host_defaults_to_cms_z_when_absent_from_config() {
+        let json = format!(
+            r#"{{
+                "schema_version": {ver},
+                "wizard_completed": true,
+                "connect": {{ "connect_to_cms": true, "transport": "CmsSsl" }},
+                "identity": {{ "callsign": "W1TEST", "identifier": null, "grid": null }},
+                "privacy": {{
+                    "gps_state": "BroadcastAtPrecision",
+                    "position_precision": "FourCharGrid"
+                }}
+            }}"#,
+            ver = CONFIG_SCHEMA_VERSION
+        );
+        let config: Config = serde_json::from_str(&json)
+            .expect("config without connect.host should deserialize");
+        assert_eq!(
+            config.connect.host, "cms-z.winlink.org",
+            "missing connect.host must default to cms-z.winlink.org"
+        );
+    }
+
+    // tuxlink-3o0: a configured host round-trips (proves persistence, not just
+    // the default).
+    #[test]
+    fn connect_host_round_trips_when_set() {
+        let json = format!(
+            r#"{{
+                "schema_version": {ver},
+                "wizard_completed": true,
+                "connect": {{ "connect_to_cms": true, "transport": "Telnet", "host": "server.winlink.org" }},
+                "identity": {{ "callsign": "W1TEST", "identifier": null, "grid": null }},
+                "privacy": {{
+                    "gps_state": "BroadcastAtPrecision",
+                    "position_precision": "FourCharGrid"
+                }}
+            }}"#,
+            ver = CONFIG_SCHEMA_VERSION
+        );
+        let config: Config = serde_json::from_str(&json).unwrap();
+        assert_eq!(config.connect.host, "server.winlink.org");
+        let reserialized = serde_json::to_string(&config).unwrap();
+        let reloaded: Config = serde_json::from_str(&reserialized).unwrap();
+        assert_eq!(reloaded.connect.host, "server.winlink.org");
     }
 
     // tuxlink-882: the privacy boundary. The grid is stored full; what may go on

@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { FolderSidebar } from './FolderSidebar';
+import { SESSION_TYPES } from '../connections/sessionTypes';
 
 describe('<FolderSidebar> (Mock B)', () => {
   it('renders the Mailbox + Connections sections with their items', () => {
@@ -12,8 +13,9 @@ describe('<FolderSidebar> (Mock B)', () => {
     expect(screen.getByTestId('folder-sent')).toBeInTheDocument();
     expect(screen.getByTestId('folder-outbox')).toBeInTheDocument();
     expect(screen.getByTestId('folder-archive')).toBeInTheDocument();
-    expect(screen.getByTestId('conn-telnet')).toBeInTheDocument();
-    expect(screen.getByTestId('conn-varahf')).toBeInTheDocument();
+    // Connections accordion: session-type headers replace old static items
+    expect(screen.getByTestId('sess-cms')).toBeInTheDocument();
+    expect(screen.getByTestId('sess-radio-only')).toBeInTheDocument();
   });
 
   it('Inbox + Sent are enabled; Outbox + Archive are disabled (v0.1)', () => {
@@ -53,8 +55,8 @@ describe('<FolderSidebar> (Mock B)', () => {
   });
 });
 
-describe('FolderSidebar — Packet connection entry', () => {
-  it('renders a selectable Packet (AX.25) item with a state dot', () => {
+describe('FolderSidebar — Packet connection entry (accordion)', () => {
+  it('renders a selectable Packet (AX.25) item with a state dot (under cms accordion)', () => {
     render(
       <FolderSidebar
         selectedFolder="inbox"
@@ -62,12 +64,14 @@ describe('FolderSidebar — Packet connection entry', () => {
         packetState="listening"
       />,
     );
-    const item = screen.getByTestId('conn-packet');
+    // Expand the CMS accordion to reveal protocols
+    fireEvent.click(screen.getByTestId('sess-cms'));
+    const item = screen.getByTestId('proto-cms-packet');
     expect(item).toHaveTextContent('Packet (AX.25)');
     expect(screen.getByTestId('conn-packet-dot').className).toContain('listening');
   });
 
-  it('clicking Packet (AX.25) calls onSelectConnection("packet")', () => {
+  it('clicking CMS Packet calls onSelectConnection with the full key', () => {
     const onSelectConnection = vi.fn();
     render(
       <FolderSidebar
@@ -77,19 +81,69 @@ describe('FolderSidebar — Packet connection entry', () => {
         packetState="off"
       />,
     );
-    fireEvent.click(screen.getByTestId('conn-packet'));
-    expect(onSelectConnection).toHaveBeenCalledWith('packet');
+    fireEvent.click(screen.getByTestId('sess-cms'));
+    fireEvent.click(screen.getByTestId('proto-cms-packet'));
+    expect(onSelectConnection).toHaveBeenCalledWith({ sessionType: 'cms', protocol: 'packet' });
   });
 
-  it('marks Packet active when selectedConnection is "packet"', () => {
+  it('marks CMS Packet active when selectedConnection matches', () => {
     render(
       <FolderSidebar
         selectedFolder="inbox"
         onSelectFolder={() => {}}
-        selectedConnection="packet"
+        selectedConnection={{ sessionType: 'cms', protocol: 'packet' }}
         packetState="connected"
       />,
     );
-    expect(screen.getByTestId('conn-packet')).toHaveClass('active');
+    // The accordion auto-expands because selectedConnection is pre-set — no manual click needed.
+    expect(screen.getByTestId('proto-cms-packet')).toHaveClass('active');
+  });
+});
+
+describe('FolderSidebar — Connections accordion', () => {
+  it('renders a header per session type, collapsed by default', () => {
+    render(<FolderSidebar selectedFolder="inbox" onSelectFolder={vi.fn()} />);
+    for (const s of SESSION_TYPES) {
+      expect(screen.getByTestId(`sess-${s.id}`)).toHaveAttribute('aria-expanded', 'false');
+    }
+  });
+  it('expands a session type to reveal its protocols', () => {
+    render(<FolderSidebar selectedFolder="inbox" onSelectFolder={vi.fn()} />);
+    fireEvent.click(screen.getByTestId('sess-cms'));
+    expect(screen.getByTestId('sess-cms')).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByTestId('proto-cms-telnet')).toBeInTheDocument();
+    expect(screen.getByTestId('proto-cms-packet')).toBeInTheDocument();
+  });
+  it('selecting a built protocol calls onSelectConnection with the key', () => {
+    const onSelectConnection = vi.fn();
+    render(<FolderSidebar selectedFolder="inbox" onSelectFolder={vi.fn()} onSelectConnection={onSelectConnection} />);
+    fireEvent.click(screen.getByTestId('sess-cms'));
+    fireEvent.click(screen.getByTestId('proto-cms-telnet'));
+    expect(onSelectConnection).toHaveBeenCalledWith({ sessionType: 'cms', protocol: 'telnet' });
+  });
+  it('a "soon" protocol is disabled and does not fire selection', () => {
+    const onSelectConnection = vi.fn();
+    render(<FolderSidebar selectedFolder="inbox" onSelectFolder={vi.fn()} onSelectConnection={onSelectConnection} />);
+    fireEvent.click(screen.getByTestId('sess-cms'));
+    const vara = screen.getByTestId('proto-cms-vara-hf');
+    expect(vara).toBeDisabled();
+    fireEvent.click(vara);
+    expect(onSelectConnection).not.toHaveBeenCalled();
+  });
+
+  it('auto-expands the session type of a pre-set selectedConnection (selection always visible)', () => {
+    render(
+      <FolderSidebar
+        selectedFolder="inbox"
+        onSelectFolder={vi.fn()}
+        selectedConnection={{ sessionType: 'cms', protocol: 'telnet' }}
+        onSelectConnection={vi.fn()}
+      />,
+    );
+    // No manual click on sess-cms — the row must already be present + active:
+    const row = screen.getByTestId('proto-cms-telnet');
+    expect(row).toBeInTheDocument();
+    expect(row).toHaveAttribute('aria-current', 'true');
+    expect(screen.getByTestId('sess-cms')).toHaveAttribute('aria-expanded', 'true');
   });
 });
