@@ -23,6 +23,10 @@ use std::time::Duration;
 use super::command::{encode_setter, Command, CommandParseError};
 use super::wire::encode_cmd_line;
 
+/// Bound on a single cmd-socket write — pairs with the per-setter ack timeout so
+/// a wedged TNC can't block init indefinitely. (Code review Phase 2a.)
+const WRITE_TIMEOUT: Duration = Duration::from_secs(10);
+
 // ─── CmdSocket ─────────────────────────────────────────────────────────────
 
 /// An active ARDOP command-socket connection.
@@ -33,6 +37,8 @@ use super::wire::encode_cmd_line;
 pub struct CmdSocket {
     writer: TcpStream,
     rx: mpsc::Receiver<Command>,
+    /// Control-loop reader thread; joined on drop after the socket is shut down.
+    reader_thread: Option<thread::JoinHandle<()>>,
 }
 
 impl CmdSocket {
@@ -47,10 +53,13 @@ impl CmdSocket {
         // used in `telnet.rs`'s `ReadHalf`/`WriteHalf`.
         let reader_stream = stream.try_clone()?;
         let writer = stream;
+        // Bound a single write so TCP flow-control backpressure from a wedged TNC
+        // can't block init forever (pairs with the per-setter ack timeout).
+        writer.set_write_timeout(Some(WRITE_TIMEOUT))?;
 
         let (tx, rx) = mpsc::channel::<Command>();
 
-        thread::spawn(move || {
+        let reader_thread = thread::spawn(move || {
             let mut reader = BufReader::new(reader_stream);
             let mut buf = Vec::new();
             loop {
@@ -87,7 +96,11 @@ impl CmdSocket {
             // `RecvError::Disconnected`.
         });
 
-        Ok(CmdSocket { writer, rx })
+        Ok(CmdSocket {
+            writer,
+            rx,
+            reader_thread: Some(reader_thread),
+        })
     }
 
     /// Write `line` to the cmd socket, appending the required `\r` terminator.
@@ -102,6 +115,20 @@ impl CmdSocket {
     /// reader thread has exited (EOF / socket closed).
     pub fn recv_event(&self, timeout: Duration) -> Result<Command, RecvTimeoutError> {
         self.rx.recv_timeout(timeout)
+    }
+}
+
+impl Drop for CmdSocket {
+    /// Shut the socket down in both directions so the reader thread's blocked
+    /// `read_until` returns promptly, then join it — guaranteeing no leaked
+    /// thread when the connection is abandoned without the peer closing first.
+    /// The reader holds its own `try_clone`d read half, so dropping the write
+    /// half alone would NOT unblock it. (Code review Phase 2a.)
+    fn drop(&mut self) {
+        let _ = self.writer.shutdown(std::net::Shutdown::Both);
+        if let Some(handle) = self.reader_thread.take() {
+            let _ = handle.join();
+        }
     }
 }
 
