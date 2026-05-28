@@ -10,8 +10,10 @@
 //!   FEC/ERR/IDF frames are silently skipped. The `Read` impl decodes frames
 //!   on the fly and presents the concatenated ARQ payloads as a flat byte
 //!   stream to the caller.
-//! - **Outbound:** raw bytes are written straight to the socket. The TNC
-//!   handles framing for TX — no framing wrapper is applied here.
+//! - **Outbound:** each write is framed as `[u16 BE payload-length][payload]`.
+//!   One frame carries at most 65535 payload bytes. No `D:` prefix, no CRC,
+//!   no 3-byte type tag (those are inbound-only). This matches wl2k-go
+//!   `transport/ardop/conn.go` `tncConn::Write`.
 //!
 //! **Read-loop design (no busy-loop, no spin):**
 //! The `read` impl drains any queued payload bytes from `leftover` first.
@@ -106,11 +108,23 @@ impl Read for DataSocket {
 }
 
 impl Write for DataSocket {
-    /// Forward raw bytes directly to the data socket.
+    /// Frame `buf` as `[u16 BE length][payload]` and write to the data socket.
     ///
-    /// The TNC handles ARDOP framing for TX — we write unframed payload.
+    /// One frame carries at most 65535 payload bytes (the u16 maximum). If
+    /// `buf` is longer than 65535 bytes, only the first 65535 bytes are sent
+    /// and `Ok(65535)` is returned so that `write_all` loops correctly for
+    /// larger buffers.
+    ///
+    /// Returns the number of **payload** bytes consumed (not counting the
+    /// 2-byte length prefix).
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.stream.write(buf)
+        let n = buf.len().min(65535);
+        // Build the frame in a single allocation: [u16 BE length][payload]
+        let mut frame = Vec::with_capacity(2 + n);
+        frame.extend_from_slice(&(n as u16).to_be_bytes());
+        frame.extend_from_slice(&buf[..n]);
+        self.stream.write_all(&frame)?;
+        Ok(n)
     }
 
     fn flush(&mut self) -> io::Result<()> {
@@ -236,10 +250,10 @@ mod tests {
         server.join().unwrap();
     }
 
-    // ── Test 4: Write sends raw bytes without framing ──────────────────────
+    // ── Test 4: Write sends framed bytes (u16 BE length prefix + payload) ──
 
     #[test]
-    fn write_sends_raw_bytes_without_framing() {
+    fn write_sends_framed_bytes() {
         use std::io::Read as IoRead;
         use std::sync::{Arc, Mutex};
 
@@ -266,6 +280,60 @@ mod tests {
         let _ = ds.stream.shutdown(std::net::Shutdown::Write);
 
         server.join().unwrap();
-        assert_eq!(*received.lock().unwrap(), b"WORLD");
+        // The server must see framed bytes: [0x00, 0x05] (length=5) followed by "WORLD"
+        assert_eq!(
+            *received.lock().unwrap(),
+            vec![0x00, 0x05, b'W', b'O', b'R', b'L', b'D'],
+            "write must send [u16 BE length][payload]"
+        );
+    }
+
+    // ── Test 5: Write of >65535 bytes caps at 65535, returns Ok(65535) ────
+
+    #[test]
+    fn write_over_65535_bytes_caps_at_frame_max() {
+        use std::io::Read as IoRead;
+        use std::sync::{Arc, Mutex};
+
+        let received: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(Vec::new()));
+        let received_clone = received.clone();
+
+        // Server reads up to 65537 + 2 bytes (frame header + max payload + some slack).
+        // A large 512 KiB read buffer is used to drain a 65535-byte payload in one pass.
+        let (addr, server) = spawn_mock_data_server(move |mut conn| {
+            let mut buf = vec![0u8; 524288]; // 512 KiB — enough for header + full max payload
+            loop {
+                match conn.read(&mut buf) {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => {
+                        received_clone.lock().unwrap().extend_from_slice(&buf[..n]);
+                    }
+                }
+            }
+        });
+
+        let mut ds = DataSocket::connect(addr).unwrap();
+
+        // Build a payload of 65536 bytes (one over the max).
+        let big = vec![0xABu8; 65536];
+        // `write` (not `write_all`) must return Ok(65535) — capped at one frame.
+        let n = ds.write(&big).unwrap();
+        assert_eq!(n, 65535, "write must cap at 65535 payload bytes per frame");
+
+        ds.flush().unwrap();
+        let _ = ds.stream.shutdown(std::net::Shutdown::Write);
+
+        server.join().unwrap();
+
+        let got = received.lock().unwrap().clone();
+        // The framed output must be exactly 2 (header) + 65535 (payload) = 65537 bytes.
+        assert_eq!(got.len(), 65537, "framed output must be 2-byte header + 65535 payload");
+        // Header must encode 0xFFFF (65535).
+        assert_eq!(&got[..2], &[0xFF, 0xFF], "length prefix must be 0xFFFF");
+        // Payload must be exactly 65535 repetitions of 0xAB.
+        assert!(
+            got[2..].iter().all(|&b| b == 0xAB),
+            "payload must be the first 65535 bytes of the input"
+        );
     }
 }

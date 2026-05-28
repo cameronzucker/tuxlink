@@ -48,13 +48,14 @@ pub enum ProcessError {
 /// status inspection (`exit_status`), and a graceful teardown (`stop`) that
 /// escalates from SIGINT to SIGKILL when necessary.
 ///
-/// # Zombie prevention
+/// # Zombie prevention + gentle drop
 ///
-/// `Drop` best-effort kills + reaps the child if it is still running when the
-/// supervisor is dropped. It does not wait for a grace period on drop — it
-/// sends SIGKILL immediately and calls `wait()` so the kernel reclaims the
-/// process table entry. Any `ProcessError` from `stop` (not normally returned
-/// from `Drop`) is silently discarded, consistent with Rust's `Drop` contract.
+/// `Drop` best-effort reaps the child if it is still running. It first sends
+/// SIGINT and polls for up to 200 ms, giving a well-behaved ardopcf a chance
+/// to clean up and release the audio device. If the process does not exit
+/// within the grace period, SIGKILL is sent and `wait()` blocks until the
+/// kernel reaps it. Errors are silently discarded, consistent with Rust's
+/// `Drop` contract.
 pub struct ManagedModem {
     child: Option<Child>,
     exit_status: Option<ExitStatus>,
@@ -231,16 +232,48 @@ impl ManagedModem {
     }
 }
 
+/// Grace period for the Drop SIGINT → SIGKILL escalation.
+///
+/// Short by design: `Drop` must not block for arbitrarily long. This is just
+/// enough for a well-behaved ardopcf to clean up and release the audio device
+/// after receiving SIGINT. After this period elapses, SIGKILL is sent
+/// unconditionally (zombie prevention takes precedence).
+const DROP_GRACE: Duration = Duration::from_millis(200);
+
 impl Drop for ManagedModem {
-    /// Best-effort kill + reap on drop to prevent zombie processes.
+    /// Gentler kill + reap on drop to reduce the chance of leaving the radio
+    /// keyed by an abrupt process death.
     ///
-    /// Sends SIGKILL immediately (no grace period — `Drop` cannot block for
-    /// arbitrarily long) then calls `wait()`. Errors are silently discarded per
-    /// Rust's `Drop` contract.
+    /// Sequence:
+    /// 1. `try_wait` — if already exited, record status and return.
+    /// 2. Send **SIGINT** — asks ardopcf to clean up gracefully.
+    /// 3. Poll `try_wait` in 20 ms increments for up to [`DROP_GRACE`] (200 ms).
+    /// 4. If still alive, send **SIGKILL** + blocking `wait()` (zombie prevention).
+    ///
+    /// Errors are silently discarded per Rust's `Drop` contract.
     fn drop(&mut self) {
-        // Only act if the child is still known to be running.
-        if let Some(ref mut child) = self.child {
-            // try_wait first — free if the process already exited.
+        let Some(ref mut child) = self.child else {
+            return;
+        };
+
+        // Step 1: already exited?
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                self.exit_status = Some(status);
+                return;
+            }
+            Ok(None) => {}
+            Err(_) => return,
+        }
+
+        // Step 2: SIGINT — ask for a graceful exit.
+        let pid = Pid::from_raw(child.id() as i32);
+        let _ = kill(pid, Signal::SIGINT);
+
+        // Step 3: Poll for up to DROP_GRACE.
+        let deadline = Instant::now() + DROP_GRACE;
+        const DROP_POLL: Duration = Duration::from_millis(20);
+        loop {
             match child.try_wait() {
                 Ok(Some(status)) => {
                     self.exit_status = Some(status);
@@ -249,12 +282,16 @@ impl Drop for ManagedModem {
                 Ok(None) => {}
                 Err(_) => return,
             }
-
-            // Process is still running — SIGKILL + wait.
-            let _ = child.kill();
-            if let Ok(status) = child.wait() {
-                self.exit_status = Some(status);
+            if Instant::now() >= deadline {
+                break;
             }
+            std::thread::sleep(DROP_POLL);
+        }
+
+        // Step 4: SIGKILL escalation + blocking reap.
+        let _ = child.kill();
+        if let Ok(status) = child.wait() {
+            self.exit_status = Some(status);
         }
     }
 }

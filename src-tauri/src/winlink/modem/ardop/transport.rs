@@ -171,10 +171,15 @@ impl ArdopTransport {
     ///    `Err(SessionError::Io(WouldBlock))` if the device is still held
     ///    after the deadline — the ADR-0015 swap invariant.
     ///
-    /// # Idempotent
+    /// # Idempotent / retry
     ///
     /// Safe to call on a partially-initialized transport (e.g., `with_addrs`
     /// without `init` — all `Option` fields are just `None`-checked).
+    ///
+    /// If the audio-device release check fails (`Err(WouldBlock)`), `managed`
+    /// is **restored** so that a subsequent `shutdown()` re-runs the check
+    /// rather than silently becoming a no-op. Once the release check succeeds,
+    /// `managed` stays consumed and subsequent calls are true no-ops.
     pub fn shutdown(&mut self) -> Result<(), SessionError> {
         // Step 1: best-effort ARQ disconnect.
         if let Some(ref mut cmd) = self.cmd {
@@ -187,23 +192,36 @@ impl ArdopTransport {
 
         // Step 3 + 4: stop the process, then verify the audio device is released
         // (the ADR-0015 swap invariant). `take()` clears `managed` so a second
-        // shutdown() is a true no-op. The release check runs REGARDLESS of whether
-        // stop() reported an error: after the SIGKILL escalation the process is
-        // gone and the device should be free, so the swap invariant must still be
-        // verified rather than silently skipped on a stop error (code review Ph5).
+        // shutdown() is a true no-op on the SUCCESS path. The release check runs
+        // REGARDLESS of whether stop() reported an error: after the SIGKILL
+        // escalation the process is gone and the device should be free, so the
+        // swap invariant must still be verified rather than silently skipped on a
+        // stop error (code review Ph5).
+        //
+        // RETRY SEMANTICS: if the audio-device release check FAILS (WouldBlock),
+        // we restore `self.managed` before returning so that a subsequent
+        // shutdown() re-checks rather than becoming a silent no-op. Once the
+        // release check SUCCEEDS, `managed` stays consumed and subsequent calls
+        // are true no-ops.
         if let Some((mut modem, audio_path)) = self.managed.take() {
             let stop_result = modem.stop(Duration::from_secs(3));
 
-            if let Some(path) = audio_path {
-                if !ManagedModem::confirm_audio_device_released(&path, Duration::from_secs(2)) {
-                    return Err(SessionError::Io(io::Error::new(
-                        io::ErrorKind::WouldBlock,
-                        format!(
-                            "audio device {:?} still held after shutdown — swap invariant violated",
-                            path
-                        ),
-                    )));
-                }
+            let release_failed = if let Some(path) = &audio_path {
+                !ManagedModem::confirm_audio_device_released(path, Duration::from_secs(2))
+            } else {
+                false
+            };
+            if release_failed {
+                // Restore managed so a retry shutdown() re-checks the invariant.
+                let err_msg = format!(
+                    "audio device {:?} still held after shutdown — swap invariant violated",
+                    audio_path.as_deref()
+                );
+                self.managed = Some((modem, audio_path));
+                return Err(SessionError::Io(io::Error::new(
+                    io::ErrorKind::WouldBlock,
+                    err_msg,
+                )));
             }
 
             // Surface a stop failure only after the swap-invariant check has run.
@@ -470,9 +488,13 @@ mod tests {
         cmd_server.join().unwrap();
         data_server.join().unwrap();
 
-        // The mock data server received the raw "WORLD" bytes (no framing added)
+        // The mock data server received the framed bytes: [u16 BE length][payload]
         let got = received.lock().unwrap().clone();
-        assert_eq!(got, b"WORLD", "data server must see raw write bytes");
+        assert_eq!(
+            got,
+            vec![0x00, 0x05, b'W', b'O', b'R', b'L', b'D'],
+            "data server must see framed write bytes [u16 BE len][payload]"
+        );
     }
 
     // ── Test 2: connect_arq before init returns Err, not panic ───────────

@@ -246,9 +246,15 @@ pub struct ConnectInfo {
 
 /// Initiate an ARQ connection to `target` with `repeat` retries.
 ///
-/// Sends `ARQCALL <target> <repeat>` and waits until the TNC emits
-/// `CONNECTED <peer_call> <bw>` (success), `FAULT <msg>` (error), or
-/// `DISCONNECTED`/`NEWSTATE DISC` (error — link dropped before connecting).
+/// Before sending `ARQCALL`, drains any already-queued events from the cmd
+/// channel so that stale events from a previous session phase (e.g. a
+/// `NEWSTATE DISC` queued before this call) cannot be misread as a
+/// "DISC before CONNECTED" failure. Draining uses a zero timeout so it
+/// does not block.
+///
+/// After draining, sends `ARQCALL <target> <repeat>` and waits until the
+/// TNC emits `CONNECTED <peer_call> <bw>` (success), `FAULT <msg>` (error),
+/// or `DISCONNECTED`/`NEWSTATE DISC` (error — link dropped before connecting).
 ///
 /// The `deadline` is an **overall** deadline from the time the function is
 /// called; per-iteration remaining time is recomputed so the loop actually
@@ -259,6 +265,11 @@ pub fn arq_connect(
     repeat: u32,
     deadline: Duration,
 ) -> Result<ConnectInfo, SessionError> {
+    // Drain stale events (e.g. NEWSTATE DISC from a prior phase) before
+    // sending ARQCALL so they cannot be misread as a connect failure.
+    // Duration::ZERO makes recv_event return immediately if nothing is queued.
+    while sock.recv_event(Duration::ZERO).is_ok() {}
+
     let start = Instant::now();
     sock.send_line(&encode_setter(
         "ARQCALL",
@@ -613,6 +624,44 @@ mod tests {
             matches!(err, SessionError::Fault(_)),
             "expected Fault, got {err:?}"
         );
+        drop(sock);
+        server.join().unwrap();
+    }
+
+    // ── Test 7c: arq_connect drains stale DISC before sending ARQCALL ──────
+
+    /// Pre-queue a NEWSTATE DISC on the mock (simulating a stale event from a
+    /// prior session phase), then script a normal successful connect sequence.
+    /// arq_connect must SUCCEED — the stale DISC is drained, not misread as
+    /// "DISC before CONNECTED".
+    #[test]
+    fn arq_connect_drains_stale_disc_before_arqcall() {
+        let (addr, server) = spawn_mock_tnc(|conn| {
+            let mut writer = conn.try_clone().unwrap();
+            let mut reader = BufReader::new(conn);
+
+            // Emit a stale NEWSTATE DISC *before* the client sends ARQCALL.
+            // This simulates an event queued from a previous phase.
+            write_reply(&mut writer, "NEWSTATE DISC");
+
+            // Now wait for the ARQCALL and script the happy path.
+            let _line = read_cmd_line(&mut reader); // consume ARQCALL
+            write_reply(&mut writer, "ARQCALL");
+            write_reply(&mut writer, "NEWSTATE ISS");
+            write_reply(&mut writer, "CONNECTED W7ABC 500");
+        });
+
+        let mut sock = CmdSocket::connect(addr).unwrap();
+
+        // Give the server a moment to push the stale DISC into the socket
+        // before we call arq_connect so it's queued in the channel.
+        std::thread::sleep(Duration::from_millis(50));
+
+        let info = arq_connect(&mut sock, "W7ABC", 3, Duration::from_secs(10))
+            .expect("arq_connect must succeed when stale DISC is drained");
+        assert_eq!(info.peer_call, "W7ABC");
+        assert_eq!(info.bandwidth_hz, 500);
+
         drop(sock);
         server.join().unwrap();
     }
