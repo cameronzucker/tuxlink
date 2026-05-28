@@ -31,16 +31,20 @@ const LINK_POLL_TIMEOUT: Duration = Duration::from_millis(200);
 /// instantly; this only trips if the OS send buffer never drains).
 const LINK_WRITE_TIMEOUT: Duration = Duration::from_secs(60);
 
-/// Which KISS byte-pipe to open. Bluetooth uses the `Serial` variant with an
-/// rfcomm device path (e.g. `/dev/rfcomm0`); there is no in-app BlueZ dependency.
+/// Which KISS byte-pipe to open.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum KissLinkConfig {
     /// KISS-over-TCP, e.g. Dire Wolf / SoundModem listening on `127.0.0.1:8001`.
     Tcp { host: String, port: u16 },
-    /// KISS-over-serial: a USB COM device (`/dev/ttyUSB0`) OR a Bluetooth RFCOMM
-    /// device (`/dev/rfcomm0`). `baud` is the host↔modem link rate (distinct from
-    /// the 1200-baud over-air rate).
+    /// KISS-over-serial: a USB COM device (`/dev/ttyUSB0`). `baud` is the host↔modem
+    /// link rate (distinct from the 1200-baud over-air rate).
     Serial { device: String, baud: u32 },
+    /// KISS over a Bluetooth RFCOMM **socket** connected directly to the radio's
+    /// `mac` (tuxlink-nx2). Unlike `Serial`+`/dev/rfcommN`, this needs no `rfcomm
+    /// bind`, no root, and no serialport TTY whose termios reconfiguration the
+    /// radio's SPP service tears down (the "Broken pipe" on first write). The SPP
+    /// channel rotates per registration, so it is read from SDP at connect time.
+    Bluetooth { mac: String },
 }
 
 /// A bidirectional, thread-movable byte stream — the KISS pipe the AX.25 state
@@ -93,7 +97,22 @@ pub fn connect_link(cfg: &KissLinkConfig) -> std::io::Result<Box<dyn ByteLink>> 
             Ok(Box::new(stream))
         }
         KissLinkConfig::Serial { .. } => connect_serial(cfg),
+        KissLinkConfig::Bluetooth { mac } => connect_bluetooth(mac),
     }
+}
+
+/// Open a Bluetooth RFCOMM **socket** to `mac` (tuxlink-nx2). Resolves the SPP
+/// channel from SDP at connect time (it rotates), then connects an
+/// `AF_BLUETOOTH`/`BTPROTO_RFCOMM` socket — no `rfcomm bind`, no root, no TTY.
+fn connect_bluetooth(mac: &str) -> std::io::Result<Box<dyn ByteLink>> {
+    let channel = crate::winlink::ax25::rfcomm::resolve_spp_channel(mac);
+    let sock = crate::winlink::ax25::rfcomm::RfcommSocket::connect(
+        mac,
+        channel,
+        LINK_POLL_TIMEOUT,
+        LINK_WRITE_TIMEOUT,
+    )?;
+    Ok(Box::new(sock))
 }
 
 /// Like `connect_link`, but wires the orchestration layer's abort signal into the
@@ -125,6 +144,14 @@ pub fn connect_link_with_abort(
         // connect(). No TCP socket handle to return.
         KissLinkConfig::Serial { .. } => {
             let inner = connect_serial(cfg)?;
+            Ok((Box::new(AbortableByteLink { inner, abort }), None))
+        }
+        // The RFCOMM socket has no try_clone/shutdown wired here, so (like Serial)
+        // abort is delivered via the shared flag: the socket's SO_RCVTIMEO
+        // (LINK_POLL_TIMEOUT) bounds how soon AbortableByteLink turns a set flag into
+        // a ConnectionAborted read, unwinding a blocked answer()/connect().
+        KissLinkConfig::Bluetooth { mac } => {
+            let inner = connect_bluetooth(mac)?;
             Ok((Box::new(AbortableByteLink { inner, abort }), None))
         }
     }
@@ -159,7 +186,9 @@ fn connect_serial(cfg: &KissLinkConfig) -> std::io::Result<Box<dyn ByteLink>> {
     let (device, baud) = match cfg {
         KissLinkConfig::Serial { device, baud } => (device, *baud),
         // connect_link only routes the Serial variant here.
-        KissLinkConfig::Tcp { .. } => unreachable!("connect_serial called with a Tcp config"),
+        KissLinkConfig::Tcp { .. } | KissLinkConfig::Bluetooth { .. } => {
+            unreachable!("connect_serial called with a non-Serial config")
+        }
     };
     let port = serialport::new(device, baud)
         // Short read-poll timeout so `recv_frame` returns promptly when the line is

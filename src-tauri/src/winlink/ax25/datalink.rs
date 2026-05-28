@@ -278,6 +278,27 @@ mod connect_tests {
     }
 
     #[test]
+    fn connect_pushes_the_configured_txdelay_to_the_tnc() {
+        // tuxlink-uhc: "configured TXdelay not respected". connect() must push the
+        // configured TXDELAY to the TNC as a KISS parameter frame (KISS cmd 0x01),
+        // not a default. (Whether the radio's TNC then honors a KISS TXDELAY command
+        // is a separate, radio-side concern; this proves tuxlink sends the value.)
+        let peer = ScriptedPeer::new();
+        let mine = call("N7CPZ", 7);
+        let target = call("W7AUX", 10);
+        peer.feed(&peer_ua(&mine, &target));
+        let params = Ax25Params { txdelay: 55, ..Ax25Params::default() };
+        connect(Box::new(peer.clone()), mine, target, &[], &params).unwrap();
+
+        let tx = peer.drain_tx();
+        let want = kiss_param(KissParam::TxDelay, 55); // the exact KISS TXDELAY frame
+        assert!(
+            tx.windows(want.len()).any(|w| w == want.as_slice()),
+            "connect must push the configured TXDELAY (55) as a KISS param frame"
+        );
+    }
+
+    #[test]
     fn answer_unwinds_with_connectionaborted_when_the_link_read_aborts() {
         // tuxlink-nj1: a serial listen Stop sets a flag that AbortableByteLink
         // (link.rs) turns into a ConnectionAborted read. This locks the OTHER half of

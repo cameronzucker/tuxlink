@@ -8,6 +8,7 @@ pub mod frame;
 pub mod kiss;
 pub mod link;
 pub mod params;
+pub mod rfcomm;
 
 // P3 public surface (consumed by config.rs, winlink_backend.rs, ui_commands.rs)
 pub use frame::Address;
