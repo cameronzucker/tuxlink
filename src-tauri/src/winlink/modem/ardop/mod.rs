@@ -10,6 +10,7 @@
 //! Phase 2 adds TCP sockets and `std::thread`-based concurrency.
 
 pub mod command;
+pub mod data;
 pub mod frame;
 pub mod session;
 pub mod wire;

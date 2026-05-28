@@ -18,9 +18,9 @@ use std::io::{self, BufRead, BufReader, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use super::command::{encode_setter, Command, CommandParseError};
+use super::command::{encode_setter, Command, CommandParseError, State};
 use super::wire::encode_cmd_line;
 
 /// Bound on a single cmd-socket write — pairs with the per-setter ack timeout so
@@ -231,6 +231,104 @@ fn set_and_ack(sock: &mut CmdSocket, cmd: &str, arg: Option<&str>) -> Result<(),
     }
 }
 
+// ─── ConnectInfo ───────────────────────────────────────────────────────────
+
+/// Result of a successful ARQ connect handshake.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConnectInfo {
+    /// Peer station callsign as reported by the TNC.
+    pub peer_call: String,
+    /// Negotiated link bandwidth in Hz.
+    pub bandwidth_hz: u32,
+}
+
+// ─── arq_connect ───────────────────────────────────────────────────────────
+
+/// Initiate an ARQ connection to `target` with `repeat` retries.
+///
+/// Sends `ARQCALL <target> <repeat>` and waits until the TNC emits
+/// `CONNECTED <peer_call> <bw>` (success), `FAULT <msg>` (error), or
+/// `DISCONNECTED`/`NEWSTATE DISC` (error — link dropped before connecting).
+///
+/// The `deadline` is an **overall** deadline from the time the function is
+/// called; per-iteration remaining time is recomputed so the loop actually
+/// terminates.
+pub fn arq_connect(
+    sock: &mut CmdSocket,
+    target: &str,
+    repeat: u32,
+    deadline: Duration,
+) -> Result<ConnectInfo, SessionError> {
+    let start = Instant::now();
+    sock.send_line(&encode_setter(
+        "ARQCALL",
+        Some(&format!("{target} {repeat}")),
+    ))?;
+    loop {
+        let elapsed = start.elapsed();
+        if elapsed >= deadline {
+            return Err(SessionError::Timeout { cmd: "ARQCALL".into() });
+        }
+        let remaining = deadline - elapsed;
+        match sock.recv_event(remaining) {
+            Ok(Command::Connected { peer_call, bandwidth_hz }) => {
+                return Ok(ConnectInfo { peer_call, bandwidth_hz });
+            }
+            Ok(Command::Fault(msg)) => {
+                return Err(SessionError::Fault(msg));
+            }
+            Ok(Command::Disconnected) | Ok(Command::NewState(State::Disc)) => {
+                return Err(SessionError::Fault(
+                    "disconnected/DISC before CONNECTED".into(),
+                ));
+            }
+            // Absorb all other events (ARQCALL echo-back, NewState ISS/IRS,
+            // Ptt, Busy, Buffer, Status, …) and keep waiting.
+            Ok(_) => continue,
+            Err(RecvTimeoutError::Timeout) => {
+                return Err(SessionError::Timeout { cmd: "ARQCALL".into() });
+            }
+            Err(RecvTimeoutError::Disconnected) => {
+                return Err(SessionError::Io(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "cmd socket disconnected while waiting for CONNECTED",
+                )));
+            }
+        }
+    }
+}
+
+// ─── arq_disconnect ────────────────────────────────────────────────────────
+
+/// Send `DISCONNECT` and wait for the TNC to confirm the link is torn down.
+///
+/// Resolves on `DISCONNECTED` or `NEWSTATE DISC`, bounded by `deadline`.
+pub fn arq_disconnect(sock: &mut CmdSocket, deadline: Duration) -> Result<(), SessionError> {
+    let start = Instant::now();
+    sock.send_line("DISCONNECT")?;
+    loop {
+        let elapsed = start.elapsed();
+        if elapsed >= deadline {
+            return Err(SessionError::Timeout { cmd: "DISCONNECT".into() });
+        }
+        let remaining = deadline - elapsed;
+        match sock.recv_event(remaining) {
+            Ok(Command::Disconnected) | Ok(Command::NewState(State::Disc)) => return Ok(()),
+            // Absorb interleaved events.
+            Ok(_) => continue,
+            Err(RecvTimeoutError::Timeout) => {
+                return Err(SessionError::Timeout { cmd: "DISCONNECT".into() });
+            }
+            Err(RecvTimeoutError::Disconnected) => {
+                return Err(SessionError::Io(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "cmd socket disconnected while waiting for DISCONNECTED",
+                )));
+            }
+        }
+    }
+}
+
 // ─── Tests ─────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -426,6 +524,116 @@ mod tests {
         init_tnc(&mut sock, &cfg).expect("init must tolerate interleaved async events");
 
         let _ = sock.writer.shutdown(std::net::Shutdown::Write);
+        server.join().unwrap();
+    }
+
+    // ── Test 5: arq_connect resolves to ConnectInfo on happy path ─────────
+
+    #[test]
+    fn arq_connect_resolves_on_connected() {
+        // Mock emits: ARQCALL echo-back → NEWSTATE ISS → CONNECTED W7ABC 500
+        let (addr, server) = spawn_mock_tnc(|conn| {
+            let mut writer = conn.try_clone().unwrap();
+            let mut reader = BufReader::new(conn);
+            // Consume the ARQCALL line.
+            let _line = read_cmd_line(&mut reader);
+            write_reply(&mut writer, "ARQCALL");          // echo-back
+            write_reply(&mut writer, "NEWSTATE ISS");     // async state transition
+            write_reply(&mut writer, "CONNECTED W7ABC 500");
+        });
+
+        let mut sock = CmdSocket::connect(addr).unwrap();
+        let info = arq_connect(&mut sock, "W7ABC", 3, Duration::from_secs(10))
+            .expect("arq_connect must succeed on CONNECTED");
+        assert_eq!(info.peer_call, "W7ABC");
+        assert_eq!(info.bandwidth_hz, 500);
+        drop(sock);
+        server.join().unwrap();
+    }
+
+    // ── Test 6: arq_connect returns Err(Fault) on FAULT reply ─────────────
+
+    #[test]
+    fn arq_connect_returns_fault_on_fault_reply() {
+        let (addr, server) = spawn_mock_tnc(|conn| {
+            let mut writer = conn.try_clone().unwrap();
+            let mut reader = BufReader::new(conn);
+            let _line = read_cmd_line(&mut reader);
+            write_reply(&mut writer, "FAULT not from state DISC");
+        });
+
+        let mut sock = CmdSocket::connect(addr).unwrap();
+        let err = arq_connect(&mut sock, "W7ABC", 3, Duration::from_secs(10))
+            .expect_err("must fail on FAULT");
+        assert!(
+            matches!(err, SessionError::Fault(ref s) if s.contains("not from state DISC")),
+            "expected Fault, got {err:?}"
+        );
+        drop(sock);
+        server.join().unwrap();
+    }
+
+    // ── Test 7: arq_connect returns Err on NEWSTATE DISC before CONNECTED ──
+
+    #[test]
+    fn arq_connect_returns_fault_on_disc_before_connected() {
+        let (addr, server) = spawn_mock_tnc(|conn| {
+            let mut writer = conn.try_clone().unwrap();
+            let mut reader = BufReader::new(conn);
+            let _line = read_cmd_line(&mut reader);
+            write_reply(&mut writer, "NEWSTATE DISC");
+        });
+
+        let mut sock = CmdSocket::connect(addr).unwrap();
+        let err = arq_connect(&mut sock, "W7ABC", 3, Duration::from_secs(10))
+            .expect_err("must fail on DISC before CONNECTED");
+        assert!(
+            matches!(err, SessionError::Fault(_)),
+            "expected Fault, got {err:?}"
+        );
+        drop(sock);
+        server.join().unwrap();
+    }
+
+    // ── Test 7b: arq_connect returns Err on DISCONNECTED before CONNECTED ──
+
+    #[test]
+    fn arq_connect_returns_fault_on_disconnected_before_connected() {
+        let (addr, server) = spawn_mock_tnc(|conn| {
+            let mut writer = conn.try_clone().unwrap();
+            let mut reader = BufReader::new(conn);
+            let _line = read_cmd_line(&mut reader);
+            write_reply(&mut writer, "DISCONNECTED");
+        });
+
+        let mut sock = CmdSocket::connect(addr).unwrap();
+        let err = arq_connect(&mut sock, "W7ABC", 3, Duration::from_secs(10))
+            .expect_err("must fail on DISCONNECTED before CONNECTED");
+        assert!(
+            matches!(err, SessionError::Fault(_)),
+            "expected Fault, got {err:?}"
+        );
+        drop(sock);
+        server.join().unwrap();
+    }
+
+    // ── Test 8: arq_disconnect resolves on DISCONNECTED ───────────────────
+
+    #[test]
+    fn arq_disconnect_resolves_on_disconnected() {
+        let (addr, server) = spawn_mock_tnc(|conn| {
+            let mut writer = conn.try_clone().unwrap();
+            let mut reader = BufReader::new(conn);
+            // Consume the DISCONNECT line.
+            let line = read_cmd_line(&mut reader);
+            assert_eq!(line, "DISCONNECT", "must send DISCONNECT command");
+            write_reply(&mut writer, "DISCONNECTED");
+        });
+
+        let mut sock = CmdSocket::connect(addr).unwrap();
+        arq_disconnect(&mut sock, Duration::from_secs(10))
+            .expect("arq_disconnect must succeed on DISCONNECTED");
+        drop(sock);
         server.join().unwrap();
     }
 }
