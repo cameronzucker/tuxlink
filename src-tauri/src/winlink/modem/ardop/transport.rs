@@ -190,14 +190,17 @@ impl ArdopTransport {
         self.cmd = None;
         self.data = None;
 
-        // Step 3 + 4: stop process and check audio release.
-        if let Some((ref mut modem, ref audio_path)) = self.managed {
-            modem.stop(Duration::from_secs(3)).map_err(|e| {
-                io::Error::new(io::ErrorKind::Other, format!("modem stop failed: {e}"))
-            })?;
+        // Step 3 + 4: stop the process, then verify the audio device is released
+        // (the ADR-0015 swap invariant). `take()` clears `managed` so a second
+        // shutdown() is a true no-op. The release check runs REGARDLESS of whether
+        // stop() reported an error: after the SIGKILL escalation the process is
+        // gone and the device should be free, so the swap invariant must still be
+        // verified rather than silently skipped on a stop error (code review Ph5).
+        if let Some((mut modem, audio_path)) = self.managed.take() {
+            let stop_result = modem.stop(Duration::from_secs(3));
 
             if let Some(path) = audio_path {
-                if !ManagedModem::confirm_audio_device_released(path, Duration::from_secs(2)) {
+                if !ManagedModem::confirm_audio_device_released(&path, Duration::from_secs(2)) {
                     return Err(SessionError::Io(io::Error::new(
                         io::ErrorKind::WouldBlock,
                         format!(
@@ -207,6 +210,11 @@ impl ArdopTransport {
                     )));
                 }
             }
+
+            // Surface a stop failure only after the swap-invariant check has run.
+            stop_result.map_err(|e| {
+                io::Error::new(io::ErrorKind::Other, format!("modem stop failed: {e}"))
+            })?;
         }
 
         Ok(())
