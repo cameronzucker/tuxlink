@@ -69,11 +69,17 @@ impl ModemTransport for ArdopTransport {
     ///
     /// Replaces any previously-open sockets (idempotent re-init).
     fn init(&mut self, cfg: &InitConfig) -> Result<(), SessionError> {
-        let cmd = CmdSocket::connect(self.cmd_addr)?;
+        // Hold the sockets as locals and run init_tnc on the local cmd socket: if
+        // any step fails, the locals drop (CmdSocket::Drop shuts down + joins its
+        // reader thread; DataSocket closes its TcpStream), leaving `self` in a
+        // clean uninit state for an idempotent re-init — and avoiding an unwrap on
+        // a just-stored Option. (Code review Phase 3.)
+        let mut cmd = CmdSocket::connect(self.cmd_addr)?;
         let data = DataSocket::connect(self.data_addr)?;
+        init_tnc(&mut cmd, cfg)?;
         self.cmd = Some(cmd);
         self.data = Some(data);
-        init_tnc(self.cmd.as_mut().unwrap(), cfg)
+        Ok(())
     }
 
     /// Initiate an ARQ connection to `target` with `repeat` retries, bounded by
