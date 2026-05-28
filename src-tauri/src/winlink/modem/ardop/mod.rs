@@ -11,4 +11,5 @@
 
 pub mod command;
 pub mod frame;
+pub mod session;
 pub mod wire;
