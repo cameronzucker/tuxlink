@@ -753,18 +753,16 @@ data_thread.join(timeout=2.0)
         };
         transport.init(&init_cfg).expect("init must succeed");
 
-        // After init, cmd socket is open; shutdown should close it and stop the stub.
+        // After init the cmd socket is open; shutdown closes it, stops the stub,
+        // and take()s `managed` (so it is consumed — true idempotency). The stub
+        // process is reaped inside ManagedModem::stop (covered by process.rs tests).
         transport.shutdown().expect("shutdown must return Ok");
-
-        // The managed ManagedModem should have been stopped.
-        if let Some((ref mut modem, _)) = transport.managed {
-            assert!(
-                !modem.is_running(),
-                "stub process must be reaped after shutdown"
-            );
-        } else {
-            panic!("managed field must be Some after with_managed_modem");
-        }
+        assert!(
+            transport.managed.is_none(),
+            "shutdown must consume `managed`"
+        );
+        // A second shutdown is a true no-op.
+        transport.shutdown().expect("second shutdown is a no-op");
 
         // Cleanup stub script.
         let _ = std::fs::remove_file(&stub_path);
