@@ -112,12 +112,7 @@ impl ArdopTransport {
         let args_refs: Vec<&str> = cfg.extra_args.iter().map(|s| s.as_str()).collect();
 
         let modem = ManagedModem::spawn(&binary_str, &args_refs)
-            .map_err(|e: ProcessError| {
-                io::Error::new(
-                    io::ErrorKind::Other,
-                    format!("failed to spawn modem: {e}"),
-                )
-            })?;
+            .map_err(|e: ProcessError| io::Error::other(format!("failed to spawn modem: {e}")))?;
 
         let cmd_addr: SocketAddr = format!("127.0.0.1:{}", cfg.cmd_port)
             .parse()
@@ -212,9 +207,7 @@ impl ArdopTransport {
             }
 
             // Surface a stop failure only after the swap-invariant check has run.
-            stop_result.map_err(|e| {
-                io::Error::new(io::ErrorKind::Other, format!("modem stop failed: {e}"))
-            })?;
+            stop_result.map_err(|e| io::Error::other(format!("modem stop failed: {e}")))?;
         }
 
         Ok(())

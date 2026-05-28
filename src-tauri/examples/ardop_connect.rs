@@ -47,11 +47,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut repeat: u32 = 3;
     let mut audio_device_path: Option<std::path::PathBuf> = None;
 
-    loop {
-        let flag = match args.next() {
-            Some(f) => f,
-            None => break,
-        };
+    while let Some(flag) = args.next() {
         let mut value = || -> Result<String, Box<dyn std::error::Error>> {
             args.next()
                 .ok_or_else(|| format!("flag {flag} requires a value").into())

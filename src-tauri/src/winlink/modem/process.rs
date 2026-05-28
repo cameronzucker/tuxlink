@@ -214,8 +214,9 @@ impl ManagedModem {
                 Ok(output) => {
                     // lsof exits 1 with empty stdout when nothing holds the file.
                     // It exits 0 with output lines when at least one process does.
-                    let stdout_trimmed = output.stdout.trim_ascii();
-                    if stdout_trimmed.is_empty() {
+                    // MSRV-safe (slice::trim_ascii is stable only since 1.80):
+                    // empty-or-all-whitespace stdout means no process holds the file.
+                    if output.stdout.iter().all(u8::is_ascii_whitespace) {
                         return true;
                     }
                 }
