@@ -633,7 +633,10 @@ impl WinlinkBackend for NativeBackend {
             Ok(()) => {
                 self.set_status(BackendStatus::Connected {
                     transport: format!("{mode:?}"),
-                    peer: CMS_HOST.to_string(),
+                    // tuxlink-3o0: the peer is the host actually dialed (the
+                    // operator's configured host, or the TUXLINK_CMS_HOST override)
+                    // — no longer a hardcoded const.
+                    peer: resolve_cms_host(&self.config),
                     since_iso: now_iso8601_utc(),
                 });
                 Ok(Session {
@@ -1058,14 +1061,15 @@ fn initial_packet_status(role: &PacketRole, ssid: u8) -> BackendStatus {
     }
 }
 
-/// The Winlink CMS host. **DEV DEFAULT = `cms-z.winlink.org`** (2026-05-21,
-/// operator directive): production (`server.winlink.org`) rejects unregistered
-/// client SIDs, and tuxlink is not yet registered — so cms-z (which accepts the
-/// unregistered client) is the only working target. `TUXLINK_CMS_HOST` still
-/// overrides this.
-/// TODO(register): revert the default to `server.winlink.org` once tuxlink's
-/// client name is registered with Winlink (the production blocker).
-const CMS_HOST: &str = "cms-z.winlink.org";
+/// Resolve the CMS host to dial (tuxlink-3o0). Precedence: the `TUXLINK_CMS_HOST`
+/// env var wins if set (the dev escape hatch, mirroring `bin/native_cms_probe`);
+/// otherwise the operator's configured `config.connect.host` is used (set via the
+/// inline SettingsPanel's `config_set_connect`). This replaces the former
+/// hardcoded `CMS_HOST` const fallback — the default now lives in
+/// `config::default_cms_host` and reaches here through the persisted config.
+fn resolve_cms_host(config: &Config) -> String {
+    std::env::var("TUXLINK_CMS_HOST").unwrap_or_else(|_| config.connect.host.clone())
+}
 
 /// Resolve the CMS `(port, transport)` from the configured `mode` plus optional
 /// dev overrides (tuxlink-gqo). `TUXLINK_CMS_PLAINTEXT` forces plaintext telnet —
@@ -1195,9 +1199,10 @@ fn native_connect(
         password,
     };
 
-    // The CMS host defaults to production; `TUXLINK_CMS_HOST` overrides it for
-    // dev (e.g. `cms-z.winlink.org`, which accepts the unregistered client).
-    let host = std::env::var("TUXLINK_CMS_HOST").unwrap_or_else(|_| CMS_HOST.to_string());
+    // The CMS host comes from the operator's configured `config.connect.host`
+    // (tuxlink-3o0, set in the inline SettingsPanel); `TUXLINK_CMS_HOST` still
+    // overrides it as a dev escape hatch. See `resolve_cms_host`.
+    let host = resolve_cms_host(config);
 
     // Hand each freshly-connected socket to the abort handle (tuxlink-9z2) so an
     // operator abort can `.shutdown()` it. A clone failure just leaves abort a
@@ -1782,7 +1787,7 @@ mod native_read_state_tests {
         Config {
             schema_version: CONFIG_SCHEMA_VERSION,
             wizard_completed: true,
-            connect: ConnectConfig { connect_to_cms: false, transport: CmsTransport::Telnet },
+            connect: ConnectConfig { connect_to_cms: false, transport: CmsTransport::Telnet, host: crate::config::default_cms_host() },
             identity: IdentityConfig { callsign: None, identifier: None, grid: None },
             privacy: PrivacyConfig {
                 gps_state: GpsState::Off,
@@ -2084,6 +2089,131 @@ mod native_read_state_tests {
         );
     }
 
+    // tuxlink-3o0: the host resolver. Absent the TUXLINK_CMS_HOST env override,
+    // the operator's configured `config.connect.host` is the dial target — the
+    // default-host const is gone; the value now flows from persisted config.
+    //
+    // NOTE: this test deliberately does NOT read/set the TUXLINK_CMS_HOST env var
+    // (process-global; would race under parallel `cargo test`). It asserts the
+    // no-override branch by building a config whose host differs from any plausible
+    // env value AND skipping the assertion if the env override happens to be set in
+    // this process (the override-wins branch is documented, not unit-asserted, for
+    // the same race reason — mirrors `resolve_cms_endpoint`'s env-free unit tests).
+    #[test]
+    fn resolve_cms_host_uses_configured_host_when_no_env_override() {
+        if std::env::var("TUXLINK_CMS_HOST").is_ok() {
+            // An override is set in this process; the config-branch is not exercised
+            // here. Don't fight process-global env under parallel tests.
+            return;
+        }
+        let mut cfg = offline_config_with_callsign();
+        cfg.connect.host = "example.invalid".to_string();
+        assert_eq!(
+            resolve_cms_host(&cfg),
+            "example.invalid",
+            "with no TUXLINK_CMS_HOST override, the configured host is the dial target"
+        );
+    }
+
+    // tuxlink-3o0 — THE KEY connect-exercise (operator's hard requirement). NOT a
+    // shell mock: a real `TcpListener` on an ephemeral 127.0.0.1 port is dialed
+    // through the SAME production code path the app uses —
+    //   host      ← resolve_cms_host(&config)   (sourced from config.connect.host)
+    //   transport ← resolve_cms_endpoint(Telnet) (yields Plaintext)
+    //   dial      ← telnet::connect_and_exchange (the real socket open)
+    // and the listener's accept() proves the dial physically connected. This proves
+    // host + port + transport flow from config → a real socket.
+    //
+    // SAFETY (RADIO-1 / live-CMS): the target is a 127.0.0.1 listener we bind in
+    // this test — NEVER a real or remote CMS. The dial host is taken from
+    // `resolve_cms_host`, which we point at "127.0.0.1" via the config; the port is
+    // the listener's own ephemeral port (NOT 8772/8773), so even a misconfigured
+    // resolver cannot reach a real CMS from here. The fake server speaks just enough
+    // of the telnet login + B2F handshake (then FQ) to let the client complete and
+    // return cleanly, mirroring `telnet::tests::connects_to_a_local_mock_and_runs_an_exchange`.
+    #[test]
+    fn config_host_and_transport_dial_a_real_local_socket() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+
+        // Skip if a dev override is set in this process — it would redirect the dial
+        // away from our local listener (process-global env; don't fight it here).
+        if std::env::var("TUXLINK_CMS_HOST").is_ok() {
+            return;
+        }
+
+        // A local fake CMS on 127.0.0.1 — not the live CMS, not RF. It accepts the
+        // dial, answers the telnet login, sends a B2F handshake + immediate quit (FQ),
+        // then drains the client's writes until EOF so we never close mid-exchange.
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let bound = listener.local_addr().unwrap();
+        let (connected_tx, connected_rx) = std::sync::mpsc::channel::<std::net::SocketAddr>();
+        let server = std::thread::spawn(move || {
+            let (mut sock, peer) = listener.accept().unwrap();
+            // Signal the test that the dial physically connected (the proof point).
+            let _ = connected_tx.send(peer);
+            sock.write_all(b"Callsign :\rPassword :\r[WL2K-5.0-B2FHM$]\rCMS>\rFQ\r")
+                .unwrap();
+            let mut buf = [0u8; 256];
+            while let Ok(n) = sock.read(&mut buf) {
+                if n == 0 {
+                    break;
+                }
+            }
+        });
+
+        // Build a config whose CMS host is the loopback listener (transport Telnet =
+        // plaintext, so no TLS handshake is attempted against the fake server).
+        let mut cfg = offline_config_with_callsign();
+        cfg.connect.host = "127.0.0.1".to_string();
+        cfg.connect.transport = CmsTransport::Telnet;
+
+        // Resolve host + transport EXACTLY as native_connect does. The host MUST come
+        // from the config (no env override, guarded above); the port is the listener's
+        // ephemeral port (the test's stand-in for the resolve_cms_endpoint default).
+        let host = resolve_cms_host(&cfg);
+        assert_eq!(host, "127.0.0.1", "dial host must be sourced from config.connect.host");
+        let (_default_port, transport) = resolve_cms_endpoint(cfg.connect.transport, false, None);
+        assert_eq!(
+            transport,
+            telnet::Transport::Plaintext,
+            "Telnet transport must resolve to Plaintext"
+        );
+
+        let exchange_config = session::ExchangeConfig {
+            mycall: "N7CPZ".into(),
+            targetcall: telnet::CMS_TARGET_CALL.to_string(),
+            locator: "CN87".into(),
+            password: None,
+        };
+        let result = telnet::connect_and_exchange(
+            &host,
+            bound.port(),
+            transport,
+            &exchange_config,
+            vec![],
+            &|_| {},
+            &|_| {},
+            &|_| {},
+            |_| vec![],
+        )
+        .expect("dial to the local listener should connect and complete a clean exchange");
+
+        // The listener accepted a connection → the dial physically connected.
+        let connected_peer = connected_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("the local listener should have accepted the dial");
+        assert_eq!(
+            connected_peer.ip().to_string(),
+            "127.0.0.1",
+            "the connection must originate from loopback (never a real CMS)"
+        );
+        // The exchange ran to completion against the fake server (nothing to send/recv).
+        assert!(result.received.is_empty());
+        assert!(result.sent.is_empty());
+        server.join().unwrap();
+    }
+
     // tuxlink-9z2: an error that follows an operator abort is a cancellation;
     // otherwise the raw outcome stands (success keeps, real error keeps).
     #[test]
@@ -2299,7 +2429,7 @@ mod native_read_state_tests {
         Config {
             schema_version: CONFIG_SCHEMA_VERSION,
             wizard_completed: true,
-            connect: ConnectConfig { connect_to_cms: true, transport: CmsTransport::Telnet },
+            connect: ConnectConfig { connect_to_cms: true, transport: CmsTransport::Telnet, host: crate::config::default_cms_host() },
             identity: IdentityConfig { callsign: Some("N7CPZ".into()), identifier: None, grid: None },
             privacy: PrivacyConfig {
                 gps_state: GpsState::Off,

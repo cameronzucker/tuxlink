@@ -11,7 +11,10 @@ beforeEach(() => {
   invokeMock.mockReset();
   invokeMock.mockImplementation(async (cmd: string) => {
     if (cmd === 'config_read') {
-      return { gps_state: 'BroadcastAtPrecision', position_precision: 'FourCharGrid' };
+      return {
+        gps_state: 'BroadcastAtPrecision',
+        position_precision: 'FourCharGrid',
+      };
     }
     return undefined;
   });
@@ -63,4 +66,5 @@ describe('SettingsPanel', () => {
     fireEvent.keyDown(document, { key: 'Escape' });
     expect(onClose).toHaveBeenCalledTimes(2);
   });
+
 });

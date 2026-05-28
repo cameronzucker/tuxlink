@@ -280,6 +280,24 @@ describe('<PacketConnectionPanel> — device picker', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Task 6 (intent prop): cms-gateway hides Listen; p2p shows it
+// ---------------------------------------------------------------------------
+describe('<PacketConnectionPanel> — intent', () => {
+  it('hides the Listen control under the cms-gateway intent', () => {
+    render(<PacketConnectionPanel config={cfg} baseCall="N7CPZ" intent="cms-gateway" />);
+    expect(screen.queryByTestId('listen-action')).toBeNull();
+  });
+  it('shows the Listen control under the p2p intent (default)', () => {
+    render(<PacketConnectionPanel config={cfg} baseCall="N7CPZ" intent="p2p" />);
+    expect(screen.getByTestId('listen-action')).toBeInTheDocument();
+  });
+  it('shows the Listen control when intent is omitted (defaults to p2p)', () => {
+    render(<PacketConnectionPanel config={cfg} baseCall="N7CPZ" />);
+    expect(screen.getByTestId('listen-action')).toBeInTheDocument();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Task 8: Container
 // ---------------------------------------------------------------------------
 import { withSsid } from './packetConfig';

@@ -228,6 +228,7 @@ describe('ConfigViewDto shape', () => {
     const config: ConfigViewDto = {
       connect_to_cms: true,
       transport: 'CmsSsl',
+      host: 'cms-z.winlink.org',
       callsign: 'W4PHS',
       identifier: null,
       grid: 'EM10ab',
@@ -244,6 +245,7 @@ describe('ConfigViewDto shape', () => {
     const config: ConfigViewDto = {
       connect_to_cms: false,
       transport: 'CmsSsl',
+      host: 'cms-z.winlink.org',
       callsign: null,
       identifier: 'OFFLINE-STATION',
       grid: 'EM10',
@@ -286,6 +288,7 @@ describe('useStatusData — position_source mapping (tuxlink-686)', () => {
     const dto: ConfigViewDto = {
       connect_to_cms: true,
       transport: 'CmsSsl',
+      host: 'cms-z.winlink.org',
       callsign: 'W4PHS',
       identifier: null,
       grid: 'EM10ab',
@@ -331,6 +334,7 @@ describe('useStatusData — gpsReady (tuxlink-686 Task 11)', () => {
     const configDto: ConfigViewDto = {
       connect_to_cms: false,
       transport: 'CmsSsl',
+      host: 'cms-z.winlink.org',
       callsign: null,
       identifier: 'MYSTATION',
       grid: 'CN87',
@@ -384,6 +388,7 @@ describe('useStatusData — gpsReady (tuxlink-686 Task 11)', () => {
     const configDto: ConfigViewDto = {
       connect_to_cms: false,
       transport: 'CmsSsl',
+      host: 'cms-z.winlink.org',
       callsign: null,
       identifier: 'MYSTATION',
       // Config grid is DM33 (stale config snapshot); live broadcast grid differs.
@@ -416,6 +421,7 @@ describe('useStatusData — gpsReady (tuxlink-686 Task 11)', () => {
     const configDto: ConfigViewDto = {
       connect_to_cms: false,
       transport: 'CmsSsl',
+      host: 'cms-z.winlink.org',
       callsign: null,
       identifier: 'MYSTATION',
       grid: 'DM33',
