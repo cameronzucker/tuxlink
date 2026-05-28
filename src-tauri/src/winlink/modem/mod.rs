@@ -18,6 +18,7 @@ use std::time::Duration;
 pub use ardop::session::{ConnectInfo, InitConfig, SessionError};
 
 pub mod ardop;
+pub mod process;
 
 // ─── ReadWrite ──────────────────────────────────────────────────────────────
 
