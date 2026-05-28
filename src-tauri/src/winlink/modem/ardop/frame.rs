@@ -58,31 +58,39 @@ impl DataDecoder {
     /// Consumed bytes are drained from the buffer so the next call sees only
     /// the remaining data.
     pub fn next_frame(&mut self) -> Option<DataFrame> {
-        // Need at least 2 (length) + 3 (type tag) = 5 bytes to read anything.
-        if self.buf.len() < 5 {
-            return None;
+        loop {
+            // Need at least 2 (length) + 3 (type tag) = 5 bytes to read anything.
+            if self.buf.len() < 5 {
+                return None;
+            }
+            let length = u16::from_be_bytes([self.buf[0], self.buf[1]]) as usize;
+            // A well-formed frame always carries at least the 3-byte tag. A length
+            // < 3 is corrupt: drain the bad 2-byte length prefix and re-sync rather
+            // than returning None on the same bytes forever — which would spin the
+            // Phase 2 read loop (caller pushes more bytes, re-calls, sees the same
+            // bad head, repeats). On a reliable loopback-TCP link this never fires;
+            // it is purely a liveness guard.
+            if length < 3 {
+                self.buf.drain(..2);
+                continue;
+            }
+            // Total wire bytes = 2 (length field) + length (tag + payload).
+            let total = 2 + length;
+            if self.buf.len() < total {
+                return None; // incomplete frame — wait for more bytes
+            }
+            let tag = &self.buf[2..5];
+            let kind = match tag {
+                b"ARQ" => DataKind::Arq,
+                b"FEC" => DataKind::Fec,
+                b"ERR" => DataKind::Err,
+                b"IDF" => DataKind::Idf,
+                _ => DataKind::Other,
+            };
+            let payload = self.buf[5..total].to_vec();
+            self.buf.drain(..total);
+            return Some(DataFrame { kind, payload });
         }
-        let length = u16::from_be_bytes([self.buf[0], self.buf[1]]) as usize;
-        // Defensive: a well-formed frame always has at least the 3-byte tag.
-        if length < 3 {
-            return None;
-        }
-        // Total wire bytes = 2 (length field) + length (tag + payload).
-        let total = 2 + length;
-        if self.buf.len() < total {
-            return None; // incomplete frame — wait for more bytes
-        }
-        let tag = &self.buf[2..5];
-        let kind = match tag {
-            b"ARQ" => DataKind::Arq,
-            b"FEC" => DataKind::Fec,
-            b"ERR" => DataKind::Err,
-            b"IDF" => DataKind::Idf,
-            _ => DataKind::Other,
-        };
-        let payload = self.buf[5..total].to_vec();
-        self.buf.drain(..total);
-        Some(DataFrame { kind, payload })
     }
 }
 
@@ -171,6 +179,26 @@ mod frame_tests {
         dec.push(&wire);
         let f = dec.next_frame().expect("complete");
         assert_eq!(f.kind, DataKind::Other);
+    }
+
+    #[test]
+    fn decode_skips_malformed_short_length_without_spinning() {
+        // A length < 3 is corrupt. The decoder must drain past it (re-sync) instead
+        // of returning None on the same bytes forever (the Phase 2 read-loop spin
+        // the code review flagged). Here: a bad length=2 prefix immediately followed
+        // by a valid empty ARQ frame — the decoder must skip the garbage and find it.
+        let mut wire = Vec::new();
+        wire.extend_from_slice(&2u16.to_be_bytes()); // length=2 (< 3, malformed)
+        wire.extend_from_slice(&3u16.to_be_bytes()); // valid frame: length=3
+        wire.extend_from_slice(b"ARQ"); // tag, empty payload
+        let mut dec = DataDecoder::default();
+        dec.push(&wire);
+        let f = dec
+            .next_frame()
+            .expect("must skip the 2-byte bad length and find the ARQ frame");
+        assert_eq!(f.kind, DataKind::Arq);
+        assert!(f.payload.is_empty());
+        assert!(dec.next_frame().is_none(), "buffer fully drained, no spin");
     }
 
     #[test]
