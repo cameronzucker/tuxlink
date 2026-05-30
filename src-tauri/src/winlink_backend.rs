@@ -1166,6 +1166,12 @@ fn cms_locator(config: &Config) -> String {
 /// GPS-derived positions go on air ONLY when `gps_state == BroadcastAtPrecision`;
 /// under `Off` or `LocalUiOnly` the on-air locator falls back to the stored
 /// config grid. A hand-set Manual grid broadcasts regardless of `gps_state`.
+///
+/// Currently only consumed by the in-module tests; production `native_connect`
+/// calls `effective_broadcast_locator` directly. Scoped to `cfg(test)` so non-test
+/// builds don't flag it as dead code. If a non-test caller appears later, drop
+/// the gate.
+#[cfg(test)]
 fn resolve_locator(config: &Config, position: Option<&crate::position::PositionArbiter>) -> String {
     crate::position::effective_broadcast_locator(config, position)
 }
@@ -1173,6 +1179,12 @@ fn resolve_locator(config: &Config, position: Option<&crate::position::PositionA
 /// Run one CMS exchange (blocking): build the outbox into proposals, connect over
 /// the chosen transport, accept all offered messages, then file what arrived into
 /// the inbox and move what was sent into the sent folder.
+//
+// native_connect coordinates a multi-faceted connect flow (config + mailbox +
+// transport + progress/wire-log callbacks + abort plumbing + position arbiter);
+// refactoring to fewer args would require introducing a builder/options struct
+// that's not justified for v0.2. Tracked separately if it ever becomes load-bearing.
+#[allow(clippy::too_many_arguments)]
 fn native_connect(
     config: &Config,
     mailbox: &Mailbox,
