@@ -4,6 +4,13 @@ All notable changes to Tuxlink are documented here.
 
 This project adheres to [Semantic Versioning](https://semver.org) with project-specific rules described in [VERSIONING.md](VERSIONING.md). Entries from `v0.0.2` onward are generated automatically by [`release-please`](https://github.com/googleapis/release-please) from [Conventional Commits](https://www.conventionalcommits.org).
 
+## [0.3.1](https://github.com/cameronzucker/tuxlink/compare/v0.3.0...v0.3.1) (2026-05-30)
+
+
+### Bug Fixes
+
+* **ui:** parse Winlink B2F Date header so CMS messages show real dates (tuxlink-p3u) ([cdf21e1](https://github.com/cameronzucker/tuxlink/commit/cdf21e1b25a958d3a796776a923fb2959d9796e1))
+
 ## [0.3.0](https://github.com/cameronzucker/tuxlink/compare/v0.2.0...v0.3.0) (2026-05-30)
 
 
