@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "kebab-case")]
@@ -192,6 +193,63 @@ impl Default for ModemSession {
     }
 }
 
+/// Poll interval for the status broadcaster — 4 Hz heartbeat from the Rust
+/// side to the WebView. Hardcoded for v1; the cmd-socket polling work that
+/// will replace the cached-snapshot rebroadcast (v0.3+) can revisit this.
+pub const STATUS_POLL_INTERVAL: Duration = Duration::from_millis(250);
+
+/// Tauri event name the broadcaster emits on. The frontend's `useModemStatus`
+/// hook (Task 1.3) subscribes to this exact string — do not rename without
+/// updating `src/hooks/useModemStatus.ts`.
+pub const STATUS_EVENT: &str = "modem:status";
+
+/// Background thread that polls `ModemSession::status_snapshot()` every
+/// `STATUS_POLL_INTERVAL` and emits each snapshot via the provided closure.
+///
+/// In production the closure is
+/// `|s| { let _ = app_handle.emit(STATUS_EVENT, s); }` — fire-and-forget
+/// against the WebView. For v1 the broadcaster just rebroadcasts the cached
+/// snapshot; richer flows (poll the ardopcf cmd-socket for live S/N,
+/// throughput, ARQ flags) are filed as follow-ups.
+///
+/// Zero-sized "namespace" type — no per-instance state, just `spawn` +
+/// `tick_for_test`.
+pub struct ModemStatusBroadcaster;
+
+impl ModemStatusBroadcaster {
+    /// Run the broadcaster on a dedicated thread named
+    /// `modem-status-broadcaster` (so it's visible as such in `top` / `htop`
+    /// / `gdb`). Returns the `JoinHandle<()>` — the caller is free to drop
+    /// it; the thread runs for the lifetime of the process. No shutdown
+    /// signal in v1 (the broadcaster owns no transport state so a clean
+    /// shutdown costs more than it's worth; revisit if/when the broadcaster
+    /// polls the cmd-socket directly).
+    pub fn spawn<F>(session: Arc<ModemSession>, emit: F) -> std::thread::JoinHandle<()>
+    where
+        F: Fn(ModemStatus) + Send + 'static,
+    {
+        std::thread::Builder::new()
+            .name("modem-status-broadcaster".into())
+            .spawn(move || loop {
+                let snap = session.status_snapshot();
+                emit(snap);
+                std::thread::sleep(STATUS_POLL_INTERVAL);
+            })
+            .expect("failed to spawn modem status broadcaster")
+    }
+
+    /// Run a single tick — used by unit tests to avoid sleeping the test
+    /// thread for 250 ms.
+    #[cfg(test)]
+    pub fn tick_for_test<F>(session: &Arc<ModemSession>, emit: &F) -> std::io::Result<()>
+    where
+        F: Fn(ModemStatus),
+    {
+        emit(session.status_snapshot());
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -245,5 +303,18 @@ mod tests {
         assert!(s.has_valid_token(&t));
         s.clear_consent_token();
         assert!(!s.has_valid_token(&t));
+    }
+
+    #[test]
+    fn broadcaster_emits_initial_stopped_snapshot() {
+        use std::cell::RefCell;
+        let session = Arc::new(ModemSession::new());
+        let recorded: RefCell<Vec<ModemStatus>> = RefCell::new(Vec::new());
+        let emit = |s: ModemStatus| recorded.borrow_mut().push(s);
+        let one_tick = ModemStatusBroadcaster::tick_for_test(&session, &emit);
+        assert!(one_tick.is_ok());
+        let recorded = recorded.into_inner();
+        assert_eq!(recorded.len(), 1);
+        assert_eq!(recorded[0].state, ModemState::Stopped);
     }
 }

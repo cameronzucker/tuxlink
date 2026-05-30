@@ -155,6 +155,32 @@ pub fn run() {
                 crate::position::gpsd::spawn_gpsd_client(arbiter_for_gpsd);
             }
 
+            // tuxlink-4ek Task 3.4: spawn the modem status broadcaster — a
+            // dedicated std::thread (named "modem-status-broadcaster") that
+            // polls the shared ModemSession snapshot every 250 ms and emits
+            // it as the `modem:status` Tauri event the frontend's
+            // `useModemStatus` hook (Task 1.3) listens to. JoinHandle is
+            // intentionally dropped: the thread runs for the lifetime of the
+            // process (v1 has no shutdown signal; the broadcaster owns no
+            // transport state so the clean-shutdown cost isn't worth it
+            // yet). No tokio (ADR 0015 — modem subsystem uses std::sync /
+            // std::thread primitives only).
+            let session_for_broadcaster =
+                (*app.state::<std::sync::Arc<crate::modem_status::ModemSession>>()).clone();
+            let app_handle_for_broadcaster = app.handle().clone();
+            let _broadcaster_handle = crate::modem_status::ModemStatusBroadcaster::spawn(
+                session_for_broadcaster,
+                move |s| {
+                    // Bring `tauri::Emitter` into the closure scope so `emit`
+                    // resolves on `AppHandle`. `Manager` (already imported at
+                    // the top of this setup block) does NOT provide `emit` —
+                    // that's `Emitter`'s extension trait (Tauri 2.x).
+                    use tauri::Emitter as _;
+                    let _ = app_handle_for_broadcaster
+                        .emit(crate::modem_status::STATUS_EVENT, s);
+                },
+            );
+
             Ok(())
         })
         .on_window_event(|window, event| {
