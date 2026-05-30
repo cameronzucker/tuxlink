@@ -1,0 +1,111 @@
+/* ArdopDock — right-hand modem dock for ARDOP HF.
+ *
+ * Tokens used: --surface, --surface-2, --border, --border-strong, --border-soft,
+ * --text, --text-faint, --accent, --success, --mono — all verbatim from
+ * App.css's :root (the approved Mock D cool-slate system).
+ *
+ * Two intentional hardcoded values per the approved mockup
+ * (docs/superpowers/specs/2026-05-30-ardop-hf-ui-dock-active.png):
+ *   - #0a1014 — input background (darker than --surface, intentional contrast).
+ *   - #1a0e02 — accent-button text color (matches --tux-accent-fg from App.css).
+ */
+
+.ardop-dock {
+  background: var(--surface);
+  border-left: 1px solid var(--border-strong);
+  width: 290px;
+  overflow: auto;
+}
+
+.ardop-dock-h {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+}
+
+.ardop-dock-name {
+  font-weight: 600;
+}
+
+.ardop-dock-sub {
+  color: var(--text-faint);
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 10px;
+}
+
+.ardop-dock-state-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-faint);
+}
+
+.ardop-dock-state-dot[data-state="stopped"] {
+  background: var(--text-faint);
+}
+
+.ardop-dock-state-dot[data-state="connected-irs"],
+.ardop-dock-state-dot[data-state="connected-iss"] {
+  background: var(--success);
+  box-shadow: 0 0 4px var(--success);
+}
+
+.ardop-dock-section {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.ardop-dock-section-h {
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  margin-bottom: 8px;
+}
+
+.ardop-dock-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 10.5px;
+  color: var(--text-faint);
+  margin-bottom: 8px;
+}
+
+.ardop-dock-input {
+  background: #0a1014;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 12.5px;
+  padding: 4px 7px;
+  height: 26px;
+}
+
+.ardop-dock-btn {
+  font-size: 12px;
+  padding: 5px 12px;
+  height: 26px;
+  border-radius: 3px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface-2);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.ardop-dock-btn-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #1a0e02;
+  font-weight: 600;
+}
+
+.ardop-dock-btn[disabled] {
+  opacity: 0.5;
+  cursor: default;
+}
