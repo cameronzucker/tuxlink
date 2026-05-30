@@ -221,6 +221,7 @@ pub fn run() {
             crate::modem_commands::config_set_ardop,   // tuxlink-4ek (ARDOP config write)
             crate::modem_commands::modem_get_status,   // tuxlink-4ek Task 3.2 (session snapshot)
             crate::modem_commands::modem_ardop_disconnect, // tuxlink-4ek Task 3.2 (clear consent + reset)
+            crate::modem_commands::modem_ardop_connect, // tuxlink-4ek Task 3.3 (RADIO-1-gated spawn + ARQ connect)
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -63,19 +63,50 @@ impl ModemStatus {
 /// Shared per-app modem session state.
 ///
 /// Wraps the current `ModemStatus` snapshot + the in-process RADIO-1 consent
-/// token. `Arc<ModemSession>` is stored in Tauri state and shared between
-/// command handlers and the broadcaster.
+/// token + the live `ModemTransport` handle (when a connect has succeeded).
+/// `Arc<ModemSession>` is stored in Tauri state and shared between command
+/// handlers and the broadcaster.
 #[derive(Debug)]
 pub struct ModemSession {
     inner: Mutex<ModemSessionInner>,
 }
 
-#[derive(Debug)]
 struct ModemSessionInner {
     status: ModemStatus,
     consent_token: Option<String>,
-    // The actual ArdopTransport handle is added in Task 3.2 once we have a
-    // sane Option<...> + Send story.
+    /// Live transport handle, present after a successful
+    /// `modem_ardop_connect`. `Box<dyn ModemTransport>` is `Send` (per
+    /// `winlink/modem/mod.rs:47`), so the surrounding `Mutex` is still
+    /// `Sync` — `Arc<ModemSession>` can flow through Tauri's managed state.
+    ///
+    /// Trait-object hand-off: ownership of the live transport lives in
+    /// `Option<Box<dyn ModemTransport>>` rather than a generic type so that
+    /// future modems (Dire Wolf, tuxmodem, etc.) can swap in without
+    /// reshaping the session struct.
+    transport: Option<Box<dyn crate::winlink::modem::ModemTransport>>,
+}
+
+// Manual `Debug` impl: `Box<dyn ModemTransport>` does not implement `Debug`,
+// so `#[derive(Debug)]` would fail. Print the non-transport fields verbatim
+// and a placeholder for the transport handle. The consent token is redacted
+// even in Debug — it's not a secret, but no value to log a live one.
+impl std::fmt::Debug for ModemSessionInner {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ModemSessionInner")
+            .field("status", &self.status)
+            .field(
+                "consent_token",
+                &self.consent_token.as_ref().map(|_| "<redacted>"),
+            )
+            .field(
+                "transport",
+                &self
+                    .transport
+                    .as_ref()
+                    .map(|_| "Some(<dyn ModemTransport>)"),
+            )
+            .finish()
+    }
 }
 
 impl ModemSession {
@@ -84,6 +115,7 @@ impl ModemSession {
             inner: Mutex::new(ModemSessionInner {
                 status: ModemStatus::stopped(),
                 consent_token: None,
+                transport: None,
             }),
         }
     }
@@ -117,6 +149,40 @@ impl ModemSession {
 
     pub fn clear_consent_token(&self) {
         self.inner.lock().unwrap().consent_token = None;
+    }
+
+    /// Install a live `ModemTransport` handle in the session. Called from
+    /// `modem_ardop_connect_inner` after a successful `init` + `connect_arq`.
+    pub fn install_transport(&self, t: Box<dyn crate::winlink::modem::ModemTransport>) {
+        self.inner.lock().unwrap().transport = Some(t);
+    }
+
+    /// Take ownership of the live transport handle, if any. The caller is
+    /// responsible for calling `disconnect()` + dropping it. Intended for
+    /// flows that want to shut down the transport WITHOUT also resetting
+    /// session status (rare). Most disconnect paths should use
+    /// [`reset_to_stopped`].
+    pub fn take_transport(&self) -> Option<Box<dyn crate::winlink::modem::ModemTransport>> {
+        self.inner.lock().unwrap().transport.take()
+    }
+
+    /// Atomically take the transport handle, clear the consent token, and
+    /// reset the status to `Stopped`. Returns the prior transport (if any)
+    /// so the caller can call `transport.disconnect(...) + drop` OUTSIDE
+    /// the lock — never call I/O while holding the session mutex.
+    ///
+    /// Single lock acquisition: observers see a consistent
+    /// `(token=None, status=Stopped, transport=None)` state. Closes the
+    /// inconsistent-intermediate window the Task 3.2 code-quality review
+    /// flagged on `modem_ardop_disconnect_inner` (the prior split between
+    /// `clear_consent_token()` + `set_status(Stopped)` widened once Task 3.3
+    /// stretched the disconnect path across `transport.disconnect()` I/O +
+    /// SIGINT).
+    pub fn reset_to_stopped(&self) -> Option<Box<dyn crate::winlink::modem::ModemTransport>> {
+        let mut inner = self.inner.lock().unwrap();
+        inner.consent_token = None;
+        inner.status = ModemStatus::stopped();
+        inner.transport.take()
     }
 }
 
