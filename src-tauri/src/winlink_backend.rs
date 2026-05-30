@@ -86,6 +86,14 @@ pub struct MessageBody {
     pub raw_rfc5322: Vec<u8>,
 }
 
+/// Attachment carried in an outbound message. Spec §6.2.
+#[derive(Debug, Clone)]
+pub struct OutboundAttachment {
+    pub filename: String,
+    pub content_type: String,
+    pub bytes: Vec<u8>,
+}
+
 /// Outbound message — what `send_message` consumes. Intentionally NOT
 /// `#[non_exhaustive]` (per spec §3.2) to keep caller-construction
 /// ergonomic. Adding fields is an acknowledged breaking change.
@@ -97,6 +105,7 @@ pub struct OutboundMessage {
     pub body: String,
     /// RFC 3339 UTC timestamp. Caller provides; backend validates.
     pub date: String,
+    pub attachments: Vec<OutboundAttachment>,
 }
 
 /// Transport selector for `connect`. `#[non_exhaustive]` so v0.5+ can add

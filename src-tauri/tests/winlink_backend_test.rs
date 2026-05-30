@@ -67,6 +67,7 @@ async fn test_pat_backend_send_message_posts_multipart_returns_none_for_pat() {
         subject: "Test".to_string(),
         body: "body".to_string(),
         date: "2026-04-22T15:00:00Z".to_string(),
+        attachments: vec![],
     };
     let result = backend.send_message(msg).await.expect("send");
     assert_eq!(result, None, "Pat 1.0.0 returns plain-text confirmation, no MID");
@@ -180,6 +181,7 @@ async fn test_native_backend_send_then_list_and_read() {
             subject: "Net check-in".to_string(),
             body: "All stations clear.".to_string(),
             date: "2024-05-20T10:13:00Z".to_string(),
+            attachments: vec![],
         })
         .await
         .unwrap()
@@ -471,6 +473,31 @@ fn spawn_failure_drains_pat_stderr_into_durable_buffer() {
         snap.iter().all(|l| l.source == LogSource::Pat),
         "drained failure lines are LogSource::Pat"
     );
+}
+
+// ============================================================================
+// Task 0.1 (tuxlink-v1p §6.2) — OutboundMessage carries attachments field.
+// ============================================================================
+#[test]
+fn test_outbound_message_carries_attachments() {
+    use tuxlink_lib::winlink_backend::{OutboundAttachment, OutboundMessage};
+    let attach = OutboundAttachment {
+        filename: "test.xml".to_string(),
+        content_type: "text/xml".to_string(),
+        bytes: b"<root/>".to_vec(),
+    };
+    let msg = OutboundMessage {
+        to: vec!["X@winlink.org".to_string()],
+        cc: vec![],
+        subject: "S".to_string(),
+        body: "B".to_string(),
+        date: "2026-05-30T00:00:00Z".to_string(),
+        attachments: vec![attach.clone()],
+    };
+    assert_eq!(msg.attachments.len(), 1);
+    assert_eq!(msg.attachments[0].filename, "test.xml");
+    assert_eq!(msg.attachments[0].content_type, "text/xml");
+    assert_eq!(msg.attachments[0].bytes, b"<root/>");
 }
 
 // ============================================================================

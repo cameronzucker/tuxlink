@@ -657,6 +657,7 @@ pub async fn message_send(
         subject: draft.subject,
         body: draft.body,
         date,
+        attachments: vec![],
     };
 
     // send_message returns Ok(None) for Pat 1.0.0 — see winlink_backend.rs
