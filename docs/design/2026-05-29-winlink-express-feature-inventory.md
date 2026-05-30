@@ -30,12 +30,12 @@ The basics every email/messaging client provides. Where WLE and Tuxlink diverge 
 |---|---|---|---|---|---|
 | 1.1 | **Send a plain-text message** | Compose To/Cc/Subject/Body and queue for next session | ✓ MessageEditor | 🟢 | Compose window shipped; B2F outbound framing verified (RFC5322 + Winlink encoding). |
 | 1.2 | **Receive plain-text messages** | Decompress + parse + render inbound mail | ✓ MessageReader | 🟢 | Reading pane shipped; date parsing fixed in PR #145 (Winlink B2F format). |
-| 1.3 | **Reply / Reply All** | Quote-reply with original headers preserved | ✓ | ⚪ | Helper `replyActions.ts` exists; UI button surface not shipped. |
-| 1.4 | **Forward (with edit)** | Quote-forward to new recipients | ✓ | ⚪ | |
-| 1.5 | **Forward without change** | Re-route unchanged | ✓ | ⚪ | Specialized routing case — operator confirm if relevant for emcomm dispatch flows. |
-| 1.6 | **Send and receive attachments** | Bundle binary files with messages | ✓ | 🟡 partial | Detected on parse, but compose-side attach is ⚪. |
+| 1.3 | **Reply / Reply All** | Quote-reply with original headers preserved | ✓ | 🟢 | UI buttons shipped (MessageView.tsx) wired via `replyActions.buildReplyDraft` + `openReplyWindow`. |
+| 1.4 | **Forward (with edit)** | Quote-forward to new recipients | ✓ | 🟢 | UI button shipped (`forward-btn`) → `fireReply('forward')`. |
+| 1.5 | **Forward without change** | Re-route unchanged | ✓ | ⚪ | NOT shipped — `ReplyMode` only has `'reply' \| 'replyAll' \| 'forward'`. Specialized routing case; operator confirm if relevant for emcomm dispatch flows. |
+| 1.6 | **Send and receive attachments** | Bundle binary files with messages | ✓ | 🟡 partial | Receive-side detected on parse; compose-side attach is ⚪. |
 | 1.7 | **Image auto-resize on attach** | Prompt to shrink large images before send | ✓ ImageEdit + ImageResize | ⚪ | Bandwidth UX; relevant once attach-on-compose ships. |
-| 1.8 | **Acknowledge receipt** | Send a Winlink read-receipt back | ✓ | ⚪ | EmComm-relevant — "did the dispatch order arrive?" |
+| 1.8 | **Acknowledge receipt** | Send a Winlink read-receipt back | ✓ | ⚪ | NOT shipped (no UI surface; no "acknowledge" Tauri command in the message verbs). EmComm-relevant — "did the dispatch order arrive?" |
 | 1.9 | **Spell check** | In-editor spell check | ✓ (NetSpell.dll) | ⚪ | Linux native: hunspell. Low priority. |
 | 1.10 | **Save message as file** | Export single message to .txt/.rtf/.eml | ✓ | ⚪ | |
 | 1.11 | **Print message** | Send to printer | ✓ | ⚪ | OS-level; Tauri webview → window.print() is one line. |
@@ -46,7 +46,7 @@ The basics every email/messaging client provides. Where WLE and Tuxlink diverge 
 | 1.16 | **Archive messages** | Move old messages out of active DB | ✓ DialogArchiveMessages | ⚪ | |
 | 1.17 | **Export / import messages (.mbo / bulk)** | Bulk-move messages between installs | ✓ | ⚪ | Useful for cross-machine sync, donate-to-historian. |
 
-**Headline gaps in this section**: Reply/Forward/Acknowledge are operator-essential message-action verbs not yet shipped on the Tuxlink reading pane. Find-messages and custom folders are non-blocking but matter for power-users in a long-running net.
+**Headline gaps in this section**: Reply and Forward (basic edit) ARE shipped (corrected from rev-1 — buttons exist + are wired). The actual missing message-action verbs are **Acknowledge receipt** (1.8) and **Forward without change** (1.5) — both still ⚪. Find-messages (1.15) and custom folders (1.13) are non-blocking but matter for power-users in a long-running net.
 
 ---
 
@@ -250,13 +250,14 @@ The features below are what makes Tuxlink "a working Winlink client," not "a fan
 
 | Capability ID | Why it's must-have | Effort |
 |---|---|---|
-| 1.3 Reply / Reply All | Basic email primitive. Already a JS helper; needs UI surface. | S |
-| 1.4 / 1.5 Forward variants | Same; emcomm dispatch flows depend on forward-unchanged. | S |
+| 1.5 Forward without change | EmComm dispatch flows depend on re-routing unchanged (e.g., relay an ICS-213 to another net without re-quoting). | S |
 | 1.8 Acknowledge receipt | Winlink-native ACK — operationally significant in emcomm ("did the order arrive?"). | S |
 | 4.1 Render inbound forms | We already detect `is_form`; rendering the XML is the missing half. Without this, every Service Advice + ICS-213 received is raw XML to the user. | M |
 | 4.2 Author ICS-213 (and a small set of common forms) | Compose-side complement to 4.1. ICS-213 is the canonical EmComm general message. | M-L |
 | 3.3 Position report SEND | Position capture is shipped; "broadcast my QTH to Winlink" is the missing message-send. | S |
 | 1.15 Find messages | Without search a multi-incident mailbox is unusable. | M |
+
+*(Reply / Reply All / Forward-with-edit are NO LONGER on this list — they were corrected from ⚪ to 🟢 in rev-2.0.1; buttons + handlers are shipped in MessageView.tsx.)*
 
 **Estimated v0.1 completion path**: 1.3+1.4+1.5+1.8 (1-2 days) → 3.3 position-send (1 day) → 4.1 form-render (1-2 days) → 1.15 search (1-2 days) → 4.2 form-author (3-5 days). ~2 weeks of focused work.
 
