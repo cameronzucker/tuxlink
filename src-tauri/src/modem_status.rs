@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::sync::Mutex;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "kebab-case")]
@@ -59,6 +60,72 @@ impl ModemStatus {
     }
 }
 
+/// Shared per-app modem session state.
+///
+/// Wraps the current `ModemStatus` snapshot + the in-process RADIO-1 consent
+/// token. `Arc<ModemSession>` is stored in Tauri state and shared between
+/// command handlers and the broadcaster.
+#[derive(Debug)]
+pub struct ModemSession {
+    inner: Mutex<ModemSessionInner>,
+}
+
+#[derive(Debug)]
+struct ModemSessionInner {
+    status: ModemStatus,
+    consent_token: Option<String>,
+    // The actual ArdopTransport handle is added in Task 3.2 once we have a
+    // sane Option<...> + Send story.
+}
+
+impl ModemSession {
+    pub fn new() -> Self {
+        Self {
+            inner: Mutex::new(ModemSessionInner {
+                status: ModemStatus::stopped(),
+                consent_token: None,
+            }),
+        }
+    }
+
+    pub fn status_snapshot(&self) -> ModemStatus {
+        self.inner.lock().unwrap().status.clone()
+    }
+
+    pub fn set_status(&self, s: ModemStatus) {
+        self.inner.lock().unwrap().status = s;
+    }
+
+    /// Generate + remember a new consent token. Returns the token so the
+    /// frontend can pass it to `modem_ardop_connect`.
+    pub fn mint_consent_token(&self) -> String {
+        // 16 random hex chars — enough for in-process uniqueness; not a secret.
+        let token: String = (0..16)
+            .map(|_| {
+                let n: u8 = rand::random::<u8>() & 0xF;
+                std::char::from_digit(n as u32, 16).unwrap()
+            })
+            .collect();
+        self.inner.lock().unwrap().consent_token = Some(token.clone());
+        token
+    }
+
+    pub fn has_valid_token(&self, candidate: &str) -> bool {
+        let inner = self.inner.lock().unwrap();
+        inner.consent_token.as_deref() == Some(candidate)
+    }
+
+    pub fn clear_consent_token(&self) {
+        self.inner.lock().unwrap().consent_token = None;
+    }
+}
+
+impl Default for ModemSession {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -96,5 +163,21 @@ mod tests {
         // confirm the wire form has camelCase + kebab-case for state
         assert!(json.contains("\"state\":\"connected-irs\""));
         assert!(json.contains("\"bytesRx\":4128"));
+    }
+
+    #[test]
+    fn modem_session_starts_stopped_with_no_token() {
+        let s = ModemSession::new();
+        assert_eq!(s.status_snapshot().state, ModemState::Stopped);
+        assert!(!s.has_valid_token("any-token"));
+    }
+
+    #[test]
+    fn modem_session_accepts_minted_token_and_invalidates_on_clear() {
+        let s = ModemSession::new();
+        let t = s.mint_consent_token();
+        assert!(s.has_valid_token(&t));
+        s.clear_consent_token();
+        assert!(!s.has_valid_token(&t));
     }
 }
