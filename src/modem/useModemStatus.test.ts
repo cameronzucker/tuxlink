@@ -27,6 +27,7 @@ describe('useModemStatus', () => {
     expect(result.current.loading).toBe(true);
     await waitFor(() => expect(result.current.loading).toBe(false));
     expect(invoke).toHaveBeenCalledWith('modem_get_status');
+    expect(listenMock).toHaveBeenCalledWith('modem:status', expect.any(Function));
   });
 
   it('updates on modem:status events', async () => {
@@ -39,9 +40,19 @@ describe('useModemStatus', () => {
     });
     const { result } = renderHook(() => useModemStatus());
     await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(listenMock).toHaveBeenCalledWith('modem:status', expect.any(Function));
     act(() => {
       captured!({ payload: { ...STOPPED, state: 'connecting' } });
     });
     expect(result.current.status.state).toBe('connecting');
+  });
+
+  it('sets error and clears loading when modem_get_status rejects', async () => {
+    const { invoke } = await import('@tauri-apps/api/core');
+    (invoke as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('backend not ready'));
+    const { result } = renderHook(() => useModemStatus());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.status.state).toBe('stopped');
+    expect(result.current.error).toContain('backend not ready');
   });
 });
