@@ -17,6 +17,18 @@ vi.mock('@tauri-apps/api/core', () => ({
     if (cmd === 'config_read') return null;
     if (cmd === 'backend_status') return null;
     if (cmd === 'session_log_snapshot') return [];
+    if (cmd === 'modem_get_status') {
+      // useModemStatus' initial snapshot — STOPPED keeps the dock unmounted,
+      // which preserves the existing 3-col Mock B topology these tests assert.
+      return {
+        state: 'stopped',
+        peer: null, mode: null, widthHz: null, pttBackend: null,
+        snDb: null, vuDbfs: null, throughputBps: null,
+        bytesRx: 0, bytesTx: 0, uptimeSec: 0,
+        arqFlags: { busy: false, rx: false, tx: false },
+        lastError: null,
+      };
+    }
     if (cmd === 'message_read') {
       return {
         id: 'INBOX1',

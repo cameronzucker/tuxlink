@@ -1,5 +1,5 @@
 export type SessionTypeId = 'cms' | 'radio-only' | 'post-office' | 'p2p' | 'network-po';
-export type ProtocolId = 'telnet' | 'packet' | 'vara-hf' | 'vara-fm';
+export type ProtocolId = 'telnet' | 'packet' | 'vara-hf' | 'vara-fm' | 'ardop-hf';
 export interface ConnectionKey { sessionType: SessionTypeId; protocol: ProtocolId; }
 
 export interface ProtocolEntry { id: ProtocolId; label: string; built: boolean; }
@@ -9,6 +9,7 @@ export interface SessionTypeEntry {
 
 const PKT = { id: 'packet' as const, label: 'Packet (AX.25)' };
 const TEL = { id: 'telnet' as const, label: 'Telnet' };
+const ARD = { id: 'ardop-hf' as const, label: 'ARDOP HF' };
 const VHF = { id: 'vara-hf' as const, label: 'VARA HF' };
 const VFM = { id: 'vara-fm' as const, label: 'VARA FM' };
 
@@ -22,6 +23,7 @@ export const SESSION_TYPES: SessionTypeEntry[] = [
     protocols: [
       { ...TEL, built: true },
       { ...PKT, built: true },
+      { ...ARD, built: true },
       { ...VHF, built: false },
       { ...VFM, built: false },
     ],
