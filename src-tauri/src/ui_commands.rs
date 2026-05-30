@@ -25,7 +25,7 @@
 //! `Arc` and drops the `RwLock` guard via [`BackendState::current`] BEFORE
 //! awaiting the trait method — the guard is never held across an await.
 
-use mail_parser::{MimeHeaders, MessageParser};
+use mail_parser::{HeaderName, MimeHeaders, MessageParser};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, State};
 
@@ -300,18 +300,24 @@ pub fn parse_raw_rfc5322(mid: &str, raw: &[u8]) -> Result<ParsedMessageDto, UiEr
     // Cc — collect all address strings.
     let cc = extract_address_list(msg.cc());
 
-    // Date — emit as RFC 3339 UTC from the Date header. If the date is
-    // absent or unparseable, fall back to the Unix epoch string so the
-    // frontend always receives a valid ISO-8601 string (never panics, never
-    // empty). mail-parser gives us a DateTime struct with a timestamp().
+    // Date — emit as RFC 3339 UTC from the Date header. Fallback chain:
+    //   1. mail-parser strict RFC5322 Date (the standard path).
+    //   2. Winlink B2F Date format `YYYY/MM/DD HH:MM` (UTC implicit) —
+    //      CMS-originated messages (Service Advice etc.) carry this format,
+    //      which mail-parser rejects. tuxlink-p3u.
+    //   3. Empty string — better than a misleading 1970-01-01 epoch when
+    //      the header is absent or in an unrecognized format. The frontend
+    //      formatters (MessageList.tsx, MessageView.tsx) gracefully render
+    //      an empty/unparseable ISO as a blank cell, not "Invalid Date".
     let date = msg
         .date()
-        .map(|d| {
-            let ts = d.to_timestamp();
-            // Format as RFC 3339 UTC: YYYY-MM-DDTHH:MM:SSZ
-            format_unix_ts(ts)
+        .map(|d| format_unix_ts(d.to_timestamp()))
+        .or_else(|| {
+            msg.header_raw(HeaderName::Date)
+                .and_then(parse_winlink_date)
+                .map(format_unix_ts)
         })
-        .unwrap_or_else(|| "1970-01-01T00:00:00Z".to_string());
+        .unwrap_or_default();
 
     // Body: find the first text/plain part; decode lossily.
     let body = find_text_plain_body(&msg);
@@ -499,6 +505,67 @@ fn days_to_ymd(days: u32) -> (u32, u32, u32) {
     let m = if mp < 10 { mp + 3 } else { mp - 9 };
     let y = if m <= 2 { y + 1 } else { y };
     (y as u32, m, d)
+}
+
+/// Convert (year, month, day) to days since 1970-01-01 (proleptic Gregorian).
+/// Inverse of [`days_to_ymd`]. Uses Howard Hinnant's `days_from_civil`
+/// algorithm. Returns `None` for impossible month/day combinations (the
+/// algorithm itself is range-tolerant; we reject out-of-range inputs early so
+/// a malformed Winlink Date can't yield a plausible-looking wrong timestamp).
+fn ymd_to_days(year: i64, month: u32, day: u32) -> Option<i64> {
+    if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
+        return None;
+    }
+    // Day-of-month upper bound per (year, month). Feb 29 is permitted on leap
+    // years only. (Same Gregorian rule as the rest of the algorithm.)
+    let max_day: u32 = match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 => {
+            let leap = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0;
+            if leap { 29 } else { 28 }
+        }
+        _ => unreachable!(),
+    };
+    if day > max_day {
+        return None;
+    }
+    let y = if month <= 2 { year - 1 } else { year };
+    let era = if y >= 0 { y } else { y - 399 } / 400;
+    let yoe = (y - era * 400) as u64; // [0, 399]
+    let m = if month > 2 { month - 3 } else { month + 9 }; // [0, 11]
+    let doy = (153 * m as u64 + 2) / 5 + day as u64 - 1; // [0, 365]
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy; // [0, 146096]
+    Some(era * 146_097 + doe as i64 - 719_468)
+}
+
+/// Parse a Winlink B2F-format Date header (`YYYY/MM/DD HH:MM`, UTC implicit)
+/// into a Unix timestamp in seconds. Returns `None` if the format doesn't
+/// match exactly. Used as the second fallback in [`parse_raw_rfc5322`] for
+/// CMS-originated messages — mail-parser's strict RFC5322 reader rejects this
+/// non-standard format, so an unconditional pre-fix epoch fallback misled the
+/// reading pane (tuxlink-p3u).
+fn parse_winlink_date(raw: &str) -> Option<i64> {
+    let s = raw.trim();
+    // Exact length + separator positions; no slack. A malformed-but-parseable
+    // suffix shouldn't be silently absorbed.
+    if s.len() != 16 {
+        return None;
+    }
+    let bytes = s.as_bytes();
+    if bytes[4] != b'/' || bytes[7] != b'/' || bytes[10] != b' ' || bytes[13] != b':' {
+        return None;
+    }
+    let year: i64 = s.get(0..4)?.parse().ok()?;
+    let month: u32 = s.get(5..7)?.parse().ok()?;
+    let day: u32 = s.get(8..10)?.parse().ok()?;
+    let hour: u32 = s.get(11..13)?.parse().ok()?;
+    let minute: u32 = s.get(14..16)?.parse().ok()?;
+    if hour > 23 || minute > 59 {
+        return None;
+    }
+    let days = ymd_to_days(year, month, day)?;
+    Some(days * 86_400 + i64::from(hour) * 3_600 + i64::from(minute) * 60)
 }
 
 // ---- message_read command --------------------------------------------------

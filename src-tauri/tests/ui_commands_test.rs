@@ -479,3 +479,80 @@ fn test_parsed_message_dto_serializes_camel_case() {
     assert_eq!(v["attachments"][0]["size"], 42);
     assert_eq!(v["routing"], serde_json::Value::Null);
 }
+
+// ============================================================================
+// tuxlink-p3u: Winlink B2F Date header (YYYY/MM/DD HH:MM) fallback
+// ============================================================================
+//
+// CMS-originated messages (Service Advice, ICS-213 replies) carry Date headers
+// in Winlink B2F format `YYYY/MM/DD HH:MM` (UTC implicit), which mail-parser's
+// strict RFC5322 reader returns None for. Pre-fix, `parse_raw_rfc5322` fell
+// through to a "1970-01-01T00:00:00Z" literal — surfaced by the 2026-05-22
+// operator smoke of a real Service Advice from SERVICE@winlink.org.
+//
+// The pre-fix code had NO assertion against `dto.date` anywhere in this file —
+// the field was silently broken for all CMS-originated messages.
+
+/// CMS Date header in Winlink format → falls back to parse_winlink_date.
+#[test]
+fn test_parse_winlink_format_date_uses_fallback() {
+    let raw = simple_rfc5322(
+        &[
+            ("From", "SERVICE@winlink.org"),
+            ("To", "W4PHS@winlink.org"),
+            ("Subject", "Service Advice"),
+            ("Date", "2026/05/22 14:30"),
+        ],
+        "Routine traffic.",
+    );
+    let dto = parse_raw_rfc5322("MID-WL", &raw).expect("parse should succeed");
+    assert_eq!(dto.date, "2026-05-22T14:30:00Z");
+}
+
+/// No Date header at all → empty string, NOT the misleading epoch.
+#[test]
+fn test_parse_date_absent_returns_empty_not_epoch() {
+    let raw = simple_rfc5322(
+        &[
+            ("From", "W4PHS@winlink.org"),
+            ("To", "KK4XYZ@winlink.org"),
+            ("Subject", "No Date Header"),
+        ],
+        "body",
+    );
+    let dto = parse_raw_rfc5322("MID-NODATE", &raw).expect("parse should succeed");
+    assert_eq!(dto.date, "", "absent Date should yield empty, not 1970 epoch");
+}
+
+/// Malformed Date (neither RFC5322 nor Winlink B2F) → empty, NOT epoch.
+#[test]
+fn test_parse_malformed_date_returns_empty_not_epoch() {
+    let raw = simple_rfc5322(
+        &[
+            ("From", "W4PHS@winlink.org"),
+            ("To", "KK4XYZ@winlink.org"),
+            ("Subject", "Bad Date"),
+            ("Date", "definitely not a date"),
+        ],
+        "body",
+    );
+    let dto = parse_raw_rfc5322("MID-BADDATE", &raw).expect("parse should succeed");
+    assert_eq!(dto.date, "", "unparseable Date should yield empty, not 1970 epoch");
+}
+
+/// Existing RFC5322-format date still works (regression guard for SMTP-side
+/// messages routed via gateways that re-emit RFC5322).
+#[test]
+fn test_parse_rfc5322_date_still_works() {
+    let raw = simple_rfc5322(
+        &[
+            ("From", "W4PHS@winlink.org"),
+            ("To", "KK4XYZ@winlink.org"),
+            ("Subject", "RFC5322 Date"),
+            ("Date", "Mon, 19 May 2026 14:05:00 +0000"),
+        ],
+        "body",
+    );
+    let dto = parse_raw_rfc5322("MID-RFC", &raw).expect("parse should succeed");
+    assert_eq!(dto.date, "2026-05-19T14:05:00Z");
+}
