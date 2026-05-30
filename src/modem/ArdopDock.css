@@ -109,3 +109,63 @@
   opacity: 0.5;
   cursor: default;
 }
+
+.ardop-arq-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 4px;
+}
+
+.ardop-arq-cell {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  padding: 5px 0;
+  text-align: center;
+  border: 1px solid var(--border-strong);
+  border-radius: 3px;
+  color: var(--text-faint);
+}
+
+.ardop-arq-cell[data-on="true"] {
+  background: rgba(93, 214, 160, 0.14);
+  border-color: var(--success);
+  color: var(--success);
+}
+
+.ardop-meter {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: 4px 0;
+}
+
+.ardop-meter-k {
+  font-size: 9.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.ardop-meter-v {
+  font-size: 13px;
+  font-family: var(--mono);
+  color: var(--text);
+  font-weight: 600;
+}
+
+.ardop-meter.warn .ardop-meter-v {
+  color: var(--accent-2);
+}
+
+.ardop-mono-stat {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--text-dim);
+  padding: 8px 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  line-height: 1.7;
+  margin: 0;
+  white-space: pre;
+}
