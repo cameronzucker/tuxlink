@@ -4,7 +4,11 @@
 //! by the frontend's RADIO-1 modal. The backend rejects any connect attempt
 //! whose token doesn't match the current session token. See Phase 6.
 
+use std::sync::Arc;
+use tauri::State;
+
 use crate::config::{self, ArdopUiConfig};
+use crate::modem_status::{ModemSession, ModemStatus};
 
 /// Return the persisted ARDOP configuration, or the struct default if nothing
 /// has been written yet (first run) or the config file is absent.
@@ -25,10 +29,42 @@ pub fn config_set_ardop(value: ArdopUiConfig) -> Result<(), String> {
     config::write_config_atomic(&cfg).map_err(|e| format!("save failed: {e}"))
 }
 
+/// Inner helper: snapshot the current session status. Pure on `&Arc<ModemSession>`
+/// so tests can exercise it without constructing a Tauri `State`.
+pub fn modem_get_status_inner(session: &Arc<ModemSession>) -> ModemStatus {
+    session.status_snapshot()
+}
+
+/// Inner helper: clear RADIO-1 consent + reset status to Stopped. The
+/// transport-handle shutdown (SIGINT to ardopcf + drop the ArdopTransport)
+/// lands in Task 3.3 once `ModemSessionInner` carries the transport field.
+pub fn modem_ardop_disconnect_inner(session: &Arc<ModemSession>) -> Result<(), String> {
+    session.clear_consent_token();
+    session.set_status(ModemStatus::stopped());
+    // TODO(Task 3.3): tell the actual ArdopTransport to shutdown + SIGINT ardopcf.
+    Ok(())
+}
+
+/// Return the current session snapshot. Hooks call this on mount to recover
+/// state when remounting mid-session (e.g. after a hot-reload).
+#[tauri::command]
+pub fn modem_get_status(session: State<'_, Arc<ModemSession>>) -> ModemStatus {
+    modem_get_status_inner(&session)
+}
+
+/// Disconnect the modem: invalidates the RADIO-1 consent token and resets
+/// status to Stopped. See `modem_ardop_disconnect_inner` for the Task 3.3
+/// TODO on transport-handle shutdown.
+#[tauri::command]
+pub fn modem_ardop_disconnect(session: State<'_, Arc<ModemSession>>) -> Result<(), String> {
+    modem_ardop_disconnect_inner(&session)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::config::CONFIG_SCHEMA_VERSION;
+    use crate::modem_status::ModemState;
 
     #[test]
     fn round_trip_persists_through_config() {
@@ -85,5 +121,31 @@ mod tests {
                 None => std::env::remove_var("TUXLINK_CONFIG_DIR"),
             }
         }
+    }
+
+    #[test]
+    fn modem_get_status_returns_session_snapshot() {
+        let session = Arc::new(ModemSession::new());
+        let s = modem_get_status_inner(&session);
+        assert_eq!(s.state, ModemState::Stopped);
+    }
+
+    #[test]
+    fn modem_ardop_disconnect_clears_consent_when_session_was_running() {
+        let session = Arc::new(ModemSession::new());
+        let token = session.mint_consent_token();
+        // simulate a running session: representative "connected" snapshot.
+        // Plan deviation: the plan's text wrote `ModemState::ConnectedIdle`
+        // which doesn't exist (Task 1.1 used `Idle` / `ConnectedIrs` / `ConnectedIss`).
+        // `ConnectedIrs` is a faithful "running" stand-in.
+        let mut s = ModemStatus::stopped();
+        s.state = ModemState::ConnectedIrs;
+        session.set_status(s);
+
+        modem_ardop_disconnect_inner(&session).unwrap();
+
+        // After disconnect, consent token must be invalidated and status reset.
+        assert!(!session.has_valid_token(&token));
+        assert_eq!(session.status_snapshot().state, ModemState::Stopped);
     }
 }

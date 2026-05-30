@@ -102,6 +102,12 @@ pub fn run() {
         // the buffer `session_log_snapshot` reads. Tauri's `State` derefs
         // through the `Arc`, so the command sees an identical surface.
         .manage(std::sync::Arc::new(crate::session_log::SessionLogState::new(500)))
+        // tuxlink-4ek Phase 3: the shared modem session — current ARDOP status
+        // snapshot + the RADIO-1 consent token. Stored as `Arc<ModemSession>`
+        // so command handlers and the broadcaster (Task 3.4) reference the
+        // same instance. Starts Stopped with no token (mint via the RADIO-1
+        // modal flow).
+        .manage(std::sync::Arc::new(crate::modem_status::ModemSession::new()))
         .setup(|app| {
             use tauri::Manager as _;  // brings .state() into scope for the setup closure
             // Install system tray icon + menu (tuxlink-rit / Task 8).
@@ -213,6 +219,8 @@ pub fn run() {
             crate::ui_commands::config_set_connect,    // tuxlink-3o0 (CMS server endpoint control)
             crate::modem_commands::config_get_ardop,   // tuxlink-4ek (ARDOP config read)
             crate::modem_commands::config_set_ardop,   // tuxlink-4ek (ARDOP config write)
+            crate::modem_commands::modem_get_status,   // tuxlink-4ek Task 3.2 (session snapshot)
+            crate::modem_commands::modem_ardop_disconnect, // tuxlink-4ek Task 3.2 (clear consent + reset)
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
