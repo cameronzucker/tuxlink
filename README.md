@@ -8,6 +8,12 @@ A native Linux desktop Winlink client for amateur-radio emergency communications
 No Windows, no web UI to babysit — a Rust application that speaks the Winlink B2F
 protocol directly.
 
+<p align="center">
+  <img src="docs/design/mockups/images/mock-b-principles-faithful.png" width="860"
+       alt="The Tuxlink mailbox: dashboard ribbon, folder sidebar, message list, reading pane, and a live session log">
+</p>
+<p align="center"><sub>The Tuxlink mailbox — dashboard ribbon, folder sidebar, reading pane, and the live B2F session log.</sub></p>
+
 ## Status
 
 **v0.1.0 — early release.** Tuxlink is a working native Winlink client: it connects to
@@ -52,6 +58,27 @@ config file on disk.
   compose new messages and replies.
 - **Session log** — both a human-readable projection of the CMS session and the raw B2F
   wire dialogue, toggleable.
+
+## Interface
+
+The first-run wizard takes a new operator from install to first message with no README
+and no tutorial — pick a CMS-connected path or an offline / radio-only path:
+
+<p align="center">
+  <img src="docs/design/mockups/images/wizard-a-welcome.png" width="820"
+       alt="Tuxlink first-run wizard welcome screen: choose a CMS-connected or an offline / radio-only path">
+</p>
+
+Tuxlink is a native desktop application — no browser, no WINE, no web UI to keep alive in
+a tab. Here it is on an Ubuntu 24.04 desktop:
+
+<p align="center">
+  <img src="docs/design/mockups/images/in-situ-ubuntu-2404.png" width="820"
+       alt="Tuxlink on an Ubuntu 24.04 desktop">
+</p>
+
+<sub>The images above reflect the approved v0.1.0 interface design, which the application
+renders faithfully.</sub>
 
 ## Maturity — what is and isn't proven
 
