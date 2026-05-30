@@ -70,11 +70,11 @@ and no tutorial — pick a CMS-connected path or an offline / radio-only path:
 </p>
 
 Tuxlink is a native desktop application — no browser, no WINE, no web UI to keep alive in
-a tab. The interface is at home on any Linux desktop, including a Raspberry Pi:
+a tab. Here it is on an Ubuntu 24.04 desktop:
 
 <p align="center">
-  <img src="docs/design/mockups/images/in-situ-raspberry-pi-os.png" width="820"
-       alt="The Tuxlink window on a Raspberry Pi OS desktop">
+  <img src="docs/design/mockups/images/in-situ-ubuntu-2404.png" width="820"
+       alt="Tuxlink on an Ubuntu 24.04 desktop">
 </p>
 
 <sub>The images above reflect the approved v0.1.0 interface design, which the application
