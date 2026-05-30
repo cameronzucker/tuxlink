@@ -143,9 +143,32 @@ impl ModemSession {
         token
     }
 
+    /// WARNING: non-destructive equality check; does NOT consume the token.
+    /// Reserved for tests and disconnect-path verification. The per-invocation
+    /// consent path (RADIO-1) MUST use [`consume_consent_token`] so a single
+    /// minted token cannot authorize more than one on-air connect.
     pub fn has_valid_token(&self, candidate: &str) -> bool {
         let inner = self.inner.lock().unwrap();
         inner.consent_token.as_deref() == Some(candidate)
+    }
+
+    /// Atomically verify a candidate token matches the stored token AND clear
+    /// it in the same lock acquisition. Returns true iff the candidate matched
+    /// (and the stored token is now `None`). Returns false if there was no
+    /// stored token, or if the candidate didn't match.
+    ///
+    /// This is the per-invocation consent path: every successful call consumes
+    /// the token, so the operator must mint a fresh one (via the RADIO-1
+    /// modal) before the next on-air connect. Closes the replay window the
+    /// 2026-05-30 Codex adrev round flagged on the non-destructive
+    /// `has_valid_token` check.
+    pub fn consume_consent_token(&self, candidate: &str) -> bool {
+        let mut inner = self.inner.lock().unwrap();
+        let matches = inner.consent_token.as_deref() == Some(candidate);
+        if matches {
+            inner.consent_token = None;
+        }
+        matches
     }
 
     pub fn clear_consent_token(&self) {
@@ -153,7 +176,8 @@ impl ModemSession {
     }
 
     /// Install a live `ModemTransport` handle in the session. Called from
-    /// `modem_ardop_connect_inner` after a successful `init` + `connect_arq`.
+    /// `modem_ardop_connect_post_consume_with_factory` after a successful
+    /// `init` + `connect_arq`.
     pub fn install_transport(&self, t: Box<dyn crate::winlink::modem::ModemTransport>) {
         self.inner.lock().unwrap().transport = Some(t);
     }
@@ -303,6 +327,35 @@ mod tests {
         assert!(s.has_valid_token(&t));
         s.clear_consent_token();
         assert!(!s.has_valid_token(&t));
+    }
+
+    #[test]
+    fn consume_consent_token_returns_true_and_clears_on_match() {
+        let s = ModemSession::new();
+        let t = s.mint_consent_token();
+        // First call: matches and consumes.
+        assert!(s.consume_consent_token(&t));
+        // After consumption the token is gone — a replay must fail.
+        assert!(!s.has_valid_token(&t));
+        assert!(!s.consume_consent_token(&t));
+    }
+
+    #[test]
+    fn consume_consent_token_returns_false_on_mismatch() {
+        let s = ModemSession::new();
+        let _t = s.mint_consent_token();
+        // Wrong candidate must NOT consume the stored token.
+        assert!(!s.consume_consent_token("wrong-token"));
+        // The minted token is still valid because the failed consume did not
+        // clear it. (Equality check failed, so no clear.)
+        assert!(s.has_valid_token(&_t));
+    }
+
+    #[test]
+    fn consume_consent_token_returns_false_when_no_token_stored() {
+        let s = ModemSession::new();
+        // No mint at all → consume must return false (and not panic).
+        assert!(!s.consume_consent_token("any-candidate"));
     }
 
     #[test]

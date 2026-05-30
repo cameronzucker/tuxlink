@@ -94,6 +94,66 @@ describe('ArdopDock end-to-end consent + connect flow', () => {
     });
   });
 
+  it('after a successful connect, clicking Connect again re-opens the consent modal (per-invocation)', async () => {
+    // RADIO-1 per-invocation consent: even if the operator already minted +
+    // confirmed once and the connect succeeded, the next Connect click must
+    // re-prompt. The frontend `consent.clear()` in `doConnect`'s finally
+    // block enforces this; the backend's `consume_consent_token` enforces it
+    // on the wire too. Closes the 2026-05-30 Codex P1 finding on
+    // `ArdopDock.tsx:61-64`.
+    let mintCallCount = 0;
+    (listen as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(() => {});
+    (invoke as unknown as ReturnType<typeof vi.fn>).mockImplementation((cmd: string) => {
+      if (cmd === 'modem_get_status') return Promise.resolve(STOPPED);
+      if (cmd === 'modem_mint_consent') {
+        mintCallCount += 1;
+        return Promise.resolve(`mint-token-${mintCallCount}`);
+      }
+      if (cmd === 'modem_ardop_connect') {
+        // First call succeeds — emit nothing on the listener so the dock
+        // stays in stopped form (the connect form remains visible) and we
+        // can click Connect again to verify the modal re-opens.
+        return Promise.resolve(undefined);
+      }
+      return Promise.resolve(undefined);
+    });
+
+    render(<ArdopDock />);
+    await waitFor(() => {
+      expect(screen.getByLabelText(/target callsign/i)).toBeInTheDocument();
+    });
+    fireEvent.change(screen.getByTestId('ardop-target'), {
+      target: { value: 'W7RMS-10' },
+    });
+
+    // 1st connect: modal → ack → confirm.
+    fireEvent.click(screen.getByRole('button', { name: /^connect$/i }));
+    const dialog1 = screen.getByRole('dialog');
+    fireEvent.click(within(dialog1).getByRole('checkbox'));
+    fireEvent.click(within(dialog1).getByRole('button', { name: /^connect$/i }));
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith('modem_ardop_connect', {
+        target: 'W7RMS-10',
+        consentToken: 'mint-token-1',
+      });
+    });
+    // Modal closes after confirm.
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    });
+
+    // 2nd Connect click: per-invocation rule — modal MUST re-open.
+    // (If `consent.clear()` were missing from `doConnect`, the dock would
+    // short-circuit via `if (consent.token) doConnect(consent.token)` and
+    // silently invoke `modem_ardop_connect` with the now-consumed
+    // mint-token-1, bypassing fresh in-the-moment acknowledgement.)
+    fireEvent.click(screen.getByRole('button', { name: /^connect$/i }));
+    const dialog2 = await screen.findByRole('dialog');
+    expect(dialog2).toBeInTheDocument();
+    // No fresh mint yet — the operator hasn't confirmed the second modal.
+    expect(mintCallCount).toBe(1);
+  });
+
   it('Cancel on consent modal does NOT invoke modem_ardop_connect', async () => {
     (listen as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(() => {});
     (invoke as unknown as ReturnType<typeof vi.fn>).mockImplementation((cmd: string) => {

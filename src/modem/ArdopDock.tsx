@@ -55,6 +55,16 @@ export function ArdopDock() {
       setConnectError(String(e));
     } finally {
       setConnecting(false);
+      // RADIO-1 per-invocation consent: the backend consumed the token in
+      // `consume_consent_token` (atomic equality-check-and-clear). Clear the
+      // local copy so the next Connect click re-opens the consent modal
+      // regardless of whether this attempt succeeded or failed. Without
+      // this, the `onConnectClick` shortcut at `if (consent.token)` would
+      // re-submit a now-invalid token (backend would Err) AND skip the
+      // modal — confusing UX and a stale-acknowledgement risk if the
+      // backend ever softened the gate. Closes the 2026-05-30 Codex P1
+      // finding on `ArdopDock.tsx:61-64`.
+      consent.clear();
     }
   };
 
