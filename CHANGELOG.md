@@ -4,6 +4,21 @@ All notable changes to Tuxlink are documented here.
 
 This project adheres to [Semantic Versioning](https://semver.org) with project-specific rules described in [VERSIONING.md](VERSIONING.md). Entries from `v0.0.2` onward are generated automatically by [`release-please`](https://github.com/googleapis/release-please) from [Conventional Commits](https://www.conventionalcommits.org).
 
+## [0.3.0](https://github.com/cameronzucker/tuxlink/compare/v0.2.0...v0.3.0) (2026-05-30)
+
+
+### Features
+
+* **ax25:** opt-in RFCOMM byte trace for on-air RX diagnosis (tuxlink-4ef) + note the abort-write race (tuxlink-0ja) ([685385d](https://github.com/cameronzucker/tuxlink/commit/685385d7981f966900c5b6ad030b3fe3f8eaf359))
+
+
+### Bug Fixes
+
+* **ax25:** RADIO-1 safety bundle — bounded connect airtime, abort-before-TX, no pre-connect DISC (tuxlink-2y4) ([7673cac](https://github.com/cameronzucker/tuxlink/commit/7673cacc8413a8c827c9d32a85989cbd9f7650a3))
+* **backend:** refresh live config on config_set_* so UI selections apply restart-free (tuxlink-ka7, tuxlink-p5u) ([195b6c6](https://github.com/cameronzucker/tuxlink/commit/195b6c6a7d5a019df83432a5eb4ca0e99099c142))
+* **config:** degrade unknown packet.link variant to None + add TUXLINK_CONFIG_DIR (tuxlink-efo) ([4b482af](https://github.com/cameronzucker/tuxlink/commit/4b482afd95c0baa294d6e5e4d76c4db6b5bd745b))
+* **scripts:** new_tuxlink_worktree default base → main (tuxlink-1k7) ([a7522e0](https://github.com/cameronzucker/tuxlink/commit/a7522e0e24f9a451bcf2926b77d78deabeddc863))
+
 ## [0.2.0](https://github.com/cameronzucker/tuxlink/compare/v0.1.0...v0.2.0) (2026-05-30)
 
 
