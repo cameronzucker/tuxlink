@@ -14,6 +14,7 @@ pub mod ui_commands;
 pub mod winlink;
 pub mod winlink_backend;
 pub mod wizard;
+pub mod modem_status;
 
 #[cfg(test)]
 mod build_support;
