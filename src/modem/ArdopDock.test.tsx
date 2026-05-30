@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { ArdopDock } from './ArdopDock';
 import { STOPPED, type ModemStatus } from './types';
 
@@ -8,13 +8,20 @@ vi.mock('./useModemStatus', () => ({
   useModemStatus: () => mockUseModemStatus(),
 }));
 
-// The modal-open smoke test exercises onClick → setShowConsent(true). It does
-// NOT click the modal's Connect (which would invoke `modem_mint_consent`), so
-// no @tauri-apps/api/core mock is required here. The full mint→connect wire
-// is covered end-to-end by Task 7.1's integration test.
+// The Disconnect-button tests exercise the `modem_ardop_disconnect` invoke
+// path; mock @tauri-apps/api/core's `invoke` so the test does not need a
+// live Tauri runtime. The original stopped/running render tests do not
+// click any Tauri-invoking buttons (Connect opens the modal; the modal's
+// Connect is not exercised here), so the mock is a no-op for those.
+const mockInvoke = vi.fn();
+vi.mock('@tauri-apps/api/core', () => ({
+  invoke: (...args: unknown[]) => mockInvoke(...args),
+}));
 
 beforeEach(() => {
   mockUseModemStatus.mockReset();
+  mockInvoke.mockReset();
+  mockInvoke.mockResolvedValue(undefined);
 });
 
 const RUNNING_FIXTURE: ModemStatus = {
@@ -69,7 +76,32 @@ describe('<ArdopDock> running', () => {
   it('does NOT render the Connect form when running', () => {
     mockUseModemStatus.mockReturnValue({ status: RUNNING_FIXTURE, loading: false });
     render(<ArdopDock />);
-    expect(screen.queryByRole('button', { name: /connect/i })).not.toBeInTheDocument();
+    // Use ^connect$ so this assertion doesn't accidentally match the new
+    // Disconnect button in the running-state JSX (tuxlink-qvl).
+    expect(screen.queryByRole('button', { name: /^connect$/i })).not.toBeInTheDocument();
     expect(screen.queryByLabelText(/target callsign/i)).not.toBeInTheDocument();
+  });
+});
+
+describe('<ArdopDock> Disconnect', () => {
+  it('renders a Disconnect button in the running state', () => {
+    mockUseModemStatus.mockReturnValue({ status: RUNNING_FIXTURE, loading: false });
+    render(<ArdopDock />);
+    expect(screen.getByRole('button', { name: /disconnect/i })).toBeInTheDocument();
+  });
+
+  it('invokes modem_ardop_disconnect when clicked', async () => {
+    mockUseModemStatus.mockReturnValue({ status: RUNNING_FIXTURE, loading: false });
+    render(<ArdopDock />);
+    fireEvent.click(screen.getByRole('button', { name: /disconnect/i }));
+    await waitFor(() => {
+      expect(mockInvoke).toHaveBeenCalledWith('modem_ardop_disconnect');
+    });
+  });
+
+  it('does NOT render a Disconnect button in the stopped state', () => {
+    mockUseModemStatus.mockReturnValue({ status: STOPPED, loading: false });
+    render(<ArdopDock />);
+    expect(screen.queryByRole('button', { name: /disconnect/i })).not.toBeInTheDocument();
   });
 });
