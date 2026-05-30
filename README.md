@@ -16,10 +16,11 @@ protocol directly.
 
 ## Status
 
-**v0.1.0 — early release.** Tuxlink is a working native Winlink client: it connects to
+**v0.2.0 — early release.** Tuxlink is a working native Winlink client: it connects to
 the Winlink CMS over telnet, runs the B2F message exchange in Rust, and sends, receives,
-and renders real Winlink messages. AX.25 1200-baud packet, GPS privacy controls, and a
-no-docs-required first-run wizard ship in this release.
+and renders real Winlink messages. AX.25 1200-baud packet, GPS privacy controls, a
+no-docs-required first-run wizard, and an ARDOP HF transport core (radio-free MVP) ship
+in this release.
 
 It is early. On-air RF paths (AX.25 over a real radio) and production CMS access require
 operator validation — see [Maturity](#maturity--what-is-and-isnt-proven) before relying
@@ -36,7 +37,7 @@ Tuxlink is a proper native desktop Winlink client for Linux. The first-run exper
 needs no README and no YouTube tutorial, and the Winlink CMS password never touches a
 config file on disk.
 
-## v0.1.0 features
+## v0.2.0 features
 
 - **Native Winlink engine** — the Winlink B2F protocol implemented directly in Rust.
   Connects to the CMS over telnet (TLS port 8773 / plaintext port 8772), proposes and
@@ -51,6 +52,11 @@ config file on disk.
 - **AX.25 1200-baud packet** — connected-mode AX.25 over a KISS TNC (USB serial or
   Bluetooth RFCOMM), carrying the same B2F exchange. Inline connection panel; no pop-up
   windows.
+- **ARDOP HF transport (radio-free MVP)** — ARQ transport core built on top of an
+  `ardopcf` daemon: wire codec, command/data sockets, ARQ connect/disconnect, byte-stream
+  data path, and a `ManagedModem` process supervisor. Backend-only in v0.2; the Connect
+  panel doesn't expose ARDOP as a selectable transport yet — a follow-up release wires
+  the UI.
 - **GPS privacy controls** — position broadcast is off, local-display-only, or broadcast
   at a chosen precision; the default reduces broadcast position to a 4-character
   Maidenhead grid (~1°). Position is never broadcast more precisely than you opt into.
@@ -77,7 +83,7 @@ a tab. Here it is on an Ubuntu 24.04 desktop:
        alt="Tuxlink on an Ubuntu 24.04 desktop">
 </p>
 
-<sub>The images above reflect the approved v0.1.0 interface design, which the application
+<sub>The images above reflect the approved v0.2.0 interface design, which the application
 renders faithfully.</sub>
 
 ## Maturity — what is and isn't proven
@@ -94,7 +100,7 @@ Tuxlink is honest about its edges:
   be registered with Winlink (in progress); until then, CMS connectivity targets the test
   server.
 
-## Not in v0.1.0
+## Not in v0.2.0
 
 - **VARA HF / VARA FM** — VARA is x86 Windows software. It runs under WINE on **x86
   Linux** (no Windows OS required) but **not on ARM** (e.g. Raspberry Pi). A clean-room
@@ -116,8 +122,8 @@ The Winlink CMS password is stored in the **OS keyring** (secret-service on Linu
 Keychain on macOS, CredentialManager on Windows) and is never written to a config file on
 disk.
 
-A layered multi-crate workspace is the planned v0.5+ direction; v0.1.0 deliberately ships
-as a single crate (see [ADR 0002](docs/adr/0002-tauri-react-single-crate.md)).
+A layered multi-crate workspace is the planned v0.5+ direction; the current v0.x series
+deliberately ships as a single crate (see [ADR 0002](docs/adr/0002-tauri-react-single-crate.md)).
 
 See [CLAUDE.md](CLAUDE.md) for the agent workflow, ethos, and safety rails this project
 operates under.
