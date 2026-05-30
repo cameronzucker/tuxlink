@@ -400,8 +400,7 @@ export function Compose({ draftId }: ComposeProps) {
           />
         </div>
 
-        {/* Cc — DISABLED: Pat 1.0.0 drops cc (spec §3.2, Codex F5 VERIFIED).
-             Enabled when Pat cc support is confirmed in v0.1. */}
+        {/* Cc — DISABLED in v0.2: Cc-to-CMS support is planned for a future release. */}
         <div className="compose-field-row">
           <label htmlFor="compose-cc" className="compose-label compose-label--muted">Cc</label>
           <input
@@ -410,12 +409,12 @@ export function Compose({ draftId }: ComposeProps) {
             type="text"
             disabled
             aria-disabled="true"
-            title="Cc support arrives in v0.1 (Pat 1.0.0 does not accept Cc recipients)"
-            placeholder="Cc not available in v0.0.1"
+            title="Cc support is planned for a future release"
+            placeholder="Cc not available in v0.2"
             data-testid="compose-cc-disabled"
           />
           <span className="compose-hint compose-hint--warn">
-            Cc available in v0.1 (Pat 1.0.0 does not forward Cc)
+            Cc support is planned for a future release
           </span>
         </div>
 
