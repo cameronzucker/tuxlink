@@ -14,6 +14,7 @@ pub mod ui_commands;
 pub mod winlink;
 pub mod winlink_backend;
 pub mod wizard;
+pub mod modem_commands;
 pub mod modem_status;
 
 #[cfg(test)]
@@ -210,6 +211,8 @@ pub fn run() {
             crate::ui_commands::position_status,      // Task 11 (tuxlink-686)
             crate::ui_commands::config_set_privacy,    // tuxlink-39b (GPS privacy control surface)
             crate::ui_commands::config_set_connect,    // tuxlink-3o0 (CMS server endpoint control)
+            crate::modem_commands::config_get_ardop,   // tuxlink-4ek (ARDOP config read)
+            crate::modem_commands::config_set_ardop,   // tuxlink-4ek (ARDOP config write)
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
