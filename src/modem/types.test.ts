@@ -27,5 +27,6 @@ describe('ModemStatus wire contract', () => {
     expect(wire.widthHz).toBe(500);
     expect(wire.snDb).toBeCloseTo(8.4, 5);
     expect(wire.bytesRx).toBe(4128);
+    expect(wire.lastError).toBeNull();
   });
 });

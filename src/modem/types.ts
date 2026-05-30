@@ -33,7 +33,7 @@ export interface ModemStatus {
   lastError: string | null;
 }
 
-export const STOPPED: ModemStatus = {
+export const STOPPED: Readonly<ModemStatus> = {
   state: 'stopped',
   peer: null, mode: null, widthHz: null, pttBackend: null,
   snDb: null, vuDbfs: null, throughputBps: null,
