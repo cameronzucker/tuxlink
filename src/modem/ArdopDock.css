@@ -169,3 +169,32 @@
   margin: 0;
   white-space: pre;
 }
+
+/* RADIO-1 consent modal (Task 6.2). `--danger` is not currently in :root, so
+ * the error text uses an inline fallback. */
+.ardop-consent-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+.ardop-consent-modal {
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  padding: 18px 22px;
+  max-width: 480px;
+  font-size: 13px;
+  color: var(--text);
+}
+.ardop-consent-modal h3 { font-size: 14px; margin: 0 0 10px; color: var(--accent-2); }
+.ardop-consent-modal p { margin: 0 0 12px; line-height: 1.5; color: var(--text-dim); }
+.ardop-consent-ack { display: flex; gap: 8px; padding: 10px 0; align-items: flex-start; color: var(--text); font-size: 12px; line-height: 1.4; }
+.ardop-consent-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 14px; }
+.ardop-consent-actions button { font-size: 12px; padding: 5px 14px; border-radius: 3px; border: 1px solid var(--border-strong); background: var(--surface-2); color: var(--text); cursor: pointer; }
+.ardop-consent-actions button:last-child { background: var(--accent); border-color: var(--accent); color: #1a0e02; font-weight: 600; }
+.ardop-consent-actions button[disabled] { opacity: 0.4; cursor: default; }
+.ardop-dock-error { color: var(--danger, #ff6f6f); font-size: 11px; padding: 6px 0; margin: 0; }

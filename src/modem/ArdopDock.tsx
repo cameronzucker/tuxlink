@@ -1,5 +1,8 @@
 import { useState } from 'react';
+import { invoke } from '@tauri-apps/api/core';
 import { useModemStatus } from './useModemStatus';
+import { useConsent } from './useConsent';
+import { ConsentModal } from './ConsentModal';
 import type { ModemStatus } from './types';
 import './ArdopDock.css';
 
@@ -38,6 +41,45 @@ function fmtUptime(sec: number): string {
 export function ArdopDock() {
   const { status } = useModemStatus();
   const [target, setTarget] = useState('');
+  const consent = useConsent();
+  const [showConsent, setShowConsent] = useState(false);
+  const [connecting, setConnecting] = useState(false);
+  const [connectError, setConnectError] = useState<string | null>(null);
+
+  const doConnect = async (tok: string) => {
+    setConnecting(true);
+    setConnectError(null);
+    try {
+      await invoke('modem_ardop_connect', { target: target.trim(), consentToken: tok });
+    } catch (e) {
+      setConnectError(String(e));
+    } finally {
+      setConnecting(false);
+    }
+  };
+
+  const onConnectClick = () => {
+    if (consent.token) {
+      void doConnect(consent.token);
+    } else {
+      setShowConsent(true);
+    }
+  };
+
+  const onConsentConfirm = async () => {
+    setShowConsent(false);
+    try {
+      // RADIO-1 SAFETY: token minted on backend; frontend never generates it.
+      // A frontend-generated token would let a compromised renderer self-mint
+      // and bypass the consent gate (the backend rejects unknown tokens, but
+      // we never want even the *appearance* of a client-side mint path).
+      const tok = await invoke<string>('modem_mint_consent');
+      consent.grant(tok);
+      void doConnect(tok);
+    } catch (e) {
+      setConnectError(`failed to mint consent token: ${e}`);
+    }
+  };
 
   return (
     <aside className="ardop-dock" data-testid="ardop-dock-root">
@@ -64,11 +106,14 @@ export function ArdopDock() {
           <button
             type="button"
             className="ardop-dock-btn ardop-dock-btn-primary"
-            disabled={target.trim() === ''}
-            // onClick wired in Task 6.2 (consent modal flow)
+            disabled={target.trim() === '' || connecting}
+            onClick={onConnectClick}
           >
-            Connect
+            {connecting ? 'Connecting…' : 'Connect'}
           </button>
+          {connectError !== null && (
+            <p className="ardop-dock-error" role="alert">{connectError}</p>
+          )}
         </section>
       )}
 
@@ -114,6 +159,14 @@ Up     ${fmtUptime(status.uptimeSec)}`}
             </pre>
           </section>
         </>
+      )}
+
+      {showConsent && (
+        <ConsentModal
+          target={target.trim()}
+          onCancel={() => setShowConsent(false)}
+          onConfirm={onConsentConfirm}
+        />
       )}
     </aside>
   );

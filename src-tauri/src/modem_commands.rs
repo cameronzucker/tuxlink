@@ -86,6 +86,18 @@ pub fn modem_get_status(session: State<'_, Arc<ModemSession>>) -> ModemStatus {
     modem_get_status_inner(&session)
 }
 
+/// RADIO-1: mint a fresh per-session consent token on the BACKEND and return
+/// it to the frontend. The frontend invokes this from the consent-modal's
+/// Connect button (after the operator ticks the acknowledgement) so that the
+/// token authorizing the subsequent `modem_ardop_connect` was produced by
+/// the same trust boundary that validates it. A frontend-generated token
+/// would let a compromised renderer self-mint — the gate would be theater.
+/// See [`ModemSession::mint_consent_token`] for storage semantics.
+#[tauri::command]
+pub fn modem_mint_consent(session: State<'_, Arc<ModemSession>>) -> String {
+    session.mint_consent_token()
+}
+
 /// Disconnect the modem: invalidates the RADIO-1 consent token, takes the
 /// live transport handle, resets status to Stopped, and shuts the transport
 /// down (best-effort `DISCONNECT` on the cmd socket).
@@ -518,5 +530,30 @@ mod tests {
             session.take_transport().is_some(),
             "successful connect must install a transport handle"
         );
+    }
+
+    // ── Task 6.2 — mint + connect end-to-end via the same code path ──────
+
+    /// RADIO-1: prove the `modem_mint_consent` Tauri command path produces a
+    /// token that unlocks `modem_ardop_connect`. We test the underlying
+    /// `mint_consent_token()` call (the same function the command wraps) +
+    /// `modem_ardop_connect_inner_with_factory` so the end-to-end loop is
+    /// verified WITHOUT requiring a Tauri `State` constructor. If a future
+    /// refactor splits the two functions onto different storage, this test
+    /// will fail loudly — which is the desired signal.
+    #[test]
+    fn mint_then_connect_with_matching_token_succeeds() {
+        use crate::modem_status::ModemSession;
+        let session = std::sync::Arc::new(ModemSession::new());
+        // Directly testing the same path `modem_mint_consent` uses.
+        let token = session.mint_consent_token();
+        let result = modem_ardop_connect_inner_with_factory(
+            &session,
+            "W7RMS-10",
+            &token,
+            &test_ardop_ui_config(),
+            |_cfg, _t| Ok(stub_transport()),
+        );
+        assert!(result.is_ok(), "result: {result:?}");
     }
 }

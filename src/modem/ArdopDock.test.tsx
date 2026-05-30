@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import { ArdopDock } from './ArdopDock';
 import { STOPPED, type ModemStatus } from './types';
 
@@ -7,6 +7,11 @@ const mockUseModemStatus = vi.fn();
 vi.mock('./useModemStatus', () => ({
   useModemStatus: () => mockUseModemStatus(),
 }));
+
+// The modal-open smoke test exercises onClick → setShowConsent(true). It does
+// NOT click the modal's Connect (which would invoke `modem_mint_consent`), so
+// no @tauri-apps/api/core mock is required here. The full mint→connect wire
+// is covered end-to-end by Task 7.1's integration test.
 
 beforeEach(() => {
   mockUseModemStatus.mockReset();
@@ -35,6 +40,16 @@ describe('<ArdopDock> stopped', () => {
     expect(screen.getByTestId('ardop-dock-root')).toBeInTheDocument();
     expect(screen.getByLabelText(/target callsign/i)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /connect/i })).toBeInTheDocument();
+  });
+
+  it('opens the consent modal when Connect is clicked', () => {
+    mockUseModemStatus.mockReturnValue({ status: STOPPED, loading: false });
+    render(<ArdopDock />);
+    const input = screen.getByTestId('ardop-target');
+    fireEvent.change(input, { target: { value: 'W7RMS-10' } });
+    fireEvent.click(screen.getByRole('button', { name: /^connect$/i }));
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    expect(screen.getByText(/About to transmit on amateur radio/i)).toBeInTheDocument();
   });
 });
 
