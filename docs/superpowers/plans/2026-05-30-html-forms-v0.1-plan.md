@@ -1,13 +1,23 @@
-# HTML Forms v0.1 Implementation Plan (rev-2)
+# HTML Forms v0.1 Implementation Plan (rev-3)
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-> **Rev-2 changes** (post 3-round plan review):
-> - **T0.2 — `OutboundMessage` disambiguation**: rev-1 said "grep all callers of `OutboundMessage {`"; that catches a different struct (`session::OutboundMessage`) at 3 of 6 grep hits. Rev-2 lists the exact 3 callers and explicitly warns away from the session struct.
-> - **T0.3 — `pat_client::send` signature**: rev-1 assumed `send(&OutboundMessage)`; actual sig is positional (`to: &[&str], subject, body, date`) and multipart is already default. Rev-2 adds a NEW method `send_with_attachments` (avoids the existing `send` signature change) and updates `PatBackend::send_message` to branch.
-> - **T1.3 — quick-xml version**: rev-1 said `0.36`; spec §10 mandates `0.39.x`. Rev-2 fixes.
-> - **T1.7, T9.x — `dev/scratch/` paths**: rev-1 used relative paths that don't exist in this worktree (gitignored + physically absent). Rev-2 uses absolute paths into the main checkout.
-> - **Phase 9 — parallel claim**: rev-1 said "parallel-safe"; rev-2 corrects to serial (T9.1→T9.2→T9.3→T9.4) — each task edits 3 shared files (catalog/templates/mod/forms-index) that would merge-conflict.
+> **Rev-3 changes** (post 4-round plan review — 3 design rounds + 1 verification round):
+>
+> **Rev-2 fixed** (caught by R1/R2/R3 design rounds):
+> - **T0.2 — `OutboundMessage` disambiguation**: rev-1's "grep all callers" catches a different struct (`session::OutboundMessage`). Rev-2 lists the exact 3 in-scope callers.
+> - **T0.3 — `pat_client::send` signature**: rev-1 assumed `send(&OutboundMessage)`; actual sig is positional. Rev-2 adds `send_with_attachments` method.
+> - **T1.3 — quick-xml version**: rev-1 said `0.36`; spec §10 mandates `0.39.x`.
+> - **T1.7, T9.x — `dev/scratch/` paths**: rev-1 used relative paths that don't resolve in this worktree.
+> - **Phase 9 — parallel claim**: rev-1 said "parallel-safe"; rev-2 corrects to serial.
+>
+> **Rev-3 fixed** (caught by R4 verification round):
+> - **T0.2 Step 1 grep filter**: rev-2's `grep -v "session::"` didn't exclude `src/winlink/session.rs:429`'s unqualified `OutboundMessage {` (same-module reference doesn't use the `session::` prefix). Rev-3 adds `grep -v "src/winlink/session.rs"`.
+> - **T0.3 fabricated types**: rev-2's `send_with_attachments` impl code used phantom `PatClientError::Send`, `self.callsign`, `self.client`, `BackendError::Transport` — all wrong vs actual `Http`/`Status`/`TooLarge` variants, `self.http` field, `TransportFailed` variant. Rev-3 makes the impl block **spec-level** (instructs subagent to read actual types from the real file) while keeping the test code concrete.
+> - **Vestigial 0.36 references**: rev-2 had 4 leftover `0.36` strings in commit messages + verify command. Rev-3 fixes all.
+> - **Self-Review checklist drift**: rev-2 still had "T9.1–9.4 can run in parallel" in the Self-Review section + execution-handoff section. Rev-3 corrects.
+>
+> **Operator-honest disclosure**: BRF review converged but is asymptotic; rev-3 may still have polish issues a 5th round would catch. The remaining defects are likely P2-class (cosmetic / mild drift), but a subagent following any step verbatim that hits an error should STOP and surface to the main session rather than fabricate a workaround. The first compile failure in subagent execution is the operator's final review gate.
 
 **Goal:** Ship HTML Forms v0.1 — bidirectional Winlink form support (render incoming, author + send ICS-213) with 5 bundled forms (ICS-213, ICS-309, Position Report, Bulletin, Damage Assessment), wire-format compatible with Winlink Express and Pat.
 
@@ -75,7 +85,7 @@
 | `src/compose/Compose.tsx` | Add "Compose form…" button + unsaved-changes dialog wiring | T6.1, T6.2 |
 | `src/compose/useDraft.ts:63-67` | Extend `DraftData` with `formId?` + `formFields?` | T6.3 |
 | `src/compose/useDraft.test.ts` (or `draft.test.ts:74`) | Tests for form-draft persistence | T6.4 |
-| `src-tauri/Cargo.toml` | Add `quick-xml = "0.36"` (or whichever 0.36+ matches MSRV) | T1.3 |
+| `src-tauri/Cargo.toml` | Add `quick-xml = "0.39"` (matches spec §10 mandate) | T1.3 |
 
 ### Cross-cutting
 
@@ -198,7 +208,7 @@ The other 3 matches from `grep "OutboundMessage {"` are NOT in scope:
 
 - [ ] **Step 1: Confirm the scope is exactly 3 callers**
 
-Run: `grep -rn "OutboundMessage {" src-tauri/src/ src-tauri/tests/ | grep -v "session::" | grep -v "pub struct"`
+Run: `grep -rn "OutboundMessage {" src-tauri/src/ src-tauri/tests/ | grep -v "session::" | grep -v "pub struct" | grep -v "src/winlink/session.rs"`
 
 Expected output (exactly 3 lines):
 ```
@@ -206,6 +216,8 @@ src-tauri/src/ui_commands.rs:654:    let msg = OutboundMessage {
 src-tauri/tests/winlink_backend_test.rs:64:    let msg = OutboundMessage {
 src-tauri/tests/winlink_backend_test.rs:177:        .send_message(OutboundMessage {
 ```
+
+The `grep -v "src/winlink/session.rs"` is load-bearing: that file's `OutboundMessage { ... }` literal at line 429 is the *unqualified* in-module construction of `session::OutboundMessage` (it does NOT use the `session::` prefix since it IS the session module), so the previous `grep -v "session::"` filter alone would have included it.
 
 If the count differs, STOP and re-read the disambiguation note above — do NOT mechanically apply the fix to extra lines.
 
@@ -318,81 +330,49 @@ async fn test_send_with_attachments_includes_file_parts() {
 Run: `cargo test --manifest-path src-tauri/Cargo.toml --test pat_client_test test_send_with_attachments_includes_file_parts -- --test-threads=1`
 Expected: compile error — `PatClient` has no `send_with_attachments` method.
 
-- [ ] **Step 4: Implement `send_with_attachments` in pat_client.rs**
+- [ ] **Step 4: Implement `send_with_attachments` in pat_client.rs (spec-level — subagent reads real file)**
 
-Add immediately after the existing `send` fn (around line ~250 in pat_client.rs):
+The subagent MUST read the existing `send` fn at `src-tauri/src/pat_client.rs:207-250` (approximately) to learn the actual:
 
-```rust
-/// Same as `send`, but with file attachments (multipart/form-data file parts).
-///
-/// Used by HTML Forms v0.1 (tuxlink-v1p) to attach RMS_Express_Form_*.xml
-/// payloads. Other sends (plain text) continue to use `send` unchanged.
-///
-/// The form-field name for attachments matches Pat's REST API convention
-/// (see Pat source at internal/forms/builder.go for the expected key).
-pub async fn send_with_attachments(
-    &self,
-    to: &[&str],
-    subject: &str,
-    body: &str,
-    date: &str,
-    attachments: &[crate::winlink_backend::OutboundAttachment],
-) -> Result<(), PatClientError> {
-    let mut form = reqwest::multipart::Form::new()
-        .text("subject", subject.to_string())
-        .text("body", body.to_string())
-        .text("date", date.to_string());
-    // Add `to` fields per existing send's pattern (verify against pat_client.rs:212-218
-    // for the exact key — likely repeated "to" field per recipient).
-    for addr in to {
-        form = form.text("to", addr.to_string());
-    }
-    // File parts.
-    for attach in attachments {
-        let part = reqwest::multipart::Part::bytes(attach.bytes.clone())
-            .file_name(attach.filename.clone())
-            .mime_str(&attach.content_type)
-            .map_err(|e| PatClientError::Send(format!("invalid mime type: {}", e)))?;
-        form = form.part("files", part);  // verify exact field name per Pat REST contract
-    }
-    let url = format!("{}/api/mailbox/{}/Outbox", self.base_url, self.callsign);
-    // (use existing URL-construction pattern; adjust if pat_client uses a helper)
-    let response = self.client.post(&url).multipart(form).send().await
-        .map_err(|e| PatClientError::Send(e.to_string()))?;
-    if !response.status().is_success() {
-        return Err(PatClientError::Send(format!("HTTP {}", response.status())));
-    }
-    Ok(())
-}
-```
+- `PatClient` field names — likely `self.http` (NOT `self.client`), `self.base_url`. Verify.
+- `PatClientError` variants — likely `Http(reqwest::Error)`, `Status(u16)`, `TooLarge { cap: usize }`. **Do NOT invent new variants** like `Send(String)`. If error-mapping needs a new shape, extend `PatClientError` with a new variant (separate commit) — do not fabricate.
+- URL path — likely `/api/mailbox/out` (lowercase, NO callsign segment). Read line ~215 to confirm.
+- HTTP client field — confirm whether it's `self.http` or `self.client`.
+
+**Behavior spec for `send_with_attachments`:**
+
+1. Build a `reqwest::multipart::Form` mirroring the existing `send` (text fields: `subject`, `body`, `date`, plus repeated `to` per recipient).
+2. For each `OutboundAttachment` in `attachments`, append a file part:
+   - Use `reqwest::multipart::Part::bytes(attach.bytes.clone())` (clone bytes; the Part API consumes the buffer).
+   - Set `.file_name(attach.filename.clone())` and `.mime_str(&attach.content_type)`.
+   - Append via `form = form.part("<field_name>", part)`.
+   - **Field name TBD by Pat's REST contract.** Read `/home/administrator/Code/tuxlink/dev/scratch/tuxlink-pat/internal/forms/builder.go` (absolute path; gitignored in this worktree) for the canonical name — likely `attachment`, `file`, or `files`. The subagent updates BOTH the test regex (Step 2) AND the impl to use the discovered name.
+3. POST `.multipart(form).send().await` to the URL from existing `send`'s URL pattern.
+4. Error handling mirrors existing `send` — wrap reqwest errors in `PatClientError::Http(_)`, status errors in `PatClientError::Status(_)`. **Do NOT invent a `PatClientError::Send(String)` variant**.
+5. Return `Result<(), PatClientError>`.
+
+The subagent's implementation is correct when (a) the test at Step 2 passes AND (b) all error mappings use the existing `PatClientError` variants AND (c) the existing `send` fn signature + behavior is unchanged.
 
 - [ ] **Step 5: Run test to verify it passes**
 
 Run: `cargo test --manifest-path src-tauri/Cargo.toml --test pat_client_test test_send_with_attachments_includes_file_parts -- --test-threads=1`
 Expected: 1 passed.
 
-If it fails on the `name="files"` regex but succeeds on the others, the Pat field name is different — read `dev/scratch/tuxlink-pat/internal/forms/builder.go` (absolute path: `/home/administrator/Code/tuxlink/dev/scratch/tuxlink-pat/internal/forms/builder.go`) for the correct field name and update both the test regex and the impl.
+If the test's `name="files"` regex doesn't match but the other matchers do, the Pat field name differs — confirm against `/home/administrator/Code/tuxlink/dev/scratch/tuxlink-pat/internal/forms/builder.go` and update BOTH the test regex AND the impl `form.part("<name>", part)` call to match.
 
 - [ ] **Step 6: Update PatBackend::send_message to call new method when attachments present**
 
-In `src-tauri/src/winlink_backend.rs` `PatBackend::send_message` (around line 1684-1688):
+In `src-tauri/src/winlink_backend.rs`'s `PatBackend::send_message` (subagent: find via `grep -n "self.pat_client.send" src-tauri/src/winlink_backend.rs` — expected around line 1684-1688; LSP/IDE will resolve), change the call:
 
-```rust
-// Old code:
-//   self.pat_client.send(&to_refs, &msg.subject, &msg.body, &msg.date).await
-//       .map_err(|e| BackendError::Transport { reason: e.to_string() })?;
-// New code:
-if msg.attachments.is_empty() {
-    self.pat_client.send(&to_refs, &msg.subject, &msg.body, &msg.date).await
-} else {
-    self.pat_client.send_with_attachments(
-        &to_refs, &msg.subject, &msg.body, &msg.date, &msg.attachments
-    ).await
-}
-.map_err(|e| BackendError::Transport { reason: e.to_string() })?;
-```
+**Spec for the change:**
 
-(Adjust to match the exact existing call site shape; do not restructure the function.)
+- BEFORE: a single `self.pat_client.send(&to_refs, &msg.subject, &msg.body, &msg.date).await.map_err(...)` call.
+- AFTER: branch on `msg.attachments.is_empty()`:
+  - empty → call existing `send` (unchanged behavior)
+  - non-empty → call `send_with_attachments(&to_refs, &msg.subject, &msg.body, &msg.date, &msg.attachments)`
+  - **Error mapping**: use the EXISTING `.map_err(...)` clause already at that call site. The variant is `BackendError::TransportFailed { reason }` (NOT `BackendError::Transport { reason }` — verify by reading `pub enum BackendError` around line 289). The reason value is `e.to_string()`.
+
+Subagent: copy-paste the existing error mapping clause; only add the `if msg.attachments.is_empty() { ... } else { ... }` wrapper around the call.
 
 - [ ] **Step 7: Full pat_client_test + winlink_backend_test regression**
 
@@ -665,13 +645,13 @@ Spec §10 mandates `quick-xml 0.39.x`. Pin to a 0.39.x release with documented e
 - [ ] **Step 2: Verify it resolves**
 
 Run: `cargo build --manifest-path src-tauri/Cargo.toml 2>&1 | grep -E "Compiling quick-xml|error" | head -5`
-Expected: a line `Compiling quick-xml v0.36.x` and no errors.
+Expected: a line `Compiling quick-xml v0.39.x` and no errors.
 
 - [ ] **Step 3: Commit**
 
 ```bash
 git add src-tauri/Cargo.toml src-tauri/Cargo.lock
-git commit -m "build(deps): add quick-xml 0.36 for form XML parsing (tuxlink-v1p)
+git commit -m "build(deps): add quick-xml 0.39 for form XML parsing (tuxlink-v1p)
 
 Required by spec §10 hardening. default-features=false to avoid pulling
 optional serialize feature unless needed.
@@ -904,7 +884,7 @@ Expected: 9 passed (4 detection from T1.4 + 5 new parse tests).
 git add src-tauri/src/forms/parse.rs
 git commit -m "feat(forms): parse_form_xml — hardened per spec §3 + §10 (tuxlink-v1p)
 
-Uses quick-xml 0.36 with:
+Uses quick-xml 0.39 with:
   - DOCTYPE rejection (no entity expansion / billion laughs)
   - depth cap (MAX_XML_NESTING_DEPTH=8)
   - event count cap (MAX_XML_EVENTS=10000)
@@ -2825,7 +2805,7 @@ Once all 4 smokes are green, the implementation is ready to merge.
 
 **No placeholders** — every step has actual content (no "TODO" / "fill in later" / "similar to Task N"). Where implementation is deferred to the spec, the spec §reference is explicit.
 
-**Cross-task conflicts** — `ui_commands.rs` is touched by T2.1 + T2.2 + T3.1; these are sequenced. Per-form tasks T9.1–9.4 touch isolated files and can run in parallel. T0.x callers update is single-file in `winlink_backend.rs` after T0.1's struct change.
+**Cross-task conflicts** — `ui_commands.rs` is touched by T2.1 + T2.2 + T3.1; these are sequenced. **Per-form tasks T9.1–9.4 touch 3 shared files (`forms/catalog.rs`, `forms/templates/mod.rs`, `src/forms/index.ts`) and MUST run serially** (corrected from rev-1's parallel claim — see Phase 9 intro). T0.x callers update is single-file in `winlink_backend.rs` after T0.1's struct change.
 
 ---
 
@@ -2839,10 +2819,10 @@ Once all 4 smokes are green, the implementation is ready to merge.
 
 2. **Inline Execution** — Execute via `superpowers:executing-plans` in this session with batch checkpoints. Best fit: smaller plans or when shared context across tasks adds value.
 
-**Recommendation: Subagent-Driven.** This plan is large enough that inline execution would consume substantial main-session context; subagent-per-task isolates risk and parallelizes Phase 9's per-form tasks naturally. Two-stage review (subagent → main session review → next subagent) provides checkpoint discipline.
+**Recommendation: Subagent-Driven.** This plan is large enough that inline execution would consume substantial main-session context; subagent-per-task isolates risk and provides checkpoint discipline. Two-stage review (subagent → main session review → next subagent) is the model. Phase 9's per-form tasks are SERIAL (corrected from rev-1; see Phase 9 intro for the shared-file conflict reasons).
 
 **Per BRF Step 5:** before kicking off subagent execution, **operator decision required** on:
 - Whether all of Phases 0–11 should execute in this session (12–18 days estimated), OR scope down to a v0.1.0-MVP slice (Phases 0–8 with only ICS-213; defer Phase 9 forms to v0.1.1)
-- Whether to use **Agent Teams** for multi-agent parallel Phase 9 execution
+- **Agent Teams is NOT a fit here** — Phase 9 was the only candidate for parallel multi-agent execution, and rev-2/rev-3 correction makes it serial. Stick with one-subagent-per-task.
 
 Agent: yew-cypress-oak
