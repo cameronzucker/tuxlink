@@ -1829,6 +1829,7 @@ mod native_read_state_tests {
             },
             pat_mbo_address: None,
             packet: PacketConfig::default(),
+            modem_ardop: None,
         }
     }
 
@@ -2471,6 +2472,7 @@ mod native_read_state_tests {
             },
             pat_mbo_address: None,
             packet: PacketConfig::default(),
+            modem_ardop: None,
         }
     }
 
