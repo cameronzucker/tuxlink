@@ -2,7 +2,7 @@
 """new_tuxlink_worktree.py — one-command ADR-0008-compliant worktree creation.
 
 Creates a worktree at worktrees/<bd-id-or-slug>/ off the specified base branch
-(default: feat/v0.0.1), creates a per-task branch inside, and optionally claims
+(default: main), creates a per-task branch inside, and optionally claims
 a bd issue + records the worktree path in the issue body via bd remember.
 
 This is the friction-reducer for the worktree-mandatory rule (ADR 0008).
@@ -18,8 +18,8 @@ Usage:
   # With session moniker recorded in the bd note for forensics:
   .claude/scripts/new_tuxlink_worktree.py --slug quick-fix --issue tuxlink-wkz --moniker cedar
 
-  # Custom base branch:
-  .claude/scripts/new_tuxlink_worktree.py --slug logs --issue tuxlink-eil --base feat/v0.0.1
+  # Custom base branch (e.g. stacked PR on a sibling branch still in review):
+  .claude/scripts/new_tuxlink_worktree.py --slug logs --issue tuxlink-eil --base bd-other-id/parent-feature
 
 Ported from support-tools/.claude/scripts/New-LfstWorktree.ps1 per Decision 3
 of the 2026-05-17 LFST→tuxlink port catalog (Python for cross-platform reuse).
@@ -68,7 +68,7 @@ def main() -> int:
             "If you don't have an issue, create one first with `bd create ...`."
         ),
     )
-    parser.add_argument("--base", default="feat/v0.0.1", help="Base branch (default: feat/v0.0.1)")
+    parser.add_argument("--base", default="main", help="Base branch (default: main)")
     parser.add_argument("--moniker", help="Session moniker — recorded in the bd note for forensics")
     args = parser.parse_args()
 
