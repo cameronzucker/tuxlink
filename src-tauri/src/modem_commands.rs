@@ -204,7 +204,7 @@ where
     };
 
     // ─── Init the TNC ────────────────────────────────────────────────────
-    let init_cfg = init_config_from_session(session);
+    let init_cfg = init_config_from_persisted_config();
     if let Err(e) = transport.init(&init_cfg) {
         let msg = format!("init failed: {e}");
         let mut s = ModemStatus::stopped();
@@ -255,7 +255,7 @@ where
 /// and `gridsquare` from `identity.grid` (defaulting to `"AA00"` when no
 /// grid is set — the ARDOP TNC requires a non-empty value but the broadcast
 /// precision gate happens upstream in the position layer).
-fn init_config_from_session(_session: &Arc<ModemSession>) -> InitConfig {
+fn init_config_from_persisted_config() -> InitConfig {
     let (mycall, grid) = config::read_config()
         .map(|c| {
             // Prefer callsign (CMS path); fall back to identifier (offline path).
