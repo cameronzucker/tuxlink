@@ -62,8 +62,11 @@ impl KissDecoder {
             match b {
                 FEND => {
                     if self.in_frame && !self.buf.is_empty() {
-                        // first buffered byte is the command/port nibble
-                        if self.buf[0] == 0x00 {
+                        // The first buffered byte is the KISS command byte: low nibble =
+                        // command (0 = data), high nibble = TNC port. A data frame from
+                        // ANY port has low-nibble 0 (tuxlink-2y4) — accept 0x00, 0x10,
+                        // 0x20, … not only the literal 0x00.
+                        if self.buf[0] & 0x0f == 0 {
                             out.push(self.buf[1..].to_vec());
                         }
                     }
@@ -91,6 +94,28 @@ impl KissDecoder {
 #[cfg(test)]
 mod kiss_decode_tests {
     use super::*;
+
+    // tuxlink-2y4: KISS data frames carry command 0x00 in the LOW nibble; the HIGH
+    // nibble is the TNC port. A multi-port TNC may emit a data frame on port 1+
+    // (command byte 0x10, 0x20, …). The decoder must accept any (byte & 0x0f) == 0,
+    // not only the literal 0x00, or it silently drops a valid inbound frame (RX bug).
+    #[test]
+    fn decoder_accepts_a_data_frame_from_a_nonzero_kiss_port() {
+        let mut dec = KissDecoder::new();
+        // FEND, cmd 0x10 (port 1, type 0 = data), payload AB CD, FEND
+        let frames = dec.push(&[FEND, 0x10, 0xAB, 0xCD, FEND]);
+        assert_eq!(frames, vec![vec![0xAB, 0xCD]], "a port-1 data frame must decode");
+    }
+
+    // tuxlink-2y4 guard: a non-data KISS command (low nibble != 0, e.g. a SET-param
+    // command 0x01) is still NOT a data frame and must be dropped.
+    #[test]
+    fn decoder_still_drops_a_non_data_command_frame() {
+        let mut dec = KissDecoder::new();
+        let frames = dec.push(&[FEND, 0x01, 0xAB, FEND]); // low nibble 1 => not data
+        assert!(frames.is_empty(), "a non-data KISS command must not decode as a data frame");
+    }
+
     #[test]
     fn decodes_a_full_frame_across_two_chunks() {
         let framed = kiss_data_frame(&[FEND, FESC, 0xAA, 0xBB]);

@@ -162,25 +162,12 @@ impl Default for Ax25ParamsConfig {
     }
 }
 
-/// Minimum runtime T1 retransmit timer, in milliseconds (tuxlink-uhc).
-///
-/// The AX.25 connect (SABM→UA) and steady-state I-frame retransmit both wait one
-/// T1 before resending. A real RF connect round-trip to a gateway — TXDELAY, the
-/// over-the-air SABM, gateway turnaround, and the over-the-air reply — is several
-/// seconds (on-air to W7MOT-6 the DM landed ~7 s after the connect). A T1 shorter
-/// than that re-keys the radio with a second SABM before the first can be answered:
-/// the "rapid re-key" the operator observed, and a likely cause of the duplicate
-/// connect the gateway refused. So `into_params` floors the runtime T1 here.
-///
-/// Flooring is zero-downside: T1 only bounds *retransmit-on-silence*; a successful
-/// connect or exchange returns the instant the reply arrives, regardless of T1. A
-/// configured value at or above this floor is honored verbatim — this only raises a
-/// stored value that is too short for RF.
-pub const MIN_RF_T1_MS: u64 = 10_000;
-
 impl Ax25ParamsConfig {
-    /// Convert to P2's runtime `Ax25Params` type. The T1 timer is floored to
-    /// [`MIN_RF_T1_MS`] so a too-short persisted value cannot make connect re-key.
+    /// Convert to P2's runtime `Ax25Params` type. T1 is honored verbatim — tuxlink-2y4
+    /// REVERTED the uhc RF floor (`MIN_RF_T1_MS`): it tripled worst-case airtime
+    /// (3 s → 10 s per retransmit) and was the wrong lever. Runaway connect airtime is
+    /// now bounded by the connect cap (`Ax25Params::connect_timeout` + a ≤2-SABM key
+    /// limit in `datalink::connect`), not by inflating the retransmit timer.
     pub fn into_params(self) -> crate::winlink::ax25::Ax25Params {
         crate::winlink::ax25::Ax25Params {
             txdelay: self.txdelay,
@@ -188,8 +175,11 @@ impl Ax25ParamsConfig {
             slot_time: self.slot_time,
             paclen: self.paclen as usize,
             maxframe: self.maxframe,
-            t1: std::time::Duration::from_millis(self.t1_ms.max(MIN_RF_T1_MS)),
+            t1: std::time::Duration::from_millis(self.t1_ms),
             n2_retries: self.n2_retries,
+            // connect_timeout (the RADIO-1 airtime ceiling) is a fixed safety default,
+            // not yet operator-tunable from the persisted [packet] section.
+            ..Default::default()
         }
     }
 }
@@ -202,12 +192,29 @@ pub struct PacketConfig {
     /// Global, sticky station SSID (0–15). Operate as `<callsign>-<ssid>`.
     pub ssid: u8,
     /// The last KISS link the operator used (TCP host:port or serial device+baud).
-    /// `None` until the operator configures one.
+    /// `None` until the operator configures one. Deserialized leniently (tuxlink-efo):
+    /// an unrecognized variant degrades to `None` instead of bricking the whole read.
+    #[serde(default, deserialize_with = "deserialize_lenient_link")]
     pub link: Option<KissLinkConfig>,
     /// AX.25 timing/windowing knobs (1200-baud defaults).
     pub params: Ax25ParamsConfig,
     /// Idle-listening default-on (spec §4.5): arm `answer()` when not dialing.
     pub listen_default: bool,
+}
+
+/// Deserialize `packet.link` leniently (tuxlink-efo): an unrecognized variant
+/// (forward/sideways schema skew across concurrent dev builds — the original symptom
+/// was a Bluetooth-aware build's config bricking a non-Bluetooth build) degrades to
+/// `None` rather than erroring the whole config read. Reads the value as a generic
+/// JSON value first (always succeeds for valid JSON), then tries to convert it to a
+/// `KissLinkConfig`; any failure (unknown variant, missing/extra fields) yields
+/// `None` so the rest of the config still loads.
+fn deserialize_lenient_link<'de, D>(de: D) -> Result<Option<KissLinkConfig>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = Option::<serde_json::Value>::deserialize(de)?;
+    Ok(value.and_then(|v| serde_json::from_value::<KissLinkConfig>(v).ok()))
 }
 
 impl Default for PacketConfig {
@@ -280,13 +287,35 @@ pub fn validate_identity_describe(s: &str) -> Option<&'static str> {
     None
 }
 
-/// Resolve the config file path. Honors XDG_CONFIG_HOME, falls back to
-/// ~/.config/tuxlink/config.json.
+/// Resolve the config file path. Precedence: `TUXLINK_CONFIG_DIR` (tuxlink-efo dev
+/// override) > `XDG_CONFIG_HOME` > `~/.config`, ending in `.../tuxlink/config.json`
+/// (or `<TUXLINK_CONFIG_DIR>/config.json`).
 pub fn config_path() -> std::path::PathBuf {
-    let base = std::env::var_os("XDG_CONFIG_HOME")
+    resolve_config_path(
+        std::env::var_os("TUXLINK_CONFIG_DIR"),
+        std::env::var_os("XDG_CONFIG_HOME"),
+        std::env::var_os("HOME"),
+    )
+}
+
+/// Pure resolver behind [`config_path`] (testable without process-global env).
+/// `TUXLINK_CONFIG_DIR` (tuxlink-efo) is a tuxlink-specific override so a per-worktree
+/// dev build points at its OWN config dir — concurrent builds then stop contaminating
+/// one shared `~/.config/tuxlink/config.json` (the dev cousin of the Vite :1420
+/// collision). The dir holds `config.json` directly. Falls back to `XDG_CONFIG_HOME`,
+/// then `~/.config`.
+fn resolve_config_path(
+    tuxlink_config_dir: Option<std::ffi::OsString>,
+    xdg_config_home: Option<std::ffi::OsString>,
+    home: Option<std::ffi::OsString>,
+) -> std::path::PathBuf {
+    if let Some(dir) = tuxlink_config_dir {
+        return std::path::PathBuf::from(dir).join("config.json");
+    }
+    let base = xdg_config_home
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| {
-            let home = std::env::var_os("HOME").expect("HOME must be set");
+            let home = home.expect("HOME must be set");
             std::path::PathBuf::from(home).join(".config")
         });
     base.join("tuxlink").join("config.json")
@@ -526,6 +555,82 @@ mod tests {
         assert_eq!(reloaded.connect.host, "server.winlink.org");
     }
 
+    // tuxlink-efo: a packet.link variant THIS build doesn't know (forward/sideways
+    // schema skew across concurrent dev builds — the original symptom was a
+    // Bluetooth-aware build's config bricking a non-Bluetooth build) must NOT brick
+    // app-open. read_config degrades the unparseable link to None; the rest of the
+    // config is preserved.
+    #[test]
+    fn unknown_packet_link_variant_degrades_to_none_not_brick() {
+        let json = format!(
+            r#"{{
+                "schema_version": {ver},
+                "wizard_completed": true,
+                "connect": {{ "connect_to_cms": false, "transport": "Telnet" }},
+                "identity": {{ "callsign": null, "identifier": "W1TEST", "grid": null }},
+                "privacy": {{ "gps_state": "BroadcastAtPrecision", "position_precision": "FourCharGrid" }},
+                "packet": {{ "ssid": 7, "link": {{ "Telepathy": {{ "mac": "00:11:22" }} }} }}
+            }}"#,
+            ver = CONFIG_SCHEMA_VERSION
+        );
+        let config: Config = serde_json::from_str(&json)
+            .expect("an unknown packet.link variant must degrade to None, not error the whole read");
+        assert_eq!(config.packet.link, None, "the unknown link variant degrades to None");
+        assert_eq!(config.packet.ssid, 7, "the rest of the packet section is preserved");
+        assert_eq!(
+            config.identity.identifier.as_deref(),
+            Some("W1TEST"),
+            "identity (and the rest of the config) is preserved through the degradation"
+        );
+    }
+
+    // tuxlink-efo regression guard: a KNOWN link variant still parses to Some — the
+    // lenient degradation must not swallow valid links.
+    #[test]
+    fn known_packet_link_variant_still_parses_to_some() {
+        let json = format!(
+            r#"{{
+                "schema_version": {ver},
+                "wizard_completed": true,
+                "connect": {{ "connect_to_cms": false, "transport": "Telnet" }},
+                "identity": {{ "callsign": null, "identifier": "W1TEST", "grid": null }},
+                "privacy": {{ "gps_state": "BroadcastAtPrecision", "position_precision": "FourCharGrid" }},
+                "packet": {{ "ssid": 7, "link": {{ "Bluetooth": {{ "mac": "38:D2:00:01:55:5C" }} }} }}
+            }}"#,
+            ver = CONFIG_SCHEMA_VERSION
+        );
+        let config: Config = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            config.packet.link,
+            Some(KissLinkConfig::Bluetooth { mac: "38:D2:00:01:55:5C".into() }),
+            "a known link variant must round-trip to Some, not degrade"
+        );
+    }
+
+    // tuxlink-efo: a tuxlink-specific config-dir override so a per-worktree dev build
+    // points at its OWN config and concurrent builds stop contaminating one shared
+    // ~/.config/tuxlink/config.json. Takes precedence over XDG_CONFIG_HOME; the dir
+    // holds config.json directly. Tested via the pure resolver (no process-global env).
+    #[test]
+    fn resolve_config_path_prefers_tuxlink_config_dir() {
+        assert_eq!(
+            resolve_config_path(Some("/tmp/wt-a".into()), Some("/xdg".into()), Some("/home/u".into())),
+            std::path::PathBuf::from("/tmp/wt-a/config.json")
+        );
+    }
+
+    #[test]
+    fn resolve_config_path_falls_back_to_xdg_then_home() {
+        assert_eq!(
+            resolve_config_path(None, Some("/xdg".into()), Some("/home/u".into())),
+            std::path::PathBuf::from("/xdg/tuxlink/config.json")
+        );
+        assert_eq!(
+            resolve_config_path(None, None, Some("/home/u".into())),
+            std::path::PathBuf::from("/home/u/.config/tuxlink/config.json")
+        );
+    }
+
     // tuxlink-882: the privacy boundary. The grid is stored full; what may go on
     // air is reduced to the configured precision — 4 chars by default, 6 on opt-in.
     #[test]
@@ -611,35 +716,43 @@ mod tests {
         );
     }
 
-    // --- tuxlink-uhc: AX.25 connect TX timing ---------------------------------
-    // On-air (UV-Pro → W7MOT-6) the connect re-keyed the radio 2–3 times in fast
-    // succession before the gateway could answer: with T1 = 3 s the SABM retransmit
-    // loop fired again at ~3 s and ~6 s while the gateway's reply (DM) didn't land
-    // until ~7 s. A real RF connect round-trip is far longer than 3 s, so the
-    // runtime T1 must be floored to an RF-realistic minimum at the config→runtime
-    // boundary. The configured value is still honored whenever it is above the floor.
+    // --- tuxlink-2y4: AX.25 connect T1 is honored verbatim (uhc floor reverted) ---
+    // The uhc RF floor (MIN_RF_T1_MS = 10 s) tripled worst-case airtime and was the
+    // wrong lever for the runaway-keying incident; 2y4 reverted it. Runaway airtime is
+    // bounded by datalink::connect's ≤2-SABM key limit + connect_timeout cap, NOT by
+    // inflating the retransmit timer. into_params now passes T1 through unchanged.
 
     #[test]
-    fn into_params_floors_a_too_short_t1_to_the_rf_minimum() {
-        // A persisted 3 s T1 (the historical auto-default) is shorter than a real RF
-        // connect round-trip; into_params must raise it so connect sends ONE SABM and
-        // waits a full round-trip before any retransmit (no rapid re-key).
+    fn into_params_honors_a_short_t1_verbatim_no_floor() {
+        // The historical 3 s auto-default is passed through as-is — NOT floored to 10 s
+        // (tuxlink-2y4 reverted the uhc floor).
         let cfg = Ax25ParamsConfig { t1_ms: 3000, ..Ax25ParamsConfig::default() };
-        assert!(
-            cfg.into_params().t1 >= std::time::Duration::from_secs(10),
-            "a 3 s T1 must be floored to the RF-realistic connect minimum"
+        assert_eq!(
+            cfg.into_params().t1,
+            std::time::Duration::from_millis(3000),
+            "T1 must be honored verbatim — the uhc RF floor was reverted (2y4)"
         );
     }
 
     #[test]
-    fn into_params_honors_a_configured_t1_above_the_rf_minimum() {
-        // A configured T1 longer than the floor is the operator's choice — passed
-        // through verbatim, never clamped down.
+    fn into_params_honors_a_long_configured_t1_verbatim() {
+        // A longer configured T1 is the operator's choice — passed through verbatim.
         let cfg = Ax25ParamsConfig { t1_ms: 15_000, ..Ax25ParamsConfig::default() };
         assert_eq!(
             cfg.into_params().t1,
             std::time::Duration::from_millis(15_000),
-            "a configured T1 above the floor must be honored verbatim"
+            "a configured T1 must be honored verbatim"
+        );
+    }
+
+    #[test]
+    fn into_params_sets_the_radio1_connect_timeout_ceiling() {
+        // tuxlink-2y4: every runtime params carries the RADIO-1 connect airtime ceiling.
+        let cfg = Ax25ParamsConfig::default();
+        assert_eq!(
+            cfg.into_params().connect_timeout,
+            std::time::Duration::from_secs(25),
+            "into_params must carry the connect_timeout safety ceiling"
         );
     }
 }

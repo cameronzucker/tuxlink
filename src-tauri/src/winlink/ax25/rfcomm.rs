@@ -195,6 +195,29 @@ impl RfcommSocket {
     }
 }
 
+/// Format bytes as space-separated lowercase hex for the on-air diagnostic trace.
+fn hex_dump(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect::<Vec<_>>().join(" ")
+}
+
+/// Timestamped RX/TX byte trace for diagnosing the RFCOMM no-RX bug (tuxlink-4ef).
+/// Opt-in via the `TUXLINK_RFCOMM_TRACE` env var (silent otherwise) so the operator's
+/// ONE bounded + abortable on-air dial yields byte-level EVIDENCE instead of guesses:
+/// if TX lines print but no RX line ever does, the socket receives nothing (an
+/// RFCOMM/SPP transport issue, NOT a KISS-decode bug) → fall back to the proven TTY or
+/// fix the socket; if RX bytes arrive but don't decode, it's the KISS/AX.25 layer.
+/// Writes to stderr (the `tauri dev` console) — no session-log plumbing needed here.
+fn trace_bytes(dir: &str, bytes: &[u8]) {
+    if std::env::var_os("TUXLINK_RFCOMM_TRACE").is_none() {
+        return;
+    }
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| format!("{}.{:03}", d.as_secs(), d.subsec_millis()))
+        .unwrap_or_default();
+    eprintln!("[rfcomm {ts}] {dir} {} bytes: {}", bytes.len(), hex_dump(bytes));
+}
+
 impl std::io::Read for RfcommSocket {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         // SAFETY: read up to buf.len() bytes into the caller's buffer on our fd.
@@ -204,7 +227,11 @@ impl std::io::Read for RfcommSocket {
             // ErrorKind::WouldBlock — recv_frame treats that as "no frame yet".
             return Err(std::io::Error::last_os_error());
         }
-        Ok(n as usize)
+        let n = n as usize;
+        if n > 0 {
+            trace_bytes("RX", &buf[..n]); // tuxlink-4ef on-air evidence
+        }
+        Ok(n)
     }
 }
 
@@ -215,6 +242,7 @@ impl std::io::Write for RfcommSocket {
         if n < 0 {
             return Err(std::io::Error::last_os_error());
         }
+        trace_bytes("TX", &buf[..n as usize]); // tuxlink-4ef on-air evidence
         Ok(n as usize)
     }
     fn flush(&mut self) -> std::io::Result<()> {
@@ -247,6 +275,14 @@ pub fn resolve_spp_channel(mac: &str) -> u8 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // tuxlink-4ef: the on-air byte trace formats bytes as space-separated lowercase hex
+    // so the operator can read TX/RX frames off the console during the diagnostic dial.
+    #[test]
+    fn hex_dump_formats_space_separated_lowercase() {
+        assert_eq!(hex_dump(&[0xC0, 0x00, 0xAB, 0x0F]), "c0 00 ab 0f");
+        assert_eq!(hex_dump(&[]), "");
+    }
 
     #[test]
     fn parse_bdaddr_reverses_octets_for_little_endian_sockaddr() {

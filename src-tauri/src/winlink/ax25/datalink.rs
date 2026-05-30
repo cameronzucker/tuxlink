@@ -49,6 +49,11 @@ pub struct Ax25Stream {
     /// reference `Connection.cs` `remoteBusy`).
     remote_busy: bool,
     closed: bool,
+    /// Set true once the link is ESTABLISHED — a UA was received (connect) or sent in
+    /// reply to an inbound SABM (answer). Gates the `Drop` auto-teardown (tuxlink-2y4):
+    /// a connect that never reaches UA (timeout / DM / abort) must NOT key a DISC when
+    /// its pre-UA stream is dropped. Explicit `disconnect()` is unaffected.
+    established: bool,
 }
 
 /// Open a connected-mode AX.25 link: push the KISS TNC params, send SABM (with the
@@ -77,37 +82,53 @@ pub fn connect(
         unacked: std::collections::BTreeMap::new(),
         remote_busy: false,
         closed: false,
+        established: false,
     };
     // Push the KISS TNC params from the timing config. CSMA itself is the modem's job.
+    // Abort-gated: `AbortableByteLink::write` refuses to key after a Cancel (tuxlink-2y4),
+    // so push_kiss_params + each SABM below are no-ops once the operator aborts.
     stream.push_kiss_params()?;
 
-    // Send SABM (P=1) and await UA, bounded by N2 retransmits of T1.
+    // tuxlink-2y4 RADIO-1 bounded connect: key AT MOST `CONNECT_MAX_SABMS` SABMs (1 +
+    // one retry), one per T1, then LISTEN — WITHOUT re-keying — for a (possibly slow)
+    // gateway UA/DM until `connect_timeout`. This caps worst-case airtime regardless of
+    // `n2_retries` (which governs DATA I-frame retransmits), closing the runaway-keying
+    // hole from the 2026-05-22 incident (n2=10 × a floored 10 s T1 ⇒ ~110 s of SABMs).
+    // Abort halts both TX (write-gated, above + send_frame) and the wait (read-gated):
+    // recv_frame surfaces ConnectionAborted, which propagates out via `?`.
     let sabm = Frame { path: path.clone(), control: Control::Sabm { pf: true }, info: vec![] };
-    for _attempt in 0..=params.n2_retries {
-        stream.send_frame(&sabm)?;
-        let deadline = Instant::now() + params.t1;
-        while Instant::now() < deadline {
-            if let Some(frame) = stream.recv_frame()? {
-                // Fix D/H: only accept UA/DM from the station we dialed; a foreign
-                // frame addressed to our call must not complete or refuse this connect.
-                if frame.path.src.call != stream.peer.call
-                    || frame.path.src.ssid != stream.peer.ssid
-                {
-                    continue;
-                }
+    let deadline = Instant::now() + params.connect_timeout;
+    let mut sabms_sent: u32 = 0;
+    let mut next_sabm_at = Instant::now(); // send the first SABM immediately
+    while Instant::now() < deadline {
+        if sabms_sent < CONNECT_MAX_SABMS && Instant::now() >= next_sabm_at {
+            stream.send_frame(&sabm)?; // abort-gated write
+            sabms_sent += 1;
+            next_sabm_at = Instant::now() + params.t1;
+        }
+        if let Some(frame) = stream.recv_frame()? {
+            // Fix D/H: only accept UA/DM from the station we dialed; a foreign frame
+            // addressed to our call must not complete or refuse this connect.
+            if frame.path.src.call == stream.peer.call
+                && frame.path.src.ssid == stream.peer.ssid
+            {
                 match frame.control {
-                    Control::Ua { .. } => return Ok(stream),
+                    Control::Ua { .. } => {
+                        // Arm Drop teardown ONLY now — the link is established (tuxlink-2y4).
+                        stream.established = true;
+                        return Ok(stream);
+                    }
                     Control::Dm { .. } => {
                         return Err(std::io::Error::new(
                             std::io::ErrorKind::ConnectionRefused,
                             "peer refused the connection (DM)",
                         ))
                     }
-                    _ => continue, // ignore anything else while awaiting UA
+                    _ => {} // ignore anything else while awaiting UA
                 }
             }
-            std::thread::sleep(POLL_INTERVAL);
         }
+        std::thread::sleep(POLL_INTERVAL);
     }
     Err(std::io::Error::new(
         std::io::ErrorKind::TimedOut,
@@ -118,6 +139,11 @@ pub fn connect(
 /// How long to nap between `recv_frame` polls when the pipe is momentarily empty,
 /// so the T1 wait does not busy-spin the CPU.
 const POLL_INTERVAL: Duration = Duration::from_millis(20);
+
+/// tuxlink-2y4 RADIO-1: the connect handshake keys at most this many SABMs (1 + one
+/// retry), independent of `n2_retries` (which governs DATA I-frame retransmits). Bounds
+/// worst-case keying airtime; the listen window is further capped by `connect_timeout`.
+const CONNECT_MAX_SABMS: u32 = 2;
 
 impl Ax25Stream {
     /// KISS-wrap an AX.25 frame and write it to the link.
@@ -254,11 +280,79 @@ mod connect_tests {
     fn connect_times_out_without_ua() {
         let peer = ScriptedPeer::new(); // never feeds a UA
         let mine = call("N7CPZ", 7);
-        // Tiny T1 + zero retries so the test is fast.
-        let params = Ax25Params { t1: Duration::from_millis(40), n2_retries: 0, ..Ax25Params::default() };
+        // Tiny T1 + a short connect_timeout (tuxlink-2y4 bounds the connect by the
+        // connect_timeout ceiling, not n2_retries) so the test is fast.
+        let params = Ax25Params {
+            t1: Duration::from_millis(40),
+            n2_retries: 0,
+            connect_timeout: Duration::from_millis(80),
+            ..Ax25Params::default()
+        };
         let err = connect(Box::new(peer), mine, call("W7AUX", 10), &[], &params)
             .err().expect("expected TimedOut error");
         assert_eq!(err.kind(), std::io::ErrorKind::TimedOut);
+    }
+
+    #[test]
+    fn connect_keys_at_most_two_sabms_regardless_of_n2_retries() {
+        // tuxlink-2y4 RADIO-1: the 2026-05-22 incident keyed ~110 s of SABMs
+        // (n2_retries=10 × a floored 10 s T1). The connect handshake must key AT MOST 2
+        // SABMs (1 + one retry), independent of n2_retries (which governs DATA I-frame
+        // retransmits). No peer answers → the full connect budget is exercised. Tiny T1
+        // + a short connect_timeout keep the test fast; no socket, no hardware, no RF.
+        let peer = ScriptedPeer::new();
+        let mine = call("N7CPZ", 7);
+        let target = call("W7AUX", 10);
+        let params = Ax25Params {
+            t1: Duration::from_millis(10),
+            n2_retries: 10, // the incident value — must NOT translate to 11 SABMs
+            connect_timeout: Duration::from_millis(80),
+            ..Ax25Params::default()
+        };
+        let err = connect(Box::new(peer.clone()), mine, target, &[], &params)
+            .err()
+            .expect("expected TimedOut");
+        assert_eq!(err.kind(), std::io::ErrorKind::TimedOut);
+        let frames = {
+            let mut d = KissDecoder::new();
+            d.push(&peer.drain_tx())
+        };
+        let sabms = frames
+            .iter()
+            .filter_map(|b| Frame::decode(b).ok())
+            .filter(|f| matches!(f.control, Control::Sabm { .. }))
+            .count();
+        assert!(
+            sabms <= 2,
+            "connect must key at most 2 SABMs regardless of n2_retries, got {sabms}"
+        );
+    }
+
+    #[test]
+    fn failed_connect_does_not_send_a_disc_on_drop() {
+        // tuxlink-2y4: connect() builds the stream before the link is up. A connect that
+        // never reaches UA (here a timeout — no peer) must NOT key a DISC when the pre-UA
+        // stream is dropped. Only an ESTABLISHED link (UA received) tears down with DISC.
+        let peer = ScriptedPeer::new(); // never answers
+        let mine = call("N7CPZ", 7);
+        let target = call("W7AUX", 10);
+        let params = Ax25Params {
+            t1: Duration::from_millis(10),
+            n2_retries: 0,
+            connect_timeout: Duration::from_millis(40),
+            ..Ax25Params::default()
+        };
+        // The Err's internal stream is dropped when connect returns.
+        let _ = connect(Box::new(peer.clone()), mine, target, &[], &params);
+        let frames = {
+            let mut d = KissDecoder::new();
+            d.push(&peer.drain_tx())
+        };
+        let sent_disc = frames
+            .iter()
+            .filter_map(|b| Frame::decode(b).ok())
+            .any(|f| matches!(f.control, Control::Disc { .. }));
+        assert!(!sent_disc, "a failed/timed-out connect must not send a DISC on drop");
     }
 
     #[test]
@@ -353,6 +447,7 @@ pub fn answer(
         unacked: std::collections::BTreeMap::new(),
         remote_busy: false,
         closed: false,
+        established: false,
     };
     // Push the KISS TNC timing params so the answering station keys its modem with
     // the configured TXDELAY/persistence/slot, not stale defaults — matching connect()
@@ -370,6 +465,8 @@ pub fn answer(
                     info: vec![],
                 };
                 stream.send_frame(&ua)?;
+                // Link is established (we replied UA) — arm Drop teardown (tuxlink-2y4).
+                stream.established = true;
                 return Ok((peer, stream));
             }
             // Ignore non-SABM frames while listening.
@@ -713,8 +810,13 @@ impl Ax25Stream {
 
 impl Drop for Ax25Stream {
     fn drop(&mut self) {
-        // A dropped stream always tries to release the link; ignore teardown errors.
-        let _ = self.disconnect();
+        // tuxlink-2y4: only an ESTABLISHED link tears down with a DISC. A pre-UA stream
+        // (a connect that timed out / got a DM / was aborted) must NOT key a DISC on
+        // drop — it was never on the air. Explicit disconnect() is unaffected (it is
+        // called intentionally on a link the caller believes is up).
+        if self.established {
+            let _ = self.disconnect();
+        }
     }
 }
 
@@ -852,6 +954,7 @@ mod disconnect_tests {
             inbound: std::collections::VecDeque::new(),
             unacked: std::collections::BTreeMap::new(),
             closed: false,
+            established: true,
         }
     }
 
@@ -931,6 +1034,7 @@ mod read_tests {
             inbound: std::collections::VecDeque::new(),
             unacked: std::collections::BTreeMap::new(),
             closed: false,
+            established: true,
         }
     }
 
@@ -1014,6 +1118,7 @@ mod recovery_tests {
             inbound: std::collections::VecDeque::new(),
             unacked: std::collections::BTreeMap::new(),
             closed: false,
+            established: true,
         }
     }
 
@@ -1097,6 +1202,7 @@ mod write_tests {
             inbound: std::collections::VecDeque::new(),
             unacked: std::collections::BTreeMap::new(),
             closed: false,
+            established: true,
         }
     }
 
@@ -1196,6 +1302,7 @@ mod hardening_tests {
             inbound: std::collections::VecDeque::new(),
             unacked: std::collections::BTreeMap::new(),
             closed: false,
+            established: true,
         }
     }
 
