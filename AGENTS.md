@@ -89,7 +89,7 @@ This project uses bd (Beads) AND Claude Code's built-in primitives (TodoWrite, a
 
 ## Extended capabilities on this Pi
 
-- **Codex CLI** (adversarial review) — `npx --yes @openai/codex exec "<prompt>"`. Not on `$PATH`; already authenticated. See [CLAUDE.md](CLAUDE.md#openai-codex-cli--for-build-robust-features-at-least-one-adversarial-round-via-codex-requirement) for full usage.
+- **Codex CLI** (adversarial review) — `/usr/local/bin/codex` or `npx --yes @openai/codex`; already authenticated. **For directed adrev with custom prompts:** `cat prompt.txt | codex review -` (CLI v0.128.0 rejects combining `--base`/`--commit` with `[PROMPT]`). See [CLAUDE.md](CLAUDE.md#openai-codex-cli--for-build-robust-features-at-least-one-adversarial-round-via-codex-requirement) for full usage.
 - **url-to-markdown** skill — prefer over WebFetch for full-page retrieval. See [CLAUDE.md](CLAUDE.md#url-to-markdown-skill--fetch-full-webpages-not-summaries).
 
 ## Session Completion

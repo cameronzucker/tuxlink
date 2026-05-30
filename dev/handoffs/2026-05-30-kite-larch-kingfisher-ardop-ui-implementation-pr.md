@@ -3,7 +3,9 @@
 > **Date:** 2026-05-30 · **Agent:** kite-larch-kingfisher · **Machine:** pandora (Pi 5)
 > **Session intent:** continue tuxlink-4ek from prior session's Phase 1 + 2 handoff. Execute Phases 3–7 of the ARDOP HF UI plan via `superpowers:subagent-driven-development`. Open the implementation PR.
 >
-> **Result:** PR [#153](https://github.com/cameronzucker/tuxlink/pull/153) open with the full implementation. Operator on-air smoke pending.
+> **Result:** PR [#153](https://github.com/cameronzucker/tuxlink/pull/153) open with the full implementation + Codex adrev findings addressed. Operator on-air smoke pending (operator currently remote, no hardware on Pi).
+>
+> **Post-initial-handoff update (same session):** operator pushed back on the "Codex deferred — CLI broken" framing in this doc. Re-investigated the CLI, found that v0.128.0 simply requires custom-prompt mode (`cat prompt.txt | codex review -`) rather than the combined `--base + prompt` form. Codex's directed RADIO-1 review then ran cleanly and **found three P1 bypass paths** that the per-task Claude subagent reviews had missed. **All three fixed in commit `42732dd`.** See §5 (Codex adrev) below for the full sequence.
 
 ---
 
@@ -43,28 +45,29 @@ The session resumed at Phase 3 Task 3.1; Phases 1 + 2 were done before this sess
 | 3 — Backend session lifecycle | 3.1–3.4 | `0d15bfc`, `c3fa8f7`, `4533f5c`+`92b735c`, `0949253` | ✅ all reviewed (spec + code-quality) |
 | 4 — Frontend dock | 4.1–4.3 | `3e852c5`, `57550d3`, `680fe24` | ✅ |
 | 5 — Settings ARDOP section | 5.1 | `f639cf7` | ✅ |
-| 6 — RADIO-1 consent modal + backend mint | 6.1, 6.2 | `8441aa8`, `3145bd4` | ✅ safety-critical review passed; no bypass found |
-| 7 — Integration test + adrev + PR | 7.1, 7.2 (gate + clippy hygiene), 7.4, 7.5 | `4c32f98`, `16b234a` | ✅ |
-| 7.3 — Codex adrev (3 rounds) | (deferred) | none | ⚠️ Codex CLI v0.128.0 rejects `--base` + `[PROMPT]` together; filed `tuxlink-yra2` |
+| 6 — RADIO-1 consent modal + backend mint | 6.1, 6.2 | `8441aa8`, `3145bd4` | ✅ safety-critical review (initial) |
+| 7.1 — Integration test | | `4c32f98` | ✅ |
+| 7.2 — Gates + clippy hygiene | | `16b234a` | ✅ |
+| 7.3 — Codex adrev (initial draft: deferred) | | none | ⚠️ Initial framing was wrong (see §5) |
+| 7.4 + 7.5 — Operator smoke prose + PR #153 | | (PR body) | ✅ |
+| **POST**: Codex adrev re-run + 3 P1 findings fixed | | `42732dd` | ✅ Gate is now per-invocation |
 
-**14 commits this session** plus 9 from the prior session = **23 commits** on the branch above `origin/main`.
+**15 commits this session** (14 plan tasks + 1 post-adrev fix) plus 9 from the prior session = **24 commits** on the branch above `origin/main`.
 
-### Quality gates re-run at session end (worktree HEAD `16b234a`)
+### Quality gates re-run at session end (worktree HEAD `42732dd`)
 
-- Frontend (vitest, full suite, 49 files): **478 / 478 passing**.
+- Frontend (vitest, full suite, 49 files): **479 / 479 passing** (added 1 integration test in `42732dd`).
 - Frontend type-check (`pnpm exec tsc --noEmit`): clean.
-- Backend (`cargo test --lib`): **406 / 406 passing**.
-- Backend (`cargo clippy --lib -- -D warnings`): clean (the 3 pre-existing PR #138 lints were cleared in `16b234a` — slice-pattern in `handshake.rs`, `#[allow(clippy::too_many_arguments)]` on `native_connect`, `#[cfg(test)]` gate on test-only `resolve_locator`).
+- Backend (`cargo test --lib`): **all passing** (added 4 tests in `42732dd`: 3× `consume_consent_token` unit + 1× replay-rejection integration).
+- Backend (`cargo clippy --lib -- -D warnings`): clean.
 
 ### What's NOT in this PR (intentionally)
 
-- Operator on-air smoke (RADIO-1 — operator only; agent forbidden to TX).
-- Codex adrev rounds with focused attack angles (deferred; CLI broken — see `tuxlink-yra2`).
+- Operator on-air smoke (RADIO-1 — operator only; agent forbidden to TX). Operator is currently remote with no hardware on the Pi.
 - Full Modem Console (separate spec).
 - ALSA device enumeration (Settings is currently freeform).
 - Backend Pat strip (`tuxlink-cyt`).
 - Dedicated Disconnect button in the dock (filed as `tuxlink-qvl`).
-- Auto-clear of `useConsent.token` when modem stops (filed; UX nit only — gate still holds backend-side).
 - ConsentModal a11y (Escape key + autofocus) — filed as `tuxlink-3tn`.
 
 ---
@@ -77,53 +80,69 @@ The safety property is bypass-proof at the unit-test level: the `modem_ardop_con
 
 ---
 
-## 4. RADIO-1 safety property — verified
+## 4. RADIO-1 safety property — verified (post-Codex-fix)
 
-Confirmed by both implementer reports AND reviewer subagents:
+Confirmed by Codex adrev + per-task Claude subagent reviews + the fix commit `42732dd`:
 
 - **No frontend token generation**: `grep -rE "Math\.random|crypto\.randomUUID|crypto\.getRandomValues" src/modem/` → zero matches.
 - **Single `modem_ardop_connect` call site**: in `ArdopDock.tsx`'s `doConnect` helper, fed only by the consent-flow path.
-- **Backend gate first**: `has_valid_token(consent_token)` is the first statement in `modem_ardop_connect_inner_with_factory`, before status mutation, before factory invocation, before any I/O.
-- **120 s connect deadline**: `CONNECT_DEADLINE = Duration::from_secs(120)` named constant in `modem_commands.rs`; no retry/composition path bypasses it.
-- **Token rotation**: every `mint_consent_token()` overwrites the prior token under the same lock; backend invalidation on disconnect via `reset_to_stopped()`.
+- **Backend gate first**: `consume_consent_token(candidate)` is the first action in both the Tauri wrapper AND `modem_ardop_connect_gated_with_factory` — runs BEFORE any I/O, config read, status mutation, or factory invocation.
+- **Token consumed on use (per-invocation)**: `consume_consent_token` is atomic equality-check-and-clear under one lock. A replay of the same token returns false and rejects. New test `modem_ardop_connect_rejects_replay_of_consumed_token` uses `AtomicBool` to assert the factory NEVER runs on a replay.
+- **120 s connect deadline**: `CONNECT_DEADLINE = Duration::from_secs(120)` named constant; no retry / composition / token-reuse path stacks deadlines.
+- **Frontend re-prompts on every fresh connect**: `ArdopDock.doConnect` clears `useConsent.token` in `finally`, so the next Connect click naturally re-opens the modal regardless of the prior attempt's outcome.
 
-The Codex adrev rounds were the **additional** cross-provider rigor layer — those are deferred (CLI incompatibility), not absent.
+Initial framing claimed the gate was "bypass-proof". Operator pushed back; re-ran Codex (see §5) which caught three P1 bypass paths the per-task Claude reviews missed. **All three fixed in commit `42732dd`**; the gate is now ACTUALLY per-invocation. The bypass-proof property is verified across both missing-token AND used-token-replay paths.
 
 ---
 
-## 5. Codex adrev situation
+## 5. Codex adrev — completed (after CLI re-investigation)
 
-The plan's Task 7.3 called for 3 directed-attack-angle rounds via:
+### What I got wrong initially
 
+Hit `error: the argument '--base <BRANCH>' cannot be used with '[PROMPT]'` and concluded "Codex CLI broken, defer." That was wrong. The CLI just changed the invocation pattern in v0.128.0:
+
+```bash
+# What stopped working:
+codex review --base main "<prompt>"
+# → error: --base cannot be used with [PROMPT]
+
+# What works:
+cat /tmp/prompt.txt | codex review -
+# The prompt instructs Codex to run `git diff origin/main..HEAD` itself
+# (Codex has read-only sandbox access to the worktree).
 ```
-npx --yes @openai/codex review --base main "<prompt>"
-```
 
-**Codex CLI v0.128.0 rejects this**:
-```
-error: the argument '--base <BRANCH>' cannot be used with '[PROMPT]'
-```
+CLAUDE.md + AGENTS.md were updated this session with the corrected pattern.
 
-Same with `--commit <SHA> "<prompt>"`. The CLI's `review` mode is now no-prompt-only; `exec "<prompt>"` works but doesn't auto-fetch the diff context the way `review` did.
+### Three P1 findings, all fixed
 
-Attempted variants:
-- `codex review --base main` (no prompt): produced 11 K-line `dev/adversarial/2026-05-30-ardop-ui-general-codex.md` of diff + file reads, but no structured findings section.
-- `codex exec "<prompt>"` (no diff): hung waiting on stdin.
-- `codex exec "<prompt>"` (with the prompt provided): got 3.9 K lines of code-reading before I terminated due to no findings emerging.
+The directed RADIO-1 review surfaced three bypass paths the Claude subagent reviewers had missed:
 
-Filed `tuxlink-yra2` to re-attempt when the CLI supports the directed pattern again. P4 — substantial coverage is provided by the bypass-proof tests and per-task Claude subagent reviews; Codex was meant to be additive rigor.
+1. **Tokens not consumed on use** (`modem_commands.rs:170-175`) — `has_valid_token` is non-destructive equality. One mint authorized unlimited subsequent connects; concurrent calls could stack 120 s attempts.
+2. **Config I/O before the gate** (`modem_commands.rs:309-315`) — Tauri wrapper called `config_get_ardop()` before the inner gate.
+3. **Frontend reused stale tokens** (`ArdopDock.tsx:61-64`) — `if (consent.token) doConnect(consent.token)` skipped the modal on subsequent connects in the same session.
+
+Commit `42732dd` adds `ModemSession::consume_consent_token` (atomic check-and-clear), moves the audio-config check after the gate, and clears `useConsent.token` after each `doConnect` attempt. New `modem_ardop_connect_rejects_replay_of_consumed_token` test asserts (via `AtomicBool`) that the factory closure NEVER runs on a replay. New frontend integration test verifies the modal re-opens after a successful connect.
+
+Raw transcript: `dev/adversarial/2026-05-30-ardop-ui-radio1-custom-codex.md` (~3500 lines; local-only per CLAUDE.md propagation contract). Summary findings are in PR #153's body.
+
+### Lesson
+
+Per-task Claude subagent reviews are valuable but NOT a substitute for cross-provider rigor. My bypass-proof test only covered missing-token rejection; the use-then-replay path was the gap Codex caught. The original PR attestation came down. `feedback_no_carveout_on_cross_provider_adrev` discipline justified — don't accept CLI tooling problems as a reason to skip; investigate the tooling first.
+
+`tuxlink-yra2` can be closed: the Codex adrev happened and was actionable. The general `codex review --base main` (no-prompt mode) also ran and produced an 11 K-line transcript of diff + file reads but no structured findings; that's expected when no custom prompt directs the attack angle.
 
 ---
 
 ## 6. Follow-up bd issues filed this session
 
-| ID | P | Title |
-|---|---|---|
-| (first one — get from `bd list`) | P3 | ArdopDock: clear useConsent.token on modem stop event |
-| `tuxlink-qvl` | P3 | ArdopDock: Disconnect button + clear connectError on modal reopen |
-| `tuxlink-3tn` | P4 | ConsentModal: a11y polish (Escape dismiss + ack-checkbox autofocus) |
-| `tuxlink-5738` | P3 | modem_ardop_connect: pre-flight identity check (callsign-present) |
-| `tuxlink-yra2` | P4 | Re-attempt Codex adversarial review rounds with focused attack angles |
+| ID | P | Title | Status post-`42732dd` |
+|---|---|---|---|
+| `tuxlink-63f` | P3 | ArdopDock: clear useConsent.token on modem stop event | **Reconsider** — Finding 3's fix in `42732dd` clears `useConsent.token` after EVERY connect attempt; the modem-stopped-event hook is now incremental rather than load-bearing. Possibly close. |
+| `tuxlink-qvl` | P3 | ArdopDock: Disconnect button + clear connectError on modal reopen | Open, still needed |
+| `tuxlink-3tn` | P4 | ConsentModal: a11y polish (Escape dismiss + ack-checkbox autofocus) | Open, still needed |
+| `tuxlink-5738` | P3 | modem_ardop_connect: pre-flight identity check (callsign-present) | Open, still needed |
+| `tuxlink-yra2` | P4 | Re-attempt Codex adversarial review rounds with focused attack angles | **Close** — Codex adrev completed this session; CLAUDE.md updated with the correct CLI pattern |
 
 Prior-session follow-ups (still open, not addressed):
 - `tuxlink-02h` (P3, radio-dock pane impl) — Phase 4 work that's now actually done? Re-check.
