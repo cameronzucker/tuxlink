@@ -4,6 +4,45 @@ All notable changes to Tuxlink are documented here.
 
 This project adheres to [Semantic Versioning](https://semver.org) with project-specific rules described in [VERSIONING.md](VERSIONING.md). Entries from `v0.0.2` onward are generated automatically by [`release-please`](https://github.com/googleapis/release-please) from [Conventional Commits](https://www.conventionalcommits.org).
 
+## [0.2.0](https://github.com/cameronzucker/tuxlink/compare/v0.1.0...v0.2.0) (2026-05-30)
+
+
+### Features
+
+* **ax25:** clean serial/Bluetooth Stop for a packet listen (tuxlink-nj1) ([12486ff](https://github.com/cameronzucker/tuxlink/commit/12486ffd69fc3ecbfa567469fcf664d0971d6704))
+* **connections:** session-type accordion selector + per-intent panes (tuxlink-3pb) ([e916709](https://github.com/cameronzucker/tuxlink/commit/e9167099d8df02e594fbe7326fed60ff4e5f6333))
+* **connections:** session-type accordion sidebar + AppShell pane dispatch (tuxlink-3pb) ([31edf19](https://github.com/cameronzucker/tuxlink/commit/31edf193c46e40891657348e2d91d0aa26c5b729))
+* **connections:** session-type/protocol catalog (tuxlink-3pb) ([5369344](https://github.com/cameronzucker/tuxlink/commit/536934482bdb85619011c07b841ced6da28bcbda))
+* **connections:** stub pane for not-yet-built session types (tuxlink-3pb) ([175c63e](https://github.com/cameronzucker/tuxlink/commit/175c63e76b37d8d02641c0e53ef1ecc03376dc2e))
+* **connections:** Telnet-CMS connection pane (relocated CMS controls) (tuxlink-3pb) ([033169a](https://github.com/cameronzucker/tuxlink/commit/033169abb59c48f70e3ffa41126ce1c3bc977365))
+* **connect:** user-switchable CMS server host + transport (tuxlink-3o0) ([c430332](https://github.com/cameronzucker/tuxlink/commit/c4303323fade43cf70090a0863a28c5de0b26501))
+* **modem-ardop:** ARQ connect/disconnect + DataSocket byte stream (tuxlink-6aj) ([27965f1](https://github.com/cameronzucker/tuxlink/commit/27965f17e07ea6619041ae5f784299761cde6f66))
+* **modem-ardop:** cmd-socket session + init handshake (sync, threaded) (tuxlink-6aj) ([b22ef0c](https://github.com/cameronzucker/tuxlink/commit/b22ef0c24c1b6601c24348b90d941445942187d9))
+* **modem-ardop:** Phase 1 wire codec — cmd, command, frame (tuxlink-6aj) ([c6ef211](https://github.com/cameronzucker/tuxlink/commit/c6ef2113f39fca979ede123537eadb221582a618))
+* **modem:** ManagedModem process supervisor (SIGINT/SIGKILL, device-release) (tuxlink-6aj) ([b112d50](https://github.com/cameronzucker/tuxlink/commit/b112d503a100fd9b75c171e13a874e68649247d3))
+* **modem:** ModemTransport trait + ArdopTransport (sync, object-safe) (tuxlink-6aj) ([0fac5b0](https://github.com/cameronzucker/tuxlink/commit/0fac5b083c4cbee640dcf219c9b49d30816c1340))
+* **modem:** with_managed_modem + shutdown + ardop_connect CLI (tuxlink-6aj) ([3502a65](https://github.com/cameronzucker/tuxlink/commit/3502a650b42da6dd644bac00ac13e0e7269fd9dd))
+* **packet:** add "Bluetooth" link kind + btMac to the TS DTO (tuxlink-nx2) ([e123da9](https://github.com/cameronzucker/tuxlink/commit/e123da9ace0e08c0947d92532777ff6bf527a7f3))
+* **packet:** in-app Bluetooth RFCOMM-socket transport (tuxlink-nx2) ([a511c69](https://github.com/cameronzucker/tuxlink/commit/a511c69a2f9a1bb663647f91c09237221d137955))
+* **packet:** intent prop gates Listen for cms-gateway vs p2p (tuxlink-3pb) ([cbcdb88](https://github.com/cameronzucker/tuxlink/commit/cbcdb8800ae02db95e54bba1be246831641df723))
+
+
+### Bug Fixes
+
+* **ax25:** floor connect/retransmit T1 to an RF-realistic minimum (tuxlink-uhc) ([3c9f577](https://github.com/cameronzucker/tuxlink/commit/3c9f577be5725a8cd30fa135d5073408c88ab884))
+* **connections:** auto-expand the selected session type so the selection stays visible (tuxlink-3pb review) ([90932de](https://github.com/cameronzucker/tuxlink/commit/90932deedee9602b36fbf4ecfe06a09f42b87770))
+* **connections:** harden isBuilt with intent-level gate + edge tests (tuxlink-3pb review) ([a11447a](https://github.com/cameronzucker/tuxlink/commit/a11447ac84cff5ad7cbc0a2ee06153fe3b7a1c0e))
+* **modem-ardop:** CmdSocket Drop joins reader thread; bound write (tuxlink-6aj) ([aff5ec5](https://github.com/cameronzucker/tuxlink/commit/aff5ec5e3ff046767f9437910d340ac594f8a701))
+* **modem-ardop:** Codex adversarial findings — outbound framing (P0) + 3 more (tuxlink-6aj) ([582bbe1](https://github.com/cameronzucker/tuxlink/commit/582bbe13018558a8cb44645c237de6c5a9527ab1))
+* **modem-ardop:** DataDecoder re-syncs past a malformed length (no spin) (tuxlink-6aj) ([b925885](https://github.com/cameronzucker/tuxlink/commit/b92588597f3a121498d9348c0cfb9264ba760f49))
+* **modem:** shutdown verifies audio release even on stop error; clears managed (tuxlink-6aj) ([cedb259](https://github.com/cameronzucker/tuxlink/commit/cedb25951752ccad6f34d2734a159c72a90842db))
+
+
+### Refactors
+
+* **modem-ardop:** ArdopTransport::init clean partial-failure, no unwrap (tuxlink-6aj) ([8aff02e](https://github.com/cameronzucker/tuxlink/commit/8aff02ee9ec2e99af32fc7c6ede6952edd2ab5c4))
+* **settings:** drop CMS fieldset — relocated to the Telnet-CMS pane (tuxlink-3pb) ([4b86327](https://github.com/cameronzucker/tuxlink/commit/4b8632731da4b901ac1ead1fe35368008e3718e0))
+
 ## [0.1.0](https://github.com/cameronzucker/tuxlink/compare/v0.0.1...v0.1.0) (2026-05-22)
 
 
