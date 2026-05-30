@@ -1,460 +1,519 @@
-# HTML Forms v0.1 — design spec
+# HTML Forms v0.1 — design spec (rev-2, post-adversarial)
 
-> Date: 2026-05-30 · Agent: yew-cypress-oak · bd: tuxlink-v1p · Parent context: PR #150 (inventory rev-2) §13.1
+> Date: 2026-05-30 · Agent: yew-cypress-oak · bd: tuxlink-v1p · Parent context: PR #150 (inventory rev-2)
+> Rev: 2 — incorporates the 4-round BRF adversarial review (Claude R1–R4; Codex R5 pending). Rev-1 had multiple P0 wire-format and architecture errors that would have produced an incompatible implementation; rev-2 fixes them.
 
-## 0. Status — DESIGN ONLY (HARD-GATE per `superpowers:brainstorming`)
+## 0. Status — DESIGN ONLY (HARD-GATE per `superpowers:brainstorming` + `build-robust-features`)
 
-This is a written design for operator (Cameron) review before any implementation. Per the brainstorming skill's HARD-GATE, **no code is committed** until this spec is approved. The operator is driving today and unavailable for real-time dialogue, so this doc is the proposal surface.
+This is the post-adversarial-review design. Per BRF, **no implementation code** is committed until this spec is approved AND a `superpowers:writing-plans` implementation plan is reviewed.
 
-To approve: review and either merge the PR opening this doc, or comment on what should change. Implementation work picks up after approval.
+Operator (Cameron) is driving today. Approval flow:
 
-## 1. Purpose & v0.1 scope
+- **Approve / merge** → I proceed to `superpowers:writing-plans` → plan review cycle (min 3 rounds) → execution recommendation → operator decision on approach (subagent / parallel session / agent teams).
+- **Comment** → I revise spec + re-run any affected adversarial round.
+- **Reject** → regroup.
 
-Operator goal (verbatim): *"HTML forms was a standout in the comparison matrix and those are a must-have feature for legacy client parity. That seems to cleanly slot into the 0.1 client as it currently exists? Can we just build that?"*
+## 1. Change log from rev-1
+
+Adversarial review surfaced **24+ P0/P1 findings** in rev-1, most of which would have shipped an implementation incompatible with WLE and/or Pat. Adversarial transcripts (gitignored, local-only) at `dev/adversarial/2026-05-30-html-forms-design-claude-r{1,2,3,4}-*.md`.
+
+Key rev-1 → rev-2 corrections:
+
+| Class | Rev-1 said | Rev-2 says | Source |
+|---|---|---|---|
+| **Wire — XML element casing** | Mixed case (`<Subjectline>`, `<Mdate>`, `<Approved_Name>`) | All lowercase (`<subjectline>`, `<mdate>`, `<approved_name>`) — WLE lowercases on serialize via `Template.cs:775-777` `.ToLower()`; Pat is case-sensitive on read | R1-F2, R2-I01 (P0) |
+| **Wire — `<form_parameters>` elements** | `<xml_file_version>`, `<tuxlink_version>`, `<form_version>` | The WLE-required set: `<xml_file_version>`, `<rms_express_version>` (value `"Tuxlink/0.3.0"`), `<submission_datetime>`, `<senders_callsign>`, `<grid_square>`, `<display_form>`, `<reply_template>` | R1-F1, R2-I02, R2-I03 (P0) |
+| **Wire — attachment filename** | `RMS_Express_Form_<id>.xml` | `RMS_Express_Form_<displayFormBasename>.xml` (e.g. `RMS_Express_Form_ICS213_Initial.xml`) — matches WLE `Template.cs:718-724` AND Pat `builder.go:459-467` | R2-I04 (P1) |
+| **Wire — MIME content-type** | "application/xml or text/xml" | `text/xml` exclusively (WLE `MimeEncoder.cs:89-92`) | R1-F5 (P1) |
+| **Wire — XML declaration** | `<?xml version="1.0" encoding="utf-8"?>` | `<?xml version="1.0"?>` (no encoding attr; UTF-8 BOM prepended) — matches WLE | R1-F3 (P2) |
+| **Wire — body charset** | UTF-8 implied | ISO-8859-1 (Latin-1) — WLE `Message.cs:295-298` down-codes; Pat reads per `Content-Type` header | R2-I06 (P1) |
+| **Wire — empty fields** | unspecified | Emit `<field></field>` always for declared form fields (matches Pat behavior) | R1-F4 (P1) |
+| **Backend — attachments** | "calls existing `send_message` infra" | **`OutboundMessage` has NO `attachments` field today** — requires precursor backend work | R2-I05 (P0) |
+| **Backend — B2F wire vs MIME** | Conflated | Two encoding paths: (1) via Pat REST API (MIME-multipart upload), (2) via native winlink session (B2F `File:` headers) — spec must pin which is v0.1 | R2-I07 (P1) |
+| **UX — draft destruction** | Implicit replace | Pre-form-switch unsaved-changes dialog (Save/Discard/Cancel) | R3-1 (P0) |
+| **UX — DraftData schema** | "React form state" | Extend `DraftData` with `formId?` + `formFields?`; wire autosave/restore | R3-2 (P0) |
+| **UX — reply-to-form behavior** | Deferred to operator question | Must be decided BEFORE shipping reply buttons; rev-2 proposes a default | R3-3 (P0) |
+| **Security — XML parser** | Unspecified | Pin `quick-xml` 0.39.x; reject `Event::DocType`; cap nesting depth 8; cap event count 10k | R4-F1 (P0) |
+| **Security — payload size cap** | None | `MAX_FORM_XML_BYTES = 256 KiB` enforced at parse boundary | R4-F2 (P0) |
+| **Security — form_id validation** | None | Validate `^[A-Za-z0-9_-]{1,64}$` at extraction; document constraint for v0.5+ catalog use | R4-F4 (P0) |
+| **Body template — `IsExercise`** | Omitted | Include `<var IsExercise>` (DRILL marker) — Part 97 / EmComm critical | R1-F2 (P0) |
+| **DTO — form_payload to frontend** | Only `form_id` added | Add `form_payload: Option<FormPayload>` — parse eagerly in `parse_raw_rfc5322` while attachment bytes are still in hand. Without this, frontend has form ID but no field values to render. | R5-Codex (P1) |
+
+Everything else from rev-1 is preserved.
+
+## 2. Purpose & v0.1 scope (unchanged)
+
+Operator goal: HTML Forms is the v0.1 must-have with highest EmComm leverage (per PR #150 §13.1). Build it autonomously.
 
 **In scope for v0.1**:
-1. **Render incoming form messages** in the reading pane as structured field/value lists (replacing the current "Winlink form attached" placeholder).
-2. **Author one canonical form (ICS-213 General Message)** in the compose window, serialize to WLE-compatible wire format, and send to other Winlink clients (WLE + Pat) so they render it correctly.
-3. **Bundle a curated set of 4–6 forms** in the tuxlink binary (ICS-213, ICS-309, Bulletin, Position Report, Damage Assessment as the seed; final set per operator review). Operator-installable third-party forms are out of scope for v0.1.
+1. **Render incoming form messages** — parse XML attachment, render structured field/value display per form type, replacing the current "Winlink form attached" placeholder.
+2. **Author one canonical form (ICS-213 General Message)** — fill out via native React, serialize to WLE+Pat-compatible wire format, send.
+3. **Bundle 4–6 forms** in the binary: ICS-213, ICS-309, GPS Position Report, Bulletin, Damage Assessment.
 
-**Out of scope for v0.1** (deferred to v0.5+, with reasons):
-- Dynamic forms-catalog auto-update from winlink.org (capability 4.4) — needs a forms-update endpoint contract; defer until v0.5.
-- Form-data aggregator views / map view (4.7, 4.8) — power-user feature.
-- ICS-309 log generation as a stand-alone tool (4.6) — related but distinct from form-render/author; tracked separately.
-- WLE's embedded-WebBrowser-with-local-HTTP-server pattern — see §3 (alternative-rejected).
-- Custom-XML-form sideload (4.5) — operator-confirm if v0.1 demand exists.
+**Out of scope** (deferred): dynamic forms-catalog auto-update; form-data aggregator views / maps; ICS-309 stand-alone tool; embedded-WebBrowser-with-local-HTTP-server pattern; custom-XML-form sideload.
 
-## 2. Background: how WLE actually works (decompiled findings)
+## 3. Background: how WLE forms actually work (corrected)
 
 A WLE form is **three files** on disk:
 
-| File | Role | Used by |
-|---|---|---|
-| `<FormName>.txt` | Metadata + plain-text message template (`Msg:` block with `<var X>` placeholders) | FormManager (catalog enumeration) + send-time template render |
-| `<FormName>_Initial.html` | Compose-side HTML with `<input name="X">` widgets and an `onsubmit` handler that POSTs to `http://{FormServer}:{FormPort}` | WLE compose flow (renders in embedded WebBrowser) |
-| `<FormName>_Viewer.html` | Read-side HTML that displays the form with values filled in (read-only) | WLE read flow (renders in embedded WebBrowser) |
+| File | Role |
+|---|---|
+| `<FormName>.txt` | Catalog metadata + plain-text message-body template (with `<var X>` placeholders) |
+| `<FormName>_Initial.html` | Compose-side HTML rendered in embedded WebBrowser (with local-HTTP-server form-action hack) |
+| `<FormName>_Viewer.html` | Read-side HTML for displaying received forms |
 
 On the wire, a WLE form message is:
 
-- **Message body**: plain text — the `Msg:` template with `<var X>` placeholders substituted to operator-entered values. This makes the message human-readable on clients that don't render forms (Pat, plain SMTP).
-- **Attachment** named `RMS_Express_Form_<FormName>.xml`: the structured XML payload. Contains all field values in `<RMS_Express_Form>` envelope. Read-side clients use this for the structured render.
+- **Body** (plain text, ISO-8859-1, quoted-printable transfer encoding): the `Msg:` template with substitutions. Human-readable for non-form-aware clients.
+- **Attachment** named `RMS_Express_Form_<DisplayFormBasename>.xml` (Content-Type `text/xml`, base64 transfer encoding): the structured payload.
 
-**Implication**: Tuxlink's current detection in [`parse_raw_rfc5322`](src-tauri/src/ui_commands.rs#L326) — `body.starts_with("<?xml")` — is wrong for WLE compatibility. The XML is in the attachment, not the body. The body is plain rendered text. **Fixing this detection is part of the v0.1 work.**
+**XML payload shape** (from WLE `Template.cs:680-754` + Pat `builder.go:106-156`):
 
-WLE's compose flow uses a peculiar mechanism: it renders `_Initial.html` in an embedded `WebBrowser` ActiveX control, and the HTML form `<form action="...">` POSTs to an embedded local HTTP server inside the WLE process. WLE captures the POSTed form-data, applies it to the `Msg:` template, and writes the message body + XML attachment. **This pattern is a Windows-WebBrowser-control hack that we don't need to copy** — see §3.
-
-The form catalog itself is currently ~1000+ forms across 18 sub-categories (ICS USA, ARC/Red Cross, Weather, HICS, state-specific sets for WA/TX/NY/etc., IARU, FMRE Mexico, Radiogram/RRI, LA/HI/OR State, Mapping-GIS, Humanitarian, General Medical). WLE auto-updates this from winlink.org periodically.
-
-## 3. Design approaches considered
-
-### Approach A — Full WLE-format compatibility (the "ingest everything" path)
-
-Adopt WLE's 3-file format directly. Tuxlink ships a `Standard Templates/` directory; users can drop in WLE form files unchanged. To render forms, embed a webview that loads the HTML directly with our IPC bridge replacing the local HTTP server.
-
-**Pros**: Instant access to the 1000-form community catalog. Drop-in interop with WLE installs. Operator familiarity (looks the same).
-
-**Cons**: 
-- We inherit every WLE wart (the HTTP-server hack, JS dependencies, ActiveX-specific quirks).
-- The HTML forms target Internet Explorer 11 / Windows WebBrowser control behavior — modern WebKitGTK renders some of them differently or breaks.
-- Heavy infra: needs a forms-update fetcher, HTML-form-to-IPC bridge, embedded webview lifecycle.
-- Hard to make UI feel native — WLE forms look like 2005-era HTML.
-
-### Approach B — Native React forms over a canonical schema (the "clean slate" path)
-
-Ignore WLE's HTML/JS. Define our own internal form schema (TypeScript/Rust types per form: ICS-213, ICS-309, etc.). Hand-write React form components for each. On send, serialize to WLE-compatible XML + plain-text body. On receive, parse the XML and render with the matching React component.
-
-**Pros**: 
-- Native Tauri UX, consistent styling, fast.
-- Type-safe field handling on both sides.
-- No webview integration headaches.
-- Each form is a small focused React component — easy to test.
-
-**Cons**: 
-- Cuts us off from the community catalog. Only forms we hand-port work.
-- Each new form is N hours of React work (vs. just dropping in an HTML file).
-- If WLE adds a field to ICS-213, we have to update our component.
-
-### Approach C — Hybrid: native React for bundled forms + later WLE webview compat (the recommended path)
-
-For v0.1, do Approach B exclusively. Ship 4–6 hand-built React forms covering the canonical EmComm cases. Parse incoming XML for ANY recognized form type and render with the matching React component; render unknown forms as a structured "fields and values" key-value list (always better than raw XML).
-
-Defer Approach A's webview-HTML-rendering to v0.5+ — at that point we have proof-of-concept that forms work and can take on the catalog scale problem.
-
-**Pros**: Ships a working v0.1 within days, not weeks. Hand-built ICS-213 + ICS-309 + Position Report covers the 80% case. The "unknown form" fallback (structured XML display) means any WLE form is at least READABLE in tuxlink even if not pretty.
-
-**Cons**: For v0.1, tuxlink will display fewer form types prettily than WLE does. But every form is readable; that's the v0.1 floor.
-
-### Recommendation: **Approach C (hybrid; ship Approach B subset for v0.1, defer A to v0.5+)**
-
-Approach C honors `discipline_triage_rule` (don't over-engineer plumbing — bundle a curated set, defer the catalog), `discipline_no_carveout_on_cross_provider_adrev` (we'll run Codex on the implementation), and the v0.1 timeline aspiration.
-
-## 4. Chosen architecture
-
-```
-                                      ┌──────────────────────────────┐
-                                      │  React frontend (Tauri webview)│
-                                      │                              │
-                                      │  Compose flow:               │
-                                      │  • FormPicker → pick ICS-213 │
-                                      │  • ICS213Form (React)        │
-                                      │  • onSubmit → IPC: send_form │
-                                      │                              │
-                                      │  Read flow:                  │
-                                      │  • MessageView detects form  │
-                                      │  • lookup formType → render  │
-                                      │    ICS213View (React)        │
-                                      │  • unknown → KeyValueView    │
-                                      └─────────────┬────────────────┘
-                                                    │ Tauri IPC
-                                                    │
-       ┌────────────────────────────────────────────┴───────────────────────────┐
-       │              Rust backend (src-tauri/src/forms/)                       │
-       │                                                                        │
-       │  forms::catalog::known_forms() → &[FormDef]                           │
-       │  forms::serialize::to_wle_xml(form_id, fields) → (xml_bytes, body)   │
-       │  forms::parse::detect_form(parsed_msg) → Option<FormPayload>         │
-       │  forms::parse::parse_form_xml(xml_bytes) → FormPayload                │
-       │                                                                        │
-       │  Integration with ui_commands.rs:                                      │
-       │  • parse_raw_rfc5322 → detect form via attachment name match           │
-       │  • compose flow → new send_form command (parallel to send_message)    │
-       └────────────────────────────────────────────────────────────────────────┘
-                                                    │
-                                                    │ wire format
-                                                    ▼
-                                      ┌──────────────────────────────┐
-                                      │  Winlink B2F message:        │
-                                      │                              │
-                                      │  Body:  Msg: template text   │
-                                      │         (with values subbed) │
-                                      │                              │
-                                      │  Attachment:                 │
-                                      │  RMS_Express_Form_<name>.xml │
-                                      │  containing <RMS_Express_Form>│
-                                      │  <field>...</field></...>    │
-                                      └──────────────────────────────┘
-```
-
-### Module layout (new files)
-
-- `src-tauri/src/forms/mod.rs` — module root.
-- `src-tauri/src/forms/catalog.rs` — bundled form definitions (struct + Vec of known forms).
-- `src-tauri/src/forms/parse.rs` — detect form in an inbound message; parse XML payload.
-- `src-tauri/src/forms/serialize.rs` — build XML + text body from form-field values.
-- `src-tauri/src/forms/types.rs` — `FormDef`, `FormField`, `FormPayload`, `FieldKind`.
-- `src-tauri/tests/forms_test.rs` — integration tests for the round-trip.
-
-- `src/forms/types.ts` — TS mirror of `FormPayload` etc.
-- `src/forms/forms.ts` — registry of known form-id → React component pairs.
-- `src/forms/ics213/Ics213Form.tsx` — compose-side React component (one per form type).
-- `src/forms/ics213/Ics213View.tsx` — read-side React component (one per form type).
-- `src/forms/KeyValueView.tsx` — fallback display for unknown forms.
-- `src/forms/FormPicker.tsx` — compose-side picker (which form to author).
-
-### Integration points (modify existing files)
-
-- `src-tauri/src/ui_commands.rs`:
-  - Fix `is_form` detection (look at attachment names matching `RMS_Express_Form_*.xml`, not body prefix).
-  - Add `send_form` Tauri command (parallel to `send_message`) accepting `(form_id, field_values, to, cc, subject)` — does the serialize + build-message work in Rust, calls existing `send_message` infra under the hood.
-- `src/mailbox/MessageView.tsx`:
-  - When `message.isForm` is true, look up the form by ID, render with matching React component or KeyValueView fallback.
-- `src/compose/Compose.tsx`:
-  - Add a "Compose form" button that opens FormPicker → selected form → form's React component (Ics213Form etc.).
-- `src/mailbox/replyActions.ts`:
-  - Already handles form-XML safely (won't quote raw payload on reply/forward). No change needed; existing tests stay green.
-
-## 5. Data model
-
-### Rust types
-
-```rust
-// src-tauri/src/forms/types.rs
-
-/// One Winlink form definition known to tuxlink.
-pub struct FormDef {
-    /// Canonical form ID (e.g. "ICS213", "ICS309", "Position"). Matches WLE
-    /// form-name prefix in the `RMS_Express_Form_<id>.xml` attachment name.
-    pub id: &'static str,
-    /// Display name (e.g. "ICS-213 General Message").
-    pub name: &'static str,
-    /// Field schema in declaration order. Used to render forms with unknown-
-    /// to-tuxlink fields (e.g. an updated WLE field we don't yet know) by
-    /// falling back to the KeyValueView with whatever fields the XML contains.
-    pub fields: &'static [FormField],
-    /// Subject-line template (with %field% substitutions).
-    pub subject_template: &'static str,
-    /// Plain-text Msg: template (with %field% substitutions). Sent as the
-    /// human-readable message body for clients that don't render forms.
-    pub body_template: &'static str,
-}
-
-pub struct FormField {
-    pub id: &'static str,         // matches XML element name
-    pub label: &'static str,      // human label for the compose UI
-    pub kind: FieldKind,
-    pub required: bool,
-    pub max_length: Option<usize>,
-}
-
-pub enum FieldKind {
-    Text,
-    LongText,         // multi-line
-    Date,
-    Time,
-    Boolean,          // checkbox; rendered as "Yes" / "No" in XML+text
-}
-
-/// A parsed form payload (XML decode result, or compose-time pre-send state).
-pub struct FormPayload {
-    pub form_id: String,                     // from attachment name
-    pub fields: Vec<(String, String)>,       // (id, value) — preserves XML order
-}
-```
-
-### Wire format (WLE-compatible)
-
-For compose-time send of ICS-213:
-
-```
-Message body (text):
-GENERAL MESSAGE (ICS 213)
-1. Incident Name: HURRICANE WALDO RESPONSE
-2. To (Name and Position): JOHN OPERATOR, EOC Comms
-3. From (Name and Position): JANE OPERATOR, Field Net Control
-4. Subject: REQUEST EXTRA MEDICAL SUPPLIES
-...
-[Sent via Tuxlink v0.3.0]
-
-Attachment: RMS_Express_Form_ICS213.xml (MIME: application/xml or text/xml)
-<?xml version="1.0" encoding="utf-8"?>
+```xml
+<?xml version="1.0"?>
 <RMS_Express_Form>
   <form_parameters>
     <xml_file_version>1.0</xml_file_version>
-    <tuxlink_version>0.3.0</tuxlink_version>
-    <form_version>ICS213/1.0</form_version>
+    <rms_express_version>Tuxlink/0.3.0</rms_express_version>
+    <submission_datetime>20260530143000</submission_datetime>
+    <senders_callsign>N0CALL</senders_callsign>
+    <grid_square>FM18lu</grid_square>
+    <display_form>ICS213_Initial_Viewer.html</display_form>
+    <reply_template>ICS213_SendReply.0</reply_template>
   </form_parameters>
   <variables>
     <inc_name>HURRICANE WALDO RESPONSE</inc_name>
     <to_name>JOHN OPERATOR, EOC Comms</to_name>
     <fm_name>JANE OPERATOR, Field Net Control</fm_name>
-    <Subjectline>REQUEST EXTRA MEDICAL SUPPLIES</Subjectline>
-    <Mdate>2026-05-30</Mdate>
+    <subjectline>REQUEST EXTRA MEDICAL SUPPLIES</subjectline>
+    <mdate>2026-05-30</mdate>
     <mtime>14:30Z</mtime>
-    <Message>Need additional bandages and IV bags at field station 3...</Message>
-    <Approved_Name>JANE OPERATOR</Approved_Name>
+    <message>Need additional bandages and IV bags at field station 3...</message>
+    <approved_name>JANE OPERATOR</approved_name>
+    <approved_postitle>Field Net Control</approved_postitle>
   </variables>
 </RMS_Express_Form>
 ```
 
-**Notes on the XML envelope:**
-- `<form_parameters>` block is WLE convention. We include `<tuxlink_version>` (parallel to WLE's `<rms_express_version>`) for forensics — if a receiving WLE operator sees a malformed form, they can blame us by version.
-- `<form_version>` lets us version-bump field schemas without breaking older receivers.
-- Field names in the XML match the WLE field names (e.g., `inc_name`, `Subjectline`, `Mdate`, `mtime`) — verified by reading the actual `ICS213_Initial.html` field decls. This is the parity gate: WLE must render our XML correctly.
+**Important wire-format constraints** (all verified against WLE decompile + Pat source):
 
-## 6. UI surfaces
+- All `<variables>` element names are lowercase ASCII. Internal underscores preserved (`<approved_name>`).
+- Element ORDER in `<form_parameters>` MUST match the WLE-emitted order above (xml_file_version → rms_express_version → submission_datetime → senders_callsign → grid_square → display_form → reply_template).
+- `<display_form>` is REQUIRED — Pat returns HTTP 400 (`forms.go:511-517`) and WLE shows "display form name is blank" error if missing.
+- `<rms_express_version>` is the canonical version-tag element (Pat uses this name too); the value can be `"Tuxlink/<semver>"` to identify originator without breaking aggregator compatibility.
+- Empty fields emit `<field></field>` (not self-closing, not omitted), per Pat behavior.
+- Special chars: `<`, `>`, `&` are XML-escaped; `"`, `'` are NOT (matches WLE).
+- File charset: UTF-8 with BOM (3-byte `EF BB BF` prefix). Pat strips BOM (`forms.go:462`); WLE's `XmlReader` handles natively.
 
-### 6.1 Compose flow
-
-Add a new entry point in the compose window: a button labeled **"Compose form…"** next to the existing "New message" entry. Clicking opens `FormPicker`.
-
-```
-┌─ FormPicker (modal / dropdown) ─────────────────┐
-│ Pick a form to author:                          │
-│                                                 │
-│ ▸ ICS-213 General Message                       │
-│ ▸ ICS-309 Communications Log                    │
-│ ▸ Position Report                               │
-│ ▸ Bulletin (information broadcast)              │
-│ ▸ Damage Assessment                             │
-│                                                 │
-│              [Cancel]    [Use selected form]   │
-└─────────────────────────────────────────────────┘
-```
-
-Selecting a form replaces the Compose body with that form's React component (e.g., `Ics213Form`). The To/Cc/Subject row above stays; the body region is replaced.
+**Body template** for ICS-213 (from real `ICS213 General Message.txt` — full canonical version):
 
 ```
-┌─ Ics213Form (in Compose body region) ───────────┐
-│ Incident Name:    [HURRICANE WALDO RESPONSE  ]  │
-│                                                 │
-│ To (Name+Pos):    [JOHN OPERATOR, EOC Comms  ]  │
-│ From (Name+Pos):  [JANE OPERATOR, Net Control]  │
-│                                                 │
-│ Subject:          [REQUEST EXTRA MEDICAL SUP ]  │
-│                                                 │
-│ Date: [2026-05-30]   Time: [14:30Z]             │
-│                                                 │
-│ Message:                                        │
-│ ┌─────────────────────────────────────────────┐ │
-│ │Need additional bandages and IV bags at      │ │
-│ │field station 3 by 1700Z. Confirm receipt.   │ │
-│ └─────────────────────────────────────────────┘ │
-│                                                 │
-│ Approved by:      [JANE OPERATOR             ]  │
-│ Position/Title:   [Field Net Control         ]  │
-│                                                 │
-│         [Discard form]    [Send (Ctrl+Enter)]  │
-└─────────────────────────────────────────────────┘
+GENERAL MESSAGE (ICS 213)
+<var FormTitle>
+<var IsExercise>
+1. Incident Name: <var inc_name>       <var txtStr>
+2. To (Name and Position): <var to_name>
+3. From (Name and Position): <var fm_name>
+4. Subject: <var subjectline>
+5. Date: <var mdate>
+6. Time: <var mtime>
+7. Message:
+
+<var message>
+
+8. Approved by: <var approved_name>
+8a. Position/Title: <var approved_postitle>
+    [Sender: <var theMsgSender> Lat: <var mapLat>, Lon: <var mapLon>, MGRS: <var MGRS>; Location source: <var locationSource>]
+------------------------------------
+Sending Station: <MsgSender>
+Senders Software Version: Tuxlink/<ProgramVersion>
+Senders Template Version: <var Templateversion>
+[No changes or editing of this message are allowed]
 ```
 
-On submit: serialize via `forms::serialize::to_wle_xml`, build outbound message with XML attachment + text body, hand to existing send infra.
+The `<var IsExercise>` line is operationally critical — it substitutes to "** THIS IS AN EXERCISE **" when the operator checked the exercise box (otherwise empty). EmComm operators trained on WLE rely on this marker. Tuxlink composing without it risks an exercise being mistaken for a real incident or vice versa.
 
-### 6.2 Read flow
+## 4. Design approaches (unchanged from rev-1)
 
-When `message.isForm` is true (newly correct after detection fix):
+Same three approaches as rev-1. Recommendation stands: **Approach C — native React forms for v0.1, defer WLE-HTML-webview-compat to v0.5+**.
 
-1. Look up the form ID from the attachment name (`RMS_Express_Form_ICS213.xml` → `ICS213`).
-2. Fetch and parse the XML attachment.
-3. If `ICS213` is a known form: render `Ics213View` with the field values.
-4. Else: render `KeyValueView` with whatever field/value pairs the XML contained.
+## 5. Chosen architecture
 
-```
-┌─ Ics213View (in reading pane) ──────────────────┐
-│ 📋 ICS-213 General Message · v1.0               │
-│ ─────────────────────────────────               │
-│ Incident:  HURRICANE WALDO RESPONSE             │
-│                                                 │
-│ To:        JOHN OPERATOR, EOC Comms             │
-│ From:      JANE OPERATOR, Field Net Control     │
-│                                                 │
-│ Date:      2026-05-30 · Time: 14:30 UTC         │
-│                                                 │
-│ Subject:   REQUEST EXTRA MEDICAL SUPPLIES       │
-│                                                 │
-│ Message:                                        │
-│   Need additional bandages and IV bags at field │
-│   station 3 by 1700Z. Confirm receipt.          │
-│                                                 │
-│ Approved by:  JANE OPERATOR                     │
-│ Position:     Field Net Control                 │
-│                                                 │
-│ ─────────────────────────────────               │
-│ [Reply with form]   [Reply as plain text]      │
-└─────────────────────────────────────────────────┘
-```
+### 5.1 Two encoding paths (both v0.1 dependencies)
 
-Replies/forwards continue to use the existing `replyActions.ts` safety pattern (never quote raw form XML in the reply body).
+Tuxlink composes form messages via two distinct paths depending on the send transport:
 
-### 6.3 KeyValueView (unknown form fallback)
-
-```
-┌─ KeyValueView ──────────────────────────────────┐
-│ 📋 Unknown form: <attachment-name>              │
-│ ─────────────────────────────────               │
-│ <field1>:  <value1>                             │
-│ <field2>:  <value2>                             │
-│ ...                                             │
-│                                                 │
-│ The form's specific renderer is not bundled in  │
-│ this tuxlink version. Above is the raw field    │
-│ data from the XML payload.                      │
-│                                                 │
-│ Message body (sender's text rendering):         │
-│ ┌─────────────────────────────────────────────┐ │
-│ │<rendered body>                              │ │
-│ └─────────────────────────────────────────────┘ │
-└─────────────────────────────────────────────────┘
-```
-
-The unknown-form case is the "graceful degradation" floor — every WLE form is at minimum readable in tuxlink, even if not visually pretty.
-
-## 7. Catalog management — bundled vs dynamic
-
-For v0.1: **bundled**. Form definitions live in `src-tauri/src/forms/catalog.rs` as `const` arrays. The seed set:
-
-| Form ID | Name | Reason |
+| Path | Used when | Encoding work |
 |---|---|---|
-| `ICS213` | ICS-213 General Message | The canonical EmComm general message — most-used form in nets and incident dispatches. |
-| `ICS309` | ICS-309 Communications Log | Standard end-of-incident reporting. |
-| `Position` | GPS Position Report | The structured QTH-update message; also the v0.1 capability 3.3 gap. |
-| `Bulletin` | Bulletin (broadcast) | Common for net announcements / SHARES / RACES. |
-| `DamageAssessment` | Damage Assessment | Most common ARC/disaster-response form. |
+| **Path A — via Pat REST** | Transport routes through Pat (current default for CMS Telnet) | Multipart/form-data HTTP POST to Pat's `/api/mailbox/Outbox`; Pat does B2F-format conversion + lzhuf + send |
+| **Path B — via native winlink/session** | Transport routes via tuxlink's native CMS Telnet stack (post-Pat-replacement) | Direct B2F format: `Message::to_bytes` emits repeating `File: <size> <name>` headers + raw attachment bytes |
 
-(Final list pending operator confirmation; the recommendation above is based on EmComm prevalence and form-type coverage variety.)
+**Decision for v0.1**: Build **Path A first** (works with the shipped Pat-via-REST send pipeline). Path B is a parallel work-item that lands when native Telnet send replaces Pat. The forms module is path-agnostic — it produces the (text body, xml bytes, filename) triple; the path-specific code handles transport.
 
-**Why bundled**: zero infra (no fetcher, no version-check, no fallback for catalog-fetch failure). 4–6 hand-built forms gets us 80% of EmComm use-cases. Operator demand will tell us when to add more.
+### 5.2 Module layout
 
-**Future: dynamic catalog** (v0.5+): fetch from winlink.org or our own forms repo. Form definitions might be JSON files in a shared `forms/` dir, loaded at startup. Defer the format design until we ship v0.1.
+**Rust backend** (new files in `src-tauri/src/forms/`):
 
-## 8. Boundaries with existing tuxlink code
+- `mod.rs` — module root
+- `catalog.rs` — bundled `FormDef` definitions for 5 forms
+- `parse.rs` — detect form via attachment-name match + parse XML payload (hardened)
+- `serialize.rs` — build XML envelope + text body from form-field values (lowercase elements, full `<form_parameters>`, etc.)
+- `types.rs` — `FormDef`, `FormField`, `FormPayload`, `FieldKind`
+- `validation.rs` — `form_id` regex + size caps + parser-config helpers
 
-| Existing surface | Change |
+**Backend integration changes** (existing files):
+
+- `winlink_backend.rs`: extend `OutboundMessage` with `attachments: Vec<OutboundAttachment>`. **Breaking change to the struct** (acknowledged at line 89 — "Adding fields is an acknowledged breaking change"). Add `OutboundAttachment { filename: String, content_type: String, bytes: Vec<u8> }`.
+- `pat_client.rs`: extend the `/api/mailbox/Outbox` POST to support multipart/form-data with file parts for attachments. Pat's REST API already accepts this (verified via tuxlink's existing `pat_client_test.rs::test_send_message_posts_multipart_form_data`).
+- `ui_commands.rs`: 
+  - **Bug fix in scope**: `is_form` detection moves from `body.starts_with("<?xml")` to attachment-name match (`attachments.iter().any(|a| a.filename.starts_with("RMS_Express_Form_") && a.filename.ends_with(".xml"))`).
+  - Add `form_id: Option<String>` to `ParsedMessageDto` (extracted from attachment name; normalized for lookup).
+  - **Add `form_payload: Option<FormPayload>`** to `ParsedMessageDto` — the parsed form fields, populated eagerly while `parse_raw_rfc5322` still has the raw attachment bytes available. Without this, the frontend would have only the form ID and no field values to render (Codex R5-P1). Eager parse is safe: `MAX_FORM_XML_BYTES = 256 KiB` caps allocation; parse is ~1ms per form. Lazy alternative (separate `get_form_payload` IPC) considered and rejected — extra round-trip + extra IPC surface for no real benefit at v0.1 sizes.
+  - Add `send_form` Tauri command: `(form_id, field_values, to, cc, subject)` → serialize → attach to `OutboundMessage` → existing `send_message` path.
+
+**React frontend** (new files in `src/forms/`):
+
+- `types.ts` — TS mirror of `FormPayload`, `FormDef`, `FormField`, `FieldKind`
+- `forms.ts` — registry `Record<form_id, { compose: Component, view: Component }>`
+- `ics213/{Ics213Form.tsx, Ics213View.tsx}` — per-form compose + view (one pair per bundled form)
+- `KeyValueView.tsx` — unknown-form fallback (renders body text + raw field/value dump)
+- `FormPicker.tsx` — compose-side modal picker (5 forms × name + description)
+
+**Frontend integration changes**:
+
+- `src/mailbox/MessageView.tsx`: form-render dispatch (lookup `message.form_id` → component or KeyValueView).
+- `src/compose/Compose.tsx`: 
+  - Add "Compose form…" button.
+  - Pre-form-switch unsaved-changes dialog (Save / Discard / Cancel) before replacing body region with form component.
+- `src/compose/useDraft.ts`: extend `DraftData` with `formId?: string | null` + `formFields?: Record<string, string>`. Update autosave + restore + `compose_window_open` seed paths.
+- `src/mailbox/replyActions.ts`: update for new body-vs-XML separation (body now plain-text-rendered, XML in attachment — different from rev-1's body-XML assumption). Add explicit tests for reply behavior on form messages.
+
+### 5.3 Reply-to-form default (rev-2 decision)
+
+Rev-1 deferred this. Rev-2 picks a default: **Reply to a form message defaults to plain-text reply, NOT auto-open the same form**. Rationale:
+
+- Operator can always escalate to a same-form reply via the Compose-form button.
+- Auto-opening a form on Reply forces the operator into structured response when free-text is sometimes the right answer ("Acknowledged, will dispatch.").
+- The pre-rev-2 quote-preserving logic in `replyActions.ts` already handles "don't quote form XML" — we extend it to "don't quote the rendered text body either" (which would be redundant noise). Reply body becomes: original sender's most recent line/two + `[ICS-213 form omitted from quote — view original for full content]`.
+- Operator-decision-overridable: a future preference toggle could flip this default. Out of scope for v0.1.
+
+## 6. Data model (corrected)
+
+### 6.1 Rust types
+
+```rust
+// src-tauri/src/forms/types.rs
+
+pub struct FormDef {
+    /// Canonical form ID (lowercase, alphanumeric + dash/underscore, ≤64 chars).
+    /// Matches the WLE template name basename (e.g. "ICS213_Initial"), used both
+    /// for attachment naming and for the React component registry lookup.
+    pub id: &'static str,
+    /// Display name in the FormPicker.
+    pub name: &'static str,
+    /// Field schema in declaration order (must match WLE element-emit order
+    /// so byte-level diff against WLE-composed forms is minimal).
+    pub fields: &'static [FormField],
+    /// Subject-line template (with `%fieldid%` placeholders — lowercase).
+    pub subject_template: &'static str,
+    /// Plain-text Msg: template (with `<var fieldid>` placeholders, matching
+    /// WLE convention). Substitutions are case-insensitive on the lookup side
+    /// (per Pat's `placeholder.go` regex `(?i)`) but stored lowercase here.
+    pub body_template: &'static str,
+    /// `<display_form>` value emitted in `<form_parameters>` (WLE+Pat both
+    /// require this; missing → Pat returns HTTP 400, WLE shows error dialog).
+    pub display_form: &'static str,
+    /// `<reply_template>` value emitted in `<form_parameters>`.
+    pub reply_template: &'static str,
+}
+
+pub struct FormField {
+    pub id: &'static str,         // lowercase ASCII; matches XML element name
+    pub label: &'static str,
+    pub kind: FieldKind,
+    pub required: bool,
+    pub max_length: Option<usize>,  // SEND-side cap; RECV-side has separate cap
+}
+
+pub enum FieldKind {
+    Text,
+    LongText,
+    Date,         // ISO format YYYY-MM-DD
+    Time,         // 24h UTC HH:MM[Z]
+    Boolean,      // checkbox; serialized as "Yes" / "" (matches WLE)
+}
+
+pub struct FormPayload {
+    pub form_id: String,                     // from attachment name, validated
+    pub form_parameters: FormParameters,     // <form_parameters> block contents
+    pub fields: Vec<(String, String)>,       // (lowercase_id, value) — XML order preserved
+}
+
+pub struct FormParameters {
+    pub xml_file_version: String,             // "1.0"
+    pub rms_express_version: String,          // "Tuxlink/<semver>" or sender's value
+    pub submission_datetime: String,          // YYYYMMDDhhmmss UTC (WLE format)
+    pub senders_callsign: String,
+    pub grid_square: String,                  // 4-char Maidenhead default per project convention
+    pub display_form: String,                 // basename match for catalog lookup
+    pub reply_template: String,               // .0 reply template filename
+}
+```
+
+### 6.2 Outbound attachment type
+
+```rust
+// src-tauri/src/winlink_backend.rs (additions)
+
+pub struct OutboundAttachment {
+    pub filename: String,        // e.g. "RMS_Express_Form_ICS213_Initial.xml"
+    pub content_type: String,    // "text/xml" for forms
+    pub bytes: Vec<u8>,          // raw bytes (UTF-8 with BOM for XML)
+}
+
+pub struct OutboundMessage {
+    pub to: Vec<String>,
+    pub cc: Vec<String>,
+    pub subject: String,
+    pub body: String,
+    pub date: String,
+    pub attachments: Vec<OutboundAttachment>,  // NEW
+}
+```
+
+This change is acknowledged-breaking per the existing `OutboundMessage` comment.
+
+### 6.3 Wire format spec (corrected — see §3)
+
+Full canonical XML payload in §3. Notable normative bits:
+
+- XML declaration: `<?xml version="1.0"?>` (NO encoding attribute, UTF-8 BOM prepended)
+- All `<variables>` element names lowercase ASCII
+- `<form_parameters>` includes all 7 elements in WLE order
+- Empty fields: `<field></field>`
+- MIME content-type: `text/xml`, base64 transfer encoding, double-quoted filename
+
+## 7. UI surfaces (with R3 fixes)
+
+### 7.1 Compose flow — with draft-protection dialog
+
+```
+┌─ Compose window ───────────────────────┐
+│ To:      [JOHN@winlink.org]            │
+│ Subject: [REQUEST EXTRA MEDICAL]       │
+│ ─────────────────────────────────       │
+│  [Body region]                          │
+│                                         │
+│  Body text or form fields here...       │
+│                                         │
+│  [Save Draft]  [Compose form…]  [Send] │
+└────────────────────────────────────────┘
+```
+
+**Clicking "Compose form…" when body region has unsaved content** triggers a dialog:
+
+```
+┌─ Unsaved changes ───────────────────────┐
+│ Switching to a form will replace your   │
+│ current message body. Your draft will   │
+│ be saved automatically — you can return │
+│ to it from Drafts.                       │
+│                                         │
+│ Continue?                                │
+│         [Cancel]    [Save & continue]   │
+└─────────────────────────────────────────┘
+```
+
+After confirm: save current body as a draft (existing `useDraft` path), then mount the form component.
+
+### 7.2 Form picker, form fill, form view (unchanged from rev-1 §6.1–§6.3)
+
+UI layouts in rev-1 §6 stand; the corrected wire format flows through unchanged.
+
+### 7.3 Draft persistence (R3-F2 fix)
+
+`DraftData` schema extends:
+
+```typescript
+interface DraftData {
+  to: string;
+  subject: string;
+  body: string;
+  requestAck: boolean;
+  formId?: string;              // NEW — if set, draft is a form-fill in progress
+  formFields?: Record<string, string>;  // NEW — field id (lowercase) → value
+}
+```
+
+Autosave path (`useDraft.ts:131`) inspects `formId`; if set, persists `formFields` instead of `body`. Restore path: if a draft has `formId`, the compose window mounts the form component with `formFields` pre-populated.
+
+### 7.4 Reply-to-form behavior (R3-F3 fix)
+
+Reply to a message where `message.form_id` is set:
+
+- **Default**: plain-text reply. Body pre-population: `"On <date>, <from> wrote:\n[ICS-213 form omitted from quote — view original for full content]\n\n"`.
+- **Operator override**: a "Reply with form…" alternative button (next to Reply / Reply All) opens the same form type with `to_name` pre-populated from the original `fm_name` (and reverse).
+- **Existing `replyActions.ts` test**: keeps the "do not quote raw XML" assertion (now even stronger: also do not quote the rendered text body, since it can contain sensitive form values).
+
+## 8. Catalog (unchanged)
+
+Bundled in binary as `const` arrays in `src-tauri/src/forms/catalog.rs`. Seed set (operator-confirmable in §15):
+
+| Form ID | Display Form | Reply Template | Tuxlink display name |
+|---|---|---|---|
+| `ICS213_Initial` | `ICS213_Initial_Viewer.html` | `ICS213_SendReply.0` | ICS-213 General Message |
+| `ICS309_Initial` | `ICS309_Initial_Viewer.html` | `ICS309_SendReply.0` | ICS-309 Communications Log |
+| `Position_Initial` | (TBD per catalog) | (TBD) | GPS Position Report |
+| `Bulletin_Initial` | (TBD per catalog) | (TBD) | Bulletin (broadcast) |
+| `DamageAssessment_Initial` | (TBD per catalog) | (TBD) | Damage Assessment |
+
+(Verify exact `<display_form>` filename for each by reading the WLE `Standard Templates/` files at impl time.)
+
+## 9. Boundaries — full integration list
+
+**New files**: `src-tauri/src/forms/{mod,catalog,parse,serialize,types,validation}.rs`, `src-tauri/tests/forms_test.rs`, `src/forms/{types,forms,FormPicker,KeyValueView,ics213/Ics213Form,ics213/Ics213View}.tsx`, plus 4 more form-component pairs.
+
+**Modify**:
+
+- `src-tauri/src/winlink_backend.rs`: add `OutboundAttachment` struct; add `attachments: Vec<OutboundAttachment>` to `OutboundMessage` (breaking but acknowledged).
+- `src-tauri/src/winlink/message.rs`: extend `Message` with attachment support for Path B (B2F wire format).
+- `src-tauri/src/pat_client.rs`: extend send to attach files via multipart/form-data POST (Path A).
+- `src-tauri/src/ui_commands.rs`: fix `is_form` detection; add `form_id` to DTO; add `send_form` command.
+- `src/mailbox/MessageView.tsx`: form-render dispatch.
+- `src/mailbox/replyActions.ts`: updated body-vs-XML logic + reply-to-form behavior; tests added.
+- `src/compose/Compose.tsx`: "Compose form" entry point + unsaved-changes dialog.
+- `src/compose/useDraft.ts`: extend `DraftData`.
+
+**No deletions**.
+
+## 10. Security & hardening (R4 — NEW section)
+
+Per BRF security round, the following hardening is **mandatory before merge**, not optional:
+
+| Concern | Mitigation |
 |---|---|
-| `parse_raw_rfc5322` | Fix `is_form` detection: look at attachments for `RMS_Express_Form_*.xml`, not body for `<?xml` prefix. Track the form ID in a new `ParsedMessageDto.form_id: Option<String>`. |
-| `ParsedMessageDto` | Add `form_id: Option<String>` field. |
-| `MessageView.tsx` | Replace the existing form-placeholder block with form-type lookup + render dispatch (FormViewByType / KeyValueView / fallback). |
-| `replyActions.ts` | No change — the existing "don't quote form XML" safety logic remains correct (we still detect `isForm` and skip body quoting). |
-| `Compose.tsx` | Add a "Compose form" entry point. |
-| `Tauri invoke handler` | Register `send_form` command. |
+| XML billion-laughs entity expansion | Use `quick-xml` 0.39.x with `Reader::trim_text(false)` and explicit `Event::DocType` rejection. Cap nesting depth at 8; cap total event count at 10k. Regression test with a corpus of malicious XML samples (entity bombs, deeply nested, etc.). |
+| OOM on large attachment | `MAX_FORM_XML_BYTES = 256 * 1024` (256 KiB) enforced at the `forms::parse::parse_form_xml` boundary; reject larger with `UiError::Internal("form XML too large")` before allocation. |
+| Field count explosion | Cap `FormPayload.fields.len() <= 256` during parse. Reject and log if exceeded. |
+| `form_id` path traversal | Validate extracted ID against regex `^[A-Za-z0-9_-]{1,64}$` at extraction. Reject otherwise. Documented as load-bearing for v0.5+ catalog cache + attachment save features. |
+| React XSS via field value | All field-value renders go through React's default-escape path. **Explicit ban on `dangerouslySetInnerHTML` in the forms module**, enforced by a Vitest test (`expect(component).not.toContain('dangerouslySetInnerHTML')`). |
+| Attachment filename rendering | Sanitize filename before display (`.replace(/[\x00-\x1f]/g, '')` + length cap 255 chars). |
+| Reply-quote leak | `replyActions.ts` updated to detect `form_id` set on the source message; skip quoting body content (which contains the form-rendered text); insert the placeholder string. New test cases. |
+| `send_form` Tauri command | Register in the Tauri allowlist with the same restrictions as `send_message`; no broader scope. |
+| UTF-8 validation | Reject non-UTF-8 XML attachment bytes early; surface as `UiError::Internal("form XML not valid UTF-8")`. |
+| Streaming-receive memory pressure | (Pat REST API: Pat buffers to memory anyway; v0.1 inherits that footprint. Future Path B native B2F receive: defer to that work item — out of scope here.) |
 
-**No deletions, no refactors of unrelated code.** The forms code is purely additive.
+## 11. Testing strategy (expanded)
 
-## 9. Testing strategy
-
-| Test | Coverage |
+| Test class | Coverage |
 |---|---|
-| **Rust unit** — `forms::serialize::to_wle_xml(ICS213, {field: value, ...})` | Generates byte-perfect WLE-compatible XML for a known field map. |
-| **Rust unit** — round-trip parse | `serialize → parse → equal field map`. Catches encoding/escape/CDATA bugs. |
-| **Rust unit** — `forms::parse::detect_form` | Returns Some(form_id) for `RMS_Express_Form_*.xml` attachment; None otherwise. |
-| **Rust integration** — full message build | Compose a form → serialize → send through `send_message` infra → received raw bytes parse into expected RFC5322 + attachment shape. |
-| **Vitest** — `Ics213Form` renders all required fields | All inputs present, required-field validation. |
-| **Vitest** — `Ics213View` renders parsed payload | Given a FormPayload, all field/value pairs displayed. |
-| **Vitest** — `KeyValueView` fallback | Given an XML payload with unknown fields, all fields displayed. |
-| **Vitest** — `Compose → Form picker → Ics213Form → submit` | End-to-end form-author UX via React Testing Library. |
-| **Vitest** — `MessageView` form-render dispatch | Given `message.isForm=true` + a known ICS213 attachment, renders `Ics213View`. Unknown form renders `KeyValueView`. |
-| **Live-receive smoke** (operator) | Send a tuxlink-composed ICS-213 to a WLE install, verify WLE renders it correctly in its viewer. Send a WLE-composed ICS-213 to tuxlink, verify tuxlink renders it correctly. Cross-client parity gate. |
+| **Rust unit — serialize** | Byte-exact output for each bundled form given a known field map (including lowercase elements, full `<form_parameters>`, BOM, MIME envelope). |
+| **Rust unit — parse** | Round-trip per form (serialize → parse → equal field map). Detection from attachment name. Form ID validation. Empty-field handling. |
+| **Rust unit — hardening** | Billion-laughs rejection; size cap rejection; field count cap; path-traversal `form_id` rejection; malformed UTF-8 rejection. |
+| **Rust integration — message build** | `send_form → OutboundMessage with attachment → pat_client multipart POST → wire bytes match expected MIME structure`. |
+| **Vitest — Ics213Form** | All required fields render; required-field validation triggers on empty submit; long-text Message field wraps. |
+| **Vitest — Ics213View** | Given a `FormPayload`, all field/value pairs displayed; XSS-safe rendering (no innerHTML). |
+| **Vitest — KeyValueView** | Body text + raw field dump displayed; unknown XML doesn't crash. |
+| **Vitest — Compose flow** | "Compose form" → dirty-body dialog → save draft → mount form. Round-trip form-fill → submit → IPC. |
+| **Vitest — Draft persistence** | Form-in-progress survives unmount/remount via `DraftData`. |
+| **Vitest — Reply behavior** | Reply to form message uses placeholder, not raw form data. Reply-with-form opens correct form pre-populated. |
+| **Live-receive smoke A** | tuxlink-composed ICS-213 → **WLE** receives + renders correctly. Cross-client parity gate. |
+| **Live-receive smoke B** | tuxlink-composed ICS-213 → **Pat** receives + renders correctly. |
+| **Live-receive smoke C** | WLE-composed ICS-213 → tuxlink receives + renders correctly. |
+| **Live-receive smoke D** | Pat-composed ICS-213 → tuxlink receives + renders correctly. |
 
-The live-receive smoke is the **gate**: ICS-213 round-trips between tuxlink and WLE without information loss. If WLE refuses to render our XML, the spec is wrong.
+The four live smokes are the **parity gates**. Any one failing means the wire format is wrong somewhere.
 
-## 10. Codex round (cross-provider review)
+## 12. Codex round (impl-stage; design-stage already done)
 
-Per `feedback_no_carveout_on_cross_provider_adrev` and the Winlink-protocol-adjacent nature of this work (XML envelope shape, WLE compatibility), the implementation gets a Codex review round before PR submission. Specifically:
+Adversarial design review per BRF has been completed (Claude R1-R4 done; Codex R5 in progress at time of writing). The impl-stage Codex round runs against the implementation commit before the final PR opens; per `feedback_no_carveout_on_cross_provider_adrev`, this is non-optional for Winlink-protocol-adjacent work.
 
-- Attack angles: WLE compatibility (does our XML pass WLE's parser?), field-name accuracy (did we miss a required WLE field?), edge cases in the round-trip (long text, special characters, empty/missing fields), reply/forward safety (don't quote XML in replies — existing pattern preserved).
+## 13. Migration (parse_raw_rfc5322 detection bug fix)
 
-## 11. Migration plan for the existing `is_form` detection bug
+In scope for this PR. Change `parse_raw_rfc5322`:
 
-The existing detection — `body.starts_with("<?xml")` — is WRONG for WLE-format messages (XML is in attachment, not body). Some tuxlink dev fixtures use the wrong format. Migration:
+- Old: `let is_form = body.trim_start().starts_with("<?xml");`
+- New: `let is_form = attachments.iter().any(|a| a.filename.starts_with("RMS_Express_Form_") && a.filename.ends_with(".xml"));` + extract `form_id` via the validated regex.
 
-1. Update `parse_raw_rfc5322`:
-   - Old: `let is_form = body.trim_start().starts_with("<?xml");`
-   - New: detect form via attachments — `is_form = attachments.iter().any(|a| a.filename.starts_with("RMS_Express_Form_") && a.filename.ends_with(".xml"))`.
-   - Also set `form_id` to the attachment's parsed ID.
-2. Update `MessageView.tsx` form-detection — uses the new `form_id` field.
-3. Update dev fixtures (`devFixture.ts`, `replyActions.test.ts`) to use the correct format (XML in attachment, plain text in body).
-4. Existing tests (`MessageView.test.tsx`, `replyActions.test.ts`) get a passes-after-fix update.
+Update dev fixtures (`devFixture.ts`, `replyActions.test.ts`) to use the correct wire format (XML in attachment + plain text in body). Update tests against the new shape.
 
-This migration lands in the same PR as the new forms surface. There's no v0.0.X user data at risk (no real messages have the wrong format in the wild yet).
+No user-data risk: no real CMS forms have been received in production with the wrong format detection.
 
-## 12. Risks & mitigations
+## 14. Risks (expanded)
 
 | Risk | Mitigation |
 |---|---|
-| WLE's XML field names don't exactly match what we generate → other clients can't render | Reading the ICS213 `_Initial.html` directly to verify field names; round-trip test with a real WLE install (operator-validated smoke). |
-| Our form schema misses optional WLE fields → looks "wrong" to a WLE operator | Bundle the full WLE field set per form; render missing values as blank, present values as filled. Cross-check against `<FormName>_Viewer.html`. |
-| 4-6 forms doesn't cover the operator's actual EmComm use-case | KeyValueView fallback ensures every form is readable. Operator feedback drives the v0.1.1+ form additions. |
-| Some WLE forms use rich HTML (tables, images, JS) we don't replicate in React | Defer those; v0.1's hand-built set is text-field-only forms (ICS-213, ICS-309, Position Report, Bulletin, Damage Assessment all fit). v0.5+ could add a webview rendering path. |
-| `parse_raw_rfc5322` change breaks existing `MessageView.test.tsx` | Tests are updated as part of this PR; the migration §11 is explicit. |
-| Reply-quote regression — replying to a form leaks form data into the reply body | Existing `replyActions.ts` safety preserved by tests (won't quote raw XML); add a test specifically for a form reply with the new format. |
+| Live smoke A fails (WLE rejects our form) | The 4 smokes are gating; if any fails, do not ship until fixed. Debug via comparing tuxlink-emitted bytes to WLE-emitted bytes for the same form. |
+| `OutboundMessage` breaking change ripples broadly | Acknowledged at code-comment level already. Update all `OutboundMessage::new` callers in the same PR. |
+| Pat REST multipart unsupported in our installed Pat version | Verify against `pat_client_test.rs` — the test name suggests it's already supported. Verify on impl day-1 before doing the React work. |
+| Path B (native B2F attachment encoding) NOT in v0.1 | Documented; ship Path A only. Native B2F lands when Pat-replacement does. |
+| Forms catalog drift (we ship ICS213/v1.0, WLE has v1.2) | Pat tolerates schema drift; WLE renders blanks for missing fields. Document; accept. Operator can refresh forms once auto-update ships (v0.5+). |
+| Performance: large form-XML on slow RF | Path A inherits Pat's buffering; size cap (256 KiB) is well under any plausible form. |
 
-## 13. Open questions for operator review
+## 15. Open questions for operator review (narrowed by BRF)
 
-1. **Form seed list** — is `ICS213 / ICS309 / Position / Bulletin / DamageAssessment` the right 5, or do you want a different mix? (E.g., HICS forms for hospital ops; ARC1077 for Red Cross damage; Radiogram.)
-2. **Position Report**: WLE has a dedicated `PositionReport` Form and ALSO the position-report-message capability (§3.3 in the inventory). Build them as the same UX (form) or different UX (button on the dashboard)?
-3. **Reply-with-form behavior**: when you reply to an incoming ICS-213, should the default be (a) plain text reply, (b) auto-open an ICS-213 reply form pre-populated with the original subject+from?
-4. **Wire-format minor details**: the XML `<form_parameters>` block — should we mimic WLE's exact element names (`<rms_express_version>` etc.) for max compatibility, or use our own (`<tuxlink_version>`) for honesty? Either works; preference?
-5. **Compose entry point**: "Compose form…" as a button in the main compose window, OR as a separate menu/dropdown? (Tuxlink's UI conventions don't have menus yet, so a button feels right — confirming.)
+The BRF rounds resolved 3 of rev-1's open questions; the remaining 4 are:
 
-These are conceptual design calls, not implementation details. The implementation plan (next via writing-plans skill) defers atomic decisions per `feedback_no_atomic_decisions_to_operator`.
+1. **Form seed list** — is `ICS213 / ICS309 / Position / Bulletin / DamageAssessment` the right 5? Substitutions? (E.g., HICS forms for hospital ops; ARC1077 specifically; Radiogram.)
+2. **Position Report vs. position-report-message dashboard button** — same UX (form) or different (dashboard button)? Note: WLE has both.
+3. **Reply-to-form default**: rev-2 picks **plain-text reply with placeholder**. Confirm, or flip to "auto-open same form pre-populated."
+4. **Forms-catalog versioning**: when `forms::catalog::ICS213_Initial` ships at form-schema v1.0, and WLE later ships v1.1 with a new field, what's our update story? Bundle update in next tuxlink release? Hot-update from a winlink.org endpoint (out of v0.1 scope)?
 
-## 14. Approval ask
+Rev-1's other operator questions (XML envelope element naming, Compose entry point) are now decided by BRF findings (use `<rms_express_version>` per Pat-aggregator-compat; button in Compose window per §7.1).
 
-Per the brainstorming HARD-GATE: this is design-only, no code written. Operator approval flow:
+## 16. Effort estimate (revised post-BRF)
 
-- **Approve** → merge this PR. I'll proceed via `superpowers:writing-plans` to break the work into an implementation plan, then execute (TDD + Codex round + impl PR).
-- **Request changes** → comment on what should change. I'll iterate.
-- **Reject the whole approach** → say so; I'll regroup before any code.
+Rev-1: "4–6 days once approved" — wildly optimistic. The OutboundMessage backend gap alone is ~2 days.
 
-Estimated implementation effort once approved: 4-6 days (Rust forms module + 5 React components + tests + Codex round + cross-client smoke).
+Rev-2: **12–18 days** for a thorough v0.1 with all 4 live smokes green. Breakdown:
+
+| Phase | Work | Days |
+|---|---|---|
+| Precursor | `OutboundMessage` + `OutboundAttachment` + `pat_client` multipart send + tests | 2-3 |
+| Forms backend | Rust `forms` module (catalog + parse + serialize + validation + tests) | 3-4 |
+| Detection fix + DTO | `ui_commands.rs` + `ParsedMessageDto.form_id` + fixture updates | 1 |
+| Frontend — forms surface | `FormPicker` + ICS-213 compose + view; `KeyValueView`; draft-protection dialog | 3-4 |
+| Frontend — additional forms (4 more) | ICS-309, Position, Bulletin, DamageAssessment | 1-2 |
+| Reply behavior | `replyActions.ts` updates + tests | 0.5 |
+| Codex impl round | Adversarial review on the implementation commit | 0.5 |
+| Live smokes (4) | Operator-driven cross-client smokes | 1-2 |
+
+Plan can subagent-parallelize: precursor + forms backend serialize/parse can run concurrently, frontend can run concurrent with hardening. With 3-way subagent parallelism, calendar can be ~8-10 days.
+
+## 17. Approval ask
+
+Per BRF: approval of this design unblocks `superpowers:writing-plans` for the implementation plan, then 3-round plan review, then operator-decision on execution approach (subagent / parallel session / agent teams).
+
+To approve: merge this PR.
+
+To request changes: comment on what should change. Spec re-runs affected adversarial round if structural.
+
+To reject the whole approach: say so; I regroup.
+
+---
+
+## Appendix A: Adversarial findings (rev-1 → rev-2)
+
+**55 findings across 5 rounds**, gitignored at `dev/adversarial/2026-05-30-html-forms-design-{claude-r{1,2,3,4}-*,codex-r5}.md`.
+
+| Round | Reviewer | Angle | Findings | P0/P1/P2 | New beyond prior rounds |
+|---|---|---|---|---|---|
+| R1 | Claude opus-4-7 (`sorrel-moss-hemlock`-style) | Wire-format pedant | 12 | 2 / 7 / 3 | All 12 |
+| R2 | Claude opus-4-7 | Interop & backward compat | 12 | 4 / 6 / 2 | 8 net-new |
+| R3 | Claude opus-4-7 | UX flow gaps | 12 | 3 / 7 / 2 | 12 net-new (orthogonal angle) |
+| R4 | Claude opus-4-7 | Security & safety | 12 | 3 / 6 / 3 | 12 net-new (orthogonal angle) |
+| R5 | Codex gpt-5.5 (`pine-thistle-raven`) | Independent holistic | 7 | 0 / 5 / 2 | **1 net-new** (P1 — carry parsed form payloads to reader) |
+
+**Codex's catch (R5-P1, the only finding all 4 Claude rounds missed)**: rev-2 added `form_id` to `ParsedMessageDto` but didn't carry the parsed field VALUES, so the frontend would have only the form ID with no data to render. Fixed in §5.2 by adding `form_payload: Option<FormPayload>` to the DTO with eager parse.
+
+All P0 findings (8) and P1 findings (~25) are addressed in rev-2's normative text. Remaining P2 findings are tracked as TODO comments in the implementation plan.
+
+## Appendix B: References
+
+- Adversarial transcripts: `dev/adversarial/2026-05-30-html-forms-design-claude-r{1,2,3,4}-*.md` (and r5-codex if completed)
+- WLE source (decompiled): `dev/scratch/winlink-re/decompiled/rms-express/` (esp. `Template.cs`, `MergeFormVariables.cs`, `MessageEditor.cs`, `MimeEncoder.cs`, `FormServer.cs`)
+- Pat source: `dev/scratch/tuxlink-pat/internal/forms/{forms.go, builder.go, placeholder.go}`
+- WLE form templates: `dev/scratch/winlink-re/install/RMS Express/Standard Templates/ICS USA Forms/`
+- Tuxlink current state: `src-tauri/src/{ui_commands.rs, winlink_backend.rs, winlink/message.rs}`, `src/{mailbox/MessageView.tsx, mailbox/replyActions.ts, compose/Compose.tsx, compose/useDraft.ts}`
 
 Agent: yew-cypress-oak
