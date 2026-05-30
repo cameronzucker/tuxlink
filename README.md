@@ -9,6 +9,14 @@ No Windows, no web UI to babysit — a Rust application that speaks the Winlink 
 protocol directly.
 
 <p align="center">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-green.svg" alt="License: MIT"></a>
+  <a href="CHANGELOG.md"><img src="https://img.shields.io/github/v/release/cameronzucker/tuxlink?label=release" alt="Latest release"></a>
+  <a href="https://github.com/cameronzucker/tuxlink/actions/workflows/release.yml"><img src="https://img.shields.io/github/actions/workflow/status/cameronzucker/tuxlink/release.yml?label=build" alt="Build status"></a>
+  <a href="https://www.rust-lang.org"><img src="https://img.shields.io/badge/rust-1.75+-orange.svg?logo=rust" alt="Rust 1.75+"></a>
+  <a href="https://www.kernel.org"><img src="https://img.shields.io/badge/platform-linux-lightgrey.svg?logo=linux&logoColor=white" alt="Platform: Linux"></a>
+</p>
+
+<p align="center">
   <img src="docs/design/mockups/images/mock-b-principles-faithful.png" width="860"
        alt="The Tuxlink mailbox: dashboard ribbon, folder sidebar, message list, reading pane, and a live session log">
 </p>
