@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tauri::State;
 
-use crate::config::{self, ArdopUiConfig};
+use crate::config::{self, ArdopUiConfig, Config};
 use crate::modem_status::{ModemSession, ModemState, ModemStatus};
 use crate::winlink::modem::ardop::transport::ArdopTransport;
 use crate::winlink::modem::ardop::ArdopConfig;
@@ -312,6 +312,38 @@ fn init_config_from_persisted_config() -> InitConfig {
     }
 }
 
+/// Pre-flight identity check: at least one of `identity.callsign` or
+/// `identity.identifier` must be set + non-empty before a connect attempt
+/// is allowed to proceed past the consent gate.
+///
+/// Why a separate helper (rather than inlining the check in
+/// `modem_ardop_connect`): the Tauri wrapper is hard to unit-test without
+/// a Tauri runtime, but this pure function over `&Config` is trivially
+/// testable. The wrapper calls this helper, so coverage at the helper
+/// layer transitively covers the wrapper's identity-check branch.
+///
+/// `deserialize_optional_nonempty_string` already maps `""` and
+/// whitespace-only inputs to `None` at deserialize time, but we still
+/// defend with a `trim().is_empty()` check in case a caller constructs
+/// a `Config` value in-memory (e.g. tests) without going through serde.
+pub fn check_identity_present(cfg: &Config) -> Result<(), String> {
+    let has_call = cfg
+        .identity
+        .callsign
+        .as_deref()
+        .is_some_and(|s| !s.trim().is_empty());
+    let has_ident = cfg
+        .identity
+        .identifier
+        .as_deref()
+        .is_some_and(|s| !s.trim().is_empty());
+    if has_call || has_ident {
+        Ok(())
+    } else {
+        Err("Operator callsign not configured — complete the wizard before connecting".into())
+    }
+}
+
 /// RADIO-1-gated ARDOP connect. Returns an actionable error when
 /// audio devices are not yet configured (operator must complete
 /// Settings → ARDOP before calling).
@@ -324,6 +356,17 @@ fn init_config_from_persisted_config() -> InitConfig {
 /// returns Err without touching the filesystem or the session state.
 /// This closes the pre-gate-I/O bypass the 2026-05-30 Codex adrev round
 /// flagged.
+///
+/// # Pre-flight identity check (tuxlink-5738)
+///
+/// AFTER the consent gate has consumed the token but BEFORE the
+/// audio-device check, this command verifies the operator's identity
+/// (callsign or identifier) is configured. Ordering rationale: a
+/// wrong-token attempt must STILL fail at the consent gate without
+/// leaking identity-state via the error message. Identity is more
+/// foundational than audio devices (no callsign → no on-air operation
+/// is legal under Part 97), so the identity check precedes the
+/// audio-device check.
 #[tauri::command]
 pub fn modem_ardop_connect(
     session: State<'_, Arc<ModemSession>>,
@@ -343,7 +386,14 @@ pub fn modem_ardop_connect(
         );
     }
 
-    // Gate passed + token consumed. Now safe to do I/O.
+    // ─── Pre-flight identity check (tuxlink-5738) ────────────────────────
+    // Operator must have a callsign OR identifier configured before any
+    // attempt to set up a radio transport. The wizard sets one of these;
+    // an unconfigured deployment must complete the wizard first.
+    let cfg = config::read_config().map_err(|e| format!("read config: {e}"))?;
+    check_identity_present(&cfg)?;
+
+    // Gate passed + identity verified. Now safe to do audio-device I/O.
     let ardop_ui = config_get_ardop();
     if ardop_ui.capture_device.is_empty() || ardop_ui.playback_device.is_empty() {
         return Err(
@@ -667,5 +717,89 @@ mod tests {
             |_cfg, _t| Ok(stub_transport()),
         );
         assert!(result.is_ok(), "result: {result:?}");
+    }
+
+    // ── tuxlink-5738 — pre-flight identity check ─────────────────────────
+
+    /// Build a Config from a JSON literal so the test exercises the same
+    /// deserialize path the production read_config() goes through (incl.
+    /// `deserialize_optional_nonempty_string` which already maps empty
+    /// strings to `None`). Mirrors the existing config.rs test pattern.
+    fn config_with_identity(callsign: Option<&str>, identifier: Option<&str>) -> Config {
+        let call_json = match callsign {
+            Some(s) => format!("\"{s}\""),
+            None => "null".to_string(),
+        };
+        let ident_json = match identifier {
+            Some(s) => format!("\"{s}\""),
+            None => "null".to_string(),
+        };
+        let json = format!(
+            r#"{{
+                "schema_version": {ver},
+                "wizard_completed": true,
+                "connect": {{ "connect_to_cms": false, "transport": "Telnet" }},
+                "identity": {{ "callsign": {call_json}, "identifier": {ident_json}, "grid": null }},
+                "privacy": {{ "gps_state": "Off", "position_precision": "FourCharGrid" }}
+            }}"#,
+            ver = crate::config::CONFIG_SCHEMA_VERSION,
+        );
+        serde_json::from_str(&json).expect("test config must deserialize")
+    }
+
+    #[test]
+    fn check_identity_present_ok_when_callsign_set() {
+        let cfg = config_with_identity(None, Some("W1TEST"));
+        assert!(check_identity_present(&cfg).is_ok());
+    }
+
+    #[test]
+    fn check_identity_present_ok_when_identifier_set() {
+        // Offline-path config: no callsign, identifier carries the station id.
+        let cfg = config_with_identity(None, Some("FIELD-1"));
+        assert!(check_identity_present(&cfg).is_ok());
+    }
+
+    #[test]
+    fn check_identity_present_err_when_both_missing() {
+        // Both None — operator has not completed the wizard's identity step.
+        let cfg = config_with_identity(None, None);
+        let err = check_identity_present(&cfg).expect_err("must reject when no identity");
+        assert!(
+            err.contains("callsign") || err.contains("wizard"),
+            "error must be actionable; got: {err}"
+        );
+    }
+
+    #[test]
+    fn check_identity_present_err_when_both_whitespace_only() {
+        // Defense-in-depth: if a caller hand-constructs a Config in-memory
+        // with whitespace-only strings (bypassing the serde validator that
+        // normally maps these to None), trim() catches it. Hand-built
+        // because `deserialize_optional_nonempty_string` would otherwise
+        // map "   " to None at the serde layer.
+        let cfg = Config {
+            schema_version: crate::config::CONFIG_SCHEMA_VERSION,
+            wizard_completed: true,
+            connect: crate::config::ConnectConfig {
+                connect_to_cms: false,
+                transport: crate::config::CmsTransport::Telnet,
+                host: crate::config::default_cms_host(),
+            },
+            identity: crate::config::IdentityConfig {
+                callsign: Some("   ".into()),
+                identifier: Some("".into()),
+                grid: None,
+            },
+            privacy: crate::config::PrivacyConfig {
+                gps_state: crate::config::GpsState::Off,
+                position_precision: crate::config::PositionPrecision::FourCharGrid,
+                position_source: crate::config::PositionSource::Gps,
+            },
+            pat_mbo_address: None,
+            packet: crate::config::PacketConfig::default(),
+            modem_ardop: None,
+        };
+        assert!(check_identity_present(&cfg).is_err());
     }
 }

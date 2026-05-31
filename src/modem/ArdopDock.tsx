@@ -45,6 +45,7 @@ export function ArdopDock() {
   const [showConsent, setShowConsent] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const [connectError, setConnectError] = useState<string | null>(null);
+  const [disconnecting, setDisconnecting] = useState(false);
 
   const doConnect = async (tok: string) => {
     setConnecting(true);
@@ -69,10 +70,27 @@ export function ArdopDock() {
   };
 
   const onConnectClick = () => {
+    // Clear any prior error so a fresh attempt presents a clean dock — both
+    // when we go straight to doConnect (consent token still cached) and when
+    // we open the modal. Without this, a previous failed-connect's red error
+    // banner stayed visible behind the modal (tuxlink-qvl §B).
+    setConnectError(null);
     if (consent.token) {
       void doConnect(consent.token);
     } else {
       setShowConsent(true);
+    }
+  };
+
+  const onDisconnectClick = async () => {
+    setDisconnecting(true);
+    setConnectError(null);
+    try {
+      await invoke('modem_ardop_disconnect');
+    } catch (e) {
+      setConnectError(String(e));
+    } finally {
+      setDisconnecting(false);
     }
   };
 
@@ -167,6 +185,20 @@ PTT    ${status.pttBackend ?? '—'}
 RX     ${status.bytesRx} B  ·  TX ${status.bytesTx} B
 Up     ${fmtUptime(status.uptimeSec)}`}
             </pre>
+          </section>
+
+          <section className="ardop-dock-section">
+            <button
+              type="button"
+              className="ardop-dock-btn"
+              disabled={disconnecting}
+              onClick={onDisconnectClick}
+            >
+              {disconnecting ? 'Disconnecting…' : 'Disconnect'}
+            </button>
+            {connectError !== null && (
+              <p className="ardop-dock-error" role="alert">{connectError}</p>
+            )}
           </section>
         </>
       )}
