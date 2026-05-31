@@ -134,11 +134,19 @@ impl DataSocket {
             .unwrap_or(true);
         while let Some(frame) = self.decoder.next_frame() {
             if frame.kind == DataKind::Arq && arq_up {
+                // tuxlink-n2uz: account in-session ARQ payload toward the
+                // cumulative bytes_rx counter at the same gate that admits the
+                // payload to `leftover`. Bytes dropped by the gate (pre-connect
+                // noise, non-ARQ frames) do NOT count — the counter represents
+                // session payload the B2F engine will see.
+                if let Some(ref state) = self.arq_state {
+                    state.add_bytes_rx(frame.payload.len() as u64);
+                }
                 self.leftover.extend(frame.payload);
             }
             // - Non-ARQ frames (FEC / ERR / IDF / Other): not B2F session data.
             // - ARQ frames decoded while `!arq_up`: stale pre-connect noise.
-            // Either way: skip.
+            // Either way: skip (and do not count toward bytes_rx).
         }
     }
 
