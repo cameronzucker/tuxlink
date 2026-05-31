@@ -4,6 +4,13 @@ All notable changes to Tuxlink are documented here.
 
 This project adheres to [Semantic Versioning](https://semver.org) with project-specific rules described in [VERSIONING.md](VERSIONING.md). Entries from `v0.0.2` onward are generated automatically by [`release-please`](https://github.com/googleapis/release-please) from [Conventional Commits](https://www.conventionalcommits.org).
 
+## [0.5.0](https://github.com/cameronzucker/tuxlink/compare/v0.4.0...v0.5.0) (2026-05-31)
+
+
+### Features
+
+* **modem:** modem_ardop_connect pre-flight identity check (tuxlink-5738) ([b6da454](https://github.com/cameronzucker/tuxlink/commit/b6da4544135f40e88ceae7dbb8f2ea249ce4d31e))
+
 ## [0.4.0](https://github.com/cameronzucker/tuxlink/compare/v0.3.1...v0.4.0) (2026-05-30)
 
 
