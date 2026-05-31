@@ -97,6 +97,186 @@ impl Index {
     }
 }
 
+use crate::search::extractor::IndexRow;
+
+impl Index {
+    /// Insert-or-replace `row` in both `messages_fts` and `messages_meta`.
+    pub fn upsert(&self, row: &IndexRow) -> Result<(), IndexError> {
+        let tx = self.conn.unchecked_transaction()?;
+        // FTS5 does not support ON CONFLICT — use DELETE + INSERT for the FTS side.
+        tx.execute(
+            "DELETE FROM messages_fts WHERE mid = ?1",
+            rusqlite::params![row.mid],
+        )?;
+        tx.execute(
+            "INSERT INTO messages_fts (mid, folder, subject, body, form_field_values)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            rusqlite::params![row.mid, row.folder, row.subject, row.body, row.form_field_values],
+        )?;
+        tx.execute(
+            "INSERT INTO messages_meta (
+                mid, folder, from_addr, to_addrs, cc_addrs,
+                date_sent, date_received, unread,
+                form_type, has_attachments, attachment_count,
+                transport_used, direction, message_size, routing_path, indexed_at
+             ) VALUES (
+                ?1, ?2, ?3, ?4, ?5,
+                ?6, ?7, ?8,
+                ?9, ?10, ?11,
+                ?12, ?13, ?14, ?15, strftime('%s','now')
+             )
+             ON CONFLICT(mid) DO UPDATE SET
+                folder = excluded.folder,
+                from_addr = excluded.from_addr,
+                to_addrs = excluded.to_addrs,
+                cc_addrs = excluded.cc_addrs,
+                date_sent = excluded.date_sent,
+                date_received = excluded.date_received,
+                unread = excluded.unread,
+                form_type = excluded.form_type,
+                has_attachments = excluded.has_attachments,
+                attachment_count = excluded.attachment_count,
+                transport_used = excluded.transport_used,
+                direction = excluded.direction,
+                message_size = excluded.message_size,
+                routing_path = excluded.routing_path,
+                indexed_at = excluded.indexed_at",
+            rusqlite::params![
+                row.mid, row.folder,
+                row.from_addr,
+                serde_json::to_string(&row.to_addrs).unwrap(),
+                serde_json::to_string(&row.cc_addrs).unwrap(),
+                row.date_sent, row.date_received,
+                row.unread as i64,
+                row.form_type,
+                row.has_attachments as i64, row.attachment_count,
+                row.transport_used,
+                row.direction.as_str(),
+                row.message_size,
+                row.routing_path,
+            ],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn delete(&self, mid: &str) -> Result<(), IndexError> {
+        let tx = self.conn.unchecked_transaction()?;
+        tx.execute("DELETE FROM messages_fts WHERE mid = ?1", rusqlite::params![mid])?;
+        tx.execute("DELETE FROM messages_meta WHERE mid = ?1", rusqlite::params![mid])?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn update_folder(&self, mid: &str, new_folder: &str) -> Result<(), IndexError> {
+        let tx = self.conn.unchecked_transaction()?;
+        tx.execute(
+            "UPDATE messages_fts SET folder = ?2 WHERE mid = ?1",
+            rusqlite::params![mid, new_folder],
+        )?;
+        tx.execute(
+            "UPDATE messages_meta SET folder = ?2 WHERE mid = ?1",
+            rusqlite::params![mid, new_folder],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn update_unread(&self, mid: &str, unread: bool) -> Result<(), IndexError> {
+        self.conn.execute(
+            "UPDATE messages_meta SET unread = ?2 WHERE mid = ?1",
+            rusqlite::params![mid, unread as i64],
+        )?;
+        Ok(())
+    }
+
+    /// Count rows in `messages_meta` — for tests and `RebuildStats`.
+    pub fn count(&self) -> Result<u32, IndexError> {
+        let n: i64 = self.conn.query_row("SELECT COUNT(*) FROM messages_meta", [], |r| r.get(0))?;
+        Ok(n as u32)
+    }
+}
+
+#[cfg(test)]
+mod mutation_tests {
+    use super::*;
+    use crate::search::extractor::{Direction, IndexRow};
+    use tempfile::tempdir;
+
+    fn fixture_row(mid: &str, folder: &str, subject: &str, body: &str) -> IndexRow {
+        IndexRow {
+            mid: mid.into(), folder: folder.into(),
+            subject: subject.into(), body: body.into(), form_field_values: "".into(),
+            from_addr: Some("KX5DD".into()), to_addrs: vec!["N7CPZ".into()], cc_addrs: vec![],
+            date_sent: None, date_received: Some(1_716_200_000), unread: true,
+            form_type: None, has_attachments: false, attachment_count: 0,
+            transport_used: Some("telnet".into()), direction: Direction::Received,
+            message_size: body.len() as u32, routing_path: None,
+        }
+    }
+
+    #[test]
+    fn upsert_inserts_then_replaces_by_mid() {
+        let dir = tempdir().unwrap();
+        let idx = Index::open(dir.path().join("search.db")).unwrap();
+        idx.upsert(&fixture_row("MID1", "inbox", "first", "body1")).unwrap();
+        assert_eq!(idx.count().unwrap(), 1);
+        // replace
+        idx.upsert(&fixture_row("MID1", "inbox", "updated", "body2")).unwrap();
+        assert_eq!(idx.count().unwrap(), 1);
+        let subj: String = idx
+            .conn
+            .query_row("SELECT subject FROM messages_fts WHERE mid = 'MID1'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(subj, "updated");
+    }
+
+    #[test]
+    fn delete_removes_from_both_tables() {
+        let dir = tempdir().unwrap();
+        let idx = Index::open(dir.path().join("search.db")).unwrap();
+        idx.upsert(&fixture_row("MID1", "inbox", "x", "y")).unwrap();
+        idx.delete("MID1").unwrap();
+        assert_eq!(idx.count().unwrap(), 0);
+        let fts_n: i64 = idx
+            .conn
+            .query_row("SELECT COUNT(*) FROM messages_fts WHERE mid = 'MID1'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(fts_n, 0);
+    }
+
+    #[test]
+    fn update_folder_changes_folder_in_both_tables() {
+        let dir = tempdir().unwrap();
+        let idx = Index::open(dir.path().join("search.db")).unwrap();
+        idx.upsert(&fixture_row("MID1", "outbox", "x", "y")).unwrap();
+        idx.update_folder("MID1", "sent").unwrap();
+        let meta: String = idx
+            .conn
+            .query_row("SELECT folder FROM messages_meta WHERE mid = 'MID1'", [], |r| r.get(0))
+            .unwrap();
+        let fts: String = idx
+            .conn
+            .query_row("SELECT folder FROM messages_fts WHERE mid = 'MID1'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(meta, "sent");
+        assert_eq!(fts, "sent");
+    }
+
+    #[test]
+    fn update_unread_flips_the_flag() {
+        let dir = tempdir().unwrap();
+        let idx = Index::open(dir.path().join("search.db")).unwrap();
+        idx.upsert(&fixture_row("MID1", "inbox", "x", "y")).unwrap();
+        idx.update_unread("MID1", false).unwrap();
+        let u: i64 = idx
+            .conn
+            .query_row("SELECT unread FROM messages_meta WHERE mid = 'MID1'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(u, 0);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
