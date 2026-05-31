@@ -48,8 +48,8 @@ export const MENU_TREE: TopMenu[] = [
     { id: 'menu:mailbox:outbox', label: 'Outbox' },
   ] },
   { label: 'View', items: [
-    { id: 'menu:view:session_log', label: 'Toggle Session Log', accel: 'Ctrl+Shift+L' },
-    { id: 'menu:view:raw_log', label: 'Show Raw Session Log' },
+    // Session-log items removed in radio-panel-shell P1.6 — the bottom
+    // session-log strip is gone; the log moves into the radio panel.
     { id: 'menu:view:status_bar', label: 'Toggle Status Bar' },
     { id: 'menu:view:radio_dock', label: 'Toggle Radio Dock', accel: 'Ctrl+Shift+M' },
     { separator: true },
@@ -109,7 +109,6 @@ export const ACCELERATORS: Accelerator[] = [
   { combo: 'Ctrl+Shift+R', key: 'r', ctrl: true, shift: true, id: 'menu:message:reply_all' },
   { combo: 'Ctrl+P', key: 'p', ctrl: true, shift: false, id: 'menu:message:print' },
   { combo: 'Ctrl+Q', key: 'q', ctrl: true, shift: false, id: 'menu:file:quit' },
-  { combo: 'Ctrl+Shift+L', key: 'l', ctrl: true, shift: true, id: 'menu:view:session_log' },
   { combo: 'Ctrl+Shift+M', key: 'm', ctrl: true, shift: true, id: 'menu:view:radio_dock' },
   { combo: 'F5', key: 'F5', ctrl: false, shift: false, id: 'menu:session:connect' },
   { combo: 'Ctrl+Shift+O', key: 'o', ctrl: true, shift: true, id: 'menu:session:connect' },

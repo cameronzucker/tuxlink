@@ -13,8 +13,10 @@
 
 /* ============================================================================
  * Layout grid — titlebar (auto) | menu bar (auto) | ribbon+search (auto) |
- * chip-strip (auto) | panes (1fr) | session-log (auto) | statusbar (auto),
- * full height. 7 rows total.
+ * chip-strip (auto) | panes (1fr) | statusbar (auto), full height. 6 rows
+ * total. (radio-panel-shell P1.6: the former 7th row — the session-log
+ * strip — was removed; the log moves into the radio panel as a per-mode
+ * section per spec §3.7 + §4.3.)
  * NOTE (ng3): the FIRST TWO rows are the HTML chrome (TitleBar, MenuBar);
  * row 3 is the combined ribbon-with-search wrapper; row 4 is the ChipStrip;
  * `panes` is row 5 (the 1fr row). ResizeHandles is position:absolute so it
@@ -23,7 +25,7 @@
  * ========================================================================== */
 .layout-b {
   display: grid;
-  grid-template-rows: auto auto auto auto 1fr auto auto;
+  grid-template-rows: auto auto auto auto 1fr auto;
   height: 100vh;
   width: 100vw;
   overflow: hidden;

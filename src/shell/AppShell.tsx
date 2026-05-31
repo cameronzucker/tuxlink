@@ -33,7 +33,6 @@ import { StatusBar } from './StatusBar';
 import { useStatusData } from './useStatus';
 import { applyColorScheme, saveColorScheme } from './colorScheme';
 import MessageView from '../mailbox/MessageView';
-import { SessionLog } from '../session/SessionLog';
 import { TitleBar } from './chrome/TitleBar';
 import { MenuBar } from './chrome/MenuBar';
 import { ResizeHandles } from './chrome/ResizeHandles';
@@ -121,8 +120,9 @@ export function AppShell() {
   // DEV_SELECTED is null outside the vite dev server, so this starts null (the
   // real empty-reading-pane state) in tests + production.
   const [selectedMessage, setSelectedMessage] = useState<SelectedMessage | null>(DEV_SELECTED);
-  // Mock B shows the session log + status bar by default; View → toggles them.
-  const [showSessionLog, setShowSessionLog] = useState(true);
+  // Mock B shows the status bar by default; View → toggles it. The bottom
+  // session-log strip was removed in radio-panel-shell P1.6 — the log moves
+  // into the radio panel as a per-mode section in P2-P4 (spec §3.7 + §4.3).
   const [showStatusBar, setShowStatusBar] = useState(true);
   // tuxlink-mnk4: pin-on flag for the modem dock (View → Toggle Radio Dock /
   // Ctrl+Shift+M). Pure additive override — when true, forces the dock visible
@@ -274,7 +274,6 @@ export function AppShell() {
     reply: () => { if (openMessage) void openReplyWindow(openMessage, 'reply').catch(() => {}); },
     replyAll: () => { if (openMessage) void openReplyWindow(openMessage, 'replyAll').catch(() => {}); },
     forward: () => { if (openMessage) void openReplyWindow(openMessage, 'forward').catch(() => {}); },
-    toggleSessionLog: () => setShowSessionLog((s) => !s),
     toggleStatusBar: () => setShowStatusBar((s) => !s),
     toggleRadioDock: () => setPinRadioDock((s) => !s),
     selectFolder: (folder) => { setSelectedFolder(folder); setSelectedMessage(null); setSelectedConnection(null); },
@@ -438,8 +437,6 @@ export function AppShell() {
         )}
         {radioPanelVisible && selectedConnection?.protocol === 'ardop-hf' && <ArdopDock />}
       </div>
-
-      {showSessionLog && <SessionLog />}
 
       <StatusBar show={showStatusBar} unread={counts.inbox ?? 0} state={statusData.state} packet={packetUi} />
 

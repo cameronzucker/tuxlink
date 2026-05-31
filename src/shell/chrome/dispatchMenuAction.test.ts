@@ -8,7 +8,6 @@ function handlers(): MenuHandlers {
     reply: vi.fn(),
     replyAll: vi.fn(),
     forward: vi.fn(),
-    toggleSessionLog: vi.fn(),
     toggleStatusBar: vi.fn(),
     toggleRadioDock: vi.fn(),
     selectFolder: vi.fn(),
@@ -39,9 +38,7 @@ describe('dispatchMenuAction', () => {
 
   it('routes view toggles', () => {
     const h = handlers();
-    dispatchMenuAction('menu:view:session_log', h);
     dispatchMenuAction('menu:view:status_bar', h);
-    expect(h.toggleSessionLog).toHaveBeenCalledOnce();
     expect(h.toggleStatusBar).toHaveBeenCalledOnce();
   });
 
