@@ -4,6 +4,10 @@ import type { FormPayload } from './types';
 /** Form authoring (compose-side) component contract. */
 export interface FormComposeProps {
   initialValues?: Record<string, string>;
+  /** Called whenever a form field changes — used by hosts (e.g., Compose)
+   *  to lift form values into draft autosave state so they survive close
+   *  and reopen. */
+  onChange?: (values: Record<string, string>) => void;
   /** Called when user submits valid form. */
   onSubmit: (values: Record<string, string>) => void;
   onCancel: () => void;

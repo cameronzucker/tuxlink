@@ -232,6 +232,9 @@ export function Compose({ draftId }: ComposeProps) {
 
   const handleSend = useCallback(async () => {
     if (sendState === 'sending') return;
+    // P1 #2 fix: in form mode, the global send is invalid — the form has its
+    // own Send button (which routes to handleFormSubmit + send_form IPC).
+    if (formMode.kind !== 'plain') return;
     setSendState('sending');
     setErrorMsg(null);
 
@@ -266,7 +269,7 @@ export function Compose({ draftId }: ComposeProps) {
         setErrorMsg(String(err));
       }
     }
-  }, [sendState, to, subject, body, draftId]);
+  }, [sendState, to, subject, body, draftId, formMode.kind]);
 
   // ============================================================================
   // Form submit (T6.1)
@@ -610,6 +613,7 @@ export function Compose({ draftId }: ComposeProps) {
           return (
             <FormComponent
               initialValues={formMode.values}
+              onChange={(values) => setFormMode({ kind: 'form', formId: formMode.formId, values })}
               onSubmit={(values) => handleFormSubmit(formMode.formId, values)}
               onCancel={() => setFormMode({ kind: 'plain' })}
             />
@@ -670,8 +674,10 @@ export function Compose({ draftId }: ComposeProps) {
         <button
           className="compose-btn compose-btn--primary"
           onClick={handleSend}
-          disabled={sendState === 'sending'}
-          title="Send (Ctrl+Enter)"
+          disabled={sendState === 'sending' || formMode.kind !== 'plain'}
+          title={formMode.kind !== 'plain'
+            ? "Use the form's Send button to submit a form"
+            : 'Send (Ctrl+Enter)'}
           data-testid="compose-send-btn"
         >
           {sendState === 'sending' ? 'Sending…' : 'Post to Outbox'}

@@ -492,3 +492,26 @@ fn non_form_message_has_no_form_payload() {
     assert!(dto.form_id.is_none());
     assert!(dto.form_payload.is_none());
 }
+
+/// P2 #5 regression: parsed form payload must have form_id backfilled from
+/// the attachment filename so the frontend KeyValueView receives a non-empty
+/// formId on the payload (not the empty string that parse_form_xml returns).
+#[test]
+fn populated_form_payload_has_form_id_set() {
+    let xml = b"<?xml version=\"1.0\"?>\n\
+<RMS_Express_Form>\n\
+<variables><inc_name>WALDO</inc_name></variables>\n\
+</RMS_Express_Form>\n";
+    let raw = format!(
+        "From: X@winlink.org\r\nTo: Y@winlink.org\r\nSubject: t\r\nMIME-Version: 1.0\r\n\
+Content-Type: multipart/mixed; boundary=\"b\"\r\n\r\n\
+--b\r\nContent-Type: text/plain\r\n\r\nbody\r\n\
+--b\r\nContent-Type: text/xml; name=\"RMS_Express_Form_ICS213_Initial.xml\"\r\n\
+Content-Disposition: attachment; filename=\"RMS_Express_Form_ICS213_Initial.xml\"\r\n\r\n\
+{}\r\n--b--\r\n",
+        std::str::from_utf8(xml).unwrap()
+    );
+    let dto = parse_raw_rfc5322("MID", raw.as_bytes()).expect("parse");
+    let payload = dto.form_payload.expect("payload populated");
+    assert_eq!(payload.form_id, "ICS213_Initial");
+}

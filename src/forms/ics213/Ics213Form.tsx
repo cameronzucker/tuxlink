@@ -1,9 +1,15 @@
 import { useState } from 'react';
 import type { FormComposeProps } from '../forms';
 
-export function Ics213Form({ initialValues = {}, onSubmit, onCancel }: FormComposeProps) {
+export function Ics213Form({ initialValues = {}, onChange, onSubmit, onCancel }: FormComposeProps) {
   const [values, setValues] = useState<Record<string, string>>(initialValues);
-  const set = (id: string, v: string) => setValues((s) => ({ ...s, [id]: v }));
+  const set = (id: string, v: string) => {
+    setValues((s) => {
+      const next = { ...s, [id]: v };
+      onChange?.(next);
+      return next;
+    });
+  };
   const required = ['to_name', 'fm_name', 'subjectline', 'mdate', 'mtime', 'message'];
   const canSubmit = required.every((id) => (values[id] ?? '').trim().length > 0);
   const submit = () => {

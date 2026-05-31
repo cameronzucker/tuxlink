@@ -349,6 +349,12 @@ pub fn parse_raw_rfc5322(mid: &str, raw: &[u8]) -> Result<ParsedMessageDto, UiEr
         let attach_name = format!("RMS_Express_Form_{}.xml", fid);
         extract_attachment_bytes(&msg, &attach_name)
             .and_then(|bytes| crate::forms::parse_form_xml(&bytes).ok())
+            .map(|mut p| {
+                // P2 #5 fix: backfill form_id from the attachment filename so the
+                // frontend's KeyValueView receives a non-empty formId on the payload.
+                p.form_id = fid.clone();
+                p
+            })
     } else {
         None
     };

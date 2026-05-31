@@ -48,4 +48,13 @@ describe('Ics213Form', () => {
     const incName = screen.getByLabelText(/Incident Name/i) as HTMLInputElement;
     expect(incName.value).toBe('WALDO');
   });
+
+  it('calls onChange when a field is edited (controlled host pattern)', () => {
+    const onChange = vi.fn();
+    render(<Ics213Form onChange={onChange} onSubmit={noop} onCancel={noop} />);
+    fireEvent.change(screen.getByLabelText(/Incident Name/i), { target: { value: 'WALDO' } });
+    expect(onChange).toHaveBeenCalled();
+    const lastCall = onChange.mock.calls[onChange.mock.calls.length - 1][0];
+    expect(lastCall.inc_name).toBe('WALDO');
+  });
 });

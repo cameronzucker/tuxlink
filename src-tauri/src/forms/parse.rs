@@ -46,7 +46,7 @@ pub fn parse_form_xml(bytes: &[u8]) -> Result<FormPayload, String> {
     }
 
     let mut reader = Reader::from_reader(bytes);
-    reader.config_mut().trim_text(true);
+    reader.config_mut().trim_text(false);
 
     let mut buf = Vec::new();
 
@@ -160,6 +160,36 @@ pub fn parse_form_xml(bytes: &[u8]) -> Result<FormPayload, String> {
                 if let Some(acc) = text_acc.as_mut() {
                     let s = e.decode().map_err(|e| e.to_string())?;
                     acc.push_str(&s);
+                }
+            }
+
+            Event::GeneralRef(e) => {
+                // Predefined XML entities and numeric character references.
+                // Only decoded when inside a leaf element accumulator; inter-element
+                // whitespace nodes have text_acc = None and are ignored here too.
+                if let Some(acc) = text_acc.as_mut() {
+                    // Use the BytesRef built-in helper for numeric character refs
+                    // (&#NNN; or &#xHH;). For named refs, decode() gives us the name.
+                    if e.is_char_ref() {
+                        // resolve_char_ref returns Ok(Some(char)) on valid refs.
+                        let ch = e.resolve_char_ref()
+                            .map_err(|err| err.to_string())?
+                            .ok_or_else(|| "invalid character reference (code 0)".to_string())?;
+                        acc.push(ch);
+                    } else {
+                        let name = e.decode().map_err(|err| err.to_string())?;
+                        let decoded = match name.as_ref() {
+                            "amp"  => "&",
+                            "lt"   => "<",
+                            "gt"   => ">",
+                            "quot" => "\"",
+                            "apos" => "'",
+                            other  => {
+                                return Err(format!("unknown entity reference: &{};", other));
+                            }
+                        };
+                        acc.push_str(decoded);
+                    }
                 }
             }
 
@@ -308,6 +338,45 @@ mod tests {
         assert_eq!(detect_form_attachment("data.xml"), None);
         assert_eq!(detect_form_attachment("RMS_Express_Form_.xml"), None);
         assert_eq!(detect_form_attachment("RMS_Express_Form_ICS213"), None);
+    }
+
+    #[test]
+    fn decodes_predefined_entity_references() {
+        let xml = r#"<?xml version="1.0"?>
+<RMS_Express_Form>
+  <variables>
+    <message>A &amp; B &lt; C &gt; D</message>
+  </variables>
+</RMS_Express_Form>"#;
+        let payload = parse_form_xml(xml.as_bytes()).expect("parse should succeed");
+        let msg = payload.fields.iter().find(|(k, _)| k == "message").map(|(_, v)| v.as_str());
+        assert_eq!(msg, Some("A & B < C > D"));
+    }
+
+    #[test]
+    fn rejects_unknown_entity_reference() {
+        let xml = r#"<?xml version="1.0"?>
+<RMS_Express_Form>
+  <variables>
+    <message>hello &unknown;</message>
+  </variables>
+</RMS_Express_Form>"#;
+        let result = parse_form_xml(xml.as_bytes());
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("unknown entity reference"));
+    }
+
+    #[test]
+    fn preserves_leading_and_trailing_whitespace_in_text() {
+        let xml = r#"<?xml version="1.0"?>
+<RMS_Express_Form>
+  <variables>
+    <message>  trailing whitespace  </message>
+  </variables>
+</RMS_Express_Form>"#;
+        let payload = parse_form_xml(xml.as_bytes()).expect("parse should succeed");
+        let msg = payload.fields.iter().find(|(k, _)| k == "message").map(|(_, v)| v.as_str());
+        assert_eq!(msg, Some("  trailing whitespace  "));
     }
 
     #[test]
