@@ -196,6 +196,49 @@ describe('<ArdopDock> Send/Receive', () => {
     });
   });
 
+  it('disables Send/Receive when status.peer is null even in connected-irs', () => {
+    // RADIO-1: the backend-reported peer is the single source of truth
+    // for the TX target. If status.peer is null while ConnectedIrs (an
+    // unlikely backend state, but defendable from the renderer's side),
+    // the Send/Receive button must NOT be clickable. The prior derivation
+    // `(status.peer ?? target).trim()` would have fallen back to the
+    // hidden stopped-state input's persisted value — a stale-callsign
+    // hazard.
+    mockUseModemStatus.mockReturnValue({
+      status: { ...RUNNING_FIXTURE, state: 'connected-irs', peer: null },
+      loading: false,
+    });
+    render(<ArdopDock />);
+    const btn = screen.queryByRole('button', { name: /send\/receive/i });
+    // The button may render (running view is mounted) but must be disabled.
+    // Align with the project's visibility-vs-disabled pattern: the button
+    // is in the DOM in the running view; the disabled prop gates the click.
+    if (btn) {
+      expect(btn).toBeDisabled();
+    }
+  });
+
+  it('does NOT fall back to stopped-state target when peer is null', async () => {
+    // Defense in depth: even if a future regression re-enables the
+    // button when status.peer is null, the onClick handler's early-return
+    // must prevent the on-air invoke chain from firing.
+    mockUseModemStatus.mockReturnValue({
+      status: { ...RUNNING_FIXTURE, state: 'connected-irs', peer: null },
+      loading: false,
+    });
+    render(<ArdopDock />);
+    const btn = screen.queryByRole('button', { name: /send\/receive/i });
+    if (btn && !(btn as HTMLButtonElement).disabled) {
+      fireEvent.click(btn);
+    }
+    // Neither the consent-mint nor the B2F-exchange invoke should fire.
+    expect(mockInvoke).not.toHaveBeenCalledWith('modem_mint_consent');
+    expect(mockInvoke).not.toHaveBeenCalledWith(
+      'modem_ardop_b2f_exchange',
+      expect.anything(),
+    );
+  });
+
   it('shows the in-flight "Exchanging…" label while the exchange is pending', async () => {
     // Hold the exchange promise open so the in-flight label is observable.
     // Capture the resolver via an outer object so TypeScript doesn't narrow

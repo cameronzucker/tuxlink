@@ -92,15 +92,21 @@ export function ArdopDock() {
   // commit body documents this property.
   const isExchangeReady =
     status.state === 'connected-irs' || status.state === 'connected-iss';
-  // Effective B2F target: in the running view there is no input field
-  // (the Connect form is unmounted), so we read the canonical peer the
-  // backend reports. Falls back to the operator's typed `target` only in
-  // the unlikely case `status.peer` is null while ConnectedIrs/Iss — the
-  // typed value persists across the form unmount via the same `useState`.
-  const effectiveTarget = (status.peer ?? target).trim();
+  // Effective B2F target: ONLY the backend-reported peer authorizes a TX
+  // target. The stopped-state `target` input is for dialing; once
+  // connected, the live peer is the single source of truth for who we're
+  // TXing to. The earlier `(status.peer ?? target).trim()` fallback was
+  // a RADIO-1 hazard — the running-view unmount preserves `target` via
+  // useState, so the fallback could pass a stale callsign (from a prior
+  // or abandoned operator entry) to the on-air B2F exchange. Codex P1
+  // finding on fc95383; closed by requiring status.peer non-null.
+  const effectiveTarget: string | null = status.peer?.trim() ?? null;
 
   const onSendReceiveClick = async () => {
-    if (!isExchangeReady || effectiveTarget === '') return;
+    // Defense in depth: even if the disabled-prop guard fails (UI bug,
+    // prop-drilling regression, etc.), refuse to invoke the on-air path
+    // without a live peer.
+    if (!isExchangeReady || effectiveTarget === null) return;
     setExchanging(true);
     setConnectError(null);
     try {
@@ -230,7 +236,7 @@ Up     ${fmtUptime(status.uptimeSec)}`}
             <button
               type="button"
               className="ardop-dock-btn ardop-dock-btn-primary"
-              disabled={!isExchangeReady || exchanging || effectiveTarget === ''}
+              disabled={!isExchangeReady || exchanging || effectiveTarget === null}
               onClick={onSendReceiveClick}
             >
               {exchanging ? 'Exchanging…' : 'Send/Receive'}
