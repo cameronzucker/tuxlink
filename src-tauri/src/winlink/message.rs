@@ -42,10 +42,21 @@ impl Message {
 
     /// Set the attachments. `pub(crate)` — only `winlink::compose` should populate
     /// this; external callers go through compose which validates filenames and ordering.
+    ///
+    /// Also synthesizes `File:` headers (one per attachment) from the attachment list,
+    /// removing any pre-existing `File:` headers first so re-population is idempotent.
     pub(crate) fn set_attachments(
         &mut self,
         files: Vec<crate::winlink_backend::OutboundAttachment>,
     ) {
+        // Remove any prior File: headers; they'll be re-emitted from the file list.
+        self.headers.retain(|(k, _)| !k.eq_ignore_ascii_case("File"));
+        for f in &files {
+            self.headers.push((
+                "File".to_string(),
+                format!("{} {}", f.bytes.len(), encode_filename(&f.filename)),
+            ));
+        }
         self.attachments = files;
     }
 
@@ -99,6 +110,15 @@ impl Message {
         // A blank line ends the header block; the raw body follows.
         out.extend_from_slice(b"\r\n");
         out.extend_from_slice(&self.body);
+
+        // NEW: write attachment region if any
+        if !self.attachments.is_empty() {
+            out.extend_from_slice(b"\r\n");  // body→first-attachment separator
+            for att in &self.attachments {
+                out.extend_from_slice(&att.bytes);
+                out.extend_from_slice(b"\r\n");  // post-attachment terminator
+            }
+        }
         out
     }
 
@@ -179,6 +199,13 @@ impl Message {
         msg.body = after_headers[..body_size].to_vec();
         Ok(msg)
     }
+}
+
+/// Encode a filename for the File: header value.
+///
+/// T1.5: ASCII passthrough. T1.8 adds RFC 2047 Q-encoding for non-ASCII names.
+fn encode_filename(name: &str) -> String {
+    name.to_string()
 }
 
 /// Find the first position of `needle` within `haystack`.
@@ -286,6 +313,29 @@ mod tests {
         ]
         .concat();
         assert_eq!(String::from_utf8(bytes).unwrap(), expected);
+    }
+
+    #[test]
+    fn to_bytes_emits_file_header_and_attachment_bytes() {
+        let mut msg = Message::new();
+        msg.set_header("Mid", "TESTMID12345");
+        msg.set_header("Subject", "Hi");
+        msg.set_header("From", "N7CPZ");
+        msg.set_body(b"hello".to_vec());
+        msg.set_attachments(vec![
+            crate::winlink_backend::OutboundAttachment {
+                filename: "a.bin".into(),
+                bytes: vec![0xAA, 0xBB, 0xCC],
+            },
+        ]);
+        let bytes = msg.to_bytes();
+        let s = String::from_utf8_lossy(&bytes);
+        assert!(s.contains("\r\nFile: 3 a.bin\r\n"),
+                "expected File: header, got: {s}");
+        // Body section: text body, CRLF, attachment bytes, CRLF
+        let body_section_start = bytes.windows(4).position(|w| w == b"\r\n\r\n").unwrap() + 4;
+        let body_section = &bytes[body_section_start..];
+        assert_eq!(body_section, b"hello\r\n\xAA\xBB\xCC\r\n");
     }
 
     #[test]
