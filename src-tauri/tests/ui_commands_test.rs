@@ -229,10 +229,13 @@ aGVsbG8=\r\n\
 }
 
 // ============================================================================
-// Task-13 test (3): Winlink form payload (`<?xml`) → isForm true
+// Task-13 test (3): Winlink form payload — body-only XML does NOT set isForm
+// (updated for T2.1: detection is attachment-based, not body-prefix-based)
 // ============================================================================
 #[test]
-fn test_parse_form_payload_sets_is_form() {
+fn test_parse_form_payload_body_only_xml_not_is_form() {
+    // Pre-T2.1 the body-starts-with-<?xml heuristic would set is_form=true here.
+    // After T2.1 fix, body XML alone is not sufficient — the attachment must match.
     let xml_body = "<?xml version=\"1.0\"?><ICS213><Msg>Test</Msg></ICS213>";
     let raw = simple_rfc5322(
         &[
@@ -247,7 +250,7 @@ fn test_parse_form_payload_sets_is_form() {
     );
 
     let dto = parse_raw_rfc5322("FORMID", &raw).expect("form parse");
-    assert!(dto.is_form, "XML-starting body must be flagged as a form");
+    assert!(!dto.is_form, "body-XML alone must NOT set is_form (attachment heuristic required)");
 }
 
 // ============================================================================
@@ -393,4 +396,47 @@ fn test_parse_rfc5322_date_still_works() {
     );
     let dto = parse_raw_rfc5322("MID-RFC", &raw).expect("parse should succeed");
     assert_eq!(dto.date, "2026-05-19T14:05:00Z");
+}
+
+// ============================================================================
+// T2.1 tests: attachment-based is_form detection
+// ============================================================================
+
+/// WLE form message: plain-text body + RMS_Express_Form_*.xml attachment →
+/// is_form must be true (the XML lives in the attachment, not the body).
+#[test]
+fn detects_form_via_attachment_not_body_prefix() {
+    // Body is plain rendered text (WLE convention), not XML.
+    let raw = b"From: SENDER@winlink.org\r\n\
+To: RECV@winlink.org\r\n\
+Subject: ICS-213\r\n\
+Date: 2026/05/30 14:30\r\n\
+MIME-Version: 1.0\r\n\
+Content-Type: multipart/mixed; boundary=\"b1\"\r\n\
+\r\n\
+--b1\r\n\
+Content-Type: text/plain\r\n\
+\r\n\
+GENERAL MESSAGE (ICS 213)\r\n\
+1. Incident Name: TEST\r\n\
+--b1\r\n\
+Content-Type: text/xml; name=\"RMS_Express_Form_ICS213_Initial.xml\"\r\n\
+Content-Disposition: attachment; filename=\"RMS_Express_Form_ICS213_Initial.xml\"\r\n\
+\r\n\
+<?xml version=\"1.0\"?><RMS_Express_Form/>\r\n\
+--b1--\r\n";
+    let dto = parse_raw_rfc5322("MID-FORM", raw).expect("parse succeeds");
+    assert!(dto.is_form, "form-attachment message must set is_form=true");
+}
+
+/// Body starts with `<?xml` but there is no RMS_Express_Form_*.xml attachment →
+/// is_form must be false (legacy body-prefix detection was a false-positive bug).
+#[test]
+fn no_form_when_body_starts_with_xml_but_no_attachment() {
+    let raw = simple_rfc5322(
+        &[("From", "X@winlink.org"), ("To", "Y@winlink.org"), ("Subject", "s")],
+        "<?xml version=\"1.0\"?>not a real form",
+    );
+    let dto = parse_raw_rfc5322("MID", &raw).expect("parse succeeds");
+    assert!(!dto.is_form, "body-XML alone must NOT trigger is_form (legacy bug)");
 }

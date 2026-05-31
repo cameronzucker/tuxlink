@@ -229,9 +229,11 @@ pub struct AttachmentMetaDto {
 ///
 /// `routing` is extracted from message headers when available
 /// (`X-Received-Winlink-Transport` or `X-Pat-Transport`); `null` if absent
-/// (the UI omits the routing strip). `isForm` is true when the text/plain
-/// body starts with `<?xml` — the heuristic for a Winlink form payload; the
-/// UI renders a "form rendering arrives in v0.1" placeholder in that case.
+/// (the UI omits the routing strip). `isForm` is true when at least one
+/// attachment filename matches `RMS_Express_Form_*.xml` — the WLE convention
+/// for form payloads (the XML lives in the attachment, not the plain-text
+/// body); the UI renders a "form rendering arrives in v0.1" placeholder in
+/// that case.
 #[derive(Debug, Serialize, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ParsedMessageDto {
@@ -261,8 +263,8 @@ pub struct ParsedMessageDto {
 ///   (the frontend renders a "could not parse" state).
 ///
 /// Body: the `text/plain` part is decoded lossily (invalid UTF-8 bytes
-/// become U+FFFD; no panic). Form detection: body starting with `<?xml`
-/// sets `is_form = true`.
+/// become U+FFFD; no panic). Form detection: an attachment whose filename
+/// matches `RMS_Express_Form_*.xml` sets `is_form = true`.
 ///
 /// Attachments: all non-inline, named MIME parts are listed by name + size
 /// in bytes. In v0.0.1 attachment bytes are never fetched or previewed (spec
@@ -322,11 +324,15 @@ pub fn parse_raw_rfc5322(mid: &str, raw: &[u8]) -> Result<ParsedMessageDto, UiEr
     // Body: find the first text/plain part; decode lossily.
     let body = find_text_plain_body(&msg);
 
-    // Winlink form detection: text/plain body starting with `<?xml`.
-    let is_form = body.trim_start().starts_with("<?xml");
-
     // Attachments: non-inline named parts (MIME attachments).
     let attachments = collect_attachments(&msg);
+
+    // Winlink form detection: a RMS_Express_Form_<id>.xml attachment.
+    // (Pre-T2.1 the heuristic was body.starts_with("<?xml"), which missed
+    // real WLE forms — XML lives in the attachment, not the body.)
+    let is_form = attachments
+        .iter()
+        .any(|a| a.filename.starts_with("RMS_Express_Form_") && a.filename.ends_with(".xml"));
 
     // Routing: check known Winlink transport headers.
     let routing = extract_routing(&msg);
