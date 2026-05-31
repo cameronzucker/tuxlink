@@ -1,0 +1,250 @@
+/* SavedSearchesPanel — modal overlay for managing saved searches + index
+   maintenance (tuxlink-1hu Task 18). Uses theme tokens so it inherits the
+   active color scheme (default / night / grayscale). */
+
+/* Backdrop — same dimming approach as SettingsPanel */
+.tux-ssp-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 8vh;
+  background: rgba(0, 0, 0, 0.55);
+}
+
+/* Panel card */
+.tux-ssp {
+  width: min(560px, calc(100vw - 48px));
+  max-height: 80vh;
+  overflow-y: auto;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
+  font-family: var(--sans);
+  color: var(--text);
+}
+
+/* ── Header ── */
+.tux-ssp-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border);
+}
+
+.tux-ssp-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--accent-2, var(--accent));
+}
+
+.tux-ssp-close {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 4px;
+}
+.tux-ssp-close:hover {
+  color: var(--text);
+}
+
+/* ── Body ── */
+.tux-ssp-body {
+  padding: 14px 18px 18px;
+}
+
+/* Saved list */
+.tux-ssp-list {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 12px;
+}
+
+.tux-ssp-empty {
+  font-size: 12px;
+  color: var(--text-faint);
+  font-style: italic;
+  padding: 10px 0;
+}
+
+.tux-ssp-row {
+  display: grid;
+  grid-template-columns: 14px 1fr 1fr auto;
+  gap: 10px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+  align-items: center;
+}
+
+.tux-ssp-drag {
+  color: var(--text-faint);
+  font-size: 14px;
+  cursor: grab;
+  user-select: none;
+}
+
+.tux-ssp-name {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tux-ssp-query {
+  font-size: 10px;
+  color: var(--text-faint);
+  font-family: var(--mono, monospace);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tux-ssp-unsave {
+  background: none;
+  border: none;
+  color: var(--text-faint);
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 3px;
+  font-size: 13px;
+  line-height: 1;
+}
+.tux-ssp-unsave:hover {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+/* + New saved search button */
+.tux-ssp-new-btn {
+  background: transparent;
+  border: 1px dashed var(--border-strong);
+  color: var(--text-dim);
+  padding: 7px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  font-family: var(--sans);
+  width: 100%;
+  text-align: left;
+  margin-bottom: 14px;
+}
+.tux-ssp-new-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent-2, var(--accent));
+}
+
+/* Inline new-search form */
+.tux-ssp-new-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 0 14px;
+}
+
+.tux-ssp-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 7px 9px;
+  font-family: var(--sans);
+  font-size: 12px;
+  color: var(--text);
+  background: var(--surface-2, var(--bg));
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+}
+.tux-ssp-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.tux-ssp-new-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.tux-ssp-save-btn,
+.tux-ssp-cancel-btn {
+  background: transparent;
+  border: 1px solid var(--border-strong);
+  color: var(--text);
+  padding: 5px 14px;
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: 12px;
+  font-family: var(--sans);
+}
+.tux-ssp-save-btn {
+  border-color: var(--accent);
+  color: var(--accent-2, var(--accent));
+}
+.tux-ssp-save-btn:hover:not(:disabled) {
+  background: var(--accent-soft);
+}
+.tux-ssp-save-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.tux-ssp-cancel-btn:hover {
+  border-color: var(--text-dim);
+  color: var(--text);
+}
+
+/* ── Maintenance section ── */
+.tux-ssp-maintenance {
+  border-top: 1px solid var(--border);
+  padding-top: 14px;
+  margin-top: 4px;
+}
+
+.tux-ssp-section-label {
+  margin: 0 0 10px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--text-dim);
+}
+
+.tux-ssp-rebuild-btn {
+  background: transparent;
+  border: 1px solid var(--border-strong);
+  color: var(--text);
+  padding: 6px 14px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  font-family: var(--sans);
+}
+.tux-ssp-rebuild-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent-2, var(--accent));
+}
+
+.tux-ssp-rebuild-banner {
+  margin-top: 8px;
+  padding: 6px 10px;
+  background: var(--accent-soft);
+  color: var(--accent-2, var(--accent));
+  border-radius: 4px;
+  font-size: 11px;
+}
+
+.tux-ssp-rebuild-error {
+  margin-top: 8px;
+  padding: 6px 10px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-radius: 4px;
+  font-size: 11px;
+}

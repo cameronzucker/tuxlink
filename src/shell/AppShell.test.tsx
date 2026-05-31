@@ -1,5 +1,5 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { render, screen, fireEvent, waitFor, within, act } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { MailboxFolder, MessageMeta } from '../mailbox/types';
@@ -61,6 +61,9 @@ vi.mock('@tauri-apps/api/core', () => ({
         n2Retries: 10,
       };
     }
+    // Search IPC stubs (Task 17 — find-messages wiring)
+    if (cmd === 'tauri_search_list_saved') return [];
+    if (cmd === 'tauri_search_list_recent') return [];
     return undefined;
   }),
 }));
@@ -299,5 +302,116 @@ describe('<AppShell> — Mock B topology', () => {
     renderShell();
     fireEvent.click(screen.getByTestId('sess-radio-only'));
     expect(screen.getByTestId('proto-radio-only-telnet')).toBeDisabled();
+  });
+});
+
+describe('AppShell — search → MessageList wiring (tuxlink-c7qz)', () => {
+  beforeEach(() => {
+    globalThis.localStorage?.clear?.();
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.mocked(invoke).mockClear();
+  });
+
+  it('renders search results in MessageList when search is active', async () => {
+    vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+      if (cmd === 'config_read') return null;
+      if (cmd === 'backend_status') return null;
+      if (cmd === 'session_log_snapshot') return [];
+      if (cmd === 'packet_config_get') return {
+        ssid: 7, listenDefault: true, linkKind: 'Tcp', tcpHost: '127.0.0.1',
+        tcpPort: 8001, serialDevice: null, serialBaud: null, txdelay: 30,
+        persistence: 63, slotTime: 10, paclen: 128, maxframe: 4, t1Ms: 3000, n2Retries: 10,
+      };
+      if (cmd === 'modem_get_status') {
+        // useModemStatus' initial snapshot — STOPPED keeps the ArdopDock unmounted
+        // so this test only asserts the search → MessageList wiring.
+        return {
+          state: 'stopped',
+          peer: null, mode: null, widthHz: null, pttBackend: null,
+          snDb: null, vuDbfs: null, throughputBps: null,
+          bytesRx: 0, bytesTx: 0, uptimeSec: 0,
+          arqFlags: { busy: false, rx: false, tx: false },
+          lastError: null,
+        };
+      }
+      if (cmd === 'tauri_search_list_saved') return [];
+      if (cmd === 'tauri_search_list_recent') return [];
+      if (cmd === 'tauri_search_run') return {
+        items: [
+          {
+            id: 'A', subject: 'DAMAGE report', from: 'KX5DD', to: ['N7CPZ'],
+            date: '2024-05-20T10:13:00Z', unread: true, bodySize: 100,
+            hasAttachments: false, folder: 'inbox',
+          },
+        ],
+        totalMatches: 1, queryMs: 10, effectiveSpec: {},
+      };
+      return undefined;
+    });
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: Infinity } },
+    });
+    render(
+      <QueryClientProvider client={qc}>
+        <AppShell />
+      </QueryClientProvider>,
+    );
+    // Type into the SearchBar → onSpecChange → search.setSpec
+    act(() => {
+      fireEvent.change(screen.getByTestId('searchbar-input'), { target: { value: 'damage' } });
+    });
+    // Advance past the 150ms debounce so `debounced` updates and query enables
+    await act(async () => { vi.advanceTimersByTime(200); });
+    // React Query fires tauri_search_run; results arrive and re-render shows them.
+    // Assert via data-testid (MessageRow renders message-row-<id>) to avoid
+    // any getByText/highlight-split ambiguity.
+    await waitFor(() => expect(screen.getByTestId('message-row-A')).toBeInTheDocument(), { timeout: 2000 });
+  });
+});
+
+describe('<AppShell> — find-messages wiring (Task 17)', () => {
+  beforeEach(() => {
+    globalThis.localStorage?.clear?.();
+    vi.mocked(invoke).mockClear();
+  });
+
+  it('renders the SearchBar in the ribbon', () => {
+    renderShell();
+    expect(screen.getByTestId('search-bar')).toBeInTheDocument();
+  });
+
+  it('renders the ChipStrip below the ribbon', () => {
+    renderShell();
+    expect(screen.getByTestId('chip-strip')).toBeInTheDocument();
+  });
+
+  it('dashboard ribbon dash-items still render (right-clustered)', () => {
+    renderShell();
+    // DashboardRibbon renders "Callsign" and "Connection" as .dash-label elements.
+    expect(screen.getByText('Callsign')).toBeInTheDocument();
+    expect(screen.getByText('Connection')).toBeInTheDocument();
+  });
+
+  it('SearchBar and ChipStrip appear before the panes in the DOM', () => {
+    renderShell();
+    const root = screen.getByTestId('app-shell-root');
+    const searchBar = screen.getByTestId('search-bar');
+    const chipStrip = screen.getByTestId('chip-strip');
+    const panes = screen.getByTestId('shell-panes');
+    // All three should be descendants of the root
+    expect(root).toContainElement(searchBar);
+    expect(root).toContainElement(chipStrip);
+    expect(root).toContainElement(panes);
+    // SearchBar DOM position must precede panes
+    expect(
+      searchBar.compareDocumentPosition(panes) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    // ChipStrip must precede panes too
+    expect(
+      chipStrip.compareDocumentPosition(panes) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
   });
 });

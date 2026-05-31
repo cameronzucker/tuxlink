@@ -19,9 +19,11 @@ import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { useQueryClient } from '@tanstack/react-query';
 import { MessageList } from '../mailbox/MessageList';
+import type { HighlightRange } from '../mailbox/MessageList';
 import { useMailbox } from '../mailbox/useMailbox';
 import { isNotConfigured } from '../mailbox/types';
-import type { MailboxFolder } from '../mailbox/types';
+import type { MailboxFolder, MessageMeta } from '../mailbox/types';
+import type { MessageMetaDto } from '../search/types';
 import { DEV_SELECTED } from '../mailbox/devFixture';
 import { FolderSidebar } from '../mailbox/FolderSidebar';
 import type { ConnectionKey } from '../mailbox/FolderSidebar';
@@ -46,6 +48,13 @@ import { derivePacketUiState, type PacketUiState } from '../packet/packetStatus'
 import { isBuilt } from '../connections/sessionTypes';
 import { TelnetCmsPanelContainer } from '../connections/TelnetCmsPanel';
 import { StubPanel } from '../connections/StubPanel';
+import { SearchBar } from '../search/SearchBar';
+import { SearchDropdown } from '../search/SearchDropdown';
+import { ChipStrip } from '../search/ChipStrip';
+import { SavedSearchesPanel } from '../search/SavedSearchesPanel';
+import { useSearch } from '../search/useSearch';
+import { useSavedSearches } from '../search/useSavedSearches';
+import { renderQuery } from '../search/queryRender';
 import { ArdopHfStub } from '../connections/ArdopHfStub';
 import { useModemStatus } from '../modem/useModemStatus';
 import { ArdopDock } from '../modem/ArdopDock';
@@ -65,6 +74,46 @@ export interface SelectedMessage {
   id: string;
 }
 
+/// Map a search-result DTO (camelCase, from Rust) to the MessageMeta shape
+/// used by MessageList. The DTO's `folder: string` is cast to MailboxFolder;
+/// callers are responsible for ensuring the backend only returns valid values.
+/// `preview` and `formTag` carry through when present.
+function dtoToMessageMeta(d: MessageMetaDto): MessageMeta {
+  return {
+    id: d.id,
+    subject: d.subject,
+    from: d.from,
+    to: d.to,
+    date: d.date,
+    unread: d.unread,
+    bodySize: d.bodySize,
+    hasAttachments: d.hasAttachments,
+    formTag: d.formTag,
+    // preview is absent from MessageMetaDto — leave undefined
+    folder: d.folder as MailboxFolder,
+  };
+}
+
+/// Build per-message highlight ranges from a free-text query token.
+/// Single-occurrence, first-token, case-insensitive (v0.1). Multi-token
+/// and multi-occurrence highlighting are a v0.2 follow-up.
+function computeHighlights(
+  items: MessageMetaDto[],
+  freeText: string | null,
+): Record<string, HighlightRange[]> {
+  if (!freeText || !freeText.trim()) return {};
+  const needle = freeText.trim().toLowerCase();
+  const out: Record<string, HighlightRange[]> = {};
+  for (const item of items) {
+    const subj = item.subject ?? '';
+    const idx = subj.toLowerCase().indexOf(needle);
+    if (idx >= 0) {
+      out[item.id] = [{ field: 'subject', start: idx, end: idx + needle.length }];
+    }
+  }
+  return out;
+}
+
 export function AppShell() {
   const [selectedFolder, setSelectedFolder] = useState<MailboxFolder>('inbox');
   // DEV_SELECTED is null outside the vite dev server, so this starts null (the
@@ -79,10 +128,54 @@ export function AppShell() {
   // Connection panel: null = no panel; a {sessionType, protocol} key selects the reading-pane connection pane.
   const [selectedConnection, setSelectedConnection] = useState<ConnectionKey | null>(null);
 
+  // Find-messages: search + saved-search state (Task 17).
+  const search = useSearch();
+  const saved = useSavedSearches();
+  const [dropdownOpen, setDropdownOpen] = useState(false);
+  // Saved-searches management panel (Task 18).
+  const [savedSearchesOpen, setSavedSearchesOpen] = useState(false);
+
+  const metaText = useMemo((): string | null => {
+    if (!search.isActive) return null;
+    const r = search.results;
+    if (!r) return search.isLoading ? 'Searching…' : null;
+    const star = search.activeSaved ? ` · ★ ${search.activeSaved.name}` : '';
+    return `${r.totalMatches} matches · ${r.queryMs} ms${star}`;
+  }, [search.isActive, search.results, search.isLoading, search.activeSaved]);
+
   const { messages, error } = useMailbox(selectedFolder);
   const inbox = useMailbox('inbox');
   const sent = useMailbox('sent');
   const notConnected = isNotConfigured(error);
+
+  // Search-result wiring (tuxlink-c7qz): when search is active, swap the
+  // folder-scoped messages for search results. When search is active but
+  // results haven't arrived yet (null), show an empty list — never fall back
+  // to folder contents while a search is running (that would be misleading).
+  const searchResultMessages = useMemo(
+    () =>
+      search.isActive
+        ? (search.results?.items ?? []).map(dtoToMessageMeta)
+        : null,
+    [search.isActive, search.results],
+  );
+
+  const searchHighlights = useMemo(
+    () =>
+      search.isActive
+        ? computeHighlights(search.results?.items ?? [], search.spec.free_text)
+        : undefined,
+    [search.isActive, search.results, search.spec.free_text],
+  );
+
+  // Show folder badges when search is cross-folder (no FOLDER chip applied).
+  const searchIsCrossFolder =
+    search.isActive &&
+    (!search.spec.filters.folder ||
+      (search.spec.filters.folder.kind === 'folder' &&
+        search.spec.filters.folder.value === 'all'));
+
+  const visibleMessages = searchResultMessages ?? messages;
 
   // Sidebar badges (mock B): Inbox = unread count ("3"), Sent = total ("87").
   const counts: Partial<Record<MailboxFolder, number>> = {
@@ -209,12 +302,55 @@ export function AppShell() {
       <TitleBar folderLabel={FOLDER_LABELS[selectedFolder]} />
       <MenuBar onAction={onMenuAction} />
       <ResizeHandles />
-      <DashboardRibbon
-        data={statusData}
-        onConnect={onConnect}
-        connecting={connecting}
-        onAbort={onAbort}
-        packet={packetUi}
+      <div className="ribbon-with-search">
+        <div className="search-zone" data-testid="search-zone">
+          <SearchBar
+            spec={search.spec}
+            activeSaved={search.activeSaved}
+            onSpecChange={search.setSpec}
+            onUnsave={async () => {
+              if (search.activeSaved) {
+                await saved.unsave(search.activeSaved.id);
+                // Codex adrev fix (find-messages P2): only detach the saved-search
+                // label; keep the current spec so the search results remain visible.
+                search.clearActiveSaved();
+              }
+            }}
+            onToggleDropdown={() => setDropdownOpen((o) => !o)}
+            dropdownOpen={dropdownOpen}
+          />
+          {dropdownOpen && (
+            <SearchDropdown
+              saved={saved.saved}
+              recent={saved.recent}
+              activeSavedId={search.activeSaved?.id ?? null}
+              onRunSaved={(s) => { search.setActiveSavedSearch(s); setDropdownOpen(false); }}
+              onRunRecent={(r) => { search.setSpec(r.spec); setDropdownOpen(false); }}
+              onPromoteRecent={async (r) => {
+                const name = window.prompt('Name for this saved search?', renderQuery(r.spec).slice(0, 24));
+                // Codex adrev fix (find-messages P2): use promote_recent so the
+                // recent entry is removed atomically — avoids duplicate in dropdown.
+                if (name) await saved.promoteRecent(name, r.spec);
+              }}
+              onUnsaveActive={async () => { if (search.activeSaved) await saved.unsave(search.activeSaved.id); }}
+              onManage={() => { setSavedSearchesOpen(true); setDropdownOpen(false); }}
+              onClose={() => setDropdownOpen(false)}
+            />
+          )}
+        </div>
+        <DashboardRibbon
+          data={statusData}
+          onConnect={onConnect}
+          connecting={connecting}
+          onAbort={onAbort}
+          packet={packetUi}
+        />
+      </div>
+
+      <ChipStrip
+        spec={search.spec}
+        onSpecChange={search.setSpec}
+        metaText={metaText}
       />
 
       <div
@@ -231,10 +367,12 @@ export function AppShell() {
         />
         <MessageList
           folder={selectedFolder}
-          messages={messages}
+          messages={visibleMessages}
           selectedId={selectedMessage?.id ?? null}
           onSelect={onSelectMessage}
-          notConnected={notConnected}
+          notConnected={search.isActive ? false : notConnected}
+          matchHighlights={searchHighlights}
+          showFolderTag={searchIsCrossFolder}
         />
         {(() => {
           if (selectedConnection === null) {
@@ -269,6 +407,10 @@ export function AppShell() {
       <StatusBar show={showStatusBar} unread={counts.inbox ?? 0} state={statusData.state} packet={packetUi} />
 
       <SettingsPanel open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+
+      {savedSearchesOpen && (
+        <SavedSearchesPanel onClose={() => setSavedSearchesOpen(false)} />
+      )}
     </div>
   );
 }

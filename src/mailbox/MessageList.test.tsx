@@ -168,6 +168,51 @@ describe('<MessageRow> (3-line, Mock D)', () => {
   });
 });
 
+describe('<MessageRow> — highlight + folder-tag (find-messages Task 17)', () => {
+  it('renders <mark> around matched ranges when matchHighlight is provided', () => {
+    const m: MessageMeta = {
+      id: 'm1', subject: 'DAMAGE report', from: 'KX5DD', to: ['N7CPZ'],
+      date: '2024-05-20T10:13:00Z', unread: true, bodySize: 100, hasAttachments: false,
+    };
+    render(<MessageRow message={m} folder="inbox" selected={false} onSelect={() => {}}
+                       matchHighlight={[{ field: 'subject', start: 0, end: 6 }]} />);
+    const mark = screen.getByTestId('row-subject').querySelector('mark');
+    expect(mark).not.toBeNull();
+    expect(mark).toHaveTextContent('DAMAGE');
+  });
+
+  it('renders folder badge when showFolderTag and message.folder set', () => {
+    const m: MessageMeta = {
+      id: 'm1', subject: 'x', from: 'y', to: ['z'],
+      date: '2024-05-20T10:13:00Z', unread: false, bodySize: 0, hasAttachments: false,
+      folder: 'sent',
+    };
+    render(<MessageRow message={m} folder="inbox" selected={false} onSelect={() => {}} showFolderTag />);
+    expect(screen.getByTestId('row-folder-tag')).toHaveTextContent(/sent/i);
+  });
+
+  it('does not render folder badge when showFolderTag is absent', () => {
+    const m: MessageMeta = {
+      id: 'm1', subject: 'x', from: 'y', to: ['z'],
+      date: '2024-05-20T10:13:00Z', unread: false, bodySize: 0, hasAttachments: false,
+      folder: 'sent',
+    };
+    render(<MessageRow message={m} folder="inbox" selected={false} onSelect={() => {}} />);
+    expect(screen.queryByTestId('row-folder-tag')).toBeNull();
+  });
+
+  it('renders subject without mark when matchHighlight is absent', () => {
+    const m: MessageMeta = {
+      id: 'm1', subject: 'Hello world', from: 'y', to: ['z'],
+      date: '2024-05-20T10:13:00Z', unread: false, bodySize: 0, hasAttachments: false,
+    };
+    render(<MessageRow message={m} folder="inbox" selected={false} onSelect={() => {}} />);
+    const subject = screen.getByTestId('row-subject');
+    expect(subject.querySelector('mark')).toBeNull();
+    expect(subject).toHaveTextContent('Hello world');
+  });
+});
+
 describe('<MessageList>', () => {
   it('renders the rows-pane root', () => {
     render(<MessageList folder="inbox" messages={[]} selectedId={null} onSelect={() => {}} />);

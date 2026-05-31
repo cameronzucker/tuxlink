@@ -14,6 +14,7 @@
 // Virtualization via react-virtuoso (rows tested via the exported `MessageRow`;
 // the real Virtuoso renders into a zero-height scroller under jsdom).
 
+import React from 'react';
 import { Virtuoso } from 'react-virtuoso';
 import type { MailboxFolder, MessageMeta } from './types';
 
@@ -77,17 +78,51 @@ export function correspondentLabel(msg: MessageMeta, folder: MailboxFolder): str
   return msg.from;
 }
 
+/// A range within a rendered field that should be highlighted with <mark>.
+/// `field` names the prop being highlighted; `start`/`end` are character offsets
+/// (exclusive end) into the displayed string. Absent → no highlight.
+export interface HighlightRange {
+  field: 'subject' | 'preview';
+  start: number;
+  end: number;
+}
+
+/// Render a text string with matched ranges wrapped in <mark> elements.
+/// When ranges is empty/absent the text is returned as a plain string node.
+function applyHighlights(text: string, ranges: HighlightRange[], field: 'subject' | 'preview'): React.ReactNode {
+  const fieldRanges = ranges.filter((r) => r.field === field);
+  if (fieldRanges.length === 0) return text;
+
+  // Merge + sort ranges by start position.
+  const sorted = [...fieldRanges].sort((a, b) => a.start - b.start);
+  const nodes: React.ReactNode[] = [];
+  let cursor = 0;
+  for (const { start, end } of sorted) {
+    if (start > cursor) nodes.push(text.slice(cursor, start));
+    nodes.push(<mark key={`${field}-${start}`}>{text.slice(start, end)}</mark>);
+    cursor = end;
+  }
+  if (cursor < text.length) nodes.push(text.slice(cursor));
+  return <>{nodes}</>;
+}
+
 export interface MessageRowProps {
   message: MessageMeta;
   folder: MailboxFolder;
   selected: boolean;
   onSelect: (id: string) => void;
+  /// Highlight ranges for this row (from a search result). Absent → no highlights.
+  matchHighlight?: HighlightRange[];
+  /// When true and message.folder is set, render a folder badge inline-left of
+  /// the subject (cross-folder search mode, spec §7.2).
+  showFolderTag?: boolean;
 }
 
 /// One Mock D list row (3-line `.row`). Pure presentation + click / Enter →
 /// `onSelect(id)`. Exported for direct unit testing.
-export function MessageRow({ message, folder, selected, onSelect }: MessageRowProps) {
+export function MessageRow({ message, folder, selected, onSelect, matchHighlight, showFolderTag }: MessageRowProps) {
   const size = formatSize(message.bodySize);
+  const highlights = matchHighlight ?? [];
   return (
     <div
       role="row"
@@ -114,15 +149,20 @@ export function MessageRow({ message, folder, selected, onSelect }: MessageRowPr
         {formatRowDate(message.date)}
       </div>
 
-      {/* line 2 — [form-tag] subject + size */}
+      {/* line 2 — [folder-tag] [form-tag] subject + size */}
       <div className="subject">
+        {showFolderTag && message.folder && (
+          <span className="folder-tag" data-testid="row-folder-tag">
+            {message.folder}
+          </span>
+        )}
         {message.formTag && (
           <span className="form-tag" data-testid="row-form-tag">
             {message.formTag}
           </span>
         )}
         <span className="subject-text" data-testid="row-subject">
-          {message.subject}
+          {applyHighlights(message.subject, highlights, 'subject')}
         </span>
         {size && (
           <span className="size" data-testid="row-size">
@@ -134,7 +174,7 @@ export function MessageRow({ message, folder, selected, onSelect }: MessageRowPr
       {/* line 3 — preview snippet (omitted when absent) */}
       {message.preview && (
         <div className="preview" data-testid="row-preview">
-          {message.preview}
+          {applyHighlights(message.preview, highlights, 'preview')}
         </div>
       )}
     </div>
@@ -149,6 +189,12 @@ export interface MessageListProps {
   /// When true and the list is empty, show the "not connected" copy instead
   /// of the generic empty-folder copy (backend offline / NotConfigured).
   notConnected?: boolean;
+  /// Per-message highlight ranges from a search result (keyed by message id).
+  /// Passed through to each MessageRow. Absent → no highlights.
+  matchHighlights?: Record<string, HighlightRange[]>;
+  /// When true, rows render a folder badge when message.folder is set
+  /// (cross-folder search mode, spec §7.2).
+  showFolderTag?: boolean;
 }
 
 /// The list pane. Renders the mock's `.rows-pane` as its root (the 420px left
@@ -159,6 +205,8 @@ export function MessageList({
   selectedId,
   onSelect,
   notConnected = false,
+  matchHighlights,
+  showFolderTag,
 }: MessageListProps) {
   return (
     <div className="rows-pane" data-testid="rows-pane">
@@ -177,6 +225,8 @@ export function MessageList({
                 folder={folder}
                 selected={msg.id === selectedId}
                 onSelect={onSelect}
+                matchHighlight={matchHighlights?.[msg.id]}
+                showFolderTag={showFolderTag}
               />
             )}
           />
