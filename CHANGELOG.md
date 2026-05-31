@@ -4,6 +4,22 @@ All notable changes to Tuxlink are documented here.
 
 This project adheres to [Semantic Versioning](https://semver.org) with project-specific rules described in [VERSIONING.md](VERSIONING.md). Entries from `v0.0.2` onward are generated automatically by [`release-please`](https://github.com/googleapis/release-please) from [Conventional Commits](https://www.conventionalcommits.org).
 
+## [0.7.0](https://github.com/cameronzucker/tuxlink/compare/v0.6.0...v0.7.0) (2026-05-31)
+
+
+### Features
+
+* **modem:** ARDOP bandwidth selection (200/500/1000/2000 Hz) — ARQBW wired through Settings (tuxlink-j0ij) ([85a6d90](https://github.com/cameronzucker/tuxlink/commit/85a6d907ba4318d14a4b109072a86e8f8e919375))
+* **modem:** ARDOP WebGUI link — spawn ardopcf with -G + dock link to Spectrum/Waterfall (tuxlink-60wh) ([11f444d](https://github.com/cameronzucker/tuxlink/commit/11f444d7b3892746cac28b4da8202981037d38c1))
+* **search:** SavedSearchesPanel modal + AppShell Manage wiring (tuxlink-1hu) ([12c05f8](https://github.com/cameronzucker/tuxlink/commit/12c05f8c1a858b66ad95c3893cb6b2783b2f8337))
+
+
+### Bug Fixes
+
+* **modem:** ARDOP ABORT during in-flight connect via cmd-socket side channel (tuxlink-o3f2) ([22cfe80](https://github.com/cameronzucker/tuxlink/commit/22cfe80dba31f374c23a3f50a33704b0d7b77193))
+* **search:** apply 3 of 5 Codex adrev findings (tuxlink-1hu) ([fff6001](https://github.com/cameronzucker/tuxlink/commit/fff6001de68f5d0557d9b213309c856dcae570ac))
+* **search:** wire search results into MessageList (tuxlink-c7qz) ([f38a5fa](https://github.com/cameronzucker/tuxlink/commit/f38a5fae0f10a42afdd9205ada80cfed1e733e18))
+
 ## [0.6.0](https://github.com/cameronzucker/tuxlink/compare/v0.5.0...v0.6.0) (2026-05-31)
 
 
