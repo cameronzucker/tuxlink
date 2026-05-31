@@ -27,6 +27,10 @@ pub struct Config {
     /// `PacketConfig`. `#[serde(default)]` is the migration for old files.
     #[serde(default)]
     pub packet: PacketConfig,
+    /// ARDOP HF modem settings (additive; absent until the operator configures ARDOP).
+    /// `#[serde(default)]` migrates old config files that predate this field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub modem_ardop: Option<ArdopUiConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -471,6 +475,37 @@ pub fn write_config_atomic(config: &Config) -> Result<(), ConfigWriteError> {
 #[derive(serde::Deserialize)]
 struct SchemaVersionProbe { schema_version: u32 }
 
+/// Frontend-shaped ARDOP HF modem settings. Persisted as `[modem_ardop]` in config;
+/// Task 3.3 (`modem_ardop_connect`) translates this into `ArdopConfig::extra_args` at
+/// spawn time. `deny_unknown_fields` is intentionally absent here — the ARDOP config
+/// is additive and forward-compat relaxation is acceptable for a new section.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ArdopUiConfig {
+    /// Path or name of the ARDOP binary (e.g. `"ardopcf"`).
+    pub binary: String,
+    /// ALSA capture device (e.g. `"plughw:1,0"`).
+    pub capture_device: String,
+    /// ALSA playback device (e.g. `"plughw:1,0"`).
+    pub playback_device: String,
+    /// Serial device for PTT control. `None` = VOX or CAT PTT.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ptt_serial_path: Option<String>,
+    /// ARDOP command/control port (default 8515).
+    pub cmd_port: u16,
+}
+
+impl Default for ArdopUiConfig {
+    fn default() -> Self {
+        Self {
+            binary: "ardopcf".into(),
+            capture_device: String::new(),
+            playback_device: String::new(),
+            ptt_serial_path: None,
+            cmd_port: 8515,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -754,5 +789,71 @@ mod tests {
             std::time::Duration::from_secs(25),
             "into_params must carry the connect_timeout safety ceiling"
         );
+    }
+
+    // --- tuxlink-4ek: ArdopUiConfig persistence tests ---
+
+    #[test]
+    fn ardop_ui_config_round_trips_through_json() {
+        let cfg = ArdopUiConfig {
+            binary: "ardopcf".into(),
+            capture_device: "plughw:1,0".into(),
+            playback_device: "plughw:1,0".into(),
+            ptt_serial_path: Some("/dev/ttyUSB0".into()),
+            cmd_port: 8515,
+        };
+        let json = serde_json::to_string(&cfg).unwrap();
+        let back: ArdopUiConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.binary, "ardopcf");
+        assert_eq!(back.cmd_port, 8515);
+        assert_eq!(back.ptt_serial_path.as_deref(), Some("/dev/ttyUSB0"));
+    }
+
+    #[test]
+    fn config_with_modem_ardop_some_then_none_round_trips() {
+        // Build a minimal Config JSON with modem_ardop set, verify it round-trips.
+        let json = format!(
+            r#"{{
+                "schema_version": {ver},
+                "wizard_completed": true,
+                "connect": {{ "connect_to_cms": false, "transport": "Telnet" }},
+                "identity": {{ "callsign": null, "identifier": "W1TEST", "grid": null }},
+                "privacy": {{ "gps_state": "Off", "position_precision": "FourCharGrid" }},
+                "modem_ardop": {{
+                    "binary": "ardopcf",
+                    "capture_device": "plughw:1,0",
+                    "playback_device": "plughw:1,0",
+                    "cmd_port": 8515
+                }}
+            }}"#,
+            ver = CONFIG_SCHEMA_VERSION
+        );
+        let cfg: Config = serde_json::from_str(&json)
+            .expect("Config with modem_ardop must deserialize");
+        assert!(cfg.modem_ardop.is_some(), "modem_ardop should be Some");
+        let ardop = cfg.modem_ardop.as_ref().unwrap();
+        assert_eq!(ardop.binary, "ardopcf");
+        assert_eq!(ardop.cmd_port, 8515);
+        assert!(ardop.ptt_serial_path.is_none(), "absent ptt_serial_path defaults to None");
+
+        // Round-trip: serialize and reload.
+        let reserialized = serde_json::to_string(&cfg).unwrap();
+        let reloaded: Config = serde_json::from_str(&reserialized).unwrap();
+        assert!(reloaded.modem_ardop.is_some());
+
+        // Verify modem_ardop is absent from a config that never had it (migration path).
+        let json_no_ardop = format!(
+            r#"{{
+                "schema_version": {ver},
+                "wizard_completed": true,
+                "connect": {{ "connect_to_cms": false, "transport": "Telnet" }},
+                "identity": {{ "callsign": null, "identifier": "W1TEST", "grid": null }},
+                "privacy": {{ "gps_state": "Off", "position_precision": "FourCharGrid" }}
+            }}"#,
+            ver = CONFIG_SCHEMA_VERSION
+        );
+        let cfg_no_ardop: Config = serde_json::from_str(&json_no_ardop)
+            .expect("old config without modem_ardop must deserialize (migration)");
+        assert!(cfg_no_ardop.modem_ardop.is_none(), "modem_ardop must default to None when absent");
     }
 }

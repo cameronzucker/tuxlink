@@ -55,6 +55,9 @@ import { SavedSearchesPanel } from '../search/SavedSearchesPanel';
 import { useSearch } from '../search/useSearch';
 import { useSavedSearches } from '../search/useSavedSearches';
 import { renderQuery } from '../search/queryRender';
+import { ArdopHfStub } from '../connections/ArdopHfStub';
+import { useModemStatus } from '../modem/useModemStatus';
+import { ArdopDock } from '../modem/ArdopDock';
 import './AppShell.css';
 
 /// Human label for a folder (titlebar). Mirrors the sidebar labels.
@@ -183,6 +186,13 @@ export function AppShell() {
   // Status data (callsign / grid / connection) — single poll, shared by the
   // dashboard ribbon, the status bar, and the window title.
   const statusData = useStatusData();
+
+  // Modem (ARDOP HF) status — drives the right-hand dock's mount + the
+  // panes-grid column-count swap (tuxlink-4ek Task 4.3). The dock appears
+  // whenever the modem is doing anything other than 'stopped' so the operator
+  // can see what the link is doing without hunting for a hidden panel.
+  const { status: modemStatus } = useModemStatus();
+  const dockVisible = modemStatus.state !== 'stopped';
 
   // CMS connect: run one exchange (send outbox + receive), then refresh the
   // mailbox so any downloaded messages appear. The button lives in the ribbon;
@@ -343,7 +353,10 @@ export function AppShell() {
         metaText={metaText}
       />
 
-      <div className="panes" data-testid="shell-panes">
+      <div
+        className={`panes${dockVisible ? ' panes--with-dock' : ''}`}
+        data-testid="shell-panes"
+      >
         <FolderSidebar
           selectedFolder={selectedFolder}
           onSelectFolder={onSelectFolder}
@@ -375,12 +388,18 @@ export function AppShell() {
           if (sessionType === 'cms' && protocol === 'packet') {
             return <PacketConnectionPanelContainer baseCall={statusData.callsign} intent="cms-gateway" />;
           }
+          if (sessionType === 'cms' && protocol === 'ardop-hf') {
+            // The actual dial UI lives in the right-hand ArdopDock; the
+            // reading-pane just directs the operator there (tuxlink-4ek 4.3).
+            return <ArdopHfStub />;
+          }
           if (sessionType === 'p2p' && protocol === 'packet') {
             return <PacketConnectionPanelContainer baseCall={statusData.callsign} intent="p2p" />;
           }
           // Built but unhandled — defensive stub
           return <StubPanel sessionType={sessionType} protocol={protocol} />;
         })()}
+        {dockVisible && <ArdopDock />}
       </div>
 
       {showSessionLog && <SessionLog />}

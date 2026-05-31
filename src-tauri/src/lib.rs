@@ -15,6 +15,8 @@ pub mod ui_commands;
 pub mod winlink;
 pub mod winlink_backend;
 pub mod wizard;
+pub mod modem_commands;
+pub mod modem_status;
 
 #[cfg(test)]
 mod build_support;
@@ -101,6 +103,12 @@ pub fn run() {
         // the buffer `session_log_snapshot` reads. Tauri's `State` derefs
         // through the `Arc`, so the command sees an identical surface.
         .manage(std::sync::Arc::new(crate::session_log::SessionLogState::new(500)))
+        // tuxlink-4ek Phase 3: the shared modem session — current ARDOP status
+        // snapshot + the RADIO-1 consent token. Stored as `Arc<ModemSession>`
+        // so command handlers and the broadcaster (Task 3.4) reference the
+        // same instance. Starts Stopped with no token (mint via the RADIO-1
+        // modal flow).
+        .manage(std::sync::Arc::new(crate::modem_status::ModemSession::new()))
         .setup(|app| {
             use tauri::Manager as _;  // brings .state() into scope for the setup closure
             // Install system tray icon + menu (tuxlink-rit / Task 8).
@@ -169,6 +177,32 @@ pub fn run() {
                     (*app.state::<std::sync::Arc<crate::position::PositionArbiter>>()).clone();
                 crate::position::gpsd::spawn_gpsd_client(arbiter_for_gpsd);
             }
+
+            // tuxlink-4ek Task 3.4: spawn the modem status broadcaster — a
+            // dedicated std::thread (named "modem-status-broadcaster") that
+            // polls the shared ModemSession snapshot every 250 ms and emits
+            // it as the `modem:status` Tauri event the frontend's
+            // `useModemStatus` hook (Task 1.3) listens to. JoinHandle is
+            // intentionally dropped: the thread runs for the lifetime of the
+            // process (v1 has no shutdown signal; the broadcaster owns no
+            // transport state so the clean-shutdown cost isn't worth it
+            // yet). No tokio (ADR 0015 — modem subsystem uses std::sync /
+            // std::thread primitives only).
+            let session_for_broadcaster =
+                (*app.state::<std::sync::Arc<crate::modem_status::ModemSession>>()).clone();
+            let app_handle_for_broadcaster = app.handle().clone();
+            let _broadcaster_handle = crate::modem_status::ModemStatusBroadcaster::spawn(
+                session_for_broadcaster,
+                move |s| {
+                    // Bring `tauri::Emitter` into the closure scope so `emit`
+                    // resolves on `AppHandle`. `Manager` (already imported at
+                    // the top of this setup block) does NOT provide `emit` —
+                    // that's `Emitter`'s extension trait (Tauri 2.x).
+                    use tauri::Emitter as _;
+                    let _ = app_handle_for_broadcaster
+                        .emit(crate::modem_status::STATUS_EVENT, s);
+                },
+            );
 
             Ok(())
         })
@@ -242,6 +276,13 @@ pub fn run() {
             crate::search::commands::tauri_search_rename,
             crate::search::commands::tauri_search_reorder,
             crate::search::commands::tauri_search_rebuild_index,
+            crate::modem_commands::config_get_ardop,   // tuxlink-4ek (ARDOP config read)
+            crate::modem_commands::config_set_ardop,   // tuxlink-4ek (ARDOP config write)
+            crate::modem_commands::modem_get_status,   // tuxlink-4ek Task 3.2 (session snapshot)
+            crate::modem_commands::modem_ardop_disconnect, // tuxlink-4ek Task 3.2 (clear consent + reset)
+            crate::modem_commands::modem_ardop_connect, // tuxlink-4ek Task 3.3 (RADIO-1-gated spawn + ARQ connect)
+            crate::modem_commands::modem_mint_consent, // tuxlink-4ek Task 6.2 (RADIO-1 token mint — backend-only)
+            crate::modem_commands::modem_ardop_b2f_exchange, // tuxlink-ytg (B2F over ARDOP — Winlink mail flows)
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

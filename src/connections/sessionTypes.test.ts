@@ -31,3 +31,17 @@ describe('session-type catalog', () => {
     expect(isBuilt({ sessionType: 'network-po', protocol: 'vara-hf' })).toBe(false);
   });
 });
+
+describe('ARDOP HF catalog entry', () => {
+  it('exposes ardop-hf as a built protocol under cms intent', () => {
+    const protos = protocolsFor('cms');
+    const ardop = protos.find((p) => p.id === 'ardop-hf');
+    expect(ardop).toBeDefined();
+    expect(ardop?.label).toBe('ARDOP HF');
+    expect(ardop?.built).toBe(true);
+  });
+
+  it('isBuilt returns true for cms × ardop-hf', () => {
+    expect(isBuilt({ sessionType: 'cms', protocol: 'ardop-hf' })).toBe(true);
+  });
+});

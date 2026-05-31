@@ -20,6 +20,7 @@ use std::sync::mpsc::{self, RecvTimeoutError};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use super::arq_state::ArqState;
 use super::command::{encode_setter, Command, CommandParseError, State};
 use super::wire::encode_cmd_line;
 
@@ -47,6 +48,19 @@ impl CmdSocket {
     /// On success returns a `CmdSocket` whose control-loop thread is already
     /// running and forwarding parsed `Command` values into the internal channel.
     pub fn connect(addr: SocketAddr) -> io::Result<Self> {
+        Self::connect_with_arq_state(addr, None)
+    }
+
+    /// Like [`connect`] but also wire an [`ArqState`] that the reader thread
+    /// updates on `CONNECTED` / `DISCONNECTED` / `NEWSTATE DISC` events
+    /// (tuxlink-ytg). The data socket reads the same `ArqState` to decide
+    /// EOF-on-DISC and pre-ARQ frame-drop. `None` skips the bookkeeping for
+    /// callers that don't share state with a data socket (the existing
+    /// connect tests).
+    pub fn connect_with_arq_state(
+        addr: SocketAddr,
+        arq_state: Option<ArqState>,
+    ) -> io::Result<Self> {
         let stream = TcpStream::connect(addr)?;
         // The reader and writer halves share the underlying socket; `try_clone`
         // gives us two independently-closeable handles — the same split pattern
@@ -82,6 +96,28 @@ impl CmdSocket {
                 }
                 match Command::parse(&line) {
                     Ok(cmd) => {
+                        // tuxlink-ytg: book-keep the ARQ link state for the data
+                        // socket's EOF-on-DISC + pre-connect drop gates. The update
+                        // happens BEFORE the send so the DataSocket sees the new
+                        // state by the time any blocking-recv consumer of the cmd
+                        // channel reacts.
+                        if let Some(ref state) = arq_state {
+                            match &cmd {
+                                Command::Connected { .. } => state.set_connected(),
+                                Command::Disconnected => state.set_disconnected(),
+                                Command::NewState(State::Disc) => state.set_disconnected(),
+                                // tuxlink-ytg P1 (Codex adrev 2026-05-30): FAULT
+                                // events must also clear ArqState. ardopcf can
+                                // emit FAULT while the data TCP socket stays
+                                // open; without this arm the data socket's
+                                // EOF-on-DISC gate stays armed (`is_connected`
+                                // remains true), so a blocked B2F `read_line`
+                                // keeps polling forever and the command never
+                                // reaches its disconnect/reset cleanup.
+                                Command::Fault(_) => state.set_disconnected(),
+                                _ => {}
+                            }
+                        }
                         // Sender drop unblocks on Err (receiver gone); exit cleanly.
                         if tx.send(cmd).is_err() {
                             break;
@@ -91,6 +127,13 @@ impl CmdSocket {
                         // Unknown/malformed command — skip rather than crash the loop.
                     }
                 }
+            }
+            // tuxlink-ytg: if the cmd socket itself dies (EOF or I/O error), the
+            // ARQ link cannot be considered live regardless of the last event.
+            // Flip the flag to disconnected so any blocked data-socket read
+            // unblocks promptly with EOF.
+            if let Some(ref state) = arq_state {
+                state.set_disconnected();
             }
             // `tx` drops here → channel becomes disconnected → recv_event returns
             // `RecvError::Disconnected`.
@@ -661,6 +704,51 @@ mod tests {
             .expect("arq_connect must succeed when stale DISC is drained");
         assert_eq!(info.peer_call, "W7ABC");
         assert_eq!(info.bandwidth_hz, 500);
+
+        drop(sock);
+        server.join().unwrap();
+    }
+
+    // ── Test 7d: FAULT event clears the shared ArqState (tuxlink-ytg P1) ───
+
+    /// Codex adrev 2026-05-30 P1 #1: when ardopcf emits FAULT while the data
+    /// TCP socket stays open, the reader thread must flip `ArqState` to
+    /// disconnected so the DataSocket's EOF-on-DISC gate fires. Without this,
+    /// a blocked B2F read_line keeps polling forever and the surrounding Tauri
+    /// command never reaches its cleanup.
+    #[test]
+    fn fault_event_clears_arq_state() {
+        // Mock that emits exactly one event: `FAULT some error`.
+        let (addr, server) = spawn_mock_tnc(|mut conn| {
+            write_reply(&mut conn, "FAULT hardware not ready");
+            // Server thread exits when the read timeout fires.
+        });
+
+        // Pre-seed an ArqState in the connected position to make the
+        // transition observable.
+        let arq_state = ArqState::new();
+        arq_state.set_connected();
+        assert!(arq_state.is_connected(), "precondition: state starts connected");
+
+        let sock = CmdSocket::connect_with_arq_state(addr, Some(arq_state.clone()))
+            .expect("connect must succeed");
+
+        // The reader thread should parse the FAULT and clear the flag. Wait
+        // for the channel to deliver the parsed event so we know the reader
+        // has processed it (the flag flip happens BEFORE the send).
+        let event = sock
+            .recv_event(Duration::from_secs(2))
+            .expect("FAULT event must reach the channel");
+        assert!(
+            matches!(event, Command::Fault(ref s) if s.contains("hardware not ready")),
+            "expected Fault, got {event:?}"
+        );
+
+        assert!(
+            !arq_state.is_connected(),
+            "FAULT must clear ArqState — the data-socket EOF-on-DISC gate \
+             depends on this transition (Codex tuxlink-ytg P1)."
+        );
 
         drop(sock);
         server.join().unwrap();

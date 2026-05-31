@@ -65,6 +65,7 @@ mod tests {
             },
             pat_mbo_address: None,
             packet: crate::config::PacketConfig::default(),
+            modem_ardop: None,
         }
     }
 

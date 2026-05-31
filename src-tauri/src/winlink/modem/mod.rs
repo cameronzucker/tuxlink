@@ -70,4 +70,20 @@ pub trait ModemTransport: Send {
     /// Returns `Err` (not a panic) if [`init`] was never called or if the
     /// data socket is not yet open.
     fn data_stream(&mut self) -> std::io::Result<&mut dyn ReadWrite>;
+
+    /// Drain any pending non-blocking events from the modem and apply them
+    /// to the provided [`ModemStatus`]. Called by
+    /// [`crate::modem_status::ModemStatusBroadcaster`] on every tick
+    /// (250 ms by default).
+    ///
+    /// Default impl is a no-op for backends that don't emit live events. The
+    /// ARDOP transport overrides this to drain its cmd-socket and update
+    /// `state` / `arq_flags` / `peer` / `width_hz` / `last_error` in place.
+    ///
+    /// Implementations MUST NOT block — drain with `Duration::ZERO` (or
+    /// equivalent non-blocking receive) and bound the per-call event count
+    /// so a runaway emitter cannot starve the broadcaster tick.
+    fn drain_status_events(&mut self, _status: &mut crate::modem_status::ModemStatus) {
+        // Default: no-op. Backends that emit live status events override.
+    }
 }

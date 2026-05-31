@@ -39,6 +39,13 @@
   overflow: hidden;
 }
 
+/* Modem (ARDOP HF) dock is mounted as the 4th column when the modem isn't
+ * 'stopped' (tuxlink-4ek Task 4.3). The mailbox column shrinks 40px (380→340)
+ * to give the dock 290px without stealing from the 1fr reading-pane. */
+.layout-b .panes--with-dock {
+  grid-template-columns: 200px 340px 1fr 290px;
+}
+
 /* ============================================================================
  * Ribbon + search row wrapper — contains the search-zone (left) and the
  * DashboardRibbon (right). The DashboardRibbon's .dashboard uses flex and

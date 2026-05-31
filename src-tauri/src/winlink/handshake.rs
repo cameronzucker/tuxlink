@@ -111,7 +111,7 @@ fn read_handshake<R: BufRead>(
             // B2F over packet is CR-only, but tolerate a stray LF left by a CRLF
             // link so framing residue can't mask the `F` peek (Codex 2026-05-22).
             match reader.fill_buf() {
-                Ok(buf) if buf.is_empty() => return Err(HandshakeError::ConnectionClosed),
+                Ok([]) => return Err(HandshakeError::ConnectionClosed),
                 Ok(buf) if buf[0] == b'\n' => {
                     reader.consume(1);
                     continue;

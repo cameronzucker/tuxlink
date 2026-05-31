@@ -17,6 +17,18 @@ vi.mock('@tauri-apps/api/core', () => ({
     if (cmd === 'config_read') return null;
     if (cmd === 'backend_status') return null;
     if (cmd === 'session_log_snapshot') return [];
+    if (cmd === 'modem_get_status') {
+      // useModemStatus' initial snapshot — STOPPED keeps the dock unmounted,
+      // which preserves the existing 3-col Mock B topology these tests assert.
+      return {
+        state: 'stopped',
+        peer: null, mode: null, widthHz: null, pttBackend: null,
+        snDb: null, vuDbfs: null, throughputBps: null,
+        bytesRx: 0, bytesTx: 0, uptimeSec: 0,
+        arqFlags: { busy: false, rx: false, tx: false },
+        lastError: null,
+      };
+    }
     if (cmd === 'message_read') {
       return {
         id: 'INBOX1',
@@ -313,6 +325,18 @@ describe('AppShell — search → MessageList wiring (tuxlink-c7qz)', () => {
         tcpPort: 8001, serialDevice: null, serialBaud: null, txdelay: 30,
         persistence: 63, slotTime: 10, paclen: 128, maxframe: 4, t1Ms: 3000, n2Retries: 10,
       };
+      if (cmd === 'modem_get_status') {
+        // useModemStatus' initial snapshot — STOPPED keeps the ArdopDock unmounted
+        // so this test only asserts the search → MessageList wiring.
+        return {
+          state: 'stopped',
+          peer: null, mode: null, widthHz: null, pttBackend: null,
+          snDb: null, vuDbfs: null, throughputBps: null,
+          bytesRx: 0, bytesTx: 0, uptimeSec: 0,
+          arqFlags: { busy: false, rx: false, tx: false },
+          lastError: null,
+        };
+      }
       if (cmd === 'tauri_search_list_saved') return [];
       if (cmd === 'tauri_search_list_recent') return [];
       if (cmd === 'tauri_search_run') return {

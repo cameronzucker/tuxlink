@@ -47,20 +47,39 @@ Key routing rules:
 
 ### OpenAI Codex CLI — for `build-robust-features`' "at least one adversarial round via Codex" requirement
 
-**Codex IS installed on this Pi. It is NOT on `$PATH`.** `which codex` returns nothing, which is why assistants keep missing it. Invoke via `npx`:
+**Codex IS installed on this Pi at `/usr/local/bin/codex`** (`which codex` does find it; the earlier "not on $PATH" framing was wrong). The `npx --yes @openai/codex ...` form still works and is the conservative invocation in case the local binary version drifts from the npm one.
 
 ```bash
 # Non-interactive agent call
 npx --yes @openai/codex exec "<prompt>"        # alias: codex e
 
-# Purpose-built code review (what adversarial rounds typically want)
-npx --yes @openai/codex review --commit <SHA> "<attack-angle prompt>"
-npx --yes @openai/codex review --uncommitted "<prompt>"      # staged + unstaged + untracked
-npx --yes @openai/codex review --base main    "<prompt>"     # current branch vs base
-
-# Optional: stdin-piped prompt
+# Stdin-piped prompt to `exec`
 cat spec.md | npx --yes @openai/codex exec -
+
+# Optional: pipe alongside argv prompt (argv = primary instructions, stdin = appended <stdin> block)
+git diff main..HEAD | npx --yes @openai/codex exec "Review the following diff:"
 ```
+
+**Adversarial-review pattern (Codex CLI v0.128.0+):** the `review` subcommand requires picking EXACTLY ONE of `--uncommitted` / `--base` / `--commit` / `[PROMPT]` — they are MUTUALLY EXCLUSIVE. Prior CLAUDE.md recipes paired `--base main` with a custom prompt; that combination is now rejected with `error: the argument '--base <BRANCH>' cannot be used with '[PROMPT]'`. Two patterns survive for directed attack-angle reviews:
+
+```bash
+# Structured-base mode (no custom prompt; Codex picks its own attack angle):
+npx --yes @openai/codex review --base main 2>&1 | tee dev/adversarial/<date>-general-codex.md
+
+# Custom-prompt mode (the one that lets you direct Codex):
+#   - The prompt itself must tell Codex to fetch the diff and which files to read.
+#   - Codex has read-only sandbox access to the worktree so it can grep/cat/sed source.
+cat > /tmp/codex-prompt.txt <<'EOF'
+You are doing adversarial code review of the diff against origin/main in this
+worktree. Run `git diff origin/main..HEAD` to see the changes. Audit for
+<specific attack angle>. Read these files: <list>. Output findings as
+markdown at the end.
+EOF
+cat /tmp/codex-prompt.txt | npx --yes @openai/codex review - 2>&1 \
+  | tee dev/adversarial/<date>-<topic>-codex.md
+```
+
+The custom-prompt pattern is what worked for the `tuxlink-4ek` ARDOP UI adrev (2026-05-30); the prior `--base + prompt` syntax produces a 5-line argparse error stub and the tee'd file contains nothing useful. **If you see the stub, the prompt got rejected — re-run with the stdin pattern.** Verifying: `wc -l dev/adversarial/*-codex.md` — a real review produces ~1500–4000+ lines including the diff + Codex's exec commands + final findings block; a stub is ~5 lines.
 
 - **Authentication:** ChatGPT-mode, cached at `~/.codex/auth.json`. Already authenticated — no setup needed.
 - **When to use:** when a workflow (notably `superpowers:build-robust-features`) explicitly calls for "at least one round via Codex." Substitute Claude agents only when this is genuinely unavailable — it isn't unavailable here.

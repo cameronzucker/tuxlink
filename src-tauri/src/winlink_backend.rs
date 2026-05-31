@@ -86,6 +86,14 @@ pub struct MessageBody {
     pub raw_rfc5322: Vec<u8>,
 }
 
+/// Attachment carried in an outbound message. Spec §6.2.
+#[derive(Debug, Clone)]
+pub struct OutboundAttachment {
+    pub filename: String,
+    pub content_type: String,
+    pub bytes: Vec<u8>,
+}
+
 /// Outbound message — what `send_message` consumes. Intentionally NOT
 /// `#[non_exhaustive]` (per spec §3.2) to keep caller-construction
 /// ergonomic. Adding fields is an acknowledged breaking change.
@@ -97,6 +105,7 @@ pub struct OutboundMessage {
     pub body: String,
     /// RFC 3339 UTC timestamp. Caller provides; backend validates.
     pub date: String,
+    pub attachments: Vec<OutboundAttachment>,
 }
 
 /// Transport selector for `connect`. `#[non_exhaustive]` so v0.5+ can add
@@ -1179,6 +1188,12 @@ fn cms_locator(config: &Config) -> String {
 /// GPS-derived positions go on air ONLY when `gps_state == BroadcastAtPrecision`;
 /// under `Off` or `LocalUiOnly` the on-air locator falls back to the stored
 /// config grid. A hand-set Manual grid broadcasts regardless of `gps_state`.
+///
+/// Currently only consumed by the in-module tests; production `native_connect`
+/// calls `effective_broadcast_locator` directly. Scoped to `cfg(test)` so non-test
+/// builds don't flag it as dead code. If a non-test caller appears later, drop
+/// the gate.
+#[cfg(test)]
 fn resolve_locator(config: &Config, position: Option<&crate::position::PositionArbiter>) -> String {
     crate::position::effective_broadcast_locator(config, position)
 }
@@ -1186,6 +1201,12 @@ fn resolve_locator(config: &Config, position: Option<&crate::position::PositionA
 /// Run one CMS exchange (blocking): build the outbox into proposals, connect over
 /// the chosen transport, accept all offered messages, then file what arrived into
 /// the inbox and move what was sent into the sent folder.
+//
+// native_connect coordinates a multi-faceted connect flow (config + mailbox +
+// transport + progress/wire-log callbacks + abort plumbing + position arbiter);
+// refactoring to fewer args would require introducing a builder/options struct
+// that's not justified for v0.2. Tracked separately if it ever becomes load-bearing.
+#[allow(clippy::too_many_arguments)]
 fn native_connect(
     config: &Config,
     mailbox: &Mailbox,
@@ -1299,6 +1320,110 @@ fn native_connect(
     }
     for mid in &result.sent {
         mailbox.move_to(MailboxFolder::Outbox, MailboxFolder::Sent, &MessageId(mid.clone()))?;
+    }
+    Ok(())
+}
+
+/// Run a B2F mail exchange over an already-`connect_arq`'d ARDOP transport
+/// (tuxlink-ytg). The transport was spawned + ARQ-connected by
+/// `modem_ardop_connect`; this function consumes it for the duration of the
+/// exchange and returns it so the caller can `disconnect()` + drop it under its
+/// own state machine (the Tauri command in `modem_commands.rs` resets
+/// `ModemSession` after this returns).
+///
+/// Mirrors `native_connect`'s mailbox plumbing: builds outbound from
+/// `mailbox`'s Outbox folder, runs the exchange in `Dial` role (slave/IRS —
+/// the operator's send/receive against a CMS or peer), files received messages
+/// into Inbox, moves sent ones from Outbox to Sent.
+///
+/// The transport surface is `Box<dyn ModemTransport>` so any future modem
+/// (Dire Wolf, tuxmodem) that implements the same trait flows through this
+/// path unchanged.
+///
+/// # RADIO-1
+///
+/// The caller MUST have consumed a per-invocation consent token before
+/// invoking this function. This function does NO consent gating of its own —
+/// the gate is upstream at the Tauri command boundary, where it can refuse
+/// I/O / state mutation pre-gate.
+pub fn run_ardop_b2f_exchange(
+    transport: &mut dyn crate::winlink::modem::ModemTransport,
+    target: &str,
+    config: &Config,
+    mailbox: &Mailbox,
+    position: Option<&crate::position::PositionArbiter>,
+) -> Result<(), BackendError> {
+    use crate::winlink::modem::ardop::b2f;
+
+    let callsign = config
+        .identity
+        .callsign
+        .clone()
+        .ok_or_else(|| BackendError::NotConfigured("identity.callsign".into()))?
+        .trim()
+        .to_uppercase();
+    let locator = crate::position::effective_broadcast_locator(config, position);
+    // The ARDOP B2F path connects to a CMS gateway OR a peer. Both speak the
+    // same B2F protocol; only the password differs (gateway dial may carry a
+    // ;PQ challenge — a peer never does). Pull the keyring entry for the
+    // gateway path; if the peer never challenges, the secret is simply unused.
+    // Note: this reuses the existing `tuxlink-pat` keyring entry — the cred
+    // store is shared with the legacy Pat flow (per ADR 0011 cred refactor).
+    let password = keyring::Entry::new("tuxlink-pat", &callsign)
+        .ok()
+        .and_then(|e| e.get_password().ok())
+        .filter(|p| !p.is_empty());
+
+    // Turn each queued outbox message into a proposal + compressed body.
+    let mut outbound = Vec::new();
+    for meta in mailbox.list(MailboxFolder::Outbox)? {
+        let body = mailbox.read(MailboxFolder::Outbox, &meta.id)?;
+        if let Ok(message) = Message::from_bytes(&body.raw_rfc5322) {
+            if let Some((proposal, compressed)) = message.to_proposal() {
+                let title = message.header("Subject").unwrap_or_default().to_string();
+                outbound.push(session::OutboundMessage {
+                    proposal,
+                    title,
+                    compressed,
+                });
+            }
+        }
+    }
+
+    let exchange_config = session::ExchangeConfig {
+        mycall: callsign,
+        targetcall: target.to_string(),
+        locator,
+        password,
+    };
+
+    let result = b2f::run_b2f_exchange(
+        transport,
+        ExchangeRole::Dial,
+        &exchange_config,
+        outbound,
+        |proposals| {
+            proposals
+                .iter()
+                .map(|_| Answer::Accept { resume_offset: 0 })
+                .collect()
+        },
+    )
+    .map_err(|e| BackendError::TransportFailed {
+        reason: format!("{e}"),
+        source: None,
+    })?;
+
+    // File received messages into the inbox; move delivered ones to sent.
+    for message in &result.received {
+        mailbox.store(MailboxFolder::Inbox, &message.to_bytes())?;
+    }
+    for mid in &result.sent {
+        mailbox.move_to(
+            MailboxFolder::Outbox,
+            MailboxFolder::Sent,
+            &MessageId(mid.clone()),
+        )?;
     }
     Ok(())
 }
@@ -1842,6 +1967,7 @@ mod native_read_state_tests {
             },
             pat_mbo_address: None,
             packet: PacketConfig::default(),
+            modem_ardop: None,
         }
     }
 
@@ -2484,6 +2610,7 @@ mod native_read_state_tests {
             },
             pat_mbo_address: None,
             packet: PacketConfig::default(),
+            modem_ardop: None,
         }
     }
 
