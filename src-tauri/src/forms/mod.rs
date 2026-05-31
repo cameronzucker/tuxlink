@@ -7,6 +7,7 @@ pub mod templates;
 pub mod types;
 pub mod validation;
 
-// Re-exports for ergonomic access. serialize re-exports added in T1.6+.
+// Re-exports for ergonomic access.
 pub use parse::{detect_form_attachment, parse_form_xml};
+pub use serialize::{render_body_template, serialize_form_xml};
 pub use types::{FieldKind, FormDef, FormField, FormParameters, FormPayload};
