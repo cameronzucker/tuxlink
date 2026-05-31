@@ -1,12 +1,12 @@
 .layout-b .dashboard .search-bar {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   background: var(--bg);
   border: 1px solid var(--border-strong);
-  border-radius: 4px;
-  padding: 6px 12px;
-  width: 420px;
+  border-radius: 999px;
+  padding: 8px 14px;
+  width: 100%;
   font-size: 12px;
 }
 .layout-b .dashboard .search-bar.focused,

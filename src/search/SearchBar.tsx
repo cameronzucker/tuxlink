@@ -35,7 +35,7 @@ export function SearchBar({ spec, activeSaved, onSpecChange, onUnsave, onToggleD
   if (activeSaved) {
     return (
       <div className="search-bar focused" data-testid="search-bar">
-        <span className="magnifier" aria-hidden="true">🔍</span>
+        <MagnifierIcon />
         <button
           type="button"
           className="saved-star"
@@ -57,7 +57,7 @@ export function SearchBar({ spec, activeSaved, onSpecChange, onUnsave, onToggleD
 
   return (
     <div className="search-bar" data-testid="search-bar">
-      <span className="magnifier" aria-hidden="true">🔍</span>
+      <MagnifierIcon />
       <input
         ref={inputRef}
         data-testid="searchbar-input"
@@ -75,7 +75,28 @@ export function SearchBar({ spec, activeSaved, onSpecChange, onUnsave, onToggleD
         onClick={onToggleDropdown}
         aria-label="Open search dropdown"
       >▾</button>
-      <span className="shortcut">⌘F</span>
+      <span className="shortcut">Ctrl+F</span>
     </div>
+  );
+}
+
+function MagnifierIcon() {
+  return (
+    <svg
+      className="magnifier"
+      data-testid="searchbar-magnifier"
+      viewBox="0 0 24 24"
+      width="14"
+      height="14"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <circle cx="11" cy="11" r="7" />
+      <line x1="21" y1="21" x2="16.65" y2="16.65" />
+    </svg>
   );
 }

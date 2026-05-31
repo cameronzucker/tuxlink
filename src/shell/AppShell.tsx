@@ -14,7 +14,7 @@
 // Compose is a separate floating Tauri window (compose_window.rs), opened from
 // File → New Message and the reading-pane reply actions.
 
-import { useState, useCallback, useEffect, useMemo } from 'react';
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { useQueryClient } from '@tanstack/react-query';
@@ -132,6 +132,20 @@ export function AppShell() {
   const search = useSearch();
   const saved = useSavedSearches();
   const [dropdownOpen, setDropdownOpen] = useState(false);
+  const searchZoneRef = useRef<HTMLDivElement>(null);
+
+  // Close the search dropdown on mousedown outside the search-zone wrapper.
+  // The dropdown stays open on clicks INSIDE the zone (e.g. dropdown rows,
+  // the SearchBar input itself) — this only triggers on background clicks.
+  useEffect(() => {
+    if (!dropdownOpen) return;
+    const onMouseDown = (e: MouseEvent) => {
+      const node = searchZoneRef.current;
+      if (node && !node.contains(e.target as Node)) setDropdownOpen(false);
+    };
+    document.addEventListener('mousedown', onMouseDown);
+    return () => document.removeEventListener('mousedown', onMouseDown);
+  }, [dropdownOpen]);
   // Saved-searches management panel (Task 18).
   const [savedSearchesOpen, setSavedSearchesOpen] = useState(false);
 
@@ -303,7 +317,7 @@ export function AppShell() {
       <MenuBar onAction={onMenuAction} />
       <ResizeHandles />
       <div className="ribbon-with-search">
-        <div className="search-zone" data-testid="search-zone">
+        <div className="search-zone" data-testid="search-zone" ref={searchZoneRef}>
           <SearchBar
             spec={search.spec}
             activeSaved={search.activeSaved}

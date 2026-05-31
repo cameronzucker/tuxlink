@@ -58,13 +58,17 @@
   border-bottom: 1px solid var(--border);
 }
 
-/* Search zone — left side of the ribbon row; contains SearchBar + dropdown. */
+/* Search zone — left side of the ribbon row; contains SearchBar + dropdown.
+ * Grows with available space (Gmail-style) but capped so the DashboardRibbon
+ * stays readable. min-width keeps it useful on narrow windows. */
 .layout-b .search-zone {
   position: relative;
-  flex-shrink: 0;
+  flex: 1 1 auto;
+  min-width: 360px;
+  max-width: 720px;
   display: flex;
   align-items: center;
-  padding: 0 12px;
+  padding: 0 16px;
 }
 
 /* The DashboardRibbon inside the ribbon-with-search wrapper fills remaining
