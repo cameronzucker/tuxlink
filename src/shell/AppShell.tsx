@@ -48,6 +48,7 @@ import { effectiveCall } from '../packet/packetConfig';
 import { derivePacketUiState, type PacketUiState } from '../packet/packetStatus';
 import { isBuilt } from '../connections/sessionTypes';
 import { TelnetCmsPanelContainer } from '../connections/TelnetCmsPanel';
+import { TelnetRadioPanel } from '../radio/modes/TelnetRadioPanel';
 import { StubPanel } from '../connections/StubPanel';
 import { SearchBar } from '../search/SearchBar';
 import { SearchDropdown } from '../search/SearchDropdown';
@@ -448,10 +449,21 @@ export function AppShell() {
           // Built but unhandled — defensive stub
           return <StubPanel sessionType={sessionType} protocol={protocol} />;
         })()}
-        {/* Spec P1: PlaceholderRadioPanel mounts here. P2-P4 swap in the
-            real per-mode components. The legacy ArdopDock continues to
-            mount BELOW until P4 removes it. */}
-        {radioPanelMode && (
+        {/* Spec P2: Telnet uses the real TelnetRadioPanel; Packet / VARA /
+            ARDOP HF still mount the placeholder until their phases land
+            (P3 Packet, P4 ARDOP, P5 VARA). For ARDOP HF the legacy
+            ArdopDock continues to mount alongside the placeholder until
+            P4 removes it — this dual mount is the established P1
+            behavior. */}
+        {radioPanelMode && radioPanelMode.kind === 'telnet' && (
+          <TelnetRadioPanel
+            onClose={() => {
+              setSelectedConnection(null);
+              setPinRadioPanel(false);
+            }}
+          />
+        )}
+        {radioPanelMode && radioPanelMode.kind !== 'telnet' && (
           <PlaceholderRadioPanel
             mode={radioPanelMode}
             onClose={() => {
