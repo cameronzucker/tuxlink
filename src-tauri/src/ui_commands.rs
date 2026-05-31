@@ -610,14 +610,10 @@ pub async fn message_read(
 /// Inbound DTO from the compose window frontend. Mirrors `OutboundDraftDto`
 /// in `src/compose/Compose.tsx`.
 ///
-/// **`cc` caveat (spec §3.2, Codex F5 VERIFIED):** `PatClient::send` accepts
-/// only `to`/`subject`/`body`/`date` form fields — Pat 1.0.0 silently drops
-/// any `cc` form field. The compose UI disables the Cc field with a v0.1
-/// tooltip (spec §5.4 disposition: "disable with tooltip rather than silently
-/// drop"). The `cc` field is present in this DTO for API completeness; the
-/// `PatBackend::send_message` → `PatClient::send` chain currently ignores it.
-/// When Pat cc support is confirmed in v0.1, enable the Cc field in the UI +
-/// add `cc` to `PatClient::send`'s multipart form.
+/// **`cc` caveat (spec §3.2, Codex F5 VERIFIED):** The compose UI disables the
+/// Cc field with a v0.1 tooltip (spec §5.4 disposition: "disable with tooltip
+/// rather than silently drop"). The `cc` field is present in this DTO for API
+/// completeness; native B2F outbound support for Cc is a v0.1 TODO.
 #[derive(Debug, Deserialize)]
 pub struct OutboundDraftDto {
     pub to: Vec<String>,
@@ -632,9 +628,8 @@ pub struct OutboundDraftDto {
 /// per spec §3.2 — the UI does not supply the send timestamp; the command
 /// stamps it at queue time).
 ///
-/// Returns `Ok(mid_string)` on success. `NativeBackend` returns a real MID;
-/// `PatBackend` (deleted in P9) returns an empty string as a transitional
-/// placeholder. The compose window shows "Posted to Outbox" on any `Ok(_)`.
+/// Returns `Ok(mid_string)` on success. `NativeBackend` returns a real MID.
+/// The compose window shows "Posted to Outbox" on any `Ok(_)`.
 /// Spec §3.2 + §5.4.
 #[tauri::command]
 pub async fn message_send(
@@ -650,7 +645,7 @@ pub async fn message_send(
 
     let msg = OutboundMessage {
         to: draft.to,
-        cc: draft.cc,  // forwarded as-is; PatBackend drops it (Codex F5)
+        cc: draft.cc,  // forwarded as-is; native B2F Cc support is a v0.1 TODO (Codex F5)
         subject: draft.subject,
         body: draft.body,
         date,
@@ -1051,10 +1046,10 @@ impl From<LogLine> for LogLineDto {
 /// contract as before, now future-proof.
 #[tauri::command]
 pub async fn session_log_snapshot(
-    // Task C (tuxlink-22l §11.2): the managed buffer is now an
-    // `Arc<SessionLogState>` so `PatBackend::spawn`'s bridge thread can append
-    // to the SAME buffer this command reads. `State` derefs through the `Arc`,
-    // so `state.snapshot()` resolves to `SessionLogState::snapshot` unchanged.
+    // Task C (tuxlink-22l §11.2): the managed buffer is an `Arc<SessionLogState>`
+    // so the backend's bridge thread can append to the SAME buffer this command
+    // reads. `State` derefs through the `Arc`, so `state.snapshot()` resolves to
+    // `SessionLogState::snapshot` unchanged.
     state: State<'_, std::sync::Arc<SessionLogState>>,
 ) -> Result<Vec<LogLineDto>, UiError> {
     Ok(state.snapshot().into_iter().map(LogLineDto::from).collect())
@@ -1989,7 +1984,7 @@ mod tests {
     // Task 16 — backend_status DTO mapping + populated-vs-None branch logic
     // ========================================================================
     use crate::app_backend::{BackendPhase, BackendState};
-    use crate::winlink_backend::{BackendStatus, PatBackend};
+    use crate::winlink_backend::{BackendStatus, NativeBackend};
     use std::sync::Arc;
 
     // StatusDto::from maps every BackendStatus variant; transport is verbatim
@@ -2069,8 +2064,8 @@ mod tests {
     // The command fn takes `State<'_, BackendState>` (needs a Tauri app), so
     // the three-state logic is exercised here against `derive_status_dto`, the
     // pure helper the command calls on its `snapshot()`. We construct
-    // `BackendState` directly in each phase + a real `PatBackend::from_url`
-    // backend for the Ready case (the live IPC round-trip is the M2 smoke gate).
+    // `BackendState` directly in each phase + a real `NativeBackend` for the
+    // Ready case (the live IPC round-trip is the M2 smoke gate).
     // ========================================================================
 
     // NotConfigured (pre-wizard / offline) → None: the ribbon renders its
@@ -2085,7 +2080,7 @@ mod tests {
         );
     }
 
-    // Spawning → Some(Connecting): the bootstrap is launching Pat; the ribbon
+    // Spawning → Some(Connecting): the bootstrap is launching the backend; the ribbon
     // shows a connecting state rather than "not connected" or an error.
     #[test]
     fn derive_status_spawning_is_connecting() {
@@ -2101,13 +2096,36 @@ mod tests {
         );
     }
 
-    // Ready + backend → the live backend's status() mapped. A freshly-spawned
-    // PatBackend reports Disconnected ("backend ready", no CMS link — adrev #10),
-    // which projects to Some(StatusDto::Disconnected).
+    // Ready + backend → the live backend's status() mapped. A freshly-constructed
+    // NativeBackend reports Disconnected, which projects to Some(StatusDto::Disconnected).
     #[test]
+    #[allow(deprecated)] // sets pat_mbo_address on Config literal; field deprecated per tuxlink-9phd T8.1
     fn derive_status_ready_maps_backend_status() {
+        use crate::config::{
+            CmsTransport, Config, ConnectConfig, GpsState, IdentityConfig, PacketConfig,
+            PositionPrecision, PrivacyConfig, CONFIG_SCHEMA_VERSION,
+        };
+        let cfg = Config {
+            schema_version: CONFIG_SCHEMA_VERSION,
+            wizard_completed: true,
+            connect: ConnectConfig {
+                connect_to_cms: true,
+                transport: CmsTransport::CmsSsl,
+                host: crate::config::default_cms_host(),
+            },
+            identity: IdentityConfig { callsign: Some("N0CALL".into()), identifier: None, grid: None },
+            privacy: PrivacyConfig {
+                gps_state: GpsState::Off,
+                position_precision: PositionPrecision::FourCharGrid,
+                position_source: crate::config::PositionSource::Gps,
+            },
+            pat_mbo_address: None,
+            packet: PacketConfig::default(),
+            modem_ardop: None,
+        };
+        let tmp = tempfile::tempdir().expect("tmpdir");
         let state = BackendState::new();
-        state.install(Arc::new(PatBackend::from_url("http://127.0.0.1:9")));
+        state.install(Arc::new(NativeBackend::new(cfg, tmp.path())));
         let (phase, backend) = state.snapshot();
         assert_eq!(
             derive_status_dto(phase, backend),
@@ -2116,8 +2134,8 @@ mod tests {
         );
     }
 
-    // Failed → Some(Error{reason}): CMS configured but Pat spawn/health failed.
-    // The ribbon shows the reason loudly (Pat is a core runtime dependency).
+    // Failed → Some(Error{reason}): CMS configured but backend spawn/health failed.
+    // The ribbon shows the reason loudly.
     #[test]
     fn derive_status_failed_is_error_with_reason() {
         let state = BackendState::new();

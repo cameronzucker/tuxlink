@@ -93,10 +93,10 @@ impl BackendState {
     }
 
     /// Install the active backend, atomically setting `(Ready, Some(backend))`
-    /// under one write lock. Called once by the bootstrap after
-    /// `PatBackend::spawn` succeeds. A poisoned lock is a no-op (the install is
-    /// dropped rather than panicking; the only writers are the bootstrap's own
-    /// phase transitions, none of which panic under the guard).
+    /// under one write lock. Called once by the bootstrap after the native
+    /// backend is successfully initialized. A poisoned lock is a no-op (the
+    /// install is dropped rather than panicking; the only writers are the
+    /// bootstrap's own phase transitions, none of which panic under the guard).
     pub fn install(&self, backend: Arc<dyn WinlinkBackend>) {
         if let Ok(mut guard) = self.inner.write() {
             *guard = (BackendPhase::Ready, Some(backend));

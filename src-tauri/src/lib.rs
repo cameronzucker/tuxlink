@@ -4,9 +4,6 @@ pub mod compose_window;
 pub mod config;
 pub mod consent_gate;
 pub mod native_mailbox;
-pub mod pat_client;
-pub mod pat_config;
-pub mod pat_process;
 pub mod position;
 pub mod session_log;
 pub mod tray;
@@ -95,15 +92,15 @@ pub fn run() {
         // empty state) and `backend_status` returns `None`.
         .manage(crate::app_backend::BackendState::new())
         // Task A (tuxlink-22l): durable session-log ring buffer. The bridge
-        // (Task C) appends here AND broadcasts on `session_log:line`; this
+        // The backend appends here AND broadcasts on `session_log:line`; this
         // managed state lets `session_log_snapshot` serve late-mounting UIs
-        // without losing Pat's startup lines (spec §11.1 / adrev #1,#2,#3).
-        // Cap 500: ≈ one extended Pat CMS session's worth of log lines.
+        // without losing startup lines (spec §11.1 / adrev #1,#2,#3).
+        // Cap 500: ≈ one extended CMS session's worth of log lines.
         //
-        // Wrapped in an `Arc` (Task C, tuxlink-22l §11.2) so `PatBackend::spawn`
-        // can hold a clone of the SAME buffer its bridge thread appends to —
-        // the buffer `session_log_snapshot` reads. Tauri's `State` derefs
-        // through the `Arc`, so the command sees an identical surface.
+        // Wrapped in an `Arc` (Task C, tuxlink-22l §11.2) so the backend's
+        // bridge thread can hold a clone of the SAME buffer that
+        // `session_log_snapshot` reads. Tauri's `State` derefs through the
+        // `Arc`, so the command sees an identical surface.
         .manage(std::sync::Arc::new(crate::session_log::SessionLogState::new(500)))
         // tuxlink-4ek Phase 3: the shared modem session — current ARDOP status
         // snapshot + the RADIO-1 consent token. Stored as `Arc<ModemSession>`
@@ -116,31 +113,21 @@ pub fn run() {
             // Install system tray icon + menu (tuxlink-rit / Task 8).
             // Close-to-tray: window close button hides to tray; only
             // File→Quit / tray→Quit / Ctrl+Q actually exit the process.
-            // This keeps the Pat child process alive mid-ARQ session.
             crate::tray::install(app.handle())?;
 
-            // Task D (tuxlink-22l) app-start Pat bootstrap (spec §3.3). Runs
+            // Task D (tuxlink-22l) app-start backend bootstrap (spec §3.3). Runs
             // OFF the main thread (a dedicated std::thread inside
-            // `bootstrap::run`) so the webview paints immediately rather than
-            // blocking on Pat's up-to-10s announce. The worker:
+            // `bootstrap::run`) so the webview paints immediately. The worker:
             //   - classifies `read_config()` via `bootstrap_decision` (adrev
             //     #14,#15: pre-wizard + offline → NotConfigured; malformed
             //     config → ConfigError; only `wizard_completed && connect_to_cms`
-            //     spawns Pat),
-            //   - resolves the Pat sidecar (adrev #12: 0-byte dev stub / missing
-            //     → Failed with an actionable message; `PAT_BINARY` dev override),
-            //   - calls the BLOCKING `PatBackend::spawn`, installs the backend in
-            //     `BackendState` (→ Ready), and starts the session-log drain task
-            //     (`tauri::async_runtime::spawn`, adrev #5) that emits one
-            //     `session_log:line` event per `LogLine`.
+            //     installs the native backend),
+            //   - installs NativeBackend in `BackendState` (→ Ready), and starts
+            //     the session-log drain task (`tauri::async_runtime::spawn`,
+            //     adrev #5) that emits one `session_log:line` event per `LogLine`.
             // ALL paths are non-fatal: the app always launches. A spawn/health
             // failure shows as an EXPLICIT error in the ribbon + session-log
             // pane (BackendPhase::Failed), not a silent empty state (spec §2).
-            //
-            // Part 97 (spec §6): the spawned argv is `pat … http --addr
-            // 127.0.0.1:<port>` (HTTP mode, loopback only) and never calls Pat's
-            // connect/send APIs — this code is WRITTEN + COMMITTED here; the
-            // licensee RUNS the spawn path. No agent/CI executes it to "verify."
             crate::bootstrap::run(app.handle().clone());
 
             // tuxlink-686 Task 11 / Codex P1-A defense-in-depth: only spawn the
