@@ -214,6 +214,53 @@ describe('autosave interval contract (structural)', () => {
 });
 
 // ---------------------------------------------------------------------------
+// T6.4 — form draft round-trip
+// ---------------------------------------------------------------------------
+
+describe('form draft round-trip (T6.4)', () => {
+  it('persists formId + formFields and restores them', () => {
+    const draftId = 'test-form-' + Math.random().toString(36).slice(2);
+    saveDraft({
+      draftId,
+      to: 'X@winlink.org',
+      subject: '',
+      body: '',
+      requestAck: false,
+      formId: 'ICS213_Initial',
+      formFields: {
+        inc_name: 'WALDO',
+        to_name: 'JOHN',
+        message: 'Test message',
+      },
+    });
+    const loaded = loadDraft(draftId);
+    expect(loaded).not.toBeNull();
+    expect(loaded?.formId).toBe('ICS213_Initial');
+    expect(loaded?.formFields).toEqual({
+      inc_name: 'WALDO',
+      to_name: 'JOHN',
+      message: 'Test message',
+    });
+    clearDraft(draftId);
+  });
+
+  it('older drafts without formId/formFields still load', () => {
+    const draftId = 'test-plain-' + Math.random().toString(36).slice(2);
+    saveDraft({
+      draftId,
+      to: 'X@winlink.org',
+      subject: 'Plain',
+      body: 'body text',
+      requestAck: false,
+    });
+    const loaded = loadDraft(draftId);
+    expect(loaded?.formId).toBeUndefined();
+    expect(loaded?.formFields).toBeUndefined();
+    clearDraft(draftId);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // (5-send) send maps to OutboundDraftDto shape  (spec §6 test 5)
 // ---------------------------------------------------------------------------
 
