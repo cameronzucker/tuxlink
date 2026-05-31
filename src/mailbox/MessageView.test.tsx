@@ -240,6 +240,37 @@ describe('<MessageViewLoaded> reply action bar', () => {
     fireEvent.click(screen.getByTestId('forward-btn'));
     expect(openReplyWindow).toHaveBeenCalledWith(m, 'forward');
   });
+
+  // Codex P2 #6 (T8.1 follow-up): "Reply with form…" is a fourth action that
+  // appears ONLY for messages whose form_id resolves in the registry (so the
+  // operator can author a same-form reply with sender↔recipient swap).
+  it('does NOT show the Reply-with-form button for a plain (non-form) message', () => {
+    render(<MessageViewLoaded message={parsed({ isForm: false })} />);
+    expect(screen.queryByTestId('reply-with-form-btn')).toBeNull();
+  });
+
+  it('does NOT show the Reply-with-form button for a form with an unknown formId', () => {
+    render(
+      <MessageViewLoaded
+        message={parsed({ isForm: true, formId: 'Unknown_Form_v1', formPayload: undefined })}
+      />,
+    );
+    expect(screen.queryByTestId('reply-with-form-btn')).toBeNull();
+  });
+
+  it('shows the Reply-with-form button when formId is registered (ICS213_Initial)', () => {
+    render(
+      <MessageViewLoaded message={parsed({ isForm: true, formId: 'ICS213_Initial' })} />,
+    );
+    expect(screen.getByTestId('reply-with-form-btn')).toBeInTheDocument();
+  });
+
+  it('Reply-with-form opens a replyWithForm compose window', () => {
+    const m = parsed({ isForm: true, formId: 'ICS213_Initial' });
+    render(<MessageViewLoaded message={m} />);
+    fireEvent.click(screen.getByTestId('reply-with-form-btn'));
+    expect(openReplyWindow).toHaveBeenCalledWith(m, 'replyWithForm');
+  });
 });
 
 // ============================================================================

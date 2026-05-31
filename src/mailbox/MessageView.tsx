@@ -171,6 +171,17 @@ export function MessageViewLoaded({ message }: { message: ParsedMessage }) {
         >
           Forward
         </button>
+        {message.isForm && message.formId && lookupForm(message.formId) && (
+          <button
+            type="button"
+            className="action-btn"
+            data-testid="reply-with-form-btn"
+            title="Reply with the same form type, pre-populated with sender↔recipient swap"
+            onClick={() => fireReply(message, 'replyWithForm')}
+          >
+            Reply with form…
+          </button>
+        )}
       </div>
 
       {/* 2 — subject heading */}
