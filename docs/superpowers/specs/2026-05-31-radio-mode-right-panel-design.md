@@ -269,19 +269,77 @@ The Signal section is the mode-specific signal-quality slot: ARDOP gets Quality 
 | Tertiary | **Abort** | "Emergency stop — interrupt any in-flight TX" | state is `stopped` |
 | Persistent (ARDOP only) | **Open WebGUI ↗** | "Open ardopcf's spectrum/waterfall in external browser" | always enabled when modem path configured |
 
-### 6.2 Menu items
+### 6.2 Menu items — complete audit
 
-The Session menu becomes:
+The redesign affects the Session and View menus. File, Message, Mailbox, Tools, and Help are unchanged. Comprehensive before/after for each top-level menu — pulled against the live `MENU_TREE` in `src/shell/chrome/menuModel.ts` to make sure no item is left orphan.
 
-- `Session → Start` (F5) — start the currently-selected mode (contextual; see §6.3)
-- `Session → Stop` — stop the currently-selected mode (gracefully)
-- `Session → Abort` — abort the currently-selected mode (emergency)
+**File** — unchanged.
 
-The View menu's existing `Show / Toggle Radio Dock` becomes:
+| Item | Accelerator | Status |
+|---|---|---|
+| Quit | Ctrl+Q | unchanged |
 
-- `View → Toggle Radio Panel` (Ctrl+Shift+M) — toggles the radio panel's visibility
+**Message** — unchanged (mail actions, independent of the radio-panel work).
 
-The View menu's existing `Show Session Log` / `Show Raw Session Log` items retire — session logs live in the panel; raw toggle is an in-panel checkbox per §4.3.
+| Item | Accelerator | Status |
+|---|---|---|
+| New Message | Ctrl+N | unchanged |
+| Reply | Ctrl+R | unchanged |
+| Reply All | Ctrl+Shift+R | unchanged |
+| Forward | — | unchanged |
+| Print | Ctrl+P | unchanged |
+
+**Session** — revised.
+
+| Item before | Accel before | Item after | Accel after | Why |
+|---|---|---|---|---|
+| Connect | F5 | **Start** | F5 (+ Ctrl+Shift+O) | Express vocabulary; F5 / Ctrl+Shift+O fire contextual Start per §6.3 |
+| Disconnect | — | **Stop** | — | Express vocabulary |
+| — | — | **Abort** (new) | — | Express has it as `mnuAbort`; emergency-stop is operationally distinct from graceful Stop |
+| Session Log | — | *removed* | — | Log is a panel section per §3.7; no separate surface to open |
+| Test send | — | **Test send** | — | Unchanged. Specific credentials-verify action per `v0.0.1-ux-mockups.md` §5.3 — mounts Telnet panel, queues a test message to SERVICE@winlink.org, runs the exchange, awaits autoresponder. Functionally distinct from Start (which doesn't queue a test message); the muscle-memory action for "verify my CMS creds work." |
+| Show transport | — | *removed* | — | Redundant with the panel: Telnet panel's Connection section displays `Endpoint` + `Transport`; Packet panel's Modem link block shows TCP/USB/BT + device; ARDOP panel's header carries peer + bandwidth and the Live block carries mode + width + PTT backend. The ribbon's session-state field also names the active transport. The popover is no longer pulling weight. |
+
+**Mailbox** — unchanged.
+
+| Item | Status |
+|---|---|
+| Inbox / Outbox / Sent / Drafts / Deleted | unchanged |
+
+**View** — revised.
+
+| Item before | Accel before | Item after | Accel after | Why |
+|---|---|---|---|---|
+| Toggle Session Log | Ctrl+Shift+L | *removed* | (accelerator unbound) | No separate session-log surface to toggle; log is in the panel whenever the panel is. |
+| Show Raw Session Log | — | *removed* | — | Raw toggle is the in-panel checkbox per §4.3. |
+| Toggle Status Bar | — | **Toggle Status Bar** | — | Unchanged; status bar still exists per §4.1. |
+| Toggle Radio Dock | Ctrl+Shift+M | **Toggle Radio Panel** | Ctrl+Shift+M | Renamed to match the new surface name; accelerator preserved so muscle memory survives the rename. |
+| Color scheme submenu (Default / Night / Grayscale) | — | unchanged | — | — |
+
+**Tools** — unchanged.
+
+| Item | Status |
+|---|---|
+| Templates (disabled, v0.1+ placeholder) | unchanged |
+| Rig Control (disabled, v0.1+ placeholder) | unchanged |
+| Settings → Connection (disabled, v0.1+ placeholder) | unchanged |
+| Settings → GPS & Privacy… | unchanged |
+
+**Help** — unchanged.
+
+| Item | Status |
+|---|---|
+| About / Documentation / Report Issue | unchanged |
+
+**Accelerator changes summary:**
+
+| Combo | Before | After |
+|---|---|---|
+| F5 | `cms_connect` (legacy Telnet quick-connect) | **Contextual Start** per §6.3 |
+| Ctrl+Shift+O | `cms_connect` (same target as F5) | **Contextual Start** per §6.3 |
+| Ctrl+Shift+L | Toggle Session Log (bottom strip visibility) | **Unbound** — no equivalent surface |
+| Ctrl+Shift+M | Toggle Radio Dock | **Toggle Radio Panel** (same accelerator, new label) |
+| Ctrl+N, Ctrl+R, Ctrl+Shift+R, Ctrl+P, Ctrl+Q | (various) | unchanged |
 
 ### 6.3 F5 / Ctrl+Shift+O accelerator behavior
 
