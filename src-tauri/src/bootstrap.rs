@@ -184,9 +184,22 @@ fn install_native(app_handle: &AppHandle, state: &BackendState, cfg: Config) {
     // managed state registered in lib.rs::run() above the .setup() call; the Arc
     // ref-count is incremented here, not moved, so the lib.rs binding stays alive.
     let arbiter = (*app_handle.state::<Arc<crate::position::PositionArbiter>>()).clone();
-    let backend = NativeBackend::with_progress(cfg, mbox_dir, progress)
+
+    // Codex adrev fix (find-messages): share the search index Arc with the
+    // production mailbox so incremental index hooks run on every
+    // store/move_to/mark_read. The SearchService is registered in lib.rs
+    // .setup() before bootstrap::run; if it's absent (e.g. SQLite failed to
+    // open) the mailbox runs without an index and only rebuild-index works.
+    let search_index = app_handle
+        .try_state::<crate::search::commands::SearchService>()
+        .map(|svc| svc.index.clone());
+
+    let mut backend = NativeBackend::with_progress(cfg, mbox_dir, progress)
         .with_wire_log(wire)
         .with_position(arbiter);
+    if let Some(index) = search_index {
+        backend = backend.with_index(index);
+    }
     state.install(Arc::new(backend));
     emit_backend_line(
         app_handle,

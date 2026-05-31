@@ -44,6 +44,8 @@ md-5 = "0.11"              # NEW (tuxlink-0ic) — Winlink secure-login response
 native-tls = "0.2"         # NEW (tuxlink-0ic) — TLS-wrapped telnet to the CMS (CmsSsl, port 8773), the default transport like Winlink Express; reuses the OpenSSL already pulled in by reqwest's default-tls
 serialport = "4"           # NEW (tuxlink-7fr P2) — KISS over USB-serial COM and Bluetooth RFCOMM (/dev/rfcommN); pure-Rust, no libudev C dep needed for open/read/write
 libc = "0.2"               # NEW (tuxlink-nx2) — AF_BLUETOOTH/BTPROTO_RFCOMM socket for the in-app Bluetooth transport (no rfcomm bind / no root / no serialport TTY)
+rusqlite = { version = "0.31", features = ["bundled", "modern_sqlite"] }  # NEW (tuxlink-1hu) — FTS5-indexed search; bundled SQLite ≥ 3.9 ensures FTS5 is compiled in
+uuid = { version = "1.8", features = ["v4", "serde"] }  # NEW (tuxlink-1hu) — saved-search IDs
 rand = "0.8"               # NEW (tuxlink-4ek Task 3.1) — RADIO-1 consent-token mint (16 hex chars); intra-process replay protection, not a secret
 
 [dev-dependencies]

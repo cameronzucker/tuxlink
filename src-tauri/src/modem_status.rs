@@ -85,6 +85,16 @@ struct ModemSessionInner {
     /// future modems (Dire Wolf, tuxmodem, etc.) can swap in without
     /// reshaping the session struct.
     transport: Option<Box<dyn crate::winlink::modem::ModemTransport>>,
+    /// Cloneable cmd-socket writer (the transport's side-channel abort
+    /// handle). Installed via [`ModemSession::install_abort_writer`] BEFORE
+    /// `connect_arq` begins blocking, and consumed by
+    /// [`ModemSession::abort_in_flight`] to send `ABORT\r` to ardopcf while
+    /// the connect path is stuck in its recv loop (tuxlink-o3f2 — P1
+    /// abort-during-connect fix).
+    ///
+    /// Cleared by [`ModemSession::reset_to_stopped`] so a fresh connect
+    /// installs a fresh writer.
+    abort_writer: Option<std::net::TcpStream>,
 }
 
 // Manual `Debug` impl: `Box<dyn ModemTransport>` does not implement `Debug`,
@@ -106,6 +116,10 @@ impl std::fmt::Debug for ModemSessionInner {
                     .as_ref()
                     .map(|_| "Some(<dyn ModemTransport>)"),
             )
+            .field(
+                "abort_writer",
+                &self.abort_writer.as_ref().map(|_| "Some(<TcpStream>)"),
+            )
             .finish()
     }
 }
@@ -117,6 +131,7 @@ impl ModemSession {
                 status: ModemStatus::stopped(),
                 consent_token: None,
                 transport: None,
+                abort_writer: None,
             }),
         }
     }
@@ -127,6 +142,30 @@ impl ModemSession {
 
     pub fn set_status(&self, s: ModemStatus) {
         self.inner.lock().unwrap().status = s;
+    }
+
+    /// Single-lock variant of `status_snapshot`: drain the installed
+    /// transport's pending status events into the cached snapshot, persist
+    /// the updated snapshot, and return a clone. Called by
+    /// [`ModemStatusBroadcaster`] every [`STATUS_POLL_INTERVAL`].
+    ///
+    /// If no transport is installed (e.g. the session is `Stopped` and
+    /// nothing has connected yet), there are no events to drain and the
+    /// cached snapshot is returned as-is.
+    ///
+    /// The transport's `drain_status_events` MUST be non-blocking — see
+    /// [`crate::winlink::modem::ModemTransport::drain_status_events`].
+    pub fn tick_and_snapshot(&self) -> ModemStatus {
+        let mut inner = self.inner.lock().unwrap();
+        // Clone the snapshot before mutating so that a panic inside
+        // `drain_status_events` leaves the persisted status untouched
+        // (poison-aware: the next acquirer will see the pre-drain state).
+        let mut snap = inner.status.clone();
+        if let Some(transport) = inner.transport.as_mut() {
+            transport.drain_status_events(&mut snap);
+        }
+        inner.status = snap.clone();
+        snap
     }
 
     /// Generate + remember a new consent token. Returns the token so the
@@ -197,17 +236,64 @@ impl ModemSession {
     /// the lock — never call I/O while holding the session mutex.
     ///
     /// Single lock acquisition: observers see a consistent
-    /// `(token=None, status=Stopped, transport=None)` state. Closes the
-    /// inconsistent-intermediate window the Task 3.2 code-quality review
-    /// flagged on `modem_ardop_disconnect_inner` (the prior split between
-    /// `clear_consent_token()` + `set_status(Stopped)` widened once Task 3.3
-    /// stretched the disconnect path across `transport.disconnect()` I/O +
-    /// SIGINT).
+    /// `(token=None, status=Stopped, transport=None, abort_writer=None)`
+    /// state. Closes the inconsistent-intermediate window the Task 3.2
+    /// code-quality review flagged on `modem_ardop_disconnect_inner` (the
+    /// prior split between `clear_consent_token()` + `set_status(Stopped)`
+    /// widened once Task 3.3 stretched the disconnect path across
+    /// `transport.disconnect()` I/O + SIGINT).
+    ///
+    /// tuxlink-o3f2: also clears `abort_writer`, since the underlying
+    /// TCP write half is owned by the transport's cmd socket and will
+    /// close when the transport is dropped by the caller. A stale writer
+    /// pointing at a dead socket is a footgun for the next connect.
     pub fn reset_to_stopped(&self) -> Option<Box<dyn crate::winlink::modem::ModemTransport>> {
         let mut inner = self.inner.lock().unwrap();
         inner.consent_token = None;
         inner.status = ModemStatus::stopped();
+        inner.abort_writer = None;
         inner.transport.take()
+    }
+
+    /// Install the side-channel cmd-socket writer used by
+    /// [`abort_in_flight`]. Called from `modem_ardop_connect_post_consume_with_factory`
+    /// AFTER `init` opens the cmd socket but BEFORE `connect_arq` begins
+    /// blocking on its recv loop — that ordering is the whole point of the
+    /// abort-during-connect fix (tuxlink-o3f2).
+    ///
+    /// Replaces any previously-installed writer.
+    pub fn install_abort_writer(&self, writer: std::net::TcpStream) {
+        self.inner.lock().unwrap().abort_writer = Some(writer);
+    }
+
+    /// Best-effort send of `ABORT\r` to ardopcf via the side-channel
+    /// writer installed by [`install_abort_writer`]. Returns `Ok(())` iff a
+    /// writer was installed and the write succeeded; returns
+    /// `Err(NotConnected)` when no writer is installed (caller can fall
+    /// through to the graceful `take_transport`/`disconnect` path).
+    ///
+    /// tuxlink-o3f2: this is the P1 abort-during-connect fix. While
+    /// `arq_connect` is blocking on the cmd-socket recv channel, the
+    /// transport is held as a stack local in the connect call's frame —
+    /// `take_transport` would observe `None`. Sending `ABORT` via the
+    /// side-channel writer causes ardopcf to halt the in-flight TX and
+    /// emit `FAULT` (or `NEWSTATE DISC`), which the cmd reader thread
+    /// delivers via the existing channel; `arq_connect`'s recv loop then
+    /// returns `Err(SessionError::Fault(...))` and the connect path
+    /// unwinds cleanly.
+    pub fn abort_in_flight(&self) -> std::io::Result<()> {
+        use std::io::Write;
+        let mut inner = self.inner.lock().unwrap();
+        if let Some(writer) = inner.abort_writer.as_mut() {
+            writer.write_all(b"ABORT\r")?;
+            writer.flush()?;
+            Ok(())
+        } else {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::NotConnected,
+                "no abort writer installed",
+            ))
+        }
     }
 }
 
@@ -227,14 +313,17 @@ pub const STATUS_POLL_INTERVAL: Duration = Duration::from_millis(250);
 /// updating `src/hooks/useModemStatus.ts`.
 pub const STATUS_EVENT: &str = "modem:status";
 
-/// Background thread that polls `ModemSession::status_snapshot()` every
-/// `STATUS_POLL_INTERVAL` and emits each snapshot via the provided closure.
+/// Background thread that polls [`ModemSession::tick_and_snapshot`] every
+/// [`STATUS_POLL_INTERVAL`] and emits each snapshot via the provided
+/// closure.
 ///
 /// In production the closure is
 /// `|s| { let _ = app_handle.emit(STATUS_EVENT, s); }` — fire-and-forget
-/// against the WebView. For v1 the broadcaster just rebroadcasts the cached
-/// snapshot; richer flows (poll the ardopcf cmd-socket for live S/N,
-/// throughput, ARQ flags) are filed as follow-ups.
+/// against the WebView. `tick_and_snapshot` does double duty: it drains
+/// any pending events from the installed [`crate::winlink::modem::ModemTransport`]
+/// into the cached status before returning a clone, so the broadcaster
+/// emits live state transitions / peer / bandwidth / ARQ flags / last error
+/// at the 4 Hz tick rate (tuxlink-926y).
 ///
 /// Zero-sized "namespace" type — no per-instance state, just `spawn` +
 /// `tick_for_test`.
@@ -255,7 +344,7 @@ impl ModemStatusBroadcaster {
         std::thread::Builder::new()
             .name("modem-status-broadcaster".into())
             .spawn(move || loop {
-                let snap = session.status_snapshot();
+                let snap = session.tick_and_snapshot();
                 emit(snap);
                 std::thread::sleep(STATUS_POLL_INTERVAL);
             })
@@ -269,7 +358,7 @@ impl ModemStatusBroadcaster {
     where
         F: Fn(ModemStatus),
     {
-        emit(session.status_snapshot());
+        emit(session.tick_and_snapshot());
         Ok(())
     }
 }
@@ -369,5 +458,131 @@ mod tests {
         let recorded = recorded.into_inner();
         assert_eq!(recorded.len(), 1);
         assert_eq!(recorded[0].state, ModemState::Stopped);
+    }
+
+    /// Stub transport whose `drain_status_events` mutates the snapshot — used
+    /// to prove `tick_and_snapshot` routes through the installed transport.
+    struct StubTransport;
+    impl crate::winlink::modem::ModemTransport for StubTransport {
+        fn init(
+            &mut self,
+            _: &crate::winlink::modem::InitConfig,
+        ) -> Result<(), crate::winlink::modem::SessionError> {
+            Ok(())
+        }
+        fn connect_arq(
+            &mut self,
+            _: &str,
+            _: u32,
+            _: std::time::Duration,
+        ) -> Result<crate::winlink::modem::ConnectInfo, crate::winlink::modem::SessionError>
+        {
+            unimplemented!("stub")
+        }
+        fn disconnect(
+            &mut self,
+            _: std::time::Duration,
+        ) -> Result<(), crate::winlink::modem::SessionError> {
+            Ok(())
+        }
+        fn data_stream(
+            &mut self,
+        ) -> std::io::Result<&mut dyn crate::winlink::modem::ReadWrite> {
+            Err(std::io::Error::other("stub"))
+        }
+        fn drain_status_events(&mut self, status: &mut ModemStatus) {
+            status.peer = Some("STUB-DRAINED".into());
+            status.width_hz = Some(1234);
+        }
+    }
+
+    #[test]
+    fn tick_and_snapshot_routes_through_installed_transport() {
+        let session = ModemSession::new();
+        session.install_transport(Box::new(StubTransport));
+        let snap = session.tick_and_snapshot();
+        assert_eq!(snap.peer.as_deref(), Some("STUB-DRAINED"));
+        assert_eq!(snap.width_hz, Some(1234));
+        // The drained-into snapshot must also persist on the session — a
+        // subsequent `status_snapshot` should reflect the mutation.
+        let cached = session.status_snapshot();
+        assert_eq!(cached.peer.as_deref(), Some("STUB-DRAINED"));
+        assert_eq!(cached.width_hz, Some(1234));
+    }
+
+    #[test]
+    fn tick_and_snapshot_is_a_no_op_when_no_transport_installed() {
+        let session = ModemSession::new();
+        let snap = session.tick_and_snapshot();
+        assert_eq!(snap.state, ModemState::Stopped);
+        assert!(snap.peer.is_none());
+    }
+
+    // ── tuxlink-o3f2: abort_writer install / abort_in_flight / reset ──────
+
+    /// Spawn a local TCP listener and return `(connected_writer, listener)`
+    /// where `connected_writer` is the client end of a connected loopback
+    /// pair. Used to feed `install_abort_writer` a real TCP stream whose
+    /// bytes the test can read back from the listener side.
+    fn loopback_writer_pair() -> (std::net::TcpStream, std::net::TcpStream) {
+        use std::net::{TcpListener, TcpStream};
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let client = TcpStream::connect(addr).unwrap();
+        let (server, _peer) = listener.accept().unwrap();
+        // The "writer" is the client end (what ModemSession holds); the
+        // "reader" is the server end (what the test asserts on).
+        (client, server)
+    }
+
+    #[test]
+    fn abort_writer_install_then_abort_writes_to_socket() {
+        use std::io::Read;
+        use std::time::Duration;
+        let (writer, mut reader) = loopback_writer_pair();
+        let session = ModemSession::new();
+
+        session.install_abort_writer(writer);
+
+        session
+            .abort_in_flight()
+            .expect("abort_in_flight must succeed when writer is installed");
+
+        // Read what arrived on the listener side — bound by a generous
+        // timeout so a regression doesn't hang the suite.
+        reader.set_read_timeout(Some(Duration::from_secs(2))).ok();
+        let mut buf = [0u8; 16];
+        let n = reader.read(&mut buf).expect("must read the side-channel bytes");
+        assert_eq!(&buf[..n], b"ABORT\r", "must write exactly the ABORT host line");
+    }
+
+    #[test]
+    fn abort_in_flight_with_no_writer_returns_err() {
+        let session = ModemSession::new();
+        let err = session
+            .abort_in_flight()
+            .expect_err("abort_in_flight must Err when no writer is installed");
+        assert_eq!(err.kind(), std::io::ErrorKind::NotConnected);
+    }
+
+    #[test]
+    fn reset_to_stopped_clears_abort_writer() {
+        let (writer, _reader) = loopback_writer_pair();
+        let session = ModemSession::new();
+        session.install_abort_writer(writer);
+
+        // Sanity: writer is installed.
+        // (Calling abort_in_flight here would also consume nothing — the
+        // method writes through the still-installed handle, it doesn't
+        // remove it. So we test the reset path directly.)
+
+        // No transport installed → reset returns None but still clears
+        // the writer.
+        assert!(session.reset_to_stopped().is_none());
+
+        let err = session
+            .abort_in_flight()
+            .expect_err("after reset, no writer must be installed");
+        assert_eq!(err.kind(), std::io::ErrorKind::NotConnected);
     }
 }

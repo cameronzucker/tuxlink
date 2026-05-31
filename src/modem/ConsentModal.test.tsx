@@ -30,4 +30,24 @@ describe('ConsentModal', () => {
     expect(onCancel).toHaveBeenCalledOnce();
     expect(onConfirm).not.toHaveBeenCalled();
   });
+
+  it('autofocuses the acknowledgement checkbox on mount', () => {
+    render(<ConsentModal target="W7RMS-10" onCancel={() => {}} onConfirm={() => {}} />);
+    expect(screen.getByRole('checkbox')).toHaveFocus();
+  });
+
+  it('Escape key calls onCancel', () => {
+    const onCancel = vi.fn();
+    render(<ConsentModal target="W7RMS-10" onCancel={onCancel} onConfirm={() => {}} />);
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(onCancel).toHaveBeenCalledOnce();
+  });
+
+  it('non-Escape keys do NOT call onCancel', () => {
+    const onCancel = vi.fn();
+    render(<ConsentModal target="W7RMS-10" onCancel={onCancel} onConfirm={() => {}} />);
+    fireEvent.keyDown(document, { key: 'Enter' });
+    fireEvent.keyDown(document, { key: ' ' });
+    expect(onCancel).not.toHaveBeenCalled();
+  });
 });

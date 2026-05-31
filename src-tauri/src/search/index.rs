@@ -1,0 +1,459 @@
+use rusqlite::Connection;
+use std::path::PathBuf;
+use thiserror::Error;
+
+/// Schema version. Bumped when the table layout changes; `Index::open` detects
+/// drift and the caller can trigger a rebuild.
+pub const SCHEMA_VERSION: u32 = 1;
+
+#[derive(Error, Debug)]
+pub enum IndexError {
+    #[error("sqlite: {0}")]
+    Sqlite(#[from] rusqlite::Error),
+    #[error("schema drift: index is at v{found}, current is v{current}")]
+    SchemaDrift { found: u32, current: u32 },
+}
+
+pub struct Index {
+    pub(crate) conn: Connection,
+}
+
+impl std::fmt::Debug for Index {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Index").finish_non_exhaustive()
+    }
+}
+
+impl Index {
+    /// Open or create the index at `path`. If the file does not exist, the
+    /// schema is created. If it exists but is at an older `user_version`,
+    /// returns `Err(IndexError::SchemaDrift)` — caller (e.g. rebuild-index)
+    /// decides whether to recreate.
+    pub fn open(path: PathBuf) -> Result<Self, IndexError> {
+        // Detect whether the file pre-exists before opening it. A new file has
+        // no user_version (SQLite defaults to 0) and needs schema init. A
+        // pre-existing file with user_version=0 is a pre-versioned database
+        // (schema drift).
+        let preexisted = path.exists();
+        let conn = Connection::open(&path)?;
+        let found: u32 = conn.pragma_query_value(None, "user_version", |row| row.get(0))?;
+        if found == 0 && !preexisted {
+            Self::init_schema(&conn)?;
+        } else if found != SCHEMA_VERSION {
+            return Err(IndexError::SchemaDrift { found, current: SCHEMA_VERSION });
+        }
+        Ok(Self { conn })
+    }
+
+    /// DDL is wrapped in a transaction so a kill between CREATE statements and
+    /// the user_version pragma cannot leave the file at a partial-schema /
+    /// user_version=0 state that is recoverable only via manual delete.
+    fn init_schema(conn: &Connection) -> Result<(), IndexError> {
+        conn.execute_batch(
+            r#"
+            BEGIN;
+
+            CREATE VIRTUAL TABLE messages_fts USING fts5 (
+                mid               UNINDEXED,
+                folder            UNINDEXED,
+                subject,
+                body,
+                form_field_values,
+                tokenize = 'porter unicode61 remove_diacritics 2'
+            );
+
+            CREATE TABLE messages_meta (
+                mid              TEXT PRIMARY KEY,
+                folder           TEXT NOT NULL,
+                from_addr        TEXT,
+                to_addrs         TEXT,
+                cc_addrs         TEXT,
+                date_sent        INTEGER,
+                date_received    INTEGER,
+                unread           INTEGER NOT NULL DEFAULT 0,
+                form_type        TEXT,
+                has_attachments  INTEGER NOT NULL DEFAULT 0,
+                attachment_count INTEGER NOT NULL DEFAULT 0,
+                transport_used   TEXT,
+                direction        TEXT NOT NULL,
+                message_size     INTEGER NOT NULL,
+                routing_path     TEXT,
+                indexed_at       INTEGER NOT NULL
+            );
+
+            CREATE INDEX idx_meta_date_recv ON messages_meta(date_received);
+            CREATE INDEX idx_meta_date_sent ON messages_meta(date_sent);
+            CREATE INDEX idx_meta_from      ON messages_meta(from_addr);
+            CREATE INDEX idx_meta_form_type ON messages_meta(form_type);
+            CREATE INDEX idx_meta_folder    ON messages_meta(folder);
+
+            COMMIT;
+            "#,
+        )?;
+        // PRAGMA user_version is set outside the transaction: some SQLite
+        // versions reject schema-version pragmas inside an explicit transaction.
+        conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+        Ok(())
+    }
+}
+
+use crate::search::extractor::IndexRow;
+
+impl Index {
+    /// Insert-or-replace `row` in both `messages_fts` and `messages_meta`.
+    pub fn upsert(&self, row: &IndexRow) -> Result<(), IndexError> {
+        let tx = self.conn.unchecked_transaction()?;
+        // FTS5 does not support ON CONFLICT — use DELETE + INSERT for the FTS side.
+        tx.execute(
+            "DELETE FROM messages_fts WHERE mid = ?1",
+            rusqlite::params![row.mid],
+        )?;
+        tx.execute(
+            "INSERT INTO messages_fts (mid, folder, subject, body, form_field_values)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            rusqlite::params![row.mid, row.folder, row.subject, row.body, row.form_field_values],
+        )?;
+        tx.execute(
+            "INSERT INTO messages_meta (
+                mid, folder, from_addr, to_addrs, cc_addrs,
+                date_sent, date_received, unread,
+                form_type, has_attachments, attachment_count,
+                transport_used, direction, message_size, routing_path, indexed_at
+             ) VALUES (
+                ?1, ?2, ?3, ?4, ?5,
+                ?6, ?7, ?8,
+                ?9, ?10, ?11,
+                ?12, ?13, ?14, ?15, strftime('%s','now')
+             )
+             ON CONFLICT(mid) DO UPDATE SET
+                folder = excluded.folder,
+                from_addr = excluded.from_addr,
+                to_addrs = excluded.to_addrs,
+                cc_addrs = excluded.cc_addrs,
+                date_sent = excluded.date_sent,
+                date_received = excluded.date_received,
+                unread = excluded.unread,
+                form_type = excluded.form_type,
+                has_attachments = excluded.has_attachments,
+                attachment_count = excluded.attachment_count,
+                transport_used = excluded.transport_used,
+                direction = excluded.direction,
+                message_size = excluded.message_size,
+                routing_path = excluded.routing_path,
+                indexed_at = excluded.indexed_at",
+            rusqlite::params![
+                row.mid, row.folder,
+                row.from_addr,
+                serde_json::to_string(&row.to_addrs).unwrap(),
+                serde_json::to_string(&row.cc_addrs).unwrap(),
+                row.date_sent, row.date_received,
+                row.unread as i64,
+                row.form_type,
+                row.has_attachments as i64, row.attachment_count,
+                row.transport_used,
+                row.direction.as_str(),
+                row.message_size,
+                row.routing_path,
+            ],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn delete(&self, mid: &str) -> Result<(), IndexError> {
+        let tx = self.conn.unchecked_transaction()?;
+        tx.execute("DELETE FROM messages_fts WHERE mid = ?1", rusqlite::params![mid])?;
+        tx.execute("DELETE FROM messages_meta WHERE mid = ?1", rusqlite::params![mid])?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn update_folder(&self, mid: &str, new_folder: &str) -> Result<(), IndexError> {
+        let tx = self.conn.unchecked_transaction()?;
+        tx.execute(
+            "UPDATE messages_fts SET folder = ?2 WHERE mid = ?1",
+            rusqlite::params![mid, new_folder],
+        )?;
+        tx.execute(
+            "UPDATE messages_meta SET folder = ?2 WHERE mid = ?1",
+            rusqlite::params![mid, new_folder],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn update_unread(&self, mid: &str, unread: bool) -> Result<(), IndexError> {
+        self.conn.execute(
+            "UPDATE messages_meta SET unread = ?2 WHERE mid = ?1",
+            rusqlite::params![mid, unread as i64],
+        )?;
+        Ok(())
+    }
+
+    /// Count rows in `messages_meta` — for tests and `RebuildStats`.
+    pub fn count(&self) -> Result<u32, IndexError> {
+        let n: i64 = self.conn.query_row("SELECT COUNT(*) FROM messages_meta", [], |r| r.get(0))?;
+        Ok(n as u32)
+    }
+}
+
+use crate::search::query::{compose, SqlParam};
+use crate::search::types::QuerySpec;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QueryHit {
+    pub mid: String,
+    pub folder: String,
+    pub from_addr: Option<String>,
+    pub to_addrs: Vec<String>,
+    pub cc_addrs: Vec<String>,
+    pub date_sent: Option<i64>,
+    pub date_received: Option<i64>,
+    pub unread: bool,
+    pub form_type: Option<String>,
+    pub has_attachments: bool,
+    pub attachment_count: u32,
+    pub transport_used: Option<String>,
+    pub direction: String,
+    pub message_size: u32,
+    pub routing_path: Option<String>,
+}
+
+impl Index {
+    pub fn query(&self, spec: &QuerySpec) -> Result<Vec<QueryHit>, IndexError> {
+        let (sql, params) = compose(spec);
+        let mut stmt = self.conn.prepare(&sql)?;
+        let rs = params
+            .iter()
+            .map(|p| match p {
+                SqlParam::Text(s) => rusqlite::types::Value::Text(s.clone()),
+                SqlParam::Int(i) => rusqlite::types::Value::Integer(*i),
+                SqlParam::Null => rusqlite::types::Value::Null,
+            })
+            .collect::<Vec<_>>();
+        let param_refs: Vec<&dyn rusqlite::ToSql> =
+            rs.iter().map(|v| v as &dyn rusqlite::ToSql).collect();
+        let rows = stmt
+            .query_map(param_refs.as_slice(), |row| {
+                Ok(QueryHit {
+                    mid: row.get(0)?,
+                    folder: row.get(1)?,
+                    from_addr: row.get(2)?,
+                    to_addrs: serde_json::from_str(&row.get::<_, String>(3)?)
+                        .unwrap_or_default(),
+                    cc_addrs: serde_json::from_str(&row.get::<_, String>(4)?)
+                        .unwrap_or_default(),
+                    date_sent: row.get(5)?,
+                    date_received: row.get(6)?,
+                    unread: row.get::<_, i64>(7)? != 0,
+                    form_type: row.get(8)?,
+                    has_attachments: row.get::<_, i64>(9)? != 0,
+                    attachment_count: row.get::<_, i64>(10)? as u32,
+                    transport_used: row.get(11)?,
+                    direction: row.get(12)?,
+                    message_size: row.get::<_, i64>(13)? as u32,
+                    routing_path: row.get(14)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+}
+
+#[cfg(test)]
+mod query_integration {
+    use super::*;
+    use crate::search::extractor::Direction;
+    use crate::search::types::{FilterKey, FilterValue, QuerySpec};
+    use std::collections::BTreeMap;
+    use tempfile::tempdir;
+
+    fn r(mid: &str, folder: &str, from: &str, subject: &str, body: &str) -> IndexRow {
+        IndexRow {
+            mid: mid.into(),
+            folder: folder.into(),
+            subject: subject.into(),
+            body: body.into(),
+            form_field_values: "".into(),
+            from_addr: Some(from.into()),
+            to_addrs: vec!["N7CPZ".into()],
+            cc_addrs: vec![],
+            date_sent: None,
+            date_received: Some(1_716_200_000),
+            unread: true,
+            form_type: None,
+            has_attachments: false,
+            attachment_count: 0,
+            transport_used: Some("telnet".into()),
+            direction: Direction::Received,
+            message_size: body.len() as u32,
+            routing_path: None,
+        }
+    }
+
+    #[test]
+    fn freetext_returns_only_matching_messages() {
+        let dir = tempdir().unwrap();
+        let idx = Index::open(dir.path().join("search.db")).unwrap();
+        idx.upsert(&r("A", "inbox", "KX5DD", "DAMAGE report", "powerlines"))
+            .unwrap();
+        idx.upsert(&r("B", "inbox", "WX5RES", "weather brief", "ridge"))
+            .unwrap();
+        let spec = QuerySpec {
+            free_text: Some("damage".into()),
+            ..QuerySpec::default()
+        };
+        let hits = idx.query(&spec).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].mid, "A");
+    }
+
+    #[test]
+    fn from_chip_narrows_results() {
+        let dir = tempdir().unwrap();
+        let idx = Index::open(dir.path().join("search.db")).unwrap();
+        idx.upsert(&r("A", "inbox", "KX5DD", "x", "y")).unwrap();
+        idx.upsert(&r("B", "inbox", "WX5RES", "x", "y")).unwrap();
+        let mut filters = BTreeMap::new();
+        filters.insert(FilterKey::From, FilterValue::Addr("KX5DD".into()));
+        let spec = QuerySpec {
+            filters,
+            ..QuerySpec::default()
+        };
+        let hits = idx.query(&spec).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].mid, "A");
+    }
+}
+
+#[cfg(test)]
+mod mutation_tests {
+    use super::*;
+    use crate::search::extractor::{Direction, IndexRow};
+    use tempfile::tempdir;
+
+    fn fixture_row(mid: &str, folder: &str, subject: &str, body: &str) -> IndexRow {
+        IndexRow {
+            mid: mid.into(), folder: folder.into(),
+            subject: subject.into(), body: body.into(), form_field_values: "".into(),
+            from_addr: Some("KX5DD".into()), to_addrs: vec!["N7CPZ".into()], cc_addrs: vec![],
+            date_sent: None, date_received: Some(1_716_200_000), unread: true,
+            form_type: None, has_attachments: false, attachment_count: 0,
+            transport_used: Some("telnet".into()), direction: Direction::Received,
+            message_size: body.len() as u32, routing_path: None,
+        }
+    }
+
+    #[test]
+    fn upsert_inserts_then_replaces_by_mid() {
+        let dir = tempdir().unwrap();
+        let idx = Index::open(dir.path().join("search.db")).unwrap();
+        idx.upsert(&fixture_row("MID1", "inbox", "first", "body1")).unwrap();
+        assert_eq!(idx.count().unwrap(), 1);
+        // replace
+        idx.upsert(&fixture_row("MID1", "inbox", "updated", "body2")).unwrap();
+        assert_eq!(idx.count().unwrap(), 1);
+        let subj: String = idx
+            .conn
+            .query_row("SELECT subject FROM messages_fts WHERE mid = 'MID1'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(subj, "updated");
+    }
+
+    #[test]
+    fn delete_removes_from_both_tables() {
+        let dir = tempdir().unwrap();
+        let idx = Index::open(dir.path().join("search.db")).unwrap();
+        idx.upsert(&fixture_row("MID1", "inbox", "x", "y")).unwrap();
+        idx.delete("MID1").unwrap();
+        assert_eq!(idx.count().unwrap(), 0);
+        let fts_n: i64 = idx
+            .conn
+            .query_row("SELECT COUNT(*) FROM messages_fts WHERE mid = 'MID1'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(fts_n, 0);
+    }
+
+    #[test]
+    fn update_folder_changes_folder_in_both_tables() {
+        let dir = tempdir().unwrap();
+        let idx = Index::open(dir.path().join("search.db")).unwrap();
+        idx.upsert(&fixture_row("MID1", "outbox", "x", "y")).unwrap();
+        idx.update_folder("MID1", "sent").unwrap();
+        let meta: String = idx
+            .conn
+            .query_row("SELECT folder FROM messages_meta WHERE mid = 'MID1'", [], |r| r.get(0))
+            .unwrap();
+        let fts: String = idx
+            .conn
+            .query_row("SELECT folder FROM messages_fts WHERE mid = 'MID1'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(meta, "sent");
+        assert_eq!(fts, "sent");
+    }
+
+    #[test]
+    fn update_unread_flips_the_flag() {
+        let dir = tempdir().unwrap();
+        let idx = Index::open(dir.path().join("search.db")).unwrap();
+        idx.upsert(&fixture_row("MID1", "inbox", "x", "y")).unwrap();
+        idx.update_unread("MID1", false).unwrap();
+        let u: i64 = idx
+            .conn
+            .query_row("SELECT unread FROM messages_meta WHERE mid = 'MID1'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(u, 0);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn open_creates_schema_on_first_use() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("search.db");
+        let idx = Index::open(path.clone()).expect("first open creates schema");
+        // tables exist
+        let names: Vec<String> = idx
+            .conn
+            .prepare("SELECT name FROM sqlite_master WHERE type IN ('table','view') ORDER BY name")
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert!(names.iter().any(|n| n == "messages_meta"));
+        assert!(names.iter().any(|n| n == "messages_fts"));
+        // user_version is set
+        let v: u32 = idx.conn.pragma_query_value(None, "user_version", |row| row.get(0)).unwrap();
+        assert_eq!(v, SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn open_is_idempotent() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("search.db");
+        let _ = Index::open(path.clone()).unwrap();
+        let _ = Index::open(path.clone()).unwrap();
+        // no error on second open
+    }
+
+    #[test]
+    fn open_detects_schema_drift() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("search.db");
+        // hand-roll an old-version db
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch("PRAGMA user_version = 0;").unwrap();
+        }
+        let err = Index::open(path).unwrap_err();
+        match err {
+            IndexError::SchemaDrift { found: 0, current: 1 } => {}
+            other => panic!("expected SchemaDrift {{ found: 0, current: 1 }}, got {other:?}"),
+        }
+    }
+}

@@ -4,6 +4,83 @@ All notable changes to Tuxlink are documented here.
 
 This project adheres to [Semantic Versioning](https://semver.org) with project-specific rules described in [VERSIONING.md](VERSIONING.md). Entries from `v0.0.2` onward are generated automatically by [`release-please`](https://github.com/googleapis/release-please) from [Conventional Commits](https://www.conventionalcommits.org).
 
+## [0.7.1](https://github.com/cameronzucker/tuxlink/compare/v0.7.0...v0.7.1) (2026-05-31)
+
+
+### Bug Fixes
+
+* **shell:** ARDOP HF dock dead-end on cold start + wire View → Toggle Radio Dock (tuxlink-mnk4) ([aa8e6ad](https://github.com/cameronzucker/tuxlink/commit/aa8e6ad8746d01aa6f948fc20c7ec4d97657affa))
+
+## [0.7.0](https://github.com/cameronzucker/tuxlink/compare/v0.6.0...v0.7.0) (2026-05-31)
+
+
+### Features
+
+* **modem:** ARDOP bandwidth selection (200/500/1000/2000 Hz) — ARQBW wired through Settings (tuxlink-j0ij) ([85a6d90](https://github.com/cameronzucker/tuxlink/commit/85a6d907ba4318d14a4b109072a86e8f8e919375))
+* **modem:** ARDOP WebGUI link — spawn ardopcf with -G + dock link to Spectrum/Waterfall (tuxlink-60wh) ([11f444d](https://github.com/cameronzucker/tuxlink/commit/11f444d7b3892746cac28b4da8202981037d38c1))
+* **search:** SavedSearchesPanel modal + AppShell Manage wiring (tuxlink-1hu) ([12c05f8](https://github.com/cameronzucker/tuxlink/commit/12c05f8c1a858b66ad95c3893cb6b2783b2f8337))
+
+
+### Bug Fixes
+
+* **modem:** ARDOP ABORT during in-flight connect via cmd-socket side channel (tuxlink-o3f2) ([22cfe80](https://github.com/cameronzucker/tuxlink/commit/22cfe80dba31f374c23a3f50a33704b0d7b77193))
+* **search:** apply 3 of 5 Codex adrev findings (tuxlink-1hu) ([fff6001](https://github.com/cameronzucker/tuxlink/commit/fff6001de68f5d0557d9b213309c856dcae570ac))
+* **search:** wire search results into MessageList (tuxlink-c7qz) ([f38a5fa](https://github.com/cameronzucker/tuxlink/commit/f38a5fae0f10a42afdd9205ada80cfed1e733e18))
+
+## [0.6.0](https://github.com/cameronzucker/tuxlink/compare/v0.5.0...v0.6.0) (2026-05-31)
+
+
+### Features
+
+* **modem:** ArdopDock Send/Receive button triggers modem_ardop_b2f_exchange (tuxlink-ecth) ([fc95383](https://github.com/cameronzucker/tuxlink/commit/fc95383bbf7232d531799c634828b88d0de77aae))
+
+
+### Bug Fixes
+
+* **modem:** require live backend peer as Send/Receive target (tuxlink-ecth) ([0173985](https://github.com/cameronzucker/tuxlink/commit/01739856ff9789596efd12a1bc2a097be9678169))
+
+## [0.5.0](https://github.com/cameronzucker/tuxlink/compare/v0.4.0...v0.5.0) (2026-05-31)
+
+
+### Features
+
+* **modem:** modem_ardop_connect pre-flight identity check (tuxlink-5738) ([b6da454](https://github.com/cameronzucker/tuxlink/commit/b6da4544135f40e88ceae7dbb8f2ea249ce4d31e))
+
+## [0.4.0](https://github.com/cameronzucker/tuxlink/compare/v0.3.1...v0.4.0) (2026-05-30)
+
+
+### Features
+
+* **backend:** add OutboundAttachment + extend OutboundMessage (tuxlink-v1p) ([3b236af](https://github.com/cameronzucker/tuxlink/commit/3b236af753d8795ede19fde99c7374a14ea56a0e))
+* **backend:** config_get_ardop / config_set_ardop Tauri commands (tuxlink-4ek) ([aa32b65](https://github.com/cameronzucker/tuxlink/commit/aa32b65d3cb45a7dc808a3bf35975e0e0418c2bf))
+* **backend:** modem_ardop_connect with RADIO-1 token gate + ArdopTransport spawn (tuxlink-4ek) ([4533f5c](https://github.com/cameronzucker/tuxlink/commit/4533f5ce20f20a20ce0dd6c1dc754534715162ce))
+* **backend:** modem_get_status + modem_ardop_disconnect + ModemSession Tauri state (tuxlink-4ek) ([c3fa8f7](https://github.com/cameronzucker/tuxlink/commit/c3fa8f729038229d476112e360a2ce28548171c9))
+* **backend:** ModemStatusBroadcaster background thread + modem:status emit (tuxlink-4ek) ([0949253](https://github.com/cameronzucker/tuxlink/commit/0949253c334636ce1664eb4336ef25f029daa6a3))
+* **config:** ArdopUiConfig struct + Config.modem_ardop field (tuxlink-4ek) ([b76ba51](https://github.com/cameronzucker/tuxlink/commit/b76ba5124a20e55830aeb3f21c14dd594ab3af4c))
+* **connections:** add 'ardop-hf' protocol to sessionTypes catalog (tuxlink-4ek) ([928c1ae](https://github.com/cameronzucker/tuxlink/commit/928c1ae111a6fd7a8cb38f663724b17875e28d0e))
+* **modem:** ArdopDock running state — ARQ grid + meters + mono status block (tuxlink-4ek) ([57550d3](https://github.com/cameronzucker/tuxlink/commit/57550d3b5c33b584dfb887d07dd15511083c3057))
+* **modem:** ArdopDock stopped-state render (Connect form) (tuxlink-4ek) ([3e852c5](https://github.com/cameronzucker/tuxlink/commit/3e852c57502cd36ce0a1fc2cfcbb1a9e2a1b211d))
+* **modem:** ModemSession shared state + RADIO-1 consent token mint/check (tuxlink-4ek) ([0d15bfc](https://github.com/cameronzucker/tuxlink/commit/0d15bfcb25d6c5ca9bea78a583f0f83317b9a7c5))
+* **modem:** ModemStatus struct + ModemState enum + serde wire contract (tuxlink-4ek) ([7f96535](https://github.com/cameronzucker/tuxlink/commit/7f9653574e26a4220a509369d0b3a123a79b6f41))
+* **modem:** RADIO-1 consent modal + backend-minted token wire (tuxlink-4ek) ([3145bd4](https://github.com/cameronzucker/tuxlink/commit/3145bd479f54e43e3fce62eedb33052190d9a8f0))
+* **modem:** TS ModemStatus type mirroring the Rust wire shape (tuxlink-4ek) ([b7c42a6](https://github.com/cameronzucker/tuxlink/commit/b7c42a63a631c25e313e374c82907b155812cd08))
+* **modem:** useConsent hook owning the in-session RADIO-1 token (tuxlink-4ek) ([8441aa8](https://github.com/cameronzucker/tuxlink/commit/8441aa8996c39787821d13d83079bc6212315175))
+* **modem:** useModemStatus React hook subscribing to modem:status event (tuxlink-4ek) ([d62b3f6](https://github.com/cameronzucker/tuxlink/commit/d62b3f67b1462963c59c2f82b7b34de7c0df9294))
+* **settings:** ARDOP HF section — binary/capture/playback/PTT/cmd-port (tuxlink-4ek) ([f639cf7](https://github.com/cameronzucker/tuxlink/commit/f639cf79171751c0d9373c3f6ab4b880dd6ef127))
+* **shell:** conditional 4-col grid + ArdopDock mount + ARDOP HF reading-pane stub (tuxlink-4ek) ([680fe24](https://github.com/cameronzucker/tuxlink/commit/680fe24fd67f0b0c7f6b54b42594e8eb1f9114b7))
+
+
+### Bug Fixes
+
+* **modem:** close RADIO-1 consent-gate bypasses found by Codex adrev (tuxlink-4ek) ([42732dd](https://github.com/cameronzucker/tuxlink/commit/42732ddb112d198c534a9e6af341acf76f20567c))
+* **modem:** lock STOPPED as Readonly&lt;ModemStatus&gt; + cover lastError null (tuxlink-4ek) ([3a79a49](https://github.com/cameronzucker/tuxlink/commit/3a79a49d72d5296875ade837d361259c7ee59cc8))
+* **modem:** useModemStatus — plug listener-handle leak + surface fetch errors (tuxlink-4ek) ([53b9f9b](https://github.com/cameronzucker/tuxlink/commit/53b9f9b2b135b3351802ab9b2f6f48ff28b2867a))
+
+
+### Refactors
+
+* **modem:** rename init_config_from_session → init_config_from_persisted_config (tuxlink-4ek) ([92b735c](https://github.com/cameronzucker/tuxlink/commit/92b735c7adeac72e0abab8f4a55498e9ceae8235))
+
 ## [0.3.1](https://github.com/cameronzucker/tuxlink/compare/v0.3.0...v0.3.1) (2026-05-30)
 
 

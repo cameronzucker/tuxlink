@@ -496,6 +496,14 @@ pub struct ArdopUiConfig {
     pub ptt_serial_path: Option<String>,
     /// ARDOP command/control port (default 8515).
     pub cmd_port: u16,
+    /// ARDOP ARQ bandwidth in Hz. One of {200, 500, 1000, 2000}. None means
+    /// "let ardopcf use its default" (typically 2000 Hz, but the operator may
+    /// have set a different default via the WebGUI or persistent config).
+    /// The value, if set, is sent as `ARQBW <hz> FORCED` during init_tnc so
+    /// the client-side preference overrides the server's preference for
+    /// outbound calls (tuxlink-j0ij).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bandwidth_hz: Option<u32>,
 }
 
 impl Default for ArdopUiConfig {
@@ -506,6 +514,7 @@ impl Default for ArdopUiConfig {
             playback_device: String::new(),
             ptt_serial_path: None,
             cmd_port: 8515,
+            bandwidth_hz: None,
         }
     }
 }
@@ -805,12 +814,69 @@ mod tests {
             playback_device: "plughw:1,0".into(),
             ptt_serial_path: Some("/dev/ttyUSB0".into()),
             cmd_port: 8515,
+            bandwidth_hz: None,
         };
         let json = serde_json::to_string(&cfg).unwrap();
         let back: ArdopUiConfig = serde_json::from_str(&json).unwrap();
         assert_eq!(back.binary, "ardopcf");
         assert_eq!(back.cmd_port, 8515);
         assert_eq!(back.ptt_serial_path.as_deref(), Some("/dev/ttyUSB0"));
+    }
+
+    // --- tuxlink-j0ij: ArdopUiConfig.bandwidth_hz persistence tests ---
+
+    #[test]
+    fn ardop_ui_config_round_trips_with_bandwidth_hz_some() {
+        // bandwidth_hz: Some(500) → serializes to {... "bandwidth_hz": 500 ...},
+        // deserializes back to Some(500). Round-trip preserves the operator's
+        // ARQ-bandwidth preference across config writes (tuxlink-j0ij).
+        let cfg = ArdopUiConfig {
+            binary: "ardopcf".into(),
+            capture_device: "plughw:1,0".into(),
+            playback_device: "plughw:1,0".into(),
+            ptt_serial_path: None,
+            cmd_port: 8515,
+            bandwidth_hz: Some(500),
+        };
+        let json = serde_json::to_string(&cfg).unwrap();
+        assert!(
+            json.contains("\"bandwidth_hz\":500"),
+            "serialized config must contain bandwidth_hz: 500 — got: {json}"
+        );
+        let back: ArdopUiConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            back.bandwidth_hz,
+            Some(500),
+            "bandwidth_hz must round-trip Some(500) verbatim"
+        );
+    }
+
+    #[test]
+    fn ardop_ui_config_round_trips_with_bandwidth_hz_none() {
+        // bandwidth_hz: None → serializes WITHOUT a "bandwidth_hz" key
+        // (skip_serializing_if = "Option::is_none"), deserializes back to None
+        // (the Default::default for Option). Migration path for pre-j0ij configs.
+        let cfg = ArdopUiConfig {
+            binary: "ardopcf".into(),
+            capture_device: "plughw:1,0".into(),
+            playback_device: "plughw:1,0".into(),
+            ptt_serial_path: None,
+            cmd_port: 8515,
+            bandwidth_hz: None,
+        };
+        let json = serde_json::to_string(&cfg).unwrap();
+        assert!(
+            !json.contains("bandwidth_hz"),
+            "None bandwidth_hz must be omitted from serialized JSON — got: {json}"
+        );
+
+        // Also verify a config WITHOUT the field deserializes (None default).
+        let no_bw_json = r#"{"binary":"ardopcf","capture_device":"","playback_device":"","cmd_port":8515}"#;
+        let back: ArdopUiConfig = serde_json::from_str(no_bw_json).unwrap();
+        assert_eq!(
+            back.bandwidth_hz, None,
+            "pre-j0ij config (no bandwidth_hz key) must deserialize as None"
+        );
     }
 
     #[test]
@@ -827,7 +893,8 @@ mod tests {
                     "binary": "ardopcf",
                     "capture_device": "plughw:1,0",
                     "playback_device": "plughw:1,0",
-                    "cmd_port": 8515
+                    "cmd_port": 8515,
+                    "bandwidth_hz": 500
                 }}
             }}"#,
             ver = CONFIG_SCHEMA_VERSION
@@ -839,11 +906,21 @@ mod tests {
         assert_eq!(ardop.binary, "ardopcf");
         assert_eq!(ardop.cmd_port, 8515);
         assert!(ardop.ptt_serial_path.is_none(), "absent ptt_serial_path defaults to None");
+        assert_eq!(
+            ardop.bandwidth_hz,
+            Some(500),
+            "bandwidth_hz must deserialize when present (tuxlink-j0ij)"
+        );
 
         // Round-trip: serialize and reload.
         let reserialized = serde_json::to_string(&cfg).unwrap();
         let reloaded: Config = serde_json::from_str(&reserialized).unwrap();
         assert!(reloaded.modem_ardop.is_some());
+        assert_eq!(
+            reloaded.modem_ardop.as_ref().unwrap().bandwidth_hz,
+            Some(500),
+            "bandwidth_hz must survive a serialize→deserialize round-trip"
+        );
 
         // Verify modem_ardop is absent from a config that never had it (migration path).
         let json_no_ardop = format!(

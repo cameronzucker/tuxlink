@@ -45,6 +45,8 @@ export function ArdopDock() {
   const [showConsent, setShowConsent] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const [connectError, setConnectError] = useState<string | null>(null);
+  const [disconnecting, setDisconnecting] = useState(false);
+  const [exchanging, setExchanging] = useState(false);
 
   const doConnect = async (tok: string) => {
     setConnecting(true);
@@ -69,10 +71,97 @@ export function ArdopDock() {
   };
 
   const onConnectClick = () => {
+    // Clear any prior error so a fresh attempt presents a clean dock — both
+    // when we go straight to doConnect (consent token still cached) and when
+    // we open the modal. Without this, a previous failed-connect's red error
+    // banner stayed visible behind the modal (tuxlink-qvl §B).
+    setConnectError(null);
     if (consent.token) {
       void doConnect(consent.token);
     } else {
       setShowConsent(true);
+    }
+  };
+
+  // RADIO-1 SAFETY: this handler is the on-air-transmitting trigger for the
+  // B2F mail exchange. The consent token MUST be backend-minted via
+  // `modem_mint_consent` (mirrors the Connect path); the backend's
+  // `consume_consent_token` atomic equality-check-and-clear is the actual
+  // gate, but we also never want even the *appearance* of a client-side
+  // mint (e.g. Math.random / crypto.randomUUID). The grep guard in the
+  // commit body documents this property.
+  const isExchangeReady =
+    status.state === 'connected-irs' || status.state === 'connected-iss';
+  // Effective B2F target: ONLY the backend-reported peer authorizes a TX
+  // target. The stopped-state `target` input is for dialing; once
+  // connected, the live peer is the single source of truth for who we're
+  // TXing to. The earlier `(status.peer ?? target).trim()` fallback was
+  // a RADIO-1 hazard — the running-view unmount preserves `target` via
+  // useState, so the fallback could pass a stale callsign (from a prior
+  // or abandoned operator entry) to the on-air B2F exchange. Codex P1
+  // finding on fc95383; closed by requiring status.peer non-null.
+  const effectiveTarget: string | null = status.peer?.trim() ?? null;
+
+  const onSendReceiveClick = async () => {
+    // Defense in depth: even if the disabled-prop guard fails (UI bug,
+    // prop-drilling regression, etc.), refuse to invoke the on-air path
+    // without a live peer.
+    if (!isExchangeReady || effectiveTarget === null) return;
+    setExchanging(true);
+    setConnectError(null);
+    try {
+      const tok = await invoke<string>('modem_mint_consent');
+      await invoke('modem_ardop_b2f_exchange', {
+        target: effectiveTarget,
+        consentToken: tok,
+      });
+      // Success — backend has already cleaned up (disconnect + reset_to_stopped).
+      // The next modem:status event will reflect Stopped state, the dock will
+      // return to the Connect form. No further frontend mailbox-refresh
+      // coordination here; the mailbox view picks up new messages on next
+      // load.
+    } catch (e) {
+      setConnectError(`Send/Receive failed: ${e}`);
+    } finally {
+      setExchanging(false);
+    }
+  };
+
+  const onDisconnectClick = async () => {
+    setDisconnecting(true);
+    setConnectError(null);
+    try {
+      await invoke('modem_ardop_disconnect');
+    } catch (e) {
+      setConnectError(String(e));
+    } finally {
+      setDisconnecting(false);
+    }
+  };
+
+  // tuxlink-60wh: open ardopcf's built-in WebGUI in the operator's default
+  // browser. ardopcf serves the WebGUI on `cmd_port - 1` per its USAGE doc;
+  // we read the live cmd_port from config (rather than hardcoding 8514)
+  // so the link tracks operator overrides. `window.open` in a Tauri WebView
+  // routes external URLs to the OS browser — no shell-plugin import needed.
+  const onOpenWebGuiClick = async () => {
+    setConnectError(null);
+    try {
+      const ardop = await invoke<{ cmd_port: number }>('config_get_ardop');
+      // Guard mirrors the backend's build_ardop_extra_args guard: cmd_port
+      // < 2 yields an unbindable webgui_port, in which case the backend
+      // also omits the -G flag and ardopcf will refuse the connection.
+      // Surface that explicitly rather than opening a dead URL.
+      if (ardop.cmd_port < 2) {
+        setConnectError(
+          `Cannot open WebGUI: ARDOP cmd_port=${ardop.cmd_port} is too low (need >= 2)`,
+        );
+        return;
+      }
+      const webguiPort = ardop.cmd_port - 1;
+      window.open(`http://localhost:${webguiPort}/`, '_blank');
+    } catch (e) {
+      setConnectError(`Failed to open WebGUI: ${e}`);
     }
   };
 
@@ -167,6 +256,36 @@ PTT    ${status.pttBackend ?? '—'}
 RX     ${status.bytesRx} B  ·  TX ${status.bytesTx} B
 Up     ${fmtUptime(status.uptimeSec)}`}
             </pre>
+          </section>
+
+          <section className="ardop-dock-section">
+            <button
+              type="button"
+              className="ardop-dock-btn ardop-dock-btn-primary"
+              disabled={!isExchangeReady || exchanging || effectiveTarget === null}
+              onClick={onSendReceiveClick}
+            >
+              {exchanging ? 'Exchanging…' : 'Send/Receive'}
+            </button>
+            <button
+              type="button"
+              className="ardop-dock-btn"
+              onClick={onOpenWebGuiClick}
+              title="Open ardopcf's built-in Spectrum/Waterfall view in browser"
+            >
+              Open WebGUI
+            </button>
+            <button
+              type="button"
+              className="ardop-dock-btn"
+              disabled={disconnecting}
+              onClick={onDisconnectClick}
+            >
+              {disconnecting ? 'Disconnecting…' : 'Disconnect'}
+            </button>
+            {connectError !== null && (
+              <p className="ardop-dock-error" role="alert">{connectError}</p>
+            )}
           </section>
         </>
       )}

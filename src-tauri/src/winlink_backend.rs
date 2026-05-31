@@ -537,6 +537,19 @@ impl NativeBackend {
         self
     }
 
+    /// Attach a search index to the mailbox so incremental index hooks run on
+    /// every `store`/`move_to`/`mark_read` (Codex adrev — find-messages P1).
+    /// Builder-style; must be called before the `mailbox` Arc is cloned (i.e.
+    /// before the backend is installed into `BackendState`). Panics if the
+    /// Arc is already shared — that would be a programmer error in the boot path.
+    pub fn with_index(mut self, index: Arc<std::sync::Mutex<crate::search::index::Index>>) -> Self {
+        let mbox = Arc::try_unwrap(self.mailbox)
+            .unwrap_or_else(|_| panic!("with_index called after Arc<Mailbox> was shared — call before install"))
+            .with_index(index);
+        self.mailbox = Arc::new(mbox);
+        self
+    }
+
     /// Attach a raw-wire log sink (tuxlink-nki). Builder-style so existing
     /// constructors and tests are unaffected; no-op by default.
     pub fn with_wire_log(mut self, wire: WireSink) -> Self {
@@ -1339,6 +1352,110 @@ fn native_connect(
     }
     for mid in &result.sent {
         mailbox.move_to(MailboxFolder::Outbox, MailboxFolder::Sent, &MessageId(mid.clone()))?;
+    }
+    Ok(())
+}
+
+/// Run a B2F mail exchange over an already-`connect_arq`'d ARDOP transport
+/// (tuxlink-ytg). The transport was spawned + ARQ-connected by
+/// `modem_ardop_connect`; this function consumes it for the duration of the
+/// exchange and returns it so the caller can `disconnect()` + drop it under its
+/// own state machine (the Tauri command in `modem_commands.rs` resets
+/// `ModemSession` after this returns).
+///
+/// Mirrors `native_connect`'s mailbox plumbing: builds outbound from
+/// `mailbox`'s Outbox folder, runs the exchange in `Dial` role (slave/IRS —
+/// the operator's send/receive against a CMS or peer), files received messages
+/// into Inbox, moves sent ones from Outbox to Sent.
+///
+/// The transport surface is `Box<dyn ModemTransport>` so any future modem
+/// (Dire Wolf, tuxmodem) that implements the same trait flows through this
+/// path unchanged.
+///
+/// # RADIO-1
+///
+/// The caller MUST have consumed a per-invocation consent token before
+/// invoking this function. This function does NO consent gating of its own —
+/// the gate is upstream at the Tauri command boundary, where it can refuse
+/// I/O / state mutation pre-gate.
+pub fn run_ardop_b2f_exchange(
+    transport: &mut dyn crate::winlink::modem::ModemTransport,
+    target: &str,
+    config: &Config,
+    mailbox: &Mailbox,
+    position: Option<&crate::position::PositionArbiter>,
+) -> Result<(), BackendError> {
+    use crate::winlink::modem::ardop::b2f;
+
+    let callsign = config
+        .identity
+        .callsign
+        .clone()
+        .ok_or_else(|| BackendError::NotConfigured("identity.callsign".into()))?
+        .trim()
+        .to_uppercase();
+    let locator = crate::position::effective_broadcast_locator(config, position);
+    // The ARDOP B2F path connects to a CMS gateway OR a peer. Both speak the
+    // same B2F protocol; only the password differs (gateway dial may carry a
+    // ;PQ challenge — a peer never does). Pull the keyring entry for the
+    // gateway path; if the peer never challenges, the secret is simply unused.
+    // Note: this reuses the existing `tuxlink-pat` keyring entry — the cred
+    // store is shared with the legacy Pat flow (per ADR 0011 cred refactor).
+    let password = keyring::Entry::new("tuxlink-pat", &callsign)
+        .ok()
+        .and_then(|e| e.get_password().ok())
+        .filter(|p| !p.is_empty());
+
+    // Turn each queued outbox message into a proposal + compressed body.
+    let mut outbound = Vec::new();
+    for meta in mailbox.list(MailboxFolder::Outbox)? {
+        let body = mailbox.read(MailboxFolder::Outbox, &meta.id)?;
+        if let Ok(message) = Message::from_bytes(&body.raw_rfc5322) {
+            if let Some((proposal, compressed)) = message.to_proposal() {
+                let title = message.header("Subject").unwrap_or_default().to_string();
+                outbound.push(session::OutboundMessage {
+                    proposal,
+                    title,
+                    compressed,
+                });
+            }
+        }
+    }
+
+    let exchange_config = session::ExchangeConfig {
+        mycall: callsign,
+        targetcall: target.to_string(),
+        locator,
+        password,
+    };
+
+    let result = b2f::run_b2f_exchange(
+        transport,
+        ExchangeRole::Dial,
+        &exchange_config,
+        outbound,
+        |proposals| {
+            proposals
+                .iter()
+                .map(|_| Answer::Accept { resume_offset: 0 })
+                .collect()
+        },
+    )
+    .map_err(|e| BackendError::TransportFailed {
+        reason: format!("{e}"),
+        source: None,
+    })?;
+
+    // File received messages into the inbox; move delivered ones to sent.
+    for message in &result.received {
+        mailbox.store(MailboxFolder::Inbox, &message.to_bytes())?;
+    }
+    for mid in &result.sent {
+        mailbox.move_to(
+            MailboxFolder::Outbox,
+            MailboxFolder::Sent,
+            &MessageId(mid.clone()),
+        )?;
     }
     Ok(())
 }

@@ -20,6 +20,7 @@ use std::sync::mpsc::{self, RecvTimeoutError};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use super::arq_state::ArqState;
 use super::command::{encode_setter, Command, CommandParseError, State};
 use super::wire::encode_cmd_line;
 
@@ -47,6 +48,19 @@ impl CmdSocket {
     /// On success returns a `CmdSocket` whose control-loop thread is already
     /// running and forwarding parsed `Command` values into the internal channel.
     pub fn connect(addr: SocketAddr) -> io::Result<Self> {
+        Self::connect_with_arq_state(addr, None)
+    }
+
+    /// Like [`connect`] but also wire an [`ArqState`] that the reader thread
+    /// updates on `CONNECTED` / `DISCONNECTED` / `NEWSTATE DISC` events
+    /// (tuxlink-ytg). The data socket reads the same `ArqState` to decide
+    /// EOF-on-DISC and pre-ARQ frame-drop. `None` skips the bookkeeping for
+    /// callers that don't share state with a data socket (the existing
+    /// connect tests).
+    pub fn connect_with_arq_state(
+        addr: SocketAddr,
+        arq_state: Option<ArqState>,
+    ) -> io::Result<Self> {
         let stream = TcpStream::connect(addr)?;
         // The reader and writer halves share the underlying socket; `try_clone`
         // gives us two independently-closeable handles — the same split pattern
@@ -82,6 +96,28 @@ impl CmdSocket {
                 }
                 match Command::parse(&line) {
                     Ok(cmd) => {
+                        // tuxlink-ytg: book-keep the ARQ link state for the data
+                        // socket's EOF-on-DISC + pre-connect drop gates. The update
+                        // happens BEFORE the send so the DataSocket sees the new
+                        // state by the time any blocking-recv consumer of the cmd
+                        // channel reacts.
+                        if let Some(ref state) = arq_state {
+                            match &cmd {
+                                Command::Connected { .. } => state.set_connected(),
+                                Command::Disconnected => state.set_disconnected(),
+                                Command::NewState(State::Disc) => state.set_disconnected(),
+                                // tuxlink-ytg P1 (Codex adrev 2026-05-30): FAULT
+                                // events must also clear ArqState. ardopcf can
+                                // emit FAULT while the data TCP socket stays
+                                // open; without this arm the data socket's
+                                // EOF-on-DISC gate stays armed (`is_connected`
+                                // remains true), so a blocked B2F `read_line`
+                                // keeps polling forever and the command never
+                                // reaches its disconnect/reset cleanup.
+                                Command::Fault(_) => state.set_disconnected(),
+                                _ => {}
+                            }
+                        }
                         // Sender drop unblocks on Err (receiver gone); exit cleanly.
                         if tx.send(cmd).is_err() {
                             break;
@@ -91,6 +127,13 @@ impl CmdSocket {
                         // Unknown/malformed command — skip rather than crash the loop.
                     }
                 }
+            }
+            // tuxlink-ytg: if the cmd socket itself dies (EOF or I/O error), the
+            // ARQ link cannot be considered live regardless of the last event.
+            // Flip the flag to disconnected so any blocked data-socket read
+            // unblocks promptly with EOF.
+            if let Some(ref state) = arq_state {
+                state.set_disconnected();
             }
             // `tx` drops here → channel becomes disconnected → recv_event returns
             // `RecvError::Disconnected`.
@@ -115,6 +158,24 @@ impl CmdSocket {
     /// reader thread has exited (EOF / socket closed).
     pub fn recv_event(&self, timeout: Duration) -> Result<Command, RecvTimeoutError> {
         self.rx.recv_timeout(timeout)
+    }
+
+    /// Get a cloneable write handle to the cmd socket. Used by `ModemSession`
+    /// so a side channel (e.g. `modem_ardop_disconnect`) can send `ABORT`
+    /// while `arq_connect`'s recv loop is blocking on this socket's read
+    /// side (tuxlink-o3f2 — P1 abort-during-connect fix).
+    ///
+    /// The returned handle shares the underlying TCP write half via
+    /// [`std::net::TcpStream::try_clone`]. Concurrent writes from multiple
+    /// threads to the same TCP stream are POSIX-safe at the kernel level
+    /// (writes are atomic up to `PIPE_BUF`), but the caller should serialize
+    /// at the application layer if the protocol requires command boundaries.
+    /// For the ABORT use case the host-protocol message is a single short
+    /// line and the only competing writer is `init`/`arq_connect` issuing
+    /// the next setter — interleaving is acceptable because ABORT is the
+    /// terminal command that unblocks the entire flow.
+    pub fn try_clone_writer(&self) -> io::Result<TcpStream> {
+        self.writer.try_clone()
     }
 }
 
@@ -143,6 +204,12 @@ pub struct InitConfig {
     pub gridsquare: String,
     /// ARQ link timeout in seconds (wl2k-go default: 30).
     pub arq_timeout_s: u32,
+    /// Optional ARQ bandwidth in Hz: 200/500/1000/2000. None = leave at
+    /// ardopcf default. If set, init_tnc sends `ARQBW <hz> FORCED` between
+    /// LISTEN and MYCALL (tuxlink-j0ij). Caller validates the value range
+    /// before constructing the InitConfig (modem_commands.rs); init_tnc
+    /// trusts the value verbatim.
+    pub arq_bandwidth_hz: Option<u32>,
 }
 
 // ─── SessionError ──────────────────────────────────────────────────────────
@@ -174,20 +241,30 @@ const SETTER_ACK_TIMEOUT: Duration = Duration::from_secs(10);
 /// 3. `PROTOCOLMODE ARQ`
 /// 4. `ARQTIMEOUT <n>`
 /// 5. `LISTEN FALSE`
-/// 6. `MYCALL <call>`
-/// 7. `GRIDSQUARE <grid>`
+/// 6. `ARQBW <hz> FORCED` — only when `cfg.arq_bandwidth_hz` is Some (tuxlink-j0ij).
+/// 7. `MYCALL <call>`
+/// 8. `GRIDSQUARE <grid>`
 ///
 /// For each setter: sends the encoded line, then consumes events from the channel
 /// until the matching `EchoBack(cmd)` ack arrives — tolerating interleaved async
 /// events (NewState/Ptt/Busy/Buffer/etc.) — or a `Fault` (→ `SessionError::Fault`).
 /// Returns `Err(SessionError::Timeout)` if the ack does not arrive within
 /// [`SETTER_ACK_TIMEOUT`].
+///
+/// **ARQBW placement (tuxlink-j0ij):** between LISTEN and MYCALL. ardopcf accepts
+/// ARQBW at any point after INITIALIZE, but placing it before MYCALL ensures the
+/// bandwidth is established before any subsequent `ARQCALL` honors it. `FORCED`
+/// (rather than `MAX`) means the client's value wins over any server-side
+/// preference during ARQ negotiation — operator's explicit choice for v1.
 pub fn init_tnc(sock: &mut CmdSocket, cfg: &InitConfig) -> Result<(), SessionError> {
     set_and_ack(sock, "INITIALIZE", None)?;
     set_and_ack(sock, "CODEC", Some("TRUE"))?;
     set_and_ack(sock, "PROTOCOLMODE", Some("ARQ"))?;
     set_and_ack(sock, "ARQTIMEOUT", Some(&cfg.arq_timeout_s.to_string()))?;
     set_and_ack(sock, "LISTEN", Some("FALSE"))?;
+    if let Some(bw) = cfg.arq_bandwidth_hz {
+        set_and_ack(sock, "ARQBW", Some(&format!("{bw} FORCED")))?;
+    }
     set_and_ack(sock, "MYCALL", Some(&cfg.mycall))?;
     set_and_ack(sock, "GRIDSQUARE", Some(&cfg.gridsquare))?;
     Ok(())
@@ -424,6 +501,7 @@ mod tests {
             mycall: "N7CPZ".into(),
             gridsquare: "CN87".into(),
             arq_timeout_s: 30,
+            arq_bandwidth_hz: None,
         };
         init_tnc(&mut sock, &cfg).expect("init should succeed");
 
@@ -470,6 +548,7 @@ mod tests {
             mycall: "N7CPZ".into(),
             gridsquare: "CN87".into(),
             arq_timeout_s: 30,
+            arq_bandwidth_hz: None,
         };
         let err = init_tnc(&mut sock, &cfg).expect_err("init must fail on FAULT");
         assert!(
@@ -531,11 +610,108 @@ mod tests {
             mycall: "N7CPZ".into(),
             gridsquare: "CN87".into(),
             arq_timeout_s: 30,
+            arq_bandwidth_hz: None,
         };
         init_tnc(&mut sock, &cfg).expect("init must tolerate interleaved async events");
 
         let _ = sock.writer.shutdown(std::net::Shutdown::Write);
         server.join().unwrap();
+    }
+
+    // ── tuxlink-j0ij: init_tnc sends ARQBW <hz> FORCED between LISTEN and MYCALL ──
+
+    /// When `cfg.arq_bandwidth_hz` is Some, init_tnc must send
+    /// `ARQBW <hz> FORCED` AFTER `LISTEN FALSE` and BEFORE `MYCALL`.
+    /// The 8-element sequence proves both presence and position.
+    #[test]
+    fn init_tnc_sends_arqbw_between_listen_and_mycall_when_some() {
+        let recorded: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let rec = recorded.clone();
+
+        let (addr, server) = spawn_mock_tnc(move |conn| {
+            let mut writer = conn.try_clone().unwrap();
+            let mut reader = BufReader::new(conn);
+            loop {
+                let line = read_cmd_line(&mut reader);
+                if line.is_empty() {
+                    break;
+                }
+                rec.lock().unwrap().push(line.clone());
+                let cmd_name = line.split_whitespace().next().unwrap_or("").to_string();
+                write_reply(&mut writer, &cmd_name);
+            }
+        });
+
+        let mut sock = CmdSocket::connect(addr).unwrap();
+        let cfg = InitConfig {
+            mycall: "N7CPZ".into(),
+            gridsquare: "CN87".into(),
+            arq_timeout_s: 30,
+            arq_bandwidth_hz: Some(500),
+        };
+        init_tnc(&mut sock, &cfg).expect("init with bandwidth should succeed");
+
+        let _ = sock.writer.shutdown(std::net::Shutdown::Write);
+        server.join().unwrap();
+
+        let lines = recorded.lock().unwrap().clone();
+        assert_eq!(
+            lines,
+            vec![
+                "INITIALIZE",
+                "CODEC TRUE",
+                "PROTOCOLMODE ARQ",
+                "ARQTIMEOUT 30",
+                "LISTEN FALSE",
+                "ARQBW 500 FORCED",
+                "MYCALL N7CPZ",
+                "GRIDSQUARE CN87",
+            ],
+            "ARQBW <hz> FORCED must be sent between LISTEN FALSE and MYCALL when bandwidth is Some (tuxlink-j0ij)"
+        );
+    }
+
+    /// When `cfg.arq_bandwidth_hz` is None, init_tnc must NOT send any ARQBW
+    /// setter — ardopcf's default (or the WebGUI's persistent override) takes
+    /// over. Regression guard for the migration path.
+    #[test]
+    fn init_tnc_does_not_send_arqbw_when_none() {
+        let recorded: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let rec = recorded.clone();
+
+        let (addr, server) = spawn_mock_tnc(move |conn| {
+            let mut writer = conn.try_clone().unwrap();
+            let mut reader = BufReader::new(conn);
+            loop {
+                let line = read_cmd_line(&mut reader);
+                if line.is_empty() {
+                    break;
+                }
+                rec.lock().unwrap().push(line.clone());
+                let cmd_name = line.split_whitespace().next().unwrap_or("").to_string();
+                write_reply(&mut writer, &cmd_name);
+            }
+        });
+
+        let mut sock = CmdSocket::connect(addr).unwrap();
+        let cfg = InitConfig {
+            mycall: "N7CPZ".into(),
+            gridsquare: "CN87".into(),
+            arq_timeout_s: 30,
+            arq_bandwidth_hz: None,
+        };
+        init_tnc(&mut sock, &cfg).expect("init with no bandwidth should succeed");
+
+        let _ = sock.writer.shutdown(std::net::Shutdown::Write);
+        server.join().unwrap();
+
+        let lines = recorded.lock().unwrap().clone();
+        assert!(
+            !lines.iter().any(|l| l.starts_with("ARQBW")),
+            "ARQBW must NOT be sent when arq_bandwidth_hz is None; got: {lines:?}"
+        );
+        // And the canonical 7-setter sequence is preserved.
+        assert_eq!(lines.len(), 7, "expected exactly 7 setters when bandwidth is None");
     }
 
     // ── Test 5: arq_connect resolves to ConnectInfo on happy path ─────────
@@ -664,6 +840,100 @@ mod tests {
 
         drop(sock);
         server.join().unwrap();
+    }
+
+    // ── Test 7d: FAULT event clears the shared ArqState (tuxlink-ytg P1) ───
+
+    /// Codex adrev 2026-05-30 P1 #1: when ardopcf emits FAULT while the data
+    /// TCP socket stays open, the reader thread must flip `ArqState` to
+    /// disconnected so the DataSocket's EOF-on-DISC gate fires. Without this,
+    /// a blocked B2F read_line keeps polling forever and the surrounding Tauri
+    /// command never reaches its cleanup.
+    #[test]
+    fn fault_event_clears_arq_state() {
+        // Mock that emits exactly one event: `FAULT some error`.
+        let (addr, server) = spawn_mock_tnc(|mut conn| {
+            write_reply(&mut conn, "FAULT hardware not ready");
+            // Server thread exits when the read timeout fires.
+        });
+
+        // Pre-seed an ArqState in the connected position to make the
+        // transition observable.
+        let arq_state = ArqState::new();
+        arq_state.set_connected();
+        assert!(arq_state.is_connected(), "precondition: state starts connected");
+
+        let sock = CmdSocket::connect_with_arq_state(addr, Some(arq_state.clone()))
+            .expect("connect must succeed");
+
+        // The reader thread should parse the FAULT and clear the flag. Wait
+        // for the channel to deliver the parsed event so we know the reader
+        // has processed it (the flag flip happens BEFORE the send).
+        let event = sock
+            .recv_event(Duration::from_secs(2))
+            .expect("FAULT event must reach the channel");
+        assert!(
+            matches!(event, Command::Fault(ref s) if s.contains("hardware not ready")),
+            "expected Fault, got {event:?}"
+        );
+
+        assert!(
+            !arq_state.is_connected(),
+            "FAULT must clear ArqState — the data-socket EOF-on-DISC gate \
+             depends on this transition (Codex tuxlink-ytg P1)."
+        );
+
+        drop(sock);
+        server.join().unwrap();
+    }
+
+    // ── Test 7e: try_clone_writer returns a usable side-channel writer ─────
+
+    /// tuxlink-o3f2: `CmdSocket::try_clone_writer` returns a clone of the
+    /// TCP write half. A write to the clone must reach the same peer the
+    /// `send_line` writes reach. This is the foundation for the
+    /// `ModemSession::abort_in_flight` side channel that sends `ABORT`
+    /// while `arq_connect` is blocked on the recv channel.
+    #[test]
+    fn try_clone_writer_returns_usable_side_channel_writer() {
+        // Mock that records every line received and never closes.
+        let received: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let rec = received.clone();
+        let (addr, server) = spawn_mock_tnc(move |conn| {
+            let mut reader = BufReader::new(conn);
+            loop {
+                let line = read_cmd_line(&mut reader);
+                if line.is_empty() {
+                    break;
+                }
+                rec.lock().unwrap().push(line);
+            }
+        });
+
+        let sock = CmdSocket::connect(addr).unwrap();
+        let mut writer_clone = sock
+            .try_clone_writer()
+            .expect("try_clone_writer must succeed on a live socket");
+        // Side-channel write — bypasses the &mut CmdSocket gate that the
+        // recv-blocked thread would otherwise hold.
+        writer_clone
+            .write_all(b"ABORT\r")
+            .expect("side-channel write must succeed");
+        writer_clone.flush().ok();
+
+        // Wait briefly for the mock thread to read the line.
+        std::thread::sleep(Duration::from_millis(50));
+
+        // Close both halves of the cmd socket so the mock's read loop exits.
+        drop(sock);
+        drop(writer_clone);
+        server.join().unwrap();
+
+        let lines = received.lock().unwrap().clone();
+        assert!(
+            lines.iter().any(|l| l == "ABORT"),
+            "side-channel writer must have delivered ABORT to the peer; got: {lines:?}"
+        );
     }
 
     // ── Test 8: arq_disconnect resolves on DISCONNECTED ───────────────────

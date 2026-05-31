@@ -5,6 +5,7 @@ pub mod config;
 pub mod consent_gate;
 pub mod native_mailbox;
 pub mod position;
+pub mod search;
 pub mod session_log;
 pub mod tray;
 pub mod ui_commands;
@@ -111,6 +112,28 @@ pub fn run() {
             // Close-to-tray: window close button hides to tray; only
             // File→Quit / tray→Quit / Ctrl+Q actually exit the process.
             crate::tray::install(app.handle())?;
+
+            // Task 10 (tuxlink-1hu): register the find-messages SearchService.
+            // search.db + saved-searches.json live alongside the native mailbox
+            // in <app_data>/native-mbox/. Failure is non-fatal — the search UI
+            // degrades gracefully (empty results); the app always launches.
+            match app.path().app_data_dir() {
+                Ok(data_dir) => {
+                    let search_root = data_dir.join("native-mbox");
+                    // Ensure the directory exists before opening SQLite (Index::open
+                    // calls Connection::open, which creates the .db file but expects
+                    // the parent directory to already exist).
+                    if let Err(e) = std::fs::create_dir_all(&search_root) {
+                        eprintln!("search: could not create native-mbox dir: {e}");
+                    } else {
+                        match crate::search::build_service(&search_root) {
+                            Ok(svc) => { app.manage(svc); }
+                            Err(e) => eprintln!("search: build_service failed: {e}"),
+                        }
+                    }
+                }
+                Err(e) => eprintln!("search: could not resolve app_data_dir: {e}"),
+            }
 
             // Task D (tuxlink-22l) app-start backend bootstrap (spec §3.3). Runs
             // OFF the main thread (a dedicated std::thread inside
@@ -229,12 +252,23 @@ pub fn run() {
             crate::ui_commands::position_status,      // Task 11 (tuxlink-686)
             crate::ui_commands::config_set_privacy,    // tuxlink-39b (GPS privacy control surface)
             crate::ui_commands::config_set_connect,    // tuxlink-3o0 (CMS server endpoint control)
+            // Task 10 (tuxlink-1hu): find-messages search commands
+            crate::search::commands::tauri_search_run,
+            crate::search::commands::tauri_search_list_saved,
+            crate::search::commands::tauri_search_list_recent,
+            crate::search::commands::tauri_search_save,
+            crate::search::commands::tauri_search_unsave,
+            crate::search::commands::tauri_search_promote_recent,
+            crate::search::commands::tauri_search_rename,
+            crate::search::commands::tauri_search_reorder,
+            crate::search::commands::tauri_search_rebuild_index,
             crate::modem_commands::config_get_ardop,   // tuxlink-4ek (ARDOP config read)
             crate::modem_commands::config_set_ardop,   // tuxlink-4ek (ARDOP config write)
             crate::modem_commands::modem_get_status,   // tuxlink-4ek Task 3.2 (session snapshot)
             crate::modem_commands::modem_ardop_disconnect, // tuxlink-4ek Task 3.2 (clear consent + reset)
             crate::modem_commands::modem_ardop_connect, // tuxlink-4ek Task 3.3 (RADIO-1-gated spawn + ARQ connect)
             crate::modem_commands::modem_mint_consent, // tuxlink-4ek Task 6.2 (RADIO-1 token mint — backend-only)
+            crate::modem_commands::modem_ardop_b2f_exchange, // tuxlink-ytg (B2F over ARDOP — Winlink mail flows)
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -16,6 +16,25 @@ protocol directly.
   <a href="https://www.kernel.org"><img src="https://img.shields.io/badge/platform-linux-lightgrey.svg?logo=linux&logoColor=white" alt="Platform: Linux"></a>
 </p>
 
+> [!WARNING]
+> **🚧 Tuxlink is pre-alpha software under active construction. It is not a working product.**
+>
+> Version tags on this repository are produced automatically by
+> [release-please](https://github.com/googleapis/release-please) from conventional-commit
+> activity — they reflect repository velocity, not release readiness. Anything below
+> `v1.0` is incomplete, breakable, and unsuitable for production or emergency
+> communications use.
+>
+> There are no installable artifacts. Running Tuxlink today requires building from source
+> in a Tauri development environment on a developer machine with the full toolchain. The
+> UI is still being shaped; surfaces shown in screenshots and mockups below may be
+> out-of-date, partially-implemented, or actively being redesigned.
+>
+> Feature claims describe what has working code paths — they do not imply the integrated
+> product is ready to operate. **Do not rely on Tuxlink for any emcomm deployment or
+> as the only client for a real Winlink workflow.** Watch the repository for the first
+> tagged release that does not carry this banner.
+
 <p align="center">
   <img src="docs/design/mockups/images/mock-b-principles-faithful.png" width="860"
        alt="The Tuxlink mailbox: dashboard ribbon, folder sidebar, message list, reading pane, and a live session log">
@@ -24,15 +43,16 @@ protocol directly.
 
 ## Status
 
-**v0.2.0 — early release.** Tuxlink is a working native Winlink client: it connects to
-the Winlink CMS over telnet, runs the B2F message exchange in Rust, and sends, receives,
-and renders real Winlink messages. AX.25 1200-baud packet, GPS privacy controls, a
-no-docs-required first-run wizard, and an ARDOP HF transport core (radio-free MVP) ship
-in this release.
+**Pre-alpha — see the banner above.** Working code paths exist for: CMS-over-telnet
+sessions, B2F message exchange in Rust, AX.25 1200-baud packet plumbing, an ARDOP HF
+transport core (radio-free MVP), GPS privacy controls, and a first-run wizard. Several
+surfaces are being actively rebuilt against the locked UX spec
+(`docs/design/v0.0.1-ux-mockups.md`) and may misbehave or look unfinished — most
+visibly, the radio-mode connection panels.
 
-It is early. On-air RF paths (AX.25 over a real radio) and production CMS access require
-operator validation — see [Maturity](#maturity--what-is-and-isnt-proven) before relying
-on it for live emergency traffic.
+On-air RF paths and production CMS access remain operator-verified-only. **Do not rely
+on Tuxlink for live emergency traffic.** See
+[Maturity](#maturity--what-is-and-isnt-proven) for the verified-vs-aspirational breakdown.
 
 ## What it is
 

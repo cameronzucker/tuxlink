@@ -2,9 +2,11 @@
 // design (docs/design/mockups/images/mock-b-principles-faithful.png + the MOCK B
 // block in 2026-05-17-mocks-v1-four-directions.html).
 //
-// Layout (the mock's dashboard + layout-B, combined into one root grid):
-//   dashboard ribbon (top) / panes[ sidebar | message list | reading pane ] /
-//   human session-log strip / status bar.
+// Layout (post-P1 radio-panel-shell): titlebar / menu bar / dashboard ribbon /
+// chip-strip / panes[ sidebar | message list | reading pane | radio-panel |
+// legacy ArdopDock ] / status bar. The right-hand radio-panel + legacy
+// ArdopDock mount conditionally per spec §3.3; the ArdopDock is removed in P4
+// once the per-mode panels (P2-P3) cover its surface.
 //
 // Selection ownership (unchanged from Task 12): AppShell owns `selectedFolder`
 // + `selectedMessage: {folder, id} | null`. The folder is carried with the id.
@@ -19,9 +21,11 @@ import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { useQueryClient } from '@tanstack/react-query';
 import { MessageList } from '../mailbox/MessageList';
+import type { HighlightRange } from '../mailbox/MessageList';
 import { useMailbox } from '../mailbox/useMailbox';
 import { isNotConfigured } from '../mailbox/types';
-import type { MailboxFolder } from '../mailbox/types';
+import type { MailboxFolder, MessageMeta } from '../mailbox/types';
+import type { MessageMetaDto } from '../search/types';
 import { DEV_SELECTED } from '../mailbox/devFixture';
 import { FolderSidebar } from '../mailbox/FolderSidebar';
 import type { ConnectionKey } from '../mailbox/FolderSidebar';
@@ -31,7 +35,6 @@ import { StatusBar } from './StatusBar';
 import { useStatusData } from './useStatus';
 import { applyColorScheme, saveColorScheme } from './colorScheme';
 import MessageView from '../mailbox/MessageView';
-import { SessionLog } from '../session/SessionLog';
 import { TitleBar } from './chrome/TitleBar';
 import { MenuBar } from './chrome/MenuBar';
 import { ResizeHandles } from './chrome/ResizeHandles';
@@ -46,9 +49,19 @@ import { derivePacketUiState, type PacketUiState } from '../packet/packetStatus'
 import { isBuilt } from '../connections/sessionTypes';
 import { TelnetCmsPanelContainer } from '../connections/TelnetCmsPanel';
 import { StubPanel } from '../connections/StubPanel';
+import { SearchBar } from '../search/SearchBar';
+import { SearchDropdown } from '../search/SearchDropdown';
+import { ChipStrip } from '../search/ChipStrip';
+import { SavedSearchesPanel } from '../search/SavedSearchesPanel';
+import { useSearch } from '../search/useSearch';
+import { useSavedSearches } from '../search/useSavedSearches';
+import { renderQuery } from '../search/queryRender';
 import { ArdopHfStub } from '../connections/ArdopHfStub';
 import { useModemStatus } from '../modem/useModemStatus';
 import { ArdopDock } from '../modem/ArdopDock';
+import { computePanelMode } from '../radio/radioPanelVisibility';
+import type { RadioPanelMode } from '../radio/types';
+import { PlaceholderRadioPanel } from '../radio/modes/PlaceholderRadioPanel';
 import './AppShell.css';
 
 /// Human label for a folder (titlebar). Mirrors the sidebar labels.
@@ -65,24 +78,117 @@ export interface SelectedMessage {
   id: string;
 }
 
+/// Map a search-result DTO (camelCase, from Rust) to the MessageMeta shape
+/// used by MessageList. The DTO's `folder: string` is cast to MailboxFolder;
+/// callers are responsible for ensuring the backend only returns valid values.
+/// `preview` and `formTag` carry through when present.
+function dtoToMessageMeta(d: MessageMetaDto): MessageMeta {
+  return {
+    id: d.id,
+    subject: d.subject,
+    from: d.from,
+    to: d.to,
+    date: d.date,
+    unread: d.unread,
+    bodySize: d.bodySize,
+    hasAttachments: d.hasAttachments,
+    formTag: d.formTag,
+    // preview is absent from MessageMetaDto — leave undefined
+    folder: d.folder as MailboxFolder,
+  };
+}
+
+/// Build per-message highlight ranges from a free-text query token.
+/// Single-occurrence, first-token, case-insensitive (v0.1). Multi-token
+/// and multi-occurrence highlighting are a v0.2 follow-up.
+function computeHighlights(
+  items: MessageMetaDto[],
+  freeText: string | null,
+): Record<string, HighlightRange[]> {
+  if (!freeText || !freeText.trim()) return {};
+  const needle = freeText.trim().toLowerCase();
+  const out: Record<string, HighlightRange[]> = {};
+  for (const item of items) {
+    const subj = item.subject ?? '';
+    const idx = subj.toLowerCase().indexOf(needle);
+    if (idx >= 0) {
+      out[item.id] = [{ field: 'subject', start: idx, end: idx + needle.length }];
+    }
+  }
+  return out;
+}
+
 export function AppShell() {
   const [selectedFolder, setSelectedFolder] = useState<MailboxFolder>('inbox');
   // DEV_SELECTED is null outside the vite dev server, so this starts null (the
   // real empty-reading-pane state) in tests + production.
   const [selectedMessage, setSelectedMessage] = useState<SelectedMessage | null>(DEV_SELECTED);
-  // Mock B shows the session log + status bar by default; View → toggles them.
-  const [showSessionLog, setShowSessionLog] = useState(true);
+  // Mock B shows the status bar by default; View → toggles it. The bottom
+  // session-log strip was removed in radio-panel-shell P1.6 — the log moves
+  // into the radio panel as a per-mode section in P2-P4 (spec §3.7 + §4.3).
   const [showStatusBar, setShowStatusBar] = useState(true);
+  // tuxlink-mnk4: pin-on flag for the radio panel (View → Toggle Radio Panel /
+  // Ctrl+Shift+M). Pure additive override — when true, forces the panel
+  // visible even on views/states where the auto rule would hide it. Never
+  // forces hide: an active modem (or being on the ARDOP HF view) always shows
+  // the panel so the operator can't accidentally hide a live link.
+  // (radio-panel-shell P1.7: renamed from pinRadioDock — the dock-vs-panel
+  // distinction is dropped per spec §3.2 + §3.7.)
+  const [pinRadioPanel, setPinRadioPanel] = useState(false);
   // Inline GPS/privacy settings overlay (tuxlink-39b), opened from Tools→Settings.
   const [settingsOpen, setSettingsOpen] = useState(false);
 
   // Connection panel: null = no panel; a {sessionType, protocol} key selects the reading-pane connection pane.
   const [selectedConnection, setSelectedConnection] = useState<ConnectionKey | null>(null);
 
+  // Find-messages: search + saved-search state (Task 17).
+  const search = useSearch();
+  const saved = useSavedSearches();
+  const [dropdownOpen, setDropdownOpen] = useState(false);
+  // Saved-searches management panel (Task 18).
+  const [savedSearchesOpen, setSavedSearchesOpen] = useState(false);
+
+  const metaText = useMemo((): string | null => {
+    if (!search.isActive) return null;
+    const r = search.results;
+    if (!r) return search.isLoading ? 'Searching…' : null;
+    const star = search.activeSaved ? ` · ★ ${search.activeSaved.name}` : '';
+    return `${r.totalMatches} matches · ${r.queryMs} ms${star}`;
+  }, [search.isActive, search.results, search.isLoading, search.activeSaved]);
+
   const { messages, error } = useMailbox(selectedFolder);
   const inbox = useMailbox('inbox');
   const sent = useMailbox('sent');
   const notConnected = isNotConfigured(error);
+
+  // Search-result wiring (tuxlink-c7qz): when search is active, swap the
+  // folder-scoped messages for search results. When search is active but
+  // results haven't arrived yet (null), show an empty list — never fall back
+  // to folder contents while a search is running (that would be misleading).
+  const searchResultMessages = useMemo(
+    () =>
+      search.isActive
+        ? (search.results?.items ?? []).map(dtoToMessageMeta)
+        : null,
+    [search.isActive, search.results],
+  );
+
+  const searchHighlights = useMemo(
+    () =>
+      search.isActive
+        ? computeHighlights(search.results?.items ?? [], search.spec.free_text)
+        : undefined,
+    [search.isActive, search.results, search.spec.free_text],
+  );
+
+  // Show folder badges when search is cross-folder (no FOLDER chip applied).
+  const searchIsCrossFolder =
+    search.isActive &&
+    (!search.spec.filters.folder ||
+      (search.spec.filters.folder.kind === 'folder' &&
+        search.spec.filters.folder.value === 'all'));
+
+  const visibleMessages = searchResultMessages ?? messages;
 
   // Sidebar badges (mock B): Inbox = unread count ("3"), Sent = total ("87").
   const counts: Partial<Record<MailboxFolder, number>> = {
@@ -94,12 +200,33 @@ export function AppShell() {
   // dashboard ribbon, the status bar, and the window title.
   const statusData = useStatusData();
 
-  // Modem (ARDOP HF) status — drives the right-hand dock's mount + the
-  // panes-grid column-count swap (tuxlink-4ek Task 4.3). The dock appears
-  // whenever the modem is doing anything other than 'stopped' so the operator
-  // can see what the link is doing without hunting for a hidden panel.
+  // Modem (ARDOP HF) status — feeds the radio-panel visibility check + the
+  // panes-grid column-count swap (tuxlink-4ek Task 4.3 baseline; radio-panel-
+  // shell P1.5+ migrated to computePanelMode). The panel appears:
+  //   - whenever the modem is doing anything other than 'stopped' (so the
+  //     operator always sees an active link without hunting for a panel), OR
+  //   - when the operator has selected any connection in the sidebar (cold-
+  //     start dial form lives inside the panel — without this, ArdopHfStub's
+  //     "use the modem dock on the right" message points at nothing and the
+  //     operator can't spawn the modem at all — tuxlink-mnk4), OR
+  //   - when the View → Toggle Radio Panel pin is on (Ctrl+Shift+M).
   const { status: modemStatus } = useModemStatus();
-  const dockVisible = modemStatus.state !== 'stopped';
+  // Spec §3.3 visibility rule. computePanelMode applies the OR of
+  // (sidebar selection, active modem, pinned toggle) and returns the mode
+  // to display, or null when the panel should not mount.
+  // In v1, only the ARDOP modem exists; when it's running, the active
+  // context is Ardop Winlink. Multi-modem coordination is out of scope
+  // per spec §8.
+  const activeModem: RadioPanelMode | null =
+    modemStatus.state !== 'stopped'
+      ? { kind: 'ardop-hf', intent: 'cms' }
+      : null;
+
+  const radioPanelMode = computePanelMode({
+    sidebarSelected: selectedConnection,
+    activeModem,
+    togglePinned: pinRadioPanel,
+  });
 
   // CMS connect: run one exchange (send outbox + receive), then refresh the
   // mailbox so any downloaded messages appear. The button lives in the ribbon;
@@ -157,8 +284,8 @@ export function AppShell() {
     reply: () => { if (openMessage) void openReplyWindow(openMessage, 'reply').catch(() => {}); },
     replyAll: () => { if (openMessage) void openReplyWindow(openMessage, 'replyAll').catch(() => {}); },
     forward: () => { if (openMessage) void openReplyWindow(openMessage, 'forward').catch(() => {}); },
-    toggleSessionLog: () => setShowSessionLog((s) => !s),
     toggleStatusBar: () => setShowStatusBar((s) => !s),
+    toggleRadioPanel: () => setPinRadioPanel((s) => !s),
     selectFolder: (folder) => { setSelectedFolder(folder); setSelectedMessage(null); setSelectedConnection(null); },
     setScheme: (id) => { applyColorScheme(id); saveColorScheme(id); },
     openSettings: () => setSettingsOpen(true),
@@ -209,16 +336,59 @@ export function AppShell() {
       <TitleBar folderLabel={FOLDER_LABELS[selectedFolder]} />
       <MenuBar onAction={onMenuAction} />
       <ResizeHandles />
-      <DashboardRibbon
-        data={statusData}
-        onConnect={onConnect}
-        connecting={connecting}
-        onAbort={onAbort}
-        packet={packetUi}
+      <div className="ribbon-with-search">
+        <div className="search-zone" data-testid="search-zone">
+          <SearchBar
+            spec={search.spec}
+            activeSaved={search.activeSaved}
+            onSpecChange={search.setSpec}
+            onUnsave={async () => {
+              if (search.activeSaved) {
+                await saved.unsave(search.activeSaved.id);
+                // Codex adrev fix (find-messages P2): only detach the saved-search
+                // label; keep the current spec so the search results remain visible.
+                search.clearActiveSaved();
+              }
+            }}
+            onToggleDropdown={() => setDropdownOpen((o) => !o)}
+            dropdownOpen={dropdownOpen}
+          />
+          {dropdownOpen && (
+            <SearchDropdown
+              saved={saved.saved}
+              recent={saved.recent}
+              activeSavedId={search.activeSaved?.id ?? null}
+              onRunSaved={(s) => { search.setActiveSavedSearch(s); setDropdownOpen(false); }}
+              onRunRecent={(r) => { search.setSpec(r.spec); setDropdownOpen(false); }}
+              onPromoteRecent={async (r) => {
+                const name = window.prompt('Name for this saved search?', renderQuery(r.spec).slice(0, 24));
+                // Codex adrev fix (find-messages P2): use promote_recent so the
+                // recent entry is removed atomically — avoids duplicate in dropdown.
+                if (name) await saved.promoteRecent(name, r.spec);
+              }}
+              onUnsaveActive={async () => { if (search.activeSaved) await saved.unsave(search.activeSaved.id); }}
+              onManage={() => { setSavedSearchesOpen(true); setDropdownOpen(false); }}
+              onClose={() => setDropdownOpen(false)}
+            />
+          )}
+        </div>
+        <DashboardRibbon
+          data={statusData}
+          onConnect={onConnect}
+          connecting={connecting}
+          onAbort={onAbort}
+          packet={packetUi}
+        />
+      </div>
+
+      <ChipStrip
+        spec={search.spec}
+        onSpecChange={search.setSpec}
+        metaText={metaText}
       />
 
       <div
-        className={`panes${dockVisible ? ' panes--with-dock' : ''}`}
+        className={`panes${radioPanelMode !== null ? ' panes--with-dock' : ''}${radioPanelMode?.kind === 'ardop-hf' ? ' panes--with-legacy-dock' : ''}`}
         data-testid="shell-panes"
       >
         <FolderSidebar
@@ -231,10 +401,12 @@ export function AppShell() {
         />
         <MessageList
           folder={selectedFolder}
-          messages={messages}
+          messages={visibleMessages}
           selectedId={selectedMessage?.id ?? null}
           onSelect={onSelectMessage}
-          notConnected={notConnected}
+          notConnected={search.isActive ? false : notConnected}
+          matchHighlights={searchHighlights}
+          showFolderTag={searchIsCrossFolder}
         />
         {(() => {
           if (selectedConnection === null) {
@@ -261,14 +433,28 @@ export function AppShell() {
           // Built but unhandled — defensive stub
           return <StubPanel sessionType={sessionType} protocol={protocol} />;
         })()}
-        {dockVisible && <ArdopDock />}
+        {/* Spec P1: PlaceholderRadioPanel mounts here. P2-P4 swap in the
+            real per-mode components. The legacy ArdopDock continues to
+            mount BELOW until P4 removes it. */}
+        {radioPanelMode && (
+          <PlaceholderRadioPanel
+            mode={radioPanelMode}
+            onClose={() => {
+              setSelectedConnection(null);
+              setPinRadioPanel(false);
+            }}
+          />
+        )}
+        {radioPanelMode?.kind === 'ardop-hf' && <ArdopDock />}
       </div>
-
-      {showSessionLog && <SessionLog />}
 
       <StatusBar show={showStatusBar} unread={counts.inbox ?? 0} state={statusData.state} packet={packetUi} />
 
       <SettingsPanel open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+
+      {savedSearchesOpen && (
+        <SavedSearchesPanel onClose={() => setSavedSearchesOpen(false)} />
+      )}
     </div>
   );
 }

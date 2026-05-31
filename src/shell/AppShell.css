@@ -7,22 +7,27 @@
  *
  * tuxlink-ng3: the webview now renders its OWN chrome (custom HTML titlebar +
  * menu bar; native decorations are off). The webview renders, top to bottom:
- *   titlebar / menu bar / dashboard (ribbon) / panes[ sidebar | rows | reader ]
- *   / session-log / statusbar
+ *   titlebar / menu bar / dashboard (ribbon) / panes[ sidebar | rows | reader |
+ *   radio-panel | legacy-dock (ARDOP HF only, P4-removed) ] / statusbar
+ * (radio-panel-shell P1.6: the session-log strip was removed; the log moves
+ * into the radio panel as a per-mode section per spec §3.7 + §4.3.)
  */
 
 /* ============================================================================
- * Layout grid — titlebar (auto) | menu bar (auto) | dashboard (auto) |
- * panes (1fr) | session-log (auto) | statusbar (auto), full height.
- * NOTE (ng3): the FIRST THREE rows are the HTML chrome added in AppShell's JSX
- * (TitleBar, MenuBar) + the ribbon; `panes` MUST be the 1fr row. The row count
- * is tied to the in-flow child order in AppShell.tsx — ResizeHandles is
- * position:absolute so it does NOT consume a grid row. If you reorder the shell's
- * children, re-check which row gets 1fr.
+ * Layout grid — titlebar (auto) | menu bar (auto) | ribbon+search (auto) |
+ * chip-strip (auto) | panes (1fr) | statusbar (auto), full height. 6 rows
+ * total. (radio-panel-shell P1.6: the former 7th row — the session-log
+ * strip — was removed; the log moves into the radio panel as a per-mode
+ * section per spec §3.7 + §4.3.)
+ * NOTE (ng3): the FIRST TWO rows are the HTML chrome (TitleBar, MenuBar);
+ * row 3 is the combined ribbon-with-search wrapper; row 4 is the ChipStrip;
+ * `panes` is row 5 (the 1fr row). ResizeHandles is position:absolute so it
+ * does NOT consume a grid row. If you reorder the shell's children,
+ * re-check which row gets 1fr.
  * ========================================================================== */
 .layout-b {
   display: grid;
-  grid-template-rows: auto auto auto 1fr auto auto;
+  grid-template-rows: auto auto auto auto 1fr auto;
   height: 100vh;
   width: 100vw;
   overflow: hidden;
@@ -38,11 +43,48 @@
   overflow: hidden;
 }
 
-/* Modem (ARDOP HF) dock is mounted as the 4th column when the modem isn't
- * 'stopped' (tuxlink-4ek Task 4.3). The mailbox column shrinks 40px (380→340)
- * to give the dock 290px without stealing from the 1fr reading-pane. */
+/* The Radio Panel is 360 px wide (spec §3.2) and mounts as the 4th
+ * column whenever the panel is visible. The mailbox column shrinks
+ * 40 px (380→340) to give the panel its width without stealing from the
+ * 1fr reading-pane. During P1, ARDOP HF dual-mounts the legacy ArdopDock
+ * alongside it; that case needs a fifth 290 px column. P4 removes the
+ * dock entirely and the second class goes away. */
 .layout-b .panes--with-dock {
-  grid-template-columns: 200px 340px 1fr 290px;
+  grid-template-columns: 200px 340px 1fr 360px;
+}
+.layout-b .panes--with-dock.panes--with-legacy-dock {
+  grid-template-columns: 200px 340px 1fr 360px 290px;
+}
+
+/* ============================================================================
+ * Ribbon + search row wrapper — contains the search-zone (left) and the
+ * DashboardRibbon (right). The DashboardRibbon's .dashboard uses flex and
+ * margin-left: auto on .dash-connect to pin the Connect button to the right.
+ * ========================================================================== */
+.layout-b .ribbon-with-search {
+  display: flex;
+  align-items: stretch;
+  background: linear-gradient(180deg, var(--surface-2) 0%, var(--surface) 100%);
+  border-bottom: 1px solid var(--border);
+}
+
+/* Search zone — left side of the ribbon row; contains SearchBar + dropdown. */
+.layout-b .search-zone {
+  position: relative;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+}
+
+/* The DashboardRibbon inside the ribbon-with-search wrapper fills remaining
+ * width and already has its own flex + border-bottom via .dashboard. Override
+ * the duplicate border-bottom since the wrapper provides it. */
+.layout-b .ribbon-with-search .dashboard {
+  flex: 1 1 auto;
+  border-bottom: none;
+  background: none;
+  min-width: 0;
 }
 
 /* ============================================================================
@@ -493,109 +535,6 @@
   margin-left: auto;
   font-variant-numeric: tabular-nums;
   flex: 0 0 auto;
-}
-
-/* ============================================================================
- * Session log (mock .session-log.human) — bottom strip, human-shaped default.
- * ========================================================================== */
-.layout-b .session-log {
-  background: #0a0f14;
-  border-top: 1px solid var(--border);
-  padding: 0;
-  font-size: 11.5px;
-  font-family: var(--mono);
-  max-height: 150px;
-  min-height: 0;
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-}
-.layout-b .session-log .log-header {
-  display: flex;
-  align-items: center;
-  background: var(--surface);
-  border-bottom: 1px solid var(--border);
-  padding: 6px 14px;
-  font-family: var(--sans);
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--text-dim);
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  height: 26px;
-  flex: 0 0 auto;
-}
-.layout-b .session-log .log-header .live-dot {
-  width: 6px;
-  height: 6px;
-  background: var(--success);
-  border-radius: 50%;
-  margin-right: 8px;
-  box-shadow: 0 0 4px var(--success);
-}
-.layout-b .session-log .log-header .log-toggle {
-  background: var(--surface-2);
-  color: var(--text-dim);
-  border: 1px solid var(--border-strong);
-  padding: 2px 8px;
-  font-size: 10px;
-  border-radius: 3px;
-  text-transform: none;
-  letter-spacing: 0;
-  font-weight: 500;
-  cursor: pointer;
-}
-.layout-b .session-log .log-header .log-toggle:first-of-type {
-  margin-left: auto;
-}
-.layout-b .session-log .log-header .log-toggle + .log-toggle {
-  margin-left: 6px;
-}
-.layout-b .session-log .log-toggle.active {
-  color: var(--accent-2);
-  background: var(--accent-soft);
-  border-color: rgba(245, 159, 60, 0.3);
-}
-.layout-b .session-log .log-lines {
-  flex: 1;
-  overflow: auto;
-  padding: 8px 14px;
-  color: var(--text-dim);
-  line-height: 1.7;
-}
-.layout-b .session-log .log-lines .ts {
-  color: var(--text-faint);
-}
-.layout-b .session-log .log-lines .info {
-  color: var(--info);
-}
-.layout-b .session-log .log-lines .send {
-  color: var(--accent-2);
-}
-.layout-b .session-log .log-lines .recv {
-  color: var(--success);
-}
-.layout-b .session-log .log-lines .err {
-  color: var(--error);
-}
-.layout-b .session-log.human .log-lines {
-  font-family: var(--sans);
-  font-size: 12.5px;
-  color: var(--text);
-}
-.layout-b .session-log.human .log-lines .step {
-  display: flex;
-  gap: 12px;
-  padding: 1px 0;
-}
-.layout-b .session-log.human .log-lines .step .step-ts {
-  color: var(--text-faint);
-  font-family: var(--mono);
-  font-size: 11px;
-  min-width: 60px;
-}
-.layout-b .session-log.human .log-lines .step .ok {
-  color: var(--success);
 }
 
 /* ============================================================================

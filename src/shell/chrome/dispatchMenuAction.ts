@@ -9,8 +9,10 @@ export interface MenuHandlers {
   reply: () => void;
   replyAll: () => void;
   forward: () => void;
-  toggleSessionLog: () => void;
+  // toggleSessionLog removed in radio-panel-shell P1.6 — the bottom session-log
+  // strip is gone; the log moves into the radio panel as a per-mode section.
   toggleStatusBar: () => void;
+  toggleRadioPanel: () => void;
   selectFolder: (folder: MailboxFolder) => void;
   setScheme: (id: ColorScheme) => void;
   /** Open the inline Settings panel (GPS state + position precision), tuxlink-39b. */
@@ -32,8 +34,8 @@ export function dispatchMenuAction(id: MenuActionId, h: MenuHandlers): void {
     case 'menu:message:reply': h.reply(); return;
     case 'menu:message:reply_all': h.replyAll(); return;
     case 'menu:message:forward': h.forward(); return;
-    case 'menu:view:session_log': h.toggleSessionLog(); return;
     case 'menu:view:status_bar': h.toggleStatusBar(); return;
+    case 'menu:view:radio_panel': h.toggleRadioPanel(); return;
     // tuxlink-39b: the consolidated GPS & Privacy settings item opens the inline
     // Settings panel (previously a cluster of dead no-op stubs found in the
     // post-merge smoke of #113).
