@@ -43,11 +43,22 @@ import './Compose.css';
 // Types
 // ============================================================================
 
+/** Attachment transferred over the Tauri IPC layer. `bytes` is base64-encoded
+ * by serde-json's default Vec<u8> serialization on the Rust side. The
+ * file-picker UI (HTML Forms, PR #151) is not yet built; pass [] until then. */
+interface OutboundAttachmentDto {
+  filename: string;
+  bytes: number[];
+}
+
 interface OutboundDraftDto {
   to: string[];
   cc: string[];
   subject: string;
   body: string;
+  /** P2.1 bridge: attachments threaded through IPC. Pass [] until the
+   *  attachment-picker UI is built (HTML Forms PR #151). */
+  attachments: OutboundAttachmentDto[];
 }
 
 type SendState = 'idle' | 'sending' | 'success' | 'error';
@@ -184,6 +195,9 @@ export function Compose({ draftId }: ComposeProps) {
       cc: [], // Cc disabled in v0.1 — Pat drops it; never silently pass user data (spec §3.2)
       subject,
       body,
+      // P2.1 bridge: attachment-picker not yet built (HTML Forms PR #151); pass []
+      // to preserve current behavior while the IPC bridge is wired up.
+      attachments: [],
     };
 
     try {

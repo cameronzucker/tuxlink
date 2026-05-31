@@ -607,6 +607,21 @@ pub async fn message_read(
 // `invoke_handler` registration lands in the orchestrator integration commit
 // (§4.3); this file is append-only for command fns.
 
+/// Attachment DTO for the compose window IPC.
+///
+/// `bytes` is serialized as a base64-encoded string by serde-json when crossing
+/// the Tauri IPC boundary — that is Tauri / serde-json's default `Vec<u8>`
+/// representation. The receiver (Rust) deserializes it back to raw bytes.
+///
+/// NOTE: large attachments over the IPC layer are intentionally not optimized for
+/// v0.0.1; the file-picker UI (HTML Forms, PR #151) is not built yet. This DTO
+/// establishes the bridge contract. Callers that have no attachments pass `[]`.
+#[derive(Debug, Deserialize)]
+pub struct OutboundAttachmentDto {
+    pub filename: String,
+    pub bytes: Vec<u8>,
+}
+
 /// Inbound DTO from the compose window frontend. Mirrors `OutboundDraftDto`
 /// in `src/compose/Compose.tsx`.
 ///
@@ -614,12 +629,22 @@ pub async fn message_read(
 /// Cc field with a v0.1 tooltip (spec §5.4 disposition: "disable with tooltip
 /// rather than silently drop"). The `cc` field is present in this DTO for API
 /// completeness; native B2F outbound support for Cc is a v0.1 TODO.
+///
+/// **`attachments` (P2.1 / Codex post-impl review):** Previously hardcoded to
+/// `vec![]` in the command body, attachments are now an explicit DTO field so
+/// the compose window can thread files through the IPC layer. The frontend
+/// passes `[]` until the attachment-picker UI (HTML Forms, PR #151) is built;
+/// the backend plumbing (T4.1 + compose_message_with_files) already handles them.
 #[derive(Debug, Deserialize)]
 pub struct OutboundDraftDto {
     pub to: Vec<String>,
     pub cc: Vec<String>,
     pub subject: String,
     pub body: String,
+    /// Attachment files. Tauri IPC encodes `Vec<u8>` fields as base64 by default.
+    /// Frontend passes `[]` until the file-picker is built (HTML Forms PR #151).
+    #[serde(default)]
+    pub attachments: Vec<OutboundAttachmentDto>,
 }
 
 /// Send an outbound message queued via the compose window.
@@ -643,13 +668,25 @@ pub async fn message_send(
     // Stamp the send timestamp here (the UI does not supply it — spec §3.2).
     let date = chrono::Utc::now().to_rfc3339();
 
+    // P2.1 (Codex post-impl review): map DTO attachments into OutboundMessage.
+    // The backend (T4.1 + compose_message_with_files) already handles attachments;
+    // this was the only gap — the IPC layer was hardcoded to vec![]. Now threaded.
+    let attachments: Vec<crate::winlink_backend::OutboundAttachment> = draft
+        .attachments
+        .into_iter()
+        .map(|a| crate::winlink_backend::OutboundAttachment {
+            filename: a.filename,
+            bytes: a.bytes,
+        })
+        .collect();
+
     let msg = OutboundMessage {
         to: draft.to,
         cc: draft.cc,  // forwarded as-is; native B2F Cc support is a v0.1 TODO (Codex F5)
         subject: draft.subject,
         body: draft.body,
         date,
-        attachments: vec![],
+        attachments,
     };
 
     // send_message returns MessageId directly. Map to String for IPC.
@@ -2618,5 +2655,87 @@ mod tests {
             dto.broadcast_grid, "DM33",
             "gps_state=Off: broadcast_grid must be config grid, NOT the GPS fix"
         );
+    }
+
+    // ========================================================================
+    // P2.1 (Codex post-impl review) — OutboundDraftDto attachment bridge
+    // ========================================================================
+    //
+    // Prior to this fix, `message_send` hardcoded `attachments: vec![]`,
+    // making it impossible for the compose window to send attachments even
+    // though the backend (T4.1 + compose_message_with_files) had the plumbing.
+    // These tests verify the DTO deserialization round-trip and the
+    // DTO→OutboundAttachment mapping.
+
+    /// `OutboundDraftDto` with no attachments field deserializes correctly via
+    /// `#[serde(default)]` — existing callers that omit the field are not broken.
+    #[test]
+    fn outbound_draft_dto_defaults_attachments_to_empty_vec() {
+        let json = r#"{"to":["W1AW"],"cc":[],"subject":"Hi","body":"Hello"}"#;
+        let dto: OutboundDraftDto = serde_json::from_str(json)
+            .expect("dto without attachments field should deserialize");
+        assert!(dto.attachments.is_empty(), "missing 'attachments' must default to []");
+    }
+
+    /// `OutboundDraftDto` with an explicit attachments array deserializes correctly.
+    #[test]
+    fn outbound_draft_dto_deserializes_attachments() {
+        // Tauri IPC encodes Vec<u8> as a JSON array of integers.
+        let json = r#"{
+            "to": ["W1AW"],
+            "cc": [],
+            "subject": "With attachment",
+            "body": "See attached.",
+            "attachments": [
+                {"filename": "report.txt", "bytes": [72, 101, 108, 108, 111]}
+            ]
+        }"#;
+        let dto: OutboundDraftDto = serde_json::from_str(json)
+            .expect("dto with attachments should deserialize");
+        assert_eq!(dto.attachments.len(), 1);
+        assert_eq!(dto.attachments[0].filename, "report.txt");
+        assert_eq!(dto.attachments[0].bytes, b"Hello");
+    }
+
+    /// The mapping from `OutboundAttachmentDto` to `OutboundAttachment` preserves
+    /// filename and bytes without truncation or transformation.
+    #[test]
+    fn outbound_attachment_dto_maps_to_backend_type() {
+        let dto = OutboundAttachmentDto {
+            filename: "ics213.pdf".to_string(),
+            bytes: vec![0x50, 0x44, 0x46],
+        };
+        let att = crate::winlink_backend::OutboundAttachment {
+            filename: dto.filename.clone(),
+            bytes: dto.bytes.clone(),
+        };
+        assert_eq!(att.filename, "ics213.pdf");
+        assert_eq!(att.bytes, [0x50, 0x44, 0x46]);
+    }
+
+    /// Multiple attachments in a DTO all map through correctly.
+    #[test]
+    fn outbound_draft_dto_maps_multiple_attachments() {
+        let dto = OutboundDraftDto {
+            to: vec!["W1AW".to_string()],
+            cc: vec![],
+            subject: "Multi".to_string(),
+            body: "Two files.".to_string(),
+            attachments: vec![
+                OutboundAttachmentDto { filename: "a.txt".into(), bytes: vec![1, 2] },
+                OutboundAttachmentDto { filename: "b.bin".into(), bytes: vec![3, 4, 5] },
+            ],
+        };
+        let mapped: Vec<crate::winlink_backend::OutboundAttachment> = dto
+            .attachments
+            .into_iter()
+            .map(|a| crate::winlink_backend::OutboundAttachment {
+                filename: a.filename,
+                bytes: a.bytes,
+            })
+            .collect();
+        assert_eq!(mapped.len(), 2);
+        assert_eq!(mapped[0].filename, "a.txt");
+        assert_eq!(mapped[1].bytes, [3, 4, 5]);
     }
 }

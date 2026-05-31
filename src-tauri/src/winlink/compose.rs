@@ -27,6 +27,13 @@ pub enum ComposeError {
          (Q-encoding would be lossy): {filename:?}"
     )]
     FilenameNotLatin1Encodable { filename: String },
+    /// A filename contained CR, LF, or NUL — characters that would inject B2F
+    /// protocol headers when serialized into `File: <size> <name>` lines.
+    #[error(
+        "filename contains a control character that would break B2F framing \
+         (\\r, \\n, or \\0): {filename:?}"
+    )]
+    FilenameContainsControlChar { filename: String },
 }
 
 /// Build a Private text message ready to send.
@@ -92,6 +99,15 @@ pub fn compose_message_with_files(
         }
         if !att.filename.chars().all(|c| (c as u32) <= 0xff) {
             return Err(ComposeError::FilenameNotLatin1Encodable {
+                filename: att.filename.clone(),
+            });
+        }
+        // P2.2 (Codex post-impl review): CR, LF, and NUL are valid Latin-1 code
+        // points, so the check above passes them — but they would inject B2F header
+        // framing when the filename lands in a `File: <size> <name>` line. Reject
+        // them explicitly before any serialization can happen.
+        if att.filename.contains(['\r', '\n', '\0']) {
+            return Err(ComposeError::FilenameContainsControlChar {
                 filename: att.filename.clone(),
             });
         }
@@ -344,5 +360,72 @@ mod tests {
         assert_eq!(s.matches("\r\nTo: ").count(), 2, "two To: headers expected; got: {s}");
         assert_eq!(s.matches("\r\nCc: ").count(), 1, "one Cc: header expected; got: {s}");
         assert_eq!(s.matches("\r\nFile: ").count(), 2, "two File: headers expected; got: {s}");
+    }
+
+    // P2.2 (Codex post-impl review): CR, LF, NUL in filenames must be rejected
+    // before serialization to prevent B2F header injection via `File: <size> <name>`.
+
+    #[test]
+    fn compose_rejects_filename_with_carriage_return() {
+        let att = OutboundAttachment {
+            filename: "inject\rheader.txt".into(),
+            bytes: vec![1],
+        };
+        let err = compose_message_with_files(
+            "N7CPZ", &["W1AW"], &[], "Hi", "body", &[att], 1_716_200_000,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(err, ComposeError::FilenameContainsControlChar { .. }),
+            "expected FilenameContainsControlChar for \\r; got: {err:?}"
+        );
+    }
+
+    #[test]
+    fn compose_rejects_filename_with_newline() {
+        let att = OutboundAttachment {
+            filename: "inject\nheader.txt".into(),
+            bytes: vec![1],
+        };
+        let err = compose_message_with_files(
+            "N7CPZ", &["W1AW"], &[], "Hi", "body", &[att], 1_716_200_000,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(err, ComposeError::FilenameContainsControlChar { .. }),
+            "expected FilenameContainsControlChar for \\n; got: {err:?}"
+        );
+    }
+
+    #[test]
+    fn compose_rejects_filename_with_nul() {
+        let att = OutboundAttachment {
+            filename: "inject\0header.txt".into(),
+            bytes: vec![1],
+        };
+        let err = compose_message_with_files(
+            "N7CPZ", &["W1AW"], &[], "Hi", "body", &[att], 1_716_200_000,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(err, ComposeError::FilenameContainsControlChar { .. }),
+            "expected FilenameContainsControlChar for \\0; got: {err:?}"
+        );
+    }
+
+    #[test]
+    fn compose_accepts_filename_without_control_chars() {
+        // Sanity: a normal filename must still pass validation unimpeded.
+        let att = OutboundAttachment {
+            filename: "valid-report_2026.txt".into(),
+            bytes: b"data".to_vec(),
+        };
+        assert!(
+            compose_message_with_files(
+                "N7CPZ", &["W1AW"], &[], "Hi", "body", &[att], 1_716_200_000,
+            )
+            .is_ok(),
+            "normal filename should pass P2.2 validation"
+        );
     }
 }

@@ -359,7 +359,7 @@ pub async fn wizard_persist_offline(
 /// disconnects. No messages are queued or sent. The Pat process is not involved.
 ///
 /// Caller is responsible for holding the WizardMutex before calling this.
-pub async fn verify_cms_connection_impl(app: tauri::AppHandle) -> Result<(), WizardError> {
+pub async fn verify_cms_connection_impl(_app: tauri::AppHandle) -> Result<(), WizardError> {
     // In cfg!(test) or CI, short-circuit with Ok(()) so unit tests never hit
     // the network. The live path requires a real CMS reachable from the machine.
     if cfg!(test) || std::env::var_os("CI").is_some() {
@@ -371,17 +371,20 @@ pub async fn verify_cms_connection_impl(app: tauri::AppHandle) -> Result<(), Wiz
         detail: format!("cannot read config for CMS verify: {e}"),
     })?;
 
-    // Resolve the mailbox root the same way bootstrap.rs does.
-    let mbox_dir = app
-        .path()
-        .app_data_dir()
-        .map(|d| d.join("native-mbox"))
-        .map_err(|e| WizardError::Other {
-            detail: format!("cannot resolve app data dir for CMS verify: {e}"),
-        })?;
+    // P1.2 (Codex post-impl review): use an isolated tempdir as the mailbox root,
+    // NOT the operator's real app-data mailbox. The prior implementation used the
+    // real native-mbox directory, which meant that if any messages were queued in
+    // the Outbox, `NativeBackend::connect` would enumerate and transmit them when
+    // "Verify CMS Connection" was clicked. An empty tempdir Outbox guarantees the
+    // B2F exchange terminates immediately after the login handshake (FF / no offers),
+    // fulfilling the "handshake only, no transmission" contract documented in the
+    // RADIO-1 note above.
+    let probe_mbox = tempfile::tempdir().map_err(|e| WizardError::Other {
+        detail: format!("cannot create probe mailbox tempdir: {e}"),
+    })?;
 
-    // Construct an ephemeral NativeBackend (no Pat, no transmission).
-    let backend = crate::winlink_backend::NativeBackend::new(config.clone(), mbox_dir);
+    // Construct an ephemeral NativeBackend over the empty tempdir mailbox.
+    let backend = crate::winlink_backend::NativeBackend::new(config.clone(), probe_mbox.path());
 
     // Connect using the operator's configured transport; disconnect immediately.
     // The connection handshake verifies CMS reachability + auth without

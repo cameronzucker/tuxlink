@@ -994,18 +994,22 @@ fn native_packet_exchange<S: std::io::Read + std::io::Write + Send + 'static>(
     )
     .map_err(|e| BackendError::TransportFailed { reason: format!("{e:?}"), source: None })?;
 
-    if !result.rejected.is_empty() {
-        return Err(BackendError::MessageRejected(format!(
-            "CMS rejected mid(s): {}",
-            result.rejected.join(", ")
-        )));
-    }
-
+    // P1.4 (Codex post-impl review): file accepted messages FIRST, then surface
+    // any rejection error. The prior ordering returned early on rejections, leaving
+    // successfully-sent MIDs in the Outbox where they would be re-offered on the
+    // next connection (duplicate send). Moving them to Sent is idempotent even
+    // when `result.sent` is empty (all-rejected batch); the error still surfaces.
     for message in &result.received {
         mailbox.store(MailboxFolder::Inbox, &message.to_bytes())?;
     }
     for mid in &result.sent {
         mailbox.move_to(MailboxFolder::Outbox, MailboxFolder::Sent, &MessageId(mid.clone()))?;
+    }
+    if !result.rejected.is_empty() {
+        return Err(BackendError::MessageRejected(format!(
+            "CMS rejected mid(s): {}",
+            result.rejected.join(", ")
+        )));
     }
     // `shared` drops here → stream drops → DISC fires (Ax25Stream::drop).
     Ok(())
@@ -1028,10 +1032,6 @@ fn native_packet_connect(
     let params = config.packet.params.clone().into_params();
     let locator = cms_locator(config);
     let base = resolved.base_mycall.clone();
-    // Password lookup for the gateway dial (challenge is conditional; peer ignores it).
-    let password = crate::winlink::credentials::read_password(&base)
-        .ok()
-        .filter(|p| !p.is_empty());
 
     progress("Opening KISS link…");
     // Open the KISS link with an abort handle (tuxlink-9z2 pattern, mirroring
@@ -1085,6 +1085,16 @@ fn native_packet_connect(
                 reason: format!("AX.25 connect: {e}"),
                 source: None,
             })?;
+            // P1.3 (Codex post-impl review): read_password is deferred until AFTER
+            // the KISS link is established. The prior placement (before connect_link)
+            // caused the OS-keyring migration to run even when the link failed — e.g.
+            // when unit tests intentionally use a closed loopback port, the keyring
+            // write still fired. Deferring until link-up means a failed connect_arq
+            // never touches the operator's keyring, and Listen arming (password: None)
+            // never triggers it at all. Option (a) per the Codex review.
+            let password = crate::winlink::credentials::read_password(&base)
+                .ok()
+                .filter(|p| !p.is_empty());
             native_packet_exchange(
                 BlockingB2fStream(stream),
                 PacketConnectCtx {
@@ -1111,6 +1121,8 @@ fn native_packet_connect(
                 source: None,
             })?;
             progress(&format!("Answered {}.", peer.call));
+            // Listen (Answer role) does not need a password — peers do not challenge.
+            // password: None is intentional; no read_password call here.
             native_packet_exchange(
                 BlockingB2fStream(stream),
                 PacketConnectCtx {
@@ -1255,9 +1267,6 @@ fn native_connect(
     // control. GPS grids go on air only when gps_state == BroadcastAtPrecision;
     // Off/LocalUiOnly fall back to the config grid. Manual broadcasts regardless.
     let locator = crate::position::effective_broadcast_locator(config, position);
-    let password = crate::winlink::credentials::read_password(&callsign)
-        .ok()
-        .filter(|p| !p.is_empty());
 
     // Dev overrides (tuxlink-gqo) mirror `bin/native_cms_probe`: TUXLINK_CMS_PLAINTEXT
     // forces plaintext (cms-z exposes no 8773 TLS), TUXLINK_CMS_PORT overrides the
@@ -1283,6 +1292,17 @@ fn native_connect(
             }
         }
     }
+
+    // P1.3 (Codex post-impl review): defer read_password until after all config
+    // validation and outbox-building steps have succeeded. Placing it here — just
+    // before ExchangeConfig is built — ensures the OS-keyring migration only runs
+    // when we are actually about to open a socket. Tests that fail in the preceding
+    // steps (no callsign, mailbox errors) never touch the keyring. Option (a) per
+    // the Codex review; the telnet path builds ExchangeConfig inline so "after link
+    // open" translates to "after outbox build but before connect_and_exchange".
+    let password = crate::winlink::credentials::read_password(&callsign)
+        .ok()
+        .filter(|p| !p.is_empty());
 
     let exchange_config = session::ExchangeConfig {
         mycall: callsign,
@@ -1339,19 +1359,22 @@ fn native_connect(
         source: None,
     })?;
 
-    if !result.rejected.is_empty() {
-        return Err(BackendError::MessageRejected(format!(
-            "CMS rejected mid(s): {}",
-            result.rejected.join(", ")
-        )));
-    }
-
-    // File received messages into the inbox; move delivered ones to sent.
+    // P1.4 (Codex post-impl review): file accepted messages FIRST, then surface
+    // any rejection error. The prior ordering returned early on rejections, leaving
+    // successfully-sent MIDs in the Outbox where they would be re-offered on the
+    // next connection (duplicate send). Moving them to Sent is idempotent even
+    // when `result.sent` is empty (all-rejected batch); the error still surfaces.
     for message in &result.received {
         mailbox.store(MailboxFolder::Inbox, &message.to_bytes())?;
     }
     for mid in &result.sent {
         mailbox.move_to(MailboxFolder::Outbox, MailboxFolder::Sent, &MessageId(mid.clone()))?;
+    }
+    if !result.rejected.is_empty() {
+        return Err(BackendError::MessageRejected(format!(
+            "CMS rejected mid(s): {}",
+            result.rejected.join(", ")
+        )));
     }
     Ok(())
 }
@@ -2228,6 +2251,103 @@ mod native_read_state_tests {
             }
             other => panic!("expected BackendError::MessageRejected, got {other:?}"),
         }
+    }
+
+    /// P1.4 (Codex post-impl review): in a mixed FS batch where one MID is
+    /// accepted (FS Y) and another is rejected (FS N), the accepted MID must be
+    /// moved to the Sent folder BEFORE `BackendError::MessageRejected` is returned.
+    /// Without the fix, the early-return left accepted messages in the Outbox and
+    /// they would be re-offered on the next connection (duplicate send).
+    ///
+    /// `fs::read_dir` enumeration order is not guaranteed, so we cannot assume
+    /// which MID lands in `sent` vs `rejected`. Instead, the test asserts:
+    ///   - exactly one MID ends up in `result.rejected` (the MessageRejected error)
+    ///   - exactly one MID ends up in `Sent`
+    ///   - they are different MIDs
+    ///   - neither the sent MID nor the rejected MID remains in `Outbox`
+    #[test]
+    fn mixed_fs_batch_moves_accepted_mid_to_sent_before_returning_rejection_error() {
+        use crate::winlink::message::Message as WMessage;
+
+        let dir = tempdir().unwrap();
+        let mailbox = Mailbox::new(dir.path());
+
+        // Two outbox messages. FS YN accepts whichever is enumerated first and
+        // rejects whichever is enumerated second. We don't control the order.
+        let mut msg1 = WMessage::new();
+        msg1.set_header("Mid", "MIXED00000A");
+        msg1.set_header("Subject", "Msg A");
+        msg1.set_body(b"Body A.\r\n".to_vec());
+        mailbox.store(MailboxFolder::Outbox, &msg1.to_bytes()).expect("store msg A");
+
+        let mut msg2 = WMessage::new();
+        msg2.set_header("Mid", "MIXED00000B");
+        msg2.set_header("Subject", "Msg B");
+        msg2.set_body(b"Body B.\r\n".to_vec());
+        mailbox.store(MailboxFolder::Outbox, &msg2.to_bytes()).expect("store msg B");
+
+        // Scripted gateway (Dial role): `FS YN` — first proposal accepted, second rejected.
+        // Filesystem enumeration order determines which MID is "first"; both orderings
+        // are valid inputs for this test — the property we check holds regardless.
+        let mut server = Vec::new();
+        server.extend_from_slice(b"[WL2K-5.0-B2FHM$]\rCMS>\r");
+        server.extend_from_slice(b"FS YN\r");
+        server.extend_from_slice(b"FF\r");
+
+        let outbound_spy = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let stream = FakeAx25Stream {
+            inbound: std::io::Cursor::new(server),
+            outbound: outbound_spy.clone(),
+        };
+
+        let result = native_packet_exchange(
+            stream,
+            PacketConnectCtx {
+                base_mycall: "N7CPZ",
+                targetcall: "W7AUX",
+                password: None,
+                role: ExchangeRole::Dial,
+                locator: "CN87",
+            },
+            &mailbox,
+            &|_| {},
+            &|_| {},
+        );
+
+        // Must return Err(MessageRejected) containing exactly one MID.
+        let rejected_mid = match result {
+            Err(BackendError::MessageRejected(ref msg)) => {
+                // Extract the one rejected MID from the error string.
+                let candidates = ["MIXED00000A", "MIXED00000B"];
+                let found: Vec<&str> = candidates.iter().copied()
+                    .filter(|m| msg.contains(m))
+                    .collect();
+                assert_eq!(found.len(), 1,
+                    "MessageRejected must name exactly one of our two MIDs; got: {msg:?}");
+                found[0].to_string()
+            }
+            other => panic!("expected BackendError::MessageRejected, got {other:?}"),
+        };
+
+        let accepted_mid = if rejected_mid == "MIXED00000A" { "MIXED00000B" } else { "MIXED00000A" };
+
+        // The accepted MID must be in Sent — NOT left in Outbox.
+        let sent = mailbox.list(MailboxFolder::Sent).unwrap();
+        assert!(
+            sent.iter().any(|m| m.id.0 == accepted_mid),
+            "accepted MID ({accepted_mid}) must be in Sent folder; sent: {sent:?}"
+        );
+        let outbox = mailbox.list(MailboxFolder::Outbox).unwrap();
+        assert!(
+            !outbox.iter().any(|m| m.id.0 == accepted_mid),
+            "accepted MID ({accepted_mid}) must NOT remain in Outbox; outbox: {outbox:?}"
+        );
+
+        // The rejected MID must NOT be in Sent.
+        assert!(
+            !sent.iter().any(|m| m.id.0 == rejected_mid),
+            "rejected MID ({rejected_mid}) must NOT be in Sent folder; sent: {sent:?}"
+        );
     }
 
     // =========================================================================
