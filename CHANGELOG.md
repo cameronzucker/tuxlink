@@ -4,6 +4,28 @@ All notable changes to Tuxlink are documented here.
 
 This project adheres to [Semantic Versioning](https://semver.org) with project-specific rules described in [VERSIONING.md](VERSIONING.md). Entries from `v0.0.2` onward are generated automatically by [`release-please`](https://github.com/googleapis/release-please) from [Conventional Commits](https://www.conventionalcommits.org).
 
+## [0.8.0](https://github.com/cameronzucker/tuxlink/compare/v0.7.1...v0.8.0) (2026-05-31)
+
+
+### Features
+
+* **radio:** define RadioPanel types (radio-panel-shell P1.1) ([da21647](https://github.com/cameronzucker/tuxlink/commit/da216472156ababd7143fc49fc6f10babeaaac6d))
+* **radio:** placeholder mode panel (radio-panel-shell P1.4) ([1448cfa](https://github.com/cameronzucker/tuxlink/commit/1448cfa8bc3b992e51d141799a2c180eee9a2044))
+* **radio:** RadioPanel shell component (radio-panel-shell P1.3) ([6be7086](https://github.com/cameronzucker/tuxlink/commit/6be708682701c21b638526c4482de631241b330b))
+* **radio:** visibility hook computes panel mount + mode (radio-panel-shell P1.2) ([c4ec053](https://github.com/cameronzucker/tuxlink/commit/c4ec053da699f63387878b6ddd211c6e2d34552b))
+* **shell:** mount RadioPanel placeholder via visibility hook (radio-panel-shell P1.5) ([fa34a40](https://github.com/cameronzucker/tuxlink/commit/fa34a400863552c7305d2a880b398f9c0475f350))
+
+
+### Bug Fixes
+
+* **radio:** two Codex P1 findings on radio-panel P1 chrome ([2da4adb](https://github.com/cameronzucker/tuxlink/commit/2da4adbd36675c959f1cafe2a8c4a59edf268b55))
+
+
+### Refactors
+
+* **shell:** remove bottom session-log strip (radio-panel-shell P1.6) ([6d8858d](https://github.com/cameronzucker/tuxlink/commit/6d8858d495b27be4c7a292a274eabf1a12fabade))
+* **shell:** rename View → Toggle Radio Panel (radio-panel-shell P1.7) ([364d65f](https://github.com/cameronzucker/tuxlink/commit/364d65f0d02fcde9d6a8f08d5ffdca5d3b2e07ef))
+
 ## [0.7.1](https://github.com/cameronzucker/tuxlink/compare/v0.7.0...v0.7.1) (2026-05-31)
 
 
