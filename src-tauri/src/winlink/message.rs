@@ -20,6 +20,7 @@ pub struct Message {
     /// wire form is always `Mid` first, then the rest sorted alphabetically.
     headers: Vec<(String, String)>,
     body: Vec<u8>,
+    attachments: Vec<crate::winlink_backend::OutboundAttachment>,
 }
 
 impl Default for Message {
@@ -31,7 +32,21 @@ impl Default for Message {
 impl Message {
     /// A new, empty message.
     pub fn new() -> Self {
-        Self { headers: Vec::new(), body: Vec::new() }
+        Self { headers: Vec::new(), body: Vec::new(), attachments: Vec::new() }
+    }
+
+    /// The attachments on this message (empty by default).
+    pub fn attachments(&self) -> &[crate::winlink_backend::OutboundAttachment] {
+        &self.attachments
+    }
+
+    /// Set the attachments. `pub(crate)` — only `winlink::compose` should populate
+    /// this; external callers go through compose which validates filenames and ordering.
+    pub(crate) fn set_attachments(
+        &mut self,
+        files: Vec<crate::winlink_backend::OutboundAttachment>,
+    ) {
+        self.attachments = files;
     }
 
     /// Set a header, replacing any existing value for the same key
@@ -188,6 +203,12 @@ pub enum ParseError {
 mod tests {
     use super::*;
     use crate::winlink::{lzhuf, transfer};
+
+    #[test]
+    fn message_carries_attachments_field() {
+        let msg = Message::new();
+        assert!(msg.attachments().is_empty());
+    }
 
     #[test]
     fn builds_a_proposal_and_compressed_body_from_a_message() {

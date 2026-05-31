@@ -107,7 +107,7 @@ pub struct MessageBody {
 }
 
 /// Attachment carried in an outbound message. Spec §6.2.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OutboundAttachment {
     pub filename: String,
     pub bytes: Vec<u8>,
