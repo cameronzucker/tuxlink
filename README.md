@@ -38,8 +38,8 @@ on it for live emergency traffic.
 
 [Winlink](https://winlink.org/) is the de-facto amateur-radio email system used by
 emergency-communications teams, CERT organizations, the Red Cross, and offshore cruisers.
-On Linux today the practical options are a proprietary Windows client under WINE, or
-Pat — a capable library with a web UI, not a desktop application.
+On Linux today the practical option is a proprietary Windows client under WINE; there
+is no full native desktop Winlink application.
 
 Tuxlink is a proper native desktop Winlink client for Linux. The first-run experience
 needs no README and no YouTube tutorial, and the Winlink CMS password never touches a
@@ -140,8 +140,7 @@ operates under.
 
 See **[docs/install.md](docs/install.md)** for the full install and first-run guide.
 
-**Build from source** is the path today — a prebuilt AppImage via CI is forthcoming. The
-runtime requires a secret-service-compatible keyring daemon on Linux; see
+**Build from source** is the path today — a prebuilt AppImage via CI is forthcoming. No Go toolchain required; Rust only. The runtime requires a secret-service-compatible keyring daemon on Linux; see
 [docs/development.md — Runtime prerequisites for end-users](docs/development.md#runtime-prerequisites-for-end-users).
 
 **System dependency:** WebKitGTK 4.1 is required. Distros shipping only WebKitGTK 4.0

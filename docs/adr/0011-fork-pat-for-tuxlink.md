@@ -1,7 +1,7 @@
 # 11. Fork Pat as `tuxlink-pat`; refactor cred-handling first; refactor other limits as discovered
 
 Date: 2026-05-18
-Status: Accepted (amends [ADR 0003](0003-no-sqlite-pat-owns-mailbox.md) §"Pat is the authoritative source of all mailbox state"; the substance of ADR 0003 — Pat owns the mailbox, no SQLite in tuxlink, tuxlink wraps Pat's HTTP API — stays accepted, but the dependency target shifts from upstream `la5nta/pat` to a tuxlink-owned fork)
+Status: Accepted (amends [ADR 0003](0003-no-sqlite-pat-owns-mailbox.md) §"Pat is the authoritative source of all mailbox state"; the substance of ADR 0003 — Pat owns the mailbox, no SQLite in tuxlink, tuxlink wraps Pat's HTTP API — stays accepted, but the dependency target shifts from upstream `la5nta/pat` to a tuxlink-owned fork; **superseded by [ADR 0016](0016-native-b2f-outbound-with-attachments.md) as of 2026-05-30** — Pat is completely removed; native backend is the sole WinlinkBackend impl; the keyring refactor this ADR motivated is preserved in the native client.)
 Deciders: cameronzucker, oak-fjord-swallow (drafting agent)
 
 ## Context

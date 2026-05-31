@@ -15,23 +15,19 @@ release pipeline lands (tracked separately from this guide). When available:
 2. Make it executable: `chmod +x tuxlink_*.AppImage`
 3. Run it: `./tuxlink_*.AppImage`
 
-No build toolchain required. The AppImage bundles the Pat sidecar binary. **The
-AppImage cannot bundle the keyring daemon** — see [Runtime prerequisite](#runtime-prerequisite-secret-service-keyring)
+No build toolchain required. **The AppImage cannot bundle the keyring daemon** — see [Runtime prerequisite](#runtime-prerequisite-secret-service-keyring)
 below.
 
 ### Option 2 — build from source
 
 See [development.md](development.md) for the full toolchain table, system package
-commands, submodule setup, and build invocation. The short version:
+commands, and build invocation. The short version:
 
 ```bash
-git clone --recurse-submodules https://github.com/cameronzucker/tuxlink.git
+git clone https://github.com/cameronzucker/tuxlink.git
 cd tuxlink/src-tauri
 cargo build --release
 ```
-
-The release build compiles tuxlink and builds the Pat sidecar from
-`external/tuxlink-pat/` automatically.
 
 ## Runtime prerequisite: secret-service keyring
 
@@ -186,5 +182,4 @@ message to `SERVICE@winlink.org` and sync again to confirm the round-trip works.
 ### Build errors
 
 See [development.md](development.md) for common build-from-source issues, including
-the Go toolchain requirement (needed for the Pat sidecar build in release mode) and
 the Tauri 2.x system dependency list.
