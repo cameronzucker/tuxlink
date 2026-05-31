@@ -13,6 +13,8 @@
 
 use std::path::PathBuf;
 
+pub mod arq_state;
+pub mod b2f;
 pub mod command;
 pub mod data;
 pub mod frame;

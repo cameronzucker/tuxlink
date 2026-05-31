@@ -7,10 +7,11 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
-use tauri::State;
+use tauri::{AppHandle, Manager, State};
 
 use crate::config::{self, ArdopUiConfig};
 use crate::modem_status::{ModemSession, ModemState, ModemStatus};
+use crate::native_mailbox::Mailbox;
 use crate::winlink::modem::ardop::transport::ArdopTransport;
 use crate::winlink::modem::ardop::ArdopConfig;
 use crate::winlink::modem::{InitConfig, ModemTransport};
@@ -363,6 +364,130 @@ pub fn modem_ardop_connect(
                 .map_err(|e| format!("spawn failed: {e}"))
         },
     )
+}
+
+/// Run a B2F mail exchange over the currently-installed ARDOP transport
+/// (tuxlink-ytg) — the actual "send/receive Winlink mail" entry point for the
+/// ARDOP HF UI.
+///
+/// # Preconditions
+///
+/// - The operator has already pressed Connect through the RADIO-1 modal, which
+///   minted a consent token, called `modem_ardop_connect`, and brought the
+///   ARQ link up. `ModemSession` now holds the live transport.
+/// - The operator has separately minted a NEW per-invocation consent token
+///   for THIS send/receive call (per-invocation Part 97 rule — the connect
+///   token was consumed by `modem_ardop_connect`).
+///
+/// # Flow
+///
+/// 1. **Consent gate first** — `consume_consent_token` runs BEFORE any I/O.
+///    A missing/replayed token returns `Err` with no side effects.
+/// 2. **Take the installed transport** out of `ModemSession`.
+/// 3. **Read config + open the native mailbox** at the standard
+///    `<app_data_dir>/native-mbox` path.
+/// 4. **Run the B2F exchange** via
+///    `winlink_backend::run_ardop_b2f_exchange` — builds outbound from the
+///    mailbox Outbox, files received messages into Inbox, moves sent into Sent.
+/// 5. **Disconnect + reset** the transport and the session, regardless of
+///    success/failure.
+///
+/// # Lock + I/O discipline
+///
+/// `take_transport` and `reset_to_stopped` run under the `ModemSession` mutex;
+/// `transport.disconnect()` and the B2F exchange run OUTSIDE any held lock so
+/// a slow CMS / peer can't stall the status broadcaster.
+///
+/// # What's deferred to follow-up PRs
+///
+/// - Frontend wiring of the "Send/Receive" button to this command.
+/// - Per-batch progress events to the session log.
+/// - Multi-message-per-connection optimization.
+/// - Throughput-stats integration with the modem status broadcaster.
+#[tauri::command]
+pub fn modem_ardop_b2f_exchange(
+    app: AppHandle,
+    session: State<'_, Arc<ModemSession>>,
+    target: String,
+    consent_token: String,
+) -> Result<(), String> {
+    // ─── RADIO-1 gate FIRST — no I/O / state mutation pre-gate ───────────
+    // `consume_consent_token` is atomic: equality check + clear in one lock.
+    // After a successful return, the stored token is None; a replay of the
+    // same token fails at this exact point. Per-invocation Part 97 rule.
+    if !session.consume_consent_token(&consent_token) {
+        return Err(
+            "RADIO-1: missing or invalid consent token; mint one via the Send/Receive modal first"
+                .into(),
+        );
+    }
+
+    // ─── Take the installed transport ────────────────────────────────────
+    // The transport was installed by `modem_ardop_connect` after a
+    // successful `init` + `connect_arq`. If it's missing, the operator
+    // didn't run Connect first — surface that cleanly.
+    let mut transport = session.take_transport().ok_or_else(|| {
+        "ARDOP transport not connected — press Connect (ARDOP HF) before Send/Receive"
+            .to_string()
+    })?;
+
+    // Wrap the exchange in a closure so a single point handles cleanup on
+    // BOTH success and failure: disconnect the transport OUTSIDE any held
+    // lock, then reset the session state.
+    let outcome = run_b2f_with_transport(&app, &mut *transport, &target);
+
+    // ─── Always disconnect + reset, regardless of outcome ────────────────
+    // Best-effort: even if disconnect errors, the session must end in a
+    // Stopped state so a fresh Connect can succeed. 5s deadline mirrors
+    // `modem_ardop_disconnect_inner`'s policy.
+    let _ = transport.disconnect(Duration::from_secs(5));
+    drop(transport);
+    // `reset_to_stopped` clears the consent token (already None — we consumed
+    // it at the top), takes any still-installed transport (None — we already
+    // took it), and flips status to Stopped. A single lock acquisition.
+    let _ = session.reset_to_stopped();
+
+    outcome
+}
+
+/// Inner helper for [`modem_ardop_b2f_exchange`]: reads the live config, opens
+/// the native mailbox at the standard path, and delegates to
+/// `winlink_backend::run_ardop_b2f_exchange`.
+///
+/// Factored out so the Tauri command can run cleanup (disconnect + reset)
+/// uniformly on both success and failure. Returns the error as a `String` so
+/// it surfaces to the frontend without exposing the internal `BackendError`
+/// type — same pattern as the other modem commands.
+fn run_b2f_with_transport(
+    app: &AppHandle,
+    transport: &mut dyn ModemTransport,
+    target: &str,
+) -> Result<(), String> {
+    // Mailbox lives at <app_data_dir>/native-mbox (per `bootstrap::install_native`).
+    let mbox_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("could not resolve app data dir: {e}"))?
+        .join("native-mbox");
+    let mailbox = Mailbox::new(mbox_dir);
+
+    let cfg = config::read_config().map_err(|e| format!("read config failed: {e}"))?;
+
+    // Position arbiter is registered in lib.rs::run() — pull a live ref so
+    // the on-air locator honors live GPS / privacy state, matching the
+    // telnet/packet paths' behavior. Mirrors `bootstrap::install_native`'s
+    // wiring.
+    let arbiter_state = app.state::<Arc<crate::position::PositionArbiter>>();
+    let arbiter: Arc<crate::position::PositionArbiter> = (*arbiter_state).clone();
+
+    crate::winlink_backend::run_ardop_b2f_exchange(
+        transport,
+        target,
+        &cfg,
+        &mailbox,
+        Some(&arbiter),
+    )
+    .map_err(|e| format!("ARDOP B2F exchange failed: {e}"))
 }
 
 #[cfg(test)]

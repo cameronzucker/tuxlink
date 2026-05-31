@@ -16,6 +16,7 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use super::super::process::{ManagedModem, ProcessError};
+use super::arq_state::ArqState;
 use super::data::DataSocket;
 use super::session::{arq_connect, arq_disconnect, init_tnc, CmdSocket, ConnectInfo, InitConfig, SessionError};
 use super::ArdopConfig;
@@ -247,14 +248,23 @@ impl ModemTransport for ArdopTransport {
     /// Open the cmd and data sockets, then run the ARDOP TNC init sequence.
     ///
     /// Replaces any previously-open sockets (idempotent re-init).
+    ///
+    /// tuxlink-ytg: builds a fresh [`ArqState`] and wires it into BOTH the
+    /// cmd socket (whose reader thread flips it on CONNECTED / DISCONNECTED /
+    /// NEWSTATE DISC) and the data socket (whose `read` returns EOF when the
+    /// flag is `Disconnected` AND no payload is buffered, and whose `write`
+    /// refuses while disconnected). This is the cmd↔data coordination the
+    /// B2F engine needs to surface an on-air disconnect promptly instead of
+    /// hanging on a quiet but still-open data TCP socket.
     fn init(&mut self, cfg: &InitConfig) -> Result<(), SessionError> {
         // Hold the sockets as locals and run init_tnc on the local cmd socket: if
         // any step fails, the locals drop (CmdSocket::Drop shuts down + joins its
         // reader thread; DataSocket closes its TcpStream), leaving `self` in a
         // clean uninit state for an idempotent re-init — and avoiding an unwrap on
         // a just-stored Option. (Code review Phase 3.)
-        let mut cmd = CmdSocket::connect(self.cmd_addr)?;
-        let data = DataSocket::connect(self.data_addr)?;
+        let arq_state = ArqState::new();
+        let mut cmd = CmdSocket::connect_with_arq_state(self.cmd_addr, Some(arq_state.clone()))?;
+        let data = DataSocket::connect_with_arq_state(self.data_addr, Some(arq_state))?;
         init_tnc(&mut cmd, cfg)?;
         self.cmd = Some(cmd);
         self.data = Some(data);
