@@ -1,11 +1,18 @@
-// Task 4.3 — AppShell mounts the ArdopDock as a 4th panes-grid column when
-// the modem is anything other than stopped, and applies the `panes--with-dock`
-// class swap so the CSS widens to four tracks (200 / 340 / 1fr / 290). When the
-// modem is stopped, the dock is absent and the existing 3-col grid stays.
+// AppShell radio-panel visibility tests (renamed from AppShell.modemDock.test
+// during radio-panel-shell P1.5). The RadioPanel (placeholder during P1)
+// mounts as the right-hand column when ANY of:
+//   - a connection entry is selected in the sidebar
+//   - any modem is in a non-stopped state
+//   - View → Toggle Radio Panel pin is on (Ctrl+Shift+M)
 //
-// This file lives separately from AppShell.test.tsx so the dock-mount story is
-// readable in isolation. The provider wrapping + Tauri IPC mocks mirror the
-// existing AppShell test so the shell mounts cleanly under jsdom.
+// During P1, the legacy ArdopDock continues to mount ALONGSIDE the
+// placeholder, but only when ARDOP HF is the selected protocol. Other modes
+// see only the placeholder. The `panes--with-dock` CSS class swap stays for
+// P1; P5 cleanup may rename.
+//
+// This file lives separately from AppShell.test.tsx so the panel-mount story
+// is readable in isolation. The provider wrapping + Tauri IPC mocks mirror
+// the existing AppShell test so the shell mounts cleanly under jsdom.
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/react';
@@ -121,66 +128,66 @@ const RUNNING: ModemStatus = {
   lastError: null,
 };
 
-describe('<AppShell> modem dock', () => {
+describe('<AppShell> radio panel', () => {
   beforeEach(() => {
     mockUseModemStatus.mockReset();
   });
 
-  it('does NOT render the dock when modem is stopped', () => {
+  it('does NOT render the panel when modem is stopped and no sidebar selection', () => {
     mockUseModemStatus.mockReturnValue({ status: STOPPED, loading: false, error: null });
     renderShell();
+    expect(screen.queryByTestId('radio-panel-root')).not.toBeInTheDocument();
     expect(screen.queryByTestId('ardop-dock-root')).not.toBeInTheDocument();
     // The 3-col grid class swap is absent.
     expect(screen.getByTestId('shell-panes')).not.toHaveClass('panes--with-dock');
   });
 
-  it('renders the dock + applies the 4-col grid class when modem is running', () => {
+  it('renders the panel + applies the 4-col grid class when modem is running', () => {
     mockUseModemStatus.mockReturnValue({ status: RUNNING, loading: false, error: null });
     renderShell();
-    expect(screen.getByTestId('ardop-dock-root')).toBeInTheDocument();
+    expect(screen.getByTestId('radio-panel-root')).toBeInTheDocument();
+    expect(screen.getByTestId('radio-panel-placeholder')).toBeInTheDocument();
     expect(screen.getByTestId('shell-panes')).toHaveClass('panes--with-dock');
   });
 
-  it('renders the dock for transient (non-stopped) states like connecting', () => {
+  it('renders the panel for transient (non-stopped) states like connecting', () => {
     mockUseModemStatus.mockReturnValue({
       status: { ...STOPPED, state: 'connecting' },
       loading: false,
       error: null,
     });
     renderShell();
-    expect(screen.getByTestId('ardop-dock-root')).toBeInTheDocument();
+    expect(screen.getByTestId('radio-panel-root')).toBeInTheDocument();
     expect(screen.getByTestId('shell-panes')).toHaveClass('panes--with-dock');
   });
 
-  // tuxlink-mnk4: cold-start dead-end fix. When the operator navigates to the
-  // ARDOP HF view, the dock must auto-mount even with the modem still stopped
-  // — otherwise the only path to spawn the modem (the Connect button inside
-  // the dock) is unreachable, and ArdopHfStub's "use the modem dock on the
-  // right" message points at nothing.
-  it('renders the dock when ARDOP HF is selected even though the modem is stopped', () => {
+  // P1: when ARDOP HF is selected, BOTH the placeholder panel AND the legacy
+  // ArdopDock mount alongside — by design. P4 deletes ArdopDock entirely.
+  it('renders the placeholder + legacy ArdopDock when ARDOP HF is selected (modem stopped)', () => {
     mockUseModemStatus.mockReturnValue({ status: STOPPED, loading: false, error: null });
     renderShell();
+    expect(screen.queryByTestId('radio-panel-root')).not.toBeInTheDocument();
     expect(screen.queryByTestId('ardop-dock-root')).not.toBeInTheDocument();
     // Expand Winlink (CMS) accordion, then pick ARDOP HF.
     fireEvent.click(screen.getByTestId('sess-cms'));
     fireEvent.click(screen.getByTestId('proto-cms-ardop-hf'));
+    expect(screen.getByTestId('radio-panel-root')).toBeInTheDocument();
     expect(screen.getByTestId('ardop-dock-root')).toBeInTheDocument();
     expect(screen.getByTestId('shell-panes')).toHaveClass('panes--with-dock');
   });
 
   // tuxlink-mnk4: View → Toggle Radio Dock (Ctrl+Shift+M) must actually toggle
-  // the dock. The menu item + accelerator were declared in menuModel.ts since
-  // PR #113 but never wired through dispatchMenuAction.ts — operator pressed
-  // the key and nothing happened.
-  it('Ctrl+Shift+M toggles the dock when the modem is stopped and no ARDOP HF view', () => {
+  // the panel. The menu item + accelerator have been wired through
+  // dispatchMenuAction since the tuxlink-mnk4 fix.
+  it('Ctrl+Shift+M toggles the panel when the modem is stopped and no sidebar selection', () => {
     mockUseModemStatus.mockReturnValue({ status: STOPPED, loading: false, error: null });
     renderShell();
-    expect(screen.queryByTestId('ardop-dock-root')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('radio-panel-root')).not.toBeInTheDocument();
 
     fireEvent.keyDown(window, { key: 'm', ctrlKey: true, shiftKey: true });
-    expect(screen.getByTestId('ardop-dock-root')).toBeInTheDocument();
+    expect(screen.getByTestId('radio-panel-root')).toBeInTheDocument();
 
     fireEvent.keyDown(window, { key: 'm', ctrlKey: true, shiftKey: true });
-    expect(screen.queryByTestId('ardop-dock-root')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('radio-panel-root')).not.toBeInTheDocument();
   });
 });

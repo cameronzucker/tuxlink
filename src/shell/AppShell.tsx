@@ -58,6 +58,8 @@ import { renderQuery } from '../search/queryRender';
 import { ArdopHfStub } from '../connections/ArdopHfStub';
 import { useModemStatus } from '../modem/useModemStatus';
 import { ArdopDock } from '../modem/ArdopDock';
+import { computePanelMode } from '../radio/useRadioPanelVisibility';
+import { PlaceholderRadioPanel } from '../radio/modes/PlaceholderRadioPanel';
 import './AppShell.css';
 
 /// Human label for a folder (titlebar). Mirrors the sidebar labels.
@@ -203,10 +205,18 @@ export function AppShell() {
   //     can't spawn the modem at all — tuxlink-mnk4), OR
   //   - when the View → Toggle Radio Dock pin is on (Ctrl+Shift+M).
   const { status: modemStatus } = useModemStatus();
-  const dockVisible =
-    modemStatus.state !== 'stopped' ||
-    selectedConnection?.protocol === 'ardop-hf' ||
-    pinRadioDock;
+  // Spec §3.3 visibility rule. The hook captures the three OR-conditions
+  // (sidebar selection / active modem / pinned-toggle) and returns the
+  // mode to show plus whether the panel is mounted.
+  const radioPanelMode = computePanelMode(
+    {
+      sidebarSelected: selectedConnection,
+      modemActive: modemStatus.state !== 'stopped',
+      togglePinned: pinRadioDock,
+    },
+    modemStatus,
+  );
+  const radioPanelVisible = radioPanelMode !== null;
 
   // CMS connect: run one exchange (send outbox + receive), then refresh the
   // mailbox so any downloaded messages appear. The button lives in the ribbon;
@@ -369,7 +379,7 @@ export function AppShell() {
       />
 
       <div
-        className={`panes${dockVisible ? ' panes--with-dock' : ''}`}
+        className={`panes${radioPanelVisible ? ' panes--with-dock' : ''}`}
         data-testid="shell-panes"
       >
         <FolderSidebar
@@ -414,7 +424,19 @@ export function AppShell() {
           // Built but unhandled — defensive stub
           return <StubPanel sessionType={sessionType} protocol={protocol} />;
         })()}
-        {dockVisible && <ArdopDock />}
+        {/* Spec P1: PlaceholderRadioPanel mounts here. P2-P4 swap in the
+            real per-mode components. The legacy ArdopDock continues to
+            mount BELOW until P4 removes it. */}
+        {radioPanelMode && (
+          <PlaceholderRadioPanel
+            mode={radioPanelMode}
+            onClose={() => {
+              setSelectedConnection(null);
+              setPinRadioDock(false);
+            }}
+          />
+        )}
+        {radioPanelVisible && selectedConnection?.protocol === 'ardop-hf' && <ArdopDock />}
       </div>
 
       {showSessionLog && <SessionLog />}
