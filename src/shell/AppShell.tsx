@@ -50,7 +50,7 @@ import { TelnetCmsPanelContainer } from '../connections/TelnetCmsPanel';
 import { StubPanel } from '../connections/StubPanel';
 import { SearchBar } from '../search/SearchBar';
 import { SearchDropdown } from '../search/SearchDropdown';
-import { ChipStrip } from '../search/ChipStrip';
+import { deparseQuery } from '../search/parseQuery';
 import { SavedSearchesPanel } from '../search/SavedSearchesPanel';
 import { useSearch } from '../search/useSearch';
 import { useSavedSearches } from '../search/useSavedSearches';
@@ -319,20 +319,21 @@ export function AppShell() {
       <div className="ribbon-with-search">
         <div className="search-zone" data-testid="search-zone" ref={searchZoneRef}>
           <SearchBar
-            spec={search.spec}
+            value={search.rawText}
             activeSaved={search.activeSaved}
-            onSpecChange={search.setSpec}
+            onValueChange={search.setRawText}
             onUnsave={async () => {
               if (search.activeSaved) {
                 await saved.unsave(search.activeSaved.id);
                 // Codex adrev fix (find-messages P2): only detach the saved-search
-                // label; keep the current spec so the search results remain visible.
+                // label; the deparsed rawText survives so the query stays active.
                 search.clearActiveSaved();
               }
             }}
             onToggleDropdown={() => setDropdownOpen((o) => !o)}
             dropdownOpen={dropdownOpen}
             onCommit={() => { void saved.recordRecent(search.spec); }}
+            metaText={metaText}
           />
           {dropdownOpen && (
             <SearchDropdown
@@ -340,7 +341,7 @@ export function AppShell() {
               recent={saved.recent}
               activeSavedId={search.activeSaved?.id ?? null}
               onRunSaved={(s) => { search.setActiveSavedSearch(s); setDropdownOpen(false); }}
-              onRunRecent={(r) => { search.setSpec(r.spec); setDropdownOpen(false); }}
+              onRunRecent={(r) => { search.setRawText(deparseQuery(r.spec)); setDropdownOpen(false); }}
               onPromoteRecent={async (r) => {
                 const name = window.prompt('Name for this saved search?', renderQuery(r.spec).slice(0, 24));
                 // Codex adrev fix (find-messages P2): use promote_recent so the
@@ -362,12 +363,6 @@ export function AppShell() {
           packet={packetUi}
         />
       </div>
-
-      <ChipStrip
-        spec={search.spec}
-        onSpecChange={search.setSpec}
-        metaText={metaText}
-      />
 
       <div
         className={`panes${dockVisible ? ' panes--with-dock' : ''}`}

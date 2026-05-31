@@ -26,15 +26,25 @@ describe('useSearch', () => {
     expect(result.current.results).toBeNull();
   });
 
-  it('calls invoke after debounce when the spec is non-empty', async () => {
+  it('calls invoke after debounce when rawText is non-empty', async () => {
     (invoke as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
       items: [], totalMatches: 0, queryMs: 1, effectiveSpec: EMPTY_SPEC,
     } satisfies SearchResults);
     const { result } = renderHook(() => useSearch(), { wrapper: wrap() });
-    act(() => result.current.setSpec({ ...EMPTY_SPEC, free_text: 'damage' }));
+    act(() => result.current.setRawText('damage'));
     expect(invoke).not.toHaveBeenCalled();           // not yet — debounce window
     await act(async () => { vi.advanceTimersByTime(200); });
     await waitFor(() => expect(invoke).toHaveBeenCalledWith('tauri_search_run', expect.anything()));
+  });
+
+  it('parses `from:X damage` inline into spec.filters + free_text', async () => {
+    (invoke as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
+      items: [], totalMatches: 0, queryMs: 1, effectiveSpec: EMPTY_SPEC,
+    } satisfies SearchResults);
+    const { result } = renderHook(() => useSearch(), { wrapper: wrap() });
+    act(() => result.current.setRawText('from:KX5DD damage'));
+    expect(result.current.spec.free_text).toBe('damage');
+    expect(result.current.spec.filters.from).toEqual({ kind: 'addr', value: 'KX5DD' });
   });
 
   it('exposes setActiveSavedSearch — name surfaces back in `activeSaved`', () => {

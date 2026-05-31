@@ -13,17 +13,18 @@
 
 /* ============================================================================
  * Layout grid — titlebar (auto) | menu bar (auto) | ribbon+search (auto) |
- * chip-strip (auto) | panes (1fr) | session-log (auto) | statusbar (auto),
- * full height. 7 rows total.
- * NOTE (ng3): the FIRST TWO rows are the HTML chrome (TitleBar, MenuBar);
- * row 3 is the combined ribbon-with-search wrapper; row 4 is the ChipStrip;
- * `panes` is row 5 (the 1fr row). ResizeHandles is position:absolute so it
- * does NOT consume a grid row. If you reorder the shell's children,
- * re-check which row gets 1fr.
+ * panes (1fr) | session-log (auto) | statusbar (auto), full height.
+ * 6 rows total.
+ *
+ * NOTE: the FIRST TWO rows are the HTML chrome (TitleBar, MenuBar); row 3 is
+ * the combined ribbon-with-search wrapper (search bar parses Gmail-style
+ * `from:foo` operators inline — no separate chip-strip row); row 4 is the
+ * 1fr panes. ResizeHandles is position:absolute so it does NOT consume a
+ * grid row. If you reorder the shell's children, re-check which row gets 1fr.
  * ========================================================================== */
 .layout-b {
   display: grid;
-  grid-template-rows: auto auto auto auto 1fr auto auto;
+  grid-template-rows: auto auto auto 1fr auto auto;
   height: 100vh;
   width: 100vw;
   overflow: hidden;

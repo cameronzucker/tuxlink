@@ -84,3 +84,14 @@
   flex-shrink: 0;
   letter-spacing: 0.02em;
 }
+.layout-b .search-bar .meta {
+  color: var(--text-faint);
+  font-size: 11px;
+  font-family: var(--mono);
+  flex-shrink: 0;
+  white-space: nowrap;
+  padding: 0 4px;
+  border-left: 1px solid var(--border);
+  margin-left: 4px;
+  line-height: 1.4;
+}

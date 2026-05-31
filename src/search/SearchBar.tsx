@@ -1,20 +1,30 @@
 import React, { useRef, useEffect } from 'react';
 import './SearchBar.css';
-import { EMPTY_SPEC, type QuerySpec, type SavedSearch } from './types';
+import type { SavedSearch } from './types';
 
 export interface SearchBarProps {
-  spec: QuerySpec;
+  /// Raw user-typed string (Gmail-style operators inline: `from:KX5DD damage`).
+  /// Parsing into the structured QuerySpec happens in useSearch.
+  value: string;
+  /// When set, the bar shows the saved-search NAME + ★ instead of the raw
+  /// input. Click the ★ to detach (unsave).
   activeSaved: SavedSearch | null;
-  onSpecChange: (spec: QuerySpec) => void;
+  onValueChange: (next: string) => void;
   onUnsave: () => void;
   onToggleDropdown: () => void;
   dropdownOpen: boolean;
   /// Called on Enter — explicit "commit this query to recent history".
   /// Run-as-you-type queries do NOT auto-record (avoids per-keystroke history).
   onCommit?: () => void;
+  /// Optional inline meta text shown between input and chevron when a search
+  /// is active. e.g. `"3 matches · 47 ms"`. Replaces the deleted chip strip.
+  metaText?: string | null;
 }
 
-export function SearchBar({ spec, activeSaved, onSpecChange, onUnsave, onToggleDropdown, dropdownOpen, onCommit }: SearchBarProps) {
+export function SearchBar({
+  value, activeSaved, onValueChange, onUnsave, onToggleDropdown, dropdownOpen,
+  onCommit, metaText,
+}: SearchBarProps) {
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -30,7 +40,7 @@ export function SearchBar({ spec, activeSaved, onSpecChange, onUnsave, onToggleD
 
   const handleKey = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Escape') {
-      onSpecChange(EMPTY_SPEC);
+      onValueChange('');
       if (dropdownOpen) onToggleDropdown();
     } else if (e.key === 'Enter') {
       onCommit?.();
@@ -50,6 +60,7 @@ export function SearchBar({ spec, activeSaved, onSpecChange, onUnsave, onToggleD
           onClick={onUnsave}
         >★</button>
         <span className="saved-name" data-testid="searchbar-saved-name">{activeSaved.name}</span>
+        {metaText && <span className="meta" data-testid="searchbar-meta">{metaText}</span>}
         <button
           type="button"
           className="chev"
@@ -68,12 +79,13 @@ export function SearchBar({ spec, activeSaved, onSpecChange, onUnsave, onToggleD
         ref={inputRef}
         data-testid="searchbar-input"
         type="text"
-        placeholder="Search messages…"
-        value={spec.free_text ?? ''}
-        onChange={(e) => onSpecChange({ ...spec, free_text: e.target.value || null })}
+        placeholder="Search messages… (try from:KX5DD damage)"
+        value={value}
+        onChange={(e) => onValueChange(e.target.value)}
         onFocus={() => { if (!dropdownOpen) onToggleDropdown(); }}
         onKeyDown={handleKey}
       />
+      {metaText && <span className="meta" data-testid="searchbar-meta">{metaText}</span>}
       <button
         type="button"
         className="chev"
