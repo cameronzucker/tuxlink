@@ -23,6 +23,7 @@ import {
   NOT_FOUND_COPY,
 } from './MessageView';
 import MessageView from './MessageView';
+import './../forms'; // side-effect: register ICS-213
 
 // Mock useMessage so MessageView integration tests don't need Tauri or
 // QueryClientProvider.
@@ -111,6 +112,63 @@ describe('<MessageViewLoaded>', () => {
     expect(screen.getByTestId('message-form-placeholder')).toBeInTheDocument();
     // The raw XML body must NOT appear in place of the placeholder.
     expect(screen.queryByTestId('message-body')).toBeNull();
+  });
+
+  it('renders the registered View component for a known form payload', () => {
+    const msg = {
+      id: 'TEST-FORM',
+      subject: 'ICS-213 test',
+      from: 'X@winlink.org',
+      to: ['Y@winlink.org'],
+      cc: [],
+      date: '2026-05-30T14:30:00Z',
+      body: 'plain rendered text',
+      attachments: [],
+      isForm: true,
+      routing: null,
+      formId: 'ICS213_Initial',
+      formPayload: {
+        formId: 'ICS213_Initial',
+        formParameters: {
+          xmlFileVersion: '1.0', rmsExpressVersion: 'Tuxlink/0.3.0',
+          submissionDatetime: '20260530143000', sendersCallsign: 'N0CALL',
+          gridSquare: 'FM18', displayForm: 'ICS213_Initial_Viewer.html',
+          replyTemplate: 'ICS213_SendReply.0',
+        },
+        fields: [
+          ['inc_name', 'WALDO'],
+          ['to_name', 'JOHN'],
+          ['subjectline', 'TEST'],
+          ['mdate', '2026-05-30'],
+          ['mtime', '14:30Z'],
+          ['message', 'Need bandages.'],
+        ],
+      },
+    };
+    render(<MessageViewLoaded message={msg as any} />);
+    expect(screen.getByTestId('message-form-rendered')).toBeInTheDocument();
+    expect(screen.getByText('WALDO')).toBeInTheDocument();
+  });
+
+  it('renders KeyValueView fallback when form_id is unknown', () => {
+    const msg = {
+      id: 'TEST-UNKNOWN', subject: 'unknown', from: 'X@winlink.org',
+      to: ['Y@winlink.org'], cc: [], date: '2026-05-30T14:30:00Z',
+      body: 'plain rendered', attachments: [], isForm: true, routing: null,
+      formId: 'Unknown_Form',
+      formPayload: {
+        formId: 'Unknown_Form',
+        formParameters: {
+          xmlFileVersion: '1.0', rmsExpressVersion: '',
+          submissionDatetime: '', sendersCallsign: '', gridSquare: '',
+          displayForm: '', replyTemplate: '',
+        },
+        fields: [['random_field', 'random_value']],
+      },
+    };
+    render(<MessageViewLoaded message={msg as any} />);
+    expect(screen.getByTestId('message-form-unknown')).toBeInTheDocument();
+    expect(screen.getByText('random_field')).toBeInTheDocument();
   });
 
   // Attachment strip lists names + sizes; no download/preview (v0.0.1).

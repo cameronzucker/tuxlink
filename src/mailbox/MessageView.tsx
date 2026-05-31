@@ -24,6 +24,7 @@ import { useMessage, type MessageSelection } from './useMessage';
 import { asUiError, isNotConfigured } from './types';
 import { openReplyWindow, type ReplyMode } from './replyActions';
 import { devFormMeta } from './devFixture';
+import { lookupForm, KeyValueView } from '../forms';
 
 // ============================================================================
 // Exported constants (used by tests)
@@ -218,9 +219,30 @@ export function MessageViewLoaded({ message }: { message: ParsedMessage }) {
         )}
       </dl>
 
-      {/* 4 — body. Form payloads render the Mock B "form attached" box (never raw
-          XML); plain messages render the decoded body. */}
-      {message.isForm ? (
+      {/* 4 — body. Form messages dispatch to a registered View component
+          (e.g., Ics213View). If the form_id is not registered, KeyValueView
+          renders the raw field/value pairs as a graceful fallback. If
+          isForm is true but there's no parsed payload (parse failed),
+          fall back to the legacy "form attached" placeholder. Plain
+          messages render the decoded body. */}
+      {message.isForm && message.formId && message.formPayload ? (() => {
+        const entry = lookupForm(message.formId);
+        if (entry) {
+          const ViewComponent = entry.View;
+          return (
+            <div className="form-attached" data-testid="message-form-rendered">
+              <ViewComponent payload={message.formPayload} />
+            </div>
+          );
+        }
+        return (
+          <div className="form-attached" data-testid="message-form-unknown">
+            <KeyValueView payload={message.formPayload} bodyText={message.body} />
+          </div>
+        );
+      })() : message.isForm ? (
+        // isForm true but no payload — parse failed server-side or message
+        // is a form by attachment-name but XML couldn't be parsed.
         <div className="form-attached" data-testid="message-form-placeholder">
           <strong className="form-attached-title">Winlink form attached.</strong>{' '}
           {FORM_PLACEHOLDER}
