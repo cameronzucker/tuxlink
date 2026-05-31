@@ -47,7 +47,6 @@ import { PacketConnectionPanelContainer } from '../packet/PacketConnectionPanel'
 import { effectiveCall } from '../packet/packetConfig';
 import { derivePacketUiState, type PacketUiState } from '../packet/packetStatus';
 import { isBuilt } from '../connections/sessionTypes';
-import { TelnetCmsPanelContainer } from '../connections/TelnetCmsPanel';
 import { TelnetRadioPanel } from '../radio/modes/TelnetRadioPanel';
 import { StubPanel } from '../connections/StubPanel';
 import { SearchBar } from '../search/SearchBar';
@@ -433,7 +432,10 @@ export function AppShell() {
           }
           const { sessionType, protocol } = selectedConnection;
           if (sessionType === 'cms' && protocol === 'telnet') {
-            return <TelnetCmsPanelContainer />;
+            // P2: Telnet UI now lives in the right-hand TelnetRadioPanel.
+            // The reading pane falls back to messages so the operator
+            // can read mail while the connection panel handles transport.
+            return <MessageView selectedMessage={selectedMessage} />;
           }
           if (sessionType === 'cms' && protocol === 'packet') {
             return <PacketConnectionPanelContainer baseCall={statusData.callsign} intent="cms-gateway" />;

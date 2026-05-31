@@ -297,11 +297,15 @@ describe('<AppShell> — Mock B topology', () => {
     expect(screen.getByTestId('message-view-empty')).toBeInTheDocument();
   });
 
-  it('renders the Telnet-CMS pane when cms+telnet is selected', async () => {
+  it('renders the TelnetRadioPanel when cms+telnet is selected (P2: panel moved to right-hand radio panel)', async () => {
     renderShell();
     fireEvent.click(screen.getByTestId('sess-cms'));
     fireEvent.click(screen.getByTestId('proto-cms-telnet'));
-    expect(await screen.findByTestId('telnet-cms-panel-root')).toBeInTheDocument();
+    // Telnet UI now lives in the right radio panel (data-testid=radio-panel-root)
+    // with the Telnet Winlink title; the reading pane shows the MessageView fallback.
+    const panel = await screen.findByTestId('radio-panel-root');
+    expect(panel).toBeInTheDocument();
+    expect(await screen.findByTestId('radio-panel-title')).toHaveTextContent('Telnet Winlink');
   });
   it('disables unbuilt protocol rows (radio-only+telnet)', () => {
     renderShell();
