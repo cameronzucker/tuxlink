@@ -30,7 +30,15 @@ export function SearchDropdown(props: SearchDropdownProps) {
     onPromoteRecent, onManage, onClose, onSaveCurrent, onClearRecent,
   } = props;
   const totalRows = saved.length + recent.length;
-  const [focusIdx, setFocusIdx] = useState(0);
+  // Initialize focus on the active-saved row when there is one — otherwise
+  // -1 (no row focused). Default-0 was wrong: every dropdown reopen would
+  // highlight the first saved row regardless, and if the actually-active
+  // saved sat elsewhere, you'd see TWO highlighted rows (its `.active`
+  // background + the first row's `.focused` background — both
+  // `accent-soft`).
+  const initialFocus =
+    activeSavedId ? Math.max(0, saved.findIndex((s) => s.id === activeSavedId)) : -1;
+  const [focusIdx, setFocusIdx] = useState(initialFocus);
 
   // Inline-rename state — non-null = in name-edit mode for that target.
   const [namingCurrent, setNamingCurrent] = useState<string | null>(null);
@@ -61,6 +69,7 @@ export function SearchDropdown(props: SearchDropdownProps) {
       else if (e.key === 'ArrowUp') { e.preventDefault(); setFocusIdx((i) => Math.max(i - 1, 0)); }
       else if (e.key === 'Enter') {
         e.preventDefault();
+        if (focusIdx < 0) return;            // no row focused → nothing to run
         if (focusIdx < saved.length) onRunSaved(saved[focusIdx]);
         else onRunRecent(recent[focusIdx - saved.length]);
       } else if (e.key === 'Escape') {
