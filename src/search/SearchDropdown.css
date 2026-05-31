@@ -38,38 +38,7 @@
   background: transparent; border: 0; color: var(--accent); cursor: pointer; padding: 0; font-size: 12px;
 }
 
-/* "Save this search" row + inline rename */
-.layout-b .search-dropdown .dropdown-save-current {
-  display: grid;
-  grid-template-columns: 18px auto 1fr;
-  gap: 12px;
-  align-items: center;
-  width: 100%;
-  padding: 11px 16px;
-  background: var(--accent-soft);
-  border: 0;
-  border-bottom: 1px solid var(--accent);
-  border-left: 2px solid var(--accent);
-  cursor: pointer;
-  font-size: 13px;
-  color: var(--accent-2);
-  text-align: left;
-  font-family: inherit;
-}
-.layout-b .search-dropdown .dropdown-save-current:hover {
-  background: color-mix(in srgb, var(--accent) 18%, transparent);
-}
-.layout-b .search-dropdown .dropdown-save-current .star { color: var(--accent); font-size: 14px; line-height: 1; }
-.layout-b .search-dropdown .dropdown-save-current .label { font-weight: 500; color: var(--accent-2); }
-.layout-b .search-dropdown .dropdown-save-current .query-preview {
-  color: var(--text-faint);
-  font-family: var(--mono);
-  font-size: 11px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
+/* Inline-rename row for ☆-promoting a recent to saved */
 .layout-b .search-dropdown .dropdown-name-row {
   display: grid;
   grid-template-columns: 18px 1fr auto auto;

@@ -7,27 +7,22 @@ export interface SearchDropdownProps {
   saved: SavedSearch[];
   recent: RecentSearch[];
   activeSavedId: string | null;
-  /// Currently-typed query text. When non-empty AND no saved is active,
-  /// a "Save this search" row appears at the top of the dropdown with
-  /// an inline rename input.
-  currentQueryText: string;
   onRunSaved: (s: SavedSearch) => void;
   onRunRecent: (r: RecentSearch) => void;
   /// Promote a recent → saved with the given user-supplied name.
+  /// Triggered by clicking ☆ next to a recent row.
   onPromoteRecent: (r: RecentSearch, name: string) => void;
   onUnsaveActive: () => void;
   onManage: () => void;
   onClose: () => void;
-  /// Save the currently-typed query with the given name.
-  onSaveCurrent?: (name: string) => void;
   /// Wipe the recent-history list. Saved searches are untouched.
   onClearRecent?: () => void;
 }
 
 export function SearchDropdown(props: SearchDropdownProps) {
   const {
-    saved, recent, activeSavedId, currentQueryText, onRunSaved, onRunRecent,
-    onPromoteRecent, onManage, onClose, onSaveCurrent, onClearRecent,
+    saved, recent, activeSavedId, onRunSaved, onRunRecent,
+    onPromoteRecent, onManage, onClose, onClearRecent,
   } = props;
   const totalRows = saved.length + recent.length;
   // Initialize focus on the active-saved row when there is one — otherwise
@@ -40,20 +35,11 @@ export function SearchDropdown(props: SearchDropdownProps) {
     activeSavedId ? Math.max(0, saved.findIndex((s) => s.id === activeSavedId)) : -1;
   const [focusIdx, setFocusIdx] = useState(initialFocus);
 
-  // Inline-rename state — non-null = in name-edit mode for that target.
-  const [namingCurrent, setNamingCurrent] = useState<string | null>(null);
+  // Inline-rename for ☆-from-recent. Saved-current-as-new is handled by
+  // typing → Enter (commits to recent) → ☆ that recent.
   const [namingRecent, setNamingRecent] = useState<{ idx: number; value: string } | null>(null);
 
-  const showSaveCurrent =
-    !!onSaveCurrent && !activeSavedId && currentQueryText.trim().length > 0;
-
   const trimName = (s: string) => s.trim().slice(0, 40);
-
-  const submitCurrent = () => {
-    const name = (namingCurrent ?? '').trim();
-    if (name && onSaveCurrent) onSaveCurrent(name);
-    setNamingCurrent(null);
-  };
 
   const submitRecent = (r: RecentSearch) => {
     const name = (namingRecent?.value ?? '').trim();
@@ -64,7 +50,7 @@ export function SearchDropdown(props: SearchDropdownProps) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       // When inline rename is active, defer to the input's own handler.
-      if (namingCurrent !== null || namingRecent !== null) return;
+      if (namingRecent !== null) return;
       if (e.key === 'ArrowDown') { e.preventDefault(); setFocusIdx((i) => Math.min(i + 1, totalRows - 1)); }
       else if (e.key === 'ArrowUp') { e.preventDefault(); setFocusIdx((i) => Math.max(i - 1, 0)); }
       else if (e.key === 'Enter') {
@@ -78,46 +64,14 @@ export function SearchDropdown(props: SearchDropdownProps) {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [focusIdx, saved, recent, totalRows, onRunSaved, onRunRecent, onClose, namingCurrent, namingRecent]);
+  }, [focusIdx, saved, recent, totalRows, onRunSaved, onRunRecent, onClose, namingRecent]);
 
   return (
     <div className="search-dropdown" data-testid="search-dropdown">
-      {showSaveCurrent && namingCurrent === null && (
-        <button
-          type="button"
-          className="dropdown-save-current"
-          data-testid="dropdown-save-current"
-          onClick={() => setNamingCurrent(trimName(currentQueryText))}
-        >
-          <span className="star filled" aria-hidden="true">★</span>
-          <span className="label">Save this search</span>
-          <span className="query-preview">{currentQueryText}</span>
-        </button>
-      )}
-      {namingCurrent !== null && (
-        <div className="dropdown-name-row" data-testid="dropdown-name-current">
-          <span className="star filled" aria-hidden="true">★</span>
-          <input
-            type="text"
-            autoFocus
-            value={namingCurrent}
-            data-testid="dropdown-name-input-current"
-            placeholder="Name this search"
-            onChange={(e) => setNamingCurrent(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') { e.preventDefault(); submitCurrent(); }
-              else if (e.key === 'Escape') { e.preventDefault(); setNamingCurrent(null); }
-            }}
-          />
-          <button type="button" className="action primary" onClick={submitCurrent}>Save</button>
-          <button type="button" className="action" onClick={() => setNamingCurrent(null)}>Cancel</button>
-        </div>
-      )}
-
       <div className="dropdown-section-label" data-testid="section-label-saved">
         Saved {saved.length > 0 && <span className="muted">(pinned)</span>}
       </div>
-      {saved.length === 0 && <div className="dropdown-empty">No saved searches yet — star a recent one or save your current search above.</div>}
+      {saved.length === 0 && <div className="dropdown-empty">No saved searches yet — run a query, then star it from Recent below.</div>}
       {saved.map((s, i) => (
         <div
           key={s.id}

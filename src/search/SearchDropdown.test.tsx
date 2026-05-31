@@ -14,7 +14,7 @@ const recent: RecentSearch[] = [
 
 function defaultProps(overrides: Partial<SearchDropdownProps> = {}): SearchDropdownProps {
   return {
-    saved, recent, activeSavedId: null, currentQueryText: '',
+    saved, recent, activeSavedId: null,
     onRunSaved: () => {}, onRunRecent: () => {}, onPromoteRecent: () => {},
     onUnsaveActive: () => {}, onManage: () => {}, onClose: () => {},
     ...overrides,
@@ -61,23 +61,9 @@ describe('SearchDropdown', () => {
     expect(onManage).toHaveBeenCalled();
   });
 
-  it('"Save this search" row only renders when there is a current query and no active saved', () => {
-    const { rerender } = render(<SearchDropdown {...defaultProps({ currentQueryText: '', onSaveCurrent: vi.fn() })} />);
+  it('does NOT render a save-current row (save flow is star-from-recent only)', () => {
+    render(<SearchDropdown {...defaultProps()} />);
     expect(screen.queryByTestId('dropdown-save-current')).not.toBeInTheDocument();
-    rerender(<SearchDropdown {...defaultProps({ currentQueryText: 'damage', onSaveCurrent: vi.fn() })} />);
-    expect(screen.getByTestId('dropdown-save-current')).toBeInTheDocument();
-    rerender(<SearchDropdown {...defaultProps({ currentQueryText: 'damage', activeSavedId: '1', onSaveCurrent: vi.fn() })} />);
-    expect(screen.queryByTestId('dropdown-save-current')).not.toBeInTheDocument();
-  });
-
-  it('clicking "Save this search" opens an inline-rename input', () => {
-    const onSaveCurrent = vi.fn();
-    render(<SearchDropdown {...defaultProps({ currentQueryText: 'damage', onSaveCurrent })} />);
-    fireEvent.click(screen.getByTestId('dropdown-save-current'));
-    const input = screen.getByTestId('dropdown-name-input-current') as HTMLInputElement;
-    expect(input.value).toBe('damage');
-    fireEvent.change(input, { target: { value: 'Damage report' } });
-    fireEvent.keyDown(input, { key: 'Enter' });
-    expect(onSaveCurrent).toHaveBeenCalledWith('Damage report');
+    expect(screen.queryByTestId('dropdown-name-input-current')).not.toBeInTheDocument();
   });
 });
