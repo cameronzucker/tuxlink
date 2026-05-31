@@ -1,14 +1,14 @@
-# Strip Pat + native B2F outbound with attachment support — design spec (rev-2, post-adversarial Claude R1–R4)
+# Strip Pat + native B2F outbound with attachment support — design spec (rev-3, post-adversarial Codex R5)
 
 > Date: 2026-05-30 · Agent: magpie-grouse-shoal · bd: tuxlink-9phd
-> Rev: 2 — incorporates the 4-round Claude adversarial review (R1 wire-format, R2 surgical safety, R3 API design, R4 failure modes). R5 (Codex cross-provider) pending against this rev.
+> Rev: 3 — incorporates the 5-round adversarial cycle (Claude R1 wire-format, R2 surgical safety, R3 API design, R4 failure modes, Codex R5 cross-provider). All P0/P1 findings from all rounds are addressed.
 > Parent context: PR #151 (HTML Forms v0.1) is paused mid-Phase-0 behind this prerequisite. Operator directive 2026-05-30: pivot to Path B + complete the Pat strip. See [`dev/handoffs/2026-05-30-heron-tanager-bog-html-forms-paused-pat-strip-prereq.md`](../../../dev/handoffs/2026-05-30-heron-tanager-bog-html-forms-paused-pat-strip-prereq.md).
 
 ## 0. Status — DESIGN ONLY (HARD-GATE per `superpowers:brainstorming` + `build-robust-features`)
 
 Approval flow:
 
-- **Approve / merge** → Codex R5 cross-provider review → revise to rev-3 if needed → `superpowers:writing-plans` → plan review cycle (min 3 rounds) → execution recommendation → operator decision on approach.
+- **Approve / merge** → `superpowers:writing-plans` → plan review cycle (min 3 rounds) → execution recommendation → operator decision on approach.
 - **Comment** → revise spec + re-run any affected adrev round.
 - **Reject** → regroup.
 
@@ -56,6 +56,19 @@ Key rev-1 → rev-2 corrections:
 | **Smoke happy-path only** | R4 P1 | single attachment | Rev-2 §7.3 expands smoke to: (a) plain text, (b) one ASCII attachment, (c) two attachments + multi-recipient, (d) non-ASCII filename, (e) empty (0-byte) attachment, (f) large (1 MB) attachment. All via the same probe binary with `--send` arg variations. |
 
 Everything else from rev-1 (high-level approach, single PR, native-only outbound) is preserved.
+
+### Key rev-2 → rev-3 corrections (Codex R5):
+
+| Class | Source | Rev-2 said | Rev-3 says |
+|---|---|---|---|
+| **Phase ordering — `MailboxFolder` deletion break** | Codex R5 P1 | "P9 deletes pat_client.rs" | `MailboxFolder` enum is defined in `pat_client.rs:9` and re-exported from `winlink_backend.rs`. Deleting `pat_client.rs` breaks every `MailboxFolder` reference (used by native mailbox + UI). Rev-3 adds **new P0 phase**: move `MailboxFolder` enum to `winlink_backend.rs` (where it's already re-exported from) BEFORE any other deletion. Total phase count: 13. |
+| **Parser — `set_header` overwrites repeated headers** | Codex R5 P1 | parser uses unchanged header-loop with `set_header` | The existing parser loop at `winlink/message.rs:147` uses `set_header`, which removes prior entries for the same key (per `message.rs:39-42`). With multi-attachment messages, only the LAST `File:` header survives — `header_all("File")` returns 1 entry. Multi-attachment messages still silently lose data on disk reload. Rev-3 §4.6 changes the parser loop to use `add_header` for known-repeatable headers (`File`, `To`, `Cc`) and `set_header` for the rest. |
+| **`Config.pat_mbo_address` private breaks `Config { ... }` literals** | Codex R5 P1 | "make pat_mbo_address private via `#[serde(default, skip_serializing)]`" | `Config { ... }` struct literals exist in 10+ files outside `config.rs` (bootstrap, winlink_backend, modem_commands, ardop transport, ui_commands, etc.). Making the field private breaks all of them and no public builder/`Default` exists to substitute. Rev-3 keeps the field `pub` but adds the `#[serde(default, skip_serializing)]` attribute (write-side suppression via serde) AND `#[deprecated(note = "...")]` (compile-time warning). Existing literals still compile (they continue to set `pat_mbo_address: None`); future writers see deprecation warnings; reads with old values fire a runtime log. |
+| **`Config::default()` doesn't exist** | Codex R5 P2 | `NativeBackend::test_fixture` uses `Config::default()` | `Config` has no `Default` impl on main (verified via grep). Rev-3 §4.4 builds an explicit fixture inline: `Self::new(test_config(), tempdir_path)` where `test_config()` is a private helper returning a minimal valid `Config` with `pat_mbo_address: None` and identity left blank (sufficient for the `BackendState::install` lifecycle tests that don't exercise actual connect). The fixture helper lives next to the `test_fixture()` factory in `#[cfg(test)]`. |
+| **`OutboundAttachment.filename: pub String` bypasses validation** | Codex R5 P2 | "`Filename::new` constructor enforces 255-char + Latin-1 caps" | Pub `String` lets any caller construct `OutboundAttachment { filename: "any garbage".into(), bytes: ... }` directly, bypassing the `Filename` newtype entirely. The "infallible compose" stance from rev-2 made this gap unfixable in compose. Rev-3 restores `compose_message_with_files -> Result<Message, ComposeError>` (fallible) and validates filenames at compose time. `ComposeError` re-introduced with `#[non_exhaustive]` + `FilenameTooLong(usize)` + `FilenameNotLatin1Encodable(String)` variants. `Filename` newtype is dropped — validation lives at the compose boundary, not the type boundary. The plain-text `compose_message` stays infallible (no filename inputs, no fallible path). |
+| **Observability layer — wrong module** | Codex R5 P2 | "extend `NativeBackend::send_message` to emit `LogSource::Wire` for FC EM and FS answers" | `NativeBackend::send_message` only stores to outbox; the wire-level proposal/answer exchange happens later in `winlink::session::send_turn` / `run_exchange` (triggered by `connect`). Rev-3 §4.8 relocates the observability hooks to the session module: `send_turn` emits `LogSource::Wire` for each `FC EM` line as it's sent, for each `FS <answers>` line received, and surfaces `BackendError::MessageRejected("FS reject from CMS for mid <X>")` (existing tuple variant) on `FS -` for our MID. The `send_message` queueing function stays observable-free (it's a passthrough; no wire I/O). |
+| **`BackendError::MessageRejected` shape** | Codex R5 P2 | `BackendError::MessageRejected { mid, reason }` (struct variant) | The existing variant is `MessageRejected(String)` — tuple-form (verified via grep). Rev-3 keeps the tuple form and encodes the diagnostic inline: `BackendError::MessageRejected(format!("FS reject from CMS for mid {mid}: {reason}"))`. Adding a new variant or restructuring the existing one would require updating every caller; not worth it for one diagnostic site. |
+| **Operator smoke shell-script bug** | Codex R5 P3 | `P=cargo run ...` "reusable alias" | `P=foo cmd args` runs `cmd` with `P=foo` in env exactly once — it's not a reusable assignment. Rev-3 §7.3 rewrites the smoke section using a shell function: `probe() { cargo run --manifest-path src-tauri/Cargo.toml --bin native_cms_probe -- "$@"; }`, then `probe`, `probe --send /tmp/a.txt`, etc. |
 
 ## 2. Purpose
 
@@ -167,14 +180,15 @@ The change is **two files of substantive code edits** (compose.rs, message.rs) p
 
 ### 4.1 `winlink::compose::compose_message_with_files`
 
-New function. Keeps the existing `compose_message` (text-only) for callers that don't need attachments; both forward to a shared inner helper. Single-purpose functions compose better than optional-param creep.
+New function. Keeps the existing `compose_message` (text-only) for callers that don't need attachments; the new-fn forwards through the existing pipeline.
 
 ```rust
 /// Build a Private text message with zero or more file attachments.
 ///
-/// Files are appended to the message in declaration order. Filename validation
-/// happens at the [`Filename`] constructor, not here, so this function cannot
-/// fail.
+/// Returns `Err(ComposeError::FilenameTooLong)` or `Err(ComposeError::FilenameNotLatin1Encodable)`
+/// if any attachment filename violates the Winlink B2F constraints (255-char cap,
+/// ISO-8859-1 encodable for Q-encoding). The first invalid filename short-circuits
+/// the build; the error names the offending filename so the UI can surface it.
 pub fn compose_message_with_files(
     mycall: &str,
     to: &[&str],
@@ -183,10 +197,19 @@ pub fn compose_message_with_files(
     body: &str,
     attachments: &[OutboundAttachment],
     unix_secs: u64,
-) -> Message;
+) -> Result<Message, ComposeError>;
+
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum ComposeError {
+    #[error("filename exceeds 255-character limit ({chars} chars): {filename:?}")]
+    FilenameTooLong { filename: String, chars: usize },
+    #[error("filename contains characters outside ISO-8859-1 (Q-encoding would be lossy): {filename:?}")]
+    FilenameNotLatin1Encodable { filename: String },
+}
 ```
 
-`compose_message` (text-only) keeps its existing signature unchanged. Implementation forwards to `compose_message_with_files` with `&[]` for attachments — no `Result`, no `.expect()`, no panic site.
+`compose_message` (text-only) keeps its existing signature unchanged. Implementation: no attachments → no filename validation → no fallible path. The two functions share an inner helper that builds headers + body; the file-handling step is gated on whether `attachments.is_empty()`.
 
 ### 4.2 Re-using `OutboundAttachment`
 
@@ -196,45 +219,18 @@ Rev-1 introduced a parallel `winlink::compose::File` struct. R3 P1-2 flagged the
 // Already on main (winlink_backend.rs:91):
 #[derive(Debug, Clone)]
 pub struct OutboundAttachment {
-    pub filename: String,           // pre-§4.5: a plain String; post-§4.5: a Filename newtype
+    pub filename: String,
     pub bytes: Vec<u8>,
 }
 ```
 
 The rev-1 `content_type: String` field is **deleted** in this PR. It was kept "for future inbound parsing and UI hints" but per the project's aggressive-deletion stance, it's removed now and restored if a real need surfaces. The PR's change to this struct is the field removal; existing callers (UI compose flow + heron-tanager-bog's T0.1 test) get a same-commit update.
 
-A new `Filename` newtype enforces the 255-char cap + Latin-1 encodability check:
-
-```rust
-#[derive(Debug, Clone)]
-pub struct Filename(String);
-
-impl Filename {
-    pub fn new(s: impl Into<String>) -> Result<Self, FilenameError> {
-        let s = s.into();
-        if s.chars().count() > 255 { return Err(FilenameError::TooLong(s.chars().count())); }
-        if !s.chars().all(|c| (c as u32) <= 0xff) { return Err(FilenameError::NotLatin1Encodable); }
-        Ok(Filename(s))
-    }
-}
-
-#[derive(Debug, thiserror::Error)]
-#[non_exhaustive]
-pub enum FilenameError {
-    #[error("filename exceeds 255-character limit: {0} chars")]
-    TooLong(usize),
-    #[error("filename contains characters outside ISO-8859-1; Q-encoding would be lossy")]
-    NotLatin1Encodable,
-}
-```
-
-The compose function takes `&[OutboundAttachment]` and uses `filename: String` directly — the `Filename` newtype is the boundary-validation shape; the wire-side carries the validated `String`. (If a more aggressive future cleanup wants to push `Filename` all the way through, the type already exists.)
-
-`OutboundAttachment::filename`'s validation happens at construction. UI sites that build `OutboundAttachment` will need to go through `Filename::new(...)?` — a few-line change tracked in §5 P4.
+Filename validation lives in `compose_message_with_files` (per §4.1) — not in a newtype on the field. Codex R5 P2 (Filename enforcement) noted that a `Filename` newtype on a `pub` struct field is bypassable (callers can directly construct `OutboundAttachment { filename: "bad".into(), .. }`); centralizing validation in compose closes the bypass deterministically. The cost is: every caller of `compose_message_with_files` handles a `Result`. This is acceptable because compose is the gate point for outbound wire encoding; validation there protects the wire format.
 
 ### 4.3 `winlink_backend::NativeBackend::send_message`
 
-The on-main implementation (`winlink_backend.rs:578-596` on the worktree branch HEAD) is already structurally close to correct — it just calls `compose::compose_message` without the attachment param. The change is a one-line swap + the `Mailbox::store` return-type rename:
+The on-main implementation (`winlink_backend.rs:578-596` on the worktree branch HEAD) is already structurally close to correct — it just calls `compose::compose_message` without the attachment param. The change is a one-line swap + the `Mailbox::store` return-type rename + a `?` to propagate compose errors:
 
 ```rust
 async fn send_message(
@@ -253,17 +249,17 @@ async fn send_message(
         &callsign, &to, &cc, &msg.subject, &msg.body,
         &msg.attachments,                                          // NEW: pass through
         unix_secs,
-    );
+    ).map_err(|e| BackendError::MessageRejected(e.to_string()))?;  // NEW: surface compose errors
     let id = self.mailbox.store(MailboxFolder::Outbox, &message.to_bytes())?;
     Ok(id)                                                         // CHANGED: no Some(...)
 }
 ```
 
-`Mailbox::store(folder, raw) -> Result<MessageId, BackendError>` parses the MID from headers itself; the caller just propagates the returned id. Trait return is `Result<MessageId, BackendError>` (no `Option`); see §4.7.
+`Mailbox::store(folder, raw) -> Result<MessageId, BackendError>` parses the MID from headers itself; the caller just propagates the returned id. Trait return is `Result<MessageId, BackendError>` (no `Option`); see §4.7. Compose errors (invalid filenames) map to `BackendError::MessageRejected` — the existing tuple variant carries the human-readable diagnostic. The UI sees this as a typed rejection it can surface to the user.
 
 ### 4.4 `app_backend::BackendState` test fixtures
 
-Per audit, `app_backend.rs` lines 161, 173, 219 use `PatBackend::from_url("http://127.0.0.1:9")` to construct a stub backend for unit tests. After Pat deletion, these need a `NativeBackend` equivalent. The chosen approach is a `#[cfg(test)]` factory on `NativeBackend`:
+Per audit, `app_backend.rs` lines 161, 173, 219 use `PatBackend::from_url("http://127.0.0.1:9")` to construct a stub backend for unit tests. After Pat deletion, these need a `NativeBackend` equivalent. The chosen approach is a `#[cfg(test)]` factory on `NativeBackend`. Codex R5 P2 noted that `Config::default()` does not exist on main; the fixture builds an explicit minimal Config inline:
 
 ```rust
 #[cfg(test)]
@@ -276,12 +272,27 @@ impl NativeBackend {
     pub fn test_fixture() -> Self {
         let tempdir = tempfile::tempdir().unwrap();
         let leaked_path = Box::leak(Box::new(tempdir)).path().to_path_buf();
-        Self::new(Config::default(), leaked_path)
+        Self::new(test_config(), leaked_path)
+    }
+}
+
+#[cfg(test)]
+fn test_config() -> Config {
+    Config {
+        // Minimum valid Config for BackendState::install lifecycle tests.
+        // Identity left blank → connect/send_message fail with NotConfigured (intentional).
+        identity: Identity { callsign: None, /* other fields default */ },
+        pat_mbo_address: None,
+        /* other top-level fields default per their #[serde(default)] attributes
+           where present; explicit construction elsewhere */
+        ..existing_test_pattern()
     }
 }
 ```
 
-The `Box::leak` keeps the tempdir alive for the test's lifetime without infecting the public API. Cargo.toml needs `tempfile` in `dev-dependencies` if not already present (verify in P1).
+The exact field list in `test_config()` is determined when writing the phase task (read the current `Config` struct definition for the full field set). The principle: minimal valid Config that doesn't require external services. The `Box::leak` keeps the tempdir alive for the test's lifetime without infecting the public API. `Cargo.toml` needs `tempfile` in `dev-dependencies` (verify in P1; if absent, add).
+
+An alternative is to add a `Default` impl for `Config` as part of the same commit — that would simplify the fixture but also exposes `Config::default()` to non-test code, which the current codebase deliberately avoids (every `Config` literal is explicit). Stick with the explicit-fixture approach.
 
 ### 4.5 Removed APIs
 
@@ -296,15 +307,39 @@ The `Box::leak` keeps the tempdir alive for the test's lifetime without infectin
 - `Cargo.toml` `[[bin]] live_cms_smoke` entry
 - `build_support.rs` (Go-toolchain check helper; orphaned after `build.rs` Go-path deletion)
 
-### 4.6 `Message::from_bytes` extension — parser side (R4 P0-1 fix)
+### 4.6 `Message::from_bytes` extension — parser side (R4 P0-1 + Codex R5 P1 fix)
 
-The current parser at `winlink/message.rs:139-167` reads headers + body and stops. With attachments, the on-disk bytes look like `headers + \r\n\r\n + body + \r\n + (attachment + \r\n)*`. The mailbox stores raw bytes correctly (it's a passthrough write); the parser needs to consume the trailing attachment region.
+The current parser at `winlink/message.rs:139-167` reads headers + body and stops, AND its header-parsing loop uses `set_header` (which removes prior entries for the same key per `message.rs:39-42`). With multi-attachment messages, only the LAST `File:` header survives and `header_all("File")` returns 1 entry regardless of how many `File:` lines were on the wire. The parser must:
 
-Extended parser shape (the function gains a step after the existing `body` assignment):
+1. Preserve repeated headers using `add_header` for known-repeatable keys (`File`, `To`, `Cc`).
+2. After parsing headers + body, consume the trailing attachment region per the §3 wire format.
+
+Extended parser:
 
 ```rust
+const REPEATABLE_HEADERS: &[&str] = &["File", "To", "Cc"];
+
 pub fn from_bytes(input: &[u8]) -> Result<Message, ParseError> {
-    // ... existing header + body parsing unchanged ...
+    let sep = find_subslice(input, b"\r\n\r\n").ok_or(ParseError::NoHeaderTerminator)?;
+    let header_block = &input[..sep];
+    let after_headers = &input[sep + 4..];
+
+    let mut msg = Message::new();
+    for line in header_block.split(|&b| b == b'\n') {
+        let line = line.strip_suffix(b"\r").unwrap_or(line);
+        if line.is_empty() { continue; }
+        let text = std::str::from_utf8(line).map_err(|_| ParseError::NonUtf8Header)?;
+        let (key, value) = text.split_once(": ").ok_or(ParseError::MalformedHeader)?;
+        // CHANGED: preserve repeated headers (Codex R5 P1 fix)
+        if REPEATABLE_HEADERS.iter().any(|h| h.eq_ignore_ascii_case(key)) {
+            msg.add_header(key, value);
+        } else {
+            msg.set_header(key, value);
+        }
+    }
+
+    let body_size = msg.header("Body").and_then(|v| v.parse::<usize>().ok()).unwrap_or(0);
+    if after_headers.len() < body_size { return Err(ParseError::TruncatedBody); }
     msg.body = after_headers[..body_size].to_vec();
 
     // NEW: parse attachments
@@ -353,6 +388,8 @@ New `ParseError` variants: `MalformedFileHeader`, `MissingAttachmentTerminator`,
 
 The `Message` struct gains an `attachments: Vec<OutboundAttachment>` field (same type as the trait-input side; symmetric). `to_bytes` already accounts for files (per §3); `from_bytes` now does too.
 
+The same `REPEATABLE_HEADERS` change fixes a latent (but unrelated) bug for messages with multiple `To:` or `Cc:` recipients — today those would also be collapsed to only the last entry on `from_bytes`. Add a test asserting `to`/`cc` round-trip with 2+ recipients (§8.2).
+
 ### 4.7 `WinlinkBackend` trait return-type tightening
 
 Per R3 P0-3, the `Result<Option<MessageId>, BackendError>` on `send_message` is a vestige of Pat 1.0.0's no-MID-echo limitation. Pat is gone in this PR; the `None` branch is dead code masquerading as a valid contract. Trait change:
@@ -372,32 +409,35 @@ Same-commit caller updates:
 - `ui_commands.rs` test file (line ~1867-1880 per R3 finding) — update mock backends that return `Ok(None)`; they now return `Ok(MessageId::new("test-mid"))`.
 - Any other call site identified by grep.
 
-### 4.8 Send-side observability
+### 4.8 Wire-level observability (relocated per Codex R5 P2)
 
-Per R4 P0-3, `BackendError::TransportFailed` swallows the actual failure mode (wire-garbage vs reject vs drop). The native session loop already has a `LogSink` for `LogSource::Wire` lines (`winlink_backend.rs:432-460`); extend `NativeBackend::send_message` to emit:
+Per R4 P0-3 and Codex R5 P2, `BackendError::TransportFailed` swallows the actual failure mode (wire-garbage vs reject vs drop). The hooks live in `winlink::session::send_turn` / `run_exchange` (where wire I/O happens), NOT `NativeBackend::send_message` (which just stores to outbox; no wire involvement at send-time):
 
-- On proposal send: `LogSource::Wire`, message body = the `FC EM <mid> <size> <compressed_size> 0` line as sent.
-- On FS-answer receive: `LogSource::Wire`, message body = `FS <answers>` raw.
-- On `FS -` (reject) for our MID: `BackendError::MessageRejected { mid, reason: "FS reject from CMS" }`.
-- On `FS =` (defer): retry with backoff (existing pattern); log defers.
-- On mid-transfer connection drop: `BackendError::TransportFailed { reason: "connection dropped mid-transfer at offset N", source: Some(io_err) }`.
+- On proposal send (in `send_turn`): emit `LogSource::Wire` line with body = the `FC EM <mid> <size> <compressed_size> 0` text exactly as written to the socket.
+- On FS-answer receive (in `send_turn`): emit `LogSource::Wire` line with body = the raw `FS <answers>` text exactly as read.
+- On `FS -` (reject) for one of our MIDs: return (or surface up via `Result`) `BackendError::MessageRejected(format!("FS reject from CMS for mid {mid}"))` — tuple-form per the existing variant; no struct-shape change.
+- On `FS =` (defer): existing retry-with-backoff pattern; emit `LogSource::Wire` line on each defer attempt for traceability.
+- On mid-transfer connection drop (in `run_exchange`): return `BackendError::TransportFailed { reason: format!("connection dropped mid-transfer at offset {offset}"), source: Some(Box::new(io_err)) }`. Existing struct-form variant; no shape change.
 
-These changes apply to the wire-level helpers in `winlink::session` + `winlink::proposal` modules — adversarial review surfaces the right place; the plan task descriptions identify exact line edits.
+The `NativeBackend::send_message` queueing function stays observable-free — it's a passthrough; no wire I/O. The wire log lines are produced when the operator triggers connect (which runs `run_exchange` → `send_turn`). Operators reading the session log see the actual FC/FS dialogue and can distinguish "I sent garbage" from "CMS dropped" by looking at where the dialogue stopped.
+
+The plan's task descriptions for the affected modules (`winlink::session`, `winlink::proposal`) identify exact line ranges. The `LogSink` plumbing already exists per `winlink_backend.rs:432-460` (used today for `LogSource::Wire` on inbound bytes); reuse it for outbound proposal/answer text.
 
 ## 5. Pat removal phases (commit-level decomposition)
 
-CI must be green at the end of every commit. The atomic invariant: `PatBackend` is referenced in code IFF the file declaring it exists. The phase count grew from rev-1's 7 to 12 because R2 surfaced missed deletion targets (test files, Cargo.toml bin entry, build_support.rs) and R4 surfaced new migration commits (keyring, config). Phase order is chosen so each prior phase enables the next without leaving uncompilable states.
+CI must be green at the end of every commit. The atomic invariant: `PatBackend` is referenced in code IFF the file declaring it exists. The phase count is 13 (was 7 in rev-1; rev-2 grew to 12 after R2/R4 missed-targets; rev-3 adds P0 after Codex R5 P1 on `MailboxFolder` placement). Phase order is chosen so each prior phase enables the next without leaving uncompilable states.
 
 | Phase | Commits | What |
 |---|---|---|
-| **P1: Compose-with-files (forward path)** | 1 commit | Add `Filename` newtype + `FilenameError`. Delete `OutboundAttachment.content_type` field; update T0.1's test + the heron-tanager-bog `ui_commands.rs:660` literal. Extend `compose::compose_message` → forward to new `compose_message_with_files`. Extend `Message` struct with `attachments: Vec<OutboundAttachment>` + `set_attachments` setter. Extend `Message::to_bytes()` to write `File:` headers + body+CRLF+(attachment+CRLF)* tail. Extend `Message::to_proposal()` (size computation includes attachments). Add 9 unit tests including the wl2k-go golden vector at `lzhuf/testdata/LPE5NXDVLVSQ.b2f`. PatBackend untouched. CI green. |
-| **P2: Parse-with-files (return path)** | 1 commit | Extend `Message::from_bytes` per §4.6: parse `File:` headers, consume body→attachment CRLF, read each attachment per its `File:` size, consume trailing CRLF after each. Add `ParseError` variants `MalformedFileHeader`, `MissingAttachmentTerminator`, `TruncatedAttachment`. Mark `ParseError` `#[non_exhaustive]`. Add 6 unit tests including a `from_bytes(to_bytes(msg)) == msg` round-trip for the golden vector. PatBackend untouched. CI green. |
+| **P0: Move `MailboxFolder` out of `pat_client.rs`** | 1 commit | `MailboxFolder` enum currently lives at `src-tauri/src/pat_client.rs:9` and is re-exported via `winlink_backend.rs`. Move the enum definition to `winlink_backend.rs` (where it's already re-exported and where the native mailbox + UI code uses it). Update `pat_client.rs` to import from the new location (transitional). Update `lib.rs` re-exports if any. After this commit, the `pat_client.rs` file no longer owns load-bearing native types — only Pat-specific types. CI green. (This phase must come FIRST because P9 deletes `pat_client.rs`; without P0, P9 breaks every `MailboxFolder` reference.) |
+| **P1: Compose-with-files (forward path)** | 1 commit | Restore `ComposeError` with `#[non_exhaustive]` + `FilenameTooLong { filename, chars }` + `FilenameNotLatin1Encodable { filename }` variants. Delete `OutboundAttachment.content_type` field; update T0.1's test + the heron-tanager-bog `ui_commands.rs:660` literal. Extend `compose::compose_message` → forward to new fallible `compose_message_with_files`. Extend `Message` struct with `attachments: Vec<OutboundAttachment>` + `set_attachments` setter. Extend `Message::to_bytes()` to write `File:` headers + body+CRLF+(attachment+CRLF)* tail. Extend `Message::to_proposal()` (size computation includes attachments). Add 9 unit tests including the wl2k-go golden vector at `lzhuf/testdata/LPE5NXDVLVSQ.b2f`. PatBackend untouched. CI green. |
+| **P2: Parse-with-files (return path)** | 1 commit | Extend `Message::from_bytes` per §4.6: (a) change header-parsing loop to use `add_header` for `File`/`To`/`Cc` (was `set_header` which dropped repeats); (b) parse `File:` headers via `header_all`, consume body→attachment CRLF, read each attachment per its `File:` size, consume trailing CRLF after each. Add `ParseError` variants `MalformedFileHeader`, `MissingAttachmentTerminator`, `TruncatedAttachment`. Mark `ParseError` `#[non_exhaustive]`. Add 7 unit tests including a `from_bytes(to_bytes(msg)) == msg` round-trip for the golden vector AND a multi-recipient round-trip (catches the `set_header` collapse bug). PatBackend untouched. CI green. |
 | **P3: Trait return-type tighten** | 1 commit | `WinlinkBackend::send_message` signature changes from `-> Result<Option<MessageId>, BackendError>` to `-> Result<MessageId, BackendError>`. Update PatBackend impl (`winlink_backend.rs:1702`) — wraps Pat's `None` return into a synthesized `MessageId::new("")` for the transitional period (this PR's transitional state is "Pat exists but is being deprecated"; the synthesized empty MID is acceptable because no caller branches on emptiness AND PatBackend is fully removed two phases later). Update NativeBackend impl. Update `ui_commands.rs` call sites (~3 sites + comments). Update test mocks. CI green. |
-| **P4: NativeBackend wires attachments** | 1 commit | `NativeBackend::send_message` calls `compose_message_with_files(...)` with `msg.attachments`. Update `two_native_backends_exchange_*` integration tests to pass an attachment through and assert round-trip via `from_bytes` (the new parse path) on the receiver. Add send-side observability (`LogSource::Wire` emits on proposal-send + FS-answer per §4.8). PatBackend untouched. CI green. |
+| **P4: NativeBackend wires attachments + session observability** | 1 commit | `NativeBackend::send_message` calls `compose_message_with_files(...)?` with `msg.attachments` (per §4.3 — fallible, maps `ComposeError` to `BackendError::MessageRejected`). Add wire observability to `winlink::session::send_turn` / `run_exchange`: emit `LogSource::Wire` lines for outbound `FC EM` proposals + inbound `FS <answers>`; map `FS -` (reject for our MID) to `BackendError::MessageRejected(...)` (existing tuple variant); map mid-transfer drops to `BackendError::TransportFailed` with offset diagnostic. Update `two_native_backends_exchange_*` integration tests to pass an attachment through and assert round-trip via `from_bytes` (the new parse path) on the receiver. Add a test that asserts `FC EM ...` appears in the session log after a send. PatBackend untouched. CI green. |
 | **P5: Flip install sites** | 1 commit | `bootstrap.rs`: delete `resolve_pat_binary` + `resolve_pat_binary_inner` + `is_nonempty_file` + `SIDECAR_STUB_REASON` + the `PatBackend::spawn` call site + the dedicated spawn thread; install `NativeBackend::new(...)` synchronously instead. `app_backend.rs` tests (3 sites): `PatBackend::from_url(...)` → `NativeBackend::test_fixture()`. `wizard.rs`: ephemeral Pat spawn for test-send → `NativeBackend` connect-only check (no test message sent — see §7.2). After this commit, no production code references PatBackend; the Pat-using tests in winlink_backend_test.rs and ui_commands_test.rs still exist but are not affected because they construct PatBackend directly. CI green. |
 | **P6: LogSource::Pat merge** | 1 commit | Remove `LogSource::Pat` variant from the enum at `winlink_backend.rs:290`. Update the Pat-stderr-line emission site (`winlink_backend.rs:1408-1423`) to emit `LogSource::Backend` instead. Frontend update in same commit: `src/wizard/logProjection.ts:30` + `src/wizard/logProjection.test.ts:330` drop the `'pat'` discriminator branch (it becomes `'backend'`). The wire form (`#[serde(rename_all = "lowercase")]`) emits `"backend"` consistently from this commit forward. Historical logs (already on disk) with `"pat"` source are still readable by the parser as a known-but-deprecated value — handle via a serde-time alias if needed (verify by reading the actual existing log files; if no on-disk persistence of LogSource, skip). CI green. |
 | **P7: Keyring service-name migration** | 1 commit | Rename `"tuxlink-pat"` → `"tuxlink"` at all 6 source sites (`winlink_backend.rs:994`, `winlink_backend.rs:1219`, `wizard.rs:186`, `bin/live_cms_smoke.rs:45+104` (file is deleted in P9 — these sites are removed there; only the 4 surviving sites in P7), `bin/native_cms_probe.rs:43`). One-time migration helper at `winlink::credentials::migrate_keyring_entry()`: read from `"tuxlink-pat"`, write to `"tuxlink"`, delete old entry, log once. Called on first `connect()` attempt. Update `src/wizard/Step2Credentials.tsx:84` UI string. CI green. |
-| **P8: Config field deprecation** | 1 commit | `Config.pat_mbo_address`: change from `pub pat_mbo_address: Option<String>` to `#[serde(default, skip_serializing)] pat_mbo_address: Option<String>` (private field, default to None on read, never written back). Keep `#[serde(deny_unknown_fields)]` on the struct (so future drift still gates correctly). On deserialize, if `pat_mbo_address.is_some()`, log a deprecation warning. Full field removal deferred to a future major bump (tracked as a follow-up bd issue). CI green. |
+| **P8: Config field deprecation** | 1 commit | `Config.pat_mbo_address`: **keep `pub`** (Codex R5 P1 — making it private breaks `Config { ... }` literals across 10+ files outside config.rs). Add `#[serde(default, skip_serializing)]` (write-side suppression — operators' config.json on next save no longer contains the field) AND `#[deprecated(note = "pat_mbo_address is unused after the Pat strip (ADR 0016); future writers should not set it. Tracked for removal in a future major bump.")]` (compile-time warning for any new write site). Keep `#[serde(deny_unknown_fields)]` on the struct (so future drift still gates correctly). On deserialize, if `pat_mbo_address.is_some()`, log a one-shot deprecation warning so operators see something on first run after upgrade. Full field removal deferred to a future major bump (file a follow-up bd issue). Existing `Config { ..., pat_mbo_address: None, ... }` literals continue to compile (the field is still pub); they just trigger the `#[deprecated]` warning, which is the intended nudge for the future removal. CI green (compile warnings on the deprecated field are non-blocking; allow-listed in CI). |
 | **P9: Delete Pat module + Pat tests** | 1 commit | `rm src-tauri/src/pat_client.rs src-tauri/src/pat_config.rs src-tauri/src/pat_process.rs`. Delete `PatBackend` + `PatBackendSpawnOptions` + the `PatBackend` `WinlinkBackend` impl block from `winlink_backend.rs`. `rm src-tauri/tests/pat_client_test.rs src-tauri/tests/pat_config_test.rs src-tauri/tests/pat_process_test.rs`. **Partial edit** of `tests/winlink_backend_test.rs` (22 PatBackend hits, 615 LOC): remove every test case that uses PatBackend (estimated ~8-12 tests); preserve non-Pat coverage. **Partial edit** of `tests/ui_commands_test.rs` (10 PatBackend hits, 558 LOC): same approach (estimated ~3-5 tests). Remove `pub mod pat_client; pub mod pat_config; pub mod pat_process;` from `lib.rs`. `rm src-tauri/src/bin/live_cms_smoke.rs`. Remove `[[bin]] live_cms_smoke` from `Cargo.toml` (lines 64-65). After this commit, `cargo build` + `cargo test` are green; no Pat code remains. |
 | **P10: Delete sidecar infra** | 1 commit | `tauri.conf.json`: remove `"externalBin": ["sidecars/pat"]`. `build.rs`: delete Go-toolchain check, `go build` invocation, 0-byte-stub creation. **The file shrinks dramatically** — flag in commit body. `rm src-tauri/build_support.rs` (the helper that tests the Go path). Delete `#[cfg(test)] mod build_support;` declaration. Delete `src-tauri/sidecars/` directory entirely. `.github/workflows/release.yml`: remove the Go-toolchain setup step + the Pat sidecar build step (search for `go-version-file: 'external/tuxlink-pat/go.mod'`). Remove any Cargo dependency that was Pat-specific (verify by inspecting `Cargo.toml` `[dependencies]` and checking whether each non-shared entry is still referenced post-deletion). CI green. |
 | **P11: Submodule deinit** | 1 commit | Per the ADR-0009-shaped procedure in §7.5: `git submodule deinit -f external/tuxlink-pat`; `git rm external/tuxlink-pat`; delete the `[submodule "external/tuxlink-pat"]` block from `.gitmodules`; document `.git/modules/external/tuxlink-pat/` orphan-removal step in PR body (operator runs locally; not part of the commit). The forked repo at `github.com/cameronzucker/tuxlink-pat` survives. CI green. |
@@ -405,7 +445,7 @@ CI must be green at the end of every commit. The atomic invariant: `PatBackend` 
 
 Each phase is a separate commit on `bd-tuxlink-9phd/strip-pat-add-native-attachments`. Polish-before-push: rebase locally for cleanup, push the cleaned sequence, do NOT amend after push. Per the no-squash ADR 0010, the merge preserves all 12 commits.
 
-**Why single PR for all 12 phases**: the alternative ("ship P1-P4 first, run for a few days, then ship P5+ later") introduces a transient state where `NativeBackend::send_message` handles attachments AND `PatBackend::send_message` still exists. Both are reachable through different install sites, and a config/wizard quirk could resurrect Pat after we thought we'd retired it. Atomic cutover is cleaner. The 12-phase decomposition keeps each commit small enough to review individually while preserving the all-or-nothing semantics at PR-merge time.
+**Why single PR for all 13 phases**: the alternative ("ship P0-P4 first, run for a few days, then ship P5+ later") introduces a transient state where `NativeBackend::send_message` handles attachments AND `PatBackend::send_message` still exists. Both are reachable through different install sites, and a config/wizard quirk could resurrect Pat after we thought we'd retired it. Atomic cutover is cleaner. The 13-phase decomposition keeps each commit small enough to review individually while preserving the all-or-nothing semantics at PR-merge time.
 
 ## 6. ADR mutations
 
@@ -500,25 +540,27 @@ This eliminates the only place where the wizard would have entangled with RADIO-
 
 `src-tauri/src/bin/live_cms_smoke.rs` is deleted (Pat-based, legacy). `src-tauri/src/bin/native_cms_probe.rs` is extended in-place to take an optional `--send <PATH>` flag that, when present, sends a message with the file at `<PATH>` attached to `<SELF-CALL>@winlink.org`.
 
-The operator smoke after merge runs the probe 6 times:
+The operator smoke after merge runs the probe 7 times. Define a shell function (POSIX-portable; per Codex R5 P3 the rev-2 `P=cargo run ...` form does not produce a reusable assignment):
 
 ```bash
-P=cargo run --manifest-path src-tauri/Cargo.toml --bin native_cms_probe --
+probe() {
+  cargo run --manifest-path src-tauri/Cargo.toml --bin native_cms_probe -- "$@"
+}
 
 # (a) Connect-only baseline.
-$P
+probe
 # (b) Plain text, no attachment.
-$P --send-empty-text
+probe --send-empty-text
 # (c) One ASCII attachment.
-echo "hello" > /tmp/a.txt && $P --send /tmp/a.txt
-# (d) Two attachments + multi-recipient (manually run with cc).
-echo "two" > /tmp/b.txt && $P --send /tmp/a.txt --send /tmp/b.txt --cc <SELF-CALL>
+echo "hello" > /tmp/a.txt && probe --send /tmp/a.txt
+# (d) Two attachments + multi-recipient.
+echo "two" > /tmp/b.txt && probe --send /tmp/a.txt --send /tmp/b.txt --cc <SELF-CALL>
 # (e) Non-ASCII filename.
-echo "x" > /tmp/café.txt && $P --send /tmp/café.txt
+echo "x" > /tmp/café.txt && probe --send /tmp/café.txt
 # (f) Empty (0-byte) attachment.
-: > /tmp/empty.txt && $P --send /tmp/empty.txt
+: > /tmp/empty.txt && probe --send /tmp/empty.txt
 # (g) Large attachment (1 MB).
-head -c 1048576 /dev/urandom > /tmp/big.bin && $P --send /tmp/big.bin
+head -c 1048576 /dev/urandom > /tmp/big.bin && probe --send /tmp/big.bin
 ```
 
 Verify each on the receiving end (Winlink web inbox or another client) that the attachment(s) arrive intact. CMS telnet is authorized non-RF dev testing per [docs/live-cms-testing-policy.md](../../live-cms-testing-policy.md). RADIO-1 does NOT apply — this is internet telnet, not RF.
@@ -579,8 +621,9 @@ Every code change is test-first per `docs/pitfalls/testing-pitfalls.md` and the 
 | `composes_message_with_empty_attachment` | `File: 0 <name>` header; zero bytes appended for that file; CRLF terminator still present |
 | `composes_message_with_no_attachments_matches_text_only_path` | Output of `compose_message_with_files(..., &[], t)` is byte-identical to `compose_message(..., t)` — NO trailing CRLF after body |
 | `q_encodes_non_ascii_filenames_with_iso_8859_1` | Filename `café.txt` produces `File: <n> =?ISO-8859-1?q?caf=E9.txt?=` header (lowercase q, charset ISO-8859-1) |
-| `filename_constructor_rejects_over_255_chars` | `Filename::new(256-char string)` returns `FilenameError::TooLong(256)` |
-| `filename_constructor_rejects_non_latin1` | `Filename::new("日本語.txt")` returns `FilenameError::NotLatin1Encodable` |
+| `compose_rejects_filename_over_255_chars` | `compose_message_with_files` with a 256-char filename returns `Err(ComposeError::FilenameTooLong { filename, chars: 256 })`; no `Message` produced |
+| `compose_rejects_non_latin1_filename` | `compose_message_with_files` with filename `"日本語.txt"` returns `Err(ComposeError::FilenameNotLatin1Encodable { filename })`; no `Message` produced |
+| `compose_short_circuits_on_first_invalid_filename` | Two attachments where the SECOND has an invalid filename → error names the second filename; first attachment was never serialized |
 | `composes_multi_recipient_with_attachments` | Two `To:` headers + one `Cc:` header + one attachment; all present in output |
 | `header_sort_canonicalizes_keys` | Headers with mixed-case keys input → output is canonicalized + alphabetical with Mid first |
 
@@ -605,6 +648,7 @@ P2:
 | `from_bytes_errors_on_truncated_attachment` | Wire bytes shorter than `File:` size header → `ParseError::TruncatedAttachment` |
 | `from_bytes_errors_on_malformed_file_header` | `File: garbage` value → `ParseError::MalformedFileHeader` |
 | `from_bytes_handles_empty_attachment` | `File: 0 <name>` → `msg.attachments` has entry with 0-byte data |
+| `from_bytes_round_trips_multi_recipient` (NEW, Codex R5 P1 regression test) | Wire bytes with 3 `To:` headers + 2 `Cc:` headers → `msg.header_all("To").len() == 3` and `msg.header_all("Cc").len() == 2`; catches the rev-2 `set_header`-collapse bug |
 
 ### 8.3 Golden vector test (highest correctness signal) (P1)
 
@@ -620,7 +664,7 @@ Also: `from_bytes(fixture_bytes)` round-trips the message — headers match, bod
 |---|---|
 | `native_backend_send_message_stores_attachments` | Pass `OutboundMessage` with one attachment; verify outbox file contains `File:` header + attachment bytes |
 | `native_backend_send_message_returns_message_id_not_option` (new) | Returns `Ok(MessageId)`, not `Ok(Some(MessageId))`; test calls and matches on the return shape |
-| `native_backend_send_message_emits_wire_log_lines` (new) | After send, the session log contains a `LogSource::Wire` line with the `FC EM` proposal text |
+| `native_session_emits_wire_log_lines_on_send` (relocated per Codex R5 P2) | After a session.send_turn that sends a message, the session log contains a `LogSource::Wire` line with the `FC EM` proposal text AND a `LogSource::Wire` line with the `FS <answers>` response. NB: `send_message` itself only queues; the wire log appears after `connect` triggers the session exchange. |
 | `two_native_backends_exchange_message_with_attachment` (extends existing) | Sender → receiver via in-process telnet loopback; receiver `from_bytes` yields the attachment intact |
 | `from_bytes_parses_attachment_received_from_telnet_loopback` (new) | End-to-end: encode + send + receive + decode preserves attachment bytes exactly |
 
@@ -678,8 +722,8 @@ Numbered for adversarial-review reference. Rev-2 replaces rev-1's risks (the Bod
 - [ADR 0014](../../adr/0014-clean-sheet-modem-no-prior-art-examination.md) — rigor template for ADR 0016
 - [`docs/live-cms-testing-policy.md`](../../live-cms-testing-policy.md) — CMS telnet authorization scope (governs §7.3 smoke)
 - [`docs/pitfalls/implementation-pitfalls.md`](../../pitfalls/implementation-pitfalls.md) — RADIO-1 entry (clarifies what this work does NOT touch)
-- Adversarial transcripts (gitignored): `dev/adversarial/2026-05-30-pat-strip-native-attachments-claude-r{1,2,3,4}-*.md`
+- Adversarial transcripts (gitignored): `dev/adversarial/2026-05-30-pat-strip-native-attachments-claude-r{1,2,3,4}-*.md` (Claude rounds) + `...-codex-r5.md` (Codex cross-provider round)
 
 ---
 
-End of design spec rev-2. Ready for Codex R5 cross-provider review.
+End of design spec rev-3. Ready for `superpowers:writing-plans` to produce the implementation plan.
