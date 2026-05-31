@@ -1032,9 +1032,8 @@ fn native_packet_connect(
     let locator = cms_locator(config);
     let base = resolved.base_mycall.clone();
     // Password lookup for the gateway dial (challenge is conditional; peer ignores it).
-    let password = keyring::Entry::new("tuxlink-pat", &base)
+    let password = crate::winlink::credentials::read_password(&base)
         .ok()
-        .and_then(|e| e.get_password().ok())
         .filter(|p| !p.is_empty());
 
     progress("Opening KISS link…");
@@ -1259,9 +1258,8 @@ fn native_connect(
     // control. GPS grids go on air only when gps_state == BroadcastAtPrecision;
     // Off/LocalUiOnly fall back to the config grid. Manual broadcasts regardless.
     let locator = crate::position::effective_broadcast_locator(config, position);
-    let password = keyring::Entry::new("tuxlink-pat", &callsign)
+    let password = crate::winlink::credentials::read_password(&callsign)
         .ok()
-        .and_then(|e| e.get_password().ok())
         .filter(|p| !p.is_empty());
 
     // Dev overrides (tuxlink-gqo) mirror `bin/native_cms_probe`: TUXLINK_CMS_PLAINTEXT

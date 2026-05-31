@@ -183,7 +183,7 @@ pub async fn persist_cms_impl(
     };
 
     // Step 4: Create keyring entry handle.
-    let entry = keyring::Entry::new("tuxlink-pat", &callsign)
+    let entry = keyring::Entry::new("tuxlink", &callsign)
         .map_err(map_keyring_error)?;
 
     // Step 5: Snapshot prior password for rollback (spec §3.2 snapshot-before-overwrite).

@@ -81,7 +81,7 @@ function errorMessage(err: WizardError): string {
     case 'ConfigWriteAndRollbackFailed':
       return (
         `Tuxlink couldn't save the config file AND the attempt to remove the keyring ` +
-        `entry also failed. Run \`secret-tool delete service tuxlink-pat account <callsign>\` ` +
+        `entry also failed. Run \`secret-tool delete service tuxlink account <callsign>\` ` +
         `manually before retrying. Config error: ${err.detail?.config_error ?? ''}; ` +
         `Rollback error: ${err.detail?.rollback_error ?? ''}`
       );

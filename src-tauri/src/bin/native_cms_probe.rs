@@ -39,10 +39,9 @@ fn main() {
         .unwrap_or(if plaintext { 8772 } else { 8773 });
 
     // The Winlink password (answers the B2F secure-login challenge) from the OS
-    // keyring — same entry the wizard/Pat use.
-    let password = keyring::Entry::new("tuxlink-pat", &callsign)
+    // keyring — same entry the wizard writes.
+    let password = tuxlink_lib::winlink::credentials::read_password(&callsign)
         .ok()
-        .and_then(|e| e.get_password().ok())
         .filter(|p| !p.is_empty());
 
     println!("Connecting to {host}:{port} as {callsign} via {transport:?} ...");
