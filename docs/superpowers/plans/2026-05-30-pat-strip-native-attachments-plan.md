@@ -1,8 +1,9 @@
-# Strip Pat + native B2F outbound with attachments — implementation plan (rev-1)
+# Strip Pat + native B2F outbound with attachments — implementation plan (rev-2)
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:subagent-driven-development` (recommended) or `superpowers:executing-plans` to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 > Date: 2026-05-30 · Agent: magpie-grouse-shoal · bd: tuxlink-9phd · Spec: [`docs/superpowers/specs/2026-05-30-pat-strip-native-attachments-design.md`](../specs/2026-05-30-pat-strip-native-attachments-design.md) (rev-3, commit 68c35d9)
+> Rev: 2 — incorporates the 3-round plan-review cycle (R1 ambiguity/interpretation, R2 dependencies/testing-pitfalls, R3 implementation-pitfalls/readability). Rev-1 had ~26 P0s flagged by the review rounds; rev-2 corrects the structural / load-bearing ones and adds a "verify-before-coding" discipline to the standard preamble so executing subagents catch any remaining fictional-API claims before producing patches. Adrev transcripts at `dev/adversarial/2026-05-30-pat-strip-native-attachments-plan-r{1,2,3}-*.md` (gitignored).
 
 **Goal:** Delete the entire Pat sidecar surface from tuxlink and ship a native B2F outbound path that supports message attachments, in a single atomic PR.
 
@@ -24,6 +25,31 @@ BEFORE starting work:
    (or invoke superpowers:test-driven-development via the Skill tool)
 2. Read docs/pitfalls/testing-pitfalls.md
 3. Read docs/pitfalls/implementation-pitfalls.md
+4. VERIFY EVERY API SHAPE THE TASK REFERENCES BEFORE WRITING ANY CODE.
+   The plan-rev-1 review (3 rounds) found ~26 P0s, most of them
+   "fictional API claims" — task descriptions referencing methods,
+   types, enum variants, or helper functions that DO NOT EXIST in the
+   actual source. The plan author wrote tasks from the spec without
+   grounding in `grep`s of the real code. Before applying any patch in
+   this task:
+     (a) `grep` for every type, fn, method, trait, enum-variant the
+         task code-snippet uses
+     (b) Read the actual definition site (file:line) to verify
+         signature, field shape, and visibility
+     (c) If the task's snippet references something that doesn't exist
+         (e.g., `Answer::Reject { mid }` when actual is unit variant
+         `Reject`; `log_sink.emit(LogLine { ... })` when actual is
+         `WireSink = Arc<dyn Fn(&str) + Send + Sync>`; or any helper
+         the snippet "assumes"), SURFACE THE DISCREPANCY in your
+         response BEFORE attempting an edit. Propose a fix grounded in
+         the verified actual API.
+     (d) If the task uses `Config::default()` or `Identity::default()`
+         or any other `T::default()`, verify the type has a `Default`
+         impl. The actual identity type is `IdentityConfig` (not
+         `Identity`) and has no `Default`. The actual `Config` has no
+         `Default`. Use the existing `native_test_config()` helper at
+         `src-tauri/tests/winlink_backend_test.rs:208` or build an
+         explicit fixture.
 Follow TDD: write failing test → run to verify it fails → implement minimal fix → run to verify green → commit.
 Use the conventional-commit subject form per CLAUDE.md commit discipline.
 EVERY commit must include the trailers:
@@ -39,8 +65,10 @@ BEFORE marking this task complete:
 2. Verify test coverage of the fix (are error paths tested? edge cases?)
 3. Run the relevant cargo test subset and confirm green:
    cargo test --manifest-path src-tauri/Cargo.toml <test_module_or_fn_name>
-4. If the task touched the frontend, run:
-   pnpm typecheck && pnpm test:unit
+4. If the task touched the frontend (any TS/TSX), run:
+   pnpm tsc --noEmit && pnpm vitest run
+   (NOTE: `pnpm typecheck` and `pnpm test:unit` do NOT exist as scripts in
+   this project's package.json. Use the underlying commands as shown.)
 5. Commit per CLAUDE.md commit discipline (Agent: trailer mandatory)
 ```
 
@@ -65,6 +93,27 @@ your private journal (or session notes) and continue onto the next phase.
 After the final phase completes and before opening the PR, dispatch ONE Codex round against the full branch diff vs main. See §Final Reviewer Dispatch.
 
 ---
+
+## Rev-2 known residuals (handle inline at execution time per "verify-before-coding")
+
+These plan-review findings are NOT directly patched in rev-2's task text because they're per-task tightenings rather than structural issues. The executing subagent for each task should handle them inline using the standard preamble's verify-before-coding discipline. If a finding turns out to be wrong (some review claims may be false positives), document the contrary evidence in the commit body.
+
+| Finding | Task | Inline handling |
+|---|---|---|
+| Plan R1 P1: Task 0.1 enum-move test passes via re-export (doesn't actually verify the move) | T0.1 | Add a second test that imports `MailboxFolder` via `tuxlink_lib::winlink_backend::MailboxFolder` ONLY (no `pat_client::` path); after the move, the import path must be reachable WITHOUT pat_client.rs being involved. |
+| Plan R3 P0-2: `encode_filename` ASCII shortcut may slip embedded spaces / `=` / `?` / `_` | T1.8 | Check wl2k-go's `mime.QEncoding.Encode("ISO-8859-1", name)` behavior on ASCII names with these chars. If Go also passes ASCII through unencoded (likely — wl2k-go uses standard Go MIME encoding), the Rust impl is correct. Add a test for `name="my=foo?bar.txt"` round-trip to lock in whichever behavior wl2k-go has. |
+| Plan R1 P1 + R2 P0-9: Keyring tests write to operator's real OS keyring (testing-pitfalls.md §7 violation) | T7.1 | Refactor `read_password` to accept an Entry-factory closure (injected `dyn Fn(&str, &str) -> Result<Box<dyn KeyringEntry>>`). Tests pass a mock factory backed by an in-process HashMap; production calls `keyring::Entry::new` via the default closure. Avoids OS-keyring writes during `cargo test`. |
+| Plan R2 P0-7 + R1 P1: Task 5.4 (wizard test-send) understates frontend cascade | T5.4 | Before editing TS, `grep -rn "TestSendOutcome\|test_send" src/` to find every consumer (discriminated union; reducer states; 3+ test files per the review). Enumerate sites + update each in the SAME commit. The Tauri-command rename forces the cascade. |
+| Plan R2 P1: Task 1.7 (proposal size test) is tautological — both sides come from `to_bytes()` | T1.7 | Change the assertion to compute size from explicit known values: `proposal.size == 4 + 10 + 4 + 2 + ...` (sum of body bytes + attachment bytes + their CRLF terminators + header overhead). Tautology vs computed-value catches off-by-one bugs the rev-1 form would miss. |
+| Plan R3 P0-7: `#[deprecated]` on `pat_mbo_address` fires at every `Config { ... }` literal | T8.1 | After applying the `#[deprecated]` attribute, `cargo build` will warn at every literal site (10+ files). Add `#[allow(deprecated)]` to each literal site IN THE SAME COMMIT. `grep -rn "pat_mbo_address:" src-tauri/src/ src-tauri/tests/` to enumerate; each get the attribute on the enclosing item (struct construction, fn, etc.). |
+| Plan R1 P0 + R3 P1-10: Tasks 12.3 / 12.4 give rewrite directives without exact text | T12.3, T12.4 | The executing subagent reads spec rev-3 §6.3 (ADR 0016 outline) and the existing HTML Forms spec to author the text. Per CLAUDE.md, the AGENTS.md parity check applies: if any new ADR-bearing rule is added, both files get updated in the same commit. |
+| Plan R1 P1 + R3 P1-9: `cp ~/go/pkg/mod/...` (T1.9) fails if Go cache unpopulated | T1.9 | Add a check: `test -f ~/go/pkg/mod/github.com/la5nta/wl2k-go@v1.0.1/lzhuf/testdata/LPE5NXDVLVSQ.b2f` before `cp`. If absent, fetch via `curl https://raw.githubusercontent.com/la5nta/wl2k-go/v1.0.1/lzhuf/testdata/LPE5NXDVLVSQ.b2f -o src-tauri/tests/fixtures/wl2k-go/LPE5NXDVLVSQ.b2f`. Tuxlink is removing Go anyway, so Go-cache reliance is fragile. |
+| Plan R2 P1: Tasks 1.6/1.11/2.4 "tests born passing" (no preceding TDD failure) | T1.6, T1.11, T2.4 | These tests verify behavior already implemented by an earlier task in the same phase. That's fine for contract tests, but the executing subagent should still RUN the test before any further edits in the task — the test asserts the contract holds. If it passes immediately, document "regression test for behavior from Task X.Y" in the commit. |
+| Plan R3 P0-3: Task 5.1 placeholder `// ... every other top-level Config field ...` | T5.1 | Fully replaced in rev-2 (use `native_test_config()`). |
+| Plan R1 P0 + R2 P0-5 + R3 P0-1: Phase 4 fictional APIs | T4.x | Phase 4 rewritten in rev-2 with verified API shapes. |
+| Plan R3 P0-5: Phase 9 cross-task dirty-tree | P9 | Rev-2 explicit single-subagent-dispatch directive added at phase header. |
+
+For ANY task: the standard preamble's "verify-before-coding" step (step 4 in the preamble) is the gate. A subagent that finds the prescribed code doesn't compile against actual APIs MUST surface the discrepancy and propose a verified fix before making the edit.
 
 ## File structure
 
@@ -212,12 +261,16 @@ Apply the **Standard phase-end review loop** (defined in §0).
 
 Build the wire-format-correct serialization side per spec §3 + §4.1 + §4.2. Each task is one small commit. The phase ends with a golden-vector conformance test against wl2k-go's `LPE5NXDVLVSQ.b2f`.
 
-### Task 1.1: Add `ComposeError` + skeleton fallible `compose_message_with_files`
+### Task 1.1: Add `ComposeError` + skeleton fallible `compose_message_with_files` + delete `OutboundAttachment.content_type`
 
 **Files:**
 - Modify: `src-tauri/src/winlink/compose.rs` (add types + skeleton fn)
+- Modify: `src-tauri/src/winlink_backend.rs` (delete `content_type: String` field from `OutboundAttachment` at line 93)
+- Modify: `src-tauri/src/ui_commands.rs:417` (update any reference to `content_type()` on `OutboundAttachment`)
+- Modify: `src-tauri/tests/winlink_backend_test.rs:486` (delete `content_type: "text/xml".to_string(),` from the test fixture literal)
+- Modify: `src-tauri/tests/winlink_backend_test.rs:499` (delete the `assert_eq!(msg.attachments[0].content_type, "text/xml");` line)
 
-**Standard preamble + completion** apply.
+**Standard preamble + completion** apply. Verify-before-coding: confirm the field is at `winlink_backend.rs:93` via grep; confirm the test fixture sites at `tests/winlink_backend_test.rs:486+499`. Rev-2 note: this task incorporates the spec rev-3 §4.2 promise to delete `content_type` AND the R2 P0-1 finding that the deletion was previously unscheduled despite being in the spec.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -600,20 +653,18 @@ fn encode_filename(name: &str) -> String {
 
 - [ ] **Step 4: Extend `to_bytes()` to write body+CRLF+(attachment+CRLF)* tail**
 
-Find the existing `to_bytes` method in `winlink/message.rs` (around line 59). Currently it writes headers + `\r\n\r\n` separator + body. Extend the tail:
+Rev-2 correction: rev-1 referenced a `headers_sorted()` helper as "existing" — **it does not exist**. The current `to_bytes` (read `src-tauri/src/winlink/message.rs:59-90`) does inline sorting. The right edit pattern is to: (a) preserve whatever sorting code is already there in `to_bytes`; (b) add the attachment tail AFTER the existing body write.
+
+Verify the current `to_bytes` implementation FIRST via `sed -n '59,95p' src-tauri/src/winlink/message.rs`. The edit is minimal — just adding the attachment tail. Conceptually:
 
 ```rust
 pub fn to_bytes(&self) -> Vec<u8> {
     let mut out = Vec::new();
-    // ... existing header write + \r\n separator ...
-    for (k, v) in &self.headers_sorted() {  // existing helper
-        out.extend_from_slice(k.as_bytes());
-        out.extend_from_slice(b": ");
-        out.extend_from_slice(v.as_bytes());
-        out.extend_from_slice(b"\r\n");
-    }
-    out.extend_from_slice(b"\r\n");
+    // ... existing header sort + write logic — DO NOT REPLACE ...
+    // ... existing \r\n separator ...
+    // ... existing self.body write ...
     out.extend_from_slice(&self.body);
+
     // NEW: write attachment region if any
     if !self.attachments.is_empty() {
         out.extend_from_slice(b"\r\n");  // body→first-attachment separator
@@ -626,7 +677,7 @@ pub fn to_bytes(&self) -> Vec<u8> {
 }
 ```
 
-(verify exact helper name `headers_sorted` by inspecting the existing source; if different, use the existing pattern unchanged)
+If the existing sort logic needs canonicalization (per Task 1.10's later edit), don't refactor it into a helper in this task; Task 1.10 makes the canonicalization change in place.
 
 - [ ] **Step 5: Run → PASS**
 
@@ -940,59 +991,36 @@ fn serializes_lpe5nxdvlvsq_byte_for_byte() {
         filename: "1469042410710.jpg".into(),
         bytes: jpg.to_vec(),
     }];
-    let body_str = std::str::from_utf8(body_bytes)
-        // The fixture body is Latin-1; we send the bytes as a String for simplicity.
-        // For pure-Latin-1 content this round-trips; for the fixture's actual
-        // contents (mostly ASCII with a few æø chars) decode loosely.
-        .unwrap_or_else(|_| panic!("fixture body is not UTF-8 representable; need raw-bytes set_body API"));
-    let msg = compose_message_with_files(
-        "LA5NTA",        // matches fixture's From/Mbo
-        &["LA4TTA"],     // matches fixture's To
-        &[],
-        "73 fra Brekke", // matches fixture's Subject
-        body_str,
-        &attachments,
-        1469042460,
-    ).expect("compose succeeds");
+    // Rev-2 correction (Plan R1 P0 + R3 P0-6): the fixture body is Latin-1
+    // with æ/ø; std::str::from_utf8 panics. Build the Message DIRECTLY via
+    // headers + set_body(bytes) instead of going through compose_message_with_files
+    // (which takes &str body). This test exercises the SERIALIZER (to_bytes),
+    // not compose — so building Message directly is appropriate.
+    use tuxlink_lib::winlink::message::Message;
+    let mut msg = Message::new();
+    msg.set_header("Mid", "LPE5NXDVLVSQ");
+    msg.set_header("Date", "2016/07/20 19:21");
+    msg.set_header("From", "LA5NTA");
+    msg.set_header("Mbo", "LA5NTA");
+    msg.set_header("To", "LA4TTA");
+    msg.set_header("Subject", "73 fra Brekke");
+    msg.set_header("Type", "Private");
+    msg.set_header("Content-Transfer-Encoding", "8bit");
+    msg.set_header("Content-Type", "text/plain; charset=ISO-8859-1");
+    msg.set_body(body_bytes.to_vec());  // raw bytes; no UTF-8 round-trip needed
+    msg.set_attachments(attachments);
 
-    // Force the Mid header to match the fixture's literal value (compose generates
-    // a different MID from callsign+time; that's expected — for byte-identity we
-    // need the same MID).
-    // The Mid is set inside compose; expose a test-only setter or compute the
-    // expected delta. SIMPLEST: assert on everything EXCEPT the Mid value.
+    // Direct Message construction (above) uses the fixture's literal Mid, so no
+    // normalization step needed. Just compare bytes:
     let produced = msg.to_bytes();
-    let fixture_with_normalized_mid = normalize_mid_to(FIXTURE, msg.header("Mid").unwrap());
-
     assert_eq!(
-        produced, fixture_with_normalized_mid,
+        produced, FIXTURE.to_vec(),
         "Rust output diverges from wl2k-go fixture"
     );
 }
-
-fn normalize_mid_to(fixture: &[u8], new_mid: &str) -> Vec<u8> {
-    // Replace `Mid: <something>\r\n` in fixture with `Mid: <new_mid>\r\n`.
-    let s = String::from_utf8_lossy(fixture);
-    let lines: Vec<String> = s.lines().map(|l| {
-        if l.starts_with("Mid: ") { format!("Mid: {}", new_mid) } else { l.to_string() }
-    }).collect();
-    let mut out = lines.join("\r\n").into_bytes();
-    // The fixture ends with binary attachment + \r\n; lines() will have collapsed
-    // those. For the test, swap the Mid in the textual header region only:
-    // Actually simpler: do a byte-level replace of the Mid line.
-    let _ = out;
-    let prefix = b"Mid: ";
-    let pos = fixture.windows(prefix.len()).position(|w| w == prefix).unwrap();
-    let end = fixture[pos..].iter().position(|&b| b == b'\r').unwrap();
-    let mut result = Vec::with_capacity(fixture.len());
-    result.extend_from_slice(&fixture[..pos]);
-    result.extend_from_slice(b"Mid: ");
-    result.extend_from_slice(new_mid.as_bytes());
-    result.extend_from_slice(&fixture[pos + end..]);
-    result
-}
 ```
 
-(Note: if the fixture body is not pure UTF-8, the `from_utf8` call panics; in that case the test needs `Message::set_body_bytes` or similar — flag this as a Task 1.9.5 if hit. The fixture body per spec §3.1 is "Hei!\r\n\r\nLiten kveldstur innover Hausdal med radioen i kveld..." which is Latin-1 with æ/ø; depending on whether those are present, `from_utf8` may need replacing with a Latin-1 → String decode.)
+(Rev-2 dropped the `normalize_mid_to` helper — by building Message directly with the fixture's literal Mid, no normalization is needed. The Rust serializer's output should be byte-identical to FIXTURE if the wire format is correct.)
 
 - [ ] **Step 3: Run → expect FAIL on first try; iterate**
 
@@ -1020,9 +1048,9 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 ### Task 1.10: Header sort canonicalization
 
 **Files:**
-- Modify: `src-tauri/src/winlink/message.rs` (the header-sort helper)
+- Modify: `src-tauri/src/winlink/message.rs`
 
-**Standard preamble + completion** apply.
+**Standard preamble + completion** apply. Rev-2 correction: the existing `to_bytes` does inline sorting (no `headers_sorted()` helper). This task INTRODUCES the helper as part of the canonicalization change (refactor + behavior change in one task), OR keeps the sort inline and adds canonicalization in place. Executing subagent decides which is cleaner after reading the current `to_bytes` implementation.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1045,9 +1073,9 @@ fn header_sort_canonicalizes_keys() {
 
 - [ ] **Step 2: Run → FAIL (current sort is case-sensitive byte-order on raw keys)**
 
-- [ ] **Step 3: Implement canonicalization**
+- [ ] **Step 3: Add canonicalization**
 
-In `winlink/message.rs`, find the header-sort helper (e.g., `headers_sorted`). Add a canonical-MIME-key transform:
+Add the helper:
 
 ```rust
 fn canonicalize_header_key(k: &str) -> String {
@@ -1067,31 +1095,9 @@ fn canonicalize_header_key(k: &str) -> String {
 }
 ```
 
-In `to_bytes`, when writing headers, use the canonicalized key:
+In the existing `to_bytes` sort logic, change the sort comparator to use `canonicalize_header_key(k)` for both the ordering AND the emitted bytes. `Mid` (canonicalized) sorts first; everything else alphabetically by canonicalized key. Multiple entries with the same canonicalized key preserve insertion order.
 
-```rust
-for (k, v) in &self.headers_sorted() {
-    out.extend_from_slice(canonicalize_header_key(k).as_bytes());
-    out.extend_from_slice(b": ");
-    // ... rest unchanged ...
-}
-```
-
-And in `headers_sorted`, sort by the canonicalized key (`Mid` first, then alphabetical):
-
-```rust
-fn headers_sorted(&self) -> Vec<(String, String)> {
-    let mut indexed: Vec<(String, String)> = self.headers.iter()
-        .map(|(k, v)| (canonicalize_header_key(k), v.clone()))
-        .collect();
-    indexed.sort_by(|a, b| {
-        if a.0 == "Mid" { return std::cmp::Ordering::Less; }
-        if b.0 == "Mid" { return std::cmp::Ordering::Greater; }
-        a.0.cmp(&b.0)
-    });
-    indexed
-}
-```
+Read the current `to_bytes` body via `sed -n '59,90p' src-tauri/src/winlink/message.rs` to see the existing sort + write structure. The patch is small: wrap the sort key with `canonicalize_header_key`, ensure the write also emits the canonicalized form.
 
 - [ ] **Step 4: Run → PASS**
 
@@ -1589,24 +1595,43 @@ Apply the **Standard phase-end review loop**.
 
 ---
 
-## Phase 4 — NativeBackend wires attachments + session observability
+## Phase 4 — NativeBackend wires attachments + session observability (REWRITTEN in rev-2)
+
+**Rev-2 rewrite note:** Rev-1's Phase 4 referenced multiple fictional API shapes (`Answer::Reject { mid }` field-form, `log_sink.emit(LogLine)`, `outbox_dir()`, `test_fixture_with_callsign`, `received.raw`). Rev-2 grounds every patch in the actual code via verified file:line citations:
+- `winlink/proposal.rs:81-90` — `Answer` is `Accept { resume_offset }`, `Reject` (UNIT), `Defer` (UNIT)
+- `winlink/session.rs:209` — `send_turn<R: BufRead, W: Write>` is SYNC, no log sink param today
+- `winlink_backend.rs:442` — `pub type WireSink = Arc<dyn Fn(&str) + Send + Sync>` is the canonical wire-log mechanism
+- `winlink_backend.rs:462,537` — `NativeBackend` already has a `wire: WireSink` field + `with_wire_log` builder
+- `winlink_backend.rs:1202` — `wire_log: &dyn Fn(&str)` is how the existing call-sites thread it
+- `winlink/session.rs send_turn:259-265` — for each `(msg, answer)` pair, the MID for `Answer::Reject` is `msg.proposal.mid` (already in scope); existing `SendOutcome.rejected: Vec<String>` collects them
+- `tests/winlink_backend_test.rs:208` — `native_test_config()` already exists; do NOT create a new fixture
+- `winlink_backend.rs:OutboundMessage struct` — `MessageBody.raw_rfc5322` is the actual field (NOT `received.raw`)
 
 ### Task 4.1: NativeBackend::send_message passes attachments through compose
 
 **Files:**
 - Modify: `src-tauri/src/winlink_backend.rs`
+- Modify: `src-tauri/tests/winlink_backend_test.rs` (add test using the existing fixture pattern)
 
-**Standard preamble + completion** apply.
+**Standard preamble + completion** apply. Verify-before-coding: confirm `MessageBody` field names + `Mailbox::store` return shape + the existing `native_test_config()` location.
 
-- [ ] **Step 1: Write the failing test**
+- [ ] **Step 1: Write the failing test using the existing fixture pattern**
 
-Add to `tests/winlink_backend_test.rs`:
+Add to `tests/winlink_backend_test.rs` (alongside the other `two_native_backends_exchange_*` tests). Use the existing `native_test_config()` helper at line 208; do NOT invent a new fixture:
 
 ```rust
 #[tokio::test]
 async fn native_backend_send_message_stores_attachments_in_outbox() {
     use tuxlink_lib::winlink_backend::*;
-    let backend = NativeBackend::test_fixture_with_callsign("N0CALL");
+    use tuxlink_lib::winlink::message::Message;
+
+    let tempdir = tempfile::tempdir().unwrap();
+    let mut cfg = native_test_config();
+    // Set callsign so compose succeeds. Use whatever field path is canonical;
+    // verify by `grep -n "identity\." src-tauri/src/winlink_backend.rs` to see
+    // how send_message reads it (e.g., `self.live_config().identity.callsign`).
+    // Set cfg.identity.callsign = Some("N0CALL".into()); (verify field path).
+    let backend = NativeBackend::new(cfg, tempdir.path().to_path_buf());
     let msg = OutboundMessage {
         to: vec!["W1AW".into()],
         cc: vec![],
@@ -1619,16 +1644,17 @@ async fn native_backend_send_message_stores_attachments_in_outbox() {
         }],
     };
     let id = backend.send_message(msg).await.expect("send queues");
-    // Read it back from the outbox; assert attachment is intact.
-    let raw_path = backend.outbox_dir().join(format!("{}.b2f", id.0));
-    let raw = std::fs::read(&raw_path).unwrap();
-    let parsed = tuxlink_lib::winlink::message::Message::from_bytes(&raw).unwrap();
-    assert_eq!(parsed.attachments().len(), 1);
-    assert_eq!(parsed.attachments()[0].bytes, b"hello");
+    // The mailbox stores at <root>/Outbox/<mid>.b2f per native_mailbox.rs.
+    // The exact directory layout is determined by Mailbox; if `outbox_dir()`
+    // doesn't exist (verify), use the Mailbox::read API instead:
+    let body = backend.list_messages(MailboxFolder::Outbox).await.unwrap();
+    // Then read the message back and assert the attachment is intact.
+    // Verify the read API by grep'ing for read_message_in / read_message.
+    // ... (the executing subagent verifies the exact read API and adjusts).
 }
 ```
 
-(Note: `test_fixture_with_callsign` is a new helper; if `NativeBackend::test_fixture()` is enough, skip the `_with_callsign` variant and set callsign via a different path.)
+The test STRUCTURE shows the intent; the executing subagent verifies + adjusts. The key assertions: `send_message` returns `Ok(MessageId)` (not Option); a subsequent read of the outbox surfaces a message whose attachment bytes match `b"hello"`.
 
 - [ ] **Step 2: Run → FAIL (current send_message ignores msg.attachments)**
 
@@ -1675,108 +1701,195 @@ Agent: magpie-grouse-shoal
 Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 ```
 
-### Task 4.2: Session wire-log + reject mapping
+### Task 4.2: Thread `WireSink` through `send_turn` for wire-log observability
 
 **Files:**
-- Modify: `src-tauri/src/winlink/session.rs`
-- Possibly modify: `src-tauri/src/winlink/proposal.rs`
+- Modify: `src-tauri/src/winlink/session.rs` (add wire_log param to `send_turn`, `run_exchange`, `run_exchange_with_role`)
+- Modify: `src-tauri/src/winlink_backend.rs` (call sites at ~line 1202, ~1290 — pass `self.wire.as_ref()` or similar)
 
-**Standard preamble + completion** apply.
+**Standard preamble + completion** apply. Verify-before-coding: read `send_turn` at `session.rs:209-265` END-TO-END before patching; confirm the `WireSink` type usage at `winlink_backend.rs:1202`.
 
-- [ ] **Step 1: Write the failing test (integration-style)**
+- [ ] **Step 1: Write the failing test**
 
-Add to `tests/winlink_backend_test.rs` or a new `tests/winlink_session_test.rs`:
+Add to `tests/winlink_backend_test.rs`:
 
 ```rust
 #[tokio::test]
 async fn native_session_emits_wire_log_on_send() {
-    // Two-backend in-process exchange: sender sends a small message,
-    // assert the sender's session log captures the FC EM proposal line.
-    // (Boilerplate borrowed from the existing two_native_backends_exchange_* tests.)
-    // ... setup ...
-    let mut log_stream = sender.stream_log();
-    // ... run send + connect ...
-    let log_lines: Vec<_> = log_stream.collect().await;
-    assert!(log_lines.iter().any(|l|
-        l.source == LogSource::Wire && l.message.starts_with("FC EM ")
-    ));
-    assert!(log_lines.iter().any(|l|
-        l.source == LogSource::Wire && l.message.starts_with("FS ")
-    ));
+    // Use the existing two-backend in-process exchange pattern.
+    // Set a wire_log capture closure on the sender; verify after the
+    // exchange that the captured strings include "FC EM " and "FS ".
+    let captured: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    let captured_clone = captured.clone();
+    let wire_log = Arc::new(move |s: &str| captured_clone.lock().unwrap().push(s.to_string()))
+        as tuxlink_lib::winlink_backend::WireSink;
+
+    // Construct sender with .with_wire_log(wire_log).
+    // ... follow the existing two_native_backends_exchange_* pattern for setup ...
+    // ... send + connect + receive ...
+
+    let lines = captured.lock().unwrap();
+    assert!(lines.iter().any(|l| l.starts_with("FC EM ")),
+            "expected FC EM in captured wire log, got: {:?}", lines);
+    assert!(lines.iter().any(|l| l.starts_with("FS ")),
+            "expected FS in captured wire log, got: {:?}", lines);
 }
 ```
 
-- [ ] **Step 2: Run → FAIL (no wire log emission today)**
+- [ ] **Step 2: Run → FAIL (`send_turn` doesn't emit wire log today)**
 
-- [ ] **Step 3: Add log emission to `winlink::session::send_turn`**
+- [ ] **Step 3: Add `wire_log` parameter to `send_turn`**
 
-Find `send_turn` in `winlink/session.rs`. At the point where the FC line is written to the socket (look for `proposal.line()` writes), add a log emit via the existing `LogSink`. The session code already takes a log sink for incoming Wire bytes; reuse it for outbound:
+In `winlink/session.rs:209`, extend the signature with an optional wire-log callback:
 
 ```rust
-// Before writing the proposal line:
-log_sink.emit(LogLine {
-    level: LogLevel::Debug,
-    source: LogSource::Wire,
-    message: proposal.line(),
-    timestamp: now_unix_secs(),
-});
-writer.write_all(proposal.line().as_bytes()).await?;
-
-// After reading the FS answer line:
-let answer_line = read_line(&mut reader).await?;
-log_sink.emit(LogLine {
-    level: LogLevel::Debug,
-    source: LogSource::Wire,
-    message: answer_line.clone(),
-    timestamp: now_unix_secs(),
-});
-let answers = parse_answers(&answer_line);
+pub fn send_turn<R: BufRead, W: Write>(
+    reader: &mut R,
+    writer: &mut W,
+    outbound: &[OutboundMessage],
+    remote_no_messages: bool,
+    wire_log: Option<&dyn Fn(&str)>,         // NEW
+) -> Result<SendOutcome, ExchangeError> {
 ```
 
-- [ ] **Step 4: Map FS-reject to MessageRejected**
+(Backwards-compat: callers pass `None` if they don't want the log.)
 
-After parsing answers, iterate; for each `Answer::Reject { mid }`:
+In the body of `send_turn` (around session.rs:227-230 where proposals are written):
 
 ```rust
-for answer in &answers {
-    match answer {
-        Answer::Reject { mid } => {
-            return Err(BackendError::MessageRejected(
-                format!("CMS rejected mid {mid} (FS -)")
-            ));
-        }
-        Answer::Defer { .. } => { /* existing defer logic */ }
-        Answer::Accept { .. } => { /* continue with transfer */ }
+for proposal in &proposals {
+    let line = proposal.line();
+    if let Some(log) = wire_log {
+        log(&line);
     }
+    write_bytes(writer, line.as_bytes())?;
+    write_bytes(writer, b"\r")?;
 }
 ```
 
-- [ ] **Step 5: Run → PASS**
+Around session.rs:241-251 (where the FS line is read):
 
-- [ ] **Step 6: Commit**
+```rust
+let answers = loop {
+    let line = read_line(reader)?;
+    if let Some(message) = remote_error(&line) {
+        return Err(ExchangeError::RemoteError(message));
+    }
+    if line.starts_with("FS ") {
+        if let Some(log) = wire_log {
+            log(&line);
+        }
+        break proposal::parse_answers(&line).map_err(ExchangeError::BadAnswer)?;
+    } else if line.starts_with(';') {
+        continue;
+    } else {
+        return Err(ExchangeError::UnexpectedResponse(line));
+    }
+};
+```
+
+- [ ] **Step 4: Update `run_exchange` and `run_exchange_with_role` to thread the param**
+
+Both fn signatures get a new `wire_log: Option<&dyn Fn(&str)>` parameter; the body passes it to `send_turn`. Existing callers (test files, possibly elsewhere) need updates — `grep -n "run_exchange" src-tauri/src/ src-tauri/tests/` to find them.
+
+- [ ] **Step 5: Update `winlink_backend.rs` call sites at lines ~1202 + ~1290**
+
+Read both sites; they currently pass `wire_log: &dyn Fn(&str)` (per the grep result). Update to thread the WireSink through `run_exchange(... Some(&wire_log_closure) ...)` where the closure invokes `self.wire(line)` or similar (read the existing `WireSink` usage).
+
+- [ ] **Step 6: Run → PASS**
+
+- [ ] **Step 7: Commit**
 
 ```bash
 git add -A
-git commit -m "feat(session): emit wire-log lines + map FS-reject to typed error
+git commit -m "feat(session): thread wire_log through send_turn + run_exchange
 
-send_turn now logs every outbound FC EM and inbound FS line as
-LogSource::Wire entries (visible in the session-log UI). FS - for any of
-our MIDs maps to BackendError::MessageRejected with the MID in the
-diagnostic. Without this, BackendError::TransportFailed swallowed the
-distinction between wire-garbage and connection-drop.
+Adds an Option<&dyn Fn(&str)> parameter to send_turn / run_exchange /
+run_exchange_with_role; when Some, every outbound FC EM proposal line
+and every inbound FS answer line is emitted to the closure. Existing
+callers that don't care pass None. winlink_backend.rs:1202+1290 thread
+the NativeBackend.wire WireSink through. Operators reading the session
+log now see the actual FC/FS dialogue and can distinguish wire-garbage
+from connection-drop.
 
-Per spec rev-3 §4.8 + R4 P0-3 + Codex R5 P2.
+Per spec rev-3 §4.8.
 
 Agent: magpie-grouse-shoal
 Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 ```
 
-### Task 4.3: Update two-native-backends exchange test for attachments
+### Task 4.3: Map FS-reject MIDs to typed errors via `SendOutcome.rejected`
+
+**Files:**
+- Modify: `src-tauri/src/winlink_backend.rs` (the caller of `run_exchange` that inspects `SendOutcome`)
+
+**Standard preamble + completion** apply. Verify-before-coding: `Answer::Reject` is a UNIT variant at `winlink/proposal.rs:88`; the MID is derived in `send_turn` (line 259-262) from `msg.proposal.mid.clone()` and collected into `outcome.rejected: Vec<String>`. The mapping to a typed error happens at the CALLER of `run_exchange`, not inside `send_turn`.
+
+- [ ] **Step 1: Write the failing test**
+
+This test requires an in-process loopback where the receiver sends `FS -` for an offered MID. The existing two-backend exchange tests don't currently exercise this; add a test or extend an existing one with a mock receiver that returns `Answer::Reject` from the `decide` closure passed to `run_exchange`.
+
+Pseudo-code (executing subagent reads the actual test fixture and adapts):
+
+```rust
+#[tokio::test]
+async fn fs_reject_for_our_mid_maps_to_message_rejected_error() {
+    // Sender offers a message; mock receiver decides Answer::Reject for it.
+    // After run_exchange returns, the result's outcome.rejected contains the MID.
+    // Verify that the caller (the connect path in winlink_backend.rs) translates
+    // that into BackendError::MessageRejected(...) with the MID in the diagnostic.
+    // ... setup ...
+    let err = backend.connect(...).await.unwrap_err();
+    match err {
+        BackendError::MessageRejected(msg) => assert!(msg.contains("MID-WE-OFFERED")),
+        other => panic!("expected MessageRejected, got {:?}", other),
+    }
+}
+```
+
+- [ ] **Step 2: Run → FAIL**
+
+- [ ] **Step 3: Patch the caller**
+
+In `winlink_backend.rs`, find where `run_exchange` is called and `SendOutcome` is consumed. After the call returns successfully:
+
+```rust
+let result = run_exchange(...)?;
+if !result.outcome.rejected.is_empty() {
+    return Err(BackendError::MessageRejected(format!(
+        "CMS rejected mid(s): {}", result.outcome.rejected.join(", ")
+    )));
+}
+// existing post-success handling
+```
+
+(Verify the exact location + the `ExchangeResult` shape before patching.)
+
+- [ ] **Step 4: Run → PASS**
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add -A
+git commit -m "feat(backend): map SendOutcome.rejected to BackendError::MessageRejected
+
+The session's send_turn collects FS-rejected MIDs into SendOutcome.rejected
+(existing behavior). The connect path now inspects this and surfaces a
+typed BackendError::MessageRejected with the MID list, instead of letting
+the rejection slip silently through as a 'successful' exchange.
+
+Per spec rev-3 §4.8 + R4 P0-3.
+
+Agent: magpie-grouse-shoal
+Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
+```
+
+### Task 4.4: Update two-backend exchange test for attachments
 
 **Files:**
 - Modify: `src-tauri/tests/winlink_backend_test.rs`
 
-**Standard preamble + completion** apply.
+**Standard preamble + completion** apply. Verify-before-coding: the `MessageBody` returned from `read_message_in` exposes the raw bytes as `raw_rfc5322` (per spec; verify via `grep -n "pub struct MessageBody\|raw_rfc5322\|pub raw" src-tauri/src/winlink_backend.rs`).
 
 - [ ] **Step 1: Find the existing test**
 
@@ -1786,33 +1899,28 @@ grep -n "two_native_backends_exchange" src-tauri/tests/winlink_backend_test.rs
 
 - [ ] **Step 2: Add a variant with attachments**
 
-Copy the existing test; rename to `two_native_backends_exchange_with_attachment`. Change the `OutboundMessage` to include one attachment:
+Copy the existing test; rename to `two_native_backends_exchange_with_attachment`. Add one attachment to the `OutboundMessage`:
 
 ```rust
-let msg = OutboundMessage {
-    to: vec!["RECEIVER-CALL".into()],
-    cc: vec![],
-    subject: "with attachment".into(),
-    body: "hello".into(),
-    date: "2026-05-30T12:00:00Z".into(),
-    attachments: vec![OutboundAttachment {
-        filename: "test.bin".into(),
-        bytes: b"hello-attachment-bytes".to_vec(),
-    }],
-};
+attachments: vec![OutboundAttachment {
+    filename: "test.bin".into(),
+    bytes: b"hello-attachment-bytes".to_vec(),
+}],
 ```
 
-After receive completes, assert the received message body contains the attachment region:
+After receive completes, assert via the round-trip:
 
 ```rust
 let received = receiver.read_message_in(MailboxFolder::Inbox, &id).await.unwrap();
-let parsed = tuxlink_lib::winlink::message::Message::from_bytes(&received.raw).unwrap();
+// Verify field name — actual is raw_rfc5322 per the spec, not `raw`.
+// If grep says different, use what grep says.
+let parsed = tuxlink_lib::winlink::message::Message::from_bytes(&received.raw_rfc5322).unwrap();
 assert_eq!(parsed.attachments().len(), 1);
 assert_eq!(parsed.attachments()[0].filename, "test.bin");
 assert_eq!(parsed.attachments()[0].bytes, b"hello-attachment-bytes");
 ```
 
-- [ ] **Step 3: Run → expect PASS (Phase 1+2+4 should all work end-to-end)**
+- [ ] **Step 3: Run → expect PASS (Phase 1+2+4.1 should work end-to-end)**
 
 If FAIL, debug along the round-trip (compose → store → fetch → proposal → compress → transfer → decompress → parse on receiver).
 
@@ -1823,8 +1931,9 @@ git add -A
 git commit -m "test(backend): two-backend end-to-end exchange with attachment
 
 In-process telnet loopback: sender composes a message with an attachment,
-sends, receiver decodes, attachment bytes match. Strongest end-to-end
-test for the new outbound-with-attachments path.
+sends, receiver decodes via Message::from_bytes (Phase 2 parser),
+attachment bytes match. Strongest end-to-end test for the new
+outbound-with-attachments path.
 
 Per spec rev-3 §8.4.
 
@@ -1842,26 +1951,64 @@ Apply the **Standard phase-end review loop**.
 
 Production code stops referencing PatBackend; PatBackend itself stays present (deleted in P9). After this phase, the production code path uses NativeBackend exclusively; only the Pat-using tests still reference PatBackend.
 
-### Task 5.1: Add `NativeBackend::test_fixture()` factory
+### Task 5.1: Add `NativeBackend::test_fixture()` factory using existing `native_test_config()`
 
 **Files:**
 - Modify: `src-tauri/src/winlink_backend.rs`
-- Modify: `src-tauri/Cargo.toml` (dev-dependencies → tempfile, if absent)
+- Possibly modify: `src-tauri/tests/winlink_backend_test.rs` (expose `native_test_config` for cross-module reuse OR move it to a `#[cfg(test)] mod test_helpers` in the lib)
 
-**Standard preamble + completion** apply.
+**Standard preamble + completion** apply. Rev-2 corrections:
+- `tempfile` is **already** a regular dependency (verified `Cargo.toml:25`); do NOT add to dev-dependencies.
+- `Config::default()` and `Identity::default()` do NOT exist; the actual identity type is `IdentityConfig`.
+- A `native_test_config()` helper **already exists** at `tests/winlink_backend_test.rs:208`. Reuse it instead of inventing a new one.
 
-- [ ] **Step 1: Add `tempfile` to dev-dependencies if not present**
+- [ ] **Step 1: Verify the helper exists and inspect its shape**
 
 ```bash
-grep -n "tempfile" src-tauri/Cargo.toml
+sed -n '208,235p' src-tauri/tests/winlink_backend_test.rs
 ```
 
-If absent, add under `[dev-dependencies]`:
-```toml
-tempfile = "3"
+This shows the field-by-field construction the helper uses. The fixture below MUST construct a Config with the same shape (or share the helper if visibility permits).
+
+- [ ] **Step 2: Choose the reuse strategy**
+
+Two options:
+- **A (preferred)**: Move `native_test_config()` from `tests/winlink_backend_test.rs` to a `#[cfg(test)] pub(crate) mod test_helpers;` in the lib (e.g., a new `src-tauri/src/test_helpers.rs`). Both the integration tests AND the new `NativeBackend::test_fixture()` factory call it.
+- **B**: Duplicate the helper inline in `winlink_backend.rs` as a `#[cfg(test)] fn fixture_config()`.
+
+Option A keeps a single canonical fixture (DRY). Pick A.
+
+- [ ] **Step 3: Move the helper**
+
+Create `src-tauri/src/test_helpers.rs`:
+
+```rust
+//! Test-only helpers shared between integration tests and #[cfg(test)] code
+//! in lib modules.
+#![cfg(test)]
+
+use crate::config::Config;
+// ... import the actual fields native_test_config sets ...
+
+pub fn native_test_config() -> Config {
+    // (Paste the EXACT current body of native_test_config() from
+    //  tests/winlink_backend_test.rs:208. Do not modify it.)
+    Config {
+        // ... existing field-by-field construction ...
+    }
+}
 ```
 
-- [ ] **Step 2: Add the fixture**
+In `src-tauri/src/lib.rs`, add `#[cfg(test)] pub(crate) mod test_helpers;`.
+
+In `tests/winlink_backend_test.rs:208`, REPLACE the local `fn native_test_config()` with:
+```rust
+use tuxlink_lib::test_helpers::native_test_config;
+```
+
+(`pub(crate)` won't be visible from integration tests; they're separate crates. Either change to `pub` for the module or — simpler — keep the helper in BOTH places: `tests/winlink_backend_test.rs:208` keeps its local copy; `src-tauri/src/test_helpers.rs` has an identical copy. Document the duplication with a comment cross-referencing the two sites.)
+
+- [ ] **Step 4: Add the fixture**
 
 In `winlink_backend.rs`, near other test helpers:
 
@@ -1869,48 +2016,43 @@ In `winlink_backend.rs`, near other test helpers:
 #[cfg(test)]
 impl NativeBackend {
     /// In-process stub for unit tests that exercise `BackendState::install`
-    /// lifecycle without touching real telnet or a real mailbox.
+    /// lifecycle without touching real telnet or a real mailbox. Uses the
+    /// shared `native_test_config()` helper; mailbox root is a tempdir.
     pub fn test_fixture() -> Self {
         let tempdir = tempfile::tempdir().unwrap();
         let leaked_path = Box::leak(Box::new(tempdir)).path().to_path_buf();
-        Self::new(test_config(), leaked_path)
-    }
-}
-
-#[cfg(test)]
-fn test_config() -> Config {
-    // Minimum valid Config for BackendState::install lifecycle tests.
-    // Identity blank → connect/send_message fail with NotConfigured (intentional).
-    // Read the actual Config struct fields and provide explicit None / defaults
-    // for each. Do NOT use Config::default() — it does not exist on main.
-    Config {
-        identity: Identity::default(),  // verify Identity has Default; if not, build explicitly
-        pat_mbo_address: None,
-        // ... every other top-level Config field, set to None / default ...
+        Self::new(crate::test_helpers::native_test_config(), leaked_path)
     }
 }
 ```
 
-(Inspect the actual `Config` struct definition in `src-tauri/src/config.rs` to fill in the full field list. Don't shortcut with `..Default::default()` since `Default` is absent.)
+The `Box::leak` keeps the tempdir alive for the test's lifetime without infecting the public API.
 
-- [ ] **Step 3: Build (no tests yet, just verify it compiles)**
+- [ ] **Step 5: Build + run unit tests**
 
 ```bash
 cargo build --manifest-path src-tauri/Cargo.toml --workspace --tests
+cargo test --manifest-path src-tauri/Cargo.toml --workspace --lib --tests -- --test-threads=1
 ```
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
 git add -A
 git commit -m "test(backend): add NativeBackend::test_fixture() factory
 
-In-process stub for BackendState::install lifecycle tests, replacing
-PatBackend::from_url calls in app_backend tests. Uses tempfile for the
-mailbox root; identity blank so connect/send fail predictably. No
-Config::default() (doesn't exist on main); explicit field construction.
+Reuses the existing native_test_config() helper (already at
+tests/winlink_backend_test.rs:208) — same identity-blank Config that
+the integration tests use. Identity blank so connect/send fail
+predictably. Mailbox root is a tempdir; Box::leak keeps it alive for
+the test's lifetime without polluting the public API.
 
-Per spec rev-3 §4.4 + Codex R5 P2.
+Rev-2 correction: rev-1 invented a new test_config() helper that
+referenced nonexistent Identity::default(). Reusing native_test_config()
+avoids the duplication AND grounds the fixture in code that actually
+compiles.
+
+Per spec rev-3 §4.4 + Plan R1+R3 P0.
 
 Agent: magpie-grouse-shoal
 Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
@@ -2587,9 +2729,20 @@ Apply the **Standard phase-end review loop**.
 
 ---
 
-## Phase 9 — Delete Pat module + test surgery
+## Phase 9 — Delete Pat module + test surgery (SINGLE SUBAGENT DISPATCH per rev-2)
 
 The big delete. After this phase, no Pat code remains in the workspace.
+
+**Rev-2 STRUCTURAL note (Plan R3 P0-5 fix):** Tasks 9.1–9.7 of rev-1 each had a "Step N: Defer commit" / "Step N: Verify build" pattern that REQUIRED dirty-tree inheritance across multiple subagent dispatches. This violates the `superpowers:subagent-driven-development` contract (each subagent dispatch must leave the tree CI-green committed). Rev-2 resolves this:
+
+**Execute all of Phase 9 (Tasks 9.1 through 9.7) in ONE subagent dispatch.** The single subagent uses internal TodoWrite sub-steps to track 9.1–9.7 progress; the dispatcher's standard task completion (commit) happens ONCE at the end after Task 9.7's verification confirms `cargo build + cargo test` green workspace-wide. The 9.x sub-task structure below is a within-subagent checklist, not a per-dispatch boundary.
+
+If the executing subagent ends partway through (token budget, finding a blocker), they:
+1. Mark which 9.x sub-tasks completed.
+2. Commit the partial work if and only if `cargo build` still passes (e.g., after 9.3, after 9.6). The phase's commits should be minimal — ideally 1, acceptably 2-3.
+3. Surface to the dispatcher; the next subagent picks up from the documented progress point.
+
+The single-commit boundary at the END of Phase 9 is preferred because the commit message is otherwise hard to summarize (deletions across many files); but a 2-commit split (e.g., "delete Pat module" + "test surgery") is acceptable if intermediate state is CI-green.
 
 ### Task 9.1: Delete the 3 standalone Pat module files
 
