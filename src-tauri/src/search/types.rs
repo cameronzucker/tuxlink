@@ -84,6 +84,39 @@ pub struct QuerySpec {
     pub page: PageRequest,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchResults {
+    pub items: Vec<MessageMetaDto>,
+    pub total_matches: u32,
+    pub query_ms: u32,
+    pub effective_spec: QuerySpec,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct MessageMetaDto {
+    pub id: String,
+    pub subject: String,
+    pub from: String,
+    pub to: Vec<String>,
+    pub date: String,           // RFC3339 UTC
+    pub unread: bool,
+    pub body_size: u32,
+    pub has_attachments: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub form_tag: Option<String>,
+    /// Folder badge for cross-folder search rendering (spec §7.2).
+    pub folder: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RebuildStats {
+    pub messages_indexed: u32,
+    pub elapsed_ms: u32,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
