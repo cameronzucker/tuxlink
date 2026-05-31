@@ -5,16 +5,18 @@
 use crate::search::index::{Index, IndexError};
 use crate::search::saved::{SavedSearch, SavedStore, SavedError, RecentSearch};
 use crate::search::types::{
-    MessageMetaDto, QuerySpec, SearchResults,
+    MessageMetaDto, QuerySpec, RebuildStats, SearchResults,
 };
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 /// Service struct held in Tauri's managed state. Wraps the Index + SavedStore.
-/// The `Mutex` guards single-writer access to the JSON saved-store (the index
-/// is internally synchronized by SQLite).
+/// `rusqlite::Connection` is `Send` but not `Sync`; the outer `Mutex` on
+/// `index` satisfies `T: Sync` required by `tauri::State<T>`. The saved-store
+/// `Mutex` guards single-writer access to the JSON file.
 pub struct SearchService {
-    pub index: Arc<Index>,
+    pub index: Arc<Mutex<Index>>,
     pub saved: Mutex<SavedStore>,
     pub now_unix: fn() -> i64,
 }
@@ -47,7 +49,7 @@ impl From<SavedError> for CommandError {
 impl SearchService {
     pub fn run(&self, spec: QuerySpec) -> Result<SearchResults, CommandError> {
         let started = Instant::now();
-        let hits = self.index.query(&spec)?;
+        let hits = self.index.lock().unwrap().query(&spec)?;
         let items: Vec<MessageMetaDto> = hits.into_iter().map(hit_to_dto).collect();
         let total_matches = items.len() as u32;
         let now = (self.now_unix)();
@@ -84,6 +86,139 @@ impl SearchService {
     pub fn reorder(&self, ordered_ids: Vec<String>) -> Result<(), CommandError> {
         Ok(self.saved.lock().unwrap().reorder(&ordered_ids)?)
     }
+
+    /// Delete + recreate the search.db, then re-walk every folder of the
+    /// supplied mailbox calling `Index::upsert` per message. Returns stats.
+    ///
+    /// The in-place approach: we lock the Mutex, replace the `Index` inside it
+    /// (dropping the old Connection, opening a fresh one against the recreated
+    /// file), then walk and upsert into the new index — all under one lock, so
+    /// any concurrent reader waits rather than seeing a half-empty index.
+    pub fn rebuild_index(&self, mailbox_root: PathBuf) -> Result<RebuildStats, CommandError> {
+        use crate::native_mailbox::Mailbox;
+        use crate::winlink_backend::MailboxFolder;
+
+        let started = Instant::now();
+
+        // Delete existing index files.
+        let db = mailbox_root.join("search.db");
+        let _ = std::fs::remove_file(&db);
+        let _ = std::fs::remove_file(mailbox_root.join("search.db-wal"));
+        let _ = std::fs::remove_file(mailbox_root.join("search.db-shm"));
+
+        // Re-open: fresh schema inside the existing Mutex so the SearchService
+        // handle stays valid for the runtime.
+        let mut locked = self.index.lock().unwrap();
+        *locked = Index::open(db).map_err(CommandError::from)?;
+
+        // Re-walk every folder.
+        let mbox = Mailbox::new(&mailbox_root);
+        let mut count = 0u32;
+        for folder in [
+            MailboxFolder::Inbox,
+            MailboxFolder::Outbox,
+            MailboxFolder::Sent,
+            MailboxFolder::Archive,
+        ] {
+            let metas = mbox
+                .list(folder)
+                .map_err(|e| CommandError::Internal(e.to_string()))?;
+            for meta in metas {
+                let body = mbox
+                    .read(folder, &meta.id)
+                    .map_err(|e| CommandError::Internal(e.to_string()))?;
+                if let Ok(msg) = crate::winlink::message::Message::from_bytes(&body.raw_rfc5322) {
+                    let direction = match folder {
+                        MailboxFolder::Sent | MailboxFolder::Outbox => {
+                            crate::search::extractor::Direction::Sent
+                        }
+                        _ => crate::search::extractor::Direction::Received,
+                    };
+                    let row = crate::search::extractor::extract(
+                        &msg,
+                        folder,
+                        direction,
+                        meta.unread,
+                        None,
+                    );
+                    locked.upsert(&row).map_err(CommandError::from)?;
+                    count += 1;
+                }
+            }
+        }
+
+        Ok(RebuildStats {
+            messages_indexed: count,
+            elapsed_ms: started.elapsed().as_millis() as u32,
+        })
+    }
+}
+
+// ── Tauri command wrappers ───────────────────────────────────────────────────
+
+#[tauri::command]
+pub fn tauri_search_run(
+    svc: tauri::State<SearchService>,
+    spec: QuerySpec,
+) -> Result<SearchResults, CommandError> {
+    svc.run(spec)
+}
+
+#[tauri::command]
+pub fn tauri_search_list_saved(svc: tauri::State<SearchService>) -> Vec<SavedSearch> {
+    svc.list_saved()
+}
+
+#[tauri::command]
+pub fn tauri_search_list_recent(svc: tauri::State<SearchService>) -> Vec<RecentSearch> {
+    svc.list_recent()
+}
+
+#[tauri::command]
+pub fn tauri_search_save(
+    svc: tauri::State<SearchService>,
+    name: String,
+    spec: QuerySpec,
+) -> Result<SavedSearch, CommandError> {
+    svc.save(name, spec)
+}
+
+#[tauri::command]
+pub fn tauri_search_unsave(
+    svc: tauri::State<SearchService>,
+    id: String,
+) -> Result<(), CommandError> {
+    svc.unsave(id)
+}
+
+#[tauri::command]
+pub fn tauri_search_rename(
+    svc: tauri::State<SearchService>,
+    id: String,
+    name: String,
+) -> Result<(), CommandError> {
+    svc.rename(id, name)
+}
+
+#[tauri::command]
+pub fn tauri_search_reorder(
+    svc: tauri::State<SearchService>,
+    ordered_ids: Vec<String>,
+) -> Result<(), CommandError> {
+    svc.reorder(ordered_ids)
+}
+
+#[tauri::command]
+pub fn tauri_search_rebuild_index(
+    svc: tauri::State<SearchService>,
+    app: tauri::AppHandle,
+) -> Result<RebuildStats, CommandError> {
+    use tauri::Manager as _;
+    let data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| CommandError::Internal(format!("no app_data_dir: {e}")))?;
+    svc.rebuild_index(data_dir.join("native-mbox"))
 }
 
 fn hit_to_dto(h: crate::search::index::QueryHit) -> MessageMetaDto {
@@ -140,7 +275,7 @@ mod tests {
     fn fixed_now() -> i64 { 1_716_200_000 }
 
     fn build_service(dir: &std::path::Path) -> SearchService {
-        let index = Arc::new(Index::open(dir.join("search.db")).unwrap());
+        let index = Arc::new(Mutex::new(Index::open(dir.join("search.db")).unwrap()));
         let saved = Mutex::new(SavedStore::open(dir.join("saved.json")).unwrap());
         SearchService { index, saved, now_unix: fixed_now }
     }
@@ -161,7 +296,7 @@ mod tests {
     fn run_returns_results_and_records_recent() {
         let dir = tempdir().unwrap();
         let svc = build_service(dir.path());
-        svc.index.upsert(&fixture_row("A", "damage report", "powerlines down")).unwrap();
+        svc.index.lock().unwrap().upsert(&fixture_row("A", "damage report", "powerlines down")).unwrap();
         let spec = QuerySpec { free_text: Some("damage".into()), ..QuerySpec::default() };
         let res = svc.run(spec.clone()).unwrap();
         assert_eq!(res.total_matches, 1);
@@ -186,5 +321,51 @@ mod tests {
     fn civil_roundtrip_unix_to_rfc3339() {
         assert_eq!(unix_to_rfc3339(0), "1970-01-01T00:00:00Z");
         assert_eq!(unix_to_rfc3339(1_716_200_000), "2024-05-20T10:13:20Z");
+    }
+}
+
+#[cfg(test)]
+mod rebuild_tests {
+    use super::*;
+    use crate::native_mailbox::Mailbox;
+    use crate::winlink_backend::MailboxFolder;
+    use tempfile::tempdir;
+
+    /// Each call uses a distinct unix_secs so `generate_mid` produces unique MIDs.
+    fn raw(subject: &str, body: &str, unix_secs: u64) -> Vec<u8> {
+        crate::winlink::compose::compose_message(
+            "N7CPZ",
+            &["W1AW"],
+            &[],
+            subject,
+            body,
+            unix_secs,
+        )
+        .to_bytes()
+    }
+
+    fn build_service_for_rebuild(dir: &std::path::Path) -> SearchService {
+        crate::search::build_service(dir).expect("build_service")
+    }
+
+    #[test]
+    fn rebuild_picks_up_messages_already_on_disk() {
+        let dir = tempdir().unwrap();
+        // Store 3 messages WITHOUT an index attached.
+        // Use distinct timestamps so generate_mid yields 3 unique MIDs
+        // (Mid = callsign + unix_secs — same timestamp → same Mid → upsert overwrites).
+        {
+            let mbox = Mailbox::new(dir.path());
+            mbox.store(MailboxFolder::Inbox, &raw("a", "x", 1_716_200_001)).unwrap();
+            mbox.store(MailboxFolder::Inbox, &raw("b", "y", 1_716_200_002)).unwrap();
+            mbox.store(MailboxFolder::Sent, &raw("c", "z", 1_716_200_003)).unwrap();
+        }
+
+        let svc = build_service_for_rebuild(dir.path());
+        let stats = svc
+            .rebuild_index(dir.path().to_path_buf())
+            .unwrap();
+        assert_eq!(stats.messages_indexed, 3);
+        assert_eq!(svc.index.lock().unwrap().count().unwrap(), 3);
     }
 }

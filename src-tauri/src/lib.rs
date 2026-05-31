@@ -109,6 +109,28 @@ pub fn run() {
             // This keeps the Pat child process alive mid-ARQ session.
             crate::tray::install(app.handle())?;
 
+            // Task 10 (tuxlink-1hu): register the find-messages SearchService.
+            // search.db + saved-searches.json live alongside the native mailbox
+            // in <app_data>/native-mbox/. Failure is non-fatal — the search UI
+            // degrades gracefully (empty results); the app always launches.
+            match app.path().app_data_dir() {
+                Ok(data_dir) => {
+                    let search_root = data_dir.join("native-mbox");
+                    // Ensure the directory exists before opening SQLite (Index::open
+                    // calls Connection::open, which creates the .db file but expects
+                    // the parent directory to already exist).
+                    if let Err(e) = std::fs::create_dir_all(&search_root) {
+                        eprintln!("search: could not create native-mbox dir: {e}");
+                    } else {
+                        match crate::search::build_service(&search_root) {
+                            Ok(svc) => { app.manage(svc); }
+                            Err(e) => eprintln!("search: build_service failed: {e}"),
+                        }
+                    }
+                }
+                Err(e) => eprintln!("search: could not resolve app_data_dir: {e}"),
+            }
+
             // Task D (tuxlink-22l) app-start Pat bootstrap (spec §3.3). Runs
             // OFF the main thread (a dedicated std::thread inside
             // `bootstrap::run`) so the webview paints immediately rather than
@@ -210,6 +232,15 @@ pub fn run() {
             crate::ui_commands::position_status,      // Task 11 (tuxlink-686)
             crate::ui_commands::config_set_privacy,    // tuxlink-39b (GPS privacy control surface)
             crate::ui_commands::config_set_connect,    // tuxlink-3o0 (CMS server endpoint control)
+            // Task 10 (tuxlink-1hu): find-messages search commands
+            crate::search::commands::tauri_search_run,
+            crate::search::commands::tauri_search_list_saved,
+            crate::search::commands::tauri_search_list_recent,
+            crate::search::commands::tauri_search_save,
+            crate::search::commands::tauri_search_unsave,
+            crate::search::commands::tauri_search_rename,
+            crate::search::commands::tauri_search_reorder,
+            crate::search::commands::tauri_search_rebuild_index,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
