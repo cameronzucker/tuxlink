@@ -200,6 +200,8 @@ const BODIES: Record<
     formKind?: string;
     formCode?: string;
     formPayloadBytes?: number;
+    formId?: string;
+    formPayload?: unknown;
   }
 > = {
   'DEV-3': {
@@ -210,6 +212,30 @@ const BODIES: Record<
     formCode: 'ICS213',
     formPayloadBytes: 980,
     routing: 'CMS via 1235-2.cms.winlink.org',
+    formId: 'ICS213_Initial',
+    formPayload: {
+      formId: 'ICS213_Initial',
+      formParameters: {
+        xmlFileVersion: '1.0',
+        rmsExpressVersion: 'Tuxlink/0.3.0',
+        submissionDatetime: '20260530143000',
+        sendersCallsign: 'N5VSU',
+        gridSquare: 'EM15',
+        displayForm: 'ICS213_Initial_Viewer.html',
+        replyTemplate: 'ICS213_SendReply.0',
+      },
+      fields: [
+        ['inc_name', 'HURRICANE WALDO'],
+        ['to_name', 'James / WX4MTL'],
+        ['fm_name', 'Maria / N5VSU'],
+        ['subjectline', 'REQUEST SUPPLIES'],
+        ['mdate', '2026-05-30'],
+        ['mtime', '14:30Z'],
+        ['message', 'Need 200 cots and 500 blankets at the Bartlett shelter by 1800Z. Two truckloads from Memphis warehouse. Reply with ETA.'],
+        ['approved_name', 'Maria Vasquez'],
+        ['approved_postitle', 'Incident Commander'],
+      ],
+    },
   },
   'DEV-2': {
     fromDisplay: 'Mike / Net Control',
@@ -283,6 +309,8 @@ export function devMessageFor(id: string): ParsedMessage | null {
       : [],
     isForm: extra.isForm ?? false,
     routing: extra.routing ?? null,
+    formId: extra.formId ?? null,
+    formPayload: extra.formPayload ?? null,
   };
 }
 
