@@ -46,6 +46,7 @@ export function ArdopDock() {
   const [connecting, setConnecting] = useState(false);
   const [connectError, setConnectError] = useState<string | null>(null);
   const [disconnecting, setDisconnecting] = useState(false);
+  const [exchanging, setExchanging] = useState(false);
 
   const doConnect = async (tok: string) => {
     setConnecting(true);
@@ -79,6 +80,50 @@ export function ArdopDock() {
       void doConnect(consent.token);
     } else {
       setShowConsent(true);
+    }
+  };
+
+  // RADIO-1 SAFETY: this handler is the on-air-transmitting trigger for the
+  // B2F mail exchange. The consent token MUST be backend-minted via
+  // `modem_mint_consent` (mirrors the Connect path); the backend's
+  // `consume_consent_token` atomic equality-check-and-clear is the actual
+  // gate, but we also never want even the *appearance* of a client-side
+  // mint (e.g. Math.random / crypto.randomUUID). The grep guard in the
+  // commit body documents this property.
+  const isExchangeReady =
+    status.state === 'connected-irs' || status.state === 'connected-iss';
+  // Effective B2F target: ONLY the backend-reported peer authorizes a TX
+  // target. The stopped-state `target` input is for dialing; once
+  // connected, the live peer is the single source of truth for who we're
+  // TXing to. The earlier `(status.peer ?? target).trim()` fallback was
+  // a RADIO-1 hazard — the running-view unmount preserves `target` via
+  // useState, so the fallback could pass a stale callsign (from a prior
+  // or abandoned operator entry) to the on-air B2F exchange. Codex P1
+  // finding on fc95383; closed by requiring status.peer non-null.
+  const effectiveTarget: string | null = status.peer?.trim() ?? null;
+
+  const onSendReceiveClick = async () => {
+    // Defense in depth: even if the disabled-prop guard fails (UI bug,
+    // prop-drilling regression, etc.), refuse to invoke the on-air path
+    // without a live peer.
+    if (!isExchangeReady || effectiveTarget === null) return;
+    setExchanging(true);
+    setConnectError(null);
+    try {
+      const tok = await invoke<string>('modem_mint_consent');
+      await invoke('modem_ardop_b2f_exchange', {
+        target: effectiveTarget,
+        consentToken: tok,
+      });
+      // Success — backend has already cleaned up (disconnect + reset_to_stopped).
+      // The next modem:status event will reflect Stopped state, the dock will
+      // return to the Connect form. No further frontend mailbox-refresh
+      // coordination here; the mailbox view picks up new messages on next
+      // load.
+    } catch (e) {
+      setConnectError(`Send/Receive failed: ${e}`);
+    } finally {
+      setExchanging(false);
     }
   };
 
@@ -188,6 +233,14 @@ Up     ${fmtUptime(status.uptimeSec)}`}
           </section>
 
           <section className="ardop-dock-section">
+            <button
+              type="button"
+              className="ardop-dock-btn ardop-dock-btn-primary"
+              disabled={!isExchangeReady || exchanging || effectiveTarget === null}
+              onClick={onSendReceiveClick}
+            >
+              {exchanging ? 'Exchanging…' : 'Send/Receive'}
+            </button>
             <button
               type="button"
               className="ardop-dock-btn"
