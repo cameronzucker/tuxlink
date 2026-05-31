@@ -40,12 +40,13 @@ impl Message {
         &self.attachments
     }
 
-    /// Set the attachments. `pub(crate)` — only `winlink::compose` should populate
-    /// this; external callers go through compose which validates filenames and ordering.
+    /// Set the attachments. Callers that go through compose get filename validation
+    /// automatically; direct callers (e.g. golden-vector tests building from raw bytes)
+    /// are responsible for pre-validated filenames.
     ///
     /// Also synthesizes `File:` headers (one per attachment) from the attachment list,
     /// removing any pre-existing `File:` headers first so re-population is idempotent.
-    pub(crate) fn set_attachments(
+    pub fn set_attachments(
         &mut self,
         files: Vec<crate::winlink_backend::OutboundAttachment>,
     ) {
