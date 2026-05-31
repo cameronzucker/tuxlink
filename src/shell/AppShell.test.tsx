@@ -156,14 +156,16 @@ describe('<AppShell> — Mock B topology', () => {
     vi.mocked(invoke).mockClear();
   });
 
-  it('renders the Mock B regions: dashboard ribbon, sidebar, panes, session log, status bar', () => {
+  // radio-panel-shell P1.6: the bottom session-log strip was removed — the log
+  // moves into the radio panel as a per-mode section in P2-P4.
+  it('renders the Mock B regions: dashboard ribbon, sidebar, panes, status bar', () => {
     renderShell();
     expect(screen.getByTestId('app-shell-root')).toBeInTheDocument();
     expect(screen.getByTestId('dashboard-ribbon')).toBeInTheDocument();
     expect(screen.getByTestId('folder-sidebar')).toBeInTheDocument();
     expect(screen.getByTestId('shell-panes')).toBeInTheDocument();
     expect(screen.getByTestId('rows-pane')).toBeInTheDocument();
-    expect(screen.getByTestId('session-log-root')).toBeInTheDocument(); // visible by default
+    expect(screen.queryByTestId('session-log-root')).not.toBeInTheDocument();
     expect(screen.getByTestId('status-bar')).toBeInTheDocument();
     expect(screen.getByTestId('message-view-empty')).toBeInTheDocument();
   });
@@ -215,13 +217,16 @@ describe('<AppShell> — Mock B topology', () => {
     fireEvent.click(within(menubar).getByRole('button', { name: item }));
   }
 
-  it('View → Toggle Session Log toggles the (default-visible) session log', () => {
+  // radio-panel-shell P1.6: the View → Toggle Session Log menu item was
+  // removed when the bottom session-log strip went away. The menu no longer
+  // offers it; the log will reappear inside the radio panel in P2-P4.
+  it('does not offer a View → Toggle Session Log menu item', () => {
     renderShell();
-    expect(screen.getByTestId('session-log-root')).toBeInTheDocument();
-    clickMenu('View', /Toggle Session Log/);
-    expect(screen.queryByTestId('session-log-root')).toBeNull();
-    clickMenu('View', /Toggle Session Log/);
-    expect(screen.getByTestId('session-log-root')).toBeInTheDocument();
+    const menubar = screen.getByRole('menubar');
+    fireEvent.click(within(menubar).getByRole('button', { name: 'View' }));
+    expect(
+      within(menubar).queryByRole('button', { name: /Toggle Session Log/ }),
+    ).toBeNull();
   });
 
   it('View → Toggle Status Bar hides and shows the status bar', () => {
@@ -277,8 +282,8 @@ describe('<AppShell> — Mock B topology', () => {
     fireEvent.click(screen.getByTestId('proto-cms-packet'));
     expect(await screen.findByTestId('packet-panel-root')).toBeInTheDocument();
     expect(screen.queryByTestId('message-view-empty')).toBeNull();
-    // The full-width session log + status bar stay put.
-    expect(screen.getByTestId('session-log-root')).toBeInTheDocument();
+    // The status bar stays put. (The bottom session-log strip was removed in
+    // radio-panel-shell P1.6; the log moves into the radio panel in P2-P4.)
     expect(screen.getByTestId('status-bar')).toBeInTheDocument();
   });
 

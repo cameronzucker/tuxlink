@@ -2,9 +2,11 @@
 // design (docs/design/mockups/images/mock-b-principles-faithful.png + the MOCK B
 // block in 2026-05-17-mocks-v1-four-directions.html).
 //
-// Layout (the mock's dashboard + layout-B, combined into one root grid):
-//   dashboard ribbon (top) / panes[ sidebar | message list | reading pane ] /
-//   human session-log strip / status bar.
+// Layout (post-P1 radio-panel-shell): titlebar / menu bar / dashboard ribbon /
+// chip-strip / panes[ sidebar | message list | reading pane | radio-panel |
+// legacy ArdopDock ] / status bar. The right-hand radio-panel + legacy
+// ArdopDock mount conditionally per spec §3.3; the ArdopDock is removed in P4
+// once the per-mode panels (P2-P3) cover its surface.
 //
 // Selection ownership (unchanged from Task 12): AppShell owns `selectedFolder`
 // + `selectedMessage: {folder, id} | null`. The folder is carried with the id.
@@ -33,7 +35,6 @@ import { StatusBar } from './StatusBar';
 import { useStatusData } from './useStatus';
 import { applyColorScheme, saveColorScheme } from './colorScheme';
 import MessageView from '../mailbox/MessageView';
-import { SessionLog } from '../session/SessionLog';
 import { TitleBar } from './chrome/TitleBar';
 import { MenuBar } from './chrome/MenuBar';
 import { ResizeHandles } from './chrome/ResizeHandles';
@@ -57,6 +58,9 @@ import { useSavedSearches } from '../search/useSavedSearches';
 import { ArdopHfStub } from '../connections/ArdopHfStub';
 import { useModemStatus } from '../modem/useModemStatus';
 import { ArdopDock } from '../modem/ArdopDock';
+import { computePanelMode } from '../radio/radioPanelVisibility';
+import type { RadioPanelMode } from '../radio/types';
+import { PlaceholderRadioPanel } from '../radio/modes/PlaceholderRadioPanel';
 import './AppShell.css';
 
 /// Human label for a folder (titlebar). Mirrors the sidebar labels.
@@ -118,15 +122,18 @@ export function AppShell() {
   // DEV_SELECTED is null outside the vite dev server, so this starts null (the
   // real empty-reading-pane state) in tests + production.
   const [selectedMessage, setSelectedMessage] = useState<SelectedMessage | null>(DEV_SELECTED);
-  // Mock B shows the session log + status bar by default; View → toggles them.
-  const [showSessionLog, setShowSessionLog] = useState(true);
+  // Mock B shows the status bar by default; View → toggles it. The bottom
+  // session-log strip was removed in radio-panel-shell P1.6 — the log moves
+  // into the radio panel as a per-mode section in P2-P4 (spec §3.7 + §4.3).
   const [showStatusBar, setShowStatusBar] = useState(true);
-  // tuxlink-mnk4: pin-on flag for the modem dock (View → Toggle Radio Dock /
-  // Ctrl+Shift+M). Pure additive override — when true, forces the dock visible
-  // even on views/states where the auto rule would hide it. Never forces hide:
-  // an active modem (or being on the ARDOP HF view) always shows the dock so
-  // the operator can't accidentally hide a live link.
-  const [pinRadioDock, setPinRadioDock] = useState(false);
+  // tuxlink-mnk4: pin-on flag for the radio panel (View → Toggle Radio Panel /
+  // Ctrl+Shift+M). Pure additive override — when true, forces the panel
+  // visible even on views/states where the auto rule would hide it. Never
+  // forces hide: an active modem (or being on the ARDOP HF view) always shows
+  // the panel so the operator can't accidentally hide a live link.
+  // (radio-panel-shell P1.7: renamed from pinRadioDock — the dock-vs-panel
+  // distinction is dropped per spec §3.2 + §3.7.)
+  const [pinRadioPanel, setPinRadioPanel] = useState(false);
   // Inline GPS/privacy settings overlay (tuxlink-39b), opened from Tools→Settings.
   const [settingsOpen, setSettingsOpen] = useState(false);
 
@@ -206,20 +213,33 @@ export function AppShell() {
   // dashboard ribbon, the status bar, and the window title.
   const statusData = useStatusData();
 
-  // Modem (ARDOP HF) status — drives the right-hand dock's mount + the
-  // panes-grid column-count swap (tuxlink-4ek Task 4.3). The dock appears:
+  // Modem (ARDOP HF) status — feeds the radio-panel visibility check + the
+  // panes-grid column-count swap (tuxlink-4ek Task 4.3 baseline; radio-panel-
+  // shell P1.5+ migrated to computePanelMode). The panel appears:
   //   - whenever the modem is doing anything other than 'stopped' (so the
   //     operator always sees an active link without hunting for a panel), OR
-  //   - when the operator has selected the ARDOP HF view (cold-start dial
-  //     form lives inside the dock — without this, ArdopHfStub's "use the
-  //     modem dock on the right" message points at nothing and the operator
-  //     can't spawn the modem at all — tuxlink-mnk4), OR
-  //   - when the View → Toggle Radio Dock pin is on (Ctrl+Shift+M).
+  //   - when the operator has selected any connection in the sidebar (cold-
+  //     start dial form lives inside the panel — without this, ArdopHfStub's
+  //     "use the modem dock on the right" message points at nothing and the
+  //     operator can't spawn the modem at all — tuxlink-mnk4), OR
+  //   - when the View → Toggle Radio Panel pin is on (Ctrl+Shift+M).
   const { status: modemStatus } = useModemStatus();
-  const dockVisible =
-    modemStatus.state !== 'stopped' ||
-    selectedConnection?.protocol === 'ardop-hf' ||
-    pinRadioDock;
+  // Spec §3.3 visibility rule. computePanelMode applies the OR of
+  // (sidebar selection, active modem, pinned toggle) and returns the mode
+  // to display, or null when the panel should not mount.
+  // In v1, only the ARDOP modem exists; when it's running, the active
+  // context is Ardop Winlink. Multi-modem coordination is out of scope
+  // per spec §8.
+  const activeModem: RadioPanelMode | null =
+    modemStatus.state !== 'stopped'
+      ? { kind: 'ardop-hf', intent: 'cms' }
+      : null;
+
+  const radioPanelMode = computePanelMode({
+    sidebarSelected: selectedConnection,
+    activeModem,
+    togglePinned: pinRadioPanel,
+  });
 
   // CMS connect: run one exchange (send outbox + receive), then refresh the
   // mailbox so any downloaded messages appear. The button lives in the ribbon;
@@ -277,9 +297,8 @@ export function AppShell() {
     reply: () => { if (openMessage) void openReplyWindow(openMessage, 'reply').catch(() => {}); },
     replyAll: () => { if (openMessage) void openReplyWindow(openMessage, 'replyAll').catch(() => {}); },
     forward: () => { if (openMessage) void openReplyWindow(openMessage, 'forward').catch(() => {}); },
-    toggleSessionLog: () => setShowSessionLog((s) => !s),
     toggleStatusBar: () => setShowStatusBar((s) => !s),
-    toggleRadioDock: () => setPinRadioDock((s) => !s),
+    toggleRadioPanel: () => setPinRadioPanel((s) => !s),
     selectFolder: (folder) => { setSelectedFolder(folder); setSelectedMessage(null); setSelectedConnection(null); },
     setScheme: (id) => { applyColorScheme(id); saveColorScheme(id); },
     openSettings: () => setSettingsOpen(true),
@@ -384,7 +403,7 @@ export function AppShell() {
       </div>
 
       <div
-        className={`panes${dockVisible ? ' panes--with-dock' : ''}`}
+        className={`panes${radioPanelMode !== null ? ' panes--with-dock' : ''}${radioPanelMode?.kind === 'ardop-hf' ? ' panes--with-legacy-dock' : ''}`}
         data-testid="shell-panes"
       >
         <FolderSidebar
@@ -429,10 +448,20 @@ export function AppShell() {
           // Built but unhandled — defensive stub
           return <StubPanel sessionType={sessionType} protocol={protocol} />;
         })()}
-        {dockVisible && <ArdopDock />}
+        {/* Spec P1: PlaceholderRadioPanel mounts here. P2-P4 swap in the
+            real per-mode components. The legacy ArdopDock continues to
+            mount BELOW until P4 removes it. */}
+        {radioPanelMode && (
+          <PlaceholderRadioPanel
+            mode={radioPanelMode}
+            onClose={() => {
+              setSelectedConnection(null);
+              setPinRadioPanel(false);
+            }}
+          />
+        )}
+        {radioPanelMode?.kind === 'ardop-hf' && <ArdopDock />}
       </div>
-
-      {showSessionLog && <SessionLog />}
 
       <StatusBar show={showStatusBar} unread={counts.inbox ?? 0} state={statusData.state} packet={packetUi} />
 

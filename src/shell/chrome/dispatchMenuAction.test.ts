@@ -8,9 +8,8 @@ function handlers(): MenuHandlers {
     reply: vi.fn(),
     replyAll: vi.fn(),
     forward: vi.fn(),
-    toggleSessionLog: vi.fn(),
     toggleStatusBar: vi.fn(),
-    toggleRadioDock: vi.fn(),
+    toggleRadioPanel: vi.fn(),
     selectFolder: vi.fn(),
     setScheme: vi.fn(),
     openSettings: vi.fn(),
@@ -39,19 +38,17 @@ describe('dispatchMenuAction', () => {
 
   it('routes view toggles', () => {
     const h = handlers();
-    dispatchMenuAction('menu:view:session_log', h);
     dispatchMenuAction('menu:view:status_bar', h);
-    expect(h.toggleSessionLog).toHaveBeenCalledOnce();
     expect(h.toggleStatusBar).toHaveBeenCalledOnce();
   });
 
-  // tuxlink-mnk4: the radio_dock menu item + Ctrl+Shift+M accelerator have
-  // existed in menuModel.ts since PR #113 but the dispatcher never routed
-  // them — operator-reported dead key.
-  it('routes view:radio_dock to toggleRadioDock', () => {
+  // tuxlink-mnk4: the radio-panel menu item + Ctrl+Shift+M accelerator must
+  // route through the dispatcher (radio-panel-shell P1.7 renamed it from
+  // radio_dock / toggleRadioDock).
+  it('routes view:radio_panel to toggleRadioPanel', () => {
     const h = handlers();
-    dispatchMenuAction('menu:view:radio_dock', h);
-    expect(h.toggleRadioDock).toHaveBeenCalledOnce();
+    dispatchMenuAction('menu:view:radio_panel', h);
+    expect(h.toggleRadioPanel).toHaveBeenCalledOnce();
   });
 
   it('routes mailbox folder selection with the folder name', () => {
