@@ -278,7 +278,7 @@ async fn test_log_stream_emits_lines_and_handles_drop() {
             seq: 0,
             timestamp_iso: format!("2026-05-18T00:00:0{i}Z"),
             level: LogLevel::Info,
-            source: LogSource::Pat,
+            source: LogSource::Backend,
             message: format!("event {i}"),
         });
         assert!(n > 0, "broadcast must have at least one subscriber on iteration {i}");
@@ -306,7 +306,7 @@ async fn test_log_stream_emits_lines_and_handles_drop() {
         seq: 0,
         timestamp_iso: "2026-05-18T00:00:99Z".to_string(),
         level: LogLevel::Info,
-        source: LogSource::Pat,
+        source: LogSource::Backend,
         message: "post-drop".to_string(),
     });
     // No panic = pass. (The send returns 0 receivers but that's fine.)
@@ -374,7 +374,7 @@ fn ingest_pat_line_appends_and_broadcasts_with_seq() {
 
     // The returned LogLine carries the seq assigned by the durable buffer.
     assert_eq!(l.seq, 1, "first appended line gets seq=1 from the buffer");
-    assert_eq!(l.source, LogSource::Pat, "Pat stderr lines are LogSource::Pat");
+    assert_eq!(l.source, LogSource::Backend, "Pat stderr lines are LogSource::Backend");
     assert_eq!(l.level, LogLevel::Info, "v0.0.1 maps every Pat line to Info");
     assert_eq!(l.message, "starting http", "message is the raw line verbatim");
 
@@ -481,8 +481,8 @@ fn spawn_failure_drains_pat_stderr_into_durable_buffer() {
         snap.iter().map(|l| &l.message).collect::<Vec<_>>()
     );
     assert!(
-        snap.iter().all(|l| l.source == LogSource::Pat),
-        "drained failure lines are LogSource::Pat"
+        snap.iter().all(|l| l.source == LogSource::Backend),
+        "drained failure lines are LogSource::Backend"
     );
 }
 

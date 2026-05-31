@@ -306,7 +306,7 @@ pub enum LogLevel { Trace, Debug, Info, Warn, Error }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
-pub enum LogSource { Backend, Pat, Transport, Wire }
+pub enum LogSource { Backend, Transport, Wire }
 
 // ============================================================================
 // Error model (spec §3.3)
@@ -1455,7 +1455,7 @@ pub fn ingest_pat_line(
 }
 
 /// Append-only counterpart to [`ingest_pat_line`]: map one raw Pat stderr line
-/// into a `LogSource::Pat` [`LogLine`] and append it to the durable buffer
+/// into a `LogSource::Backend` [`LogLine`] and append it to the durable buffer
 /// (which assigns + sets the monotonic `seq`), WITHOUT broadcasting. Returns the
 /// stored line (with `seq` populated).
 ///
@@ -1470,7 +1470,7 @@ fn append_pat_line(raw: String, buffer: &SessionLogState) -> LogLine {
         seq: 0,
         timestamp_iso: now_iso8601_utc(),
         level: LogLevel::Info,
-        source: LogSource::Pat,
+        source: LogSource::Backend,
         message: raw,
     };
     // `append` assigns + returns the monotonic seq and stores the line.

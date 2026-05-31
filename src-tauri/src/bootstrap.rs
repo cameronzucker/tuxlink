@@ -407,7 +407,7 @@ mod tests {
             seq: 0, // append() assigns the real seq
             timestamp_iso: "2026-05-20T00:00:00Z".into(),
             level: LogLevel::Info,
-            source: LogSource::Pat,
+            source: LogSource::Backend,
             message: msg.into(),
         }
     }

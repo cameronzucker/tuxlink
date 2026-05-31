@@ -957,8 +957,8 @@ pub async fn backend_status(state: State<'_, BackendState>) -> Result<Option<Sta
 /// Serializable session-log line. Mirrors `LogLineDto` in
 /// `src/session/logProjection.ts` — field names are camelCase on the wire
 /// (`timestampIso`) and the enum values serialize as lowercase strings
-/// (`'trace'|'debug'|'info'|'warn'|'error'`, `'backend'|'pat'|'transport'|
-/// 'wire'`) so the TS model needs no rename/translation layer.
+/// (`'trace'|'debug'|'info'|'warn'|'error'`, `'backend'|'transport'|'wire'`)
+/// so the TS model needs no rename/translation layer.
 ///
 /// `seq` is the monotonic sequence number from `SessionLogState`. The frontend
 /// uses it as a cursor for snapshot-then-tail deduplication (adrev #4): seed
@@ -1005,7 +1005,6 @@ impl From<LogLevel> for LogLevelDto {
 #[serde(rename_all = "lowercase")]
 pub enum LogSourceDto {
     Backend,
-    Pat,
     Transport,
     Wire,
 }
@@ -1015,7 +1014,6 @@ impl From<LogSource> for LogSourceDto {
     fn from(s: LogSource) -> Self {
         match s {
             LogSource::Backend => LogSourceDto::Backend,
-            LogSource::Pat => LogSourceDto::Pat,
             LogSource::Transport => LogSourceDto::Transport,
             LogSource::Wire => LogSourceDto::Wire,
         }
@@ -2195,7 +2193,6 @@ mod tests {
         }
         for (source, expected) in [
             (LogSource::Backend, "backend"),
-            (LogSource::Pat, "pat"),
             (LogSource::Transport, "transport"),
             (LogSource::Wire, "wire"),
         ] {
@@ -2304,7 +2301,7 @@ mod tests {
             seq: 0,
             timestamp_iso: "2026-05-20T00:00:01Z".into(),
             level: LogLevel::Info,
-            source: LogSource::Pat,
+            source: LogSource::Backend,
             message: "Pat HTTP server ready".into(),
         });
         ring.append(LogLine {
@@ -2321,7 +2318,7 @@ mod tests {
         assert_eq!(dtos.len(), 2, "both appended lines project to DTOs");
         assert_eq!(dtos[0].seq, 1, "first line gets seq=1");
         assert_eq!(dtos[0].message, "Pat HTTP server ready");
-        assert_eq!(dtos[0].source, LogSourceDto::Pat);
+        assert_eq!(dtos[0].source, LogSourceDto::Backend);
         assert_eq!(dtos[1].seq, 2, "second line gets seq=2");
         assert_eq!(dtos[1].message, "CMS connection timeout");
         assert_eq!(dtos[1].source, LogSourceDto::Backend);
