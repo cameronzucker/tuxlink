@@ -129,6 +129,30 @@ impl ModemSession {
         self.inner.lock().unwrap().status = s;
     }
 
+    /// Single-lock variant of `status_snapshot`: drain the installed
+    /// transport's pending status events into the cached snapshot, persist
+    /// the updated snapshot, and return a clone. Called by
+    /// [`ModemStatusBroadcaster`] every [`STATUS_POLL_INTERVAL`].
+    ///
+    /// If no transport is installed (e.g. the session is `Stopped` and
+    /// nothing has connected yet), there are no events to drain and the
+    /// cached snapshot is returned as-is.
+    ///
+    /// The transport's `drain_status_events` MUST be non-blocking — see
+    /// [`crate::winlink::modem::ModemTransport::drain_status_events`].
+    pub fn tick_and_snapshot(&self) -> ModemStatus {
+        let mut inner = self.inner.lock().unwrap();
+        // Clone the snapshot before mutating so that a panic inside
+        // `drain_status_events` leaves the persisted status untouched
+        // (poison-aware: the next acquirer will see the pre-drain state).
+        let mut snap = inner.status.clone();
+        if let Some(transport) = inner.transport.as_mut() {
+            transport.drain_status_events(&mut snap);
+        }
+        inner.status = snap.clone();
+        snap
+    }
+
     /// Generate + remember a new consent token. Returns the token so the
     /// frontend can pass it to `modem_ardop_connect`.
     pub fn mint_consent_token(&self) -> String {
@@ -227,14 +251,17 @@ pub const STATUS_POLL_INTERVAL: Duration = Duration::from_millis(250);
 /// updating `src/hooks/useModemStatus.ts`.
 pub const STATUS_EVENT: &str = "modem:status";
 
-/// Background thread that polls `ModemSession::status_snapshot()` every
-/// `STATUS_POLL_INTERVAL` and emits each snapshot via the provided closure.
+/// Background thread that polls [`ModemSession::tick_and_snapshot`] every
+/// [`STATUS_POLL_INTERVAL`] and emits each snapshot via the provided
+/// closure.
 ///
 /// In production the closure is
 /// `|s| { let _ = app_handle.emit(STATUS_EVENT, s); }` — fire-and-forget
-/// against the WebView. For v1 the broadcaster just rebroadcasts the cached
-/// snapshot; richer flows (poll the ardopcf cmd-socket for live S/N,
-/// throughput, ARQ flags) are filed as follow-ups.
+/// against the WebView. `tick_and_snapshot` does double duty: it drains
+/// any pending events from the installed [`crate::winlink::modem::ModemTransport`]
+/// into the cached status before returning a clone, so the broadcaster
+/// emits live state transitions / peer / bandwidth / ARQ flags / last error
+/// at the 4 Hz tick rate (tuxlink-926y).
 ///
 /// Zero-sized "namespace" type — no per-instance state, just `spawn` +
 /// `tick_for_test`.
@@ -255,7 +282,7 @@ impl ModemStatusBroadcaster {
         std::thread::Builder::new()
             .name("modem-status-broadcaster".into())
             .spawn(move || loop {
-                let snap = session.status_snapshot();
+                let snap = session.tick_and_snapshot();
                 emit(snap);
                 std::thread::sleep(STATUS_POLL_INTERVAL);
             })
@@ -269,7 +296,7 @@ impl ModemStatusBroadcaster {
     where
         F: Fn(ModemStatus),
     {
-        emit(session.status_snapshot());
+        emit(session.tick_and_snapshot());
         Ok(())
     }
 }
@@ -369,5 +396,63 @@ mod tests {
         let recorded = recorded.into_inner();
         assert_eq!(recorded.len(), 1);
         assert_eq!(recorded[0].state, ModemState::Stopped);
+    }
+
+    /// Stub transport whose `drain_status_events` mutates the snapshot — used
+    /// to prove `tick_and_snapshot` routes through the installed transport.
+    struct StubTransport;
+    impl crate::winlink::modem::ModemTransport for StubTransport {
+        fn init(
+            &mut self,
+            _: &crate::winlink::modem::InitConfig,
+        ) -> Result<(), crate::winlink::modem::SessionError> {
+            Ok(())
+        }
+        fn connect_arq(
+            &mut self,
+            _: &str,
+            _: u32,
+            _: std::time::Duration,
+        ) -> Result<crate::winlink::modem::ConnectInfo, crate::winlink::modem::SessionError>
+        {
+            unimplemented!("stub")
+        }
+        fn disconnect(
+            &mut self,
+            _: std::time::Duration,
+        ) -> Result<(), crate::winlink::modem::SessionError> {
+            Ok(())
+        }
+        fn data_stream(
+            &mut self,
+        ) -> std::io::Result<&mut dyn crate::winlink::modem::ReadWrite> {
+            Err(std::io::Error::other("stub"))
+        }
+        fn drain_status_events(&mut self, status: &mut ModemStatus) {
+            status.peer = Some("STUB-DRAINED".into());
+            status.width_hz = Some(1234);
+        }
+    }
+
+    #[test]
+    fn tick_and_snapshot_routes_through_installed_transport() {
+        let session = ModemSession::new();
+        session.install_transport(Box::new(StubTransport));
+        let snap = session.tick_and_snapshot();
+        assert_eq!(snap.peer.as_deref(), Some("STUB-DRAINED"));
+        assert_eq!(snap.width_hz, Some(1234));
+        // The drained-into snapshot must also persist on the session — a
+        // subsequent `status_snapshot` should reflect the mutation.
+        let cached = session.status_snapshot();
+        assert_eq!(cached.peer.as_deref(), Some("STUB-DRAINED"));
+        assert_eq!(cached.width_hz, Some(1234));
+    }
+
+    #[test]
+    fn tick_and_snapshot_is_a_no_op_when_no_transport_installed() {
+        let session = ModemSession::new();
+        let snap = session.tick_and_snapshot();
+        assert_eq!(snap.state, ModemState::Stopped);
+        assert!(snap.peer.is_none());
     }
 }

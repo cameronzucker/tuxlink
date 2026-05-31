@@ -16,10 +16,13 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use super::super::process::{ManagedModem, ProcessError};
+use super::command::{Command, State};
 use super::data::DataSocket;
 use super::session::{arq_connect, arq_disconnect, init_tnc, CmdSocket, ConnectInfo, InitConfig, SessionError};
 use super::ArdopConfig;
+use crate::modem_status::{ModemState, ModemStatus};
 use crate::winlink::modem::{ModemTransport, ReadWrite};
+use std::sync::mpsc::RecvTimeoutError;
 
 /// How long to wait (total) for ardopcf to bind both TCP ports after spawn.
 const BIND_WAIT_TIMEOUT: Duration = Duration::from_secs(5);
@@ -298,9 +301,261 @@ impl ModemTransport for ArdopTransport {
                 )
             })
     }
+
+    /// Drain pending cmd-socket events and fold them into `status`.
+    ///
+    /// Called by [`crate::modem_status::ModemStatusBroadcaster`] every
+    /// 250 ms. Uses [`Duration::ZERO`] on `CmdSocket::recv_event` so the
+    /// drain never blocks the broadcaster tick, and caps the per-call loop
+    /// at [`MAX_DRAIN_EVENTS_PER_TICK`] so a runaway emitter cannot starve
+    /// the tick.
+    ///
+    /// If the cmd-socket reader thread has exited (the TNC went away), the
+    /// status is marked [`ModemState::Error`] with a `last_error` message
+    /// the UI surfaces in the dock.
+    fn drain_status_events(&mut self, status: &mut ModemStatus) {
+        let Some(cmd) = self.cmd.as_mut() else {
+            return;
+        };
+        for _ in 0..MAX_DRAIN_EVENTS_PER_TICK {
+            match cmd.recv_event(Duration::ZERO) {
+                Ok(event) => apply_ardop_event_to_status(event, status),
+                Err(RecvTimeoutError::Timeout) => return, // queue empty
+                Err(RecvTimeoutError::Disconnected) => {
+                    status.state = ModemState::Error;
+                    status.last_error.get_or_insert_with(|| {
+                        "cmd-socket reader thread exited (TNC connection lost)".into()
+                    });
+                    return;
+                }
+            }
+        }
+    }
+}
+
+// ─── Status-event translation ────────────────────────────────────────────────
+
+/// Maximum number of cmd-socket events drained per broadcaster tick.
+///
+/// Bounds the worst-case time spent inside `drain_status_events` so a
+/// chatty / runaway TNC cannot stall the 250 ms broadcaster cadence.
+const MAX_DRAIN_EVENTS_PER_TICK: usize = 64;
+
+/// Fold a single parsed ardopcf [`Command`] into a [`ModemStatus`].
+///
+/// Mapping (v1 — structural transitions only; numeric meters land in v2):
+///
+/// - `NewState(s)` updates `status.state` (plus derived `arq_flags.rx/tx`).
+///   `FecSend`/`FecRcv` map to `ConnectedIrs` as a best-effort
+///   approximation — FEC isn't an ARQ link, but the dock has no separate
+///   FEC state today.
+/// - `Connected { peer, bw }` populates `peer`, `width_hz`, clears
+///   `last_error`, and sets `state = ConnectedIrs` (initial role; a
+///   subsequent `NewState` will flip to `ConnectedIss` if applicable).
+/// - `Disconnected` clears the ARQ rx/tx flags and transitions to `Idle`.
+///   (Full Stopped transition is owned by `ModemSession::reset_to_stopped`.)
+/// - `Fault(msg)` transitions to `Error` and stores the message.
+/// - `Ptt(on)` mirrors into `arq_flags.tx`.
+/// - `Busy(on)` mirrors into `arq_flags.busy`.
+/// - `Buffer(n)` flips `arq_flags.tx` true when queue depth is non-zero
+///   (movement indicator). Throughput rate calculation is deferred to v2.
+/// - `Status(_)` and `EchoBack(_)` are intentionally ignored — STATUS-string
+///   S/N parsing and setter echo-backs are not status-relevant for v1.
+fn apply_ardop_event_to_status(event: Command, status: &mut ModemStatus) {
+    match event {
+        Command::NewState(new_state) => {
+            status.state = match new_state {
+                State::Offline => ModemState::Stopped,
+                State::Disc => ModemState::Idle,
+                State::Idle => ModemState::Idle,
+                State::Iss => ModemState::ConnectedIss,
+                State::Irs => ModemState::ConnectedIrs,
+                // FEC modes aren't ARQ; best-effort mapping to keep the dock
+                // showing "connected-ish". Revisit if we add a FEC dock state.
+                State::FecSend | State::FecRcv => ModemState::ConnectedIrs,
+            };
+            status.arq_flags.rx = matches!(new_state, State::Irs);
+            status.arq_flags.tx = matches!(new_state, State::Iss);
+        }
+        Command::Connected {
+            peer_call,
+            bandwidth_hz,
+        } => {
+            status.state = ModemState::ConnectedIrs;
+            status.peer = Some(peer_call);
+            status.width_hz = Some(bandwidth_hz);
+            status.last_error = None;
+        }
+        Command::Disconnected => {
+            // Mark Idle, not Stopped — the Stopped transition is owned by
+            // `ModemSession::reset_to_stopped`. This keeps the broadcaster
+            // and the disconnect command-handler agreeing on the terminal
+            // state instead of racing.
+            status.state = ModemState::Idle;
+            status.arq_flags.rx = false;
+            status.arq_flags.tx = false;
+        }
+        Command::Fault(msg) => {
+            status.state = ModemState::Error;
+            status.last_error = Some(msg);
+        }
+        Command::Ptt(on) => {
+            status.arq_flags.tx = on;
+        }
+        Command::Buffer(remaining) => {
+            if remaining > 0 {
+                status.arq_flags.tx = true;
+            }
+            // throughput_bps from BUFFER depth requires a rolling-window
+            // calculator — deferred to v2.
+        }
+        Command::Busy(on) => {
+            status.arq_flags.busy = on;
+        }
+        Command::Status(_) => {
+            // Free-form STATUS strings (S/N etc.) parsing is v2.
+        }
+        Command::EchoBack(_) => {
+            // Setter echo-backs ("MYCALL", etc.) aren't status-relevant.
+        }
+    }
 }
 
 // ─── Tests ──────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod drain_tests {
+    //! Translation-helper tests: assert that `apply_ardop_event_to_status`
+    //! maps each ardopcf [`Command`] variant into the documented
+    //! [`ModemStatus`] field updates. These tests intentionally don't touch
+    //! the cmd-socket — they exercise the pure mapping function.
+    use super::*;
+    use crate::modem_status::{ModemState, ModemStatus};
+
+    #[test]
+    fn newstate_irs_sets_connected_irs_and_rx_flag() {
+        let mut s = ModemStatus::stopped();
+        apply_ardop_event_to_status(Command::NewState(State::Irs), &mut s);
+        assert_eq!(s.state, ModemState::ConnectedIrs);
+        assert!(s.arq_flags.rx);
+        assert!(!s.arq_flags.tx);
+    }
+
+    #[test]
+    fn newstate_iss_sets_connected_iss_and_tx_flag() {
+        let mut s = ModemStatus::stopped();
+        apply_ardop_event_to_status(Command::NewState(State::Iss), &mut s);
+        assert_eq!(s.state, ModemState::ConnectedIss);
+        assert!(!s.arq_flags.rx);
+        assert!(s.arq_flags.tx);
+    }
+
+    #[test]
+    fn newstate_disc_maps_to_idle() {
+        let mut s = ModemStatus::stopped();
+        // Pre-seed the rx flag so we can verify it gets cleared.
+        s.arq_flags.rx = true;
+        apply_ardop_event_to_status(Command::NewState(State::Disc), &mut s);
+        assert_eq!(s.state, ModemState::Idle);
+        assert!(!s.arq_flags.rx);
+        assert!(!s.arq_flags.tx);
+    }
+
+    #[test]
+    fn newstate_offline_maps_to_stopped() {
+        let mut s = ModemStatus::stopped();
+        apply_ardop_event_to_status(Command::NewState(State::Offline), &mut s);
+        assert_eq!(s.state, ModemState::Stopped);
+    }
+
+    #[test]
+    fn connected_event_sets_peer_and_bandwidth() {
+        let mut s = ModemStatus::stopped();
+        // Pre-seed an error so we can verify Connected clears it.
+        s.last_error = Some("stale".into());
+        apply_ardop_event_to_status(
+            Command::Connected {
+                peer_call: "W7RMS-10".into(),
+                bandwidth_hz: 500,
+            },
+            &mut s,
+        );
+        assert_eq!(s.peer.as_deref(), Some("W7RMS-10"));
+        assert_eq!(s.width_hz, Some(500));
+        assert_eq!(s.state, ModemState::ConnectedIrs);
+        assert!(s.last_error.is_none(), "Connected must clear last_error");
+    }
+
+    #[test]
+    fn disconnected_event_transitions_to_idle_and_clears_flags() {
+        let mut s = ModemStatus::stopped();
+        s.state = ModemState::ConnectedIrs;
+        s.arq_flags.rx = true;
+        s.arq_flags.tx = true;
+        apply_ardop_event_to_status(Command::Disconnected, &mut s);
+        assert_eq!(s.state, ModemState::Idle);
+        assert!(!s.arq_flags.rx);
+        assert!(!s.arq_flags.tx);
+    }
+
+    #[test]
+    fn fault_event_transitions_to_error_with_message() {
+        let mut s = ModemStatus::stopped();
+        apply_ardop_event_to_status(Command::Fault("TNC timeout".into()), &mut s);
+        assert_eq!(s.state, ModemState::Error);
+        assert_eq!(s.last_error.as_deref(), Some("TNC timeout"));
+    }
+
+    #[test]
+    fn ptt_on_sets_tx_flag_and_off_clears_it() {
+        let mut s = ModemStatus::stopped();
+        apply_ardop_event_to_status(Command::Ptt(true), &mut s);
+        assert!(s.arq_flags.tx);
+        apply_ardop_event_to_status(Command::Ptt(false), &mut s);
+        assert!(!s.arq_flags.tx);
+    }
+
+    #[test]
+    fn busy_event_toggles_arq_busy_flag() {
+        let mut s = ModemStatus::stopped();
+        apply_ardop_event_to_status(Command::Busy(true), &mut s);
+        assert!(s.arq_flags.busy);
+        apply_ardop_event_to_status(Command::Busy(false), &mut s);
+        assert!(!s.arq_flags.busy);
+    }
+
+    #[test]
+    fn buffer_nonzero_sets_tx_flag() {
+        let mut s = ModemStatus::stopped();
+        apply_ardop_event_to_status(Command::Buffer(1024), &mut s);
+        assert!(
+            s.arq_flags.tx,
+            "BUFFER with bytes queued should mark tx in progress"
+        );
+    }
+
+    #[test]
+    fn buffer_zero_does_not_force_tx_flag() {
+        let mut s = ModemStatus::stopped();
+        apply_ardop_event_to_status(Command::Buffer(0), &mut s);
+        assert!(
+            !s.arq_flags.tx,
+            "BUFFER 0 must not flip tx — TX is finished, not active"
+        );
+    }
+
+    #[test]
+    fn status_and_echo_back_are_no_ops_on_status() {
+        // STATUS strings + setter echo-backs intentionally don't move the
+        // status — STATUS parsing is v2, echo-backs are protocol bookkeeping.
+        let s_before = ModemStatus::stopped();
+        let mut s = s_before.clone();
+        apply_ardop_event_to_status(Command::Status("anything".into()), &mut s);
+        assert_eq!(s, s_before, "Status events must not mutate ModemStatus");
+        apply_ardop_event_to_status(Command::EchoBack("MYCALL".into()), &mut s);
+        assert_eq!(s, s_before, "EchoBack events must not mutate ModemStatus");
+    }
+}
 
 #[cfg(test)]
 mod tests {
