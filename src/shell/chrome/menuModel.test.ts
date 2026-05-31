@@ -7,7 +7,7 @@ const EXPECTED_IDS = [
   'menu:file:quit',
   'menu:message:new', 'menu:message:reply', 'menu:message:reply_all', 'menu:message:forward', 'menu:message:print',
   'menu:session:connect', 'menu:session:disconnect', 'menu:session:log',
-  'menu:session:test_send', 'menu:session:show_transport',
+  'menu:session:verify_cms', 'menu:session:show_transport',
   'menu:mailbox:inbox', 'menu:mailbox:sent', 'menu:mailbox:outbox',
   'menu:view:session_log', 'menu:view:raw_log', 'menu:view:status_bar', 'menu:view:radio_dock',
   'menu:view:scheme:default', 'menu:view:scheme:night-red', 'menu:view:scheme:grayscale',

@@ -1,54 +1,46 @@
-// Step3TestSend.tsx — wizard cluster Task 11 / tuxlink-e4x
+// Step3TestSend.tsx — wizard cluster Task 5.4 / tuxlink-9phd
 // Spec: docs/superpowers/specs/2026-05-18-onboarding-wizard-cluster-design.md
 //       §3.3 (Step 3), §3.4 (4-substate machine), §5.3 (UX copy), §5.8 (Part 97 dedup)
 //
-// Part 97 / RADIO-1 safety:
-//   The [Send test] button is UNCONDITIONALLY ABSENT when testSendSubstate !== 'idle'.
-//   This is NOT just "disabled" — the button is removed from the DOM entirely so
-//   a React double-render (StrictMode, Suspense flush) cannot dispatch BEGIN_TEST_SEND
-//   twice and trigger two CMS transmissions. See spec §3.1 invariant 2 + §5.8.
-//
-//   The reducer's BEGIN_TEST_SEND guard (wizardReducer.ts) is the first defense.
-//   The Rust-side WizardMutex is the second defense.
-//   The button-absent rule is the third (removes the dispatch surface entirely).
+// Task 5.4 (tuxlink-9phd): replaced the Pat-based test-send with a
+// connect-only NativeBackend probe (verify_cms_connection). No transmission;
+// just verifies CMS reachability + auth. RADIO-1 no longer applies to this path.
 //
 // 4 substates:
-//   idle    → "Ready to send a test message..." + [Send test] [Skip]
-//   sending → progress indicator + session-log stream + [Skip and go to inbox]
-//   success → green check + auto-advance to complete after 3s
-//   failed  → yellow warning + likely-causes list + [Retry] [Edit credentials] [Go to inbox]
+//   idle    → "Ready to verify..." + [Verify CMS Connection] [Skip]
+//   probing → progress indicator + session-log stream + [Skip and go to inbox]
+//   ok      → green check + auto-advance to complete after 3s
+//   error   → yellow warning + error message + [Retry] [Edit credentials] [Go to inbox]
 //
 // Non-blocking: every substate has a path to the inbox (Skip / Go to inbox).
 // Transport-visibility paragraph always rendered above the substate content
 // per spec §5.3 + UX anti-pattern fix in design doc §4.1.
 //
-// MOCKED mode: when TUXLINK_TEST_SEND_MOCK is set in the Rust environment,
-// wizard_run_test_send returns mocked outcomes. The UI shows a banner:
-//   "Test-send MOCKED — no real Winlink transmission."
-// The mock signal is sourced from the backend via wizard_test_send_is_mocked(),
-// queried on entering the `sending` substate so the banner is reliably visible
-// during `sending` (spec §3.8). The prior reply_subject-sniffing approach was
-// unreachable because reply_subject is never appended to testSendLog.
+// Part 97 dedup (inherited from prior test-send design, still correct here):
+//   The [Verify CMS Connection] button is UNCONDITIONALLY ABSENT when
+//   cmsVerifySubstate !== 'idle'. This is NOT just "disabled" — the button is
+//   removed from the DOM entirely so a React double-render cannot dispatch
+//   BEGIN_CMS_VERIFY twice. The reducer's BEGIN_CMS_VERIFY guard (wizardReducer.ts)
+//   is the first defense; the Rust-side WizardMutex is the second; the
+//   button-absent rule is the third.
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { useWizard } from './wizardContext';
-import type { TestSendOutcome, WizardError } from './types';
+import type { WizardError } from './types';
 
-// How long to linger on the success substate before auto-advancing (ms).
+// How long to linger on the ok substate before auto-advancing (ms).
 // Spec §3.4: "auto-advance to complete after 3 seconds (cancellable)."
-const SUCCESS_AUTO_ADVANCE_MS = 3000;
+const OK_AUTO_ADVANCE_MS = 3000;
 
-// Watchdog timeout for the `sending` substate (tuxlink-9w8).
+// Watchdog timeout for the `probing` substate (tuxlink-9w8 pattern).
 //
-// The backend live test-send polls up to TEST_SEND_TIMEOUT_SECS (30 s per
-// wizard.rs). A GENEROUS margin (15 s) is added so the watchdog never
-// false-fires on a legitimately slow but working send. The watchdog is
-// ONLY a backstop for the stuck case — a Busy result from a *different*
-// mutex holder that means TEST_SEND_RESULT never arrives for this window.
+// The backend probe has no built-in timeout (the NativeBackend connect uses OS
+// TCP defaults, ~75 s for SYN retries). A GENEROUS watchdog ensures the wizard
+// is never stuck indefinitely.
 //
-// 45 000 ms = 30 s (backend limit) + 15 s (front-end margin)
-const SENDING_WATCHDOG_MS = 45_000;
+// 90 000 ms = 75 s (OS TCP SYN timeout upper bound) + 15 s margin.
+const PROBING_WATCHDOG_MS = 90_000;
 
 // Narrow an unknown caught value to a discriminated WizardError-by-`kind`.
 // Tauri rejects the invoke promise with the serialized WizardError object.
@@ -59,32 +51,33 @@ function errorKind(err: unknown): WizardError['kind'] | null {
   return null;
 }
 
+// Extract a human-readable detail from a caught WizardError or unknown error.
+function extractErrorDetail(err: unknown): string {
+  if (typeof err === 'object' && err !== null) {
+    if ('detail' in err && typeof (err as { detail: unknown }).detail === 'object') {
+      const d = (err as { detail: { detail?: unknown } }).detail;
+      if (d && 'detail' in d) return String(d.detail);
+    }
+    if ('detail' in err) return String((err as { detail: unknown }).detail);
+  }
+  return String(err);
+}
+
 export function Step3TestSend() {
   const { state, dispatch } = useWizard();
   const autoAdvanceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Watchdog timer ref for the `sending` substate (tuxlink-9w8).
-  // Armed when `sending` is entered; cancelled when a result arrives or the
-  // substate leaves `sending` (including unmount cleanup). If the timer fires,
-  // the wizard transitions to a recoverable `failed` state so the operator is
-  // never stuck indefinitely.
-  const sendingWatchdogTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Watchdog timer ref for the `probing` substate.
+  // Armed when `probing` is entered; cancelled when a result arrives or the
+  // substate leaves `probing` (including unmount cleanup).
+  const probingWatchdogTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // FIX 4 (P2): MOCKED-mode signal sourced from the Rust backend (the only
-  // authority on whether TUXLINK_TEST_SEND_MOCK is set). Queried once we enter
-  // `sending` so the MOCKED banner is operator-visible during that substate
-  // (spec §3.8). Null = not yet known; false = live; true = mocked.
-  const [isMocked, setIsMocked] = useState<boolean | null>(null);
-
-  // ── Auto-advance on success ────────────────────────────────────────────
-  // Schedule auto-advance to 'complete' 3s after entering 'success' substate.
-  // The timer is cancelled if the component unmounts or the substate changes
-  // (e.g., operator clicks away, or wizard re-mounts for some reason).
+  // ── Auto-advance on ok ─────────────────────────────────────────────────
   useEffect(() => {
-    if (state.testSendSubstate === 'success') {
+    if (state.cmsVerifySubstate === 'ok') {
       autoAdvanceTimer.current = setTimeout(() => {
-        dispatch({ type: 'SKIP_TEST_SEND' });
-      }, SUCCESS_AUTO_ADVANCE_MS);
+        dispatch({ type: 'SKIP_CMS_VERIFY' });
+      }, OK_AUTO_ADVANCE_MS);
     }
     return () => {
       if (autoAdvanceTimer.current !== null) {
@@ -92,213 +85,92 @@ export function Step3TestSend() {
         autoAdvanceTimer.current = null;
       }
     };
-  }, [state.testSendSubstate, dispatch]);
+  }, [state.cmsVerifySubstate, dispatch]);
 
-  // ── Sending-substate watchdog (tuxlink-9w8) ────────────────────────────
-  // Problem: a Busy result from a *different* mutex holder causes the Busy
-  // no-op path to stay in `sending` with no TEST_SEND_RESULT ever arriving,
-  // stranding the wizard indefinitely.
-  //
-  // Fix: arm a watchdog when `sending` is entered. If no result arrives within
-  // SENDING_WATCHDOG_MS, transition to a recoverable `failed` state. Cancel the
-  // watchdog whenever:
-  //   • A TEST_SEND_RESULT arrives (real success/failure — substate leaves `sending`)
-  //   • The operator skips (SKIP_TEST_SEND dispatched, substate leaves `sending`)
-  //   • The component unmounts (effect cleanup)
-  //
-  // Concurrent-retry case: a Busy from a CONCURRENT test-send double-fire means
-  // the OTHER in-flight send will eventually deliver a TEST_SEND_RESULT that
-  // changes the substate, which cancels the watchdog before it fires. The
-  // generous 45 s window ensures the watchdog never false-fires on a slow
-  // legitimate send.
+  // ── Probing-substate watchdog ──────────────────────────────────────────
   useEffect(() => {
-    if (state.testSendSubstate === 'sending') {
-      sendingWatchdogTimer.current = setTimeout(() => {
-        sendingWatchdogTimer.current = null;
+    if (state.cmsVerifySubstate === 'probing') {
+      probingWatchdogTimer.current = setTimeout(() => {
+        probingWatchdogTimer.current = null;
         dispatch({
-          type: 'TEST_SEND_RESULT',
-          outcome: {
-            kind: 'Failed',
-            detail: {
-              cause: 'Send timed out — the system was busy; try again.',
-              likely_causes_hint: [
-                'Another wizard window may be running a test send',
-                'No internet connection',
-                'Firewall blocking port 8773',
-                'CMS temporarily busy',
-              ],
-            },
-          },
+          type: 'CMS_VERIFY_RESULT',
+          ok: false,
+          errorMessage: 'Connection timed out — the CMS did not respond in time. Try again.',
         });
-      }, SENDING_WATCHDOG_MS);
+      }, PROBING_WATCHDOG_MS);
     } else {
-      // Substate left `sending` (result arrived, skip, or error). Cancel the
-      // watchdog so it does not fire late.
-      if (sendingWatchdogTimer.current !== null) {
-        clearTimeout(sendingWatchdogTimer.current);
-        sendingWatchdogTimer.current = null;
+      if (probingWatchdogTimer.current !== null) {
+        clearTimeout(probingWatchdogTimer.current);
+        probingWatchdogTimer.current = null;
       }
     }
     return () => {
-      // Unmount cleanup: cancel the watchdog so it cannot dispatch after unmount.
-      if (sendingWatchdogTimer.current !== null) {
-        clearTimeout(sendingWatchdogTimer.current);
-        sendingWatchdogTimer.current = null;
+      if (probingWatchdogTimer.current !== null) {
+        clearTimeout(probingWatchdogTimer.current);
+        probingWatchdogTimer.current = null;
       }
     };
-  }, [state.testSendSubstate, dispatch]);
+  }, [state.cmsVerifySubstate, dispatch]);
 
-  // ── MOCKED-mode detection ───────────────────────────────────────────────
-  // FIX 4 (P2) + tuxlink-fzm: ask the Rust backend whether the test-send is
-  // mocked, so the MOCKED banner can render during `sending` (spec §3.8).
-  //
-  // Queried ONCE on mount (not on entering `sending`): the mock signal
-  // (TUXLINK_TEST_SEND_MOCK) is a STATIC process env var that cannot change
-  // during the wizard, so resolving it at mount means `isMocked` is known well
-  // before any send. The prior per-`sending` query raced a fast mocked send —
-  // the send could return (leaving `sending`, cancelling the effect) before the
-  // query resolved, so the banner never appeared. No idle-reset is needed
-  // (the signal is immutable). A query failure → live (banner absent — fail
-  // safe: never falsely claim a live send is mocked; Part 97).
-  useEffect(() => {
-    let cancelled = false;
-    invoke<boolean>('wizard_test_send_is_mocked')
-      .then((mocked) => {
-        if (!cancelled) setIsMocked(mocked);
-      })
-      .catch(() => {
-        if (!cancelled) setIsMocked(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  // ── Verify handler ─────────────────────────────────────────────────────
+  // Only reachable when cmsVerifySubstate === 'idle' (button absent otherwise).
+  const handleVerify = useCallback(async () => {
+    if (state.cmsVerifySubstate !== 'idle') return;
 
-  // ── Send handler ───────────────────────────────────────────────────────
-  // Part 97: only reachable when testSendSubstate === 'idle' (button absent otherwise).
-  const handleSendTest = useCallback(async () => {
-    // Guard: no-op if not idle (defense-in-depth; reducer is the primary guard).
-    if (state.testSendSubstate !== 'idle') return;
-
-    // Dispatch BEGIN_TEST_SEND to enter 'sending' substate.
-    // The reducer's BEGIN_TEST_SEND guard ensures this is a no-op if already sending.
-    dispatch({ type: 'BEGIN_TEST_SEND' });
+    dispatch({ type: 'BEGIN_CMS_VERIFY' });
 
     try {
-      const outcome = await invoke<TestSendOutcome>('wizard_run_test_send');
-      dispatch({ type: 'TEST_SEND_RESULT', outcome });
+      await invoke<void>('verify_cms_connection');
+      dispatch({ type: 'CMS_VERIFY_RESULT', ok: true });
     } catch (err) {
-      // FIX 2 (P0b): a Busy result means the Rust single-flight mutex was
-      // contended — a prior wizard_run_test_send is STILL in flight (and may
-      // already be transmitting under the operator's callsign). This contended
-      // call did NOT transmit (the mutex returns Busy before run_test_send_impl).
-      // Treat it as a strict NO-OP: do NOT dispatch TEST_SEND_RESULT, do NOT flip
-      // the UI to `failed`. Flipping to `failed` would put a live Retry control on
-      // screen while the first send is still running — a double-transmission risk.
-      // We stay in the current (`sending`) substate, reflecting reality.
+      // Busy means the Rust single-flight mutex was contended — a prior
+      // verify_cms_connection is still in flight. Treat as NO-OP: do NOT
+      // dispatch CMS_VERIFY_RESULT, do NOT flip the UI to `error`.
       if (errorKind(err) === 'Busy') return;
 
-      // tuxlink-2a7: expected operational failures (CMS timeout, connect
-      // failure, etc.) now arrive as Ok(TestSendOutcome::Failed) and are
-      // dispatched above — they no longer reach this catch. This branch is the
-      // fallback for an UNEXPECTED command-level error (IPC failure, panic):
-      // surface it as a failed outcome so the user is never stuck in `sending`.
-      const detail =
-        typeof err === 'object' && err !== null && 'detail' in err
-          ? String((err as { detail: unknown }).detail)
-          : String(err);
+      // Unexpected command-level error: surface as error substate so the
+      // operator is never stuck in `probing`.
       dispatch({
-        type: 'TEST_SEND_RESULT',
-        outcome: {
-          kind: 'Failed',
-          detail: {
-            cause: `Unexpected error: ${detail}`,
-            likely_causes_hint: [
-              'No internet connection',
-              'Firewall blocking port 8773',
-              'CMS temporarily busy',
-              'A captive portal / network login page intercepting traffic',
-            ],
-          },
-        },
+        type: 'CMS_VERIFY_RESULT',
+        ok: false,
+        errorMessage: `Unexpected error: ${extractErrorDetail(err)}`,
       });
     }
-  }, [state.testSendSubstate, dispatch]);
+  }, [state.cmsVerifySubstate, dispatch]);
 
   // ── Skip handler ───────────────────────────────────────────────────────
   const handleSkip = useCallback(() => {
-    dispatch({ type: 'SKIP_TEST_SEND' });
+    dispatch({ type: 'SKIP_CMS_VERIFY' });
   }, [dispatch]);
 
   // ── Retry handler ─────────────────────────────────────────────────────
-  // FIX 1 (P0a): the [Retry] gesture is routed THROUGH the reducer.
-  //
-  // RETRY_TEST_SEND transitions failed → sending in the reducer, so React leaves
-  // `failed` and enters `sending` at the moment of invoke. The [Retry] button is
-  // rendered ONLY in the `failed` substate, so once we are in `sending` there is no
-  // activation surface for a second transmission — preserving the Part 97
-  // one-consent-one-transmission invariant (spec §3.1 invariant 2 + §5.8).
-  //
-  // Previously this handler bypassed the reducer and called invoke() while the
-  // substate stayed `failed` (Retry button still live), so a fast completion could
-  // release the Rust mutex and a second Retry could transmit again under one gesture.
+  // RETRY_CMS_VERIFY transitions error → probing in the reducer BEFORE the invoke,
+  // so React leaves `error` and enters `probing` at the moment of invoke. The
+  // [Retry] button is rendered ONLY in `error`, so once in `probing` there is no
+  // activation surface for a second connection — preserving the dedup invariant.
   const handleRetry = useCallback(async () => {
-    if (state.testSendSubstate !== 'failed') return;
+    if (state.cmsVerifySubstate !== 'error') return;
 
-    // Leave `failed`, enter `sending` BEFORE the invoke. The reducer no-ops this
-    // from any non-`failed` substate, so a double-fire from `sending` is harmless.
-    dispatch({ type: 'RETRY_TEST_SEND' });
+    dispatch({ type: 'RETRY_CMS_VERIFY' });
 
     try {
-      const outcome = await invoke<TestSendOutcome>('wizard_run_test_send');
-      dispatch({ type: 'TEST_SEND_RESULT', outcome });
+      await invoke<void>('verify_cms_connection');
+      dispatch({ type: 'CMS_VERIFY_RESULT', ok: true });
     } catch (err) {
-      // FIX 2 (P0b): Busy means the single-flight mutex was contended — a prior
-      // send is still in flight. The contended call did NOT transmit. No-op: do
-      // not surface a failure (which would re-show the live Retry control mid-flight).
       if (errorKind(err) === 'Busy') return;
 
-      const detail =
-        typeof err === 'object' && err !== null && 'detail' in err
-          ? String((err as { detail: unknown }).detail)
-          : String(err);
       dispatch({
-        type: 'TEST_SEND_RESULT',
-        outcome: {
-          kind: 'Failed',
-          detail: {
-            cause: `Unexpected error on retry: ${detail}`,
-            likely_causes_hint: [
-              'No internet connection',
-              'Firewall blocking port 8773',
-              'CMS temporarily busy',
-              'A captive portal / network login page intercepting traffic',
-            ],
-          },
-        },
+        type: 'CMS_VERIFY_RESULT',
+        ok: false,
+        errorMessage: `Unexpected error on retry: ${extractErrorDetail(err)}`,
       });
     }
-  }, [state.testSendSubstate, dispatch]);
+  }, [state.cmsVerifySubstate, dispatch]);
 
   // ── Edit credentials handler ──────────────────────────────────────────
   const handleEditCredentials = useCallback(() => {
     dispatch({ type: 'RETURN_TO_CREDENTIALS' });
   }, [dispatch]);
-
-  // ── Mock banner ───────────────────────────────────────────────────────
-  // FIX 4 (P2): the banner is driven by the backend mock signal (isMocked),
-  // queried on entering `sending`. This makes the banner reliably reachable
-  // during the `sending` substate (spec §3.8 line 348) — the prior approach
-  // sniffed testSendLog for "[MOCKED]", but reply_subject was never appended
-  // to testSendLog, so the banner was effectively unreachable.
-  // Rendered in sending/success/failed (any in-flight or terminal substate);
-  // absent in live mode and in idle.
-  const showMockBanner = isMocked === true && state.testSendSubstate !== 'idle';
-  const mockBanner = showMockBanner ? (
-    <p className="wizard-mock-banner" role="note" data-testid="mock-banner">
-      Test-send MOCKED — no real Winlink transmission.
-    </p>
-  ) : null;
 
   // ── Render ────────────────────────────────────────────────────────────
   return (
@@ -311,23 +183,22 @@ export function Step3TestSend() {
       </p>
 
       {/* ── idle substate ─────────────────────────────────────────────── */}
-      {state.testSendSubstate === 'idle' && (
+      {state.cmsVerifySubstate === 'idle' && (
         <div data-testid="substate-idle">
-          <h1>Verify your CMS credentials</h1>
+          <h1>Verify your CMS connection</h1>
           <p>
-            Ready to send a test message to verify your credentials. This sends a
-            brief message to <code>SERVICE@winlink.org</code> and waits for an
-            autoresponder reply.
+            Ready to verify your CMS credentials. This opens a connection to the
+            CMS and confirms your account is reachable — no message is sent.
           </p>
-          {/* Part 97 / RADIO-1: [Send test] button is PRESENT only in idle substate.
-              It is ABSENT (not rendered) in sending/success/failed — see spec §3.1 invariant 2 + §5.8. */}
+          {/* [Verify CMS Connection] button is PRESENT only in idle substate.
+              It is ABSENT (not rendered) in probing/ok/error — dedup invariant. */}
           <div className="wizard-submit-row">
             <button
               type="button"
               data-testid="send-test-btn"
-              onClick={handleSendTest}
+              onClick={handleVerify}
             >
-              Send test
+              Verify CMS Connection
             </button>
             <button
               type="button"
@@ -341,29 +212,27 @@ export function Step3TestSend() {
         </div>
       )}
 
-      {/* ── sending substate ──────────────────────────────────────────── */}
-      {state.testSendSubstate === 'sending' && (
+      {/* ── probing substate ──────────────────────────────────────────── */}
+      {state.cmsVerifySubstate === 'probing' && (
         <div data-testid="substate-sending">
-          <h1>Sending test message…</h1>
-          {/* MOCKED banner — operator-visible during `sending` per spec §3.8 (FIX 4). */}
-          {mockBanner}
-          {/* Session-log preview — human-shaped projection lines streamed via Tauri events */}
+          <h1>Connecting to CMS…</h1>
+          {/* Session-log preview — lines appended via CMS_VERIFY_LOG_LINE */}
           <div
             className="wizard-session-log"
             role="log"
             aria-live="polite"
             data-testid="session-log"
           >
-            {state.testSendLog.length === 0 ? (
+            {state.cmsVerifyLog.length === 0 ? (
               <p className="wizard-log-placeholder">Connecting to CMS via TLS (port 8773)…</p>
             ) : (
-              state.testSendLog.map((line, i) => (
+              state.cmsVerifyLog.map((line, i) => (
                 // eslint-disable-next-line react/no-array-index-key
                 <p key={i} className="wizard-log-line">{line}</p>
               ))
             )}
           </div>
-          {/* [Skip and go to inbox] — always available during sending per spec §3.4 */}
+          {/* [Skip and go to inbox] — always available during probing per spec §3.4 */}
           <div className="wizard-submit-row">
             <button
               type="button"
@@ -374,12 +243,12 @@ export function Step3TestSend() {
               Skip and go to inbox
             </button>
           </div>
-          {/* Note: [Send test] button is ABSENT here — spec §3.1 invariant 2 + §5.8 Part 97 */}
+          {/* Note: [Verify CMS Connection] button is ABSENT here — dedup invariant */}
         </div>
       )}
 
-      {/* ── success substate ──────────────────────────────────────────── */}
-      {state.testSendSubstate === 'success' && (
+      {/* ── ok substate ───────────────────────────────────────────────── */}
+      {state.cmsVerifySubstate === 'ok' && (
         <div data-testid="substate-success">
           <span
             className="wizard-success-icon"
@@ -389,9 +258,8 @@ export function Step3TestSend() {
           >
             ✓
           </span>
-          <h1>Test send complete.</h1>
+          <h1>CMS connection verified.</h1>
           <p data-testid="success-message">Your CMS account is verified.</p>
-          {mockBanner}
           <p className="wizard-auto-advance-hint">
             Continuing to inbox in 3 seconds…{' '}
             <button
@@ -401,7 +269,7 @@ export function Step3TestSend() {
                   clearTimeout(autoAdvanceTimer.current);
                   autoAdvanceTimer.current = null;
                 }
-                dispatch({ type: 'SKIP_TEST_SEND' });
+                dispatch({ type: 'SKIP_CMS_VERIFY' });
               }}
               data-testid="go-to-inbox-now-btn"
               className="wizard-btn-link"
@@ -409,12 +277,12 @@ export function Step3TestSend() {
               Go to inbox now
             </button>
           </p>
-          {/* Note: [Send test] button ABSENT — spec §3.1 invariant 2 + §5.8 Part 97 */}
+          {/* Note: [Verify CMS Connection] button ABSENT — dedup invariant */}
         </div>
       )}
 
-      {/* ── failed substate ───────────────────────────────────────────── */}
-      {state.testSendSubstate === 'failed' && (
+      {/* ── error substate ────────────────────────────────────────────── */}
+      {state.cmsVerifySubstate === 'error' && (
         <div data-testid="substate-failed">
           <span
             className="wizard-warning-icon"
@@ -424,20 +292,20 @@ export function Step3TestSend() {
           >
             ⚠
           </span>
-          <h1>Test send did not complete.</h1>
+          <h1>CMS connection did not complete.</h1>
           {/* Yellow warning copy — NOT red error (spec §3.4: "failure is information, not a wall") */}
           <p className="wizard-failed-warning" data-testid="failed-message">
             Your credentials are saved. You can reach your inbox now and retry the
-            test send later from <strong>Session → Test send</strong>.
+            verification later from <strong>Session → Test send</strong>.
           </p>
-          {/* Specific error from testSendError */}
-          {state.testSendError && (
+          {/* Specific error from cmsVerifyError */}
+          {state.cmsVerifyError && (
             <p
               className="wizard-failed-detail"
               role="alert"
               data-testid="failed-error"
             >
-              Error: {state.testSendError}
+              Error: {state.cmsVerifyError}
             </p>
           )}
           {/* Likely-causes list per spec §3.4 + §5.12 (captive portal as 4th cause) */}
@@ -449,7 +317,7 @@ export function Step3TestSend() {
             <li>A captive portal or network login page intercepting traffic</li>
           </ul>
           <div className="wizard-submit-row">
-            {/* [Retry] — re-invokes wizard_run_test_send; see handleRetry above */}
+            {/* [Retry] — re-invokes verify_cms_connection; see handleRetry above */}
             <button
               type="button"
               data-testid="retry-btn"
@@ -466,7 +334,7 @@ export function Step3TestSend() {
             >
               Edit credentials
             </button>
-            {/* [Go to inbox] — dispatches SKIP_TEST_SEND */}
+            {/* [Go to inbox] — dispatches SKIP_CMS_VERIFY */}
             <button
               type="button"
               data-testid="go-to-inbox-btn"
@@ -486,7 +354,7 @@ export function Step3TestSend() {
               Open Settings
             </button>
           </div>
-          {/* Note: [Send test] button ABSENT — spec §3.1 invariant 2 + §5.8 Part 97 */}
+          {/* Note: [Verify CMS Connection] button ABSENT — dedup invariant */}
         </div>
       )}
     </div>

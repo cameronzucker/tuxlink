@@ -39,7 +39,7 @@ export const MENU_TREE: TopMenu[] = [
     { id: 'menu:session:disconnect', label: 'Disconnect' },
     { separator: true },
     { id: 'menu:session:log', label: 'Session Log' },
-    { id: 'menu:session:test_send', label: 'Test send' },
+    { id: 'menu:session:verify_cms', label: 'Verify CMS Connection' },
     { id: 'menu:session:show_transport', label: 'Show transport' },
   ] },
   { label: 'Mailbox', items: [

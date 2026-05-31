@@ -36,96 +36,103 @@ describe('wizardReducer', () => {
     expect(s.step).toBe('account');
   });
 
-  it('SUBMIT_CREDENTIALS_SUCCESS clears password and routes per skipTestSend flag', () => {
+  it('SUBMIT_CREDENTIALS_SUCCESS clears password and routes per skipCmsVerify flag', () => {
     const base = { ...initialWizardState(), step: 'credentials' as const, callsign: 'W4PHS', password: 'secret', inFlight: true };
-    const s1 = wizardReducer(base, { type: 'SUBMIT_CREDENTIALS_SUCCESS', skipTestSend: false });
+    const s1 = wizardReducer(base, { type: 'SUBMIT_CREDENTIALS_SUCCESS', skipCmsVerify: false });
     expect(s1.password).toBe('');
-    expect(s1.step).toBe('test_send');
+    expect(s1.step).toBe('cms_verify');
     expect(s1.inFlight).toBe(false);
-    const s2 = wizardReducer({ ...base, inFlight: true }, { type: 'SUBMIT_CREDENTIALS_SUCCESS', skipTestSend: true });
+    const s2 = wizardReducer({ ...base, inFlight: true }, { type: 'SUBMIT_CREDENTIALS_SUCCESS', skipCmsVerify: true });
     expect(s2.step).toBe('complete');
   });
 
-  // INVARIANT: BEGIN_TEST_SEND while sending is a no-op (Part 97 correctness)
-  it('BEGIN_TEST_SEND while testSendSubstate=sending returns state unchanged', () => {
-    const s = { ...initialWizardState(), step: 'test_send' as const, testSendSubstate: 'sending' as const };
-    const s2 = wizardReducer(s, { type: 'BEGIN_TEST_SEND' });
+  // INVARIANT: BEGIN_CMS_VERIFY while probing is a no-op (dedup correctness)
+  it('BEGIN_CMS_VERIFY while cmsVerifySubstate=probing returns state unchanged', () => {
+    const s = { ...initialWizardState(), step: 'cms_verify' as const, cmsVerifySubstate: 'probing' as const };
+    const s2 = wizardReducer(s, { type: 'BEGIN_CMS_VERIFY' });
     expect(s2).toBe(s);
   });
 
-  it('BEGIN_TEST_SEND from idle transitions to sending + resets log + clears skipSignaled', () => {
-    const s = { ...initialWizardState(), step: 'test_send' as const, testSendSubstate: 'idle' as const, testSendLog: ['stale'], skipSignaled: true };
-    const s2 = wizardReducer(s, { type: 'BEGIN_TEST_SEND' });
-    expect(s2.testSendSubstate).toBe('sending');
-    expect(s2.testSendLog).toEqual([]);
+  it('BEGIN_CMS_VERIFY from idle transitions to probing + resets log + clears skipSignaled', () => {
+    const s = { ...initialWizardState(), step: 'cms_verify' as const, cmsVerifySubstate: 'idle' as const, cmsVerifyLog: ['stale'], skipSignaled: true };
+    const s2 = wizardReducer(s, { type: 'BEGIN_CMS_VERIFY' });
+    expect(s2.cmsVerifySubstate).toBe('probing');
+    expect(s2.cmsVerifyLog).toEqual([]);
     expect(s2.skipSignaled).toBe(false);
   });
 
-  // FIX 1 (P0a): RETRY_TEST_SEND maps failed → sending so the retry gesture
-  // goes THROUGH the reducer (React leaves `failed` before/at invoke), preserving
-  // one-consent-one-transmission. BEGIN_TEST_SEND remains strictly idle→sending.
-  it('RETRY_TEST_SEND from failed transitions to sending + resets log + clears skipSignaled', () => {
-    const s = { ...initialWizardState(), step: 'test_send' as const, testSendSubstate: 'failed' as const,
-      testSendError: 'connection refused', testSendLog: ['stale'], skipSignaled: true };
-    const s2 = wizardReducer(s, { type: 'RETRY_TEST_SEND' });
-    expect(s2.testSendSubstate).toBe('sending');
-    expect(s2.testSendLog).toEqual([]);
+  // RETRY_CMS_VERIFY maps error → probing so the retry gesture goes THROUGH the
+  // reducer (React leaves `error` before/at invoke), preserving the dedup invariant.
+  // BEGIN_CMS_VERIFY remains strictly idle→probing.
+  it('RETRY_CMS_VERIFY from error transitions to probing + resets log + clears skipSignaled', () => {
+    const s = { ...initialWizardState(), step: 'cms_verify' as const, cmsVerifySubstate: 'error' as const,
+      cmsVerifyError: 'connection refused', cmsVerifyLog: ['stale'], skipSignaled: true };
+    const s2 = wizardReducer(s, { type: 'RETRY_CMS_VERIFY' });
+    expect(s2.cmsVerifySubstate).toBe('probing');
+    expect(s2.cmsVerifyLog).toEqual([]);
     expect(s2.skipSignaled).toBe(false);
-    expect(s2.testSendError).toBeNull();
+    expect(s2.cmsVerifyError).toBeNull();
   });
 
-  // INVARIANT (dedup): RETRY_TEST_SEND from sending/success/idle is a strict no-op.
-  it('RETRY_TEST_SEND while sending is a strict no-op (dedup invariant)', () => {
-    const s = { ...initialWizardState(), step: 'test_send' as const, testSendSubstate: 'sending' as const };
-    const s2 = wizardReducer(s, { type: 'RETRY_TEST_SEND' });
+  // INVARIANT (dedup): RETRY_CMS_VERIFY from probing/ok/idle is a strict no-op.
+  it('RETRY_CMS_VERIFY while probing is a strict no-op (dedup invariant)', () => {
+    const s = { ...initialWizardState(), step: 'cms_verify' as const, cmsVerifySubstate: 'probing' as const };
+    const s2 = wizardReducer(s, { type: 'RETRY_CMS_VERIFY' });
     expect(s2).toBe(s);
   });
 
-  it('RETRY_TEST_SEND while success is a strict no-op (dedup invariant)', () => {
-    const s = { ...initialWizardState(), step: 'test_send' as const, testSendSubstate: 'success' as const };
-    const s2 = wizardReducer(s, { type: 'RETRY_TEST_SEND' });
+  it('RETRY_CMS_VERIFY while ok is a strict no-op (dedup invariant)', () => {
+    const s = { ...initialWizardState(), step: 'cms_verify' as const, cmsVerifySubstate: 'ok' as const };
+    const s2 = wizardReducer(s, { type: 'RETRY_CMS_VERIFY' });
     expect(s2).toBe(s);
   });
 
-  it('RETRY_TEST_SEND while idle is a strict no-op (only failed may retry)', () => {
-    const s = { ...initialWizardState(), step: 'test_send' as const, testSendSubstate: 'idle' as const };
-    const s2 = wizardReducer(s, { type: 'RETRY_TEST_SEND' });
+  it('RETRY_CMS_VERIFY while idle is a strict no-op (only error may retry)', () => {
+    const s = { ...initialWizardState(), step: 'cms_verify' as const, cmsVerifySubstate: 'idle' as const };
+    const s2 = wizardReducer(s, { type: 'RETRY_CMS_VERIFY' });
     expect(s2).toBe(s);
   });
 
-  // INVARIANT: BEGIN_TEST_SEND from failed remains a strict no-op (the retry path
-  // is RETRY_TEST_SEND, not BEGIN_TEST_SEND; BEGIN stays idle-only per §3.1 inv 2).
-  it('BEGIN_TEST_SEND while failed returns state unchanged (idle-only guard preserved)', () => {
-    const s = { ...initialWizardState(), step: 'test_send' as const, testSendSubstate: 'failed' as const, testSendError: 'err' };
-    const s2 = wizardReducer(s, { type: 'BEGIN_TEST_SEND' });
+  // INVARIANT: BEGIN_CMS_VERIFY from error remains a strict no-op (the retry path
+  // is RETRY_CMS_VERIFY, not BEGIN_CMS_VERIFY; BEGIN stays idle-only).
+  it('BEGIN_CMS_VERIFY while error returns state unchanged (idle-only guard preserved)', () => {
+    const s = { ...initialWizardState(), step: 'cms_verify' as const, cmsVerifySubstate: 'error' as const, cmsVerifyError: 'err' };
+    const s2 = wizardReducer(s, { type: 'BEGIN_CMS_VERIFY' });
     expect(s2).toBe(s);
   });
 
-  // INVARIANT: TEST_SEND_RESULT ignored when skipSignaled
-  it('TEST_SEND_RESULT after SKIP_TEST_SEND is silently ignored (skipSignaled gate)', () => {
-    let s: WizardState = { ...initialWizardState(), step: 'test_send', testSendSubstate: 'sending' };
-    s = wizardReducer(s, { type: 'SKIP_TEST_SEND' });
+  // INVARIANT: CMS_VERIFY_RESULT ignored when skipSignaled
+  it('CMS_VERIFY_RESULT after SKIP_CMS_VERIFY is silently ignored (skipSignaled gate)', () => {
+    let s: WizardState = { ...initialWizardState(), step: 'cms_verify', cmsVerifySubstate: 'probing' };
+    s = wizardReducer(s, { type: 'SKIP_CMS_VERIFY' });
     expect(s.step).toBe('complete');
     expect(s.skipSignaled).toBe(true);
-    const s2 = wizardReducer(s, { type: 'TEST_SEND_RESULT', outcome: { kind: 'Success', detail: { reply_subject: 'test' } } });
+    const s2 = wizardReducer(s, { type: 'CMS_VERIFY_RESULT', ok: true });
     expect(s2).toBe(s);
   });
 
-  it('TEST_SEND_RESULT Success transitions sending → success', () => {
-    const s = { ...initialWizardState(), step: 'test_send' as const, testSendSubstate: 'sending' as const };
-    const s2 = wizardReducer(s, { type: 'TEST_SEND_RESULT', outcome: { kind: 'Success', detail: { reply_subject: 'auto-reply' } } });
-    expect(s2.testSendSubstate).toBe('success');
+  it('CMS_VERIFY_RESULT ok=true transitions probing → ok', () => {
+    const s = { ...initialWizardState(), step: 'cms_verify' as const, cmsVerifySubstate: 'probing' as const };
+    const s2 = wizardReducer(s, { type: 'CMS_VERIFY_RESULT', ok: true });
+    expect(s2.cmsVerifySubstate).toBe('ok');
   });
 
-  it('TEST_SEND_RESULT Failed populates testSendError + transitions sending → failed', () => {
-    const s = { ...initialWizardState(), step: 'test_send' as const, testSendSubstate: 'sending' as const };
-    const s2 = wizardReducer(s, { type: 'TEST_SEND_RESULT', outcome: { kind: 'Failed', detail: { cause: 'wrong password', likely_causes_hint: [] } } });
-    expect(s2.testSendSubstate).toBe('failed');
-    expect(s2.testSendError).toBe('wrong password');
+  it('CMS_VERIFY_RESULT ok=false populates cmsVerifyError + transitions probing → error', () => {
+    const s = { ...initialWizardState(), step: 'cms_verify' as const, cmsVerifySubstate: 'probing' as const };
+    const s2 = wizardReducer(s, { type: 'CMS_VERIFY_RESULT', ok: false, errorMessage: 'wrong password' });
+    expect(s2.cmsVerifySubstate).toBe('error');
+    expect(s2.cmsVerifyError).toBe('wrong password');
   });
 
-  it('RETURN_TO_CREDENTIALS from failed substate clears password but preserves callsign/grid/MBO', () => {
-    const s = { ...initialWizardState(), step: 'test_send' as const, testSendSubstate: 'failed' as const,
+  it('CMS_VERIFY_RESULT ok=false with no errorMessage uses fallback string', () => {
+    const s = { ...initialWizardState(), step: 'cms_verify' as const, cmsVerifySubstate: 'probing' as const };
+    const s2 = wizardReducer(s, { type: 'CMS_VERIFY_RESULT', ok: false });
+    expect(s2.cmsVerifySubstate).toBe('error');
+    expect(s2.cmsVerifyError).toBeTruthy();
+  });
+
+  it('RETURN_TO_CREDENTIALS from error substate clears password but preserves callsign/grid/MBO', () => {
+    const s = { ...initialWizardState(), step: 'cms_verify' as const, cmsVerifySubstate: 'error' as const,
       callsign: 'W4PHS', password: '', grid: 'EM75', mboAddress: 'W4PHS@winlink.org' };
     const s2 = wizardReducer(s, { type: 'RETURN_TO_CREDENTIALS' });
     expect(s2.step).toBe('credentials');
@@ -133,18 +140,18 @@ describe('wizardReducer', () => {
     expect(s2.callsign).toBe('W4PHS');
     expect(s2.grid).toBe('EM75');
     expect(s2.mboAddress).toBe('W4PHS@winlink.org');
-    expect(s2.testSendSubstate).toBe('idle');
+    expect(s2.cmsVerifySubstate).toBe('idle');
   });
 
-  it('TEST_SEND_LOG_LINE appends to testSendLog', () => {
-    const s = { ...initialWizardState(), testSendSubstate: 'sending' as const };
-    const s2 = wizardReducer(s, { type: 'TEST_SEND_LOG_LINE', line: 'Connecting via CMS-SSL...' });
-    expect(s2.testSendLog).toEqual(['Connecting via CMS-SSL...']);
+  it('CMS_VERIFY_LOG_LINE appends to cmsVerifyLog', () => {
+    const s = { ...initialWizardState(), cmsVerifySubstate: 'probing' as const };
+    const s2 = wizardReducer(s, { type: 'CMS_VERIFY_LOG_LINE', line: 'Connecting via CMS-SSL...' });
+    expect(s2.cmsVerifyLog).toEqual(['Connecting via CMS-SSL...']);
   });
 
-  it('TEST_SEND_LOG_LINE ignored when skipSignaled', () => {
-    const s = { ...initialWizardState(), testSendSubstate: 'sending' as const, skipSignaled: true };
-    const s2 = wizardReducer(s, { type: 'TEST_SEND_LOG_LINE', line: 'stale' });
+  it('CMS_VERIFY_LOG_LINE ignored when skipSignaled', () => {
+    const s = { ...initialWizardState(), cmsVerifySubstate: 'probing' as const, skipSignaled: true };
+    const s2 = wizardReducer(s, { type: 'CMS_VERIFY_LOG_LINE', line: 'stale' });
     expect(s2).toBe(s);
   });
 });

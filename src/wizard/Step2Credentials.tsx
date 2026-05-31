@@ -3,8 +3,8 @@
 //
 // Form with callsign / password (with show/hide toggle) / grid / MBO address.
 // Two submit paths:
-//   Continue → wizard_persist_cms → SUBMIT_CREDENTIALS_SUCCESS(skipTestSend=false) → test_send step
-//   Save-and-skip → wizard_persist_cms → SUBMIT_CREDENTIALS_SUCCESS(skipTestSend=true) → complete
+//   Continue → wizard_persist_cms → SUBMIT_CREDENTIALS_SUCCESS(skipCmsVerify=false) → cms_verify step
+//   Save-and-skip → wizard_persist_cms → SUBMIT_CREDENTIALS_SUCCESS(skipCmsVerify=true) → complete
 //
 // Password is cleared from WizardState on success (spec §3.1 invariant 1).
 // Buttons disabled during inFlight (spec §3.1).
@@ -168,7 +168,7 @@ export function Step2Credentials() {
 
   // ── Submit handler ────────────────────────────────────────────────────
 
-  async function handleSubmit(skipTestSend: boolean) {
+  async function handleSubmit(skipCmsVerify: boolean) {
     if (!canSubmit) return;
     setSubmitError(null);
     dispatch({ type: 'SUBMIT_BEGIN' });
@@ -181,7 +181,7 @@ export function Step2Credentials() {
       });
       // Clear local password immediately after successful invoke.
       setPassword('');
-      dispatch({ type: 'SUBMIT_CREDENTIALS_SUCCESS', skipTestSend });
+      dispatch({ type: 'SUBMIT_CREDENTIALS_SUCCESS', skipCmsVerify });
     } catch (err) {
       const wizErr = err as WizardError;
       if (wizErr.kind === 'Busy') {

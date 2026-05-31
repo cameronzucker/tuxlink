@@ -217,8 +217,7 @@ pub fn run() {
             crate::wizard::get_wizard_completed,
             crate::wizard::wizard_persist_cms,
             crate::wizard::wizard_persist_offline,
-            crate::wizard::wizard_run_test_send,
-            crate::wizard::wizard_test_send_is_mocked,
+            crate::wizard::verify_cms_connection,   // Task 5.4 (tuxlink-9phd): replaces wizard_run_test_send
             // Main-UI cluster commands. Task 12 (tuxlink-zsm) created
             // `mailbox_list`; Tasks 13/14/16 appended their command fns to
             // `ui_commands.rs` but deferred registration to this single

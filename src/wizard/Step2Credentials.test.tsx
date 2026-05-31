@@ -128,9 +128,9 @@ describe('<Step2Credentials>', () => {
     expect(mboInput.value).toBe('CUSTOM@winlink.org');
   });
 
-  // ── Submit — Continue (→ test_send) ────────────────────────────────────
+  // ── Submit — Continue (→ cms_verify) ─────────────────────────────────
 
-  it('Continue calls invoke("wizard_persist_cms") and transitions to test_send on success', async () => {
+  it('Continue calls invoke("wizard_persist_cms") and transitions to cms_verify on success', async () => {
     (invoke as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
     renderStep2();
 
@@ -146,7 +146,7 @@ describe('<Step2Credentials>', () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByTestId('probe-step')).toHaveTextContent('test_send');
+      expect(screen.getByTestId('probe-step')).toHaveTextContent('cms_verify');
     });
   });
 

@@ -28,8 +28,8 @@ export function WizardInner({ onComplete }: WizardInnerProps) {
       {state.step === 'credentials' && <Step2Credentials />}
       {/* Task 11.5 (tuxlink-d76): offline identity path. */}
       {state.step === 'offline_identity' && <Step2OfflineIdentity />}
-      {/* Task 11 (tuxlink-e4x): 4-substate test-send verification. */}
-      {state.step === 'test_send' && <Step3TestSend />}
+      {/* Task 5.4 (tuxlink-9phd): connect-only CMS verification (no transmission). */}
+      {state.step === 'cms_verify' && <Step3TestSend />}
       {/* Transient — App.tsx swaps to the shell via onComplete almost immediately. */}
       {state.step === 'complete' && (
         <p data-testid="wizard-complete-placeholder" className="wizard-complete-msg">

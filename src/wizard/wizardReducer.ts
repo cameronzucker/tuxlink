@@ -9,9 +9,9 @@ export function initialWizardState(): WizardState {
     identifier: '',
     grid: '',
     mboAddress: '',
-    testSendSubstate: 'idle',
-    testSendError: null,
-    testSendLog: [],
+    cmsVerifySubstate: 'idle',
+    cmsVerifyError: null,
+    cmsVerifyLog: [],
     inFlight: false,
     skipSignaled: false,
   };
@@ -39,7 +39,7 @@ export function wizardReducer(state: WizardState, action: WizardAction): WizardS
       return {
         ...state,
         password: '',
-        step: action.skipTestSend ? 'complete' : 'test_send',
+        step: action.skipCmsVerify ? 'complete' : 'cms_verify',
         inFlight: false,
       };
 
@@ -49,42 +49,42 @@ export function wizardReducer(state: WizardState, action: WizardAction): WizardS
     case 'SUBMIT_FAILURE':
       return { ...state, inFlight: false };
 
-    case 'BEGIN_TEST_SEND':
-      if (state.testSendSubstate !== 'idle') return state;
-      return { ...state, testSendSubstate: 'sending', testSendLog: [], skipSignaled: false };
+    case 'BEGIN_CMS_VERIFY':
+      if (state.cmsVerifySubstate !== 'idle') return state;
+      return { ...state, cmsVerifySubstate: 'probing', cmsVerifyLog: [], skipSignaled: false };
 
-    case 'RETRY_TEST_SEND':
-      // Retry path: failed → sending. Strict no-op from any other substate (dedup
-      // invariant — a retry is only meaningful from `failed`). Clears the prior
+    case 'RETRY_CMS_VERIFY':
+      // Retry path: error → probing. Strict no-op from any other substate (dedup
+      // invariant — a retry is only meaningful from `error`). Clears the prior
       // error + log and resets skipSignaled so the new attempt starts clean.
       // Routing [Retry] through this transition (instead of bypassing the reducer)
-      // ensures React leaves `failed` BEFORE the invoke, so the Retry control is
-      // absent while a send is in flight — Part 97 one-consent-one-transmission.
-      if (state.testSendSubstate !== 'failed') return state;
+      // ensures React leaves `error` BEFORE the invoke, so the Retry control is
+      // absent while a probe is in flight — Part 97 one-consent-one-connection.
+      if (state.cmsVerifySubstate !== 'error') return state;
       return {
         ...state,
-        testSendSubstate: 'sending',
-        testSendError: null,
-        testSendLog: [],
+        cmsVerifySubstate: 'probing',
+        cmsVerifyError: null,
+        cmsVerifyLog: [],
         skipSignaled: false,
       };
 
-    case 'TEST_SEND_LOG_LINE':
+    case 'CMS_VERIFY_LOG_LINE':
       if (state.skipSignaled) return state;
-      return { ...state, testSendLog: [...state.testSendLog, action.line] };
+      return { ...state, cmsVerifyLog: [...state.cmsVerifyLog, action.line] };
 
-    case 'TEST_SEND_RESULT':
+    case 'CMS_VERIFY_RESULT':
       if (state.skipSignaled) return state;
-      if (action.outcome.kind === 'Success') {
-        return { ...state, testSendSubstate: 'success' };
+      if (action.ok) {
+        return { ...state, cmsVerifySubstate: 'ok' };
       }
       return {
         ...state,
-        testSendSubstate: 'failed',
-        testSendError: action.outcome.detail.cause,
+        cmsVerifySubstate: 'error',
+        cmsVerifyError: action.errorMessage ?? 'Unknown error',
       };
 
-    case 'SKIP_TEST_SEND':
+    case 'SKIP_CMS_VERIFY':
       return { ...state, step: 'complete', skipSignaled: true };
 
     case 'RETURN_TO_CREDENTIALS':
@@ -92,9 +92,9 @@ export function wizardReducer(state: WizardState, action: WizardAction): WizardS
         ...state,
         step: 'credentials',
         password: '',
-        testSendSubstate: 'idle',
-        testSendError: null,
-        testSendLog: [],
+        cmsVerifySubstate: 'idle',
+        cmsVerifyError: null,
+        cmsVerifyLog: [],
       };
 
     default:
