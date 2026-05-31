@@ -197,6 +197,135 @@ impl Index {
     }
 }
 
+use crate::search::query::{compose, SqlParam};
+use crate::search::types::QuerySpec;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QueryHit {
+    pub mid: String,
+    pub folder: String,
+    pub from_addr: Option<String>,
+    pub to_addrs: Vec<String>,
+    pub cc_addrs: Vec<String>,
+    pub date_sent: Option<i64>,
+    pub date_received: Option<i64>,
+    pub unread: bool,
+    pub form_type: Option<String>,
+    pub has_attachments: bool,
+    pub attachment_count: u32,
+    pub transport_used: Option<String>,
+    pub direction: String,
+    pub message_size: u32,
+    pub routing_path: Option<String>,
+}
+
+impl Index {
+    pub fn query(&self, spec: &QuerySpec) -> Result<Vec<QueryHit>, IndexError> {
+        let (sql, params) = compose(spec);
+        let mut stmt = self.conn.prepare(&sql)?;
+        let rs = params
+            .iter()
+            .map(|p| match p {
+                SqlParam::Text(s) => rusqlite::types::Value::Text(s.clone()),
+                SqlParam::Int(i) => rusqlite::types::Value::Integer(*i),
+                SqlParam::Null => rusqlite::types::Value::Null,
+            })
+            .collect::<Vec<_>>();
+        let param_refs: Vec<&dyn rusqlite::ToSql> =
+            rs.iter().map(|v| v as &dyn rusqlite::ToSql).collect();
+        let rows = stmt
+            .query_map(param_refs.as_slice(), |row| {
+                Ok(QueryHit {
+                    mid: row.get(0)?,
+                    folder: row.get(1)?,
+                    from_addr: row.get(2)?,
+                    to_addrs: serde_json::from_str(&row.get::<_, String>(3)?)
+                        .unwrap_or_default(),
+                    cc_addrs: serde_json::from_str(&row.get::<_, String>(4)?)
+                        .unwrap_or_default(),
+                    date_sent: row.get(5)?,
+                    date_received: row.get(6)?,
+                    unread: row.get::<_, i64>(7)? != 0,
+                    form_type: row.get(8)?,
+                    has_attachments: row.get::<_, i64>(9)? != 0,
+                    attachment_count: row.get::<_, i64>(10)? as u32,
+                    transport_used: row.get(11)?,
+                    direction: row.get(12)?,
+                    message_size: row.get::<_, i64>(13)? as u32,
+                    routing_path: row.get(14)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+}
+
+#[cfg(test)]
+mod query_integration {
+    use super::*;
+    use crate::search::extractor::Direction;
+    use crate::search::types::{FilterKey, FilterValue, QuerySpec};
+    use std::collections::BTreeMap;
+    use tempfile::tempdir;
+
+    fn r(mid: &str, folder: &str, from: &str, subject: &str, body: &str) -> IndexRow {
+        IndexRow {
+            mid: mid.into(),
+            folder: folder.into(),
+            subject: subject.into(),
+            body: body.into(),
+            form_field_values: "".into(),
+            from_addr: Some(from.into()),
+            to_addrs: vec!["N7CPZ".into()],
+            cc_addrs: vec![],
+            date_sent: None,
+            date_received: Some(1_716_200_000),
+            unread: true,
+            form_type: None,
+            has_attachments: false,
+            attachment_count: 0,
+            transport_used: Some("telnet".into()),
+            direction: Direction::Received,
+            message_size: body.len() as u32,
+            routing_path: None,
+        }
+    }
+
+    #[test]
+    fn freetext_returns_only_matching_messages() {
+        let dir = tempdir().unwrap();
+        let idx = Index::open(dir.path().join("search.db")).unwrap();
+        idx.upsert(&r("A", "inbox", "KX5DD", "DAMAGE report", "powerlines"))
+            .unwrap();
+        idx.upsert(&r("B", "inbox", "WX5RES", "weather brief", "ridge"))
+            .unwrap();
+        let spec = QuerySpec {
+            free_text: Some("damage".into()),
+            ..QuerySpec::default()
+        };
+        let hits = idx.query(&spec).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].mid, "A");
+    }
+
+    #[test]
+    fn from_chip_narrows_results() {
+        let dir = tempdir().unwrap();
+        let idx = Index::open(dir.path().join("search.db")).unwrap();
+        idx.upsert(&r("A", "inbox", "KX5DD", "x", "y")).unwrap();
+        idx.upsert(&r("B", "inbox", "WX5RES", "x", "y")).unwrap();
+        let mut filters = BTreeMap::new();
+        filters.insert(FilterKey::From, FilterValue::Addr("KX5DD".into()));
+        let spec = QuerySpec {
+            filters,
+            ..QuerySpec::default()
+        };
+        let hits = idx.query(&spec).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].mid, "A");
+    }
+}
+
 #[cfg(test)]
 mod mutation_tests {
     use super::*;
