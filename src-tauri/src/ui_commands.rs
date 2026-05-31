@@ -744,6 +744,75 @@ pub async fn message_send(
     Ok(mid.0)
 }
 
+/// Send an outbound Winlink HTML Form.
+///
+/// Per spec §5.1 (Path B — native B2F) + ADR 0016. Looks up the form
+/// definition in the bundled catalog, builds the XML payload + plain-text
+/// body + subject via the form's templates, wraps the XML in an
+/// `OutboundAttachment` named `RMS_Express_Form_<id>.xml`, and dispatches
+/// via `backend.send_message()` — the same pipeline as `message_send`.
+///
+/// `senders_callsign` + `grid_square` come from the caller (typically the
+/// configured CMS callsign / locator); the XML's `<form_parameters>` block
+/// uses them.
+///
+/// Returns the MID string on success (mirrors `message_send` contract).
+#[tauri::command]
+pub async fn send_form(
+    form_id: String,
+    field_values: std::collections::HashMap<String, String>,
+    to: Vec<String>,
+    cc: Vec<String>,
+    senders_callsign: String,
+    grid_square: String,
+    state: State<'_, BackendState>,
+) -> Result<String, UiError> {
+    use crate::forms;
+
+    let form = forms::catalog::find_form(&form_id)
+        .ok_or_else(|| UiError::Internal {
+            detail: format!("unknown form: {}", form_id),
+        })?;
+
+    let now = chrono::Utc::now();
+    let params = forms::types::FormParameters {
+        xml_file_version: "1.0".to_string(),
+        rms_express_version: format!("Tuxlink/{}", env!("CARGO_PKG_VERSION")),
+        submission_datetime: now.format("%Y%m%d%H%M%S").to_string(),
+        senders_callsign,
+        grid_square,
+        display_form: form.display_form.to_string(),
+        reply_template: form.reply_template.to_string(),
+    };
+
+    let xml_bytes = forms::serialize::serialize_form_xml(form, &params, &field_values);
+    let body = forms::serialize::render_body_template(form.body_template, &field_values);
+    let subject = forms::serialize::render_body_template(form.subject_template, &field_values);
+
+    // OutboundAttachment has { filename, bytes } only — NO content_type field.
+    // The native B2F wire format does not use MIME content-type headers for
+    // attachments. See winlink_backend.rs ~105-108 for the canonical struct.
+    let attachment = crate::winlink_backend::OutboundAttachment {
+        filename: format!("RMS_Express_Form_{}.xml", form.id),
+        bytes: xml_bytes,
+    };
+
+    let msg = OutboundMessage {
+        to,
+        cc,
+        subject,
+        body,
+        date: now.to_rfc3339(),
+        attachments: vec![attachment],
+    };
+
+    let backend = state
+        .current()
+        .ok_or_else(|| UiError::NotConfigured("backend offline".to_string()))?;
+    let mid = backend.send_message(msg).await?;
+    Ok(mid.0)
+}
+
 /// Run one CMS connection: send everything queued in the outbox and download any
 /// waiting messages (tuxlink-0ic). Drives the backend's `connect` over the
 /// configured transport, then drops the session (the native exchange completes

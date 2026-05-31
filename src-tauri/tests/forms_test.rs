@@ -55,3 +55,35 @@ fn ics213_body_template_substitutes_correctly() {
     assert!(body.contains("4. Subject: TEST"));
     assert!(body.contains("** THIS IS AN EXERCISE **"));
 }
+
+#[test]
+fn send_form_builds_outbound_message_with_xml_attachment() {
+    use std::collections::HashMap;
+    use tuxlink_lib::forms::{catalog, serialize, types::FormParameters};
+
+    let form = catalog::find_form("ICS213_Initial").unwrap();
+    let mut values = HashMap::new();
+    values.insert("inc_name".into(), "TEST INCIDENT".into());
+    values.insert("subjectline".into(), "TEST SUBJECT".into());
+    values.insert("mdate".into(), "2026-05-30".into());
+    values.insert("mtime".into(), "14:30Z".into());
+    let params = FormParameters {
+        xml_file_version: "1.0".into(),
+        rms_express_version: "Tuxlink/0.3.0".into(),
+        submission_datetime: "20260530143000".into(),
+        senders_callsign: "N0CALL".into(),
+        grid_square: "FM18".into(),
+        display_form: form.display_form.into(),
+        reply_template: form.reply_template.into(),
+    };
+
+    let xml = serialize::serialize_form_xml(form, &params, &values);
+    let body = serialize::render_body_template(form.body_template, &values);
+
+    assert!(body.contains("1. Incident Name: TEST INCIDENT"));
+    assert!(body.contains("4. Subject: TEST SUBJECT"));
+    assert!(xml.starts_with(&[0xEF, 0xBB, 0xBF]));
+    let xml_str = String::from_utf8_lossy(&xml);
+    assert!(xml_str.contains("<display_form>ICS213_Initial_Viewer.html</display_form>"));
+    assert!(xml_str.contains("<inc_name>TEST INCIDENT</inc_name>"));
+}
