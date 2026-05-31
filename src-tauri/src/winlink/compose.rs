@@ -323,4 +323,26 @@ mod tests {
             other => panic!("expected FilenameNotLatin1Encodable for '日本.bin', got {:?}", other),
         }
     }
+
+    #[test]
+    fn composes_multi_recipient_with_attachments() {
+        let attachments = vec![
+            OutboundAttachment { filename: "a.bin".into(), bytes: vec![1] },
+            OutboundAttachment { filename: "b.bin".into(), bytes: vec![2] },
+        ];
+        let msg = compose_message_with_files(
+            "N7CPZ",
+            &["W1AW", "K1AB"],
+            &["KE7XYZ"],
+            "Multi",
+            "body",
+            &attachments,
+            1_716_200_000,
+        ).unwrap();
+        let bytes = msg.to_bytes();
+        let s = String::from_utf8_lossy(&bytes);
+        assert_eq!(s.matches("\r\nTo: ").count(), 2, "two To: headers expected; got: {s}");
+        assert_eq!(s.matches("\r\nCc: ").count(), 1, "one Cc: header expected; got: {s}");
+        assert_eq!(s.matches("\r\nFile: ").count(), 2, "two File: headers expected; got: {s}");
+    }
 }
