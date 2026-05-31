@@ -2869,3 +2869,19 @@ mod native_read_state_tests {
         assert_eq!(n2, 0, "Ok(0) while the link is closed must surface as a real EOF");
     }
 }
+
+#[cfg(test)]
+impl NativeBackend {
+    /// In-process stub for unit tests that exercise `BackendState::install`
+    /// lifecycle without touching real telnet or a real mailbox. Uses the
+    /// shared `native_test_config()` helper; mailbox root is a tempdir.
+    ///
+    /// The tempdir is Box::leak'd so it lives for the test process's lifetime
+    /// without requiring the caller to hold a TempDir handle. Tests are
+    /// short-lived processes; the OS reclaims the allocation on exit.
+    pub fn test_fixture() -> Self {
+        let tempdir = tempfile::tempdir().unwrap();
+        let leaked_path = Box::leak(Box::new(tempdir)).path().to_path_buf();
+        Self::new(crate::test_helpers::native_test_config(), leaked_path)
+    }
+}

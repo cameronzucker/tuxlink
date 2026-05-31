@@ -208,6 +208,12 @@ async fn test_native_backend_send_then_list_and_read() {
     let _ = backend.stream_log();
 }
 
+// NOTE (tuxlink-9phd T5.1): the canonical copy of this helper lives at
+// src/test_helpers.rs for use by #[cfg(test)] lib code (e.g., NativeBackend::test_fixture).
+// Integration tests in `tests/` can't import #[cfg(test)] items from the lib
+// crate (they're gated out in the lib's normal --test build), so this copy is
+// intentionally kept here. Keep both copies in sync when changing the config
+// shape; changes to config fields will cause a compile error at both sites.
 fn native_test_config() -> tuxlink_lib::config::Config {
     use tuxlink_lib::config::{
         Config, ConnectConfig, GpsState, IdentityConfig, PositionPrecision, PrivacyConfig,
