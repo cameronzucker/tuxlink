@@ -7,6 +7,8 @@
 // only hard build-dependency between Task 12 and its dependents (spec §4.3).
 // Keep it free of React / Tauri imports so it's a pure type/contract module.
 
+import type { FormPayload } from '../forms/types';
+
 /// List-row metadata. Mirrors `MessageMetaDto` (camelCase) in
 /// `src-tauri/src/ui_commands.rs`. `to` and `hasAttachments` degrade to
 /// `[]` / `false` when Pat 1.0.0's list DTO omits them (spec §2.1).
@@ -51,10 +53,8 @@ export interface ParsedMessage {
   /// Optional + null when not a form. Validated server-side; safe for path use.
   formId?: string | null;
   /// Eagerly-parsed form payload from the attachment XML (T2.2). Optional +
-  /// null when not a form OR when server-side parse failed. The `unknown`
-  /// placeholder narrows to FormPayload via src/forms/types.ts in T4.1; until
-  /// then consumers should type-narrow before structural access.
-  formPayload?: unknown;
+  /// null when not a form OR when server-side parse failed.
+  formPayload?: FormPayload | null;
 }
 
 export interface AttachmentMeta {

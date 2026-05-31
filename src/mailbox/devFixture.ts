@@ -18,6 +18,7 @@
 // (grim screenshots), but never by default.
 
 import type { MailboxFolder, MessageMeta, ParsedMessage } from './types';
+import type { FormPayload } from '../forms/types';
 
 /**
  * True ONLY when explicitly opted in for design work, under the vite dev server.
@@ -201,7 +202,7 @@ const BODIES: Record<
     formCode?: string;
     formPayloadBytes?: number;
     formId?: string;
-    formPayload?: unknown;
+    formPayload?: FormPayload;
   }
 > = {
   'DEV-3': {
