@@ -318,22 +318,36 @@ where
 /// Build the [`InitConfig`] passed to `ModemTransport::init` from the
 /// operator's persisted identity config. Pulls `mycall` from
 /// `identity.callsign` (CMS path) or `identity.identifier` (offline path),
-/// and `gridsquare` from `identity.grid` (defaulting to `"AA00"` when no
-/// grid is set — the ARDOP TNC requires a non-empty value but the broadcast
-/// precision gate happens upstream in the position layer).
+/// `gridsquare` from `identity.grid` (defaulting to `"AA00"` when no grid
+/// is set — the ARDOP TNC requires a non-empty value but the broadcast
+/// precision gate happens upstream in the position layer), and the ARQ
+/// bandwidth from `modem_ardop.bandwidth_hz` (tuxlink-j0ij).
+///
+/// **Bandwidth validation:** the Settings panel constrains the dropdown to
+/// {200, 500, 1000, 2000}, but the persisted JSON could be hand-edited
+/// off-app, so this function defends in depth: any other value is logged
+/// to stderr and dropped to None (let ardopcf use its default) rather than
+/// passed through and rejected by ardopcf at init time.
 fn init_config_from_persisted_config() -> InitConfig {
-    let (mycall, grid) = config::read_config()
-        .map(|c| {
-            // Prefer callsign (CMS path); fall back to identifier (offline path).
+    let cfg = config::read_config().ok();
+    let (mycall, grid, arq_bandwidth_hz) = match &cfg {
+        Some(c) => {
             let call = c
                 .identity
                 .callsign
                 .clone()
                 .or_else(|| c.identity.identifier.clone())
                 .unwrap_or_default();
-            (call, c.identity.grid.unwrap_or_default())
-        })
-        .unwrap_or_default();
+            let grid = c.identity.grid.clone().unwrap_or_default();
+            let bw = c
+                .modem_ardop
+                .as_ref()
+                .and_then(|a| a.bandwidth_hz)
+                .and_then(validate_arq_bandwidth_hz);
+            (call, grid, bw)
+        }
+        None => (String::new(), String::new(), None),
+    };
 
     // ARDOP requires a non-empty grid; "AA00" is the canonical placeholder
     // (also wl2k-go's fallback). Operators who care about grid accuracy
@@ -348,6 +362,29 @@ fn init_config_from_persisted_config() -> InitConfig {
         mycall,
         gridsquare,
         arq_timeout_s: ARQ_TIMEOUT_SECS,
+        arq_bandwidth_hz,
+    }
+}
+
+/// Validate a persisted ARQ bandwidth value (tuxlink-j0ij). ardopcf accepts
+/// exactly {200, 500, 1000, 2000} Hz for `ARQBW`. The Settings dropdown
+/// constrains user input to these values, so a value OUTSIDE this set in
+/// the persisted config indicates either a stale value from a future
+/// ardopcf release, a hand-edited config, or a frontend bug — in any case,
+/// the safe degradation is "drop to None and let ardopcf pick its default."
+///
+/// Logs the dropped value to stderr so a session-end review can spot the
+/// drift. Returns Some(bw) when the value is valid, None otherwise.
+fn validate_arq_bandwidth_hz(bw: u32) -> Option<u32> {
+    match bw {
+        200 | 500 | 1000 | 2000 => Some(bw),
+        invalid => {
+            eprintln!(
+                "tuxlink-j0ij: ignoring invalid persisted bandwidth_hz={invalid}; \
+                 valid: 200/500/1000/2000"
+            );
+            None
+        }
     }
 }
 
@@ -583,9 +620,28 @@ mod tests {
     use super::*;
     use crate::config::CONFIG_SCHEMA_VERSION;
     use crate::modem_status::ModemState;
+    use std::sync::Mutex;
+
+    /// Serializes tests that mutate the process-global TUXLINK_CONFIG_DIR env
+    /// var. `std::env::set_var` is not thread-safe under parallel test
+    /// execution (cargo runs tests in a thread pool by default), so each test
+    /// that touches the env grabs this mutex for the duration of its
+    /// set→read→restore sequence. Without this gate, `init_config_from_...`
+    /// tests would race with `round_trip_persists_through_config` and other
+    /// concurrent env mutators in the same binary, sometimes reading from a
+    /// neighbor's tempdir or no dir at all (tuxlink-j0ij).
+    fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: Mutex<()> = Mutex::new(());
+        // unwrap_or_else: if a previous test panicked while holding the lock,
+        // the mutex is poisoned but the env state is still well-defined for
+        // the next test (each test fully restores its env in a deferred-style
+        // tail). Recover and proceed.
+        LOCK.lock().unwrap_or_else(|e| e.into_inner())
+    }
 
     #[test]
     fn round_trip_persists_through_config() {
+        let _env_guard = env_lock();
         // Isolate this test from the operator's real config by pointing
         // TUXLINK_CONFIG_DIR at a fresh tempdir. `config_path()` will resolve
         // to `<tmpdir>/config.json` (per config.rs §294).
@@ -626,6 +682,7 @@ mod tests {
             playback_device: "plughw:0,0".into(),
             ptt_serial_path: None,
             cmd_port: 8515,
+            bandwidth_hz: None,
         };
         config_set_ardop(initial.clone()).expect("config_set_ardop must succeed");
         let read = config_get_ardop();
@@ -729,6 +786,7 @@ mod tests {
             playback_device: "plughw:0,0".into(),
             ptt_serial_path: None,
             cmd_port: 8515,
+            bandwidth_hz: None,
         }
     }
 
@@ -1193,5 +1251,159 @@ mod tests {
             modem_ardop: None,
         };
         assert!(check_identity_present(&cfg).is_err());
+    }
+
+    // ── tuxlink-j0ij: bandwidth validation + plumb-through tests ──────────
+
+    #[test]
+    fn validate_arq_bandwidth_hz_accepts_the_four_valid_values() {
+        assert_eq!(validate_arq_bandwidth_hz(200), Some(200));
+        assert_eq!(validate_arq_bandwidth_hz(500), Some(500));
+        assert_eq!(validate_arq_bandwidth_hz(1000), Some(1000));
+        assert_eq!(validate_arq_bandwidth_hz(2000), Some(2000));
+    }
+
+    #[test]
+    fn validate_arq_bandwidth_hz_drops_invalid_values_to_none() {
+        // ardopcf only documents {200, 500, 1000, 2000}; any other value is a
+        // stale persist / hand-edit / forward-schema drift — drop to None so
+        // ardopcf's default takes over rather than failing init.
+        assert_eq!(validate_arq_bandwidth_hz(0), None);
+        assert_eq!(validate_arq_bandwidth_hz(100), None);
+        assert_eq!(validate_arq_bandwidth_hz(750), None);
+        assert_eq!(validate_arq_bandwidth_hz(2500), None);
+        assert_eq!(validate_arq_bandwidth_hz(u32::MAX), None);
+    }
+
+    /// `init_config_from_persisted_config` must plumb a valid persisted
+    /// `bandwidth_hz` through to the resulting `InitConfig.arq_bandwidth_hz`.
+    /// Uses TUXLINK_CONFIG_DIR isolation (same pattern as
+    /// round_trip_persists_through_config).
+    #[test]
+    fn init_config_from_persisted_config_passes_through_valid_bandwidth() {
+        let _env_guard = env_lock();
+        let tmp = tempfile::tempdir().expect("create tempdir");
+        let prior = std::env::var("TUXLINK_CONFIG_DIR").ok();
+        // SAFETY: env_lock above serializes against other env-mutating tests.
+        unsafe { std::env::set_var("TUXLINK_CONFIG_DIR", tmp.path()); }
+
+        let seed = format!(
+            r#"{{
+                "schema_version": {ver},
+                "wizard_completed": true,
+                "connect": {{ "connect_to_cms": false, "transport": "Telnet" }},
+                "identity": {{ "callsign": null, "identifier": "W1TEST", "grid": "CN87" }},
+                "privacy": {{ "gps_state": "Off", "position_precision": "FourCharGrid" }},
+                "modem_ardop": {{
+                    "binary": "ardopcf",
+                    "capture_device": "plughw:1,0",
+                    "playback_device": "plughw:1,0",
+                    "cmd_port": 8515,
+                    "bandwidth_hz": 500
+                }}
+            }}"#,
+            ver = CONFIG_SCHEMA_VERSION,
+        );
+        std::fs::write(tmp.path().join("config.json"), seed)
+            .expect("seed config.json into tempdir");
+
+        let init_cfg = init_config_from_persisted_config();
+        assert_eq!(init_cfg.arq_bandwidth_hz, Some(500));
+        assert_eq!(init_cfg.mycall, "W1TEST");
+        assert_eq!(init_cfg.gridsquare, "CN87");
+
+        // Restore env (best-effort).
+        // SAFETY: symmetric with the set_var above; single-threaded test.
+        unsafe {
+            match prior {
+                Some(v) => std::env::set_var("TUXLINK_CONFIG_DIR", v),
+                None => std::env::remove_var("TUXLINK_CONFIG_DIR"),
+            }
+        }
+    }
+
+    /// A hand-edited (or stale) `bandwidth_hz` outside the valid set drops
+    /// to None — ardopcf's default takes over. Defense-in-depth against the
+    /// Settings dropdown being bypassed.
+    #[test]
+    fn init_config_from_persisted_config_drops_invalid_bandwidth() {
+        let _env_guard = env_lock();
+        let tmp = tempfile::tempdir().expect("create tempdir");
+        let prior = std::env::var("TUXLINK_CONFIG_DIR").ok();
+        // SAFETY: env_lock serializes env-mutating tests.
+        unsafe { std::env::set_var("TUXLINK_CONFIG_DIR", tmp.path()); }
+
+        let seed = format!(
+            r#"{{
+                "schema_version": {ver},
+                "wizard_completed": true,
+                "connect": {{ "connect_to_cms": false, "transport": "Telnet" }},
+                "identity": {{ "callsign": null, "identifier": "W1TEST", "grid": null }},
+                "privacy": {{ "gps_state": "Off", "position_precision": "FourCharGrid" }},
+                "modem_ardop": {{
+                    "binary": "ardopcf",
+                    "capture_device": "plughw:1,0",
+                    "playback_device": "plughw:1,0",
+                    "cmd_port": 8515,
+                    "bandwidth_hz": 750
+                }}
+            }}"#,
+            ver = CONFIG_SCHEMA_VERSION,
+        );
+        std::fs::write(tmp.path().join("config.json"), seed)
+            .expect("seed config.json into tempdir");
+
+        let init_cfg = init_config_from_persisted_config();
+        assert_eq!(
+            init_cfg.arq_bandwidth_hz, None,
+            "invalid bandwidth_hz=750 must drop to None (defense in depth — tuxlink-j0ij)"
+        );
+
+        // SAFETY: symmetric with set_var above.
+        unsafe {
+            match prior {
+                Some(v) => std::env::set_var("TUXLINK_CONFIG_DIR", v),
+                None => std::env::remove_var("TUXLINK_CONFIG_DIR"),
+            }
+        }
+    }
+
+    /// When the persisted config has no `modem_ardop` section, the
+    /// `InitConfig.arq_bandwidth_hz` must be None — ardopcf's default takes
+    /// over. This is the migration path: pre-j0ij configs still init.
+    #[test]
+    fn init_config_from_persisted_config_yields_none_bandwidth_when_modem_ardop_absent() {
+        let _env_guard = env_lock();
+        let tmp = tempfile::tempdir().expect("create tempdir");
+        let prior = std::env::var("TUXLINK_CONFIG_DIR").ok();
+        // SAFETY: env_lock serializes env-mutating tests.
+        unsafe { std::env::set_var("TUXLINK_CONFIG_DIR", tmp.path()); }
+
+        let seed = format!(
+            r#"{{
+                "schema_version": {ver},
+                "wizard_completed": true,
+                "connect": {{ "connect_to_cms": false, "transport": "Telnet" }},
+                "identity": {{ "callsign": null, "identifier": "W1TEST", "grid": null }},
+                "privacy": {{ "gps_state": "Off", "position_precision": "FourCharGrid" }}
+            }}"#,
+            ver = CONFIG_SCHEMA_VERSION,
+        );
+        std::fs::write(tmp.path().join("config.json"), seed)
+            .expect("seed config.json into tempdir");
+
+        let init_cfg = init_config_from_persisted_config();
+        assert_eq!(
+            init_cfg.arq_bandwidth_hz, None,
+            "no modem_ardop section → no ARQBW override (migration path)"
+        );
+
+        // SAFETY: symmetric.
+        unsafe {
+            match prior {
+                Some(v) => std::env::set_var("TUXLINK_CONFIG_DIR", v),
+                None => std::env::remove_var("TUXLINK_CONFIG_DIR"),
+            }
+        }
     }
 }
