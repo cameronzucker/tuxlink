@@ -3,7 +3,52 @@
 **Agent:** mink-swallow-kite
 **Branch:** `bd-tuxlink-7qmc/modem-foundations` (in worktree `worktrees/bd-tuxlink-7qmc-modem-foundations/`)
 **bd issue:** `tuxlink-7qmc` (in_progress, claimed)
-**Status:** Three deliverables committed (`8b24344`). Ready for operator review. No PR opened — operator review gates that.
+**Status (UPDATED 2026-05-31 after the operator's full-drive autonomous pass):** **All four phases (A, B, D) complete.** Twelve files committed across five commits (`8b24344`, `6bcf51a`, `8ac8a67`, `494d5b2`, `732c4cb`). All pushed to `origin/bd-tuxlink-7qmc/modem-foundations`. Ready for operator review. No PR opened — operator review gates that per the brainstorming-skill HARD-GATE.
+
+## Update — autonomous pass during operator's San Diego → Phoenix drive
+
+Operator unblocked the hook denial (main checkout off `main`), then departed for a ~6h drive. The drive-time autonomous pass produced three additional phases of work past the initial three-doc commit:
+
+- **Phase A — foundation substrate deepened** (commit `8ac8a67`). Added §1.4 "Open implementations of HF channel simulators" (ITS/NTIA, GNU Radio HF channel modules, academic releases — with provenance audit). Augmented §6.1 with K1JT FT4/FT8 QEX 2020 paper (LDPC-short-block + Costas-array-sync as worked example). Augmented §6.2 ARDOP with MIT-license confirmation, canonical-spec-PDF enumeration, license-compatibility analysis (black-box runtime dependency OK; DSP-code examination forfeits independent creation), pflarue's AI-skeptical contribution stance. Augmented §6.3 AX.25 with the v2.0 vs v2.2 distinction (Selective Reject, 22-year adoption gap as warning, Dire Wolf as only complete v2.2 impl). Augmented §5.2 SDR/DSP with SoapySDR, rtl-sdr/librtlsdr, GPL-contamination caveat for the standalone-daemon spin-off.
+
+- **Phase B — seven subsystem STUB specs** (commit `494d5b2`). Drafted per-subsystem STUB design specs for #1 (channel sim), #3 (PHY/waveform), #4 (FEC), #5 (link/MAC), #6 (ARQ), #7 (link adaptation), #8 (host protocol). Each STUB carries: role, what-it-is-NOT (scope boundary), forcing functions, open design questions subordinate to overview Q1-Q8, citations from foundations, no-implementation-choice markers, dependencies (upstream/downstream), and watched failure modes. Filenames end in `-STUB`; gets renamed off the suffix only after the overview AND the per-subsystem STUB are operator-approved.
+
+- **Phase C — DROPPED** per operator-directive (JPL engineer flagged the original bench-rig RF chain as over-spec for integration testing).
+
+- **Phase D — bench-rig revision + dep graph + cross-doc consistency** (commit `732c4cb`). Revised the bench-rig spec to the JPL-validated simpler topology: two radios next to each other on the bench, direct-attach dummy loads on each antenna port, nearby RTL-SDR with basic antenna, incidental near-field coupling. Dropped the step attenuator, directional couplers, USB isolator speculation, ferrite speculation, and the vendor cost columns. Added the JPL review attribution so future contributors don't second-guess back into over-spec. Added a mermaid subsystem-dependency graph to the overview DRAFT (§1.1) — color-coded foundation/stack/integration, solid arrows for direct dependency, dashed arrows for cross-validation. Cross-doc consistency pass: enumerated all seven STUBs in the overview's references section; added "Where this citation library is consumed" mapping in the foundation doc.
+
+## Complete deliverable list
+
+```
+worktrees/bd-tuxlink-7qmc-modem-foundations/
+├── dev/handoffs/
+│   └── 2026-05-31-mink-swallow-kite-modem-autonomous-pass.md   (this file)
+├── dev/scratch/
+│   └── 2026-05-31-mink-swallow-kite-session-end-notes.md       (gitignored — operator notes)
+├── docs/
+│   ├── hardware/
+│   │   └── bench-rig-two-host-topology.md                      REVISED — JPL-simplified RF coupling
+│   ├── research/
+│   │   └── modem-foundations.md                                EXPANDED — 40+ citations, STUB-mapping
+│   └── superpowers/specs/
+│       ├── 2026-05-31-clean-sheet-modem-overview-DRAFT.md      DRAFT umbrella + mermaid dep graph
+│       ├── 2026-05-31-clean-sheet-modem-1-channel-simulator-STUB.md
+│       ├── 2026-05-31-clean-sheet-modem-3-phy-waveform-STUB.md
+│       ├── 2026-05-31-clean-sheet-modem-4-fec-STUB.md
+│       ├── 2026-05-31-clean-sheet-modem-5-link-mac-STUB.md
+│       ├── 2026-05-31-clean-sheet-modem-6-arq-STUB.md
+│       ├── 2026-05-31-clean-sheet-modem-7-link-adaptation-STUB.md
+│       └── 2026-05-31-clean-sheet-modem-8-host-protocol-STUB.md
+```
+
+Commit chain on `bd-tuxlink-7qmc/modem-foundations`:
+- `8b24344` — initial three docs (bench-rig + foundations + overview DRAFT)
+- `6bcf51a` — this handoff doc (initial version)
+- `8ac8a67` — Phase A foundation deepening
+- `494d5b2` — Phase B seven STUB specs
+- `732c4cb` — Phase D bench-rig revision + mermaid + consistency
+
+All pushed.
 
 ## TL;DR
 
