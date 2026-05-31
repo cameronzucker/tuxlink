@@ -12,7 +12,9 @@ import { DEV_FIXTURE, DEV_CONNECTION_STATUS } from '../mailbox/devFixture';
 import { formatPacketStatusBar, type PacketUiState } from '../packet/packetStatus';
 import './StatusBar.css';
 
-const APP_VERSION = 'v0.0.1';
+// Injected at build time from version.txt (release-please's canonical bump
+// target). See vite.config.ts. Prefixed with "v" for display.
+const APP_VERSION = `v${__APP_VERSION__}`;
 
 export interface StatusBarProps {
   /** When false, the status bar is hidden (returns null — zero height). */

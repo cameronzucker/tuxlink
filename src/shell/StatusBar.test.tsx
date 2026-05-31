@@ -18,7 +18,9 @@ describe('<StatusBar> (Mock B)', () => {
     expect(screen.getByTestId('status-bar-state')).toHaveTextContent('Telnet ready');
     expect(screen.getByTestId('status-bar-dot').className).toContain('good');
     expect(screen.getByTestId('status-bar-unread')).toHaveTextContent('3 unread');
-    expect(screen.getByTestId('status-bar-version')).toHaveTextContent('v0.0.1');
+    // Status bar renders v<version.txt-contents>; we don't pin the exact value
+    // because release-please bumps version.txt frequently.
+    expect(screen.getByTestId('status-bar-version').textContent ?? '').toMatch(/^v\d+\.\d+\.\d+/);
   });
 
   it('the dot tone tracks the connection state', () => {
