@@ -137,10 +137,18 @@ impl SavedStore {
     }
 
     pub fn record_recent(&mut self, spec: QuerySpec, now: i64) -> Result<(), SavedError> {
+        // Dedupe: if this exact spec already exists in recent, remove it first
+        // so the new entry slots in at position 0 (most-recent first ordering).
+        self.file.recent.retain(|r| r.spec != spec);
         self.file.recent.insert(0, RecentSearch { spec, ran_at: now });
         if self.file.recent.len() > RECENT_CAP {
             self.file.recent.truncate(RECENT_CAP);
         }
+        self.flush()
+    }
+
+    pub fn clear_recent(&mut self) -> Result<(), SavedError> {
+        self.file.recent.clear();
         self.flush()
     }
 
@@ -203,16 +211,40 @@ mod tests {
     fn record_recent_caps_at_RECENT_CAP() {
         let dir = tempdir().unwrap();
         let mut store = SavedStore::open(dir.path().join("s.json")).unwrap();
+        // Use distinct specs so the dedup-on-insert collapse doesn't reduce
+        // these to one entry — that's a separate dedup test below.
         for i in 0..(RECENT_CAP as i64 + 5) {
-            store
-                .record_recent(empty_spec(), 1_700_000_000 + i)
-                .unwrap();
+            let spec = QuerySpec { free_text: Some(format!("q{i}")), ..QuerySpec::default() };
+            store.record_recent(spec, 1_700_000_000 + i).unwrap();
         }
         assert_eq!(store.recent().len(), RECENT_CAP);
         // newest first
         assert!(
             store.recent().first().unwrap().ran_at > store.recent().last().unwrap().ran_at
         );
+    }
+
+    #[test]
+    fn record_recent_dedupes_repeated_spec() {
+        let dir = tempdir().unwrap();
+        let mut store = SavedStore::open(dir.path().join("s.json")).unwrap();
+        let spec = QuerySpec { free_text: Some("damage".into()), ..QuerySpec::default() };
+        store.record_recent(spec.clone(), 1_700_000_000).unwrap();
+        store.record_recent(spec.clone(), 1_700_000_500).unwrap();
+        // Same spec committed twice → exactly one recent entry, with the newer timestamp.
+        assert_eq!(store.recent().len(), 1);
+        assert_eq!(store.recent()[0].ran_at, 1_700_000_500);
+    }
+
+    #[test]
+    fn clear_recent_empties_history() {
+        let dir = tempdir().unwrap();
+        let mut store = SavedStore::open(dir.path().join("s.json")).unwrap();
+        let spec = QuerySpec { free_text: Some("x".into()), ..QuerySpec::default() };
+        store.record_recent(spec, 1_700_000_000).unwrap();
+        assert_eq!(store.recent().len(), 1);
+        store.clear_recent().unwrap();
+        assert_eq!(store.recent().len(), 0);
     }
 
     #[test]

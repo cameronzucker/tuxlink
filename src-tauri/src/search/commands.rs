@@ -52,8 +52,10 @@ impl SearchService {
         let hits = self.index.lock().unwrap().query(&spec)?;
         let items: Vec<MessageMetaDto> = hits.into_iter().map(hit_to_dto).collect();
         let total_matches = items.len() as u32;
-        let now = (self.now_unix)();
-        self.saved.lock().unwrap().record_recent(spec.clone(), now)?;
+        // Recent history is NOT recorded here. Each debounced keystroke would
+        // commit (e.g., typing "service" leaves s/se/ser/serv/servi/servic in
+        // recent). Frontend calls tauri_search_record_recent on explicit
+        // commit (Enter key) only.
         Ok(SearchResults {
             items,
             total_matches,
@@ -68,6 +70,25 @@ impl SearchService {
 
     pub fn list_recent(&self) -> Vec<RecentSearch> {
         self.saved.lock().unwrap().recent().to_vec()
+    }
+
+    /// Record `spec` as a completed search in the recent-history list.
+    /// Called from the UI on explicit commit (Enter) — NOT per debounced
+    /// query, which would log every keystroke.
+    pub fn record_recent(&self, spec: QuerySpec) -> Result<(), CommandError> {
+        // Don't record an empty spec (`Enter` on an already-cleared box).
+        let empty = spec.free_text.as_deref().map(|s| s.trim().is_empty()).unwrap_or(true)
+            && spec.filters.is_empty();
+        if empty { return Ok(()); }
+        let now = (self.now_unix)();
+        self.saved.lock().unwrap().record_recent(spec, now)?;
+        Ok(())
+    }
+
+    /// Wipe the recent-history list; saved searches are untouched.
+    pub fn clear_recent(&self) -> Result<(), CommandError> {
+        self.saved.lock().unwrap().clear_recent()?;
+        Ok(())
     }
 
     pub fn save(&self, name: String, spec: QuerySpec) -> Result<SavedSearch, CommandError> {
@@ -227,6 +248,21 @@ pub fn tauri_search_reorder(
 }
 
 #[tauri::command]
+pub fn tauri_search_record_recent(
+    svc: tauri::State<SearchService>,
+    spec: QuerySpec,
+) -> Result<(), CommandError> {
+    svc.record_recent(spec)
+}
+
+#[tauri::command]
+pub fn tauri_search_clear_recent(
+    svc: tauri::State<SearchService>,
+) -> Result<(), CommandError> {
+    svc.clear_recent()
+}
+
+#[tauri::command]
 pub fn tauri_search_rebuild_index(
     svc: tauri::State<SearchService>,
     app: tauri::AppHandle,
@@ -311,7 +347,10 @@ mod tests {
     }
 
     #[test]
-    fn run_returns_results_and_records_recent() {
+    fn run_returns_results_and_does_not_record_recent() {
+        // Bug fix follow-up: run() must NOT record_recent on every call,
+        // because the UI debounces and calls run on every keystroke pause —
+        // that polluted history with "s", "se", "ser", ... entries.
         let dir = tempdir().unwrap();
         let svc = build_service(dir.path());
         svc.index.lock().unwrap().upsert(&fixture_row("A", "damage report", "powerlines down")).unwrap();
@@ -319,10 +358,54 @@ mod tests {
         let res = svc.run(spec.clone()).unwrap();
         assert_eq!(res.total_matches, 1);
         assert_eq!(res.items[0].id, "A");
-        // recent was recorded
+        // run() must not record anything in recent — that's record_recent's job
+        assert_eq!(svc.list_recent().len(), 0);
+    }
+
+    #[test]
+    fn record_recent_commits_explicitly() {
+        let dir = tempdir().unwrap();
+        let svc = build_service(dir.path());
+        let spec = QuerySpec { free_text: Some("damage".into()), ..QuerySpec::default() };
+        svc.record_recent(spec.clone()).unwrap();
         let rec = svc.list_recent();
         assert_eq!(rec.len(), 1);
         assert_eq!(rec[0].spec, spec);
+    }
+
+    #[test]
+    fn record_recent_ignores_empty_spec() {
+        let dir = tempdir().unwrap();
+        let svc = build_service(dir.path());
+        // empty free_text, no filters → no-op (Enter on a cleared box)
+        svc.record_recent(QuerySpec::default()).unwrap();
+        svc.record_recent(QuerySpec { free_text: Some("   ".into()), ..QuerySpec::default() }).unwrap();
+        assert_eq!(svc.list_recent().len(), 0);
+    }
+
+    #[test]
+    fn record_recent_dedupes_existing_spec() {
+        let dir = tempdir().unwrap();
+        let svc = build_service(dir.path());
+        let spec = QuerySpec { free_text: Some("damage".into()), ..QuerySpec::default() };
+        svc.record_recent(spec.clone()).unwrap();
+        svc.record_recent(spec.clone()).unwrap();
+        // committing the same query twice should leave one entry (the new one),
+        // not two
+        assert_eq!(svc.list_recent().len(), 1);
+    }
+
+    #[test]
+    fn clear_recent_empties_history_without_touching_saved() {
+        let dir = tempdir().unwrap();
+        let svc = build_service(dir.path());
+        svc.save("Keep me".into(), QuerySpec { free_text: Some("net".into()), ..QuerySpec::default() }).unwrap();
+        svc.record_recent(QuerySpec { free_text: Some("temp".into()), ..QuerySpec::default() }).unwrap();
+        assert_eq!(svc.list_recent().len(), 1);
+        assert_eq!(svc.list_saved().len(), 1);
+        svc.clear_recent().unwrap();
+        assert_eq!(svc.list_recent().len(), 0);
+        assert_eq!(svc.list_saved().len(), 1, "saved must not be touched");
     }
 
     #[test]

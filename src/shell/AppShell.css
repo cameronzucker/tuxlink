@@ -14,20 +14,27 @@
  */
 
 /* ============================================================================
- * Layout grid — titlebar (auto) | menu bar (auto) | ribbon+search (auto) |
- * chip-strip (auto) | panes (1fr) | statusbar (auto), full height. 6 rows
- * total. (radio-panel-shell P1.6: the former 7th row — the session-log
- * strip — was removed; the log moves into the radio panel as a per-mode
- * section per spec §3.7 + §4.3.)
+ * Layout grid — titlebar (auto) | menu bar (auto) | ribbon-with-search (auto) |
+ * panes (1fr) | statusbar (auto), full height. 5 rows total.
+ *
+ * Two rows were removed during the v0.7 cycle and must stay removed:
+ *   - The former ChipStrip row (was row 4) — find-messages smoke-cluster
+ *     folded filter chips into Gmail-style inline operators parsed by
+ *     SearchBar (`from:foo`, `is:unread`, etc.); the ChipStrip row no longer
+ *     renders.
+ *   - The former session-log strip (was the last row before statusbar) —
+ *     radio-panel-shell P1.6 moved the log into the radio panel as a per-mode
+ *     section per spec §3.7 + §4.3.
+ *
  * NOTE (ng3): the FIRST TWO rows are the HTML chrome (TitleBar, MenuBar);
- * row 3 is the combined ribbon-with-search wrapper; row 4 is the ChipStrip;
- * `panes` is row 5 (the 1fr row). ResizeHandles is position:absolute so it
- * does NOT consume a grid row. If you reorder the shell's children,
- * re-check which row gets 1fr.
+ * row 3 is the combined ribbon-with-search wrapper (SearchBar + ribbon);
+ * row 4 is the 1fr panes; row 5 is the StatusBar. ResizeHandles is
+ * position:absolute so it does NOT consume a grid row. If you reorder the
+ * shell's children, re-check which row gets 1fr.
  * ========================================================================== */
 .layout-b {
   display: grid;
-  grid-template-rows: auto auto auto auto 1fr auto;
+  grid-template-rows: auto auto auto 1fr auto;
   height: 100vh;
   width: 100vw;
   overflow: hidden;
@@ -68,13 +75,17 @@
   border-bottom: 1px solid var(--border);
 }
 
-/* Search zone — left side of the ribbon row; contains SearchBar + dropdown. */
+/* Search zone — left side of the ribbon row; contains SearchBar + dropdown.
+ * Grows with available space (Gmail-style) but capped so the DashboardRibbon
+ * stays readable. min-width keeps it useful on narrow windows. */
 .layout-b .search-zone {
   position: relative;
-  flex-shrink: 0;
+  flex: 1 1 auto;
+  min-width: 360px;
+  max-width: 720px;
   display: flex;
   align-items: center;
-  padding: 0 12px;
+  padding: 0 16px;
 }
 
 /* The DashboardRibbon inside the ribbon-with-search wrapper fills remaining

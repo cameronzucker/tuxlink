@@ -41,7 +41,7 @@ export function ChipStrip({ spec, onSpecChange, metaText }: ChipStripProps) {
 
   return (
     <div className="chip-strip" data-testid="chip-strip">
-      {isEmpty && <span className="empty-prefix" data-testid="chipstrip-empty">No active filter — click + to add</span>}
+      {isEmpty && <span className="empty-prefix" data-testid="chipstrip-empty">Filters: none active</span>}
       {!isEmpty && <span className="label-prefix">Filters:</span>}
       {activeKeys.map((k) => {
         const v = spec.filters[k]!;

@@ -10,44 +10,53 @@ const STORM: SavedSearch = {
 };
 
 describe('SearchBar', () => {
-  it('renders placeholder when no spec', () => {
-    render(<SearchBar spec={EMPTY_SPEC} activeSaved={null} onSpecChange={noop} onUnsave={noop} onToggleDropdown={noop} dropdownOpen={false} />);
+  it('renders placeholder when value is empty', () => {
+    render(<SearchBar value="" activeSaved={null} onValueChange={noop} onUnsave={noop} onToggleDropdown={noop} dropdownOpen={false} />);
     expect(screen.getByPlaceholderText(/Search messages/i)).toBeInTheDocument();
   });
 
-  it('shows saved-search name + ★ when activeSaved set', () => {
-    render(<SearchBar spec={STORM.spec} activeSaved={STORM} onSpecChange={noop} onUnsave={noop} onToggleDropdown={noop} dropdownOpen={false} />);
+  it('renders saved-search badge AND the editable input when activeSaved set', () => {
+    render(<SearchBar value="damage" activeSaved={STORM} onValueChange={noop} onUnsave={noop} onToggleDropdown={noop} dropdownOpen={false} />);
     expect(screen.getByTestId('searchbar-saved-name')).toHaveTextContent('Storm Net 5/30');
     expect(screen.getByTestId('searchbar-saved-star')).toBeInTheDocument();
+    // Input must remain present and editable so the user can modify the
+    // saved query inline; previously this was hidden behind a non-editable
+    // saved-mode branch.
+    expect(screen.getByTestId('searchbar-input')).toBeInTheDocument();
   });
 
   it('clicking ★ on an active saved search calls onUnsave', () => {
     const onUnsave = vi.fn();
-    render(<SearchBar spec={STORM.spec} activeSaved={STORM} onSpecChange={noop} onUnsave={onUnsave} onToggleDropdown={noop} dropdownOpen={false} />);
+    render(<SearchBar value="damage" activeSaved={STORM} onValueChange={noop} onUnsave={onUnsave} onToggleDropdown={noop} dropdownOpen={false} />);
     fireEvent.click(screen.getByTestId('searchbar-saved-star'));
     expect(onUnsave).toHaveBeenCalled();
   });
 
   it('clicking chevron toggles dropdown', () => {
     const onToggle = vi.fn();
-    render(<SearchBar spec={EMPTY_SPEC} activeSaved={null} onSpecChange={noop} onUnsave={noop} onToggleDropdown={onToggle} dropdownOpen={false} />);
+    render(<SearchBar value="" activeSaved={null} onValueChange={noop} onUnsave={noop} onToggleDropdown={onToggle} dropdownOpen={false} />);
     fireEvent.click(screen.getByTestId('searchbar-chevron'));
     expect(onToggle).toHaveBeenCalled();
   });
 
-  it('typing fires onSpecChange with updated free_text', () => {
-    const onSpecChange = vi.fn();
-    render(<SearchBar spec={EMPTY_SPEC} activeSaved={null} onSpecChange={onSpecChange} onUnsave={noop} onToggleDropdown={noop} dropdownOpen={false} />);
+  it('typing fires onValueChange with the typed text', () => {
+    const onValueChange = vi.fn();
+    render(<SearchBar value="" activeSaved={null} onValueChange={onValueChange} onUnsave={noop} onToggleDropdown={noop} dropdownOpen={false} />);
     const input = screen.getByTestId('searchbar-input');
-    fireEvent.change(input, { target: { value: 'damage' } });
-    expect(onSpecChange).toHaveBeenCalledWith(expect.objectContaining({ free_text: 'damage' }));
+    fireEvent.change(input, { target: { value: 'from:KX5DD damage' } });
+    expect(onValueChange).toHaveBeenCalledWith('from:KX5DD damage');
   });
 
-  it('Escape clears spec and closes dropdown', () => {
-    const onSpecChange = vi.fn();
+  it('Escape clears the value and closes dropdown', () => {
+    const onValueChange = vi.fn();
     const onToggle = vi.fn();
-    render(<SearchBar spec={{ ...EMPTY_SPEC, free_text: 'x' }} activeSaved={null} onSpecChange={onSpecChange} onUnsave={noop} onToggleDropdown={onToggle} dropdownOpen={true} />);
+    render(<SearchBar value="x" activeSaved={null} onValueChange={onValueChange} onUnsave={noop} onToggleDropdown={onToggle} dropdownOpen={true} />);
     fireEvent.keyDown(screen.getByTestId('searchbar-input'), { key: 'Escape' });
-    expect(onSpecChange).toHaveBeenCalledWith(EMPTY_SPEC);
+    expect(onValueChange).toHaveBeenCalledWith('');
+  });
+
+  it('renders meta text when provided', () => {
+    render(<SearchBar value="damage" activeSaved={null} onValueChange={noop} onUnsave={noop} onToggleDropdown={noop} dropdownOpen={false} metaText="3 matches · 47 ms" />);
+    expect(screen.getByTestId('searchbar-meta')).toHaveTextContent('3 matches · 47 ms');
   });
 });

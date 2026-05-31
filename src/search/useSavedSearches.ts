@@ -43,6 +43,18 @@ export function useSavedSearches() {
       await invoke('tauri_search_reorder', { orderedIds });
       await refetchAll();
     },
+    // Record `spec` as a completed search. Called on explicit commit (Enter)
+    // — NOT per debounced keystroke (the original design was logging every
+    // character).
+    recordRecent: async (spec: QuerySpec) => {
+      await invoke('tauri_search_record_recent', { spec });
+      await qc.invalidateQueries({ queryKey: RECENT_KEY });
+    },
+    // Wipe the recent-history list; saved is untouched.
+    clearRecent: async () => {
+      await invoke('tauri_search_clear_recent');
+      await qc.invalidateQueries({ queryKey: RECENT_KEY });
+    },
     rebuildIndex: async (): Promise<{ messagesIndexed: number; elapsedMs: number }> => {
       const stats = await invoke<{ messagesIndexed: number; elapsedMs: number }>('tauri_search_rebuild_index');
       await refetchAll();
