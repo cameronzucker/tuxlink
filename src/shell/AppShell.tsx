@@ -121,6 +121,12 @@ export function AppShell() {
   // Mock B shows the session log + status bar by default; View → toggles them.
   const [showSessionLog, setShowSessionLog] = useState(true);
   const [showStatusBar, setShowStatusBar] = useState(true);
+  // tuxlink-mnk4: pin-on flag for the modem dock (View → Toggle Radio Dock /
+  // Ctrl+Shift+M). Pure additive override — when true, forces the dock visible
+  // even on views/states where the auto rule would hide it. Never forces hide:
+  // an active modem (or being on the ARDOP HF view) always shows the dock so
+  // the operator can't accidentally hide a live link.
+  const [pinRadioDock, setPinRadioDock] = useState(false);
   // Inline GPS/privacy settings overlay (tuxlink-39b), opened from Tools→Settings.
   const [settingsOpen, setSettingsOpen] = useState(false);
 
@@ -201,11 +207,19 @@ export function AppShell() {
   const statusData = useStatusData();
 
   // Modem (ARDOP HF) status — drives the right-hand dock's mount + the
-  // panes-grid column-count swap (tuxlink-4ek Task 4.3). The dock appears
-  // whenever the modem is doing anything other than 'stopped' so the operator
-  // can see what the link is doing without hunting for a hidden panel.
+  // panes-grid column-count swap (tuxlink-4ek Task 4.3). The dock appears:
+  //   - whenever the modem is doing anything other than 'stopped' (so the
+  //     operator always sees an active link without hunting for a panel), OR
+  //   - when the operator has selected the ARDOP HF view (cold-start dial
+  //     form lives inside the dock — without this, ArdopHfStub's "use the
+  //     modem dock on the right" message points at nothing and the operator
+  //     can't spawn the modem at all — tuxlink-mnk4), OR
+  //   - when the View → Toggle Radio Dock pin is on (Ctrl+Shift+M).
   const { status: modemStatus } = useModemStatus();
-  const dockVisible = modemStatus.state !== 'stopped';
+  const dockVisible =
+    modemStatus.state !== 'stopped' ||
+    selectedConnection?.protocol === 'ardop-hf' ||
+    pinRadioDock;
 
   // CMS connect: run one exchange (send outbox + receive), then refresh the
   // mailbox so any downloaded messages appear. The button lives in the ribbon;
@@ -265,6 +279,7 @@ export function AppShell() {
     forward: () => { if (openMessage) void openReplyWindow(openMessage, 'forward').catch(() => {}); },
     toggleSessionLog: () => setShowSessionLog((s) => !s),
     toggleStatusBar: () => setShowStatusBar((s) => !s),
+    toggleRadioDock: () => setPinRadioDock((s) => !s),
     selectFolder: (folder) => { setSelectedFolder(folder); setSelectedMessage(null); setSelectedConnection(null); },
     setScheme: (id) => { applyColorScheme(id); saveColorScheme(id); },
     openSettings: () => setSettingsOpen(true),

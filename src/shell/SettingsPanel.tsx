@@ -65,6 +65,13 @@ interface ArdopUiConfig {
   playback_device: string;
   ptt_serial_path: string | null;
   cmd_port: number;
+  /**
+   * ARDOP ARQ bandwidth in Hz: one of 200/500/1000/2000, or null meaning
+   * "let ardopcf use its default" (tuxlink-j0ij). The Settings dropdown
+   * constrains user input to the four valid values + Auto; the backend
+   * validates again before sending `ARQBW <hz> FORCED` at init.
+   */
+  bandwidth_hz: number | null;
 }
 
 const ARDOP_DEFAULT: ArdopUiConfig = {
@@ -73,7 +80,19 @@ const ARDOP_DEFAULT: ArdopUiConfig = {
   playback_device: '',
   ptt_serial_path: null,
   cmd_port: 8515,
+  bandwidth_hz: null,
 };
+
+// Bandwidth options for the ARQ-bandwidth dropdown (tuxlink-j0ij). Numeric
+// values are the wire shape expected by ardopcf's `ARQBW`; the value `null`
+// (rendered as empty string in <select>) means "leave at ardopcf default."
+const BANDWIDTH_OPTIONS: { value: number | null; label: string }[] = [
+  { value: null, label: 'Auto (ardopcf default)' },
+  { value: 200, label: '200 Hz (most robust)' },
+  { value: 500, label: '500 Hz (marginal HF)' },
+  { value: 1000, label: '1000 Hz' },
+  { value: 2000, label: '2000 Hz (best throughput)' },
+];
 
 export interface SettingsPanelProps {
   open: boolean;
@@ -287,6 +306,28 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
               }
               onBlur={() => persistArdop(ardop)}
             />
+          </label>
+          {/* tuxlink-j0ij: ARQ bandwidth selector. Backend (modem_commands.rs)
+              validates the value again before sending ARQBW <hz> FORCED at
+              init time — the dropdown is the primary user-facing constraint,
+              the backend is defense in depth against hand-edited config. */}
+          <label className="tux-settings-field">
+            <span className="tux-settings-field-label">ARQ bandwidth</span>
+            <select
+              className="tux-settings-host-input"
+              value={ardop.bandwidth_hz ?? ''}
+              onChange={(e) => {
+                const v = e.target.value === '' ? null : parseInt(e.target.value, 10);
+                setArdop({ ...ardop, bandwidth_hz: v });
+              }}
+              onBlur={() => persistArdop(ardop)}
+            >
+              {BANDWIDTH_OPTIONS.map((o) => (
+                <option key={o.value ?? 'auto'} value={o.value ?? ''}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
           </label>
         </fieldset>
       </div>

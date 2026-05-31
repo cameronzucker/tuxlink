@@ -8,7 +8,7 @@
 // existing AppShell test so the shell mounts cleanly under jsdom.
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { MailboxFolder, MessageMeta } from '../mailbox/types';
@@ -150,5 +150,37 @@ describe('<AppShell> modem dock', () => {
     renderShell();
     expect(screen.getByTestId('ardop-dock-root')).toBeInTheDocument();
     expect(screen.getByTestId('shell-panes')).toHaveClass('panes--with-dock');
+  });
+
+  // tuxlink-mnk4: cold-start dead-end fix. When the operator navigates to the
+  // ARDOP HF view, the dock must auto-mount even with the modem still stopped
+  // — otherwise the only path to spawn the modem (the Connect button inside
+  // the dock) is unreachable, and ArdopHfStub's "use the modem dock on the
+  // right" message points at nothing.
+  it('renders the dock when ARDOP HF is selected even though the modem is stopped', () => {
+    mockUseModemStatus.mockReturnValue({ status: STOPPED, loading: false, error: null });
+    renderShell();
+    expect(screen.queryByTestId('ardop-dock-root')).not.toBeInTheDocument();
+    // Expand Winlink (CMS) accordion, then pick ARDOP HF.
+    fireEvent.click(screen.getByTestId('sess-cms'));
+    fireEvent.click(screen.getByTestId('proto-cms-ardop-hf'));
+    expect(screen.getByTestId('ardop-dock-root')).toBeInTheDocument();
+    expect(screen.getByTestId('shell-panes')).toHaveClass('panes--with-dock');
+  });
+
+  // tuxlink-mnk4: View → Toggle Radio Dock (Ctrl+Shift+M) must actually toggle
+  // the dock. The menu item + accelerator were declared in menuModel.ts since
+  // PR #113 but never wired through dispatchMenuAction.ts — operator pressed
+  // the key and nothing happened.
+  it('Ctrl+Shift+M toggles the dock when the modem is stopped and no ARDOP HF view', () => {
+    mockUseModemStatus.mockReturnValue({ status: STOPPED, loading: false, error: null });
+    renderShell();
+    expect(screen.queryByTestId('ardop-dock-root')).not.toBeInTheDocument();
+
+    fireEvent.keyDown(window, { key: 'm', ctrlKey: true, shiftKey: true });
+    expect(screen.getByTestId('ardop-dock-root')).toBeInTheDocument();
+
+    fireEvent.keyDown(window, { key: 'm', ctrlKey: true, shiftKey: true });
+    expect(screen.queryByTestId('ardop-dock-root')).not.toBeInTheDocument();
   });
 });

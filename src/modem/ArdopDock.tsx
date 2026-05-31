@@ -139,6 +139,32 @@ export function ArdopDock() {
     }
   };
 
+  // tuxlink-60wh: open ardopcf's built-in WebGUI in the operator's default
+  // browser. ardopcf serves the WebGUI on `cmd_port - 1` per its USAGE doc;
+  // we read the live cmd_port from config (rather than hardcoding 8514)
+  // so the link tracks operator overrides. `window.open` in a Tauri WebView
+  // routes external URLs to the OS browser — no shell-plugin import needed.
+  const onOpenWebGuiClick = async () => {
+    setConnectError(null);
+    try {
+      const ardop = await invoke<{ cmd_port: number }>('config_get_ardop');
+      // Guard mirrors the backend's build_ardop_extra_args guard: cmd_port
+      // < 2 yields an unbindable webgui_port, in which case the backend
+      // also omits the -G flag and ardopcf will refuse the connection.
+      // Surface that explicitly rather than opening a dead URL.
+      if (ardop.cmd_port < 2) {
+        setConnectError(
+          `Cannot open WebGUI: ARDOP cmd_port=${ardop.cmd_port} is too low (need >= 2)`,
+        );
+        return;
+      }
+      const webguiPort = ardop.cmd_port - 1;
+      window.open(`http://localhost:${webguiPort}/`, '_blank');
+    } catch (e) {
+      setConnectError(`Failed to open WebGUI: ${e}`);
+    }
+  };
+
   const onConsentConfirm = async () => {
     setShowConsent(false);
     try {
@@ -240,6 +266,14 @@ Up     ${fmtUptime(status.uptimeSec)}`}
               onClick={onSendReceiveClick}
             >
               {exchanging ? 'Exchanging…' : 'Send/Receive'}
+            </button>
+            <button
+              type="button"
+              className="ardop-dock-btn"
+              onClick={onOpenWebGuiClick}
+              title="Open ardopcf's built-in Spectrum/Waterfall view in browser"
+            >
+              Open WebGUI
             </button>
             <button
               type="button"

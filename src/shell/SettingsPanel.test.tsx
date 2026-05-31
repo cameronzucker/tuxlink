@@ -18,12 +18,14 @@ beforeEach(() => {
     }
     if (cmd === 'config_get_ardop') {
       // Wire format is snake_case — ArdopUiConfig lacks #[serde(rename_all = "camelCase")].
+      // bandwidth_hz is None at fixture default (tuxlink-j0ij — "let ardopcf default").
       return {
         binary: 'ardopcf',
         capture_device: 'plughw:1,0',
         playback_device: 'plughw:1,0',
         ptt_serial_path: null,
         cmd_port: 8515,
+        bandwidth_hz: null,
       };
     }
     return undefined;
@@ -118,6 +120,64 @@ describe('SettingsPanel ARDOP HF section', () => {
     await waitFor(() => {
       expect(invokeMock).toHaveBeenCalledWith('config_set_ardop', expect.objectContaining({
         value: expect.objectContaining({ ptt_serial_path: null }),
+      }));
+    });
+  });
+
+  // ── tuxlink-j0ij: ARQ bandwidth selector tests ───────────────────────
+
+  it('renders the bandwidth dropdown with Auto + 4 valid options', async () => {
+    render(<SettingsPanel open onClose={vi.fn()} />);
+    const select = await screen.findByLabelText(/arq bandwidth/i);
+    expect(select).toBeInTheDocument();
+    // <option>s carry their label text — verify all five render.
+    const options = (select as HTMLSelectElement).querySelectorAll('option');
+    expect(options).toHaveLength(5);
+    expect(options[0]).toHaveTextContent(/auto/i);
+    expect(options[1]).toHaveTextContent(/200 hz/i);
+    expect(options[2]).toHaveTextContent(/500 hz/i);
+    expect(options[3]).toHaveTextContent(/1000 hz/i);
+    expect(options[4]).toHaveTextContent(/2000 hz/i);
+  });
+
+  it('persists bandwidth_hz: 500 on blur after selecting 500 Hz', async () => {
+    render(<SettingsPanel open onClose={vi.fn()} />);
+    const select = (await screen.findByLabelText(/arq bandwidth/i)) as HTMLSelectElement;
+    fireEvent.change(select, { target: { value: '500' } });
+    fireEvent.blur(select);
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith('config_set_ardop', expect.objectContaining({
+        value: expect.objectContaining({ bandwidth_hz: 500 }),
+      }));
+    });
+  });
+
+  it('persists bandwidth_hz: null on blur after selecting Auto', async () => {
+    // Seed the fixture to start at 500 so the change-to-Auto is observable.
+    invokeMock.mockImplementation(async (cmd: string) => {
+      if (cmd === 'config_read') {
+        return { gps_state: 'BroadcastAtPrecision', position_precision: 'FourCharGrid' };
+      }
+      if (cmd === 'config_get_ardop') {
+        return {
+          binary: 'ardopcf',
+          capture_device: 'plughw:1,0',
+          playback_device: 'plughw:1,0',
+          ptt_serial_path: null,
+          cmd_port: 8515,
+          bandwidth_hz: 500,
+        };
+      }
+      return undefined;
+    });
+    render(<SettingsPanel open onClose={vi.fn()} />);
+    const select = (await screen.findByLabelText(/arq bandwidth/i)) as HTMLSelectElement;
+    // Auto's value attribute is "" — selecting it maps to null on the wire.
+    fireEvent.change(select, { target: { value: '' } });
+    fireEvent.blur(select);
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith('config_set_ardop', expect.objectContaining({
+        value: expect.objectContaining({ bandwidth_hz: null }),
       }));
     });
   });
