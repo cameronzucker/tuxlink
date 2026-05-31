@@ -1,21 +1,30 @@
-.layout-b .dashboard .search-bar {
+/* Ribbon-mounted search bar (Option E). Lives inside `.search-zone` in the
+ * AppShell — `.search-zone` is a flex sibling of `.dashboard`, NOT a child of
+ * it, so selectors here scope under `.layout-b .search-bar`, not
+ * `.layout-b .dashboard .search-bar` (that's a no-match). Width is 100% of the
+ * search-zone, which itself grows up to 720px (see AppShell.css). */
+.layout-b .search-bar {
   display: flex;
   align-items: center;
   gap: 10px;
   background: var(--bg);
   border: 1px solid var(--border-strong);
   border-radius: 999px;
-  padding: 8px 14px;
+  padding: 8px 16px;
   width: 100%;
   font-size: 12px;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
 }
-.layout-b .dashboard .search-bar.focused,
-.layout-b .dashboard .search-bar:focus-within {
+.layout-b .search-bar.focused,
+.layout-b .search-bar:focus-within {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
-.layout-b .dashboard .search-bar .magnifier { color: var(--text-faint); }
-.layout-b .dashboard .search-bar input {
+.layout-b .search-bar .magnifier {
+  color: var(--text-faint);
+  flex-shrink: 0;
+}
+.layout-b .search-bar input {
   flex: 1;
   background: transparent;
   border: 0;
@@ -24,22 +33,46 @@
   font-family: var(--mono);
   outline: none;
   padding: 0;
+  min-width: 0;
 }
-.layout-b .dashboard .search-bar input::placeholder { color: var(--text-faint); }
-.layout-b .dashboard .search-bar .saved-star {
-  background: transparent; border: 0; color: var(--accent);
-  font-size: 14px; cursor: pointer; padding: 0;
+.layout-b .search-bar input::placeholder { color: var(--text-faint); }
+.layout-b .search-bar .saved-star {
+  background: transparent;
+  border: 0;
+  color: var(--accent);
+  font-size: 14px;
+  cursor: pointer;
+  padding: 0;
+  flex-shrink: 0;
 }
-.layout-b .dashboard .search-bar .saved-name {
-  flex: 1; color: var(--accent-2); font-family: var(--mono);
-  font-size: 13px; font-weight: 600;
+.layout-b .search-bar .saved-name {
+  flex: 1;
+  color: var(--accent-2);
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 600;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.layout-b .dashboard .search-bar .chev {
-  background: transparent; border: 0; color: var(--accent);
-  font-size: 11px; cursor: pointer; padding: 0;
+.layout-b .search-bar .chev {
+  background: transparent;
+  border: 0;
+  color: var(--accent);
+  font-size: 11px;
+  cursor: pointer;
+  padding: 0;
+  flex-shrink: 0;
 }
-.layout-b .dashboard .search-bar .shortcut {
-  color: var(--text-faint); font-size: 10px; font-family: var(--mono);
-  background: var(--surface-2); border: 1px solid var(--border);
-  border-radius: 2px; padding: 1px 4px;
+.layout-b .search-bar .shortcut {
+  color: var(--text-faint);
+  font-size: 10px;
+  font-family: var(--mono);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 2px 6px;
+  flex-shrink: 0;
+  letter-spacing: 0.02em;
 }
