@@ -4,6 +4,13 @@ All notable changes to Tuxlink are documented here.
 
 This project adheres to [Semantic Versioning](https://semver.org) with project-specific rules described in [VERSIONING.md](VERSIONING.md). Entries from `v0.0.2` onward are generated automatically by [`release-please`](https://github.com/googleapis/release-please) from [Conventional Commits](https://www.conventionalcommits.org).
 
+## [0.7.1](https://github.com/cameronzucker/tuxlink/compare/v0.7.0...v0.7.1) (2026-05-31)
+
+
+### Bug Fixes
+
+* **shell:** ARDOP HF dock dead-end on cold start + wire View → Toggle Radio Dock (tuxlink-mnk4) ([aa8e6ad](https://github.com/cameronzucker/tuxlink/commit/aa8e6ad8746d01aa6f948fc20c7ec4d97657affa))
+
 ## [0.7.0](https://github.com/cameronzucker/tuxlink/compare/v0.6.0...v0.7.0) (2026-05-31)
 
 
