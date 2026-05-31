@@ -295,7 +295,12 @@ impl ArdopTransport {
     /// transport's accumulator state. Called at the end of each
     /// [`drain_status_events`] tick, AFTER all queued events have been
     /// folded in.
-    fn populate_derived_meters(&self, status: &mut ModemStatus) {
+    ///
+    /// Takes `&mut self` so [`current_throughput_bps`] can prune the
+    /// rolling sample window on every tick (Codex P1 finding, tuxlink-n2uz);
+    /// without prune-on-call the throughput meter would stay frozen at
+    /// the last computed rate after TX stops.
+    fn populate_derived_meters(&mut self, status: &mut ModemStatus) {
         status.uptime_sec = self
             .accumulators
             .connected_at
@@ -307,7 +312,7 @@ impl ArdopTransport {
             .as_ref()
             .map(|s| s.bytes_rx())
             .unwrap_or(0);
-        status.throughput_bps = current_throughput_bps(&self.accumulators);
+        status.throughput_bps = current_throughput_bps(&mut self.accumulators);
     }
 }
 
@@ -361,17 +366,46 @@ fn record_buffer(accum: &mut AccumulatorState, remaining: u32) {
 /// Returns `None` when:
 /// - Fewer than 2 samples are buffered (no transmissions yet, or a
 ///   single drop event — no time-delta to divide by).
-/// - The window elapsed is < 500 ms (sample is too fresh; rate would
-///   be a high-variance instantaneous spike, not a meter the operator
-///   can read).
-fn current_throughput_bps(accum: &AccumulatorState) -> Option<u32> {
+/// - The window elapsed (now − oldest sample) is < 500 ms (sample is too
+///   fresh; rate would be a high-variance instantaneous spike, not a
+///   meter the operator can read).
+/// - All samples are older than `THROUGHPUT_WINDOW` and get pruned (the
+///   link has gone idle).
+///
+/// **Idle-decay (Codex P1 finding, 2026-05-31; tuxlink-n2uz).** This
+/// function prunes the sample window on every call AND uses `Instant::now()`
+/// as the window upper bound — not the latest sample's timestamp. After
+/// TX stops, no new BUFFER drops arrive, so without on-call pruning the
+/// window would stay frozen at its last contents and report the same
+/// "old fast" rate forever. Pruning here lets the meter decay smoothly
+/// to 0 and then to `None` as samples age out of the 5-second window.
+fn current_throughput_bps(accum: &mut AccumulatorState) -> Option<u32> {
+    let now = Instant::now();
+    // Prune samples older than the window on every call (not just when a
+    // new sample arrives). Always keep at least one historical sample so
+    // a brief lull doesn't collapse the deque to a single element that
+    // would force a `None` return via the len<2 guard while a real rate
+    // is still observable.
+    while accum.throughput_samples.len() > 1 {
+        let (t_front, _) = accum.throughput_samples[0];
+        if now.duration_since(t_front) > THROUGHPUT_WINDOW {
+            accum.throughput_samples.pop_front();
+        } else {
+            break;
+        }
+    }
+
     let samples = &accum.throughput_samples;
     if samples.len() < 2 {
         return None;
     }
     let (t0, b0) = *samples.front()?;
-    let (t1, b1) = *samples.back()?;
-    let elapsed = t1.duration_since(t0).as_secs_f64();
+    let (_t1, b1) = *samples.back()?;
+    // Use `now` (not the latest sample's timestamp) as the window upper
+    // bound. When TX stops, `b1 - b0` stays constant but `now - t0` keeps
+    // growing, so the computed rate decays toward 0 and eventually the
+    // front sample expires out of the window (returning None above).
+    let elapsed = now.duration_since(t0).as_secs_f64();
     if elapsed < 0.5 {
         return None;
     }
@@ -475,6 +509,18 @@ impl ModemTransport for ArdopTransport {
     ) -> Result<ConnectInfo, SessionError> {
         let cmd = self.cmd_or_err()?;
         let info = arq_connect(cmd, target, repeat, deadline)?;
+        // Stamp `connected_at` at THIS moment — `arq_connect` just consumed
+        // the first `CONNECTED` event from the cmd socket directly via
+        // `recv_event`, so a later `drain_status_events` tick will NEVER
+        // see that event in `apply_event_to_accumulators_inline`'s
+        // `Command::Connected` arm. Without this stamp, `uptime_sec` would
+        // stay 0 for the entire session unless ardopcf emits a duplicate
+        // CONNECTED. (Codex P1 finding, 2026-05-31; tuxlink-n2uz.)
+        //
+        // The `connected_at.is_none()` guard on the event-driven arm still
+        // applies — both paths stamp the FIRST observed connect moment, and
+        // a duplicate event won't reset the timer.
+        self.accumulators.connected_at = Some(Instant::now());
         // Drain pre-connect OS-buffered bytes from the data socket NOW. The
         // cmd reader thread has already flipped ArqState to connected (that
         // happens BEFORE the Connected event is sent on the channel), so the
@@ -491,9 +537,18 @@ impl ModemTransport for ArdopTransport {
     /// Send `DISCONNECT` and wait for the TNC to confirm the link is torn down.
     ///
     /// Returns `Err` if [`init`] was not called first.
+    ///
+    /// Belt-and-suspenders clears `connected_at` directly: the event-driven
+    /// arm in `apply_event_to_accumulators_inline` already clears it when
+    /// the `Disconnected` event arrives via the cmd-socket reader thread,
+    /// but a command-initiated disconnect may return before that event has
+    /// drained — clearing here avoids a stale stamp on an immediate
+    /// reconnect. (Codex P1 finding, 2026-05-31; tuxlink-n2uz.)
     fn disconnect(&mut self, deadline: Duration) -> Result<(), SessionError> {
         let cmd = self.cmd_or_err()?;
-        arq_disconnect(cmd, deadline)
+        let result = arq_disconnect(cmd, deadline);
+        self.accumulators.connected_at = None;
+        result
     }
 
     /// Return the data byte stream for the connected ARQ session.
@@ -853,15 +908,15 @@ mod drain_tests {
 
     #[test]
     fn throughput_returns_none_with_too_few_samples() {
-        let accum = AccumulatorState::default();
-        assert_eq!(current_throughput_bps(&accum), None, "empty window → None");
+        let mut accum = AccumulatorState::default();
+        assert_eq!(current_throughput_bps(&mut accum), None, "empty window → None");
 
         let mut accum = AccumulatorState::default();
         accum
             .throughput_samples
             .push_back((Instant::now(), 100));
         assert_eq!(
-            current_throughput_bps(&accum),
+            current_throughput_bps(&mut accum),
             None,
             "single sample → None (no time delta)"
         );
@@ -869,16 +924,18 @@ mod drain_tests {
 
     #[test]
     fn throughput_returns_none_when_window_too_fresh() {
-        // Two samples with <500 ms gap → high-variance instantaneous rate,
-        // not a meter the operator can read.
+        // Two samples that span less than 500 ms relative to `Instant::now()`
+        // (the window upper bound after the tuxlink-n2uz idle-decay fix).
+        // Place both samples in the very recent past so `now - t0 < 500ms`,
+        // exercising the high-variance-spike guard.
         let now = Instant::now();
         let mut accum = AccumulatorState::default();
         accum.throughput_samples.push_back((now, 0));
         accum
             .throughput_samples
-            .push_back((now + Duration::from_millis(100), 1000));
+            .push_back((now + Duration::from_millis(50), 1000));
         assert_eq!(
-            current_throughput_bps(&accum),
+            current_throughput_bps(&mut accum),
             None,
             "sub-500ms window must return None"
         );
@@ -886,18 +943,24 @@ mod drain_tests {
 
     #[test]
     fn throughput_computes_bits_per_second_over_window() {
-        // 1000 bytes over 1 second = 8000 bits/s.
+        // 1000 bytes between t=2s-ago and t=1s-ago, then read at t=now.
+        // The fix uses `Instant::now()` as the window upper bound, so
+        // elapsed ≈ 2s (now − front_sample_timestamp) and rate ≈
+        // 1000 bytes / 2 s = 4000 bps.
         let now = Instant::now();
         let mut accum = AccumulatorState::default();
-        accum.throughput_samples.push_back((now, 0));
         accum
             .throughput_samples
-            .push_back((now + Duration::from_secs(1), 1000));
-        let bps = current_throughput_bps(&accum).expect("Some(bps)");
-        // Allow a small slop for f64-to-u32 truncation; nominal is 8000.
+            .push_back((now - Duration::from_secs(2), 0));
+        accum
+            .throughput_samples
+            .push_back((now - Duration::from_secs(1), 1000));
+        let bps = current_throughput_bps(&mut accum).expect("Some(bps)");
+        // Allow generous slop for the test scheduler's variance between
+        // when `now` was captured and when `current_throughput_bps` ran.
         assert!(
-            (7990..=8000).contains(&bps),
-            "expected ~8000 bits/s, got {bps}"
+            (3500..=4500).contains(&bps),
+            "expected ~4000 bits/s, got {bps}"
         );
     }
 
@@ -1054,7 +1117,7 @@ mod drain_tests {
     fn populate_derived_meters_uptime_is_zero_when_disconnected() {
         // No connected_at → uptime_sec stays 0 (not a stale wall-clock value).
         let addr: SocketAddr = "127.0.0.1:1".parse().unwrap();
-        let t = ArdopTransport::with_addrs(addr, addr);
+        let mut t = ArdopTransport::with_addrs(addr, addr);
         let mut s = ModemStatus::stopped();
         // Pre-seed a stale value to make sure populate clears it.
         s.uptime_sec = 999;
@@ -1069,10 +1132,96 @@ mod drain_tests {
         // Transport without arq_state installed: bytes_rx falls back to 0,
         // doesn't panic.
         let addr: SocketAddr = "127.0.0.1:1".parse().unwrap();
-        let t = ArdopTransport::with_addrs(addr, addr);
+        let mut t = ArdopTransport::with_addrs(addr, addr);
         let mut s = ModemStatus::stopped();
         t.populate_derived_meters(&mut s);
         assert_eq!(s.bytes_rx, 0);
+    }
+
+    // ── Codex P1 fixes (2026-05-31, tuxlink-n2uz) ────────────────────────
+
+    /// Codex P1 #2: throughput meter must decay to `None` when all samples
+    /// fall outside the rolling window. Without on-call pruning + an
+    /// `Instant::now()` window upper bound, the meter would stay frozen at
+    /// the last rate forever after TX stops.
+    #[test]
+    fn throughput_decays_to_none_when_all_samples_past_window() {
+        let mut accum = AccumulatorState::default();
+        // Both samples are older than THROUGHPUT_WINDOW (5s). Pruning on
+        // call must drop the front one; the deque collapses to len == 1
+        // and the `len() < 2` guard returns None.
+        let t0 = Instant::now() - Duration::from_secs(10);
+        let t1 = Instant::now() - Duration::from_secs(8);
+        accum.throughput_samples.push_back((t0, 0));
+        accum.throughput_samples.push_back((t1, 1000));
+        assert_eq!(
+            current_throughput_bps(&mut accum),
+            None,
+            "all-stale samples must decay to None"
+        );
+        // After the call, the prune loop must have collapsed the deque
+        // to at most one (kept) historical sample.
+        assert!(
+            accum.throughput_samples.len() <= 1,
+            "prune-on-call must have evicted stale samples; deque len = {}",
+            accum.throughput_samples.len()
+        );
+    }
+
+    /// Codex P1 #2: the elapsed window must use `Instant::now()` (not the
+    /// most recent sample's timestamp). When TX stops mid-burst, the back
+    /// sample is frozen but the wall clock keeps advancing — the meter
+    /// should report a DECAYING rate, not the "last fast" rate forever.
+    #[test]
+    fn throughput_uses_now_not_last_sample_timestamp_for_elapsed() {
+        let mut accum = AccumulatorState::default();
+        // Two samples 1 second apart, ending 4 seconds ago.
+        let now = Instant::now();
+        accum
+            .throughput_samples
+            .push_back((now - Duration::from_secs(4), 0));
+        accum
+            .throughput_samples
+            .push_back((now - Duration::from_secs(3), 1000));
+        // Correct fix uses `now` as upper bound:
+        //   elapsed ≈ 4 s, delta = 1000 B → 250 B/s = 2000 bps.
+        // The pre-fix bug would use the back sample's timestamp:
+        //   elapsed = 1 s, delta = 1000 B → 8000 bps ("frozen fast").
+        let bps = current_throughput_bps(&mut accum)
+            .expect("Some(bps) — samples still within window");
+        assert!(
+            (1500..=2500).contains(&bps),
+            "expected ~2000 bps (now − oldest sample, not back − front); got {bps}"
+        );
+    }
+
+    /// Codex P1 #1: `connect_arq` consumes the first `CONNECTED` event from
+    /// the cmd socket via `arq_connect` BEFORE the broadcaster tick can
+    /// drain it through `apply_event_to_accumulators_inline`. The transport
+    /// must therefore stamp `connected_at` directly on a successful return
+    /// from `arq_connect` so `uptime_sec` advances for ordinary sessions.
+    ///
+    /// Indirect test: drive `connect_arq` through the mock-TNC pair the
+    /// other transport tests use (in the sibling `tests` module). Here we
+    /// validate the simpler invariant: a successful `arq_connect` followed
+    /// by an immediate `populate_derived_meters` reports `uptime_sec >= 1`
+    /// after a brief sleep.
+    ///
+    /// The full integration via mock TNCs lives in the sibling `tests`
+    /// module under `connect_arq_stamps_connected_at_on_success`.
+    #[test]
+    fn connected_at_directly_stamped_implies_uptime_advances() {
+        let addr: SocketAddr = "127.0.0.1:1".parse().unwrap();
+        let mut t = ArdopTransport::with_addrs(addr, addr);
+        // Simulate the stamp `connect_arq` now performs.
+        t.accumulators.connected_at = Some(Instant::now() - Duration::from_secs(7));
+        let mut s = ModemStatus::stopped();
+        t.populate_derived_meters(&mut s);
+        assert!(
+            (6..=8).contains(&s.uptime_sec),
+            "uptime_sec must reflect the stamped connected_at (~7s); got {}",
+            s.uptime_sec
+        );
     }
 }
 
@@ -1449,6 +1598,109 @@ mod tests {
             &buf[..n],
             b"AFTER-CONNECT",
             "first post-connect read must yield post-connect data, not pre-connect noise"
+        );
+
+        drop(t);
+        cmd_server.join().unwrap();
+        data_server.join().unwrap();
+    }
+
+    // ── tuxlink-n2uz Codex P1 #1: connect_arq stamps connected_at ──────────
+
+    /// `arq_connect` consumes the first `CONNECTED` event from the cmd
+    /// socket directly via `recv_event`, so `drain_status_events` would
+    /// never observe it in the `Command::Connected` arm of the accumulator
+    /// handler. Without an explicit stamp inside `connect_arq`, the dock's
+    /// "Up Ns" meter stays at 0 for the entire session. This test verifies
+    /// the stamp.
+    #[test]
+    fn connect_arq_stamps_connected_at_on_success() {
+        let connected_signal = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let (cmd_addr, cmd_server) =
+            spawn_mock_cmd_server_with_signal("W7ABC", 500, Some(connected_signal.clone()));
+        // Data mock — we don't write a payload through it, but the connect
+        // path expects a data socket to exist (drain_pending runs on it).
+        let received: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(Vec::new()));
+        let (data_addr, data_server) = spawn_mock_data_server_with_signal(
+            b"".to_vec(),
+            received.clone(),
+            Some(connected_signal),
+        );
+
+        let mut t = ArdopTransport::with_addrs(cmd_addr, data_addr);
+        let cfg = InitConfig {
+            mycall: "N7TST".into(),
+            gridsquare: "CN87".into(),
+            arq_timeout_s: 30,
+        };
+        t.init(&cfg).expect("init must succeed");
+
+        // Pre-condition: a fresh init has reset accumulators.
+        assert!(
+            t.accumulators.connected_at.is_none(),
+            "connected_at must be None before connect"
+        );
+
+        t.connect_arq("W7ABC", 3, Duration::from_secs(5))
+            .expect("connect_arq must succeed");
+
+        // Post-condition: the stamp was applied.
+        assert!(
+            t.accumulators.connected_at.is_some(),
+            "connect_arq must stamp connected_at on success"
+        );
+
+        // Indirect verification through the public meter path:
+        // populate_derived_meters reports a non-zero uptime once the stamp
+        // has aged.
+        std::thread::sleep(Duration::from_millis(1100));
+        let mut s = ModemStatus::stopped();
+        t.populate_derived_meters(&mut s);
+        assert!(
+            s.uptime_sec >= 1,
+            "uptime_sec must be >= 1 after a connect + 1.1s; got {}",
+            s.uptime_sec
+        );
+
+        // Tear down cleanly.
+        t.disconnect(Duration::from_secs(5))
+            .expect("disconnect must succeed");
+        drop(t);
+        cmd_server.join().unwrap();
+        data_server.join().unwrap();
+    }
+
+    /// Companion to the stamp test: `disconnect` clears `connected_at` so a
+    /// subsequent reconnect starts a fresh uptime rather than inheriting
+    /// a stale stamp from the prior session.
+    #[test]
+    fn disconnect_clears_connected_at() {
+        let connected_signal = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let (cmd_addr, cmd_server) =
+            spawn_mock_cmd_server_with_signal("W7ABC", 500, Some(connected_signal.clone()));
+        let received: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(Vec::new()));
+        let (data_addr, data_server) = spawn_mock_data_server_with_signal(
+            b"".to_vec(),
+            received.clone(),
+            Some(connected_signal),
+        );
+
+        let mut t = ArdopTransport::with_addrs(cmd_addr, data_addr);
+        let cfg = InitConfig {
+            mycall: "N7TST".into(),
+            gridsquare: "CN87".into(),
+            arq_timeout_s: 30,
+        };
+        t.init(&cfg).expect("init must succeed");
+        t.connect_arq("W7ABC", 3, Duration::from_secs(5))
+            .expect("connect_arq must succeed");
+        assert!(t.accumulators.connected_at.is_some());
+
+        t.disconnect(Duration::from_secs(5))
+            .expect("disconnect must succeed");
+        assert!(
+            t.accumulators.connected_at.is_none(),
+            "disconnect must clear connected_at (belt-and-suspenders, Codex P1 #1)"
         );
 
         drop(t);
