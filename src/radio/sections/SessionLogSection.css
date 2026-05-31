@@ -1,0 +1,83 @@
+/* src/radio/sections/SessionLogSection.css */
+.session-log-section .log-scroll {
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  font-size: 10px;
+  line-height: 1.5;
+  background: rgba(0, 0, 0, 0.18);
+  border-radius: 3px;
+  padding: 6px 8px;
+  max-height: 132px;
+  overflow-y: auto;
+  color: var(--text-faint, #94a3b8);
+}
+
+.session-log-section .log-entry {
+  display: grid;
+  grid-template-columns: 56px 1fr;
+  gap: 6px;
+  padding: 3px 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.04);
+}
+.session-log-section .log-entry:first-child {
+  border-top: none;
+  padding-top: 0;
+}
+
+.session-log-section .log-ts {
+  color: #64748b;
+  font-size: 9px;
+  padding-top: 1px;
+  white-space: nowrap;
+}
+
+.session-log-section .log-msg {
+  word-break: break-word;
+}
+
+.log-entry-info .log-msg  { color: var(--text, #cbd5e1); }
+.log-entry-ok   .log-msg  { color: #4ade80; }
+.log-entry-warn .log-msg  { color: #fbbf24; }
+.log-entry-warn .log-msg::before { content: '⚠ '; }
+.log-entry-raw  .log-msg  { color: var(--text-faint, #94a3b8); font-style: italic; opacity: 0.7; }
+
+.log-entry-alert {
+  background: rgba(239, 68, 68, 0.08);
+  border-left: 3px solid #f87171;
+  padding-left: 6px;
+  margin: 2px -8px;
+  padding-right: 8px;
+  padding-top: 4px;
+  padding-bottom: 4px;
+  border-top: none;
+}
+.log-entry-alert + .log-entry { border-top: 1px solid rgba(255, 255, 255, 0.04); }
+.log-entry-alert .log-msg { color: #f87171; }
+.log-entry-alert .log-msg::before { content: '⊘ '; font-weight: 600; }
+.log-entry-alert .log-msg .log-raw { color: #fecaca; font-style: italic; opacity: 0.8; }
+
+.session-log-section .log-controls {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+  font-size: 9px;
+  align-items: center;
+}
+.session-log-section .log-controls label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-faint, #94a3b8);
+  cursor: pointer;
+}
+.session-log-section .log-controls label input {
+  transform: scale(0.85);
+}
+.session-log-section .log-copy {
+  background: transparent;
+  border: none;
+  color: #67e8f9;
+  cursor: pointer;
+  margin-left: auto;
+  padding: 0;
+  font-size: 9px;
+}
