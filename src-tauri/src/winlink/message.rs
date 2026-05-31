@@ -339,6 +339,43 @@ mod tests {
     }
 
     #[test]
+    fn to_bytes_preserves_attachment_declaration_order() {
+        let mut msg = Message::new();
+        msg.set_header("Mid", "MID2");
+        msg.set_header("From", "N7CPZ");
+        msg.set_body(b"x".to_vec());
+        msg.set_attachments(vec![
+            crate::winlink_backend::OutboundAttachment { filename: "a.bin".into(), bytes: vec![1] },
+            crate::winlink_backend::OutboundAttachment { filename: "b.bin".into(), bytes: vec![2] },
+            crate::winlink_backend::OutboundAttachment { filename: "c.bin".into(), bytes: vec![3] },
+        ]);
+        let bytes = msg.to_bytes();
+        // Find the body region after \r\n\r\n
+        let bs = bytes.windows(4).position(|w| w == b"\r\n\r\n").unwrap() + 4;
+        assert_eq!(&bytes[bs..], b"x\r\n\x01\r\n\x02\r\n\x03\r\n");
+        // File: headers must also be in declaration order
+        let header_block = &bytes[..bs - 2];  // exclude the trailing \r\n
+        let header_str = std::str::from_utf8(header_block).unwrap();
+        let file_lines: Vec<&str> = header_str
+            .lines()
+            .filter(|l| l.starts_with("File:"))
+            .collect();
+        assert_eq!(file_lines, vec!["File: 1 a.bin", "File: 1 b.bin", "File: 1 c.bin"]);
+    }
+
+    #[test]
+    fn to_bytes_with_zero_attachments_emits_no_trailing_crlf() {
+        let mut msg = Message::new();
+        msg.set_header("Mid", "MID3");
+        msg.set_header("From", "N7CPZ");
+        msg.set_body(b"plain".to_vec());
+        // No set_attachments call.
+        let bytes = msg.to_bytes();
+        let bs = bytes.windows(4).position(|w| w == b"\r\n\r\n").unwrap() + 4;
+        assert_eq!(&bytes[bs..], b"plain");  // exact — no trailing CRLF
+    }
+
+    #[test]
     fn parses_headers_and_body_from_wire_bytes() {
         let wire = [
             "Mid: ABC123\r\n",
