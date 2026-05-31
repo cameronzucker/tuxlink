@@ -42,23 +42,34 @@
   height: 20px;
 }
 .layout-b .search-bar input::placeholder { color: var(--text-faint); }
-.layout-b .search-bar .saved-star {
-  background: transparent;
-  border: 0;
-  color: var(--accent);
-  font-size: 16px;
-  line-height: 1;
+/* Saved-search badge (inline pill before the input). Click to unsave. */
+.layout-b .search-bar .saved-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--accent-soft);
+  border: 1px solid color-mix(in srgb, var(--accent) 38%, transparent);
+  border-radius: 3px;
+  padding: 3px 8px;
   cursor: pointer;
-  padding: 0;
-  flex-shrink: 0;
-}
-.layout-b .search-bar .saved-name {
-  flex: 1;
   color: var(--accent-2);
-  font-family: var(--mono);
-  font-size: 14px;
+  font-size: 12px;
   font-weight: 600;
-  min-width: 0;
+  flex-shrink: 0;
+  font-family: inherit;
+  max-width: 240px;
+  line-height: 1.2;
+}
+.layout-b .search-bar .saved-badge:hover {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  border-color: var(--accent);
+}
+.layout-b .search-bar .saved-badge .star { color: var(--accent); font-size: 13px; line-height: 1; }
+.layout-b .search-bar .saved-badge .saved-name {
+  color: var(--accent-2);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

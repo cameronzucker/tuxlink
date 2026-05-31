@@ -48,47 +48,43 @@ export function SearchBar({
     }
   };
 
-  if (activeSaved) {
-    return (
-      <div className="search-bar focused" data-testid="search-bar">
-        <MagnifierIcon />
+  // Clicking ANYWHERE on the bar background reopens the dropdown. Inner
+  // buttons (★ unsave, ▾ chevron) stopPropagation so they don't double-fire
+  // the bar's open-on-click + their own action. WebKitGTK (Tauri's
+  // renderer) often retains input focus through row-clicks, so onFocus
+  // alone isn't enough.
+  const openIfClosed = () => { if (!dropdownOpen) onToggleDropdown(); };
+
+  // Always render the input. When a saved search is active, a compact
+  // ★ + name badge sits BEFORE the input as a non-modal indicator —
+  // typing edits the query in place; useSearch auto-detaches the saved
+  // label the moment the text diverges from the saved canonical form.
+  // Clicking the ★ explicitly UNSAVES (deletes from storage) — that
+  // matches the dropdown's filled-star semantics.
+  return (
+    <div className="search-bar" data-testid="search-bar" onClick={openIfClosed}>
+      <MagnifierIcon />
+      {activeSaved && (
         <button
           type="button"
-          className="saved-star"
+          className="saved-badge"
           data-testid="searchbar-saved-star"
           aria-label={`Unsave ${activeSaved.name}`}
-          onClick={onUnsave}
-        >★</button>
-        <span className="saved-name" data-testid="searchbar-saved-name">{activeSaved.name}</span>
-        {metaText && <span className="meta" data-testid="searchbar-meta">{metaText}</span>}
-        <button
-          type="button"
-          className="chev"
-          data-testid="searchbar-chevron"
-          onClick={onToggleDropdown}
-          aria-label="Open search dropdown"
-        >▾</button>
-      </div>
-    );
-  }
-
-  return (
-    <div className="search-bar" data-testid="search-bar">
-      <MagnifierIcon />
+          title="Unsave this search"
+          onClick={(e) => { e.stopPropagation(); onUnsave(); }}
+        >
+          <span className="star" aria-hidden="true">★</span>
+          <span className="saved-name" data-testid="searchbar-saved-name">{activeSaved.name}</span>
+        </button>
+      )}
       <input
         ref={inputRef}
         data-testid="searchbar-input"
         type="text"
-        placeholder="Search messages… (try from:KX5DD damage)"
+        placeholder={activeSaved ? '' : 'Search messages… (try from:KX5DD damage)'}
         value={value}
         onChange={(e) => onValueChange(e.target.value)}
-        onFocus={() => { if (!dropdownOpen) onToggleDropdown(); }}
-        // Also open on click — in WebKitGTK (Tauri's renderer) clicking a
-        // focusable row does not reliably move focus, so the input keeps
-        // focus across browse-result interactions. Without this, clicking
-        // back on the still-focused input fires no onFocus event and the
-        // dropdown stays closed.
-        onClick={() => { if (!dropdownOpen) onToggleDropdown(); }}
+        onFocus={openIfClosed}
         onKeyDown={handleKey}
       />
       {metaText && <span className="meta" data-testid="searchbar-meta">{metaText}</span>}
@@ -96,8 +92,8 @@ export function SearchBar({
         type="button"
         className="chev"
         data-testid="searchbar-chevron"
-        onClick={onToggleDropdown}
-        aria-label="Open search dropdown"
+        onClick={(e) => { e.stopPropagation(); onToggleDropdown(); }}
+        aria-label="Toggle search dropdown"
       >▾</button>
       <span className="shortcut">Ctrl+F</span>
     </div>

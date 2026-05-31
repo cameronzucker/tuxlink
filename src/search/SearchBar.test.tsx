@@ -15,10 +15,14 @@ describe('SearchBar', () => {
     expect(screen.getByPlaceholderText(/Search messages/i)).toBeInTheDocument();
   });
 
-  it('shows saved-search name + ★ when activeSaved set', () => {
+  it('renders saved-search badge AND the editable input when activeSaved set', () => {
     render(<SearchBar value="damage" activeSaved={STORM} onValueChange={noop} onUnsave={noop} onToggleDropdown={noop} dropdownOpen={false} />);
     expect(screen.getByTestId('searchbar-saved-name')).toHaveTextContent('Storm Net 5/30');
     expect(screen.getByTestId('searchbar-saved-star')).toBeInTheDocument();
+    // Input must remain present and editable so the user can modify the
+    // saved query inline; previously this was hidden behind a non-editable
+    // saved-mode branch.
+    expect(screen.getByTestId('searchbar-input')).toBeInTheDocument();
   });
 
   it('clicking ★ on an active saved search calls onUnsave', () => {

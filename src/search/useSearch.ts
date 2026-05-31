@@ -12,18 +12,31 @@ function specIsActive(spec: QuerySpec): boolean {
 
 export function useSearch() {
   // `rawText` is what the user types — full Gmail-style operator string
-  // (e.g. `from:KX5DD damage`). The spec is derived from it via parseQuery,
-  // EXCEPT when an activeSaved is set (then the saved-search spec wins and
-  // the input shows the saved-search NAME rather than rawText).
-  const [rawText, setRawText] = useState('');
+  // (e.g. `from:KX5DD damage`). The spec is always derived from it via
+  // parseQuery. When a saved search is loaded, its deparseQuery'd string
+  // is what populates rawText — typing edits it in place. `activeSaved`
+  // is just a UI label (★ Name) showing the user this query started life
+  // as a saved one; the moment rawText diverges from the saved spec, the
+  // label auto-detaches.
+  const [rawText, setRawTextInner] = useState('');
   const [debouncedSpec, setDebouncedSpec] = useState<QuerySpec>(EMPTY_SPEC);
   const [activeSaved, setActiveSaved] = useState<SavedSearch | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const spec = useMemo<QuerySpec>(
-    () => (activeSaved ? activeSaved.spec : parseQuery(rawText)),
-    [rawText, activeSaved],
-  );
+  const spec = useMemo<QuerySpec>(() => parseQuery(rawText), [rawText]);
+
+  // Wrap setRawText so user typing automatically detaches a saved-search
+  // label when the text no longer matches the saved spec. Saved-search
+  // loading bypasses this (it sets rawText to the canonical deparse, so
+  // the comparison succeeds and the label is preserved).
+  const setRawText = useCallback((next: string) => {
+    setRawTextInner(next);
+    setActiveSaved((prev) => {
+      if (!prev) return null;
+      const canon = deparseQuery(prev.spec);
+      return next === canon ? prev : null;
+    });
+  }, []);
 
   useEffect(() => {
     if (timer.current) clearTimeout(timer.current);
@@ -43,22 +56,24 @@ export function useSearch() {
   });
 
   const clear = useCallback(() => {
-    setRawText('');
+    setRawTextInner('');
     setActiveSaved(null);
   }, []);
 
+  // Load a saved search: set rawText to the deparsed canonical form AND
+  // mark activeSaved. Use the inner setter so we don't trip the
+  // auto-detach in setRawText.
   const setActiveSavedSearch = useCallback((saved: SavedSearch | null) => {
     setActiveSaved(saved);
-    setRawText(saved ? deparseQuery(saved.spec) : '');
+    setRawTextInner(saved ? deparseQuery(saved.spec) : '');
   }, []);
 
-  // Detach the saved-search label but keep the equivalent rawText so the
-  // query stays visible. Codex adrev fix (find-messages P2): unsave must
-  // not blank the search.
+  // Detach the saved-search label without clearing the input. Used after
+  // unsave (★ click) so the typed query remains active even though the
+  // saved-search backing was deleted from storage.
   const clearActiveSaved = useCallback(() => {
-    if (activeSaved) setRawText(deparseQuery(activeSaved.spec));
     setActiveSaved(null);
-  }, [activeSaved]);
+  }, []);
 
   return {
     rawText,
