@@ -17,7 +17,7 @@
 > - **Live smokes T11.2-11.5 updated** — Smoke B and Smoke D retain Pat wire-format cross-client validation (Pat-compatibility is still a goal per spec §11); no behavior change to the smoke descriptions, only notes about the transport path.
 > - All other Pat prose references audited; non-load-bearing mentions (WLE+Pat compatibility phrasing, historical test conventions, tuxlink-pat references in smoke descriptions) are left in place as they describe interop goals, not implementation paths.
 >
-> Per [spec rev-3](../specs/2026-05-30-html-forms-design.md) §5.1 + [ADR 0016](../../adr/0016-native-b2f-replaces-pat.md) + 9phd Phase 1+4.
+> Per [spec rev-3](../specs/2026-05-30-html-forms-design.md) §5.1 + [ADR 0016](../../adr/0016-native-b2f-outbound-with-attachments.md) + 9phd Phase 1+4.
 
 > **Rev-3 changes** (post 4-round plan review — 3 design rounds + 1 verification round):
 >
