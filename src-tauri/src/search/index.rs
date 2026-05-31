@@ -15,7 +15,7 @@ pub enum IndexError {
 }
 
 pub struct Index {
-    conn: Connection,
+    pub(crate) conn: Connection,
 }
 
 impl std::fmt::Debug for Index {

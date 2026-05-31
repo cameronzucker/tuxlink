@@ -13,6 +13,7 @@
 
 use std::fs;
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 
 use crate::winlink::message::Message;
 use crate::winlink_backend::{BackendError, MailboxFolder, MessageBody, MessageId, MessageMeta};
@@ -20,11 +21,24 @@ use crate::winlink_backend::{BackendError, MailboxFolder, MessageBody, MessageId
 /// A native message store rooted at a directory.
 pub struct Mailbox {
     root: PathBuf,
+    /// Search index, wrapped in a Mutex because `rusqlite::Connection` is not
+    /// `Sync`. `Mailbox` itself must be `Sync` (it is held as `Arc<Mailbox>`
+    /// inside `NativeBackend: Send + Sync`). The Mutex makes every index call
+    /// exclusive, which is fine — index operations are fast and infrequent.
+    index: Option<Arc<Mutex<crate::search::index::Index>>>,
 }
 
 impl Mailbox {
     pub fn new(root: impl Into<PathBuf>) -> Self {
-        Self { root: root.into() }
+        Self { root: root.into(), index: None }
+    }
+
+    /// Attach a search index. After each successful filesystem write, the
+    /// mailbox dispatches a best-effort index update. Index errors are logged
+    /// but never propagated — the filesystem write is canonical (spec §8).
+    pub fn with_index(mut self, index: Arc<Mutex<crate::search::index::Index>>) -> Self {
+        self.index = Some(index);
+        self
     }
 
     /// Store a raw Winlink message in a folder, keyed by its message id (taken
@@ -40,6 +54,27 @@ impl Mailbox {
         let dir = self.folder_dir(folder);
         fs::create_dir_all(&dir)?;
         fs::write(dir.join(format!("{mid}.b2f")), raw)?;
+
+        // Best-effort index hook — filesystem write already succeeded above.
+        // Index errors are logged but never propagated (spec §8).
+        if let Some(idx) = self.index.as_ref() {
+            let row = crate::search::extractor::extract(
+                &msg,
+                folder,
+                direction_for_folder(folder),
+                /*unread=*/ folder == MailboxFolder::Inbox,
+                /*transport_used=*/ None,
+            );
+            match idx.lock() {
+                Ok(guard) => {
+                    if let Err(e) = guard.upsert(&row) {
+                        eprintln!("search-index upsert failed for mid={}: {e}", row.mid);
+                    }
+                }
+                Err(e) => eprintln!("search-index lock poisoned during upsert: {e}"),
+            }
+        }
+
         Ok(MessageId(mid))
     }
 
@@ -110,6 +145,19 @@ impl Mailbox {
             fs::write(dst_dir.join(format!("{}.read", id.0)), [])?;
             fs::remove_file(&src_marker)?;
         }
+
+        // Best-effort index hook — filesystem move already succeeded above.
+        if let Some(idx) = self.index.as_ref() {
+            match idx.lock() {
+                Ok(guard) => {
+                    if let Err(e) = guard.update_folder(&id.0, folder_str(to)) {
+                        eprintln!("search-index update_folder failed for mid={}: {e}", id.0);
+                    }
+                }
+                Err(e) => eprintln!("search-index lock poisoned during update_folder: {e}"),
+            }
+        }
+
         Ok(())
     }
 
@@ -125,6 +173,19 @@ impl Mailbox {
             return Ok(());
         }
         fs::write(dir.join(format!("{}.read", id.0)), [])?;
+
+        // Best-effort index hook — filesystem write already succeeded above.
+        if let Some(idx) = self.index.as_ref() {
+            match idx.lock() {
+                Ok(guard) => {
+                    if let Err(e) = guard.update_unread(&id.0, false) {
+                        eprintln!("search-index update_unread failed for mid={}: {e}", id.0);
+                    }
+                }
+                Err(e) => eprintln!("search-index lock poisoned during update_unread: {e}"),
+            }
+        }
+
         Ok(())
     }
 
@@ -136,6 +197,22 @@ impl Mailbox {
             MailboxFolder::Archive => "archive",
         };
         self.root.join(name)
+    }
+}
+
+fn direction_for_folder(f: MailboxFolder) -> crate::search::extractor::Direction {
+    match f {
+        MailboxFolder::Sent | MailboxFolder::Outbox => crate::search::extractor::Direction::Sent,
+        _ => crate::search::extractor::Direction::Received,
+    }
+}
+
+fn folder_str(f: MailboxFolder) -> &'static str {
+    match f {
+        MailboxFolder::Inbox => "inbox",
+        MailboxFolder::Outbox => "outbox",
+        MailboxFolder::Sent => "sent",
+        MailboxFolder::Archive => "archive",
     }
 }
 
@@ -322,5 +399,76 @@ mod tests {
             dir.path().join("archive").join(format!("{}.read", id.0)).exists(),
             "read-marker should travel with the message"
         );
+    }
+}
+
+#[cfg(test)]
+mod index_hook_tests {
+    use super::*;
+    use crate::search::index::Index;
+    use std::sync::{Arc, Mutex};
+    use tempfile::tempdir;
+
+    fn build_mailbox_with_index(dir: &std::path::Path) -> (Mailbox, Arc<Mutex<Index>>) {
+        let idx = Arc::new(Mutex::new(Index::open(dir.join("search.db")).unwrap()));
+        let mut mbox = Mailbox::new(dir.to_path_buf());
+        mbox = mbox.with_index(idx.clone());
+        (mbox, idx)
+    }
+
+    fn raw(subject: &str, body: &str) -> Vec<u8> {
+        crate::winlink::compose::compose_message(
+            "N7CPZ", &["W1AW"], &[], subject, body, 1_716_200_000,
+        ).to_bytes()
+    }
+
+    #[test]
+    fn store_upserts_into_index() {
+        let dir = tempdir().unwrap();
+        let (mbox, idx) = build_mailbox_with_index(dir.path());
+        mbox.store(MailboxFolder::Inbox, &raw("Hello", "body")).unwrap();
+        assert_eq!(idx.lock().unwrap().count().unwrap(), 1);
+    }
+
+    #[test]
+    fn move_to_updates_folder_in_index() {
+        let dir = tempdir().unwrap();
+        let (mbox, idx) = build_mailbox_with_index(dir.path());
+        let id = mbox.store(MailboxFolder::Outbox, &raw("x", "y")).unwrap();
+        mbox.move_to(MailboxFolder::Outbox, MailboxFolder::Sent, &id).unwrap();
+        let folder: String = idx
+            .lock()
+            .unwrap()
+            .conn
+            .query_row("SELECT folder FROM messages_meta WHERE mid = ?1", [&id.0], |r| r.get(0))
+            .unwrap();
+        assert_eq!(folder, "sent");
+    }
+
+    #[test]
+    fn mark_read_updates_unread_in_index() {
+        let dir = tempdir().unwrap();
+        let (mbox, idx) = build_mailbox_with_index(dir.path());
+        let id = mbox.store(MailboxFolder::Inbox, &raw("x", "y")).unwrap();
+        mbox.mark_read(MailboxFolder::Inbox, &id).unwrap();
+        let unread: i64 = idx
+            .lock()
+            .unwrap()
+            .conn
+            .query_row("SELECT unread FROM messages_meta WHERE mid = ?1", [&id.0], |r| r.get(0))
+            .unwrap();
+        assert_eq!(unread, 0);
+    }
+
+    #[test]
+    fn index_failure_does_not_break_mailbox_store() {
+        // Build an Index, then delete the file mid-test so the next index
+        // upsert fails. The mailbox.store call must still return Ok —
+        // find-messages never breaks mailbox writes (spec §8).
+        let dir = tempdir().unwrap();
+        let (mbox, _idx) = build_mailbox_with_index(dir.path());
+        std::fs::remove_file(dir.path().join("search.db")).unwrap();
+        let res = mbox.store(MailboxFolder::Inbox, &raw("x", "y"));
+        assert!(res.is_ok(), "mailbox.store must not fail because of index errors");
     }
 }
