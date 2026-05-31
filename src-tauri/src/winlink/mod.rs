@@ -11,6 +11,7 @@
 //! on-disk mailbox.
 
 pub mod ax25;
+pub mod credentials;
 pub mod modem;
 pub mod compose;
 pub mod handshake;
