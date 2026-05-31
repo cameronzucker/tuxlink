@@ -187,7 +187,11 @@ impl Message {
             }
             let text = std::str::from_utf8(line).map_err(|_| ParseError::NonUtf8Header)?;
             let (key, value) = text.split_once(": ").ok_or(ParseError::MalformedHeader)?;
-            msg.set_header(key, value);
+            if REPEATABLE_HEADERS.iter().any(|h| h.eq_ignore_ascii_case(key)) {
+                msg.add_header(key, value);
+            } else {
+                msg.set_header(key, value);
+            }
         }
 
         // The Body header gives the body length in bytes.
@@ -202,6 +206,11 @@ impl Message {
         Ok(msg)
     }
 }
+
+/// Headers that may appear more than once per message on the wire.
+/// The parser uses `add_header` for these and `set_header` for everything else,
+/// so multi-recipient / multi-attachment messages round-trip correctly.
+const REPEATABLE_HEADERS: &[&str] = &["File", "To", "Cc"];
 
 /// Canonicalize a header key to MIME/textproto convention: first char +
 /// chars after `-` are uppercased; everything else lowercased.
@@ -418,6 +427,18 @@ mod tests {
         let bytes = msg.to_bytes();
         let bs = bytes.windows(4).position(|w| w == b"\r\n\r\n").unwrap() + 4;
         assert_eq!(&bytes[bs..], b"plain");  // exact — no trailing CRLF
+    }
+
+    #[test]
+    fn from_bytes_preserves_repeated_to_and_cc_headers() {
+        let wire = "Mid: MIDREP\r\nDate: 2026/05/30 12:00\r\nFrom: N7CPZ\r\n\
+                    To: W1AW\r\nTo: K1AB\r\nCc: KE7XYZ\r\nCc: KD8ZZZ\r\n\
+                    Body: 0\r\n\r\n";
+        let msg = Message::from_bytes(wire.as_bytes()).unwrap();
+        assert_eq!(msg.header_all("To"), vec!["W1AW", "K1AB"],
+                   "expected two To: entries preserved");
+        assert_eq!(msg.header_all("Cc"), vec!["KE7XYZ", "KD8ZZZ"],
+                   "expected two Cc: entries preserved");
     }
 
     #[test]
