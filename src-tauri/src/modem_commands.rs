@@ -211,16 +211,8 @@ where
     // (Naming the function `_post_consume` is the discipline contract.)
 
     // ─── Translate ArdopUiConfig (frontend) → ArdopConfig (backend) ─────
-    // ardopcf's positional CLI is `ardopcf [-p <ptt>] <cmd_port> <capture> <playback>`.
-    // The PTT flag, when present, must precede the positional triple.
-    let mut extra_args: Vec<String> = Vec::with_capacity(5);
-    if let Some(ref ptt) = ardop_ui.ptt_serial_path {
-        extra_args.push("-p".into());
-        extra_args.push(ptt.clone());
-    }
-    extra_args.push(ardop_ui.cmd_port.to_string());
-    extra_args.push(ardop_ui.capture_device.clone());
-    extra_args.push(ardop_ui.playback_device.clone());
+    // See `build_ardop_extra_args` — extracted for unit testing.
+    let extra_args = build_ardop_extra_args(ardop_ui);
 
     let cfg = ArdopConfig {
         binary: PathBuf::from(&ardop_ui.binary),
@@ -364,6 +356,59 @@ fn init_config_from_persisted_config() -> InitConfig {
         arq_timeout_s: ARQ_TIMEOUT_SECS,
         arq_bandwidth_hz,
     }
+}
+
+/// Build the `extra_args` vector passed to `ArdopConfig` (the ardopcf CLI).
+///
+/// ardopcf's positional CLI is:
+/// ```text
+/// ardopcf [-p <ptt>] [-G <webgui_port>] <cmd_port> <capture> <playback>
+/// ```
+///
+/// Optional flags (in this order) precede the positional triple:
+///
+/// - **`-p <ptt>`** — only when `ardop_ui.ptt_serial_path` is `Some(non_empty)`.
+///   RTS PTT via the named serial port. ardopcf rejects an empty value, so we
+///   filter empty strings here defensively.
+/// - **`-G <webgui_port>`** — tuxlink-60wh: enable ardopcf's built-in WebGUI
+///   (Spectrum + Waterfall + level meters) so the operator can open it in
+///   their browser via the dock's "Open WebGUI" button. The port follows
+///   ardopcf's documented convention `webgui_port = cmd_port - 1` (default
+///   8515 → 8514). The flag is omitted when `cmd_port < 2` (no valid TCP
+///   port can be derived); `0` is reserved and `1` is too low to bind in
+///   practice. The omission is a safe default — ardopcf simply runs
+///   without a WebGUI when `-G` is absent.
+///
+/// Pure over `&ArdopUiConfig` so unit tests can assert the exact argv shape
+/// without spawning a real process.
+pub(crate) fn build_ardop_extra_args(ardop_ui: &ArdopUiConfig) -> Vec<String> {
+    // Capacity covers worst case: -p <ptt> -G <wg> <cmd> <cap> <play> = 7.
+    let mut extra_args: Vec<String> = Vec::with_capacity(7);
+
+    if let Some(ref ptt) = ardop_ui.ptt_serial_path {
+        if !ptt.is_empty() {
+            extra_args.push("-p".into());
+            extra_args.push(ptt.clone());
+        }
+    }
+
+    // tuxlink-60wh: spawn ardopcf with its built-in WebGUI on the conventional
+    // port (cmd_port - 1). Operator opens it via the dock's "Open WebGUI"
+    // button which targets `http://localhost:<webgui_port>/` — Spectrum,
+    // Waterfall, audio level meters, TX/RX indicators, test-tone trigger.
+    // Guard: cmd_port must be >= 2 so the derived webgui_port is a valid
+    // bindable TCP port (>= 1). The default cmd_port is 8515 → 8514.
+    if ardop_ui.cmd_port >= 2 {
+        let webgui_port = ardop_ui.cmd_port - 1;
+        extra_args.push("-G".into());
+        extra_args.push(webgui_port.to_string());
+    }
+
+    extra_args.push(ardop_ui.cmd_port.to_string());
+    extra_args.push(ardop_ui.capture_device.clone());
+    extra_args.push(ardop_ui.playback_device.clone());
+
+    extra_args
 }
 
 /// Validate a persisted ARQ bandwidth value (tuxlink-j0ij). ardopcf accepts
@@ -1366,6 +1411,126 @@ mod tests {
                 None => std::env::remove_var("TUXLINK_CONFIG_DIR"),
             }
         }
+    }
+
+    // ── tuxlink-60wh: -G WebGUI flag in ardopcf extra_args ───────────────
+
+    #[test]
+    fn extra_args_includes_g_webgui_flag_with_cmd_port_minus_one() {
+        // Default cmd_port = 8515 → webgui_port = 8514. The `-G 8514` pair
+        // must appear AFTER any `-p` PTT flag (or first when PTT is None)
+        // and BEFORE the positional triple (cmd_port / capture / playback).
+        let cfg = ArdopUiConfig {
+            binary: "ardopcf".into(),
+            capture_device: "plughw:1,0".into(),
+            playback_device: "plughw:1,0".into(),
+            ptt_serial_path: None,
+            cmd_port: 8515,
+            bandwidth_hz: None,
+        };
+        let args = build_ardop_extra_args(&cfg);
+        assert_eq!(
+            args,
+            vec![
+                "-G".to_string(),
+                "8514".to_string(),
+                "8515".to_string(),
+                "plughw:1,0".to_string(),
+                "plughw:1,0".to_string(),
+            ],
+            "argv order must be: -G <wg> <cmd> <capture> <playback>"
+        );
+    }
+
+    #[test]
+    fn extra_args_g_webgui_flag_uses_dynamic_cmd_port_minus_one() {
+        // Operator may override cmd_port via Settings; webgui_port follows
+        // ardopcf's documented convention `cmd_port - 1`.
+        let cfg = ArdopUiConfig {
+            binary: "ardopcf".into(),
+            capture_device: "plughw:0,0".into(),
+            playback_device: "plughw:0,0".into(),
+            ptt_serial_path: None,
+            cmd_port: 9001,
+            bandwidth_hz: None,
+        };
+        let args = build_ardop_extra_args(&cfg);
+        assert!(
+            args.windows(2).any(|w| w[0] == "-G" && w[1] == "9000"),
+            "expected `-G 9000` pair for cmd_port=9001; got: {args:?}"
+        );
+    }
+
+    #[test]
+    fn extra_args_omits_g_when_cmd_port_too_low_to_compute() {
+        // Edge case: cmd_port=1 would yield webgui_port=0 (invalid). The
+        // guard drops `-G` entirely; ardopcf runs without a WebGUI rather
+        // than failing to bind. cmd_port=0 likewise.
+        for low_port in [0u16, 1u16] {
+            let cfg = ArdopUiConfig {
+                binary: "ardopcf".into(),
+                capture_device: "plughw:0,0".into(),
+                playback_device: "plughw:0,0".into(),
+                ptt_serial_path: None,
+                cmd_port: low_port,
+                bandwidth_hz: None,
+            };
+            let args = build_ardop_extra_args(&cfg);
+            assert!(
+                !args.iter().any(|a| a == "-G"),
+                "cmd_port={low_port}: -G must be omitted; got: {args:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn extra_args_preserves_ptt_p_flag_before_g_and_positional() {
+        // Regression: tuxlink-60wh refactor extracted extra_args into a
+        // helper. Make sure the PTT plumbing still works AND appears in
+        // the right order: -p <ptt> -G <wg> <cmd> <capture> <playback>.
+        let cfg = ArdopUiConfig {
+            binary: "ardopcf".into(),
+            capture_device: "plughw:1,0".into(),
+            playback_device: "plughw:1,0".into(),
+            ptt_serial_path: Some("/dev/ttyUSB0".into()),
+            cmd_port: 8515,
+            bandwidth_hz: None,
+        };
+        let args = build_ardop_extra_args(&cfg);
+        assert_eq!(
+            args,
+            vec![
+                "-p".to_string(),
+                "/dev/ttyUSB0".to_string(),
+                "-G".to_string(),
+                "8514".to_string(),
+                "8515".to_string(),
+                "plughw:1,0".to_string(),
+                "plughw:1,0".to_string(),
+            ],
+            "argv order must be: -p <ptt> -G <wg> <cmd> <capture> <playback>"
+        );
+    }
+
+    #[test]
+    fn extra_args_omits_p_flag_when_ptt_serial_path_empty_string() {
+        // Defense in depth: ardopcf rejects `-p ""`. If a stale config or
+        // hand-edited JSON yields Some("") (the serde validator should
+        // normalize this, but tests construct in-memory configs directly),
+        // the helper drops the flag rather than passing an invalid value.
+        let cfg = ArdopUiConfig {
+            binary: "ardopcf".into(),
+            capture_device: "plughw:1,0".into(),
+            playback_device: "plughw:1,0".into(),
+            ptt_serial_path: Some("".into()),
+            cmd_port: 8515,
+            bandwidth_hz: None,
+        };
+        let args = build_ardop_extra_args(&cfg);
+        assert!(
+            !args.iter().any(|a| a == "-p"),
+            "empty PTT path must drop the -p flag; got: {args:?}"
+        );
     }
 
     /// When the persisted config has no `modem_ardop` section, the
