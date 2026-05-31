@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { toSessionLogEntry, toSessionLogEntries } from './useSessionLog';
+import { toSessionLogEntry, toSessionLogEntries, mergeLogLine, mergeLogLines } from './useSessionLog';
 import type { LogLineDto } from '../../session/logProjection';
 
 const at = (ts: string, level: LogLineDto['level'], source: LogLineDto['source'], message: string, seq = 1): LogLineDto => ({
@@ -56,5 +56,73 @@ describe('toSessionLogEntries', () => {
     ]);
     expect(out.map((e) => e.level)).toEqual(['info', 'warn', 'alert']);
     expect(out.map((e) => e.ts)).toEqual(['19:00:00', '19:00:01', '19:00:02']);
+  });
+});
+
+describe('mergeLogLine (Codex R2 — snapshot/listen race)', () => {
+  it('appends a new line at the seq-correct position', () => {
+    const merged = mergeLogLine(
+      [at('t', 'info', 'backend', 'a', 1), at('t', 'info', 'backend', 'c', 3)],
+      at('t', 'info', 'backend', 'b', 2),
+    );
+    expect(merged.map((l) => l.message)).toEqual(['a', 'b', 'c']);
+  });
+
+  it('deduplicates by seq (idempotent when the same line arrives twice)', () => {
+    const start = [at('t', 'info', 'backend', 'a', 1)];
+    const merged = mergeLogLine(start, at('t', 'info', 'backend', 'a-dup', 1));
+    expect(merged).toEqual(start); // no change; existing line wins
+  });
+
+  it('appends seq=0 synthetic lines unconditionally (no dedup, tail position)', () => {
+    const merged = mergeLogLine(
+      [at('t', 'info', 'backend', 'a', 1)],
+      at('t', 'info', 'backend', '*** Session summary', 0),
+    );
+    expect(merged.map((l) => l.message)).toEqual(['a', '*** Session summary']);
+  });
+
+  it('synthetic seq=0 anchors in its insertion-order position (subsequent real lines slot after it)', () => {
+    // Synthetic seq=0 has no canonical time ordering; it's a frontend-only
+    // marker (e.g., session-boundary annotation). It stays where it was
+    // inserted. A real line arriving later doesn't reorder around it —
+    // the synthetic stays anchored at its insertion point, and subsequent
+    // lines append after.
+    const merged = mergeLogLine(
+      [at('t', 'info', 'backend', 'a', 1), at('t', 'info', 'backend', '*** Synthetic', 0)],
+      at('t', 'info', 'backend', 'c', 3),
+    );
+    expect(merged.map((l) => l.message)).toEqual(['a', '*** Synthetic', 'c']);
+  });
+});
+
+describe('mergeLogLines (snapshot ingestion)', () => {
+  it('idempotently merges a snapshot that contains a line already streamed live', () => {
+    // Race scenario: a live event with seq=5 arrived first; later the
+    // snapshot resolves and includes the same seq=5 line.
+    const live = [at('t', 'info', 'backend', 'live-5', 5)];
+    const snapshot = [
+      at('t', 'info', 'backend', 'snap-3', 3),
+      at('t', 'info', 'backend', 'snap-5', 5), // dup of live; should be ignored
+      at('t', 'info', 'backend', 'snap-7', 7),
+    ];
+    const merged = mergeLogLines(live, snapshot);
+    expect(merged.map((l) => l.seq)).toEqual([3, 5, 7]);
+    // The live-5 message wins (first writer); snap-5 was deduplicated.
+    expect(merged.find((l) => l.seq === 5)?.message).toBe('live-5');
+  });
+
+  it('produces the same result regardless of arrival order (commutative for real seqs)', () => {
+    const a: LogLineDto[] = [
+      at('t', 'info', 'backend', 'm3', 3),
+      at('t', 'info', 'backend', 'm1', 1),
+    ];
+    const b: LogLineDto[] = [
+      at('t', 'info', 'backend', 'm2', 2),
+    ];
+    const ab = mergeLogLines(mergeLogLines([], a), b);
+    const ba = mergeLogLines(mergeLogLines([], b), a);
+    expect(ab.map((l) => l.seq)).toEqual([1, 2, 3]);
+    expect(ba.map((l) => l.seq)).toEqual([1, 2, 3]);
   });
 });
