@@ -96,10 +96,13 @@ pub fn compose_message_with_files(
             });
         }
     }
-    // Forward the validated path to compose_message; attachments still unused
-    // (wired in T1.4).
-    let _ = attachments;
-    Ok(compose_message(mycall, to, cc, subject, body, unix_secs))
+    // Build the base message via compose_message (text-only path), then attach
+    // the validated files. set_body in compose_message already wrote the Body:
+    // header; File: headers + the attachment serialization land in
+    // Message::to_bytes (Task 1.5+).
+    let mut msg = compose_message(mycall, to, cc, subject, body, unix_secs);
+    msg.set_attachments(attachments.to_vec());
+    Ok(msg)
 }
 
 /// Generate a 12-character message id from the call sign and the send time.
@@ -293,6 +296,17 @@ mod tests {
         ).unwrap_err();
         assert!(matches!(err, ComposeError::FilenameNotLatin1Encodable { .. }),
                 "expected FilenameNotLatin1Encodable, got {:?}", err);
+    }
+
+    #[test]
+    fn compose_attaches_files_to_message() {
+        let att = OutboundAttachment { filename: "report.txt".into(), bytes: b"hello".to_vec() };
+        let msg = compose_message_with_files(
+            "N7CPZ", &["W1AW"], &[], "Hi", "body", &[att.clone()], 1_716_200_000,
+        ).unwrap();
+        assert_eq!(msg.attachments().len(), 1);
+        assert_eq!(msg.attachments()[0].filename, "report.txt");
+        assert_eq!(msg.attachments()[0].bytes, b"hello");
     }
 
     #[test]
