@@ -36,6 +36,7 @@ fn cms_config() -> Config {
         },
         pat_mbo_address: Some("W4PHS@winlink.org".to_string()),
         packet: PacketConfig::default(),
+        modem_ardop: None,
     }
 }
 

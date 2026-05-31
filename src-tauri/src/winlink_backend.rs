@@ -21,9 +21,29 @@ use std::net::{Shutdown, TcpStream};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use thiserror::Error;
 
-// Re-export MailboxFolder so the trait surface doesn't reach into the
-// Pat-specific module.
-pub use crate::pat_client::MailboxFolder;
+/// Mailbox folder selector. `#[non_exhaustive]` per tuxlink-z5f v2 P1 #5 —
+/// future folders (Drafts, Spam, custom) added without breaking exhaustive
+/// matches at call sites. `Copy + Clone + Debug` so the trait re-export
+/// carries useful semantics.
+///
+/// Moved from `pat_client` to `winlink_backend` (tuxlink-9phd Task 0.1) so
+/// that Phase 9's deletion of `pat_client.rs` doesn't break MailboxFolder
+/// references across the codebase. Canonical path is now
+/// `winlink_backend::MailboxFolder`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum MailboxFolder { Inbox, Sent, Outbox, Archive }
+
+impl MailboxFolder {
+    pub(crate) fn as_path(&self) -> &'static str {
+        match self {
+            MailboxFolder::Inbox => "in",
+            MailboxFolder::Sent => "sent",
+            MailboxFolder::Outbox => "out",
+            MailboxFolder::Archive => "archive",
+        }
+    }
+}
 
 // Native backend wiring (see the NativeBackend section below).
 use crate::config::{broadcast_grid, CmsTransport, Config};

@@ -1,23 +1,5 @@
+use crate::winlink_backend::MailboxFolder;
 use serde::Deserialize;
-
-/// Mailbox folder selector. `#[non_exhaustive]` per tuxlink-z5f v2 P1 #5 —
-/// future folders (Drafts, Spam, custom) added without breaking exhaustive
-/// matches at call sites. `Copy + Clone + Debug` so the trait re-export
-/// carries useful semantics.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum MailboxFolder { Inbox, Sent, Outbox, Archive }
-
-impl MailboxFolder {
-    fn as_path(&self) -> &'static str {
-        match self {
-            MailboxFolder::Inbox => "in",
-            MailboxFolder::Sent => "sent",
-            MailboxFolder::Outbox => "out",
-            MailboxFolder::Archive => "archive",
-        }
-    }
-}
 
 #[derive(Debug, Clone)]
 pub struct Message {

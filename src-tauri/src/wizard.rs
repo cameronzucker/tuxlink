@@ -529,7 +529,7 @@ async fn test_send_round_trip(base_url: &str) -> TestSendOutcome {
         // The Pat runs against a fresh, isolated mbox (see spawn_isolated_pat),
         // so the inbox starts empty — any SERVICE@winlink.org message is our
         // autoresponder reply.
-        if let Ok(msgs) = client.list(crate::pat_client::MailboxFolder::Inbox).await {
+        if let Ok(msgs) = client.list(crate::winlink_backend::MailboxFolder::Inbox).await {
             if let Some(reply) = msgs.iter().find(|m| is_autoresponder_reply(&m.from)) {
                 return TestSendOutcome::Success {
                     reply_subject: Some(reply.subject.clone()),

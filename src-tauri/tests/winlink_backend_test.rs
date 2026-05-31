@@ -229,6 +229,7 @@ fn native_test_config() -> tuxlink_lib::config::Config {
         },
         pat_mbo_address: None,
         packet: PacketConfig::default(),
+        modem_ardop: None,
     }
 }
 
@@ -437,6 +438,7 @@ fn spawn_failure_drains_pat_stderr_into_durable_buffer() {
         },
         pat_mbo_address: None,
         packet: PacketConfig::default(),
+        modem_ardop: None,
     };
 
     let buf = Arc::new(SessionLogState::new(64));
@@ -577,6 +579,7 @@ async fn spawn_against_real_pat_http_mode() {
         },
         pat_mbo_address: None,
         packet: PacketConfig::default(),
+        modem_ardop: None,
     };
 
     let buf = Arc::new(SessionLogState::new(64));
@@ -612,4 +615,18 @@ async fn spawn_against_real_pat_http_mode() {
 
     // Drop the backend → graceful shutdown (SIGTERM→reap) of the Pat child.
     drop(backend);
+}
+
+// ============================================================================
+// Task 0.1 (tuxlink-9phd P0/P12) — MailboxFolder canonical definition locality
+// ============================================================================
+// Verifies that MailboxFolder is reachable via the canonical path
+// `tuxlink_lib::winlink_backend::MailboxFolder` — not a re-export from
+// pat_client. After Phase 9 deletes pat_client.rs, this path must still work.
+// This test passes immediately today (via the re-export) and stays as a
+// regression guard after the move so the canonical path keeps working.
+#[test]
+fn mailbox_folder_is_defined_in_winlink_backend() {
+    let _: tuxlink_lib::winlink_backend::MailboxFolder =
+        tuxlink_lib::winlink_backend::MailboxFolder::Inbox;
 }

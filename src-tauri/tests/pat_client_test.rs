@@ -2,7 +2,8 @@
 // spawns an inner tokio runtime that panics if dropped in async test context).
 // All HTTP-touching tests use #[tokio::test] + Server::new_async + .await.
 
-use tuxlink_lib::pat_client::{MailboxFolder, PatClient, PatClientError};
+use tuxlink_lib::pat_client::{PatClient, PatClientError};
+use tuxlink_lib::winlink_backend::MailboxFolder;
 
 #[tokio::test]
 async fn test_list_inbox_parses_pat_json() {

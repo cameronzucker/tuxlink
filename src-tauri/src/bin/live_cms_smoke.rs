@@ -39,7 +39,8 @@ use std::time::{Duration, Instant};
 
 use tuxlink_lib::config::{self, CmsTransport, Config};
 use tuxlink_lib::consent_gate::{check_consent, ConsentOutcome, TransmissionPlan};
-use tuxlink_lib::pat_client::{MailboxFolder, PatClient};
+use tuxlink_lib::pat_client::PatClient;
+use tuxlink_lib::winlink_backend::MailboxFolder;
 use tuxlink_lib::pat_process::{PatProcess, PatSpawnOptions};
 
 const KEYRING_SERVICE: &str = "tuxlink-pat";
