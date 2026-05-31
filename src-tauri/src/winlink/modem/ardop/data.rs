@@ -150,6 +150,75 @@ impl DataSocket {
             .map(|s| s.is_connected())
             .unwrap_or(true)
     }
+
+    /// Discard any bytes currently sitting in the OS receive buffer of the
+    /// data socket (tuxlink-ytg P1, Codex adrev 2026-05-30).
+    ///
+    /// Used by [`crate::winlink::modem::ardop::transport::ArdopTransport::connect_arq`]
+    /// immediately after a successful ARQ-handshake. Without this drain, any
+    /// ARQ-tagged bytes that arrived between `init()` opening the data socket
+    /// and the `CONNECTED` event flipping `ArqState` would be silently
+    /// accepted as session payload on the first post-connect `read()` — the
+    /// `pump_decoder` drop gate only fires when the flag is `Disconnected`
+    /// AT DECODE TIME, not for bytes received earlier and decoded later.
+    ///
+    /// Returns the number of raw socket bytes consumed and discarded. The
+    /// decoder is also reset, so any partial frame held mid-parse is cleared
+    /// — preserving the invariant that post-drain reads only see post-connect
+    /// data.
+    ///
+    /// **Blocking-mode discipline:** sets the underlying TCP stream to a very
+    /// short read timeout for the drain, then restores the prior timeout on
+    /// every exit path (success AND error). The prior timeout is whatever
+    /// `connect_with_arq_state` configured ([`ARQ_STATE_POLL_INTERVAL`]) or
+    /// what the caller has otherwise set; we never leave the socket with the
+    /// drain-window timeout.
+    pub fn drain_pending(&mut self) -> io::Result<usize> {
+        // Snapshot the prior read-timeout so we can restore it on every exit.
+        let prior_timeout = self.stream.read_timeout().ok().flatten();
+        // A tiny read-timeout is the portable "non-blocking drain": each
+        // syscall either returns bytes immediately or fails with WouldBlock /
+        // TimedOut after the deadline, so the loop terminates cleanly without
+        // touching the socket's nonblocking flag (which is finicky under
+        // `try_clone` siblings — TimedOut/WouldBlock at OS level may differ).
+        let drain_window = Duration::from_millis(1);
+        if let Err(e) = self.stream.set_read_timeout(Some(drain_window)) {
+            // If we can't set a short timeout, restore the prior one and
+            // surface the error rather than risk a long block in the drain
+            // loop below.
+            let _ = self.stream.set_read_timeout(prior_timeout);
+            return Err(e);
+        }
+
+        let mut total = 0;
+        let mut scratch = [0u8; 8192];
+        let result = loop {
+            match self.stream.read(&mut scratch) {
+                Ok(0) => break Ok(total), // peer closed — nothing more to drain
+                Ok(n) => total += n,
+                Err(e)
+                    if e.kind() == io::ErrorKind::WouldBlock
+                        || e.kind() == io::ErrorKind::TimedOut =>
+                {
+                    // No more bytes immediately available — drain is done.
+                    break Ok(total);
+                }
+                Err(e) => break Err(e),
+            }
+        };
+
+        // Restore the prior timeout regardless of result, so post-drain reads
+        // observe the same blocking discipline as before the drain.
+        let _ = self.stream.set_read_timeout(prior_timeout);
+
+        // Reset the decoder so any mid-parse partial frame is discarded too —
+        // bytes that landed in the decoder before the connect transition are
+        // pre-session noise just like bytes still in the OS buffer.
+        self.decoder = DataDecoder::default();
+        self.leftover.clear();
+
+        result
+    }
 }
 
 impl Read for DataSocket {
@@ -564,6 +633,102 @@ mod tests {
         );
 
         flipper.join().unwrap();
+        drop(ds);
+        server.join().unwrap();
+    }
+
+    // ── Test 8b: drain_pending discards pre-connect OS-buffered bytes (tuxlink-ytg P1) ──
+
+    /// Codex adrev 2026-05-30 P1 #2: when ARQ-tagged data arrives on the
+    /// data socket BEFORE the ARQ-connect handshake completes, those bytes
+    /// sit in the OS receive buffer until the first post-connect `read()` —
+    /// by which time the flag has flipped and the `pump_decoder` drop gate
+    /// no longer fires. `drain_pending` discards those bytes at the connect
+    /// transition so they cannot corrupt the B2F handshake.
+    #[test]
+    fn drain_pending_discards_pre_connect_os_buffered_bytes() {
+        // Mock writes some ARQ-frame-looking bytes immediately on connect,
+        // then idles (holding the socket open) so we can observe the drain
+        // and a subsequent read in the same test.
+        let (addr, server) = spawn_mock_data_server(|mut conn: TcpStream| {
+            // Bytes that would otherwise corrupt the post-connect B2F read.
+            conn.write_all(&arq_frame(b"PRECONNECT-NOISE")).unwrap();
+            // Hold the connection open so the client side can call drain
+            // before the server's read timeout fires the close.
+            let _ = conn.set_read_timeout(Some(Duration::from_secs(2)));
+            let mut buf = [0u8; 32];
+            let _ = conn.read(&mut buf);
+        });
+
+        // Start in the disconnected state — mirrors the production timing
+        // where bytes accumulate before the cmd-reader flips the flag.
+        let arq_state = super::super::arq_state::ArqState::new();
+        let mut ds = DataSocket::connect_with_arq_state(addr, Some(arq_state.clone())).unwrap();
+
+        // Wait long enough for the server's write to land in the client's OS
+        // recv buffer.
+        std::thread::sleep(Duration::from_millis(50));
+
+        let drained = ds.drain_pending().expect("drain_pending must succeed");
+        assert!(
+            drained > 0,
+            "drain_pending should report bytes consumed from the OS buffer; got {drained}"
+        );
+
+        // Flip to connected (production: the cmd reader does this just before
+        // arq_connect returns Ok); the post-drain read must NOT see the
+        // pre-connect noise.
+        arq_state.set_connected();
+
+        // Subsequent read should time out / wouldblock — no bytes remain.
+        // The default read-timeout from connect_with_arq_state is
+        // ARQ_STATE_POLL_INTERVAL (~250ms); we expect at least one full poll
+        // cycle to fire WouldBlock + arq_connected() check → Ok(0)/loop, but
+        // since no further bytes ever arrive, we just verify the leftover
+        // buffer is empty post-drain.
+        assert!(
+            ds.leftover.is_empty(),
+            "leftover must be empty after drain; got {:?}",
+            ds.leftover
+        );
+
+        drop(ds);
+        server.join().unwrap();
+    }
+
+    // ── Test 8c: drain_pending restores prior read-timeout on success ─────
+
+    /// `drain_pending` uses a 1 ms read-timeout internally; it MUST restore
+    /// whatever timeout was set before so post-drain reads keep their
+    /// blocking discipline (in particular the `ARQ_STATE_POLL_INTERVAL`
+    /// poll that backstops the EOF-on-DISC gate). Regression guard for
+    /// "drain leaves the socket in a 1ms-poll state forever."
+    #[test]
+    fn drain_pending_restores_prior_read_timeout() {
+        let (addr, server) = spawn_mock_data_server(|mut conn: TcpStream| {
+            // Write some bytes so the drain has something to consume.
+            let _ = conn.write_all(&arq_frame(b"X"));
+            let _ = conn.set_read_timeout(Some(Duration::from_secs(2)));
+            let mut buf = [0u8; 16];
+            let _ = conn.read(&mut buf);
+        });
+
+        let arq_state = super::super::arq_state::ArqState::new();
+        let mut ds = DataSocket::connect_with_arq_state(addr, Some(arq_state)).unwrap();
+
+        // Sanity: connect_with_arq_state set the ARQ_STATE_POLL_INTERVAL.
+        let before = ds.stream.read_timeout().unwrap();
+        assert!(before.is_some(), "expected a read timeout from connect_with_arq_state");
+
+        std::thread::sleep(Duration::from_millis(50));
+        let _ = ds.drain_pending().unwrap();
+
+        let after = ds.stream.read_timeout().unwrap();
+        assert_eq!(
+            after, before,
+            "drain_pending must restore the prior read timeout (got {after:?}, expected {before:?})"
+        );
+
         drop(ds);
         server.join().unwrap();
     }

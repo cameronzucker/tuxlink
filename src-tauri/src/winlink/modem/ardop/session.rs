@@ -106,6 +106,15 @@ impl CmdSocket {
                                 Command::Connected { .. } => state.set_connected(),
                                 Command::Disconnected => state.set_disconnected(),
                                 Command::NewState(State::Disc) => state.set_disconnected(),
+                                // tuxlink-ytg P1 (Codex adrev 2026-05-30): FAULT
+                                // events must also clear ArqState. ardopcf can
+                                // emit FAULT while the data TCP socket stays
+                                // open; without this arm the data socket's
+                                // EOF-on-DISC gate stays armed (`is_connected`
+                                // remains true), so a blocked B2F `read_line`
+                                // keeps polling forever and the command never
+                                // reaches its disconnect/reset cleanup.
+                                Command::Fault(_) => state.set_disconnected(),
                                 _ => {}
                             }
                         }
@@ -695,6 +704,51 @@ mod tests {
             .expect("arq_connect must succeed when stale DISC is drained");
         assert_eq!(info.peer_call, "W7ABC");
         assert_eq!(info.bandwidth_hz, 500);
+
+        drop(sock);
+        server.join().unwrap();
+    }
+
+    // ── Test 7d: FAULT event clears the shared ArqState (tuxlink-ytg P1) ───
+
+    /// Codex adrev 2026-05-30 P1 #1: when ardopcf emits FAULT while the data
+    /// TCP socket stays open, the reader thread must flip `ArqState` to
+    /// disconnected so the DataSocket's EOF-on-DISC gate fires. Without this,
+    /// a blocked B2F read_line keeps polling forever and the surrounding Tauri
+    /// command never reaches its cleanup.
+    #[test]
+    fn fault_event_clears_arq_state() {
+        // Mock that emits exactly one event: `FAULT some error`.
+        let (addr, server) = spawn_mock_tnc(|mut conn| {
+            write_reply(&mut conn, "FAULT hardware not ready");
+            // Server thread exits when the read timeout fires.
+        });
+
+        // Pre-seed an ArqState in the connected position to make the
+        // transition observable.
+        let arq_state = ArqState::new();
+        arq_state.set_connected();
+        assert!(arq_state.is_connected(), "precondition: state starts connected");
+
+        let sock = CmdSocket::connect_with_arq_state(addr, Some(arq_state.clone()))
+            .expect("connect must succeed");
+
+        // The reader thread should parse the FAULT and clear the flag. Wait
+        // for the channel to deliver the parsed event so we know the reader
+        // has processed it (the flag flip happens BEFORE the send).
+        let event = sock
+            .recv_event(Duration::from_secs(2))
+            .expect("FAULT event must reach the channel");
+        assert!(
+            matches!(event, Command::Fault(ref s) if s.contains("hardware not ready")),
+            "expected Fault, got {event:?}"
+        );
+
+        assert!(
+            !arq_state.is_connected(),
+            "FAULT must clear ArqState — the data-socket EOF-on-DISC gate \
+             depends on this transition (Codex tuxlink-ytg P1)."
+        );
 
         drop(sock);
         server.join().unwrap();
