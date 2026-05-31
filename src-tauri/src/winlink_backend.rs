@@ -997,6 +997,13 @@ fn native_packet_exchange<S: std::io::Read + std::io::Write + Send + 'static>(
     )
     .map_err(|e| BackendError::TransportFailed { reason: format!("{e:?}"), source: None })?;
 
+    if !result.rejected.is_empty() {
+        return Err(BackendError::MessageRejected(format!(
+            "CMS rejected mid(s): {}",
+            result.rejected.join(", ")
+        )));
+    }
+
     for message in &result.received {
         mailbox.store(MailboxFolder::Inbox, &message.to_bytes())?;
     }
@@ -1336,6 +1343,13 @@ fn native_connect(
         reason: format!("{e:?}"),
         source: None,
     })?;
+
+    if !result.rejected.is_empty() {
+        return Err(BackendError::MessageRejected(format!(
+            "CMS rejected mid(s): {}",
+            result.rejected.join(", ")
+        )));
+    }
 
     // File received messages into the inbox; move delivered ones to sent.
     for message in &result.received {
@@ -2512,6 +2526,71 @@ mod native_read_state_tests {
             inbox.iter().any(|m| m.id.0 == "PEERMSG00009"),
             "PEERMSG00009 must be in the inbox; got {inbox:?}"
         );
+    }
+
+    // =========================================================================
+    // Task 4.3: FS-reject MIDs map to BackendError::MessageRejected
+    // =========================================================================
+
+    /// When the CMS sends `FS N` for our proposal, `ExchangeResult.rejected`
+    /// contains the MID. The caller (`native_packet_exchange`) must convert that
+    /// into `BackendError::MessageRejected` instead of silently succeeding.
+    #[test]
+    fn fs_reject_for_our_mid_maps_to_message_rejected_error() {
+        use crate::winlink::message::Message as WMessage;
+
+        // Build an outbox message so native_packet_exchange has something to
+        // propose to the gateway.
+        let dir = tempdir().unwrap();
+        let mailbox = Mailbox::new(dir.path());
+        let mut msg = WMessage::new();
+        msg.set_header("Mid", "REJECTME0001");
+        msg.set_header("Subject", "FS-reject test");
+        msg.set_body(b"Should be rejected by the gateway.\r\n".to_vec());
+        mailbox
+            .store(MailboxFolder::Outbox, &msg.to_bytes())
+            .expect("store to outbox");
+
+        // Scripted gateway (Dial role: gateway speaks first, no challenge):
+        //   1. CMS handshake
+        //   2. FS N  — reject our one proposal
+        //   3. FF    — gateway has nothing to offer us
+        // After FS N our remaining queue is empty and remote_no_messages=true,
+        // so our next send_turn emits FQ and breaks the loop.
+        let mut server = Vec::new();
+        server.extend_from_slice(b"[WL2K-5.0-B2FHM$]\rCMS>\r");
+        server.extend_from_slice(b"FS N\r");
+        server.extend_from_slice(b"FF\r");
+
+        let outbound_spy = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let stream = FakeAx25Stream {
+            inbound: std::io::Cursor::new(server),
+            outbound: outbound_spy.clone(),
+        };
+
+        let result = native_packet_exchange(
+            stream,
+            PacketConnectCtx {
+                base_mycall: "N7CPZ",
+                targetcall: "W7AUX",
+                password: None,
+                role: ExchangeRole::Dial,
+                locator: "CN87",
+            },
+            &mailbox,
+            &|_| {},
+            &|_| {},
+        );
+
+        match result {
+            Err(BackendError::MessageRejected(msg)) => {
+                assert!(
+                    msg.contains("REJECTME0001"),
+                    "MessageRejected must contain the MID; got: {msg:?}"
+                );
+            }
+            other => panic!("expected BackendError::MessageRejected, got {other:?}"),
+        }
     }
 
     // =========================================================================
