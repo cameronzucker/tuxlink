@@ -15,6 +15,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { saveDraft } from '../compose/useDraft';
 import type { ParsedMessage } from './types';
+import { sanitizeAttachmentName } from './sanitize';
 
 export type ReplyMode = 'reply' | 'replyAll' | 'forward' | 'replyWithForm';
 
@@ -78,7 +79,7 @@ function quoteSource(message: ParsedMessage): string {
 function attachmentsOmittedNote(message: ParsedMessage): string {
   if (message.attachments.length === 0) return '';
   const n = message.attachments.length;
-  const names = message.attachments.map((a) => a.filename).join(', ');
+  const names = message.attachments.map((a) => sanitizeAttachmentName(a.filename)).join(', ');
   return `\n\n[${n} attachment${n === 1 ? '' : 's'} from the original message ${
     n === 1 ? 'was' : 'were'
   } not carried into this forward (attachment forwarding arrives in v0.1): ${names}]`;

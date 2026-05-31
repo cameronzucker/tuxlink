@@ -23,6 +23,7 @@ import type { ParsedMessage, AttachmentMeta } from './types';
 import { useMessage, type MessageSelection } from './useMessage';
 import { asUiError, isNotConfigured } from './types';
 import { openReplyWindow, type ReplyMode } from './replyActions';
+import { sanitizeAttachmentName } from './sanitize';
 import { devFormMeta } from './devFixture';
 import { lookupForm, KeyValueView } from '../forms';
 
@@ -265,7 +266,7 @@ export function MessageViewLoaded({ message }: { message: ParsedMessage }) {
           <ul className="msg-attachment-list">
             {message.attachments.map((a: AttachmentMeta, i: number) => (
               <li key={i} className="msg-attachment-item">
-                <span className="msg-attachment-name">{a.filename}</span>
+                <span className="msg-attachment-name">{sanitizeAttachmentName(a.filename)}</span>
                 <span className="msg-attachment-size">{formatAttachSize(a.size)}</span>
               </li>
             ))}
