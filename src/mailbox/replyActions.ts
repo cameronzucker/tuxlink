@@ -16,7 +16,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { saveDraft } from '../compose/useDraft';
 import type { ParsedMessage } from './types';
 
-export type ReplyMode = 'reply' | 'replyAll' | 'forward';
+export type ReplyMode = 'reply' | 'replyAll' | 'forward' | 'replyWithForm';
 
 export interface DraftPrefill {
   /// Semicolon-separated recipients (matches the compose To field input format
@@ -24,6 +24,9 @@ export interface DraftPrefill {
   to: string;
   subject: string;
   body: string;
+  /** When set, opens compose in form-mode pre-populated with these fields. */
+  formId?: string;
+  formFields?: Record<string, string>;
 }
 
 const RE_PREFIX = /^re:\s*/i;
@@ -102,14 +105,45 @@ function forwardBody(message: ParsedMessage): string {
   return `\n\n${header}\n\n${quoteSource(message)}\n${attachmentsOmittedNote(message)}`;
 }
 
-/// Pure: derive the To / Subject / Body prefill for a reply, reply-all, or
-/// forward off a parsed message. No I/O.
+/// Pure: derive the To / Subject / Body prefill for a reply, reply-all,
+/// forward, or replyWithForm off a parsed message. No I/O.
 export function buildReplyDraft(message: ParsedMessage, mode: ReplyMode): DraftPrefill {
   if (mode === 'forward') {
     return {
       to: '',
       subject: FWD_PREFIX.test(message.subject) ? message.subject : `Fwd: ${message.subject}`,
       body: forwardBody(message),
+    };
+  }
+
+  if (mode === 'replyWithForm') {
+    // Only valid for messages that already carry a form payload.
+    if (!message.isForm || !message.formId || !message.formPayload) {
+      // Fall back to a plain reply if the original wasn't a parseable form.
+      return buildReplyDraft(message, 'reply');
+    }
+    // Sender↔recipient swap: original fm_name → new to_name; preserve
+    // subjectline + inc_name + isexercise.
+    const origFields: Record<string, string> = Object.fromEntries(message.formPayload.fields);
+    const fmName = origFields['fm_name'] ?? '';
+    const formFields: Record<string, string> = {
+      // Pre-populate with the swap (don't carry approval / message body —
+      // those are response-specific).
+      to_name: fmName,
+      inc_name: origFields['inc_name'] ?? '',
+      subjectline: origFields['subjectline']
+        ? RE_PREFIX.test(origFields['subjectline'])
+          ? origFields['subjectline']
+          : `Re: ${origFields['subjectline']}`
+        : '',
+      isexercise: origFields['isexercise'] ?? '',
+    };
+    return {
+      to: message.from,
+      subject: RE_PREFIX.test(message.subject) ? message.subject : `Re: ${message.subject}`,
+      body: '',
+      formId: message.formId,
+      formFields,
     };
   }
 
@@ -145,6 +179,8 @@ export async function openReplyWindow(message: ParsedMessage, mode: ReplyMode): 
     subject: prefill.subject,
     body: prefill.body,
     requestAck: false,
+    formId: prefill.formId,
+    formFields: prefill.formFields,
   });
   await invoke('compose_window_open', { draftId });
 }

@@ -90,24 +90,59 @@ describe('buildReplyDraft — body', () => {
   });
 });
 
-// Codex P2 (2026-05-20): the reader hides Winlink form XML behind a
+// Codex P2 (2026-05-20): the reader hides Winlink form payloads behind a
 // placeholder and never silently drops user data. Reply/Forward must honor
-// both — no raw form XML in the quote, and a visible note when a forward
-// cannot carry the original attachments (compose can't attach files in v0.0.1).
+// both — no rendered form content in the quote, and a visible note when a
+// forward cannot carry the original attachments (compose can't attach files
+// in v0.0.1).
 describe('buildReplyDraft — form + attachment safety', () => {
-  const FORM_XML = '<?xml version="1.0"?><RMS_Express_Form>SECRET-PAYLOAD</RMS_Express_Form>';
+  const FORM_BODY_RENDERED =
+    'GENERAL MESSAGE (ICS 213)\n1. Incident Name: WALDO\n4. Subject: REQUEST SUPPLIES';
+  const FORM_PAYLOAD = {
+    formId: 'ICS213_Initial',
+    formParameters: {
+      xmlFileVersion: '1.0',
+      rmsExpressVersion: 'Tuxlink/0.3.0',
+      submissionDatetime: '20260530143000',
+      sendersCallsign: 'N0CALL',
+      gridSquare: 'FM18',
+      displayForm: 'ICS213_Initial_Viewer.html',
+      replyTemplate: 'ICS213_SendReply.0',
+    },
+    fields: [
+      ['inc_name', 'WALDO'],
+      ['to_name', 'JOHN'],
+      ['fm_name', 'JANE'],
+      ['subjectline', 'REQUEST SUPPLIES'],
+      ['mdate', '2026-05-30'],
+      ['mtime', '14:30Z'],
+      ['message', 'Need bandages.'],
+    ] as [string, string][],
+  };
 
-  it('reply does not quote raw form XML; substitutes a safe placeholder', () => {
-    const body = buildReplyDraft(parsed({ isForm: true, body: FORM_XML }), 'reply').body;
-    expect(body).not.toContain('RMS_Express_Form');
-    expect(body).not.toContain('SECRET-PAYLOAD');
+  it('reply on a form does not quote the rendered body; substitutes a safe placeholder', () => {
+    const msg = parsed({
+      isForm: true,
+      body: FORM_BODY_RENDERED,
+      formId: 'ICS213_Initial',
+      formPayload: FORM_PAYLOAD,
+    });
+    const body = buildReplyDraft(msg, 'reply').body;
+    expect(body).not.toContain('GENERAL MESSAGE');
+    expect(body).not.toContain('WALDO');
     expect(body.toLowerCase()).toContain('form');
   });
 
-  it('forward does not include raw form XML', () => {
-    const body = buildReplyDraft(parsed({ isForm: true, body: FORM_XML }), 'forward').body;
-    expect(body).not.toContain('RMS_Express_Form');
-    expect(body).not.toContain('SECRET-PAYLOAD');
+  it('forward on a form does not include the rendered body', () => {
+    const msg = parsed({
+      isForm: true,
+      body: FORM_BODY_RENDERED,
+      formId: 'ICS213_Initial',
+      formPayload: FORM_PAYLOAD,
+    });
+    const body = buildReplyDraft(msg, 'forward').body;
+    expect(body).not.toContain('GENERAL MESSAGE');
+    expect(body).not.toContain('WALDO');
   });
 
   it('forward of a message WITH attachments adds a visible omitted-attachments note', () => {
@@ -149,5 +184,64 @@ describe('openReplyWindow', () => {
     expect(draft!.subject).toBe('Re: Net check-in');
     expect(draft!.body).toContain('> ');
     expect(draft!.requestAck).toBe(false);
+  });
+});
+
+describe("buildReplyDraft 'replyWithForm' mode", () => {
+  const FORM_PAYLOAD = {
+    formId: 'ICS213_Initial',
+    formParameters: {
+      xmlFileVersion: '1.0',
+      rmsExpressVersion: 'Tuxlink/0.3.0',
+      submissionDatetime: '20260530143000',
+      sendersCallsign: 'N5VSU',
+      gridSquare: 'EM15',
+      displayForm: 'ICS213_Initial_Viewer.html',
+      replyTemplate: 'ICS213_SendReply.0',
+    },
+    fields: [
+      ['inc_name', 'WALDO'],
+      ['to_name', 'James / WX4MTL'],
+      ['fm_name', 'Maria / N5VSU'],
+      ['subjectline', 'REQUEST SUPPLIES'],
+      ['mdate', '2026-05-30'],
+      ['mtime', '14:30Z'],
+      ['message', 'Need bandages.'],
+      ['isexercise', ''],
+    ] as [string, string][],
+  };
+
+  it('seeds the draft with the same formId for round-trip form composition', () => {
+    const msg = parsed({ isForm: true, formId: 'ICS213_Initial', formPayload: FORM_PAYLOAD });
+    const draft = buildReplyDraft(msg, 'replyWithForm');
+    expect(draft.formId).toBe('ICS213_Initial');
+  });
+
+  it('swaps fm_name into to_name and preserves inc_name + subjectline (with Re: prefix)', () => {
+    const msg = parsed({
+      isForm: true,
+      formId: 'ICS213_Initial',
+      formPayload: FORM_PAYLOAD,
+      subject: 'ICS-213 REQUEST',
+    });
+    const draft = buildReplyDraft(msg, 'replyWithForm');
+    expect(draft.formFields?.to_name).toBe('Maria / N5VSU');
+    expect(draft.formFields?.inc_name).toBe('WALDO');
+    expect(draft.formFields?.subjectline).toBe('Re: REQUEST SUPPLIES');
+  });
+
+  it('does not pre-populate message / approved_name fields (response-specific)', () => {
+    const msg = parsed({ isForm: true, formId: 'ICS213_Initial', formPayload: FORM_PAYLOAD });
+    const draft = buildReplyDraft(msg, 'replyWithForm');
+    expect(draft.formFields?.message).toBeUndefined();
+    expect(draft.formFields?.approved_name).toBeUndefined();
+  });
+
+  it("falls back to a plain reply when the source isn't a parseable form", () => {
+    const msg = parsed({ isForm: false });
+    const draft = buildReplyDraft(msg, 'replyWithForm');
+    // No formId set → plain reply path
+    expect(draft.formId).toBeUndefined();
+    expect(draft.formFields).toBeUndefined();
   });
 });
