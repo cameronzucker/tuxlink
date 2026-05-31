@@ -3,6 +3,7 @@ pub mod bootstrap;
 pub mod compose_window;
 pub mod config;
 pub mod consent_gate;
+pub mod forms;
 pub mod native_mailbox;
 pub mod position;
 pub mod search;
