@@ -19,9 +19,11 @@ import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { useQueryClient } from '@tanstack/react-query';
 import { MessageList } from '../mailbox/MessageList';
+import type { HighlightRange } from '../mailbox/MessageList';
 import { useMailbox } from '../mailbox/useMailbox';
 import { isNotConfigured } from '../mailbox/types';
-import type { MailboxFolder } from '../mailbox/types';
+import type { MailboxFolder, MessageMeta } from '../mailbox/types';
+import type { MessageMetaDto } from '../search/types';
 import { DEV_SELECTED } from '../mailbox/devFixture';
 import { FolderSidebar } from '../mailbox/FolderSidebar';
 import type { ConnectionKey } from '../mailbox/FolderSidebar';
@@ -69,6 +71,46 @@ export interface SelectedMessage {
   id: string;
 }
 
+/// Map a search-result DTO (camelCase, from Rust) to the MessageMeta shape
+/// used by MessageList. The DTO's `folder: string` is cast to MailboxFolder;
+/// callers are responsible for ensuring the backend only returns valid values.
+/// `preview` and `formTag` carry through when present.
+function dtoToMessageMeta(d: MessageMetaDto): MessageMeta {
+  return {
+    id: d.id,
+    subject: d.subject,
+    from: d.from,
+    to: d.to,
+    date: d.date,
+    unread: d.unread,
+    bodySize: d.bodySize,
+    hasAttachments: d.hasAttachments,
+    formTag: d.formTag,
+    // preview is absent from MessageMetaDto — leave undefined
+    folder: d.folder as MailboxFolder,
+  };
+}
+
+/// Build per-message highlight ranges from a free-text query token.
+/// Single-occurrence, first-token, case-insensitive (v0.1). Multi-token
+/// and multi-occurrence highlighting are a v0.2 follow-up.
+function computeHighlights(
+  items: MessageMetaDto[],
+  freeText: string | null,
+): Record<string, HighlightRange[]> {
+  if (!freeText || !freeText.trim()) return {};
+  const needle = freeText.trim().toLowerCase();
+  const out: Record<string, HighlightRange[]> = {};
+  for (const item of items) {
+    const subj = item.subject ?? '';
+    const idx = subj.toLowerCase().indexOf(needle);
+    if (idx >= 0) {
+      out[item.id] = [{ field: 'subject', start: idx, end: idx + needle.length }];
+    }
+  }
+  return out;
+}
+
 export function AppShell() {
   const [selectedFolder, setSelectedFolder] = useState<MailboxFolder>('inbox');
   // DEV_SELECTED is null outside the vite dev server, so this starts null (the
@@ -102,6 +144,35 @@ export function AppShell() {
   const inbox = useMailbox('inbox');
   const sent = useMailbox('sent');
   const notConnected = isNotConfigured(error);
+
+  // Search-result wiring (tuxlink-c7qz): when search is active, swap the
+  // folder-scoped messages for search results. When search is active but
+  // results haven't arrived yet (null), show an empty list — never fall back
+  // to folder contents while a search is running (that would be misleading).
+  const searchResultMessages = useMemo(
+    () =>
+      search.isActive
+        ? (search.results?.items ?? []).map(dtoToMessageMeta)
+        : null,
+    [search.isActive, search.results],
+  );
+
+  const searchHighlights = useMemo(
+    () =>
+      search.isActive
+        ? computeHighlights(search.results?.items ?? [], search.spec.free_text)
+        : undefined,
+    [search.isActive, search.results, search.spec.free_text],
+  );
+
+  // Show folder badges when search is cross-folder (no FOLDER chip applied).
+  const searchIsCrossFolder =
+    search.isActive &&
+    (!search.spec.filters.folder ||
+      (search.spec.filters.folder.kind === 'folder' &&
+        search.spec.filters.folder.value === 'all'));
+
+  const visibleMessages = searchResultMessages ?? messages;
 
   // Sidebar badges (mock B): Inbox = unread count ("3"), Sent = total ("87").
   const counts: Partial<Record<MailboxFolder, number>> = {
@@ -283,10 +354,12 @@ export function AppShell() {
         />
         <MessageList
           folder={selectedFolder}
-          messages={messages}
+          messages={visibleMessages}
           selectedId={selectedMessage?.id ?? null}
           onSelect={onSelectMessage}
-          notConnected={notConnected}
+          notConnected={search.isActive ? false : notConnected}
+          matchHighlights={searchHighlights}
+          showFolderTag={searchIsCrossFolder}
         />
         {(() => {
           if (selectedConnection === null) {
