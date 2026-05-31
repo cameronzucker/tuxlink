@@ -45,9 +45,14 @@ impl Index {
         Ok(Self { conn })
     }
 
+    /// DDL is wrapped in a transaction so a kill between CREATE statements and
+    /// the user_version pragma cannot leave the file at a partial-schema /
+    /// user_version=0 state that is recoverable only via manual delete.
     fn init_schema(conn: &Connection) -> Result<(), IndexError> {
         conn.execute_batch(
             r#"
+            BEGIN;
+
             CREATE VIRTUAL TABLE messages_fts USING fts5 (
                 mid               UNINDEXED,
                 folder            UNINDEXED,
@@ -81,8 +86,12 @@ impl Index {
             CREATE INDEX idx_meta_from      ON messages_meta(from_addr);
             CREATE INDEX idx_meta_form_type ON messages_meta(form_type);
             CREATE INDEX idx_meta_folder    ON messages_meta(folder);
+
+            COMMIT;
             "#,
         )?;
+        // PRAGMA user_version is set outside the transaction: some SQLite
+        // versions reject schema-version pragmas inside an explicit transaction.
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
         Ok(())
     }
