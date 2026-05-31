@@ -269,6 +269,7 @@ fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 
 /// Why a message could not be parsed from wire bytes.
 #[derive(Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ParseError {
     /// No blank line separated the header block from the body.
     NoHeaderTerminator,
@@ -278,6 +279,15 @@ pub enum ParseError {
     NonUtf8Header,
     /// The input ended before the whole body (per the `Body` header) was read.
     TruncatedBody,
+    /// A `File:` header value was not in `<size> <filename>` form, or `<size>`
+    /// did not parse as a usize.
+    MalformedFileHeader,
+    /// Expected a CRLF terminator between body and first attachment, or between
+    /// successive attachments, and the input was shorter.
+    MissingAttachmentTerminator,
+    /// `File:` header claimed N bytes for the attachment but the input ended
+    /// before N bytes could be read.
+    TruncatedAttachment,
 }
 
 #[cfg(test)]
