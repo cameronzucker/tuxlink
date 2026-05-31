@@ -239,6 +239,12 @@ describe('<ArdopDock> Send/Receive', () => {
     );
   });
 
+  it('does NOT render the Open WebGUI button when stopped (no running view at all)', () => {
+    mockUseModemStatus.mockReturnValue({ status: STOPPED, loading: false });
+    render(<ArdopDock />);
+    expect(screen.queryByRole('button', { name: /open webgui/i })).not.toBeInTheDocument();
+  });
+
   it('shows the in-flight "Exchanging…" label while the exchange is pending', async () => {
     // Hold the exchange promise open so the in-flight label is observable.
     // Capture the resolver via an outer object so TypeScript doesn't narrow
@@ -264,5 +270,107 @@ describe('<ArdopDock> Send/Receive', () => {
     });
     // Release the exchange so the test exits cleanly.
     pending.resolve(undefined);
+  });
+});
+
+describe('<ArdopDock> Open WebGUI (tuxlink-60wh)', () => {
+  it('renders an Open WebGUI button in the running state', () => {
+    mockUseModemStatus.mockReturnValue({ status: RUNNING_FIXTURE, loading: false });
+    render(<ArdopDock />);
+    expect(screen.getByRole('button', { name: /open webgui/i })).toBeInTheDocument();
+  });
+
+  it('does NOT render the Open WebGUI button in the stopped state', () => {
+    mockUseModemStatus.mockReturnValue({ status: STOPPED, loading: false });
+    render(<ArdopDock />);
+    expect(screen.queryByRole('button', { name: /open webgui/i })).not.toBeInTheDocument();
+  });
+
+  it('reads cmd_port from config and opens http://localhost:<cmd_port-1>/ when clicked', async () => {
+    // Default cmd_port=8515 → webgui_port=8514 per ardopcf convention.
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'config_get_ardop') {
+        return Promise.resolve({ cmd_port: 8515 });
+      }
+      return Promise.resolve(undefined);
+    });
+    const windowOpenSpy = vi
+      .spyOn(window, 'open')
+      .mockImplementation(() => null);
+
+    mockUseModemStatus.mockReturnValue({ status: RUNNING_FIXTURE, loading: false });
+    render(<ArdopDock />);
+    fireEvent.click(screen.getByRole('button', { name: /open webgui/i }));
+
+    await waitFor(() => {
+      expect(mockInvoke).toHaveBeenCalledWith('config_get_ardop');
+    });
+    await waitFor(() => {
+      expect(windowOpenSpy).toHaveBeenCalledWith('http://localhost:8514/', '_blank');
+    });
+
+    windowOpenSpy.mockRestore();
+  });
+
+  it('uses the operator-configured cmd_port (not a hardcoded 8514)', async () => {
+    // Operator overrides cmd_port=9001 → webgui_port=9000.
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'config_get_ardop') {
+        return Promise.resolve({ cmd_port: 9001 });
+      }
+      return Promise.resolve(undefined);
+    });
+    const windowOpenSpy = vi
+      .spyOn(window, 'open')
+      .mockImplementation(() => null);
+
+    mockUseModemStatus.mockReturnValue({ status: RUNNING_FIXTURE, loading: false });
+    render(<ArdopDock />);
+    fireEvent.click(screen.getByRole('button', { name: /open webgui/i }));
+
+    await waitFor(() => {
+      expect(windowOpenSpy).toHaveBeenCalledWith('http://localhost:9000/', '_blank');
+    });
+
+    windowOpenSpy.mockRestore();
+  });
+
+  it('surfaces an actionable error when cmd_port is too low to derive a webgui_port', async () => {
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'config_get_ardop') {
+        return Promise.resolve({ cmd_port: 1 });
+      }
+      return Promise.resolve(undefined);
+    });
+    const windowOpenSpy = vi
+      .spyOn(window, 'open')
+      .mockImplementation(() => null);
+
+    mockUseModemStatus.mockReturnValue({ status: RUNNING_FIXTURE, loading: false });
+    render(<ArdopDock />);
+    fireEvent.click(screen.getByRole('button', { name: /open webgui/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/cannot open webgui/i)).toBeInTheDocument();
+    });
+    // No URL was opened — the guard fired first.
+    expect(windowOpenSpy).not.toHaveBeenCalled();
+
+    windowOpenSpy.mockRestore();
+  });
+
+  it('surfaces a backend error in the dock error slot on config_get_ardop failure', async () => {
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'config_get_ardop') return Promise.reject('read config: file not found');
+      return Promise.resolve(undefined);
+    });
+    mockUseModemStatus.mockReturnValue({ status: RUNNING_FIXTURE, loading: false });
+    render(<ArdopDock />);
+    fireEvent.click(screen.getByRole('button', { name: /open webgui/i }));
+    await waitFor(() => {
+      expect(
+        screen.getByText(/failed to open webgui.*read config: file not found/i),
+      ).toBeInTheDocument();
+    });
   });
 });

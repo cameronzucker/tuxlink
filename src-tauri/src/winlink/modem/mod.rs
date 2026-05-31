@@ -86,4 +86,20 @@ pub trait ModemTransport: Send {
     fn drain_status_events(&mut self, _status: &mut crate::modem_status::ModemStatus) {
         // Default: no-op. Backends that emit live status events override.
     }
+
+    /// Return a cloneable side-channel writer that another thread can use to
+    /// inject an `ABORT`-style command while the main transport thread is
+    /// blocked inside [`connect_arq`]'s recv loop (tuxlink-o3f2 — P1
+    /// abort-during-connect fix).
+    ///
+    /// The default impl returns `None` — backends that don't support
+    /// side-channel abort fall back to whatever in-line cancellation they
+    /// can offer. The ARDOP transport overrides this to expose a
+    /// [`std::net::TcpStream`] clone of its cmd-socket write half so
+    /// `ModemSession::abort_in_flight` can write `ABORT\r` and unblock the
+    /// `arq_connect` recv loop (ardopcf responds with `FAULT`/`NEWSTATE
+    /// DISC`, which the cmd reader thread delivers via the channel).
+    fn try_clone_abort_writer(&self) -> Option<std::net::TcpStream> {
+        None
+    }
 }

@@ -66,7 +66,27 @@ pub fn modem_get_status_inner(session: &Arc<ModemSession>) -> ModemStatus {
 /// AFTER the session mutex is released. Holding the lock across the modem
 /// disconnect I/O (TCP DISCONNECT + DISCONNECTED ack, bounded by 5s) would
 /// stall any concurrent `status_snapshot` call for the duration.
+///
+/// tuxlink-o3f2 (P1 abort-during-connect): FIRST step is a best-effort
+/// `abort_in_flight()` that side-channels `ABORT\r` to ardopcf via the
+/// cmd-socket writer installed at connect time. If a connect is currently
+/// blocking inside `arq_connect`'s recv loop, ardopcf responds to ABORT
+/// with `FAULT` / `NEWSTATE DISC`, the cmd reader thread delivers it via
+/// the channel, the recv loop returns `Err(SessionError::Fault(...))`,
+/// and the connect path unwinds cleanly. If no connect is in flight,
+/// `abort_in_flight` is harmless: ABORT on an idle TNC is a no-op
+/// (ardopcf documents it as "immediate interrupt of any in-flight TX").
+/// If no writer is installed (transport was never connected, or session
+/// already reset), `abort_in_flight` returns `Err` and we fall through to
+/// the existing graceful disconnect path.
 pub fn modem_ardop_disconnect_inner(session: &Arc<ModemSession>) -> Result<(), String> {
+    // tuxlink-o3f2: best-effort abort of any in-flight connect_arq. The
+    // _ discard is deliberate — if the writer is missing or the write
+    // fails, the fall-through reset_to_stopped + transport.disconnect
+    // path will still surface a clean Stopped state. Documented behavior:
+    // ABORT on an idle TNC is a no-op, so it's safe to call unconditionally.
+    let _ = session.abort_in_flight();
+
     if let Some(mut transport) = session.reset_to_stopped() {
         // Best-effort: even if disconnect errors, the session is already
         // marked Stopped so reconnects are possible. The TNC process (when
@@ -191,16 +211,8 @@ where
     // (Naming the function `_post_consume` is the discipline contract.)
 
     // ─── Translate ArdopUiConfig (frontend) → ArdopConfig (backend) ─────
-    // ardopcf's positional CLI is `ardopcf [-p <ptt>] <cmd_port> <capture> <playback>`.
-    // The PTT flag, when present, must precede the positional triple.
-    let mut extra_args: Vec<String> = Vec::with_capacity(5);
-    if let Some(ref ptt) = ardop_ui.ptt_serial_path {
-        extra_args.push("-p".into());
-        extra_args.push(ptt.clone());
-    }
-    extra_args.push(ardop_ui.cmd_port.to_string());
-    extra_args.push(ardop_ui.capture_device.clone());
-    extra_args.push(ardop_ui.playback_device.clone());
+    // See `build_ardop_extra_args` — extracted for unit testing.
+    let extra_args = build_ardop_extra_args(ardop_ui);
 
     let cfg = ArdopConfig {
         binary: PathBuf::from(&ardop_ui.binary),
@@ -245,6 +257,24 @@ where
         return Err(msg);
     }
 
+    // tuxlink-o3f2: install the side-channel abort writer BEFORE the
+    // blocking `connect_arq` begins. While the recv loop inside
+    // `arq_connect` holds the transport on its stack, the operator's
+    // Disconnect button calls `modem_ardop_disconnect_inner` → which calls
+    // `session.abort_in_flight()` → which writes `ABORT\r` to ardopcf via
+    // this writer. The recv loop then surfaces FAULT/NEWSTATE DISC and
+    // returns Err, unwinding the connect path. Without this hook the
+    // 120s `CONNECT_DEADLINE` was the only abort path — see the
+    // 2026-05-22 runaway-connect incident (memory radio1-bounded-airtime-abort).
+    //
+    // If the backend can't expose a writer (default trait impl returns
+    // None), the install is silently skipped: graceful disconnect remains
+    // the only path. For ardopcf the writer is always available after
+    // init() succeeds.
+    if let Some(writer) = transport.try_clone_abort_writer() {
+        session.install_abort_writer(writer);
+    }
+
     // Status: Connecting (bounded by CONNECT_DEADLINE below).
     let mut snap = session.status_snapshot();
     snap.state = ModemState::Connecting;
@@ -280,22 +310,36 @@ where
 /// Build the [`InitConfig`] passed to `ModemTransport::init` from the
 /// operator's persisted identity config. Pulls `mycall` from
 /// `identity.callsign` (CMS path) or `identity.identifier` (offline path),
-/// and `gridsquare` from `identity.grid` (defaulting to `"AA00"` when no
-/// grid is set — the ARDOP TNC requires a non-empty value but the broadcast
-/// precision gate happens upstream in the position layer).
+/// `gridsquare` from `identity.grid` (defaulting to `"AA00"` when no grid
+/// is set — the ARDOP TNC requires a non-empty value but the broadcast
+/// precision gate happens upstream in the position layer), and the ARQ
+/// bandwidth from `modem_ardop.bandwidth_hz` (tuxlink-j0ij).
+///
+/// **Bandwidth validation:** the Settings panel constrains the dropdown to
+/// {200, 500, 1000, 2000}, but the persisted JSON could be hand-edited
+/// off-app, so this function defends in depth: any other value is logged
+/// to stderr and dropped to None (let ardopcf use its default) rather than
+/// passed through and rejected by ardopcf at init time.
 fn init_config_from_persisted_config() -> InitConfig {
-    let (mycall, grid) = config::read_config()
-        .map(|c| {
-            // Prefer callsign (CMS path); fall back to identifier (offline path).
+    let cfg = config::read_config().ok();
+    let (mycall, grid, arq_bandwidth_hz) = match &cfg {
+        Some(c) => {
             let call = c
                 .identity
                 .callsign
                 .clone()
                 .or_else(|| c.identity.identifier.clone())
                 .unwrap_or_default();
-            (call, c.identity.grid.unwrap_or_default())
-        })
-        .unwrap_or_default();
+            let grid = c.identity.grid.clone().unwrap_or_default();
+            let bw = c
+                .modem_ardop
+                .as_ref()
+                .and_then(|a| a.bandwidth_hz)
+                .and_then(validate_arq_bandwidth_hz);
+            (call, grid, bw)
+        }
+        None => (String::new(), String::new(), None),
+    };
 
     // ARDOP requires a non-empty grid; "AA00" is the canonical placeholder
     // (also wl2k-go's fallback). Operators who care about grid accuracy
@@ -310,6 +354,82 @@ fn init_config_from_persisted_config() -> InitConfig {
         mycall,
         gridsquare,
         arq_timeout_s: ARQ_TIMEOUT_SECS,
+        arq_bandwidth_hz,
+    }
+}
+
+/// Build the `extra_args` vector passed to `ArdopConfig` (the ardopcf CLI).
+///
+/// ardopcf's positional CLI is:
+/// ```text
+/// ardopcf [-p <ptt>] [-G <webgui_port>] <cmd_port> <capture> <playback>
+/// ```
+///
+/// Optional flags (in this order) precede the positional triple:
+///
+/// - **`-p <ptt>`** — only when `ardop_ui.ptt_serial_path` is `Some(non_empty)`.
+///   RTS PTT via the named serial port. ardopcf rejects an empty value, so we
+///   filter empty strings here defensively.
+/// - **`-G <webgui_port>`** — tuxlink-60wh: enable ardopcf's built-in WebGUI
+///   (Spectrum + Waterfall + level meters) so the operator can open it in
+///   their browser via the dock's "Open WebGUI" button. The port follows
+///   ardopcf's documented convention `webgui_port = cmd_port - 1` (default
+///   8515 → 8514). The flag is omitted when `cmd_port < 2` (no valid TCP
+///   port can be derived); `0` is reserved and `1` is too low to bind in
+///   practice. The omission is a safe default — ardopcf simply runs
+///   without a WebGUI when `-G` is absent.
+///
+/// Pure over `&ArdopUiConfig` so unit tests can assert the exact argv shape
+/// without spawning a real process.
+pub(crate) fn build_ardop_extra_args(ardop_ui: &ArdopUiConfig) -> Vec<String> {
+    // Capacity covers worst case: -p <ptt> -G <wg> <cmd> <cap> <play> = 7.
+    let mut extra_args: Vec<String> = Vec::with_capacity(7);
+
+    if let Some(ref ptt) = ardop_ui.ptt_serial_path {
+        if !ptt.is_empty() {
+            extra_args.push("-p".into());
+            extra_args.push(ptt.clone());
+        }
+    }
+
+    // tuxlink-60wh: spawn ardopcf with its built-in WebGUI on the conventional
+    // port (cmd_port - 1). Operator opens it via the dock's "Open WebGUI"
+    // button which targets `http://localhost:<webgui_port>/` — Spectrum,
+    // Waterfall, audio level meters, TX/RX indicators, test-tone trigger.
+    // Guard: cmd_port must be >= 2 so the derived webgui_port is a valid
+    // bindable TCP port (>= 1). The default cmd_port is 8515 → 8514.
+    if ardop_ui.cmd_port >= 2 {
+        let webgui_port = ardop_ui.cmd_port - 1;
+        extra_args.push("-G".into());
+        extra_args.push(webgui_port.to_string());
+    }
+
+    extra_args.push(ardop_ui.cmd_port.to_string());
+    extra_args.push(ardop_ui.capture_device.clone());
+    extra_args.push(ardop_ui.playback_device.clone());
+
+    extra_args
+}
+
+/// Validate a persisted ARQ bandwidth value (tuxlink-j0ij). ardopcf accepts
+/// exactly {200, 500, 1000, 2000} Hz for `ARQBW`. The Settings dropdown
+/// constrains user input to these values, so a value OUTSIDE this set in
+/// the persisted config indicates either a stale value from a future
+/// ardopcf release, a hand-edited config, or a frontend bug — in any case,
+/// the safe degradation is "drop to None and let ardopcf pick its default."
+///
+/// Logs the dropped value to stderr so a session-end review can spot the
+/// drift. Returns Some(bw) when the value is valid, None otherwise.
+fn validate_arq_bandwidth_hz(bw: u32) -> Option<u32> {
+    match bw {
+        200 | 500 | 1000 | 2000 => Some(bw),
+        invalid => {
+            eprintln!(
+                "tuxlink-j0ij: ignoring invalid persisted bandwidth_hz={invalid}; \
+                 valid: 200/500/1000/2000"
+            );
+            None
+        }
     }
 }
 
@@ -545,9 +665,28 @@ mod tests {
     use super::*;
     use crate::config::CONFIG_SCHEMA_VERSION;
     use crate::modem_status::ModemState;
+    use std::sync::Mutex;
+
+    /// Serializes tests that mutate the process-global TUXLINK_CONFIG_DIR env
+    /// var. `std::env::set_var` is not thread-safe under parallel test
+    /// execution (cargo runs tests in a thread pool by default), so each test
+    /// that touches the env grabs this mutex for the duration of its
+    /// set→read→restore sequence. Without this gate, `init_config_from_...`
+    /// tests would race with `round_trip_persists_through_config` and other
+    /// concurrent env mutators in the same binary, sometimes reading from a
+    /// neighbor's tempdir or no dir at all (tuxlink-j0ij).
+    fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: Mutex<()> = Mutex::new(());
+        // unwrap_or_else: if a previous test panicked while holding the lock,
+        // the mutex is poisoned but the env state is still well-defined for
+        // the next test (each test fully restores its env in a deferred-style
+        // tail). Recover and proceed.
+        LOCK.lock().unwrap_or_else(|e| e.into_inner())
+    }
 
     #[test]
     fn round_trip_persists_through_config() {
+        let _env_guard = env_lock();
         // Isolate this test from the operator's real config by pointing
         // TUXLINK_CONFIG_DIR at a fresh tempdir. `config_path()` will resolve
         // to `<tmpdir>/config.json` (per config.rs §294).
@@ -588,6 +727,7 @@ mod tests {
             playback_device: "plughw:0,0".into(),
             ptt_serial_path: None,
             cmd_port: 8515,
+            bandwidth_hz: None,
         };
         config_set_ardop(initial.clone()).expect("config_set_ardop must succeed");
         let read = config_get_ardop();
@@ -691,6 +831,7 @@ mod tests {
             playback_device: "plughw:0,0".into(),
             ptt_serial_path: None,
             cmd_port: 8515,
+            bandwidth_hz: None,
         }
     }
 
@@ -896,6 +1037,235 @@ mod tests {
         );
     }
 
+    // ── tuxlink-o3f2: abort-during-connect side channel ──────────────────
+
+    use crate::winlink::modem::ardop::session::SessionError as ArdopSessionError;
+    use std::io::Read;
+    use std::net::{TcpListener, TcpStream};
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    /// Stub transport that:
+    /// - exposes `try_clone_abort_writer` returning a clone of a `TcpStream`
+    ///   connected to a `TcpListener` we own in the test, so the test can
+    ///   observe the side-channel ABORT bytes;
+    /// - `connect_arq` blocks until `abort_signal` flips to true (the test
+    ///   sets it from a watcher thread that reads from the listener and
+    ///   asserts on the bytes).
+    ///
+    /// Used to prove that `modem_ardop_disconnect_inner` aborts an in-flight
+    /// `connect_arq` via the side channel, not by holding the transport
+    /// mutex (which during connect_arq is `None` from the session's POV).
+    struct AbortableStubTransport {
+        abort_writer: Option<TcpStream>,
+        abort_signal: Arc<AtomicBool>,
+    }
+
+    impl AbortableStubTransport {
+        fn new(abort_writer: TcpStream, abort_signal: Arc<AtomicBool>) -> Self {
+            Self {
+                abort_writer: Some(abort_writer),
+                abort_signal,
+            }
+        }
+    }
+
+    impl ModemTransport for AbortableStubTransport {
+        fn init(&mut self, _cfg: &InitConfig) -> Result<(), ArdopSessionError> {
+            Ok(())
+        }
+        fn connect_arq(
+            &mut self,
+            _target: &str,
+            _repeat: u32,
+            deadline: Duration,
+        ) -> Result<crate::winlink::modem::ConnectInfo, ArdopSessionError> {
+            // Spin (bounded by deadline) until abort_signal flips. In
+            // production this loop is the real `arq_connect` recv loop;
+            // here the signal stands in for "ardopcf emitted FAULT/DISC in
+            // response to ABORT and the cmd reader thread delivered it."
+            let start = std::time::Instant::now();
+            while !self.abort_signal.load(Ordering::Acquire) {
+                if start.elapsed() >= deadline {
+                    return Err(ArdopSessionError::Timeout {
+                        cmd: "ARQCALL".into(),
+                    });
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            Err(ArdopSessionError::Fault("aborted via side channel".into()))
+        }
+        fn disconnect(&mut self, _deadline: Duration) -> Result<(), ArdopSessionError> {
+            Ok(())
+        }
+        fn data_stream(
+            &mut self,
+        ) -> std::io::Result<&mut dyn crate::winlink::modem::ReadWrite> {
+            Err(std::io::Error::other("stub"))
+        }
+        fn try_clone_abort_writer(&self) -> Option<TcpStream> {
+            self.abort_writer.as_ref().and_then(|s| s.try_clone().ok())
+        }
+    }
+
+    /// Spawn a TCP listener and return `(addr, server_thread_handle, abort_signal)`.
+    /// The server thread reads bytes; when it sees `ABORT\r` it flips
+    /// `abort_signal` to true and exits. The signal is the test's hook to
+    /// unblock the connect stub.
+    fn spawn_abort_listener() -> (std::net::SocketAddr, std::thread::JoinHandle<Vec<u8>>, Arc<AtomicBool>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let abort_signal = Arc::new(AtomicBool::new(false));
+        let signal_for_thread = abort_signal.clone();
+        let handle = std::thread::spawn(move || {
+            let (mut conn, _peer) = listener.accept().unwrap();
+            conn.set_read_timeout(Some(Duration::from_secs(5))).ok();
+            let mut accumulated = Vec::new();
+            let mut buf = [0u8; 64];
+            loop {
+                match conn.read(&mut buf) {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => {
+                        accumulated.extend_from_slice(&buf[..n]);
+                        if accumulated.windows(6).any(|w| w == b"ABORT\r") {
+                            signal_for_thread.store(true, Ordering::Release);
+                            break;
+                        }
+                    }
+                }
+            }
+            accumulated
+        });
+        (addr, handle, abort_signal)
+    }
+
+    /// End-to-end abort-during-connect: the connect call runs on one
+    /// thread, blocking inside `connect_arq` (stub spins until aborted).
+    /// On another thread we call `modem_ardop_disconnect_inner`, which
+    /// MUST send ABORT via the session's side-channel writer; the listener
+    /// observes the bytes and flips the signal that lets `connect_arq`
+    /// return. Connect returns Err promptly (well under the 120s deadline)
+    /// rather than running to deadline.
+    ///
+    /// This is the regression test for the 2026-05-22 runaway-connect
+    /// incident — the proof that the operator's Disconnect button can
+    /// halt an in-flight connect in seconds, not minutes.
+    #[test]
+    fn disconnect_aborts_in_flight_connect_via_side_channel() {
+        let (addr, listener_handle, abort_signal) = spawn_abort_listener();
+
+        // Client end of the loopback pair — this is what
+        // `try_clone_abort_writer` will hand back via the stub.
+        let abort_writer = TcpStream::connect(addr).expect("connect to abort listener");
+
+        let session = Arc::new(ModemSession::new());
+        let token = session.mint_consent_token();
+
+        // Run the connect call on a worker thread so the test thread can
+        // call disconnect in parallel.
+        let session_for_connect = session.clone();
+        let abort_signal_for_stub = abort_signal.clone();
+        let connect_thread = std::thread::spawn(move || {
+            modem_ardop_connect_gated_with_factory(
+                &session_for_connect,
+                "W7RMS-10",
+                &token,
+                &test_ardop_ui_config(),
+                move |_cfg, _target| {
+                    Ok(Box::new(AbortableStubTransport::new(
+                        abort_writer,
+                        abort_signal_for_stub,
+                    )) as Box<dyn ModemTransport>)
+                },
+            )
+        });
+
+        // Wait until the connect path has progressed past install_abort_writer
+        // (status flips to Connecting AFTER the install). Poll briefly.
+        let start = std::time::Instant::now();
+        loop {
+            let st = session.status_snapshot().state;
+            if matches!(st, ModemState::Connecting) {
+                break;
+            }
+            if start.elapsed() >= Duration::from_secs(5) {
+                panic!("status never reached Connecting (state={st:?})");
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+
+        // Now hit Disconnect. This must (a) write ABORT via the side
+        // channel and (b) return promptly. The connect thread sees the
+        // signal, returns Err, and joins.
+        let disconnect_start = std::time::Instant::now();
+        modem_ardop_disconnect_inner(&session).expect("disconnect must succeed");
+        let disconnect_elapsed = disconnect_start.elapsed();
+        assert!(
+            disconnect_elapsed < Duration::from_secs(2),
+            "disconnect must return promptly; took {disconnect_elapsed:?}"
+        );
+
+        // The connect call should have returned Err once the stub saw the
+        // signal flip. Bound the wait so a regression fails the test
+        // instead of hanging.
+        let connect_result = connect_thread
+            .join()
+            .expect("connect thread must not panic");
+        assert!(
+            connect_result.is_err(),
+            "connect must return Err after ABORT signal; got: {connect_result:?}"
+        );
+
+        // The listener thread received the side-channel bytes.
+        let received = listener_handle.join().expect("listener thread must not panic");
+        assert!(
+            received.windows(6).any(|w| w == b"ABORT\r"),
+            "abort listener must have received ABORT\\r; got: {received:?}"
+        );
+
+        // Signal flipped means abort_in_flight delivered the line.
+        assert!(
+            abort_signal.load(Ordering::Acquire),
+            "abort signal must be set"
+        );
+
+        // Session state: the disconnect path reset to Stopped, then the
+        // connect thread's error handler ran (because connect_arq returned
+        // Err after the abort signal) and set state to Error. Either
+        // terminal is acceptable as a "no longer Connecting" outcome —
+        // the load-bearing assertion is the prompt disconnect above. We
+        // explicitly assert NOT-Connecting and NOT-ConnectedIrs/Iss so a
+        // regression that leaves the session stuck mid-flow fails loudly.
+        let final_state = session.status_snapshot().state;
+        assert!(
+            matches!(final_state, ModemState::Stopped | ModemState::Error),
+            "session must end Stopped or Error after abort-driven disconnect; got: {final_state:?}"
+        );
+    }
+
+    /// `modem_ardop_disconnect_inner` must call `abort_in_flight` BEFORE
+    /// any reset/transport teardown — best-effort, ignore-error. If no
+    /// writer is installed (e.g. transport was never connected), the call
+    /// is a no-op and the existing graceful path still runs.
+    ///
+    /// This test directly exercises the disconnect ordering: install a
+    /// writer pointing at a local listener, call disconnect, observe the
+    /// ABORT bytes on the listener side.
+    #[test]
+    fn disconnect_in_flight_sends_abort_via_side_channel() {
+        let (addr, listener_handle, _signal) = spawn_abort_listener();
+        let writer = TcpStream::connect(addr).expect("connect to abort listener");
+        let session = Arc::new(ModemSession::new());
+        session.install_abort_writer(writer);
+
+        modem_ardop_disconnect_inner(&session).expect("disconnect must succeed");
+
+        let received = listener_handle.join().expect("listener thread must not panic");
+        assert!(
+            received.windows(6).any(|w| w == b"ABORT\r"),
+            "disconnect must send ABORT via the side channel; got: {received:?}"
+        );
+    }
+
     #[test]
     fn check_identity_present_err_when_both_whitespace_only() {
         // Defense-in-depth: if a caller hand-constructs a Config in-memory
@@ -926,5 +1296,279 @@ mod tests {
             modem_ardop: None,
         };
         assert!(check_identity_present(&cfg).is_err());
+    }
+
+    // ── tuxlink-j0ij: bandwidth validation + plumb-through tests ──────────
+
+    #[test]
+    fn validate_arq_bandwidth_hz_accepts_the_four_valid_values() {
+        assert_eq!(validate_arq_bandwidth_hz(200), Some(200));
+        assert_eq!(validate_arq_bandwidth_hz(500), Some(500));
+        assert_eq!(validate_arq_bandwidth_hz(1000), Some(1000));
+        assert_eq!(validate_arq_bandwidth_hz(2000), Some(2000));
+    }
+
+    #[test]
+    fn validate_arq_bandwidth_hz_drops_invalid_values_to_none() {
+        // ardopcf only documents {200, 500, 1000, 2000}; any other value is a
+        // stale persist / hand-edit / forward-schema drift — drop to None so
+        // ardopcf's default takes over rather than failing init.
+        assert_eq!(validate_arq_bandwidth_hz(0), None);
+        assert_eq!(validate_arq_bandwidth_hz(100), None);
+        assert_eq!(validate_arq_bandwidth_hz(750), None);
+        assert_eq!(validate_arq_bandwidth_hz(2500), None);
+        assert_eq!(validate_arq_bandwidth_hz(u32::MAX), None);
+    }
+
+    /// `init_config_from_persisted_config` must plumb a valid persisted
+    /// `bandwidth_hz` through to the resulting `InitConfig.arq_bandwidth_hz`.
+    /// Uses TUXLINK_CONFIG_DIR isolation (same pattern as
+    /// round_trip_persists_through_config).
+    #[test]
+    fn init_config_from_persisted_config_passes_through_valid_bandwidth() {
+        let _env_guard = env_lock();
+        let tmp = tempfile::tempdir().expect("create tempdir");
+        let prior = std::env::var("TUXLINK_CONFIG_DIR").ok();
+        // SAFETY: env_lock above serializes against other env-mutating tests.
+        unsafe { std::env::set_var("TUXLINK_CONFIG_DIR", tmp.path()); }
+
+        let seed = format!(
+            r#"{{
+                "schema_version": {ver},
+                "wizard_completed": true,
+                "connect": {{ "connect_to_cms": false, "transport": "Telnet" }},
+                "identity": {{ "callsign": null, "identifier": "W1TEST", "grid": "CN87" }},
+                "privacy": {{ "gps_state": "Off", "position_precision": "FourCharGrid" }},
+                "modem_ardop": {{
+                    "binary": "ardopcf",
+                    "capture_device": "plughw:1,0",
+                    "playback_device": "plughw:1,0",
+                    "cmd_port": 8515,
+                    "bandwidth_hz": 500
+                }}
+            }}"#,
+            ver = CONFIG_SCHEMA_VERSION,
+        );
+        std::fs::write(tmp.path().join("config.json"), seed)
+            .expect("seed config.json into tempdir");
+
+        let init_cfg = init_config_from_persisted_config();
+        assert_eq!(init_cfg.arq_bandwidth_hz, Some(500));
+        assert_eq!(init_cfg.mycall, "W1TEST");
+        assert_eq!(init_cfg.gridsquare, "CN87");
+
+        // Restore env (best-effort).
+        // SAFETY: symmetric with the set_var above; single-threaded test.
+        unsafe {
+            match prior {
+                Some(v) => std::env::set_var("TUXLINK_CONFIG_DIR", v),
+                None => std::env::remove_var("TUXLINK_CONFIG_DIR"),
+            }
+        }
+    }
+
+    /// A hand-edited (or stale) `bandwidth_hz` outside the valid set drops
+    /// to None — ardopcf's default takes over. Defense-in-depth against the
+    /// Settings dropdown being bypassed.
+    #[test]
+    fn init_config_from_persisted_config_drops_invalid_bandwidth() {
+        let _env_guard = env_lock();
+        let tmp = tempfile::tempdir().expect("create tempdir");
+        let prior = std::env::var("TUXLINK_CONFIG_DIR").ok();
+        // SAFETY: env_lock serializes env-mutating tests.
+        unsafe { std::env::set_var("TUXLINK_CONFIG_DIR", tmp.path()); }
+
+        let seed = format!(
+            r#"{{
+                "schema_version": {ver},
+                "wizard_completed": true,
+                "connect": {{ "connect_to_cms": false, "transport": "Telnet" }},
+                "identity": {{ "callsign": null, "identifier": "W1TEST", "grid": null }},
+                "privacy": {{ "gps_state": "Off", "position_precision": "FourCharGrid" }},
+                "modem_ardop": {{
+                    "binary": "ardopcf",
+                    "capture_device": "plughw:1,0",
+                    "playback_device": "plughw:1,0",
+                    "cmd_port": 8515,
+                    "bandwidth_hz": 750
+                }}
+            }}"#,
+            ver = CONFIG_SCHEMA_VERSION,
+        );
+        std::fs::write(tmp.path().join("config.json"), seed)
+            .expect("seed config.json into tempdir");
+
+        let init_cfg = init_config_from_persisted_config();
+        assert_eq!(
+            init_cfg.arq_bandwidth_hz, None,
+            "invalid bandwidth_hz=750 must drop to None (defense in depth — tuxlink-j0ij)"
+        );
+
+        // SAFETY: symmetric with set_var above.
+        unsafe {
+            match prior {
+                Some(v) => std::env::set_var("TUXLINK_CONFIG_DIR", v),
+                None => std::env::remove_var("TUXLINK_CONFIG_DIR"),
+            }
+        }
+    }
+
+    // ── tuxlink-60wh: -G WebGUI flag in ardopcf extra_args ───────────────
+
+    #[test]
+    fn extra_args_includes_g_webgui_flag_with_cmd_port_minus_one() {
+        // Default cmd_port = 8515 → webgui_port = 8514. The `-G 8514` pair
+        // must appear AFTER any `-p` PTT flag (or first when PTT is None)
+        // and BEFORE the positional triple (cmd_port / capture / playback).
+        let cfg = ArdopUiConfig {
+            binary: "ardopcf".into(),
+            capture_device: "plughw:1,0".into(),
+            playback_device: "plughw:1,0".into(),
+            ptt_serial_path: None,
+            cmd_port: 8515,
+            bandwidth_hz: None,
+        };
+        let args = build_ardop_extra_args(&cfg);
+        assert_eq!(
+            args,
+            vec![
+                "-G".to_string(),
+                "8514".to_string(),
+                "8515".to_string(),
+                "plughw:1,0".to_string(),
+                "plughw:1,0".to_string(),
+            ],
+            "argv order must be: -G <wg> <cmd> <capture> <playback>"
+        );
+    }
+
+    #[test]
+    fn extra_args_g_webgui_flag_uses_dynamic_cmd_port_minus_one() {
+        // Operator may override cmd_port via Settings; webgui_port follows
+        // ardopcf's documented convention `cmd_port - 1`.
+        let cfg = ArdopUiConfig {
+            binary: "ardopcf".into(),
+            capture_device: "plughw:0,0".into(),
+            playback_device: "plughw:0,0".into(),
+            ptt_serial_path: None,
+            cmd_port: 9001,
+            bandwidth_hz: None,
+        };
+        let args = build_ardop_extra_args(&cfg);
+        assert!(
+            args.windows(2).any(|w| w[0] == "-G" && w[1] == "9000"),
+            "expected `-G 9000` pair for cmd_port=9001; got: {args:?}"
+        );
+    }
+
+    #[test]
+    fn extra_args_omits_g_when_cmd_port_too_low_to_compute() {
+        // Edge case: cmd_port=1 would yield webgui_port=0 (invalid). The
+        // guard drops `-G` entirely; ardopcf runs without a WebGUI rather
+        // than failing to bind. cmd_port=0 likewise.
+        for low_port in [0u16, 1u16] {
+            let cfg = ArdopUiConfig {
+                binary: "ardopcf".into(),
+                capture_device: "plughw:0,0".into(),
+                playback_device: "plughw:0,0".into(),
+                ptt_serial_path: None,
+                cmd_port: low_port,
+                bandwidth_hz: None,
+            };
+            let args = build_ardop_extra_args(&cfg);
+            assert!(
+                !args.iter().any(|a| a == "-G"),
+                "cmd_port={low_port}: -G must be omitted; got: {args:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn extra_args_preserves_ptt_p_flag_before_g_and_positional() {
+        // Regression: tuxlink-60wh refactor extracted extra_args into a
+        // helper. Make sure the PTT plumbing still works AND appears in
+        // the right order: -p <ptt> -G <wg> <cmd> <capture> <playback>.
+        let cfg = ArdopUiConfig {
+            binary: "ardopcf".into(),
+            capture_device: "plughw:1,0".into(),
+            playback_device: "plughw:1,0".into(),
+            ptt_serial_path: Some("/dev/ttyUSB0".into()),
+            cmd_port: 8515,
+            bandwidth_hz: None,
+        };
+        let args = build_ardop_extra_args(&cfg);
+        assert_eq!(
+            args,
+            vec![
+                "-p".to_string(),
+                "/dev/ttyUSB0".to_string(),
+                "-G".to_string(),
+                "8514".to_string(),
+                "8515".to_string(),
+                "plughw:1,0".to_string(),
+                "plughw:1,0".to_string(),
+            ],
+            "argv order must be: -p <ptt> -G <wg> <cmd> <capture> <playback>"
+        );
+    }
+
+    #[test]
+    fn extra_args_omits_p_flag_when_ptt_serial_path_empty_string() {
+        // Defense in depth: ardopcf rejects `-p ""`. If a stale config or
+        // hand-edited JSON yields Some("") (the serde validator should
+        // normalize this, but tests construct in-memory configs directly),
+        // the helper drops the flag rather than passing an invalid value.
+        let cfg = ArdopUiConfig {
+            binary: "ardopcf".into(),
+            capture_device: "plughw:1,0".into(),
+            playback_device: "plughw:1,0".into(),
+            ptt_serial_path: Some("".into()),
+            cmd_port: 8515,
+            bandwidth_hz: None,
+        };
+        let args = build_ardop_extra_args(&cfg);
+        assert!(
+            !args.iter().any(|a| a == "-p"),
+            "empty PTT path must drop the -p flag; got: {args:?}"
+        );
+    }
+
+    /// When the persisted config has no `modem_ardop` section, the
+    /// `InitConfig.arq_bandwidth_hz` must be None — ardopcf's default takes
+    /// over. This is the migration path: pre-j0ij configs still init.
+    #[test]
+    fn init_config_from_persisted_config_yields_none_bandwidth_when_modem_ardop_absent() {
+        let _env_guard = env_lock();
+        let tmp = tempfile::tempdir().expect("create tempdir");
+        let prior = std::env::var("TUXLINK_CONFIG_DIR").ok();
+        // SAFETY: env_lock serializes env-mutating tests.
+        unsafe { std::env::set_var("TUXLINK_CONFIG_DIR", tmp.path()); }
+
+        let seed = format!(
+            r#"{{
+                "schema_version": {ver},
+                "wizard_completed": true,
+                "connect": {{ "connect_to_cms": false, "transport": "Telnet" }},
+                "identity": {{ "callsign": null, "identifier": "W1TEST", "grid": null }},
+                "privacy": {{ "gps_state": "Off", "position_precision": "FourCharGrid" }}
+            }}"#,
+            ver = CONFIG_SCHEMA_VERSION,
+        );
+        std::fs::write(tmp.path().join("config.json"), seed)
+            .expect("seed config.json into tempdir");
+
+        let init_cfg = init_config_from_persisted_config();
+        assert_eq!(
+            init_cfg.arq_bandwidth_hz, None,
+            "no modem_ardop section → no ARQBW override (migration path)"
+        );
+
+        // SAFETY: symmetric.
+        unsafe {
+            match prior {
+                Some(v) => std::env::set_var("TUXLINK_CONFIG_DIR", v),
+                None => std::env::remove_var("TUXLINK_CONFIG_DIR"),
+            }
+        }
     }
 }
