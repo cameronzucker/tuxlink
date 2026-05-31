@@ -46,6 +46,7 @@ export function ArdopDock() {
   const [connecting, setConnecting] = useState(false);
   const [connectError, setConnectError] = useState<string | null>(null);
   const [disconnecting, setDisconnecting] = useState(false);
+  const [exchanging, setExchanging] = useState(false);
 
   const doConnect = async (tok: string) => {
     setConnecting(true);
@@ -79,6 +80,44 @@ export function ArdopDock() {
       void doConnect(consent.token);
     } else {
       setShowConsent(true);
+    }
+  };
+
+  // RADIO-1 SAFETY: this handler is the on-air-transmitting trigger for the
+  // B2F mail exchange. The consent token MUST be backend-minted via
+  // `modem_mint_consent` (mirrors the Connect path); the backend's
+  // `consume_consent_token` atomic equality-check-and-clear is the actual
+  // gate, but we also never want even the *appearance* of a client-side
+  // mint (e.g. Math.random / crypto.randomUUID). The grep guard in the
+  // commit body documents this property.
+  const isExchangeReady =
+    status.state === 'connected-irs' || status.state === 'connected-iss';
+  // Effective B2F target: in the running view there is no input field
+  // (the Connect form is unmounted), so we read the canonical peer the
+  // backend reports. Falls back to the operator's typed `target` only in
+  // the unlikely case `status.peer` is null while ConnectedIrs/Iss — the
+  // typed value persists across the form unmount via the same `useState`.
+  const effectiveTarget = (status.peer ?? target).trim();
+
+  const onSendReceiveClick = async () => {
+    if (!isExchangeReady || effectiveTarget === '') return;
+    setExchanging(true);
+    setConnectError(null);
+    try {
+      const tok = await invoke<string>('modem_mint_consent');
+      await invoke('modem_ardop_b2f_exchange', {
+        target: effectiveTarget,
+        consentToken: tok,
+      });
+      // Success — backend has already cleaned up (disconnect + reset_to_stopped).
+      // The next modem:status event will reflect Stopped state, the dock will
+      // return to the Connect form. No further frontend mailbox-refresh
+      // coordination here; the mailbox view picks up new messages on next
+      // load.
+    } catch (e) {
+      setConnectError(`Send/Receive failed: ${e}`);
+    } finally {
+      setExchanging(false);
     }
   };
 
@@ -188,6 +227,14 @@ Up     ${fmtUptime(status.uptimeSec)}`}
           </section>
 
           <section className="ardop-dock-section">
+            <button
+              type="button"
+              className="ardop-dock-btn ardop-dock-btn-primary"
+              disabled={!isExchangeReady || exchanging || effectiveTarget === ''}
+              onClick={onSendReceiveClick}
+            >
+              {exchanging ? 'Exchanging…' : 'Send/Receive'}
+            </button>
             <button
               type="button"
               className="ardop-dock-btn"
