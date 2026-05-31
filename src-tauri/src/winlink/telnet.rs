@@ -208,7 +208,7 @@ where
     progress("CMS login complete.");
 
     progress("Negotiating messages…");
-    session::run_exchange(&mut reader, &mut writer, config, outbound, decide)
+    session::run_exchange(&mut reader, &mut writer, config, outbound, decide, None)
         .map_err(TelnetError::Exchange)
 }
 

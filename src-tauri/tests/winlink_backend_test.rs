@@ -714,3 +714,74 @@ async fn native_backend_send_message_stores_attachments_in_outbox() {
     assert_eq!(atts[0].filename, "hello.bin", "filename must be preserved");
     assert_eq!(atts[0].bytes, b"hello", "attachment bytes must be preserved");
 }
+
+// ============================================================================
+// Test N: wire_log observability — run_exchange emits FC EM proposal lines and
+// FS answer lines to the wire_log callback (tuxlink-9phd §Phase 4 Task 4.2).
+// ============================================================================
+#[test]
+fn native_session_emits_wire_log_on_send() {
+    use std::cell::RefCell;
+    use std::io::Cursor;
+    use tuxlink_lib::winlink::message::Message;
+    use tuxlink_lib::winlink::session::{ExchangeConfig, OutboundMessage};
+
+    // Build one outbound message.
+    let mut msg = Message::new();
+    msg.set_header("Mid", "WIRELOG0001");
+    msg.set_header("Subject", "Wire log test");
+    msg.set_body(b"Testing wire_log observability.\r\n".to_vec());
+    let (proposal, compressed) = msg.to_proposal().expect("to_proposal");
+    let out = OutboundMessage {
+        proposal: proposal.clone(),
+        title: "Wire log test".to_string(),
+        compressed,
+    };
+
+    // Build a scripted server that accepts the proposal (FS Y).
+    // In Dial role, the client takes the FIRST message turn (sends proposals),
+    // then reads the FS answer from the cursor, then the server takes its turn.
+    let mut server = Vec::new();
+    // CMS handshake (no challenge — no password needed).
+    server.extend_from_slice(b"[WL2K-5.0-B2FHM$]\rCMS>\r");
+    // Server's response to our proposal: accept it (FS Y).
+    // This is what the exchange reads AFTER we write our FC EM proposals.
+    server.extend_from_slice(b"FS Y\r");
+    // Server's message turn: nothing to offer (FQ — quit, already accepted ours).
+    server.extend_from_slice(b"FQ\r");
+
+    let mut reader = Cursor::new(server);
+    let mut writer = Vec::new();
+    let config = ExchangeConfig {
+        mycall: "N7CPZ".into(),
+        targetcall: "SERVICE".into(),
+        locator: "CN87".into(),
+        password: None,
+    };
+
+    // Capture wire log lines.
+    let captured: RefCell<Vec<String>> = RefCell::new(Vec::new());
+    let wire_log = |s: &str| captured.borrow_mut().push(s.to_string());
+
+    tuxlink_lib::winlink::session::run_exchange(
+        &mut reader,
+        &mut writer,
+        &config,
+        vec![out],
+        |_| vec![tuxlink_lib::winlink::proposal::Answer::Accept { resume_offset: 0 }],
+        Some(&wire_log),
+    )
+    .expect("exchange should succeed");
+
+    let lines = captured.borrow();
+    assert!(
+        lines.iter().any(|l| l.starts_with("FC EM ")),
+        "expected FC EM in captured wire log, got: {:?}",
+        lines
+    );
+    assert!(
+        lines.iter().any(|l| l.starts_with("FS ")),
+        "expected FS in captured wire log, got: {:?}",
+        lines
+    );
+}

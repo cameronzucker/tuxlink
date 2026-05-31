@@ -812,13 +812,14 @@ impl NativeBackend {
         let config = self.live_config();
         let mailbox = self.mailbox.clone();
         let progress = self.progress.clone();
+        let wire = self.wire.clone();
         let abort_handle = self.abort_handle.clone();
         let aborting = self.aborting.clone();
 
         self.set_status(initial_status);
 
         let outcome = tokio::task::spawn_blocking(move || {
-            native_packet_connect(&config, &mailbox, link, resolved, &*progress, &abort_handle, aborting)
+            native_packet_connect(&config, &mailbox, link, resolved, &*progress, &*wire, &abort_handle, aborting)
         })
         .await
         .map_err(|e| BackendError::Internal {
@@ -935,6 +936,7 @@ fn native_packet_exchange<S: std::io::Read + std::io::Write + Send + 'static>(
     ctx: PacketConnectCtx<'_>,
     mailbox: &Mailbox,
     progress: &dyn Fn(&str),
+    wire_log: &dyn Fn(&str),
 ) -> Result<(), BackendError> {
     let PacketConnectCtx { base_mycall, targetcall, password, role, locator } = ctx;
     // Split the owned stream into simultaneous read + write halves via a shared
@@ -991,6 +993,7 @@ fn native_packet_exchange<S: std::io::Read + std::io::Write + Send + 'static>(
         &exchange_config,
         outbound,
         |proposals| proposals.iter().map(|_| Answer::Accept { resume_offset: 0 }).collect(),
+        Some(wire_log),
     )
     .map_err(|e| BackendError::TransportFailed { reason: format!("{e:?}"), source: None })?;
 
@@ -1007,12 +1010,14 @@ fn native_packet_exchange<S: std::io::Read + std::io::Write + Send + 'static>(
 /// Open the KISS link, connect (dial) or answer (listen), and run the exchange.
 /// Per RADIO-1, the agent never runs this against a real KISS modem — tests
 /// exercise `native_packet_exchange` with `FakeAx25Stream` only.
+#[allow(clippy::too_many_arguments)]
 fn native_packet_connect(
     config: &Config,
     mailbox: &Arc<Mailbox>,
     link: KissLinkConfig,
     resolved: ResolvedPacket,
     progress: &dyn Fn(&str),
+    wire_log: &dyn Fn(&str),
     abort_handle: &Mutex<Option<TcpStream>>,
     aborting: Arc<AtomicBool>,
 ) -> Result<(), BackendError> {
@@ -1088,6 +1093,7 @@ fn native_packet_connect(
                 },
                 mailbox,
                 progress,
+                wire_log,
             )
         }
         None => {
@@ -1113,6 +1119,7 @@ fn native_packet_connect(
                 },
                 mailbox,
                 progress,
+                wire_log,
             )
         }
     }
@@ -2442,6 +2449,7 @@ mod native_read_state_tests {
             },
             &mailbox,
             &|_| {},
+            &|_| {},
         );
         assert!(result.is_ok(), "gateway dial must succeed, got {result:?}");
 
@@ -2493,6 +2501,7 @@ mod native_read_state_tests {
                 locator: "CN87",
             },
             &mailbox,
+            &|_| {},
             &|_| {},
         );
         assert!(result.is_ok(), "answer exchange must succeed, got {result:?}");
