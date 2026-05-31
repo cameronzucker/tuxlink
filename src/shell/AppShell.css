@@ -12,17 +12,18 @@
  */
 
 /* ============================================================================
- * Layout grid — titlebar (auto) | menu bar (auto) | dashboard (auto) |
- * panes (1fr) | session-log (auto) | statusbar (auto), full height.
- * NOTE (ng3): the FIRST THREE rows are the HTML chrome added in AppShell's JSX
- * (TitleBar, MenuBar) + the ribbon; `panes` MUST be the 1fr row. The row count
- * is tied to the in-flow child order in AppShell.tsx — ResizeHandles is
- * position:absolute so it does NOT consume a grid row. If you reorder the shell's
- * children, re-check which row gets 1fr.
+ * Layout grid — titlebar (auto) | menu bar (auto) | ribbon+search (auto) |
+ * chip-strip (auto) | panes (1fr) | session-log (auto) | statusbar (auto),
+ * full height. 7 rows total.
+ * NOTE (ng3): the FIRST TWO rows are the HTML chrome (TitleBar, MenuBar);
+ * row 3 is the combined ribbon-with-search wrapper; row 4 is the ChipStrip;
+ * `panes` is row 5 (the 1fr row). ResizeHandles is position:absolute so it
+ * does NOT consume a grid row. If you reorder the shell's children,
+ * re-check which row gets 1fr.
  * ========================================================================== */
 .layout-b {
   display: grid;
-  grid-template-rows: auto auto auto 1fr auto auto;
+  grid-template-rows: auto auto auto auto 1fr auto auto;
   height: 100vh;
   width: 100vw;
   overflow: hidden;
@@ -36,6 +37,37 @@
   grid-template-columns: 200px 380px 1fr;
   min-height: 0;
   overflow: hidden;
+}
+
+/* ============================================================================
+ * Ribbon + search row wrapper — contains the search-zone (left) and the
+ * DashboardRibbon (right). The DashboardRibbon's .dashboard uses flex and
+ * margin-left: auto on .dash-connect to pin the Connect button to the right.
+ * ========================================================================== */
+.layout-b .ribbon-with-search {
+  display: flex;
+  align-items: stretch;
+  background: linear-gradient(180deg, var(--surface-2) 0%, var(--surface) 100%);
+  border-bottom: 1px solid var(--border);
+}
+
+/* Search zone — left side of the ribbon row; contains SearchBar + dropdown. */
+.layout-b .search-zone {
+  position: relative;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+}
+
+/* The DashboardRibbon inside the ribbon-with-search wrapper fills remaining
+ * width and already has its own flex + border-bottom via .dashboard. Override
+ * the duplicate border-bottom since the wrapper provides it. */
+.layout-b .ribbon-with-search .dashboard {
+  flex: 1 1 auto;
+  border-bottom: none;
+  background: none;
+  min-width: 0;
 }
 
 /* ============================================================================

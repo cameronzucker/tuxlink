@@ -46,6 +46,12 @@ import { derivePacketUiState, type PacketUiState } from '../packet/packetStatus'
 import { isBuilt } from '../connections/sessionTypes';
 import { TelnetCmsPanelContainer } from '../connections/TelnetCmsPanel';
 import { StubPanel } from '../connections/StubPanel';
+import { SearchBar } from '../search/SearchBar';
+import { SearchDropdown } from '../search/SearchDropdown';
+import { ChipStrip } from '../search/ChipStrip';
+import { useSearch } from '../search/useSearch';
+import { useSavedSearches } from '../search/useSavedSearches';
+import { renderQuery } from '../search/queryRender';
 import './AppShell.css';
 
 /// Human label for a folder (titlebar). Mirrors the sidebar labels.
@@ -75,6 +81,19 @@ export function AppShell() {
 
   // Connection panel: null = no panel; a {sessionType, protocol} key selects the reading-pane connection pane.
   const [selectedConnection, setSelectedConnection] = useState<ConnectionKey | null>(null);
+
+  // Find-messages: search + saved-search state (Task 17).
+  const search = useSearch();
+  const saved = useSavedSearches();
+  const [dropdownOpen, setDropdownOpen] = useState(false);
+
+  const metaText = useMemo((): string | null => {
+    if (!search.isActive) return null;
+    const r = search.results;
+    if (!r) return search.isLoading ? 'Searching…' : null;
+    const star = search.activeSaved ? ` · ★ ${search.activeSaved.name}` : '';
+    return `${r.totalMatches} matches · ${r.queryMs} ms${star}`;
+  }, [search.isActive, search.results, search.isLoading, search.activeSaved]);
 
   const { messages, error } = useMailbox(selectedFolder);
   const inbox = useMailbox('inbox');
@@ -199,12 +218,51 @@ export function AppShell() {
       <TitleBar folderLabel={FOLDER_LABELS[selectedFolder]} />
       <MenuBar onAction={onMenuAction} />
       <ResizeHandles />
-      <DashboardRibbon
-        data={statusData}
-        onConnect={onConnect}
-        connecting={connecting}
-        onAbort={onAbort}
-        packet={packetUi}
+      <div className="ribbon-with-search">
+        <div className="search-zone" data-testid="search-zone">
+          <SearchBar
+            spec={search.spec}
+            activeSaved={search.activeSaved}
+            onSpecChange={search.setSpec}
+            onUnsave={async () => {
+              if (search.activeSaved) {
+                await saved.unsave(search.activeSaved.id);
+                search.setActiveSavedSearch(null);
+              }
+            }}
+            onToggleDropdown={() => setDropdownOpen((o) => !o)}
+            dropdownOpen={dropdownOpen}
+          />
+          {dropdownOpen && (
+            <SearchDropdown
+              saved={saved.saved}
+              recent={saved.recent}
+              activeSavedId={search.activeSaved?.id ?? null}
+              onRunSaved={(s) => { search.setActiveSavedSearch(s); setDropdownOpen(false); }}
+              onRunRecent={(r) => { search.setSpec(r.spec); setDropdownOpen(false); }}
+              onPromoteRecent={async (r) => {
+                const name = window.prompt('Name for this saved search?', renderQuery(r.spec).slice(0, 24));
+                if (name) await saved.save(name, r.spec);
+              }}
+              onUnsaveActive={async () => { if (search.activeSaved) await saved.unsave(search.activeSaved.id); }}
+              onManage={() => { setDropdownOpen(false); }}
+              onClose={() => setDropdownOpen(false)}
+            />
+          )}
+        </div>
+        <DashboardRibbon
+          data={statusData}
+          onConnect={onConnect}
+          connecting={connecting}
+          onAbort={onAbort}
+          packet={packetUi}
+        />
+      </div>
+
+      <ChipStrip
+        spec={search.spec}
+        onSpecChange={search.setSpec}
+        metaText={metaText}
       />
 
       <div className="panes" data-testid="shell-panes">

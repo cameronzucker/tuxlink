@@ -28,6 +28,9 @@ export interface MessageMeta {
   /// "ICS-213"). OPTIONAL — the list DTO has no form-type field today
   /// (fixture-only; backend follow-up). Absent → no badge.
   formTag?: string;
+  /// Optional folder badge for cross-folder search rendering (spec §7.2).
+  /// Absent → no badge.
+  folder?: MailboxFolder;
 }
 
 /// Reading-pane parsed view (Task 13 produces this from raw RFC5322 at the

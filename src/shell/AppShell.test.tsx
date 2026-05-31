@@ -49,6 +49,9 @@ vi.mock('@tauri-apps/api/core', () => ({
         n2Retries: 10,
       };
     }
+    // Search IPC stubs (Task 17 — find-messages wiring)
+    if (cmd === 'tauri_search_list_saved') return [];
+    if (cmd === 'tauri_search_list_recent') return [];
     return undefined;
   }),
 }));
@@ -287,5 +290,49 @@ describe('<AppShell> — Mock B topology', () => {
     renderShell();
     fireEvent.click(screen.getByTestId('sess-radio-only'));
     expect(screen.getByTestId('proto-radio-only-telnet')).toBeDisabled();
+  });
+});
+
+describe('<AppShell> — find-messages wiring (Task 17)', () => {
+  beforeEach(() => {
+    globalThis.localStorage?.clear?.();
+    vi.mocked(invoke).mockClear();
+  });
+
+  it('renders the SearchBar in the ribbon', () => {
+    renderShell();
+    expect(screen.getByTestId('search-bar')).toBeInTheDocument();
+  });
+
+  it('renders the ChipStrip below the ribbon', () => {
+    renderShell();
+    expect(screen.getByTestId('chip-strip')).toBeInTheDocument();
+  });
+
+  it('dashboard ribbon dash-items still render (right-clustered)', () => {
+    renderShell();
+    // DashboardRibbon renders "Callsign" and "Connection" as .dash-label elements.
+    expect(screen.getByText('Callsign')).toBeInTheDocument();
+    expect(screen.getByText('Connection')).toBeInTheDocument();
+  });
+
+  it('SearchBar and ChipStrip appear before the panes in the DOM', () => {
+    renderShell();
+    const root = screen.getByTestId('app-shell-root');
+    const searchBar = screen.getByTestId('search-bar');
+    const chipStrip = screen.getByTestId('chip-strip');
+    const panes = screen.getByTestId('shell-panes');
+    // All three should be descendants of the root
+    expect(root).toContainElement(searchBar);
+    expect(root).toContainElement(chipStrip);
+    expect(root).toContainElement(panes);
+    // SearchBar DOM position must precede panes
+    expect(
+      searchBar.compareDocumentPosition(panes) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    // ChipStrip must precede panes too
+    expect(
+      chipStrip.compareDocumentPosition(panes) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
   });
 });
