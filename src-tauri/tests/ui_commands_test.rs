@@ -313,6 +313,8 @@ fn test_parsed_message_dto_serializes_camel_case() {
         }],
         is_form: false,
         routing: None,
+        form_id: None,
+        form_payload: None,
     };
     let v = serde_json::to_value(&dto).unwrap();
     assert_eq!(v["isForm"], false);
@@ -439,4 +441,54 @@ fn no_form_when_body_starts_with_xml_but_no_attachment() {
     );
     let dto = parse_raw_rfc5322("MID", &raw).expect("parse succeeds");
     assert!(!dto.is_form, "body-XML alone must NOT trigger is_form (legacy bug)");
+}
+
+// ============================================================================
+// T2.2 tests: form_id + form_payload population
+// ============================================================================
+
+/// WLE form message with valid XML payload → form_id and form_payload populated.
+#[test]
+fn populates_form_id_and_payload_for_form_messages() {
+    let xml = b"<?xml version=\"1.0\"?>\n\
+<RMS_Express_Form>\n\
+<form_parameters>\n\
+<display_form>ICS213_Initial_Viewer.html</display_form>\n\
+<rms_express_version>Tuxlink/0.3.0</rms_express_version>\n\
+</form_parameters>\n\
+<variables>\n\
+<inc_name>WALDO</inc_name>\n\
+<subjectline>TEST</subjectline>\n\
+</variables>\n\
+</RMS_Express_Form>\n";
+    let raw = format!(
+        "From: X@winlink.org\r\nTo: Y@winlink.org\r\nSubject: t\r\nMIME-Version: 1.0\r\n\
+Content-Type: multipart/mixed; boundary=\"b\"\r\n\r\n\
+--b\r\nContent-Type: text/plain\r\n\r\nbody text\r\n\
+--b\r\nContent-Type: text/xml; name=\"RMS_Express_Form_ICS213_Initial.xml\"\r\n\
+Content-Disposition: attachment; filename=\"RMS_Express_Form_ICS213_Initial.xml\"\r\n\r\n\
+{}\r\n--b--\r\n",
+        std::str::from_utf8(xml).unwrap()
+    );
+    let dto = parse_raw_rfc5322("MID", raw.as_bytes()).expect("parse");
+    assert!(dto.is_form);
+    assert_eq!(dto.form_id.as_deref(), Some("ICS213_Initial"));
+    let payload = dto.form_payload.expect("payload populated");
+    assert_eq!(payload.form_parameters.display_form, "ICS213_Initial_Viewer.html");
+    let inc_name = payload.fields.iter().find(|(k, _)| k == "inc_name").map(|(_, v)| v.as_str());
+    assert_eq!(inc_name, Some("WALDO"));
+}
+
+/// Non-form message (no RMS_Express_Form_*.xml attachment) → form_id and
+/// form_payload must both be None.
+#[test]
+fn non_form_message_has_no_form_payload() {
+    let raw = simple_rfc5322(
+        &[("From", "X@winlink.org"), ("To", "Y@winlink.org"), ("Subject", "plain")],
+        "plain text body",
+    );
+    let dto = parse_raw_rfc5322("MID", &raw).expect("parse");
+    assert!(!dto.is_form);
+    assert!(dto.form_id.is_none());
+    assert!(dto.form_payload.is_none());
 }

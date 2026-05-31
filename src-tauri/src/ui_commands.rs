@@ -217,7 +217,7 @@ pub const MAX_RFC5322_BYTES: usize = 2 * 1024 * 1024;
 /// `src/mailbox/types.ts`. v0.0.1 lists names + sizes only; bytes are NOT
 /// downloaded or previewed in v0.0.1 (spec §5.3 — no attachment open, no
 /// browser spawn).
-#[derive(Debug, Serialize, Clone, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct AttachmentMetaDto {
     pub filename: String,
     pub size: u64,
@@ -234,7 +234,7 @@ pub struct AttachmentMetaDto {
 /// for form payloads (the XML lives in the attachment, not the plain-text
 /// body); the UI renders a "form rendering arrives in v0.1" placeholder in
 /// that case.
-#[derive(Debug, Serialize, Clone, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ParsedMessageDto {
     pub id: String,
@@ -247,6 +247,12 @@ pub struct ParsedMessageDto {
     pub attachments: Vec<AttachmentMetaDto>,
     pub is_form: bool,
     pub routing: Option<String>,
+    /// Form ID extracted from `RMS_Express_Form_<id>.xml` attachment name.
+    /// Validated via `forms::validation::is_valid_form_id`. None when not a form.
+    pub form_id: Option<String>,
+    /// Parsed form payload (eager parse while attachment bytes available).
+    /// None when not a form OR when parse failed (also logged).
+    pub form_payload: Option<crate::forms::FormPayload>,
 }
 
 /// Parse raw RFC5322 bytes into a [`ParsedMessageDto`].
@@ -334,6 +340,19 @@ pub fn parse_raw_rfc5322(mid: &str, raw: &[u8]) -> Result<ParsedMessageDto, UiEr
         .iter()
         .any(|a| a.filename.starts_with("RMS_Express_Form_") && a.filename.ends_with(".xml"));
 
+    // Form ID + payload: eager parse while attachment bytes are in scope.
+    let form_id = attachments
+        .iter()
+        .find_map(|a| crate::forms::detect_form_attachment(&a.filename));
+
+    let form_payload = if let Some(ref fid) = form_id {
+        let attach_name = format!("RMS_Express_Form_{}.xml", fid);
+        extract_attachment_bytes(&msg, &attach_name)
+            .and_then(|bytes| crate::forms::parse_form_xml(&bytes).ok())
+    } else {
+        None
+    };
+
     // Routing: check known Winlink transport headers.
     let routing = extract_routing(&msg);
 
@@ -348,6 +367,8 @@ pub fn parse_raw_rfc5322(mid: &str, raw: &[u8]) -> Result<ParsedMessageDto, UiEr
         attachments,
         is_form,
         routing,
+        form_id,
+        form_payload,
     })
 }
 
@@ -437,6 +458,25 @@ fn collect_attachments(msg: &mail_parser::Message<'_>) -> Vec<AttachmentMetaDto>
             Some(AttachmentMetaDto { filename, size })
         })
         .collect()
+}
+
+/// Extract the raw bytes of an attachment by filename match.
+/// Returns the decoded attachment bytes (mail-parser handles CTE decoding).
+/// Returns None when no attachment matches.
+fn extract_attachment_bytes(msg: &mail_parser::Message<'_>, filename: &str) -> Option<Vec<u8>> {
+    msg.attachments().find_map(|part| {
+        let name = part.attachment_name()?;
+        if name != filename {
+            return None;
+        }
+        match &part.body {
+            mail_parser::PartType::Binary(b) | mail_parser::PartType::InlineBinary(b) => {
+                Some(b.to_vec())
+            }
+            mail_parser::PartType::Text(t) => Some(t.as_bytes().to_vec()),
+            _ => None,
+        }
+    })
 }
 
 /// Extract a routing string from known Winlink transport-info headers.
@@ -1863,6 +1903,8 @@ mod tests {
             }],
             is_form: false,
             routing: Some("via CMS-SSL".into()),
+            form_id: None,
+            form_payload: None,
         };
         let v = serde_json::to_value(&dto).unwrap();
         assert_eq!(v["isForm"], false);
