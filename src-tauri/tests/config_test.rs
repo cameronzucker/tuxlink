@@ -81,6 +81,7 @@ use tuxlink_lib::config::{
 };
 
 #[test]
+#[allow(deprecated)] // reads pat_mbo_address on deserialized Config; field deprecated per tuxlink-9phd T8.1
 fn test_deserialize_minimal_cms_config() {
     let json = r#"{
         "schema_version": 1,
@@ -104,6 +105,7 @@ fn test_deserialize_minimal_cms_config() {
 }
 
 #[test]
+#[allow(deprecated)] // reads pat_mbo_address on deserialized Config; field deprecated per tuxlink-9phd T8.1
 fn test_deserialize_offline_config() {
     let json = r#"{
         "schema_version": 1,
@@ -257,6 +259,7 @@ fn test_position_precision_two_variants_round_trip() {
 }
 
 #[test]
+#[allow(deprecated)] // reads pat_mbo_address on deserialized Config; field deprecated per tuxlink-9phd T8.1
 fn test_empty_string_identity_field_normalizes_to_none() {
     // Spec §3.1: deserialize_optional_nonempty_string maps "" → None.
     // This is the offline-mode-when-operator-types-then-clears case.
@@ -673,4 +676,76 @@ fn test_write_atomic_probe_read_eacces_fails_typed() {
         let preserved = std::fs::read(&cfg_path).unwrap();
         assert_eq!(preserved, original, "original file content must be preserved on ProbeReadFailed refusal");
     });
+}
+
+// ============================================================================
+// Phase 6 — pat_mbo_address deprecation (tuxlink-9phd, Task 8.1)
+//
+// Two contracts under test:
+//   a) skip_serializing: the field is ABSENT from the serialized JSON output.
+//   b) default (tolerant read): a legacy config JSON containing pat_mbo_address
+//      is accepted on read and the value round-trips through the field.
+//
+// Both tests carry #[allow(deprecated)] because they explicitly exercise the
+// deprecated field — that is the point of the test.
+// ============================================================================
+
+#[test]
+#[allow(deprecated)]
+fn config_skips_pat_mbo_address_on_write() {
+    // Build a Config that has pat_mbo_address set. After applying
+    // #[serde(skip_serializing)], the serialized JSON must NOT contain
+    // the key "pat_mbo_address" at all, regardless of the field value.
+    let cfg = Config {
+        schema_version: CONFIG_SCHEMA_VERSION,
+        wizard_completed: true,
+        connect: tuxlink_lib::config::ConnectConfig {
+            connect_to_cms: true,
+            transport: CmsTransport::CmsSsl,
+            host: tuxlink_lib::config::default_cms_host(),
+        },
+        identity: tuxlink_lib::config::IdentityConfig {
+            callsign: Some("W4PHS".into()),
+            identifier: None,
+            grid: None,
+        },
+        privacy: tuxlink_lib::config::PrivacyConfig {
+            gps_state: GpsState::Off,
+            position_precision: PositionPrecision::FourCharGrid,
+            position_source: tuxlink_lib::config::PositionSource::Gps,
+        },
+        pat_mbo_address: Some("LEGACY-VALUE".into()),
+        packet: tuxlink_lib::config::PacketConfig::default(),
+        modem_ardop: None,
+    };
+    let json = serde_json::to_string(&cfg).unwrap();
+    assert!(
+        !json.contains("pat_mbo_address"),
+        "skip_serializing must exclude pat_mbo_address from JSON output, got: {json}"
+    );
+}
+
+#[test]
+#[allow(deprecated)]
+fn config_reads_legacy_pat_mbo_address_without_error() {
+    // A legacy config JSON that contains pat_mbo_address must still parse
+    // successfully (tolerant read, #[serde(default)] means present-or-absent).
+    // The parsed value must round-trip through the field.
+    //
+    // Note: Config has #[serde(deny_unknown_fields)] but pat_mbo_address is
+    // still a KNOWN field (just deprecated) — so this round-trips cleanly.
+    let json = r#"{
+        "schema_version": 1,
+        "wizard_completed": true,
+        "connect": {"connect_to_cms": true, "transport": "CmsSsl"},
+        "identity": {"callsign": "W4PHS", "identifier": null, "grid": null},
+        "privacy": {"gps_state": "Off", "position_precision": "FourCharGrid"},
+        "pat_mbo_address": "LEGACY-VALUE"
+    }"#;
+    let cfg: Config = serde_json::from_str(json).expect("legacy config with pat_mbo_address must parse");
+    assert_eq!(
+        cfg.pat_mbo_address,
+        Some("LEGACY-VALUE".to_string()),
+        "pat_mbo_address value must round-trip through the deprecated field on read"
+    );
 }

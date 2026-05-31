@@ -54,6 +54,7 @@ fn use_mock_keyring() {
 
 #[tokio::test]
 #[serial]
+#[allow(deprecated)] // reads pat_mbo_address on deserialized Config; field deprecated per tuxlink-9phd T8.1
 async fn persist_cms_happy_path_writes_keyring_and_config() {
     use_mock_keyring();
     let _xdg = xdg_temp();
@@ -80,7 +81,9 @@ async fn persist_cms_happy_path_writes_keyring_and_config() {
     assert!(config.connect.connect_to_cms, "connect_to_cms must be true (CMS path)");
     assert_eq!(config.identity.callsign.as_deref(), Some("W4PHS"), "callsign must be normalized to uppercase");
     assert_eq!(config.identity.grid.as_deref(), Some("EM75"), "grid preserved");
-    assert_eq!(config.pat_mbo_address.as_deref(), Some("W4PHS@winlink.org"), "MBO address stored");
+    // pat_mbo_address is deprecated + skip_serializing (tuxlink-9phd T8.1): the field is never
+    // written to config.json, so reading back always yields None regardless of what was passed.
+    assert!(config.pat_mbo_address.is_none(), "pat_mbo_address must be absent from config.json (skip_serializing)");
     assert!(config.identity.identifier.is_none(), "identifier unused in CMS path");
 }
 
@@ -233,6 +236,7 @@ async fn persist_cms_empty_grid_stored_as_none() {
 
 #[tokio::test]
 #[serial]
+#[allow(deprecated)] // reads pat_mbo_address on deserialized Config; field deprecated per tuxlink-9phd T8.1
 async fn persist_cms_empty_mbo_stored_as_none() {
     use_mock_keyring();
     let _xdg = xdg_temp();

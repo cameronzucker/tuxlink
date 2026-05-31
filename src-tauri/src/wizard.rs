@@ -136,6 +136,7 @@ pub async fn get_wizard_completed() -> Result<bool, WizardError> {
 ///
 /// Caller is responsible for holding the WizardMutex before calling this.
 /// Spec §3.2: keyring-first → config-second with snapshot-and-restore rollback.
+#[allow(deprecated)] // sets pat_mbo_address on Config literal; field deprecated per tuxlink-9phd T8.1
 pub async fn persist_cms_impl(
     raw_callsign: String,
     password: String,
@@ -258,6 +259,7 @@ pub async fn wizard_persist_cms(
 ///
 /// Caller is responsible for holding the WizardMutex before calling this.
 /// Spec §3.3: config-only write; NO keyring touch; connect_to_cms hardcoded false.
+#[allow(deprecated)] // sets pat_mbo_address on Config literal; field deprecated per tuxlink-9phd T8.1
 pub async fn persist_offline_impl(
     identifier: String,
     grid: String,
@@ -474,6 +476,7 @@ mod tests {
 
     #[tokio::test]
     #[serial]
+    #[allow(deprecated)] // reads pat_mbo_address on deserialized Config; field deprecated per tuxlink-9phd T8.1
     async fn persist_offline_blank_submit_writes_valid_offline_config() {
         let _xdg = xdg_temp();
         let result = persist_offline_impl("".to_string(), "".to_string()).await;

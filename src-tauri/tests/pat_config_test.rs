@@ -15,6 +15,7 @@ use tuxlink_lib::pat_config::{
 };
 
 // Helper: build a minimal valid CMS-path config.
+#[allow(deprecated)] // sets pat_mbo_address on Config literal; field deprecated per tuxlink-9phd T8.1
 fn cms_config() -> Config {
     Config {
         schema_version: 1,

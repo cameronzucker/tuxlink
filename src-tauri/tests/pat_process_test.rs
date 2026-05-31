@@ -39,6 +39,7 @@ fn pat_binary() -> PathBuf {
 /// valid CMS-path config to satisfy the render contract; Pat's actual
 /// CMS behavior is not exercised here (any keyring lookup would miss in
 /// the test ENV but these tests only assert spawn + shutdown lifecycle).
+#[allow(deprecated)] // sets pat_mbo_address on Config literal; field deprecated per tuxlink-9phd T8.1
 fn minimal_cms_config() -> Config {
     Config {
         schema_version: 1,

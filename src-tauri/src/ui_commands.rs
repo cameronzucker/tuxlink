@@ -1897,6 +1897,7 @@ mod tests {
     };
 
     /// Build a CMS-mode config fixture for the mapping tests.
+    #[allow(deprecated)] // sets pat_mbo_address on Config literal; field deprecated per tuxlink-9phd T8.1
     fn cms_config_fixture() -> Config {
         Config {
             schema_version: CONFIG_SCHEMA_VERSION,
@@ -2511,6 +2512,7 @@ mod tests {
     }
 
     // Helpers for position_status DTO unit tests.
+    #[allow(deprecated)] // sets pat_mbo_address on Config literal; field deprecated per tuxlink-9phd T8.1
     fn make_config_for_position_status(gps_state: GpsState, grid: Option<&str>) -> config::Config {
         use crate::config::{ConnectConfig, CmsTransport, IdentityConfig, PrivacyConfig, CONFIG_SCHEMA_VERSION};
         config::Config {

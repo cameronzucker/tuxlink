@@ -14,6 +14,7 @@ use crate::config::{
 /// fields that make connect/send fail predictably without reaching a real CMS.
 /// Used by `NativeBackend::test_fixture()` and integration tests in
 /// `tests/winlink_backend_test.rs`.
+#[allow(deprecated)] // sets pat_mbo_address on Config literal; field deprecated per tuxlink-9phd T8.1
 pub fn native_test_config() -> Config {
     Config {
         schema_version: 1,

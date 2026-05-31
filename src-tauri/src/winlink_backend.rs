@@ -1885,6 +1885,7 @@ mod native_read_state_tests {
     use crate::winlink::compose::compose_message;
     use tempfile::tempdir;
 
+    #[allow(deprecated)] // sets pat_mbo_address on Config literal; field deprecated per tuxlink-9phd T8.1
     fn offline_config() -> Config {
         Config {
             schema_version: CONFIG_SCHEMA_VERSION,
@@ -2595,6 +2596,7 @@ mod native_read_state_tests {
     // Task 6: packet lifecycle branch selection + no-link fast-fail
     // =========================================================================
 
+    #[allow(deprecated)] // sets pat_mbo_address on Config literal; field deprecated per tuxlink-9phd T8.1
     fn offline_config_with_callsign() -> Config {
         Config {
             schema_version: CONFIG_SCHEMA_VERSION,

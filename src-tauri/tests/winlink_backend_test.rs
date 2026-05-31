@@ -214,6 +214,7 @@ async fn test_native_backend_send_then_list_and_read() {
 // crate (they're gated out in the lib's normal --test build), so this copy is
 // intentionally kept here. Keep both copies in sync when changing the config
 // shape; changes to config fields will cause a compile error at both sites.
+#[allow(deprecated)] // sets pat_mbo_address on Config literal; field deprecated per tuxlink-9phd T8.1
 fn native_test_config() -> tuxlink_lib::config::Config {
     use tuxlink_lib::config::{
         Config, ConnectConfig, GpsState, IdentityConfig, PositionPrecision, PrivacyConfig,
@@ -400,6 +401,7 @@ fn ingest_pat_line_appends_and_broadcasts_with_seq() {
 // exercising the no-announce error path. It asserts (a) spawn returns
 // BackendUnavailable, and (b) the diagnostic line reached the durable buffer.
 #[test]
+#[allow(deprecated)] // sets pat_mbo_address on Config literal; field deprecated per tuxlink-9phd T8.1
 fn spawn_failure_drains_pat_stderr_into_durable_buffer() {
     use std::os::unix::fs::PermissionsExt;
     use std::sync::Arc;
@@ -522,6 +524,7 @@ fn test_outbound_message_carries_attachments() {
 // MUST NOT run it (CLAUDE.md live-radio rule).
 #[tokio::test]
 #[ignore]
+#[allow(deprecated)] // sets pat_mbo_address on Config literal; field deprecated per tuxlink-9phd T8.1
 async fn spawn_against_real_pat_http_mode() {
     use std::path::PathBuf;
     use std::sync::Arc;

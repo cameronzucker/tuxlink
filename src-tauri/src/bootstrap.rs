@@ -286,6 +286,7 @@ mod tests {
 
     /// CMS-mode config fixture (`wizard_completed = true`, `connect_to_cms =
     /// true`). Built like the `ui_commands` config tests.
+    #[allow(deprecated)] // sets pat_mbo_address on Config literal; field deprecated per tuxlink-9phd T8.1
     fn cms_config() -> Config {
         Config {
             schema_version: CONFIG_SCHEMA_VERSION,
