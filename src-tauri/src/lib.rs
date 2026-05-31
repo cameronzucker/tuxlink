@@ -275,6 +275,8 @@ pub fn run() {
             crate::search::commands::tauri_search_promote_recent,
             crate::search::commands::tauri_search_rename,
             crate::search::commands::tauri_search_reorder,
+            crate::search::commands::tauri_search_record_recent,
+            crate::search::commands::tauri_search_clear_recent,
             crate::search::commands::tauri_search_rebuild_index,
             crate::modem_commands::config_get_ardop,   // tuxlink-4ek (ARDOP config read)
             crate::modem_commands::config_set_ardop,   // tuxlink-4ek (ARDOP config write)

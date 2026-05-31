@@ -9,9 +9,12 @@ export interface SearchBarProps {
   onUnsave: () => void;
   onToggleDropdown: () => void;
   dropdownOpen: boolean;
+  /// Called on Enter — explicit "commit this query to recent history".
+  /// Run-as-you-type queries do NOT auto-record (avoids per-keystroke history).
+  onCommit?: () => void;
 }
 
-export function SearchBar({ spec, activeSaved, onSpecChange, onUnsave, onToggleDropdown, dropdownOpen }: SearchBarProps) {
+export function SearchBar({ spec, activeSaved, onSpecChange, onUnsave, onToggleDropdown, dropdownOpen, onCommit }: SearchBarProps) {
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -25,9 +28,12 @@ export function SearchBar({ spec, activeSaved, onSpecChange, onUnsave, onToggleD
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
-  const handleEsc = (e: React.KeyboardEvent<HTMLInputElement>) => {
+  const handleKey = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Escape') {
       onSpecChange(EMPTY_SPEC);
+      if (dropdownOpen) onToggleDropdown();
+    } else if (e.key === 'Enter') {
+      onCommit?.();
       if (dropdownOpen) onToggleDropdown();
     }
   };
@@ -66,7 +72,7 @@ export function SearchBar({ spec, activeSaved, onSpecChange, onUnsave, onToggleD
         value={spec.free_text ?? ''}
         onChange={(e) => onSpecChange({ ...spec, free_text: e.target.value || null })}
         onFocus={() => { if (!dropdownOpen) onToggleDropdown(); }}
-        onKeyDown={handleEsc}
+        onKeyDown={handleKey}
       />
       <button
         type="button"

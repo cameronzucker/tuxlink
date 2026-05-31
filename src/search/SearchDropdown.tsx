@@ -13,10 +13,12 @@ export interface SearchDropdownProps {
   onUnsaveActive: () => void;
   onManage: () => void;
   onClose: () => void;
+  /// Wipe the recent-history list. Saved searches are untouched.
+  onClearRecent?: () => void;
 }
 
 export function SearchDropdown(props: SearchDropdownProps) {
-  const { saved, recent, activeSavedId, onRunSaved, onRunRecent, onPromoteRecent, onManage, onClose } = props;
+  const { saved, recent, activeSavedId, onRunSaved, onRunRecent, onPromoteRecent, onManage, onClose, onClearRecent } = props;
   const totalRows = saved.length + recent.length;
   const [focusIdx, setFocusIdx] = useState(0);
 
@@ -81,7 +83,10 @@ export function SearchDropdown(props: SearchDropdownProps) {
       })}
 
       <div className="dropdown-footer">
-        <span className="hints">↑↓ navigate · ⏎ run · Esc close</span>
+        <span className="hints">↑↓ navigate · ⏎ commit · Esc close</span>
+        {onClearRecent && recent.length > 0 && (
+          <button type="button" className="action" data-testid="dropdown-clear-recent" onClick={onClearRecent}>Clear recents</button>
+        )}
         <button type="button" className="action" data-testid="dropdown-manage" onClick={onManage}>Manage… ⚙</button>
       </div>
     </div>

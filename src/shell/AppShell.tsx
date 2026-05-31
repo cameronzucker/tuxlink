@@ -332,6 +332,7 @@ export function AppShell() {
             }}
             onToggleDropdown={() => setDropdownOpen((o) => !o)}
             dropdownOpen={dropdownOpen}
+            onCommit={() => { void saved.recordRecent(search.spec); }}
           />
           {dropdownOpen && (
             <SearchDropdown
@@ -349,6 +350,7 @@ export function AppShell() {
               onUnsaveActive={async () => { if (search.activeSaved) await saved.unsave(search.activeSaved.id); }}
               onManage={() => { setSavedSearchesOpen(true); setDropdownOpen(false); }}
               onClose={() => setDropdownOpen(false)}
+              onClearRecent={() => { void saved.clearRecent(); }}
             />
           )}
         </div>
