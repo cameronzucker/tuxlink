@@ -124,12 +124,14 @@ export function AppShell() {
   // session-log strip was removed in radio-panel-shell P1.6 — the log moves
   // into the radio panel as a per-mode section in P2-P4 (spec §3.7 + §4.3).
   const [showStatusBar, setShowStatusBar] = useState(true);
-  // tuxlink-mnk4: pin-on flag for the modem dock (View → Toggle Radio Dock /
-  // Ctrl+Shift+M). Pure additive override — when true, forces the dock visible
-  // even on views/states where the auto rule would hide it. Never forces hide:
-  // an active modem (or being on the ARDOP HF view) always shows the dock so
-  // the operator can't accidentally hide a live link.
-  const [pinRadioDock, setPinRadioDock] = useState(false);
+  // tuxlink-mnk4: pin-on flag for the radio panel (View → Toggle Radio Panel /
+  // Ctrl+Shift+M). Pure additive override — when true, forces the panel
+  // visible even on views/states where the auto rule would hide it. Never
+  // forces hide: an active modem (or being on the ARDOP HF view) always shows
+  // the panel so the operator can't accidentally hide a live link.
+  // (radio-panel-shell P1.7: renamed from pinRadioDock — the dock-vs-panel
+  // distinction is dropped per spec §3.2 + §3.7.)
+  const [pinRadioPanel, setPinRadioPanel] = useState(false);
   // Inline GPS/privacy settings overlay (tuxlink-39b), opened from Tools→Settings.
   const [settingsOpen, setSettingsOpen] = useState(false);
 
@@ -195,15 +197,16 @@ export function AppShell() {
   // dashboard ribbon, the status bar, and the window title.
   const statusData = useStatusData();
 
-  // Modem (ARDOP HF) status — drives the right-hand dock's mount + the
-  // panes-grid column-count swap (tuxlink-4ek Task 4.3). The dock appears:
+  // Modem (ARDOP HF) status — feeds the radio-panel visibility hook + the
+  // panes-grid column-count swap (tuxlink-4ek Task 4.3 baseline; radio-panel-
+  // shell P1.5+ migrated to computePanelMode). The panel appears:
   //   - whenever the modem is doing anything other than 'stopped' (so the
   //     operator always sees an active link without hunting for a panel), OR
-  //   - when the operator has selected the ARDOP HF view (cold-start dial
-  //     form lives inside the dock — without this, ArdopHfStub's "use the
-  //     modem dock on the right" message points at nothing and the operator
-  //     can't spawn the modem at all — tuxlink-mnk4), OR
-  //   - when the View → Toggle Radio Dock pin is on (Ctrl+Shift+M).
+  //   - when the operator has selected any connection in the sidebar (cold-
+  //     start dial form lives inside the panel — without this, ArdopHfStub's
+  //     "use the modem dock on the right" message points at nothing and the
+  //     operator can't spawn the modem at all — tuxlink-mnk4), OR
+  //   - when the View → Toggle Radio Panel pin is on (Ctrl+Shift+M).
   const { status: modemStatus } = useModemStatus();
   // Spec §3.3 visibility rule. The hook captures the three OR-conditions
   // (sidebar selection / active modem / pinned-toggle) and returns the
@@ -212,7 +215,7 @@ export function AppShell() {
     {
       sidebarSelected: selectedConnection,
       modemActive: modemStatus.state !== 'stopped',
-      togglePinned: pinRadioDock,
+      togglePinned: pinRadioPanel,
     },
     modemStatus,
   );
@@ -275,7 +278,7 @@ export function AppShell() {
     replyAll: () => { if (openMessage) void openReplyWindow(openMessage, 'replyAll').catch(() => {}); },
     forward: () => { if (openMessage) void openReplyWindow(openMessage, 'forward').catch(() => {}); },
     toggleStatusBar: () => setShowStatusBar((s) => !s),
-    toggleRadioDock: () => setPinRadioDock((s) => !s),
+    toggleRadioPanel: () => setPinRadioPanel((s) => !s),
     selectFolder: (folder) => { setSelectedFolder(folder); setSelectedMessage(null); setSelectedConnection(null); },
     setScheme: (id) => { applyColorScheme(id); saveColorScheme(id); },
     openSettings: () => setSettingsOpen(true),
@@ -431,7 +434,7 @@ export function AppShell() {
             mode={radioPanelMode}
             onClose={() => {
               setSelectedConnection(null);
-              setPinRadioDock(false);
+              setPinRadioPanel(false);
             }}
           />
         )}

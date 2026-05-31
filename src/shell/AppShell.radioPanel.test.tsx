@@ -176,9 +176,10 @@ describe('<AppShell> radio panel', () => {
     expect(screen.getByTestId('shell-panes')).toHaveClass('panes--with-dock');
   });
 
-  // tuxlink-mnk4: View → Toggle Radio Dock (Ctrl+Shift+M) must actually toggle
-  // the panel. The menu item + accelerator have been wired through
-  // dispatchMenuAction since the tuxlink-mnk4 fix.
+  // tuxlink-mnk4: View → Toggle Radio Panel (Ctrl+Shift+M) must actually
+  // toggle the panel. The menu item + accelerator have been wired through
+  // dispatchMenuAction since the tuxlink-mnk4 fix; the menu item was
+  // renamed from "Toggle Radio Dock" in radio-panel-shell P1.7.
   it('Ctrl+Shift+M toggles the panel when the modem is stopped and no sidebar selection', () => {
     mockUseModemStatus.mockReturnValue({ status: STOPPED, loading: false, error: null });
     renderShell();

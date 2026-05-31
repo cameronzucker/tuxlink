@@ -51,7 +51,7 @@ export const MENU_TREE: TopMenu[] = [
     // Session-log items removed in radio-panel-shell P1.6 — the bottom
     // session-log strip is gone; the log moves into the radio panel.
     { id: 'menu:view:status_bar', label: 'Toggle Status Bar' },
-    { id: 'menu:view:radio_dock', label: 'Toggle Radio Dock', accel: 'Ctrl+Shift+M' },
+    { id: 'menu:view:radio_panel', label: 'Toggle Radio Panel', accel: 'Ctrl+Shift+M' },
     { separator: true },
     { label: 'Color scheme', submenu: [
       { id: 'menu:view:scheme:default', label: 'Default' },
@@ -109,7 +109,7 @@ export const ACCELERATORS: Accelerator[] = [
   { combo: 'Ctrl+Shift+R', key: 'r', ctrl: true, shift: true, id: 'menu:message:reply_all' },
   { combo: 'Ctrl+P', key: 'p', ctrl: true, shift: false, id: 'menu:message:print' },
   { combo: 'Ctrl+Q', key: 'q', ctrl: true, shift: false, id: 'menu:file:quit' },
-  { combo: 'Ctrl+Shift+M', key: 'm', ctrl: true, shift: true, id: 'menu:view:radio_dock' },
+  { combo: 'Ctrl+Shift+M', key: 'm', ctrl: true, shift: true, id: 'menu:view:radio_panel' },
   { combo: 'F5', key: 'F5', ctrl: false, shift: false, id: 'menu:session:connect' },
   { combo: 'Ctrl+Shift+O', key: 'o', ctrl: true, shift: true, id: 'menu:session:connect' },
 ];
