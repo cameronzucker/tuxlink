@@ -92,19 +92,20 @@ impl Message {
             out.extend_from_slice(b"\r\n");
         };
 
-        // Mid is always written first.
-        if let Some((k, v)) = self.headers.iter().find(|(k, _)| k.eq_ignore_ascii_case("Mid")) {
-            write_line(&mut out, k, v);
-        }
-
-        // The remaining headers follow in alphabetical order by key.
-        let mut rest: Vec<&(String, String)> = self
-            .headers
-            .iter()
-            .filter(|(k, _)| !k.eq_ignore_ascii_case("Mid"))
+        // Build the canonicalized + sorted header list.
+        // Mid is always written first; the rest follow in alphabetical order by
+        // canonicalized key.  Stable sort preserves insertion order for headers
+        // that share the same canonicalized key (e.g. multiple `File:` lines).
+        let mut indexed: Vec<(String, &String)> = self.headers.iter()
+            .map(|(k, v)| (canonicalize_header_key(k), v))
             .collect();
-        rest.sort_by(|(a, _), (b, _)| a.cmp(b));
-        for (k, v) in rest {
+        indexed.sort_by(|a, b| {
+            if a.0 == "Mid" { return std::cmp::Ordering::Less; }
+            if b.0 == "Mid" { return std::cmp::Ordering::Greater; }
+            a.0.cmp(&b.0)
+        });
+
+        for (k, v) in &indexed {
             write_line(&mut out, k, v);
         }
 
@@ -200,6 +201,23 @@ impl Message {
         msg.body = after_headers[..body_size].to_vec();
         Ok(msg)
     }
+}
+
+/// Canonicalize a header key to MIME/textproto convention: first char +
+/// chars after `-` are uppercased; everything else lowercased.
+/// `mid` → `Mid`, `content-type` → `Content-Type`.
+fn canonicalize_header_key(k: &str) -> String {
+    let mut out = String::with_capacity(k.len());
+    let mut upper_next = true;
+    for c in k.chars() {
+        if upper_next {
+            out.extend(c.to_uppercase());
+        } else {
+            out.extend(c.to_lowercase());
+        }
+        upper_next = c == '-';
+    }
+    out
 }
 
 /// Encode a filename for the File: header value.
@@ -442,6 +460,23 @@ mod tests {
         // Lowercase q, charset ISO-8859-1 per wl2k-go fbb/message.go:436-437
         assert!(s.contains("File: 1 =?ISO-8859-1?q?caf=E9.txt?="),
                 "expected Q-encoded filename, got: {s}");
+    }
+
+    #[test]
+    fn header_sort_canonicalizes_keys() {
+        let mut msg = Message::new();
+        msg.set_header("mid", "MID4");          // lowercase
+        msg.set_header("subject", "S");
+        msg.set_header("from", "N7CPZ");
+        msg.set_header("date", "2026/05/30 12:00");
+        let bytes = msg.to_bytes();
+        let s = String::from_utf8_lossy(&bytes);
+        // Mid first (case-normalized), then alphabetical
+        let lines: Vec<&str> = s.lines().take_while(|l| !l.is_empty()).collect();
+        assert_eq!(lines[0], "Mid: MID4",
+                   "expected 'Mid: MID4' (canonicalized) at line 0, got: {:?}", lines);
+        assert!(lines[1].starts_with("Date:"),
+                "expected Date: alphabetically first after Mid, got: {:?}", lines);
     }
 
     #[test]
