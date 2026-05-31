@@ -51,7 +51,7 @@ export const MENU_TREE: TopMenu[] = [
     { id: 'menu:view:session_log', label: 'Toggle Session Log', accel: 'Ctrl+Shift+L' },
     { id: 'menu:view:raw_log', label: 'Show Raw Session Log' },
     { id: 'menu:view:status_bar', label: 'Toggle Status Bar' },
-    { id: 'menu:view:radio_dock', label: 'Show Radio Dock', accel: 'Ctrl+Shift+M' },
+    { id: 'menu:view:radio_dock', label: 'Toggle Radio Dock', accel: 'Ctrl+Shift+M' },
     { separator: true },
     { label: 'Color scheme', submenu: [
       { id: 'menu:view:scheme:default', label: 'Default' },
