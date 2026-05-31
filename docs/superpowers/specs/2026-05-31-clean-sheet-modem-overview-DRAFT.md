@@ -56,7 +56,7 @@ matches the bench-rig spec's references and the foundation doc's
 |---|---|---|
 | 0 | **Program overview** (this doc) | Goals, success criteria, design discipline, sequencing, decomposition itself. |
 | 1 | **Channel simulator** | Software HF ionospheric channel emulator (Watterson-class). DSP-first validation harness — every PHY candidate is tested against it offline before RF. |
-| 2 | **RF measurement rig** | Calibrated hardware. SDR + directional coupler + step attenuator topology, per `project_rf_measurement_rig_design`. Validates real radios + characterizes the real channel. |
+| 2 | **RF measurement rig** | Calibrated hardware. SDR + directional coupler + step attenuator topology, per `project_rf_measurement_rig_design`. Validates real radios + characterizes the real channel. **Distinct from the integration-test bench rig** in `docs/hardware/bench-rig-two-host-topology.md`, which uses incidental near-field coupling without calibration. |
 | 3 | **PHY / waveform** | Modulation, sub-carrier structure (if OFDM-family), sync, frame detection. The "what does it sound like on air" layer. |
 | 4 | **FEC** | Forward error correction. Could fold into #3 or stay separate depending on architecture choice. |
 | 5 | **Link / MAC** | Frame format, framing, headers, addressing, station identification. |
@@ -65,6 +65,90 @@ matches the bench-rig spec's references and the foundation doc's
 | 8 | **Host protocol / control plane** | API between client and modem. ADR 0015's "open question" — must be settled before subsystems #5/#6 freeze. |
 | 9 | **Integration in tuxlink** | `ModemTransport` plugin per ADR 0015. Supervised process lifecycle, sound-card-contention enforcement, audio-device handoff. |
 | 10 | **Standalone daemon packaging** | Spin-off as open-source TCP modem usable by Pat / ARIM / etc. Per ADR 0015's preserved optionality. |
+
+### §1.1 Subsystem dependency graph
+
+```mermaid
+graph TB
+    %% Foundation
+    overview[#0 Program overview]
+
+    %% Validation infrastructure
+    sim[#1 Channel simulator<br/>DSP-first validation harness]
+    rig[#2 RF measurement rig<br/>Calibrated characterization<br/>+ bench-rig integration test]
+
+    %% Modem stack
+    phy[#3 PHY / waveform]
+    fec[#4 FEC]
+    mac[#5 Link / MAC]
+    arq[#6 ARQ]
+    adapt[#7 Link adaptation]
+
+    %% Integration
+    host[#8 Host protocol]
+    tux[#9 Integration in tuxlink]
+    daemon[#10 Standalone daemon packaging]
+
+    %% Dependencies
+    overview --> sim
+    overview --> rig
+    overview --> phy
+    overview --> fec
+    overview --> mac
+    overview --> arq
+    overview --> adapt
+    overview --> host
+    overview --> tux
+    overview --> daemon
+
+    sim --> phy
+    sim --> fec
+    sim --> arq
+    sim --> adapt
+
+    phy --> mac
+    fec --> phy
+    fec --> arq
+
+    mac --> arq
+    mac --> host
+
+    arq --> adapt
+    arq --> host
+
+    adapt --> host
+
+    host --> tux
+    host --> daemon
+
+    tux --> daemon
+
+    rig -.->|cross-validation| phy
+    rig -.->|cross-validation| adapt
+
+    %% Style for parallel work
+    classDef parallel fill:#fff4e6,stroke:#d4a574
+    classDef foundation fill:#e6f3ff,stroke:#5b8dbe
+    classDef stack fill:#e8f5e8,stroke:#6ba66b
+    classDef integration fill:#f5e8f5,stroke:#a66ba6
+
+    class overview foundation
+    class sim,rig foundation
+    class phy,fec,mac,arq,adapt stack
+    class host,tux,daemon integration
+```
+
+**Reading the graph:**
+- **Solid arrows** = direct dependency: the downstream subsystem cannot be
+  built (or its spec finalized) without the upstream one.
+- **Dashed arrows** = cross-validation dependency: the downstream uses the
+  upstream as a verification oracle, not as a build-time dependency.
+- **Color coding:** blue = foundation, green = modem stack, purple = integration.
+
+**Sequencing implication:** the longest dependency chain is
+`#0 → #1 → #3 → #4 → #5 → #6 → #7 → #8 → #9 → #10`. Subsystem #2 (RF
+measurement rig) develops in parallel from when there's a candidate PHY to
+cross-validate. This is the rationale for §3's DSP-first sequencing.
 
 ## §2. Per-subsystem descriptions
 
@@ -364,14 +448,51 @@ in five rules every subsystem spec must follow:
 
 ## §6. References
 
-### Internal
+### Internal — ADRs
 
 - ADR 0014 — Clean-sheet modem; no prior-art examination.
 - ADR 0015 — Modem integration and rig-control foundation.
+
+### Internal — hardware
+
 - `docs/hardware/modem-test-rig.md` — VHF/UHF FM modem hardware chain (CDM-1550LS+).
-- `docs/hardware/bench-rig-two-host-topology.md` — HF bench rig (G90 + FT-818, two hosts), session 2026-05-31.
-- `docs/research/modem-foundations.md` — Citation library for the program, session 2026-05-31.
-- Memory: `project_v05_modem_design_posture`, `project_rf_measurement_rig_design`, `project_g90_vara_standard_works_firsthand`, `feedback_clean_sheet_concepts_only`, `feedback_ai_amateur_radio_reliability`.
+- `docs/hardware/bench-rig-two-host-topology.md` — HF bench rig (G90 + FT-818,
+  two hosts; incidental near-field RF coupling validated by external RF
+  engineering review 2026-05-31).
+
+### Internal — research
+
+- `docs/research/modem-foundations.md` — Annotated bibliography (citation library)
+  for the program. 40+ entries across HF channel modeling, modem theory, FEC,
+  ARQ, SDR/DSP methodology, open amateur protocols. Updated 2026-05-31.
+
+### Internal — subsystem STUB specs (subordinate to this overview)
+
+These STUBs are subordinate to this overview DRAFT and are renamed off their
+`-STUB` suffix only after both the overview and the per-subsystem STUB are
+operator-approved.
+
+- `docs/superpowers/specs/2026-05-31-clean-sheet-modem-1-channel-simulator-STUB.md`
+- `docs/superpowers/specs/2026-05-31-clean-sheet-modem-3-phy-waveform-STUB.md`
+- `docs/superpowers/specs/2026-05-31-clean-sheet-modem-4-fec-STUB.md`
+- `docs/superpowers/specs/2026-05-31-clean-sheet-modem-5-link-mac-STUB.md`
+- `docs/superpowers/specs/2026-05-31-clean-sheet-modem-6-arq-STUB.md`
+- `docs/superpowers/specs/2026-05-31-clean-sheet-modem-7-link-adaptation-STUB.md`
+- `docs/superpowers/specs/2026-05-31-clean-sheet-modem-8-host-protocol-STUB.md`
+
+Subsystems #2 (RF measurement rig), #9 (integration), and #10 (standalone
+daemon packaging) do not have STUB specs in this autonomous pass — #2 is
+substantially scoped in the `project_rf_measurement_rig_design` memory entry
+already; #9 / #10 are integration / packaging concerns that should be specced
+after the modem stack subsystems settle.
+
+### Memory
+
+- `project_v05_modem_design_posture` — full-replacement, no-VARA-interop, technical-merit-only.
+- `project_rf_measurement_rig_design` — SDR + directional coupler + step attenuator characterization rig (distinct from the integration-test bench rig).
+- `project_g90_vara_standard_works_firsthand` — G90 + VARA HF Standard works operationally; G90 is the known-good radio in the bench rig.
+- `feedback_clean_sheet_concepts_only` — research surfaces conceptual primitives + failure modes, not specific protocol choices.
+- `feedback_ai_amateur_radio_reliability` — AI output in ham radio is structurally unreliable; verify against ground-truth sources.
 
 ### External
 

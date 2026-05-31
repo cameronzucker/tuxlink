@@ -20,10 +20,13 @@ unreliable in practice. (Empirical project knowledge from prior testing; the
 constraint is the reason ADR 0015 was written the way it was.)
 
 Bench testing two radios as B2F (or future-tuxmodem) peers therefore requires
-**one host per radio**. The radios couple via RF — the air, or a wired attenuator
-chain — not via a network bridge between hosts. Each host is a standard ADR-0015
-single-radio configuration; the bench rig is two of them, RF-linked, plus an
-independent SDR observer.
+**one host per radio**. The radios couple via incidental near-field RF leakage
+between dummy loads positioned close to each other on the bench — not via a
+network bridge between hosts, and not via a calibrated RF measurement chain
+(which is a separate use case; see "RF coupling" below). Each host is a
+standard ADR-0015 single-radio configuration; the bench rig is two of them,
+RF-coupled via the dummy loads, plus an independent SDR observer with a basic
+antenna positioned nearby.
 
 This satisfies several design constraints simultaneously:
 
@@ -67,15 +70,35 @@ Host A (primary Pi):           Host B (secondary host):
 │  modem A        │            │  modem B        │
 └─────────────────┘            └─────────────────┘
 
-                  RF coupling path
-                  ┌──────────────────────────────────────┐
-                  ▼                                      ▼
-G90 antenna ┌──── coupler ──── step attenuator ──── coupler ────┐ FT-818 antenna
-            │                                                    │
-            └──────── RTL-SDR V4 observer (RX-only) ─────────────┘
-                       (calibrated tap point per
-                        project_rf_measurement_rig_design)
+                RF antenna path
+                                                         ┌────────────────┐
+G90 antenna port ─── direct-attach dummy load            │ RTL-SDR V4     │
+                                                         │ observer (RX-  │
+FT-818 antenna port ─── direct-attach dummy load         │ only) — basic  │
+                                                         │ antenna (the   │
+                  ↑                                      │ included whip  │
+                  │                                      │ or similar);   │
+       The two rigs sit physically next to               │ positioned     │
+       each other on the bench. Dummy-load               │ nearby to pick │
+       housings are not perfect Faraday cages —          │ up incidental  │
+       they leak just enough RF for incidental           │ near-field RF  │
+       near-field coupling between the two rigs          │ from BOTH      │
+       AND for the SDR observer to capture both          │ dummy loads.   │
+       radios' emissions. No attenuator chain,           └────────────────┘
+       no directional couplers, no measurement
+       calibration required for an integration-test
+       (yes/no) bench rig.
 ```
+
+**Approach validated by external RF engineering review (JPL, 2026-05-31).**
+The "two radios next to each other → direct-attach dummy loads → nearby SDR with
+basic antenna" topology is what RF engineers actually use for *integration*
+testing of two-station radio protocols. The over-spec alternative — calibrated
+attenuator chain + directional couplers + USB isolators — applies to
+*characterization* work (precise measurement of RF performance), which is a
+separate use case covered by `project_rf_measurement_rig_design` and is NOT
+required for the bench rig described here. Do not introduce the over-spec
+hardware speculatively.
 
 ## Hardware bill of materials
 
@@ -88,60 +111,94 @@ G90 antenna ┌──── coupler ──── step attenuator ──── co
 | DigiRig Mobile (full-fat) | 2 | One per host. CM108B-class USB audio + HID PTT + serial CAT in one box. Mini-DIN-6 to radio data port (matches both G90 and FT-818). |
 | DRA-100-DIN6 | 1 | **Reserved for the VHF/UHF FM rig** (CDM-1550LS+ via Motorola-16 adapter, per `modem-test-rig.md`). Not used in this HF bench rig. |
 
-### Required additions
+### Required additions (minimal)
 
-| Item | Approx. cost | Role |
-|---|---|---|
-| Second Linux host | $0 if a retired laptop / Pi is on hand; ~$50–200 otherwise | Host B compute. Any Linux host with a free USB port; the FT-818 side does not carry the same dev tooling as the primary Pi. |
-| RTL-SDR V4 | ~$35 | Observer for the calibrated RF tap. First-slice of the RF measurement rig (per `project_rf_measurement_rig_design` memory). |
-| Step attenuator (HF, 0–80 dB in 10 dB steps) | ~$50–150 | RF coupling path. Sets the over-the-air SNR between the two radios at the bench. |
-| Directional coupler (HF, ~20 dB) | ~$30–80 | Tap point for the SDR observer. Two units for symmetric tap on both radios. |
-| Dummy loads | ~$20 each | Terminate any RF that doesn't propagate through the wanted path. |
-| USB-A male to USB-A male shielded cables | $5 each | Standard. |
-| Ferrite cores (snap-on, type 31 or 43) | ~$15/pack | Suppress common-mode RF on USB and audio cables between the two RF-hot hosts. |
-| **Optional:** USB isolators (e.g., Adafruit USB isolator board) | ~$30 each | If RFI on USB-ground from one radio re-radiates into the other, galvanic isolation breaks the path. Add per-host empirically if xrun rates spike during dual-TX. |
-| Stable 13.8 V DC bench supply | $0 if already on hand; ~$80 otherwise | Required for FT-818 to deliver 5 W rather than degrading to 3 W or 2 W below 11 V (HRCC measurement, ~2023 review). |
+| Item | Role |
+|---|---|
+| Second Linux host | Host B compute. Any Linux host with a free USB port — retired laptop, second Pi, mini-PC. |
+| RTL-SDR V4 (any compatible RTL2832U-based dongle) | Observer. Captures RF emissions from both radios via incidental near-field coupling. Basic antenna (the included whip or similar) is sufficient. |
+| Two direct-attach dummy loads | One per radio, attached at the antenna port. Standard ham dummy loads (any rated for the radio's power level). Operator likely has these. |
+| Stable 13.8 V DC bench supply for the FT-818 | Required for FT-818 to deliver 5 W rather than degrading to 3 W or 2 W below 11 V (per FT-818 known issues survey in `docs/research/modem-foundations.md` §7 / 2026-05-31 research synthesis). Operator likely has this. |
+| USB-A cables (DigiRig to host) | Standard. |
 
 ### Conscious non-additions
 
-- **No second DRA-100.** Mixing CM108B (DigiRig) and CM119A (DRA-100) on the bench
-  forces the PTT HID feature-report code to branch across two CM-family variants
-  (the byte layouts differ subtly — `modem-test-rig.md` already calls this out and
-  points at Direwolf's `cm108.c` as authoritative). Two DigiRigs keeps the bench-
-  side HID path on one CM-family branch. The DRA-100 stays with the CDM rig where
-  it's already designed in.
+- **No step attenuator.** Two radios next to each other on the bench with dummy
+  loads already provide more than enough attenuation between TX of one and RX
+  of the other for an integration test ("do they talk to each other?"). For
+  *characterization* work (measure precise BER vs. SNR), the calibrated
+  measurement rig (per `project_rf_measurement_rig_design`) is the separate
+  tool. Do not over-spec the integration bench with characterization gear.
 
-## RF coupling chain
+- **No directional couplers.** Same logic. The SDR observer picks up
+  incidental near-field RF from the dummy loads. For precise calibrated
+  tapping, the characterization rig handles that — separate use case.
 
-The two radios couple via the over-the-air path or a wired equivalent. For a bench
-rig the wired path is preferred — repeatable SNR, no QRM, no other-station QRM
-during testing, no Part 97 question about whether bench testing constitutes
-transmission. (Dummy-load-into-shielded coupling is non-radiating and outside
-Part 97; the residual concern is equipment thermal limits, not regulatory.)
+- **No USB isolators speculatively.** The two-host topology already separates
+  the audio paths physically. USB isolators would be useful only if observed
+  RFI/ground-loop problems surface during operation; add them then. (Per
+  bench-test discipline: add hardware in response to problems, not in
+  anticipation of them.)
 
-Recommended chain (per direction; mirror for the reverse path):
+- **No ferrite cores speculatively.** Same posture. Add if needed.
+
+- **No second DRA-100.** Mixing CM108B (DigiRig) and CM119A (DRA-100) on the
+  bench forces the PTT HID feature-report code to branch across two CM-family
+  variants (the byte layouts differ subtly — `modem-test-rig.md` already
+  calls this out and points at Direwolf's `cm108.c` as authoritative). Two
+  DigiRigs keeps the bench-side HID path on one CM-family branch. The DRA-100
+  stays with the CDM rig where it's already designed in.
+
+## RF coupling — incidental near-field
+
+The two radios couple via **incidental near-field RF leakage** between
+direct-attach dummy loads positioned close to each other on the bench. Dummy
+load housings are not perfect Faraday cages — they leak just enough RF for
+the other radio's RX front-end to hear the transmission and decode it. The
+SDR observer, positioned nearby with a basic antenna, captures the same
+incidental RF as a third independent path.
+
+This is what RF engineers actually do for *integration testing* of two-station
+protocols. The over-spec alternative — calibrated step-attenuator chain +
+directional couplers + RF measurement gear — is for *characterization* work
+(precise BER vs. SNR curves), which is a separate use case covered by the
+RF measurement rig design (`project_rf_measurement_rig_design` memory) and
+which is NOT required for the bench rig described here.
+
+**Approach validated by external RF engineering review (JPL, 2026-05-31).**
+The single-line summary from that review: "two rigs next to each other
+dumping into direct-attach dummy loads with a nearby RTL-SDR with no or
+basic antenna is perfectly suitable."
 
 ```
-G90 RF out ──► Coupler 1 ──► Step attenuator ──► Coupler 2 ──► FT-818 antenna in
-                  │                                  │
-                  ▼                                  ▼
-              SDR tap point #1                  SDR tap point #2
-              (calibrated, per                  (calibrated, per
-               project_rf_measurement_          project_rf_measurement_
-               rig_design)                      rig_design)
+        G90                            FT-818
+         │                              │
+         │ antenna port                 │ antenna port
+         │                              │
+   ┌─────▼─────┐                  ┌─────▼─────┐
+   │ Dummy load│                  │ Dummy load│
+   │  (direct  │  ◄── incidental ──► (direct  │
+   │  attach)  │       RF leakage    │ attach) │
+   └───────────┘                  └───────────┘
+
+                  ┌────────────────────────┐
+                  │ RTL-SDR V4 observer    │
+                  │ Basic antenna          │
+                  │ Positioned nearby      │
+                  │ Captures incidental    │
+                  │ RF from both radios    │
+                  └────────────────────────┘
 ```
 
-- The step attenuator sets the over-air SNR. Start at 80 dB for the first
-  calibration pass; back off in 10 dB steps until decode just barely fails to
-  characterize the modem's lower SNR limit.
-- The directional couplers tap a calibrated 20 dB-down sample for the SDR observer.
-  The observer captures *both* radios' RF — used as ground truth for whether the
-  modem on each side is emitting what its other-side peer reports decoding.
-- Each radio's antenna port terminates into a dummy load on the path-OUT direction;
-  the path-IN direction goes to the other radio's antenna port via the attenuator.
-  In practice this is set up symmetrically with two couplers + two attenuators
-  back-to-back, or asymmetrically with a single coupled section and bidirectional
-  attenuation depending on the desired test (one-direction vs. round-trip).
+Part 97 note: dummy-load-confined RF is non-radiating and outside Part 97.
+The residual concern under sustained TX is equipment thermal limits
+(dummy load + radio finals), not regulatory.
+
+**SNR adjustment:** if the natural-coupling SNR turns out wrong (radios
+decode too easily — uninteresting bench condition — or not at all —
+unhelpful), adjust by *physically separating the dummy loads* (more
+distance → lower coupled RF) or *moving them closer* (more coupling).
+No step attenuator required for this integration-test use case.
 
 ## Setup tax (one-shot per host)
 
@@ -209,8 +266,7 @@ For each host's DigiRig + radio combination:
 2. **TX-side audio**: drive a known steady tone (e.g., 1 kHz sine) from a test
    harness into the DigiRig output. Observe the radio's TX with the SDR observer.
    Adjust DigiRig software output gain + (for FT-818) Menu 25 to bring TX power
-   to nominal (5 W for FT-818, ~10 W for G90 if you want headroom against the
-   step attenuator).
+   to nominal (5 W for FT-818, ~10 W for G90).
 3. **RX-side audio**: with the SDR observer transmitting a known signal back at
    a known coupled level, observe the DigiRig input. Adjust DigiRig input gain
    to bring the audio peaks just below ALSA full-scale (~−6 dBFS). Per the modem
@@ -245,12 +301,13 @@ research synthesis in [docs/research/modem-foundations.md](../research/modem-fou
 Once the rig is calibrated:
 
 - **End-to-end exchange test**: modem A on G90 transmits a known payload; modem
-  B on FT-818 attempts to decode. SDR observer captures the wire RF on both sides
-  for cross-validation. Vary the step attenuator to characterize the SNR floor.
+  B on FT-818 attempts to decode. SDR observer captures the wire RF for
+  cross-validation. Adjust dummy-load spacing to dial in a realistic
+  bench-coupling SNR (start close, separate if the test is too easy).
 - **Symmetric test**: same in the reverse direction (FT-818 TX, G90 RX). FT-818's
-  5 W into the same attenuator chain gives a lower received power at the G90 by
-  ~6 dB vs the G90's 20 W full-scale; this is realistic for the modem's lower-
-  power-radio compatibility.
+  5 W is ~6 dB below the G90's 20 W full-scale, so the asymmetric coupling
+  mirrors a realistic mixed-power-class deployment (one station QRP, the other
+  with normal power).
 - **Filter-edge characterization**: the FT-818 side is the canary for any modem
   PHY component that touches the 2300 Hz bandwidth edge. Failures on FT-818
   while G90 succeeds indicate a filter-passband design issue.
@@ -272,8 +329,10 @@ overview ([2026-05-31-clean-sheet-modem-overview-DRAFT.md](../superpowers/specs/
 - PipeWire vs raw ALSA `hw:` access under simultaneous TX on two radios
   (already a known watched-issue per `modem-test-rig.md`; the two-host topology
   removes this concern by giving each radio its own audio stack instance).
-- Step attenuator + coupler insertion-loss calibration at the relevant HF bands
-  (40 m, 20 m, 15 m for NVIS / regional / DX bench cases respectively).
+- Dummy-load coupling characterization across the relevant HF bands (40 m, 20 m,
+  15 m) — first by inspection (do the radios decode at expected SNR?), and only
+  if the natural coupling is wildly outside the target SNR envelope, by
+  physically adjusting dummy-load spacing.
 - FT-818 internal battery state at session start (parasitic drain via the soft
   power switch is documented; verify the bench supply takes over cleanly).
 

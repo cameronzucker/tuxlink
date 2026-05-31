@@ -396,7 +396,26 @@ The above are the operator's *own first-person operational reports*. They're in-
 
 ---
 
-## §8. Maintenance discipline
+## §8. Where this citation library is consumed
+
+This document is the **citation substrate** for the modem-program subsystem
+specs. Each subsystem's STUB / canonical spec draws specific citations
+from here as its design provenance record.
+
+Subsystem STUBs that cite this foundation:
+
+- `docs/superpowers/specs/2026-05-31-clean-sheet-modem-overview-DRAFT.md` — program umbrella.
+- `docs/superpowers/specs/2026-05-31-clean-sheet-modem-1-channel-simulator-STUB.md` — cites §1, §1.4, §5.1.
+- `docs/superpowers/specs/2026-05-31-clean-sheet-modem-3-phy-waveform-STUB.md` — cites §2 (Proakis, Sklar, Haykin, Shannon, OFDM, QAM, sync), §5.1, §6.
+- `docs/superpowers/specs/2026-05-31-clean-sheet-modem-4-fec-STUB.md` — cites §3 (Reed-Solomon, Viterbi, Gallager LDPC, Berrou turbo, Arikan polar, Costello/Forney), §4.1, §6.1, §6.2.
+- `docs/superpowers/specs/2026-05-31-clean-sheet-modem-5-link-mac-STUB.md` — cites §4, §6.2, §6.3.
+- `docs/superpowers/specs/2026-05-31-clean-sheet-modem-6-arq-STUB.md` — cites §4.1, §6.2, §6.3.
+- `docs/superpowers/specs/2026-05-31-clean-sheet-modem-7-link-adaptation-STUB.md` — cites §6.2, §4.1, §1.2.
+- `docs/superpowers/specs/2026-05-31-clean-sheet-modem-8-host-protocol-STUB.md` — cites §6.2 (ARDOP host interface).
+
+The bench rig at `docs/hardware/bench-rig-two-host-topology.md` cites §7 (operator-confirmed radio inventory) and references §1.4 (channel-simulator implementations).
+
+## §9. Maintenance discipline
 
 When adding a citation:
 
