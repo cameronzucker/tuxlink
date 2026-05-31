@@ -1,0 +1,29 @@
+.layout-b .chip-strip {
+  background: var(--bg); border-bottom: 1px solid var(--border);
+  padding: 8px 18px; display: flex; flex-wrap: wrap;
+  align-items: center; gap: 6px; min-height: 30px;
+}
+.layout-b .chip-strip .label-prefix,
+.layout-b .chip-strip .empty-prefix {
+  color: var(--text-faint); font-size: 10px; margin-right: 6px;
+  text-transform: uppercase; letter-spacing: .08em;
+}
+.layout-b .chip-strip .chip {
+  font-size: 10px; padding: 2px 7px 2px 8px; border-radius: 9px;
+  font-family: var(--mono); display: inline-flex; align-items: center; gap: 4px;
+}
+.layout-b .chip-strip .chip.active {
+  background: var(--accent-soft); color: var(--accent-2);
+  border: 1px solid color-mix(in srgb, var(--accent) 32%, transparent);
+}
+.layout-b .chip-strip .chip.inactive {
+  background: transparent; color: var(--text-faint);
+  border: 1px solid var(--border-strong); font-family: inherit;
+}
+.layout-b .chip-strip .chip .x {
+  background: transparent; border: 0; color: var(--text-faint); cursor: pointer;
+  padding: 0; font-size: 11px;
+}
+.layout-b .chip-strip .meta {
+  margin-left: auto; color: var(--text-faint); font-size: 10px; font-family: var(--mono);
+}
