@@ -24,135 +24,6 @@ pub fn detect_form_attachment(filename: &str) -> Option<String> {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    // ---------------------------------------------------------------------------
-    // T1.5 parse_form_xml tests
-    // ---------------------------------------------------------------------------
-
-    const SAMPLE_XML: &str = r#"<?xml version="1.0"?>
-<RMS_Express_Form>
-  <form_parameters>
-    <xml_file_version>1.0</xml_file_version>
-    <rms_express_version>Tuxlink/0.3.0</rms_express_version>
-    <submission_datetime>20260530143000</submission_datetime>
-    <senders_callsign>N0CALL</senders_callsign>
-    <grid_square>FM18</grid_square>
-    <display_form>ICS213_Initial_Viewer.html</display_form>
-    <reply_template>ICS213_SendReply.0</reply_template>
-  </form_parameters>
-  <variables>
-    <inc_name>HURRICANE WALDO</inc_name>
-    <to_name>JOHN OPERATOR</to_name>
-    <fm_name>JANE OPERATOR</fm_name>
-    <subjectline>REQUEST SUPPLIES</subjectline>
-    <mdate>2026-05-30</mdate>
-    <mtime>14:30Z</mtime>
-    <message>Need bandages.</message>
-    <approved_name>JANE OPERATOR</approved_name>
-  </variables>
-</RMS_Express_Form>"#;
-
-    #[test]
-    fn parses_well_formed_form_xml() {
-        let payload = parse_form_xml(SAMPLE_XML.as_bytes()).expect("parse should succeed");
-        assert_eq!(payload.form_id, "");  // form_id is set by caller (from attachment name)
-        assert_eq!(payload.form_parameters.display_form, "ICS213_Initial_Viewer.html");
-        assert_eq!(payload.form_parameters.rms_express_version, "Tuxlink/0.3.0");
-        assert_eq!(payload.form_parameters.senders_callsign, "N0CALL");
-        let inc_name = payload.fields.iter().find(|(k, _)| k == "inc_name").map(|(_, v)| v.as_str());
-        assert_eq!(inc_name, Some("HURRICANE WALDO"));
-        let mtime = payload.fields.iter().find(|(k, _)| k == "mtime").map(|(_, v)| v.as_str());
-        assert_eq!(mtime, Some("14:30Z"));
-    }
-
-    #[test]
-    fn rejects_oversized_xml() {
-        let huge = vec![b'<'; validation::MAX_FORM_XML_BYTES + 1];
-        let result = parse_form_xml(&huge);
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("too large"));
-    }
-
-    #[test]
-    fn rejects_billion_laughs_doctype() {
-        let malicious = r#"<?xml version="1.0"?>
-<!DOCTYPE lolz [
-  <!ENTITY lol "lol">
-  <!ENTITY lol2 "&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;">
-]>
-<RMS_Express_Form>&lol2;</RMS_Express_Form>"#;
-        let result = parse_form_xml(malicious.as_bytes());
-        assert!(result.is_err(), "DOCTYPE/entity bomb must be rejected");
-    }
-
-    #[test]
-    fn rejects_deeply_nested_xml() {
-        let mut bomb = String::from("<?xml version=\"1.0\"?>");
-        for _ in 0..20 {
-            bomb.push_str("<x>");
-        }
-        for _ in 0..20 {
-            bomb.push_str("</x>");
-        }
-        let result = parse_form_xml(bomb.as_bytes());
-        assert!(result.is_err(), "depth-20 nesting must exceed MAX_XML_NESTING_DEPTH=8");
-    }
-
-    #[test]
-    fn rejects_too_many_fields() {
-        let mut payload = String::from(r#"<?xml version="1.0"?><RMS_Express_Form><variables>"#);
-        for i in 0..300 {
-            payload.push_str(&format!("<f{0}>v</f{0}>", i));
-        }
-        payload.push_str("</variables></RMS_Express_Form>");
-        let result = parse_form_xml(payload.as_bytes());
-        assert!(result.is_err(), "300 fields must exceed MAX_FORM_FIELDS=256");
-    }
-
-    // ---------------------------------------------------------------------------
-    // T1.4 detect_form_attachment tests
-    // ---------------------------------------------------------------------------
-
-    #[test]
-    fn detects_ics213_attachment() {
-        assert_eq!(
-            detect_form_attachment("RMS_Express_Form_ICS213_Initial.xml"),
-            Some("ICS213_Initial".to_string())
-        );
-    }
-
-    #[test]
-    fn detects_ics309_attachment() {
-        assert_eq!(
-            detect_form_attachment("RMS_Express_Form_ICS309_Initial.xml"),
-            Some("ICS309_Initial".to_string())
-        );
-    }
-
-    #[test]
-    fn ignores_non_form_attachment() {
-        assert_eq!(detect_form_attachment("photo.jpg"), None);
-        assert_eq!(detect_form_attachment("data.xml"), None);
-        assert_eq!(detect_form_attachment("RMS_Express_Form_.xml"), None);
-        assert_eq!(detect_form_attachment("RMS_Express_Form_ICS213"), None);
-    }
-
-    #[test]
-    fn rejects_unsafe_form_id() {
-        assert_eq!(
-            detect_form_attachment("RMS_Express_Form_../etc/passwd.xml"),
-            None
-        );
-        assert_eq!(
-            detect_form_attachment("RMS_Express_Form_foo bar.xml"),
-            None
-        );
-    }
-}
-
 /// Parse a Winlink HTML-form XML payload per spec §3 (wire format) and §10 (hardening).
 ///
 /// Hardening invariants (all return `Err` on violation):
@@ -320,5 +191,134 @@ fn apply_form_parameter(params: &mut FormParameters, name: &str, value: &str) {
         "display_form" => params.display_form = value.to_string(),
         "reply_template" => params.reply_template = value.to_string(),
         _ => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ---------------------------------------------------------------------------
+    // T1.5 parse_form_xml tests
+    // ---------------------------------------------------------------------------
+
+    const SAMPLE_XML: &str = r#"<?xml version="1.0"?>
+<RMS_Express_Form>
+  <form_parameters>
+    <xml_file_version>1.0</xml_file_version>
+    <rms_express_version>Tuxlink/0.3.0</rms_express_version>
+    <submission_datetime>20260530143000</submission_datetime>
+    <senders_callsign>N0CALL</senders_callsign>
+    <grid_square>FM18</grid_square>
+    <display_form>ICS213_Initial_Viewer.html</display_form>
+    <reply_template>ICS213_SendReply.0</reply_template>
+  </form_parameters>
+  <variables>
+    <inc_name>HURRICANE WALDO</inc_name>
+    <to_name>JOHN OPERATOR</to_name>
+    <fm_name>JANE OPERATOR</fm_name>
+    <subjectline>REQUEST SUPPLIES</subjectline>
+    <mdate>2026-05-30</mdate>
+    <mtime>14:30Z</mtime>
+    <message>Need bandages.</message>
+    <approved_name>JANE OPERATOR</approved_name>
+  </variables>
+</RMS_Express_Form>"#;
+
+    #[test]
+    fn parses_well_formed_form_xml() {
+        let payload = parse_form_xml(SAMPLE_XML.as_bytes()).expect("parse should succeed");
+        assert_eq!(payload.form_id, "");  // form_id is set by caller (from attachment name)
+        assert_eq!(payload.form_parameters.display_form, "ICS213_Initial_Viewer.html");
+        assert_eq!(payload.form_parameters.rms_express_version, "Tuxlink/0.3.0");
+        assert_eq!(payload.form_parameters.senders_callsign, "N0CALL");
+        let inc_name = payload.fields.iter().find(|(k, _)| k == "inc_name").map(|(_, v)| v.as_str());
+        assert_eq!(inc_name, Some("HURRICANE WALDO"));
+        let mtime = payload.fields.iter().find(|(k, _)| k == "mtime").map(|(_, v)| v.as_str());
+        assert_eq!(mtime, Some("14:30Z"));
+    }
+
+    #[test]
+    fn rejects_oversized_xml() {
+        let huge = vec![b'<'; validation::MAX_FORM_XML_BYTES + 1];
+        let result = parse_form_xml(&huge);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("too large"));
+    }
+
+    #[test]
+    fn rejects_billion_laughs_doctype() {
+        let malicious = r#"<?xml version="1.0"?>
+<!DOCTYPE lolz [
+  <!ENTITY lol "lol">
+  <!ENTITY lol2 "&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;">
+]>
+<RMS_Express_Form>&lol2;</RMS_Express_Form>"#;
+        let result = parse_form_xml(malicious.as_bytes());
+        assert!(result.is_err(), "DOCTYPE/entity bomb must be rejected");
+    }
+
+    #[test]
+    fn rejects_deeply_nested_xml() {
+        let mut bomb = String::from("<?xml version=\"1.0\"?>");
+        for _ in 0..20 {
+            bomb.push_str("<x>");
+        }
+        for _ in 0..20 {
+            bomb.push_str("</x>");
+        }
+        let result = parse_form_xml(bomb.as_bytes());
+        assert!(result.is_err(), "depth-20 nesting must exceed MAX_XML_NESTING_DEPTH=8");
+    }
+
+    #[test]
+    fn rejects_too_many_fields() {
+        let mut payload = String::from(r#"<?xml version="1.0"?><RMS_Express_Form><variables>"#);
+        for i in 0..300 {
+            payload.push_str(&format!("<f{0}>v</f{0}>", i));
+        }
+        payload.push_str("</variables></RMS_Express_Form>");
+        let result = parse_form_xml(payload.as_bytes());
+        assert!(result.is_err(), "300 fields must exceed MAX_FORM_FIELDS=256");
+    }
+
+    // ---------------------------------------------------------------------------
+    // T1.4 detect_form_attachment tests
+    // ---------------------------------------------------------------------------
+
+    #[test]
+    fn detects_ics213_attachment() {
+        assert_eq!(
+            detect_form_attachment("RMS_Express_Form_ICS213_Initial.xml"),
+            Some("ICS213_Initial".to_string())
+        );
+    }
+
+    #[test]
+    fn detects_ics309_attachment() {
+        assert_eq!(
+            detect_form_attachment("RMS_Express_Form_ICS309_Initial.xml"),
+            Some("ICS309_Initial".to_string())
+        );
+    }
+
+    #[test]
+    fn ignores_non_form_attachment() {
+        assert_eq!(detect_form_attachment("photo.jpg"), None);
+        assert_eq!(detect_form_attachment("data.xml"), None);
+        assert_eq!(detect_form_attachment("RMS_Express_Form_.xml"), None);
+        assert_eq!(detect_form_attachment("RMS_Express_Form_ICS213"), None);
+    }
+
+    #[test]
+    fn rejects_unsafe_form_id() {
+        assert_eq!(
+            detect_form_attachment("RMS_Express_Form_../etc/passwd.xml"),
+            None
+        );
+        assert_eq!(
+            detect_form_attachment("RMS_Express_Form_foo bar.xml"),
+            None
+        );
     }
 }
