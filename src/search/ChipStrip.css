@@ -1,16 +1,17 @@
 .layout-b .chip-strip {
   background: var(--bg); border-bottom: 1px solid var(--border);
-  padding: 8px 18px; display: flex; flex-wrap: wrap;
-  align-items: center; gap: 6px; min-height: 30px;
+  padding: 10px 18px; display: flex; flex-wrap: wrap;
+  align-items: center; gap: 8px; min-height: 38px;
 }
 .layout-b .chip-strip .label-prefix,
 .layout-b .chip-strip .empty-prefix {
-  color: var(--text-faint); font-size: 10px; margin-right: 6px;
+  color: var(--text-faint); font-size: 11px; margin-right: 6px;
   text-transform: uppercase; letter-spacing: .08em;
 }
 .layout-b .chip-strip .chip {
-  font-size: 10px; padding: 2px 7px 2px 8px; border-radius: 9px;
-  font-family: var(--mono); display: inline-flex; align-items: center; gap: 4px;
+  font-size: 12px; padding: 4px 10px 4px 11px; border-radius: 999px;
+  font-family: var(--mono); display: inline-flex; align-items: center; gap: 6px;
+  line-height: 1.2;
 }
 .layout-b .chip-strip .chip.active {
   background: var(--accent-soft); color: var(--accent-2);
@@ -19,11 +20,13 @@
 .layout-b .chip-strip .chip.inactive {
   background: transparent; color: var(--text-faint);
   border: 1px solid var(--border-strong); font-family: inherit;
+  opacity: 0.65;
 }
 .layout-b .chip-strip .chip .x {
   background: transparent; border: 0; color: var(--text-faint); cursor: pointer;
-  padding: 0; font-size: 11px;
+  padding: 0 2px; font-size: 14px; line-height: 1;
 }
+.layout-b .chip-strip .chip .x:hover { color: var(--accent-2); }
 .layout-b .chip-strip .meta {
-  margin-left: auto; color: var(--text-faint); font-size: 10px; font-family: var(--mono);
+  margin-left: auto; color: var(--text-faint); font-size: 11px; font-family: var(--mono);
 }
