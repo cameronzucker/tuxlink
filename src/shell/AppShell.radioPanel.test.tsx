@@ -158,7 +158,10 @@ describe('<AppShell> radio panel', () => {
     });
     renderShell();
     expect(screen.getByTestId('radio-panel-root')).toBeInTheDocument();
-    expect(screen.getByTestId('shell-panes')).toHaveClass('panes--with-dock');
+    const shellPanes = screen.getByTestId('shell-panes');
+    expect(shellPanes).toHaveClass('panes--with-dock');
+    // Connecting modem = ARDOP active context (v1) → legacy dock mounts too.
+    expect(shellPanes).toHaveClass('panes--with-legacy-dock');
   });
 
   // P1: when ARDOP HF is selected, BOTH the placeholder panel AND the legacy
@@ -173,7 +176,26 @@ describe('<AppShell> radio panel', () => {
     fireEvent.click(screen.getByTestId('proto-cms-ardop-hf'));
     expect(screen.getByTestId('radio-panel-root')).toBeInTheDocument();
     expect(screen.getByTestId('ardop-dock-root')).toBeInTheDocument();
-    expect(screen.getByTestId('shell-panes')).toHaveClass('panes--with-dock');
+    // Grid layout: ARDOP dual mount needs BOTH classes — the 4-col
+    // panes--with-dock plus the 5th column from panes--with-legacy-dock.
+    const shellPanes = screen.getByTestId('shell-panes');
+    expect(shellPanes).toHaveClass('panes--with-dock');
+    expect(shellPanes).toHaveClass('panes--with-legacy-dock');
+  });
+
+  // Codex P1 finding (radio-panel-shell): a running ARDOP modem with no
+  // sidebar selection (the "operator clicked Close while ARDOP was on-air"
+  // scenario) must show the Ardop panel mode AND keep the legacy ArdopDock
+  // mounted. Pre-fix this fell through to the togglePinned Telnet/CMS
+  // default and dropped the dock entirely.
+  it('shows ARDOP mode + legacy dock when modem is running with no sidebar selection', () => {
+    mockUseModemStatus.mockReturnValue({ status: RUNNING, loading: false, error: null });
+    renderShell();
+    expect(screen.getByTestId('radio-panel-root')).toBeInTheDocument();
+    expect(screen.getByTestId('ardop-dock-root')).toBeInTheDocument();
+    const shellPanes = screen.getByTestId('shell-panes');
+    expect(shellPanes).toHaveClass('panes--with-dock');
+    expect(shellPanes).toHaveClass('panes--with-legacy-dock');
   });
 
   // tuxlink-mnk4: View → Toggle Radio Panel (Ctrl+Shift+M) must actually

@@ -60,6 +60,7 @@ import { ArdopHfStub } from '../connections/ArdopHfStub';
 import { useModemStatus } from '../modem/useModemStatus';
 import { ArdopDock } from '../modem/ArdopDock';
 import { computePanelMode } from '../radio/radioPanelVisibility';
+import type { RadioPanelMode } from '../radio/types';
 import { PlaceholderRadioPanel } from '../radio/modes/PlaceholderRadioPanel';
 import './AppShell.css';
 
@@ -213,9 +214,17 @@ export function AppShell() {
   // Spec §3.3 visibility rule. computePanelMode applies the OR of
   // (sidebar selection, active modem, pinned toggle) and returns the mode
   // to display, or null when the panel should not mount.
+  // In v1, only the ARDOP modem exists; when it's running, the active
+  // context is Ardop Winlink. Multi-modem coordination is out of scope
+  // per spec §8.
+  const activeModem: RadioPanelMode | null =
+    modemStatus.state !== 'stopped'
+      ? { kind: 'ardop-hf', intent: 'cms' }
+      : null;
+
   const radioPanelMode = computePanelMode({
     sidebarSelected: selectedConnection,
-    modemActive: modemStatus.state !== 'stopped',
+    activeModem,
     togglePinned: pinRadioPanel,
   });
 
@@ -379,7 +388,7 @@ export function AppShell() {
       />
 
       <div
-        className={`panes${radioPanelMode !== null ? ' panes--with-dock' : ''}`}
+        className={`panes${radioPanelMode !== null ? ' panes--with-dock' : ''}${radioPanelMode?.kind === 'ardop-hf' ? ' panes--with-legacy-dock' : ''}`}
         data-testid="shell-panes"
       >
         <FolderSidebar
@@ -436,7 +445,7 @@ export function AppShell() {
             }}
           />
         )}
-        {radioPanelMode !== null && selectedConnection?.protocol === 'ardop-hf' && <ArdopDock />}
+        {radioPanelMode?.kind === 'ardop-hf' && <ArdopDock />}
       </div>
 
       <StatusBar show={showStatusBar} unread={counts.inbox ?? 0} state={statusData.state} packet={packetUi} />

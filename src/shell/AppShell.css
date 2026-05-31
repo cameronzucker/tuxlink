@@ -8,7 +8,7 @@
  * tuxlink-ng3: the webview now renders its OWN chrome (custom HTML titlebar +
  * menu bar; native decorations are off). The webview renders, top to bottom:
  *   titlebar / menu bar / dashboard (ribbon) / panes[ sidebar | rows | reader |
- *   radio-panel | dock ] / statusbar
+ *   radio-panel | legacy-dock (ARDOP HF only, P4-removed) ] / statusbar
  * (radio-panel-shell P1.6: the session-log strip was removed; the log moves
  * into the radio panel as a per-mode section per spec §3.7 + §4.3.)
  */
@@ -43,11 +43,17 @@
   overflow: hidden;
 }
 
-/* Modem (ARDOP HF) dock is mounted as the 4th column when the modem isn't
- * 'stopped' (tuxlink-4ek Task 4.3). The mailbox column shrinks 40px (380→340)
- * to give the dock 290px without stealing from the 1fr reading-pane. */
+/* The Radio Panel is 360 px wide (spec §3.2) and mounts as the 4th
+ * column whenever the panel is visible. The mailbox column shrinks
+ * 40 px (380→340) to give the panel its width without stealing from the
+ * 1fr reading-pane. During P1, ARDOP HF dual-mounts the legacy ArdopDock
+ * alongside it; that case needs a fifth 290 px column. P4 removes the
+ * dock entirely and the second class goes away. */
 .layout-b .panes--with-dock {
-  grid-template-columns: 200px 340px 1fr 290px;
+  grid-template-columns: 200px 340px 1fr 360px;
+}
+.layout-b .panes--with-dock.panes--with-legacy-dock {
+  grid-template-columns: 200px 340px 1fr 360px 290px;
 }
 
 /* ============================================================================

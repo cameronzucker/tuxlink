@@ -15,7 +15,7 @@ import type { RadioPanelMountReason, RadioPanelMode } from './types';
 export function computePanelVisibility(reason: RadioPanelMountReason): boolean {
   return (
     reason.sidebarSelected !== null ||
-    reason.modemActive ||
+    reason.activeModem !== null ||
     reason.togglePinned
   );
 }
@@ -27,10 +27,7 @@ export function computePanelMode(
     return null;
   }
 
-  // v1 prefers sidebar selection. Multi-modem coordination (where a
-  // running modem differs from the sidebar selection) is out of scope
-  // per spec §8 — one active modem at a time, and the sidebar
-  // selection is the operator's active context.
+  // Sidebar selection wins when present (operator's explicit context).
   if (reason.sidebarSelected !== null) {
     const { sessionType, protocol } = reason.sidebarSelected;
     const intent: 'cms' | 'p2p' = sessionType === 'p2p' ? 'p2p' : 'cms';
@@ -43,8 +40,16 @@ export function computePanelMode(
     }
   }
 
-  // togglePinned + no sidebar selection + no modem: show a "no connection"
-  // placeholder. For v1 we default to Telnet Winlink as a reasonable
-  // empty state; operators set the actual mode by clicking a sidebar entry.
+  // No sidebar: an active modem's mode reflects the operator's actual
+  // current context. Spec §3.3 — the panel stays mounted on a running
+  // modem and the mode shown should match the running modem, not a
+  // default.
+  if (reason.activeModem !== null) {
+    return reason.activeModem;
+  }
+
+  // togglePinned with no sidebar and no modem: default to Telnet Winlink
+  // as a reasonable empty state; operator clicks a sidebar entry to set
+  // the actual mode.
   return { kind: 'telnet', intent: 'cms' };
 }
