@@ -34,6 +34,12 @@
   outline: none;
   padding: 0;
   min-width: 0;
+  /* Pin both line-height and height so the blinking caret is the same size
+   * whether the input is empty or has glyphs. Without this, the browser's
+   * user-agent default kicks in for empty <input> and the caret renders
+   * noticeably shorter than the typed text's visual height. */
+  line-height: 20px;
+  height: 20px;
 }
 .layout-b .search-bar input::placeholder { color: var(--text-faint); }
 .layout-b .search-bar .saved-star {
