@@ -47,12 +47,31 @@ describe('parseQuery', () => {
     expect(s.filters).toEqual({});
   });
 
-  it('a token with trailing colon is free_text', () => {
-    expect(parseQuery('from: damage').free_text).toBe('from: damage');
+  it('a bare trailing colon with no value stays as free_text', () => {
+    expect(parseQuery('from:').filters.from).toBeUndefined();
+    expect(parseQuery('from:').free_text).toBe('from:');
   });
 
   it('case-insensitive on operator key', () => {
     expect(parseQuery('FROM:foo').filters.from).toEqual({ kind: 'addr', value: 'foo' });
+  });
+
+  it('tolerates a space after the colon (Gmail-style: "from: foo")', () => {
+    const s = parseQuery('from: service damage');
+    expect(s.filters.from).toEqual({ kind: 'addr', value: 'service' });
+    expect(s.free_text).toBe('damage');
+  });
+
+  it('tolerates a space + lowercase value ("to: n7cpz")', () => {
+    const s = parseQuery('to: n7cpz');
+    expect(s.filters.to).toEqual({ kind: 'addr', value: 'n7cpz' });
+  });
+
+  it('mid-typing `from: ` with trailing space (no value yet) does NOT filter', () => {
+    // Operator typed "from:" + space but hasn't typed the value yet — we
+    // shouldn't synthesize an empty filter or eat the colon.
+    const s = parseQuery('from: ');
+    expect(s.filters.from).toBeUndefined();
   });
 });
 

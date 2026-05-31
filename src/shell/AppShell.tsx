@@ -288,10 +288,16 @@ export function AppShell() {
 
   const onSelectMessage = useCallback(
     (id: string) => {
-      setSelectedMessage({ folder: selectedFolder, id });
+      // When a search is active, the clicked row may live in a folder other
+      // than the sidebar's selectedFolder. Look up the row's own folder
+      // from the search results; fall back to the sidebar folder for the
+      // regular folder-scoped browse case.
+      const hit = searchResultMessages?.find((m) => m.id === id);
+      const folder = (hit?.folder as MailboxFolder | undefined) ?? selectedFolder;
+      setSelectedMessage({ folder, id });
       setSelectedConnection(null);
     },
-    [selectedFolder],
+    [selectedFolder, searchResultMessages],
   );
 
   // Derive the packet UI state for the ribbon + status bar indicators from the

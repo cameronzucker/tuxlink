@@ -30,8 +30,15 @@ const KEY_ALIASES: Record<string, FilterKey> = {
   date: 'date-range',
 };
 
+// Pre-normalize step: collapse `key: value` → `key:value` for recognized
+// operators so Gmail-style typing with a space after the colon works.
+// Only matches when there's a non-whitespace value to bind to; `from: `
+// (trailing space, no value) is left alone so mid-typing doesn't misbehave.
+const KEY_NORMALIZE_RE = /\b(from|to|folder|form|form-type|transport|has|has-form|has-attach|is|read|read-state|date):\s+(?=\S)/gi;
+
 export function parseQuery(input: string): QuerySpec {
-  const tokens = input.trim().split(/\s+/).filter(Boolean);
+  const normalized = input.replace(KEY_NORMALIZE_RE, (_m, k: string) => `${k.toLowerCase()}:`);
+  const tokens = normalized.trim().split(/\s+/).filter(Boolean);
   const filters: Partial<Record<FilterKey, FilterValue>> = {};
   const freeText: string[] = [];
 
