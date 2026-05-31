@@ -43,11 +43,11 @@ async fn test_pat_backend_list_messages_returns_mapped_metas() {
 }
 
 // ============================================================================
-// Test 2: send_message happy path — multipart POST returns Ok(None) per Pat
-// 1.0.0's plain-text-confirmation behavior (no MID returned by Pat).
+// Test 2: send_message happy path — multipart POST returns Ok(MessageId(""))
+// per Pat 1.0.0 transitional placeholder (no real MID from Pat; deleted in P9).
 // ============================================================================
 #[tokio::test]
-async fn test_pat_backend_send_message_posts_multipart_returns_none_for_pat() {
+async fn test_pat_backend_send_message_posts_multipart_returns_empty_mid_for_pat() {
     let mut server = mockito::Server::new_async().await;
     let _mock = server
         .mock("POST", "/api/mailbox/out")
@@ -70,7 +70,11 @@ async fn test_pat_backend_send_message_posts_multipart_returns_none_for_pat() {
         attachments: vec![],
     };
     let result = backend.send_message(msg).await.expect("send");
-    assert_eq!(result, None, "Pat 1.0.0 returns plain-text confirmation, no MID");
+    assert!(
+        result.0.is_empty(),
+        "Pat 1.0.0 has no MID — transitional placeholder is empty string, got: {:?}",
+        result
+    );
 }
 
 // ============================================================================
@@ -184,7 +188,6 @@ async fn test_native_backend_send_then_list_and_read() {
             attachments: vec![],
         })
         .await
-        .unwrap()
         .expect("native backend assigns a MID at queue time");
 
     // It is now listable + readable from the outbox.
@@ -627,4 +630,37 @@ async fn spawn_against_real_pat_http_mode() {
 fn mailbox_folder_is_defined_in_winlink_backend() {
     let _: tuxlink_lib::winlink_backend::MailboxFolder =
         tuxlink_lib::winlink_backend::MailboxFolder::Inbox;
+}
+
+// ============================================================================
+// Task 3.1 (tuxlink-9phd) — compile-time check: send_message returns
+// Result<MessageId, BackendError>, NOT Result<Option<MessageId>, BackendError>.
+//
+// Spirit: if the trait is rolled back to return Option, this file fails to
+// compile because `let _: Result<MessageId, BackendError>` won't accept a
+// `Result<Option<MessageId>, BackendError>`.
+// ============================================================================
+#[tokio::test]
+async fn native_backend_send_message_returns_message_id_not_option() {
+    use tuxlink_lib::winlink_backend::{BackendError, NativeBackend, OutboundMessage};
+
+    let cfg = native_test_config();
+    let tmp = tempfile::tempdir().expect("tmpdir");
+    let backend = NativeBackend::new(cfg, tmp.path());
+
+    // The type annotation here is the compile-time assertion:
+    // Result<MessageId, BackendError> must be assignable from send_message's return.
+    // If the trait returns Result<Option<MessageId>, _>, this will not compile.
+    let _result: Result<MessageId, BackendError> = backend
+        .send_message(OutboundMessage {
+            to: vec!["W1AW@winlink.org".to_string()],
+            cc: vec![],
+            subject: "Type-check".to_string(),
+            body: "compile-time assertion".to_string(),
+            date: "2026-05-30T00:00:00Z".to_string(),
+            attachments: vec![],
+        })
+        .await;
+    // Runtime: just verify it's Ok (no panic).
+    _result.expect("NativeBackend::send_message must succeed with valid config");
 }

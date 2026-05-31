@@ -632,18 +632,15 @@ pub struct OutboundDraftDto {
 /// per spec §3.2 — the UI does not supply the send timestamp; the command
 /// stamps it at queue time).
 ///
-/// Returns `Ok(None)` when Pat does not echo a MID (Pat 1.0.0 behavior —
-/// plain-text confirmation, no MID). The compose window shows "Posted to
-/// Outbox" on any `Ok(_)`. Spec §3.2 + §5.4.
-///
-/// **None-success invariant (spec §3.2):** `Ok(None)` is a SUCCESS, not an
-/// error. The frontend must treat `Ok(Some(mid))` and `Ok(None)` identically
-/// as "posted." The Rust test below asserts this mapping explicitly.
+/// Returns `Ok(mid_string)` on success. `NativeBackend` returns a real MID;
+/// `PatBackend` (deleted in P9) returns an empty string as a transitional
+/// placeholder. The compose window shows "Posted to Outbox" on any `Ok(_)`.
+/// Spec §3.2 + §5.4.
 #[tauri::command]
 pub async fn message_send(
     draft: OutboundDraftDto,
     state: State<'_, BackendState>,
-) -> Result<Option<String>, UiError> {
+) -> Result<String, UiError> {
     let backend = state
         .current()
         .ok_or_else(|| UiError::NotConfigured("backend offline".to_string()))?;
@@ -660,10 +657,9 @@ pub async fn message_send(
         attachments: vec![],
     };
 
-    // send_message returns Ok(None) for Pat 1.0.0 — see winlink_backend.rs
-    // PatBackend impl. Map Option<MessageId> → Option<String> for IPC.
+    // send_message returns MessageId directly. Map to String for IPC.
     let mid = backend.send_message(msg).await?;
-    Ok(mid.map(|id| id.0))
+    Ok(mid.0)
 }
 
 /// Run one CMS connection: send everything queued in the outbox and download any

@@ -408,11 +408,13 @@ pub trait WinlinkBackend: Send + Sync {
         Ok(())
     }
 
-    /// Returns `Ok(Some(id))` when the backend assigns a MID at queue
-    /// time, `Ok(None)` when it does not (current Pat 1.0.0 behavior:
-    /// returns a plain-text confirmation, no MID).
+    /// Returns `Ok(id)` with the MID assigned at queue time.
+    ///
+    /// `NativeBackend` assigns a real filesystem-derived MID.
+    /// `PatBackend` (deleted in P9) synthesizes an empty MID as a transitional
+    /// placeholder — callers may check `.0.is_empty()` to detect the Pat case.
     async fn send_message(&self, msg: OutboundMessage)
-        -> Result<Option<MessageId>, BackendError>;
+        -> Result<MessageId, BackendError>;
 
     async fn connect(&self, transport: TransportConfig)
         -> Result<Session, BackendError>;
@@ -597,7 +599,7 @@ impl WinlinkBackend for NativeBackend {
     async fn send_message(
         &self,
         msg: OutboundMessage,
-    ) -> Result<Option<MessageId>, BackendError> {
+    ) -> Result<MessageId, BackendError> {
         let callsign = self
             .live_config()
             .identity
@@ -610,7 +612,7 @@ impl WinlinkBackend for NativeBackend {
         let message =
             compose::compose_message(&callsign, &to, &cc, &msg.subject, &msg.body, unix_secs);
         let id = self.mailbox.store(MailboxFolder::Outbox, &message.to_bytes())?;
-        Ok(Some(id))
+        Ok(id)
     }
 
     async fn connect(&self, transport: TransportConfig) -> Result<Session, BackendError> {
@@ -1719,17 +1721,17 @@ impl WinlinkBackend for PatBackend {
     }
 
     async fn send_message(&self, msg: OutboundMessage)
-        -> Result<Option<MessageId>, BackendError>
+        -> Result<MessageId, BackendError>
     {
         let to_refs: Vec<&str> = msg.to.iter().map(String::as_str).collect();
         self.client
             .send(&to_refs, &msg.subject, &msg.body, &msg.date)
             .await
             .map_err(|e| translate_pat_err(e, "send_message"))?;
-        // Pat 1.0.0 returns plain-text confirmation, no MID — see
-        // pat_client_test.rs::test_send_message_posts_multipart_form_data
-        // for the verified API behavior. Honestly return None.
-        Ok(None)
+        // Pat 1.0.0 returns plain-text confirmation, no MID. Synthesize an
+        // empty MID as a transitional placeholder. PatBackend is deleted in P9.
+        // Callers may check `.0.is_empty()` to detect this Pat case.
+        Ok(MessageId::new(""))
     }
 
     async fn connect(&self, transport: TransportConfig)
