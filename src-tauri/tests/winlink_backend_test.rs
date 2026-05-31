@@ -785,3 +785,191 @@ fn native_session_emits_wire_log_on_send() {
         lines
     );
 }
+
+// ============================================================================
+// Task 4.4 (tuxlink-9phd) — two-backend end-to-end exchange with attachment.
+//
+// Spec: docs/plans/strip-pat-add-native-b2f-attachments.md §Phase 4 Task 4.4
+// bd issue: tuxlink-9phd
+//
+// An in-process telnet loopback: sender composes a message with an attachment,
+// sends, receiver decodes via Message::from_bytes (Phase 2 parser), attachment
+// bytes match. Strongest end-to-end test for the new outbound-with-attachments
+// path.
+//
+// RADIO-1: 127.0.0.1 loopback only. Nothing is transmitted.
+// ============================================================================
+#[tokio::test]
+async fn two_native_backends_exchange_with_attachment() {
+    use std::io::{BufRead, BufReader, Write};
+    use std::net::TcpListener;
+    use tuxlink_lib::native_mailbox::Mailbox;
+    use tuxlink_lib::winlink::message::Message;
+    use tuxlink_lib::winlink::session::{ExchangeConfig, ExchangeRole, OutboundMessage};
+    use tuxlink_lib::winlink::telnet::{connect_and_exchange, Transport, CMS_TARGET_CALL};
+    use tuxlink_lib::winlink_backend::{
+        MailboxFolder, NativeBackend, OutboundAttachment, OutboundMessage as BackendOutbound,
+        WinlinkBackend,
+    };
+
+    // -----------------------------------------------------------------------
+    // Step 1: sender composes a message with an attachment and queues it.
+    // -----------------------------------------------------------------------
+    let sender_tmp = tempfile::tempdir().expect("sender tmpdir");
+    let receiver_tmp = tempfile::tempdir().expect("receiver tmpdir");
+
+    let sender = NativeBackend::new(native_test_config(), sender_tmp.path());
+    let id = sender
+        .send_message(BackendOutbound {
+            to: vec!["W7AUX@winlink.org".to_string()],
+            cc: vec![],
+            subject: "Attachment e2e test".to_string(),
+            body: "See attached.".to_string(),
+            date: "2026-05-30T12:00:00Z".to_string(),
+            attachments: vec![OutboundAttachment {
+                filename: "test.bin".into(),
+                bytes: b"hello-attachment-bytes".to_vec(),
+            }],
+        })
+        .await
+        .expect("send_message must queue the message");
+
+    // -----------------------------------------------------------------------
+    // Step 2: build the proposal from the queued outbox message.
+    // -----------------------------------------------------------------------
+    let sender_mailbox = Mailbox::new(sender_tmp.path());
+    let body = sender_mailbox
+        .read(MailboxFolder::Outbox, &id)
+        .expect("outbox message must be readable");
+    let msg =
+        Message::from_bytes(&body.raw_rfc5322).expect("outbox bytes must parse as Message");
+    let (proposal, compressed) = msg.to_proposal().expect("message must produce a proposal");
+    let outbound_session = vec![OutboundMessage {
+        proposal,
+        title: msg.header("Subject").unwrap_or_default().to_string(),
+        compressed,
+    }];
+
+    // -----------------------------------------------------------------------
+    // Step 3: spawn a fake telnet server (Answer role) that receives the
+    // message and stores it in the receiver's mailbox.
+    //
+    // Server protocol:
+    //   → client dials
+    //   ← server writes login prompts
+    //   → client sends callsign + password
+    //   ← server runs B2F Answer-role exchange (sends master handshake first)
+    //   ← server stores received messages into receiver_tmp mailbox
+    //
+    // RADIO-1: 127.0.0.1 loopback only; nothing is transmitted.
+    // -----------------------------------------------------------------------
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback listener");
+    let listen_port = listener.local_addr().expect("get listener addr").port();
+    let receiver_dir = receiver_tmp.path().to_path_buf();
+
+    let server = std::thread::spawn(move || -> Vec<u8> {
+        let (sock, _) = listener.accept().expect("accept");
+        // Write telnet login prompts.
+        let mut writer = sock.try_clone().expect("clone for write");
+        writer
+            .write_all(b"Callsign :\rPassword :\r")
+            .expect("write login prompts");
+
+        // Read and discard the client's callsign and password responses
+        // (two CR-terminated lines).
+        let mut reader = BufReader::new(sock);
+        for _ in 0..2 {
+            let mut line = Vec::new();
+            reader
+                .read_until(b'\r', &mut line)
+                .expect("read login response");
+        }
+
+        // Run B2F Answer-role exchange on this socket.
+        let server_config = ExchangeConfig {
+            mycall: "W7AUX".into(),
+            targetcall: CMS_TARGET_CALL.to_string(),
+            locator: "CN87".into(),
+            password: None,
+        };
+        let result = tuxlink_lib::winlink::session::run_exchange_with_role(
+            &mut reader,
+            &mut writer,
+            ExchangeRole::Answer,
+            &server_config,
+            vec![], // server has nothing to send
+            |proposals| {
+                proposals
+                    .iter()
+                    .map(|_| tuxlink_lib::winlink::proposal::Answer::Accept { resume_offset: 0 })
+                    .collect()
+            },
+            None,
+        )
+        .expect("server-side exchange must succeed");
+
+        // Store received messages into the receiver's mailbox.
+        let receiver_mailbox = Mailbox::new(&receiver_dir);
+        let mut first_raw = Vec::new();
+        for message in &result.received {
+            let raw = message.to_bytes();
+            if first_raw.is_empty() {
+                first_raw = raw.clone();
+            }
+            receiver_mailbox
+                .store(MailboxFolder::Inbox, &raw)
+                .expect("store in receiver inbox");
+        }
+        first_raw
+    });
+
+    // -----------------------------------------------------------------------
+    // Step 4: client dials the local listener and runs the exchange.
+    // -----------------------------------------------------------------------
+    let client_config = ExchangeConfig {
+        mycall: "N7CPZ".into(),
+        targetcall: CMS_TARGET_CALL.to_string(),
+        locator: "CN87".into(),
+        password: None,
+    };
+    connect_and_exchange(
+        "127.0.0.1",
+        listen_port,
+        Transport::Plaintext,
+        &client_config,
+        outbound_session,
+        &|_| {},
+        &|_| {},
+        &|_| {},
+        |_| vec![],
+    )
+    .expect("client-side exchange must succeed");
+
+    // Wait for the server to finish storing received messages.
+    server.join().expect("server thread panicked");
+
+    // -----------------------------------------------------------------------
+    // Step 5: assert attachment survived the full pipeline.
+    // -----------------------------------------------------------------------
+    let receiver = NativeBackend::new(native_test_config(), receiver_tmp.path());
+    let inbox = receiver
+        .list_messages(MailboxFolder::Inbox)
+        .await
+        .expect("list receiver inbox");
+    assert_eq!(inbox.len(), 1, "receiver inbox must hold exactly one message; got {inbox:?}");
+
+    let received_body = receiver
+        .read_message_in(MailboxFolder::Inbox, &inbox[0].id)
+        .await
+        .expect("read_message_in must succeed");
+    // Verify field name — actual is raw_rfc5322 per the spec.
+    let parsed = Message::from_bytes(&received_body.raw_rfc5322)
+        .expect("received bytes must parse as Message");
+    assert_eq!(parsed.attachments().len(), 1, "should have exactly one attachment");
+    assert_eq!(parsed.attachments()[0].filename, "test.bin", "filename must be preserved");
+    assert_eq!(
+        parsed.attachments()[0].bytes,
+        b"hello-attachment-bytes",
+        "attachment bytes must be preserved"
+    );
+}
