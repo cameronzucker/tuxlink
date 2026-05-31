@@ -4,6 +4,18 @@ All notable changes to Tuxlink are documented here.
 
 This project adheres to [Semantic Versioning](https://semver.org) with project-specific rules described in [VERSIONING.md](VERSIONING.md). Entries from `v0.0.2` onward are generated automatically by [`release-please`](https://github.com/googleapis/release-please) from [Conventional Commits](https://www.conventionalcommits.org).
 
+## [0.6.0](https://github.com/cameronzucker/tuxlink/compare/v0.5.0...v0.6.0) (2026-05-31)
+
+
+### Features
+
+* **modem:** ArdopDock Send/Receive button triggers modem_ardop_b2f_exchange (tuxlink-ecth) ([fc95383](https://github.com/cameronzucker/tuxlink/commit/fc95383bbf7232d531799c634828b88d0de77aae))
+
+
+### Bug Fixes
+
+* **modem:** require live backend peer as Send/Receive target (tuxlink-ecth) ([0173985](https://github.com/cameronzucker/tuxlink/commit/01739856ff9789596efd12a1bc2a097be9678169))
+
 ## [0.5.0](https://github.com/cameronzucker/tuxlink/compare/v0.4.0...v0.5.0) (2026-05-31)
 
 
