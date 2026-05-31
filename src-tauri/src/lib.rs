@@ -238,6 +238,7 @@ pub fn run() {
             crate::search::commands::tauri_search_list_recent,
             crate::search::commands::tauri_search_save,
             crate::search::commands::tauri_search_unsave,
+            crate::search::commands::tauri_search_promote_recent,
             crate::search::commands::tauri_search_rename,
             crate::search::commands::tauri_search_reorder,
             crate::search::commands::tauri_search_rebuild_index,

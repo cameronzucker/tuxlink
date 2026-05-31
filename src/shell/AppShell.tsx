@@ -230,7 +230,9 @@ export function AppShell() {
             onUnsave={async () => {
               if (search.activeSaved) {
                 await saved.unsave(search.activeSaved.id);
-                search.setActiveSavedSearch(null);
+                // Codex adrev fix (find-messages P2): only detach the saved-search
+                // label; keep the current spec so the search results remain visible.
+                search.clearActiveSaved();
               }
             }}
             onToggleDropdown={() => setDropdownOpen((o) => !o)}
@@ -245,7 +247,9 @@ export function AppShell() {
               onRunRecent={(r) => { search.setSpec(r.spec); setDropdownOpen(false); }}
               onPromoteRecent={async (r) => {
                 const name = window.prompt('Name for this saved search?', renderQuery(r.spec).slice(0, 24));
-                if (name) await saved.save(name, r.spec);
+                // Codex adrev fix (find-messages P2): use promote_recent so the
+                // recent entry is removed atomically — avoids duplicate in dropdown.
+                if (name) await saved.promoteRecent(name, r.spec);
               }}
               onUnsaveActive={async () => { if (search.activeSaved) await saved.unsave(search.activeSaved.id); }}
               onManage={() => { setSavedSearchesOpen(true); setDropdownOpen(false); }}

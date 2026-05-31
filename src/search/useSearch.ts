@@ -42,11 +42,20 @@ export function useSearch() {
     setSpec(saved ? saved.spec : EMPTY_SPEC);
   }, []);
 
+  // Detach the saved-search label without clearing the query spec. Use this
+  // when the user un-stars an active saved search — the search result should
+  // remain visible; only the "you are in a saved search" marker is removed
+  // (Codex adrev fix — find-messages P2: unsave must not blank the search).
+  const clearActiveSaved = useCallback(() => {
+    setActiveSaved(null);
+  }, []);
+
   return {
     spec,
     setSpec,
     activeSaved,
     setActiveSavedSearch,
+    clearActiveSaved,
     clear,
     results: active ? (query.data ?? null) : null,
     isLoading: query.isLoading,

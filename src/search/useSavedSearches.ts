@@ -22,6 +22,15 @@ export function useSavedSearches() {
       await refetchAll();
       return result;
     },
+    // Promote a recent search to saved: atomically removes the recent entry
+    // and creates the saved one — prevents the duplicate shown when `save`
+    // is called without removing the matching recent (Codex adrev fix,
+    // find-messages P2).
+    promoteRecent: async (name: string, spec: QuerySpec): Promise<SavedSearch> => {
+      const result = await invoke<SavedSearch>('tauri_search_promote_recent', { name, spec });
+      await refetchAll();
+      return result;
+    },
     unsave: async (id: string) => {
       await invoke('tauri_search_unsave', { id });
       await refetchAll();

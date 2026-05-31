@@ -79,6 +79,15 @@ impl SearchService {
         Ok(self.saved.lock().unwrap().unsave(&id)?)
     }
 
+    /// Promote a recent search to saved: removes from recent, creates a saved
+    /// entry, and returns it — atomically. Prevents the duplicate shown when
+    /// `save` is called without removing the matching recent (Codex adrev fix,
+    /// find-messages P2).
+    pub fn promote_recent(&self, name: String, spec: QuerySpec) -> Result<SavedSearch, CommandError> {
+        let now = (self.now_unix)();
+        Ok(self.saved.lock().unwrap().promote_recent(&name, &spec, now)?)
+    }
+
     pub fn rename(&self, id: String, name: String) -> Result<(), CommandError> {
         Ok(self.saved.lock().unwrap().rename(&id, &name)?)
     }
@@ -189,6 +198,15 @@ pub fn tauri_search_unsave(
     id: String,
 ) -> Result<(), CommandError> {
     svc.unsave(id)
+}
+
+#[tauri::command]
+pub fn tauri_search_promote_recent(
+    svc: tauri::State<SearchService>,
+    name: String,
+    spec: QuerySpec,
+) -> Result<SavedSearch, CommandError> {
+    svc.promote_recent(name, spec)
 }
 
 #[tauri::command]

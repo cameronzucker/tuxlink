@@ -523,6 +523,19 @@ impl NativeBackend {
         self
     }
 
+    /// Attach a search index to the mailbox so incremental index hooks run on
+    /// every `store`/`move_to`/`mark_read` (Codex adrev — find-messages P1).
+    /// Builder-style; must be called before the `mailbox` Arc is cloned (i.e.
+    /// before the backend is installed into `BackendState`). Panics if the
+    /// Arc is already shared — that would be a programmer error in the boot path.
+    pub fn with_index(mut self, index: Arc<std::sync::Mutex<crate::search::index::Index>>) -> Self {
+        let mbox = Arc::try_unwrap(self.mailbox)
+            .unwrap_or_else(|_| panic!("with_index called after Arc<Mailbox> was shared — call before install"))
+            .with_index(index);
+        self.mailbox = Arc::new(mbox);
+        self
+    }
+
     /// Attach a raw-wire log sink (tuxlink-nki). Builder-style so existing
     /// constructors and tests are unaffected; no-op by default.
     pub fn with_wire_log(mut self, wire: WireSink) -> Self {
