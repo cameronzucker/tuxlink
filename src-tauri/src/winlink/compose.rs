@@ -81,9 +81,24 @@ pub fn compose_message_with_files(
     attachments: &[OutboundAttachment],
     unix_secs: u64,
 ) -> Result<Message, ComposeError> {
-    // Step 1: forward the text-only path to compose_message.
-    // Validation + file handling lands in follow-up tasks (T1.2-T1.4).
-    let _ = attachments; // suppress unused warning until T1.4
+    // NEW: filename validation (T1.3)
+    for att in attachments {
+        let chars = att.filename.chars().count();
+        if chars > 255 {
+            return Err(ComposeError::FilenameTooLong {
+                filename: att.filename.clone(),
+                chars,
+            });
+        }
+        if !att.filename.chars().all(|c| (c as u32) <= 0xff) {
+            return Err(ComposeError::FilenameNotLatin1Encodable {
+                filename: att.filename.clone(),
+            });
+        }
+    }
+    // Forward the validated path to compose_message; attachments still unused
+    // (wired in T1.4).
+    let _ = attachments;
     Ok(compose_message(mycall, to, cc, subject, body, unix_secs))
 }
 
@@ -257,5 +272,41 @@ mod tests {
         ).expect("no filenames → cannot fail");
         let text_only = compose_message("N7CPZ", &["W1AW"], &[], "Hi", "body", 1_716_200_000);
         assert_eq!(no_files.to_bytes(), text_only.to_bytes());
+    }
+
+    #[test]
+    fn compose_rejects_filename_over_255_chars() {
+        let long: String = "a".repeat(256);
+        let att = OutboundAttachment { filename: long.clone(), bytes: vec![1, 2, 3] };
+        let err = compose_message_with_files(
+            "N7CPZ", &["W1AW"], &[], "Hi", "body", &[att], 1_716_200_000,
+        ).unwrap_err();
+        assert!(matches!(err, ComposeError::FilenameTooLong { chars: 256, .. }),
+                "expected FilenameTooLong{{chars: 256, ..}}, got {:?}", err);
+    }
+
+    #[test]
+    fn compose_rejects_non_latin1_filename() {
+        let att = OutboundAttachment { filename: "日本語.txt".into(), bytes: vec![1, 2] };
+        let err = compose_message_with_files(
+            "N7CPZ", &["W1AW"], &[], "Hi", "body", &[att], 1_716_200_000,
+        ).unwrap_err();
+        assert!(matches!(err, ComposeError::FilenameNotLatin1Encodable { .. }),
+                "expected FilenameNotLatin1Encodable, got {:?}", err);
+    }
+
+    #[test]
+    fn compose_short_circuits_on_first_invalid_filename() {
+        let ok = OutboundAttachment { filename: "good.txt".into(), bytes: vec![1] };
+        let bad = OutboundAttachment { filename: "日本.bin".into(), bytes: vec![2] };
+        let err = compose_message_with_files(
+            "N7CPZ", &["W1AW"], &[], "Hi", "body", &[ok, bad], 1_716_200_000,
+        ).unwrap_err();
+        match err {
+            ComposeError::FilenameNotLatin1Encodable { filename } => {
+                assert_eq!(filename, "日本.bin");
+            }
+            other => panic!("expected FilenameNotLatin1Encodable for '日本.bin', got {:?}", other),
+        }
     }
 }
