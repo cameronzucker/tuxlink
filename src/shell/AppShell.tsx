@@ -49,6 +49,7 @@ import { StubPanel } from '../connections/StubPanel';
 import { SearchBar } from '../search/SearchBar';
 import { SearchDropdown } from '../search/SearchDropdown';
 import { ChipStrip } from '../search/ChipStrip';
+import { SavedSearchesPanel } from '../search/SavedSearchesPanel';
 import { useSearch } from '../search/useSearch';
 import { useSavedSearches } from '../search/useSavedSearches';
 import { renderQuery } from '../search/queryRender';
@@ -86,6 +87,8 @@ export function AppShell() {
   const search = useSearch();
   const saved = useSavedSearches();
   const [dropdownOpen, setDropdownOpen] = useState(false);
+  // Saved-searches management panel (Task 18).
+  const [savedSearchesOpen, setSavedSearchesOpen] = useState(false);
 
   const metaText = useMemo((): string | null => {
     if (!search.isActive) return null;
@@ -245,7 +248,7 @@ export function AppShell() {
                 if (name) await saved.save(name, r.spec);
               }}
               onUnsaveActive={async () => { if (search.activeSaved) await saved.unsave(search.activeSaved.id); }}
-              onManage={() => { setDropdownOpen(false); }}
+              onManage={() => { setSavedSearchesOpen(true); setDropdownOpen(false); }}
               onClose={() => setDropdownOpen(false)}
             />
           )}
@@ -308,6 +311,10 @@ export function AppShell() {
       <StatusBar show={showStatusBar} unread={counts.inbox ?? 0} state={statusData.state} packet={packetUi} />
 
       <SettingsPanel open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+
+      {savedSearchesOpen && (
+        <SavedSearchesPanel onClose={() => setSavedSearchesOpen(false)} />
+      )}
     </div>
   );
 }
