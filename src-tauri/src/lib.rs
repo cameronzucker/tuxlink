@@ -15,9 +15,6 @@ pub mod modem_commands;
 pub mod modem_status;
 
 #[cfg(test)]
-mod build_support;
-
-#[cfg(test)]
 pub mod test_helpers;
 
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
