@@ -203,9 +203,35 @@ impl Message {
 
 /// Encode a filename for the File: header value.
 ///
-/// T1.5: ASCII passthrough. T1.8 adds RFC 2047 Q-encoding for non-ASCII names.
+/// ASCII filenames pass through unchanged. Non-ASCII filenames (which must
+/// be Latin-1 encodable — compose-time validation in T1.3 rejects anything
+/// else) are RFC 2047 Q-encoded with charset=ISO-8859-1 and lowercase `q`,
+/// matching wl2k-go fbb/message.go:436-437.
 fn encode_filename(name: &str) -> String {
-    name.to_string()
+    if name.is_ascii() {
+        return name.to_string();
+    }
+    let mut encoded = String::from("=?ISO-8859-1?q?");
+    for c in name.chars() {
+        let cp = c as u32;
+        if cp > 0xff {
+            // Defensive: compose-level validation rejects this case.
+            encoded.push('?');
+            continue;
+        }
+        let b = cp as u8;
+        // RFC 2047 Q-encoding: printable ASCII (except = ? _) emitted as-is;
+        // space → _; everything else → =HH (hex).
+        if b == b' ' {
+            encoded.push('_');
+        } else if b > 0x20 && b < 0x7f && b != b'=' && b != b'?' && b != b'_' {
+            encoded.push(b as char);
+        } else {
+            encoded.push_str(&format!("={:02X}", b));
+        }
+    }
+    encoded.push_str("?=");
+    encoded
 }
 
 /// Find the first position of `needle` within `haystack`.
@@ -395,6 +421,44 @@ mod tests {
         assert_eq!(msg.header("Subject"), Some("Test"));
         assert_eq!(msg.header("To"), Some("SERVICE@winlink.org"));
         assert_eq!(msg.body(), b"Hello world\r\n");
+    }
+
+    #[test]
+    fn q_encodes_non_ascii_filename_with_iso_8859_1() {
+        let mut msg = Message::new();
+        msg.set_header("Mid", "MIDQ");
+        msg.set_header("From", "N7CPZ");
+        msg.set_body(b"x".to_vec());
+        msg.set_attachments(vec![
+            crate::winlink_backend::OutboundAttachment {
+                // U+00E9 (é, Latin-1 0xE9)
+                filename: "café.txt".into(),
+                bytes: vec![1],
+            },
+        ]);
+        let bytes = msg.to_bytes();
+        let s = String::from_utf8_lossy(&bytes);
+        // Lowercase q, charset ISO-8859-1 per wl2k-go fbb/message.go:436-437
+        assert!(s.contains("File: 1 =?ISO-8859-1?q?caf=E9.txt?="),
+                "expected Q-encoded filename, got: {s}");
+    }
+
+    #[test]
+    fn ascii_filename_passes_through_unencoded() {
+        let mut msg = Message::new();
+        msg.set_header("Mid", "MIDA");
+        msg.set_header("From", "N7CPZ");
+        msg.set_body(b"x".to_vec());
+        msg.set_attachments(vec![
+            crate::winlink_backend::OutboundAttachment {
+                filename: "plain.txt".into(),
+                bytes: vec![1],
+            },
+        ]);
+        let bytes = msg.to_bytes();
+        let s = String::from_utf8_lossy(&bytes);
+        assert!(s.contains("File: 1 plain.txt"),
+                "expected unencoded ASCII filename, got: {s}");
     }
 
     #[test]
