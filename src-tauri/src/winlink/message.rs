@@ -396,4 +396,23 @@ mod tests {
         assert_eq!(msg.header("To"), Some("SERVICE@winlink.org"));
         assert_eq!(msg.body(), b"Hello world\r\n");
     }
+
+    #[test]
+    fn to_proposal_size_includes_attachment_bytes_and_crlfs() {
+        let mut msg = Message::new();
+        msg.set_header("Mid", "MIDPROP");
+        msg.set_header("Subject", "T");
+        msg.set_header("From", "N7CPZ");
+        msg.set_body(b"body".to_vec());  // 4 bytes
+        msg.set_attachments(vec![
+            crate::winlink_backend::OutboundAttachment {
+                filename: "x.bin".into(),
+                bytes: vec![0; 10],  // 10 bytes
+            },
+        ]);
+        let (proposal, _compressed) = msg.to_proposal().unwrap();
+        let raw = msg.to_bytes();
+        assert_eq!(proposal.size, raw.len(),
+                   "proposal.size = {}, to_bytes len = {}", proposal.size, raw.len());
+    }
 }
