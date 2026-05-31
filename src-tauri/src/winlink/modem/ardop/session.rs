@@ -20,6 +20,7 @@ use std::sync::mpsc::{self, RecvTimeoutError};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use super::arq_state::ArqState;
 use super::command::{encode_setter, Command, CommandParseError, State};
 use super::wire::encode_cmd_line;
 
@@ -47,6 +48,19 @@ impl CmdSocket {
     /// On success returns a `CmdSocket` whose control-loop thread is already
     /// running and forwarding parsed `Command` values into the internal channel.
     pub fn connect(addr: SocketAddr) -> io::Result<Self> {
+        Self::connect_with_arq_state(addr, None)
+    }
+
+    /// Like [`connect`] but also wire an [`ArqState`] that the reader thread
+    /// updates on `CONNECTED` / `DISCONNECTED` / `NEWSTATE DISC` events
+    /// (tuxlink-ytg). The data socket reads the same `ArqState` to decide
+    /// EOF-on-DISC and pre-ARQ frame-drop. `None` skips the bookkeeping for
+    /// callers that don't share state with a data socket (the existing
+    /// connect tests).
+    pub fn connect_with_arq_state(
+        addr: SocketAddr,
+        arq_state: Option<ArqState>,
+    ) -> io::Result<Self> {
         let stream = TcpStream::connect(addr)?;
         // The reader and writer halves share the underlying socket; `try_clone`
         // gives us two independently-closeable handles — the same split pattern
@@ -82,6 +96,19 @@ impl CmdSocket {
                 }
                 match Command::parse(&line) {
                     Ok(cmd) => {
+                        // tuxlink-ytg: book-keep the ARQ link state for the data
+                        // socket's EOF-on-DISC + pre-connect drop gates. The update
+                        // happens BEFORE the send so the DataSocket sees the new
+                        // state by the time any blocking-recv consumer of the cmd
+                        // channel reacts.
+                        if let Some(ref state) = arq_state {
+                            match &cmd {
+                                Command::Connected { .. } => state.set_connected(),
+                                Command::Disconnected => state.set_disconnected(),
+                                Command::NewState(State::Disc) => state.set_disconnected(),
+                                _ => {}
+                            }
+                        }
                         // Sender drop unblocks on Err (receiver gone); exit cleanly.
                         if tx.send(cmd).is_err() {
                             break;
@@ -91,6 +118,13 @@ impl CmdSocket {
                         // Unknown/malformed command — skip rather than crash the loop.
                     }
                 }
+            }
+            // tuxlink-ytg: if the cmd socket itself dies (EOF or I/O error), the
+            // ARQ link cannot be considered live regardless of the last event.
+            // Flip the flag to disconnected so any blocked data-socket read
+            // unblocks promptly with EOF.
+            if let Some(ref state) = arq_state {
+                state.set_disconnected();
             }
             // `tx` drops here → channel becomes disconnected → recv_event returns
             // `RecvError::Disconnected`.
