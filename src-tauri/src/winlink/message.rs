@@ -605,4 +605,62 @@ mod tests {
         assert_eq!(proposal.size, raw.len(),
                    "proposal.size = {}, to_bytes len = {}", proposal.size, raw.len());
     }
+
+    #[test]
+    fn from_bytes_round_trips_through_to_bytes() {
+        let mut original = Message::new();
+        original.set_header("Mid", "MIDRT");
+        original.set_header("From", "N7CPZ");
+        original.set_header("Date", "2026/05/30 12:00");
+        original.set_body(b"hello world".to_vec());
+        original.set_attachments(vec![
+            crate::winlink_backend::OutboundAttachment {
+                filename: "a.bin".into(),
+                bytes: vec![1, 2, 3, 4, 5],
+            },
+            crate::winlink_backend::OutboundAttachment {
+                filename: "b.bin".into(),
+                bytes: vec![0xAA, 0xBB],
+            },
+        ]);
+        let bytes = original.to_bytes();
+        let parsed = Message::from_bytes(&bytes).expect("round-trip parse");
+        assert_eq!(parsed.attachments().len(), 2);
+        assert_eq!(parsed.attachments()[0].filename, "a.bin");
+        assert_eq!(parsed.attachments()[0].bytes, vec![1, 2, 3, 4, 5]);
+        assert_eq!(parsed.attachments()[1].filename, "b.bin");
+        assert_eq!(parsed.attachments()[1].bytes, vec![0xAA, 0xBB]);
+        assert_eq!(parsed.body(), b"hello world");
+    }
+
+    #[test]
+    fn from_bytes_handles_empty_attachment() {
+        let wire = b"Mid: MIDE\r\nFile: 0 empty.bin\r\nFrom: N7CPZ\r\nBody: 0\r\n\r\n\r\n\r\n";
+        let msg = Message::from_bytes(wire).unwrap();
+        assert_eq!(msg.attachments().len(), 1);
+        assert_eq!(msg.attachments()[0].bytes.len(), 0);
+    }
+
+    #[test]
+    fn from_bytes_errors_on_missing_attachment_terminator() {
+        // Body claims 0 bytes, File: claims 3 bytes, but no body→file CRLF
+        let wire = b"Mid: MIDX\r\nFile: 3 a.bin\r\nFrom: N7CPZ\r\nBody: 0\r\n\r\nXXX";
+        let err = Message::from_bytes(wire).unwrap_err();
+        assert_eq!(err, ParseError::MissingAttachmentTerminator);
+    }
+
+    #[test]
+    fn from_bytes_errors_on_truncated_attachment() {
+        // File: claims 10 bytes but only 3 are present
+        let wire = b"Mid: MIDT\r\nFile: 10 a.bin\r\nFrom: N7CPZ\r\nBody: 0\r\n\r\n\r\nXXX\r\n";
+        let err = Message::from_bytes(wire).unwrap_err();
+        assert_eq!(err, ParseError::TruncatedAttachment);
+    }
+
+    #[test]
+    fn from_bytes_errors_on_malformed_file_header() {
+        let wire = b"Mid: MIDM\r\nFile: notanumber a.bin\r\nFrom: N7CPZ\r\nBody: 0\r\n\r\n";
+        let err = Message::from_bytes(wire).unwrap_err();
+        assert_eq!(err, ParseError::MalformedFileHeader);
+    }
 }
