@@ -433,10 +433,14 @@ fn collect_attachments(msg: &mail_parser::Message<'_>) -> Vec<AttachmentMetaDto>
         .collect()
 }
 
-/// Extract a routing string from known Winlink / Pat transport headers.
+/// Extract a routing string from known Winlink transport-info headers.
 /// Checks a prioritized list of custom headers; returns `None` when absent.
+///
+/// `X-Pat-Transport` is retained as a known incoming header so messages
+/// forwarded by remote Pat-running gateways still surface a routing string in
+/// the UI. Tuxlink itself does not emit it (Pat is fully stripped per ADR
+/// 0016); this is wire-compatibility for peers, not a Pat dependency.
 fn extract_routing(msg: &mail_parser::Message<'_>) -> Option<String> {
-    // Known Winlink / Pat transport-info headers (order of preference).
     const TRANSPORT_HEADERS: &[&str] = &[
         "X-Winlink-Route",
         "X-Received-Winlink-Transport",

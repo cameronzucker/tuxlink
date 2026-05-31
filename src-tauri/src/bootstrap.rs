@@ -204,7 +204,7 @@ fn install_native(app_handle: &AppHandle, state: &BackendState, cfg: Config) {
     emit_backend_line(
         app_handle,
         LogLevel::Info,
-        "Native Winlink backend ready (no Pat).".to_string(),
+        "Native Winlink backend ready.".to_string(),
     );
 }
 
