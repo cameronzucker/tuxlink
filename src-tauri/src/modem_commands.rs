@@ -66,7 +66,27 @@ pub fn modem_get_status_inner(session: &Arc<ModemSession>) -> ModemStatus {
 /// AFTER the session mutex is released. Holding the lock across the modem
 /// disconnect I/O (TCP DISCONNECT + DISCONNECTED ack, bounded by 5s) would
 /// stall any concurrent `status_snapshot` call for the duration.
+///
+/// tuxlink-o3f2 (P1 abort-during-connect): FIRST step is a best-effort
+/// `abort_in_flight()` that side-channels `ABORT\r` to ardopcf via the
+/// cmd-socket writer installed at connect time. If a connect is currently
+/// blocking inside `arq_connect`'s recv loop, ardopcf responds to ABORT
+/// with `FAULT` / `NEWSTATE DISC`, the cmd reader thread delivers it via
+/// the channel, the recv loop returns `Err(SessionError::Fault(...))`,
+/// and the connect path unwinds cleanly. If no connect is in flight,
+/// `abort_in_flight` is harmless: ABORT on an idle TNC is a no-op
+/// (ardopcf documents it as "immediate interrupt of any in-flight TX").
+/// If no writer is installed (transport was never connected, or session
+/// already reset), `abort_in_flight` returns `Err` and we fall through to
+/// the existing graceful disconnect path.
 pub fn modem_ardop_disconnect_inner(session: &Arc<ModemSession>) -> Result<(), String> {
+    // tuxlink-o3f2: best-effort abort of any in-flight connect_arq. The
+    // _ discard is deliberate — if the writer is missing or the write
+    // fails, the fall-through reset_to_stopped + transport.disconnect
+    // path will still surface a clean Stopped state. Documented behavior:
+    // ABORT on an idle TNC is a no-op, so it's safe to call unconditionally.
+    let _ = session.abort_in_flight();
+
     if let Some(mut transport) = session.reset_to_stopped() {
         // Best-effort: even if disconnect errors, the session is already
         // marked Stopped so reconnects are possible. The TNC process (when
@@ -243,6 +263,24 @@ where
         // is torn down by its Drop impl rather than leaking past this fn.
         drop(transport);
         return Err(msg);
+    }
+
+    // tuxlink-o3f2: install the side-channel abort writer BEFORE the
+    // blocking `connect_arq` begins. While the recv loop inside
+    // `arq_connect` holds the transport on its stack, the operator's
+    // Disconnect button calls `modem_ardop_disconnect_inner` → which calls
+    // `session.abort_in_flight()` → which writes `ABORT\r` to ardopcf via
+    // this writer. The recv loop then surfaces FAULT/NEWSTATE DISC and
+    // returns Err, unwinding the connect path. Without this hook the
+    // 120s `CONNECT_DEADLINE` was the only abort path — see the
+    // 2026-05-22 runaway-connect incident (memory radio1-bounded-airtime-abort).
+    //
+    // If the backend can't expose a writer (default trait impl returns
+    // None), the install is silently skipped: graceful disconnect remains
+    // the only path. For ardopcf the writer is always available after
+    // init() succeeds.
+    if let Some(writer) = transport.try_clone_abort_writer() {
+        session.install_abort_writer(writer);
     }
 
     // Status: Connecting (bounded by CONNECT_DEADLINE below).
@@ -893,6 +931,235 @@ mod tests {
         assert!(
             err.contains("callsign") || err.contains("wizard"),
             "error must be actionable; got: {err}"
+        );
+    }
+
+    // ── tuxlink-o3f2: abort-during-connect side channel ──────────────────
+
+    use crate::winlink::modem::ardop::session::SessionError as ArdopSessionError;
+    use std::io::Read;
+    use std::net::{TcpListener, TcpStream};
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    /// Stub transport that:
+    /// - exposes `try_clone_abort_writer` returning a clone of a `TcpStream`
+    ///   connected to a `TcpListener` we own in the test, so the test can
+    ///   observe the side-channel ABORT bytes;
+    /// - `connect_arq` blocks until `abort_signal` flips to true (the test
+    ///   sets it from a watcher thread that reads from the listener and
+    ///   asserts on the bytes).
+    ///
+    /// Used to prove that `modem_ardop_disconnect_inner` aborts an in-flight
+    /// `connect_arq` via the side channel, not by holding the transport
+    /// mutex (which during connect_arq is `None` from the session's POV).
+    struct AbortableStubTransport {
+        abort_writer: Option<TcpStream>,
+        abort_signal: Arc<AtomicBool>,
+    }
+
+    impl AbortableStubTransport {
+        fn new(abort_writer: TcpStream, abort_signal: Arc<AtomicBool>) -> Self {
+            Self {
+                abort_writer: Some(abort_writer),
+                abort_signal,
+            }
+        }
+    }
+
+    impl ModemTransport for AbortableStubTransport {
+        fn init(&mut self, _cfg: &InitConfig) -> Result<(), ArdopSessionError> {
+            Ok(())
+        }
+        fn connect_arq(
+            &mut self,
+            _target: &str,
+            _repeat: u32,
+            deadline: Duration,
+        ) -> Result<crate::winlink::modem::ConnectInfo, ArdopSessionError> {
+            // Spin (bounded by deadline) until abort_signal flips. In
+            // production this loop is the real `arq_connect` recv loop;
+            // here the signal stands in for "ardopcf emitted FAULT/DISC in
+            // response to ABORT and the cmd reader thread delivered it."
+            let start = std::time::Instant::now();
+            while !self.abort_signal.load(Ordering::Acquire) {
+                if start.elapsed() >= deadline {
+                    return Err(ArdopSessionError::Timeout {
+                        cmd: "ARQCALL".into(),
+                    });
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            Err(ArdopSessionError::Fault("aborted via side channel".into()))
+        }
+        fn disconnect(&mut self, _deadline: Duration) -> Result<(), ArdopSessionError> {
+            Ok(())
+        }
+        fn data_stream(
+            &mut self,
+        ) -> std::io::Result<&mut dyn crate::winlink::modem::ReadWrite> {
+            Err(std::io::Error::other("stub"))
+        }
+        fn try_clone_abort_writer(&self) -> Option<TcpStream> {
+            self.abort_writer.as_ref().and_then(|s| s.try_clone().ok())
+        }
+    }
+
+    /// Spawn a TCP listener and return `(addr, server_thread_handle, abort_signal)`.
+    /// The server thread reads bytes; when it sees `ABORT\r` it flips
+    /// `abort_signal` to true and exits. The signal is the test's hook to
+    /// unblock the connect stub.
+    fn spawn_abort_listener() -> (std::net::SocketAddr, std::thread::JoinHandle<Vec<u8>>, Arc<AtomicBool>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let abort_signal = Arc::new(AtomicBool::new(false));
+        let signal_for_thread = abort_signal.clone();
+        let handle = std::thread::spawn(move || {
+            let (mut conn, _peer) = listener.accept().unwrap();
+            conn.set_read_timeout(Some(Duration::from_secs(5))).ok();
+            let mut accumulated = Vec::new();
+            let mut buf = [0u8; 64];
+            loop {
+                match conn.read(&mut buf) {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => {
+                        accumulated.extend_from_slice(&buf[..n]);
+                        if accumulated.windows(6).any(|w| w == b"ABORT\r") {
+                            signal_for_thread.store(true, Ordering::Release);
+                            break;
+                        }
+                    }
+                }
+            }
+            accumulated
+        });
+        (addr, handle, abort_signal)
+    }
+
+    /// End-to-end abort-during-connect: the connect call runs on one
+    /// thread, blocking inside `connect_arq` (stub spins until aborted).
+    /// On another thread we call `modem_ardop_disconnect_inner`, which
+    /// MUST send ABORT via the session's side-channel writer; the listener
+    /// observes the bytes and flips the signal that lets `connect_arq`
+    /// return. Connect returns Err promptly (well under the 120s deadline)
+    /// rather than running to deadline.
+    ///
+    /// This is the regression test for the 2026-05-22 runaway-connect
+    /// incident — the proof that the operator's Disconnect button can
+    /// halt an in-flight connect in seconds, not minutes.
+    #[test]
+    fn disconnect_aborts_in_flight_connect_via_side_channel() {
+        let (addr, listener_handle, abort_signal) = spawn_abort_listener();
+
+        // Client end of the loopback pair — this is what
+        // `try_clone_abort_writer` will hand back via the stub.
+        let abort_writer = TcpStream::connect(addr).expect("connect to abort listener");
+
+        let session = Arc::new(ModemSession::new());
+        let token = session.mint_consent_token();
+
+        // Run the connect call on a worker thread so the test thread can
+        // call disconnect in parallel.
+        let session_for_connect = session.clone();
+        let abort_signal_for_stub = abort_signal.clone();
+        let connect_thread = std::thread::spawn(move || {
+            modem_ardop_connect_gated_with_factory(
+                &session_for_connect,
+                "W7RMS-10",
+                &token,
+                &test_ardop_ui_config(),
+                move |_cfg, _target| {
+                    Ok(Box::new(AbortableStubTransport::new(
+                        abort_writer,
+                        abort_signal_for_stub,
+                    )) as Box<dyn ModemTransport>)
+                },
+            )
+        });
+
+        // Wait until the connect path has progressed past install_abort_writer
+        // (status flips to Connecting AFTER the install). Poll briefly.
+        let start = std::time::Instant::now();
+        loop {
+            let st = session.status_snapshot().state;
+            if matches!(st, ModemState::Connecting) {
+                break;
+            }
+            if start.elapsed() >= Duration::from_secs(5) {
+                panic!("status never reached Connecting (state={st:?})");
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+
+        // Now hit Disconnect. This must (a) write ABORT via the side
+        // channel and (b) return promptly. The connect thread sees the
+        // signal, returns Err, and joins.
+        let disconnect_start = std::time::Instant::now();
+        modem_ardop_disconnect_inner(&session).expect("disconnect must succeed");
+        let disconnect_elapsed = disconnect_start.elapsed();
+        assert!(
+            disconnect_elapsed < Duration::from_secs(2),
+            "disconnect must return promptly; took {disconnect_elapsed:?}"
+        );
+
+        // The connect call should have returned Err once the stub saw the
+        // signal flip. Bound the wait so a regression fails the test
+        // instead of hanging.
+        let connect_result = connect_thread
+            .join()
+            .expect("connect thread must not panic");
+        assert!(
+            connect_result.is_err(),
+            "connect must return Err after ABORT signal; got: {connect_result:?}"
+        );
+
+        // The listener thread received the side-channel bytes.
+        let received = listener_handle.join().expect("listener thread must not panic");
+        assert!(
+            received.windows(6).any(|w| w == b"ABORT\r"),
+            "abort listener must have received ABORT\\r; got: {received:?}"
+        );
+
+        // Signal flipped means abort_in_flight delivered the line.
+        assert!(
+            abort_signal.load(Ordering::Acquire),
+            "abort signal must be set"
+        );
+
+        // Session state: the disconnect path reset to Stopped, then the
+        // connect thread's error handler ran (because connect_arq returned
+        // Err after the abort signal) and set state to Error. Either
+        // terminal is acceptable as a "no longer Connecting" outcome —
+        // the load-bearing assertion is the prompt disconnect above. We
+        // explicitly assert NOT-Connecting and NOT-ConnectedIrs/Iss so a
+        // regression that leaves the session stuck mid-flow fails loudly.
+        let final_state = session.status_snapshot().state;
+        assert!(
+            matches!(final_state, ModemState::Stopped | ModemState::Error),
+            "session must end Stopped or Error after abort-driven disconnect; got: {final_state:?}"
+        );
+    }
+
+    /// `modem_ardop_disconnect_inner` must call `abort_in_flight` BEFORE
+    /// any reset/transport teardown — best-effort, ignore-error. If no
+    /// writer is installed (e.g. transport was never connected), the call
+    /// is a no-op and the existing graceful path still runs.
+    ///
+    /// This test directly exercises the disconnect ordering: install a
+    /// writer pointing at a local listener, call disconnect, observe the
+    /// ABORT bytes on the listener side.
+    #[test]
+    fn disconnect_in_flight_sends_abort_via_side_channel() {
+        let (addr, listener_handle, _signal) = spawn_abort_listener();
+        let writer = TcpStream::connect(addr).expect("connect to abort listener");
+        let session = Arc::new(ModemSession::new());
+        session.install_abort_writer(writer);
+
+        modem_ardop_disconnect_inner(&session).expect("disconnect must succeed");
+
+        let received = listener_handle.join().expect("listener thread must not panic");
+        assert!(
+            received.windows(6).any(|w| w == b"ABORT\r"),
+            "disconnect must send ABORT via the side channel; got: {received:?}"
         );
     }
 

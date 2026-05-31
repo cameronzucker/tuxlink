@@ -334,6 +334,15 @@ impl ModemTransport for ArdopTransport {
             })
     }
 
+    /// Expose a clone of the cmd-socket write half so a side channel
+    /// (`ModemSession::abort_in_flight`) can inject `ABORT\r` while
+    /// `connect_arq`'s recv loop is blocked (tuxlink-o3f2). Returns `None`
+    /// when `init()` has not been called and the cmd socket is therefore
+    /// not yet open.
+    fn try_clone_abort_writer(&self) -> Option<std::net::TcpStream> {
+        self.cmd.as_ref().and_then(|s| s.try_clone_writer().ok())
+    }
+
     /// Drain pending cmd-socket events and fold them into `status`.
     ///
     /// Called by [`crate::modem_status::ModemStatusBroadcaster`] every
@@ -1030,6 +1039,88 @@ mod tests {
         drop(t);
         cmd_server.join().unwrap();
         data_server.join().unwrap();
+    }
+
+    // ── Test tuxlink-o3f2: try_clone_abort_writer surfaces a live socket ──
+
+    /// tuxlink-o3f2: `ArdopTransport::try_clone_abort_writer` MUST return
+    /// `None` before `init()` (no cmd socket open) and `Some(stream)` after
+    /// `init()` succeeds. The returned stream must actually deliver bytes to
+    /// the cmd-port peer — proving it is the live write half, not a placeholder.
+    #[test]
+    fn try_clone_abort_writer_returns_none_before_init_and_writeable_socket_after() {
+        // Spawn a recording cmd mock that echoes setters AND captures any
+        // line received (including a side-channel ABORT).
+        let recorded: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let rec = recorded.clone();
+        let (cmd_addr, cmd_server) = spawn_server(move |conn| {
+            let mut writer = conn.try_clone().unwrap();
+            let mut reader = BufReader::new(conn);
+            loop {
+                let line = read_cmd_line(&mut reader);
+                if line.is_empty() {
+                    break;
+                }
+                rec.lock().unwrap().push(line.clone());
+                // Echo back the first token to ack every setter, so init_tnc completes.
+                let cmd_name = line
+                    .split_whitespace()
+                    .next()
+                    .unwrap_or("")
+                    .to_ascii_uppercase();
+                write_reply(&mut writer, &cmd_name);
+            }
+        });
+        // Data mock: accepts the connection and idles (init connects it).
+        let (data_addr, data_server) = spawn_server(|conn| {
+            let mut buf = [0u8; 64];
+            // Read until the peer closes (drives EOF when the test drops the transport).
+            let mut conn = conn;
+            loop {
+                match conn.read(&mut buf) {
+                    Ok(0) | Err(_) => break,
+                    Ok(_) => continue,
+                }
+            }
+        });
+
+        let mut t = ArdopTransport::with_addrs(cmd_addr, data_addr);
+        // Before init: no cmd socket → None.
+        assert!(
+            t.try_clone_abort_writer().is_none(),
+            "must return None before init() opens the cmd socket"
+        );
+
+        let cfg = InitConfig {
+            mycall: "N7CPZ".into(),
+            gridsquare: "CN87".into(),
+            arq_timeout_s: 30,
+        };
+        t.init(&cfg).expect("init must succeed");
+
+        // After init: a live writer that can deliver bytes to the cmd mock.
+        let mut abort_writer = t
+            .try_clone_abort_writer()
+            .expect("must return Some after init()");
+        abort_writer
+            .write_all(b"ABORT\r")
+            .expect("side-channel write must succeed");
+        abort_writer.flush().ok();
+
+        // Give the mock a moment to read the side-channel line.
+        std::thread::sleep(Duration::from_millis(100));
+
+        // Drop the transport (closes cmd socket) and the writer so the mock exits.
+        drop(t);
+        drop(abort_writer);
+        cmd_server.join().unwrap();
+        data_server.join().unwrap();
+
+        let lines = recorded.lock().unwrap().clone();
+        assert!(
+            lines.iter().any(|l| l == "ABORT"),
+            "cmd mock must have received the side-channel ABORT line; got: {lines:?}"
+        );
     }
 
     // ── Phase 5 helper: Python stub that mimics ardopcf's TCP ports ──────

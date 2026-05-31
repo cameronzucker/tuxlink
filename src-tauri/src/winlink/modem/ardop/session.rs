@@ -159,6 +159,24 @@ impl CmdSocket {
     pub fn recv_event(&self, timeout: Duration) -> Result<Command, RecvTimeoutError> {
         self.rx.recv_timeout(timeout)
     }
+
+    /// Get a cloneable write handle to the cmd socket. Used by `ModemSession`
+    /// so a side channel (e.g. `modem_ardop_disconnect`) can send `ABORT`
+    /// while `arq_connect`'s recv loop is blocking on this socket's read
+    /// side (tuxlink-o3f2 — P1 abort-during-connect fix).
+    ///
+    /// The returned handle shares the underlying TCP write half via
+    /// [`std::net::TcpStream::try_clone`]. Concurrent writes from multiple
+    /// threads to the same TCP stream are POSIX-safe at the kernel level
+    /// (writes are atomic up to `PIPE_BUF`), but the caller should serialize
+    /// at the application layer if the protocol requires command boundaries.
+    /// For the ABORT use case the host-protocol message is a single short
+    /// line and the only competing writer is `init`/`arq_connect` issuing
+    /// the next setter — interleaving is acceptable because ABORT is the
+    /// terminal command that unblocks the entire flow.
+    pub fn try_clone_writer(&self) -> io::Result<TcpStream> {
+        self.writer.try_clone()
+    }
 }
 
 impl Drop for CmdSocket {
@@ -752,6 +770,55 @@ mod tests {
 
         drop(sock);
         server.join().unwrap();
+    }
+
+    // ── Test 7e: try_clone_writer returns a usable side-channel writer ─────
+
+    /// tuxlink-o3f2: `CmdSocket::try_clone_writer` returns a clone of the
+    /// TCP write half. A write to the clone must reach the same peer the
+    /// `send_line` writes reach. This is the foundation for the
+    /// `ModemSession::abort_in_flight` side channel that sends `ABORT`
+    /// while `arq_connect` is blocked on the recv channel.
+    #[test]
+    fn try_clone_writer_returns_usable_side_channel_writer() {
+        // Mock that records every line received and never closes.
+        let received: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let rec = received.clone();
+        let (addr, server) = spawn_mock_tnc(move |conn| {
+            let mut reader = BufReader::new(conn);
+            loop {
+                let line = read_cmd_line(&mut reader);
+                if line.is_empty() {
+                    break;
+                }
+                rec.lock().unwrap().push(line);
+            }
+        });
+
+        let sock = CmdSocket::connect(addr).unwrap();
+        let mut writer_clone = sock
+            .try_clone_writer()
+            .expect("try_clone_writer must succeed on a live socket");
+        // Side-channel write — bypasses the &mut CmdSocket gate that the
+        // recv-blocked thread would otherwise hold.
+        writer_clone
+            .write_all(b"ABORT\r")
+            .expect("side-channel write must succeed");
+        writer_clone.flush().ok();
+
+        // Wait briefly for the mock thread to read the line.
+        std::thread::sleep(Duration::from_millis(50));
+
+        // Close both halves of the cmd socket so the mock's read loop exits.
+        drop(sock);
+        drop(writer_clone);
+        server.join().unwrap();
+
+        let lines = received.lock().unwrap().clone();
+        assert!(
+            lines.iter().any(|l| l == "ABORT"),
+            "side-channel writer must have delivered ABORT to the peer; got: {lines:?}"
+        );
     }
 
     // ── Test 8: arq_disconnect resolves on DISCONNECTED ───────────────────
