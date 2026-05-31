@@ -609,8 +609,16 @@ impl WinlinkBackend for NativeBackend {
         let unix_secs = parse_rfc3339_secs(&msg.date).unwrap_or_else(now_unix_secs);
         let to: Vec<&str> = msg.to.iter().map(String::as_str).collect();
         let cc: Vec<&str> = msg.cc.iter().map(String::as_str).collect();
-        let message =
-            compose::compose_message(&callsign, &to, &cc, &msg.subject, &msg.body, unix_secs);
+        let message = compose::compose_message_with_files(
+            &callsign,
+            &to,
+            &cc,
+            &msg.subject,
+            &msg.body,
+            &msg.attachments,
+            unix_secs,
+        )
+        .map_err(|e| BackendError::MessageRejected(e.to_string()))?;
         let id = self.mailbox.store(MailboxFolder::Outbox, &message.to_bytes())?;
         Ok(id)
     }

@@ -664,3 +664,53 @@ async fn native_backend_send_message_returns_message_id_not_option() {
     // Runtime: just verify it's Ok (no panic).
     _result.expect("NativeBackend::send_message must succeed with valid config");
 }
+
+// ============================================================================
+// Test 11: NativeBackend::send_message stores attachments in the outbox.
+//
+// Spec: docs/plans/strip-pat-add-native-b2f-attachments.md §4.3
+// bd issue: tuxlink-9phd / Task 4.1
+//
+// Verifies that msg.attachments is passed through to compose_message_with_files
+// and survives the mailbox round-trip: the attachment bytes and filename must be
+// readable back from the outbox via read_message_in + Message::from_bytes.
+// ============================================================================
+#[tokio::test]
+async fn native_backend_send_message_stores_attachments_in_outbox() {
+    use tuxlink_lib::winlink::message::Message;
+    use tuxlink_lib::winlink_backend::{
+        MailboxFolder, NativeBackend, OutboundAttachment, OutboundMessage, WinlinkBackend,
+    };
+
+    let tmp = tempfile::tempdir().expect("tmpdir");
+    let cfg = native_test_config(); // already sets callsign = Some("N7CPZ")
+
+    let backend = NativeBackend::new(cfg, tmp.path());
+
+    let msg = OutboundMessage {
+        to: vec!["W1AW".to_string()],
+        cc: vec![],
+        subject: "Attachment test".to_string(),
+        body: "body".to_string(),
+        date: "2026-05-30T12:00:00Z".to_string(),
+        attachments: vec![OutboundAttachment {
+            filename: "hello.bin".to_string(),
+            bytes: b"hello".to_vec(),
+        }],
+    };
+
+    let id = backend.send_message(msg).await.expect("send queues");
+
+    // Read the stored bytes back and parse with Message::from_bytes.
+    let body = backend
+        .read_message_in(MailboxFolder::Outbox, &id)
+        .await
+        .expect("outbox message should be readable");
+    assert_eq!(body.id, id);
+
+    let parsed = Message::from_bytes(&body.raw_rfc5322).expect("stored bytes parse as Message");
+    let atts = parsed.attachments();
+    assert_eq!(atts.len(), 1, "should have exactly one attachment");
+    assert_eq!(atts[0].filename, "hello.bin", "filename must be preserved");
+    assert_eq!(atts[0].bytes, b"hello", "attachment bytes must be preserved");
+}
