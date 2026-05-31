@@ -203,6 +203,41 @@ impl Message {
             return Err(ParseError::TruncatedBody);
         }
         msg.body = after_headers[..body_size].to_vec();
+
+        // NEW (T2.3): parse attachments per spec §3 wire format.
+        //   body + \r\n + (attachment_bytes + \r\n)*   (when files exist)
+        let mut offset = sep + 4 + body_size;
+        let file_headers: Vec<(usize, String)> = msg
+            .header_all("File")
+            .into_iter()
+            .map(parse_file_header)
+            .collect::<Result<Vec<_>, _>>()?;
+
+        if !file_headers.is_empty() {
+            // Consume the body→first-attachment terminator CRLF.
+            if input.get(offset..offset + 2) != Some(b"\r\n") {
+                return Err(ParseError::MissingAttachmentTerminator);
+            }
+            offset += 2;
+
+            for (size, name) in file_headers {
+                if input.len() < offset + size {
+                    return Err(ParseError::TruncatedAttachment);
+                }
+                let data = input[offset..offset + size].to_vec();
+                offset += size;
+                // Consume the trailing CRLF after this attachment.
+                if input.get(offset..offset + 2) != Some(b"\r\n") {
+                    return Err(ParseError::MissingAttachmentTerminator);
+                }
+                offset += 2;
+                msg.attachments.push(crate::winlink_backend::OutboundAttachment {
+                    filename: name,
+                    bytes: data,
+                });
+            }
+        }
+
         Ok(msg)
     }
 }
@@ -265,6 +300,19 @@ fn encode_filename(name: &str) -> String {
 /// Find the first position of `needle` within `haystack`.
 fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     haystack.windows(needle.len()).position(|w| w == needle)
+}
+
+/// Parse a `File:` header value of the form `<size> <filename>` into a
+/// `(byte_count, filename)` pair.  Both fields are required; a missing space
+/// or non-numeric size produces `ParseError::MalformedFileHeader`.
+fn parse_file_header(value: &str) -> Result<(usize, String), ParseError> {
+    let (size_str, name) = value
+        .split_once(' ')
+        .ok_or(ParseError::MalformedFileHeader)?;
+    let size = size_str
+        .parse::<usize>()
+        .map_err(|_| ParseError::MalformedFileHeader)?;
+    Ok((size, name.to_string()))
 }
 
 /// Why a message could not be parsed from wire bytes.
@@ -437,6 +485,17 @@ mod tests {
         let bytes = msg.to_bytes();
         let bs = bytes.windows(4).position(|w| w == b"\r\n\r\n").unwrap() + 4;
         assert_eq!(&bytes[bs..], b"plain");  // exact — no trailing CRLF
+    }
+
+    #[test]
+    fn from_bytes_parses_single_attachment() {
+        let mut wire = Vec::new();
+        wire.extend_from_slice(b"Mid: MIDATT\r\nDate: 2026/05/30 12:00\r\nFile: 3 a.bin\r\n\
+                                 From: N7CPZ\r\nBody: 5\r\n\r\nhello\r\n\xAA\xBB\xCC\r\n");
+        let msg = Message::from_bytes(&wire).unwrap();
+        assert_eq!(msg.attachments().len(), 1);
+        assert_eq!(msg.attachments()[0].filename, "a.bin");
+        assert_eq!(msg.attachments()[0].bytes, vec![0xAA, 0xBB, 0xCC]);
     }
 
     #[test]
