@@ -485,7 +485,6 @@ fn test_outbound_message_carries_attachments() {
     use tuxlink_lib::winlink_backend::{OutboundAttachment, OutboundMessage};
     let attach = OutboundAttachment {
         filename: "test.xml".to_string(),
-        content_type: "text/xml".to_string(),
         bytes: b"<root/>".to_vec(),
     };
     let msg = OutboundMessage {
@@ -498,7 +497,6 @@ fn test_outbound_message_carries_attachments() {
     };
     assert_eq!(msg.attachments.len(), 1);
     assert_eq!(msg.attachments[0].filename, "test.xml");
-    assert_eq!(msg.attachments[0].content_type, "text/xml");
     assert_eq!(msg.attachments[0].bytes, b"<root/>");
 }
 

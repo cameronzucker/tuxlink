@@ -11,8 +11,23 @@
 //! byte-identical to any other client.
 
 use md5::{Digest, Md5};
+use thiserror::Error;
 
 use super::message::Message;
+use crate::winlink_backend::OutboundAttachment;
+
+/// Errors that can occur while composing an outbound message with attachments.
+#[derive(Debug, Error)]
+#[non_exhaustive]
+pub enum ComposeError {
+    #[error("filename exceeds 255-character limit ({chars} chars): {filename:?}")]
+    FilenameTooLong { filename: String, chars: usize },
+    #[error(
+        "filename contains characters outside ISO-8859-1 \
+         (Q-encoding would be lossy): {filename:?}"
+    )]
+    FilenameNotLatin1Encodable { filename: String },
+}
 
 /// Build a Private text message ready to send.
 ///
@@ -48,6 +63,28 @@ pub fn compose_message(
     msg.set_header("Content-Type", "text/plain; charset=ISO-8859-1");
     msg.set_body(encode_body(body));
     msg
+}
+
+/// Build a Private text message with zero or more file attachments.
+///
+/// Returns `Err(ComposeError::FilenameTooLong)` or
+/// `Err(ComposeError::FilenameNotLatin1Encodable)` if any attachment
+/// filename violates the Winlink B2F constraints. The first invalid
+/// filename short-circuits; the error names the offending filename so
+/// the UI can surface it.
+pub fn compose_message_with_files(
+    mycall: &str,
+    to: &[&str],
+    cc: &[&str],
+    subject: &str,
+    body: &str,
+    attachments: &[OutboundAttachment],
+    unix_secs: u64,
+) -> Result<Message, ComposeError> {
+    // Step 1: forward the text-only path to compose_message.
+    // Validation + file handling lands in follow-up tasks (T1.2-T1.4).
+    let _ = attachments; // suppress unused warning until T1.4
+    Ok(compose_message(mycall, to, cc, subject, body, unix_secs))
 }
 
 /// Generate a 12-character message id from the call sign and the send time.
@@ -211,5 +248,14 @@ mod tests {
         let (proposal, compressed) = msg.to_proposal().unwrap();
         assert_eq!(proposal.mid, "LIHHQU663POB");
         assert!(!compressed.is_empty());
+    }
+
+    #[test]
+    fn compose_with_no_files_matches_text_only_path() {
+        let no_files = compose_message_with_files(
+            "N7CPZ", &["W1AW"], &[], "Hi", "body", &[], 1_716_200_000,
+        ).expect("no filenames → cannot fail");
+        let text_only = compose_message("N7CPZ", &["W1AW"], &[], "Hi", "body", 1_716_200_000);
+        assert_eq!(no_files.to_bytes(), text_only.to_bytes());
     }
 }

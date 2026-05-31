@@ -110,7 +110,6 @@ pub struct MessageBody {
 #[derive(Debug, Clone)]
 pub struct OutboundAttachment {
     pub filename: String,
-    pub content_type: String,
     pub bytes: Vec<u8>,
 }
 
