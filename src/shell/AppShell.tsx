@@ -54,7 +54,6 @@ import { deparseQuery } from '../search/parseQuery';
 import { SavedSearchesPanel } from '../search/SavedSearchesPanel';
 import { useSearch } from '../search/useSearch';
 import { useSavedSearches } from '../search/useSavedSearches';
-import { renderQuery } from '../search/queryRender';
 import { ArdopHfStub } from '../connections/ArdopHfStub';
 import { useModemStatus } from '../modem/useModemStatus';
 import { ArdopDock } from '../modem/ArdopDock';
@@ -346,13 +345,17 @@ export function AppShell() {
               saved={saved.saved}
               recent={saved.recent}
               activeSavedId={search.activeSaved?.id ?? null}
+              currentQueryText={search.rawText}
               onRunSaved={(s) => { search.setActiveSavedSearch(s); setDropdownOpen(false); }}
               onRunRecent={(r) => { search.setRawText(deparseQuery(r.spec)); setDropdownOpen(false); }}
-              onPromoteRecent={async (r) => {
-                const name = window.prompt('Name for this saved search?', renderQuery(r.spec).slice(0, 24));
+              onPromoteRecent={async (r, name) => {
                 // Codex adrev fix (find-messages P2): use promote_recent so the
                 // recent entry is removed atomically — avoids duplicate in dropdown.
-                if (name) await saved.promoteRecent(name, r.spec);
+                await saved.promoteRecent(name, r.spec);
+              }}
+              onSaveCurrent={async (name) => {
+                await saved.save(name, search.spec);
+                setDropdownOpen(false);
               }}
               onUnsaveActive={async () => { if (search.activeSaved) await saved.unsave(search.activeSaved.id); }}
               onManage={() => { setSavedSearchesOpen(true); setDropdownOpen(false); }}

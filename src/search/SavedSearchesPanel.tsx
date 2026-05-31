@@ -1,18 +1,15 @@
 /**
- * SavedSearchesPanel — modal for managing saved searches + index maintenance
- * (tuxlink-1hu Task 18). Opened from SearchDropdown's "Manage saved searches"
- * action in AppShell.
+ * SavedSearchesPanel — modal for managing existing saved searches + index
+ * maintenance (tuxlink-1hu Task 18). Opened from SearchDropdown's
+ * "Manage… ⚙" action.
  *
- * NOT a tabbed Settings host (the existing SettingsPanel is a standalone modal
- * too — same pattern). The two modals are independent; they don't share state.
- *
- * v0.1 scope: list / unsave / create + rename via inline form + rebuild index.
- * Drag-reorder is deferred (visual handle only, no interaction).
+ * Saved searches are CREATED from the SearchDropdown's "Save this search"
+ * row (when a query is typed) or by ☆-promoting a recent entry. This
+ * panel is pure management: list, unsave, rebuild index.
  */
 
 import React, { useState } from 'react';
 import './SavedSearchesPanel.css';
-import { EMPTY_SPEC } from './types';
 import { renderQuery } from './queryRender';
 import { useSavedSearches } from './useSavedSearches';
 
@@ -22,9 +19,6 @@ export interface SavedSearchesPanelProps {
 
 export function SavedSearchesPanel({ onClose }: SavedSearchesPanelProps) {
   const saved = useSavedSearches();
-  const [newOpen, setNewOpen] = useState(false);
-  const [newName, setNewName] = useState('');
-  const [newText, setNewText] = useState('');
   const [rebuildStats, setRebuildStats] = useState<{ messagesIndexed: number; elapsedMs: number } | null>(null);
   const [rebuildError, setRebuildError] = useState<string | null>(null);
 
@@ -36,14 +30,6 @@ export function SavedSearchesPanel({ onClose }: SavedSearchesPanelProps) {
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
   }, [onClose]);
-
-  const submitNew = async () => {
-    if (!newName.trim()) return;
-    await saved.save(newName.trim(), { ...EMPTY_SPEC, free_text: newText.trim() || null });
-    setNewName('');
-    setNewText('');
-    setNewOpen(false);
-  };
 
   const handleRebuild = async () => {
     setRebuildStats(null);
@@ -84,7 +70,12 @@ export function SavedSearchesPanel({ onClose }: SavedSearchesPanelProps) {
 
         {/* ── Body ── */}
         <div className="tux-ssp-body">
-          {/* Saved list */}
+          <p className="tux-ssp-hint">
+            To create a saved search: type a query in the search bar (Gmail-style
+            operators like <code>from:KX5DD</code> work), then click <strong>★ Save
+            this search</strong> in the dropdown.
+          </p>
+
           <ul className="tux-ssp-list" aria-label="Saved searches list">
             {saved.saved.length === 0 && (
               <li className="tux-ssp-empty">No saved searches yet.</li>
@@ -94,8 +85,6 @@ export function SavedSearchesPanel({ onClose }: SavedSearchesPanelProps) {
               .sort((a, b) => a.order - b.order)
               .map((s) => (
                 <li key={s.id} className="tux-ssp-row">
-                  {/* Drag handle — visual only in v0.1 */}
-                  <span className="tux-ssp-drag" aria-hidden="true">⠿</span>
                   <span className="tux-ssp-name">{s.name}</span>
                   <span className="tux-ssp-query">{renderQuery(s.spec)}</span>
                   <button
@@ -110,58 +99,14 @@ export function SavedSearchesPanel({ onClose }: SavedSearchesPanelProps) {
               ))}
           </ul>
 
-          {/* + New saved search expander */}
-          {!newOpen && (
-            <button
-              type="button"
-              className="tux-ssp-new-btn"
-              data-testid="new-saved-search"
-              onClick={() => setNewOpen(true)}
-            >
-              + New saved search
-            </button>
-          )}
-          {newOpen && (
-            <div className="tux-ssp-new-form">
-              <input
-                className="tux-ssp-input"
-                data-testid="new-saved-name-input"
-                placeholder="Name (required)"
-                value={newName}
-                onChange={(e) => setNewName(e.target.value)}
-                autoFocus
-                onKeyDown={(e) => { if (e.key === 'Enter') void submitNew(); }}
-              />
-              <input
-                className="tux-ssp-input"
-                placeholder="Free-text filter (optional)"
-                value={newText}
-                onChange={(e) => setNewText(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter') void submitNew(); }}
-              />
-              <div className="tux-ssp-new-actions">
-                <button
-                  type="button"
-                  className="tux-ssp-save-btn"
-                  onClick={() => void submitNew()}
-                  disabled={!newName.trim()}
-                >
-                  Save
-                </button>
-                <button
-                  type="button"
-                  className="tux-ssp-cancel-btn"
-                  onClick={() => { setNewOpen(false); setNewName(''); setNewText(''); }}
-                >
-                  Cancel
-                </button>
-              </div>
-            </div>
-          )}
-
           {/* ── Maintenance ── */}
           <div className="tux-ssp-maintenance">
             <h3 className="tux-ssp-section-label">Maintenance</h3>
+            <p className="tux-ssp-maintenance-hint">
+              The search index is built incrementally on every new message.
+              Rebuild from disk if results look stale, after a major upgrade,
+              or to index messages stored before find-messages shipped.
+            </p>
             <button
               type="button"
               className="tux-ssp-rebuild-btn"

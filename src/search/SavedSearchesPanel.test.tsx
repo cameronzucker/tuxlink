@@ -33,10 +33,10 @@ describe('SavedSearchesPanel', () => {
     await waitFor(() => expect(screen.getByText(/Storm Net 5\/30/)).toBeInTheDocument());
   });
 
-  it('expanding "+ New saved search" shows the form', () => {
+  it('does NOT host a "new saved search" form (creation lives in SearchDropdown)', () => {
     render(<SavedSearchesPanel onClose={() => {}} />, { wrapper: wrap() });
-    fireEvent.click(screen.getByTestId('new-saved-search'));
-    expect(screen.getByTestId('new-saved-name-input')).toBeInTheDocument();
+    expect(screen.queryByTestId('new-saved-search')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('new-saved-name-input')).not.toBeInTheDocument();
   });
 
   it('rebuild button triggers tauri_search_rebuild_index', async () => {
