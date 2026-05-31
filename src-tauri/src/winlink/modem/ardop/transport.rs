@@ -16,6 +16,7 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use super::super::process::{ManagedModem, ProcessError};
+use super::arq_state::ArqState;
 use super::command::{Command, State};
 use super::data::DataSocket;
 use super::session::{arq_connect, arq_disconnect, init_tnc, CmdSocket, ConnectInfo, InitConfig, SessionError};
@@ -250,14 +251,23 @@ impl ModemTransport for ArdopTransport {
     /// Open the cmd and data sockets, then run the ARDOP TNC init sequence.
     ///
     /// Replaces any previously-open sockets (idempotent re-init).
+    ///
+    /// tuxlink-ytg: builds a fresh [`ArqState`] and wires it into BOTH the
+    /// cmd socket (whose reader thread flips it on CONNECTED / DISCONNECTED /
+    /// NEWSTATE DISC) and the data socket (whose `read` returns EOF when the
+    /// flag is `Disconnected` AND no payload is buffered, and whose `write`
+    /// refuses while disconnected). This is the cmd↔data coordination the
+    /// B2F engine needs to surface an on-air disconnect promptly instead of
+    /// hanging on a quiet but still-open data TCP socket.
     fn init(&mut self, cfg: &InitConfig) -> Result<(), SessionError> {
         // Hold the sockets as locals and run init_tnc on the local cmd socket: if
         // any step fails, the locals drop (CmdSocket::Drop shuts down + joins its
         // reader thread; DataSocket closes its TcpStream), leaving `self` in a
         // clean uninit state for an idempotent re-init — and avoiding an unwrap on
         // a just-stored Option. (Code review Phase 3.)
-        let mut cmd = CmdSocket::connect(self.cmd_addr)?;
-        let data = DataSocket::connect(self.data_addr)?;
+        let arq_state = ArqState::new();
+        let mut cmd = CmdSocket::connect_with_arq_state(self.cmd_addr, Some(arq_state.clone()))?;
+        let data = DataSocket::connect_with_arq_state(self.data_addr, Some(arq_state))?;
         init_tnc(&mut cmd, cfg)?;
         self.cmd = Some(cmd);
         self.data = Some(data);
@@ -268,6 +278,17 @@ impl ModemTransport for ArdopTransport {
     /// `deadline`.
     ///
     /// Returns `Err` if [`init`] was not called first.
+    ///
+    /// tuxlink-ytg P1 (Codex adrev 2026-05-30 #2): on a successful handshake,
+    /// drains any bytes that landed in the data socket's OS receive buffer
+    /// between `init()` and the `CONNECTED` event. ardopcf can emit ARQ-tagged
+    /// bytes on the data socket from monitored / non-session traffic in that
+    /// window; without this drain those pre-connect bytes would be accepted
+    /// as session data on the first post-connect read and corrupt the B2F
+    /// handshake (the `pump_decoder` drop gate only fires at decode time, not
+    /// for already-buffered bytes whose decode is deferred until after the
+    /// flag flips). The drain is a no-op if the data socket is unset (impossible
+    /// once `init` has run, but defensively handled).
     fn connect_arq(
         &mut self,
         target: &str,
@@ -275,7 +296,18 @@ impl ModemTransport for ArdopTransport {
         deadline: Duration,
     ) -> Result<ConnectInfo, SessionError> {
         let cmd = self.cmd_or_err()?;
-        arq_connect(cmd, target, repeat, deadline)
+        let info = arq_connect(cmd, target, repeat, deadline)?;
+        // Drain pre-connect OS-buffered bytes from the data socket NOW. The
+        // cmd reader thread has already flipped ArqState to connected (that
+        // happens BEFORE the Connected event is sent on the channel), so the
+        // window between the flag flip and this call is tens-of-microseconds
+        // — far shorter than the on-air round trip for the peer to receive
+        // our CONNECTED ack and start transmitting session data. Anything in
+        // the OS buffer at this moment is therefore pre-session noise.
+        if let Some(data) = self.data.as_mut() {
+            let _ = data.drain_pending(); // best-effort; ignore drain I/O errors
+        }
+        Ok(info)
     }
 
     /// Send `DISCONNECT` and wait for the TNC to confirm the link is torn down.
@@ -611,9 +643,18 @@ mod tests {
     /// 3. On `DISCONNECT` replies: `DISCONNECTED`.
     ///
     /// `peer_call` and `bandwidth_hz` are baked into the `CONNECTED` reply.
-    fn spawn_mock_cmd_server(
+    ///
+    /// `connected_signal` is an optional flag the server sets AFTER writing
+    /// the `CONNECTED` line. The companion data mock waits on it before
+    /// writing its inbound payload so the timing matches production: the
+    /// peer only transmits session data after the ARQ link is up. This is
+    /// what makes the post-`connect_arq` drain hook in [`ArdopTransport`]
+    /// (tuxlink-ytg Codex-P1 #2) a no-op for these tests instead of eating
+    /// the inbound payload.
+    fn spawn_mock_cmd_server_with_signal(
         peer_call: &'static str,
         bandwidth_hz: u32,
+        connected_signal: Option<Arc<std::sync::atomic::AtomicBool>>,
     ) -> (SocketAddr, thread::JoinHandle<()>) {
         spawn_server(move |conn| {
             let mut writer = conn.try_clone().unwrap();
@@ -636,6 +677,9 @@ mod tests {
                             &mut writer,
                             &format!("CONNECTED {peer_call} {bandwidth_hz}"),
                         );
+                        if let Some(ref signal) = connected_signal {
+                            signal.store(true, std::sync::atomic::Ordering::Release);
+                        }
                     }
                     "DISCONNECT" => {
                         write_reply(&mut writer, "DISCONNECTED");
@@ -664,15 +708,45 @@ mod tests {
     }
 
     /// Spawn a mock DATA server that:
-    /// - Immediately sends one ARQ frame with `inbound_payload`.
+    /// - Sends one ARQ frame with `inbound_payload` AFTER `connected_signal`
+    ///   flips to `true` (or immediately if `None`).
     /// - Collects all raw bytes written by the client into `received`.
     ///
-    /// Returns `(addr, join_handle, received_arc)`.
-    fn spawn_mock_data_server(
+    /// The signal-gated form is required for tests that exercise the full
+    /// `init → connect_arq → read` flow because [`ArdopTransport::connect_arq`]
+    /// drains the data socket on connect (tuxlink-ytg Codex-P1 #2). Sending
+    /// the inbound payload BEFORE `CONNECTED` would have it drained out,
+    /// breaking the test's read assertion — but that pre-connect window is
+    /// exactly the bug Codex's drain fix targets, so the test mock needs to
+    /// mirror the production timing.
+    ///
+    /// Returns `(addr, join_handle)`.
+    fn spawn_mock_data_server_with_signal(
         inbound_payload: Vec<u8>,
         received: Arc<Mutex<Vec<u8>>>,
+        connected_signal: Option<Arc<std::sync::atomic::AtomicBool>>,
     ) -> (SocketAddr, thread::JoinHandle<()>) {
         spawn_server(move |mut conn| {
+            // If a signal is wired, wait (bounded) for the cmd-server to
+            // emit CONNECTED before writing the inbound payload.
+            if let Some(ref signal) = connected_signal {
+                let deadline = std::time::Instant::now() + Duration::from_secs(5);
+                while !signal.load(std::sync::atomic::Ordering::Acquire) {
+                    if std::time::Instant::now() >= deadline {
+                        break; // give up; the test will fail loudly on its read assertion
+                    }
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                // Brief grace window so the client's `arq_connect` returns
+                // and its post-connect `drain_pending` runs BEFORE this
+                // legitimate post-connect payload hits the wire. Without
+                // this sleep the drain races the write and may eat it
+                // (the bug Codex's fix targets is bytes arriving BEFORE
+                // the drain; bytes arriving AFTER are legitimate session
+                // data and the production peer's airtime round-trip gives
+                // a much larger natural gap than this 100ms test value).
+                std::thread::sleep(Duration::from_millis(100));
+            }
             // Send the framed ARQ payload to the client.
             let frame = arq_frame(&inbound_payload);
             let _ = conn.write_all(&frame);
@@ -691,12 +765,22 @@ mod tests {
 
     #[test]
     fn full_session_happy_path_via_boxed_trait() {
-        // — CMD mock
-        let (cmd_addr, cmd_server) = spawn_mock_cmd_server("W7ABC", 500);
+        // Synchronize the two mocks: the DATA server must NOT write its
+        // inbound payload until the CMD server has emitted CONNECTED, so the
+        // post-`connect_arq` drain (tuxlink-ytg Codex-P1 #2) doesn't eat it.
+        let connected_signal = Arc::new(std::sync::atomic::AtomicBool::new(false));
 
-        // — DATA mock: sends "HELLO" ARQ frame, collects raw client writes
+        // — CMD mock
+        let (cmd_addr, cmd_server) =
+            spawn_mock_cmd_server_with_signal("W7ABC", 500, Some(connected_signal.clone()));
+
+        // — DATA mock: waits for CONNECTED, then sends "HELLO" ARQ frame
         let received: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(Vec::new()));
-        let (data_addr, data_server) = spawn_mock_data_server(b"HELLO".to_vec(), received.clone());
+        let (data_addr, data_server) = spawn_mock_data_server_with_signal(
+            b"HELLO".to_vec(),
+            received.clone(),
+            Some(connected_signal),
+        );
 
         // Exercise through Box<dyn ModemTransport> — this is the object-safety
         // test; if the trait isn't object-safe this line won't compile.
@@ -788,6 +872,103 @@ mod tests {
         }
     }
 
+    // ── Test 3b: connect_arq drains pre-connect data-socket bytes (tuxlink-ytg P1) ─
+
+    /// Codex adrev 2026-05-30 P1 #2: ARQ-tagged data on the data socket
+    /// before the `CONNECTED` event must NOT survive into the post-connect
+    /// read stream. This is the transport-level integration test that pairs
+    /// with the `drain_pending` unit test in `data.rs`.
+    ///
+    /// Scripts a data mock that:
+    /// 1. Writes pre-connect noise (`STALE-FRAME`) immediately.
+    /// 2. Waits for the cmd-mock's CONNECTED signal.
+    /// 3. Writes the legitimate post-connect payload (`AFTER-CONNECT`).
+    ///
+    /// After init+connect_arq, the first read MUST yield `AFTER-CONNECT`,
+    /// not `STALE-FRAME`.
+    #[test]
+    fn connect_arq_drains_pre_connect_data_socket_bytes() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        let connected_signal = Arc::new(AtomicBool::new(false));
+        let (cmd_addr, cmd_server) =
+            spawn_mock_cmd_server_with_signal("W7ABC", 500, Some(connected_signal.clone()));
+
+        let signal_for_data = connected_signal.clone();
+        let (data_addr, data_server) = spawn_server(move |mut conn| {
+            // 1. Pre-connect noise: an ARQ frame that would corrupt B2F if it
+            //    survived the drain.
+            let stale = {
+                let payload = b"STALE-FRAME";
+                let mut v = Vec::new();
+                v.extend_from_slice(&((3 + payload.len()) as u16).to_be_bytes());
+                v.extend_from_slice(b"ARQ");
+                v.extend_from_slice(payload);
+                v
+            };
+            let _ = conn.write_all(&stale);
+
+            // 2. Wait for CONNECTED.
+            let deadline = std::time::Instant::now() + Duration::from_secs(5);
+            while !signal_for_data.load(Ordering::Acquire) {
+                if std::time::Instant::now() >= deadline {
+                    return;
+                }
+                std::thread::sleep(Duration::from_millis(5));
+            }
+
+            // 3. Brief gap so the client's connect_arq returns + drain runs
+            //    before the legitimate post-connect frame goes on the wire.
+            std::thread::sleep(Duration::from_millis(100));
+
+            let after = {
+                let payload = b"AFTER-CONNECT";
+                let mut v = Vec::new();
+                v.extend_from_slice(&((3 + payload.len()) as u16).to_be_bytes());
+                v.extend_from_slice(b"ARQ");
+                v.extend_from_slice(payload);
+                v
+            };
+            let _ = conn.write_all(&after);
+
+            // Hold the socket open while the client reads.
+            let mut buf = [0u8; 32];
+            let _ = conn.read(&mut buf);
+        });
+
+        let mut t = ArdopTransport::with_addrs(cmd_addr, data_addr);
+        let cfg = InitConfig {
+            mycall: "N7CPZ".into(),
+            gridsquare: "CN87".into(),
+            arq_timeout_s: 30,
+        };
+        t.init(&cfg).expect("init must succeed");
+
+        // Give the mock time to push the stale frame into the client's OS
+        // recv buffer before we even start connect_arq, so the drain has
+        // something to discard.
+        std::thread::sleep(Duration::from_millis(100));
+
+        t.connect_arq("W7ABC", 3, Duration::from_secs(5))
+            .expect("connect_arq must succeed");
+
+        // The first read on the data stream must NOT yield the pre-connect
+        // noise — the drain in connect_arq discarded it. It MUST yield the
+        // legitimate post-connect payload.
+        let ds = t.data_stream().expect("data_stream available");
+        let mut buf = vec![0u8; 64];
+        let n = ds.read(&mut buf).expect("read must succeed");
+        assert_eq!(
+            &buf[..n],
+            b"AFTER-CONNECT",
+            "first post-connect read must yield post-connect data, not pre-connect noise"
+        );
+
+        drop(t);
+        cmd_server.join().unwrap();
+        data_server.join().unwrap();
+    }
+
     // ── Test 4: disconnect before init returns Err, not panic ────────────
 
     #[test]
@@ -811,10 +992,18 @@ mod tests {
     /// but we do a minimal round-trip to keep the test light and focused.
     #[test]
     fn object_safety_box_dyn_modem_transport() {
-        let (cmd_addr, cmd_server) = spawn_mock_cmd_server("K7XYZ", 200);
+        // Same connect-then-write timing as the happy-path test so the
+        // post-`connect_arq` drain (tuxlink-ytg Codex-P1 #2) doesn't eat
+        // the inbound payload.
+        let connected_signal = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let (cmd_addr, cmd_server) =
+            spawn_mock_cmd_server_with_signal("K7XYZ", 200, Some(connected_signal.clone()));
         let received: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(Vec::new()));
-        let (data_addr, data_server) =
-            spawn_mock_data_server(b"PING".to_vec(), received.clone());
+        let (data_addr, data_server) = spawn_mock_data_server_with_signal(
+            b"PING".to_vec(),
+            received.clone(),
+            Some(connected_signal),
+        );
 
         // The explicit type annotation is the load-bearing part of this test:
         // if `ModemTransport` were not object-safe, this line would fail to compile.
