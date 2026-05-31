@@ -75,6 +75,72 @@ is part of the design provenance record).
 - **Provenance:** Open-access (CC-BY-SA).
 - **Relevance:** **Program overview (#0), RF measurement rig (#2).** Useful as a fast orientation for a contributor coming in cold; pointers into the standard references above.
 
+### 1.4 Open implementations of HF channel simulators
+
+> Survey of existing open-source Watterson-class HF channel simulators. The goal
+> is to know what exists so tuxmodem's channel sim can either **build on a
+> verified-open implementation** (citation chain stays clean) or **build from
+> scratch citing only the foundational papers** (independent creation). Either
+> way, no closed-source HF channel simulator is consulted.
+
+- **ITS HF Channel Simulator (NTIA/ITS).** Public-domain (US government work).
+  - Background: The Institute for Telecommunication Sciences (ITS), part of NTIA
+    (National Telecommunications and Information Administration, US Dept. of
+    Commerce), maintains a research portfolio on HF propagation and modems.
+    Federal-government works are generally in the public domain in the US.
+  - Provenance: Public-domain US government release; redistribution and
+    incorporation into open projects is permitted.
+  - Relevance: **Channel simulator (#1).** A government-provenance baseline that
+    can be consulted with no IP-defensibility concerns. Useful as a comparison
+    point for any tuxmodem-internal channel sim implementation. Verify the
+    specific release version's licensing terms before incorporating code; the
+    "public domain" claim attaches to USG-authored portions specifically.
+  - Caveat: A government-published artifact may contain dependencies whose
+    provenance is NOT public-domain (e.g., contracted academic implementations).
+    Audit before incorporating *code*; citing *concepts* is unconstrained.
+
+- **GNU Radio HF channel modules.** Open-source (GPL, see individual module licenses).
+  - Background: The GNU Radio ecosystem includes several out-of-tree (OOT)
+    modules implementing HF / ionospheric channel models — Watterson-class
+    typically, sometimes with extensions. Specific modules float in and out of
+    maintenance; check current state at `github.com/gnuradio/gr-*` and the
+    OOT module registry.
+  - Provenance: Open-source, GPL-compatible.
+  - Relevance: **Channel simulator (#1).** Confirms the design pattern of
+    "Watterson model as a GNU Radio block" is established and validated by
+    practitioners. If the tuxmodem channel simulator is implemented in pure
+    Rust rather than GNU Radio, the GNU Radio implementations serve as
+    cross-validation oracles — does the same input signal produce comparable
+    output statistics across the two implementations?
+  - Caveat: GPL is more restrictive than the tuxmodem program is likely to want
+    for the standalone-daemon spin-off; if any code is incorporated rather than
+    just consulted, the license-compatibility implications need an explicit
+    review before incorporation.
+
+- **Academic / textbook implementations.** Various researchers have released
+  Watterson-model code in MATLAB / Python / C alongside papers. Quality and
+  provenance vary by source.
+  - Provenance: Per-release, usually permissive (MIT/BSD) when bundled with
+    academic publication. Verify per source.
+  - Relevance: **Channel simulator (#1).** Cross-validation oracles. Some have
+    been validated against the ITU-R F.1487 standardized test conditions; those
+    are especially useful as reference points.
+
+- **No closed-source channel simulator consulted.** Per ADR 0014 §2, this is
+  not a watched gap — it's an intentional discipline. The open implementations
+  + the foundational papers (Watterson 1970, ITU-R F.520/F.1487) are sufficient.
+
+**Practical recommendation (for the channel-simulator subsystem #1 spec):** the
+tuxmodem channel simulator should be a **pure-Rust standalone crate**
+implementing the Watterson model from the foundational papers + ITU-R
+recommendations. Cross-validate output statistics against ITS or a GNU Radio
+OOT module during development; cite the cross-validation in the subsystem spec.
+This preserves independent-creation posture (the implementation comes from
+papers, not from code) while gaining confidence (the output matches a verified
+open implementation under the same standardized inputs). **Open question for
+the channel-sim subsystem spec:** is the cross-validation reference ITS or GNU
+Radio — or both? [open]
+
 ---
 
 ## §2. General modem theory — PHY, FEC, ARQ subsystems
@@ -210,6 +276,18 @@ is part of the design provenance record).
 - **Provenance:** Open-source (GPL).
 - **Relevance:** **Channel simulator (#1), PHY (#3) — prototyping substrate only.** GNU Radio is widely used in academic and amateur SDR development as a DSP prototyping environment. Useful for early PHY exploration. *Not* a deployment runtime decision — that question is separately decided in the program overview.
 - **Key concepts:** Block-flow signal processing; out-of-tree modules; UHD radio hardware abstraction; SoapySDR multi-vendor SDR support.
+- **License caveat:** GPL contamination is a real concern for the tuxmodem standalone-daemon spin-off (subsystem #10). If tuxmodem links against any GPL'd GNU Radio component, the entire daemon would need to be GPL'd. Practical posture: use GNU Radio as a **prototyping / cross-validation tool** (Python flow graphs, OOT module experimentation) but NOT as a runtime library dependency. Pure-Rust implementation of tuxmodem's DSP keeps the license posture flexible.
+
+- **SoapySDR.** SDR hardware abstraction layer. https://github.com/pothosware/SoapySDR.
+- **Provenance:** Open-source (BSL-1.0 or compatible permissive license).
+- **Relevance:** **Channel simulator (#1), PHY (#3), RF measurement rig (#2).** Hardware abstraction over RTL-SDR, HackRF, USRP, RX-888, and others. If the tuxmodem program ever needs to drive an SDR directly (RF measurement rig integration in #2, or — speculatively — a future SDR-direct PHY mode), SoapySDR is the established abstraction. Permissive license keeps the spin-off compatible.
+
+- **rtl-sdr / librtlsdr.** Driver and userspace library for the RTL2832U-based SDRs. https://osmocom.org/projects/rtl-sdr/wiki/Rtl-sdr.
+- **Provenance:** Open-source (GPL for the kernel-adjacent driver; check librtlsdr individually for userspace components).
+- **Relevance:** **RF measurement rig (#2).** The RTL-SDR V4 in the bench rig speaks to this stack. Standard amateur-radio SDR substrate.
+
+- **Wikipedia: "GNU Radio" / "Software-defined radio."** Open-access (CC-BY-SA). Fetched 2026-05-31.
+- **Relevance:** SDR context for contributors new to the space.
 
 ---
 
@@ -235,13 +313,32 @@ is part of the design provenance record).
 - **Provenance:** Open-access via the WSJT project's host.
 - **Relevance:** PHY (#3) reference for understanding the WSJT family's protocol structure.
 
+- **K1JT et al., "The FT4 and FT8 Communication Protocols."** *QEX*, July/August 2020. (Reachable via https://physics.princeton.edu/pulsar/k1jt/FT4_FT8_QEX.pdf when the Princeton host is up; alternate mirrors exist within the WSJT-X community.)
+- **Provenance:** Open-access via the WSJT project's host (Princeton physics department, K1JT's institutional affiliation).
+- **Relevance:** **PHY (#3), FEC (#4).** Authoritative description of FT4 and FT8's wire protocol: 8-FSK / 4-FSK modulation choices, 75-bit message structure, LDPC(174,91) FEC with 14-symbol CRC + 14-symbol Costas array for sync. Useful as a worked example of a narrow-band weak-signal protocol where the FEC + sync work is doing the heavy lifting against severe SNR conditions. **Specific parameters here are NOT to be adopted for tuxmodem** — they're for a different design space (8 kHz channel slicing, ~15-second slot synchronization, no ARQ). But the design *primitive* of "LDPC short-block over a frequency-shift modulation with explicit sync sequence" is a generic primitive.
+
+- **Wikipedia: "FT8" / "WSPR (amateur radio software)" / "JS8Call."** Open-access (CC-BY-SA). Fetched 2026-05-31.
+- **Relevance:** **PHY (#3), MAC (#5), ARQ (#6) — quick orientation.** Per-mode summaries; pointers into K1JT's papers + the WSJT-X documentation. JS8Call's design is particularly interesting as a *conversational* protocol built on FT8's PHY foundations — illustrates how a different MAC + application layer can be layered on a fixed PHY, useful conceptual primitive for tuxmodem's layering.
+
 ### 6.2 ARDOP
 
 - **ARDOP (Amateur Radio Digital Open Protocol).** Open specification + multiple open implementations.
-- **Reference implementation:** github.com/pflarue/ardop (ardopcf) — the implementation tuxlink already integrates via the ARDOP transport (ADR 0015 + bd-tuxlink-ytg).
-- **Provenance:** Open-source (MIT or similar permissive license depending on implementation).
-- **Relevance:** **PHY (#3), MAC (#5), ARQ (#6), Link adaptation (#7) — conceptual reference.** ARDOP is an open HF ARQ protocol that operates over a soundcard interface. Useful for understanding what a fully-open HF data protocol's design space looks like — OFDM PHY with FSK fallback for sync, multiple bandwidth modes (200/500/1000/2000 Hz), ARQ with selective-repeat-style retransmission.
-- **Key concepts:** Bandwidth-selectable PHY modes; sync via FSK preamble; fragmented data + selective ACK; mode-stepping based on observed channel conditions.
+- **Reference implementation:** [`github.com/pflarue/ardop`](https://github.com/pflarue/ardop) (ardopcf, maintainer pflarue). The implementation tuxlink already integrates via the ARDOP transport (ADR 0015 + bd-tuxlink-ytg).
+- **Provenance:** **MIT license** (confirmed from the repo's `LICENSE` file). Open-source; permissive; permits derivative work with attribution.
+- **Key documents in the ardopcf repo (`docs/refs/`)**, included for reference per the maintainer's discretion:
+  - `ARDOP_Overview_20150701.pdf` — original protocol overview.
+  - `ARDOP_Specification_20171127.pdf` — the canonical ARDOP specification.
+  - `ARDOP_Protocol_Native_TNC_Commands_20171130.pdf` — TNC command set.
+  - `Host_Interface_Spec_for_WL2K_supported_Protocols_TNCs_20171109.pdf` — Winlink-relevant host interface spec.
+- **Relevance:** **PHY (#3), MAC (#5), ARQ (#6), Link adaptation (#7), Host protocol (#8) — conceptual reference.** ARDOP is the closest open-protocol analog to what tuxmodem will be. Useful for understanding what a fully-open HF data protocol's design space looks like:
+  - **PHY family:** OFDM-class with FSK fallback for low-SNR sync.
+  - **Bandwidth modes:** 200 Hz / 500 Hz / 1000 Hz / 2000 Hz — operator-selectable.
+  - **ARQ:** selective-repeat with fragmented data + selective ACK.
+  - **Link adaptation:** mode-stepping based on observed channel conditions.
+  - **Host protocol:** ASCII command interface over TCP socket (the "Host_Interface" PDF documents this; ardopcf binds a TCP control port and a TCP data port by default).
+- **Key concepts to absorb (NOT specific design choices to inherit):** the design *shape* of a layered HF ARQ protocol; the operator-controlled bandwidth-mode discipline; the layered command vs. data socket pattern for host interface.
+- **License compatibility note:** The MIT license permits incorporating ardopcf code into tuxmodem (under MIT or a permissive-compatible license). However, per ADR 0014's independent-creation posture, tuxmodem's *on-air protocol* is designed clean-sheet — examining ardopcf's *waveform implementation* (DSP code, frame layout, modulation parameters) for design-input purposes would forfeit independent creation. ardopcf code can be used as a **black-box runtime dependency** (tuxlink already does this via the ARDOP transport in `bd-tuxlink-ytg`), but not as a *source* for tuxmodem's PHY design.
+- **Operationally:** the maintainer (pflarue) has stated an AI-skeptical stance toward contributions to ardopcf (line-by-line human review required for any AI-assisted PRs to that project). This is a contribution guideline for *upstream ardopcf*, not a constraint on tuxlink's *use* of ardopcf as a runtime dependency or on tuxmodem's clean-sheet development.
 
 ### 6.3 AX.25 (packet radio layer 2)
 
@@ -249,8 +346,17 @@ is part of the design provenance record).
 - **Available at:** http://www.tapr.org/pub_ax25.html.
 - **Provenance:** Open-access (TAPR publishes the spec freely).
 - **Relevance:** **MAC (#5), ARQ (#6) — conceptual reference.** AX.25 is the established amateur packet link-layer protocol. Frame structure, link-establishment (SABM/UA), reliable delivery (I-frames with N(S)/N(R)), supervisory frames (RR/RNR/REJ), connectionless UI frames. Foundation for understanding link-layer design in an amateur context.
-- **Key concepts:** HDLC-derived framing; layer-2 connection state machine; window-sized retransmission; layer-2 vs. layer-3 separation (AX.25 vs. NET/ROM / TheNET / etc.).
+- **Key concepts (NOT specific design choices to inherit):** HDLC-derived framing; layer-2 connection state machine; window-sized retransmission; layer-2 vs. layer-3 separation (AX.25 vs. NET/ROM / TheNET / etc.).
 - **Wikipedia overview:** https://en.wikipedia.org/wiki/AX.25 — open-access (CC-BY-SA), fetched 2026-05-31.
+
+**Specific v2.0 vs v2.2 distinction worth knowing** (from Wikipedia survey, fetched 2026-05-31; cite the TAPR spec for definitive treatment):
+
+- **AX.25 v2.0** uses 3-bit sequence numbers (window size ≤7) and 256-byte payload limit. Sufficient for 1200-baud Bell-202 AFSK on VHF and 300-baud Bell-103 AFSK on HF, which are the dominant deployed configurations.
+- **AX.25 v2.2** (1998) extends sequence numbers to 7 bits (window size ≤127), supports negotiated larger payloads, and adds **Selective Reject** (SREJ) supervisory frames — i.e., proper selective-repeat ARQ instead of go-back-N. Substantively better for any link where retransmissions are common.
+- **Adoption gap:** the Wikipedia survey notes that as of 2020, **Dire Wolf is the only known complete implementation of AX.25 v2.2.** This 22-year gap between spec publication and complete implementation is a useful warning: a published spec is not the same as a deployed standard. Worth noting when tuxmodem's MAC layer chooses where on the v2.0/v2.2 spectrum to live, if it lives there at all.
+- **AX.25 does not define a physical layer** (per the spec). It defines only a "physical layer state machine" and transmitter/receiver timing parameters. Each PHY is paired separately — Bell-202 AFSK, G3RUH 9600 DFSK on VHF/UHF, Bell-103 AFSK on HF. This decoupling is itself a useful primitive: a clean-sheet PHY can be paired with AX.25's link layer (or any other) as long as the framing-state-machine timing is respected. (Tuxmodem may or may not adopt this layer separation; that's an open question in the program overview.)
+
+**Dire Wolf as the v2.2 reference implementation:** [github.com/wb2osz/direwolf](https://github.com/wb2osz/direwolf) (mentioned elsewhere in this doc for its authoritative CM108-HID PTT report-byte handling). Open-source. The same project is the canonical *implementation* reference for AX.25 v2.2 specifics, alongside the TAPR spec as the canonical *specification* reference.
 
 ### 6.4 Other HF data references worth knowing exist
 
