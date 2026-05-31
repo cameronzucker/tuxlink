@@ -1,4 +1,4 @@
-// src/radio/useRadioPanelVisibility.ts
+// src/radio/radioPanelVisibility.ts
 //
 // The visibility rule from docs/superpowers/specs/2026-05-31-radio-mode-
 // right-panel-design.md §3.3:
@@ -11,7 +11,6 @@
 //   The mode displayed is derived from that same context (§3.3 + §4.1).
 
 import type { RadioPanelMountReason, RadioPanelMode } from './types';
-import type { ModemStatus } from '../modem/types';
 
 export function computePanelVisibility(reason: RadioPanelMountReason): boolean {
   return (
@@ -23,7 +22,6 @@ export function computePanelVisibility(reason: RadioPanelMountReason): boolean {
 
 export function computePanelMode(
   reason: RadioPanelMountReason,
-  _modemStatus: ModemStatus,
 ): RadioPanelMode | null {
   if (!computePanelVisibility(reason)) {
     return null;

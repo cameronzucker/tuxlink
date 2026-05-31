@@ -1,6 +1,6 @@
 /* src/radio/RadioPanel.css */
 .radio-panel {
-  background: var(--panel-bg, #0f1218);
+  background: var(--surface, #0f1218);
   border-left: 1px solid var(--border, #2a3140);
   color: var(--text, #cbd5e1);
   font-size: 11px;

@@ -2,9 +2,11 @@
 // design (docs/design/mockups/images/mock-b-principles-faithful.png + the MOCK B
 // block in 2026-05-17-mocks-v1-four-directions.html).
 //
-// Layout (the mock's dashboard + layout-B, combined into one root grid):
-//   dashboard ribbon (top) / panes[ sidebar | message list | reading pane ] /
-//   human session-log strip / status bar.
+// Layout (post-P1 radio-panel-shell): titlebar / menu bar / dashboard ribbon /
+// chip-strip / panes[ sidebar | message list | reading pane | radio-panel |
+// legacy ArdopDock ] / status bar. The right-hand radio-panel + legacy
+// ArdopDock mount conditionally per spec §3.3; the ArdopDock is removed in P4
+// once the per-mode panels (P2-P3) cover its surface.
 //
 // Selection ownership (unchanged from Task 12): AppShell owns `selectedFolder`
 // + `selectedMessage: {folder, id} | null`. The folder is carried with the id.
@@ -57,7 +59,7 @@ import { renderQuery } from '../search/queryRender';
 import { ArdopHfStub } from '../connections/ArdopHfStub';
 import { useModemStatus } from '../modem/useModemStatus';
 import { ArdopDock } from '../modem/ArdopDock';
-import { computePanelMode } from '../radio/useRadioPanelVisibility';
+import { computePanelMode } from '../radio/radioPanelVisibility';
 import { PlaceholderRadioPanel } from '../radio/modes/PlaceholderRadioPanel';
 import './AppShell.css';
 
@@ -197,7 +199,7 @@ export function AppShell() {
   // dashboard ribbon, the status bar, and the window title.
   const statusData = useStatusData();
 
-  // Modem (ARDOP HF) status — feeds the radio-panel visibility hook + the
+  // Modem (ARDOP HF) status — feeds the radio-panel visibility check + the
   // panes-grid column-count swap (tuxlink-4ek Task 4.3 baseline; radio-panel-
   // shell P1.5+ migrated to computePanelMode). The panel appears:
   //   - whenever the modem is doing anything other than 'stopped' (so the
@@ -208,18 +210,14 @@ export function AppShell() {
   //     operator can't spawn the modem at all — tuxlink-mnk4), OR
   //   - when the View → Toggle Radio Panel pin is on (Ctrl+Shift+M).
   const { status: modemStatus } = useModemStatus();
-  // Spec §3.3 visibility rule. The hook captures the three OR-conditions
-  // (sidebar selection / active modem / pinned-toggle) and returns the
-  // mode to show plus whether the panel is mounted.
-  const radioPanelMode = computePanelMode(
-    {
-      sidebarSelected: selectedConnection,
-      modemActive: modemStatus.state !== 'stopped',
-      togglePinned: pinRadioPanel,
-    },
-    modemStatus,
-  );
-  const radioPanelVisible = radioPanelMode !== null;
+  // Spec §3.3 visibility rule. computePanelMode applies the OR of
+  // (sidebar selection, active modem, pinned toggle) and returns the mode
+  // to display, or null when the panel should not mount.
+  const radioPanelMode = computePanelMode({
+    sidebarSelected: selectedConnection,
+    modemActive: modemStatus.state !== 'stopped',
+    togglePinned: pinRadioPanel,
+  });
 
   // CMS connect: run one exchange (send outbox + receive), then refresh the
   // mailbox so any downloaded messages appear. The button lives in the ribbon;
@@ -381,7 +379,7 @@ export function AppShell() {
       />
 
       <div
-        className={`panes${radioPanelVisible ? ' panes--with-dock' : ''}`}
+        className={`panes${radioPanelMode !== null ? ' panes--with-dock' : ''}`}
         data-testid="shell-panes"
       >
         <FolderSidebar
@@ -438,7 +436,7 @@ export function AppShell() {
             }}
           />
         )}
-        {radioPanelVisible && selectedConnection?.protocol === 'ardop-hf' && <ArdopDock />}
+        {radioPanelMode !== null && selectedConnection?.protocol === 'ardop-hf' && <ArdopDock />}
       </div>
 
       <StatusBar show={showStatusBar} unread={counts.inbox ?? 0} state={statusData.state} packet={packetUi} />

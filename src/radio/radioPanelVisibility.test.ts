@@ -1,9 +1,6 @@
-// src/radio/useRadioPanelVisibility.test.ts
+// src/radio/radioPanelVisibility.test.ts
 import { describe, it, expect } from 'vitest';
-import { computePanelMode, computePanelVisibility } from './useRadioPanelVisibility';
-import { STOPPED, type ModemStatus } from '../modem/types';
-
-const RUNNING: ModemStatus = { ...STOPPED, state: 'connected-irs' };
+import { computePanelMode, computePanelVisibility } from './radioPanelVisibility';
 
 describe('computePanelVisibility', () => {
   it('hides the panel when nothing is active', () => {
@@ -43,7 +40,6 @@ describe('computePanelMode', () => {
   it('returns null when nothing is active', () => {
     expect(computePanelMode(
       { sidebarSelected: null, modemActive: false, togglePinned: false },
-      STOPPED,
     )).toBeNull();
   });
 
@@ -54,7 +50,6 @@ describe('computePanelMode', () => {
     const mode = computePanelMode(
       { sidebarSelected: { sessionType: 'cms', protocol: 'packet' },
         modemActive: true, togglePinned: false },
-      { ...STOPPED, state: 'connecting' },
     );
     expect(mode).toEqual({ kind: 'packet', intent: 'cms' });
   });
@@ -63,7 +58,6 @@ describe('computePanelMode', () => {
     const mode = computePanelMode(
       { sidebarSelected: { sessionType: 'p2p', protocol: 'packet' },
         modemActive: false, togglePinned: false },
-      STOPPED,
     );
     expect(mode).toEqual({ kind: 'packet', intent: 'p2p' });
   });
@@ -71,17 +65,6 @@ describe('computePanelMode', () => {
   it('returns telnet/cms as the default empty state when only togglePinned is on', () => {
     const mode = computePanelMode(
       { sidebarSelected: null, modemActive: false, togglePinned: true },
-      STOPPED,
-    );
-    expect(mode).toEqual({ kind: 'telnet', intent: 'cms' });
-  });
-
-  // Use RUNNING to keep the import live and confirm the hook accepts a
-  // running ModemStatus without falling over.
-  it('returns telnet/cms as the default empty state with a running modem but no sidebar', () => {
-    const mode = computePanelMode(
-      { sidebarSelected: null, modemActive: true, togglePinned: false },
-      RUNNING,
     );
     expect(mode).toEqual({ kind: 'telnet', intent: 'cms' });
   });
