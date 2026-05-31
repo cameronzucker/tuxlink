@@ -433,10 +433,14 @@ fn collect_attachments(msg: &mail_parser::Message<'_>) -> Vec<AttachmentMetaDto>
         .collect()
 }
 
-/// Extract a routing string from known Winlink / Pat transport headers.
+/// Extract a routing string from known Winlink transport-info headers.
 /// Checks a prioritized list of custom headers; returns `None` when absent.
+///
+/// `X-Pat-Transport` is retained as a known incoming header so messages
+/// forwarded by remote Pat-running gateways still surface a routing string in
+/// the UI. Tuxlink itself does not emit it (Pat is fully stripped per ADR
+/// 0016); this is wire-compatibility for peers, not a Pat dependency.
 fn extract_routing(msg: &mail_parser::Message<'_>) -> Option<String> {
-    // Known Winlink / Pat transport-info headers (order of preference).
     const TRANSPORT_HEADERS: &[&str] = &[
         "X-Winlink-Route",
         "X-Received-Winlink-Transport",
@@ -607,23 +611,44 @@ pub async fn message_read(
 // `invoke_handler` registration lands in the orchestrator integration commit
 // (§4.3); this file is append-only for command fns.
 
+/// Attachment DTO for the compose window IPC.
+///
+/// `bytes` is serialized as a base64-encoded string by serde-json when crossing
+/// the Tauri IPC boundary — that is Tauri / serde-json's default `Vec<u8>`
+/// representation. The receiver (Rust) deserializes it back to raw bytes.
+///
+/// NOTE: large attachments over the IPC layer are intentionally not optimized for
+/// v0.0.1; the file-picker UI (HTML Forms, PR #151) is not built yet. This DTO
+/// establishes the bridge contract. Callers that have no attachments pass `[]`.
+#[derive(Debug, Deserialize)]
+pub struct OutboundAttachmentDto {
+    pub filename: String,
+    pub bytes: Vec<u8>,
+}
+
 /// Inbound DTO from the compose window frontend. Mirrors `OutboundDraftDto`
 /// in `src/compose/Compose.tsx`.
 ///
-/// **`cc` caveat (spec §3.2, Codex F5 VERIFIED):** `PatClient::send` accepts
-/// only `to`/`subject`/`body`/`date` form fields — Pat 1.0.0 silently drops
-/// any `cc` form field. The compose UI disables the Cc field with a v0.1
-/// tooltip (spec §5.4 disposition: "disable with tooltip rather than silently
-/// drop"). The `cc` field is present in this DTO for API completeness; the
-/// `PatBackend::send_message` → `PatClient::send` chain currently ignores it.
-/// When Pat cc support is confirmed in v0.1, enable the Cc field in the UI +
-/// add `cc` to `PatClient::send`'s multipart form.
+/// **`cc` caveat (spec §3.2, Codex F5 VERIFIED):** The compose UI disables the
+/// Cc field with a v0.1 tooltip (spec §5.4 disposition: "disable with tooltip
+/// rather than silently drop"). The `cc` field is present in this DTO for API
+/// completeness; native B2F outbound support for Cc is a v0.1 TODO.
+///
+/// **`attachments` (P2.1 / Codex post-impl review):** Previously hardcoded to
+/// `vec![]` in the command body, attachments are now an explicit DTO field so
+/// the compose window can thread files through the IPC layer. The frontend
+/// passes `[]` until the attachment-picker UI (HTML Forms, PR #151) is built;
+/// the backend plumbing (T4.1 + compose_message_with_files) already handles them.
 #[derive(Debug, Deserialize)]
 pub struct OutboundDraftDto {
     pub to: Vec<String>,
     pub cc: Vec<String>,
     pub subject: String,
     pub body: String,
+    /// Attachment files. Tauri IPC encodes `Vec<u8>` fields as base64 by default.
+    /// Frontend passes `[]` until the file-picker is built (HTML Forms PR #151).
+    #[serde(default)]
+    pub attachments: Vec<OutboundAttachmentDto>,
 }
 
 /// Send an outbound message queued via the compose window.
@@ -632,18 +657,14 @@ pub struct OutboundDraftDto {
 /// per spec §3.2 — the UI does not supply the send timestamp; the command
 /// stamps it at queue time).
 ///
-/// Returns `Ok(None)` when Pat does not echo a MID (Pat 1.0.0 behavior —
-/// plain-text confirmation, no MID). The compose window shows "Posted to
-/// Outbox" on any `Ok(_)`. Spec §3.2 + §5.4.
-///
-/// **None-success invariant (spec §3.2):** `Ok(None)` is a SUCCESS, not an
-/// error. The frontend must treat `Ok(Some(mid))` and `Ok(None)` identically
-/// as "posted." The Rust test below asserts this mapping explicitly.
+/// Returns `Ok(mid_string)` on success. `NativeBackend` returns a real MID.
+/// The compose window shows "Posted to Outbox" on any `Ok(_)`.
+/// Spec §3.2 + §5.4.
 #[tauri::command]
 pub async fn message_send(
     draft: OutboundDraftDto,
     state: State<'_, BackendState>,
-) -> Result<Option<String>, UiError> {
+) -> Result<String, UiError> {
     let backend = state
         .current()
         .ok_or_else(|| UiError::NotConfigured("backend offline".to_string()))?;
@@ -651,19 +672,30 @@ pub async fn message_send(
     // Stamp the send timestamp here (the UI does not supply it — spec §3.2).
     let date = chrono::Utc::now().to_rfc3339();
 
+    // P2.1 (Codex post-impl review): map DTO attachments into OutboundMessage.
+    // The backend (T4.1 + compose_message_with_files) already handles attachments;
+    // this was the only gap — the IPC layer was hardcoded to vec![]. Now threaded.
+    let attachments: Vec<crate::winlink_backend::OutboundAttachment> = draft
+        .attachments
+        .into_iter()
+        .map(|a| crate::winlink_backend::OutboundAttachment {
+            filename: a.filename,
+            bytes: a.bytes,
+        })
+        .collect();
+
     let msg = OutboundMessage {
         to: draft.to,
-        cc: draft.cc,  // forwarded as-is; PatBackend drops it (Codex F5)
+        cc: draft.cc,  // forwarded as-is; native B2F Cc support is a v0.1 TODO (Codex F5)
         subject: draft.subject,
         body: draft.body,
         date,
-        attachments: vec![],
+        attachments,
     };
 
-    // send_message returns Ok(None) for Pat 1.0.0 — see winlink_backend.rs
-    // PatBackend impl. Map Option<MessageId> → Option<String> for IPC.
+    // send_message returns MessageId directly. Map to String for IPC.
     let mid = backend.send_message(msg).await?;
-    Ok(mid.map(|id| id.0))
+    Ok(mid.0)
 }
 
 /// Run one CMS connection: send everything queued in the outbox and download any
@@ -961,8 +993,8 @@ pub async fn backend_status(state: State<'_, BackendState>) -> Result<Option<Sta
 /// Serializable session-log line. Mirrors `LogLineDto` in
 /// `src/session/logProjection.ts` — field names are camelCase on the wire
 /// (`timestampIso`) and the enum values serialize as lowercase strings
-/// (`'trace'|'debug'|'info'|'warn'|'error'`, `'backend'|'pat'|'transport'|
-/// 'wire'`) so the TS model needs no rename/translation layer.
+/// (`'trace'|'debug'|'info'|'warn'|'error'`, `'backend'|'transport'|'wire'`)
+/// so the TS model needs no rename/translation layer.
 ///
 /// `seq` is the monotonic sequence number from `SessionLogState`. The frontend
 /// uses it as a cursor for snapshot-then-tail deduplication (adrev #4): seed
@@ -1009,7 +1041,6 @@ impl From<LogLevel> for LogLevelDto {
 #[serde(rename_all = "lowercase")]
 pub enum LogSourceDto {
     Backend,
-    Pat,
     Transport,
     Wire,
 }
@@ -1019,7 +1050,6 @@ impl From<LogSource> for LogSourceDto {
     fn from(s: LogSource) -> Self {
         match s {
             LogSource::Backend => LogSourceDto::Backend,
-            LogSource::Pat => LogSourceDto::Pat,
             LogSource::Transport => LogSourceDto::Transport,
             LogSource::Wire => LogSourceDto::Wire,
         }
@@ -1057,10 +1087,10 @@ impl From<LogLine> for LogLineDto {
 /// contract as before, now future-proof.
 #[tauri::command]
 pub async fn session_log_snapshot(
-    // Task C (tuxlink-22l §11.2): the managed buffer is now an
-    // `Arc<SessionLogState>` so `PatBackend::spawn`'s bridge thread can append
-    // to the SAME buffer this command reads. `State` derefs through the `Arc`,
-    // so `state.snapshot()` resolves to `SessionLogState::snapshot` unchanged.
+    // Task C (tuxlink-22l §11.2): the managed buffer is an `Arc<SessionLogState>`
+    // so the backend's bridge thread can append to the SAME buffer this command
+    // reads. `State` derefs through the `Arc`, so `state.snapshot()` resolves to
+    // `SessionLogState::snapshot` unchanged.
     state: State<'_, std::sync::Arc<SessionLogState>>,
 ) -> Result<Vec<LogLineDto>, UiError> {
     Ok(state.snapshot().into_iter().map(LogLineDto::from).collect())
@@ -1903,6 +1933,7 @@ mod tests {
     };
 
     /// Build a CMS-mode config fixture for the mapping tests.
+    #[allow(deprecated)] // sets pat_mbo_address on Config literal; field deprecated per tuxlink-9phd T8.1
     fn cms_config_fixture() -> Config {
         Config {
             schema_version: CONFIG_SCHEMA_VERSION,
@@ -1994,7 +2025,7 @@ mod tests {
     // Task 16 — backend_status DTO mapping + populated-vs-None branch logic
     // ========================================================================
     use crate::app_backend::{BackendPhase, BackendState};
-    use crate::winlink_backend::{BackendStatus, PatBackend};
+    use crate::winlink_backend::{BackendStatus, NativeBackend};
     use std::sync::Arc;
 
     // StatusDto::from maps every BackendStatus variant; transport is verbatim
@@ -2074,8 +2105,8 @@ mod tests {
     // The command fn takes `State<'_, BackendState>` (needs a Tauri app), so
     // the three-state logic is exercised here against `derive_status_dto`, the
     // pure helper the command calls on its `snapshot()`. We construct
-    // `BackendState` directly in each phase + a real `PatBackend::from_url`
-    // backend for the Ready case (the live IPC round-trip is the M2 smoke gate).
+    // `BackendState` directly in each phase + a real `NativeBackend` for the
+    // Ready case (the live IPC round-trip is the M2 smoke gate).
     // ========================================================================
 
     // NotConfigured (pre-wizard / offline) → None: the ribbon renders its
@@ -2090,7 +2121,7 @@ mod tests {
         );
     }
 
-    // Spawning → Some(Connecting): the bootstrap is launching Pat; the ribbon
+    // Spawning → Some(Connecting): the bootstrap is launching the backend; the ribbon
     // shows a connecting state rather than "not connected" or an error.
     #[test]
     fn derive_status_spawning_is_connecting() {
@@ -2106,13 +2137,36 @@ mod tests {
         );
     }
 
-    // Ready + backend → the live backend's status() mapped. A freshly-spawned
-    // PatBackend reports Disconnected ("backend ready", no CMS link — adrev #10),
-    // which projects to Some(StatusDto::Disconnected).
+    // Ready + backend → the live backend's status() mapped. A freshly-constructed
+    // NativeBackend reports Disconnected, which projects to Some(StatusDto::Disconnected).
     #[test]
+    #[allow(deprecated)] // sets pat_mbo_address on Config literal; field deprecated per tuxlink-9phd T8.1
     fn derive_status_ready_maps_backend_status() {
+        use crate::config::{
+            CmsTransport, Config, ConnectConfig, GpsState, IdentityConfig, PacketConfig,
+            PositionPrecision, PrivacyConfig, CONFIG_SCHEMA_VERSION,
+        };
+        let cfg = Config {
+            schema_version: CONFIG_SCHEMA_VERSION,
+            wizard_completed: true,
+            connect: ConnectConfig {
+                connect_to_cms: true,
+                transport: CmsTransport::CmsSsl,
+                host: crate::config::default_cms_host(),
+            },
+            identity: IdentityConfig { callsign: Some("N0CALL".into()), identifier: None, grid: None },
+            privacy: PrivacyConfig {
+                gps_state: GpsState::Off,
+                position_precision: PositionPrecision::FourCharGrid,
+                position_source: crate::config::PositionSource::Gps,
+            },
+            pat_mbo_address: None,
+            packet: PacketConfig::default(),
+            modem_ardop: None,
+        };
+        let tmp = tempfile::tempdir().expect("tmpdir");
         let state = BackendState::new();
-        state.install(Arc::new(PatBackend::from_url("http://127.0.0.1:9")));
+        state.install(Arc::new(NativeBackend::new(cfg, tmp.path())));
         let (phase, backend) = state.snapshot();
         assert_eq!(
             derive_status_dto(phase, backend),
@@ -2121,8 +2175,8 @@ mod tests {
         );
     }
 
-    // Failed → Some(Error{reason}): CMS configured but Pat spawn/health failed.
-    // The ribbon shows the reason loudly (Pat is a core runtime dependency).
+    // Failed → Some(Error{reason}): CMS configured but backend spawn/health failed.
+    // The ribbon shows the reason loudly.
     #[test]
     fn derive_status_failed_is_error_with_reason() {
         let state = BackendState::new();
@@ -2199,7 +2253,6 @@ mod tests {
         }
         for (source, expected) in [
             (LogSource::Backend, "backend"),
-            (LogSource::Pat, "pat"),
             (LogSource::Transport, "transport"),
             (LogSource::Wire, "wire"),
         ] {
@@ -2308,7 +2361,7 @@ mod tests {
             seq: 0,
             timestamp_iso: "2026-05-20T00:00:01Z".into(),
             level: LogLevel::Info,
-            source: LogSource::Pat,
+            source: LogSource::Backend,
             message: "Pat HTTP server ready".into(),
         });
         ring.append(LogLine {
@@ -2325,7 +2378,7 @@ mod tests {
         assert_eq!(dtos.len(), 2, "both appended lines project to DTOs");
         assert_eq!(dtos[0].seq, 1, "first line gets seq=1");
         assert_eq!(dtos[0].message, "Pat HTTP server ready");
-        assert_eq!(dtos[0].source, LogSourceDto::Pat);
+        assert_eq!(dtos[0].source, LogSourceDto::Backend);
         assert_eq!(dtos[1].seq, 2, "second line gets seq=2");
         assert_eq!(dtos[1].message, "CMS connection timeout");
         assert_eq!(dtos[1].source, LogSourceDto::Backend);
@@ -2518,6 +2571,7 @@ mod tests {
     }
 
     // Helpers for position_status DTO unit tests.
+    #[allow(deprecated)] // sets pat_mbo_address on Config literal; field deprecated per tuxlink-9phd T8.1
     fn make_config_for_position_status(gps_state: GpsState, grid: Option<&str>) -> config::Config {
         use crate::config::{ConnectConfig, CmsTransport, IdentityConfig, PrivacyConfig, CONFIG_SCHEMA_VERSION};
         config::Config {
@@ -2605,5 +2659,87 @@ mod tests {
             dto.broadcast_grid, "DM33",
             "gps_state=Off: broadcast_grid must be config grid, NOT the GPS fix"
         );
+    }
+
+    // ========================================================================
+    // P2.1 (Codex post-impl review) — OutboundDraftDto attachment bridge
+    // ========================================================================
+    //
+    // Prior to this fix, `message_send` hardcoded `attachments: vec![]`,
+    // making it impossible for the compose window to send attachments even
+    // though the backend (T4.1 + compose_message_with_files) had the plumbing.
+    // These tests verify the DTO deserialization round-trip and the
+    // DTO→OutboundAttachment mapping.
+
+    /// `OutboundDraftDto` with no attachments field deserializes correctly via
+    /// `#[serde(default)]` — existing callers that omit the field are not broken.
+    #[test]
+    fn outbound_draft_dto_defaults_attachments_to_empty_vec() {
+        let json = r#"{"to":["W1AW"],"cc":[],"subject":"Hi","body":"Hello"}"#;
+        let dto: OutboundDraftDto = serde_json::from_str(json)
+            .expect("dto without attachments field should deserialize");
+        assert!(dto.attachments.is_empty(), "missing 'attachments' must default to []");
+    }
+
+    /// `OutboundDraftDto` with an explicit attachments array deserializes correctly.
+    #[test]
+    fn outbound_draft_dto_deserializes_attachments() {
+        // Tauri IPC encodes Vec<u8> as a JSON array of integers.
+        let json = r#"{
+            "to": ["W1AW"],
+            "cc": [],
+            "subject": "With attachment",
+            "body": "See attached.",
+            "attachments": [
+                {"filename": "report.txt", "bytes": [72, 101, 108, 108, 111]}
+            ]
+        }"#;
+        let dto: OutboundDraftDto = serde_json::from_str(json)
+            .expect("dto with attachments should deserialize");
+        assert_eq!(dto.attachments.len(), 1);
+        assert_eq!(dto.attachments[0].filename, "report.txt");
+        assert_eq!(dto.attachments[0].bytes, b"Hello");
+    }
+
+    /// The mapping from `OutboundAttachmentDto` to `OutboundAttachment` preserves
+    /// filename and bytes without truncation or transformation.
+    #[test]
+    fn outbound_attachment_dto_maps_to_backend_type() {
+        let dto = OutboundAttachmentDto {
+            filename: "ics213.pdf".to_string(),
+            bytes: vec![0x50, 0x44, 0x46],
+        };
+        let att = crate::winlink_backend::OutboundAttachment {
+            filename: dto.filename.clone(),
+            bytes: dto.bytes.clone(),
+        };
+        assert_eq!(att.filename, "ics213.pdf");
+        assert_eq!(att.bytes, [0x50, 0x44, 0x46]);
+    }
+
+    /// Multiple attachments in a DTO all map through correctly.
+    #[test]
+    fn outbound_draft_dto_maps_multiple_attachments() {
+        let dto = OutboundDraftDto {
+            to: vec!["W1AW".to_string()],
+            cc: vec![],
+            subject: "Multi".to_string(),
+            body: "Two files.".to_string(),
+            attachments: vec![
+                OutboundAttachmentDto { filename: "a.txt".into(), bytes: vec![1, 2] },
+                OutboundAttachmentDto { filename: "b.bin".into(), bytes: vec![3, 4, 5] },
+            ],
+        };
+        let mapped: Vec<crate::winlink_backend::OutboundAttachment> = dto
+            .attachments
+            .into_iter()
+            .map(|a| crate::winlink_backend::OutboundAttachment {
+                filename: a.filename,
+                bytes: a.bytes,
+            })
+            .collect();
+        assert_eq!(mapped.len(), 2);
+        assert_eq!(mapped[0].filename, "a.txt");
+        assert_eq!(mapped[1].bytes, [3, 4, 5]);
     }
 }

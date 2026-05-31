@@ -106,13 +106,14 @@ pub fn run_exchange<R, W, F>(
     config: &ExchangeConfig,
     outbound: Vec<OutboundMessage>,
     decide: F,
+    wire_log: Option<&dyn Fn(&str)>,
 ) -> Result<ExchangeResult, ExchangeError>
 where
     R: BufRead,
     W: Write,
     F: Fn(&[Proposal]) -> Vec<Answer>,
 {
-    run_exchange_with_role(reader, writer, ExchangeRole::Dial, config, outbound, decide)
+    run_exchange_with_role(reader, writer, ExchangeRole::Dial, config, outbound, decide, wire_log)
 }
 
 /// Run a full exchange in the given [`ExchangeRole`]. See the enum docs for the
@@ -124,6 +125,7 @@ pub fn run_exchange_with_role<R, W, F>(
     config: &ExchangeConfig,
     outbound: Vec<OutboundMessage>,
     decide: F,
+    wire_log: Option<&dyn Fn(&str)>,
 ) -> Result<ExchangeResult, ExchangeError>
 where
     R: BufRead,
@@ -182,7 +184,7 @@ where
             return Err(ExchangeError::TooManyTurns);
         }
         if my_turn {
-            let outcome = send_turn(reader, writer, &remaining, remote_no_messages)?;
+            let outcome = send_turn(reader, writer, &remaining, remote_no_messages, wire_log)?;
             result.sent.extend(outcome.sent);
             result.rejected.extend(outcome.rejected);
             result.deferred.extend(outcome.deferred);
@@ -211,6 +213,7 @@ pub fn send_turn<R: BufRead, W: Write>(
     writer: &mut W,
     outbound: &[OutboundMessage],
     remote_no_messages: bool,
+    wire_log: Option<&dyn Fn(&str)>,
 ) -> Result<SendOutcome, ExchangeError> {
     let mut outcome = SendOutcome::default();
 
@@ -227,7 +230,11 @@ pub fn send_turn<R: BufRead, W: Write>(
     let batch = &outbound[..outbound.len().min(MAX_BATCH)];
     let proposals: Vec<Proposal> = batch.iter().map(|m| m.proposal.clone()).collect();
     for proposal in &proposals {
-        write_bytes(writer, proposal.line().as_bytes())?;
+        let line = proposal.line();
+        if let Some(log) = wire_log {
+            log(&line);
+        }
+        write_bytes(writer, line.as_bytes())?;
         write_bytes(writer, b"\r")?;
     }
     write_bytes(writer, proposal::batch_checksum_line(&proposals).as_bytes())?;
@@ -240,6 +247,9 @@ pub fn send_turn<R: BufRead, W: Write>(
             return Err(ExchangeError::RemoteError(message));
         }
         if line.starts_with("FS ") {
+            if let Some(log) = wire_log {
+                log(&line);
+            }
             break proposal::parse_answers(&line).map_err(ExchangeError::BadAnswer)?;
         } else if line.starts_with(';') {
             continue;
@@ -439,7 +449,7 @@ mod tests {
     fn with_nothing_to_send_we_signal_no_more_messages() {
         let mut reader = Cursor::new(Vec::<u8>::new());
         let mut writer = Vec::<u8>::new();
-        let outcome = send_turn(&mut reader, &mut writer, &[], false).unwrap();
+        let outcome = send_turn(&mut reader, &mut writer, &[], false, None).unwrap();
         assert_eq!(writer, b"FF\r");
         assert!(!outcome.quit_sent);
     }
@@ -448,7 +458,7 @@ mod tests {
     fn with_nothing_to_send_and_the_other_side_done_we_quit() {
         let mut reader = Cursor::new(Vec::<u8>::new());
         let mut writer = Vec::<u8>::new();
-        let outcome = send_turn(&mut reader, &mut writer, &[], true).unwrap();
+        let outcome = send_turn(&mut reader, &mut writer, &[], true, None).unwrap();
         assert_eq!(writer, b"FQ\r");
         assert!(outcome.quit_sent);
     }
@@ -460,7 +470,7 @@ mod tests {
 
         let mut reader = Cursor::new(b"FS Y\r".to_vec());
         let mut writer = Vec::new();
-        let outcome = send_turn(&mut reader, &mut writer, std::slice::from_ref(&out), false).unwrap();
+        let outcome = send_turn(&mut reader, &mut writer, std::slice::from_ref(&out), false, None).unwrap();
 
         let mut expected = Vec::new();
         expected.extend_from_slice(proposal.line().as_bytes());
@@ -481,7 +491,7 @@ mod tests {
 
         let mut reader = Cursor::new(b"FS R\r".to_vec());
         let mut writer = Vec::new();
-        let outcome = send_turn(&mut reader, &mut writer, std::slice::from_ref(&out), false).unwrap();
+        let outcome = send_turn(&mut reader, &mut writer, std::slice::from_ref(&out), false, None).unwrap();
 
         // Only the proposal line and the checksum line — no framed block.
         let mut expected = Vec::new();
@@ -575,6 +585,7 @@ mod tests {
             &config,
             vec![],
             |_| vec![],
+            None,
         )
         .unwrap();
         assert!(result.received.is_empty() && result.sent.is_empty());
@@ -601,7 +612,7 @@ mod tests {
             locator: "CN87".into(),
             password: Some("MYPASS".into()),
         };
-        let result = run_exchange(&mut reader, &mut writer, &config, vec![], |_| vec![]).unwrap();
+        let result = run_exchange(&mut reader, &mut writer, &config, vec![], |_| vec![], None).unwrap();
 
         assert!(result.received.is_empty());
         assert!(result.sent.is_empty());
@@ -642,7 +653,7 @@ mod tests {
         };
         let result = run_exchange(&mut reader, &mut writer, &config, vec![], |_| {
             vec![Answer::Accept { resume_offset: 0 }]
-        })
+        }, None)
         .unwrap();
 
         assert_eq!(result.received.len(), 1);
@@ -661,7 +672,7 @@ mod tests {
             password: None,
         };
         assert_eq!(
-            run_exchange(&mut reader, &mut writer, &config, vec![], |_| vec![]),
+            run_exchange(&mut reader, &mut writer, &config, vec![], |_| vec![], None),
             Err(ExchangeError::PasswordRequired)
         );
     }
@@ -683,7 +694,7 @@ mod tests {
         let (out, _) = outbound_message("ERR000000001", "Test", b"hi");
         let mut reader = Cursor::new(b"*** Secure login failed\r".to_vec());
         let mut writer = Vec::new();
-        let result = send_turn(&mut reader, &mut writer, std::slice::from_ref(&out), false);
+        let result = send_turn(&mut reader, &mut writer, std::slice::from_ref(&out), false, None);
         assert!(matches!(result, Err(ExchangeError::RemoteError(_))));
     }
 
@@ -743,6 +754,7 @@ mod tests {
             &config,
             vec![],
             |_| vec![Answer::Accept { resume_offset: 0 }],
+            None,
         )
         .unwrap();
 

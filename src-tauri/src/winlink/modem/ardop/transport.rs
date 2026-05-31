@@ -1643,6 +1643,7 @@ mod tests {
             mycall: "N7TST".into(),
             gridsquare: "CN87".into(),
             arq_timeout_s: 30,
+            arq_bandwidth_hz: None,
         };
         t.init(&cfg).expect("init must succeed");
 
@@ -1701,6 +1702,7 @@ mod tests {
             mycall: "N7TST".into(),
             gridsquare: "CN87".into(),
             arq_timeout_s: 30,
+            arq_bandwidth_hz: None,
         };
         t.init(&cfg).expect("init must succeed");
         t.connect_arq("W7ABC", 3, Duration::from_secs(5))

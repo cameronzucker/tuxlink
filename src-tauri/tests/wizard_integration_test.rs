@@ -248,6 +248,7 @@ async fn integration_keyring_round_trip_at_tuxlink_pat_account_shape() {
 #[tokio::test]
 #[ignore]
 #[serial]
+#[allow(deprecated)] // reads pat_mbo_address on deserialized Config; field deprecated per tuxlink-9phd T8.1
 async fn integration_persist_cms_happy_path_real_keyring() {
     if skip_if_no_session_bus() { return; }
     assert_keyring_isolated();
@@ -274,7 +275,9 @@ async fn integration_persist_cms_happy_path_real_keyring() {
     assert!(config.connect.connect_to_cms, "connect_to_cms must be true for CMS path");
     assert_eq!(config.identity.callsign.as_deref(), Some("INTTEST2"), "callsign normalized to uppercase");
     assert_eq!(config.identity.grid.as_deref(), Some("FM18"), "grid preserved");
-    assert_eq!(config.pat_mbo_address.as_deref(), Some("INTTEST2@winlink.org"), "MBO address stored");
+    // pat_mbo_address is deprecated + skip_serializing (tuxlink-9phd T8.1): the field is never
+    // written to config.json, so reading back always yields None regardless of what was passed.
+    assert!(config.pat_mbo_address.is_none(), "pat_mbo_address must be absent from config.json (skip_serializing)");
     assert!(config.identity.identifier.is_none(), "CMS path must not set identifier");
 
     // CROSS-PROCESS CONTRACT ASSERTION (the load-bearing check, not best-effort).

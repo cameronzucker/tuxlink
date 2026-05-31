@@ -1,9 +1,9 @@
 /**
  * StatusBar — bottom status bar (Mock B `.statusbar`).
  *
- * Mock B: ● <connection> · <N> unread                    v0.0.1 · Pat 1.0.0
+ * Mock B: ● <connection> · <N> unread                                v0.0.1
  * The rich operator info (callsign/grid/GPS) lives in the DashboardRibbon up
- * top; this bar carries connection-ready state + unread count + versions.
+ * top; this bar carries connection-ready state + unread count + app version.
  * Toggleable via View → Toggle Status Bar.
  */
 
@@ -12,8 +12,9 @@ import { DEV_FIXTURE, DEV_CONNECTION_STATUS } from '../mailbox/devFixture';
 import { formatPacketStatusBar, type PacketUiState } from '../packet/packetStatus';
 import './StatusBar.css';
 
-const APP_VERSION = 'v0.0.1';
-const PAT_VERSION = 'Pat 1.0.0';
+// Injected at build time from version.txt (release-please's canonical bump
+// target). See vite.config.ts. Prefixed with "v" for display.
+const APP_VERSION = `v${__APP_VERSION__}`;
 
 export interface StatusBarProps {
   /** When false, the status bar is hidden (returns null — zero height). */
@@ -49,7 +50,7 @@ export function StatusBar({ show, unread, state, packet }: StatusBarProps) {
         {unread} unread
       </div>
       <div className="status-right" data-testid="status-bar-version">
-        {APP_VERSION} · {PAT_VERSION}
+        {APP_VERSION}
       </div>
     </div>
   );

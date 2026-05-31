@@ -20,7 +20,11 @@ pub struct Config {
     pub connect: ConnectConfig,
     pub identity: IdentityConfig,
     pub privacy: PrivacyConfig,
-    #[serde(deserialize_with = "deserialize_optional_nonempty_string", default)]
+    #[deprecated(
+        note = "pat_mbo_address is unused after the Pat strip (ADR 0016); future writers \
+                should not set it. Tracked for removal in a future major bump."
+    )]
+    #[serde(deserialize_with = "deserialize_optional_nonempty_string", default, skip_serializing)]
     pub pat_mbo_address: Option<String>,
     // winlink_password_present REMOVED per AMD-11; deny_unknown_fields catches drift.
     /// AX.25 packet transport settings (additive; defaults when absent). See

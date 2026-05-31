@@ -11,8 +11,30 @@
 //! byte-identical to any other client.
 
 use md5::{Digest, Md5};
+use thiserror::Error;
 
 use super::message::Message;
+use crate::winlink_backend::OutboundAttachment;
+
+/// Errors that can occur while composing an outbound message with attachments.
+#[derive(Debug, Error)]
+#[non_exhaustive]
+pub enum ComposeError {
+    #[error("filename exceeds 255-character limit ({chars} chars): {filename:?}")]
+    FilenameTooLong { filename: String, chars: usize },
+    #[error(
+        "filename contains characters outside ISO-8859-1 \
+         (Q-encoding would be lossy): {filename:?}"
+    )]
+    FilenameNotLatin1Encodable { filename: String },
+    /// A filename contained CR, LF, or NUL — characters that would inject B2F
+    /// protocol headers when serialized into `File: <size> <name>` lines.
+    #[error(
+        "filename contains a control character that would break B2F framing \
+         (\\r, \\n, or \\0): {filename:?}"
+    )]
+    FilenameContainsControlChar { filename: String },
+}
 
 /// Build a Private text message ready to send.
 ///
@@ -48,6 +70,55 @@ pub fn compose_message(
     msg.set_header("Content-Type", "text/plain; charset=ISO-8859-1");
     msg.set_body(encode_body(body));
     msg
+}
+
+/// Build a Private text message with zero or more file attachments.
+///
+/// Returns `Err(ComposeError::FilenameTooLong)` or
+/// `Err(ComposeError::FilenameNotLatin1Encodable)` if any attachment
+/// filename violates the Winlink B2F constraints. The first invalid
+/// filename short-circuits; the error names the offending filename so
+/// the UI can surface it.
+pub fn compose_message_with_files(
+    mycall: &str,
+    to: &[&str],
+    cc: &[&str],
+    subject: &str,
+    body: &str,
+    attachments: &[OutboundAttachment],
+    unix_secs: u64,
+) -> Result<Message, ComposeError> {
+    // NEW: filename validation (T1.3)
+    for att in attachments {
+        let chars = att.filename.chars().count();
+        if chars > 255 {
+            return Err(ComposeError::FilenameTooLong {
+                filename: att.filename.clone(),
+                chars,
+            });
+        }
+        if !att.filename.chars().all(|c| (c as u32) <= 0xff) {
+            return Err(ComposeError::FilenameNotLatin1Encodable {
+                filename: att.filename.clone(),
+            });
+        }
+        // P2.2 (Codex post-impl review): CR, LF, and NUL are valid Latin-1 code
+        // points, so the check above passes them — but they would inject B2F header
+        // framing when the filename lands in a `File: <size> <name>` line. Reject
+        // them explicitly before any serialization can happen.
+        if att.filename.contains(['\r', '\n', '\0']) {
+            return Err(ComposeError::FilenameContainsControlChar {
+                filename: att.filename.clone(),
+            });
+        }
+    }
+    // Build the base message via compose_message (text-only path), then attach
+    // the validated files. set_body in compose_message already wrote the Body:
+    // header; File: headers + the attachment serialization land in
+    // Message::to_bytes (Task 1.5+).
+    let mut msg = compose_message(mycall, to, cc, subject, body, unix_secs);
+    msg.set_attachments(attachments.to_vec());
+    Ok(msg)
 }
 
 /// Generate a 12-character message id from the call sign and the send time.
@@ -211,5 +282,150 @@ mod tests {
         let (proposal, compressed) = msg.to_proposal().unwrap();
         assert_eq!(proposal.mid, "LIHHQU663POB");
         assert!(!compressed.is_empty());
+    }
+
+    #[test]
+    fn compose_with_no_files_matches_text_only_path() {
+        let no_files = compose_message_with_files(
+            "N7CPZ", &["W1AW"], &[], "Hi", "body", &[], 1_716_200_000,
+        ).expect("no filenames → cannot fail");
+        let text_only = compose_message("N7CPZ", &["W1AW"], &[], "Hi", "body", 1_716_200_000);
+        assert_eq!(no_files.to_bytes(), text_only.to_bytes());
+    }
+
+    #[test]
+    fn compose_rejects_filename_over_255_chars() {
+        let long: String = "a".repeat(256);
+        let att = OutboundAttachment { filename: long.clone(), bytes: vec![1, 2, 3] };
+        let err = compose_message_with_files(
+            "N7CPZ", &["W1AW"], &[], "Hi", "body", &[att], 1_716_200_000,
+        ).unwrap_err();
+        assert!(matches!(err, ComposeError::FilenameTooLong { chars: 256, .. }),
+                "expected FilenameTooLong{{chars: 256, ..}}, got {:?}", err);
+    }
+
+    #[test]
+    fn compose_rejects_non_latin1_filename() {
+        let att = OutboundAttachment { filename: "日本語.txt".into(), bytes: vec![1, 2] };
+        let err = compose_message_with_files(
+            "N7CPZ", &["W1AW"], &[], "Hi", "body", &[att], 1_716_200_000,
+        ).unwrap_err();
+        assert!(matches!(err, ComposeError::FilenameNotLatin1Encodable { .. }),
+                "expected FilenameNotLatin1Encodable, got {:?}", err);
+    }
+
+    #[test]
+    fn compose_attaches_files_to_message() {
+        let att = OutboundAttachment { filename: "report.txt".into(), bytes: b"hello".to_vec() };
+        let msg = compose_message_with_files(
+            "N7CPZ", &["W1AW"], &[], "Hi", "body", &[att.clone()], 1_716_200_000,
+        ).unwrap();
+        assert_eq!(msg.attachments().len(), 1);
+        assert_eq!(msg.attachments()[0].filename, "report.txt");
+        assert_eq!(msg.attachments()[0].bytes, b"hello");
+    }
+
+    #[test]
+    fn compose_short_circuits_on_first_invalid_filename() {
+        let ok = OutboundAttachment { filename: "good.txt".into(), bytes: vec![1] };
+        let bad = OutboundAttachment { filename: "日本.bin".into(), bytes: vec![2] };
+        let err = compose_message_with_files(
+            "N7CPZ", &["W1AW"], &[], "Hi", "body", &[ok, bad], 1_716_200_000,
+        ).unwrap_err();
+        match err {
+            ComposeError::FilenameNotLatin1Encodable { filename } => {
+                assert_eq!(filename, "日本.bin");
+            }
+            other => panic!("expected FilenameNotLatin1Encodable for '日本.bin', got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn composes_multi_recipient_with_attachments() {
+        let attachments = vec![
+            OutboundAttachment { filename: "a.bin".into(), bytes: vec![1] },
+            OutboundAttachment { filename: "b.bin".into(), bytes: vec![2] },
+        ];
+        let msg = compose_message_with_files(
+            "N7CPZ",
+            &["W1AW", "K1AB"],
+            &["KE7XYZ"],
+            "Multi",
+            "body",
+            &attachments,
+            1_716_200_000,
+        ).unwrap();
+        let bytes = msg.to_bytes();
+        let s = String::from_utf8_lossy(&bytes);
+        assert_eq!(s.matches("\r\nTo: ").count(), 2, "two To: headers expected; got: {s}");
+        assert_eq!(s.matches("\r\nCc: ").count(), 1, "one Cc: header expected; got: {s}");
+        assert_eq!(s.matches("\r\nFile: ").count(), 2, "two File: headers expected; got: {s}");
+    }
+
+    // P2.2 (Codex post-impl review): CR, LF, NUL in filenames must be rejected
+    // before serialization to prevent B2F header injection via `File: <size> <name>`.
+
+    #[test]
+    fn compose_rejects_filename_with_carriage_return() {
+        let att = OutboundAttachment {
+            filename: "inject\rheader.txt".into(),
+            bytes: vec![1],
+        };
+        let err = compose_message_with_files(
+            "N7CPZ", &["W1AW"], &[], "Hi", "body", &[att], 1_716_200_000,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(err, ComposeError::FilenameContainsControlChar { .. }),
+            "expected FilenameContainsControlChar for \\r; got: {err:?}"
+        );
+    }
+
+    #[test]
+    fn compose_rejects_filename_with_newline() {
+        let att = OutboundAttachment {
+            filename: "inject\nheader.txt".into(),
+            bytes: vec![1],
+        };
+        let err = compose_message_with_files(
+            "N7CPZ", &["W1AW"], &[], "Hi", "body", &[att], 1_716_200_000,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(err, ComposeError::FilenameContainsControlChar { .. }),
+            "expected FilenameContainsControlChar for \\n; got: {err:?}"
+        );
+    }
+
+    #[test]
+    fn compose_rejects_filename_with_nul() {
+        let att = OutboundAttachment {
+            filename: "inject\0header.txt".into(),
+            bytes: vec![1],
+        };
+        let err = compose_message_with_files(
+            "N7CPZ", &["W1AW"], &[], "Hi", "body", &[att], 1_716_200_000,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(err, ComposeError::FilenameContainsControlChar { .. }),
+            "expected FilenameContainsControlChar for \\0; got: {err:?}"
+        );
+    }
+
+    #[test]
+    fn compose_accepts_filename_without_control_chars() {
+        // Sanity: a normal filename must still pass validation unimpeded.
+        let att = OutboundAttachment {
+            filename: "valid-report_2026.txt".into(),
+            bytes: b"data".to_vec(),
+        };
+        assert!(
+            compose_message_with_files(
+                "N7CPZ", &["W1AW"], &[], "Hi", "body", &[att], 1_716_200_000,
+            )
+            .is_ok(),
+            "normal filename should pass P2.2 validation"
+        );
     }
 }

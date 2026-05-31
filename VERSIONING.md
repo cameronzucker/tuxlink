@@ -8,11 +8,9 @@ Tuxlink's SemVer applies to surfaces a user interacts with *without editing repo
 
 - The configuration file format at `$XDG_CONFIG_HOME/tuxlink/config.json` (`schema_version` field, required keys).
 - The runtime path layout at `$XDG_RUNTIME_DIR/tuxlink/*` (PID files, sockets, log files).
-- The IPC contract with the bundled Pat process (HTTP endpoints, port allocation, signal handling).
 - The native OS menu structure (menu items, accelerators) — user automation may key on these.
 - The system tray API (icon, click-to-show, context menu items).
 - The CLI flags accepted by the AppImage launcher (`--config`, `--no-tray`, future expansions).
-- The bundled-Pat version range (which Pat versions Tuxlink is compatible with).
 
 A release that breaks any of the above requires a **MAJOR** bump. A release that only touches internal Rust modules, React component structure, or test fixtures is **MINOR / PATCH**.
 
@@ -22,8 +20,8 @@ A release that breaks any of the above requires a **MAJOR** bump. A release that
 
 | Level | Trigger | Conventional Commits marker |
 |---|---|---|
-| **MAJOR** (X → X+1.0.0) | Any change to the contract surface above. Config format change; PID-file path change; bundled-Pat compatibility break; menu accelerator removal. | `feat!:` / `fix!:` or `BREAKING CHANGE:` footer |
-| **MINOR** (X.Y → X.Y+1.0) | New user-visible feature. New menu item. New CLI flag. New supported Pat version. Non-breaking behavior changes. | `feat:` |
+| **MAJOR** (X → X+1.0.0) | Any change to the contract surface above. Config format change; PID-file path change; menu accelerator removal. | `feat!:` / `fix!:` or `BREAKING CHANGE:` footer |
+| **MINOR** (X.Y → X.Y+1.0) | New user-visible feature. New menu item. New CLI flag. Non-breaking behavior changes. | `feat:` |
 | **PATCH** (X.Y.Z → X.Y.Z+1) | Bug fix. Performance improvement. Dependency bump with no behavior change. Internal refactor. | `fix:`, `perf:`, `refactor:` |
 | *(no bump)* | Docs-only change. Test-only change. CI / tooling change. Chore. | `docs:`, `test:`, `ci:`, `chore:`, `build:` |
 

@@ -3,7 +3,7 @@ use tuxlink_lib::winlink_backend::{LogLine, LogLevel, LogSource};
 
 fn line(msg: &str) -> LogLine {
     LogLine { seq: 0, timestamp_iso: "2026-05-20T00:00:00Z".into(),
-              level: LogLevel::Info, source: LogSource::Pat, message: msg.into() }
+              level: LogLevel::Info, source: LogSource::Backend, message: msg.into() }
 }
 
 #[test]

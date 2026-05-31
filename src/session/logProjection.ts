@@ -27,7 +27,7 @@ export interface LogLineDto {
   seq: number;
   timestampIso: string;
   level: 'trace' | 'debug' | 'info' | 'warn' | 'error';
-  source: 'backend' | 'pat' | 'transport' | 'wire';
+  source: 'backend' | 'transport' | 'wire';
   message: string;
 }
 

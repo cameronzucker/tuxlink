@@ -5,12 +5,10 @@
 //!
 //! This module defines the `WinlinkBackend` trait — the architectural
 //! boundary that decouples tuxlink's UI/config layer from any one Winlink
-//! protocol implementation. Two implementations live here:
+//! protocol implementation. One implementation lives here:
 //!
-//! - [`PatBackend`] — wraps the existing [`crate::pat_client::PatClient`]
-//!   plus [`crate::pat_process::PatProcess`]. v0.0.1 ships only this one.
-//! - [`NativeBackend`] — stub returning [`BackendError::NotImplemented`]
-//!   for every method. Real native logic arrives in v0.5 Steps 3–10.
+//! - [`NativeBackend`] — speaks B2F directly, stores messages in its own
+//!   mailbox, and connects over plaintext or TLS telnet.
 //!
 //! Per [feedback_discipline_triage_rule]: the trait is the hard-to-undo
 //! architectural decision; once defined, implementations are TDD plumbing.
@@ -19,11 +17,32 @@ use async_trait::async_trait;
 use futures::stream::{BoxStream, StreamExt};
 use std::net::{Shutdown, TcpStream};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, RwLock};
 use thiserror::Error;
+use tokio::sync::broadcast;
+use tokio_stream::wrappers::BroadcastStream;
 
-// Re-export MailboxFolder so the trait surface doesn't reach into the
-// Pat-specific module.
-pub use crate::pat_client::MailboxFolder;
+/// Mailbox folder selector. `#[non_exhaustive]` per tuxlink-z5f v2 P1 #5 —
+/// future folders (Drafts, Spam, custom) added without breaking exhaustive
+/// matches at call sites. `Copy + Clone + Debug` so the trait re-export
+/// carries useful semantics.
+///
+/// Canonical path: `winlink_backend::MailboxFolder` (moved from the deleted
+/// `pat_client` module in tuxlink-9phd Phase 9).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum MailboxFolder { Inbox, Sent, Outbox, Archive }
+
+impl MailboxFolder {
+    pub(crate) fn as_path(&self) -> &'static str {
+        match self {
+            MailboxFolder::Inbox => "in",
+            MailboxFolder::Sent => "sent",
+            MailboxFolder::Outbox => "out",
+            MailboxFolder::Archive => "archive",
+        }
+    }
+}
 
 // Native backend wiring (see the NativeBackend section below).
 use crate::config::{broadcast_grid, CmsTransport, Config};
@@ -57,21 +76,16 @@ pub struct MessageMeta {
     pub subject: String,
     pub from: String,
     /// Recipient list. Drives the list "To" column (esp. Sent/Outbox).
-    /// Added by Task 12 (tuxlink-zsm). Pat 1.0.0's `/api/mailbox` list DTO
-    /// does NOT expose a To array (verified against the shipped fixture in
-    /// `pat_client_test.rs`), so `PatBackend::list_messages` degrades this to
-    /// an empty vec — see `pat_client::Message::to` and spec §2.1 graceful
-    /// degradation. The field stays on the trait surface so a future Pat
-    /// (or NativeBackend) that DOES provide recipients can populate it.
+    /// Recipient list. Added by Task 12 (tuxlink-zsm). NativeBackend populates
+    /// this from the stored RFC5322 headers; spec §2.1 graceful degradation
+    /// for backends that don't expose a recipient list.
     pub to: Vec<String>,
     /// RFC 3339 UTC timestamp. Backend emits canonical form.
     pub date: String,
     pub unread: bool,
     pub body_size: u64,
     /// Attachment-presence indicator for the list `#` column. Added by Task
-    /// 12 (tuxlink-zsm). Pat 1.0.0's list DTO does not expose attachment
-    /// metadata, so `PatBackend::list_messages` degrades this to `false`
-    /// (spec §2.1). The full attachment list is materialized at read time
+    /// 12 (tuxlink-zsm). The full attachment list is materialized at read time
     /// (Task 13's RFC5322 parse), not in the list view.
     pub has_attachments: bool,
 }
@@ -87,10 +101,9 @@ pub struct MessageBody {
 }
 
 /// Attachment carried in an outbound message. Spec §6.2.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OutboundAttachment {
     pub filename: String,
-    pub content_type: String,
     pub bytes: Vec<u8>,
 }
 
@@ -224,20 +237,15 @@ impl BackendInstanceId {
 #[derive(Debug)]
 pub struct Session {
     pub(crate) backend_id: BackendInstanceId,
-    /// Backend-specific session payload. v0.0.1 PatBackend `connect` mints
-    /// a stub variant (no HTTP call yet — full Pat /api/connect integration
-    /// is deferred to v0.5 Step 5); the field is held for future-use match
-    /// arms in `disconnect` to call out to Pat or native cleanup.
+    /// Backend-specific session payload. Held for future-use match arms in
+    /// `disconnect` to call out to native cleanup.
     #[allow(dead_code)]
     pub(crate) inner: SessionInner,
 }
 
 #[derive(Debug)]
-#[allow(dead_code)] // pat_session_id will be read in v0.5 Step 5 PatBackend disconnect
 pub(crate) enum SessionInner {
-    Pat { pat_session_id: String },
-    /// NativeBackend stub never produces sessions. Variant kept for future
-    /// v0.5+ NativeBackend session shapes.
+    /// NativeBackend session. Variant kept for future v0.5+ session shapes.
     Native(()),
 }
 
@@ -245,8 +253,8 @@ impl Drop for Session {
     fn drop(&mut self) {
         // Local cleanup only — see spec §3.5. No remote-disconnect call;
         // explicit WinlinkBackend::disconnect is the guaranteed release path.
-        // PatBackend sessions auto-time-out server-side; future native
-        // sessions will close their socket fd via Drop on the inner stream.
+        // Future native sessions will close their socket fd via Drop on the
+        // inner stream.
     }
 }
 
@@ -287,7 +295,7 @@ pub enum LogLevel { Trace, Debug, Info, Warn, Error }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
-pub enum LogSource { Backend, Pat, Transport, Wire }
+pub enum LogSource { Backend, Transport, Wire }
 
 // ============================================================================
 // Error model (spec §3.3)
@@ -378,22 +386,20 @@ pub trait WinlinkBackend: Send + Sync {
         self.read_message_in(MailboxFolder::Inbox, id).await
     }
 
-    /// Mark a message read. Best-effort: backends with no read-state (e.g.
-    /// `PatBackend`, which delegates read-state to Pat's own store) inherit
-    /// this no-op default. `NativeBackend` overrides it to drop a read-marker
-    /// in its store. A failure here MUST NOT fail the read that triggered it —
-    /// the caller (`message_read`) treats read-state as best-effort
-    /// (tuxlink-xgn).
+    /// Mark a message read. Best-effort: the default is a no-op.
+    /// `NativeBackend` overrides it to drop a read-marker in its store.
+    /// A failure here MUST NOT fail the read that triggered it — the caller
+    /// (`message_read`) treats read-state as best-effort (tuxlink-xgn).
     async fn mark_read(&self, _folder: MailboxFolder, _id: &MessageId)
         -> Result<(), BackendError> {
         Ok(())
     }
 
-    /// Returns `Ok(Some(id))` when the backend assigns a MID at queue
-    /// time, `Ok(None)` when it does not (current Pat 1.0.0 behavior:
-    /// returns a plain-text confirmation, no MID).
+    /// Returns `Ok(id)` with the MID assigned at queue time.
+    ///
+    /// `NativeBackend` assigns a real filesystem-derived MID at queue time.
     async fn send_message(&self, msg: OutboundMessage)
-        -> Result<Option<MessageId>, BackendError>;
+        -> Result<MessageId, BackendError>;
 
     async fn connect(&self, transport: TransportConfig)
         -> Result<Session, BackendError>;
@@ -404,8 +410,7 @@ pub trait WinlinkBackend: Send + Sync {
     /// Abort an in-flight [`WinlinkBackend::connect`] (tuxlink-9z2): shut down the
     /// connecting socket to unblock a slow TLS/login/exchange phase and return the
     /// backend to `Disconnected`. The aborted `connect` resolves to
-    /// [`BackendError::Cancelled`]. Default is a no-op `Ok` for backends with no
-    /// in-flight socket to cancel (e.g. `PatBackend`). Safe to call when idle.
+    /// [`BackendError::Cancelled`]. Default is a no-op `Ok`. Safe to call when idle.
     async fn abort(&self) -> Result<(), BackendError> {
         Ok(())
     }
@@ -415,7 +420,7 @@ pub trait WinlinkBackend: Send + Sync {
     /// path read that stale snapshot — a UI host/transport/packet-param change only
     /// took effect after an app restart. The config-writing UI commands call this
     /// after persisting, so the NEXT connect honors the change restart-free. Default
-    /// no-op for backends that hold no config snapshot (e.g. `PatBackend`).
+    /// no-op for backends that hold no config snapshot.
     fn set_config(&self, _config: Config) {}
 
     fn status(&self) -> BackendStatus;
@@ -424,7 +429,7 @@ pub trait WinlinkBackend: Send + Sync {
 }
 
 // ============================================================================
-// NativeBackend stub (spec §3.9)
+// NativeBackend (spec §3.9)
 // ============================================================================
 
 /// A sink for per-step connect progress messages (tuxlink-gqo). The connect path
@@ -591,7 +596,7 @@ impl WinlinkBackend for NativeBackend {
     async fn send_message(
         &self,
         msg: OutboundMessage,
-    ) -> Result<Option<MessageId>, BackendError> {
+    ) -> Result<MessageId, BackendError> {
         let callsign = self
             .live_config()
             .identity
@@ -601,10 +606,18 @@ impl WinlinkBackend for NativeBackend {
         let unix_secs = parse_rfc3339_secs(&msg.date).unwrap_or_else(now_unix_secs);
         let to: Vec<&str> = msg.to.iter().map(String::as_str).collect();
         let cc: Vec<&str> = msg.cc.iter().map(String::as_str).collect();
-        let message =
-            compose::compose_message(&callsign, &to, &cc, &msg.subject, &msg.body, unix_secs);
+        let message = compose::compose_message_with_files(
+            &callsign,
+            &to,
+            &cc,
+            &msg.subject,
+            &msg.body,
+            &msg.attachments,
+            unix_secs,
+        )
+        .map_err(|e| BackendError::MessageRejected(e.to_string()))?;
         let id = self.mailbox.store(MailboxFolder::Outbox, &message.to_bytes())?;
-        Ok(Some(id))
+        Ok(id)
     }
 
     async fn connect(&self, transport: TransportConfig) -> Result<Session, BackendError> {
@@ -796,13 +809,14 @@ impl NativeBackend {
         let config = self.live_config();
         let mailbox = self.mailbox.clone();
         let progress = self.progress.clone();
+        let wire = self.wire.clone();
         let abort_handle = self.abort_handle.clone();
         let aborting = self.aborting.clone();
 
         self.set_status(initial_status);
 
         let outcome = tokio::task::spawn_blocking(move || {
-            native_packet_connect(&config, &mailbox, link, resolved, &*progress, &abort_handle, aborting)
+            native_packet_connect(&config, &mailbox, link, resolved, &*progress, &*wire, &abort_handle, aborting)
         })
         .await
         .map_err(|e| BackendError::Internal {
@@ -919,6 +933,7 @@ fn native_packet_exchange<S: std::io::Read + std::io::Write + Send + 'static>(
     ctx: PacketConnectCtx<'_>,
     mailbox: &Mailbox,
     progress: &dyn Fn(&str),
+    wire_log: &dyn Fn(&str),
 ) -> Result<(), BackendError> {
     let PacketConnectCtx { base_mycall, targetcall, password, role, locator } = ctx;
     // Split the owned stream into simultaneous read + write halves via a shared
@@ -975,14 +990,26 @@ fn native_packet_exchange<S: std::io::Read + std::io::Write + Send + 'static>(
         &exchange_config,
         outbound,
         |proposals| proposals.iter().map(|_| Answer::Accept { resume_offset: 0 }).collect(),
+        Some(wire_log),
     )
     .map_err(|e| BackendError::TransportFailed { reason: format!("{e:?}"), source: None })?;
 
+    // P1.4 (Codex post-impl review): file accepted messages FIRST, then surface
+    // any rejection error. The prior ordering returned early on rejections, leaving
+    // successfully-sent MIDs in the Outbox where they would be re-offered on the
+    // next connection (duplicate send). Moving them to Sent is idempotent even
+    // when `result.sent` is empty (all-rejected batch); the error still surfaces.
     for message in &result.received {
         mailbox.store(MailboxFolder::Inbox, &message.to_bytes())?;
     }
     for mid in &result.sent {
         mailbox.move_to(MailboxFolder::Outbox, MailboxFolder::Sent, &MessageId(mid.clone()))?;
+    }
+    if !result.rejected.is_empty() {
+        return Err(BackendError::MessageRejected(format!(
+            "CMS rejected mid(s): {}",
+            result.rejected.join(", ")
+        )));
     }
     // `shared` drops here → stream drops → DISC fires (Ax25Stream::drop).
     Ok(())
@@ -991,23 +1018,20 @@ fn native_packet_exchange<S: std::io::Read + std::io::Write + Send + 'static>(
 /// Open the KISS link, connect (dial) or answer (listen), and run the exchange.
 /// Per RADIO-1, the agent never runs this against a real KISS modem — tests
 /// exercise `native_packet_exchange` with `FakeAx25Stream` only.
+#[allow(clippy::too_many_arguments)]
 fn native_packet_connect(
     config: &Config,
     mailbox: &Arc<Mailbox>,
     link: KissLinkConfig,
     resolved: ResolvedPacket,
     progress: &dyn Fn(&str),
+    wire_log: &dyn Fn(&str),
     abort_handle: &Mutex<Option<TcpStream>>,
     aborting: Arc<AtomicBool>,
 ) -> Result<(), BackendError> {
     let params = config.packet.params.clone().into_params();
     let locator = cms_locator(config);
     let base = resolved.base_mycall.clone();
-    // Password lookup for the gateway dial (challenge is conditional; peer ignores it).
-    let password = keyring::Entry::new("tuxlink-pat", &base)
-        .ok()
-        .and_then(|e| e.get_password().ok())
-        .filter(|p| !p.is_empty());
 
     progress("Opening KISS link…");
     // Open the KISS link with an abort handle (tuxlink-9z2 pattern, mirroring
@@ -1061,6 +1085,16 @@ fn native_packet_connect(
                 reason: format!("AX.25 connect: {e}"),
                 source: None,
             })?;
+            // P1.3 (Codex post-impl review): read_password is deferred until AFTER
+            // the KISS link is established. The prior placement (before connect_link)
+            // caused the OS-keyring migration to run even when the link failed — e.g.
+            // when unit tests intentionally use a closed loopback port, the keyring
+            // write still fired. Deferring until link-up means a failed connect_arq
+            // never touches the operator's keyring, and Listen arming (password: None)
+            // never triggers it at all. Option (a) per the Codex review.
+            let password = crate::winlink::credentials::read_password(&base)
+                .ok()
+                .filter(|p| !p.is_empty());
             native_packet_exchange(
                 BlockingB2fStream(stream),
                 PacketConnectCtx {
@@ -1072,6 +1106,7 @@ fn native_packet_connect(
                 },
                 mailbox,
                 progress,
+                wire_log,
             )
         }
         None => {
@@ -1086,6 +1121,8 @@ fn native_packet_connect(
                 source: None,
             })?;
             progress(&format!("Answered {}.", peer.call));
+            // Listen (Answer role) does not need a password — peers do not challenge.
+            // password: None is intentional; no read_password call here.
             native_packet_exchange(
                 BlockingB2fStream(stream),
                 PacketConnectCtx {
@@ -1097,6 +1134,7 @@ fn native_packet_connect(
                 },
                 mailbox,
                 progress,
+                wire_log,
             )
         }
     }
@@ -1229,10 +1267,6 @@ fn native_connect(
     // control. GPS grids go on air only when gps_state == BroadcastAtPrecision;
     // Off/LocalUiOnly fall back to the config grid. Manual broadcasts regardless.
     let locator = crate::position::effective_broadcast_locator(config, position);
-    let password = keyring::Entry::new("tuxlink-pat", &callsign)
-        .ok()
-        .and_then(|e| e.get_password().ok())
-        .filter(|p| !p.is_empty());
 
     // Dev overrides (tuxlink-gqo) mirror `bin/native_cms_probe`: TUXLINK_CMS_PLAINTEXT
     // forces plaintext (cms-z exposes no 8773 TLS), TUXLINK_CMS_PORT overrides the
@@ -1258,6 +1292,17 @@ fn native_connect(
             }
         }
     }
+
+    // P1.3 (Codex post-impl review): defer read_password until after all config
+    // validation and outbox-building steps have succeeded. Placing it here — just
+    // before ExchangeConfig is built — ensures the OS-keyring migration only runs
+    // when we are actually about to open a socket. Tests that fail in the preceding
+    // steps (no callsign, mailbox errors) never touch the keyring. Option (a) per
+    // the Codex review; the telnet path builds ExchangeConfig inline so "after link
+    // open" translates to "after outbox build but before connect_and_exchange".
+    let password = crate::winlink::credentials::read_password(&callsign)
+        .ok()
+        .filter(|p| !p.is_empty());
 
     let exchange_config = session::ExchangeConfig {
         mycall: callsign,
@@ -1314,12 +1359,22 @@ fn native_connect(
         source: None,
     })?;
 
-    // File received messages into the inbox; move delivered ones to sent.
+    // P1.4 (Codex post-impl review): file accepted messages FIRST, then surface
+    // any rejection error. The prior ordering returned early on rejections, leaving
+    // successfully-sent MIDs in the Outbox where they would be re-offered on the
+    // next connection (duplicate send). Moving them to Sent is idempotent even
+    // when `result.sent` is empty (all-rejected batch); the error still surfaces.
     for message in &result.received {
         mailbox.store(MailboxFolder::Inbox, &message.to_bytes())?;
     }
     for mid in &result.sent {
         mailbox.move_to(MailboxFolder::Outbox, MailboxFolder::Sent, &MessageId(mid.clone()))?;
+    }
+    if !result.rejected.is_empty() {
+        return Err(BackendError::MessageRejected(format!(
+            "CMS rejected mid(s): {}",
+            result.rejected.join(", ")
+        )));
     }
     Ok(())
 }
@@ -1444,25 +1499,10 @@ fn parse_rfc3339_secs(s: &str) -> Option<u64> {
         .map(|dt| dt.timestamp().max(0) as u64)
 }
 
-// ============================================================================
-// PatBackend (spec §3.8)
-// ============================================================================
-
-use std::sync::{Arc, Mutex, RwLock};
-use std::thread::JoinHandle;
-use std::time::Duration;
-use tokio::sync::broadcast;
-use tokio_stream::wrappers::BroadcastStream;
-
-use crate::pat_client::{PatClient, PatClientError};
-use crate::session_log::SessionLogState;
-
 /// Format the current wall-clock instant as an RFC 3339 / ISO-8601 UTC string
-/// (`YYYY-MM-DDTHH:MM:SSZ`). Minimal epoch-based formatter — no `chrono`
-/// dependency in this module. Mirrors the manual formatter in `ui_commands.rs`
-/// (`format_unix_ts`) and `wizard.rs`; precision is whole seconds, which is all
-/// the v0.0.1 session-log ingestion timestamp needs (spec §3.2: ingestion time,
-/// not Pat's own parsed timestamp).
+/// (`YYYY-MM-DDTHH:MM:SSZ`). Minimal epoch-based formatter. Mirrors the manual
+/// formatter in `ui_commands.rs` (`format_unix_ts`) and `wizard.rs`; precision
+/// is whole seconds.
 fn now_iso8601_utc() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
     let secs = SystemTime::now()
@@ -1479,9 +1519,7 @@ fn now_iso8601_utc() -> String {
 
 /// Convert days since 1970-01-01 to (year, month, day) on the proleptic
 /// Gregorian calendar (Howard Hinnant's `civil_from_days`). Same algorithm as
-/// `ui_commands::days_to_ymd`; duplicated locally to keep the two modules'
-/// timestamp helpers self-contained (each is a few lines; a shared util module
-/// is out of scope for v0.0.1).
+/// `ui_commands::days_to_ymd`.
 fn days_to_ymd(days: u64) -> (u64, u64, u64) {
     let z = days as i64 + 719_468;
     let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
@@ -1496,453 +1534,6 @@ fn days_to_ymd(days: u64) -> (u64, u64, u64) {
     (y as u64, m, d)
 }
 
-/// Map one raw Pat stderr line into a [`LogLine`], append it to the durable
-/// `SessionLogState` ring buffer (which assigns the monotonic `seq`), and
-/// broadcast it live on `log_tx`. Returns the `LogLine` actually stored +
-/// broadcast (with `seq` populated by the buffer).
-///
-/// Effects are exactly the append + the broadcast send. The broadcast `send`
-/// failing (0 receivers) is fine — durability is provided by the buffer, the
-/// broadcast is live-notify only (spec §3.2, adrev #2). Unit-tested directly
-/// in `winlink_backend_test.rs` (`ingest_pat_line_appends_and_broadcasts_with_seq`).
-///
-/// `#[doc(hidden) pub]` (mirrors `push_log_line_for_test`) so the integration
-/// test crate can drive it without a real Pat process.
-#[doc(hidden)]
-pub fn ingest_pat_line(
-    raw: String,
-    buffer: &SessionLogState,
-    log_tx: &broadcast::Sender<LogLine>,
-) -> LogLine {
-    // Durable append (assigns + sets the monotonic seq, stores the line).
-    let line = append_pat_line(raw, buffer);
-    // Live notify; 0 receivers is fine (durability is in `buffer`).
-    let _ = log_tx.send(line.clone());
-    line
-}
-
-/// Append-only counterpart to [`ingest_pat_line`]: map one raw Pat stderr line
-/// into a `LogSource::Pat` [`LogLine`] and append it to the durable buffer
-/// (which assigns + sets the monotonic `seq`), WITHOUT broadcasting. Returns the
-/// stored line (with `seq` populated).
-///
-/// Used by the `PatBackend::spawn` failure path (tuxlink-22l Codex R2 FIX 2):
-/// when `PatProcess::spawn` returns `Err`, Pat's pre-exit stderr diagnostics may
-/// still be sitting in the mpsc receiver, but the live broadcast has no
-/// subscribers yet (and the backend is never constructed), so a broadcast is
-/// pointless there — durability into the buffer is what carries the lines to the
-/// UI (via the snapshot + the buffer-polling drain).
-fn append_pat_line(raw: String, buffer: &SessionLogState) -> LogLine {
-    let mut line = LogLine {
-        seq: 0,
-        timestamp_iso: now_iso8601_utc(),
-        level: LogLevel::Info,
-        source: LogSource::Pat,
-        message: raw,
-    };
-    // `append` assigns + returns the monotonic seq and stores the line.
-    line.seq = buffer.append(line.clone());
-    line
-}
-
-/// Options for [`PatBackend::spawn`] — the full-lifecycle constructor (spec §3.1).
-///
-/// The resolved Pat sidecar path, the Pat config/mbox/pid paths, and tuxlink's
-/// config are supplied by the bootstrap (`lib.rs` `.setup()`); see spec §3.5/§3.6
-/// for path-resolution responsibilities (the bootstrap owns resolution, not
-/// `spawn`).
-pub struct PatBackendSpawnOptions {
-    /// Resolved Pat sidecar binary path.
-    pub binary: std::path::PathBuf,
-    /// Where `PatProcess` renders Pat's config.json before exec.
-    pub config_path: std::path::PathBuf,
-    /// Pat mailbox dir.
-    pub mbox_dir: std::path::PathBuf,
-    /// Pat pid file.
-    pub pid_file: std::path::PathBuf,
-    /// Tuxlink config — `PatProcess` renders Pat's config from it.
-    pub tuxlink_config: crate::config::Config,
-}
-
-/// Wraps the existing [`PatClient`] (HTTP) and forwards Pat's stderr log
-/// stream into a tokio broadcast channel for `stream_log` subscribers.
-///
-/// Two constructors:
-/// - [`PatBackend::from_url`] — for tests + situations where Pat is
-///   already running (or being mocked). No PatProcess managed.
-/// - [`PatBackend::spawn`] — full lifecycle: spawn Pat, attach a
-///   PatClient, multiplex stderr to subscribers, register backend-id.
-pub struct PatBackend {
-    backend_id: BackendInstanceId,
-    client: PatClient,
-    log_tx: broadcast::Sender<LogLine>,
-    status: Arc<RwLock<BackendStatus>>,
-    /// The supervised Pat child process. `Some` for [`PatBackend::spawn`]
-    /// (the backend owns Pat's lifetime); `None` for [`PatBackend::from_url`]
-    /// (Pat is managed externally / mocked). `Drop` gracefully shuts down a
-    /// `Some` process; a `None` Drop is a no-op (spec §3.1 step 5, adrev #16).
-    /// Wrapped in `Option` so `Drop` can `take()` it (needs `&mut`).
-    _process: Option<crate::pat_process::PatProcess>,
-    /// Join handle for the stderr→LogLine bridge thread (`spawn` only; `None`
-    /// for `from_url`). Stored so the thread is not silently orphaned (adrev
-    /// #17). The thread exits when Pat's stderr closes → `PatProcess`'s reader
-    /// thread drops the mpsc sender → the bridge's `rx.recv()` returns `Err`.
-    /// `Drop` joins it with a bounded wait.
-    _bridge_thread: Option<JoinHandle<()>>,
-}
-
-impl PatBackend {
-    /// Construct a PatBackend that talks to a Pat HTTP server already
-    /// reachable at `base_url`. Used for tests (against mockito) and for
-    /// scenarios where Pat is managed externally. No log forwarding from
-    /// a spawned Pat process — `stream_log` only emits if callers
-    /// directly push to the internal broadcast channel via test helpers.
-    pub fn from_url(base_url: impl Into<String>) -> Self {
-        let (log_tx, _rx) = broadcast::channel(256);
-        Self {
-            backend_id: BackendInstanceId::next(),
-            client: PatClient::new(base_url),
-            log_tx,
-            status: Arc::new(RwLock::new(BackendStatus::Disconnected)),
-            // No spawned process / bridge — Pat is external (spec §3.1).
-            _process: None,
-            _bridge_thread: None,
-        }
-    }
-
-    /// Full-lifecycle constructor (spec §3.1, §11.2): spawn Pat in HTTP mode,
-    /// wire a `PatClient` to the announced port, bridge Pat's stderr into BOTH
-    /// the durable `log_buffer` (so `session_log_snapshot` sees startup lines)
-    /// AND the live broadcast, hold + supervise the process, and report a
-    /// truthful initial status of [`BackendStatus::Disconnected`].
-    ///
-    /// **Initial status is `Disconnected`, NOT `Connected`** (adrev #10): Pat's
-    /// local HTTP server being up is NOT a CMS link. A real `Connected` is only
-    /// minted by an operator-triggered `connect()`.
-    ///
-    /// **Part 97 (spec §6):** the spawned argv is `pat … http --addr 127.0.0.1:<port>`
-    /// — HTTP mode only, loopback only; this constructor never calls Pat's
-    /// connect/send APIs. Serving the local HTTP API is not a CMS session and
-    /// not a transmission.
-    ///
-    /// Errors: any `PatProcess::spawn` `io::Error` (binary missing, announce
-    /// timeout, config render failure) maps to
-    /// [`BackendError::BackendUnavailable`] with the source chain preserved.
-    pub fn spawn(
-        opts: PatBackendSpawnOptions,
-        log_buffer: Arc<SessionLogState>,
-    ) -> Result<Self, BackendError> {
-        // Channel for Pat stderr lines: PatProcess's reader thread is the
-        // sender; our bridge thread is the receiver.
-        let (tx, rx) = std::sync::mpsc::channel::<String>();
-
-        // Spawn Pat in HTTP mode on an ephemeral loopback port (http_listen_port
-        // = 0). `log_sink: Some(tx)` makes PatProcess forward EVERY stderr line
-        // (incl. pre-announce) into our channel (spec §3.1 step 2).
-        let process = match crate::pat_process::PatProcess::spawn(
-            crate::pat_process::PatSpawnOptions {
-                binary: opts.binary,
-                config_path: opts.config_path,
-                mbox_dir: opts.mbox_dir,
-                http_listen_port: 0,
-                pid_file: opts.pid_file,
-                log_sink: Some(tx),
-                tuxlink_config: opts.tuxlink_config,
-                http_announce_timeout: Duration::from_secs(10),
-            },
-        ) {
-            Ok(p) => p,
-            Err(e) => {
-                // FIX 2 (tuxlink-22l Codex R2): Pat may have printed its failure
-                // cause to stderr before exiting; PatProcess's reader thread
-                // forwarded those lines into `rx` before EOF. The bridge thread
-                // is NOT started on this path, so without draining, those
-                // diagnostics are lost. Drain `rx` into the durable buffer so
-                // Pat's failure cause reaches the UI (via the snapshot + the
-                // buffer-polling drain). `PatProcess::spawn`'s error paths all
-                // kill + reap the child first, so the reader thread has hit (or
-                // is about to hit) EOF and will drop its sender — `recv_timeout`
-                // therefore terminates promptly (the timeout is a defensive
-                // bound against a pathological reader, not the expected path).
-                while let Ok(raw) = rx.recv_timeout(Duration::from_secs(1)) {
-                    append_pat_line(raw, &log_buffer);
-                }
-                return Err(BackendError::BackendUnavailable {
-                    reason: format!("Pat failed to start: {e}"),
-                    source: Some(Box::new(e)),
-                });
-            }
-        };
-
-        // Wire the HTTP client to the port Pat actually bound (loopback).
-        let port = process.http_port();
-        let client = PatClient::new(format!("http://127.0.0.1:{port}"));
-
-        // Live-notify broadcast channel, same shape as `from_url` (cap 256).
-        let (log_tx, _rx) = broadcast::channel::<LogLine>(256);
-
-        // Bridge thread: drain Pat stderr lines from the mpsc receiver, append
-        // each to the durable buffer (assigns seq) AND broadcast it live
-        // (spec §3.2). A blocking `std::thread` — `mpsc::Receiver::recv` is
-        // blocking, consistent with PatProcess's reader. Exits when the mpsc
-        // sender closes (Pat exits → PatProcess reader drops its sender).
-        let bridge_buffer = log_buffer.clone();
-        let bridge_log_tx = log_tx.clone();
-        let bridge_thread = std::thread::spawn(move || {
-            while let Ok(raw) = rx.recv() {
-                ingest_pat_line(raw, &bridge_buffer, &bridge_log_tx);
-            }
-        });
-
-        Ok(Self {
-            backend_id: BackendInstanceId::next(),
-            client,
-            log_tx,
-            // Initial status is Disconnected ("backend ready"), NOT Connected
-            // — Pat's HTTP server is up but no CMS link exists (adrev #10).
-            status: Arc::new(RwLock::new(BackendStatus::Disconnected)),
-            _process: Some(process),
-            _bridge_thread: Some(bridge_thread),
-        })
-    }
-
-    /// Test-only: push a synthetic log line into the broadcast channel
-    /// for verification of `stream_log()` semantics. Returns the number
-    /// of receivers that got the message (0 if no active subscribers).
-    #[doc(hidden)]
-    pub fn push_log_line_for_test(&self, line: LogLine) -> usize {
-        self.log_tx.send(line).unwrap_or(0)
-    }
-}
-
-impl Drop for PatBackend {
-    /// Graceful teardown of a spawned Pat (spec §3.1 step 5, adrev #16,#17).
-    ///
-    /// For a `spawn`ed backend (`_process: Some`): call
-    /// `PatProcess::shutdown(5s)` — a SIGTERM→reap→SIGKILL-on-timeout cycle
-    /// (vs `PatProcess`'s own `Drop`, which is an immediate SIGKILL). Killing
-    /// Pat closes its stderr → `PatProcess`'s reader thread sees EOF and exits
-    /// → it drops the mpsc sender → the bridge thread's `rx.recv()` returns
-    /// `Err` → the bridge exits. We then join the bridge with a bounded wait
-    /// so it is not orphaned.
-    ///
-    /// For a `from_url` backend (`_process: None`): a no-op (nothing to stop).
-    fn drop(&mut self) {
-        if let Some(mut process) = self._process.take() {
-            // Graceful stop; ignore the io::Error (best-effort teardown).
-            let _ = process.shutdown(Duration::from_secs(5));
-            // `process` is dropped here, after its child is reaped, closing
-            // stderr for good and unblocking the bridge thread's recv().
-        }
-        // Join the bridge thread so it is not silently orphaned. By the time
-        // shutdown() has returned, Pat is reaped and its stderr is closed, so
-        // the bridge's `rx.recv()` has already returned `Err` (or is about to)
-        // — the join is bounded in practice. A `from_url` backend has no bridge
-        // thread (`None`), so this is skipped there.
-        //
-        // FIX 3 (tuxlink-22l Codex R2): the join is BOUNDED. An unbounded
-        // `handle.join()` would hang app teardown if the bridge thread never
-        // exits — e.g. a Pat *descendant* inherited and held Pat's stderr write
-        // end open, so the reader (and hence the bridge) never sees EOF despite
-        // Pat itself being reaped. We join on a tiny throwaway joiner thread that
-        // signals completion over an mpsc, and wait at most 2s. On timeout we
-        // DETACH (drop the JoinHandle without joining): a single leaked,
-        // short-lived thread blocked on `recv` is strictly better than a hung
-        // application teardown. (The leaked thread exits on its own whenever the
-        // held-open stderr finally closes.)
-        if let Some(handle) = self._bridge_thread.take() {
-            let (done_tx, done_rx) = std::sync::mpsc::channel::<()>();
-            std::thread::spawn(move || {
-                let _ = handle.join();
-                // Receiver may already be gone (we timed out + detached); the
-                // send error is expected and ignored in that case.
-                let _ = done_tx.send(());
-            });
-            match done_rx.recv_timeout(Duration::from_secs(2)) {
-                Ok(()) => { /* bridge thread joined cleanly. */ }
-                Err(_) => {
-                    // Timed out (or joiner disconnected): detach. The bridge
-                    // thread is leaked rather than blocking teardown forever.
-                }
-            }
-        }
-    }
-}
-
-#[async_trait]
-impl WinlinkBackend for PatBackend {
-    async fn list_messages(&self, folder: MailboxFolder)
-        -> Result<Vec<MessageMeta>, BackendError>
-    {
-        let metas = self.client
-            .list(folder)
-            .await
-            .map_err(|e| translate_pat_err(e, "list_messages"))?;
-
-        Ok(metas
-            .into_iter()
-            .map(|m| MessageMeta {
-                id: MessageId(m.mid),
-                subject: m.subject,
-                from: m.from,
-                // Pat 1.0.0's list DTO carries no recipient list nor
-                // attachment metadata; `Message` already degrades these
-                // (pat_client.rs). Carried through faithfully so a future
-                // Pat that exposes them populates the trait without a
-                // mapping change. Spec §2.1 graceful degradation.
-                to: m.to,
-                date: m.date,
-                unread: m.unread,
-                body_size: m.body_size,
-                has_attachments: m.has_attachments,
-            })
-            .collect())
-    }
-
-    async fn read_message_in(&self, folder: MailboxFolder, id: &MessageId)
-        -> Result<MessageBody, BackendError>
-    {
-        // Task 12 (tuxlink-zsm): folder is now explicit so a Sent/Outbox
-        // message reads from the right folder. The prior impl hardcoded
-        // Inbox; `read_message` retains Inbox semantics via the trait's
-        // default forwarder.
-        let bytes = self.client
-            .read(folder, &id.0)
-            .await
-            .map_err(|e| translate_pat_err_for_read(e, id))?;
-        Ok(MessageBody {
-            id: id.clone(),
-            raw_rfc5322: bytes,
-        })
-    }
-
-    async fn send_message(&self, msg: OutboundMessage)
-        -> Result<Option<MessageId>, BackendError>
-    {
-        let to_refs: Vec<&str> = msg.to.iter().map(String::as_str).collect();
-        self.client
-            .send(&to_refs, &msg.subject, &msg.body, &msg.date)
-            .await
-            .map_err(|e| translate_pat_err(e, "send_message"))?;
-        // Pat 1.0.0 returns plain-text confirmation, no MID — see
-        // pat_client_test.rs::test_send_message_posts_multipart_form_data
-        // for the verified API behavior. Honestly return None.
-        Ok(None)
-    }
-
-    async fn connect(&self, transport: TransportConfig)
-        -> Result<Session, BackendError>
-    {
-        // v0.0.1 stub: PatBackend's `connect` mints a synthetic session
-        // tied to this backend's instance id; actual remote connection to
-        // CMS is initiated implicitly by send_message in Pat's model. A
-        // full Pat HTTP /api/connect integration is deferred to v0.5
-        // Step 5 (CMS telnet client) where the trait's connect-semantics
-        // align with native backend's session-state needs.
-        //
-        // For now: update status to Connecting → Connected and return a
-        // session handle the caller can later pass to disconnect.
-        let transport_label = match &transport {
-            TransportConfig::Cms { mode } => format!("CMS-{:?}", mode),
-            TransportConfig::Packet { ssid, .. } => format!("Packet-{ssid}"),
-        };
-        {
-            let mut s = self.status.write().map_err(|_| BackendError::Internal {
-                msg: "status RwLock poisoned".to_string(),
-                source: None,
-            })?;
-            *s = BackendStatus::Connected {
-                transport: transport_label.clone(),
-                peer: "cms.winlink.org".to_string(),
-                since_iso: "2026-05-18T00:00:00Z".to_string(),
-            };
-        }
-        Ok(Session {
-            backend_id: self.backend_id,
-            inner: SessionInner::Pat {
-                pat_session_id: format!("pat-stub-{}", self.backend_id.0),
-            },
-        })
-    }
-
-    async fn disconnect(&self, session: Session)
-        -> Result<(), BackendError>
-    {
-        if session.backend_id != self.backend_id {
-            return Err(BackendError::InvalidSession);
-        }
-        {
-            let mut s = self.status.write().map_err(|_| BackendError::Internal {
-                msg: "status RwLock poisoned".to_string(),
-                source: None,
-            })?;
-            *s = BackendStatus::Disconnected;
-        }
-        Ok(())
-    }
-
-    fn status(&self) -> BackendStatus {
-        self.status
-            .read()
-            .map(|s| s.clone())
-            .unwrap_or(BackendStatus::Error {
-                reason: "status RwLock poisoned".to_string(),
-            })
-    }
-
-    fn stream_log(&self) -> BoxStream<'static, LogLine> {
-        let rx = self.log_tx.subscribe();
-        BroadcastStream::new(rx)
-            .filter_map(|res| async move { res.ok() })
-            .boxed()
-    }
-}
-
-// ============================================================================
-// PatClientError → BackendError translation (spec §3.3)
-// ============================================================================
-
-fn translate_pat_err(err: PatClientError, context: &'static str) -> BackendError {
-    match err {
-        PatClientError::Http(e) if e.is_connect() => BackendError::BackendUnavailable {
-            reason: "could not reach Pat HTTP sidecar".to_string(),
-            source: Some(Box::new(e)),
-        },
-        PatClientError::Http(e) if e.is_timeout() => BackendError::TransportFailed {
-            reason: "Pat HTTP request timed out".to_string(),
-            source: Some(Box::new(e)),
-        },
-        PatClientError::Http(e) => BackendError::Internal {
-            msg: format!("Pat HTTP client error in {context}"),
-            source: Some(Box::new(e)),
-        },
-        PatClientError::Status(401) => BackendError::AuthFailed {
-            reason: "Pat returned 401".to_string(),
-        },
-        PatClientError::Status(404) => BackendError::Internal {
-            msg: format!("Pat returned 404 in {context}"),
-            source: None,
-        },
-        PatClientError::Status(n) => BackendError::Internal {
-            msg: format!("Pat returned status {n} in {context}"),
-            source: None,
-        },
-        PatClientError::TooLarge { cap } => BackendError::Internal {
-            msg: format!("Pat message exceeded the {cap}-byte read cap in {context}"),
-            source: None,
-        },
-    }
-}
-
-/// Variant for `read_message` where 404 means the message doesn't exist
-/// (vs other contexts where 404 is an unexpected internal error).
-fn translate_pat_err_for_read(err: PatClientError, id: &MessageId) -> BackendError {
-    match err {
-        PatClientError::Status(404) => BackendError::NotFound(id.clone()),
-        other => translate_pat_err(other, "read_message"),
-    }
-}
-
 #[cfg(test)]
 mod native_read_state_tests {
     use super::*;
@@ -1954,6 +1545,7 @@ mod native_read_state_tests {
     use crate::winlink::compose::compose_message;
     use tempfile::tempdir;
 
+    #[allow(deprecated)] // sets pat_mbo_address on Config literal; field deprecated per tuxlink-9phd T8.1
     fn offline_config() -> Config {
         Config {
             schema_version: CONFIG_SCHEMA_VERSION,
@@ -2307,6 +1899,7 @@ mod native_read_state_tests {
     fn config_host_and_transport_dial_a_real_local_socket() {
         use std::io::{Read, Write};
         use std::net::TcpListener;
+        use std::time::Duration;
 
         // Skip if a dev override is set in this process — it would redirect the dial
         // away from our local listener (process-global env; don't fight it here).
@@ -2530,6 +2123,7 @@ mod native_read_state_tests {
             },
             &mailbox,
             &|_| {},
+            &|_| {},
         );
         assert!(result.is_ok(), "gateway dial must succeed, got {result:?}");
 
@@ -2582,6 +2176,7 @@ mod native_read_state_tests {
             },
             &mailbox,
             &|_| {},
+            &|_| {},
         );
         assert!(result.is_ok(), "answer exchange must succeed, got {result:?}");
 
@@ -2594,9 +2189,172 @@ mod native_read_state_tests {
     }
 
     // =========================================================================
+    // Task 4.3: FS-reject MIDs map to BackendError::MessageRejected
+    // =========================================================================
+
+    /// When the CMS sends `FS N` for our proposal, `ExchangeResult.rejected`
+    /// contains the MID. The caller (`native_packet_exchange`) must convert that
+    /// into `BackendError::MessageRejected` instead of silently succeeding.
+    #[test]
+    fn fs_reject_for_our_mid_maps_to_message_rejected_error() {
+        use crate::winlink::message::Message as WMessage;
+
+        // Build an outbox message so native_packet_exchange has something to
+        // propose to the gateway.
+        let dir = tempdir().unwrap();
+        let mailbox = Mailbox::new(dir.path());
+        let mut msg = WMessage::new();
+        msg.set_header("Mid", "REJECTME0001");
+        msg.set_header("Subject", "FS-reject test");
+        msg.set_body(b"Should be rejected by the gateway.\r\n".to_vec());
+        mailbox
+            .store(MailboxFolder::Outbox, &msg.to_bytes())
+            .expect("store to outbox");
+
+        // Scripted gateway (Dial role: gateway speaks first, no challenge):
+        //   1. CMS handshake
+        //   2. FS N  — reject our one proposal
+        //   3. FF    — gateway has nothing to offer us
+        // After FS N our remaining queue is empty and remote_no_messages=true,
+        // so our next send_turn emits FQ and breaks the loop.
+        let mut server = Vec::new();
+        server.extend_from_slice(b"[WL2K-5.0-B2FHM$]\rCMS>\r");
+        server.extend_from_slice(b"FS N\r");
+        server.extend_from_slice(b"FF\r");
+
+        let outbound_spy = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let stream = FakeAx25Stream {
+            inbound: std::io::Cursor::new(server),
+            outbound: outbound_spy.clone(),
+        };
+
+        let result = native_packet_exchange(
+            stream,
+            PacketConnectCtx {
+                base_mycall: "N7CPZ",
+                targetcall: "W7AUX",
+                password: None,
+                role: ExchangeRole::Dial,
+                locator: "CN87",
+            },
+            &mailbox,
+            &|_| {},
+            &|_| {},
+        );
+
+        match result {
+            Err(BackendError::MessageRejected(msg)) => {
+                assert!(
+                    msg.contains("REJECTME0001"),
+                    "MessageRejected must contain the MID; got: {msg:?}"
+                );
+            }
+            other => panic!("expected BackendError::MessageRejected, got {other:?}"),
+        }
+    }
+
+    /// P1.4 (Codex post-impl review): in a mixed FS batch where one MID is
+    /// accepted (FS Y) and another is rejected (FS N), the accepted MID must be
+    /// moved to the Sent folder BEFORE `BackendError::MessageRejected` is returned.
+    /// Without the fix, the early-return left accepted messages in the Outbox and
+    /// they would be re-offered on the next connection (duplicate send).
+    ///
+    /// `fs::read_dir` enumeration order is not guaranteed, so we cannot assume
+    /// which MID lands in `sent` vs `rejected`. Instead, the test asserts:
+    ///   - exactly one MID ends up in `result.rejected` (the MessageRejected error)
+    ///   - exactly one MID ends up in `Sent`
+    ///   - they are different MIDs
+    ///   - neither the sent MID nor the rejected MID remains in `Outbox`
+    #[test]
+    fn mixed_fs_batch_moves_accepted_mid_to_sent_before_returning_rejection_error() {
+        use crate::winlink::message::Message as WMessage;
+
+        let dir = tempdir().unwrap();
+        let mailbox = Mailbox::new(dir.path());
+
+        // Two outbox messages. FS YN accepts whichever is enumerated first and
+        // rejects whichever is enumerated second. We don't control the order.
+        let mut msg1 = WMessage::new();
+        msg1.set_header("Mid", "MIXED00000A");
+        msg1.set_header("Subject", "Msg A");
+        msg1.set_body(b"Body A.\r\n".to_vec());
+        mailbox.store(MailboxFolder::Outbox, &msg1.to_bytes()).expect("store msg A");
+
+        let mut msg2 = WMessage::new();
+        msg2.set_header("Mid", "MIXED00000B");
+        msg2.set_header("Subject", "Msg B");
+        msg2.set_body(b"Body B.\r\n".to_vec());
+        mailbox.store(MailboxFolder::Outbox, &msg2.to_bytes()).expect("store msg B");
+
+        // Scripted gateway (Dial role): `FS YN` — first proposal accepted, second rejected.
+        // Filesystem enumeration order determines which MID is "first"; both orderings
+        // are valid inputs for this test — the property we check holds regardless.
+        let mut server = Vec::new();
+        server.extend_from_slice(b"[WL2K-5.0-B2FHM$]\rCMS>\r");
+        server.extend_from_slice(b"FS YN\r");
+        server.extend_from_slice(b"FF\r");
+
+        let outbound_spy = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let stream = FakeAx25Stream {
+            inbound: std::io::Cursor::new(server),
+            outbound: outbound_spy.clone(),
+        };
+
+        let result = native_packet_exchange(
+            stream,
+            PacketConnectCtx {
+                base_mycall: "N7CPZ",
+                targetcall: "W7AUX",
+                password: None,
+                role: ExchangeRole::Dial,
+                locator: "CN87",
+            },
+            &mailbox,
+            &|_| {},
+            &|_| {},
+        );
+
+        // Must return Err(MessageRejected) containing exactly one MID.
+        let rejected_mid = match result {
+            Err(BackendError::MessageRejected(ref msg)) => {
+                // Extract the one rejected MID from the error string.
+                let candidates = ["MIXED00000A", "MIXED00000B"];
+                let found: Vec<&str> = candidates.iter().copied()
+                    .filter(|m| msg.contains(m))
+                    .collect();
+                assert_eq!(found.len(), 1,
+                    "MessageRejected must name exactly one of our two MIDs; got: {msg:?}");
+                found[0].to_string()
+            }
+            other => panic!("expected BackendError::MessageRejected, got {other:?}"),
+        };
+
+        let accepted_mid = if rejected_mid == "MIXED00000A" { "MIXED00000B" } else { "MIXED00000A" };
+
+        // The accepted MID must be in Sent — NOT left in Outbox.
+        let sent = mailbox.list(MailboxFolder::Sent).unwrap();
+        assert!(
+            sent.iter().any(|m| m.id.0 == accepted_mid),
+            "accepted MID ({accepted_mid}) must be in Sent folder; sent: {sent:?}"
+        );
+        let outbox = mailbox.list(MailboxFolder::Outbox).unwrap();
+        assert!(
+            !outbox.iter().any(|m| m.id.0 == accepted_mid),
+            "accepted MID ({accepted_mid}) must NOT remain in Outbox; outbox: {outbox:?}"
+        );
+
+        // The rejected MID must NOT be in Sent.
+        assert!(
+            !sent.iter().any(|m| m.id.0 == rejected_mid),
+            "rejected MID ({rejected_mid}) must NOT be in Sent folder; sent: {sent:?}"
+        );
+    }
+
+    // =========================================================================
     // Task 6: packet lifecycle branch selection + no-link fast-fail
     // =========================================================================
 
+    #[allow(deprecated)] // sets pat_mbo_address on Config literal; field deprecated per tuxlink-9phd T8.1
     fn offline_config_with_callsign() -> Config {
         Config {
             schema_version: CONFIG_SCHEMA_VERSION,
@@ -2867,5 +2625,21 @@ mod native_read_state_tests {
         assert_eq!(&buf[..n], b"FF\r", "must block through transient Ok(0), not EOF early");
         let n2 = std::io::Read::read(&mut s, &mut buf).unwrap();
         assert_eq!(n2, 0, "Ok(0) while the link is closed must surface as a real EOF");
+    }
+}
+
+#[cfg(test)]
+impl NativeBackend {
+    /// In-process stub for unit tests that exercise `BackendState::install`
+    /// lifecycle without touching real telnet or a real mailbox. Uses the
+    /// shared `native_test_config()` helper; mailbox root is a tempdir.
+    ///
+    /// The tempdir is Box::leak'd so it lives for the test process's lifetime
+    /// without requiring the caller to hold a TempDir handle. Tests are
+    /// short-lived processes; the OS reclaims the allocation on exit.
+    pub fn test_fixture() -> Self {
+        let tempdir = tempfile::tempdir().unwrap();
+        let leaked_path = Box::leak(Box::new(tempdir)).path().to_path_buf();
+        Self::new(crate::test_helpers::native_test_config(), leaked_path)
     }
 }

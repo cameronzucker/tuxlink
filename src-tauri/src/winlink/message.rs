@@ -20,6 +20,7 @@ pub struct Message {
     /// wire form is always `Mid` first, then the rest sorted alphabetically.
     headers: Vec<(String, String)>,
     body: Vec<u8>,
+    attachments: Vec<crate::winlink_backend::OutboundAttachment>,
 }
 
 impl Default for Message {
@@ -31,7 +32,33 @@ impl Default for Message {
 impl Message {
     /// A new, empty message.
     pub fn new() -> Self {
-        Self { headers: Vec::new(), body: Vec::new() }
+        Self { headers: Vec::new(), body: Vec::new(), attachments: Vec::new() }
+    }
+
+    /// The attachments on this message (empty by default).
+    pub fn attachments(&self) -> &[crate::winlink_backend::OutboundAttachment] {
+        &self.attachments
+    }
+
+    /// Set the attachments. Callers that go through compose get filename validation
+    /// automatically; direct callers (e.g. golden-vector tests building from raw bytes)
+    /// are responsible for pre-validated filenames.
+    ///
+    /// Also synthesizes `File:` headers (one per attachment) from the attachment list,
+    /// removing any pre-existing `File:` headers first so re-population is idempotent.
+    pub fn set_attachments(
+        &mut self,
+        files: Vec<crate::winlink_backend::OutboundAttachment>,
+    ) {
+        // Remove any prior File: headers; they'll be re-emitted from the file list.
+        self.headers.retain(|(k, _)| !k.eq_ignore_ascii_case("File"));
+        for f in &files {
+            self.headers.push((
+                "File".to_string(),
+                format!("{} {}", f.bytes.len(), encode_filename(&f.filename)),
+            ));
+        }
+        self.attachments = files;
     }
 
     /// Set a header, replacing any existing value for the same key
@@ -65,25 +92,35 @@ impl Message {
             out.extend_from_slice(b"\r\n");
         };
 
-        // Mid is always written first.
-        if let Some((k, v)) = self.headers.iter().find(|(k, _)| k.eq_ignore_ascii_case("Mid")) {
-            write_line(&mut out, k, v);
-        }
-
-        // The remaining headers follow in alphabetical order by key.
-        let mut rest: Vec<&(String, String)> = self
-            .headers
-            .iter()
-            .filter(|(k, _)| !k.eq_ignore_ascii_case("Mid"))
+        // Build the canonicalized + sorted header list.
+        // Mid is always written first; the rest follow in alphabetical order by
+        // canonicalized key.  Stable sort preserves insertion order for headers
+        // that share the same canonicalized key (e.g. multiple `File:` lines).
+        let mut indexed: Vec<(String, &String)> = self.headers.iter()
+            .map(|(k, v)| (canonicalize_header_key(k), v))
             .collect();
-        rest.sort_by(|(a, _), (b, _)| a.cmp(b));
-        for (k, v) in rest {
+        indexed.sort_by(|a, b| {
+            if a.0 == "Mid" { return std::cmp::Ordering::Less; }
+            if b.0 == "Mid" { return std::cmp::Ordering::Greater; }
+            a.0.cmp(&b.0)
+        });
+
+        for (k, v) in &indexed {
             write_line(&mut out, k, v);
         }
 
         // A blank line ends the header block; the raw body follows.
         out.extend_from_slice(b"\r\n");
         out.extend_from_slice(&self.body);
+
+        // NEW: write attachment region if any
+        if !self.attachments.is_empty() {
+            out.extend_from_slice(b"\r\n");  // body→first-attachment separator
+            for att in &self.attachments {
+                out.extend_from_slice(&att.bytes);
+                out.extend_from_slice(b"\r\n");  // post-attachment terminator
+            }
+        }
         out
     }
 
@@ -150,7 +187,11 @@ impl Message {
             }
             let text = std::str::from_utf8(line).map_err(|_| ParseError::NonUtf8Header)?;
             let (key, value) = text.split_once(": ").ok_or(ParseError::MalformedHeader)?;
-            msg.set_header(key, value);
+            if REPEATABLE_HEADERS.iter().any(|h| h.eq_ignore_ascii_case(key)) {
+                msg.add_header(key, value);
+            } else {
+                msg.set_header(key, value);
+            }
         }
 
         // The Body header gives the body length in bytes.
@@ -162,8 +203,98 @@ impl Message {
             return Err(ParseError::TruncatedBody);
         }
         msg.body = after_headers[..body_size].to_vec();
+
+        // NEW (T2.3): parse attachments per spec §3 wire format.
+        //   body + \r\n + (attachment_bytes + \r\n)*   (when files exist)
+        let mut offset = sep + 4 + body_size;
+        let file_headers: Vec<(usize, String)> = msg
+            .header_all("File")
+            .into_iter()
+            .map(parse_file_header)
+            .collect::<Result<Vec<_>, _>>()?;
+
+        if !file_headers.is_empty() {
+            // Consume the body→first-attachment terminator CRLF.
+            if input.get(offset..offset + 2) != Some(b"\r\n") {
+                return Err(ParseError::MissingAttachmentTerminator);
+            }
+            offset += 2;
+
+            for (size, name) in file_headers {
+                if input.len() < offset + size {
+                    return Err(ParseError::TruncatedAttachment);
+                }
+                let data = input[offset..offset + size].to_vec();
+                offset += size;
+                // Consume the trailing CRLF after this attachment.
+                if input.get(offset..offset + 2) != Some(b"\r\n") {
+                    return Err(ParseError::MissingAttachmentTerminator);
+                }
+                offset += 2;
+                msg.attachments.push(crate::winlink_backend::OutboundAttachment {
+                    filename: name,
+                    bytes: data,
+                });
+            }
+        }
+
         Ok(msg)
     }
+}
+
+/// Headers that may appear more than once per message on the wire.
+/// The parser uses `add_header` for these and `set_header` for everything else,
+/// so multi-recipient / multi-attachment messages round-trip correctly.
+const REPEATABLE_HEADERS: &[&str] = &["File", "To", "Cc"];
+
+/// Canonicalize a header key to MIME/textproto convention: first char +
+/// chars after `-` are uppercased; everything else lowercased.
+/// `mid` → `Mid`, `content-type` → `Content-Type`.
+fn canonicalize_header_key(k: &str) -> String {
+    let mut out = String::with_capacity(k.len());
+    let mut upper_next = true;
+    for c in k.chars() {
+        if upper_next {
+            out.extend(c.to_uppercase());
+        } else {
+            out.extend(c.to_lowercase());
+        }
+        upper_next = c == '-';
+    }
+    out
+}
+
+/// Encode a filename for the File: header value.
+///
+/// ASCII filenames pass through unchanged. Non-ASCII filenames (which must
+/// be Latin-1 encodable — compose-time validation in T1.3 rejects anything
+/// else) are RFC 2047 Q-encoded with charset=ISO-8859-1 and lowercase `q`,
+/// matching wl2k-go fbb/message.go:436-437.
+fn encode_filename(name: &str) -> String {
+    if name.is_ascii() {
+        return name.to_string();
+    }
+    let mut encoded = String::from("=?ISO-8859-1?q?");
+    for c in name.chars() {
+        let cp = c as u32;
+        if cp > 0xff {
+            // Defensive: compose-level validation rejects this case.
+            encoded.push('?');
+            continue;
+        }
+        let b = cp as u8;
+        // RFC 2047 Q-encoding: printable ASCII (except = ? _) emitted as-is;
+        // space → _; everything else → =HH (hex).
+        if b == b' ' {
+            encoded.push('_');
+        } else if b > 0x20 && b < 0x7f && b != b'=' && b != b'?' && b != b'_' {
+            encoded.push(b as char);
+        } else {
+            encoded.push_str(&format!("={:02X}", b));
+        }
+    }
+    encoded.push_str("?=");
+    encoded
 }
 
 /// Find the first position of `needle` within `haystack`.
@@ -171,8 +302,22 @@ fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     haystack.windows(needle.len()).position(|w| w == needle)
 }
 
+/// Parse a `File:` header value of the form `<size> <filename>` into a
+/// `(byte_count, filename)` pair.  Both fields are required; a missing space
+/// or non-numeric size produces `ParseError::MalformedFileHeader`.
+fn parse_file_header(value: &str) -> Result<(usize, String), ParseError> {
+    let (size_str, name) = value
+        .split_once(' ')
+        .ok_or(ParseError::MalformedFileHeader)?;
+    let size = size_str
+        .parse::<usize>()
+        .map_err(|_| ParseError::MalformedFileHeader)?;
+    Ok((size, name.to_string()))
+}
+
 /// Why a message could not be parsed from wire bytes.
 #[derive(Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ParseError {
     /// No blank line separated the header block from the body.
     NoHeaderTerminator,
@@ -182,12 +327,27 @@ pub enum ParseError {
     NonUtf8Header,
     /// The input ended before the whole body (per the `Body` header) was read.
     TruncatedBody,
+    /// A `File:` header value was not in `<size> <filename>` form, or `<size>`
+    /// did not parse as a usize.
+    MalformedFileHeader,
+    /// Expected a CRLF terminator between body and first attachment, or between
+    /// successive attachments, and the input was shorter.
+    MissingAttachmentTerminator,
+    /// `File:` header claimed N bytes for the attachment but the input ended
+    /// before N bytes could be read.
+    TruncatedAttachment,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::winlink::{lzhuf, transfer};
+
+    #[test]
+    fn message_carries_attachments_field() {
+        let msg = Message::new();
+        assert!(msg.attachments().is_empty());
+    }
 
     #[test]
     fn builds_a_proposal_and_compressed_body_from_a_message() {
@@ -268,6 +428,89 @@ mod tests {
     }
 
     #[test]
+    fn to_bytes_emits_file_header_and_attachment_bytes() {
+        let mut msg = Message::new();
+        msg.set_header("Mid", "TESTMID12345");
+        msg.set_header("Subject", "Hi");
+        msg.set_header("From", "N7CPZ");
+        msg.set_body(b"hello".to_vec());
+        msg.set_attachments(vec![
+            crate::winlink_backend::OutboundAttachment {
+                filename: "a.bin".into(),
+                bytes: vec![0xAA, 0xBB, 0xCC],
+            },
+        ]);
+        let bytes = msg.to_bytes();
+        let s = String::from_utf8_lossy(&bytes);
+        assert!(s.contains("\r\nFile: 3 a.bin\r\n"),
+                "expected File: header, got: {s}");
+        // Body section: text body, CRLF, attachment bytes, CRLF
+        let body_section_start = bytes.windows(4).position(|w| w == b"\r\n\r\n").unwrap() + 4;
+        let body_section = &bytes[body_section_start..];
+        assert_eq!(body_section, b"hello\r\n\xAA\xBB\xCC\r\n");
+    }
+
+    #[test]
+    fn to_bytes_preserves_attachment_declaration_order() {
+        let mut msg = Message::new();
+        msg.set_header("Mid", "MID2");
+        msg.set_header("From", "N7CPZ");
+        msg.set_body(b"x".to_vec());
+        msg.set_attachments(vec![
+            crate::winlink_backend::OutboundAttachment { filename: "a.bin".into(), bytes: vec![1] },
+            crate::winlink_backend::OutboundAttachment { filename: "b.bin".into(), bytes: vec![2] },
+            crate::winlink_backend::OutboundAttachment { filename: "c.bin".into(), bytes: vec![3] },
+        ]);
+        let bytes = msg.to_bytes();
+        // Find the body region after \r\n\r\n
+        let bs = bytes.windows(4).position(|w| w == b"\r\n\r\n").unwrap() + 4;
+        assert_eq!(&bytes[bs..], b"x\r\n\x01\r\n\x02\r\n\x03\r\n");
+        // File: headers must also be in declaration order
+        let header_block = &bytes[..bs - 2];  // exclude the trailing \r\n
+        let header_str = std::str::from_utf8(header_block).unwrap();
+        let file_lines: Vec<&str> = header_str
+            .lines()
+            .filter(|l| l.starts_with("File:"))
+            .collect();
+        assert_eq!(file_lines, vec!["File: 1 a.bin", "File: 1 b.bin", "File: 1 c.bin"]);
+    }
+
+    #[test]
+    fn to_bytes_with_zero_attachments_emits_no_trailing_crlf() {
+        let mut msg = Message::new();
+        msg.set_header("Mid", "MID3");
+        msg.set_header("From", "N7CPZ");
+        msg.set_body(b"plain".to_vec());
+        // No set_attachments call.
+        let bytes = msg.to_bytes();
+        let bs = bytes.windows(4).position(|w| w == b"\r\n\r\n").unwrap() + 4;
+        assert_eq!(&bytes[bs..], b"plain");  // exact — no trailing CRLF
+    }
+
+    #[test]
+    fn from_bytes_parses_single_attachment() {
+        let mut wire = Vec::new();
+        wire.extend_from_slice(b"Mid: MIDATT\r\nDate: 2026/05/30 12:00\r\nFile: 3 a.bin\r\n\
+                                 From: N7CPZ\r\nBody: 5\r\n\r\nhello\r\n\xAA\xBB\xCC\r\n");
+        let msg = Message::from_bytes(&wire).unwrap();
+        assert_eq!(msg.attachments().len(), 1);
+        assert_eq!(msg.attachments()[0].filename, "a.bin");
+        assert_eq!(msg.attachments()[0].bytes, vec![0xAA, 0xBB, 0xCC]);
+    }
+
+    #[test]
+    fn from_bytes_preserves_repeated_to_and_cc_headers() {
+        let wire = "Mid: MIDREP\r\nDate: 2026/05/30 12:00\r\nFrom: N7CPZ\r\n\
+                    To: W1AW\r\nTo: K1AB\r\nCc: KE7XYZ\r\nCc: KD8ZZZ\r\n\
+                    Body: 0\r\n\r\n";
+        let msg = Message::from_bytes(wire.as_bytes()).unwrap();
+        assert_eq!(msg.header_all("To"), vec!["W1AW", "K1AB"],
+                   "expected two To: entries preserved");
+        assert_eq!(msg.header_all("Cc"), vec!["KE7XYZ", "KD8ZZZ"],
+                   "expected two Cc: entries preserved");
+    }
+
+    #[test]
     fn parses_headers_and_body_from_wire_bytes() {
         let wire = [
             "Mid: ABC123\r\n",
@@ -287,5 +530,137 @@ mod tests {
         assert_eq!(msg.header("Subject"), Some("Test"));
         assert_eq!(msg.header("To"), Some("SERVICE@winlink.org"));
         assert_eq!(msg.body(), b"Hello world\r\n");
+    }
+
+    #[test]
+    fn q_encodes_non_ascii_filename_with_iso_8859_1() {
+        let mut msg = Message::new();
+        msg.set_header("Mid", "MIDQ");
+        msg.set_header("From", "N7CPZ");
+        msg.set_body(b"x".to_vec());
+        msg.set_attachments(vec![
+            crate::winlink_backend::OutboundAttachment {
+                // U+00E9 (é, Latin-1 0xE9)
+                filename: "café.txt".into(),
+                bytes: vec![1],
+            },
+        ]);
+        let bytes = msg.to_bytes();
+        let s = String::from_utf8_lossy(&bytes);
+        // Lowercase q, charset ISO-8859-1 per wl2k-go fbb/message.go:436-437
+        assert!(s.contains("File: 1 =?ISO-8859-1?q?caf=E9.txt?="),
+                "expected Q-encoded filename, got: {s}");
+    }
+
+    #[test]
+    fn header_sort_canonicalizes_keys() {
+        let mut msg = Message::new();
+        msg.set_header("mid", "MID4");          // lowercase
+        msg.set_header("subject", "S");
+        msg.set_header("from", "N7CPZ");
+        msg.set_header("date", "2026/05/30 12:00");
+        let bytes = msg.to_bytes();
+        let s = String::from_utf8_lossy(&bytes);
+        // Mid first (case-normalized), then alphabetical
+        let lines: Vec<&str> = s.lines().take_while(|l| !l.is_empty()).collect();
+        assert_eq!(lines[0], "Mid: MID4",
+                   "expected 'Mid: MID4' (canonicalized) at line 0, got: {:?}", lines);
+        assert!(lines[1].starts_with("Date:"),
+                "expected Date: alphabetically first after Mid, got: {:?}", lines);
+    }
+
+    #[test]
+    fn ascii_filename_passes_through_unencoded() {
+        let mut msg = Message::new();
+        msg.set_header("Mid", "MIDA");
+        msg.set_header("From", "N7CPZ");
+        msg.set_body(b"x".to_vec());
+        msg.set_attachments(vec![
+            crate::winlink_backend::OutboundAttachment {
+                filename: "plain.txt".into(),
+                bytes: vec![1],
+            },
+        ]);
+        let bytes = msg.to_bytes();
+        let s = String::from_utf8_lossy(&bytes);
+        assert!(s.contains("File: 1 plain.txt"),
+                "expected unencoded ASCII filename, got: {s}");
+    }
+
+    #[test]
+    fn to_proposal_size_includes_attachment_bytes_and_crlfs() {
+        let mut msg = Message::new();
+        msg.set_header("Mid", "MIDPROP");
+        msg.set_header("Subject", "T");
+        msg.set_header("From", "N7CPZ");
+        msg.set_body(b"body".to_vec());  // 4 bytes
+        msg.set_attachments(vec![
+            crate::winlink_backend::OutboundAttachment {
+                filename: "x.bin".into(),
+                bytes: vec![0; 10],  // 10 bytes
+            },
+        ]);
+        let (proposal, _compressed) = msg.to_proposal().unwrap();
+        let raw = msg.to_bytes();
+        assert_eq!(proposal.size, raw.len(),
+                   "proposal.size = {}, to_bytes len = {}", proposal.size, raw.len());
+    }
+
+    #[test]
+    fn from_bytes_round_trips_through_to_bytes() {
+        let mut original = Message::new();
+        original.set_header("Mid", "MIDRT");
+        original.set_header("From", "N7CPZ");
+        original.set_header("Date", "2026/05/30 12:00");
+        original.set_body(b"hello world".to_vec());
+        original.set_attachments(vec![
+            crate::winlink_backend::OutboundAttachment {
+                filename: "a.bin".into(),
+                bytes: vec![1, 2, 3, 4, 5],
+            },
+            crate::winlink_backend::OutboundAttachment {
+                filename: "b.bin".into(),
+                bytes: vec![0xAA, 0xBB],
+            },
+        ]);
+        let bytes = original.to_bytes();
+        let parsed = Message::from_bytes(&bytes).expect("round-trip parse");
+        assert_eq!(parsed.attachments().len(), 2);
+        assert_eq!(parsed.attachments()[0].filename, "a.bin");
+        assert_eq!(parsed.attachments()[0].bytes, vec![1, 2, 3, 4, 5]);
+        assert_eq!(parsed.attachments()[1].filename, "b.bin");
+        assert_eq!(parsed.attachments()[1].bytes, vec![0xAA, 0xBB]);
+        assert_eq!(parsed.body(), b"hello world");
+    }
+
+    #[test]
+    fn from_bytes_handles_empty_attachment() {
+        let wire = b"Mid: MIDE\r\nFile: 0 empty.bin\r\nFrom: N7CPZ\r\nBody: 0\r\n\r\n\r\n\r\n";
+        let msg = Message::from_bytes(wire).unwrap();
+        assert_eq!(msg.attachments().len(), 1);
+        assert_eq!(msg.attachments()[0].bytes.len(), 0);
+    }
+
+    #[test]
+    fn from_bytes_errors_on_missing_attachment_terminator() {
+        // Body claims 0 bytes, File: claims 3 bytes, but no body→file CRLF
+        let wire = b"Mid: MIDX\r\nFile: 3 a.bin\r\nFrom: N7CPZ\r\nBody: 0\r\n\r\nXXX";
+        let err = Message::from_bytes(wire).unwrap_err();
+        assert_eq!(err, ParseError::MissingAttachmentTerminator);
+    }
+
+    #[test]
+    fn from_bytes_errors_on_truncated_attachment() {
+        // File: claims 10 bytes but only 3 are present
+        let wire = b"Mid: MIDT\r\nFile: 10 a.bin\r\nFrom: N7CPZ\r\nBody: 0\r\n\r\n\r\nXXX\r\n";
+        let err = Message::from_bytes(wire).unwrap_err();
+        assert_eq!(err, ParseError::TruncatedAttachment);
+    }
+
+    #[test]
+    fn from_bytes_errors_on_malformed_file_header() {
+        let wire = b"Mid: MIDM\r\nFile: notanumber a.bin\r\nFrom: N7CPZ\r\nBody: 0\r\n\r\n";
+        let err = Message::from_bytes(wire).unwrap_err();
+        assert_eq!(err, ParseError::MalformedFileHeader);
     }
 }

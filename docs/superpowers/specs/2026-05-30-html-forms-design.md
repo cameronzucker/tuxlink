@@ -1,7 +1,7 @@
-# HTML Forms v0.1 — design spec (rev-2, post-adversarial)
+# HTML Forms v0.1 — design spec (rev-3, native attachment path finalized)
 
 > Date: 2026-05-30 · Agent: yew-cypress-oak · bd: tuxlink-v1p · Parent context: PR #150 (inventory rev-2)
-> Rev: 2 — incorporates the 4-round BRF adversarial review (Claude R1–R4; Codex R5 pending). Rev-1 had multiple P0 wire-format and architecture errors that would have produced an incompatible implementation; rev-2 fixes them.
+> Rev: 3 — removes the Path A (Pat REST) choice in §5.1; native B2F outbound with attachments is now available per ADR 0016. The spec is unblocked; PR #151 resumes on native rails.
 
 ## 0. Status — DESIGN ONLY (HARD-GATE per `superpowers:brainstorming` + `build-robust-features`)
 
@@ -13,7 +13,19 @@ Operator (Cameron) is driving today. Approval flow:
 - **Comment** → I revise spec + re-run any affected adversarial round.
 - **Reject** → regroup.
 
-## 1. Change log from rev-1
+## 1. Change log
+
+### rev-3 (2026-05-30 — native attachment path finalized)
+
+| Change | Detail |
+|---|---|
+| **§5.1 rewritten** | Path A (Pat REST) removed. The native B2F attachment path is the only encoding path for v0.1 per [ADR 0016](../../adr/0016-native-b2f-outbound-with-attachments.md). |
+| **Spec header updated** | rev-2 → rev-3; status line updated. |
+| **§5.2 Module layout** | `pat_client.rs` reference removed; native send pipeline is the only target. |
+| **§9 Boundaries** | `pat_client.rs` reference removed. |
+| **Effort table (§16)** | "Precursor" row updated to reflect native-only pipeline. |
+
+### rev-2 (2026-05-30 — post-adversarial)
 
 Adversarial review surfaced **24+ P0/P1 findings** in rev-1, most of which would have shipped an implementation incompatible with WLE and/or Pat. Adversarial transcripts (gitignored, local-only) at `dev/adversarial/2026-05-30-html-forms-design-claude-r{1,2,3,4}-*.md`.
 
@@ -29,7 +41,7 @@ Key rev-1 → rev-2 corrections:
 | **Wire — body charset** | UTF-8 implied | ISO-8859-1 (Latin-1) — WLE `Message.cs:295-298` down-codes; Pat reads per `Content-Type` header | R2-I06 (P1) |
 | **Wire — empty fields** | unspecified | Emit `<field></field>` always for declared form fields (matches Pat behavior) | R1-F4 (P1) |
 | **Backend — attachments** | "calls existing `send_message` infra" | **`OutboundMessage` has NO `attachments` field today** — requires precursor backend work | R2-I05 (P0) |
-| **Backend — B2F wire vs MIME** | Conflated | Two encoding paths: (1) via Pat REST API (MIME-multipart upload), (2) via native winlink session (B2F `File:` headers) — spec must pin which is v0.1 | R2-I07 (P1) |
+| **Backend — B2F wire vs MIME** | Conflated | Rev-2 identified two encoding paths: (1) via Pat REST API (MIME-multipart upload), (2) via native winlink session (B2F `File:` headers). Rev-3 finalizes the native path (2) per ADR 0016 — Path A is removed. | R2-I07 (P1); rev-3 resolution |
 | **UX — draft destruction** | Implicit replace | Pre-form-switch unsaved-changes dialog (Save/Discard/Cancel) | R3-1 (P0) |
 | **UX — DraftData schema** | "React form state" | Extend `DraftData` with `formId?` + `formFields?`; wire autosave/restore | R3-2 (P0) |
 | **UX — reply-to-form behavior** | Deferred to operator question | Must be decided BEFORE shipping reply buttons; rev-2 proposes a default | R3-3 (P0) |
@@ -139,16 +151,15 @@ Same three approaches as rev-1. Recommendation stands: **Approach C — native R
 
 ## 5. Chosen architecture
 
-### 5.1 Two encoding paths (both v0.1 dependencies)
+### 5.1 Native attachment path (the only v0.1 encoding path)
 
-Tuxlink composes form messages via two distinct paths depending on the send transport:
+Tuxlink composes form messages via the native B2F attachment path. Pat was removed in the PR that landed [ADR 0016](../../adr/0016-native-b2f-outbound-with-attachments.md); Path A (Pat REST multipart) no longer exists.
 
-| Path | Used when | Encoding work |
-|---|---|---|
-| **Path A — via Pat REST** | Transport routes through Pat (current default for CMS Telnet) | Multipart/form-data HTTP POST to Pat's `/api/mailbox/Outbox`; Pat does B2F-format conversion + lzhuf + send |
-| **Path B — via native winlink/session** | Transport routes via tuxlink's native CMS Telnet stack (post-Pat-replacement) | Direct B2F format: `Message::to_bytes` emits repeating `File: <size> <name>` headers + raw attachment bytes |
+| Path | Encoding work |
+|---|---|
+| **Native B2F attachment path** | `compose_message_with_files` emits `File: <size> <name>` headers + raw attachment bytes per the Winlink B2F wire format (see ADR 0016 §"Wire format reference"); lzhuf compression + B2F proposal exchange handled by the existing native transfer pipeline. |
 
-**Decision for v0.1**: Build **Path A first** (works with the shipped Pat-via-REST send pipeline). Path B is a parallel work-item that lands when native Telnet send replaces Pat. The forms module is path-agnostic — it produces the (text body, xml bytes, filename) triple; the path-specific code handles transport.
+**Decision for v0.1**: The forms module is transport-agnostic — it produces the (text body, xml bytes, filename) triple; `compose_message_with_files` handles the B2F encoding. No Pat dependency; no multipart/form-data. This is the same native send pipeline that handles plain-text outbound today, extended for attachments per the design spec `2026-05-30-pat-strip-native-attachments-design.md`.
 
 ### 5.2 Module layout
 
@@ -164,7 +175,7 @@ Tuxlink composes form messages via two distinct paths depending on the send tran
 **Backend integration changes** (existing files):
 
 - `winlink_backend.rs`: extend `OutboundMessage` with `attachments: Vec<OutboundAttachment>`. **Breaking change to the struct** (acknowledged at line 89 — "Adding fields is an acknowledged breaking change"). Add `OutboundAttachment { filename: String, content_type: String, bytes: Vec<u8> }`.
-- `pat_client.rs`: extend the `/api/mailbox/Outbox` POST to support multipart/form-data with file parts for attachments. Pat's REST API already accepts this (verified via tuxlink's existing `pat_client_test.rs::test_send_message_posts_multipart_form_data`).
+- `winlink/compose.rs`: `compose_message_with_files` is the entry point for form messages with XML attachments — same function used for any native outbound attachment per ADR 0016.
 - `ui_commands.rs`: 
   - **Bug fix in scope**: `is_form` detection moves from `body.starts_with("<?xml")` to attachment-name match (`attachments.iter().any(|a| a.filename.starts_with("RMS_Express_Form_") && a.filename.ends_with(".xml"))`).
   - Add `form_id: Option<String>` to `ParsedMessageDto` (extracted from attachment name; normalized for lookup).
@@ -376,8 +387,7 @@ Bundled in binary as `const` arrays in `src-tauri/src/forms/catalog.rs`. Seed se
 **Modify**:
 
 - `src-tauri/src/winlink_backend.rs`: add `OutboundAttachment` struct; add `attachments: Vec<OutboundAttachment>` to `OutboundMessage` (breaking but acknowledged).
-- `src-tauri/src/winlink/message.rs`: extend `Message` with attachment support for Path B (B2F wire format).
-- `src-tauri/src/pat_client.rs`: extend send to attach files via multipart/form-data POST (Path A).
+- `src-tauri/src/winlink/message.rs`: extend `Message` with attachment support (B2F wire format) — completed by ADR 0016 PR.
 - `src-tauri/src/ui_commands.rs`: fix `is_form` detection; add `form_id` to DTO; add `send_form` command.
 - `src/mailbox/MessageView.tsx`: form-render dispatch.
 - `src/mailbox/replyActions.ts`: updated body-vs-XML logic + reply-to-form behavior; tests added.
@@ -401,7 +411,7 @@ Per BRF security round, the following hardening is **mandatory before merge**, n
 | Reply-quote leak | `replyActions.ts` updated to detect `form_id` set on the source message; skip quoting body content (which contains the form-rendered text); insert the placeholder string. New test cases. |
 | `send_form` Tauri command | Register in the Tauri allowlist with the same restrictions as `send_message`; no broader scope. |
 | UTF-8 validation | Reject non-UTF-8 XML attachment bytes early; surface as `UiError::Internal("form XML not valid UTF-8")`. |
-| Streaming-receive memory pressure | (Pat REST API: Pat buffers to memory anyway; v0.1 inherits that footprint. Future Path B native B2F receive: defer to that work item — out of scope here.) |
+| Streaming-receive memory pressure | Native B2F receive: the send pipeline is attachment-agnostic at the frame layer; attachment bytes are buffered per-file by the parser. Size cap (256 KiB per form XML) bounds memory per receive. Large binary attachments are not in scope for v0.1 forms. |
 
 ## 11. Testing strategy (expanded)
 
@@ -410,7 +420,7 @@ Per BRF security round, the following hardening is **mandatory before merge**, n
 | **Rust unit — serialize** | Byte-exact output for each bundled form given a known field map (including lowercase elements, full `<form_parameters>`, BOM, MIME envelope). |
 | **Rust unit — parse** | Round-trip per form (serialize → parse → equal field map). Detection from attachment name. Form ID validation. Empty-field handling. |
 | **Rust unit — hardening** | Billion-laughs rejection; size cap rejection; field count cap; path-traversal `form_id` rejection; malformed UTF-8 rejection. |
-| **Rust integration — message build** | `send_form → OutboundMessage with attachment → pat_client multipart POST → wire bytes match expected MIME structure`. |
+| **Rust integration — message build** | `send_form → OutboundMessage with attachment → compose_message_with_files → wire bytes match expected B2F structure`. |
 | **Vitest — Ics213Form** | All required fields render; required-field validation triggers on empty submit; long-text Message field wraps. |
 | **Vitest — Ics213View** | Given a `FormPayload`, all field/value pairs displayed; XSS-safe rendering (no innerHTML). |
 | **Vitest — KeyValueView** | Body text + raw field dump displayed; unknown XML doesn't crash. |
@@ -445,10 +455,8 @@ No user-data risk: no real CMS forms have been received in production with the w
 |---|---|
 | Live smoke A fails (WLE rejects our form) | The 4 smokes are gating; if any fails, do not ship until fixed. Debug via comparing tuxlink-emitted bytes to WLE-emitted bytes for the same form. |
 | `OutboundMessage` breaking change ripples broadly | Acknowledged at code-comment level already. Update all `OutboundMessage::new` callers in the same PR. |
-| Pat REST multipart unsupported in our installed Pat version | Verify against `pat_client_test.rs` — the test name suggests it's already supported. Verify on impl day-1 before doing the React work. |
-| Path B (native B2F attachment encoding) NOT in v0.1 | Documented; ship Path A only. Native B2F lands when Pat-replacement does. |
-| Forms catalog drift (we ship ICS213/v1.0, WLE has v1.2) | Pat tolerates schema drift; WLE renders blanks for missing fields. Document; accept. Operator can refresh forms once auto-update ships (v0.5+). |
-| Performance: large form-XML on slow RF | Path A inherits Pat's buffering; size cap (256 KiB) is well under any plausible form. |
+| Forms catalog drift (we ship ICS213/v1.0, WLE has v1.2) | WLE renders blanks for missing fields; tuxlink tolerates schema drift equally. Document; accept. Operator can refresh forms once auto-update ships (v0.5+). |
+| Performance: large form-XML on slow RF | Native B2F pipeline buffers per-file; size cap (256 KiB) is well under any plausible form. |
 
 ## 15. Open questions for operator review (narrowed by BRF)
 
@@ -469,7 +477,7 @@ Rev-2: **12–18 days** for a thorough v0.1 with all 4 live smokes green. Breakd
 
 | Phase | Work | Days |
 |---|---|---|
-| Precursor | `OutboundMessage` + `OutboundAttachment` + `pat_client` multipart send + tests | 2-3 |
+| Precursor | `OutboundMessage` + `OutboundAttachment` + `compose_message_with_files` native B2F send + tests — **completed by ADR 0016 PR** | 0 (done) |
 | Forms backend | Rust `forms` module (catalog + parse + serialize + validation + tests) | 3-4 |
 | Detection fix + DTO | `ui_commands.rs` + `ParsedMessageDto.form_id` + fixture updates | 1 |
 | Frontend — forms surface | `FormPicker` + ICS-213 compose + view; `KeyValueView`; draft-protection dialog | 3-4 |

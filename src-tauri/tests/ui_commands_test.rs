@@ -16,81 +16,14 @@
 // here + the BackendState unit tests in-crate; the live IPC round-trip is
 // smoke-verified at M2 (testing-pitfalls: static tests verify logic, not
 // rendered widgets).
+//
+// Pat-specific tests (driving PatBackend::from_url for DTO mapping, folder
+// reads, etc.) were deleted in tuxlink-9phd Phase 9 along with PatBackend.
 
 use tuxlink_lib::ui_commands::{parse_folder, parse_raw_rfc5322, MessageMetaDto, ParsedMessageDto, UiError};
 use tuxlink_lib::winlink_backend::{
-    BackendError, MailboxFolder, MessageId, PatBackend, WinlinkBackend,
+    BackendError, MailboxFolder, MessageId,
 };
-
-// ============================================================================
-// Task-12 test (1): mailbox_list maps MessageMeta → DTO incl. to + hasAttachments
-// (mockito Pat fixture). Drives the list end-to-end through PatBackend +
-// the DTO mapping the command uses.
-// ============================================================================
-#[tokio::test]
-async fn test_list_maps_meta_to_dto_including_to_and_has_attachments() {
-    let mut server = mockito::Server::new_async().await;
-    // Pat 1.0.0's REAL list shape — no To, no attachment field. Verifies the
-    // graceful-degradation default (to=[], hasAttachments=false).
-    let _mock = server
-        .mock("GET", "/api/mailbox/in")
-        .with_status(200)
-        .with_header("content-type", "application/json")
-        .with_body(
-            r#"[{"MID":"ABC123","Subject":"Test","From":{"Addr":"W4PHS@winlink.org"},"Date":"2026-04-22T15:00:00Z","Unread":true,"BodySize":42}]"#,
-        )
-        .create_async()
-        .await;
-
-    let backend = PatBackend::from_url(server.url());
-    let metas = backend
-        .list_messages(MailboxFolder::Inbox)
-        .await
-        .expect("list_messages");
-    let dtos: Vec<MessageMetaDto> = metas.into_iter().map(MessageMetaDto::from).collect();
-
-    assert_eq!(dtos.len(), 1);
-    assert_eq!(dtos[0].id, "ABC123");
-    assert_eq!(dtos[0].subject, "Test");
-    assert_eq!(dtos[0].from, "W4PHS@winlink.org");
-    assert!(dtos[0].unread);
-    assert_eq!(dtos[0].body_size, 42);
-    // Graceful degradation: Pat omits these, so they default.
-    assert_eq!(dtos[0].to, Vec::<String>::new(), "Pat list DTO omits To → empty");
-    assert!(!dtos[0].has_attachments, "Pat list DTO omits attachments → false");
-}
-
-// ============================================================================
-// Forward-compat: when a backend DOES provide To + a Files array, the DTO
-// carries them. Proves the degradation is graceful (default), not hardcoded.
-// ============================================================================
-#[tokio::test]
-async fn test_list_populates_to_and_has_attachments_when_pat_provides_them() {
-    let mut server = mockito::Server::new_async().await;
-    let _mock = server
-        .mock("GET", "/api/mailbox/sent")
-        .with_status(200)
-        .with_header("content-type", "application/json")
-        .with_body(
-            r#"[{"MID":"S1","Subject":"Re: ICS-213","From":{"Addr":"KK4XYZ@winlink.org"},"To":[{"Addr":"W4PHS@winlink.org"},{"Addr":"N0CALL@winlink.org"}],"Date":"2026-05-19T12:00:00Z","Unread":false,"BodySize":900,"Files":[{"Name":"form.xml"}]}]"#,
-        )
-        .create_async()
-        .await;
-
-    let backend = PatBackend::from_url(server.url());
-    let metas = backend
-        .list_messages(MailboxFolder::Sent)
-        .await
-        .expect("list sent");
-    let dtos: Vec<MessageMetaDto> = metas.into_iter().map(MessageMetaDto::from).collect();
-
-    assert_eq!(dtos.len(), 1);
-    assert_eq!(
-        dtos[0].to,
-        vec!["W4PHS@winlink.org".to_string(), "N0CALL@winlink.org".to_string()]
-    );
-    assert!(dtos[0].has_attachments, "non-empty Files array → hasAttachments true");
-}
 
 // ============================================================================
 // Task-12 test (2): folder string parse — drafts/deleted rejected/handled,
@@ -121,75 +54,6 @@ fn test_parse_folder_rejects_local_and_disabled_folders() {
         Err(UiError::Internal { detail }) => assert!(detail.contains("unknown")),
         other => panic!("expected Internal for unknown, got {other:?}"),
     }
-}
-
-// ============================================================================
-// Task-12 test (7): read_message_in(Inbox, id) == old read_message(id)
-// (back-compat). The trait's default read_message forwards to
-// read_message_in(Inbox, id); both must hit the same bytes.
-// ============================================================================
-#[tokio::test]
-async fn test_read_message_in_inbox_matches_read_message_back_compat() {
-    let mut server = mockito::Server::new_async().await;
-    let body = b"Subject: hi\r\n\r\nbody";
-    let _mock = server
-        .mock("GET", "/api/mailbox/in/MID1")
-        .with_status(200)
-        .with_body(body.as_slice())
-        // Both calls hit the same inbox URL; expect 2 requests.
-        .expect(2)
-        .create_async()
-        .await;
-
-    let backend = PatBackend::from_url(server.url());
-    let id = MessageId::new("MID1");
-
-    let via_in = backend
-        .read_message_in(MailboxFolder::Inbox, &id)
-        .await
-        .expect("read_message_in");
-    let via_compat = backend.read_message(&id).await.expect("read_message");
-
-    assert_eq!(via_in.raw_rfc5322, body);
-    assert_eq!(via_compat.raw_rfc5322, via_in.raw_rfc5322);
-    assert_eq!(via_compat.id, via_in.id);
-}
-
-// ============================================================================
-// tuxlink-xgn: the trait's default mark_read is a best-effort no-op. Backends
-// with no read-state of their own (PatBackend) inherit it and MUST NOT error,
-// so message_read can mark-read without risking the read it just served.
-// ============================================================================
-#[tokio::test]
-async fn test_mark_read_default_is_a_successful_noop() {
-    // No server: the default never touches the network or disk.
-    let backend = PatBackend::from_url("http://127.0.0.1:9".to_string());
-    backend
-        .mark_read(MailboxFolder::Inbox, &MessageId::new("ANY"))
-        .await
-        .expect("default mark_read is a no-op that succeeds");
-}
-
-// ============================================================================
-// read_message_in reads from the requested folder (not always Inbox) — the
-// whole point of the generalization. A Sent read must hit /api/mailbox/sent.
-// ============================================================================
-#[tokio::test]
-async fn test_read_message_in_uses_requested_folder() {
-    let mut server = mockito::Server::new_async().await;
-    let _mock = server
-        .mock("GET", "/api/mailbox/sent/SENTMID")
-        .with_status(200)
-        .with_body(b"sent body".as_slice())
-        .create_async()
-        .await;
-
-    let backend = PatBackend::from_url(server.url());
-    let body = backend
-        .read_message_in(MailboxFolder::Sent, &MessageId::new("SENTMID"))
-        .await
-        .expect("read sent");
-    assert_eq!(body.raw_rfc5322, b"sent body");
 }
 
 // ============================================================================
@@ -283,7 +147,7 @@ fn test_ui_error_serializes_with_tag_content_shape() {
 // `ui_commands.rs`'s `#[cfg(test)]` module) because `MessageMeta` is
 // `#[non_exhaustive]` and cannot be struct-literal-constructed from this
 // external integration-test crate. The DTO mapping from a real backend is
-// exercised end-to-end by `test_list_maps_meta_to_dto_*` above.
+// exercised end-to-end by the NativeBackend integration tests.
 
 // ============================================================================
 // Task-13 tests (tuxlink-y5c) — RFC5322 parse at the command boundary
@@ -409,32 +273,6 @@ fn test_parse_non_utf8_body_decodes_lossily_no_panic() {
         "lossy replacement or tail present: {:?}",
         dto.body
     );
-}
-
-// ============================================================================
-// Task-13 test (5): message_read on missing MID → NotFound via PatBackend
-// ============================================================================
-#[tokio::test]
-async fn test_message_read_missing_mid_returns_not_found() {
-    let mut server = mockito::Server::new_async().await;
-    let _mock = server
-        .mock("GET", "/api/mailbox/in/MISSINGMID")
-        .with_status(404)
-        .create_async()
-        .await;
-
-    let backend = tuxlink_lib::winlink_backend::PatBackend::from_url(server.url());
-    let result = backend
-        .read_message_in(
-            tuxlink_lib::winlink_backend::MailboxFolder::Inbox,
-            &tuxlink_lib::winlink_backend::MessageId::new("MISSINGMID"),
-        )
-        .await;
-
-    match result {
-        Err(tuxlink_lib::winlink_backend::BackendError::NotFound(_)) => {}
-        other => panic!("expected NotFound, got {other:?}"),
-    }
 }
 
 // ============================================================================

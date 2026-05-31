@@ -327,7 +327,7 @@ describe('LogLineDto type validity', () => {
   });
 
   it('all valid source values are accepted', () => {
-    const sources: LogLineDto['source'][] = ['backend', 'pat', 'transport', 'wire'];
+    const sources: LogLineDto['source'][] = ['backend', 'transport', 'wire'];
     sources.forEach((source, idx) => {
       const line: LogLineDto = {
         seq: idx + 1,

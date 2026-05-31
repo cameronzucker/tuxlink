@@ -1,0 +1,172 @@
+//! Keyring credential read + one-time migration helper.
+//!
+//! Service name history:
+//! - `"tuxlink-pat"` — used during the Pat era; the service name reflected the Pat sidecar.
+//! - `"tuxlink"` — canonical name post-Pat-strip. This is what new entries use.
+//!
+//! `read_password` reads from `"tuxlink"` first. If no entry exists, it falls back to
+//! `"tuxlink-pat"` (one-time migration): on success it writes the password to the new
+//! entry and best-effort deletes the old one, then returns the password. This is
+//! transparent to operators who set their password during the Pat era.
+//!
+//! # Test isolation
+//!
+//! The `read_password` public API is sugar over `read_password_with_factory`, which
+//! accepts an `EntryLike` factory closure for dependency injection. Tests use a
+//! `HashMap`-backed mock factory that shares state across calls for the same
+//! `(service, account)` — something `keyring::mock`'s `EntryOnly` persistence
+//! cannot provide. Production uses `keyring::Entry::new` directly.
+//!
+//! See `src-tauri/tests/winlink_credentials_test.rs` for the full test suite.
+//! See `docs/pitfalls/testing-pitfalls.md §7` for the keyring isolation contract.
+//!
+//! Spec: docs/superpowers/specs/2026-05-30-strip-pat-add-native-attachments.md §7.1
+//! Plan: Phase 7 Task 7.1 / tuxlink-9phd
+
+/// The canonical keyring service name for tuxlink credentials.
+const SERVICE: &str = "tuxlink";
+/// Legacy service name from the Pat era. Used only during one-time migration.
+const LEGACY_SERVICE: &str = "tuxlink-pat";
+
+// ──────────────────────────────────────────────────────────────
+// Public error type
+// ──────────────────────────────────────────────────────────────
+
+/// Error returned by `read_password` (and its test-mockable sibling).
+#[derive(Debug, PartialEq)]
+pub enum KeyringError {
+    /// No password found for this callsign in either the new or legacy service.
+    NoEntry { callsign: String },
+    /// The underlying keyring backend returned an unexpected error.
+    Backend(String),
+}
+
+impl std::fmt::Display for KeyringError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            KeyringError::NoEntry { callsign } => {
+                write!(f, "no keyring entry for callsign {callsign}")
+            }
+            KeyringError::Backend(msg) => write!(f, "keyring backend error: {msg}"),
+        }
+    }
+}
+
+impl std::error::Error for KeyringError {}
+
+// ──────────────────────────────────────────────────────────────
+// EntryLike trait — the abstraction injected by tests
+// ──────────────────────────────────────────────────────────────
+
+/// A minimal abstraction over a keyring entry.
+///
+/// Production: backed by `keyring::Entry`.
+/// Tests: backed by `MockEntry` (see `winlink_credentials_test.rs`).
+pub trait EntryLike {
+    fn get_password(&self) -> Result<String, keyring::Error>;
+    fn set_password(&self, password: &str) -> Result<(), keyring::Error>;
+    fn delete_password(&self) -> Result<(), keyring::Error>;
+}
+
+// ──────────────────────────────────────────────────────────────
+// Production Entry wrapper
+// ──────────────────────────────────────────────────────────────
+
+struct RealEntry(keyring::Entry);
+
+impl EntryLike for RealEntry {
+    fn get_password(&self) -> Result<String, keyring::Error> {
+        self.0.get_password()
+    }
+
+    fn set_password(&self, password: &str) -> Result<(), keyring::Error> {
+        self.0.set_password(password)
+    }
+
+    fn delete_password(&self) -> Result<(), keyring::Error> {
+        self.0.delete_credential()
+    }
+}
+
+// ──────────────────────────────────────────────────────────────
+// Internal implementation
+// ──────────────────────────────────────────────────────────────
+
+/// Internal implementation accepting an entry factory for testability.
+///
+/// The `factory` closure is called as `factory(service, account)` and must
+/// return a boxed `EntryLike`. In production this wraps `keyring::Entry::new`;
+/// in tests it wraps an in-memory mock.
+///
+/// # Errors
+///
+/// - `KeyringError::NoEntry` — neither the `"tuxlink"` nor the `"tuxlink-pat"` entry
+///   exists for this callsign.
+/// - `KeyringError::Backend` — an unexpected error from the underlying credential store.
+pub fn read_password_with_factory<F>(callsign: &str, factory: &F) -> Result<String, KeyringError>
+where
+    F: Fn(&str, &str) -> Box<dyn EntryLike>,
+{
+    // Step 1: try the canonical service name.
+    let new_entry = factory(SERVICE, callsign);
+    match new_entry.get_password() {
+        Ok(password) => return Ok(password),
+        Err(keyring::Error::NoEntry) => {} // fall through to migration
+        Err(other) => return Err(KeyringError::Backend(format!("{other}"))),
+    }
+
+    // Step 2: canonical entry absent — try the legacy service (one-time migration).
+    let old_entry = factory(LEGACY_SERVICE, callsign);
+    match old_entry.get_password() {
+        Ok(password) => {
+            // Migrate: write to new service name.
+            let migrate_entry = factory(SERVICE, callsign);
+            if let Err(e) = migrate_entry.set_password(&password) {
+                // Migration write failed — still return the password; next call retries.
+                eprintln!(
+                    "credentials: migration write to '{}' failed for {callsign}: {e}",
+                    SERVICE
+                );
+            } else {
+                // Best-effort delete from legacy service.
+                if let Err(e) = old_entry.delete_password() {
+                    eprintln!(
+                        "credentials: best-effort delete from '{}' failed for {callsign}: {e}",
+                        LEGACY_SERVICE
+                    );
+                }
+                eprintln!(
+                    "credentials: migrated {callsign} from '{}' to '{}'",
+                    LEGACY_SERVICE, SERVICE
+                );
+            }
+            Ok(password)
+        }
+        Err(keyring::Error::NoEntry) => Err(KeyringError::NoEntry {
+            callsign: callsign.to_string(),
+        }),
+        Err(other) => Err(KeyringError::Backend(format!("{other}"))),
+    }
+}
+
+// ──────────────────────────────────────────────────────────────
+// Public API
+// ──────────────────────────────────────────────────────────────
+
+/// Read the Winlink password for `callsign` from the OS keyring.
+///
+/// Reads from the `"tuxlink"` service. If absent, transparently migrates from the
+/// legacy `"tuxlink-pat"` service (one-time, logged at `info`).
+///
+/// # Errors
+///
+/// - `KeyringError::NoEntry` — no entry in either service.
+/// - `KeyringError::Backend` — unexpected backend error.
+pub fn read_password(callsign: &str) -> Result<String, KeyringError> {
+    let real_factory = |service: &str, account: &str| -> Box<dyn EntryLike> {
+        let entry = keyring::Entry::new(service, account)
+            .expect("keyring::Entry::new should not fail for valid service/account strings");
+        Box::new(RealEntry(entry))
+    };
+    read_password_with_factory(callsign, &real_factory)
+}

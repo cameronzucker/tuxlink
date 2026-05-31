@@ -93,10 +93,10 @@ impl BackendState {
     }
 
     /// Install the active backend, atomically setting `(Ready, Some(backend))`
-    /// under one write lock. Called once by the bootstrap after
-    /// `PatBackend::spawn` succeeds. A poisoned lock is a no-op (the install is
-    /// dropped rather than panicking; the only writers are the bootstrap's own
-    /// phase transitions, none of which panic under the guard).
+    /// under one write lock. Called once by the bootstrap after the native
+    /// backend is successfully initialized. A poisoned lock is a no-op (the
+    /// install is dropped rather than panicking; the only writers are the
+    /// bootstrap's own phase transitions, none of which panic under the guard).
     pub fn install(&self, backend: Arc<dyn WinlinkBackend>) {
         if let Ok(mut guard) = self.inner.write() {
             *guard = (BackendPhase::Ready, Some(backend));
@@ -135,7 +135,7 @@ impl Default for BackendState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::winlink_backend::PatBackend;
+    use crate::winlink_backend::NativeBackend;
 
     // A fresh BackendState is (NotConfigured, None): `current()` is None — the
     // command layer maps this to NotConfigured. (Migrated from Task-12
@@ -158,7 +158,7 @@ mod tests {
     #[test]
     fn install_then_current_returns_a_backend_and_ready() {
         let state = BackendState::new();
-        state.install(Arc::new(PatBackend::from_url("http://127.0.0.1:9")));
+        state.install(Arc::new(NativeBackend::test_fixture()));
         let (phase, backend) = state.snapshot();
         assert!(backend.is_some(), "after install, current() yields the backend");
         assert!(matches!(phase, BackendPhase::Ready), "install sets phase Ready");
@@ -170,7 +170,7 @@ mod tests {
     #[test]
     fn set_phase_failed_clears_backend() {
         let state = BackendState::new();
-        state.install(Arc::new(PatBackend::from_url("http://127.0.0.1:9")));
+        state.install(Arc::new(NativeBackend::test_fixture()));
         state.set_phase(BackendPhase::Failed {
             reason: "spawn failed".to_string(),
         });
@@ -216,7 +216,7 @@ mod tests {
     #[test]
     fn current_clones_arc_without_holding_lock() {
         let state = BackendState::new();
-        state.install(Arc::new(PatBackend::from_url("http://127.0.0.1:9")));
+        state.install(Arc::new(NativeBackend::test_fixture()));
         let a = state.current();
         let b = state.current();
         assert!(a.is_some() && b.is_some());

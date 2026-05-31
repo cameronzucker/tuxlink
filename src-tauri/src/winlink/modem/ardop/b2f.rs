@@ -105,8 +105,10 @@ where
     let mut reader = BufReader::new(ReadHalf(shared.clone()));
     let mut writer = WriteHalf(shared);
 
-    session::run_exchange_with_role(&mut reader, &mut writer, role, config, outbound, decide)
-        .map_err(B2fOverArdopError::Exchange)
+    session::run_exchange_with_role(
+        &mut reader, &mut writer, role, config, outbound, decide, None,
+    )
+    .map_err(B2fOverArdopError::Exchange)
 }
 
 /// Why a B2F-over-ARDOP exchange failed.

@@ -23,7 +23,8 @@
 //   - Clear on successful send
 //   - Close with unsaved changes → "Save draft / Discard / Cancel" dialog
 //   - Ctrl+S → save; Ctrl+Enter → send
-//   - message_send Ok(_) (including None) → "Posted to Outbox" success
+//   - message_send Ok(_) → "Posted to Outbox" success (MID may be empty
+//     string for the transitional Pat path; deleted in P9)
 //   - From / Send-as / Select-Template / Cc → disabled (v0.1 tooltip)
 //   - Attachments list + drop zone (stubbed — DONE_WITH_CONCERNS; Pat
 //     multipart attachment wiring is out of reach for v0.0.1)
@@ -42,11 +43,22 @@ import './Compose.css';
 // Types
 // ============================================================================
 
+/** Attachment transferred over the Tauri IPC layer. `bytes` is base64-encoded
+ * by serde-json's default Vec<u8> serialization on the Rust side. The
+ * file-picker UI (HTML Forms, PR #151) is not yet built; pass [] until then. */
+interface OutboundAttachmentDto {
+  filename: string;
+  bytes: number[];
+}
+
 interface OutboundDraftDto {
   to: string[];
   cc: string[];
   subject: string;
   body: string;
+  /** P2.1 bridge: attachments threaded through IPC. Pass [] until the
+   *  attachment-picker UI is built (HTML Forms PR #151). */
+  attachments: OutboundAttachmentDto[];
 }
 
 type SendState = 'idle' | 'sending' | 'success' | 'error';
@@ -183,12 +195,17 @@ export function Compose({ draftId }: ComposeProps) {
       cc: [], // Cc disabled in v0.1 — Pat drops it; never silently pass user data (spec §3.2)
       subject,
       body,
+      // P2.1 bridge: attachment-picker not yet built (HTML Forms PR #151); pass []
+      // to preserve current behavior while the IPC bridge is wired up.
+      attachments: [],
     };
 
     try {
-      // Returns Option<String> (MID). Pat 1.0.0 returns None — treat Ok(_)
-      // uniformly as success (spec §3.2 / §5.4).
-      await invoke<string | null>('message_send', { draft: dto });
+      // Returns String (MID). NativeBackend returns a real MID; PatBackend
+      // (deleted in P9) returns an empty string as a transitional placeholder.
+      // Treat any Ok(_) uniformly as success (spec §3.2 / §5.4); do not
+      // display the MID directly — it may be empty.
+      await invoke<string>('message_send', { draft: dto });
       // Gate autosave BEFORE clearing the draft so the interval cannot win a
       // race between the flag set and the next 2s tick (Codex P1 fix).
       sentRef.current = true;

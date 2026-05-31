@@ -5,7 +5,7 @@ description = "Linux-native full-capability Winlink client"
 authors = ["Cameron Zucker <cameronzucker@gmail.com>"]
 edition = "2021"
 rust-version = "1.75"
-# With the helper bins in src/bin/ (live_cms_smoke, native_cms_probe), a bare
+# With the helper bin in src/bin/ (native_cms_probe), a bare
 # `cargo run` / `tauri dev` is ambiguous; name the app binary as the default.
 default-run = "tuxlink"
 
@@ -60,9 +60,3 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 name = "tuxlink"
 path = "src/main.rs"
 
-# Operator-only live-CMS smoke test (tuxlink-nk7, Task 6). NOT a test target —
-# `cargo test` does not discover or run it. Transmits under the operator's
-# amateur callsign; the licensee runs it manually with runtime consent.
-[[bin]]
-name = "live_cms_smoke"
-path = "src/bin/live_cms_smoke.rs"

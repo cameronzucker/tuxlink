@@ -129,6 +129,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         mycall: mycall.clone(),
         gridsquare: gridsquare.clone(),
         arq_timeout_s: 30,
+        arq_bandwidth_hz: None,
     };
     transport.init(&init_cfg)?;
     println!("ardop_connect: init OK");
