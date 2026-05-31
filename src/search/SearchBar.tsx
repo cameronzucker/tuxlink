@@ -83,6 +83,12 @@ export function SearchBar({
         value={value}
         onChange={(e) => onValueChange(e.target.value)}
         onFocus={() => { if (!dropdownOpen) onToggleDropdown(); }}
+        // Also open on click — in WebKitGTK (Tauri's renderer) clicking a
+        // focusable row does not reliably move focus, so the input keeps
+        // focus across browse-result interactions. Without this, clicking
+        // back on the still-focused input fires no onFocus event and the
+        // dropdown stays closed.
+        onClick={() => { if (!dropdownOpen) onToggleDropdown(); }}
         onKeyDown={handleKey}
       />
       {metaText && <span className="meta" data-testid="searchbar-meta">{metaText}</span>}
