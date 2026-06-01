@@ -17,10 +17,6 @@
 //! Watterson 1970 + ITU-R F.520 + ITU-R F.1487, applied to baseband audio-
 //! band samples. Deterministic, reproducible, AI-agent-friendly.
 
-#[cfg(test)]
-mod scaffold_smoke {
-    #[test]
-    fn crate_is_wired() {
-        assert_eq!(2 + 2, 4);
-    }
-}
+pub mod params;
+
+pub use params::{ChannelCondition, WattersonParams};
