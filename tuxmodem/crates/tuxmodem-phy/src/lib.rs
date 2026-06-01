@@ -13,5 +13,6 @@ pub mod audio_io;
 pub mod constellations;
 pub mod sync;
 pub mod subcarrier_snr;
+pub mod ofdm_main;
 pub mod error;
 pub use error::PhyError;
