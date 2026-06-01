@@ -169,7 +169,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 
 **Context:** Operator 2026-06-01: *"The ARDOP controls are hidden in the GPS + privacy sub-menu which is even more things we need on the ARDOP radio control dock. That has to be high priority fixed."* The Settings panel currently contains an ARDOP fieldset with `binary`, `capture_device`, `playback_device`, `ptt_serial_path`, `cmd_port`, `bandwidth_hz` — operator option (a): delete the fieldset entirely. Task 3 ensures every control has an inline-edit equivalent in the ARDOP panel's Radio section.
 
-- [ ] **Step 1: Write the failing assertion.**
+- [x] **Step 1: Write the failing assertion.**
 
 In `src/shell/SettingsPanel.test.tsx`, ADD:
 
@@ -182,7 +182,7 @@ test('SettingsPanel does NOT render the ARDOP HF fieldset (tuxlink-jmfm)', () =>
 });
 ```
 
-- [ ] **Step 2: Run the test to verify it fails.**
+- [x] **Step 2: Run the test to verify it fails.**
 
 ```bash
 pnpm vitest run src/shell/SettingsPanel.test.tsx -t "does NOT render the ARDOP HF fieldset" 2>&1 | tail -10
@@ -190,7 +190,7 @@ pnpm vitest run src/shell/SettingsPanel.test.tsx -t "does NOT render the ARDOP H
 
 Expected: FAIL (the fieldset currently renders).
 
-- [ ] **Step 3: Delete the ARDOP fieldset + supporting code from `SettingsPanel.tsx`.**
+- [x] **Step 3: Delete the ARDOP fieldset + supporting code from `SettingsPanel.tsx`.**
 
 In `src/shell/SettingsPanel.tsx`:
 
@@ -209,7 +209,7 @@ In `src/shell/SettingsPanel.test.tsx`:
 - DELETE every test that asserts ARDOP controls render, ARDOP values persist, ARDOP default loads, ARDOP onBlur fires, etc.
 - KEEP every test that asserts GPS-state + precision behavior.
 
-- [ ] **Step 4: Run the test to verify it passes.**
+- [x] **Step 4: Run the test to verify it passes.**
 
 ```bash
 pnpm vitest run src/shell/SettingsPanel.test.tsx 2>&1 | tail -10
@@ -217,7 +217,7 @@ pnpm vitest run src/shell/SettingsPanel.test.tsx 2>&1 | tail -10
 
 Expected: PASS (only GPS-state + precision tests remain; the new "does NOT render the ARDOP HF fieldset" test passes).
 
-- [ ] **Step 5: Run the full vitest suite + tsc.**
+- [x] **Step 5: Run the full vitest suite + tsc.**
 
 ```bash
 pnpm vitest run 2>&1 | tail -5
@@ -226,7 +226,7 @@ pnpm exec tsc --noEmit 2>&1 | tail -5
 
 Expected: all passing; tsc clean.
 
-- [ ] **Step 6: Commit.**
+- [x] **Step 6: Commit.**
 
 ```bash
 git add src/shell/SettingsPanel.tsx src/shell/SettingsPanel.test.tsx

@@ -53,47 +53,6 @@ interface SettingsView {
   position_precision: PositionPrecision;
 }
 
-/**
- * Frontend mirror of Rust's `config::ArdopUiConfig`. The Rust struct lacks
- * `#[serde(rename_all = "camelCase")]`, so the wire format is snake_case
- * (verified against `src-tauri/src/config.rs` and the Phase 2 modem-commands
- * tests). Keys here must match the Rust field names exactly.
- */
-interface ArdopUiConfig {
-  binary: string;
-  capture_device: string;
-  playback_device: string;
-  ptt_serial_path: string | null;
-  cmd_port: number;
-  /**
-   * ARDOP ARQ bandwidth in Hz: one of 200/500/1000/2000, or null meaning
-   * "let ardopcf use its default" (tuxlink-j0ij). The Settings dropdown
-   * constrains user input to the four valid values + Auto; the backend
-   * validates again before sending `ARQBW <hz> FORCED` at init.
-   */
-  bandwidth_hz: number | null;
-}
-
-const ARDOP_DEFAULT: ArdopUiConfig = {
-  binary: 'ardopcf',
-  capture_device: '',
-  playback_device: '',
-  ptt_serial_path: null,
-  cmd_port: 8515,
-  bandwidth_hz: null,
-};
-
-// Bandwidth options for the ARQ-bandwidth dropdown (tuxlink-j0ij). Numeric
-// values are the wire shape expected by ardopcf's `ARQBW`; the value `null`
-// (rendered as empty string in <select>) means "leave at ardopcf default."
-const BANDWIDTH_OPTIONS: { value: number | null; label: string }[] = [
-  { value: null, label: 'Auto (ardopcf default)' },
-  { value: 200, label: '200 Hz (most robust)' },
-  { value: 500, label: '500 Hz (marginal HF)' },
-  { value: 1000, label: '1000 Hz' },
-  { value: 2000, label: '2000 Hz (best throughput)' },
-];
-
 export interface SettingsPanelProps {
   open: boolean;
   onClose: () => void;
@@ -102,7 +61,6 @@ export interface SettingsPanelProps {
 export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
   const [gpsState, setGpsState] = useState<GpsState | null>(null);
   const [precision, setPrecision] = useState<PositionPrecision | null>(null);
-  const [ardop, setArdop] = useState<ArdopUiConfig>(ARDOP_DEFAULT);
   const [error, setError] = useState<string | null>(null);
 
   // Load the current values each time the panel opens (live config, not cached).
@@ -119,31 +77,10 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
       .catch(() => {
         if (mounted) setError('Could not load settings.');
       });
-    // ARDOP HF section (tuxlink-4ek). config_get_ardop returns the persisted
-    // ArdopUiConfig or the struct default (Task 2.2), so the call is safe even
-    // pre-wizard. Swallow errors deliberately — the rest of Settings should
-    // remain usable if the ARDOP slice fails to read.
-    invoke<ArdopUiConfig>('config_get_ardop')
-      .then((v) => {
-        if (mounted) setArdop(v);
-      })
-      .catch(() => {
-        /* keep ARDOP_DEFAULT */
-      });
     return () => {
       mounted = false;
     };
   }, [open]);
-
-  // Persist the ARDOP section. Called on blur of any ARDOP field. Errors are
-  // swallowed (network or pre-wizard config-write failures); the in-memory
-  // state remains the source of truth until the next open.
-  function persistArdop(next: ArdopUiConfig) {
-    setArdop(next);
-    void invoke('config_set_ardop', { value: next }).catch(() => {
-      /* surface via inline error if/when we add per-section error UI */
-    });
-  }
 
   // Esc closes (matches the click-away/Esc affordances elsewhere in the chrome).
   useEffect(() => {
@@ -238,97 +175,6 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
               </span>
             </label>
           ))}
-        </fieldset>
-
-        {/* ARDOP HF — tuxlink-4ek Phase 5. Persisted via config_set_ardop (Task 2.2);
-            Task 3.3 modem_ardop_connect refuses if capture/playback devices are empty. */}
-        <fieldset className="tux-settings-group">
-          <legend>ARDOP HF</legend>
-          <label className="tux-settings-field">
-            <span className="tux-settings-field-label">ardopcf binary</span>
-            <input
-              type="text"
-              className="tux-settings-host-input"
-              value={ardop.binary}
-              onChange={(e) => setArdop({ ...ardop, binary: e.target.value })}
-              onBlur={() => persistArdop(ardop)}
-            />
-          </label>
-          <label className="tux-settings-field">
-            <span className="tux-settings-field-label">Capture device (ALSA)</span>
-            <input
-              type="text"
-              className="tux-settings-host-input"
-              placeholder="plughw:1,0"
-              value={ardop.capture_device}
-              onChange={(e) => setArdop({ ...ardop, capture_device: e.target.value })}
-              onBlur={() => persistArdop(ardop)}
-            />
-          </label>
-          <label className="tux-settings-field">
-            <span className="tux-settings-field-label">Playback device (ALSA)</span>
-            <input
-              type="text"
-              className="tux-settings-host-input"
-              placeholder="plughw:1,0"
-              value={ardop.playback_device}
-              onChange={(e) => setArdop({ ...ardop, playback_device: e.target.value })}
-              onBlur={() => persistArdop(ardop)}
-            />
-          </label>
-          <label className="tux-settings-field">
-            <span className="tux-settings-field-label">PTT serial path (optional — leave blank for VOX)</span>
-            <input
-              type="text"
-              className="tux-settings-host-input"
-              placeholder="/dev/ttyUSB0"
-              value={ardop.ptt_serial_path ?? ''}
-              onChange={(e) =>
-                setArdop({
-                  ...ardop,
-                  ptt_serial_path: e.target.value === '' ? null : e.target.value,
-                })
-              }
-              onBlur={() => persistArdop(ardop)}
-            />
-          </label>
-          <label className="tux-settings-field">
-            <span className="tux-settings-field-label">Cmd port</span>
-            <input
-              type="number"
-              className="tux-settings-host-input"
-              value={ardop.cmd_port}
-              onChange={(e) =>
-                setArdop({
-                  ...ardop,
-                  cmd_port: parseInt(e.target.value, 10) || 8515,
-                })
-              }
-              onBlur={() => persistArdop(ardop)}
-            />
-          </label>
-          {/* tuxlink-j0ij: ARQ bandwidth selector. Backend (modem_commands.rs)
-              validates the value again before sending ARQBW <hz> FORCED at
-              init time — the dropdown is the primary user-facing constraint,
-              the backend is defense in depth against hand-edited config. */}
-          <label className="tux-settings-field">
-            <span className="tux-settings-field-label">ARQ bandwidth</span>
-            <select
-              className="tux-settings-host-input"
-              value={ardop.bandwidth_hz ?? ''}
-              onChange={(e) => {
-                const v = e.target.value === '' ? null : parseInt(e.target.value, 10);
-                setArdop({ ...ardop, bandwidth_hz: v });
-              }}
-              onBlur={() => persistArdop(ardop)}
-            >
-              {BANDWIDTH_OPTIONS.map((o) => (
-                <option key={o.value ?? 'auto'} value={o.value ?? ''}>
-                  {o.label}
-                </option>
-              ))}
-            </select>
-          </label>
         </fieldset>
       </div>
     </div>
