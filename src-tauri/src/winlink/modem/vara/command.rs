@@ -151,7 +151,9 @@ pub enum InboundCommand {
     Pending,
     /// `CANCELPENDING` — pending connection request canceled.
     CancelPending,
-    /// `LINK REGISTERED` — registration with the link-layer succeeded.
+    /// `LINK REGISTERED` — link-layer registration succeeded (distinct
+    /// from the bare `REGISTERED` event below, which signals the
+    /// operator's callsign is registered with the VARA license server).
     LinkRegistered,
     /// `IAMALIVE` — keep-alive ping from the modem.
     IAmAlive,
@@ -162,6 +164,19 @@ pub enum InboundCommand {
     WrongCallsign,
     /// `OFFLINE` — modem reports it's offline.
     Offline,
+    /// `BUSY ON` / `BUSY OFF` — VARA's channel-busy detector reports
+    /// whether RF energy is currently above its busy threshold. Useful
+    /// input for adaptive-scheduling consumers (e.g. holding TX until
+    /// the channel clears).
+    BusyDetected(bool),
+    /// `OK` — VARA's acknowledgement of a successfully-parsed outbound
+    /// command (echoes after `MYCALL`, `BW`, `LISTEN`, etc.).
+    CommandAck,
+    /// `REGISTERED` — operator's callsign is registered with the VARA
+    /// license server (i.e. running registered, not in demo mode).
+    /// Distinct from [`InboundCommand::LinkRegistered`], which signals
+    /// link-layer registration.
+    Registered,
     /// Unrecognized command, captured verbatim for forensics.
     Unknown(String),
 }
@@ -201,6 +216,24 @@ impl InboundCommand {
             "CANCELPENDING" => Self::CancelPending,
             "IAMALIVE" => Self::IAmAlive,
             "OFFLINE" => Self::Offline,
+            "OK" => Self::CommandAck,
+            "REGISTERED" => Self::Registered,
+            "BUSY" => match rest {
+                Some(arg) if arg.eq_ignore_ascii_case("ON") => Self::BusyDetected(true),
+                Some(arg) if arg.eq_ignore_ascii_case("OFF") => Self::BusyDetected(false),
+                Some(other) => {
+                    return Err(CommandParseError::Malformed {
+                        cmd: "BUSY".into(),
+                        detail: format!("expected ON or OFF, got {other:?}"),
+                    });
+                }
+                None => {
+                    return Err(CommandParseError::Malformed {
+                        cmd: "BUSY".into(),
+                        detail: "missing ON/OFF".into(),
+                    });
+                }
+            },
             "PTT" => match rest {
                 Some("ON") | Some("on") => Self::Ptt(true),
                 Some("OFF") | Some("off") => Self::Ptt(false),
@@ -365,6 +398,48 @@ mod tests {
         assert_eq!(
             InboundCommand::parse("SOMETHING NOVEL").unwrap(),
             InboundCommand::Unknown("SOMETHING NOVEL".into())
+        );
+    }
+
+    #[test]
+    fn inbound_busy_on_off() {
+        assert_eq!(
+            InboundCommand::parse("BUSY ON").unwrap(),
+            InboundCommand::BusyDetected(true)
+        );
+        assert_eq!(
+            InboundCommand::parse("BUSY OFF").unwrap(),
+            InboundCommand::BusyDetected(false)
+        );
+    }
+
+    #[test]
+    fn inbound_busy_malformed_rejected() {
+        let err = InboundCommand::parse("BUSY MAYBE").unwrap_err();
+        assert!(matches!(err, CommandParseError::Malformed { .. }));
+    }
+
+    #[test]
+    fn inbound_ok_ack() {
+        assert_eq!(InboundCommand::parse("OK").unwrap(), InboundCommand::CommandAck);
+    }
+
+    #[test]
+    fn inbound_bare_registered() {
+        assert_eq!(
+            InboundCommand::parse("REGISTERED").unwrap(),
+            InboundCommand::Registered
+        );
+    }
+
+    #[test]
+    fn inbound_link_registered_distinct_from_bare_registered() {
+        // The bare REGISTERED event (operator's callsign registered with the
+        // VARA license server) is distinct from LINK REGISTERED (link-layer
+        // registration). Keep them as separate variants.
+        assert_ne!(
+            InboundCommand::parse("REGISTERED").unwrap(),
+            InboundCommand::parse("LINK REGISTERED").unwrap()
         );
     }
 
