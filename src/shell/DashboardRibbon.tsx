@@ -109,8 +109,15 @@ export function DashboardRibbon({ data, onConnect, connecting, onAbort, packet, 
               value={ssid ?? 0}
               onChange={(e) => onSsidChange(Number(e.target.value))}
             >
+              {/* Bare integer (no leading dash) — operator smoke 2026-05-31.
+                  The callsign already renders as `<base>-<ssid>` (e.g. W7CPZ-7)
+                  via renderEffectiveCall above; prefixing the option with `-`
+                  duplicated the dash visually (`W7CPZ-7  -7`). PacketRadioPanel's
+                  SSID select keeps the `-N` form because there it sits in a
+                  labeled SSID row where the leading dash is read as a value
+                  hint, not as a duplicate of an adjacent callsign suffix. */}
               {ssidOptions().map((n) => (
-                <option key={n} value={n}>{`-${n}`}</option>
+                <option key={n} value={n}>{n.toString()}</option>
               ))}
             </select>
           )}

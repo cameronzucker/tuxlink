@@ -161,6 +161,26 @@ describe('DashboardRibbon — SSID propagation + inline edit', () => {
     );
   });
 
+  it('option text is the bare integer (no leading dash) so it does not duplicate the callsign suffix', () => {
+    // Regression — operator smoke 2026-05-31. Previously the ribbon's SSID
+    // options rendered as `-0` / `-1` / `-7` etc., which read as a duplicate
+    // dash next to the callsign chip (e.g. `W7CPZ-7  -7`). Adjacent to the
+    // already-suffixed callsign, the leading dash on the option label was
+    // visually doubled. Fix: render the bare integer here; the
+    // PacketRadioPanel's labeled SSID row keeps the `-N` form (no callsign
+    // adjacency there).
+    render(<DashboardRibbon data={makeData({ callsign: 'N7CPZ' })} ssid={0} onSsidChange={() => {}} />);
+    const sel = screen.getByTestId('ribbon-ssid-select') as HTMLSelectElement;
+    const labels = Array.from(sel.options).map((o) => o.textContent);
+    expect(labels).toEqual(
+      ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12', '13', '14', '15'],
+    );
+    // Defensive: no option label starts with a dash.
+    for (const label of labels) {
+      expect(label?.startsWith('-')).toBe(false);
+    }
+  });
+
   it('fires onSsidChange when the operator selects a new SSID', () => {
     const onSsidChange = vi.fn();
     render(<DashboardRibbon data={makeData({ callsign: 'N7CPZ' })} ssid={0} onSsidChange={onSsidChange} />);
