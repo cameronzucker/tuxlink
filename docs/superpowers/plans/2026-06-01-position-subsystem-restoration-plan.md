@@ -710,7 +710,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 
 **Context:** Per spec §3.3, both commands MUST hold the arbiter's `inner` mutex across the full critical section (read config → write config → mutate arbiter). The current implementation drops the mutex between `read_config` and `arbiter.set_manual` / `arbiter.use_gps`, leaving TOCTOU windows.
 
-- [ ] **Step 1: Write the failing concurrency test.**
+- [x] **Step 1: Write the failing concurrency test.**
 
 In `src-tauri/src/ui_commands.rs`'s `mod tests`, ADD:
 
@@ -752,7 +752,7 @@ In `src-tauri/src/ui_commands.rs`'s `mod tests`, ADD:
     }
 ```
 
-- [ ] **Step 2: Run the test to verify it fails.**
+- [x] **Step 2: Run the test to verify it fails.**
 
 ```bash
 cargo test --manifest-path src-tauri/Cargo.toml --lib \
@@ -761,7 +761,9 @@ cargo test --manifest-path src-tauri/Cargo.toml --lib \
 
 Expected: FAIL (with flakiness) — the arbiter source and the on-disk source may diverge under contention.
 
-- [ ] **Step 3: Add a per-arbiter critical-section method.**
+NOTE (plover-willow-basalt, T6 execution): the test as written did NOT reliably fail pre-fix on this hardware (30/30 trials passed). The race exists per spec analysis, but the entire impl-fn body is synchronous code with no cooperative yield between `write_config_atomic` and the arbiter mutation; the race window is OS-preemption-only and rarely observed in a unit test. The test was strengthened with a tokio Barrier + 20 iterations × 100 tasks to maximize contention; still 30/30 passed pre-fix. Treat the test primarily as a regression net + poisoned-mutex sentinel; the spec invariant motivates the fix independently.
+
+- [x] **Step 3: Add a per-arbiter critical-section method.**
 
 In `src-tauri/src/position/arbiter.rs`, ADD a `with_inner` helper that holds the mutex for the full transaction:
 
@@ -811,7 +813,7 @@ pub(crate) async fn config_set_grid_impl(
 
 Apply the same pattern to `position_set_source_impl`. The arbiter's existing `set_manual` and `use_gps` methods still exist but become callers of the internal mutation; the commands bypass them and mutate `Inner` directly inside `with_inner`.
 
-- [ ] **Step 4: Run the test to verify it passes.**
+- [x] **Step 4: Run the test to verify it passes.**
 
 ```bash
 cargo test --manifest-path src-tauri/Cargo.toml --lib \
@@ -820,7 +822,7 @@ cargo test --manifest-path src-tauri/Cargo.toml --lib \
 
 Expected: PASS.
 
-- [ ] **Step 5: Run the full cargo --lib.**
+- [x] **Step 5: Run the full cargo --lib.**
 
 ```bash
 cargo test --manifest-path src-tauri/Cargo.toml --lib 2>&1 | tail -5
@@ -828,7 +830,7 @@ cargo test --manifest-path src-tauri/Cargo.toml --lib 2>&1 | tail -5
 
 Expected: all passing.
 
-- [ ] **Step 6: Commit.**
+- [x] **Step 6: Commit.**
 
 ```bash
 git add src-tauri/src/position/arbiter.rs src-tauri/src/ui_commands.rs
