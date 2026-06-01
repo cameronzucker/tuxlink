@@ -27,17 +27,20 @@ pub enum DialerLoginOutcome {
 pub enum DialerLoginError {
     #[error("io error during login: {0}")]
     Io(#[from] io::Error),
-    #[error("peer closed connection before CALLSIGN prompt")]
+    #[error("peer closed connection before Callsign prompt")]
     EofBeforeCallsignPrompt,
-    #[error("peer asked for password but none was configured for this peer")]
-    PasswordPromptedButNotConfigured,
     #[error("peer sent unexpected line during login: {line:?}")]
     UnexpectedLine { line: String },
 }
 
-/// Read one line terminated by `\r`, `\n`, or `\r\n`. Returns the bytes
-/// INCLUDING the terminator(s) — for `\r\n`, both are consumed and included.
-/// Returns `None` on EOF before any byte was read.
+/// Read one line terminated by `\r` OR `\n`. Returns the bytes including the
+/// terminator. Returns `None` on EOF before any byte was read.
+///
+/// Does NOT peek across `\r\n` pairs — that would require `BufRead::fill_buf`
+/// which BLOCKS a TCP socket waiting for the next byte. WLE's wire protocol
+/// uses bare `\r`, so paired `\r\n` is only a concern for hypothetical
+/// non-WLE peers; the next `read_line_with_eol` call will yield a single-byte
+/// `\n` line which the caller treats as an empty line and skips.
 fn read_line_with_eol<R: BufRead>(reader: &mut R) -> io::Result<Option<Vec<u8>>> {
     let mut buf = Vec::new();
     loop {
@@ -48,17 +51,7 @@ fn read_line_with_eol<R: BufRead>(reader: &mut R) -> io::Result<Option<Vec<u8>>>
             }
             Ok(_) => {
                 buf.push(byte[0]);
-                if byte[0] == b'\n' {
-                    return Ok(Some(buf));
-                }
-                if byte[0] == b'\r' {
-                    // Peek for a paired \n — consume if present, leave alone if not.
-                    // BufRead::fill_buf is the non-consuming peek primitive.
-                    let peek = reader.fill_buf()?;
-                    if peek.first() == Some(&b'\n') {
-                        buf.push(b'\n');
-                        reader.consume(1);
-                    }
+                if byte[0] == b'\r' || byte[0] == b'\n' {
                     return Ok(Some(buf));
                 }
             }
@@ -66,6 +59,29 @@ fn read_line_with_eol<R: BufRead>(reader: &mut R) -> io::Result<Option<Vec<u8>>>
         }
     }
 }
+
+/// Read a non-empty trimmed line from `reader`. Skips lines whose trimmed
+/// content is empty (e.g., a stranded `\n` left over from a `\r\n` previous
+/// line, or a peer that sends a blank line as padding).
+fn read_non_empty_line<R: BufRead>(reader: &mut R) -> io::Result<Option<(Vec<u8>, String)>> {
+    loop {
+        let raw = match read_line_with_eol(reader)? {
+            Some(l) => l,
+            None => return Ok(None),
+        };
+        let trimmed = trimmed_str(&raw);
+        if !trimmed.is_empty() {
+            return Ok(Some((raw, trimmed)));
+        }
+        // Empty trimmed line — likely a stranded \n. Loop and try again.
+    }
+}
+
+/// Default password to send when a peer prompts but the operator has not
+/// configured one. Matches WLE-as-dialer behavior (`TelnetP2PSession.cs:1341`).
+/// WLE-as-listener with empty `strStationPassword` accepts any incoming
+/// password including this default, so this works against unconfigured peers.
+const DEFAULT_PEER_PASSWORD: &str = "CMSTelnet";
 
 fn trimmed_str(line: &[u8]) -> String {
     String::from_utf8_lossy(line).trim().to_string()
@@ -84,9 +100,10 @@ pub fn dialer_login<R: BufRead, W: Write>(
     our_callsign: &str,
     password: Option<&str>,
 ) -> Result<DialerLoginOutcome, DialerLoginError> {
-    // Phase 1: wait for the CALLSIGN: prompt.
-    let line = read_line_with_eol(reader)?.ok_or(DialerLoginError::EofBeforeCallsignPrompt)?;
-    let trimmed = trimmed_str(&line);
+    // Phase 1: wait for the Callsign: prompt (WLE sends "Callsign :\r"; this is
+    // case-insensitive to tolerate variants).
+    let (_raw, trimmed) = read_non_empty_line(reader)?
+        .ok_or(DialerLoginError::EofBeforeCallsignPrompt)?;
     if !trimmed.eq_ignore_ascii_case("CALLSIGN :") && !trimmed.eq_ignore_ascii_case("CALLSIGN:") {
         return Err(DialerLoginError::UnexpectedLine { line: trimmed });
     }
@@ -96,24 +113,26 @@ pub fn dialer_login<R: BufRead, W: Write>(
     writer.flush()?;
 
     // Phase 2: read the next line. Either Password: prompt or B2F handshake.
-    let next = match read_line_with_eol(reader)? {
-        Some(l) => l,
+    let (next, next_trimmed) = match read_non_empty_line(reader)? {
+        Some(pair) => pair,
         None => return Ok(DialerLoginOutcome::Done), // Peer closed; no B2F coming.
     };
-    let next_trimmed = trimmed_str(&next);
 
     if next_trimmed.eq_ignore_ascii_case("PASSWORD :")
         || next_trimmed.eq_ignore_ascii_case("PASSWORD:")
     {
-        // Password prompt. We need a configured password.
-        let pw = password.ok_or(DialerLoginError::PasswordPromptedButNotConfigured)?;
+        // Password prompt. Send the configured password, or "CMSTelnet" as
+        // the WLE-compat default (WLE-as-listener with empty station password
+        // accepts anything; WLE-as-dialer sends "CMSTelnet" when its
+        // favorites entry has no remote password — see TelnetP2PSession.cs:1341).
+        let pw = password.unwrap_or(DEFAULT_PEER_PASSWORD);
         write!(writer, "{}\r", pw)?;
         writer.flush()?;
         // After the password exchange the peer immediately starts the B2F
         // handshake; read and push back the first line so the session driver
         // sees it in its reader (same pattern as the no-password case).
-        return match read_line_with_eol(reader)? {
-            Some(b2f_line) => Ok(DialerLoginOutcome::DoneWithPushback { pushback: b2f_line }),
+        return match read_non_empty_line(reader)? {
+            Some((b2f_line, _)) => Ok(DialerLoginOutcome::DoneWithPushback { pushback: b2f_line }),
             None => Ok(DialerLoginOutcome::Done),
         };
     }
@@ -164,29 +183,67 @@ mod tests {
     }
 
     #[test]
-    fn errors_if_password_prompted_but_none_provided() {
-        let peer = b"CALLSIGN :\rPassword :\r";
+    fn sends_cmstelnet_default_password_when_none_configured() {
+        // WLE always prompts for password even when its station-password is
+        // empty (and accepts anything in that case). WLE-as-dialer sends
+        // "CMSTelnet" as its default. Match that for parity + interop.
+        let peer = b"CALLSIGN :\rPassword :\r[RMS-EXPRESS-1.7.31.0-B2FHM$]\r";
         let (outcome, sent) = run(peer, None);
-        assert_eq!(sent, b"N0CALL\r".to_vec());
+        assert_eq!(sent, b"N0CALL\rCMSTelnet\r".to_vec());
         assert!(matches!(
             outcome,
-            Err(DialerLoginError::PasswordPromptedButNotConfigured)
+            Ok(DialerLoginOutcome::DoneWithPushback { .. })
         ));
     }
 
     #[test]
-    fn tolerates_crlf_line_endings_in_both_callsign_prompt_and_b2f_opener() {
-        // WLE on Windows sends \r\n. Both terminators must be consumed as one
-        // unit so the next read sees the B2F handshake start, not a stranded \n.
+    fn tolerates_lf_alone_terminator_between_prompts() {
+        // After the Task 2 CRLF "fix" introduced a fill_buf deadlock on real
+        // sockets (the peek blocked forever waiting for bytes the peer would
+        // not send until WE sent our callsign), the loop reverted to stopping
+        // on either \r or \n. CRLF tolerance is now provided by skipping empty
+        // trimmed lines (read_non_empty_line). This test pins that the stranded
+        // \n between two \r-terminated lines is correctly skipped.
         let peer = b"CALLSIGN :\r\n[RMS-EXPRESS-1.7.31.0-B2FHM$]\r\n";
         let (outcome, sent) = run(peer, None);
         assert_eq!(sent, b"N0CALL\r".to_vec());
         match outcome {
             Ok(DialerLoginOutcome::DoneWithPushback { pushback }) => {
-                // Pushback must be the B2F line including its \r\n, NOT a stranded \n.
-                assert_eq!(pushback, b"[RMS-EXPRESS-1.7.31.0-B2FHM$]\r\n".to_vec());
+                // The trimmed pushback must be the B2F line.
+                assert_eq!(trimmed_str(&pushback), "[RMS-EXPRESS-1.7.31.0-B2FHM$]");
             }
             other => panic!("expected DoneWithPushback with B2F line, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn lowercase_callsign_prompt_from_wle_is_accepted() {
+        // WLE actually sends "Callsign :\r" (capital C, rest lowercase) — see
+        // TelnetP2PSession.cs:2371. The case-insensitive match handles it.
+        let peer = b"Callsign :\r[RMS-EXPRESS-1.7.31.0-B2FHM$]\r";
+        let (outcome, sent) = run(peer, None);
+        assert_eq!(sent, b"N0CALL\r".to_vec());
+        assert!(matches!(
+            outcome,
+            Ok(DialerLoginOutcome::DoneWithPushback { .. })
+        ));
+    }
+
+    #[test]
+    fn bare_cr_terminator_does_not_block_peeking_for_lf() {
+        // Regression: the prior fill_buf peek for paired \n would block a TCP
+        // socket forever when the peer sent bare-\r line endings (which WLE
+        // does — every DataToSend call uses "\r"). read_line_with_eol must
+        // return immediately on \r without attempting to peek.
+        let peer = b"CALLSIGN :\r[RMS-EXPRESS-1.7.31.0-B2FHM$]\r";
+        let (outcome, _) = run(peer, None);
+        match outcome {
+            Ok(DialerLoginOutcome::DoneWithPushback { pushback }) => {
+                // Pushback must be the B2F line WITHOUT a stranded leading byte
+                // from the previous read's terminator.
+                assert_eq!(pushback, b"[RMS-EXPRESS-1.7.31.0-B2FHM$]\r".to_vec());
+            }
+            other => panic!("expected DoneWithPushback, got {:?}", other),
         }
     }
 
