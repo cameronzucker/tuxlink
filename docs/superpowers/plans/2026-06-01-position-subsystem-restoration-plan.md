@@ -1410,7 +1410,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 
 **Context:** Per spec §2.1 + §4.2: render different DOM elements per `source` value.
 
-- [ ] **Step 1: Write the failing tests.**
+- [x] **Step 1: Write the failing tests.**
 
 In `src/shell/GridEdit.test.tsx`, ADD:
 
@@ -1459,7 +1459,7 @@ test('source chip <span> does not call onUseGps on click when source = Gps', () 
 });
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail.**
+- [x] **Step 2: Run the tests to verify they fail.**
 
 ```bash
 pnpm vitest run src/shell/GridEdit.test.tsx -t "source chip" 2>&1 | tail -20
@@ -1467,7 +1467,7 @@ pnpm vitest run src/shell/GridEdit.test.tsx -t "source chip" 2>&1 | tail -20
 
 Expected: FAIL — the current stub from Task 10 always renders a `<span>` regardless of source.
 
-- [ ] **Step 3: Render different elements per source.**
+- [x] **Step 3: Render different elements per source.**
 
 In `src/shell/GridEdit.tsx`, replace the source-chip render with a conditional element:
 
@@ -1495,7 +1495,7 @@ In `src/shell/GridEdit.tsx`, replace the source-chip render with a conditional e
 )}
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass.**
+- [x] **Step 4: Run the tests to verify they pass.**
 
 ```bash
 pnpm vitest run src/shell/GridEdit.test.tsx -t "source chip" 2>&1 | tail -10
@@ -1503,7 +1503,7 @@ pnpm vitest run src/shell/GridEdit.test.tsx -t "source chip" 2>&1 | tail -10
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit.**
+- [x] **Step 5: Commit.**
 
 ```bash
 git add src/shell/GridEdit.tsx src/shell/GridEdit.test.tsx
