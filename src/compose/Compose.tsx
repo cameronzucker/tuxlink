@@ -26,8 +26,8 @@
 //   - message_send Ok(_) → "Posted to Outbox" success (MID may be empty
 //     string for the transitional Pat path; deleted in P9)
 //   - From / Send-as / Select-Template / Cc → disabled (v0.1 tooltip)
-//   - Attachments list + drop zone (stubbed — DONE_WITH_CONCERNS; Pat
-//     multipart attachment wiring is out of reach for v0.0.1)
+//   - Attachments list + drop zone (stubbed — multipart attachment wiring
+//     is deferred until the form-aware send path lands)
 //
 // DOES NOT import from AppShell.tsx or listen for menu:file:new (Codex F7:
 // compose windows must not listen for that event — it would spawn nested
@@ -111,7 +111,7 @@ export function Compose({ draftId }: ComposeProps) {
     action: null,
   });
 
-  // Attachment stub (v0.0.1 DONE_WITH_CONCERNS: Pat multipart wiring deferred)
+  // Attachment stub (multipart UI wiring deferred — see drop-zone comment below)
   const [attachments, _setAttachments] = useState<string[]>([]);
 
   // Track the "clean" snapshot so we can detect unsaved changes on close
@@ -423,7 +423,7 @@ export function Compose({ draftId }: ComposeProps) {
   }, []);
 
   // ============================================================================
-  // Drag-and-drop attachment stub (v0.0.1 — presence only)
+  // Drag-and-drop attachment stub (UI presence only — wire-up deferred)
   // ============================================================================
 
   const handleDragOver = (e: React.DragEvent) => {
@@ -433,17 +433,17 @@ export function Compose({ draftId }: ComposeProps) {
 
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
-    // v0.0.1 DONE_WITH_CONCERNS: Pat multipart attachment API wiring is
-    // deferred. The drop zone accepts files and lists their names, but the
-    // send path does NOT include them (they are silently omitted with a
-    // visible warning in the UI rather than silently dropped without notice).
+    // Multipart attachment UI wiring is deferred. The drop zone accepts files
+    // and lists their names, but the send path does NOT include them (they
+    // are silently omitted with a visible warning in the UI rather than
+    // silently dropped without notice).
     const names = Array.from(e.dataTransfer.files).map((f) => f.name);
     if (names.length > 0) {
       // We intentionally do not call _setAttachments here — this is the stub
-      // that shows we accepted the event without wiring send. A real v0.1
+      // that shows we accepted the event without wiring send. A future
       // implementation populates attachments state and sends multipart form
       // data.
-      console.warn('Attachment UI stub: attach-send is not wired in v0.0.1', names);
+      console.warn('Attachment UI stub: attach-send is not wired yet', names);
     }
   };
 
@@ -485,7 +485,7 @@ export function Compose({ draftId }: ComposeProps) {
       {/* ------------------------------------------------------------------ */}
       <div className="compose-fields">
 
-        {/* From — disabled (single callsign, v0.1 multi-callsign) */}
+        {/* From — disabled (single callsign; multi-callsign deferred) */}
         <div className="compose-field-row">
           <label htmlFor="compose-from" className="compose-label">From</label>
           <input
@@ -496,14 +496,14 @@ export function Compose({ draftId }: ComposeProps) {
             readOnly
             disabled
             aria-describedby="compose-from-hint"
-            title="Callsign selection arrives in v0.1"
+            title="Multi-callsign selection not yet wired"
           />
           <span id="compose-from-hint" className="compose-hint">
-            v0.1 — multi-callsign support
+            Multi-callsign — coming soon
           </span>
         </div>
 
-        {/* Send as — disabled (v0.1) */}
+        {/* Send as — disabled (deferred) */}
         <div className="compose-field-row">
           <label htmlFor="compose-send-as" className="compose-label">Send as</label>
           <input
@@ -513,7 +513,7 @@ export function Compose({ draftId }: ComposeProps) {
             value="Winlink Message"
             readOnly
             disabled
-            title="Message type selection arrives in v0.1"
+            title="Message type selection not yet wired"
           />
         </div>
 
@@ -575,7 +575,7 @@ export function Compose({ draftId }: ComposeProps) {
             id="compose-template"
             className="compose-btn compose-btn--ghost compose-btn--disabled"
             disabled
-            title="Template selection arrives in v0.1"
+            title="Template selection not yet wired"
           >
             Select Template…
           </button>
@@ -627,7 +627,7 @@ export function Compose({ draftId }: ComposeProps) {
       </div>
 
       {/* ------------------------------------------------------------------ */}
-      {/* Attachments (v0.0.1 stub — drop zone only, send not wired)         */}
+      {/* Attachments (stub — drop zone only, send not wired yet)            */}
       {/* ------------------------------------------------------------------ */}
       <div
         className="compose-attachments"
@@ -637,7 +637,7 @@ export function Compose({ draftId }: ComposeProps) {
       >
         {attachments.length === 0 ? (
           <span className="compose-attachments__hint">
-            Drop files here to attach (v0.0.1: attachment send not wired)
+            Drop files here to attach (attachment send not yet wired)
           </span>
         ) : (
           <ul className="compose-attachments__list">
