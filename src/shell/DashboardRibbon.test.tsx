@@ -146,39 +146,54 @@ describe('DashboardRibbon — SSID propagation + inline edit', () => {
     expect(screen.queryByTestId('ribbon-ssid-select')).toBeNull();
   });
 
-  it('renders callsign with -SSID suffix when ssid is supplied', () => {
-    render(<DashboardRibbon data={makeData({ callsign: 'N7CPZ' })} ssid={7} onSsidChange={() => {}} />);
+  it('renders callsign with -SSID suffix when ssid is supplied (no edit handler)', () => {
+    // When onSsidChange is not provided we render the plain text span — the
+    // dropdown only mounts in editable mode. The displayed value is the
+    // effective call (base-SSID).
+    render(<DashboardRibbon data={makeData({ callsign: 'N7CPZ' })} ssid={7} />);
     expect(screen.getByTestId('ribbon-callsign')).toHaveTextContent('N7CPZ-7');
+    expect(screen.queryByTestId('ribbon-ssid-select')).toBeNull();
   });
 
-  it('exposes the SSID picker only when onSsidChange is provided', () => {
+  it('exposes a single click-to-edit callsign select when onSsidChange is provided', () => {
+    // Operator smoke 2026-05-31 round 3: the ribbon previously rendered a
+    // static callsign span PLUS a separate SSID select. Now there is ONE
+    // surface — the select itself displays the full callsign, and each
+    // option shows the full `<base>-<N>` form so picking an option directly
+    // mutates what reads in the ribbon.
     render(<DashboardRibbon data={makeData({ callsign: 'N7CPZ' })} ssid={3} onSsidChange={() => {}} />);
     const sel = screen.getByTestId('ribbon-ssid-select') as HTMLSelectElement;
     expect(sel.value).toBe('3');
-    // 0..15 inclusive
+    // 0..15 inclusive — wire values stay numeric.
     expect(Array.from(sel.options).map((o) => o.value)).toEqual(
       ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12', '13', '14', '15'],
     );
+    // The plain-text callsign span MUST NOT be rendered alongside the
+    // select — that would re-introduce the two-surface bug.
+    expect(screen.queryByText('N7CPZ-3', { selector: 'span.dash-callsign-text' })).toBeNull();
   });
 
-  it('option text is the bare integer (no leading dash) so it does not duplicate the callsign suffix', () => {
-    // Regression — operator smoke 2026-05-31. Previously the ribbon's SSID
-    // options rendered as `-0` / `-1` / `-7` etc., which read as a duplicate
-    // dash next to the callsign chip (e.g. `W7CPZ-7  -7`). Adjacent to the
-    // already-suffixed callsign, the leading dash on the option label was
-    // visually doubled. Fix: render the bare integer here; the
-    // PacketRadioPanel's labeled SSID row keeps the `-N` form (no callsign
-    // adjacency there).
-    render(<DashboardRibbon data={makeData({ callsign: 'N7CPZ' })} ssid={0} onSsidChange={() => {}} />);
+  it('each option label is the full callsign-SSID form (W7CPZ-0 .. W7CPZ-15)', () => {
+    // Operator smoke 2026-05-31 round 3: option labels were previously bare
+    // integers (`0`..`15`). With the select-IS-the-display refactor, each
+    // option must show the full call so the operator never sees two SSID
+    // surfaces. Verifies the label text + ordering.
+    render(<DashboardRibbon data={makeData({ callsign: 'W7CPZ' })} ssid={0} onSsidChange={() => {}} />);
     const sel = screen.getByTestId('ribbon-ssid-select') as HTMLSelectElement;
     const labels = Array.from(sel.options).map((o) => o.textContent);
-    expect(labels).toEqual(
-      ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12', '13', '14', '15'],
-    );
-    // Defensive: no option label starts with a dash.
-    for (const label of labels) {
-      expect(label?.startsWith('-')).toBe(false);
-    }
+    expect(labels).toEqual([
+      'W7CPZ-0', 'W7CPZ-1', 'W7CPZ-2', 'W7CPZ-3',
+      'W7CPZ-4', 'W7CPZ-5', 'W7CPZ-6', 'W7CPZ-7',
+      'W7CPZ-8', 'W7CPZ-9', 'W7CPZ-10', 'W7CPZ-11',
+      'W7CPZ-12', 'W7CPZ-13', 'W7CPZ-14', 'W7CPZ-15',
+    ]);
+  });
+
+  it('does not render the SSID select when callsign is empty (pre-wizard)', () => {
+    // Matches the prior "no dangling dash" behavior: don't render an empty
+    // or broken select before the operator has set a callsign.
+    render(<DashboardRibbon data={makeData({ callsign: '' })} ssid={0} onSsidChange={() => {}} />);
+    expect(screen.queryByTestId('ribbon-ssid-select')).toBeNull();
   });
 
   it('fires onSsidChange when the operator selects a new SSID', () => {

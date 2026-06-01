@@ -95,31 +95,35 @@ export function DashboardRibbon({ data, onConnect, connecting, onAbort, packet, 
       <div className="dash-item">
         <div className="dash-label">Callsign</div>
         <div className="dash-value callsign dash-callsign-row" data-testid="ribbon-callsign">
-          <span className="dash-callsign-text">{displayCall}</span>
-          {onSsidChange && (
-            // Inline SSID selector — operator smoke 2026-05-31. The dropdown
-            // reads tiny so it doesn't dominate the ribbon, but it's a real
-            // <select> (keyboard-friendly, screen-reader-friendly) rather
-            // than a bespoke chip menu. value=0..15.
+          {/* Operator smoke 2026-05-31 (round 3): the ribbon previously
+              rendered the effective callsign as a static `<span>` AND a
+              separate `<select>` whose options were bare SSID integers
+              (`0`..`15`). The operator saw TWO SSID surfaces — the `-N`
+              suffix in the displayed call PLUS the dropdown next to it.
+              Fix: collapse to ONE click-to-edit surface. The select IS
+              the display — each option renders the full `<base>-<N>`
+              call (e.g. `W7CPZ-7`) so picking an option directly mutates
+              what the operator sees in the ribbon.
+
+              Fallback (no callsign yet, pre-wizard / pre-identity): render
+              empty string, matching the prior "no dangling dash" behavior.
+              Fallback (no onSsidChange handler): plain text span — no
+              broken/empty select. */}
+          {callsign && onSsidChange ? (
             <select
-              className="dash-ssid-select"
+              className="dash-callsign-select"
               data-testid="ribbon-ssid-select"
-              aria-label="AX.25 SSID"
-              title="AX.25 SSID — same value used by the Packet panel"
+              aria-label="Callsign with AX.25 SSID"
+              title="Callsign · click to switch AX.25 SSID"
               value={ssid ?? 0}
               onChange={(e) => onSsidChange(Number(e.target.value))}
             >
-              {/* Bare integer (no leading dash) — operator smoke 2026-05-31.
-                  The callsign already renders as `<base>-<ssid>` (e.g. W7CPZ-7)
-                  via renderEffectiveCall above; prefixing the option with `-`
-                  duplicated the dash visually (`W7CPZ-7  -7`). PacketRadioPanel's
-                  SSID select keeps the `-N` form because there it sits in a
-                  labeled SSID row where the leading dash is read as a value
-                  hint, not as a duplicate of an adjacent callsign suffix. */}
               {ssidOptions().map((n) => (
-                <option key={n} value={n}>{n.toString()}</option>
+                <option key={n} value={n}>{`${callsign}-${n}`}</option>
               ))}
             </select>
+          ) : (
+            <span className="dash-callsign-text">{displayCall}</span>
           )}
         </div>
       </div>

@@ -147,32 +147,47 @@
   font-weight: 700;
   font-size: 14px;
 }
-/* Inline SSID picker (operator smoke 2026-05-31). Renders next to the
-   callsign text as a small chip-styled <select>. The visible value is the
-   -N suffix only; the surrounding callsign text supplies the base call. */
+/* Inline SSID picker (operator smoke 2026-05-31 round 3). The select IS
+   the displayed callsign — each option is the full `<base>-<N>` token.
+   Styled to read as the original .dash-value.callsign text (transparent
+   bg, no border) with a small chevron indicator that hints the chip is
+   interactive. The appearance reset is REQUIRED so the OS-default
+   light-grey select shell doesn't read as "disabled" against the dark
+   dashboard background — same pattern used by .radio-panel-input below
+   the radio panel for the baud / SSID / bandwidth selectors. */
 .layout-b .dashboard .dash-callsign-row {
   display: inline-flex;
   align-items: baseline;
   gap: 4px;
 }
-.layout-b .dashboard .dash-ssid-select {
+.layout-b .dashboard .dash-callsign-select {
   font-family: var(--mono);
-  font-size: 12px;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
   color: var(--accent-2);
   background: transparent;
-  border: 1px solid var(--border, #2a3140);
+  border: 1px solid transparent;
   border-radius: 3px;
-  padding: 0 4px;
+  padding: 0 16px 0 4px;
   cursor: pointer;
-  font-weight: 600;
   appearance: none;
   -webkit-appearance: none;
   -moz-appearance: none;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'><path fill='%2394a3b8' d='M0 0l5 6 5-6z'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 4px center;
 }
-.layout-b .dashboard .dash-ssid-select:hover,
-.layout-b .dashboard .dash-ssid-select:focus {
+.layout-b .dashboard .dash-callsign-select:hover,
+.layout-b .dashboard .dash-callsign-select:focus {
   border-color: var(--accent-2);
   outline: none;
+}
+/* Option list itself (when the OS popup opens) uses the system color, but
+   force a sane dark fallback so the dropdown isn't blinding white-on-white. */
+.layout-b .dashboard .dash-callsign-select option {
+  background: var(--surface, #0f1218);
+  color: var(--text, #cbd5e1);
 }
 .layout-b .dashboard .dash-value.good {
   color: var(--success);
