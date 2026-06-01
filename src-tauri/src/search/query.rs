@@ -100,7 +100,7 @@ pub fn compose(spec: &QuerySpec) -> (String, Vec<SqlParam>) {
     // entries to `params` which would break the `params.is_empty()` assertion
     // in the no-filter test case.
     let sql = format!(
-        "SELECT m.mid, m.folder, m.from_addr, m.to_addrs, m.cc_addrs, \
+        "SELECT m.mid, m.folder, m.subject, m.from_addr, m.to_addrs, m.cc_addrs, \
                 m.date_sent, m.date_received, m.unread, m.form_type, \
                 m.has_attachments, m.attachment_count, m.transport_used, \
                 m.direction, m.message_size, m.routing_path \

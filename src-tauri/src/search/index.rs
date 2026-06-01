@@ -4,7 +4,14 @@ use thiserror::Error;
 
 /// Schema version. Bumped when the table layout changes; `Index::open` detects
 /// drift and the caller can trigger a rebuild.
-pub const SCHEMA_VERSION: u32 = 1;
+///
+/// v1 → v2 (tuxlink-g4dj): add `subject` column to `messages_meta`. Subject
+/// already existed in `messages_fts` for free-text search; the column on
+/// `messages_meta` is what `hit_to_dto` reads at query time so result rows
+/// render with a non-empty subject. Existing v1 indices return SchemaDrift
+/// from `Index::open`; the operator runs `tauri_search_rebuild_index` to
+/// recreate from the mbox source.
+pub const SCHEMA_VERSION: u32 = 2;
 
 #[derive(Error, Debug)]
 pub enum IndexError {
@@ -65,6 +72,7 @@ impl Index {
             CREATE TABLE messages_meta (
                 mid              TEXT PRIMARY KEY,
                 folder           TEXT NOT NULL,
+                subject          TEXT NOT NULL DEFAULT '',
                 from_addr        TEXT,
                 to_addrs         TEXT,
                 cc_addrs         TEXT,
@@ -115,18 +123,19 @@ impl Index {
         )?;
         tx.execute(
             "INSERT INTO messages_meta (
-                mid, folder, from_addr, to_addrs, cc_addrs,
+                mid, folder, subject, from_addr, to_addrs, cc_addrs,
                 date_sent, date_received, unread,
                 form_type, has_attachments, attachment_count,
                 transport_used, direction, message_size, routing_path, indexed_at
              ) VALUES (
-                ?1, ?2, ?3, ?4, ?5,
-                ?6, ?7, ?8,
-                ?9, ?10, ?11,
-                ?12, ?13, ?14, ?15, strftime('%s','now')
+                ?1, ?2, ?3, ?4, ?5, ?6,
+                ?7, ?8, ?9,
+                ?10, ?11, ?12,
+                ?13, ?14, ?15, ?16, strftime('%s','now')
              )
              ON CONFLICT(mid) DO UPDATE SET
                 folder = excluded.folder,
+                subject = excluded.subject,
                 from_addr = excluded.from_addr,
                 to_addrs = excluded.to_addrs,
                 cc_addrs = excluded.cc_addrs,
@@ -142,7 +151,7 @@ impl Index {
                 routing_path = excluded.routing_path,
                 indexed_at = excluded.indexed_at",
             rusqlite::params![
-                row.mid, row.folder,
+                row.mid, row.folder, row.subject,
                 row.from_addr,
                 serde_json::to_string(&row.to_addrs).unwrap(),
                 serde_json::to_string(&row.cc_addrs).unwrap(),
@@ -204,6 +213,7 @@ use crate::search::types::QuerySpec;
 pub struct QueryHit {
     pub mid: String,
     pub folder: String,
+    pub subject: String,
     pub from_addr: Option<String>,
     pub to_addrs: Vec<String>,
     pub cc_addrs: Vec<String>,
@@ -238,21 +248,22 @@ impl Index {
                 Ok(QueryHit {
                     mid: row.get(0)?,
                     folder: row.get(1)?,
-                    from_addr: row.get(2)?,
-                    to_addrs: serde_json::from_str(&row.get::<_, String>(3)?)
+                    subject: row.get(2)?,
+                    from_addr: row.get(3)?,
+                    to_addrs: serde_json::from_str(&row.get::<_, String>(4)?)
                         .unwrap_or_default(),
-                    cc_addrs: serde_json::from_str(&row.get::<_, String>(4)?)
+                    cc_addrs: serde_json::from_str(&row.get::<_, String>(5)?)
                         .unwrap_or_default(),
-                    date_sent: row.get(5)?,
-                    date_received: row.get(6)?,
-                    unread: row.get::<_, i64>(7)? != 0,
-                    form_type: row.get(8)?,
-                    has_attachments: row.get::<_, i64>(9)? != 0,
-                    attachment_count: row.get::<_, i64>(10)? as u32,
-                    transport_used: row.get(11)?,
-                    direction: row.get(12)?,
-                    message_size: row.get::<_, i64>(13)? as u32,
-                    routing_path: row.get(14)?,
+                    date_sent: row.get(6)?,
+                    date_received: row.get(7)?,
+                    unread: row.get::<_, i64>(8)? != 0,
+                    form_type: row.get(9)?,
+                    has_attachments: row.get::<_, i64>(10)? != 0,
+                    attachment_count: row.get::<_, i64>(11)? as u32,
+                    transport_used: row.get(12)?,
+                    direction: row.get(13)?,
+                    message_size: row.get::<_, i64>(14)? as u32,
+                    routing_path: row.get(15)?,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -323,6 +334,21 @@ mod query_integration {
         let hits = idx.query(&spec).unwrap();
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].mid, "A");
+    }
+
+    /// tuxlink-g4dj: subject populated on the IndexRow round-trips through
+    /// messages_meta and surfaces in QueryHit.subject (not empty).
+    #[test]
+    fn subject_round_trips_through_messages_meta() {
+        let dir = tempdir().unwrap();
+        let idx = Index::open(dir.path().join("search.db")).unwrap();
+        idx.upsert(&r("MID-A", "inbox", "KX5DD", "DAMAGE REPORT - SHELBY", "body"))
+            .unwrap();
+        let hits = idx.query(&QuerySpec::default()).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].mid, "MID-A");
+        // Pre-g4dj this assertion failed (hit_to_dto would have surfaced "").
+        assert_eq!(hits[0].subject, "DAMAGE REPORT - SHELBY");
     }
 }
 
@@ -452,8 +478,8 @@ mod tests {
         }
         let err = Index::open(path).unwrap_err();
         match err {
-            IndexError::SchemaDrift { found: 0, current: 1 } => {}
-            other => panic!("expected SchemaDrift {{ found: 0, current: 1 }}, got {other:?}"),
+            IndexError::SchemaDrift { found: 0, current: 2 } => {}
+            other => panic!("expected SchemaDrift {{ found: 0, current: 2 }}, got {other:?}"),
         }
     }
 }

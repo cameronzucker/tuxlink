@@ -278,9 +278,10 @@ pub fn tauri_search_rebuild_index(
 fn hit_to_dto(h: crate::search::index::QueryHit) -> MessageMetaDto {
     MessageMetaDto {
         id: h.mid,
-        // subject not stored in messages_meta in v0.1 (plan gap, see bd issue);
-        // search results render with empty subject until backfilled.
-        subject: String::new(),
+        // subject is stored in messages_meta as of SCHEMA_VERSION=2
+        // (tuxlink-g4dj). Pre-v2 indices fail Index::open with SchemaDrift
+        // and the operator runs tauri_search_rebuild_index to recreate.
+        subject: h.subject,
         from: h.from_addr.unwrap_or_default(),
         to: h.to_addrs,
         date: unix_to_rfc3339(h.date_received.or(h.date_sent).unwrap_or(0)),
