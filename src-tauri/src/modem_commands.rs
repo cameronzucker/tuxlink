@@ -392,14 +392,22 @@ pub(crate) fn build_ardop_extra_args(ardop_ui: &ArdopUiConfig) -> Vec<String> {
         }
     }
 
-    // tuxlink-60wh: spawn ardopcf with its built-in WebGUI on the conventional
-    // port (cmd_port - 1). Operator opens it via the dock's "Open WebGUI"
-    // button which targets `http://localhost:<webgui_port>/` — Spectrum,
-    // Waterfall, audio level meters, TX/RX indicators, test-tone trigger.
-    // Guard: cmd_port must be >= 2 so the derived webgui_port is a valid
-    // bindable TCP port (>= 1). The default cmd_port is 8515 → 8514.
-    if ardop_ui.cmd_port >= 2 {
-        let webgui_port = ardop_ui.cmd_port - 1;
+    // tuxlink-60wh: spawn ardopcf with its built-in WebGUI on the resolved
+    // port. Operator opens it via the radio panel's "Open WebGUI" button,
+    // which targets `http://localhost:<webgui_port>/` — Spectrum, Waterfall,
+    // audio level meters, TX/RX indicators, test-tone trigger.
+    //
+    // The port comes from `resolved_webgui_port()` so the spawn flag and
+    // the frontend's URL computation read from the SAME source. Operator
+    // smoke 2026-05-31 round 3 — "Open WebGUI opens but connection refused"
+    // — could fall on the divergence between this site (the `-G` we pass
+    // to ardopcf) and the frontend's port derivation. Routing both through
+    // `resolved_webgui_port()` rules that class of bug out by construction.
+    //
+    // None means "no valid WebGUI port can be derived" (cmd_port < 2 and
+    // no override) — omit the `-G` flag, ardopcf runs without a WebGUI.
+    // The frontend's button surfaces a clear error in that case.
+    if let Some(webgui_port) = ardop_ui.resolved_webgui_port() {
         extra_args.push("-G".into());
         extra_args.push(webgui_port.to_string());
     }
@@ -728,6 +736,7 @@ mod tests {
             ptt_serial_path: None,
             cmd_port: 8515,
             bandwidth_hz: None,
+            webgui_port: None,
         };
         config_set_ardop(initial.clone()).expect("config_set_ardop must succeed");
         let read = config_get_ardop();
@@ -832,6 +841,7 @@ mod tests {
             ptt_serial_path: None,
             cmd_port: 8515,
             bandwidth_hz: None,
+            webgui_port: None,
         }
     }
 
@@ -1428,6 +1438,7 @@ mod tests {
             ptt_serial_path: None,
             cmd_port: 8515,
             bandwidth_hz: None,
+            webgui_port: None,
         };
         let args = build_ardop_extra_args(&cfg);
         assert_eq!(
@@ -1454,6 +1465,7 @@ mod tests {
             ptt_serial_path: None,
             cmd_port: 9001,
             bandwidth_hz: None,
+            webgui_port: None,
         };
         let args = build_ardop_extra_args(&cfg);
         assert!(
@@ -1475,6 +1487,7 @@ mod tests {
                 ptt_serial_path: None,
                 cmd_port: low_port,
                 bandwidth_hz: None,
+                webgui_port: None,
             };
             let args = build_ardop_extra_args(&cfg);
             assert!(
@@ -1496,6 +1509,7 @@ mod tests {
             ptt_serial_path: Some("/dev/ttyUSB0".into()),
             cmd_port: 8515,
             bandwidth_hz: None,
+            webgui_port: None,
         };
         let args = build_ardop_extra_args(&cfg);
         assert_eq!(
@@ -1526,11 +1540,61 @@ mod tests {
             ptt_serial_path: Some("".into()),
             cmd_port: 8515,
             bandwidth_hz: None,
+            webgui_port: None,
         };
         let args = build_ardop_extra_args(&cfg);
         assert!(
             !args.iter().any(|a| a == "-p"),
             "empty PTT path must drop the -p flag; got: {args:?}"
+        );
+    }
+
+    // ── Operator smoke 2026-05-31 round 3: webgui_port override path ──────
+
+    #[test]
+    fn extra_args_honors_explicit_webgui_port_override() {
+        // Operator pins webgui_port=9080 (non-conventional ardopcf build).
+        // The spawn must emit `-G 9080` regardless of `cmd_port - 1`, so the
+        // frontend's `resolved_webgui_port` and this site agree by going
+        // through the same helper.
+        let cfg = ArdopUiConfig {
+            binary: "ardopcf".into(),
+            capture_device: "plughw:1,0".into(),
+            playback_device: "plughw:1,0".into(),
+            ptt_serial_path: None,
+            cmd_port: 8515,
+            bandwidth_hz: None,
+            webgui_port: Some(9080),
+        };
+        let args = build_ardop_extra_args(&cfg);
+        assert!(
+            args.windows(2).any(|w| w[0] == "-G" && w[1] == "9080"),
+            "explicit webgui_port override must produce `-G 9080`; got: {args:?}"
+        );
+        assert!(
+            !args.windows(2).any(|w| w[0] == "-G" && w[1] == "8514"),
+            "override must NOT fall back to cmd_port - 1 = 8514; got: {args:?}"
+        );
+    }
+
+    #[test]
+    fn extra_args_emits_g_with_override_even_when_cmd_port_too_low() {
+        // cmd_port=0 would normally suppress `-G` (derivation impossible),
+        // but an explicit override should still pin the port — the operator
+        // told us where the WebGUI is bound.
+        let cfg = ArdopUiConfig {
+            binary: "ardopcf".into(),
+            capture_device: "plughw:1,0".into(),
+            playback_device: "plughw:1,0".into(),
+            ptt_serial_path: None,
+            cmd_port: 0,
+            bandwidth_hz: None,
+            webgui_port: Some(8514),
+        };
+        let args = build_ardop_extra_args(&cfg);
+        assert!(
+            args.windows(2).any(|w| w[0] == "-G" && w[1] == "8514"),
+            "override must apply even with low cmd_port; got: {args:?}"
         );
     }
 

@@ -43,7 +43,8 @@ import { ArdopRadioPanel } from './ArdopRadioPanel';
 const defaultInvokeImpl = async (cmd: string) => {
   if (cmd === 'session_log_snapshot') return [];
   // Full ardop config so the Radio section can load capture/playback/ptt
-  // without choking on missing keys.
+  // without choking on missing keys. webgui_port=null exercises the
+  // "derive from cmd_port - 1" path (round 3 default).
   if (cmd === 'config_get_ardop') {
     return {
       binary: 'ardopcf',
@@ -52,6 +53,7 @@ const defaultInvokeImpl = async (cmd: string) => {
       ptt_serial_path: null,
       cmd_port: 8515,
       bandwidth_hz: null,
+      webgui_port: null,
     };
   }
   if (cmd === 'modem_mint_consent') return 'test-token';
@@ -216,6 +218,7 @@ describe('<ArdopRadioPanel>', () => {
           ptt_serial_path: null,
           cmd_port: 1,
           bandwidth_hz: null,
+          webgui_port: null,
         };
       }
       if (cmd === 'session_log_snapshot') return [];
@@ -235,6 +238,114 @@ describe('<ArdopRadioPanel>', () => {
       expect(screen.getByRole('alert')).toHaveTextContent(/cmd_port/);
     });
     expect(shellOpenMock).not.toHaveBeenCalled();
+  });
+
+  // Operator smoke 2026-05-31 round 3: "ARDOP Open WebGUI opens but
+  // localhost:8514 returns connection refused." Root-cause investigation
+  // showed `-G <cmd_port - 1>` IS passed to ardopcf — the most likely
+  // operator-observable cause is clicking Open WebGUI while ardopcf isn't
+  // running. Gate the button behind the stopped state so the operator
+  // can't request the URL before there's anything bound to it.
+  it('Open WebGUI button is disabled when ardopcf is stopped (round 3)', async () => {
+    // Default state from beforeEach is STOPPED.
+    render(<ArdopRadioPanel onClose={() => {}} />);
+    const btn = screen.getByTestId('ardop-open-webgui-btn') as HTMLButtonElement;
+    expect(btn.disabled).toBe(true);
+    // Title hint must tell the operator WHY: ardopcf must be running first.
+    expect(btn.title.toLowerCase()).toContain('start');
+  });
+
+  it('Open WebGUI uses the operator-pinned webgui_port override when set (round 3)', async () => {
+    // Operator pins webgui_port=9080 (non-conventional ardopcf build).
+    // The button MUST open the override port, not the cmd_port-1 default,
+    // so it matches what the spawn passed to `-G`.
+    const core = await import('@tauri-apps/api/core');
+    (core.invoke as ReturnType<typeof vi.fn>).mockImplementation(async (cmd: string) => {
+      if (cmd === 'config_get_ardop') {
+        return {
+          binary: 'ardopcf',
+          capture_device: 'plughw:1,0',
+          playback_device: 'plughw:1,0',
+          ptt_serial_path: null,
+          cmd_port: 8515,
+          bandwidth_hz: null,
+          webgui_port: 9080,
+        };
+      }
+      if (cmd === 'session_log_snapshot') return [];
+      return undefined;
+    });
+    mockUseModemStatus.mockReturnValue({ status: RUNNING, loading: false, error: null });
+    const shell = await import('@tauri-apps/plugin-shell');
+    const shellOpenMock = shell.open as ReturnType<typeof vi.fn>;
+    shellOpenMock.mockClear();
+    render(<ArdopRadioPanel onClose={() => {}} />);
+    fireEvent.click(screen.getByTestId('ardop-open-webgui-btn'));
+    await waitFor(() => {
+      expect(shellOpenMock).toHaveBeenCalledWith('http://localhost:9080/');
+    });
+  });
+
+  it('webgui_port input field persists override on blur (round 3)', async () => {
+    const core = await import('@tauri-apps/api/core');
+    const invokeMock = core.invoke as ReturnType<typeof vi.fn>;
+    render(<ArdopRadioPanel onClose={() => {}} />);
+    // Wait for initial load.
+    await waitFor(() => {
+      expect(screen.getByTestId('ardop-webgui-port-input')).toBeInTheDocument();
+    });
+    const input = screen.getByTestId('ardop-webgui-port-input') as HTMLInputElement;
+    // Default (None) renders as empty + a placeholder showing the derived port.
+    expect(input.value).toBe('');
+    expect(input.placeholder).toMatch(/auto/i);
+
+    fireEvent.change(input, { target: { value: '9080' } });
+    fireEvent.blur(input);
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith(
+        'config_set_ardop',
+        expect.objectContaining({
+          value: expect.objectContaining({ webgui_port: 9080 }),
+        }),
+      );
+    });
+  });
+
+  it('webgui_port empty input clears the override (round 3)', async () => {
+    const core = await import('@tauri-apps/api/core');
+    const invokeMock = core.invoke as ReturnType<typeof vi.fn>;
+    // Seed with an override so we can clear it.
+    invokeMock.mockImplementation(async (cmd: string) => {
+      if (cmd === 'config_get_ardop') {
+        return {
+          binary: 'ardopcf',
+          capture_device: 'plughw:1,0',
+          playback_device: 'plughw:1,0',
+          ptt_serial_path: null,
+          cmd_port: 8515,
+          bandwidth_hz: null,
+          webgui_port: 9080,
+        };
+      }
+      if (cmd === 'session_log_snapshot') return [];
+      return undefined;
+    });
+    render(<ArdopRadioPanel onClose={() => {}} />);
+    await waitFor(() => {
+      const input = screen.getByTestId('ardop-webgui-port-input') as HTMLInputElement;
+      expect(input.value).toBe('9080');
+    });
+    const input = screen.getByTestId('ardop-webgui-port-input') as HTMLInputElement;
+    fireEvent.change(input, { target: { value: '' } });
+    fireEvent.blur(input);
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith(
+        'config_set_ardop',
+        expect.objectContaining({
+          value: expect.objectContaining({ webgui_port: null }),
+        }),
+      );
+    });
   });
 
   it('close button fires onClose', () => {

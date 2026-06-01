@@ -194,6 +194,26 @@ interface ArdopFullConfig {
   ptt_serial_path: string | null;
   cmd_port: number;
   bandwidth_hz: number | null;
+  /** Optional WebGUI port pin. null → derive from `cmd_port - 1` (the
+   *  ardopcf convention). Set when an operator runs an ardopcf build
+   *  that binds the WebGUI somewhere non-standard; the spawn passes
+   *  `-G <webgui_port>` from the SAME source so the URL never drifts
+   *  from where ardopcf is actually listening (operator smoke
+   *  2026-05-31 round 3 — "Open WebGUI returns connection refused"). */
+  webgui_port: number | null;
+}
+
+/** Mirror of Rust's `ArdopUiConfig::resolved_webgui_port`. Single source
+ *  of truth for "where does the WebGUI bind?" — the spawn flag and the
+ *  Open-WebGUI button URL MUST agree, so both go through this helper. */
+function resolveWebguiPort(cfg: Pick<ArdopFullConfig, 'cmd_port' | 'webgui_port'>): number | null {
+  if (cfg.webgui_port !== null && cfg.webgui_port !== undefined) {
+    return cfg.webgui_port;
+  }
+  if (cfg.cmd_port >= 2) {
+    return cfg.cmd_port - 1;
+  }
+  return null;
 }
 
 export function ArdopRadioPanel({ onClose }: ArdopRadioPanelProps) {
@@ -211,6 +231,11 @@ export function ArdopRadioPanel({ onClose }: ArdopRadioPanelProps) {
   const [captureInput, setCaptureInput] = useState<string>('');
   const [playbackInput, setPlaybackInput] = useState<string>('');
   const [pttSerialInput, setPttSerialInput] = useState<string>('');
+  // WebGUI port override (operator smoke 2026-05-31 round 3). Stored as a
+  // string in the input so the operator can type freely; commits to the
+  // backend on blur after a non-empty numeric parse. Empty input → null
+  // (revert to "derive from cmd_port - 1" — the default).
+  const [webguiPortInput, setWebguiPortInput] = useState<string>('');
   const consent = useConsent();
   const [showConsent, setShowConsent] = useState(false);
   const [connecting, setConnecting] = useState(false);
@@ -241,6 +266,11 @@ export function ArdopRadioPanel({ onClose }: ArdopRadioPanelProps) {
         setCaptureInput(c.capture_device ?? '');
         setPlaybackInput(c.playback_device ?? '');
         setPttSerialInput(c.ptt_serial_path ?? '');
+        // Display the resolved port (override OR cmd_port-1) as a hint so
+        // the operator sees what URL the button will open. Empty → no
+        // override pinned yet, so the input shows the derived default as
+        // a placeholder rather than a value.
+        setWebguiPortInput(c.webgui_port !== null && c.webgui_port !== undefined ? String(c.webgui_port) : '');
       })
       .catch(() => {
         /* pre-wizard / config absent — keep null default */
@@ -274,6 +304,28 @@ export function ArdopRadioPanel({ onClose }: ArdopRadioPanelProps) {
     const trimmed = pttSerialInput.trim();
     // Empty string → null on the wire (means "use VOX").
     persistArdop({ ptt_serial_path: trimmed === '' ? null : trimmed });
+  };
+  const commitWebguiPort = () => {
+    const trimmed = webguiPortInput.trim();
+    if (trimmed === '') {
+      // Empty → clear override; backend reverts to "derive from cmd_port - 1".
+      persistArdop({ webgui_port: null });
+      return;
+    }
+    const n = Number(trimmed);
+    // Reject NaN, non-integer, and out-of-u16-range values. On reject, also
+    // resync the input to whatever's persisted so the operator's bad value
+    // doesn't linger in the field.
+    if (!Number.isInteger(n) || n < 1 || n > 65535) {
+      setWebguiPortInput(
+        ardopConfig?.webgui_port !== null && ardopConfig?.webgui_port !== undefined
+          ? String(ardopConfig.webgui_port)
+          : '',
+      );
+      setConnectError(`Invalid WebGUI port "${trimmed}" — must be 1..65535. Reverted.`);
+      return;
+    }
+    persistArdop({ webgui_port: n });
   };
 
   const onBandwidthChange = (e: ChangeEvent<HTMLSelectElement>) => {
@@ -366,26 +418,33 @@ export function ArdopRadioPanel({ onClose }: ArdopRadioPanelProps) {
   const onOpenWebGuiClick = async () => {
     setConnectError(null);
     try {
-      const ardop = await invoke<{ cmd_port: number }>('config_get_ardop');
-      // Guard mirrors backend's build_ardop_extra_args: cmd_port < 2
-      // yields an unbindable webgui_port. Surface that explicitly
-      // rather than open a dead URL.
-      if (ardop.cmd_port < 2) {
+      // Re-read the live config so the URL reflects any in-flight Settings
+      // change. Use the resolved-port helper (mirror of Rust's
+      // `ArdopUiConfig::resolved_webgui_port`) so this site agrees with the
+      // spawn's `-G` flag by construction. Operator smoke 2026-05-31 round 3
+      // — "Open WebGUI opens but connection refused" — was rooted in the
+      // possibility of those two sources drifting; routing both through the
+      // same helper rules that bug class out.
+      const ardop = await invoke<ArdopFullConfig>('config_get_ardop');
+      const webguiPort = resolveWebguiPort(ardop);
+      if (webguiPort === null) {
         setConnectError(
-          `Cannot open WebGUI: ARDOP cmd_port=${ardop.cmd_port} is too low (need >= 2)`,
+          `Cannot open WebGUI: cmd_port=${ardop.cmd_port} too low and no explicit webgui_port override set`,
         );
         return;
       }
-      const webguiPort = ardop.cmd_port - 1;
-      // Tauri's WebView does NOT implement `window.open` like a browser — that
-      // call silently no-ops in the runtime, which is why the smoke flagged
-      // this button as broken. The shell plugin's `open()` shells out to the
-      // OS's default URL handler (xdg-open on Linux) and actually launches the
-      // operator's system browser. Same plugin Step2Credentials uses for the
-      // Winlink Register link.
+      // The button is only rendered while ardopcf is running (`!isStopped`),
+      // so by the time we get here ardopcf SHOULD be bound to webguiPort.
+      // If the operator still gets "connection refused," the most likely
+      // causes are: (a) the ardopcf binary on PATH doesn't honor `-G`
+      // (older build), (b) ardopcf bound but crashed during init, or
+      // (c) the operator pinned `webgui_port` to a wrong value. Surface
+      // a useful error template covering those.
       await shellOpen(`http://localhost:${webguiPort}/`);
     } catch (e) {
-      setConnectError(`Failed to open WebGUI: ${e}`);
+      setConnectError(
+        `Failed to open WebGUI: ${e}. If the URL opens but reports "connection refused," ardopcf may not have bound the WebGUI — check that the binary on PATH supports the -G flag and that webgui_port matches its actual bind port.`,
+      );
     }
   };
 
@@ -505,6 +564,32 @@ export function ArdopRadioPanel({ onClose }: ArdopRadioPanelProps) {
               onBlur={commitPttSerial}
             />
           </label>
+          {/* WebGUI port — operator smoke 2026-05-31 round 3. Defaults to
+              `cmd_port - 1` (the ardopcf convention). Override when running
+              an ardopcf build that binds the WebGUI somewhere else. Empty
+              input clears the override. The spawn passes `-G <webgui_port>`
+              from the SAME source as this field so the "Open WebGUI" button
+              never drifts from where ardopcf is actually listening. */}
+          <label className="radio-panel-input-row">
+            <span>WebGUI</span>
+            <input
+              type="text"
+              inputMode="numeric"
+              className="radio-panel-input"
+              data-testid="ardop-webgui-port-input"
+              value={webguiPortInput}
+              spellCheck={false}
+              autoCapitalize="off"
+              autoCorrect="off"
+              placeholder={
+                ardopConfig
+                  ? `${Math.max(1, (ardopConfig.cmd_port || 8515) - 1)} (auto = cmd_port - 1)`
+                  : '8514 (auto = cmd_port - 1)'
+              }
+              onChange={(e) => setWebguiPortInput(e.target.value)}
+              onBlur={commitWebguiPort}
+            />
+          </label>
         </section>
       )}
 
@@ -601,7 +686,12 @@ Up     ${fmtUptime(status.uptimeSec)}`}
           className="radio-panel-btn"
           data-testid="ardop-open-webgui-btn"
           onClick={onOpenWebGuiClick}
-          title="Open ardopcf's built-in Spectrum/Waterfall view in browser"
+          disabled={isStopped}
+          title={
+            isStopped
+              ? 'Start ARDOP first — ardopcf must be running for its WebGUI to be reachable'
+              : "Open ardopcf's built-in Spectrum/Waterfall view in browser"
+          }
         >
           Open WebGUI
         </button>
