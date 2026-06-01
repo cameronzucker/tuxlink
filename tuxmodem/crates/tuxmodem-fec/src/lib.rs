@@ -31,6 +31,7 @@ pub mod crc;
 pub mod decode;
 pub mod encode;
 pub mod interleaver;
+pub mod llr;
 pub mod parity_matrix;
 pub mod puncture;
 pub mod stats;
