@@ -38,6 +38,7 @@ import { useConsent } from '../../modem/useConsent';
 import { ConsentModal } from '../../modem/ConsentModal';
 import type { ModemState, ModemStatus } from '../../modem/types';
 import type { ArdopFrameType } from '../charts/FrameRibbon';
+import './ArdopRadioPanel.css';
 
 export interface ArdopRadioPanelProps {
   onClose: () => void;

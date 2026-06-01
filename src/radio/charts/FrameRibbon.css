@@ -9,7 +9,8 @@
   display: flex;
   gap: 2px;
   align-items: stretch;
-  height: 22px;
+  /* Bumped from 22 px → 28 px so the 11-px frame-cell labels fit. */
+  height: 28px;
   margin-top: 8px;
   background: rgba(0, 0, 0, 0.18);
   border-radius: 3px;
@@ -20,9 +21,11 @@
   flex: 1;
   border-radius: 2px;
   font-family: ui-monospace, monospace;
-  font-size: 8px;
+  /* Operator smoke 2026-05-31: bumped from 8 px → 11 px so labels are
+     readable at panel width. */
+  font-size: 11px;
   text-align: center;
-  line-height: 18px;
+  line-height: 24px;
   background: rgba(255, 255, 255, 0.04);
   color: var(--text-faint, #94a3b8);
 }
@@ -36,22 +39,24 @@
 
 .frame-legend {
   display: flex;
-  gap: 8px;
-  font-size: 9px;
+  gap: 10px;
+  /* Bumped from 9 px → 11 px. */
+  font-size: 11px;
   color: var(--text-faint, #94a3b8);
-  margin-top: 4px;
+  margin-top: 6px;
   flex-wrap: wrap;
 }
 
 .frame-legend span {
   display: inline-flex;
   align-items: center;
-  gap: 3px;
+  gap: 4px;
 }
 
 .frame-legend i {
-  width: 8px;
-  height: 8px;
+  /* Bumped swatch from 8 × 8 px → 10 × 10 px to match the label scale. */
+  width: 10px;
+  height: 10px;
   border-radius: 2px;
   display: inline-block;
 }

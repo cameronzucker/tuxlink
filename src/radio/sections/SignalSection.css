@@ -4,11 +4,16 @@
  * S/N trend), full-width FrameRibbon below. Colors use the established
  * radio-panel green palette so the section reads as "all good" when
  * quality is high.
+ *
+ * Operator smoke 2026-05-31: type scale was 8-10 px in the labels +
+ * axis ticks — too small to read at a glance. Bumped to 11-12 px to
+ * match the P2-standardized 12-13 px radio-panel base. The Quality big
+ * number stays at 32 px (was 24 px) so it remains the at-a-glance read.
  */
 
 .signal-section .signal-top {
   display: grid;
-  grid-template-columns: 90px 1fr;
+  grid-template-columns: 104px 1fr;
   gap: 10px;
   align-items: center;
 }
@@ -17,62 +22,71 @@
   background: radial-gradient(circle at 50% 50%, rgba(34, 197, 94, 0.18), transparent 65%);
   border: 1px solid rgba(34, 197, 94, 0.30);
   border-radius: 6px;
-  padding: 6px 4px;
+  padding: 8px 4px;
   text-align: center;
 }
 
 .signal-section .qv {
   font-family: ui-monospace, monospace;
-  font-size: 24px;
+  /* Bumped from 24 px so the at-a-glance read is unambiguous. */
+  font-size: 32px;
   font-weight: 600;
   color: #4ade80;
   line-height: 1;
 }
 
 .signal-section .qk {
-  font-size: 8px;
+  /* Bumped from 8 px → 11 px (label legibility). */
+  font-size: 11px;
   color: var(--text-faint, #94a3b8);
   text-transform: uppercase;
   letter-spacing: 0.07em;
-  margin-top: 3px;
+  margin-top: 4px;
 }
 
 .signal-section .qs {
-  font-size: 9px;
+  /* Bumped from 9 px → 11 px. */
+  font-size: 11px;
   color: var(--text-faint, #94a3b8);
-  margin-top: 2px;
+  margin-top: 3px;
 }
 
 .signal-section .snr-trend .lab-row {
   display: flex;
   justify-content: space-between;
   align-items: baseline;
-  font-size: 10px;
+  /* Bumped from 10 px → 12 px for readability. */
+  font-size: 12px;
 }
 
 .signal-section .snr-trend .k {
   color: var(--text-faint, #94a3b8);
   text-transform: uppercase;
-  font-size: 9px;
+  /* Bumped from 9 px → 11 px. */
+  font-size: 11px;
   letter-spacing: 0.05em;
 }
 
 .signal-section .snr-trend .v {
   font-family: ui-monospace, monospace;
+  /* Bumped to 12 px (current S/N is operator-facing data). */
+  font-size: 12px;
   color: #4ade80;
 }
 
-/* Axis row below the Sparkline — small grey ticks ("−60s" / "now") flank
+/* Axis row below the Sparkline — grey ticks ("−60s" / "now") flank
  * the centered avg readout. */
 .signal-section .snr-trend .signal-axis {
-  margin-top: 2px;
+  margin-top: 4px;
 }
 
 .signal-section .snr-trend .signal-axis-tick {
-  font-size: 9px;
+  /* Bumped from 9 px → 11 px. */
+  font-size: 11px;
   opacity: 0.7;
 }
 
 .signal-section .snr-trend .signal-axis-avg {
-  font-size: 9px;
+  /* Bumped from 9 px → 11 px. */
+  font-size: 11px;
 }
