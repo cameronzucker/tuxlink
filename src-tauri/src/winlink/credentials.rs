@@ -170,3 +170,131 @@ pub fn read_password(callsign: &str) -> Result<String, KeyringError> {
     };
     read_password_with_factory(callsign, &real_factory)
 }
+
+// ──────────────────────────────────────────────────────────────
+// P2P peer password helpers
+// ──────────────────────────────────────────────────────────────
+//
+// Peer passwords use `SERVICE` ("tuxlink") as the keyring service, but a
+// `"p2p-peer:<CALLSIGN-UPPER>"` account string so they live in a distinct
+// namespace from the CMS-secure-login credentials (which use just the callsign
+// as the account).
+//
+// Spec: docs/design/2026-06-01-tcp-p2p-telnet-design.md §4.4
+// Plan: 2026-06-01-tcp-p2p-telnet-pr1-client-dial.md Task 1 (tuxlink-0pnb)
+
+/// Build the keyring "account" string for a P2P peer password.
+///
+/// Uppercases the callsign so case variants don't create duplicate entries.
+fn p2p_peer_account(callsign: &str) -> String {
+    format!("p2p-peer:{}", callsign.to_uppercase())
+}
+
+/// Read the password for a specific P2P peer from the keyring.
+///
+/// Returns `KeyringError::NoEntry { callsign }` if no entry exists.
+/// Uses `SERVICE` ("tuxlink") as the keyring service name.
+///
+/// Accepts an entry factory for dependency injection; production callers use
+/// `p2p_peer_password_read` which supplies the real `keyring::Entry` factory.
+pub fn p2p_peer_password_read_with_factory<F>(
+    callsign: &str,
+    factory: &F,
+) -> Result<String, KeyringError>
+where
+    F: Fn(&str, &str) -> Box<dyn EntryLike>,
+{
+    let account = p2p_peer_account(callsign);
+    let entry = factory(SERVICE, &account);
+    match entry.get_password() {
+        Ok(password) => Ok(password),
+        Err(keyring::Error::NoEntry) => Err(KeyringError::NoEntry {
+            callsign: callsign.to_string(),
+        }),
+        Err(other) => Err(KeyringError::Backend(format!("{other}"))),
+    }
+}
+
+/// Read the password for a specific P2P peer from the OS keyring.
+///
+/// # Errors
+///
+/// - `KeyringError::NoEntry` — no entry found for this peer callsign.
+/// - `KeyringError::Backend` — unexpected backend error.
+pub fn p2p_peer_password_read(callsign: &str) -> Result<String, KeyringError> {
+    let real_factory = |service: &str, account: &str| -> Box<dyn EntryLike> {
+        let entry = keyring::Entry::new(service, account)
+            .expect("keyring::Entry::new should not fail for valid service/account strings");
+        Box::new(RealEntry(entry))
+    };
+    p2p_peer_password_read_with_factory(callsign, &real_factory)
+}
+
+/// Write the password for a specific P2P peer to the keyring.
+///
+/// Overwrites any existing entry for this peer callsign.
+/// Accepts an entry factory for dependency injection.
+pub fn p2p_peer_password_write_with_factory<F>(
+    callsign: &str,
+    password: &str,
+    factory: &F,
+) -> Result<(), KeyringError>
+where
+    F: Fn(&str, &str) -> Box<dyn EntryLike>,
+{
+    let account = p2p_peer_account(callsign);
+    let entry = factory(SERVICE, &account);
+    entry
+        .set_password(password)
+        .map_err(|e| KeyringError::Backend(format!("{e}")))
+}
+
+/// Write the password for a specific P2P peer to the OS keyring.
+///
+/// # Errors
+///
+/// - `KeyringError::Backend` — unexpected backend error.
+pub fn p2p_peer_password_write(callsign: &str, password: &str) -> Result<(), KeyringError> {
+    let real_factory = |service: &str, account: &str| -> Box<dyn EntryLike> {
+        let entry = keyring::Entry::new(service, account)
+            .expect("keyring::Entry::new should not fail for valid service/account strings");
+        Box::new(RealEntry(entry))
+    };
+    p2p_peer_password_write_with_factory(callsign, password, &real_factory)
+}
+
+/// Delete the password for a specific P2P peer from the keyring.
+///
+/// Idempotent: returns `Ok(())` if no entry exists.
+/// Accepts an entry factory for dependency injection.
+pub fn p2p_peer_password_delete_with_factory<F>(
+    callsign: &str,
+    factory: &F,
+) -> Result<(), KeyringError>
+where
+    F: Fn(&str, &str) -> Box<dyn EntryLike>,
+{
+    let account = p2p_peer_account(callsign);
+    let entry = factory(SERVICE, &account);
+    match entry.delete_password() {
+        Ok(()) => Ok(()),
+        Err(keyring::Error::NoEntry) => Ok(()), // idempotent
+        Err(other) => Err(KeyringError::Backend(format!("{other}"))),
+    }
+}
+
+/// Delete the password for a specific P2P peer from the OS keyring.
+///
+/// Idempotent: returns `Ok(())` if no entry exists.
+///
+/// # Errors
+///
+/// - `KeyringError::Backend` — unexpected backend error.
+pub fn p2p_peer_password_delete(callsign: &str) -> Result<(), KeyringError> {
+    let real_factory = |service: &str, account: &str| -> Box<dyn EntryLike> {
+        let entry = keyring::Entry::new(service, account)
+            .expect("keyring::Entry::new should not fail for valid service/account strings");
+        Box::new(RealEntry(entry))
+    };
+    p2p_peer_password_delete_with_factory(callsign, &real_factory)
+}

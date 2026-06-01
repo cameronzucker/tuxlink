@@ -26,7 +26,8 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use tuxlink_lib::winlink::credentials::{
-    read_password_with_factory, EntryLike, KeyringError,
+    p2p_peer_password_delete_with_factory, p2p_peer_password_read_with_factory,
+    p2p_peer_password_write_with_factory, read_password_with_factory, EntryLike, KeyringError,
 };
 
 // ──────────────────────────────────────────────────────────────
@@ -190,4 +191,40 @@ fn backend_error_on_primary_read_passes_through() {
         KeyringError::Backend(_) => {} // correct
         other => panic!("expected Backend error, got: {other:?}"),
     }
+}
+
+// ──────────────────────────────────────────────────────────────
+// P2P peer password helpers (tuxlink-0pnb)
+// ──────────────────────────────────────────────────────────────
+
+#[test]
+fn p2p_peer_password_roundtrip_in_keyring() {
+    let store: Arc<Mutex<HashMap<(String, String), String>>> = Arc::new(Mutex::new(HashMap::new()));
+    let factory = mock_factory(Arc::clone(&store));
+    p2p_peer_password_write_with_factory("N7CPZ", "secretphrase", &factory).unwrap();
+    let got = p2p_peer_password_read_with_factory("N7CPZ", &factory).unwrap();
+    assert_eq!(got, "secretphrase");
+}
+
+#[test]
+fn p2p_peer_password_delete_removes_entry() {
+    let store: Arc<Mutex<HashMap<(String, String), String>>> = Arc::new(Mutex::new(HashMap::new()));
+    let factory = mock_factory(Arc::clone(&store));
+    p2p_peer_password_write_with_factory("N7CPZ", "x", &factory).unwrap();
+    p2p_peer_password_delete_with_factory("N7CPZ", &factory).unwrap();
+    let result = p2p_peer_password_read_with_factory("N7CPZ", &factory);
+    assert!(matches!(result, Err(KeyringError::NoEntry { .. })));
+}
+
+#[test]
+fn p2p_peer_password_keyring_account_uses_p2p_peer_prefix() {
+    // The keyring 'account' field must be "p2p-peer:<CALLSIGN-UPPER>" so it
+    // does not collide with the CMS-secure-login key namespace (just the callsign).
+    let store: Arc<Mutex<HashMap<(String, String), String>>> = Arc::new(Mutex::new(HashMap::new()));
+    let factory = mock_factory(Arc::clone(&store));
+    p2p_peer_password_write_with_factory("n7cpz", "x", &factory).unwrap();
+    // Reading via the CMS-side helper (which uses just the callsign as account)
+    // should return NoEntry — proves no namespace collision.
+    let cms_side = read_password_with_factory("N7CPZ", &factory);
+    assert!(matches!(cms_side, Err(KeyringError::NoEntry { .. })));
 }
