@@ -1536,7 +1536,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 
 **Context:** Per spec §2.3 + §2.4 + §4.2: render a `<button>Set manually</button>` in State 4 + State 5; render an interpunct `· ` prefix on the grid value in State 4; dim the source chip when `source = Gps && !gpsReady`.
 
-- [ ] **Step 1: Write the failing tests (4-quadrant matrix per R4 P1 #5).**
+- [x] **Step 1: Write the failing tests (4-quadrant matrix per R4 P1 #5).**
 
 In `src/shell/GridEdit.test.tsx`, ADD:
 
@@ -1577,7 +1577,7 @@ test('State 4 grid value has interpunct prefix + chip dimmed', () => {
 });
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail.**
+- [x] **Step 2: Run the tests to verify they fail.**
 
 ```bash
 pnpm vitest run src/shell/GridEdit.test.tsx -t "Set manually" 2>&1 | tail -20
@@ -1585,7 +1585,7 @@ pnpm vitest run src/shell/GridEdit.test.tsx -t "Set manually" 2>&1 | tail -20
 
 Expected: FAIL.
 
-- [ ] **Step 3: Render the `Set manually` button + interpunct prefix.**
+- [x] **Step 3: Render the `Set manually` button + interpunct prefix.**
 
 In `src/shell/GridEdit.tsx`, ADD (alongside the source chip):
 
@@ -1634,7 +1634,7 @@ Ensure the grid input element has an `id="grid-input"` for the `aria-controls` a
 />
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass.**
+- [x] **Step 4: Run the tests to verify they pass.**
 
 ```bash
 pnpm vitest run src/shell/GridEdit.test.tsx 2>&1 | tail -10
@@ -1642,7 +1642,7 @@ pnpm vitest run src/shell/GridEdit.test.tsx 2>&1 | tail -10
 
 Expected: all GridEdit tests pass.
 
-- [ ] **Step 5: Commit.**
+- [x] **Step 5: Commit.**
 
 ```bash
 git add src/shell/GridEdit.tsx src/shell/GridEdit.test.tsx
