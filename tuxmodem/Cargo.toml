@@ -1,6 +1,9 @@
 [workspace]
 resolver = "2"
-members = ["crates/tuxmodem-phy"]
+members = [
+    "crates/tuxmodem-fec",
+    "crates/tuxmodem-phy",
+]
 
 [workspace.package]
 edition = "2021"
@@ -17,8 +20,12 @@ thiserror = "1"
 # Once published, replace `path = ...` with `version = "0.1"`. Member crates
 # opt-in via `hf-channel-sim.workspace = true` under [dev-dependencies].
 hf-channel-sim = { path = "../hf-channel-sim" }
-# Subsystem #4: path-dep placeholder once #4's crate is scaffolded.
-# tuxmodem-fec = { path = "crates/tuxmodem-fec" }
+tuxmodem-fec = { path = "crates/tuxmodem-fec" }
+tuxmodem-phy = { path = "crates/tuxmodem-phy" }
+bitvec = "1"
+crc = "3"
+rand = "0.8"
+rand_chacha = "0.3"
 proptest = "1"
 criterion = "0.5"
 hound = "3"           # .wav read/write for audio_loopback_check + bench-rig captures
