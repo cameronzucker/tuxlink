@@ -21,6 +21,8 @@ pub mod params;
 pub mod rng;
 pub mod fading;
 pub mod channel;
+pub mod noise;
 
 pub use params::{ChannelCondition, WattersonParams};
 pub use channel::WattersonChannel;
+pub use noise::AwgnGenerator;
