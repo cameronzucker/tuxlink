@@ -4,6 +4,13 @@ All notable changes to Tuxlink are documented here.
 
 This project adheres to [Semantic Versioning](https://semver.org) with project-specific rules described in [VERSIONING.md](VERSIONING.md). Entries from `v0.0.2` onward are generated automatically by [`release-please`](https://github.com/googleapis/release-please) from [Conventional Commits](https://www.conventionalcommits.org).
 
+## [0.11.1](https://github.com/cameronzucker/tuxlink/compare/v0.11.0...v0.11.1) (2026-06-01)
+
+
+### Bug Fixes
+
+* **mailbox:** list_messages returns newest-first by date (tuxlink-mjc8) ([007778e](https://github.com/cameronzucker/tuxlink/commit/007778e9bea97a1f61e8e63d12b8c644ecf5f039))
+
 ## [0.11.0](https://github.com/cameronzucker/tuxlink/compare/v0.10.0...v0.11.0) (2026-06-01)
 
 
