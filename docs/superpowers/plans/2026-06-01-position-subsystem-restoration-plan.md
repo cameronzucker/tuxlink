@@ -1681,7 +1681,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 
 **Context:** Per spec §4.3: after the `invoke('config_set_grid')` or `invoke('position_set_source')` resolves, force an immediate `config_read` refresh so the source chip's `source` value reflects the change within one render cycle.
 
-- [ ] **Step 1: Write the failing tests.**
+- [x] **Step 1: Write the failing tests.**
 
 In `src/shell/DashboardRibbon.test.tsx`, ADD:
 
@@ -1704,7 +1704,7 @@ test('source chip flips to Gps within one render cycle after position_set_source
 
 (The tests' exact setup depends on how `useStatus.ts` exposes its query client; adjust to use the project's existing test patterns.)
 
-- [ ] **Step 2: Run the tests to verify they fail.**
+- [x] **Step 2: Run the tests to verify they fail.**
 
 ```bash
 pnpm vitest run src/shell/DashboardRibbon.test.tsx -t "flips to" 2>&1 | tail -15
@@ -1712,7 +1712,7 @@ pnpm vitest run src/shell/DashboardRibbon.test.tsx -t "flips to" 2>&1 | tail -15
 
 Expected: FAIL.
 
-- [ ] **Step 3: Add the `invalidateQueries` call after each invoke resolves.**
+- [x] **Step 3: Add the `invalidateQueries` call after each invoke resolves.**
 
 In `src/shell/DashboardRibbon.tsx`, wire the queryClient:
 
@@ -1740,7 +1740,7 @@ const queryClient = useQueryClient();
 
 If `useStatus.ts` uses a different queryKey for `config_read`, match it.
 
-- [ ] **Step 4: Run the tests to verify they pass.**
+- [x] **Step 4: Run the tests to verify they pass.**
 
 ```bash
 pnpm vitest run src/shell/DashboardRibbon.test.tsx -t "flips to" 2>&1 | tail -10
@@ -1748,7 +1748,7 @@ pnpm vitest run src/shell/DashboardRibbon.test.tsx -t "flips to" 2>&1 | tail -10
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit.**
+- [x] **Step 5: Commit.**
 
 ```bash
 git add src/shell/DashboardRibbon.tsx src/shell/DashboardRibbon.test.tsx
