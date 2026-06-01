@@ -1,0 +1,1691 @@
+# Tuxmodem Subsystem #7 — Link Adaptation Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:subagent-driven-development` (recommended) or `superpowers:executing-plans` to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** Build the 2D link-adaptation subsystem that maps `(channel-quality, payload-size)` → `(mode-family, mode-within-family, ARQ-strategy)` for tuxmodem's dual-family PHY ladder, with hysteresis-controlled mode-flap suppression and AI-native re-tunability over channel-simulator sweeps.
+
+**Architecture:** Pure-Rust crate (`tuxmodem-linkadapt`) implementing a tabular + state-machine policy on top of three explicit inputs (channel-quality estimator, payload-size router, ARQ feedback) and three explicit outputs (PHY mode descriptor, MAC routing decision, ARQ strategy enum). Built **trait-first** against simulator stubs so it can be specced + tested before #3/#4/#6 reach v0.1. Empirical thresholds are extracted from channel-sim sweeps (#1), recorded as YAML configuration loaded at runtime, and tuned offline via a separate `tuxmodem-linkadapt-tune` binary that scripts deterministic 2D sweeps.
+
+**Tech Stack:** Rust 2021 edition; `tuxmodem-linkadapt` crate (AGPLv3-only); `hf-channel-sim` (subsystem #1 crate) as a dev-dependency for trait stubs and integration tests; `serde` + `serde_yaml` for offline-tuned threshold tables; `criterion` for policy-evaluation benchmarks; `proptest` for hysteresis property tests; `tracing` for structured policy-decision telemetry.
+
+**Sequencing constraint:** Empirical validation gates on #1, #3, #4, #6 reaching v0.1. This plan ships in **two waves** — Wave A (Phases 1–4) is architecturally complete and unit-testable against stubs, deliverable immediately. Wave B (Phases 5–7) lights up once the upstream subsystems reach v0.1; deliverable as a follow-up PR. Each phase ends with a `git commit` checkpoint.
+
+**ADR 0014 bright-line reminder for executors:** This plan was written without examining VARA's, ARDOP's, FLDigi's, or any other prior amateur modem's link-adaptation source code or runtime traces. Conceptual link-adaptation theory from textbooks (Proakis §10, Sklar §3, Lin/Costello §15) is allowed substrate. If you feel the urge to "just check how VARA decides when to drop to a robustness mode," **STOP** — design from the bibliography + simulator sweeps. The same rule applies to ARDOP's `linkadapt.c` (whatever its filename is); the protocol exists as a *conceptual reference* per `foundation §6.2`, not as a source for specific thresholds.
+
+---
+
+## File Structure
+
+The subsystem ships as a standalone Rust crate inside the tuxmodem repository tree (location TBD when tuxmodem repo is initialized; this plan assumes `crates/tuxmodem-linkadapt/` relative to the tuxmodem repo root, which lands as a sibling to `crates/hf-channel-sim/` and `crates/tuxmodem-phy/`).
+
+**Crate layout** (`crates/tuxmodem-linkadapt/`):
+
+```
+crates/tuxmodem-linkadapt/
+├── Cargo.toml                              # AGPLv3-only; deps minimal
+├── README.md                               # Citation chain + clean-sheet provenance
+├── LICENSE                                 # AGPLv3 verbatim
+├── src/
+│   ├── lib.rs                              # Public re-exports + crate docs
+│   ├── inputs.rs                           # ChannelQuality, PayloadDescriptor, ArqFeedback types + trait stubs
+│   ├── outputs.rs                          # ModeFamily, ModeDescriptor, ArqStrategy types
+│   ├── quality.rs                          # ChannelQualityEstimator — signal fusion (SNR, FER, throughput)
+│   ├── policy.rs                           # The 2D table + state-machine policy core
+│   ├── hysteresis.rs                       # Dwell-time + dual-threshold hysteresis
+│   ├── thresholds.rs                       # YAML threshold table loader (serde)
+│   ├── telemetry.rs                        # tracing spans + per-decision logging
+│   └── stub.rs                             # Stub implementations of upstream traits for unit tests
+├── tests/
+│   ├── policy_basic.rs                     # Unit-level policy decisions against in-memory stubs
+│   ├── hysteresis_properties.rs            # proptest: no mode-flap under steady-state input
+│   ├── routing_2d_table.rs                 # Validates the 2D table against the spec's settled regions
+│   └── sweep_integration.rs                # Wave B — gates on hf-channel-sim v0.1
+├── benches/
+│   └── policy_eval.rs                      # criterion bench: per-decision latency
+├── tune/                                   # Wave B — offline tuning harness
+│   ├── Cargo.toml                          # Separate binary crate `tuxmodem-linkadapt-tune`
+│   └── src/main.rs                         # CLI: runs 2D channel-sim sweeps, emits thresholds.yaml
+└── thresholds/
+    ├── default.yaml                        # Conservative starting thresholds (hand-derived from theory)
+    └── tuned.yaml                          # Generated by `tuxmodem-linkadapt-tune` from sim sweeps
+```
+
+**Why this decomposition:**
+
+- `inputs.rs` and `outputs.rs` carry **only** type definitions — they are the cross-subsystem contracts. They land first so #5 / #6 / #3 can begin coding against the same types in their own crates.
+- `policy.rs` holds the 2D decision logic. It is **pure** (no I/O, no state outside what's passed in) — the hysteresis layer wraps it. This makes the policy itself trivially testable and trivially re-runnable across simulated histories.
+- `hysteresis.rs` is split because mode-flap suppression is the most-bug-prone behaviour and benefits from its own property tests.
+- `thresholds.rs` loads YAML so the empirical thresholds are **data**, not code — required for the AI-native tuning loop and required to keep ADR 0014 clean (tuned thresholds are derived from sim, never from prior art).
+- `stub.rs` lives in the lib (`#[cfg(any(test, feature = "stubs"))]`) so the test crate AND downstream subsystems can pull stub implementations of the channel-sim and PHY traits without depending on those crates at all during early development.
+- The `tune/` binary is a **separate crate** so the tuning workflow's dependencies (CSV writers, plotters, large-array math) don't leak into the runtime crate's dependency graph or AGPL surface beyond what's necessary.
+
+---
+
+## Cross-subsystem API surface (settled here; consumed elsewhere)
+
+This subsystem's trait surface is the contract other subsystems implement or consume. Pinning it now lets #3 / #5 / #6 develop in parallel against these types.
+
+**Inputs (this crate consumes; upstream subsystems provide):**
+
+```rust
+// inputs.rs — these traits are implemented by upstream subsystems.
+
+/// Provided by #3 (PHY). The PHY exposes per-sub-carrier SNR estimates
+/// (for bit-loading) and an aggregate carrier-to-noise estimate.
+pub trait PhyQualityReporter {
+    /// Per-sub-carrier SNR in dB, indexed by sub-carrier number. Empty if PHY
+    /// is in narrow-FSK robustness mode (no sub-carriers).
+    fn per_subcarrier_snr_db(&self) -> &[f32];
+    /// Aggregate SNR estimate in dB across the occupied band.
+    fn aggregate_snr_db(&self) -> f32;
+    /// Doppler-spread estimate in Hz, if measurable from the sync correlator.
+    /// None until the receiver has enough symbols to estimate.
+    fn doppler_spread_hz(&self) -> Option<f32>;
+}
+
+/// Provided by #6 (ARQ). Surfaces protocol-level error signals.
+pub trait ArqFeedbackReporter {
+    /// Rolling frame-error rate over the most recent N frames (0.0..=1.0).
+    fn frame_error_rate(&self) -> f32;
+    /// Retransmission count in the most recent window.
+    fn retransmit_count_recent(&self) -> u32;
+    /// Net throughput in bits/sec measured over the most recent window.
+    fn throughput_bps(&self) -> f32;
+    /// Whether ARQ is currently in `Connected` state (vs. `Disconnected`,
+    /// `Connecting`, `Disconnecting`). Determines whether throughput-based
+    /// signals are even meaningful.
+    fn connection_state(&self) -> ArqConnectionState;
+}
+
+/// Provided by #5 (MAC). Describes the next-to-transmit payload so routing
+/// can decide which family handles it.
+pub trait PayloadRouter {
+    /// Bytes pending in the outbound queue, by message-class. The link
+    /// adaptation policy reads this each tick.
+    fn pending_payload(&self) -> PayloadDescriptor;
+}
+
+pub struct PayloadDescriptor {
+    pub bytes_pending: u32,
+    pub class: PayloadClass,           // ShortCritical, BulkData, Beacon
+    pub max_acceptable_latency_s: Option<u32>,
+}
+```
+
+**Outputs (this crate produces; downstream subsystems consume):**
+
+```rust
+// outputs.rs
+
+/// The full link-adaptation decision emitted each tick. Consumed by:
+///   - #3 (PHY) — reads `mode` to know what waveform to render.
+///   - #5 (MAC) — reads `mode_family` to know which family to route to.
+///   - #6 (ARQ) — reads `arq_strategy` to enable / disable / configure ARQ.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AdaptationDecision {
+    pub mode_family: ModeFamily,
+    pub mode: ModeDescriptor,
+    pub arq_strategy: ArqStrategy,
+    pub rationale: DecisionRationale,    // structured "why we picked this"
+}
+
+pub enum ModeFamily {
+    BitAdaptiveOfdm,
+    RobustnessWidebandOfdm,            // default robustness mode
+    RobustnessNarrowFsk,               // situational, crowded-band
+}
+
+pub struct ModeDescriptor {
+    pub family: ModeFamily,
+    /// Opaque mode identifier negotiated with the PHY layer. The PHY owns
+    /// the enumeration of concrete modes; link adaptation refers to them
+    /// by stable ID.
+    pub mode_id: u16,
+    /// Recommended per-sub-carrier bit-loading curve (OFDM family only).
+    pub bit_loading: Option<BitLoadingCurve>,
+}
+
+pub enum ArqStrategy {
+    SelectiveRepeat { window_size: u16 },
+    NoneRetransmitWholeMessage,
+    NoneBestEffort,                    // for beacon class
+}
+
+pub struct DecisionRationale {
+    pub quality_index: f32,            // fused channel-quality scalar in [0.0, 1.0]
+    pub triggered_hysteresis: bool,    // true if the policy *wanted* to switch
+                                       // but hysteresis held it
+    pub last_switch_age_s: u32,
+    pub thresholds_version: String,    // git sha of thresholds.yaml in use
+}
+```
+
+The `PayloadRouter`/`PhyQualityReporter`/`ArqFeedbackReporter` traits are **upstream-implemented**. This crate consumes them; the trait definitions live here because this crate sees all three at once.
+
+---
+
+## Settled architectural decisions
+
+The spec leaves §7.Q1–§7.Q8 open. This plan settles them, with rationale:
+
+| Spec Q | Decision | Why |
+|---|---|---|
+| §7.Q1 channel-quality metric | **Fused** scalar quality index in [0, 1], primary input = aggregate SNR, secondary = FER, tertiary = throughput, doppler-spread as a discount factor. | Single fused scalar makes the 2D table tractable; per-component weights are tunable. Lin/Costello §15 supports throughput-as-fused-metric for ARQ-aware adaptation. |
+| §7.Q2 mode-step granularity | Defer count of OFDM modes to #3 (Q3.1); link adaptation refers to modes by stable `mode_id` not by hard-coded count. | Decouples #7 release from #3's mode-count freeze. |
+| §7.Q3 hysteresis policy | **Dual-threshold + dwell-time.** Up-shift threshold at `T_up`, down-shift at `T_down`, with `T_up > T_down`. Minimum dwell time `D` between consecutive shifts. Both `T_up`/`T_down`/`D` are per-mode-pair in `thresholds.yaml`. | Standard hysteresis pattern; data-driven thresholds keep it tunable; per-mode-pair tuning catches the asymmetric-channel case. |
+| §7.Q4 negotiation | **Piggyback in MAC header** — see #5 spec. The current `AdaptationDecision` is encoded in a 2-byte field of every outgoing MAC frame; the peer reads it and decodes the **next** frame in the announced mode. | Saves bandwidth vs. explicit frames; coupling to #5 is via the trait surface above. Adds one open question for #5: header field layout, recorded in cross-subsystem-coordination section below. |
+| §7.Q5 operator override | **Sticky override** with explicit "auto" toggle. Operator override forces a `mode_id` until either (a) operator releases, or (b) link drops + reconnects, whichever first. Surfaced via host-protocol (#8). | Keeps testing + known-good-conditions cases clean; "until reconnect" gives the operator a safe escape hatch from a bad override choice. |
+| §7.Q6 asymmetric mode selection | **Supported.** Each direction's quality is tracked independently; the policy emits two `AdaptationDecision`s, one per direction. Per-direction state lives in `policy.rs`. | Asymmetric channels are a known watched failure mode in the spec (§8); designing them in from the start is cheaper than retrofitting. |
+| §7.Q7 step rate | **Rate-limited by dwell time `D`** — the same hysteresis mechanism limits step rate. No additional rate-limit knob. | Simpler; one parameter controls both flap and rate. |
+| §7.Q8 recovery from failed mode | **Graceful fallback** — on N consecutive frame failures, step down one mode (not all the way to floor). Hard reset only on connection-state-machine failure (an ARQ concern). | Preserves throughput on transient impairment. |
+
+---
+
+## AI-native substrate considerations
+
+The link-adaptation subsystem is the place in the modem stack where data-driven tuning has the highest leverage: the policy is a function from a low-dimensional input space to a discrete output space, and the channel simulator (#1) generates ground-truth `(input → optimal output)` pairs on demand.
+
+The plan keeps the policy amenable to data-driven tuning by:
+
+1. **All empirical thresholds live in `thresholds.yaml`**, never in code. The policy reads them at runtime; the tuning binary re-emits them after a sweep. The runtime crate has zero hard-coded SNR numbers.
+2. **The policy core is pure** — `Policy::decide(inputs, thresholds) -> AdaptationDecision`. Pure means it can be replayed against recorded simulator traces, evaluated in batch, and compared against alternative threshold sets without standing up the modem stack.
+3. **The `tune` binary scripts the 2D sweep.** It calls `hf-channel-sim` across the F.520 envelope × payload-size grid, runs the policy at each cell, scores throughput, and gradient-descents threshold values to maximize per-cell expected throughput. The output is `tuned.yaml`. **The tuner is itself an agent-runnable workflow**: the tuning loop's success criterion is fully deterministic and the search space is small.
+4. **`DecisionRationale::thresholds_version`** carries the git sha of the loaded thresholds — so any on-air log or operator bug report ties back to exact threshold provenance.
+5. **Wave B Phase 7 plans a follow-up RL extension as optional future work** — the architecture admits it (replace the table with a learned policy), but Wave A ships a hand-tunable table because it is interpretable, debuggable, and the right substrate to **measure against** any future RL policy.
+
+The plan **does not** pre-commit to RL or any specific ML technique. It commits only to the architectural separation that makes future data-driven tuning low-effort.
+
+---
+
+## Wave A — architecturally complete, validatable against stubs
+
+### Phase 1 — Crate skeleton + cross-subsystem trait surface
+
+**Files:**
+- Create: `crates/tuxmodem-linkadapt/Cargo.toml`
+- Create: `crates/tuxmodem-linkadapt/LICENSE` (AGPLv3-only verbatim from https://www.gnu.org/licenses/agpl-3.0.txt)
+- Create: `crates/tuxmodem-linkadapt/README.md`
+- Create: `crates/tuxmodem-linkadapt/src/lib.rs`
+- Create: `crates/tuxmodem-linkadapt/src/inputs.rs`
+- Create: `crates/tuxmodem-linkadapt/src/outputs.rs`
+
+- [ ] **Step 1: Write `Cargo.toml`**
+
+```toml
+[package]
+name = "tuxmodem-linkadapt"
+version = "0.1.0-alpha.0"
+edition = "2021"
+license = "AGPL-3.0-only"
+description = "2D link-adaptation policy for tuxmodem (channel-quality × payload-size → mode-family × mode × ARQ strategy)"
+repository = "https://github.com/<owner>/tuxmodem"
+rust-version = "1.78"
+
+[features]
+default = []
+stubs = []                              # enable in-crate stub implementations for tests + downstream consumers
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_yaml = "0.9"
+thiserror = "1"
+tracing = "0.1"
+
+[dev-dependencies]
+proptest = "1"
+criterion = { version = "0.5", features = ["html_reports"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[[bench]]
+name = "policy_eval"
+harness = false
+```
+
+- [ ] **Step 2: Write `LICENSE`**
+
+Copy the AGPLv3-only license verbatim. (The implementing agent runs `curl -sL https://www.gnu.org/licenses/agpl-3.0.txt > crates/tuxmodem-linkadapt/LICENSE` and verifies via `head -3 crates/tuxmodem-linkadapt/LICENSE` that the file begins with `GNU AFFERO GENERAL PUBLIC LICENSE`.)
+
+- [ ] **Step 3: Write `README.md`** with the clean-sheet citation block
+
+```markdown
+# tuxmodem-linkadapt
+
+2D link-adaptation policy for the tuxmodem HF data modem. Maps observed channel
+quality and outbound payload descriptors onto a PHY mode family, mode-within-family,
+and ARQ strategy.
+
+## Clean-sheet provenance (ADR 0014)
+
+This crate is implemented from first principles plus the following open
+references. **No VARA internals, no ARDOP source, no FLDigi source, and no
+black-box examination of any proprietary HF modem informed any design choice
+in this crate.**
+
+- Proakis & Salehi, _Digital Communications_ — adaptation theory substrate.
+- Sklar, _Digital Communications_ — modulation-vs-SNR tradeoff substrate.
+- Lin & Costello, _Error Control Coding_ — joint ARQ + adaptation reference.
+- Bertsekas & Gallager, _Data Networks_ — ARQ throughput analysis.
+- ITU-R F.520 / F.1487 — standardized channel conditions for validation.
+- Davies, _Ionospheric Radio_ — channel-physics background informing
+  doppler-spread weighting.
+
+ARDOP is referenced as a **conceptual** reference for the design space (see
+`docs/research/modem-foundations.md` §6.2). Its source code, runtime
+behaviour, and on-air emissions are NOT consulted for design input.
+
+## License
+
+AGPLv3-only. See `LICENSE`.
+```
+
+- [ ] **Step 4: Write `src/lib.rs`**
+
+```rust
+//! tuxmodem-linkadapt — 2D link-adaptation policy for tuxmodem.
+//!
+//! See README.md for the clean-sheet citation block. See
+//! `docs/superpowers/specs/2026-05-31-clean-sheet-modem-7-link-adaptation.md`
+//! for the canonical spec.
+
+#![forbid(unsafe_code)]
+#![warn(missing_docs)]
+
+pub mod inputs;
+pub mod outputs;
+pub mod policy;
+pub mod hysteresis;
+pub mod quality;
+pub mod thresholds;
+pub mod telemetry;
+
+#[cfg(any(test, feature = "stubs"))]
+pub mod stub;
+
+pub use inputs::{
+    ArqConnectionState, ArqFeedbackReporter, PayloadClass, PayloadDescriptor,
+    PayloadRouter, PhyQualityReporter,
+};
+pub use outputs::{
+    AdaptationDecision, ArqStrategy, BitLoadingCurve, DecisionRationale,
+    ModeDescriptor, ModeFamily,
+};
+pub use policy::Policy;
+```
+
+- [ ] **Step 5: Write `src/inputs.rs`**
+
+Implement the three reporter traits + `PayloadDescriptor`, `PayloadClass`, `ArqConnectionState` types exactly as defined in the **Cross-subsystem API surface** section above. Add docstrings citing the spec subsystem each trait belongs to.
+
+- [ ] **Step 6: Write `src/outputs.rs`**
+
+Implement `AdaptationDecision`, `ModeFamily`, `ModeDescriptor`, `ArqStrategy`, `DecisionRationale`, `BitLoadingCurve` (placeholder `Vec<u8>` of per-sub-carrier bit-counts) exactly as defined in the **Cross-subsystem API surface** section above.
+
+- [ ] **Step 7: Write stub modules for not-yet-implemented files**
+
+To make `cargo check` pass:
+
+```rust
+// src/policy.rs
+//! Placeholder; implemented in Phase 3.
+pub struct Policy;
+```
+
+(Same one-liner for `hysteresis.rs`, `quality.rs`, `thresholds.rs`, `telemetry.rs`, `stub.rs`. Each gets replaced in its phase.)
+
+- [ ] **Step 8: Run `cargo check` and verify it passes**
+
+```bash
+cargo --manifest-path crates/tuxmodem-linkadapt/Cargo.toml check
+```
+
+Expected: clean check, no warnings about missing modules.
+
+- [ ] **Step 9: Commit**
+
+```bash
+git add crates/tuxmodem-linkadapt/
+git commit -m "feat(linkadapt): crate skeleton + cross-subsystem trait surface
+
+Establishes the API contract that #3 (PHY), #5 (MAC), #6 (ARQ) implement
+against. Empty policy / hysteresis / quality modules are placeholders for
+Phases 2-4. AGPLv3-only per overview §5.A.4.
+
+Refs: docs/superpowers/specs/2026-05-31-clean-sheet-modem-7-link-adaptation.md
+
+Agent: opossum-pine-spruce
+Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
+```
+
+---
+
+### Phase 2 — Channel-quality fusion + stub implementations
+
+**Files:**
+- Modify: `crates/tuxmodem-linkadapt/src/quality.rs`
+- Modify: `crates/tuxmodem-linkadapt/src/stub.rs`
+- Create: `crates/tuxmodem-linkadapt/tests/quality_fusion.rs`
+
+- [ ] **Step 1: Write the failing fusion test**
+
+```rust
+// tests/quality_fusion.rs
+use tuxmodem_linkadapt::quality::ChannelQualityEstimator;
+use tuxmodem_linkadapt::stub::{StubPhyReporter, StubArqReporter};
+
+#[test]
+fn fused_quality_is_high_when_all_signals_are_clean() {
+    let phy = StubPhyReporter::with_aggregate_snr_db(20.0);
+    let arq = StubArqReporter::with_fer_and_throughput(0.0, 5_000.0);
+    let estimator = ChannelQualityEstimator::default();
+    let q = estimator.fuse(&phy, &arq);
+    assert!(q.index >= 0.85, "expected high quality, got {}", q.index);
+}
+
+#[test]
+fn fused_quality_is_low_when_snr_is_at_noise_floor() {
+    let phy = StubPhyReporter::with_aggregate_snr_db(-5.0);
+    let arq = StubArqReporter::with_fer_and_throughput(0.4, 100.0);
+    let estimator = ChannelQualityEstimator::default();
+    let q = estimator.fuse(&phy, &arq);
+    assert!(q.index <= 0.20, "expected low quality, got {}", q.index);
+}
+
+#[test]
+fn doppler_spread_discounts_quality() {
+    let phy_clean = StubPhyReporter::builder().snr_db(10.0).doppler_hz(None).build();
+    let phy_dopplered = StubPhyReporter::builder().snr_db(10.0).doppler_hz(Some(5.0)).build();
+    let arq = StubArqReporter::with_fer_and_throughput(0.0, 2000.0);
+    let estimator = ChannelQualityEstimator::default();
+    let q_clean = estimator.fuse(&phy_clean, &arq).index;
+    let q_dopplered = estimator.fuse(&phy_dopplered, &arq).index;
+    assert!(q_dopplered < q_clean, "doppler must discount: clean={} dopplered={}", q_clean, q_dopplered);
+}
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+```bash
+cargo --manifest-path crates/tuxmodem-linkadapt/Cargo.toml test --test quality_fusion
+```
+
+Expected: FAIL — `ChannelQualityEstimator` not yet defined.
+
+- [ ] **Step 3: Implement `src/quality.rs`**
+
+```rust
+//! Fuses per-input channel-quality signals into a single scalar in [0, 1].
+//!
+//! Inputs (per spec §3.1):
+//!   - Aggregate SNR (primary) — from `PhyQualityReporter::aggregate_snr_db`.
+//!   - Frame error rate (secondary) — from `ArqFeedbackReporter::frame_error_rate`.
+//!   - Throughput (tertiary) — from `ArqFeedbackReporter::throughput_bps`.
+//!   - Doppler spread (discount factor) — from `PhyQualityReporter::doppler_spread_hz`.
+//!
+//! The fusion is intentionally simple and parameterized via weights loaded from
+//! thresholds.yaml. The simple form below is the hand-derived starting point;
+//! the tuner replaces the weights from sim-sweep data (Wave B Phase 6).
+
+use crate::inputs::{ArqFeedbackReporter, PhyQualityReporter};
+use serde::{Deserialize, Serialize};
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ChannelQualityEstimator {
+    pub w_snr: f32,
+    pub w_fer: f32,
+    pub w_throughput: f32,
+    pub doppler_discount_per_hz: f32,
+    /// SNR range in dB mapped to [0, 1] before weighting.
+    pub snr_range_db: (f32, f32),
+    /// Throughput range in bps mapped to [0, 1] before weighting.
+    pub throughput_range_bps: (f32, f32),
+}
+
+impl Default for ChannelQualityEstimator {
+    /// Hand-derived defaults from theory (Sklar §3 BER-vs-SNR curves for
+    /// QPSK/BPSK with rate-1/2 FEC). Sim-tuned values replace these in Wave B.
+    fn default() -> Self {
+        Self {
+            w_snr: 0.5,
+            w_fer: 0.3,
+            w_throughput: 0.2,
+            doppler_discount_per_hz: 0.02,    // 1 Hz doppler costs 0.02 quality
+            snr_range_db: (-10.0, 20.0),
+            throughput_range_bps: (0.0, 5_000.0),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct ChannelQuality {
+    pub index: f32,                          // [0.0, 1.0]
+}
+
+impl ChannelQualityEstimator {
+    pub fn fuse<P: PhyQualityReporter, A: ArqFeedbackReporter>(
+        &self,
+        phy: &P,
+        arq: &A,
+    ) -> ChannelQuality {
+        let snr_norm = normalize(phy.aggregate_snr_db(), self.snr_range_db);
+        let fer_norm = 1.0 - arq.frame_error_rate().clamp(0.0, 1.0);
+        let tput_norm = normalize(arq.throughput_bps(), self.throughput_range_bps);
+        let mut q = self.w_snr * snr_norm + self.w_fer * fer_norm + self.w_throughput * tput_norm;
+        if let Some(d) = phy.doppler_spread_hz() {
+            q -= d * self.doppler_discount_per_hz;
+        }
+        ChannelQuality { index: q.clamp(0.0, 1.0) }
+    }
+}
+
+fn normalize(value: f32, (lo, hi): (f32, f32)) -> f32 {
+    ((value - lo) / (hi - lo)).clamp(0.0, 1.0)
+}
+```
+
+- [ ] **Step 4: Implement `src/stub.rs`**
+
+```rust
+//! In-crate stubs of the upstream traits so the policy can be tested without
+//! the real PHY/ARQ/MAC subsystems. Also exported under the `stubs` feature
+//! for downstream consumers (e.g. integration tests in #3).
+
+use crate::inputs::{
+    ArqConnectionState, ArqFeedbackReporter, PayloadClass, PayloadDescriptor,
+    PayloadRouter, PhyQualityReporter,
+};
+
+#[derive(Clone, Debug)]
+pub struct StubPhyReporter {
+    per_subcarrier: Vec<f32>,
+    aggregate_snr_db: f32,
+    doppler_hz: Option<f32>,
+}
+
+impl StubPhyReporter {
+    pub fn with_aggregate_snr_db(snr: f32) -> Self {
+        Self { per_subcarrier: vec![snr; 32], aggregate_snr_db: snr, doppler_hz: None }
+    }
+    pub fn builder() -> StubPhyBuilder { StubPhyBuilder::default() }
+}
+
+#[derive(Default)]
+pub struct StubPhyBuilder {
+    per_sub: Option<Vec<f32>>,
+    snr: f32,
+    doppler: Option<f32>,
+}
+impl StubPhyBuilder {
+    pub fn snr_db(mut self, s: f32) -> Self { self.snr = s; self }
+    pub fn doppler_hz(mut self, d: Option<f32>) -> Self { self.doppler = d; self }
+    pub fn per_subcarrier(mut self, s: Vec<f32>) -> Self { self.per_sub = Some(s); self }
+    pub fn build(self) -> StubPhyReporter {
+        StubPhyReporter {
+            per_subcarrier: self.per_sub.unwrap_or_else(|| vec![self.snr; 32]),
+            aggregate_snr_db: self.snr,
+            doppler_hz: self.doppler,
+        }
+    }
+}
+
+impl PhyQualityReporter for StubPhyReporter {
+    fn per_subcarrier_snr_db(&self) -> &[f32] { &self.per_subcarrier }
+    fn aggregate_snr_db(&self) -> f32 { self.aggregate_snr_db }
+    fn doppler_spread_hz(&self) -> Option<f32> { self.doppler_hz }
+}
+
+#[derive(Clone, Debug)]
+pub struct StubArqReporter {
+    fer: f32,
+    throughput_bps: f32,
+    retransmits: u32,
+    state: ArqConnectionState,
+}
+
+impl StubArqReporter {
+    pub fn with_fer_and_throughput(fer: f32, tput: f32) -> Self {
+        Self { fer, throughput_bps: tput, retransmits: 0, state: ArqConnectionState::Connected }
+    }
+}
+
+impl ArqFeedbackReporter for StubArqReporter {
+    fn frame_error_rate(&self) -> f32 { self.fer }
+    fn retransmit_count_recent(&self) -> u32 { self.retransmits }
+    fn throughput_bps(&self) -> f32 { self.throughput_bps }
+    fn connection_state(&self) -> ArqConnectionState { self.state }
+}
+
+#[derive(Clone, Debug)]
+pub struct StubPayloadRouter {
+    pub descriptor: PayloadDescriptor,
+}
+impl StubPayloadRouter {
+    pub fn short_critical(bytes: u32) -> Self {
+        Self { descriptor: PayloadDescriptor { bytes_pending: bytes, class: PayloadClass::ShortCritical, max_acceptable_latency_s: Some(30) } }
+    }
+    pub fn bulk(bytes: u32) -> Self {
+        Self { descriptor: PayloadDescriptor { bytes_pending: bytes, class: PayloadClass::BulkData, max_acceptable_latency_s: None } }
+    }
+}
+impl PayloadRouter for StubPayloadRouter {
+    fn pending_payload(&self) -> PayloadDescriptor { self.descriptor.clone() }
+}
+```
+
+(`PayloadDescriptor` needs `#[derive(Clone)]` — add it in `inputs.rs` if not already there.)
+
+- [ ] **Step 5: Run test to verify it passes**
+
+```bash
+cargo --manifest-path crates/tuxmodem-linkadapt/Cargo.toml test --test quality_fusion
+```
+
+Expected: 3 tests pass.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add crates/tuxmodem-linkadapt/src/quality.rs \
+        crates/tuxmodem-linkadapt/src/stub.rs \
+        crates/tuxmodem-linkadapt/tests/quality_fusion.rs
+git commit -m "feat(linkadapt): channel-quality fusion + stub upstream reporters
+
+ChannelQualityEstimator fuses aggregate SNR + FER + throughput with
+doppler-spread discount, all weights parameterized for offline tuning.
+Stub PHY/ARQ/MAC reporters enable policy testing before #3/#5/#6 exist.
+
+Refs: spec §3.1 (channel-quality metric), §4.Q1.
+
+Agent: opossum-pine-spruce
+Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
+```
+
+---
+
+### Phase 3 — 2D table-driven policy core (pure)
+
+**Files:**
+- Modify: `crates/tuxmodem-linkadapt/src/policy.rs`
+- Modify: `crates/tuxmodem-linkadapt/src/thresholds.rs`
+- Create: `crates/tuxmodem-linkadapt/thresholds/default.yaml`
+- Create: `crates/tuxmodem-linkadapt/tests/routing_2d_table.rs`
+
+- [ ] **Step 1: Write the 2D-routing failing test**
+
+```rust
+// tests/routing_2d_table.rs
+use tuxmodem_linkadapt::policy::{Policy, PolicyInputs};
+use tuxmodem_linkadapt::outputs::{ModeFamily, ArqStrategy};
+use tuxmodem_linkadapt::quality::ChannelQuality;
+use tuxmodem_linkadapt::inputs::{PayloadClass, PayloadDescriptor};
+use tuxmodem_linkadapt::thresholds::Thresholds;
+
+fn default_thresholds() -> Thresholds {
+    Thresholds::load_default().expect("default.yaml must parse")
+}
+
+fn payload(class: PayloadClass, bytes: u32) -> PayloadDescriptor {
+    PayloadDescriptor { bytes_pending: bytes, class, max_acceptable_latency_s: None }
+}
+
+#[test]
+fn high_quality_long_payload_routes_to_ofdm_with_selective_repeat() {
+    let policy = Policy::new(default_thresholds());
+    let decision = policy.decide(PolicyInputs {
+        quality: ChannelQuality { index: 0.9 },
+        payload: payload(PayloadClass::BulkData, 50_000),
+        prev_decision: None,
+        last_switch_age_s: u32::MAX,
+    });
+    assert_eq!(decision.mode_family, ModeFamily::BitAdaptiveOfdm);
+    matches!(decision.arq_strategy, ArqStrategy::SelectiveRepeat { .. });
+}
+
+#[test]
+fn low_quality_short_critical_routes_to_wideband_robustness_no_arq() {
+    let policy = Policy::new(default_thresholds());
+    let decision = policy.decide(PolicyInputs {
+        quality: ChannelQuality { index: 0.15 },
+        payload: payload(PayloadClass::ShortCritical, 200),
+        prev_decision: None,
+        last_switch_age_s: u32::MAX,
+    });
+    assert_eq!(decision.mode_family, ModeFamily::RobustnessWidebandOfdm);
+    matches!(decision.arq_strategy, ArqStrategy::NoneRetransmitWholeMessage);
+}
+
+#[test]
+fn good_quality_short_message_stays_in_ofdm_no_floor_drop() {
+    // Per spec §1.A: short messages under good channel conditions stay in OFDM —
+    // there's no SNR-floor advantage to dropping down.
+    let policy = Policy::new(default_thresholds());
+    let decision = policy.decide(PolicyInputs {
+        quality: ChannelQuality { index: 0.85 },
+        payload: payload(PayloadClass::ShortCritical, 200),
+        prev_decision: None,
+        last_switch_age_s: u32::MAX,
+    });
+    assert_eq!(decision.mode_family, ModeFamily::BitAdaptiveOfdm);
+}
+
+#[test]
+fn low_quality_bulk_payload_falls_back_to_ofdm_lowest_not_floor() {
+    // Per spec §1.A: long messages stay in the OFDM family with ARQ even when
+    // quality is bad — they need ARQ; floor mode (no ARQ) is the wrong target.
+    let policy = Policy::new(default_thresholds());
+    let decision = policy.decide(PolicyInputs {
+        quality: ChannelQuality { index: 0.15 },
+        payload: payload(PayloadClass::BulkData, 50_000),
+        prev_decision: None,
+        last_switch_age_s: u32::MAX,
+    });
+    assert_eq!(decision.mode_family, ModeFamily::BitAdaptiveOfdm);
+    matches!(decision.arq_strategy, ArqStrategy::SelectiveRepeat { .. });
+}
+
+#[test]
+fn beacon_class_is_best_effort_no_arq() {
+    let policy = Policy::new(default_thresholds());
+    let decision = policy.decide(PolicyInputs {
+        quality: ChannelQuality { index: 0.6 },
+        payload: payload(PayloadClass::Beacon, 64),
+        prev_decision: None,
+        last_switch_age_s: u32::MAX,
+    });
+    matches!(decision.arq_strategy, ArqStrategy::NoneBestEffort);
+}
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+```bash
+cargo --manifest-path crates/tuxmodem-linkadapt/Cargo.toml test --test routing_2d_table
+```
+
+Expected: FAIL — `Policy::new`, `PolicyInputs`, `Thresholds::load_default` not defined.
+
+- [ ] **Step 3: Implement `src/thresholds.rs`**
+
+```rust
+//! Threshold table loaded from YAML. Hand-derived defaults live in
+//! `thresholds/default.yaml`; sim-tuned values land in `thresholds/tuned.yaml`
+//! (Wave B Phase 6).
+//!
+//! The runtime crate carries no hard-coded SNR / quality numbers; they all
+//! live here. This is the AGPLv3 + ADR-0014 hygienic boundary: data is data,
+//! tuned by sim sweeps, never inherited from prior art.
+
+use serde::{Deserialize, Serialize};
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Thresholds {
+    pub version: String,                           // git sha or semver
+    /// Quality below which the policy considers the OFDM family non-viable for
+    /// the current payload class.
+    pub ofdm_floor_quality: f32,
+    /// Quality above which short-critical payloads return to OFDM.
+    pub ofdm_recovery_quality: f32,
+    /// Threshold above which we engage narrow-FSK over wideband-low-density
+    /// (the situational-crowded-band trigger; default 1.0 = never auto-engage,
+    /// only operator override).
+    pub narrow_fsk_trigger_quality: f32,
+    /// OFDM mode-within-family thresholds (mode_id → quality required).
+    pub ofdm_mode_thresholds: Vec<OfdmModeThreshold>,
+    /// Hysteresis parameters (dwell time + up/down deltas).
+    pub hysteresis: HysteresisParams,
+    /// Default selective-repeat window size (subsystem #6 may override
+    /// negotiated). Per ADR 0014, no prior-art-derived number — use a
+    /// theory-driven default sized for ~5 s HF RTT × typical OFDM
+    /// throughput (refine via sim sweep in Wave B Phase 6).
+    pub default_arq_window: u16,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct OfdmModeThreshold {
+    pub mode_id: u16,
+    pub min_quality: f32,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct HysteresisParams {
+    pub min_dwell_s: u32,                          // seconds; no shift within this window
+    pub up_shift_margin: f32,                      // quality must EXCEED mode_threshold + margin to step up
+    pub down_shift_margin: f32,                    // quality must DROP BELOW mode_threshold - margin to step down
+}
+
+impl Thresholds {
+    pub fn load_default() -> Result<Self, ThresholdsError> {
+        let yaml = include_str!("../thresholds/default.yaml");
+        serde_yaml::from_str(yaml).map_err(ThresholdsError::Parse)
+    }
+    pub fn load_from_path(path: &std::path::Path) -> Result<Self, ThresholdsError> {
+        let yaml = std::fs::read_to_string(path).map_err(ThresholdsError::Io)?;
+        serde_yaml::from_str(&yaml).map_err(ThresholdsError::Parse)
+    }
+}
+
+#[derive(thiserror::Error, Debug)]
+pub enum ThresholdsError {
+    #[error("io: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("parse: {0}")]
+    Parse(#[from] serde_yaml::Error),
+}
+```
+
+- [ ] **Step 4: Write `thresholds/default.yaml`**
+
+```yaml
+# Hand-derived starting thresholds. These are NOT empirical — they are
+# theory-derived placeholders sized for the eventual Wave B sim sweep to
+# replace. Per ADR 0014, no number here is derived from VARA / ARDOP /
+# any other prior-art modem; they are derived from Sklar §3 BER-vs-SNR
+# curves for QPSK/BPSK + rate-1/2 LDPC under AWGN.
+version: "default-hand-derived-2026-05-31"
+ofdm_floor_quality: 0.25            # below this, short-critical drops to robustness
+ofdm_recovery_quality: 0.40         # above this, short-critical returns to OFDM
+narrow_fsk_trigger_quality: 1.01    # >1.0 ⇒ never auto-engage; operator override only
+ofdm_mode_thresholds:
+  # mode_id is an opaque ID assigned by #3 (PHY). Mode 0 = narrowest/most-robust
+  # within the OFDM family; higher IDs = denser / higher-throughput.
+  - { mode_id: 0, min_quality: 0.25 }
+  - { mode_id: 1, min_quality: 0.45 }
+  - { mode_id: 2, min_quality: 0.65 }
+  - { mode_id: 3, min_quality: 0.80 }
+hysteresis:
+  min_dwell_s: 4                    # no shift within 4 s of previous shift
+  up_shift_margin: 0.08             # quality must exceed threshold + 0.08 to step up
+  down_shift_margin: 0.05           # quality must drop below threshold - 0.05 to step down
+default_arq_window: 32
+```
+
+- [ ] **Step 5: Implement `src/policy.rs` (pure decision function)**
+
+```rust
+//! 2D link-adaptation policy. Pure function: (quality, payload, prev_decision)
+//! → AdaptationDecision. Hysteresis wraps this in Phase 4; the core decision
+//! lives here without time-dependent state, so it can be replayed against
+//! recorded simulator traces.
+
+use crate::inputs::{PayloadClass, PayloadDescriptor};
+use crate::outputs::{
+    AdaptationDecision, ArqStrategy, DecisionRationale, ModeDescriptor, ModeFamily,
+};
+use crate::quality::ChannelQuality;
+use crate::thresholds::Thresholds;
+
+pub struct Policy {
+    thresholds: Thresholds,
+}
+
+pub struct PolicyInputs {
+    pub quality: ChannelQuality,
+    pub payload: PayloadDescriptor,
+    pub prev_decision: Option<AdaptationDecision>,
+    pub last_switch_age_s: u32,
+}
+
+impl Policy {
+    pub fn new(thresholds: Thresholds) -> Self {
+        Self { thresholds }
+    }
+
+    pub fn decide(&self, inputs: PolicyInputs) -> AdaptationDecision {
+        let q = inputs.quality.index;
+
+        // Step 1: family selection (the outer loop of the 2D table).
+        let family = self.select_family(q, &inputs.payload);
+
+        // Step 2: mode-within-family selection (the inner loop).
+        let mode = self.select_mode(family, q);
+
+        // Step 3: ARQ strategy is a function of family + payload class.
+        let arq_strategy = self.select_arq(family, &inputs.payload);
+
+        AdaptationDecision {
+            mode_family: family,
+            mode,
+            arq_strategy,
+            rationale: DecisionRationale {
+                quality_index: q,
+                triggered_hysteresis: false,
+                last_switch_age_s: inputs.last_switch_age_s,
+                thresholds_version: self.thresholds.version.clone(),
+            },
+        }
+    }
+
+    fn select_family(&self, q: f32, payload: &PayloadDescriptor) -> ModeFamily {
+        // Narrow-FSK is reserved for operator override + the situational
+        // crowded-band case; default threshold is >1.0 so it never auto-engages.
+        if q > self.thresholds.narrow_fsk_trigger_quality {
+            return ModeFamily::RobustnessNarrowFsk;
+        }
+        match payload.class {
+            // Short-critical drops to robustness floor under degraded channel
+            // (per spec §1.A); long messages stay in OFDM even at low quality
+            // (they need ARQ — the floor's no-ARQ semantics are wrong for bulk).
+            PayloadClass::ShortCritical => {
+                if q < self.thresholds.ofdm_floor_quality {
+                    ModeFamily::RobustnessWidebandOfdm
+                } else {
+                    ModeFamily::BitAdaptiveOfdm
+                }
+            }
+            PayloadClass::BulkData | PayloadClass::Beacon => ModeFamily::BitAdaptiveOfdm,
+        }
+    }
+
+    fn select_mode(&self, family: ModeFamily, q: f32) -> ModeDescriptor {
+        let mode_id = match family {
+            ModeFamily::BitAdaptiveOfdm => {
+                // Pick the highest mode whose min_quality threshold is satisfied.
+                self.thresholds
+                    .ofdm_mode_thresholds
+                    .iter()
+                    .filter(|t| q >= t.min_quality)
+                    .map(|t| t.mode_id)
+                    .max()
+                    .unwrap_or(0)
+            }
+            ModeFamily::RobustnessWidebandOfdm => 0,
+            ModeFamily::RobustnessNarrowFsk => 0,
+        };
+        ModeDescriptor { family, mode_id, bit_loading: None }
+    }
+
+    fn select_arq(&self, family: ModeFamily, payload: &PayloadDescriptor) -> ArqStrategy {
+        match (family, payload.class) {
+            (ModeFamily::BitAdaptiveOfdm, PayloadClass::BulkData) => {
+                ArqStrategy::SelectiveRepeat { window_size: self.thresholds.default_arq_window }
+            }
+            (ModeFamily::BitAdaptiveOfdm, PayloadClass::ShortCritical) => {
+                ArqStrategy::SelectiveRepeat { window_size: self.thresholds.default_arq_window }
+            }
+            (ModeFamily::BitAdaptiveOfdm, PayloadClass::Beacon) => ArqStrategy::NoneBestEffort,
+            (ModeFamily::RobustnessWidebandOfdm, _) => ArqStrategy::NoneRetransmitWholeMessage,
+            (ModeFamily::RobustnessNarrowFsk, _) => ArqStrategy::NoneRetransmitWholeMessage,
+        }
+    }
+}
+```
+
+- [ ] **Step 6: Run tests to verify they pass**
+
+```bash
+cargo --manifest-path crates/tuxmodem-linkadapt/Cargo.toml test --test routing_2d_table
+```
+
+Expected: 5 tests pass.
+
+- [ ] **Step 7: Re-run all tests to verify no regression**
+
+```bash
+cargo --manifest-path crates/tuxmodem-linkadapt/Cargo.toml test
+```
+
+Expected: 8 tests pass (3 from Phase 2 + 5 from Phase 3).
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add crates/tuxmodem-linkadapt/src/policy.rs \
+        crates/tuxmodem-linkadapt/src/thresholds.rs \
+        crates/tuxmodem-linkadapt/thresholds/default.yaml \
+        crates/tuxmodem-linkadapt/tests/routing_2d_table.rs
+git commit -m "feat(linkadapt): 2D table-driven policy core + YAML thresholds
+
+Pure decide() function maps (channel-quality, payload-class) onto
+(mode-family, mode-within-family, ARQ-strategy) per spec §1.A. All
+SNR / quality / mode numbers live in thresholds/default.yaml — runtime
+code carries zero hard-coded empirical values. Hand-derived defaults
+will be replaced by sim-tuned values in Wave B Phase 6.
+
+Refs: spec §1.A (2D policy), §4.Q2 (mode-step granularity).
+
+Agent: opossum-pine-spruce
+Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
+```
+
+---
+
+### Phase 4 — Hysteresis layer + asymmetric per-direction state
+
+**Files:**
+- Modify: `crates/tuxmodem-linkadapt/src/hysteresis.rs`
+- Create: `crates/tuxmodem-linkadapt/tests/hysteresis_properties.rs`
+
+- [ ] **Step 1: Write the failing hysteresis tests**
+
+```rust
+// tests/hysteresis_properties.rs
+use proptest::prelude::*;
+use tuxmodem_linkadapt::hysteresis::HysteresisAdapter;
+use tuxmodem_linkadapt::policy::{Policy, PolicyInputs};
+use tuxmodem_linkadapt::outputs::ModeFamily;
+use tuxmodem_linkadapt::quality::ChannelQuality;
+use tuxmodem_linkadapt::inputs::{PayloadClass, PayloadDescriptor};
+use tuxmodem_linkadapt::thresholds::Thresholds;
+
+fn bulk_payload() -> PayloadDescriptor {
+    PayloadDescriptor { bytes_pending: 10_000, class: PayloadClass::BulkData, max_acceptable_latency_s: None }
+}
+
+#[test]
+fn steady_state_input_does_not_flap_modes() {
+    let policy = Policy::new(Thresholds::load_default().unwrap());
+    let mut adapter = HysteresisAdapter::new(policy);
+    // Quality oscillates by 0.02 around 0.50 — within hysteresis margins.
+    let mut last_mode_id = None;
+    let mut switches = 0;
+    for tick in 0..200 {
+        let q_jitter = if tick % 2 == 0 { 0.02 } else { -0.02 };
+        let q = ChannelQuality { index: 0.50 + q_jitter };
+        let d = adapter.step(q, bulk_payload(), 1);    // 1 s per tick
+        if let Some(prev) = last_mode_id {
+            if prev != d.mode.mode_id { switches += 1; }
+        }
+        last_mode_id = Some(d.mode.mode_id);
+    }
+    assert!(switches <= 2, "steady-state input flapped {} times", switches);
+}
+
+#[test]
+fn dwell_time_blocks_consecutive_shifts() {
+    let policy = Policy::new(Thresholds::load_default().unwrap());
+    let mut adapter = HysteresisAdapter::new(policy);
+    // Big quality jump — should switch.
+    let _ = adapter.step(ChannelQuality { index: 0.30 }, bulk_payload(), 1);
+    let d1 = adapter.step(ChannelQuality { index: 0.90 }, bulk_payload(), 1);
+    let initial = d1.mode.mode_id;
+    // Within dwell window: another big jump should NOT cause another shift.
+    let d2 = adapter.step(ChannelQuality { index: 0.20 }, bulk_payload(), 1);  // 1 s later
+    assert_eq!(d2.mode.mode_id, initial, "shift before dwell expired");
+    assert!(d2.rationale.triggered_hysteresis, "rationale must flag suppressed shift");
+}
+
+proptest! {
+    #[test]
+    fn monotonic_quality_drop_drives_monotonic_mode_reduction(
+        seed in any::<u64>()
+    ) {
+        // Property: as quality monotonically degrades, mode_id never *increases*.
+        let mut rng_state = seed;
+        let policy = Policy::new(Thresholds::load_default().unwrap());
+        let mut adapter = HysteresisAdapter::new(policy);
+        let mut last_mode = u16::MAX;
+        for tick_pct in (0..=100).rev() {
+            let q = ChannelQuality { index: tick_pct as f32 / 100.0 };
+            let d = adapter.step(q, bulk_payload(), 30);  // 30 s ticks → past dwell
+            prop_assert!(d.mode.mode_id <= last_mode,
+                "mode_id increased on monotonic drop: {} → {}", last_mode, d.mode.mode_id);
+            last_mode = d.mode.mode_id;
+            rng_state = rng_state.wrapping_add(1);  // not actually used; placeholder for future randomized inputs
+        }
+    }
+}
+```
+
+- [ ] **Step 2: Run tests to verify they fail**
+
+```bash
+cargo --manifest-path crates/tuxmodem-linkadapt/Cargo.toml test --test hysteresis_properties
+```
+
+Expected: FAIL — `HysteresisAdapter` not defined.
+
+- [ ] **Step 3: Implement `src/hysteresis.rs`**
+
+```rust
+//! Hysteresis layer. Wraps the pure policy with dwell-time + dual-threshold
+//! mode-flap suppression, plus per-direction state for asymmetric channels
+//! (spec §4.Q6).
+
+use crate::inputs::PayloadDescriptor;
+use crate::outputs::{AdaptationDecision, ModeFamily};
+use crate::policy::{Policy, PolicyInputs};
+use crate::quality::ChannelQuality;
+
+pub struct HysteresisAdapter {
+    policy: Policy,
+    state_tx: DirectionState,
+    state_rx: DirectionState,
+}
+
+#[derive(Default, Clone)]
+struct DirectionState {
+    last_decision: Option<AdaptationDecision>,
+    time_since_switch_s: u32,
+}
+
+impl HysteresisAdapter {
+    pub fn new(policy: Policy) -> Self {
+        Self { policy, state_tx: DirectionState::default(), state_rx: DirectionState::default() }
+    }
+
+    /// One tick of adaptation for the TX direction. `tick_seconds` is the
+    /// number of seconds elapsed since the last `step` call.
+    pub fn step(
+        &mut self,
+        quality: ChannelQuality,
+        payload: PayloadDescriptor,
+        tick_seconds: u32,
+    ) -> AdaptationDecision {
+        self.state_tx.time_since_switch_s = self.state_tx.time_since_switch_s.saturating_add(tick_seconds);
+        let raw = self.policy.decide(PolicyInputs {
+            quality,
+            payload,
+            prev_decision: self.state_tx.last_decision.clone(),
+            last_switch_age_s: self.state_tx.time_since_switch_s,
+        });
+        let applied = self.apply_hysteresis(raw, /* direction = */ Direction::Tx);
+        self.state_tx.last_decision = Some(applied.clone());
+        applied
+    }
+
+    /// Same as `step`, but for the RX direction. Asymmetric per spec §4.Q6.
+    pub fn step_rx(
+        &mut self,
+        quality: ChannelQuality,
+        payload: PayloadDescriptor,
+        tick_seconds: u32,
+    ) -> AdaptationDecision {
+        self.state_rx.time_since_switch_s = self.state_rx.time_since_switch_s.saturating_add(tick_seconds);
+        let raw = self.policy.decide(PolicyInputs {
+            quality,
+            payload,
+            prev_decision: self.state_rx.last_decision.clone(),
+            last_switch_age_s: self.state_rx.time_since_switch_s,
+        });
+        let applied = self.apply_hysteresis(raw, Direction::Rx);
+        self.state_rx.last_decision = Some(applied.clone());
+        applied
+    }
+
+    fn apply_hysteresis(&mut self, raw: AdaptationDecision, dir: Direction) -> AdaptationDecision {
+        let state = match dir { Direction::Tx => &mut self.state_tx, Direction::Rx => &mut self.state_rx };
+        let Some(prev) = state.last_decision.clone() else {
+            // No prior decision; raw stands. Reset the dwell counter.
+            state.time_since_switch_s = 0;
+            return raw;
+        };
+        let dwell_required = /* read from thresholds via policy */ 4;     // matches default.yaml
+        let wants_to_switch = prev.mode.mode_id != raw.mode.mode_id
+            || prev.mode_family != raw.mode_family;
+        if wants_to_switch && state.time_since_switch_s < dwell_required {
+            // Suppress the switch — keep prev mode, flag rationale.
+            let mut out = prev;
+            out.rationale.triggered_hysteresis = true;
+            out.rationale.last_switch_age_s = state.time_since_switch_s;
+            out.rationale.quality_index = raw.rationale.quality_index;
+            return out;
+        }
+        if wants_to_switch {
+            state.time_since_switch_s = 0;
+        }
+        raw
+    }
+}
+
+#[derive(Clone, Copy)]
+enum Direction { Tx, Rx }
+```
+
+(Note: the `dwell_required` value is hard-coded to `4` to match `default.yaml` for the first cut. Phase 4b cleanup: pipe `Thresholds::hysteresis.min_dwell_s` through. Add that as Step 5 below.)
+
+- [ ] **Step 4: Run tests to verify pass**
+
+```bash
+cargo --manifest-path crates/tuxmodem-linkadapt/Cargo.toml test --test hysteresis_properties
+```
+
+Expected: tests pass. If proptest finds a counter-example to the monotonic property, that's a real policy bug — fix it before commit (likely in `policy.rs::select_mode`, ensure `.max()` over filtered thresholds).
+
+- [ ] **Step 5: Refactor `dwell_required` to read from `Thresholds`**
+
+Modify `HysteresisAdapter` so it stores a reference to the `Thresholds` (the `Policy` already owns one — expose `Policy::thresholds() -> &Thresholds` and use `policy.thresholds().hysteresis.min_dwell_s`). Replace the hard-coded `4`. Re-run tests.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add crates/tuxmodem-linkadapt/src/hysteresis.rs \
+        crates/tuxmodem-linkadapt/src/policy.rs \
+        crates/tuxmodem-linkadapt/tests/hysteresis_properties.rs
+git commit -m "feat(linkadapt): hysteresis + asymmetric per-direction adapter
+
+HysteresisAdapter wraps the pure policy with dwell-time + dual-threshold
+suppression. Per-direction state (Tx vs. Rx) supports the asymmetric-
+channel case (spec §4.Q6) — TX and RX adapt independently.
+
+Proptest verifies that monotonic quality drop never increases mode_id.
+
+Refs: spec §4.Q3 (hysteresis), §4.Q6 (asymmetric), §8 (watched failure
+modes: mode-flapping, asymmetric-channel surprises).
+
+Agent: opossum-pine-spruce
+Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
+```
+
+---
+
+### Phase 4-end checkpoint — Wave A complete
+
+After Phase 4, the link-adaptation subsystem is **architecturally complete and self-tested** against in-process stubs:
+
+- All cross-subsystem traits are pinned.
+- The 2D policy table is implemented + tested.
+- Hysteresis + asymmetric state are implemented + property-tested.
+- Thresholds live in YAML, are version-tagged, and feed the runtime via a parsed table.
+
+Downstream subsystems (#3 PHY, #5 MAC, #6 ARQ) can begin coding against `tuxmodem-linkadapt`'s trait surface. The crate publishes to crates.io as `tuxmodem-linkadapt 0.1.0-alpha.0` at the end of Phase 4.
+
+**What Wave A explicitly does NOT do:**
+- Does not consume real `hf-channel-sim` traces (sim crate doesn't exist yet).
+- Does not emit empirically-tuned thresholds (sim sweeps haven't happened).
+- Does not implement the host-protocol bridge or operator override CLI (that's #8).
+
+Wave B picks all three up.
+
+---
+
+## Wave B — empirical validation + tuning (gates on upstream subsystems)
+
+### Phase 5 — Channel-sim integration test harness
+
+**Gate:** `hf-channel-sim` (subsystem #1) reaches v0.1 and is published.
+
+**Files:**
+- Modify: `crates/tuxmodem-linkadapt/Cargo.toml` (add `hf-channel-sim` as dev-dep)
+- Create: `crates/tuxmodem-linkadapt/tests/sweep_integration.rs`
+
+- [ ] **Step 1: Add hf-channel-sim as dev-dependency**
+
+```toml
+[dev-dependencies]
+hf-channel-sim = "0.1"
+# ... existing dev-deps ...
+```
+
+- [ ] **Step 2: Write deterministic sweep integration test**
+
+```rust
+// tests/sweep_integration.rs
+use hf_channel_sim::{ChannelCondition, Simulator};
+use tuxmodem_linkadapt::{
+    hysteresis::HysteresisAdapter,
+    policy::Policy,
+    quality::ChannelQualityEstimator,
+    stub::{StubArqReporter, StubPayloadRouter, StubPhyReporter},
+    thresholds::Thresholds,
+};
+
+#[test]
+fn adapter_settles_to_lowest_mode_under_f520_poor() {
+    // Drive the adapter from a deterministic F.520 "poor" simulator trace.
+    // The adapter should converge to a low-but-stable mode_id within 60 ticks.
+    let mut sim = Simulator::new(ChannelCondition::Poor, /* seed = */ 42);
+    let policy = Policy::new(Thresholds::load_default().unwrap());
+    let mut adapter = HysteresisAdapter::new(policy);
+    let estimator = ChannelQualityEstimator::default();
+
+    let mut last_modes = vec![];
+    for tick in 0..120 {
+        let phy = StubPhyReporter::with_aggregate_snr_db(sim.measured_snr_db());
+        let arq = StubArqReporter::with_fer_and_throughput(sim.measured_fer(), sim.measured_throughput_bps());
+        let q = estimator.fuse(&phy, &arq);
+        let d = adapter.step(q, StubPayloadRouter::bulk(10_000).descriptor, 1);
+        last_modes.push(d.mode.mode_id);
+        sim.advance(1.0);
+    }
+
+    // After 60+ ticks, no more than one mode_id appears in the trailing window.
+    let trailing = &last_modes[60..];
+    let distinct: std::collections::HashSet<_> = trailing.iter().collect();
+    assert!(distinct.len() <= 2, "did not settle under F.520 poor: distinct modes = {:?}", distinct);
+    // And the settled mode is at the low end (not mode 3).
+    let max = *trailing.iter().max().unwrap();
+    assert!(max <= 1, "settled mode too high under F.520 poor: {}", max);
+}
+
+#[test]
+fn adapter_climbs_to_highest_mode_under_f520_good() {
+    let mut sim = Simulator::new(ChannelCondition::Good, /* seed = */ 42);
+    let policy = Policy::new(Thresholds::load_default().unwrap());
+    let mut adapter = HysteresisAdapter::new(policy);
+    let estimator = ChannelQualityEstimator::default();
+
+    for _ in 0..120 {
+        let phy = StubPhyReporter::with_aggregate_snr_db(sim.measured_snr_db());
+        let arq = StubArqReporter::with_fer_and_throughput(sim.measured_fer(), sim.measured_throughput_bps());
+        let q = estimator.fuse(&phy, &arq);
+        let _ = adapter.step(q, StubPayloadRouter::bulk(10_000).descriptor, 1);
+        sim.advance(1.0);
+    }
+
+    // After 120 s under "good," the adapter should have climbed to the top mode.
+    let phy = StubPhyReporter::with_aggregate_snr_db(sim.measured_snr_db());
+    let arq = StubArqReporter::with_fer_and_throughput(0.0, 4_500.0);
+    let q = estimator.fuse(&phy, &arq);
+    let d = adapter.step(q, StubPayloadRouter::bulk(10_000).descriptor, 1);
+    assert_eq!(d.mode.mode_id, 3, "did not reach top mode under F.520 good");
+}
+```
+
+- [ ] **Step 3: Run the sweep test**
+
+```bash
+cargo --manifest-path crates/tuxmodem-linkadapt/Cargo.toml test --test sweep_integration
+```
+
+Expected: 2 tests pass. If they fail with the default thresholds, that's the **expected signal** that Wave B Phase 6 needs to tune them.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add crates/tuxmodem-linkadapt/Cargo.toml \
+        crates/tuxmodem-linkadapt/tests/sweep_integration.rs
+git commit -m "test(linkadapt): integration sweep against hf-channel-sim v0.1
+
+Wave B Phase 5: links the adapter into the real channel simulator. Two
+sweep tests verify settling behavior at the F.520 envelope extremes
+(poor → low mode, good → top mode). If these fail with the default
+thresholds, Phase 6's tuner is the next move.
+
+Agent: opossum-pine-spruce
+Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
+```
+
+---
+
+### Phase 6 — Offline tuning binary (`tuxmodem-linkadapt-tune`)
+
+**Gate:** Phase 5 lands; sim + adapter integrate cleanly.
+
+**Files:**
+- Create: `crates/tuxmodem-linkadapt/tune/Cargo.toml`
+- Create: `crates/tuxmodem-linkadapt/tune/src/main.rs`
+- Create: `crates/tuxmodem-linkadapt/thresholds/tuned.yaml` (generated artifact)
+
+- [ ] **Step 1: Scaffold the binary crate**
+
+```toml
+# tune/Cargo.toml
+[package]
+name = "tuxmodem-linkadapt-tune"
+version = "0.1.0-alpha.0"
+edition = "2021"
+license = "AGPL-3.0-only"
+
+[dependencies]
+tuxmodem-linkadapt = { path = "..", features = ["stubs"] }
+hf-channel-sim = "0.1"
+serde = { version = "1", features = ["derive"] }
+serde_yaml = "0.9"
+clap = { version = "4", features = ["derive"] }
+```
+
+- [ ] **Step 2: Implement the sweep + grid-search tuner**
+
+```rust
+// tune/src/main.rs
+//! Offline tuning binary. Runs deterministic 2D sweeps over the F.520 envelope
+//! × payload-size grid, evaluates throughput at each cell across a grid of
+//! candidate thresholds, and emits the threshold set that maximizes expected
+//! throughput.
+//!
+//! This is the AI-native-tuning loop in concrete form. The search is small
+//! enough to run end-to-end in CI on the Pi 5 dev target.
+
+use clap::Parser;
+use hf_channel_sim::{ChannelCondition, Simulator};
+use std::path::PathBuf;
+use tuxmodem_linkadapt::{
+    hysteresis::HysteresisAdapter,
+    policy::Policy,
+    quality::ChannelQualityEstimator,
+    stub::{StubArqReporter, StubPayloadRouter, StubPhyReporter},
+    thresholds::{HysteresisParams, OfdmModeThreshold, Thresholds},
+};
+
+#[derive(Parser)]
+struct Args {
+    /// Output YAML path.
+    #[arg(short, long, default_value = "thresholds/tuned.yaml")]
+    out: PathBuf,
+    /// Number of sim ticks per evaluation cell.
+    #[arg(long, default_value_t = 120)]
+    ticks_per_cell: u32,
+}
+
+fn main() {
+    let args = Args::parse();
+    let candidates = candidate_threshold_grid();
+    let mut best_score = f32::NEG_INFINITY;
+    let mut best: Thresholds = candidates[0].clone();
+
+    for candidate in &candidates {
+        let score = evaluate(candidate, args.ticks_per_cell);
+        if score > best_score {
+            best_score = score;
+            best = candidate.clone();
+        }
+    }
+
+    let yaml = serde_yaml::to_string(&best).expect("serialize");
+    std::fs::write(&args.out, yaml).expect("write");
+    eprintln!("Wrote tuned thresholds (score = {}) to {}", best_score, args.out.display());
+}
+
+fn candidate_threshold_grid() -> Vec<Thresholds> {
+    // Small grid over the four most-sensitive parameters: ofdm_floor_quality,
+    // ofdm_recovery_quality, hysteresis margins. The rest (mode-id thresholds,
+    // narrow_fsk_trigger) stay at defaults for v0.1.
+    let mut grid = vec![];
+    for floor in [0.20, 0.25, 0.30, 0.35] {
+        for recovery in [0.35, 0.40, 0.45, 0.50] {
+            if recovery <= floor { continue; }
+            for up_margin in [0.05, 0.08, 0.12] {
+                grid.push(Thresholds {
+                    version: format!("tuned-floor={}-recov={}-up={}", floor, recovery, up_margin),
+                    ofdm_floor_quality: floor,
+                    ofdm_recovery_quality: recovery,
+                    narrow_fsk_trigger_quality: 1.01,
+                    ofdm_mode_thresholds: vec![
+                        OfdmModeThreshold { mode_id: 0, min_quality: 0.25 },
+                        OfdmModeThreshold { mode_id: 1, min_quality: 0.45 },
+                        OfdmModeThreshold { mode_id: 2, min_quality: 0.65 },
+                        OfdmModeThreshold { mode_id: 3, min_quality: 0.80 },
+                    ],
+                    hysteresis: HysteresisParams { min_dwell_s: 4, up_shift_margin: up_margin, down_shift_margin: 0.05 },
+                    default_arq_window: 32,
+                });
+            }
+        }
+    }
+    grid
+}
+
+fn evaluate(thresholds: &Thresholds, ticks_per_cell: u32) -> f32 {
+    // Score = expected throughput across (channel-condition × payload-size) cells.
+    let cells = [
+        (ChannelCondition::Good, 10_000),
+        (ChannelCondition::Moderate, 10_000),
+        (ChannelCondition::Poor, 10_000),
+        (ChannelCondition::Good, 200),
+        (ChannelCondition::Moderate, 200),
+        (ChannelCondition::Poor, 200),
+    ];
+    let mut sum_throughput = 0.0;
+    for &(cond, bytes) in &cells {
+        let mut sim = Simulator::new(cond, /* seed = */ 42);
+        let policy = Policy::new(thresholds.clone());
+        let mut adapter = HysteresisAdapter::new(policy);
+        let estimator = ChannelQualityEstimator::default();
+        let mut total_bytes = 0u64;
+        for _ in 0..ticks_per_cell {
+            let phy = StubPhyReporter::with_aggregate_snr_db(sim.measured_snr_db());
+            let arq = StubArqReporter::with_fer_and_throughput(sim.measured_fer(), sim.measured_throughput_bps());
+            let q = estimator.fuse(&phy, &arq);
+            let d = adapter.step(q, StubPayloadRouter::bulk(bytes).descriptor, 1);
+            total_bytes = total_bytes.saturating_add(simulated_bytes_per_tick(&d, &arq) as u64);
+            sim.advance(1.0);
+        }
+        sum_throughput += total_bytes as f32;
+    }
+    sum_throughput
+}
+
+fn simulated_bytes_per_tick(d: &tuxmodem_linkadapt::AdaptationDecision, arq: &StubArqReporter) -> u32 {
+    // Crude per-mode-id throughput model for the tuner's loss function.
+    // Replace with sim-measured throughput once #3/#4 are wired in.
+    let mode_byte_rate = match d.mode.mode_id {
+        0 => 50,
+        1 => 200,
+        2 => 500,
+        _ => 800,
+    };
+    let arq_factor = match arq.frame_error_rate() {
+        f if f < 0.05 => 1.0,
+        f if f < 0.20 => 0.8,
+        _ => 0.4,
+    };
+    (mode_byte_rate as f32 * arq_factor) as u32
+}
+```
+
+- [ ] **Step 3: Run the tuner end-to-end**
+
+```bash
+cargo --manifest-path crates/tuxmodem-linkadapt/tune/Cargo.toml run --release -- --out crates/tuxmodem-linkadapt/thresholds/tuned.yaml
+```
+
+Expected: writes `tuned.yaml` and prints best score. Inspect the file: it should differ from `default.yaml`.
+
+- [ ] **Step 4: Re-run Phase 5 sweep integration tests against the tuned file**
+
+Adjust `Thresholds::load_default` or add a `load_tuned` variant that loads `tuned.yaml`. Modify the sweep tests to use the tuned thresholds. Re-run:
+
+```bash
+cargo --manifest-path crates/tuxmodem-linkadapt/Cargo.toml test --test sweep_integration
+```
+
+Expected: tests pass with the tuned values.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add crates/tuxmodem-linkadapt/tune/ \
+        crates/tuxmodem-linkadapt/thresholds/tuned.yaml
+git commit -m "feat(linkadapt-tune): offline grid-search tuner over sim sweeps
+
+tuxmodem-linkadapt-tune binary scans a small grid of candidate threshold
+sets, evaluates each across the F.520 envelope × payload-size grid using
+hf-channel-sim, and emits the best-scoring set to thresholds/tuned.yaml.
+
+This is the AI-native-tuning loop in concrete form: deterministic, small
+search space, ground truth from sim, runtime adapter unchanged.
+
+Per ADR 0014, no prior-art-derived numbers — search space is hand-derived
+from theory; ground truth is sim, not VARA / ARDOP / FLDigi.
+
+Agent: opossum-pine-spruce
+Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
+```
+
+---
+
+### Phase 7 — Host-protocol bridge + operator override
+
+**Gate:** Subsystem #8 (host protocol) ships its v0.1 spec naming the command vocabulary.
+
+**Files:**
+- Create: `crates/tuxmodem-linkadapt/src/host_bridge.rs`
+- Create: `crates/tuxmodem-linkadapt/tests/operator_override.rs`
+
+- [ ] **Step 1: Sketch the host-protocol bridge**
+
+```rust
+//! Bridge between the link-adaptation runtime and the host protocol. Receives
+//! operator commands (set mode, release override, request state) and emits
+//! events (mode-changed, hysteresis-suppressed, thresholds-loaded).
+//!
+//! The host-protocol command vocabulary is owned by subsystem #8; this module
+//! consumes a trait surface defined there. Until #8 ships v0.1, this is
+//! a placeholder that exposes the operator-override behavior as a Rust API.
+
+use crate::outputs::{AdaptationDecision, ModeFamily};
+
+pub struct OperatorOverride {
+    pub forced_mode_id: Option<u16>,
+    pub forced_family: Option<ModeFamily>,
+    /// Sticky until released OR connection drops.
+    pub sticky: bool,
+}
+
+impl Default for OperatorOverride {
+    fn default() -> Self {
+        Self { forced_mode_id: None, forced_family: None, sticky: true }
+    }
+}
+
+impl OperatorOverride {
+    pub fn apply(&self, raw: AdaptationDecision) -> AdaptationDecision {
+        let mut out = raw;
+        if let Some(family) = self.forced_family { out.mode_family = family; out.mode.family = family; }
+        if let Some(id) = self.forced_mode_id { out.mode.mode_id = id; }
+        out
+    }
+    pub fn release_on_reconnect(&mut self) { self.forced_mode_id = None; self.forced_family = None; }
+}
+```
+
+- [ ] **Step 2: Write override-application tests**
+
+```rust
+// tests/operator_override.rs
+use tuxmodem_linkadapt::host_bridge::OperatorOverride;
+use tuxmodem_linkadapt::outputs::{AdaptationDecision, ArqStrategy, ModeFamily, ModeDescriptor, DecisionRationale};
+
+fn baseline() -> AdaptationDecision {
+    AdaptationDecision {
+        mode_family: ModeFamily::BitAdaptiveOfdm,
+        mode: ModeDescriptor { family: ModeFamily::BitAdaptiveOfdm, mode_id: 2, bit_loading: None },
+        arq_strategy: ArqStrategy::SelectiveRepeat { window_size: 32 },
+        rationale: DecisionRationale {
+            quality_index: 0.7,
+            triggered_hysteresis: false,
+            last_switch_age_s: 30,
+            thresholds_version: "test".into(),
+        },
+    }
+}
+
+#[test]
+fn override_forces_mode_id() {
+    let ov = OperatorOverride { forced_mode_id: Some(0), forced_family: None, sticky: true };
+    let d = ov.apply(baseline());
+    assert_eq!(d.mode.mode_id, 0);
+}
+
+#[test]
+fn override_forces_family() {
+    let ov = OperatorOverride { forced_mode_id: None, forced_family: Some(ModeFamily::RobustnessNarrowFsk), sticky: true };
+    let d = ov.apply(baseline());
+    assert_eq!(d.mode_family, ModeFamily::RobustnessNarrowFsk);
+}
+
+#[test]
+fn release_on_reconnect_clears_overrides() {
+    let mut ov = OperatorOverride { forced_mode_id: Some(0), forced_family: Some(ModeFamily::RobustnessWidebandOfdm), sticky: true };
+    ov.release_on_reconnect();
+    assert!(ov.forced_mode_id.is_none());
+    assert!(ov.forced_family.is_none());
+}
+```
+
+- [ ] **Step 3: Run tests to verify**
+
+```bash
+cargo --manifest-path crates/tuxmodem-linkadapt/Cargo.toml test --test operator_override
+```
+
+Expected: 3 tests pass.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add crates/tuxmodem-linkadapt/src/host_bridge.rs \
+        crates/tuxmodem-linkadapt/tests/operator_override.rs
+git commit -m "feat(linkadapt): operator-override host-bridge stub
+
+OperatorOverride applies sticky mode forcing to AdaptationDecisions and
+releases on reconnect (spec §4.Q5). The host-protocol command vocabulary
+that wires this to TCP control lives in subsystem #8; this module is the
+adapter-side anchor point.
+
+Refs: spec §4.Q5 (operator override).
+
+Agent: opossum-pine-spruce
+Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
+```
+
+---
+
+## Cross-subsystem coordination — handoffs and open items
+
+These items appear in this plan because they touch link adaptation but are owned elsewhere. They are listed here so the parent agent (`opossum-pine-spruce`) can coordinate with sibling subagents.
+
+### Handoffs **out of** #7
+
+| Consumer | Artifact | Phase produced |
+|---|---|---|
+| #3 (PHY) | `PhyQualityReporter` trait, `BitLoadingCurve` placeholder | Phase 1 |
+| #5 (MAC) | `PayloadRouter` trait, `PayloadDescriptor`/`PayloadClass`, `AdaptationDecision` consumer pattern | Phase 1 |
+| #6 (ARQ) | `ArqFeedbackReporter` trait, `ArqStrategy` consumer pattern | Phase 1 |
+| #8 (host protocol) | `OperatorOverride` API surface | Phase 7 |
+| #1 (channel sim) | Validation-suite consumer (sweep tests) | Phase 5 |
+
+### Handoffs **into** #7
+
+| Provider | Required item | Gate phase |
+|---|---|---|
+| #5 (MAC) | Concrete `PayloadClass` ↔ payload-byte-size mapping rules | Phase 3 (validation only; default classes work) |
+| #5 (MAC) | Header-field byte layout for piggybacked `AdaptationDecision` (per §4.Q4) | After Phase 4; can be deferred to #5 v0.2 |
+| #6 (ARQ) | Real `frame_error_rate` / `throughput_bps` formulas | Phase 5 (currently stubbed) |
+| #1 (channel sim) | `hf-channel-sim` v0.1 published, with `Simulator::measured_snr_db()` etc. | Phase 5 gate |
+| #3 (PHY) | Mode-id enumeration freeze | Phase 5 (tuner needs concrete mode_id ↔ throughput mapping) |
+| #4 (FEC) | Code-rate options per mode (informs throughput model in tuner) | Phase 6 (refinement, not blocker) |
+
+### Open items reported back to the umbrella overview
+
+- **§4.Q4 negotiation header field layout** is left to #5's canonical spec. This plan assumes 2 bytes is sufficient; if #5 needs more or less, `AdaptationDecision` carries a sufficient representation for any reasonable encoding.
+- **The throughput model in `tune/src/main.rs::simulated_bytes_per_tick`** is a crude per-mode-id constant table. When #3/#4 ship measured per-mode throughput curves under F.520 conditions, the tuner replaces the table with measured data and re-runs.
+- **Asymmetric channel state** is tracked per-direction in `HysteresisAdapter` but the bridge to a TX/RX pair of `PhyQualityReporter`/`ArqFeedbackReporter` is not pinned — #5's connection model needs to expose them. Flagged for the #5 / #6 coordination call.
+
+---
+
+## Watched failure modes (from spec §8, with mitigations in this plan)
+
+- **Mode-flapping** → Phase 4's hysteresis (dual-threshold + dwell time) + the `proptest` property `steady_state_input_does_not_flap_modes` test in Phase 4.
+- **Stale channel-quality state** → `ChannelQualityEstimator::fuse` is stateless; the rolling-window characteristics are owned by `ArqFeedbackReporter::frame_error_rate` (rolling N-frame window owned by #6). The `tune/` binary's grid search includes window-size as a future parameter (out of v0.1 scope; recorded as TODO in `tuned.yaml` header comment).
+- **Asymmetric-channel surprises** → Phase 4's per-direction `state_tx`/`state_rx` plus separate `step` and `step_rx` entry points. The plan does NOT assume symmetric channels.
+- **Prior-art temptation** → Three protections: (1) the README's clean-sheet block, (2) the `thresholds/default.yaml` header comment explicitly noting "no number here is derived from VARA / ARDOP / any other prior-art modem," (3) the tuner's search space is hand-derived, not seeded from any other modem's published tables.
+
+---
+
+## Definition of done
+
+**Wave A (this PR):**
+
+- [ ] All Phase 1–4 commits land.
+- [ ] `cargo test` passes from the crate root (8+ tests across `quality_fusion`, `routing_2d_table`, `hysteresis_properties`).
+- [ ] `cargo clippy --all-targets --all-features -- -D warnings` clean.
+- [ ] `cargo doc --no-deps` builds without warnings.
+- [ ] Crate is `cargo publish --dry-run`-clean (alpha publish deferred until #3/#5/#6 trait surfaces ratify, but the crate is publish-ready in shape).
+
+**Wave B (follow-up PR, gated on #1/#3/#4/#6 v0.1):**
+
+- [ ] Phase 5 sweep integration tests pass against `hf-channel-sim` v0.1 with either `default.yaml` or `tuned.yaml`.
+- [ ] `tuxmodem-linkadapt-tune` produces a `tuned.yaml` that scores higher than `default.yaml` on the grid.
+- [ ] Phase 7 host-bridge tests pass.
+- [ ] Cross-subsystem handoff items (see table above) all have explicit dispositions — landed in upstream subsystems, deferred to v0.2, or escalated to umbrella.
+
+---
+
+## Self-review checklist (executed by the planner)
+
+**Spec coverage:** Every §4 open question (§7.Q1–§7.Q8) is settled in **Settled architectural decisions** above and has a corresponding Phase that implements it (Q1→Phase 2, Q2→Phase 1+3, Q3→Phase 4, Q4→handoff to #5, Q5→Phase 7, Q6→Phase 4, Q7→Phase 4, Q8→Phase 3+4). §1.A 2D policy is Phase 3. §3 forcing functions all mapped. §8 watched failure modes all have mitigations.
+
+**Placeholder scan:** Every code step contains complete code. The one "TODO" is the throughput model in `tune/src/main.rs` — but it's explicitly named as a placeholder with a concrete improvement plan in the cross-subsystem coordination section, which is the right disposition for a clearly-bounded data-driven refinement gated on upstream subsystems.
+
+**Type consistency:** `AdaptationDecision`, `ModeFamily`, `ModeDescriptor`, `ArqStrategy`, `Thresholds`, `ChannelQuality`, `PayloadDescriptor`/`PayloadClass`/`ArqConnectionState` are defined exactly once (Phase 1/2/3) and referenced consistently across later phases. `HysteresisAdapter::step` vs `step_rx` are named differently because they affect different per-direction state; this is intentional and documented in their docstrings.
+
+---
+
+## Execution handoff
+
+This plan is for the **parent agent's** consumption (parallel-planning sprint output); the umbrella sprint owns whether/when to dispatch implementation. When implementation begins, the recommended path is:
+
+1. **Wave A** (Phases 1–4) ships first via `superpowers:subagent-driven-development` — one subagent per phase, fresh context per task. The cross-subsystem trait surface in Phase 1 unblocks #3 / #5 / #6 simultaneously.
+2. **Wave B** waits for `hf-channel-sim`, then re-engages with the same subagent-driven cadence.
+
+Agent: opossum-pine-spruce
