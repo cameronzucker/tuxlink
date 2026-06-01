@@ -227,7 +227,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 
 **Context:** The 2026-05-22 spec's `use_gps()` required `arbiter.has_fresh_fix()`. The position-subsystem restoration relaxes `use_gps()` to infallible — it sets `source = Gps` regardless of `last_fix`. See spec §1.1.
 
-- [ ] **Step 1: Write the failing test.**
+- [x] **Step 1: Write the failing test.**
 
 In `src-tauri/src/position/arbiter.rs`'s `mod tests`, DELETE any existing test asserting `use_gps_requires_a_usable_fix` (or similar). ADD:
 
@@ -254,7 +254,7 @@ In `src-tauri/src/position/arbiter.rs`'s `mod tests`, DELETE any existing test a
     }
 ```
 
-- [ ] **Step 2: Run the test to verify it fails.**
+- [x] **Step 2: Run the test to verify it fails.**
 
 ```bash
 cargo test --manifest-path src-tauri/Cargo.toml --lib \
@@ -263,7 +263,7 @@ cargo test --manifest-path src-tauri/Cargo.toml --lib \
 
 Expected: FAIL. Either: (a) compilation error because `arbiter.use_gps()` returns `Result<(), &'static str>` (the test uses `()`); OR (b) the pre-pjih `use_gps()` returns `Err("no usable GPS fix")` and the test's `arbiter.source()` assertion fails (still Manual).
 
-- [ ] **Step 3: Implement the relaxation.**
+- [x] **Step 3: Implement the relaxation.**
 
 In `src-tauri/src/position/arbiter.rs`, change the `use_gps()` signature and body:
 
@@ -279,7 +279,7 @@ In `src-tauri/src/position/arbiter.rs`, change the `use_gps()` signature and bod
 
 Compile-fail any caller of `use_gps()` that expected a `Result<_, _>`. The expected call site is in `src-tauri/src/ui_commands.rs::position_set_source` — Task 3 fixes that.
 
-- [ ] **Step 4: Run the test to verify it passes.**
+- [x] **Step 4: Run the test to verify it passes.**
 
 ```bash
 cargo test --manifest-path src-tauri/Cargo.toml --lib \
@@ -288,7 +288,7 @@ cargo test --manifest-path src-tauri/Cargo.toml --lib \
 
 Expected: PASS for this test; the full `cargo test --lib` will fail at the `position_set_source` callsite — that's expected and Task 3 fixes it.
 
-- [ ] **Step 5: Commit.**
+- [x] **Step 5: Commit.**
 
 ```bash
 git add src-tauri/src/position/arbiter.rs
