@@ -1,0 +1,31 @@
+[package]
+name = "tuxmodem-phy"
+version = "0.1.0"
+description = "Clean-sheet HF PHY waveform layer for tuxmodem (AGPL-3.0-only)"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+num-complex.workspace = true
+rustfft.workspace = true
+thiserror.workspace = true
+hound.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+rand = "0.8"
+# Activated as #1 and #4 publish; until then sibling subagents' plans
+# may stub these with path-deps in coordination.
+# hf-channel-sim.workspace = true
+# tuxmodem-fec.workspace = true
+
+[features]
+default = []
+audio-device = ["dep:cpal"]   # opt-in real-device I/O
+
+[dependencies.cpal]
+workspace = true
+optional = true
