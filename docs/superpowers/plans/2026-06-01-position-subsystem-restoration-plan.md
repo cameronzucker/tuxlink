@@ -1782,7 +1782,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 
 **Context:** Per spec §6.3 + R5 #7: the per-layer tests on arbiter and GridEdit pass independently, but no test exercises the composed flow. The position-subsystem restoration adds one integration test that mounts the full GridEdit + useStatus hook with mocked Tauri commands and walks the State 1 → click source chip → State 4 → click Set manually → grid input focused flow.
 
-- [ ] **Step 1: Create the test file with the failing integration test.**
+- [x] **Step 1: Create the test file with the failing integration test.**
 
 Create `src/shell/GridEdit.integration.test.tsx`:
 
@@ -1875,7 +1875,7 @@ test('integration: clicking source chip in State 1 (no fix) lands in State 4 + S
 
 Note: this is a simplified integration test. Depending on the project's test patterns, the test may need adjustments (mocking strategy, prop drilling vs. context, the queryClient invalidation timing). Per spec §6.3, the test should walk all 9 steps; the snippet above shows steps 1–4.
 
-- [ ] **Step 2: Run the integration test to verify it passes.**
+- [x] **Step 2: Run the integration test to verify it passes.**
 
 ```bash
 pnpm vitest run src/shell/GridEdit.integration.test.tsx 2>&1 | tail -15
@@ -1883,7 +1883,7 @@ pnpm vitest run src/shell/GridEdit.integration.test.tsx 2>&1 | tail -15
 
 Expected: PASS (all prior tasks combined produce the behavior the integration test asserts).
 
-- [ ] **Step 3: Run the full vitest + cargo --lib suites.**
+- [x] **Step 3: Run the full vitest + cargo --lib suites.**
 
 ```bash
 pnpm vitest run 2>&1 | tail -5
@@ -1892,7 +1892,7 @@ cargo test --manifest-path src-tauri/Cargo.toml --lib 2>&1 | tail -5
 
 Expected: all passing.
 
-- [ ] **Step 4: Commit.**
+- [x] **Step 4: Commit.**
 
 ```bash
 git add src/shell/GridEdit.integration.test.tsx
