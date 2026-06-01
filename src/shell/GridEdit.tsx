@@ -123,18 +123,31 @@ export function GridEdit({ grid, source, gpsReady, onCommit, onUseGps }: GridEdi
       >
         {grid ?? '—'}
       </button>
-      {/* Source chip. GPS gets a `locked` modifier when a fix is live so it
-          reads as ACTIVE (green) rather than greyed-out-as-if-disabled (tuxlink-39b). */}
-      <span
-        className={`dash-source-chip ${source === 'Manual' ? 'manual' : 'gps'}${
-          source === 'Gps' && gpsReady ? ' locked' : ''
-        }`}
-        data-testid="source-chip"
-        aria-label={`Position source: ${source}`}
-        onClick={source === 'Manual' ? onUseGps : undefined}
-      >
-        {source === 'Manual' ? 'MANUAL' : 'GPS'}
-      </span>
+      {/* Source chip. Per spec §2.1 + §4.2 (tuxlink-c79g T12): renders as a
+          real <button> (keyboard-accessible, screen-reader-actionable) when
+          source = Manual, and as a passive <span role="status"> when source =
+          Gps. GPS gets a `locked` modifier when a fix is live so it reads as
+          ACTIVE (green) rather than greyed-out-as-if-disabled (tuxlink-39b). */}
+      {source === 'Manual' ? (
+        <button
+          type="button"
+          className={`dash-source-chip manual${gpsReady ? ' gps-ready-glow' : ''}`}
+          data-testid="source-chip"
+          aria-label="Switch position source to GPS"
+          onClick={onUseGps}
+        >
+          MANUAL
+        </button>
+      ) : (
+        <span
+          className={`dash-source-chip gps${gpsReady ? ' locked' : ''}`}
+          data-testid="source-chip"
+          role="status"
+          aria-label={`Position source: GPS, ${gpsReady ? 'fresh fix' : 'no fix'}`}
+        >
+          GPS
+        </span>
+      )}
       {/* State 2 hint (tuxlink-c79g T11, spec §2.2 + §4.2): when source = Manual
           AND a fresh fix is available, render a PASSIVE "GPS ready" status text
           beside the chip. Pre-pjih had this as a clickable <button data-testid="use-gps">

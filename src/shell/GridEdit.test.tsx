@@ -122,3 +122,49 @@ test('GPS-ready hint in State 2 is a <span> (passive), not a <button>', () => {
   const hint = screen.getByText(/GPS ready/i);
   expect(hint.tagName).toBe('SPAN');
 });
+
+// tuxlink-c79g Task 12: per spec §2.1 + §4.2, the source chip renders as a
+// real <button> (keyboard-accessible, screen-reader-actionable) when source =
+// Manual, and as a passive <span role="status"> when source = Gps.
+test('source chip is a <button> when source = Manual', () => {
+  render(
+    <GridEdit
+      grid="EM75"
+      source="Manual"
+      gpsReady={false}
+      onCommit={vi.fn()}
+      onUseGps={vi.fn()}
+    />,
+  );
+  expect(screen.getByTestId('source-chip').tagName).toBe('BUTTON');
+});
+
+test('source chip is a <span> with role=status when source = Gps', () => {
+  render(
+    <GridEdit
+      grid="DM33"
+      source="Gps"
+      gpsReady={true}
+      onCommit={vi.fn()}
+      onUseGps={vi.fn()}
+    />,
+  );
+  const chip = screen.getByTestId('source-chip');
+  expect(chip.tagName).toBe('SPAN');
+  expect(chip.getAttribute('role')).toBe('status');
+});
+
+test('source chip <span> does not call onUseGps on click when source = Gps', () => {
+  const onUseGps = vi.fn();
+  render(
+    <GridEdit
+      grid="DM33"
+      source="Gps"
+      gpsReady={true}
+      onCommit={vi.fn()}
+      onUseGps={onUseGps}
+    />,
+  );
+  fireEvent.click(screen.getByTestId('source-chip'));
+  expect(onUseGps).not.toHaveBeenCalled();
+});
