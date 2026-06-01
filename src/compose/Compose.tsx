@@ -37,6 +37,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { clearDraft, loadDraft, saveDraft, splitAddrs } from './useDraft';
 import { ComposeTitleBar } from './ComposeTitleBar';
+import { ResizeHandles } from '../shell/chrome/ResizeHandles';
 import { FormPicker, lookupForm, allForms } from '../forms';
 import './Compose.css';
 
@@ -469,6 +470,10 @@ export function Compose({ draftId }: ComposeProps) {
 
   return (
     <div className="compose-root" data-testid="compose-root">
+      {/* Borderless-window resize affordances (decorations:false leaves no
+          native grips on labwc / Wayland). Mirrors AppShell. */}
+      <ResizeHandles />
+
       {/* ------------------------------------------------------------------ */}
       {/* Custom title bar (tuxlink-ng3: decorations:false, closes msr)      */}
       {/* ------------------------------------------------------------------ */}
