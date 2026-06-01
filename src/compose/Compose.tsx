@@ -38,7 +38,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { clearDraft, loadDraft, saveDraft, splitAddrs } from './useDraft';
 import { ComposeTitleBar } from './ComposeTitleBar';
 import { ResizeHandles } from '../shell/chrome/ResizeHandles';
-import { FormPicker, lookupForm, allForms } from '../forms';
+import { FormPicker, lookupForm, composableForms } from '../forms';
 import './Compose.css';
 
 // ============================================================================
@@ -602,7 +602,7 @@ export function Compose({ draftId }: ComposeProps) {
         )}
         {formMode.kind === 'pick' && (
           <FormPicker
-            forms={allForms().map((f) => ({ id: f.id, name: f.name }))}
+            forms={composableForms().map((f) => ({ id: f.id, name: f.name }))}
             onPick={(id) => setFormMode({ kind: 'form', formId: id, values: {} })}
             onCancel={() => setFormMode({ kind: 'plain' })}
           />
