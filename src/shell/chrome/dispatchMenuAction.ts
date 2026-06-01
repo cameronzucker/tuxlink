@@ -17,6 +17,8 @@ export interface MenuHandlers {
   setScheme: (id: ColorScheme) => void;
   /** Open the inline Settings panel (GPS state + position precision), tuxlink-39b. */
   openSettings: () => void;
+  /** Open the inline Theme Designer (View → Color Scheme → Customize…), tuxlink-vgth. */
+  openThemeDesigner: () => void;
   quit: () => void;
 }
 
@@ -41,6 +43,9 @@ export function dispatchMenuAction(id: MenuActionId, h: MenuHandlers): void {
     // post-merge smoke of #113).
     case 'menu:tools:settings_privacy':
       h.openSettings(); return;
+    // tuxlink-vgth: opens the inline Theme Designer panel.
+    case 'menu:view:customize_theme':
+      h.openThemeDesigner(); return;
     case 'menu:mailbox:inbox':
     case 'menu:mailbox:sent':
     case 'menu:mailbox:outbox':

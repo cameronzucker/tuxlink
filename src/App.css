@@ -186,6 +186,125 @@ body,
 }
 
 /* ----------------------------------------------------------------------------
+ * Light-mode presets (tuxlink-c22r). Motivated by outdoor / bright-sun
+ * readability on the operator's LCD. Each block sets `color-scheme: light` so
+ * WebKitGTK renders native scrollbars, selects, and selection highlights in
+ * light mode — the missing `color-scheme` is what made the prior "rich text
+ * input picks up dark scrollbar" regressions look themed-but-broken.
+ *
+ * The accent on light themes is a deep, warm shade (saddle brown / burnt
+ * orange family) rather than a light accent. Two reasons: (1) dark accent on
+ * light surface yields high contrast for outdoor readability, and (2) the
+ * `--tux-accent-fg` token has to flip to white on light themes so accent
+ * buttons remain readable.
+ * -------------------------------------------------------------------------- */
+
+/* Daylight — soft off-white surfaces with warm-amber accent. Designed for
+ * indoor + bright-sun moderate conditions; not full-contrast. */
+:root[data-theme='daylight'] {
+  --bg: #f4f6f9;
+  --surface: #ffffff;
+  --surface-2: #eef1f5;
+  --elevated: #e6eaef;
+  --border: #d4dae2;
+  --border-strong: #9ea7b3;
+  --border-soft: #e6eaef;
+  --text: #101820;
+  --text-dim: #3d4753;
+  --text-faint: #6c7682;
+  --accent: #a04a00;
+  --accent-2: #7a3700;
+  --accent-soft: rgba(160, 74, 0, 0.10);
+  --unread-dot: #a04a00;
+  --success: #0a6d3b;
+  --error: #a3171e;
+  --info: #0b4f9c;
+  --form-tag: #5b21b6;
+  /* literal --tux-* tokens (no primitive to alias) */
+  --tux-accent-fg: #ffffff;
+  --tux-danger-fg: #ffffff;
+  --tux-danger-surface: rgba(163, 23, 30, 0.10);
+  --tux-focus-ring: rgba(160, 74, 0, 0.45);
+  color-scheme: light;
+}
+
+/* High-contrast light — pure white surface, near-black text, deep accents.
+ * For harsh direct-sun viewing where Daylight still washes out. WCAG-AAA
+ * level contrast on every primary surface combination. */
+:root[data-theme='high-contrast-light'] {
+  --bg: #ffffff;
+  --surface: #ffffff;
+  --surface-2: #f0f0f0;
+  --elevated: #e0e0e0;
+  --border: #6e6e6e;
+  --border-strong: #333333;
+  --border-soft: #c8c8c8;
+  --text: #000000;
+  --text-dim: #2a2a2a;
+  --text-faint: #555555;
+  --accent: #8a3700;
+  --accent-2: #5f2600;
+  --accent-soft: rgba(138, 55, 0, 0.13);
+  --unread-dot: #8a3700;
+  --success: #00532a;
+  --error: #8a0014;
+  --info: #002e6e;
+  --form-tag: #4a1a85;
+  /* literal --tux-* tokens (no primitive to alias) */
+  --tux-accent-fg: #ffffff;
+  --tux-danger-fg: #ffffff;
+  --tux-danger-surface: rgba(138, 0, 20, 0.10);
+  --tux-focus-ring: rgba(138, 55, 0, 0.6);
+  color-scheme: light;
+}
+
+/* Paper — warm beige paper-on-desk surfaces with saddle-brown accent. Less
+ * harsh than Daylight; reads like a printed sheet. */
+:root[data-theme='paper'] {
+  --bg: #f5efe0;
+  --surface: #faf6ea;
+  --surface-2: #eee7d0;
+  --elevated: #e5dcbf;
+  --border: #c8bd9d;
+  --border-strong: #a89978;
+  --border-soft: #d8cfae;
+  --text: #2c2418;
+  --text-dim: #5a4f3a;
+  --text-faint: #897e64;
+  --accent: #8b4513;
+  --accent-2: #663508;
+  --accent-soft: rgba(139, 69, 19, 0.12);
+  --unread-dot: #8b4513;
+  --success: #2e7d32;
+  --error: #b71c1c;
+  --info: #1565c0;
+  --form-tag: #6a1b9a;
+  /* literal --tux-* tokens (no primitive to alias) */
+  --tux-accent-fg: #faf6ea;
+  --tux-danger-fg: #faf6ea;
+  --tux-danger-surface: rgba(183, 28, 28, 0.10);
+  --tux-focus-ring: rgba(139, 69, 19, 0.45);
+  color-scheme: light;
+}
+
+/* Custom — operator-designed theme (tuxlink-vgth). Empty by design: the
+ * designer applies its tokens as inline `style="--bg: …"` on <html>, which
+ * beats this rule's specificity (inline style is 1,0,0,0 — higher than the
+ * selector's 0,0,2,0). The block exists so a missing `loadCustomTheme()`
+ * after `clearCustomTheme()` doesn't leave the operator on a bare cool-slate
+ * cascade with `data-theme=custom` still attached — the resolver clears the
+ * attr in that branch, but having the empty selector is harmless and
+ * documents the contract. The literal `--tux-*` tokens default to the dark
+ * preset's values; the designer overrides them when it writes its inline
+ * style, so this is just a safety net during the moment between
+ * applyColorScheme stripping the inline style and the user clicking Save. */
+:root[data-theme='custom'] {
+  /* literal --tux-* tokens (no primitive to alias) — safety defaults */
+  --tux-accent-fg: #1a0e02;
+  --tux-danger-fg: #1a0e02;
+}
+
+/* ----------------------------------------------------------------------------
  * Base element theming (cool slate)
  * -------------------------------------------------------------------------- */
 

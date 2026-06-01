@@ -34,6 +34,7 @@ import { SettingsPanel } from './SettingsPanel';
 import { StatusBar } from './StatusBar';
 import { useStatusData } from './useStatus';
 import { applyColorScheme, saveColorScheme } from './colorScheme';
+import { ThemeDesigner } from './ThemeDesigner';
 import MessageView from '../mailbox/MessageView';
 import { TitleBar } from './chrome/TitleBar';
 import { MenuBar } from './chrome/MenuBar';
@@ -136,6 +137,9 @@ export function AppShell() {
   const [pinRadioPanel, setPinRadioPanel] = useState(false);
   // Inline GPS/privacy settings overlay (tuxlink-39b), opened from Tools→Settings.
   const [settingsOpen, setSettingsOpen] = useState(false);
+  // Inline theme designer overlay (tuxlink-vgth), opened from View → Color
+  // Scheme → Customize…. Same backdrop pattern as SettingsPanel.
+  const [themeDesignerOpen, setThemeDesignerOpen] = useState(false);
 
   // Connection panel: null = no panel; a {sessionType, protocol} key selects the reading-pane connection pane.
   const [selectedConnection, setSelectedConnection] = useState<ConnectionKey | null>(null);
@@ -308,6 +312,7 @@ export function AppShell() {
     selectFolder: (folder) => { setSelectedFolder(folder); setSelectedMessage(null); setSelectedConnection(null); },
     setScheme: (id) => { applyColorScheme(id); saveColorScheme(id); },
     openSettings: () => setSettingsOpen(true),
+    openThemeDesigner: () => setThemeDesignerOpen(true),
     quit: () => { void invoke('app_quit'); },
   }), [onConnect, openMessage]);
 
@@ -524,6 +529,8 @@ export function AppShell() {
       <StatusBar show={showStatusBar} unread={counts.inbox ?? 0} state={statusData.state} packet={packetUi} />
 
       <SettingsPanel open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+
+      <ThemeDesigner open={themeDesignerOpen} onClose={() => setThemeDesignerOpen(false)} />
 
       {savedSearchesOpen && (
         <SavedSearchesPanel onClose={() => setSavedSearchesOpen(false)} />
