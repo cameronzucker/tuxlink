@@ -460,6 +460,11 @@ pub struct NativeBackend {
     mailbox: Arc<Mailbox>,
     log_tx: broadcast::Sender<LogLine>,
     status: Arc<RwLock<BackendStatus>>,
+    /// Broadcasts every BackendStatus transition (2026-05-31): the frontend's
+    /// 5s status poll missed sub-second CMS-Z exchanges. Subscribers (the
+    /// bootstrap's emitter task) translate these to Tauri events. Best-effort
+    /// — send failures (no receivers) are swallowed in set_status.
+    status_tx: broadcast::Sender<BackendStatus>,
     progress: ProgressSink,
     /// Sink for raw B2F wire lines (tuxlink-nki): tees the on-wire dialogue into
     /// the session log as `LogSource::Wire` so it surfaces under "Raw output". No-op
@@ -515,12 +520,22 @@ impl NativeBackend {
         progress: ProgressSink,
     ) -> Self {
         let (log_tx, _rx) = broadcast::channel(256);
+        // 2026-05-31 operator-flagged: the 5s status poll missed sub-second
+        // CMS-Z exchanges. status_tx broadcasts every BackendStatus
+        // transition; bootstrap::install_native subscribes + emits Tauri
+        // `backend_status:change` events so the frontend sees every state
+        // (including the brief Connected window) without poll-rate aliasing.
+        // Capacity 64: bursts of state churn (Connecting → Connected →
+        // Disconnecting → Disconnected) fit; slow listeners just lose the
+        // oldest event (acceptable — the periodic snapshot poll backstops).
+        let (status_tx, _status_rx) = broadcast::channel(64);
         Self {
             backend_id: BackendInstanceId::next(),
             config: RwLock::new(config),
             mailbox: Arc::new(Mailbox::new(mailbox_root)),
             log_tx,
             status: Arc::new(RwLock::new(BackendStatus::Disconnected)),
+            status_tx,
             progress,
             wire: Arc::new(|_: &str| {}),
             abort_handle: Arc::new(Mutex::new(None)),
@@ -528,6 +543,14 @@ impl NativeBackend {
             connect_in_progress: Arc::new(AtomicBool::new(false)),
             position: None,
         }
+    }
+
+    /// Subscribe to live status transitions. The bootstrap installs an
+    /// emitter task that consumes this receiver and emits Tauri
+    /// `backend_status:change` events. No-op when nothing is subscribed
+    /// (broadcast::send returns Err that we swallow in set_status).
+    pub fn subscribe_status(&self) -> broadcast::Receiver<BackendStatus> {
+        self.status_tx.subscribe()
     }
 
     /// Attach the live position arbiter (tuxlink-686). Builder-style so existing
@@ -570,8 +593,12 @@ impl NativeBackend {
 
     fn set_status(&self, status: BackendStatus) {
         if let Ok(mut s) = self.status.write() {
-            *s = status;
+            *s = status.clone();
         }
+        // Best-effort broadcast for the event-emitter task (2026-05-31). Send
+        // returns Err when there are no active subscribers — that's fine, the
+        // RwLock above remains the snapshot source for backend_status polls.
+        let _ = self.status_tx.send(status);
     }
 }
 

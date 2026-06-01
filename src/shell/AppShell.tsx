@@ -47,7 +47,7 @@ import { PacketConnectionPanelContainer } from '../packet/PacketConnectionPanel'
 import { effectiveCall } from '../packet/packetConfig';
 import { derivePacketUiState, type PacketUiState } from '../packet/packetStatus';
 import { isBuilt } from '../connections/sessionTypes';
-import { TelnetCmsPanelContainer } from '../connections/TelnetCmsPanel';
+import { TelnetRadioPanel } from '../radio/modes/TelnetRadioPanel';
 import { StubPanel } from '../connections/StubPanel';
 import { SearchBar } from '../search/SearchBar';
 import { SearchDropdown } from '../search/SearchDropdown';
@@ -314,9 +314,17 @@ export function AppShell() {
     setSelectedConnection(null);
   }, []);
 
+  // 2026-05-31 operator-flagged: selectedConnection and selectedMessage are
+  // independent now that Telnet lives in the right-hand RadioPanel (P2). The
+  // pre-P2 design clobbered each other because both fought for the reading
+  // pane; the post-P2 reading pane shows MessageView for Telnet so a
+  // connection-panel + open-message can coexist. Other modes (Packet/ARDOP)
+  // still claim the reading pane via their per-protocol mount; the operator
+  // simply sees the connection panel there until they click a different
+  // connection or close the panel. selectedMessage is preserved for when
+  // they navigate back.
   const onSelectConnection = useCallback((conn: ConnectionKey) => {
     setSelectedConnection(conn);
-    setSelectedMessage(null);
   }, []);
 
   const onSelectMessage = useCallback(
@@ -328,7 +336,6 @@ export function AppShell() {
       const hit = searchResultMessages?.find((m) => m.id === id);
       const folder = (hit?.folder as MailboxFolder | undefined) ?? selectedFolder;
       setSelectedMessage({ folder, id });
-      setSelectedConnection(null);
     },
     [selectedFolder, searchResultMessages],
   );
@@ -432,7 +439,10 @@ export function AppShell() {
           }
           const { sessionType, protocol } = selectedConnection;
           if (sessionType === 'cms' && protocol === 'telnet') {
-            return <TelnetCmsPanelContainer />;
+            // P2: Telnet UI now lives in the right-hand TelnetRadioPanel.
+            // The reading pane falls back to messages so the operator
+            // can read mail while the connection panel handles transport.
+            return <MessageView selectedMessage={selectedMessage} />;
           }
           if (sessionType === 'cms' && protocol === 'packet') {
             return <PacketConnectionPanelContainer baseCall={statusData.callsign} intent="cms-gateway" />;
@@ -448,10 +458,21 @@ export function AppShell() {
           // Built but unhandled — defensive stub
           return <StubPanel sessionType={sessionType} protocol={protocol} />;
         })()}
-        {/* Spec P1: PlaceholderRadioPanel mounts here. P2-P4 swap in the
-            real per-mode components. The legacy ArdopDock continues to
-            mount BELOW until P4 removes it. */}
-        {radioPanelMode && (
+        {/* Spec P2: Telnet uses the real TelnetRadioPanel; Packet / VARA /
+            ARDOP HF still mount the placeholder until their phases land
+            (P3 Packet, P4 ARDOP, P5 VARA). For ARDOP HF the legacy
+            ArdopDock continues to mount alongside the placeholder until
+            P4 removes it — this dual mount is the established P1
+            behavior. */}
+        {radioPanelMode && radioPanelMode.kind === 'telnet' && (
+          <TelnetRadioPanel
+            onClose={() => {
+              setSelectedConnection(null);
+              setPinRadioPanel(false);
+            }}
+          />
+        )}
+        {radioPanelMode && radioPanelMode.kind !== 'telnet' && (
           <PlaceholderRadioPanel
             mode={radioPanelMode}
             onClose={() => {

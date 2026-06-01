@@ -16,6 +16,7 @@
 
 import { useEffect, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import { DEV_FIXTURE, DEV_CALLSIGN, DEV_GRID } from '../mailbox/devFixture';
 
 // ============================================================================
@@ -310,6 +311,8 @@ export function useStatusData(): StatusBarData {
   useEffect(() => {
     if (DEV_FIXTURE) return; // dev fixture is always "Idle"; don't poll
     let mounted = true;
+    let unlistenStatus: (() => void) | null = null;
+
     const load = () => {
       invoke<StatusDto | null>('backend_status')
         .then((s) => {
@@ -319,11 +322,31 @@ export function useStatusData(): StatusBarData {
           if (mounted) setStatus(null);
         });
     };
+
+    // Event-driven path (2026-05-31): backend emits `backend_status:change`
+    // on every transition (see src-tauri/src/bootstrap.rs). Without this,
+    // the 2s poll missed sub-second CMS-Z exchanges and the user only saw
+    // Connecting → Disconnected without the brief Connected window. The
+    // poll below stays as a snapshot backstop in case events drop (broadcast
+    // channel overflow, late-mounting UI, etc.).
+    listen<StatusDto>('backend_status:change', (event) => {
+      if (mounted) setStatus(event.payload);
+    })
+      .then((u) => {
+        if (mounted) unlistenStatus = u;
+        else u();
+      })
+      .catch(() => {
+        // listen() unavailable (test env / no Tauri context) — polling
+        // alone still works.
+      });
+
     load();
     const id = setInterval(load, 2000);
     return () => {
       mounted = false;
       clearInterval(id);
+      if (unlistenStatus) unlistenStatus();
     };
   }, []);
 
