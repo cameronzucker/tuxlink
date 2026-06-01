@@ -126,6 +126,7 @@ const RUNNING: ModemStatus = {
   uptimeSec: 222,
   arqFlags: { busy: false, rx: false, tx: false },
   lastError: null,
+  quality: null,
 };
 
 describe('<AppShell> radio panel', () => {

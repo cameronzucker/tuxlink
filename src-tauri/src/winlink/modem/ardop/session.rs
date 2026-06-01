@@ -286,12 +286,17 @@ fn set_and_ack(sock: &mut CmdSocket, cmd: &str, arg: Option<&str>) -> Result<(),
             }
             Ok(Command::Fault(msg)) => return Err(SessionError::Fault(msg)),
             // Interleaved async events are normal during init; absorb and continue.
+            // PingAck / Ping (tuxlink-1637) are async telemetry like Status —
+            // they can arrive at any moment, including between a setter and
+            // its echo-back, and must not break the ack wait.
             Ok(
                 Command::NewState(_)
                 | Command::Ptt(_)
                 | Command::Busy(_)
                 | Command::Buffer(_)
                 | Command::Status(_)
+                | Command::PingAck { .. }
+                | Command::Ping { .. }
                 | Command::Connected { .. }
                 | Command::Disconnected,
             ) => continue,

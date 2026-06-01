@@ -31,6 +31,13 @@ export interface ModemStatus {
   uptimeSec: number;
   arqFlags: ArqFlags;
   lastError: string | null;
+  /**
+   * ardopcf Quality score (0..=100), populated from PINGACK / PING events.
+   * `null` until the first ping has been observed; held across the rest of
+   * the session as the last-known reading. Read by the Signal section's
+   * "Quality" big-number indicator (spec §5.3). Closes tuxlink-1637.
+   */
+  quality: number | null;
 }
 
 export const STOPPED: Readonly<ModemStatus> = {
@@ -40,4 +47,5 @@ export const STOPPED: Readonly<ModemStatus> = {
   bytesRx: 0, bytesTx: 0, uptimeSec: 0,
   arqFlags: { busy: false, rx: false, tx: false },
   lastError: null,
+  quality: null,
 };

@@ -22,6 +22,7 @@ const CONNECTED_FIXTURE: ModemStatus = {
   uptimeSec: 1,
   arqFlags: { busy: false, rx: false, tx: false },
   lastError: null,
+  quality: null,
 };
 
 beforeEach(() => {

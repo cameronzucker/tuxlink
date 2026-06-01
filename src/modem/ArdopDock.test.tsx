@@ -38,6 +38,7 @@ const RUNNING_FIXTURE: ModemStatus = {
   uptimeSec: 222,
   arqFlags: { busy: true, rx: true, tx: false },
   lastError: null,
+  quality: null,
 };
 
 describe('<ArdopDock> stopped', () => {

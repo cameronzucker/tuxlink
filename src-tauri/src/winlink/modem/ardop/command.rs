@@ -51,6 +51,21 @@ pub enum Command {
     Buffer(u32),
     Busy(bool),
     Status(String),
+    /// `PINGACK <SNdB> <Quality>` — ardopcf's response to an operator-issued
+    /// ping. `sn_db` is signed (negative on poor links); `quality` is
+    /// ardopcf's 0..=100 score derived from the ping decoder's
+    /// confidence measurement. Closes tuxlink-1637.
+    PingAck { sn_db: i32, quality: u32 },
+    /// `PING <caller>><target> <SNdB> <Quality>` — ardopcf decoded an
+    /// incoming PING frame addressed to (or witnessed by) the local TNC.
+    /// caller/target are amateur callsigns or self-IDs without the '>'
+    /// separator. Closes tuxlink-1637.
+    Ping {
+        caller: String,
+        target: String,
+        sn_db: i32,
+        quality: u32,
+    },
     /// Echo-back acknowledgment of a setter command.
     EchoBack(String),
 }
@@ -144,6 +159,80 @@ impl Command {
                 Ok(Command::Buffer(n))
             }
             "STATUS" => Ok(Command::Status(rest.unwrap_or("").to_string())),
+            "PINGACK" => {
+                // "PINGACK <SNdB> <Quality>" — both ints, SN may be negative.
+                let rest = rest.ok_or_else(|| CommandParseError::Malformed {
+                    cmd: "PINGACK".into(),
+                    detail: "missing args".into(),
+                })?;
+                let mut toks = rest.split_whitespace();
+                let sn_db_tok = toks.next().ok_or_else(|| CommandParseError::Malformed {
+                    cmd: "PINGACK".into(),
+                    detail: "missing SN dB".into(),
+                })?;
+                let sn_db: i32 = sn_db_tok.parse().map_err(|e: std::num::ParseIntError| {
+                    CommandParseError::Malformed {
+                        cmd: "PINGACK".into(),
+                        detail: format!("SN dB: {e}"),
+                    }
+                })?;
+                let q_tok = toks.next().ok_or_else(|| CommandParseError::Malformed {
+                    cmd: "PINGACK".into(),
+                    detail: "missing quality".into(),
+                })?;
+                let quality: u32 = q_tok.parse().map_err(|e: std::num::ParseIntError| {
+                    CommandParseError::Malformed {
+                        cmd: "PINGACK".into(),
+                        detail: format!("quality: {e}"),
+                    }
+                })?;
+                Ok(Command::PingAck { sn_db, quality })
+            }
+            "PING" => {
+                // "PING <caller>><target> <SNdB> <Quality>". The first
+                // whitespace-delimited token is the callsign pair joined by
+                // '>'. Without the '>' the line is malformed.
+                let rest = rest.ok_or_else(|| CommandParseError::Malformed {
+                    cmd: "PING".into(),
+                    detail: "missing args".into(),
+                })?;
+                let mut toks = rest.split_whitespace();
+                let cg = toks.next().ok_or_else(|| CommandParseError::Malformed {
+                    cmd: "PING".into(),
+                    detail: "missing caller>target".into(),
+                })?;
+                let (caller, target) =
+                    cg.split_once('>').ok_or_else(|| CommandParseError::Malformed {
+                        cmd: "PING".into(),
+                        detail: format!("expected caller>target, got: {cg}"),
+                    })?;
+                let sn_db_tok = toks.next().ok_or_else(|| CommandParseError::Malformed {
+                    cmd: "PING".into(),
+                    detail: "missing SN dB".into(),
+                })?;
+                let sn_db: i32 = sn_db_tok.parse().map_err(|e: std::num::ParseIntError| {
+                    CommandParseError::Malformed {
+                        cmd: "PING".into(),
+                        detail: format!("SN dB: {e}"),
+                    }
+                })?;
+                let q_tok = toks.next().ok_or_else(|| CommandParseError::Malformed {
+                    cmd: "PING".into(),
+                    detail: "missing quality".into(),
+                })?;
+                let quality: u32 = q_tok.parse().map_err(|e: std::num::ParseIntError| {
+                    CommandParseError::Malformed {
+                        cmd: "PING".into(),
+                        detail: format!("quality: {e}"),
+                    }
+                })?;
+                Ok(Command::Ping {
+                    caller: caller.to_string(),
+                    target: target.to_string(),
+                    sn_db,
+                    quality,
+                })
+            }
             // Setter echo-backs: TNC echoes the command name to acknowledge.
             other if is_setter_echo_back(other) => Ok(Command::EchoBack(other.to_string())),
             _ => Err(CommandParseError::Unknown(head)),
@@ -298,6 +387,70 @@ mod parse_tests {
     #[test]
     fn unknown_command_yields_an_error() {
         assert!(Command::parse("MYSTERY 123").is_err());
+    }
+
+    // ── tuxlink-1637: PING / PINGACK parsing ────────────────────────────
+
+    #[test]
+    fn parses_pingack_with_sn_and_quality() {
+        // ardopcf emits "PINGACK SNdB Quality" in response to an
+        // operator-issued ping. Both values are space-separated ints; SN
+        // may be negative on poor links.
+        let parsed = Command::parse("PINGACK 12 87").unwrap();
+        match parsed {
+            Command::PingAck { sn_db, quality } => {
+                assert_eq!(sn_db, 12);
+                assert_eq!(quality, 87);
+            }
+            other => panic!("expected PingAck, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_pingack_with_negative_sn() {
+        // Negative S/N is common on noisy links — the parser MUST accept
+        // it without rejecting the whole line.
+        let parsed = Command::parse("PINGACK -3 42").unwrap();
+        match parsed {
+            Command::PingAck { sn_db, quality } => {
+                assert_eq!(sn_db, -3);
+                assert_eq!(quality, 42);
+            }
+            other => panic!("expected PingAck, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_ping_with_caller_target_sn_quality() {
+        // ardopcf emits "PING caller>target SNdB Quality" when an
+        // incoming ping is decoded. The caller>target token uses '>'
+        // as the separator.
+        let parsed = Command::parse("PING W4PHS>W7RMS 10 75").unwrap();
+        match parsed {
+            Command::Ping {
+                caller,
+                target,
+                sn_db,
+                quality,
+            } => {
+                assert_eq!(caller, "W4PHS");
+                assert_eq!(target, "W7RMS");
+                assert_eq!(sn_db, 10);
+                assert_eq!(quality, 75);
+            }
+            other => panic!("expected Ping, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn ping_missing_caller_target_separator_errs() {
+        // Without the '>' the line is malformed.
+        assert!(Command::parse("PING W4PHS 10 75").is_err());
+    }
+
+    #[test]
+    fn pingack_with_non_numeric_quality_errs() {
+        assert!(Command::parse("PINGACK 12 xx").is_err());
     }
 
     #[test]
