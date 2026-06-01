@@ -1,8 +1,8 @@
 // Folder sidebar — Mock B `.sidebar` (Mailbox + Connections sections, 200px).
 //
 // Source: the MOCK B sidebar (2026-05-17-mocks-v1-four-directions.html lines
-// 1190-1201). v0.0.1 functional folders are Inbox + Sent; Outbox + Archive are
-// disabled (v0.1). The Connections section is a session-type accordion driven
+// 1190-1201). Functional folders are Inbox + Sent; Outbox + Archive are
+// disabled (not yet wired). The Connections section is a session-type accordion driven
 // by SESSION_TYPES. Selecting a built protocol calls
 // `onSelectConnection({ sessionType, protocol })`. Styling lives in AppShell.css.
 
@@ -25,7 +25,7 @@ interface MailboxItem {
   v01?: boolean;
 }
 
-/// Mailbox section (mock B order). Inbox/Sent functional; Outbox/Archive v0.1.
+/// Mailbox section (mock B order). Inbox/Sent functional; Outbox/Archive deferred.
 const MAILBOX_ITEMS: readonly MailboxItem[] = [
   { id: 'inbox', label: 'Inbox', icon: '▣', enabled: true },
   { id: 'sent', label: 'Sent', icon: '▢', enabled: true },
@@ -96,7 +96,7 @@ export function FolderSidebar({
                 {count}
               </span>
             )}
-            {item.v01 && <span className="v01-badge">v0.1</span>}
+            {item.v01 && <span className="v01-badge">soon</span>}
           </button>
         );
       })}

@@ -94,7 +94,7 @@ describe('buildReplyDraft — body', () => {
 // placeholder and never silently drops user data. Reply/Forward must honor
 // both — no rendered form content in the quote, and a visible note when a
 // forward cannot carry the original attachments (compose can't attach files
-// in v0.0.1).
+// yet).
 describe('buildReplyDraft — form + attachment safety', () => {
   const FORM_BODY_RENDERED =
     'GENERAL MESSAGE (ICS 213)\n1. Incident Name: WALDO\n4. Subject: REQUEST SUPPLIES';
@@ -268,7 +268,7 @@ describe("buildReplyDraft 'replyWithForm' mode", () => {
 
 // Codex r2 P2 #1 helper — gates the MessageView "Reply with form…" button.
 describe('hasReplyWithFormSupport', () => {
-  it('returns true for ICS213_Initial (the only mapped form in v0.1)', () => {
+  it('returns true for ICS213_Initial (the only currently mapped form)', () => {
     expect(hasReplyWithFormSupport('ICS213_Initial')).toBe(true);
   });
 

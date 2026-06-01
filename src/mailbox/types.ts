@@ -23,7 +23,7 @@ export interface MessageMeta {
   hasAttachments: boolean;
   /// Short preview snippet (Mock D row line 3). OPTIONAL — Pat 1.0.0's list DTO
   /// does not supply a snippet, so this is undefined for live data today and is
-  /// populated only by the dev fixture. Backend `snippet` is a v0.1 follow-up
+  /// populated only by the dev fixture. Backend `snippet` is a follow-up
   /// (tuxlink-yd4 row work); the row renders nothing when absent.
   preview?: string;
   /// Winlink form label for the row's inline form badge (Mock D, e.g.
@@ -36,8 +36,9 @@ export interface MessageMeta {
 }
 
 /// Reading-pane parsed view (Task 13 produces this from raw RFC5322 at the
-/// Rust command boundary; declared here as the shared contract). v0.0.1
-/// lists attachment names only; form rendering + attachment open are v0.1.
+/// Rust command boundary; declared here as the shared contract). The current
+/// surface lists attachment names only; form rendering + attachment open are
+/// deferred.
 export interface ParsedMessage {
   id: string;
   subject: string;
@@ -46,8 +47,8 @@ export interface ParsedMessage {
   cc: string[];
   date: string; // RFC 3339 UTC
   body: string; // decoded text/plain
-  attachments: AttachmentMeta[]; // names + sizes; bytes fetched lazily (v0.1)
-  isForm: boolean; // body is a Winlink form payload → v0.1 placeholder
+  attachments: AttachmentMeta[]; // names + sizes; bytes fetched lazily (deferred)
+  isForm: boolean; // body is a Winlink form payload → placeholder for now
   routing: string | null; // e.g. "via CMS-SSL"; null if unknown
   /// Form ID extracted from RMS_Express_Form_<id>.xml attachment name (T2.2).
   /// Optional + null when not a form. Validated server-side; safe for path use.
@@ -63,7 +64,7 @@ export interface AttachmentMeta {
 }
 
 /// Sidebar folder identifiers. `drafts` is a local (localStorage) store, not
-/// a backend folder; `deleted` is a disabled placeholder in v0.0.1 (spec
+/// a backend folder; `deleted` is a disabled placeholder for now (spec
 /// §2.2). The Rust `parse_folder` rejects both for backend commands.
 export type MailboxFolder = 'inbox' | 'outbox' | 'sent' | 'drafts' | 'deleted';
 
