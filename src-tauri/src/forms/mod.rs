@@ -1,4 +1,5 @@
-//! HTML Forms support per spec docs/superpowers/specs/2026-05-30-html-forms-design.md.
+//! HTML Forms support per spec docs/superpowers/specs/2026-05-30-html-forms-design.md
+//! and the full-parity revision in docs/superpowers/specs/2026-05-31-html-forms-full-parity-design.md.
 
 pub mod catalog;
 pub mod parse;
@@ -6,6 +7,7 @@ pub mod serialize;
 pub mod templates;
 pub mod types;
 pub mod validation;
+pub mod wle_templates;
 
 // Re-exports for ergonomic access.
 pub use parse::{detect_form_attachment, parse_form_xml};
