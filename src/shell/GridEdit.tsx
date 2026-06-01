@@ -90,6 +90,7 @@ export function GridEdit({ grid, source, gpsReady, onCommit, onUseGps }: GridEdi
     return (
       <div className="dash-grid-edit-container">
         <input
+          id="grid-input"
           className="dash-value dash-grid-input"
           data-testid="grid-input"
           aria-label="Grid locator"
@@ -111,23 +112,33 @@ export function GridEdit({ grid, source, gpsReady, onCommit, onUseGps }: GridEdi
     );
   }
 
+  // State 4 / State 5 (tuxlink-c79g T13, spec §2.3 + §2.4): when source = Gps
+  // and no fresh fix is live, the source chip is DIMMED, the grid value carries
+  // an interpunct `· ` prefix (if a manual_grid fallback is present), and the
+  // `Set manually` button is rendered so the operator can escape to inline-edit.
+  const showSetManually = source === 'Gps' && !gpsReady;
+  const interpunctPrefix = showSetManually && grid ? '· ' : '';
+
   return (
     <div className="dash-grid-display">
-      {/* The clickable grid value — data-testid matches the old ribbon-grid testid */}
+      {/* The clickable grid value — data-testid renamed from `ribbon-grid` to
+          `grid-value-display` per the T13 plan body (spec §2.3 wiring). */}
       <button
         type="button"
         className="dash-value dash-grid-value-btn"
-        data-testid="ribbon-grid"
+        data-testid="grid-value-display"
         onClick={enterEdit}
         title="Click to edit grid"
       >
-        {grid ?? '—'}
+        {grid ? `${interpunctPrefix}${grid}` : '—'}
       </button>
       {/* Source chip. Per spec §2.1 + §4.2 (tuxlink-c79g T12): renders as a
           real <button> (keyboard-accessible, screen-reader-actionable) when
           source = Manual, and as a passive <span role="status"> when source =
           Gps. GPS gets a `locked` modifier when a fix is live so it reads as
-          ACTIVE (green) rather than greyed-out-as-if-disabled (tuxlink-39b). */}
+          ACTIVE (green) rather than greyed-out-as-if-disabled (tuxlink-39b).
+          T13 (spec §2.4): the GPS chip carries a `dimmed` modifier when no
+          fresh fix is live, visually differentiating State 4/5 from State 3. */}
       {source === 'Manual' ? (
         <button
           type="button"
@@ -141,7 +152,7 @@ export function GridEdit({ grid, source, gpsReady, onCommit, onUseGps }: GridEdi
         </button>
       ) : (
         <span
-          className={`dash-source-chip gps${gpsReady ? ' locked' : ''}`}
+          className={`dash-source-chip gps${gpsReady ? ' locked' : ' dimmed'}`}
           data-testid="source-chip"
           role="status"
           aria-label={`Position source: GPS, ${gpsReady ? 'fresh fix' : 'no fix'}`}
@@ -162,6 +173,32 @@ export function GridEdit({ grid, source, gpsReady, onCommit, onUseGps }: GridEdi
         >
           ● GPS ready
         </span>
+      )}
+      {/* State 4 / State 5 affordance (tuxlink-c79g T13, spec §2.3 + §2.5):
+          status text + Set manually button. The status text suffix
+          "broadcasting fallback" appears only when a manual_grid is set (State
+          4) — in State 5 (no manual_grid) the suffix is omitted per spec row
+          3. The Set manually <button> is keyboard-accessible and focuses the
+          grid input on click via enterEdit() + the input's autoFocus. */}
+      {showSetManually && (
+        <>
+          <span
+            className="dash-gps-no-fix-status"
+            data-testid="gps-no-fix-status"
+            role="status"
+          >
+            GPS no fix{grid ? ' · broadcasting fallback' : ''}
+          </span>
+          <button
+            type="button"
+            className="dash-set-manually"
+            data-testid="set-manually-button"
+            aria-controls="grid-input"
+            onClick={enterEdit}
+          >
+            ▸ Set manually
+          </button>
+        </>
       )}
     </div>
   );

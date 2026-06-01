@@ -12,20 +12,20 @@ import { GridEdit } from './GridEdit';
 test('clicking the grid value enters edit mode and commits a valid grid', async () => {
   const onCommit = vi.fn().mockResolvedValue(undefined);
   render(<GridEdit grid="CN87" source="Manual" gpsReady={false} onCommit={onCommit} onUseGps={vi.fn()} />);
-  fireEvent.click(screen.getByTestId('ribbon-grid'));
+  fireEvent.click(screen.getByTestId('grid-value-display'));
   const input = screen.getByTestId('grid-input') as HTMLInputElement;
   fireEvent.change(input, { target: { value: 'DM33ab' } });
   fireEvent.keyDown(input, { key: 'Enter' });
   await act(async () => {});
   expect(onCommit).toHaveBeenCalledWith('DM33ab');
-  expect(screen.getByTestId('ribbon-grid')).toBeInTheDocument();
+  expect(screen.getByTestId('grid-value-display')).toBeInTheDocument();
   expect(screen.queryByTestId('grid-input')).not.toBeInTheDocument();
 });
 
 test('invalid grid shows a validation message and does not commit', () => {
   const onCommit = vi.fn();
   render(<GridEdit grid="CN87" source="Manual" gpsReady={false} onCommit={onCommit} onUseGps={vi.fn()} />);
-  fireEvent.click(screen.getByTestId('ribbon-grid'));
+  fireEvent.click(screen.getByTestId('grid-value-display'));
   const input = screen.getByTestId('grid-input');
   fireEvent.change(input, { target: { value: 'NOPE' } });
   fireEvent.keyDown(input, { key: 'Enter' });
@@ -47,7 +47,7 @@ test('no Use-GPS affordance is rendered (tuxlink-pjih)', () => {
 test('Escape cancels edit without committing', () => {
   const onCommit = vi.fn();
   render(<GridEdit grid="CN87" source="Manual" gpsReady={false} onCommit={onCommit} onUseGps={vi.fn()} />);
-  fireEvent.click(screen.getByTestId('ribbon-grid'));
+  fireEvent.click(screen.getByTestId('grid-value-display'));
   fireEvent.keyDown(screen.getByTestId('grid-input'), { key: 'Escape' });
   expect(onCommit).not.toHaveBeenCalled();
   expect(screen.queryByTestId('grid-input')).not.toBeInTheDocument();
@@ -56,7 +56,7 @@ test('Escape cancels edit without committing', () => {
 test('backend rejection shows the error detail and stays in edit mode', async () => {
   const onCommit = vi.fn().mockRejectedValue({ kind: 'Rejected', detail: 'Grid must be a 4- or 6-char Maidenhead locator.' });
   render(<GridEdit grid="CN87" source="Manual" gpsReady={false} onCommit={onCommit} onUseGps={vi.fn()} />);
-  fireEvent.click(screen.getByTestId('ribbon-grid'));
+  fireEvent.click(screen.getByTestId('grid-value-display'));
   fireEvent.change(screen.getByTestId('grid-input'), { target: { value: 'DM33' } });
   fireEvent.keyDown(screen.getByTestId('grid-input'), { key: 'Enter' });
   await act(async () => {});
@@ -84,7 +84,7 @@ test('GPS chip is NOT locked when GPS source has no fix', () => {
 // no instructions". A format placeholder makes it self-explanatory.
 test('grid input shows a format placeholder when editing', () => {
   render(<GridEdit grid="DM33" source="Manual" gpsReady={false} onCommit={vi.fn()} onUseGps={vi.fn()} />);
-  fireEvent.click(screen.getByTestId('ribbon-grid'));
+  fireEvent.click(screen.getByTestId('grid-value-display'));
   const input = screen.getByTestId('grid-input') as HTMLInputElement;
   expect(input.placeholder).toMatch(/DM33xx|6-char|Maidenhead/i);
 });
@@ -188,4 +188,44 @@ test('source chip <span> does not call onUseGps on click when source = Gps', () 
   );
   fireEvent.click(screen.getByTestId('source-chip'));
   expect(onUseGps).not.toHaveBeenCalled();
+});
+
+// tuxlink-c79g Task 13: spec §2.3 + §2.4 — `Set manually` button rendered in
+// State 4 + State 5 (source = Gps && !gpsReady) so the operator can escape to
+// inline-edit. The 4-quadrant matrix tests the present/absent contract; the
+// focus test pins the Codex P2 #6 a11y promise; the interpunct + dimmed-chip
+// test pins the State 1 vs State 4 visual differentiation from R2 #4.
+test('Set manually button is present in State 4 (source = Gps && !gpsReady)', () => {
+  render(<GridEdit grid="EM75" source="Gps" gpsReady={false} onCommit={vi.fn()} onUseGps={vi.fn()} />);
+  expect(screen.getByTestId('set-manually-button')).toBeInTheDocument();
+});
+
+test('Set manually button is absent in State 1 (source = Manual && !gpsReady)', () => {
+  render(<GridEdit grid="EM75" source="Manual" gpsReady={false} onCommit={vi.fn()} onUseGps={vi.fn()} />);
+  expect(screen.queryByTestId('set-manually-button')).not.toBeInTheDocument();
+});
+
+test('Set manually button is absent in State 3 (source = Gps && gpsReady)', () => {
+  render(<GridEdit grid="DM33" source="Gps" gpsReady={true} onCommit={vi.fn()} onUseGps={vi.fn()} />);
+  expect(screen.queryByTestId('set-manually-button')).not.toBeInTheDocument();
+});
+
+test('Set manually button is absent in State 2 (source = Manual && gpsReady)', () => {
+  render(<GridEdit grid="EM75" source="Manual" gpsReady={true} onCommit={vi.fn()} onUseGps={vi.fn()} />);
+  expect(screen.queryByTestId('set-manually-button')).not.toBeInTheDocument();
+});
+
+test('Set manually button focuses the grid input on click (Codex P2 #6)', async () => {
+  render(<GridEdit grid="EM75" source="Gps" gpsReady={false} onCommit={vi.fn()} onUseGps={vi.fn()} />);
+  fireEvent.click(screen.getByTestId('set-manually-button'));
+  // Wait for the inline-edit transition.
+  await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+  expect(document.activeElement).toBe(screen.getByTestId('grid-input'));
+});
+
+test('State 4 grid value has interpunct prefix + chip dimmed', () => {
+  render(<GridEdit grid="EM75" source="Gps" gpsReady={false} onCommit={vi.fn()} onUseGps={vi.fn()} />);
+  // The grid value should contain "· EM75" or render the interpunct as a separate element.
+  expect(screen.getByTestId('grid-value-display').textContent).toMatch(/·\s+EM75/);
+  expect(screen.getByTestId('source-chip').className).toContain('dimmed');
 });
