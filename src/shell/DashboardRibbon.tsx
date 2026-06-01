@@ -13,6 +13,7 @@ import type { StatusBarData, StatusTone } from './useStatus';
 import { GridEdit } from './GridEdit';
 import { DEV_FIXTURE, DEV_POSITION, DEV_CONNECTION_DASH } from '../mailbox/devFixture';
 import { formatPacketConnection, type PacketUiState } from '../packet/packetStatus';
+import { effectiveCall as renderEffectiveCall, ssidOptions } from '../packet/packetConfig';
 
 function useClock() {
   const [now, setNow] = useState(() => new Date());
@@ -59,11 +60,24 @@ export interface DashboardRibbonProps {
   onAbort?: () => void;
   /** Packet transport state; when active, overrides the CMS connection label. */
   packet?: PacketUiState;
+  /** Effective AX.25 SSID (0..15) for the callsign chip. Undefined when no
+   *  packet config has loaded — the callsign renders without a -N suffix. */
+  ssid?: number;
+  /** Persist a new SSID. Operator smoke 2026-05-31: SSID is editable inline
+   *  from the dashboard ribbon (not just the PacketRadioPanel) so the operator
+   *  doesn't need to open the radio panel to switch. */
+  onSsidChange?: (n: number) => void;
 }
 
-export function DashboardRibbon({ data, onConnect, connecting, onAbort, packet }: DashboardRibbonProps) {
+export function DashboardRibbon({ data, onConnect, connecting, onAbort, packet, ssid, onSsidChange }: DashboardRibbonProps) {
   const { utc, local } = useClock();
   const { callsign, grid, state, connection: connectionFromData } = data;
+  // Compose the operator's effective AX.25 call (base-SSID) when an SSID is
+  // available. When ssid is undefined (no packet config loaded), fall back to
+  // the bare callsign so we don't render a misleading "-0" before load.
+  const displayCall = ssid !== undefined && callsign
+    ? renderEffectiveCall(callsign, ssid)
+    : callsign;
   // Position (GPS coords) is a v0.1 data source; the dev fixture shows the mock
   // value, and the real app omits the item until GPS exists.
   const position = DEV_FIXTURE ? DEV_POSITION : null;
@@ -80,8 +94,26 @@ export function DashboardRibbon({ data, onConnect, connecting, onAbort, packet }
     <div className="dashboard" data-testid="dashboard-ribbon" role="banner">
       <div className="dash-item">
         <div className="dash-label">Callsign</div>
-        <div className="dash-value callsign" data-testid="ribbon-callsign">
-          {callsign}
+        <div className="dash-value callsign dash-callsign-row" data-testid="ribbon-callsign">
+          <span className="dash-callsign-text">{displayCall}</span>
+          {onSsidChange && (
+            // Inline SSID selector — operator smoke 2026-05-31. The dropdown
+            // reads tiny so it doesn't dominate the ribbon, but it's a real
+            // <select> (keyboard-friendly, screen-reader-friendly) rather
+            // than a bespoke chip menu. value=0..15.
+            <select
+              className="dash-ssid-select"
+              data-testid="ribbon-ssid-select"
+              aria-label="AX.25 SSID"
+              title="AX.25 SSID — same value used by the Packet panel"
+              value={ssid ?? 0}
+              onChange={(e) => onSsidChange(Number(e.target.value))}
+            >
+              {ssidOptions().map((n) => (
+                <option key={n} value={n}>{`-${n}`}</option>
+              ))}
+            </select>
+          )}
         </div>
       </div>
       <div className="dash-divider" />

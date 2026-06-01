@@ -45,6 +45,7 @@ import { openReplyWindow } from '../mailbox/replyActions';
 import { newDraftId } from '../routing';
 import { effectiveCall } from '../packet/packetConfig';
 import { derivePacketUiState, type PacketUiState } from '../packet/packetStatus';
+import { usePacketConfig } from '../packet/usePacketConfig';
 import { isBuilt } from '../connections/sessionTypes';
 import { TelnetRadioPanel } from '../radio/modes/TelnetRadioPanel';
 import { PacketRadioPanel } from '../radio/modes/PacketRadioPanel';
@@ -212,6 +213,12 @@ export function AppShell() {
   // dashboard ribbon, the status bar, and the window title.
   const statusData = useStatusData();
 
+  // Packet config — loaded once at AppShell and shared with the ribbon (callsign
+  // SSID suffix + inline editor) AND the PacketRadioPanel (which reads its own
+  // config and emits writes; the shared listener here picks those up). Operator
+  // smoke 2026-05-31 caught that the prior code hardcoded SSID=0 in the ribbon.
+  const packetConfig = usePacketConfig();
+
   // Modem (ARDOP HF) status — feeds the radio-panel visibility check + the
   // panes-grid column-count swap (tuxlink-4ek Task 4.3 baseline; radio-panel-
   // shell P1.5+ migrated to computePanelMode). The panel appears:
@@ -351,9 +358,13 @@ export function AppShell() {
       derivePacketUiState(
         statusData.status ?? null,
         selectedConnection?.protocol === 'packet',
-        effectiveCall(statusData.callsign, 0), // v0.1 placeholder SSID
+        // Operator smoke 2026-05-31: the prior hard-coded `0` made the ribbon
+        // callsign show `<base>-0` regardless of the configured SSID. Source
+        // the SSID from the shared packet config so the ribbon, status bar,
+        // and PacketRadioPanel all agree on `<base>-<ssid>`.
+        effectiveCall(statusData.callsign, packetConfig.ssid),
       ),
-    [statusData.status, selectedConnection, statusData.callsign],
+    [statusData.status, selectedConnection, statusData.callsign, packetConfig.ssid],
   );
 
   return (
@@ -405,6 +416,8 @@ export function AppShell() {
           connecting={connecting}
           onAbort={onAbort}
           packet={packetUi}
+          ssid={packetConfig.config ? packetConfig.ssid : undefined}
+          onSsidChange={packetConfig.config ? packetConfig.setSsid : undefined}
         />
       </div>
 

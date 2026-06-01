@@ -134,3 +134,37 @@ describe('DashboardRibbon — packet connection', () => {
     expect(screen.getByTestId('ribbon-connection')).toHaveTextContent('Idle · CMS-SSL');
   });
 });
+
+// ---------------------------------------------------------------------------
+// Operator smoke 2026-05-31: SSID propagates to callsign + is settable inline
+// ---------------------------------------------------------------------------
+
+describe('DashboardRibbon — SSID propagation + inline edit', () => {
+  it('renders bare callsign when no ssid is supplied', () => {
+    render(<DashboardRibbon data={makeData({ callsign: 'N7CPZ' })} />);
+    expect(screen.getByTestId('ribbon-callsign')).toHaveTextContent('N7CPZ');
+    expect(screen.queryByTestId('ribbon-ssid-select')).toBeNull();
+  });
+
+  it('renders callsign with -SSID suffix when ssid is supplied', () => {
+    render(<DashboardRibbon data={makeData({ callsign: 'N7CPZ' })} ssid={7} onSsidChange={() => {}} />);
+    expect(screen.getByTestId('ribbon-callsign')).toHaveTextContent('N7CPZ-7');
+  });
+
+  it('exposes the SSID picker only when onSsidChange is provided', () => {
+    render(<DashboardRibbon data={makeData({ callsign: 'N7CPZ' })} ssid={3} onSsidChange={() => {}} />);
+    const sel = screen.getByTestId('ribbon-ssid-select') as HTMLSelectElement;
+    expect(sel.value).toBe('3');
+    // 0..15 inclusive
+    expect(Array.from(sel.options).map((o) => o.value)).toEqual(
+      ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12', '13', '14', '15'],
+    );
+  });
+
+  it('fires onSsidChange when the operator selects a new SSID', () => {
+    const onSsidChange = vi.fn();
+    render(<DashboardRibbon data={makeData({ callsign: 'N7CPZ' })} ssid={0} onSsidChange={onSsidChange} />);
+    fireEvent.change(screen.getByTestId('ribbon-ssid-select'), { target: { value: '10' } });
+    expect(onSsidChange).toHaveBeenCalledWith(10);
+  });
+});

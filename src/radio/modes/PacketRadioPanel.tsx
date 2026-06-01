@@ -92,8 +92,16 @@ export function PacketRadioPanel({ intent, baseCall, onClose }: PacketRadioPanel
   // Persist helper — merges new fields into the current DTO and writes
   // to backend. No-op when config is unloaded (we can't write a partial
   // DTO; the backend's #[serde(deny_unknown_fields)] would reject).
+  // Also broadcasts via a same-window CustomEvent so the DashboardRibbon's
+  // shared usePacketConfig hook sees SSID changes immediately (operator
+  // smoke 2026-05-31 — the ribbon callsign was stuck at `<base>-0`).
   const persistDto = (next: PacketConfigDto) => {
     setConfig(next);
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(
+        new CustomEvent('tuxlink:packet-config:change', { detail: next }),
+      );
+    }
     void invoke('packet_config_set', { dto: next }).catch(() => {
       // Persist errors surface in the session log via the backend.
     });
