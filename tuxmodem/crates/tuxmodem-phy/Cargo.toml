@@ -12,10 +12,10 @@ authors.workspace = true
 num-complex.workspace = true
 rustfft.workspace = true
 thiserror.workspace = true
+hound.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true
-hound.workspace = true
 # Activated as #1 and #4 publish; until then sibling subagents' plans
 # may stub these with path-deps in coordination.
 # hf-channel-sim.workspace = true
