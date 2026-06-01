@@ -14,9 +14,12 @@ REPO_ROOT="$(git rev-parse --show-toplevel)"
 # shellcheck source=lib/branch-state.sh
 . "${REPO_ROOT}/.githooks/lib/branch-state.sh"
 
-# Documented escape-hatch env var. Setting it to any non-empty value
-# bypasses the refuse (loud + audited).
+# Documented escape-hatch env var. Codex P2 (2026-06-01): require the
+# exact sentinel "I-know-what-Im-doing" rather than any non-empty value,
+# so accidental TUXLINK_BRANCH_LIFECYCLE_OVERRIDE=false / =0 / =no does
+# not silently bypass.
 OVERRIDE_VAR="TUXLINK_BRANCH_LIFECYCLE_OVERRIDE"
+OVERRIDE_SENTINEL="I-know-what-Im-doing"
 
 branch="$(git symbolic-ref --short HEAD 2>/dev/null || echo HEAD)"
 state="$(classify_branch_state "${branch}")"
@@ -27,23 +30,27 @@ case "${state}" in
     exit 0
     ;;
   unknown)
-    # gh unavailable or detached HEAD — warn but allow. CI nightly catches
-    # what slips through.
+    # gh unavailable, auth missing, network error, timeout, or detached
+    # HEAD — warn but allow. CI nightly audit (tuxlink-ui3i) catches what
+    # slips through.
     if [ -t 2 ]; then
-      printf '\033[33m⚠ branch lifecycle: could not consult gh (auth missing? quota? detached HEAD?) — allowing commit\033[0m\n' >&2
+      printf '\033[33m⚠ branch lifecycle: could not consult gh (auth/network/timeout/detached HEAD?) — allowing commit\033[0m\n' >&2
     else
       printf '⚠ branch lifecycle: gh consult failed — allowing commit\n' >&2
     fi
     exit 0
     ;;
   merged-dead|closed-dead)
-    # Check the documented override.
-    if [ -n "${!OVERRIDE_VAR:-}" ]; then
+    # Check the documented override — must match the exact sentinel.
+    if [ "${!OVERRIDE_VAR:-}" = "${OVERRIDE_SENTINEL}" ]; then
       branch_state_log_override "commit" "${branch}" "${state}"
       printf '⚠ branch lifecycle: %s OVERRIDDEN for commit on %s (%s)\n' \
         "${OVERRIDE_VAR}" "${branch}" "${state}" >&2
       printf '  logged to dev/scratch/branch-lifecycle-overrides.log\n' >&2
       exit 0
+    elif [ -n "${!OVERRIDE_VAR:-}" ]; then
+      printf '⚠ branch lifecycle: %s was set but did not match sentinel %q — refusing\n' \
+        "${OVERRIDE_VAR}" "${OVERRIDE_SENTINEL}" >&2
     fi
     branch_state_refuse_message "${state}" "${branch}" "commit" "${OVERRIDE_VAR}"
     exit 1

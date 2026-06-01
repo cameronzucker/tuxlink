@@ -65,16 +65,34 @@ classify_branch_state() {
   fi
 
   # 5-second timeout per gh call so a slow network does not stall every
-  # `git commit` for minutes.
+  # `git commit` for minutes. Distinguish "empty result" (gh exit 0, no
+  # PR matched) from "command failed" (auth missing, network error,
+  # rate limit, timeout). Per Codex 2026-06-01 P1 #1, the latter MUST
+  # return "unknown" so callers warn-and-allow rather than misclassify
+  # the branch as `active`.
+  #
+  # NB: split declaration from assignment because `local var=$(cmd)` would
+  # set $? to local-builtin's rc (always 0), masking gh's exit code.
   local merged_check closed_check open_check
+  local rc
 
-  merged_check="$(timeout 5 gh pr list --head "${branch}" --state merged --limit 1 --json number,mergedAt 2>/dev/null || true)"
+  merged_check="$(timeout 5 gh pr list --head "${branch}" --state merged --limit 1 --json number,mergedAt 2>/dev/null)"
+  rc=$?
+  if [ "${rc}" -ne 0 ]; then
+    echo "unknown"
+    return 0
+  fi
   if printf '%s' "${merged_check}" | grep -q '"mergedAt"'; then
     echo "merged-dead"
     return 0
   fi
 
-  closed_check="$(timeout 5 gh pr list --head "${branch}" --state closed --limit 1 --json number,state 2>/dev/null || true)"
+  closed_check="$(timeout 5 gh pr list --head "${branch}" --state closed --limit 1 --json number,state 2>/dev/null)"
+  rc=$?
+  if [ "${rc}" -ne 0 ]; then
+    echo "unknown"
+    return 0
+  fi
   if printf '%s' "${closed_check}" | grep -q '"state":"CLOSED"'; then
     # state=CLOSED with no mergedAt means closed-without-merge.
     if ! printf '%s' "${closed_check}" | grep -q '"mergedAt"'; then
@@ -83,7 +101,12 @@ classify_branch_state() {
     fi
   fi
 
-  open_check="$(timeout 5 gh pr list --head "${branch}" --state open --limit 1 --json number 2>/dev/null || true)"
+  open_check="$(timeout 5 gh pr list --head "${branch}" --state open --limit 1 --json number 2>/dev/null)"
+  rc=$?
+  if [ "${rc}" -ne 0 ]; then
+    echo "unknown"
+    return 0
+  fi
   if printf '%s' "${open_check}" | grep -q '"number"'; then
     echo "pr-open"
     return 0

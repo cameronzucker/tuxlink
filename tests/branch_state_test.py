@@ -211,12 +211,62 @@ class BranchStateClassifierTest(unittest.TestCase):
             os.environ["PATH"] = orig_path
             shutil.rmtree(tmp, ignore_errors=True)
 
+    def test_gh_failure_returns_unknown(self):
+        """Codex P1 #1 (2026-06-01) — gh exits non-zero (auth missing, network
+        error, rate limit, timeout) MUST return unknown so callers warn+allow."""
+        tmp = tempfile.mkdtemp(prefix="tuxlink-gh-fail-")
+        try:
+            gh_path = Path(tmp) / "gh"
+            # Stub that always exits 1 (simulates `gh auth status` failure
+            # cascading to `gh pr list`).
+            gh_path.write_text(
+                "#!/usr/bin/env bash\necho 'authentication required' >&2\nexit 1\n"
+            )
+            gh_path.chmod(0o755)
+            orig = os.environ.get("PATH", "")
+            os.environ["PATH"] = f"{tmp}:{orig}"
+            try:
+                self.assertEqual(_classify("any-branch"), "unknown")
+            finally:
+                os.environ["PATH"] = orig
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_gh_timeout_returns_unknown(self):
+        """The `timeout 5 gh ...` wrapper must surface timeout (exit 124) as
+        'unknown', not silently fall through to 'active'."""
+        tmp = tempfile.mkdtemp(prefix="tuxlink-gh-slow-")
+        try:
+            gh_path = Path(tmp) / "gh"
+            # Sleep longer than the 5s timeout in classify_branch_state.
+            gh_path.write_text("#!/usr/bin/env bash\nsleep 30\n")
+            gh_path.chmod(0o755)
+            orig = os.environ.get("PATH", "")
+            os.environ["PATH"] = f"{tmp}:{orig}"
+            try:
+                # This should return within ~5s when timeout fires.
+                self.assertEqual(_classify("any-branch"), "unknown")
+            finally:
+                os.environ["PATH"] = orig
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
 
 class HookSmokeTest(unittest.TestCase):
     """End-to-end smoke: invoke pre-commit / pre-push with stubbed gh."""
 
-    def _invoke_hook(self, hook_name: str, branch: str, env_extra: dict | None = None) -> subprocess.CompletedProcess:
-        """Invoke the hook from a temporary git worktree on the given branch."""
+    def _invoke_hook(
+        self,
+        hook_name: str,
+        branch: str,
+        env_extra: dict | None = None,
+        push_local_ref: str | None = None,
+    ) -> subprocess.CompletedProcess:
+        """Invoke the hook from a temporary git worktree on the given branch.
+
+        For pre-push, `push_local_ref` overrides the local_ref part of the
+        stdin protocol — use 'HEAD' to test the non-branch-refspec path.
+        """
         # The hook needs to be in a real git repo. Use the existing REPO_ROOT
         # (the worktree we're in) but force the branch via env-var tricks is
         # not straightforward; instead, build a fresh tiny repo.
@@ -268,8 +318,9 @@ class HookSmokeTest(unittest.TestCase):
                     capture_output=True,
                     text=True,
                 ).stdout.strip()
+                local_ref = push_local_ref or f"refs/heads/{branch}"
                 stdin_input = (
-                    f"refs/heads/{branch} {sha} refs/heads/{branch} {sha}\n"
+                    f"{local_ref} {sha} refs/heads/{branch} {sha}\n"
                 )
             return subprocess.run(
                 [str(hook_path)],
@@ -333,6 +384,32 @@ class HookSmokeTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, msg=result.stderr)
         self.assertIn("OVERRIDDEN", result.stderr)
 
+    def test_pre_commit_override_with_wrong_sentinel_still_refuses(self):
+        """Codex P2 (2026-06-01): the override env-var must match the EXACT
+        sentinel, not any non-empty value. =true / =1 / =please does NOT bypass."""
+        with _GhStub(
+            {
+                (
+                    "bd-tuxlink-v1p/html-forms",
+                    "merged",
+                ): '[{"number":200,"mergedAt":"2026-05-31T18:00:00Z"}]',
+            }
+        ):
+            for wrong_value in ("true", "1", "yes", "please", "false"):
+                result = self._invoke_hook(
+                    "pre-commit",
+                    "bd-tuxlink-v1p/html-forms",
+                    env_extra={
+                        "TUXLINK_BRANCH_LIFECYCLE_OVERRIDE": wrong_value
+                    },
+                )
+                self.assertEqual(
+                    result.returncode,
+                    1,
+                    msg=f"expected refuse for value={wrong_value!r}; stderr={result.stderr}",
+                )
+                self.assertIn("did not match sentinel", result.stderr)
+
     def test_pre_push_refuses_merged_dead(self):
         with _GhStub(
             {
@@ -364,6 +441,30 @@ class HookSmokeTest(unittest.TestCase):
         ):
             result = self._invoke_hook("pre-push", "bd-tuxlink-qepd/work")
         self.assertEqual(result.returncode, 0, msg=result.stderr)
+
+    def test_pre_push_resolves_head_refspec_to_dead_branch(self):
+        """Codex P1 #2 (2026-06-01): `git push origin HEAD:refs/heads/foo`
+        passes local_ref=HEAD; the hook must fall through to remote_ref to
+        identify the dead branch + refuse the push."""
+        with _GhStub(
+            {
+                (
+                    "bd-tuxlink-v1p/html-forms",
+                    "merged",
+                ): '[{"number":200,"mergedAt":"2026-05-31T18:00:00Z"}]',
+            }
+        ):
+            result = self._invoke_hook(
+                "pre-push",
+                "bd-tuxlink-v1p/html-forms",
+                push_local_ref="HEAD",
+            )
+        self.assertEqual(
+            result.returncode,
+            1,
+            msg=f"expected refuse for HEAD-refspec; stderr={result.stderr}",
+        )
+        self.assertIn("merged-dead", result.stderr)
 
 
 if __name__ == "__main__":

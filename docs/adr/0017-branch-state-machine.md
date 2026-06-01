@@ -84,12 +84,15 @@ Hooks are written in POSIX-portable bash. They depend only on `git` + `gh` (the 
 
 Per the project's `--no-verify` ban (destructive-git hook C1), `git commit --no-verify` is denied at the Claude tool layer. The hooks add a *true* enforcement that survives outside Claude Code: a non-Claude shell that doesn't load the destructive-git harness can still bypass via `--no-verify`, BUT the CI nightly audit (tuxlink-ui3i) will detect the orphan commit retroactively.
 
-Operators who genuinely need to commit on a merged-dead branch (e.g., a hotfix amended commit that needs to land on the same merged ref before a force-push remediation) can:
+Operators who genuinely need to commit on a merged-dead branch (e.g., a hotfix amended commit that needs to land on the same merged ref before a force-push remediation) use the documented escape hatch:
 
-1. Use the documented escape hatch: `TUXLINK_BRANCH_LIFECYCLE_OVERRIDE=I-know-what-Im-doing git commit ...` — the hook respects this env-var and logs the override to `dev/scratch/branch-lifecycle-overrides.log` for audit.
-2. Disable hooks for that one operation: `git -c core.hooksPath=/dev/null commit ...`.
+```bash
+TUXLINK_BRANCH_LIFECYCLE_OVERRIDE=I-know-what-Im-doing git commit ...
+```
 
-Both paths are loud + audited. Neither is silent.
+The hook requires the **exact sentinel string** (per Codex 2026-06-01 P2 — bare `=true` or `=1` or `=please` does not bypass; the operator must type the documented value). The override logs to `dev/scratch/branch-lifecycle-overrides.log` for audit.
+
+`git -c core.hooksPath=/dev/null commit ...` is **NOT a sanctioned bypass**: it would disable the hook silently, defeating the audit trail. A future addition to the destructive-git hook (`.claude/hooks/block-destructive-git.sh`) should add it to the deny list alongside `--no-verify`; filed as a follow-up (the destructive-git hook is the right enforcement layer for that pattern).
 
 ### Session-end ordering rule (Codex P1 #12)
 
