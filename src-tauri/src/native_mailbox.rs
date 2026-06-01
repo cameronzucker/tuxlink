@@ -80,6 +80,15 @@ impl Mailbox {
 
     /// List the messages in a folder (header-only view). A missing folder lists
     /// as empty.
+    ///
+    /// Result is sorted newest-first (descending by [`MessageMeta::date`]),
+    /// with [`MessageMeta::id`] ascending as a deterministic tiebreaker for
+    /// messages whose dates collide at the minute-resolution Winlink stores.
+    /// Operator-load-bearing default per tuxlink-mjc8: without an explicit
+    /// sort, `fs::read_dir` yields filesystem-hash order — effectively random
+    /// to the operator — and search-but-no-default-order makes the inbox
+    /// unusable. Messages whose date doesn't parse as RFC 3339 sort to the
+    /// bottom of the list rather than anchoring to the 1970 epoch.
     pub fn list(&self, folder: MailboxFolder) -> Result<Vec<MessageMeta>, BackendError> {
         let dir = self.folder_dir(folder);
         if !dir.exists() {
@@ -103,6 +112,17 @@ impl Mailbox {
                 metas.push(meta);
             }
         }
+        metas.sort_by(|a, b| {
+            let ka = sort_key_from_rfc3339(&a.date);
+            let kb = sort_key_from_rfc3339(&b.date);
+            // Newest first: `Some(later).cmp(&Some(earlier)) == Greater`, so
+            // `kb.cmp(&ka)` returns Greater when `b` is older → `a` sorts
+            // first. `Option::None` is less than any `Some(_)`, so an
+            // unparseable date falls to the bottom of the newest-first list.
+            // Id ascending breaks ties deterministically (Winlink Date headers
+            // are minute-resolution, so a single batched receive can collide).
+            kb.cmp(&ka).then_with(|| a.id.0.cmp(&b.id.0))
+        });
         Ok(metas)
     }
 
@@ -237,6 +257,14 @@ fn meta_from_message(msg: &Message) -> MessageMeta {
     }
 }
 
+/// Parse an RFC 3339 timestamp into seconds since the epoch, for use as a
+/// `MessageMeta::date` sort key. `None` (unparseable) sorts to the bottom of a
+/// newest-first list rather than to a default-zero "1970" anchor that would
+/// pin garbage-dated messages to the bottom only by accident.
+fn sort_key_from_rfc3339(s: &str) -> Option<i64> {
+    chrono::DateTime::parse_from_rfc3339(s).ok().map(|dt| dt.timestamp())
+}
+
 /// Convert a Winlink date header (`YYYY/MM/DD HH:MM`) to the RFC 3339 form the
 /// trait's `MessageMeta::date` expects. Anything not in that exact shape is
 /// passed through unchanged.
@@ -258,6 +286,10 @@ mod tests {
 
     fn raw(subject: &str, body: &str) -> Vec<u8> {
         compose_message("N7CPZ", &["W1AW"], &[], subject, body, 1_716_200_000).to_bytes()
+    }
+
+    fn raw_at(subject: &str, body: &str, ts: u64) -> Vec<u8> {
+        compose_message("N7CPZ", &["W1AW"], &[], subject, body, ts).to_bytes()
     }
 
     #[test]
@@ -399,6 +431,75 @@ mod tests {
             dir.path().join("archive").join(format!("{}.read", id.0)).exists(),
             "read-marker should travel with the message"
         );
+    }
+
+    // tuxlink-mjc8: operator-load-bearing default — list returns newest first
+    // regardless of fs::read_dir order. Three timestamps stored in arbitrary
+    // sequence; the result must be strictly descending by date.
+    #[test]
+    fn list_returns_messages_newest_first_by_date() {
+        let dir = tempdir().unwrap();
+        let mbox = Mailbox::new(dir.path());
+        // Three timestamps minutes apart so the Winlink minute-resolution
+        // Date header carries distinct values for all three.
+        let oldest = 1_716_200_000; // 2024-05-20T10:13Z → header "2024/05/20 10:13"
+        let middle = oldest + 600; // +10 min
+        let newest = oldest + 1200; // +20 min
+        // Store out-of-order: middle, oldest, newest — so any "preserved
+        // insertion order" implementation would land middle-first.
+        mbox.store(MailboxFolder::Inbox, &raw_at("Middle", "m", middle)).unwrap();
+        mbox.store(MailboxFolder::Inbox, &raw_at("Oldest", "o", oldest)).unwrap();
+        mbox.store(MailboxFolder::Inbox, &raw_at("Newest", "n", newest)).unwrap();
+
+        let metas = mbox.list(MailboxFolder::Inbox).unwrap();
+        assert_eq!(metas.len(), 3);
+        assert_eq!(metas[0].subject, "Newest", "first row must be the newest message");
+        assert_eq!(metas[1].subject, "Middle");
+        assert_eq!(metas[2].subject, "Oldest", "last row must be the oldest");
+    }
+
+    // tuxlink-mjc8: messages with identical (minute-resolution) Date headers
+    // must sort by id ascending — deterministic across runs + filesystems.
+    // Winlink Date headers carry minute resolution and `generate_mid` keys
+    // on `(unix_secs, callsign)`, so three timestamps in the same minute
+    // (different seconds) produce identical Date headers but distinct MIDs
+    // — exactly the tie-break case the operator hits when a single CMS
+    // exchange ingests multiple messages within one minute.
+    #[test]
+    fn list_tiebreaks_equal_dates_by_id_ascending() {
+        let dir = tempdir().unwrap();
+        let mbox = Mailbox::new(dir.path());
+        let base = 1_716_200_000; // 2024-05-20 10:13:20 UTC
+        let id_0 = mbox.store(MailboxFolder::Inbox, &raw_at("Sec20", "x", base)).unwrap();
+        let id_1 = mbox.store(MailboxFolder::Inbox, &raw_at("Sec21", "x", base + 1)).unwrap();
+        let id_2 = mbox.store(MailboxFolder::Inbox, &raw_at("Sec22", "x", base + 2)).unwrap();
+        let metas = mbox.list(MailboxFolder::Inbox).unwrap();
+        assert_eq!(metas.len(), 3, "three distinct MIDs from same-minute timestamps");
+        // All three carry the same minute-resolution Date header
+        // ("2024-05-20T10:13:00Z"), so the tiebreaker (id asc) determines
+        // the displayed order.
+        assert!(
+            metas.iter().all(|m| m.date == "2024-05-20T10:13:00Z"),
+            "fixture must collide at the minute (was: {:?})",
+            metas.iter().map(|m| &m.date).collect::<Vec<_>>()
+        );
+        let mut expected = vec![id_0.0.clone(), id_1.0.clone(), id_2.0.clone()];
+        expected.sort();
+        let actual: Vec<String> = metas.iter().map(|m| m.id.0.clone()).collect();
+        assert_eq!(actual, expected, "equal-date tiebreaker must be id ascending");
+    }
+
+    // tuxlink-mjc8: a message whose Date header doesn't parse as RFC 3339
+    // sorts to the bottom of a newest-first list — anchoring it at the
+    // 1970 epoch (the alternative Option-default) would be just as random
+    // as the current OS-order bug.
+    #[test]
+    fn sort_key_from_rfc3339_returns_none_for_unparseable() {
+        assert_eq!(sort_key_from_rfc3339(""), None);
+        assert_eq!(sort_key_from_rfc3339("not a date"), None);
+        assert_eq!(sort_key_from_rfc3339("2024/05/20 10:13"), None, "Winlink raw form is not RFC 3339");
+        // Properly-shaped RFC 3339 parses to its epoch second.
+        assert_eq!(sort_key_from_rfc3339("2024-05-20T10:13:00Z"), Some(1_716_199_980));
     }
 }
 
