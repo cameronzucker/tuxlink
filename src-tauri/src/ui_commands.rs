@@ -1785,10 +1785,10 @@ pub async fn position_set_source(
             let mut cfg = config::read_config().map_err(|e| UiError::Internal { detail: e.to_string() })?;
             cfg.privacy.position_source = config::PositionSource::Gps;
             config::write_config_atomic(&cfg).map_err(|e| UiError::Internal { detail: e.to_string() })?;
-            // Flip in-memory only after a successful persist. use_gps re-checks freshness
-            // atomically; the pre-check→use_gps window is sub-millisecond vs a 30s staleness,
-            // so a fix expiring in between is not a real-world concern.
-            arbiter.use_gps().map_err(|e| UiError::Unavailable { reason: format!("Cannot switch to GPS: {e}") })?;
+            // Flip in-memory only after a successful persist. use_gps is now
+            // infallible (Task 2). Task 3 will remove the has_fresh_fix pre-check
+            // above + UiError::Unavailable error path entirely.
+            arbiter.use_gps();
             // tuxlink-ka7/p5u: refresh the live backend (config_set_* wildcard).
             if let Some(backend) = state.current() {
                 backend.set_config(cfg);
@@ -2755,30 +2755,6 @@ mod tests {
     // Task 11 (tuxlink-686) — position_set_source + position_status unit tests
     // ========================================================================
     use crate::position::{Fix, PositionArbiter};
-
-    // position_set_source: use_gps with no fix → Err → maps to UiError::Unavailable.
-    // Tests the use_gps → UiError mapping at unit level (the full State-bearing
-    // command path requires a Tauri app runtime; the arbiter primitive is the
-    // critical correctness gate per spec §position-686).
-    #[test]
-    fn use_gps_no_fix_maps_to_ui_error_unavailable() {
-        let arbiter = PositionArbiter::new(
-            PositionSource::Manual,
-            Some("CN87".into()),
-            PositionPrecision::FourCharGrid,
-        );
-        // No fix applied → use_gps() must be Err.
-        let result = arbiter.use_gps();
-        assert!(result.is_err(), "use_gps without a fix must fail");
-        // Map the &'static str Err to UiError::Unavailable (the command's mapping).
-        let ui_err = UiError::Unavailable {
-            reason: format!("Cannot switch to GPS: {}", result.unwrap_err()),
-        };
-        assert!(
-            matches!(ui_err, UiError::Unavailable { .. }),
-            "Err from use_gps maps to UiError::Unavailable"
-        );
-    }
 
     // position_set_source: unknown source string → UiError::Rejected.
     #[test]

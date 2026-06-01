@@ -50,8 +50,8 @@ impl PositionArbiter {
     }
     /// The active position source — the chip selection that gates `active_grid`
     /// and `broadcast_grid`. Matches `config.privacy.position_source`; updated
-    /// by `set_manual` (pins Manual) and `use_gps` (pins Gps when a fresh fix
-    /// exists).
+    /// by `set_manual` (pins Manual) and `use_gps` (pins Gps, infallible per
+    /// spec §1.1 relaxation — falls back to manual_grid if no fresh fix).
     pub fn source(&self) -> PositionSource { self.inner.lock().unwrap().source }
 
     /// Hand-set the manual grid (full precision) and pin `source = Manual`.
@@ -79,13 +79,12 @@ impl PositionArbiter {
         self.inner.lock().unwrap().precision = precision;
     }
 
-    /// Switch to GPS — only if a fresh fix exists. Err with a reason otherwise.
-    pub fn use_gps(&self) -> Result<(), &'static str> {
+    /// Switch to GPS (now infallible per spec §1.1 the relaxation).
+    /// Always sets source = Gps. If no fresh fix exists, display falls back
+    /// to manual_grid per State 4 / State 5 (spec row 3).
+    pub fn use_gps(&self) {
         let mut i = self.inner.lock().unwrap();
-        match &i.last_fix {
-            Some(f) if f.is_fresh(FIX_STALENESS) => { i.source = PositionSource::Gps; Ok(()) }
-            _ => Err("no usable GPS fix"),
-        }
+        i.source = PositionSource::Gps;
     }
 
     /// The active grid at full precision, gated on `source`. Manual →
@@ -148,14 +147,25 @@ mod tests {
         assert_eq!(a.broadcast_grid().as_deref(), Some("CN87"));
     }
 
+    // R4 P0 #2 + Codex P0 #1: use_gps is infallible; falls back to manual_grid
+    // when source flips to Gps without a fresh fix.
     #[test]
-    fn use_gps_requires_a_usable_fix() {
-        let a = PositionArbiter::new(PositionSource::Manual, Some("CN87".into()), PositionPrecision::FourCharGrid);
-        assert!(a.use_gps().is_err());            // no fix yet
-        a.apply_gps_fix(Fix::test("DM33ab"));     // stored as last_fix even while Manual
-        assert!(a.use_gps().is_ok());
-        assert_eq!(a.source(), PositionSource::Gps);
-        assert_eq!(a.active_grid().as_deref(), Some("DM33ab"));
+    fn use_gps_succeeds_without_fresh_fix_and_yields_manual_fallback() {
+        let arbiter = PositionArbiter::new(
+            crate::config::PositionSource::Manual,
+            Some("EM75".to_string()),
+            crate::config::PositionPrecision::FourCharGrid,
+        );
+        assert_eq!(arbiter.source(), crate::config::PositionSource::Manual);
+        assert!(!arbiter.has_fresh_fix(), "fixture has no fix");
+
+        // use_gps() is now infallible — no Result, no panic, no error.
+        arbiter.use_gps();
+        assert_eq!(arbiter.source(), crate::config::PositionSource::Gps,
+            "use_gps must flip source = Gps regardless of fresh fix");
+        // active_grid falls back to manual_grid per spec State 4.
+        assert_eq!(arbiter.active_grid().as_deref(), Some("EM75"),
+            "active_grid must fall back to manual_grid in State 4");
     }
 
     // tuxlink-39b: changing precision at runtime (settings UI) must change the
