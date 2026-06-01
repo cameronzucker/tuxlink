@@ -1,0 +1,149 @@
+/* AboutDialog — inline About Tuxlink overlay (tuxlink-35g0). */
+
+.tux-about-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.55);
+}
+
+.tux-about-panel {
+  width: min(480px, calc(100vw - 48px));
+  max-height: calc(100vh - 96px);
+  overflow-y: auto;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+  font-family: var(--sans);
+  color: var(--text);
+}
+
+.tux-about-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border);
+}
+
+.tux-about-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.tux-about-close {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 4px;
+}
+.tux-about-close:hover {
+  color: var(--text);
+}
+
+.tux-about-body {
+  padding: 18px;
+}
+
+.tux-about-product {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+.tux-about-product-name {
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  color: var(--text);
+}
+
+.tux-about-product-version {
+  font-family: var(--mono);
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
+.tux-about-tagline {
+  margin: 0 0 14px;
+  font-size: 13px;
+  color: var(--text-dim);
+  line-height: 1.5;
+}
+
+.tux-about-prealpha {
+  margin: 0 0 16px;
+  padding: 10px 12px;
+  font-size: 12px;
+  color: var(--text);
+  background: var(--accent-soft);
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  line-height: 1.45;
+}
+
+.tux-about-meta {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  column-gap: 14px;
+  row-gap: 6px;
+  margin: 0 0 18px;
+  font-size: 12px;
+}
+
+.tux-about-meta dt {
+  color: var(--text-dim);
+  font-weight: 600;
+}
+
+.tux-about-meta dd {
+  margin: 0;
+  color: var(--text);
+}
+
+.tux-about-meta a {
+  color: var(--accent);
+  text-decoration: none;
+}
+.tux-about-meta a:hover {
+  text-decoration: underline;
+}
+
+.tux-about-credit {
+  margin: 0;
+  padding-top: 14px;
+  font-size: 11px;
+  color: var(--text-faint);
+  border-top: 1px solid var(--border-soft);
+}
+
+.tux-about-actions {
+  display: flex;
+  justify-content: flex-end;
+  padding: 12px 18px;
+  border-top: 1px solid var(--border);
+}
+
+.tux-about-button {
+  padding: 7px 18px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--tux-accent-fg);
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  cursor: pointer;
+}
+.tux-about-button:hover {
+  background: var(--accent-2);
+  border-color: var(--accent-2);
+}

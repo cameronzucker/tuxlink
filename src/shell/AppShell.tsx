@@ -35,6 +35,9 @@ import { StatusBar } from './StatusBar';
 import { useStatusData } from './useStatus';
 import { applyColorScheme, saveColorScheme } from './colorScheme';
 import { ThemeDesigner } from './ThemeDesigner';
+import { AboutDialog } from './AboutDialog';
+import { HelpPanel } from './HelpPanel';
+import { open as shellOpen } from '@tauri-apps/plugin-shell';
 import MessageView from '../mailbox/MessageView';
 import { TitleBar } from './chrome/TitleBar';
 import { MenuBar } from './chrome/MenuBar';
@@ -140,6 +143,9 @@ export function AppShell() {
   // Inline theme designer overlay (tuxlink-vgth), opened from View → Color
   // Scheme → Customize…. Same backdrop pattern as SettingsPanel.
   const [themeDesignerOpen, setThemeDesignerOpen] = useState(false);
+  // Inline About + Help overlays (tuxlink-35g0), opened from the Help menu.
+  const [aboutOpen, setAboutOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
 
   // Connection panel: null = no panel; a {sessionType, protocol} key selects the reading-pane connection pane.
   const [selectedConnection, setSelectedConnection] = useState<ConnectionKey | null>(null);
@@ -318,6 +324,18 @@ export function AppShell() {
     setScheme: (id) => { applyColorScheme(id); saveColorScheme(id); },
     openSettings: () => setSettingsOpen(true),
     openThemeDesigner: () => setThemeDesignerOpen(true),
+    openAbout: () => setAboutOpen(true),
+    openHelp: () => setHelpOpen(true),
+    reportIssue: () => {
+      // tuxlink-35g0: open the project's GitHub issue tracker in the
+      // operator's default browser. The URL is hard-coded — the source
+      // repo doesn't move per-deploy.
+      void shellOpen('https://github.com/cameronzucker/tuxlink/issues/new').catch(() => {
+        /* swallow — the alternative is a UI toast that the operator
+         * can't act on; the next session-log entry on a real CMS
+         * exchange surfaces shell-tool availability anyway. */
+      });
+    },
     quit: () => { void invoke('app_quit'); },
   }), [onConnect, openMessage]);
 
@@ -540,6 +558,10 @@ export function AppShell() {
       <SettingsPanel open={settingsOpen} onClose={() => setSettingsOpen(false)} />
 
       <ThemeDesigner open={themeDesignerOpen} onClose={() => setThemeDesignerOpen(false)} />
+
+      <AboutDialog open={aboutOpen} onClose={() => setAboutOpen(false)} />
+
+      <HelpPanel open={helpOpen} onClose={() => setHelpOpen(false)} />
 
       {savedSearchesOpen && (
         <SavedSearchesPanel onClose={() => setSavedSearchesOpen(false)} />

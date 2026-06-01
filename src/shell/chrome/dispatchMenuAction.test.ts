@@ -14,6 +14,9 @@ function handlers(): MenuHandlers {
     setScheme: vi.fn(),
     openSettings: vi.fn(),
     openThemeDesigner: vi.fn(),
+    openAbout: vi.fn(),
+    openHelp: vi.fn(),
+    reportIssue: vi.fn(),
     quit: vi.fn(),
   };
 }
@@ -99,7 +102,27 @@ describe('dispatchMenuAction', () => {
   it('is a safe no-op for stub/unhandled ids', () => {
     const h = handlers();
     expect(() => dispatchMenuAction('menu:tools:preferences', h)).not.toThrow();
-    expect(() => dispatchMenuAction('menu:help:about', h)).not.toThrow();
+    expect(() => dispatchMenuAction('menu:session:disconnect', h)).not.toThrow();
+  });
+
+  // tuxlink-35g0: the Help menu is now wired — About / Documentation /
+  // Report Issue each route to a dedicated handler.
+  it('routes Help → About Tuxlink to openAbout', () => {
+    const h = handlers();
+    dispatchMenuAction('menu:help:about', h);
+    expect(h.openAbout).toHaveBeenCalledOnce();
+  });
+
+  it('routes Help → Documentation to openHelp', () => {
+    const h = handlers();
+    dispatchMenuAction('menu:help:docs', h);
+    expect(h.openHelp).toHaveBeenCalledOnce();
+  });
+
+  it('routes Help → Report Issue to reportIssue', () => {
+    const h = handlers();
+    dispatchMenuAction('menu:help:report_issue', h);
+    expect(h.reportIssue).toHaveBeenCalledOnce();
   });
 
   // tuxlink-39b: the consolidated GPS & Privacy settings item opens the panel
