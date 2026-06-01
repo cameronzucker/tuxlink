@@ -6,7 +6,10 @@ use crate::forms::types::FormDef;
 
 pub const BUNDLED_FORMS: &[&FormDef] = &[
     &templates::ics213::ICS213_INITIAL,
-    // ics309, position, bulletin, damage_assessment added in T9.x
+    &templates::ics309::FORM309_INITIAL,
+    &templates::position::POSITION_REPORT,
+    &templates::bulletin::BULLETIN_INITIAL,
+    &templates::damage_assessment::DAMAGE_ASSESSMENT_INITIAL,
 ];
 
 /// Look up a bundled form by its canonical ID. Returns None if not known.
@@ -36,5 +39,41 @@ mod tests {
         let f = find_form("ICS213_Initial").unwrap();
         assert_eq!(f.display_form, "ICS213_Initial_Viewer.html");
         assert_eq!(f.reply_template, "ICS213_SendReply.0");
+    }
+
+    #[test]
+    fn finds_form_309_by_id() {
+        let f = find_form("Form-309_Initial").expect("Form-309_Initial bundled");
+        assert_eq!(f.name, "ICS-309 Communications Log");
+        assert!(f.fields.iter().any(|fd| fd.id == "opname"));
+        assert!(f.fields.iter().any(|fd| fd.id == "time1"));
+        assert_eq!(f.display_form, "Form-309_Viewer.html");
+    }
+
+    #[test]
+    fn finds_bulletin_by_id() {
+        let f = find_form("Bulletin_Initial").expect("Bulletin_Initial bundled");
+        assert_eq!(f.name, "Bulletin");
+        assert!(f.fields.iter().any(|fd| fd.id == "bullnr"));
+        assert!(f.fields.iter().any(|fd| fd.id == "message"));
+        assert_eq!(f.display_form, "Bulletin Viewer.html");
+    }
+
+    #[test]
+    fn finds_position_report_by_id() {
+        let f = find_form("Position_Report").expect("Position_Report bundled");
+        assert_eq!(f.name, "GPS Position Report");
+        assert!(f.fields.iter().any(|fd| fd.id == "lat"));
+        assert!(f.fields.iter().any(|fd| fd.id == "lon"));
+        assert_eq!(f.display_form, "GPS Position Report.html");
+    }
+
+    #[test]
+    fn finds_damage_assessment_by_id() {
+        let f = find_form("Damage_Assessment_Initial").expect("Damage_Assessment_Initial bundled");
+        assert_eq!(f.name, "Damage Assessment");
+        assert!(f.fields.iter().any(|fd| fd.id == "surarea"));
+        assert!(f.fields.iter().any(|fd| fd.id == "dollar16"));
+        assert_eq!(f.display_form, "Damage_Assessment_Viewer.html");
     }
 }
