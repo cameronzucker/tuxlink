@@ -265,7 +265,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 
 **Context:** PR #185 commit `4c88618` added Capture / Playback / PTT / WebGUI inline-edit rows to the ARDOP panel's Radio section. Two of the ARDOP fields from the (now-deleted, Task 2) Settings fieldset weren't covered: `cmd_port` and the `binary` (ardopcf binary path). Task 3 adds them.
 
-- [ ] **Step 1: Write the failing tests.**
+- [x] **Step 1: Write the failing tests.**
 
 In `src/radio/modes/ArdopRadioPanel.test.tsx`, ADD:
 
@@ -294,16 +294,16 @@ test('cmd_port input persists on blur', async () => {
 
 (Adjust the persistArdop mocking pattern to match the existing ArdopRadioPanel test patterns for Capture / Playback / PTT / WebGUI inputs.)
 
-- [ ] **Step 2: Run the tests to verify they fail.**
+- [x] **Step 2: Run the tests to verify they fail.**
 
 ```bash
 pnpm vitest run src/radio/modes/ArdopRadioPanel.test.tsx -t "cmd_port" 2>&1 | tail -10
 pnpm vitest run src/radio/modes/ArdopRadioPanel.test.tsx -t "ardopcf binary" 2>&1 | tail -10
 ```
 
-Expected: FAIL.
+Expected: FAIL. (Confirmed 4 failing tests before implementation.)
 
-- [ ] **Step 3: Add the two `<label className="radio-panel-input-row">` rows.**
+- [x] **Step 3: Add the two `<label className="radio-panel-input-row">` rows.**
 
 In `src/radio/modes/ArdopRadioPanel.tsx`, locate the `<section className="radio-panel-sec" data-testid="ardop-radio-section">` block (around line 520). After the existing WebGUI input row (around line 575–595), ADD:
 
@@ -376,7 +376,7 @@ const commitBinary = useCallback(() => {
 
 Match the existing pattern from `commitCapture` / `commitPlayback` / `commitPttSerial` / `commitWebguiPort` in the same file.
 
-- [ ] **Step 4: Run the tests to verify they pass.**
+- [x] **Step 4: Run the tests to verify they pass.**
 
 ```bash
 pnpm vitest run src/radio/modes/ArdopRadioPanel.test.tsx 2>&1 | tail -10
@@ -384,7 +384,7 @@ pnpm vitest run src/radio/modes/ArdopRadioPanel.test.tsx 2>&1 | tail -10
 
 Expected: PASS.
 
-- [ ] **Step 5: Run the full vitest suite + tsc.**
+- [x] **Step 5: Run the full vitest suite + tsc.**
 
 ```bash
 pnpm vitest run 2>&1 | tail -5
@@ -393,7 +393,7 @@ pnpm exec tsc --noEmit 2>&1 | tail -5
 
 Expected: all passing; tsc clean.
 
-- [ ] **Step 6: Commit.**
+- [x] **Step 6: Commit.**
 
 ```bash
 git add src/radio/modes/ArdopRadioPanel.tsx src/radio/modes/ArdopRadioPanel.test.tsx
