@@ -35,7 +35,18 @@ import { ArdopRadioPanel } from './ArdopRadioPanel';
 
 const defaultInvokeImpl = async (cmd: string) => {
   if (cmd === 'session_log_snapshot') return [];
-  if (cmd === 'config_get_ardop') return { cmd_port: 8515 };
+  // Full ardop config so the Radio section can load capture/playback/ptt
+  // without choking on missing keys.
+  if (cmd === 'config_get_ardop') {
+    return {
+      binary: 'ardopcf',
+      capture_device: 'plughw:1,0',
+      playback_device: 'plughw:1,0',
+      ptt_serial_path: null,
+      cmd_port: 8515,
+      bandwidth_hz: null,
+    };
+  }
   if (cmd === 'modem_mint_consent') return 'test-token';
   return undefined;
 };
@@ -189,7 +200,16 @@ describe('<ArdopRadioPanel>', () => {
   it('does not open WebGUI when cmd_port is below 2 (surfaces an error instead)', async () => {
     const core = await import('@tauri-apps/api/core');
     (core.invoke as ReturnType<typeof vi.fn>).mockImplementation(async (cmd: string) => {
-      if (cmd === 'config_get_ardop') return { cmd_port: 1 };
+      if (cmd === 'config_get_ardop') {
+        return {
+          binary: 'ardopcf',
+          capture_device: '',
+          playback_device: '',
+          ptt_serial_path: null,
+          cmd_port: 1,
+          bandwidth_hz: null,
+        };
+      }
       if (cmd === 'session_log_snapshot') return [];
       return undefined;
     });
@@ -213,5 +233,95 @@ describe('<ArdopRadioPanel>', () => {
     render(<ArdopRadioPanel onClose={onClose} />);
     fireEvent.click(screen.getByTestId('radio-panel-close'));
     expect(onClose).toHaveBeenCalled();
+  });
+
+  // Operator smoke 2026-05-31: Radio section parity with AX.25's
+  // ModemLinkSection — audio capture + playback + PTT serial editable inline.
+  describe('Radio section', () => {
+    it('mounts the Radio section in stopped state', async () => {
+      render(<ArdopRadioPanel onClose={() => {}} />);
+      await waitFor(() =>
+        expect(screen.getByTestId('ardop-radio-section')).toBeInTheDocument(),
+      );
+      expect(screen.getByTestId('ardop-capture-input')).toBeInTheDocument();
+      expect(screen.getByTestId('ardop-playback-input')).toBeInTheDocument();
+      expect(screen.getByTestId('ardop-ptt-input')).toBeInTheDocument();
+    });
+
+    it('loads capture/playback/PTT from config_get_ardop on mount', async () => {
+      render(<ArdopRadioPanel onClose={() => {}} />);
+      await waitFor(() => {
+        const cap = screen.getByTestId('ardop-capture-input') as HTMLInputElement;
+        expect(cap.value).toBe('plughw:1,0');
+      });
+    });
+
+    it('persists capture device via config_set_ardop on blur', async () => {
+      const core = await import('@tauri-apps/api/core');
+      const invokeMock = core.invoke as ReturnType<typeof vi.fn>;
+      render(<ArdopRadioPanel onClose={() => {}} />);
+      // Wait for initial load to complete (otherwise persistArdop would
+      // see ardopConfig=null and bail).
+      await waitFor(() => {
+        expect((screen.getByTestId('ardop-capture-input') as HTMLInputElement).value).toBe('plughw:1,0');
+      });
+      const cap = screen.getByTestId('ardop-capture-input') as HTMLInputElement;
+      fireEvent.change(cap, { target: { value: 'plughw:2,0' } });
+      fireEvent.blur(cap);
+      await waitFor(() => {
+        expect(invokeMock).toHaveBeenCalledWith(
+          'config_set_ardop',
+          expect.objectContaining({
+            value: expect.objectContaining({ capture_device: 'plughw:2,0' }),
+          }),
+        );
+      });
+    });
+
+    it('empty PTT serial path persists as null (= VOX)', async () => {
+      const core = await import('@tauri-apps/api/core');
+      const invokeMock = core.invoke as ReturnType<typeof vi.fn>;
+      // Seed with a non-empty PTT path so we can clear it.
+      invokeMock.mockImplementation(async (cmd: string) => {
+        if (cmd === 'config_get_ardop') {
+          return {
+            binary: 'ardopcf',
+            capture_device: '',
+            playback_device: '',
+            ptt_serial_path: '/dev/ttyUSB0',
+            cmd_port: 8515,
+            bandwidth_hz: null,
+          };
+        }
+        if (cmd === 'session_log_snapshot') return [];
+        return undefined;
+      });
+      render(<ArdopRadioPanel onClose={() => {}} />);
+      await waitFor(() => {
+        const ptt = screen.getByTestId('ardop-ptt-input') as HTMLInputElement;
+        expect(ptt.value).toBe('/dev/ttyUSB0');
+      });
+      const ptt = screen.getByTestId('ardop-ptt-input') as HTMLInputElement;
+      fireEvent.change(ptt, { target: { value: '' } });
+      fireEvent.blur(ptt);
+      await waitFor(() => {
+        expect(invokeMock).toHaveBeenCalledWith(
+          'config_set_ardop',
+          expect.objectContaining({
+            value: expect.objectContaining({ ptt_serial_path: null }),
+          }),
+        );
+      });
+    });
+
+    it('Radio section is hidden when the modem is running (settings consumed at spawn)', () => {
+      mockUseModemStatus.mockReturnValue({
+        status: RUNNING,
+        loading: false,
+        error: null,
+      });
+      render(<ArdopRadioPanel onClose={() => {}} />);
+      expect(screen.queryByTestId('ardop-radio-section')).not.toBeInTheDocument();
+    });
   });
 });

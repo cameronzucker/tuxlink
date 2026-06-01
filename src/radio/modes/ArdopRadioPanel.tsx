@@ -175,6 +175,26 @@ const ARQ_BANDWIDTH_OPTIONS: { value: number | null; label: string }[] = [
   { value: 2000, label: '2000 Hz (best throughput)' },
 ];
 
+/**
+ * Frontend mirror of Rust's `config::ArdopUiConfig`. Keys are snake_case
+ * because the Rust struct lacks `#[serde(rename_all = "camelCase")]`. The
+ * Radio section below edits a subset (capture_device / playback_device /
+ * ptt_serial_path). Other fields are loaded + written back untouched so a
+ * partial write doesn't clobber bandwidth_hz / cmd_port / binary.
+ *
+ * Mirrors the same shape SettingsPanel.tsx uses (the original editor that
+ * the operator-flagged smoke wanted available inline in the radio panel
+ * for parity with AX.25's ModemLinkSection).
+ */
+interface ArdopFullConfig {
+  binary: string;
+  capture_device: string;
+  playback_device: string;
+  ptt_serial_path: string | null;
+  cmd_port: number;
+  bandwidth_hz: number | null;
+}
+
 export function ArdopRadioPanel({ onClose }: ArdopRadioPanelProps) {
   const { status } = useModemStatus();
   const [target, setTarget] = useState('');
@@ -182,6 +202,14 @@ export function ArdopRadioPanel({ onClose }: ArdopRadioPanelProps) {
   // config_get_ardop on mount; persisted via config_set_ardop on change.
   // null = "leave at ardopcf default."
   const [bandwidth, setBandwidth] = useState<number | null>(null);
+  // Full ARDOP config — operator smoke 2026-05-31 added a Radio section
+  // here so audio devices + PTT serial path are editable inline (parity
+  // with AX.25's ModemLinkSection on the Packet panel). Loaded on mount,
+  // persisted via config_set_ardop on each blur.
+  const [ardopConfig, setArdopConfig] = useState<ArdopFullConfig | null>(null);
+  const [captureInput, setCaptureInput] = useState<string>('');
+  const [playbackInput, setPlaybackInput] = useState<string>('');
+  const [pttSerialInput, setPttSerialInput] = useState<string>('');
   const consent = useConsent();
   const [showConsent, setShowConsent] = useState(false);
   const [connecting, setConnecting] = useState(false);
@@ -198,14 +226,20 @@ export function ArdopRadioPanel({ onClose }: ArdopRadioPanelProps) {
   const throughputHistory = useSampleHistory(status.throughputBps, 60);
   const frameHistory = useFrameHistory(status, 60);
 
-  // Load ARQ bandwidth from persisted ARDOP config on mount.
+  // Load ARDOP config on mount: bandwidth (existing) + audio/PTT (added
+  // 2026-05-31 for the Radio section).
   useEffect(() => {
     let cancelled = false;
-    invoke<{ bandwidth_hz: number | null }>('config_get_ardop')
+    invoke<ArdopFullConfig>('config_get_ardop')
       .then((c) => {
-        if (!cancelled && c && typeof c.bandwidth_hz !== 'undefined') {
+        if (cancelled || !c) return;
+        if (typeof c.bandwidth_hz !== 'undefined') {
           setBandwidth(c.bandwidth_hz);
         }
+        setArdopConfig(c);
+        setCaptureInput(c.capture_device ?? '');
+        setPlaybackInput(c.playback_device ?? '');
+        setPttSerialInput(c.ptt_serial_path ?? '');
       })
       .catch(() => {
         /* pre-wizard / config absent — keep null default */
@@ -214,6 +248,32 @@ export function ArdopRadioPanel({ onClose }: ArdopRadioPanelProps) {
       cancelled = true;
     };
   }, []);
+
+  /** Persist an updated ARDOP config slice. Mirrors SettingsPanel's
+   *  merge-then-write pattern so two writers can't clobber each other
+   *  (the bandwidth selector + this Radio section both edit subsets). */
+  const persistArdop = (patch: Partial<ArdopFullConfig>) => {
+    if (!ardopConfig) return;
+    const next = { ...ardopConfig, ...patch };
+    setArdopConfig(next);
+    void invoke('config_set_ardop', { value: next }).catch(() => {
+      /* persist errors surface in the session log via the backend */
+    });
+  };
+
+  const commitCapture = () => {
+    const trimmed = captureInput.trim();
+    persistArdop({ capture_device: trimmed });
+  };
+  const commitPlayback = () => {
+    const trimmed = playbackInput.trim();
+    persistArdop({ playback_device: trimmed });
+  };
+  const commitPttSerial = () => {
+    const trimmed = pttSerialInput.trim();
+    // Empty string → null on the wire (means "use VOX").
+    persistArdop({ ptt_serial_path: trimmed === '' ? null : trimmed });
+  };
 
   const onBandwidthChange = (e: ChangeEvent<HTMLSelectElement>) => {
     // value="" represents the "Auto" option → null. Otherwise parse as int.
@@ -378,6 +438,65 @@ export function ArdopRadioPanel({ onClose }: ArdopRadioPanelProps) {
                 </option>
               ))}
             </select>
+          </label>
+        </section>
+      )}
+
+      {/* Radio (audio devices + PTT serial path). Operator smoke 2026-05-31:
+          AX.25 has the ModemLinkSection for TNC link selection; ARDOP needed
+          parallel pickers for audio + PTT so the operator doesn't have to
+          jump to the Settings panel. Editable in the stopped state — ardopcf
+          consumes these at spawn time, so changing them mid-session has no
+          effect until restart. We surface them in stopped state only to
+          avoid implying live-changeability. (Bandwidth follows the same
+          pattern in the Connect section above.) */}
+      {isStopped && (
+        <section className="radio-panel-sec" data-testid="ardop-radio-section">
+          <h5>Radio</h5>
+          <label className="radio-panel-input-row">
+            <span>Capture</span>
+            <input
+              type="text"
+              className="radio-panel-input"
+              data-testid="ardop-capture-input"
+              value={captureInput}
+              spellCheck={false}
+              autoCapitalize="off"
+              autoCorrect="off"
+              placeholder="plughw:1,0"
+              onChange={(e) => setCaptureInput(e.target.value)}
+              onBlur={commitCapture}
+            />
+          </label>
+          <label className="radio-panel-input-row">
+            <span>Playback</span>
+            <input
+              type="text"
+              className="radio-panel-input"
+              data-testid="ardop-playback-input"
+              value={playbackInput}
+              spellCheck={false}
+              autoCapitalize="off"
+              autoCorrect="off"
+              placeholder="plughw:1,0"
+              onChange={(e) => setPlaybackInput(e.target.value)}
+              onBlur={commitPlayback}
+            />
+          </label>
+          <label className="radio-panel-input-row">
+            <span>PTT</span>
+            <input
+              type="text"
+              className="radio-panel-input"
+              data-testid="ardop-ptt-input"
+              value={pttSerialInput}
+              spellCheck={false}
+              autoCapitalize="off"
+              autoCorrect="off"
+              placeholder="/dev/ttyUSB0 (empty = VOX)"
+              onChange={(e) => setPttSerialInput(e.target.value)}
+              onBlur={commitPttSerial}
+            />
           </label>
         </section>
       )}
