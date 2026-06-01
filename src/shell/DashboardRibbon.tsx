@@ -93,7 +93,6 @@ export function DashboardRibbon({ data, onConnect, connecting, onAbort, packet }
           source={data.position_source}
           gpsReady={data.gpsReady ?? false}
           onCommit={(g) => invoke('config_set_grid', { grid: g })}
-          onUseGps={() => invoke('position_set_source', { source: 'Gps' })}
         />
       </div>
       <div className="dash-divider" />
