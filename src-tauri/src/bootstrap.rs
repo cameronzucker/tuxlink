@@ -200,6 +200,23 @@ fn install_native(app_handle: &AppHandle, state: &BackendState, cfg: Config) {
     if let Some(index) = search_index {
         backend = backend.with_index(index);
     }
+
+    // 2026-05-31 operator-flagged: the 5s status poll missed sub-second
+    // CMS-Z exchanges so the user saw Connecting → Disconnected with no
+    // visible Connected state. Subscribe to the backend's status broadcast
+    // BEFORE handing the Arc to BackendState (otherwise we lose the racey
+    // initial Disconnected). Emit `backend_status:change` with the StatusDto
+    // payload the frontend's `useStatus.ts` already understands.
+    let mut status_rx = backend.subscribe_status();
+    let status_app = app_handle.clone();
+    tauri::async_runtime::spawn(async move {
+        while let Ok(s) = status_rx.recv().await {
+            let dto = crate::ui_commands::StatusDto::from(s);
+            let _ = status_app.emit("backend_status:change", &dto);
+        }
+        // Channel closed = backend dropped. The task exits silently.
+    });
+
     state.install(Arc::new(backend));
     emit_backend_line(
         app_handle,
