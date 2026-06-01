@@ -78,12 +78,31 @@
      the whole body would push the action row off-screen. */
   min-height: 0;
   overflow-y: auto;
+  /* Hard horizontal clamp — defensive cap so any element that escapes its
+     `.radio-panel-sec`'s wrap/truncate net cannot push the panel into
+     horizontal scroll. The panel is 360 px wide and is not meant to scroll
+     horizontally. Operator smoke 2026-05-31 round 3 — "elements off-screen
+     to the right". */
+  overflow-x: hidden;
+  min-width: 0;
 }
 
-/* Section primitive — used by mode panels and shared sections */
+/* Section primitive — used by mode panels and shared sections. The
+   `min-width: 0` + `box-sizing: border-box` pair is operator-smoke load-
+   bearing: without it, a wide child (a long status line, a long stats
+   row, an SVG with intrinsic width > panel width) propagates its width
+   up the flex chain and pushes the entire section past the panel's
+   336 px content box. With both, the section is hard-bounded to the
+   panel width and children must wrap / truncate / shrink to fit.
+   See operator smoke 2026-05-31 round 3 — "elements pushed off-screen
+   to the right". */
 .radio-panel-sec {
   padding: 8px 12px;
   border-bottom: 1px dashed rgba(255, 255, 255, 0.08);
+  min-width: 0;
+  box-sizing: border-box;
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }
 .radio-panel-sec:last-child {
   border-bottom: none;

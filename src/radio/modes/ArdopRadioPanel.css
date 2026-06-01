@@ -15,7 +15,15 @@
 
 .ardop-arq-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  /* Operator smoke 2026-05-31 round 3: previously `repeat(3, 1fr)`. The
+     `1fr` track size is `minmax(auto, 1fr)`, where `auto` resolves to the
+     content's intrinsic min size — and a cell's content can be wider than
+     the grid's available width with the round-2 12 px font scale, which
+     pushes the third column off-panel. `minmax(0, 1fr)` lets cells share
+     the panel width by allowing them to shrink below their intrinsic
+     content size; combined with `min-width: 0` on the cell, this keeps
+     all 9 cells inside the 336 px content box at the 360 px panel width. */
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 4px;
 }
 
@@ -31,6 +39,15 @@
   color: var(--text-faint, #94a3b8);
   letter-spacing: 0.02em;
   font-weight: 500;
+  /* Pair with the grid's `minmax(0, ...)` so cells can shrink below their
+     content's intrinsic min size. */
+  min-width: 0;
+  /* Defensive: if the panel ever ends up narrower than 9 × cell content,
+     truncate rather than overflow. */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  box-sizing: border-box;
 }
 
 .ardop-arq-cell[data-on='true'] {
@@ -83,6 +100,40 @@
   border: 1px solid rgba(255, 255, 255, 0.10);
   border-radius: 3px;
   margin: 8px 0 0;
-  white-space: pre;
+  /* Operator smoke 2026-05-31 round 3: a `<pre>` with `white-space: pre`
+     does NOT wrap, so long peer call signs, long mode names, or the
+     compound "RX <bytes> B · TX <bytes> B" line could push the pre wider
+     than the 360 px panel and force the entire section off-screen. Switch
+     to `white-space: pre-wrap` so newlines (which compose the row layout)
+     are preserved while long values wrap within their row. Pair with
+     `overflow-wrap: anywhere` for callsigns / paths without natural break
+     points. Both together keep the section inside the panel width
+     unconditionally. */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  box-sizing: border-box;
+  max-width: 100%;
   color: var(--text-faint, #94a3b8);
+}
+
+/* ARDOP meter rows (S/N, VU, Throughput). The label is short + fixed
+   ("S/N", "VU", "Throughput"), but `.ardop-meter-v` carries the operator-
+   facing number that can grow ("Throughput 999999 bps", "VU -120 dBFS").
+   `min-width: 0` on the value column lets flex shrink it; truncation +
+   ellipsis preserves the row height when content exceeds the row width.
+   Operator smoke 2026-05-31 round 3: this was overflowing the panel
+   alongside `.ardop-stats`. */
+.ardop-meter {
+  min-width: 0;
+  box-sizing: border-box;
+}
+.ardop-meter-k {
+  flex-shrink: 0;
+}
+.ardop-meter-v {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
