@@ -1,0 +1,580 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>FRM 900-001</title>
+
+<style type="text/css">
+<!--
+@media print {
+.form-control, .form-control.nobug {
+border: 0;
+outline: 0;
+box-shadow: none;
+font-size:14px;
+}
+.form-control.nobug {
+transition: none; /*-- THIS IS IMPORTANT -- */
+}
+input, textarea {
+outline: none !important;
+box-shadow: none;
+border: none;
+overflow: visible;
+font-family: Arial, Helvetica, sans-serif;
+font-size: 10px;
+}
+.formtext {
+font-family: Arial, Helvetica, sans-serif;
+font-size: 10pt;
+font-weight: normal;
+}
+}
+  input[type=button] {
+
+  border: 2px solid #0f88f2;;
+   border-radius:.25rem;
+  color: black;
+  padding: 2px 2px;
+ background-color: white;
+  text-decoration: none;
+  margin: 2px 2px;
+  cursor: pointer;
+}
+input[type=submit] {
+ border: 2px solid green;
+  border-radius:.25rem;
+  background-color: white;
+  color: black;
+  padding: 2px 2px;
+  font-size: 14px;
+   cursor: pointer;
+}
+input[type=reset] {
+ border: 2px solid red;
+ border-radius:.25rem;
+  background-color: white;
+  color: black;
+  padding: 2px 2px;
+  font-size: 14px;
+   cursor: pointer;
+}
+input[type=black1] {
+ border: 2px solid #999999;
+   width:225px;
+  border-radius:.25rem;
+
+  background-color: white;
+  color: black;
+  padding: 2px 2px;
+  font-size: 14px;
+   cursor: pointer;
+}
+
+</style>
+ <script>
+function shortmonth(monthnum) {
+var monthname;
+shortmonths = ["JAN", "FEB", "MAR","APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"] ;
+monthname = shortmonths [monthnum];s
+return monthname; }
+</script>
+<script>
+function SetDateTime(TType,TheFld, FocusFld) {
+var txt;
+var myprompt;
+var d = new Date(),
+thisyear = d.getFullYear();
+thismonth= d.getMonth();
+thisday = d.getDate();
+var monname;
+h = (d.getHours()<10?'0':'') + d.getHours()
+m = (d.getMinutes()<10?'0':'') + d.getMinutes()
+s = (d.getSeconds()<10?'0':'') + d.getSeconds();
+var now = new Date();
+var utch = now.getUTCHours();
+if (utch < 10) { utch = "0"+utch};
+var utcs = now.getUTCMinutes();
+if (utcs < 10) { utcs = "0"+utcs};
+var myUTCtime = utch+":"+utcs+"Z";
+var utcstr = d.toUTCString();
+var localt = d.toLocaleTimeString();
+var isostr = d.toISOString();
+monthname = shortmonth (thismonth);
+thismonth = thismonth + 1;
+switch (TType) {
+case 'hms' :
+myprompt = h + ':' + m + ':' + s;
+var RightNow = prompt("Time:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'hm' :
+myprompt = h + ':' + m;
+var RightNow = prompt("Time:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'm-d-y': myprompt = thismonth+ '-' + thisday+ '-'+ thisyear;
+var RightNow = prompt("Date:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'm/d/y': myprompt = thismonth+ '/' + thisday+ '/'+ thisyear;
+var RightNow = prompt("Date:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'd mmm y': myprompt = thisday+ ' ' + monthname+ ' '+ thisyear;
+var RightNow = prompt("Date:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'mmm-d-y': myprompt = monthname+'-'+thisday+ '-' + thisyear;
+var RightNow = prompt("Date:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'localampm': var myprompt = localt;
+var RightNow = prompt("Local time:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'fulldate': var myprompt = thisyear+ '/'+thismonth+'/'+thisday;
+var RightNow = prompt("Date:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'fulldatetime': var myprompt = thisyear+'/'+thismonth+ ''+thisday+' '+h + ':' + m ;
+var RightNow = prompt("Date time:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'autodate': var RightNow = thisyear+'-'+thismonth+ '-'+thisday ;
+//var RightNow = prompt("Date time:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'autotime': var RightNow = h + ':' + m ;
+//var RightNow = prompt("Date time:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'iso': var myprompt = isostr;
+var RightNow = prompt("Date time:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'utc': var myprompt = utcstr;
+var RightNow = prompt("Date time:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'zulu': var myprompt = isostr;
+myprompt = isostr.replace("T", " "); slen = myprompt.length;
+myprompt = myprompt.substr(0, slen-5)+'Z';
+var RightNow = prompt("Date time:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'UTChm': var myprompt = myUTCtime;
+var RightNow = prompt("Date time:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+}
+// if(FocusFld !== null && FocusFld !== '') {document.getElementById(FocusFld).focus()} --/
+}; 
+    
+  function AutoGrowTextArea(textField)
+{
+if (textField.clientHeight < textField.scrollHeight)
+{
+textField.style.height = textField.scrollHeight + "px";
+if (textField.clientHeight < textField.scrollHeight)
+{
+textField.style.height = (textField.scrollHeight * 2 - textField.clientHeight) + "px";
+}
+}
+}  
+    
+    
+  function isNumberKey(evt)
+{
+var charCode = (evt.which) ? evt.which : event.keyCode
+if (charCode < 48 || charCode > 57)
+return false;
+return true;
+}
+  
+    
+    
+    </script>
+    
+    
+    
+    
+</head>
+
+<body>
+ <form  style="font-family: Arial;" pbzloc="3" onsubmit="return confirm('To complete your form submission, click OK and close the open browser window. You will return to the new message window so you can post your message to the outbox');document.getElementById('parseme').value='';" method="post" id="myform" enctype="multipart/form-data" action="http://{FormServer}:{FormPort}"><table width="983" height="1922" border="1" cellpadding="6" cellspacing="0" bordercolor="#999999" style="width: 900px; height: 533px; font-family: Gotham, 'Helvetica Neue', Helvetica, Arial, sans-serif;" pbzloc="11">
+  <!--DWLayoutTable-->
+  <tbody>
+    <tr valign="top">
+      <td height="46" colspan="8" style="vertical-align: top; background-color: rgb(255, 255, 204); font-family: Gotham, 'Helvetica Neue', Helvetica, Arial, sans-serif; font-weight: bold;"><div align="center"><strong>&nbsp; &nbsp; &nbsp; &nbsp;</strong>&nbsp;<big>FRM 900-001 SitRep</big><br />
+      </div></td>
+    </tr>
+    <tr>
+      <td colspan="5" valign="top" style="vertical-align: top; text-align: justify; height: 45px; width: 30%; font-family: Gotham, 'Helvetica Neue', Helvetica, Arial, sans-serif;">&nbsp;1. Incident Name:&nbsp;
+        &nbsp;&nbsp;&nbsp;
+        <p>&nbsp;&nbsp;
+          <input name="Incident_Name" id="Incident_Name" title="Incident or Agency # optional." value="{var Incident_Name}" size="45" maxlength="40" readonly="readonly" />
+          <textarea name="parseme" cols="60" id="parseme" style="display: none;"></textarea>
+        </p>
+        <p>
+          <textarea name="parseme" cols="60" id="parseme" style="display: none;"></textarea>
+          <br />
+        </td>
+      <td colspan="3" valign="top"><table border="0" cellpadding="2" cellspacing="0" style="width: 416px; height: 87px; font-family: Gotham, 'Helvetica Neue', Helvetica, Arial, sans-serif;">
+        <!--DWLayoutTable-->
+        <tbody>
+          <tr>
+            <td colspan="4">Operational Period:</td>
+            </tr>
+          <tr>
+            <td width="109" style="width: 28%;">Date From<big>:</big></td>
+            <td width="101"><b>
+              <input name="DateFrom" id="DateFrom" value="{var DateFrom}" size="12" maxlength="12" readonly="readonly" />
+              </b></td>
+            <td width="71">Date To:</td>
+            <td width="101"><b>
+              <input name="DateTo" required="required" id="DateTo" value="{var DateTo}" size="12" maxlength="12" readonly="readonly" />
+              </b></td>
+            </tr>
+          <tr>
+            <td>Time From:</td>
+            <td><b>
+              <input name="TimeFrom" id="TimeFrom" title="Local 24 hr time" value="{var TimeFrom}" size="10" maxlength="10" readonly="readonly" />
+              </b></td>
+            <td>Time To:</td>
+            <td><b>
+              <input name="TimeTo" id="TimeTo" title="Local 24 hr time" value="{var TimeTo}" size="10" maxlength="10" readonly="readonly" />
+              </b></td>
+            </tr>
+          <tr>
+         
+            </tr>
+          </tbody>
+      </table></td>
+    </tr>
+    <tr>
+      <td height="38" colspan="5" valign="top" style="vertical-align: top;  "> Prepared By        <b>
+        <input name="preparer" type="text" id="preparer" value="{var preparer}" size="30" maxlength="42" readonly="readonly" equired="required" />
+      </b></td>
+      <td colspan="3" valign="top"><span style="vertical-align: top;  ">Position: 
+        <input name="position" type="text" id="position
+                                                                    parer3" size="30" maxlength="42" readonly="readonly" equired="required" />
+      </span></td>
+    </tr>
+    <tr>
+      <td height="32" colspan="8" style="text-align: left; vertical-align: top; font-style: italic;">Service Summary</td>
+    </tr>
+    <tr>
+      <td height="43" colspan="8" style="text-align: left; vertical-align: top; font-family: Gotham, 'Helvetica Neue', Helvetica, Arial, sans-serif;"><table width="100%" border="1" cellpadding="4" cellspacing="0">
+        <tbody>
+          <tr bgcolor="#f8f8ff">
+            <td colspan="5" bgcolor="#f8f8ff">Resources Deployed</td>
+            </tr>
+          <tr>
+            <td width="158"># Workers<br></td>
+            <td width="288"><b>
+              <input name="workers" id="workers" onkeypress="return isNumberKey(event)" value="{var workers}" size="15" maxlength="15" readonly="readonly" />
+            </b></td>
+            <td width="155">Worker hrs.</td>
+            <td colspan="2"><b>
+              <input name="workers2hours" id="workers2hours" onkeypress="return isNumberKey(event)" value="{var workers2hours}" size="15" maxlength="15" readonly="readonly" />
+            </b></td>
+          </tr>
+          <tr>
+            <td height="31"># Canteens</td>
+            <td><b>
+              <input name="canteens" id="canteens" onkeypress="return isNumberKey(event)" value="{var canteens}" size="15" maxlength="15" readonly="readonly" />
+            </b></td>
+            <td rowspan="2"># Sites in Operation</td>
+            <td width="121">Feeding</td>
+            <td width="122"><b>
+              <input name="feeddingsites" id="feeddingsites" onkeypress="return isNumberKey(event)" value="{var feeddingsites}" size="15" maxlength="15" readonly="readonly" />
+            </b></td>
+          </tr>
+          <tr>
+            <td># Vehicles</td>
+            <td><b>
+              <input name="Vehicles" id="Vehicles" onkeypress="return isNumberKey(event)" value="{var Vehicles}" size="15" maxlength="15" readonly="readonly" />
+            </b></td>
+            <td>Distribution</td>
+            <td><b>
+              <input name="DistributionSites" id="DistributionSites" onkeypress="return isNumberKey(event)" value="{var DistributionSites}" size="15" maxlength="15" />
+            </b></td>
+          </tr>
+          </tbody>
+      </table></td>
+    </tr>
+    <tr>
+      <td height="15" colspan="8" bgcolor="#f8f8ff" style="text-align: left; vertical-align: top; font-family: Gotham, 'Helvetica Neue', Helvetica, Arial, sans-serif;">Food Services</td>
+    </tr>
+    <tr>
+      <td width="96" height="32" style="text-align: left; vertical-align: top;"># Meals</td>
+      <td width="86" style="text-align: left; vertical-align: top;"><b>
+        <input name="Meals" id="Meals" onkeypress="return isNumberKey(event)" value="{var Meals}" size="8" maxlength="8" readonly="readonly" />
+      </b></td>
+      <td width="96" nowrap="nowrap" style="text-align: left; vertical-align: top;"># Snacks</td>
+      <td width="108" style="text-align: left; vertical-align: top;"><b>
+        <input name="Snacks" id="Snacks"onkeypress="return isNumberKey(event)" value="{var Snacks}" size="8" maxlength="8" readonly="readonly" />
+      </b></td>
+      <td width="122" nowrap="nowrap" style="text-align: left; vertical-align: top;"># Cold Drinks</td>
+      <td width="97" height="32" style="text-align: left; vertical-align: top;"><b>
+        <input name="Coldrinks" id="Coldrinks"onkeypress="return isNumberKey(event)" value="{var Coldrinks}" size="8" maxlength="8" />
+      </b></td>
+      <td width="123" height="32" style="text-align: left; vertical-align: top;"># Hot Drinks</td>
+      <td width="168" height="32" style="text-align: left; vertical-align: top;"><b>
+        <input name="Hotdrinks" id="Hotdrinks"onkeypress="return isNumberKey(event)" value="{var Hotdrinks}" size="8" maxlength="8" readonly="readonly" />
+      </b></td>
+    </tr>
+    <tr>
+      <td height="32" colspan="8" bgcolor="#f8f8ff" style="text-align: left; vertical-align: top;">Goods-in-Kind Distrubution (add additional rows as needed)</td>
+    </tr>
+    <tr>
+      <td height="32" style="text-align: left; vertical-align: top;"><b>
+        <input name="Inkind1"" id="Inkind1" placeholder="(Item 1)" value="{vaar Inkind1}" size="15" maxlength="15" readonly="readonly"Inkind1 />
+      </b></td>
+      <td height="32" style="text-align: left; vertical-align: top;"><b>
+        <input name="inkinct1"  id="inkinct1"onkeypress="return isNumberKey(event)" value="{var inkinct1}" size="8" maxlength="8" readonly="readonly" />
+      </b></td>
+      <td height="32" style="text-align: left; vertical-align: top;"><b>
+        <input name="Inkind2" id="Inkind2" placeholder="(Item 2)" value="{var Inkind2}" size="15" maxlength="15" readonly="readonly" />
+      </b></td>
+      <td height="32" style="text-align: left; vertical-align: top;"><b>
+        <input name="inkinct2" id="inkinct2"onkeypress="return isNumberKey(event)" value="{var inkinct2}" size="8" maxlength="8" />
+      </b></td>
+      <td height="32" style="text-align: left; vertical-align: top;"><b>
+        <input name="Inkind3" id="Inkind3" placeholder="(Item 3)" value="{var Inkind3}" size="15" maxlength="15" readonly="readonly" />
+      </b></td>
+      <td height="32" style="text-align: left; vertical-align: top;"><b>
+        <input name="inkinct3" id="inkinct3" onkeypress="return isNumberKey(event)" value="{var inkinct3}" size="8"maxlength="8" readonly="readonly" />
+      </b></td>
+      <td height="32" style="text-align: left; vertical-align: top;"><b><b>
+        <input name="In kind4" id="Inkind4" placeholder="(Item 4)" value="{var Inkind4}" size="15" maxlength="15" readonly="readonly" />
+      </b></b></td>
+      <td height="32" style="text-align: left; vertical-align: top;"><b>
+        <input name="inkinct4" id="inkinct4"onkeypress="return isNumberKey(event)" value="{var inkinct4}" size="8" maxlength="8" readonly="readonly" />
+      </b></td>
+    </tr>
+    <tr>
+      <td height="32" colspan="8" bgcolor="#f8f8ff" style="text-align: left; vertical-align: top;">Finances</td>
+    </tr>
+    <tr>
+      <td height="32" colspan="8" style="text-align: left; vertical-align: top;"><table width="100%" border="1" cellspacing="0">
+        <tbody>
+          <tr>
+            <td width="28%">Worker Expenses<br>
+(food/lodging)</td>
+            <td width="38%"><p>Response  Expenses<br>
+              (Vehicles, food,  goods-in-kind, etc.)</p></td>
+            <td width="34%">Donations</td>
+          </tr>
+          <tr>
+            <td><span style="width: 300px; word-wrap: break-word; display: inline-block; text-align: left;">{var WorkerExpenses}</span></td>
+            <td><span style="width: 300px; word-wrap: break-word; display: inline-block; text-align: left;">{var ResponseExpenses}</span></td>
+            <td><span style="width: 300px; word-wrap: break-word; display: inline-block; text-align: left;">{var DonationExpenses}</span></td>
+          </tr>
+        </tbody>
+      </table></td>
+    </tr>
+    <tr>
+      <td height="32" colspan="8" style="text-align: left; vertical-align: top; font-style: italic; font-weight: bold;">Response Overview</td>
+    </tr>
+    <tr bgcolor="#f8f8ff">
+      <td height="32" colspan="8" style="text-align: left; vertical-align: top;">Current Situation Status</td>
+    </tr>
+    <tr>
+      <td height="32" colspan="8" style="text-align: left; vertical-align: top;"><span style="width: 600px; word-wrap: break-word; display: inline-block; text-align: left;">{var CurrentSituation}</span>
+</td>
+      CurrentSituation
+    </tr>
+    <tr bgcolor="#f8f8ff">
+      <td height="32" colspan="8" bgcolor="#f8f8ff" style="text-align: left; vertical-align: top;">Current TSA (The Salvation Army) Response Status</td>
+    </tr>
+    <tr>
+      <td height="32" colspan="8" style="text-align: left; vertical-align: top;"><span style="width: 600px; word-wrap: break-word; display: inline-block; text-align: left;">{var CurrentTSA}</span></td>
+      CurrentSituation </tr>
+    <tr bgcolor="#f8f8ff">
+      <td height="33" colspan="8" style="text-align: left; vertical-align: top;">Projected Situation Outlook</td>
+    </tr>
+    <tr>
+      <td height="32" colspan="8" style="text-align: left; vertical-align: top;"><span style="width: 600px; word-wrap: break-word; display: inline-block; text-align: left;">{var projectedOutlook}</span></td>
+      CurrentSituation </tr>
+    <tr bgcolor="#f8f8ff">
+      <td height="33" colspan="8" bgcolor="#f8f8ff" style="text-align: left; vertical-align: top; font-weight: normal;">Projected TSA Response for Next 3 Days</td>
+    </tr>
+    <tr>
+      <td height="32" colspan="8" style="text-align: left; vertical-align: top;"><span style="width: 600px; word-wrap: break-word; display: inline-block; text-align: left;">{var ProjectTSAResponse}</span></td>
+      CurrentSituation </tr>
+    <tr>
+      <td height="43" colspan="8" bgcolor="#f8f8ff" style="text-align: left; vertical-align: top; font-weight: bold;">Section Specific Information</td>
+    </tr>
+    <tr>
+      <td height="43" colspan="8" style="text-align: left; vertical-align: top;">Public Information<br>        
+        <span style="width: 600px; word-wrap: break-word; display: inline-block; text-align: left;"> {var SSI1}</span><br></td>
+    </tr>
+    <tr>
+      <td height="43" colspan="8" style="text-align: left; vertical-align: top;">Liaison<br>
+        <span style="width: 600px; word-wrap: break-word; display: inline-block; text-align: left;"> {var SSI2}</span><br></td>
+    </tr>
+    <tr>
+      <td height="43" colspan="8" style="text-align: left; vertical-align: top;">Safety<br>
+        <span style="width: 600px; word-wrap: break-word; display: inline-block; text-align: left;"> {var SSI3}</span><br></td>
+    </tr>
+    <tr>
+      <td height="43" colspan="8" style="text-align: left; vertical-align: top;">Emotional &amp; Spiritual Care<br>
+        <span style="width: 600px; word-wrap: break-word; display: inline-block; text-align: left;"> {var SSI4}</span><br></td>
+    </tr>
+    <tr>
+      <td height="43" colspan="8" style="text-align: left; vertical-align: top;">Operations<br>
+        <span style="width: 600px; word-wrap: break-word; display: inline-block; text-align: left;"> {var SSI5}</span><br></td>
+    </tr>
+    <tr>
+      <td height="43" colspan="8" style="text-align: left; vertical-align: top;">Logistics<br>
+        <span style="width: 600px; word-wrap: break-word; display: inline-block; text-align: left;"> {var SSI6}</span><br></td>
+    </tr>
+    <tr>
+      <td height="43" colspan="8" style="text-align: left; vertical-align: top;">Planning<br>
+        <span style="width: 600px; word-wrap: break-word; display: inline-block; text-align: left;"> {var SSI7}</span><br></td>
+    </tr>
+    <tr>
+      <td height="43" colspan="8" bgcolor="#f8f8ff" style="text-align: left; vertical-align: top; font-weight: bold;">ICS (Incident Command System) Contact Info</td>
+    </tr>
+    <tr>
+      <td height="291" colspan="8" style="text-align: left; vertical-align: top; font-weight: normal;"><table width="100%" border="1" cellpadding="4" cellspacing="0">
+        <tbody>
+          <tr>
+            <td width="13%">Role</td>
+            <td width="28%">Name</td>
+            <td width="20%">Email</td>
+            <td width="18%">Phone Number</td>
+            <td width="21%">Last Service Date</td>
+          </tr>
+          <tr>
+            <td>IC <br></td>
+            <td><span style="vertical-align: top;  ">
+              <input name="icsname1" type="text" id="icsname1" value="{var icsname1}" size="25" maxlength="25" readonly="readonly" equired="required" />
+            </span></td>
+            <td><span style="vertical-align: top;  ">
+              <input name="icsemail1" type="text" id="icsemail1" value="{var icsemail1}" size="25" maxlength="25" readonly="readonly" equired="required" />
+            </span></td>
+            <td><span style="vertical-align: top;  ">
+              <input name="icsphone1" type="text" id="icsphone1" placeholder='Phone #' value="{var icsphone1}" size="25" maxlength="25" readonly="readonly" equired="required" />
+            </span></td>
+            <td><span style="vertical-align: top;  ">
+              <input name="icslastdate1" type="text" id="icslastdate1" value="{var icslastdate1}" size="25" maxlength="25" readonly="readonly" equired="required" />
+            </span></td>
+          </tr>
+          <tr>
+            <td>Public Information<br></td>
+            <td><span style="vertical-align: top;  ">
+              <input name="icsname2" type="text" id="icsname2" value="{var icsname2}" size="25" maxlength="25" readonly="readonly" equired="required" />
+            </span></td>
+            <td><span style="vertical-align: top;  ">
+              <input name="icsemail2" type="text" required="required" id="icsemail2" value="{var icsemail2}" size="25" maxlength="25" equired="required" />
+            </span></td>
+            <td><span style="vertical-align: top;  ">
+              <input name="icsphone2" type="text" id="icsphone2" placeholder='Phone #' value="{var icsphone2}" size="25" maxlength="25" readonly="readonly" equired="required" />
+            </span></td>
+            <td><span style="vertical-align: top;  ">
+              <input name="icslastdate2" type="text" id="icslastdate2" value="{var icslastdate2}" size="25" maxlength="25" readonly="readonly" equired="required" />
+            </span></td>
+          </tr>
+          <tr>
+            <td>Liaison<br></td>
+            <td><span style="vertical-align: top;  ">
+              <input name="icsname3" type="text" id="icsname3" value="{var icsname3}" size="25" maxlength="25" readonly="readonly" equired="required" />
+            </span></td>
+            <td><span style="vertical-align: top;  ">
+              <input name="icsemail3" type="text" id="icsemail3" value="{var icsemail3}" size="25" maxlength="25" readonly="readonly" equired="required" />
+            </span></td>
+            <td><span style="vertical-align: top;  ">
+              <input name="icsphone3" type="text" id="icsphone3" placeholder='Phone #' value="{var icsphone3}" size="25" maxlength="25" readonly="readonly" equired="required" />
+            </span></td>
+            <td><span style="vertical-align: top;  ">
+              <input name="icslastdate3" type="text" id="icslastdate3" value="{var icslastdate3}" size="25" maxlength="25" readonly="readonly" equired="required" />
+            </span></td>
+          </tr>
+          <tr>
+            <td>Safety<br></td>
+            <td><span style="vertical-align: top;  ">
+              <input name="icsname4" type="text" id="icsname4" value="{var icsname4}" size="25" maxlength="25" readonly="readonly" equired="required" />
+            </span></td>
+            <td><span style="vertical-align: top;  ">
+              <input name="icsemail4" type="text" id="icsemail4" value="{var icsemail4}" size="25" maxlength="25" readonly="readonly" equired="required" />
+            </span></td>
+            <td><span style="vertical-align: top;  ">
+              <input name="icsphone4" type="text" id="icsphone4" placeholder='Phone #' value="{var icsphone4}" size="25" maxlength="25" readonly="readonly" equired="required" />
+            </span></td>
+            <td><span style="vertical-align: top;  ">
+              <input name="icslastdate4" type="text" id="icslastdate4" value="{var icslastdate4}" size="25" maxlength="25" readonly="readonly" equired="required" />
+            </span></td>
+          </tr>
+          <tr>
+            <td>Operations<br></td>
+            <td><span style="vertical-align: top;  ">
+              <input name="icsname5" type="text" id="icsname5" value="{var icsname5}" size="25" maxlength="25" readonly="readonly" equired="required" />
+            </span></td>
+            <td><span style="vertical-align: top;  ">
+              <input name="icsemail5" type="text" id="icsemail5" value="{var icsemail5}" size="25" maxlength="25" equired="required" />
+            </span></td>
+            <td><span style="vertical-align: top;  ">
+              <input name="icsphone5" type="text" id="icsphone5" placeholder='Phone #' value="{var icsphone5}" size="25" maxlength="25" readonly="readonly" equired="required" />
+            </span></td>
+            <td><span style="vertical-align: top;  ">
+              <input name="icslastdate5" type="text" id="icslastdate5" value="{var icslastdate5}" size="25" maxlength="25" readonly="readonly" equired="required" />
+            </span></td>
+          </tr>
+          <tr>
+            <td>Logistics<br></td>
+            <td><span style="vertical-align: top;  ">
+              <input name="icsname6" type="text" id="icsname6" value="{var icsname6}" size="25" maxlength="25" readonly="readonly" equired="required" />
+            </span></td>
+            <td><span style="vertical-align: top;  ">
+              <input name="icsemail6" type="text" id="icsemail6" value="{var icsemail6}" size="25" maxlength="25" readonly="readonly" equired="required" />
+            </span></td>
+            <td><span style="vertical-align: top;  ">
+              <input name="icsphone6" type="text" id="icsphone6" placeholder='Phone #' value="{var icsphone6}" size="25" maxlength="25" readonly="readonly" equired="required" />
+            </span></td>
+            <td><span style="vertical-align: top;  ">
+              <input name="icslastdate6" type="text" id="icslastdate6" value="{var icslastdate6}" size="25" maxlength="25" readonly="readonly" equired="required" />
+            </span></td>
+          </tr>
+          <tr>
+            <td>Planning</td>
+            <td><span style="vertical-align: top;  ">
+              <input name="icsname7" type="text" id="icsname7" value="{var icsname7}" size="25" maxlength="25" readonly="readonly" equired="required" />
+            </span></td>
+            <td><span style="vertical-align: top;  ">
+              <input name="icsemail7" type="text" id="icsemail7" value="{var icsemail7}" size="25" maxlength="25" readonly="readonly" equired="required" />
+            </span></td>
+            <td><span style="vertical-align: top;  ">
+              <input name="icsphone7" type="text" id="icsphone7" placeholder='Phone #' value="{var icsphone7}" size="25" maxlength="25" readonly="readonly" equired="required" />
+            </span></td>
+            <td><span style="vertical-align: top;  ">
+              <input name="icslastdate7" type="text" id="icslastdate7" value="{var icslastdate7}" size="25" maxlength="25" readonly="readonly" equired="required" />
+            </span></td>
+          </tr>
+          <tr>
+            <td height="28">FinAdmin</td>
+            <td><span style="vertical-align: top;  ">
+              <input name="icsname8" type="text" id="icsname8" value="{var icsname8}" size="25" maxlength="25" readonly="readonly" equired="required" />
+            </span></td>
+            <td><span style="vertical-align: top;  ">
+              <input name="icsemail8" type="text" id="icsemail8" value="{var icsemail8}" size="25" maxlength="25" readonly="readonly" equired="required" />
+            </span></td>
+            <td><span style="vertical-align: top;  ">
+              <input name="icsphone8" type="text" id="icsphone8" placeholder='Phone #' value="{var icsphone8}" size="25" maxlength="25" readonly="readonly" equired="required" />
+            </span></td>
+            <td><span style="vertical-align: top;  ">
+              <input name="icslastdate8" type="text" id="icslastdate8" value="{var icslastdate8}" size="25" maxlength="25" equired="required" />
+            </span></td>
+          </tr>
+        </tbody>
+      </table></td>
+    </tr>
+   
+  </tbody>
+</table>
+   <p>&nbsp;</p>
+    </form>
+</body>
+</html>

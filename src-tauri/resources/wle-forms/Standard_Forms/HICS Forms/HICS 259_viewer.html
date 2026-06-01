@@ -1,0 +1,381 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD HTML 4.0 Transitional//EN">
+<html><head>
+    <meta http-equiv="content-type" content="text/html; charset=utf-8">
+    
+    <title> HICS 259 – HOSPITAL CASUALTY/FATALITY REPORT </title>
+    <style type="text/css">
+@media print {
+.form-control, .form-control.nobug {
+border: 0;
+outline: 0;
+box-shadow: none;
+font-size:14px;
+}
+.form-control.nobug {
+transition: none; /*-- THIS IS IMPORTANT -- */
+}
+input, textarea {
+outline: none !important;
+box-shadow: none;
+border: none;
+}
+}
+.style2 {
+font-size: 14px;
+font-weight: bold;
+}
+.style3 {font-size: 10px; font-weight: bold; font-family: Arial, Helvetica, sans-serif; }
+body {
+background-color: #FFFFFF;
+}
+.style6 {
+font-size: 11px;
+font-family: Arial, Helvetica, sans-serif;
+}
+    </style>
+	<style>
+/*
+body {color:#000; background:#fff; font:100%/1.5 arial,sans-serif;}
+h2 {margin-top:0}
+*/
+/* Styling applied to classes only */
+/* Pop-up content shifted off-screen when not in view.
+Still readable by screen-reader software.
+When targeted it fills the browser window.
+*/
+.pop-up {
+	position:absolute;
+	top:0;
+	left:-500em;
+	visibility: visible;
+}
+.pop-up:target {position:static; left:0;}
+/* The pop-up itself */
+.popBox {
+	background:#ffffff;
+	position:absolute;
+	left:10%;
+	right:10%;
+	top:15%;
+	bottom:15%;
+	z-index:10;
+	border:1px solid #3a3a3a;
+/* CSS3 where available: rounded corners, drop-shadow, and fade in. */
+border-radius:.25rem;
+box-shadow:0 .5rem .5rem rgba(0,0,0,.5);
+	opacity:0;
+	transition: opacity 0.8s ease-out;
+	visibility: visible;
+}
+:target .popBox {position:fixed; opacity:1;}
+/* Light box properties */
+.lightbox {
+display:none;
+text-indent:-200em;
+background-color:rgba(0,0,0,.4);
+width:100%;
+height:100%;
+position:fixed;
+top:0;
+left:0;
+bottom:0;
+right:0;
+z-index:5;
+}
+:target .lightbox {display:block;}
+/* The pop-ups close link, moved via CSS to the top right of the pop-up */
+.close:link,
+.close:visited {
+	position: absolute;
+	top: -0.75em;
+	right: -0.75em;
+	display: block;
+	width: 2em;
+	height: 2em;
+	line-height: 1.8;
+	padding: 0;
+	text-align: center;
+	text-decoration: none;
+	background-color: #000;
+	border: 2px solid #fff;
+	color: #fff;
+	border-radius: 50%;
+box-shadow: 0 0 .5rem .5rem rba(0,0,0,.5);
+	visibility: visible;
+}
+.close:before {content:"X";}
+.close:hover,
+.close:active,
+.close:focus {
+box-shadow: 0 0 .5rem .5rem rba(255,0,0,.5);
+background-color: #c00;
+color: #fff;
+}
+.close span {
+text-indent: -200em;
+display: block;
+}
+/* The pop-up content div will scroll if it has too much content */
+.popScroll {
+	position:absolute;
+	top: 1rem;
+	left: 1rem;
+	right: 1rem;
+	bottom: 1rem;
+	overflow-y: auto;
+*overflow-y: scroll;
+	padding-right: 0.5em;
+	visibility: visible;
+}
+.popScroll h2 {margin-top:0}
+.formtext1 {font-family: Arial, Helvetica, sans-serif;
+font-size: 10pt;
+font-weight: normal;
+}
+	
+	
+ input[type=button] {
+
+  border: 2px solid #0f88f2;;
+   border-radius:.25rem;
+  
+  font-size: 14px;
+  padding: 2px 2px;
+ background-color: white;
+  text-decoration: none;
+  margin: 2px 2px;
+  cursor: pointer;
+}
+input[type=submit] {
+ border: 2px solid green;
+  border-radius:.25rem;
+  background-color: white;
+ 
+  padding: 2px 2px;
+  font-size: 14px;
+   cursor: pointer;
+}
+input[type=reset] {
+ border: 2px solid red;
+ border-radius:.25rem;
+  background-color: white;
+ 
+  padding: 2px 2px;
+  font-size: 14px;
+   cursor: pointer;
+}
+input[type=regular] {
+ border: 2px solid #999999;
+  border-radius:.25rem;
+width:50px;
+  background-color: white;
+ 
+  padding: 2px 2px;
+  font-size: 12px;
+   cursor: pointer;
+}
+    .formtext {font-family: Arial, Helvetica, sans-serif;
+font-size: 11pt;
+font-weight: normal;
+}
+    .style26 {font-size: 11px}
+    .style27 {font-family: Arial, Helvetica, sans-serif; font-size: 10px;}
+    </style>
+</head>
+<body >
+<form  style="font-family: Arial;" pbzloc="3" onSubmit="return confirm('To complete your form submission, click OK and close the open browser window. You will return to the new message window so you can post your message to the outbox');" method="post" id="myform" enctype="multipart/form-data" action="http://{FormServer}:{FormPort}">
+
+<div id="pop1" class="pop-up"><!-- The pop-up block -->
+
+<div class="popBox"><!-- If the content becomes larger than the pop-up this div will scroll the content -->
+
+<div class="popScroll"><!-- Test for help starts here -->
+
+<p> </p>
+
+<strong>HICS 259 &ndash; HOSPITAL CASUALTY/FATALITY REPORT<</strong><br />
+<br>
+<p>PURPOSE: DOCUMENT THE NUMBER OF INJURIES AND FATALITIES</p>
+<p>ORIGINATION: PATIENT TRACKING MANAGER</p>
+<p>COPIES TO: COMMAND STAFF, SECTION CHIEFS, AND DOCUMENTATION UNIT LEADER</p>
+<p>INSTRUCTIONS:</p>
+<p>Enter complete information.</p>
+<p>1. INCIDENT NAME If the incident is internal to the hospital, the name may be given by the hospital&rsquo;s Incident Commander. If the incident affects the larger community, the name may be given by a local authority (e.g., fire department, local EOC, etc.).</p>
+<p> 2. DATE PREPARED Use the international standard date notation YYYY-MM-DD, where YYYY is the year, MM is the month of the year between 01 (January) and 12 (December), and DD is the day of the month between 01 and 31. For example, the fourteenth day of February in the year 2006 is written as 2006-02-14.</p>
+<p>3. TIME PREPARED Use the international standard notation hh:mm, where hh is the number of complete hours that have passed since midnight (00-24) and mm is the number of complete minutes that have passed since the start of the hour (00-59). For example, 5:04 PM is written as 17:04. Use local time.</p>
+<p>4. OPERATIONAL PERIOD DATE/TIME Identify the operational period during which this information applies. This is the time period established by the hospital&rsquo;s Incident Commander, during which current objectives are to be accomplished and at the end of which they are evaluated. For example, a 12-hour operational period might be 2006-08-16 18:00 to 2006-08-17 06:00.</p>
+<p>5. NUMBER OF CASUALTIES/FATALITIES For the operational period covered, record total numbers of adult and pediatric patients seen, admitted (specify bed type), discharged, transferred, expired, and waiting to be seen.</p>
+<p>6. PREPARED BY (PATIENT TRACKING MANAGER) Use proper name.</p>
+<p>7. FACILITY NAME Use when transmitting the form outside of the hospital.</p>
+<p>WHEN TO COMPLETE: Prior to briefing in the next operational period.<br>
+</p>
+. <td width="0%"></p>
+
+</div>
+
+<!-- The close pop-up link correctly positioned at the end of the content block -->
+
+  <a href="#links" class="close"><span>Back
+
+to links</span></a> </div>
+
+</div>
+	    <div class="pop-up" id="pop3">
+    <!-- The pop-up block -->
+    <div class="popBox">
+      <!-- If the content becomes larger than the pop-up this div will scroll the content -->
+      <div class="popScroll">
+        <p> </p>
+        <h2>Copy and Paste Data From Spreadsheet</h2>
+        <span class="style13">
+        <p align="left">Copy the data from the spreadsheet and paste in box below, then click "Parse Data"<br />
+		Tab delineation only. Ensure fields match & do not exceed form field lengths, or data entries will not be correct. 
+        </p>
+        <textarea name="parseme" cols="100" rows="10" id="parseme" placeholder="Paste spreadsheet data here" ></textarea> 
+		<BR />&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<input type=button value="Parse Data" onClick="parsestring('P');document.getElementById('closeme').click();">
+		
+		
+        </span>
+        <p align="left"></p>
+      <a href="#links" >Close this window</a> </div>
+      <!-- The close pop-up link correctly positioned at the end of the content block -->
+       &nbsp;&nbsp;<a href="#links" id="closeme">Close this window</a>  </div>
+  </div>
+     <table width="1000" border="1" cellpadding="6" cellspacing="0" style="width: 966px; ">
+        <tbody>
+          <tr valign="top" bgcolor="#dee9f9">
+            <td colspan="2" style="text-align: center;"><div align="left">
+              <p align="center" class="style2">HICS 259 – HOSPITAL CASUALTY/FATALITY REPORT</p>
+            </div></td>
+          </tr>
+          <tr valign="top">
+            <td width="286" height="55" rowspan="2" nowrap class="style3" style="vertical-align: top; text-align: left;"><p><span class="style6"><strong>1. Incident Name:</strong> &nbsp;</span><span class="style3"><span style="font-weight: normal;"><br>
+            </span>
+                <input name="Title" type="hidden" id="Title" value="Winlink" />
+            <textarea name="parseme" cols="60" id="parseme" style="display: none;"></textarea>                    
+            <span class="style2"><span style="font-weight: normal;">
+                {var IncidentName}
+                </span></span> </span></p>
+            </td>
+          <td width="650" height="27" nowrap  style="vertical-align: top; text-align: left;"><p class="style6"><strong>2. Date: 
+                </strong>{var Thedate}                <strong><span class="style3"><span class="style26">&nbsp;&nbsp;&nbsp;&nbsp;</span></span>3. Time:  
+                </strong>{var TheTime}                 </p>
+            </td>
+          </tr>
+          <tr valign="top">
+            <td height="28" nowrap  style="vertical-align: top; text-align: left;"><table width="85%"  border="0" cellspacing="0" cellpadding="1">
+              <tr>
+                <td width="24%" nowrap class="style6"><strong> 4. Operational Period # </strong>{var opperiod} </td>
+                <td width="19%" nowrap><div align="right"><span class="style3">Date From:&nbsp;&nbsp; </span></div></td>
+                <td width="19%" class="style6">                 {var DateFrom}                  </td>
+                <td width="15%" nowrap><div align="right"><span class="style3">&nbsp;Date To:&nbsp;&nbsp; </span></div></td>
+                <td width="23%"><span class="style27">
+                {var DateTo}                </span></td>
+              </tr>
+              <tr valign="middle">
+                <td height="39">&nbsp;</td>
+                <td nowrap><div align="right"><span class="style3">Time From:&nbsp;&nbsp; </span></div></td>
+                <td><span class="style3">
+               </span><span class="style27">{var TimeFrom}</span> </td>
+                <td nowrap><div align="right"><span class="style3">&nbsp;Time To:&nbsp;&nbsp; </span></div></td>
+                <td><span class="style27">
+                {var TimeTo}                </span></td>
+              </tr>
+            </table></td>
+          </tr>
+          <tr valign="top">
+            <td height="247" colspan="2" nowrap class="style2" style="vertical-align: top; text-align: left;">
+              <table width="950" border="1" cellspacing="0" cellpadding="3">
+              <tr class="style26">
+                <td colspan="5" class="style6"><strong>5. Number Of Casualties/Fatalities</strong></td>
+              </tr>
+              <tr class="style26">
+                <td width="184" class="style26"><div align="center"></div></td>
+                <td width="145" bgcolor="#f8f8ff" class="style26"><div align="center" class="style6"><span class="style3">Adult</span></div></td>
+                <td width="124" bgcolor="#f8f8ff"><div align="center"><span class="style3">Pediatric<br>
+                </span><span class="style27">(&lt;18 years old)</span></div></td>
+                <td width="117" bgcolor="#f8f8ff"><div align="center" class="style3">Total</div></td>
+                <td width="358" bgcolor="#f8f8ff"><div align="center" class="style3">Comments</div></td>
+              </tr>
+              <tr class="style6">
+                <td class="style3"><span class="style26">Patients seen</span></td>
+                <td><div align="center">{var A1}</div></td>
+                <td><div align="center">{var A2}</div></td>
+                <td><div align="center">{var TOTAL1}</div></td>
+                <td><span style="width:350px; margin: 10px;  word-wrap:break-word; display:inline-block;">{var Comment1}</span></td>
+              </tr>
+              <tr class="style6">
+                <td class="style3"><span class="style26">Waiting to be seen</span></td>
+                <td><div align="center">{var B1}</div></td>
+                <td><div align="center">{var B2}</div></td>
+                <td><div align="center">{var TOTAL2}</div></td>
+			 <td><span style="width:350px; margin: 10px;  word-wrap:break-word; display:inline-block;">{var Comment2}</span></td>              </tr>
+              <tr class="style6">
+                <td class="style3"><span class="style26">Admitted<br>
+  </span></td>
+                <td><div align="center">{var C1}</div></td>
+                <td><div align="center">{var C2}</div></td>
+                <td><div align="center">{var TOTAL3}</div></td>
+ <td><span style="width:350px; margin: 10px;  word-wrap:break-word; display:inline-block;">{var Comment3}</span></td>              </tr>
+              <tr class="style6">
+                <td class="style3"><span class="style26">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Critical care bed</span></td>
+                <td><div align="center">{var D1}</div></td>
+                <td><div align="center">{var D2}</div></td>
+                <td><div align="center">{var TOTAL4}</div></td>
+ <td><span style="width:350px; margin: 10px;  word-wrap:break-word; display:inline-block;">{var Comment4}</span></td>              </tr>
+              <tr class="style6">
+                <td class="style3"><span class="style26">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Medical/surgical bed</span></td>
+                <td><div align="center">{var E1}</div></td>
+                <td><div align="center">{var E2}</div></td>
+                <td><div align="center">{var TOTAL5}</div></td>
+ <td><span style="width:350px; margin: 10px;  word-wrap:break-word; display:inline-block;">{var Comment5}</span></td>              </tr>
+              <tr class="style6">
+                <td class="style3"><span class="style26">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Pediatric bed</span></td>
+                <td><div align="center">{var F1}</div></td>
+                <td><div align="center">{var F2}</div></td>
+                <td><div align="center">{var TOTAL6}</div></td>
+ <td><span style="width:350px; margin: 10px;  word-wrap:break-word; display:inline-block;">{var Comment6}</span></td>              </tr>
+              <tr class="style6">
+                <td class="style3"><span class="style26">Discharged</span></td>
+                <td><div align="center">{var G1}</div></td>
+                <td><div align="center">{var G2}</div></td>
+                <td><div align="center">{var TOTAL7}</div></td>
+ <td><span style="width:350px; margin: 10px;  word-wrap:break-word; display:inline-block;">{var Comment7}</span></td>              </tr>
+              <tr class="style6">
+                <td class="style3"><span class="style26">Transferred</span></td>
+                <td><div align="center">{var H1}</div></td>
+                <td><div align="center">{var H2}</div></td>
+                <td><div align="center">{var TOTAL8}</div></td>
+ <td><span style="width:350px; margin: 10px;  word-wrap:break-word; display:inline-block;">{var Comment8}</span></td>              </tr>
+              <tr class="style6">
+                <td class="style3"><span class="style26">Expired</span></td>
+                <td><div align="center">{var I1}</div></td>
+                <td><div align="center">{var I2}</div></td>
+                <td><div align="center">{var TOTAL9}</div></td>
+ <td><span style="width:350px; margin: 10px;  word-wrap:break-word; display:inline-block;">{var Comment9}</span></td>              </tr>
+            </table></td>
+          </tr>
+          <tr valign="top">
+            <td height="38" colspan="2" nowrap class="style2" style="vertical-align: top; text-align: left;"><p class="style6"><span class="style3"><span style="font-weight: normal;">
+              <span style="font-weight: normal;">
+              <textarea name="allAttachments" id="allAttachments" style="display: none;"></textarea>
+              </span>            <span style="font-weight: normal;"><span style="font-weight: normal;">
+              <textarea name="AddedOthers" id="AddedOthers" style="display: none;"></textarea>
+              </span></span><strong>6. </strong></span></span><span class="style3"><span style="font-weight: normal;"><strong>&nbsp;Prepared by (Patient Tracking Manager): </strong><span style="font-weight: normal;">
+              {var Prepedbychief}
+              <span style="font-weight: normal;"><span style="font-weight: normal;"> </span></span></span> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;7. <strong>Facility Name </strong>: <span style="font-weight: normal;"><span style="font-weight: normal;">
+              {var Facility}
+              </span></span></span></span></p>
+              <p align="right" class="style6"><span class="style3"><strong>HICS 259 &nbsp;</strong></span></p>
+              <p align="right" class="style6"><span class="style3"><small><small><span style="font-weight: normal;">&nbsp;&nbsp;&nbsp;&nbsp;
+                        <input name="testCall" type="hidden" id="testCall" value="{MsgSender}" size="14" maxlength="13" />
+                        <input name="Templateversion" type="hidden"
+
+                                    id="Templateversion" value="HICS 259 v 0.1" />
+Ver 0.2</span></small></small></span><span class="style3"><small><small><span style="font-weight: normal;">  </span></small></small></span></p></td>
+          </tr>
+        </tbody>
+  </table>
+     <br>
+</form>
+</body></html>

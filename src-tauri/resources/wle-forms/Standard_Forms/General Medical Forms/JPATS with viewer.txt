@@ -1,0 +1,28 @@
+Form:JPATS_Initial.html,JPATS_viewer.html
+
+To: 
+Subject:JPATS - <var Incident_Name> - <var Facility> 
+
+Msg:
+1. INCIDENT NAME: <var Incident_Name>
+PAGE [<var Page>] OF [<var Page1>]
+
+2. OPERATIONAL PERIOD:
+Date From: <var DateFrom>
+Time From: <var TimeFrom>
+
+Date To: <var DateTo>
+Time To: <var TimeTo>
+------
+
+The attached .csv file contains the all data that was entered.
+You can open the file in a spreadsheet program.
+  
+------------------------------------
+Express Sending Station: <MsgSender>
+Senders Express Version: <ProgramVersion>
+Senders Template Version: <var Templateversion>
+
+
+
+

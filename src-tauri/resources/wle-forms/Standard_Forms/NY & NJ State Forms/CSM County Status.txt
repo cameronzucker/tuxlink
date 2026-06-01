@@ -1,0 +1,45 @@
+Form:CSM County Status Initial.html,CSM County Status Viewer.html
+To: 
+Subject:CSM County Status: <var LINE1>, <var LINE2>, <var LINE3>
+ - <var Mdate> <var mtime>
+
+Msg:
+CSM County Status Message
+<var FormTitle>
+<var IsExercise> 
+
+1. Incident Name: <var inc_name>
+2. To (Name/Position):  <var to_name>
+3. From (Name/Position): <var fm_name>
+4. Subject: <var Subjectline>
+5. Date: <var Mdate>	6. Time:  <var Mtime>
+
+7. Message: 
+ MESSAGE NUMBER: <var MSG_NUM>
+ PRIORITY: <var Priority>
+ LINE 1  STATE:	<var LINE1>
+ LINE 2  COUNTY: <var LINE2>
+ LINE 3  TOWN: <var LINE3>
+ LINE 4  DTG(Z): <var LINE4>
+ LINE 5  POWER: <var LINE5>
+ LINE 6  WATER: <var LINE6>
+ LINE 7  SEWER: <var LINE7>
+ LINE 8  SANITATION: <var LINE8>
+ LINE 9  TRANSPORTATION: <var LINE9>
+ LINE 10  MEDICAL FACILITIES: <var LINE10>
+ LINE 11  COMMUNICATIONS: <var LINE11>
+ LINE 12  CELLULAR: <var LINE12>
+ LINE 13  911: <var LINE13>
+ LINE 14  POLICE: <var LINE14>
+ LINE 15  FIRE: <var LINE15>
+ LINE 16  EMS: <var LINE16>
+ LINE 17.  SAFETY HAZARDS: <var LINE17>
+ LINE 18.  SOURCE: <var LINE18>
+ LINE 19.  REMARKS: <var LINE19>
+
+
+ 8. Approved by:  <var Approved_Name>            8b. Position / Title:   <var Approved_PosTitle>
+------------------------------------
+Express Sending Station: <MsgSender>
+Senders Express Version: <ProgramVersion>
+Senders Template Version: <var Templateversion>

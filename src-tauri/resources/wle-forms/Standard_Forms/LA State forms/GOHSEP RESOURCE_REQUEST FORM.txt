@@ -1,0 +1,66 @@
+Form: GOHSEP RESOURCE_REQUEST_FORM_Initial.html,GOHSEP RESOURCE_REQUEST_FORM_viewer.html
+
+
+To: 
+Subject:GOHSEP RR # <var Incidentnum>, PARISH: <var PARISH>, Tracking # <var TrackongNum>
+
+
+Msg:
+GOHSEP RESOURCE REQUEST FORM
+
+----------------------------------------------------
+THIS SECTION TO BE FILLED OUT BY GOHSEP when Replying
+
+24. DATE LOGGED:
+25. TIME LOGGED:
+26. GOHSEP MISSION #:
+27. LOGGER NAME:
+
+----------------------------------------------------
+
+OPERATIONS SECTION
+A. RADO NAME: <var RADO>
+B. CALL SIGN: <var RADOCall>
+C. DATE: <var RDateTime2>
+D. TIME: <var RDateTime3>
+
+GENERAL INFORMATION	 	 
+1. INCIDENT #:<var Incidentnum>	
+2. REQUESTER NAME: <var RequesterName>
+3. PARISH: <var PARISH>
+4. DATE/TIME NEEDED: <var RDateTime>
+5. DURATION NEEDED:<var Duration>
+6. TRACKING # (DTG/PARISH):<var TrackongNum>
+
+RESOURCE TYPE	
+7. <var rESOURCEtYPE> 
+
+RESOURCE DESCRIPTION & DELIVERY INSTRUCTIONS 
+8. <var DESC-DELIVERY>
+
+
+
+REQUESTER POC	
+10. FIRST NAME: <var thename2>
+11. LAST NAME: <var LastName>
+12. AGENCY: <var Agency>
+13. PHONE: <var ReqPhone>
+14. ALT. PHONE: <var ReqPhone2>
+15. E-MAIL: <var ReqPhone3>
+
+DELIVERY INFORMATION
+16. POC NAME: <var POCname>
+17. E-MAIL: <var POCemail>
+18. PHONE: <var POCphone>
+19. ALT. PHONE: <var POCaltphone>
+20. NAME OF SITE: <var POCSite>
+21. ADDRESS:<var DESC-DELIVERY2>
+
+PARISH AUTHORIZATION
+22. SIGNATURE: <var Signsture>
+23. POSITION/TITLE: <var Position>
+------------------------
+Express Sending Station: <MsgSender>
+Senders Express Version: <ProgramVersion>
+Senders Template Version: <var Templateversion>
+

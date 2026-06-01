@@ -1,0 +1,3864 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+
+<html xmlns="http://www.w3.org/1999/xhtml"><head>
+
+    <meta http-equiv="content-type" content="application/xhtml+xml; charset=utf-8" />
+
+    
+
+    <title>JPATS</title>
+
+	<style type="text/css">
+
+body, td, th {
+
+font-family: Arial,Helvetica,sans-serif;
+
+font-size: 12px;
+
+}
+
+.zentriert {
+
+font-size: 12px;
+
+font-family: Arial,Helvetica,sans-serif;
+
+}
+
+input, select {
+
+padding: 1px;
+
+font-family: Arial,Helvetica,sans-serif;
+
+font-size: 12px;
+
+}
+
+textarea {
+
+margin: 8px;
+
+padding: 8px;
+
+font-family: Arial,Helvetica,sans-serif;
+
+font-size: 12px;
+
+}
+
+.rechtsbuendig {
+
+font-size: 12px;
+
+font-family: Arial,Helvetica,sans-serif;
+
+}
+
+.SubmitBtn {
+
+font-size: 12px;
+
+font-family: Arial,Helvetica,sans-serif;
+
+}
+
+.version {
+
+margin: 5px;
+
+color: #666666;
+
+position: relative;
+
+left: 0px;
+
+top: 1px;
+
+font-family: Arial,Helvetica,sans-serif;
+
+font-size: 12px;
+
+}
+
+#TextHeader {
+
+background-color: #dddddd;
+
+font-size: 10px;
+
+font-family: Arial,Helvetica,sans-serif;
+
+}
+
+
+
+.upload-btn-wrapper {
+
+  position: relative;
+
+  overflow: hidden;
+
+  display: inline-block;
+
+}
+
+
+
+.btn {
+
+  border: 2px solid gray;
+
+  color: gray;
+
+  background-color: white;
+
+  padding: 8px 20px;
+
+  border-radius: 4px;
+
+  font-size: 12px;
+
+  font-weight: bold;
+
+}
+
+
+
+.upload-btn-wrapper input[type=file] {
+
+  font-size: 50px;
+
+  position: absolute;
+
+  left: 0;
+
+  top: 0;
+
+  opacity: 0;}
+
+    </style>
+
+    <style>
+
+/*
+
+body {color:#000; background:#fff; font:100%/1.5 arial,sans-serif;}
+
+h2 {margin-top:0}
+
+*/
+
+/* Styling applied to classes only */
+
+/* Pop-up content shifted off-screen when not in view.
+
+Still readable by screen-reader software.
+
+When targeted it fills the browser window.
+
+*/
+
+.pop-up {
+
+	position:absolute;
+
+	top:0;
+
+	left:-500em;
+
+	visibility: visible;
+
+}
+
+.pop-up:target {position:static; left:0;}
+
+/* The pop-up itself */
+
+.popBox {
+
+	background:#ffffff;
+
+	position:absolute;
+
+	left:20%;
+
+	right:20%;
+
+	top:10%;
+
+	bottom:10%;
+
+	z-index:10;
+
+	border:1px solid #3a3a3a;
+
+/* CSS3 where available: rounded corners, drop-shadow, and fade in. */
+
+border-radius:.25rem;
+
+box-shadow:0 .5rem .5rem rgba(0,0,0,.5);
+
+	opacity:0;
+
+	transition: opacity 0.8s ease-out;
+
+	visibility: visible;
+
+}
+
+:target .popBox {position:fixed; opacity:1;}
+
+/* Light box properties */
+
+.lightbox {
+
+display:none;
+
+text-indent:-200em;
+
+background-color:rgba(0,0,0,.4);
+
+width:100%;
+
+height:100%;
+
+position:fixed;
+
+top:0;
+
+left:0;
+
+bottom:0;
+
+right:0;
+
+z-index:5;
+
+}
+
+:target .lightbox {display:block;}
+
+/* The pop-ups close link, moved via CSS to the top right of the pop-up */
+
+.close:link,
+
+.close:visited {
+
+	position: absolute;
+
+	top: -0.75em;
+
+	right: -0.75em;
+
+	display: block;
+
+	width: 2em;
+
+	height: 2em;
+
+	line-height: 1.8;
+
+	padding: 0;
+
+	text-align: center;
+
+	text-decoration: none;
+
+	background-color: #000;
+
+	border: 2px solid #fff;
+
+	color: #fff;
+
+	border-radius: 50%;
+
+box-shadow: 0 0 .5rem .5rem rba(0,0,0,.5);
+
+	visibility: visible;
+
+}
+
+.close:before {content:"X";}
+
+.close:hover,
+
+.close:active,
+
+.close:focus {
+
+box-shadow: 0 0 .5rem .5rem rba(255,0,0,.5);
+
+background-color: #c00;
+
+color: #fff;
+
+}
+
+.close span {
+
+text-indent: -200em;
+
+display: block;
+
+}
+
+/* The pop-up content div will scroll if it has too much content */
+
+.popScroll {
+
+	position:absolute;
+
+	top: 1rem;
+
+	left: 1rem;
+
+	right: 1rem;
+
+	bottom: 1rem;
+
+	overflow-y: auto;
+
+*overflow-y: scroll;
+
+	padding-right: 0.5em;
+
+	visibility: visible;
+
+}
+
+.popScroll h2 {margin-top:0}
+
+.style2 {font-size: 10px}
+
+  input[type=button] {
+
+
+
+  border: 2px solid #0f88f2;;
+
+   border-radius:.25rem;
+
+  color: black;
+
+  padding: 2px 2px;
+
+ background-color: white;
+
+  text-decoration: none;
+
+  margin: 2px 2px;
+
+  cursor: pointer;
+
+}
+
+input[type=submit] {
+
+ border: 2px solid green;
+
+  border-radius:.25rem;
+
+  background-color: white;
+
+  color: black;
+
+  padding: 2px 2px;
+
+  font-size: 14px;
+
+   cursor: pointer;
+
+}
+
+input[type=reset] {
+
+ border: 2px solid red;
+
+ border-radius:.25rem;
+
+  background-color: white;
+
+  color: black;
+
+  padding: 2px 2px;
+
+  font-size: 14px;
+
+   cursor: pointer;
+
+}
+
+input[type=black1] {
+
+ border: 2px solid #999999;
+
+   width:240px;
+
+  border-radius:.25rem;
+
+
+
+  background-color: white;
+
+  color: black;
+
+  padding: 2px 2px;
+
+  font-size: 14px;
+
+   cursor: pointer;
+
+}
+
+  input[type=button] {
+
+
+
+  border: 2px solid #0f88f2;;
+
+   border-radius:.25rem;
+
+  color: black;
+
+  padding: 2px 2px;
+
+ background-color: white;
+
+  text-decoration: none;
+
+  margin: 2px 2px;
+
+  cursor: pointer;
+
+}
+
+input[type=submit] {
+
+ border: 2px solid green;
+
+  border-radius:.25rem;
+
+  background-color: white;
+
+  color: black;
+
+  padding: 2px 2px;
+
+  font-size: 14px;
+
+   cursor: pointer;
+
+}
+
+input[type=reset] {
+
+ border: 2px solid red;
+
+ border-radius:.25rem;
+
+  background-color: white;
+
+  color: black;
+
+  padding: 2px 2px;
+
+  font-size: 14px;
+
+   cursor: pointer;
+
+}
+
+input[type=black1] {
+
+ border: 2px solid #999999;
+
+   width:225px;
+
+  border-radius:.25rem;
+
+
+
+  background-color: white;
+
+  color: black;
+
+  padding: 2px 2px;
+
+  font-size: 14px;
+
+   cursor: pointer;
+
+}
+
+  input[type=button] {
+
+
+
+  border: 2px solid #0f88f2;;
+
+   border-radius:.25rem;
+
+  color: black;
+
+  padding: 2px 2px;
+
+ background-color: white;
+
+  text-decoration: none;
+
+  margin: 2px 2px;
+
+  cursor: pointer;
+
+}
+
+input[type=submit] {
+
+ border: 2px solid green;
+
+  border-radius:.25rem;
+
+  background-color: white;
+
+  color: black;
+
+  padding: 2px 2px;
+
+  font-size: 14px;
+
+   cursor: pointer;
+
+}
+
+input[type=reset] {
+
+ border: 2px solid red;
+
+ border-radius:.25rem;
+
+  background-color: white;
+
+  color: black;
+
+  padding: 2px 2px;
+
+  font-size: 14px;
+
+   cursor: pointer;
+
+}
+
+input[type=black1] {
+
+ border: 2px solid #999999;
+
+   width:225px;
+
+  border-radius:.25rem;
+
+width:120px;
+
+  background-color: white;
+
+  color: black;
+
+  padding: 2px 2px;
+
+  font-size: 14px;
+
+   cursor: pointer;
+
+}
+
+
+
+    .style4 {font-size: 16px}
+
+	
+
+	textarea {
+
+  padding: 4px 4px;
+
+  font-size: 10px;
+
+     resize: none;
+
+  overflow: hidden;
+
+  border: 2px solid #ccc;
+
+  border-radius: 4px;
+
+
+
+ }
+
+}
+
+    .style6 {font-size: 9}
+
+    .style8 {font-size: 9; font-weight: bold; }
+
+    </style>
+
+    <script>
+
+
+
+function $(x) {
+
+    return document.getElementById(x);
+
+}
+
+
+
+
+
+
+
+
+
+function TimeNow(Timefld) {
+
+var txt;
+
+var d = new Date(),
+
+thisyear = d.getFullYear();
+
+thismonth= d.getMonth();
+
+thismonth = thismonth+1;
+
+if (thismonth < 10) { thismonth = "0" + thismonth}
+
+
+
+thisday = d.getDate();
+
+if (thisday < 10) { thisday = "0" + thisday}
+
+
+
+h = (d.getHours()<10?'0':'') + d.getHours()
+
+m = (d.getMinutes()<10?'0':'') + d.getMinutes()
+
+s = (d.getSeconds()<10?'0':'') + d.getSeconds();
+
+var myprompt = thisyear+ '-'+thismonth+'-'+thisday+' '+h + ':' + m ;
+
+var RightNow = prompt("", myprompt);
+
+document.getElementById(Timefld).value = RightNow;
+
+} 
+
+function DateforFile(RightNow) {
+
+var txt;
+
+var d = new Date(),
+
+thisyear = d.getFullYear();
+
+thismonth= d.getMonth();
+
+thismonth = thismonth+1;
+
+if (thismonth < 10) { thismonth = "0" + thismonth}
+
+
+
+thisday = d.getDate();
+
+if (thisday < 10) { thisday = "0" + thisday}
+
+
+
+h = (d.getHours()<10?'0':'') + d.getHours()
+
+m = (d.getMinutes()<10?'0':'') + d.getMinutes()
+
+s = (d.getSeconds()<10?'0':'') + d.getSeconds();
+
+var myprompt = thisyear+ '-'+thismonth+'-'+thisday+' '+h + '_' + m ;
+
+return myprompt;
+
+}
+
+</script>
+
+
+
+<script>
+
+function isNumberKeyD(evt)
+
+{
+
+var charCode = (evt.which) ? evt.which : event.keyCode
+
+if (charCode > 32 && (charCode < 45 || charCode > 57))
+
+//if (charCode > 32 && (charCode < 40 ))
+
+return false;
+
+return true;
+
+}
+
+function isNumberKey(evt)
+
+{
+
+var charCode = (evt.which) ? evt.which : event.keyCode
+
+if (charCode < 48 || charCode > 57)
+
+return false;
+
+return true;
+
+}
+
+
+
+
+
+
+
+function shortmonth(monthnum) {
+
+var monthname;
+
+shortmonths = ["JAN", "FEB", "MAR","APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"] ;
+
+monthname = shortmonths [monthnum];
+
+return monthname;
+
+}
+
+function DateTime(TType,TheFld, FocusFld) {
+
+var txt;
+
+var myprompt;
+
+var d = new Date(),
+
+thisyear = d.getFullYear();
+
+thismonth= d.getMonth();
+
+thisday = d.getDate();
+
+var monname;
+
+h = (d.getHours()<10?'0':'') + d.getHours()
+
+m = (d.getMinutes()<10?'0':'') + d.getMinutes()
+
+s = (d.getSeconds()<10?'0':'') + d.getSeconds();
+
+var now = new Date();
+
+var utch = now.getUTCHours();
+
+if (utch < 10) { utch = "0"+utch};
+
+var utcs = now.getUTCMinutes();
+
+if (utcs < 10) { utcs = "0"+utcs};
+
+var myUTCtime = utch+":"+utcs+"Z";
+
+var utcstr = d.toUTCString();
+
+var localt = d.toLocaleTimeString();
+
+var isostr = d.toISOString();
+
+monthname = shortmonth (thismonth);
+
+thismonth = thismonth + 1;
+
+switch (TType) {
+
+case 'hms' :
+
+myprompt = h + ':' + m + ':' + s;
+
+var RightNow = prompt("Time:", myprompt);
+
+document.getElementById(TheFld).value = RightNow;
+
+break;
+
+case 'hm' :
+
+myprompt = h + ':' + m;
+
+var RightNow = prompt("Time:", myprompt);
+
+document.getElementById(TheFld).value = RightNow;
+
+break;
+
+case 'm-d-y': myprompt = thismonth+ '-' + thisday+ '-'+ thisyear;
+
+var RightNow = prompt("Date:", myprompt);
+
+document.getElementById(TheFld).value = RightNow;
+
+break;
+
+case 'm/d/y': myprompt = thismonth+ '/' + thisday+ '/'+ thisyear;
+
+var RightNow = prompt("Date:", myprompt);
+
+document.getElementById(TheFld).value = RightNow;
+
+break;
+
+case 'DateStamp-m-d-y': var RightNow = thismonth+ '-' + thisday+ '-'+ thisyear;
+
+document.getElementById(TheFld).value = RightNow;
+
+break;
+
+case 'd mmm y': myprompt = thisday+ ' ' + monthname+ ' '+ thisyear;
+
+var RightNow = prompt("Date:", myprompt);
+
+document.getElementById(TheFld).value = RightNow;
+
+break;
+
+case 'mmm-d-y': myprompt = monthname+'-'+thisday+ '-' + thisyear;
+
+var RightNow = prompt("Date:", myprompt);
+
+document.getElementById(TheFld).value = RightNow;
+
+break;
+
+case 'localampm': var myprompt = localt;
+
+var RightNow = prompt("Local time:", myprompt);
+
+document.getElementById(TheFld).value = RightNow;
+
+break;
+
+case 'fulldate': var myprompt = thisyear+ '-'+thismonth+'-'+thisday;
+
+var RightNow = prompt("Date:", myprompt);
+
+document.getElementById(TheFld).value = RightNow;
+
+break;
+
+case 'fulldatetime': var myprompt = thisyear+'-'+thismonth+ '-'+thisday+' '+h + ':' + m + ':' + s;
+
+var RightNow = prompt("Date time:", myprompt);
+
+document.getElementById(TheFld).value = RightNow;
+
+break;
+
+case 'iso': var myprompt = isostr;
+
+var RightNow = prompt("Date time:", myprompt);
+
+document.getElementById(TheFld).value = RightNow;
+
+break;
+
+case 'utc': var myprompt = utcstr;
+
+var RightNow = prompt("Date time:", myprompt);
+
+document.getElementById(TheFld).value = RightNow;
+
+break;
+
+case 'zulu': var myprompt = isostr;
+
+myprompt = isostr.replace("T", " "); slen = myprompt.length;
+
+myprompt = myprompt.substr(0, slen-5)+'Z';
+
+var RightNow = prompt("Date time:", myprompt);
+
+document.getElementById(TheFld).value = RightNow;
+
+break;
+
+case 'UTChm': var myprompt = myUTCtime;
+
+var RightNow = prompt("Date time:", myprompt);
+
+document.getElementById(TheFld).value = RightNow;
+
+break;
+
+}
+
+// if(FocusFld !== null && FocusFld !== '') {document.getElementById(FocusFld).focus()} --/
+
+};
+
+function AutoGrowTextArea(textField)
+
+{
+
+
+
+if (textField.clientHeight < textField.scrollHeight)
+
+{
+
+textField.style.height = textField.scrollHeight + "px";
+
+if (textField.clientHeight < textField.scrollHeight)
+
+{
+
+textField.style.height = (textField.scrollHeight * 2 - textField.clientHeight) + "px";
+
+}
+
+}
+
+}
+
+function Countthelines(f) { var text1 = f
+
+var text2 = text1.replace(/\s+$/,"");
+
+var split2 = text2.split("\n"); var mytotal = split2.length * 17;
+
+if (mytotal < 150) {
+
+mytotal = 150;
+
+}
+
+var tstr = mytotal.toString();
+
+return tstr;
+
+}
+
+function newfix(f){
+
+var ThisText = document.getElementById("SpecialInstructions").value;
+
+var makeit = Countthelines(ThisText);
+
+document.getElementById(f).style.height = makeit+"px"; }
+
+
+
+function Fixarea() {
+
+newfix("SpecialInstructions");
+
+AutoGrowTextArea("SpecialInstructions");
+
+
+
+}
+
+function RWS(str){
+
+var text2 = str.replace(/\s+$/,"");
+
+return text2.trim();
+
+}
+
+function Collect(){
+
+var datatosave;
+
+datatosave = "JPATS"+ "\r";
+
+
+
+document.getElementById("Saveme").value = datatosave;
+
+
+
+}
+
+
+
+function saveTextAsFile(fileNameToSaveAs, textToWrite) {
+
+var textToWrite = document.getElementById('parseme').value; 
+
+var fileNameToSaveAs =  "JPATS data " + DateforFile()+".txt";
+
+fileNameToSaveAs = prompt("", fileNameToSaveAs);
+
+if (fileNameToSaveAs == null){return};
+
+  /* Saves a text string as a blob file*/  
+
+  var ie = navigator.userAgent.match(/MSIE\s([\d.]+)/),
+
+      ie11 = navigator.userAgent.match(/Trident\/7.0/) && navigator.userAgent.match(/rv:11/),
+
+      ieEDGE = navigator.userAgent.match(/Edge/g),
+
+      ieVer=(ie ? ie[1] : (ie11 ? 11 : (ieEDGE ? 12 : -1)));
+
+
+
+  if (ie && ieVer<10) {
+
+    console.log("No blobs on IE ver<10");
+
+    return;
+
+  }
+
+
+
+  var textFileAsBlob = new Blob([textToWrite], {
+
+    type: 'text/plain'
+
+  });
+
+
+
+  if (ieVer>-1) {
+
+    window.navigator.msSaveBlob(textFileAsBlob, fileNameToSaveAs);
+
+
+
+  } else {
+
+    var downloadLink = document.createElement("a");
+
+    downloadLink.download = fileNameToSaveAs;
+
+    downloadLink.href = window.URL.createObjectURL(textFileAsBlob);
+
+    downloadLink.onclick = function(e) { document.body.removeChild(e.target); };
+
+    downloadLink.style.display = "none";
+
+    document.body.appendChild(downloadLink);
+
+    downloadLink.click();
+
+  }
+
+}
+
+
+
+
+
+
+
+
+
+
+
+function destroyClickedElement(event)
+
+{
+
+    document.body.removeChild(event.target);
+
+}
+
+function SaveData() {
+
+	
+
+			formDataToObject(document.getElementById('myform'))
+
+			saveTextAsFile();
+
+			
+
+			//saveTextAsFile();
+
+			}
+
+
+
+function loadFileAsText()
+
+{
+
+
+
+    var fileToLoad = document.getElementById("fileToLoad").files[0];
+
+ 
+
+    var fileReader = new FileReader();
+
+    fileReader.onload = function(fileLoadedEvent) 
+
+    {
+
+        var textFromFileLoaded = fileLoadedEvent.target.result;
+
+        document.getElementById("inputTextToSave").value = textFromFileLoaded;
+
+    };
+
+    fileReader.readAsText(fileToLoad, "UTF-8");
+
+}
+
+
+
+function formDataToObject(elForm) {
+
+  if (!elForm instanceof Element) return;
+
+  var fields = elForm.querySelectorAll('input, select, textarea'),
+
+    o = {};
+
+  for (var i=0, imax=fields.length; i<imax; ++i) {
+
+    var field = fields[i],
+
+      sKey = field.name || field.id;
+
+    if (field.type==='button' || field.type==='image' || field.type==='submit' || !sKey) continue;
+
+    switch (field.type) {
+
+      case 'checkbox':
+
+        o[sKey] = +field.checked;
+
+        break;
+
+      case 'radio':
+
+        if (o[sKey]===undefined) o[sKey] = '';
+
+        if (field.checked) o[sKey] = field.value;
+
+        break;
+
+      case 'select-multiple':
+
+        var a = [];
+
+        for (var j=0, jmax=field.options.length; j<jmax; ++j) {
+
+          if (field.options[j].selected) a.push(field.options[j].value);
+
+        }
+
+        o[sKey] = a;
+
+        break;
+
+      default:
+
+        o[sKey] = field.value;
+
+    }
+
+  }
+
+ // ('Form data:\n\n' + JSON.stringify(o, null, 2));
+
+ document.getElementById('parseme').value = JSON.stringify(o, null, 2);
+
+//  return o;
+
+}
+
+
+
+function populateForm(o) {
+
+
+
+o =  JSON.parse(document.getElementById('parseme').value);
+
+ //if (!isObject(o)) return;
+
+//if (!isObject(o)) return;
+
+  for (var i in o) {
+
+    var el = document.getElementById(i) || document.querySelector('[name=' + i + ']');
+
+    if (el.type==='radio') el = document.querySelectorAll('[name=' + i + ']');
+
+    switch (typeof o[i]) {
+
+      case 'number':
+
+        el.checked = o[i];
+
+        break;
+
+      case 'object':
+
+        if (el.options && o[i] instanceof Array) {
+
+          for (var j=0, jmax=el.options.length; j<jmax; ++j) {
+
+            if (o[i].indexOf(el.options[j].value)>-1) el.options[j].selected = true;
+
+          }
+
+        }
+
+        break;
+
+      default:
+
+        if (el instanceof NodeList) {
+
+          for (var j=0, jmax=el.length; j<jmax; ++j) {
+
+            if (el[j].value===o[i]) el[j].checked = true;
+
+          }
+
+        } else {
+
+          el.value = o[i];
+
+        }
+
+    }
+
+  }
+
+  
+
+    Fixfields();
+
+
+
+
+
+}
+
+
+
+
+
+		
+
+		//
+
+
+
+
+
+	
+
+	function selectaddress(){  
+
+ location.href="#pop3";  
+
+} 
+
+ 
+
+//-------
+
+
+
+ function readBlob(opt_startByte, opt_stopByte) {
+
+  
+
+    var files = document.getElementById('files').files;
+
+    if (!files.length) {
+
+      ('Please select a file!');
+
+      return;
+
+    }
+
+
+
+    var file = files[0];
+
+    var start = parseInt(opt_startByte) || 0;
+
+    var stop = parseInt(opt_stopByte) || file.size - 1;
+
+
+
+    var reader = new FileReader();
+
+
+
+    // If we use onloadend, we need to check the readyState.
+
+    reader.onloadend = function(evt) {
+
+      if (evt.target.readyState == FileReader.DONE) { // DONE == 2
+
+        document.getElementById('byte_content').textContent = evt.target.result;
+
+        document.getElementById('byte_range').textContent = 
+
+            ['Read bytes: ', start + 1, ' - ', stop + 1,
+
+             ' of ', file.size, ' byte file'].join('');
+
+      }
+
+    };
+
+
+
+    var blob = file.slice(start, stop + 1);
+
+    reader.readAsBinaryString(blob);
+
+  }
+
+    	
+
+  window.onload = function () { 
+
+ 
+
+ //Check the support for the File API support 
+
+ if (window.File && window.FileReader && window.FileList && window.Blob) {
+
+    var fileSelected = document.getElementById('txtfiletoread');
+
+	
+
+    fileSelected.addEventListener('change', function (e) { 
+
+         //Set the extension for the file 
+
+         var fileExtension = /text.*/; 
+
+         //Get the file object 
+
+         var fileTobeRead = fileSelected.files[0];
+
+        //Check of the extension match 
+
+         if (fileTobeRead.type.match(fileExtension)) { 
+
+             //Initialize the FileReader object to read the 2file 
+
+			
+
+             var fileReader = new FileReader(); 
+
+             fileReader.onload = function (e) { 
+
+                 var fileContents = document.getElementById('filecontents'); 
+
+         
+
+				document.getElementById('parseme').value =fileReader.result;
+
+				populateForm(obj = document.getElementById('parseme').value);
+
+					 } 
+
+             fileReader.readAsText(fileTobeRead); 
+
+         } 
+
+         else { 
+
+             ("Please select text file"); 
+
+         }
+
+ 
+
+    }, false);
+
+} 
+
+ else { 
+
+     ("Files are not supported"); 
+
+ } 
+
+ Checkifinbrowser();
+
+ }
+
+
+
+ function Checkifinbrowser() {
+
+
+
+ var x= document.getElementById("testCall").value; 
+
+ var n = x.search("{Msg");
+
+ if (n>-1) { 
+
+ document.getElementById('Submit').style.visibility='hidden';
+
+  alert('You are running this form outside of Winlink.\n \nWhen you have completed the form, SAVE the data and then give or send the SAVED data file to the radio operator. The operator will load the SAVED data into the correct form and send via winlink. ');
+
+ } else {document.getElementById('Submit').style.visibility='visible';  }
+
+} 
+
+function isObject(arg) {
+
+  return Object.prototype.toString.call(arg)==='[object Object]';
+
+}
+
+
+
+function ExportData(doexport) {
+
+		var mydata= "";
+
+	for (x = 1; x <21; x++) {
+
+
+
+        //var tabs = lines[line].split('\t',11);
+
+		//ID1, Lastname1,Firstname1,Gender1,DOB1,Minor1,Orgfaclty1,PatientT1,HeathStatus1,Bedtype1,Disp1,Timestamp1
+
+         	
+
+			var mydata=mydata + getEX('ID'+x)+",";
+
+			
+
+		 		var mydata=mydata+getEX('Lastname'+x)+",";
+
+
+
+			var mydata=mydata+getEX('Firstname'+x)+",";
+
+		
+
+			var mydata=mydata+getEX('Gender'+x)+",";
+
+			
+
+			var mydata=mydata+getEX('DOB'+x)+",";
+
+			var mydata=mydata+getEX('Minor'+x)+",";
+
+			//var mydata=mydata+getEX('CCareT'+x)+","
+
+			//1
+
+			var mydata=mydata+getEX('Orgfaclty'+x)+",";
+
+			var mydata=mydata+getEX('PatientT'+x)+",";
+
+			
+
+			var mydata=mydata+getEX('HeathStatus'+x)+",";
+
+			var mydata=mydata+getEX('Bedtype'+x)+",";//
+
+			var mydata=mydata+getEX('Injurytype'+x)+",";
+
+			var mydata=mydata+getEX('Notes'+x)+",";
+
+			var mydata=mydata+getEX('Disp'+x)+",";//Disp1
+
+			var mydata=mydata+getEX('Timestamp'+x)+"\n";
+
+			
+
+			//var mydata=mydata+"\n";
+
+			document.getElementById('parseme').value = mydata;
+
+			
+
+			 }   
+
+			var excelheader= "Tracking #,Last Name,First Name,Sex,DOB - Age,Unaccompanied Minor,Originating Site/ Facility Name,Patient Type,Health Status,Bed Type,Injury Nature,Notes,Disposition,Time Stamp"+"\n" ;
+
+
+
+			
+
+	
+
+			document.getElementById('parseme').value = mydata;
+
+			document.getElementById('attached_text').value = excelheader+ mydata;
+
+			document.getElementById('attached_file').value = "JPATS data " + DateforFile()+".csv"
+
+		//var attached_file = "JPATS data " + DateforFile()+".csv"
+
+
+
+			if (doexport == true) {ExporttoCSV()};
+
+			
+
+			//saveTextAsFile();
+
+			}
+
+function ExporttoCSV(fileNameToSaveAs, textToWrite) {
+
+
+
+var textToWrite =document.getElementById('attached_text').value;
+
+//var excelheader= "Tracking #, Last Name,First Name,Gender,DOB,Unaccompanied Minor,Critical Care Transport Needed,Healthcare Facility,Patient Type,Health Status,Bed Type,Injury Nature,Disposition,Timestamp"+"\n" ;
+
+;var textToWrite = textToWrite;
+
+var fileNameToSaveAs = "JPATS " + DateforFile()+".csv";
+
+fileNameToSaveAs = prompt("", fileNameToSaveAs);
+
+
+
+  /* Saves a text string as a blob file*/  
+
+  var ie = navigator.userAgent.match(/MSIE\s([\d.]+)/),
+
+      ie11 = navigator.userAgent.match(/Trident\/7.0/) && navigator.userAgent.match(/rv:11/),
+
+      ieEDGE = navigator.userAgent.match(/Edge/g),
+
+      ieVer=(ie ? ie[1] : (ie11 ? 11 : (ieEDGE ? 12 : -1)));
+
+
+
+  if (ie && ieVer<10) {
+
+    console.log("No blobs on IE ver<10");
+
+    return;
+
+  }
+
+
+
+  var textFileAsBlob = new Blob([textToWrite], {
+
+    type: 'text/plain'
+
+  });
+
+
+
+  if (ieVer>-1) {
+
+    window.navigator.msSaveBlob(textFileAsBlob, fileNameToSaveAs);
+
+
+
+  } else {
+
+    var downloadLink = document.createElement("a");
+
+    downloadLink.download = fileNameToSaveAs;
+
+    downloadLink.href = window.URL.createObjectURL(textFileAsBlob);
+
+    downloadLink.onclick = function(e) { document.body.removeChild(e.target); };
+
+    downloadLink.style.display = "none";
+
+    document.body.appendChild(downloadLink);
+
+    downloadLink.click();
+
+  }
+
+}
+
+function Flip(theid,working) {
+
+x1 = document.getElementById(theid).value;
+
+if (x1 == '') { document.getElementById(theid).value = 'TRUE';} 
+
+else { document.getElementById(theid).value = 'FALSE';}
+
+}
+
+
+
+function getEX (str) {
+
+//console.log (str);
+
+var line=document.getElementById(str).value;
+
+
+
+if (line =='--') {line=''}
+
+//if (line =='FALSE') {line=''}
+
+//console.log(str);
+
+// fix quotes
+
+  line = line.replace(/[\u2014]/g, "--")        // emdash
+
+line = line.replace(/[\u2022]/g, "*")         // bullet
+
+line = line.replace(/[\u2018\u2019]/g, "'")   // smart single quotes
+
+line = line.replace(/[\u201C\u201D]/g, '"');  // smart double quotes
+
+// end fix  quotes
+
+
+
+ var addquote = false;
+
+ var position = line.search('"');
+
+if (position != -1){line = line.replace(/"/g, '""');addquote = true}
+
+
+
+var position = line.search(",");
+
+if (position != -1){ addquote = true}
+
+if (addquote==true) {var line = '"' +line+'"';} 
+
+
+
+
+
+return line;
+
+}
+
+function Fixfields(){
+
+for (x = 1; x <21; x++) {
+
+			var mydata=mydata + getEX('ID'+x)+",";
+
+
+
+AutoGrowTextArea(document.getElementById("Bedtype"+x));
+
+AutoGrowTextArea(document.getElementById("Injurytype"+x));
+
+AutoGrowTextArea(document.getElementById("Notes"+x));
+
+}
+
+}
+
+function parsestring(mType) {
+
+var mytext = document.getElementById('parseme3').value;
+
+var myType = mType;
+
+var lines = mytext.split('\n', 20);
+
+
+
+    for(var line = 0; line < lines.length ; line++){
+
+        // By tabs
+
+		//alert (lines[line]);
+
+var x = line +1;
+
+// console.log(lines[line]);
+
+     if (line <21) {  var tabs = lines[line].split('\t',14);
+
+         	if (tabs[0] != null){document.getElementById('ID'+x).value =fixhigh(tabs[0])};
+
+		 	if (tabs[1] != null){document.getElementById('Lastname'+x).value =fixhigh(tabs[1])};
+
+			
+
+			if (tabs[2] != null){document.getElementById('Firstname'+x).value = fixhigh(tabs[2])};
+
+			if (tabs[3] != null){document.getElementById('Gender'+x).value = fixhigh(tabs[3])};
+
+			if (tabs[4] != null){document.getElementById('DOB'+x).value = fixhigh(tabs[4])};
+
+			if (tabs[5] != null){document.getElementById('Minor'+x).value = fixhigh(tabs[5])};
+
+			//if (tabs[6] != null){document.getElementById('CCareT'+x).value = tabs[6]};
+
+			if (tabs[6] != null){document.getElementById('Orgfaclty'+x).value = fixhigh(tabs[6])};
+
+			if (tabs[7] != null){document.getElementById('PatientT'+x).value = fixhigh(tabs[7])};
+
+			if (tabs[8] != null){document.getElementById('HeathStatus'+x).value = fixhigh(tabs[8])};
+
+			if (tabs[9] != null){document.getElementById('Bedtype'+x).value = fixhigh(tabs[9])};
+
+			
+
+			if (tabs[10] != null){document.getElementById('Injurytype'+x).value = fixhigh(tabs[10])};
+
+			if (tabs[11] != null){document.getElementById('Notes'+x).value = fixhigh(tabs[11])};
+
+			if (tabs[12] != null){document.getElementById('Disp'+x).value = fixhigh(tabs[12])};
+
+			if (tabs[13] != null){document.getElementById('Timestamp'+x).value = fixhigh(tabs[13])};
+
+			
+
+			
+
+			 }   
+
+			}
+
+			Fixfields();
+
+	alert('Parsing completed');
+
+	}
+
+
+
+
+
+	function selectaddress(){  
+
+ location.href="#pop3";  
+
+}  
+
+			function CollectData() {
+
+		var mydata= "";
+
+	for (x = 1; x <21; x++) {
+
+
+
+			var mydata=mydata + getEX('ID'+x)+"\t";
+
+			
+
+		 		var mydata=mydata+getEX('Lastname'+x)+"\t";
+
+			var mydata=mydata+getEX('Firstname'+x)+"\t";
+
+			var mydata=mydata+getEX('Gender'+x)+"\t";			
+
+			var mydata=mydata+getEX('DOB'+x)+"\t";
+
+			var mydata=mydata+getEX('Minor'+x)+"\t";
+
+			//var mydata=mydata+getEX('CCareT'+x)+"\t"
+
+			var mydata=mydata+getEX('Orgfaclty'+x)+"\t";
+
+			var mydata=mydata+getEX('PatientT'+x)+"\t";
+
+			var mydata=mydata+getEX('HeathStatus'+x)+"\t";
+
+			var mydata=mydata+getEX('Bedtype'+x)+"\t";//
+
+			var mydata=mydata+getEX('Injurytype'+x)+"\t";
+
+			var mydata=mydata+getEX('Notes'+x)+"\t";
+
+			var mydata=mydata+getEX('Disp'+x)+"\t";//Disp1
+
+			var mydata=mydata+getEX('Timestamp'+x)+"\n";
+
+				document.getElementById('parseme3').value = mydata;
+
+			
+
+			 }   
+
+			var excelheader= "Tracking #\tLast Name\tFirst Name\tSex\tDOB - Age\tUnaccompanied Minor\tOriginating Site/ facility name\tPatient Type\tHealth Status\tBed Type\tInjury Nature\tNotes\tDisposition\tTime Stamp"+"\n" ;
+
+			document.getElementById('parseme3').value = mydata;
+
+			//document.getElementById('parseme3').value = mydata;
+
+			
+
+			}
+
+function fixhigh(s) {
+
+var s = s.replace(/[\u{0080}-\u{10FFFF}]/gu,"");
+
+return s;
+
+}
+
+function fix(s) {
+
+var s = s.replace(/(\r\n|\n|\r)/gm," "); 
+
+var s = s.replace(/[\u{0080}-\u{10FFFF}]/gu,"");
+
+return s;
+
+
+
+}
+
+function clearUnNeeded(){
+
+document.getElementById('parseme3').value ='';
+
+document.getElementById('parseme').value ='';
+
+}
+
+</script></head>
+
+<body style="color: rgb(0, 0, 0); background-color: rgb(255, 255, 255);" alink="#000099" link="#000099" vlink="#990099">
+
+    &nbsp;<br />
+
+    <form action="http://{FormServer}:{FormPort}" enctype="multipart/form-data" id="myform" method="post" onsubmit="return confirm('To complete your form submission, click OK and close the open browser window. You will return to the new message window so you can post your message to the outbox');" pbzloc="0">
+
+      <div id="pop1" class="pop-up"><!-- The pop-up block -->
+
+        <div class="popBox"><!-- If the content becomes larger than the pop-up this div will scroll the content -->
+
+          <div class="popScroll">
+
+            <p> </p>
+
+            <h2>Disaster Pre-JPATS Patient Evacuation Situation Report</h2>
+
+            
+
+<p><strong>PURPOSE:</strong><br>
+
+The Joint Patient Assessment and Tracking System (JPATS) is an application in the National Disaster Medical System (NDMS) Disaster Medical Information Suite (DMIS) that is designed to track every patient moved by the Federal government from start to finish. JPATS is also used by State and local health departments for their own isolated incidents, for State-to-State responses and for larger events when the Federal government responds.<a href="https://files.asprtracie.hhs.gov/documents/jpats-overview-and-factsheet.pdf" target="_blank"> https://files.asprtracie.hhs.gov/documents/jpats-overview-and- factsheet.pdf</a></p>
+
+<p><br>
+
+  When patient movement is requested from a site, this form is aligned with categories and information that the JPATS application requires. This WinLink form can be used to facilitate an initial request for JPATS transport and to begin capturing patient data at the point of origin. Capturing patient data and care documentation early during the initial phase of a disaster response from the patient&rsquo;s point of origin is something that initial responders can do with this Winlink form.<br>
+
+</p>
+
+<p>The purpose of a Winlink form is to provide a standardized format for transmission of this information by emergency communications methods. If the situation dictates, patients could also be listed only by designated unique tracking number, gender, year of birth (age) and withholding the name and full birthdate personally identifiable information when appropriate. That data should be maintained at the site so it can be provided directly to the arriving transport team.<br>
+
+  <br>
+
+  Archived WinLink forms can be used to track patients who have been transported from their points of origin to their entry in JPATS .<br>
+
+</p>
+
+<p>NOTES<br>
+
+  The form is completed upon decision that first patient may require JPATS transport. It is updated periodically, at least every operational period. If additional pages are needed, use another JPATS form and repaginate as needed.</p>
+
+<p><strong>1. Incident Name:</strong><br>
+
+  Enter the name assigned to the incident.</p>
+
+<p><strong>2. Operational Period</strong><br>
+
+  Enter the start date (mm/dd/yyyy) and time (24-hour clock) and end date and time for the operational period local time to which the form applies.</p>
+
+<p><strong>3. Site Name</strong><br>
+
+  Enter the site location name</p>
+
+<p><strong>Spreadsheet Columns (see notes below)</strong></p>
+
+<p><strong>Tracking Number</strong> Enter site tracking number. For example, this may be a field triage tag<br>
+
+  number or hospital medical record number, as applicable</p>
+
+<p><strong>Name</strong><br>
+
+  Enter the last and first name of patient</p>
+
+<p><strong>Sex</strong><br>
+
+  Enter M for male, F for female, or O for patient prefers other gender designation</p>
+
+<p><strong>DOB / Age</strong><br>
+
+  Enter complete date of birth OR age, if known </p>
+
+<p><strong>Unaccompanied Minor Yes or No</strong></p>
+
+<p><strong>Patient Type</strong> if applicable, 1 &ndash; Federal Patient 2-State/Local 3-Federal non-medical 4- State/Local non-medical<br>
+
+  <br>
+
+  <strong>Health Status</strong> 1-Critical 2-Priority 3-Routine 4-Deceased 5-N/A</p>
+
+<p><strong>Bed Type</strong> 1-Med/Surg 2- Psychiatric 3-Burns 4-Pediatric 5-Critical 6- Unknown Injury/Nature Diagnosis or Chief complaint requiring transport e.g. Dialysis</p>
+
+<p><strong>Notes</strong> Additional key transport information e.g. ETT, chest tube, burn level, GCS score</p>
+
+<p><strong>Disposition</strong> Current JPATS status 1-Staged 2-Registered 3-Departed site or blank Disposition Time<br>
+
+Enter the disposition Time, 24 hour clock.</p>
+
+<p><strong>Prepared by</strong><br>
+
+Enter the name of the person preparing the form. Since this is a radio delivered form, a typed name is same as signature. Enter date (m/d/y), time prepared (24-hour clock), and site/station from which it was sent</p>
+
+<p><strong>More Information</strong><br>
+
+  <br>
+
+  You can save your completed HTML to a text file. This will allow you to reload the JPATS form with ALL entered form data. You do this prior to submitting the form. Then you can open a new 254 and load the saved HTML form data. NOTE: Date and Times will be the previous, so change if needed. This is much like using FireFox and the addon Formlet. It will save the info as a text file with the Date and Time as a file name. Now you can use any browser, save your form, (as many versions as you like), and then re-populate.<br>
+
+  <br>
+
+This form also allows for pasting data from a spreadsheet with TAB delineation. You would create a spreadsheet to MATCH the HTML template for data in &quot;3. Area&quot;. Do not exceed the data entry box input lengths or the info will not be seen properly if printed. You can do 10 columns and up to 10 rows of data. It is suggested you experiment and test to understand how this works. Once mastered it can be a time saver in the field for data entry.</p>
+
+<p><strong>NOTE on printing.</strong><br>
+
+  Printing this form is dependent upon your selected printer and its settings. Various Web Browsers and their viewing sizes are not all the same. Printing from a browser&rsquo;s print function may be different from the operating systems default print mode. Select what works for you, for both printing and viewing. You may print direct to the printer as a HTML or save as a PDF then print the PDF. In some instances, Landscape mode may print better than Portrait.<br>
+
+</p>
+
+
+
+
+
+</p>
+
+		  </div>
+
+          <!-- The close pop-up link correctly positioned at the end of the content block --><a href="#links" class="close"><span>Back
+
+        to links</span></a> </div>
+
+      </div>
+
+	  
+
+	<div class="pop-up" id="pop3">
+
+    <!-- The pop-up block -->
+
+    <div class="popBox">
+
+      <!-- If the content becomes larger than the pop-up this div will scroll the content -->
+
+      <div class="popScroll">
+
+        <p> </p>
+
+        <h2>Copy and Paste Data From Spreadsheet</h2>
+
+        <span class="style13">
+
+        <p align="left">Copy the data from the spreadsheet and paste in box below, then click "Parse Data"<br />
+
+		Tab delineation only. Ensure fields match & do not exceed form field lengths, or data entries will not be correct. 
+
+        </p>
+
+        <textarea name="parseme3" cols="120" rows="15" id="parseme3" placeholder="Paste spreadsheet data here" ></textarea> 
+
+		<BR />&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<input type=button value="Parse Data" onClick="parsestring('P');document.getElementById('closeme').click();">
+
+		
+
+		
+
+        </span>
+
+        <p align="left"></p><br /><br /><br />
+
+      <a href="#links">Close this window</a> </div>
+
+      <!-- The close pop-up link correctly positioned at the end of the content block -->
+
+      <a href="#links" id='closeme'>Close this window</a> </div>
+
+  </div>
+
+        <table  border="0" align="center" style="height: 856px;">
+
+        <tbody>
+
+          <tr>
+
+            <td width="1314" valign="top" pbzloc="17">
+
+              <table  style="width: 1119px; height: 881px;" pbzloc="11" border="1" bordercolor="#999999" cellpadding="1" cellspacing="0">
+
+                <tbody>
+
+                  <tr valign="top" bgcolor="#ffffe6">
+
+                    <td colspan="3" style="vertical-align: top; "><div align="center">
+
+                      <p class="style4"> Joint Patient Assessment and Tracking System<br />
+
+                      &nbsp; </p>
+
+                      
+
+                      </div><p align="center"><span style="font-style: italic;"><span style="color: rgb(204, 0, 0);"> &nbsp;
+
+                            <input type="button"value="Form Instructions" onclick="location.href = '#pop1'" />
+
+                      </span><br />
+
+                    </span></p></td>
+
+                  </tr>
+
+                  <tr>
+
+                    <td style="width: 50%; text-align: center; vertical-align: top;"><div align="left"><br />
+
+                      &nbsp;&nbsp; 1.
+
+                      Incident Name&nbsp;&nbsp;                      <input required="required" id="Incident_Name" maxlength="65" name="Incident_Name" size="70"  />
+
+                      <br />
+
+                      <br />
+
+                      <span style="color: rgb(204, 0, 0);">&nbsp;&nbsp; &nbsp;&nbsp; </span>Page<span style="color: rgb(204, 0, 0);"> </span>
+
+                      <input maxlength="2" size="3" name="Page" id="Page" required="required" />
+
+                      <span >&nbsp;Of&nbsp;&nbsp;
+
+                      <input required="required" maxlength="2" size="3" name="Page1" id="Page1" />&nbsp;&nbsp;&nbsp;&nbsp;  <input type="button" value=" Load JPATS Data " onclick="document.getElementById('txtfiletoread').click();" /> 
+
+                      <br />
+
+                        
+
+              <textarea name="parseme" cols="60" id="parseme" style="display: none;"></textarea>
+
+  <input name="attached_file" type="hidden" id="attached_file" value= "JPATS data " + DateforFile()+".csv" />
+
+                <textarea name="attached_text"  cols="140" rows="3" id="attached_text" style="display: none;"></textarea>
+
+			   <textarea name="FormData"  cols="140" rows="3" id="FormData" style="display: none;"></textarea></div></td>
+
+<td style="width: 50%; vertical-align: top; text-align: justify;" colspan="2">&nbsp;&nbsp;
+
+
+
+<div align="left"> &nbsp;&nbsp;2. Operational Period
+
+&nbsp; <br />
+
+  <br />
+
+&nbsp;&nbsp; &nbsp;&nbsp; &nbsp;&nbsp;  Date From &nbsp;<b>
+
+  <input maxlength="12" id="DateFrom" name="DateFrom" size="12" placeholder="mm-dd-yyyy" />
+
+&nbsp; &nbsp;</b>To &nbsp;<b>
+
+  <input maxlength="12" id="DateTo" name="DateTo" size="12" placeholder="mm-dd-yyyy" />
+
+  <br />
+
+  <br />
+
+  </b>&nbsp;&nbsp; &nbsp;&nbsp; &nbsp;&nbsp; Time From &nbsp;<b>
+
+  <input maxlength="10" id="TimeFrom" name="TimeFrom" size="10" placeholder="hh:mm" /> 
+
+  </b>&nbsp;
+
+&nbsp;&nbsp; &nbsp;To &nbsp;<b>
+
+  <input maxlength="10" id="TimeTo" name="TimeTo" size="10" placeholder="hh:mm" /> 
+
+  </b><br />
+
+  <br />
+
+</div></td>
+
+</tr>
+
+<tr align="left">
+
+<td colspan="3" style="text-align: center; vertical-align: top;">
+
+<p align="left">&nbsp;&nbsp; 3. Site name&nbsp;&nbsp; &nbsp;<strong>
+
+  <input name="Area" id="Area" size="40" maxlength="40" />
+
+  </strong> 
+
+ 
+
+&nbsp;   <input type="file" id="txtfiletoread" accept=".txt" style="display: none;" />
+
+&nbsp;&nbsp;&nbsp; &nbsp;&nbsp;&nbsp; &nbsp;&nbsp;<a href="javascript:selectaddress();">Paste Field Data Below from a Spreadsheet </a></p>
+
+<table height="0%" border="1" align="left" cellpadding="1" cellspacing="1" style="width: 1113px; ">
+
+  <tbody>
+
+    <tr valign="top" bgcolor="#ffffe6">
+
+      <td width="50" height="9%" id="TextHeader" style="font-weight: bold; vertical-align: top; text-align: center; background-color: rgb(204, 255, 255);">Tracking #</td>
+
+      <td width="126" id="TextHeader" style="font-weight: bold; text-align: center; vertical-align: top; background-color: rgb(204, 255, 255);">Last Name</td>
+
+      <td width="126" id="TextHeader" style="font-weight: bold; vertical-align: top; text-align: center; background-color: rgb(204, 255, 255);">First Name</td>
+
+      <td nowrap="nowrap" id="TextHeader" style="font-weight: bold; vertical-align: top; text-align: center; background-color: rgb(204, 255, 255);">Sex<br />
+
+          <span style="font-weight: normal;">Example:<br />
+
+        M =Male<br />
+
+        F = Female<br />
+
+        O = Other <br />
+
+        </span></td>
+
+      <td width="83" id="TextHeader" style="font-weight: bold; text-align: center; vertical-align: top; background-color: rgb(204, 255, 255);">DOB - Age<br />
+
+          <span style="font-weight: normal;">(numbers only)</span></td>
+
+      <td width="97" id="TextHeader" style="font-weight: bold; text-align: center; vertical-align: top; background-color: rgb(204, 255, 255);"> Unaccompanied <br />
+
+        Minor<br />
+
+        <span style="font-weight: normal;">Example<br />
+
+        Y = Yes<br />
+
+        N = No</span></td>
+
+      <td width="77" valign="top" id="TextHeader" style="text-align: center; vertical-align: top; background-color: rgb(204, 255, 255);"><div align="center"><span class="style8">Originating Site/ Facility Name </span></div></td>
+
+      <td nowrap="nowrap" class="style2" id="TextHeader" style=" text-align: center; vertical-align: top; background-color: rgb(204, 255, 255);"><strong>Patient Type </strong><br />
+
+          <span style="font-weight: normal;">Example</span><br />
+
+        1 = Federal Patient<br />
+
+        2 = State & Local Patient<br />
+
+        3 = Federal Non-Medical<br />
+
+        4 = State & Local Non-Medical <br />
+
+      </td>
+
+      <td width="148" valign="top" nowrap="nowrap" style="font-weight: bold; background-color: rgb(204, 255, 255); text-align: center;"><span class="style2">Health Status </span><br />
+
+          <span style="font-weight: normal;"><span class="style2">Example<br />
+
+        1 = Critical<br />
+
+        2 = Priority<br />
+
+        3 = Routine<br />
+
+        4 = Deceased<br />
+
+        5 = N/A</span><br />
+
+        </span></td>
+
+      <td nowrap="nowrap" style="background-color: rgb(204, 255, 255); text-align: center;"><div align="center">
+
+          <div align="center" class="style2"><strong>Bed Type</strong><br />
+
+            Example<br />
+
+            1 = Medical/Surgical<br />
+
+            2 = Psychiatric<br />
+
+            3 = Burns<br />
+
+            4 = Pediatric<br />
+
+            5 = Critical<br />
+
+            6 = Unknown </div>
+
+      </div></td>
+
+      <td style="font-weight: bold; background-color: rgb(204, 255, 255); text-align: center;"><div align="center" class="style2">
+
+          <div align="center">Injury Nature</div>
+
+      </div></td>
+
+      <td style="font-weight: bold; background-color: rgb(204, 255, 255); text-align: center;"><div align="center" class="style2">
+
+          <div align="center">Notes</div>
+
+      </div></td>
+
+      <td width="76" id="TextHeader" style="font-weight: bold; text-align: center; vertical-align: top; background-color: rgb(204, 255, 255);"><div align="center">Disposition&nbsp;</div></td>
+
+      <td width="84" id="TextHeader" style="font-weight: bold; text-align: center; vertical-align: top; background-color: rgb(204, 255, 255);"><div align="center">Time Stamp</div></td>
+
+    </tr>
+
+    <tr valign="top">
+
+      <td height="4%" valign="middle" style="height: 10px;"><input maxlength="15" name="ID1" id="ID1"size="15" /></td>
+
+      <td valign="middle"><input size="20" name="Lastname1"  maxlength="25" id="Lastname1" />
+
+      </td>
+
+      <td valign="middle"><input id="Firstname1" maxlength="25" name="Firstname1" size="20" /></td>
+
+      <td valign="middle" nowrap="nowrap"><div align="center">
+
+          <input name="Gender1" type="text" id="Gender1" size="10" maxlength="10" />
+
+      </div></td>
+
+      <td valign="middle"><input maxlength="12" name="DOB1" id="DOB1"size="12"   onkeypress="return isNumberKeyD(event)"/></td>
+
+      <td valign="middle" nowrap="nowrap"><div align="center">
+
+          <input name="Minor1" type="text" id="Minor1" size="10" maxlength="10" />
+
+          <span class="style2"> </span> </div></td>
+
+      <td valign="middle"><input name="Orgfaclty1" class="style6" id="Orgfaclty1" size="15" maxlength="15" /></td>
+
+      <td valign="middle"><div align="center">
+
+          <input name="PatientT1" id="PatientT1" size="28" maxlength="28" />
+
+      </div></td>
+
+      <td valign="middle"><div align="center">
+
+          <input name="HeathStatus1" id="HeathStatus1" size="15" maxlength="15" />
+
+      </div></td>
+
+      <td><textarea style="text-align:left;"
+
+
+
+cols="12" rows="1" name="Bedtype1" id="Bedtype1"  onkeydown="return (event.keyCode!=13);"
+
+
+
+onkeyup="this.value = fix(this.value);AutoGrowTextArea(this)" placeholder="Be Brief"></textarea></td>
+
+      <td><textarea style="text-align:left;"
+
+
+
+cols="12" rows="1" name="Injurytype1" id="Injurytype1"  onkeydown="return (event.keyCode!=13);"
+
+
+
+onkeyup="this.value = fix(this.value);AutoGrowTextArea(this)" placeholder="Be Brief"></textarea></td>
+
+      <td><textarea style="text-align:left;"
+
+
+
+cols="12" rows="1" name="Notes1" id="Notes1"  onkeydown="return (event.keyCode!=13);"
+
+
+
+onkeyup="this.value = fix(this.value);AutoGrowTextArea(this)" onchange="this.value = fix(this.value);"placeholder="Be Brief"></textarea></td>
+
+      <td valign="middle"><input name="Disp1" id="Disp1" size="15" maxlength="13" />
+
+      </td>
+
+      <td valign="middle"><input maxlength="15" name="Timestamp1" id="Timestamp1" size="15" onclick="TimeNow('Timestamp1')"/></td>
+
+    </tr>
+
+    <tr valign="middle">
+
+      <td height="4%" style="height: 10px;"><input maxlength="15" name="ID2" id="ID2"size="15" /></td>
+
+      <td><input size="20" name="Lastname2"  maxlength="25" id="Lastname2" />
+
+      </td>
+
+      <td><input id="Firstname2" maxlength="25" name="Firstname2" size="20" /></td>
+
+      <td valign="middle" nowrap="nowrap"><div align="center">
+
+          <input name="Gender2" type="text" id="Gender2" size="10" maxlength="10" />
+
+      </div></td>
+
+      <td valign="middle"><input maxlength="12" name="DOB2" id="DOB2"size="12"  onkeypress="return isNumberKeyD(event)"/></td>
+
+      <td valign="middle" nowrap="nowrap"><div align="center">
+
+          <input name="Minor2" type="text" id="Minor2" size="10" maxlength="10" />
+
+      </div></td>
+
+      <td valign="middle"><input name="Orgfaclty2" class="style6" id="Orgfaclty2" size="15" maxlength="15" /></td>
+
+      <td valign="middle"><div align="center">
+
+          <input name="PatientT2" id="PatientT2" size="28" maxlength="28" />
+
+      </div></td>
+
+      <td valign="middle"><div align="center">
+
+          <input name="HeathStatus2" id="HeathStatus2" size="15" maxlength="15" />
+
+      </div></td>
+
+      <td><textarea style="text-align:left;"
+
+
+
+cols="12" rows="1" name="Bedtype2" id="Bedtype2"  onkeydown="return (event.keyCode!=13) "
+
+
+
+onkeyup="this.value = fix(this.value);AutoGrowTextArea(this)" placeholder="Be Brief"></textarea></td>
+
+      <td><textarea style="text-align:left;"
+
+
+
+cols="12" rows="1" name="Injurytype2" id="Injurytype2"  onkeydown="return (event.keyCode!=13)"
+
+
+
+onkeyup="this.value = fix(this.value);AutoGrowTextArea(this)" placeholder="Be Brief"></textarea></td>
+
+      <td><textarea style="text-align:left;"
+
+
+
+cols="12" rows="1" name="Notes2" id="Notes2"  onkeydown="return (event.keyCode!=13)"
+
+
+
+onkeyup="this.value = fix(this.value);AutoGrowTextArea(this)" placeholder="Be Brief"></textarea></td>
+
+      <td><input name="Disp2" id="Disp2" size="15" maxlength="13" />
+
+      </td>
+
+      <td><input maxlength="15" name="Timestamp2" id="Timestamp2" size="15" onclick="TimeNow('Timestamp2')"/>
+
+      </td>
+
+    </tr>
+
+    <tr valign="middle">
+
+      <td height="4%" style="height: 10px;"><input maxlength="15" name="ID3" id="ID3"size="15" /></td>
+
+      <td><input size="20" name="Lastname3"  maxlength="25" id="Lastname3" />
+
+      </td>
+
+      <td><input id="Firstname3" maxlength="25" name="Firstname3" size="20" /></td>
+
+      <td valign="middle" nowrap="nowrap"><div align="center">
+
+          <input name="Gender3" type="text" id="Gender3" size="10" maxlength="10" />
+
+      </div></td>
+
+      <td valign="middle"><input maxlength="12" name="DOB3" id="DOB3"size="12"  onkeypress="return isNumberKeyD(event)"/></td>
+
+      <td valign="middle" nowrap="nowrap"><div align="center">
+
+          <input name="Minor3" type="text" id="Minor3" size="10" maxlength="10" />
+
+      </div></td>
+
+      <td valign="middle"><input name="Orgfaclty3" class="style6" id="Orgfaclty3" size="15" maxlength="15" /></td>
+
+      <td><div align="center">
+
+          <input name="PatientT3" id="PatientT3" size="28" maxlength="28" />
+
+      </div></td>
+
+      <td valign="middle"><div align="center">
+
+          <input name="HeathStatus3" id="HeathStatus3" size="15" maxlength="15" />
+
+      </div></td>
+
+      <td><textarea style="text-align:left;"
+
+
+
+cols="12" rows="1" name="Bedtype3" id="Bedtype3"  onkeydown="return (event.keyCode!=13) "
+
+
+
+onkeyup="this.value = fix(this.value);AutoGrowTextArea(this)" placeholder="Be Brief"></textarea></td>
+
+      <td><textarea style="text-align:left;"
+
+
+
+cols="12" rows="1" name="Injurytype3" id="Injurytype3"  onkeydown="return (event.keyCode!=13);"
+
+
+
+onkeyup="this.value = fix(this.value);AutoGrowTextArea(this)" placeholder="Be Brief"></textarea></td>
+
+      <td><textarea style="text-align:left;"
+
+
+
+cols="12" rows="1" name="Notes3" id="Notes3"  onkeydown="return (event.keyCode!=13);"
+
+
+
+onkeyup="this.value = fix(this.value);AutoGrowTextArea(this)" placeholder="Be Brief"></textarea></td>
+
+      <td><input name="Disp3" id="Disp3" size="15" maxlength="13" />
+
+      </td>
+
+      <td><input maxlength="15" name="Timestamp3" id="Timestamp3" size="15" onclick="TimeNow('Timestamp3')"/></td>
+
+    </tr>
+
+    <tr valign="middle">
+
+      <td height="4%" style="height: 10px;"><input maxlength="15" name="ID4" id="ID4"size="15" /></td>
+
+      <td><input size="20" name="Lastname4"  maxlength="25" id="Lastname4" />
+
+      </td>
+
+      <td><input id="Firstname4" maxlength="25" name="Firstname4" size="20" /></td>
+
+      <td valign="middle" nowrap="nowrap"><div align="center">
+
+          <input name="Gender4" type="text" id="Gender4" size="10" maxlength="10" />
+
+      </div></td>
+
+      <td><input maxlength="12" name="DOB4" id="DOB4"size="12"  onkeypress="return isNumberKeyD(event)"/></td>
+
+      <td valign="middle" nowrap="nowrap"><div align="center">
+
+          <input name="Minor4" type="text" id="Minor4" size="10" maxlength="10" />
+
+      </div></td>
+
+      <td valign="middle"><input name="Orgfaclty4" class="style6" id="Orgfaclty4" size="15" maxlength="15" /></td>
+
+      <td><div align="center">
+
+          <input name="PatientT4" id="PatientT4" size="28" maxlength="28" />
+
+      </div></td>
+
+      <td valign="middle"><div align="center">
+
+          <input name="HeathStatus4" id="HeathStatus4" size="15" maxlength="15" />
+
+      </div></td>
+
+      <td><textarea style="text-align:left;"
+
+
+
+cols="12" rows="1" name="Bedtype4" id="Bedtype4"  onkeydown="return (event.keyCode!=13);" "
+
+
+
+onkeyup="this.value = fix(this.value);AutoGrowTextArea(this)" placeholder="Be Brief"></textarea></td>
+
+      <td><textarea style="text-align:left;"
+
+
+
+cols="12" rows="1" name="Injurytype4" id="Injurytype4"  onkeydown="return (event.keyCode!=13);" "
+
+
+
+onkeyup="this.value = fix(this.value);this.value = fix(this.value);AutoGrowTextArea(this)" placeholder="Be Brief"></textarea></td>
+
+      <td><textarea style="text-align:left;"
+
+
+
+cols="12" rows="1" name="Notes4" id="Notes4"  onkeydown="return (event.keyCode!=13);" "
+
+
+
+onkeyup="this.value = fix(this.value);this.value = fix(this.value);AutoGrowTextArea(this)" placeholder="Be Brief"></textarea></td>
+
+      <td><input name="Disp4" id="Disp4" size="15" maxlength="13" />
+
+      </td>
+
+      <td><input maxlength="15" name="Timestamp4" id="Timestamp4" size="15" onclick="TimeNow('Timestamp4')"/></td>
+
+    </tr>
+
+    <tr valign="middle">
+
+      <td height="4%" style="height: 10px;"><input maxlength="15" name="ID5" id="ID5"size="15" /></td>
+
+      <td><input size="20" name="Lastname5"  maxlength="25" id="Lastname5" />
+
+      </td>
+
+      <td><input id="Firstname5" maxlength="25" name="Firstname5" size="20" /></td>
+
+      <td valign="middle" nowrap="nowrap"><div align="center">
+
+          <input name="Gender5" type="text" id="Gender5" size="10" maxlength="10" />
+
+      </div></td>
+
+      <td><input maxlength="12" name="DOB5" id="DOB5"size="12"  onkeypress="return isNumberKeyD(event)"/></td>
+
+      <td valign="middle" nowrap="nowrap"><div align="center">
+
+          <input name="Minor5" type="text" id="Minor5" size="10" maxlength="10" />
+
+      </div></td>
+
+      <td valign="middle"><input name="Orgfaclty5" class="style6" id="Orgfaclty5" size="15" maxlength="15" /></td>
+
+      <td><div align="center">
+
+          <input name="PatientT5" id="PatientT5" size="28" maxlength="28" />
+
+      </div></td>
+
+      <td valign="middle"><div align="center">
+
+          <input name="HeathStatus5" id="HeathStatus5" size="15" maxlength="15" />
+
+      </div></td>
+
+      <td><textarea style="text-align:left;"
+
+
+
+cols="12" rows="1" name="Bedtype5" id="Bedtype5"  onkeydown="return (event.keyCode!=13);" "
+
+
+
+onkeyup="this.value = fix(this.value);AutoGrowTextArea(this)" placeholder="Be Brief"></textarea></td>
+
+      <td><textarea style="text-align:left;"
+
+
+
+cols="12" rows="1" name="Injurytype5" id="Injurytype5"  onkeydown="return (event.keyCode!=13);" "
+
+
+
+onkeyup="this.value = fix(this.value);AutoGrowTextArea(this)" placeholder="Be Brief"></textarea>
+
+      </td>
+
+      <td><textarea style="text-align:left;"
+
+
+
+cols="12" rows="1" name="Notes5" id="Notes5"  onkeydown="return (event.keyCode!=13);" "
+
+
+
+onkeyup="this.value = fix(this.value);AutoGrowTextArea(this)" placeholder="Be Brief"></textarea></td>
+
+      <td><input name="Disp5" id="Disp5" size="15" maxlength="13" />
+
+      </td>
+
+      <td><input maxlength="15" name="Timestamp5" id="Timestamp5" size="15" onclick="TimeNow('Timestamp5')"/></td>
+
+    </tr>
+
+    <tr valign="middle">
+
+      <td height="4%" style="height: 10px;"><input maxlength="15" name="ID6" id="ID6"size="15" /></td>
+
+      <td><input size="20" name="Lastname6"  maxlength="25" id="Lastname6" />
+
+      </td>
+
+      <td><input id="Firstname6" maxlength="25" name="Firstname6" size="20" /></td>
+
+      <td valign="middle" nowrap="nowrap"><div align="center">
+
+          <input name="Gender6" type="text" id="Gender6" size="10" maxlength="10" />
+
+      </div></td>
+
+      <td><input maxlength="12" name="DOB6" id="DOB6"size="12"  onkeypress="return isNumberKeyD(event)"/></td>
+
+      <td valign="middle" nowrap="nowrap"><div align="center">
+
+          <input name="Minor6" type="text" id="Minor6" size="10" maxlength="10" />
+
+      </div></td>
+
+      <td valign="middle"><input name="Orgfaclty6" class="style6" id="Orgfaclty6" size="15" maxlength="15" /></td>
+
+      <td><input name="PatientT6" id="PatientT6" size="28" maxlength="28" /></td>
+
+      <td valign="middle"><div align="center">
+
+          <input name="HeathStatus6" id="HeathStatus6" size="15" maxlength="15" />
+
+      </div></td>
+
+      <td><textarea style="text-align:left;"
+
+
+
+cols="12" rows="1" name="Bedtype6" id="Bedtype6"  onkeydown="return (event.keyCode!=13);" "
+
+
+
+onkeyup="this.value = fix(this.value);AutoGrowTextArea(this)" placeholder="Be Brief"></textarea></td>
+
+      <td><textarea style="text-align:left;"
+
+
+
+cols="12" rows="1" name="Injurytype6" id="Injurytype6"  onkeydown="return (event.keyCode!=13);" "
+
+
+
+onkeyup="this.value = fix(this.value);AutoGrowTextArea(this)" placeholder="Be Brief"></textarea></td>
+
+      <td><textarea style="text-align:left;"
+
+
+
+cols="12" rows="1" name="Notes6" id="Notes6"  onkeydown="return (event.keyCode!=13);" "
+
+
+
+onkeyup="this.value = fix(this.value);AutoGrowTextArea(this)" placeholder="Be Brief"></textarea></td>
+
+      <td><input name="Disp6" id="Disp6" size="15" maxlength="13" />
+
+      </td>
+
+      <td><input maxlength="15" name="Timestamp6" id="Timestamp6" size="15" onclick="TimeNow('Timestamp6')"/></td>
+
+    </tr>
+
+    <tr valign="middle">
+
+      <td height="4%" style="height: 10px;"><input maxlength="15" name="ID7" id="ID7"size="15" /></td>
+
+      <td><input size="20" name="Lastname7"  maxlength="25" id="Lastname7" />
+
+      </td>
+
+      <td><input id="Firstname7" maxlength="25" name="Firstname7" size="20" /></td>
+
+      <td valign="middle" nowrap="nowrap"><div align="center">
+
+          <input name="Gender7" type="text" id="Gender7" size="10" maxlength="10" />
+
+      </div></td>
+
+      <td><input maxlength="12" name="DOB7" id="DOB7"size="12"  onkeypress="return isNumberKeyD(event)"/></td>
+
+      <td valign="middle" nowrap="nowrap"><div align="center">
+
+          <input name="Minor7" type="text" id="Minor7" size="10" maxlength="10" />
+
+      </div></td>
+
+      <td valign="middle"><input name="Orgfaclty7" class="style6" id="Orgfaclty7" size="15" maxlength="15" /></td>
+
+      <td><input name="PatientT7" id="PatientT7" size="28" maxlength="28" /></td>
+
+      <td valign="middle"><div align="center">
+
+          <input name="HeathStatus7" id="HeathStatus7" size="15" maxlength="15" />
+
+      </div></td>
+
+      <td><textarea style="text-align:left;"
+
+
+
+cols="12" rows="1" name="Bedtype7" id="Bedtype7"  onkeydown="return (event.keyCode!=13);" "
+
+
+
+onkeyup="this.value = fix(this.value);AutoGrowTextArea(this)" placeholder="Be Brief"></textarea></td>
+
+      <td><textarea style="text-align:left;"
+
+
+
+cols="12" rows="1" name="Injurytype7" id="Injurytype7"  onkeydown="return (event.keyCode!=13);" "
+
+
+
+onkeyup="this.value = fix(this.value);AutoGrowTextArea(this)" placeholder="Be Brief"></textarea></td>
+
+      <td><textarea style="text-align:left;"
+
+
+
+cols="12" rows="1" name="Notes7" id="Notes7"  onkeydown="return (event.keyCode!=13);" "
+
+
+
+onkeyup="this.value = fix(this.value);AutoGrowTextArea(this)" placeholder="Be Brief"></textarea></td>
+
+      <td><input name="Disp7" id="Disp7" size="15" maxlength="13" />
+
+      </td>
+
+      <td><input maxlength="15" name="Timestamp7" id="Timestamp7" size="15" onclick="TimeNow('Timestamp7')"/></td>
+
+    </tr>
+
+    <tr valign="middle">
+
+      <td height="4%" style="height: 10px;"><input maxlength="15" name="ID8" id="ID8"size="15" /></td>
+
+      <td><input size="20" name="Lastname8"  maxlength="25" id="Lastname8" />
+
+      </td>
+
+      <td><input id="Firstname8" maxlength="25" name="Firstname8" size="20" /></td>
+
+      <td valign="middle" nowrap="nowrap"><div align="center">
+
+          <input name="Gender8" type="text" id="Gender8" size="10" maxlength="10" />
+
+      </div></td>
+
+      <td><input maxlength="12" name="DOB8" id="DOB8"size="12"  onkeypress="return isNumberKeyD(event)"/></td>
+
+      <td valign="middle" nowrap="nowrap"><div align="center">
+
+          <input name="Minor8" type="text" id="Minor8" size="10" maxlength="10" />
+
+      </div></td>
+
+      <td valign="middle"><input name="Orgfaclty8" class="style6" id="Orgfaclty8" size="15" maxlength="15" /></td>
+
+      <td><input name="PatientT8" id="PatientT8" size="28" maxlength="28" /></td>
+
+      <td valign="middle"><div align="center">
+
+          <input name="HeathStatus8" id="HeathStatus8" size="15" maxlength="15" />
+
+      </div></td>
+
+      <td><textarea style="text-align:left;"
+
+
+
+cols="12" rows="1" name="Bedtype8" id="Bedtype8"  onkeydown="return (event.keyCode!=13);" "
+
+
+
+onkeyup="this.value = fix(this.value);AutoGrowTextArea(this)" placeholder="Be Brief"></textarea></td>
+
+      <td><textarea style="text-align:left;"
+
+
+
+cols="12" rows="1" name="Injurytype8" id="Injurytype8"  onkeydown="return (event.keyCode!=13);" "
+
+
+
+onkeyup="this.value = fix(this.value);AutoGrowTextArea(this)" placeholder="Be Brief"></textarea></td>
+
+      <td><textarea style="text-align:left;"
+
+
+
+cols="12" rows="1" name="Notes8" id="Notes8"  onkeydown="return (event.keyCode!=13);" "
+
+
+
+onkeyup="this.value = fix(this.value);AutoGrowTextArea(this)" placeholder="Be Brief"></textarea></td>
+
+      <td><input name="Disp8" id="Disp8" size="15" maxlength="13" />
+
+      </td>
+
+      <td><input maxlength="15" name="Timestamp8" id="Timestamp8" size="15" onclick="TimeNow('Timestamp8')"/></td>
+
+    </tr>
+
+    <tr valign="middle">
+
+      <td height="4%" style="height: 10px;"><input maxlength="15" name="ID9" id="ID9"size="15" /></td>
+
+      <td><input size="20" name="Lastname9"  maxlength="25" id="Lastname9" />
+
+      </td>
+
+      <td><input id="Firstname9" maxlength="25" name="Firstname9" size="20" /></td>
+
+      <td valign="middle" nowrap="nowrap"><div align="center">
+
+          <input name="Gender9" type="text" id="Gender9" size="10" maxlength="10" />
+
+      </div></td>
+
+      <td><input maxlength="12" name="DOB9" id="DOB9"size="12"  onkeypress="return isNumberKeyD(event)"/></td>
+
+      <td valign="middle" nowrap="nowrap"><div align="center">
+
+          <input name="Minor9" type="text" id="Minor9" size="10" maxlength="10" />
+
+      </div></td>
+
+      <td valign="middle"><div align="center">
+
+          <input name="Orgfaclty9" class="style6" id="Orgfaclty9" size="15" maxlength="15" />
+
+      </div></td>
+
+      <td><input name="PatientT9" id="PatientT9" size="28" maxlength="28" /></td>
+
+      <td valign="middle"><div align="center">
+
+          <input name="HeathStatus9" id="HeathStatus9" size="15" maxlength="15" />
+
+      </div></td>
+
+      <td><textarea style="text-align:left;"
+
+
+
+cols="12" rows="1" name="Bedtype9" id="Bedtype9"  onkeydown="return (event.keyCode!=13);" "
+
+
+
+onkeyup="this.value = fix(this.value);AutoGrowTextArea(this)" placeholder="Be Brief"></textarea></td>
+
+      <td><textarea style="text-align:left;"
+
+
+
+cols="12" rows="1" name="Injurytype9" id="Injurytype9"  onkeydown="return (event.keyCode!=13);" "
+
+
+
+onkeyup="this.value = fix(this.value);AutoGrowTextArea(this)" placeholder="Be Brief"></textarea></td>
+
+      <td><textarea style="text-align:left;"
+
+
+
+cols="12" rows="1" name="Notes9" id="Notes9"  onkeydown="return (event.keyCode!=13);" "
+
+
+
+onkeyup="this.value = fix(this.value);AutoGrowTextArea(this)" placeholder="Be Brief"></textarea></td>
+
+      <td><input name="Disp9" id="Disp9" size="15" maxlength="13" />
+
+      </td>
+
+      <td><input maxlength="15" name="Timestamp9" id="Timestamp9" size="15" onclick="TimeNow('Timestamp9')"/></td>
+
+    </tr>
+
+    <tr valign="middle">
+
+      <td height="4%" style="height: 10px;"><input maxlength="15" name="ID10" id="ID10"size="15" /></td>
+
+      <td><input size="20" name="Lastname10"  maxlength="25" id="Lastname10" />
+
+      </td>
+
+      <td><input id="Firstname10" maxlength="25" name="Firstname10" size="20" /></td>
+
+      <td valign="middle" nowrap="nowrap"><div align="center">
+
+          <input name="Gender10" type="text" id="Gender10" size="10" maxlength="10" />
+
+      </div></td>
+
+      <td valign="middle"><input maxlength="12" name="DOB10" id="DOB10"size="12"  onkeypress="return isNumberKeyD(event)"/></td>
+
+      <td valign="middle" nowrap="nowrap"><div align="center">
+
+          <input name="Minor10" type="text" id="Minor10" size="10" maxlength="10" />
+
+      </div></td>
+
+      <td valign="middle"><input name="Orgfaclty10" class="style6" id="Orgfaclty10" size="15" maxlength="15" />
+
+      </td>
+
+      <td><input name="PatientT10" id="PatientT10" size="28" maxlength="28" /></td>
+
+      <td valign="middle"><div align="center">
+
+          <input name="HeathStatus10" id="HeathStatus10" size="15" maxlength="15" />
+
+      </div></td>
+
+      <td><textarea style="text-align:left;"
+
+
+
+cols="12" rows="1" name="Bedtype10" id="Bedtype10"  onkeydown="return (event.keyCode!=13);" "
+
+
+
+onkeyup="this.value = fix(this.value);AutoGrowTextArea(this)" placeholder="Be Brief"></textarea></td>
+
+      <td><textarea style="text-align:left;"
+
+
+
+cols="12" rows="1" name="Injurytype10" id="Injurytype10"  onkeydown="return (event.keyCode!=13);" "
+
+
+
+onkeyup="this.value = fix(this.value);AutoGrowTextArea(this)" placeholder="Be Brief"></textarea></td>
+
+      <td><textarea style="text-align:left;"
+
+
+
+cols="12" rows="1" name="Notes10" id="Notes10"  onkeydown="return (event.keyCode!=13);" "
+
+
+
+onkeyup="this.value = fix(this.value);AutoGrowTextArea(this)" placeholder="Be Brief"></textarea></td>
+
+      <td><input name="Disp10" id="Disp10" size="15" maxlength="13" />
+
+      </td>
+
+      <td><input maxlength="15" name="Timestamp10" id="Timestamp10" size="15" onclick="TimeNow('Timestamp10')"/></td>
+
+    </tr>
+
+    <tr valign="middle">
+
+      <td height="4%" style="height: 10px;"><input maxlength="15" name="ID11" id="ID11"size="15" /></td>
+
+      <td><input size="20" name="Lastname11"  maxlength="25" id="Lastname11" />
+
+      </td>
+
+      <td><input id="Firstname11" maxlength="25" name="Firstname11" size="20" /></td>
+
+      <td valign="middle" nowrap="nowrap"><div align="center">
+
+          <input name="Gender11" type="text" id="Gender11" size="10" maxlength="10" />
+
+      </div></td>
+
+      <td valign="middle"><input maxlength="12" name="DOB11" id="DOB11"size="12"   onkeypress="return isNumberKeyD(event)"/></td>
+
+      <td valign="middle" nowrap="nowrap"><div align="center">
+
+          <input name="Minor11" type="text" id="Minor11" size="10" maxlength="10" />
+
+      </div></td>
+
+      <td valign="middle"><input name="Orgfaclty11" class="style6" id="Orgfaclty11" size="15" maxlength="15" /></td>
+
+      <td valign="middle"><input name="PatientT11" id="PatientT11" size="28" maxlength="28" /></td>
+
+      <td valign="middle"><div align="center">
+
+          <input name="HeathStatus11" id="HeathStatus11" size="15" maxlength="15" />
+
+      </div></td>
+
+      <td><textarea style="text-align:left;"
+
+
+
+cols="12" rows="1" name="Bedtype11" id="Bedtype11"  onkeydown="return (event.keyCode!=13);" "
+
+
+
+onkeyup="this.value = fix(this.value);AutoGrowTextArea(this)" placeholder="Be Brief"></textarea></td>
+
+      <td><textarea style="text-align:left;"
+
+
+
+cols="12" rows="1" name="Injurytype11" id="Injurytype11"  onkeydown="return (event.keyCode!=13);" "
+
+
+
+onkeyup="this.value = fix(this.value);AutoGrowTextArea(this)" placeholder="Be Brief"></textarea></td>
+
+      <td><textarea style="text-align:left;"
+
+
+
+cols="12" rows="1" name="Notes11" id="Notes11"  onkeydown="return (event.keyCode!=13);" "
+
+
+
+onkeyup="this.value = fix(this.value);AutoGrowTextArea(this)" placeholder="Be Brief"></textarea></td>
+
+      <td><input name="Disp11" id="Disp11" size="15" maxlength="13" />
+
+      </td>
+
+      <td><input maxlength="15" name="Timestamp11" id="Timestamp11" size="15" onclick="TimeNow('Timestamp11')"/></td>
+
+    </tr>
+
+    <tr valign="middle">
+
+      <td height="4%" style="height: 10px;"><input maxlength="15" name="ID12" id="ID12"size="15" /></td>
+
+      <td><input size="20" name="Lastname12"  maxlength="25" id="Lastname12" />
+
+      </td>
+
+      <td><input id="Firstname12" maxlength="25" name="Firstname12" size="20" /></td>
+
+      <td valign="middle" nowrap="nowrap"><div align="center">
+
+          <input name="Gender12" type="text" id="Gender12" size="10" maxlength="10" />
+
+      </div></td>
+
+      <td valign="middle"><input maxlength="12" name="DOB12" id="DOB12"size="12"  onkeypress="return isNumberKeyD(event)"/></td>
+
+      <td valign="middle" nowrap="nowrap"><div align="center">
+
+          <input name="Minor12" type="text" id="Minor12" size="10" maxlength="10" />
+
+      </div></td>
+
+      <td valign="middle"><div align="center"><span class="style6">
+
+          <input name="Orgfaclty12" id="Orgfaclty12" size="15" maxlength="15" />
+
+      </span></div></td>
+
+      <td valign="middle"><input name="PatientT12" id="PatientT12" size="28" maxlength="28" /></td>
+
+      <td valign="middle"><div align="center">
+
+          <input name="HeathStatus12" id="HeathStatus12" size="15" maxlength="15" />
+
+      </div></td>
+
+      <td><textarea style="text-align:left;"
+
+
+
+cols="12" rows="1" name="Bedtype12" id="Bedtype12"  onkeydown="return (event.keyCode!=13);" "
+
+
+
+onkeyup="this.value = fix(this.value);AutoGrowTextArea(this)" placeholder="Be Brief"></textarea></td>
+
+      <td><textarea style="text-align:left;"
+
+
+
+cols="12" rows="1" name="Injurytype12" id="Injurytype12"  onkeydown="return (event.keyCode!=13);" "
+
+
+
+onkeyup="this.value = fix(this.value);AutoGrowTextArea(this)" placeholder="Be Brief"></textarea></td>
+
+      <td><textarea style="text-align:left;"
+
+
+
+cols="12" rows="1" name="Notes12" id="Notes12"  onkeydown="return (event.keyCode!=13);" "
+
+
+
+onkeyup="this.value = fix(this.value);AutoGrowTextArea(this)" placeholder="Be Brief"></textarea></td>
+
+      <td><input name="Disp12" id="Disp12" size="15" maxlength="13" />
+
+      </td>
+
+      <td><input maxlength="15" name="Timestamp12" id="Timestamp12" size="15" onclick="TimeNow('Timestamp12')"/></td>
+
+    </tr>
+
+    <tr valign="middle">
+
+      <td height="4%" style="height: 10px;"><input maxlength="15" name="ID13" id="ID13"size="15" /></td>
+
+      <td><input size="20" name="Lastname13"  maxlength="25" id="Lastname13" />
+
+      </td>
+
+      <td><input id="Firstname13" maxlength="25" name="Firstname13" size="20" /></td>
+
+      <td valign="middle" nowrap="nowrap"><div align="center">
+
+          <input name="Gender13" type="text" id="Gender13" size="10" maxlength="10" />
+
+      </div></td>
+
+      <td><input maxlength="13" name="DOB13" id="DOB13"size="12"  onkeypress="return isNumberKeyD(event)"/></td>
+
+      <td valign="middle" nowrap="nowrap"><div align="center">
+
+          <input name="Minor13" type="text" id="Minor13" size="10" maxlength="10" />
+
+      </div></td>
+
+      <td valign="middle"><div align="center"><span class="style6">
+
+          <input name="Orgfaclty13" id="Orgfaclty13" size="15" maxlength="15" />
+
+      </span></div></td>
+
+      <td><input name="PatientT13" id="PatientT13" size="28" maxlength="28" /></td>
+
+      <td valign="middle"><div align="center">
+
+          <input name="HeathStatus13" id="HeathStatus13" size="15" maxlength="15" />
+
+      </div></td>
+
+      <td><textarea style="text-align:left;"
+
+
+
+cols="12" rows="1" name="Bedtype13" id="Bedtype13"  onkeydown="return (event.keyCode!=13);" "
+
+
+
+onkeyup="this.value = fix(this.value);AutoGrowTextArea(this)" placeholder="Be Brief"></textarea></td>
+
+      <td><textarea style="text-align:left;"
+
+
+
+cols="12" rows="1" name="Injurytype13" id="Injurytype13"  onkeydown="return (event.keyCode!=13);" "
+
+
+
+onkeyup="this.value = fix(this.value);AutoGrowTextArea(this)" placeholder="Be Brief"></textarea></td>
+
+      <td><textarea style="text-align:left;"
+
+
+
+cols="12" rows="1" name="Notes13" id="Notes13"  onkeydown="return (event.keyCode!=13);" "
+
+
+
+onkeyup="this.value = fix(this.value);AutoGrowTextArea(this)" placeholder="Be Brief"></textarea></td>
+
+      <td><input name="Disp13" id="Disp13" size="15" maxlength="13" />
+
+      </td>
+
+      <td><input maxlength="15" name="Timestamp13" id="Timestamp13" size="15" onclick="TimeNow('Timestamp13')"/></td>
+
+    </tr>
+
+    <tr valign="middle">
+
+      <td height="4%" style="height: 10px;"><input maxlength="15" name="ID14" id="ID14"size="15" /></td>
+
+      <td><input size="20" name="Lastname14"  maxlength="25" id="Lastname14" />
+
+      </td>
+
+      <td><input id="Firstname14" maxlength="25" name="Firstname14" size="20" /></td>
+
+      <td valign="middle" nowrap="nowrap"><div align="center">
+
+          <input name="Gender14" type="text" id="Gender14" size="10" maxlength="10" />
+
+      </div></td>
+
+      <td><input maxlength="13" name="DOB14" id="DOB14"size="12"  onkeypress="return isNumberKeyD(event)"/></td>
+
+      <td valign="middle" nowrap="nowrap"><div align="center">
+
+          <input name="Minor14" type="text" id="Minor14" size="10" maxlength="10" />
+
+      </div></td>
+
+      <td valign="middle"><div align="center"><span class="style6">
+
+          <input name="Orgfaclty14" id="Orgfaclty14" size="15" maxlength="15" />
+
+      </span></div></td>
+
+      <td><input name="PatientT14" id="PatientT14" size="28" maxlength="28" /></td>
+
+      <td valign="middle"><div align="center">
+
+          <input name="HeathStatus14" id="HeathStatus14" size="15" maxlength="15" />
+
+      </div></td>
+
+      <td><textarea style="text-align:left;"
+
+
+
+cols="12" rows="1" name="Bedtype14" id="Bedtype14"  onkeydown="return (event.keyCode!=13);" "
+
+
+
+onkeyup="this.value = fix(this.value);AutoGrowTextArea(this)" placeholder="Be Brief"></textarea></td>
+
+      <td><textarea style="text-align:left;"
+
+
+
+cols="12" rows="1" name="Injurytype14" id="Injurytype14"  onkeydown="return (event.keyCode!=13);" "
+
+
+
+onkeyup="this.value = fix(this.value);AutoGrowTextArea(this)" placeholder="Be Brief"></textarea></td>
+
+      <td><textarea style="text-align:left;"
+
+
+
+cols="12" rows="1" name="Notes14" id="Notes14"  onkeydown="return (event.keyCode!=13);" "
+
+
+
+onkeyup="this.value = fix(this.value);AutoGrowTextArea(this)" placeholder="Be Brief"></textarea></td>
+
+      <td><input name="Disp14" id="Disp14" size="15" maxlength="13" />
+
+      </td>
+
+      <td><input maxlength="15" name="Timestamp14" id="Timestamp14" size="15" onclick="TimeNow('Timestamp14')"/></td>
+
+    </tr>
+
+    <tr valign="middle">
+
+      <td height="4%" style="height: 10px;"><input maxlength="15" name="ID15" id="ID15"size="15" /></td>
+
+      <td><input size="20" name="Lastname15"  maxlength="25" id="Lastname15" />
+
+      </td>
+
+      <td><input id="Firstname15" maxlength="25" name="Firstname15" size="20" /></td>
+
+      <td valign="middle" nowrap="nowrap"><div align="center">
+
+          <input name="Gender15" type="text" id="Gender15" size="10" maxlength="10" />
+
+      </div></td>
+
+      <td><input maxlength="13" name="DOB15" id="DOB15"size="12"  onkeypress="return isNumberKeyD(event)"/></td>
+
+      <td valign="middle" nowrap="nowrap"><div align="center">
+
+          <input name="Minor15" type="text" id="Minor15" size="10" maxlength="10" />
+
+      </div></td>
+
+      <td><div align="center">
+
+          <input name="Orgfaclty15" id="Orgfaclty15" size="15" maxlength="15" />
+
+      </div></td>
+
+      <td><input name="PatientT15" id="PatientT15" size="28" maxlength="28" />
+
+      </td>
+
+      <td valign="middle"><div align="center">
+
+          <input name="HeathStatus15" id="HeathStatus15" size="15" maxlength="15" />
+
+      </div></td>
+
+      <td><textarea style="text-align:left;"
+
+
+
+cols="12" rows="1" name="Bedtype15" id="Bedtype15"  onkeydown="return (event.keyCode!=13);" "
+
+
+
+onkeyup="this.value = fix(this.value);AutoGrowTextArea(this)" placeholder="Be Brief"></textarea></td>
+
+      <td><textarea style="text-align:left;"
+
+
+
+cols="12" rows="1" name="Injurytype15" id="Injurytype15"  onkeydown="return (event.keyCode!=13);" "
+
+
+
+onkeyup="this.value = fix(this.value);AutoGrowTextArea(this)" placeholder="Be Brief"></textarea></td>
+
+      <td><textarea style="text-align:left;"
+
+
+
+cols="12" rows="1" name="Notes15" id="Notes15"  onkeydown="return (event.keyCode!=13);" "
+
+
+
+onkeyup="this.value = fix(this.value);AutoGrowTextArea(this)" placeholder="Be Brief"></textarea></td>
+
+      <td><input name="Disp15" id="Disp15" size="15" maxlength="13" />
+
+      </td>
+
+      <td><input maxlength="15" name="Timestamp15" id="Timestamp15" size="15" onclick="TimeNow('Timestamp15')"/></td>
+
+    </tr>
+
+    <tr valign="middle">
+
+      <td height="92" style="height: 10px;"><input maxlength="15" name="ID16" id="ID16"size="15" /></td>
+
+      <td><input size="20" name="Lastname16"  maxlength="25" id="Lastname16" />
+
+      </td>
+
+      <td><input id="Firstname16" maxlength="25" name="Firstname16" size="20" /></td>
+
+      <td valign="middle" nowrap="nowrap"><div align="center">
+
+          <input name="Gender16" type="text" id="Gender16" size="10" maxlength="10" />
+
+      </div></td>
+
+      <td><input maxlength="13" name="DOB16" id="DOB16"size="12"  onkeypress="return isNumberKeyD(event)"/></td>
+
+      <td valign="middle" nowrap="nowrap"><div align="center">
+
+          <input name="Minor16" type="text" id="Minor16" size="10" maxlength="10" />
+
+      </div></td>
+
+      <td valign="middle"><div align="center">
+
+          <input name="Orgfaclty16" id="Orgfaclty16" size="15" maxlength="15" />
+
+      </div></td>
+
+      <td><input name="PatientT16" id="PatientT16" size="28" maxlength="28" /></td>
+
+      <td valign="middle"><div align="center">
+
+          <input name="HeathStatus16" id="HeathStatus16" size="15" maxlength="15" />
+
+      </div></td>
+
+      <td><textarea style="text-align:left;"
+
+
+
+cols="12" rows="1" name="Bedtype16" id="Bedtype16"  onkeydown="return (event.keyCode!=13);" "
+
+
+
+onkeyup="this.value = fix(this.value);AutoGrowTextArea(this)" placeholder="Be Brief"></textarea></td>
+
+      <td><textarea style="text-align:left;"
+
+
+
+cols="12" rows="1" name="Injurytype16" id="Injurytype16"  onkeydown="return (event.keyCode!=13);" "
+
+
+
+onkeyup="this.value = fix(this.value);AutoGrowTextArea(this)" placeholder="Be Brief"></textarea></td>
+
+      <td><textarea style="text-align:left;"
+
+
+
+cols="12" rows="1" name="Notes16" id="Notes16"  onkeydown="return (event.keyCode!=13);" "
+
+
+
+onkeyup="this.value = fix(this.value);AutoGrowTextArea(this)" placeholder="Be Brief"></textarea></td>
+
+      <td><input name="Disp16" id="Disp16" size="15" maxlength="13" />
+
+      </td>
+
+      <td><input maxlength="15" name="Timestamp16" id="Timestamp16" size="15" onclick="TimeNow('Timestamp16')"/></td>
+
+    </tr>
+
+    <tr valign="middle">
+
+      <td height="4%" style="height: 10px;"><input maxlength="15" name="ID17" id="ID17"size="15" /></td>
+
+      <td><input size="20" name="Lastname17"  maxlength="25" id="Lastname17" />
+
+      </td>
+
+      <td><input id="Firstname17" maxlength="25" name="Firstname17" size="20" /></td>
+
+      <td valign="middle" nowrap="nowrap"><div align="center">
+
+          <input name="Gender17" type="text" id="Gender17" size="10" maxlength="10" />
+
+      </div></td>
+
+      <td><input maxlength="13" name="DOB17" id="DOB17"size="12"  onkeypress="return isNumberKeyD(event)"/></td>
+
+      <td valign="middle" nowrap="nowrap"><div align="center">
+
+          <input name="Minor17" type="text" id="Minor17" size="10" maxlength="10" />
+
+      </div></td>
+
+      <td><div align="center">
+
+          <input name="Orgfaclty17" id="Orgfaclty17" size="15" maxlength="15" />
+
+      </div></td>
+
+      <td><input name="PatientT17" id="PatientT17" size="28" maxlength="28" /></td>
+
+      <td valign="middle"><div align="center">
+
+          <input name="HeathStatus17" id="HeathStatus17" size="15" maxlength="15" />
+
+      </div></td>
+
+      <td><textarea style="text-align:left;"
+
+
+
+cols="12" rows="1" name="Bedtype17" id="Bedtype17"  onkeydown="return (event.keyCode!=13);" "
+
+
+
+onkeyup="this.value = fix(this.value);AutoGrowTextArea(this)" placeholder="Be Brief"></textarea></td>
+
+      <td><textarea style="text-align:left;"
+
+
+
+cols="12" rows="1" name="Injurytype17" id="Injurytype17"  onkeydown="return (event.keyCode!=13);" "
+
+
+
+onkeyup="this.value = fix(this.value);AutoGrowTextArea(this)" placeholder="Be Brief"></textarea></td>
+
+      <td><textarea style="text-align:left;"
+
+
+
+cols="12" rows="1" name="Notes17" id="Notes17"  onkeydown="return (event.keyCode!=13);" "
+
+
+
+onkeyup="this.value = fix(this.value);AutoGrowTextArea(this)" placeholder="Be Brief"></textarea></td>
+
+      <td><input name="Disp17" id="Disp17" size="15" maxlength="13" />
+
+      </td>
+
+      <td><input maxlength="15" name="Timestamp17" id="Timestamp17" size="15" onclick="TimeNow('Timestamp17')"/></td>
+
+    </tr>
+
+    <tr valign="middle">
+
+      <td height="4%" style="height: 10px;"><input maxlength="15" name="ID18" id="ID18"size="15" /></td>
+
+      <td><input size="20" name="Lastname18"  maxlength="25" id="Lastname18" />
+
+      </td>
+
+      <td><input id="Firstname18" maxlength="25" name="Firstname18" size="20" /></td>
+
+      <td valign="middle" nowrap="nowrap"><div align="center">
+
+          <input name="Gender18" type="text" id="Gender18" size="10" maxlength="10" />
+
+      </div></td>
+
+      <td><input maxlength="13" name="DOB18" id="DOB18"size="12"  onkeypress="return isNumberKeyD(event)"/></td>
+
+      <td valign="middle" nowrap="nowrap"><div align="center">
+
+          <input name="Minor18" type="text" id="Minor18" size="10" maxlength="10" />
+
+      </div></td>
+
+      <td><div align="center">
+
+          <input name="Orgfaclty18" id="Orgfaclty18" size="15" maxlength="15" />
+
+      </div></td>
+
+      <td><input name="PatientT18" id="PatientT18" size="28" maxlength="28" /></td>
+
+      <td valign="middle"><div align="center">
+
+          <input name="HeathStatus18" id="HeathStatus18" size="15" maxlength="15" />
+
+      </div></td>
+
+      <td><textarea style="text-align:left;"
+
+
+
+cols="12" rows="1" name="Bedtype18" id="Bedtype18"  onkeydown="return (event.keyCode!=13);" "
+
+
+
+onkeyup="this.value = fix(this.value);AutoGrowTextArea(this)" placeholder="Be Brief"></textarea></td>
+
+      <td><textarea style="text-align:left;"
+
+
+
+cols="12" rows="1" name="Injurytype18" id="Injurytype18"  onkeydown="return (event.keyCode!=13);" "
+
+
+
+onkeyup="this.value = fix(this.value);AutoGrowTextArea(this)" placeholder="Be Brief"></textarea></td>
+
+      <td><textarea style="text-align:left;"
+
+
+
+cols="12" rows="1" name="Notes18" id="Notes18"  onkeydown="return (event.keyCode!=13);" "
+
+
+
+onkeyup="this.value = fix(this.value);AutoGrowTextArea(this)" placeholder="Be Brief"></textarea></td>
+
+      <td><input name="Disp18" id="Disp18" size="15" maxlength="13" />
+
+      </td>
+
+      <td><input maxlength="15" name="Timestamp18" id="Timestamp18" size="15" onclick="TimeNow('Timestamp18')"/></td>
+
+    </tr>
+
+    <tr valign="middle">
+
+      <td height="4%" style="height: 10px;"><input maxlength="15" name="ID19" id="ID19"size="15" /></td>
+
+      <td><input size="20" name="Lastname19"  maxlength="25" id="Lastname19" />
+
+      </td>
+
+      <td><input id="Firstname19" maxlength="25" name="Firstname19" size="20" /></td>
+
+      <td valign="middle" nowrap="nowrap"><div align="center">
+
+          <input name="Gender19" type="text" id="Gender19" size="10" maxlength="10" />
+
+      </div></td>
+
+      <td><input maxlength="13" name="DOB19" id="DOB19"size="12"  onkeypress="return isNumberKeyD(event)"/></td>
+
+      <td valign="middle" nowrap="nowrap"><div align="center">
+
+          <input name="Minor19" type="text" id="Minor19" size="10" maxlength="10" />
+
+      </div></td>
+
+      <td><div align="center">
+
+          <input name="Orgfaclty19" id="Orgfaclty19" size="15" maxlength="15" />
+
+      </div></td>
+
+      <td><input name="PatientT19" id="PatientT19" size="28" maxlength="28" /></td>
+
+      <td valign="middle"><div align="center">
+
+          <input name="HeathStatus19" id="HeathStatus19" size="15" maxlength="15" />
+
+      </div></td>
+
+      <td><textarea style="text-align:left;"
+
+
+
+cols="12" rows="1" name="Bedtype19" id="Bedtype19"  onkeydown="return (event.keyCode!=13);" "
+
+
+
+onkeyup="this.value = fix(this.value);AutoGrowTextArea(this)" placeholder="Be Brief"></textarea></td>
+
+      <td><textarea style="text-align:left;"
+
+
+
+cols="12" rows="1" name="Injurytype19" id="Injurytype19"  onkeydown="return (event.keyCode!=13);" "
+
+
+
+onkeyup="this.value = fix(this.value);AutoGrowTextArea(this)" placeholder="Be Brief"></textarea></td>
+
+      <td><textarea style="text-align:left;"
+
+
+
+cols="12" rows="1" name="Notes19" id="Notes19"  onkeydown="return (event.keyCode!=13);" "
+
+
+
+onkeyup="this.value = fix(this.value);AutoGrowTextArea(this)" placeholder="Be Brief"></textarea></td>
+
+      <td><input name="Disp19" id="Disp19" size="15" maxlength="13" />
+
+      </td>
+
+      <td><input maxlength="15" name="Timestamp19" id="Timestamp19" size="15" onclick="TimeNow('Timestamp19')"/></td>
+
+    </tr>
+
+    <tr valign="middle">
+
+      <td height="4%" style="height: 10px;"><input maxlength="15" name="ID20" id="ID20"size="15" /></td>
+
+      <td><input size="20" name="Lastname20"  maxlength="25" id="Lastname20" />
+
+      </td>
+
+      <td><input id="Firstname20" maxlength="25" name="Firstname20" size="20" /></td>
+
+      <td valign="middle" nowrap="nowrap"><div align="center">
+
+          <input name="Gender20" type="text" id="Gender20" size="10" maxlength="10" />
+
+      </div></td>
+
+      <td><input maxlength="13" name="DOB20" id="DOB20"size="12"  onkeypress="return isNumberKeyD(event)"/></td>
+
+      <td valign="middle" nowrap="nowrap"><div align="center">
+
+          <input name="Minor20" type="text" id="Minor20" size="10" maxlength="10" />
+
+      </div></td>
+
+      <td><div align="center">
+
+          <input name="Orgfaclty20" id="Orgfaclty20" size="15" maxlength="15" />
+
+      </div></td>
+
+      <td><input name="PatientT20" id="PatientT20" size="28" maxlength="28" /></td>
+
+      <td valign="middle"><div align="center">
+
+          <input name="HeathStatus20" id="HeathStatus20" size="15" maxlength="15" />
+
+      </div></td>
+
+      <td><textarea style="text-align:left;"
+
+
+
+cols="12" rows="1" name="Bedtype20" id="Bedtype20"  onkeydown="return (event.keyCode!=13);" "
+
+
+
+onkeyup="this.value = fix(this.value);AutoGrowTextArea(this)" placeholder="Be Brief"></textarea></td>
+
+      <td><textarea style="text-align:left;"
+
+
+
+cols="12" rows="1" name="Injurytype20" id="Injurytype20"  onkeydown="return (event.keyCode!=13);" "
+
+
+
+onkeyup="this.value = fix(this.value);AutoGrowTextArea(this)" placeholder="Be Brief"></textarea></td>
+
+      <td><textarea style="text-align:left;"
+
+
+
+cols="12" rows="1" name="Notes20" id="Notes20"  onkeydown="return (event.keyCode!=13);" "
+
+
+
+onkeyup="this.value = fix(this.value);AutoGrowTextArea(this)" placeholder="Be Brief"></textarea></td>
+
+      <td><input name="Disp20" id="Disp20" size="15" maxlength="13" />
+
+      </td>
+
+      <td><input maxlength="15" name="Timestamp20" id="Timestamp20" size="15" onclick="TimeNow('Timestamp20')"/></td>
+
+    </tr>
+
+  </tbody>
+
+</table></td>
+
+</tr>
+
+<tr>
+
+<td style="height: 30px; text-align: center; vertical-align: middle;" colspan="3"><div align="left"><b><span style="font-weight: normal;"><br />
+
+&nbsp;&nbsp; 4.</span><span style="font-weight: normal;">
+
+  Submitted By</span></b><big>:</big><b>
+
+&nbsp;
+
+  <input required="required" maxlength="40" size="45" id="PreparedName" name="PreparedName" placeholder="Name here same as signature." />
+
+&nbsp;</b><b>&nbsp;&nbsp;</b>Date: 
+
+<input title="Can be overwritten if needed." maxlength="11" size="12" id="Date_Time" name="Date_Time" onclick="DateTime('fulldate',this.id)" placeholder="Click for Date" required="required" />
+
+&nbsp;Time:<b>
+
+&nbsp;</b>
+
+  <input maxlength="10" size="11" id="Time" name="Time" onclick="DateTime('hm',this.id)" placeholder="Click for Time" required="required" />
+
+  <b>
+
+&nbsp; <span style="color: rgb(153, 0, 0);">&nbsp;</span></b>Location:<span style="color: rgb(153, 0, 0);">:</span><b><span style="color: rgb(153, 0, 0);">&nbsp;</span>
+
+&nbsp;
+
+  <input required="required" maxlength="40" size="45" name="Facility" id="Facility"  />
+
+&nbsp;&nbsp;
+
+  <br />
+
+&nbsp; &nbsp;&nbsp;</b><b><b>
+
+</b></b></div></td>
+
+</tr>
+
+<tr>
+
+<td colspan="3"><big> &nbsp;<big></big><big></big>
+    <input class="SubmitBtn" enctype="multipart/form-data" id="Submit"  onclick="CollectData();ExportData(false);clearUnNeeded();" method="Post" name="Submit" value=" Submit " type="submit" />
+</big> &nbsp;
+&nbsp;
+<input type="button" value="Save JPATS Data"  onclick="SaveData()" />
+  <input class="BtnFormat2" value="Reset Form " name="ResetForm"  type="reset" />
+
+&nbsp;
+
+&nbsp; &nbsp;<span style="color: rgb(204, 0, 0);"><b><span style="font-weight: normal;"><big>
+
+<input type="button" value="Export Data to CSV"  onclick="ExportData(true)" />
+
+</big></span></b>&nbsp;</span> &nbsp; &nbsp; &nbsp; &nbsp;
+
+&nbsp;
+
+&nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp;
+
+&nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp;
+
+&nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp;
+
+&nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp;
+
+&nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp;
+
+&nbsp; &nbsp; &nbsp;&nbsp; &nbsp;
+
+&nbsp; &nbsp; &nbsp;<span style="font-style: italic;">&nbsp;<span style="font-weight: bold;">&nbsp; &nbsp; &nbsp; &nbsp;&nbsp;</span>&nbsp; </span>&nbsp;Vers 0.7<span style="font-style: italic;">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 
+
+<input name="testCall" type="hidden" id="testCall" value="{MsgSender}" size="14" maxlength="13" />
+
+<span style="font-style: italic;">
+
+<input name="Templateversion" type="hidden"
+
+
+
+                                    id="Templateversion" value="JPATS 0.7" />
+
+</span></span></td>
+
+</tr>
+
+</tbody>
+
+</table>
+
+<br />
+
+</td>
+
+</tr>
+
+</tbody>
+
+</table>
+
+</form>
+
+</body></html>

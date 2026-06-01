@@ -1,0 +1,581 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml"><head>
+    <meta http-equiv="Content-Type" content="text/html; charset=iso-8859-1" />
+    
+
+    <title>HI Damage Rpt</title><style type="text/css">
+<!--@media print {
+.form-control, .form-control.nobug {
+border: 0;
+outline: 0;
+box-shadow: none;
+font-size:14px;
+}
+}
+ol {
+    line-height:200%;
+}
+.form-control.nobug {
+transition: none; /*-- THIS IS IMPORTANT -- */
+}
+input, textarea {
+outline: none !important;
+box-shadow: none;
+border: none;
+overflow: visible;
+font-family: Arial, Helvetica, sans-serif;
+font-size: 14px;
+}
+table, th, td {
+  border: 1px solid black;
+  border-collapse: collapse;
+}
+.formtext {
+font-family: Arial, Helvetica, sans-serif;
+font-size: 11pt;
+font-weight: normal;
+margin: 10px;
+}
+#TextHeader {
+background-color: #dddddd;
+font-size: 10px;
+font-family: Arial,Helvetica,sans-serif;
+}
+.upload-btn-wrapper {
+position: relative;
+overflow: hidden;
+display: inline-block;
+}
+.btn {
+border: 2px solid gray;
+color: gray;
+background-color: white;
+padding: 8px 20px;
+border-radius: 4px;
+font-size: 12px;
+font-weight: bold;
+}
+.upload-btn-wrapper input[type=file] {
+font-size: 50px;
+position: absolute;
+left: 0;
+top: 0;
+opacity: 0;}
+.upload-btn-wrapper {
+position: relative;
+overflow: hidden;
+display: inline-block;
+}
+.btn {
+border: 2px solid gray;
+color: gray;
+background-color: white;
+padding: 8px 20px;
+border-radius: 4px;
+font-size: 12px;
+font-weight: bold;
+}
+.modal {
+    position: fixed;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.5);
+    opacity: 0;
+    visibility: hidden;
+    transform: scale(1.1);
+    transition: visibility 0s linear 0.25s, opacity 0.25s 0s, transform 0.25s;
+}
+.modal-content {
+    position: absolute;
+    text-align: left;
+    top: 25%;
+    left: 25%;
+    transform: translate(-25%, 0%);
+    background-color: white;
+    padding: 1rem 1.5rem;
+    width: 50rem;
+    border-radius: 0.5rem;
+}
+.close-button {
+    float: right;
+    width: 1.5rem;
+    line-height: 1.5rem;
+    text-align: center;
+    cursor: pointer;
+    border-radius: 0.25rem;
+    background-color: lightgray;
+}
+.close-button:hover {
+    background-color: darkgray;
+}
+.show-modal {
+    opacity: 1;
+    visibility: visible;
+    transform: scale(1.0);
+    transition: visibility 0s linear 0s, opacity 0.25s 0s, transform 0.25s;
+}
+.style14 {font-size: 20pt}
+.style16 {font-size: 18px}
+.style17 {color: #FF0000}
+input[type=button] {
+border: 2px solid #0f88f2;;
+border-radius:.25rem;
+color: black;
+padding: 2px 2px;
+text-decoration: none;
+margin: 2px 2px;
+cursor: pointer;
+}
+input[type=submit] {
+border: 2px solid green;
+border-radius:.25rem;
+background-color: white;
+color: black;
+padding: 2px 2px;
+font-size: 14px;
+cursor: pointer;
+}
+input[type=reset] {
+border: 2px solid red;
+border-radius:.25rem;
+background-color: white;
+color: black;
+padding: 2px 2px;
+font-size: 14px;
+cursor: pointer;
+}
+input[type=black1] {
+border: 2px solid #999999;
+width:225px;
+border-radius:.25rem;
+background-color: white;
+color: black;
+padding: 2px 2px;
+font-size: 14px;
+cursor: pointer;
+}
+.style18 {color: #FF0000;
+font-size: 10px;
+}
+.style18 {font-size: 10px}
+.style8 {font-size: 10px}
+</style>
+<script>
+    function SetDateTime(TType, TheFld, FocusFld) {
+        //id="tformat" value="Local"
+        var txt;
+        var myprompt;
+        var d = new Date(),
+            thisyear = d.getFullYear();
+        thismonth = d.getMonth();
+        thisday = d.getDate();
+        if (thisday < 10) { thisday = "0" + thisday }
+        var monname;
+        h = (d.getHours() < 10 ? '0' : '') + d.getHours()
+        m = (d.getMinutes() < 10 ? '0' : '') + d.getMinutes()
+        s = (d.getSeconds() < 10 ? '0' : '') + d.getSeconds();
+        var now = new Date();
+        var utch = now.getUTCHours();
+        if (utch < 10) { utch = "0" + utch };
+        var utcs = now.getUTCMinutes();
+        if (utcs < 10) { utcs = "0" + utcs };
+        var myUTCtime = utch + ":" + utcs + "Z";
+        var utcstr = d.toUTCString();
+        var localt = d.toLocaleTimeString();
+        var isostr = d.toISOString();
+        var UTCyear = d.getUTCFullYear();
+        //monthname = shortmonth (thismonth);
+        var UTCmon = d.getUTCMonth(); var UTCmon = UTCmon + 1;
+        if (UTCmon < 10) { UTCmon = "0" + UTCmon }
+        var UTCdate = d.getUTCDate(); thismonth = thismonth + 1;
+        if (thismonth < 10) { thismonth = "0" + thismonth };
+        //if (thismonth < 10) { thismonth = "0" + thismonth}
+        myUTCdate = UTCyear + '-' + UTCmon + '-' + UTCdate;
+        switch (TType) {
+            case 'hms':
+                myprompt = h + ':' + m + ':' + s;
+                var RightNow = prompt("Time:", myprompt);
+                document.getElementById(TheFld).value = RightNow;
+                break;
+            case 'hm':
+                //var cformat =document.getElementById('tformat').checked;
+                var myprompt = h + ':' + m;
+                var RightNow = prompt("Time:", myprompt);
+                document.getElementById(TheFld).value = RightNow;
+                break;
+            case 'm-d-y': myprompt = thismonth + '-' + thisday + '-' + thisyear;
+                var RightNow = prompt("Date:", myprompt);
+                document.getElementById(TheFld).value = RightNow;
+                break;
+            case 'm/d/y': myprompt = thismonth + '/' + thisday + '/' + thisyear;
+                var RightNow = prompt("Date:", myprompt);
+                document.getElementById(TheFld).value = RightNow;
+                break;
+            case 'd mmm y': myprompt = thisday + ' ' + monthname + ' ' + thisyear;
+                var RightNow = prompt("Date:", myprompt);
+                document.getElementById(TheFld).value = RightNow;
+                break;
+            case 'mmm-d-y': myprompt = monthname + '-' + thisday + '-' + thisyear;
+                var RightNow = prompt("Date:", myprompt);
+                document.getElementById(TheFld).value = RightNow;
+                break;
+            case 'localampm': var myprompt = localt;
+                var RightNow = prompt("Local time:", myprompt);
+                document.getElementById(TheFld).value = RightNow;
+                break;
+            case 'fulldate': //var cformat =document.getElementById('tformat').checked;
+                var myprompt = thisyear + '-' + thismonth + '-' + thisday;
+                var RightNow = prompt("Date:", myprompt);
+                document.getElementById(TheFld).value = RightNow;
+                break;
+            case 'fulldatetime': var myprompt = thisyear + '-' + thismonth + '-' + thisday + ' ' + h + ':' + m;
+                var RightNow = prompt("Date time:", myprompt);
+                document.getElementById(TheFld).value = RightNow;
+                break;
+            case 'autodate': var RightNow = thisyear + '-' + thismonth + '-' + thisday;
+                //var RightNow = prompt("Date time:", myprompt);
+                document.getElementById(TheFld).value = RightNow;
+                break;
+            case 'autotime': var RightNow = h + ':' + m;
+                //var RightNow = prompt("Date time:", myprompt);
+                document.getElementById(TheFld).value = RightNow;
+                break;
+            case 'iso': var myprompt = isostr;
+                var RightNow = prompt("Date time:", myprompt);
+                document.getElementById(TheFld).value = RightNow;
+                break;
+            case 'utc': var myprompt = utcstr;
+                var RightNow = prompt("Date time:", myprompt);
+                document.getElementById(TheFld).value = RightNow;
+                break;
+            case 'zulu': var myprompt = isostr;
+                myprompt = isostr.replace("T", " "); slen = myprompt.length;
+                myprompt = myprompt.substr(0, slen - 5);
+                var RightNow = prompt("Date time:", myprompt);
+            // if(FocusFld !== null && FocusFld !== '') {document.getElementById(FocusFld).focus()} --/
+        }
+    }
+    function AutoGrowTextArea(textField) {
+        if (textField.clientHeight < textField.scrollHeight) {
+            textField.style.height = (textField.scrollHeight * 2 - textField.clientHeight) + "px";
+        }
+    }
+    function makestr() {
+        d1 = document.getElementById("DR_num").value; d2 = document.getElementById("Priority2").value; var txtStr = "";
+        document.getElementById("txtStr").value = txtStr;
+    }
+    function fixcurly(n) {
+        n = n.replace(/[\u2018\u2019]/g, "'") // smart single quotes
+        n = n.replace(/[\u201C\u201D]/g, '"'); // smart double quotes
+        return n;
+    }
+    function Fixcurlymsg() {
+        var n = document.getElementById("Message").value
+        n = n.replace(/[\u2018\u2019]/g, "'") // smart single quotes
+        n = n.replace(/[\u201C\u201D]/g, '"'); // smart double quotes
+        document.getElementById("Message").value = n
+    }
+    function Checkifinbrowser() {
+        var x = document.getElementById("testCall").value; var n = x.search("{Msg");
+        if (n > -1) {
+            document.getElementById('Submit').style.visibility = 'hidden';
+            alert('You are running this form outside of Winlink.\n \nWhen you have composed your Message, SAVE the data and then send that SAVED data file to the radio operator. \nThe operator will enter that SAVED data to send as an ICS213 for you. Reply and Viewing forms do not work outside of Express. Any reply will be sent back as an HTML, PDF, or plain text.');
+        } else { document.getElementById('Submit').style.visibility = 'visible'; }
+    }
+    function destroyClickedElement(event) {
+        document.body.removeChild(event.target);
+    }
+    function isObject(arg) {
+        return Object.prototype.toString.call(arg) === '[object Object]';
+    }
+    window.onload = function () {
+        getit();
+    }
+    function checkzero(num) {
+        var num = num * 1;
+        return num;
+    }
+    function splitPaste(str) {
+        var d = str.split(',');
+        if (d.length > 1) {
+            document.getElementById('mapLat').value = checkzero(d[0].substring(0,8));
+            document.getElementById('mapLon').value = checkzero(d[1].substring(0,10));
+        }
+    }
+    function CheckLat() {
+        var latCheck = 1;
+        var num = document.getElementById('mapLat').value;
+        var z1 = (Number(num));
+        if ((num < 18) || (num > 23) || isNaN(z1)) {
+            alert('Hawaiian Latitude must be between 18 and 23 degrees');
+            document.getElementById('mapLat').value = '';
+            document.getElementById('mapLat').focus();
+            latCheck = 0;
+        }
+        return latCheck;
+    }
+    function CheckLon() {
+        var lonCheck = 1;
+        var num = document.getElementById('mapLon').value;
+        var z1 = (Number(num));
+        if ((num < -162) || (num > -153) || isNaN(z1)) {
+            alert('Hawaiian Longitude must be between -153 and -162 degrees');
+            document.getElementById('mapLon').value = '';
+            document.getElementById('mapLon').focus();
+            lonCheck = 0;
+        } return lonCheck;
+    }
+    function checkLatLon() {
+        var cnt = 1;
+        var x1 = CheckLat();
+        var x2 = CheckLon();
+        if (x1 == 1 && x2 == 1) { // now set string for latlon
+            var mlat = document.getElementById('mapLat').value;
+            var mlon = document.getElementById('mapLon').value;
+        }
+    }
+    function getit() {
+        var val = localStorage.getItem('RFAIncName');
+        document.getElementById('inc_name').value = val;
+        val = localStorage.getItem('DRFmName');
+        document.getElementById('fm_name').value = val;
+        var z1 = '{Latitude}';
+        var z2 = '{Longitude}';
+        document.getElementById('mapLat').value = checkzero(z1);
+        document.getElementById('mapLon').value = checkzero(z2);
+        //checkLatLon();
+    }
+    function storeit() {
+        var val = document.getElementById('inc_name').value;
+        localStorage.setItem('RFAIncName', val);
+        val = document.getElementById('fm_name').value;
+        localStorage.setItem('DRFmName', val);
+// Incident:T=j0
+// DateTime:T=j1
+// From:T=j2
+// Latitude:T=j4
+// Longitude:T=j5
+// Damage:T=j6
+// When:T=j7
+// Where:T=j8
+// Who:T=j9
+// Injuries:T=j9A
+        var txtdata = document.getElementById('FormData').value;
+        val = document.getElementById('inc_name').value;
+        txtdata = txtdata.replace('j0', val);
+
+        val = new Date().toISOString();
+        txtdata = txtdata.replace('j1', val);
+
+        val = document.getElementById('fm_name').value;
+        txtdata = txtdata.replace('j2', val);
+
+        val = document.getElementById('mapLat').value;
+        txtdata = txtdata.replace('j4', val);
+
+        val = document.getElementById('mapLon').value;
+        txtdata = txtdata.replace('j5', val);
+
+        val = document.getElementById('dmg_report').value.split('\n')[0];
+        txtdata = txtdata.replace('j6', val);
+
+        val = document.getElementById('dmg_when').value;
+        txtdata = txtdata.replace('j7', val);
+
+        val = document.getElementById('dmg_where').value;
+        txtdata = txtdata.replace('j8', val);
+
+        val = document.getElementById('dmg_who').value;
+        txtdata = txtdata.replace('j9', val);
+
+        val = document.getElementById('dmg_injuries').value.split('\n')[0];
+        txtdata = txtdata.replace('j9A', val);
+
+        //temp1 = removeLinebreaks(temp1);
+        document.getElementById('attached_text').value = txtdata;
+
+        val = document.getElementById("Version").innerText;
+        document.getElementById("TemplateVersion").value = val;
+    }
+
+    function checkform(e) {
+        checkLatLon();
+        var val = document.getElementById('to_county').value;
+        if (val.length < 2) {
+            alert("Please select county");
+            document.getElementById('to_county').focus();
+            e.preventDefault();
+            return;
+        }
+        storeit();
+    }
+</script></head>
+
+
+<body>
+<b>
+</b><span style="font-size: 12px;"></span>
+<form style="font-family: Arial;" onsubmit="return confirm('To complete your form submission, click OK and close the open browser window. You will return to the new message window so you can post your message to the outbox');" 
+    method="post" id="myform" enctype="multipart/form-data" action="http://{FormServer}:{FormPort}">
+    <table style="width: 962px; height: 670px;" cellpadding="3" cellspacing="0">
+        <colgroup><col width="657" /></colgroup>
+        <tbody>
+            <tr style="background-color: #f5f5f5; vertical-align: top">
+                <td style="width: 248px;" colspan="3" height="31">
+                    <div style="text-align: center"><span class="style6">&nbsp;<span style="font-weight: bold;">
+                        Hawaii Damage Report</span><span class="style16"></span></span><span class="style16"><br />
+                            <span class="style16" id="SubjectText"><strong>
+                                </strong></span><span class="formtext"></span></span>
+                            <div style="margin-left: 40px; text-align: right;">
+                                <button class="trigger" onclick="event.preventDefault()">Form Instructions</button>
+                                <div class="modal">
+                                    <div class="modal-content">
+                                    <span class="close-button">x</span>
+<b>Damage Report Form Instructions</b><br /><br />
+<div style="height: 400px; overflow-y: scroll; margin-right: 20px;">
+<ol>
+<li>Incident name: name of the incident or event (it will be saved for the next time the form is used).</li>
+<li>From: the originator of the form contents.</li>
+<li>County: the county that the location of the damage resides.</li>
+<li>Date: current date.</li>
+<li>Time: current time.</li>
+<li>Location Coordinates: the latitude and longitude of the delivery site. Please use 4 to 5 decimal digits right of decimal pt.</li>
+<li>What Happened: a concise description of what damage has happened.  Required field.</li>
+<li>When: date and time of when the damage occurred.  Required field.</li>
+<li>Where: street address and/or nearest intersection or mile marker.  Required field.</li>
+<li>Who affected: number of persons injured or affected by the damage.  Required field.</li>
+<li>Any injuries: type and extent of any known injuries.  Required field.</li>
+<li>Recorded by: optional field of radio operator recording this report and their call sign.</li>
+</ol></div>
+                                </div>
+                                </div>
+                            </div>
+                    </div>
+                </td>
+            </tr>
+            <tr>
+                <td style="height: 28px;" colspan="3">This Report is an 
+                    <input name="xeventtype" type="radio" onclick="document.getElementById('eventType').value = 'EXERCISE MSG'" checked />
+                    Exercise Message &nbsp; &nbsp;
+                    <input name="xeventtype" type="radio" onclick="document.getElementById('eventType').value = ''"/> 
+                    <span style="color: rgb(204, 0, 0);">REAL EVENT</span>
+                    <input name="eventType" type="hidden" id="eventType" value="EXERCISE MSG" />
+                </td>
+            </tr>
+            <tr>
+                <td style="height: 28px;" colspan="3">1.
+                    Incident Name:&nbsp; <input placeholder="Incident name is optional" name="inc_name" id="inc_name" size="55" />
+                    &nbsp;&nbsp;</td>
+            </tr> 
+            <tr>
+                <td style="height: 28px;" colspan="3">2.
+                    From (Name/Position):&nbsp; <input required="" name="fm_name" id="fm_name" size="65" placeholder="Required" maxlength="60" /></td>
+            </tr>
+            <tr>
+                <td style="height: 28px;">3. County: &nbsp;<select name="to_county" id="to_county">
+                    <option selected></option>
+                    <option>Hawaii</option>
+                    <option>Honolulu</option>
+                    <option>Kalawao</option>
+                    <option>Kauai</option>
+                    <option>Maui</option></select>
+                </td>
+                <td style="width: 250px; height: 28px;">4.
+                    Date:&nbsp; <input required title="Click to change the date or overwrite" name="Mdate"
+                    id="Mdate" placeholder="Required" size="11" maxlength="10" onclick="SetDateTime('fulldate',this.id)" /></td>
+                <td style="width: 250px; height: 28px;">5.
+                    Time:&nbsp; <input required title="Click to change the time or overwrite" name="Mtime"
+                    id="Mtime" placeholder="Required" size="9" maxlength="9" onclick="SetDateTime('hm',this.id)" /></td>
+            </tr>
+            <tr>
+                <td style="height: 91px;" colspan="3">
+                    6. Location Coordinates: &nbsp;LAT&nbsp;
+                    <input style="border: 1px solid rgb(0, 0, 0);" name="mapLat" id="mapLat" placeholder="ex: 21.3073" onchange="splitPaste(this.value); CheckLat();" size="12" required="" />&nbsp;LON&nbsp;
+                    <input style="border: 1px solid rgb(0, 0, 0);" name="mapLon" id="mapLon" placeholder="ex:-157.8659" onchange="checkLatLon()" size="12" required="" /> <br />
+                    <br />
+                    <div style="text-align: center;"><span class="style12">LAT & LON default to the center of the grid
+                            square listed in Express Settings<br />
+                            IF a GPS is not available, LAT & LON must be entered manually</span><br />
+                        <strong style="color: rgb(204, 0, 0);">Without
+                            properly formatted GPS coordinates this form cannot be mapped in
+                            Winlink Express</strong>
+                    </div>
+                </td>
+            </tr>
+            <tr style="vertical-align: top;">
+                <td colspan="3">7. What Happened:<br />
+                    <textarea required onchange="AutoGrowTextArea(this);this.value=fixcurly(this.value);" onkeyup="AutoGrowTextArea(this)"
+                        style="padding-left: 20px;" placeholder="Keep it concise (Required)" id="dmg_report" rows="5" cols="125" name="dmg_report"></textarea>
+                </td>
+            </tr>
+            <tr><td colspan="3" style="height: 28px;">8. When:&nbsp; 
+                <input required name="dmg_when" id="dmg_when" size="65" placeholder="Date & Time of when the damage occurred  (Required)"/></td></tr>
+            <tr><td colspan="3" style="height: 28px;">9. Where:&nbsp; 
+                <input required name="dmg_where" id="dmg_where" size="65" placeholder="Street addr, intersection, mile marker  (Required)"/></td></tr>
+            <tr><td colspan="3">10. Who affected:
+                <input required name="dmg_who" id="dmg_who" size="65" placeholder="Number of persons (Required)"/>
+            </td></tr>
+            <tr style="vertical-align: top;">
+                <td colspan="3">11. Any Injuries:
+                <textarea required onchange="AutoGrowTextArea(this);this.value=fixcurly(this.value);" onkeyup="AutoGrowTextArea(this)"
+                style="padding-left: 20px;" placeholder="Type and extent of injuries (Required)" id="dmg_injuries" rows="2" cols="125" name="dmg_injuries"></textarea>
+            </td></tr>
+            <tr><td colspan="3" style="height: 28px;">12. Recorded by:&nbsp; 
+                <input name="Recorded_Name" id="Recorded_Name" size="35" maxlength="30"/>
+                &nbsp;&nbsp;&nbsp;Call Sign: &nbsp;
+                <input name="Recorded_call" id="Recorded_call" size="35" maxlength="30" value="{MsgSender}"/>
+                
+                <textarea name="attached_text" cols="140" rows="3" id="attached_text" style="display: none;"></textarea>
+                <input name="attached_file" id="attached_file" value="FormData.txt" type="hidden" />
+                <textarea name="FormData" id="FormData" style="display: none;">MapFileName:T=Hawaii Damage Rpt
+Incident:T=j0
+DateTime:T=j1
+From:T=j2
+Latitude:T=j4
+Longitude:T=j5
+Damage:T=j6
+When:T=j7
+Where:T=j8
+Who:T=j9
+Injuries:T=j9A
+Sender:T={MsgSender}</textarea>
+                    <input name="TemplateVersion" id="TemplateVersion" type="hidden" />
+                </td>
+            </tr>
+            <tr style="background-color: #f5f5f5;">
+                <td style="height: 38px;" colspan="2">
+                    <input value="Submit" style="width: 70px;" size="8" name="Submit" method="Post" id="Submit" 
+                        enctype="multipart/form-data" class="SubmitBtn" onclick="checkform(event)" type="submit" />&nbsp;
+                    <input class="BtnFormat2" value="Reset Form " name="ResetForm" type="reset" />
+                </td>
+                <td>
+                    <div style="text-align: center;"><span id="Version">Ver 1.1</span></div>
+                </td>
+            </tr>
+        </tbody>
+    </table>
+    <br />
+</form>
+<script>
+//Modal instructions
+const modal = document.querySelector(".modal");
+const trigger = document.querySelector(".trigger");
+const closeButton = document.querySelector(".close-button");
+
+function toggleModal() {
+    modal.classList.toggle("show-modal");
+}
+
+function windowOnClick(event) {
+    if (event.target === modal) {
+        toggleModal();
+    }
+}
+
+trigger.addEventListener("click", toggleModal);
+closeButton.addEventListener("click", toggleModal);
+window.addEventListener("click", windowOnClick);
+</script>
+</body></html>

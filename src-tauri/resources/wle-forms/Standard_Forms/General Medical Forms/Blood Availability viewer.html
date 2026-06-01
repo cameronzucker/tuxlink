@@ -1,0 +1,532 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml"><head>
+<meta http-equiv="content-type" content="application/xhtml+xml; charset=utf-8" /><title>Blood Availability</title>
+
+<style type="text/css">
+
+/*
+body {color:#000; background:#fff; font:100%/1.5 arial,sans-serif;}
+h2 {margin-top:0}
+*/
+/* Styling applied to classes only */
+/* Pop-up content shifted off-screen when not in view.
+Still readable by screen-reader software.
+When targeted it fills the browser window.
+*/
+.pop-up {
+	position:absolute;
+	top:0;
+	left:-500em;
+	visibility: visible;
+}
+.pop-up:target {position:static; left:0;}
+/* The pop-up itself */
+.popBox { 
+	background:#ffffff;
+	position:absolute;
+	left:25%;
+	right:25%;
+	top:20%;
+	bottom:20%;
+	z-index:10;
+	border:1px solid #3a3a3a;
+/* CSS3 where available: rounded corners, drop-shadow, and fade in. */
+border-radius:.25rem;
+box-shadow:0 .5rem .5rem rgba(0,0,0,.5);
+	opacity:0;
+	transition: opacity 0.8s ease-out;
+	visibility: visible;
+}
+:target .popBox {position:fixed; opacity:1;}
+/* Light box properties */
+.lightbox {
+display:none;
+text-indent:-200em;
+background-color:rgba(0,0,0,.4);
+width:100%;
+height:100%;
+position:fixed;
+top:0;
+left:0;
+bottom:0;
+right:0;
+z-index:5;
+}
+:target .lightbox {display:block;}
+/* The pop-ups close link, moved via CSS to the top right of the pop-up */
+.close:link,
+.close:visited {
+	position: absolute;
+	top: -0.75em;
+	right: -0.75em;
+	display: block;
+	width: 2em;
+	height: 2em;
+	line-height: 1.8;
+	padding: 0;
+	text-align: center;
+	text-decoration: none;
+	background-color: #000;
+	border: 2px solid #fff;
+	color: #fff;
+	border-radius: 50%;
+box-shadow: 0 0 .5rem .5rem rba(0,0,0,.5);
+	z-index: 12;
+	visibility: visible;
+}
+.close:before {content:"X";}
+.close:hover,
+.close:active,
+.close:focus {
+box-shadow: 0 0 .5rem .5rem rba(255,0,0,.5);
+background-color: #c00;
+color: #fff;
+}
+.close span {
+text-indent: -200em;
+display: block;
+}
+/* The pop-up content div will scroll if it has too much content */
+.popScroll {
+	position:absolute;
+	top: 1rem;
+	left: 1rem;
+	right: 1rem;
+	bottom: 1rem;
+	overflow-y: auto;
+*overflow-y: scroll;
+	padding-right: 0.5em;
+	z-index: 11;
+	visibility: visible;
+}
+.popScroll h2 {margin-top:0}
+.style6 {
+	font-family: Arial, Helvetica, sans-serif;
+	font-size: 20px;
+	font-weight: bold;
+}
+.formtext1 {font-family: Arial, Helvetica, sans-serif;
+font-size: 10pt;
+font-weight: normal;
+}
+body, td, th {
+    font-family: Arial,Helvetica,sans-serif;
+    font-size: 14px;
+    font-weight: bold;
+}
+.zentriert {
+font-size: 14px;
+font-family: Arial,Helvetica,sans-serif;
+font-weight: inherit;
+}
+    
+    input:focus{
+    outline-color : lightskyblue;
+    outline-width : 5px;
+    border : 1px solid blue;
+}
+input, select {
+    padding: 1px;
+    -moz-border-radius-topleft: 2px;
+    -moz-border-radius-topright: 2px;
+    -moz-border-radius-bottomright: 2px;
+    -moz-border-radius-bottomleft: 2px;
+    font-family: Arial,Helvetica,sans-serif;
+    font-size: 14px;
+    font-weight: inherit;
+    font-style: normal;
+}
+textarea {
+padding: 1px;
+-moz-border-radius-topleft: 2px;
+-moz-border-radius-topright: 2px;
+-moz-border-radius-bottomright: 2px;
+-moz-border-radius-bottomleft: 2px;
+font-family: Arial,Helvetica,sans-serif;
+font-size: 14px;
+font-weight: inherit;
+}
+    textarea:focus{
+    outline-color : lightskyblue;
+    outline-width : 5px;
+    border : 1px solid blue;
+.rechtsbuendig {
+font-size: 14px;
+font-family: Arial,Helvetica,sans-serif;
+font-weight: inherit;
+}
+.SubmitBtn {
+font-size: 14px;
+font-family: Arial,Helvetica,sans-serif;
+font-weight: inherit;
+}
+.version {
+color: #666666;
+position: relative;
+left: 0px;
+top: 3px;
+font-size: 14px;
+font-family: Arial,Helvetica,sans-serif;
+font-weight: inherit;
+}
+</style>
+<style type="text/css">
+.style4 {
+    font-size: 18px;
+    font-style: normal;
+    font-weight: normal;
+}
+.style3 {font-size: 14px; font-weight: normal; font-family: Arial, Helvetica, sans-serif; }
+.style12 {
+	color: #FF0000;
+	font-style: italic;
+}
+.style15 {font-size: 14px; }
+.style20 {font-size: 18px}
+.style22 {
+    font-family: Arial, Helvetica, sans-serif;
+    font-style: normal;
+    color: #0A0000;
+}
+.style23 {color: #FF0000}
+
+ input[type=button] {
+
+  border: 1.75px solid #0f88f2;;
+   border-radius:.25rem;
+  
+  font-size: 14px;
+  padding: 2px 2px;
+ background-color: white;
+  text-decoration: none;
+  margin: 2px 2px;
+  cursor: pointer;
+}
+input[type=submit] {
+ border: 1.75px solid green;
+  border-radius:.25rem;
+  background-color: white;
+ 
+  padding: 2px 2px;
+  font-size: 14px;
+   cursor: pointer;
+}
+input[type=reset] {
+ border: 1.75px solid red;
+ border-radius:.25rem;
+  background-color: white;
+ 
+  padding: 2px 2px;
+  font-size: 14px;
+   cursor: pointer;
+}
+input[type=regular] {
+ border: 1.75px solid #999999;
+  border-radius:.25rem;
+width:40px;
+  background-color: white;
+ 
+  padding: 2px 2px;
+  font-size: 14px;
+   cursor: pointer;
+}
+
+.style25 {
+    font-family: Arial, Helvetica, sans-serif;
+    color: #333333;
+    font-weight: normal;
+    text-align: right;
+}
+.style45 {font-size: 12px}
+.style45 {color: #2A5F00}
+.style47 {color: #000000}
+.style9 {font-size: 12px}
+.style221 {font-family: Arial, Helvetica, sans-serif;  }
+.style27 {font-size: 12px}
+</style>
+<script type="text/javascript">
+
+
+    
+</script>
+</head>
+<body >
+
+<span style="font-family:  Arial, Helvetica, sans-serif;"> </span>
+
+<form  style="font-family: Arial;" pbzloc="3" onsubmit="return confirm('To complete your form submission, click OK and close the open browser window. You will return to the new message window so you can post your message to the outbox');" method="post" id="myform" enctype="multipart/form-data" action="http://{FormServer}:{FormPort}">
+<table style="width: 951px; height: 406px;" align="center" border="0">
+<tbody>
+<tr>
+<td><span style="font-family:  Arial, Helvetica, sans-serif;;">&nbsp;</span>
+<table width="10100%"  border="3" cellpadding="4" cellspacing="0" bordercolor="#999999" style="font-size: 14px; width: 829px; ">
+<tbody>
+<tr>
+<td width="100%" height="71" valign="top" bgcolor="#dee9f9" style="vertical-align: bottom; height: 5%; text-align: center; background-color: "><p style="font-family:  Arial, Helvetica, sans-serif;;">&nbsp;
+  <span class="style4">Blood Availability</span><br />
+
+  <input type="file" id="txtfiletoread" accept=".txt"  style="display: none;"/>
+<table width="100%"  border="0" cellpadding="0" cellspacing="0" bordercolor="#dee9f9">
+    <tr>
+     
+      </tr>
+  </table>
+ 
+  </tr>
+<tr>
+  <td valign="top" nowrap="nowrap" style="vertical-align: middle; text-align: center; width: 50%; font-weight: normal;">
+  <div align="left">
+    <p><span class="style13"> {var IsExercise}</p>
+    <p><span style="color: black;"><span style="font-family:  Arial, Helvetica, sans-serif;; color: black;"><strong>&nbsp;Date/Time:</strong></span></span> <span class="style15">&nbsp;</span> 
+      <input name="DateTime" id="DateTime" tabindex="1" onclick="TimeNow('DateTime', true)" value="{var DateTime}" size="21" maxlength="19" readonly="readonly" /> 
+      &nbsp;&nbsp; &nbsp;<span style="font-size: 14px;">
+        <span style="font-size: 14px;">
+          <input name="timestamp" type="hidden" id="timestamp" size="30" />
+          </span><input name="timestamp2" type="hidden" id="timestamp2" size="40" />
+      </span></p>
+    <p><strong>&nbsp;Facility Name: </strong><strong></strong><span style="font-weight: normal">
+      <input  name="FacilityName" id="FacilityName" placeholder="Facility name" tabindex="2" title="Send to"  onblur="store()" value="{var FacilityName}" size="75" maxlength="75" />
+    </span>&nbsp;<span class="style3">
+        <input name="Organization" type="hidden" id="Organization" value="Winlink Net" />
+        &nbsp;</span><span class="style12"><a href="javascript:clearsendto();" class="style23">.</a>
+          <input name="internetcheck" type="hidden" id="internetcheck" value="{InternetAvailable} " />
+          <input name="GPSvalid" type="hidden" id="GPSvalid" value="{GPSValid} " />
+          </span></p>
+    <p><span class="style12"><strong class="style22">Facility Address: <span style="font-weight: normal">
+      <input  name="Address" id="Address" placeholder="Facility name" tabindex="2" title="Send to"  onblur="store()" value="{var Address}" size="100" maxlength="100" readonly="readonly" />
+    </span></strong><br />
+      </span><span style="font-family:  Arial, Helvetica, sans-serif;;"><br />
+        </span><span class="style22">&nbsp;<strong>Facility Contact Name</strong>: </span>
+      <span style="font-weight: normal">
+        <input  name="ContactName" id="ContactName" placeholder="Facility Contact Name" tabindex="3" value="{var ContactName}" size="25" maxlength="25" />
+        &nbsp; </span>&nbsp;<span class="style22">&nbsp;</span>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span style="font-weight: normal"> </span>&nbsp;<span class="style221">&nbsp;</span>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<strong>Facility Phone Number: </strong><span style="font-weight: normal">
+        <input  name="PhoneNumber" autofocus="autofocus" id="PhoneNumber" placeholder="Facility Contact Name" tabindex="3" title="Name of Facility Phone number" value="{var PhoneNumber}" size="25" maxlength="25" readonly="readonly" />
+        </span><br />
+      <span style="font-family:  Arial, Helvetica, sans-serif;;"></span></p>
+  </div>
+  </td>
+</tr>
+<tr>
+  <td nowrap="nowrap" style="vertical-align: middle; text-align: left; width: 50%; font-weight: normal;"><table width="100%" border="1" cellspacing="00" cellpadding="1">
+    <tbody>
+      <tr>
+        <td width="21%"><p><strong>&nbsp;&nbsp;&nbsp;BLOOD AVAILABLITY<br />
+        </strong></p>
+          <p>&nbsp;</p></td>
+        <td width="79%"><table width="71%" border="1" cellspacing="00" cellpadding="4">
+          <tbody>
+            <tr>
+              <td colspan="8" bgcolor="#ff9999" style="font-weight: bold">RED BLOOD CELLS</td>
+            </tr>
+            <tr>
+              <td width="66" style="font-weight: bold">O+</td>
+              <td width="66" style="font-weight: bold">O-</td>
+              <td width="66" style="font-weight: bold">A+</td>
+              <td width="66" style="font-weight: bold">A-</td>
+              <td width="66" style="font-weight: bold">B+</td>
+              <td width="59"font-weight:="font-weight:" bold="bold"">B-</td>
+              <td width="51" style="font-weight: bold">AB+</td>
+              <td width="66" style="font-weight: bold">AB-</td>
+            </tr>
+            <tr>
+              <td><span class="style9">
+                <input name="Btype1" type="text" id="Btype1"   tabindex="96" value="{var Btype1}" size="6" maxlength="5" readonly="readonly" />
+              </span></td>
+              <td><span class="style9">
+                <input name="Btype2" type="text" id="Btype5"   tabindex="96" value="{var Btype2}" size="6" maxlength="5" readonly="readonly" />
+              </span></td>
+              <td><span class="style9">
+                <input name="Btype3" type="text" id="Btype6"   tabindex="96" value="{var Btype3}" size="6" maxlength="5" readonly="readonly" />
+              </span></td>
+              <td><span class="style9">
+                <input name="Btype4" type="text" id="Btype7"   tabindex="96" value="{var Btype4}" size="6" maxlength="5" readonly="readonly" />
+              </span></td>
+              <td><span class="style9">
+                <input name="Btype5" type="text" id="Btype8"   tabindex="96" value="{var Btype5}" size="6" maxlength="5" readonly="readonly" />
+              </span></td>
+              <td><span class="style9">
+                <input name="Btype6" type="text" id="Btype17"   tabindex="96" value="{var Btype6}" size="6" maxlength="5" readonly="readonly" />
+              </span></td>
+              <td><span class="style9">
+                <input name="Btype7" type="text" id="Btype18"   tabindex="96" value="{var Btype7}" size="6" maxlength="5" readonly="readonly" />
+              </span></td>
+              <td><span class="style9">
+                <input name="Btype8" type="text" id="Btype19"   tabindex="96" value="{var Btype7}" size="6" maxlength="5" readonly="readonly" />
+              </span></td>
+            </tr>
+          </tbody>
+        </table>
+          <table width="257" border="1" cellpadding="4" cellspacing="00">
+            <tbody>
+              <tr>
+                <td colspan="4" bgcolor="#FFFFE0" style="font-weight: bold">PLASMA</td>
+              </tr>
+              <tr>
+                <td width="25%" style="font-weight: bold">O</td>
+                <td width="24%" style="font-weight: bold">A</td>
+                <td width="25%" style="font-weight: bold">B</td>
+                <td width="26%" style="font-weight: bold">AB</td>
+              </tr>
+              <tr>
+                <td><span class="style9">
+                  <input name="Btype9" type="text" id="Btype9"   tabindex="96" value="{var Btype9}" size="6" maxlength="5" readonly="readonly" />
+                </span></td>
+                <td><span class="style9">
+                  <input name="Btype10" type="text" id="Btype2"   tabindex="96" value="{var Btype10}" size="6" maxlength="5" readonly="readonly" />
+                </span></td>
+                <td><span class="style9">
+                  <input name="Btype11" type="text" id="Btype3"   tabindex="96" value="{var Btype11}" size="6" maxlength="5" readonly="readonly" />
+                </span></td>
+                <td><span class="style9">
+                  <input name="Btype12" type="text" id="Btype4"   tabindex="96" value="{var Btype12}" size="6" maxlength="5" readonly="readonly" />
+                </span></td>
+              </tr>
+            </tbody>
+        </table>
+          <p>&nbsp;</p></td>
+      </tr>
+    </tbody>
+</table></td>
+</tr>
+<tr>
+  <td valign="middle" nowrap="nowrap" style="vertical-align: middle; text-align: left; width: 50%; font-size: 14px; font-style: normal;"><p><span class="style47" style="font-family:  Arial, Helvetica, sans-serif"><strong>COMMENTS</strong>:<span style="font-style: italic;">&nbsp;<span class="style47" style="font-family:  Arial, Helvetica, sans-serif"> <br />
+            <span style="font-weight: normal; font-style: normal;">{var Comments}</span></span> <span style="font-weight: normal">&nbsp;</span></span></span>
+      <span style="font-weight: normal">
+      <textarea name="attached_text2"  cols="140" rows="3" id="attached_text2" style="display: none;"></textarea>
+    
+      <textarea name="FormData" cols="70" rows="25" id="FormData" style="display: none;">MapFileName:T=j1
+DateTime:T=Add2
+Latitude:T=j4
+Longitude:T=j5 
+MGRS:T=j9
+DateTime:T=j3
+Facility:T=j4
+Contact Name: T=j6a
+Red Blood O+:N=bt1  
+Red Blood O-:N=bt2
+Red Blood A+:N=bt3
+Red Blood A-:N=bt4
+Red Blood B+:N=bt5
+Red Blood B-:N=bt6
+Red Blood AB+:N=bt7
+Red Blood AB-:N=bt8
+Plasma O:N=bt9
+Plasma A:N=bt10
+Plasma B:N=bt11
+Plasma AB:N=bt12                                                                                                                                                   3a. Location:T=j8
+4a. Comments:T=j14</textarea>
+      </span>
+      <span style="font-weight: normal">
+      <textarea  cols="140" rows="2" maxlength="250" name="Commentstab2" id="Commentstab2" 
+ style="display: none;"></textarea>
+    
+      <textarea name="parseme" cols="60" id="parseme" style="display: none;"></textarea>
+      </span></p>
+    <p>&nbsp;</p>
+    <p>Approved by:<span style="font-weight: normal"> {var Approved_Name}</span></p></td>
+</tr>
+<tr bgcolor="#f8f8ff">
+<td colspan="3" valign="top" nowrap="nowrap" style="text-align: center; vertical-align: middle; background-color: ; font-style: normal; font-size: 14px;" pbzloc="6">
+<div align="left"><strong>Facility Location</strong>
+  <p><strong>Latitude</strong>:<span style="font-weight: normal">
+    {var mapLat}
+ </span>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<strong>&nbsp;c. Longitude</strong>:
+ <span style="font-weight: normal">{var mapLon}</span><span class="style12"> <span style="color: #000000; font-style: normal; font-size: 14px;">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<strong>&nbsp;d.  MGRS:</strong></span>
+</span><span style="font-weight: normal">{var MGRS} </span><span class="style12">&nbsp;</span>&nbsp;&nbsp;&nbsp;</em><strong>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</strong><span style="font-weight: normal"><strong>Grid Square:</strong></span>&nbsp;<span style="font-weight: normal">
+{var Grid}
+<br />
+<strong>Location source:</strong>  {var locationSource}</span><span class="style12">&nbsp;<br />
+</span></p>
+  <p><span style="font-size: 14px;">  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span><span class="style12"><em> </em></span> <span class="style12">
+  <input name="GPS2" type="hidden" id="GPS2" size="40" onchange="convertthis()" onkeypress="return isNumberKey(event)"  maxlength="40" title= "If entering manually use format: 38.5567,-121.7932" placeholder="Ex: 38.5567,-121.7932" />
+  </span>&nbsp;
+  <input name="ExtGPS" type="hidden" id="ExtGPS" value="{GPS_SIGNED_DECIMAL}" />
+  <input name="addformat" type="hidden" id="addformat" />
+  <span class="style12"> <span class="style45"><span style="font-family:  Arial, Helvetica, sans-serif;; color: black;">
+  <input name="GPS" type="hidden" id="GPS" value="{GPS_SIGNED_DECIMAL}" />
+  </span></span></span>
+  <input name="w3w" type="hidden" id="w3w" size="50" placeholder = "Ex: contrived.rides.thankfully" onkeypress="if(event.keyCode==13){return false;}"  onchange="convert3words(this.value);convertthis() ";/>
+  <em><span class="style12">&nbsp; </span></em> <em><span class="style12">&nbsp;<span style="color: black;"><span style="font-family:  Arial, Helvetica, sans-serif;; color: black;">
+  <input name="GPS" type="hidden" id="GPS" value="{GPS_SIGNED_DECIMAL}" />
+  </span></span></span></em><span style="font-size: 14px;">
+  <input name="testlonfld" type="hidden" id="testlonfld" value="{Longitude}" size="14" maxlength="13" />
+  </span></p>
+</div>
+</td>
+</tr>
+<tr>
+  <td height="38"><span style="font-family:  Arial, Helvetica, sans-serif;;"><span class="style25">{var Templateversion} </span><span style="font-size: 14px;">
+    <input name="testCall" type="hidden" id="testCall" value="{MsgSender}" size="14" maxlength="&lt;/table&gt;13" />
+  KW6GB</span></span></td>
+</tr>
+</tbody>
+</table>
+<span style="font-family:  Arial, Helvetica, sans-serif;;"><br />
+&nbsp;</span></td>
+</tr>
+</tbody>
+</table>
+<span style="font-family:  Arial, Helvetica, sans-serif;"><br />
+&nbsp;</span></table>
+<div id="pop1" class="pop-up"><!-- The pop-up block -->
+
+<div class="popBox"><!-- If the content becomes larger than the pop-up this div will scroll the content -->
+
+<div class="popScroll"><!-- Test for help starts here -->
+
+<p> </p>
+<p><strong>The Check-in Form notifies net control or the agency having jurisdiction (AHJ)  that a station is available. Use the CHECK-OUT form when leaving the net, changing shifts or securing the station.</strong></p>
+<p><strong>Winlink Check-In Form - Initial Entry</strong><br>
+SETUP:  add your agency or group name to the form. It will remain until you change it. Clear:click on setup, delete the entry and enter a space. Then click OK.</p>
+<p>1. STATION (Information)<br>
+  <strong>a. Date/Time:</strong> automatically defaults to LOCAL time. Can be manually changed.<br>
+  <strong>b. To: </strong>Enter recipient email address. Addresses in this field populate the Winlink Message To: field.<br>
+  For Winlink recipients only enter the callsign or tactical address. <br>
+  For internet recipients enter the email address.<br>
+  Multiple addresses should be separated by semicolons (;).<br>
+  <strong>c. From: </strong>Sending callsign or tactical address. Populated by Winlink message From: field.<br>
+  <strong>d. Station Contact:</strong> Name of the station contact at sending station. Refers to the person with authority to send traffic. Depending on the situation that may be an emergency manager, agency personnel, radio operator, etc.<br>
+  <strong>e. Initial Operator(s</strong>):   Callsigns of initial operator(s) on site. Useful when the From: is a tactical address or when one or more operators are on site.</p>
+<p>2. SESSION<br>
+  Session information reflects the sender's intent. The actual session may vary.<br>
+  <strong>a. Type:</strong> Select EXERCISE or REAL EVENT.<br>
+  <strong>b. Service:</strong> Select AMATEUR (FCC Part 97 rules) or SHARES (NTIA rules)<br>
+  <strong>c. Band:</strong> Select the band you intend to use. NA = Not available/Unknown; Telnet = Internet/Mesh; HF - High Frequency 3 MHz - 30MHz; VHF - Very High Frequency 30MHz - 300MHz; UHF = Ultra High Frequency 300MHz - 3000MHz; SHF = Super High Frequency 3000MHz and above <br>
+  <strong>d. </strong>Session:   Select the Winlink session you intend to use. Telnet ( via Internet); Packet; Pactor; Robust Packet;’; Ardop; VARA HF; VARA FM; Iridium Go; Mesh (via AREDN, HamNet, HamWAN, etc.)</p>
+<p>3. LOCATION<br>
+  <strong>a. </strong>Location:   Enter your location. This is intended to be a tactical address, descriptor, facility, city, county, region, state, country, etc. This entry is added to the Subject line. Full street addresses are better entered in Comments instead. For precise location enter latitude and longitude or MGRS below. <br>
+  <strong>b.</strong> Latitude:   Enter your latitude or accept the value Winlink suggests*.<br>
+  <strong>c.</strong> Longitude:   Enter your longitude or accept the value Winlink suggests*.<br>
+  <strong>d. </strong>MGRS:   Enter your Military Grid Reference System (MGRS) coordinates or accept the value Winlink suggests.<br>
+  <strong>e. </strong>Grid Square:   The grid square is calculated based on your Latitude, Longitude or MGRS entries.</p>
+<p>*COORDINATES<br>
+  Winlink suggests latitude, longitude, MGRS and grid square coordinates based on<br>
+  -   Center of your grid square coordinates if no GPS is present and no manual entries are entered and activated in Position Reports. <br>
+  -   Manual coordinates manual entries have been entered and activated in Position Reports. <br>
+  -   GPS Coordinates if a GPS is connected to Winlink in Position Reports.<br>
+  Note: form coordinates can be entered and adjusted manually and may therefore differ from the automatic coordinates Winlink attaches to each email by default in the message header. </p>
+<p>4. COMMENTS<br>
+  Enter any comments that may clarify your situation when checking in. </p>
+<p>SAVE and LOAD<br>
+  SAVE:   Saves entries to a text file for later retrieval.<br>
+  LOAD:   Loads entries from saved text file.<br>
+  Hint: Double-check your data before submitting forms with loaded data.<br>
+</p>
+<p><strong>Winlink Message</strong><br>
+You can copy and paste the message data to a spreadsheet. Labels and data are separated by tabs.</p>
+<p><strong>Winlink Check-In Form - Viewer</strong><br>
+  Printing this form depends on your browser and printer settings. Use the Print Preview in your browser to make adjustments.<br>
+</p>
+<td width="0%"></p>
+
+</div>
+
+<!-- The close pop-up link correctly positioned at the end of the content block -->y
+
+<a href="#links" class="close"><span>Back
+
+to links</span></a> </div>
+
+</div>
+</form>
+</body></html>

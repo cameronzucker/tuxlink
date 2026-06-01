@@ -1,0 +1,1613 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+
+<html xmlns="http://www.w3.org/1999/xhtml"><head>
+
+<meta http-equiv="content-type" content="application/xhtml+xml; charset=utf-8" /><title>Hurricane Report Entry</title>
+
+
+
+<style type="text/css">
+
+body, td, th {
+
+font-family: Arial, Helvetica, sans-serif;
+
+}
+
+.zentriert {
+
+text-align: center;
+
+}
+
+input, select {
+
+padding: 1px;
+
+-moz-border-radius-topleft: 2px;
+
+-moz-border-radius-topright: 2px;
+
+-moz-border-radius-bottomright: 2px;
+
+-moz-border-radius-bottomleft: 2px;
+
+font-family: Arial, Helvetica, sans-serif;
+
+font-size: 12px;
+
+text-align: left;
+
+font-weight: normal;
+
+font-style: normal;
+
+}
+
+textarea {
+
+padding: 1px;
+
+-moz-border-radius-topleft: 2px;
+
+-moz-border-radius-topright: 2px;
+
+-moz-border-radius-bottomright: 2px;
+
+-moz-border-radius-bottomleft: 2px;
+
+font-family: Arial, Helvetica, sans-serif;
+
+font-size: 12px;
+
+font-weight: normal;
+
+font-style: normal;
+
+}
+
+.rechtsbuendig {
+
+text-align: right;
+
+}
+
+.SubmitBtn {
+
+text-align: right;
+
+}
+
+.version {
+
+font-size: 10px;
+
+color: #666666;
+
+position: relative;
+
+left: 0px;
+
+top: 3px;
+
+}
+
+.style1 {
+	font-size: 14px;
+	font-style: italic;
+	color: #FF0000;
+}
+.style2 {
+	color: #FF0000;
+	font-style: italic;
+}
+.style3 {font-size: 15px}
+.style6 {font-size: 14px; font-style: italic; color: #2A0000; }
+.style8 {color: #FF0000}
+.style11 {color: #2A0000}
+.style12 {font-size: 16px}
+.style13 {color: #B8C931}
+.style14 {font-size: 12pt}
+.style15 {font-size: 12px}
+.style16 {
+	color: #007F00;
+	font-style: italic;
+}
+.formtext {font-family: Arial, Helvetica, sans-serif;
+font-size: 11pt;
+font-weight: normal;
+}
+.formtext11 {font-family: Arial, Helvetica, sans-serif;
+
+font-size: 11pt;
+
+font-weight: normal;
+
+margin: 10px;
+}
+.style17 {font-size: 12px; font-family: Arial, Helvetica, sans-serif}
+.style45 {font-size: 12px}
+.style45 {color: #2A5F00}
+.style46 {color: #000000}
+</style>
+
+<script>
+
+function Checkifinbrowser() {
+
+ var x= document.getElementById("testCall").value; 
+ var n = x.search("{Msg");
+ if (n>-1) { 
+ document.getElementById('Submit').style.visibility='hidden';
+ document.getElementById("MsgSender").value = '';
+
+  alert('You are running this form outside of Winlink.\n \nWhen you have completed the form, SAVE the data and then give or send the SAVED data file to the radio operator. The operator will load the SAVED data into the correct form and send via winlink. ');
+ } else {document.getElementById('Submit').style.visibility='visible';  }
+ 
+ // document.getElementById('testlnkbtn').style.visibility='hidden';
+}
+
+
+function shortmonth(monthnum) {
+var monthname;
+shortmonths = ["JAN", "FEB", "MAR","APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"] ;
+monthname = shortmonths [monthnum];s
+ return monthname;
+		
+}
+function DateTime(TType,TheFld, dopromt) {
+var txt;
+var  myprompt;
+var d = new Date(),
+ thisyear = d.getFullYear();
+ thismonth= d.getMonth();
+ thisday = d.getDate();
+var monname;
+h = (d.getHours()<10?'0':'') + d.getHours()
+m = (d.getMinutes()<10?'0':'') + d.getMinutes()
+s = (d.getSeconds()<10?'0':'') + d.getSeconds();
+var utcstr = d.toUTCString();
+var localt  = d.toLocaleTimeString();
+var isostr = d.toISOString();
+monthname = shortmonth (thismonth);
+thismonth = thismonth + 1;
+switch (TType) {
+    case 'hms'  :
+        myprompt = h + ':' + m + ':' + s;
+		var RightNow = prompt("Time:", myprompt);
+		document.getElementById(TheFld).value = RightNow;
+        break;
+		case 'hm'  :
+        myprompt = h + ':' + m;
+		var RightNow = prompt("Time:", myprompt);
+		document.getElementById(TheFld).value = RightNow;
+        break;
+		case 'm-d-y':     
+			myprompt = thismonth+ '-' + thisday+ '-'+  thisyear;
+			var RightNow = prompt("Date:", myprompt);
+			document.getElementById(TheFld).value = RightNow;
+		   break;
+		 case 'm/d/y':     
+			myprompt = thismonth+ '/' + thisday+ '/'+  thisyear;
+			var RightNow = prompt("Date:", myprompt);
+			document.getElementById(TheFld).value = RightNow;
+		     break;
+		 case 'd mmm y':     
+			myprompt = thisday+ ' ' + monthname+ ' '+  thisyear;
+			var RightNow = prompt("Date:", myprompt);
+			document.getElementById(TheFld).value = RightNow;
+		   break;
+		   case 'mmm-d-y':     
+			myprompt = monthname+'-'+thisday+ '-' +  thisyear;
+			var RightNow = prompt("Date:", myprompt);
+			document.getElementById(TheFld).value = RightNow;
+		   break;
+        case 'localampm':     
+			var myprompt = localt;
+			var RightNow = prompt("Local time:", myprompt);
+			document.getElementById(TheFld).value = RightNow;
+		   break;
+
+		case 'fulldate':     
+			var myprompt = thisyear+ '-'+thismonth+'-'+thisday;
+			var RightNow = prompt("Date:", myprompt);
+			document.getElementById(TheFld).value = RightNow;
+		   break;
+		   case 'fulldatetime':     
+			var myprompt = thisyear+'-'+thismonth+ '-'+thisday+' '+h + ':' + m + ':' + s;
+			var RightNow = prompt("Date time:", myprompt);
+			document.getElementById(TheFld).value = RightNow;
+		   break;
+		    case 'iso':     
+			var myprompt = isostr;
+			var RightNow = prompt("Date time:", myprompt);
+			document.getElementById(TheFld).value = RightNow;
+		   break;
+		   case 'utc':     
+			var myprompt = utcstr;
+			if (dopromt) { document.getElementById(TheFld).value = myprompt; TimeStamp();
+} else {
+			var RightNow = prompt("UTC Date time:", myprompt);
+			document.getElementById(TheFld).value = RightNow;TimeStamp();
+}
+			
+		   break;
+		  
+		   case 'zulu':     
+			var myprompt = isostr;
+			myprompt = isostr.replace("T", "  "); 
+			slen = myprompt.length;
+			myprompt = myprompt.substr(0, slen-5)+'Z';
+			var RightNow = prompt("Date time:", myprompt);
+			document.getElementById(TheFld).value = RightNow;
+			TimeStamp();
+		   break;
+		   case 'autozulu':     
+			var myprompt = isostr;
+			myprompt = isostr.replace("T", "  "); 
+			slen = myprompt.length;
+			myprompt = myprompt.substr(0, slen-5)+'Z';
+			var RightNow = myprompt;
+			document.getElementById('UDTGfld').value = RightNow;
+			TimeStamp();
+		   break;
+		}
+				
+	// if(FocusFld !== null && FocusFld !== '') {document.getElementById(FocusFld).focus()} --/
+	};
+
+function wordcount(s) {
+
+s = s.replace(/(^\s*)|(\s*$)/gi,"");//exclude start and end white-space
+
+s = s.replace(/\n/g, " "); // Convert CR to spacing
+
+s = s.replace(/[ ]{2,}/gi," ");//2 or more space to 1
+
+cnt = s.split(' ').length; var ele = document.getElementById('check');
+
+ document.getElementById('Check').value= cnt;
+
+}
+
+
+
+function CheckText() {
+
+var MSGText = document.getElementById('Message').value;
+
+
+
+wordcount(document.getElementById('Message').value)
+
+
+
+}
+
+function Flip(theid,working) {
+x1 = document.getElementById(theid).value;
+if (x1 == '' || x1 == '') { document.getElementById(theid).value = 'WX4NHC';} 
+else { document.getElementById(theid).value = '';}
+}
+
+function AutoGrowTextArea(textField)
+
+{
+
+if (textField.clientHeight < textField.scrollHeight)
+
+{
+
+textField.style.height = textField.scrollHeight + "px";
+
+if (textField.clientHeight < textField.scrollHeight)
+
+{
+
+textField.style.height = (textField.scrollHeight * 2 - textField.clientHeight) + "px";
+
+}
+
+}
+
+}
+
+function Countthelines(f) { var text1 = f
+
+var text2 = text1.replace(/\s+$/,"");
+
+var split2 = text2.split("\n"); var mytotal = split2.length * 17;
+
+if (mytotal < 150) {
+
+mytotal = 150;
+
+}
+
+var tstr = mytotal.toString();
+
+return tstr;
+
+}
+
+function newfix(f){
+
+var ThisText = document.getElementById(f).value;
+
+var makeit = Countthelines(ThisText);
+
+document.getElementById(f).style.height = makeit+"px"; }
+
+function Fixarea() {
+
+newfix("Message");
+
+// newfix("reply");
+
+AutoGrowTextArea(document.getElementById("Message"));
+
+// AutoGrowTextArea(document.getElementById("reply"));
+
+}
+
+function RWS(str){
+
+var text2 = str.replace(/\s+$/,"");
+
+return text2.trim();
+
+}
+
+// add save load
+
+
+function saveTextAsFile(fileNameToSaveAs, textToWrite) {
+var textToWrite = document.getElementById('parseme').value; 
+var fileNameToSaveAs = "Hurricane Report Data " + DateforFile()+".txt";
+fileNameToSaveAs = prompt("", fileNameToSaveAs);
+
+  /* Saves a text string as a blob file*/  
+  var ie = navigator.userAgent.match(/MSIE\s([\d.]+)/),
+      ie11 = navigator.userAgent.match(/Trident\/7.0/) && navigator.userAgent.match(/rv:11/),
+      ieEDGE = navigator.userAgent.match(/Edge/g),
+      ieVer=(ie ? ie[1] : (ie11 ? 11 : (ieEDGE ? 12 : -1)));
+
+  if (ie && ieVer<10) {
+    console.log("No blobs on IE ver<10");
+    return;
+  }
+
+  var textFileAsBlob = new Blob([textToWrite], {
+    type: 'text/plain'
+  });
+
+  if (ieVer>-1) {
+    window.navigator.msSaveBlob(textFileAsBlob, fileNameToSaveAs);
+
+  } else {
+    var downloadLink = document.createElement("a");
+    downloadLink.download = fileNameToSaveAs;
+    downloadLink.href = window.URL.createObjectURL(textFileAsBlob);
+    downloadLink.onclick = function(e) { document.body.removeChild(e.target); };
+    downloadLink.style.display = "none";
+    document.body.appendChild(downloadLink);
+    downloadLink.click();
+  }
+}
+
+
+
+
+
+function destroyClickedElement(event)
+{
+    document.body.removeChild(event.target);
+}
+
+function loadFileAsText()
+{
+
+    var fileToLoad = document.getElementById("fileToLoad").files[0];
+ 
+    var fileReader = new FileReader();
+    fileReader.onload = function(fileLoadedEvent) 
+    {
+        var textFromFileLoaded = fileLoadedEvent.target.result;
+        document.getElementById("inputTextToSave").value = textFromFileLoaded;
+    };
+    fileReader.readAsText(fileToLoad, "UTF-8");
+}
+
+
+function DateforFile(RightNow) {
+var txt;
+var d = new Date(),
+thisyear = d.getFullYear();
+thismonth= d.getMonth();
+thismonth = thismonth+1;
+if (thismonth < 10) { thismonth = "0" + thismonth}
+
+thisday = d.getDate();
+if (thisday < 10) { thisday = "0" + thisday}
+
+h = (d.getHours()<10?'0':'') + d.getHours()
+m = (d.getMinutes()<10?'0':'') + d.getMinutes()
+var myprompt = thisyear+ '-'+thismonth+'-'+thisday+' '+h + '_' + m ;
+return myprompt;
+}
+
+function isObject(arg) {
+  return Object.prototype.toString.call(arg)==='[object Object]';
+}
+
+function formDataToObject(elForm) {
+  if (!elForm instanceof Element) return;
+  var fields = elForm.querySelectorAll('input, select, textarea'),
+    o = {};
+  for (var i=0, imax=fields.length; i<imax; ++i) {
+    var field = fields[i],
+      sKey = field.name || field.id;
+    if (field.type==='button' || field.type==='image' || field.type==='submit' || !sKey) continue;
+    switch (field.type) {
+      case 'checkbox':
+        o[sKey] = +field.checked;
+        break;
+      case 'radio':
+        if (o[sKey]===undefined) o[sKey] = '';
+        if (field.checked) o[sKey] = field.value;
+        break;
+      case 'select-multiple':
+        var a = [];
+        for (var j=0, jmax=field.options.length; j<jmax; ++j) {
+          if (field.options[j].selected) a.push(field.options[j].value);
+        }
+        o[sKey] = a;
+        break;
+      default:
+        o[sKey] = field.value;
+    }
+  }
+ // alert('Form data:\n\n' + JSON.stringify(o, null, 2));
+ document.getElementById('parseme').value = JSON.stringify(o, null, 2);
+//  return o;
+}
+
+function populateForm(o) {
+
+o =  JSON.parse(document.getElementById('parseme').value);
+ //if (!isObject(o)) return;
+if (!isObject(o)) return;
+  for (var i in o) {
+    var el = document.getElementById(i) || document.querySelector('[name=' + i + ']');
+    if (el.type==='radio') el = document.querySelectorAll('[name=' + i + ']');
+    switch (typeof o[i]) {
+      case 'number':
+        el.checked = o[i];
+        break;
+      case 'object':
+        if (el.options && o[i] instanceof Array) {
+          for (var j=0, jmax=el.options.length; j<jmax; ++j) {
+            if (o[i].indexOf(el.options[j].value)>-1) el.options[j].selected = true;
+          }
+        }
+        break;
+      default:
+        if (el instanceof NodeList) {
+          for (var j=0, jmax=el.length; j<jmax; ++j) {
+            if (el[j].value===o[i]) el[j].checked = true;
+          }
+        } else {
+          el.value = o[i];
+        }
+    }
+  }
+    Fixfields();
+
+
+}
+
+function SaveData() {
+	
+			formDataToObject(document.getElementById('myform'))
+			saveTextAsFile();
+			
+			//saveTextAsFile();
+			}
+
+//-------
+ function readBlob(opt_startByte, opt_stopByte) {
+  
+    var files = document.getElementById('files').files;
+    if (!files.length) {
+      alert('Please select a file!');
+      return;
+    }
+
+    var file = files[0];
+    var start = parseInt(opt_startByte) || 0;
+    var stop = parseInt(opt_stopByte) || file.size - 1;
+
+    var reader = new FileReader();
+
+    // If we use onloadend, we need to check the readyState.
+    reader.onloadend = function(evt) {
+      if (evt.target.readyState == FileReader.DONE) { // DONE == 2
+        document.getElementById('byte_content').textContent = evt.target.result;
+        document.getElementById('byte_range').textContent = 
+            ['Read bytes: ', start + 1, ' - ', stop + 1,
+             ' of ', file.size, ' byte file'].join('');
+      }
+    };
+
+    var blob = file.slice(start, stop + 1);
+    reader.readAsBinaryString(blob);
+  }
+    	
+  window.onload = function () { 
+ 
+ //Check the support for the File API support 
+ if (window.File && window.FileReader && window.FileList && window.Blob) {
+    var fileSelected = document.getElementById('txtfiletoread');
+	
+    fileSelected.addEventListener('change', function (e) { 
+         //Set the extension for the file 
+         var fileExtension = /text.*/; 
+         //Get the file object 
+         var fileTobeRead = fileSelected.files[0];
+        //Check of the extension match 
+         if (fileTobeRead.type.match(fileExtension)) { 
+             //Initialize the FileReader object to read the 2file 
+			
+             var fileReader = new FileReader(); 
+             fileReader.onload = function (e) { 
+                 var fileContents = document.getElementById('filecontents'); 
+                
+				document.getElementById('parseme').value =fileReader.result;
+				populateForm(obj = document.getElementById('parseme').value);
+					 } 
+             fileReader.readAsText(fileTobeRead); 
+         } 
+         else { 
+             alert("Please select text file"); 
+         }
+ 
+    }, false);
+} 
+ else { 
+     alert("Files are not supported"); 
+ } 
+   Checkifinbrowser() ;
+ defaultGPS();
+
+GetGPS();
+copyGPS();
+       CheckGPSType();  
+checkLatLon();
+ DateTime('autozulu','UDTGfld', true);
+TimeStamp();
+ } 
+ 
+ 
+ 
+ function Fixfields() {
+AutoGrowTextArea(document.getElementById("Comments"));
+
+//  AutoGrowTextArea(document.getElementById("Comm3"));
+}
+function defaultGPS(){
+var z1 = '{Latitude}';
+var z2= '{Longitude}';
+document.getElementById('mapLat').value =z1;
+document.getElementById('mapLon').value =z2;
+checkLatLon();
+}
+function copyGPS() {
+var GPSstr= document.getElementById("ExtGPS").value;
+var nameArr = GPSstr.split(" ");
+var a =nameArr[0];
+var b =nameArr[1];
+if(!isNaN (a)){document.getElementById('mapLat').value =a;}
+if(!isNaN (b)){document.getElementById('mapLon').value =b;}
+
+}
+
+function GetGPS(){
+
+document.getElementById('mapLat').value ={Latitude};
+document.getElementById('mapLon').value = {Longitude}
+var ans = document.getElementById('ExtGPS').value;
+//
+
+if (ans  != '(Not available)'){var ans = '{GPS_SIGNED_DECIMAL}'
+myMGRS=ans;
+var ans = ans.replace(" ", ",");
+
+
+ if (ans  != '{GPS_SIGNED_DECIMAL}') {document.getElementById('GPS2').value = ans};
+//now the mrgs
+
+var d= myMGRS.split(' ');
+MGRSString(d[0],d[1]);
+//store();
+//what3words.api.convertTo3wa({lat:51.508344, lng:-0.12549900}, 'en')<br />
+//lat:38.5565, lng:-121.7931  38.5566,-121.7931
+
+
+//var mypram = {lat:+d[0], lng:+d[1]};
+//alert(mypram);
+//what3words.api.convertTo3wa(mypram, 'en')
+ // .then(function(response) {
+//  theword = ("[convertTo3wa]", response);
+//  document.getElementById('w3w').value = theword.words
+  
+  //alert(theword.words);
+ // });
+  convertthis();
+ 
+
+}
+
+
+//document.getElementById('GPS').value = ans;
+}
+
+function parsethisdate() {
+var thedatetime=  document.getElementById('DateTime').value;
+//d= new Date(Date.parse(thedatetime)).toString();
+var d= new Date(Date.parse(thedatetime));
+
+//alert (Date.parse(thedatetime));
+//d =parseDate(thedatetime);
+utcstr = d.toISOString()
+//alert (utcstr);
+document.getElementById('timestamp2').value= utcstr;
+return utcstr;
+}
+function TimeStamp(){
+var d1 = new Date();
+mtime = d1.getTime();
+//var thedatetime=  document.getElementById('UDTGfld').value;
+var thedatetime= parsethisdate();
+var thedatetime=thedatetime.replace(/-/g, ',');
+var thedatetime=thedatetime.replace(/:/g, ',');
+//alert ('the dt '+thedatetime);
+var thedatetime = thedatetime.replace("T", " ") 
+var thedatetime=thedatetime.replace(' ', ',');
+var thedatetime = thedatetime.replace("Z", "") ;
+var thedatetime = thedatetime.replace(".000", "") ;
+
+//alert ('the dt '+thedatetime);
+var thesplit = thedatetime.split (',');
+var d = new Date(Date.UTC(parseInt(thesplit[0]),parseInt(thesplit[1]),parseInt(thesplit[2]),parseInt(thesplit[3]),parseInt(thesplit[4]),parseInt(thesplit[5])));
+//alert (thesplit[1]);
+//var d= new Date(Date.parse('2020/11/24 15:30:01'));
+  var nyyyy = d.getUTCFullYear();
+  nyyyy= nyyyy.toString();
+
+  var nMM = d.getUTCMonth();
+  if(nMM<10) {nMM= '0'+nMM}
+ nMM=nMM.toString()
+var ndd = d.getUTCDate();
+  if(ndd<10) {ndd= '0'+ndd}
+  ndd=ndd.toString()
+ // alert(ndd);
+  var nhh = d.getUTCHours();
+nhh=nhh.toString();
+ if(nhh.length <2) {nhh= '0'+nhh}
+// alert ('after hour'+nhh);
+    var nmm = d.getUTCMinutes();
+	  nmm=nmm.toString();
+	if(nmm.length <2) {nmm= '0'+nmm}
+	 var nss = d.getUTCSeconds();
+	
+  nss=nss.toString()
+   if(nss.length <2) {nss= '0'+nss}
+//
+var test = (thesplit[0])+(thesplit[1])+(thesplit[2])+(thesplit[3])+(thesplit[4])+(thesplit[5]);
+
+
+test = test.replace(/\s/g,'');
+ document.getElementById("timestamp").value = test; ;
+  //  document.getElementById("timestamp2").value= test;
+ //x=nyyyy+nmm+ndd+nhh+nmm+nss;
+   
+   
+  // document.getElementById("timestamp2").value = nyyyy+nMM+ndd+nhh+nmm+nss
+  // alert (nyyyy+nMM+ndd+nhh+nmm+nss);
+   var x=(document.getElementById("timestamp2").value);
+
+if (x.search("NaN")!==-1){alert ('Invalid date please enter UTC date time as yyyy-mm-dd hh:mm:ssZ\n \nDEFAULTING  to current UTC Time.');DateTime('autozulu','UDTGfld', true); }
+
+ 
+}
+function MGRSString ()
+
+//function MGRSString (51.172,-1.779)
+// 51.172,-1.779  38.556, -121.793
+{ //var Lat = 38.556; var Long=-121.793; 
+//var Lat1 = 38.556; var Long1=-121.793; 
+var thestring= document.getElementById("GPS2").value;
+
+if (thestring ==''){ return;}
+ var res = thestring.split(",");
+ var Lat = parseFloat(res[0]); 
+ var Long=parseFloat(res[1]); 
+ if (isNaN(Lat)) {return} 
+if (isNaN(Long)) {return}
+latLonToGridSquare(res[0],res[1]);
+
+
+ //Lat=38.556; Long=-121.793
+if (Lat < -80) return 'Too far South' ; if (Lat > 84) return 'Too far North' ;
+var c = 1 + Math.floor ((Long+180)/6);
+var e = c*6 - 183 ;
+var k = Lat*Math.PI/180; 
+var l = Long*Math.PI/180;
+var m = e*Math.PI/180;
+var n = Math.cos (k);
+var o = 0.006739496819936062*Math.pow (n,2);
+var p = 40680631590769/(6356752.314*Math.sqrt(1 + o));
+var q = Math.tan (k);
+var r = q*q;
+var s = (r*r*r) - Math.pow (q,6);
+var t = l - m;
+var u = 1.0 - r + o;
+var v = 5.0 - r + 9*o + 4.0*(o*o);
+var w = 5.0 - 18.0*r + (r*r) + 14.0*o - 58.0*r*o;
+var x = 61.0 - 58.0*r + (r*r) + 270.0*o - 330.0*r*o;
+var y = 61.0 - 479.0*r + 179.0*(r*r) - (r*r*r);
+var z = 1385.0 - 3111.0*r + 543.0*(r*r) - (r*r*r);
+
+var aa = p*n*t + (p/6.0*Math.pow (n,3)*u*Math.pow (t,3)) + (p/120.0*Math.pow (n,5)*w*Math.pow (t,5)) + (p/5040.0*Math.pow (n,7)*y*Math.pow (t,7));
+var ab = 6367449.14570093*(k - (0.00251882794504*Math.sin (2*k)) + (0.00000264354112*Math.sin (4*k)) - (0.00000000345262*Math.sin (6*k)) + (0.000000000004892*Math.sin (8*k))) + (q/2.0*p*Math.pow (n,2)*Math.pow (t,2)) + (q/24.0*p*Math.pow (n,4)*v*Math.pow (t,4)) + (q/720.0*p*Math.pow (n,6)*x*Math.pow (t,6)) + (q/40320.0*p*Math.pow (n,8)*z*Math.pow (t,8));
+aa = aa*0.9996 + 500000.0;
+
+ab = ab*0.9996; if (ab < 0.0) ab += 10000000.0;
+var ad = 'CDEFGHJKLMNPQRSTUVWXX'.charAt (Math.floor (Lat/8 + 10));
+var ae = Math.floor (aa/100000);
+var af = ['ABCDEFGH','JKLMNPQR','STUVWXYZ'][(c-1)%3].charAt (ae-1);
+var ag = Math.floor (ab/100000)%20;
+var ah = ['ABCDEFGHJKLMNPQRSTUV','FGHJKLMNPQRSTUVABCDE'][(c-1)%2].charAt (ag);
+function pad (val) {if (val < 10) {val = '0000' + val} else if (val < 100) {val = '000' + val} else if (val < 1000) {val = '00' + val} else if (val < 10000) {val = '0' + val};return val};
+aa = Math.floor (aa%100000); aa = pad (aa); 
+ab = Math.floor (ab%100000); ab = pad (ab);
+//var mrgs= c + ad + ' ' + af + ah + ' ' + aa + ' ' + ab;
+var MRGS2=c + ad + ' ' + af + ah + ' ' + aa + ' ' + ab;
+var mrgs= c + ad + af + ah  + aa + ab;
+
+document.getElementById('MGRS').value =mrgs;
+
+
+//document.getElementById('MGRS2').value =MRGS2;
+};
+
+function convertthis(){
+
+document.getElementById('MGRS').value ='';
+var nameArr=[];
+var thestring= document.getElementById("GPS2").value;
+//(thestring);
+document.getElementById("GPS2").value = thestring;
+ var n = thestring.search(",");
+ var n1= thestring.search(" ");
+var res = thestring.split(",");
+var p=res.length;
+if (p==2){MGRSString(); 
+
+var mypram = {lat:+res[0], lng:+res[1]};
+document.getElementById('mapLat').value =res[0];
+document.getElementById('mapLon').value =res[1];
+
+if(res[0]==''|res[1]==''){return};
+
+//mapLat
+//alert(mypram);
+//what3words.api.convertTo3wa(mypram, 'en')
+//  .then(function(response) {
+//  theword = ("[convertTo3wa]", response);
+//  document.getElementById('w3w').value = theword.words
+  
+  //alert(theword.words);
+//  });
+  } else 
+{ ( "Please correct your coordinates --\nEnter Coordinates in decimal format with the Lat and Lon separated by a comma.\nExample: 38.556724, -121.793285 " );
+document.getElementById('GPS2').value ='';
+document.getElementById('mapLat').value ='';
+document.getElementById('mapLon').value ='';
+//document.getElementById('w3w').value ='';
+//document.getElementById('WithSpaces').value ='';
+document.getElementById('MGRS').value ='';
+document.getElementById('Grid').value ='';
+//document.getElementById('NoSpaces').value ='';
+ document.getElementById("GPS2").focus()}
+}
+
+latLonToGridSquare = function(param1,param2){
+  var lat=-100.0;
+  var lon=0.0;
+  var adjLat,adjLon,GLat,GLon,nLat,nLon,gLat,gLon,rLat,rLon;
+  var U = 'ABCDEFGHIJKLMNOPQRSTUVWX'
+  var L = U.toLowerCase();
+  // support Chris Veness 2002-2012 LatLon library and
+  // other objects with lat/lon properties
+  // properties could be getter functions, numbers, or strings
+  function toNum(x){
+    if (typeof(x) === 'number') return x;
+    if (typeof(x) === 'string') return parseFloat(x);
+    if (typeof(x) === 'function') return parseFloat(x());
+   // 9-20-20 ( "HamGridSquare -- toNum -- can not convert input: "+x);
+  }
+  if (typeof(param1)==='object'){
+    if (param1.length === 2){
+      lat = toNum(param1[0]);
+      lon = toNum(param1[1]);
+    } else if (('lat' in param1) && ('lon' in param1)){
+      lat = toNum(param1.lat);
+      lon = toNum(param1.lon);
+    } else if (('latitude' in param1) && ('longitude' in param1)){
+      lat = toNum(param1.latitude);
+      lon = toNum(param1.longitude);
+    } else {
+      ( "Please correct your coordinates -- "+param1);
+    }
+  } else {
+    lat = toNum(param1);
+    lon = toNum(param2);
+  }
+  //if (isNaN(lat)) throw "lat is NaN";
+   if (isNaN(lat)) return;
+// if (isNaN(lon)) throw "lon is NaN";
+ if (isNaN(lon)) {return} 
+  if (Math.abs(lat) === 90.0) throw "grid squares invalid at N/S poles";
+  if (Math.abs(lat) > 90)  ("invalid latitude: "+lat);
+  if (Math.abs(lon) > 180) ( "invalid longitude: "+lon);
+  adjLat = lat + 90;
+  adjLon = lon + 180;
+  GLat = U[Math.trunc(adjLat/10)];
+  GLon = U[Math.trunc(adjLon/20)];
+  nLat = ''+Math.trunc(adjLat % 10);
+  nLon = ''+Math.trunc((adjLon/2) % 10);
+  rLat = (adjLat - Math.trunc(adjLat)) * 60;
+  rLon = (adjLon - 2*Math.trunc(adjLon/2)) *60;
+  gLat = L[Math.trunc(rLat/2.5)];
+  gLon = L[Math.trunc(rLon/5)];
+  var mygrid = GLon+GLat+nLon+nLat+gLon+gLat;
+  //( 'line 52 '+GLon+GLat+nLon+nLat+gLon+gLat);
+  document.getElementById('Grid').value =mygrid;
+}
+
+
+function CheckLat(SkipMsg){
+var latCheck = 1;
+var num =document.getElementById('mapLat').value;
+if (num=='') {document.getElementById('MGRS').value = '';
+		document.getElementById('GPS2').value = '';}
+z1 =(Number(num));
+z2 = (isNaN (z1));
+if (z1 == 'NaN') {alert ('error')}
+if ((num <-90)  || ( num >90) || isNaN (z1) ) { document.getElementById('mapLat').value='';
+//alert ('Latitude must be between -90 and 90\n\nBy default the calculated Latitude from the Grid Square entered in Winlink Express Setup will be used. '); 
+alert ('Latitude must be between -90 and 90');
+ document.getElementById('mapLat').value ='';
+		document.getElementById('mapLat').focus();
+		document.getElementById('MGRS').value = '';
+		document.getElementById('GPS2').value = '';
+		var latCheck = 0;
+}
+
+return latCheck;
+}
+
+function CheckLon(SkipMsg){
+var lonCheck = 1;
+var num =document.getElementById('mapLon').value;
+if (num=='') {document.getElementById('MGRS').value = '';
+		document.getElementById('GPS2').value = '';}
+z1 =(Number(num));
+z2 = (isNaN (z1));
+
+if ((num <-180) || ( num >180) || isNaN (z1) ) { document.getElementById('mapLon').value='';
+alert ('Longitude must be between -180 and 180 '); 
+//alert ('Longitude must be between -180 and 180\n\nBy default the calculated Latitude from the Grid Square entered in Winlink Express Setup will be used. '); 
+ document.getElementById('mapLon').value = '';
+		document.getElementById('MGRS').value = '';
+		document.getElementById('GPS2').value = '';
+		var lonCheck = 0;
+
+} 
+
+return lonCheck;
+}
+
+function removeLinebreaks (s){
+
+var s = s.replace(/(\r\n|\n|\r)/gm," "); 
+return s;
+}
+
+
+function checkLatLon() {
+var cnt = 1;
+//var x1=0; var x2=0;
+x1 = CheckLat(true);
+x2 = CheckLon(true);
+
+if (x1==1 && x2==1) {// now set string for latlon
+	var mlat = document.getElementById('mapLat').value;
+	var mlon = document.getElementById('mapLon').value;
+	document.getElementById('GPS2').value =mlat+','+mlon;
+	
+	convertthis();
+} 
+}
+function splitPaste(str) {
+var str = str.replace(",", " ");
+var str = str.replace("  ", " ");
+var d= str.split(' ');
+var cnt = d.length;
+if (cnt >1) {
+document.getElementById('mapLat').value =d[0];
+document.getElementById('mapLon').value =d[1];
+}
+}
+
+function TimeStamp(){
+var d1 = new Date();
+mtime = d1.getTime();
+var thedatetime=  document.getElementById('UDTGfld').value;
+
+var thedatetime=thedatetime.replace(/-/g, ',');
+var thedatetime=thedatetime.replace(/:/g, ',');
+//alert ('the dt '+thedatetime);
+var thedatetime=thedatetime.replace(' ', ',');
+var thedatetime = thedatetime.replace("Z", "") ;
+//alert ('the dt '+thedatetime);
+var thesplit = thedatetime.split (',');
+var d = new Date(Date.UTC(parseInt(thesplit[0]),parseInt(thesplit[1]),parseInt(thesplit[2]),parseInt(thesplit[3]),parseInt(thesplit[4]),parseInt(thesplit[5])));
+//alert (thesplit[1]);
+//var d= new Date(Date.parse('2020/11/24 15:30:01'));
+  var nyyyy = d.getUTCFullYear();
+  nyyyy= nyyyy.toString();
+
+  var nMM = d.getUTCMonth();
+  if(nMM<10) {nMM= '0'+nMM}
+ nMM=nMM.toString()
+var ndd = d.getUTCDate();
+  if(ndd<10) {ndd= '0'+ndd}
+  ndd=ndd.toString()
+ // alert(ndd);
+  var nhh = d.getUTCHours();
+nhh=nhh.toString();
+ if(nhh.length <2) {nhh= '0'+nhh}
+// alert ('after hour'+nhh);
+    var nmm = d.getUTCMinutes();
+	  nmm=nmm.toString();
+	if(nmm.length <2) {nmm= '0'+nmm}
+	 var nss = d.getUTCSeconds();
+	
+  nss=nss.toString()
+   if(nss.length <2) {nss= '0'+nss}
+//
+var test = (thesplit[0])+(thesplit[1])+(thesplit[2])+(thesplit[3])+(thesplit[4])+(thesplit[5]);
+
+
+test = test.replace(/\s/g,'');
+ document.getElementById("timestamp").value = test; ;
+    document.getElementById("timestamp2").value= test;
+ //x=nyyyy+nmm+ndd+nhh+nmm+nss;
+   
+   
+  // document.getElementById("timestamp2").value = nyyyy+nMM+ndd+nhh+nmm+nss
+  // alert (nyyyy+nMM+ndd+nhh+nmm+nss);
+   var x=(document.getElementById("timestamp2").value);
+
+if (x.search("NaN")!==-1){alert ('Invalid date please enter UTC date time as yyyy-mm-dd hh:mm:ssZ\n \nDEFAULTING  to current UTC Time.');DateTime('autozulu','UDTGfld', true); }
+
+ 
+}
+function LatLongFromMGRSstring (a) 
+{
+var b = a.trim();
+b = b.match(/\S+/g);
+if (b == null || b.length != 4) return [false,null,null];
+var c = (b[0].length < 3) ? b[0][0] : b[0].slice(0,2);
+var d = (b[0].length < 3) ? b[0][1] : b[0][2];
+var e = (c*6-183)*Math.PI / 180;
+var f = ["ABCDEFGH","JKLMNPQR","STUVWXYZ"][(c-1) % 3].indexOf(b[1][0]) + 1;
+var g = "CDEFGHJKLMNPQRSTUVWXX".indexOf(d);
+var h = ["ABCDEFGHJKLMNPQRSTUV","FGHJKLMNPQRSTUVABCDE"][(c-1) % 2].indexOf(b[1][1]);
+var i = [1.1,2.0,2.8,3.7,4.6,5.5,6.4,7.3,8.2,9.1,0,0.8,1.7,2.6,3.5,4.4,5.3,6.2,7.0,7.9];
+var j = [0,2,2,2,4,4,6,6,8,8,0,0,0,2,2,4,4,6,6,6];
+var k = i[g];
+var l = Number(j[g]) + h / 10;
+if (l < k) l += 2;
+var m = f*100000.0 + Number(b[2]);
+var n = l*1000000 + Number(b[3]);
+m -= 500000.0;
+if (d < 'N') n -= 10000000.0;
+m /= 0.9996; n /= 0.9996;
+var o = n / 6367449.14570093;
+var p = o + (0.0025188266133249035*Math.sin(2.0*o)) + (0.0000037009491206268*Math.sin(4.0*o)) + (0.0000000074477705265*Math.sin(6.0*o)) + (0.0000000000170359940*Math.sin(8.0*o));
+var q = Math.tan(p);
+var r = q*q;
+var s = r*r;
+var t = Math.cos(p);
+var u = 0.006739496819936062*Math.pow(t,2);
+var v = 40680631590769 / (6356752.314*Math.sqrt(1 + u));
+var w = v;
+var x = 1.0 / (w*t); w *= v;
+var y = q / (2.0*w); w *= v;
+var z = 1.0 / (6.0*w*t); w *= v;
+var aa = q / (24.0*w); w *= v;
+var ab = 1.0 / (120.0*w*t); w *= v;
+var ac = q / (720.0*w); w *= v;
+var ad = 1.0 / (5040.0*w*t); w *= v;
+var ae = q / (40320.0*w);
+var af = -1.0-u;
+var ag = -1.0-2*r-u;
+var ah = 5.0 + 3.0*r + 6.0*u-6.0*r*u-3.0*(u*u)-9.0*r*(u*u);
+var ai = 5.0 + 28.0*r + 24.0*s + 6.0*u + 8.0*r*u;
+var aj = -61.0-90.0*r-45.0*s-107.0*u + 162.0*r*u;
+var ak = -61.0-662.0*r-1320.0*s-720.0*(s*r);
+var al = 1385.0 + 3633.0*r + 4095.0*s + 1575*(s*r);
+var lat = p + y*af*(m*m) + aa*ah*Math.pow(m,4) + ac*aj*Math.pow(m,6) + ae*al*Math.pow(m,8);
+var lng = e + x*m + z*ag*Math.pow(m,3) + ab*ai*Math.pow(m,5) + ad*ak*Math.pow(m,7);
+lat = lat*180 / Math.PI;
+lat = lat.toFixed (4);
+lng = lng*180 / Math.PI;
+lng = lng.toFixed (4);
+
+document.getElementById('GPS2').value = lat+','+lng;
+//document.getElementById('dd').value = lat+','+lng;
+document.getElementById('mapLat').value = lat;
+document.getElementById('mapLon').value = lng;
+//gpsLat
+convertthis();
+//return [true,lat,lng];
+
+}
+
+
+function checkformgrs(thestring){
+//var thestring= document.getElementById("MGRS").value;
+var thestring= thestring.replace(/\s/g, '');
+ document.getElementById("MGRS").value = thestring;
+var spc = thestring.split(" ");
+ var n = thestring.search(",");
+ var nlen=thestring.length;
+if (n>0) {alert('Please correct your coordinates --\nEnter valid MGRS string.\nExample: 10SFH0514968253 or 10S FH 05149 68253" '); document.getElementById('MGRS').value='';}
+if(nlen<12){alert('Please correct your coordinates --\nEnter valid MGRS string.\nExample: 10SFH0514968253 or 10S FH 05149 68253'); document.getElementById('MGRS').value=''; return}
+document.getElementById('mapLat').value = '';
+document.getElementById('mapLon').value = '';
+if (spc.length >2){(thestring);
+ } else{
+ 
+ var n = thestring.search(",")
+var spc = thestring.split(" ");
+//(spc.length);
+if (n ==-1) {// try to parse
+var str = document.getElementById("MGRS").value;  
+var res = str.substring(0, 3);
+    var res1 = str.substring(3, 5);
+	// check len
+	var checklen = str.substring(5, 20);
+	// alert (checklen);
+	
+if (checklen.length ==10) {
+     var res2 = checklen.substring(0, 5); 
+     var res3 = checklen.substring(5, 15);
+	} //if 8
+    if (checklen.length == 8) {
+	 var res2 = checklen.substring(0, 4); var res2 =  res2+'0';
+     var res3 = checklen.substring(4, 13); var res3 = res3 + '0'; 
+	}
+	LatLongFromMGRSstring(res+' '+res1+' '+res2+ ' '+res3);
+
+document.getElementById("MGRS").value = res+res1+res2+res3;
+}
+}
+}
+
+function checkform(){
+
+num1 = parseFloat(document.getElementById('mapLat').value);
+
+num2 = parseFloat (document.getElementById('mapLon').value);
+
+if (isNaN(num1) | isNaN(num2)){  document.getElementById('mapLon').value = '{longitude}';  
+document.getElementById('mapLat').value = '{latitude}';
+checkLatLon();
+return confirm('You have not entered valid GPS coordinates. \nBy default, the Latitude and Longitude will be calculated from your Grid Square.')
+}}
+
+function createjson () {
+
+var jsontext =document.getElementById('FormData').value;
+var temp1= document.getElementById('Mapfilename').value;
+var jsontext=jsontext.replace('j1', temp1);
+
+var temp1= document.getElementById('timestamp').value;
+var jsontext=jsontext.replace('j2', temp1);
+
+var temp1= document.getElementById('Type').value;
+var jsontext=jsontext.replace('j3', temp1);
+
+
+var temp1= document.getElementById('mapLat').value;
+var jsontext=jsontext.replace('j4', temp1);
+
+var temp1= document.getElementById('mapLon').value;
+    var gpstype =document.getElementById('locationSource').value;//set location  source
+var jsontext=jsontext.replace('l6', gpstype);//8-19-24
+    
+var jsontext=jsontext.replace('j5', temp1);
+var temp1= document.getElementById('MGRS').value;
+var jsontext=jsontext.replace('j6', temp1);
+var temp1= document.getElementById('Grid').value;
+var jsontext=jsontext.replace('j7', temp1);
+var temp1= document.getElementById('MsgSender').value;
+var jsontext=jsontext.replace('j8', temp1);
+var temp1= document.getElementById('Party').value;
+var jsontext=jsontext.replace('j9', temp1);
+var temp1= document.getElementById('Email').value;
+var jsontext=jsontext.replace('j10', temp1);
+
+var temp1= document.getElementById('Phone').value;
+var jsontext=jsontext.replace('j11', temp1);
+var temp1= document.getElementById('City').value;
+var jsontext=jsontext.replace('j12', temp1);
+
+var temp1= document.getElementById('County').value;
+var jsontext=jsontext.replace('j13', temp1);
+var temp1= document.getElementById('State').value;
+var jsontext=jsontext.replace('j14', temp1);
+
+var temp1= document.getElementById('Country').value;
+var jsontext=jsontext.replace('j15', temp1);
+var temp1= document.getElementById('Type').value;
+var jsontext=jsontext.replace('j16', temp1);
+
+var temp1= document.getElementById('Instruments').value;
+var jsontext=jsontext.replace('j17', temp1);
+var temp1= document.getElementById('Wind1').value;
+var jsontext=jsontext.replace('j18', temp1);
+var temp1= document.getElementById('Speedm').value;
+var jsontext=jsontext.replace('j18a', temp1);
+
+var temp1= document.getElementById('Wind2').value;
+var jsontext=jsontext.replace('j19', temp1);
+var temp1= document.getElementById('Speed2m').value;
+var jsontext=jsontext.replace('j19a', temp1);
+var temp1= document.getElementById('Direction').value;
+var jsontext=jsontext.replace('j20', temp1);
+
+var temp1= document.getElementById('Pressure').value;
+var jsontext=jsontext.replace('j21', temp1);
+var temp1= document.getElementById('Pressure2m').value;
+var jsontext=jsontext.replace('j21a', temp1);
+var temp1= document.getElementById('Comments').value;
+temp1 = removeLinebreaks(temp1);
+var jsontext=jsontext.replace('j22', temp1);
+
+
+document.getElementById('attached_text').value = jsontext;
+var attached_file = 'FormData.txt';
+
+
+//attached_text = jsontext;
+}//attached_text
+
+
+    // JavaScript to test hemisphere
+
+// Add to lat lon HTMLField
+//Testlat(); pn changes
+
+function Testlon(){   
+    // get user loc via lat lon and then compare
+     
+    var homelon = "{Longitude}";
+       var msg = 'Verify entered coordinates before submitting form.'
+    var num =document.getElementById('mapLon').value;
+ 
+    if ( (homelon <0 && num >0) || (homelon >0 && num <0)  ){
+        document.getElementById('mapLon').style.backgroundColor = '#ffdde2';
+          alert('Warning\nThe entered longitude is in a different hemisphere than the Winlink Express or Position Report coordinates. Western longitudes are negative numbers. Eastern longitudes are positive numbers.\n\nClick OK to edit the longitude or ignore this warning and continue with the entered longitude.');
+      
+    }else {document.getElementById('mapLon').style.backgroundColor = '';
+         }            
+}
+    
+    
+function Testlat(){
+    
+      // get user loc via lat lon and then compare
+   //var themsg = document.getElementById('mapLon').value;
+    var homelat = "{Latitude}";
+    var num =document.getElementById('mapLat').value;    
+   
+    
+    if ( (homelat <0 && num >0) || (homelat >0 && num <0)  ){
+        document.getElementById('mapLat').style.backgroundColor = '#ffdde2';
+       alert('Warning\nThe entered latitude is in a different hemisphere than the Winlink Express or Position Report coordinates. Southern latitudes are negative numbers. Northern latitudes are positive numbers.\n\nClick OK to edit the latitude or ignore this warning and continue with the entered latitude.');
+             }
+    else {document.getElementById('mapLat').style.backgroundColor = '';
+               }    
+   
+}
+    
+    function CheckGPSType(){
+    var  gpstype ='';
+       var  gpsnote ='';
+      var  gpstype =document.getElementById('location_source').value;
+      if (gpstype === "GPS") { document.getElementById('locationSource').value='GPS'}
+if (gpstype === "SPECIFIED") { document.getElementById('locationSource').value='User specified'}
+if (gpstype === "FORM ENTRY") { document.getElementById('locationSource').value='Form entry'}
+if (gpstype === "GRID SQUARE") { document.getElementById('locationSource').value='Grid square'}
+    }
+    
+</script></head>
+
+<body>
+
+<div style="text-align: center;">
+
+<form  style="font-family: Arial;" pbzloc="3" onsubmit="return confirm('To complete your form submission, click OK and close the open browser window. You will return to the new message window so you can post your message to the outbox');" method="post" id="myform" enctype="multipart/form-data" action="http://{FormServer}:{FormPort}">
+
+<table style="text-align: left; margin-left: auto; margin-right: auto; width: 8width: 100%; height: 938px;" border="0">
+
+<tbody>
+
+<tr>
+
+<td>
+
+<table style="font-size: 14px; width: width: 100%; height: 776px;" border="3" bordercolor="#999999" cellpadding="2" cellspacing="0">
+
+<tbody>
+
+<tr>
+
+<td height="50" colspan="2" valign="top" bgcolor="#dee9f9" style="height: 15%; vertical-align: top; text-align: center; "><div align="center"><small><b>&nbsp;&nbsp;
+    
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<br />
+<span class="style14">HURRICANE REPORT&nbsp;</span></b><span class="style14" style="font-size: 14px;"><big style="font-weight: bold;"></span><span style="font-size: 14px;"><big style="font-weight: bold;">&nbsp;<br />
+
+</span></small> 
+<input type="button" value=" Load Hurricane Report Data " onclick="document.getElementById('txtfiletoread').click();" />
+ <input type="file" id="txtfiletoread" accept=".txt"  style="display: none;"/>
+</div>     </p></td>
+
+</tr>
+
+<tr><td style="text-align: center;" colspan="2"><p class="style6"><small>Fill in as much information as possible. This form will send the message formatted as plain text. </small></p>
+    <p class="style1"><small><span class="style11">&nbsp;           </span><span class="style8">
+           <span class="style12"></span>
+           <input type="checkbox" name="checkbox" value="checkbox"  onclick="Flip('SendTo', 'WX4NHC')"/>
+           <span class="style12"><small>If WX4NHC is active and accepting traffic, click to add address.</small></span> </span>         
+           <input name="SendTo" type="hidden" id="SendTo" >
+           <input name="attached_file" type="hidden" id="attached_file" value="FormData.txt" />
+           <input name="Mapfilename" type="hidden" id="Mapfilename" value="Hurricane Report" />
+           <span style="font-size: 14px;"><span style="font-size: 14px;">
+           <input name="timestamp" type="hidden" id="timestamp" size="30" />
+           </span>
+           <input name="timestamp2" type="hidden" id="timestamp2" size="40" />
+           </span><br />
+    </small></p></td>
+</tr>
+<tr pbzloc="3">
+
+<td colspan="2" nowrap="nowrap" style="text-align: center; vertical-align: top;">
+
+  <div align="left">  &nbsp; <br />
+    &nbsp;<span style="font-size: 14px;"> 1. DATE/TIME:
+    <input name="UDTGfld" id="UDTGfld" title="You can overwrite if needed." onkeydown="return (event.keyCode!=13);" onclick=" DateTime('zulu','UDTGfld', false);" size="40" maxlength="40" />
+&nbsp;</span>&nbsp;&nbsp;<span style="color: #000000;">2. Report
+
+  Status</span>
+  
+<input name="Type1" type="radio" value="First Report" checked="checked" onclick="document.getElementById('Type').value =this.value "/>
+First Report
+<input name="Type1" type="radio" value="Update Report" onclick="document.getElementById('Type').value =this.value " />
+Update Report
+<input name="Type1" type="radio" value="Final Report"  onclick="document.getElementById('Type').value =this.value "/>
+Final Report
+<input name="Type" type="hidden" id="Type" value="First Report" />
+<br />
+  <br />
+  </div></td>
+
+</tr>
+
+
+
+<tr>
+
+<td height="644" colspan="5" style="height: 88px; vertical-align: middle; text-align: center; background-color: white;">
+
+<table border="1" cellpadding="2" cellspacing="0" style="text-align: left; width: 100%; height: 323px;">
+
+<tbody>
+
+<tr align="center">
+
+<td height="30"><div align="left"><span style="color: rgb(0, 102, 0);"> &nbsp;&nbsp;<span class="style46">3. Sender</span></span>&nbsp;
+    <input size="15" name="MsgSender"  id="MsgSender" maxlength="15" value="{MsgSender}" title="Call sign or Tactical of station sending." readonly="readonly" />
+&nbsp;<span style="color: #000000;">
+  
+4. Are you the Reporting Observer?</span>
+  
+<span style="color: rgb(204, 0, 0)"><small style="color: red; font-style: italic;">
+   
+  <input name="Party" id="Party"type="radio" value="YES" checked="checked" />
+  <span class="style46">Yes</span><span style="color: rgb(204, 0, 0)"><small style="color: red; font-style: italic;">&nbsp;&nbsp;<input name="Party" type="radio" value="YES" />
+  </small></span>NO, means you are  sending </small></span> <span class="style2">for another</span> <span class="style2">observer </span>&nbsp; &nbsp; &nbsp;&nbsp;
+  
+&nbsp;&nbsp; &nbsp; &nbsp; &nbsp; &nbsp;
+  
+&nbsp; &nbsp;&nbsp;</div></td>
+
+</tr>
+
+<tr align="center">
+
+<td height="30"><div align="left">
+ &nbsp; 5. Reporting Observer
+
+  Email&nbsp;  
+  <input size="70" name="Email" id="Email" maxlength="60" placeholder="If it is YOU, enter your email or Winlink address." />
+
+</div></td>
+
+</tr>
+
+<tr align="center">
+
+<td height="30"><div align="left">
+ &nbsp; 6. Reporting Observer Phone Number &nbsp;
+
+  <input size="70" name="Phone" id="Phone" maxlength="60" placeholder="If it is YOU, enter your phone number." />
+
+</div></td>
+
+</tr>
+
+<tr align="center">
+
+<td height="30" bgcolor="#FFFFFF"> &nbsp; &nbsp;<span class="style3">&nbsp;<span style="color: black;"><strong>Geographic Area of
+    
+Observed Event&nbsp;&nbsp;</strong></span></span></td>
+
+</tr>
+
+<tr align="center">
+
+<td height="95" nowrap="nowrap" bgcolor="#e6fff7" ><div align="left">
+  
+ <p>&nbsp; 6. City&nbsp;&nbsp;  
+    
+   <input name="City" id="City" size="40" maxlength="35" />
+&nbsp;
+    
+&nbsp;7. County&nbsp;
+<input placeholder="County- Province-Parish- Region" name="County" id="County"size="35" maxlength="35" />
+&nbsp;&nbsp;8. State
+<input name="State" id="State"size="25" maxlength="25" />
+<br />
+    
+  <br />
+  &nbsp;&nbsp;9. Country&nbsp; 
+  <input name="Country" id="Country"size="40" maxlength="35" />
+&nbsp;
+    
+  <input name="ExtGPS" type="hidden" id="ExtGPS" value="{GPS_SIGNED_DECIMAL}" />
+  <input name="GPS" type="hidden" id="GPS" value="{GPS_SIGNED_DECIMAL}" /> 
+  </p>
+ <p> Latitude and longitude: LAT<em><span class="style2">&nbsp;
+       <input name="mapLat" type="text" id="mapLat" onchange="splitPaste(this.value);checkLatLon();Testlat(); document.getElementById('location_source').value ='FORM ENTRY';CheckGPSType();" size="12" placeholder="ex: 38.5567" />
+ </span><span class="style45"> &nbsp;&nbsp;</span>LON <span class="style2">
+ <input name="mapLon" type="text" id="mapLon" onchange="CheckLon();checkLatLon();Testlon(); document.getElementById('location_source').value ='FORM ENTRY';CheckGPSType();document.getElementById('location_source').value ='FORM ENTRY';CheckGPSType();" size="12" placeholder="ex:-121.7932" />
+ </span>&nbsp;MGRS</em><span class="style2">
+ <input name="MGRS"onkeypress="if(event.keyCode==13){return false;}"   type="text" title= "If entering manually use format: 11SNR0184195204 or 11S NR 01841 95204" placeholder="Ex:11SNR0184195204" id="MGRS" onchange="checkformgrs(this.value)"size="25" maxlength="25" />
+&nbsp;</span><em>&nbsp;Grid&nbsp;
+<input name="Grid" type="text" id="Grid" value="{GridSquare}" size="8" maxlength="8" readonly="readonly" />
+<span class="style2">&nbsp;
+<input name="GPS2" type="hidden" id="GPS2" size="40" onchange="convertthis()" onkeypress="return isNumberKey(event)"  maxlength="40" title= "If entering manually use format: 38.5567,-121.7932" placeholder="Ex: 38.5567,-121.7932" />
+<span class="style45"><span style="color: black;"><span style="font-family:  Arial, Helvetica, sans-serif;; color: black;">
+<input name="GPS" type="hidden" id="GPS" value="{GPS_SIGNED_DECIMAL}" />
+</span></span></span></span></em>
+<input name="locationSource" type="hidden" id="locationSource" placeholder=""  style="color:blue" value=""   />
+<input name="location_source" type="hidden" id="location_source" placeholder=""  style="color:blue" value="{Location_Source}" />
+ </p>
+ <p><span class="style2">&nbsp;</span><span class="style2">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;LAT/LON and MGRS default to the center of the grid square listed in Express Settings,<br />
+ </span><span class="style2"> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;unless a GPS is used or Lat/LON or MGRS are entered manually.</span><span class="style8"></span></p>
+ <p> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="style8">If sending report for someone else, do not use your GPS Lat/Lon, obtain theirs if available and manually enter in decimal format.</span></p>
+ </div></td>
+
+</tr>
+
+</tbody>
+
+</table>
+
+<table style="text-align: left; width: 100%; height: 315px;" border="1" cellpadding="2" cellspacing="0">
+
+<tbody>
+
+<tr align="center">
+
+<td height="30"><div align="left"><span style="color: rgb(0, 102, 0);"><span style="color: black;"> 10.&nbsp; Measurements</span>&nbsp;</span>
+
+      <select name="Type1" id="Type1" size="2">
+
+        <option selected="selected">Estimated</option>
+
+        <option>Measured</option>
+
+      </select>
+
+&nbsp; 11. List Any Weather Instruments Used&nbsp;<small> &nbsp; 
+
+  <input name="Instruments" id="Instruments" size="60" maxlength="55" placeholder="If  &quot;Measured&quot; indicate instruments." />
+
+  </small>&nbsp;
+
+&nbsp;&nbsp; </div></td>
+
+</tr>
+
+<tr align="center">
+
+<td height="30"><div align="left"><span style="text-decoration: underline;"></span> &nbsp;12.  Wind&nbsp;Speed
+
+      <input name="Wind1" id="Wind1" size="4" maxlength="4" />
+      <select name="Speedm" size="4" id="Speedm" >
+        <option value="--" selected="selected">Unknown</option>
+        <option>MPH</option>
+        <option>KM/h</option>
+        <option>Knots</option>
+            </select>
+      &nbsp;&nbsp;
+      <input name="Speed" type="hidden" id="Speed" />
+&nbsp;13. Gust Speed<span style="font-weight: bold;"> </span>
+
+  <input name="Wind2" id="Wind2"  size="4" maxlength="4" />
+
+  <span style="font-weight: bold;">&nbsp;&nbsp;</span>
+  <select name="Speed2m"  size="4" id="Speed2m" >
+    <option value="--" selected="selected">Unknown</option>
+    <option>MPH</option>
+    <option>KM/h</option>
+    <option>Knots</option>
+
+  </select>
+
+&nbsp; 
+<input name="Speed2" type="hidden" id="Speed2" />
+&nbsp;&nbsp;
+ 14. Wind
+
+  Direction<span style="font-weight: bold;"></span><span style="font-weight: bold;">&nbsp; <span style="font-weight: bold;">
+  <select name="Directionm" size="4" id="Directionm" onchange="document.getElementById('Direction').value = document.getElementById('Directionm').value" >
+    <option selected="selected">---</option>
+    <option>N</option>
+    <option>NE</option>
+    <option>E</option>
+    <option>SE</option>
+    <option>S</option>
+    <option>SW</option>
+    <option>W</option>
+    <option>NW</option>
+  </select>
+  </span> </span>&nbsp;
+  <input name="Direction" type="hidden" id="Direction" value="" />
+  <textarea name="parseme" cols="60" id="parseme" style="display: none;"></textarea> </div></td>
+
+</tr>
+
+<tr align="center">
+
+<td height="30"><div align="left"><span style="text-decoration: underline;"></span><span style="font-weight: bold; text-decoration: underline;"></span><span style="text-decoration: underline;"></span>  <span style="font-weight: bold;"><span style="font-weight: bold;">
+  </span> </span>&nbsp;&nbsp;<span style="color: rgb(204, 0, 0);"></span><span style="color: rgb(204, 0, 0);"></span>15. Barometric
+
+  Pressure&nbsp;&nbsp;
+
+  <input title="Must be attained using calibrated barometer" name="Pressure"  id="Pressure" size="8" maxlength="8"/>
+
+&nbsp;&nbsp;
+
+  <select name="Pressure2m" size="3" id="Pressure2m"  >
+    <option value="--" selected="selected">Unknown</option>
+    <option>Inches</option>
+    <option>Millibars</option>
+
+  </select>
+
+&nbsp;
+<input name="Pressure2" type="hidden" id="Pressure2" />   <textarea name="attached_text"  cols="140" rows="3" id="attached_text" style="display: none;"></textarea>
+	
+<strong> &nbsp;&nbsp;&nbsp;&nbsp;</strong>
+&nbsp;</div></td>
+
+</tr>
+
+<tr align="center">
+
+<td height="100" valign="top" nowrap="nowrap">  <p align="left">    &nbsp; <br />
+&nbsp;  16. Comments: <span class="style16">(brief information to help quantify the intensity of this event. Eye Witness comments of Flooding, Storm Surge, Damages, etc.).</span> <br />
+&nbsp;
+    
+<textarea placeholder="Severe Flooding, Storm Surge, Rain Amount, Damage Reports, Evacuations, etc" name="Comments" id="Comments" rows="3" cols="110"onkeyup="AutoGrowTextArea(this)" onchange="this.value=RWS(this.value)"></textarea>
+<textarea name="FormData" cols="70" rows="25" id="FormData" style="display: none;">MapFileName:T=j1
+
+Latitude:T=j4
+Longitude:T=j5
+MGRS:T=j6
+Location source:M:GPS,User specified,Form entry,Grid square,Address lookup=l6
+Grid:T=j7
+DateTime:T=j2 
+01. Status:M=j3
+02. Is Sending Station the Observing Party?:M=j9
+03. Sender:T=j8
+04. Reporting Observer Email:T=j10
+05. Reporting Observer Phone Number:T=j11
+06. City:T=j12
+07. County:T=j13
+08. State:T=j14
+09. Country:T=j15
+10. Measurements Were:T=j16
+11. Weather Instruments Used:T=j17
+12. Wind Speed:N=j18 
+12b. Unit:M=j18a
+13. Gust Speed:N=j19
+13b. Unit:M=j19a
+14. Wind Direction:M=j20
+15. Barometric Pressure:N=j21
+15b. Unit:M=j21a
+16. Event Comments:T=j22
+</textarea>      
+<br />
+  <small><small><span style="font-family: Calibri;">
+  <br />
+&nbsp;&nbsp;
+  </span><span style="font-size: 12px;"><small><span class="formtext"><span style="font-family: Calibri;"><big>
+  </big></span></span>
+  <input value="Submit" style="height: 28px; color: green;" size="8" name="Submit" method="Post" id="Submit" onclick="checkform();createjson();  document.getElementById('parseme').value='' " enctype="multipart/form-data" class="SubmitBtn" type="submit" />
+&nbsp;&nbsp;<span class="formtext"><span style="font-family: Calibri;"><big>
+<input type="button" value="Save Hurricane Report Data"  style="color: blue;"onclick="SaveData()" />
+  </big></span></span></small></span>&nbsp;&nbsp;<span style="color: rgb(128, 0, 0);"><span><span style="font-size: 12px;"></span></span></span></small><span style="color: rgb(128, 0, 0);"></span></small>
+  <input style="color: rgb(204, 0, 0);" name="ResetForm" value="Reset Form " class="BtnFormat2" type="reset" />
+  <small> &nbsp;<span class="style15"> <span class="style13"><span class="style11"><span class="style2">Hurricane Watch Net Frequency When Active: 14.325 MHZ</span></span></span></span></small> &nbsp;&nbsp;<small>&nbsp; &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</small><span class="style15"><small>Ver 16.8</small></span>
+  <span class="style17"><span class="formtext11">
+  <input name="Templateversion" type="hidden" id="templateversion" value="Hurricane Report v. 16.8" />
+  <span style="font-family:  Arial, Helvetica, sans-serif;;"><span style="font-size: 12px;">
+  <input name="testCall" type="hidden" id="testCall" value="{MsgSender}" size="14" maxlength="</table>13" />
+  </span></span> </span></span>  
+  <p align="left">  
+</tr>
+
+</tbody>
+
+</table>
+
+</td>
+
+</tr>
+
+</tbody>
+
+</table>
+
+</td>
+
+</tr>
+
+</tbody>
+
+</table>
+
+</form>
+
+</div>
+
+</body></html>

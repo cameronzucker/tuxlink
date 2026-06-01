@@ -1,0 +1,45 @@
+Form: HICS 251 Facility Status Report_Initial.html,HICS 251 Facility Status Report_viewer.html
+
+To: 
+Subject: HICS-251 <var Incident_Name>, <var Facility>, <var DateTime>  
+Readonly:True
+Msg:
+1. INCIDENT NAME:	<var Incident_Name>
+PAGE	[<var Page>]	OF	[<var Page1>]
+Express Sender:	<var MsgSender>
+
+2. OPERATIONAL PERIOD: #:	[<var OpNum>]
+Date From:	<var DateFrom>
+Time From:	<var TimeFrom>
+
+Date To:	<var DateTo>
+Time To:	<var TimeTo>
+
+3. Name of Department / Unit Reporting Status Below	<var Department>	Contact Number:	<var Contactnumber>  
+Street Address: <var StreetADDRESS>  City:<var City> State: <var State> Zip Code: <var ZipCode>  
+4. System	5. Status	6. Comments
+4a. Power:	<var DMa>	<var Commenta>
+4b. Lighting:	<var DMb>	<var Commentb>
+4c. Water:	<var DMc>	<var Commentc>
+4d. Sewage/Toilets:	<var DMd>	<var Commentd>
+4e. Nurse Call System:	<var DMe>	<var Commente>
+4f. Medical Gases / Oxygen:	<var DMf>	<var Commentf>
+4g. Communications IT system, telephones, pagers:	<var DMg>	<var Commentg>
+
+7. Remarks:	<var Remarks>
+8. PREPARED by:	<var PreparedName>
+   Date/Time:	<var DateTime>
+   FACILITY:	<var Facility>
+
+9.Radio operator: <var Operator>
+ Latitude: <var mapLat>, Longitude:<var mapLon>, MGRS: <var MGRS>, Location source: <var locationSource>
+
+------------------------------------
+Express Sending Station:	<MsgSender>
+Senders Express Version:	<ProgramVersion>
+Senders Template Version:	<var Templateversion>
+Map File Name:	<var MapFileName>
+[No changes or editing of this message are allowed]
+
+
+

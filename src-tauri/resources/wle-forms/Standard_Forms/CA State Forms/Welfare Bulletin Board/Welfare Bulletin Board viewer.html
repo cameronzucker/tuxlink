@@ -1,0 +1,376 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <head>
+    <meta http-equiv="content-type" content="application/xhtml+xml; charset=utf-8" />
+    <title>WELFARE BULLETIN BOARD MESSAGE</title>
+    <style type="text/css">
+body, td, th {
+font-family: Arial, Helvetica, sans-serif;
+}
+.zentriert {
+text-align: center;
+}
+input, select {
+padding: 1px;
+-moz-border-radius-topleft: 2px;
+-moz-border-radius-topright: 2px;
+-moz-border-radius-bottomright: 2px;
+-moz-border-radius-bottomleft: 2px;
+font-family: Arial, Helvetica, sans-serif;
+font-size: 12px;
+text-align: left;
+font-weight: normal;
+font-style: normal;
+}
+
+
+
+input { 
+    text-align: left; 
+}
+textarea {
+padding: 1px;
+-moz-border-radius-topleft: 2px;
+-moz-border-radius-topright: 2px;
+-moz-border-radius-bottomright: 2px;
+-moz-border-radius-bottomleft: 2px;
+font-family: Arial, Helvetica, sans-serif;
+font-size: 12px;
+font-weight: normal;
+font-style: normal;
+}
+
+.right {
+text-align: right;
+}
+.SubmitBtn {
+text-align: right;
+}
+.version {
+font-size: 10px;
+color: #666666;
+position: relative;
+left: 0px;
+top: 3px;
+}
+.Header {	font-family: Arial, Helvetica, sans-serif;
+	font-size: 12px;
+	font-weight: bold;
+	color: #000;
+	text-align: center;
+	background-color: #EFEFEF;
+}
+
+  input[type=button] {
+
+  border: 2px solid #0f88f2;;
+   border-radius:.25rem;
+  color: black;
+   font-size: 14px;
+  padding: 2px 2px;
+ background-color: white;
+  text-decoration: none;
+  margin: 2px 2px;
+  cursor: pointer;
+}
+input[type=submit] {
+ border: 2px solid green;
+  border-radius:.25rem;
+  background-color: white;
+  color: black;
+  padding: 2px 2px;
+  font-size: 14px;
+   cursor: pointer;
+}
+input[type=reset] {
+ border: 2px solid red;
+ border-radius:.25rem;
+  background-color: white;
+  color: black;
+  padding: 2px 2px;
+  font-size: 14px;
+   cursor: pointer;
+}
+input[type=black1] {
+ border: 2px solid #999999;
+   width:225px;
+  border-radius:.25rem;
+
+  background-color: white;
+  color: black;
+  padding: 2px 2px;
+  font-size: 14px;
+   cursor: pointer;
+}
+    </style> <style>
+
+.pop-up {
+	position:absolute;
+	top:0;
+	left:-500em;
+	visibility: visible;
+}
+.pop-up:target {position:static; left:0;}
+/* The pop-up itself */
+.popBox {
+	background:#ffffff;
+	position:absolute;
+	left:30%;
+	right:30%;
+	top:20%;
+	bottom:25%;
+	z-index:10;
+	border:1px solid #3a3a3a;
+/* CSS3 where available: rounded corners, drop-shadow, and fade in. */
+border-radius:.25rem;
+box-shadow:0 .5rem .5rem rgba(0,0,0,.5);
+	opacity:0;
+	transition: opacity 0.8s ease-out;
+	visibility: visible;
+}
+:target .popBox {position:fixed; opacity:1;}
+/* Light box properties */
+.lightbox {
+display:none;
+text-indent:-200em;
+background-color:rgba(0,0,0,.4);
+width:100%;
+height:100%;
+position:fixed;
+top:0;
+left:0;
+bottom:0;
+right:0;
+z-index:5;
+}
+:target .lightbox {display:block;}
+/* The pop-ups close link, moved via CSS to the top right of the pop-up */
+.close:link,
+.close:visited {
+	position: absolute;
+	top: -0.75em;
+	right: -0.75em;
+	display: block;
+	width: 2em;
+	height: 2em;
+	line-height: 1.8;
+	padding: 0;
+	text-align: center;
+	text-decoration: none;
+	background-color: #000;
+	border: 2px solid #fff;
+	color: #fff;
+	border-radius: 50%;
+box-shadow: 0 0 .5rem .5rem rba(0,0,0,.5);
+	visibility: visible;
+}
+
+.close:before {content:"X";}
+.close:hover,
+.close:active,
+.close:focus {
+box-shadow: 0 0 .5rem .5rem rba(255,0,0,.5);
+background-color: #c00;
+color: #fff;
+}
+.close span {
+text-indent: -200em;
+display: block;
+}
+/* The pop-up content div will scroll if it has too much content */
+.popScroll {
+	position:absolute;
+	top: 1rem;
+	left: 1rem;
+	right: 1rem;
+	bottom: 1rem;
+	overflow-y: auto;
+*overflow-y: scroll;
+	padding-right: 0.5em;
+}
+.popScroll h2 {margin-top:0}
+.style26 {font-size: 10px}
+.style27 {font-size: 12px}
+    .style12 {	color: #FF0000;
+	font-style: italic;
+}
+.style23 {color: #FF0000}
+.style45 {font-size: 12px}
+.style45 {color: #2A5F00}
+    .style2 {font-size: 14px}
+    .style48 {color: #2A5F00; font-size: 12px; font-style: italic; }
+    .style15 {font-size: 14px; }
+.style22 {font-family: Arial, Helvetica, sans-serif;  }
+.style3 {font-size: 14px; font-weight: normal; font-family: Arial, Helvetica, sans-serif; }
+.style33 {font-size: 16px; color: #000049; }
+    .form-group {margin-bottom: 10px; }
+    </style>  
+    <script>
+  
+</script>
+<script type="text/javascript">
+
+
+</script></head>
+  <body>
+<form  style="font-family: Arial;" pbzloc="3" onsubmit="return confirm('To complete your form submission, click OK and close the open browser window. You will return to the new message window so you can post your message to the outbox');" method="post" id="myform" enctype="multipart/form-data" action="http://{FormServer}:{FormPort}">
+<script  src="https://assets.what3words.com/sdk/v3/what3words.js?key=XTENHH9U" onerror="hidbtn(true);" ></script>
+
+
+      <table width="1074" border="0" align="center" style="height: 498px; width: 907px;">
+        <tbody>
+          <tr>
+            <td width="1068">
+              <b>
+              </b>
+              <table style="font-size: 14px; width: 800px; height: 542px;" cellspacing="0"
+
+                cellpadding="2" bordercolor="#999999" border="1" width="1500">
+                <tbody>
+                  <tr bgcolor="#f8f8ff">
+                    <td colspan="2" bgcolor="#f8f8ff" style="height: 15%; vertical-align: top; text-align: center; "><h2 style="font-size: 18px;">WELFARE BULLETIN BOARD MESSAGE
+                      </h2>
+                      <div align="right"><input type="file" id="txtfiletoread" accept=".txt"  style="display: none;"/> 
+                    </div></td>
+                  </tr>
+                  <tr valign="top">
+                    <td 
+                        colspan="2" nowrap="nowrap" style="text-align: center; vertical-align: top;">
+                      <div align="left">
+                        <p><strong>Incident Name<span style="font-size: 14px">:</span></strong><span style="font-size: 14px"></span><span
+
+                            style="font-size: 12px;"> 
+                          <span
+
+                            style="font-size: 12px;">
+                          <span
+
+                            style="font-size: 12px;">
+                          {var iNCIDENTnAME}
+                          </span>                      <span
+
+                            style="font-size: 12px;"><span
+
+                            style="font-size: 12px;">
+                          <span ">&nbsp;&nbsp;&nbsp;&nbsp;
+                           &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="style12">
+                           <input name="internetcheck" type="hidden" id="internetcheck" value="{InternetAvailable} " />
+                           <input name="GPSvalid" type="hidden" id="GPSvalid" value="{GPSValid} " />
+                           <input name="Newsubject" type="hidden" id="Newsubject" />
+                           </span>&nbsp;<span class="style3">
+                           <input name="Organization" type="hidden" id="Organization" value="Winlink Net" />
+&nbsp;</span>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+<input name="IsExercise" type="hidden" id="IsExercise"  />
+<input name="IN24HR" type="hidden" id="IN24HR" />
+                    <input name="IN72HR" type="hidden" id="IN72HR" />
+                    <input name="ExtGPS" type="hidden" id="ExtGPS" value="{GPS_SIGNED_DECIMAL}" />
+                    <span class="style2">&nbsp;</span><span style="font-size: 14px;"> <span style="font-size: 14px;">
+                    <input name="timestamp" type="HIDDEN" id="timestamp" size="30" />
+                    </span>
+                    <input name="timestamp2" type="hidden" id="timestamp2" size="40" />
+<input name="attached_file" type="hidden" id="attached_file" value="FormData.txt" />
+<input name="Mapfilename" type="hidden" id="Mapfilename" value="LAX Bed Availability and HSL" />
+                    </span></span></span></span></span></span></p>
+                        <p><strong>To:</strong><span style="font-weight: normal">
+                          {var MsgTo}
+                        </span></p>
+                        <p><span class="style22"> <strong>From:&nbsp;</strong></span> <span style="font-weight: normal">
+                          {var From}
+                        </span><span class="style22">&nbsp; &nbsp;</span>                        </p>
+                        <p><strong>Message Type:
+                          </strong><span class="style33">{var msgtype}</span></p>
+                        <p><strong>Message Status:</strong> {var message_status} </p>
+                        <p><span style="color: black;"><span style="font-family:  Arial, Helvetica, sans-serif;; color: black;"><strong>Date/Time Local:</strong></span></span> <span class="style15">&nbsp;</span>{var fixeddate}                        </p>
+                        <p><strong>Date/Time UTC</strong>: <span style="font-size: 14px;">
+                          {var utctime}
+                          
+                              <input name="timestamp2" type="hidden" id="timestamp2" size="40" />
+                        </span></p>
+                      </div></td>
+                  </tr>
+                  <tr valign="top">
+                    <td colspan="2" style="text-align: justify;"><table width="100%" border="1" cellspacing="00" cellpadding="1">
+                      <tbody>
+                        <tr>
+                          <td bgcolor="#f8f8ff"><strong>WELFARE MESSAGE</strong></td>
+                        </tr>
+                      </tbody>
+                    </table>
+                      <p><strong>My Status</strong>: {var msgstatus} </p>
+                      <p><strong>Message:</strong><br />
+                      {var Message}</p>
+                      <p><strong>Next Check-in (local date-time):</strong></p>
+                      <p><strong>Next Date:</strong> {var Nextdate}</p>
+                      <p><strong>Next Time:</strong> {var Nexttime}<span style="color: rgb(128, 0, 0);"></p>
+                                                                                                        <textarea name="parseme" cols="80" rows="3" id="parseme" placeholder="Paste spreadsheet data here" style="display: none;"></textarea>
+                      <table width="100%" border="1" cellspacing="00" cellpadding="1">
+                      <tbody>
+                        <tr>
+                          <td bgcolor="#f8f8ff"><strong>LOCATION INFORMATION<em><span class="style12"><span class="style45"><span style="color: black;"><span style="font-family:  Arial, Helvetica, sans-serif;; color: black;">
+                            <input name="GPS3" type="hidden" id="GPS3" value="{GPS_SIGNED_DECIMAL}" />
+                          </span></span></span></span></em></strong></td>
+                        </tr>
+                      </tbody>
+                    </table>
+                    <p><span style="color: black;"><span style="font-family:  Arial, Helvetica, sans-serif;; color: black;"><span style="color: black;"><span style="font-family:  Arial, Helvetica, sans-serif;; color: black;">
+                      <strong>Street:</strong><span style="font-weight: normal">
+                      {var Street}
+                     </span></span></span></span></span></p>
+                    <p><strong>City:</strong> {var City} <strong>&nbsp;&nbsp;                    State:</strong>{var State}&nbsp;&nbsp;&nbsp;&nbsp;<strong>Zip:  </strong>{var zip}
+  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</p>
+                    <p><strong>Country:</strong> {var myCountry} </p>
+                    <table width="100%" border="1" cellspacing="00" cellpadding="1">
+                      <tbody>
+                        <tr>
+                          <td bgcolor="#f8f8ff"><strong>FOR RADIO OPERATORS USE<em><span class="style12"><span class="style45"><span style="color: black;"><span style="font-family:  Arial, Helvetica, sans-serif;; color: black;">
+                            <input name="GPS4" type="hidden" id="GPS4" value="{GPS_SIGNED_DECIMAL}" />
+                          </span></span></span></span></em></strong></td>
+                        </tr>
+                      </tbody>
+                    </table>
+                    <p><strong>Radio Operator:</strong> <span style="font-weight: normal"> {var CALLSIGN}</span></p>
+                    <p><strong>Coordinates are same as address: </strong>{var addressSame}</p>
+                    <p><span style="color: black;"><span style="font-family:  Arial, Helvetica, sans-serif;; color: black;"><span style="color: black;"><span style="font-family:  Arial, Helvetica, sans-serif;; color: black;">
+                      <strong>
+                      <input name="GPS" type="hidden" id="GPS" value="{GPS_SIGNED_DECIMAL}" />
+                      </strong></span></span></span></span><strong>Latitude<em>:</em></strong><em> </em>{var mapLat}<em>&nbsp;<span class="style45"> <strong>&nbsp;</strong></em><strong><span class="style48">&nbsp;</span>Longitude:</strong> {var mapLon}<em> <span style="color: black;"><span style="font-family: Arial, Helvetica, sans-serif;;">&nbsp;&nbsp;</span></span>&nbsp; <span class="style23">
+                      <input name="MGRS"onkeypress="if(event.keyCode==13){return false;}"   type="hidden" title= "If entering manually use format: 11SNR0184195204 or 11S NR 01841 95204" placeholder="Ex:11SNR0184195204" id="MGRS" onchange="checkformgrs(this.value)"size="25" maxlength="25" />
+&nbsp;</span>&nbsp;&nbsp;
+  <input name="Grid" type="hidden" id="Grid" value="{GridSquare}" size="8" maxlength="8" readonly="readonly" />
+                                                                  
+                                                                  
+
+
+  <span class="style12">&nbsp;
+  <input name="GPS2" type="hidden" id="GPS2" size="40" onchange="convertthis()" onkeypress="return isNumberKey(event)"  maxlength="40" title= "If entering manually use format: 38.5567,-121.7932" placeholder="Ex: 38.5567,-121.7932" />
+  </span></em><br />
+  <span class="style23"><br />
+  </span><strong>What3words location (US English):                          
+                      </strong>{var w3w} <em><em><span class="style12">&nbsp; </span></em></em></p>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td width="797" height="34">&nbsp;&nbsp;Form designed by  K6OLI, direct any inquiries or suggestions to <a href="mailto:k6oli@arrl.net">k6oli@arrl.net</a></td>
+<td width="105" nowrap="nowrap"><div align="center"><span
+
+                            style="font-size: 12px;"><span
+
+                                  class="Header">
+  <input name="Templateversion" type="hidden"
+
+                                    id="Templateversion" value="Welfare Message Board V 1.2.1" />
+  <input name="testCall" type="hidden" id="testCall" value="{MsgSender}" size="14" maxlength="13" />
+</span></span>Version 1.3<span style="font-size: 12px;"><big
+
+style="font-weight: bold;">  <span class="Header">
+</span></span></div></td>
+</tr>
+</tbody>
+</table>
+<br />
+ </td>
+</tr>
+</tbody>
+</table>
+</form>
+</body></html>

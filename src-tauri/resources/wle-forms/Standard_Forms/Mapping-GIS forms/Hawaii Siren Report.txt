@@ -1,0 +1,39 @@
+Form:Hawaii Siren Report.html,Hawaii Siren Report Viewer.html
+To:	<var MsgTo>
+Subject:  Hawaii Siren Report - <var Status>, <var SirenHeard>
+Call/Tactical Sender: <var MsgSender>
+Readonly:False
+Msg:
+-
+Hawaii Siren Report
+
+<var Organization>
+Report Type: [<var Status>]
+Date/Time: <var DateTime>
+Operators: <var Assigned>
+Station Contact Name: <var ContactName>
+Call/Tactical Sender: <var MsgSender>
+Location: <var Location>
+County: <var CountySelected>
+GPS Coordinates: LAT <var mapLat> LON <var mapLon>    MGRS Coordinates: <var MGRS> Grid Square: <var Grid>
+Siren Status: <var SirenHeard>
+Call/Tactical Sender: <var MsgSender>
+-------------------------------------------------------------
+Comments:
+
+<var Comments>  
+
+
+-------------------------------------------------------------
+Below Info Used for Copy and Paste to Spreadsheet
+
+TAB Delimited:
+
+<var Organization>	<var DateTime>	<var MsgSender>	<var Assigned>	<var ContactName>	<var Location>	<var CountySelected>	<var GPS2>	<var MGRS>	<var Grid>	<var SirenHeard>	<var Comments>
+
+Semicolon Delimited Values: 
+
+<var Organization>;<var DateTime>;<var MsgSender>;<var Assigned>;<var ContactName>;<var Location>;<var CountySelected>;<var GPS2>;<var MGRS>;<var Grid>;<var SirenHeard>;<var Comments>
+----------
+<var Templateversion>
+[No changes or editing of this message are allowed]

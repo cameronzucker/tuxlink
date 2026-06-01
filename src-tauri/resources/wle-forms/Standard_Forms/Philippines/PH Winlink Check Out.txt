@@ -1,0 +1,38 @@
+Form:PH Winlink_Check_out_Initial.html,PH Winlink_Check_out_Viewer.html
+To:<var MsgTo>
+Subject:<var Newsubject>
+Readonly:True
+Msg:
+-
+<var Organization> Check-Out
+Status: [<var Status>]
+Station secured at: <var DateTime>
+Calls Signs of On-Site Operator(s): <var Assigned>
+Station Contact Name: <var ContactName>
+Additional Location Info: <var Location>
+City / Town: <var CityTown>
+Barangay: <var Barangay> 
+Region: <var Region> 
+GPS Coordinates: LAT <var mapLat> LON <var mapLon>    MGRS Coordinates: <var MGRS> Grid Square: <var Grid>
+Call/Tactical Sender: <var MsgSender> 
+
+-------------------------------------------------------------
+Comments:
+
+<var Comments>  
+
+-------------------------------------------------------------
+Info Below Used for Copy and Paste to Spreadsheet
+
+TAB Delimited:
+
+<var Organization>	<var DateTime>	<var MsgSender>	<var Assigned>	<var ContactName>	<var Location>	<var CityTown>	<var Barangay>	<var Region>	<var GPS2>	<var MGRS>	<var Grid>	<var Commentstab>
+
+Semicolon Delimited Values: 
+
+<var Organization>;<var DateTime>;<var MsgSender>;<var Assigned>;<var ContactName>;<var Location>;<var CityTown>;<var Barangay>;<var Region>;<var GPS2>;<var MGRS>;<var Grid>;<var Commentstab>
+
+----------
+<var Templateversion>
+Map file name: <var Mapfilename>
+[No changes or editing of this message are allowed]

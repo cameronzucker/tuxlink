@@ -1,0 +1,575 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml"><head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+    
+    <title>HICS 251 – FACILITY SYSTEM STATUS REPORT</title>
+	<style type="text/css">
+body, td, th {
+font-family: Arial,Helvetica,sans-serif;
+font-size: 12px;
+}
+.zentriert {
+font-size: 12px;
+font-family: Arial,Helvetica,sans-serif;
+}
+input, select {
+padding: 1px;
+font-family: Arial,Helvetica,sans-serif;
+font-size: 12px;
+}
+textarea {
+margin: 8px;
+padding: 8px;
+font-family: Arial,Helvetica,sans-serif;
+font-size: 12px;
+}
+.rechtsbuendig {
+font-size: 12px;
+font-family: Arial,Helvetica,sans-serif;
+}
+.SubmitBtn {
+font-size: 12px;
+font-family: Arial,Helvetica,sans-serif;
+}
+.version {
+margin: 5px;
+color: #666666;
+position: relative;
+left: 0px;
+top: 1px;
+font-family: Arial,Helvetica,sans-serif;
+font-size: 12px;
+}
+#TextHeader {
+background-color: #dddddd;
+font-size: 10px;
+font-family: Arial,Helvetica,sans-serif;
+}
+
+.upload-btn-wrapper {
+  position: relative;
+  overflow: hidden;
+  display: inline-block;
+}
+
+.btn {
+  border: 2px solid gray;
+  color: gray;
+  background-color: white;
+  padding: 8px 20px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: bold;
+}
+
+.upload-btn-wrapper input[type=file] {
+  font-size: 50px;
+  position: absolute;
+  left: 0;
+  top: 0;
+  opacity: 0;}
+    </style>
+    <style>
+/*
+body {color:#000; background:#fff; font:100%/1.5 arial,sans-serif;}
+h2 {margin-top:0}
+*/
+/* Styling applied to classes only */
+/* Pop-up content shifted off-screen when not in view.
+Still readable by screen-reader software.
+When targeted it fills the browser window.
+*/
+.pop-up {
+	position:absolute;
+	top:0;
+	left:-500em;
+	visibility: hidden;
+}
+.pop-up:target {position:static; left:0;}
+/* The pop-up itself */
+.popBox {
+	background:#ffffff;
+	position:absolute;
+	left:20%;
+	right:20%;
+	top:10%;
+	bottom:10%;
+	z-index:10;
+	border:1px solid #3a3a3a;
+/* CSS3 where available: rounded corners, drop-shadow, and fade in. */
+border-radius:.25rem;
+box-shadow:0 .5rem .5rem rgba(0,0,0,.5);
+	opacity:0;
+	transition: opacity 0.8s ease-out;
+	visibility: hidden;
+}
+:target .popBox {position:fixed; opacity:1;}
+/* Light box properties */
+.lightbox {
+display:none;
+text-indent:-200em;
+background-color:rgba(0,0,0,.4);
+width:100%;
+height:100%;
+position:fixed;
+top:0;
+left:0;
+bottom:0;
+right:0;
+z-index:5;
+}
+:target .lightbox {display:block;}
+/* The pop-ups close link, moved via CSS to the top right of the pop-up */
+.close:link,
+.close:visited {
+	position: absolute;
+	top: -0.75em;
+	right: -0.75em;
+	display: block;
+	width: 2em;
+	height: 2em;
+	line-height: 1.8;
+	padding: 0;
+	text-align: center;
+	text-decoration: none;
+	background-color: #000;
+	border: 2px solid #fff;
+	color: #fff;
+	border-radius: 50%;
+box-shadow: 0 0 .5rem .5rem rba(0,0,0,.5);
+	visibility: hidden;
+}
+.close:before {content:"X";}
+.close:hover,
+.close:active,
+.close:focus {
+box-shadow: 0 0 .5rem .5rem rba(255,0,0,.5);
+background-color: #c00;
+color: #fff;
+}
+.close span {
+text-indent: -200em;
+display: block;
+}
+/* The pop-up content div will scroll if it has too much content */
+.popScroll {
+	position:absolute;
+	top: 1rem;
+	left: 1rem;
+	right: 1rem;
+	bottom: 1rem;
+	overflow-y: auto;
+*overflow-y: scroll;
+	padding-right: 0.5em;
+	visibility: hidden;
+}
+.popScroll h2 {margin-top:0}
+    .style3 {
+	color: #FF0000;
+	font-style: italic;
+}
+  input[type=button] {
+
+  border: 2px solid #0f88f2;;
+   border-radius:.25rem;
+  color: black;
+  padding: 2px 2px;
+ background-color: white;
+  text-decoration: none;
+  margin: 2px 2px;
+  cursor: pointer;
+}
+input[type=submit] {
+ border: 2px solid green;
+  border-radius:.25rem;
+  background-color: white;
+  color: black;
+  padding: 2px 2px;
+  font-size: 14px;
+   cursor: pointer;
+}
+input[type=reset] {
+ border: 2px solid red;
+ border-radius:.25rem;
+  background-color: white;
+  color: black;
+  padding: 2px 2px;
+  font-size: 14px;
+   cursor: pointer;
+}
+input[type=black1] {
+ border: 2px solid #999999;
+   width:225px;
+  border-radius:.25rem;
+
+  background-color: white;
+  color: black;
+  padding: 2px 2px;
+  font-size: 14px;
+   cursor: pointer;
+}
+  input[type=button] {
+
+  border: 2px solid #0f88f2;;
+   border-radius:.25rem;
+  color: black;
+  padding: 2px 2px;
+ background-color: white;
+  text-decoration: none;
+  margin: 2px 2px;
+  cursor: pointer;
+}
+input[type=submit] {
+ border: 2px solid green;
+  border-radius:.25rem;
+  background-color: white;
+  color: black;
+  padding: 2px 2px;
+  font-size: 14px;
+   cursor: pointer;
+}
+input[type=reset] {
+ border: 2px solid red;
+ border-radius:.25rem;
+  background-color: white;
+  color: black;
+  padding: 2px 2px;
+  font-size: 14px;
+   cursor: pointer;
+}
+input[type=black1] {
+ border: 2px solid #999999;
+   width:225px;
+  border-radius:.25rem;
+
+  background-color: white;
+  color: black;
+  padding: 2px 2px;
+  font-size: 14px;
+   cursor: pointer;
+}
+  input[type=button] {
+
+  border: 2px solid #0f88f2;;
+   border-radius:.25rem;
+  color: black;
+  padding: 2px 2px;
+ background-color: white;
+  text-decoration: none;
+  margin: 2px 2px;
+  cursor: pointer;
+}
+input[type=submit] {
+ border: 2px solid green;
+  border-radius:.25rem;
+  background-color: white;
+  color: black;
+  padding: 2px 2px;
+  font-size: 14px;
+   cursor: pointer;
+}
+input[type=reset] {
+ border: 2px solid red;
+ border-radius:.25rem;
+  background-color: white;
+  color: black;
+  padding: 2px 2px;
+  font-size: 14px;
+   cursor: pointer;
+}
+input[type=black1] {
+ border: 2px solid #999999;
+   width:225px;
+  border-radius:.25rem;
+width:120px;
+  background-color: white;
+  color: black;
+  padding: 2px 2px;
+  font-size: 14px;
+   cursor: pointer;
+}
+
+    .style4 {font-size: 16px}
+    .style5 {color: #000000}
+    .style45 {font-size: 12px}
+.style45 {color: #2A5F00}
+    .style46 {color: #000000}
+    body {
+	background-color: #FFFFFF;
+}
+    .style31 {color: #FF0000}
+.style49 {font-style: italic}
+.style49 {color: #FF0000;
+	font-style: italic;
+}
+    </style>
+    <script>
+
+
+</script></head>
+<body style="color: rgb(0, 0, 0); background-color: rgb(255, 255, 255);" alink="#000099" link="#000099" vlink="#990099">
+<br />
+    <form action="http://{FormServer}:{FormPort}" enctype="multipart/form-data" id="myform" method="post" onsubmit="return confirm('To complete your form submission, click OK and close the open browser window. You will return to the new message window so you can post your message to the outbox');" pbzloc="0">
+      <div id="pop1" class="pop-up"><!-- The pop-up block -->
+        <div class="popBox"><!-- If the content becomes larger than the pop-up this div will scroll the content -->
+          <div class="popScroll">
+            <p> </p>
+            <h2>HICS 254 - DISASTER VICTIM/PATIENT TRACKING</h2>
+            <p><strong>PURPOSE</strong>:<br />
+              The HICS 254 Disaster Victim/Patient Tracking records the triage,
+              treatment, and disposition of victims/patients of the event
+              seeking
+              medical attention</p>
+            <p align="left"><strong>NOTES</strong><br />
+              The form is completed upon arrival of the first patient and
+              updated
+              periodically. Copies of the form are sent to the Planning Section
+              Patient Tracking Manager each hour or as arranged, and at the end
+              of
+              each operational
+              period until disposition of the last victim(s) are known. If
+              additional
+              pages are needed, use another HICS 254 and repaginate as needed.</p>
+            <p align="left"><strong>1. Incident Name:<br />
+              </strong>Enter the name assigned to the incident.</p>
+            <p align="left"><strong>2. Operational Period</strong><br />
+              Enter the start date (mm/dd/yyyy) and time (24-hour clock) and end
+              date
+              and time for the operational period to which the form applies.<br />
+              <br />
+              <strong>3. Area</strong><br />
+              Enter the triage or specific treatment area (e.g., Triage,
+              Immediate
+              Treatment Area).<br />
+              <br />
+              <strong>Field Tag Number</strong><br />
+              Enter field triage tag number.</p>
+            <p align="left"><strong>Medical Record Number</strong>
+              <br />
+              Enter hospital medical record number if available.<br />
+              <br />
+              <strong>Name</strong><br />
+              Enter the full name of victim/patient.</p>
+            <p align="left"> <strong>Sex</strong><br />
+              Enter sex: M for male, F for female, or leave blank.</p>
+            <p align="left"><strong>DOB / Age</strong><br />
+              Enter date of birth and age, numbers only.</p>
+            <p align="left"><strong>Triage Category</strong><br />
+              Enter the triage category assigned to patient:<br />
+			  Immediate - Delayed - Minor - Expectant - Expired</p>
+            <p align="left"><strong>Location</strong><br />
+              Enter location of procedure.<br />
+              <br />
+              <strong>Disposition</strong><br />
+              Enter the disposition category:<br />
+			  (D) Discharge (A) Admit (S) Surgery (T) Transfer (M) Morgue
+			  <br /><br />
+			  <strong>Disposition Time</strong><br />	
+			  Enter the disposition Time, 24 hour clock.<br />	  	  
+              <br />
+              <strong>Prepared by</strong><br />
+              Enter the name of the person preparing the form. Since this is a
+              radio
+              delivered form, a typed name is same as signature. Enter
+              date (m/d/y), time prepared (24-hour clock), and Facility.</p>
+			  <strong>More Information</strong><br /><br />
+You can save your completed HTML to a text file. This will allow you to reload the ICS 254
+with ALL entered form data. You do this prior to submitting the form. Then you can open a new 254 and load the saved HTML form data. 
+NOTE: Date and Times will be the previous, so change if needed. This is much like using FireFox and the addon Formlet. It will save the info
+as a text file with the Date and Time as a file name. Now you can use any browser, save your form, (as many versions as you like), and then re-populate.
+<br />
+<br />
+			  This form also allows for pasting data from a spreadsheet with TAB delineation.
+			  You would create a spreadsheet to MATCH the HTML template for data in "3. Area".
+			  Do not exceed the data entry box input lengths or the info will not be seen properly if printed.
+			  You can do 10 columns and up to 10 rows of data.
+			  It is suggested you experiment and test to understand how this works.
+			  Once mastered it can be a time saver in the field for data entry.<br /><br />
+			  <strong> NOTE on printing. </strong><br />
+
+<br />
+
+Printing this form is dependent upon your selected
+
+printer and its settings. Various Web Browsers and and their viewing
+
+sizes are not all the same. Printing from a browsers print function
+
+may be different from the operating systems default print mode.
+
+Select what works for you, for both printing and viewing.
+
+You may print direct to the printer as a HTML or save as a
+
+PDF then print the PDF. In some instances Landscape mode may print
+
+better than Portrait. <br />
+
+</p>
+		  </div>
+          <!-- The close pop-up link correctly positioned at the end of the content block --><a href="#links" class="close"><span>Back
+        to links</span></a> </div>
+      </div>
+	  
+	    <div class="pop-up" id="pop3">
+    <!-- The pop-up block -->
+    <div class="popBox">
+      <!-- If the content becomes larger than the pop-up this div will scroll the content -->
+      <div class="popScroll">
+        <p> </p>
+        <h2>Copy and Paste Data From Spreadsheet</h2>
+        <span class="style13">
+        <p align="left">Copy the data from the spreadsheet, then click the button "Parse Data"<br />
+		TAB delineation and entry data needs to not exceed HTML entry box input lengths.<br />
+		10 columns and up to 10 rows of information.
+        </p>
+        <textarea name="parseme" cols="120" rows="11" id="parseme" placeholder="Paste spreadsheet data here" ></textarea> 
+		<input type=button value="Parse Data" onClick="parsestring('P');document.getElementById('closeme').click();">
+		
+		
+        </span>
+        <p align="left"></p>
+      <a href="#links">Close this window</a> </div>
+
+      <!-- The close pop-up link correctly positioned at the end of the content block -->
+
+      <a href="#links" id='closeme'>Close this window</a> 
+	   </div>
+  </div>
+      <table style="width: 1214px; height: 856px;" align="center" border="0">
+        <tbody>
+          <tr>
+            <td pbzloc="17">
+              <table width="100"  border="1" cellpadding="1" cellspacing="0" style=" width: 1000px; " pbzloc="11">
+                <tbody>
+                  <tr valign="top" bgcolor="#dee9f9">
+                    <td height="75" colspan="3" style="vertical-align: top;"><div align="center">
+                      <p class="style4"> HICS 251 – FACILITY SYSTEM STATUS REPORT<br />
+                      &nbsp; <span style="font-style: italic;">HICS -
+                      Hospital Incident Command System</span>
+                      </p>
+                      
+                      </div><p align="center"><span style="font-style: italic;"><span style="color: rgb(204, 0, 0);"> </span><br />
+                    </span></p></td>
+                  </tr>
+                  <tr>
+                    <td width="77%" height="94" style="width: 50%; text-align: center; vertical-align: top;"><div align="left"><br />
+                      &nbsp;&nbsp; <strong>1.
+                      Incident Name&nbsp;&nbsp;</strong> {var Incident_Name}                     <br />
+                      <br />
+                      <span ">&nbsp;&nbsp; &nbsp;&nbsp; </span>Page<span style="color: rgb(0, 0, 0);"> </span>
+                      {var Page}
+                      <span >&nbsp;Of&nbsp;&nbsp;
+                      {var Page1}&nbsp;&nbsp;&nbsp;&nbsp;
+                      <input type="file" id="txtfiletoread" accept=".txt" style="display: none;" /><br />
+                        <small>
+  <input name="attached_file" type="hidden" id="attached_file" value= "" />
+<textarea name="attached_text"  cols="140" rows="3" id="attached_text" style="display: none;"></textarea>
+  <input name="attached_file2" type="hidden" id="attached_file2" value= "" />
+<textarea name="attached_text2"  cols="140" rows="3" id="attached_text2" style="display: none;"></textarea>
+
+                    </div></td>
+<td width="23%" colspan="2" style="width: 50%; vertical-align: top; text-align: justify;">&nbsp;&nbsp;
+<div align="left"> &nbsp;<strong>&nbsp;2. Operational Period</strong>&nbsp; &nbsp; (#): &nbsp;
+  {var OpNum}
+  <br />
+  <br />
+&nbsp;&nbsp; &nbsp;&nbsp; &nbsp;&nbsp;  Date From: &nbsp; {var DateFrom} &nbsp; <b>&nbsp;</b>To:&nbsp;  {var DateTo}
+  <br />
+  <b><br />
+  </b>&nbsp;&nbsp; &nbsp;&nbsp; &nbsp;&nbsp; Time From: &nbsp; {var TimeFrom} &nbsp;
+&nbsp;&nbsp; &nbsp;To: &nbsp; {var TimeTo} <br />
+</div></td>
+</tr>
+                  <tr>
+                    <td height="19" colspan="3" style="width: 50%; text-align: center; vertical-align: top;"><div align="left">
+                      <p><strong> &nbsp;&nbsp;3. Name of Department / Unit Reporting Status Below&nbsp;&nbsp;&nbsp;</strong> {var Department} &nbsp;&nbsp; &nbsp;&nbsp;<strong> Contact Number: </strong>{var Contactnumber}                    </p>
+                      <p><span > <strong>&nbsp;&nbsp;3a. Street Address</strong>:</span> {var StreetADDRESS}&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span style="color: rgb(204, 0, 0);">&nbsp;</span><strong>City</strong>:{var City} <span style="color: rgb(204, 0, 0);">&nbsp;&nbsp;&nbsp;&nbsp;</span><strong>&nbsp;State:</strong>
+                        {var State} 
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span style="color: rgb(204, 0, 0);">&nbsp;</span><strong>Zip Code:</strong>
+{var ZipCode}
+                      <p>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Coordinates: Latitude: {var mapLat}; Longitude: {var mapLon};  MGRS : {var MGRS}; Grid Square: {var Grid}; Location source: {var locationSource }
+                    </p>
+                    </div></td>
+                  </tr>
+<tr>
+<td height="316" colspan="3" style="text-align: center; vertical-align: top;">
+<table width="100%"  border="1" cellspacing="0" cellpadding="4">
+  <tr align="left" valign="top" bgcolor="#f8f8ff">
+    <td width="29%"><strong>4. System </strong></td>
+    <td width="14%"><strong>5. Status </strong></td>
+    <td width="57%"><strong>6. Comments</strong> If not fully functional, give location, reason, and estimated time/resources for necessary repair. Identify who reported or inspected.</td>
+  </tr>
+  <tr align="left" valign="top">
+    <td><strong>4a. Power</strong>
+        <input name="DMa" type="hidden" id="DMa" value="N/A" /></td>
+    <td>{var DMa}</td>
+    <td><span style="width:400px; margin: 5px;  word-wrap:break-word; display:inline-block;">{var Commenta}</span></td>
+  </tr>
+  <tr align="left" valign="top">
+    <td><strong>4b. Lighting</strong>
+        <input name="DMb" type="hidden" id="DMb" value="N/A" /></td>
+    <td>{var DMb}</td>
+    <td><span style="width:400px; margin: 5px;  word-wrap:break-word; display:inline-block;">{var Commentb}</span></td>
+  </tr>
+  <tr align="left" valign="top">
+    <td><strong>4c. Water</strong>
+        <input name="DMc" type="hidden" id="DMc" value="N/A" /></td>
+    <td>{var DMc}</td>
+    <td><span style="width:400x; margin: 5px;  word-wrap:break-word; display:inline-block;">{var Commentc}</span></td>
+  </tr>
+  <tr align="left" valign="top">
+    <td><strong>4d. Sewage/Toilets</strong>
+        <input name="DMd" type="hidden" id="DMd" value="N/A" /></td>
+    <td>{var DMd}</td>
+    <td><span style="width:400px; margin: 5px;  word-wrap:break-word; display:inline-block;">{var Commentd}</span></td>
+  </tr>
+  <tr align="left" valign="top">
+    <td><strong>4e. Nurse Call System</strong>
+        <input name="DMe" type="hidden" id="DMe" value="N/A" /></td>
+    <td>{var DMe}</td>
+    <td><span style="width:400px; margin: 5px;  word-wrap:break-word; display:inline-block;">{var Commente}</span></td>
+  </tr>
+  <tr align="left" valign="top">
+    <td><strong>4f. Medical Gases / Oxygen</strong>
+        <input name="DMf" type="hidden" id="DMf" value="N/A" /></td>
+    <td>{var DMf}</td>
+    <td><span style="width:400px; margin: 5px;  word-wrap:break-word; display:inline-block;">{var Commentf}</span></td>
+  </tr>
+  <tr align="left" valign="top">
+    <td><strong>4g. Communications</strong> IT system, telephones, pagers
+        <input name="DMg" type="hidden" id="DMg" value="N/A" /></td>
+    <td>{var DMg}</td>
+    <td><span style="width:400px; margin: 5px;  word-wrap:break-word; display:inline-block;">{var Commentg}</span></td>
+  </tr>
+  <tr align="left" valign="top" bgcolor="#f8f8ff">
+    <td colspan="3"><p><strong>7. Remarks</strong> (Cracked walls, broken glass, falling light fixtures, etc.) </p>
+      <p><span style="width:750px; margin: 5px;  word-wrap:break-word; display:inline-block;">{var Remarks}</span> </p></td>
+    </tr>
+  <tr align="left" valign="top">
+   
+</table>
+</td>
+</tr>
+<tr>
+  <td height="34" colspan="3" style="height: 30px; text-align: center; vertical-align: middle;"><div align="left">
+    <p><b><span style="font-weight: normal;">&nbsp;</span></b><span style="font-weight: normal;"><strong> 8.</strong></span><span style="font-weight: bold;"> Prepared By</span><strong><big>:</big></strong><b> &nbsp; </b>{var PreparedName}<b>&nbsp;&nbsp;&nbsp;</b><strong>Date</strong> / Time: {var DateTime} &nbsp;<b> FACILITY :</b>&nbsp; {var Facility} &nbsp;&nbsp; <span class="style5"><span style="color: black;"><span style="font-family:  Arial, Helvetica, sans-serif;; color: black;"><span style="color: black;"><span style="font-family:  Arial, Helvetica, sans-serif;; color: black;"><b><span style="font-weight: normal;">&nbsp;&nbsp;</span></b></span></span></span></span></span> &nbsp;<span style="font-style: italic;">&nbsp;</span></p>
+    <p><span style="font-style: italic;"><span style="font-weight: bold;"><b><span style="font-weight: normal;">&nbsp;</span></b><span style="font-weight: normal;"><strong> </strong></span>9.Radio opertor: {var operator}<br />
+    </span></span><b><span style="font-weight: normal;">&nbsp;</span></b><span style="font-weight: normal;"><strong>&nbsp;&nbsp; </strong></span>Latitude and longitude: LAT<em>  {var mapLat}      LON  </em> {var mapLon}      MGRS {var MGRS}    Grid<em>  {var Grid} </em>        Location source: {var locationSource}  </p>
+    <p><span style="font-style: italic;">
+      <input name="testCall" type="hidden" id="testCall" value="{MsgSender}" size="14" maxlength="13" />
+            <input name="Templateversion" type="hidden"
+
+                                    id="Templateversion" value="HICS 251 v .6" />
+        </span></p>
+  </div></td>
+</tr>
+</tbody>
+</table>
+<br />
+</td>
+</tr>
+</tbody>
+</table>
+</form>
+</body></html>

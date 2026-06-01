@@ -1,0 +1,9 @@
+Form: Quick Message Initial.html
+
+To: <var address>
+Subject: <var Subjectline>	
+Msg:
+From <var From_Name>
+Sent on <var time>
+
+<var Message>

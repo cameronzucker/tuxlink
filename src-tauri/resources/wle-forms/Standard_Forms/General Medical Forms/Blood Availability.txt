@@ -1,0 +1,59 @@
+Form:Blood Availability initial.html,Blood Availability viewer.html
+
+To: 
+Subject: Blood Availability: <var FacilityName>  <var DateTime>  
+
+Msg:
+<var IsExercise>
+
+Date/Time: <var DateTime>
+Facility Name: 	<var FacilityName>
+Facility Address: <var Address>
+Facility Contact Name: <var ContactName>
+Facility Phone number: <var PhoneNumber>
+	
+Blood Availability by Type
+Red Blood
+O+	<var Btype1>
+O-	<var Btype2>
+
+A+	<var Btype3>
+A-	<var Btype4>
+
+B+	<var Btype5>
+B-	<var Btype6>
+
+AB+	<var Btype7>
+AB-	<var Btype8>
+
+Plasma
+O	<var Btype9>
+
+A	<var Btype10>
+
+B	<var Btype11>
+
+AB	<var Btype12>
+
+Comments
+<var Comments>
+
+Approved by: <var Approved_Name>
+----
+ LOCATION
+  Location:	<var FacilityName>
+  Latitude:	<var mapLat> 
+  Longitude:	<var mapLon>    
+  MGRS:	<var MGRS> 
+  Grid Square:	<var Grid>
+  Location source: <var locationSource>
+
+------------------------------------
+Express Sending Station:	<MsgSender>
+Senders Express Version:	<ProgramVersion>
+Senders Template Version:	<var Templateversion>
+Map File Name:	<var MapFileName>
+
+
+
+

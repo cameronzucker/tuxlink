@@ -1,0 +1,53 @@
+Form:Welfare Bulletin Board Initial.html,Welfare Bulletin Board viewer.html
+To:<var MsgTo>
+Subject:WELFARE BULLETIN MESSAGE- <var From> - <var fixeddate>
+Msg:
+-- WELFARE BULLETIN BOARD --
+On the web at https://www.laxnortheast.org/welfare
+
+
+Incident Name: <var iNCIDENTnAME>                                                                
+
+To: <var MsgTo>
+
+From:  <var From>    
+
+Message Type: <var msgtype>
+
+Message Status: <var message_status>
+
+Date/Time Local:  <var fixeddate> 
+
+Date/Time UTC: <var utctime>
+
+-- WELFARE MESSAGE -- 
+My Status: <var msgstatus>
+
+Message:<var Message>
+
+Next Check-in (local date-time)
+   Next Date:<var Nextdate>
+   Next Time: <var Nexttime>
+
+-- LOCATION INFORMATION --
+Street: <var Street>
+
+Coordinates are same as address: <var addressSame>
+City:<var City>    State:<var State>    
+
+Zip: <var zip>       Country: <var myCountry>
+
+-- FOR RADIO OPERATOR USE --
+Radio operator: <var CALLSIGN>
+
+Latitude: <var mapLat>    Longitude: <var mapLon>          
+
+What3words location (US English): <var w3w>  
+
+Form designed by K6OLI, direct any inquiries or suggestions to k6oli@arrl.net
+-------------------------------------------------------------
+
+<var Templateversion>
+Map file name: <var Mapfilename>
+----
+  

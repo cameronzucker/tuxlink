@@ -1,0 +1,1912 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml"><head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+    
+    <title>HICS 251 – FACILITY SYSTEM STATUS REPORT</title>
+	<style type="text/css">
+body, td, th {
+font-family: Arial,Helvetica,sans-serif;
+font-size: 12px;
+}
+.zentriert {
+font-size: 12px;
+font-family: Arial,Helvetica,sans-serif;
+}
+input, select {
+padding: 1px;
+font-family: Arial,Helvetica,sans-serif;
+font-size: 12px;
+}
+textarea {
+margin: 8px;
+padding: 8px;
+font-family: Arial,Helvetica,sans-serif;
+font-size: 12px;
+}
+.rechtsbuendig {
+font-size: 12px;
+font-family: Arial,Helvetica,sans-serif;
+}
+.SubmitBtn {
+font-size: 12px;
+font-family: Arial,Helvetica,sans-serif;
+}
+.version {
+margin: 5px;
+color: #666666;
+position: relative;
+left: 0px;
+top: 1px;
+font-family: Arial,Helvetica,sans-serif;
+font-size: 12px;
+}
+#TextHeader {
+background-color: #dddddd;
+font-size: 10px;
+font-family: Arial,Helvetica,sans-serif;
+}
+
+.upload-btn-wrapper {
+  position: relative;
+  overflow: hidden;
+  display: inline-block;
+}
+
+.btn {
+  border: 2px solid gray;
+  color: gray;
+  background-color: white;
+  padding: 8px 20px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: bold;
+}
+
+.upload-btn-wrapper input[type=file] {
+  font-size: 50px;
+  position: absolute;
+  left: 0;
+  top: 0;
+  opacity: 0;}
+    </style>
+    <style>
+/*
+body {color:#000; background:#fff; font:100%/1.5 arial,sans-serif;}
+h2 {margin-top:0}
+*/
+/* Styling applied to classes only */
+/* Pop-up content shifted off-screen when not in view.
+Still readable by screen-reader software.
+When targeted it fills the browser window.
+*/
+.pop-up {
+	position:absolute;
+	top:0;
+	left:-500em;
+	visibility: visible;
+}
+.pop-up:target {position:static; left:0;}
+/* The pop-up itself */
+.popBox {
+	background:#ffffff;
+	position:absolute;
+	left:20%;
+	right:20%;
+	top:10%;
+	bottom:10%;
+	z-index:10;
+	border:1px solid #3a3a3a;
+/* CSS3 where available: rounded corners, drop-shadow, and fade in. */
+border-radius:.25rem;
+box-shadow:0 .5rem .5rem rgba(0,0,0,.5);
+	opacity:0;
+	transition: opacity 0.8s ease-out;
+	visibility: visible;
+}
+:target .popBox {position:fixed; opacity:1;}
+/* Light box properties */
+.lightbox {
+display:none;
+text-indent:-200em;
+background-color:rgba(0,0,0,.4);
+width:100%;
+height:100%;
+position:fixed;
+top:0;
+left:0;
+bottom:0;
+right:0;
+z-index:5;
+}
+:target .lightbox {display:block;}
+/* The pop-ups close link, moved via CSS to the top right of the pop-up */
+.close:link,
+.close:visited {
+	position: absolute;
+	top: -0.75em;
+	right: -0.75em;
+	display: block;
+	width: 2em;
+	height: 2em;
+	line-height: 1.8;
+	padding: 0;
+	text-align: center;
+	text-decoration: none;
+	background-color: #000;
+	border: 2px solid #fff;
+	color: #fff;
+	border-radius: 50%;
+box-shadow: 0 0 .5rem .5rem rba(0,0,0,.5);
+	visibility: visible;
+}
+.close:before {content:"X";}
+.close:hover,
+.close:active,
+.close:focus {
+box-shadow: 0 0 .5rem .5rem rba(255,0,0,.5);
+background-color: #c00;
+color: #fff;
+}
+.close span {
+text-indent: -200em;
+display: block;
+}
+/* The pop-up content div will scroll if it has too much content */
+.popScroll {
+	position:absolute;
+	top: 1rem;
+	left: 1rem;
+	right: 1rem;
+	bottom: 1rem;
+	overflow-y: auto;
+*overflow-y: scroll;
+	padding-right: 0.5em;
+	visibility: visible;
+}
+.popScroll h2 {margin-top:0}
+    .style3 {
+	color: #FF0000;
+	font-style: italic;
+}
+  input[type=button] {
+
+  border: 2px solid #0f88f2;;
+   border-radius:.25rem;
+  color: black;
+  padding: 2px 2px;
+ background-color: white;
+  text-decoration: none;
+  margin: 2px 2px;
+  cursor: pointer;
+}
+input[type=submit] {
+ border: 2px solid green;
+  border-radius:.25rem;
+  background-color: white;
+  color: black;
+  padding: 2px 2px;
+  font-size: 14px;
+   cursor: pointer;
+}
+input[type=reset] {
+ border: 2px solid red;
+ border-radius:.25rem;
+  background-color: white;
+  color: black;
+  padding: 2px 2px;
+  font-size: 14px;
+   cursor: pointer;
+}
+input[type=black1] {
+ border: 2px solid #999999;
+   width:225px;
+  border-radius:.25rem;
+
+  background-color: white;
+  color: black;
+  padding: 2px 2px;
+  font-size: 14px;
+   cursor: pointer;
+}
+  input[type=button] {
+
+  border: 2px solid #0f88f2;;
+   border-radius:.25rem;
+  color: black;
+  padding: 2px 2px;
+ background-color: white;
+  text-decoration: none;
+  margin: 2px 2px;
+  cursor: pointer;
+}
+input[type=submit] {
+ border: 2px solid green;
+  border-radius:.25rem;
+  background-color: white;
+  color: black;
+  padding: 2px 2px;
+  font-size: 14px;
+   cursor: pointer;
+}
+input[type=reset] {
+ border: 2px solid red;
+ border-radius:.25rem;
+  background-color: white;
+  color: black;
+  padding: 2px 2px;
+  font-size: 14px;
+   cursor: pointer;
+}
+input[type=black1] {
+ border: 2px solid #999999;
+   width:225px;
+  border-radius:.25rem;
+
+  background-color: white;
+  color: black;
+  padding: 2px 2px;
+  font-size: 14px;
+   cursor: pointer;
+}
+  input[type=button] {
+
+  border: 2px solid #0f88f2;;
+   border-radius:.25rem;
+  color: black;
+  padding: 2px 2px;
+ background-color: white;
+  text-decoration: none;
+  margin: 2px 2px;
+  cursor: pointer;
+}
+input[type=submit] {
+ border: 2px solid green;
+  border-radius:.25rem;
+  background-color: white;
+  color: black;
+  padding: 2px 2px;
+  font-size: 14px;
+   cursor: pointer;
+}
+input[type=reset] {
+ border: 2px solid red;
+ border-radius:.25rem;
+  background-color: white;
+  color: black;
+  padding: 2px 2px;
+  font-size: 14px;
+   cursor: pointer;
+}
+input[type=black1] {
+ border: 2px solid #999999;
+   width:225px;
+  border-radius:.25rem;
+width:120px;
+  background-color: white;
+  color: black;
+  padding: 2px 2px;
+  font-size: 14px;
+   cursor: pointer;
+}
+
+    .style4 {font-size: 16px}
+    .style5 {color: #FF0000}
+    .style45 {font-size: 12px}
+.style45 {color: #2A5F00}
+    .style46 {color: #000000}
+    body {
+	background-color: #FFFFFF;
+}
+    </style>
+    <script>
+
+function saveTextAsFile(fileNameToSaveAs, textToWrite) {
+var textToWrite = document.getElementById('parseme').value; 
+var fileNameToSaveAs = "HICS251 " + DateforFile()+".txt";
+fileNameToSaveAs = prompt("", fileNameToSaveAs);
+
+  /* Saves a text string as a blob file*/  
+  var ie = navigator.userAgent.match(/MSIE\s([\d.]+)/),
+      ie11 = navigator.userAgent.match(/Trident\/7.0/) && navigator.userAgent.match(/rv:11/),
+      ieEDGE = navigator.userAgent.match(/Edge/g),
+      ieVer=(ie ? ie[1] : (ie11 ? 11 : (ieEDGE ? 12 : -1)));
+
+  if (ie && ieVer<10) {
+    console.log("No blobs on IE ver<10");
+    return;
+  }
+
+  var textFileAsBlob = new Blob([textToWrite], {
+    type: 'text/plain'
+  });
+
+  if (ieVer>-1) {
+    window.navigator.msSaveBlob(textFileAsBlob, fileNameToSaveAs);
+
+  } else {
+    var downloadLink = document.createElement("a");
+    downloadLink.download = fileNameToSaveAs;
+    downloadLink.href = window.URL.createObjectURL(textFileAsBlob);
+    downloadLink.onclick = function(e) { document.body.removeChild(e.target); };
+    downloadLink.style.display = "none";
+    document.body.appendChild(downloadLink);
+    downloadLink.click();
+  }
+}
+
+
+
+
+
+function destroyClickedElement(event)
+{
+    document.body.removeChild(event.target);
+}
+
+function loadFileAsText()
+{
+
+    var fileToLoad = document.getElementById("fileToLoad").files[0];
+ 
+    var fileReader = new FileReader();
+    fileReader.onload = function(fileLoadedEvent) 
+    {
+        var textFromFileLoaded = fileLoadedEvent.target.result;
+        document.getElementById("inputTextToSave").value = textFromFileLoaded;
+    };
+    fileReader.readAsText(fileToLoad, "UTF-8");
+}
+
+function TimeNow(Timefld, FocusFld) {
+var txt;
+var d = new Date(),
+thisyear = d.getFullYear();
+thismonth= d.getMonth();
+thismonth = thismonth+1;
+if (thismonth < 10) { thismonth = "0" + thismonth}
+
+thisday = d.getDate();
+if (thisday < 10) { thisday = "0" + thisday}
+
+h = (d.getHours()<10?'0':'') + d.getHours()
+m = (d.getMinutes()<10?'0':'') + d.getMinutes()
+s = (d.getSeconds()<10?'0':'') + d.getSeconds();
+var myprompt = thisyear+ '-'+thismonth+'-'+thisday+' '+h + ':' + m ;
+var RightNow = prompt("", myprompt);
+document.getElementById(Timefld).value = RightNow;
+TimeStamp();
+} 
+function DateforFile(RightNow) {
+var txt;
+var d = new Date(),
+thisyear = d.getFullYear();
+thismonth= d.getMonth();
+thismonth = thismonth+1;
+if (thismonth < 10) { thismonth = "0" + thismonth}
+
+thisday = d.getDate();
+if (thisday < 10) { thisday = "0" + thisday}
+
+h = (d.getHours()<10?'0':'') + d.getHours()
+m = (d.getMinutes()<10?'0':'') + d.getMinutes()
+s = (d.getSeconds()<10?'0':'') + d.getSeconds();
+var myprompt = thisyear+ '-'+thismonth+'-'+thisday+' '+h + '_' + m ;
+return myprompt;
+TimeStamp();
+}
+</script>
+
+<script>
+function shortmonth(monthnum) {
+var monthname;
+shortmonths = ["JAN", "FEB", "MAR","APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"] ;
+monthname = shortmonths [monthnum];
+return monthname;
+}
+function DateTimef(TType,TheFld, FocusFld) {
+var txt;
+var myprompt;
+var d = new Date(),
+thisyear = d.getFullYear();
+thismonth= d.getMonth();
+thisday = d.getDate();
+var monname;
+h = (d.getHours()<10?'0':'') + d.getHours()
+m = (d.getMinutes()<10?'0':'') + d.getMinutes()
+s = (d.getSeconds()<10?'0':'') + d.getSeconds();
+var now = new Date();
+var utch = now.getUTCHours();
+if (utch < 10) { utch = "0"+utch};
+var utcs = now.getUTCMinutes();
+if (utcs < 10) { utcs = "0"+utcs};
+var myUTCtime = utch+":"+utcs+"Z";
+var utcstr = d.toUTCString();
+var localt = d.toLocaleTimeString();
+var isostr = d.toISOString();
+monthname = shortmonth (thismonth);
+thismonth = thismonth + 1;
+if (thismonth < 10) { thismonth = "0"+thismonth};
+if (thisday < 10) { thisday = "0"+thisday};
+switch (TType) {
+case 'hms' :
+myprompt = h + ':' + m + ':' + s;
+var RightNow = prompt("Time:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'hm' :
+myprompt = h + ':' + m;
+//myprompt = h+ m;
+var RightNow = prompt("Time:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'm-d-y': myprompt = thismonth+ '-' + thisday+ '-'+ thisyear;
+var RightNow = prompt("Date:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'm/d/y': myprompt = thismonth+ '/' + thisday+ '/'+ thisyear;
+var RightNow = prompt("Date:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'DateStamp-m-d-y': var RightNow = thismonth+ '-' + thisday+ '-'+ thisyear;
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'd mmm y': myprompt = thisday+ ' ' + monthname+ ' '+ thisyear;
+var RightNow = prompt("Date:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'mmm-d-y': myprompt = monthname+'-'+thisday+ '-' + thisyear;
+var RightNow = prompt("Date:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'localampm': var myprompt = localt;
+var RightNow = prompt("Local time:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'fulldate': var myprompt = thisyear+ '-'+thismonth+'-'+thisday;
+var RightNow = prompt("Date:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'fulldatetime': var myprompt = thisyear+'-'+thismonth+ '-'+thisday+' '+h + ':' + m + ':' + s;
+var RightNow = prompt("Date time:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'iso': var myprompt = isostr;
+var RightNow = prompt("Date time:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'utc': var myprompt = utcstr;
+var RightNow = prompt("Date time:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'zulu': var myprompt = isostr;
+myprompt = isostr.replace("T", " "); slen = myprompt.length;
+myprompt = myprompt.substr(0, slen-5)+'Z';
+var RightNow = prompt("Date time:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'UTChm': var myprompt = myUTCtime;
+var RightNow = prompt("Date time:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+}
+
+// if(FocusFld !== null && FocusFld !== '') {document.getElementById(FocusFld).focus()} --/
+};
+function AutoGrowTextArea(textField)
+{
+
+if (textField.clientHeight < textField.scrollHeight)
+{
+textField.style.height = textField.scrollHeight + "px";
+if (textField.clientHeight < textField.scrollHeight)
+{
+textField.style.height = (textField.scrollHeight * 2 - textField.clientHeight) + "px";
+}
+}
+}
+function Countthelines(f) { var text1 = f
+var text2 = text1.replace(/\s+$/,"");
+var split2 = text2.split("\n"); var mytotal = split2.length * 17;
+if (mytotal < 150) {
+mytotal = 150;
+}
+var tstr = mytotal.toString();
+return tstr;
+}
+function newfix(f){
+var ThisText = document.getElementById("SpecialInstructions").value;
+var makeit = Countthelines(ThisText);
+document.getElementById(f).style.height = makeit+"px"; }
+
+function Fixarea() {
+newfix("SpecialInstructions");
+AutoGrowTextArea("SpecialInstructions");
+
+}
+function RWS(str){
+var text2 = str.replace(/\s+$/,"");
+return text2.trim();
+}
+function Collect(){
+var datatosave;
+datatosave = "HICS-251"+ "\r";
+
+document.getElementById("Saveme").value = datatosave;
+
+}
+
+function SaveData() {
+	var mydata= "";
+		//		
+
+			 
+			 // note get header info
+		var mydata=mydata + document.getElementById('Incident_Name').value+"\t";
+		var mydata=mydata + document.getElementById('Page').value+"\t";
+		var mydata=mydata + document.getElementById('Page1').value+"\t";
+		var mydata=mydata + document.getElementById('OpNum').value+"\t";
+		var mydata=mydata + document.getElementById('DateFrom').value+"\t";
+		var mydata=mydata + document.getElementById('TimeFrom').value+"\t";
+		var mydata=mydata + document.getElementById('DateTo').value+"\t";
+		var mydata=mydata + document.getElementById('TimeTo').value+"\t";
+		
+		var mydata=mydata + document.getElementById('PreparedName').value+"\t";
+		var mydata=mydata + document.getElementById('Date_Time').value+"\t";
+				
+		var mydata=mydata + document.getElementById('Facility').value+"\t";
+		var mydata=mydata + document.getElementById('Area').value+"\t";
+		var mydata=mydata+"\n";
+		
+
+			document.getElementById('parseme').value = mydata;
+			
+			saveTextAsFile();
+			
+			//saveTextAsFile();
+			}
+			
+
+
+
+
+
+		
+		//
+
+
+	
+	function selectaddress(){  
+ location.href="#pop3";  
+} 
+ 
+//-------
+
+  function readBlob(opt_startByte, opt_stopByte) {
+      alert('at blob!');
+    var files = document.getElementById('files').files;
+    if (!files.length) {
+      alert('Please select a file!');
+      return;
+    }
+
+    var file = files[0];
+    var start = parseInt(opt_startByte) || 0;
+    var stop = parseInt(opt_stopByte) || file.size - 1;
+
+    var reader = new FileReader();
+
+    // If we use onloadend, we need to check the readyState.
+    reader.onloadend = function(evt) {
+      if (evt.target.readyState == FileReader.DONE) { // DONE == 2
+        document.getElementById('byte_content').textContent = evt.target.result;
+        document.getElementById('byte_range').textContent = 
+            ['Read bytes: ', start + 1, ' - ', stop + 1,
+             ' of ', file.size, ' byte file'].join('');
+      }
+    };
+
+    var blob = file.slice(start, stop + 1);
+    reader.readAsBinaryString(blob);
+  }
+  
+  window.onload = function () { 
+ 
+ //Check the support for the File API support 
+ if (window.File && window.FileReader && window.FileList && window.Blob) {
+    var fileSelected = document.getElementById('txtfiletoread');
+	
+    fileSelected.addEventListener('change', function (e) { 
+         //Set the extension for the file 
+         var fileExtension = /text.*/; 
+         //Get the file object 
+         var fileTobeRead = fileSelected.files[0];
+        //Check of the extension match 
+         if (fileTobeRead.type.match(fileExtension)) { 
+             //Initialize the FileReader object to read the 2file 
+			
+             var fileReader = new FileReader(); 
+             fileReader.onload = function (e) { 
+                 var fileContents = document.getElementById('filecontents'); 
+         
+				document.getElementById('parseme').value =fileReader.result;
+				populateForm(obj = document.getElementById('parseme').value);
+					 } 
+             fileReader.readAsText(fileTobeRead); 
+         } 
+         else { 
+             ("Please select text file"); 
+         }
+ 
+    }, false);
+} 
+ else { 
+     ("Files are not supported"); 
+ } 
+//Checkifinbrowser();
+copyGPS();
+        CheckGPSType();
+checkLatLon();
+ }
+function copyGPS() {
+
+var z1 = '{GPSLatitude}';
+var z2= '{GPSLongitude}';
+document.getElementById('mapLat').value =z1;
+document.getElementById('mapLon').value =z2;
+
+var GPSstr= document.getElementById("ExtGPS").value;
+var nameArr = GPSstr.split(" ");
+var a =nameArr[0];
+var b =nameArr[1];
+if(!isNaN (a)){document.getElementById('mapLat').value =a;}
+if(!isNaN (b)){document.getElementById('mapLon').value =b;}
+//checkLatLon();
+}
+
+ function Checkifinbrowser() {
+
+ var x= document.getElementById("testCall").value; 
+ var n = x.search("{Msg");
+ if (n>-1) { 
+ document.getElementById('Submit').style.visibility='hidden';
+  alert('You are running this form outside of Winlink.\n \nWhen you have completed the form, SAVE the data and then give or send the SAVED data file to the radio operator. The operator will load the SAVED data into the correct form and send via winlink. ');
+ } else {document.getElementById('Submit').style.visibility='visible';  }
+} 
+//Export sTuff
+function ExportData(ToDo) {
+var ToDo= document.getElementById("DoAttach").value; 
+if(ToDo!= 'attach') {return}
+		var mydata= "";
+			var mydata=mydata +  getEX(document.getElementById('Incident_Name').value)+",";
+
+			var mydata=mydata +  getEX(document.getElementById('OpNum').value)+",";
+			var mydata=mydata +  getEX(document.getElementById('DateFrom').value)+",";
+			var mydata=mydata +  getEX(document.getElementById('DateTo').value)+",";
+			var mydata=mydata +  getEX(document.getElementById('TimeFrom').value)+",";
+			var mydata=mydata +  getEX(document.getElementById('DateTo').value)+",";
+			var mydata=mydata +  getEX(document.getElementById('Department').value)+",";
+			var mydata=mydata +  getEX(document.getElementById('Contactnumber').value)+",";
+    
+    var mydata=mydata +  getEX(document.getElementById('StreetADDRESS').value)+",";
+    var mydata=mydata +  getEX(document.getElementById('City').value)+",";
+    var mydata=mydata +  getEX(document.getElementById('State').value)+",";
+    var mydata=mydata +  getEX(document.getElementById('ZipCode').value)+",";
+    
+			var mydata=mydata +  getEX(document.getElementById('DMa').value)+",";
+			var mydata=mydata+   getEX(document.getElementById('Commenta').value)+",";
+			
+			var mydata=mydata +  getEX(document.getElementById('DMb').value)+",";
+			var mydata=mydata+  getEX(document.getElementById('Commentb').value)+",";
+			
+			var mydata=mydata +  getEX(document.getElementById('DMc').value)+",";
+			var mydata=mydata+  getEX(document.getElementById('Commentc').value)+",";
+			
+			var mydata=mydata +  getEX(document.getElementById('DMd').value)+",";
+			var mydata=mydata+  getEX(document.getElementById('Commentd').value)+",";
+			
+			var mydata=mydata +  getEX(document.getElementById('DMe').value)+",";
+			var mydata=mydata+  getEX(document.getElementById('Commente').value)+",";
+			
+			var mydata=mydata +  getEX(document.getElementById('DMf').value)+",";
+			var mydata=mydata+  getEX(document.getElementById('Commentf').value)+",";
+			var mydata=mydata +  getEX(document.getElementById('DMg').value)+",";
+			var mydata=mydata+  getEX(document.getElementById('Commentg').value)+",";
+			
+			var mydata=mydata+  getEX(document.getElementById('Remarks').value)+",";
+			var mydata=mydata+  getEX(document.getElementById('PreparedName').value)+",";
+			var mydata=mydata+  getEX(document.getElementById('DateTime').value)+",";
+			var mydata=mydata+  getEX(document.getElementById('Facility').value)+",";
+
+
+							
+				
+			var mydata=mydata+"\n";
+
+			 var nametouse ='';
+			if  ( ToDo== 'attach' ){
+				var nametouse =  "HICS 251 data " + DateforFile()+".csv"
+				document.getElementById('attached_file2').value =nametouse;
+				var excelheader = "Incident Name,2. Operational Period,2a. Date from,2a. Date To,2a. Time from,2a. Time2  To,3. Department/Unit Reporting,3b. Department/Unit Contact number,Address,City,State,Zip,4a. Power,4a. Power Comment,4b. Lighting,4b. Lighting Comment,4c. Water,4c. Water comment,4d. Sewage/Toilets,4d. Sewage/Toilets comment,4e. Nurse Call System,4e. Nurse Call System comment,4f. Medical Gases / Oxygen,4f. Medical Gases  comment,4g. Communications IT system,4g. Communications IT system comment,5. Remarks,6. Prepared by,6. Prepared Time,6. Facility"+"\n";
+				document.getElementById('attached_text2').value = excelheader+ mydata;
+				
+			} //attached_file
+	
+			
+			
+			}
+			
+
+function ExporttoExcel(fileNameToSaveAs, textToWrite) {
+var textToWrite = document.getElementById('parseme').value; 
+var excelheader = "Incident Name,2. Operational Period,2a. Date from,2a. Date To,2a. Time from,2a. Time2  To,3. Department/Unit Reporting,3b. Department/Unit Contact number,4a. Power,4a. Power Comment,4b. Lighting,4b. Lighting Comment,4c. Water,4c. Water comment,4d. Sewage/Toilets,4d. Sewage/Toilets comment,4e. Nurse Call System,4e. Nurse Call System comment,4f. Medical Gases / Oxygen,4f. Medical Gases  comment,4g. Communications IT system,4g. Communications IT system comment,5. Remarks,6. Prepared by,6. Prepared Time,6. Facility";
+var textToWrite = excelheader + "\r" + textToWrite;
+var fileNameToSaveAs = "HICS 251 " + DateforFile()+".csv";
+fileNameToSaveAs = prompt("", fileNameToSaveAs);
+
+  /* Saves a text string as a blob file*/  
+  var ie = navigator.userAgent.match(/MSIE\s([\d.]+)/),
+      ie11 = navigator.userAgent.match(/Trident\/7.0/) && navigator.userAgent.match(/rv:11/),
+      ieEDGE = navigator.userAgent.match(/Edge/g),
+      ieVer=(ie ? ie[1] : (ie11 ? 11 : (ieEDGE ? 12 : -1)));
+
+  if (ie && ieVer<10) {
+    console.log("No blobs on IE ver<10");
+    return;
+  }
+
+  var textFileAsBlob = new Blob([textToWrite], {
+    type: 'text/plain'
+  });
+
+  if (ieVer>-1) {
+    window.navigator.msSaveBlob(textFileAsBlob, fileNameToSaveAs);
+
+  } else {
+    var downloadLink = document.createElement("a");
+    downloadLink.download = fileNameToSaveAs;
+    downloadLink.href = window.URL.createObjectURL(textFileAsBlob);
+    downloadLink.onclick = function(e) { document.body.removeChild(e.target); };
+    downloadLink.style.display = "none";
+    document.body.appendChild(downloadLink);
+    downloadLink.click();
+  }
+}
+function getEX (str) {
+
+if(str==null){return}
+var line=str;
+
+if (line =='--') {line=''}
+//if (line =='FALSE') {line=''}
+
+// fix quotes
+  line = line.replace(/[\u2014]/g, "--")        // emdash
+line = line.replace(/[\u2022]/g, "*")         // bullet
+line = line.replace(/[\u2018\u2019]/g, "'")   // smart single quotes
+line = line.replace(/[\u201C\u201D]/g, '"');  // smart double quotes
+ var addquote = false;
+ var position = line.search('"');
+if (position != -1){line = line.replace(/"/g, '""');addquote = true}
+
+var position = line.search(",");
+if (position != -1){ addquote = true}
+if (addquote==true) {var line = '"' +line+'"';} 
+
+
+return line;
+}
+
+// mapping stuff
+
+function GetGPS(){
+var ans = document.getElementById('ExtGPS').value;
+
+if (ans  != '(Not available)'){
+//fill it with defaults
+//alert(ans);
+
+myMGRS=ans;
+var ans = ans.replace(" ", ",");
+
+
+ if (ans  != '{GPS_SIGNED_DECIMAL}') {document.getElementById('GPS2').value = ans};
+//now the mrgs
+
+var d= myMGRS.split(' ');
+MGRSString(d[0],d[1]);
+//store();
+//what3words.api.convertTo3wa({lat:51.508344, lng:-0.12549900}, 'en')<br />
+//lat:38.5565, lng:-121.7931  38.5566,-121.7931
+
+
+var mypram = {lat:+d[0], lng:+d[1]};
+//alert(mypram);
+
+  convertthis();
+} 
+
+}
+ 
+function MGRSString ()
+
+//function MGRSString (51.172,-1.779)
+// 51.172,-1.779  38.556, -121.793
+{ //var Lat = 38.556; var Long=-121.793; 
+//var Lat1 = 38.556; var Long1=-121.793; 
+var thestring= document.getElementById("GPS2").value;
+
+if (thestring ==''){ return;}
+ var res = thestring.split(",");
+ var Lat = parseFloat(res[0]); 
+ var Long=parseFloat(res[1]); 
+ if (isNaN(Lat)) {return} 
+if (isNaN(Long)) {return}
+latLonToGridSquare(res[0],res[1]);
+
+
+ //Lat=38.556; Long=-121.793
+if (Lat < -80) return 'Too far South' ; if (Lat > 84) return 'Too far North' ;
+var c = 1 + Math.floor ((Long+180)/6);
+var e = c*6 - 183 ;
+var k = Lat*Math.PI/180; 
+var l = Long*Math.PI/180;
+var m = e*Math.PI/180;
+var n = Math.cos (k);
+var o = 0.006739496819936062*Math.pow (n,2);
+var p = 40680631590769/(6356752.314*Math.sqrt(1 + o));
+var q = Math.tan (k);
+var r = q*q;
+var s = (r*r*r) - Math.pow (q,6);
+var t = l - m;
+var u = 1.0 - r + o;
+var v = 5.0 - r + 9*o + 4.0*(o*o);
+var w = 5.0 - 18.0*r + (r*r) + 14.0*o - 58.0*r*o;
+var x = 61.0 - 58.0*r + (r*r) + 270.0*o - 330.0*r*o;
+var y = 61.0 - 479.0*r + 179.0*(r*r) - (r*r*r);
+var z = 1385.0 - 3111.0*r + 543.0*(r*r) - (r*r*r);
+
+var aa = p*n*t + (p/6.0*Math.pow (n,3)*u*Math.pow (t,3)) + (p/120.0*Math.pow (n,5)*w*Math.pow (t,5)) + (p/5040.0*Math.pow (n,7)*y*Math.pow (t,7));
+var ab = 6367449.14570093*(k - (0.00251882794504*Math.sin (2*k)) + (0.00000264354112*Math.sin (4*k)) - (0.00000000345262*Math.sin (6*k)) + (0.000000000004892*Math.sin (8*k))) + (q/2.0*p*Math.pow (n,2)*Math.pow (t,2)) + (q/24.0*p*Math.pow (n,4)*v*Math.pow (t,4)) + (q/720.0*p*Math.pow (n,6)*x*Math.pow (t,6)) + (q/40320.0*p*Math.pow (n,8)*z*Math.pow (t,8));
+aa = aa*0.9996 + 500000.0;
+
+ab = ab*0.9996; if (ab < 0.0) ab += 10000000.0;
+var ad = 'CDEFGHJKLMNPQRSTUVWXX'.charAt (Math.floor (Lat/8 + 10));
+var ae = Math.floor (aa/100000);
+var af = ['ABCDEFGH','JKLMNPQR','STUVWXYZ'][(c-1)%3].charAt (ae-1);
+var ag = Math.floor (ab/100000)%20;
+var ah = ['ABCDEFGHJKLMNPQRSTUV','FGHJKLMNPQRSTUVABCDE'][(c-1)%2].charAt (ag);
+function pad (val) {if (val < 10) {val = '0000' + val} else if (val < 100) {val = '000' + val} else if (val < 1000) {val = '00' + val} else if (val < 10000) {val = '0' + val};return val};
+aa = Math.floor (aa%100000); aa = pad (aa); 
+ab = Math.floor (ab%100000); ab = pad (ab);
+//var mrgs= c + ad + ' ' + af + ah + ' ' + aa + ' ' + ab;
+var MRGS2=c + ad + ' ' + af + ah + ' ' + aa + ' ' + ab;
+var mrgs= c + ad + af + ah  + aa + ab;
+//document.getElementById('WithSpaces').value =MRGS2;
+//document.getElementById('NoSpaces').value =mrgs;
+document.getElementById('MGRS').value =mrgs;
+
+document.getElementById('MGRS').value =mrgs;
+//document.getElementById('MGRS2').value =MRGS2;
+};
+function convertthis(){
+
+document.getElementById('MGRS').value ='';
+var nameArr=[];
+var thestring= document.getElementById("GPS2").value;
+//(thestring);
+document.getElementById("GPS2").value = thestring;
+ var n = thestring.search(",");
+ var n1= thestring.search(" ");
+var res = thestring.split(",");
+var p=res.length;
+if (p==2){MGRSString(); 
+
+var mypram = {lat:+res[0], lng:+res[1]};
+document.getElementById('mapLat').value =res[0];
+document.getElementById('mapLon').value =res[1];
+
+if(res[0]==''|res[1]==''){return};
+
+//mapLat
+//alert(mypram);
+
+  } else 
+{ ( "Please correct your coordinates --\nEnter Coordinates in decimal format with the Lat and Lon separated by a comma.\nExample: 38.556724, -121.793285 " );
+document.getElementById('GPS2').value ='';
+document.getElementById('mapLat').value ='';
+document.getElementById('mapLon').value ='';
+//document.getElementById('w3w').value ='';
+document.getElementById('WithSpaces').value ='';
+document.getElementById('MGRS').value ='';
+document.getElementById('Grid').value ='';
+document.getElementById('NoSpaces').value ='';
+ document.getElementById("GPS2").focus()}
+}
+
+
+function isNumberKey(evt)  
+
+{  
+if(event.keyCode==13){return false;}
+if(event.keyCode==32){return false;}
+var charCode = (evt.which) ? evt.which : event.keyCode  
+
+if (charCode > 32 && (charCode < 43 || charCode > 57))  
+
+//if (charCode > 32 && (charCode < 40 ))  
+
+return false;  
+
+return true;  
+  
+}  
+
+latLonToGridSquare = function(param1,param2){
+  var lat=-100.0;
+  var lon=0.0;
+  var adjLat,adjLon,GLat,GLon,nLat,nLon,gLat,gLon,rLat,rLon;
+  var U = 'ABCDEFGHIJKLMNOPQRSTUVWX'
+  var L = U.toLowerCase();
+  // support Chris Veness 2002-2012 LatLon library and
+  // other objects with lat/lon properties
+  // properties could be getter functions, numbers, or strings
+  function toNum(x){
+    if (typeof(x) === 'number') return x;
+    if (typeof(x) === 'string') return parseFloat(x);
+    if (typeof(x) === 'function') return parseFloat(x());
+   // 9-20-20 ( "HamGridSquare -- toNum -- can not convert input: "+x);
+  }
+  if (typeof(param1)==='object'){
+    if (param1.length === 2){
+      lat = toNum(param1[0]);
+      lon = toNum(param1[1]);
+    } else if (('lat' in param1) && ('lon' in param1)){
+      lat = toNum(param1.lat);
+      lon = toNum(param1.lon);
+    } else if (('latitude' in param1) && ('longitude' in param1)){
+      lat = toNum(param1.latitude);
+      lon = toNum(param1.longitude);
+    } else {
+      ( "Please correct your coordinates -- "+param1);
+    }
+  } else {
+    lat = toNum(param1);
+    lon = toNum(param2);
+  }
+  //if (isNaN(lat)) throw "lat is NaN";
+   if (isNaN(lat)) return;
+// if (isNaN(lon)) throw "lon is NaN";
+ if (isNaN(lon)) {return} 
+  if (Math.abs(lat) === 90.0) throw "grid squares invalid at N/S poles";
+  if (Math.abs(lat) > 90)  ("invalid latitude: "+lat);
+  if (Math.abs(lon) > 180) ( "invalid longitude: "+lon);
+  adjLat = lat + 90;
+  adjLon = lon + 180;
+  GLat = U[Math.trunc(adjLat/10)];
+  GLon = U[Math.trunc(adjLon/20)];
+  nLat = ''+Math.trunc(adjLat % 10);
+  nLon = ''+Math.trunc((adjLon/2) % 10);
+  rLat = (adjLat - Math.trunc(adjLat)) * 60;
+  rLon = (adjLon - 2*Math.trunc(adjLon/2)) *60;
+  gLat = L[Math.trunc(rLat/2.5)];
+  gLon = L[Math.trunc(rLon/5)];
+  var mygrid = GLon+GLat+nLon+nLat+gLon+gLat;
+  //( 'line 52 '+GLon+GLat+nLon+nLat+gLon+gLat);
+  document.getElementById('Grid').value =mygrid;
+}
+
+function checkformgrs(thestring){
+if (thestring=='') return;//aqdded 4-25-22
+//var thestring= document.getElementById("MGRS").value;
+var spc = thestring.split(" ");
+ var n = thestring.search(",");
+ var nlen=thestring.length;
+if (n>0) {alert('Please correct your coordinates --\nEnter valid MGRS string.\nExample: 10SFH0514968253 or 10S FH 05149 68253" '); document.getElementById('MGRS').value='';}
+if(nlen<15){alert('Please correct your coordinates --\nEnter valid MGRS string.\nExample: 10SFH0514968253 or 10S FH 05149 68253'); document.getElementById('MGRS').value='';}
+
+if (spc.length >2){LatLongFromMGRSstring(thestring);
+ } else{
+ 
+ var n = thestring.search(",")
+var spc = thestring.split(" ");
+//(spc.length);
+if (n ==-1) {// try to parse
+
+var str = document.getElementById("MGRS").value;  
+var res = str.substring(0, 3);
+    var res1 = str.substring(3, 5);
+      var res2 = str.substring(5, 10);
+       var res3 = str.substring(10, 15);
+//( res+' '+res1+' '+res2+ ' '+res3);
+LatLongFromMGRSstring(res+' '+res1+' '+res2+ ' '+res3);
+convertthis();
+store();
+}
+}
+}
+function LatLongFromMGRSstring (a) 
+{
+var b = a.trim();
+b = b.match(/\S+/g);
+if (b == null || b.length != 4) return [false,null,null];
+var c = (b[0].length < 3) ? b[0][0] : b[0].slice(0,2);
+var d = (b[0].length < 3) ? b[0][1] : b[0][2];
+var e = (c*6-183)*Math.PI / 180;
+var f = ["ABCDEFGH","JKLMNPQR","STUVWXYZ"][(c-1) % 3].indexOf(b[1][0]) + 1;
+var g = "CDEFGHJKLMNPQRSTUVWXX".indexOf(d);
+var h = ["ABCDEFGHJKLMNPQRSTUV","FGHJKLMNPQRSTUVABCDE"][(c-1) % 2].indexOf(b[1][1]);
+var i = [1.1,2.0,2.8,3.7,4.6,5.5,6.4,7.3,8.2,9.1,0,0.8,1.7,2.6,3.5,4.4,5.3,6.2,7.0,7.9];
+var j = [0,2,2,2,4,4,6,6,8,8,0,0,0,2,2,4,4,6,6,6];
+var k = i[g];
+var l = Number(j[g]) + h / 10;
+if (l < k) l += 2;
+var m = f*100000.0 + Number(b[2]);
+var n = l*1000000 + Number(b[3]);
+m -= 500000.0;
+if (d < 'N') n -= 10000000.0;
+m /= 0.9996; n /= 0.9996;
+var o = n / 6367449.14570093;
+var p = o + (0.0025188266133249035*Math.sin(2.0*o)) + (0.0000037009491206268*Math.sin(4.0*o)) + (0.0000000074477705265*Math.sin(6.0*o)) + (0.0000000000170359940*Math.sin(8.0*o));
+var q = Math.tan(p);
+var r = q*q;
+var s = r*r;
+var t = Math.cos(p);
+var u = 0.006739496819936062*Math.pow(t,2);
+var v = 40680631590769 / (6356752.314*Math.sqrt(1 + u));
+var w = v;
+var x = 1.0 / (w*t); w *= v;
+var y = q / (2.0*w); w *= v;
+var z = 1.0 / (6.0*w*t); w *= v;
+var aa = q / (24.0*w); w *= v;
+var ab = 1.0 / (120.0*w*t); w *= v;
+var ac = q / (720.0*w); w *= v;
+var ad = 1.0 / (5040.0*w*t); w *= v;
+var ae = q / (40320.0*w);
+var af = -1.0-u;
+var ag = -1.0-2*r-u;
+var ah = 5.0 + 3.0*r + 6.0*u-6.0*r*u-3.0*(u*u)-9.0*r*(u*u);
+var ai = 5.0 + 28.0*r + 24.0*s + 6.0*u + 8.0*r*u;
+var aj = -61.0-90.0*r-45.0*s-107.0*u + 162.0*r*u;
+var ak = -61.0-662.0*r-1320.0*s-720.0*(s*r);
+var al = 1385.0 + 3633.0*r + 4095.0*s + 1575*(s*r);
+var lat = p + y*af*(m*m) + aa*ah*Math.pow(m,4) + ac*aj*Math.pow(m,6) + ae*al*Math.pow(m,8);
+var lng = e + x*m + z*ag*Math.pow(m,3) + ab*ai*Math.pow(m,5) + ad*ak*Math.pow(m,7);
+lat = lat*180 / Math.PI;
+lat = lat.toFixed (4);
+lng = lng*180 / Math.PI;
+lng = lng.toFixed (4);
+
+document.getElementById('GPS2').value = lat+','+lng;
+mlon = lng;
+mlat = lat;
+}
+
+function splitPaste(str) {
+var str = str.replace(",", " ");
+var str = str.replace("  ", " ");
+var d= str.split(' ');
+var cnt = d.length;
+if (cnt >1) {
+
+document.getElementById('mapLat').value =checkzero(d[0]);
+document.getElementById('mapLon').value =checkzero(d[1]);
+}else {
+document.getElementById('mapLat').value =checkzero(str)}
+}
+
+function checkzero (num){
+var num = num *1;
+return num;
+}
+function Striptabs (s,fieldid){
+var s = s.replace(/(\r\n|\n|\r)/gm," "); 
+document.getElementById(fieldid).value = s;  
+
+}
+function SaveData() {
+	
+			formDataToObject(document.getElementById('myform'))
+			saveTextAsFile();
+}
+
+function formDataToObject(elForm) {
+  if (!elForm instanceof Element) return;
+  var fields = elForm.querySelectorAll('input, select, textarea'),
+    o = {};
+  for (var i=0, imax=fields.length; i<imax; ++i) {
+    var field = fields[i],
+      sKey = field.name || field.id;
+    if (field.type==='button' || field.type==='image' || field.type==='submit' || !sKey) continue;
+    switch (field.type) {
+      case 'checkbox':
+        o[sKey] = +field.checked;
+        break;
+      case 'radio':
+        if (o[sKey]===undefined) o[sKey] = '';
+        if (field.checked) o[sKey] = field.value;
+        break;
+      case 'select-multiple':
+        var a = [];
+        for (var j=0, jmax=field.options.length; j<jmax; ++j) {
+          if (field.options[j].selected) a.push(field.options[j].value);
+        }
+        o[sKey] = a;
+        break;
+      default:
+        o[sKey] = field.value;
+    }
+  }
+ // ('Form data:\n\n' + JSON.stringify(o, null, 2));
+ document.getElementById('parseme').value = JSON.stringify(o, null, 2);
+//  return o;
+}
+
+function populateForm(o) {
+
+o =  JSON.parse(document.getElementById('parseme').value);
+ //if (!isObject(o)) return;
+if (!isObject(o)) return;
+var Theversion = document.getElementById('Templateversion').value; // save the template version before load
+
+  for (var i in o) {
+    var el = document.getElementById(i) || document.querySelector('[name=' + i + ']');
+    if (el.type==='radio') el = document.querySelectorAll('[name=' + i + ']');
+    switch (typeof o[i]) {
+      case 'number':
+        el.checked = o[i];
+        break;
+      case 'object':
+        if (el.options && o[i] instanceof Array) {
+          for (var j=0, jmax=el.options.length; j<jmax; ++j) {
+            if (o[i].indexOf(el.options[j].value)>-1) el.options[j].selected = true;
+          }
+        }
+        break;
+      default:
+        if (el instanceof NodeList) {
+          for (var j=0, jmax=el.length; j<jmax; ++j) {
+            if (el[j].value===o[i]) el[j].checked = true;
+          }
+        } else {
+          el.value = o[i];
+        }
+    }
+	document.getElementById('Templateversion').value =Theversion;//reset template to form number
+  }
+Fixfields();
+}
+function isObject(arg) {
+  return Object.prototype.toString.call(arg)==='[object Object]';
+}
+function checkLatLon() {
+var cnt = 1;
+//var x1=0; var x2=0;
+x1 = CheckLat(true);
+x2 = CheckLon(true);
+
+if (x1==1 && x2==1) {// now set string for latlon
+	var mlat = document.getElementById('mapLat').value;
+	var mlon = document.getElementById('mapLon').value;
+	document.getElementById('GPS2').value =mlat+','+mlon;
+	
+	convertthis();
+} 
+}
+function CheckLat(SkipMsg){
+var latCheck = 1;
+var num =document.getElementById('mapLat').value;
+if (num=='') {document.getElementById('MGRS').value = '';
+		document.getElementById('GPS2').value = '';}
+z1 =(Number(num));
+z2 = (isNaN (z1));
+if (z1 == 'NaN') {alert ('error')}
+if ((num <-90)  || ( num >90) || isNaN (z1) ) { document.getElementById('mapLat').value='';
+//alert ('Latitude must be between -90 and 90\n\nBy default the calculated Latitude from the Grid Square entered in Winlink Express Setup will be used. '); 
+alert ('Latitude must be between -90 and 90');
+ document.getElementById('mapLat').value ='';
+		document.getElementById('mapLat').focus();
+		document.getElementById('MGRS').value = '';
+		document.getElementById('GPS2').value = '';
+		var latCheck = 0;
+}
+
+return latCheck;
+}
+
+function CheckLon(SkipMsg){
+var lonCheck = 1;
+var num =document.getElementById('mapLon').value;
+if (num=='') {document.getElementById('MGRS').value = '';
+		document.getElementById('GPS2').value = '';}
+z1 =(Number(num));
+z2 = (isNaN (z1));
+
+if ((num <-180) || ( num >180) || isNaN (z1) ) { document.getElementById('mapLon').value='';
+alert ('Longitude must be between -180 and 180 '); 
+//alert ('Longitude must be between -180 and 180\n\nBy default the calculated Latitude from the Grid Square entered in Winlink Express Setup will be used. '); 
+ document.getElementById('mapLon').value = '';
+		document.getElementById('MGRS').value = '';
+		document.getElementById('GPS2').value = '';
+		var lonCheck = 0;
+
+} 
+
+return lonCheck;
+}
+function fix(s) {
+
+var s = s.replace(/(\r\n|\n|\r)/gm," "); 
+return s;
+
+}
+function removeLinebreaks (s){
+
+var s = s.replace(/(\r\n|\n|\r)/gm," "); 
+return s;
+}
+function createjson () {
+
+var jsontext =document.getElementById('FormData').value;
+var temp1= document.getElementById('MapFileName').value;
+var jsontext=jsontext.replace('j1', temp1);
+
+var temp1= document.getElementById('timestamp').value;
+var jsontext=jsontext.replace('j2', temp1);
+var temp1= document.getElementById('testCall').value;
+var jsontext=jsontext.replace('j6', temp1);
+
+var temp1= document.getElementById('mapLat').value;
+var jsontext=jsontext.replace('j4', temp1);
+    
+var gpstype =document.getElementById('locationSource').value;//set location  source
+var jsontext=jsontext.replace('l6', gpstype);//8-19-24
+    
+var temp1= document.getElementById('Operator').value;
+var jsontext=jsontext.replace('Operatorname', temp1);
+//Operatorname
+var temp1= document.getElementById('mapLon').value;
+var jsontext=jsontext.replace('j5', temp1);
+var temp1= document.getElementById('MGRS').value;
+var jsontext=jsontext.replace('j9', temp1);
+var temp1= document.getElementById('Grid').value;
+var jsontext=jsontext.replace('j10', temp1);
+
+var temp1= document.getElementById('Grid').value;
+var jsontext=jsontext.replace('j10', temp1);
+
+//Incident Name
+
+var temp1= document.getElementById('Incident_Name').value;
+var jsontext=jsontext.replace('t1', temp1);
+
+var temp1= document.getElementById('OpNum').value;
+var jsontext=jsontext.replace('j11', temp1);
+var temp1= document.getElementById('DateFrom').value;
+var temp2= document.getElementById('TimeFrom').value;
+var temp3=temp1+' - '+temp2;
+
+var jsontext=jsontext.replace('je12', temp3);
+
+var temp1= document.getElementById('DateTo').value;
+var temp2= document.getElementById('TimeTo').value;
+var temp3=temp1+' - '+temp2;
+
+var jsontext=jsontext.replace('j13', temp3);
+
+var temp1= document.getElementById('Department').value;
+var jsontext=jsontext.replace('j14', temp1);
+
+var temp1= document.getElementById('Contactnumber').value;
+var jsontext=jsontext.replace('j14a', temp1);
+
+   var temp1= document.getElementById('StreetADDRESS').value; var jsontext=jsontext.replace('M1', temp1);
+       var temp1= document.getElementById('City').value; var jsontext=jsontext.replace('M2', temp1);
+
+       var temp1= document.getElementById('State').value; var jsontext=jsontext.replace('M3', temp1);
+
+       var temp1= document.getElementById('ZipCode').value; var jsontext=jsontext.replace('M4', temp1);
+
+    
+    
+var temp1= document.getElementById('DMa').value;
+var jsontext=jsontext.replace('j15', temp1);
+var temp1= document.getElementById('Commenta').value;
+var temp1 =  fix(temp1);
+var jsontext=jsontext.replace('j15a', temp1);
+var temp1= document.getElementById('DMb').value;
+var jsontext=jsontext.replace('j16', temp1);
+var temp1= document.getElementById('Commentb').value;
+var temp1 =  fix(temp1);
+var jsontext=jsontext.replace('j16a', temp1);
+
+var temp1= document.getElementById('DMc').value;
+var jsontext=jsontext.replace('j17', temp1);
+var temp1= document.getElementById('Commentc').value;
+var temp1 =  fix(temp1);
+var jsontext=jsontext.replace('j17a', temp1);
+var temp1= document.getElementById('DMd').value;
+var jsontext=jsontext.replace('j18', temp1);
+var temp1= document.getElementById('Commentd').value;
+var jsontext=jsontext.replace('j18a', temp1);
+var temp1= document.getElementById('DMe').value;
+var jsontext=jsontext.replace('j19', temp1);
+var temp1 =  fix(temp1);
+var temp1= document.getElementById('Commente').value;
+var jsontext=jsontext.replace('j19a', temp1);
+var temp1= document.getElementById('DMf').value;
+var jsontext=jsontext.replace('j20', temp1);
+var temp1= document.getElementById('Commentf').value;
+var temp1 =  fix(temp1);
+var jsontext=jsontext.replace('j20a', temp1);
+var temp1= document.getElementById('DMg').value;
+var jsontext=jsontext.replace('j21', temp1);
+var temp1= document.getElementById('Commentg').value;
+var temp1 =  fix(temp1);
+var jsontext=jsontext.replace('j21a', temp1);
+// not the comments and etc
+var temp1= document.getElementById('Remarks').value;
+var temp1 =  fix(temp1);
+var jsontext=jsontext.replace('j30', temp1);
+
+var temp1= document.getElementById('PreparedName').value;
+var jsontext=jsontext.replace('j31', temp1);
+var temp1= document.getElementById('Facility').value;
+var jsontext=jsontext.replace('j33', temp1);
+var temp1= document.getElementById('DateTime').value;
+var jsontext=jsontext.replace('j32', temp1);
+
+
+//document.getElementById('FormData').value= jsontext;
+//document.getElementById('attached_text').value = jsontext;
+document.getElementById('attached_text').value = jsontext;
+var attached_file = 'FormData.txt';
+}
+
+function parsethisdate() {
+var thedatetime=  document.getElementById('DateTime').value;
+//d= new Date(Date.parse(thedatetime)).toString();
+var d= new Date(Date.parse(thedatetime));
+
+//alert (Date.parse(thedatetime));
+//d =parseDate(thedatetime);
+utcstr = d.toISOString()
+//alert (utcstr);
+document.getElementById('timestamp2').value= utcstr;
+return utcstr;
+}
+function TimeStamp(){
+var d1 = new Date();
+mtime = d1.getTime();
+//var thedatetime=  document.getElementById('UDTGfld').value;
+var thedatetime= parsethisdate();
+var thedatetime=thedatetime.replace(/-/g, ',');
+var thedatetime=thedatetime.replace(/:/g, ',');
+//alert ('the dt '+thedatetime);
+var thedatetime = thedatetime.replace("T", " ") 
+var thedatetime=thedatetime.replace(' ', ',');
+var thedatetime = thedatetime.replace("Z", "") ;
+var thedatetime = thedatetime.replace(".000", "") ;
+
+//alert ('the dt '+thedatetime);
+var thesplit = thedatetime.split (',');
+var d = new Date(Date.UTC(parseInt(thesplit[0]),parseInt(thesplit[1]),parseInt(thesplit[2]),parseInt(thesplit[3]),parseInt(thesplit[4]),parseInt(thesplit[5])));
+//alert (thesplit[1]);
+//var d= new Date(Date.parse('2020/11/24 15:30:01'));
+  var nyyyy = d.getUTCFullYear();
+  nyyyy= nyyyy.toString();
+
+  var nMM = d.getUTCMonth();
+  if(nMM<10) {nMM= '0'+nMM}
+ nMM=nMM.toString()
+var ndd = d.getUTCDate();
+  if(ndd<10) {ndd= '0'+ndd}
+  ndd=ndd.toString()
+ // alert(ndd);
+  var nhh = d.getUTCHours();
+nhh=nhh.toString();
+ if(nhh.length <2) {nhh= '0'+nhh}
+// alert ('after hour'+nhh);
+    var nmm = d.getUTCMinutes();
+	  nmm=nmm.toString();
+	if(nmm.length <2) {nmm= '0'+nmm}
+	 var nss = d.getUTCSeconds();
+	
+  nss=nss.toString()
+   if(nss.length <2) {nss= '0'+nss}
+//
+var test = (thesplit[0])+(thesplit[1])+(thesplit[2])+(thesplit[3])+(thesplit[4])+(thesplit[5]);
+
+
+test = test.replace(/\s/g,'');
+ document.getElementById("timestamp").value = test; ;
+  //  document.getElementById("timestamp2").value= test;
+ //x=nyyyy+nmm+ndd+nhh+nmm+nss;
+   
+   
+  // document.getElementById("timestamp2").value = nyyyy+nMM+ndd+nhh+nmm+nss
+  // alert (nyyyy+nMM+ndd+nhh+nmm+nss);
+   var x=(document.getElementById("timestamp2").value);
+
+if (x.search("NaN")!==-1){alert ('Invalid date please enter UTC date time as yyyy-mm-dd hh:mm:ssZ\n \nDEFAULTING  to current UTC Time.');DateTime('autozulu','UDTGfld', true); 
+}
+}
+ function Fixfields() {
+
+AutoGrowTextArea(document.getElementById("Commenta"));
+AutoGrowTextArea(document.getElementById("Commentb"));
+AutoGrowTextArea(document.getElementById("Commentc"));
+AutoGrowTextArea(document.getElementById("Commentd"));
+AutoGrowTextArea(document.getElementById("Commente"));
+AutoGrowTextArea(document.getElementById("Commentf"));
+AutoGrowTextArea(document.getElementById("Commentg"));//
+AutoGrowTextArea(document.getElementById("Remarks"));
+}
+    
+// JavaScript to test hemisphere
+
+function Testlon(){   
+    // get user loc via lat lon and then compare
+     
+    var homelon = "{Longitude}";
+       var msg = 'Verify entered coordinates before submitting form.'
+    var num =document.getElementById('mapLon').value;
+ 
+    if ( (homelon <0 && num >0) || (homelon >0 && num <0)  ){
+        document.getElementById('mapLon').style.backgroundColor = '#ffdde2';
+          alert('Warning\nThe entered longitude is in a different hemisphere than the Winlink Express or Position Report coordinates. Western longitudes are negative numbers. Eastern longitudes are positive numbers.\n\nClick OK to edit the longitude or ignore this warning and continue with the entered longitude.');
+      
+    }else {document.getElementById('mapLon').style.backgroundColor = '';
+         }            
+}
+    
+    
+function Testlat(){
+    
+      // get user loc via lat lon and then compare
+   //var themsg = document.getElementById('mapLon').value;
+    var homelat = "{Latitude}";
+    var num =document.getElementById('mapLat').value;    
+   
+    
+    if ( (homelat <0 && num >0) || (homelat >0 && num <0)  ){
+        document.getElementById('mapLat').style.backgroundColor = '#ffdde2';
+       alert('Warning\nThe entered latitude is in a different hemisphere than the Winlink Express or Position Report coordinates. Southern latitudes are negative numbers. Northern latitudes are positive numbers.\n\nClick OK to edit the latitude or ignore this warning and continue with the entered latitude.');
+             }
+    else {document.getElementById('mapLat').style.backgroundColor = '';
+               }    
+   
+}
+    
+function CheckGPSType(){
+    var  gpstype ='';
+       var  gpsnote ='';
+      var  gpstype =document.getElementById('location_source').value;
+      if (gpstype === "GPS") { document.getElementById('locationSource').value='GPS'}
+if (gpstype === "SPECIFIED") { document.getElementById('locationSource').value='User specified'}
+if (gpstype === "FORM ENTRY") { document.getElementById('locationSource').value='Form entry'}
+if (gpstype === "GRID SQUARE") { document.getElementById('locationSource').value='Grid square'}
+    }
+</script></head>
+<body style="color: rgb(0, 0, 0); background-color: rgb(255, 255, 255);" alink="#000099" link="#000099" vlink="#990099">
+<br />
+    <form action="http://{FormServer}:{FormPort}" enctype="multipart/form-data" id="myform" method="post" onsubmit="return confirm('To complete your form submission, click OK and close the open browser window. You will return to the new message window so you can post your message to the outbox');" pbzloc="0">
+      <div id="pop1" class="pop-up"><!-- The pop-up block -->
+        <div class="popBox"><!-- If the content becomes larger than the pop-up this div will scroll the content -->
+          <div class="popScroll">
+            <p> </p>
+			<b>HICS 251 – FACILITY SYSTEM STATUS REPORT</b><p></p>
+<div align="left">NOTE: The Winlink HICS 251 is an abbreviated version of the official form, focusing on overall facility status, i.e. the first page.<br>
+  For the official form see here: <br>
+  <a href="https://emsa.ca.gov/wp-content/uploads/sites/71/2017/07/HICS-251-Facility-System-Status-Report_4.pdf%20" target="_blank">https://emsa.ca.gov/wp-content/uploads/sites/71/2017/07/HICS-251-Facility-System-Status-Report_4.pdf
+  </a>
+</div>
+<p align="left">PURPOSE <br>
+  The HICS 251-Facility System Status Report is used to record the status of various critical facility systems and infrastructure. The HICS 251 provides the Planning and Operations Sections with information about current and potential system failures or limitations that may affect incident response and recovery.</p>
+<p align="left">ORIGINATION<br>
+  Completed by the Operations Section Infrastructure Branch Director with input from facility personnel.</p>
+<p align="left">COPIES TO<br>
+  Delivered to the Situation Unit Leader, with copies to the Operations Section Chief, Business Continuity Branch Director, Planning Section Chief, Safety Officer, Liaison Officer, Materiel Tracking Managers, and the Documentation Unit Leader.</p>
+<p align="left">NOTES<br>
+  The Infrastructure Branch conducts the survey and correlates results. Individual department managers may also be tasked to complete an assessment of their areas and provide the information to the Infrastructure Branch. If additional pages are needed, use a blank HICS 251 and repaginate as needed. Additions and deletions may be made to the form to meet the<br>
+  organization&rsquo;s needs.</p>
+<p align="left">FIELDS</p>
+<p align="left">1 INCIDENT NAME<br>
+  Enter the name assigned to the incident.</p>
+<p align="left">2 OPERATIONAL PERIOD<br>
+  Enter the start date (m/d/y) and time (24-hour clock) and end date and time for the operational period to which the form applies.</p>
+<p align="left">3 NAME OF FACILITY/REPORTING STATUS<br>
+  Enter the name of the facility.</p>
+<p align="left">4 SYSTEM<br>
+  System type listed in form.</p>
+<p align="left">5 STATUS<br>
+  Fully functional: 100% operable with no limitations<br>
+  Partially functional: Operable or somewhat operable with limitations<br>
+  Nonfunctional: Out of commission<br>
+  N/A: Not applicable, do not have</p>
+<p align="left">6 COMMENTS<br>
+  Comment on location, reason, and estimates for necessary<br>
+  repair of any system that is not fully operational. If inspection is<br>
+  completed by someone other than as defined by policy or<br>
+  procedure, identify that person in the comments.</p>
+<p align="left">7 REMARKS<br>
+  Note any overall facility-wide assessments or future potential issues such as skilled staffing issues, fuel duration, plans for repairs, etc.</p>
+<p align="left">8 PREPARED BY<br>
+  Enter the name and signature of the person preparing the form.<br>
+  Enter date (m/d/y), time prepared (24-hour clock), and facility. <br>
+  _______________</p>
+<p align="left">The Winlink HICS 251 offers additional optional features to the standard form that allow the data to be mapped if coordinates are provided.<br>
+  Moreover, there is an option to add the form data as a comma separated values (CSV) file for use in spreadsheets.</p>
+<p align="left">RADIO OPERATOR<br>
+  Enter the name of the radio operator sending the form'</p>
+<p align="left">FACILITY LATITUDE and LONGITUDE<br>
+  Enter the latitude and longitude or MGRS coordinates of the facility reporting.<br>
+  This allows for the field data to be mapped within Winlink and GIS software packages, such as ArcGIS, QGIS, Google Maps, etc.</p>
+<p align="left">ATTACH CSV DATA FILE TO MESSAGE<br>
+  Yes - attaches a comma separated values file to the message<br>
+  No - does not attach a comma separated values file to the message</p>
+<p align="left">SAVE HICS251 DATA<br>
+  Saves a copy of the form entries to a text (TXT) file, which can be loaded using the LOAD HICS251 DATA function at the top of the form.<br>
+  This is useful when the originator and the sender are different people.</p>
+<p align="left">RESET FORM<br>
+  Clears all entries from the form.</p>
+<p align="left">SUBMIT<br>
+  Sends the form data to the Winlink message.</p>
+		  </div>
+          <!-- The close pop-up link correctly positioned at the end of the content block --><a href="#links" class="close"><span>Back
+        to links</span></a> </div>
+      </div>
+	  
+	    <div class="pop-up" id="pop3">
+    <!-- The pop-up block -->
+    <div class="popBox">
+      <!-- If the content becomes larger than the pop-up this div will scroll the content -->
+      <div class="popScroll">
+        <p> </p>
+        <h2>Copy and Paste Data From Spreadsheet</h2>
+        <span class="style13">
+        <p align="left">Copy the data from the spreadsheet, then click the button "Parse Data"<br />
+		TAB delineation and entry data needs to not exceed HTML entry box input lengths.<br />
+		10 columns and up to 10 rows of information.
+        </p>
+        <textarea name="parseme" cols="120" rows="11" id="parseme" placeholder="Paste spreadsheet data here" ></textarea> 
+		<input type=button value="Parse Data" onClick="parsestring('P');document.getElementById('closeme').click();">
+		
+		
+        </span>
+        <p align="left"></p>
+      <a href="#links">Close this window</a> </div>
+
+      <!-- The close pop-up link correctly positioned at the end of the content block -->
+
+      <a href="#links" id='closeme'>Close this window</a> 
+	   </div>
+  </div>
+      <table style="width: 1214px; height: 856px;" align="center" border="0">
+        <tbody>
+          <tr>
+            <td pbzloc="17">
+              <table style=" width: 1119px; height: 881px;" pbzloc="11" border="1" cellpadding="1" cellspacing="0">
+                <tbody>
+                  <tr valign="top" bgcolor="#dee9f9">
+                    <td height="93" colspan="3" style="vertical-align: top;"><div align="center">
+                      <p class="style4"> HICS 251 – FACILITY SYSTEM STATUS REPORT<br />
+                      &nbsp; <span style="font-style: italic;">HICS -
+                      Hospital Incident Command System</span>
+                      </p>
+                      
+                      </div><p align="center"><span style="font-style: italic;">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;   
+                      <input type="button" value=" Load HICS 251 Data " onclick="document.getElementById('txtfiletoread').click();" />
+                      <input type="file" id="txtfiletoread" accept=".txt" style="display: none;" />
+                      &nbsp;
+                            &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+                            <input type="BUTTON"value="Form Instructions" onclick="location.href = '#pop1'" />
+                      </span><br />
+                    </span></p></td>
+                  </tr>
+                  <tr>
+                    <td width="77%" height="111" style="width: 50%; text-align: center; vertical-align: top;"><div align="left"><br />
+                      &nbsp;&nbsp; <strong>1.
+                      Incident Name&nbsp;&nbsp;</strong>
+                      <input required="required" id="Incident_Name" maxlength="45" name="Incident_Name" size="45"  />                      
+                      <br />
+                      <br />
+                      <span style="color: rgb(204, 0, 0);">&nbsp;&nbsp; &nbsp;&nbsp; </span>Page<span style="color: rgb(204, 0, 0);"> </span>
+                      <input  maxlength="2" size="3" name="Page" id="Page" required="required" />
+                      <span >&nbsp;Of&nbsp;&nbsp;
+                      <input required="required" maxlength="2" size="3" name="Page1" id="Page1" />&nbsp;&nbsp;&nbsp;&nbsp;</small><br />
+                        <small>
+<input name="attached_file" type="hidden" id="attached_file" value="FormData.txt" />
+<textarea name="attached_text"  cols="140" rows="3" id="attached_text" style="display: none;"></textarea>
+  <input name="attached_file2" type="hidden" id="attached_file2" value= "" />
+<textarea name="attached_text2"  cols="140" rows="3" id="attached_text2" style="display: none;"></textarea>
+
+                    </div></td>
+<td width="23%" colspan="2" style="width: 50%; vertical-align: top; text-align: justify;">&nbsp;&nbsp;
+<div align="left"> &nbsp;<strong>&nbsp;2. Operational Period</strong>&nbsp; &nbsp; (#): &nbsp;
+  <input maxlength="4" size="5" name="OpNum" id="OpNum" />
+  <br />
+  <br />
+&nbsp;&nbsp; &nbsp;&nbsp; &nbsp;&nbsp;  Date From &nbsp;<b>
+<input maxlength="12" id="DateFrom" name="DateFrom" size="12" placeholder="yyyy-mm-dd" onclick="DateTimef('fulldate','DateFrom');"/>
+&nbsp; &nbsp;</b>To &nbsp;<b>
+  <input maxlength="12" id="DateTo" name="DateTo" size="12" placeholder="yyyy-mm-dd" onclick="DateTimef('fulldate','DateTo');"/>
+  <br />
+  <br />
+  </b>&nbsp;&nbsp; &nbsp;&nbsp; &nbsp;&nbsp; Time From &nbsp;<b>
+  <input maxlength="10" id="TimeFrom" name="TimeFrom" size="10" placeholder="hh:mm"onclick="DateTimef('hm','TimeFrom');" /> 
+  </b>&nbsp;
+&nbsp;&nbsp; &nbsp;To &nbsp;<b>
+  <input maxlength="10" id="TimeTo" name="TimeTo" size="10" placeholder="hh:mm" onclick="DateTimef('hm','TimeTo');"  />
+  </b><br />
+</div></td>
+</tr>
+                  <tr>
+                    <td height="19" colspan="3" style="width: 50%; text-align: center; vertical-align: top;"><div align="left">
+                      <p><strong> &nbsp;&nbsp;3. Name of Department / Unit Reporting Status Below&nbsp;&nbsp;&nbsp;                    
+                        <input required="required" id="Department" maxlength="45" name="Department" size="45" />
+  &nbsp;&nbsp;<strong> </strong>&nbsp;&nbsp;<strong> Contact Number: 
+  <input required="required" id="Contactnumber" maxlength="30" name="Contactnumber" size="30" />
+</strong> </strong></p>
+                      <p><span > <strong> &nbsp;3. Street Address:</strong></span>
+                        <input
+
+                                        maxlength="50" size="40" name="StreetADDRESS" id="StreetADDRESS"
+
+                                        placeholder="Address" required="required" />
+&nbsp;<span style="color: rgb(204, 0, 0);">&nbsp;&nbsp;&nbsp;</span><strong>City</strong>:
+<input
+
+                                        maxlength="50" size="25" name="City" id="City"
+
+                                        placeholder="City
+                                                     " required="required" />
+<span style="color: rgb(204, 0, 0);">&nbsp;</span>&nbsp;<strong>State:
+</strong>
+<input
+
+                                        maxlength="5" size="5" name="State" id="State"
+
+                                        placeholder="State" required="required" />
+<span style="color: rgb(204, 0, 0);">&nbsp;&nbsp;&nbsp;&nbsp;<strong>&nbsp;</strong></span><strong>Zip Code</strong>:
+<input
+
+                                        maxlength="12" size="12" name="ZipCode" id="ZipCode"
+
+                                        placeholder="Zip" />
+                      </p>
+                    </div></td>
+                  </tr>
+<tr>
+<td style="text-align: center; vertical-align: top;" colspan="3">
+<table width="100%"  border="1" cellspacing="0" cellpadding="4">
+  <tr align="left" valign="top" bgcolor="#f8f8ff">
+    <td width="34%"><strong>4. System </strong></td>
+    <td width="19%"><strong>5. Status </strong></td>
+    <td width="47%"><strong>6. Comments</strong> If not fully functional, give location, reason, and estimated time/resources for necessary repair. Identify who reported or inspected.</td>
+  </tr>
+  <tr align="left" valign="top">
+    <td><strong>4a. Power</strong>
+        <input name="DMa" type="hidden" id="DMa" value="N/A" /></td>
+    <td><select name="selecta" id="selecta"onchange="document.getElementById('DMa').value=this.value;">
+      <option selected="selected" disabled>Select</option>
+      <option value="Fully functional">Fully functional</option>
+      <option value="Partially functional">Partially functional</option>
+      <option value="Nonfunctional">Nonfunctional</option>
+      <option value="N/A">N/A</option>
+        </select></td>
+    <td><textarea name="Commenta" maxlength="100" cols="60" rows="1" id="Commenta" onchange="Striptabs(this.value,'Commenta')"  onkeyup="AutoGrowTextArea(this)" placeholder="Comments."></textarea></td>
+  </tr>
+  <tr align="left" valign="top">
+    <td><strong>4b. Lighting</strong>
+        <input name="DMb" type="hidden" id="DMb" value="N/A" /></td>
+    <td><select name="selectb" id="selectb"onchange="document.getElementById('DMb').value=this.value;">
+      <option selected="selected" disabled >Select</option>
+      Select      <option value="Fully functional">Fully functional</option>
+      <option value="Partially functional">Partially functional</option>
+      <option value="Nonfunctional">Nonfunctional</option>
+      <option value="N/A">N/A</option>
+            </select></td>
+    <td><textarea name="Commentb" c cols="60" rows="1" id="Commentb" onchange="Striptabs(this.value,'Commentb')"  onkeyup="AutoGrowTextArea(this)" placeholder="Comments."></textarea></td>
+  </tr>
+  <tr align="left" valign="top">
+    <td><strong>4c. Water</strong>
+        <input name="DMc" type="hidden" id="DMc" value="N/A" /></td>
+    <td><select name="selectc" id="selectc"onchange="document.getElementById('DMc').value=this.value;">
+      <option selected="selected" disabled >Select</option>
+      <option value="Fully functional">Fully functional</option>
+      <option value="Partially functional">Partially functional</option>
+      <option value="Nonfunctional">Nonfunctional</option>
+      <option value="N/A">N/A</option>
+    </select></td>
+    <td><textarea name="Commentc" c cols="60" rows="1" id="Commentc" onchange="Striptabs(this.value,'Commentc')"  onkeyup="AutoGrowTextArea(this)" placeholder="Comments."></textarea></td>
+  </tr>
+  <tr align="left" valign="top">
+    <td><strong>4d. Sewage/Toilets</strong>
+        <input name="DMd" type="hidden" id="DMd" value="N/A" /></td>
+    <td><select name="selectd" id="selectd" onchange="document.getElementById('DMd').value=this.value;">
+      <option selected="selected" disabled >Select</option>
+      <option value="Fully functional">Fully functional</option>
+      <option value="Partially functional">Partially functional</option>
+      <option value="Nonfunctional">Nonfunctional</option>
+      <option value="N/A">N/A</option>
+    </select></td>
+    <td><textarea name="Commentd" cols="60" rows="1" id="Commentd" onchange="Striptabs(this.value,'Commentd')"  onkeyup="AutoGrowTextArea(this)" ccols="60" placeholder="Comments."></textarea></td>
+  </tr>
+  <tr align="left" valign="top">
+    <td><strong>4e. Nurse Call System</strong>
+        <input name="DMe" type="hidden" id="DMe" value="N/A" /></td>
+    <td><select name="selecte" id="selecte" onchange="document.getElementById('DMe').value=this.value;">
+     <option selected="selected" disabled >Select</option>
+      <option value="Fully functional">Fully functional</option>
+      <option value="Partially functional">Partially functional</option>
+      <option value="Nonfunctional">Nonfunctional</option>
+      <option value="N/A">N/A</option>
+    </select></td>
+    <td><textarea name="Commente" cols="60" rows="1" id="Commente" onchange="Striptabs(this.value,'Commente')"  onkeyup="AutoGrowTextArea(this)" ccols="60" placeholder="Comments."></textarea></td>
+  </tr>
+  <tr align="left" valign="top">
+    <td><strong>4f. Medical Gases / Oxygen</strong>
+        <input name="DMf" type="hidden" id="DMf" value="N/A" /></td>
+    <td><select name="selectf" id="selectf" onchange="document.getElementById('DMf').value=this.value;">
+    <option selected="selected" disabled >Select</option>
+      <option value="Fully functional">Fully functional</option>
+      <option value="Partially functional">Partially functional</option>
+      <option value="Nonfunctional">Nonfunctional</option>
+      <option value="N/A">N/A</option>
+    </select></td>
+    <td><textarea name="Commentf" cols="60" rows="1" id="Commentf" onchange="Striptabs(this.value,'Commentf')"  onkeyup="AutoGrowTextArea(this)" ccols="60" placeholder="Comments."></textarea></td>
+  </tr>
+  <tr align="left" valign="top">
+    <td><strong>4g. Communications</strong> IT system, telephones, pagers
+        <input name="DMg" type="hidden" id="DMg" value="N/A" /></td>
+    <td><select name="selectg" id="selectg"onchange="document.getElementById('DMg').value=this.value;">
+    <option selected="selected" disabled >Select</option>
+      <option value="Fully functional">Fully functional</option>
+      <option value="Partially functional">Partially functional</option>
+      <option value="Nonfunctional">Nonfunctional</option>
+      <option value="N/A">N/A</option>
+    </select></td>
+    <td><textarea name="Commentg" c cols="60" rows="1" id="Commentg" onchange="Striptabs(this.value,'Commentg')"  onkeyup="AutoGrowTextArea(this)" placeholder="Comments."></textarea></td>
+  </tr>
+  <tr align="left" valign="top" bgcolor="#f8f8ff">
+    <td colspan="3"><strong>7. Remarks</strong> (Cracked walls, broken glass, falling light fixtures, etc.) </td>
+    </tr>
+  <tr align="left" valign="top">
+    <td colspan="3"><textarea name="Remarks" cols="140" rows="2" id="Remarks" onchange="Striptabs(this.value,'Remarks')"  onkeyup="AutoGrowTextArea(this)" ccols="140" placeholder="Remarks"></textarea></td>
+    </tr>
+  <tr align="left" valign="top" bgcolor="#f8f8ff">
+    <td colspan="3"><span style="font-weight: normal;"><strong> 8.</strong></span><span style="font-weight: bold;"> Prepared By</span><strong><big>:</big></strong><b> &nbsp;
+        <input required="required" maxlength="40" size="45" id="PreparedName" name="PreparedName" placeholder="Name here same as signature." />
+&nbsp;&nbsp;&nbsp;</b><strong>Date / Time: </strong>
+<b>  
+<input required="required" placeholder="Click to Add Date/Time" name="DateTime" maxlength="23" id="DateTime" size="24"  onclick="TimeNow('DateTime', true)" />
+&nbsp; FACILITY :</b>&nbsp;
+<input required="required" maxlength="40" size="45" name="Facility" id="Facility" placeholder="Use full name of facility." />
+&nbsp;&nbsp; </td>
+  </tr>
+</table>
+</td>
+</tr>
+<tr valign="top" bgcolor="#FFFEEB">
+<td colspan="3" style="height: 30px; text-align: center; vertical-align: middle;"><div align="left">
+  <p><span class="style5"><span style="color: black;"><span style="font-family:  Arial, Helvetica, sans-serif;; color: black;"><span style="color: black;"><span style="font-family:  Arial, Helvetica, sans-serif;; color: black;"><strong>&nbsp; Radio Operator</strong>&nbsp;</span></span></span></span></span><span class="style3"><span style="color: black;"><span style="font-family:  Arial, Helvetica, sans-serif;; color: black;"><span style="color: black;"><span style="font-family:  Arial, Helvetica, sans-serif;; color: black;">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span></span>&nbsp;</span></span></span>
+Name: 
+  <input name="Operator" type="text" id="Operator" size="25" maxlength="25" /> 
+
+  <p><span class="style3"><span style="color: black;"><span style="color: black;"><span style="font-family:  Arial, Helvetica, sans-serif;; color: black;">&nbsp;</span></span></span><span style="color: black;"><span style="font-family:  Arial, Helvetica, sans-serif;; color: black;">&nbsp;</span></span></span><span class="style3"><span style="color: black;"><span style="font-family:  Arial, Helvetica, sans-serif;; color: black;">&nbsp;</span></span></span><span class="style3"><span style="color: black;"><span style="font-family:  Arial, Helvetica, sans-serif;; color: black;">&nbsp;</span></span></span><span class="style5"><span style="color: black;"><span style="font-family:  Arial, Helvetica, sans-serif;; color: black;">Facility</span></span> <span class="style46">Latitude and longitude: LAT&nbsp;
+          <input name="mapLat" type="text" id="mapLat" placeholder="ex: 38.5567" onchange="splitPaste(this.value);checkLatLon();Testlat();document.getElementById('location_source').value ='FORM ENTRY';CheckGPSType();" size="12" />
+          <span class="style45"> &nbsp;&nbsp;</span>LON
+          <input name="mapLon" type="text" id="mapLon" placeholder="ex:-121.7932" onchange="this.value=checkzero(this.value);CheckLon();checkLatLon();Testlon();document.getElementById('location_source').value ='FORM ENTRY';CheckGPSType();" size="12" />
+&nbsp;MGRS          
+<input name="MGRS"onkeypress="if(event.keyCode==13){return false;}"   type="text" title= "If entering manually use format: 11SNR0184195204 or 11S NR 01841 95204" placeholder="Ex:11SNR0184195204" id="MGRS" onchange="checkformgrs(this.value)"size="25" maxlength="25" />
+&nbsp;&nbsp;Grid</span>&nbsp;
+  <input name="Grid" type="text" id="Grid" size="8" maxlength="8" readonly="readonly" />
+</span><span class="style3"><em>&nbsp;
+  <input name="ExtGPS" type="hidden" id="ExtGPS" value="{GPS_SIGNED_DECIMAL}" />
+  <input name="GPS2" type="hidden" id="GPS2" size="40" onchange="convertthis()" onkeypress="return isNumberKey(event)"  maxlength="40" title= "If entering manually use format: 38.5567,-121.7932" placeholder="Ex: 38.5567,-121.7932" />
+  <span class="style45"><span style="color: black;"><span style="font-family:  Arial, Helvetica, sans-serif;; color: black;">
+  <em><span style="color: black;"><span style="font-family:  Arial, Helvetica, sans-serif;; color: black;">
+  </span></span></em> </span></span></span>
+  <input name="w3w" type="hidden" id="w3w" size="50" placeholder = "Ex: contrived.rides.thankfully" onkeypress="if(event.keyCode==13){return false;}"  onchange="convert3words(this.value);convertthis() ";/>
+  <em>&nbsp; </em> <em>&nbsp;<span style="color: black;"><span style="font-family:  Arial, Helvetica, sans-serif;; color: black;"><span style="color: black;"><span style="font-family:  Arial, Helvetica, sans-serif;; color: black;">
+  <input name="GPS" type="hidden" id="GPS" value="{GPS_SIGNED_DECIMAL}" />
+  </span></span></span></span></em></em>
+  <input name="timestamp" type="hidden" id="timestamp" size="30" /> <input name="timestamp2" type="hidden" id="timestamp2" size="30" />
+<input name="MapFileName" type="hidden" id="MapFileName" value="HICS-251 Facility Status Report " />
+<em><span class="style45"><span style="color: black;"><span style="font-family:  Arial, Helvetica, sans-serif;; color: black;"><em><span style="color: black;"><span style="font-family:  Arial, Helvetica, sans-serif;; color: black;">
+<input name="GPS" type="hidden" id="GPS" value="{GPS_SIGNED_DECIMAL}" />
+</span></span></em></span></span></span></em><em><em><span style="font-family:  Arial, Helvetica, sans-serif;; color: black;">
+<input name="locationSource" type="hidden" id="locationSource" placeholder=""  style="color:blue" value=""   />
+<input name="location_source" type="hidden" id="location_source" placeholder=""  style="color:blue" value="{Location_Source}" />
+</span></em></em><br />
+  <span style="color: black;"><span style="font-family:  Arial, Helvetica, sans-serif;; color: black;">&nbsp;</span></span><span style="color: black;"><span style="font-family:  Arial, Helvetica, sans-serif;; color: black;">&nbsp;</span></span>  &nbsp;LAT/LON and MGRS default to the center of the grid square listed in Express Settings, &nbsp;unless a GPS is used or Lat/LON<span class="style5">&nbsp;</span> or MGRS must be entered<br />
+              <span class="style5">&nbsp;&nbsp;&nbsp;</span> manually.</span><span class="style5"><span class="style3">&nbsp;</span> <strong>Without properly formatted GPS coordinates this form cannot be mapped in Winlink Express.</strong></span> 
+          </p>
+  <p><b><span style="font-weight: normal;">&nbsp;&nbsp;&nbsp; <span class="style5">&nbsp;</span></span><span class="style5">Attach CSV data file to message?</span>    
+      <input name="AddAttachment" type="radio" value="attach" onclick="document.getElementById('DoAttach').value =  this.value"  />
+    Yes <span style="font-weight: normal;">&nbsp;&nbsp; </span>
+    <input name="AddAttachment" type="radio" value="false" checked="checked"onclick="document.getElementById('DoAttach').value =  this.value"  /> 
+    No
+<span style="font-weight: normal;">&nbsp;</span>
+<input name="DoAttach" type="hidden" id="DoAttach" value="false" />
+<br />
+&nbsp; &nbsp;&nbsp;</b></p>
+</div></td>
+</tr>
+<tr>
+  <td style="height: 30px; text-align: center; vertical-align: middle;" colspan="3">&nbsp;</td>
+</tr>
+<tr>
+<td colspan="3"><big> &nbsp;<big></big><big></big>
+    <input class="SubmitBtn" enctype="multipart/form-data" id="Submit" onclick="createjson();ExportData(''); document.getElementById('parseme').value='';" method="Post" name="Submit" value=" Submit " type="submit" />
+&nbsp;&nbsp;</big>
+  <input type="button" value="Save HICS 251 Data"  onclick="SaveData()" />
+  &nbsp; 
+  <input class="BtnFormat2" value="Reset Form " name="ResetForm"  type="reset" />
+&nbsp;
+&nbsp; &nbsp;<span class="style3"> &nbsp;&nbsp;<b><span style="font-weight: normal;"><big>
+</big></span></b></span> &nbsp; &nbsp; &nbsp;
+&nbsp;
+&nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp;
+&nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp;
+&nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp;
+&nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp;
+&nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp;
+&nbsp; &nbsp; &nbsp;&nbsp; &nbsp;
+&nbsp; &nbsp; &nbsp;<span style="font-style: italic;">&nbsp;<span style="font-weight: bold;">&nbsp; &nbsp; &nbsp; &nbsp;&nbsp;</span><small>&nbsp;</small> &nbsp;Vers 0 .6&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 
+<span style="font-style: italic;">
+<input name="testCall" type="hidden" id="testCall" value="{MsgSender}" size="14" maxlength="13" />
+</span>
+<input name="Templateversion" type="hidden"
+
+                                    id="Templateversion" value="HICS-251 v .6" />
+</span></td>
+</tr>
+</tbody>
+</table>
+              
+<br />
+</td>
+</tr>
+</tbody>
+</table>
+      <textarea name="FormData" cols="150" rows="8" id="FormData" style="display: none">MapFileName:T=j1
+DateTime:T=j2
+Latitude:T=j4
+Longitude:T=j5
+Sender:T=j6
+MGRS:T=j9
+Grid:T=j10
+Location source:M:GPS,User specified,Form entry,Grid square,Address lookup=l6
+Operator:T=Operatorname
+1. Incident Name:T=t1
+2. Operational Period:M=j11
+2a. Operational period from:T=je12
+2a. Operational period to:T=j13
+3. Department / Unit Reporting:T=j14
+3b. Department / Unit Contact number:T=j14a
+3c. Street Address:T=M1
+3d. City:T=M2
+3e. State:T=M3
+3f. Zip:T=M4
+4a. Power:M:Fully functional,Partially functional,Nonfunctional,N/A=j15
+4a. Power Comment:T=j15a
+4b. Lighting:M:Fully functional,Partially functional,Nonfunctional,N/A=j16
+4b. Lighting Comment:T=j16a
+4c. Water:M:Fully functional,Partially functional,Nonfunctional,N/A=j17
+4c. Water comment:T=j17a
+4d. Sewage/Toilets:M:Fully functional,Partially functional,Nonfunctional,N/A=j18
+4d. Sewage/Toilets comment:T=j18a
+4e. Nurse Call System:M:Fully functional,Partially functional,Nonfunctional,N/A=j19
+4e. Nurse Call System comment:T=j19a
+4f. Medical Gases / Oxygen:M:Fully functional,Partially functional,Nonfunctional,N/A=j20
+4f. Medical Gases  comment:T=j20a
+4g. Communications IT system, telephones, pagers:M:Fully functional,Partially functional,Nonfunctional,N/A=j21
+4g. Communications IT system comment:T=j21a
+7. Remarks:T=j30
+8a. Prepared by:T=j31
+8b. Prepared Time:T=j32
+8c. Facility:T=j33
+      </textarea>
+    </form>
+</body></html>

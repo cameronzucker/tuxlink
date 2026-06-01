@@ -1,0 +1,642 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml"><head>
+<meta http-equiv="content-type" content="application/xhtml+xml; charset=iso-8859-1" /><title>Winlink PH SMS Message</title>
+
+<style type="text/css">
+body, td, th {
+font-family: Arial,Helvetica,sans-serif;
+font-size: 12px;
+font-weight: inherit;
+}
+.zentriert {
+font-size: 12px;
+font-weight: inherit;
+}
+input, select {
+padding: 1px;
+-moz-border-radius-topleft: 2px;
+-moz-border-radius-topright: 2px;
+-moz-border-radius-bottomright: 2px;
+-moz-border-radius-bottomleft: 2px;
+font-family: Arial,Helvetica,sans-serif;
+font-size: 12px;
+font-weight: inherit;
+}
+textarea {
+padding: 1px;
+-moz-border-radius-topleft: 2px;
+-moz-border-radius-topright: 2px;
+-moz-border-radius-bottomright: 2px;
+-moz-border-radius-bottomleft: 2px;
+font-family: Arial,Helvetica,sans-serif;
+font-size: 12px;
+font-weight: inherit;
+}
+.rechtsbuendig {
+font-size: 12px;
+font-weight: inherit;
+}
+.SubmitBtn {
+font-size: 12px;
+font-weight: inherit;
+}
+.version {
+color: #666666;
+position: relative;
+left: 0px;
+top: 3px;
+font-size: 12px;
+font-weight: inherit;
+}
+.style2 {font-size: 14px}
+.style4 {color: #000000}
+.formtext11 {font-family: Arial, Helvetica, sans-serif;
+
+font-size: 11pt;
+
+font-weight: normal;
+
+margin: 10px;
+}
+ input[type=button] {
+
+  border: 2px solid #0f88f2;;
+   border-radius:.25rem;
+  
+  font-size: 14px;
+  padding: 2px 2px;
+ background-color: white;
+  text-decoration: none;
+  margin: 2px 2px;
+  cursor: pointer;
+}
+input[type=submit] {
+ border: 2px solid green;
+  border-radius:.25rem;
+  background-color: white;
+ 
+  padding: 2px 2px;
+  font-size: 14px;
+   cursor: pointer;
+}
+input[type=reset] {
+ border: 2px solid red;
+ border-radius:.25rem;
+  background-color: white;
+ 
+  padding: 2px 2px;
+  font-size: 14px;
+   cursor: pointer;
+}
+input[type=regular] {
+ border: 2px solid #999999;
+  border-radius:.25rem;
+width:45px;
+  background-color: white;
+ 
+  padding: 2px 2px;
+  font-size: 12px;
+   cursor: pointer;
+}
+.style6 {font-size: 16px; font-weight: normal; }
+.style7 {font-weight: normal;}
+    
+    .style12 {
+    font-size: 16px;
+	color: #FF0000;
+	font-style: italic;
+}
+.MSGtext {font-family: Arial,Helvetica,sans-serif;  
+  
+font-size: 12px;  
+}
+.style40 {font-family: Arial, Helvetica, sans-serif}
+.style18 {font-size: 13px}
+    .pop-up {
+	position:absolute;
+	top:0;
+	left:-500em;
+	visibility: visible;
+}
+.pop-up:target {position:static; left:0;}
+/* The pop-up itself */
+.popBox { 
+	background:#ffffff;
+	position:absolute;
+	left:25%;
+	right:25%;
+	top:20%;
+	bottom:20%;
+	z-index:10;
+	border:1px solid #3a3a3a;
+/* CSS3 where available: rounded corners, drop-shadow, and fade in. */
+border-radius:.25rem;
+box-shadow:0 .5rem .5rem rgba(0,0,0,.5);
+	opacity:0;
+	transition: opacity 0.8s ease-out;
+	visibility: visible;
+}
+:target .popBox {position:fixed; opacity:1;}
+/* Light box properties */
+.lightbox {
+display:none;
+text-indent:-200em;
+background-color:rgba(0,0,0,.4);
+width:100%;
+height:100%;
+position:fixed;
+top:0;
+left:0;
+bottom:0;
+right:0;
+z-index:5;
+}
+:target .lightbox {display:block;}
+/* The pop-ups close link, moved via CSS to the top right of the pop-up */
+.close:link,
+.close:visited {
+	position: absolute;
+	top: -0.75em;
+	right: -0.75em;
+	display: block;
+	width: 2em;
+	height: 2em;
+	line-height: 1.8;
+	padding: 0;
+	text-align: center;
+	text-decoration: none;
+	background-color: #000;
+	border: 2px solid #fff;
+	color: #fff;
+	border-radius: 50%;
+box-shadow: 0 0 .5rem .5rem rba(0,0,0,.5);
+	z-index: 12;
+	visibility: visible;
+}
+.close:before {content:"X";}
+.close:hover,
+.close:active,
+.close:focus {
+box-shadow: 0 0 .5rem .5rem rba(255,0,0,.5);
+background-color: #c00;
+color: #fff;
+}
+.close span {
+text-indent: -200em;
+display: block;
+}
+/* The pop-up content div will scroll if it has too much content */
+.popScroll {
+	position:absolute;
+	top: 1rem;
+	left: 1rem;
+	right: 1rem;
+	bottom: 1rem;
+	overflow-y: auto;
+*overflow-y: scroll;
+	padding-right: 0.5em;
+	z-index: 11;
+	visibility: visible;
+}
+.popScroll h2 {margin-top:0}
+.zentriert1 {font-size: 12px;
+font-weight: inherit;
+}
+.zentriert1 {font-size: 12px;
+font-weight: inherit;
+}
+</style>
+<script>
+function AutoGrowTextArea(textField)
+{
+if (textField.clientHeight < textField.scrollHeight)
+{
+textField.style.height = textField.scrollHeight + "px";
+if (textField.clientHeight < textField.scrollHeight)
+{
+textField.style.height = (textField.scrollHeight * 2 - textField.clientHeight) + "px";
+}
+}
+}
+function Countthelines(f) { var text1 = f
+var text2 = text1.replace(/\s+$/,"");
+var split2 = text2.split("\n"); var mytotal = split2.length * 17;
+if (mytotal < 150) {
+mytotal = 150;
+}
+var tstr = mytotal.toString();
+return tstr;
+}
+function newfix(f){
+var ThisText = document.getElementById(f).value;
+var makeit = Countthelines(ThisText);
+document.getElementById(f).style.height = makeit+"px"; }
+function Fixarea() {
+newfix("Message");
+// newfix("reply");
+AutoGrowTextArea(document.getElementById("Message"));
+// AutoGrowTextArea(document.getElementById("reply"));
+}
+function RWS(str){
+var text2 = str.replace(/\s+$/,"");
+return text2.trim();
+}
+
+
+function saveTextAsFile(fileNameToSaveAs, textToWrite) {
+var textToWrite = document.getElementById('parseme').value; 
+var fileNameToSaveAs = "PH SMS Message data " + DateforFile()+".txt";
+fileNameToSaveAs = prompt("", fileNameToSaveAs);
+
+  /* Saves a text string as a blob file*/  
+  var ie = navigator.userAgent.match(/MSIE\s([\d.]+)/),
+      ie11 = navigator.userAgent.match(/Trident\/7.0/) && navigator.userAgent.match(/rv:11/),
+      ieEDGE = navigator.userAgent.match(/Edge/g),
+      ieVer=(ie ? ie[1] : (ie11 ? 11 : (ieEDGE ? 12 : -1)));
+
+  if (ie && ieVer<10) {
+    console.log("No blobs on IE ver<10");
+    return;
+  }
+
+  var textFileAsBlob = new Blob([textToWrite], {
+    type: 'text/plain'
+  });
+
+  if (ieVer>-1) {
+    window.navigator.msSaveBlob(textFileAsBlob, fileNameToSaveAs);
+
+  } else {
+    var downloadLink = document.createElement("a");
+    downloadLink.download = fileNameToSaveAs;
+    downloadLink.href = window.URL.createObjectURL(textFileAsBlob);
+    downloadLink.onclick = function(e) { document.body.removeChild(e.target); };
+    downloadLink.style.display = "none";
+    document.body.appendChild(downloadLink);
+    downloadLink.click();
+  }
+}
+
+
+
+
+
+function destroyClickedElement(event)
+{
+    document.body.removeChild(event.target);
+}
+
+function loadFileAsText()
+{
+
+    var fileToLoad = document.getElementById("fileToLoad").files[0];
+ 
+    var fileReader = new FileReader();
+    fileReader.onload = function(fileLoadedEvent) 
+    {
+        var textFromFileLoaded = fileLoadedEvent.target.result;
+        document.getElementById("inputTextToSave").value = textFromFileLoaded;
+    };
+    fileReader.readAsText(fileToLoad, "UTF-8");
+}
+
+
+function DateforFile(RightNow) {
+var txt;
+var d = new Date(),
+thisyear = d.getFullYear();
+thismonth= d.getMonth();
+thismonth = thismonth+1;
+if (thismonth < 10) { thismonth = "0" + thismonth}
+
+thisday = d.getDate();
+if (thisday < 10) { thisday = "0" + thisday}
+
+h = (d.getHours()<10?'0':'') + d.getHours()
+m = (d.getMinutes()<10?'0':'') + d.getMinutes()
+var myprompt = thisyear+ '-'+thismonth+'-'+thisday+' '+h + '_' + m ;
+return myprompt;
+}
+
+function isObject(arg) {
+  return Object.prototype.toString.call(arg)==='[object Object]';
+}
+
+function formDataToObject(elForm) {
+  if (!elForm instanceof Element) return;
+  var fields = elForm.querySelectorAll('input, select, textarea'),
+    o = {};
+  for (var i=0, imax=fields.length; i<imax; ++i) {
+    var field = fields[i],
+      sKey = field.name || field.id;
+    if (field.type==='button' || field.type==='image' || field.type==='submit' || !sKey) continue;
+    switch (field.type) {
+      case 'checkbox':
+        o[sKey] = +field.checked;
+        break;
+      case 'radio':
+        if (o[sKey]===undefined) o[sKey] = '';
+        if (field.checked) o[sKey] = field.value;
+        break;
+      case 'select-multiple':
+        var a = [];
+        for (var j=0, jmax=field.options.length; j<jmax; ++j) {
+          if (field.options[j].selected) a.push(field.options[j].value);
+        }
+        o[sKey] = a;
+        break;
+      default:
+        o[sKey] = field.value;
+    }
+  }
+ // alert('Form data:\n\n' + JSON.stringify(o, null, 2));
+ document.getElementById('parseme').value = JSON.stringify(o, null, 2);
+//  return o;
+}
+
+function populateForm(o) {
+
+o =  JSON.parse(document.getElementById('parseme').value);
+ //if (!isObject(o)) return;
+if (!isObject(o)) return;
+  for (var i in o) {
+    var el = document.getElementById(i) || document.querySelector('[name=' + i + ']');
+    if (el.type==='radio') el = document.querySelectorAll('[name=' + i + ']');
+    switch (typeof o[i]) {
+      case 'number':
+        el.checked = o[i];
+        break;
+      case 'object':
+        if (el.options && o[i] instanceof Array) {
+          for (var j=0, jmax=el.options.length; j<jmax; ++j) {
+            if (o[i].indexOf(el.options[j].value)>-1) el.options[j].selected = true;
+          }
+        }
+        break;
+      default:
+        if (el instanceof NodeList) {
+          for (var j=0, jmax=el.length; j<jmax; ++j) {
+            if (el[j].value===o[i]) el[j].checked = true;
+          }
+        } else {
+          el.value = o[i];
+        }
+    }
+  }
+    Fixfields();
+
+
+}
+
+function SaveData() {
+	
+			formDataToObject(document.getElementById('myform'))
+			saveTextAsFile();
+			
+			//saveTextAsFile();
+			}
+
+//-------
+ function readBlob(opt_startByte, opt_stopByte) {
+  
+    var files = document.getElementById('files').files;
+    if (!files.length) {
+      alert('Please select a file!');
+      return;
+    }
+
+    var file = files[0];
+    var start = parseInt(opt_startByte) || 0;
+    var stop = parseInt(opt_stopByte) || file.size - 1;
+
+    var reader = new FileReader();
+
+    // If we use onloadend, we need to check the readyState.
+    reader.onloadend = function(evt) {
+      if (evt.target.readyState == FileReader.DONE) { // DONE == 2
+        document.getElementById('byte_content').textContent = evt.target.result;
+        document.getElementById('byte_range').textContent = 
+            ['Read bytes: ', start + 1, ' - ', stop + 1,
+             ' of ', file.size, ' byte file'].join('');
+      }
+    };
+
+    var blob = file.slice(start, stop + 1);
+    reader.readAsBinaryString(blob);
+  }
+    	
+  window.onload = function () { 
+ 
+ //Check the support for the File API support 
+ if (window.File && window.FileReader && window.FileList && window.Blob) {
+    var fileSelected = document.getElementById('txtfiletoread');
+	
+    fileSelected.addEventListener('change', function (e) { 
+         //Set the extension for the file 
+         var fileExtension = /text.*/; 
+         //Get the file object 
+         var fileTobeRead = fileSelected.files[0];
+        //Check of the extension match 
+         if (fileTobeRead.type.match(fileExtension)) { 
+             //Initialize the FileReader object to read the 2file 
+			
+             var fileReader = new FileReader(); 
+             fileReader.onload = function (e) { 
+                 var fileContents = document.getElementById('filecontents'); 
+                
+				document.getElementById('parseme').value =fileReader.result;
+				populateForm(obj = document.getElementById('parseme').value);
+					 } 
+             fileReader.readAsText(fileTobeRead); 
+         } 
+         else { 
+             alert("Please select text file"); 
+         }
+ 
+    }, false);
+} 
+ else { 
+     alert("Files are not supported"); 
+ } 
+ Checkifinbrowser();
+ //Fixfields();
+ }
+  function Fixfields() {
+AutoGrowTextArea(document.getElementById("Message"));
+
+}
+
+ function TimeNow(Timefld) {
+var txt;
+var d = new Date(),
+thisyear = d.getFullYear();
+thismonth= d.getMonth();
+thismonth = thismonth+1;
+thismonth = (thismonth <10?'0':'') +thismonth;
+m = (d.getMinutes()<10?'0':'') + d.getMinutes()
+
+thisday = d.getDate();
+h = (d.getHours()<10?'0':'') + d.getHours()
+m = (d.getMinutes()<10?'0':'') + d.getMinutes()
+s = (d.getSeconds()<10?'0':'') + d.getSeconds();
+var myprompt = thisyear+ '-'+thismonth+'-'+thisday+' '+h + ':' + m;
+var RightNow = prompt("", myprompt);
+document.getElementById(Timefld).value = RightNow;
+}
+
+function Checkifinbrowser() {
+ var x= document.getElementById("testCall").value; 
+ var n = x.search("{Msg");
+ if (n>-1) { 
+ document.getElementById('Submit').style.visibility='hidden';
+  alert('You are running this form outside of Winlink.\n \nWhen you have completed the form, SAVE the data and then give or send the SAVED data file to the radio operator. The operator will load the SAVED data into the correct form and send via winlink. ');
+ } else {document.getElementById('Submit').style.visibility='visible';  }
+}
+    
+	function numbersonly(evt)  
+{  
+var charCode = (evt.which) ? evt.which : event.keyCode  ; 
+if (charCode > 47 && (charCode < 60) || (charCode == 44))  
+return true;  
+return false;  
+
+} 
+function addSemi(myStr){
+var S= myStr;
+if (myStr.trim().length != 0) {
+S = S+';';}
+return S;
+}
+
+    function Getphone(){
+
+var phone = document.getElementById('phone').value;
+var phone= phone.replace(/-/g, '');
+var carrier = document.getElementById('carrier').value;
+if ((carrier!=='Select Carrier') && phone !=='' ){
+var current = document.getElementById('address').value;
+document.getElementById('address').value=current+phone+carrier+";\r";
+//AutoGrowTextArea(document.getElementById("addresses"));
+//doclear();a
+var str = document.getElementById('address').value;
+var temp= str.replace(/\n/g, '');
+document.getElementById('address').value=temp;
+    
+   document.getElementById('AttachXML').value=false; 
+} else {alert('You must enter a phone number AND select a carrier.')};
+}
+    
+   
+    function wordcount(s) {  
+  
+cnt= s.length;
+document.getElementById('check2').value = cnt;  
+  
+ }  
+  
+function getsmsAddresses(){
+    a = document.getElementById('phone').value;
+    b=  document.getElementById('phone2').value;
+    
+    if (a=='' && b!='') document.getElementById('Alladdresses').value = a+b;
+      if (a!='' && b=='') document.getElementById('Alladdresses').value = a+b;
+    if (a!='' && b!='') document.getElementById('Alladdresses').value = a+','+b;
+    
+    
+    
+   //document.getElementById('Alladdresses').value = a+b;
+    
+    } 
+  
+</script></head>
+<body>
+<form  style="font-family: Arial;" pbzloc="3" onsubmit="return confirm('To complete your form submission, click OK and close the open browser window. You will return to the new message window so you can post your message to the outbox');" method="post" id="myform" enctype="multipart/form-data" action="http://{FormServer}:{FormPort}">
+<table width="900" border="0" align="left" style="height: 498px; width: 900px;">
+ 
+<tbody>
+<tr>
+<td width="800" valign="top">
+<table width="819" border="1" cellpadding="4" cellspacing="0" bordercolor="#999999" style="font-size: 14px; width: 900px; height: 348px;">
+<tbody>
+<tr>
+<td height="39" style="text-align: left; background-color: rgb(222,233,249); font-weight: normal;"><div align="center" > <span class="style6">Winlink PH SMS Message</span><br />
+  <br />
+  <input type="button" value=" Load PH SMS Message Data" onclick="document.getElementById('txtfiletoread').click();" />
+          <input type="file" id="txtfiletoread" accept=".txt"  style="display: none;"/>
+  <table width="100%" border="0" cellspacing="0" cellpadding="0">
+      
+    <tbody>
+      <tr>
+        <td> </td>
+        </tr>
+    </tbody>
+  </table>
+  
+  This form generates a short text message that can be sent to an email and/or SMS address.&nbsp;<br />
+    The PAREDN club (DX1PRD) runs 2 SMS gateways and is only accessible using Winlink.<br />
+    No delivery guarantee is made or implied</div></td>
+</tr>
+<tr>
+<td style="text-align: center;"><div align="left">
+  <p><em><span class="style12">Separate multiple email addresses and SMS numbers with a comma ( <strong>,</strong> )</span></em></p>
+  <p><span class="style2">Send to address(s):
+      <input name="address" type="text" id="address" placeholder="winlink2sms@gmail.com" onchange="this.value = addSemi(this.value);" value="winlink2sms@gmail.com," size="120"" />
+  </span></span></p>
+  <p><span class="style2">Add Local SMS number(s): <span style="font-weight: normal;"><a name="SMS" id="SMS"></a></span></span><span class="background_table"><span class="style7"><span style="font-weight: normal;"><span class="MSGtext"><span class="style40">
+    <input name="phone" type="text" placeholder="Start with Zero + 10 numbers" id="phone" onkeypress="return numbersonly(event)" value="" size="60" />
+  </span></span></span></span></span><span style="font-weight: normal;">&nbsp;&nbsp;&nbsp;</span></p>
+  <p><span style="font-weight: normal;"><span class="style2">Add Int'l SMS number(s): <a name="SMS" id="SMS2"></a></span><span class="background_table"><span class="style7"><span class="MSGtext"><span class="style40">
+  <input name="phone2" type="text" placeholder="Use 10 numbers" id="phone2" onkeypress="return numbersonly(event)" value="" size="60" />
+  </span></span></span></span>&nbsp;
+  </span><span class="style18">
+    <input name="Alladdresses" type="hidden" id="Alladdresses" value="" /></span></p>
+</div></td>
+</tr>
+<tr>
+<td style="text-align: center; vertical-align: middle;"><div align="left"><span style="font-size: 14px;">
+  <pbzloc ="1" style="font-weight: normal;"></pbzloc></span><br />
+   <span style="font-size: 14px;"> From:&nbsp;<span style="font-size: 14px;"> </span></span>
+   <input title="Your name/group or person you are sending for." id="From_Name" maxlength="30" required="required" name="From_Name" placeholder='Enter your name' size="30" />
+&nbsp;<span class="style2"> &nbsp;&nbsp;Date/Time: &nbsp;</span>
+<input name="time" type="text" id="time" onclick="TimeNow('time')" size="20" maxlength="21"  placeholder="Click for Date/Time"/> 
+&nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp;&nbsp;<textarea name="parseme" cols="60" id="parseme" style="display: none;"></textarea></div></td>
+</tr>
+<tr>
+  <td colspan="4" style="height: 88px; vertical-align: top; text-align: center; font-size: 14px;"><div align="left"><br />
+    <span class="style2">Message</span> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Character count: <span class="MSGtext">
+      <input name="check2" id="check2" size="3" maxlength="3" class="zentriert1" readonly="readonly" value="0" type="text" />
+      </span><br />
+    <br />
+    
+    <label> </label>
+    <span class="style2">&nbsp;&nbsp;</span>
+    <textarea cols="120" rows="3"  maxlength="140" name="Message"  id="Message"  onkeypress="if(event.keyCode==13){return false}"  onkeyup="AutoGrowTextArea(this); wordcount(this.value)" onchange="this.value=RWS(this.value)" placeholder='140 characters max'></textarea>
+    <br />
+    <br />
+  </div></td>
+</tr>
+<tr>
+<td style="text-align: justify;">
+&nbsp;
+&nbsp;<span style="color: rgb(128, 0, 0);"><span><span style="font-size: 12px;"></span></span></span>&nbsp;
+<input class="SubmitBtn" enctype="multipart/form-data" id="Submit" method="Post" name="Submit" size="8" style="height: 28px; width: 52px; " value="Submit" type="submit" onclick="getsmsAddresses();" />
+&nbsp;&nbsp;
+<input type="button" value="Save PH SMS Message  Data"  onclick="SaveData()" />
+</span>&nbsp;
+<input class="BtnFormat2" value="Reset Form " name="ResetForm" type="reset" />
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; <span style="color: rgb(128, 0, 0);"><span style="font-size: 12px;">&nbsp; </span></span><span style="color: rgb(128, 0, 0);">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+<input name="testCall" type="hidden" id="testCall" value="{MsgSender}" size="14" maxlength="13" />
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span style="font-weight: normal;"><span class="formtext11">
+<input name="Templateversion" type="hidden" id="templateversion" value="PH SMS Message version 1.3" />
+</span></span></strong>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span>&nbsp;&nbsp;<span style="color: rgb(128, 0, 0);"><span style="color: rgb(128, 0, 0);"><span class="style4">V<span class="style7">. <span style="color: rgb(128, 0, 0)">1.3.</span></span></span></span></span><span style="color: rgb(128, 0, 0);">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span></td>
+</tr>
+</tbody>
+</table>
+<br />
+&nbsp;</td>
+</tr>
+</tbody>
+</table>
+
+</form>
+</body></html>

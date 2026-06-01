@@ -1,0 +1,497 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+
+<html xmlns="http://www.w3.org/1999/xhtml"><head>
+
+
+
+<meta http-equiv="content-type" content="application/xhtml+xml; charset=utf-8" /><title>Check Out-{var MsgSender}-{var Location}</title>
+
+
+
+
+
+
+
+<style type="text/css">
+
+
+
+@media print {
+
+#printPageButton {
+
+    display: none;
+
+  }
+
+  .form-control, .form-control.nobug {
+
+border: 0;
+
+outline: 0;
+
+box-shadow: none;
+
+font-size:12px;
+
+}
+
+.form-control.nobug {
+
+transition: none; /*-- THIS IS IMPORTANT -- */
+
+}
+
+ input {
+
+         outline: none !important;
+
+		box-shadow: none;
+
+		border: none;
+
+		}
+
+}
+
+
+
+body, td, th {
+
+
+
+font-family: Arial,Helvetica,sans-serif;
+
+
+
+font-size: 12px;
+
+
+
+font-weight: inherit;
+
+
+
+}
+
+
+
+.zentriert {
+
+
+
+font-size: 12px;
+
+
+
+font-family: Arial,Helvetica,sans-serif;
+
+
+
+font-weight: inherit;
+
+
+
+}
+
+
+
+input, select {
+
+
+
+padding: 1px;
+
+
+
+-moz-border-radius-topleft: 2px;
+
+
+
+-moz-border-radius-topright: 2px;
+
+
+
+-moz-border-radius-bottomright: 2px;
+
+
+
+-moz-border-radius-bottomleft: 2px;
+
+
+
+font-family: Arial,Helvetica,sans-serif;
+
+
+
+font-size: 12px;
+
+
+
+font-weight: inherit;
+
+
+
+}
+
+
+
+textarea {
+
+
+padding: 1px;
+
+
+font-family: Arial,Helvetica,sans-serif;
+
+
+
+font-size: 12px;
+
+
+
+font-weight: inherit;
+
+overflow:hidden;
+
+}
+
+
+
+.rechtsbuendig {
+
+
+
+font-size: 12px;
+
+
+
+font-family: Arial,Helvetica,sans-serif;
+
+
+
+font-weight: inherit;
+
+
+
+}
+
+
+
+.SubmitBtn {
+
+
+
+font-size: 12px;
+
+
+
+font-family: Arial,Helvetica,sans-serif;
+
+
+
+font-weight: inherit;
+
+
+
+}
+
+
+
+.version {
+
+
+
+color: #666666;
+
+
+
+position: relative;
+
+
+
+left: 0px;
+
+
+
+top: 3px;
+
+
+
+font-size: 12px;
+
+
+
+font-family: Arial,Helvetica,sans-serif;
+
+
+
+font-weight: inherit;
+
+
+
+}
+
+.style2 {font-size: 16px}
+
+.style4 {font-size: 12px}
+
+.style7 {color: #FF0000;
+
+	font-size: 10px;
+
+}
+
+.style7 {font-size: 10px}
+
+
+
+.style12 {
+    font-size: 12px
+}
+
+.style24 {	color: #FF0000;
+
+	font-style: italic;
+
+}
+.style45 {font-size: 12px}
+
+.style22 {font-family: Arial, Helvetica, sans-serif; color: #000000; }
+.style46 {color: #FF0000; font-size: 12px; }
+.style47 {color: #FF0000}
+.style121 {font-size: 14px}
+</style>
+
+<script type="text/javascript">
+
+function DoCheck() {
+s = "{var Comments}";
+//alert(s.length);
+}
+
+function Flip() {  
+var withspace = document.getElementById('WithSpaces').value;
+var nospace = document.getElementById('NoSpaces').value;
+
+//document.getElementById('MGRS').value =mrgs;
+   var Checked = document.getElementById("Format").checked;
+   
+    document.getElementById('addformat').value =Checked;
+   if (Checked) { document.getElementById('MGRS').value =withspace;}  else{document.getElementById('MGRS').value =nospace;}
+   
+}  
+
+
+</script>
+</head>
+
+
+
+<body onload="DoCheck()">
+
+
+
+<span style="font-family:  Arial, Helvetica, sans-serif;"> </span>
+
+
+
+<form pbzloc="1" method="post" id="Check In" enctype="multipart/form-data" action="http://{FormServer}:{FormPort}" onsubmit="return confirm('To complete your form submission, click OK and close open blank browser window. You will return to the New Message window to post your mail to the outbox. You can also make address changes at this time.');">
+
+
+
+<table style="width: 960px; " align="center" border="0">
+
+
+
+<tbody>
+
+
+
+<tr>
+
+
+
+<td height="409" ><span style="font-family:  Arial, Helvetica, sans-serif;">&nbsp;</span>
+  <table width="893" border="1" cellpadding="4" cellspacing="0" bordercolor="#999999" style="font-size: 14px; width: 874px; ">
+
+
+
+<tbody>
+
+
+
+<tr>
+
+
+
+<td height="34"  colspan="2" valign="top" bgcolor="#ffa366" style="vertical-align: top; text-align: center; ">
+
+
+
+  <div align="center"><strong><span class="style2"><em><strong><span class="style7"><strong>&nbsp;&nbsp;</strong></span></strong>PH Winlink Check-out </em></span></strong><span class="style2"><strong><br />
+
+      {var Organization}</strong><br />
+
+              &nbsp;&nbsp; </span></div></td>
+
+
+
+</tr>
+
+
+
+<tr>
+
+
+
+<td height="94" colspan="2" style="vertical-align: middle; text-align: center; width: 50%;"><div align="left">
+  <p><span class="style45" style="font-family:  Arial, Helvetica, sans-serif;"><span style="color: black;"><span style="color: black;">&nbsp;</span></span></span><span class="style45" style="font-family:  Arial, Helvetica, sans-serif;;"><strong> Station was secured at </strong></span>&nbsp;
+  
+
+  
+      <input readonly="readonly" maxlength="19" size="20" name="DateTime" value="{var DateTime}" />
+&nbsp;&nbsp;<span style="font-family:  Arial, Helvetica, sans-serif;"><small style="color: black;"> <span class="style45" style="color: black;">Status</span>&nbsp;</span><span style="font-family:  Arial, Helvetica, sans-serif;">
+  
+
+  
+  <input maxlength="11" size="12" readonly="readonly" name="Status" value="{var Status}" />
+  </span><span class="style4"><br />
+&nbsp;&nbsp;</span>
+  
+  <span style="font-family:  Arial, Helvetica, sans-serif;">&nbsp; <br />
+  
+  <br />
+  
+
+  
+  </span>
+  
+
+  
+ 
+  
+  <span style="font-family:  Arial, Helvetica, sans-serif;"> <span style="color: rgb(0, 0, 0); font-family: Arial, Helvetica, sans-serif; font-size: 12px; font-style: normal; font-variant-ligatures: normal; font-variant-caps: normal; font-weight: 400; letter-spacing: normal; orphans: 2; text-align: -webkit-left; text-indent: 0px; text-transform: none; white-space: normal; widows: 2; word-spacing: 0px; -webkit-text-stroke-width: 0px; text-decoration-thickness: initial; text-decoration-style: initial; text-decoration-color: initial; display: inline !important; float: none;"><span style="color: black;"><span style="color: black;">&nbsp;</span></span>Calls Signs of On-Site Operator(s) </span>&nbsp; </span>
+  
+  <input readonly="readonly" value="{var Assigned}" title="Call signs only." maxlength="60" size="40" name="Assigned" />
+</p>
+  <p><span class="style22"><span class="style12 style45"> <span style="font-family:  Arial, Helvetica, sans-serif;"><span style="color: rgb(0, 0, 0); font-family: Arial, Helvetica, sans-serif; font-size: 12px; font-style: normal; font-variant-ligatures: normal; font-variant-caps: normal; font-weight: 400; letter-spacing: normal; orphans: 2; text-align: -webkit-left; text-indent: 0px; text-transform: none; white-space: normal; widows: 2; word-spacing: 0px; -webkit-text-stroke-width: 0px; text-decoration-thickness: initial; text-decoration-style: initial; text-decoration-color: initial; display: inline !important; float: none;"><span style="color: black;"><span style="color: black;">&nbsp;</span></span></span></span>Station Contact Name: </span><span class="style46">:</span> </span>
+    <input  name="ContactName" id="ContactName" readonly="readonly"title="Call sign or tactical being used to send mail" value="{var ContactName}" size="25" maxlength="25" placeholder="Station contact Name" />
+&nbsp; &nbsp; &nbsp;&nbsp;&nbsp;  <span style="font-size: 12px;"><span class="style12"><small style="color: black;"><span class="style45">Station Call Sign </span></span>&nbsp;&nbsp; 
+    
+  <input stitle="Call sign or tactical used to send mail" readonly="readonly" maxlength="16" size="17" name="MsgSender" value="{var MsgSender}" />
+    
+  </span>  <br />
+    
+
+    
+  <span style="font-family:  Arial, Helvetica, sans-serif;"></span></p>
+</div></td>
+
+
+
+
+
+
+
+</tr>
+
+
+
+<tr>
+
+
+
+<td height="61" colspan="4" bgcolor="#f8f8ff" style="text-align: center; vertical-align: middle;" pbzloc="6"><div align="left">
+
+  <p><br />
+
+  
+
+    <span class="style4">&nbsp;<span class="style12">Additional Location Info&nbsp;</span></span>
+
+  
+
+    
+
+  
+
+  <input readonly="readonly" value="{var Location}" size="77" required="required" name="Location" maxlength="75" id="Subjectline" />
+
+&nbsp;
+
+  
+
+&nbsp;&nbsp;
+<input name="WithSpaces" type="hidden" id="WithSpaces" value="{var WithSpaces }" />
+<input name="NoSpaces" type="hidden" id="NoSpaces" value="{var NoSpaces}" />
+  </p>
+  <p><span class="style12">City /Town</span>
+    <input  name="CityTown" id="CityTown" value="{var CityTown}" size="25"  maxlength="25" readonly="readonly" />
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="style12">Barangay</span>
+<input  name="BARANGAY" id="BARANGAY" value="{var Barangay}" size="25" maxlength="25" readonly="readonly" />
+  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="style12">Region</span>
+  <input  name="Region" id="Region" placeholder ="Region" value="{var Region}" size="25"  maxlength="25" />
+  </p>
+
+  <p><span style="color: black;"><span style="font-family: Arial, Helvetica, sans-serif;;">&nbsp;</span></span>GPS Coordinates  LAT<span class="style12"><span class="style46"><span class="style47">&nbsp;</span></span></span><em><span class="style12"><em><span class="style24">
+            <input readonly="readonly" name="mapLat" type="text" id="mapLat" onchange="splitPaste(this.value);checkLatLon();" value="{var mapLat}" size="12" placeholder="ex: 38.5567" />
+  </span><span class="style45"> &nbsp;&nbsp;</span></em></span></em><span class="style12"><span class="style45">LON</span></span><em><span class="style12"><em> <span class="style24">
+  <input readonly="readonly" name="mapLon" type="text" id="mapLon" onchange="CheckLon();checkLatLon()" value="{var mapLon}" size="12" placeholder="ex:-121.7932" />
+  </span></em>&nbsp; <em>&nbsp; &nbsp;</em></span></em><span class="style45">MGRS</span><em>&nbsp; </em>
+  
+    <input  name="MGRS" type="text" id="MGRS" value="{var MGRS}" readonly="readonly" size="25" maxlength="25" placeholder="Optional- MGRS coordinates"/>
+  
+    <span class="style24">&nbsp;</span><em><em> <em><em><em>   <span class="style24">&nbsp;</span></em></em></em><span class="style24">&nbsp;</span></em></em><span class="style45">Grid</span><em>&nbsp;
+      <input name="Grid" readonly="readonly" ype="text" id="Grid" value="{var Grid}" size="8" maxlength="8" />
+      <span class="style24">&nbsp;</span></em></p>
+  </div></td>
+
+
+
+</tr>
+
+
+
+<tr>
+
+
+
+  <td height="74" colspan="5" style="vertical-align: top; text-align: left; height: 40px;"> <p><span style="font-family:  Arial, Helvetica, sans-serif; color: black;"><span class="style12"><strong>Comments</strong>:</span>  </span></p>
+    <p class="style45"><span style="width:750px; margin: 10px;  word-wrap:break-word; display:inline-block;">
+{var comments}</span> </p></td>
+</tr>
+
+
+
+</tbody>
+
+
+
+</table>
+
+
+
+<p>{var Templateversion}<span style="font-family:  Arial, Helvetica, sans-serif;"><span class="style2"><span class="style8">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span></span><span class="style8">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="style2"></span>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span></span></p>
+
+</td>
+
+
+
+</tr>
+
+
+
+</tbody>
+
+
+
+</table>
+
+
+
+</form>
+
+
+
+</body></html>

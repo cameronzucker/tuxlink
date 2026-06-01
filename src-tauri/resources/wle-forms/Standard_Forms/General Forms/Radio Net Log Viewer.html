@@ -1,0 +1,492 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml"><head>
+<title>Info Form</title>
+
+<meta content="text/html; charset=utf-8" http-equiv="Content-Type" />
+<style type="text/css">
+body, td, th {
+font-family: Arial,Helvetica,sans-serif;
+font-size: 12px;
+}
+.zentriert {
+font-size: 12px;
+}
+input, select {
+padding: 1px;
+-moz-border-radius-topleft: 1px;
+-moz-border-radius-topright: 1px;
+-moz-border-radius-bottomright: 1px;
+-moz-border-radius-bottomleft: 1px;
+font-family: Arial,Helvetica,sans-serif;
+font-size: 12px;
+}
+textarea {
+margin: 8px;
+padding: 8px;
+-moz-border-radius-topleft: 1px;
+-moz-border-radius-topright: 1px;
+-moz-border-radius-bottomright: 1px;
+-moz-border-radius-bottomleft: 1px;
+font-family: Arial,Helvetica,sans-serif;
+font-size: 12px;
+}
+.rechtsbuendig {
+font-size: 12px;
+}
+.SubmitBtn {
+font-size: 12px;
+}
+.version {
+margin: 5px;
+color: #666666;
+position: relative;
+left: 0px;
+top: 3px;
+font-size: 12px;
+}
+#TextHeader {
+background-color: #dddddd;
+font-size: 12px;
+}
+</style>
+<style>
+/*
+body {color:#000; background:#fff; font:100%/1.5 arial,sans-serif;}
+h2 {margin-top:0}
+*/
+/* Styling applied to classes only */
+/* Pop-up content shifted off-screen when not in view.
+Still readable by screen-reader software.
+When targeted it fills the browser window.
+*/
+.pop-up {
+	position:absolute;
+	top:0;
+	left:-500em;
+	visibility: visible;
+}
+.pop-up:target {position:static; left:0;}
+/* The pop-up itself */
+.popBox {
+	background:#ffffff;
+	position:absolute;
+	left:10%;
+	right:10%;
+	top:10%;
+	bottom:10%;
+	z-index:10;
+	border:1px solid #3a3a3a;
+/* CSS3 where available: rounded corners, drop-shadow, and fade in. */
+border-radius:.25rem;
+box-shadow:0 .5rem .5rem rgba(0,0,0,.5);
+	opacity:0;
+	transition: opacity 0.8s ease-out;
+	visibility: hidden;
+}
+:target .popBox {position:fixed; opacity:1;}
+/* Light box properties */
+.lightbox {
+display:none;
+text-indent:-200em;
+background-color:rgba(0,0,0,.4);
+width:100%;
+height:100%;
+position:fixed;
+top:0;
+left:0;
+bottom:0;
+right:0;
+z-index:5;
+}
+:target .lightbox {display:block;}
+/* The pop-ups close link, moved via CSS to the top right of the pop-up */
+.close:link,
+.close:visited {
+	position: absolute;
+	top: -0.75em;
+	right: -0.75em;
+	display: block;
+	width: 2em;
+	height: 2em;
+	line-height: 1.8;
+	padding: 0;
+	text-align: center;
+	text-decoration: none;
+	background-color: #000;
+	border: 2px solid #fff;
+	color: #fff;
+	border-radius: 50%;
+box-shadow: 0 0 .5rem .5rem rba(0,0,0,.5);
+	visibility: hidden;
+}
+.close:before {content:"X";}
+.close:hover,
+.close:active,
+.close:focus {
+box-shadow: 0 0 .5rem .5rem rba(255,0,0,.5);
+background-color: #c00;
+color: #fff;
+}
+.close span {
+text-indent: -200em;
+display: block;
+}
+/* The pop-up content div will scroll if it has too much content */
+.popScroll {
+	position:absolute;
+	top: 1rem;
+	left: 1rem;
+	right: 1rem;
+	bottom: 1rem;
+	overflow-y: auto;
+*overflow-y: scroll;
+	padding-right: 0.5em;
+	visibility: hidden;
+}
+.popScroll h2 {margin-top:0}
+</style>
+<style type="text/css">
+.formtext {font-family: Arial, Helvetica, sans-serif;
+font-size: 11pt;
+font-weight: normal;
+}
+.formbold {font-size: 12px; font-weight: bold; font-family:Arial, Helvetica, sans-serif}
+
+ input[type=button] {
+
+  border: 2px solid #0f88f2;;
+   border-radius:.25rem;
+  
+  font-size: 14px;
+  padding: 2px 2px;
+ background-color: white;
+  text-decoration: none;
+  margin: 2px 2px;
+  cursor: pointer;
+}
+input[type=submit] {
+ border: 2px solid green;
+  border-radius:.25rem;
+  background-color: white;
+ 
+  padding: 2px 2px;
+  font-size: 14px;
+   cursor: pointer;
+}
+input[type=reset] {
+ border: 2px solid red;
+ border-radius:.25rem;
+  background-color: white;
+ 
+  padding: 2px 2px;
+  font-size: 14px;
+   cursor: pointer;
+}
+input[type=regular] {
+ border: 2px solid #999999;
+  border-radius:.25rem;
+width:45px;
+  background-color: white;
+ 
+  padding: 2px 2px;
+  font-size: 12px;
+   cursor: pointer;
+}
+.style9 {	font-size: 12px;
+	font-weight: bold;
+}
+.style12 {color: #FF0000}
+</style>
+<script>
+
+    
+
+	
+
+</script>
+</head>
+<body>
+<div style="text-align: center;">&nbsp;<b><span style="font-weight: normal;"><big>&nbsp;<span class="formtext"><span style="font-family: Calibri;">&nbsp;</span></span></big></span></b>
+  <form  style="font-family: Arial;" pbzloc="3" onsubmit="return confirm('To complete your form submission, click OK and close the open browser window. You will return to the new message window so you can post your message to the outbox');" method="post" id="myform" enctype="multipart/form-data" action="http://{FormServer}:{FormPort}">
+  
+<tbody>
+<tr>
+<td><table width="950"  border="1" cellpadding="4" cellspacing="0" bordercolor="#999999" style="background-color: rgb(250, 250, 255); width: 876px; ">
+  <tbody>
+    <tr valign="top" bgcolor="#dee9f9">
+      <td height="52"  colspan="2" nowrap="nowrap" style="text-align: center;"><p><big><span style="font-weight: bold;">Radio Net Log</span><br />
+                <span  id="SubjectText"><strong>{var Title}</strong></span></big><big><small>
+                <input type="file" id="txtfiletoread" accept=".txt"  style="display: none;"/>
+            </small></big></p></td>
+    </tr>
+    <tr valign="top">
+      <td width="49%" height="97" style="width: 45%; vertical-align: top; text-align: center;" h><p align="left"><strong>1. Incident Name:</strong> <b> {var Incident_Name} </b> </p>
+          <p align="left"><span style="font-weight: bold;">3. Name /Position (NCS): </span><b> {var NCS} </b></p>
+          <p align="left"><span style="font-weight: normal;"><strong>4. Name /Position (Backup):</strong> <b> {var BackupNCS} </b></span><br style="color: rgb(0, 102, 0);" />
+              <textarea name="parseme" cols="60" id="parseme" style="display: none;"></textarea>
+        </p></td>
+      <td width="51%"  style="width: 45%; vertical-align: top; text-align: center;"><table style="width: 416px; height: 87px;" border="0" cellpadding="2" cellspacing="2">
+          <tbody>
+            <tr>
+              <td colspan="4"><div align="center"><strong>2. Operational Period</strong>:<span class="formbold"><span class=""><small>
+                  <input name="Title" type="hidden" id="Title" value=" DELAWARE COUNTY OFFICE OF EMERGENCY MANAGEMENT" />
+              </small></span></span></div></td>
+            </tr>
+            <tr>
+              <td style="width: 28%;"><strong>2a. Date From<big>:</big></strong></td>
+              <td width="27%" align="left"><div align="left"><strong> {var DateFrom} </strong></div></td>
+              <td width="20%"><strong> Date To:</strong></td>
+              <td width="26%" align="left"><strong> {var DateTo} </strong></td>
+            </tr>
+            <tr>
+              <td><strong>2b. Time From:</strong></td>
+              <td align="left"><strong> {var TimeFrom} </strong></td>
+              <td><strong> ime To:</strong></td>
+              <td align="left"><div align="left"><strong> {var TimeTo} </strong></div></td>
+            </tr>
+          </tbody>
+        </table>
+         </td>
+    </tr>
+    <tr valign="top">
+      <td height="808"  colspan="3" style="vertical-align: top; text-align: center;"><table width="100%"  border="1" cellspacing="0" cellpadding="3">
+          <tr>
+            <td width="3%" rowspan="2"><div align="center"><strong>#</strong></div></td>
+            <td width="7%" rowspan="2"><div align="center"><strong> Call Sign </strong></div></td>
+            <td width="13%" rowspan="2"><div align="center"><strong> Location or<br />
+                Tactical Call </strong></div></td>
+            <td colspan="2"><div align="center"><strong>Station</strong></div></td>
+            <td width="57%" rowspan="2"><div align="center"><strong>Comments</strong> <br />
+                (be brief) </div></td>
+          </tr>
+          <tr>
+            <td width="10%"><div align="center">Check in </div></td>
+            <td width="10%"><div align="center">Check out </div></td>
+          </tr>
+          <tr bgcolor="#fff2cc">
+            <td><div align="center">1</div></td>
+            <td>{var A1}</td>
+            <td>{var A2} </td>
+            <td><div align="center">{var A3}</div></td>
+            <td><div align="center">{var A4}</div></td>
+            <td><div align="left"> {var A5} </div></td>
+          </tr>
+          <tr>
+            <td><div align="center">2</div></td>
+            <td>{var B1}</td>
+            <td>{var B2}</td>
+            <td><div align="center">{var B3} </div></td>
+            <td><div align="center">{var B4}</div></td>
+            <td><div align="left"> {var B5} </div></td>
+          </tr>
+          <tr bgcolor="#fff2cc">
+            <td><div align="center">3</div></td>
+            <td>{var C1}</td>
+            <td>{var C2}</td>
+            <td><div align="center">{var C3} </div></td>
+            <td><div align="center">{var C4}</div></td>
+            <td><div align="left"> {var C5} </div></td>
+          </tr>
+          <tr>
+            <td><div align="center">4</div></td>
+            <td>{var D1}</td>
+            <td>{var D2}</td>
+            <td><div align="center">{var D4} </div></td>
+            <td><div align="center">{var D4}</div></td>
+            <td><div align="left"> {var D5} </div></td>
+          </tr>
+          <tr bgcolor="#fff2cc">
+            <td><div align="center">5</div></td>
+            <td>{var E1}</td>
+            <td>{var E2}</td>
+            <td><div align="center">{var E3} </div></td>
+            <td><div align="center">{var E4}</div></td>
+            <td><div align="left"> {var E5} </div></td>
+          </tr>
+          <tr>
+            <td><div align="center">6</div></td>
+            <td>{var F1}</td>
+            <td>{var F2}</td>
+            <td><div align="center">{var F3} </div></td>
+            <td><div align="center">{var F4}</div></td>
+            <td><div align="left"> {var F5} </div></td>
+          </tr>
+          <tr bgcolor="#fff2cc">
+            <td><div align="center">7</div></td>
+            <td>{var G1}</td>
+            <td>{var G2}</td>
+            <td><div align="center">{var G3} </div></td>
+            <td><div align="center">{var G4}</div></td>
+            <td><div align="left"> {var G5} </div></td>
+          </tr>
+          <tr>
+            <td><div align="center">8</div></td>
+            <td>{var H1}</td>
+            <td>{var H2}</td>
+            <td><div align="center">{var H3} </div></td>
+            <td><div align="center">{var H4}</div></td>
+            <td><div align="left"> {var H5} </div></td>
+          </tr>
+          <tr bgcolor="#fff2cc">
+            <td><div align="center">9</div></td>
+            <td>{var I1}</td>
+            <td>{var I2}</td>
+            <td><div align="center">{var I3} </div></td>
+            <td><div align="center">{var I4}</div></td>
+            <td><div align="left"> {var I5} </div></td>
+          </tr>
+          <tr>
+            <td><div align="center">10</div></td>
+            <td>{var J1}</td>
+            <td>{var J2}</td>
+            <td><div align="center">{var J3} </div></td>
+            <td><div align="center">{var J4}</div></td>
+            <td><div align="left"> {var J5} </div></td>
+          </tr>
+          <tr bgcolor="#fff2cc">
+            <td><div align="center">11</div></td>
+            <td>{var K1}</td>
+            <td>{var K2}</td>
+            <td><div align="center">{var K3} </div></td>
+            <td><div align="center">{var K4}</div></td>
+            <td><div align="left"> {var K5} </div></td>
+          </tr>
+          <tr>
+            <td><div align="center">12</div></td>
+            <td>{var L1}</td>
+            <td>{var L2}</td>
+            <td><div align="center">{var L3} </div></td>
+            <td><div align="center">{var L4}</div></td>
+            <td><div align="left"> {var L5} </div></td>
+          </tr>
+          <tr bgcolor="#fff2cc">
+            <td><div align="center">13</div></td>
+            <td>{var M1}</td>
+            <td>{var M2}</td>
+            <td><div align="center">{var M3} </div></td>
+            <td><div align="center">{var M4}</div></td>
+            <td><div align="left"> {var M5} </div></td>
+          </tr>
+          <tr>
+            <td><div align="center">14</div></td>
+            <td>{var N1}</td>
+            <td>{var N2}</td>
+            <td><div align="center">{var N3} </div></td>
+            <td><div align="center">{var N4}</div></td>
+            <td><div align="left"> {var N5} </div></td>
+          </tr>
+          <tr bgcolor="#fff2cc">
+            <td><div align="center">15</div></td>
+            <td>{var O1}</td>
+            <td>{var O2}</td>
+            <td><div align="center">{var O3} </div></td>
+            <td><div align="center">{var O4}</div></td>
+            <td><div align="left"> {var O5} </div></td>
+          </tr>
+          <tr>
+            <td><div align="center">16</div></td>
+            <td>{var P1}</td>
+            <td>{var P2}</td>
+            <td><div align="center">{var P3} </div></td>
+            <td><div align="center">{var P4}</div></td>
+            <td><div align="left"> {var P5} </div></td>
+          </tr>
+          <tr bgcolor="#fff2cc">
+            <td><div align="center">17</div></td>
+            <td>{var Q1}</td>
+            <td>{var Q2}</td>
+            <td><div align="center">{var Q3} </div></td>
+            <td><div align="center">{var Q4}</div></td>
+            <td><div align="left"> {var Q5} </div></td>
+          </tr>
+          <tr>
+            <td><div align="center">18</div></td>
+            <td>{var R1}</td>
+            <td>{var R2}</td>
+            <td><div align="center">{var R3} </div></td>
+            <td><div align="center">{var R4}</div></td>
+            <td><div align="left"> {var R5} </div></td>
+          </tr>
+          <tr bgcolor="#fff2cc">
+            <td><div align="center">19</div></td>
+            <td>{var S1}</td>
+            <td>{var S2}</td>
+            <td><div align="center">{var S3} </div></td>
+            <td><div align="center">{var S4}</div></td>
+            <td><div align="left"> {var S5} </div></td>
+          </tr>
+          <tr>
+            <td><div align="center">20</div></td>
+            <td>{var T1}</td>
+            <td>{var T2}</td>
+            <td><div align="center">{var T3} </div></td>
+            <td><div align="center">{var T4}</div></td>
+            <td><div align="left"> {var T5} </div></td>
+          </tr>
+          <tr bgcolor="#fff2cc">
+            <td><div align="center">21</div></td>
+            <td>{var U1}</td>
+            <td>{var U2}</td>
+            <td><div align="center">{var U3} </div></td>
+            <td><div align="center">{var U4}</div></td>
+            <td><div align="left"> {var U5} </div></td>
+          </tr>
+          <tr>
+            <td><div align="center">22</div></td>
+            <td>{var V1}</td>
+            <td>{var V2}</td>
+            <td><div align="center">{var V3} </div></td>
+            <td><div align="center">{var V4}</div></td>
+            <td><div align="left"> {var V5} </div></td>
+          </tr>
+          <tr bgcolor="#fff2cc">
+            <td><div align="center">23</div></td>
+            <td>{var W1}</td>
+            <td>{var W2}</td>
+            <td><div align="center">{var W3} </div></td>
+            <td><div align="center">{var W4}</div></td>
+            <td><div align="left"> {var W5} </div></td>
+          </tr>
+          <tr>
+            <td><div align="center">24</div></td>
+            <td>{var X1}</td>
+            <td>{var X2}</td>
+            <td><div align="center">{var X3} </div></td>
+            <td><div align="center">{var X4}</div></td>
+            <td><div align="left"> {var X5} </div></td>
+          </tr>
+          <tr bgcolor="#fff2cc">
+            <td><div align="center">25</div></td>
+            <td>{var Y1}</td>
+            <td>{var Y2}</td>
+            <td><div align="center">{var Y3} </div></td>
+            <td><div align="center">{var Y4}</div></td>
+            <td><div align="left"> {var Y5} </div></td>
+          </tr>
+      </table>
+        <div align="left"></div>        <p align="left"> Comments or Additional&nbsp; Information&nbsp;<b><span style="font-weight: normal;"><big>
+        <input name="testCall" type="hidden" id="testCall" value="{MsgSender}" size="14" maxlength="13" />
+        <input name="Templateversion" type="hidden"
+
+                                    id="Templateversion" value="Readio Net Log v 1.2" />
+</big></span></b></p>
+        <p align="left"><span style="width:750px; margin: 10px;  word-wrap:break-word; display:inline-block;">{var Comments} </span></p>
+        <p align="left">&nbsp;</p>
+        <p align="right">PAGE 
+          {var PageOf} 
+OF
+          {var PageTo}
+</p>
+        <p align="right"><big><span class="SubmitBtn" style="font-weight: bold;"> &nbsp;</span> <span class="style9"><span style="font-weight: normal;"><big>&nbsp;<span class="style12">&nbsp;</span>V . 1.3</big></span></span></big></p></td>
+    </tr>
+  </tbody>
+</table>
+<center pbzloc="5"></center>
+</td>
+</tr>
+</tbody>
+<!-- popup starts here -->
+
+</form>
+</div>
+</body></html>

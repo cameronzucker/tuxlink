@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "forms-webview",
+  "description": "HTML Forms child-webview (label `compose-form-*`, P1 Task 7). Loopback HTTP fetch ONLY: the webview talks to tuxlink exclusively via the lazy forms::http_server bound at 127.0.0.1:<ephemeral-port>. NO Tauri IPC, NO fs, NO shell, NO window control. Per design §5.6 + §10: even a malicious custom-form HTML file scoped here cannot reach tuxlink internals (compose state, mailbox, credentials, GPS); its blast radius is its own webview, which gets discarded on close. Note (Codex P1 2026-06-01): the permissions array is INTENTIONALLY EMPTY — `core:default` was rejected as it expands to a non-trivial event/window/webview/app/resource bundle that contradicts the no-IPC threat model.",
+  "webviews": ["compose-form-*"],
+  "permissions": []
+}

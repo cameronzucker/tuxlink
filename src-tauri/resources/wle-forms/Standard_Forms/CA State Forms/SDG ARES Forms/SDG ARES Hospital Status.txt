@@ -1,0 +1,87 @@
+Form:SDG_ARES_Hospital_Status_Initial.html,SDG_ARES_Hospital_Status_viewer.html
+
+To: 
+Subject:SDG Hospital Status: <var FacName>: <var sd0A>  <var sd0C>
+
+:
+Msg:
+<var IsExercise> 
+
+** CURRENT OPERATIONAL STATUS: <var OpStatus>
+
+Facility Name: <var FacName>
+Date From: <var sd0A> 
+Time From: <var sd0C>
+Facility Address: <var FacAddress>
+Facility Type: <var FacType>
+Facility ID: <var FacID>
+CLIA #: <var FacCLIA>
+Emergency Contact Name <var FacEmhgName>
+Phone #: <var FacEmgPhone>
+Fax #: <var FacEmgPhonw2>
+Other Phone, Fax, Cell, or Radio: <var FacAddress2>
+
+** Damage Assessment ** `
+Structural Damage: <var Damage1>
+Partial Collapse: <var Damage2>
+Total Collapse:<var Damage3>
+Internal Disaster: <var Damage4>
+Flooding: <var Damage5>
+Utility Damage: <var Damage6>
+Poor Air Quality:<var Damage7>
+
+** Utility Status ** 
+HVAC: <var UStatus2>
+Natural Gas: <var UStatus3>
+Water: <var UStatus4>
+Wastewater/Sewer: <var UStatus5>
+Internet/Wifi: <var UStatus6>
+Phone: <var UStatus7>
+Elevator(s): <var UStatus8>
+
+** Generator ** 
+On Generator Power: <var Gen1>`	 
+Generator Fuel:	<var Gen2>
+
+** Critical Needs ** 
+Food/Water: <var Critneed1>
+Linen/Laundry: <var Critneed2>
+PPE/Medical Supply: <var Critneed3>	
+Pharmaceuticals: <var Critneed4>
+Staffing: <var Critneed5>
+
+** FACILITY CENSUS - COUNT TOTAL ** 
+Total Patient/Resident Count: <var g1>
+Staffed Bed Count: <var g2>
+Unstaffed Bed Count: <var g3>
+Patients WITHOUT Beds Count: <var g4>
+Total Bed Count: <var g5>
+
+** Services Available ** 
+Laboratory: <var Service1>
+Memory Care Unit: <var Service2>
+Behavioral health Unit: <var Service3>
+Pharmacy: <var Service4>
+Nutrition/ Environmental: <var Service5> 
+Emergency Dept: <var Service6>
+Operation Rooms: <var Service7>
+Radiology: <var Service8>
+Morgue/Mass Fatality Area: <var Service9>
+Dialysis: <var Service10>
+
+** Surge  Count ** 
+Casualty Information in the Last 12 Hours
+Patients Not Yet Seen: <var Serge1>
+Patients Treated and Released: <var Serge2>
+Patients Admitted (Last 12 hours): <var Serge3>
+
+**  How Long Can You Go Without Assistance?** 
+<var HowLong>
+
+Radio Operator Name: <var RadioOperator> 
+Report Date/Time : <var ReportDate>
+
+-----------------------------------------
+Senders Base Call: <Callsign>
+Senders Express Version: <ProgramVersion>
+Senders Template Version: <var Templateversion>

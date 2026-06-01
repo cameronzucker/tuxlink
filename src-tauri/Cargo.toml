@@ -48,6 +48,14 @@ rusqlite = { version = "0.31", features = ["bundled", "modern_sqlite"] }  # NEW 
 uuid = { version = "1.8", features = ["v4", "serde"] }  # NEW (tuxlink-1hu) — saved-search IDs
 rand = "0.8"               # NEW (tuxlink-4ek Task 3.1) — RADIO-1 consent-token mint (16 hex chars); intra-process replay protection, not a secret
 quick-xml = { version = "0.39", default-features = false, features = ["serialize"] }  # NEW (tuxlink-v1p T1.3) — XML parse/serialize for HTML Forms; per spec §10 (hardening) + plan rev-4 T1.3
+axum = "0.7"                                     # NEW (tuxlink-ytya P1) — lazy loopback HTTP server for HTML Forms webview path; design §5.3
+tower = { version = "0.5", features = ["util"] } # NEW (tuxlink-ytya P1) — service composition for the form-server router
+tower-http = { version = "0.6", features = ["fs", "cors"] }  # NEW (tuxlink-ytya P1) — static-file serving for WLE asset subtree
+mime = "0.3"                                     # NEW (tuxlink-ytya P1) — Content-Type construction in form-server responses
+multer = "3"                                     # NEW (tuxlink-ytya P1) — multipart/form-data parser preserving repeated names + submitter per design §5.3
+percent-encoding = "2"                           # NEW (tuxlink-ytya P1) — urlencoded body parse where multer doesn't apply
+walkdir = "2"                                    # NEW (tuxlink-ytya P1) — bundled + custom WLE template recursive enumeration
+bytes = "1"                                      # NEW (tuxlink-ytya P1) — request body buffer passed to multer's stream-once wrapper
 
 [dev-dependencies]
 mockito = "1.5"

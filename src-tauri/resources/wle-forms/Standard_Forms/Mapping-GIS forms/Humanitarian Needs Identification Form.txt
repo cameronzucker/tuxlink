@@ -1,0 +1,31 @@
+Form:Humanitarian Needs Identification.html,Humanitarian Needs Identification viewer.html
+
+To:	<var MsgTo>
+
+Subject: Humanitarian Needs Identification - <var TeamID>, <var TheDate>
+
+Msg:
+Report of a Humanitarian Needs within a response
+
+H1. GPS Coordinates Decimal format:	<var mapLat>	<var mapLon> 
+H2. Team ID:	<var TeamID> 
+H3. Date:	<var TheDate> 
+H4. Time:	<var TheTime>
+H5. Address/area	<var Address>
+H6. Type of Issue and brief description:	<var allconcerns>
+H7. Brief description of situation 
+	<var SituationDescription> 
+H8. Other Information:	<var OtherInfo> 
+Form completed by:	<var approvedby>
+Title/position:	<var TitlePos>
+
+------------------------------------
+Express Sending Station: <MsgSender>
+Express Version: <ProgramVersion>
+Template Version: <var Templateversion>
+Map File Name: <var mapfilename>
+
+
+
+
+

@@ -1,0 +1,2950 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html lang="de"><html xmlns="http://www.w3.org/1999/xhtml"><head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8" /><title>Did You Feel it?</title>
+<script>
+    // <meta charset="utf-8">
+function zapSpace(temp){
+var str=temp.replace(/\s+/gm,'');
+document.getElementById('eventid').value = str;
+}
+
+function Countthelines(f) { 
+var text1 = f
+var text2 = text1.replace(/\s+$/,"");
+var split2 = text2.split("\n"); 
+var mytotal = split2.length * 17;
+if (mytotal < 150) {
+    mytotal = 150;
+}
+var tstr = mytotal.toString();
+ return tstr;
+}
+
+function newfix(f){
+var ThisText = document.getElementById(f).value;
+var makeit = Countthelines(ThisText);
+document.getElementById(f).style.height = makeit+"px"; 
+}
+
+function Fixarea() {
+
+newfix("Comments");
+// newfix("reply");
+AutoGrowTextArea(document.getElementById("Comments"));
+// AutoGrowTextArea(document.getElementById("reply"));
+}
+function RWS(str){
+var text2 = str.replace(/\s+$/,"");
+aquote = '"';
+var text2=text2.replace(/\�/gm, aquote); 
+var text2=text2.replace(/\�/gm, aquote); 
+var text2=text2.replace(/\�/gm, "'"); 
+var text2=text2.replace(/\�/gm, "'"); 
+
+  return text2.trim();
+}
+
+
+</script>
+<style type="text/css">
+body, td, th {
+font-family: Arial,Helvetica,sans-serif;
+font-size: 12px;
+font-weight: inherit;
+}
+.zentriert {
+font-size: 12px;
+font-weight: inherit;
+}
+input, select {
+padding: 1px;
+-moz-border-radius-topleft: 2px;
+-moz-border-radius-topright: 2px;
+-moz-border-radius-bottomright: 2px;
+-moz-border-radius-bottomleft: 2px;
+font-family: Arial,Helvetica,sans-serif;
+font-size: 12px;
+font-weight: inherit;
+}
+textarea {
+padding: 1px;
+-moz-border-radius-topleft: 2px;
+-moz-border-radius-topright: 2px;
+-moz-border-radius-bottomright: 2px;
+-moz-border-radius-bottomleft: 2px;
+font-family: Arial,Helvetica,sans-serif;
+font-size: 12px;
+font-weight: inherit;
+}
+.rechtsbuendig {
+font-size: 12px;
+font-weight: inherit;
+}
+.SubmitBtn {
+font-size: 12px;
+font-weight: inherit;
+}
+.version {
+color: #666666;
+position: relative;
+left: 0px;
+top: 3px;
+font-size: 12px;
+font-weight: inherit;
+}
+</style>
+<script type="text/javascript">
+function TimeNow(Timefld, FocusFld) {
+var txt;
+var d = new Date(),
+thisyear = d.getFullYear();
+thismonth= d.getMonth();
+thismonth = thismonth+1;
+thisday = d.getDate();
+h = (d.getHours()<10?'0':'') + d.getHours()
+m = (d.getMinutes()<10?'0':'') + d.getMinutes()
+s = (d.getSeconds()<10?'0':'') + d.getSeconds();
+var myprompt = thisyear+ '-'+thismonth+'-'+thisday+' '+h + m;
+var RightNow = prompt("", myprompt);
+document.getElementById(Timefld).value = RightNow;
+}
+</script>
+<style>
+/*
+body {color:#000; background:#fff; font:100%/1.5 arial,sans-serif;}
+h2 {margin-top:0}
+*/
+/* Styling applied to classes only */
+/* Pop-up content shifted off-screen when not in view.
+Still readable by screen-reader software.
+When targeted it fills the browser window.
+*/
+.pop-up {
+	position:absolute;
+	top:0;
+	left:-500em;
+	visibility: visible;
+}
+.pop-up:target {position:static; left:0;}
+/* The pop-up itself */
+.popBox {
+	background:#ffffff;
+	position:absolute;
+	left:10%;
+	right:12%;
+	top:10%;
+	bottom:10%;
+	z-index:10;
+	border:1px solid #3a3a3a;
+/* CSS3 where available: rounded corners, drop-shadow, and fade in. */
+border-radius:.25rem;
+box-shadow:0 .5rem .5rem rgba(0,0,0,.5);
+	opacity:0;
+	transition: opacity 0.8s ease-out;
+	visibility: visible;
+}
+:target .popBox {position:fixed; opacity:1;}
+/* Light box properties */
+.lightbox {
+display:none;
+text-indent:-200em;
+background-color:rgba(0,0,0,.4);
+width:100%;
+height:100%;
+position:fixed;
+top:0;
+left:0;
+bottom:0;
+right:0;
+z-index:5;
+}
+:target .lightbox {display:block;}
+/* The pop-ups close link, moved via CSS to the top right of the pop-up */
+.close:link,
+.close:visited {
+	position: absolute;
+	top: -0.75em;
+	right: -0.75em;
+	display: block;
+	width: 2em;
+	height: 2em;
+	line-height: 1.8;
+	padding: 0;
+	text-align: center;
+	text-decoration: none;
+	background-color: #000;
+	border: 2px solid #fff;
+	color: #fff;
+	border-radius: 50%;
+box-shadow: 0 0 .5rem .5rem rba(0,0,0,.5);
+	visibility: visible;
+}
+.close:before {content:"X";}
+.close:hover,
+.close:active,
+.close:focus {
+box-shadow: 0 0 .5rem .5rem rba(255,0,0,.5);
+background-color: #c00;
+color: #fff;
+}
+.close span {
+text-indent: -200em;
+display: block;
+}
+/* The pop-up content div will scroll if it has too much content */
+.popScroll {
+	position:absolute;
+	top: 1rem;
+	left: 1rem;
+	right: 1rem;
+	bottom: 1rem;
+	overflow-y: auto;
+*overflow-y: scroll;
+	padding-right: 0.5em;
+	visibility: visible;
+}
+.popScroll h2 {margin-top:0}
+.formtext1 {font-family: Arial, Helvetica, sans-serif;
+font-size: 10pt;
+font-weight: normal;
+}
+.style11 {font-size: 14px}
+ input[type=button] {
+
+  border: 1px solid #0f88f2;;
+   border-radius:.25rem;
+  
+  font-size: 14px;
+  padding: 2px 2px;
+ background-color: white;
+  text-decoration: none;
+  margin: 2px 2px;
+  cursor: pointer;
+}
+ input[type=buttongreen] {
+
+  border: 1.75px solid green;;
+   border-radius:.25rem;
+  width:52px;
+  font-size: 14px;
+  padding: 2px 2px;
+ background-color: white;
+  text-decoration: none;
+  margin: 2px 2px;
+  cursor: pointer;
+}
+
+input[type=submit] {
+ border: 1.75px solid green;
+  border-radius:.25rem;
+  background-color: white;
+ 
+  padding: 2px 2px;
+  font-size: 14px;
+   cursor: pointer;
+}
+input[type=reset] {
+ border: 1.75px solid red;
+ border-radius:.25rem;
+  background-color: white;
+ 
+  padding: 2px 2px;
+  font-size: 14px;
+   cursor: pointer;
+}
+input[type=regular] {
+ border: 1px solid #999999;
+  border-radius:.25rem;
+width:45px;
+  background-color: white;
+ 
+  padding: 2px 2px;
+  font-size: 12px;
+   cursor: pointer;
+}
+
+
+.style12 {font-size: 18px}
+.style13 {
+    font-size: 16px;
+    text-align: left;
+    font-weight: normal;
+}
+.style15 {
+    font-size: 13px;
+    text-align: left;
+}
+.style21 {font-size: 14px; color: #000049; }
+.style23 {font-size: 16px; color: #FF0000; }
+.style24 {
+	font-size: 16px;
+	font-style: italic;
+	color: #007F00;
+}
+.style26 {
+	font-size: 16px;
+	color: black;
+}
+.style28 {
+	color: #FF0000;
+	font-size: 14px;
+	font-style: italic;
+}
+.style29 {color: #FF0000; font-size: 14px; }
+.style31 {color: black}
+.style32 {color: #FF0000}
+.style33 {font-size: 16px; color: #000049; }
+.style34 {
+	font-size: 12px;
+	color: #FF0000;
+}
+.style35 {color: #006600}
+.style36 {
+	font-size: 14px;
+	font-style: italic;
+}
+.style37 {color: black; font-size: 14px; }
+.style27 {font-size: 12px}
+.style4 {color: #FF0000; font-style: italic; }
+.style45 {font-size: 12px}
+.style45 {color: #2A5F00}
+    
+  
+}
+.style11 {    font-size: 13px;
+    text-align: left;
+}
+    
+   .toggle {
+       
+       style.display = "none";
+       
+}
+.style111 {font-size: 14px}
+</style>
+<script>
+function shortmonth(monthnum) {
+var monthname;
+shortmonths = ["JAN", "FEB", "MAR","APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"] ;
+monthname = shortmonths [monthnum];
+return monthname; }
+
+function SetDateTime(TType,TheFld, FocusFld) {
+var txt;
+var myprompt;
+var d = new Date();
+document.getElementById('timestamp').value = d.getTime();
+thisyear = d.getFullYear();
+thismonth= d.getMonth();
+thisday = d.getDate();
+var submonth = thismonth+1; ;
+if (submonth < 10) { submonth = "0"+submonth};
+var subday = thisday;
+if (thisday < 10) { thisday = "0"+thisday};
+var monname;
+h = (d.getHours()<10?'0':'') + d.getHours()
+m = (d.getMinutes()<10?'0':'') + d.getMinutes()
+s = (d.getSeconds()<10?'0':'') + d.getSeconds();
+var now = new Date();
+var utch = now.getUTCHours();
+if (utch < 10) { utch = "0"+utch};
+var utcs = now.getUTCMinutes();
+if (utcs < 10) { utcs = "0"+utcs};
+var myUTCtime = utch+":"+utcs+"Z";
+var utcstr = d.toUTCString();
+var localt = d.toLocaleTimeString();
+var isostr = d.toISOString();
+//monthname = shortmonth (thismonth);
+thismonth = thismonth + 1;
+switch (TType) {
+case 'hms' :
+myprompt = h + ':' + m + ':' + s;
+var RightNow = prompt("Time:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'hm' :
+myprompt = h +':'+ m;
+var RightNow = prompt("Zeiteingabe im 24h Format hh:mm", myprompt);
+if (Timetest(RightNow)!==true){ autotime(); break;}
+document.getElementById(TheFld).value = RightNow;
+concatdatetime();
+mapTimeStamp();
+break;
+case 'm-d-y': myprompt = thismonth+ '-' + thisday+ '-'+ thisyear;
+var RightNow = prompt("Date:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'dd/mm/y': myprompt = thisday+ '.' + submonth+ '.'+ thisyear;
+var RightNow = prompt("Date in dd.mm.yyyy format:", myprompt);
+if (datetest(RightNow)!==true){ autodate(); break;}
+document.getElementById(TheFld).value = RightNow;
+concatdatetime();
+mapTimeStamp();
+break;
+case 'd mmm y': myprompt = thisday+ ' ' + monthname+ ' '+ thisyear;
+var RightNow = prompt("Date:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'mmm-d-y': myprompt = monthname+'-'+thisday+ '-' + thisyear;
+var RightNow = prompt("Date:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'mmm-d-y-time': myprompt = monthname+'-'+thisday+ '-' + thisyear +'  '+ h+':'+m;
+var RightNow = prompt("Date & Tinme:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'localampm': var myprompt = localt;
+var RightNow = prompt("Local time:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'fulldate': var myprompt = thisyear+ '-'+thismonth+'-'+thisday;
+var RightNow = prompt("Date:", mypromspt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'fulldatetime': var myprompt = thisyear+'-'+thismonth+ '-'+thisday+' '+h + m ;
+var RightNow = prompt("Date time:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'autodate': var RightNow = thisday+ '.' +submonth+ '.'+ thisyear;
+document.getElementById('xTheDate').value = RightNow;
+concatdatetime();
+mapTimeStamp();
+break;
+case 'autotime': var RightNow = myprompt = h  +':'+ m;
+document.getElementById('xTime').value = RightNow;
+concatdatetime();
+mapTimeStamp();
+break;
+case 'iso': var myprompt = isostr;
+var RightNow = prompt("Date time:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'utc': var myprompt = utcstr;
+var RightNow = prompt("Date time:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'zulu': var myprompt = isostr;
+myprompt = isostr.replace("T", " "); slen = myprompt.length;
+myprompt = myprompt.substr(0, slen-5)+'Z';
+var RightNow = prompt("Date time:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'UTChm': var myprompt = myUTCtime;
+var RightNow = prompt("Date time:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+mapTimeStamp();
+}
+
+// GRPS routines
+function checkexternalGPS () {
+
+var GPSstr= document.getElementById("GPS").value;
+ var n = GPSstr.search("available");
+//var O  = GPSstr.search("GPS");
+ if (n >0){
+ // disable button to copy
+document.getElementById("GPS").disabled = true;
+document.getElementById("CopyGPS").disabled = true;
+document.getElementById('CopyGPS').value = 'No External GPS is connected' ;
+ }
+}
+function copyGPS() {
+
+var GPSstr= document.getElementById("myGPS").value;
+//alert(thestring);
+var nameArr = GPSstr.split(" ");
+var a =nameArr[0];
+var b =nameArr[1];
+
+document.getElementById("Lat").value = a;
+document.getElementById("Lon").value = b;
+
+var GPSstr= document.getElementById("GPS").value;
+var Fullstring = GPSstr;
+var Fullstring=Fullstring.replace(/-/gm, "\xB0");
+var Fullstring=Fullstring.replace(".","'");
+var Fullstring=Fullstring.replace(".","'");
+var Fullstring=Fullstring.replace("N", '"N');
+var Fullstring=Fullstring.replace("S", '"S');
+var Fullstring=Fullstring.replace("E", '"E');
+var Fullstring=Fullstring.replace("W", '"W');
+//var e1 = parse_gps (Fullstring);
+//alert(' 1010 parse '+Fullstring);
+document.getElementById("full").value=Fullstring;
+//backtodec (Fullstring);
+var nameArr = Fullstring.split(" ");
+var a =nameArr[0];
+var b =nameArr[1];
+//alert('407 '+a+' - '+b);
+d=convertDMSToDD(a);
+d1 =convertDMSToDD(b);
+document.getElementById("Lat").value=d
+document.getElementById("Lon").value=d1;
+}
+}; 
+function convertDMSToDD (dms) {
+var parts = [];
+     var parts = dms.split(/[^\d+(\,\d+)\d+(\.\d+)?\w]+/);
+     var degrees = parseFloat(parts[0]);
+     var minutes = parseFloat(parts[1]);
+	 var seconds = parseFloat(parts[2].replace(',','.'));
+     var direction = parts[3];
+
+     var dd = degrees + minutes / 60 + seconds / (60 * 60);
+	 var tseconds = minutes / 60;
+	
+	
+	 
+	 //alert('conv--> 966 '+minutes+'--> '+tseconds)
+
+
+     if (direction == 'S' || direction == 'W') {
+       dd = dd * -1;
+     } // Don't do anything for N or E
+     return dd;
+   }
+// Test auto collect
+
+function AutoGrowTextArea(textField)
+{
+  if (textField.clientHeight < textField.scrollHeight)
+  {
+    textField.style.height = textField.scrollHeight + "px";
+    if (textField.clientHeight < textField.scrollHeight)
+    {
+      textField.style.height = 
+        (textField.scrollHeight * 2 - textField.clientHeight) + "px";
+    }
+  }
+}
+
+function saveTextAsFile(fileNameToSaveAs, textToWrite) {
+//var mytitle = document.getElementById('Title').value; 
+var textToWrite = document.getElementById('parseme').value; 
+var fileNameToSaveAs = "DYFI data " + DateforFile()+".txt";
+fileNameToSaveAs = prompt("", fileNameToSaveAs);
+
+  /* Saves a text string as a blob file*/  
+  var ie = navigator.userAgent.match(/MSIE\s([\d.]+)/),
+      ie11 = navigator.userAgent.match(/Trident\/7.0/) && navigator.userAgent.match(/rv:11/),
+      ieEDGE = navigator.userAgent.match(/Edge/g),
+      ieVer=(ie ? ie[1] : (ie11 ? 11 : (ieEDGE ? 12 : -1)));
+
+  if (ie && ieVer<10) {
+    console.log("No blobs on IE ver<10");
+    return;
+  }
+
+  var textFileAsBlob = new Blob([textToWrite], {
+    type: 'text/plain'
+  });
+
+  if (ieVer>-1) {
+    window.navigator.msSaveBlob(textFileAsBlob, fileNameToSaveAs);
+
+  } else {
+    var downloadLink = document.createElement("a");
+    downloadLink.download = fileNameToSaveAs;
+    downloadLink.href = window.URL.createObjectURL(textFileAsBlob);
+    downloadLink.onclick = function(e) { document.body.removeChild(e.target); };
+    downloadLink.style.display = "none";
+    document.body.appendChild(downloadLink);
+    downloadLink.click();
+  }
+}
+
+
+
+
+
+function destroyClickedElement(event)
+{
+    document.body.removeChild(event.target);
+}
+
+function loadFileAsText()
+{
+
+    var fileToLoad = document.getElementById("fileToLoad").files[0];
+ 
+    var fileReader = new FileReader();
+    fileReader.onload = function(fileLoadedEvent) 
+    {
+        var textFromFileLoaded = fileLoadedEvent.target.result;
+        document.getElementById("inputTextToSave").value = textFromFileLoaded;
+    };
+    fileReader.readAsText(fileToLoad, "UTF-8");
+}
+
+
+function DateforFile(RightNow) {
+
+// for later new Date().getTime() and Date.now()
+var txt;
+var d = new Date();
+
+thisyear = d.getFullYear();
+thismonth= d.getMonth();
+thismonth = thismonth+1;
+if (thismonth < 10) { thismonth = "0" + thismonth}
+
+thisday = d.getDate();
+if (thisday < 10) { thisday = "0" + thisday}
+
+h = (d.getHours()<10?'0':'') + d.getHours()
+m = (d.getMinutes()<10?'0':'') + d.getMinutes()
+var myprompt = thisyear+ '-'+thismonth+'-'+thisday+' '+h + '_' + m ;
+return myprompt;
+}
+
+function isObject(arg) {
+  return Object.prototype.toString.call(arg)==='[object Object]';
+}
+
+function formDataToObject(elForm) {
+  if (!elForm instanceof Element) return;
+  var fields = elForm.querySelectorAll('input, select, textarea'),
+    o = {};
+  for (var i=0, imax=fields.length; i<imax; ++i) {
+    var field = fields[i],
+      sKey = field.name || field.id;
+	  var ck = sKey.search("x")
+
+	  if (field.name =='txtfiletoread') {continue}
+	if (field.name ==='parseme') {continue}
+		if (field.name ==='FormData') {continue}
+	if (field.name ==='attached_file') {continue}
+		if (field.name ==='attached_text') {continue}
+		 if (ck ==0) {continue}
+    if (field.type==='button' || field.type==='image' || field.type==='submit'  || field.type==='reset' || field.type==='checkbox'||  !sKey) continue;
+    switch (field.type) {
+      case 'checkbox':
+        o[sKey] = +field.checked;
+        break;
+      case 'radio':
+        if (o[sKey]===undefined) o[sKey] = '';
+        if (field.checked) o[sKey] = field.value;
+        break;
+      case 'select-multiple':
+        var a = [];
+        for (var j=0, jmax=field.options.length; j<jmax; ++j) {
+          if (field.options[j].selected) a.push(field.options[j].value);
+        }
+        o[sKey] = a;
+        break;
+      default:
+        if( field.value!==''){o[sKey] = field.value;}
+		
+    }
+  }
+ // alert('Form data:\n\n' + JSON.stringify(o, null, 2));
+ document.getElementById('parseme').value = JSON.stringify(o, null, 2);
+ createMapNote();
+//  return o;
+}
+
+
+//document.getElementById('attached_text').value = jsontext;
+function populateForm(o) {
+
+o =  JSON.parse(document.getElementById('parseme').value);
+ //if (!isObject(o)) return;
+if (!isObject(o)) return;
+  for (var i in o) {
+    var el = document.getElementById(i) || document.querySelector('[name=' + i + ']');
+    if (el.type==='radio') el = document.querySelectorAll('[name=' + i + ']');
+    switch (typeof o[i]) {
+      case 'number':
+        el.checked = o[i];
+        break;
+      case 'object':
+        if (el.options && o[i] instanceof Array) {
+          for (var j=0, jmax=el.options.length; j<jmax; ++j) {
+            if (o[i].indexOf(el.options[j].value)>-1) el.options[j].selected = true;
+          }
+        }
+        break;
+      default:
+        if (el instanceof NodeList) {
+          for (var j=0, jmax=el.length; j<jmax; ++j) {
+            if (el[j].value===o[i]) el[j].checked = true;
+          }
+        } else {   alert( el.value);
+          el.value = o[i];
+        }
+    }
+  }
+  
+	AutoGrowTextArea(document.getElementById("Message"));
+
+}
+
+function SaveData() {
+	
+			formDataToObject(document.getElementById('myform'))
+			saveTextAsFile();
+			
+			//saveTextAsFile();
+			}
+
+//-------
+ function readBlob(opt_startByte, opt_stopByte) {
+  
+    var files = document.getElementById('files').files;
+    if (!files.length) {
+      alert('Please select a file!');
+      return;
+    }
+
+    var file = files[0];
+    var start = parseInt(opt_startByte) || 0;
+    var stop = parseInt(opt_stopByte) || file.size - 1;
+
+    var reader = new FileReader();
+
+    // If we use onloadend, we need to check the readyState.
+    reader.onloadend = function(evt) {
+      if (evt.target.readyState == FileReader.DONE) { // DONE == 2
+        document.getElementById('byte_content').textContent = evt.target.result;
+        document.getElementById('byte_range').textContent = 
+            ['Read bytes: ', start + 1, ' - ', stop + 1,
+             ' of ', file.size, ' byte file'].join('');
+      }
+    };
+
+    var blob = file.slice(start, stop + 1);
+    reader.readAsBinaryString(blob);
+  }
+    	
+  window.onload = function () { 
+ 
+ //Check the support for the File API support 
+ if (window.File && window.FileReader && window.FileList && window.Blob) {
+    var fileSelected = document.getElementById('txtfiletoread');
+	
+    fileSelected.addEventListener('change', function (e) { 
+         //Set the extension for the file 
+         var fileExtension = /text.*/; 
+         //Get the file object 
+         var fileTobeRead = fileSelected.files[0];
+        //Check of the extension match 
+         if (fileTobeRead.type.match(fileExtension)) { 
+             //Initialize the FileReader object to read the 2file 
+			
+             var fileReader = new FileReader(); 
+             fileReader.onload = function (e) { 
+                 var fileContents = document.getElementById('filecontents'); 
+                
+				document.getElementById('parseme').value =fileReader.result;
+				populateForm(obj = document.getElementById('parseme').value);
+					 } 
+             fileReader.readAsText(fileTobeRead); 
+         } 
+         else { 
+             alert("Please select text file"); 
+         }
+ 
+    }, false);
+} 
+ else { 
+     alert("Files are not supported"); 
+ } 
+ flipID('EXERCISE');
+      
+   toggleOff('none');
+      
+ SetDateTime('autodate'); SetDateTime('autotime');
+ copyGPS();
+   // var rows = document.getElementsByClassName('toggle');
+
+;      }
+
+
+ 
+
+// function setcolors() {
+
+
+function concatdatetime(){
+
+var d=document.getElementById('xTheDate').value;
+    //convert for map
+    datarry=d.split('.');
+var t=document.getElementById('xTime').value;
+document.getElementById('ciim_time').value=datarry[1]+'/'+datarry[0]+'/'+datarry[2]+' '+t;
+
+}
+
+function collect(){
+var s = '';
+var buildingdamage = 0;
+//cb1fld=document.getElementById("xfld_damage1").value;
+if (document.getElementById('xfld_damage1').checked) {var s = s +document.getElementById('xfld_damage1').value +' ';}
+if (document.getElementById('xfld_damage2').checked) {var s = s +document.getElementById('xfld_damage2').value +' ';var buildingdamage = 1;}
+if (document.getElementById('xfld_damage3').checked) {var s = s +document.getElementById('xfld_damage3').value +' ';var buildingdamage = 1;}
+if (document.getElementById('xfld_damage4').checked){var s = s +document.getElementById('xfld_damage4').value +' ';var buildingdamage = 1;}
+
+if (document.getElementById('xfld_damage5').checked){var s = s +document.getElementById('xfld_damage5').value +' ';var buildingdamage = 1;}
+if (document.getElementById('xfld_damage6').checked){var s = s +document.getElementById('xfld_damage6').value +' ';var buildingdamage = 1;}
+if (document.getElementById('xfld_damage7').checked){var s = s +document.getElementById('xfld_damage7').value +' ';var buildingdamage = 1;}
+if (document.getElementById('xfld_damage8').checked){var s = s +document.getElementById('xfld_damage8').value +' ';var buildingdamage = 1;}
+if (document.getElementById('xfld_damage9').checked){var s = s +document.getElementById('xfld_damage9').value +' ';var buildingdamage = 1;}
+if (document.getElementById('xfld_damage10').checked){var s = s +document.getElementById('xfld_damage10').value +' ';var buildingdamage = 1;}
+if (document.getElementById('xfld_damage11').checked){var s = s +document.getElementById('xfld_damage11').value +' ';var buildingdamage = 1;}
+if (document.getElementById('xfld_damage12').checked){var s= s +document.getElementById('xfld_damage12').value +' ';var buildingdamage = 1;}
+if (document.getElementById('xfld_damage13').checked){var s = s +document.getElementById('xfld_damage13').value +' ';var buildingdamage = 1;}
+if (document.getElementById('xfld_damage14').checked){var s = s +document.getElementById('xfld_damage14').value +' ';var buildingdamage = 1;}
+document.getElementById("d_text").value = s;
+// now yes no
+if (buildingdamage>0){document.getElementById("BuildingDamage").value = 'YES';}
+if (buildingdamage<1){document.getElementById("BuildingDamage").value = 'NO';}
+
+}
+
+//Code to get GPS device
+function copyGPS() {
+
+var GPSstr= document.getElementById("xmyGPS").value;
+//alert(xmyGPS);
+if(GPSstr !== '{GPS}'){
+var nameArr = GPSstr.split(" ");
+var a =nameArr[0];
+var b =nameArr[1];
+} //64
+
+var GPSstr= document.getElementById("xmyGPS").value;
+var Fullstring = GPSstr;
+var Fullstring=Fullstring.replace(/-/gm, "\xB0");
+var Fullstring=Fullstring.replace(".","'");
+var Fullstring=Fullstring.replace(".","'");
+var Fullstring=Fullstring.replace("N", '"N');
+var Fullstring=Fullstring.replace("S", '"S');
+var Fullstring=Fullstring.replace("E", '"E');
+var Fullstring=Fullstring.replace("W", '"W');
+//var e1 = parse_gps (Fullstring);
+//alert(' 1010 parse '+Fullstring);
+//document.getElementById("full").value=Fullstring;
+//backtodec (Fullstring);
+var nameArr = Fullstring.split(" ");
+var a =nameArr[0];
+var b =nameArr[1];
+//alert('1019 --------- '+b);
+d=convertDMSToDD(a);
+d = d+'';
+//d=d.padEnd(17, '0');
+
+d1 =convertDMSToDD(b);
+d1 = d1+'';
+//d1=d1.padEnd(15, '0')
+document.getElementById("ciim_mapLat").value = d.trim();
+document.getElementById("ciim_mapLon").value = d1.trim();
+
+function convertDMSToDD (dms) {
+t= "{"; var 
+n = GPSstr.search(t);
+
+//alert(dms);
+window.onerror = function(){
+   return true;
+}
+
+     var parts = dms.split(/[^\d+(\,\d+)\d+(\.\d+)?\w]+/);
+     var degrees = parseFloat(parts[0]);
+     var minutes = parseFloat(parts[1]);
+	 var seconds = parseFloat(parts[2].replace(',','.'));
+     var direction = parts[3];
+
+     var dd = degrees + Number((minutes  +'.'+ seconds )/60);
+dd= dd.toFixed(4);
+	     if (direction == 'S' || direction == 'W') {
+       dd = dd * -1;
+     } // Don't do anything for N or E
+     return dd;
+   }
+}
+
+function sendMail(){
+ 
+if (checkform("Sending the DYFI data via email is experimental and may go away.\nThis feature MAY be useful if your radio is not working with Winlink.\n\nClick 'OK' to create create an email message in you email client to send the DYFI data,\n'Cancel'  will return you to the Winlink form."))
+{
+  formDataToObject(document.getElementById('myform'));
+	var msgbody = document.getElementById('parseme').value;
+
+
+var breakln = '%0D%0A';
+//var lookfor = "",'+breakln;
+var h = '--- BEGIN json --- \n'; var h = h+ '%0D%0A'+"   ";
+var f = '%0D%0A' +' \n--- END json ---';
+   // formDataToObject(document.getElementById('myform'));
+	//var msgbody = document.getElementById('parseme').value;
+var xx= msgbody.split('",');
+t=  xx[0];
+var a='';
+	var mtext;
+	for (i = 0; i <  xx.length; i++) { 
+  var a = a + xx[i] +'"%0D%0A%12';
+}
+//validateform();
+	//alert(mtext);
+	msgbody= a;
+	//var msgbody=  msgbody.replace(/,/gm, "+"); // '%0D%0A");
+	var msgbody = h+msgbody+f+ '%0D%0A'+'%0D%0A'+'This message is being send via an email client rather than than Winlink';
+	
+	//var body = document.getElementById("contact_message").value;
+    window.location.href = "mailto:vinceq@contractor.usgs.gov?subject=DYFI Automatic Entry - Winlink email for  testing"+'&body='+msgbody;
+}
+}
+
+
+function checkform() {
+//alert('validate');
+
+
+
+var a='';
+var b= '';
+var c = '';
+var ifOk = true;
+var cka =  document.getElementById('fldSituation_felt').value; 
+var ckb =  document.getElementById('ciim_mapAddress').value;
+var ckc =  document.getElementById('ciim_mapLat').value;
+var ckd =  document.getElementById('ciim_mapLon').value;
+if (cka =='') {var a = '\nYou must indicate whether you felt the event'; var ifOk = false;} 
+//alert(a+b); 
+var clatl =ckc+ckd+ ckb;
+if (clatl=='')  {var b = '\nYou must specify your location during the event';var ifOk = false;}
+//if ((ckb=='') & ckl) {var b = '\nYou must specify your location during the event';var ifOk = false;}
+//if (ckb ==''){ var b = '\nYou must specify your location during the event'; var haserror = true;}
+
+if (ifOk == false) {alert ('One or more required fields is in error. See below for details: \n'+a+b); window.location.href = "#haveerror";
+} else {var isOk = false}
+
+return ifOk ;
+}
+function isNumberKey(evt)
+{
+var charCode = (evt.which) ? evt.which : event.keyCode
+//if (charCode =45){alert('45')} 
+if (charCode > 32 && (charCode < 45 || charCode > 57))
+//if (charCode > 32 && (charCode < 40 ))
+return false;
+return true;
+}
+
+
+function checklatlon(num, fld) {
+if (num !='')
+	{
+ 	var a = parseFloat(num);
+ 	if (a !=num){alert('Please enter coordinates in Decimal format.');
+		document.getElementById(fld).value = '';
+		document.getElementById(fld).focus();
+	}
+	if (fld =='ciim_mapLat'){if (num <-90 ||  num >90) { alert ('Latitude must be between -90 and 90'); document.getElementById(fld).value = '';
+		document.getElementById(fld).focus();}}
+		
+	if (fld =='ciim_mapLon'){if (num <-180 || num >180){alert ('Longitude must be between -180 and 180'); document.getElementById(fld).value = '';
+		document.getElementById(fld).focus();}}
+	}
+	}
+	
+function datetest(totest){
+        pattern = new RegExp(/(?=\d)^(?:(?!(?:10\D(?:0?[5-9]|1[0-4])\D(?:1582))|(?:0?9\D(?:0?[3-9]|1[0-3])\D(?:1752)))((?:0?[13578]|1[02])|(?:0?[469]|11)(?!\/31)(?!-31)(?!\.31)|(?:0?2(?=.?(?:(?:29.(?!000[04]|(?:(?:1[^0-6]|[2468][^048]|[3579][^26])00))(?:(?:(?:\d\d)(?:[02468][048]|[13579][26])(?!\x20BC))|(?:00(?:42|3[0369]|2[147]|1[258]|09)\x20BC))))))|(?:0?2(?=.(?:(?:\d\D)|(?:[01]\d)|(?:2[0-8])))))([-.\/])(0?[1-9]|[12]\d|3[01])\2(?!0000)((?=(?:00(?:4[0-5]|[0-3]?\d)\x20BC)|(?:\d{4}(?!\x20BC)))\d{4}(?:\x20BC)?)(?:$|(?=\x20\d)\x20))?((?:(?:0?[1-9]|1[012])(?::[0-5]\d){0,2}(?:\x20[aApP][mM]))|(?:[01]\d|2[0-3])(?::[0-5]\d){1,2})?$/);
+//if(!totest.match(pattern))
+ // {alert('Datum fehlerhaft. Bitte im Format "Tag.Monat.Jahr" eingeben'); return false;}
+//else {
+    return true;
+	
+}
+function Timetest(totest){
+
+	var pattern = new RegExp(/^(0[0-9]|1[0-9]|2[0-3]):[0-5][0-9]$/);
+if(!totest.match(pattern))
+  {alert('Zeit fehlerhaft. Bitte im 24h Format eingeben "hh:mm"'); return false;}
+else {return true;}
+	}
+
+// Ingtrnsitys info
+
+function intensitydisplay (mm_scale, intensity, Strength,  Discription) {
+//alert (mm_scale+ ' '+intensity+' '+Strength);
+switch (intensity) {
+
+  case 1:
+     Intensitycolor = '#fffff';//1
+    break;
+  case 2:
+     Intensitycolor = '#ccffff';//2
+    break;
+  case 3:
+   Intensitycolor = '#99ffff';//3
+    break;
+  case 4:
+   Intensitycolor = '#99ffcc';//4
+    break;
+  case 5:
+     Intensitycolor = '#99ff99';//5
+    break;
+  case 6:
+    Intensitycolor = '#ffff33';//6
+	  case 7:
+    Intensitycolor = '#ffcc33';//7
+	    break;
+	 case 8:
+    Intensitycolor = '#ff6633';//8
+	 case 9:
+    Intensitycolor = '#ff6633';//7
+	    break;
+	 case 10:
+    Intensitycolor = '#cc3333';//7
+	    break;
+	 case 11:
+    Intensitycolor = '#cc3333';//7
+	    break;
+	 case 12:
+    Intensitycolor = '#cc3333';//7
+	    break;
+}
+
+document.getElementById('int_txt').innerHTML = mm_scale;
+document.getElementById('int_Strength').innerHTML = Strength;
+document.getElementById('int_Discription').innerHTML = Discription;
+var myguess = mm_scale + ' ,   Strength: ' + Strength + ',  Description of effects you might observe: '+Discription;
+document.getElementById('xPintensity').value = myguess;
+document.getElementById('intensitydisplay').style.background =Intensitycolor; 
+
+}
+
+function createMapNote (){
+var notetext = document.getElementById('FormData').value; 
+var temp1= document.getElementById('eventType').value;
+var notetext=notetext.replace('k1', temp1);
+//mapmmscale
+var temp1= document.getElementById('xmaptimestamp').value;
+var notetext=notetext.replace('k00', temp1);
+
+var temp1= document.getElementById('mapmmscale').value;
+var notetext=notetext.replace('k15', temp1);
+//mapStrength
+//var temp1= document.getElementById('mapStrength').value;
+//var notetext=notetext.replace('k16', temp1);
+
+
+var temp1= document.getElementById('user_id').value;
+var notetext=notetext.replace('k3', temp1);
+
+var temp1= document.getElementById('ciim_mapLat').value;
+var notetext=notetext.replace('k4', temp1);
+var temp1= document.getElementById('ciim_mapLon').value;
+var notetext=notetext.replace('k5', temp1);
+
+// convert 
+var temp1= document.getElementById('xmapshaking').value;
+var notetext=notetext.replace('k6', temp1);
+var temp1= document.getElementById('xmapshelves').value;
+var notetext=notetext.replace('k7', temp1);
+
+var temp1= document.getElementById('xmapfurniture').value;
+var notetext=notetext.replace('k8', temp1);
+
+var temp1= document.getElementById('fldEffects_walls').value;
+var  s1 = temp1;
+var s1=s1.replace('0', 'NO');
+var s1=s1.replace('cracked', 'Yes- some were cracked');
+var s1=s1.replace('fell_partial', 'Yes- some partially fell');
+var s1=s1.replace('fell_complete', 'Yes- some fell completely');
+var s1=s1.replace('0', 'NO');
+var temp1 = s1;
+var notetext=notetext.replace('k9', temp1);
+
+//comments
+var temp1= document.getElementById('comments').value;
+var notetext=notetext.replace('k11', temp1);
+//alert (temp1);
+// now replace
+var temp1= document.getElementById('d_text').value;
+var  s1 = temp1;
+	var s1=s1.replace('_none', ' No damage');
+var s1=s1.replace('_crackmin', ' cracks in walls; ');
+var s1=s1.replace('_crackwallfew', ' large cracks in walls;');
+var s1=s1.replace('_crackwallmany', ' Many large cracks in walls; ');
+var s1=s1.replace('_tilesfell', ' Ceiling tiles fell; ');
+var s1=s1.replace('_crackchim', ' Cracks in chimney; ');
+var s1=s1.replace('_crackwindows', ' cracked windows;');
+var s1=s1.replace('_brokenwindows', ' Many windows cracked or broken; ');
+var s1=s1.replace('_masonryfell', ' Masonry fell; ');
+var s1=s1.replace('_majoroldchim', ' Masonry fell from block or brick wall(s); ');
+var s1=s1.replace('_majormodernchim', ' Old chimney, major damage; ');
+var s1=s1.replace('_tiltedwall', ' Side walls tilted or collapsed; ');
+var s1=s1.replace('_porch', ' Separation of porch, balcony; ');
+var s1=s1.replace('_move', 'Building shifted; ');
+var temp1 = s1;
+
+var notetext=notetext.replace('k10', temp1);
+//xPintensity
+//alert (temp1);
+var temp1= document.getElementById('xPintensity').value;
+//alert(temp1);
+var notetext=notetext.replace('k12', temp1);
+
+var temp1= document.getElementById('BuildingDamage').value;
+//alert(temp1);
+var notetext=notetext.replace('k21', temp1);
+var temp1= document.getElementById('comments').value;
+//alert(temp1);
+var notetext=notetext.replace('k25', temp1);
+var temp1= document.getElementById('exercise_id').value;
+var notetext=notetext.replace('k26', temp1);
+var temp1= document.getElementById('eventid').value;
+var notetext=notetext.replace('k27', temp1);
+/// now new vars
+    var temp1= document.getElementById('ciim_time').value;
+var notetext=notetext.replace('added1', temp1); //timestamp
+    var notetext=notetext.replace('added1', temp1); //timestamp
+ 
+    
+    // ****************for event in utc
+    dateTimeString=document.getElementById('ciim_time').value;
+  // Create a Date object from the string.
+// Note: This assumes the input string is in the local timezone of the environment
+// where the code is executed.
+const dateObject = new Date(dateTimeString);
+
+temp1 = dateObject.toISOString();
+    var temp1= temp1.replace("T", " "); slen = temp1.length; 
+var temp1 = temp1.substr(0, slen-5);
+  var notetext=notetext.replace('eDateTime', temp1);  
+    
+    
+    
+    //******************* end of utc
+    
+    
+ var temp1= document.getElementById('timestamp').value;
+//var notetext=notetext.replace('addedutc', temp1); //timestamp
+    
+    var temp1= document.getElementById('timestamp').value;
+    //remove Z
+   //var temp1 = temp1.replace ("Z","");
+//var notetext=notetext.replace('addedunix', temp1); del 8-12
+    
+    
+var temp1= document.getElementById('xmaptimestamp2').value;
+   var temp1= temp1.replace("T", " "); slen = temp1.length; 
+var temp1 = temp1.substr(0, slen-5);
+    
+var notetext=notetext.replace('addedutc', temp1);
+    
+     var x2=Math.floor(Date.now() / 1000);
+    // notetext=notetext.replace('subDTMath', x2); deleted 8-12
+
+    //now utc
+    const currentDate = new Date();
+const isoString = currentDate.toISOString();
+xutc= (isoString); 
+var temp1 = xutc.replace ("Z","");
+    temp1=temp1.replace ("T"," ");
+       notetext=notetext.replace('subutc', temp1); 
+
+document.getElementById('attached_text').value = notetext;
+
+
+document.getElementById('attached_text').value = notetext;
+
+//-=$subDTMath.floor(Date.now() / 1000)
+    
+  
+    
+//}
+
+
+document.getElementById('attached_text').value = notetext;
+
+
+
+}
+
+function getinteger (str){
+var str=str.replace(/[^\d\.]+/,'');//
+return str;
+}
+
+// used in intensity1()
+function getFeltValue() {
+    var other = parseInt(getinteger(document.getElementById('fldSituation_others').value));
+    var felt = parseInt(getinteger(document.getElementById('fldSituation_felt').value));
+    var value = 0;
+	
+	if (other <= 2) { // not specified or not felt
+		other = 0;
+		value = felt;
+	} else if (other == 3) {
+        value = .72;
+    } else if (other > 3) {
+        value = 1;
+    } else {
+        value = felt;
+    }
+
+//    alert("getFeltValue: other: " + other + ", felt: " + felt + ", value: " + value);
+    return value;
+}
+
+// used in intensity1()
+function getDamageValue() {
+    var d_textary = document.getElementById('d_text').value;
+    var value = 0;
+
+    if (d_textary.includes("_move")
+      || d_textary.includes("_chim")
+      || d_textary.includes("_found")
+      || d_textary.includes("_collapse")
+      || d_textary.includes("_porch")
+      || d_textary.includes("_majormodernchim")
+      || d_textary.includes("_tiltedwall")) {
+        value = 3;
+    } else if (d_textary.includes("_wall")
+      || d_textary.includes("_pipe")
+      || d_textary.includes("_win")
+      || d_textary.includes("_brokenwindows")
+      || d_textary.includes("_majoroldchim")
+      || d_textary.includes("_masonryfell")) {
+        value = 2;
+    } else if (d_textary.includes("_crackwallmany")
+      || d_textary.includes("_crackwall")
+      || d_textary.includes("_crackfloor")
+      || d_textary.includes("_crackchim")
+      || d_textary.includes("_tilesfell")) {
+        value = 1;
+    } else if (d_textary.includes("_crackwallfew") ) {
+        value = 0.75;
+    } else if (d_textary.includes("_crackmin")
+      || d_textary.includes("_crackwindows")) {
+        value = 0.5
+    }
+	
+    // alert("getDamageValue: damage: " + value + ", text: " + d_textary);
+    return value;
+}
+
+function intensity1(){
+// for testalert
+// see https://github.com/usgs/earthquake-dyfi-response/blob/master/src/htdocs/inc/response.inc.php#L39-L75
+// intensity is computed as a non-linear functions of a weighted sum of: who felt it, what they experienced, and how much damage occurred
+
+var feltValue = getFeltValue();
+var shakeValue = parseInt(getinteger(document.getElementById('fldExperience_shaking').value)); if ( isNaN(shakeValue)) {shakeValue = 0;}
+var reactionValue = parseInt(getinteger(document.getElementById('fldExperience_reaction').value)); if ( isNaN(reactionValue)) {reactionValue = 0;}
+var standValue = parseInt(getinteger(document.getElementById('fldExperience_stand').value)); if ( isNaN(standValue)) {standValue = 0;}
+var shelvedValue = parseInt(getinteger(document.getElementById('fldEffects_shelved').value)); if ( isNaN(shelvedValue)) {shelvedValue = 0;}
+var picturesValue = parseInt(getinteger(document.getElementById('fldEffects_pictures').value)); if ( isNaN(picturesValue)) {picturesValue = 0;}
+var furnitureValue = parseInt(document.getElementById('fldEffects_furniture').value); if ( isNaN(furnitureValue)) {furnitureValue = 0;}
+var damageValue = getDamageValue();
+
+var cws = feltValue * 5
+      + shakeValue * 1
+      + reactionValue * 1
+      + standValue * 2
+      + shelvedValue * 5
+      + picturesValue * 2
+      + furnitureValue * 3
+      + damageValue * 5;
+
+/**
+alert("intensity1: "
+    + "\nfelt: " + feltValue
+    + "\nshake: " + shakeValue
+    + "\nreaction: " + reactionValue
+    + "\nstand: " + standValue
+    + "\nshelved: " + shelvedValue
+    + "\npicture: " + picturesValue
+    + "\nfurniture: " + furnitureValue
+    + "\ndamage: " + damageValue
+    + "\ncws: " + cws);
+**/
+	
+var intensity = 1;
+if (cws > 0) {
+    intensity = (3.3996 * Math.log(cws) - 4.3781);
+}
+
+if (intensity <= 1) {
+    intensity = 1;
+} else if (intensity < 2) {
+	intensity = 2;
+}
+
+// where is the justification for this?
+// intensity is at least 2 if ANY index is nonzero
+//if (cws > 0 && intensity <2) {
+//    intensity = 2;
+//}
+
+intensity = parseInt(intensity+0.5);
+// alert("intensity1: cws: " + cws + ", intensity: " + intensity);	
+
+var i_array=['','I','II','III','IV','V','VI','VII','VIII','IX','X','XI','XII'];
+var strength_arry =['','Not Felt',
+'Weak',
+'Weak',
+'Light',
+'Moderate',
+'Strong',
+'Very Strong',
+'Severe',
+'Violent',
+'Extreme',
+'Extreme',
+'Extreme'];
+var disc_arry =['','Not felt except by a very few under especially favorable conditions.',
+'Felt only by a few persons at rest, especially on upper floors of buildings. Delicately suspended objects may swing.',
+'Felt quite noticeably by persons indoors, especially on upper floors of buildings. Many people do not recognize it as an earthquake. Standing motor cars may rock slightly. Vibration similar to the passing of a truck. Duration estimated.',
+'Felt indoors by many, outdoors by few during the day. At night, some awakened. Dishes, windows, doors disturbed; walls make cracking sound. Sensation like heavy truck striking building. Standing motor cars rocked noticeably.',
+'Felt by nearly everyone; many awakened. some dishes, windows broken. Unstable objects overturned. Pendulum clocks may stop.',
+' Felt by all, many frightened. Some heavy furniture moved; a few instances of fallen plaster. Damage slight.',
+'Damage negligible in buildings of good design and construction; slight to moderate in well-built ordinary structures; considerable damage in poorly built or badly designed structures; some chimneys broken.',
+'Damage slight in specially designed structures; considerable damage in ordinary substantial buildings with partial collapse. Damage great in poorly built structures. Fall of chmineys, factory stacks, columns, monuments, walls. Heavy furniture overturned.',
+' Damage considerable in specially designed structures; well-designed frame structures thrown out of plumb. Damage great in substantial buildings, with partial collapse. Buildings shifted off foundations.',
+'Some well-built wooden structures destroyed; most masonry and frame structures destroyed with foundations. Rail bent.',
+'Few, if any (masonry) structures remain standing. Bridges destroyed. Rails bent greatly.',
+ 'Damage total. Lines of sight and level are distorted. Objects thrown into the air.'];
+var Scale_Des = disc_arry[intensity];
+var mm_scale = i_array[intensity];
+//mapmmscale
+document.getElementById('mapmmscale').value = intensity;
+var Strength = strength_arry[intensity];
+var i_desc='Your responses indicate an intensity of ->'+mm_scale+' <- \n\n and is considered '+Scale_Des+'"';
+
+
+
+ intensitydisplay (mm_scale, intensity, Strength,  Scale_Des);
+//intensitydisplay();
+window.location.href = "#pop2"; 
+//window.location.href = "#DATA";
+//if (i_desc!==''){alert(i_desc);}
+
+}
+function flipID (x) { 
+if (x == 'EXERCISE'){document.getElementById('prompttxt').innerHTML =' Optionale ID der &Uuml;bung: ';
+document.getElementById('eventid').value ='';
+document.getElementById('eventid').style.display = "none";
+document.getElementById('exercise_id').style.display = "inline";
+}
+
+if (x == 'REAL EVENT'){document.getElementById('prompttxt').innerHTML =' USGS Event ID: ';
+document.getElementById('exercise_id').value = '';
+document.getElementById('eventid').style.display = 'inline';
+document.getElementById('exercise_id').style.display = "none";
+
+}
+
+}
+
+function mapTimeStamp(){
+
+//ciim_time
+var d1 = new Date();
+mtime = d1.getTime();
+var thedatetime=  document.getElementById('ciim_time').value;
+var thedatetime= mapparsethisdate();
+var thedatetime=thedatetime.replace(/-/g, ',');
+var thedatetime=thedatetime.replace(/\//g, ',');// replace the slash
+var thedatetime=thedatetime.replace(/:/g, ',');
+//alert ('the dt '+thedatetime);
+var thedatetime = thedatetime.replace("T", " ") 
+var thedatetime=thedatetime.replace(' ', ',');
+var thedatetime = thedatetime.replace("Z", "") ;
+var thedatetime = thedatetime.replace(".000", "") ;
+
+//alert ('the dt '+thedatetime);
+var thesplit = thedatetime.split (',');
+var d = new Date(Date.UTC(parseInt(thesplit[0]),parseInt(thesplit[1]),parseInt(thesplit[2]),parseInt(thesplit[3]),parseInt(thesplit[4]),parseInt(thesplit[5])));
+//alert (thesplit[1]);
+//var d= new Date(Date.parse('2020/11/24 15:30:01'));
+  var nyyyy = d.getUTCFullYear();
+  nyyyy= nyyyy.toString();
+
+  var nMM = d.getUTCMonth();
+  if(nMM<10) {nMM= '0'+nMM}
+ nMM=nMM.toString()
+var ndd = d.getUTCDate();
+  if(ndd<10) {ndd= '0'+ndd}
+  ndd=ndd.toString()
+ // alert(ndd);
+  var nhh = d.getUTCHours();
+nhh=nhh.toString();
+ if(nhh.length <2) {nhh= '0'+nhh}
+// alert ('after hour'+nhh);
+    var nmm = d.getUTCMinutes();
+	  nmm=nmm.toString();
+	if(nmm.length <2) {nmm= '0'+nmm}
+	 var nss = d.getUTCSeconds();
+	
+  nss=nss.toString()
+   if(nss.length <2) {nss= '0'+nss}
+//
+var test = (thesplit[0])+(thesplit[1])+(thesplit[2])+(thesplit[3])+(thesplit[4])+(thesplit[5]);
+test = test.replace(/\s/g,'');
+ document.getElementById("xmaptimestamp").value = test; ;
+    var x=(document.getElementById("xmaptimestamp2").value);
+
+if (x.search("NaN")!==-1){alert ('Invalid date please enter UTC date time as yyyy-mm-dd hh:mm:ssZ\n \nDEFAULTING  to current UTC Time.');DateTime('autozulu','UDTGfld', true); }
+
+ 
+}
+function mapparsethisdate() {
+var thedatetime=  document.getElementById('ciim_time').value;
+//d= new Date(Date.parse(thedatetime)).toString();
+var d= new Date(Date.parse(thedatetime));
+
+//alert (Date.parse(thedatetime));
+//d =parseDate(thedatetime);
+utcstr = d.toISOString()
+//alert (utcstr);
+document.getElementById('xmaptimestamp2').value= utcstr;
+return utcstr;
+}
+
+function splitPaste(str) {
+var str = str.replace(",", " ");
+var str = str.replace("  ", " ");
+var d= str.split(' ');
+var cnt = d.length;
+if (cnt >1) {
+document.getElementById('ciim_mapLat').value =d[0];
+document.getElementById('ciim_mapLon').value =d[1];
+}
+}
+    //ciim_mapLat
+    // JavaScript to test hemisphere
+
+// Add to lat lon HTMLField
+// pn changes
+
+function Testlon(){   
+    // get user loc via lat lon and then compare
+     
+    var homelon = "{Longitude}";
+       var msg = 'Verify entered coordinates before submitting form.'
+    var num =document.getElementById('ciim_mapLon').value;
+ 
+    if ( (homelon <0 && num >0) || (homelon >0 && num <0)  ){
+        document.getElementById('ciim_mapLon').style.backgroundColor = '#ffdde2';
+          alert('Warning\nThe entered longitude is in a different hemisphere than the Winlink Express or Position Report coordinates. Western longitudes are negative numbers. Eastern longitudes are positive numbers.\n\nClick OK to edit the longitude or ignore this warning and continue with the entered longitude.');
+      
+    }else {document.getElementById('ciim_mapLon').style.backgroundColor = '';
+         }            
+}
+    
+    
+    
+  function toggleRows(buttonId, className) {
+   var rows = document.getElementsByClassName('toggle');
+  
+ // button.addEventListener("click", function(event) {
+    for (var i = 0; i < rows.length; i++) {
+      if (rows[i].style.display === "none") {
+        rows[i].style.display = "block";
+      } else {
+        rows[i].style.display = "none";
+      }
+    }
+  };
+    function toggleOff(a) {
+    
+   var rows = document.getElementsByClassName("toggle");
+      for (var i = 0; i < rows.length; i++) { 
+    //  if (rows[i].style.display === "") {
+     //   rows[i].style.display = "block";
+   //   } else {
+        rows[i].style.display = a;
+  //   }
+    }
+  };
+
+
+    
+    
+function Testlat(){
+    
+      // get user loc via lat lon and then compare
+ 
+    var homelat = "{Latitude}";
+    var num =document.getElementById('ciim_mapLat').value;    
+   
+    
+    if ( (homelat <0 && num >0) || (homelat >0 && num <0)  ){
+        document.getElementById('ciim_mapLat').style.backgroundColor = '#ffdde2';
+       alert('Warning\nThe entered latitude is in a different hemisphere than the Winlink Express or Position Report coordinates. Southern latitudes are negative numbers. Northern latitudes are positive numbers.\n\nClick OK to edit the latitude or ignore this warning and continue with the entered latitude.');
+             }
+    else {document.getElementById('ciim_mapLat').style.backgroundColor = '';
+               }    
+   
+}
+    
+        function isAlphaNumeric(event) {
+    // Allow only alphanumeric characters (a-z, A-Z, 0-9)
+    const charCode = event.which || event.keyCode;
+    const charStr = String.fromCharCode(charCode);
+    
+    if (!/^[a-zA-Z0-9]$/.test(charStr)) {
+        event.preventDefault();
+    }
+        
+      }
+    
+
+</script>
+<title>Did You Feel It?</title></head>
+
+<body >
+<form   method="post" id="myform" onsubmit="formDataToObject(document.getElementById('myform'))" enctype="multipart/form-data" action="http://{FormServer}:{FormPort}">
+  <div id="pop1" class="pop-up"><!-- The pop-up block -->
+
+<div class="popBox"><!-- If the content becomes larger than the pop-up this div will scroll the content -->
+
+<div class="popScroll"><!-- Test for help starts here -->
+
+<h4><p align="center"> <span class="style12">Was ist das DYFI Formular?</span></p>
+</h4>
+ <p class="style1"><strong>Einf&uuml;hrung</strong></p>
+<p>Das Did-you-feel-it? (DYFI)-System wurde entwickelt, um die zahlreichen verf&uuml;gbaren Informationen &uuml;ber Erdbeben von den Menschen zu nutzen, die sie erleben. Indem wir uns die gro&szlig;e Zahl an Internetnutzern und Winlink-Nutzern zunutze machen, k&ouml;nnen wir eine umfassendere Beschreibung dessen erhalten, was die Menschen erlebt haben, welche Auswirkungen ein Erdbeben hatte und wie gro&szlig; der Schaden war. Und das Beste: Mit Ihrer Hilfe k&ouml;nnen wir dies schnell tun.</p>
+<p>Wenn Sie nach einem Erdbeben einen DYFI-Bericht erstellen, tragen Sie zur B&uuml;rgerforschung (&quot;Citizen Science&quot;)  und zur weiteren Erforschung von Erdbeben bei. Sie stellen auch sicher, dass Ihr Gebiet in die Zusammenstellung der Shaking-Karten aufgenommen wird. Das ist gut f&uuml;r die Gemeinschaft: Sie geben nicht nur wertvolle Informationen &uuml;ber das Ausma&szlig; der Erdbeben und des Schadens weiter, sondern Sie lernen auch mehr dar&uuml;ber, wie andere Gemeinden betroffen waren und bekommen ein besseres Verst&auml;ndnis der Auswirkungen von Erdbeben.<br>
+  Die Intensit&auml;t kann an das USGS &uuml;ber das &quot;Did You Feel It?&quot;-Formular auf der USGS Webseite und jetzt auch &uuml;ber Winlink gemeldet werden.<br>
+  <br>
+  Der DYFI Winlink-Bericht wird standardm&auml;&szlig;ig an eine USGS-E-Mail-Adresse gesendet, sodass Ihre DYFI Winlink-Daten direkt an die USGS-Server gemeldet werden.<br>
+  Die Intensit&auml;t ist ein qualitatives Ma&szlig; f&uuml;r die Erdbebenst&auml;rke an einem bestimmten Ort.  Sie basiert auf den Beobachtungen der Auswirkungen eines Erdbebens auf Menschen und Infrastruktur. Auch wenn Sie das Erdbeben nicht gesp&uuml;rt haben, ist Ihre Antwort wichtig: In Gebieten mit leichten Ersch&uuml;tterungen sind die &quot;nicht gesp&uuml;rt&quot; (not felt)  Antworten wertvoll, um den relativen Anteil der &quot;Erdbeben gesp&uuml;rt&quot; Antworten zu bestimmen und die Grenze zwischen den Gegenden zu bestimmen, in denen das Beben &quot;gesp&uuml;rt&quot; und &quot;nicht gesp&uuml;rt&quot; wurde.<br>
+</p>
+<p>Die <strong>Intensit&auml;t</strong> beschreibt die Auswirkungen eines Erdbebens und variiert mit der Magnitude, der Entfernung vom Hypozentrum und der lokalen Geologie. Im Gegensatz dazu beschreibt die Magnitude die Energie, die durch ein Erdbeben freigesetzt wird, und ist ein fester Wert.<br>
+  Wenn Sie Internet haben, finden Sie die neuesten Informationen zu DYFI unter: https://earthquake.usgs.gov/data/dyfi/<br>
+  Winlink DYFI-Formular</p>
+<p>Das Winlink DYFI-Formular hat mehrere erweiterte Funktionen, die im Web-Formular des USGS nicht verf&uuml;gbar sind.<br>
+  &uuml;bungsmodus: In Winlink haben Sie die M&ouml;glichkeit, eine &uuml;bung zu abzuhalten. Das USGS DYFI-Team empfiehlt, die Winlink-&uuml;bungsoption regelm&auml;&szlig;ig  f&uuml;r lokale und nationale Veranstaltungen zu verwenden, z. B. ShakeOut.<br>
+  &uuml;bungs-ID: Das Eingeben einer &uuml;bungs-ID ist optional, wird aber empfohlen. Sie hilft dem USGS, anderen Organisationen und den &uuml;bungsteilnehmern, Ihren Bericht einer bestimmten &uuml;bung zuzuordnen.<br>
+  Sie k&ouml;nnen eine beliebige &uuml;bungs-ID w&auml;hlen. F&uuml;r Gruppen&uuml;bungen sollten Sie f&uuml;r alle Teilnehmer identische &uuml;bungs-IDs verwenden.<br>
+  Winlink Mapping-Filter k&ouml;nnen nach bestimmten Ereignissen basierend auf der &uuml;bungs-ID filtern.<br>
+</p>
+<p><strong>Echtes Ereignis:</strong> Wenn Sie ein echtes Ereignis melden, will hei&szlig;en ein tats&auml;chliches Erdbeben, w&auml;hlen Sie die Option &quot;ECHTES Ereignis&quot; im Radiobutton.<br>
+  Ereignis-ID: Das Eingeben der Ereignis-ID ist optional, wird aber empfohlen. Sie hilft dem USGS, Ihren Bericht einem bestimmten Erdbeben zuzuordnen. Das USGS DYFI-Team bittet Sie, Echte Ereignis-IDs ohne Leerzeichen einzugeben.<br>
+</p>
+<p>Winlink Mapping-Filter k&ouml;nnen nach bestimmten Ereignissen basierend auf der Ereignis-ID filtern.<br>
+  <br>
+  <strong>Die Ereignis-ID</strong> kann von der USGS-Erdbebenkarte unter https://earthquake.usgs.gov/earthquakes/map/ oder vom USGS-Erdbebenbenachrichtigungsdienst https://earthquake.usgs.gov/ens/ abgerufen werden, sowie von anderen Quellen.<br>
+Weitere Details finden Sie weiter unten.</p>
+<p><strong>Winlink-Einsch&auml;tzung der Intensit&auml;t</strong>: Nach dem Klicken auf &quot;Senden&quot; zeigt das Winlink DYFI-Formular ein Pop-up mit einer Sch&auml;tzung der Intensit&auml;t an, die auf Ihren Antworten basiert. Diese angegebene Intensit&auml;t ist nur eine Sch&auml;tzung. Die Berechnungen basieren auf den Berechnungen des USGS, werden aber vom Code im Winlink-Formular durchgef&uuml;hrt. Diese Angabe ist ohne Gew&auml;hr und dient der Information und Bildung.<br>
+  Die Winlink DYFI Intensit&auml;tssch&auml;tzung hat keinen Einfluss auf die Daten im USGS JSON, die von USGS nach dem Empfang getrennt verarbeitet werden.<br>
+  Rufzeichen: Ihr Rufzeichen wird automatisch zu jedem DYFI-Bericht hinzugef&uuml;gt, den Sie senden.<br>
+  <strong><br>
+  E-Mail:</strong> Das Winlink DYFI-Formular f&uuml;gt Ihrem Bericht automatisch die USGS-E-Mail dyfi_reports_automated@usgs.gov hinzu, wenn Sie auf &quot;Senden&quot; klicken.<br>
+Sie k&ouml;nnen im Winlink Nachrichtenfenster zus&auml;tzliche Stationen und/oder E-Mail-Adressen in CC hinzuf&uuml;gen.</p>
+<p><strong>Kartendarstellung</strong>: Das Winlink DYFI-Formular erstellt eine geografische Informationsdatei, die von anderen Winlink-Benutzern verwendet werden kann, um DYFI-Daten aus dem Bericht zu kartieren. Die Datei enth&auml;lt standardm&auml;&szlig;ig nur Breitengrad/L&auml;ngengrad, gesch&auml;tzte Intensit&auml;t von Winlink, &uuml;bung/Echtes Ereignis, &uuml;bungs-ID, Echte Ereignis-ID. Diese Felder k&ouml;nnen in der Winlink Karte gefiltert werden und stehen auch zum Export im CSV-Format zur Verf&uuml;gung.<br>
+  <br>
+  F&uuml;r Fragen zum Winlink DYFI-Formular wenden Sie sich an den Winlink DYFI-Projektkoordinator Oliver Dully K6OLI unter https://www.qrz.com/db/K6OLI<br>
+  <br>
+  F&uuml;r Fragen zum USGS DYFI-Programm kontaktieren Sie USGS unter https://answers.usgs.gov/<br>
+  Hinweis: Das Formular ist eine Zusammenarbeit zwischen dem Winlink Development Team und dem USGS DYFI-Team. Nur diese beiden Teams haben die Autorit&auml;t &uuml;ber das Formular.<br>
+  <br>
+  <strong>GPS</strong><br>
+  Die Angabe von GPS-Informationen ist optional, aber sehr wertvoll. Wir ermutigen Sie dazu, den L&auml;ngengrad und Breitengrad Ihres Standortes anzugeben.<br>
+  LAT/LON: Das Formular akzeptiert nur Dezimalgrad-Breitengrad und L&auml;ngengrad. 4 Dezimalstellen werden bevorzugt.<br>
+  N/E/S/W: Norden und Osten sind positive Zahlen in Dezimalgrad, S&uuml;den und Westen sind negative Zahlen in Dezimalgrad. Zum Beispiel befindet sich das Hollywood-Schild bei Dezimalgrad 34,1341, -118,3215.<br>
+  HINWEIS: Damit automatisch eingegebene GPS-Dezimalkoordinaten funktionieren, m&uuml;ssen Sie ein verbundenes und konfiguriertes GPS-Ger&auml;t haben, das mit Winlink Express funktioniert. Andernfalls kann die manuelle Eingabe im angegebenen Format verwendet werden.<br>
+</p>
+<p>USGS Ereignis-ID / Optionale &uuml;bungs-ID<br>
+  USGS Ereignis-ID<br>
+  Bei der Meldung eines ECHTEN EREIGNISSES k&ouml;nnen Sie die USGS Ereignis-ID hinzuf&uuml;gen. Dies ist optional, aber es hilft dem USGS, Ihren Bericht mit dem von Ihnen gemeldeten Erdbeben abzugleichen.<br>
+  Es gibt mehrere M&ouml;glichkeiten, eine USGS Ereignis-ID zu erhalten:</p>
+<p><strong>Aus dem Internet.</strong></p>
+<p>Gehen Sie zu https://earthquake.usgs.gov/earthquakes/map<br>
+  Klicken Sie auf das Erdbeben, &uuml;ber das Sie berichten. Klicken Sie auf &quot;Haben Sie es gesp&uuml;rt?&quot;<br>
+  Die USGS ID wird in der dritten Zeile des Headers angezeigt, zum Beispiel ID:ci40063464<br>
+  In diesem Beispiel w&uuml;rden Sie ci40063464 melden.<br>
+  Aus der Webadresse<br>
+  Wenn Sie einen Link zur USGS-Website eines Erdbebens haben, wird die ID in der Webadresse aufgef&uuml;hrt sein.<br>
+  Zum Beispiel https://earthquake.usgs.gov/earthquakes/eventpage/ci40063464/executive</p>
+<p>Aus dem Erdbeben-Benachrichtigungsdienst (ENS)<br>
+  Wenn Sie Erdbebenbenachrichtigungen von USGS erhalten, wird die Mitteilung auch die Ereignis-ID anzeigen, zum Beispiel</p>
+<p><strong>Ereignis-ID: ci40063464</strong></p>
+<p>Ereignis-IDs sollten immer ohne Leerzeichen eingegeben werden, z. B. ci40063464<br>
+ENS ist ein kostenloser Service. Sie k&ouml;nnen sich anmelden, Einstellungen anpassen und abmelden unter https://earthquake.usgs.gov/ens/</p>
+<p><strong>Optionale &uuml;bungs-ID</strong><br>
+  Der USGS ermutigt Funkamateure dazu, &uuml;bungsberichte einzureichen, insbesondere wenn sie an organisierten &uuml;bungen teilnehmen. Die hinzugef&uuml;gte optionale &uuml;bungs-ID hilft dem USGS, &uuml;bungsereignisse zu gruppieren.<br>
+  Stellen Sie sicher, dass alle in Ihrer Gruppe denselben &uuml;bungsnamen verwenden. Beispiele sind ShakeOut2021, ARESLAX0815, SeattleDrill14 usw.<br>
+</p>
+<p>Die Entwicklung des DYFI Winlink-Formulars wurde durch eine Zusammenarbeit des United States Geological Survey (USGS) und des Winlink Development Teams erm&ouml;glicht.<br>
+  Training, Daten und Formulartests wurden bereitgestellt von:</p>
+<p>ARES LAX Northeast</p>
+<p>Auburn Area Emergency Communications Team (AAECT)</p>
+<p>Hawaii ARES</p>
+<p>MIRO (Mercer Island Radio Operators)</p>
+<p>NBAT (North Bend Amateur Radio Emergency Services, North Bend, WA )</p>
+<p>PSEARES (Puget Sound Energy Amateur Radio Emergency Services, Bellevue, WA)</p>
+<p>San Diego Amateur Radio Emergency Service (SDG ARES)</p>
+<p>San Joaquin Valley ARES</p>
+<p>Sacramento Valley ARES</p>
+<p>Ventura County CA ACS-ARES</p>
+<p>Western Kern County Amateur Radio Emergency Service (WKCARES)</p>
+<p>Yavapai County ARES/RACES (Amateur Radio Emergency Service, Yavapai County, Arizona)<br>
+<br>
+<p>&Uuml;bersetzung durch Patrick OE1LHP; basierend auf Version 11.0e in Sprachversion deu_V2<br>
+</p>
+
+
+
+   	  <span class="style13">
+
+
+. 
+<td width="0%">
+
+</div>
+
+<!-- The close pop-up link correctly positioned at the end of the content block -->
+
+<a href="#links" class="close"><span>Back
+
+to links</span></a> </div>
+</div>
+
+
+<div id="pop2" class="pop-up"><!-- The pop-up block -->
+
+<div class="popBox"><!-- If the content becomes larger than the pop-up this div will scroll the content -->
+
+<div class="popScroll"><!-- Test for help starts here -->
+<div align="center"><strong><span class="style11">Did You Feel It - Intensity</span></p></p>Below is an estimate of the intensity you reported from your location. <br />
+Click Continue to submit your report. </strong> </div>
+<table width="71%" height="22"  border="1" align="center" cellpadding="2" cellspacing="0"> 
+     <td id = "intensitydisplay2"><div align="center" class="style41">Intensity</div></td>
+    <td><div align="center" class="style41">&nbsp;Strength</div></td>
+    <td> <div align="left" class="style41">&nbsp;Description </div></td>
+  </tr>
+    <td width="10%" id = "intensitydisplay"><div align="center" class="style40" id = "intensitydisplay"><span  id="int_txt"><strong>int_Strength </strong></span></div></td>
+    <td width="18%"><div align="center" span class="style40"> <span  id="int_Strength">int_Strength </span></span></td>
+    <td width="63%"><span class="style41"><span  id="int_Discription">int_Strength </span></span></td><p><br /><br />
+  </tr>
+</table></p>
+<p align="center"><span class="style11">
+To complete your form submission, click Continue and close the open browser window.<br /> You will return to the new message window so you can post your message to the outbox.
+<p align="center"></span>
+   <input style="height: 28px; width: 65px; "  class="SubmitBtn" enctype="multipart/form-data" id="Continue" method="Submit" name="Submit" value="Continue" type="submit"  />
+</div>
+<td width="0%"></p>
+
+
+
+<!-- The close pop-up link correctly positioned at the end of the content block -->
+
+<!--<a href="#links" class="close"><span>Backto links</span></a>  --></div>
+</div>
+<table width="1043" border="0" align="center" style="width: 1045px;">
+<tbody>
+<tr>
+<td width="1037">
+<table width="922" border="1" cellpadding="4" cellspacing="0" bordercolor="#999999" style="font-size: 14px; width: 900px; ">
+<tbody>
+<tr>
+<td width="910" height="26" bgcolor="#dee9f9" style="text-align: center; vertical-align: top;"><p class="style12">  Erdbebenmeldung: Did You Feel it?</p>
+  <p class="style11">"Did You Feel It?" oder auch DYFI - zu deutsch "Hast du es gesp&uuml;rt?" - sammelt Informationen zu wahrgenommenen Erdbeben.<br/>Es hilft dabei, Karten &uuml;ber die Vorkommen und die dabei entstandenen Sch&auml;den zu erstellen.
+    <br/>
+    <br/>
+    Die Empf&auml;nger-Adresse des USGS (United States Geological Survey) wird durch klicken auf SUBMIT automatisch erg&auml;nzt.<br/>Die Mail wird dann direkt an das USGS versendet!</p>
+  <p class="style11"><span style="color: rgb(128, 0, 0);"><span style="color: black;"><span class="style29"><span class="style31">
+Informationen zum Thema Erdbeben findet ihr auf den Webseiten des <a href="https://www.usgs.gov/programs/earthquake-hazards" target="_blank">USGS</a> (nur in englischer Sprache) und <a href="https://www.gfz-potsdam.de/presse/erdbebeninformationen" target="_blank">GFZ Potsdam</a> (beide Links nur online erreichbar).
+</span></span></span></span></p>
+  <table width="100%" height="16"  border="0" cellpadding="0" cellspacing="0">
+    <tr>
+      <td width="18%">&nbsp;</td>
+      <td width="67%"><div align="center" class="style11"><span style="font-size: 12px;">
+        <input name="loadbtn" type="button" id="loadbtn" onclick="document.getElementById('txtfiletoread').click();" value=" Load Did You Feel It Data" style="display:none"/>
+      </span></div></td>
+      <td width="15%"><span class="style21"><span class="style32"><a href="#pop1">Erkl&auml;rung zu DYFI</a> </span></span></td>
+    </tr>
+  </table>  
+  <div align="center"></div>
+  <div align="center"></div></td>
+</tr>
+<tr>
+<td style="vertical-align: top; text-align: center;"><span style="font-size: 14px;"> <pbzloc ="1" style="font-weight: normal;"></pbzloc></span><span style="font-size: 14px;"><pbzloc ="1" style="font-weight: normal;"></pbzloc></span>
+  <div align="left">
+    <table width="100%"  border="1" cellpadding="8" cellspacing="0" bordercolor="#CCCCCC">
+      <tr>
+        <td valign="top" bgcolor="#FFFFFF"><p><span class="style33">&gt;&gt;&gt;&gt; Der Erdbebenreport ist eine
+              <input name="xeventtype" id="xeventtype"type="radio" onclick="document.getElementById('eventType').value = 'EXERCISE'; flipID('EXERCISE')" value="EXERCISE" checked="checked" />
+          &Uuml;bung/Test          <span class="style32">
+          <input name="xeventtype" type="radio" value="Real Event" onclick="document.getElementById('eventType').value = 'REAL EVENT';  flipID ('REAL EVENT')"/> 
+          ECHTE MELDUNG</span>          
+          <input name="eventType" type="hidden" id="eventType" value="EXERCISE" />
+ &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<br /><br />
+ &nbsp; &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; <span  id="prompttxt"> Optionale ID der &Uuml;bung: </span> 
+  <input name="exercise_id" type="text" id="exercise_id" size="30" placeholder = 'nur auf Anforderung !'  onblur="this.value=this.value.toUpperCase();" onkeypress="return isAlphaNumeric(event)"  />
+<input name="eventid" type="text" id="eventid" size="30" onchange="zapSpace(this.value)" onblur="this.value=this.value.toLowerCase();" onkeypress="return isAlphaNumeric(event)"   placeholder = '(Only if known; e.g. nc72282711)' />
+</span><span class="style27"><em><span class="style4"><span class="style45"><span style="color: black;"><span style="font-family:  Arial, Helvetica, sans-serif;; color: black;"><span style="color: rgb(0, 0, 0); font-family: Arial, Helvetica, sans-serif; font-size: 12px; font-style: normal; font-variant-ligatures: normal; font-variant-caps: normal; font-weight: 400; letter-spacing: normal; orphans: 2; text-align: start; text-indent: 0px; text-transform: none; white-space: normal; widows: 2; word-spacing: 0px; -webkit-text-stroke-width: 0px; text-decoration-style: initial; text-decoration-color: initial; display: inline !important; float: none;"><span style="font-size: 14px;"><span style="font-size: 14px;"><span style="color: rgb(0, 0, 0); font-family: Arial, Helvetica, sans-serif; font-size: 12px; font-style: normal; font-variant-ligatures: normal; font-variant-caps: normal; font-weight: 400; letter-spacing: normal; orphans: 2; text-align: start; text-indent: 0px; text-transform: none; white-space: normal; widows: 2; word-spacing: 0px; -webkit-text-stroke-width: 0px; text-decoration-style: initial; text-decoration-color: initial; display: inline !important; float: none;"><span style="font-size: 14px;"><span style="font-size: 14px;">
+<input name="xmaptimestamp" type="hidden" id="xmaptimestamp" size="30" />
+          </span></span></span></span>
+                            <input name="xmaptimestamp2" type="hidden" id="xmaptimestamp2" size="40" />
+</span></span></span></span></span></span></em></span></p>
+          <hr />
+          <p><span class="style23">Did you feel it?<span class="style11"> <span class="style23">(PFLICHTFELD)</span></span></span></p>
+          <p><span class="style11">&nbsp; &nbsp;
+                  <input name="xfldSituation_felt" type="radio" value="1" onclick="document.getElementById('fldSituation_felt').value = '1'" />
+                  JA &nbsp; &nbsp;
+                  <input name="xfldSituation_felt" type="radio" value="0"onclick="document.getElementById('fldSituation_felt').value = '0'" />
+    NEIN</span>
+                <input name="fldSituation_felt" type="hidden" id="fldSituation_felt" style="outline: none !important;
+    border:1px solid red;"/> 
+                <span class="style23"><span class="style11"><span class="style13"><span  id="Q2"><span  id="Ln3"><a name="haveerror" id="haveerror"></a></span></span></span></span></span>                
+				<textarea name="parseme" cols="60" id="parseme" style="display: none;"></textarea>  
+                <input type="file" id="txtfiletoread" accept=".txt"  style="display: none;"/> 
+            </p></td>
+      </tr>
+      <tr>
+        <td valign="top" bgcolor="#F8F8FF"><p><span class="style23"><span class="style11"><span class="style13"><span  id="Q2"></span></span></span>Zeitpunkt des Erdbebens: (PFLICHTFELD)</span>  <span class="style11"> &nbsp;&nbsp;Ausschlie&szlig;lich lokale Zeitangabe verwenden, kein UTC! Datumsformat: DD/MM/YYYY 09:15</span></p>
+          <p class="style26">
+            Datum:
+            <input title="Wenn notwendig, &uuml;berschreiben"
+
+                          maxlength="24" size="10" name="xTheDate" id="xTheDate" placeholder="Click for Date"
+
+                          onclick="SetDateTime('dd/mm/y',this.id)" readonly required="required" />
+            <span class="style13">&nbsp; &nbsp; &nbsp;</span>Zeit: 
+  	    <input maxlength="12" size="10" name="xTime" id="xTime"
+
+                          placeholder="Click for Time" onclick="SetDateTime('hm',this.id)" readonly
+
+                          required="required" /> 
+  <span class="style11">.
+  </span>
+  <input placeholder="Time of earthquake" name="ciim_time" type="hidden" id="ciim_time" size="30" maxlength="30" />
+          </p>
+          <p><span class="style13">&nbsp; &nbsp;<em> &nbsp;</em></span><span class="style36"> (Beim &ouml;ffnen des Forms werden automatisch die Felder Datum/Zeit aktualisiert. Zum manuellen &auml;ndern, in das Feld klicken.)</span></p></td>
+      </tr>
+      <tr>
+        <td valign="top" bgcolor="#FFFFFF"><p class="style23">Standort - Adresse, Stadt, Region wo das Erdbeben wahrgenommen wurde: (PFLICHTFELD) 
+          <p class="style13"> &nbsp; &nbsp; &nbsp;
+              <input placeholder="Adresse, Stadt, Region, Land" Title="*STREET ADDRESS , CITY, STATE *" name="ciim_mapAddress" type="text" id="ciim_mapAddress" size="100" maxlength="90" /> 
+             </p>
+          <p class="style13"> <span class="style11">Optionale GPS-Koordinaten wie in folgendem Beispiel: <span class="style35">32.504892 -116.982466</span></span>&nbsp;&nbsp;LAT
+            <input name="ciim_mapLat"  style="color:blue" type="text" id="ciim_mapLat" size="22" maxlength="40" placeholder="Beispiel: 32.504891" onkeypress="return isNumberKey(event)" onchange="splitPaste(this.value);checklatlon(this.value, 'ciim_mapLat');Testlat();"; />
+            &nbsp;&nbsp;&nbsp;LON 
+<input name="ciim_mapLon"  style="color:blue" type="text" id="ciim_mapLon" size="22" maxlength="40" placeholder="Beispiel: -116.982466" onkeypress="return isNumberKey(event)" onchange="checklatlon(this.value, 'ciim_mapLon'); Testlon();" />
+                <input name="xmyGPS" type="hidden" id="xmyGPS" value="{GPS}" size="20" style="outline: none !important;
+    border:1px solid red;" />
+                </p>
+        <p class="style13">&nbsp;&nbsp;   &nbsp;<span class="style11"><em> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Wenn ein passend konfigurierter GPS-Empf&auml;nger verf&uuml;gbar ist, werden LAT/LON automatisch eingef&uuml;gt</em><em class="style11"></em></span><em class="style11">. </em></p>
+        <hr />        <p align="center" class="style24"> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Der folgende Abschnitt ist optional.</br>Wenn die Einstriegsfrage "Did you feel it?" mit NEIN beantwortet wurde, scrolle bis ans Ende zum Punkt "SUBMIT".</br>War die Antwort JA, dann beantworte die folgenden Fragen so gut wie m&ouml;glich, damit das USGS bessere Aussagen treffen kann.</p></td>
+      </tr>
+      <tr>
+        <td valign="top" bgcolor="#F8F8FF"><p class="style13">Wo hast du dich w&auml;hred des Erdbebens aufgehalten?
+              <input name="fldSituation_situation" type="hidden" id="fldSituation_situation" style="outline: none !important;
+    border:1px solid red;"/>
+
+          <table width="82%"  border="0" cellspacing="0" cellpadding="0">
+            <tr>
+              <td width="3%">&nbsp;</td>
+              <td width="33%"><span class="style11">
+                <input name="xfldfelt" type="radio"onclick="document.getElementById('fldSituation_situation').value = ''" />
+      Keine Angabe</span></td>
+              <td width="33%"><span class="style11">
+                <input name="xfldfelt" type="radio" value="inside"onclick="document.getElementById('fldSituation_situation').value = this.value" />
+      In einem Geb&auml;ude</span></td>
+              <td width="31%"><span class="style11">
+                <input name="xfldfelt" type="radio" value="outside"onclick="document.getElementById('fldSituation_situation').value = this.value" />
+      Au&szlig;erhalb eines Geb&auml;udes</span></td>
+            </tr>
+            <tr>
+              <td>&nbsp;</td>
+              <td><span class="style11">
+                <input name="xfldfelt" type="radio" value="veh_stopped"onclick="document.getElementById('fldSituation_situation').value = this.value" />
+      In einem stehenden Fahrzeug</span></td>
+              <td><span class="style11">
+                <input name="xfldfelt" type="radio" value="veh_moving" onclick="document.getElementById('fldSituation_situation').value = this.value" />
+      In einem fahrenden Fahrzeug</span></td>
+              <td><span class="style11">
+                </span></td>
+            </tr>
+            <tr>
+              <td>&nbsp;</td>
+              <td colspan="3"><span class="style11">
+                <input name="xfldfelt" type="radio" value="other" onclick="document.getElementById('fldSituation_situation').value = this.value" />
+Anderer</span> <span class="style11">Ort:
+                  </span>
+<input placeholder="Beschreibe bitte" name="fldSituation_situation_other" type="text" id="fldSituation_situation_other" size="80" maxlength="70" /></td>
+            </tr>
+          </table></td>
+      </tr>
+      <tr>
+        <td valign="top" bgcolor="#FFFFFF"><p class="style13">Wenn du in einem Geb&auml;ude warst, in welchem Stockwerk?
+          <input name="fldSituation_floor" type="hidden" id="fldSituation_floor" style="outline: none !important;
+    border:1px solid red;"/>
+        </p>
+          <table width="82%"  border="0" cellspacing="0" cellpadding="0">
+            <tr>
+              <td width="3%">&nbsp;</td>
+              <td width="33%"><span class="style11">
+                <input name="xfldfloor" type="radio"onclick="document.getElementById('fldSituation_floor').value = ''" />
+                Keine Angabe</span></td>
+              <td width="33%"><span class="style11">
+                <input name="xfldfloor" type="radio" value="underground"onclick="document.getElementById('fldSituation_floor').value = this.value" />
+                Keller</span></td>
+              <td width="31%"><span class="style11">
+                <input name="xfldfloor" type="radio" value="ground"onclick="document.getElementById('fldSituation_floor').value = this.value" />
+                Erdgescho&szlig;/Stra&szlig;enniveau</span></td>
+            </tr>
+            <tr>
+              <td>&nbsp;</td>
+              <td><span class="style11">
+                <input name="xfldfloor" type="radio" value="floor2"onclick="document.getElementById('fldSituation_floor').value = this.value" />
+                1. Stockwerk</span></td>
+              <td><span class="style11">
+                <input name="xfldfloor" type="radio" value="floor3" onclick="document.getElementById('fldSituation_floor').value = this.value" />
+                2. Stockwerk</span></td>
+              <td><span class="style11"> </span></td>
+            </tr>
+            <tr>
+              <td>&nbsp;</td>
+              <td colspan="3"><span class="style11">
+                <input name="xfldfloor" type="radio" value="other" onclick="document.getElementById('fldSituation_floor').value = this.value" />
+                Anderer</span> <span class="style11">Ort: </span>
+                <input placeholder="weitere Angaben. Dachgescho&szlig;,..." name="ifHigherPleaseDescribe" type="text" id="ifHigherPleaseDescribe" size="80" maxlength="70" /></td>
+            </tr>
+          </table></td>
+      </tr>
+      <tr>
+        <td  valign="top" bgcolor="#F8F8FF"><p class="style13">Wenn du in einem Geb&auml;ude warst, wieviele Stockwerke hat es?
+            <input name="fldSituation_structureStories" type="hidden" id="fldSituation_structureStories" style="outline: none !important;
+    border:1px solid red;"/>
+        </p>
+          <table width="77%"  border="0" cellspacing="0" cellpadding="0">
+            <tr>
+              <td width="3%">&nbsp;</td>
+              <td width="33%"><span class="style11">
+                <input name="xTallfld" type="radio"onclick="document.getElementById('fldSituation_structureStories').value = ''" />
+                Keine Angabe</span></td>
+              <td width="33%"><span class="style11">
+                <input name="xTallfld" type="radio" value="story1"onclick="document.getElementById('fldSituation_structureStories').value = this.value" />
+                1 Stockwerk</span></td>
+              <td width="31%"><span class="style11">
+                <input name="xTallfld" type="radio" value="story2"onclick="document.getElementById('fldSituation_structureStories').value = this.value" />
+                2 Stockwerke              </span></td>
+              <td width="31%" nowrap="nowrap"><span class="style11">
+                <input name="xTallfld" type="radio" value="story3"onclick="document.getElementById('fldSituation_structureStories').value = this.value" />
+                3 Stockwerke</span></td>
+            </tr>
+            <tr>
+              <td >&nbsp;</td>
+              <td colspan="4"><span class="style11">
+                <input name="xTallfld" type="radio" value="other" onclick="document.getElementById('fldSituation_structureStories').value = this.value" />
+Andere</span> <span class="style11">: </span>
+<input placeholder="Bei mehr als 3 Stockwerken, bitte die Anzahl angeben (NUMERISCH)" name="howTallPleaseDescribe" type="text" id="howTallPleaseDescribe" size="80" maxlength="70" /></td>
+              </tr>
+          </table></td>
+      </tr>
+      <tr>
+        <td valign="top" bgcolor="#FFFFFF"><p class="style13">Hast du geschlafen?
+              <input name="fldSituation_sleep" type="hidden" id="fldSituation_sleep" style="outline: none !important;
+    border:1px solid red;" />
+        </p>
+          <p class="style13"><span class="style11">&nbsp; &nbsp;
+                <input name="xfldSituation_sleep" type="radio" onclick="document.getElementById('fldSituation_sleep').value = ''" />
+            Keine Angabe</span> <span class="style11"> &nbsp; &nbsp;
+            <input name="xfldSituation_sleep" type="radio" onclick="document.getElementById('fldSituation_sleep').value = this.value" value="no" />
+            Nein</span> <span class="style11"> &nbsp; &nbsp;
+            <input name="xfldSituation_sleep" type="radio" onclick="document.getElementById('fldSituation_sleep').value = this.value" value="slept" />
+  Durchgeschlafen &nbsp; &nbsp;
+  <input name="xfldSituation_sleep" type="radio" onclick="document.getElementById('fldSituation_sleep').value = this.value" value="woke" />
+            Aufgewacht</span></p></td>
+      </tr>
+      <tr>
+        <td valign="top" bgcolor="#F8F8FF"><p class="style13">Haben es andere (Nachbarn) ebenfalls gesp&uuml;rt?
+              <input name="fldSituation_others" type="hidden" id="fldSituation_others" style="outline: none !important;
+    border:1px solid red;"/>
+        </p>
+          <p class="style11"><span class="style13">&nbsp; &nbsp;
+                <input name="xother_felt" type="radio" onclick="document.getElementById('fldSituation_others').value = ''" />
+            </span>Keine Angabe<span class="style13"> &nbsp; &nbsp;
+            <input name="xother_felt" type="radio" onclick="document.getElementById('fldSituation_others').value = this.value" value="2" />
+            </span>Keiner hat es gesp&uuml;rt<span class="style13">&nbsp;&nbsp;
+            <input name="xother_felt" type="radio" onclick="document.getElementById('fldSituation_others').value = this.value" value="3" />
+            </span>Einige haben es gesp&uuml;rt<span class="style13">&nbsp;
+            <input name="xother_felt" type="radio" onclick="document.getElementById('fldSituation_others').value = this.value" value="4" />
+            </span>Fast alle haben es gesp&uuml;rt<span class="style13">&nbsp;
+            <input name="xother_felt" type="radio" onclick="document.getElementById('fldSituation_others').value = this.value" value="5" />
+          </span>Jeder hat es gesp&uuml;rt</p></td>
+      </tr>
+      <tr>
+        <td valign="top" bgcolor="#FFFFFF"><p><span class="style13">Beschreibe, wie es sich angef&uuml;hlt hat:</span> <span class="style13">
+          <input name="fldExperience_shaking" type="hidden" id="fldExperience_shaking" style="outline: none !important;
+    border:1px solid red;"/>
+        </span></p>
+          <table width="82%"  border="0" cellspacing="0" cellpadding="0">
+            <tr>
+              <td width="3%">&nbsp;</td>
+              <td width="33%"><span class="style11">
+                <input name="xDescShake" type="radio"
+				onclick="document.getElementById('fldExperience_shaking').value = '';
+				document.getElementById('xmapshaking').value ='Not Specified';">
+      Keine Angabe</span></td>
+              <td width="33%"><span class="style11">
+                <input name="xDescShake" type="radio" value="0"onclick="document.getElementById('fldExperience_shaking').value = this.value;
+				document.getElementById('xmapshaking').value ='Not felt';" />
+                Keine Wahrnehmung</span></td>
+              <td width="31%"><span class="style11">
+                <input name="xDescShake" type="radio" value="1"onclick="document.getElementById('fldExperience_shaking').value = this.value;document.getElementById('xmapshaking').value ='Weak';" />
+      Schwach</span></td>
+              <td width="31%" nowrap="nowrap"><span class="style11">
+                <input name="xDescShake" type="radio" value="2"onclick="document.getElementById('fldExperience_shaking').value = this.value;document.getElementById('xmapshaking').value ='Mild';" />
+Leicht</span></td>
+            </tr>
+            <tr>
+              <td>&nbsp;</td>
+              <td><span class="style11">
+                <input name="xDescShake" type="radio" value="3" onclick="document.getElementById('fldExperience_shaking').value = this.value;document.getElementById('xmapshaking').value ='Moderate';" />
+M&auml;&szlig;ig
+                </span></td>
+              <td><span class="style11">
+                <input name="xDescShake" type="radio" value="4" onclick="document.getElementById('fldExperience_shaking').value = this.value; document.getElementById('xmapshaking').value ='Strong';" />
+Stark
+                </span></td>
+              <td><span class="style11">
+                <input name="xDescShake" type="radio" value="5"onclick="document.getElementById('fldExperience_shaking').value = this.value;document.getElementById('xmapshaking').value ='Violent';" />
+Gewaltig 
+                </span></td>
+              <td>&nbsp;</td>
+            </tr>
+          </table>          
+          <input name="xmapshaking" type="hidden" id="xmapshaking" /></td>
+      </tr>
+      <tr>
+        <td valign="top" bgcolor="#F8F8FF"><p class="style13">Wie war die (emotionale) Wirkung auf dich? 
+            <input name="fldExperience_reaction" type="hidden" id="fldExperience_reaction" style="outline: none !important;
+    border:1px solid red;"/>
+        </p>
+          <table width="77%"  border="0" cellspacing="0" cellpadding="0">
+            <tr>
+              <td width="3%">&nbsp;</td>
+              <td width="33%"><span class="style11">
+                <input name="xReactfld" type="radio"onclick="document.getElementById('fldExperience_reaction').value = ''" />
+      Keine Angabe</span></td>
+              <td width="33%"><span class="style11">
+                <input name="xReactfld" type="radio" value="0"onclick="document.getElementById('fldExperience_reaction').value = this.value" />
+      Keine Reaktion</span></td>
+              <td width="31%"><span class="style11">
+                <input name="xReactfld" type="radio" value="1"onclick="document.getElementById('fldExperience_reaction').value = this.value" />
+      Geringe Reaktion</span></td>
+              <td width="31%" nowrap="nowrap"><span class="style11">
+                <input name="xReactfld" type="radio" value="2"onclick="document.getElementById('fldExperience_reaction').value = this.value" />
+      Aufgeregt</span></td>
+            </tr>
+            <tr>
+              <td>&nbsp;</td>
+              <td><span class="style11">
+                <input name="xReactfld" type="radio" value="3" onclick="document.getElementById('fldExperience_reaction').value = this.value" />
+      Erschrocken<br/>
+              </span></td>
+              <td><span class="style11">
+                <input name="xReactfld" type="radio" value="4" onclick="document.getElementById('fldExperience_reaction').value = this.value" />
+      Schockiert</span></td>
+              <td><span class="style11">
+                <input name="xReactfld" type="radio" value="5"onclick="document.getElementById('fldExperience_reaction').value = this.value" />
+      Ohnm&auml;chtig</span></td>
+              <td>&nbsp;</td>
+            </tr>
+          </table>          </td>
+      </tr>
+      <tr>
+        <td valign="top" bgcolor="#FFFFFF"><p class="style13">Wie hast du reagiert? 
+          <input name="fldExperience_response" type="hidden" id="fldExperience_response"style="outline: none !important;
+    border:1px solid red;" />
+        </p>
+          <table width="82%"  border="0" cellspacing="0" cellpadding="0">
+            <tr>
+              <td width="3%">&nbsp;</td>
+              <td width="33%"><span class="style11">
+                <input name="xFldResponce" type="radio"onclick="document.getElementById('fldExperience_response').value = ''" />
+      Keine Angabe</span></td>
+              <td width="33%"><span class="style11">
+                <input name="xFldResponce" type="radio" value="no_action"onclick="document.getElementById('fldExperience_response').value = this.value" />
+      Keine Aktion gesetzt
+      
+              </span></td>
+              <td width="31%"><span class="style11">
+                <input name="xFldResponce" type="radio" value="doorway"onclick="document.getElementById('fldExperience_response').value = this.value" />
+      Im T&uuml;rrahmen untergestellt</span></td>
+            </tr>
+            <tr>
+              <td>&nbsp;</td>
+              <td><span class="style11">
+                <input name="xFldResponce" type="radio" value="duck"onclick="document.getElementById('fldExperience_response').value = this.value" />
+                Geduckt und Gesch&uuml;tzt</span></td>
+              <td><span class="style11">
+<input name="xFldResponce" type="radio" value="ran_outside" onclick="document.getElementById('fldExperience_response').value = this.value" />      
+Schnell den Ort verlassen</span></td>
+              <td><span class="style11">
+                </span></td>
+            </tr>
+            <tr>
+              <td>&nbsp;</td>
+              <td colspan="3"><span class="style11">
+                <input name="xFldResponce" type="radio" value="other" onclick="document.getElementById('fldExperience_response').value = this.value" />
+Anderes</span> <span class="style11"></span>:
+                  <input placeholder="Beschreibe bitte" name="fldExperience_response_other" type="text" id="fldExperience_response_other" size="80" maxlength="70" /></td>
+            </tr>
+          </table>          </td>
+      </tr>
+      <tr>
+        <td valign="top" bgcolor="#F8F8FF"><p class="style13">
+          War es schwer, zu stehen oder zu gehen? 
+          <input name="fldExperience_stand" type="hidden" id="fldExperience_stand" style="outline: none !important;
+    border:1px solid red;"/>
+        </p>
+          <p class="style11">&nbsp; &nbsp;
+                <input name="xfld_stand" type="radio" onclick="document.getElementById('fldExperience_stand').value = ''" />
+                Keine Angabe &nbsp; &nbsp;
+                <input name="xfld_stand" type="radio" onclick="document.getElementById('fldExperience_stand').value = this.value" value="0" />
+                NEIN &nbsp; &nbsp;
+                <input name="xfld_stand" type="radio" onclick="document.getElementById('fldExperience_stand').value = this.value" value="1" />
+                JA</p></td>
+      </tr>
+      <tr>
+        <td valign="top" bgcolor="#FFFFFF"><p class="style13">Hast du aufschwingende T&uuml;ren oder Gegenst&auml;nde (zB. h&auml;ngende Bilder an der Wand) gesehen?
+          <input name="fldEffects_doors" type="hidden" id="fldEffects_doors"style="outline: none !important;
+    border:1px solid red;" />
+        </p>
+          <p class="style11"><span class="style13">&nbsp; &nbsp;
+                <input name="xfld_sway" type="radio" onclick="document.getElementById('fldEffects_doors').value = ''" />
+            </span> Keine Angabe <span class="style13"> &nbsp; &nbsp;
+            <input name="xfld_sway" type="radio" onclick="document.getElementById('fldEffects_doors').value = this.value" value="0" />
+            </span>NEIN <span class="style13">&nbsp;&nbsp;
+            <input name="xfld_sway" type="radio" onclick="document.getElementById('fldEffects_doors').value = this.value" value="1 slight" />
+            </span>JA, leicht schwingend<span class="style13">&nbsp; &nbsp;
+<input name="xfld_sway" type="radio" onclick="document.getElementById('fldEffects_doors').value = this.value" value="1 violent" />
+            </span>JA, stark schwingend<span class="style13">&nbsp; </span></p></td>
+      </tr>
+      <tr>
+        <td valign="top" bgcolor="#F8F8FF"><p class="style13">Hast du Ger&auml;usche (wie Knacken oder Krachen von Holz oder Stein) geh&ouml;rt?
+          <input name="fldEffects_sounds" type="hidden" id="fldEffects_sounds" style="outline: none !important;
+    border:1px solid red;"/>
+        </p>
+          <p class="style11"><span class="style13">&nbsp;</span> &nbsp;
+                <input name="xfld_sounds" type="radio" onclick="document.getElementById('fldEffects_sounds').value = ''" />
+             Keine Angabe  &nbsp; &nbsp;
+             <input name="xfld_sounds" type="radio" onclick="document.getElementById('fldEffects_sounds').value = this.value" value="0" />
+            NEIN &nbsp;&nbsp;
+            <input name="xfld_sounds" type="radio" onclick="document.getElementById('fldEffects_sounds').value = this.value" value="1 slight" />
+            JA, leise&nbsp; &nbsp;
+            <input name="xfld_sounds" type="radio" onclick="document.getElementById('fldEffects_sounds').value = this.value" value="1 loud" />
+          JA, laut</p></td>
+      </tr>
+      <tr>
+        <td valign="top" bgcolor="#FFFFFF"><p class="style13">Sind auf M&ouml;belst&uuml;cke stehende Gegenst&auml;nde runtergefallen/umgefallen oder haben sich verschoben? 
+          <input name="fldEffects_shelved" type="hidden" id="fldEffects_shelved"style="outline: none !important;
+    border:1px solid red;" />
+        </p>
+          <table width="82%"  border="0" cellspacing="0" cellpadding="0">
+          <tr>
+            <td width="3%">&nbsp;</td>
+            <td width="33%"><span class="style11">
+              <input name="xfld_shelf" type="radio"onclick="document.getElementById('fldEffects_shelved').value = '';document.getElementById('xmapshelves').value ='Not specified';" />
+      Keine Angabe</span></td>
+            <td width="33%"><span class="style11">
+              <input name="xfld_shelf" type="radio" value="0"onclick="document.getElementById('fldEffects_shelved').value = this.value;document.getElementById('xmapshelves').value ='No';" />
+      NEIN</span></td>
+            <td width="31%"><span class="style11">
+              <input name="xfld_shelf" type="radio" value="0 rattled_slightly"onclick="document.getElementById('fldEffects_shelved').value = this.value;document.getElementById('xmapshelves').value ='Rattled slightly';" />
+      Leichtes Ratteln</span></td>
+          </tr>
+          <tr>
+            <td>&nbsp;</td>
+            <td><span class="style11">
+              <input name="xfld_shelf" type="radio" value="0 rattled_loudly "onclick="document.getElementById('fldEffects_shelved').value = this.value;document.getElementById('xmapshelves').value =' Rattled loudly';" />
+      Lautes Ratteln</span></td>
+            <td><span class="style11">
+              <input name="xfld_shelf" type="radio" value="1 few_toppled_or_fell" onclick="document.getElementById('fldEffects_shelved').value = this.value;document.getElementById('xmapshelves').value ='A few toppled or fell off';" />
+      Einige sind umgefallen</span></td>
+            <td><span class="style11">
+<input name="xfld_shelf" type="radio" value="2 many_toppled_or_fell" onclick="document.getElementById('fldEffects_shelved').value = this.value;document.getElementById('xmapshelves').value ='Many fell off';" />      
+Einige sind runtergefallen</span></td>
+          </tr>
+          <tr>
+            <td>&nbsp;</td>
+            <td><span class="style11">
+              <input name="xfld_shelf" type="radio" value="2 many_toppled_or_fell" onclick="document.getElementById('fldEffects_shelved').value = this.value;document.getElementById('xmapshelves').value ='Nearly everything fell off';" />
+Alle sind runtergefallen</span></td>
+            <td>&nbsp;</td>
+            <td>&nbsp;</td>
+          </tr>
+        </table>
+          <input name="xmapshelves" type="hidden" id="xmapshelves" />
+          <input type="hidden" name="hiddenField" /></td>
+      </tr>
+      <tr>
+        <td valign="top" bgcolor="#F8F8FF"><p class="style13">Sind Wandbilder verschoben worden oder herabgefallen?? 
+          <input name="fldEffects_pictures" type="hidden" id="fldEffects_pictures" style="outline: none !important;
+    border:1px solid red;"/>
+        </p>
+          <p class="style11"><span class="style13">&nbsp;</span> &nbsp;
+              <input name="xfld_picture" type="radio" onclick="document.getElementById('fldEffects_pictures').value = ''" />
+  Keine Angabe &nbsp; &nbsp;
+  <input name="xfld_picture" type="radio" onclick="document.getElementById('fldEffects_pictures').value = this.value" value="0" />
+  NEIN &nbsp;&nbsp;
+  <input name="xfld_picture" type="radio" onclick="document.getElementById('fldEffects_pictures').value = this.value" value="1 did_not_fall " />
+  JA, aber nicht heruntergefallen&nbsp;&nbsp;
+  <input name="xfld_picture" type="radio" onclick="document.getElementById('fldEffects_pictures').value = this.value" value="1 some_fell" />  
+  JA, auch heruntergefallen</p></td>
+      </tr>
+      <tr>
+        <td valign="top" bgcolor="#FFFFFF"><p class="style13">Haben sich M&ouml;belst&uuml;cke verschoben oder sind umgefallen?
+          <input name="fldEffects_furniture" type="hidden" id="fldEffects_furniture"style="outline: none !important;
+    border:1px solid red;" />
+        </p>
+          <p class="style11"><span class="style13">&nbsp;</span> &nbsp;
+              <input name="xfld_furniture" type="radio" onclick="document.getElementById('fldEffects_furniture').value = '';document.getElementById('xmapfurniture').value ='Not specified';" />
+  Keine Angabe &nbsp; &nbsp;
+  <input name="xfld_furniture" type="radio" onclick="document.getElementById('fldEffects_furniture').value = this.value;document.getElementById('xmapfurniture').value ='No';" value="0" />
+  NEIN &nbsp;&nbsp;
+  <input name="xfld_furniture" type="radio" onclick="document.getElementById('fldEffects_furniture').value = this.value;document.getElementById('xmapfurniture').value ='Yes';" value="1" />
+  JA 
+  <input name="xmapfurniture" type="hidden" id="xmapfurniture" />
+          </p></td>
+      </tr>
+      <tr>
+        <td valign="top" bgcolor="#F8F8FF"><p><span class="style13">Haben sich schwere M&ouml;belst&uuml;cke oder Gegenst&auml;nde (zB K&uuml;hlschrank, Waschmaschine,...) verschoben oder sind umgefallen?</span> <span class="style13">
+          <input name="fldEffects_appliances" type="hidden" id="fldEffects_appliances" style="outline: none !important;
+    border:1px solid red;" />
+        </span></p>
+          <table width="82%"  border="0" cellspacing="0" cellpadding="0">
+          <tr>
+            <td width="3%">&nbsp;</td>
+            <td width="33%"><span class="style11">
+              <input name="xfld_heavy_appliance" type="radio"onclick="document.getElementById('fldEffects_appliances').value = ''" />
+      Keine Angabe</span></td>
+            <td width="33%"><span class="style11">
+              <input name="xfld_heavy_appliance" type="radio" value="0"onclick="document.getElementById('fldEffects_appliances').value = this.value" />
+      NEIN</span></td>
+            <td width="31%"><span class="style11">
+              <input name="xfld_heavy_appliance" type="radio" value="fell"onclick="document.getElementById('fldEffects_appliances').value = this.value" />
+      JA, Gegenst&auml;nde herausgefallen</span></td>
+          </tr>
+          <tr>
+            <td>&nbsp;</td>
+            <td><span class="style11">
+              <input name="xfld_heavy_appliance" type="radio" value="shifted"onclick="document.getElementById('fldEffects_appliances').value = this.value" />
+      JA, einige Zentimeter verschoben</span></td>
+            <td><span class="style11">
+              <input name="xfld_heavy_appliance" type="radio" value="shifted_foot" onclick="document.getElementById('fldEffects_appliances').value = this.value" />
+              JA, mehr als 30 cm verschoben</span></td>
+            <td><span class="style11">
+              <input name="xfld_heavy_appliance" type="radio" value="overturned" onclick="document.getElementById('fldEffects_appliances').value = this.value" />
+      JA, umgefallen</span></td>
+          </tr>
+        </table></td>
+      </tr>
+      <tr>
+        <td valign="top" bgcolor="#FFFFFF"><p><span class="style13">Wurden freistehende Mauern oder Z&auml;une besch&auml;digt?</span> <span class="style13">
+        <input name="fldEffects_walls" type="hidden" id="fldEffects_walls"style="outline: none !important;
+    border:1px solid red;" />
+</span></p>
+          <table width="82%"  border="0" cellspacing="0" cellpadding="0">
+            <tr>
+              <td width="3%">&nbsp;</td>
+              <td width="33%" valign="top"><span class="style11">
+                
+<input name="xfld_walls" type="radio"onclick="document.getElementById('fldEffects_walls').value = this.value;document.getElementById('xmapwalls').value ='Not specified';" />      
+Keine Angabe</span></td>
+              <td width="33%" valign="top"><span class="style11">
+                <input name="xfld_walls" type="radio" value="0"onclick="document.getElementById('fldEffects_walls').value = this.value;document.getElementById('xmapwalls').value ='No';" />
+      NEIN</span></td>
+              <td width="31%" valign="top"><span class="style11">
+                <input name="xfld_walls" type="radio" value="cracked"onclick="document.getElementById('fldEffects_walls').value = this.value;document.getElementById('xmapwalls').value =' Yes, some were cracked';" />
+      JA, Risse oder Spr&uuml;nge</span></td>
+            </tr>
+            <tr>
+              <td height="16">&nbsp;</td>
+              <td valign="top"><span class="style11">
+                <input name="xfld_walls" type="radio" value="fell_partial"onclick="document.getElementById('fldEffects_walls').value = this.value;document.getElementById('xmapwalls').value ='Yes, some partially fell';" />
+      JA, teilweise umgefallen/gebrochen</span></td>
+              <td valign="top" class="style11">
+                  <input name="xfld_walls" type="radio" value="fell_complete" onclick="document.getElementById('fldEffects_walls').value = this.value;document.getElementById('xmapwalls').value =' Yes, some fell completely';" />
+        JA, gro&szlig;er Schaden</td>
+              <td valign="top"><span class="style11"> </span></td>
+            </tr>
+          </table>
+          <span class="style11">
+          <input name="xmapwalls" type="hidden" id="xmapwalls" />
+          </span></td>
+      </tr>
+      <tr>
+        <td valign="top" bgcolor="#F8F8FF"><p class="style13">Wurde das Geb&auml;ude besch&auml;digt? <span class="style11">(Mehrfachnennung m&ouml;glich)</span>            
+          <input name="d_text" type="hidden" id="d_text" size="80"style="outline: none !important;
+    border:1px solid red;" />
+ <input name="xPintensity" type="hidden" id="xPintensity" /> 
+ <input name="mapmmscale" type="hidden" id="mapmmscale" />
+ <input name="mapStrength" type="hidden" id="mapStrength" />
+ <input name="WallDamage" type="hidden" id="WallDamage" />
+ <input name="BuildingDamage" type="hidden" id="BuildingDamage" />
+        </p>
+          <table width="96%"  border="0" cellspacing="0" cellpadding="2">
+            <tr>
+              <td><span class="style15">
+<input name="xfld_damage1" type="checkbox" id="xfld_damage1" onclick="collect()" value="_none"/>
+Kein Schaden</span></td>
+              <td width="39%" valign="top"><span class="style15">
+<input name="xfld_damage2" type="checkbox" id="xfld_damage2" onclick="collect()" value="_crackmin"/>
+Haarrisse in W&auml;nden</span></td>
+              <td width="27%" valign="top"><span class="style15">
+                <input name="xfld_damage3" type="checkbox" id="xfld_damage3" onclick="collect()" value="_crackwallfew"/>
+Einige Risse in W&auml;nden</span></td>
+            </tr>
+            <tr>
+              <td height="16"><span class="style15">
+                <input name="xfld_damage4" type="checkbox" id="xfld_damage4" onclick="collect()" value="_crackwallmany"/>
+Viele gro&szlig;e Risse in W&auml;nden</span></td>
+              <td valign="top"><span class="style15">
+                <input name="xfld_damage5" type="checkbox" id="xfld_damage5" onclick="collect()" value="_tilesfell"/>
+                Deckenverkleidung/Lampen heruntergefallen</span></td>
+              <td valign="top"><span class="style15">
+<input name="xfld_damage6" type="checkbox" id="xfld_damage6" onclick="collect()" value="_crackchim"/>
+Risse in Rauchf&auml;ngen </span></td>
+            </tr>
+            <tr>
+              <td height="16"><span class="style15">
+                <input name="xfld_damage7" type="checkbox" id="xfld_damage7" onclick="collect()" value="_crackwindows"/>
+1 oder mehr gesprungene Fenstergl&auml;ser</span></td>
+              <td valign="top" nowrap="nowrap" class="style15">                
+			  <input name="xfld_damage8" type="checkbox" id="xfld_damage8" onclick="collect()" value="_brokenwindows"/>              Viele Fenster mit starker Besch&auml;digung</td>
+              <td valign="top" nowrap="nowrap"> <span class="style15">
+                <input name="xfld_damage9" type="checkbox" id="xfld_damage9" onclick="collect()" value="_masonryfell"/>
+              Mauerwerk/-verkleidung abgefallen</span></td>
+            </tr>
+            <tr>
+              <td height="16" nowrap="nowrap"><span class="style15">
+                <input name="xfld_damage10" type="checkbox" id="xfld_damage10" onclick="collect()" value="_majoroldchim"/>
+Ziegelrauchfang besch&auml;digt/gebrochen</span></td>
+              <td valign="top" nowrap="nowrap"><span class="style15">
+<input name="xfld_damage11" type="checkbox" id="xfld_damage11" onclick="collect()" value="_majormodernchim"/>
+Moderner Rauchfang besch&auml;digt/eingebrochen</span></td>
+              <td valign="top" nowrap="NOWRAP"><span class="style15">
+<input name="xfld_damage12" type="checkbox" id="xfld_damage12" onclick="collect()" value="_tiltedwall"/>
+W&auml;nde umgefallen oder komplett kollabiert</span></td>
+            </tr>
+            <tr>
+              <td height="16" nowrap="nowrap"><span class="style15">
+                <input name="xfld_damage13" type="checkbox" id="xfld_damage13" onclick="collect()" value="_porch"/>
+Balkone oder andere Anbauten herabgefallen</span> </td>
+              <td valign="top" nowrap="nowrap">
+                <span class="style15">                
+                <input name="xfld_damage14" type="checkbox" id="xfld_damage14" onclick="collect()" value="_move"/>
+Geb&auml;ude &uuml;ber dem Fundament versetzt<br />
+                </span></td>
+              <td valign="top" nowrap="nowrap"><span class="style15">
+                </span></td>
+            </tr>
+          </table>          
+          
+          </td>
+      </tr>
+      <tr>
+        <td height="119" valign="top" bgcolor="#FFFFFF"><p class="style13">Zusatzinformationen:<span class="style28"> &nbsp;(max 400 Zeichen) </span></p>
+          <p>
+            <textarea placeholder="Aufbau des Geb&auml;udes (Ziegel, Stahlbeton, Stein, Holz), andere Sch&auml;den in der Umgebung und zus&auml;tzliche Informationen." cols="140" rows="2" name="comments" id="comments"onchange="this.value=RWS(this.value)" onkeypress="if(event.keyCode==13){return false;}"  
+ onkeyup="AutoGrowTextArea(this)"></textarea>
+</p>
+          <p>
+            <textarea name="FormData" cols="90" rows="25" id="FormData" style="display: none;">MapFileName:T=DYFI Map
+DateTime:T=k00
+Latitude:T=k4 
+Longitude:T=k5 
+Sender:T=k3 
+This DYFI report is a:M:EXERCISE,REAL EVENT=k1
+Exercise ID:M=k26
+Event ID:M=k27
+Estimated numeric intensity(Modified Mercalli Scale):N=k15
+* Estimate of the intensity you reported:T=k12  [This intensity is a Winlink courtesy estimate only. USGS processes your report separately.]
+Comments:T=k25
+Event_DateTime_Local:T=added1
+Event_DateTime_UTC:T=eDateTime  
+Submit_DateTime_UTC:T=subutc
+
+</textarea>
+            <textarea name="attached_text"  cols="140" rows="3" id="attached_text" style="display: none;"></textarea>
+   
+          </td>
+      </tr>
+    </table>
+  </div></td>
+</tr>
+<tr>
+  <td #FFFFFF bgcolor="#fde8e8" style="vertical-align: top; "><p class="style12"><strong style="font-weight: bold; text-align: center;">Optional</strong></p>
+    <p class="style13">Hier kannst du weitere Fragen zum "Erdbebenfr&uuml;hwarnsystem" (Earthquake Early Warning = EEW) bzw deiner Reaktion beim aktuellen Erdbeben beantworten.</p>
+    <p class="style13"><span style="font-weight: normal; font-style: oblique; text-align: left; color: #F80509;">Erinnerung: jeglicher Amateurfunkverkehr ist offen und &ouml;ffentlich. </span></p>
+    <p class="style15"><span class="style13">&nbsp;&nbsp;&nbsp;<a href="javascript:toggleRows('optional','toggleRows');">Klicken, f&uuml;r weitere Fragen</a></span></p></td>
+</tr>
+<tr>
+  <td valign="top" class="toggle" style="text-align: left"><p class="style13">Hast du oder jemand in deiner N&auml;he eine Erdbebenwarnung erhalten?
+    <input name="sup_initial" type="hidden" id="sup_initial"style="outline: none !important;
+    border:1px solid red;" />
+  </p>
+    <table width="77%"  border="0" cellspacing="0" cellpadding="0">
+      <tr>
+        <td width="2%" valign="top">&nbsp;</td>
+        <td width="20%" valign="top" class="style15"><span class="style11">
+          <input name="xsup_initial" type="radio"onclick="document.getElementById('sup_initial').value = ''" />
+          Keine Angabe</span></td>
+        <td width="12%" valign="top" class="style15"><span class="style111">
+          <input name="xsup_initial" type="radio" value="yes"onclick="document.getElementById('sup_initial').value = this.value" />
+          JA</span></td>
+        <td width="54%" valign="top" class="style15"><span class="style111">
+          <input name="xsup_initial" type="radio" value="sup_no_expected"onclick="document.getElementById('sup_initial').value = this.value" />
+          Keine Warnung erhalten, sollte sie aber empfangen</span></td>
+        <td width="12%" valign="top" nowrap="nowrap" class="style15"><span class="style111">
+          <input name="xsup_initial" type="radio" value="no"onclick="document.getElementById('sup_initial').value = this.value" />
+          NEIN</span></td>
+        </tr>
+      </table></td>
+</tr>
+<tr>
+  <td valign="top" bgcolor="#F8F8FF" class="toggle" style="text-align: left"><p class="style13">Hast du eine Warnung vor, w&auml;hrend oder nach dem Beben erhalten?
+    <input name="sup_whenReceived" type="hidden" id="sup_whenReceived"style="outline: none !important;
+    border:1px solid red;" />
+  </p>
+    <table width="77%"  border="0" cellspacing="0" cellpadding="0">
+      <tr>
+        <td width="3%">&nbsp;</td>
+        <td width="33%" class="style15"><span class="style11">
+          <input name="xsup_whenReceived" type="radio"onclick="document.getElementById('sup_whenReceived').value = ''" />
+          Keine Angabe</span></td>
+        <td width="33%" class="style15"><span class="style11">
+          <input name="xsup_whenReceived" type="radio" value="sup_before"onclick="document.getElementById('sup_whenReceived').value = this.value" />
+          Vorher</span></td>
+        <td width="31%" class="style15"><span class="style11">
+          <input name="xsup_whenReceived" type="radio" value="sup_during"onclick="document.getElementById('sup_whenReceived').value = this.value" />
+          W&auml;hrenddessen</span></td>
+        <td width="31%" nowrap="nowrap" class="style15"><span class="style11">
+          <input name="xsup_whenReceived" type="radio" value="sup_after"onclick="document.getElementById('sup_whenReceived').value = this.value" />
+          Danach</span></td>
+      </tr>
+    </table></td>
+</tr>
+<tr>
+  <td class="toggle" style="text-align: left"><p class="style13">Hast du eine Warnung vor, w&auml;hrend oder nach dem Beben erhalten?
+    <input name="sup_howLongBeforeFelt" type="hidden" id="sup_howLongBeforeFelt"style="outline: none !important;
+    border:1px solid red;" />
+  </p>
+    <table width="77%"  border="0" cellspacing="0" cellpadding="0">
+      <tr>
+        <td width="3%">&nbsp;</td>
+        <td width="33%" class="style15"><span class="style11">
+          <input name="xsup_howLongBeforeFelt" type="radio"onclick="document.getElementById('sup_howLongBeforeFelt').value = ''" />
+          Keine Angabe</span></td>
+        <td width="33%" class="style15"><span class="style11">
+          <input name="xsup_howLongBeforeFelt" type="radio" value="sup_before_1"onclick="document.getElementById('sup_howLongBeforeFelt').value = this.value" />
+          1-5 Sekunden</span></td>
+        <td width="31%" class="style15"><span class="style11">
+          <input name="xsup_howLongBeforeFelt" type="radio" value="sup_before_6"onclick="document.getElementById('sup_howLongBeforeFelt').value = this.value" />
+          6-10 Sekunden</span></td>
+        <td width="31%" nowrap="nowrap" class="style15"><span class="style11">
+          <input name="xsup_howLongBeforeFelt" type="radio" value="sup_before_11"onclick="document.getElementById('sup_howLongBeforeFelt').value = this.value" />
+          11-15 Sekunden</span></td>
+      </tr>
+      <tr>
+        <td>&nbsp;</td>
+        <td colspan="4" class="style15"><span class="style11">
+          <input name="xsup_howLongBeforeFelt" type="radio" value="sup_other" onclick="document.getElementById('sup_howLongBeforeFelt').value = this.value" />
+Andere</span> <span class="style11"></span>:
+          <span class="style13">
+          <input placeholder="Wenn l&auml;nger als 15 Sek, gib bitte die gesch&auml;tzte Verz&ouml;gerung an" name="sup_howLongBeforeFeltOther" type="text" id="sup_howLongBeforeFeltOther" size="80" maxlength="70" />
+          </span></td>
+        </tr>
+    </table></td>
+</tr>
+<tr>
+  <td bgcolor="#F8F8FF" class="toggle"style="text-align: left"><p class="style13">Wo warst du, als du die Warnung erhalten hast?
+    <input name="sup_whereReceived" type="hidden" id="sup_whereReceived"style="outline: none !important;
+    border:1px solid red;" />
+  </p>
+    <table width="94%"  border="0" cellspacing="0" cellpadding="0">
+      <tr>
+        <td width="2%">&nbsp;</td>
+        <td width="21%" class="style11"><span class="style11">
+          <input name="xsup_whereReceived" type="radio"onclick="document.getElementById('sup_whereReceived').value = ''" />
+          Keine Angabe</span></td>
+        <td width="34%" class="style11"><span class="style11">
+          <input name="xsup_whereReceived" type="radio" value="sup_homeInside"onclick="document.getElementById('sup_whereReceived').value = this.value" />
+          Zuhause, im Geb&auml;ude</span></td>
+        <td width="25%" class="style11xsup_whereReceived><span class="style11">
+          <input name="xsup_whereReceived" type="radio" value="sup_homeOutside"onclick="document.getElementById('sup_whereReceived').value = this.value" />
+          <span style="font-size: 13px">          Zuhause, im Au&szlig;enbereich</span></span></td>
+        <td width="18%" nowrap="nowrap" class="style11"><span class="style11">
+          <input name="xsup_whereReceived" type="radio" value="sup_workSchool"onclick="document.getElementById('sup_whereReceived').value = this.value" />
+          In der Arbeit/Schule</span></td>
+      </tr>
+      <tr>
+        <td>&nbsp;</td>
+        <td valign="top" class="style11"><span class="style11">
+          <input name="xsup_whereReceived" type="radio" value="sup_movingVeh"onclick="document.getElementById('sup_whereReceived').value = this.value" />
+          In fahrendem Fahrzeug</span></td>
+        <td valign="top" class="style11"><span class="style11">
+          <input name="xsup_whereReceived" type="radio" value="sup_publicPlace"onclick="document.getElementById('sup_whereReceived').value = this.value" />
+          In der &Ouml;ffentlichkeit (Einkaufszentrum, Park, Spital) </span></td>
+        <td valign="top" class="style11"><span class="style11">
+          <input name="xsup_whereReceived" type="radio" value="sup_publicTransit"onclick="document.getElementById('sup_whereReceived').value = this.value" />
+          In einem &ouml;ffentlichen Verkehrsmittel (Zug, Bahn, Bus, U-Bahn)</span></td>
+        <td valign="top" nowrap="nowrap" class="style11">&nbsp;</td>
+      </tr>
+      <tr>
+        <td>&nbsp;</td>
+        <td colspan="4" valign="top" class="style11"><span class="style11">
+          <input name="xsup_whereReceived" type="radio" value="sup_other" onclick="document.getElementById('sup_whereReceived').value = this.value" />
+          Andere</span>
+          <input placeholder="Beschreibe bitte" name="sup_whereReceivedOther" type="text" id="sup_whereReceivedOther" size="80" maxlength="70" /></td>
+      </tr>
+    </table></td>
+</tr>
+<tr>
+  <td class="toggle"style="text-align: left"><p class="style13">Warst du alleine, als du die Warnung erhalten hast?
+    <input name="sup_aloneOrOthers" type="hidden" id="sup_aloneOrOthers"style="outline: none !important;
+    border:1px solid red;" />
+  </p>
+    <table width="786"  border="0" cellpadding="0" cellspacing="0">
+      <tr>
+        <td>&nbsp;</td>
+        <td class="style11"><span class="style11">
+          <input name="xsup_aloneOrOthers" type="radio"onclick="document.getElementById('xsup_aloneOrOthers').value = ''" />
+          Keine Angabe</span></td>
+        <td class="style11"><span class="style11">
+          <input name="xsup_aloneOrOthers" type="radio" value="sup_alone"onclick="document.getElementById('sup_aloneOrOthers').value = this.value" />
+          Alleine</span></td>
+        <td class="style11"><span class="style11">
+          <input name="xsup_aloneOrOthers" type="radio" value="sup_adult"onclick="document.getElementById('sup_aloneOrOthers').value = this.value" />
+          Mit anderen Erwachsenen</span></td>
+        <td nowrap="nowrap" class="style11"><span class="style11">
+          <input name="xsup_aloneOrOthers" type="radio" value="sup_small"onclick="document.getElementById('sup_aloneOrOthers').value = this.value" />
+          Mit Kleinkind(ern)</span></td>
+      </tr>
+      <tr>
+        <td>&nbsp;</td>
+        <td colspan="2" class="style11"><span class="style11">
+          <input name="xsup_aloneOrOthers" type="radio" value="sup_adultdependent"onclick="document.getElementById('sup_aloneOrOthers').value = this.value" />
+          Mit anderen Erwachsenen und deren Kindern</span></td>
+        <td colspan="2" class="style11"><span class="style11">
+          <input name="xsup_aloneOrOthers" type="radio" value="sup_special"onclick="document.getElementById('sup_aloneOrOthers').value = this.value" />
+          Mit Personen mit besonderen Bed&uuml;rfnissen (&Auml;ltere, Gebrechliche, Blinde, etc.)</span></td>
+      </tr>
+    </table></td>
+</tr>
+<tr>
+  <td bgcolor="#F8F8FF" class="toggle"style="text-align: left"><p class="style13">Anhand der gegenw&auml;rtigen Situation, wie sch&auml;tzt du die N&uuml;tzlichkeit des Fr&uuml;hwarnsystems ein?
+    <input name="sup_alertUsefulness" type="hidden" id="sup_alertUsefulness"style="outline: none !important;
+    border:1px solid red;" />
+  </p>
+    <table width="85%"  border="0" cellspacing="0" cellpadding="0">
+      <tr>
+        <td width="3%">&nbsp;</td>
+        <td width="33%" class="style11"><span class="style11">
+          <input name="xsup_alertUsefulness" type="radio"onclick="document.getElementById('sup_alertUsefulness').value = ''" />
+          Keine Angabe</span></td>
+        <td width="33%" class="style11"><span class="style11">
+          <input name="xsup_alertUsefulness" type="radio" value="sup_useful_5"onclick="document.getElementById('sup_alertUsefulness').value = this.value" />
+          Sehr n&uuml;tzlich</span></td>
+        <td width="31%" class="style11"><span class="style11">
+          <input name="xsup_alertUsefulness" type="radio" value="sup_useful_4"onclick="document.getElementById('sup_alertUsefulness').value = this.value" />
+          Brauchbar</span></td>
+        <td width="31%" nowrap="nowrap" class="style11"><span class="style11">
+          <input name="xsup_alertUsefulness" type="radio" value="sup_useful_3"onclick="document.getElementById('sup_alertUsefulness').value = this.value" />
+          Neutral</span></td>
+      </tr>
+      <tr>
+        <td>&nbsp;</td>
+        <td class="style11"><span class="style11">
+          <input name="xsup_alertUsefulness" type="radio" value="sup_useful_2"onclick="document.getElementById('sup_alertUsefulness').value = this.value" />
+          Nicht n&uuml;tzlich</span></td>
+        <td class="style11"><span class="style11">
+          <input name="xsup_alertUsefulness" type="radio" value="sup_useful_1"onclick="document.getElementById('sup_alertUsefulness').value = this.value" />
+          Unbrauchbar</span></td>
+        <td class="style11">&nbsp;</td>
+        <td nowrap="nowrap" class="style11">&nbsp;</td>
+      </tr>
+    </table></td>
+</tr>
+<tr>
+  <td bgcolor="#FFFFFF" class="toggle"style="text-align: left"><p class="style13">Wie hast du dich in der Zeit zwischen dem Erhalt der Warnung und dem Beben verhalten? (W&auml;hle das aus, was am besten passt)
+    <input name="sup_actionTake" type="hidden" id="sup_actionTake"style="outline: none !important;
+    border:1px solid red;" />
+  </p>
+    <table  border="0" cellspacing="0" cellpadding="0">
+      <tr>
+        <td width="7" >&nbsp;</td>
+        <td width="267" valign="top" class="style11"><input name="xsup_actionTake" type="radio"onclick="document.getElementById('sup_actionTake').value = ''" />
+          Keine Angabe</td>
+        <td width="353" valign="top" class="style11"><input name="xsup_actionTake" type="radio" value="sup_noAction"onclick="document.getElementById('sup_actionTake').value = this.value" />
+          Keine Aktion gesetzt, Zeitraum war zu kurz
+          </p></td>
+        <td width="285" valign="top" class="style11"><input name="xsup_actionTake" type="radio" value="sup_safe"onclick="document.getElementById('sup_actionTake').value = this.value" />
+          Keine Aktion gesetzt, war bereits in einem sicheren Bereich</td>
+      </tr>
+      <tr>
+        <td height="44">&nbsp;</td>
+        <td valign="top" class="style11"><input name="xsup_actionTake" type="radio" value="sup_brace"onclick="document.getElementById('sup_actionTake').value = this.value" />
+          Keine Aktion gesetzt, mich aber mental auf das Eintreffen des Bebens vorbereitet</td>
+        <td valign="top" class="style11"><input name="xsup_actionTake" type="radio" value="sup_move"onclick="document.getElementById('sup_actionTake').value = this.value" />
+          Habe mich von Gefahrenstellen entfernt (Mauerwerk, Fenster, Mauern,...)</td>
+        <td valign="top" class="style11"><input name="xsup_actionTake" type="radio" value="sup_exit"onclick="document.getElementById('sup_actionTake').value = this.value" />
+          Habe das Geb&auml;ude verlassen</td>
+      </tr>
+      <tr>
+        <td>&nbsp;</td>
+        <td valign="top" class="style11"><input name="xsup_actionTake" type="radio" value="sup_stand"onclick="document.getElementById('sup_actionTake').value = this.value" />
+          In T&uuml;rrahmen untergestellt</td>
+        <td valign="top" class="style11"><input name="xsup_actionTake" type="radio" value="sup_drop"onclick="document.getElementById('sup_actionTake').value = this.value" />
+          Geduckt, gesch&uuml;tzt und abgewartet</td>
+        <td valign="top" class="style11"><input name="xsup_actionTake" type="radio" value="sup_act"onclick="document.getElementById('sup_actionTake').value = this.value" />
+          Anderen geholfen (zB Kleinkind, Gebrechliche, Pers. m. bes. Bed&uuml;rfnissen)</td>
+      </tr>
+      <tr>
+        <td>&nbsp;</td>
+        <td valign="top" class="style11"><input name="xsup_actionTake" type="radio" value="sup_pull"onclick="document.getElementById('sup_actionTake').value = this.value" />
+          Fahrzeug(e) angehalten/gestoppt</td>
+        <td valign="top" nowrap="nowrap" class="style11">&nbsp;</td>
+        <td valign="top" class="style11">&nbsp;</td>
+      </tr>
+      <tr>
+        <td>&nbsp;</td>
+        <td colspan="3" valign="top" class="style11"><input name="xsup_actionTake" type="radio" value="sup_other" onclick="document.getElementById('sup_whereReceived').value = this.value" />
+Andere
+  <input placeholder="Beschreibe bitte" name="sup_whereReceivedOther" type="text" id="sup_whereReceivedOther" size="80" maxlength="70" /></td>
+        </tr>
+    </table></td>
+</tr>
+<tr>
+  <td bgcolor="#F8F8FF" class="toggle"style="text-align: left"><p class="style13">Wenn die Zeit f&uuml;r Vorbereitungen zu kurz war, wieviel Zeit w&uuml;rdest du ben&ouml;tigen?
+    <input name="sup_warningNeed" type="hidden" id="sup_warningNeed"style="outline: none !important;
+    border:1px solid red;" />
+  </p>
+    <table width="77%"  border="0" cellspacing="0" cellpadding="0">
+      <tr>
+        <td width="3%">&nbsp;</td>
+        <td width="33%" class="style11"><span class="style11">
+          <input name="xsup_warningNeed" type="radio"onclick="document.getElementById('sup_warningNeed').value = ''" />
+          Keine Angabe</span></td>
+        <td width="33%" class="style11"><span class="style11">
+          <input name="xsup_warningNeed" type="radio" value="sup_warn_60" onclick="document.getElementById('sup_warningNeed').value = this.value" />
+          Mehr als 1 Minute</span></td>
+        <td width="31%" class="style11"><span class="style11">
+          <input name="xsup_warningNeed" type="radio" value="sup_warn_31" onclick="document.getElementById('sup_warningNeed').value = this.value" />
+          31-60 Sekunden</span></td>
+        <td width="31%" nowrap="nowrap" class="style11"><span class="style11">
+          <input name="xsup_warningNeed" type="radio" value="sup_warn_21" onclick="document.getElementById('sup_warningNeed').value = this.value" />
+          21-30 Sekunden</span></td>
+      </tr>
+      <tr>
+        <td>&nbsp;</td>
+        <td class="style11"><span class="style11">
+          <input name="xsup_warningNeed" type="radio" value="sup_warn_11" onclick="document.getElementById('sup_warningNeed').value = this.value" />
+          11-20 Sekunden</span></td>
+        <td class="style11"><span class="style11">
+          <input name="xsup_warningNeed" type="radio" value="sup_warn_6" onclick="document.getElementById('sup_warningNeed').value = this.value" />
+          6-10 Sekunden</span></td>
+        <td class="style11"><span class="style11">
+          <input name="xsup_warningNeed" type="radio" value="sup_warn_3" onclick="document.getElementById('sup_warningNeed').value = this.value" />
+          3-5 Sekunden</span></td>
+        <td nowrap="nowrap" class="style11"><span class="style11">
+          <input name="xsup_warningNeed" type="radio" value="sup_warn_2" onclick="document.getElementById('sup_warningNeed').value = this.value" />
+          2-3 Sekunden</span></td>
+      </tr>
+      <tr>
+        <td>&nbsp;</td>
+        <td class="style11"><span class="style11">
+          <input name="xsup_howLongBeforeFelt" type="radio" value="sup_warn_0" onclick="document.getElementById('sup_warningNeed').value = this.value" />
+          0-2 Sekunden</span></td>
+        <td class="style11"><span class="style11">
+          <input name="xsup_howLongBeforeFelt" type="radio" value="sup_warn_dontknow" onclick="document.getElementById('sup_warningNeed').value = this.value" />
+          Wei&szlig; ich nicht</span></td>
+        <td class="style11">&nbsp;</td>
+        <td nowrap="nowrap" class="style11">&nbsp;</td>
+      </tr>
+    </table></td>
+</tr>
+<tr>
+  <td bgcolor="#FFFFFF" class="toggle"style="text-align: left"><p class="style13">Wie war das erlebte Erdbeben in relation zur erhaltenen Warnung?
+    <input name="sup_expectedShaking" type="hidden" id="sup_expectedShaking"style="outline: none !important;
+    border:1px solid red;" />
+  </p>
+    <table width="90%"  border="0" cellspacing="0" cellpadding="0">
+      <tr>
+        <td width="2%">&nbsp;</td>
+        <td width="19%" class="style11"><span class="style11">
+          <input name="xsup_expectedShaking" type="radio"onclick="document.getElementById('sup_expectedShaking').value = ''" />
+          Keine Angabe</span></td>
+        <td width="29%" nowrap="nowrap" class="style11"><span class="style11">
+          <input name="xsup_expectedShaking" type="radio" value="sup_expect_less"onclick="document.getElementById('sup_expectedShaking').value = this.value" />
+          Schw&auml;cher als vorhergesagt</span></td>
+        <td width="25%" nowrap="nowrap" class="style11"><span class="style11">
+          <input name="xsup_expectedShaking" type="radio" value="sup_expect_same"onclick="document.getElementById('sup_expectedShaking').value = this.value" />
+          Wie es zu erwarten war</span></td>
+        <td width="25%" nowrap="nowrap" class="style11"><span class="style11">
+          <input name="xsup_expectedShaking" type="radio" value="sup_expect_more"onclick="document.getElementById('sup_expectedShaking').value = this.value" />
+          St&auml;rker als es zu erwarten war</span></td>
+      </tr>
+      <tr>
+        <td>&nbsp;</td>
+        <td colspan="4" class="style11"><span class="style11">
+          <input name="xsup_howLongBeforeFelt" type="radio" value="sup_expect_notfelt" onclick="document.getElementById('sup_expectedShaking').value = this.value" />
+        </span><span class="style11"></span>Not felt</td>
+      </tr>
+    </table></td>
+</tr>
+<tr>
+  <td bgcolor="#F8F8FF" class="toggle"style="text-align: left"><p class="style13">Basierend auf der erhaltenen Fr&uuml;hwarnung zum aktuellen Beben w&uuml;nsche ich mir...
+    <input name="sup_preferAlert" type="hidden" id="sup_preferAlert"style="outline: none !important;
+    border:1px solid red;" />
+  </p>
+    <table  border="0" cellspacing="0" cellpadding="0">
+      <tr>
+        <td width="7" height="44" >&nbsp;</td>
+        <td width="267" valign="top" class="style11"><span class="style11">
+          <input name="xsup_preferAlert" type="radio"onclick="document.getElementById('sup_preferAlert').value = ''" />
+          Keine Angabe</span></td>
+        <td width="353" valign="top" class="style11"><input name="xsup_preferAlert" type="radio" value="sup_alertAll"onclick="document.getElementById('sup_preferAlert').value = this.value" />
+          <span class="style11">Warnungen f&uuml;r alle Erdbeben, auch f&uuml;r kaum sp&uuml;rbare
+            </p>
+          </span></td>
+        <td width="285" valign="top" class="style11"><span class="style11">
+          <input name="xsup_preferAlert" type="radio" value="sup_alertDisrupt"onclick="document.getElementById('sup_preferAlert').value = this.value" />
+          Warnungen f&uuml;r alle Erdbeben, welche allgemeine T&auml;tigkeiten beeintr&auml;chtigen aber keine Sch&auml;den verursachen</span></td>
+      </tr>
+      <tr>
+        <td height="44">&nbsp;</td>
+        <td valign="top" class="style11"><span class="style11">
+          <input name="xsup_preferAlert" type="radio" value="sup_alertDamage"onclick="document.getElementById('sup_preferAlert').value = this.value" />
+          Warnungen nur f&uuml;r starke Erdbeben, welche Sch&auml;den an Sachen und Leben verursachen</span></td>
+        <td valign="top" class="style11"><span class="style11">
+          <input name="xsup_preferAlert" type="radio" value="sup_alertNone"onclick="document.getElementById('sup_preferAlert').value = this.value" />
+          Garkeine Fr&uuml;hwarnungen f&uuml;r Erdbeben</span></td>
+        <td valign="top" class="style11">&nbsp;</td>
+      </tr>
+    </table></td>
+</tr>
+<tr>
+  <td class="toggle"style="text-align: left"><p class="style13">Wie findest du die erhaltene Fr&uuml;hwarnung:
+    <input name="sup_adequateWarning" type="hidden" id="sup_adequateWarning"style="outline: none !important;
+    border:1px solid red;" />
+  </p>
+    <table  border="0" cellspacing="0" cellpadding="0">
+      <tr>
+        <td width="7" >&nbsp;</td>
+        <td width="267" valign="top" class="style11"><span class="style11">
+          <input name="xsup_adequateWarning" type="radio"onclick="document.getElementById('sup_adequateWarning').value = ''" />
+          Keine Angabe</span></td>
+        <td width="353" valign="top" class="style11"><input name="xsup_adequateWarning" type="radio" value="sup_adequate" onclick="document.getElementById('sup_adequateWarning').value = this.value" />
+          <span class="style11">Angemessen</span></td>
+        <td width="285" valign="top" class="style11"><span class="style11">
+          <input name="xsup_adequateWarning" type="radio" value="sup_magnitude"onclick="document.getElementById('sup_adequateWarning').value = this.value" />
+          Unzureichend, es fehlt die Angabe zur Magnitude</span></td>
+      </tr>
+      <tr>
+        <td height="44">&nbsp;</td>
+        <td valign="top" class="style11"><span class="style11">
+          <input name="xsup_adequateWarning" type="radio" value="sup_map" onclick="document.getElementById('sup_adequateWarning').value = this.value" />
+          Unzureichend, es fehlt eine Kartendarstellung mit Epizentrum und dem eigenen Standort</span></td>
+        <td valign="top" class="style11"><span class="style11">
+          <input name="xsup_adequateWarning" type="radio" value="sup_timeleft" onclick="document.getElementById('sup_adequateWarning').value = this.value" />
+          Unzureichend, es fehlt eine Zeitangabe bis zum eintreffen des Bebens</span></td>
+        <td valign="top" class="style11"><span class="style11">
+          <input name="xsup_adequateWarning" type="radio" value="sup_timer"onclick="document.getElementById('sup_adequateWarning').value = this.value" />
+          Unzureichend, es fehlt ein Countdown bis zum eintreffen des Bebens an meinem Standort</span></td>
+      </tr>
+    </table></td>
+</tr>
+<tr>
+  <td bgcolor="#F8F8FF" class="toggle"style="text-align: left"><p class="style13">Die US Geolocical Survey USGS ver&ouml;ffentlicht nach einem Beben im Rahmen des "ShakeAlert" Informationen zur Magnitude, Standort des Epizentrums, betroffene Regionen und kartografische Daten. Wie w&uuml;rdest du solche Post-Erdbeben-Informationen finden:
+    <input name="sup_postEq" type="hidden" id="sup_postEq"style="outline: none !important;
+    border:1px solid red;" />
+  </p>
+    <table width="90%"  border="0" cellspacing="0" cellpadding="0">
+      <tr>
+        <td width="2%">&nbsp;</td>
+        <td width="19%" class="style11"><span class="style11">
+          <input name="xsup_postEq" type="radio"onclick="document.getElementById('sup_postEq').value = ''" />
+          Keine Angabe</span></td>
+        <td width="29%" nowrap="nowrap" class="style11"><span class="style11">
+          <input name="xsup_postEq" type="radio" value="sup_useful" onclick="document.getElementById('sup_postEq').value = this.value" />
+          N&uuml;tzlich</span></td>
+        <td width="25%" nowrap="nowrap" class="style11"><span class="style11">
+          <input name="xsup_postEq" type="radio" value="sup_notuseful" onclick="document.getElementById('sup_postEq').value = this.value" />
+          Nicht brauchbar</span></td>
+        <td width="25%" nowrap="nowrap" class="style11"><span class="style11">
+          <input name="xsup_postEq" type="radio" value="sup_notreceived" onclick="document.getElementById('sup_postEq').value = this.value" />
+          Ich habe keinen Zugang zu den Informationen</span></td>
+      </tr>
+      <tr>
+        <td>&nbsp;</td>
+        <td colspan="4" class="style11"><span class="style11">
+          <input name="xsup_postEq" type="radio" value="sup_other" onclick="document.getElementById('sup_postEq').value = this.value" />
+          Andere</span>
+          <input placeholder="Beschreibe bitte" name="sup_postEqOther" type="text" id="sup_postEqOther" size="80" maxlength="70" /></td>
+      </tr>
+    </table></td>
+</tr>
+<tr>
+  <td class="toggle"style="text-align: left"><p class="style13">Wie hast du die Warnung erhalten:
+    <input name="sup_alertDelivery" type="hidden" id="sup_alertDelivery"style="outline: none !important;
+    border:1px solid red;" />
+  </p>
+    <table  border="0" cellspacing="0" cellpadding="0">
+      <tr>
+        <td width="10">&nbsp;</td>
+        <td width="266" valign="top" class="style11"><span class="style11">
+          <input name="xsup_alertDelivery" type="radio"onclick="document.getElementById('sup_alertDelivery').value = ''" />
+          Keine Angabe</span></td>
+        <td width="244" valign="top" nowrap="nowrap" class="style11"><span class="style11">
+          <input name="xsup_alertDelivery" type="radio" value="sup_cellphone"onclick="document.getElementById('sup_alertDelivery').value = this.value" />
+          am Smartphone/mobiles Ger&auml;t</span></td>
+        <td width="232" valign="top" nowrap="nowrap" class="style11"><span class="style11"> &nbsp;
+          <input name="xsup_alertDelivery" type="radio" value="sup_others"onclick="document.getElementById('sup_alertDelivery').value = this.value" />
+          durch Personen in der N&auml;he</span></td>
+        <td width="160" valign="top" class="style11"><span class="style11">
+          <input name="xsup_alertDelivery" type="radio" value="sup_emergency" onclick="document.getElementById('sup_alertDelivery').value = this.value" />
+          &uuml;ber TV/Radio</span></td>
+      </tr>
+      <tr>
+        <td height="50">&nbsp;</td>
+        <td valign="top" class="style11"><span class="style11">
+          <input name="xsup_alertDelivery" type="radio" value="sup_public"onclick="document.getElementById('sup_alertDelivery').value = this.value" />
+          &ouml;ffentliche Durchsage in der Schule/Arbeitsst&auml;tte</span></td>
+        <td valign="top" class="style11"><span class="style11">
+          <input name="xsup_alertDelivery" type="radio" value="sup_road"onclick="document.getElementById('sup_alertDelivery').value = this.value" />
+          digitales Stra&szlig;enschild</span></td>
+        <td valign="top" class="style11"><span class="style11"> &nbsp;
+          <input name="xsup_alertDelivery" type="radio" value="sup_billboard" onclick="document.getElementById('sup_alertDelivery').value = this.value" />
+          digitale Plakatwand</span></td>
+        <td valign="top" class="style11">&nbsp;</td>
+      </tr>
+      <tr>
+        <td>&nbsp;</td>
+        <td colspan="4" class="style11"><span class="style11">
+          <input name="xsup_alertDelivery" type="radio" value="sup_other" onclick="document.getElementById('sup_alertDelivery').value = this.value" />
+          Andere</span>
+          <input placeholder="Beschreibe bitte" name="sup_alertDeliveryOther" type="text" id="sup_alertDeliveryOther" size="80" maxlength="70" /></td>
+      </tr>
+    </table></td>
+</tr>
+<tr>
+  <td bgcolor="#F8F8FF" class="toggle"style="text-align: left"><p class="style13">Hast du in der Vergangenheit Erdbebensch&auml;den erlitten?
+    <input name="sup_damagePast" type="hidden" id="sup_damagePast"style="outline: none !important;
+    border:1px solid red;" />
+  </p>
+    <table width="88%"  border="0" cellpadding="0" cellspacing="0">
+      <tr>
+        <td width="10">&nbsp;</td>
+        <td width="212" valign="top" class="style11"><span class="style11">
+          <input name="xsup_damagePast" type="radio"onclick="document.getElementById('sup_damagePast').value = ''" />
+          Keine Angabe</span></td>
+        <td width="196" valign="top" nowrap="nowrap" class="style11"><span class="style11">
+          <input name="xsup_damagePast" type="radio" value="yes"onclick="document.getElementById('sup_damagePast').value = this.value" />
+          JA</span></td>
+        <td width="132" valign="top" nowrap="nowrap" class="style11"><span class="style11"> &nbsp;
+          <input name="xsup_damagePast" type="radio" value="no"onclick="document.getElementById('sup_damagePast').value = this.value" />
+          NEIN</span></td>
+        <td width="259" valign="top" class="style11"><span class="style11">
+          <input name="xsup_damagePast" type="radio" value="sup_dontknow" onclick="document.getElementById('sup_damagePast').value = this.value" />
+          Kann mich nicht erinnern</span></td>
+      </tr>
+    </table></td>
+</tr>
+<tr>
+  <td class="toggle"style="text-align: left"><p class="style13">Hast du zum ersten mal eine Erdbebenfr&uuml;hwarnung erhalten?
+    <input name="sup_firstAlert" type="hidden" id="sup_firstAlert"style="outline: none !important;
+    border:1px solid red;" />
+  </p>
+    <table width="88%"  border="0" cellpadding="0" cellspacing="0">
+      <tr>
+        <td width="10">&nbsp;</td>
+        <td width="212" valign="top" class="style11"><span class="style11">
+          <input name="xsup_firstAlert" type="radio"onclick="document.getElementById('sup_firstAlert').value = ''" />
+          Keine Angabe</span></td>
+        <td width="196" valign="top" nowrap="nowrap" class="style11"><span class="style11">
+          <input name="xsup_firstAlert" type="radio" value="yes"onclick="document.getElementById('sup_firstAlert').value = this.value" />
+          JA</span></td>
+        <td width="132" valign="top" nowrap="nowrap" class="style11"><span class="style11"> &nbsp;
+          <input name="xsup_firstAlert" type="radio" value="no"onclick="document.getElementById('sup_firstAlert').value = this.value" />
+          NEIN</span></td>
+        <td width="259" valign="top" class="style11"><span class="style11">
+          <input name="xsup_firstAlert" type="radio" value="sup_dontknow" onclick="document.getElementById('sup_firstAlert').value = this.value" />
+          Kann mich nicht erinnern</span></td>
+      </tr>
+    </table></td>
+</tr>
+<tr>
+  <td bgcolor="#F8F8FF" class="toggle"style="text-align: left"><p class="style13">Ich bin...
+    <input name="sup_whatGender" type="hidden" id="sup_whatGender"style="outline: none !important;
+    border:1px solid red;" />
+  </p>
+    <table width="88%"  border="0" cellpadding="0" cellspacing="0">
+      <tr>
+        <td width="7"  >&nbsp;</td>
+        <td width="267" valign="top" class="style11"><span class="style11">
+          <input name="xsup_whatGender" type="radio"onclick="document.getElementById('sup_whatGender').value = ''" />
+          Unspezifisch</span></td>
+        <td width="353" valign="top" class="style11"><input name="xsup_whatGender" type="radio" value="sup_female" onclick="document.getElementById('sup_whatGender').value = this.value" />
+          <span class="style11">Weiblich</span></td>
+        <td width="285" valign="top" class="style11"><span class="style11">
+          <input name="xsup_whatGender" type="radio" value="sup_male"onclick="document.getElementById('sup_whatGender').value = this.value" />
+          M&auml;nnlich</span></td>
+      </tr>
+      <tr>
+        <td height="22">&nbsp;</td>
+        <td valign="top" class="style11"><span class="style11">
+          <input name="xsup_whatGender" type="radio" value="sup_nonbinary" onclick="document.getElementById('sup_whatGender').value = this.value" />
+          Non-binary</span></td>
+        <td valign="top" class="style11"><span class="style11">
+          <input name="xsup_whatGender" type="radio" value="sup_noanswer" onclick="document.getElementById('sup_whatGender').value = this.value" />
+          Will keine Angabe machen</span></td>
+        <td valign="top" class="style11">&nbsp;</td>
+      </tr>
+      <tr>
+        <td >&nbsp;</td>
+        <td colspan="3" valign="top" class="style11"><span class="style11">
+          <input name="xsup_whatGender" type="radio" value="sup_whatGenderother" onclick="document.getElementById('sup_whatGender').value = this.value" />
+          Andere: <span class="style13">
+          <input placeholder="Platz f&uuml;r deine Identit&auml;t" name="sup_whatGenderOther" type="text" id="sup_whatGenderOther" size="80" maxlength="70" />
+          </span></span></td>
+      </tr>
+    </table></td>
+</tr>
+<tr>
+  <td class="toggle"style="text-align: left"><p class="style13">Ich bin...
+    <input name="sup_ageGroup" type="hidden" id="sup_ageGroup"style="outline: none !important;
+    border:1px solid red;" />
+  </p>
+    <table width="88%"  border="0" cellpadding="0" cellspacing="0">
+    <tr></tr>
+    <tr>
+      <td width="10" >&nbsp;</td>
+      <td valign="top" class="style11"><span class="style11">
+        <input name="xsup_ageGroup" type="radio"onclick="document.getElementById('sup_ageGroup').value = ''" />
+        Keine Angabe</span></td>
+      <td valign="top" nowrap="nowrap" class="style11"><span class="style11">
+        <input name="xsup_ageGroup" type="radio" value="sup_age_under18"onclick="document.getElementById('sup_ageGroup').value = this.value" />
+        Unter 18</span></td>
+      <td width="232" valign="top" nowrap="nowrap" class="style11"><span class="style11"> &nbsp;
+        <input name="xsup_ageGroup" type="radio" value="sup_age_18"onclick="document.getElementById('sup_ageGroup').value = this.value" />
+        18 - 24</span></td>
+      <td valign="top" class="style11"><span class="style11">
+        <input name="xsup_ageGroup" type="radio" value="sup_age_25" onclick="document.getElementById('sup_ageGroup').value = this.value" />
+        25 - 34</span></td>
+    </tr>
+    <tr>
+      <td >&nbsp;</td>
+      <td valign="top" class="style11"><span class="style11">
+        <input name="xsup_ageGroup" type="radio" value="sup_age_35"onclick="document.getElementById('sup_ageGroup').value = this.value" />
+        35 - 44</span></td>
+      <td valign="top" class="style11"><span class="style11">
+        <input name="xsup_ageGroup" type="radio" value="sup_age_45"onclick="document.getElementById('sup_ageGroup').value = this.value" />
+        45 - 54</span></td>
+      <td valign="top" class="style11"><span class="style11"> &nbsp;
+        <input name="xsup_ageGroup" type="radio" value="sup_age_55" onclick="document.getElementById('sup_ageGroup').value = this.value" />
+        55 - 64</span></td>
+      <td valign="top" class="style11"><input name="xsup_ageGroup" type="radio" value="sup_age_65"onclick="document.getElementById('sup_ageGroup').value = this.value" />
+        65 - 74</td>
+    </tr>
+    <tr>
+      <td >&nbsp;</td>
+      <td valign="top" class="style11"><input name="xsup_ageGroup" type="radio" value="sup_age_75"onclick="document.getElementById('sup_ageGroup').value = this.value" />
+75 oder &auml;lter</td>
+      <td >&nbsp;</td>
+      <td valign="top" class="style11">&nbsp;</td>
+      <td valign="top" class="style11">&nbsp;</td>
+    </tr>
+    </table></td>
+</tr>
+<tr>
+  <td bgcolor="#F8F8FF" class="toggle"style="text-align: left"><p class="style13">Welchen Ausbildungsstand hast du?
+    <input name="sup_levelEducation" type="hidden" id="sup_levelEducation"style="outline: none !important;
+    border:1px solid red;" />
+  </p>
+    <table width="88%"  border="0" cellpadding="0" cellspacing="0">
+      <tr></tr>
+      <tr>
+        <td width="10" >&nbsp;</td>
+        <td valign="top" class="style11"><input name="xsup_levelEducation" type="radio"onclick="document.getElementById('sup_levelEducation').value = ''" />
+          Keine Angabe</td>
+        <td valign="top" nowrap="nowrap" class="style11"><input name="xsup_levelEducation" type="radio" value="sup_edu_no"onclick="document.getElementById('sup_levelEducation').value = this.value" />
+          Keine Ausbildung</td>
+        <td width="232" valign="top" nowrap="nowrap" class="style11">&nbsp;
+          <input name="xsup_levelEducation" type="radio" value="sup_edu_elem"onclick="document.getElementById('sup_levelEducation').value = this.value" />
+          Grundschule</td>
+        <td valign="top" class="style11"><input name="xsup_levelEducation" type="radio" value="sup_edu_somehs" onclick="document.getElementById('sup_levelEducation').value = this.value" />
+          Haupt/Realschule, Gymnasium</td>
+      </tr>
+      <tr>
+        <td >&nbsp;</td>
+        <td valign="top" class="style11"><input name="xsup_levelEducation" type="radio" value="sup_edu_hs"onclick="document.getElementById('sup_levelEducation').value = this.value" />
+          Oberstufe, BFS</td>
+        <td valign="top" class="style11"><input name="xsup_levelEducation" type="radio" value="sup_edu_somecol"onclick="document.getElementById('sup_levelEducation').value = this.value" />
+          Abendschule/Kolleg</td>
+        <td valign="top" class="style11">&nbsp;
+          <input name="xsup_levelEducation" type="radio" value="sup_edu_assoc" onclick="document.getElementById('sup_levelEducation').value = this.value" />
+          Kurzstudium ohne Bachelor</td>
+        <td valign="top" class="style11"><input name="xsup_levelEducation" type="radio" value="sup_edu_bachelor"onclick="document.getElementById('sup_levelEducation').value = this.value" />
+          Bachelor o.&auml;.</td>
+      </tr>
+      <tr>
+        <td >&nbsp;</td>
+        <td valign="top" class="style11"><input name="xsup_levelEducation" type="radio" value="sup_edu_grad"onclick="document.getElementById('sup_levelEducation').value = this.value" />
+          Master, PhD, Dr o.&auml;.</td>
+        <td valign="top" class="style11">&nbsp;</td>
+        <td valign="top" class="style11">&nbsp;</td>
+        <td valign="top" class="style11">&nbsp;</td>
+      </tr>
+    </table></td>
+</tr>
+<tr>
+  <td class="toggle"style="text-align: left"><p class="style13">Zus&auml;tzliche Kommentare zur Erdbebenfr&uuml;hwarnung</p>
+    <p><span class="style11">
+      <input placeholder="Beschreibe bitte" name="sup_contact_comments" type="text" id="sup_contact_comments" size="80" maxlength="70" />
+    </span></p></td>
+</tr>
+<tr>
+<td style="height: 35px; text-align: justify; vertical-align: top;" height="54"> <span style="font-family: Calibri;">
+  </span>
+  <table width="100%"  border="0" cellpadding="0" cellspacing="0" bordercolor="#FFFFFF">
+    <tr>
+      <td width="90%"><span style="font-family: Calibri;">
+      </span>&nbsp;<span style="color: rgb(128, 0, 0);"><span style="color: black;"><span class="style13"><span class="style28">
+      <input name="xintensity" type="button" id="intensity" onclick=";if( checkform()){intensity1();}" value=" Fertig " />
+      </span></span></span></span>&nbsp;<span ><span><span style="font-size: 12px;"></span></span></span>&nbsp;
+      <span style="color: rgb(128, 0, 0);"><span style="color: black;"><span class="style13"><span class="style28">
+      </span></span></span></span>&nbsp;<span style="color: rgb(128, 0, 0);"> &nbsp;</span>
+        <input class="BtnFormat2" value="Reset Form " name="ResetForm" style="color: rgb(204, 0, 0);" type="reset" />
+        <span style="color: rgb(128, 0, 0);"> &nbsp; &nbsp;<span style="color: black;"> </span><span style="color: black;">&nbsp;&nbsp;
+        <input name="language" type="hidden" id="language" value="en" />
+        <input name="eventTime" type="hidden" id="eventTime" />
+        <input name="timestamp" type="hidden" id="timestamp" />
+        <input name="user_id" type="hidden" id="user_id" value="{Callsign}" />
+        <input name="user_id_type" type="hidden" id="user_id_type" value="Callsign" />
+ &nbsp;&nbsp;&nbsp;&nbsp;<span class="style13"><span class="style28">
+ <span style="color: rgb(128, 0, 0);"><span style="color: black;">&nbsp;
+ <input name="attached_file" type="hidden" id="attached_file" value="FormData.txt" />
+ <input name="xMapfilename" type="hidden" id="xMapfilename" value="DYFI Map" />
+ </span></span> </span></span></span></span></td>
+      <td width="15%">Ver 11.e deu_V3 &nbsp;Patrick OE1LHP<span style="font-size: 12px;"><span style="font-size: 12px;"><span style="font-size: 12px;"><span style="font-size: 12px;">
+      <span style="font-size: 12px;"><span style="font-size: 12px;"><span style="font-size: 12px;"><span style="font-size: 12px;">
+      <input name="form_version" type="hidden" id="form_version" value="DYFI Winlink form Ver 11.3" />
+      </span></span></span></span> </span></span> </span> </span></td>
+    </tr>
+  </table>
+  <span style="font-family: Calibri;">
+  </span></td>
+</tr>
+</tbody>
+</table>
+<br />
+&nbsp;</td>
+</tr>
+</tbody>
+</table>
+f
+</form>
+</body></html>

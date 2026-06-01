@@ -1,0 +1,137 @@
+Form:ICS201 Incident Briefing.html,ICS201 Incident Briefing viewer.html
+
+To: 
+Subject: ICS 201 - <var Incident_Name>, <var IncidentNumber>
+Readonly:True
+Msg:
+ ICS 201 INCIDENT BRIEFING
+ 
+1. Incident Name
+    <var Incident_Name>
+2. Incident Number:
+    <var IncidentNUmber>	  
+3. Date/Time Initiated:
+      Date:	<var DateFrom>
+      Time:	<var TimeFrom>
+
+   4. Map/Sketch
+
+   <var TMap2>   A JPEG of map/sketch attached
+
+ 5.Situation Summary and Health and Safety Briefing (for briefings or transfer of command): Recognize potential incident Health and Safety Hazards and develop necessary measures (remove hazard, provide personal protective equipment, warn people of the hazard) to protect responders from those hazards.
+  <var HealthBriefing>
+
+6. Prepared by: Name <var Prepedby>    Position/Title: <var Position>    Signature: <var Prepsig>
+
+    Date/Time: <var prepDateTime>
+
+
+
+      ICS 201 Page 1 of 4  
+ 
+
+ICS 201 INCIDENT BRIEFING 
+
+
+7. Current and Planned Objectives:
+  <var Objectives>
+  
+8. Current and Planned Actions, Strategies, and Tactics: 
+
+ TIME	 ACTIONS
+<var ActivityTime1>	<var Activities1>
+<var ActivityTime2>	<var Activities2>
+<var ActivityTime3>	<var Activities3>
+<var ActivityTime4>	<var Activities4>
+<var ActivityTime5>	<var Activities5>
+<var ActivityTime6>	<var Activities6>
+<var ActivityTime7>	<var Activities7>
+<var ActivityTime8>	<var Activities8>
+<var ActivityTime9>	<var Activities9>
+<var ActivityTime10>	<var Activities10>
+<var ActivityTime11>	<var Activities11>
+<var ActivityTime12>	<var Activities12>
+<var ActivityTime13>	<var Activities13>
+<var ActivityTime14>	<var Activities14>
+<var ActivityTime15>	<var Activities15>
+<var ActivityTime16>	<var Activities16>
+<var ActivityTime17>	<var Activities17>
+<var ActivityTime18>	<var Activities18>
+<var ActivityTime19>	<var Activities19>
+<var ActivityTime20>	<var Activities20>
+  
+
+      ICS 201 Page 2 pof 4  
+
+                   ICS 201 INCIDENT BRIEFING
+        
+
+6. Current  Management Team (fill in additional positions as appropriate)
+
+Incident Commander:	<var icA1>
+ 	
+Liaison Officer:	<var A5>
+ 	 
+Safety Officer:	<var A6>
+ 
+Public Information Officer:	<var A7> 
+
+	
+Planning Section Chief:	<var A7A>
+<var A0>
+<var A8>
+<var A9>
+<var A11>
+<var A12> 
+
+Operations Section Chief:	<var A16>
+<var A17> 
+<var A18>
+<var A19a>
+<var A19>
+<var A20>
+
+Finance/Administration Section Chief:	<var A21>
+<var A22>
+<var A23>
+<var A24> 
+<var A25>
+<var A25B>
+
+Logistics Section Chief:	<var A26>
+<var A27>
+<var A28>
+<var A29> 
+<var A30>
+<var A31>
+
+      ICS 201 Page 3 of 4  
+ICS 201 INCIDENT BRIEFING        
+
+10. Summary of Resources Requested and Assigned
+Resource	Resource Identifier	DATE/TIME ORDERED	ETA	Arrived	NOTES	(LOCATION / ASSIGNMENT / STATUS)	
+
+<var Resource1>	<var ResID1>	<var OrderT1>	<var ETA1>	<var Tcbox1>	<var ResNotes1>	
+<var Resource2>	<var ResID2>	<var OrderT2>	<var ETA2>	<var Tcbox2>	<var ResNotes2>	
+<var Resource3>	<var ResID3>	<var OrderT3>	<var ETA3>	<var Tcbox3>	<var ResNotes3>	
+<var Resource4>	<var ResID4>	<var OrderT4>	<var ETA4>	<var Tcbox4>	<var ResNotes4>	
+<var Resource5>	<var ResID5>	<var OrderT5>	<var ETA5>	<var Tcbox5>	<var ResNotes5>	
+<var Resource6>	<var ResID6>	<var OrderT6>	<var ETA6>	<var Tcbox6>	<var ResNotes6>	
+<var Resource7>	<var ResID7>	<var OrderT7>	<var ETA7>	<var Tcbox7>	<var ResNotes7>	
+<var Resource8>	<var ResID8>	<var OrderT8>	<var ETA8>	<var Tcbox8>	<var ResNotes8>	
+<var Resource9>	<var ResID9>	<var OrderT9>	<var ETA9>	<var Tcbox9>	<var ResNotes9>	
+<var Resource10>	<var ResID10>	<var OrderT10>	<var ETA10>	<var Tcbox10>	<var ResNotes10>
+<var Resource11>	<var ResID11>	<var OrderT11>	<var ETA11>	<var Tcbox11>	<var ResNotes11>	
+<var Resource12>	<var ResID12>	<var OrderT12>	<var ETA12>	<var Tcbox12>	<var ResNotes12>
+<var Resource13>	<var ResID13>	<var OrderT13>	<var ETA13>	<var Tcbox13>	<var ResNotes13>
+<var ResNotes14>	<var ResID14>	<var OrderT14>	<var ETA14>	<var Tcbox14>	<var ResNotes14>
+<var Resource15>	<var ResID15>	<var OrderT15>	<var ETA15>	<var Tcbox15>	<var ResNotes15>
+
+ICS 201 Page 4 of 4
+
+ 
+------------------------------------ 
+Express Sending Station: <MsgSender>
+Senders Express Version: <ProgramVersion>
+Senders Template Version: <var Templateversion>
+[No changes or editing of this message are allowed]

@@ -1,0 +1,408 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+<meta content="application/xhtml+xml; charset=utf-8" http-equiv="content-type" />
+<title>ONTARIO IMS205- Initial</title>
+<style type="text/css">
+body, td, th {
+	font-family: Arial, Helvetica, sans-serif;
+	font-size: 12px;
+}
+tr td table {
+}
+.zentriert {
+	font-size: 12px;
+	font-family: Arial, Helvetica, sans-serif;
+}
+input, select {
+	padding: 1px;
+	font-family: Arial, Helvetica, sans-serif;
+	font-size: 12px;
+}
+textarea {
+	margin: 8px;
+	padding: 8px;
+	font-family: Arial, Helvetica, sans-serif;
+	font-size: 12px;
+}
+.rechtsbuendig {
+	font-size: 12px;
+	font-family: Arial, Helvetica, sans-serif;
+}
+.SubmitBtn {
+	font-size: 12px;
+	font-family: Arial, Helvetica, sans-serif;
+}
+.version {
+	margin: 5px;
+	color: #666666;
+	position: relative;
+	left: 0px;
+	top: 1px;
+	font-family: Arial, Helvetica, sans-serif;
+	font-size: 12px;
+}
+#TextHeader {
+	background-color: #dddddd;
+	font-size: 10px;
+	font-family: Arial, Helvetica, sans-serif;
+}
+</style>
+<style>
+/*
+body {color:#000; background:#fff; font:100%/1.5 arial,sans-serif;}
+h2 {margin-top:0}
+*/
+/* Styling applied to classes only */
+/* Pop-up content shifted off-screen when not in view.
+Still readable by screen-reader software.
+When targeted it fills the browser window.
+*/
+.pop-up {
+	position: absolute;
+	top: 0;
+	left: -500em;
+}
+.pop-up:target {
+	position: static;
+	left: 0;
+}
+/* The pop-up itself */
+.popBox {
+	background: #ffffff;
+	/* alternatively fixed width / height and negative margins from 50% */
+	position: absolute;
+	left: 30%;
+	right: 30%;
+	top: 30%;
+	bottom: 30%;
+	z-index: 10;
+	border: 1px solid #3a3a3a;
+	/* CSS3 where available: rounded corners, drop-shadow, and fade in. */
+	border-radius: .25rem;
+	box-shadow: 0 .5rem .5rem rgba(0,0,0,.5);
+	opacity: 0;
+	transition: opacity 0.8s ease-out;
+}
+:target .popBox {
+	position: fixed;
+	opacity: 1;
+}
+/* Light box properties */
+.lightbox {
+	display: none;
+	text-indent: -200em;
+	background-color: rgba(0,0,0,.4);
+	width: 100%;
+	height: 100%;
+	position: fixed;
+	top: 0;
+	left: 0;
+	bottom: 0;
+	right: 0;
+	z-index: 5;
+}
+:target .lightbox {
+	display: block;
+}
+/* The pop-ups close link, moved via CSS to the top right of the pop-up */
+.close:link, .close:visited {
+	position: absolute;
+	top: -0.75em;
+	right: -0.75em;
+	display: block;
+	width: 2em;
+	height: 2em;
+	line-height: 1.8;
+	padding: 0;
+	text-align: center;
+	text-decoration: none;
+	background-color: #000;
+	border: 2px solid #fff;
+	color: #fff;
+	border-radius: 50%;
+	box-shadow: 0 0 .5rem .5rem rba(0, 0, 0, .5);
+}
+.close:before {
+	content: "X";
+}
+.close:hover, .close:active, .close:focus {
+	box-shadow: 0 0 .5rem .5rem rba(255, 0, 0, .5);
+	background-color: #c00;
+	color: #fff;
+}
+.close span {
+	text-indent: -200em;
+	display: block;
+}
+/* The pop-up content div will scroll if it has too much content */
+.popScroll {
+	position: absolute;
+	top: 1rem;
+	left: 1rem;
+	right: 1rem;
+	bottom: 1rem;
+	overflow-y: auto;
+*overflow-y: scroll;
+	padding-right: 0.5em;
+}
+.popScroll h2 {
+	margin-top: 0
+}
+.formtext {
+	font-family: Arial, Helvetica, sans-serif;
+	font-size: 11pt;
+	font-weight: normal;
+}
+.style10 {
+	font-family: Arial, Helvetica, sans-serif;
+	font-size: xx-small;
+}
+.style12 {
+	font-size: 12px;
+	font-family: Arial, Helvetica, sans-serif
+}
+.style14 {
+	font-size: 13px
+}
+</style>
+<script type="text/javascript">
+function TimeNow(Timefld, FocusFld) {
+var txt;
+var d = new Date(),
+thisyear = d.getFullYear();
+thismonth= d.getMonth();
+thismonth = thismonth+1;
+thisday = d.getDate();
+h = (d.getHours()<10?'0':'') + d.getHours()
+m = (d.getMinutes()<10?'0':'') + d.getMinutes()
+s = (d.getSeconds()<10?'0':'') + d.getSeconds();
+var myprompt = thisyear+ '-'+thismonth+'-'+thisday+' '+h + ':' + m ;
+var RightNow = prompt("", myprompt);
+document.getElementById(Timefld).value = RightNow;
+document.getElementById(FocusFld).focus();
+} </script>
+
+<script>
+function AutoGrowTextArea(textField)
+{
+if (textField.clientHeight < textField.scrollHeight)
+{
+textField.style.height = textField.scrollHeight + "px";
+if (textField.clientHeight < textField.scrollHeight)
+{
+textField.style.height = (textField.scrollHeight * 2 - textField.clientHeight) + "px";
+}
+}
+}
+function Countthelines(f) { var text1 = f
+var text2 = text1.replace(/\s+$/,"");
+var split2 = text2.split("\n"); var mytotal = split2.length * 17;
+if (mytotal < 150) {
+mytotal = 150;
+}
+var tstr = mytotal.toString();
+return tstr;
+}
+function newfix(f){
+var ThisText = document.getElementById(f).value;
+var makeit = Countthelines(ThisText);
+document.getElementById(f).style.height = makeit+"px"; }
+function Fixarea() {
+newfix("msg");
+newfix("reply");
+AutoGrowTextArea(document.getElementById("msg"));
+AutoGrowTextArea(document.getElementById("reply"));
+}
+function RWS(str){
+var text2 = str.replace(/\s+$/,"");
+return text2.trim();
+}
+</script>
+</head>
+<body>
+<form  style="font-family: Arial;" pbzloc="3" onsubmit="return confirm('To complete your form submission, click OK and close the open browser window. You will return to the new message window so you can post your message to the outbox');" method="post" id="myform" enctype="multipart/form-data" action="http://{FormServer}:{FormPort}">
+  <table style="height: 557px;" align="center" border="0">
+    <tbody>
+      <tr>
+        <td width="929" pbzloc="17"><table width="892" height="773" border="1" cellpadding="6" cellspacing="0" bordercolor="#999999" style="background-color: rgb(250, 250, 255); width: 900px; height: 533px;" pbzloc="11">
+            <!--DWLayoutTable-->
+            <tbody>
+              <tr valign="top">
+                <td colspan="5" style="vertical-align: top; background-color: rgb(255, 255, 204);"><div align="center"><strong>&nbsp; &nbsp; &nbsp; &nbsp;</strong>&nbsp;<big> <span style="font-weight: bold;">INCIDENT TELECOMMUNICATIONS
+                    PLAN &nbsp; &nbsp; &nbsp; &nbsp;&nbsp; &nbsp; &nbsp;</span><small>(Ontario IMS 205)</small>&nbsp;
+                &nbsp;&nbsp;&nbsp;</big><span style="font-weight: bold;"></span> Ver 1.0</div></td>
+              </tr>
+              <tr>
+                <td width="65%" valign="top" style="vertical-align: top; text-align: justify; height: 45px; width: 30%;">&nbsp;1. Incident Name:&nbsp;
+                  &nbsp;&nbsp;&nbsp;
+                  <p>&nbsp;&nbsp;
+                    {var Incident_Name}
+                  </p>
+                  <p>
+                    <br />
+                  </p></td>
+                <td width="35%" colspan="3" valign="top"><table border="0" cellpadding="2" cellspacing="2" style="width: 416px; height: 87px;">
+                    <!--DWLayoutTable-->
+                    <tbody>
+                      <tr>
+                        <td width="106" rowspan="2" style="width: 28%; vertical-align: top; background-color: #D1CDCD;" nowrap>2. Operational Period:</td>
+                        <td width="108" style="width: 28%;" nowrap>Date From<big>:</big></td>
+                        <td width="70" nowrap><b>
+                          {var DateFrom}
+                          </b></td>
+                        <td width="51" nowrap>Date To:</td>
+                        <td width="49" nowrap><b>
+                          {var DateTo}
+                          </b></td>
+                      </tr>
+                      <tr>
+                        <td nowrap>Time From:</td>
+                        <td nowrap><b>
+                          {var TimeFrom}
+                          </b></td>
+                        <td nowrap>Time To:</td>
+                        <td nowrap><b>
+                          {var TimeTo}
+                          </b></td>
+                      </tr>
+                    </tbody>
+                  </table></td>
+              </tr>
+              <tr>
+                <td colspan="5" style="text-align: left; vertical-align: top;"><div align="left"></div>
+                  <table width="882" height="418" border="1" cellpadding="4" cellspacing="0">
+                    <tr>
+                      <td height="24" colspan="6" style="background-color: #D1CDCD;">3. Basic Contact Information:</td>
+                    </tr>
+                    <tr style="background-color: #D1CDCD;">
+                      <td height="33"><span class="style14">Function</span></td>
+                      <td><span class="style14">Assignment</span></td>
+                      <td><span class="style14">System Type/Cache</span></td>
+                      <td><span class="style14">Channel / Phone / PIN</span></td>
+                      <td><span class="style14">Frequency/Tone</span></td>
+                      <td><span class="style14">Remarks</span></td>
+                    </tr>
+                    <tr>
+                      <td height="33">{var Function1}</td>
+                      <td>{var Assignment1}</td>
+                      <td>{var System1}</td>
+                      <td>{var ChannelPhonePIN1}</td>
+                      <td>{var FrequencyTone1}</td>
+                      <td>{var Remarks1}</td>
+                    </tr>
+                    <tr>
+                      <td height="33">{var Function2}</td>
+                      <td>{var Assignment2}</td>
+                      <td>{var System2}</td>
+                      <td>{var ChannelPhonePIN2}</td>
+                      <td>{var FrequencyTone2}</td>
+                      <td>{var Remarks2}</td>
+                    </tr>
+                    <tr>
+                      <td height="33">{var Function3}</td>
+                      <td>{var Assignment3}</td>
+                      <td>{var System3}</td>
+                      <td>{var ChannelPhonePIN3}</td>
+                      <td>{var FrequencyTone3}</td>
+                      <td>{var Remarks3}</td>
+                    </tr>
+                    <tr>
+                      <td height="33">{var Function4}</td>
+                      <td>{var Assignment4}</td>
+                      <td>{var System4}</td>
+                      <td>{var ChannelPhonePIN4}</td>
+                      <td>{var FrequencyTone4}</td>
+                      <td>{var Remarks4}</td>
+                    </tr>
+                    <tr>
+                      <td height="33">{var Function5}</td>
+                      <td>{var Assignment5}</td>
+                      <td>{var System5}</td>
+                      <td>{var ChannelPhonePIN5}</td>
+                      <td>{var FrequencyTone5}</td>
+                      <td>{var Remarks5}</td>
+                    </tr>
+                    <tr>
+                      <td height="33">{var Function6}</td>
+                      <td>{var Assignment6}</td>
+                      <td>{var System6}</td>
+                      <td>{var ChannelPhonePIN6}</td>
+                      <td>{var FrequencyTone6}</td>
+                      <td>{var Remarks6}</td>
+                    </tr>
+                    <tr>
+                      <td height="33">{var Function7}</td>
+                      <td>{var Assignment7}</td>
+                      <td>{var System7}</td>
+                      <td>{var ChannelPhonePIN7}</td>
+                      <td>{var FrequencyTone7}</td>
+                      <td>{var Remarks7}</td>
+                    </tr>
+                    <tr>
+                      <td height="33">{var Function8}</td>
+                      <td>{var Assignment8}</td>
+                      <td>{var System8}</td>
+                      <td>{var ChannelPhonePIN8}</td>
+                      <td>{var FrequencyTone8}</td>
+                      <td>{var Remarks8}</td>
+                    </tr>
+                    <tr>
+                      <td height="33">{var Function9}</td>
+                      <td>{var Assignment9}</td>
+                      <td>{var System9}</td>
+                      <td>{var ChannelPhonePIN9}</td>
+                      <td>{var FrequencyTone9}</td>
+                      <td>{var Remarks9}</td>
+                    </tr>
+                    <tr>
+                      <td height="33">{var Function10}</td>
+                      <td>{var Assignment10}</td>
+                      <td>{var System10}</td>
+                      <td>{var ChannelPhonePIN10}</td>
+                      <td>{var FrequencyTone10}</td>
+                      <td>{var Remarks10}</td>
+                    </tr>
+                  </table></td>
+              </tr>
+              <tr>
+                <td colspan="5" style="text-align: left; vertical-align: top; background-color: #D1CDCD;">4. Special Instructions:</td>
+              </tr>
+              <tr>
+                <td colspan="5" style="text-align: left; vertical-align: top;">{var SpecialInstructions}</textarea></td>
+              </tr>
+              <tr>
+                <td colspan="5" style="text-align: left; vertical-align: top; background-color: #D1CDCD;">5. Prepared By (Telecommunications Unit Leader):</td>
+              </tr>
+              <tr>
+                <td colspan="5" style="text-align: left; vertical-align: top;"><table width="882" border="1" cellpadding="4" cellspacing="0">
+                    <tbody>
+                      <tr>
+                        <td width="70">Name:</td>
+                        <td width="174">{var PreparedBy}</td>
+                        <td width="121">Position/Title:</td>
+                        <td width="188">{var PositionTitle}</td>
+                        <td width="57">Signature</td>
+                        <td width="210">{var Signature}</td>
+                      </tr>
+                      <tr>
+                        <td>IAP Page:</td>
+                        <td>{var IAPPage}</td>
+                        <td>Date/Time:</td>
+                        <td colspan="3">{var ActivityDateTime}</td>
+                      </tr>
+                    </tbody>
+                  </table></td>
+              </tr>
+              <tr>
+                <td colspan="5" style="text-align: left; vertical-align: top;"><!--DWLayoutEmptyCell-->&nbsp;</td>
+              </tr>
+            </tbody>
+          </table>
+        <br /></td>
+      </tr>
+    </tbody>
+  </table>
+</form>
+</body>
+</html>

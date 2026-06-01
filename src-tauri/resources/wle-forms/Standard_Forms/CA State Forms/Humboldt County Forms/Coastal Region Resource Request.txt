@@ -1,0 +1,54 @@
+Form: Coastal Region Resource Request.html,Coastal Region Resource Request viewer.html
+
+
+Subj: Coastal Region Resource- <var Incidentname>, <var RDateTime>
+Msg: 
+COASTAL REGION RESOURCE REQUEST
+
+REQUESTING JURISDICTION INFORMATION
+Incident Name: <var Incidentname>  	Request Date/Time: <var RDateTime> 
+
+Priority
+When do you need this request fulfilled?   [<var Priorityval>]
+
+Justification
+Does the county or local jurisdiction have the ability to contract for these resources?   [<var AbilitytoContractval>]
+Have you exhausted all mutual aid options in the surrounding counties?  [<var exhaustedmutualval>]
+Additional justification for the requested resource(s)
+<var Justification>
+
+Requesting Jurisdiction
+Requesting Jurisdiction Name: <var ReqJuridiciton> 
+
+Operational Area: <var OPerationalArea>
+Requested Resources
+ Resource Name	 Quantity Requested (ea)	 Detailed Resource Description 	 Is an operator needed?
+<var Resouce1>	<var Quanity1>	<var detailedDec1>	[<var OperNeed1val>]
+<var Resouce2>	<var Quanity2>	<var detailedDec2>	[<var OperNeed2val>]
+<var Resouce3>	<var Quanity3>	<var detailedDec3>	[<var OperNeed3val>]
+
+Request Summary:
+<var RequestSummary>
+
+Actions taken on this request so far:
+<var ActionsTaken>
+
+Requester Information
+Requester First & Last Name: <var ReqFirstLastName>                Requester Email: <var ReqFemail>  
+Requester Phone: <var ReqPhone>                  Requester Title: <var ReqTitle>
+
+Delivery Information
+Recipient First & Last Name: <var DeliveryName>
+Delivery Recipient Email: <var DeliveryEmail>
+Delivery Recipient Phone: <var DEliveryPhone>	
+Delivery Recipient Title: <var DeliveryTitle>  
+Delivery Recipient Entity Name: <var DeliveryEntityname>
+
+Delivery Location:
+<var DEliveryLocation>
+Delivery Notes:
+<var DEliveryNOtes>
+_____________________________________________________________________
+Express Sending Station: <MsgSender>
+Senders Express Version: <ProgramVersion>
+Senders Template Version: <var Templateversion>

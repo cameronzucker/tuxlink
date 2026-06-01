@@ -1,0 +1,51 @@
+Form: ICS215A_Incident-Safety Analysis_Initial.html,ICS215A_Incident-Safety Analysis_viewer.html
+
+To: 
+Subject: ICS 215A INCIDENT ACTION SAFETY ANALYSIS-<var IncidentName>, <var Formdatetime> 
+Readonly:True
+Msg: ICS 215A INCIDENT ACTION SAFETY ANALYSIS
+<var Title>
+
+1. Incident Name:	<var IncidentName> 
+
+2. Incident Number:	<var IncidentNumber> 
+
+3. Date/ Time Prepared: 
+	Date:	<var PreparedDate> 
+	Time:	<var PreparedTime> 
+
+4. Operational Period:
+	Date From:	<var DateFrom>	Date To:	<var DateTo> 
+	Time From:	<var TimeFrom>	Time To:	<var TimeTo> 
+     
+5. Incident Area	6. Hazards/Risks	7. Mitigations 
+---
+<var area1>	<var hazard1>	<var Mitigtion1>
+<var area2>	<var hazard2>	<var Mitigtion2>
+<var area3>	<var hazard3>	<var Mitigtion3>
+<var area4>	<var hazard4>	<var Mitigtion4>
+<var area5>	<var hazard5>	<var Mitigtion5>
+<var area6>	<var hazard6>	<var Mitigtion6>
+<var area7>	<var hazard7>	<var Mitigtion7>
+<var area8>	<var hazard8>	<var Mitigtion8>
+<var area9>	<var hazard9>	<var Mitigtion9>
+<var area10>	<var hazard10>	<var Mitigtion10>
+<var area11>	<var hazard11>	<var Mitigtion11>
+<var area12>	<var hazard12>	<var Mitigtion12>
+<var area13>	<var hazard13>	<var Mitigtion13>
+<var area14>	<var hazard14>	<var Mitigtion14>
+<var area15>	<var hazard15>	<var Mitigtion15>
+------------
+8. Prepared by (Safety Officer): Name	<var Prepedby>	Signature:	<var Prepsig> 
+Prepared by (Operations Section Chief):	Name <var Prepedbychief>	Signature:	<var OpsChiefpsig> 
+
+Date/Time: <var Formdatetime> 
+------------------------
+Express Sending Station:	<MsgSender>
+Senders Express Version:	<ProgramVersion>
+Senders Template Version:	<var Templateversion>
+[No changes or editing of this message are allowed]
+
+
+
+
