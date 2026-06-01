@@ -485,7 +485,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 
 **Context:** Pjih's `config_set_grid` updates `cfg.identity.grid` but does NOT persist `cfg.privacy.position_source = Manual`. The position-subsystem restoration restores the persistence per spec §3.1 + Codex P1 #3.
 
-- [ ] **Step 1: Write the failing test.**
+- [x] **Step 1: Write the failing test.**
 
 In `src-tauri/src/ui_commands.rs`'s `mod tests`, DELETE any pjih-era test asserting `set_manual` does not pin source (e.g. `arbiter_set_manual_updates_grid_without_changing_stored_source`). ADD:
 
@@ -522,7 +522,7 @@ In `src-tauri/src/ui_commands.rs`'s `mod tests`, DELETE any pjih-era test assert
 
 Same pattern as Task 3: if `config_set_grid_impl` doesn't exist, factor it from the Tauri command.
 
-- [ ] **Step 2: Run the test to verify it fails.**
+- [x] **Step 2: Run the test to verify it fails.**
 
 ```bash
 cargo test --manifest-path src-tauri/Cargo.toml --lib \
@@ -531,7 +531,7 @@ cargo test --manifest-path src-tauri/Cargo.toml --lib \
 
 Expected: FAIL. Either compilation error (no helper), OR the `cfg.privacy.position_source` assertion fails (pjih leaves it at Gps).
 
-- [ ] **Step 3: Restore the persistence in `config_set_grid`.**
+- [x] **Step 3: Restore the persistence in `config_set_grid`.**
 
 In `src-tauri/src/ui_commands.rs`'s `config_set_grid`, find the body. Add one line after `cfg.identity.grid = Some(g.clone());`:
 
@@ -559,7 +559,7 @@ Ok(())
 
 Also RESTORE the pre-pjih `arbiter_set_manual_pins_manual_source` test if it was deleted in Task 1 — paste it from spec §6.1 (the existing test in spec §6.1's "Restore" list).
 
-- [ ] **Step 4: Run the test to verify it passes.**
+- [x] **Step 4: Run the test to verify it passes.**
 
 ```bash
 cargo test --manifest-path src-tauri/Cargo.toml --lib \
@@ -568,7 +568,7 @@ cargo test --manifest-path src-tauri/Cargo.toml --lib \
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit.**
+- [x] **Step 5: Commit.**
 
 ```bash
 git add src-tauri/src/ui_commands.rs
