@@ -188,7 +188,7 @@ export function ArdopRadioPanel({ onClose }: ArdopRadioPanelProps) {
   const [disconnecting, setDisconnecting] = useState(false);
   const [exchanging, setExchanging] = useState(false);
 
-  const logEntries = useSessionLog();
+  const { entries: logEntries, clear: clearLog } = useSessionLog();
 
   // Rolling 60-sample buffers (1 Hz tick) for the S/N + throughput
   // sparklines. The hook reads the latest reading out of a ref every
@@ -433,7 +433,7 @@ Up     ${fmtUptime(status.uptimeSec)}`}
         snrCurrent={status.snDb}
       />
 
-      <SessionLogSection entries={logEntries} />
+      <SessionLogSection entries={logEntries} onClear={clearLog} />
 
       <section className="radio-panel-sec radio-panel-act">
         {isStopped && (

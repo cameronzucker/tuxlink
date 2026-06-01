@@ -55,7 +55,7 @@ export function PacketRadioPanel({ intent, baseCall, onClose }: PacketRadioPanel
   // live `armed` state above. Synced from config on load + persisted via
   // packet_set_listen. Restored 2026-05-31 from legacy PacketConnectionPanel.
   const [listenDefault, setListenDefault] = useState<boolean>(true);
-  const logEntries = useSessionLog();
+  const { entries: logEntries, clear: clearLog } = useSessionLog();
 
   // Load packet config on mount. If packet_config_get rejects (pre-wizard)
   // we leave config=null and the panel renders with fallback defaults; any
@@ -317,7 +317,7 @@ export function PacketRadioPanel({ intent, baseCall, onClose }: PacketRadioPanel
         </button>
       </section>
 
-      <SessionLogSection entries={logEntries} />
+      <SessionLogSection entries={logEntries} onClear={clearLog} />
     </RadioPanel>
   );
 }

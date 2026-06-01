@@ -1,6 +1,6 @@
 // src/radio/sections/SessionLogSection.test.tsx
-import { describe, it, expect } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { describe, it, expect, vi } from 'vitest';
+import { render, screen, within, fireEvent } from '@testing-library/react';
 import { SessionLogSection, type SessionLogEntry } from './SessionLogSection';
 
 const FIXTURE: SessionLogEntry[] = [
@@ -45,5 +45,26 @@ describe('<SessionLogSection>', () => {
     ];
     render(<SessionLogSection entries={withRaw} />);
     expect(screen.queryByText('[B2F] FQ')).not.toBeInTheDocument();
+  });
+
+  // Operator smoke 2026-05-31: Clear button alongside Copy. Local-only reset;
+  // does NOT touch the backend snapshot buffer.
+  describe('Clear control', () => {
+    it('does NOT render a Clear button when onClear is omitted', () => {
+      render(<SessionLogSection entries={FIXTURE} />);
+      expect(screen.queryByTestId('log-clear-btn')).toBeNull();
+    });
+
+    it('renders a Clear button when onClear is provided', () => {
+      render(<SessionLogSection entries={FIXTURE} onClear={() => {}} />);
+      expect(screen.getByTestId('log-clear-btn')).toBeInTheDocument();
+    });
+
+    it('fires onClear when the Clear button is clicked', () => {
+      const onClear = vi.fn();
+      render(<SessionLogSection entries={FIXTURE} onClear={onClear} />);
+      fireEvent.click(screen.getByTestId('log-clear-btn'));
+      expect(onClear).toHaveBeenCalledTimes(1);
+    });
   });
 });

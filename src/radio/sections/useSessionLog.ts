@@ -13,7 +13,7 @@
 // in TelnetRadioPanel. Same pattern reused by Packet (P3) and ARDOP
 // (P4) per spec §4.3.
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { listen } from '@tauri-apps/api/event';
 import { invoke } from '@tauri-apps/api/core';
 import type { LogLineDto } from '../../session/logProjection';
@@ -113,10 +113,26 @@ export function mergeLogLines(prev: LogLineDto[], batch: LogLineDto[]): LogLineD
   return result;
 }
 
+export interface UseSessionLogResult {
+  /** Accumulated entries, projected for SessionLogSection's `entries` prop. */
+  entries: SessionLogEntry[];
+  /**
+   * Clear the locally-rendered entries. Operator smoke 2026-05-31: panels
+   * needed a way to reset their log view without re-mounting.
+   *
+   * NOTE: this only resets the local React state — the next backend
+   * `session_log:line` event will re-add subsequent lines. The backend's
+   * `session_log_snapshot` buffer is NOT touched (it's a global buffer
+   * shared by every panel; one panel's clear must not blow away history
+   * the others might still want). New lines arriving after the clear
+   * show up normally.
+   */
+  clear: () => void;
+}
+
 /**
  * Subscribe to the backend's `session_log:line` stream + seed from the
- * `session_log_snapshot` buffer. Returns the accumulated SessionLogEntry
- * list, suitable for SessionLogSection's `entries` prop.
+ * `session_log_snapshot` buffer. Returns `{ entries, clear }`.
  *
  * Codex R2 fix: subscribe FIRST, then fetch snapshot. Both paths merge
  * by `seq` so the late-resolving snapshot cannot overwrite a live event
@@ -127,7 +143,7 @@ export function mergeLogLines(prev: LogLineDto[], batch: LogLineDto[]): LogLineD
  * (pre-wizard, no Tauri context): snapshot resolves to [] silently,
  * listen attaches a no-op that cleans up on unmount.
  */
-export function useSessionLog(): SessionLogEntry[] {
+export function useSessionLog(): UseSessionLogResult {
   const [lines, setLines] = useState<LogLineDto[]>([]);
 
   useEffect(() => {
@@ -174,5 +190,9 @@ export function useSessionLog(): SessionLogEntry[] {
     };
   }, []);
 
-  return toSessionLogEntries(lines);
+  const clear = useCallback(() => {
+    setLines([]);
+  }, []);
+
+  return { entries: toSessionLogEntries(lines), clear };
 }
