@@ -34,6 +34,7 @@ use tokio_stream::wrappers::BroadcastStream;
 pub enum MailboxFolder { Inbox, Sent, Outbox, Archive }
 
 impl MailboxFolder {
+    #[allow(dead_code)]
     pub(crate) fn as_path(&self) -> &'static str {
         match self {
             MailboxFolder::Inbox => "in",
@@ -1562,6 +1563,22 @@ fn days_to_ymd(days: u64) -> (u64, u64, u64) {
 }
 
 #[cfg(test)]
+impl NativeBackend {
+    /// In-process stub for unit tests that exercise `BackendState::install`
+    /// lifecycle without touching real telnet or a real mailbox. Uses the
+    /// shared `native_test_config()` helper; mailbox root is a tempdir.
+    ///
+    /// The tempdir is Box::leak'd so it lives for the test process's lifetime
+    /// without requiring the caller to hold a TempDir handle. Tests are
+    /// short-lived processes; the OS reclaims the allocation on exit.
+    pub fn test_fixture() -> Self {
+        let tempdir = tempfile::tempdir().unwrap();
+        let leaked_path = Box::leak(Box::new(tempdir)).path().to_path_buf();
+        Self::new(crate::test_helpers::native_test_config(), leaked_path)
+    }
+}
+
+#[cfg(test)]
 mod native_read_state_tests {
     use super::*;
     use crate::config::{
@@ -2652,21 +2669,5 @@ mod native_read_state_tests {
         assert_eq!(&buf[..n], b"FF\r", "must block through transient Ok(0), not EOF early");
         let n2 = std::io::Read::read(&mut s, &mut buf).unwrap();
         assert_eq!(n2, 0, "Ok(0) while the link is closed must surface as a real EOF");
-    }
-}
-
-#[cfg(test)]
-impl NativeBackend {
-    /// In-process stub for unit tests that exercise `BackendState::install`
-    /// lifecycle without touching real telnet or a real mailbox. Uses the
-    /// shared `native_test_config()` helper; mailbox root is a tempdir.
-    ///
-    /// The tempdir is Box::leak'd so it lives for the test process's lifetime
-    /// without requiring the caller to hold a TempDir handle. Tests are
-    /// short-lived processes; the OS reclaims the allocation on exit.
-    pub fn test_fixture() -> Self {
-        let tempdir = tempfile::tempdir().unwrap();
-        let leaked_path = Box::leak(Box::new(tempdir)).path().to_path_buf();
-        Self::new(crate::test_helpers::native_test_config(), leaked_path)
     }
 }

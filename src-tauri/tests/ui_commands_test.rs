@@ -20,7 +20,7 @@
 // Pat-specific tests (driving PatBackend::from_url for DTO mapping, folder
 // reads, etc.) were deleted in tuxlink-9phd Phase 9 along with PatBackend.
 
-use tuxlink_lib::ui_commands::{parse_folder, parse_raw_rfc5322, MessageMetaDto, ParsedMessageDto, UiError};
+use tuxlink_lib::ui_commands::{parse_folder, parse_raw_rfc5322, ParsedMessageDto, UiError};
 use tuxlink_lib::winlink_backend::{
     BackendError, MailboxFolder, MessageId,
 };
@@ -229,10 +229,13 @@ aGVsbG8=\r\n\
 }
 
 // ============================================================================
-// Task-13 test (3): Winlink form payload (`<?xml`) → isForm true
+// Task-13 test (3): Winlink form payload — body-only XML does NOT set isForm
+// (updated for T2.1: detection is attachment-based, not body-prefix-based)
 // ============================================================================
 #[test]
-fn test_parse_form_payload_sets_is_form() {
+fn test_parse_form_payload_body_only_xml_not_is_form() {
+    // Pre-T2.1 the body-starts-with-<?xml heuristic would set is_form=true here.
+    // After T2.1 fix, body XML alone is not sufficient — the attachment must match.
     let xml_body = "<?xml version=\"1.0\"?><ICS213><Msg>Test</Msg></ICS213>";
     let raw = simple_rfc5322(
         &[
@@ -247,7 +250,7 @@ fn test_parse_form_payload_sets_is_form() {
     );
 
     let dto = parse_raw_rfc5322("FORMID", &raw).expect("form parse");
-    assert!(dto.is_form, "XML-starting body must be flagged as a form");
+    assert!(!dto.is_form, "body-XML alone must NOT set is_form (attachment heuristic required)");
 }
 
 // ============================================================================
@@ -310,6 +313,8 @@ fn test_parsed_message_dto_serializes_camel_case() {
         }],
         is_form: false,
         routing: None,
+        form_id: None,
+        form_payload: None,
     };
     let v = serde_json::to_value(&dto).unwrap();
     assert_eq!(v["isForm"], false);
@@ -393,4 +398,120 @@ fn test_parse_rfc5322_date_still_works() {
     );
     let dto = parse_raw_rfc5322("MID-RFC", &raw).expect("parse should succeed");
     assert_eq!(dto.date, "2026-05-19T14:05:00Z");
+}
+
+// ============================================================================
+// T2.1 tests: attachment-based is_form detection
+// ============================================================================
+
+/// WLE form message: plain-text body + RMS_Express_Form_*.xml attachment →
+/// is_form must be true (the XML lives in the attachment, not the body).
+#[test]
+fn detects_form_via_attachment_not_body_prefix() {
+    // Body is plain rendered text (WLE convention), not XML.
+    let raw = b"From: SENDER@winlink.org\r\n\
+To: RECV@winlink.org\r\n\
+Subject: ICS-213\r\n\
+Date: 2026/05/30 14:30\r\n\
+MIME-Version: 1.0\r\n\
+Content-Type: multipart/mixed; boundary=\"b1\"\r\n\
+\r\n\
+--b1\r\n\
+Content-Type: text/plain\r\n\
+\r\n\
+GENERAL MESSAGE (ICS 213)\r\n\
+1. Incident Name: TEST\r\n\
+--b1\r\n\
+Content-Type: text/xml; name=\"RMS_Express_Form_ICS213_Initial.xml\"\r\n\
+Content-Disposition: attachment; filename=\"RMS_Express_Form_ICS213_Initial.xml\"\r\n\
+\r\n\
+<?xml version=\"1.0\"?><RMS_Express_Form/>\r\n\
+--b1--\r\n";
+    let dto = parse_raw_rfc5322("MID-FORM", raw).expect("parse succeeds");
+    assert!(dto.is_form, "form-attachment message must set is_form=true");
+}
+
+/// Body starts with `<?xml` but there is no RMS_Express_Form_*.xml attachment →
+/// is_form must be false (legacy body-prefix detection was a false-positive bug).
+#[test]
+fn no_form_when_body_starts_with_xml_but_no_attachment() {
+    let raw = simple_rfc5322(
+        &[("From", "X@winlink.org"), ("To", "Y@winlink.org"), ("Subject", "s")],
+        "<?xml version=\"1.0\"?>not a real form",
+    );
+    let dto = parse_raw_rfc5322("MID", &raw).expect("parse succeeds");
+    assert!(!dto.is_form, "body-XML alone must NOT trigger is_form (legacy bug)");
+}
+
+// ============================================================================
+// T2.2 tests: form_id + form_payload population
+// ============================================================================
+
+/// WLE form message with valid XML payload → form_id and form_payload populated.
+#[test]
+fn populates_form_id_and_payload_for_form_messages() {
+    let xml = b"<?xml version=\"1.0\"?>\n\
+<RMS_Express_Form>\n\
+<form_parameters>\n\
+<display_form>ICS213_Initial_Viewer.html</display_form>\n\
+<rms_express_version>Tuxlink/0.3.0</rms_express_version>\n\
+</form_parameters>\n\
+<variables>\n\
+<inc_name>WALDO</inc_name>\n\
+<subjectline>TEST</subjectline>\n\
+</variables>\n\
+</RMS_Express_Form>\n";
+    let raw = format!(
+        "From: X@winlink.org\r\nTo: Y@winlink.org\r\nSubject: t\r\nMIME-Version: 1.0\r\n\
+Content-Type: multipart/mixed; boundary=\"b\"\r\n\r\n\
+--b\r\nContent-Type: text/plain\r\n\r\nbody text\r\n\
+--b\r\nContent-Type: text/xml; name=\"RMS_Express_Form_ICS213_Initial.xml\"\r\n\
+Content-Disposition: attachment; filename=\"RMS_Express_Form_ICS213_Initial.xml\"\r\n\r\n\
+{}\r\n--b--\r\n",
+        std::str::from_utf8(xml).unwrap()
+    );
+    let dto = parse_raw_rfc5322("MID", raw.as_bytes()).expect("parse");
+    assert!(dto.is_form);
+    assert_eq!(dto.form_id.as_deref(), Some("ICS213_Initial"));
+    let payload = dto.form_payload.expect("payload populated");
+    assert_eq!(payload.form_parameters.display_form, "ICS213_Initial_Viewer.html");
+    let inc_name = payload.fields.iter().find(|(k, _)| k == "inc_name").map(|(_, v)| v.as_str());
+    assert_eq!(inc_name, Some("WALDO"));
+}
+
+/// Non-form message (no RMS_Express_Form_*.xml attachment) → form_id and
+/// form_payload must both be None.
+#[test]
+fn non_form_message_has_no_form_payload() {
+    let raw = simple_rfc5322(
+        &[("From", "X@winlink.org"), ("To", "Y@winlink.org"), ("Subject", "plain")],
+        "plain text body",
+    );
+    let dto = parse_raw_rfc5322("MID", &raw).expect("parse");
+    assert!(!dto.is_form);
+    assert!(dto.form_id.is_none());
+    assert!(dto.form_payload.is_none());
+}
+
+/// P2 #5 regression: parsed form payload must have form_id backfilled from
+/// the attachment filename so the frontend KeyValueView receives a non-empty
+/// formId on the payload (not the empty string that parse_form_xml returns).
+#[test]
+fn populated_form_payload_has_form_id_set() {
+    let xml = b"<?xml version=\"1.0\"?>\n\
+<RMS_Express_Form>\n\
+<variables><inc_name>WALDO</inc_name></variables>\n\
+</RMS_Express_Form>\n";
+    let raw = format!(
+        "From: X@winlink.org\r\nTo: Y@winlink.org\r\nSubject: t\r\nMIME-Version: 1.0\r\n\
+Content-Type: multipart/mixed; boundary=\"b\"\r\n\r\n\
+--b\r\nContent-Type: text/plain\r\n\r\nbody\r\n\
+--b\r\nContent-Type: text/xml; name=\"RMS_Express_Form_ICS213_Initial.xml\"\r\n\
+Content-Disposition: attachment; filename=\"RMS_Express_Form_ICS213_Initial.xml\"\r\n\r\n\
+{}\r\n--b--\r\n",
+        std::str::from_utf8(xml).unwrap()
+    );
+    let dto = parse_raw_rfc5322("MID", raw.as_bytes()).expect("parse");
+    let payload = dto.form_payload.expect("payload populated");
+    assert_eq!(payload.form_id, "ICS213_Initial");
 }

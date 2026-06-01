@@ -1,6 +1,23 @@
-# HTML Forms v0.1 Implementation Plan (rev-3)
+# HTML Forms v0.1 Implementation Plan (rev-4)
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+> **Rev-4 changes** (post tuxlink-9phd merge — native backend replaces Pat REST):
+>
+> Rev-3 was written against spec rev-2 (Path A: Pat REST) by `yew-cypress-oak` on 2026-05-30. The 9phd PR (bd-tuxlink-9phd/strip-pat-add-native-attachments) shipped Path B (native B2F + attachments) AND stripped `pat_client.rs` completely. Spec was updated to rev-3 in 9phd Phase 12 (T12.4). Plan rev-4 aligns the plan with spec rev-3 and the shipped API surface.
+>
+> **Changes in rev-4:**
+> - **T0.1 marked DONE** — `OutboundAttachment` struct + `OutboundMessage.attachments` field landed on main via PR #151 (commits 3b236af/5012707). Note: the shipped struct has NO `content_type` field (dropped in 9phd T1.1); test code referencing `content_type` in this plan is annotated as stale.
+> - **T0.2 marked DONE** — caller compile-fix at `ui_commands.rs:660` landed on main via PR #151.
+> - **T0.3 marked OBSOLETE** — `send_with_attachments` on `pat_client` is fictional; `pat_client.rs` is deleted (ADR 0016). The native equivalent is `compose_message_with_files` (shipped in 9phd Phase 1), wired through `NativeBackend::send_message` via the `OutboundDraftDto.attachments` IPC bridge added in 9phd Codex P2.1.
+> - **T3.1 rewritten** — `send_form` command now constructs `OutboundMessage` with `OutboundAttachment { filename, bytes }` (NO `content_type`), calls `backend.send_message(msg)` directly (same path as `message_send`). Drops all Pat REST routing logic.
+> - **Architecture paragraph updated** — now cites spec rev-3 + native B2F (Path B) as the only v0.1 encoding path.
+> - **File Structure table updated** — `pat_client.rs` row replaced with DONE/OBSOLETE annotations.
+> - **Self-Review table updated** — §5.1 row corrected to reflect native path (not Pat/Path A).
+> - **Live smokes T11.2-11.5 updated** — Smoke B and Smoke D retain Pat wire-format cross-client validation (Pat-compatibility is still a goal per spec §11); no behavior change to the smoke descriptions, only notes about the transport path.
+> - All other Pat prose references audited; non-load-bearing mentions (WLE+Pat compatibility phrasing, historical test conventions, tuxlink-pat references in smoke descriptions) are left in place as they describe interop goals, not implementation paths.
+>
+> Per [spec rev-3](../specs/2026-05-30-html-forms-design.md) §5.1 + [ADR 0016](../../adr/0016-native-b2f-outbound-with-attachments.md) + 9phd Phase 1+4.
 
 > **Rev-3 changes** (post 4-round plan review — 3 design rounds + 1 verification round):
 >
@@ -21,7 +38,7 @@
 
 **Goal:** Ship HTML Forms v0.1 — bidirectional Winlink form support (render incoming, author + send ICS-213) with 5 bundled forms (ICS-213, ICS-309, Position Report, Bulletin, Damage Assessment), wire-format compatible with Winlink Express and Pat.
 
-**Architecture:** Per [spec rev-2](../specs/2026-05-30-html-forms-design.md), native React form components for compose+render, Rust `forms/` module for parse+serialize+catalog, eager form-payload parse on inbound, send via Pat REST multipart POST (Path A; native B2F deferred to v0.5+). Hardened parser (quick-xml + size caps + entity-expansion rejection). Backend precursor: extend `OutboundMessage` with `attachments` field.
+**Architecture:** Per [spec rev-3](../specs/2026-05-30-html-forms-design.md) §5.1 (native attachment path — the only v0.1 encoding path), native React form components for compose+render, Rust `forms/` module for parse+serialize+catalog, eager form-payload parse on inbound, send via `compose_message_with_files` → `NativeBackend::send_message` (Path B; Pat REST / Path A removed per ADR 0016 + tuxlink-9phd). Hardened parser (quick-xml + size caps + entity-expansion rejection). Backend precursor: extend `OutboundMessage` with `attachments` field — DONE (PR #151).
 
 **Tech Stack:** Rust 1.75+ (`quick-xml` for XML, existing `serde`, `mail-parser`), React + Tauri 2 (existing), Vitest + cargo-test.
 
@@ -68,9 +85,9 @@
 
 | Path | Changes | Tasks |
 |---|---|---|
-| `src-tauri/src/winlink_backend.rs:89-100` | Add `OutboundAttachment` struct; extend `OutboundMessage` with `attachments: Vec<OutboundAttachment>` | T0.1 |
-| Multiple callers of `OutboundMessage::new` | Add `attachments: vec![]` default for non-form sends (compile fix after T0.1) | T0.2 |
-| `src-tauri/src/pat_client.rs` (existing `send` function) | Switch to multipart/form-data POST when attachments present | T0.3 |
+| `src-tauri/src/winlink_backend.rs:89-100` | Add `OutboundAttachment` struct; extend `OutboundMessage` with `attachments: Vec<OutboundAttachment>` | T0.1 — **DONE** (PR #151) |
+| Multiple callers of `OutboundMessage::new` | Add `attachments: vec![]` default for non-form sends (compile fix after T0.1) | T0.2 — **DONE** (PR #151) |
+| ~~`src-tauri/src/pat_client.rs`~~ | ~~Switch to multipart/form-data POST when attachments present~~ | T0.3 — **OBSOLETE** (pat_client.rs deleted per ADR 0016 / 9phd; native equivalent is `compose_message_with_files` in T3.1) |
 | `src-tauri/src/ui_commands.rs:214` | Add `MAX_FORM_XML_BYTES = 256 * 1024` constant | T1.2 |
 | `src-tauri/src/ui_commands.rs:244-247` | Add `form_id: Option<String>` + `form_payload: Option<FormPayload>` to `ParsedMessageDto` | T2.2 |
 | `src-tauri/src/ui_commands.rs:325-327` | Fix `is_form` detection: attachment-name match instead of body prefix | T2.1 |
@@ -99,6 +116,13 @@
 This phase is independent of the forms-specific work; it adds the attachment plumbing that Phase 1+ depends on. It also enables capability §1.6 (compose-side attach) from the inventory.
 
 ### Task 0.1: Add `OutboundAttachment` struct + extend `OutboundMessage`
+
+> **DONE** (landed via PR #151 commits 3b236af / 5012707; on main).
+>
+> The shipped `OutboundAttachment` struct has NO `content_type` field (dropped in 9phd T1.1 — B2F wire format does not use MIME content-type). The test code below references `content_type: "text/xml"` which is stale and will not compile. Skip all steps; the struct and field exist in `src-tauri/src/winlink_backend.rs:105-122`. Verify shape before any T3.1 implementation:
+> ```bash
+> grep -A8 "pub struct OutboundAttachment" src-tauri/src/winlink_backend.rs
+> ```
 
 **Files:**
 - Modify: `src-tauri/src/winlink_backend.rs:89-100`
@@ -192,6 +216,10 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 
 ### Task 0.2: Update winlink_backend::OutboundMessage callers (compile fix)
 
+> **DONE** (landed via PR #151 commits 3b236af / 5012707; on main).
+>
+> `ui_commands.rs:660` (now ~`ui_commands.rs:660` post-9phd edits) already carries `attachments: vec![]`. Skip all steps.
+
 **Files:** The THREE specific callers of `winlink_backend::OutboundMessage { ... }` listed below. **Do NOT touch `winlink::session::OutboundMessage { ... }` callers** — that's a DIFFERENT struct (proposal/title/compressed B2F-layer type at `src-tauri/src/winlink/session.rs:32`) which a mechanical `grep "OutboundMessage {"` will catch but which we are NOT modifying.
 
 The full caller list (verified via grep on rev-2 of the plan):
@@ -251,6 +279,10 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 ---
 
 ### Task 0.3: Add send_with_attachments to pat_client
+
+> **OBSOLETE per ADR 0016 / spec rev-3 §5.1.** The `pat_client.rs` module is deleted; the native equivalent is `compose_message_with_files` (shipped via tuxlink-9phd Phase 1). Skip this task; verify the API replacement in T3.1's notes.
+>
+> The remainder of this task is preserved as historical context for the Pat REST approach (Path A), which was the spec rev-2 design. Do NOT execute any step below. If you need to understand the native replacement, read `src-tauri/src/winlink/compose.rs` (compose_message_with_files) and `src-tauri/src/winlink_backend.rs` (NativeBackend::send_message).
 
 **Existing state verified before plan rev-2:**
 
@@ -1695,6 +1727,8 @@ Expected: 1 passed.
 
 - [ ] **Step 3: Add the send_form command in ui_commands.rs**
 
+> **Rev-4 note (ADR 0016 / 9phd Codex P2.1):** The Pat REST path is gone. `send_form` must use the native B2F pipeline: construct `OutboundMessage` with `OutboundAttachment { filename, bytes }` (NO `content_type` field — that field does not exist in the shipped struct; B2F does not use MIME content-type), then call `backend.send_message(msg)` directly (same path as `message_send`). Return type is `Result<String, UiError>` (returns the MID string, not `Option<String>`), mirroring `message_send`.
+
 Near other Tauri commands:
 
 ```rust
@@ -1707,7 +1741,7 @@ pub async fn send_form(
     senders_callsign: String,
     grid_square: String,
     state: State<'_, BackendState>,
-) -> Result<Option<String>, UiError> {
+) -> Result<String, UiError> {
     use crate::forms;
     let form = forms::catalog::find_form(&form_id)
         .ok_or_else(|| UiError::Internal { detail: format!("unknown form: {}", form_id) })?;
@@ -1725,9 +1759,11 @@ pub async fn send_form(
     let body = forms::serialize::render_body_template(form.body_template, &field_values);
     let subject = forms::serialize::render_body_template(form.subject_template, &field_values);
 
+    // Note: OutboundAttachment has { filename, bytes } only — NO content_type field.
+    // The native B2F wire format does not use MIME content-type headers for attachments.
+    // See winlink_backend.rs:105-108 for the canonical struct definition.
     let attachment = OutboundAttachment {
         filename: format!("RMS_Express_Form_{}.xml", form.id),
-        content_type: "text/xml".to_string(),
         bytes: xml_bytes,
     };
     let msg = OutboundMessage {
@@ -1740,7 +1776,9 @@ pub async fn send_form(
     };
 
     let backend = state.current().ok_or_else(|| UiError::NotConfigured("backend offline".into()))?;
-    backend.send(&msg).await.map_err(UiError::from)
+    // send_message returns MessageId; map to String for IPC (mirrors message_send).
+    let mid = backend.send_message(msg).await?;
+    Ok(mid.0)
 }
 ```
 
@@ -1757,12 +1795,15 @@ Expected: `Finished`.
 
 ```bash
 git add src-tauri/src/ui_commands.rs src-tauri/src/lib.rs src-tauri/tests/forms_test.rs
-git commit -m "feat(ipc): send_form Tauri command per spec §5.2 (tuxlink-v1p)
+git commit -m "feat(ipc): send_form Tauri command per spec rev-3 §5.1 (tuxlink-v1p)
 
 Accepts (form_id, field_values, to, cc, senders_callsign, grid_square),
-looks up the bundled form, builds the XML payload + text body, attaches
-the XML as a multipart attachment, and dispatches via the existing
-backend send infra. Returns MID per existing send_message contract.
+looks up the bundled form, builds the XML payload + text body, wraps
+in OutboundAttachment { filename, bytes } (no content_type — B2F native),
+and dispatches via backend.send_message() on the native B2F path.
+Returns MID string per send_message contract.
+
+Per ADR 0016 + tuxlink-9phd Codex P2.1 (native pipeline; Pat REST removed).
 
 Agent: <moniker>
 Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
@@ -2766,12 +2807,14 @@ npx --yes @openai/codex review --commit <SHA> 2>&1 | tee dev/adversarial/2026-XX
 
 ### Tasks 11.2–11.5: Live cross-client smokes
 
-Operator-driven (subagent CANNOT execute these per CLAUDE.md RADIO-1 and tuxlink-pat operator-only practice):
+Operator-driven (subagent CANNOT execute these per CLAUDE.md RADIO-1):
 
-- [ ] **Smoke A**: Tuxlink-composed ICS-213 → WLE receives + renders correctly.
-- [ ] **Smoke B**: Tuxlink-composed ICS-213 → Pat receives + renders correctly.
+> **Rev-4 note:** Tuxlink's send path is now native B2F (compose_message_with_files → NativeBackend::send_message). Pat is no longer used as a transport, but wire-format compatibility with Pat is still a spec goal (§11). Smoke B and D remain valid — they test that Tuxlink's native-B2F output is parseable by Pat (Smoke B) and that Pat-authored B2F messages are parseable by Tuxlink (Smoke D). These are interop / wire-format validation smokes, not transport smokes.
+
+- [ ] **Smoke A**: Tuxlink-composed ICS-213 (native B2F) → WLE receives + renders correctly.
+- [ ] **Smoke B**: Tuxlink-composed ICS-213 (native B2F) → Pat receives + renders correctly (wire-format interop gate).
 - [ ] **Smoke C**: WLE-composed ICS-213 → Tuxlink receives + renders correctly.
-- [ ] **Smoke D**: Pat-composed ICS-213 → Tuxlink receives + renders correctly.
+- [ ] **Smoke D**: Pat-composed ICS-213 → Tuxlink receives + renders correctly (wire-format interop gate).
 
 For each: capture the .mime bytes; if the receiving client errors or mis-renders, compare bytes against the working reference and adjust. The 4 smokes are the parity gates per spec §11.
 
@@ -2786,7 +2829,7 @@ Once all 4 smokes are green, the implementation is ready to merge.
 | Spec section | Implementing task(s) |
 |---|---|
 | §3 wire format | T1.6 (serialize), T1.5 (parse) |
-| §5.1 two encoding paths | T0.3 (Path A); Path B deferred |
+| §5.1 native attachment path (only path) | T3.1 (native B2F via `compose_message_with_files`); Pat REST / Path A removed per ADR 0016 |
 | §5.2 module layout + DTO addition (form_payload) | T1.1, T2.2 |
 | §6.1 Rust types | T1.1 |
 | §6.2 OutboundAttachment | T0.1 |

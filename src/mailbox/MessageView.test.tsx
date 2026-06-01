@@ -23,6 +23,7 @@ import {
   NOT_FOUND_COPY,
 } from './MessageView';
 import MessageView from './MessageView';
+import './../forms'; // side-effect: register ICS-213
 
 // Mock useMessage so MessageView integration tests don't need Tauri or
 // QueryClientProvider.
@@ -31,9 +32,14 @@ vi.mock('./useMessage', () => ({
 }));
 import { useMessage } from './useMessage';
 
-// Reply/forward open a compose window via openReplyWindow — mock the side
-// effect so the action-bar tests assert wiring, not Tauri behavior.
-vi.mock('./replyActions', () => ({ openReplyWindow: vi.fn().mockResolvedValue(undefined) }));
+// Reply/forward open a compose window via openReplyWindow — mock that side
+// effect so the action-bar tests assert wiring, not Tauri behavior. Keep
+// the real hasReplyWithFormSupport export so MessageView's gate logic
+// (Codex r2 P2 #1) is exercised end-to-end.
+vi.mock('./replyActions', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./replyActions')>();
+  return { ...actual, openReplyWindow: vi.fn().mockResolvedValue(undefined) };
+});
 import { openReplyWindow } from './replyActions';
 import type { ParsedMessage } from './types';
 
@@ -113,6 +119,63 @@ describe('<MessageViewLoaded>', () => {
     expect(screen.queryByTestId('message-body')).toBeNull();
   });
 
+  it('renders the registered View component for a known form payload', () => {
+    const msg = {
+      id: 'TEST-FORM',
+      subject: 'ICS-213 test',
+      from: 'X@winlink.org',
+      to: ['Y@winlink.org'],
+      cc: [],
+      date: '2026-05-30T14:30:00Z',
+      body: 'plain rendered text',
+      attachments: [],
+      isForm: true,
+      routing: null,
+      formId: 'ICS213_Initial',
+      formPayload: {
+        formId: 'ICS213_Initial',
+        formParameters: {
+          xmlFileVersion: '1.0', rmsExpressVersion: 'Tuxlink/0.3.0',
+          submissionDatetime: '20260530143000', sendersCallsign: 'N0CALL',
+          gridSquare: 'FM18', displayForm: 'ICS213_Initial_Viewer.html',
+          replyTemplate: 'ICS213_SendReply.0',
+        },
+        fields: [
+          ['inc_name', 'WALDO'],
+          ['to_name', 'JOHN'],
+          ['subjectline', 'TEST'],
+          ['mdate', '2026-05-30'],
+          ['mtime', '14:30Z'],
+          ['message', 'Need bandages.'],
+        ],
+      },
+    };
+    render(<MessageViewLoaded message={msg as any} />);
+    expect(screen.getByTestId('message-form-rendered')).toBeInTheDocument();
+    expect(screen.getByText('WALDO')).toBeInTheDocument();
+  });
+
+  it('renders KeyValueView fallback when form_id is unknown', () => {
+    const msg = {
+      id: 'TEST-UNKNOWN', subject: 'unknown', from: 'X@winlink.org',
+      to: ['Y@winlink.org'], cc: [], date: '2026-05-30T14:30:00Z',
+      body: 'plain rendered', attachments: [], isForm: true, routing: null,
+      formId: 'Unknown_Form',
+      formPayload: {
+        formId: 'Unknown_Form',
+        formParameters: {
+          xmlFileVersion: '1.0', rmsExpressVersion: '',
+          submissionDatetime: '', sendersCallsign: '', gridSquare: '',
+          displayForm: '', replyTemplate: '',
+        },
+        fields: [['random_field', 'random_value']],
+      },
+    };
+    render(<MessageViewLoaded message={msg as any} />);
+    expect(screen.getByTestId('message-form-unknown')).toBeInTheDocument();
+    expect(screen.getByText('random_field')).toBeInTheDocument();
+  });
+
   // Attachment strip lists names + sizes; no download/preview (v0.0.1).
   it('lists attachment names and sizes', () => {
     render(
@@ -181,6 +244,49 @@ describe('<MessageViewLoaded> reply action bar', () => {
     render(<MessageViewLoaded message={m} />);
     fireEvent.click(screen.getByTestId('forward-btn'));
     expect(openReplyWindow).toHaveBeenCalledWith(m, 'forward');
+  });
+
+  // Codex P2 #6 (T8.1 follow-up): "Reply with form…" is a fourth action that
+  // appears ONLY for messages whose form_id resolves in the registry (so the
+  // operator can author a same-form reply with sender↔recipient swap).
+  it('does NOT show the Reply-with-form button for a plain (non-form) message', () => {
+    render(<MessageViewLoaded message={parsed({ isForm: false })} />);
+    expect(screen.queryByTestId('reply-with-form-btn')).toBeNull();
+  });
+
+  it('does NOT show the Reply-with-form button for a form with an unknown formId', () => {
+    render(
+      <MessageViewLoaded
+        message={parsed({ isForm: true, formId: 'Unknown_Form_v1', formPayload: undefined })}
+      />,
+    );
+    expect(screen.queryByTestId('reply-with-form-btn')).toBeNull();
+  });
+
+  it('shows the Reply-with-form button when formId is registered (ICS213_Initial)', () => {
+    render(
+      <MessageViewLoaded message={parsed({ isForm: true, formId: 'ICS213_Initial' })} />,
+    );
+    expect(screen.getByTestId('reply-with-form-btn')).toBeInTheDocument();
+  });
+
+  it('Reply-with-form opens a replyWithForm compose window', () => {
+    const m = parsed({ isForm: true, formId: 'ICS213_Initial' });
+    render(<MessageViewLoaded message={m} />);
+    fireEvent.click(screen.getByTestId('reply-with-form-btn'));
+    expect(openReplyWindow).toHaveBeenCalledWith(m, 'replyWithForm');
+  });
+
+  // Codex r2 P2 #1: forms registered via Phase 9 (Bulletin/Position/ICS-309/
+  // Damage Assessment) lookup successfully but don't have per-form reply
+  // mappings in buildReplyDraft — hiding the button avoids the half-populated
+  // form draft trap. Add per-form mappings + remove the gate in v0.1.2 to
+  // light it up for these forms.
+  it('does NOT show the Reply-with-form button on Phase 9 forms without reply mappings', () => {
+    render(
+      <MessageViewLoaded message={parsed({ isForm: true, formId: 'Bulletin_Initial' })} />,
+    );
+    expect(screen.queryByTestId('reply-with-form-btn')).toBeNull();
   });
 });
 

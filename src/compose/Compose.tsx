@@ -37,6 +37,8 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { clearDraft, loadDraft, saveDraft, splitAddrs } from './useDraft';
 import { ComposeTitleBar } from './ComposeTitleBar';
+import { ResizeHandles } from '../shell/chrome/ResizeHandles';
+import { FormPicker, lookupForm, allForms } from '../forms';
 import './Compose.css';
 
 // ============================================================================
@@ -63,9 +65,16 @@ interface OutboundDraftDto {
 
 type SendState = 'idle' | 'sending' | 'success' | 'error';
 
+type FormMode =
+  | { kind: 'plain' }
+  | { kind: 'pick' }
+  | { kind: 'form'; formId: string; values: Record<string, string> };
+
+type CloseAction = 'close' | 'switch-to-form' | null;
+
 interface ClosePromptState {
   open: boolean;
-  action: null | 'close';
+  action: CloseAction;
 }
 
 // ============================================================================
@@ -89,6 +98,11 @@ export function Compose({ draftId }: ComposeProps) {
   const [body, setBody] = useState('');
   const [requestAck, setRequestAck] = useState(false);
 
+  // Form mode state (T6.1)
+  const [formMode, setFormMode] = useState<FormMode>({ kind: 'plain' });
+  const [callsign, setCallsign] = useState<string>('');
+  const [grid, setGrid] = useState<string>('');
+
   // Send + close state
   const [sendState, setSendState] = useState<SendState>('idle');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -108,13 +122,17 @@ export function Compose({ draftId }: ComposeProps) {
   // Track if the user has interacted (only prompt on genuine changes)
   const isDirty = useCallback(() => {
     const s = savedSnapshotRef.current;
+    // Form mode is "dirty" iff there are any non-empty field values
+    if (formMode.kind === 'form') {
+      return Object.values(formMode.values).some((v) => v.trim().length > 0);
+    }
     return (
       to !== s.to ||
       subject !== s.subject ||
       body !== s.body ||
       requestAck !== s.requestAck
     );
-  }, [to, subject, body, requestAck]);
+  }, [to, subject, body, requestAck, formMode]);
 
   // ============================================================================
   // Restore on mount
@@ -133,8 +151,28 @@ export function Compose({ draftId }: ComposeProps) {
         body: draft.body,
         requestAck: draft.requestAck,
       };
+      if (draft.formId) {
+        setFormMode({
+          kind: 'form',
+          formId: draft.formId,
+          values: draft.formFields ?? {},
+        });
+      }
     }
   }, [draftId]);
+
+  // Fetch config to populate callsign + grid for send_form (T6.1)
+  useEffect(() => {
+    invoke<{ callsign?: string; grid?: string }>('config_read')
+      .then((cfg) => {
+        setCallsign(cfg.callsign ?? '');
+        setGrid(cfg.grid ?? '');
+      })
+      .catch(() => {
+        // pre-wizard launch — leave empty, send_form will still build XML
+        // with empty senders_callsign/grid_square; operator-pending verification
+      });
+  }, []);
 
   // ============================================================================
   // Autosave every 2s (spec §5.4)
@@ -145,11 +183,15 @@ export function Compose({ draftId }: ComposeProps) {
       // Do NOT autosave after a successful send — the draft was intentionally
       // cleared and the interval must not recreate it (Codex P1 fix).
       if (!sentRef.current) {
-        saveDraft({ draftId, to, subject, body, requestAck });
+        saveDraft({
+          draftId, to, subject, body, requestAck,
+          formId: formMode.kind === 'form' ? formMode.formId : undefined,
+          formFields: formMode.kind === 'form' ? formMode.values : undefined,
+        });
       }
     }, 2000);
     return () => clearInterval(interval);
-  }, [draftId, to, subject, body, requestAck]);
+  }, [draftId, to, subject, body, requestAck, formMode]);
 
   // ============================================================================
   // Keyboard shortcuts
@@ -176,10 +218,14 @@ export function Compose({ draftId }: ComposeProps) {
   // ============================================================================
 
   const handleSaveDraft = useCallback(() => {
-    saveDraft({ draftId, to, subject, body, requestAck });
+    saveDraft({
+      draftId, to, subject, body, requestAck,
+      formId: formMode.kind === 'form' ? formMode.formId : undefined,
+      formFields: formMode.kind === 'form' ? formMode.values : undefined,
+    });
     savedSnapshotRef.current = { to, subject, body, requestAck };
     setSendState('idle');
-  }, [draftId, to, subject, body, requestAck]);
+  }, [draftId, to, subject, body, requestAck, formMode]);
 
   // ============================================================================
   // Send
@@ -187,6 +233,9 @@ export function Compose({ draftId }: ComposeProps) {
 
   const handleSend = useCallback(async () => {
     if (sendState === 'sending') return;
+    // P1 #2 fix: in form mode, the global send is invalid — the form has its
+    // own Send button (which routes to handleFormSubmit + send_form IPC).
+    if (formMode.kind !== 'plain') return;
     setSendState('sending');
     setErrorMsg(null);
 
@@ -221,7 +270,52 @@ export function Compose({ draftId }: ComposeProps) {
         setErrorMsg(String(err));
       }
     }
-  }, [sendState, to, subject, body, draftId]);
+  }, [sendState, to, subject, body, draftId, formMode.kind]);
+
+  // ============================================================================
+  // Form submit (T6.1)
+  // ============================================================================
+
+  const handleFormSubmit = useCallback(async (formId: string, values: Record<string, string>) => {
+    if (sendState === 'sending') return;
+    setSendState('sending');
+    setErrorMsg(null);
+    try {
+      await invoke<string>('send_form', {
+        formId,
+        fieldValues: values,
+        to: splitAddrs(to),
+        cc: [],
+        sendersCallsign: callsign,
+        gridSquare: grid,
+      });
+      sentRef.current = true;
+      setSendState('success');
+      clearDraft(draftId);
+      savedSnapshotRef.current = { to: '', subject: '', body: '', requestAck: false };
+    } catch (err: unknown) {
+      setSendState('error');
+      if (err && typeof err === 'object' && 'detail' in err) {
+        const detail = (err as { detail: unknown }).detail;
+        setErrorMsg(typeof detail === 'string' ? detail : JSON.stringify(detail));
+      } else {
+        setErrorMsg(String(err));
+      }
+    }
+  }, [sendState, to, draftId, callsign, grid]);
+
+  // ============================================================================
+  // Form picker (T6.1)
+  // ============================================================================
+
+  const handleOpenFormPicker = useCallback(() => {
+    // T6.2: if body has unsaved content, prompt first
+    if (body.trim().length > 0 || subject.trim().length > 0) {
+      setClosePrompt({ open: true, action: 'switch-to-form' });
+      return;
+    }
+    setFormMode({ kind: 'pick' });
+  }, [body, subject]);
 
   // ============================================================================
   // Close handling (spec §5.4: unsaved changes → prompt)
@@ -293,17 +387,36 @@ export function Compose({ draftId }: ComposeProps) {
     invoke('compose_close_self').catch(() => {/* ignore */});
   };
 
-  const handleSaveAndClose = useCallback(() => {
-    saveDraft({ draftId, to, subject, body, requestAck });
+  const handleSaveAndProceed = useCallback(() => {
+    saveDraft({
+      draftId, to, subject, body, requestAck,
+      formId: formMode.kind === 'form' ? formMode.formId : undefined,
+      formFields: formMode.kind === 'form' ? formMode.values : undefined,
+    });
+    const action = closePrompt.action;
     setClosePrompt({ open: false, action: null });
-    closeWindow();
-  }, [draftId, to, subject, body, requestAck]);
+    if (action === 'switch-to-form') {
+      setFormMode({ kind: 'pick' });
+    } else {
+      closeWindow();
+    }
+  }, [draftId, to, subject, body, requestAck, closePrompt.action, formMode]);
 
-  const handleDiscardAndClose = useCallback(() => {
-    clearDraft(draftId);
+  const handleDiscardAndProceed = useCallback(() => {
+    // Clear body content
+    setTo('');
+    setSubject('');
+    setBody('');
+    setRequestAck(false);
+    const action = closePrompt.action;
     setClosePrompt({ open: false, action: null });
-    closeWindow();
-  }, [draftId]);
+    if (action === 'switch-to-form') {
+      setFormMode({ kind: 'pick' });
+    } else {
+      clearDraft(draftId);
+      closeWindow();
+    }
+  }, [draftId, closePrompt.action]);
 
   const handleCancelClose = useCallback(() => {
     setClosePrompt({ open: false, action: null });
@@ -357,6 +470,10 @@ export function Compose({ draftId }: ComposeProps) {
 
   return (
     <div className="compose-root" data-testid="compose-root">
+      {/* Borderless-window resize affordances (decorations:false leaves no
+          native grips on labwc / Wayland). Mirrors AppShell. */}
+      <ResizeHandles />
+
       {/* ------------------------------------------------------------------ */}
       {/* Custom title bar (tuxlink-ng3: decorations:false, closes msr)      */}
       {/* ------------------------------------------------------------------ */}
@@ -473,14 +590,40 @@ export function Compose({ draftId }: ComposeProps) {
         <label htmlFor="compose-body" className="compose-label compose-label--sr-only">
           Message body
         </label>
-        <textarea
-          id="compose-body"
-          className="compose-textarea"
-          value={body}
-          onChange={(e) => setBody(e.target.value)}
-          placeholder="Type your message here…"
-          data-testid="compose-body"
-        />
+        {formMode.kind === 'plain' && (
+          <textarea
+            id="compose-body"
+            className="compose-textarea"
+            value={body}
+            onChange={(e) => setBody(e.target.value)}
+            placeholder="Type your message here…"
+            data-testid="compose-body"
+          />
+        )}
+        {formMode.kind === 'pick' && (
+          <FormPicker
+            forms={allForms().map((f) => ({ id: f.id, name: f.name }))}
+            onPick={(id) => setFormMode({ kind: 'form', formId: id, values: {} })}
+            onCancel={() => setFormMode({ kind: 'plain' })}
+          />
+        )}
+        {formMode.kind === 'form' && (() => {
+          const entry = lookupForm(formMode.formId);
+          if (!entry) {
+            // Unknown form ID (shouldn't happen since picker shows registered only)
+            setFormMode({ kind: 'plain' });
+            return null;
+          }
+          const FormComponent = entry.Form;
+          return (
+            <FormComponent
+              initialValues={formMode.values}
+              onChange={(values) => setFormMode({ kind: 'form', formId: formMode.formId, values })}
+              onSubmit={(values) => handleFormSubmit(formMode.formId, values)}
+              onCancel={() => setFormMode({ kind: 'plain' })}
+            />
+          );
+        })()}
       </div>
 
       {/* ------------------------------------------------------------------ */}
@@ -536,8 +679,10 @@ export function Compose({ draftId }: ComposeProps) {
         <button
           className="compose-btn compose-btn--primary"
           onClick={handleSend}
-          disabled={sendState === 'sending'}
-          title="Send (Ctrl+Enter)"
+          disabled={sendState === 'sending' || formMode.kind !== 'plain'}
+          title={formMode.kind !== 'plain'
+            ? "Use the form's Send button to submit a form"
+            : 'Send (Ctrl+Enter)'}
           data-testid="compose-send-btn"
         >
           {sendState === 'sending' ? 'Sending…' : 'Post to Outbox'}
@@ -549,6 +694,14 @@ export function Compose({ draftId }: ComposeProps) {
           data-testid="compose-save-draft-btn"
         >
           Save Draft
+        </button>
+        <button
+          className="compose-btn compose-btn--secondary"
+          onClick={handleOpenFormPicker}
+          disabled={formMode.kind !== 'plain'}
+          data-testid="compose-form-picker-btn"
+        >
+          Compose form…
         </button>
       </div>
 
@@ -565,19 +718,21 @@ export function Compose({ draftId }: ComposeProps) {
         >
           <div className="compose-dialog">
             <p className="compose-dialog__msg">
-              This draft has unsaved changes.
+              {closePrompt.action === 'switch-to-form'
+                ? 'Save changes before switching to a form?'
+                : 'This draft has unsaved changes.'}
             </p>
             <div className="compose-dialog__actions">
               <button
                 className="compose-btn compose-btn--primary"
-                onClick={handleSaveAndClose}
+                onClick={handleSaveAndProceed}
                 data-testid="compose-close-save"
               >
                 Save Draft
               </button>
               <button
                 className="compose-btn compose-btn--danger"
-                onClick={handleDiscardAndClose}
+                onClick={handleDiscardAndProceed}
                 data-testid="compose-close-discard"
               >
                 Discard

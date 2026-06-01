@@ -1,0 +1,15 @@
+// Side-effect imports — register forms at module load via registerForm()
+// calls in each form's index.ts; plus the shared forms stylesheet so every
+// consumer of this module gets the per-form authoring + read-side rules.
+// FormPicker.css is imported separately from FormPicker.tsx (modal-specific).
+import './forms.css';
+import './ics213';
+import './ics309';
+import './position';
+import './bulletin';
+import './damage_assessment';
+
+export * from './forms';
+export * from './types';
+export * from './KeyValueView';
+export * from './FormPicker';

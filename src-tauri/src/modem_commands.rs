@@ -1266,6 +1266,7 @@ mod tests {
         );
     }
 
+    #[allow(deprecated)]
     #[test]
     fn check_identity_present_err_when_both_whitespace_only() {
         // Defense-in-depth: if a caller hand-constructs a Config in-memory
