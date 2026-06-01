@@ -218,12 +218,12 @@ mod tests {
         assert!(row.unread);
         assert_eq!(row.transport_used.as_deref(), Some("telnet"));
         assert_eq!(row.direction, Direction::Received);
-        assert_eq!(row.has_attachments, false);
+        assert!(!row.has_attachments);
         assert_eq!(row.attachment_count, 0);
         assert_eq!(row.form_type, None);
         assert_eq!(row.form_field_values, "");
         assert!(row.message_size > 0);
-        assert_eq!(row.mid.is_empty(), false);
+        assert!(!row.mid.is_empty());
     }
 
     #[test]

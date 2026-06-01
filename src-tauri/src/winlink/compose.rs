@@ -318,7 +318,7 @@ mod tests {
     fn compose_attaches_files_to_message() {
         let att = OutboundAttachment { filename: "report.txt".into(), bytes: b"hello".to_vec() };
         let msg = compose_message_with_files(
-            "N7CPZ", &["W1AW"], &[], "Hi", "body", &[att.clone()], 1_716_200_000,
+            "N7CPZ", &["W1AW"], &[], "Hi", "body", std::slice::from_ref(&att), 1_716_200_000,
         ).unwrap();
         assert_eq!(msg.attachments().len(), 1);
         assert_eq!(msg.attachments()[0].filename, "report.txt");

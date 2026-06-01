@@ -10,7 +10,7 @@
 
 use tuxlink_lib::config::{CmsTransport, PacketConfig};
 use tuxlink_lib::winlink_backend::{
-    BackendError, BackendStatus, LogLine, MailboxFolder, MessageId, NativeBackend,
+    BackendStatus, MailboxFolder, MessageId, NativeBackend,
     OutboundMessage, WinlinkBackend,
 };
 

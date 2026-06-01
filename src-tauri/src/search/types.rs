@@ -46,17 +46,12 @@ pub enum ReadState {
     Unread,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Copy, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum SortOrder {
+    #[default]
     DateDesc,
     DateAsc,
-}
-
-impl Default for SortOrder {
-    fn default() -> Self {
-        SortOrder::DateDesc
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

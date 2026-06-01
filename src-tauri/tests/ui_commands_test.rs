@@ -20,7 +20,7 @@
 // Pat-specific tests (driving PatBackend::from_url for DTO mapping, folder
 // reads, etc.) were deleted in tuxlink-9phd Phase 9 along with PatBackend.
 
-use tuxlink_lib::ui_commands::{parse_folder, parse_raw_rfc5322, MessageMetaDto, ParsedMessageDto, UiError};
+use tuxlink_lib::ui_commands::{parse_folder, parse_raw_rfc5322, ParsedMessageDto, UiError};
 use tuxlink_lib::winlink_backend::{
     BackendError, MailboxFolder, MessageId,
 };

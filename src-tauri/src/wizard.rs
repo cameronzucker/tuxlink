@@ -31,8 +31,6 @@ use tokio::sync::Mutex;
 
 // WinlinkBackend trait must be in scope to call connect/disconnect on NativeBackend.
 use crate::winlink_backend::WinlinkBackend;
-// Manager trait must be in scope to call app.path() on AppHandle.
-use tauri::Manager;
 
 /// Discriminated union mirrored as `WizardError` in src/wizard/types.ts.
 /// Tauri's `#[serde(tag = "kind", content = "detail")]` produces the same
@@ -593,7 +591,7 @@ mod tests {
         // path exits before it is used).
         // We test the mutex path indirectly via the WizardMutex test below.
         // This test documents the cfg!(test) fast-path contract.
-        assert!(true, "cfg!(test) short-circuit path: documented via mutex test below");
+        // cfg!(test) short-circuit path: documented via mutex test below.
     }
 
     /// Verify WizardMutex returns Busy when contended.
