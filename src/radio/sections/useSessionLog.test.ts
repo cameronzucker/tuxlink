@@ -1,6 +1,23 @@
-import { describe, it, expect } from 'vitest';
-import { toSessionLogEntry, toSessionLogEntries, mergeLogLine, mergeLogLines } from './useSessionLog';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { renderHook, act, waitFor } from '@testing-library/react';
+import {
+  toSessionLogEntry,
+  toSessionLogEntries,
+  mergeLogLine,
+  mergeLogLines,
+  useSessionLog,
+} from './useSessionLog';
 import type { LogLineDto } from '../../session/logProjection';
+
+// Tauri IPC mocks — only loaded for the renderHook tests below (the pure
+// projection/merge tests above don't need them).
+vi.mock('@tauri-apps/api/core', () => ({
+  invoke: vi.fn(),
+}));
+
+vi.mock('@tauri-apps/api/event', () => ({
+  listen: vi.fn(async () => () => {}),
+}));
 
 const at = (ts: string, level: LogLineDto['level'], source: LogLineDto['source'], message: string, seq = 1): LogLineDto => ({
   seq,
@@ -124,5 +141,67 @@ describe('mergeLogLines (snapshot ingestion)', () => {
     const ba = mergeLogLines(mergeLogLines([], b), a);
     expect(ab.map((l) => l.seq)).toEqual([1, 2, 3]);
     expect(ba.map((l) => l.seq)).toEqual([1, 2, 3]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// useSessionLog.clear() — backend drain + local-state reset (round-2 fix)
+// Operator smoke 2026-05-31: prior `clear()` only reset React state, so a
+// panel re-mount (mode switch) refetched the snapshot and the "cleared"
+// entries reappeared. The fix invokes `session_log_clear` first.
+// ---------------------------------------------------------------------------
+
+describe('useSessionLog().clear (operator smoke round-2: backend drain)', () => {
+  beforeEach(async () => {
+    const core = await import('@tauri-apps/api/core');
+    (core.invoke as ReturnType<typeof vi.fn>).mockReset();
+    // Default invoke: empty snapshot + a no-op session_log_clear.
+    (core.invoke as ReturnType<typeof vi.fn>).mockImplementation(async (cmd: string) => {
+      if (cmd === 'session_log_snapshot') return [];
+      if (cmd === 'session_log_clear') return undefined;
+      return undefined;
+    });
+  });
+
+  it('invokes session_log_clear on the backend when clear() is called', async () => {
+    const core = await import('@tauri-apps/api/core');
+    const invokeMock = core.invoke as ReturnType<typeof vi.fn>;
+
+    const { result } = renderHook(() => useSessionLog());
+    // Wait for the listen/snapshot effect to settle before triggering clear,
+    // so the assertion below isn't polluted by the mount-time invokes.
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith('session_log_snapshot');
+    });
+
+    act(() => {
+      result.current.clear();
+    });
+
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith('session_log_clear');
+    });
+  });
+
+  it('still clears local state when the backend invoke rejects (offline degrade)', async () => {
+    const core = await import('@tauri-apps/api/core');
+    const invokeMock = core.invoke as ReturnType<typeof vi.fn>;
+    invokeMock.mockImplementation(async (cmd: string) => {
+      if (cmd === 'session_log_snapshot') return [];
+      if (cmd === 'session_log_clear') throw new Error('backend offline');
+      return undefined;
+    });
+
+    const { result } = renderHook(() => useSessionLog());
+
+    // The clear path should not throw even though the backend invoke rejects.
+    expect(() => {
+      act(() => {
+        result.current.clear();
+      });
+    }).not.toThrow();
+
+    // Local entries stay empty (started empty + clear is best-effort).
+    expect(result.current.entries).toEqual([]);
   });
 });

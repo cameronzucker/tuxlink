@@ -117,15 +117,24 @@ export interface UseSessionLogResult {
   /** Accumulated entries, projected for SessionLogSection's `entries` prop. */
   entries: SessionLogEntry[];
   /**
-   * Clear the locally-rendered entries. Operator smoke 2026-05-31: panels
+   * Clear the rendered entries. Operator smoke 2026-05-31 (round 2): panels
    * needed a way to reset their log view without re-mounting.
    *
-   * NOTE: this only resets the local React state — the next backend
-   * `session_log:line` event will re-add subsequent lines. The backend's
-   * `session_log_snapshot` buffer is NOT touched (it's a global buffer
-   * shared by every panel; one panel's clear must not blow away history
-   * the others might still want). New lines arriving after the clear
-   * show up normally.
+   * The clear targets BOTH layers:
+   *
+   *   1. Backend: invokes `session_log_clear` to drain the shared ring
+   *      buffer. Without this, switching modes (which re-mounts the panel)
+   *      refetched the snapshot via `session_log_snapshot` and the
+   *      "cleared" entries reappeared. (Round-1 fix only touched local
+   *      state; round-2 added the backend drain.)
+   *
+   *   2. Local React state: `setLines([])` keeps the UI responsive even
+   *      when the backend invoke rejects (pre-bootstrap / offline). The
+   *      backend call is best-effort; its rejection is swallowed.
+   *
+   * `next_seq` is preserved across the backend clear (see SessionLogState),
+   * so post-clear lines stay monotonic and any panel still tracking a
+   * stale `last_seq` cursor can't accidentally match a recycled id.
    */
   clear: () => void;
 }
@@ -191,6 +200,13 @@ export function useSessionLog(): UseSessionLogResult {
   }, []);
 
   const clear = useCallback(() => {
+    // Backend drain first — without this, the panel's snapshot re-fetch on
+    // re-mount (mode switch) re-loads the just-cleared entries. Best-effort:
+    // a rejection (offline / pre-bootstrap) is swallowed so the local clear
+    // still happens and the UI stays responsive.
+    void invoke('session_log_clear').catch(() => {
+      /* backend absent or offline — local clear still applies below */
+    });
     setLines([]);
   }, []);
 
