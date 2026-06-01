@@ -749,6 +749,18 @@ pub async fn cms_connect(
             // are transient (connect → B2F exchange → done), not a held
             // socket — close the session explicitly so backend_status
             // reflects reality on the next poll.
+            //
+            // 2026-05-31 operator smoke #5: even after the event-driven
+            // status fix landed, the Connected state was sub-millisecond
+            // on screen (the disconnect fires immediately, React batches
+            // the rapid setStatus(Connected) → setStatus(Disconnected) and
+            // the user never sees green). Hold the Connected state for
+            // 1.5s before disconnecting so the operator has perceptible
+            // visual confirmation that the exchange succeeded. The status
+            // really is Connected for that time (no UX lie); the cost is
+            // ~1.5s of delayed Start-button re-enable, which is
+            // imperceptible compared to the value of the success signal.
+            tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
             if let Err(e) = backend.disconnect(session).await {
                 emit_session_line(
                     &app,
