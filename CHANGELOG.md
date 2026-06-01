@@ -4,6 +4,13 @@ All notable changes to Tuxlink are documented here.
 
 This project adheres to [Semantic Versioning](https://semver.org) with project-specific rules described in [VERSIONING.md](VERSIONING.md). Entries from `v0.0.2` onward are generated automatically by [`release-please`](https://github.com/googleapis/release-please) from [Conventional Commits](https://www.conventionalcommits.org).
 
+## [0.11.0](https://github.com/cameronzucker/tuxlink/compare/v0.10.0...v0.11.0) (2026-06-01)
+
+
+### Features
+
+* **compose:** enable the Cc field end-to-end (tuxlink-h1km) ([4198aa6](https://github.com/cameronzucker/tuxlink/commit/4198aa629909a424a20a83b35385d8c20d49ca7e))
+
 ## [0.10.0](https://github.com/cameronzucker/tuxlink/compare/v0.9.0...v0.10.0) (2026-06-01)
 
 
