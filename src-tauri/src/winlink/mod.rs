@@ -21,6 +21,7 @@ pub mod proposal;
 pub mod secure;
 pub mod session;
 pub mod telnet;
+pub mod telnet_p2p;
 pub mod telnet_p2p_login;
 pub mod transfer;
 pub mod wire;
