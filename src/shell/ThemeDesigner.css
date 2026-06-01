@@ -1,0 +1,227 @@
+/* ThemeDesigner — inline overlay for the custom color-scheme editor
+ * (tuxlink-vgth). Uses theme tokens so the panel re-paints under the live
+ * preview as the operator edits — the panel's own appearance is part of the
+ * visual feedback loop. */
+
+.tux-theme-designer-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.55);
+}
+
+.tux-theme-designer-panel {
+  width: min(640px, calc(100vw - 48px));
+  max-height: calc(100vh - 64px);
+  overflow-y: auto;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+  font-family: var(--sans);
+  color: var(--text);
+}
+
+.tux-theme-designer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border);
+}
+
+.tux-theme-designer-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.tux-theme-designer-close {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 4px;
+}
+.tux-theme-designer-close:hover {
+  color: var(--text);
+}
+
+.tux-theme-designer-help {
+  padding: 12px 18px 0;
+  font-size: 12px;
+  color: var(--text-dim);
+  line-height: 1.5;
+}
+
+.tux-theme-designer-group {
+  border: none;
+  margin: 0;
+  padding: 14px 18px;
+}
+.tux-theme-designer-group + .tux-theme-designer-group {
+  border-top: 1px solid var(--border-soft);
+}
+.tux-theme-designer-group legend {
+  padding: 0;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--text-dim);
+  margin-bottom: 10px;
+}
+
+.tux-theme-designer-group-help {
+  font-size: 11px;
+  color: var(--text-faint);
+  margin-bottom: 12px;
+  line-height: 1.4;
+}
+
+.tux-theme-designer-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px 0;
+}
+
+.tux-theme-designer-field-label {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.tux-theme-designer-field-help {
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.tux-theme-designer-text-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 7px 9px;
+  font-family: inherit;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+}
+.tux-theme-designer-text-input:focus {
+  outline: 2px solid var(--tux-focus-ring);
+  outline-offset: 1px;
+  border-color: var(--accent);
+}
+
+.tux-theme-designer-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 0;
+  border-top: 1px dashed var(--border-soft);
+}
+.tux-theme-designer-row:first-of-type {
+  border-top: none;
+}
+
+.tux-theme-designer-row-label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1 1 auto;
+  cursor: pointer;
+}
+
+.tux-theme-designer-token-label {
+  font-size: 13px;
+  color: var(--text);
+}
+
+.tux-theme-designer-token-help {
+  font-size: 11px;
+  color: var(--text-faint);
+  line-height: 1.35;
+}
+
+.tux-theme-designer-row-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+.tux-theme-designer-color {
+  width: 36px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 5px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.tux-theme-designer-color-text {
+  width: 120px;
+  padding: 6px 8px;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  border-radius: 5px;
+}
+.tux-theme-designer-color-text:focus {
+  outline: 2px solid var(--tux-focus-ring);
+  outline-offset: 1px;
+  border-color: var(--accent);
+}
+
+.tux-theme-designer-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 18px;
+  border-top: 1px solid var(--border);
+  position: sticky;
+  bottom: 0;
+  background: var(--surface);
+}
+
+.tux-theme-designer-actions-right {
+  display: flex;
+  gap: 8px;
+}
+
+.tux-theme-designer-button {
+  padding: 7px 14px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  cursor: pointer;
+}
+.tux-theme-designer-button:hover {
+  background: var(--elevated);
+  border-color: var(--accent);
+}
+
+.tux-theme-designer-button-primary {
+  color: var(--tux-accent-fg);
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.tux-theme-designer-button-primary:hover {
+  background: var(--accent-2);
+  border-color: var(--accent-2);
+  color: var(--tux-accent-fg);
+}

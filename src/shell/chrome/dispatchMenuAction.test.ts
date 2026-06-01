@@ -13,6 +13,7 @@ function handlers(): MenuHandlers {
     selectFolder: vi.fn(),
     setScheme: vi.fn(),
     openSettings: vi.fn(),
+    openThemeDesigner: vi.fn(),
     quit: vi.fn(),
   };
 }
@@ -61,6 +62,28 @@ describe('dispatchMenuAction', () => {
     const h = handlers();
     dispatchMenuAction('menu:view:scheme:night-red', h);
     expect(h.setScheme).toHaveBeenCalledWith('night-red');
+  });
+
+  it('routes the new light presets', () => {
+    const h = handlers();
+    dispatchMenuAction('menu:view:scheme:daylight', h);
+    dispatchMenuAction('menu:view:scheme:high-contrast-light', h);
+    dispatchMenuAction('menu:view:scheme:paper', h);
+    expect(h.setScheme).toHaveBeenNthCalledWith(1, 'daylight');
+    expect(h.setScheme).toHaveBeenNthCalledWith(2, 'high-contrast-light');
+    expect(h.setScheme).toHaveBeenNthCalledWith(3, 'paper');
+  });
+
+  it('routes the "custom" scheme sentinel', () => {
+    const h = handlers();
+    dispatchMenuAction('menu:view:scheme:custom', h);
+    expect(h.setScheme).toHaveBeenCalledWith('custom');
+  });
+
+  it('routes Customize… to openThemeDesigner', () => {
+    const h = handlers();
+    dispatchMenuAction('menu:view:customize_theme', h);
+    expect(h.openThemeDesigner).toHaveBeenCalledOnce();
   });
 
   it('routes reply / reply_all / forward', () => {

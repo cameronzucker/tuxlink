@@ -53,10 +53,20 @@ export const MENU_TREE: TopMenu[] = [
     { id: 'menu:view:status_bar', label: 'Toggle Status Bar' },
     { id: 'menu:view:radio_panel', label: 'Toggle Radio Panel', accel: 'Ctrl+Shift+M' },
     { separator: true },
+    // tuxlink-c22r + tuxlink-vgth: dark default, three light presets, two
+    // specialty schemes, then a separator and the operator's saved custom
+    // theme + the Customize designer entry. The Customize action opens an
+    // inline panel (per feedback_inline_ui_no_window_clutter), not a window.
     { label: 'Color scheme', submenu: [
-      { id: 'menu:view:scheme:default', label: 'Default' },
+      { id: 'menu:view:scheme:default', label: 'Default (dark)' },
+      { id: 'menu:view:scheme:daylight', label: 'Daylight (light)' },
+      { id: 'menu:view:scheme:high-contrast-light', label: 'High contrast (light)' },
+      { id: 'menu:view:scheme:paper', label: 'Paper (warm light)' },
       { id: 'menu:view:scheme:night-red', label: 'Night / tactical (red)' },
       { id: 'menu:view:scheme:grayscale', label: 'Grayscale' },
+      { separator: true },
+      { id: 'menu:view:scheme:custom', label: 'My custom theme' },
+      { id: 'menu:view:customize_theme', label: 'Customize…' },
     ] },
   ] },
   { label: 'Tools', items: [
