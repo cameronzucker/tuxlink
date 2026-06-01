@@ -19,5 +19,6 @@
 
 pub mod params;
 pub mod rng;
+pub mod fading;
 
 pub use params::{ChannelCondition, WattersonParams};
