@@ -56,7 +56,16 @@ export interface ModemLinkSectionProps {
 
 const DEFAULT_TCP_HOST = '127.0.0.1';
 const DEFAULT_TCP_PORT = 8001;
-const DEFAULT_SERIAL_BAUD = 9600;
+// AX.25 host-link baud (TNC-to-host KISS link, NOT over-air). Operator smoke
+// 2026-05-31: default should be 1200 — that's what almost every TNC ships
+// with, and the prior 9600 default was wrong for the common case. The
+// selector lists the full standard ladder; the operator picks per radio.
+const DEFAULT_SERIAL_BAUD = 1200;
+
+/** Standard TNC host-link bauds. 1200 is the common default for KISS TNCs;
+ *  9600 is also common; the higher rates exist for KISS-over-USB-CDC and
+ *  Bluetooth SPP adapters. Wire field on PacketConfigDto = serialBaud. */
+const SERIAL_BAUD_OPTIONS = [1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200] as const;
 
 function initialSegment(kind: 'Tcp' | 'Serial'): ModemSegment {
   return kind === 'Tcp' ? 'tcp' : 'usb';
@@ -79,7 +88,9 @@ export function ModemLinkSection({
   const [hostInput, setHostInput] = useState(host ?? DEFAULT_TCP_HOST);
   const [portInput, setPortInput] = useState(String(port ?? DEFAULT_TCP_PORT));
   const [deviceInput, setDeviceInput] = useState(serialDevice ?? '');
-  const baud = serialBaud ?? DEFAULT_SERIAL_BAUD;
+  // Track baud as local state so changes apply immediately on the new value
+  // (rather than the stale prop) when the operator selects from the dropdown.
+  const [baudInput, setBaudInput] = useState<number>(serialBaud ?? DEFAULT_SERIAL_BAUD);
 
   // Re-seed when props change underneath (parent loaded a new config).
   useEffect(() => {
@@ -87,9 +98,10 @@ export function ModemLinkSection({
     setHostInput(host ?? DEFAULT_TCP_HOST);
     setPortInput(String(port ?? DEFAULT_TCP_PORT));
     setDeviceInput(serialDevice ?? '');
-  }, [kind, host, port, serialDevice]);
+    setBaudInput(serialBaud ?? DEFAULT_SERIAL_BAUD);
+  }, [kind, host, port, serialDevice, serialBaud]);
 
-  const emit = (seg: ModemSegment) => {
+  const emit = (seg: ModemSegment, baudOverride?: number) => {
     if (seg === 'tcp') {
       onChange({
         linkKind: 'Tcp',
@@ -104,7 +116,7 @@ export function ModemLinkSection({
         tcpHost: null,
         tcpPort: null,
         serialDevice: deviceInput.trim() || (serialDevice ?? null),
-        serialBaud: baud,
+        serialBaud: baudOverride ?? baudInput,
       });
     }
   };
@@ -195,14 +207,20 @@ export function ModemLinkSection({
           </label>
           <label className="radio-panel-input-row">
             <span>Baud</span>
-            <input
-              type="text"
-              inputMode="numeric"
+            <select
               className="radio-panel-input"
               data-testid="modem-baud"
-              value={String(baud)}
-              readOnly
-            />
+              value={baudInput}
+              onChange={(e) => {
+                const next = Number(e.target.value);
+                setBaudInput(next);
+                emit(segment, next);
+              }}
+            >
+              {SERIAL_BAUD_OPTIONS.map((b) => (
+                <option key={b} value={b}>{b}</option>
+              ))}
+            </select>
           </label>
         </>
       )}

@@ -64,7 +64,54 @@ describe('<ModemLinkSection>', () => {
       />,
     );
     expect(screen.getByDisplayValue('/dev/ttyUSB0')).toBeInTheDocument();
-    expect(screen.getByDisplayValue('9600')).toBeInTheDocument();
+    // Baud is now a <select> — the selected option's value is reflected in
+    // the select element's displayValue.
+    const baudSelect = screen.getByTestId('modem-baud') as HTMLSelectElement;
+    expect(baudSelect.value).toBe('9600');
+  });
+
+  it('baud select defaults to 1200 (the common TNC default) when no serialBaud is provided', () => {
+    render(
+      <ModemLinkSection
+        kind="Serial"
+        serialDevice="/dev/ttyUSB0"
+        onChange={() => {}}
+      />,
+    );
+    const baudSelect = screen.getByTestId('modem-baud') as HTMLSelectElement;
+    expect(baudSelect.value).toBe('1200');
+  });
+
+  it('baud select exposes the standard TNC baud ladder', () => {
+    render(
+      <ModemLinkSection
+        kind="Serial"
+        serialDevice="/dev/ttyUSB0"
+        onChange={() => {}}
+      />,
+    );
+    const baudSelect = screen.getByTestId('modem-baud') as HTMLSelectElement;
+    const values = Array.from(baudSelect.options).map((o) => o.value);
+    expect(values).toEqual(['1200', '2400', '4800', '9600', '19200', '38400', '57600', '115200']);
+  });
+
+  it('changing baud fires onChange with the new serialBaud immediately', () => {
+    const onChange = vi.fn();
+    render(
+      <ModemLinkSection
+        kind="Serial"
+        serialDevice="/dev/ttyUSB0"
+        serialBaud={1200}
+        onChange={onChange}
+      />,
+    );
+    fireEvent.change(screen.getByTestId('modem-baud'), { target: { value: '9600' } });
+    expect(onChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        linkKind: 'Serial',
+        serialBaud: 9600,
+      }),
+    );
   });
 
   it('persists TCP host edits via onChange on blur', () => {
