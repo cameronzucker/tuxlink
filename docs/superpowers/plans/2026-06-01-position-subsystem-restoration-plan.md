@@ -323,7 +323,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 
 **Context:** The pre-pjih `position_set_source('Gps')` command pre-checked `arbiter.has_fresh_fix()` and returned `UiError::Unavailable { reason: "Cannot switch to GPS: no usable GPS fix" }` on miss. Per spec §1.1 + Codex P0 #1, the position-subsystem restoration extends the relaxation to the command layer: remove the pre-check and the error path.
 
-- [ ] **Step 1: Write the failing test.**
+- [x] **Step 1: Write the failing test.**
 
 In `src-tauri/src/ui_commands.rs`'s `mod tests`, ADD:
 
@@ -361,7 +361,7 @@ In `src-tauri/src/ui_commands.rs`'s `mod tests`, ADD:
 
 Note: the test references `position_set_source_impl` — a non-Tauri-attribute helper that the existing `position_set_source` `#[tauri::command]` delegates to (so it's callable from tests without a Tauri runtime). If the codebase doesn't already have this split, factor it out as part of Step 3.
 
-- [ ] **Step 2: Run the test to verify it fails.**
+- [x] **Step 2: Run the test to verify it fails.**
 
 ```bash
 cargo test --manifest-path src-tauri/Cargo.toml --lib \
@@ -370,7 +370,7 @@ cargo test --manifest-path src-tauri/Cargo.toml --lib \
 
 Expected: FAIL. Either the test helper doesn't compile (no `position_set_source_impl` exposed), OR the pre-check returns `Err(UiError::Unavailable {..})` and the `result.is_ok()` assertion fails.
 
-- [ ] **Step 3: Remove the `has_fresh_fix` pre-check + the `UiError::Unavailable` error path.**
+- [x] **Step 3: Remove the `has_fresh_fix` pre-check + the `UiError::Unavailable` error path.**
 
 In `src-tauri/src/ui_commands.rs`, locate the `position_set_source` async fn. The current body:
 
@@ -436,7 +436,7 @@ pub async fn position_set_source(
 }
 ```
 
-- [ ] **Step 4: Run the test to verify it passes.**
+- [x] **Step 4: Run the test to verify it passes.**
 
 ```bash
 cargo test --manifest-path src-tauri/Cargo.toml --lib \
@@ -445,7 +445,7 @@ cargo test --manifest-path src-tauri/Cargo.toml --lib \
 
 Expected: PASS.
 
-- [ ] **Step 5: Run the full cargo --lib to confirm no other regressions.**
+- [x] **Step 5: Run the full cargo --lib to confirm no other regressions.**
 
 ```bash
 cargo test --manifest-path src-tauri/Cargo.toml --lib 2>&1 | tail -5
@@ -453,7 +453,7 @@ cargo test --manifest-path src-tauri/Cargo.toml --lib 2>&1 | tail -5
 
 Expected: all passing. If any test fails because it asserts the pre-check error path (e.g. `use_gps_no_fix_maps_to_ui_error_unavailable`), DELETE that test — it asserts pre-relaxation behavior that the position-subsystem restoration removes.
 
-- [ ] **Step 6: Commit.**
+- [x] **Step 6: Commit.**
 
 ```bash
 git add src-tauri/src/ui_commands.rs
