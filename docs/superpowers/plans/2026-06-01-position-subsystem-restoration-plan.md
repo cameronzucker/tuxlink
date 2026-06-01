@@ -190,7 +190,7 @@ Expected: All passing. Other pjih-era tests (`fresh_gps_fix_wins_over_manual_gri
 
 If any other test fails because it referenced `effective_source`, delete the reference (the entire test if it was pjih-specific).
 
-- [ ] **Step 6: Commit.**
+- [x] **Step 6: Commit.**
 
 ```bash
 git -C /home/administrator/Code/tuxlink/worktrees/bd-tuxlink-c79g-position-subsystem-restoration add src-tauri/src/position/arbiter.rs
