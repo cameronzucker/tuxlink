@@ -43,9 +43,13 @@
 #
 # Exit codes:
 #   0   converged + launched (or converged-only if --skip-launch)
-#   4   git worktree create / fetch / sync failed
+#   4   git worktree create/fetch/sync failed, OR disposable worktree
+#       is in a state the script won't auto-fix (dirty content, or
+#       orphan directory at the disposable path that isn't a worktree)
 #   6   pnpm install failed
 #   7   port 1420 owner refused to release (manual --force-kill-owned needed)
+#   9   another converge-build is in flight in this operator checkout
+#       (per-checkout flock contention)
 #   10  script-internal error (bug)
 
 set -euo pipefail
@@ -250,26 +254,67 @@ fetch_prune() {
 # First run: create via `git worktree add --detach`.
 # Subsequent runs: `git checkout --detach origin/main` from inside it (this
 # is safe — detached HEAD updates do not affect any branch).
+# Helper: is the disposable worktree dirty? Tracks staged + tracked changes
+# plus non-ignored untracked files. Ignores node_modules/ + target/ (the
+# tracked-but-gitignored build caches). Returns 0 if clean, 1 if dirty.
+_disposable_is_clean() {
+  [[ -d "${DISPOSABLE_WT_DIR}" ]] || return 0
+  if ! git -C "${DISPOSABLE_WT_DIR}" diff --quiet 2>/dev/null; then return 1; fi
+  if ! git -C "${DISPOSABLE_WT_DIR}" diff --quiet --cached 2>/dev/null; then return 1; fi
+  # Untracked NON-gitignored files (the cached node_modules + target/
+  # are gitignored, so --exclude-standard hides them).
+  local untracked
+  untracked="$(git -C "${DISPOSABLE_WT_DIR}" ls-files --others --exclude-standard 2>/dev/null || true)"
+  [[ -z "${untracked}" ]]
+}
+
 ensure_disposable_worktree() {
   local dry="$1"
-  mkdir -p "$(dirname "${DISPOSABLE_WT_DIR}")"
   local origin_main_sha; origin_main_sha="$(git -C "${REPO_ROOT}" rev-parse origin/main)"
 
-  # Is the worktree already registered with git?
+  # Codex P2 #2 (2026-06-01): defer .local/ creation to the non-dry-run
+  # path so --dry-run honors its no-mutation contract.
+  if [[ "${dry}" -eq 0 ]]; then
+    mkdir -p "$(dirname "${DISPOSABLE_WT_DIR}")"
+  fi
+
+  # Codex P1 #2 (2026-06-01): proactively prune git's worktree registry
+  # before the registration check. This handles the case where the
+  # worktree was registered but the directory was deleted out-of-band
+  # (manual rm -rf, disk failure, OS clean-up). Without prune, the
+  # registration check sees the path as 'registered', then the subsequent
+  # `git -C $DIR` calls fail because the directory is missing.
+  if [[ "${dry}" -eq 0 ]]; then
+    git -C "${REPO_ROOT}" worktree prune >&2 2>/dev/null || true
+  fi
+
+  # Is the worktree currently registered (post-prune) and directory present?
   local registered=0
+  local dir_exists=0
+  [[ -d "${DISPOSABLE_WT_DIR}" ]] && dir_exists=1
   if git -C "${REPO_ROOT}" worktree list --porcelain 2>/dev/null \
       | awk -v p="${DISPOSABLE_WT_DIR}" '$1=="worktree" && $2==p {found=1} END {exit !found}'; then
     registered=1
   fi
 
+  # Codex P1 #2 continued: handle the un-registered-but-present-on-disk
+  # case — refuse with a clear remediation rather than letting
+  # `git worktree add` fail with an opaque message.
+  if [[ "${registered}" -eq 0 && "${dir_exists}" -eq 1 ]]; then
+    warn "directory ${DISPOSABLE_WT_DIR} exists but is NOT a registered worktree."
+    warn "this likely means it was a worktree that was deregistered (e.g. via"
+    warn "git worktree prune after manual delete) but the dir was not removed."
+    warn "If safe, remove it: rm -rf ${DISPOSABLE_WT_DIR}"
+    warn "then re-run scripts/converge-build.sh."
+    audit "disposable_orphan_dir" "$(printf '{"path":"%s"}' "${DISPOSABLE_WT_DIR}")"
+    exit 4
+  fi
+
   if [[ "${registered}" -eq 0 ]]; then
-    # Either never created, OR previously created and the directory was
-    # removed without `git worktree prune`. Run prune to clean up first.
     if [[ "${dry}" -eq 1 ]]; then
-      dim "  [dry-run] would: git worktree prune; git worktree add --detach ${DISPOSABLE_WT_DIR} ${origin_main_sha:0:12}"
+      dim "  [dry-run] would: git worktree add --detach ${DISPOSABLE_WT_DIR} ${origin_main_sha:0:12}"
     else
       step "creating disposable worktree at ${DISPOSABLE_WT_DIR}"
-      git -C "${REPO_ROOT}" worktree prune >&2
       if ! git -C "${REPO_ROOT}" worktree add --detach "${DISPOSABLE_WT_DIR}" "${origin_main_sha}" >&2; then
         die "git worktree add failed — check git error above" 4
       fi
@@ -278,11 +323,21 @@ ensure_disposable_worktree() {
     return 0
   fi
 
-  # Worktree exists; check whether its HEAD matches origin/main.
-  local wt_head=""
-  if [[ -d "${DISPOSABLE_WT_DIR}" ]]; then
-    wt_head="$(git -C "${DISPOSABLE_WT_DIR}" rev-parse HEAD 2>/dev/null || echo unknown)"
+  # Worktree exists. Codex P1 #1 (2026-06-01): check dirtiness BEFORE the
+  # HEAD-matches early return. A dirty worktree that happens to be at the
+  # right HEAD would otherwise silently contaminate the build.
+  if ! _disposable_is_clean; then
+    warn "disposable worktree has uncommitted/untracked source changes — refusing to use"
+    warn "inspect with: git -C ${DISPOSABLE_WT_DIR} status"
+    warn "agents should never write here; this likely indicates a misbehaving process"
+    warn "or a manual edit. If intentional, commit + push elsewhere; if accidental,"
+    warn "manually clean (cached node_modules/ + target/ are fine — they're gitignored)."
+    audit "disposable_dirty" "$(printf '{"path":"%s"}' "${DISPOSABLE_WT_DIR}")"
+    exit 4
   fi
+
+  local wt_head=""
+  wt_head="$(git -C "${DISPOSABLE_WT_DIR}" rev-parse HEAD 2>/dev/null || echo unknown)"
 
   if [[ "${wt_head}" = "${origin_main_sha}" ]]; then
     dim "disposable worktree already at origin/main (${origin_main_sha:0:12})"
@@ -295,17 +350,6 @@ ensure_disposable_worktree() {
   fi
 
   step "syncing disposable worktree to origin/main (${wt_head:0:12} → ${origin_main_sha:0:12})"
-  # Defensive: if the disposable worktree somehow has uncommitted changes
-  # (shouldn't happen — agents never write there — but a misbehaving
-  # process could), refuse to overwrite.
-  if ! git -C "${DISPOSABLE_WT_DIR}" diff --quiet 2>/dev/null \
-      || ! git -C "${DISPOSABLE_WT_DIR}" diff --quiet --cached 2>/dev/null; then
-    warn "disposable worktree has uncommitted changes — refusing to overwrite"
-    warn "inspect with: git -C ${DISPOSABLE_WT_DIR} status"
-    warn "if intentional, commit + push elsewhere; if accidental, manually clean."
-    audit "disposable_dirty" "$(printf '{"path":"%s"}' "${DISPOSABLE_WT_DIR}")"
-    exit 4
-  fi
   if ! git -C "${DISPOSABLE_WT_DIR}" checkout --detach "${origin_main_sha}" >&2; then
     die "git checkout --detach failed inside disposable worktree" 4
   fi
@@ -526,6 +570,21 @@ main() {
   step "build target: ${DISPOSABLE_WT_DIR} (detached @ origin/main)"
   if [[ "${FLAG_DRY_RUN}" -eq 1 ]]; then
     warn "DRY RUN — no mutations will be performed"
+  fi
+
+  # Codex P2 #1 (2026-06-01): hold a flock on .local/converge-build.lock
+  # for the duration of any mutating run. Two simultaneous invocations
+  # from the SAME operator checkout would otherwise race the
+  # worktree-prune + add, rm -rf node_modules, pnpm install, and state
+  # writes. The lock is per-operator-checkout (different checkouts have
+  # different .local/ paths); cross-checkout coordination is the
+  # dev-server-lease's job (tuxlink-8d7y / PR #206).
+  if [[ "${FLAG_DRY_RUN}" -eq 0 ]] && command -v flock >/dev/null 2>&1; then
+    mkdir -p "${REPO_ROOT}/.local"
+    exec 199>>"${REPO_ROOT}/.local/converge-build.lock"
+    if ! flock -n 199; then
+      die "another converge-build is in flight in this checkout (${REPO_ROOT}); refusing" 9
+    fi
   fi
 
   # 1. Fetch fresh origin refs.

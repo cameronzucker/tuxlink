@@ -57,8 +57,10 @@ dist-ssr/
 # a persistent throwaway worktree pinned at exactly origin/main, used as the
 # unambiguous build target. The directory is managed by git worktree
 # machinery; .local/ otherwise accumulates per-machine runtime state and
-# should never be tracked.
-.local/
+# should never be tracked. Anchored to repo root (/.local/) to avoid
+# accidentally ignoring an unrelated .local subdirectory anywhere in the
+# tree (Codex 2026-06-01 P3 catch).
+/.local/
 
 # Logs
 *.log
