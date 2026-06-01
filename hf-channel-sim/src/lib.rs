@@ -18,5 +18,6 @@
 //! band samples. Deterministic, reproducible, AI-agent-friendly.
 
 pub mod params;
+pub mod rng;
 
 pub use params::{ChannelCondition, WattersonParams};
