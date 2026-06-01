@@ -76,6 +76,41 @@ _audit_commits_ahead_of_main() {
   git rev-list --count "origin/${branch}" --not "origin/main" 2>/dev/null || echo 0
 }
 
+# Detect squash/rebase-merged PRs. A no-ff merge-commit has 2 parents
+# (main's pre-merge tip + the branch tip); a squash-merge produces a
+# regular 1-parent commit on main. ADR 0010 BANS squash-merge for
+# tuxlink, but defensively detect + flag (the orphan heuristic
+# "ahead of main" misclassifies squash-merged branches as orphan
+# because their original commits were not preserved on main).
+# Returns 0 if no-ff (safe to apply orphan check), 1 if squash/rebase
+# (skip orphan check + flag in body).
+_audit_is_no_ff_merge() {
+  local merge_commit="$1"
+  [[ -z "${merge_commit}" ]] && return 0  # unknown; default to safe (orphan check still runs)
+  # `git rev-list --no-walk --parents <sha>` prints one line:
+  #   "<commit-sha> <parent1-sha> [<parent2-sha> ...]"
+  # The number of parents = NF - 1. A no-ff merge has 2+ parents; a
+  # squash-merge or rebase-merge produces a regular single-parent
+  # commit on main.
+  local line parent_count
+  line="$(git rev-list --no-walk --parents "${merge_commit}" 2>/dev/null | head -1)"
+  parent_count="$(echo "${line}" | awk '{print NF - 1}')"
+  [[ "${parent_count:-0}" -ge 2 ]]
+}
+
+# Markdown-escape a string for safe embedding in an issue-body table
+# cell (Codex P3 2026-06-01). Git allows | and backticks in branch
+# names; both would corrupt markdown table parsing or break out of
+# inline-code spans. We don't fully escape unicode — just the markdown-
+# significant characters that affect rendering.
+_audit_md_escape() {
+  local s="$1"
+  s="${s//\\/\\\\}"
+  s="${s//\`/\\\`}"
+  s="${s//|/\\|}"
+  printf '%s' "${s}"
+}
+
 main() {
   if ! command -v gh >/dev/null 2>&1; then
     printf '✗ gh CLI not available — cannot run branch audit\n' >&2
@@ -100,6 +135,7 @@ main() {
   local orphan_branches=()
   local closed_dead_with_ahead=()
   local unknown_branches=()
+  local squash_merged_branches=()
   local total=0
   local audited=0
 
@@ -121,10 +157,18 @@ main() {
         local merged_tip remote_head ahead
         merged_tip="$(_audit_merged_tip "${branch}")"
         remote_head="$(_audit_remote_head "${branch}")"
-        ahead="$(_audit_commits_ahead_of_main "${branch}")"
-        if [[ -n "${remote_head}" && "${ahead}" -gt 0 ]]; then
-          # Branch is merged BUT still has commits not on main → orphan-post-merge.
-          orphan_branches+=("${branch}|${remote_head}|${ahead}|${merged_tip:-?}")
+        # Codex P2 (2026-06-01): the ahead-of-main heuristic only works
+        # for no-ff merges (tuxlink's standard per ADR 0010). For
+        # squash/rebase merges, the branch's original commits aren't
+        # preserved on main, so they always look "ahead" even when
+        # there are no post-merge orphans. Detect + bucket separately.
+        if [[ -n "${merged_tip}" ]] && ! _audit_is_no_ff_merge "${merged_tip}"; then
+          squash_merged_branches+=("${branch}|${merged_tip}")
+        else
+          ahead="$(_audit_commits_ahead_of_main "${branch}")"
+          if [[ -n "${remote_head}" && "${ahead}" -gt 0 ]]; then
+            orphan_branches+=("${branch}|${remote_head}|${ahead}|${merged_tip:-?}")
+          fi
         fi
         ;;
       closed-dead)
@@ -150,23 +194,39 @@ main() {
   printf 'branches audited (after ignoring main/bot/protected): %d\n' "${audited}" >&2
   printf 'orphan-post-merge branches found: %d\n' "${#orphan_branches[@]}" >&2
   printf 'closed-without-merge branches with extra commits: %d\n' "${#closed_dead_with_ahead[@]}" >&2
+  printf 'squash-merged branches (orphan check skipped — ADR 0010 violation): %d\n' "${#squash_merged_branches[@]}" >&2
   printf 'unknown-classification branches: %d\n' "${#unknown_branches[@]}" >&2
   printf '\n' >&2
 
+  # Codex P1 (2026-06-01): clean=true MUST also require zero unknowns. A
+  # transient `gh pr list` failure (rate limit, auth blip, network) leaves
+  # branches in the `unknown` bucket; if we set clean=true on that, the
+  # workflow's close-issue step fires and the backstop falsely clears
+  # itself. unknown_count>0 = audit incomplete, NOT clean.
   if [[ "${#orphan_branches[@]}" -eq 0 \
-        && "${#closed_dead_with_ahead[@]}" -eq 0 ]]; then
+        && "${#closed_dead_with_ahead[@]}" -eq 0 \
+        && "${#squash_merged_branches[@]}" -eq 0 \
+        && "${#unknown_branches[@]}" -eq 0 ]]; then
     printf '✓ No orphan-post-merge commits detected. Branch lifecycle is clean.\n' >&2
-    # Emit a "clean" finding to GITHUB_OUTPUT so the workflow can close
-    # any existing tracking issue.
     if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
       {
         echo "orphan_count=0"
         echo "closed_dead_with_ahead_count=0"
-        echo "unknown_count=${#unknown_branches[@]}"
+        echo "squash_merged_count=0"
+        echo "unknown_count=0"
         echo 'clean=true'
       } >>"${GITHUB_OUTPUT}"
     fi
     exit 0
+  fi
+
+  if [[ "${#orphan_branches[@]}" -eq 0 \
+        && "${#closed_dead_with_ahead[@]}" -eq 0 \
+        && "${#squash_merged_branches[@]}" -eq 0 ]]; then
+    printf '⚠ No orphans found, but %d branches were classified as unknown — audit incomplete.\n' \
+      "${#unknown_branches[@]}" >&2
+    # Fall through into the findings-body path so the workflow surfaces
+    # the unknowns rather than silently closing the tracking issue.
   fi
 
   printf '⚠ FINDINGS\n' >&2
@@ -211,7 +271,7 @@ main() {
       echo "|---|---:|---|---|"
       for entry in "${orphan_branches[@]}"; do
         IFS='|' read -r b remote_head ahead merged_tip <<<"${entry}"
-        echo "| \`${b}\` | ${ahead} | \`${merged_tip:0:12}\` | \`${remote_head:0:12}\` |"
+        echo "| \`$(_audit_md_escape "${b}")\` | ${ahead} | \`${merged_tip:0:12}\` | \`${remote_head:0:12}\` |"
       done
       echo ""
       echo "**Remediation:**"
@@ -231,7 +291,22 @@ main() {
       echo "|---|---:|"
       for entry in "${closed_dead_with_ahead[@]}"; do
         IFS='|' read -r b ahead <<<"${entry}"
-        echo "| \`${b}\` | ${ahead} |"
+        echo "| \`$(_audit_md_escape "${b}")\` | ${ahead} |"
+      done
+      echo ""
+    fi
+    if [[ "${#squash_merged_branches[@]}" -gt 0 ]]; then
+      echo "## Squash/rebase-merged branches — orphan check skipped (${#squash_merged_branches[@]})"
+      echo ""
+      echo "These branches have a merged PR whose merge-commit is a single-parent commit (squash or rebase-merge). ADR 0010 BANS squash-merge in tuxlink; if these appear here, somebody bypassed the policy via the GitHub UI or API."
+      echo ""
+      echo "The orphan-detection heuristic (commits ahead of main) does NOT work for squash-merges because the branch's original commits weren't preserved on main; the audit therefore CANNOT distinguish 'post-merge orphan' from 'normal pre-merge branch state' for these. They are surfaced here for operator review."
+      echo ""
+      echo "| Branch | Merge-commit |"
+      echo "|---|---|"
+      for entry in "${squash_merged_branches[@]}"; do
+        IFS='|' read -r b merged_tip <<<"${entry}"
+        echo "| \`$(_audit_md_escape "${b}")\` | \`${merged_tip:0:12}\` |"
       done
       echo ""
     fi
@@ -243,7 +318,7 @@ main() {
       echo "<details><summary>List</summary>"
       echo ""
       for b in "${unknown_branches[@]}"; do
-        echo "- \`${b}\`"
+        echo "- \`$(_audit_md_escape "${b}")\`"
       done
       echo ""
       echo "</details>"
@@ -258,6 +333,7 @@ main() {
     {
       echo "orphan_count=${#orphan_branches[@]}"
       echo "closed_dead_with_ahead_count=${#closed_dead_with_ahead[@]}"
+      echo "squash_merged_count=${#squash_merged_branches[@]}"
       echo "unknown_count=${#unknown_branches[@]}"
       echo "clean=false"
       echo "body_file=${body_file}"

@@ -351,6 +351,50 @@ class BranchAuditTest(unittest.TestCase):
             gh_out.get("orphan_count"), "0", msg=f"stderr={stderr}"
         )
 
+    def test_unknown_classification_keeps_audit_non_clean(self):
+        """Codex P1 (2026-06-01) — when gh is unreachable for some branches,
+        they bucket as 'unknown'. The audit must NOT emit clean=true (which
+        would let the workflow close the tracking issue) even if no orphans
+        were found in the branches it could classify.
+        """
+        # Repo with one branch + main. gh stub that always exits non-zero
+        # → classifier returns "unknown" → script must report non-clean.
+        self.repo.setup(
+            {
+                "main": [],
+                "bd-tuxlink-mystery/work": ["a"],
+            }
+        )
+        tmp = tempfile.mkdtemp(prefix="tuxlink-gh-fail-")
+        try:
+            gh_path = Path(tmp) / "gh"
+            gh_path.write_text(
+                "#!/usr/bin/env bash\n"
+                "echo 'auth required' >&2\n"
+                "exit 1\n"
+            )
+            gh_path.chmod(0o755)
+            orig_path = os.environ.get("PATH", "")
+            os.environ["PATH"] = f"{tmp}:{orig_path}"
+            try:
+                rc, stdout, stderr, gh_out, body = _run_audit(self.repo.clone)
+            finally:
+                os.environ["PATH"] = orig_path
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+        # gh fails → classifier returns "unknown" for the branch.
+        # Even with 0 orphans, clean must NOT be true.
+        self.assertEqual(rc, 0, msg=stderr)
+        self.assertNotEqual(
+            gh_out.get("clean"),
+            "true",
+            msg=(
+                "Codex P1: unknown classifications must not produce clean=true. "
+                f"gh_out={gh_out!r} stderr={stderr!r}"
+            ),
+        )
+        self.assertTrue(int(gh_out.get("unknown_count", "0")) > 0)
+
     def test_bot_branch_ignored(self):
         """Bot-owned branches (release-please--*) skipped from audit."""
         self.repo.setup(
@@ -371,6 +415,85 @@ class BranchAuditTest(unittest.TestCase):
             rc, stdout, stderr, gh_out, body = _run_audit(self.repo.clone)
         self.assertEqual(rc, 0, msg=stderr)
         self.assertEqual(gh_out.get("orphan_count"), "0")
+
+
+    def test_squash_merged_branch_bucketed_separately(self):
+        """Codex P2 (2026-06-01) — branches whose merge-commit is a single-
+        parent commit (squash/rebase merge) cannot be checked for post-merge
+        orphans via the 'ahead of main' heuristic. They must bucket into
+        squash_merged_branches instead of orphan_branches even if they have
+        commits ahead of main."""
+        # Set up: a branch with commits, then SQUASH-merged to main (single
+        # parent commit on main, NOT a no-ff merge).
+        self.repo.setup(
+            {
+                "main": [],
+                "bd-tuxlink-squashed/work": ["w1", "w2"],
+            }
+        )
+        # Do a squash-merge manually (not via merge_branch_to_main which
+        # does --no-ff). The squash retains the branch's content but as
+        # a single new commit on main.
+        self.repo._git(self.repo.source, "checkout", "-q", "main")
+        self.repo._git(
+            self.repo.source,
+            "merge",
+            "--squash",
+            "bd-tuxlink-squashed/work",
+        )
+        self.repo._git(
+            self.repo.source,
+            "commit",
+            "-q",
+            "-m",
+            "Squashed: bd-tuxlink-squashed/work",
+        )
+        squash_commit = self.repo._git(
+            self.repo.source, "rev-parse", "HEAD"
+        ).stdout.strip()
+        # Update the clone to see the squash-merge.
+        self.repo._git(self.repo.clone, "fetch", "origin")
+        with _GhStub(
+            merged_prs={"bd-tuxlink-squashed/work": squash_commit},
+        ):
+            rc, stdout, stderr, gh_out, body = _run_audit(self.repo.clone)
+        self.assertEqual(rc, 0, msg=stderr)
+        # The branch should bucket as squash-merged, NOT as orphan.
+        self.assertEqual(
+            gh_out.get("orphan_count"), "0", msg=stderr,
+        )
+        self.assertEqual(
+            gh_out.get("squash_merged_count"), "1", msg=stderr,
+        )
+
+    def test_markdown_escape_branch_names_with_pipe_and_backtick(self):
+        """Codex P3 (2026-06-01) — branch names with markdown-significant
+        characters (pipe, backtick) must be escaped in the issue body so
+        they don't corrupt markdown table parsing or break inline-code spans."""
+        # Test the escape helper directly via the script's sourced library.
+        # Using subprocess to source + invoke _audit_md_escape.
+        r = subprocess.run(
+            [
+                "bash",
+                "-c",
+                (
+                    "set -e\n"
+                    # Source the script via grep-based exec (the script's
+                    # `main` is at the end; sourcing it would run main).
+                    "AUDIT='" + str(REPO_ROOT / "scripts" / "branch-audit.sh") + "'\n"
+                    # Run the function in isolation by extracting it.
+                    "eval \"$(sed -n '/^_audit_md_escape()/,/^}/p' \"$AUDIT\")\"\n"
+                    "_audit_md_escape 'foo|bar`baz\\\\qux'\n"
+                ),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(r.returncode, 0, msg=r.stderr)
+        # `|` → `\|`, backtick → backslash-backtick, backslash → escaped.
+        self.assertIn("\\|", r.stdout)
+        self.assertIn("\\`", r.stdout)
 
 
 class WorkflowSanityTest(unittest.TestCase):

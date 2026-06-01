@@ -107,6 +107,7 @@ jobs:
         env:
           ORPHAN: ${{ steps.audit.outputs.orphan_count }}
           CLOSED: ${{ steps.audit.outputs.closed_dead_with_ahead_count }}
+          SQUASH: ${{ steps.audit.outputs.squash_merged_count }}
           UNKNOWN: ${{ steps.audit.outputs.unknown_count }}
           CLEAN: ${{ steps.audit.outputs.clean }}
         run: |
@@ -117,6 +118,7 @@ jobs:
             echo "|---|---:|"
             echo "| Orphan-post-merge branches | ${ORPHAN:-?} |"
             echo "| Closed-without-merge branches with ahead-of-main commits | ${CLOSED:-?} |"
+            echo "| Squash/rebase-merged branches (ADR 0010 violation; orphan check skipped) | ${SQUASH:-?} |"
             echo "| Unknown-classification branches | ${UNKNOWN:-?} |"
             echo "| Status | ${CLEAN:-?} |"
           } >>"$GITHUB_STEP_SUMMARY"
