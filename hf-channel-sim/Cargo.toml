@@ -20,6 +20,7 @@ rustfft = "6"
 clap = { version = "4", features = ["derive"] }
 
 [dev-dependencies]
+proptest = "1"
 
 [[bin]]
 name = "hf-channel-sim-cli"
