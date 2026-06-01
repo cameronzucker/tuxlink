@@ -1,7 +1,7 @@
 /* ============================================================================
  * App.css — global foundation, ported to the approved Mock D design system.
  *
- * tuxlink-yd4 (2026-05-20): v0.0.1 adopts Mock D (Mail.app-minimal). The
+ * tuxlink-yd4 (2026-05-20): adopts Mock D (Mail.app-minimal); superseded by ADR 0013 (Mock B), but the design-system tokens here remained. The
  * palette / elevation / type below are the EXACT :root tokens from the approved
  * mock (docs/design/mockups/2026-05-17-mocks-v1-four-directions.html) — a COOL
  * SLATE system with a real elevation ladder, NOT the prior warm-neutral flat

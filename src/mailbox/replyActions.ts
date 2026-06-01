@@ -73,16 +73,16 @@ function quoteSource(message: ParsedMessage): string {
 }
 
 /// A visible note for a forward that cannot carry the original attachments.
-/// v0.0.1 compose has no attachment-send path, so a forward silently dropping
-/// them would violate the project's "never silently drop user data" rule — we
-/// name them instead. Empty string when there are no attachments.
+/// The compose path has no attachment-send wiring yet, so a forward silently
+/// dropping them would violate the project's "never silently drop user data"
+/// rule — we name them instead. Empty string when there are no attachments.
 function attachmentsOmittedNote(message: ParsedMessage): string {
   if (message.attachments.length === 0) return '';
   const n = message.attachments.length;
   const names = message.attachments.map((a) => sanitizeAttachmentName(a.filename)).join(', ');
   return `\n\n[${n} attachment${n === 1 ? '' : 's'} from the original message ${
     n === 1 ? 'was' : 'were'
-  } not carried into this forward (attachment forwarding arrives in v0.1): ${names}]`;
+  } not carried into this forward (attachment forwarding not yet supported): ${names}]`;
 }
 
 function replyBody(message: ParsedMessage): string {

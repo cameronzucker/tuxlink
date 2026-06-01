@@ -1,10 +1,10 @@
 // Dev-only mailbox fixture (the approved design is Mock B — principles-faithful).
 //
-// v0.0.1 ships with the live Pat backend STUBBED (AppBackend = None →
-// mailbox_list returns NotConfigured → empty states), so the rows + reading
-// pane + dashboard + session log can't be SEEN without sample data. This module
-// supplies the EXACT content of the approved Mock B so a `grim` screenshot
-// reproduces docs/design/mockups/images/mock-b-principles-faithful.png.
+// The shipping client uses the native backend; when no backend is configured
+// (AppBackend = None) mailbox_list returns NotConfigured → empty states. That
+// means the rows + reading pane + dashboard + session log can't be SEEN without
+// sample data. This module supplies the EXACT content of the approved Mock B
+// so a `grim` screenshot reproduces docs/design/mockups/images/mock-b-principles-faithful.png.
 //
 // ACTIVATION: OPT-IN. The fixture is OFF by default everywhere — including the
 // `vite` dev server — so `tauri dev` shows the REAL backend (real callsign/grid,
@@ -95,7 +95,7 @@ export const DEV_INBOX: MessageMeta[] = [
     bodySize: 980,
     hasAttachments: true,
     formTag: 'ICS-213',
-    preview: '[This message contains a Winlink form — form rendering arrives in v0.1]',
+    preview: '[This message contains a Winlink form — form rendering coming soon]',
   },
   {
     id: 'DEV-4',

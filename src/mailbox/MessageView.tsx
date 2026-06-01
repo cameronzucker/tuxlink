@@ -8,7 +8,7 @@
 //   2. `h1.subject-line` — the subject
 //   3. `dl.msg-meta`     — From / To / Date (+ Via when routing is known)
 //   4. `pre.msg-body`    — the decoded body (form → placeholder box)
-//   5. attachment strip  — names + sizes only (v0.0.1; open/preview is v0.1)
+//   5. attachment strip  — names + sizes only (open/preview is deferred)
 //
 // The reply→compose wiring (replyActions.ts) is unchanged — it is sound; only
 // the markup/labels are reshaped to the mock. State (empty/loading/not-found/
@@ -34,7 +34,7 @@ import { lookupForm, KeyValueView } from '../forms';
 export const SELECT_MESSAGE_COPY = 'Select a message to read.';
 export const NOT_FOUND_COPY = 'Message not found. It may have been deleted or moved.';
 export const PARSE_ERROR_PREFIX = 'This message could not be parsed';
-export const FORM_PLACEHOLDER = 'Form rendering arrives in v0.1.';
+export const FORM_PLACEHOLDER = 'Form rendering coming soon.';
 
 /**
  * Open a reply / reply-all / forward compose window. Window-open failure is
@@ -273,7 +273,7 @@ export function MessageViewLoaded({ message }: { message: ParsedMessage }) {
         </pre>
       )}
 
-      {/* 5 — attachment strip — names + sizes only (no download/preview in v0.0.1) */}
+      {/* 5 — attachment strip — names + sizes only (no download/preview yet) */}
       {message.attachments.length > 0 && (
         <div className="msg-attachments" data-testid="message-attachments">
           <span className="msg-attachments-label">Attachments:</span>

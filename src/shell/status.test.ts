@@ -453,7 +453,7 @@ describe('useStatusData — gpsReady (tuxlink-686 Task 11)', () => {
 // formatStatusState — Mock D status-bar short state word + dot tone (tuxlink-yd4)
 // ============================================================================
 describe('formatStatusState — Mock D status bar', () => {
-  it('null backend (v0.0.1 default) reads Idle / idle tone', () => {
+  it('null backend (default when unconfigured) reads Idle / idle tone', () => {
     expect(formatStatusState(null)).toEqual({ label: 'Idle', tone: 'idle' });
   });
   it('Disconnected reads Idle / idle tone', () => {

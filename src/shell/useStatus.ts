@@ -223,7 +223,7 @@ export type StatusTone = 'idle' | 'good' | 'warn' | 'error';
  *
  * Mock D's status bar shows a single state word (`Idle`, `Connecting`, …) with
  * a colored dot, NOT the ribbon's "Idle · Telnet" transport-qualified label.
- * `null` (no backend — the v0.0.1 default) and Disconnected both read "Idle".
+ * `null` (no backend — the default when nothing is configured) and Disconnected both read "Idle".
  */
 export function formatStatusState(status: StatusDto | null): { label: string; tone: StatusTone } {
   if (status === null) return { label: 'Idle', tone: 'idle' };

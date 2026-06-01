@@ -27,7 +27,7 @@ describe('MenuBar', () => {
   });
 
   // tuxlink-39b: not-yet-wired items render disabled + badged (not dead clickables).
-  it('renders a not-yet-wired item disabled with a v0.1 badge and does not fire onAction', () => {
+  it('renders a not-yet-wired item disabled with a "soon" badge and does not fire onAction', () => {
     const onAction = vi.fn();
     render(<MenuBar onAction={onAction} />);
     fireEvent.click(screen.getByRole('button', { name: 'Tools' }));

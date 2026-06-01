@@ -18,7 +18,7 @@ describe('<FolderSidebar> (Mock B)', () => {
     expect(screen.getByTestId('sess-radio-only')).toBeInTheDocument();
   });
 
-  it('Inbox + Sent are enabled; Outbox + Archive are disabled (v0.1)', () => {
+  it('Inbox + Sent are enabled; Outbox + Archive are disabled (deferred)', () => {
     render(<FolderSidebar selectedFolder="inbox" onSelectFolder={() => {}} />);
     expect(screen.getByTestId('folder-inbox')).not.toBeDisabled();
     expect(screen.getByTestId('folder-sent')).not.toBeDisabled();

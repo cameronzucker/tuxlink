@@ -64,7 +64,7 @@ export interface DashboardRibbonProps {
 export function DashboardRibbon({ data, onConnect, connecting, onAbort, packet }: DashboardRibbonProps) {
   const { utc, local } = useClock();
   const { callsign, grid, state, connection: connectionFromData } = data;
-  // Position (GPS coords) is a v0.1 data source; the dev fixture shows the mock
+  // Position (GPS coords) is a deferred data source; the dev fixture shows the mock
   // value, and the real app omits the item until GPS exists.
   const position = DEV_FIXTURE ? DEV_POSITION : null;
   // connection string is pre-formatted by useStatusData via formatConnectionState,
