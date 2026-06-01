@@ -1807,10 +1807,10 @@ pub async fn position_set_source(
 ///   [`crate::position::effective_broadcast_locator`], honoring both precision and
 ///   the `gps_state` privacy control. The ribbon displays this so it always shows
 ///   exactly what is/would be transmitted (Codex P1-B). Empty string = no grid.
-/// - `active_source`: the LIVE source actually producing the displayed grid —
-///   `Gps` while a fresh fix exists, `Manual` when falling back to the
-///   manually-set grid. tuxlink-pjih: the UI source chip reads this so it
-///   stays truthful even when the operator's stored preference disagrees.
+/// - `active_source`: OUTDATED description — see the field-level docstring
+///   below for the restored chip-mirror semantics. Task 5 of the position-
+///   subsystem restoration deletes this field; until then, the field-level
+///   doc is authoritative.
 ///
 /// Polled by useStatusData (2s).
 #[derive(Debug, Serialize, Clone, PartialEq)]

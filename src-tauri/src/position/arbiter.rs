@@ -128,7 +128,8 @@ mod tests {
         arbiter.set_manual("EM75");
         assert_eq!(arbiter.source(), crate::config::PositionSource::Manual,
             "set_manual must pin source = Manual");
-        assert_eq!(arbiter.active_grid().as_deref(), Some("EM75"));
+        assert_eq!(arbiter.active_grid().as_deref(), Some("EM75"),
+            "active_grid must follow manual_grid immediately after set_manual");
 
         // GPS fix arrives WHILE source = Manual; arbiter must record last_fix
         // but active_grid must stay manual_grid (sticky).
