@@ -199,6 +199,27 @@ mod tests {
         assert_eq!(a.broadcast_grid().as_deref(), Some("CN87ux")); // full 6-char after change
     }
 
+    // RESTORED from pre-pjih: GPS fix updates active position only while source = Gps.
+    #[test]
+    fn gps_fix_updates_active_only_when_source_is_gps() {
+        let arbiter = PositionArbiter::new(
+            PositionSource::Gps,
+            None,
+            PositionPrecision::FourCharGrid,
+        );
+        arbiter.apply_gps_fix(Fix::test("DM33ab"));
+        assert_eq!(arbiter.active_grid().as_deref(), Some("DM33ab"));
+
+        let arbiter2 = PositionArbiter::new(
+            PositionSource::Manual,
+            Some("EM75".to_string()),
+            PositionPrecision::FourCharGrid,
+        );
+        arbiter2.apply_gps_fix(Fix::test("DM33ab"));
+        assert_eq!(arbiter2.active_grid().as_deref(), Some("EM75"),
+            "Manual source ignores fresh GPS fix in active_grid");
+    }
+
     // R3 F4 (tuxlink-c79g T7): proptest over the State 1-5 matrix from spec §3.4.
     // The five `active_grid` invariants I1-I5 cover all reachable cells of
     // (source × manual_grid × apply_fix). I6 (synchronization between

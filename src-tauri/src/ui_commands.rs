@@ -3207,6 +3207,27 @@ mod tests {
         );
     }
 
+    // Codex P1 #3: Manual source ignores fresh GPS at the BROADCAST boundary.
+    // (Different from arbiter::tests because effective_broadcast_locator
+    // also enforces gps_state privacy gating.)
+    #[test]
+    fn manual_source_ignores_fresh_gps_fix_at_broadcast_boundary() {
+        let mut cfg = make_config_for_position_status(
+            crate::config::GpsState::BroadcastAtPrecision,
+            None,
+        );
+        cfg.privacy.position_source = crate::config::PositionSource::Manual;
+        let arbiter = crate::position::PositionArbiter::new(
+            crate::config::PositionSource::Manual,
+            Some("EM75".to_string()),
+            crate::config::PositionPrecision::FourCharGrid,
+        );
+        arbiter.apply_gps_fix(crate::position::Fix::test("DM33ab"));
+        let locator = crate::position::effective_broadcast_locator(&cfg, Some(&arbiter));
+        assert_eq!(locator, "EM75",
+            "Manual source must broadcast manual_grid regardless of fresh GPS fix");
+    }
+
     // ========================================================================
     // P2.1 (Codex post-impl review) — OutboundDraftDto attachment bridge
     // ========================================================================
