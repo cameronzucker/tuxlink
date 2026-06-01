@@ -1,14 +1,14 @@
 // AppShell radio-panel visibility tests (renamed from AppShell.modemDock.test
-// during radio-panel-shell P1.5). The RadioPanel (placeholder during P1)
-// mounts as the right-hand column when ANY of:
+// during radio-panel-shell P1.5). The RadioPanel mounts as the right-hand
+// column when ANY of:
 //   - a connection entry is selected in the sidebar
 //   - any modem is in a non-stopped state
 //   - View → Toggle Radio Panel pin is on (Ctrl+Shift+M)
 //
-// During P1, the legacy ArdopDock continues to mount ALONGSIDE the
-// placeholder, but only when ARDOP HF is the selected protocol. Other modes
-// see only the placeholder. The `panes--with-dock` CSS class swap stays for
-// P1; P5 cleanup may rename.
+// As of P4 (radio-panel-ardop), the legacy ArdopDock is GONE — ARDOP HF
+// routes to the new ArdopRadioPanel inside the RadioPanel slot, with no
+// secondary mount. The placeholder remains for VARA HF / VARA FM only.
+// The `panes--with-legacy-dock` class is no longer applied to anything.
 //
 // This file lives separately from AppShell.test.tsx so the panel-mount story
 // is readable in isolation. The provider wrapping + Tauri IPC mocks mirror
@@ -37,6 +37,10 @@ vi.mock('@tauri-apps/api/core', () => ({
     if (cmd === 'backend_status') return null;
     if (cmd === 'session_log_snapshot') return [];
     if (cmd === 'message_read') return null;
+    // ArdopRadioPanel calls config_get_ardop when Open WebGUI is clicked,
+    // but it's safe to return a benign default here so test-time imports
+    // don't hit `undefined` and surface noisy errors.
+    if (cmd === 'config_get_ardop') return { cmd_port: 8515 };
     if (cmd === 'packet_config_get') {
       return {
         ssid: 7,
@@ -138,20 +142,29 @@ describe('<AppShell> radio panel', () => {
     mockUseModemStatus.mockReturnValue({ status: STOPPED, loading: false, error: null });
     renderShell();
     expect(screen.queryByTestId('radio-panel-root')).not.toBeInTheDocument();
+    // P4: legacy ArdopDock removed; the testid no longer exists anywhere.
     expect(screen.queryByTestId('ardop-dock-root')).not.toBeInTheDocument();
     // The 3-col grid class swap is absent.
     expect(screen.getByTestId('shell-panes')).not.toHaveClass('panes--with-dock');
+    // P4: panes--with-legacy-dock class is gone for good.
+    expect(screen.getByTestId('shell-panes')).not.toHaveClass('panes--with-legacy-dock');
   });
 
-  it('renders the panel + applies the 4-col grid class when modem is running', () => {
+  it('renders the ArdopRadioPanel + 4-col grid class when modem is running (ardop-hf)', () => {
     mockUseModemStatus.mockReturnValue({ status: RUNNING, loading: false, error: null });
     renderShell();
     expect(screen.getByTestId('radio-panel-root')).toBeInTheDocument();
-    expect(screen.getByTestId('radio-panel-placeholder')).toBeInTheDocument();
+    // P4: the placeholder is no longer mounted for ARDOP HF — the
+    // ArdopRadioPanel itself owns the slot. SignalSection is one of its
+    // mounted children and uniquely identifies the panel.
+    expect(screen.queryByTestId('radio-panel-placeholder')).not.toBeInTheDocument();
+    expect(screen.getByTestId('signal-section')).toBeInTheDocument();
     expect(screen.getByTestId('shell-panes')).toHaveClass('panes--with-dock');
+    // P4: no more legacy-dock class.
+    expect(screen.getByTestId('shell-panes')).not.toHaveClass('panes--with-legacy-dock');
   });
 
-  it('renders the panel for transient (non-stopped) states like connecting', () => {
+  it('renders the ArdopRadioPanel for transient (non-stopped) states like connecting', () => {
     mockUseModemStatus.mockReturnValue({
       status: { ...STOPPED, state: 'connecting' },
       loading: false,
@@ -159,15 +172,18 @@ describe('<AppShell> radio panel', () => {
     });
     renderShell();
     expect(screen.getByTestId('radio-panel-root')).toBeInTheDocument();
+    expect(screen.getByTestId('signal-section')).toBeInTheDocument();
     const shellPanes = screen.getByTestId('shell-panes');
     expect(shellPanes).toHaveClass('panes--with-dock');
-    // Connecting modem = ARDOP active context (v1) → legacy dock mounts too.
-    expect(shellPanes).toHaveClass('panes--with-legacy-dock');
+    // P4: connecting modem → ArdopRadioPanel only; no separate dock + no
+    // legacy-dock class.
+    expect(shellPanes).not.toHaveClass('panes--with-legacy-dock');
+    expect(screen.queryByTestId('ardop-dock-root')).not.toBeInTheDocument();
   });
 
-  // P1: when ARDOP HF is selected, BOTH the placeholder panel AND the legacy
-  // ArdopDock mount alongside — by design. P4 deletes ArdopDock entirely.
-  it('renders the placeholder + legacy ArdopDock when ARDOP HF is selected (modem stopped)', () => {
+  // P4: ARDOP HF selected → ArdopRadioPanel mounts (single mount). The
+  // pre-P4 dual-mount of placeholder + legacy ArdopDock is gone.
+  it('renders ArdopRadioPanel when ARDOP HF is selected (modem stopped)', () => {
     mockUseModemStatus.mockReturnValue({ status: STOPPED, loading: false, error: null });
     renderShell();
     expect(screen.queryByTestId('radio-panel-root')).not.toBeInTheDocument();
@@ -176,27 +192,29 @@ describe('<AppShell> radio panel', () => {
     fireEvent.click(screen.getByTestId('sess-cms'));
     fireEvent.click(screen.getByTestId('proto-cms-ardop-hf'));
     expect(screen.getByTestId('radio-panel-root')).toBeInTheDocument();
-    expect(screen.getByTestId('ardop-dock-root')).toBeInTheDocument();
-    // Grid layout: ARDOP dual mount needs BOTH classes — the 4-col
-    // panes--with-dock plus the 5th column from panes--with-legacy-dock.
+    // ArdopRadioPanel mounts; SignalSection is unique to it among the
+    // built panels (Telnet / Packet don't mount SignalSection).
+    expect(screen.getByTestId('signal-section')).toBeInTheDocument();
+    // No legacy dock anywhere.
+    expect(screen.queryByTestId('ardop-dock-root')).not.toBeInTheDocument();
     const shellPanes = screen.getByTestId('shell-panes');
     expect(shellPanes).toHaveClass('panes--with-dock');
-    expect(shellPanes).toHaveClass('panes--with-legacy-dock');
+    expect(shellPanes).not.toHaveClass('panes--with-legacy-dock');
   });
 
   // Codex P1 finding (radio-panel-shell): a running ARDOP modem with no
   // sidebar selection (the "operator clicked Close while ARDOP was on-air"
-  // scenario) must show the Ardop panel mode AND keep the legacy ArdopDock
-  // mounted. Pre-fix this fell through to the togglePinned Telnet/CMS
-  // default and dropped the dock entirely.
-  it('shows ARDOP mode + legacy dock when modem is running with no sidebar selection', () => {
+  // scenario) must show the Ardop panel. P4 means the ArdopRadioPanel
+  // itself is the mount — no separate dock.
+  it('shows ArdopRadioPanel when modem is running with no sidebar selection', () => {
     mockUseModemStatus.mockReturnValue({ status: RUNNING, loading: false, error: null });
     renderShell();
     expect(screen.getByTestId('radio-panel-root')).toBeInTheDocument();
-    expect(screen.getByTestId('ardop-dock-root')).toBeInTheDocument();
+    expect(screen.getByTestId('signal-section')).toBeInTheDocument();
+    expect(screen.queryByTestId('ardop-dock-root')).not.toBeInTheDocument();
     const shellPanes = screen.getByTestId('shell-panes');
     expect(shellPanes).toHaveClass('panes--with-dock');
-    expect(shellPanes).toHaveClass('panes--with-legacy-dock');
+    expect(shellPanes).not.toHaveClass('panes--with-legacy-dock');
   });
 
   // tuxlink-mnk4: View → Toggle Radio Panel (Ctrl+Shift+M) must actually

@@ -49,6 +49,7 @@ import { derivePacketUiState, type PacketUiState } from '../packet/packetStatus'
 import { isBuilt } from '../connections/sessionTypes';
 import { TelnetRadioPanel } from '../radio/modes/TelnetRadioPanel';
 import { PacketRadioPanel } from '../radio/modes/PacketRadioPanel';
+import { ArdopRadioPanel } from '../radio/modes/ArdopRadioPanel';
 import { StubPanel } from '../connections/StubPanel';
 import { SearchBar } from '../search/SearchBar';
 import { SearchDropdown } from '../search/SearchDropdown';
@@ -56,9 +57,7 @@ import { deparseQuery } from '../search/parseQuery';
 import { SavedSearchesPanel } from '../search/SavedSearchesPanel';
 import { useSearch } from '../search/useSearch';
 import { useSavedSearches } from '../search/useSavedSearches';
-import { ArdopHfStub } from '../connections/ArdopHfStub';
 import { useModemStatus } from '../modem/useModemStatus';
-import { ArdopDock } from '../modem/ArdopDock';
 import { computePanelMode } from '../radio/radioPanelVisibility';
 import type { RadioPanelMode } from '../radio/types';
 import { PlaceholderRadioPanel } from '../radio/modes/PlaceholderRadioPanel';
@@ -411,7 +410,7 @@ export function AppShell() {
       </div>
 
       <div
-        className={`panes${radioPanelMode !== null ? ' panes--with-dock' : ''}${radioPanelMode?.kind === 'ardop-hf' ? ' panes--with-legacy-dock' : ''}`}
+        className={`panes${radioPanelMode !== null ? ' panes--with-dock' : ''}`}
         data-testid="shell-panes"
       >
         <FolderSidebar
@@ -449,9 +448,10 @@ export function AppShell() {
             return <PacketConnectionPanelContainer baseCall={statusData.callsign} intent="cms-gateway" />;
           }
           if (sessionType === 'cms' && protocol === 'ardop-hf') {
-            // The actual dial UI lives in the right-hand ArdopDock; the
-            // reading-pane just directs the operator there (tuxlink-4ek 4.3).
-            return <ArdopHfStub />;
+            // P4: the ArdopRadioPanel owns the ARDOP HF dial UI; the
+            // reading pane falls back to mail (same pattern as Telnet,
+            // P2). Eliminates the P1 dual-mount of placeholder + ArdopDock.
+            return <MessageView selectedMessage={selectedMessage} />;
           }
           if (sessionType === 'p2p' && protocol === 'packet') {
             return <PacketConnectionPanelContainer baseCall={statusData.callsign} intent="p2p" />;
@@ -459,12 +459,12 @@ export function AppShell() {
           // Built but unhandled — defensive stub
           return <StubPanel sessionType={sessionType} protocol={protocol} />;
         })()}
-        {/* Spec P3: Telnet (P2) and Packet (P3) use their real right-panel
-            implementations; VARA / ARDOP HF still mount the placeholder
-            until their phases land (P4 ARDOP, P5 VARA). For ARDOP HF the
-            legacy ArdopDock continues to mount alongside the placeholder
-            until P4 removes it — this dual mount is the established P1
-            behavior. */}
+        {/* Per-mode radio panels. Telnet (P2), Packet (P3), and ARDOP HF
+            (P4) ship their real implementations; VARA HF / VARA FM still
+            fall through to the placeholder until P5 lands. The P1 dual-
+            mount of ArdopDock + placeholder for ARDOP HF is GONE — the
+            ArdopRadioPanel covers the full dial-and-live-state surface
+            on its own. */}
         {radioPanelMode && radioPanelMode.kind === 'telnet' && (
           <TelnetRadioPanel
             onClose={() => {
@@ -483,9 +483,18 @@ export function AppShell() {
             }}
           />
         )}
+        {radioPanelMode && radioPanelMode.kind === 'ardop-hf' && (
+          <ArdopRadioPanel
+            onClose={() => {
+              setSelectedConnection(null);
+              setPinRadioPanel(false);
+            }}
+          />
+        )}
         {radioPanelMode &&
           radioPanelMode.kind !== 'telnet' &&
-          radioPanelMode.kind !== 'packet' && (
+          radioPanelMode.kind !== 'packet' &&
+          radioPanelMode.kind !== 'ardop-hf' && (
             <PlaceholderRadioPanel
               mode={radioPanelMode}
               onClose={() => {
@@ -494,7 +503,6 @@ export function AppShell() {
               }}
             />
           )}
-        {radioPanelMode?.kind === 'ardop-hf' && <ArdopDock />}
       </div>
 
       <StatusBar show={showStatusBar} unread={counts.inbox ?? 0} state={statusData.state} packet={packetUi} />
