@@ -4,6 +4,20 @@ All notable changes to Tuxlink are documented here.
 
 This project adheres to [Semantic Versioning](https://semver.org) with project-specific rules described in [VERSIONING.md](VERSIONING.md). Entries from `v0.0.2` onward are generated automatically by [`release-please`](https://github.com/googleapis/release-please) from [Conventional Commits](https://www.conventionalcommits.org).
 
+## [0.12.0](https://github.com/cameronzucker/tuxlink/compare/v0.11.1...v0.12.0) (2026-06-01)
+
+
+### Features
+
+* **githooks:** branch lifecycle state machine + pre-commit/pre-push hooks ([15f5723](https://github.com/cameronzucker/tuxlink/commit/15f57232453c6c60693b9c6adf6648c92e126146))
+* **scripts:** v1 converge-build.sh + pnpm dev:converged wrapper ([25547ed](https://github.com/cameronzucker/tuxlink/commit/25547ed2fccc17f19674fde6cbfb16f87b51fc45))
+
+
+### Bug Fixes
+
+* **githooks:** branch-state-machine Codex P1+P2 dispositions ([27bf968](https://github.com/cameronzucker/tuxlink/commit/27bf968d35b8904f30f2928eb331a2494eb09706))
+* **scripts:** converge-build v1 Codex P1+P3 dispositions ([33a0562](https://github.com/cameronzucker/tuxlink/commit/33a0562f737a59ebec992b243cb14da498a11110))
+
 ## [0.11.1](https://github.com/cameronzucker/tuxlink/compare/v0.11.0...v0.11.1) (2026-06-01)
 
 
