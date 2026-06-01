@@ -1,0 +1,43 @@
+Form: ICS217A_Initial.html, ICS217A_Viewer.html
+
+To: 
+Subject: ICS 217A - <var Incident> - <var ActivityDateTime1>
+Readonly:True
+Msg:
+ICS 217A
+<var FormTitle>
+
+Date/Time (optional): <var ActivityDateTime1>
+Incident/Event: <var Incident>
+Frequency Band: <var Bands>
+Description: <var Description>
+--------------------------------------
+Channel Configuration	Channel Name/Trunked Radio System Talkgroup	Eligible Users	RX Freq	N/W	 RX Tone/NAC	TX Freq 	N/W	TX Tone/NAC	Mode A, D or M	Remarks
+
+<var ChConfig1>	<var ChName1>	<var Users1>	<var RxFreq1>	<var NWMode1>	<var RxTone1>	<var TxFreq1>	<var TNWMode1>	<var TxTone1>	<var Mode1>	<var Remarks1>
+<var ChConfig2>	<var ChName2>	<var Users2>	<var RxFreq2>	<var NWMode2>	<var RxTone2>	<var TxFreq2>	<var TNWMode2>	<var TxTone2>	<var Mode2>	<var Remarks2>
+<var ChConfig3>	<var ChName3>	<var Users3>	<var RxFreq3>	<var NWMode3>	<var RxTone3>	<var TxFreq3>	<var TNWMode3>	<var TxTone3>	<var Mode3>	<var Remarks3>
+<var ChConfig4>	<var ChName4>	<var Users4>	<var RxFreq4>	<var NWMode4>	<var RxTone4>	<var TxFreq4>	<var TNWMode4>	<var TxTone4>	<var Mode4>	<var Remarks4>
+<var ChConfig5>	<var ChName5>	<var Users5>	<var RxFreq5>	<var NWMode5>	<var RxTone5>	<var TxFreq5>	<var TNWMode5>	<var TxTone5>	<var Mode5>	<var Remarks5>
+<var ChConfig6>	<var ChName6>	<var Users6>	<var RxFreq6>	<var NWMode6>	<var RxTone6>	<var TxFreq6>	<var TNWMode6>	<var TxTone6>	<var Mode6>	<var Remarks6>
+<var ChConfig7>	<var ChName7>	<var Users7>	<var RxFreq7>	<var NWMode7>	<var RxTone7>	<var TxFreq7>	<var TNWMode7>	<var TxTone7>	<var Mode7>	<var Remarks7>
+<var ChConfig8>	<var ChName8>	<var Users8>	<var RxFreq8>	<var NWMode8>	<var RxTone8>	<var TxFreq8>	<var TNWMode8>	<var TxTone8>	<var Mode8>	<var Remarks8>
+<var ChConfig9>	<var ChName9>	<var Users9>	<var RxFreq9>	<var NWMode9>	<var RxTone9>	<var TxFreq9>	<var TNWMode9>	<var TxTone9>	<var Mode9>	<var Remarks9>
+<var ChConfig10>	<var ChName10>	<var Users10>	<var RxFreq10>	<var NWMode10>	<var RxTone10>	<var TxFreq10>	<var TNWMode10>	<var TxTone10>	<var Mode10>	<var Remarks10>
+<var ChConfig11>	<var ChName11>	<var Users11>	<var RxFreq11>	<var NWMode11>	<var RxTone11>	<var TxFreq11>	<var TNWMode11>	<var TxTone11>	<var Mode11>	<var Remarks11>
+<var ChConfig12>	<var ChName12>	<var Users12>	<var RxFreq12>	<var NWMode12>	<var RxTone12>	<var TxFreq12>	<var TNWMode12>	<var TxTone12>	<var Mode12>	<var Remarks12>
+<var ChConfig13>	<var ChName13>	<var Users13>	<var RxFreq13>	<var NWMode13>	<var RxTone13>	<var TxFreq13>	<var TNWMode13>	<var TxTone13>	<var Mode13>	<var Remarks13>
+<var ChConfig14>	<var ChName14>	<var Users14>	<var RxFreq14>	<var NWMode14>	<var RxTone14>	<var TxFreq14>	<var TNWMode14>	<var TxTone14>	<var Mode14>	<var Remarks14>
+<var ChConfig15>	<var ChName15>	<var Users15>	<var RxFreq15>	<var NWMode15>	<var RxTone15>	<var TxFreq15>	<var TNWMode15>	<var TxTone15>	<var Mode15>	<var Remarks15>
+<var ChConfig16>	<var ChName16>	<var Users16>	<var RxFreq16>	<var NWMode16>	<var RxTone16>	<var TxFreq16>	<var TNWMode16>	<var TxTone16>	<var Mode16>	<var Remarks16>
+<var ChConfig17>	<var ChName17>	<var Users17>	<var RxFreq17>	<var NWMode17>	<var RxTone17>	<var TxFreq17>	<var TNWMode17>	<var TxTone17>	<var Mode17>	<var Remarks17>
+<var ChConfig18>	<var ChName18>	<var Users18>	<var RxFreq18>	<var NWMode18>	<var RxTone18>	<var TxFreq18>	<var TNWMode18>	<var TxTone18>	<var Mode18>	<var Remarks18>
+<var ChConfig19>	<var ChName19>	<var Users19>	<var RxFreq19>	<var NWMode19>	<var RxTone19>	<var TxFreq19>	<var TNWMode19>	<var TxTone19>	<var Mode19>	<var Remarks19>
+<var ChConfig20>	<var ChName20>	<var Users20>	<var RxFreq20>	<var NWMode20>	<var RxTone20>	<var TxFreq20>	<var TNWMode20>	<var TxTone20>	<var Mode20>	<var Remarks20>
+
+
+-----------------
+Express Sending Station: <MsgSender>
+Senders Express Version: <ProgramVersion>
+Senders Template Version: <var Templateversion>
+[No changes or editing of this message are allowed]

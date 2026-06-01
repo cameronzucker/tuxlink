@@ -1,0 +1,782 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+
+<html xmlns="http://www.w3.org/1999/xhtml"><head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8" /><title>FIELD SITUATION REPORT</title>
+
+<style type="text/css">
+.pop-up {
+	position:absolute;
+	top:0;
+	left:-500em;
+	visibility: hidden;
+}
+.pop-up:target {position:static; left:0;}
+/* The pop-up itself */
+.popBox {
+	background:#ffffff;
+	position:absolute;
+	left:20%;
+	right:20%;
+	top:15%;
+	bottom:25%;
+	z-index:10;
+	border:1px solid #3a3a3a;
+/* CSS3 where available: rounded corners, drop-shadow, and fade in. */
+border-radius:.25rem;
+box-shadow:0 .5rem .5rem rgba(0,0,0,.5);
+	opacity:0;
+	transition: opacity 0.8s ease-out;
+	visibility: hidden;
+}
+:target .popBox {position:fixed; opacity:1;}
+/* Light box properties */
+.lightbox {
+display:none;
+text-indent:-200em;
+background-color:rgba(0,0,0,.4);
+width:100%;
+height:100%;
+position:fixed;
+top:0;
+left:0;
+bottom:0;
+right:0;
+z-index:5;
+}
+:target .lightbox {display:block;}
+/* The pop-ups close link, moved via CSS to the top right of the pop-up */
+.close:link,
+.close:visited {
+	position: absolute;
+	top: -0.75em;
+	right: -0.75em;
+	display: block;
+	width: 2em;
+	height: 2em;
+	line-height: 1.8;
+	padding: 0;
+	text-align: center;
+	text-decoration: none;
+	background-color: #000;
+	border: 2px solid #fff;
+	color: #fff;
+	border-radius: 50%;
+box-shadow: 0 0 .5rem .5rem rba(0,0,0,.5);
+	visibility: hidden;
+}
+.close:before {content:"X";}
+.close:hover,
+.close:active,
+.close:focus {
+box-shadow: 0 0 .5rem .5rem rba(255,0,0,.5);
+background-color: #c00;
+color: #fff;
+}
+.close span {
+text-indent: -200em;
+display: block;
+}
+/* The pop-up content div will scroll if it has too much content */
+.popScroll {
+	position:absolute;
+	top: 1rem;
+	left: 1rem;
+	right: 1rem;
+	bottom: 1rem;
+	overflow-y: auto;
+*overflow-y: scroll;
+	padding-right: 0.5em;
+	visibility: hidden;
+}
+.popScroll h2 {margin-top:0}
+.style37 {color: black; font-size: 14px; }
+
+body, td, th {
+
+
+
+font-family: Arial,Helvetica,sans-serif;
+
+
+
+font-size: 12px;
+
+
+
+font-weight: inherit;
+
+
+
+}
+
+
+
+.zentriert {
+
+
+
+font-size: 12px;
+
+
+
+font-weight: inherit;
+
+
+
+}
+
+
+
+input, select {
+
+
+
+padding: 1px;
+
+
+
+-moz-border-radius-topleft: 2px;
+
+
+
+-moz-border-radius-topright: 2px;
+
+
+
+-moz-border-radius-bottomright: 2px;
+
+
+
+-moz-border-radius-bottomleft: 2px;
+
+
+
+font-family: Arial,Helvetica,sans-serif;
+
+
+
+font-size: 12px;
+
+
+
+font-weight: inherit;
+
+
+
+}
+
+
+
+textarea {
+
+
+
+padding: 1px;
+
+
+
+-moz-border-radius-topleft: 2px;
+
+
+
+-moz-border-radius-topright: 2px;
+
+
+
+-moz-border-radius-bottomright: 2px;
+
+
+
+-moz-border-radius-bottomleft: 2px;
+
+
+
+font-family: Arial,Helvetica,sans-serif;
+
+
+
+font-size: 12px;
+
+
+
+font-weight: inherit;
+
+
+
+}
+
+
+
+.rechtsbuendig {
+
+
+
+font-size: 12px;
+
+
+
+font-weight: inherit;
+
+
+
+}
+
+
+
+ input[type=button] {
+
+
+
+  border: 1.75px solid #0f88f2;;
+
+   border-radius:.25rem;
+
+  
+
+  font-size: 14px;
+
+  padding: 2px 2px;
+
+ background-color: white;
+
+  text-decoration: none;
+
+  margin: 2px 2px;
+
+  cursor: pointer;
+
+}
+
+input[type=submit] {
+
+ border: 1.75px solid green;
+
+  border-radius:.25rem;
+
+  background-color: white;
+
+ 
+
+  padding: 2px 2px;
+
+  font-size: 14px;
+
+   cursor: pointer;
+
+}
+
+input[type=reset] {
+
+ border: 1.75px solid red;
+
+ border-radius:.25rem;
+
+  background-color: white;
+
+ 
+
+  padding: 2px 2px;
+
+  font-size: 14px;
+
+   cursor: pointer;
+
+}
+
+input[type=regular] {
+
+ border: 1.75px solid #999999;
+
+  border-radius:.25rem;
+
+width:40px;
+
+  background-color: white;
+
+ 
+
+  padding: 2px 2px;
+
+  font-size: 12px;
+
+   cursor: pointer;
+
+}
+
+
+
+.style2 {font-size: 12px}
+
+.style3 {font-size: 14px}
+
+.SubmitBtn1 {font-size: 12px;
+
+font-family: Arial,Helvetica,sans-serif;
+
+font-weight: inherit;
+
+}
+
+.style37 {font-size: 14px}
+.style41 {color: black}
+.style44 {
+	color: #000000;
+	font-weight: bold;
+	font-size: 14px;
+}
+.style45 {
+	color: #000000;
+	font-size: 14px;
+}
+.style46 {font-family: Arial, Helvetica, sans-serif}
+</style>
+
+</head>
+
+
+
+<body>
+
+
+
+<form  style="font-family: Arial;" pbzloc="3" onsubmit="return confirm('To complete your form submission, click OK and close the open browser window. You will return to the new message window so you can post your message to the outbox');" method="post" id="myform" enctype="multipart/form-data" action="http://{FormServer}:{FormPort}">
+
+<div id="pop1" class="pop-up"><!-- The pop-up block -->
+
+<div class="popBox"><!-- If the content becomes larger than the pop-up this div will scroll the content -->
+<div class="popScroll"><!-- Test for help starts here -->
+
+
+</h4>
+    <span class="style37"><strong>SHARES SpotRep Form</strong>
+    </span>
+    <p class="style37">SHARES SpotRep Form of a new feature in Winlink Express - Display a SitRep Map and report. To display the SitRep map you must provide the GPS coordinates of the event.<p>Providing GPS information is very valuable. We encourage you to do so.<br>If you leave the LAT/LON fields empty, by default, the LAT/LON calculated from your grid square in Express will be used. <br><br>
+    LAT/LON: The form accepts only Decimal Degree latitude and longitude. 4 decimals are preferred. <br> <br>
+    N/E/S/W: North and East are positive numbers in Decimal Degrees, South and West are negative numbers in Decimal Degrees. For example, the Hollywood Sign is located at Decimal Degrees 34.1341, -118.3215<br> <br>
+	You may also enter a valid MGRS position.</p><br />
+	Note: POC: Point of contact.  Can be different than the FROM call, who is sending the message.
+    <hr>
+ </span>
+
+</div>
+
+<!-- The close pop-up link correctly positioned at the end of the content block -->
+
+<a href="#links" class="close"><span>Back
+
+to links</span></a> </div>
+</div>
+
+
+<table width="912" border="0" align="left" style="width: 1045px; height: 482px;">
+
+<tbody>
+
+<tr>
+
+<td width="906">
+
+<table style="font-size: 14px; width: 897px; height: 556px;" border="1" bordercolor="#999999" cellpadding="2" cellspacing="0">
+
+<tbody>
+
+<tr>
+
+<td style="vertical-align: top; height: 8%; background-color: #dee9f9; text-align: center;"><p align="center" class="style2">   &nbsp;  <span class="style3">FIELD SITUATION REPORT</span><span class="style37">&nbsp;</span></p>
+  <p align="center" class="style2"><span class="style37">{var Title}</span><br />
+&nbsp; &nbsp; </p></td>
+
+</tr>
+
+<tr>
+
+  <td style="text-align: center; background-color: #f8f8ff;"><span style="font-style: italic;">For Non-Express recipients, this form is  sent as plain text in the message body.</span></td>
+
+</tr><tr>
+
+<td valign="top" style="vertical-align: top; text-align: justify;"><span style="font-size: 14px;">
+
+<pbzloc ="1" style="font-weight: normal;"></pbzloc></span>
+  <p style="font-size: 14px;"><pbzloc ="1" style="font-weight: normal;"><br />
+  
+      <span style="font-size: 14px;"><span class="style2">&nbsp;</span>&nbsp;</span>PRECEDENCE:  
+  
+      <span style="font-size: 14px;"> {var Precedence} &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span> <span style="font-size: 14px;"><span style="font-size: 14px;"><span style="font-size: 14px;"><span style="font-size: 14px;">&nbsp;&nbsp;&nbsp;</span></span>&nbsp;&nbsp;</span> DATE/TIME: {var UDTGfld} &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;TASK # {var MsgNR} </span></pbzloc><pbzloc ="1" style="font-weight: normal;"></pbzloc>
+  </p>
+  <span style="font-size: 14px;"><span class="style2">&nbsp;</span>&nbsp;<pbzloc ="1" style="font-weight: normal;">FROM:<span style="font-size: 14px;"> &nbsp; </span><span style="font-size: 14px;"> &nbsp; </span><span style="font-size: 14px;"> </span><span style="font-size: 14px;"><pbzloc ="1" style="font-weight: normal;"><span style="font-size: 14px;">&nbsp; </span> {var MsgSender} &nbsp;</pbzloc></span>  
+
+&nbsp;</pbzloc></span>
+
+<br /><textarea name="parseme" cols="60" id="parseme" style="display: none;"></textarea><input type="file" id="txtfiletoread" accept=".txt"  style="display: none;"/>
+
+<br />
+
+
+
+<table width="100%"  border="0" cellspacing="0" cellpadding="0">
+
+  <tr>
+
+    <td width="9%"><span class="style3">&nbsp;&nbsp;<pbzloc ="1" style="font-weight: normal;">TO:</pbzloc></span><span style="font-size: 14px"><pbzloc ="1" style="font-weight: normal;"></pbzloc><pbzloc ="1" style="font-weight: normal;"></pbzloc><pbzloc ="1" style="font-weight: normal;"></pbzloc></span><pbzloc ="1" style="font-weight: normal;">&nbsp;</pbzloc></td>
+
+    <td width="91%"><span style="font-size: 14px;"><pbzloc ="1" style="font-weight: normal;">
+
+      <span style="font-size: 14px;"><pbzloc ="1" style="font-weight: normal;"><span style="font-size: 14px;"> </span> {var MsgTo} &nbsp;</pbzloc></span> </pbzloc></span><span style="font-size: 14px;"><pbzloc ="1" style="font-weight: normal;"> </pbzloc></span></td>
+
+  </tr>
+
+</table>
+
+<br />
+
+<table width="100%"  border="0" cellspacing="0" cellpadding="0">
+
+  <tr>
+
+    <td width="9%"><span style="font-size: 14px;">&nbsp;&nbsp;<pbzloc ="1" style="font-weight: normal;">INFO&nbsp;(CC)</pbzloc><pbzloc ="1" style="font-weight: normal;"></pbzloc><pbzloc ="1" style="font-weight: normal;">:&nbsp;</pbzloc></span><span style="font-size: 14px;"><pbzloc ="1" style="font-weight: normal;"></pbzloc></span><pbzloc ="1" style="font-weight: normal;"></pbzloc></td>
+
+    <td width="91%"><span style="font-size: 14px;"><pbzloc ="1" style="font-weight: normal;">
+
+      <span style="font-size: 14px;"><span style="font-size: 14px;">
+
+      <span style="font-size: 14px;"> <span style="font-size: 14px;"><span style="font-size: 14px;"><span style="font-size: 14px;"></span></span></span></span><span style="font-size: 14px;"><span style="font-size: 14px;"><span style="font-size: 14px;"><span style="font-size: 14px;"></span><span style="font-size: 14px;"><span style="font-size: 14px;"><span style="font-size: 12px;"><span class="style37"><span style="width:640px; margin: 1px;  word-wrap:break-word; display:inline-block;">{var MsgCc}</span></span></span></span></span></span></span></span><span style="font-size: 14px;"></span></span></span></pbzloc></span><span style="font-size: 14px;"><pbzloc ="1" style="font-weight: normal;"></pbzloc></span></td>
+
+  </tr>
+
+</table>
+<p><span style="font-size: 14px;"><pbzloc ="1" style="font-weight: normal;">
+
+          <span style="font-size: 14px;">&nbsp;&nbsp;<pbzloc ="1" style="font-weight: normal;"></pbzloc>&nbsp;&nbsp;<pbzloc ="1" style="font-weight: normal;"></pbzloc>&nbsp;&nbsp;<pbzloc ="1" style="font-weight: normal;"></pbzloc>&nbsp;&nbsp;<pbzloc ="1" style="font-weight: normal;"></pbzloc>&nbsp;&nbsp;<pbzloc ="1" style="font-weight: normal;"></pbzloc>&nbsp;&nbsp;<pbzloc ="1" style="font-weight: normal;"></pbzloc>&nbsp;&nbsp;<pbzloc ="1" style="font-weight: normal;"></pbzloc>&nbsp;&nbsp;<pbzloc ="1" style="font-weight: normal;"></pbzloc>&nbsp;&nbsp;<pbzloc ="1" style="font-weight: normal;"></pbzloc>&nbsp;&nbsp;<pbzloc ="1" style="font-weight: normal;"></pbzloc>&nbsp;<span class="style2">&nbsp;<pbzloc ="1" style="font-weight: normal;"></pbzloc></span></span><span class="style2" style="color: rgb(0, 153, 0);"><span style="color: rgb(0, 102, 0); font-style: italic;">Call signs  or E-mails
+
+  entered into the <span style="font-weight: bold;">TO</span>
+
+  or <span style="font-weight: bold;">INFO</span>
+
+  fields above, can be multiples separated by a semicolon ;</span></span></pbzloc></span><span class="style2" style="font-size: 14px;"><pbzloc ="1" style="font-weight: normal;"></pbzloc></span><span style="font-size: 14px;"><pbzloc ="1" style="font-weight: normal;"></pbzloc></span><span style="font-size: 14px;"><pbzloc ="1" style="font-weight: normal;"><br />
+
+          </pbzloc></span></p>
+
+</td>
+
+</tr>
+
+<tr>
+  <td  id= "Critical" colspan="4" valign="top" bgcolor="#FFFFFF"><span style="font-size: 12px;">&nbsp; <span class="style37">&nbsp;</span></span><span class="style44">1. Is there is an EMERGENT/LIFE SAFETY Need: {var Safetyneed}</span><span style="font-size: 14px;"><br />
+&nbsp;&nbsp;&nbsp; {var Comm0}</span></td>
+</tr>
+<tr>
+  <td colspan="4" valign="top" bgcolor="#f8f8ff"><span style="font-size: 14px;">&nbsp; &nbsp;</span><span class="style37">2. City&nbsp;
+    {var City} 
+&nbsp; &nbsp; &nbsp; County:
+{var County}
+&nbsp; &nbsp; &nbsp; State: {var State}
+&nbsp; &nbsp; &nbsp; Territory:
+{var Territory}</span></td>
+</tr>
+<tr>
+
+<td colspan="4" valign="top"><p class="style37">&nbsp; &nbsp;3.<span class="style41">&nbsp;LAT: {var gpsLat} &nbsp;&nbsp;&nbsp;LON: {var gpsLon}&nbsp;&nbsp;&nbsp;&nbsp; MGRS:&nbsp;{var MGRS} &nbsp; &nbsp;</span>
+ Location source:{var locationSource}
+<table width="100%"  border="0" cellpadding="4" cellspacing="0" bgcolor="#f8f8ff">
+    <tr valign="middle">
+      <td width="27%" valign="top"><span style="font-size: 14px;">&nbsp; </span><span class="style37">4a.&nbsp;POTS landlines functioning? </span></td>
+      <td width="73%" valign="top"><span class="style37"> {var POTS}</span></td>
+    </tr>
+    <tr>
+      <td colspan="2"><span style="font-size: 14px;"> &nbsp; &nbsp; &nbsp;  
+       <span style="width:750px; margin: 10px;  word-wrap:break-word; display:inline-block;"> {var Comm1}</span></span></td>
+    </tr>
+    <tr>
+      <td><span style="font-size: 14px;">&nbsp; &nbsp;</span><span class="style37">4b.&nbsp;VOIP landlines functioning? </span></td>
+    <td width="73%"><span class="style37">{var VOIP} </td>
+    </tr>
+    <tr>
+      <td colspan="2"><span style="font-size: 14px;">&nbsp; &nbsp; &nbsp; <span style="width:750px; margin: 10px;  word-wrap:break-word; display:inline-block;"> {var Comm1A}</span></span></td>
+    </tr>
+  </table>
+  <table width="100%"  border="0" cellspacing="0" cellpadding="4">
+
+  <tr valign="middle">
+
+    <td width="27%" nowrap="nowrap"><span style="font-size: 14px;">&nbsp; 5a </span><span class="style37">.Cell phone voice calls functioning?</span></td>
+
+    <td width="73%"><span class="style37">{var Cell}</span></td>
+
+  </tr>
+
+  <tr>
+
+    <td colspan="2"><span style="font-size: 14px;"> &nbsp; &nbsp; &nbsp; 
+
+<span style="width:750px; margin: 10px;  word-wrap:break-word; display:inline-block;">{var Comm2}</span></span></td>
+
+  </tr>
+  <tr>
+    <td><span style="font-size: 14px;">&nbsp; 5b </span><span class="style37">. Cell phone texts functioning? </span></td>
+  <td><span class="style37">{var Celltext} </span></td>
+  </tr>
+  <tr>
+    <td colspan="2"><span style="font-size: 14px;">&nbsp; &nbsp; &nbsp; <span style="width:750px; margin: 10px;  word-wrap:break-word; display:inline-block;">{var Comm2A}</span></span></td>
+    </tr>
+ 
+
+</table>
+
+<table width="100%"  border="0" cellspacing="0" cellpadding="4">
+
+  <tr valign="middle" bgcolor="#f8f8ff">
+
+    <td width="27%" nowrap="nowrap"><span style="font-size: 14px;">&nbsp; &nbsp;</span><span class="style37"></span><span class="style37">6. AM/FM Broadcast Stations functioning?	</span></td>
+
+    <td width="73%" bgcolor="#f8f8ff"><span class="style37">{var AMFM}</span></td>
+
+
+  </tr>
+
+  <tr bgcolor="#f8f8ff">
+
+    <td colspan="2"><span style="font-size: 14px;"> &nbsp; &nbsp; &nbsp; 
+
+<span style="width:750px; margin: 10px;  word-wrap:break-word; display:inline-block;"> {var Comm3}</span></span></td>
+
+  </tr>
+
+</table>
+
+<table width="100%"  border="0" cellspacing="0" cellpadding="4">
+
+  <tr valign="middle">
+
+    <td width="28%"><span style="font-size: 14px;">&nbsp; &nbsp;</span><span class="style37">7a. OTA TV functioning?</span></td>
+
+    <td width="72%"><span class="style37">{var TVStatus}</span></td>
+
+  </tr>
+
+  <tr>
+
+    <td colspan="2"><span style="font-size: 14px;"> &nbsp; &nbsp; 
+
+        
+        
+       <span style="width:750px; margin: 10px;  word-wrap:break-word; display:inline-block;"> {var Comm4} </span> </span></td>
+
+  </tr>
+  <tr valign="middle">
+    <td><span style="font-size: 14px;">&nbsp; &nbsp;</span><span class="style37">7b. Satellite TV functioning?</span></td>
+    <td><span class="style37">{var TVStatusb}</span></td>
+  </tr>
+  <tr>
+    <td colspan="2"><span style="font-size: 14px;"> &nbsp; &nbsp; <span style="width:750px; margin: 10px;  word-wrap:break-word; display:inline-block;"> {var Comm4b} </span> </span></td>
+  </tr>
+  <tr valign="middle">
+    <td><span style="font-size: 14px;">&nbsp; &nbsp;</span><span class="style37">7c. Cable TV functioning?</span></td>
+    <td><span class="style37">{var TVStatusc}</span></td>
+  </tr>
+  <tr>
+    <td colspan="2"><span style="font-size: 14px;"> &nbsp; &nbsp; <span style="width:750px; margin: 10px;  word-wrap:break-word; display:inline-block;"> {var Comm4c} </span> </span></td>
+  </tr>
+
+</table>
+
+
+
+<table width="100%"  border="0" cellspacing="0" cellpadding="4">
+
+  <tr valign="middle" bgcolor="#f8f8ff">
+
+    <td width="28%" nowrap="nowrap"><span style="font-size: 14px;">&nbsp; &nbsp;</span><span class="style37">8. Public Water Works functioning?</span></td>
+
+    <td width="72%"><span class="style37">{var WaterWorks}</span></td>
+
+  </tr>
+
+  <tr bgcolor="#f8f8ff">
+
+    <td colspan="2"><span style="font-size: 14px;"> &nbsp; &nbsp; &nbsp; 
+
+          <span style="width:750px; margin: 10px;  word-wrap:break-word; display:inline-block;">{var Comm5}</span></span></td>
+
+  </tr>
+
+</table>
+
+<table width="100%"  border="0" cellspacing="0" cellpadding="4">
+
+  <tr valign="middle">
+
+    <td width="28%"><span style="font-size: 14px;">&nbsp; &nbsp;</span><span class="style37">9a. Commercial Power functioning?</span></td>
+
+    <td width="72%"><span class="style37">{var PowerWorks}</span></td>
+
+  </tr>
+
+  <tr>
+
+    <td colspan="2"><span style="font-size: 14px;"> &nbsp; &nbsp; &nbsp; 
+
+ <span style="width:750px; margin: 10px;  word-wrap:break-word; display:inline-block;">{var Comm6}  </span>              </span></td>
+
+  </tr>
+  <tr>
+    <td><span style="font-size: 14px;"> &nbsp; 9b</span><span class="style37">. Commercial Power Stable?</span></td>
+  <td width="73%"><span class="style37">{var PowerStable}</td>
+  </tr>
+  <tr>
+    <td colspan="2"><span style="font-size: 14px;">&nbsp; &nbsp; &nbsp; <span style="width:750px; margin: 10px;  word-wrap:break-word; display:inline-block;">{var Comm6A} </span></span></td>
+  </tr>
+
+</table>
+
+<table width="100%"  border="0" cellpadding="4" cellspacing="0" >
+
+  <tr>
+    <td><span style="font-size: 14px;"> &nbsp; 9c</span><span class="style37">. Natural Gas supply functioning?</span></td>
+    <td width="73%"><span class="style37">{var kgc9}</td>
+  </tr>
+  <tr valign="middle">
+    <td colspan="2">&nbsp; &nbsp; &nbsp; 
+
+ <span style="width:750px; margin: 10px;  word-wrap:break-word; display:inline-block;">{var Comm9c} </span></td>
+    </tr>
+  <tr valign="middle" bgcolor="#f8f8ff">
+
+    <td width="28%"><span style="font-size: 14px;">&nbsp; 10</span><span class="style37">. Internet functioning?   </span></td>
+
+    <td width="72%"><span class="style37">{var Inter}</span></td>
+
+  </tr>
+
+  <tr bgcolor="#f8f8ff">
+
+    <td colspan="2"><span style="font-size: 14px;"> <span style="font-size: 12px;">&nbsp; </span><span style="font-size: 12px;">&nbsp; </span><span style="font-size: 12px;">&nbsp; </span>
+
+ <span style="width:750px; margin: 10px;  word-wrap:break-word; display:inline-block;">{var Comm7} </span>               </span></td>
+
+  </tr>
+
+</table>
+
+</td>
+
+</tr>
+
+<tr>
+  <td colspan="4" valign="top" style="height: 88px; vertical-align: top; text-align: left;"><table width="100%"  border="0" cellspacing="0" cellpadding="4">
+    <tr valign="middle" bgcolor="#f8f8ff">
+      <td width="27%" nowrap="NOWRAP" bgcolor="#FFFFFF" b><span style="font-size: 14px;">&nbsp; &nbsp;11a. </span><span class="style37"> NOAA Weather Radio functioning?</span></td>
+      <td width="73%" bgcolor="#FFFFFF" ><span class="style37">{var NOAA}</span></td>
+    </tr>
+  </table>
+
+    <p style="font-size: 14px;">
+      <span style="font-size: 14px;"><span style="font-size: 12px;">&nbsp; &nbsp; &nbsp;</span></span>
+      <span style="width:750px; margin: 10px;  word-wrap:break-word; display:inline-block;">{var NOAAcom}</span></p>
+    <table width="100%"  border="0" cellspacing="0" cellpadding="4">
+      <tr valign="middle" bgcolor="#f8f8ff">
+        <td width="27%" nowrap="NOWRAP" bgcolor="#FFFFFF"font-size: 14px;">&nbsp; &nbsp;11b. <span class="style37"> NOAA Weather Radio audio degraded?</span></td>
+        <td width="73%" bgcolor="#FFFFFF" ><span class="style37">{var NOAAb}</span></td>
+      </tr>
+    </table>
+    <span style="font-size: 14px;"> <span style="font-size: 14px;"><span style="font-size: 12px;">&nbsp; &nbsp; &nbsp;</span></span> <span style="width:750px; margin: 10px;  word-wrap:break-word; display:inline-block;">{var NOAAcomb}</span></span>    <p style="font-size: 14px;">&nbsp;</p></td>
+</tr>
+<tr>
+
+<td  colspan="4" bgcolor="#f8f8ff" style="height: 88px; vertical-align: top; text-align: center;"><div align="left">
+
+  <p><span style="font-size: 14px;">&nbsp; &nbsp;&nbsp;12. </span><span class="style37">Additional Comments &nbsp;</span><span class="style37" style="font-style: italic"><small style="color: rgb(0, 102, 0);">Brief
+
+      summary of current situation - expected outage times, major observations, etc.</span>
+
+      
+
+      <span style="font-size: 14px;">&nbsp;<br /> 
+      &nbsp; &nbsp;</span>
+
+       <span class="style3 style45" style="width:700px; margin: 10px;  word-wrap:break-word; display:inline-block;">{var Message}</span><span class="style37"><br />
+      
+       </span>
+
+  </div></td>
+  <textarea name="FormData" cols="70" rows="25" id="FormData" style="display: none";>MapFileName:T=SPOTREP-2
+Precedence:M:(Z) - Flash,(O) - Immediate,(P) - Priority,(R) - Routine=j25
+Task Number:T=j23
+Sender:T=j20
+DateTime:T=j3
+City/State/Territory:T=j16
+Latitude:T=z1
+Longitude:T=z2
+MGRS:T=mgrs  
+EMERGENT/LIFE SAFETY Need?M:YES,NO,=j0
+LandLines functioning?:M:YES,NO POTS,NO VOIP,NO POTS nor VOIP,Unknown - N/A=j7
+LandLines note:T=j15
+Cell Phones functioning?:M:YES,NO,Unknown - N/A=j5
+Cell phone note:T=j12
+AM/FM Broadcast Stations functioning?:M:YES,NO,Unknown - N/A=j4
+Broadcast Station note:T=j11
+TV Stations functioning?:M:YES,NO,Unknown - N/A=j9
+TV station note:T=j22
+Internet functioning?:M:YES,NO,Unknown - N/A=j6
+Internet note:T=j14
+Commercial Power functioning?:M:YES,NO,Unknown - N/A=j8
+Commercial Power  note:T=j19
+Public Water Works functioning?:M:YES,NO,Unknown - N/A=j10
+Public Water Works note:T=j24
+NOAA/NWS Weather Radio?M:YES,YES but degraded audio,NO,Unknown - N/A=j11
+Note:T=
+
+Additional Comments:T=j13
+POC:T=j18
+</textarea>
+</tr>
+
+<tr><td style="text-align: center;"><div align="left">
+  <p class="style37"><br />
+        &nbsp;&nbsp;&nbsp;<span class="style46">13. POC</span><span class="style46" style="color: black;"><span style="color: rgb(204, 0, 0);">&nbsp;</span> </span><span style="color: black;">&nbsp;</span> {var POC}       </p>
+  <p><span class="style41">
+    <input name="k3" type="hidden" id="k3" value="Unknown - N/A" />
+    <input name="k4" type="hidden" id="k4" value="Unknown - N/A" />
+    <input name="k5" type="hidden" id="k5" value="Unknown - N/A" />
+    <input name="k6" type="hidden" id="k6" value="Unknown - N/A" />
+	 <input name="k7" type="hidden" id="k7" value="Unknown - N/A" />
+	  <input name="k8" type="hidden" id="k8" value="Unknown - N/A" />
+	   <input name="k9" type="hidden" id="k9" value="Unknown - N/A" />
+	    <input name="k10" type="hidden" id="k10" value="Unknown - N/A" />
+</span><br />
+</p>
+  </div></td>
+
+</tr><tr>
+
+<td height="41" style="height: 35px; text-align: justify; vertical-align: top;"> 
+
+  <div align="right"><span style="font-family:  Arial, Helvetica, sans-serif;;"><small><span style="font-family:  Arial, Helvetica, sans-serif;">
+  
+  </span></small></span>  <span style="color: rgb(128, 0, 0);"><span style="color: black;"><span style="color: rgb(128, 0, 0);"><span style="font-family:  Arial, Helvetica, sans-serif;;"><span style="font-size: 12px;"><span style="font-family:  Arial, Helvetica, sans-serif;;"><span style="font-size: 12px;"><span style="font-family:  Arial, Helvetica, sans-serif;;"><span style="font-size: 12px;"><span style="font-family:  Arial, Helvetica, sans-serif;;"><span style="font-size: 12px;">
+    <input name="testCall" type="hidden" id="testCall" value="{MsgSender}" size="14" maxlength="13" />
+  
+  </span></span></span></span></span></span></span></span><span style="color: black;">&nbsp;&nbsp;</span></span></span><span style="font-size: 12px;"><span style="font-size: 12px;"><span style="font-size: 12px;"><span style="font-size: 12px;">
+  
+  <input name="Templateversion" type="hidden" id="Templateversion" value="Field Situation Report V 0.2.9.1" />
+  
+</span></span></span></span></span><span style="font-size: 12px;"><span style="font-size: 12px;"><span style="font-size: 12px;"><span style="font-size: 12px;"><span class="style2"><span class="style3"><span style="font-size: 12px;"><span style="font-size: 12px;"><span style="font-size: 12px;"><span style="font-size: 12px;"><span class="style37">Ver 0.<span class="style37">2</span>.<span style="font-size: 12px"><span class="style41">10</span></span></span></span></span></span></span></span></span></span></span></span></span></div></td>
+
+</tr>
+
+</tbody>
+
+</table>
+
+<br />
+
+&nbsp;</td>
+
+</tr>
+
+</tbody>
+
+</table>
+
+</form>
+
+</body></html>

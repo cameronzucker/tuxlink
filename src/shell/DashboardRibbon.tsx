@@ -79,7 +79,7 @@ export function DashboardRibbon({ data, onConnect, connecting, onAbort, packet, 
   const displayCall = ssid !== undefined && callsign
     ? renderEffectiveCall(callsign, ssid)
     : callsign;
-  // Position (GPS coords) is a v0.1 data source; the dev fixture shows the mock
+  // Position (GPS coords) is a deferred data source; the dev fixture shows the mock
   // value, and the real app omits the item until GPS exists.
   const position = DEV_FIXTURE ? DEV_POSITION : null;
   // connection string is pre-formatted by useStatusData via formatConnectionState,
@@ -145,7 +145,6 @@ export function DashboardRibbon({ data, onConnect, connecting, onAbort, packet, 
           source={data.position_source}
           gpsReady={data.gpsReady ?? false}
           onCommit={(g) => invoke('config_set_grid', { grid: g })}
-          onUseGps={() => invoke('position_set_source', { source: 'Gps' })}
         />
       </div>
       <div className="dash-divider" />

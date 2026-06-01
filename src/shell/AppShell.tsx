@@ -1,6 +1,6 @@
-// Main application shell — Mock B (Principles-faithful), the APPROVED v0.0.1
+// Main application shell — Mock B (Principles-faithful), the approved main-UI
 // design (docs/design/mockups/images/mock-b-principles-faithful.png + the MOCK B
-// block in 2026-05-17-mocks-v1-four-directions.html).
+// block in 2026-05-17-mocks-v1-four-directions.html; ratified by ADR 0013).
 //
 // Layout (post-P1 radio-panel-shell): titlebar / menu bar / dashboard ribbon /
 // chip-strip / panes[ sidebar | message list | reading pane | radio-panel |
@@ -98,8 +98,8 @@ function dtoToMessageMeta(d: MessageMetaDto): MessageMeta {
 }
 
 /// Build per-message highlight ranges from a free-text query token.
-/// Single-occurrence, first-token, case-insensitive (v0.1). Multi-token
-/// and multi-occurrence highlighting are a v0.2 follow-up.
+/// Single-occurrence, first-token, case-insensitive (current scope). Multi-token
+/// and multi-occurrence highlighting are a follow-up.
 function computeHighlights(
   items: MessageMetaDto[],
   freeText: string | null,

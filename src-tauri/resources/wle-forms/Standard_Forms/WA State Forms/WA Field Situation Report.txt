@@ -1,0 +1,99 @@
+Form:WA Field Situation Report Initial.html,WA Field Situation Report viewer.html 
+To: <var MsgTo>
+Readonly:True
+Subject://WL2K <var Precedence>/ Field Situation Report <var TheDate>
+
+Readonly:True
+Msg:
+Washington State Field Situation Report
+TO: <var msgTo>
+CC: <var MsgCC>
+
+ Reporting party: <var Reportingparty>       Reporting party's location: <var location>
+
+Is reporting station able to provide updates as they occur at this location? <var willUpdate>
+
+Winlink Address:<var WinlinkAddress>         Served Agency: <var Servedagency>
+County:  <var County>           Closest Town: <var Town>    
+
+Latitude and longitude:   LAT <var gpsLat >    LON <VAR gpsLon> .     
+
+HF frequencies monitored : <var FreqMonitored>          Service: <var Service>
+
+PRECEDENCE: <var Precedence>       DATE/TIME: <var TheDate>  
+
+Transportation-- observed damage or shutdown(s) and/or blockages:
+ [<var btf1>] Highway / Freeway	
+Observation notes:
+
+<var transportation>
+
+ [<var btf2>] Mass Transit
+ [<var btf3>] Railroad
+ [<var btf4>] Airport
+ [<var btf5>] Seaport/ Ferry
+ [<var btf6>] Arterial Roads
+ [<var btf7>] Fuel Pipeline
+
+Utilities-- observed damage or disruption(s) in service:
+
+ [<var btf8>] Natural Gas      	Company name, if known : <var GasCompany>
+ [<var btf9>] Water	Company name, if known: <var WaterCompany>
+ [<var btf10>] Sewer	Company name, if known: <var SewerCompany>
+ [<var btf11>] Electric	Company name, if known: <var ElectriCompany>
+If you have power, is it stable?<var stablePWR>
+Observations	<var Utilitynote>
+
+Environmental— hazards observed:
+ [<var btf12>]  Air Quality	
+Observation notes:
+
+<var Enviromentnaotes>
+
+ [<var btf13>] Water Quality
+ [<var btf14>] Landslide
+ [<var btf15>] Avalanche
+ [<var btf16>] Hazmat
+ [<var btf17>] Flood/ Dam Issue(s)
+
+Public Health Needs/ Medical Needs
+Observed: [<var HealthObserved>]	
+<var Healthnotes>
+
+
+Communications
+
+Check all that are non-functional:
+[<var btf18>] Landline phone   	Provider, if known: <var cProvider1>
+[<var btf19>] Cable / VoIP Phone	Provider, if known: <var cProvider2>
+[<var btf20>] Cell Voice	Provider, if known: <var cProvider3>
+[<var btf21>] Cell Text	Provider, if known: <var cProvider4>
+[<var btf22>] Cell Data	Provider, if known: <var cProvider5>
+
+Report the functionality of the following:
+Cable Internet	<var Functionality1>
+<var funStr1>
+Cable Television	<var Functionality2>
+<var funStr2>
+Satellite Internet	<var Functionality3>
+<var funStr3>
+Satellite Television	<var Functionality4>
+<var funStr4>
+Over the Air Television	<var Functionality5>
+<var funStr5>
+AM/FM Broadcast	<var Functionality6>
+<var funStr6>
+NOAA Radio	<var Functionality7>
+<var funStr7>
+-----
+Approved by: <var Approved_Name>        Position / Title: <var Approved_PosTitle>    Date/Time: <var ApproveTime>
+[No changes or editing of this message are allowed]
+
+------------------------------------
+Express Sending Station: <MsgSender>
+Express Version: <ProgramVersion>
+Template Version: <var Templateversion>
+Map File Name: <var mapfilename>
+
+
+

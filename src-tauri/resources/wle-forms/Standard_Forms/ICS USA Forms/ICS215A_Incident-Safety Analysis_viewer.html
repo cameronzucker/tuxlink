@@ -1,0 +1,414 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD HTML 4.0 Transitional//EN">
+<html><head>
+    <meta http-equiv="content-type" content="text/html; charset=utf-8">
+    
+    <title>INCIDENT ACTION SAFETY ANALYSIS (ICS 215A)</title>
+    <style type="text/css">
+@media print {
+.form-control, .form-control.nobug {
+border: 0;
+outline: 0;
+box-shadow: none;
+font-size:14px;
+}
+.form-control.nobug {
+transition: none; /*-- THIS IS IMPORTANT -- */
+}
+input, textarea {
+outline: none !important;
+box-shadow: none;
+border: none;
+}
+.style2 {
+font-size: 14px;
+font-weight: bold;
+}
+.style3 {font-size: 10px; font-family: Arial, Helvetica, sans-serif; }
+body {
+background-color: #FFFFFF;
+}
+.style6 {
+font-size: 10px;
+font-family: Arial, Helvetica, sans-serif;
+}
+    </style>
+	<style>
+/*
+body {color:#000; background:#fff; font:100%/1.5 arial,sans-serif;}
+h2 {margin-top:0}
+*/
+/* Styling applied to classes only */
+/* Pop-up content shifted off-screen when not in view.
+Still readable by screen-reader software.
+When targeted it fills the browser window.
+*/
+.pop-up {
+	position:absolute;
+	top:0;
+	left:-500em;
+	visibility: visible;
+}
+.pop-up:target {position:static; left:0;}
+/* The pop-up itself */
+.popBox {
+	background:#ffffff;
+	position:absolute;
+	left:30%;
+	right:30%;
+	top:20%;
+	bottom:25%;
+	z-index:10;
+	border:1px solid #3a3a3a;
+/* CSS3 where available: rounded corners, drop-shadow, and fade in. */
+border-radius:.25rem;
+box-shadow:0 .5rem .5rem rgba(0,0,0,.5);
+	opacity:0;
+	transition: opacity 0.8s ease-out;
+	visibility: visible;
+}
+:target .popBox {position:fixed; opacity:1;}
+/* Light box properties */
+.lightbox {
+display:none;
+text-indent:-200em;
+background-color:rgba(0,0,0,.4);
+width:100%;
+height:100%;
+position:fixed;
+top:0;
+left:0;
+bottom:0;
+right:0;
+z-index:5;
+}
+:target .lightbox {display:block;}
+/* The pop-ups close link, moved via CSS to the top right of the pop-up */
+.close:link,
+.close:visited {
+	position: absolute;
+	top: -0.75em;
+	right: -0.75em;
+	display: block;
+	width: 2em;
+	height: 2em;
+	line-height: 1.8;
+	padding: 0;
+	text-align: center;
+	text-decoration: none;
+	background-color: #000;
+	border: 2px solid #fff;
+	color: #fff;
+	border-radius: 50%;
+box-shadow: 0 0 .5rem .5rem rba(0,0,0,.5);
+	visibility: visible;
+}
+.close:before {content:"X";}
+.close:hover,
+.close:active,
+.close:focus {
+box-shadow: 0 0 .5rem .5rem rba(255,0,0,.5);
+background-color: #c00;
+color: #fff;
+}
+.close span {
+text-indent: -200em;
+display: block;
+}
+/* The pop-up content div will scroll if it has too much content */
+.popScroll {
+	position:absolute;
+	top: 1rem;
+	left: 1rem;
+	right: 1rem;
+	bottom: 1rem;
+	overflow-y: auto;
+*overflow-y: scroll;
+	padding-right: 0.5em;
+	visibility: visible;
+}
+.popScroll h2 {margin-top:0}
+.formtext1 {font-family: Arial, Helvetica, sans-serif;
+font-size: 10pt;
+font-weight: normal;
+}
+	
+	
+ input[type=button] {
+
+  border: 2px solid #0f88f2;;
+   border-radius:.25rem;
+  
+  font-size: 14px;
+  padding: 2px 2px;
+ background-color: white;
+  text-decoration: none;
+  margin: 2px 2px;
+  cursor: pointer;
+}
+input[type=submit] {
+ border: 2px solid green;
+  border-radius:.25rem;
+  background-color: white;
+ 
+  padding: 2px 2px;
+  font-size: 14px;
+   cursor: pointer;
+}
+input[type=reset] {
+ border: 2px solid red;
+ border-radius:.25rem;
+  background-color: white;
+ 
+  padding: 2px 2px;
+  font-size: 14px;
+   cursor: pointer;
+}
+input[type=regular] {
+ border: 2px solid #999999;
+  border-radius:.25rem;
+width:50px;
+  background-color: white;
+ 
+  padding: 2px 2px;
+  font-size: 12px;
+   cursor: pointer;
+}
+
+    .style25 {font-size: 12}
+    .formtext {font-family: Arial, Helvetica, sans-serif;
+font-size: 11pt;
+font-weight: normal;
+}
+    </style>
+    <script>
+
+
+
+</script></head>
+<body >
+<form  style="font-family: Arial;" pbzloc="3" onSubmit="return confirm('To complete your form submission, click OK and close the open browser window. You will return to the new message window so you can post your message to the outbox');" method="post" id="myform" enctype="multipart/form-data" action="http://{FormServer}:{FormPort}">
+
+<div id="pop1" class="pop-up"><!-- The pop-up block -->
+
+<div class="popBox"><!-- If the content becomes larger than the pop-up this div will scroll the content -->
+
+<div class="popScroll"><!-- Test for help starts here -->
+
+<p> </p>
+
+<strong>More Information</strong><br /><br />
+You can save your completed HTML to a text file. This will allow you to reload the Form
+with ALL entered form data. You do this prior to submitting the form. Then you can open a new Form and load the saved HTML form data. 
+NOTE: Date and Times will be the previous, so change if needed. It will save the info as a text file with the Date and Time as the text file name.
+Now you can use any browser, save your form, (as many versions as you like), and then re-ate.
+<br />
+<br />You can change the form title to reflect your group or agency name. Just use the SETUP button on forms top left and enter what you wish. It will remian as such until you change it.
+
+
+
+* NOTE on printing:<br />
+
+<br />
+
+Printing this form is dependent upon your selected
+
+printer and its settings. Various Web Browsers and and their viewing
+
+sizes are not all the same. Printing from a browsers print function
+
+may be different from the operating systems default print mode.
+
+Select what works for you, for both printing and viewing.
+
+You may print direct to the printer as a HTML or save as a
+
+PDF then print the PDF. In some instances Landscape mode may print
+
+better than Portrait. <br />
+</span>
+</p>
+
+. <td width="0%"></p>
+
+</div>
+
+<!-- The close pop-up link correctly positioned at the end of the content block -->
+
+<a href="#links" class="close"><span>Back
+
+to links</span></a> </div>
+
+</div>
+     <table width="1000" border="1" cellpadding="6" cellspacing="0" style="width: 966px; ">
+        <tbody>
+          <tr valign="top">
+            <td colspan="2" style="text-align: center;"><div align="left">
+              <p align="center"><span class="style3"><span style="font-weight: bold;"><span class="style18"> INCIDENT ACTION SAFETY ANALYSIS (ICS 215A)</span><span style="font-weight: bold;"><br>
+                <span  id="SubjectText">{var Title}  </span> 
+              &nbsp; </span></span>
+              </div></td>
+          </tr>
+          <tr valign="top">
+            <td width="430" height="55" nowrap class="style3" style="vertical-align: top; text-align: left;"><p><span class="style6"><strong>1. Incident Name:</strong> &nbsp;</span><span class="style3"><span style="font-weight: normal;"><br>
+            </span>
+                <input name="Title" type="hidden" id="Title" value="Winlink" />
+            </span>                <span class="style6">
+            <textarea name="parseme" cols="60" id="parseme" style="display: none;"></textarea>                    
+            <span style="font-weight: normal;">
+            {var IncidentName}</span></span> </p>
+            </td>
+          <td width="498" height="55" nowrap  style="vertical-align: top; text-align: left;"><p class="style6"><strong>2. Incident Number:<br>
+          </strong>
+            {var IncidentNumber}
+            </p>
+            </td>
+          </tr>
+          <tr valign="top">
+            <td height="78" nowrap class="style3" style="vertical-align: top; text-align: left;"><p class="style6"><strong>3. Date/ Time Prepared:</strong></p>
+            <p class="style6">Date: {var PreparedDate}<strong>&nbsp;&nbsp;&nbsp;&nbsp; Time:</strong> {var PreparedTime} </p></td>
+            <td height="78" nowrap  style="vertical-align: top; text-align: left;"><table width="94%"  border="0" cellspacing="0" cellpadding="1">
+              <tr>
+                <td nowrap class="style6"><strong> 4. Operational Period:</strong></td>
+                <td nowrap><span class="style3">Date From:</span></td>
+                <td class="style25"><span class="style6">{var DateFrom}</span> </td>
+                <td nowrap class="style6"><span class="style3">&nbsp;Date To:</span></td>
+                <td class="style6"><span class="style25">
+                  {var DateTo}
+                </span></td>
+              </tr>
+              <tr valign="middle">
+                <td height="39">&nbsp;</td>
+                <td nowrap><span class="style3">Time From:</span></td>
+                <td class="style6"><span class="style25">
+                  {var TimeFrom}</span></td>
+                <td nowrap class="style6"><span class="style3">&nbsp;Time To:</span></td>
+                <td class="style6"><span class="style25">
+                  {var TimeTo}
+                </span></td>
+              </tr>
+            </table></td>
+          </tr>
+          <tr valign="top">
+            <td height="320" colspan="2" nowrap class="style2" style="vertical-align: top; text-align: left;"><table width="100%"  border="1" cellspacing="0" cellpadding="2">
+                <tr bgcolor="#f8f8ff">
+                  <td width="23%"><span class="style6"><span style="font-weight: bold;">5. Incident Area</span></span></td>
+                  <td width="39%"><span class="style6"><span style="font-weight: bold;">6. Hazards/Risks </span></span></td>
+                  <td width="38%"><span class="style6"><span style="font-weight: bold;">7. Mitigations </span></span></td>
+              </tr>
+                <tr class="style3">
+                  <td valign="top">{var area1}</td>
+                  <td valign="top" class="style6"><span style="width:350px; margin: 3px;  word-wrap:break-word; display:inline-block;">{var hazard1}</span></td>
+                  <td valign="top"><span class="style6"><span style="width:350px; margin: 3px;  word-wrap:break-word; display:inline-block;">{var Mitigtion1}</span></span></td>
+              </tr>
+                <tr class="style3">
+                  <td valign="top">{var area2}</td>
+          <td valign="top" class="style6"><span style="width:350px; margin: 3px;  word-wrap:break-word; display:inline-block;">{var hazard2}</span></td>
+                  <td valign="top"><span class="style6"><span style="width:350px; margin: 3px;  word-wrap:break-word; display:inline-block;">{var Mitigtion2}</span></span></td>
+              </tr>
+                <tr class="style3">
+                  <td valign="top">{var area3}</td>
+               <td valign="top" class="style6"><span style="width:350px; margin: 3px;  word-wrap:break-word; display:inline-block;">{var hazard3}</span></td>
+                  <td valign="top"><span class="style6"><span style="width:350px; margin: 3px;  word-wrap:break-word; display:inline-block;">{var Mitigtion3}</span></span></td>
+              </tr>
+                <tr class="style3">
+                  <td valign="top">{var area4}</td>
+				    <td valign="top" class="style6"><span style="width:350px; margin: 3px;  word-wrap:break-word; display:inline-block;">{var hazard4}</span></td>
+                  <td valign="top"><span class="style6"><span style="width:350px; margin: 3px;  word-wrap:break-word; display:inline-block;">{var Mitigtion4}</span></span></td>
+
+              </tr>
+                <tr class="style3">
+                  <td valign="top">{var area5}</td>
+         			<td valign="top" class="style6"><span style="width:350px; margin: 3px;  word-wrap:break-word; display:inline-block;">{var hazard5}</span></td>
+                  <td valign="top"><span class="style6"><span style="width:350px; margin: 3px;  word-wrap:break-word; display:inline-block;">{var Mitigtion5}</span></span></td>
+              </tr>
+                <tr class="style3">
+                  <td valign="top">{var area6}</td>
+                  <td valign="top" class="style6"><span style="width:350px; margin: 3px;  word-wrap:break-word; display:inline-block;">{var hazard6}</span></td>
+                  <td valign="top"><span class="style6"><span style="width:350px; margin: 3px;  word-wrap:break-word; display:inline-block;">{var Mitigtion6}</span></span></td>
+             </tr>
+                <tr class="style3">
+                  <td valign="top">{var area7}</td>
+         			<td valign="top" class="style6"><span style="width:350px; margin: 3px;  word-wrap:break-word; display:inline-block;">{var hazard7}</span></td>
+                  <td valign="top"><span class="style6"><span style="width:350px; margin: 3px;  word-wrap:break-word; display:inline-block;">{var Mitigtion7}</span></span></td>
+              </tr>
+                <tr class="style3">
+                  <td valign="top">{var area8}</td>
+            			<td valign="top" class="style6"><span style="width:350px; margin: 3px;  word-wrap:break-word; display:inline-block;">{var hazard8}</span></td>
+                  <td valign="top"><span class="style6"><span style="width:350px; margin: 3px;  word-wrap:break-word; display:inline-block;">{var Mitigtion8}</span></span></td>
+            </tr>
+                <tr class="style3">
+                  <td valign="top">{var area9}</td>
+         			<td valign="top" class="style6"><span style="width:350px; margin: 3px;  word-wrap:break-word; display:inline-block;">{var hazard9}</span></td>
+                  <td valign="top"><span class="style6"><span style="width:350px; margin: 3px;  word-wrap:break-word; display:inline-block;">{var Mitigtion9}</span></span></td>
+              </tr>
+                <tr class="style3">
+                  <td valign="top">{var area10}</td>
+          			<td valign="top" class="style6"><span style="width:350px; margin: 3px;  word-wrap:break-word; display:inline-block;">{var hazard10}</span></td>
+                  <td valign="top"><span class="style6"><span style="width:350px; margin: 3px;  word-wrap:break-word; display:inline-block;">{var Mitigtion10}</span></span></td>
+              </tr>
+                <tr class="style3">
+                  <td valign="top">{var area11}</td>
+           			<td valign="top" class="style6"><span style="width:350px; margin: 3px;  word-wrap:break-word; display:inline-block;">{var hazard11}</span></td>
+                  <td valign="top"><span class="style6"><span style="width:350px; margin: 3px;  word-wrap:break-word; display:inline-block;">{var Mitigtion11}</span></span></td>
+             </tr>
+                <tr class="style3">
+                  <td valign="top">{var area12}</td>
+          			<td valign="top" class="style6"><span style="width:350px; margin: 3px;  word-wrap:break-word; display:inline-block;">{var hazard12}</span></td>
+                  <td valign="top"><span class="style6"><span style="width:350px; margin: 3px;  word-wrap:break-word; display:inline-block;">{var Mitigtion12}</span></span></td>
+              </tr>
+                <tr class="style3">
+                  <td valign="top">{var area13}</td>
+           			<td valign="top" class="style6"><span style="width:350px; margin: 3px;  word-wrap:break-word; display:inline-block;">{var hazard13}</span></td>
+                  <td valign="top"><span class="style6"><span style="width:350px; margin: 3px;  word-wrap:break-word; display:inline-block;">{var Mitigtion13}</span></span></td>
+              </tr>
+                <tr class="style3">
+                  <td valign="top">{var area14}</td>
+             			<td valign="top" class="style6"><span style="width:350px; margin: 3px;  word-wrap:break-word; display:inline-block;">{var hazard14}</span></td>
+                  <td valign="top"><span class="style6"><span style="width:350px; margin: 3px;  word-wrap:break-word; display:inline-block;">{var Mitigtion14}</span></span></td>
+            </tr>
+                <tr class="style3">
+                  <td valign="top">{var area15}</td>
+         			<td valign="top" class="style6"><span style="width:350px; margin: 3px;  word-wrap:break-word; display:inline-block;">{var hazard15}</span></td>
+                  <td valign="top"><span class="style6"><span style="width:350px; margin: 3px;  word-wrap:break-word; display:inline-block;">{var Mitigtion15}</span></span></td>
+              </tr>
+              </table>           
+            </td>
+          </tr>
+          <tr valign="top">
+            <td height="38" colspan="2" nowrap class="style2" style="vertical-align: top; text-align: left;"><p class="style6"><span class="style3"><span style="font-weight: normal;">
+              <span style="font-weight: normal;">
+              <textarea name="allAttachments" id="allAttachments" style="display: none;"></textarea>
+              </span>            <span style="font-weight: normal;"><span style="font-weight: normal;">
+              <textarea name="AddedOthers" id="AddedOthers" style="display: none;"></textarea>
+              </span></span><strong>8. Prepared by (Safety Officer):  </strong>Name 
+                    <span style="font-weight: normal;">
+                    {var Prepedby}<span style="font-weight: normal;"><span style="font-weight: normal;">
+  </span></span></span> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Signature: <span style="font-weight: normal;"><span style="font-weight: normal;">
+  {var Prepsig}
+</span></span></span></span></p>
+              <p class="style6"><span class="style3"><span style="font-weight: normal;"><strong>&nbsp; &nbsp;&nbsp;Prepared b: (Operations Section Chief): </strong>Name <span style="font-weight: normal;">
+              {var Prepedbychief}
+              <span style="font-weight: normal;"><span style="font-weight: normal;"> </span></span></span> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Signature: <span style="font-weight: normal;"><span style="font-weight: normal;">
+              {var OpsChiefpsig}
+              </span></span></span></span></p>
+            <p class="style6"><span class="style3"></span></p></td>
+          </tr>
+          <tr valign="top">
+            <td height="42" nowrap class="style3" style="vertical-align: top; text-align: left;"><strong>ICS 215A </strong></td>
+          <td height="42" nowrap class="style2" style="vertical-align: top; text-align: left;"><div align="left"><span class="style3" style="font-weight: normal;">&nbsp;&nbsp;<strong>Date/Time</strong></span><span class="style6" style="font-weight: bold;">: </span><span class="style6"><span class="style3"><span style="font-weight: normal;">
+            {var Formdatetime}</span></span></span> &nbsp; </div></td>
+          </tr>
+          <tr>
+            <td colspan="2"><div align="right"><small><span style="font-family: Calibri;">
+              </span></small>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+              <input name="testCall" type="hidden" id="testCall" value="{MsgSender}" size="14" maxlength="13" />
+              <input name="Templateversion" type="hidden"
+
+                                    id="Templateversion" value="ICS 208 v 1.0.1" />
+&nbsp; &nbsp; &nbsp;&nbsp; &nbsp; &nbsp; &nbsp;&nbsp; &nbsp; &nbsp; &nbsp;&nbsp; &nbsp; &nbsp; &nbsp;&nbsp; &nbsp; &nbsp; &nbsp;&nbsp;&nbsp;&nbsp;&nbsp; &nbsp; &nbsp; &nbsp;&nbsp;&nbsp; &nbsp; &nbsp; &nbsp;&nbsp;&nbsp;&nbsp; <span class="style3"><span style="font-weight: bold;"></span><small><small><span style="font-weight: normal;">Ver 1.0.1</span></small></small></span><span class="style3"><small><small><span style="font-weight: normal;"> &nbsp;&nbsp; </span></small></small></span></div></td>
+          </tr>
+        </tbody>
+  </table>
+      <br>
+</form>
+</body></html>

@@ -1,0 +1,71 @@
+Form: HICS IAP Quick Start_Initial.html,HICS IAP Quick Start_viewer.html
+
+To: 
+Subject: HICS INCIDENT ACTION PLAN (IAP) QUICK START-<var IncidentName>, <var Facility>, <var DateTime> 
+Readonly:True
+Msg: HICS INCIDENT ACTION PLAN (IAP) QUICK START
+
+1. Incident Name:  
+<var IncidentName>
+
+2. Operational Period # <var opperiod>:	
+Date From:	<var DateFrom>	Date To:	<var DateTo>
+Time From:	<var TimeFrom>	Time To:	<var TimeTo>
+
+3. Situation Summary      	
+ — HICS 201 —
+  <var SituationSummary>
+
+4. Current Hospital Incident Management Team (fill in additional positions as appropriate)	
+—HICS201,203—
+Incident Commander (s)
+<var IC>
+Command Staff	
+Public Information Officer:	<var PIO>
+Safety Officer:	<var Safety>
+Liaison Officer:	<var Liaison>
+Medical-Technical Specialist:	<var Med1>
+Medical-Technical Specialist:	<var Med2>
+Medical-Technical Specialist:	<var Med3>
+Medical-Technical Specialist:	<var Med4>
+
+General Staff
+Operations Chief:	<var Ops>
+Planning Chief:	<var Planning> 
+Logistics Chief:	<var Logistics>
+Finance/Administration Chief:	<var Finance>      
+     
+5. Health and Safety Briefing Identify potential incident health and safety hazards and develop necessary measures (remove hazard, provide personal protective equipment, warn people of the hazard) to protect responders from those hazards.	
+— HICS 202, 215A —
+
+ <var HealthSafety>
+
+6. Incident Objectives	
+— HICS 202, 204 —
+
+6a. OBJECTIVES	6b. STRATEGIES / TACTICS	6c. RESOURCES REQUIRED	6d. ASSIGNED TO
+
+<var Obj1>	<var tactic1>	<var resource1>	<var assign1>
+
+<var Obj2>	<var tactic2>	<var resource3>	<var assign2>
+
+<var Obj3>	<var tactic3>	<var resource3>	<var assign3>
+
+<var Obj4>	<var tactic4>	<var resource4>	<var assign4>
+
+<var Obj5>	<var tactic5>	<var resource5>	<var assign5>
+
+7. Prepared by: Name:	<var Prepedby>
+   Signature:	<var Prepsig>
+
+   Date/Time:	<var DateTime>
+   Facility:	<var Facility>
+
+------------------------
+Express Sending Station:	<MsgSender>
+Senders Express Version:	<ProgramVersion>
+Senders Template Version:	<var Templateversion>
+[No changes or editing of this message are allowed]
+
+
+

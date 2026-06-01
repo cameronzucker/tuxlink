@@ -1,0 +1,4 @@
+Form:Off-Grid_Spotting_Hunting.html
+To: <var To>
+Subject: <var cmd> <var Alpha> <var Bravo> <var Charlie> <var Delta> <var Echo>
+Msg:

@@ -1,0 +1,53 @@
+Form: STAR_Form_TX_Initial.html,STAR_Form_TX_Viewer.html
+To: 
+Cc: <var DoCC>
+Subject: STAR Message-Request No: <var Star1>; Requestor: <var Star2>
+
+Msg:
+STATE OF TEXAS ASSISTANCE REQUEST (STAR) Vers 10   
+
+* Information
+Request No:	<var Star1>
+Requestor Name:	<var Star2>
+Requestor Position:	<var Star3>
+Requestor Phone #:	<var Star4>
+Requestor Email:	<var Star5>
+Requestor Signature:	<var Star6>
+Initial Request Date:	<var Star7>
+Incident Name:	<var Star8>
+Requesting Entity:	<var Star9>
+
+* Item/Mission Description
+Item/Mission:<var Star10>
+
+Qty:	<var Star11>
+Unit: When Needed?	<var Star12>
+For How Long?	<var Star13>
+
+Mission Description:	<var Star14>
+Purpose of Request:	<var Star15>
+File Attachment: <var Star16>
+PPE Attachment:	<var Star17>
+
+* Delivery Address
+Destination:	<var Star18>
+Point of Contact:<var Star19>
+
+* Responsible Party/Following
+Responsible Party:	<var Star20>
+Following: <var Star21>
+
+* Routing Notes
+Notes: <var Star22>
+Cancelled / Not Filled Notes: <var Star23>
+
+Signature:<var Star24>
+Date / Time: <var Star25>
+Comments:<var Star26>
+
+-----------------
+Express Sending Station:	<MsgSender>
+Senders Express Version:	<ProgramVersion>
+Senders Template Version:	<var Templateversion>
+
+

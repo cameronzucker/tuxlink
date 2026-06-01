@@ -1,0 +1,59 @@
+Form:After Action Review Initial.html,After Action Review Viewer.html
+
+To: 
+Subject: AAR: <var Incident_Name> - <var Name> - <var DateTimeFrom> to <var DateTimeTo>
+
+Msg:
+After Action Review
+ 
+<var FormTitle> 
+PAGE # <var Page>
+
+1. Incident or Event Name:	<var Incident_Name>
+2. Operational Period: 
+ From:	<var DateTimeFrom> 
+ To:	<var DateTimeTo>
+
+3: Name:	<var Name>
+4: ICS Position:	<var ICS_Position>
+5  Home Agency & Unit:	<var Home_Agency>
+----------------------------------------------
+6. RESOURCES ASSIGNED:
+
+NAME	ICS POSITION	HOME AGENCY
+<var Name1>	<var ICS_Position1>	<var Home_Agency1>
+<var Name2>	<var ICS_Position2>	<var Home_Agency2>
+<var Name3>	<var ICS_Position3>	<var Home_Agency3>
+<var Name4>	<var ICS_Position4>	<var Home_Agency4>
+<var Name5>	<var ICS_Position5>	<var Home_Agency5>
+<var Name6>	<var ICS_Position6>	<var Home_Agency6>
+<var Name7>	<var ICS_Position7>	<var Home_Agency7>
+<var Name8>	<var ICS_Position8>	<var Home_Agency8>
+
+----------------------------------------------
+7a. What Was Planned?
+
+<var fld7a>
+
+7b. What Actually Happened?
+
+<var fld7b>
+
+7c. Why Did It Happen?
+
+<var fld7c>
+
+7d. What Are We Going To Do Next Time?
+
+<var fld7d>
+---------------------------------------------
+4. PREPARED BY:	<var PreparedName>    Date/Time: <var DateTime>
+---------------------------------------------
+
+Express Sending Station:	<MsgSender>
+Senders Express Version:	<ProgramVersion>
+Senders Template Version:	<var Templateversion>
+
+
+
+

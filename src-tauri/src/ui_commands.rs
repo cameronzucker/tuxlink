@@ -1700,25 +1700,28 @@ pub(crate) fn validate_grid_input(s: &str) -> Option<&'static str> {
         .then_some("Grid must be a 4- or 6-char Maidenhead locator (e.g. EM75 or EM75xx).")
 }
 
-/// Persist a manually-set grid to the config file and pin the [`PositionArbiter`].
+/// Persist a manually-set grid to the config file and update the arbiter's
+/// fallback grid.
 ///
 /// - Validates the input with [`validate_grid_input`]; invalid → `Rejected`.
-/// - Reads the current config, updates `identity.grid` + `privacy.position_source`,
-///   and writes atomically. Both I/O errors map to `UiError::Internal` (same
-///   pattern as `config_read` + `cms_connect`).
-/// - Calls `arbiter.set_manual` to pin the in-memory arbiter to Manual
-///   immediately; the arbiter is the runtime source of truth for broadcast
-///   position (spec §position-686).
+/// - Reads the current config, updates `identity.grid`, and writes atomically.
+///   Both I/O errors map to `UiError::Internal` (same pattern as `config_read`
+///   + `cms_connect`).
+/// - Calls `arbiter.set_manual` to update the in-memory fallback grid; the
+///   arbiter is the runtime source of truth for broadcast position
+///   (spec §position-686).
+///
+/// **tuxlink-pjih (2026-06-01):** previously this command also persisted
+/// `cfg.privacy.position_source = Manual` and the arbiter's `set_manual`
+/// pinned the runtime source to `Manual`. Operator complaint was that
+/// setting a manual grid caused the GPS-derived grid to stop displaying
+/// even when a fresh GPS fix was available. Resolution: setting a manual
+/// grid now updates ONLY the fallback grid; the stored source preference
+/// and live arbiter source are no longer pinned. The displayed grid
+/// follows GPS-fresh-else-manual (see [`PositionArbiter::active_grid`]).
 ///
 /// The arbiter is managed as an `Arc<PositionArbiter>` so it is shared between
 /// this command and (Task 11) the gpsd task.
-///
-/// NOTE (test coverage): the full validate → persist → pin round-trip is NOT
-/// unit-tested here. `config::config_path()` resolves via the process-global
-/// `XDG_CONFIG_HOME`, so an isolated round-trip test would race under parallel
-/// `cargo test`. The persist+pin path is covered by the Task 8 operator browser
-/// smoke + a future integration test; the validator and the arbiter's set_manual
-/// stickiness are unit-tested in isolation.
 ///
 /// NOTE (empty string): this command is never invoked with an empty string — the
 /// Task 8 `GridEdit` UI validates client-side first; the backend correctly
@@ -1737,7 +1740,6 @@ pub async fn config_set_grid(
         detail: e.to_string(),
     })?;
     cfg.identity.grid = Some(g.clone());
-    cfg.privacy.position_source = config::PositionSource::Manual;
     config::write_config_atomic(&cfg).map_err(|e| UiError::Internal {
         detail: e.to_string(),
     })?;
@@ -1805,6 +1807,10 @@ pub async fn position_set_source(
 ///   [`crate::position::effective_broadcast_locator`], honoring both precision and
 ///   the `gps_state` privacy control. The ribbon displays this so it always shows
 ///   exactly what is/would be transmitted (Codex P1-B). Empty string = no grid.
+/// - `active_source`: the LIVE source actually producing the displayed grid —
+///   `Gps` while a fresh fix exists, `Manual` when falling back to the
+///   manually-set grid. tuxlink-pjih: the UI source chip reads this so it
+///   stays truthful even when the operator's stored preference disagrees.
 ///
 /// Polled by useStatusData (2s).
 #[derive(Debug, Serialize, Clone, PartialEq)]
@@ -1814,6 +1820,8 @@ pub struct PositionStatusDto {
     /// gps_state). Empty string when no grid is available. Serializes as
     /// `broadcast_grid` (snake_case) matching the TS PositionStatusDto.
     pub broadcast_grid: String,
+    /// The live source actually used to derive the active grid (tuxlink-pjih).
+    pub active_source: config::PositionSource,
 }
 
 #[tauri::command]
@@ -1824,6 +1832,7 @@ pub async fn position_status(
     Ok(PositionStatusDto {
         gps_ready: arbiter.has_fresh_fix(),
         broadcast_grid: crate::position::effective_broadcast_locator(&cfg, Some(&arbiter)),
+        active_source: arbiter.effective_source(),
     })
 }
 
@@ -2439,7 +2448,8 @@ mod tests {
         assert!(err.is_some()); // returns the validation message
     }
 
-    // Step 4a — valid grids pass validation; set_manual pins arbiter to Manual.
+    // Step 4a — valid grids pass validation (the arbiter is updated separately by
+    // `set_manual`; see the dedicated test below for that side of the contract).
     #[test]
     fn validate_grid_accepts_valid_four_and_six_char() {
         assert!(validate_grid_input("EM75").is_none(), "4-char Maidenhead should be valid");
@@ -2450,17 +2460,24 @@ mod tests {
         assert!(validate_grid_input("EM7").is_some(), "3-char should be invalid");
     }
 
-    // Step 4b — arbiter primitive: set_manual pins source to Manual.
+    // tuxlink-pjih (2026-06-01): set_manual no longer pins source = Manual;
+    // it just updates the fallback grid. The stored source preference stays
+    // where the operator put it. The displayed grid follows GPS-fresh-else-
+    // manual (verified in `position::arbiter::tests`); this test pins the
+    // ui_commands-side invariant that set_manual is grid-only.
     #[test]
-    fn arbiter_set_manual_pins_manual_source() {
+    fn arbiter_set_manual_updates_grid_without_changing_stored_source() {
         use crate::config::{PositionPrecision, PositionSource};
         use crate::position::PositionArbiter;
 
         let arbiter = PositionArbiter::new(PositionSource::Gps, None, PositionPrecision::FourCharGrid);
         assert_eq!(arbiter.source(), PositionSource::Gps);
         arbiter.set_manual("EM75");
-        assert_eq!(arbiter.source(), PositionSource::Manual);
+        assert_eq!(arbiter.source(), PositionSource::Gps, "set_manual must not flip stored source (tuxlink-pjih)");
+        // With no fresh GPS fix, active_grid falls back to manual_grid.
         assert_eq!(arbiter.active_grid().as_deref(), Some("EM75"));
+        // effective_source reflects the live fallback path.
+        assert_eq!(arbiter.effective_source(), PositionSource::Manual);
     }
 
     // Step 4c — multibyte UTF-8 input must not panic and must return Some (invalid).
@@ -2833,13 +2850,16 @@ mod tests {
         let dto = PositionStatusDto {
             gps_ready: arbiter.has_fresh_fix(),
             broadcast_grid: crate::position::effective_broadcast_locator(&cfg, Some(&arbiter)),
+            active_source: arbiter.effective_source(),
         };
         assert!(dto.gps_ready);
         assert_eq!(dto.broadcast_grid, "DM33", "GPS fix grid must appear in broadcast_grid");
+        assert_eq!(dto.active_source, PositionSource::Gps, "active_source must be Gps when fresh fix is producing the displayed grid (tuxlink-pjih)");
         // Verify snake_case serialization.
         let v = serde_json::to_value(&dto).unwrap();
         assert_eq!(v["gps_ready"], true, "gps_ready serializes snake_case");
         assert_eq!(v["broadcast_grid"], "DM33", "broadcast_grid serializes snake_case");
+        assert_eq!(v["active_source"], "Gps", "active_source serializes snake_case + PascalCase value");
     }
 
     // position_status: fresh arbiter (no fix) → PositionStatusDto { gps_ready: false }.
@@ -2855,8 +2875,10 @@ mod tests {
         let dto = PositionStatusDto {
             gps_ready: arbiter.has_fresh_fix(),
             broadcast_grid: crate::position::effective_broadcast_locator(&cfg, Some(&arbiter)),
+            active_source: arbiter.effective_source(),
         };
         assert!(!dto.gps_ready);
+        assert_eq!(dto.active_source, PositionSource::Manual, "active_source must be Manual when no fresh fix (tuxlink-pjih)");
         let v = serde_json::to_value(&dto).unwrap();
         assert_eq!(v["gps_ready"], false);
         // Manual arbiter with "CN87" → broadcast_grid = "CN87".
@@ -2878,6 +2900,7 @@ mod tests {
         let dto = PositionStatusDto {
             gps_ready: arbiter.has_fresh_fix(),
             broadcast_grid: crate::position::effective_broadcast_locator(&cfg, Some(&arbiter)),
+            active_source: arbiter.effective_source(),
         };
         assert_eq!(
             dto.broadcast_grid, "DM33",

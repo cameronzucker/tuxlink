@@ -111,7 +111,7 @@ describe('<MessageViewLoaded>', () => {
     expect(pre).toHaveTextContent('Hello ARES');
   });
 
-  // Winlink form → v0.1 placeholder; never render raw XML.
+  // Winlink form → placeholder for now; never render raw XML.
   it('shows form placeholder when isForm', () => {
     render(<MessageViewLoaded message={parsed({ isForm: true, body: '<?xml...' })} />);
     expect(screen.getByTestId('message-form-placeholder')).toBeInTheDocument();
@@ -176,7 +176,7 @@ describe('<MessageViewLoaded>', () => {
     expect(screen.getByText('random_field')).toBeInTheDocument();
   });
 
-  // Attachment strip lists names + sizes; no download/preview (v0.0.1).
+  // Attachment strip lists names + sizes; no download/preview yet.
   it('lists attachment names and sizes', () => {
     render(
       <MessageViewLoaded
@@ -280,8 +280,8 @@ describe('<MessageViewLoaded> reply action bar', () => {
   // Codex r2 P2 #1: forms registered via Phase 9 (Bulletin/Position/ICS-309/
   // Damage Assessment) lookup successfully but don't have per-form reply
   // mappings in buildReplyDraft — hiding the button avoids the half-populated
-  // form draft trap. Add per-form mappings + remove the gate in v0.1.2 to
-  // light it up for these forms.
+  // form draft trap. Add per-form mappings + remove the gate in a follow-up
+  // to light it up for these forms.
   it('does NOT show the Reply-with-form button on Phase 9 forms without reply mappings', () => {
     render(
       <MessageViewLoaded message={parsed({ isForm: true, formId: 'Bulletin_Initial' })} />,

@@ -1,0 +1,1218 @@
+
+
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+
+"http://www.w3.org/TR/xhtml/DTD/xhtml-transitional.dtd">
+
+<html xmlns="http://www.w3.org/1999/xhtml">
+
+<head> 
+
+<title>Race Tracker</title> 
+
+<meta http-equiv="Content-Type" content="text/html; charset=iso-8859-1" />
+<script language="javascript" type="text/javascript"> 
+
+<!-- 
+
+    function store(){
+
+ var formatted= document.getElementById("address");
+
+     localStorage.setItem("RTrackeradd", formatted.value);
+
+	 var formatted= document.getElementById("Location");
+    localStorage.setItem("RTrackerloc", formatted.value);
+	 var formatted= document.getElementById("EventTitle");
+    localStorage.setItem("RTrackertitle", formatted.value);
+	var regulartitle  = document.getElementById('EventTitle').value + ' [Track Times at]: ' +  document.getElementById('Location').value;
+	document.getElementById('msgsubject').value = regulartitle;
+	
+//msgsubject
+
+    }
+
+	
+
+	function getit() {
+
+	var storedValue = localStorage.getItem("RTrackeradd");
+
+document.forms[0].address.value = storedValue;
+
+	var storedValue = localStorage.getItem("RTrackerloc");
+	document.forms[0].Location.value = storedValue;
+	var storedValue = localStorage.getItem("RTrackertitle");
+	document.forms[0].EventTitle.value = storedValue;
+
+var regulartitle  = document.getElementById('EventTitle').value + ' [Track Times at]: ' +  document.getElementById('Location').value;
+	document.getElementById('msgsubject').value = regulartitle;
+document.getElementById('FormatNote').value = "* The entries in this email are TAB delimited. This allows you to copy and paste into a spreadsheet."
+
+
+	}
+
+function ClearForm() {
+
+ document.forms[0].TheData.value= ""; 
+ document.forms[0].Timefld.value= "";
+ 
+ 
+
+  document.forms[0].msgsubject.value= "";
+ document.getElementById("RiderNum").focus();
+ document.getElementById("Inbtn").disabled = false;
+
+document.getElementById("Outbtn").disabled = false;
+
+document.getElementById("Dropbtn").disabled = false;
+document.getElementById("RiderNum").disabled = false; 
+document.getElementById("numlines").disabled = false; 
+
+document.getElementById("numlines").value = '0'; 
+document.getElementById('FormatNote').value = "* The entries in this email are TAB delimited. This allows you to copy and paste into a spreadsheet."
+
+
+
+}
+function countLines2() { 
+delBlankLines2();
+var text1 = document.getElementById("TheData").value;
+var text2 = text1.replace(/\s+$/,"");
+var split = text2.split("\n") ;
+
+document.forms[0].numlines.value = split.length;
+
+document.getElementById("numlines").disabled=false; } 
+function rtrim(stringToTrim) {
+
+	return stringToTrim.replace(/\s+$/,"");
+
+}
+
+function delBlankLines2() {
+
+ var stringArray = document.getElementById('TheData').value.split('\n');
+
+ var temp = [""];
+
+ var x = 0;
+ for (var i = 0; i < stringArray.length; i++) {
+
+   if (stringArray[i].trim() != "") {
+ temp[x] = stringArray[i];
+     x++;
+   }
+ }
+ temp = temp.join('\n');
+var lookfor = "//";
+var temp=temp.replace(/lookfor/gm, "/");
+
+ document.getElementById('TheData').value = temp+'\n';
+
+}
+function delBlankLines() {
+
+ var stringArray = document.getElementById('TheData').value.split('\n');
+
+ var temp = [""];
+
+ var x = 0;
+ for (var i = 0; i < stringArray.length; i++) {
+
+   if (stringArray[i].trim() != "") {
+
+     temp[x] = stringArray[i];
+
+     x++;
+
+   }
+
+ }
+ temp = temp.join('\n');
+var lookfor = "//";
+var temp=temp.replace(/lookfor/gm, "/");
+
+ document.getElementById('TheData').value = temp;
+
+}
+
+function DoConfirm() {
+Thelocation= document.getElementById('Location').value;
+if (Thelocation.length <1) {
+alert('Error: You must add an "Aid/Check Point" ');document.getElementById('Location').focus();} 
+
+else {
+  if (confirm("Format Times for UltraLive?")) {
+replaceit (); }
+}
+  
+  }
+  
+  function Docleardata() {
+  if (confirm("Clear all participant data?")) {
+ClearForm();
+  } 
+  }
+
+function undoformatting () {
+document.getElementById('doIncrement').value = false;
+var str= document.getElementById("TheData").value
+ var n = str.search('BEGIN');
+  if (n <0) {alert('The data has not been formatted for ultralive\nClick \'Format Message for UltraLive (optional)\' button first.')
+    return false;}
+	else{
+  if (confirm(" Undo UltraLive formatting?")) {
+document.getElementById("TheData").value = document.getElementById("beforeformatting").value;
+document.getElementById("Inbtn").disabled = false;
+document.getElementById("Outbtn").disabled = false;
+document.getElementById("Dropbtn").disabled = false;
+document.getElementById("RiderNum").disabled = false; 
+var regulartitle  = document.getElementById('EventTitle').value + ' Tracking Times at ' +  document.getElementById('Location').value
+
+document.getElementById('msgsubject').value = regulartitle;
+document.getElementById('FormatNote').value = "* The entries in this email are TAB delimited. This allows you to copy and paste into a spreadsheet."
+
+}
+else {   return false;}
+}
+}
+
+function putTime() {
+document.getElementById("Timefld").value = RunnerTime();
+}
+
+function  replaceit ()
+{
+document.getElementById("beforeformatting").value = document.getElementById("TheData").value;
+var addtag = "/IN";
+
+// Subject:<var EventTitle> Tracking Times at <var Location>
+delBlankLines ();
+var regulartitle  = document.getElementById('EventTitle').value + ' Tracking Times at ' +  document.getElementById('Location').value
+//var addtag = document.getElementById('InOutFld').value;
+
+
+var d = new Date();
+
+var themonth = d.getMonth();
+
+themonth = themonth+1;
+
+var mday = d.getDate();
+
+var dd = String(mday);
+
+var myday = dd;
+
+if (dd.length <2) 
+
+{myday= "0"+dd;}
+
+var mm = String(themonth);
+
+mymonth= mm;
+
+if (mm.length <2) 
+
+{  mymonth = "0"+mm;} 
+var theaddress = document.forms[0].address.value;
+
+document.forms[0].sendto.value = theaddress;
+
+var location=document.forms[0].Location.value;
+
+var AddSubject=true;
+
+var thelocation = location;
+
+var location = "BEGIN " + location;
+
+var str1=document.forms[0].TheData.value;
+var str1 = str1.replace(/\t/g,"/");
+var str1 = str1.replace(/:/g,"");
+var str1 = str1.replace(/ /g,"");
+var str = rtrim (str1);
+
+var mystring = str;
+
+var FirstTime = str;
+
+var allofit;
+
+allofit = "";
+var nostatus = false;
+
+if (nostatus ==  false) 
+
+{FirstTime = mystring.split("/",2); }
+
+// added code
+
+var FirstTime=str.split("/",2);
+
+var sstr = FirstTime;
+
+var FirstTime=sstr[1].split(/\n/,1);
+junk = FirstTime;
+junka= String(junk);
+//junka = String(FirstTime.length;
+if (junka.length <4) 
+{  FirstTime = "0"+FirstTime;} 
+//alert(FirstTime);
+// now check for 3 digit times
+
+var tfix;
+
+  var lines = str.split("\n");
+
+
+  for(var i=0; i<lines.length; i++) {
+
+//  var addtag = document.getElementById('InOutFld').value;
+
+ if (lines[i] != ""){
+//Check for last/
+var fixthis = lines[i];
+var stringLength = fixthis.length;
+var lastChar = fixthis.charAt(stringLength - 1);
+
+if (lastChar == "/") { fixthis= fixthis.substr(0,stringLength-1);
+}
+lines[i] = fixthis ;
+  	var mtime = lines[i].split("/",3); 
+//alert (mtime);
+  	var tempsplit = lines[i].split("/",3);
+
+  // catch error
+try {  	if(mtime[1].length <4 ){lines[i] = mtime[0]+"/" + "0"+mtime[1] };}
+catch(err) {
+ alert('Invalid data entry.\nCorrect format is Bib#/Time/Status\nin line -->'+fixthis + '<--');
+   return false;
+}
+	//try this
+	//if (tempsplit[2].length >0) { lines[i] = lines[i] +"/"+tempsplit[2];}
+	//if(mtime[1].length <4 ){lines[i] = mtime[0]+"/" + "0"+mtime[1] }
+
+  //lines[i]
+
+ // if (tempsplit[2] == '-' || tempsplit[2] == '+' || tempsplit[2] == '*') {lines[i] = tempsplit[0]+"/" + tempsplit[1]+"/" + tempsplit[2];} else{ lines[i] = lines[i] +addtag;}  }
+  
+  var teststr = tempsplit[2];
+  
+
+  if (mtime[2] == '-' || mtime[2] == '+' || mtime[2] == '*' || mtime[2] !== undefined) {lines[i] = mtime[0]+"/" + mtime[1]+"/" + mtime[2];} else
+  { 
+  
+  
+  lines[i] = lines[i] +addtag;
+  }  }
+
+// try agin
+   var mtime = lines[i].split("/",3); 
+   
+	if(mtime[1].length <4 ){lines[i] = mtime[0]+"/" + "0"+mtime[1]+"/"+ mtime[2] };
+  }
+
+n = lines.join("\n");
+
+var lookfor = "//";
+var n=n.replace(/\/\//gm, "/");
+
+var n= n.replace(/\+/gm, "IN");
+
+var n=n.replace(/\-/gm, "OUT");
+//var n=n.replace(/\*/gm, "DROP");
+
+expand = false
+var seq=document.forms[0].seqnumber.value;
+var seq =padLeadingZeros( seq, 3)
+var msg = location+"\r"+mymonth+myday+"\r"+n+"\r"+"END" ;
+
+var msubject = "DATA "+ thelocation +" "+ FirstTime +"  #"+seq;
+
+if (AddSubject == true) { "\r" + msg;}
+
+document.forms[0].TheData.value = msg;
+
+delBlankLines ();
+
+document.forms[0].msgsubject.value = msubject;
+// document.forms[0].sendto.focus(); 
+
+// document.forms[0].sendto.select();
+document.getElementById("Inbtn").disabled = true;
+
+document.getElementById("Outbtn").disabled = true;
+
+document.getElementById("Dropbtn").disabled = true;
+document.getElementById("RiderNum").disabled = true; 
+document.getElementById('FormatNote').value = "* The entries in this email have been formatted for use with Ultralive."
+document.getElementById('doIncrement').value = true;
+
+}
+
+
+function SelectTheText(fieldName){ 
+
+{
+
+document.forms[0].sendto.focus(); 
+
+document.forms[0].sendto.select();
+}
+
+} 
+
+/* ************************************************* */
+
+
+/* ************************************************* */
+
+//--> 
+
+function RunnerTime (RightNow) {
+var txt;
+var d = new Date(),
+thisyear = d.getFullYear();
+thismonth= d.getMonth();
+thismonth = thismonth+1;
+if (thismonth < 10) { thismonth = "0" + thismonth}
+
+thisday = d.getDate();
+if (thisday < 10) { thisday = "0" + thisday}
+
+h = (d.getHours()<10?'0':'') + d.getHours()
+m = (d.getMinutes()<10?'0':'') + d.getMinutes()
+var myprompt = h + ':' + m ;
+return myprompt;
+}
+
+function isObject(arg) {
+  return Object.prototype.toString.call(arg)==='[object Object]';
+}
+
+function AddIn() {
+temp = document.getElementById("RiderNum").value;
+if (temp.length >0 ) {
+temp = rtrim(temp);
+var temp = temp.replace(/ /g,"");
+var TheRunner = temp;
+//var TheRunner = document.getElementById("RiderNum").value;
+//var TheTime = RunnerTime();
+var TheTime =document.getElementById("Timefld").value;
+//check for :
+if (TheTime.length <4) 
+{  TheTime = "0"+TheTime;} 
+if (TheTime.search(":") <0) { TheTime = [TheTime.slice(0, 2), ':', TheTime.slice(2)].join('');}
+//if ( TheTime.indexOf(":") <0) { TheTime = [TheTime.slice(0, 2), ':', TheTime.slice(2)].join('');}
+
+
+var Location = document.getElementById("Location").value;
+var Previoustime = document.getElementById("TheData").value;
+//document.getElementById("TheData").value = Previoustime+ TheRunner+"\t"+TheTime +"\t"+"IN"+"\t"+ Location + "\n";
+document.getElementById("TheData").value = Previoustime+ TheRunner+"\t"+TheTime +"\t"+"IN"+"\t"+ Location + "\n";
+ document.getElementById("RiderNum").value=''; 
+ document.getElementById("Timefld").value = '';
+  document.getElementById("RiderNum").focus(); 
+  countLines2();
+  } else { alert('Enter Runner/Bib number');
+    document.getElementById("RiderNum").focus(); 
+
+	}
+}
+function AddOut() {
+temp = document.getElementById("RiderNum").value;
+if (temp.length >0 ) {temp = rtrim(temp);
+var temp = temp.replace(/ /g,"");
+var TheRunner = temp;
+//var TheRunner = document.getElementById("RiderNum").value;
+//var TheTime = RunnerTime();
+var TheTime =document.getElementById("Timefld").value;
+if (TheTime.length <4) 
+{  TheTime = "0"+TheTime;} 
+if (TheTime.search(":") <0) { TheTime = [TheTime.slice(0, 2), ':', TheTime.slice(2)].join('');}
+
+var Location = document.getElementById("Location").value;
+var Previoustime = document.getElementById("TheData").value;
+document.getElementById("TheData").value = Previoustime+ TheRunner+"\t"+TheTime +"\t"+"OUT"+"\t"+ Location + "\n";
+ document.getElementById("RiderNum").value=''; 
+  document.getElementById("Timefld").value = '';
+  document.getElementById("RiderNum").focus(); 
+    countLines2();
+	} else { alert('Enter Runner/Bib number');
+	  document.getElementById("RiderNum").focus(); 
+
+	}
+}
+
+function moveCursorToEnd(obj) {
+
+  if (!(obj.updating)) {
+    obj.updating = true;
+    var oldValue = obj.value;
+    obj.value = '';
+    setTimeout(function(){ obj.value = oldValue; obj.updating = false; }, 100);
+  }
+
+}
+
+function AddDrop() {
+temp = document.getElementById("RiderNum").value;
+if (temp.length >0 ) {
+
+temp = rtrim(temp);
+var temp = temp.replace(/ /g,"");
+var TheRunner = temp;
+//var TheRunner = document.getElementById("RiderNum").value;
+//var TheTime = RunnerTime();
+var TheTime =document.getElementById("Timefld").value;
+if (TheTime.length <4) 
+{  TheTime = "0"+TheTime;} 
+if (TheTime.search(":") <0) { TheTime = [TheTime.slice(0, 2), ':', TheTime.slice(2)].join('');}
+
+var Location = document.getElementById("Location").value;
+var Previoustime = document.getElementById("TheData").value;
+document.getElementById("TheData").value = Previoustime+ TheRunner+"\t"+TheTime +"\t"+"DROP"+"\t"+ Location + "\n";
+ document.getElementById("RiderNum").value=''; 
+  document.getElementById("Timefld").value = '';
+  document.getElementById("RiderNum").focus(); 
+    countLines2();
+	} else { alert('Enter Runner/Bib number');
+	  document.getElementById("RiderNum").focus(); 
+
+	}
+}
+
+function Sortit(){
+var myString = document.getElementById("TheData").value;
+
+orderString(myString);
+
+function orderString(str) {
+    var i = 0;
+    var myArray = str.split('\n');
+    while (i < str.length){
+        var j = i + 1;
+        while (j < str.length) {
+            if (myArray[j] < myArray[i]){
+                var temp = myArray[i];
+                myArray[i] = myArray[j];
+                myArray[j] = temp;
+            }
+            j++;
+        }
+        i++;
+    }
+    var newString = myArray.join('\n');
+    document.getElementById("TheData").value= newString;
+}
+}
+
+function AutoGrowTextArea(textField){
+//alert (textField.clientHeight );
+//textField.style.height = textField.scrollHeight + "px";
+if (textField.clientHeight < textField.scrollHeight)
+{
+textField.style.height = (textField.scrollHeight * 2 - textField.clientHeight) + "px";
+}
+}
+
+function Countthelines(f) { var text1 = f;
+
+var text2 = text1.replace(/\s+$/,"");
+var split2 = text2.split("\n"); 
+var ar = text2.length /100;
+var mytotal = (split2.length+ar) * 15.5;
+
+
+//var mytotal = split2.length * 15.5;
+//alert("#lines "+mytotal)
+//if (mytotal < 300) {
+//mytotal = 150;
+//}
+var tstr = mytotal.toString();
+return tstr;
+}
+function newfix(f){
+var ThisText = document.getElementById(f).value;
+var makeit = Countthelines(ThisText);
+
+document.getElementById(f).style.height = makeit+"px"; 
+
+}
+
+function setfocus (){
+document.getElementById('Timefld').focus();
+return false;
+}
+
+
+function saveTextAsFile(fileNameToSaveAs, textToWrite) {
+var textToWrite = document.getElementById('parseme').value; 
+var fileNameToSaveAs = "Race Tracking data " + DateforFile()+".txt";
+fileNameToSaveAs = prompt("", fileNameToSaveAs);
+
+  /* Saves a text string as a blob file*/  
+  var ie = navigator.userAgent.match(/MSIE\s([\d.]+)/),
+      ie11 = navigator.userAgent.match(/Trident\/7.0/) && navigator.userAgent.match(/rv:11/),
+      ieEDGE = navigator.userAgent.match(/Edge/g),
+      ieVer=(ie ? ie[1] : (ie11 ? 11 : (ieEDGE ? 12 : -1)));
+
+  if (ie && ieVer<10) {
+    console.log("No blobs on IE ver<10");
+    return;
+  }
+
+  var textFileAsBlob = new Blob([textToWrite], {
+    type: 'text/plain'
+  });
+
+  if (ieVer>-1) {
+    window.navigator.msSaveBlob(textFileAsBlob, fileNameToSaveAs);
+
+  } else {
+    var downloadLink = document.createElement("a");
+    downloadLink.download = fileNameToSaveAs;
+    downloadLink.href = window.URL.createObjectURL(textFileAsBlob);
+    downloadLink.onclick = function(e) { document.body.removeChild(e.target); };
+    downloadLink.style.display = "none";
+    document.body.appendChild(downloadLink);
+    downloadLink.click();
+  }
+}
+
+
+
+
+
+function destroyClickedElement(event)
+{
+    document.body.removeChild(event.target);
+}
+
+function loadFileAsText()
+{
+
+    var fileToLoad = document.getElementById("fileToLoad").files[0];
+ 
+    var fileReader = new FileReader();
+    fileReader.onload = function(fileLoadedEvent) 
+    {
+        var textFromFileLoaded = fileLoadedEvent.target.result;
+        document.getElementById("inputTextToSave").value = textFromFileLoaded;
+    };
+    fileReader.readAsText(fileToLoad, "UTF-8");
+}
+
+
+function DateforFile(RightNow) {
+var txt;
+var d = new Date(),
+thisyear = d.getFullYear();
+thismonth= d.getMonth();
+thismonth = thismonth+1;
+if (thismonth < 10) { thismonth = "0" + thismonth}
+
+thisday = d.getDate();
+if (thisday < 10) { thisday = "0" + thisday}
+
+h = (d.getHours()<10?'0':'') + d.getHours()
+m = (d.getMinutes()<10?'0':'') + d.getMinutes()
+var myprompt = thisyear+ '-'+thismonth+'-'+thisday+' '+h + '_' + m ;
+return myprompt;
+}
+
+function isObject(arg) {
+  return Object.prototype.toString.call(arg)==='[object Object]';
+}
+
+function formDataToObject(elForm) {
+  if (!elForm instanceof Element) return;
+  var fields = elForm.querySelectorAll('input, select, textarea'),
+    o = {};
+  for (var i=0, imax=fields.length; i<imax; ++i) {
+    var field = fields[i],
+      sKey = field.name || field.id;
+    if (field.type==='button' || field.type==='image' || field.type==='submit' || !sKey) continue;
+    switch (field.type) {
+      case 'checkbox':
+        o[sKey] = +field.checked;
+        break;
+      case 'radio':
+        if (o[sKey]===undefined) o[sKey] = '';
+        if (field.checked) o[sKey] = field.value;
+        break;
+      case 'select-multiple':
+        var a = [];
+        for (var j=0, jmax=field.options.length; j<jmax; ++j) {
+          if (field.options[j].selected) a.push(field.options[j].value);
+        }
+        o[sKey] = a;
+        break;
+      default:
+        o[sKey] = field.value;
+    }
+  }
+ // alert('Form data:\n\n' + JSON.stringify(o, null, 2));
+ document.getElementById('parseme').value = JSON.stringify(o, null, 2);
+//  return o;
+}
+
+function populateForm(o) {
+
+o =  JSON.parse(document.getElementById('parseme').value);
+ //if (!isObject(o)) return;
+if (!isObject(o)) return;
+  for (var i in o) {
+    var el = document.getElementById(i) || document.querySelector('[name=' + i + ']');
+    if (el.type==='radio') el = document.querySelectorAll('[name=' + i + ']');
+    switch (typeof o[i]) {
+      case 'number':
+        el.checked = o[i];
+        break;
+      case 'object':
+        if (el.options && o[i] instanceof Array) {
+          for (var j=0, jmax=el.options.length; j<jmax; ++j) {
+            if (o[i].indexOf(el.options[j].value)>-1) el.options[j].selected = true;
+          }
+        }
+        break;
+      default:
+        if (el instanceof NodeList) {
+          for (var j=0, jmax=el.length; j<jmax; ++j) {
+            if (el[j].value===o[i]) el[j].checked = true;
+          }
+        } else {
+          el.value = o[i];
+        }
+    }
+  }
+    getit();
+	Fixfields();
+
+
+}
+
+function SaveData() {
+	
+			formDataToObject(document.getElementById('myform'))
+			saveTextAsFile();
+			
+			//saveTextAsFile();
+			}
+
+//-------
+ function readBlob(opt_startByte, opt_stopByte) {
+  
+    var files = document.getElementById('files').files;
+    if (!files.length) {
+      alert('Please select a file!');
+      return;
+    }
+
+    var file = files[0];
+    var start = parseInt(opt_startByte) || 0;
+    var stop = parseInt(opt_stopByte) || file.size - 1;
+
+    var reader = new FileReader();
+
+    // If we use onloadend, we need to check the readyState.
+    reader.onloadend = function(evt) {
+      if (evt.target.readyState == FileReader.DONE) { // DONE == 2
+        document.getElementById('byte_content').textContent = evt.target.result;
+        document.getElementById('byte_range').textContent = 
+            ['Read bytes: ', start + 1, ' - ', stop + 1,
+             ' of ', file.size, ' byte file'].join('');
+      }
+    };
+
+    var blob = file.slice(start, stop + 1);
+    reader.readAsBinaryString(blob);
+  }
+    	
+  window.onload = function () { 
+ 
+ //Check the support for the File API support 
+ if (window.File && window.FileReader && window.FileList && window.Blob) {
+    var fileSelected = document.getElementById('txtfiletoread');
+	
+    fileSelected.addEventListener('change', function (e) { 
+         //Set the extension for the file 
+         var fileExtension = /text.*/; 
+         //Get the file object 
+         var fileTobeRead = fileSelected.files[0];
+        //Check of the extension match 
+         if (fileTobeRead.type.match(fileExtension)) { 
+             //Initialize the FileReader object to read the 2file 
+			
+             var fileReader = new FileReader(); 
+             fileReader.onload = function (e) { 
+                 var fileContents = document.getElementById('filecontents'); 
+                
+				document.getElementById('parseme').value =fileReader.result;
+				populateForm(obj = document.getElementById('parseme').value);
+					 } 
+             fileReader.readAsText(fileTobeRead); 
+         } 
+         else { 
+             alert("Please select text file"); 
+         }
+ 
+    }, false);
+} 
+ else { 
+     alert("Files are not supported"); 
+ } 
+ getit();
+ Fixfields();
+// SetDateTime('autofulldatetime','DateTime');
+ }
+ 
+ function Fixfields() { 
+ AutoGrowTextArea(document.getElementById("TheData"));
+
+}
+
+function padLeadingZeros(num, size) {
+    var s = num+"";
+    while (s.length < size) s = "0" + s;
+    return s;
+}
+</script> 
+
+<style type="text/css">
+
+<!--
+
+.style1 {font-family: Arial, Helvetica, sans-serif}
+
+.style8 {font-family: Arial, Helvetica, sans-serif; font-size: 14px; }
+
+.style9 {font-size: 12px}
+
+.style13 {font-size: 12px; font-family: Arial, Helvetica, sans-serif;}
+
+-->
+
+</style>
+<style>
+
+/*
+
+body {color:#000; background:#fff; font:100%/1.5 arial,sans-serif;}
+
+h2 {margin-top:0}
+
+*/
+
+/* Styling applied to classes only */
+
+/* Pop-up content shifted off-screen when not in view.
+
+Still readable by screen-reader software.
+
+When targeted it fills the browser window.
+
+*/
+
+.pop-up {position:absolute; top:0; left:-500em;}
+
+.pop-up:target {position:static; left:0;}
+
+/* The pop-up itself */
+
+.popBox {
+
+background:#ffffff;
+
+/* alternatively fixed width / height and negative margins from 50% */
+
+position:absolute; left:20%; right:20%; top:20%; bottom:20%;
+
+z-index:10;
+
+border:1px solid #3a3a3a;
+
+/* CSS3 where available: rounded corners, drop-shadow, and fade in. */
+
+border-radius:.25rem;
+
+box-shadow:0 .5rem .5rem rgba(0,0,0,.5);
+
+opacity:0;
+
+transition: opacity 0.8s ease-out;
+
+}
+
+:target .popBox {position:fixed; opacity:1;}
+
+/* Light box properties */
+
+.lightbox {
+
+display:none;
+
+text-indent:-200em;
+
+background-color:rgba(0,0,0,.4);
+
+width:100%;
+
+height:100%;
+
+position:fixed;
+
+top:0;
+
+left:0;
+
+bottom:0;
+
+right:0;
+
+z-index:5;
+
+}
+
+:target .lightbox {display:block;}
+
+/* The pop-ups close link, moved via CSS to the top right of the pop-up */
+
+.close:link,
+
+.close:visited {
+
+position: absolute;
+
+top: -0.75em;
+
+right: -0.75em;
+
+display: block;
+
+width: 2em;
+
+height: 2em;
+
+line-height: 1.8;
+
+padding: 0;
+
+text-align: center;
+
+text-decoration: none;
+
+background-color: #000;
+
+border: 2px solid #fff;
+
+color: #fff;
+
+border-radius: 50%;
+
+box-shadow: 0 0 .5rem .5rem rba(0,0,0,.5);
+
+}
+
+.close:before {content:"X";}
+
+.close:hover,
+
+.close:active,
+
+.close:focus {
+
+box-shadow: 0 0 .5rem .5rem rba(255,0,0,.5);
+
+background-color: #c00;
+
+color: #fff;
+
+}
+
+.close span {
+
+text-indent: -200em;
+
+display: block;
+
+}
+
+/* The pop-up content div will scroll if it has too much content */
+
+.popScroll {
+
+position:absolute;
+
+top: 1rem;
+
+left: 1rem;
+
+right: 1rem;
+
+bottom: 1rem;
+
+overflow-y: auto;
+
+*overflow-y: scroll;
+
+padding-right: 0.5em;
+
+}
+
+.popScroll h2 {margin-top:0}
+.style14 {
+	font-size: 14px;
+	font-weight: bold;
+}
+.style19 {font-size: 10px}
+.style20 {
+	font-size: 14px;
+	color: #FF0000;
+}
+.style21 {
+	color: #2A5F00;
+	font-style: italic;
+}
+.formtext {font-family: Arial, Helvetica, sans-serif;
+font-size: 10pt;
+font-weight: normal;
+}
+.formtext1 {font-family: Arial, Helvetica, sans-serif;
+font-size: 11pt;
+font-weight: normal;
+}
+.style28 {color: #2A5F00}
+.style29 {font-size: xx-large}
+input[type=submit] {
+ border: 2px solid green;
+  border-radius:.25rem;
+  background-color: white;
+  color: black;
+  padding: 2px 2px;
+  font-size: 14px;
+   cursor: pointer;
+}
+input[type=reset] {
+ border: 2px solid red;
+ border-radius:.25rem;
+  background-color: white;
+  color: black;
+  padding: 2px 2px;
+  font-size: 14px;
+   cursor: pointer;
+}
+input[type=Other] {
+width: 110px;
+ border: 2px solid #0987CB;
+ border-radius:.25rem;
+  background-color: white;
+  color: black;
+  padding: 2px 2px;
+  font-size: 14px;
+   cursor: pointer;
+}
+input[type=Other2] {
+width: 110px;
+ border: 2px solid blue;
+ border-radius:.25rem;
+  background-color: white;
+  color: black;
+  padding: 2px 2px;
+  font-size: 14px;
+   cursor: pointer;
+}
+
+</style>
+
+</head> 
+<body > 
+<form  style="font-family: Arial;" pbzloc="3" onsubmit="return confirm('To complete your form submission, click OK and close the open browser window. You will return to the new message window so you can post your message to the outbox');" method="post" id="myform" enctype="multipart/form-data" action="http://{FormServer}:{FormPort}">
+
+
+
+
+<table width="850" border="1" cellpadding="2" cellspacing="0" bordercolor="#999999">
+  <tr>
+    <td width="842" height="882" valign="top" nowrap="nowrap"><h3 align="center" class="style8">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; &nbsp;&nbsp;<span class="style21">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="style29">Race Tracker</span></span>&nbsp;&nbsp;<span class="style19">Ver. 3.4</span>&nbsp;
+        <input name="Theversion" type="hidden" id="Theversion" value="3.4" />
+<small><b><big><span class="style13"><em><span class="style1"><small><b><big><em>&nbsp;&nbsp;<small><b><big><em>
+<input type="button" value="Form Information -  READ" 
+
+onclick="location.href = '#pop1'" />
+</em></big></b></small>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</em></big></b></small>
+        <small><b><big><em>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<small><b><big><em><small><b><big><em>&nbsp;&nbsp;</em></big></b></small></em></big></b></small><small><b><big><em><small><b><big><em>&nbsp;&nbsp;</em></big></b></small></em></big></b></small>&nbsp;&nbsp;&nbsp;</em></big></b></small><small><b><big><em>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</em></big></b></small>
+        </span></em></span> <small><b><big><span class="style13"><em><span class="style1"><small><b><big><em>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</em></big></b></small></span></em></span></big></b></small></big></b></small></h3>
+      <p class="style13"> &nbsp; Race/Event Name:            
+           <input name="EventTitle" type="text" id="EventTitle"  onchange = "store();" size="40" maxlength="35" required="required" placeholder="Races or Event Name"/> 
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; &nbsp; &nbsp; &nbsp;<span class="style1"><span class="style8">
+</span></span></p>
+        <p class="style13">&nbsp;   Send to:           
+          <input name="address" type="text" id="address" onchange = "store();" size="50" maxlength="45"  title= "Seperate multiple calls or address's with a semicolon;" required placeholder = "Winlink Radio Call or Email"/>
+  &nbsp;Aid/Check Point:   
+  <input name="Location" type="text" id="Location" onchange="javascript:this.value=this.value.toUpperCase();xx=store();" size="25" required="required" maxlength="22" placeholder = "Call or Name" />
+&nbsp;<span class="style1"><span class="style8">        <input name="FormatNote" type="hidden" id="FormatNote" value="* The entries in this email are TAB delimited. This allows you to copy and paste into a spreadsheet." />
+
+</span></span> <em>&nbsp;&nbsp;&nbsp; <span class="style1"><span class="style8">
+</span></span></em></p>
+        <p class="style13">&nbsp;&nbsp;Subject: <span class="style1"><span class="style8"> 
+        <input name="msgsubject" type="text"  id="msgsubject" readonly="readonly" size="60" maxlength="70" />
+&nbsp;</span></span><span class="style21">(subject is created for you with 1st entry)</span><span class="style1"><span class="style8"> &nbsp;&nbsp;</span></span></p>
+        <p class="style13"><span class="style1"><span class="style8">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; <em class="style21 style9">The  entry boxes above will remain with what you enter the first time. You overwrite to change.</em> </span></span>
+          <textarea name="beforeformatting" id="beforeformatting"  style="display: none;"></textarea>   
+          <input type="file" id="txtfiletoread" accept=".txt"  style="display: none;"/>      
+        </p>
+        <hr />
+        <p align="left" class="style13"><span class="style14">&nbsp;</span><span class="style20">Bib or Rider #: </span> 
+          <input name="RiderNum" type="text" id="RiderNum" onkeypress="if(event.keyCode==13){a=setfocus(); return false;}" size="15" maxlength="13"  onblur="javascript:this.value=this.value.trim();this.value=this.value.toUpperCase(); putTime();" />
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Click box to add Time:
+<input name="Timefld" type="text" id="Timefld" style=" width: 50px;" onkeypress="if(event.keyCode==13){alert('Click: IN - OUT - DROP');return false;}" size="6" maxlength="6"  onblur=" this.value=this.value.trim(); " /> 
+&nbsp;<span class="style21">(you can accept or modify the time)</span></p>
+        <hr />        <p align="left" class="style13">&nbsp;&nbsp;Now select ONE to create an Entry:&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;          <span class="style1">
+          <input name="Inbtn" type="button" id="Inbtn" onclick="AddIn();" value="In" />
+          </span><span class="style1">
+          <input name="Outbtn" type="button" id="Outbtn" onclick="AddOut();" value="Out" />
+        </span>
+<input name="Dropbtn" type="button" id="Dropbtn" onclick="AddDrop()" value="Drop" />
+        &nbsp;
+        <input name="sendto" type="hidden" id="sendto" size="30" /> 
+        <textarea name="parseme" cols="60" id="parseme" style="display: none;"></textarea>
+        &nbsp;<span class="style1 style9"><span style="font-family: Calibri;">
+        <input name="savebtn" type="Other2" id="savebtn"  onclick="SaveData()" value="Save Race data " />
+        </span></span>&nbsp;<span class="style8"><small><b><big>
+        <small><b><big>
+        <input name="loadbtn" type="Other" id="loadbtn" onclick="document.getElementById('txtfiletoread').click();" value=" Load Race data" />
+        </big></b></small>        </big></b></small></span> <em>&nbsp;</em> <span class="style8">
+        
+        &nbsp;
+        <input name="doIncrement" type="hidden" id="doIncrement" value="false" />
+        <input name="seqnumber" type="hidden" id="seqnumber" value="{SeqNum}" />
+        </span>  </p>
+        <hr />
+        <div align="left"></div>
+        <table width="588"  border="1" align="center" cellpadding="0" cellspacing="0">
+          <tr>
+            <td width="584" height="500" valign="top" bgcolor="f8f8ff"><div align="left">
+              <p align="center">
+                      <span class="style13">Number of Entries</span>
+                  <input name="numlines" type="text" id="numlines" style="color: red;" readonly value="0" size="5" />
+                  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="style1 style9"><span class="style1">
+                  <input name="doclear" type="button" id="doclear" onclick="Docleardata()" value="Clear Entries" />
+</span></span> </span></p>
+              <p align="center">
+                <textarea name="TheData" cols="55" placeholder="NOTE: No more than 20 Entries in one message, if using UltraLive." rows="23" id="TheData"  onkeypress="if(event.keyCode==13){countLines2() }" onblur="countLines2()" ></textarea>
+              </p>
+              <p align="center"><span class="style13">  Comments:</span><span class="style13"></span><span class="style13"><br />
+ 
+                      <textarea name="Comment" cols="55" rows="2" id="Comment" onkeyup="AutoGrowTextArea(this)" ></textarea>
+</span></p>
+              </div></td>
+          </tr>
+          <tr>
+            <td height="88" bgcolor="ffffe6">            <div align="left">
+              <p align="center" class="style1 style9"><span class="style13"> </span>                <span class="style13"> </span>
+                <input type="button" value="Format for UltraLive Submittal (optional)" onclick="DoConfirm();" />
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="style13">
+<input name="undo" type="button" id="undo"  onclick="undoformatting()" value="Remove UltraLive Formatting" />
+</span></p>
+              <p align="left" class="style1 style9"><span class="style1"><small><span class="formtext"><span style="font-family: Calibri;"><small><span style="font-family: Calibri;"><small><span style="font-family: Calibri;"><small><span class="formtext1"><span style="font-family: Calibri;"><small><big><big><small><span style="font-family: Calibri;">
+&nbsp;
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; </span>
+              &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+              <input style="height: 28px; width: 85px; c" title="After submitting, close browser, then address message for posting" class="SubmitBtn" enctype="multipart/form-data" id="Submit" method="Post" name="Submit" value="SUBMIT" type="submit" />
+  &nbsp; 
+   &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<br />            
+            </div></td></tr>
+        </table>
+
+
+      </td>
+  </tr>
+</table>
+</form>
+<div id="pop1" class="pop-up">
+        <!-- The pop-up block -->
+
+        <div class="popBox">
+          <!-- If the content becomes larger than the pop-up this div will scroll the content -->
+
+          <div class="popScroll">
+
+           <p> 
+  Winlink Operator Supplemental Information<br /><br />
+  If NOT doing UltraLive, then data entered is formatted as TAB delineated text in the sent message, for spreadsheet entry or a running log. <br /><br />
+  >>> The Subject line will be formatted for you.  <br /><br />
+  The LOAD and SAVE data buttons are for capturing entered race data. This allows you to start a form, close it if needed, then reopen the form and continue on. 
+  Suggest you use and learn the form and its features fully before an event. <br /><br />
+  
+Note: You can change the time entry if doing manual entries, such as from a clipboard of participants. Times out of order have no affect on UltraLive entry or doing a spreadsheet.<br />
+<br />
+--------------------------------------------<br /><br />
+The below information is applicable for UltraLive data format.<br />
+
+  Suggest you download and have a copy prior to your event if doing UltraLive.<br /><br />
+  
+<a href="https://docs.google.com/document/d/1J01uupj-9hcXdfFJV5jQau0pp8E6EL_dVkS7H5RjulM/edit">https://docs.google.com/document/d/1J01uupj-9hcXdfFJV5jQau0pp8E6EL_dVkS7H5RjulM/edit</a> <br /><br />
+
+Someone needs to register first with UltraLive so you can enter the sent data. Info on how to do this easy process, is in the downloadable document in the above link. You have to do this prior to your event.<br />
+<br />
+  The information that is sent via WinLink can be pasted into directly into the webcast site, or garnered to any form at Net Control. The data must follow the format examples below, (done for you) or it will not post properly into the Web Site. DO NOT send more than 20 lines of rider data at any one time.<br />
+<br />
+  
+<p align="left">UnltraLive Email Subject Line<br /><br />* The Subject line will be formated for you in UltraLive format.<br /><br />
+
+  DATA LC 0905 #sequencenumber--&gt; Subject line identifies this message as being data from Last Chance (LC). The identifying number is the time of the runner in the data report and a sequence number for tracking. Times are all in 24 hour format. No AM or PM.<br />
+
+Sample Data Report</p>
+
+<p align="left">BEGIN LC --&gt; start report. LC is the two letter identifier of the check point or aid station (Last Chance).<br />
+
+  0623 --&gt; The month and day in a 4 digit format<br />
+
+  231/0905/IN<br />
+
+  345/1028/IN<br />
+
+  27/1316/DROP<br />
+
+  END --&gt; end of report<br /><br />
+
+  NOTE: Drops should also be sent via the established voice network in a timely manner. <br /><br />
+  -- for UltraLive formatting the Sequence number of the message can be reset from Winlink.<br /> Select 'Message' and then 'Template settings'.<br /><br /> For form design questions or suggestions contact: Greg KG6SJT of WDT. Form was tested with UltraLive staff.
+          </div>
+     <!-- The close pop-up link correctly positioned at the end of the content block -->
+
+<a class="close" href="#links"><span>Back
+
+to links</span></a> </div>
+
+</div>
+
+<div id="pop2" class="pop-up">
+        <!-- The pop-up block -->
+
+        <div class="popBox">
+          <!-- If the content becomes larger than the pop-up this div will scroll the content -->
+
+          <div class="popScroll">
+
+           <p> 
+  Ultralive formatting Information<p></p>
+
+From <a href="https://docs.google.com/document/d/1J01uupj-9hcXdfFJV5jQau0pp8E6EL_dVkS7H5RjulM/edit" target="_blank">https://docs.google.com/document/d/1J01uupj-9hcXdfFJV5jQau0pp8E6EL_dVkS7H5RjulM/edit</a>
+<br /><p></p>
+  Suggest you download and have a copy for event.<br />
+          </div>
+     <!-- The close pop-up link correctly positioned at the end of the content block -->
+
+<a class="close" href="#links"><span>Back
+
+to links</span></a> </div>
+
+</div>
+
+</body>
+</html>
+

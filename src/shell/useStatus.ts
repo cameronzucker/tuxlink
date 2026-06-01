@@ -53,15 +53,20 @@ export interface ConfigViewDto {
   position_source: PositionSource;
 }
 
-/** Mirrors PositionStatusDto from ui_commands.rs (tuxlink-686, Task 11 + Codex P1-B).
- * Live arbiter state — NOT config. Polled at 2s by useStatusData.
+/** Mirrors PositionStatusDto from ui_commands.rs (tuxlink-686, Task 11 + Codex P1-B,
+ * tuxlink-pjih). Live arbiter state — NOT config. Polled at 2s by useStatusData.
  * `broadcast_grid` is the effective on-air locator (honoring gps_state) — the
  * ribbon shows this so it always matches what is/would be transmitted. Empty
- * string means no grid is available. */
+ * string means no grid is available. `active_source` is the LIVE source
+ * actually producing the displayed grid — the source chip reads this so it
+ * stays truthful even when the operator's stored preference disagrees. */
 export interface PositionStatusDto {
   gps_ready: boolean;
   /** Effective on-air locator (honoring gps_state + precision). Empty = no grid. */
   broadcast_grid: string;
+  /** Live source: 'Gps' when a fresh fix is producing the active grid,
+   * 'Manual' when falling back to the manually-set grid (tuxlink-pjih). */
+  active_source: PositionSource;
 }
 
 /**
@@ -218,7 +223,7 @@ export type StatusTone = 'idle' | 'good' | 'warn' | 'error';
  *
  * Mock D's status bar shows a single state word (`Idle`, `Connecting`, …) with
  * a colored dot, NOT the ribbon's "Idle · Telnet" transport-qualified label.
- * `null` (no backend — the v0.0.1 default) and Disconnected both read "Idle".
+ * `null` (no backend — the default when nothing is configured) and Disconnected both read "Idle".
  */
 export function formatStatusState(status: StatusDto | null): { label: string; tone: StatusTone } {
   if (status === null) return { label: 'Idle', tone: 'idle' };
@@ -421,7 +426,12 @@ export function useStatusData(): StatusBarData {
     gridTooltip: gridResult.tooltip,
     state: formatStatusState(status),
     connection: formatConnectionState(status, configTransport),
-    position_source: config?.position_source ?? 'Gps',
+    // tuxlink-pjih: source chip reads the LIVE active source from positionStatus
+    // (Gps when fresh fix is producing the displayed grid; Manual when falling
+    // back to the manually-set grid). Falls back to the stored config preference
+    // when positionStatus hasn't loaded yet (pre-arbiter / first paint), then to
+    // 'Gps' as the project's default-on intent.
+    position_source: positionStatus?.active_source ?? config?.position_source ?? 'Gps',
     gpsReady: positionStatus?.gps_ready ?? false,
     status,
   };

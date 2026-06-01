@@ -1,0 +1,43 @@
+Form:Winlink_Check_In_Initial.html,Winlink_Check_In_Viewer.html
+To:<var MsgTo>
+Subject: <var Newsubject>
+Readonly:True
+Msg:
+Winlink Check-in 
+0. HEADER
+  0a: Organization:	<var Organization>
+  0b: Subject:	<var Newsubject>
+
+1. STATION
+  1a. Date/Time:	<var DateTime>
+  1b. To:	<var MsgTo>
+  1c. From:	<var MsgSender>  
+  1d. Station Contact Name:	<var ContactName>
+  1e. Initial Operators:	<var Assigned>
+
+2. SESSION
+  2a. Type:	<var Status>
+  2b. Service:	<var Service>
+  2c. Band:	<var Band>
+  2d. Session:	<var Session>
+
+3. LOCATION
+  3a. Location:	<var Location>
+  3b. Latitude:	<var mapLat> 
+  3c. Longitude:	<var mapLon>    
+  3d. MGRS:	<var MGRS> 
+  3e. Grid Square:	<var Grid>
+  3f. Location source:	<var locationSource>
+-------------------------------------------------------------
+4a COMMENTS:
+
+<var Comments>  
+
+
+-------------------------------------------------------------
+
+<var Templateversion>
+Map file name: <var Mapfilename>
+
+[No changes or editing of this message are allowed]
+----

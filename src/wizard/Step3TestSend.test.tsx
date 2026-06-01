@@ -257,7 +257,7 @@ describe('<Step3TestSend>', () => {
     expect(screen.getByTestId('probe-step')).toHaveTextContent('complete');
   });
 
-  it('error: [Open Settings] button is rendered but disabled (v0.0.1 placeholder)', () => {
+  it('error: [Open Settings] button is rendered but disabled (placeholder for now)', () => {
     renderInState({ cmsVerifySubstate: 'error', cmsVerifyError: 'err' });
     expect(screen.getByTestId('open-settings-btn')).toBeDisabled();
   });

@@ -1,0 +1,33 @@
+Form:PH Welfare Bulletin Board Initial.html,PH Welfare Bulletin Board viewer.html
+To:welfare.winlinkph@gmail.com
+Subject:WELFARE <var City> <var MsgTo> - <var fixeddate>
+Msg:
+-- PH WELFARE BULLETIN BOARD --
+On the web at https://lookerstudio.google.com/reporting/91b43306-9014-4261-b58f-3bc75a6605a4
+
+Incident Name: <var iNCIDENTnAME>                                                                
+Type=<var msgtype>
+To=<var MsgTo>
+Email= <var email>
+Cellphone=<var Cellphone>
+Address=<var Street> 
+Barangay=<var Barangay>
+City=<var City> 
+State=<var State>
+Zip=<var zip> 
+Region=<var Region>
+My status=<var msgstatus>
+Message=<var Message>
+From=<var From> 
+Station=<var CALLSIGN>  
+
+Date/Time Local:  <var fixeddate> 
+Date/Time UTC: <var utctime>
+Latitude: <var mapLat>    Longitude: <var mapLon> 
+Form designed by Lot Marquez, direct any inquiries or suggestions to k6irf@yahoo.com
+-------------------------------------------------------------
+
+<var Templateversion>
+Map file name: <var Mapfilename>
+----
+  

@@ -1,0 +1,104 @@
+Form: RESOURCE_REQUEST_FORM_B_Initial.html,RESOURCE_REQUEST_FORM_B_viewer.html
+
+
+To: 
+Subject:CAL EMMA RESOURCE REQUEST Form B: <var Incidentname>, <var RDateTime>
+
+
+Msg:
+EMMA FORM 1B  EMMA RESOURCE REQUEST 
+
+EMMA #: <var EMMANo>
+  (Generated in WebEOC/CalEOC by Requesting Jurisdiction)
+Incident Name:<var Incidentname>
+Request Date/Time: <var RDateTime>
+
+REQUESTING JURISDICTION INFORMATION
+County/Operational Area: <var OPerationalArea>
+Requesting Jurisdiction Name:  <var ReqJuridiciton>  
+24 Hour Phone Number: <var phone24>
+OA EMMA Coordinator / PRIMARY Point of Contact Name: <var coordinatePOC>
+Phone:  <var coordPhone>
+Alternate Phone:  <var coordaltphone>	FAX  <var coordFax>
+E-Mail: <var PocEamil>
+Providing Jurisdiction Point of Contact: <var altPOC>	 Position / Title: <var AltTile>
+Phone: <var AltPOCphone>	Alternate Phone: <var altPOCAltPhone>
+FAX: <var altPOCfax>
+Email : <var altPOCEmail>
+Providing Jurisdiction Authorization: (The following signature of the Providing Jurisdiction indicates a good-faith effort to ensure the EMMA resource(s) listed on this form is qualified to fulfill the request and is available for deployment. It is understood that this form does not constitute a contract with the Requesting Jurisdiction. Mutual aid extended under the EMMA Plan shall be without reimbursement unless otherwise established in a separate pre/post-event agreement between the Requesting and Providing Jurisdictions.)
+
+Print Name and Title: <var JAName>                Signature: <var JASig>
+ 
+CONTINUED - POTENTIAL EMMA RESOURCE INFORMATION (MAY LIST UP TO 4 PEOPLE PER POSITION):
+#1   <var person1checked1>     (For Requesting Jurisdiction only: Check this box to select EMMA resource for assignment.)
+Name: <var personName1>  	Title: <var PersonTitle1>	Cell Phone: <var PersonCell1>
+Email: <var PersonEmail1>	Available for time as specified on Form A?     <var availableValue1>
+Able to perform tasks described in Form A?    <var AbleValue1>	    Security Clearance (If applicable)?    <var securityval1>
+Has required equipment per Form A?              <var hasEqpval>
+Is aware of expected working conditions?     <var WorkAwareVal1>
+Self-Contained?      <var selfContain1val1>	
+Comments/Other: <var specExplain1>
+Experience / EOC Position Credentials: <var Experience1>
+Special Skills / Licenses / Certifications: <var specialSkill1>
+Originating City/County: <var OriginatingCounty1>	Estimated Travel Time:: <var TravelTime1>
+Emergency Contact Name:
+<var Emergontact1>
+Relationship:: <var contactRelation1>	Cell Phone: <var EmgContCell1>	
+Email: <var EmgContEmail1>
+Special Pay/Compensation Considerations: <var specialPay1>
+ -------
+
+#2   <var person1checked2>     (For Requesting Jurisdiction only: Check this box to select EMMA resource for assignment.)
+Name: <var personName2>	Title: <var PersonTitle2>	Cell Phone: <var PersonCell2>
+Email: <var PersonEmail2>	Available for time as specified on Form A? <var availableValue2>
+Able to perform tasks described in Form A?    <var AbleValue2>	   Security Clearance (If applicable)?    <var securityval2>
+Has required equipment per Form A?   <var hasEqpval2>
+Is aware of expected working conditions?     <var WorkAwareVal2>
+Self-Contained?      selfContain1val2   	Comments/Other: <var specExplain2>
+Experience / EOC Position Credentials: <var Experience2>
+Special Skills / Licenses / Certifications: <var specialSkill2>
+Originating City/County: <var OriginatingCounty2>	Estimated Travel Time:: <var TravelTime2>
+Emergency Contact Name:
+<var Emergontact2>
+Relationship::
+<vzar contactRelation2>	Cell Phone:
+<var EmgContCell2>	Email:
+<var EmgContEmail2>
+Special Pay/Compensation Considerations: <var specialPay2>
+ 
+ 
+#3   <var person1checked3>     (For Requesting Jurisdiction only: Check this box to select EMMA resource for assignment.)
+Name: <var personName3>	Title: <var PersonTitle3>	Cell Phone: <ar PersonCell3>
+Email: <var PersonEmail3>	Available for time as specified on Form A?     <var availableValue3>
+Able to perform tasks described in Form A?    <var AbleValue3>	Security Clearance (If applicable)?    <var securityval3>
+Has required equipment per Form A?              <var hasEqpval3>
+(Personal Equipment Disclaimer HERE)
+Is aware of expected working conditions?     <var WorkAwareVal3>
+Self-Contained?      <var selfContain1val3>	Comments/Other: <var specExplain3>
+Experience / EOC Position Credentials: <var Experience3|
+Special Skills / Licenses / Certifications: <var specialSkill3>
+Originating City/County: <var OriginatingCounty3>	Estimated Travel Time: <var TravelTime3>
+Emergency Contact Name: <var Emergontact3>
+Relationship:: <var contactRelation3>	Cell Phone:
+<var EmgContCell3>	Email:b<var EmgContEmail3>
+Special Pay/Compensation Considerations: <var specialPay3>
+ 
+#4   <var person1checked4>    (For Requesting Jurisdiction only: Check this box to select EMMA resource for assignment.)
+Name: <var personName4>	Title: <var PersonTitle4>	Cell Phone: <var PersonCell4>
+Email: <var PersonEmail4>	Available for time as specified on Form A?     <var availableValue4>
+Able to perform tasks described in Form A?    <var AbleValue4>	   Security Clearance (If applicable)?    <var securityval4>
+Has required equipment per Form A? <var hasEqpval4>
+Is aware of expected working conditions?    <var WorkAwareVal4>
+Self-Contained?     <var selfContain1val4>	Comments/Other: <var specExplain4>
+Experience / EOC Position Credentials: <VAR Experience4>
+Special Skills / Licenses / Certifications: <var specialSkill4>
+Originating City/County: <var OriginatingCounty4>	Estimated Travel Time:: <var TravelTime4>
+Relationship::
+<var contactRelation4>	Cell Phone:
+<var EmgContCell4>	Email: <var EmgContEmail4>
+Special Pay/Compensation Considerations: <var specialPay4>
+------------------------
+Express Sending Station: <MsgSender>
+Senders Express Version: <ProgramVersion>
+Senders Template Version: <var Templateversion>
+

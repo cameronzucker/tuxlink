@@ -4,6 +4,37 @@ All notable changes to Tuxlink are documented here.
 
 This project adheres to [Semantic Versioning](https://semver.org) with project-specific rules described in [VERSIONING.md](VERSIONING.md). Entries from `v0.0.2` onward are generated automatically by [`release-please`](https://github.com/googleapis/release-please) from [Conventional Commits](https://www.conventionalcommits.org).
 
+## [0.10.0](https://github.com/cameronzucker/tuxlink/compare/v0.9.0...v0.10.0) (2026-06-01)
+
+
+### Features
+
+* **analysis:** per-sub-carrier SNR estimator + serde output ([630675d](https://github.com/cameronzucker/tuxlink/commit/630675d5c790e946952f763e9cbb02efba8ae41d))
+* **channel:** two-tap Watterson WattersonChannel core ([db750e7](https://github.com/cameronzucker/tuxlink/commit/db750e7639f8f5e1fd29c10dbe52a737d2e4f698))
+* **cli:** pipe-friendly hf-channel-sim-cli for AI-agent harnesses ([9954bba](https://github.com/cameronzucker/tuxlink/commit/9954bbaaf3f04468e2cdf06ba5d7624b7eac9f7b))
+* **fading:** spectrum-shaped complex-Gaussian Watterson tap process ([abec1e4](https://github.com/cameronzucker/tuxlink/commit/abec1e4a65eba308f99b32c6ccf725d8e25a3295))
+* **hf-channel-sim:** initial AGPLv3 crate scaffolding ([a4dcb82](https://github.com/cameronzucker/tuxlink/commit/a4dcb82669d7233dc041f5cf856a90146f357b40))
+* **noise:** AWGN generator decoupled from channel ([4caa603](https://github.com/cameronzucker/tuxlink/commit/4caa6037f2bacfb4e5269d0d8cd7071f50ab9ca2))
+* **params:** ITU-R F.520 + F.1487 channel condition vocabulary ([3aaec08](https://github.com/cameronzucker/tuxlink/commit/3aaec08cad657a7fed830e3556c1acf10a9e721b))
+* **report:** end-to-end characterization report + JSON ([ff1b1f1](https://github.com/cameronzucker/tuxlink/commit/ff1b1f1e4d88f8a2f2a0371ee4553a28c3ae1227))
+* **rng:** seeded Xoshiro256++ + complex Gaussian draws ([bea1a5b](https://github.com/cameronzucker/tuxlink/commit/bea1a5bb3778c064cc5e225dc5eadde2b0fca700))
+* **tuxmodem-phy:** 48kHz f32 audio buffer + wav round-trip helper ([0bbd9ba](https://github.com/cameronzucker/tuxlink/commit/0bbd9ba91c653f9deaa661ac26dd140981515d1c))
+* **tuxmodem-phy:** BPSK / QPSK / 16-QAM / 64-QAM + max-log LLR ([a1e8e0a](https://github.com/cameronzucker/tuxlink/commit/a1e8e0a7d2ccb54b0bbc7adea41ba492fadb3f12))
+* **tuxmodem-phy:** channel-sim adapter + BER sweep + ARDOP competence gate ([fd0c422](https://github.com/cameronzucker/tuxlink/commit/fd0c42223594bb67225a32c542245c4a9e9cbf78))
+* **tuxmodem-phy:** crate skeleton + error taxonomy ([b710959](https://github.com/cameronzucker/tuxlink/commit/b710959e343ff671b8384a9c0539f3ef15a0ef3c))
+* **tuxmodem-phy:** FEC bus contract + SNR-aware mode router + FT-818 gate ([87ee200](https://github.com/cameronzucker/tuxlink/commit/87ee200e4fa94165f5de3e7729117f3d3511d3b4))
+* **tuxmodem-phy:** mode table + ModeHint/ResolvedMode/ModeFamily skeleton ([0ab38d0](https://github.com/cameronzucker/tuxlink/commit/0ab38d0b2efc1f9493e0761027879c7cfbb4d67f))
+* **tuxmodem-phy:** narrow-FSK situational floor mode ([a950860](https://github.com/cameronzucker/tuxlink/commit/a950860af1504ae76a16fa04c83b548ee97ed496))
+* **tuxmodem-phy:** OFDM equalizer + receiver (clean-channel round-trip) ([926de8f](https://github.com/cameronzucker/tuxlink/commit/926de8f78cb2d64a73962aec5c34cbefbd25e5b6))
+* **tuxmodem-phy:** OFDM mode parameter table (Narrow/Mid/Wide) ([7531188](https://github.com/cameronzucker/tuxlink/commit/75311881738cc0a8c6327f74a886df2526609806))
+* **tuxmodem-phy:** OFDM transmitter (one-symbol modulate) ([bee9f92](https://github.com/cameronzucker/tuxlink/commit/bee9f92a77c0d334ef4ccf237d84172af2d83372))
+* **tuxmodem-phy:** PhyTransport API + NullPhy contract baseline ([9b8a531](https://github.com/cameronzucker/tuxlink/commit/9b8a53167db372501c868848c69cf2fa45c272d0))
+* **tuxmodem-phy:** pilot-aided per-subcarrier SNR estimator (Phase 5) ([39f03be](https://github.com/cameronzucker/tuxlink/commit/39f03be5ad58d18dc97836cc00f1d714a3011fe5))
+* **tuxmodem-phy:** synchronization infrastructure (Phase 4) ([28d26e8](https://github.com/cameronzucker/tuxlink/commit/28d26e81fbbc483149548f611c0f66b95b30c968))
+* **tuxmodem-phy:** water-filling per-subcarrier bit-loader ([76c5c1a](https://github.com/cameronzucker/tuxlink/commit/76c5c1a1d60bd07ecbd6bc6ad2704ce913b74e4d))
+* **tuxmodem-phy:** wide-band low-density OFDM floor (default robustness mode) ([262fc1f](https://github.com/cameronzucker/tuxlink/commit/262fc1f9f9218f76fa4e13f681ea4fc61e66ce3a))
+* **tuxmodem:** scaffold AGPLv3 workspace for clean-sheet modem ([ed579aa](https://github.com/cameronzucker/tuxlink/commit/ed579aac452eca30ba11412028dbf1ad32061dbb))
+
 ## [0.9.0](https://github.com/cameronzucker/tuxlink/compare/v0.8.0...v0.9.0) (2026-06-01)
 
 

@@ -1,0 +1,47 @@
+Form:ICS205 Radio Plan_Initial.html,ICS205 Radio Plan_Viewer.html
+To: 
+Subject:ICS 205 - <var Incident_Name> - <var ActivityDateTime2>  
+Readonly:True
+Msg:
+<var FormTitle>
+
+1. Incident Name:	<var Incident_Name>
+2. Date & Time Prepared:	<var ActivityDateTime2>
+
+3. Operational Period:
+From:	<var DateFrom>	<var TimeFrom>
+To:	<var DateTo>	<var TimeTo> 
+
+4. BASIC RADIO CHANNEL USE:
+
+ZONE GRP:	CH#:	FUNCTION:	CH NAME:	ASSIGNMENT:	RX FREQ:	N or W:	RX TONE:	TX FREQ:	N or W:	TX TONE:	MODE:	REMARKS:
+<var ZoneGrp1>	<var Ch1>	<var Function1>	<var ChannelName1>	<var Assignment1>	<var RX1>	<var NWMode1>	<var RXTone1>	<var TX1>	<var TNWMode1>	<var TXTone1>	<var Mode1>	<var Remarks1>
+<var ZoneGrp2>	<var Ch2>	<var Function2>	<var ChannelName2>	<var Assignment2>	<var RX2>	<var NWMode2>	<var RXTone2>	<var TX2>	<var TNWMode2>	<var TXTone2>	<var Mode2>	<var Remarks2>
+<var ZoneGrp3>	<var Ch3>	<var Function3>	<var ChannelName3>	<var Assignment3>	<var RX3>	<var NWMode3>	<var RXTone3>	<var TX3>	<var TNWMode3>	<var TXTone3>	<var Mode3>	<var Remarks3>
+<var ZoneGrp4>	<var Ch4>	<var Function4>	<var ChannelName4>	<var Assignment4>	<var RX4>	<var NWMode4>	<var RXTone4>	<var TX4>	<var TNWMode4>	<var TXTone4>	<var Mode4>	<var Remarks4>
+<var ZoneGrp5>	<var Ch5>	<var Function5>	<var ChannelName5>	<var Assignment5>	<var RX5>	<var NWMode5>	<var RXTone5>	<var TX5>	<var TNWMode5>	<var TXTone5>	<var Mode5>	<var Remarks5>
+<var ZoneGrp6>	<var Ch6>	<var Function6>	<var ChannelName6>	<var Assignment6>	<var RX6>	<var NWMode6>	<var RXTone6>	<var TX6>	<var TNWMode6>	<var TXTone6>	<var Mode6>	<var Remarks6>
+<var ZoneGrp7>	<var Ch7>	<var Function7>	<var ChannelName7>	<var Assignment7>	<var RX7>	<var NWMode7>	<var RXTone7>	<var TX7>	<var TNWMode7>	<var TXTone7>	<var Mode7>	<var Remarks7>
+<var ZoneGrp8>	<var Ch8>	<var Function8>	<var ChannelName8>	<var Assignment8>	<var RX8>	<var NWMode8>	<var RXTone8>	<var TX8>	<var TNWMode8>	<var TXTone8>	<var Mode8>	<var Remarks8>
+<var ZoneGrp9>	<var Ch9>	<var Function9>	<var ChannelName9>	<var Assignment9>	<var RX9>	<var NWMode9>	<var RXTone9>	<var TX9>	<var TNWMode9>	<var TXTone9>	<var Mode9>	<var Remarks9>
+<var ZoneGrp10>	<var Ch10>	<var Function10>	<var ChannelName10>	<var Assignment10>	<var RX10>	<var NWMode10>	<var RXTone10>	<var TX10>	<var TNWMode10>	<var TXTone10>	<var Mode10>	<var Remarks10>
+
+
+--------------------------------------
+5. Special Instructions:
+ 
+<var SpecialInstructions>
+
+--------------------------------------
+6. Approved by:	<var PreparedName>	Date/Time:	<var ActivityDateTime1>
+IAP Page:	<var IAP_Page>
+
+Express Sender:	<var MsgSender>
+
+-------------------
+Express Sending Station:	<MsgSender>
+Senders Express Version:	<ProgramVersion>
+Senders Template Version:	<var Templateversion>
+[No changes or editing of this message are allowed]
+
+

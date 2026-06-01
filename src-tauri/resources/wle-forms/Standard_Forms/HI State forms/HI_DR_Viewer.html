@@ -1,0 +1,257 @@
+<!DOCTYPE html
+    PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml">
+
+<head>
+    <meta http-equiv="Content-Type" content="text/html; charset=ISO-8859-1" />
+    <title>HI Damage Rpt {MsgSender}</title>
+
+    <style type="text/css">
+<!--
+@media print {
+#printPageButton {
+display: none;
+}
+.no-print, .no-print *
+{
+display: none !important;
+}
+.form-control, .form-control.nobug {
+border: 0;
+outline: 0;
+box-shadow: none;
+font-size:14px;
+}
+.form-control.nobug {
+transition: none; /*-- THIS IS IMPORTANT -- */
+}
+input, textarea {
+outline: none !important;
+box-shadow: none;
+border: none;
+overflow: visible;
+font-family: Arial, Helvetica, sans-serif;
+font-size: 12px;
+}
+}
+.formtext {
+font-family: Arial, Helvetica, sans-serif;
+font-size: 11pt;
+font-weight: normal;
+}
+body {
+font-family: Arial, Helvetica, sans-serif;
+}
+table, th, td {
+  border: 1px solid black;
+  border-collapse: collapse;
+}
+</style>
+<script>
+    function AutoGrowTextArea(textField) {
+        if (textField.clientHeight < textField.scrollHeight) {
+            textField.style.height = textField.scrollHeight + "px";
+            if (textField.clientHeight < textField.scrollHeight) {
+                textField.style.height = (textField.scrollHeight * 2 - textField.clientHeight) + "px";
+            }
+        }
+    }
+    function Countthelines(f) {
+        var text1 = f
+        var text2 = text1.replace(/\s+$/, "");
+        var split2 = text2.split("\n"); var mytotal = split2.length * 17;
+        if (mytotal < 150) {
+            mytotal = 150;
+        }
+        var tstr = mytotal.toString();
+        return tstr;
+    }
+    function Fixarea() {
+        AutoGrowTextArea(document.getElementById("dmg_report"));
+    }
+</script>
+<style>
+.style24 {font-family: Arial,Helvetica,sans-serif; font-size: 20px}
+.pop-up {
+position:absolute;
+top:0;
+left:-500em;
+visibility: visible;
+}
+.pop-up:target {position:static; left:0;}
+/* The pop-up itself */
+.popBox {
+background:#ffffff;
+position:absolute;
+left:10%;
+right:10%;
+top:10%;
+bottom:10%;
+z-index:10;
+border:1px solid #3a3a3a;
+/* CSS3 where available: rounded corners, drop-shadow, and fade in. */
+border-radius:.25rem;
+box-shadow:0 .5rem .5rem rgba(0,0,0,.5);
+opacity:0;
+transition: opacity 0.8s ease-out;
+visibility: visible;
+}
+:target .popBox {position:fixed; opacity:1;}
+/* Light box properties */
+.lightbox {
+display:none;
+text-indent:-200em;
+background-color:rgba(0,0,0,.4);
+width:100%;
+height:100%;
+position:fixed;
+top:0;
+left:0;
+bottom:0;
+right:0;
+z-index:5;
+}
+:target .lightbox {display:block;}
+/* The pop-ups close link, moved via CSS to the top right of the pop-up */
+.close:link,
+.close:visited {
+position: absolute;
+top: -0.75em;
+right: -0.75em;
+display: block;
+width: 2em;
+height: 2em;
+line-height: 1.8;
+padding: 0;
+text-align: center;
+text-decoration: none;
+background-color: #000;
+border: 2px solid #fff;
+color: #fff;
+border-radius: 50%;
+box-shadow: 0 0 .5rem .5rem rba(0,0,0,.5);
+visibility: visible;
+}
+.close:before {content:"X";}
+.close:hover,
+.close:active,
+.close:focus {
+box-shadow: 0 0 .5rem .5rem rba(255,0,0,.5);
+background-color: #c00;
+color: #fff;
+}
+.close span {
+text-indent: -200em;
+display: block;
+}
+/* The pop-up content div will scroll if it has too much content */
+.popScroll {
+position:absolute;
+top: 1rem;
+left: 1rem;
+right: 1rem;
+bottom: 1rem;
+overflow-y: auto;
+*overflow-y: scroll;
+padding-right: 0.5em;
+visibility: visible;
+}
+.popScroll h2 {margin-top:0}
+.style6 {
+font-family: Arial, Helvetica, sans-serif;
+font-size: 20px;
+}
+.style10 {font-size: 10pt}
+.style14 {color: #006600}
+.style15 {font-size: 18pt}
+.style16 {
+color: #2A0000;
+font-size: medium;
+}
+.style17 {color: #FF0000}
+.style7 {font-size: 12px}
+.style23 {
+color: #FF0000;
+font-style: italic;
+font-weight: bold;
+}
+.style24 {font-style: italic}
+.style26 {color:black}
+input[type=button] {
+border: 2px solid #0f88f2;;
+border-radius:.25rem;
+color: black;
+padding: 2px 2px;
+text-decoration: none;
+margin: 2px 2px;
+cursor: pointer;
+}
+input[type=black1] {
+border: 2px solid #999999;
+width:225px;
+border-radius:.25rem;
+background-color: white;
+color: black;
+padding: 2px 2px;
+font-size: 14px;
+cursor: pointer;
+}
+.style27 {font-size: 12pt}
+</style>
+</head>
+<body onload="Fixarea()">
+    <table style="width: 962px; height: 670px;" cellpadding="3" cellspacing="0">
+        <colgroup>
+        <col width="657" />
+    </colgroup>
+    <tbody>
+        <tr style="background-color: #f5f5f5; vertical-align: middle">
+            <td colspan="3" height="35">
+                <div style="text-align: center"><span style="font-weight: bold">Hawaii Damage Report {var eventType}</span></div>
+            </td>
+        </tr>
+        <tr style="height: 30px;">
+            <td colspan="3">1.
+                Incident Name:&nbsp;{var inc_name}
+            </td>
+        </tr>
+        <tr style="height: 30px;">
+            <td colspan="3">2.
+                From:&nbsp; {var fm_name} </td>
+        </tr>
+        <tr style="height: 30px;">
+            <td>3. County: {var to_county}</td>
+            <td style="width:300px;">4. Date:&nbsp; {var Mdate}</td>
+            <td style="width:300px;">5. Time:&nbsp; {var Mtime}</td>
+        </tr>
+        <tr style="height: 30px;">
+            <td colspan="3">6. Location Coordinates:
+                &nbsp;{var mapLat}, {var mapLon}</td>
+        </tr>
+        <tr style="vertical-align: top;">
+            <td colspan="3">7. Damage Report:<br />
+                <div  style="padding-left: 20px;">{var dmg_report}</div></td>
+        </tr>
+        <tr style="height: 30px;">
+            <td colspan="3">8. When: {var dmg_when}</td>
+        </tr>
+        <tr style="height: 30px;">
+            <td colspan="3">9. Where: {var dmg_where}</td>
+        </tr>
+        <tr style="height: 30px;">
+            <td colspan="3">10. Who where affected: {var dmg_who}</td>
+        </tr>
+        <tr style="height: 30px;">
+            <td colspan="3">11. Injuries: {var dmg_injuries}</td>
+        </tr>
+        <tr style="height: 30px;">
+            <td colspan="3"> 12. Recorded by: {var Recorded_name} - {var Recorded_call}</td>
+        </tr>
+        <tr style="background-color: #f8f8ff">
+            <td colspan="3" height="35">{var eventType}
+                <span style="float: right">Ver 1.1</span>
+            </td>
+        </tr>
+    </tbody>
+</table>
+</body></html>

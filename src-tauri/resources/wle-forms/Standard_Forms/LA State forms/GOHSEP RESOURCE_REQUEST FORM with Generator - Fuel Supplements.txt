@@ -1,0 +1,147 @@
+Form:GOHSEP RESOURCE_REQUEST FORM with Generator - Fuel Supplements,GOHSEP RESOURCE_REQUEST FORM with Generator - Fuel Supplements_viewer.html
+
+
+To: 
+Subject:GOHSEP RR # <var Incidentnum>, PARISH: <var PARISH>, Tracking # <var TrackongNum>
+
+
+Msg:
+GOHSEP RESOURCE REQUEST FORM
+----------------------------------------------------
+THIS SECTION TO BE FILLED OUT BY GOHSEP when Replying
+
+24. DATE LOGGED:
+25. TIME LOGGED:
+26. GOHSEP MISSION #:
+27. LOGGER NAME:
+
+----------------------------------------------------
+
+OPERATIONS SECTION
+A. RADO NAME: <var RADO>
+B. CALL SIGN: <var RADOCall>
+C. DATE: <var RDateTime2>
+D. TIME: <var RDateTime3>
+
+GENERAL INFORMATION	 	 
+1. INCIDENT #:<var Incidentnum>	
+2. REQUESTER NAME: <var RequesterName>
+3. PARISH: <var PARISH>
+4. DATE/TIME NEEDED: <var RDateTime>
+5. DURATION NEEDED:<var Duration>
+6. TRACKING # (DTG/PARISH):<var TrackongNum>
+
+RESOURCE TYPE	
+7. <var rESOURCEtYPE> 
+
+RESOURCE DESCRIPTION & DELIVERY INSTRUCTIONS 
+8. <var DESC-DELIVERY>
+9.IS DELIVERY REQUIRED: <var DeliveryNeeded> 
+
+REQUESTER POC	
+10. FIRST NAME: <var thename2>
+11. LAST NAME: <var LastName>
+12. AGENCY: <var Agency>
+13. PHONE: <var ReqPhone>
+14. ALT. PHONE: <var ReqPhone2>
+15. E-MAIL: <var ReqPhone3>
+
+DELIVERY INFORMATION
+16. POC NAME: <var POCname>
+17. E-MAIL: <var POCemail>
+18. PHONE: <var POCphone>
+19. ALT. PHONE: <var POCaltphone>
+20. NAME OF SITE: <var POCSite>
+21. ADDRESS:<var DESC-DELIVERY2>
+
+PARISH AUTHORIZATION
+22. SIGNATURE: <var Signsture>
+23. POSITION/TITLE: <var Position>
+
+
+--------------------------------------------
+Generator Form Supplement to GOHSEP Resource Request Form
+Version 5/23/25
+
+When requesting a generator, this form supplement must be completed and attached to your GOHSEP Resource Request Form.
+
+1. POC Information: <var Gen1>
+2. Location/Address: <var Gen2>
+3. Parish Tracking Number: <var Gen3>
+4. Delivery Time: <var Gen4>
+5. Do you have a backup generator: <var Gen5>
+6. Have power requirements been determined? <var Gen6>
+
+Provide Generator Size:
+7. KW: <var Gen7>
+8. Voltage: <var Gen8>
+9. Phase: <var Gen9>
+
+Connection tie in:
+10. Do you need cables? <var Gen10>
+11. How long should the cables be? <var Gen11>
+12. Do you have a transfer switch? <var Gen12>
+13. Has an assessment been done on the facility? <var Gen13>
+14. Do you have an electrician that can hook up the generator? <var Gen14>
+15. Do you need GOHSEP to provide fuel for the generator? <var Gen15>
+16. Are there any space restrictions that would impact placement and refuel operations? <var Gen16>
+
+17. (If #15 was Yes, provide additional information that identifies constraints and special equipment/materials needed.)
+   <var Gen17>
+
+
+-------------------------------------------------
+
+Fuel Form Supplement to GOHSEP Resource Request Form
+Louisiana Department of Agriculture and Forestry Fuel Form Supplement to GOHSEP Resource Request
+
+When requesting fuel, this form supplement must be completed and attached to your GOHSEP Resource Request Form.
+
+1. Date: <var Fuel1>
+2. Name of Incident: <var Fuel2>
+3. Incident Number: <var Fuel3>
+4. What is the Fueling mission? <var Fuel4>
+5. What type of Equipment needs to be refueled (Vehicles, Generators, Bulk Fuel Tank, Other) 
+<var Fuel5>
+ 
+6. What Fuel Type is needed (Gas, Diesel, Av Gas, Jet-A, Other)? <var Fuel6>
+7. What is the Quantity of Fuel being requested? <var Fuel7>
+8. What is the Priority of Fueling Mission (Urgent, Same Day, Next Day, Other)? <var Fuel8>
+9. Are there any Special Conditions for the Fueling Mission (Length of hose required, special fitting or connections on tank)? <var Fuel9>
+
+10. Are there any Time Restrictions for making the Fuel Delivery?  <var Fuel10>
+11. What is the best time for receiving?  <var Fuel11>
+
+List two points of contact with working Phone Numbers:
+12. Contact Name: <var Fuel12>
+13. Contact Phone: <var Fuel13>
+14. Alternate Name: <var Fuel14>
+15. Alternate Phone:  <var Fuel15>
+
+For Bulk Fuel Deliveries to an Existing Bulk Fuel Storage Tank
+16. What is the Capacity of the Tank? <var Fuel16>
+17. What is the Existing Inventory? <var Fuel17>
+18. Is the Tank (Aboveground or Underground)?  <var Fuel18>
+19. Will there be a Site Representative present to meet with the driver prior to unloading to verify that the Tank will hold the quantity of product that was ordered (Yes or No)? <var Fuel19>
+
+For Bulk Fuel Deliveries where Vendor must Provide the Bulk Fuel Storage Tank
+20. What is the Size of the Tank being requested in gallons?  <var Fuel20>
+21. What Power Source is available for the pump (AC or DC)?  <var Fuel21>
+22. Is a Forklift onsite to offload the Tank (Yes or No)?  <var Fuel22>
+
+Required Fuel Billing Information
+23. Party responsible for this fuel bill: <var Fuel23>
+24. Billing address: <var Fuel24>
+25. Billing point of Contact: <var Fuel25>
+26. Billing phone Number: 
+<var Fuel26>
+
+27. Billing Authorized User: <var Fuel27>
+28. Agency Number: <var Fuel28>
+This form was modeled from AHS-20-39 (R. 1/14)
+
+------------------------
+Express Sending Station: <MsgSender>
+Senders Express Version: <ProgramVersion>
+Senders Template Version: <var Templateversion>
+

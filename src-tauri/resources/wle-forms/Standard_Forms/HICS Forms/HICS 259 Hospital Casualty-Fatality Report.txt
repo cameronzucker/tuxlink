@@ -1,0 +1,38 @@
+Form: HICS 259_Initial.html,HICS 259_viewer.html
+
+To: 
+Subject: HICS-259 HOSPITAL CASUALTY/FATALITY REPORT-<var IncidentName>, <var Facility>,  <var Thedate> <var TheTime>
+Readonly:True
+Msg: HICS 259 HOSPITAL CASUALTY/FATALITY REPORT
+
+1. Incident Name:	<var IncidentName> 
+
+2. Date: <var Thedate>     
+3. Time: <var TheTime>
+4. Operational Period #	<var opperiod>
+	Date From:	<var DateFrom>	Date To: <var DateTo> 
+	Time From:	<var TimeFrom>	Time To: <var TimeTo> 
+
+5. NUMBER OF CASUALTIES/FATALITIES     
+		Adult	  Pediatric	Total  	   Comments
+Patients seen	<var A1>	<var A2>	<var TOTAL1>	<var Comment1>
+Waiting to be seen	<var B1> 	 <var B2>	 <var TOTAL2>	  <var Comment2>
+Admitted	<var C1>	<var C2>	<var TOTAL3>	  <var Comment3>
+   Critical care bed		<var D1>	<var D2>	<var TOTAL4>	  <var Comment4>
+   Medical/surgical bed		<var E1>	<var E2>	<var TOTAL5>	  <var Comment5>
+   Pediatric bed	<var F1>	<var F2>	<var TOTAL6>	  <var Comment6>
+Discharged	<var G1>	<var G2>	<var TOTAL7>	  <var Comment7>
+Transferred	<var H1>	<var H2>	<var TOTAL8>	  <var Comment8>
+Expired	<var I1>	<var I2>	<var TOTAL9>	  <var Comment9>
+------------
+6. Prepared by (Patient Tracking Manager):	<var Prepedbychief>
+7. Facility Name:	<var Facility>
+
+------------------------
+Express Sending Station:	<MsgSender>
+Senders Express Version:	<ProgramVersion>
+Senders Template Version:	<var Templateversion>
+[No changes or editing of this message are allowed]
+
+
+

@@ -34,7 +34,7 @@ function MenuItems({ items, onPick }: { items: MenuNode[]; onPick: (id: MenuActi
               title="Coming in a future release"
             >
               {node.label}
-              <span className="tux-v01" aria-hidden="true">v0.1</span>
+              <span className="tux-v01" aria-hidden="true">soon</span>
             </button>
           );
         }

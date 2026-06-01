@@ -1,0 +1,139 @@
+Form: HICS 201 Incident Briefing.html,HICS 201 Incident Briefing.viewer.html
+
+To: 
+Subject: HICS 201 <var Incident_Name> Briefing
+Readonly:True
+Msg:
+HICS 201 INCIDENT BRIEFING
+
+1. Incident Name:	<var Incident_Name>
+Winlink Message Sender:	<var MsgSender>
+
+2. Operational Period: 
+Date From: <var DateFrom> To: <var DateTo>
+Time From: <var TimeFrom> To: <var TimeTo>
+
+3.Situation Summary (for briefings or transfer of command)
+  <var SitSummary>
+
+4.Health and Safety Briefing 
+Identify potential incident health and safety hazards and implement necessary measures (remove hazard, provide personal protective equipment, warn people of the hazard) to protect responders from those hazards. (Summary of HICS 215A)
+
+  <var HealthBriefing>
+
+5. Map/Sketch 
+JPEG map/sketch attached <var MapAttached>
+
+
+HICS 201 | Page 1 of 4  
+----------------------------
+
+HICS 201 | Page 2 of 4  
+
+HICS 201 INCIDENT BRIEFING
+
+6. Currrent Hospital Management Team (fill in additional positions as appropiate)
+
+Incident Commander	<var icA1>
+
+PIO	<var A2>
+Liasion Office	<var A3>
+Safety Officer  <var A4>
+ 		
+Medical Technical Specialist	<var A5>
+Medical Technical Specialist	<var A6>
+Medical Technical Specialist	<var A7>
+
+Operations Section Chief	<var A7A>
+Staging Manager	<var A0>
+Medical Care Branch Director	<var A8>
+Infrastructure Branch Director	<var A9>
+Security Branch Director	<var A10>
+HazMat Branch Director	<var A11>
+Business Continuity Branch Director	<var A12>
+Patient Family Assistance Director	<var A13>
+Other is needed	<var A15>
+
+Planning Section Chief	<var A16>
+Resources Unit Leader	<var A17>
+Situation Unit Leader	<var A18>
+Documentation Unit Leader	<var A19>
+Demobilization Unit Leader	<var A20>
+
+Logistics Planning Chief	<var A21>
+Service Branch Director	<var A22>
+Support Branch Director	<var A23>
+
+Finance / Administration Section Chief	<var A24>
+Time Unit Leader	<var A25>
+Procurement Unit Leader	<var A26>
+Compensation/Claims Unit Leader	<var A27>
+Cost Unit Leader	<var A28>
+
+
+HICS 201 | Page 2 of 4  
+----------------------------
+
+HICS 201 | Page 3 of 4  
+
+7. Incident Objectives
+<var IncObjective> 
+
+8. Summary of Current and Planned Actions
+
+TIME	ACTIVITY
+<var ActivityTime1>	<var Activities1>
+<var ActivityTime2>	<var Activities2>
+<var ActivityTime3>	<var Activities3>
+<var ActivityTime4>	<var Activities4>
+<var ActivityTime5>	<var Activities5>
+<var ActivityTime6>	<var Activities6>
+<var ActivityTime7>	<var Activities7>
+<var ActivityTime8>	<var Activities8>
+<var ActivityTime9>	<var Activities9>
+<var ActivityTime10>	<var Activities10>
+<var ActivityTime11>	<var Activities11>
+<var ActivityTime12>	<var Activities13>
+<var ActivityTime13>	<var Activities13>
+<var ActivityTime14>	<var Activities14>
+<var ActivityTime15>	<var Activities15>
+<var ActivityTime16>	<var Activities16>
+<var ActivityTime17>	<var Activities17>
+<var ActivityTime18>	<var Activities18>
+<var ActivityTime19>	<var Activities19>
+<var ActivityTime20>	<var Activities20>
+
+HICS 201 | Page 3 of 4  
+----------------------------
+
+HICS 201 | Page 4 of 4  
+
+9. Summary of Resources Requested and Assigned
+
+RESOURCE	DATE / TIME ORDERED	ETA	DATE / TIME ARRIVED	NOTES
+<var Resource1>	<var OrderT1>	<var ETA1>	<var ArriveT1>	<var ResNotes1> 
+<var Resource2>	<var OrderT2>	<var ETA2>	<var ArriveT2>	<var ResNotes2>
+<var Resource3>	<var OrderT3>	<var ETA3>	<var ArriveT3>	<var ResNotes3> 
+<var Resource4>	<var OrderT4>	<var ETA4>	<var ArriveT4>	<var ResNotes4> 
+<var Resource5>	<var OrderT5>	<var ETA5>	<var ArriveT5>	<var ResNotes5> 
+<var Resource6>	<var OrderT6>	<var ETA6>	<var ArriveT6>	<var ResNotes6> 
+<var Resource7>	<var OrderT7>	<var ETA7>	<var ArriveT7>	<var ResNotes7> 
+<var Resource8>	<var OrderT8>	<var ETA8>	<var ArriveT8>	<var ResNotes8> 
+<var Resource9>	<var OrderT9>	<var ETA9>	<var ArriveT9>	<var ResNotes9> 
+<var Resource10>	<var OrderT10>	<var ETA10>	<var ArriveT10>	<var ResNotes10> 
+<var Resource11>	<var OrderT11>	<var ETA11>	<var ArriveT11>	<var ResNotes11> 
+<var Resource12>	<var OrderT12>	<var ETA12>	<var ArriveT12>	<var ResNotes12> 
+<var Resource13>	<var OrderT13>	<var ETA13>	<var ArriveT13>	<var ResNotes13> 
+<var Resource14>	<var OrderT14>	<var ETA14>	<var ArriveT14>	<var ResNotes14> 
+<var Resource15>	<var OrderT15>	<var ETA15>	<var ArriveT15>	<var ResNotes15> 
+
+10. Prepared by:	Name	<var Prepedby>	Position/Title:	<var Position>	Signature:	<var Prepsig> 
+Date/Time:	<var prepDateTime> 
+
+HICS 201 | Page 4 of 4  
+
+------------------------------------ 
+Express Sending Station: <MsgSender>
+Senders Express Version: <ProgramVersion>
+Senders Template Version: <var Templateversion>
+[No changes or editing of this message are allowed]

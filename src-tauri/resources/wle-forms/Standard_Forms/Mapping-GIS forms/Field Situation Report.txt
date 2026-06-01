@@ -1,0 +1,57 @@
+Form:Field Situation Report Initial.html,Field Situation Report viewer.html 
+To: <var MsgTo>
+Cc: <var MsgCc>
+Readonly:True
+Subject://WL2K <var Precedence>/ Field Situation Report <var UDTGfld>
+
+Readonly:True
+Msg:
+
+PRECEDENCE: <var Precedence>   
+DATE/TIME Group: <var UDTGfld>   
+TASK# <var MsgNR>
+AGENCY: <var Title>
+FROM: <var MsgSender>
+TO: <var MsgTo>
+INFO (CC): <var MsgCc>
+BT
+UNCLASS
+
+SUBJ: Field Situation Report <var UDTGfld> 
+
+1.EMERGENT/LIFE SAFETY Need <var Safetyneed>
+Needs: <var Comm0>
+
+2. City:<var City>  County:<var County> State: <var State> Territory:<var Territory>
+3. Latitude:<var gpsLat>  Longitude:<var gpsLon>   MGRS:<var MGRS>  Location source: <var locationSource>
+4a. POTS landlines functioning: [ <var k4> ]  <var Comm1>
+4b. VOIP landlines functioning: [ <var k4A> ]  <var Comm1A>
+5a. Cell phone voice calls functioning: [<var k5> ]  <var Comm2>
+5b. Cell phone phone texts functioning: [<var k5A> ]   <var Comm2A>
+6. AM/FM Broadcast Stations functioning: [ <var AMFM> ]  <var Comm3>
+7a. OTA TV functioning: [ <var TVStatus> ]  <var Comm4>
+7b. Satellite TV functioning: [ <var TVStatusb> ]  <var Comm4b>
+7c. Cable TV  functioning:[ <var TVStatusc> ]  <var Comm4c>
+8. Public Water Works functioning: [ <var WaterWorks> ]  <var Comm5>
+9a. Commercial Power functioning: [ <var k9> ]  <var Comm6>
+9b. Commercial Power Stable: [ <var k9A> ] <var Comm6A>
+9c. Natural Gas Supply functioning: [ <var kgc9> ] <var Comm9c>
+10. Internet functioning: [ <var Inter> ] <var Comm7>
+11a. NOAA Weather Radio functioning: [ <var NOAA> ]  <var NOAAcom>
+11b. NOAA Weather Radio Audio degraded: [ <var NOAAb> ]  <var NOAAcomb>
+12. Additional Comments:  <var Message>
+13. POC <var POC>
+
+BT
+NNNN
+
+[No changes or editing of this message are allowed]
+
+------------------------------------
+Express Sending Station: <MsgSender>
+Express Version: <ProgramVersion>
+Template Version: <var Templateversion>
+Map File Name: <var mapfilename>
+
+
+

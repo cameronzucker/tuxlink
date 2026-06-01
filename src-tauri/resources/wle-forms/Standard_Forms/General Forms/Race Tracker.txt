@@ -1,0 +1,14 @@
+Form: Race Tracker Initial.html
+SeqInc:
+To: <var address>
+Subject:<var msgsubject>
+Msg: 
+<var TheData>
+
+-----
+<var Comment> 
+
+<var FormatNote>
+-----
+Winlink Express Sender <var MsgSender> 
+Template version <var Theversion>

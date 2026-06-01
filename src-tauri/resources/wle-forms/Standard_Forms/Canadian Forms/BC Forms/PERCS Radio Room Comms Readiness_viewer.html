@@ -1,0 +1,543 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml"><head>
+<meta http-equiv="content-type" content="application/xhtml+xml; charset=utf-8" /><title>BC ARES  Check In-Initial</title>
+
+<style type="text/css">
+.style12 {font-size: 10pt}
+.style13 {
+    font-family: Arial, Helvetica, sans-serif;
+    font-weight: normal;
+}
+.style15 {font-size: 10pt; font-family: Arial, Helvetica, sans-serif; }
+.hidden {            display: none;
+    
+}
+.formtext {font-family: Arial, Helvetica, sans-serif;
+font-size: 10pt;
+font-weight: normal;
+}
+.formtext {font-family: Arial, Helvetica, sans-serif;
+    font-size: 10pt;
+    font-weight: normal;
+    text-align: left;
+}
+.formtext2 {font-family: Arial, Helvetica, sans-serif;
+font-size: 10pt;
+font-weight: normal;
+}
+.formtext2 {font-family: Arial, Helvetica, sans-serif;
+font-size: 10pt;
+font-weight: normal;
+}
+.formtext4 {font-family: Arial, Helvetica, sans-serif;
+font-size: 10pt;
+font-weight: normal;
+}
+.formtext4 {font-family: Arial, Helvetica, sans-serif;
+    font-size: 10pt;
+    font-weight: normal;
+    text-align: left;
+}
+</style>
+
+
+
+<script>
+    function shortmonth(monthnum) {
+var monthname;
+shortmonths = ["JAN", "FEB", "MAR","APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"] ;
+monthname = shortmonths [monthnum];s
+ return monthname; }
+function SetDateTime(TType,TheFld, FocusFld) {
+var txt;
+var  myprompt;
+var d = new Date(),
+ thisyear = d.getFullYear();
+ thismonth= d.getMonth();
+ thisday = d.getDate();
+ 
+  var submonth = thismonth+1; ;
+if (submonth < 10) { submonth = "0"+submonth};
+ var subday = thisday;
+if (thisday < 10) { thisday = "0"+thisday};
+
+var monname;
+h = (d.getHours()<10?'0':'') + d.getHours()
+m = (d.getMinutes()<10?'0':'') + d.getMinutes()
+s = (d.getSeconds()<10?'0':'') + d.getSeconds();
+
+var now = new Date();
+var utch = now.getUTCHours();
+if (utch < 10) { utch = "0"+utch};
+var utcs =  now.getUTCMinutes();
+if (utcs < 10) { utcs = "0"+utcs};
+var myUTCtime =  utch+":"+utcs+"Z";
+
+
+var utcstr = d.toUTCString();
+var localt  = d.toLocaleTimeString();
+var isostr = d.toISOString();
+monthname = shortmonth (thismonth);
+thismonth = thismonth + 1;
+switch (TType) {
+    case 'hms'  :
+        myprompt = h + ':' + m + ':' + s;
+		var RightNow = prompt("Time:", myprompt);
+		document.getElementById(TheFld).value = RightNow;
+        break;
+		case 'hm'  :
+        myprompt = h + ':' + m;
+		var RightNow = prompt("Time:", myprompt);
+		document.getElementById(TheFld).value = RightNow;
+        break;
+		case 'm-d-y':     
+			myprompt = thismonth+ '-' + thisday+ '-'+  thisyear;
+			var RightNow = prompt("Date:", myprompt);
+			document.getElementById(TheFld).value = RightNow;
+		   break;
+		 case 'm/d/y':     
+			myprompt = thismonth+ '/' + thisday+ '/'+  thisyear;
+			var RightNow = prompt("Date:", myprompt);
+			document.getElementById(TheFld).value = RightNow;
+		     break;
+		 case 'd mmm y':     
+			myprompt = thisday+ ' ' + monthname+ ' '+  thisyear;
+			var RightNow = prompt("Date:", myprompt);
+			document.getElementById(TheFld).value = RightNow;
+		   break;
+		   case 'mmm-d-y':     
+			myprompt = monthname+'-'+thisday+ '-' +  thisyear;
+			var RightNow = prompt("Date:", myprompt);
+			document.getElementById(TheFld).value = RightNow;
+		   break;
+        case 'localampm':     
+			var myprompt = localt;
+			var RightNow = prompt("Local time:", myprompt);
+			document.getElementById(TheFld).value = RightNow;
+		   break;
+
+		case 'fulldate':     
+			var myprompt = thisyear+ '-'+thismonth+'-'+thisday;
+			var RightNow = prompt("Date:", myprompt);
+			document.getElementById(TheFld).value = RightNow;
+		   break;
+		   case 'fulldatetime':     
+			var myprompt = thisyear+'-'+thismonth+ '-'+thisday+' '+h + ':' + m ;
+			var RightNow = prompt("Date time:", myprompt);
+			document.getElementById(TheFld).value = RightNow;
+		   break;
+		   case 'autofulldatetime':     
+			var RightNow = thisyear+'-'+thismonth+ '-'+thisday+' '+h + ':' + m ;
+			
+			//var RightNow = prompt("Date time:", myprompt);
+			document.getElementById(TheFld).value = RightNow;
+			var ORTimestamp = thisyear+submonth+subday;
+			document.getElementById('TimeStampOR').value = ORTimestamp; 
+		   break;
+		    case 'iso':     
+			var myprompt = isostr;
+			var RightNow = prompt("Date time:", myprompt);
+			document.getElementById(TheFld).value = RightNow;
+		   break;
+		   case 'utc':     
+			var myprompt = utcstr;
+			var RightNow = prompt("Date time:", myprompt);
+			document.getElementById(TheFld).value = RightNow;
+		   break;
+		   	   
+		   case 'zulu':     
+			var myprompt = isostr;
+			myprompt = isostr.replace("T", "  "); 
+			slen = myprompt.length;
+			myprompt = myprompt.substr(0, slen-5)+'Z';
+			var RightNow = prompt("Date time:", myprompt);
+			document.getElementById(TheFld).value = RightNow;
+		   break;
+		    case 'UTChm':     
+			var myprompt = myUTCtime;
+			var RightNow = prompt("Date time:", myprompt);
+			document.getElementById(TheFld).value = RightNow;
+		   break;
+		}
+				
+	// if(FocusFld !== null && FocusFld !== '') {document.getElementById(FocusFld).focus()} --/
+	};	
+		
+</script><script>
+
+function AutoGrowTextArea(textField)
+{
+if (textField.clientHeight < textField.scrollHeight)
+{
+textField.style.height = textField.scrollHeight + "px";
+if (textField.clientHeight < textField.scrollHeight)
+{
+textField.style.height = (textField.scrollHeight * 2 - textField.clientHeight) + "px";
+}
+}
+}
+function Countthelines(f) { var text1 = f
+var text2 = text1.replace(/\s+$/,"");
+var split2 = text2.split("\n"); var mytotal = split2.length * 17;
+if (mytotal < 60) {
+mytotal = 60;
+}
+var tstr = mytotal.toString();
+return tstr;
+}
+function newfix(f){
+var ThisText = document.getElementById(f).value;
+var makeit = Countthelines(ThisText);
+document.getElementById(f).style.height = makeit+"px"; }
+function Fixarea() {
+newfix("Comments");
+AutoGrowTextArea(document.getElementById("Comments"));
+}
+function RWS(str){
+var text2 = str.replace(/\s+$/,"");
+return text2.trim();
+}
+   
+function Flip(theid,working) {
+
+x1 = document.getElementById(theid).value;
+
+if (x1 == '' || x1 == '') { document.getElementById(theid).value = working} 
+
+else { document.getElementById(theid).value = '';}
+collect();
+}
+      function toggleCheckboxes() {
+            var optionSelect = document.getElementById("optionSelect");
+            var checkboxSets = document.querySelectorAll("[id^='checkbox-set']");
+
+            checkboxSets.forEach(function (set) {
+                set.style.display = "none";
+            });
+
+            var selectedSet = document.getElementById("checkbox-" + optionSelect.value);
+            if (selectedSet) {
+                selectedSet.style.display = "block";
+            }
+          document.getElementById("monitoring").value = '';
+        }
+ </script></head>
+<body style="margin-left: 30px; width: 761px;">
+
+<table width="925" border="1" cellpadding="2" cellspacing="0" bordercolor="#999999" style="font-family: Calibri; font-size: 14px; width: 752px;">
+<tbody>
+<tr valign="top" bgcolor="#f8f8ff">
+  <td height="30" colspan="2" style="height: 5%; text-align: center; ">
+  <span style="font-family: Calibri; font-size: 20px;"><small>&nbsp;
+  <span class="style13">&nbsp; PERCS Radio Room Comms Readiness Report<br />
+  </span></small></span></td>
+</tr>
+<tr>
+  <td colspan="2" valign="top" nowrap="nowrap" style="vertical-align: top; text-align: center;">
+    <div align="left">
+      <p> &nbsp;Message#: {SeqNum}</p>
+      <p>&nbsp;Send to PERCS: {var Other1}<br />
+      </p>
+      </div></td>
+</tr>
+<tr>
+    
+<td height="43" colspan="2">&nbsp;From Radio Room: {var Callsign}&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="formtext" style="text-align: left"><span class="formtext4" style="text-align: left"><span class="formtext2">Date/Time:  {var DateTime}</span></span></span></p>
+
+    <p>&nbsp;Location: {var Location}</p></td>
+</tr>
+<tr valign="top">
+<td height="55" colspan="2" style="text-align: center; " pbzloc="6"><div align="left">
+  <table width="100%" border="1" cellspacing="0" cellpadding="0">
+    <tbody>
+      <tr>
+        <td valign="top"><table width="100%" border="0" cellspacing="0" cellpadding="0">
+            <tbody>
+              <tr>
+                <td width="52%">&nbsp;Our Radio Room is now:</td>
+                <td width="48%">
+                  {var RoomNow}</td>
+              </tr>
+            </tbody>
+          </table></td>
+        <td width="55%" valign="top">&nbsp;When on the air. we wil have access to a Winlink CMS &nbsp;gateway: &nbsp;&nbsp;<br />
+          &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;{var Gateway}</td>
+      </tr>
+    </tbody>
+  </table>
+</div></td>
+</tr>
+<tr>
+  <td height="150" colspan="2" valign="top"><table width="87%" height="79" border="0" cellpadding="0" cellspacing="0">
+    <tbody>
+      <tr>
+        <td colspan="2" valign="top">&nbsp;When on he air, we will bec continuously monitoring these PREOC voice frequencies during this event for &nbsp;important bulletins and can be reached on thise frequencies until our station gets off the air.
+          <br />
+          <br /></td>
+        </tr>
+      <tr>
+        <td width="37%" valign="top" nowrap="nowrap"><span style="font-weight: bold;"><span class="style12"><span class="style13"><strong>&nbsp;HF<br />
+        </strong></span></span></span>{var f6}<br />
+        {var f7}<br />
+        {var f8}<span class="style13"><br />
+            <br />
+          </span></p></td>
+        <td width="63%" valign="top">
+            
+            <!-- checkbox-set1" checkbox-set1 -->
+            <div id="checkbox-set1"  class="hidden">> &nbsp;</span><br />
+          <p>&nbsp;<strong>SWE VHF/UHF</strong></span><span style="font-weight: bold;">
+      <input name="thelable1" type="hidden" id="thelable1" value="SWE VHF/UHF" />
+    </span><br />
+          <input name="f1b" type="checkbox" id="f1b" value="YES" onclick="Flip('setA1', '146.415 Simplex\n')"/>
+          <input name="setA1" type="hidden" id="setA1" />
+
+          </span>1456.415 Simplex <br />
+          <span style="font-weight: bold;">
+            <input name="f2b" type="checkbox" id="f2b" value="YES" onclick="Flip('setA2', '145.170 (600Hz)\n')"/>
+            <input name="setA2" type="hidden" id="setA2" />
+      </span>145.170 (600Hz)<br />
+          <span style="font-weight: bold;">
+            <input name="fb3" type="checkbox" id="fb3" value="YES" onclick="askfreq('IMERS (Commercial) Chcannel','setA3','fb3')"/>
+            <input name="f3" type="hidden" id="f3" />
+      </span> <span style="font-weight: bold;"> </span>IMERS (Commercial)
+          <input name="setA3" id="setA3"  placeholder= "Specify CH"  size="10" maxlength="10"readonly="readonly"  />
+          <br />
+          <span style="font-weight: bold;"> </span><span style="font-weight: bold;">
+            <input name="fb4" type="checkbox" id="fb4" value="YES" onclick="askfreq('Other Frequency','setA4', 'fb4')"/>
+         
+            </span>Other:
+          <input name="setA4" id="setA4"  placeholder= "Other VHF/UHF"  size="20" maxlength="19" readonly="readonly"/>; </p>
+    <p>&nbsp;</p>
+       
+          </div>
+    
+     <!-- checkbox-set2"   -->
+
+<div id="checkbox-set2" class="hidden"> &nbsp;</span><br /><STRONG>VIC VHF/UHF</strong></span><span style="font-weight: bold;">
+<input name="thelable2" type="hidden" id="thelable2" value="VIC VHF/UHF" />
+</span></span><br />
+  <input name="g1b" type="checkbox" id="g1b" value="YES" onclick="Flip('setB1', '147.570 Simplex\n')"/>
+          <input name="setB1" type="hidden" id="setB1" />
+
+          </span><span class="hidden"> </span>147.570 Simplex </span><br>
+          <input name="B2b" type="checkbox" id="B2b" value="YES" onclick="Flip('setB2', '148.685 Simplex\n')"/>
+          <input name="setB2" type="hidden" id="setB2" />
+          </span>148.685 Simplex<br>
+  <input name="g3b" type="checkbox" id="g3b" value="YES" onclick="Flip('setB3', 'Island Trunk Repeater System\n')"/>
+  <input name="setB3" type="hidden" id="setB3" />
+  </span><span class="text">Island Trunk Repeater System</span><br />
+  <span style="font-weight: bold;">
+            <input name="g4b" type="checkbox" id="f4b" value="YES" onclick="Flip('setB4', '444.925 (+5MHz T100Hz )\n')"/>
+    <input name="setB4" type="hidden" id="setB4" /> </span>444.925 (+5MHz T100Hz )<br />
+          <input name="g5b" type="checkbox" id="g5b" value="YES" onclick="Flip('setB5', 'D-Star VE7VIC\n')"/>
+          <input name="setB5" type="hidden" id="setB5" />
+          </span><span class="text"><span style="font-weight: bold;"> </span>D-Star VE7VIC</span><br />
+          <span style="font-weight: bold;"> </span><span style="font-weight: bold;">
+            <input name="g6b" type="checkbox" id="g6b" value="YES" onclick="askfreq('Other Frequency','setB6', 'g6b')"/>
+         
+           
+          </span>Other:  <input name="setB6" type="text" id="setB6"readonly="readonly" />
+          
+</div>
+
+<!-- checkbox-set3"   -->
+
+<div id="checkbox-set3" class="hidden"> &nbsp;</span><br /><STRONG>VE7KAZ – CTL PREOC</strong></span><span style="font-weight: bold;">
+<input name="thelable3" type="hidden" id="thelable3" value="VE7KAZ – CTL PREOC" />
+</span></span><br />
+  <input name="h1b" type="checkbox" id="h1b" value="YES" onclick="Flip('setC1', '146.960 (-600 kHz) T123.0\n')"/>
+          <input name="setC1" type="hidden" id="setC1" />
+
+          </span>146.960 (-600 kHz) T123.0</span><br>
+          <input name="h2b" type="checkbox" id="h2b" value="YES" onclick="Flip('setC2', '147.320 (+600 kHz)\n')"/>
+          <input name="setC2" type="hidden" id="setC2" />
+          </span>147.320 (+600 kHz)<br>
+  <input name="h3b" type="checkbox" id="h3b" value="YES" onclick="Flip('setC3', '442.525 (+5 MHz) T100.0\n')"/>
+  <input name="setC3" type="hidden" id="setC3" />
+  </span><span class="text">442.525 (+5 MHz) T100.0</span><br />
+  <span style="font-weight: bold;">
+  <input name="h4b" type="checkbox" id="h4b" value="YES" onclick="Flip('setC4', '448.525 (-5 MHz)\n')"/>
+    <input name="setC4" type="hidden" id="setC4" /> </span>448.525 (-5 MHz)<br />        
+          
+</div>
+
+<!-- checkbox-set4"   -->
+
+
+<div id="checkbox-set4" class="hidden"> &nbsp;</span><br /><STRONG>VE7NEZ – SEA PREOC</strong></span><span style="font-weight: bold;">
+<input name="thelable4" type="hidden" id="thelable4" value="VE7KAZ – CTL PREOC" />
+</span></span><br />
+  <input name="i1b" type="checkbox" id="i1b" value="YES" onclick="Flip('setD1', '145.130 (-600 kHz) T100.00\n')"/>
+    <input name="setD1" type="hidden" id="setD1" />
+
+          </span>145.130 (-600 kHz) T100.0</span><br>
+  <input name="i2b" type="checkbox" id="i2b" value="YES" onclick="Flip('setD2', '146.640 (-600 kHz) T100.0\n')"/>
+          <input name="setD2" type="hidden" id="setD2" />
+          </span>146.640 (-600 kHz) T100.0<br>
+  <input name="i3b" type="checkbox" id="i3b" value="YES" onclick="Flip('setD3', '147.040 (+600 kHz) T100.0\n')"/>
+  <input name="setD3" type="hidden" id="setD3" />
+  </span><span class="text">147.040 (+600 kHz) T100.0</span><br />
+  <span style="font-weight: bold;">
+  <input name="i4b" type="checkbox" id="i4b" value="YES" onclick="Flip('setD4', '147.060 (+600 kHz) T100.0\n')"/>
+    <input name="setD4" type="hidden" id="setD4" /> 
+  </span>147.060 (+600 kHz) T100.0<br />  
+  <span style="font-weight: bold;">
+  <input name="i5b" type="checkbox" id="i5b" value="YES" onclick="Flip('setD5', '444.550 (+5 MHz) T100.0\n')"/>
+  <input name="setD5" type="hidden" id="setD5" />
+  </span>444.550 (+5 MHz) T100.0          
+</div>
+
+<!-- checkbox-set5"   -->
+
+
+<div id="checkbox-set5" class="hidden"> &nbsp;</span><br /><STRONG>VE7NWZ – NWE PREOC</strong></span><span style="font-weight: bold;">
+<input name="thelable5" type="hidden" id="thelable5" value="VE7NWZ – NWE PREOC" />
+</span></span><br />
+  <input name="j1b" type="checkbox" id="j1b" value="YES" onclick="Flip('setE1', '146.600 (-600 kHz) T100.0\n')"/>
+    <input name="setE1" type="hidden" id="setE1" />
+
+          </span>146.600 (-600 kHz) T100.0</span><br>
+  <input name="j2b" type="checkbox" id="j2b" value="YES" onclick="Flip('setE2', '146.800 (-600 kHz)\n')"/>
+          <input name="setE2" type="hidden" id="setE2" />
+          </span>146.800 (-600 kHz)<br>
+   
+</div>
+<strong>{var SetName} UHF/VHF<br />
+</strong>{var monitoring}
+
+</p>
+<div id="checkbox-set6" class="hidden"> &nbsp;</span><br /><STRONG>VE7PGZ – NEA PREOC </strong></span><span style="font-weight: bold;">
+<input name="thelable6" type="hidden" id="thelable6" value="VE7PGZ – NEA PREOC" />
+</span></span><br />
+  <input name="k1b" type="checkbox" id="k1b" value="YES" onclick="Flip('setF1', '145.430 (-600 kHz) T100.0\n')"/>
+    <input name="setF1" type="hidden" id="setF1" />
+
+          </span>145.430 (-600 kHz) T100.0</span><br>
+  <input name="k2b" type="checkbox" id="k2b" value="YES" onclick="Flip('setF2', '146.640 (-600 kHz) T100.0\n')"/>
+          <input name="setF2" type="hidden" id="setF2" />
+          </span>146.640 (-600 kHz) T100.0<br>
+  <input name="k3b" type="checkbox" id="k3b" value="YES" onclick="Flip('setF3', '146.700 (-600 kHz) T100.0\n')"/>
+  <input name="setF3" type="hidden" id="setF3" />
+  </span><span class="text">146.700 (-600 kHz) T100.0</span><br />
+  <span style="font-weight: bold;">
+  <input name="k4b" type="checkbox" id="k4b" value="YES" onclick="Flip('setF4', '146.910 (-600 kHz) T100.0\n')"/>
+    <input name="setF4" type="hidden" id="setF4" /> 
+  </span>146.910 (-600 kHz) T100.0<br />  
+  <span style="font-weight: bold;">
+  <input name="k5b" type="checkbox" id="k5b" value="YES" onclick="Flip('setF5', '146.940 (-600 kHz) T100.0\n')"/>
+  <input name="setF5" type="hidden" id="setF5" />
+  </span>146.940 (-600 kHz) T100.0   <br />  
+<span style="font-weight: bold;">
+  <input name="k6b" type="checkbox" id="k6b" value="YES" onclick="Flip('setF6', '147.000 (+600 kHz) T100.0\n')"/>
+  <input name="setF6" type="hidden" id="setF6" />
+  </span>147.000 (+600 kHz) T100.0 <br />  
+<span style="font-weight: bold;">
+  <input name="k7b" type="checkbox" id="k7b" value="YES" onclick="Flip('setF7', '147.300 (+600 kHz) T100.00\n')"/>
+  <input name="setF7" type="hidden" id="setF7" />
+  </span>147.300 (+600 kHz) T100.0       
+</div>
+
+
+</td>
+        </tr>
+      </tbody>
+  </table>
+    <br /></td>
+</tr>
+<tr>
+  <td height="80" colspan="2" valign="top" style="text-align: center;">
+  <div align="left" class="style13">&nbsp;&nbsp; Comments&nbsp;&nbsp;&nbsp;<span class="style13"><normal></normal></span><normal><br />
+    </normal> 
+  &nbsp;&nbsp;
+    {var Comments}<br />
+  </div>
+  </td>
+</tr>
+<tr>
+<td width="558" height="34" valign="top">&nbsp; &nbsp;
+&nbsp;
+<span style="font-family: Calibri;">
+<input type="button" value="Print this page" onClick="window.print()">
+</span></td>
+<td width="292" valign="top"><span class="style15">Version  2.2 VA7MPG 
+    <input name="Templateversion" type="hidden" id="Templateversion" value="2.2" />
+</span>
+  <div align="left">  </div></td>
+</tr>
+
+<script>
+    
+      
+  
+    
+    function askfreq(myprompt, putfield,thebtn){
+    
+    //
+		var RightNow = prompt(myprompt);
+    //alert(RightNow);
+    if(RightNow!=='')  document.getElementById(putfield).value= RightNow+'  '+myprompt; 
+ if (RightNow ==''){document.getElementById(thebtn).checked = false;document.getElementById(putfield).value= ''}
+    collect();
+    }
+
+    function collect(){
+        a =  document.getElementById("whichset").value; 
+        
+var S = '';
+  
+      if (a == 'set1') {if(document.getElementById('setA1').value!=='SWE VHF/UHF') S=S + document.getElementById('setA1').value+'\n';
+       if(document.getElementById('setA2').value !=='')  S=S + document.getElementById('setA2').value+'\n';
+      if(document.getElementById('setA3').value !=='') S=S + document.getElementById('setA3').value+'\n';
+      if(document.getElementById('setA4').value !=='') S=S + document.getElementById('setA4').value+'\n';
+                      }
+        
+    if (a == 'set2') {if(document.getElementById('setB1').value!=='SWE VHF/UHF') S=S + document.getElementById('setB1').value+'\n';
+       if(document.getElementById('setB2').value !=='')  S=S + document.getElementById('setB2').value+'\n';
+      if(document.getElementById('setB3').value !=='') S=S + document.getElementById('setB3').value+'\n';
+      if(document.getElementById('setB4').value !=='') S=S + document.getElementById('setB4').value+'\n';
+        if(document.getElementById('setB5').value !=='') S=S + document.getElementById('setB5').value+'\n';
+                      if(document.getElementById('setB6').value !=='') S=S + document.getElementById('setB6').value+'\n';              
+                       }
+if (a == 'set3') {if(document.getElementById('setC1').value!=='SVE7KAZ – CTL PREOC') S=S + document.getElementById('setC1').value+'\n';
+       if(document.getElementById('setC2').value !=='')  S=S + document.getElementById('setC2').value+'\n';
+      if(document.getElementById('setC3').value !=='') S=S + document.getElementById('setC3').value+'\n';
+      if(document.getElementById('setC4').value !=='') S=S + document.getElementById('setC4').value+'\n';
+                       }
+
+if (a == 'set4') {if(document.getElementById('setD1').value!=='SVE7KAZ – CTL PREOC') S=S + document.getElementById('setD1').value+'\n';
+       if(document.getElementById('setD2').value !=='')  S=S + document.getElementById('setD2').value+'\n';
+      if(document.getElementById('setD3').value !=='') S=S + document.getElementById('setD3').value+'\n';
+      if(document.getElementById('setD4').value !=='') S=S + document.getElementById('setD4').value+'\n';
+                       if(document.getElementById('setD5').value !=='') S=S + document.getElementById('setD5').value+'\n';
+                       }
+    if (a == 'set5') {if(document.getElementById('setE1').value!=='SVE7KAZ – CTL PREOC') S=S + document.getElementById('setE1').value+'\n';
+       if(document.getElementById('setE2').value !=='')  S=S + document.getElementById('setE2').value+'\n';
+                             }
+        
+       if (a == 'set6') {if(document.getElementById('setF1').value!=='SVE7KAZ – CTL PREOC') S=S + document.getElementById('setF1').value+'\n';
+       if(document.getElementById('setF2').value !=='')  S=S + document.getElementById('setF2').value+'\n';
+      if(document.getElementById('setF3').value !=='') S=S + document.getElementById('setF3').value+'\n';
+      if(document.getElementById('setF4').value !=='') S=S + document.getElementById('setF4').value+'\n';
+     if(document.getElementById('setF5').value !=='') S=S + document.getElementById('setF5').value+'\n';
+                           if(document.getElementById('setF6').value !=='') S=S + document.getElementById('setF6').value+'\n';
+                           if(document.getElementById('setF7').value !=='') S=S + document.getElementById('setF7').value+'\n';
+                       }
+
+        
+        
+
+        
+        
+        
+        
+document.getElementById("monitoring").value = S;
+// now yes no
+
+}
+
+    </script>
+</table>
+<br />
+</form>
+</body></html>
