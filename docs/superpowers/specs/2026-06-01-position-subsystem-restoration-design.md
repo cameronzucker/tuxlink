@@ -1,40 +1,89 @@
-# Position Subsystem — Restoration After pjih (v2)
+# Position Subsystem — Restoration After pjih (v3)
 
 - **Date:** 2026-06-01
 - **bd issue:** tuxlink-c79g (closes); references tuxlink-pjih, PR #189 (reverts)
-- **Status:** v2 — 5-round adrev applied, operator review pending
+- **Status:** v3 — 5-round adrev applied + explicit-referent revision; operator review pending
 - **Authors:** bison-condor-grouse + operator
 - **Amends:** [`docs/superpowers/specs/2026-05-22-position-subsystem-design.md`](2026-05-22-position-subsystem-design.md)
-- **Adrev:** R1 Codex + R2/R3/R4/R5 Claude — 47 findings (6 P0, 21 P1, 20 P2); all P0 + all P1 applied; P2 selectively per cost/value.
+- **Adrev:** R1 Codex + R2 UX + R3 contract + R4 tests + R5 holistic — 47 findings total (6 P0, 21 P1, 20 P2); all P0 + all P1 applied; P2 selectively per cost/value.
+
+## Vocabulary (referenced throughout — read this once)
+
+The position-subsystem restoration design references several named UI elements, backend symbols, and operator-visible states. Every reference below uses the explicit name; do NOT translate to a shorter pronoun. The vocabulary list is exhaustive for the surface this design covers.
+
+**Operator-visible states** (combinations of `source × fix_state × manual_grid_set`):
+
+| Label | Predicate | Operator sees |
+|---|---|---|
+| **State 1** | `source = Manual && no fresh fix` | The MANUAL source chip (amber). The grid value `CN87` (or operator's last commit). No status text. |
+| **State 2** | `source = Manual && fresh fix exists` | The MANUAL source chip (amber). The grid value `CN87`. Passive status text "GPS ready" beside the MANUAL source chip. |
+| **State 3** | `source = Gps && fresh fix exists` | The GPS source chip (green, locked). The grid value `DM33` (live fix, precision-reduced). No status text. |
+| **State 4** | `source = Gps && no fresh fix && manual_grid set` | The GPS source chip (dimmed). The grid value `· CN87` (interpunct prefix from `manual_grid`). Status text "GPS no fix · broadcasting fallback". The `Set manually` button. |
+| **State 5** | `source = Gps && no fresh fix && manual_grid = None` | The GPS source chip (dimmed). The grid value `—` (em-dash placeholder). Status text "GPS no fix". The `Set manually` button. |
+| **State 6** | `source = Manual && manual_grid = None` | The MANUAL source chip (amber). The grid value `—` (em-dash placeholder). |
+
+**Named UI elements** (in the ribbon's Grid cell):
+
+| Name | DOM type | Lives in |
+|---|---|---|
+| **Source chip when `source = Manual`** | `<button>` | `GridEdit.tsx`, replaces the pre-pjih non-interactive `<span>` |
+| **Source chip when `source = Gps`** | `<span role="status">` | `GridEdit.tsx`, non-interactive |
+| **Grid value** | `<button>` (inline-edit trigger) | `GridEdit.tsx`, pre-pjih behavior |
+| **Grid input** | `<input>` (active during edit) | `GridEdit.tsx`, pre-pjih behavior |
+| **GPS-ready status text** | `<span>` (passive, NOT a button) | `GridEdit.tsx`, replaces the pre-pjih `<button data-testid="use-gps">` |
+| **`Set manually` button** | `<button>` with `aria-controls` | `GridEdit.tsx`, new in this restoration |
+
+**Named backend symbols** (in the position subsystem):
+
+| Name | File:line range | Role |
+|---|---|---|
+| `arbiter.set_manual(grid)` | `src-tauri/src/position/arbiter.rs` | Mutates `manual_grid` + `source` |
+| `arbiter.use_gps()` | `src-tauri/src/position/arbiter.rs` | Switches `source = Gps` |
+| `arbiter.active_grid()` | `src-tauri/src/position/arbiter.rs` | Returns the displayed grid value |
+| `arbiter.broadcast_grid()` | `src-tauri/src/position/arbiter.rs` | Returns the on-air grid value (precision-reduced) |
+| `config_set_grid(grid)` command | `src-tauri/src/ui_commands.rs` | Tauri command; wraps `arbiter.set_manual` + persists `cfg.identity.grid` + `cfg.privacy.position_source` |
+| `position_set_source(source)` command | `src-tauri/src/ui_commands.rs` | Tauri command; wraps `arbiter.use_gps` + persists `cfg.privacy.position_source` |
+| `position_status` command | `src-tauri/src/ui_commands.rs` | Tauri command; returns `PositionStatusDto` to the UI |
+| `effective_broadcast_locator(cfg, arbiter)` | `src-tauri/src/position/mod.rs` | Top-level on-air locator computation with privacy gate |
+
+**Named source-contract amendments** (this design):
+
+| Name | Scope |
+|---|---|
+| **The `use_gps()` + `position_set_source('Gps')` relaxation** | Both symbols lose their `has_fresh_fix` gate. See [§1.1](#11--the-use_gps--position_set_source-gps-relaxation). |
+
+---
 
 ## TL;DR
 
-The 2026-05-22 position-subsystem design is correct as-written; pjih (PR #189, merged `a6db716`) violated the design contract on the assumption that the operator wanted a new semantic. Operator confirmed 2026-06-01: *"The original spec was fine. We had it working for a while. Each fix was only to address regression."*
+The 2026-05-22 position-subsystem design is correct as-written; pjih (PR #189, merged `a6db716`) violated the 2026-05-22 source contract. Operator confirmed 2026-06-01: *"The original spec was fine. We had it working for a while. Each fix was only to address regression."*
 
-This v2 spec covers:
+The position-subsystem restoration covers:
 
 1. **Revert** the pjih backend + frontend changes (restore the 2026-05-22 source contract).
-2. **Close two pre-pjih implementation gaps** (chip clickability + row-3 "Set manually" affordance) that the original spec required but were never coded — and which probably motivated the original "GPS regression" complaint pjih over-fixed.
-3. **One spec amendment** (chosen explicitly over two alternatives — see [§1.5](#15-why-a-relaxed-use_gps-over-b-clear-manual-pin-or-c-confirm-then-switch)): relax `use_gps()` AND its command-layer counterpart `position_set_source('Gps')` so that source-switching succeeds unconditionally. Operators without GPS hardware can reach the spec's row-3 destination state from Manual.
+2. **Close two pre-pjih implementation gaps** that the 2026-05-22 spec required but were never coded:
+   - The source chip when `source = Manual` was rendered as a non-interactive `<span>` despite the 2026-05-22 spec defining click semantics.
+   - The `Set manually` button was never added despite the 2026-05-22 spec defining State 4 + State 5 affordance.
+3. **Apply the `use_gps()` + `position_set_source('Gps')` relaxation** (chosen explicitly over two alternatives — see [§1.2](#12--why-the-use_gps-relaxation-over-clear-manual-pin-or-confirm-then-switch)): both symbols lose their `has_fresh_fix` gate. Operators without GPS hardware can reach State 4 from State 1 by clicking the source chip when `source = Manual`.
 
-The 2026-05-22 spec remains the authoritative source contract. Everything below either points back to it or extends it for the gap-closures.
+The 2026-05-22 spec remains the authoritative source contract. Every section below either points back to the 2026-05-22 spec or extends the 2026-05-22 spec for the gap-closures.
 
 ---
 
 ## Motivation
 
-The 2026-05-22 spec defined an explicit operator-owned source contract: `Manual` is sticky, GPS never overrides until the operator explicitly switches via the source chip. The implementation that shipped (tuxlink-686) honored the sticky-Manual backend semantics but **left two spec lines unimplemented on the frontend**:
+The 2026-05-22 spec defined an explicit operator-owned source contract: `Manual` is sticky against GPS, and returning to GPS is a deliberate operator act via the source chip. The implementation that shipped (tuxlink-686) honored the sticky-Manual backend semantics in `arbiter.set_manual` but **left two 2026-05-22 spec lines unimplemented on the frontend**:
 
-- **Spec §4 ("Source chip"), line 102:** *"Clicking the chip switches source explicitly."* — The chip was rendered as a non-interactive `<span>`.
-- **Spec §"Ribbon states (Grid cell)", row 3:** *"Gps + none usable → `CN87 · GPS no fix` (fallback to last grid) + obvious 'set manually'."* — No "set manually" affordance was ever added; the row-3 visual state is empty.
+- **2026-05-22 spec §4 ("Source chip"), line 102:** *"Clicking the chip switches source explicitly."* — `GridEdit.tsx` rendered the source chip when `source = Manual` as a non-interactive `<span>`.
+- **2026-05-22 spec §"Ribbon states", row 3:** *"Gps + none usable → `CN87 · GPS no fix` (fallback to last grid) + obvious 'set manually'."* — `GridEdit.tsx` never rendered the `Set manually` button; State 4 and State 5 visual states had no operator-actionable element.
 
-Without the chip-as-switcher and without the row-3 affordance, an operator who engaged Manual (intentionally or accidentally) and didn't have a live GPS fix had no in-UI way back to Gps mode. The conditional "● GPS ready — tap to switch" hint only renders when `source === 'Manual' && gpsReady` — gated on a gpsd fix, which operators without GPS hardware never see.
+Without the source-chip-as-button and without the `Set manually` button, an operator in State 1 (or State 2 with `gpsReady = true` but no actionable click) had no in-UI path back to `source = Gps`. The conditional "● GPS ready — tap to switch" button in pre-pjih `GridEdit.tsx` only rendered when `source === 'Manual' && gpsReady === true`, gated on a gpsd fix that operators without GPS hardware never see.
 
-PR #189 (pjih) attempted to fix this by deleting the Manual semantic entirely: `set_manual` no longer pinned source, the chip read a derived `effective_source` from arbiter state, and the Use-GPS button was removed as "structurally unreachable." That decision violated the design contract — and the operator hit the consequence on 2026-06-01:
+PR #189 (pjih) attempted to fix the operator-stuck-in-Manual situation by deleting the Manual semantic entirely: `arbiter.set_manual` no longer pinned `source`, the source chip in `GridEdit.tsx` read a derived `effective_source` from arbiter state, and the "GPS ready — tap to switch" button was removed as "structurally unreachable." The pjih decisions violated the 2026-05-22 source contract — and the operator hit the consequence on 2026-06-01:
 
 > "GPS is now fully broken. It doesn't switch to manual entry with 'gps available' it just says GPS green at all times and accepts/displays whatever input. That's major regression."
 
-The fix is to revert pjih and close the original spec-implementation gaps that triggered the original complaint pjih was over-reacting to.
+The position-subsystem restoration reverts pjih and closes the two 2026-05-22 spec-implementation gaps that triggered the original operator complaint that pjih over-fixed.
 
 ---
 
@@ -42,289 +91,312 @@ The fix is to revert pjih and close the original spec-implementation gaps that t
 
 In scope:
 
-- Revert PR #189's backend + frontend code.
-- Restore the 2026-05-22 source contract — see [§"The source contract"](2026-05-22-position-subsystem-design.md#the-source-contract).
-- Make the source chip clickable when source = `Manual` (close spec gap §4 line 102).
-- Add a "Set manually" affordance for the Gps + no-fix state (close spec gap row 3).
-- Spec amendment: relax `use_gps()` AND `position_set_source('Gps')` to succeed unconditionally.
+- Revert PR #189's backend + frontend code (precise list in [§3 backend changes](#3--backend-changes-revert-pjih--extend-the-relaxation-to-the-command-layer) + [§4 frontend changes](#4--frontend-changes-revert-pjih--source-chip-as-button--set-manually-button--optimistic-update)).
+- Restore the 2026-05-22 source contract — see [2026-05-22 spec §"The source contract"](2026-05-22-position-subsystem-design.md#the-source-contract).
+- Render the source chip as a `<button>` when `source = Manual` (close the 2026-05-22 spec §4 line 102 implementation gap).
+- Render the `Set manually` button in State 4 and State 5 (close the 2026-05-22 spec row 3 implementation gap).
+- Apply the `use_gps() + position_set_source('Gps')` relaxation.
 
 Out of scope (handled in separate tracks — but see [§8 Track B interactions](#8--track-b-interactions)):
 
 - Settings → GPS+Privacy panel cleanup (tuxlink-jmfm, Track B).
 - ARDOP panel widening (tuxlink-8rng, Track B).
-- Visual redesign of the chip beyond the actionable/status distinction below.
-- Any change to gpsd client or fix-quality gate.
+- Visual redesign of the source chip beyond the actionable/status distinction defined in [§2.1](#21--source-chip-dom-type-and-click-semantics-by-source-value).
+- Any change to the gpsd client or fix-quality gate.
 
 ---
 
-## §1 — Source contract (RESTORED + one amendment)
+## §1 — Source contract (RESTORED from the 2026-05-22 spec + the relaxation amendment)
 
-Restored verbatim from the 2026-05-22 spec ([§"The source contract"](2026-05-22-position-subsystem-design.md#the-source-contract)):
+The position-subsystem restoration restores verbatim from the 2026-05-22 spec ([§"The source contract"](2026-05-22-position-subsystem-design.md#the-source-contract)):
 
 | Rule | Behavior |
 |---|---|
 | Explicit source | `source ∈ {Manual, Gps}`. There is no implicit/auto source. |
-| Manual is sticky | Setting a grid by hand pins `source = Manual`. GPS **never** overrides a manual position. |
-| Operator-only switching | Returning to GPS is a deliberate act (the source chip), never automatic. |
-| Precision is source-independent | Broadcast precision is enforced on whatever source is active. |
-| Source is always visible | The ribbon labels the active source; a change is never invisible. |
+| Manual is sticky | `arbiter.set_manual(grid)` pins `source = Manual`. A GPS fix arriving while `source = Manual` updates `arbiter.last_fix` but does NOT update `arbiter.active_grid`. |
+| Operator-only switching | Returning to `source = Gps` is a deliberate operator act via clicking the source chip when `source = Manual` (never automatic). |
+| Precision is source-independent | `arbiter.broadcast_grid()` applies `position_precision` to whatever value `arbiter.active_grid()` returns — independent of which source produced the value. |
+| Source is always visible | The source chip in `GridEdit.tsx` always shows the current `source` value. A change to `source` is never invisible. |
 
-**Spec amendment (full disclosure of contract impact — R5 P0 #1):**
+### §1.1 — The `use_gps()` + `position_set_source('Gps')` relaxation
 
-The 2026-05-22 spec's `use_gps()` requires a usable recent fix. This makes the "Gps + no fix" state (row 3 of the spec table) unreachable from `Manual` for operators without GPS hardware — the root recoverability gap that motivated pjih.
+**The 2026-05-22 spec gap that motivates the relaxation amendment.** The 2026-05-22 spec's `arbiter.use_gps()` requires a usable recent fix:
 
-**v2 amendment**: BOTH `arbiter.use_gps()` AND its command-layer caller `position_set_source('Gps')` succeed unconditionally. They set `source = Gps`; if a fresh fix exists, the display upgrades to row 2 (`CN87` live + `GPS` chip); if not, the display renders row 3 (`CN87 · GPS no fix (fallback to last grid)` + "Set manually" affordance). The display's "fallback to last grid" is `arbiter.manual_grid` (the last hand-set grid); on-air follows the same value via `effective_broadcast_locator`'s existing else-branch.
+> *"`use_gps()` → switches source = Gps (requires a usable recent fix; otherwise reports 'no fix' and leaves the prior position visible)."*
 
-**What changes in the contract (full extent — not "one line"):**
-- `use_gps()` signature changes from `Result<(), &'static str>` to `()` (infallible).
-- `position_set_source('Gps')` command: removes the `arbiter.has_fresh_fix()` pre-check + the `UiError::Unavailable { reason: "Cannot switch to GPS: no usable GPS fix" }` error path.
-- The `Gps + no fix + manual_grid set` state — previously only reachable as an initial-state quirk — becomes a stable operator-driven destination that broadcasts the manual_grid through the GPS path. The chip says GPS (operator preference); the on-air locator is `manual_grid` (fallback per spec row 3). See [§2.5 Broadcasting in the Gps + no-fix state](#25--broadcasting-in-the-gps--no-fix-state-clarity-not-contract-violation) for the clarity treatment.
+The strict 2026-05-22 `arbiter.use_gps()` makes State 4 and State 5 unreachable from State 1 for operators without GPS hardware. The strict 2026-05-22 `arbiter.use_gps()` is the root recoverability gap that motivated pjih.
 
-**What does NOT change:**
-- Sticky-Manual semantics (set_manual still pins Manual; GPS never overrides).
-- Privacy gate (`effective_broadcast_locator` keys on `a.source()` as before).
-- gpsd client (fix-quality gate, staleness, reconnect backoff — all unchanged).
-- Initial source default = `Gps` (per "GPS by default" memory + 2026-05-22 spec).
+**The relaxation amendment, full extent.** BOTH symbols below lose their `has_fresh_fix` gate:
 
----
+- `arbiter.use_gps()` — signature changes from `Result<(), &'static str>` to `()` (infallible). Sets `source = Gps` unconditionally.
+- `position_set_source('Gps')` command — removes the `arbiter.has_fresh_fix()` pre-check + the `UiError::Unavailable { reason: "Cannot switch to GPS: no usable GPS fix" }` error path. The `position_set_source('Gps')` command still persists `cfg.privacy.position_source = Gps` before mutating the arbiter, per the existing persist-first ordering in `src-tauri/src/ui_commands.rs`.
 
-## §1.5 — Why (a) "relaxed `use_gps`" over (b) "Clear Manual pin" or (c) "confirm-then-switch"
+**What the relaxation amendment changes:** the State 4 / State 5 state — previously only reachable as an initial-state quirk under the 2026-05-22 spec — becomes a stable operator-driven destination reachable from State 1 by clicking the source chip when `source = Manual`. The source chip when `source = Gps` shows GPS (operator preference). The on-air locator is `arbiter.manual_grid` (the State 4 fallback per the 2026-05-22 spec row 3). See [§2.5 Broadcasting in State 4 and State 5](#25--broadcasting-in-state-4-and-state-5-clarity-not-divergence) for the State 4 broadcast-clarity treatment.
 
-R5 P0 #2 caught that v1 picked the relaxation without comparing alternatives. Three were on the table:
+**What the relaxation amendment does NOT change:**
+- Sticky-Manual semantics — `arbiter.set_manual` still pins `source = Manual`; a GPS fix arriving never overrides `source = Manual`.
+- The privacy gate in `effective_broadcast_locator` — keys on `arbiter.source()` (the stored preference), as before.
+- The gpsd client (fix-quality gate, staleness window, reconnect backoff) — unchanged.
+- The initial `source` default value (`Gps`) — per the [`project_gps_precision_reduction.md`](../../../...) memory + 2026-05-22 spec.
+
+### §1.2 — Why the `use_gps()` relaxation over "Clear Manual pin" or "confirm-then-switch"
+
+R5 P0 #2 caught that the position-subsystem restoration v1 picked the `use_gps()` relaxation without comparing alternatives. Three mechanisms were on the table:
 
 | Mechanism | Pros | Cons | Decision |
 |---|---|---|---|
-| **(a) Relax `use_gps()` + `position_set_source('Gps')`** | Smallest delta from 2026-05-22 spec. Chip remains the single switch surface. No new UI elements. Matches operator's "original spec but not broken" framing. | Contract amendment is broader than initial framing (Codex P0 #1, R5 P0 #1) — both arbiter primitive AND command must change. Row-3 "no fix + broadcasting fallback" requires UX clarity treatment. | **CHOSEN.** |
-| (b) Dedicated "Clear Manual pin" affordance | No spec contract amendment. `use_gps()` semantic preserved as-written. Each UI element does exactly one thing. | New UI surface (a second button beside the chip) — adds visual weight to the ribbon's Grid cell. Operator must learn the new affordance. Two paths from Manual (chip vs. button) creates UX ambiguity about which is canonical. | Rejected: adds UI noise without solving the case where source-switch needs to land WITHOUT fresh fix. |
-| (c) Two-stage confirm-then-switch on chip click | Prevents accidental source switches. | Operator has previously flagged confirmation modals as ceremony ([memory: `feedback_radio1_governs_tx_not_ui.md`](../../../...)). Adds friction without addressing the root recoverability issue. | Rejected: friction without solving the gap. |
-
-Operator confirmed (a) 2026-06-01.
+| **The `use_gps() + position_set_source('Gps')` relaxation** | Smallest delta from the 2026-05-22 spec. The source chip when `source = Manual` remains the single switch surface. No new UI elements. Matches the operator's "original spec but not broken" framing. | Two named backend symbols change, not "one amendment" — see [§1.1](#11--the-use_gps--position_set_source-gps-relaxation) for the full extent. State 4 requires the "broadcasting fallback" status text — see [§2.5](#25--broadcasting-in-state-4-and-state-5-clarity-not-divergence). | **CHOSEN by operator 2026-06-01.** |
+| Dedicated "Clear Manual pin" button beside the source chip | No 2026-05-22 spec contract amendment. The `arbiter.use_gps()` semantic preserved as-written. Each UI element does exactly one thing. | New UI surface (a second button beside the source chip) adds visual weight to the ribbon Grid cell. Operator must learn the new button. Two paths from State 1 (clicking the source chip vs clicking the new Clear-Manual-pin button) create UX ambiguity about which path is canonical. | Rejected by operator: introduces UI noise without solving the case where a source switch must land WITHOUT a fresh fix. |
+| Two-stage confirm-then-switch on source-chip click | Prevents accidental source switches. | Operator has previously flagged confirmation modals as ceremony (`feedback_radio1_governs_tx_not_ui` memory). Adds friction without addressing the root recoverability gap. | Rejected by operator: friction without solving the gap. |
 
 ---
 
-## §2 — UI surface (chip clickable + row-3 affordance + State-1/4 differentiation)
+## §2 — UI surface (source chip clickable + `Set manually` button + State 1 vs State 4 differentiation)
 
-### §2.1 — Chip-click semantics + element choice (Codex #2 + R2 #1 + R5 #3)
+### §2.1 — Source chip DOM type and click semantics by `source` value
 
-Strong convergence across three rounds (Codex, R2, R5) that "an enabled `<button>` that intentionally does nothing" is a UX failure mode. v2 design:
+Strong convergence across three adrev rounds (Codex R1 #2, R2 #1, R5 #3) that an enabled `<button>` rendering of the source chip when `source = Gps` that intentionally does nothing on click is a UX failure. The restoration design:
 
-| Source | Element | Interaction |
+| `source` value | DOM type for the source chip | Click handler |
 |---|---|---|
-| `Manual` | `<button>` | `onClick` = call `position_set_source('Gps')`. The chip is the single explicit switch surface. |
-| `Gps` | `<span role="status">` (no role="button") | Status-only. Not focusable. No click handler. Switching INTO Manual is via the grid-value inline-edit (per 2026-05-22 spec). |
+| `Manual` | `<button>` with `aria-label="Switch position source to GPS"` | Calls `position_set_source({ source: 'Gps' })` (now infallible per [§1.1 the relaxation](#11--the-use_gps--position_set_source-gps-relaxation)). The source chip when `source = Manual` is the single explicit switch surface. |
+| `Gps` | `<span role="status">` (NOT `<button>`, NOT focusable, NOT `aria-disabled` either) | None. Status-only. Switching INTO `source = Manual` is via the grid value's inline-edit (per the 2026-05-22 spec). |
 
-Rationale: the chip's purpose is OPERATOR ACTION. When the operator is already in Gps mode, the chip has nothing to do for them (Manual is reached via grid-edit). A button that doesn't react fails the principle of least astonishment.
+Rationale for the source chip when `source = Gps` rendering as `<span role="status">`: the source chip's PURPOSE in the ribbon is operator action. When the operator is already in `source = Gps`, the source chip has no operator action available (entering `source = Manual` is via the grid value inline-edit). A `<button>` that doesn't react fails the principle of least astonishment.
 
-This also makes the chip visually distinct between actionable (Manual) and status (Gps), which reinforces the operator's available action without text.
+The actionable/status distinction also makes the source chip visually different between `source = Manual` (raised, button-shaped) and `source = Gps` (flat, span-shaped) — reinforces operator-available action without text.
 
-### §2.2 — Chip + Use-GPS button redundancy (R2 #2)
+### §2.2 — Source chip and GPS-ready status redundancy in State 2
 
-When `source === 'Manual' && gpsReady`, both the (newly-clickable) chip AND the "● GPS ready — tap to switch" button are clickable. v2 changes the hint button into a passive status text:
-
-```
-[ MANUAL ] · GPS ready                ← passive text, not a button
-```
-
-The chip remains the single click surface. The hint provides contextual information ("a fix is available"); it doesn't duplicate the action.
-
-### §2.3 — "Set manually" affordance for row 3 (Codex #6 + R2 #3)
-
-For the `Gps + no-fix` state (spec row 3 — now reachable per §1 amendment):
+In pre-pjih `GridEdit.tsx`, when `source === 'Manual' && gpsReady === true` (State 2), BOTH the source chip when `source = Manual` AND the "● GPS ready — tap to switch" `<button>` were clickable. The restoration design changes the "GPS ready" element from a `<button>` into passive `<span>` status text:
 
 ```
-[ Grid ]  CN87 · GPS no fix   [ ▸ Set manually ]
-   ^                              ^
-   fallback grid                  button — focuses grid input
+[ MANUAL ] · GPS ready                ← passive <span>, NOT <button>
 ```
 
-Spec line per Codex #6:
-- `Set manually` is a `<button>` rendered AFTER the source chip in DOM/tab order.
-- Visual cue: small right-arrow `▸` icon to convey the focus-jump.
-- ARIA: `aria-controls={gridInputId}` — programmatically associates the button with the input it activates.
-- Enter/Space invokes the same inline-edit path as clicking the grid value.
-- The newly-mounted grid input receives focus on mount (R2 #3 + Codex #6 explicit).
-- Strengthen the vitest from "enters edit mode" to assert `document.activeElement === grid-input`.
+The source chip when `source = Manual` remains the single click surface in State 2. The GPS-ready status text provides contextual information ("a fresh fix is currently available") without duplicating the click action.
 
-### §2.4 — State 1 vs State 4 visual differentiation (R2 #4 — CRITICAL)
+### §2.3 — `Set manually` button (State 4 and State 5)
 
-R2 #4 identifies the failure mode pjih literally shipped: at first glance, State 1 (Manual + no GPS) and State 4 (Gps + no fix) can look identical — same grid value, same chip-shape, same surrounding chrome. The operator can't tell at a glance whether they're broadcasting their manual entry as Manual or as a Gps fallback.
+For State 4 and State 5 (`source = Gps && no fresh fix`, now reachable per [§1.1 the relaxation](#11--the-use_gps--position_set_source-gps-relaxation)), the restoration design renders a `<button>` labeled `Set manually`:
 
-v2 differentiation:
+```
+[ Grid cell ]  · CN87   [ GPS dimmed ]   GPS no fix · broadcasting fallback   [ ▸ Set manually ]
+                ^                                                                  ^
+                grid value (fallback from manual_grid)                             Set manually button (focuses grid input on click)
+```
 
-| State | Chip color | Grid prefix | Status text |
+Spec for the `Set manually` button:
+
+- DOM: `<button aria-controls={gridInputId}>▸ Set manually</button>` — `aria-controls` programmatically associates the `Set manually` button with the grid input that the `Set manually` button activates.
+- Visual cue: small right-arrow `▸` icon to convey the focus-jump action.
+- Tab order: source chip → `Set manually` button → grid value.
+- Enter/Space invokes the same inline-edit path as clicking the grid value (calls the same `enterEdit()` handler in `GridEdit.tsx`).
+- The newly-mounted grid input receives focus on mount (R2 #3 + Codex P2 #6 explicit).
+- The vitest assertion for the `Set manually` button asserts `document.activeElement === gridInput` after clicking the `Set manually` button (not just "enters edit mode").
+
+### §2.4 — State 1 vs State 4 visual differentiation (R2 #4 — the failure mode pjih shipped)
+
+R2 #4 identifies the UX failure mode that pjih literally shipped: at first glance, State 1 (`source = Manual` + no GPS) and State 4 (`source = Gps + no fresh fix + manual_grid set`) can look identical — same grid value, same chip shape, same surrounding ribbon chrome. The operator cannot tell at a glance whether the operator is broadcasting the manual_grid as a Manual pin or as a Gps fallback.
+
+The State 1 vs State 4 differentiation matrix:
+
+| State label | Source chip color + shape | Grid value prefix | Status text beside the source chip |
 |---|---|---|---|
-| 1. Manual + no GPS | amber `MANUAL` (saturated) | (none) | (none) |
-| 2. Manual + GPS-ready | amber `MANUAL` + green dot | (none) | "GPS ready" (passive text) |
-| 3. Gps + fresh fix | green `GPS` (locked) | (none) | (none) |
-| 4. Gps + no fix | dimmed `GPS` outline | `· ` interpunct prefix | "GPS no fix" |
+| State 1 (`source = Manual` + no GPS) | Amber `MANUAL`, button-shaped, saturated | (none) | (none) |
+| State 2 (`source = Manual` + fresh fix) | Amber `MANUAL`, button-shaped, saturated, with a small green dot | (none) | "GPS ready" (passive `<span>`) |
+| State 3 (`source = Gps` + fresh fix) | Green `GPS`, span-shaped, locked | (none) | (none) |
+| State 4 (`source = Gps` + no fresh fix + manual_grid set) | Green `GPS`, span-shaped, DIMMED | `· ` interpunct prefix on the grid value | "GPS no fix · broadcasting fallback" (passive `<span>`) |
+| State 5 (`source = Gps` + no fresh fix + manual_grid = None) | Green `GPS`, span-shaped, DIMMED | (none — grid value is `—` em-dash) | "GPS no fix" (passive `<span>`) |
+| State 6 (`source = Manual` + manual_grid = None) | Amber `MANUAL`, button-shaped, saturated | (none — grid value is `—` em-dash) | (none) |
 
-The grid-value prefix `· ` + dimmed chip + status text make State 4 visually distinct from State 1 at any zoom level. Per the 2026-05-22 spec's row 3 wording ("`CN87 · GPS no fix`"), the interpunct is part of the canonical display.
+The interpunct prefix (`· `), the dimmed chip styling, and the status text together make State 4 visually distinct from State 1. The 2026-05-22 spec row 3 wording (`CN87 · GPS no fix`) defines the interpunct as part of the canonical State 4 + State 5 grid-value display.
 
-### §2.5 — Broadcasting in the Gps + no-fix state (clarity, not contract violation)
+### §2.5 — Broadcasting in State 4 and State 5 (clarity, not divergence)
 
-R3 F2 P0 flagged a perceived display/on-air divergence: chip says GPS, on-air is manual_grid via the GPS path. After re-tracing the 2026-05-22 spec, this is consistent with operator intent (operator preference = Gps; manual_grid is the spec-defined fallback for on-air), but needs explicit clarity in the UI and the spec:
+R3 F2 P0 flagged a perceived display-vs-on-air divergence in State 4: the source chip says GPS, while the on-air locator is `manual_grid` via the `effective_broadcast_locator` else-branch. After re-tracing the 2026-05-22 spec, the State 4 behavior is consistent with operator intent (operator preference = `Gps`; `manual_grid` is the spec-defined fallback for both display and on-air per the 2026-05-22 spec row 3). The State 4 behavior needs explicit clarity in the UI and the spec, NOT a semantic change.
 
-**Spec text (added):** When `source = Gps && no fresh fix && manual_grid is set`:
-- Display: row 3 (`CN87 · GPS no fix` + chip dimmed + Set manually affordance).
-- On-air: `manual_grid` (precision-reduced) — broadcast via `effective_broadcast_locator`'s else-branch — same as the displayed value.
-- These are NOT divergent — they're the same `manual_grid` value displayed two ways. The chip reflects OPERATOR PREFERENCE (Gps); the value reflects WHAT IS BROADCAST (the fallback per spec row 3).
+**Spec text (added).** When `source = Gps && no fresh fix && manual_grid is set` (State 4):
 
-**UI text (added):** the row-3 status text says `"GPS no fix · broadcasting fallback"` rather than just `"GPS no fix"`. The "broadcasting fallback" suffix explicitly tells the operator that the displayed grid IS the on-air locator (not zero / not nothing).
+- The grid value displayed in the ribbon = `manual_grid` (precision-reduced).
+- The on-air locator (`effective_broadcast_locator(cfg, &arbiter)`) = `manual_grid` (precision-reduced) — via the `effective_broadcast_locator` else-branch — same value.
+- The displayed grid value and the on-air locator are NOT divergent — both are the same `manual_grid` value. The source chip when `source = Gps` reflects OPERATOR PREFERENCE (`Gps`); the grid value reflects WHAT IS BROADCAST (`manual_grid`, the State 4 fallback per the 2026-05-22 spec row 3).
 
-### §2.6 — ASCII state mockups (refined)
+**UI text (added).** The State 4 status text reads `"GPS no fix · broadcasting fallback"` rather than `"GPS no fix"`. The "broadcasting fallback" suffix explicitly tells the operator that the displayed grid value IS the on-air locator (not zero / not nothing / not the pre-fix value).
 
-State 1 — `source = Manual`, no fresh fix:
+### §2.6 — ASCII state mockups (the six states)
+
+State 1 — `source = Manual` && no fresh fix:
 ```
 ┌───────────────────────────────────────────────┐
 │ Grid │  CN87   ┌──────┐                       │
-│      │         │MANUAL│ ← amber, clickable    │
-│      │         └──────┘   (→ position_set_source('Gps')) │
+│      │         │MANUAL│ ← <button>, amber     │
+│      │         └──────┘   (click → position_set_source('Gps')) │
 └───────────────────────────────────────────────┘
 ```
 
-State 2 — `source = Manual`, fresh fix exists:
+State 2 — `source = Manual` && fresh fix exists:
 ```
 ┌──────────────────────────────────────────────────────┐
 │ Grid │  CN87   ┌──────┐  ● GPS ready                  │
-│      │         │MANUAL│   (passive text — NOT button) │
+│      │         │MANUAL│   (passive <span>, NOT button) │
 │      │         └──────┘                               │
 └──────────────────────────────────────────────────────┘
 ```
 
-State 3 — `source = Gps`, fresh fix:
+State 3 — `source = Gps` && fresh fix:
 ```
 ┌─────────────────────────────────────────────┐
 │ Grid │  DM33   ┌──────┐                     │
-│      │         │ GPS  │ ← green-locked      │
-│      │         └──────┘   (span, status)    │
+│      │         │ GPS  │ ← <span role=status>│
+│      │         └──────┘   green, locked     │
 └─────────────────────────────────────────────┘
 ```
 
-State 4 — `source = Gps`, no fresh fix (spec row 3, now reachable):
+State 4 — `source = Gps` && no fresh fix && manual_grid set:
 ```
 ┌──────────────────────────────────────────────────────────────────┐
 │ Grid │  · CN87  ┌──────┐  GPS no fix · broadcasting fallback     │
 │      │  ^       │ GPS  │  [ ▸ Set manually ]                      │
-│      │  interpunct (dimmed)                                       │
+│      │  interpunct (chip dimmed)                                  │
 └──────────────────────────────────────────────────────────────────┘
+```
+
+State 5 — `source = Gps` && no fresh fix && manual_grid = None:
+```
+┌──────────────────────────────────────────────────────┐
+│ Grid │  —      ┌──────┐  GPS no fix                  │
+│      │  em-dash│ GPS  │  [ ▸ Set manually ]           │
+│      │         └──────┘   (chip dimmed)               │
+└──────────────────────────────────────────────────────┘
+```
+
+State 6 — `source = Manual` && manual_grid = None:
+```
+┌─────────────────────────────────────────────┐
+│ Grid │  —      ┌──────┐                     │
+│      │  em-dash│MANUAL│ ← <button>, amber   │
+│      │         └──────┘                     │
+└─────────────────────────────────────────────┘
 ```
 
 ---
 
 ## §3 — Backend changes (revert pjih + extend the relaxation to the command layer)
 
-### §3.1 — Revert table
+### §3.1 — Backend revert + relaxation table
 
-| Symbol | Pre-pjih state | pjih state (current `main`) | v2 restoration |
+| Backend symbol | Pre-pjih state | pjih state (current `main`) | Restoration target |
 |---|---|---|---|
-| `arbiter.active_grid` | `Manual → manual_grid`; `Gps → fresh fix else manual_grid fallback` | GPS-fresh always wins regardless of source | Restore source-gated behavior |
-| `arbiter.set_manual` | Pins `source = Manual` | No source change | Restore source-pinning |
-| `arbiter.effective_source` | (did not exist) | Returns `Gps` when fresh fix exists | **Remove entirely** |
-| `arbiter.use_gps` | Required fresh fix | Required fresh fix | **Relax: infallible** (see §1 amendment); signature → `()` not `Result<(), _>` |
-| `position_set_source('Gps')` command | Required fresh fix (`UiError::Unavailable`) | Same (pjih didn't touch this command) | **Relax: remove the `has_fresh_fix` pre-check + error path** (Codex P0 #1) |
-| `config_set_grid` command | Persisted `cfg.privacy.position_source = Manual` | Does not touch `position_source` | Restore the persistence |
-| `PositionStatusDto` | `{ gps_ready, broadcast_grid }` | `{ gps_ready, broadcast_grid, active_source }` | **Remove `active_source`** |
-| `position_status` command | (matches DTO above) | Populates `active_source` from `arbiter.effective_source()` | Drop the `active_source` population |
+| `arbiter.active_grid()` | `Manual → manual_grid`; `Gps + fresh fix → fix.grid`; `Gps + no fix → manual_grid fallback` | GPS-fresh always wins regardless of `source` | Restore the pre-pjih source-gated behavior. |
+| `arbiter.set_manual(grid)` | Pins `source = Manual` AND updates `manual_grid` | Updates only `manual_grid`; does not touch `source` | Restore the source-pinning. |
+| `arbiter.effective_source()` | Did not exist | Returns `Gps` when fresh fix exists, else `Manual` | Remove entirely. |
+| `arbiter.use_gps()` | Required `has_fresh_fix`; signature `Result<(), &'static str>` | Same as pre-pjih | Relax: signature `()` (infallible); always sets `source = Gps`. See [§1.1 the relaxation](#11--the-use_gps--position_set_source-gps-relaxation). |
+| `position_set_source('Gps')` command | Pre-checked `has_fresh_fix` and returned `UiError::Unavailable` on miss | Same as pre-pjih (pjih did not touch the `position_set_source` command) | Relax: remove the `has_fresh_fix` pre-check + the `UiError::Unavailable` error path. See [§1.1 the relaxation](#11--the-use_gps--position_set_source-gps-relaxation). |
+| `config_set_grid(grid)` command | Persisted `cfg.privacy.position_source = Manual` AND called `arbiter.set_manual` | Updates `cfg.identity.grid` only; does not persist `cfg.privacy.position_source`; calls `arbiter.set_manual` (which under pjih does not touch `source`) | Restore the `cfg.privacy.position_source = Manual` persistence + restore the source-pinning side effect via the restored `arbiter.set_manual`. |
+| `PositionStatusDto` struct | `{ gps_ready, broadcast_grid }` | `{ gps_ready, broadcast_grid, active_source }` | Remove the `active_source` field. |
+| `position_status` command | Populates `gps_ready` from `arbiter.has_fresh_fix()` + `broadcast_grid` from `effective_broadcast_locator` | Same + populates `active_source` from `arbiter.effective_source()` | Drop the `active_source` population. |
 
-### §3.2 — Keep as-is (no change from current `main`)
+### §3.2 — Backend keep-as-is (no change from current `main`)
 
-- `effective_broadcast_locator` already keys the privacy gate on `a.source()` (the stored preference). That's correct post-restore. No change.
-- All gpsd-client code (`crate::position::gpsd`) — unaffected.
-- Precision-reduction helper (`broadcast_grid` in `config.rs`) — unaffected.
+- `effective_broadcast_locator(cfg, arbiter)` in `src-tauri/src/position/mod.rs` — already keys the privacy gate on `arbiter.source()` (the stored preference). The current `main` behavior is correct post-restore. No change.
+- All gpsd-client code in `src-tauri/src/position/gpsd.rs` — unaffected.
+- The precision-reduction helper `broadcast_grid()` in `src-tauri/src/config.rs` — unaffected.
 
-### §3.3 — Concurrency invariants (R3 F1 + R3 F7)
+### §3.3 — Concurrency invariants for `config_set_grid` and `position_set_source` (R3 F1 + R3 F7)
 
-R3 caught that `config_set_grid` and `position_set_source` are non-atomic three-step sequences (read config → write file → mutate arbiter → push to backend). Without an explicit invariant, rapid-fire chip-clicks + inline-edits can leave disk / arbiter / backend snapshots disagreeing.
+R3 caught that the `config_set_grid` command and the `position_set_source` command are each non-atomic three-step sequences (read config → write config file atomically → mutate the arbiter → push the new config to the live backend). Without an explicit concurrency invariant, rapid-fire operator actions (chip-click + grid inline-edit + chip-click + grid inline-edit) can leave the on-disk config, the arbiter, and the live-backend snapshot disagreeing.
 
-**Invariant (added to spec):** Both `config_set_grid` and `position_set_source` MUST hold the arbiter's `inner` mutex from "read config" through "mutate arbiter" (i.e., for the entire critical section). The mutex is dropped only after the in-memory arbiter has been updated. The "push to live backend" step occurs after the mutex is released (the backend's own snapshot is eventually-consistent with the arbiter — that's pre-existing behavior).
+**Invariant added in this restoration spec:** the `config_set_grid` command and the `position_set_source` command MUST each hold the arbiter's `inner` mutex from "read config" through "mutate the arbiter" — i.e., for the entire critical section. The arbiter `inner` mutex is dropped only after the in-memory arbiter has been updated. The "push the new config to the live backend" step occurs after the arbiter `inner` mutex is released (the live backend's own config snapshot is eventually-consistent with the arbiter — pre-existing behavior).
 
-**Implementation note:** the arbiter's `Mutex<Inner>` is the natural serialization point. Both commands clone the `Arc<PositionArbiter>` and call methods that lock-and-update atomically. The `config::read_config` + `write_config_atomic` calls happen INSIDE the locked region (not outside) to close the TOCTOU.
+**Implementation note:** the arbiter's `Mutex<Inner>` is the natural serialization point. The `config_set_grid` command and the `position_set_source` command each clone the `Arc<PositionArbiter>` and call methods that lock-and-update atomically. The `config::read_config()` and `config::write_config_atomic()` calls happen INSIDE the locked region (not outside) to close the TOCTOU between "read" and "mutate."
 
-**Test:** a new backend test `concurrent_config_set_grid_and_position_set_source_serialize` issues 100 concurrent calls of both commands from different tokio tasks; asserts the final arbiter state is consistent with the LAST committed write (per Mutex ordering); asserts no panic, no poisoned mutex.
+**Test (new):** `concurrent_config_set_grid_and_position_set_source_serialize` — spawns 100 concurrent tokio tasks alternating the `config_set_grid` command and the `position_set_source` command from different sources. Asserts that the final arbiter state is consistent with the LAST committed write per Mutex ordering; asserts no panic and no poisoned Mutex.
 
-### §3.4 — State-space invariants (R3 F4)
+### §3.4 — State-space invariants (R3 F4 — all 36 cells of `source × fix_state × gps_state × manual_grid_set`)
 
-R3 walked all 36 cells of `source × fix_state × gps_state × manual_grid_set`. 6 cells were undefined under v1. v2 invariants:
+R3 walked all 36 cells of the state space `source × fix_state × gps_state × manual_grid_set`. 6 cells were undefined under the position-subsystem restoration v1. The position-subsystem restoration v3 invariants:
 
 | Invariant | Behavior |
 |---|---|
-| **I1** | When `source = Manual && manual_grid = None`: `active_grid = None`; display shows `—` (em-dash placeholder); chip = MANUAL (still actionable to switch to Gps); on-air = `effective_broadcast_locator` falls back to `config.identity.grid` (may be None → empty on-air). |
-| **I2** | When `source = Manual` (any `fix_state`, any `gps_state`, `manual_grid` set): `active_grid = manual_grid`. The Manual chip's sticky-against-GPS property holds across ALL gps_state values — privacy doesn't change source semantics. |
-| **I3** | When `source = Gps && fix fresh`: `active_grid = fix.grid`; on-air respects gps_state per existing privacy gate. |
-| **I4** | When `source = Gps && no fresh fix && manual_grid set`: `active_grid = manual_grid` (fallback per spec row 3). Display = row 3; on-air = `manual_grid` (precision-reduced) per spec row 3 ("broadcasting fallback"). |
-| **I5** | When `source = Gps && no fresh fix && manual_grid = None`: `active_grid = None`; display = "no grid" (em-dash); on-air = falls back to `config.identity.grid` (which should be in sync with manual_grid via the existing config-set path; if it isn't, on-air may be empty — this is a config-file integrity assumption, not a runtime fail). |
-| **I6** | `manual_grid` and `config.identity.grid` are synchronized by `config_set_grid` (writes both atomically). The arbiter's `new()` reads the initial `manual_grid` from `config.identity.grid`. No code path mutates one without the other except gpsd fix arrival (which only writes `last_fix`, never `manual_grid`). |
+| **I1** | When `source = Manual && manual_grid = None` (State 6): `arbiter.active_grid()` returns `None`; the grid value displayed in `GridEdit.tsx` is `—` (em-dash placeholder); the source chip when `source = Manual` remains a `<button>` (still actionable to switch to `source = Gps`); the on-air locator from `effective_broadcast_locator` falls back to `config.identity.grid` (may be `None` → empty on-air string). |
+| **I2** | When `source = Manual` (any `fix_state`, any `gps_state`, `manual_grid` set — i.e., State 1 or State 2): `arbiter.active_grid()` returns `manual_grid`. The sticky-Manual property holds across ALL `gps_state` values — privacy semantics do not change source semantics. |
+| **I3** | When `source = Gps && fresh fix` (State 3): `arbiter.active_grid()` returns `fix.grid`; the on-air locator from `effective_broadcast_locator` respects `gps_state` per the existing privacy gate. |
+| **I4** | When `source = Gps && no fresh fix && manual_grid set` (State 4): `arbiter.active_grid()` returns `manual_grid` (fallback per the 2026-05-22 spec row 3). The grid value displayed in State 4 = `manual_grid`; the on-air locator from `effective_broadcast_locator` = `manual_grid` (precision-reduced) per the 2026-05-22 spec row 3 — see [§2.5](#25--broadcasting-in-state-4-and-state-5-clarity-not-divergence). |
+| **I5** | When `source = Gps && no fresh fix && manual_grid = None` (State 5): `arbiter.active_grid()` returns `None`; the grid value displayed in State 5 = `—` (em-dash); the on-air locator from `effective_broadcast_locator` falls back to `config.identity.grid` (which under the I6 invariant is synchronized with `manual_grid`; if `manual_grid` is `None`, `config.identity.grid` is also `None`; the on-air string is empty — this is a config-file integrity assumption, not a runtime failure). |
+| **I6** | `arbiter.manual_grid` and `config.identity.grid` are synchronized by the `config_set_grid` command (which writes both atomically). The `arbiter.new()` constructor reads the initial `manual_grid` from `config.identity.grid`. No code path mutates one without the other except gpsd fix arrival (which writes only `arbiter.last_fix`, never `arbiter.manual_grid`). |
 
-Tests for invariants: see §6 ("Test plan") for the matrix.
+Tests for the I1–I6 invariants: see [§6.1](#61--backend-tests-cargo---lib) for the state-space matrix test.
 
 ---
 
-## §4 — Frontend changes (revert pjih + chip-as-button + row-3 affordance + optimistic update)
+## §4 — Frontend changes (revert pjih + source chip as button + `Set manually` button + optimistic update)
 
-### §4.1 — Revert table
+### §4.1 — Frontend revert table
 
-| Surface | pjih state (current `main`) | v2 restoration |
+| Frontend surface | pjih state (current `main`) | Restoration target |
 |---|---|---|
-| `DashboardRibbon.tsx` | `<GridEdit ... onCommit={...} />` — no `onUseGps` prop | Restore `onUseGps={() => invoke('position_set_source', { source: 'Gps' })}` |
-| `GridEdit.tsx` props | No `onUseGps` | Restore `onUseGps: () => void` in `GridEditProps` |
-| `GridEdit.tsx` Use-GPS button | Removed entirely | NOT restored as a button — replaced with passive "GPS ready" status text (R2 #2) |
-| `useStatus.ts` `PositionStatusDto` | `{ gps_ready, broadcast_grid, active_source }` | Remove `active_source` field |
-| `useStatus.ts` `useStatusData` | `position_source: positionStatus?.active_source ?? config?.position_source ?? 'Gps'` | Restore `position_source: config?.position_source ?? 'Gps'` |
+| `DashboardRibbon.tsx` GridEdit invocation | `<GridEdit ... onCommit={...} />` — no `onUseGps` prop passed | Restore `onUseGps={() => invoke('position_set_source', { source: 'Gps' })}` on the GridEdit invocation. |
+| `GridEdit.tsx` `GridEditProps` interface | No `onUseGps` member | Restore `onUseGps: () => void` member in `GridEditProps`. |
+| `GridEdit.tsx` `<button data-testid="use-gps">` element | Removed entirely | NOT restored as a `<button>` — replaced with a passive `<span>` showing "GPS ready" status text in State 2 (see [§2.2](#22--source-chip-and-gps-ready-status-redundancy-in-state-2)). |
+| `useStatus.ts` `PositionStatusDto` interface | `{ gps_ready, broadcast_grid, active_source }` | Remove the `active_source` member. |
+| `useStatus.ts` `useStatusData` hook | `position_source: positionStatus?.active_source ?? config?.position_source ?? 'Gps'` | Restore `position_source: config?.position_source ?? 'Gps'`. |
 
-### §4.2 — Chip-as-button + row-3 affordance + GPS-ready passive text
+### §4.2 — Source chip as button + GPS-ready as passive span + `Set manually` button
 
-Per §2.1:
-- Source chip when `source === 'Manual'`: `<button onClick={onUseGps}>` with `aria-label="Switch position source to GPS"`.
+Per [§2.1](#21--source-chip-dom-type-and-click-semantics-by-source-value):
+- Source chip when `source === 'Manual'`: `<button onClick={onUseGps}>` with `aria-label="Switch position source to GPS"` in `GridEdit.tsx`.
 - Source chip when `source === 'Gps'`: `<span role="status" aria-label={...}>` — non-interactive, non-focusable.
-- Existing "● GPS ready — tap to switch" button is REPLACED by `<span className="dash-gps-ready-status">GPS ready</span>` — passive text only.
+- The pre-pjih `<button data-testid="use-gps">` element in `GridEdit.tsx` is REPLACED by `<span className="dash-gps-ready-status">GPS ready</span>` — passive text only, rendered when `source === 'Manual' && gpsReady === true` (State 2).
 
-Per §2.3:
-- Row-3 affordance: `<button aria-controls={gridInputId} onClick={enterEdit}>▸ Set manually</button>` rendered when `source === 'Gps' && !gpsReady`. Tab order: chip → set-manually → grid value. On click, `enterEdit()` is called and the grid input receives focus on mount.
+Per [§2.3](#23--set-manually-button-state-4-and-state-5):
+- The `Set manually` button: `<button aria-controls={gridInputId} onClick={enterEdit}>▸ Set manually</button>` rendered when `source === 'Gps' && !gpsReady` (State 4 or State 5). Tab order: source chip → `Set manually` button → grid value. On clicking the `Set manually` button, `GridEdit.tsx`'s `enterEdit()` handler runs and the newly-mounted grid input receives focus.
 
-### §4.3 — Optimistic update after writes (Codex P1 #4)
+### §4.3 — Optimistic update after `config_set_grid` and `position_set_source` (Codex P1 #4)
 
-Dropping `active_source` from `PositionStatusDto` means the chip's source state comes from `config_read` (5s poll). Without an optimistic update, the chip lags 0-5s behind the operator's click.
+Dropping `active_source` from `PositionStatusDto` means the source chip's `source` value comes from `useStatusData`'s `config_read` poll (5-second interval). Without an optimistic update, the source chip lags 0–5 seconds behind a successful operator action that changes `source`.
 
-**Add to frontend:**
-- After successful `config_set_grid` invoke: call `queryClient.invalidateQueries(['config'])` (or equivalent) to force an immediate config_read refresh. The chip should reflect `source = Manual` within one render cycle.
-- After successful `position_set_source('Gps')` invoke: same — force config_read refresh.
+**Optimistic-update spec for `GridEdit.tsx` + `DashboardRibbon.tsx`:**
 
-**Alternative considered + rejected:** local optimistic state on the chip (`useState` + sync from config_read). Rejected because two sources of truth for source state risk divergence on error paths (e.g., backend write fails, optimistic state stays Manual, config still says Gps).
+- After the `invoke('config_set_grid', ...)` call resolves successfully: call `queryClient.invalidateQueries(['config'])` to force an immediate `config_read` refresh. The source chip's `source` value reflects `Manual` within one React render cycle.
+- After the `invoke('position_set_source', { source: 'Gps' })` call resolves successfully: call the same `queryClient.invalidateQueries(['config'])` to force an immediate `config_read` refresh. The source chip's `source` value reflects `Gps` within one React render cycle.
 
-**Implementation note:** the `useStatus.ts` `useStatusData` hook is the natural place to expose an `invalidate()` callback that GridEdit + DashboardRibbon can call after writes.
+**Alternative considered and rejected:** local optimistic source-chip state via `useState` + sync from `config_read` poll. The local-`useState` alternative is rejected because two sources of truth for the source chip's `source` value (local `useState` + on-disk config) risk divergence on error paths (e.g., the backend write fails; the local `useState` value stays `Manual`; the on-disk config still says `Gps`; the source chip renders the wrong `source` value).
 
-### §4.4 — A11y notes (R2 #6 + R2 #3)
+**Implementation note:** the `useStatus.ts` `useStatusData` hook is the natural place to expose an `invalidate()` callback that `GridEdit.tsx` and `DashboardRibbon.tsx` each call after a successful write.
 
-- Replace "tap to switch" mouse-centric language with "Switch to GPS" (in the chip's aria-label and the passive status text).
-- The chip-as-button has `aria-pressed` reflecting `source === 'Gps'` (false when Manual, true when Gps — though button is hidden as span in Gps state, so this is only visible in the Manual state).
-- The `Set manually` button has `aria-controls={gridInputId}` (the grid-value input's ID).
+### §4.4 — A11y treatment (R2 #6 + R2 #3)
+
+- Replace pre-pjih "tap to switch" mouse-centric language with "Switch to GPS" in the source chip's `aria-label` AND in the GPS-ready passive status text.
+- The source chip when `source = Manual` (`<button>`) gets `aria-pressed={false}` (the source chip when `source = Gps` is a `<span>`, not a button, so `aria-pressed` does not apply).
+- The `Set manually` button gets `aria-controls={gridInputId}` — the grid input's DOM `id` attribute.
 
 ---
 
 ## §5 — Migration (REWRITTEN per Codex P1 #5 + R3 F8)
 
-v1's §5 migration table was literally backwards. v2 correction:
+The position-subsystem restoration v1's §5 migration table was literally backwards. The position-subsystem restoration v3 correction:
 
-**Reality on disk after the pjih merge:**
+**Actual on-disk `cfg.privacy.position_source` after the pjih merge — by operator path:**
 
-| Operator path | `config.privacy.position_source` on disk |
+| Operator path | `cfg.privacy.position_source` on disk |
 |---|---|
-| First install AFTER pjih merge | `Gps` (default; pjih's `config_set_grid` never persisted `Manual`). |
-| First install BEFORE pjih merge, used `config_set_grid` (pre-pjih code) | `Manual` (pre-pjih `config_set_grid` persisted `Manual`). |
-| First install BEFORE pjih merge, never touched grid | `Gps` (default). |
-| First install BEFORE pjih merge, used `config_set_grid` (pre-pjih), then merged pjih, then used `config_set_grid` again (pjih code) | `Manual` from the pre-pjih write; pjih's `config_set_grid` did NOT overwrite to `Gps`, just left it. |
-| First install BEFORE pjih merge, used `position_set_source('Gps')` after | `Gps` (the command did persist `Gps` on successful switch). |
+| First-install AFTER pjih merge (pjih-only operator) | `Gps` (the pjih `config_set_grid` command never persists `Manual`). |
+| First-install BEFORE pjih merge, used pre-pjih `config_set_grid` command | `Manual` (the pre-pjih `config_set_grid` command persisted `Manual`). |
+| First-install BEFORE pjih merge, never used the `config_set_grid` command | `Gps` (default). |
+| First-install BEFORE pjih merge, used pre-pjih `config_set_grid` command, then merged pjih, then used the pjih `config_set_grid` command | `Manual` from the pre-pjih write; the pjih `config_set_grid` command does NOT overwrite to `Gps`, just leaves the existing `Manual` value. |
+| First-install BEFORE pjih merge, used `position_set_source('Gps')` command after a fresh fix | `Gps` (the `position_set_source('Gps')` command persisted `Gps` on successful switch). |
 
-**Post-restore behavior matrix:**
+**Post-restore operator experience — by on-disk source value:**
 
-| On-disk source | Operator experience post-restore |
+| On-disk `cfg.privacy.position_source` | Operator experience post-restore |
 |---|---|
-| `Gps` (most operators per above) | Default state: row 2 if fresh fix; row 3 if no fix. Editing grid pins Manual sticky. Chip-click escapes back to Gps. |
-| `Manual` (pre-pjih operators who set a grid) | Sticky Manual from disk. Chip is actionable; clicking it calls `position_set_source('Gps')` which now succeeds unconditionally; source flips to Gps; row 2 or row 3 renders. No data loss. |
+| `Gps` (most operators per the above table) | Default state: State 3 if fresh fix; State 4 or State 5 if no fresh fix. Editing the grid value pins `source = Manual` (sticky). Clicking the source chip when `source = Manual` escapes back to `source = Gps`. |
+| `Manual` (pre-pjih operators who used the pre-pjih `config_set_grid` command) | Sticky `source = Manual` from disk (State 1 if no fresh fix; State 2 if a fresh fix arrives). The source chip when `source = Manual` is actionable; clicking the source chip when `source = Manual` calls the `position_set_source('Gps')` command (which now succeeds unconditionally per [§1.1 the relaxation](#11--the-use_gps--position_set_source-gps-relaxation)); `source` flips to `Gps`; State 3 or State 4 renders. No data loss. |
 
-**No one-time migration code is required.** Codex P1 #5: pjih cannot distinguish deliberate pre-pjih Manual intent from pjih-window confusion, and resetting would violate the restored source/privacy contract. The pjih-era operators with `Gps` on disk simply use the restored chip; the pre-pjih operators with `Manual` on disk get the same restored chip + the now-actionable click.
+**No one-time migration code is required.** Per Codex P1 #5: pjih cannot distinguish deliberate pre-pjih `Manual` intent from pjih-window confusion, and resetting would violate the restored source/privacy contract. The pjih-era operators with `Gps` on disk simply use the now-actionable source chip when `source = Manual`; the pre-pjih operators with `Manual` on disk get the same source chip when `source = Manual` + the now-actionable click semantics from [§2.1](#21--source-chip-dom-type-and-click-semantics-by-source-value).
 
-**The reported regression that motivated this fix:** the operator's complaint *"GPS is now fully broken... accepts/displays whatever input"* matches the pjih-window-write code path — `config_set_grid` updates `cfg.identity.grid` without persisting `position_source = Manual`, and `arbiter.set_manual` doesn't pin source. So the operator sees: edits grid → display updates (because pjih's `active_grid` returns the typed value as the only available data) + chip stuck at `Gps` (from `effective_source` derived from arbiter state where last_fix may or may not exist). Post-restore: edits grid → display updates + chip flips to MANUAL (sticky) + on-air uses manual_grid.
+**The reported regression that motivated the position-subsystem restoration:** the operator's complaint *"GPS is now fully broken... accepts/displays whatever input"* matches the pjih-window-write code path. The pjih `config_set_grid` command updates `cfg.identity.grid` without persisting `cfg.privacy.position_source = Manual`, and the pjih `arbiter.set_manual` does not pin `source`. The operator sees: editing the grid value → the displayed grid value updates (because the pjih `arbiter.active_grid` returns the typed value as the only available data) + the source chip stuck on `Gps` (from the pjih `arbiter.effective_source` derived from arbiter state where `arbiter.last_fix` may or may not exist). Post-restore: editing the grid value → the displayed grid value updates + the source chip flips to `Manual` (sticky) + the on-air locator uses `arbiter.manual_grid`.
 
 ---
 
@@ -332,143 +404,144 @@ v1's §5 migration table was literally backwards. v2 correction:
 
 ### §6.1 — Backend tests (cargo `--lib`)
 
-**Restore (from pre-pjih, with R4 P0 #1 strengthening):**
+**Restore from pre-pjih, with R4 P0 #1 strengthening:**
 
-- `set_manual_pins_source_and_is_sticky_against_gps` — RESTORE but EXTEND for R4 P0 #1: the test now exercises the temporal sequence `set_manual("EM75") → apply_gps_fix(Fix::test("DM33ab")) → verify source still Manual && active_grid == "EM75" && last_fix is recorded`. The pre-pjih test only pinned the post-set snapshot; v2's version pins the GPS-arrival regression class.
+- `set_manual_pins_source_and_is_sticky_against_gps` — RESTORE but EXTEND for R4 P0 #1: the restored test exercises the temporal sequence `arbiter.set_manual("EM75") → arbiter.apply_gps_fix(Fix::test("DM33ab")) → assert arbiter.source() == Manual && arbiter.active_grid() == "EM75" && arbiter.last_fix is recorded`. The pre-pjih test asserted only the post-`set_manual` snapshot; the restored test pins the GPS-arrival regression class.
 
 - `gps_fix_updates_active_only_when_source_is_gps` — RESTORE as-is.
 
 - `arbiter_set_manual_pins_manual_source` (in `ui_commands::tests`) — RESTORE as-is.
 
-**Add (R4 P0 #2 + Codex P1 #3):**
+**Add per R4 P0 #2 + Codex P1 #3 + Codex P0 #1:**
 
-- `use_gps_succeeds_without_fresh_fix_and_yields_manual_fallback` (replaces the renamed `use_gps_requires_a_usable_fix`): asserts `use_gps()` returns `()` (infallible), asserts `source` flips to `Gps`, asserts `active_grid()` equals `manual_grid` (fallback per spec row 3). Requires a `manual_grid` to be set in the arbiter setup.
+- `use_gps_succeeds_without_fresh_fix_and_yields_manual_fallback` (replaces the renamed-but-removed `use_gps_requires_a_usable_fix`): asserts that `arbiter.use_gps()` returns `()` (infallible); asserts `arbiter.source()` flips to `Gps`; asserts `arbiter.active_grid()` equals `arbiter.manual_grid` (the State 4 fallback per the 2026-05-22 spec row 3). Requires `arbiter.manual_grid` to be set in the arbiter setup.
 
-- `manual_source_ignores_fresh_gps_fix_at_broadcast_boundary` (Codex P1 #3): sets `arbiter = (source: Manual, manual_grid: "EM75")` + `gps_state = BroadcastAtPrecision`, then `apply_gps_fix(Fix::test("DM33ab"))`, then asserts `effective_broadcast_locator(cfg, &arbiter) == "EM75"` (precision-reduced). This pins the "Manual broadcasts manual regardless of fresh GPS fix" invariant at the broadcast boundary.
+- `manual_source_ignores_fresh_gps_fix_at_broadcast_boundary` (Codex P1 #3): sets `arbiter = (source: Manual, manual_grid: "EM75")` + `cfg.privacy.gps_state = BroadcastAtPrecision`; calls `arbiter.apply_gps_fix(Fix::test("DM33ab"))`; asserts `effective_broadcast_locator(cfg, &arbiter) == "EM75"` (precision-reduced). Pins the "Manual broadcasts manual_grid regardless of fresh GPS fix" invariant at the broadcast boundary.
 
-- `config_set_grid_pins_manual_source_in_config_and_arbiter` (Codex P1 #3): drives `config_set_grid("EM75")` end-to-end via the command (not the arbiter primitive); asserts both `arbiter.source() == Manual` AND `read_config().privacy.position_source == Manual`. Pins the cross-layer persistence invariant.
+- `config_set_grid_pins_manual_source_in_config_and_arbiter` (Codex P1 #3): drives the `config_set_grid` command end-to-end with input `"EM75"`; asserts both `arbiter.source() == Manual` AND `read_config().privacy.position_source == Manual`. Pins the cross-layer persistence invariant.
 
-- `position_set_source_gps_succeeds_without_fresh_fix` (Codex P0 #1): asserts the command path mirrors the arbiter relaxation — returns `Ok(())` even with no fresh fix; persists `position_source = Gps` to config; arbiter source flips.
+- `position_set_source_gps_succeeds_without_fresh_fix` (Codex P0 #1): asserts the `position_set_source` command mirrors the `arbiter.use_gps()` relaxation — returns `Ok(())` even when `arbiter.last_fix` is `None`; persists `cfg.privacy.position_source = Gps`; `arbiter.source()` flips to `Gps`.
 
-- `concurrent_config_set_grid_and_position_set_source_serialize` (§3.3): spawns 100 concurrent tokio tasks alternating both commands; asserts no panic, no poisoned mutex, final config + arbiter agree.
+- `concurrent_config_set_grid_and_position_set_source_serialize` (per [§3.3](#33--concurrency-invariants-for-config_set_grid-and-position_set_source-r3-f1--r3-f7)): spawns 100 concurrent tokio tasks alternating the `config_set_grid` command and the `position_set_source` command; asserts no panic, no poisoned Mutex, final on-disk config + final arbiter state agree.
 
-- **State-space matrix tests** (R3 F4): one test per non-trivial cell of §3.4's I1-I6 invariants. Combine via `proptest` over `(source, fix_state, gps_state, manual_grid_set)` quadrants; assert active_grid + broadcast result for each.
+- **State-space matrix tests** (R3 F4): one test per non-trivial cell of the I1–I6 invariants from [§3.4](#34--state-space-invariants-r3-f4--all-36-cells-of-source--fix_state--gps_state--manual_grid_set). The matrix tests combine via `proptest` over `(source, fix_state, gps_state, manual_grid_set)`; each generated case asserts `arbiter.active_grid()` + `effective_broadcast_locator` output match the I1–I6 invariant for that case.
 
-**Remove (no longer apply post-restore):**
+**Remove (the tests no longer apply post-restore):**
 
-- All five pjih-era arbiter tests (`set_manual_updates_grid_without_changing_stored_source`, `fresh_gps_fix_wins_over_manual_grid_regardless_of_stored_source`, `manual_grid_used_when_gps_fix_is_stale_or_absent`, the equivalent in `ui_commands::tests`, the `position_status_dto_*` `active_source` assertions).
+- The five pjih-era arbiter tests: `set_manual_updates_grid_without_changing_stored_source`, `fresh_gps_fix_wins_over_manual_grid_regardless_of_stored_source`, `manual_grid_used_when_gps_fix_is_stale_or_absent`, `arbiter_set_manual_updates_grid_without_changing_stored_source` (in `ui_commands::tests`), and the `position_status_dto_*` `active_source` assertions in `ui_commands::tests`.
 
 ### §6.2 — Frontend tests (vitest)
 
-**Restore (with strengthening):**
+**Restore from pre-pjih, with [§2.2](#22--source-chip-and-gps-ready-status-redundancy-in-state-2) strengthening:**
 
-- `shows GPS-ready hint when a fix is available while Manual` (GridEdit) — RESTORE but assert the hint is a `<span>` (passive text), NOT a `<button>`. Per §2.2.
+- `shows GPS-ready hint when a fix is available while Manual` in `GridEdit.test.tsx` — RESTORE but assert the GPS-ready hint is a `<span>` (passive text), NOT a `<button>`. Per [§2.2](#22--source-chip-and-gps-ready-status-redundancy-in-state-2).
 
-**Add (Codex P1 #3 + Codex P1 #4 + R4 P1 #3-#5 + R5 #7):**
+**Add per Codex P1 #3 + Codex P1 #4 + R4 P1 #3 + R4 P1 #4 + R4 P1 #5 + R5 #7:**
 
-- `chip_is_a_button_when_source_is_Manual_and_calls_onUseGps_on_click` (GridEdit, per R4 P1 #3): fire click on the chip element; assert `onUseGps` mock called.
+- `source_chip_is_a_button_when_source_is_Manual_and_calls_onUseGps_on_click` (in `GridEdit.test.tsx`, per R4 P1 #3): fires a click on the source chip element when `source = 'Manual'`; asserts `onUseGps` mock was called.
 
-- `chip_is_a_span_when_source_is_Gps_with_no_click_handler` (GridEdit, per R4 P1 #3): assert `getByTestId('source-chip').tagName === 'SPAN'`; assert `onUseGps` mock NOT called on element click (defensive).
+- `source_chip_is_a_span_when_source_is_Gps_with_no_click_handler` (in `GridEdit.test.tsx`, per R4 P1 #3): asserts `getByTestId('source-chip').tagName === 'SPAN'` when `source = 'Gps'`; asserts the `onUseGps` mock was NOT called on a click attempt (defensive).
 
-- `set_manually_affordance_is_present_in_Gps_no_fix_state` (GridEdit, per R4 P1 #5): assert affordance rendered with `source='Gps' && gpsReady=false`.
+- `set_manually_button_is_present_in_State_4` (in `GridEdit.test.tsx`, per R4 P1 #5): asserts the `Set manually` button is rendered when `source = 'Gps' && gpsReady = false`.
 
-- `set_manually_affordance_is_absent_in_Manual_state` (GridEdit, per R4 P1 #5): assert affordance NOT rendered with `source='Manual'`.
+- `set_manually_button_is_absent_in_State_1` (in `GridEdit.test.tsx`, per R4 P1 #5): asserts the `Set manually` button is NOT rendered when `source = 'Manual' && gpsReady = false`.
 
-- `set_manually_affordance_is_absent_in_Gps_with_fresh_fix` (GridEdit, per R4 P1 #5): assert affordance NOT rendered with `source='Gps' && gpsReady=true`.
+- `set_manually_button_is_absent_in_State_3` (in `GridEdit.test.tsx`, per R4 P1 #5): asserts the `Set manually` button is NOT rendered when `source = 'Gps' && gpsReady = true`.
 
-- `set_manually_affordance_is_absent_in_Manual_with_GPS_ready` (GridEdit, per R4 P1 #5 — closes the 4-quadrant matrix): assert affordance NOT rendered with `source='Manual' && gpsReady=true`.
+- `set_manually_button_is_absent_in_State_2` (in `GridEdit.test.tsx`, per R4 P1 #5 — closes the 4-quadrant matrix): asserts the `Set manually` button is NOT rendered when `source = 'Manual' && gpsReady = true`.
 
-- `set_manually_focuses_the_grid_input_on_click` (GridEdit, per Codex P2 #6): assert `document.activeElement === grid-input` after click.
+- `set_manually_button_focuses_the_grid_input_on_click` (in `GridEdit.test.tsx`, per Codex P2 #6): asserts `document.activeElement === gridInput` after clicking the `Set manually` button.
 
-- `ribbon_source_stays_Manual_when_config_says_Manual_even_if_gps_ready_is_true` (useStatus hook test, per Codex P1 #3): mock `config_read.position_source = Manual` and `position_status.gps_ready = true`; assert `result.current.position_source === 'Manual'`. Pins the chip-from-config-not-from-arbiter invariant.
+- `ribbon_source_chip_stays_Manual_when_config_says_Manual_even_if_gpsReady_is_true` (in `useStatus.test.ts` hook test, per Codex P1 #3): mocks `config_read.position_source = 'Manual'` and `position_status.gps_ready = true`; asserts `result.current.position_source === 'Manual'`. Pins the source-chip-source-comes-from-config-not-from-arbiter invariant.
 
-- `chip_flips_to_Manual_immediately_after_config_set_grid_completes` (DashboardRibbon, per Codex P1 #4): mock `invoke('config_set_grid')` to resolve; assert chip text changes within one render cycle (not after 5s poll). Verifies the optimistic refresh.
+- `source_chip_flips_to_Manual_within_one_render_cycle_after_config_set_grid_resolves` (in `DashboardRibbon.test.tsx`, per Codex P1 #4): mocks `invoke('config_set_grid')` to resolve; asserts the source chip's text changes from `GPS` to `MANUAL` within one render cycle, NOT after the 5-second `config_read` poll. Verifies the optimistic-refresh path from [§4.3](#43--optimistic-update-after-config_set_grid-and-position_set_source-codex-p1-4).
 
-- `chip_flips_to_Gps_immediately_after_position_set_source_completes` (DashboardRibbon, per Codex P1 #4): mock `invoke('position_set_source')` to resolve; assert chip text changes within one render cycle.
+- `source_chip_flips_to_Gps_within_one_render_cycle_after_position_set_source_resolves` (in `DashboardRibbon.test.tsx`, per Codex P1 #4): mocks `invoke('position_set_source')` to resolve; asserts the source chip's text changes from `MANUAL` to `GPS` within one render cycle.
 
-- `chip_for_source_Gps_with_no_fix_renders_State_4_distinguishable_from_State_1` (GridEdit, per R2 #4): mock `source='Gps' && gpsReady=false && grid='CN87'`; assert presence of the `· ` interpunct prefix on grid value AND the `dimmed` modifier class on the chip. Differentiates row 3 from row 1.
+- `State_4_grid_value_has_interpunct_prefix_and_chip_is_dimmed` (in `GridEdit.test.tsx`, per R2 #4): mocks `source = 'Gps' && gpsReady = false && grid = 'CN87'`; asserts presence of the `· ` interpunct prefix on the grid value AND the `dimmed` modifier class on the source chip. Pins the State 4 vs State 1 differentiation from [§2.4](#24--state-1-vs-state-4-visual-differentiation-r2-4--the-failure-mode-pjih-shipped).
 
-**Remove:**
+**Remove (the test no longer applies):**
 
 - `no Use-GPS affordance is rendered (tuxlink-pjih)` in `GridEdit.test.tsx` — pjih-era absence-assertion.
 
 ### §6.3 — Cross-layer integration test (R4 P1 #4 + R5 #7 — the test class pjih violated)
 
-R5 #7 caught the root cause of pjih's undetected merge: per-layer tests on backend (arbiter) and frontend (GridEdit) passed independently, but no test exercised the composed flow that justifies the entire restoration. v2 adds:
+R5 #7 caught the root cause of pjih's undetected merge: per-layer tests on backend (`arbiter`) and frontend (`GridEdit.tsx`) passed independently, but no test exercised the composed flow that justifies the entire restoration. The position-subsystem restoration adds:
 
-- **`integration_chip_click_from_Manual_to_Gps_no_fix_renders_row_3` (Playwright or @testing-library `renderHook` with mocked Tauri)**:
-  1. Mount the full GridEdit + useStatus hook with mocked Tauri commands.
-  2. Initial state: `config.position_source = 'Manual'` + `manual_grid = 'EM75'` + `position_status.gps_ready = false`.
-  3. Verify State 1 (Manual chip + grid value `EM75`).
-  4. Click the source chip.
-  5. Verify `invoke('position_set_source', { source: 'Gps' })` was called.
-  6. Update mock config to `position_source = 'Gps'`.
-  7. Verify State 4 (Gps dimmed chip + `· EM75` interpunct prefix + "GPS no fix · broadcasting fallback" + Set manually affordance).
-  8. Click Set manually.
-  9. Verify the grid input mounts AND receives focus.
+**`integration_clicking_source_chip_in_State_1_with_no_fix_lands_in_State_4`** (Playwright OR `@testing-library` `renderHook` with mocked Tauri commands):
 
-This single test would have caught the pjih regression at merge time.
+1. Mount the full `GridEdit` + `useStatus` hook with mocked Tauri commands.
+2. Set the initial mocked state: `config.position_source = 'Manual'` + `manual_grid = 'EM75'` + `position_status.gps_ready = false`.
+3. Assert the rendered state is State 1 (source chip says `MANUAL` + grid value `EM75`).
+4. Click the source chip when `source = 'Manual'`.
+5. Assert `invoke('position_set_source', { source: 'Gps' })` was called.
+6. Update the mocked `config_read.position_source` to `'Gps'`.
+7. Assert the rendered state is State 4 (source chip says `GPS` dimmed + grid value `· EM75` interpunct + status text `"GPS no fix · broadcasting fallback"` + the `Set manually` button is present).
+8. Click the `Set manually` button.
+9. Assert the grid input mounts AND the grid input receives focus (`document.activeElement === gridInput`).
 
-### §6.4 — Operator smoke (REWRITTEN per R2 #5)
+The cross-layer integration test would have caught the pjih regression at merge time.
 
-R2 #5 caught that v1's §6 smoke didn't exercise the no-GPS-hardware case that the entire §1 amendment exists to fix. v2 smoke (kill `gpsd` or unplug GPS receiver between steps as noted):
+### §6.4 — Operator smoke (REWRITTEN per R2 #5 — no-GPS-hardware case)
 
-1. **Manual sticky (GPS present)** — start with gpsd running. Inline-edit grid to `EM75`. Confirm chip shows MANUAL (amber). Apply a fresh GPS fix to `DM33` (via gpsd). Confirm grid value STAYS `EM75` (sticky). Confirm chip STAYS MANUAL.
+R2 #5 caught that the position-subsystem restoration v1's §6 smoke did not exercise the no-GPS-hardware case that [§1.1 the relaxation](#11--the-use_gps--position_set_source-gps-relaxation) exists to fix. The v3 operator smoke (start gpsd or stop gpsd between steps as noted):
 
-2. **Chip click escapes Manual (GPS present)** — from step 1, click the MANUAL chip. Confirm chip flips to GPS (green-locked). Confirm grid value flips to the live GPS fix `DM33`.
+1. **Sticky Manual against an arriving GPS fix (GPS present).** Start with gpsd running. Inline-edit the grid value to `EM75`. Assert the source chip says `MANUAL` (amber, button-shaped). Wait for gpsd to publish a fresh fix to `DM33`. Assert the grid value STAYS `EM75` (sticky Manual). Assert the source chip STAYS `MANUAL`.
 
-3. **Chip click escapes Manual (no GPS — the case pjih existed to fix)** — kill gpsd (`sudo systemctl stop gpsd`). Inline-edit grid to `EM75`. Confirm State 1 (Manual chip + `EM75`). Click the MANUAL chip. Confirm State 4 (GPS chip dimmed + `· EM75` interpunct + "GPS no fix · broadcasting fallback" + Set manually affordance). Confirm operator is no longer stuck.
+2. **Source-chip escape from Manual (GPS present).** From step 1, click the source chip when `source = Manual`. Assert the source chip flips to `GPS` (green, span-shaped, locked). Assert the grid value flips to the live GPS fix `DM33`.
 
-4. **Set manually from row 3** — from step 3, click Set manually. Confirm grid input receives focus and is editable. Type `DM33` + Enter. Confirm State 1 (MANUAL chip + `DM33`).
+3. **Source-chip escape from Manual (no GPS — the case [§1.1 the relaxation](#11--the-use_gps--position_set_source-gps-relaxation) exists to fix).** Stop gpsd (`sudo systemctl stop gpsd`). Inline-edit the grid value to `EM75`. Assert State 1 (the source chip says `MANUAL` + grid value `EM75`). Click the source chip when `source = Manual`. Assert State 4 (the source chip says `GPS` dimmed + grid value `· EM75` interpunct + status text `"GPS no fix · broadcasting fallback"` + the `Set manually` button is present). Assert the operator is no longer stuck.
 
-5. **GPS happy path** — restart gpsd (`sudo systemctl start gpsd`). With `source = Gps`, confirm grid value tracks the live fix. Confirm State 3 (green-locked GPS chip).
+4. **`Set manually` button from State 4.** From step 3, click the `Set manually` button. Assert the grid input mounts and receives focus and is editable. Type `DM33` and press Enter. Assert State 1 (source chip says `MANUAL` + grid value `DM33`).
 
-6. **Privacy gate intact** — set `gps_state = LocalUiOnly`. Confirm the broadcast locator (e.g., via the CMS-exchange operator-smoke from PR #185) falls back to the stored config grid, not the live GPS fix.
+5. **GPS happy path (State 3).** Restart gpsd (`sudo systemctl start gpsd`). With `source = Gps`, assert the grid value tracks the live fix. Assert State 3 (source chip says `GPS` green, locked).
+
+6. **Privacy gate intact under `gps_state = LocalUiOnly`.** Set `cfg.privacy.gps_state = LocalUiOnly`. Confirm the on-air locator (via the CMS-exchange operator smoke from PR #185) falls back to `cfg.identity.grid`, NOT the live GPS fix.
 
 ---
 
 ## §7 — Why pjih landed undetected (R5 #5 hypothesis)
 
-R5 #5: without a hypothesis for why the operator didn't catch the pjih regression at merge time, the same dynamic could reproduce here.
+R5 #5 caught that without a hypothesis for why the operator did not detect the pjih regression at merge time, the same merge-undetected dynamic could reproduce for the position-subsystem restoration.
 
-**Hypothesis:** pjih's PR description and adrev focused on the immediate symptom ("setting manual grid breaks GPS-derived display"). The agent (me, on the prior turn) re-interpreted "GPS-derived display" as "the operator wants GPS-derived display even after setting Manual" — a semantic that REQUIRED removing Manual stickiness. The PR's stated goal was framed as "decouple grid-set from source-pin," which sounded like a clean refactor.
+**Hypothesis.** pjih's PR description and pjih's own adrev focused on the immediate symptom ("setting manual grid breaks GPS-derived display"). The agent that wrote pjih re-interpreted "GPS-derived display" as "the operator wants GPS-derived display even after setting Manual" — a semantic interpretation that REQUIRED removing the 2026-05-22 sticky-Manual contract. The pjih PR's stated goal was framed as "decouple grid-set from source-pin," which sounded like a clean refactor.
 
-The operator approved the PR based on the framing, not by walking the actual UX with the change in hand. The CI gates were green (per-layer tests passed). The full operator-visible flow (Manual → GPS sticky → escape via chip OR row 3 fallback) was not exercised by any test, so the contract violation didn't surface until the operator hit it in smoke.
+The operator approved the pjih PR based on the pjih framing, not by walking the actual UX with the pjih change in hand. The CI gates were green (per-layer tests passed). The full operator-visible flow (Manual → GPS sticky → escape via source chip OR State 4 fallback) was not exercised by any test, so the contract violation in pjih did not surface until the operator hit the pjih regression in smoke.
 
-**Watched failure mode for v2:** the operator must walk the §6.4 smoke steps end-to-end with the v2 changes in hand. If the smoke can't run (no GPS hardware), step 3 + 4 still exercise the critical no-GPS recoverability path. Adrev caught what unit tests can't: cross-layer narrative coherence. The integration test (§6.3) is the automated form of that adrev — it's the single test that pins the spec's primary correctness story.
+**Watched failure mode for the position-subsystem restoration.** The operator must walk the [§6.4 operator smoke](#64--operator-smoke-rewritten-per-r2-5--no-gps-hardware-case) steps end-to-end with the restoration changes in hand. If the operator smoke cannot run (no GPS hardware), steps 3 and 4 still exercise the no-GPS recoverability path. Adrev caught what unit tests cannot: cross-layer narrative coherence. The [§6.3 cross-layer integration test](#63--cross-layer-integration-test-r4-p1-4--r5-7--the-test-class-pjih-violated) is the automated form of that adrev — the single test that pins the position-subsystem restoration's primary correctness story.
 
 ---
 
 ## §8 — Track B interactions
 
-Track B (tuxlink-jmfm + tuxlink-8rng) covers Settings → GPS+Privacy ARDOP block removal + radio-panel widening to 400px. R5 #6 surfaced potential interactions with this Track A restoration:
+Track B (tuxlink-jmfm + tuxlink-8rng) covers the Settings → GPS+Privacy panel cleanup + the radio-panel widening to 400 px. R5 #6 surfaced potential interactions between Track A (the position-subsystem restoration) and Track B:
 
-**Settings panel (jmfm):** the Settings panel is named "GPS privacy" panel (per the file header comment in `SettingsPanel.tsx`). It currently contains GPS-state + precision controls AND an ARDOP fieldset. Track B deletes the ARDOP fieldset. After Track B + Track A both land:
-- Settings panel is purely a GPS-privacy panel (its original intent).
-- The Track A restoration's `gps_state` privacy gate continues to work; the Settings panel's GPS-state radio + precision radio are unchanged.
+**Settings panel cleanup (tuxlink-jmfm).** The `SettingsPanel.tsx` file is currently named the "GPS privacy" panel per the file header comment in `SettingsPanel.tsx`. The SettingsPanel currently contains GPS-state controls + precision controls + an ARDOP fieldset. Track B deletes the ARDOP fieldset from `SettingsPanel.tsx`. After Track A + Track B both land:
+- The SettingsPanel is purely a GPS-privacy panel (its original intent).
+- The position-subsystem restoration's `gps_state` privacy gate in `effective_broadcast_locator` continues to work; the SettingsPanel's GPS-state radio + precision radio elements are unchanged by Track A.
 
-**No interaction**: Track B's ARDOP-block delete touches no code in the position subsystem. The two tracks can ship in either order. If Track B ships first, the Settings panel becomes a "pure GPS-privacy panel" and Track A's chip-as-button work is unaffected. If Track A ships first, the Settings panel still has the ARDOP fieldset until Track B lands; the GPS+Privacy controls work as expected.
+**No interaction between Track A code and Track B code.** Track B's ARDOP-fieldset delete touches no code in the position subsystem. Track A and Track B can ship in either order. If Track B ships first, the SettingsPanel becomes a "pure GPS-privacy panel" and Track A's source-chip-as-button work is unaffected. If Track A ships first, the SettingsPanel still has the ARDOP fieldset until Track B lands; the GPS+Privacy controls work as expected.
 
-**Radio panel widening (8rng):** entirely orthogonal — radio panel chrome is in `radio/RadioPanel.css`, the dashboard ribbon's GridEdit is in `shell/`. Zero overlap.
+**Radio panel widening (tuxlink-8rng).** Entirely orthogonal to the position-subsystem restoration. The radio-panel chrome lives in `radio/RadioPanel.css`. The dashboard ribbon's GridEdit lives in `shell/`. Zero overlap.
 
 ---
 
-## §9 — Adversarial review status
+## §9 — Adversarial review disposition
 
 | Round | Reviewer | Findings | Disposition |
 |---|---|---|---|
-| R1 | Codex (GPT-5) | 6 (1 P0, 4 P1, 1 P2) | All applied: P0 #1 (extend relaxation to command layer) → §1 amendment + §3.1 + §6.1 new test. P1 #2 (Gps-chip status-only) → §2.1. P1 #3 (cross-layer source-sequence tests) → §6.1 added 4 tests. P1 #4 (optimistic update) → §4.3. P1 #5 (migration text wrong) → §5 rewritten. P2 #6 (focus contract) → §2.3 + §6.2 strengthened. |
-| R2 | Claude (UX) | 8 (5 P1, 3 P2) | All P1 applied. #1 (chip-click justification) → §1.5 + §2.1. #2 (chip/button redundancy) → §2.2 + §4.2. #3 (set-manually focus a11y) → §2.3. #4 (State 1 vs 4 visual differentiation) → §2.4 + §6.2 new test. #5 (smoke missing no-GPS case) → §6.4 step 3. P2 #6 (mouse-centric "tap") → §4.4. P2 #7 (subsumed by chip-as-span). P2 #8 (width budget) — deferred to implementation polish. |
-| R3 | Claude (contract/races) | 10 (1 P0, 3 P1, 6 P2) | P0 F2 (privacy gate clarity) → §1 amendment + §2.5 explicit text. P1 F1+F7 (concurrency invariants) → §3.3. P1 F8 (§5 narrative wrong) → §5 rewritten. P1 F4 (state-space) → §3.4 + §6.1 matrix tests. P2 (vestigial pre-checks, fix-aging tests, gpsd-client documentation, etc.) — implementation-detail; tracked for the plan. |
-| R4 | Claude (tests) | 11 (2 P0, 4 P1, 5 P2) | All P0 + P1 applied. P0 #1 (temporal sticky) → §6.1 sticky test extended. P0 #2 (use_gps active_grid assertion) → §6.1 new test. P1 #3 (chip-element-type test) → §6.2 added. P1 #4 (composed flow) → §6.3 integration test. P1 #5 (4-quadrant affordance matrix) → §6.2 expanded. P1 #6 (3 missing backend invariants) → §6.1 added. P2 — partially applied to §6 strengthening. |
-| R5 | Claude (holistic) | 12 (2 P0, 5 P1, 5 P2) | P0 #1 (one-amendment understated) → §1 amendment now full disclosure + §1.5. P0 #2 (alternatives not compared) → §1.5 added. P1 #3 (chip-click semantics) → §2.1 + §1.5. P1 #4 ("GPS by default" axiomatic) — confirmed by operator + 2026-05-22 spec; documented as a decision in §1.5. P1 #5 (why pjih undetected) → §7. P1 #6 (Track B interactions) → §8. P1 #7 (cross-layer test class) → §6.3. P2 — partially applied. |
+| R1 | Codex (GPT-5) | 6 (1 P0, 4 P1, 1 P2) | All P0 + P1 applied. Codex P0 #1 (the `use_gps` relaxation extends to the `position_set_source` command) → [§1.1 the relaxation](#11--the-use_gps--position_set_source-gps-relaxation) + [§3.1](#31--backend-revert--relaxation-table) + [§6.1 new test](#61--backend-tests-cargo---lib). Codex P1 #2 (source chip when `source = Gps` is status-only) → [§2.1](#21--source-chip-dom-type-and-click-semantics-by-source-value). Codex P1 #3 (cross-layer source-sequence tests) → [§6.1 added 4 tests](#61--backend-tests-cargo---lib). Codex P1 #4 (optimistic update) → [§4.3](#43--optimistic-update-after-config_set_grid-and-position_set_source-codex-p1-4). Codex P1 #5 (§5 migration text wrong) → [§5 rewritten](#5--migration-rewritten-per-codex-p1-5--r3-f8). Codex P2 #6 (focus contract) → [§2.3](#23--set-manually-button-state-4-and-state-5) + [§6.2 strengthened](#62--frontend-tests-vitest). |
+| R2 | Claude (UX) | 8 (5 P1, 3 P2) | All P1 applied. R2 #1 (source-chip click semantics justification) → [§1.2](#12--why-the-use_gps-relaxation-over-clear-manual-pin-or-confirm-then-switch) + [§2.1](#21--source-chip-dom-type-and-click-semantics-by-source-value). R2 #2 (source chip + GPS-ready button redundancy) → [§2.2](#22--source-chip-and-gps-ready-status-redundancy-in-state-2) + [§4.2](#42--source-chip-as-button--gps-ready-as-passive-span--set-manually-button). R2 #3 (`Set manually` button a11y) → [§2.3](#23--set-manually-button-state-4-and-state-5). R2 #4 (State 1 vs State 4 visual differentiation) → [§2.4](#24--state-1-vs-state-4-visual-differentiation-r2-4--the-failure-mode-pjih-shipped) + [§6.2 new test](#62--frontend-tests-vitest). R2 #5 (operator smoke missing no-GPS case) → [§6.4 step 3](#64--operator-smoke-rewritten-per-r2-5--no-gps-hardware-case). R2 P2 #6 (mouse-centric "tap" language) → [§4.4](#44--a11y-treatment-r2-6--r2-3). R2 P2 #7 (subsumed by source-chip-as-span when `source = Gps`). R2 P2 #8 (width budget) — deferred to implementation polish. |
+| R3 | Claude (contract/races) | 10 (1 P0, 3 P1, 6 P2) | All P0 + P1 applied. R3 F2 P0 (privacy-gate clarity for State 4) → [§1.1 the relaxation](#11--the-use_gps--position_set_source-gps-relaxation) + [§2.5](#25--broadcasting-in-state-4-and-state-5-clarity-not-divergence). R3 F1 + F7 P1 (concurrency invariants) → [§3.3](#33--concurrency-invariants-for-config_set_grid-and-position_set_source-r3-f1--r3-f7). R3 F8 P1 (§5 migration narrative wrong) → [§5 rewritten](#5--migration-rewritten-per-codex-p1-5--r3-f8). R3 F4 P1 (state-space) → [§3.4](#34--state-space-invariants-r3-f4--all-36-cells-of-source--fix_state--gps_state--manual_grid_set) + [§6.1 matrix tests](#61--backend-tests-cargo---lib). R3 P2 — implementation-detail; tracked for the plan. |
+| R4 | Claude (tests) | 11 (2 P0, 4 P1, 5 P2) | All P0 + P1 applied. R4 P0 #1 (temporal sticky test) → [§6.1 sticky test extended](#61--backend-tests-cargo---lib). R4 P0 #2 (`use_gps` `active_grid` assertion) → [§6.1 new test](#61--backend-tests-cargo---lib). R4 P1 #3 (source-chip-element-type test) → [§6.2 added](#62--frontend-tests-vitest). R4 P1 #4 (composed flow) → [§6.3 integration test](#63--cross-layer-integration-test-r4-p1-4--r5-7--the-test-class-pjih-violated). R4 P1 #5 (4-quadrant `Set manually` matrix) → [§6.2 expanded](#62--frontend-tests-vitest). R4 P1 #6 (3 missing backend invariants) → [§6.1 added](#61--backend-tests-cargo---lib). R4 P2 — partially applied to §6 strengthening. |
+| R5 | Claude (holistic) | 12 (2 P0, 5 P1, 5 P2) | All P0 + P1 applied. R5 P0 #1 ("one amendment" understated) → [§1.1 the relaxation](#11--the-use_gps--position_set_source-gps-relaxation) (full extent) + [§1.2](#12--why-the-use_gps-relaxation-over-clear-manual-pin-or-confirm-then-switch). R5 P0 #2 (alternatives not compared) → [§1.2](#12--why-the-use_gps-relaxation-over-clear-manual-pin-or-confirm-then-switch). R5 P1 #3 (source-chip click semantics) → [§2.1](#21--source-chip-dom-type-and-click-semantics-by-source-value) + [§1.2](#12--why-the-use_gps-relaxation-over-clear-manual-pin-or-confirm-then-switch). R5 P1 #4 ("GPS by default" axiomatic) — operator + 2026-05-22 spec confirmed; documented as a decision in [§1.2](#12--why-the-use_gps-relaxation-over-clear-manual-pin-or-confirm-then-switch). R5 P1 #5 (why pjih undetected) → [§7](#7--why-pjih-landed-undetected-r5-5-hypothesis). R5 P1 #6 (Track B interactions) → [§8](#8--track-b-interactions). R5 P1 #7 (cross-layer test class) → [§6.3 integration test](#63--cross-layer-integration-test-r4-p1-4--r5-7--the-test-class-pjih-violated). R5 P2 — partially applied. |
 
 **Total: 47 findings; 6 P0 + 21 P1 = 27 must-apply, all applied. P2: 20, selectively applied per cost/value.**
 
 ---
 
-## Appendix A — Reference: 2026-05-22 spec
+## Appendix A — Reference: the 2026-05-22 spec
 
-See [`docs/superpowers/specs/2026-05-22-position-subsystem-design.md`](2026-05-22-position-subsystem-design.md) for the authoritative source contract, gpsd client design, manual-entry approach (Approach A), source-chip spec (Approach A), and the full ribbon-states table.
+See [`docs/superpowers/specs/2026-05-22-position-subsystem-design.md`](2026-05-22-position-subsystem-design.md) for the authoritative source contract, the gpsd-client design, the manual-entry approach (Approach A), the source-chip spec (Approach A), and the full ribbon-states table.
 
-This restoration spec extends — does not supersede — that document.
+The position-subsystem restoration spec extends — does not supersede — the 2026-05-22 spec.
