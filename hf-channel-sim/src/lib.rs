@@ -22,7 +22,9 @@ pub mod rng;
 pub mod fading;
 pub mod channel;
 pub mod noise;
+pub mod analysis;
 
 pub use params::{ChannelCondition, WattersonParams};
 pub use channel::WattersonChannel;
 pub use noise::AwgnGenerator;
+pub use analysis::{estimate_subcarrier_snr, SubcarrierSnrEstimate};
