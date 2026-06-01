@@ -1,10 +1,21 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, within, act } from '@testing-library/react';
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 import type { ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { MailboxFolder, MessageMeta } from '../mailbox/types';
+
+// Vite-native raw-import of AppShell.css for the tuxlink-8rng chrome-width
+// assertions below. Uses the same pattern as src/forms/innerhtml-ban.test.ts:
+// `import.meta.glob` with `eager + ?raw + default` returns the CSS as a string
+// at module-evaluation time, so no @types/node / node:fs dependency is needed
+// and `pnpm tsc --noEmit` stays clean. Pitfall TEST-1
+// (docs/pitfalls/implementation-pitfalls.md) forbids node:fs in tests.
+const APP_SHELL_CSS_MODULES = import.meta.glob('./AppShell.css', {
+  eager: true,
+  query: '?raw',
+  import: 'default',
+}) as Record<string, string>;
+const appShellCss = APP_SHELL_CSS_MODULES['./AppShell.css'];
 
 // ---------------------------------------------------------------------------
 // Tauri IPC mocks. The Mock B shell mounts the HTML chrome (TitleBar + MenuBar
@@ -472,19 +483,14 @@ describe('<AppShell> — find-messages wiring (Task 17)', () => {
 // variants per operator's "all modes" directive.
 // ---------------------------------------------------------------------------
 describe('AppShell.css radio-panel chrome width (tuxlink-8rng)', () => {
-  const css = readFileSync(
-    resolve(__dirname, '../../src/shell/AppShell.css'),
-    'utf-8',
-  );
-
   it('declares the radio-panel column at 400px in .panes--with-dock', () => {
-    expect(css).toMatch(
+    expect(appShellCss).toMatch(
       /\.layout-b \.panes--with-dock\s*\{[^}]*200px\s+300px\s+1fr\s+400px/,
     );
   });
 
   it('declares the radio-panel column at 400px in .panes--with-legacy-dock', () => {
-    expect(css).toMatch(
+    expect(appShellCss).toMatch(
       /\.layout-b \.panes--with-dock\.panes--with-legacy-dock\s*\{[^}]*200px\s+300px\s+1fr\s+400px\s+290px/,
     );
   });
