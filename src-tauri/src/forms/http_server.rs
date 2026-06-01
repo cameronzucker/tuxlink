@@ -1,0 +1,582 @@
+//! Lazy loopback HTTP server for HTML Forms webview path.
+//!
+//! Lifecycle is per-form-open, NOT application-lifetime: each
+//! [`FormSession::open`] call binds a fresh `127.0.0.1:0` listener,
+//! spawns a serve task, and serves ONE form at root `/`. When the caller
+//! drops the session (or calls [`FormSession::close`]) the serve task is
+//! aborted and the port is released.
+//!
+//! ## Why per-session, not multi-session
+//!
+//! Per the 2026-06-01 WLE snapshot recon
+//! (`dev/scratch/2026-06-01-wle-snapshot-recon.md`), WLE Standard Forms
+//! POST to `http://{FormServer}:{FormPort}` with **no path component**
+//! (e.g. `action="http://127.0.0.1:34567"` after substitution). That
+//! ecosystem contract forces a per-session-per-port design: the port
+//! demarcates the session, not a URL path or token. This matches the
+//! Winlink Express reference implementation.
+//!
+//! ## Security model (per design §10, with recon-time revision)
+//!
+//! - **Loopback only**: bind 127.0.0.1, never 0.0.0.0
+//! - **Ephemeral port**: kernel-assigned (`:0`); no fixed port discoverable
+//!   in config files
+//! - **Per-form-open lifecycle**: listener is up only while the operator
+//!   has the form open
+//! - **Scoped Tauri capability** (`forms-webview.json`): the child webview
+//!   gets HTTP access to `http://127.0.0.1:*` and nothing else; no IPC, no
+//!   fs, no shell, no window control
+//! - **No URL-token defense**: per the recon Option A recommendation, the
+//!   token is dropped because the WLE form's submit action carries no path.
+//!   The defense is loopback + ephemeral port + capability scope, matching
+//!   the WLE Express reference contract
+//!
+//! ## Routes
+//!
+//! - `GET /` → serve the form HTML with WLE substitutions + skin link
+//! - `POST /` → accept the form submission; parse body; emit ParsedBody
+//!   on the in-process channel; respond with a brief "Submitted ✓" page
+//! - `GET /skin.css` → serve the static tuxlink skin (`forms::skin`)
+//! - `GET /folder/<path>/<file>` → serve adjacent assets from the
+//!   template's folder (P1 minimal support for `{FormFolder}` references;
+//!   path-traversal rejected via canonicalize)
+//! - anything else → 404
+//!
+//! Plan: docs/superpowers/plans/2026-06-01-html-forms-p1-webview-infra.md
+//!       Task 6.
+
+use std::net::SocketAddr;
+use std::path::PathBuf;
+use std::sync::Arc;
+
+use axum::{
+    body::{to_bytes, Body},
+    extract::{Path as AxumPath, State},
+    http::{header, HeaderMap, Method, Request, StatusCode},
+    response::{Html, IntoResponse, Response},
+    routing::{any, get},
+    Router,
+};
+use tokio::net::TcpListener;
+use tokio::sync::mpsc;
+use tokio::task::{AbortHandle, JoinHandle};
+
+use super::multipart::{parse_multipart, parse_urlencoded, ParsedBody};
+use super::skin;
+use super::wle_templates::Template;
+
+/// Body-size cap for /submit. WLE form submissions are well under 100 KB
+/// in practice; 1 MB is generous headroom and prevents trivial DOS.
+const MAX_SUBMIT_BODY_BYTES: usize = 1_048_576;
+
+/// State shared with the axum router. Cheap to clone (Arc-wrapped channel).
+#[derive(Clone)]
+struct SessionState {
+    /// Pre-substituted form HTML, ready to serve at GET /.
+    form_html: String,
+    /// Absolute path to the template's parent folder, for /folder/* asset serving.
+    template_folder_path: PathBuf,
+    /// Channel for emitting parsed submissions back to the caller.
+    submit_tx: mpsc::UnboundedSender<ParsedBody>,
+}
+
+/// One open form session. Drop the value (or call [`close`]) to tear
+/// down the serve task and free the port.
+pub struct FormSession {
+    pub port: u16,
+    /// Receive submissions from the form. Caller awaits this; the channel
+    /// closes when the session is dropped.
+    pub submit_rx: mpsc::UnboundedReceiver<ParsedBody>,
+    /// AbortHandle for the spawned serve task; calling `abort()` shuts
+    /// down the listener (the inner JoinHandle is intentionally not kept
+    /// — Drop relies solely on the AbortHandle for sync teardown).
+    abort: AbortHandle,
+}
+
+impl FormSession {
+    /// Open a new form session: read the template, substitute placeholders,
+    /// bind a fresh listener, start serving.
+    ///
+    /// `template` is the form to serve; its HTML is loaded from
+    /// `template.path` immediately so a later rename / delete doesn't break
+    /// the open session.
+    pub async fn open(template: Template) -> Result<Self, String> {
+        let raw = std::fs::read_to_string(&template.path)
+            .map_err(|e| format!("read template: {e}"))?;
+        let folder = template
+            .path
+            .parent()
+            .ok_or_else(|| "template has no parent folder".to_string())?
+            .to_path_buf();
+
+        let listener = TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], 0)))
+            .await
+            .map_err(|e| format!("bind 127.0.0.1:0: {e}"))?;
+        let port = listener
+            .local_addr()
+            .map_err(|e| format!("local_addr: {e}"))?
+            .port();
+
+        let form_html = substitute_template(&raw, port, &template.folder);
+
+        let (submit_tx, submit_rx) = mpsc::unbounded_channel();
+        let state = Arc::new(SessionState {
+            form_html,
+            template_folder_path: folder,
+            submit_tx,
+        });
+
+        let router = build_router(state);
+        let serve_handle: JoinHandle<()> = tokio::spawn(async move {
+            let _ = axum::serve(listener, router).await;
+        });
+        let abort = serve_handle.abort_handle();
+        // The JoinHandle drops here; the spawned task continues running
+        // (tokio keeps it alive until completion or abort). The
+        // AbortHandle is what we hold for shutdown.
+        Ok(Self {
+            port,
+            submit_rx,
+            abort,
+        })
+    }
+
+    /// The URL the child webview should navigate to. Form-fetch + submit
+    /// share the same origin; submit lands at `/` per the WLE contract.
+    pub fn url(&self) -> String {
+        format!("http://127.0.0.1:{}/", self.port)
+    }
+
+    /// Explicit shutdown. Aborts the serve task; the listener is dropped
+    /// + port released. Idempotent.
+    pub fn close(&mut self) {
+        self.abort.abort();
+    }
+}
+
+impl Drop for FormSession {
+    fn drop(&mut self) {
+        self.abort.abort();
+        // serve_handle awaits cancellation in the tokio runtime; we don't
+        // block here (Drop must be sync).
+    }
+}
+
+/// Substitute the WLE placeholders. Stable, order-independent string ops.
+///
+/// {FormServer} → 127.0.0.1
+/// {FormPort}   → <port>
+/// {FormFolder} → /folder/<url-encoded-folder>
+fn substitute_template(raw: &str, port: u16, folder: &str) -> String {
+    use percent_encoding::{utf8_percent_encode, NON_ALPHANUMERIC};
+    let folder_path = format!(
+        "/folder/{}",
+        utf8_percent_encode(folder, NON_ALPHANUMERIC)
+    );
+    let with_subs = raw
+        .replace("{FormServer}", "127.0.0.1")
+        .replace("{FormPort}", &port.to_string())
+        .replace("{FormFolder}", &folder_path);
+    inject_skin_link(&with_subs)
+}
+
+/// Insert `<link rel="stylesheet" href="/skin.css">` into <head>. If there's
+/// no `<head>`, prepend it before the doctype/html (browsers tolerate that).
+fn inject_skin_link(html: &str) -> String {
+    let link = r#"<link rel="stylesheet" href="/skin.css">"#;
+    if let Some(pos) = html.to_lowercase().find("<head>") {
+        let mut out = html.to_string();
+        let insert_at = pos + "<head>".len();
+        out.insert_str(insert_at, link);
+        out
+    } else if let Some(pos) = html.to_lowercase().find("<html") {
+        // No <head>; prepend before <html>. (Some WLE templates open with
+        // `<!DOCTYPE …>` then `<html …>`.)
+        let mut out = html.to_string();
+        out.insert_str(pos, link);
+        out
+    } else {
+        // Malformed: just prepend.
+        format!("{link}{html}")
+    }
+}
+
+fn build_router(state: Arc<SessionState>) -> Router {
+    Router::new()
+        .route("/", any(root_handler))
+        .route("/skin.css", get(skin_handler))
+        .route("/folder/*path", get(folder_handler))
+        .with_state(state)
+}
+
+/// GET / serves the form; POST / accepts the submit.
+async fn root_handler(
+    State(state): State<Arc<SessionState>>,
+    req: Request<Body>,
+) -> Response {
+    match *req.method() {
+        Method::GET => Html(state.form_html.clone()).into_response(),
+        Method::POST => submit_handler(state, req).await,
+        _ => (StatusCode::METHOD_NOT_ALLOWED, "method not allowed").into_response(),
+    }
+}
+
+async fn submit_handler(state: Arc<SessionState>, req: Request<Body>) -> Response {
+    let content_type = req
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+    let body = match to_bytes(req.into_body(), MAX_SUBMIT_BODY_BYTES).await {
+        Ok(b) => b,
+        Err(_) => {
+            return (StatusCode::PAYLOAD_TOO_LARGE, "body too large").into_response()
+        }
+    };
+    let parsed = if let Some(boundary) = content_type
+        .split(';')
+        .map(|s| s.trim())
+        .find_map(|s| s.strip_prefix("boundary="))
+    {
+        // multer is strict about quoted boundaries; trim quotes if present.
+        let boundary = boundary.trim_matches('"');
+        match parse_multipart(boundary, body).await {
+            Ok(p) => p,
+            Err(e) => return (StatusCode::BAD_REQUEST, format!("multipart parse: {e}")).into_response(),
+        }
+    } else {
+        let body_str = match std::str::from_utf8(&body) {
+            Ok(s) => s,
+            Err(_) => return (StatusCode::BAD_REQUEST, "non-UTF-8 urlencoded body").into_response(),
+        };
+        match parse_urlencoded(body_str) {
+            Ok(p) => p,
+            Err(e) => return (StatusCode::BAD_REQUEST, format!("urlencoded parse: {e}")).into_response(),
+        }
+    };
+    if state.submit_tx.send(parsed).is_err() {
+        // Receiver dropped; the session is closing. Return success anyway
+        // so the form's onsubmit doesn't show a confusing error.
+    }
+    Html(SUBMITTED_HTML).into_response()
+}
+
+const SUBMITTED_HTML: &str = r#"<!doctype html>
+<html><head><title>Submitted</title>
+<link rel="stylesheet" href="/skin.css">
+</head><body><h2>Submitted ✓</h2>
+<p>Returning to tuxlink…</p>
+</body></html>"#;
+
+async fn skin_handler() -> Response {
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        header::CONTENT_TYPE,
+        "text/css; charset=utf-8".parse().unwrap(),
+    );
+    (headers, skin::generate().to_string()).into_response()
+}
+
+/// Serve an asset inside the template's folder. Path is URL-decoded by
+/// axum; we canonicalize against the folder and reject anything that
+/// escapes it.
+async fn folder_handler(
+    State(state): State<Arc<SessionState>>,
+    AxumPath(rest): AxumPath<String>,
+) -> Response {
+    // Split off the encoded folder prefix; rest = "<encoded-folder>/<file...>"
+    let mut parts = rest.splitn(2, '/');
+    let _folder_segment = parts.next().unwrap_or("");
+    let file_path = parts.next().unwrap_or("");
+    // Note: the encoded folder is informational; we always serve from the
+    // session's template folder (which is the only folder the operator
+    // intended to be readable). This also blunts any directory-name
+    // forgery attempt by a malicious template.
+    if file_path.is_empty() {
+        return (StatusCode::NOT_FOUND, "not found").into_response();
+    }
+    let candidate = state.template_folder_path.join(file_path);
+    let canonical = match candidate.canonicalize() {
+        Ok(p) => p,
+        Err(_) => return (StatusCode::NOT_FOUND, "not found").into_response(),
+    };
+    let root_canonical = match state.template_folder_path.canonicalize() {
+        Ok(p) => p,
+        Err(_) => return (StatusCode::NOT_FOUND, "folder gone").into_response(),
+    };
+    if !canonical.starts_with(&root_canonical) {
+        return (StatusCode::FORBIDDEN, "path traversal").into_response();
+    }
+    match std::fs::read(&canonical) {
+        Ok(bytes) => {
+            let mut headers = HeaderMap::new();
+            let ext = canonical
+                .extension()
+                .and_then(|x| x.to_str())
+                .unwrap_or("")
+                .to_ascii_lowercase();
+            let ct = match ext.as_str() {
+                "html" | "htm" => "text/html; charset=utf-8",
+                "css" => "text/css; charset=utf-8",
+                "js" => "application/javascript",
+                "png" => "image/png",
+                "jpg" | "jpeg" => "image/jpeg",
+                "gif" => "image/gif",
+                "svg" => "image/svg+xml",
+                _ => "application/octet-stream",
+            };
+            headers.insert(header::CONTENT_TYPE, ct.parse().unwrap());
+            (headers, bytes).into_response()
+        }
+        Err(_) => (StatusCode::NOT_FOUND, "not found").into_response(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::forms::wle_templates::TemplateSource;
+    use axum::body::Body;
+    use axum::http::Request;
+    use tempfile::TempDir;
+    use tower::ServiceExt;
+
+    fn make_state(html: &str) -> (Arc<SessionState>, mpsc::UnboundedReceiver<ParsedBody>) {
+        let td = TempDir::new().unwrap();
+        let folder = td.path().to_path_buf();
+        // Leak the tempdir so the path stays valid for the test's lifetime.
+        // (A test-helper struct that holds the TempDir would be cleaner, but
+        // for the SessionState tests we don't actually read files.)
+        std::mem::forget(td);
+        let (tx, rx) = mpsc::unbounded_channel();
+        let state = Arc::new(SessionState {
+            form_html: html.to_string(),
+            template_folder_path: folder,
+            submit_tx: tx,
+        });
+        (state, rx)
+    }
+
+    #[tokio::test]
+    async fn get_root_serves_form_html() {
+        let html = "<html><head></head><body>test form</body></html>";
+        let (state, _rx) = make_state(html);
+        let router = build_router(state);
+        let resp = router
+            .oneshot(Request::builder().uri("/").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = to_bytes(resp.into_body(), 64_000).await.unwrap();
+        let s = String::from_utf8_lossy(&body);
+        assert!(s.contains("test form"));
+    }
+
+    #[tokio::test]
+    async fn skin_route_serves_css() {
+        let (state, _rx) = make_state("<html></html>");
+        let router = build_router(state);
+        let resp = router
+            .oneshot(
+                Request::builder()
+                    .uri("/skin.css")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(
+            resp.headers()
+                .get(header::CONTENT_TYPE)
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "text/css; charset=utf-8"
+        );
+    }
+
+    #[tokio::test]
+    async fn post_root_urlencoded_dispatches_to_channel() {
+        let (state, mut rx) = make_state("");
+        let router = build_router(state);
+        let resp = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/")
+                    .header("Content-Type", "application/x-www-form-urlencoded")
+                    .body(Body::from("Subject=Hi&Submit=Submit"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let parsed = rx.recv().await.unwrap();
+        assert_eq!(parsed.fields["Subject"][0], "Hi");
+        assert_eq!(parsed.submitter, Some("Submit".to_string()));
+    }
+
+    #[tokio::test]
+    async fn post_root_multipart_dispatches_to_channel() {
+        let (state, mut rx) = make_state("");
+        let router = build_router(state);
+        let boundary = "----testb";
+        let body = format!(
+            "--{b}\r\nContent-Disposition: form-data; name=\"Subject\"\r\n\r\nHi\r\n\
+             --{b}\r\nContent-Disposition: form-data; name=\"Submit\"\r\n\r\nSubmit\r\n\
+             --{b}--\r\n",
+            b = boundary
+        );
+        let resp = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/")
+                    .header(
+                        "Content-Type",
+                        format!("multipart/form-data; boundary={boundary}"),
+                    )
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let parsed = rx.recv().await.unwrap();
+        assert_eq!(parsed.fields["Subject"][0], "Hi");
+        assert_eq!(parsed.submitter, Some("Submit".to_string()));
+    }
+
+    #[tokio::test]
+    async fn folder_route_rejects_path_traversal() {
+        let (state, _rx) = make_state("");
+        let router = build_router(state);
+        let resp = router
+            .oneshot(
+                Request::builder()
+                    .uri("/folder/abc/../../../etc/passwd")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        // Either FORBIDDEN (traversal detected post-canonicalize) or
+        // NOT_FOUND (canonicalize on a non-existent path fails) — both
+        // are acceptable defenses.
+        assert!(
+            resp.status() == StatusCode::FORBIDDEN
+                || resp.status() == StatusCode::NOT_FOUND,
+            "path traversal must not return 200; got: {}",
+            resp.status()
+        );
+    }
+
+    #[tokio::test]
+    async fn unknown_route_returns_404() {
+        let (state, _rx) = make_state("");
+        let router = build_router(state);
+        let resp = router
+            .oneshot(
+                Request::builder()
+                    .uri("/nope")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[test]
+    fn substitute_template_replaces_form_server_and_form_port() {
+        let raw = r#"<form action="http://{FormServer}:{FormPort}"></form>"#;
+        let out = substitute_template(raw, 34567, "ICS Forms");
+        assert!(out.contains("http://127.0.0.1:34567"));
+        assert!(!out.contains("{FormServer}"));
+        assert!(!out.contains("{FormPort}"));
+    }
+
+    #[test]
+    fn substitute_template_replaces_form_folder_url_encoded() {
+        let raw = r#"<a href="{FormFolder}/foo.html">x</a>"#;
+        let out = substitute_template(raw, 1, "ICS Forms");
+        // "ICS Forms" → "ICS%20Forms" (NON_ALPHANUMERIC encodes the space)
+        assert!(out.contains("/folder/ICS%20Forms"));
+    }
+
+    #[test]
+    fn inject_skin_link_adds_link_into_head() {
+        let html = "<html><head></head><body></body></html>";
+        let out = inject_skin_link(html);
+        assert!(out.contains(r#"<link rel="stylesheet" href="/skin.css">"#));
+        // Link is placed inside <head>, not at the start.
+        let head_idx = out.find("<head>").unwrap();
+        let link_idx = out.find("/skin.css").unwrap();
+        assert!(link_idx > head_idx);
+    }
+
+    #[test]
+    fn inject_skin_link_handles_no_head() {
+        let html = "<html><body></body></html>";
+        let out = inject_skin_link(html);
+        assert!(out.contains("/skin.css"));
+    }
+
+    #[tokio::test]
+    async fn submit_with_oversized_body_returns_413() {
+        let (state, _rx) = make_state("");
+        let router = build_router(state);
+        let huge = "A".repeat(MAX_SUBMIT_BODY_BYTES + 10);
+        let resp = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/")
+                    .header("Content-Type", "application/x-www-form-urlencoded")
+                    .body(Body::from(huge))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    }
+
+    // ============================================================
+    // Integration test: real bind + serve + fetch
+    // ============================================================
+
+    #[tokio::test]
+    async fn full_open_session_serves_form_html_via_real_tcp() {
+        let td = TempDir::new().unwrap();
+        let path = td.path().join("Test.html");
+        std::fs::write(&path, "<html><head></head><body>OK</body></html>").unwrap();
+        let template = Template {
+            id: "Test".to_string(),
+            label: "Test".to_string(),
+            folder: "".to_string(),
+            source: TemplateSource::Bundled,
+            path: path.clone(),
+        };
+        let mut session = FormSession::open(template).await.unwrap();
+        let url = session.url();
+        let resp = reqwest::get(&url).await.unwrap();
+        assert_eq!(resp.status(), 200);
+        let body = resp.text().await.unwrap();
+        assert!(body.contains("OK"));
+        assert!(body.contains("/skin.css"));
+        session.close();
+        // After close, a fresh GET should fail (the listener is gone).
+        // tolerate either a TCP-refuse error or a timeout — both signal
+        // the listener is down.
+        let after = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_millis(500))
+            .build()
+            .unwrap()
+            .get(&url)
+            .send()
+            .await;
+        assert!(after.is_err(), "listener should be down after close()");
+    }
+}
