@@ -125,9 +125,17 @@ describe('<TelnetP2pRadioPanel>', () => {
 
   it('renders the Transport section with plaintext note (no TLS option)', () => {
     render(<TelnetP2pRadioPanel onClose={() => {}} />);
-    // The transport section shows "Plaintext · port 8772" — no radio buttons,
-    // no TLS option. WLE P2P is plaintext-only per spec §4.3.
-    expect(screen.getByText(/Plaintext · port 8772/)).toBeInTheDocument();
+    // Transport section explains plaintext-only — no radio buttons, no TLS
+    // option. WLE P2P is plaintext-only per spec §4.3.
+    expect(screen.getByText(/Plaintext only/)).toBeInTheDocument();
+  });
+
+  it('port input defaults to 8772 and is operator-editable', () => {
+    render(<TelnetP2pRadioPanel onClose={() => {}} />);
+    const portInput = screen.getByTestId('p2p-port-input') as HTMLInputElement;
+    expect(portInput.value).toBe('8772');
+    fireEvent.change(portInput, { target: { value: '9000' } });
+    expect(portInput.value).toBe('9000');
   });
 
   // ── Peer Password section ─────────────────────────────────────────────────
@@ -284,6 +292,31 @@ describe('<TelnetP2pRadioPanel>', () => {
         },
       });
     });
+  });
+
+  it('operator port override flows to telnet_p2p_connect', async () => {
+    const core = await import('@tauri-apps/api/core');
+    let observedPort = 0;
+    (core.invoke as ReturnType<typeof vi.fn>).mockImplementation(
+      async (cmd: string, args?: unknown) => {
+        if (cmd === 'config_read') return { callsign: 'N0CALL', grid: 'CN87' };
+        if (cmd === 'p2p_peer_password_status') return 'NotSet';
+        if (cmd === 'session_log_snapshot') return [];
+        if (cmd === 'telnet_p2p_connect') {
+          observedPort = (args as { req: { port: number } }).req.port;
+          return { sent_count: 0, received_count: 0 };
+        }
+        return undefined;
+      },
+    );
+    render(<TelnetP2pRadioPanel onClose={() => {}} />);
+    await waitFor(() =>
+      expect((core.invoke as ReturnType<typeof vi.fn>)).toHaveBeenCalledWith('config_read'),
+    );
+    fireEvent.change(screen.getByTestId('p2p-port-input'), { target: { value: '9000' } });
+    fireEvent.change(screen.getByTestId('p2p-peer-callsign-input'), { target: { value: 'W7AUX' } });
+    fireEvent.click(screen.getByRole('button', { name: /Connect/i }));
+    await waitFor(() => expect(observedPort).toBe(9000));
   });
 
   it('clicking Stop fires telnet_p2p_abort', async () => {

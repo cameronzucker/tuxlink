@@ -26,8 +26,10 @@
 //   - Peer password Set/Clear (keyring-backed; CMS uses its own auth path).
 //   - Host quick-pick chip shows 127.0.0.1 (local Winlink Express default
 //     for P2P; CMS quick-picks are remote server names).
-//   - No port input exposed: WLE P2P is plaintext 8772 only (no TLS).
-//     Surfacing a port field would imply TLS is an option — it is not.
+//   - Port input IS exposed (default 8772): WLE itself surfaces txtPort
+//     in TelnetP2PSetup.cs:392, and operators run WLE on non-default
+//     ports for NAT / SSH-tunnel / multi-instance setups. Port choice is
+//     independent of TLS — WLE P2P is plaintext regardless of port.
 //   - No transport radio group: WLE P2P is plaintext-only per decompile
 //     (spec §4.3). Hiding transport choice is honest, not an omission.
 //
@@ -51,7 +53,9 @@ export interface TelnetP2pRadioPanelProps {
 }
 
 const DEFAULT_HOST = '127.0.0.1';
-const P2P_PORT = 8772; // WLE P2P is plaintext 8772 only — no TLS option.
+const DEFAULT_PORT = 8772; // WLE P2P listener default — operator can override per setup.
+const MIN_PORT = 1;
+const MAX_PORT = 65535;
 
 type PasswordStatus = 'Set' | 'NotSet';
 
@@ -75,6 +79,7 @@ const QUICK_PICKS: { host: string; label: string }[] = [
 export function TelnetP2pRadioPanel({ onClose }: TelnetP2pRadioPanelProps) {
   const [busy, setBusy] = useState(false);
   const [host, setHost] = useState<string>(DEFAULT_HOST);
+  const [port, setPort] = useState<number>(DEFAULT_PORT);
   const [peerCallsign, setPeerCallsign] = useState<string>('');
   const [myCallsign, setMyCallsign] = useState<string>('');
   const [locator, setLocator] = useState<string>('');
@@ -174,7 +179,7 @@ export function TelnetP2pRadioPanel({ onClose }: TelnetP2pRadioPanelProps) {
       const res = await invoke<DialResult>('telnet_p2p_connect', {
         req: {
           host: host.trim() || DEFAULT_HOST,
-          port: P2P_PORT,
+          port,
           peer_callsign: peerCallsign,
           my_callsign: myCallsign,
           locator,
@@ -194,8 +199,8 @@ export function TelnetP2pRadioPanel({ onClose }: TelnetP2pRadioPanelProps) {
   };
 
   const subText = peerCallsign
-    ? `${peerCallsign} @ ${host.trim() || DEFAULT_HOST}:${P2P_PORT}`
-    : `${host.trim() || DEFAULT_HOST}:${P2P_PORT}`;
+    ? `${peerCallsign} @ ${host.trim() || DEFAULT_HOST}:${port}`
+    : `${host.trim() || DEFAULT_HOST}:${port}`;
 
   return (
     <RadioPanel
@@ -223,9 +228,22 @@ export function TelnetP2pRadioPanel({ onClose }: TelnetP2pRadioPanelProps) {
             onKeyDown={onHostKey}
           />
         </label>
-        {/* Port is not an editable input: WLE P2P is plaintext 8772 only.
-            Exposing a port field would imply TLS is an option — it is not.
-            The port is shown in the sub-header line for operator awareness. */}
+        <label className="radio-panel-input-row">
+          <span>Port</span>
+          <input
+            type="number"
+            className="radio-panel-input"
+            data-testid="p2p-port-input"
+            value={port}
+            min={MIN_PORT}
+            max={MAX_PORT}
+            onChange={(e) => {
+              const n = parseInt(e.target.value, 10);
+              if (!Number.isNaN(n) && n >= MIN_PORT && n <= MAX_PORT) setPort(n);
+            }}
+            onKeyDown={onHostKey}
+          />
+        </label>
         <label className="radio-panel-input-row">
           <span>Callsign</span>
           <input
@@ -262,8 +280,9 @@ export function TelnetP2pRadioPanel({ onClose }: TelnetP2pRadioPanelProps) {
       <section className="radio-panel-sec">
         <h5>Transport</h5>
         <p className="radio-panel-radio-help">
-          Plaintext · port {P2P_PORT}. WLE P2P does not support TLS — the
-          transport is fixed.
+          Plaintext only. WLE P2P does not support TLS at any port — TLS
+          (CmsSsl, port 8773) exists for CMS only. Set the port in the
+          Peer Station section above.
         </p>
       </section>
 
