@@ -1,0 +1,122 @@
+/* ============================================================
+ * FormPicker — modal overlay + listbox + action bar.
+ * Mirrors the .compose-overlay / .compose-dialog tokens so the
+ * picker reads as the same dialog idiom users already know from
+ * the close-prompt flow.
+ * ============================================================ */
+
+.form-picker {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+.form-picker__card {
+  background: var(--tux-surface);
+  border: 1px solid var(--tux-border);
+  border-radius: 8px;
+  padding: 24px;
+  min-width: 360px;
+  max-width: 480px;
+  width: 90%;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.form-picker__card h3 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--tux-fg);
+}
+
+.form-picker-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--tux-border);
+  border-radius: 4px;
+  max-height: 280px;
+  overflow-y: auto;
+  background: var(--tux-bg);
+}
+
+.form-picker-list:focus,
+.form-picker-list:focus-visible {
+  outline: 2px solid var(--tux-focus-ring);
+  outline-offset: 2px;
+}
+
+.form-picker-list li {
+  padding: 10px 14px;
+  cursor: pointer;
+  color: var(--tux-fg);
+  border-bottom: 1px solid var(--tux-border);
+  user-select: none;
+  font-size: 13px;
+  line-height: 1.3;
+}
+
+.form-picker-list li:last-child {
+  border-bottom: none;
+}
+
+.form-picker-list li:hover {
+  background: var(--tux-hover);
+}
+
+.form-picker-list li.selected {
+  background: var(--tux-accent-bg);
+  font-weight: 500;
+}
+
+.form-picker-list li.selected:hover {
+  background: rgba(245, 159, 60, 0.18);
+}
+
+.form-picker-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.form-picker-actions button {
+  padding: 7px 14px;
+  border-radius: 4px;
+  border: 1px solid var(--tux-border);
+  background: var(--tux-surface-2);
+  color: var(--tux-fg);
+  cursor: pointer;
+  font-size: 13px;
+  font-family: inherit;
+}
+
+.form-picker-actions button:hover:not(:disabled) {
+  background: var(--tux-elevated);
+}
+
+.form-picker-actions button:focus-visible {
+  outline: 2px solid var(--tux-focus-ring);
+  outline-offset: 1px;
+}
+
+.form-picker-actions button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.form-picker-actions__primary {
+  background: var(--tux-accent) !important;
+  border-color: var(--tux-accent) !important;
+  color: var(--tux-accent-fg) !important;
+}
+
+.form-picker-actions__primary:hover:not(:disabled) {
+  background: var(--tux-accent-hover) !important;
+}
