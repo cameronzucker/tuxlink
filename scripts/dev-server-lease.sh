@@ -65,8 +65,16 @@ EOF
 }
 
 cmd_inspect() {
+  # Codex P2 (2026-06-01): the rc=$? capture is correct, but the outer
+  # script runs under `set -e`, which sees ds_lease_inspect's non-zero
+  # return as an error and exits before the case statement runs. Disable
+  # errexit for this function's body so the human-diagnostic branches
+  # actually fire.
+  local rc
+  set +e
   ds_lease_inspect
-  local rc=$?
+  rc=$?
+  set -e
   case "${rc}" in
     0) printf '%s✓ lease + port are consistent%s\n' "${C_GREEN}" "${C_RESET}" >&2 ;;
     1) printf '%s○ no lease + port-1420 is free%s\n' "${C_DIM}" "${C_RESET}" >&2 ;;
