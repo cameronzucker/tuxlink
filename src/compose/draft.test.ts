@@ -267,28 +267,50 @@ describe('form draft round-trip (T6.4)', () => {
 describe('OutboundDraftDto mapping (structural)', () => {
   it('split To maps correctly to the expected DTO shape', () => {
     const rawTo = 'W6ABC@winlink.org ; W7DEF@winlink.org';
+    const rawCc = 'EOC@winlink.org';
     const draft: DraftData = {
       draftId: 'dto-test',
       to: rawTo,
+      cc: rawCc,
       subject: 'ICS-213 check',
       body: 'Body text',
       requestAck: true,
       savedAt: new Date().toISOString(),
     };
 
-    // cc is always [] in v0.0.1 (Pat 1.0.0 drops cc — spec §3.2, Codex F5).
-    // The DTO shape MUST include cc so the field is present in the Rust struct
-    // (spec §6). Codex P3 fix: add cc to this assertion.
+    // Cc is end-to-end live per tuxlink-h1km (native B2F path writes RFC 5322
+    // Cc headers in winlink/compose.rs). Both To and Cc go through splitAddrs.
     const dto = {
       to: splitAddrs(draft.to),
-      cc: [] as string[],
+      cc: splitAddrs(draft.cc ?? ''),
       subject: draft.subject,
       body: draft.body,
     };
 
     expect(dto.to).toEqual(['W6ABC@winlink.org', 'W7DEF@winlink.org']);
-    expect(dto.cc).toEqual([]);
+    expect(dto.cc).toEqual(['EOC@winlink.org']);
     expect(dto.subject).toBe('ICS-213 check');
     expect(dto.body).toBe('Body text');
+  });
+
+  it('empty cc maps to [] (back-compat with drafts saved before cc landed)', () => {
+    const draft: DraftData = {
+      draftId: 'dto-test-no-cc',
+      to: 'W6ABC@winlink.org',
+      // cc intentionally omitted (legacy draft)
+      subject: 'No-cc',
+      body: 'Body',
+      requestAck: false,
+      savedAt: new Date().toISOString(),
+    };
+
+    const dto = {
+      to: splitAddrs(draft.to),
+      cc: splitAddrs(draft.cc ?? ''),
+      subject: draft.subject,
+      body: draft.body,
+    };
+
+    expect(dto.cc).toEqual([]);
   });
 });

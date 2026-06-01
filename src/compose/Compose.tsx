@@ -7,15 +7,16 @@
 // window labeled `compose-<draftId>`. It is NOT a Radix Dialog inside the
 // main shell — AMD-6 locked decision #2.
 //
-// Cc field disposition (spec §3.2 cc caveat, Codex F5 VERIFIED):
-//   Pat 1.0.0's `send_message` / `PatClient::send` drops `cc` silently.
-//   Per spec §5.4: "never silently drop." Resolution: the Cc field is
-//   DISABLED with a v0.1 tooltip. The `cc` field is present in
-//   `OutboundDraftDto` and wired through to Rust (where it populates
-//   `OutboundMessage.cc`), but `PatBackend::send_message` forwards only
-//   `to`/`subject`/`body`/`date` to Pat. When Pat gains cc support in v0.1,
-//   Task 14's compose UI (enable the field) + pat_client (add form field)
-//   are the only change points. See also: DONE_WITH_CONCERNS note in PR body.
+// Cc field disposition (tuxlink-h1km, 2026-06-01):
+//   The Cc field is ENABLED end-to-end. The original v0.0.1-era rationale
+//   was Pat 1.0.0's `send_message` dropping Cc silently; Pat is fully
+//   stripped (project_pat_complete_strip_directive_2026_05_30) and the
+//   native B2F path writes RFC 5322 `Cc:` headers in compose_message
+//   (winlink/compose.rs L65-67). End-to-end verification trace:
+//     Compose.tsx cc state → OutboundDraftDto.cc → ui_commands.rs
+//     message_send (L741) → NativeBackend.send_message
+//     (winlink_backend.rs L636) → compose_message_with_files (cc &[&str])
+//     → compose_message → add_header("Cc", …) per recipient.
 //
 // Key behaviors (spec §5.4):
 //   - Autosave to localStorage every 2s
@@ -23,9 +24,8 @@
 //   - Clear on successful send
 //   - Close with unsaved changes → "Save draft / Discard / Cancel" dialog
 //   - Ctrl+S → save; Ctrl+Enter → send
-//   - message_send Ok(_) → "Posted to Outbox" success (MID may be empty
-//     string for the transitional Pat path; deleted in P9)
-//   - From / Send-as / Select-Template / Cc → disabled (v0.1 tooltip)
+//   - message_send Ok(_) → "Posted to Outbox" success
+//   - From / Send-as / Select-Template → disabled (deferred-feature tooltip)
 //   - Attachments list + drop zone (stubbed — multipart attachment wiring
 //     is deferred until the form-aware send path lands)
 //
@@ -94,6 +94,7 @@ export interface ComposeProps {
 export function Compose({ draftId }: ComposeProps) {
   // Field state — restored from localStorage on mount
   const [to, setTo] = useState('');
+  const [cc, setCc] = useState('');
   const [subject, setSubject] = useState('');
   const [body, setBody] = useState('');
   const [requestAck, setRequestAck] = useState(false);
@@ -115,7 +116,7 @@ export function Compose({ draftId }: ComposeProps) {
   const [attachments, _setAttachments] = useState<string[]>([]);
 
   // Track the "clean" snapshot so we can detect unsaved changes on close
-  const savedSnapshotRef = useRef({ to: '', subject: '', body: '', requestAck: false });
+  const savedSnapshotRef = useRef({ to: '', cc: '', subject: '', body: '', requestAck: false });
   // Set to true after a successful send — gates the autosave interval so it
   // cannot recreate the draft that was intentionally cleared (Codex P1).
   const sentRef = useRef(false);
@@ -128,11 +129,12 @@ export function Compose({ draftId }: ComposeProps) {
     }
     return (
       to !== s.to ||
+      cc !== s.cc ||
       subject !== s.subject ||
       body !== s.body ||
       requestAck !== s.requestAck
     );
-  }, [to, subject, body, requestAck, formMode]);
+  }, [to, cc, subject, body, requestAck, formMode]);
 
   // ============================================================================
   // Restore on mount
@@ -142,11 +144,15 @@ export function Compose({ draftId }: ComposeProps) {
     const draft = loadDraft(draftId);
     if (draft) {
       setTo(draft.to);
+      // `cc` is optional on the DraftData shape for back-compat with drafts
+      // saved before tuxlink-h1km landed; default to ''.
+      setCc(draft.cc ?? '');
       setSubject(draft.subject);
       setBody(draft.body);
       setRequestAck(draft.requestAck);
       savedSnapshotRef.current = {
         to: draft.to,
+        cc: draft.cc ?? '',
         subject: draft.subject,
         body: draft.body,
         requestAck: draft.requestAck,
@@ -184,14 +190,14 @@ export function Compose({ draftId }: ComposeProps) {
       // cleared and the interval must not recreate it (Codex P1 fix).
       if (!sentRef.current) {
         saveDraft({
-          draftId, to, subject, body, requestAck,
+          draftId, to, cc, subject, body, requestAck,
           formId: formMode.kind === 'form' ? formMode.formId : undefined,
           formFields: formMode.kind === 'form' ? formMode.values : undefined,
         });
       }
     }, 2000);
     return () => clearInterval(interval);
-  }, [draftId, to, subject, body, requestAck, formMode]);
+  }, [draftId, to, cc, subject, body, requestAck, formMode]);
 
   // ============================================================================
   // Keyboard shortcuts
@@ -211,7 +217,7 @@ export function Compose({ draftId }: ComposeProps) {
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [to, subject, body, requestAck, draftId]);
+  }, [to, cc, subject, body, requestAck, draftId]);
 
   // ============================================================================
   // Save draft
@@ -219,13 +225,13 @@ export function Compose({ draftId }: ComposeProps) {
 
   const handleSaveDraft = useCallback(() => {
     saveDraft({
-      draftId, to, subject, body, requestAck,
+      draftId, to, cc, subject, body, requestAck,
       formId: formMode.kind === 'form' ? formMode.formId : undefined,
       formFields: formMode.kind === 'form' ? formMode.values : undefined,
     });
-    savedSnapshotRef.current = { to, subject, body, requestAck };
+    savedSnapshotRef.current = { to, cc, subject, body, requestAck };
     setSendState('idle');
-  }, [draftId, to, subject, body, requestAck, formMode]);
+  }, [draftId, to, cc, subject, body, requestAck, formMode]);
 
   // ============================================================================
   // Send
@@ -241,7 +247,7 @@ export function Compose({ draftId }: ComposeProps) {
 
     const dto: OutboundDraftDto = {
       to: splitAddrs(to),
-      cc: [], // Cc disabled in v0.1 — Pat drops it; never silently pass user data (spec §3.2)
+      cc: splitAddrs(cc),
       subject,
       body,
       // P2.1 bridge: attachment-picker not yet built (HTML Forms PR #151); pass []
@@ -260,7 +266,7 @@ export function Compose({ draftId }: ComposeProps) {
       sentRef.current = true;
       setSendState('success');
       clearDraft(draftId);
-      savedSnapshotRef.current = { to: '', subject: '', body: '', requestAck: false };
+      savedSnapshotRef.current = { to: '', cc: '', subject: '', body: '', requestAck: false };
     } catch (err: unknown) {
       setSendState('error');
       if (err && typeof err === 'object' && 'detail' in err) {
@@ -270,7 +276,7 @@ export function Compose({ draftId }: ComposeProps) {
         setErrorMsg(String(err));
       }
     }
-  }, [sendState, to, subject, body, draftId, formMode.kind]);
+  }, [sendState, to, cc, subject, body, draftId, formMode.kind]);
 
   // ============================================================================
   // Form submit (T6.1)
@@ -285,14 +291,14 @@ export function Compose({ draftId }: ComposeProps) {
         formId,
         fieldValues: values,
         to: splitAddrs(to),
-        cc: [],
+        cc: splitAddrs(cc),
         sendersCallsign: callsign,
         gridSquare: grid,
       });
       sentRef.current = true;
       setSendState('success');
       clearDraft(draftId);
-      savedSnapshotRef.current = { to: '', subject: '', body: '', requestAck: false };
+      savedSnapshotRef.current = { to: '', cc: '', subject: '', body: '', requestAck: false };
     } catch (err: unknown) {
       setSendState('error');
       if (err && typeof err === 'object' && 'detail' in err) {
@@ -302,7 +308,7 @@ export function Compose({ draftId }: ComposeProps) {
         setErrorMsg(String(err));
       }
     }
-  }, [sendState, to, draftId, callsign, grid]);
+  }, [sendState, to, cc, draftId, callsign, grid]);
 
   // ============================================================================
   // Form picker (T6.1)
@@ -389,7 +395,7 @@ export function Compose({ draftId }: ComposeProps) {
 
   const handleSaveAndProceed = useCallback(() => {
     saveDraft({
-      draftId, to, subject, body, requestAck,
+      draftId, to, cc, subject, body, requestAck,
       formId: formMode.kind === 'form' ? formMode.formId : undefined,
       formFields: formMode.kind === 'form' ? formMode.values : undefined,
     });
@@ -400,11 +406,12 @@ export function Compose({ draftId }: ComposeProps) {
     } else {
       closeWindow();
     }
-  }, [draftId, to, subject, body, requestAck, closePrompt.action, formMode]);
+  }, [draftId, to, cc, subject, body, requestAck, closePrompt.action, formMode]);
 
   const handleDiscardAndProceed = useCallback(() => {
     // Clear body content
     setTo('');
+    setCc('');
     setSubject('');
     setBody('');
     setRequestAck(false);
@@ -534,22 +541,19 @@ export function Compose({ draftId }: ComposeProps) {
           />
         </div>
 
-        {/* Cc — DISABLED in v0.2: Cc-to-CMS support is planned for a future release. */}
+        {/* Cc — enabled end-to-end per tuxlink-h1km. */}
         <div className="compose-field-row">
-          <label htmlFor="compose-cc" className="compose-label compose-label--muted">Cc</label>
+          <label htmlFor="compose-cc" className="compose-label">Cc</label>
           <input
             id="compose-cc"
-            className="compose-input compose-input--disabled"
+            className="compose-input"
             type="text"
-            disabled
-            aria-disabled="true"
-            title="Cc support is planned for a future release"
-            placeholder="Cc not available in v0.2"
-            data-testid="compose-cc-disabled"
+            value={cc}
+            onChange={(e) => setCc(e.target.value)}
+            placeholder="W6ABC@winlink.org; W7DEF@winlink.org"
+            aria-label="Cc recipients (semicolon-separated callsigns)"
+            data-testid="compose-cc"
           />
-          <span className="compose-hint compose-hint--warn">
-            Cc support is planned for a future release
-          </span>
         </div>
 
         {/* Subject */}
