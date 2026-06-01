@@ -231,6 +231,12 @@ export function ArdopRadioPanel({ onClose }: ArdopRadioPanelProps) {
   const [captureInput, setCaptureInput] = useState<string>('');
   const [playbackInput, setPlaybackInput] = useState<string>('');
   const [pttSerialInput, setPttSerialInput] = useState<string>('');
+  // cmd_port + binary inputs (tuxlink-jmfm Task 3). PR #185 commit 4c88618
+  // added Capture / Playback / PTT / WebGUI; Task 2 of the radio-panel-width
+  // plan deleted the Settings ARDOP fieldset, so cmd_port + binary needed an
+  // inline-edit surface in the panel to remain reachable.
+  const [cmdPortInput, setCmdPortInput] = useState<string>('');
+  const [binaryInput, setBinaryInput] = useState<string>('');
   // WebGUI port override (operator smoke 2026-05-31 round 3). Stored as a
   // string in the input so the operator can type freely; commits to the
   // backend on blur after a non-empty numeric parse. Empty input → null
@@ -266,6 +272,8 @@ export function ArdopRadioPanel({ onClose }: ArdopRadioPanelProps) {
         setCaptureInput(c.capture_device ?? '');
         setPlaybackInput(c.playback_device ?? '');
         setPttSerialInput(c.ptt_serial_path ?? '');
+        setCmdPortInput(String(c.cmd_port));
+        setBinaryInput(c.binary ?? '');
         // Display the resolved port (override OR cmd_port-1) as a hint so
         // the operator sees what URL the button will open. Empty → no
         // override pinned yet, so the input shows the derived default as
@@ -326,6 +334,30 @@ export function ArdopRadioPanel({ onClose }: ArdopRadioPanelProps) {
       return;
     }
     persistArdop({ webgui_port: n });
+  };
+  // cmd_port commit: parse to int, reject NaN / non-positive, skip no-op
+  // writes. Mirrors commitWebguiPort's reject-on-bad-value pattern but
+  // without the upper bound (the backend clamps cmd_port itself; >65535
+  // would just fail on bind, which is a useful error surface).
+  const commitCmdPort = () => {
+    if (!ardopConfig) return;
+    const trimmed = cmdPortInput.trim();
+    const parsed = parseInt(trimmed, 10);
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      // Revert the input to whatever's persisted so the operator's bad
+      // value doesn't linger in the field.
+      setCmdPortInput(String(ardopConfig.cmd_port));
+      setConnectError(`Invalid cmd_port "${trimmed}" — must be a positive integer. Reverted.`);
+      return;
+    }
+    if (parsed === ardopConfig.cmd_port) return;
+    persistArdop({ cmd_port: parsed });
+  };
+  const commitBinary = () => {
+    if (!ardopConfig) return;
+    const trimmed = binaryInput.trim();
+    if (trimmed === '' || trimmed === ardopConfig.binary) return;
+    persistArdop({ binary: trimmed });
   };
 
   const onBandwidthChange = (e: ChangeEvent<HTMLSelectElement>) => {
@@ -588,6 +620,40 @@ export function ArdopRadioPanel({ onClose }: ArdopRadioPanelProps) {
               }
               onChange={(e) => setWebguiPortInput(e.target.value)}
               onBlur={commitWebguiPort}
+            />
+          </label>
+          {/* cmd_port + binary (tuxlink-jmfm Task 3). The Settings ARDOP
+              fieldset was deleted in Task 2; without these rows the
+              operator would have no UI surface to edit either control. */}
+          <label className="radio-panel-input-row">
+            <span>Cmd port</span>
+            <input
+              type="text"
+              inputMode="numeric"
+              className="radio-panel-input"
+              data-testid="ardop-cmd-port-input"
+              value={cmdPortInput}
+              spellCheck={false}
+              autoCapitalize="off"
+              autoCorrect="off"
+              placeholder="8515 (ardopcf default)"
+              onChange={(e) => setCmdPortInput(e.target.value)}
+              onBlur={commitCmdPort}
+            />
+          </label>
+          <label className="radio-panel-input-row">
+            <span>Binary</span>
+            <input
+              type="text"
+              className="radio-panel-input"
+              data-testid="ardop-binary-input"
+              value={binaryInput}
+              spellCheck={false}
+              autoCapitalize="off"
+              autoCorrect="off"
+              placeholder="ardopcf"
+              onChange={(e) => setBinaryInput(e.target.value)}
+              onBlur={commitBinary}
             />
           </label>
         </section>

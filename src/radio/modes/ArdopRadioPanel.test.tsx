@@ -443,5 +443,66 @@ describe('<ArdopRadioPanel>', () => {
       render(<ArdopRadioPanel onClose={() => {}} />);
       expect(screen.queryByTestId('ardop-radio-section')).not.toBeInTheDocument();
     });
+
+    // tuxlink-jmfm Task 3: Settings ARDOP fieldset was deleted in Task 2;
+    // cmd_port + binary were the two controls without an inline-edit
+    // surface in the panel. These tests pin the rows + their persist-on-blur
+    // behavior so the operator can edit both inline.
+    it('Radio section has a cmd_port input row (tuxlink-jmfm)', async () => {
+      render(<ArdopRadioPanel onClose={() => {}} />);
+      await waitFor(() =>
+        expect(screen.getByTestId('ardop-cmd-port-input')).toBeInTheDocument(),
+      );
+    });
+
+    it('Radio section has an ardopcf binary input row (tuxlink-jmfm)', async () => {
+      render(<ArdopRadioPanel onClose={() => {}} />);
+      await waitFor(() =>
+        expect(screen.getByTestId('ardop-binary-input')).toBeInTheDocument(),
+      );
+    });
+
+    it('cmd_port input persists on blur (tuxlink-jmfm)', async () => {
+      const core = await import('@tauri-apps/api/core');
+      const invokeMock = core.invoke as ReturnType<typeof vi.fn>;
+      render(<ArdopRadioPanel onClose={() => {}} />);
+      // Wait for initial load (default config has cmd_port=8515 so the
+      // input renders that value once ardopConfig hydrates).
+      await waitFor(() => {
+        expect((screen.getByTestId('ardop-cmd-port-input') as HTMLInputElement).value).toBe('8515');
+      });
+      const cmd = screen.getByTestId('ardop-cmd-port-input') as HTMLInputElement;
+      fireEvent.change(cmd, { target: { value: '8520' } });
+      fireEvent.blur(cmd);
+      await waitFor(() => {
+        expect(invokeMock).toHaveBeenCalledWith(
+          'config_set_ardop',
+          expect.objectContaining({
+            value: expect.objectContaining({ cmd_port: 8520 }),
+          }),
+        );
+      });
+    });
+
+    it('binary input persists on blur (tuxlink-jmfm)', async () => {
+      const core = await import('@tauri-apps/api/core');
+      const invokeMock = core.invoke as ReturnType<typeof vi.fn>;
+      render(<ArdopRadioPanel onClose={() => {}} />);
+      // Wait for initial load (default config has binary='ardopcf').
+      await waitFor(() => {
+        expect((screen.getByTestId('ardop-binary-input') as HTMLInputElement).value).toBe('ardopcf');
+      });
+      const bin = screen.getByTestId('ardop-binary-input') as HTMLInputElement;
+      fireEvent.change(bin, { target: { value: '/usr/local/bin/ardopcf' } });
+      fireEvent.blur(bin);
+      await waitFor(() => {
+        expect(invokeMock).toHaveBeenCalledWith(
+          'config_set_ardop',
+          expect.objectContaining({
+            value: expect.objectContaining({ binary: '/usr/local/bin/ardopcf' }),
+          }),
+        );
+      });
+    });
   });
 });
