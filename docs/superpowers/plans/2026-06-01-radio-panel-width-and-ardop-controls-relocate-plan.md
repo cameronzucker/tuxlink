@@ -55,7 +55,7 @@ Expected: clean working tree on branch `bd-tuxlink-jmfm/radio-panel-400px-contro
 
 **Context:** The radio-panel chrome is 360 px wide per `.layout-b .panes--with-dock { grid-template-columns: 200px 340px 1fr 360px; }`. Operator 2026-06-01 surfaced clipping in the ARDOP panel that prior CSS clamps (commit `cc82bf4`) only partially fixed. Operator-approved fix: widen to 400 px; the mailbox column absorbs the 40 px reduction (340 px → 300 px) so the 1fr reading-pane keeps its share.
 
-- [ ] **Step 1: Write a failing snapshot/dimension test.**
+- [x] **Step 1: Write a failing snapshot/dimension test.**
 
 In `src/shell/AppShell.test.tsx` (or wherever the layout grid is tested), ADD:
 
@@ -73,7 +73,7 @@ test('radio-panel column is 400px in panes--with-dock (tuxlink-8rng)', () => {
 
 (If the existing AppShell tests don't render with `.panes--with-dock`, mock a state where the radio panel is open or use the existing pattern from prior radio-panel tests in `src/shell/AppShell.radioPanel.test.tsx`.)
 
-- [ ] **Step 2: Run the test to verify it fails.**
+- [x] **Step 2: Run the test to verify it fails.**
 
 ```bash
 pnpm vitest run src/shell/AppShell.test.tsx -t "radio-panel column is 400px" 2>&1 | tail -10
@@ -81,7 +81,7 @@ pnpm vitest run src/shell/AppShell.test.tsx -t "radio-panel column is 400px" 2>&
 
 Expected: FAIL (column is currently 360 px).
 
-- [ ] **Step 3: Update the grid-template-columns.**
+- [x] **Step 3: Update the grid-template-columns.**
 
 In `src/shell/AppShell.css`, find:
 
@@ -117,7 +117,7 @@ For each match, update from `336px` → `376px` (content width = 400 − 24 padd
 
 In `src/radio/modes/ArdopRadioPanel.css`, the prior `cc82bf4` clamps (`.ardop-arq-grid`, `.ardop-stats`, `.ardop-meter-v`) should naturally fit the wider panel — but audit for any explicit `max-width: 336px` or similar that needs updating.
 
-- [ ] **Step 4: Run the test to verify it passes.**
+- [x] **Step 4: Run the test to verify it passes.**
 
 ```bash
 pnpm vitest run src/shell/AppShell.test.tsx -t "radio-panel column is 400px" 2>&1 | tail -10
@@ -125,7 +125,7 @@ pnpm vitest run src/shell/AppShell.test.tsx -t "radio-panel column is 400px" 2>&
 
 Expected: PASS.
 
-- [ ] **Step 5: Run the full vitest suite.**
+- [x] **Step 5: Run the full vitest suite.**
 
 ```bash
 pnpm vitest run 2>&1 | tail -5
@@ -133,7 +133,7 @@ pnpm vitest run 2>&1 | tail -5
 
 Expected: all passing.
 
-- [ ] **Step 6: Commit.**
+- [x] **Step 6: Commit.**
 
 ```bash
 git -C /home/administrator/Code/tuxlink/worktrees/bd-tuxlink-jmfm-radio-panel-400px-controls-relocate add src/shell/AppShell.css src/shell/AppShell.test.tsx src/radio/RadioPanel.css src/radio/modes/ArdopRadioPanel.css
