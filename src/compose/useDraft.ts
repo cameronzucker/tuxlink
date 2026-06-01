@@ -22,6 +22,9 @@ const draftKey = (id: string) => `tuxlink.drafts.${id}`;
 export interface DraftData {
   draftId: string;
   to: string;      // raw semicolon-separated input string (split on send)
+  /// Raw semicolon-separated Cc input string (split on send). Optional for
+  /// back-compat with drafts saved before Cc was enabled (tuxlink-h1km).
+  cc?: string;
   subject: string;
   body: string;
   requestAck: boolean;
