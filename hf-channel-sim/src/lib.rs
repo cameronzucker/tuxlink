@@ -23,8 +23,10 @@ pub mod fading;
 pub mod channel;
 pub mod noise;
 pub mod analysis;
+pub mod report;
 
 pub use params::{ChannelCondition, WattersonParams};
 pub use channel::WattersonChannel;
 pub use noise::AwgnGenerator;
 pub use analysis::{estimate_subcarrier_snr, SubcarrierSnrEstimate};
+pub use report::{run_characterization, CharacterizationInputs, CharacterizationReport};
