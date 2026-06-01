@@ -15,5 +15,6 @@ pub mod sync;
 pub mod subcarrier_snr;
 pub mod ofdm_main;
 pub mod robustness_floor;
+pub mod coded_modulation;
 pub mod error;
 pub use error::PhyError;

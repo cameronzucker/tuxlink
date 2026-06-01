@@ -93,15 +93,27 @@ impl ModeTable {
         out
     }
 
-    /// Resolve a `ModeHint` to a concrete `ResolvedMode`. Channel SNR is
-    /// reserved for Phase 7's bit-loader-driven mode picking; the v0.1
-    /// skeleton ignores it.
-    pub fn resolve(&self, hint: ModeHint, _channel_snr_db: Option<f32>) -> ResolvedMode {
+    /// Resolve a `ModeHint` to a concrete `ResolvedMode`. For
+    /// `ModeHint::MainAuto` the channel SNR (in dB) selects across the
+    /// OFDM ladder; missing measurement falls back to the Mid mode.
+    /// Phase 11 re-pegs the thresholds against channel-sim sweeps.
+    pub fn resolve(&self, hint: ModeHint, channel_snr_db: Option<f32>) -> ResolvedMode {
         match hint {
             ModeHint::Floor => self.by_name("floor-wblo"),
             ModeHint::FloorCrowdedBand => self.by_name("floor-nfsk"),
-            ModeHint::MainAuto => self.by_name("ofdm-mid"),
             ModeHint::MainPinned(name) => self.by_name(name),
+            ModeHint::MainAuto => {
+                let snr = channel_snr_db.unwrap_or(15.0);
+                if snr < 0.0 {
+                    self.by_name("floor-wblo")
+                } else if snr < 10.0 {
+                    self.by_name("ofdm-narrow")
+                } else if snr < 20.0 {
+                    self.by_name("ofdm-mid")
+                } else {
+                    self.by_name("ofdm-wide")
+                }
+            }
         }
     }
 
