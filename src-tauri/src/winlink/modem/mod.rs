@@ -19,6 +19,7 @@ pub use ardop::session::{ConnectInfo, InitConfig, SessionError};
 
 pub mod ardop;
 pub mod process;
+pub mod vara;
 
 // ─── ReadWrite ──────────────────────────────────────────────────────────────
 
