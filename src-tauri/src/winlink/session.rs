@@ -442,6 +442,8 @@ impl std::fmt::Display for ExchangeError {
     }
 }
 
+impl std::error::Error for ExchangeError {}
+
 #[cfg(test)]
 mod tests {
     use super::*;
