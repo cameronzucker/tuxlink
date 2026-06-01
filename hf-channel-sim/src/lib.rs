@@ -20,5 +20,7 @@
 pub mod params;
 pub mod rng;
 pub mod fading;
+pub mod channel;
 
 pub use params::{ChannelCondition, WattersonParams};
+pub use channel::WattersonChannel;
