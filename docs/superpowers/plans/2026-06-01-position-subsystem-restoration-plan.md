@@ -1210,7 +1210,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 
 **Context:** Per spec §4.1, the `onUseGps` prop on `GridEditProps` is restored; `DashboardRibbon.tsx` passes `() => invoke('position_set_source', { source: 'Gps' })` on the GridEdit invocation.
 
-- [ ] **Step 1: Write the failing test.**
+- [x] **Step 1: Write the failing test.**
 
 In `src/shell/GridEdit.test.tsx`, ADD:
 
@@ -1231,7 +1231,7 @@ test('calls onUseGps when source chip is clicked while source = Manual', () => {
 });
 ```
 
-- [ ] **Step 2: Run the test to verify it fails.**
+- [x] **Step 2: Run the test to verify it fails.**
 
 ```bash
 pnpm vitest run src/shell/GridEdit.test.tsx -t "calls onUseGps when source chip is clicked" 2>&1 | tail -10
@@ -1239,7 +1239,7 @@ pnpm vitest run src/shell/GridEdit.test.tsx -t "calls onUseGps when source chip 
 
 Expected: FAIL — either TypeScript error (no `onUseGps` in `GridEditProps`) or click is no-op on the `<span>` chip.
 
-- [ ] **Step 3: Restore `onUseGps` prop in `GridEdit.tsx` + handler.**
+- [x] **Step 3: Restore `onUseGps` prop in `GridEdit.tsx` + handler.**
 
 In `src/shell/GridEdit.tsx`:
 
@@ -1291,7 +1291,7 @@ In `src/shell/DashboardRibbon.tsx`, RESTORE the `onUseGps` prop on the GridEdit 
 />
 ```
 
-- [ ] **Step 4: Run the test to verify it passes.**
+- [x] **Step 4: Run the test to verify it passes.**
 
 ```bash
 pnpm vitest run src/shell/GridEdit.test.tsx -t "calls onUseGps when source chip is clicked" 2>&1 | tail -10
@@ -1299,7 +1299,7 @@ pnpm vitest run src/shell/GridEdit.test.tsx -t "calls onUseGps when source chip 
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit.**
+- [x] **Step 5: Commit.**
 
 ```bash
 git add src/shell/GridEdit.tsx src/shell/DashboardRibbon.tsx src/shell/GridEdit.test.tsx
