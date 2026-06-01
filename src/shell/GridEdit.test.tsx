@@ -11,7 +11,7 @@ import { GridEdit } from './GridEdit';
 
 test('clicking the grid value enters edit mode and commits a valid grid', async () => {
   const onCommit = vi.fn().mockResolvedValue(undefined);
-  render(<GridEdit grid="CN87" source="Manual" gpsReady={false} onCommit={onCommit} />);
+  render(<GridEdit grid="CN87" source="Manual" gpsReady={false} onCommit={onCommit} onUseGps={vi.fn()} />);
   fireEvent.click(screen.getByTestId('ribbon-grid'));
   const input = screen.getByTestId('grid-input') as HTMLInputElement;
   fireEvent.change(input, { target: { value: 'DM33ab' } });
@@ -24,7 +24,7 @@ test('clicking the grid value enters edit mode and commits a valid grid', async 
 
 test('invalid grid shows a validation message and does not commit', () => {
   const onCommit = vi.fn();
-  render(<GridEdit grid="CN87" source="Manual" gpsReady={false} onCommit={onCommit} />);
+  render(<GridEdit grid="CN87" source="Manual" gpsReady={false} onCommit={onCommit} onUseGps={vi.fn()} />);
   fireEvent.click(screen.getByTestId('ribbon-grid'));
   const input = screen.getByTestId('grid-input');
   fireEvent.change(input, { target: { value: 'NOPE' } });
@@ -40,13 +40,13 @@ test('invalid grid shows a validation message and does not commit', () => {
 // fresh fix, and gpsReady would be false. The test below codifies that
 // the affordance is gone — its absence is now part of the contract.
 test('no Use-GPS affordance is rendered (tuxlink-pjih)', () => {
-  render(<GridEdit grid="CN87" source="Manual" gpsReady={true} onCommit={vi.fn()} />);
+  render(<GridEdit grid="CN87" source="Manual" gpsReady={true} onCommit={vi.fn()} onUseGps={vi.fn()} />);
   expect(screen.queryByTestId('use-gps')).not.toBeInTheDocument();
 });
 
 test('Escape cancels edit without committing', () => {
   const onCommit = vi.fn();
-  render(<GridEdit grid="CN87" source="Manual" gpsReady={false} onCommit={onCommit} />);
+  render(<GridEdit grid="CN87" source="Manual" gpsReady={false} onCommit={onCommit} onUseGps={vi.fn()} />);
   fireEvent.click(screen.getByTestId('ribbon-grid'));
   fireEvent.keyDown(screen.getByTestId('grid-input'), { key: 'Escape' });
   expect(onCommit).not.toHaveBeenCalled();
@@ -55,7 +55,7 @@ test('Escape cancels edit without committing', () => {
 
 test('backend rejection shows the error detail and stays in edit mode', async () => {
   const onCommit = vi.fn().mockRejectedValue({ kind: 'Rejected', detail: 'Grid must be a 4- or 6-char Maidenhead locator.' });
-  render(<GridEdit grid="CN87" source="Manual" gpsReady={false} onCommit={onCommit} />);
+  render(<GridEdit grid="CN87" source="Manual" gpsReady={false} onCommit={onCommit} onUseGps={vi.fn()} />);
   fireEvent.click(screen.getByTestId('ribbon-grid'));
   fireEvent.change(screen.getByTestId('grid-input'), { target: { value: 'DM33' } });
   fireEvent.keyDown(screen.getByTestId('grid-input'), { key: 'Enter' });
@@ -67,14 +67,14 @@ test('backend rejection shows the error detail and stays in edit mode', async ()
 // tuxlink-39b round 2: the source chip must read as ACTIVE (green) when GPS is
 // the source AND a fix is locked — not greyed-out-as-if-disabled.
 test('GPS chip is marked locked when GPS is the source and a fix is locked', () => {
-  render(<GridEdit grid="DM33xx" source="Gps" gpsReady={true} onCommit={vi.fn()} />);
+  render(<GridEdit grid="DM33xx" source="Gps" gpsReady={true} onCommit={vi.fn()} onUseGps={vi.fn()} />);
   const chip = screen.getByTestId('source-chip');
   expect(chip).toHaveClass('gps');
   expect(chip).toHaveClass('locked');
 });
 
 test('GPS chip is NOT locked when GPS source has no fix', () => {
-  render(<GridEdit grid="DM33" source="Gps" gpsReady={false} onCommit={vi.fn()} />);
+  render(<GridEdit grid="DM33" source="Gps" gpsReady={false} onCommit={vi.fn()} onUseGps={vi.fn()} />);
   const chip = screen.getByTestId('source-chip');
   expect(chip).toHaveClass('gps');
   expect(chip).not.toHaveClass('locked');
@@ -83,8 +83,25 @@ test('GPS chip is NOT locked when GPS source has no fix', () => {
 // tuxlink-39b round 2: the edit input had no prompt, so it "demanded input with
 // no instructions". A format placeholder makes it self-explanatory.
 test('grid input shows a format placeholder when editing', () => {
-  render(<GridEdit grid="DM33" source="Manual" gpsReady={false} onCommit={vi.fn()} />);
+  render(<GridEdit grid="DM33" source="Manual" gpsReady={false} onCommit={vi.fn()} onUseGps={vi.fn()} />);
   fireEvent.click(screen.getByTestId('ribbon-grid'));
   const input = screen.getByTestId('grid-input') as HTMLInputElement;
   expect(input.placeholder).toMatch(/DM33xx|6-char|Maidenhead/i);
+});
+
+// tuxlink-c79g Task 10: restore `onUseGps` per spec §4.1 — clicking the source
+// chip while source = Manual fires onUseGps so the operator can switch to GPS.
+test('calls onUseGps when source chip is clicked while source = Manual', () => {
+  const onUseGps = vi.fn();
+  render(
+    <GridEdit
+      grid="EM75"
+      source="Manual"
+      gpsReady={false}
+      onCommit={vi.fn()}
+      onUseGps={onUseGps}
+    />,
+  );
+  fireEvent.click(screen.getByTestId('source-chip'));
+  expect(onUseGps).toHaveBeenCalledTimes(1);
 });

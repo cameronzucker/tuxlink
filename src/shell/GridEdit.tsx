@@ -32,9 +32,10 @@ export interface GridEditProps {
   source: PositionSource;                           // 'Manual' | 'Gps' (LIVE source per tuxlink-pjih)
   gpsReady: boolean;                                // a usable fix exists (sourced in Task 11)
   onCommit: (grid: string) => void | Promise<void>; // receives the NORMALIZED grid
+  onUseGps: () => void;                             // RESTORED per spec §4.1 — fires when chip is clicked while source = Manual
 }
 
-export function GridEdit({ grid, source, gpsReady, onCommit }: GridEditProps) {
+export function GridEdit({ grid, source, gpsReady, onCommit, onUseGps }: GridEditProps) {
   const [editing, setEditing] = useState(false);
   const [inputValue, setInputValue] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -130,6 +131,7 @@ export function GridEdit({ grid, source, gpsReady, onCommit }: GridEditProps) {
         }`}
         data-testid="source-chip"
         aria-label={`Position source: ${source}`}
+        onClick={source === 'Manual' ? onUseGps : undefined}
       >
         {source === 'Manual' ? 'MANUAL' : 'GPS'}
       </span>
