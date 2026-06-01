@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, within, act } from '@testing-library/react';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import type { ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { MailboxFolder, MessageMeta } from '../mailbox/types';
@@ -453,5 +455,37 @@ describe('<AppShell> — find-messages wiring (Task 17)', () => {
     expect(
       searchBar.compareDocumentPosition(panes) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Radio-panel chrome width — tuxlink-8rng
+//
+// Operator 2026-06-01 surfaced ARDOP-panel content clipping at the 360 px
+// width; a prior CSS clamp (commit cc82bf4) only partially fixed it.
+// Operator-approved fix: widen the panel column to 400 px. The mailbox
+// column absorbs the 40 px reduction (340 → 300) so the 1fr reading-pane
+// keeps its share. This test pins the grid-template-columns declaration
+// in AppShell.css so any future regression that quietly walks the width
+// back is caught at unit-test time. The rule must apply to BOTH the
+// 4-col (`panes--with-dock`) and 5-col (`.panes--with-legacy-dock`)
+// variants per operator's "all modes" directive.
+// ---------------------------------------------------------------------------
+describe('AppShell.css radio-panel chrome width (tuxlink-8rng)', () => {
+  const css = readFileSync(
+    resolve(__dirname, '../../src/shell/AppShell.css'),
+    'utf-8',
+  );
+
+  it('declares the radio-panel column at 400px in .panes--with-dock', () => {
+    expect(css).toMatch(
+      /\.layout-b \.panes--with-dock\s*\{[^}]*200px\s+300px\s+1fr\s+400px/,
+    );
+  });
+
+  it('declares the radio-panel column at 400px in .panes--with-legacy-dock', () => {
+    expect(css).toMatch(
+      /\.layout-b \.panes--with-dock\.panes--with-legacy-dock\s*\{[^}]*200px\s+300px\s+1fr\s+400px\s+290px/,
+    );
   });
 });

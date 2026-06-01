@@ -22,7 +22,9 @@
      pushes the third column off-panel. `minmax(0, 1fr)` lets cells share
      the panel width by allowing them to shrink below their intrinsic
      content size; combined with `min-width: 0` on the cell, this keeps
-     all 9 cells inside the 336 px content box at the 360 px panel width. */
+     all 9 cells inside the 376 px content box at the 400 px panel width
+     (tuxlink-8rng widened the panel from 360 → 400 px on 2026-06-01;
+     the prior 336 px content box is now 376 px). */
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 4px;
 }
@@ -103,7 +105,8 @@
   /* Operator smoke 2026-05-31 round 3: a `<pre>` with `white-space: pre`
      does NOT wrap, so long peer call signs, long mode names, or the
      compound "RX <bytes> B · TX <bytes> B" line could push the pre wider
-     than the 360 px panel and force the entire section off-screen. Switch
+     than the 400 px panel (widened from 360 px on 2026-06-01 per
+     tuxlink-8rng) and force the entire section off-screen. Switch
      to `white-space: pre-wrap` so newlines (which compose the row layout)
      are preserved while long values wrap within their row. Pair with
      `overflow-wrap: anywhere` for callsigns / paths without natural break

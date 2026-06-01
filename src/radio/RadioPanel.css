@@ -14,8 +14,13 @@
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  width: 360px;
-  min-width: 360px;
+  /* tuxlink-8rng (2026-06-01): widened 360 → 400 px so ARDOP-panel
+     content stops clipping the panel chrome. Must match the
+     `.layout-b .panes--with-dock` grid track in AppShell.css (single
+     source of truth for the panel column width). The widen applies to
+     all modes — see AppShell.css comment for rationale. */
+  width: 400px;
+  min-width: 400px;
   height: 100%;
 }
 
@@ -80,7 +85,8 @@
   overflow-y: auto;
   /* Hard horizontal clamp — defensive cap so any element that escapes its
      `.radio-panel-sec`'s wrap/truncate net cannot push the panel into
-     horizontal scroll. The panel is 360 px wide and is not meant to scroll
+     horizontal scroll. The panel is 400 px wide (tuxlink-8rng widened
+     it 360 → 400 px on 2026-06-01) and is not meant to scroll
      horizontally. Operator smoke 2026-05-31 round 3 — "elements off-screen
      to the right". */
   overflow-x: hidden;
@@ -92,10 +98,12 @@
    bearing: without it, a wide child (a long status line, a long stats
    row, an SVG with intrinsic width > panel width) propagates its width
    up the flex chain and pushes the entire section past the panel's
-   336 px content box. With both, the section is hard-bounded to the
-   panel width and children must wrap / truncate / shrink to fit.
-   See operator smoke 2026-05-31 round 3 — "elements pushed off-screen
-   to the right". */
+   376 px content box (400 px panel − 24 px horizontal padding;
+   tuxlink-8rng widened the panel from 360 → 400 px on 2026-06-01, so
+   the prior 336 px content box is now 376 px). With both, the section
+   is hard-bounded to the panel width and children must wrap / truncate
+   / shrink to fit. See operator smoke 2026-05-31 round 3 — "elements
+   pushed off-screen to the right". */
 .radio-panel-sec {
   padding: 8px 12px;
   border-bottom: 1px dashed rgba(255, 255, 255, 0.08);

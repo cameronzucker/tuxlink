@@ -50,17 +50,23 @@
   overflow: hidden;
 }
 
-/* The Radio Panel is 360 px wide (spec §3.2) and mounts as the 4th
- * column whenever the panel is visible. The mailbox column shrinks
- * 40 px (380→340) to give the panel its width without stealing from the
- * 1fr reading-pane. During P1, ARDOP HF dual-mounts the legacy ArdopDock
- * alongside it; that case needs a fifth 290 px column. P4 removes the
- * dock entirely and the second class goes away. */
+/* The Radio Panel is 400 px wide (spec §3.2, widened 2026-06-01 per
+ * tuxlink-8rng — operator surfaced ARDOP-panel content clipping at the
+ * prior 360 px width that a CSS clamp in cc82bf4 only partially fixed;
+ * the 400 px change applies to ALL modes, not just ARDOP, so the panel
+ * chrome reads cohesively across Telnet / Packet / ARDOP / placeholder
+ * mounts) and mounts as the 4th column whenever the panel is visible.
+ * The mailbox column shrinks 80 px total (380→300) to give the panel
+ * its width without stealing from the 1fr reading-pane: 40 px funds the
+ * prior 360 px panel, the additional 40 px funds the widen to 400 px.
+ * During P1, ARDOP HF dual-mounts the legacy ArdopDock alongside it;
+ * that case needs a fifth 290 px column. P4 removes the dock entirely
+ * and the second class goes away. */
 .layout-b .panes--with-dock {
-  grid-template-columns: 200px 340px 1fr 360px;
+  grid-template-columns: 200px 300px 1fr 400px;
 }
 .layout-b .panes--with-dock.panes--with-legacy-dock {
-  grid-template-columns: 200px 340px 1fr 360px 290px;
+  grid-template-columns: 200px 300px 1fr 400px 290px;
 }
 
 /* ============================================================================
