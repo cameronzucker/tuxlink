@@ -35,8 +35,9 @@ pub enum DialerLoginError {
     UnexpectedLine { line: String },
 }
 
-/// Read one `\r`- or `\n`-terminated line from `reader`, including the
-/// terminator. Returns `None` on EOF before any byte.
+/// Read one line terminated by `\r`, `\n`, or `\r\n`. Returns the bytes
+/// INCLUDING the terminator(s) — for `\r\n`, both are consumed and included.
+/// Returns `None` on EOF before any byte was read.
 fn read_line_with_eol<R: BufRead>(reader: &mut R) -> io::Result<Option<Vec<u8>>> {
     let mut buf = Vec::new();
     loop {
@@ -47,7 +48,17 @@ fn read_line_with_eol<R: BufRead>(reader: &mut R) -> io::Result<Option<Vec<u8>>>
             }
             Ok(_) => {
                 buf.push(byte[0]);
-                if byte[0] == b'\r' || byte[0] == b'\n' {
+                if byte[0] == b'\n' {
+                    return Ok(Some(buf));
+                }
+                if byte[0] == b'\r' {
+                    // Peek for a paired \n — consume if present, leave alone if not.
+                    // BufRead::fill_buf is the non-consuming peek primitive.
+                    let peek = reader.fill_buf()?;
+                    if peek.first() == Some(&b'\n') {
+                        buf.push(b'\n');
+                        reader.consume(1);
+                    }
                     return Ok(Some(buf));
                 }
             }
@@ -164,14 +175,19 @@ mod tests {
     }
 
     #[test]
-    fn tolerates_whitespace_and_eol_variants_in_callsign_prompt() {
+    fn tolerates_crlf_line_endings_in_both_callsign_prompt_and_b2f_opener() {
+        // WLE on Windows sends \r\n. Both terminators must be consumed as one
+        // unit so the next read sees the B2F handshake start, not a stranded \n.
         let peer = b"CALLSIGN :\r\n[RMS-EXPRESS-1.7.31.0-B2FHM$]\r\n";
         let (outcome, sent) = run(peer, None);
         assert_eq!(sent, b"N0CALL\r".to_vec());
-        assert!(matches!(
-            outcome,
-            Ok(DialerLoginOutcome::DoneWithPushback { .. })
-        ));
+        match outcome {
+            Ok(DialerLoginOutcome::DoneWithPushback { pushback }) => {
+                // Pushback must be the B2F line including its \r\n, NOT a stranded \n.
+                assert_eq!(pushback, b"[RMS-EXPRESS-1.7.31.0-B2FHM$]\r\n".to_vec());
+            }
+            other => panic!("expected DoneWithPushback with B2F line, got {:?}", other),
+        }
     }
 
     #[test]
