@@ -63,11 +63,11 @@ Host A (primary Pi):           Host B (secondary host):
      │ USB-A                       │ USB-A
      ▼                              ▼
 ┌─────────────────┐            ┌─────────────────┐
-│ Raspberry Pi 5  │            │ Pi 4 / laptop / │
-│  (primary dev)  │            │  mini-PC / 2nd  │
-│  ALSA hw:N      │            │  Pi (any Linux  │
-│  /dev/hidraw_g90│            │  host w/ USB)   │
-│  modem A        │            │  modem B        │
+│ Raspberry Pi 5  │            │ Raspberry Pi 5  │
+│  (primary dev)  │            │  (Host B —      │
+│  ALSA hw:N      │            │  second unit in │
+│  /dev/hidraw_g90│            │  operator       │
+│  modem A        │            │  inventory)     │
 └─────────────────┘            └─────────────────┘
 
                 RF antenna path
@@ -115,7 +115,7 @@ hardware speculatively.
 
 | Item | Role |
 |---|---|
-| Second Linux host | Host B compute. Any Linux host with a free USB port — retired laptop, second Pi, mini-PC. |
+| Second Raspberry Pi 5 (Host B compute) | Settled 2026-05-31 (overview §5.A.7): operator already has a second Pi 5 in inventory. Matches Host A's hardware family verbatim — same userspace, same DigiRig CM108B / ALSA / HID setup as Host A — so the per-host setup tax is one set of patterns rather than two. |
 | RTL-SDR V4 (any compatible RTL2832U-based dongle) | Observer. Captures RF emissions from both radios via incidental near-field coupling. Basic antenna (the included whip or similar) is sufficient. |
 | Two direct-attach dummy loads | One per radio, attached at the antenna port. Standard ham dummy loads (any rated for the radio's power level). Operator likely has these. |
 | Stable 13.8 V DC bench supply for the FT-818 | Required for FT-818 to deliver 5 W rather than degrading to 3 W or 2 W below 11 V (per FT-818 known issues survey in `docs/research/modem-foundations.md` §7 / 2026-05-31 research synthesis). Operator likely has this. |
@@ -319,7 +319,7 @@ Once the rig is calibrated:
 The detailed test procedures for each subsystem (channel sim runs, PHY
 characterization, FEC stress tests, MAC behavior, ARQ scenarios, link adaptation
 sweeps) live in the corresponding subsystem design specs, drafted off the program
-overview ([2026-05-31-clean-sheet-modem-overview-DRAFT.md](../superpowers/specs/2026-05-31-clean-sheet-modem-overview-DRAFT.md)).
+overview ([2026-05-31-clean-sheet-modem-overview.md](../superpowers/specs/2026-05-31-clean-sheet-modem-overview.md)).
 
 ## Open verify-items (with hardware in hand)
 

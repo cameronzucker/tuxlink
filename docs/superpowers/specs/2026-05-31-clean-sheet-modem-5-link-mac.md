@@ -1,6 +1,28 @@
-# Subsystem #5 — Link / MAC layer (STUB)
+# Subsystem #5 — Link / MAC layer
 
-> **Status: STUB.** Subordinate to the program overview DRAFT.
+> **Status: Canonical.** Subordinate to
+> [2026-05-31-clean-sheet-modem-overview.md](2026-05-31-clean-sheet-modem-overview.md).
+> Incorporates overview §5.A.2 (payload-size-aware routing — MAC decides
+> which PHY family handles outgoing frames based on size + channel
+> conditions, in concert with subsystem #7 link adaptation).
+
+## §1.A Payload-size routing role (per overview §5.A.2)
+
+The MAC layer is the **routing decision point** between PHY families. For
+each outgoing frame, MAC consults (current channel quality estimate +
+payload size) and decides:
+
+- **Long messages (typical mail exchange):** route to the bit-adaptive
+  OFDM family at the link-adaptation-chosen mode. ARQ applies.
+- **Short critical payloads (status / position / ICS-213-class) under
+  degraded channel conditions:** route to the FSK weak-signal floor mode.
+  No ARQ; retransmit-the-whole-message semantics (FT8-pattern).
+- **Short messages under good channel conditions:** stay in the OFDM
+  family — there's no SNR-floor advantage to dropping down.
+
+Specific size/SNR thresholds for the routing decision are an open
+question (see §4 below); the *policy mechanism* (MAC routes; subsystem #7
+provides the channel-quality input) is settled.
 
 ## §1. Role
 

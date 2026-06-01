@@ -1,6 +1,46 @@
-# Subsystem #7 — Link adaptation (STUB)
+# Subsystem #7 — Link adaptation
 
-> **Status: STUB.** Subordinate to the program overview DRAFT.
+> **Status: Canonical.** Subordinate to
+> [2026-05-31-clean-sheet-modem-overview.md](2026-05-31-clean-sheet-modem-overview.md).
+> Incorporates overview §5.A.1 (multi-mode ladder with two families — OFDM
+> + FSK-floor), §5.A.2 (payload-size-aware MAC routing makes link
+> adaptation a 2D policy).
+
+## §1.A Two-dimensional adaptation policy (per overview §5.A.1 + §5.A.2)
+
+Link adaptation in tuxmodem is **substantially more complex** than the
+conventional "measure SNR, pick a mode" policy because of the dual-family
+PHY architecture:
+
+**Outer loop — mode-family selection:**
+
+- Observe channel quality (SNR, FER, throughput, bit-loading curve shape).
+- If channel quality is above the FSK-floor threshold → operate in the
+  bit-adaptive OFDM family.
+- If channel quality degrades past the OFDM family's usable envelope AND
+  outgoing payload is short critical → drop into the FSK weak-signal floor.
+
+**Inner loop — within-OFDM-family:**
+
+- Per-sub-carrier bit-loading. Adapts continuously to per-sub-carrier SNR
+  measurements (PHY exposes; link adaptation consumes). Higher per-sub-carrier
+  SNR → more bits per symbol on that sub-carrier; lower → fewer or none.
+- Mode-within-family selection (which discrete OFDM mode is in use — i.e.,
+  which bandwidth + sub-carrier-count combination). Slower than bit-loading.
+
+**Coordination with MAC payload-size routing:**
+
+- MAC (subsystem #5) provides outgoing payload size.
+- Link adaptation provides current channel-quality estimate + recommended
+  mode.
+- MAC combines the two to decide: route to OFDM-mode-N, or drop to FSK
+  floor.
+
+**Coordination with ARQ:**
+
+- ARQ is mode-conditional (subsystem #6 §1.A). When link adaptation
+  switches mode families (OFDM ↔ FSK floor), the ARQ state machine
+  enables / disables accordingly.
 
 ## §1. Role
 

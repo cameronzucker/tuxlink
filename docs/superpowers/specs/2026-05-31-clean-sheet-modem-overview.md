@@ -1,17 +1,12 @@
-# Clean-sheet HF modem program — overview (DRAFT)
+# Clean-sheet HF modem program — overview
 
-> **Status: DRAFT — operator review pending.** This is a v0 draft written
-> autonomously during the operator's 6-hour drive (2026-05-31, agent
-> mink-swallow-kite). The brainstorming skill's HARD-GATE has NOT been cleared:
-> the design has not been presented to and approved by the operator. This file
-> exists as a markup target for that review, not as an approved spec. Until
-> approval, no subsystem implementation work begins. After approval, the file
-> is renamed (dropping `-DRAFT`) and committed as canonical.
->
-> All quantitative targets in this draft are marked `[open: operator
-> confirms]`. The decomposition, sequencing, and design-discipline framing are
-> proposals; the open-question section at the end enumerates what the operator
-> needs to settle.
+> **Status: Canonical** (renamed from `-DRAFT` after the 2026-05-31 brainstorm).
+> Approved by Cameron Zucker (operator); brainstorm walked by Cameron +
+> mink-swallow-kite (agent) on 2026-05-31. The eight open questions originally
+> enumerated in this doc's draft are now resolved; the resolutions are
+> incorporated into §0 (success-criterion shape) and §5 (architectural
+> decisions). The seven subsystem STUBs that were subordinate to this doc are
+> renamed off their `-STUB` suffix in the same commit.
 
 ## §0. Program scope
 
@@ -36,14 +31,16 @@ clients (Pat / ARIM / etc.).
 - Not constrained by a community-adoption migration story. Optimize for technical merit only; operator has community reach to drive adoption of a technically-superior alternative. (`project_v05_modem_design_posture` memory.)
 - Not a bridge or interop layer. Full replacement.
 
-**Success-criterion shape (quantitative targets [open: operator confirms]):**
+**Success-criterion shape (settled 2026-05-31):**
 
-- Total occupied bandwidth: ≤2300 Hz [open: confirm 2300 vs. wider]. **Rationale for the 2300 Hz proposal:** the FT-818's stock SSB IF filter (no Collins YF-122S upgrade) cleanly passes ≤2300 Hz; designs wider than this become "supported on better radios, degraded on FT-818." Operator's installed-base assumptions drive this target.
-- Decode threshold under ITU-R F.520 "moderate" HF channel conditions: [open: SNR target in dB].
-- Net throughput at moderate channel: [open: kbps target].
-- ARQ-corrected end-to-end reliability under typical channel impairment: [open: target percentage at named conditions].
-- Compatibility with Cameron's reference radios: works on G90 + FT-818 over the bench rig (`docs/hardware/bench-rig-two-host-topology.md`).
-- Independent-creation defense preserved per ADR 0014 throughout the project lifecycle.
+- **Total occupied bandwidth — variable / multi-mode** (operator-selectable + link-adaptation-selectable across modes). The mode ladder spans two PHY families (see §5.A.1); each mode within the OFDM family carries its own bandwidth, ranging from sub-100 Hz at the FSK-floor end up to whatever the operator + adaptation choose at the wide end. **No single fixed-bandwidth design.**
+- **Decode threshold — beat ARDOP's narrowest-mode floor.** The FSK weak-signal floor mode targets stronger SNR-floor performance than ARDOP's narrowest mode. Specific dB number is to be measured against ITU-R F.520 "moderate" conditions in the channel simulator; brainstorm-time commitment is to the *strategic posture* (be more robust than the open-source reference, validated empirically).
+- **Net throughput — emergent from bit-loading, exceeds VARA per measurement.** Throughput is not pre-committed to a number. The bit-adaptive OFDM family (§5.A.1) achieves throughput as a function of (bandwidth × per-sub-carrier SNR × audio-passband rolloff). Success criterion is "exceed VARA at comparable channel conditions, validated by channel-simulator measurement against named F.520 conditions."
+- **ARQ-corrected end-to-end reliability** — applies above the FSK-floor mode; the floor mode itself may operate ARQ-disabled with retransmit-the-whole-message semantics (FT8-pattern). Specific reliability target to be set per-subsystem during implementation.
+- **Compatibility with reference radios:** works on G90 + FT-818 over the bench rig (`docs/hardware/bench-rig-two-host-topology.md`).
+- **Independent-creation defense preserved per ADR 0014** throughout the project lifecycle.
+- **License posture: AGPLv3-only** for tuxmodem (the modem itself + the channel-simulator crate). Tuxlink-the-client license is a separate workstream not settled here.
+- **Compute target: best-effort** — anything that runs Rust + ALSA cleanly. Pi 5 is primary dev target; no pre-committed minimum.
 
 ## §1. Subsystem decomposition
 
@@ -433,18 +430,163 @@ in five rules every subsystem spec must follow:
    the watched-failure-mode entry "this section's framing might tempt
    investigation of prior art; stop instead."
 
-## §5. Open questions (operator must settle)
+## §5. Architectural decisions from the 2026-05-31 brainstorm
 
-| # | Question | Why it matters | Default-if-no-answer (proposed) |
-|---|---|---|---|
-| Q1 | Total occupied bandwidth target — confirm 2300 Hz vs. wider? | Caps PHY design space. FT-818 stock filter forces ≤2300 Hz for installed-base compatibility; wider designs require Collins YF-122S filter or limit deployment to better-equipped radios. | 2300 Hz |
-| Q2 | Decode threshold under ITU-R F.520 "moderate" channel conditions — target SNR in dB for usable decode? | Defines the channel-condition envelope the modem must operate over. Affects PHY constellation density + FEC overhead. | [open] |
-| Q3 | Net throughput target — kbps at moderate channel, kbps at good channel? | Caps PHY data rate. Tradeoff against #Q2. | [open] |
-| Q4 | Deployment-target compute budget — Pi 5 / x86 / ARM / etc.? | Caps FEC decoder complexity + PHY DSP complexity. | Pi 5 + x86 reasonable laptop |
-| Q5 | Host-protocol-API form — TCP vs. Unix socket vs. stdio vs. shared memory? Standardize against any prior art? | Caps deployment + spin-off design. ADR 0015's deferred question. | TCP, novel protocol, versioned |
-| Q6 | License for the standalone modem daemon spin-off — MIT / Apache 2.0 / GPLv3 / dual-license? | Caps adoption. Permissive license maximizes adoption; copyleft constrains downstream incorporation. | MIT or Apache 2.0 |
-| Q7 | Should the channel simulator be its own crate (public) or live inside tuxmodem? | Affects whether external researchers can reuse it; affects independent-creation defense (a public Watterson simulator is a public artifact). | Standalone open-source crate |
-| Q8 | Bench-rig second host — which machine becomes Host B? | Caps the timeline for the bench-rig becoming operational. | Operator picks — laptop / Pi / mini-PC |
+The eight open questions from the draft are resolved here. Each decision
+defines a constraint or architectural commitment that downstream subsystem
+specs must honor. Subsystem-level open questions remain inside the individual
+subsystem specs (per their own §4 sections), subordinate to these.
+
+### §5.A. Architectural commitments
+
+#### §5.A.1 — Multi-mode PHY ladder with two architecturally-distinct families
+
+The PHY is **not a single waveform with variable parameters**. It is a ladder
+of operator-selectable + link-adaptation-selectable modes spanning two
+architecturally-distinct families:
+
+- **Bit-adaptive OFDM family** (main throughput modes). DSL/xDSL-derived
+  pattern: orthogonal sub-carriers covering the radio's audio passband, each
+  sub-carrier individually bit-loaded based on observed per-sub-carrier SNR.
+  High-SNR sub-carriers carry more bits per symbol (16-QAM, 64-QAM, possibly
+  higher); low-SNR sub-carriers carry fewer bits (QPSK, BPSK) or are turned
+  off. Throughput emerges from the bit-loading curve × bandwidth × channel
+  conditions, not from a pre-committed numeric target.
+
+- **FSK weak-signal floor mode** (bottom of the ladder). Borrows the conceptual
+  primitive of FT8/JS8/JS8Call: short-block fixed-payload modulation with very
+  strong FEC, designed to operate at SNRs where the OFDM family cannot push
+  data through. **Explicit design goal: beat ARDOP's narrowest-mode SNR
+  floor.** May operate ARQ-disabled with retransmit-the-whole-message
+  semantics for short critical payloads.
+
+**Clean-sheet provenance:** Bit-adaptive OFDM with per-sub-carrier bit-loading
+is openly documented in ITU-T G.992 (ADSL) and G.993 (VDSL) standards plus
+extensive academic literature. Applying this DSL technique to HF audio-band
+is a clean derivation from public DSP foundations, not a copy of any HF
+prior-art protocol. The FSK weak-signal family draws on the *conceptual
+primitive* of FT8/JS8 weak-signal design (per the foundation doc §6.1, and
+per `feedback_clean_sheet_concepts_only` — primitives, not specific protocol
+choices).
+
+#### §5.A.2 — Payload-size-aware MAC routing
+
+The MAC layer routes outgoing frames into different PHY-family paths based on
+payload size + observed channel conditions:
+
+- **Short critical payloads** (status reports, position beacons, ICS-213
+  message classes, etc.) route to the FSK weak-signal floor mode when channel
+  conditions degrade past the OFDM family's usable envelope.
+- **Long messages** stay in the bit-adaptive OFDM family with ARQ;
+  link-adaptation selects which OFDM mode within the family.
+
+This makes link adaptation (subsystem #7) a two-dimensional policy:
+(channel-quality, payload-size) → (mode-family, mode-within-family,
+ARQ-strategy).
+
+**Practical implication:** ARQ (subsystem #6) is mode-conditional — the FSK
+floor doesn't use ARQ; the OFDM family does. ARQ-applicability is a
+per-mode attribute.
+
+#### §5.A.3 — TCP host protocol via existing `ModemTransport` abstraction
+
+Settled by ADR 0015 prior to this brainstorm. Tuxmodem plugs into the same
+abstraction ardopcf already uses and (eventually) VARA-over-network will use:
+TCP-reachable, two-port (cmd + data), process-supervised. The protocol
+*vocabulary* (what specific commands tuxmodem exposes for bit-loading
+control, FSK-floor mode selection, payload-size-aware routing) becomes a
+subsystem #8 implementation detail.
+
+#### §5.A.4 — AGPLv3-only license posture
+
+Tuxmodem (the modem itself) and its channel-simulator crate ship under
+**AGPLv3-only**. AGPLv3 was chosen over GPLv3 to close the network-service
+loophole: anyone running a modified tuxmodem as a TCP-accessible service
+must offer source to its users. Section 13 of AGPL is load-bearing for a
+TCP-server modem daemon.
+
+License compatibility note: AGPLv3 permits linking with GPLv3 code (via
+AGPL's explicit Section 13 paragraph 2 clause). It is NOT compatible with
+permissive-only-licensed downstream incorporation that disallows copyleft.
+Earlier subsystems must avoid runtime library dependencies on GPL-only or
+non-AGPL-compatible code. Pure-Rust libraries (typically MIT-or-Apache-2.0)
+are AGPL-compatible. GNU Radio (GPL) is consultable for cross-validation
+but is NOT a runtime dependency.
+
+Tuxlink-the-client license is a **separate** workstream: current-state
+verification + CLA / contributor-consent analysis happens as its own PR,
+not in this brainstorm.
+
+#### §5.A.5 — Channel simulator as standalone AGPLv3 public crate
+
+Subsystem #1 is published as a standalone public Rust crate from day one
+(not in-tree-then-extracted). AGPLv3 license matches tuxmodem. Standalone
+publication:
+
+- Makes the citation chain visible (the simulator's own repo carries the
+  foundational-paper citations directly; dated commits document the
+  clean-sheet provenance independently of tuxmodem).
+- Creates a public research contribution beyond tuxmodem itself — a
+  pure-Rust Watterson-class HF channel simulator is genuinely useful to the
+  broader SDR / HF / academic community.
+- Gives the program a credibility artifact independent of the modem's
+  on-air-protocol success.
+
+Crate name TBD (suggested working names: `hf-channel-sim`, `watterson-rs`).
+
+#### §5.A.6 — Compute target is best-effort
+
+No pre-committed minimum compute envelope. Primary dev target is Raspberry
+Pi 5 (matches the bench-rig spec's Host A configuration). Lower-end (Pi 4,
+older ARM) and higher-end (modern x86) targets are best-effort. This
+posture does NOT pre-constrain subsystem-level decisions on FFT size
+(subsystem #3), LDPC iteration count (subsystem #4), or equalizer
+complexity (subsystem #3 / #7).
+
+Implementation discipline: profile under representative workloads; optimize
+where bottlenecks appear in actual measurement.
+
+#### §5.A.7 — Bench-rig Host B is a second Pi 5
+
+Settled separately from the architecture decisions, but documented here for
+completeness. The bench rig's Host B is a second Raspberry Pi 5 already in
+operator inventory. Matches Host A's hardware family verbatim — same
+userspace, same DigiRig CM108B / ALSA / HID setup, no per-host divergence
+in the bench-rig spec.
+
+### §5.B. Subsystem implication map (which §5.A decision affects which subsystem)
+
+| Decision | Affects subsystems |
+|---|---|
+| §5.A.1 multi-mode PHY ladder + two families | #3 (PHY), #4 (FEC — per-family strategies), #7 (link adaptation), #1 (channel sim must expose per-sub-carrier SNR estimation for bit-loading characterization) |
+| §5.A.2 payload-size-aware MAC routing | #5 (MAC), #6 (ARQ mode-conditional), #7 (link adaptation 2D policy) |
+| §5.A.3 TCP host protocol via `ModemTransport` | #8 (vocabulary), #9 (integration) |
+| §5.A.4 AGPLv3-only | All subsystems (no GPL-only or proprietary runtime dependencies); #10 (standalone daemon packaging) |
+| §5.A.5 channel sim as standalone crate | #1 (channel sim) |
+| §5.A.6 best-effort compute | #3 (PHY DSP complexity choices), #4 (FEC decoder complexity choices), #7 (link adaptation complexity) |
+| §5.A.7 bench-rig Host B = Pi 5 | bench-rig spec only (no subsystem implication) |
+
+### §5.C. Open at the subsystem level
+
+These remain open *inside* the per-subsystem specs, subordinate to §5.A.
+They settle during subsystem implementation rather than at brainstorm time:
+
+- **Specific dB number for FSK-floor SNR threshold** — measured empirically
+  against ITU-R F.520 "moderate" in subsystem #1 once the candidate floor
+  PHY exists. Strategic posture: "beat ARDOP's narrowest mode" is the
+  acceptance criterion; the specific number falls out of measurement.
+- **Specific code family within FEC** — LDPC short-block vs. polar codes
+  for the FSK floor; per-sub-carrier strategy for the OFDM family. Settle in
+  subsystem #4's canonical spec, informed by channel-simulator runs.
+- **OFDM mode count + bandwidths in the ladder** — how many discrete modes
+  in the OFDM family, and what bandwidths each occupies. Settle in
+  subsystem #3 informed by audio-passband measurements on the bench-rig
+  radios.
+- **Host-protocol command vocabulary** — what specific commands tuxmodem
+  exposes for bit-loading control, FSK-floor mode selection, payload-size
+  routing. Settle in subsystem #8 once subsystem #5 / #6 freeze.
+- **Channel-simulator cross-validation reference** — ITS, GNU Radio OOT,
+  or both. Settle in subsystem #1 as part of the simulator's quality gate.
 
 ## §6. References
 
@@ -466,25 +608,24 @@ in five rules every subsystem spec must follow:
   for the program. 40+ entries across HF channel modeling, modem theory, FEC,
   ARQ, SDR/DSP methodology, open amateur protocols. Updated 2026-05-31.
 
-### Internal — subsystem STUB specs (subordinate to this overview)
+### Internal — subsystem specs (subordinate to this overview)
 
-These STUBs are subordinate to this overview DRAFT and are renamed off their
-`-STUB` suffix only after both the overview and the per-subsystem STUB are
-operator-approved.
+These are subordinate to this overview and incorporate the §5 architectural
+decisions:
 
-- `docs/superpowers/specs/2026-05-31-clean-sheet-modem-1-channel-simulator-STUB.md`
-- `docs/superpowers/specs/2026-05-31-clean-sheet-modem-3-phy-waveform-STUB.md`
-- `docs/superpowers/specs/2026-05-31-clean-sheet-modem-4-fec-STUB.md`
-- `docs/superpowers/specs/2026-05-31-clean-sheet-modem-5-link-mac-STUB.md`
-- `docs/superpowers/specs/2026-05-31-clean-sheet-modem-6-arq-STUB.md`
-- `docs/superpowers/specs/2026-05-31-clean-sheet-modem-7-link-adaptation-STUB.md`
-- `docs/superpowers/specs/2026-05-31-clean-sheet-modem-8-host-protocol-STUB.md`
+- `docs/superpowers/specs/2026-05-31-clean-sheet-modem-1-channel-simulator.md`
+- `docs/superpowers/specs/2026-05-31-clean-sheet-modem-3-phy-waveform.md`
+- `docs/superpowers/specs/2026-05-31-clean-sheet-modem-4-fec.md`
+- `docs/superpowers/specs/2026-05-31-clean-sheet-modem-5-link-mac.md`
+- `docs/superpowers/specs/2026-05-31-clean-sheet-modem-6-arq.md`
+- `docs/superpowers/specs/2026-05-31-clean-sheet-modem-7-link-adaptation.md`
+- `docs/superpowers/specs/2026-05-31-clean-sheet-modem-8-host-protocol.md`
 
 Subsystems #2 (RF measurement rig), #9 (integration), and #10 (standalone
-daemon packaging) do not have STUB specs in this autonomous pass — #2 is
-substantially scoped in the `project_rf_measurement_rig_design` memory entry
-already; #9 / #10 are integration / packaging concerns that should be specced
-after the modem stack subsystems settle.
+daemon packaging) do not have specs in this initial pass — #2 is substantially
+scoped in the `project_rf_measurement_rig_design` memory entry; #9 / #10 are
+integration / packaging concerns that should be specced after the modem-stack
+subsystems concretize.
 
 ### Memory
 

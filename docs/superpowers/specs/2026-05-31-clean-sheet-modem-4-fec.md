@@ -1,6 +1,13 @@
-# Subsystem #4 — Forward error correction (STUB)
+# Subsystem #4 — Forward error correction
 
-> **Status: STUB.** Subordinate to the program overview DRAFT.
+> **Status: Canonical.** Subordinate to
+> [2026-05-31-clean-sheet-modem-overview.md](2026-05-31-clean-sheet-modem-overview.md).
+> Incorporates overview §5.A.1 (per-family FEC strategies — OFDM family
+> uses per-sub-carrier or per-mode-wide FEC; FSK floor uses short-block
+> strong FEC), §5.A.2 (FEC interacts with payload-size routing — short
+> payloads to the FSK floor get one FEC strategy; long payloads in the
+> OFDM family get another), §5.A.4 (no GPL-only runtime dependencies),
+> §5.A.6 (best-effort decoder complexity).
 
 ## §1. Role
 

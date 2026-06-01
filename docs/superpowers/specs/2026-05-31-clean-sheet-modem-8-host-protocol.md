@@ -1,8 +1,15 @@
-# Subsystem #8 — Host protocol / control plane (STUB)
+# Subsystem #8 — Host protocol / control plane
 
-> **Status: STUB.** Subordinate to the program overview DRAFT.
+> **Status: Canonical.** Subordinate to
+> [2026-05-31-clean-sheet-modem-overview.md](2026-05-31-clean-sheet-modem-overview.md).
+> Incorporates overview §5.A.3 (TCP host protocol via the existing
+> `ModemTransport` abstraction — pattern settled; vocabulary remains to
+> design at this subsystem's level), §5.A.4 (AGPLv3-only — the host
+> protocol itself doesn't constrain license, but the daemon that exposes
+> it does).
 >
-> **Special status:** ADR 0015 explicitly defers this subsystem's design with
+> **Architectural note:** ADR 0015 originally defers this subsystem's
+> design with
 > the note "**must be settled before the modem spec**." This STUB captures the
 > open questions but does NOT settle the deferred choice — that's an
 > operator-decision moment in the brainstorm.

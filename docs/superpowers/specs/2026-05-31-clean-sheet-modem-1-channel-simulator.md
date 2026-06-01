@@ -1,14 +1,16 @@
-# Subsystem #1 — HF channel simulator (STUB)
+# Subsystem #1 — HF channel simulator
 
-> **Status: STUB.** Subordinate to
-> [2026-05-31-clean-sheet-modem-overview-DRAFT.md](2026-05-31-clean-sheet-modem-overview-DRAFT.md);
-> not approved as canonical until the overview is. Renamed off `-STUB` after
-> operator-approval of the overview + subsystem-level review of this doc.
+> **Status: Canonical.** Subordinate to
+> [2026-05-31-clean-sheet-modem-overview.md](2026-05-31-clean-sheet-modem-overview.md);
+> incorporates the §5.A.1 (multi-mode PHY ladder, bit-adaptive OFDM main +
+> FSK weak-signal floor), §5.A.4 (AGPLv3-only license), §5.A.5 (standalone
+> public crate from day one), and §5.A.6 (best-effort compute) decisions
+> from the 2026-05-31 brainstorm.
 >
-> **Scope:** what the HF channel simulator subsystem does, what it does NOT do,
-> the forcing functions on its design, and the open questions the operator
-> needs to settle before implementation. Does NOT pre-decide algorithm choice,
-> language, or API.
+> **Scope:** what the HF channel simulator subsystem does, what it does NOT
+> do, the forcing functions on its design, and the open questions that
+> remain to be settled during implementation. Pre-decides architectural
+> commitments inherited from the program overview §5.A.
 
 ## §1. Role
 
@@ -61,26 +63,37 @@ performance metric across design iterations.
 5. **Determinism and reproducibility.** Random number streams seeded
    explicitly; same seed + same input + same parameters → bit-identical
    output. Required for CI use as a regression-test substrate.
-6. **Performance budget.** Must run faster than real-time on the development
-   target (Pi 5 or x86 laptop, per overview Q4) so CI loops produce results
-   in seconds, not hours. **Open question:** is real-time-equivalent sufficient
-   or do we want, say, 10x real-time? [open]
-7. **API shape.** Library-callable from tests (and from a hypothetical CLI
+6. **Per-sub-carrier SNR estimation interface** (overview §5.A.1 + §5.B
+   imply this). Bit-adaptive OFDM requires per-sub-carrier channel-quality
+   characterization for bit-loading decisions; the simulator must expose
+   per-frequency-bin SNR statistics over time, not only aggregate BER.
+   This is not a stretch goal — it's a load-bearing capability for
+   subsystem #3's PHY family validation.
+7. **Performance budget — best-effort** (per overview §5.A.6). No
+   pre-committed real-time multiplier; profile under actual workloads,
+   optimize where bottlenecks appear. Pi 5 is primary dev target; faster
+   x86 desktops are best-effort acceleration paths for long CI sweeps.
+8. **API shape.** Library-callable from tests (and from a hypothetical CLI
    for ad-hoc characterization). API stability is required since downstream
    subsystem tests depend on it.
+9. **Standalone AGPLv3 public crate** (per overview §5.A.4 + §5.A.5).
+   Implemented as a separate Rust crate, published independently on
+   crates.io, licensed AGPLv3-only, with its own README + dated commits
+   serving as the contemporaneous citation chain for the foundational papers
+   (Watterson 1970, ITU-R F.520, F.1487).
 
-## §4. Open design questions (subordinate to overview Q1-Q8)
+## §4. Open design questions (remaining at subsystem level)
 
-| # | Question | Notes / what depends on it |
+| # | Question | Status / notes |
 |---|---|---|
-| §1.Q1 | Independent Rust implementation, or wrap an existing open implementation? | Independent implementation preserves clean-sheet posture; wrapping changes the citation chain. Decision interacts with overview Q7 (channel sim as own crate or in-tree). |
-| §1.Q2 | Sample-rate / sample-format API — fixed (e.g., 48 kHz f32 I/Q) or parameterized? | Affects integration with downstream PHY tests. Tradeoff: simpler API vs. flexibility for different PHY sample rates. |
-| §1.Q3 | Audio-band vs. baseband I/Q input? | Tuxmodem's PHY likely operates audio-band (after the radio's SSB demod); simulator's input format must match. |
-| §1.Q4 | Channel-condition parameter representation — typed enum (Good/Moderate/Poor/Flutter) or numeric (multipath delay-spread + Doppler-spread)? | Enum is safer + matches ITU-R F.520; numeric is more flexible. Both are reasonable. |
-| §1.Q5 | Multi-channel (frequency-selective) Watterson extension supported? | F.1487 allows up to 12 kHz; pure Watterson is 2-tap. tuxmodem likely doesn't need >2300 Hz so 2-tap is sufficient — but a multi-channel extension is "free" if added later. |
-| §1.Q6 | Cross-validation reference — ITS, GNU Radio, both, or other? | Discussed in foundation doc §1.4. Settle here as part of subsystem #1's design. |
-| §1.Q7 | Real-time-equivalent or accelerated? | Foreshadowed in §3.6 above. |
-| §1.Q8 | Visualization / diagnostics — output BER vs. SNR curves, eye diagrams, scatter plots? | Useful for development; tradeoff is scope creep. |
+| §1.Q1 | Independent Rust implementation, or wrap an existing open implementation? | **RESOLVED — independent Rust implementation.** Per overview §5.A.5 (standalone crate, independent provenance for the citation chain). Wrap precluded by overview's clean-sheet posture. |
+| §1.Q2 | Sample-rate / sample-format API — fixed (e.g., 48 kHz f32 I/Q) or parameterized? | Open. Tradeoff: simpler API vs. flexibility for different PHY sample rates. Settle during implementation. |
+| §1.Q3 | Audio-band vs. baseband I/Q input? | Likely audio-band (tuxmodem's PHY operates after the radio's SSB demod). Confirm during subsystem #3 development. |
+| §1.Q4 | Channel-condition parameter representation — typed enum (Good/Moderate/Poor/Flutter) or numeric (multipath delay-spread + Doppler-spread)? | Open. Enum is safer + matches ITU-R F.520; numeric is more flexible. Probably both — typed enum as primary API + numeric escape hatch. |
+| §1.Q5 | Multi-channel (frequency-selective) Watterson extension supported? | Open. F.1487 allows up to 12 kHz; pure Watterson is 2-tap. Probably 2-tap initially; multi-channel extension is "free" if added later. |
+| §1.Q6 | Cross-validation reference — ITS, GNU Radio, both, or other? | Open. Listed in overview §5.C as a subsystem-level open question. Probably both for confidence; settle during implementation as part of the "done" gate. |
+| §1.Q7 | Visualization / diagnostics — output BER vs. SNR curves, eye diagrams, scatter plots? | Open. Useful for development; tradeoff is scope creep. Recommended: bare-bones text-output BER tables first, visualizations added if needed. |
+| §1.Q8 | Crate name? | Open. Working suggestions: `hf-channel-sim`, `watterson-rs`. Decide before crates.io publication. |
 
 ## §5. Citations from foundation doc
 
