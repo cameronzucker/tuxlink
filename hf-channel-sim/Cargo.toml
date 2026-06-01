@@ -3,11 +3,15 @@ name = "hf-channel-sim"
 version = "0.1.0"
 edition = "2021"
 license = "AGPL-3.0-only"
-description = "Watterson-class HF ionospheric channel simulator. Pure-Rust, deterministic, AGPLv3-only."
+description = "Watterson-class HF ionospheric channel simulator with ITU-R F.520/F.1487 conditions, per-sub-carrier SNR estimation, and AI-agent-friendly structured JSON output. Pure-Rust, deterministic, AGPLv3."
 repository = "https://github.com/cameronzucker/hf-channel-sim"
+documentation = "https://docs.rs/hf-channel-sim"
 readme = "README.md"
-keywords = ["hf", "radio", "channel-model", "watterson", "ionospheric"]
-categories = ["science", "simulation"]
+keywords = ["hf", "radio", "watterson", "channel", "modem"]
+categories = ["science", "simulation", "command-line-utilities"]
+authors = ["tuxmodem contributors"]
+rust-version = "1.75"
+exclude = ["tests/fixtures/*.f32", ".github/"]
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
