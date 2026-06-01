@@ -10,5 +10,6 @@
 pub mod modes;
 pub mod phy_api;
 pub mod audio_io;
+pub mod constellations;
 pub mod error;
 pub use error::PhyError;
