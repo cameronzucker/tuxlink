@@ -28,7 +28,7 @@ This document serves three audiences. Start here, then go directly to the sectio
 | 1 | [Scope and Audience Boundaries](#1-scope-and-audience-boundaries) | Any feature, doc, or design decision touching what tuxlink does vs. what is out of scope | SCOPE-1 | §1.C |
 | 2 | [Safety-Stack Coordination and Cross-Component Parity](#2-safety-stack-coordination-and-cross-component-parity) | Any time a project hook denies a write op, OR you're tempted to add additional "session liveness" signals, OR you're writing a script that reads/writes the same state a hook does | HOOK-1, LEASE-1, PARITY-1 | §2.C |
 | 3 | [Plan and Documentation Discipline](#3-plan-and-documentation-discipline) | Any plan / spec amendment, especially when an AMENDMENT marker (AMD-N) lands in a previously-shipped task's plan body | DRIFT-1 | §3.C |
-| — | [Tool Integration](#tool-integration) | Conflicts between project commitments and tool-installed defaults | BD-1 | §Tool-Integration.C |
+| — | [Tool Integration](#tool-integration) | Conflicts between project commitments and tool-installed defaults; Vite frontend testing patterns; reference material discovery; schema versioning | TEST-1, DISCOVERY-1, SCHEMA-1, BD-1 | §Tool-Integration.C |
 | — | [Orchestration](#orchestration) | Parallel subagent dispatch and output persistence | ORCH-1 | §Orchestration.C |
 | A | [Historical Changelog](#appendix-a-historical-changelog) | Provenance, validation dates, review process meta-observations | — | — |
 | B | [Unified Summary Table](#appendix-b-unified-summary-table) | All pitfalls at a glance, with severity and status | — | — |
@@ -430,6 +430,89 @@ The discipline question is asked at amendment time, not delegated to a future pl
 
 ---
 
+### TEST-1: Filesystem-scan tests in Vite projects must use import.meta.glob, not Node fs
+
+**The Flaw:** A filesystem-scan test within a Vite frontend (e.g., enforcing a project-wide ban on `dangerouslySetInnerHTML` across `src/forms/`) written with `import { readFileSync, readdirSync } from 'node:fs'` passes vitest at runtime but fails `tsc --noEmit` with `TS2591: Cannot find name 'node:fs'`. The Tauri frontend tsconfig does not include `@types/node` in its `types` array; adding it pulls Node global types into the React/DOM type space, causing secondary type conflicts. The test passes the runtime gate (vitest) but fails the static gate (tsc), creating a shadow CI blind spot.
+
+**Why It Matters:** A test that fails tsc but passes vitest will be skipped by CI tsc gates, silently disabling the ban. Future contributions can introduce `dangerouslySetInnerHTML` (or whichever pattern the test gates) without test breakage — the XSS or pattern-enforcement check is unenforced at CI time. The developer's machine runs vitest and sees green; the CI pipeline runs tsc and sees no test failure (because the test is not tsc-discoverable) — only the broader build gate catches the failure, and only if the build actually exercises the pattern. Patterns like XSS need front-line test coverage; shadow-CI status means the pattern sneaks through.
+
+**The Fix:** Use Vite's native `import.meta.glob` with `eager: true` and `query: '?raw'` to scan files synchronously:
+
+```typescript
+import { describe, it, expect } from 'vitest';
+
+const FORM_FILES = import.meta.glob('/src/forms/**/*.{ts,tsx}', {
+  eager: true,
+  query: '?raw',
+  import: 'default',
+}) as Record<string, string>;
+
+describe('forms module — dangerouslySetInnerHTML ban', () => {
+  it('no file in src/forms/ uses dangerouslySetInnerHTML', () => {
+    const offenders: string[] = [];
+    for (const [path, content] of Object.entries(FORM_FILES)) {
+      if (path.endsWith('/innerhtml-ban.test.ts')) continue; // self
+      if (content.includes('dangerouslySetInnerHTML')) offenders.push(path);
+    }
+    expect(offenders).toEqual([]);
+  });
+});
+```
+
+`eager: true` evaluates the imports synchronously at module load (correct for tests that must see all files before assertion); `query: '?raw', import: 'default'` returns each file's text content as a string. Vite type-checks the glob pattern statically; no Node types needed. Both vitest and tsc recognize the pattern and pass.
+
+**The Lesson:** When writing tests that scan repo files inside a Vite project, use Vite's native filesystem primitives (`import.meta.glob`) rather than Node's `fs` module. Cross-tool gate parity (tsc + vitest both green) is non-negotiable for test discoverability — a test that only one tool runs is shadow CI, and shadow CI is indistinguishable from unenforced.
+
+---
+
+### DISCOVERY-1: Gitignored references live in `.claude/worktree-archives/`, not just disk
+
+**The Flaw:** When a working-directory-relative path (e.g., `dev/winlink-reference/`) is mentioned in `.gitignore` but not present on disk, an agent searching for the directory via `find` or `ls` reports "not found" and may defer the work. The agent does not check `.claude/worktree-archives/` for compressed reference materials kept between sessions. When a task depends on bulk third-party reference material (WLE templates, decompiled binaries, archived research), missing discovery knowledge stalls the task until the operator walks the agent to the right archive.
+
+**Why It Matters:** Large reference materials are archived (compressed, catalogued) per ADR 0009 disposal patterns. The operator creates these archives intentionally — they're inputs to dependent tasks, not stale clutter. When the agent's discovery pipeline doesn't include archive enumeration, the operator has to explain the archive's location and contents in every session that depends on it. Cross-session reference knowledge is lost; redundant operator guidance accumulates.
+
+**Signature.** Recognize this pitfall via:
+
+1. An agent searching for a file mentioned in a plan/issue but not present under `dev/`.
+2. The agent reports "file not found" via `find` or `ls` with no follow-up search in archives.
+3. The operator responds "it's in `.claude/worktree-archives/` — unzip it" without the agent having asked.
+4. The same reference is searched for again in a subsequent session.
+
+**The Fix:** When searching for a reference file/dir that's expected to be present but isn't visible to `ls`, follow this discovery order:
+
+1. `grep -E "<keyword>" .gitignore` — confirm the path is intentionally ignored (signals legitimate-but-absent vs. unknown).
+2. `ls -lh .claude/worktree-archives/ | grep -iE "<keyword>"` — check for compressed archives. Large bulk material (>10MB) is typically archived here per ADR 0009 disposal patterns.
+3. If found in step 2, run `unzip -l <archive>` to list contents; `unzip -j <archive> "<glob>" -d /tmp/` extracts selected files to a working directory.
+4. If no archive match, search by content signature: `grep -rl "<unique-fingerprint>" dev/ | head` (e.g., `RMS_Express_Form` for WLE templates).
+
+Document the archive's purpose and extraction path in the issue/plan that references it (e.g., "WLE templates in `.claude/worktree-archives/RMS-personal-install-20260518T073146Z.zip` — extract to `dev/winlink-reference/`").
+
+**The Lesson:** Archived reference material is structurally invisible to `find`/`ls`. When an expected gitignored path doesn't resolve via standard filesystem search, expand the discovery surface to compressed archives before deferring the work. The operator's first hint will almost always point to `.claude/worktree-archives/`. Build archive enumeration into reference-material discovery workflows.
+
+---
+
+### SCHEMA-1: SCHEMA_VERSION bump triggers operator-driven rebuild, not silent ALTER TABLE
+
+**The Flaw:** When extending a backed-by-SQLite subsystem (e.g., `search/index.rs` with an FTS5 virtual table) with a new column on an existing table, the temptation is to ALTER TABLE in-place during `Index::open` for forward compatibility. This silently mutates the operator's local index file, can hit SQLite ALTER limitations (FTS5 virtual tables do not support `ALTER TABLE`), and risks half-migrated state if the process is killed mid-ALTER. The code path breaks the `Index::open` contract: detect drift, return `SchemaDrift` error, caller (the operator) decides whether to rebuild.
+
+**Why It Matters:** The index file is derived state; the mbox source (or whichever log the indexer walks) is authoritative. In-place ALTER treats the index as source of truth, bypassing the safety property that allows the operator to rebuild from source at will. If the ALTER partially fails (process killed, disk full, SQLite SQLITE_LOCKED), the index lands in a corrupted half-migrated state with no way to recover except manual SQL repair or forensic recovery. More broadly, mutations to derived state without invalidation signals invite data-loss bugs: future code reads an index at version N, assuming schema N, but the operator's copy is at version N+1 due to a stale in-app migration.
+
+**The Fix:** When a schema change is needed:
+
+1. Bump `SCHEMA_VERSION` constant in the subsystem's code (e.g., `search/index.rs`).
+2. Update the `init_schema` DDL to include the new column from scratch.
+3. Update `upsert` / `query` / query-result types to read/write the new column.
+4. Update the schema-drift-detection test: the `open_detects_schema_drift` test should expect the new version and assert that opening an old-version index triggers `SchemaDrift`.
+5. Add a round-trip regression test: new column goes through `upsert` → `query` → assertion.
+6. Document the migration in the `SCHEMA_VERSION` doc-comment (which version introduced what; whether drift-detect is sufficient or special handling is needed).
+7. **DO NOT add an ALTER TABLE path.** The operator runs the rebuild from the UI or CLI; `rebuild_index` deletes the index file and re-walks the source (mbox, log, etc.).
+
+When an operator with an existing index at the prior version launches the new code, `Index::open` detects drift, returns `SchemaDrift`, and the operator is prompted to rebuild. Rebuild deletes the old index, walks the source fresh, and creates a new index with the new column populated.
+
+**The Lesson:** Index files are derived state, not source of truth. Migrations exploit this asymmetry — delete the derived state, rebuild from source. In-place ALTER patterns belong in systems where the table IS the source of truth and must survive in-place. Not here. The design property ("drift detection + rebuild") is intentional, not accidental; don't trade it away for convenience.
+
+---
+
 ### BD-1: bd opinionated-tooling overrides
 
 **The Flaw:** `bd` (Beads) installs a CLAUDE.md block on `bd setup claude` that prescribes operational rules ("do NOT use TodoWrite," "do NOT use MEMORY.md files," "Work is NOT complete until `git push` succeeds — YOU must push"). Originally three of these conflicted with tuxlink-wide commitments; as of 2026-05-17 only the first two still do. The push-timing directive now agrees with project policy ([§Session Completion](../../CLAUDE.md#session-completion)) and is no longer overridden. TodoWrite remains the canonical in-turn working-memory primitive; the auto-memory dir remains harness-native and pre-seeded.
@@ -460,6 +543,9 @@ The override mechanism is documented in CLAUDE.md's `## Tool referee` section + 
 
 ### Tool-Integration Review Checklist
 
+- [ ] **Check derived from TEST-1** — Filesystem-scan tests in Vite frontends use `import.meta.glob` with `eager: true`, not Node `fs` module. Verify by `grep -rn "readFileSync\|readdirSync" src-tauri/src-frontend/` — hits on those imports indicate the anti-pattern. Verify tests pass both vitest and `tsc --noEmit`.
+- [ ] **Check derived from DISCOVERY-1** — When a task references a gitignored path (e.g., `dev/winlink-reference/`), check `.claude/worktree-archives/` is part of the discovery workflow. If an agent reports "file not found" and the file later surfaces in an archive, verify the plan/issue now documents the archive's location and extraction path.
+- [ ] **Check derived from SCHEMA-1** — SQLite-backed subsystems (search index, etc.) bump `SCHEMA_VERSION` on schema changes; `Index::open` detects drift and returns `SchemaDrift`; no in-place `ALTER TABLE` paths exist in the migration logic. Verify by checking `src-tauri/src/search/index.rs` (or equivalent) for `SCHEMA_VERSION` bumps paired with `init_schema` updates and absence of `ALTER TABLE` in `open()`.
 - [ ] **`## Tool referee` section intact in CLAUDE.md.** No edits inside `<!-- BEGIN BEADS INTEGRATION -->` markers (those are bd-managed and may be regenerated).
 - [ ] **`AGENTS.md` summary pointer present** for the `## Tool referee` section.
 - [ ] **ADR 0006's override list matches CLAUDE.md's `## Tool referee` table.** When updating one, update both.
@@ -519,6 +605,21 @@ Companion artifacts:
 - Plan: `docs/superpowers/plans/2026-05-18-tuxlink-arv-lease-dir-fix.md`
 - Auto-memory refresh: `~/.claude/projects/-home-administrator-Code-tuxlink/memory/feedback_stale_lease_means_worktree.md` (updated to reflect script accuracy + reinforce worktree authority)
 
+## 2026-05-31 — Added TEST-1, DISCOVERY-1, SCHEMA-1 (HTML Forms v0.1 session lessons)
+
+Source: HTML Forms v0.1 PR #177 and related work (v0.0.1 HTML Forms task cluster). Three findings from the session:
+
+1. **TEST-1** (Filesystem-scan tests in Vite): Task T10.1 of the HTML Forms plan attempted to enforce a `dangerouslySetInnerHTML` ban across the forms subsystem using Node `fs` APIs; test passed vitest but failed tsc, creating shadow CI. Discovered during implementation that Vite's `import.meta.glob` is the correct pattern.
+2. **DISCOVERY-1** (Reference material in archives): Phase 9 of the HTML Forms session — agent searched for WLE Standard Templates referenced in the plan, couldn't find them on disk, didn't check `.claude/worktree-archives/` where the operator had archived `RMS-personal-install-20260518T073146Z.zip` (74 MB). Task stalled until operator pointed to the archive.
+3. **SCHEMA-1** (Schema versioning without ALTER TABLE): Related to tuxlink-g4dj fix (PR #178) — search index migrations need to bump SCHEMA_VERSION and delegate rebuild to the operator, not silently ALTER TABLE in-place. Codifies the design property: index files are derived state, not source of truth.
+
+Section title "Tool Integration" expanded to cover implementation patterns beyond just third-party tool conflicts.
+
+Companion artifacts:
+- Task: PR #177 (HTML Forms v0.1)
+- Related: PR #178 (search index schema)
+- Plan: `docs/superpowers/plans/2026-05-DD-html-forms-v0.1.md` (archived; lessons extracted to this doc)
+
 ---
 
 # Appendix B: Unified Summary Table
@@ -534,6 +635,9 @@ Companion artifacts:
 | LEASE-1 | Adding additional "session liveness" signals beyond the lease | HIGH | VALIDATED | §2 Safety-Stack Coordination and Cross-Component Parity |
 | PARITY-1 | Script/Hook Path-Resolution Parity | HIGH | VALIDATED | §2 Safety-Stack Coordination and Cross-Component Parity |
 | DRIFT-1 | Plan-text amendments don't auto-cascade to code | HIGH | VALIDATED | §3 Plan and Documentation Discipline |
+| TEST-1 | Filesystem-scan tests in Vite must use import.meta.glob, not Node fs | HIGH | VALIDATED | Tool Integration |
+| DISCOVERY-1 | Gitignored references live in `.claude/worktree-archives/`, not just disk | HIGH | VALIDATED | Tool Integration |
+| SCHEMA-1 | SCHEMA_VERSION bump triggers operator-driven rebuild, not silent ALTER TABLE | HIGH | VALIDATED | Tool Integration |
 | ORCH-1 | Analysis Dispatches Must Persist Findings | HIGH | VALIDATED | Orchestration |
 | BD-1 | bd opinionated-tooling overrides | MEDIUM | VALIDATED | Tool Integration |
 
