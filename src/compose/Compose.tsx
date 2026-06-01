@@ -38,7 +38,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { clearDraft, loadDraft, saveDraft, splitAddrs } from './useDraft';
 import { ComposeTitleBar } from './ComposeTitleBar';
 import { ResizeHandles } from '../shell/chrome/ResizeHandles';
-import { FormPicker, lookupForm, allForms } from '../forms';
+import { FormPicker, lookupForm, composableForms } from '../forms';
 import './Compose.css';
 
 // ============================================================================
@@ -606,15 +606,16 @@ export function Compose({ draftId }: ComposeProps) {
         )}
         {formMode.kind === 'pick' && (
           <FormPicker
-            forms={allForms().map((f) => ({ id: f.id, name: f.name }))}
+            forms={composableForms().map((f) => ({ id: f.id, name: f.name }))}
             onPick={(id) => setFormMode({ kind: 'form', formId: id, values: {} })}
             onCancel={() => setFormMode({ kind: 'plain' })}
           />
         )}
         {formMode.kind === 'form' && (() => {
           const entry = lookupForm(formMode.formId);
-          if (!entry) {
-            // Unknown form ID (shouldn't happen since picker shows registered only)
+          if (!entry || !entry.Form) {
+            // Unknown form ID, or view-only entry with no compose-side Form
+            // (shouldn't happen since the picker is scoped to composableForms()).
             setFormMode({ kind: 'plain' });
             return null;
           }
@@ -680,17 +681,21 @@ export function Compose({ draftId }: ComposeProps) {
       {/* Action bar                                                          */}
       {/* ------------------------------------------------------------------ */}
       <div className="compose-actions">
-        <button
-          className="compose-btn compose-btn--primary"
-          onClick={handleSend}
-          disabled={sendState === 'sending' || formMode.kind !== 'plain'}
-          title={formMode.kind !== 'plain'
-            ? "Use the form's Send button to submit a form"
-            : 'Send (Ctrl+Enter)'}
-          data-testid="compose-send-btn"
-        >
-          {sendState === 'sending' ? 'Sending…' : 'Post to Outbox'}
-        </button>
+        {/* Post to Outbox + Compose form… only apply to plain-text mode. In
+            form mode the form's own Send button handles submission; in pick
+            mode neither applies. Hiding them removes the "why are these
+            greyed out?" confusion (operator feedback 2026-06-01). */}
+        {formMode.kind === 'plain' && (
+          <button
+            className="compose-btn compose-btn--primary"
+            onClick={handleSend}
+            disabled={sendState === 'sending'}
+            title="Send (Ctrl+Enter)"
+            data-testid="compose-send-btn"
+          >
+            {sendState === 'sending' ? 'Sending…' : 'Post to Outbox'}
+          </button>
+        )}
         <button
           className="compose-btn compose-btn--secondary"
           onClick={handleSaveDraft}
@@ -699,14 +704,15 @@ export function Compose({ draftId }: ComposeProps) {
         >
           Save Draft
         </button>
-        <button
-          className="compose-btn compose-btn--secondary"
-          onClick={handleOpenFormPicker}
-          disabled={formMode.kind !== 'plain'}
-          data-testid="compose-form-picker-btn"
-        >
-          Compose form…
-        </button>
+        {formMode.kind === 'plain' && (
+          <button
+            className="compose-btn compose-btn--secondary"
+            onClick={handleOpenFormPicker}
+            data-testid="compose-form-picker-btn"
+          >
+            Compose form…
+          </button>
+        )}
       </div>
 
       {/* ------------------------------------------------------------------ */}

@@ -140,14 +140,23 @@ pub fn compose_window_open(
     // so `.position()` is ignored and the window lands center regardless.
     // Operator accepted centered for v0.0.1; the true in-window docked panel
     // (which CAN position itself, and is also faster) is filed for revisit.
+    // Default size bumped from 720x560 to 1100x820 (2026-05-31, operator
+    // feedback): HTML Forms v0.1 (PR #177) shipped multi-fieldset forms
+    // (ICS-309 with up to 30 log entries; Damage Assessment with 15
+    // 6-column category grids) that were unusably cramped at the prior
+    // 720x560 default. Min bumped from 480x360 to 720x560 (the old default)
+    // so the user can shrink but not back to the toy-sized floor.
+    // tauri-plugin-window-state persists per-label geometry — operators who
+    // resize a specific compose window get their choice remembered; only
+    // new drafts use this default.
     let build_result = WebviewWindowBuilder::new(
         &app,
         &label,
         WebviewUrl::App(url.into()),
     )
     .title("New Message — Tuxlink")
-    .inner_size(720.0, 560.0)
-    .min_inner_size(480.0, 360.0)
+    .inner_size(1100.0, 820.0)
+    .min_inner_size(720.0, 560.0)
     .resizable(true)
     .decorations(false)
     .center()
