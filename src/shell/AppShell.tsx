@@ -314,9 +314,17 @@ export function AppShell() {
     setSelectedConnection(null);
   }, []);
 
+  // 2026-05-31 operator-flagged: selectedConnection and selectedMessage are
+  // independent now that Telnet lives in the right-hand RadioPanel (P2). The
+  // pre-P2 design clobbered each other because both fought for the reading
+  // pane; the post-P2 reading pane shows MessageView for Telnet so a
+  // connection-panel + open-message can coexist. Other modes (Packet/ARDOP)
+  // still claim the reading pane via their per-protocol mount; the operator
+  // simply sees the connection panel there until they click a different
+  // connection or close the panel. selectedMessage is preserved for when
+  // they navigate back.
   const onSelectConnection = useCallback((conn: ConnectionKey) => {
     setSelectedConnection(conn);
-    setSelectedMessage(null);
   }, []);
 
   const onSelectMessage = useCallback(
@@ -328,7 +336,6 @@ export function AppShell() {
       const hit = searchResultMessages?.find((m) => m.id === id);
       const folder = (hit?.folder as MailboxFolder | undefined) ?? selectedFolder;
       setSelectedMessage({ folder, id });
-      setSelectedConnection(null);
     },
     [selectedFolder, searchResultMessages],
   );

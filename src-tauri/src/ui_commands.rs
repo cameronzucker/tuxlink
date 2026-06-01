@@ -740,8 +740,23 @@ pub async fn cms_connect(
         })
         .await
     {
-        Ok(_session) => {
+        Ok(session) => {
             emit_session_line(&app, &log, LogLevel::Info, "CMS exchange complete.".to_string());
+            // 2026-05-31 operator-flagged: previously the session was
+            // dropped without transitioning status back to Disconnected,
+            // so the ribbon + status bar showed "Connected · Telnet"
+            // perpetually after a successful CMS exchange. CMS connects
+            // are transient (connect → B2F exchange → done), not a held
+            // socket — close the session explicitly so backend_status
+            // reflects reality on the next poll.
+            if let Err(e) = backend.disconnect(session).await {
+                emit_session_line(
+                    &app,
+                    &log,
+                    LogLevel::Warn,
+                    format!("session close after exchange: {e}"),
+                );
+            }
             Ok(())
         }
         Err(BackendError::Cancelled) => {

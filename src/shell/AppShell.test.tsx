@@ -307,6 +307,37 @@ describe('<AppShell> — Mock B topology', () => {
     expect(panel).toBeInTheDocument();
     expect(await screen.findByTestId('radio-panel-title')).toHaveTextContent('Telnet Winlink');
   });
+
+  it('keeps the radio panel open when the operator clicks a message (2026-05-31 decoupling fix)', async () => {
+    // Operator-flagged bug: clicking a message while the Telnet panel was open
+    // unmounted the panel because onSelectMessage cleared selectedConnection.
+    // The post-P2 reading pane is decoupled from selectedConnection for Telnet,
+    // so the two states must be independent.
+    renderShell();
+    fireEvent.click(screen.getByTestId('sess-cms'));
+    fireEvent.click(screen.getByTestId('proto-cms-telnet'));
+    await screen.findByTestId('radio-panel-root');
+    fireEvent.click(screen.getByTestId('message-row-INBOX1'));
+    // Panel must still be present; the click on the message no longer clears
+    // selectedConnection.
+    expect(screen.getByTestId('radio-panel-root')).toBeInTheDocument();
+    expect(screen.getByTestId('radio-panel-title')).toHaveTextContent('Telnet Winlink');
+  });
+
+  it('keeps an open message in the reading pane when the operator re-clicks a connection', async () => {
+    // The sister of the above: onSelectConnection used to clear selectedMessage.
+    // Now they're independent. Selecting Telnet again (after a message is open)
+    // must not erase the selected message.
+    renderShell();
+    fireEvent.click(screen.getByTestId('message-row-INBOX1'));
+    // selectedMessage is set; reading pane shows MessageView for INBOX1.
+    fireEvent.click(screen.getByTestId('sess-cms'));
+    fireEvent.click(screen.getByTestId('proto-cms-telnet'));
+    await screen.findByTestId('radio-panel-root');
+    // The message row stays highlighted (selectedMessage was preserved).
+    const messageRow = screen.getByTestId('message-row-INBOX1');
+    expect(messageRow).toHaveAttribute('aria-selected', 'true');
+  });
   it('disables unbuilt protocol rows (radio-only+telnet)', () => {
     renderShell();
     fireEvent.click(screen.getByTestId('sess-radio-only'));
