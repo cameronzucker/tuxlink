@@ -335,28 +335,42 @@ export function ArdopRadioPanel({ onClose }: ArdopRadioPanelProps) {
     }
     persistArdop({ webgui_port: n });
   };
-  // cmd_port commit: parse to int, reject NaN / non-positive, skip no-op
-  // writes. Mirrors commitWebguiPort's reject-on-bad-value pattern but
-  // without the upper bound (the backend clamps cmd_port itself; >65535
-  // would just fail on bind, which is a useful error surface).
+  // cmd_port commit: strict parse (Number + Number.isInteger; rejects
+  // "8515abc" where parseInt would have silently accepted 8515), reject
+  // out-of-u16-range, skip no-op writes. Mirrors commitWebguiPort exactly
+  // so the two sibling port-input handlers behave identically — the prior
+  // asymmetry (parseInt + no upper bound on cmd_port; Number + 65535 on
+  // webgui_port) was a code smell.
   const commitCmdPort = () => {
     if (!ardopConfig) return;
     const trimmed = cmdPortInput.trim();
-    const parsed = parseInt(trimmed, 10);
-    if (!Number.isFinite(parsed) || parsed <= 0) {
+    const n = Number(trimmed);
+    if (!Number.isInteger(n) || n < 1 || n > 65535) {
       // Revert the input to whatever's persisted so the operator's bad
       // value doesn't linger in the field.
       setCmdPortInput(String(ardopConfig.cmd_port));
-      setConnectError(`Invalid cmd_port "${trimmed}" — must be a positive integer. Reverted.`);
+      setConnectError(`Invalid cmd_port "${trimmed}" — must be 1..65535. Reverted.`);
       return;
     }
-    if (parsed === ardopConfig.cmd_port) return;
-    persistArdop({ cmd_port: parsed });
+    if (n === ardopConfig.cmd_port) return;
+    persistArdop({ cmd_port: n });
   };
+  // binary commit: empty trimmed reverts the input to the persisted value
+  // (matches commitCmdPort's revert-on-invalid pattern). Without this, an
+  // operator who clears the field and tabs out sees the input go visually
+  // empty, ardopConfig.binary unchanged, then the useEffect resync on next
+  // mount overwrites the empty input back to the persisted value — looks
+  // like "my edit silently vanished." The revert surfaces the truth
+  // immediately and writes a connectError explaining why.
   const commitBinary = () => {
     if (!ardopConfig) return;
     const trimmed = binaryInput.trim();
-    if (trimmed === '' || trimmed === ardopConfig.binary) return;
+    if (trimmed === '') {
+      setBinaryInput(ardopConfig.binary);
+      setConnectError('Binary path cannot be empty — reverted to persisted value.');
+      return;
+    }
+    if (trimmed === ardopConfig.binary) return;
     persistArdop({ binary: trimmed });
   };
 
