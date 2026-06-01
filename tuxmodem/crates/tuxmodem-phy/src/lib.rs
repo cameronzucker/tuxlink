@@ -7,5 +7,7 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+pub mod modes;
+pub mod phy_api;
 pub mod error;
 pub use error::PhyError;
