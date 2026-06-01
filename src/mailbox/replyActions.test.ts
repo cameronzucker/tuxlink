@@ -13,7 +13,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn().mockResolvedValue(null) }));
 import { invoke } from '@tauri-apps/api/core';
 
-import { buildReplyDraft, openReplyWindow } from './replyActions';
+import { buildReplyDraft, openReplyWindow, hasReplyWithFormSupport } from './replyActions';
 import { loadDraft } from '../compose/useDraft';
 import type { ParsedMessage } from './types';
 
@@ -243,5 +243,45 @@ describe("buildReplyDraft 'replyWithForm' mode", () => {
     // No formId set → plain reply path
     expect(draft.formId).toBeUndefined();
     expect(draft.formFields).toBeUndefined();
+  });
+
+  // Codex r2 P2 #1: forms WITHOUT explicit field-mapping logic
+  // (Bulletin/Position/ICS-309/Damage Assessment) fall back to plain reply
+  // rather than producing a half-populated form draft.
+  it('falls back to a plain reply for non-ICS-213 forms (no per-form mapping)', () => {
+    const bulletinPayload = {
+      formId: 'Bulletin_Initial',
+      formParameters: {
+        xmlFileVersion: '1.0', rmsExpressVersion: 'Tuxlink/0.3.0',
+        submissionDatetime: '', sendersCallsign: '', gridSquare: '',
+        displayForm: 'Bulletin Viewer.html', replyTemplate: '',
+      },
+      fields: [['title', 'Test'], ['message', 'Body text']] as [string, string][],
+    };
+    const msg = parsed({ isForm: true, formId: 'Bulletin_Initial', formPayload: bulletinPayload });
+    const draft = buildReplyDraft(msg, 'replyWithForm');
+    // Plain-reply fallback: no formId/formFields on the draft.
+    expect(draft.formId).toBeUndefined();
+    expect(draft.formFields).toBeUndefined();
+  });
+});
+
+// Codex r2 P2 #1 helper — gates the MessageView "Reply with form…" button.
+describe('hasReplyWithFormSupport', () => {
+  it('returns true for ICS213_Initial (the only mapped form in v0.1)', () => {
+    expect(hasReplyWithFormSupport('ICS213_Initial')).toBe(true);
+  });
+
+  it('returns false for Phase 9 forms (Bulletin / Position / ICS-309 / DA)', () => {
+    expect(hasReplyWithFormSupport('Bulletin_Initial')).toBe(false);
+    expect(hasReplyWithFormSupport('Position_Report')).toBe(false);
+    expect(hasReplyWithFormSupport('Form-309_Initial')).toBe(false);
+    expect(hasReplyWithFormSupport('Damage_Assessment_Initial')).toBe(false);
+  });
+
+  it('returns false for null / undefined / unknown formIds', () => {
+    expect(hasReplyWithFormSupport(null)).toBe(false);
+    expect(hasReplyWithFormSupport(undefined)).toBe(false);
+    expect(hasReplyWithFormSupport('Made_Up_Form_v999')).toBe(false);
   });
 });

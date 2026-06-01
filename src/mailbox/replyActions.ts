@@ -106,6 +106,22 @@ function forwardBody(message: ParsedMessage): string {
   return `\n\n${header}\n\n${quoteSource(message)}\n${attachmentsOmittedNote(message)}`;
 }
 
+// ============================================================================
+// Per-form reply-with-form support map (Codex r2 P2 #1)
+// ============================================================================
+//
+// Only forms with explicit field-mapping logic in buildReplyDraft below are
+// safe to expose via the "Reply with form…" action — otherwise clicking the
+// button on, say, a Position Report opens a blank-ish form with no useful
+// pre-population. MessageView's button visibility consults this set.
+const REPLY_WITH_FORM_SUPPORTED: ReadonlySet<string> = new Set(['ICS213_Initial']);
+
+/// True iff `replyWithForm` produces a meaningfully-populated draft for the
+/// given form ID. Used by MessageView to gate the "Reply with form…" button.
+export function hasReplyWithFormSupport(formId: string | null | undefined): boolean {
+  return !!formId && REPLY_WITH_FORM_SUPPORTED.has(formId);
+}
+
 /// Pure: derive the To / Subject / Body prefill for a reply, reply-all,
 /// forward, or replyWithForm off a parsed message. No I/O.
 export function buildReplyDraft(message: ParsedMessage, mode: ReplyMode): DraftPrefill {
@@ -118,9 +134,16 @@ export function buildReplyDraft(message: ParsedMessage, mode: ReplyMode): DraftP
   }
 
   if (mode === 'replyWithForm') {
-    // Only valid for messages that already carry a form payload.
-    if (!message.isForm || !message.formId || !message.formPayload) {
-      // Fall back to a plain reply if the original wasn't a parseable form.
+    // Only valid for messages that already carry a form payload AND have a
+    // per-form mapping defined below. Other forms (ICS-309, Bulletin,
+    // Position, Damage Assessment) fall back to a plain reply rather than
+    // producing a half-populated form draft (Codex r2 P2 #1).
+    if (
+      !message.isForm ||
+      !message.formId ||
+      !message.formPayload ||
+      !hasReplyWithFormSupport(message.formId)
+    ) {
       return buildReplyDraft(message, 'reply');
     }
     // Sender↔recipient swap: original fm_name → new to_name; preserve

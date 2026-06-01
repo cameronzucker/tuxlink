@@ -294,8 +294,8 @@ Comments:(if any)
 <var Comments>
 
 -------------------------
-Express Sender: [<var MsgSender>]
-Senders Template Version: <var Templateversion>
+Sending Station: Tuxlink
+[No changes or editing of this message are allowed]
 "#;
 
 pub const DAMAGE_ASSESSMENT_INITIAL: FormDef = FormDef {

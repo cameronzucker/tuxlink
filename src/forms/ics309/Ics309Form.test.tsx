@@ -42,4 +42,37 @@ describe('Ics309Form', () => {
     const last = onChange.mock.calls[onChange.mock.calls.length - 1][0];
     expect(last.title).toBe('Bravo Net');
   });
+
+  // Codex r2 P2 #2: when restoring a saved draft, scan all 4 entry fields
+  // across all 30 rows so populated entries 11-30 (and rows with from/to/sub
+  // but no time) are visible to the operator before submit.
+  it('restores entryCount to the highest populated row across all 4 fields (1..30)', () => {
+    render(
+      <Ics309Form
+        initialValues={{ title: 't', from17: 'KK4OBN', to17: 'KK4XYZ' }}
+        onSubmit={noop}
+        onCancel={noop}
+      />,
+    );
+    // Row 17 should be visible (the "from17" / "to17" inputs are rendered).
+    expect(screen.getByLabelText(/From #17/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/To #17/i)).toBeInTheDocument();
+  });
+
+  it('restores entryCount to 30 when the last row carries any data', () => {
+    render(
+      <Ics309Form
+        initialValues={{ title: 't', sub30: 'final log entry' }}
+        onSubmit={noop}
+        onCancel={noop}
+      />,
+    );
+    expect(screen.getByLabelText(/Subject #30/i)).toBeInTheDocument();
+  });
+
+  it('starts with 5 visible rows when no entry fields are populated', () => {
+    render(<Ics309Form initialValues={{ title: 't' }} onSubmit={noop} onCancel={noop} />);
+    expect(screen.getByLabelText(/Time #5/i)).toBeInTheDocument();
+    expect(screen.queryByLabelText(/Time #6/i)).toBeNull();
+  });
 });

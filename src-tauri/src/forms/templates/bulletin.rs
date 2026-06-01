@@ -28,9 +28,8 @@ Date/Time: <var ActivityDateTime1>
 <var Message>
 
 ------------------------------------
-Express Sending Station: <MsgSender>
-Express Version: <ProgramVersion>
-Template Version: <var Templateversion>
+Sending Station: Tuxlink
+[No changes or editing of this message are allowed]
 "#;
 
 pub const BULLETIN_INITIAL: FormDef = FormDef {

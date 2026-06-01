@@ -1,16 +1,26 @@
 import { useState } from 'react';
 import type { FormComposeProps } from '../forms';
 
-const MAX_ENTRIES = 10;
+const MAX_LOG_ROWS = 30; // WLE Form-309 caps log entries at 30
+const INITIAL_VISIBLE_ROWS = 5;
 
 export function Ics309Form({ initialValues = {}, onChange, onSubmit, onCancel }: FormComposeProps) {
   const [values, setValues] = useState<Record<string, string>>(initialValues);
   const [entryCount, setEntryCount] = useState(() => {
-    // Pre-populate entry count based on any existing values
-    for (let i = MAX_ENTRIES; i >= 1; i--) {
-      if ((initialValues[`time${i}`] ?? '').trim()) return i;
+    // Codex r2 P2 #2: scan ALL 4 entry fields across the full 30-row range
+    // when deriving the initial visible count from a restored draft. The
+    // prior version only scanned `time1..time10`, so any saved data in
+    // entries 11-30, or rows with from/to/sub populated but no time, would
+    // be hidden from the operator while still being submitted on the wire.
+    for (let i = MAX_LOG_ROWS; i >= 1; i--) {
+      const hasAny =
+        (initialValues[`time${i}`] ?? '').trim() ||
+        (initialValues[`from${i}`] ?? '').trim() ||
+        (initialValues[`to${i}`] ?? '').trim() ||
+        (initialValues[`sub${i}`] ?? '').trim();
+      if (hasAny) return i;
     }
-    return 1;
+    return INITIAL_VISIBLE_ROWS;
   });
 
   const set = (id: string, v: string) => {
@@ -25,7 +35,7 @@ export function Ics309Form({ initialValues = {}, onChange, onSubmit, onCancel }:
   const canSubmit = required.every((id) => (values[id] ?? '').trim().length > 0);
   const submit = () => { if (canSubmit) onSubmit(values); };
 
-  const addEntry = () => setEntryCount((n) => Math.min(n + 1, 30));
+  const addEntry = () => setEntryCount((n) => Math.min(n + 1, MAX_LOG_ROWS));
 
   return (
     <form className="ics309-form" onSubmit={(e) => { e.preventDefault(); submit(); }}>
@@ -48,10 +58,10 @@ export function Ics309Form({ initialValues = {}, onChange, onSubmit, onCancel }:
           return (
             <div key={n} className="ics309-log-entry">
               <strong>Entry {n}</strong>
-              <label>Time <input value={values[`time${n}`] ?? ''} onChange={(e) => set(`time${n}`, e.target.value)} maxLength={10} placeholder="HH:MMZ" /></label>
-              <label>From <input value={values[`from${n}`] ?? ''} onChange={(e) => set(`from${n}`, e.target.value)} maxLength={30} /></label>
-              <label>To <input value={values[`to${n}`] ?? ''} onChange={(e) => set(`to${n}`, e.target.value)} maxLength={30} /></label>
-              <label>Subject <textarea value={values[`sub${n}`] ?? ''} onChange={(e) => set(`sub${n}`, e.target.value)} rows={2} maxLength={200} /></label>
+              <label>Time #{n} <input value={values[`time${n}`] ?? ''} onChange={(e) => set(`time${n}`, e.target.value)} maxLength={10} placeholder="HH:MMZ" /></label>
+              <label>From #{n} <input value={values[`from${n}`] ?? ''} onChange={(e) => set(`from${n}`, e.target.value)} maxLength={30} /></label>
+              <label>To #{n} <input value={values[`to${n}`] ?? ''} onChange={(e) => set(`to${n}`, e.target.value)} maxLength={30} /></label>
+              <label>Subject #{n} <textarea value={values[`sub${n}`] ?? ''} onChange={(e) => set(`sub${n}`, e.target.value)} rows={2} maxLength={200} /></label>
             </div>
           );
         })}

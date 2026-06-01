@@ -22,7 +22,7 @@ import './MessageView.css';
 import type { ParsedMessage, AttachmentMeta } from './types';
 import { useMessage, type MessageSelection } from './useMessage';
 import { asUiError, isNotConfigured } from './types';
-import { openReplyWindow, type ReplyMode } from './replyActions';
+import { openReplyWindow, hasReplyWithFormSupport, type ReplyMode } from './replyActions';
 import { sanitizeAttachmentName } from './sanitize';
 import { devFormMeta } from './devFixture';
 import { lookupForm, KeyValueView } from '../forms';
@@ -171,17 +171,20 @@ export function MessageViewLoaded({ message }: { message: ParsedMessage }) {
         >
           Forward
         </button>
-        {message.isForm && message.formId && lookupForm(message.formId) && (
-          <button
-            type="button"
-            className="action-btn"
-            data-testid="reply-with-form-btn"
-            title="Reply with the same form type, pre-populated with sender↔recipient swap"
-            onClick={() => fireReply(message, 'replyWithForm')}
-          >
-            Reply with form…
-          </button>
-        )}
+        {message.isForm
+          && message.formId
+          && lookupForm(message.formId)
+          && hasReplyWithFormSupport(message.formId) && (
+            <button
+              type="button"
+              className="action-btn"
+              data-testid="reply-with-form-btn"
+              title="Reply with the same form type, pre-populated with sender↔recipient swap"
+              onClick={() => fireReply(message, 'replyWithForm')}
+            >
+              Reply with form…
+            </button>
+          )}
       </div>
 
       {/* 2 — subject heading */}

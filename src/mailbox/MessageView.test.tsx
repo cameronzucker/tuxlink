@@ -32,9 +32,14 @@ vi.mock('./useMessage', () => ({
 }));
 import { useMessage } from './useMessage';
 
-// Reply/forward open a compose window via openReplyWindow — mock the side
-// effect so the action-bar tests assert wiring, not Tauri behavior.
-vi.mock('./replyActions', () => ({ openReplyWindow: vi.fn().mockResolvedValue(undefined) }));
+// Reply/forward open a compose window via openReplyWindow — mock that side
+// effect so the action-bar tests assert wiring, not Tauri behavior. Keep
+// the real hasReplyWithFormSupport export so MessageView's gate logic
+// (Codex r2 P2 #1) is exercised end-to-end.
+vi.mock('./replyActions', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./replyActions')>();
+  return { ...actual, openReplyWindow: vi.fn().mockResolvedValue(undefined) };
+});
 import { openReplyWindow } from './replyActions';
 import type { ParsedMessage } from './types';
 
@@ -270,6 +275,18 @@ describe('<MessageViewLoaded> reply action bar', () => {
     render(<MessageViewLoaded message={m} />);
     fireEvent.click(screen.getByTestId('reply-with-form-btn'));
     expect(openReplyWindow).toHaveBeenCalledWith(m, 'replyWithForm');
+  });
+
+  // Codex r2 P2 #1: forms registered via Phase 9 (Bulletin/Position/ICS-309/
+  // Damage Assessment) lookup successfully but don't have per-form reply
+  // mappings in buildReplyDraft — hiding the button avoids the half-populated
+  // form draft trap. Add per-form mappings + remove the gate in v0.1.2 to
+  // light it up for these forms.
+  it('does NOT show the Reply-with-form button on Phase 9 forms without reply mappings', () => {
+    render(
+      <MessageViewLoaded message={parsed({ isForm: true, formId: 'Bulletin_Initial' })} />,
+    );
+    expect(screen.queryByTestId('reply-with-form-btn')).toBeNull();
   });
 });
 

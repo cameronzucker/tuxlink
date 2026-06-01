@@ -165,7 +165,6 @@ Operational Period #: <var OpPer>
 
 Radio Operator Name:<var OpName>
 Station ID: <var OperId>
-Express Sender: <var MsgSender>
 
          LOG
 ----------------------------
@@ -380,9 +379,7 @@ SUBJECT:
  <var Sub30>
 
 ------------------
-Express Sending Station: <MsgSender>
-Senders Express Version: <ProgramVersion>
-Senders Template Version: <var Templateversion>
+Sending Station: Tuxlink
 [No changes or editing of this message are allowed]
 "#;
 
