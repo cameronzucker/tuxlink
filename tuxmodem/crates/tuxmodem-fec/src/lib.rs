@@ -34,3 +34,8 @@ pub mod interleaver;
 pub mod parity_matrix;
 pub mod puncture;
 pub mod stats;
+
+// Internal note: codes::floor_rate14 and codes::ofdm_wifi_family
+// depend on encode::Encoder::try_new for the rank-deficiency seed
+// iteration. This creates an intra-crate dep: codes → encode →
+// parity_matrix. No public cycle.

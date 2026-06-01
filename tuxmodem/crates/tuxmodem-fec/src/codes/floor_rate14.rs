@@ -20,31 +20,44 @@ const ROW_WEIGHT: usize = 4;
 const SEED: u64 = 0xFEC0_F100_0014_u64;
 
 /// Construct the floor rate-1/4 parity-check matrix.
+///
 /// Deterministic given the [`SEED`] constant. Returns an (n-k) × n
-/// matrix.
+/// matrix with regular column weight 3 and regular row weight 4.
+///
+/// NOTE: this configuration-model construction does not guarantee
+/// rank-full `H` — the floor code (n=2048, k=512) reliably produces
+/// rank-deficient matrices under random sampling. The
+/// [`crate::encode::Encoder`] currently panics on the floor code;
+/// the proper fix is a PEG (progressive-edge-growth) or
+/// column-swap-pivot construction tracked by the tuxlink-bbin
+/// follow-up. Structural tests (weights, determinism) work on the
+/// rank-deficient H as-is.
 pub fn build() -> ParityCheckMatrix {
+    build_with_seed(SEED).expect("structural construction must succeed with the pinned SEED")
+}
+
+/// Single seed attempt at the configuration-model construction.
+/// Returns `None` if `MAX_RESHUFFLE` attempts exhausted without
+/// producing a duplicate-free row partition.
+fn build_with_seed(seed: u64) -> Option<ParityCheckMatrix> {
     let m = N - K;
     debug_assert_eq!(N * COL_WEIGHT, m * ROW_WEIGHT, "regular construction balance");
 
     let total_edges = m * ROW_WEIGHT;
     debug_assert_eq!(total_edges, N * COL_WEIGHT);
 
-    // Configuration-model construction: for each column c, emit
-    // COL_WEIGHT stubs labeled c; shuffle all stubs; partition into
-    // m rows of ROW_WEIGHT each. Each column ends up with exactly
-    // COL_WEIGHT stubs (in some rows); each row ends up with exactly
-    // ROW_WEIGHT stubs (some columns).
+    // Configuration-model: for each column c, emit COL_WEIGHT stubs
+    // labeled c; shuffle all stubs; partition into m rows of
+    // ROW_WEIGHT each. Each column ends up with exactly COL_WEIGHT
+    // stubs (in some rows); each row ends up with exactly ROW_WEIGHT
+    // stubs (some columns).
     let mut stubs: Vec<usize> = (0..N)
         .flat_map(|c| std::iter::repeat(c).take(COL_WEIGHT))
         .collect();
 
-    let mut rng = ChaCha8Rng::seed_from_u64(SEED);
-
-    // Reject + retry if any row picks duplicate column indices (would
-    // be a degenerate parity check that resolves to a tautology).
-    // Per-row duplicate probability ≈ ROW_WEIGHT² / N = 16 / 2048 < 1 %;
-    // total reshuffles expected < 5.
+    let mut rng = ChaCha8Rng::seed_from_u64(seed);
     stubs.shuffle(&mut rng);
+
     for _attempt in 0..32 {
         let mut rows: Vec<Vec<usize>> = Vec::with_capacity(m);
         let mut ok = true;
@@ -60,11 +73,11 @@ pub fn build() -> ParityCheckMatrix {
             rows.push(row);
         }
         if ok {
-            return ParityCheckMatrix { n: N, k: K, rows };
+            return Some(ParityCheckMatrix { n: N, k: K, rows });
         }
         stubs.shuffle(&mut rng);
     }
-    panic!("floor_rate14::build failed to construct a duplicate-free H after 32 retries; code bug or seed pathology");
+    None
 }
 
 #[cfg(test)]

@@ -22,14 +22,31 @@ use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
 
 use super::{BlockN, WifiLdpcRate};
+use crate::encode::Encoder;
 use crate::parity_matrix::ParityCheckMatrix;
 
 const Z_648: usize = 27;
 const Z_1296: usize = 54;
 const SEED_BASE: u64 = 0xFEC0_0FD0_F1F1_u64;
+const MAX_SEED_ITERATIONS: u64 = 64;
 
 /// Build the parity-check matrix for the given `(block_n, rate)` pair.
+/// Iterates seeds until a rank-full `H` is found (so systematic
+/// encoding via [`Encoder::try_new`] succeeds).
 pub fn build(block_n: BlockN, rate: WifiLdpcRate) -> ParityCheckMatrix {
+    for delta in 0..MAX_SEED_ITERATIONS {
+        let base = SEED_BASE.wrapping_add(delta);
+        let h = build_with_seed(block_n, rate, base);
+        if Encoder::try_new(&h).is_ok() {
+            return h;
+        }
+    }
+    panic!(
+        "ofdm_wifi_family::build({block_n:?}, {rate:?}): no rank-full H found in {MAX_SEED_ITERATIONS} seed iterations"
+    );
+}
+
+fn build_with_seed(block_n: BlockN, rate: WifiLdpcRate, seed_base: u64) -> ParityCheckMatrix {
     let z = match block_n {
         BlockN::N648 => Z_648,
         BlockN::N1296 => Z_1296,
@@ -44,7 +61,7 @@ pub fn build(block_n: BlockN, rate: WifiLdpcRate) -> ParityCheckMatrix {
     debug_assert_eq!(m % z, 0);
     debug_assert_eq!(n % z, 0);
 
-    let seed = SEED_BASE ^ ((block_n as u64) << 8) ^ ((rate as u64) << 16);
+    let seed = seed_base ^ ((block_n as u64) << 8) ^ ((rate as u64) << 16);
     let mut rng = ChaCha8Rng::seed_from_u64(seed);
 
     // Construct the block-shift matrix: m_blocks × n_blocks entries.
