@@ -1,0 +1,36 @@
+/* src/radio/sections/ModemLinkSection.css
+ *
+ * Section-specific styles for the Modem link section. The `.radio-panel-
+ * segmented` primitive is hoisted here (vs RadioPanel.css) because it is
+ * currently single-section; if a future panel (Signal in P4, etc.) needs
+ * a 3-way segmented picker we lift it into RadioPanel.css then.
+ */
+
+.radio-panel-segmented {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 4px;
+  margin-bottom: 6px;
+}
+.radio-panel-segmented button {
+  padding: 4px 6px;
+  border-radius: 3px;
+  text-align: center;
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(255, 255, 255, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+.radio-panel-segmented button:hover {
+  background: rgba(255, 255, 255, 0.07);
+  color: rgba(255, 255, 255, 0.85);
+}
+.radio-panel-segmented button.active {
+  background: rgba(34, 197, 94, 0.18);
+  color: #4ade80;
+  border-color: rgba(34, 197, 94, 0.35);
+}
