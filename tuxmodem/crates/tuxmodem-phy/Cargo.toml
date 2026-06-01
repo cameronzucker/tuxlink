@@ -16,6 +16,7 @@ hound.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true
+rand = "0.8"
 # Activated as #1 and #4 publish; until then sibling subagents' plans
 # may stub these with path-deps in coordination.
 # hf-channel-sim.workspace = true
