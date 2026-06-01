@@ -242,12 +242,15 @@ describe('<AppShell> — Mock B topology', () => {
     ).toBeNull();
   });
 
-  it('View → Toggle Status Bar hides and shows the status bar', () => {
+  it('View → Toggle Mailbox Bar hides and shows the status bar', () => {
     renderShell();
     expect(screen.getByTestId('status-bar')).toBeInTheDocument();
-    clickMenu('View', /Toggle Status Bar/);
+    // tuxlink-qxqj: the menu label is now "Toggle Mailbox Bar" — the bar's
+    // content is mailbox queue state, not transport status. The action id
+    // (menu:view:status_bar) and data-testid (status-bar) stay the same.
+    clickMenu('View', /Toggle Mailbox Bar/);
     expect(screen.queryByTestId('status-bar')).toBeNull();
-    clickMenu('View', /Toggle Status Bar/);
+    clickMenu('View', /Toggle Mailbox Bar/);
     expect(screen.getByTestId('status-bar')).toBeInTheDocument();
   });
 

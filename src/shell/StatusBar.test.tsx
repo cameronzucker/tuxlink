@@ -1,44 +1,34 @@
 import { describe, it, expect } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { StatusBar } from './StatusBar';
-import type { StatusTone } from './useStatus';
-import type { PacketUiState } from '../packet/packetStatus';
 
-// DEV_FIXTURE is false under vitest, so StatusBar renders the passed `state`.
-const ready = { label: 'Telnet ready', tone: 'good' as StatusTone };
-
-describe('<StatusBar> (Mock B)', () => {
+describe('<StatusBar> — mailbox-bar redesign (tuxlink-qxqj)', () => {
   it('renders nothing when show=false (zero height)', () => {
-    const { container } = render(<StatusBar show={false} unread={3} state={ready} />);
+    const { container } = render(<StatusBar show={false} unread={3} outboxQueued={0} />);
     expect(container.firstChild).toBeNull();
   });
 
-  it('renders connection state, unread count, and versions', () => {
-    render(<StatusBar show unread={3} state={ready} />);
-    expect(screen.getByTestId('status-bar-state')).toHaveTextContent('Telnet ready');
-    expect(screen.getByTestId('status-bar-dot').className).toContain('good');
+  it('renders outbox queue + unread + version when outbox is non-empty', () => {
+    render(<StatusBar show unread={3} outboxQueued={2} />);
+    expect(screen.getByTestId('status-bar-outbox')).toHaveTextContent('2 to send');
     expect(screen.getByTestId('status-bar-unread')).toHaveTextContent('3 unread');
-    // Status bar renders v<version.txt-contents>; we don't pin the exact value
-    // because release-please bumps version.txt frequently.
+    // release-please bumps version.txt frequently; just verify the shape.
     expect(screen.getByTestId('status-bar-version').textContent ?? '').toMatch(/^v\d+\.\d+\.\d+/);
   });
 
-  it('the dot tone tracks the connection state', () => {
-    render(<StatusBar show unread={0} state={{ label: 'Idle', tone: 'idle' }} />);
-    expect(screen.getByTestId('status-bar-dot').className).toContain('idle');
+  it('hides the outbox segment when the queue is empty (no zero-state noise)', () => {
+    render(<StatusBar show unread={0} outboxQueued={0} />);
+    expect(screen.queryByTestId('status-bar-outbox')).toBeNull();
+    // The unread segment + version still render — the bar's anchors.
     expect(screen.getByTestId('status-bar-unread')).toHaveTextContent('0 unread');
+    expect(screen.getByTestId('status-bar-version')).toBeInTheDocument();
   });
-});
 
-describe('StatusBar — packet transport', () => {
-  it('shows the packet status string when packet is active', () => {
-    const packet: PacketUiState = {
-      active: true, listening: true, connected: false,
-      effectiveCall: 'N7CPZ-7', linkLabel: 'KISS-TCP Dire Wolf',
-    };
-    render(<StatusBar show unread={3} state={{ label: 'Idle', tone: 'idle' }} packet={packet} />);
-    expect(screen.getByTestId('status-bar-state')).toHaveTextContent(
-      'Packet 1200 · Listening as N7CPZ-7 · KISS-TCP Dire Wolf',
-    );
+  it('does not render the connection state (now lives in DashboardRibbon)', () => {
+    render(<StatusBar show unread={3} outboxQueued={1} />);
+    // The pre-redesign data-testids must be gone — they belonged to the
+    // duplicated connection chip the operator asked us to drop.
+    expect(screen.queryByTestId('status-bar-state')).toBeNull();
+    expect(screen.queryByTestId('status-bar-dot')).toBeNull();
   });
 });

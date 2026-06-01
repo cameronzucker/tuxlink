@@ -50,7 +50,11 @@ export const MENU_TREE: TopMenu[] = [
   { label: 'View', items: [
     // Session-log items removed in radio-panel-shell P1.6 — the bottom
     // session-log strip is gone; the log moves into the radio panel.
-    { id: 'menu:view:status_bar', label: 'Toggle Status Bar' },
+    // tuxlink-qxqj: the bottom bar's content is mailbox queue + unread state
+    // (the connection chip moved out; it duplicated DashboardRibbon). Menu
+    // label tracks the new purpose; the action id stays so muscle-memory
+    // keybindings and tests don't churn.
+    { id: 'menu:view:status_bar', label: 'Toggle Mailbox Bar' },
     { id: 'menu:view:radio_panel', label: 'Toggle Radio Panel', accel: 'Ctrl+Shift+M' },
     { separator: true },
     // tuxlink-c22r + tuxlink-vgth: dark default, three light presets, two
