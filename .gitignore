@@ -52,6 +52,16 @@ dist/
 dist-ssr/
 *.local
 
+# Convergence-discipline disposable worktree (tuxlink-pxmi).
+# scripts/converge-build.sh v2 maintains .local/converge-build-worktree/ as
+# a persistent throwaway worktree pinned at exactly origin/main, used as the
+# unambiguous build target. The directory is managed by git worktree
+# machinery; .local/ otherwise accumulates per-machine runtime state and
+# should never be tracked. Anchored to repo root (/.local/) to avoid
+# accidentally ignoring an unrelated .local subdirectory anywhere in the
+# tree (Codex 2026-06-01 P3 catch).
+/.local/
+
 # Logs
 *.log
 npm-debug.log*

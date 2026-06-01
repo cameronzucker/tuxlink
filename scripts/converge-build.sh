@@ -5,23 +5,37 @@
 # tauri dev sequences that lose to one or more of seven known failure modes
 # documented in dev/handoffs/2026-06-01-moss-cove-hemlock-convergence-discipline-handoff.md.
 #
-# v1 scope (this issue: tuxlink-qepd). Codex round 2026-06-01 (3300-line
-# transcript at dev/adversarial/2026-06-01-convergence-discipline-codex.md
-# on bd-tuxlink-jy6p/convergence-adrev) surfaced 21 findings; v1 addresses:
-#   #2  (branch classification, warn-not-refuse — full enforce → tuxlink-21j8)
-#   #4  (SHA-compare untracked-vs-tracked collision)
-#   #5  (.beads/issues.jsonl explicit stash)
-#   #7  (pnpm dev:converged wrapper as default path)
-#   #11 (audit log)
-#   #13 partial (lockfile-change-detect — full topology verifier → tuxlink-pxmi)
-#   #20 (--dry-run mode)
-#   #21 (named stash marker)
-# Deferred to sub-issues:
-#   #1  (post-merge hook semantics)              → tuxlink-21j8
-#   #6  (host-level dev-server lease)            → tuxlink-8d7y
-#   #8  (build from disposable origin/main wt)   → tuxlink-pxmi
-#   #9  (CI scheduled branch audit)              → tuxlink-ui3i
-#   #18 (test fixtures for 7 failure modes)      → tuxlink-8zho
+# v2 (this issue: tuxlink-pxmi). Codex 2026-06-01 P1 #8: "Source of truth
+# remains ambiguous — rebasing task-amd-main-ui and restoring a stash can
+# produce a build from `origin/main + local handoff/docs + dirty overlay`,
+# while the banner prints only one HEAD SHA. That is not clearly 'actual
+# project state.' Best option: build from a disposable/managed worktree
+# checked out at `origin/main`, leaving the operator handoff branch out
+# of runtime builds."
+#
+# Build target is .local/converge-build-worktree/ at the repo root —
+# a persistent throwaway worktree with detached HEAD at exactly
+# origin/main. Operator's working checkout (task-amd-main-ui or any
+# bd-NN/* branch) is NEVER mutated by this script. node_modules + cargo
+# target/ live INSIDE the disposable worktree, cached across runs,
+# wiped on lockfile or HEAD change.
+#
+# v1 → v2 deltas:
+#   - REMOVED: rebase phase (operator checkout is untouched)
+#   - REMOVED: .beads/issues.jsonl stash phase (no rebase = no jsonl conflict)
+#   - REMOVED: untracked-vs-tracked collision check (operator checkout untouched)
+#   - REMOVED: EXIT trap for stash recovery (no stash anymore)
+#   - ADDED:   ensure_disposable_worktree (create or fast-forward)
+#   - ADDED:   sync_disposable_worktree (update its detached HEAD to origin/main)
+#
+# Inherited from v1 (still correct):
+#   - Branch classification (warn on merged-dead/orphan; v2 hooks in
+#     tuxlink-21j8 lift to refuse at commit/push time)
+#   - Audit log at dev/scratch/converge-build.log (json-lines, jq-friendly)
+#   - lockfile-change-detect for node_modules wipe
+#   - HEAD-change-detect for src-tauri/target wipe
+#   - --fresh / --dry-run / --skip-launch flags
+#   - Process kill + port 1420 verification
 #
 # Usage:
 #   scripts/converge-build.sh [--fresh] [--dry-run] [--skip-launch] [--help]
@@ -29,12 +43,13 @@
 #
 # Exit codes:
 #   0   converged + launched (or converged-only if --skip-launch)
-#   2   untracked-vs-tracked collision with differing content (operator decision needed)
-#   3   working tree dirty in a way the script won't auto-resolve
-#   4   rebase failed (probably divergent histories needing operator)
-#   5   bd .beads/issues.jsonl unstaged-dirty without a clear stash path
+#   4   git worktree create/fetch/sync failed, OR disposable worktree
+#       is in a state the script won't auto-fix (dirty content, or
+#       orphan directory at the disposable path that isn't a worktree)
 #   6   pnpm install failed
 #   7   port 1420 owner refused to release (manual --force-kill-owned needed)
+#   9   another converge-build is in flight in this operator checkout
+#       (per-checkout flock contention)
 #   10  script-internal error (bug)
 
 set -euo pipefail
@@ -46,8 +61,9 @@ readonly REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 readonly RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)-$$"
 readonly AUDIT_LOG="${REPO_ROOT}/dev/scratch/converge-build.log"
 readonly STATE_FILE="${REPO_ROOT}/dev/scratch/converge-build-state.json"
-readonly STASH_LABEL="converge-build/${RUN_ID}/bd-issues-jsonl"
-readonly LOCKFILE="${REPO_ROOT}/pnpm-lock.yaml"
+# The disposable worktree lives INSIDE the operator's main checkout but
+# under .local/ which is gitignored. Persistent across runs.
+readonly DISPOSABLE_WT_DIR="${REPO_ROOT}/.local/converge-build-worktree"
 
 # ─── Flags ─────────────────────────────────────────────────────────────────
 
@@ -55,9 +71,6 @@ FLAG_FRESH=0
 FLAG_DRY_RUN=0
 FLAG_SKIP_LAUNCH=0
 FLAG_FORCE_KILL_OWNED=0
-
-# Filled in by stash_bd_state, consulted by trap_on_exit on abnormal exit.
-PERSISTED_STASH_REF=""
 
 # ─── ANSI helpers ──────────────────────────────────────────────────────────
 
@@ -79,39 +92,8 @@ ok()   { printf '%s✓ %s%s\n' "${C_GREEN}" "$*" "${C_RESET}" >&2; }
 die()  { printf '%s✗ %s%s\n' "${C_RED}${C_BOLD}" "$*" "${C_RESET}" >&2; exit "${2:-10}"; }
 dim()  { printf '%s%s%s\n' "${C_DIM}" "$*" "${C_RESET}" >&2; }
 
-# ─── Trap: stash-recovery on abnormal exit ─────────────────────────────────
-
-# Codex P1 #3 — if the script exits non-zero between stash_bd_state and
-# restore_bd_state (most likely a rebase failure), the operator's bd state
-# is hidden in a stash. Print the recovery command loudly so they don't
-# need to grep `git stash list` for the label.
-trap_on_exit() {
-  local rc=$?
-  if [[ "${rc}" -ne 0 && -n "${PERSISTED_STASH_REF}" ]]; then
-    # Verify the stash still exists (it might have been popped already).
-    if git -C "${REPO_ROOT}" stash list 2>/dev/null | grep -qF "${STASH_LABEL}"; then
-      printf '\n%s━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━%s\n' "${C_YELLOW}" "${C_RESET}" >&2
-      printf '%s⚠ STASH RECOVERY NEEDED%s\n' "${C_YELLOW}${C_BOLD}" "${C_RESET}" >&2
-      printf '%sYour .beads/issues.jsonl is in stash labelled:%s\n' "${C_YELLOW}" "${C_RESET}" >&2
-      printf '    %s\n' "${STASH_LABEL}" >&2
-      printf '%sFind + restore with:%s\n' "${C_YELLOW}" "${C_RESET}" >&2
-      printf '    git stash list | grep %q\n' "${STASH_LABEL}" >&2
-      printf '    git stash pop <ref>\n' >&2
-      printf '%s━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━%s\n\n' "${C_YELLOW}" "${C_RESET}" >&2
-      # Audit even on abnormal exit (best-effort; might fail if disk full etc).
-      audit "stash_recovery_needed" "$(printf '{"stash_label":"%s","exit_code":%d}' "${STASH_LABEL}" "${rc}")" || true
-    fi
-  fi
-  return "${rc}"
-}
-trap trap_on_exit EXIT
-
 # ─── Audit log ────────────────────────────────────────────────────────────
 
-# Append a structured JSON line to dev/scratch/converge-build.log.
-# Each line is self-contained; jq-tail-friendly for forensics.
-# In --dry-run, emit to stderr instead so the scratch dir stays untouched
-# (Codex P3 #7 — dry-run promised no mutations).
 audit() {
   local kind="$1"; shift
   local payload="$1"; shift || true
@@ -131,51 +113,62 @@ audit() {
 
 usage() {
   cat <<EOF
-converge-build.sh — single-source-of-truth consolidated tuxlink build.
+converge-build.sh v2 — disposable-worktree-at-origin/main consolidated build.
 
 USAGE:
   scripts/converge-build.sh [OPTIONS]
   pnpm dev:converged                 # wrapper, the documented default path
 
+WHAT IT DOES:
+  Maintains a managed throwaway worktree at .local/converge-build-worktree/
+  pinned at exactly origin/main (detached HEAD). Builds + launches tauri
+  dev from THAT worktree, so the runtime build is unambiguous:
+  no overlay from your handoff branch, no risk of building stale code.
+
 OPTIONS:
-  --fresh                  Wipe node_modules + src-tauri/target before install.
-                           Default: wipe only when pnpm-lock.yaml changed since
-                           the previous run (per recorded state).
-  --skip-launch            Converge (rebase + install + build deps) but do not
-                           launch \`tauri dev\`.
-  --dry-run                Print the plan — branch classification, untracked
-                           collision decisions, install mode, processes to
-                           kill, launch command — without mutating anything.
-  --force-kill-owned       Allow killing tauri/vite/tuxlink processes even if
-                           they appear to be owned by another worktree. v1
-                           kills any tauri/vite PID; this flag is reserved for
-                           the lease enforcement landing in tuxlink-8d7y.
+  --fresh                  Wipe disposable worktree's node_modules +
+                           src-tauri/target before install. Default: wipe
+                           on lockfile change OR HEAD change since the
+                           previous run.
+  --skip-launch            Converge (sync + install + build deps) but do
+                           not launch \`tauri dev\`.
+  --dry-run                Print the plan without mutating anything.
+  --force-kill-owned       Allow killing tauri/vite/tuxlink processes
+                           that may be owned by another worktree.
+                           Reserved for tuxlink-8d7y lease integration.
   -h, --help               This message.
 
 KNOWN FAILURE MODES THIS HANDLES:
-  1. Operator's branch N commits behind origin/main → rebase forward
-  2. pnpm install reports "up to date" but symlinks stale → lockfile diff
-  3. .beads/issues.jsonl staged by bd, blocking rebase → named stash
-  4. Untracked path same as tracked on origin/main, blocking rebase →
-     SHA-compare; auto-remove identical, stop-and-ask on differing
-  5. Stale src-tauri/target/debug/tuxlink binary → wipe when HEAD moved
-  6. Parallel \`tauri dev\` on port 1420 (strictPort) → kill before launch
-  7. Bare-branch warning (orphan-post-merge): warn classification; v2 hooks
-     in tuxlink-21j8 will refuse-on-dead
+  1. Operator's handoff branch is N commits behind origin/main
+     → BUILD IS NOT FROM OPERATOR'S BRANCH; always origin/main.
+     Operator branch is read-only to this script.
+  2. pnpm install reports "up to date" but symlinks stale
+     → lockfile diff inside the disposable worktree drives the wipe.
+  3. .beads/issues.jsonl staged by bd
+     → no rebase of operator branch happens; staged file is irrelevant.
+  4. Untracked vs tracked path collision in operator's checkout
+     → disposable worktree is freshly-checked-out from origin/main;
+     no untracked overlay possible.
+  5. Stale src-tauri/target/debug/tuxlink binary
+     → wipe when disposable worktree's HEAD changes (effectively
+     whenever origin/main moves forward).
+  6. Parallel \`tauri dev\` on port 1420 (strictPort)
+     → kill before launch + verify port is free via ss / lsof.
+  7. Bare-branch warning (orphan-post-merge)
+     → still warns on operator's current branch; v2 hooks in
+     tuxlink-21j8 lift to refuse at commit/push time.
 
-NOT HANDLED IN v1 (see sub-issues):
-  - Host-level dev-server lease for safe parallel work       → tuxlink-8d7y
-  - Build from disposable worktree at exactly origin/main    → tuxlink-pxmi
-  - Refuse commits on merged-dead branches                   → tuxlink-21j8
-  - CI scheduled audit catching non-Claude bypasses          → tuxlink-ui3i
-  - Test fixtures for all 7 modes                            → tuxlink-8zho
+NOT HANDLED IN v2 (see sub-issues / follow-up PRs):
+  - Host-level dev-server lease for safe parallel work     → tuxlink-8d7y
+  - CI scheduled audit catching non-Claude bypasses        → tuxlink-ui3i
+  - Test fixtures for all 7 modes                          → tuxlink-8zho
+  - Refuse commits on merged-dead branches                 → tuxlink-21j8
 
 REQUIREMENTS: Linux (bash 4+, ss or lsof, sha256sum, pgrep, pkill, jq, git, pnpm).
-              tuxlink targets Linux/Pi development; macOS/Windows porting is
-              out of scope for v1.
 
-AUDIT LOG: ${AUDIT_LOG}
-STATE FILE: ${STATE_FILE}
+AUDIT LOG:        ${AUDIT_LOG}
+STATE FILE:       ${STATE_FILE}
+DISPOSABLE WT:    ${DISPOSABLE_WT_DIR}
 EOF
 }
 
@@ -193,225 +186,59 @@ parse_args() {
   done
 }
 
-# ─── Phase: classify the current branch ───────────────────────────────────
+# ─── Phase: branch classification (informational only in v2) ──────────────
 
-# Categories (Codex P0 #2 — warn-not-refuse in v1; tuxlink-21j8 lifts this to
-# hook-level refuse-on-dead). Output JSON for the audit log.
-classify_branch() {
+# v2 still classifies the operator's branch + warns on merged-dead/orphan,
+# but the warning is purely informational: the disposable worktree is the
+# build target, so the operator's branch state cannot affect the runtime
+# build. Branch state machine (tuxlink-21j8) lifts the warn to a refuse
+# at commit/push time via .githooks.
+classify_operator_branch() {
   local branch; branch="$(git -C "${REPO_ROOT}" symbolic-ref --short HEAD 2>/dev/null || echo DETACHED)"
   local sha;    sha="$(git -C "${REPO_ROOT}" rev-parse HEAD)"
   local merged_pr_state="none"
   local open_pr_state="none"
 
-  # gh may be absent or unauthenticated; fail soft (warn, not die).
   if command -v gh >/dev/null 2>&1; then
-    # Open PR for this branch?
     if gh pr view "${branch}" --json state,number 2>/dev/null | grep -q '"state":"OPEN"'; then
       open_pr_state="$(gh pr view "${branch}" --json number 2>/dev/null | sed -n 's/.*"number":\([0-9]*\).*/\1/p')"
     fi
-    # Most-recent MERGED PR for this branch?
     if gh pr list --head "${branch}" --state merged --json number,mergedAt --limit 1 2>/dev/null | grep -q '"mergedAt"'; then
       merged_pr_state="$(gh pr list --head "${branch}" --state merged --json number --limit 1 2>/dev/null | sed -n 's/.*"number":\([0-9]*\).*/\1/p')"
     fi
   fi
 
   local category="unknown"
-  local note=""
   case "${branch}" in
-    main)
-      category="protected-main"
-      note="building from main directly — convergence is trivially satisfied"
-      ;;
-    task-amd-main-ui|task-*)
-      category="operator-local"
-      note="operator's named work branch; rebase forward and proceed"
-      ;;
+    main)                                     category="protected-main" ;;
+    task-amd-main-ui|task-*)                  category="operator-local" ;;
     bd-*)
       if [[ "${open_pr_state}" != "none" ]]; then
-        category="bd-issue-pr-open"; note="open PR #${open_pr_state}"
+        category="bd-issue-pr-open"
       elif [[ "${merged_pr_state}" != "none" ]]; then
         category="bd-issue-merged-dead"
-        note="PR #${merged_pr_state} merged — branch should be retired (v2: pre-commit/pre-push refuses)"
       else
-        category="bd-issue-active"; note="bd-issue branch, no PR yet"
+        category="bd-issue-active"
       fi
       ;;
-    agent-*)
-      category="agent-throwaway"
-      note="throwaway agent branch"
-      ;;
-    release-please--*|dependabot/*)
-      category="bot"
-      note="bot-owned automation branch"
-      ;;
+    agent-*)                                  category="agent-throwaway" ;;
+    release-please--*|dependabot/*)           category="bot" ;;
     *)
       if [[ "${open_pr_state}" != "none" ]]; then
-        category="adhoc-pr-open"; note="open PR #${open_pr_state}"
+        category="adhoc-pr-open"
       elif [[ "${merged_pr_state}" != "none" ]]; then
         category="adhoc-merged-dead"
-        note="PR #${merged_pr_state} merged — likely orphan-post-merge"
       else
-        category="adhoc-unowned"; note="no bd-id prefix, no PR — verify intent"
+        category="adhoc-unowned"
       fi
       ;;
   esac
 
-  printf '{"branch":"%s","sha":"%s","category":"%s","note":"%s"}\n' \
-    "${branch}" "${sha}" "${category}" "${note}"
+  printf '{"branch":"%s","sha":"%s","category":"%s"}\n' \
+    "${branch}" "${sha}" "${category}"
 }
 
-# ─── Phase: untracked-vs-tracked collision resolution ─────────────────────
-
-# Codex P1 #4. Walk operator's untracked files; for each that exists on
-# origin/main, SHA-compare. Identical bytes → auto-remove (the tracked copy
-# is the source of truth). Differing bytes → STOP-AND-ASK.
-resolve_untracked_collisions() {
-  local dry="$1"
-  local origin_main_sha; origin_main_sha="$(git -C "${REPO_ROOT}" rev-parse origin/main)"
-  local conflict_count=0
-  local resolved_identical=()
-  local resolved_differing=()
-
-  # git ls-files --others --exclude-standard prints relative paths.
-  local untracked
-  untracked="$(git -C "${REPO_ROOT}" ls-files --others --exclude-standard)"
-  [[ -z "${untracked}" ]] && { echo '{"identical_removed":0,"differing_blocked":0}'; return 0; }
-
-  while IFS= read -r path; do
-    [[ -z "${path}" ]] && continue
-    # Does origin/main track this path?
-    if ! git -C "${REPO_ROOT}" cat-file -e "${origin_main_sha}:${path}" 2>/dev/null; then
-      continue  # untracked locally + not tracked upstream → leave it alone
-    fi
-    # SHA-compare local bytes vs origin/main blob.
-    local local_sha; local_sha="$(git -C "${REPO_ROOT}" hash-object "${REPO_ROOT}/${path}")"
-    local main_sha; main_sha="$(git -C "${REPO_ROOT}" rev-parse "${origin_main_sha}:${path}")"
-    if [[ "${local_sha}" == "${main_sha}" ]]; then
-      resolved_identical+=("${path}")
-      if [[ "${dry}" -eq 0 ]]; then
-        rm -f "${REPO_ROOT}/${path}"
-      fi
-    else
-      resolved_differing+=("${path}")
-      conflict_count=$((conflict_count + 1))
-    fi
-  done <<<"${untracked}"
-
-  if [[ "${#resolved_identical[@]}" -gt 0 ]]; then
-    if [[ "${dry}" -eq 1 ]]; then
-      dim "  [dry-run] would remove ${#resolved_identical[@]} identical-byte untracked files:"
-    else
-      ok "removed ${#resolved_identical[@]} identical-byte untracked files (origin/main is SoT):"
-    fi
-    for f in "${resolved_identical[@]}"; do dim "    ${f}"; done
-  fi
-
-  if [[ "${#resolved_differing[@]}" -gt 0 ]]; then
-    warn "untracked-vs-tracked collision with differing bytes (${#resolved_differing[@]} files):"
-    for f in "${resolved_differing[@]}"; do
-      warn "    ${f}"
-      warn "      tracked SHA:    ${main_sha}"
-      warn "      local SHA:      $(git -C "${REPO_ROOT}" hash-object "${REPO_ROOT}/${f}")"
-    done
-    warn ""
-    warn "operator must choose for each: commit / rename / archive / discard."
-    warn "v1 does not auto-resolve differing-bytes collisions; please run:"
-    warn "    git diff --no-index origin/main:<path> <path>"
-    warn "for each, then commit/rename/archive/discard as appropriate, then re-run."
-    audit "untracked_collision_blocked" \
-      "$(printf '{"differing":["%s"],"identical":["%s"]}' \
-          "$(IFS=',';echo "${resolved_differing[*]}")" \
-          "$(IFS=',';echo "${resolved_identical[*]}")")"
-    exit 2
-  fi
-
-  printf '{"identical_removed":%d,"differing_blocked":%d}\n' \
-    "${#resolved_identical[@]}" "${conflict_count}"
-}
-
-# ─── Phase: stash bd state ────────────────────────────────────────────────
-
-# Codex P1 #5. bd auto-stages .beads/issues.jsonl on every command; rebase
-# refuses while it's dirty. Named stash so concurrent runs do not clobber
-# each other (Codex P3 #21).
-stash_bd_state() {
-  local dry="$1"
-  local has_bd_jsonl=0
-  local has_other_dirty=0
-
-  # Anything to stash at all?
-  if ! git -C "${REPO_ROOT}" diff --quiet --cached -- .beads/issues.jsonl 2>/dev/null; then
-    has_bd_jsonl=1
-  fi
-  if ! git -C "${REPO_ROOT}" diff --quiet -- .beads/issues.jsonl 2>/dev/null; then
-    has_bd_jsonl=1
-  fi
-  # Anything OTHER than .beads/issues.jsonl dirty?
-  local other_dirty
-  other_dirty="$(git -C "${REPO_ROOT}" status --porcelain --untracked-files=no 2>/dev/null | grep -v ' \.beads/issues\.jsonl$' || true)"
-  if [[ -n "${other_dirty}" ]]; then
-    has_other_dirty=1
-  fi
-
-  if [[ "${has_other_dirty}" -eq 1 ]]; then
-    warn "working tree has dirty tracked files besides .beads/issues.jsonl:"
-    echo "${other_dirty}" | while IFS= read -r line; do warn "    ${line}"; done
-    warn ""
-    warn "v1 does not auto-stash arbitrary dirty files (too easy to lose work)."
-    warn "Either commit, stash by name, or discard them explicitly, then re-run."
-    audit "dirty_blocked" "$(printf '{"summary":%s}' "$(git -C "${REPO_ROOT}" status --porcelain --untracked-files=no | jq -Rsc . 2>/dev/null || echo '"jq missing"')")"
-    exit 3
-  fi
-
-  if [[ "${has_bd_jsonl}" -eq 0 ]]; then
-    dim "no bd state to stash"
-    echo "none"
-    return 0
-  fi
-
-  if [[ "${dry}" -eq 1 ]]; then
-    dim "  [dry-run] would: git stash push -m '${STASH_LABEL}' -- .beads/issues.jsonl"
-    echo "would-stash"
-    return 0
-  fi
-
-  if ! git -C "${REPO_ROOT}" stash push -m "${STASH_LABEL}" -- .beads/issues.jsonl >&2; then
-    die "failed to stash .beads/issues.jsonl" 5
-  fi
-  # Capture the freshly-created stash@{0} ref so trap_on_exit can locate it
-  # even if the message-match heuristic fails (Codex P1 #3).
-  PERSISTED_STASH_REF="stash@{0}"
-  ok "stashed .beads/issues.jsonl as '${STASH_LABEL}' (${PERSISTED_STASH_REF})"
-  echo "stashed"
-}
-
-# Restore the named stash by exact label match (safe across concurrent runs).
-restore_bd_state() {
-  local stashed="$1"
-  local dry="$2"
-  [[ "${stashed}" == "stashed" ]] || return 0
-  if [[ "${dry}" -eq 1 ]]; then
-    dim "  [dry-run] would: git stash pop <named stash>"
-    return 0
-  fi
-  # `git stash push -m <msg>` records as "stash@{N}: On <branch>: <msg>".
-  # Match by the unique RUN_ID-suffixed label to disambiguate concurrent runs.
-  local stash_ref
-  stash_ref="$(git -C "${REPO_ROOT}" stash list \
-    | awk -v label="${STASH_LABEL}" '$0 ~ label {sub(/:.*/,"",$0); print; exit}' \
-    || true)"
-  if [[ -z "${stash_ref}" ]]; then
-    warn "could not find stash labelled '${STASH_LABEL}' — leaving worktree as-is"
-    return 0
-  fi
-  if ! git -C "${REPO_ROOT}" stash pop "${stash_ref}" >&2; then
-    warn "stash pop failed; .beads/issues.jsonl will remain in stash '${stash_ref}'"
-    return 0
-  fi
-  ok "restored .beads/issues.jsonl from stash"
-}
-
-# ─── Phase: rebase onto origin/main ───────────────────────────────────────
+# ─── Phase: fetch + sync the disposable worktree ──────────────────────────
 
 fetch_prune() {
   local dry="$1"
@@ -419,39 +246,127 @@ fetch_prune() {
     dim "  [dry-run] would: git fetch origin --prune"
     return 0
   fi
-  step "git fetch origin --prune"
+  step "git fetch origin --prune (in operator checkout)"
   git -C "${REPO_ROOT}" fetch origin --prune >&2
 }
 
-rebase_forward() {
-  local dry="$1"
-  if [[ "${dry}" -eq 1 ]]; then
-    dim "  [dry-run] would: git rebase origin/main"
-    return 0
-  fi
-  step "git rebase origin/main"
-  if ! git -C "${REPO_ROOT}" rebase origin/main >&2; then
-    warn "rebase failed. The script will leave the worktree in 'rebasing' state."
-    warn "Resolve conflicts, finish the rebase with 'git rebase --continue',"
-    warn "then re-run scripts/converge-build.sh to complete convergence."
-    audit "rebase_failed" "null"
-    exit 4
-  fi
-  ok "rebased onto origin/main"
+# Ensure .local/converge-build-worktree exists at HEAD=origin/main (detached).
+# First run: create via `git worktree add --detach`.
+# Subsequent runs: `git checkout --detach origin/main` from inside it (this
+# is safe — detached HEAD updates do not affect any branch).
+# Helper: is the disposable worktree dirty? Tracks staged + tracked changes
+# plus non-ignored untracked files. Ignores node_modules/ + target/ (the
+# tracked-but-gitignored build caches). Returns 0 if clean, 1 if dirty.
+_disposable_is_clean() {
+  [[ -d "${DISPOSABLE_WT_DIR}" ]] || return 0
+  if ! git -C "${DISPOSABLE_WT_DIR}" diff --quiet 2>/dev/null; then return 1; fi
+  if ! git -C "${DISPOSABLE_WT_DIR}" diff --quiet --cached 2>/dev/null; then return 1; fi
+  # Untracked NON-gitignored files (the cached node_modules + target/
+  # are gitignored, so --exclude-standard hides them).
+  local untracked
+  untracked="$(git -C "${DISPOSABLE_WT_DIR}" ls-files --others --exclude-standard 2>/dev/null || true)"
+  [[ -z "${untracked}" ]]
 }
 
-# ─── Phase: install + build artifact freshness ────────────────────────────
+ensure_disposable_worktree() {
+  local dry="$1"
+  local origin_main_sha; origin_main_sha="$(git -C "${REPO_ROOT}" rev-parse origin/main)"
 
-# Decide what to wipe. Codex P1 #1 + handoff catalog modes 5+6:
-#   - node_modules: wipe when --fresh, or pnpm-lock.yaml changed since last run.
-#   - src-tauri/target: wipe additionally when HEAD moved since last run (the
-#     compiled tuxlink binary is keyed to source SHA; rebase invalidates it).
-# Returns one JSON object summarizing both decisions.
+  # Codex P2 #2 (2026-06-01): defer .local/ creation to the non-dry-run
+  # path so --dry-run honors its no-mutation contract.
+  if [[ "${dry}" -eq 0 ]]; then
+    mkdir -p "$(dirname "${DISPOSABLE_WT_DIR}")"
+  fi
+
+  # Codex P1 #2 (2026-06-01): proactively prune git's worktree registry
+  # before the registration check. This handles the case where the
+  # worktree was registered but the directory was deleted out-of-band
+  # (manual rm -rf, disk failure, OS clean-up). Without prune, the
+  # registration check sees the path as 'registered', then the subsequent
+  # `git -C $DIR` calls fail because the directory is missing.
+  if [[ "${dry}" -eq 0 ]]; then
+    git -C "${REPO_ROOT}" worktree prune >&2 2>/dev/null || true
+  fi
+
+  # Is the worktree currently registered (post-prune) and directory present?
+  local registered=0
+  local dir_exists=0
+  [[ -d "${DISPOSABLE_WT_DIR}" ]] && dir_exists=1
+  if git -C "${REPO_ROOT}" worktree list --porcelain 2>/dev/null \
+      | awk -v p="${DISPOSABLE_WT_DIR}" '$1=="worktree" && $2==p {found=1} END {exit !found}'; then
+    registered=1
+  fi
+
+  # Codex P1 #2 continued: handle the un-registered-but-present-on-disk
+  # case — refuse with a clear remediation rather than letting
+  # `git worktree add` fail with an opaque message.
+  if [[ "${registered}" -eq 0 && "${dir_exists}" -eq 1 ]]; then
+    warn "directory ${DISPOSABLE_WT_DIR} exists but is NOT a registered worktree."
+    warn "this likely means it was a worktree that was deregistered (e.g. via"
+    warn "git worktree prune after manual delete) but the dir was not removed."
+    warn "If safe, remove it: rm -rf ${DISPOSABLE_WT_DIR}"
+    warn "then re-run scripts/converge-build.sh."
+    audit "disposable_orphan_dir" "$(printf '{"path":"%s"}' "${DISPOSABLE_WT_DIR}")"
+    exit 4
+  fi
+
+  if [[ "${registered}" -eq 0 ]]; then
+    if [[ "${dry}" -eq 1 ]]; then
+      dim "  [dry-run] would: git worktree add --detach ${DISPOSABLE_WT_DIR} ${origin_main_sha:0:12}"
+    else
+      step "creating disposable worktree at ${DISPOSABLE_WT_DIR}"
+      if ! git -C "${REPO_ROOT}" worktree add --detach "${DISPOSABLE_WT_DIR}" "${origin_main_sha}" >&2; then
+        die "git worktree add failed — check git error above" 4
+      fi
+      ok "disposable worktree created at HEAD=${origin_main_sha:0:12}"
+    fi
+    return 0
+  fi
+
+  # Worktree exists. Codex P1 #1 (2026-06-01): check dirtiness BEFORE the
+  # HEAD-matches early return. A dirty worktree that happens to be at the
+  # right HEAD would otherwise silently contaminate the build.
+  if ! _disposable_is_clean; then
+    warn "disposable worktree has uncommitted/untracked source changes — refusing to use"
+    warn "inspect with: git -C ${DISPOSABLE_WT_DIR} status"
+    warn "agents should never write here; this likely indicates a misbehaving process"
+    warn "or a manual edit. If intentional, commit + push elsewhere; if accidental,"
+    warn "manually clean (cached node_modules/ + target/ are fine — they're gitignored)."
+    audit "disposable_dirty" "$(printf '{"path":"%s"}' "${DISPOSABLE_WT_DIR}")"
+    exit 4
+  fi
+
+  local wt_head=""
+  wt_head="$(git -C "${DISPOSABLE_WT_DIR}" rev-parse HEAD 2>/dev/null || echo unknown)"
+
+  if [[ "${wt_head}" = "${origin_main_sha}" ]]; then
+    dim "disposable worktree already at origin/main (${origin_main_sha:0:12})"
+    return 0
+  fi
+
+  if [[ "${dry}" -eq 1 ]]; then
+    dim "  [dry-run] would: cd ${DISPOSABLE_WT_DIR} && git checkout --detach ${origin_main_sha:0:12}"
+    return 0
+  fi
+
+  step "syncing disposable worktree to origin/main (${wt_head:0:12} → ${origin_main_sha:0:12})"
+  if ! git -C "${DISPOSABLE_WT_DIR}" checkout --detach "${origin_main_sha}" >&2; then
+    die "git checkout --detach failed inside disposable worktree" 4
+  fi
+  ok "disposable worktree synced to ${origin_main_sha:0:12}"
+}
+
+# ─── Phase: build artifact freshness inside the disposable worktree ───────
+
 maybe_wipe_build_artifacts() {
   local dry="$1"
+  local lockfile="${DISPOSABLE_WT_DIR}/pnpm-lock.yaml"
   local cur_lockfile_sha=""
-  [[ -f "${LOCKFILE}" ]] && cur_lockfile_sha="$(sha256sum "${LOCKFILE}" | cut -d' ' -f1)"
-  local cur_head_sha; cur_head_sha="$(git -C "${REPO_ROOT}" rev-parse HEAD)"
+  [[ -f "${lockfile}" ]] && cur_lockfile_sha="$(sha256sum "${lockfile}" | cut -d' ' -f1)"
+  local cur_head_sha=""
+  if [[ -d "${DISPOSABLE_WT_DIR}" ]]; then
+    cur_head_sha="$(git -C "${DISPOSABLE_WT_DIR}" rev-parse HEAD 2>/dev/null || echo unknown)"
+  fi
   local prev_lockfile_sha=""
   local prev_head_sha=""
   if [[ -f "${STATE_FILE}" ]]; then
@@ -459,7 +374,6 @@ maybe_wipe_build_artifacts() {
     prev_head_sha="$(jq -r '.last_head_sha // empty' "${STATE_FILE}" 2>/dev/null || true)"
   fi
 
-  # node_modules decision
   local nm_reason=""
   if [[ "${FLAG_FRESH}" -eq 1 ]]; then
     nm_reason="--fresh flag"
@@ -471,7 +385,6 @@ maybe_wipe_build_artifacts() {
     fi
   fi
 
-  # cargo target decision
   local target_reason=""
   if [[ "${FLAG_FRESH}" -eq 1 ]]; then
     target_reason="--fresh flag"
@@ -491,10 +404,10 @@ maybe_wipe_build_artifacts() {
 
   if [[ -n "${nm_reason}" ]]; then
     if [[ "${dry}" -eq 1 ]]; then
-      dim "  [dry-run] would wipe node_modules (${nm_reason})"
+      dim "  [dry-run] would wipe ${DISPOSABLE_WT_DIR}/node_modules (${nm_reason})"
     else
-      step "wiping node_modules (${nm_reason})"
-      rm -rf "${REPO_ROOT}/node_modules"
+      step "wiping ${DISPOSABLE_WT_DIR}/node_modules (${nm_reason})"
+      rm -rf "${DISPOSABLE_WT_DIR}/node_modules"
     fi
   else
     dim "node_modules: keep (lockfile unchanged)"
@@ -502,10 +415,10 @@ maybe_wipe_build_artifacts() {
 
   if [[ -n "${target_reason}" ]]; then
     if [[ "${dry}" -eq 1 ]]; then
-      dim "  [dry-run] would wipe src-tauri/target (${target_reason})"
+      dim "  [dry-run] would wipe ${DISPOSABLE_WT_DIR}/src-tauri/target (${target_reason})"
     else
-      step "wiping src-tauri/target (${target_reason})"
-      rm -rf "${REPO_ROOT}/src-tauri/target"
+      step "wiping ${DISPOSABLE_WT_DIR}/src-tauri/target (${target_reason})"
+      rm -rf "${DISPOSABLE_WT_DIR}/src-tauri/target"
     fi
   else
     dim "src-tauri/target: keep (HEAD unchanged)"
@@ -519,28 +432,21 @@ maybe_wipe_build_artifacts() {
 pnpm_install() {
   local dry="$1"
   if [[ "${dry}" -eq 1 ]]; then
-    dim "  [dry-run] would: pnpm install --frozen-lockfile"
+    dim "  [dry-run] would: cd ${DISPOSABLE_WT_DIR} && pnpm install --frozen-lockfile"
     return 0
   fi
-  step "pnpm install --frozen-lockfile"
-  if ! (cd "${REPO_ROOT}" && pnpm install --frozen-lockfile); then
-    die "pnpm install failed" 6
+  step "pnpm install --frozen-lockfile (in disposable worktree)"
+  if ! (cd "${DISPOSABLE_WT_DIR}" && pnpm install --frozen-lockfile); then
+    die "pnpm install failed inside ${DISPOSABLE_WT_DIR}" 6
   fi
   ok "pnpm install complete"
 }
 
-# ─── Phase: kill stale tauri/vite/tuxlink processes ───────────────────────
+# ─── Phase: kill stale tauri/vite/tuxlink processes + verify port ─────────
 
-# Codex P1 #6: full lease lives in tuxlink-8d7y. v1 logs the PIDs we kill so
-# multi-worktree forensics is possible after the fact.
 kill_stale_dev_processes() {
   local dry="$1"
   local pids_killed=()
-  local pid_patterns=(
-    "tauri dev"
-    "target/debug/tuxlink"
-    "node.*vite"
-  )
   local matches
   matches="$(pgrep -af "tauri dev|target/debug/tuxlink|node.*vite" 2>/dev/null || true)"
   if [[ -z "${matches}" ]]; then
@@ -559,7 +465,6 @@ kill_stale_dev_processes() {
     return 0
   fi
 
-  # Capture PIDs into an audit-loggable list, then kill them.
   while IFS= read -r pid; do
     [[ -z "${pid}" ]] && continue
     pids_killed+=("${pid}")
@@ -581,17 +486,12 @@ kill_stale_dev_processes() {
   printf ']'
 }
 
-# Codex P1 #4 — after the blanket pkill, verify port 1420 is actually free
-# before claiming convergence. If something still holds it (e.g. a process
-# that doesn't match our pattern), exit 7 with operator instructions so the
-# audit log does not falsely record "converged" for a build that can't launch.
 verify_port_free() {
   local dry="$1"
   if [[ "${dry}" -eq 1 ]]; then
     dim "  [dry-run] would: check port 1420 is free; exit 7 if held"
     return 0
   fi
-  # ss is the canonical tool on modern Linux; lsof as fallback.
   local owner=""
   if command -v ss >/dev/null 2>&1; then
     owner="$(ss -lntp 2>/dev/null | awk '$4 ~ /:1420$/ {print; exit}' || true)"
@@ -604,10 +504,9 @@ verify_port_free() {
   if [[ -n "${owner}" ]]; then
     warn "port 1420 still occupied after pkill:"
     warn "    ${owner}"
-    warn ""
-    warn "v1's blanket pkill matched 'tauri dev|target/debug/tuxlink|node.*vite'"
-    warn "but something else is holding the port. Identify + free it manually,"
-    warn "then re-run. The proper host-level lease lands in tuxlink-8d7y."
+    warn "v2's blanket pkill matched 'tauri dev|target/debug/tuxlink|node.*vite'"
+    warn "but something else is holding the port. Free it manually + re-run."
+    warn "(tuxlink-8d7y lease will resolve this case via inspect + --force-kill-owned)"
     audit "port_1420_busy" "$(printf '{"owner":%s}' "$(printf '%s' "${owner}" | jq -Rs . 2>/dev/null || echo '"unknown"')")"
     exit 7
   fi
@@ -624,36 +523,40 @@ launch_tauri_dev() {
     return 0
   fi
   if [[ "${dry}" -eq 1 ]]; then
-    dim "  [dry-run] would: cd ${REPO_ROOT} && pnpm tauri dev"
+    dim "  [dry-run] would: cd ${DISPOSABLE_WT_DIR} && pnpm tauri dev"
     echo "would-launch"
     return 0
   fi
-  step "launching: cd ${REPO_ROOT} && pnpm tauri dev"
-  ok "converged at HEAD=$(git -C "${REPO_ROOT}" rev-parse --short HEAD) (origin/main=$(git -C "${REPO_ROOT}" rev-parse --short origin/main))"
+  step "launching: cd ${DISPOSABLE_WT_DIR} && pnpm tauri dev"
+  ok "converged at disposable=$(git -C "${DISPOSABLE_WT_DIR}" rev-parse --short HEAD) (origin/main=$(git -C "${REPO_ROOT}" rev-parse --short origin/main))"
   ok "audit log: ${AUDIT_LOG}"
-  # exec replaces the shell so the script's PID becomes the tauri-dev PID,
-  # which is what the operator's terminal will see + Ctrl-C cleanly.
-  audit "launching" "$(printf '{"head":"%s","origin_main":"%s"}' \
-    "$(git -C "${REPO_ROOT}" rev-parse HEAD)" \
+  audit "launching" "$(printf '{"disposable_head":"%s","origin_main":"%s"}' \
+    "$(git -C "${DISPOSABLE_WT_DIR}" rev-parse HEAD)" \
     "$(git -C "${REPO_ROOT}" rev-parse origin/main)")"
-  cd "${REPO_ROOT}"
+  cd "${DISPOSABLE_WT_DIR}"
   exec pnpm tauri dev
 }
 
-# ─── State-file writer (for the next run's lockfile-change-detect) ────────
+# ─── State-file writer ────────────────────────────────────────────────────
 
 write_state() {
   local dry="$1"
   [[ "${dry}" -eq 1 ]] && return 0
   mkdir -p "$(dirname "${STATE_FILE}")"
+  local lockfile="${DISPOSABLE_WT_DIR}/pnpm-lock.yaml"
   local cur_lockfile_sha=""
-  [[ -f "${LOCKFILE}" ]] && cur_lockfile_sha="$(sha256sum "${LOCKFILE}" | cut -d' ' -f1)"
+  [[ -f "${lockfile}" ]] && cur_lockfile_sha="$(sha256sum "${lockfile}" | cut -d' ' -f1)"
+  local cur_head_sha="unknown"
+  if [[ -d "${DISPOSABLE_WT_DIR}" ]]; then
+    cur_head_sha="$(git -C "${DISPOSABLE_WT_DIR}" rev-parse HEAD 2>/dev/null || echo unknown)"
+  fi
   cat >"${STATE_FILE}" <<EOF
 {
   "last_run_id": "${RUN_ID}",
   "last_lockfile_sha": "${cur_lockfile_sha}",
-  "last_head_sha": "$(git -C "${REPO_ROOT}" rev-parse HEAD)",
-  "last_origin_main_sha": "$(git -C "${REPO_ROOT}" rev-parse origin/main)"
+  "last_head_sha": "${cur_head_sha}",
+  "last_origin_main_sha": "$(git -C "${REPO_ROOT}" rev-parse origin/main)",
+  "disposable_worktree_path": "${DISPOSABLE_WT_DIR}"
 }
 EOF
 }
@@ -663,70 +566,69 @@ EOF
 main() {
   parse_args "$@"
 
-  step "tuxlink converge-build v1 (run ${RUN_ID})"
+  step "tuxlink converge-build v2 (run ${RUN_ID})"
+  step "build target: ${DISPOSABLE_WT_DIR} (detached @ origin/main)"
   if [[ "${FLAG_DRY_RUN}" -eq 1 ]]; then
     warn "DRY RUN — no mutations will be performed"
   fi
 
-  # 0. Fetch fresh origin refs BEFORE classify + collision detection so we
-  # do not act on a stale origin/main (Codex P1 #2).
-  step "phase 1/8 — git fetch origin --prune"
+  # Codex P2 #1 (2026-06-01): hold a flock on .local/converge-build.lock
+  # for the duration of any mutating run. Two simultaneous invocations
+  # from the SAME operator checkout would otherwise race the
+  # worktree-prune + add, rm -rf node_modules, pnpm install, and state
+  # writes. The lock is per-operator-checkout (different checkouts have
+  # different .local/ paths); cross-checkout coordination is the
+  # dev-server-lease's job (tuxlink-8d7y / PR #206).
+  if [[ "${FLAG_DRY_RUN}" -eq 0 ]] && command -v flock >/dev/null 2>&1; then
+    mkdir -p "${REPO_ROOT}/.local"
+    exec 199>>"${REPO_ROOT}/.local/converge-build.lock"
+    if ! flock -n 199; then
+      die "another converge-build is in flight in this checkout (${REPO_ROOT}); refusing" 9
+    fi
+  fi
+
+  # 1. Fetch fresh origin refs.
+  step "phase 1/6 — git fetch origin --prune"
   fetch_prune "${FLAG_DRY_RUN}"
   audit "fetched" "$(printf '{"origin_main":"%s"}' \
     "$(git -C "${REPO_ROOT}" rev-parse origin/main 2>/dev/null || echo unknown)")"
 
-  # 1. Classify branch (warn-not-refuse in v1; tuxlink-21j8 lifts to refuse).
-  step "phase 2/8 — branch classification"
-  local branch_json; branch_json="$(classify_branch)"
+  # 2. Informational: classify operator's branch + warn on dead/orphan.
+  step "phase 2/6 — operator branch classification (informational)"
+  local branch_json; branch_json="$(classify_operator_branch)"
   echo "  ${branch_json}" >&2
-  audit "branch_classified" "${branch_json}"
+  audit "operator_branch" "${branch_json}"
   case "${branch_json}" in
     *bd-issue-merged-dead*|*adhoc-merged-dead*)
-      warn "this branch has a MERGED PR — committing here is the orphan-post-merge mode."
-      warn "v2 (tuxlink-21j8) will refuse via pre-commit hook. v1 only warns."
+      warn "operator branch has a MERGED PR — committing there is the orphan-post-merge mode."
+      warn "tuxlink-21j8's .githooks/pre-commit refuses this; activate via bash scripts/install-githooks.sh"
       ;;
     *adhoc-unowned*)
-      warn "unowned branch (no bd-id prefix, no PR). verify intent before continuing."
+      dim "operator branch is unowned (no bd-id prefix, no PR). build is not affected."
       ;;
   esac
 
-  # 2. Resolve untracked collisions (auto for identical, stop for differing).
-  step "phase 3/8 — untracked-vs-tracked collision check"
-  local collision_json; collision_json="$(resolve_untracked_collisions "${FLAG_DRY_RUN}")"
-  audit "untracked_resolved" "${collision_json}"
+  # 3. Ensure disposable worktree exists + is synced to origin/main.
+  step "phase 3/6 — disposable worktree ensure + sync"
+  ensure_disposable_worktree "${FLAG_DRY_RUN}"
+  audit "disposable_synced" "$(printf '{"path":"%s","head":"%s"}' \
+    "${DISPOSABLE_WT_DIR}" \
+    "$(test -d "${DISPOSABLE_WT_DIR}" && git -C "${DISPOSABLE_WT_DIR}" rev-parse HEAD 2>/dev/null || echo unknown)")"
 
-  # 3. Stash bd state.
-  step "phase 4/8 — stash .beads/issues.jsonl"
-  local stash_state; stash_state="$(stash_bd_state "${FLAG_DRY_RUN}")"
-  audit "bd_stash" "$(printf '{"state":"%s","label":"%s"}' "${stash_state}" "${STASH_LABEL}")"
-
-  # 4. Rebase forward.
-  step "phase 5/8 — rebase onto origin/main"
-  rebase_forward "${FLAG_DRY_RUN}"
-  audit "rebased" "$(printf '{"head":"%s","origin_main":"%s"}' \
-    "$(git -C "${REPO_ROOT}" rev-parse HEAD 2>/dev/null || echo unknown)" \
-    "$(git -C "${REPO_ROOT}" rev-parse origin/main 2>/dev/null || echo unknown)")"
-
-  # 5. Pop bd stash (best-effort; failure does not block; trap_on_exit
-  # would have surfaced a recovery command had rebase failed above).
-  restore_bd_state "${stash_state}" "${FLAG_DRY_RUN}"
-  PERSISTED_STASH_REF=""  # disarm trap_on_exit's recovery message
-
-  # 6. node_modules + cargo target wipe-or-keep + install.
-  step "phase 6/8 — build artifact freshness"
+  # 4. Build artifact freshness + install.
+  step "phase 4/6 — build artifact freshness"
   local wipe_json; wipe_json="$(maybe_wipe_build_artifacts "${FLAG_DRY_RUN}")"
   audit "install_decision" "${wipe_json}"
   pnpm_install "${FLAG_DRY_RUN}"
 
-  # 7. Kill stale dev processes + VERIFY port 1420 is actually free.
-  step "phase 7/8 — kill stale tauri/vite/tuxlink processes"
+  # 5. Kill stale dev processes + verify port.
+  step "phase 5/6 — kill stale tauri/vite/tuxlink processes + verify port 1420"
   local killed_json; killed_json="$(kill_stale_dev_processes "${FLAG_DRY_RUN}")"
   audit "processes_killed" "$(printf '{"pids":%s}' "${killed_json}")"
   verify_port_free "${FLAG_DRY_RUN}"
 
-  # 8. Write state + launch. State write happens AFTER port verification so
-  # a stalled run does not poison next-run's lockfile/HEAD baselines.
-  step "phase 8/8 — launch"
+  # 6. Write state + launch.
+  step "phase 6/6 — launch"
   write_state "${FLAG_DRY_RUN}"
   audit "convergence_complete_pre_launch" "$(printf '{"dry_run":%d}' "${FLAG_DRY_RUN}")"
   launch_tauri_dev "${FLAG_DRY_RUN}"
