@@ -1007,9 +1007,7 @@ mod drain_tests {
         // Construct the state directly (we can't get a u32 drop to push
         // past u64::MAX in one step, but seed `bytes_tx` near the limit
         // and verify saturating_add is in use).
-        let mut accum = AccumulatorState::default();
-        accum.bytes_tx = u64::MAX - 10;
-        accum.prior_buffer = Some(1000);
+        let mut accum = AccumulatorState { bytes_tx: u64::MAX - 10, prior_buffer: Some(1000), ..Default::default() };
         record_buffer(&mut accum, 0); // 1000-byte drop attempts +1000
         assert_eq!(accum.bytes_tx, u64::MAX, "bytes_tx must saturate, not wrap");
     }
@@ -1044,16 +1042,14 @@ mod drain_tests {
 
     #[test]
     fn disconnected_event_clears_connected_at() {
-        let mut accum = AccumulatorState::default();
-        accum.connected_at = Some(Instant::now());
+        let mut accum = AccumulatorState { connected_at: Some(Instant::now()), ..Default::default() };
         apply_event_to_accumulators_inline(&Command::Disconnected, &mut accum);
         assert!(accum.connected_at.is_none(), "Disconnected must clear connected_at");
     }
 
     #[test]
     fn fault_event_clears_connected_at() {
-        let mut accum = AccumulatorState::default();
-        accum.connected_at = Some(Instant::now());
+        let mut accum = AccumulatorState { connected_at: Some(Instant::now()), ..Default::default() };
         apply_event_to_accumulators_inline(&Command::Fault("oops".into()), &mut accum);
         assert!(accum.connected_at.is_none(), "Fault must clear connected_at");
     }
@@ -1061,8 +1057,7 @@ mod drain_tests {
     #[test]
     fn newstate_disc_or_offline_clears_connected_at() {
         for state in [State::Disc, State::Offline] {
-            let mut accum = AccumulatorState::default();
-            accum.connected_at = Some(Instant::now());
+            let mut accum = AccumulatorState { connected_at: Some(Instant::now()), ..Default::default() };
             apply_event_to_accumulators_inline(&Command::NewState(state), &mut accum);
             assert!(
                 accum.connected_at.is_none(),
@@ -1076,8 +1071,7 @@ mod drain_tests {
         // NEWSTATE IDLE is an ARQ-state-machine transition that does NOT
         // signal session end (it can fire mid-session between transmit
         // bursts). Uptime must continue ticking through it.
-        let mut accum = AccumulatorState::default();
-        accum.connected_at = Some(Instant::now());
+        let mut accum = AccumulatorState { connected_at: Some(Instant::now()), ..Default::default() };
         apply_event_to_accumulators_inline(&Command::NewState(State::Idle), &mut accum);
         assert!(accum.connected_at.is_some(), "NEWSTATE IDLE must NOT clear connected_at");
     }

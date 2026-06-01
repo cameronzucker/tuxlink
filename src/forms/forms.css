@@ -1,0 +1,392 @@
+/* ============================================================
+ * Forms — compose-side authoring + mailbox read-side rendering.
+ *
+ * Consumes the canonical --tux-* token palette defined in App.css.
+ * Side-effect-imported from src/forms/index.ts so any consumer of
+ * the forms module gets the styles automatically. The selectors
+ * use :where() for zero specificity so app-shell overrides win.
+ *
+ * Scope of this file: every classname authored by the v0.1 HTML
+ * Forms work (FormPicker excepted — see FormPicker.css). The
+ * design target is "functional + readable at the 720x560 compose
+ * default," not "exhaustively styled" — per-form decorative polish
+ * is iterative.
+ * ============================================================ */
+
+/* ============================================================
+ * Authoring side — shared form chrome
+ * ============================================================ */
+
+:where(.ics213-form, .ics309-form, .bulletin-form, .position-form, .damage-assessment-form) {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 8px 4px 96px;
+  color: var(--tux-fg);
+  min-height: 0;
+}
+
+:where(.ics213-form, .ics309-form, .bulletin-form, .position-form, .damage-assessment-form) > label,
+:where(.ics213-form, .ics309-form, .bulletin-form, .position-form, .damage-assessment-form) fieldset > label,
+:where(.ics309-log-entry, .damage-category) > label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--tux-fg-muted);
+}
+
+/* Checkbox labels stay inline */
+:where(.ics213-form, .ics309-form, .bulletin-form, .position-form, .damage-assessment-form) label:has(> input[type="checkbox"]) {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--tux-fg);
+}
+
+:where(.ics213-form, .ics309-form, .bulletin-form, .position-form, .damage-assessment-form) :is(input:not([type="checkbox"]), textarea) {
+  background: var(--tux-surface-2);
+  border: 1px solid var(--tux-border);
+  border-radius: 4px;
+  padding: 6px 8px;
+  color: var(--tux-fg);
+  font: inherit;
+  font-size: 13px;
+  outline: none;
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+}
+
+:where(.ics213-form, .ics309-form, .bulletin-form, .position-form, .damage-assessment-form) :is(input, textarea):focus {
+  border-color: var(--tux-accent);
+  box-shadow: 0 0 0 2px var(--tux-focus-ring);
+}
+
+:where(.ics213-form, .ics309-form, .bulletin-form, .position-form, .damage-assessment-form) input[type="checkbox"] {
+  width: auto;
+  margin: 0;
+  accent-color: var(--tux-accent);
+}
+
+/* Fieldsets (Ics309 + DamageAssessment groupings) */
+:where(.ics213-form, .ics309-form, .bulletin-form, .position-form, .damage-assessment-form) fieldset {
+  border: 1px solid var(--tux-border);
+  border-radius: 4px;
+  padding: 12px 14px;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: transparent;
+  min-width: 0;
+}
+
+:where(.ics213-form, .ics309-form, .bulletin-form, .position-form, .damage-assessment-form) legend {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--tux-fg);
+  padding: 0 6px;
+}
+
+/* "+ Add entry" button (Ics309) — secondary, full-width-ish */
+.ics309-form fieldset > button[type="button"]:not(.form-actions button) {
+  align-self: flex-start;
+  padding: 6px 12px;
+  border-radius: 4px;
+  border: 1px dashed var(--tux-border);
+  background: transparent;
+  color: var(--tux-fg-muted);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.ics309-form fieldset > button[type="button"]:not(.form-actions button):hover {
+  border-color: var(--tux-accent);
+  color: var(--tux-fg);
+}
+
+/* ICS-309 log entry — heading + (time/from/to) + subject row */
+.ics309-log-entry {
+  background: var(--tux-surface);
+  border-left: 3px solid var(--tux-border);
+  border-radius: 0 4px 4px 0;
+  padding: 8px 12px;
+  display: grid;
+  grid-template-columns: minmax(90px, max-content) minmax(120px, 1fr) minmax(120px, 1fr);
+  grid-template-areas:
+    "head head head"
+    "time from to"
+    "subj subj subj";
+  gap: 6px 8px;
+  min-width: 0;
+}
+
+.ics309-log-entry > strong {
+  grid-area: head;
+  font-size: 11px;
+  color: var(--tux-fg-muted);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.ics309-log-entry > label:nth-of-type(1) { grid-area: time; }
+.ics309-log-entry > label:nth-of-type(2) { grid-area: from; }
+.ics309-log-entry > label:nth-of-type(3) { grid-area: to; }
+.ics309-log-entry > label:nth-of-type(4) { grid-area: subj; }
+
+/* Damage Assessment category — 6 numeric fields in a row */
+.damage-category {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 6px 8px;
+  align-items: end;
+}
+
+.damage-category > legend {
+  grid-column: 1 / -1;
+}
+
+.damage-category > legend > input {
+  background: var(--tux-surface-2);
+  border: 1px solid var(--tux-border);
+  border-radius: 4px;
+  padding: 3px 6px;
+  color: var(--tux-fg);
+  font: inherit;
+  font-size: 12px;
+  width: 200px;
+  max-width: 100%;
+}
+
+/* form-actions — sticky to the bottom of the scrollable body so Send/Discard
+   stay reachable when the form (ICS-309, Damage Assessment) is taller than
+   the compose window. */
+.form-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  position: sticky;
+  bottom: 0;
+  margin-top: 4px;
+  padding: 10px 0;
+  background: linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 0) 0%,
+    var(--tux-bg) 30%,
+    var(--tux-bg) 100%
+  );
+  z-index: 5;
+}
+
+.form-actions button {
+  padding: 7px 14px;
+  border-radius: 4px;
+  border: 1px solid var(--tux-border);
+  background: var(--tux-surface-2);
+  color: var(--tux-fg);
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+}
+
+.form-actions button:hover:not(:disabled) {
+  background: var(--tux-elevated);
+}
+
+.form-actions button:focus-visible {
+  outline: 2px solid var(--tux-focus-ring);
+  outline-offset: 1px;
+}
+
+.form-actions button[type="submit"] {
+  background: var(--tux-accent);
+  border-color: var(--tux-accent);
+  color: var(--tux-accent-fg);
+}
+
+.form-actions button[type="submit"]:hover:not(:disabled) {
+  background: var(--tux-accent-hover);
+}
+
+.form-actions button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ============================================================
+ * Read side — mailbox message-detail view
+ * ============================================================ */
+
+.form-view {
+  background: var(--tux-surface);
+  border: 1px solid var(--tux-border);
+  border-radius: 4px;
+  padding: 14px 16px;
+  color: var(--tux-fg);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  font-size: 13px;
+}
+
+.form-view-header {
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--tux-border);
+  font-size: 14px;
+  color: var(--tux-fg);
+}
+
+.form-view-header strong {
+  font-weight: 600;
+}
+
+.form-view-header p {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--tux-fg-muted);
+}
+
+.form-view-exercise-marker {
+  background: var(--tux-warn);
+  color: var(--tux-accent-fg);
+  padding: 6px 10px;
+  border-radius: 4px;
+  text-align: center;
+  font-size: 12px;
+}
+
+.form-fields {
+  display: grid;
+  grid-template-columns: minmax(110px, max-content) 1fr;
+  column-gap: 16px;
+  row-gap: 6px;
+  margin: 0;
+}
+
+.form-fields dt {
+  color: var(--tux-fg-muted);
+  font-weight: 500;
+  font-size: 12px;
+  align-self: start;
+}
+
+.form-fields dd {
+  margin: 0;
+  color: var(--tux-fg);
+  word-break: break-word;
+}
+
+/* KeyValueView wraps each pair in a div; display:contents lets the
+   dt/dd participate as direct grid children of .form-fields. */
+.form-field-row {
+  display: contents;
+}
+
+.form-message-body {
+  grid-column: 1 / -1;
+  margin-top: 4px;
+}
+
+.form-message-body pre {
+  margin: 0;
+  font-family: var(--tux-mono);
+  font-size: 12px;
+  white-space: pre-wrap;
+  background: var(--tux-bg);
+  border: 1px solid var(--tux-border);
+  border-radius: 4px;
+  padding: 8px 10px;
+  color: var(--tux-fg);
+  overflow-x: auto;
+}
+
+/* ICS-309 + Damage Assessment data tables */
+.ics309-log-section h3 {
+  margin: 0 0 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--tux-fg);
+}
+
+.ics309-log-table,
+.damage-category-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.ics309-log-table th,
+.damage-category-table th,
+.ics309-log-table td,
+.damage-category-table td {
+  padding: 6px 8px;
+  text-align: left;
+  border-bottom: 1px solid var(--tux-border);
+  vertical-align: top;
+}
+
+.ics309-log-table th,
+.damage-category-table th {
+  font-size: 11px;
+  color: var(--tux-fg-muted);
+  font-weight: 600;
+  background: var(--tux-surface-2);
+}
+
+.ics309-log-table tbody tr:hover,
+.damage-category-table tbody tr:hover {
+  background: var(--tux-hover);
+}
+
+/* Damage Assessment — totals + comments */
+.damage-total-cost {
+  margin: 0;
+  font-size: 13px;
+  padding: 8px 12px;
+  background: var(--tux-accent-bg);
+  border-radius: 4px;
+}
+
+.damage-comments strong {
+  display: block;
+  font-size: 12px;
+  color: var(--tux-fg-muted);
+  margin-bottom: 4px;
+}
+
+.damage-comments pre {
+  margin: 0;
+  font-family: inherit;
+  font-size: 13px;
+  white-space: pre-wrap;
+  background: var(--tux-bg);
+  border: 1px solid var(--tux-border);
+  border-radius: 4px;
+  padding: 8px 10px;
+  color: var(--tux-fg);
+}
+
+/* KeyValueView fallback — sender's text rendering shown below the kv pairs */
+.form-view-body {
+  border-top: 1px solid var(--tux-border);
+  padding-top: 10px;
+}
+
+.form-view-body h4 {
+  margin: 0 0 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--tux-fg-muted);
+}
+
+.form-view-body pre {
+  margin: 0;
+  font-family: var(--tux-mono);
+  font-size: 12px;
+  white-space: pre-wrap;
+  color: var(--tux-fg);
+}

@@ -3,6 +3,7 @@ pub mod bootstrap;
 pub mod compose_window;
 pub mod config;
 pub mod consent_gate;
+pub mod forms;
 pub mod native_mailbox;
 pub mod position;
 pub mod search;
@@ -233,6 +234,7 @@ pub fn run() {
             crate::ui_commands::mailbox_list,          // Task 12 (tuxlink-zsm)
             crate::ui_commands::message_read,          // Task 13 (tuxlink-y5c)
             crate::ui_commands::message_send,          // Task 14 (tuxlink-dm8)
+            crate::ui_commands::send_form,             // HTML Forms v0.1 (tuxlink-v1p Task 3.1)
             crate::ui_commands::cms_connect,           // tuxlink-0ic (native connect)
             crate::ui_commands::cms_abort,             // tuxlink-9z2 (abort in-flight connect)
             crate::ui_commands::config_read,           // Task 16 (tuxlink-hvv)

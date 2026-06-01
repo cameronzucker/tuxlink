@@ -217,7 +217,7 @@ pub const MAX_RFC5322_BYTES: usize = 2 * 1024 * 1024;
 /// `src/mailbox/types.ts`. v0.0.1 lists names + sizes only; bytes are NOT
 /// downloaded or previewed in v0.0.1 (spec §5.3 — no attachment open, no
 /// browser spawn).
-#[derive(Debug, Serialize, Clone, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct AttachmentMetaDto {
     pub filename: String,
     pub size: u64,
@@ -229,10 +229,12 @@ pub struct AttachmentMetaDto {
 ///
 /// `routing` is extracted from message headers when available
 /// (`X-Received-Winlink-Transport` or `X-Pat-Transport`); `null` if absent
-/// (the UI omits the routing strip). `isForm` is true when the text/plain
-/// body starts with `<?xml` — the heuristic for a Winlink form payload; the
-/// UI renders a "form rendering arrives in v0.1" placeholder in that case.
-#[derive(Debug, Serialize, Clone, PartialEq)]
+/// (the UI omits the routing strip). `isForm` is true when at least one
+/// attachment filename matches `RMS_Express_Form_*.xml` — the WLE convention
+/// for form payloads (the XML lives in the attachment, not the plain-text
+/// body); the UI renders a "form rendering arrives in v0.1" placeholder in
+/// that case.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ParsedMessageDto {
     pub id: String,
@@ -245,6 +247,12 @@ pub struct ParsedMessageDto {
     pub attachments: Vec<AttachmentMetaDto>,
     pub is_form: bool,
     pub routing: Option<String>,
+    /// Form ID extracted from `RMS_Express_Form_<id>.xml` attachment name.
+    /// Validated via `forms::validation::is_valid_form_id`. None when not a form.
+    pub form_id: Option<String>,
+    /// Parsed form payload (eager parse while attachment bytes available).
+    /// None when not a form OR when parse failed (also logged).
+    pub form_payload: Option<crate::forms::FormPayload>,
 }
 
 /// Parse raw RFC5322 bytes into a [`ParsedMessageDto`].
@@ -261,8 +269,8 @@ pub struct ParsedMessageDto {
 ///   (the frontend renders a "could not parse" state).
 ///
 /// Body: the `text/plain` part is decoded lossily (invalid UTF-8 bytes
-/// become U+FFFD; no panic). Form detection: body starting with `<?xml`
-/// sets `is_form = true`.
+/// become U+FFFD; no panic). Form detection: an attachment whose filename
+/// matches `RMS_Express_Form_*.xml` sets `is_form = true`.
 ///
 /// Attachments: all non-inline, named MIME parts are listed by name + size
 /// in bytes. In v0.0.1 attachment bytes are never fetched or previewed (spec
@@ -322,11 +330,34 @@ pub fn parse_raw_rfc5322(mid: &str, raw: &[u8]) -> Result<ParsedMessageDto, UiEr
     // Body: find the first text/plain part; decode lossily.
     let body = find_text_plain_body(&msg);
 
-    // Winlink form detection: text/plain body starting with `<?xml`.
-    let is_form = body.trim_start().starts_with("<?xml");
-
     // Attachments: non-inline named parts (MIME attachments).
     let attachments = collect_attachments(&msg);
+
+    // Winlink form detection: a RMS_Express_Form_<id>.xml attachment.
+    // (Pre-T2.1 the heuristic was body.starts_with("<?xml"), which missed
+    // real WLE forms — XML lives in the attachment, not the body.)
+    let is_form = attachments
+        .iter()
+        .any(|a| a.filename.starts_with("RMS_Express_Form_") && a.filename.ends_with(".xml"));
+
+    // Form ID + payload: eager parse while attachment bytes are in scope.
+    let form_id = attachments
+        .iter()
+        .find_map(|a| crate::forms::detect_form_attachment(&a.filename));
+
+    let form_payload = if let Some(ref fid) = form_id {
+        let attach_name = format!("RMS_Express_Form_{}.xml", fid);
+        extract_attachment_bytes(&msg, &attach_name)
+            .and_then(|bytes| crate::forms::parse_form_xml(&bytes).ok())
+            .map(|mut p| {
+                // P2 #5 fix: backfill form_id from the attachment filename so the
+                // frontend's KeyValueView receives a non-empty formId on the payload.
+                p.form_id = fid.clone();
+                p
+            })
+    } else {
+        None
+    };
 
     // Routing: check known Winlink transport headers.
     let routing = extract_routing(&msg);
@@ -342,6 +373,8 @@ pub fn parse_raw_rfc5322(mid: &str, raw: &[u8]) -> Result<ParsedMessageDto, UiEr
         attachments,
         is_form,
         routing,
+        form_id,
+        form_payload,
     })
 }
 
@@ -431,6 +464,25 @@ fn collect_attachments(msg: &mail_parser::Message<'_>) -> Vec<AttachmentMetaDto>
             Some(AttachmentMetaDto { filename, size })
         })
         .collect()
+}
+
+/// Extract the raw bytes of an attachment by filename match.
+/// Returns the decoded attachment bytes (mail-parser handles CTE decoding).
+/// Returns None when no attachment matches.
+fn extract_attachment_bytes(msg: &mail_parser::Message<'_>, filename: &str) -> Option<Vec<u8>> {
+    msg.attachments().find_map(|part| {
+        let name = part.attachment_name()?;
+        if name != filename {
+            return None;
+        }
+        match &part.body {
+            mail_parser::PartType::Binary(b) | mail_parser::PartType::InlineBinary(b) => {
+                Some(b.to_vec())
+            }
+            mail_parser::PartType::Text(t) => Some(t.as_bytes().to_vec()),
+            _ => None,
+        }
+    })
 }
 
 /// Extract a routing string from known Winlink transport-info headers.
@@ -694,6 +746,75 @@ pub async fn message_send(
     };
 
     // send_message returns MessageId directly. Map to String for IPC.
+    let mid = backend.send_message(msg).await?;
+    Ok(mid.0)
+}
+
+/// Send an outbound Winlink HTML Form.
+///
+/// Per spec §5.1 (Path B — native B2F) + ADR 0016. Looks up the form
+/// definition in the bundled catalog, builds the XML payload + plain-text
+/// body + subject via the form's templates, wraps the XML in an
+/// `OutboundAttachment` named `RMS_Express_Form_<id>.xml`, and dispatches
+/// via `backend.send_message()` — the same pipeline as `message_send`.
+///
+/// `senders_callsign` + `grid_square` come from the caller (typically the
+/// configured CMS callsign / locator); the XML's `<form_parameters>` block
+/// uses them.
+///
+/// Returns the MID string on success (mirrors `message_send` contract).
+#[tauri::command]
+pub async fn send_form(
+    form_id: String,
+    field_values: std::collections::HashMap<String, String>,
+    to: Vec<String>,
+    cc: Vec<String>,
+    senders_callsign: String,
+    grid_square: String,
+    state: State<'_, BackendState>,
+) -> Result<String, UiError> {
+    use crate::forms;
+
+    let form = forms::catalog::find_form(&form_id)
+        .ok_or_else(|| UiError::Internal {
+            detail: format!("unknown form: {}", form_id),
+        })?;
+
+    let now = chrono::Utc::now();
+    let params = forms::types::FormParameters {
+        xml_file_version: "1.0".to_string(),
+        rms_express_version: format!("Tuxlink/{}", env!("CARGO_PKG_VERSION")),
+        submission_datetime: now.format("%Y%m%d%H%M%S").to_string(),
+        senders_callsign,
+        grid_square,
+        display_form: form.display_form.to_string(),
+        reply_template: form.reply_template.to_string(),
+    };
+
+    let xml_bytes = forms::serialize::serialize_form_xml(form, &params, &field_values);
+    let body = forms::serialize::render_body_template(form.body_template, &field_values);
+    let subject = forms::serialize::render_body_template(form.subject_template, &field_values);
+
+    // OutboundAttachment has { filename, bytes } only — NO content_type field.
+    // The native B2F wire format does not use MIME content-type headers for
+    // attachments. See winlink_backend.rs ~105-108 for the canonical struct.
+    let attachment = crate::winlink_backend::OutboundAttachment {
+        filename: format!("RMS_Express_Form_{}.xml", form.id),
+        bytes: xml_bytes,
+    };
+
+    let msg = OutboundMessage {
+        to,
+        cc,
+        subject,
+        body,
+        date: now.to_rfc3339(),
+        attachments: vec![attachment],
+    };
+
+    let backend = state
+        .current()
+        .ok_or_else(|| UiError::NotConfigured("backend offline".to_string()))?;
     let mid = backend.send_message(msg).await?;
     Ok(mid.0)
 }
@@ -1884,6 +2005,8 @@ mod tests {
             }],
             is_form: false,
             routing: Some("via CMS-SSL".into()),
+            form_id: None,
+            form_payload: None,
         };
         let v = serde_json::to_value(&dto).unwrap();
         assert_eq!(v["isForm"], false);

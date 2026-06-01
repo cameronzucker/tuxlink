@@ -26,6 +26,8 @@
   font-family: inherit;
   font-size: 14px;
   overflow: hidden;
+  /* Anchor for the absolute-positioned ResizeHandles (mirrors AppShell). */
+  position: relative;
 }
 
 /* ============================================================
@@ -142,6 +144,10 @@
   flex-direction: column;
   padding: 4px 12px;
   min-height: 0;
+  /* Tall forms (ICS-309, Damage Assessment) overflow the body area at the
+     720x560 compose default; let them scroll within the area instead of
+     pushing the action bar off-screen. */
+  overflow-y: auto;
 }
 
 .compose-textarea {

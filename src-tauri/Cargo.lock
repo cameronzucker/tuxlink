@@ -3198,6 +3198,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "721da970c312655cde9b4ffe0547f20a8494866a4af5ff51f18b7c633d0c870b"
 dependencies = [
  "memchr",
+ "serde",
 ]
 
 [[package]]
@@ -4960,6 +4961,7 @@ dependencies = [
  "mockito",
  "native-tls",
  "nix 0.29.0",
+ "quick-xml",
  "rand 0.8.6",
  "reqwest 0.12.28",
  "rusqlite",

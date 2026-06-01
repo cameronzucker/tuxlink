@@ -15,8 +15,9 @@
 import { invoke } from '@tauri-apps/api/core';
 import { saveDraft } from '../compose/useDraft';
 import type { ParsedMessage } from './types';
+import { sanitizeAttachmentName } from './sanitize';
 
-export type ReplyMode = 'reply' | 'replyAll' | 'forward';
+export type ReplyMode = 'reply' | 'replyAll' | 'forward' | 'replyWithForm';
 
 export interface DraftPrefill {
   /// Semicolon-separated recipients (matches the compose To field input format
@@ -24,6 +25,9 @@ export interface DraftPrefill {
   to: string;
   subject: string;
   body: string;
+  /** When set, opens compose in form-mode pre-populated with these fields. */
+  formId?: string;
+  formFields?: Record<string, string>;
 }
 
 const RE_PREFIX = /^re:\s*/i;
@@ -75,7 +79,7 @@ function quoteSource(message: ParsedMessage): string {
 function attachmentsOmittedNote(message: ParsedMessage): string {
   if (message.attachments.length === 0) return '';
   const n = message.attachments.length;
-  const names = message.attachments.map((a) => a.filename).join(', ');
+  const names = message.attachments.map((a) => sanitizeAttachmentName(a.filename)).join(', ');
   return `\n\n[${n} attachment${n === 1 ? '' : 's'} from the original message ${
     n === 1 ? 'was' : 'were'
   } not carried into this forward (attachment forwarding arrives in v0.1): ${names}]`;
@@ -102,14 +106,68 @@ function forwardBody(message: ParsedMessage): string {
   return `\n\n${header}\n\n${quoteSource(message)}\n${attachmentsOmittedNote(message)}`;
 }
 
-/// Pure: derive the To / Subject / Body prefill for a reply, reply-all, or
-/// forward off a parsed message. No I/O.
+// ============================================================================
+// Per-form reply-with-form support map (Codex r2 P2 #1)
+// ============================================================================
+//
+// Only forms with explicit field-mapping logic in buildReplyDraft below are
+// safe to expose via the "Reply with form…" action — otherwise clicking the
+// button on, say, a Position Report opens a blank-ish form with no useful
+// pre-population. MessageView's button visibility consults this set.
+const REPLY_WITH_FORM_SUPPORTED: ReadonlySet<string> = new Set(['ICS213_Initial']);
+
+/// True iff `replyWithForm` produces a meaningfully-populated draft for the
+/// given form ID. Used by MessageView to gate the "Reply with form…" button.
+export function hasReplyWithFormSupport(formId: string | null | undefined): boolean {
+  return !!formId && REPLY_WITH_FORM_SUPPORTED.has(formId);
+}
+
+/// Pure: derive the To / Subject / Body prefill for a reply, reply-all,
+/// forward, or replyWithForm off a parsed message. No I/O.
 export function buildReplyDraft(message: ParsedMessage, mode: ReplyMode): DraftPrefill {
   if (mode === 'forward') {
     return {
       to: '',
       subject: FWD_PREFIX.test(message.subject) ? message.subject : `Fwd: ${message.subject}`,
       body: forwardBody(message),
+    };
+  }
+
+  if (mode === 'replyWithForm') {
+    // Only valid for messages that already carry a form payload AND have a
+    // per-form mapping defined below. Other forms (ICS-309, Bulletin,
+    // Position, Damage Assessment) fall back to a plain reply rather than
+    // producing a half-populated form draft (Codex r2 P2 #1).
+    if (
+      !message.isForm ||
+      !message.formId ||
+      !message.formPayload ||
+      !hasReplyWithFormSupport(message.formId)
+    ) {
+      return buildReplyDraft(message, 'reply');
+    }
+    // Sender↔recipient swap: original fm_name → new to_name; preserve
+    // subjectline + inc_name + isexercise.
+    const origFields: Record<string, string> = Object.fromEntries(message.formPayload.fields);
+    const fmName = origFields['fm_name'] ?? '';
+    const formFields: Record<string, string> = {
+      // Pre-populate with the swap (don't carry approval / message body —
+      // those are response-specific).
+      to_name: fmName,
+      inc_name: origFields['inc_name'] ?? '',
+      subjectline: origFields['subjectline']
+        ? RE_PREFIX.test(origFields['subjectline'])
+          ? origFields['subjectline']
+          : `Re: ${origFields['subjectline']}`
+        : '',
+      isexercise: origFields['isexercise'] ?? '',
+    };
+    return {
+      to: message.from,
+      subject: RE_PREFIX.test(message.subject) ? message.subject : `Re: ${message.subject}`,
+      body: '',
+      formId: message.formId,
+      formFields,
     };
   }
 
@@ -145,6 +203,8 @@ export async function openReplyWindow(message: ParsedMessage, mode: ReplyMode): 
     subject: prefill.subject,
     body: prefill.body,
     requestAck: false,
+    formId: prefill.formId,
+    formFields: prefill.formFields,
   });
   await invoke('compose_window_open', { draftId });
 }

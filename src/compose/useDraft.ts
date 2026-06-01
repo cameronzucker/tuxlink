@@ -25,6 +25,10 @@ export interface DraftData {
   subject: string;
   body: string;
   requestAck: boolean;
+  /** Form ID when this draft is a form-mode draft (T6.3). Optional. */
+  formId?: string;
+  /** Form field values when this draft is a form-mode draft (T6.3). Optional. */
+  formFields?: Record<string, string>;
   savedAt: string; // ISO 8601 UTC
 }
 
