@@ -43,7 +43,6 @@ import { dispatchMenuAction, type MenuHandlers } from './chrome/dispatchMenuActi
 import { useMessage } from '../mailbox/useMessage';
 import { openReplyWindow } from '../mailbox/replyActions';
 import { newDraftId } from '../routing';
-import { PacketConnectionPanelContainer } from '../packet/PacketConnectionPanel';
 import { effectiveCall } from '../packet/packetConfig';
 import { derivePacketUiState, type PacketUiState } from '../packet/packetStatus';
 import { isBuilt } from '../connections/sessionTypes';
@@ -445,7 +444,10 @@ export function AppShell() {
             return <MessageView selectedMessage={selectedMessage} />;
           }
           if (sessionType === 'cms' && protocol === 'packet') {
-            return <PacketConnectionPanelContainer baseCall={statusData.callsign} intent="cms-gateway" />;
+            // P3: PacketRadioPanel owns the Packet dial UI in the right
+            // radio panel; reading pane falls back to mail (same pattern
+            // as Telnet (P2) and ARDOP (P4)).
+            return <MessageView selectedMessage={selectedMessage} />;
           }
           if (sessionType === 'cms' && protocol === 'ardop-hf') {
             // P4: the ArdopRadioPanel owns the ARDOP HF dial UI; the
@@ -454,7 +456,8 @@ export function AppShell() {
             return <MessageView selectedMessage={selectedMessage} />;
           }
           if (sessionType === 'p2p' && protocol === 'packet') {
-            return <PacketConnectionPanelContainer baseCall={statusData.callsign} intent="p2p" />;
+            // P3 (P2P branch): same — PacketRadioPanel handles the dial UI.
+            return <MessageView selectedMessage={selectedMessage} />;
           }
           // Built but unhandled — defensive stub
           return <StubPanel sessionType={sessionType} protocol={protocol} />;
