@@ -677,17 +677,21 @@ export function Compose({ draftId }: ComposeProps) {
       {/* Action bar                                                          */}
       {/* ------------------------------------------------------------------ */}
       <div className="compose-actions">
-        <button
-          className="compose-btn compose-btn--primary"
-          onClick={handleSend}
-          disabled={sendState === 'sending' || formMode.kind !== 'plain'}
-          title={formMode.kind !== 'plain'
-            ? "Use the form's Send button to submit a form"
-            : 'Send (Ctrl+Enter)'}
-          data-testid="compose-send-btn"
-        >
-          {sendState === 'sending' ? 'Sending…' : 'Post to Outbox'}
-        </button>
+        {/* Post to Outbox + Compose form… only apply to plain-text mode. In
+            form mode the form's own Send button handles submission; in pick
+            mode neither applies. Hiding them removes the "why are these
+            greyed out?" confusion (operator feedback 2026-06-01). */}
+        {formMode.kind === 'plain' && (
+          <button
+            className="compose-btn compose-btn--primary"
+            onClick={handleSend}
+            disabled={sendState === 'sending'}
+            title="Send (Ctrl+Enter)"
+            data-testid="compose-send-btn"
+          >
+            {sendState === 'sending' ? 'Sending…' : 'Post to Outbox'}
+          </button>
+        )}
         <button
           className="compose-btn compose-btn--secondary"
           onClick={handleSaveDraft}
@@ -696,14 +700,15 @@ export function Compose({ draftId }: ComposeProps) {
         >
           Save Draft
         </button>
-        <button
-          className="compose-btn compose-btn--secondary"
-          onClick={handleOpenFormPicker}
-          disabled={formMode.kind !== 'plain'}
-          data-testid="compose-form-picker-btn"
-        >
-          Compose form…
-        </button>
+        {formMode.kind === 'plain' && (
+          <button
+            className="compose-btn compose-btn--secondary"
+            onClick={handleOpenFormPicker}
+            data-testid="compose-form-picker-btn"
+          >
+            Compose form…
+          </button>
+        )}
       </div>
 
       {/* ------------------------------------------------------------------ */}
