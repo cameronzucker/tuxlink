@@ -1328,7 +1328,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 
 **Context:** Per spec §2.2 + §4.2: the State 2 "GPS ready" hint is passive text, NOT a `<button>`. Pre-pjih had it as `<button data-testid="use-gps">`; the restoration replaces with `<span className="dash-gps-ready-status">`.
 
-- [ ] **Step 1: Write the failing test.**
+- [x] **Step 1: Write the failing test.**
 
 In `src/shell/GridEdit.test.tsx`, ADD:
 
@@ -1348,7 +1348,7 @@ test('GPS-ready hint in State 2 is a <span> (passive), not a <button>', () => {
 });
 ```
 
-- [ ] **Step 2: Run the test to verify it fails.**
+- [x] **Step 2: Run the test to verify it fails.**
 
 ```bash
 pnpm vitest run src/shell/GridEdit.test.tsx -t "GPS-ready hint in State 2 is a <span>" 2>&1 | tail -10
@@ -1356,7 +1356,7 @@ pnpm vitest run src/shell/GridEdit.test.tsx -t "GPS-ready hint in State 2 is a <
 
 Expected: FAIL — either `getByText` doesn't find "GPS ready" (pjih removed it entirely), OR it's a `<button>` if pre-pjih code is partially restored.
 
-- [ ] **Step 3: Render the passive "GPS ready" status text.**
+- [x] **Step 3: Render the passive "GPS ready" status text.**
 
 In `src/shell/GridEdit.tsx`, add the State 2 hint as a `<span>`:
 
@@ -1373,7 +1373,7 @@ In `src/shell/GridEdit.tsx`, add the State 2 hint as a `<span>`:
 )}
 ```
 
-- [ ] **Step 4: Run the test to verify it passes.**
+- [x] **Step 4: Run the test to verify it passes.**
 
 ```bash
 pnpm vitest run src/shell/GridEdit.test.tsx -t "GPS-ready hint in State 2 is a <span>" 2>&1 | tail -10
@@ -1381,7 +1381,7 @@ pnpm vitest run src/shell/GridEdit.test.tsx -t "GPS-ready hint in State 2 is a <
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit.**
+- [x] **Step 5: Commit.**
 
 ```bash
 git add src/shell/GridEdit.tsx src/shell/GridEdit.test.tsx
