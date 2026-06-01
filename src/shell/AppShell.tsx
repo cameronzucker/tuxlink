@@ -48,6 +48,7 @@ import { effectiveCall } from '../packet/packetConfig';
 import { derivePacketUiState, type PacketUiState } from '../packet/packetStatus';
 import { isBuilt } from '../connections/sessionTypes';
 import { TelnetRadioPanel } from '../radio/modes/TelnetRadioPanel';
+import { PacketRadioPanel } from '../radio/modes/PacketRadioPanel';
 import { StubPanel } from '../connections/StubPanel';
 import { SearchBar } from '../search/SearchBar';
 import { SearchDropdown } from '../search/SearchDropdown';
@@ -458,11 +459,11 @@ export function AppShell() {
           // Built but unhandled — defensive stub
           return <StubPanel sessionType={sessionType} protocol={protocol} />;
         })()}
-        {/* Spec P2: Telnet uses the real TelnetRadioPanel; Packet / VARA /
-            ARDOP HF still mount the placeholder until their phases land
-            (P3 Packet, P4 ARDOP, P5 VARA). For ARDOP HF the legacy
-            ArdopDock continues to mount alongside the placeholder until
-            P4 removes it — this dual mount is the established P1
+        {/* Spec P3: Telnet (P2) and Packet (P3) use their real right-panel
+            implementations; VARA / ARDOP HF still mount the placeholder
+            until their phases land (P4 ARDOP, P5 VARA). For ARDOP HF the
+            legacy ArdopDock continues to mount alongside the placeholder
+            until P4 removes it — this dual mount is the established P1
             behavior. */}
         {radioPanelMode && radioPanelMode.kind === 'telnet' && (
           <TelnetRadioPanel
@@ -472,15 +473,27 @@ export function AppShell() {
             }}
           />
         )}
-        {radioPanelMode && radioPanelMode.kind !== 'telnet' && (
-          <PlaceholderRadioPanel
-            mode={radioPanelMode}
+        {radioPanelMode && radioPanelMode.kind === 'packet' && (
+          <PacketRadioPanel
+            intent={radioPanelMode.intent}
+            baseCall={statusData.callsign}
             onClose={() => {
               setSelectedConnection(null);
               setPinRadioPanel(false);
             }}
           />
         )}
+        {radioPanelMode &&
+          radioPanelMode.kind !== 'telnet' &&
+          radioPanelMode.kind !== 'packet' && (
+            <PlaceholderRadioPanel
+              mode={radioPanelMode}
+              onClose={() => {
+                setSelectedConnection(null);
+                setPinRadioPanel(false);
+              }}
+            />
+          )}
         {radioPanelMode?.kind === 'ardop-hf' && <ArdopDock />}
       </div>
 
