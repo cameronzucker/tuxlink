@@ -971,7 +971,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 
 **Context:** Per spec §6.1, two more backend tests are required to pin the cross-layer source contract: `gps_fix_updates_active_only_when_source_is_gps` (restore from pre-pjih) and `manual_source_ignores_fresh_gps_fix_at_broadcast_boundary` (new).
 
-- [ ] **Step 1: Write the tests.**
+- [x] **Step 1: Write the tests.**
 
 In `src-tauri/src/position/arbiter.rs`'s `mod tests`, ADD (or RESTORE from pre-pjih):
 
@@ -1023,7 +1023,7 @@ In `src-tauri/src/ui_commands.rs`'s `mod tests`, ADD:
     }
 ```
 
-- [ ] **Step 2: Run the tests to verify they pass.**
+- [x] **Step 2: Run the tests to verify they pass.**
 
 ```bash
 cargo test --manifest-path src-tauri/Cargo.toml --lib \
@@ -1034,7 +1034,7 @@ cargo test --manifest-path src-tauri/Cargo.toml --lib \
 
 Expected: PASS for both. (Implementation already exists from Tasks 1–4; these tests just pin the invariants.)
 
-- [ ] **Step 3: Run full cargo --lib.**
+- [x] **Step 3: Run full cargo --lib.**
 
 ```bash
 cargo test --manifest-path src-tauri/Cargo.toml --lib 2>&1 | tail -5
@@ -1042,7 +1042,7 @@ cargo test --manifest-path src-tauri/Cargo.toml --lib 2>&1 | tail -5
 
 Expected: all passing. Note the total test count — should be `pre-pjih_count + 5` from these phase-2 additions vs the current pjih state.
 
-- [ ] **Step 4: Commit.**
+- [x] **Step 4: Commit.**
 
 ```bash
 git add src-tauri/src/position/arbiter.rs src-tauri/src/ui_commands.rs
