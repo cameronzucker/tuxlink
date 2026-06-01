@@ -28,15 +28,33 @@ struct Inner {
 }
 
 impl Inner {
-    /// Active full-precision grid from already-locked state (Manual → manual_grid;
-    /// Gps → fresh fix, else fall back to manual_grid so the ribbon never blanks).
+    /// Active full-precision grid: GPS-fresh always wins. Falls back to
+    /// `manual_grid` when no fresh fix exists.
+    ///
+    /// tuxlink-pjih (2026-06-01): the prior implementation gated this on
+    /// `source` — `source == Manual` always returned `manual_grid`, even
+    /// when a fresh GPS fix was available. Operator complaint: "Setting a
+    /// manual grid now results in the GPS-derived grid no longer working,
+    /// only displaying the manual grid." Resolution: `source` is no longer
+    /// the display switch; it's a persisted preference, and `effective_source`
+    /// (below) derives the live indicator from arbiter state. The displayed
+    /// grid follows the available-data rule — GPS when fresh, manual otherwise.
     fn active_grid(&self) -> Option<String> {
-        match self.source {
-            PositionSource::Manual => self.manual_grid.clone(),
-            PositionSource::Gps => match &self.last_fix {
-                Some(f) if f.is_fresh(FIX_STALENESS) => Some(f.grid.clone()),
-                _ => self.manual_grid.clone(),
-            },
+        match &self.last_fix {
+            Some(f) if f.is_fresh(FIX_STALENESS) => Some(f.grid.clone()),
+            _ => self.manual_grid.clone(),
+        }
+    }
+
+    /// The LIVE source used to render `active_grid` — `Gps` while a fresh
+    /// fix exists, otherwise `Manual` (the fallback path). UI source chip
+    /// reads this so it always matches what is/would be broadcast. Distinct
+    /// from the stored `source` preference, which represents the operator's
+    /// recorded intent but is no longer the display switch (tuxlink-pjih).
+    fn effective_source(&self) -> PositionSource {
+        match &self.last_fix {
+            Some(f) if f.is_fresh(FIX_STALENESS) => PositionSource::Gps,
+            _ => PositionSource::Manual,
         }
     }
 }
@@ -45,16 +63,31 @@ impl PositionArbiter {
     pub fn new(source: PositionSource, manual_grid: Option<String>, precision: PositionPrecision) -> Self {
         Self { inner: Mutex::new(Inner { source, manual_grid, last_fix: None, precision }) }
     }
+    /// The stored operator preference (`config.privacy.position_source`).
+    /// NOT the display rule — see [`effective_source`] for the live source.
     pub fn source(&self) -> PositionSource { self.inner.lock().unwrap().source }
 
-    /// Hand-set grid: store full precision, pin Manual (sticky). Caller validates first.
-    pub fn set_manual(&self, grid: &str) {
-        let mut i = self.inner.lock().unwrap();
-        i.manual_grid = Some(grid.to_string());
-        i.source = PositionSource::Manual;
+    /// The live source actually used to derive the active grid: `Gps` while
+    /// a fresh GPS fix exists, otherwise `Manual` (the fallback path).
+    /// Use this for any UI indicator that should reflect what is/would be
+    /// broadcast — NOT [`source`], which is the persisted preference.
+    pub fn effective_source(&self) -> PositionSource {
+        self.inner.lock().unwrap().effective_source()
     }
 
-    /// Record the newest fix. Becomes the active position only while source == Gps.
+    /// Hand-set the fallback grid (full precision). Caller validates first.
+    ///
+    /// tuxlink-pjih (2026-06-01): no longer pins `source = Manual`. The
+    /// operator's complaint was that setting a manual grid made the
+    /// GPS-derived grid disappear; the fix decouples grid-set from
+    /// source-pin. Source is now operator preference only; `active_grid`
+    /// follows GPS-fresh-else-manual.
+    pub fn set_manual(&self, grid: &str) {
+        self.inner.lock().unwrap().manual_grid = Some(grid.to_string());
+    }
+
+    /// Record the newest fix. Once stored, becomes the active position
+    /// whenever it is fresh (tuxlink-pjih — no longer gated on `source`).
     pub fn apply_gps_fix(&self, fix: Fix) {
         self.inner.lock().unwrap().last_fix = Some(fix);
     }
@@ -74,8 +107,9 @@ impl PositionArbiter {
         }
     }
 
-    /// The active grid at full precision (Manual -> manual_grid; Gps -> fresh fix, else
-    /// fall back to manual_grid so the ribbon never goes blank).
+    /// The active grid at full precision. GPS-fresh always wins; falls back
+    /// to manual_grid so the ribbon never blanks. tuxlink-pjih: no longer
+    /// source-gated — see [`effective_source`] for the live source indicator.
     pub fn active_grid(&self) -> Option<String> {
         self.inner.lock().unwrap().active_grid()
     }
@@ -99,21 +133,43 @@ mod tests {
     use super::*;
     use crate::config::PositionPrecision;
 
+    // tuxlink-pjih (2026-06-01): set_manual no longer pins source = Manual,
+    // and active_grid is no longer source-gated. Operator complaint was that
+    // setting a manual grid made the GPS-derived grid disappear; the fix
+    // makes manual_grid the fallback used ONLY when GPS is unavailable.
     #[test]
-    fn set_manual_pins_source_and_is_sticky_against_gps() {
+    fn set_manual_updates_grid_without_changing_stored_source() {
         let a = PositionArbiter::new(PositionSource::Gps, None, PositionPrecision::FourCharGrid);
         a.set_manual("CN87ux");
-        assert_eq!(a.source(), PositionSource::Manual);
-        a.apply_gps_fix(Fix::test("DM33ab")); // GPS arrives
-        assert_eq!(a.active_grid().as_deref(), Some("CN87ux")); // unchanged
-        assert_eq!(a.source(), PositionSource::Manual);
+        assert_eq!(a.source(), PositionSource::Gps); // stored preference unchanged
+        assert_eq!(a.active_grid().as_deref(), Some("CN87ux")); // shown as fallback (no fresh fix)
     }
 
     #[test]
-    fn gps_fix_updates_active_only_when_source_is_gps() {
+    fn fresh_gps_fix_wins_over_manual_grid_regardless_of_stored_source() {
+        // Even when stored source is Manual (e.g. a legacy config from
+        // before tuxlink-pjih), a fresh GPS fix takes the displayed grid.
+        let a = PositionArbiter::new(PositionSource::Manual, None, PositionPrecision::FourCharGrid);
+        a.set_manual("CN87ux");
+        a.apply_gps_fix(Fix::test("DM33ab"));
+        assert_eq!(a.active_grid().as_deref(), Some("DM33ab"));
+        assert_eq!(a.effective_source(), PositionSource::Gps);
+    }
+
+    #[test]
+    fn manual_grid_used_when_gps_fix_is_stale_or_absent() {
+        let a = PositionArbiter::new(PositionSource::Gps, None, PositionPrecision::FourCharGrid);
+        a.set_manual("CN87ux");
+        assert_eq!(a.active_grid().as_deref(), Some("CN87ux"));
+        assert_eq!(a.effective_source(), PositionSource::Manual);
+    }
+
+    #[test]
+    fn gps_fix_updates_active_regardless_of_stored_source() {
         let a = PositionArbiter::new(PositionSource::Gps, None, PositionPrecision::FourCharGrid);
         a.apply_gps_fix(Fix::test("DM33ab"));
         assert_eq!(a.active_grid().as_deref(), Some("DM33ab"));
+        assert_eq!(a.effective_source(), PositionSource::Gps);
     }
 
     #[test]

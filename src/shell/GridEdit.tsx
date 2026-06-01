@@ -2,11 +2,15 @@
  * GridEdit — inline-edit cell for the ribbon Grid value + MANUAL/GPS source chip.
  *
  * Click the grid cell → inline input; Enter validates + commits; Esc cancels.
- * Renders a MANUAL/GPS source chip beside the value. When source is Manual and
- * a GPS fix is available (gpsReady), renders a "GPS ready" affordance to switch.
+ * Renders a MANUAL/GPS source chip beside the value reflecting the LIVE source
+ * (Gps when a fresh fix is producing the displayed grid; Manual when falling
+ * back to the manually-set grid). tuxlink-pjih: the prior "GPS ready — tap to
+ * switch" affordance was removed; under the new arbiter semantics GPS-fresh
+ * ALWAYS wins the displayed grid, so the explicit "switch to GPS" step is
+ * structurally unreachable.
  *
  * Spec: docs/superpowers/specs/2026-05-19-main-ui-cluster-design.md §Task 8
- * bd issue: tuxlink-686
+ * bd issue: tuxlink-686, tuxlink-pjih
  */
 
 import { useState } from 'react';
@@ -25,13 +29,12 @@ function extractErrorMessage(err: unknown): string {
 
 export interface GridEditProps {
   grid: string | null;                              // current broadcast grid (data.grid)
-  source: PositionSource;                           // 'Manual' | 'Gps'
+  source: PositionSource;                           // 'Manual' | 'Gps' (LIVE source per tuxlink-pjih)
   gpsReady: boolean;                                // a usable fix exists (sourced in Task 11)
   onCommit: (grid: string) => void | Promise<void>; // receives the NORMALIZED grid
-  onUseGps: () => void;                             // switch source to GPS
 }
 
-export function GridEdit({ grid, source, gpsReady, onCommit, onUseGps }: GridEditProps) {
+export function GridEdit({ grid, source, gpsReady, onCommit }: GridEditProps) {
   const [editing, setEditing] = useState(false);
   const [inputValue, setInputValue] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -130,18 +133,6 @@ export function GridEdit({ grid, source, gpsReady, onCommit, onUseGps }: GridEdi
       >
         {source === 'Manual' ? 'MANUAL' : 'GPS'}
       </span>
-      {/* GPS-ready affordance: visible when Manual and a fix exists */}
-      {source === 'Manual' && gpsReady && (
-        <button
-          type="button"
-          className="dash-use-gps"
-          data-testid="use-gps"
-          onClick={onUseGps}
-          title="A GPS fix is available — click to switch to GPS"
-        >
-          <span aria-hidden="true">● </span>GPS ready — tap to switch
-        </button>
-      )}
     </div>
   );
 }

@@ -342,7 +342,7 @@ describe('useStatusData — gpsReady (tuxlink-686 Task 11)', () => {
       position_precision: 'FourCharGrid',
       position_source: 'Gps',
     };
-    const positionDto: PositionStatusDto = { gps_ready: true, broadcast_grid: 'CN87' };
+    const positionDto: PositionStatusDto = { gps_ready: true, broadcast_grid: 'CN87', active_source: 'Gps' };
 
     vi.mocked(invoke).mockImplementation(async (cmd: string) => {
       if (cmd === 'config_read') return configDto;
@@ -398,7 +398,7 @@ describe('useStatusData — gpsReady (tuxlink-686 Task 11)', () => {
       position_source: 'Gps',
     };
     // Live position_status returns the effective on-air locator = CN87 (GPS fix).
-    const positionDto: PositionStatusDto = { gps_ready: true, broadcast_grid: 'CN87' };
+    const positionDto: PositionStatusDto = { gps_ready: true, broadcast_grid: 'CN87', active_source: 'Gps' };
 
     vi.mocked(invoke).mockImplementation(async (cmd: string) => {
       if (cmd === 'config_read') return configDto;
@@ -430,7 +430,7 @@ describe('useStatusData — gpsReady (tuxlink-686 Task 11)', () => {
       position_source: 'Gps',
     };
     // Empty broadcast_grid = no position available.
-    const positionDto: PositionStatusDto = { gps_ready: false, broadcast_grid: '' };
+    const positionDto: PositionStatusDto = { gps_ready: false, broadcast_grid: '', active_source: 'Manual' };
 
     vi.mocked(invoke).mockImplementation(async (cmd: string) => {
       if (cmd === 'config_read') return configDto;
