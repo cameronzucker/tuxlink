@@ -597,7 +597,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 
 **Context:** Pjih added an `active_source` field to `PositionStatusDto` populated from `arbiter.effective_source()`. Per spec §3.1, the position-subsystem restoration removes the field entirely — the frontend reads source from `config_read`, not from `position_status`.
 
-- [ ] **Step 1: Write the failing test (defensive — assert the DTO has no `active_source` field).**
+- [x] **Step 1: Write the failing test (defensive — assert the DTO has no `active_source` field).**
 
 In `src-tauri/src/ui_commands.rs`'s `mod tests`, ADD:
 
@@ -618,7 +618,7 @@ In `src-tauri/src/ui_commands.rs`'s `mod tests`, ADD:
     }
 ```
 
-- [ ] **Step 2: Run the test to verify it fails.**
+- [x] **Step 2: Run the test to verify it fails.**
 
 ```bash
 cargo test --manifest-path src-tauri/Cargo.toml --lib \
@@ -627,7 +627,7 @@ cargo test --manifest-path src-tauri/Cargo.toml --lib \
 
 Expected: FAIL. The current `PositionStatusDto { ... }` literal doesn't compile (struct still has `active_source` field). OR the `v.get("active_source")` is `Some`.
 
-- [ ] **Step 3: Remove the `active_source` field from `PositionStatusDto` + the `position_status` command body.**
+- [x] **Step 3: Remove the `active_source` field from `PositionStatusDto` + the `position_status` command body.**
 
 In `src-tauri/src/ui_commands.rs`, find the `PositionStatusDto` struct:
 
@@ -659,7 +659,7 @@ Delete any other pjih-era tests that constructed `PositionStatusDto` with `activ
 - `position_status_dto_carries_active_source_manual_when_no_fix`
 (or similar — search for `active_source` in the file and delete the test fns that reference it.)
 
-- [ ] **Step 4: Run the test to verify it passes.**
+- [x] **Step 4: Run the test to verify it passes.**
 
 ```bash
 cargo test --manifest-path src-tauri/Cargo.toml --lib \
@@ -668,7 +668,7 @@ cargo test --manifest-path src-tauri/Cargo.toml --lib \
 
 Expected: PASS.
 
-- [ ] **Step 5: Run full cargo --lib.**
+- [x] **Step 5: Run full cargo --lib.**
 
 ```bash
 cargo test --manifest-path src-tauri/Cargo.toml --lib 2>&1 | tail -5
@@ -676,7 +676,7 @@ cargo test --manifest-path src-tauri/Cargo.toml --lib 2>&1 | tail -5
 
 Expected: all passing.
 
-- [ ] **Step 6: Commit.**
+- [x] **Step 6: Commit.**
 
 ```bash
 git add src-tauri/src/ui_commands.rs
