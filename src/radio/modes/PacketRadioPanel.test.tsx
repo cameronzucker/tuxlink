@@ -96,7 +96,7 @@ describe('<PacketRadioPanel>', () => {
     render(<PacketRadioPanel intent="cms" baseCall="N7CPZ" onClose={() => {}} />);
     await waitFor(() => expect(screen.getByTestId('packet-target-input')).toBeInTheDocument());
     fireEvent.change(screen.getByTestId('packet-target-input'), { target: { value: 'W7RPT' } });
-    fireEvent.click(screen.getByTestId('packet-connect-btn'));
+    fireEvent.click(screen.getByTestId('packet-start-btn'));
     expect(invoke).toHaveBeenCalledWith('packet_connect', { call: 'W7RPT', path: [] });
   });
 
@@ -107,7 +107,7 @@ describe('<PacketRadioPanel>', () => {
     fireEvent.change(screen.getByTestId('packet-target-input'), { target: { value: 'W7RPT' } });
     fireEvent.click(screen.getByTestId('packet-add-relay'));
     fireEvent.change(screen.getByTestId('packet-relay-0'), { target: { value: 'W7XYZ-1' } });
-    fireEvent.click(screen.getByTestId('packet-connect-btn'));
+    fireEvent.click(screen.getByTestId('packet-start-btn'));
     expect(invoke).toHaveBeenCalledWith('packet_connect', {
       call: 'W7RPT',
       path: ['W7XYZ-1'],
@@ -119,7 +119,7 @@ describe('<PacketRadioPanel>', () => {
     render(<PacketRadioPanel intent="cms" baseCall="N7CPZ" onClose={() => {}} />);
     await waitFor(() => expect(screen.getByTestId('packet-target-input')).toBeInTheDocument());
     (invoke as ReturnType<typeof vi.fn>).mockClear();
-    fireEvent.click(screen.getByTestId('packet-connect-btn'));
+    fireEvent.click(screen.getByTestId('packet-start-btn'));
     // Sift: no call to packet_connect among any invocations.
     const calls = (invoke as ReturnType<typeof vi.fn>).mock.calls.filter(
       (c: unknown[]) => c[0] === 'packet_connect',

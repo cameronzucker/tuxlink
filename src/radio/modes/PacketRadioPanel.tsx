@@ -303,13 +303,17 @@ export function PacketRadioPanel({ intent, baseCall, onClose }: PacketRadioPanel
           Path: <code>{pathPreview(baseCall, ssid, relays, target)}</code>
         </p>
 
+        {/* Vocab unification (operator smoke 2026-05-31): use Start (idle) /
+            Stop (active) to match the Telnet + ARDOP panels. The dedicated
+            data-testid retains a stable hook for tests + grep. Listen is a
+            distinct action that stays separate (it's the "armed" state). */}
         <button
           type="button"
           className="radio-panel-btn radio-panel-btn-primary"
-          data-testid="packet-connect-btn"
+          data-testid="packet-start-btn"
           onClick={onConnect}
         >
-          {target.trim() ? `Connect to ${target.trim()}` : 'Connect'}
+          {target.trim() ? `Start (call ${target.trim()})` : 'Start'}
         </button>
       </section>
 
