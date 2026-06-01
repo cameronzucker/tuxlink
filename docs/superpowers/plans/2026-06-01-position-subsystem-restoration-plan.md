@@ -863,7 +863,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 
 **Context:** Per spec §3.4, the I1–I6 invariants cover all 36 cells of `source × fix_state × gps_state × manual_grid_set`. Adding proptest coverage.
 
-- [ ] **Step 1: Add proptest dev-dependency if not present.**
+- [x] **Step 1: Add proptest dev-dependency if not present.**
 
 Check `src-tauri/Cargo.toml`'s `[dev-dependencies]`:
 ```bash
@@ -875,7 +875,7 @@ If missing, add to `[dev-dependencies]`:
 proptest = "1.4"
 ```
 
-- [ ] **Step 2: Write the matrix tests.**
+- [x] **Step 2: Write the matrix tests.**
 
 In `src-tauri/src/position/arbiter.rs`'s `mod tests`, ADD at the end:
 
@@ -933,7 +933,7 @@ In `src-tauri/src/position/arbiter.rs`'s `mod tests`, ADD at the end:
     // I6 (synchronization): tested elsewhere as part of config_set_grid_pins_manual_source_in_config_and_arbiter (Task 4).
 ```
 
-- [ ] **Step 3: Run the matrix tests.**
+- [x] **Step 3: Run the matrix tests.**
 
 ```bash
 cargo test --manifest-path src-tauri/Cargo.toml --lib \
@@ -942,7 +942,7 @@ cargo test --manifest-path src-tauri/Cargo.toml --lib \
 
 Expected: PASS (proptest runs many cases; default 256 iterations).
 
-- [ ] **Step 4: Commit.**
+- [x] **Step 4: Commit.**
 
 ```bash
 git add src-tauri/src/position/arbiter.rs src-tauri/Cargo.toml
