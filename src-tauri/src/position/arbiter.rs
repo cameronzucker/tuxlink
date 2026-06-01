@@ -198,4 +198,60 @@ mod tests {
         a.set_precision(PositionPrecision::SixCharGrid);
         assert_eq!(a.broadcast_grid().as_deref(), Some("CN87ux")); // full 6-char after change
     }
+
+    // R3 F4 (tuxlink-c79g T7): proptest over the State 1-5 matrix from spec §3.4.
+    // The five `active_grid` invariants I1-I5 cover all reachable cells of
+    // (source × manual_grid × apply_fix). I6 (synchronization between
+    // config.privacy.position_source and arbiter.source after config_set_grid)
+    // is covered by config_set_grid_pins_manual_source_in_config_and_arbiter
+    // from Task 4 — not re-encoded here.
+    use proptest::prelude::*;
+
+    fn arb_source() -> impl Strategy<Value = PositionSource> {
+        prop_oneof![Just(PositionSource::Manual), Just(PositionSource::Gps)]
+    }
+
+    fn arb_manual_grid() -> impl Strategy<Value = Option<String>> {
+        prop_oneof![
+            Just(None),
+            Just(Some("EM75".to_string())),
+            Just(Some("CN87xx".to_string())),
+        ]
+    }
+
+    proptest! {
+        // I1: source = Manual && manual_grid = None → active_grid = None.
+        // I2: source = Manual && manual_grid set → active_grid = manual_grid.
+        // I3: source = Gps && fresh fix → active_grid = fix.grid.
+        // I4: source = Gps && no fix && manual_grid set → active_grid = manual_grid.
+        // I5: source = Gps && no fix && manual_grid = None → active_grid = None.
+        #[test]
+        fn state_space_active_grid_matches_i1_through_i5(
+            source in arb_source(),
+            manual_grid in arb_manual_grid(),
+            apply_fix in proptest::bool::ANY,
+        ) {
+            let arbiter = PositionArbiter::new(
+                source,
+                manual_grid.clone(),
+                PositionPrecision::FourCharGrid,
+            );
+            if apply_fix {
+                arbiter.apply_gps_fix(Fix::test("DM33ab"));
+            }
+            let active = arbiter.active_grid();
+            match (source, apply_fix, manual_grid.as_deref()) {
+                // I1
+                (PositionSource::Manual, _, None) => prop_assert_eq!(active, None),
+                // I2
+                (PositionSource::Manual, _, Some(g)) => prop_assert_eq!(active.as_deref(), Some(g)),
+                // I3
+                (PositionSource::Gps, true, _) => prop_assert_eq!(active.as_deref(), Some("DM33ab")),
+                // I4
+                (PositionSource::Gps, false, Some(g)) => prop_assert_eq!(active.as_deref(), Some(g)),
+                // I5
+                (PositionSource::Gps, false, None) => prop_assert_eq!(active, None),
+            }
+        }
+    }
 }

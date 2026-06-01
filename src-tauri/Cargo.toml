@@ -60,6 +60,7 @@ bytes = "1"                                      # NEW (tuxlink-ytya P1) — req
 [dev-dependencies]
 mockito = "1.5"
 serial_test = "3"          # NEW — gates env-var-mutating tests
+proptest = "1.4"           # NEW (tuxlink-c79g T7) — state-space matrix tests for position arbiter invariants I1-I5
 
 [lib]
 name = "tuxlink_lib"
