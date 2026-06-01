@@ -56,6 +56,9 @@ FLAG_DRY_RUN=0
 FLAG_SKIP_LAUNCH=0
 FLAG_FORCE_KILL_OWNED=0
 
+# Filled in by stash_bd_state, consulted by trap_on_exit on abnormal exit.
+PERSISTED_STASH_REF=""
+
 # ─── ANSI helpers ──────────────────────────────────────────────────────────
 
 if [[ -t 1 ]]; then
@@ -76,17 +79,52 @@ ok()   { printf '%s✓ %s%s\n' "${C_GREEN}" "$*" "${C_RESET}" >&2; }
 die()  { printf '%s✗ %s%s\n' "${C_RED}${C_BOLD}" "$*" "${C_RESET}" >&2; exit "${2:-10}"; }
 dim()  { printf '%s%s%s\n' "${C_DIM}" "$*" "${C_RESET}" >&2; }
 
+# ─── Trap: stash-recovery on abnormal exit ─────────────────────────────────
+
+# Codex P1 #3 — if the script exits non-zero between stash_bd_state and
+# restore_bd_state (most likely a rebase failure), the operator's bd state
+# is hidden in a stash. Print the recovery command loudly so they don't
+# need to grep `git stash list` for the label.
+trap_on_exit() {
+  local rc=$?
+  if [[ "${rc}" -ne 0 && -n "${PERSISTED_STASH_REF}" ]]; then
+    # Verify the stash still exists (it might have been popped already).
+    if git -C "${REPO_ROOT}" stash list 2>/dev/null | grep -qF "${STASH_LABEL}"; then
+      printf '\n%s━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━%s\n' "${C_YELLOW}" "${C_RESET}" >&2
+      printf '%s⚠ STASH RECOVERY NEEDED%s\n' "${C_YELLOW}${C_BOLD}" "${C_RESET}" >&2
+      printf '%sYour .beads/issues.jsonl is in stash labelled:%s\n' "${C_YELLOW}" "${C_RESET}" >&2
+      printf '    %s\n' "${STASH_LABEL}" >&2
+      printf '%sFind + restore with:%s\n' "${C_YELLOW}" "${C_RESET}" >&2
+      printf '    git stash list | grep %q\n' "${STASH_LABEL}" >&2
+      printf '    git stash pop <ref>\n' >&2
+      printf '%s━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━%s\n\n' "${C_YELLOW}" "${C_RESET}" >&2
+      # Audit even on abnormal exit (best-effort; might fail if disk full etc).
+      audit "stash_recovery_needed" "$(printf '{"stash_label":"%s","exit_code":%d}' "${STASH_LABEL}" "${rc}")" || true
+    fi
+  fi
+  return "${rc}"
+}
+trap trap_on_exit EXIT
+
 # ─── Audit log ────────────────────────────────────────────────────────────
 
 # Append a structured JSON line to dev/scratch/converge-build.log.
 # Each line is self-contained; jq-tail-friendly for forensics.
+# In --dry-run, emit to stderr instead so the scratch dir stays untouched
+# (Codex P3 #7 — dry-run promised no mutations).
 audit() {
   local kind="$1"; shift
   local payload="$1"; shift || true
-  mkdir -p "$(dirname "${AUDIT_LOG}")"
   local ts; ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  printf '{"ts":"%s","run_id":"%s","kind":"%s","cwd":"%s","payload":%s}\n' \
-    "${ts}" "${RUN_ID}" "${kind}" "${PWD}" "${payload:-null}" >>"${AUDIT_LOG}"
+  local line
+  line="$(printf '{"ts":"%s","run_id":"%s","kind":"%s","cwd":"%s","payload":%s}' \
+    "${ts}" "${RUN_ID}" "${kind}" "${PWD}" "${payload:-null}")"
+  if [[ "${FLAG_DRY_RUN:-0}" -eq 1 ]]; then
+    printf '%s[dry-run audit] %s%s\n' "${C_DIM}" "${line}" "${C_RESET}" >&2
+    return 0
+  fi
+  mkdir -p "$(dirname "${AUDIT_LOG}")"
+  printf '%s\n' "${line}" >>"${AUDIT_LOG}"
 }
 
 # ─── Argument parse ────────────────────────────────────────────────────────
@@ -131,6 +169,10 @@ NOT HANDLED IN v1 (see sub-issues):
   - Refuse commits on merged-dead branches                   → tuxlink-21j8
   - CI scheduled audit catching non-Claude bypasses          → tuxlink-ui3i
   - Test fixtures for all 7 modes                            → tuxlink-8zho
+
+REQUIREMENTS: Linux (bash 4+, ss or lsof, sha256sum, pgrep, pkill, jq, git, pnpm).
+              tuxlink targets Linux/Pi development; macOS/Windows porting is
+              out of scope for v1.
 
 AUDIT LOG: ${AUDIT_LOG}
 STATE FILE: ${STATE_FILE}
@@ -233,7 +275,7 @@ resolve_untracked_collisions() {
   # git ls-files --others --exclude-standard prints relative paths.
   local untracked
   untracked="$(git -C "${REPO_ROOT}" ls-files --others --exclude-standard)"
-  [[ -z "${untracked}" ]] && { echo "[]"; return 0; }
+  [[ -z "${untracked}" ]] && { echo '{"identical_removed":0,"differing_blocked":0}'; return 0; }
 
   while IFS= read -r path; do
     [[ -z "${path}" ]] && continue
@@ -336,7 +378,10 @@ stash_bd_state() {
   if ! git -C "${REPO_ROOT}" stash push -m "${STASH_LABEL}" -- .beads/issues.jsonl >&2; then
     die "failed to stash .beads/issues.jsonl" 5
   fi
-  ok "stashed .beads/issues.jsonl as '${STASH_LABEL}'"
+  # Capture the freshly-created stash@{0} ref so trap_on_exit can locate it
+  # even if the message-match heuristic fails (Codex P1 #3).
+  PERSISTED_STASH_REF="stash@{0}"
+  ok "stashed .beads/issues.jsonl as '${STASH_LABEL}' (${PERSISTED_STASH_REF})"
   echo "stashed"
 }
 
@@ -368,14 +413,22 @@ restore_bd_state() {
 
 # ─── Phase: rebase onto origin/main ───────────────────────────────────────
 
-rebase_forward() {
+fetch_prune() {
   local dry="$1"
   if [[ "${dry}" -eq 1 ]]; then
-    dim "  [dry-run] would: git fetch origin --prune; git rebase origin/main"
+    dim "  [dry-run] would: git fetch origin --prune"
     return 0
   fi
   step "git fetch origin --prune"
   git -C "${REPO_ROOT}" fetch origin --prune >&2
+}
+
+rebase_forward() {
+  local dry="$1"
+  if [[ "${dry}" -eq 1 ]]; then
+    dim "  [dry-run] would: git rebase origin/main"
+    return 0
+  fi
   step "git rebase origin/main"
   if ! git -C "${REPO_ROOT}" rebase origin/main >&2; then
     warn "rebase failed. The script will leave the worktree in 'rebasing' state."
@@ -389,44 +442,78 @@ rebase_forward() {
 
 # ─── Phase: install + build artifact freshness ────────────────────────────
 
-# Wipe + reinstall when lockfile changed since last run OR --fresh.
-maybe_wipe_node_modules() {
+# Decide what to wipe. Codex P1 #1 + handoff catalog modes 5+6:
+#   - node_modules: wipe when --fresh, or pnpm-lock.yaml changed since last run.
+#   - src-tauri/target: wipe additionally when HEAD moved since last run (the
+#     compiled tuxlink binary is keyed to source SHA; rebase invalidates it).
+# Returns one JSON object summarizing both decisions.
+maybe_wipe_build_artifacts() {
   local dry="$1"
   local cur_lockfile_sha=""
   [[ -f "${LOCKFILE}" ]] && cur_lockfile_sha="$(sha256sum "${LOCKFILE}" | cut -d' ' -f1)"
+  local cur_head_sha; cur_head_sha="$(git -C "${REPO_ROOT}" rev-parse HEAD)"
   local prev_lockfile_sha=""
+  local prev_head_sha=""
   if [[ -f "${STATE_FILE}" ]]; then
     prev_lockfile_sha="$(jq -r '.last_lockfile_sha // empty' "${STATE_FILE}" 2>/dev/null || true)"
+    prev_head_sha="$(jq -r '.last_head_sha // empty' "${STATE_FILE}" 2>/dev/null || true)"
   fi
 
-  local reason=""
+  # node_modules decision
+  local nm_reason=""
   if [[ "${FLAG_FRESH}" -eq 1 ]]; then
-    reason="--fresh flag"
+    nm_reason="--fresh flag"
   elif [[ "${cur_lockfile_sha}" != "${prev_lockfile_sha}" ]]; then
     if [[ -z "${prev_lockfile_sha}" ]]; then
-      reason="no prior recorded state"
+      nm_reason="no prior recorded state"
     else
-      reason="pnpm-lock.yaml changed since last converge-build (${prev_lockfile_sha:0:8} → ${cur_lockfile_sha:0:8})"
+      nm_reason="pnpm-lock.yaml changed (${prev_lockfile_sha:0:8} → ${cur_lockfile_sha:0:8})"
     fi
   fi
 
-  if [[ -z "${reason}" ]]; then
-    dim "node_modules: keep (lockfile unchanged since last run)"
-    echo '{"action":"keep","reason":"lockfile-unchanged"}'
+  # cargo target decision
+  local target_reason=""
+  if [[ "${FLAG_FRESH}" -eq 1 ]]; then
+    target_reason="--fresh flag"
+  elif [[ "${cur_head_sha}" != "${prev_head_sha}" ]]; then
+    if [[ -z "${prev_head_sha}" ]]; then
+      target_reason="no prior recorded state"
+    else
+      target_reason="HEAD moved (${prev_head_sha:0:8} → ${cur_head_sha:0:8})"
+    fi
+  fi
+
+  if [[ -z "${nm_reason}" && -z "${target_reason}" ]]; then
+    dim "build artifacts: keep (lockfile + HEAD unchanged since last run)"
+    echo '{"node_modules":"keep","target":"keep"}'
     return 0
   fi
 
-  if [[ "${dry}" -eq 1 ]]; then
-    dim "  [dry-run] would wipe node_modules + src-tauri/target (${reason})"
-    printf '{"action":"would-wipe","reason":"%s"}\n' "${reason}"
-    return 0
+  if [[ -n "${nm_reason}" ]]; then
+    if [[ "${dry}" -eq 1 ]]; then
+      dim "  [dry-run] would wipe node_modules (${nm_reason})"
+    else
+      step "wiping node_modules (${nm_reason})"
+      rm -rf "${REPO_ROOT}/node_modules"
+    fi
+  else
+    dim "node_modules: keep (lockfile unchanged)"
   fi
 
-  step "wiping node_modules (${reason})"
-  rm -rf "${REPO_ROOT}/node_modules"
-  step "wiping src-tauri/target"
-  rm -rf "${REPO_ROOT}/src-tauri/target"
-  printf '{"action":"wiped","reason":"%s"}\n' "${reason}"
+  if [[ -n "${target_reason}" ]]; then
+    if [[ "${dry}" -eq 1 ]]; then
+      dim "  [dry-run] would wipe src-tauri/target (${target_reason})"
+    else
+      step "wiping src-tauri/target (${target_reason})"
+      rm -rf "${REPO_ROOT}/src-tauri/target"
+    fi
+  else
+    dim "src-tauri/target: keep (HEAD unchanged)"
+  fi
+
+  printf '{"node_modules":"%s","node_modules_reason":"%s","target":"%s","target_reason":"%s"}\n' \
+    "$([[ -n "${nm_reason}" ]] && echo wiped || echo keep)" "${nm_reason}" \
+    "$([[ -n "${target_reason}" ]] && echo wiped || echo keep)" "${target_reason}"
 }
 
 pnpm_install() {
@@ -494,6 +581,39 @@ kill_stale_dev_processes() {
   printf ']'
 }
 
+# Codex P1 #4 — after the blanket pkill, verify port 1420 is actually free
+# before claiming convergence. If something still holds it (e.g. a process
+# that doesn't match our pattern), exit 7 with operator instructions so the
+# audit log does not falsely record "converged" for a build that can't launch.
+verify_port_free() {
+  local dry="$1"
+  if [[ "${dry}" -eq 1 ]]; then
+    dim "  [dry-run] would: check port 1420 is free; exit 7 if held"
+    return 0
+  fi
+  # ss is the canonical tool on modern Linux; lsof as fallback.
+  local owner=""
+  if command -v ss >/dev/null 2>&1; then
+    owner="$(ss -lntp 2>/dev/null | awk '$4 ~ /:1420$/ {print; exit}' || true)"
+  elif command -v lsof >/dev/null 2>&1; then
+    owner="$(lsof -i :1420 -sTCP:LISTEN 2>/dev/null | tail -n +2 | head -1 || true)"
+  else
+    warn "neither ss nor lsof present — cannot verify port 1420 status; continuing"
+    return 0
+  fi
+  if [[ -n "${owner}" ]]; then
+    warn "port 1420 still occupied after pkill:"
+    warn "    ${owner}"
+    warn ""
+    warn "v1's blanket pkill matched 'tauri dev|target/debug/tuxlink|node.*vite'"
+    warn "but something else is holding the port. Identify + free it manually,"
+    warn "then re-run. The proper host-level lease lands in tuxlink-8d7y."
+    audit "port_1420_busy" "$(printf '{"owner":%s}' "$(printf '%s' "${owner}" | jq -Rs . 2>/dev/null || echo '"unknown"')")"
+    exit 7
+  fi
+  ok "port 1420 is free"
+}
+
 # ─── Phase: launch ────────────────────────────────────────────────────────
 
 launch_tauri_dev() {
@@ -548,12 +668,18 @@ main() {
     warn "DRY RUN — no mutations will be performed"
   fi
 
-  # 0. Classify branch (warn-not-refuse in v1; tuxlink-21j8 lifts to refuse).
-  step "phase 1/7 — branch classification"
+  # 0. Fetch fresh origin refs BEFORE classify + collision detection so we
+  # do not act on a stale origin/main (Codex P1 #2).
+  step "phase 1/8 — git fetch origin --prune"
+  fetch_prune "${FLAG_DRY_RUN}"
+  audit "fetched" "$(printf '{"origin_main":"%s"}' \
+    "$(git -C "${REPO_ROOT}" rev-parse origin/main 2>/dev/null || echo unknown)")"
+
+  # 1. Classify branch (warn-not-refuse in v1; tuxlink-21j8 lifts to refuse).
+  step "phase 2/8 — branch classification"
   local branch_json; branch_json="$(classify_branch)"
   echo "  ${branch_json}" >&2
   audit "branch_classified" "${branch_json}"
-  # v1 surfaces a loud warning for dead/orphan branches but does not refuse.
   case "${branch_json}" in
     *bd-issue-merged-dead*|*adhoc-merged-dead*)
       warn "this branch has a MERGED PR — committing here is the orphan-post-merge mode."
@@ -564,41 +690,45 @@ main() {
       ;;
   esac
 
-  # 1. Resolve untracked collisions (auto for identical, stop for differing).
-  step "phase 2/7 — untracked-vs-tracked collision check"
+  # 2. Resolve untracked collisions (auto for identical, stop for differing).
+  step "phase 3/8 — untracked-vs-tracked collision check"
   local collision_json; collision_json="$(resolve_untracked_collisions "${FLAG_DRY_RUN}")"
   audit "untracked_resolved" "${collision_json}"
 
-  # 2. Stash bd state.
-  step "phase 3/7 — stash .beads/issues.jsonl"
+  # 3. Stash bd state.
+  step "phase 4/8 — stash .beads/issues.jsonl"
   local stash_state; stash_state="$(stash_bd_state "${FLAG_DRY_RUN}")"
   audit "bd_stash" "$(printf '{"state":"%s","label":"%s"}' "${stash_state}" "${STASH_LABEL}")"
 
-  # 3. Rebase forward.
-  step "phase 4/7 — rebase onto origin/main"
+  # 4. Rebase forward.
+  step "phase 5/8 — rebase onto origin/main"
   rebase_forward "${FLAG_DRY_RUN}"
   audit "rebased" "$(printf '{"head":"%s","origin_main":"%s"}' \
     "$(git -C "${REPO_ROOT}" rev-parse HEAD 2>/dev/null || echo unknown)" \
     "$(git -C "${REPO_ROOT}" rev-parse origin/main 2>/dev/null || echo unknown)")"
 
-  # 4. Pop bd stash (best-effort; failure does not block).
+  # 5. Pop bd stash (best-effort; failure does not block; trap_on_exit
+  # would have surfaced a recovery command had rebase failed above).
   restore_bd_state "${stash_state}" "${FLAG_DRY_RUN}"
+  PERSISTED_STASH_REF=""  # disarm trap_on_exit's recovery message
 
-  # 5. node_modules + cargo target wipe-or-keep + install.
-  step "phase 5/7 — node_modules / cargo target freshness"
-  local wipe_json; wipe_json="$(maybe_wipe_node_modules "${FLAG_DRY_RUN}")"
+  # 6. node_modules + cargo target wipe-or-keep + install.
+  step "phase 6/8 — build artifact freshness"
+  local wipe_json; wipe_json="$(maybe_wipe_build_artifacts "${FLAG_DRY_RUN}")"
   audit "install_decision" "${wipe_json}"
   pnpm_install "${FLAG_DRY_RUN}"
 
-  # 6. Kill stale dev processes.
-  step "phase 6/7 — kill stale tauri/vite/tuxlink processes"
+  # 7. Kill stale dev processes + VERIFY port 1420 is actually free.
+  step "phase 7/8 — kill stale tauri/vite/tuxlink processes"
   local killed_json; killed_json="$(kill_stale_dev_processes "${FLAG_DRY_RUN}")"
   audit "processes_killed" "$(printf '{"pids":%s}' "${killed_json}")"
+  verify_port_free "${FLAG_DRY_RUN}"
 
-  # 7. Write state + launch.
-  step "phase 7/7 — launch"
+  # 8. Write state + launch. State write happens AFTER port verification so
+  # a stalled run does not poison next-run's lockfile/HEAD baselines.
+  step "phase 8/8 — launch"
   write_state "${FLAG_DRY_RUN}"
-  audit "converged" "$(printf '{"dry_run":%d}' "${FLAG_DRY_RUN}")"
+  audit "convergence_complete_pre_launch" "$(printf '{"dry_run":%d}' "${FLAG_DRY_RUN}")"
   launch_tauri_dev "${FLAG_DRY_RUN}"
 }
 
