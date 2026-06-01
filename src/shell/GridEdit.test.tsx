@@ -139,6 +139,27 @@ test('source chip is a <button> when source = Manual', () => {
   expect(screen.getByTestId('source-chip').tagName).toBe('BUTTON');
 });
 
+// tuxlink-c79g Task 12 follow-up: per spec §4.4 line 371 + plan body line 1481
+// (grounded in adrev R2 #3 + R2 #6), the Manual source-chip <button> carries
+// aria-pressed={false}. The initial T12 implementation deliberately omitted
+// this citing WAI-ARIA's framing of aria-pressed as a toggle attribute; the
+// spec is canonical and the attribute is restored. If there's appetite to
+// amend the spec, that's a separate adrev-round decision — this test
+// prevents future sessions from silently dropping the attribute again.
+test('Manual source-chip <button> carries aria-pressed="false" (spec §4.4)', () => {
+  render(
+    <GridEdit
+      grid="EM75"
+      source="Manual"
+      gpsReady={false}
+      onCommit={vi.fn()}
+      onUseGps={vi.fn()}
+    />,
+  );
+  const chip = screen.getByTestId('source-chip');
+  expect(chip).toHaveAttribute('aria-pressed', 'false');
+});
+
 test('source chip is a <span> with role=status when source = Gps', () => {
   render(
     <GridEdit

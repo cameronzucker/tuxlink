@@ -134,6 +134,7 @@ export function GridEdit({ grid, source, gpsReady, onCommit, onUseGps }: GridEdi
           className={`dash-source-chip manual${gpsReady ? ' gps-ready-glow' : ''}`}
           data-testid="source-chip"
           aria-label="Switch position source to GPS"
+          aria-pressed={false}
           onClick={onUseGps}
         >
           MANUAL
