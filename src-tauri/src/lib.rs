@@ -107,6 +107,13 @@ pub fn run() {
         // same instance. Starts Stopped with no token (mint via the RADIO-1
         // modal flow).
         .manage(std::sync::Arc::new(crate::modem_status::ModemSession::new()))
+        // tuxlink-0pnb: P2P-Telnet single-flight + abort coordination (mirrors
+        // NativeBackend's connect_in_progress + aborting flags, but held in
+        // managed state because P2P bypasses WinlinkBackend entirely).
+        .manage(crate::ui_commands::P2pConnectState {
+            in_progress: std::sync::atomic::AtomicBool::new(false),
+            aborting: std::sync::atomic::AtomicBool::new(false),
+        })
         .setup(|app| {
             use tauri::Manager as _;  // brings .state() into scope for the setup closure
             // Install system tray icon + menu (tuxlink-rit / Task 8).
@@ -274,8 +281,11 @@ pub fn run() {
             crate::modem_commands::modem_ardop_connect, // tuxlink-4ek Task 3.3 (RADIO-1-gated spawn + ARQ connect)
             crate::modem_commands::modem_mint_consent, // tuxlink-4ek Task 6.2 (RADIO-1 token mint — backend-only)
             crate::modem_commands::modem_ardop_b2f_exchange, // tuxlink-ytg (B2F over ARDOP — Winlink mail flows)
-            // tuxlink-0pnb Task 4: P2P-Telnet dial + per-peer password management
-            crate::ui_commands::telnet_p2p_dial,
+            // tuxlink-0pnb Task 4 (refactored): P2P-Telnet connect + abort + peer-password management.
+            // telnet_p2p_dial renamed to telnet_p2p_connect (StatusBar pipeline wiring);
+            // telnet_p2p_abort added to mirror cms_abort (operator cancel semantics).
+            crate::ui_commands::telnet_p2p_connect,
+            crate::ui_commands::telnet_p2p_abort,
             crate::ui_commands::p2p_peer_password_set,
             crate::ui_commands::p2p_peer_password_clear,
             crate::ui_commands::p2p_peer_password_status,

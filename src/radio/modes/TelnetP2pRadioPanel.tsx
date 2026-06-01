@@ -1,34 +1,43 @@
 // src/radio/modes/TelnetP2pRadioPanel.tsx
 //
-// Telnet P2P right-panel implementation per spec §4.5 and the right-panel
-// architecture established by TelnetRadioPanel (P2), PacketRadioPanel (P3),
-// and ArdopRadioPanel (P4).
+// Telnet P2P right-hand radio panel (tuxlink-0pnb), structurally mirroring
+// TelnetRadioPanel.tsx per the 2026-06-01 operator-flagged regression:
+// the prior implementation built a one-off control scheme and never wired
+// into the connection-status pipeline, so the StatusBar stayed idle and
+// operators lost control parity with the CMS panel.
 //
-// Path decision (Task 6): path (a) — matches the established right-panel
-// pattern where the reading pane falls back to MessageView and all
-// connection controls live in the right-hand radio panel. The plan's
-// `src/connections/TelnetP2pPanel.tsx` location pre-dated discovery that
-// every other built mode uses this right-panel architecture; the right-panel
-// path gives the operator a consistent UX surface for all connection types.
+// Structural mirror of TelnetRadioPanel:
+//   - Same RadioPanel chrome wrapper (mode, state, sub, onClose).
+//   - Same radio-panel-sec / radio-panel-input-row / radio-panel-chip
+//     class system — no new CSS classes invented.
+//   - Same radio-panel-btn-primary (Connect) + radio-panel-btn-bad (Stop)
+//     button pair in a radio-panel-act section.
+//   - Same SessionLogSection + useSessionLog for live progress.
+//   - Same config_read pattern for my_callsign + locator on mount.
+//   - Backend calls: telnet_p2p_connect (mirrors cms_connect) +
+//     telnet_p2p_abort (mirrors cms_abort).
+//   - telnet_p2p_connect emits backend_status:change events at each phase
+//     transition, so the StatusBar reflects Connecting / Connected /
+//     Disconnected for P2P sessions without polling WinlinkBackend.
 //
-// Controls (Dial mode only — PR 1 scope):
-//   - Peer host input (default 127.0.0.1)
-//   - Port input (default 8772, WLE parity — no TLS for P2P)
-//   - Peer callsign input (uppercased on input)
-//   - Password status + Set/Clear buttons (secret never displayed)
-//   - Connect button → telnet_p2p_dial Tauri command
-//   - Result display: "Sent N, received M." on success; error string on fail
-//   - Session log (shared surface via useSessionLog)
-//
-// my_callsign + locator sourced from config_read (same as TelnetRadioPanel's
-// host/transport config — one fetch on mount, cancelled on unmount).
+// Differences from TelnetRadioPanel that ARE warranted:
+//   - Peer callsign input (CMS callsign is fixed in config; P2P callsign
+//     is per-session and set at dial time).
+//   - Peer password Set/Clear (keyring-backed; CMS uses its own auth path).
+//   - Host quick-pick chip shows 127.0.0.1 (local Winlink Express default
+//     for P2P; CMS quick-picks are remote server names).
+//   - No port input exposed: WLE P2P is plaintext 8772 only (no TLS).
+//     Surfacing a port field would imply TLS is an option — it is not.
+//   - No transport radio group: WLE P2P is plaintext-only per decompile
+//     (spec §4.3). Hiding transport choice is honest, not an omission.
 //
 // Tauri commands used:
 //   config_read()                               → { callsign, grid, ... }
-//   telnet_p2p_dial({ req: P2pDialReq })        → { sent_count, received_count }
-//   p2p_peer_password_status(callsign)           → "Set" | "NotSet"
-//   p2p_peer_password_set(callsign, password)    → void
-//   p2p_peer_password_clear(callsign)            → void
+//   telnet_p2p_connect({ req: P2pDialReq })     → { sent_count, received_count }
+//   telnet_p2p_abort()                          → void (best-effort cancel)
+//   p2p_peer_password_status(callsign)          → "Set" | "NotSet"
+//   p2p_peer_password_set(callsign, password)   → void
+//   p2p_peer_password_clear(callsign)           → void
 
 import { useEffect, useState } from 'react';
 import type { KeyboardEvent } from 'react';
@@ -36,14 +45,13 @@ import { invoke } from '@tauri-apps/api/core';
 import { RadioPanel } from '../RadioPanel';
 import { SessionLogSection } from '../sections/SessionLogSection';
 import { useSessionLog } from '../sections/useSessionLog';
-import './TelnetP2pRadioPanel.css';
 
 export interface TelnetP2pRadioPanelProps {
   onClose: () => void;
 }
 
 const DEFAULT_HOST = '127.0.0.1';
-const DEFAULT_PORT = 8772;
+const P2P_PORT = 8772; // WLE P2P is plaintext 8772 only — no TLS option.
 
 type PasswordStatus = 'Set' | 'NotSet';
 
@@ -57,19 +65,26 @@ interface ConfigSlice {
   grid?: string;
 }
 
+// Quick-pick chips for the peer host input. 127.0.0.1 is the canonical
+// "dial into a local Winlink Express instance" target. The operator can type
+// any host manually; the chip is a convenience only.
+const QUICK_PICKS: { host: string; label: string }[] = [
+  { host: '127.0.0.1', label: 'localhost' },
+];
+
 export function TelnetP2pRadioPanel({ onClose }: TelnetP2pRadioPanelProps) {
   const [busy, setBusy] = useState(false);
   const [host, setHost] = useState<string>(DEFAULT_HOST);
-  const [port, setPort] = useState<number>(DEFAULT_PORT);
   const [peerCallsign, setPeerCallsign] = useState<string>('');
   const [myCallsign, setMyCallsign] = useState<string>('');
   const [locator, setLocator] = useState<string>('');
   const [passwordStatus, setPasswordStatus] = useState<PasswordStatus>('NotSet');
   const [result, setResult] = useState<DialResult | null>(null);
-  const [dialError, setDialError] = useState<string | null>(null);
+  const [connectError, setConnectError] = useState<string | null>(null);
   const { entries: logEntries, clear: clearLog } = useSessionLog();
 
-  // Load my_callsign + locator from config on mount.
+  // Load my_callsign + locator from config on mount (same pattern as
+  // TelnetRadioPanel's host/transport fetch — one call, cancelled on unmount).
   useEffect(() => {
     let cancelled = false;
     invoke<ConfigSlice>('config_read')
@@ -79,14 +94,16 @@ export function TelnetP2pRadioPanel({ onClose }: TelnetP2pRadioPanelProps) {
         if (c.grid) setLocator(c.grid);
       })
       .catch(() => {
-        // Pre-wizard / config absent — keep defaults.
+        // Pre-wizard / config absent — my_callsign + locator stay empty;
+        // the backend will reject with a meaningful error if needed.
       });
     return () => {
       cancelled = true;
     };
   }, []);
 
-  // Refresh password status whenever the peer callsign changes.
+  // Refresh password status whenever the peer callsign changes (debounce not
+  // needed — the backend lookup is a fast keyring read).
   useEffect(() => {
     if (!peerCallsign) {
       setPasswordStatus('NotSet');
@@ -105,26 +122,35 @@ export function TelnetP2pRadioPanel({ onClose }: TelnetP2pRadioPanelProps) {
     };
   }, [peerCallsign]);
 
-  const onPeerCallsignChange = (raw: string) => {
-    setPeerCallsign(raw.toUpperCase());
+  const commitHost = () => {
+    const trimmed = host.trim();
+    if (trimmed && trimmed !== host) setHost(trimmed);
   };
 
-  const onPortKey = (e: KeyboardEvent<HTMLInputElement>) => {
+  const onHostKey = (e: KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter') {
       e.preventDefault();
       (e.target as HTMLInputElement).blur();
     }
   };
 
+  const pickHost = (picked: string) => {
+    setHost(picked);
+  };
+
+  const onPeerCallsignChange = (raw: string) => {
+    setPeerCallsign(raw.toUpperCase());
+  };
+
   const handleSetPassword = async () => {
-    // v0.1: use window.prompt for password entry; no secret ever stored in state.
-    const pw = window.prompt(`Enter password for ${peerCallsign} (leave blank to cancel):`);
+    // v0.1: use window.prompt — secret never stored in component state.
+    const pw = window.prompt(`Enter password for ${peerCallsign} (blank = cancel):`);
     if (pw === null || pw === '') return;
     try {
       await invoke('p2p_peer_password_set', { callsign: peerCallsign, password: pw });
       setPasswordStatus('Set');
     } catch {
-      // Backend errors propagate via session log; swallowed here.
+      // Backend errors surface in the session log.
     }
   };
 
@@ -133,20 +159,22 @@ export function TelnetP2pRadioPanel({ onClose }: TelnetP2pRadioPanelProps) {
       await invoke('p2p_peer_password_clear', { callsign: peerCallsign });
       setPasswordStatus('NotSet');
     } catch {
-      // Swallowed; session log carries any backend error.
+      // Session log carries any backend error.
     }
   };
 
-  const connect = async () => {
+  // Connect — mirrors TelnetRadioPanel's `start()` pattern.
+  // telnet_p2p_connect drives session-log events + status transitions.
+  const start = async () => {
     if (busy) return;
     setBusy(true);
     setResult(null);
-    setDialError(null);
+    setConnectError(null);
     try {
-      const res = await invoke<DialResult>('telnet_p2p_dial', {
+      const res = await invoke<DialResult>('telnet_p2p_connect', {
         req: {
           host: host.trim() || DEFAULT_HOST,
-          port,
+          port: P2P_PORT,
           peer_callsign: peerCallsign,
           my_callsign: myCallsign,
           locator,
@@ -154,15 +182,20 @@ export function TelnetP2pRadioPanel({ onClose }: TelnetP2pRadioPanelProps) {
       });
       setResult(res);
     } catch (e) {
-      setDialError(String(e));
+      setConnectError(String(e));
     } finally {
       setBusy(false);
     }
   };
 
+  // Stop — mirrors TelnetRadioPanel's `stop()` pattern.
+  const stop = () => {
+    void invoke('telnet_p2p_abort').catch(() => {});
+  };
+
   const subText = peerCallsign
-    ? `${peerCallsign} @ ${host.trim() || DEFAULT_HOST}:${port}`
-    : `${host.trim() || DEFAULT_HOST}:${port}`;
+    ? `${peerCallsign} @ ${host.trim() || DEFAULT_HOST}:${P2P_PORT}`
+    : `${host.trim() || DEFAULT_HOST}:${P2P_PORT}`;
 
   return (
     <RadioPanel
@@ -171,7 +204,7 @@ export function TelnetP2pRadioPanel({ onClose }: TelnetP2pRadioPanelProps) {
       sub={subText}
       onClose={onClose}
     >
-      {/* Peer endpoint */}
+      {/* Peer Station section — mirrors TelnetRadioPanel's Server section */}
       <section className="radio-panel-sec">
         <h5>Peer Station</h5>
         <label className="radio-panel-input-row">
@@ -186,21 +219,13 @@ export function TelnetP2pRadioPanel({ onClose }: TelnetP2pRadioPanelProps) {
             autoCorrect="off"
             placeholder="127.0.0.1"
             onChange={(e) => setHost(e.target.value)}
+            onBlur={commitHost}
+            onKeyDown={onHostKey}
           />
         </label>
-        <label className="radio-panel-input-row">
-          <span>Port</span>
-          <input
-            type="number"
-            className="radio-panel-input radio-panel-input--narrow"
-            data-testid="p2p-port-input"
-            value={port}
-            min={1}
-            max={65535}
-            onChange={(e) => setPort(parseInt(e.target.value, 10) || DEFAULT_PORT)}
-            onKeyDown={onPortKey}
-          />
-        </label>
+        {/* Port is not an editable input: WLE P2P is plaintext 8772 only.
+            Exposing a port field would imply TLS is an option — it is not.
+            The port is shown in the sub-header line for operator awareness. */}
         <label className="radio-panel-input-row">
           <span>Callsign</span>
           <input
@@ -215,17 +240,44 @@ export function TelnetP2pRadioPanel({ onClose }: TelnetP2pRadioPanelProps) {
             onChange={(e) => onPeerCallsignChange(e.target.value)}
           />
         </label>
+        <div className="radio-panel-chip-row">
+          {QUICK_PICKS.map((q) => (
+            <button
+              key={q.host}
+              type="button"
+              className="radio-panel-chip"
+              data-testid={`p2p-pick-${q.host}`}
+              onClick={() => pickHost(q.host)}
+            >
+              {q.label}
+            </button>
+          ))}
+        </div>
       </section>
 
-      {/* Peer password */}
+      {/* Transport note — mirrors TelnetRadioPanel's Transport section.
+          WLE P2P is plaintext-only (no TLS). The section is present so the
+          operator knows this is not an oversight, and to maintain visual
+          parity with the CMS panel's section count. */}
+      <section className="radio-panel-sec">
+        <h5>Transport</h5>
+        <p className="radio-panel-radio-help">
+          Plaintext · port {P2P_PORT}. WLE P2P does not support TLS — the
+          transport is fixed.
+        </p>
+      </section>
+
+      {/* Peer Password section — P2P-specific; no CMS equivalent.
+          The per-peer password is keyring-backed and never shown in the UI.
+          Set/Clear chips mirror the chip styling of the Host quick-picks. */}
       <section className="radio-panel-sec">
         <h5>Peer Password</h5>
-        <div className="p2p-password-row">
+        <div className="radio-panel-chip-row">
           <span
-            className="p2p-password-status"
+            className="radio-panel-sub"
             data-testid="p2p-password-status"
           >
-            {passwordStatus === 'Set' ? '<set>' : '<not set>'}
+            {passwordStatus === 'Set' ? 'Set' : 'Not set'}
           </span>
           <button
             type="button"
@@ -246,47 +298,51 @@ export function TelnetP2pRadioPanel({ onClose }: TelnetP2pRadioPanelProps) {
             Clear
           </button>
         </div>
-        <p className="radio-panel-help">
-          Optional. Sent only if the peer station challenges for a password.
+        <p className="radio-panel-radio-help">
+          Optional. Sent only if the peer challenges for a password.
           Stored in OS keyring — never in config or logs.
         </p>
       </section>
 
-      {/* Session log */}
       <SessionLogSection entries={logEntries} onClear={clearLog} />
 
-      {/* Result / error feedback */}
+      {/* Result / error feedback — displayed below the session log so the
+          operator sees the outcome inline without a separate modal. */}
       {result && (
         <section className="radio-panel-sec">
-          <p
-            className="p2p-result"
-            data-testid="p2p-result"
-          >
+          <p className="radio-panel-radio-help" data-testid="p2p-result">
             Sent {result.sent_count}, received {result.received_count}.
           </p>
         </section>
       )}
-      {dialError && (
+      {connectError && (
         <section className="radio-panel-sec">
-          <p
-            className="p2p-error"
-            data-testid="p2p-error"
-          >
-            {dialError}
+          <p className="radio-panel-radio-help" data-testid="p2p-error"
+             style={{ color: 'var(--error, #f87171)' }}>
+            {connectError}
           </p>
         </section>
       )}
 
-      {/* Actions */}
+      {/* Actions — mirrors TelnetRadioPanel's Start/Stop section exactly:
+          primary button (Connect / Connecting…) + bad button (Stop). */}
       <section className="radio-panel-sec radio-panel-act">
         <button
           type="button"
           className="radio-panel-btn radio-panel-btn-primary"
           data-testid="p2p-connect-btn"
           disabled={busy}
-          onClick={connect}
+          onClick={start}
         >
           {busy ? 'Connecting…' : 'Connect'}
+        </button>
+        <button
+          type="button"
+          className="radio-panel-btn radio-panel-btn-bad"
+          data-testid="p2p-stop-btn"
+          onClick={stop}
+        >
+          Stop
         </button>
       </section>
     </RadioPanel>
