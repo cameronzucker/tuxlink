@@ -1,0 +1,42 @@
+/* TelnetP2pRadioPanel.css — styles for the P2P Telnet right-hand radio panel */
+
+/* Password row: status badge + action chips in one line */
+.p2p-password-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.p2p-password-status {
+  font-size: 11px;
+  font-family: var(--font-mono, monospace);
+  color: var(--text-faint, #94a3b8);
+  background: var(--surface-2, #1e293b);
+  border: 1px solid var(--border, #334155);
+  border-radius: 3px;
+  padding: 1px 5px;
+  min-width: 56px;
+  text-align: center;
+}
+
+/* Input width: narrower for port field */
+.radio-panel-input--narrow {
+  width: 72px;
+  min-width: 0;
+}
+
+/* Result / error feedback */
+.p2p-result {
+  font-size: 12px;
+  color: var(--success, #34d399);
+  margin: 0;
+}
+
+.p2p-error {
+  font-size: 12px;
+  color: var(--error, #f87171);
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 0;
+}

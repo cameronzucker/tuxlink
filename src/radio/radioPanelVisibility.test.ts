@@ -76,4 +76,12 @@ describe('computePanelMode', () => {
     );
     expect(mode).toEqual({ kind: 'telnet', intent: 'cms' });
   });
+
+  it('returns telnet/p2p when p2p+telnet is selected in the sidebar (tuxlink-0pnb)', () => {
+    const mode = computePanelMode(
+      { sidebarSelected: { sessionType: 'p2p', protocol: 'telnet' },
+        activeModem: null, togglePinned: false },
+    );
+    expect(mode).toEqual({ kind: 'telnet', intent: 'p2p' });
+  });
 });
