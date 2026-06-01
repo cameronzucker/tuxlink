@@ -1,0 +1,14 @@
+[package]
+name = "hf-channel-sim"
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-only"
+description = "Watterson-class HF ionospheric channel simulator. Pure-Rust, deterministic, AGPLv3-only."
+repository = "https://github.com/cameronzucker/hf-channel-sim"
+readme = "README.md"
+keywords = ["hf", "radio", "channel-model", "watterson", "ionospheric"]
+categories = ["science", "simulation"]
+
+[dependencies]
+
+[dev-dependencies]
