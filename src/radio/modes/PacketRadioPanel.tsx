@@ -51,6 +51,10 @@ export function PacketRadioPanel({ intent, baseCall, onClose }: PacketRadioPanel
   const [target, setTarget] = useState('');
   const [relays, setRelays] = useState<string[]>([]);
   const [armed, setArmed] = useState(false);
+  // listenDefault PREFERENCE (auto-arm on startup) — distinct from the
+  // live `armed` state above. Synced from config on load + persisted via
+  // packet_set_listen. Restored 2026-05-31 from legacy PacketConnectionPanel.
+  const [listenDefault, setListenDefault] = useState<boolean>(true);
   const logEntries = useSessionLog();
 
   // Load packet config on mount. If packet_config_get rejects (pre-wizard)
@@ -60,7 +64,13 @@ export function PacketRadioPanel({ intent, baseCall, onClose }: PacketRadioPanel
     let cancelled = false;
     invoke<PacketConfigDto>('packet_config_get')
       .then((c) => {
-        if (!cancelled) setConfig(c);
+        if (cancelled) return;
+        setConfig(c);
+        // Sync the listenDefault preference from config — keep panel
+        // state in sync with persisted preference on first load.
+        if (typeof c.listenDefault === 'boolean') {
+          setListenDefault(c.listenDefault);
+        }
       })
       .catch(() => {
         // Pre-wizard / no config — fallback defaults via getters below.
@@ -69,6 +79,15 @@ export function PacketRadioPanel({ intent, baseCall, onClose }: PacketRadioPanel
       cancelled = true;
     };
   }, []);
+
+  const onToggleListenDefault = () => {
+    const next = !listenDefault;
+    setListenDefault(next);
+    void invoke('packet_set_listen', { enabled: next }).catch(() => {
+      // Rollback on failure so the checkbox doesn't lie about persisted state.
+      setListenDefault((v) => !v);
+    });
+  };
 
   // Persist helper — merges new fields into the current DTO and writes
   // to backend. No-op when config is unloaded (we can't write a partial
@@ -194,6 +213,24 @@ export function PacketRadioPanel({ intent, baseCall, onClose }: PacketRadioPanel
               ? `Waiting for a call as ${effectiveCall(baseCall, ssid)} — Stop`
               : 'Listen for an incoming call'}
           </button>
+          {/* listenDefault is a PREFERENCE (auto-arm on startup), distinct
+              from the live armed state above — it does not imply live
+              listening. Restored 2026-05-31 from the legacy
+              PacketConnectionPanel after Codex P1 flagged it as a lost
+              feature on this PR. */}
+          <label
+            className="packet-listen-pref"
+            data-testid="listen-default-pref"
+            style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 8, fontSize: 12, color: 'var(--text-faint, #94a3b8)' }}
+          >
+            <input
+              type="checkbox"
+              data-testid="listen-default-checkbox"
+              checked={listenDefault}
+              onChange={onToggleListenDefault}
+            />
+            Auto-arm Listen at startup
+          </label>
         </section>
       )}
 

@@ -162,9 +162,25 @@ function fmtUptime(sec: number): string {
   return m === 0 ? `${s}s` : `${m}m ${s}s`;
 }
 
+// ARQ bandwidth options — wire shape expected by ardopcf's `ARQBW`. `null`
+// renders as empty <option value=""> meaning "Auto (ardopcf default)".
+// Mirrors SettingsPanel.tsx — restored to the Connect section per Codex P1
+// 2026-05-31 so the operator doesn't have to leave the radio panel.
+const ARQ_BANDWIDTH_OPTIONS: { value: number | null; label: string }[] = [
+  { value: null, label: 'Auto (ardopcf default)' },
+  { value: 200, label: '200 Hz (most robust)' },
+  { value: 500, label: '500 Hz (marginal HF)' },
+  { value: 1000, label: '1000 Hz' },
+  { value: 2000, label: '2000 Hz (best throughput)' },
+];
+
 export function ArdopRadioPanel({ onClose }: ArdopRadioPanelProps) {
   const { status } = useModemStatus();
   const [target, setTarget] = useState('');
+  // ARQ bandwidth (restored 2026-05-31 — Codex P1). Loaded from
+  // config_get_ardop on mount; persisted via config_set_ardop on change.
+  // null = "leave at ardopcf default."
+  const [bandwidth, setBandwidth] = useState<number | null>(null);
   const consent = useConsent();
   const [showConsent, setShowConsent] = useState(false);
   const [connecting, setConnecting] = useState(false);
@@ -180,6 +196,43 @@ export function ArdopRadioPanel({ onClose }: ArdopRadioPanelProps) {
   const snrHistory = useSampleHistory(status.snDb, 60);
   const throughputHistory = useSampleHistory(status.throughputBps, 60);
   const frameHistory = useFrameHistory(status, 60);
+
+  // Load ARQ bandwidth from persisted ARDOP config on mount.
+  useEffect(() => {
+    let cancelled = false;
+    invoke<{ bandwidth_hz: number | null }>('config_get_ardop')
+      .then((c) => {
+        if (!cancelled && c && typeof c.bandwidth_hz !== 'undefined') {
+          setBandwidth(c.bandwidth_hz);
+        }
+      })
+      .catch(() => {
+        /* pre-wizard / config absent — keep null default */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const onBandwidthChange = (e: ChangeEvent<HTMLSelectElement>) => {
+    // value="" represents the "Auto" option → null. Otherwise parse as int.
+    const raw = e.target.value;
+    const next = raw === '' ? null : parseInt(raw, 10);
+    setBandwidth(next);
+    // Persist via merge: read current ardop config, splice bandwidth, write
+    // back. Mirrors SettingsPanel.tsx's pattern so two writers can't clobber
+    // each other's fields.
+    void (async () => {
+      try {
+        const current = await invoke<Record<string, unknown>>('config_get_ardop');
+        await invoke('config_set_ardop', {
+          value: { ...current, bandwidth_hz: next },
+        });
+      } catch {
+        // Persist errors surface via the session log; UI keeps the new value.
+      }
+    })();
+  };
 
   const isStopped = status.state === 'stopped';
   const isExchangeReady =
@@ -309,6 +362,21 @@ export function ArdopRadioPanel({ onClose }: ArdopRadioPanelProps) {
               autoCapitalize="characters"
               autoCorrect="off"
             />
+          </label>
+          <label className="radio-panel-input-row">
+            <span>Bandwidth</span>
+            <select
+              className="radio-panel-input"
+              data-testid="ardop-bandwidth-select"
+              value={bandwidth ?? ''}
+              onChange={onBandwidthChange}
+            >
+              {ARQ_BANDWIDTH_OPTIONS.map((opt) => (
+                <option key={String(opt.value)} value={opt.value ?? ''}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
           </label>
         </section>
       )}
