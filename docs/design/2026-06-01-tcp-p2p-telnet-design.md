@@ -53,14 +53,17 @@ client (no synthetic harness, no CMS-dev workarounds).
 
 ## 2. Operational modes (ground-truthed)
 
-Tuxlink can act as **dialer-master** (initiating outbound) or **listener-slave**
-(accepting inbound). The B2F session primitives are reused; the orchestration
-role differs.
+Tuxlink can act as **dialer** (initiating outbound) or **listener** (accepting
+inbound). In FBB B2F terms, the side that emits the `[NAME-VERSION-CODES]`
+handshake first is the **master**; the side that answers it is the **slave**.
+The B2F session primitives are reused unchanged via the existing
+`ExchangeRole` enum (`ExchangeRole::Dial` = slave; `ExchangeRole::Answer` =
+master). The orchestration role differs by mode.
 
-| Mode | tuxlink role (FBB) | Who speaks first | Auth source |
-|---|---|---|---|
-| **Dial P2P peer** | master (dialer) | peer (listener) sends `CALLSIGN :` prompt; B2F runs after login | peer's RF callsign + optional shared password |
-| **Listen for P2P peer** | slave (listener) | **tuxlink** (issues `CALLSIGN :` + optional `Password :` prompt; then peer sends B2F handshake) | dialer's RF callsign + optional configured password |
+| Mode | tuxlink role (FBB) | `ExchangeRole` arg | Who emits B2F handshake first | Auth source |
+|---|---|---|---|---|
+| **Dial P2P peer** | slave (dialer) | `Dial` | peer (listener) — after telnet-login wrapper | peer's RF callsign + optional shared password |
+| **Listen for P2P peer** | master (listener-answerer) | `Answer` | **tuxlink** (listener) — after telnet-login wrapper | dialer's RF callsign + optional configured password |
 
 **Telnet-login wrapper** (WLE-compat, evidence: `TelnetP2PSession.cs:1252-1340`):
 
@@ -82,9 +85,11 @@ Notes:
   triggers the prompt).
 - Allowed-stations gate applies AFTER the dialer's callsign is received, BEFORE
   any B2F handshake. Failed match → close connection.
-- After the wrapper, the **listener** is in B2F-slave role (server speaks first
-  in the existing `run_exchange` model — which is correct: listener emits the
-  B2F handshake first).
+- After the wrapper, the **listener** is in B2F-master role (it emits the
+  `[NAME-VERSION-CODES]` handshake first; the dialer reads it via
+  `read_remote_handshake` and answers via `build_master_handshake`). This
+  matches the existing `ExchangeRole::Answer` path in `run_exchange_with_role`
+  used today by the AX.25 packet listener (`tuxlink-7fr`).
 
 ## 3. Architecture (layering)
 
@@ -95,9 +100,10 @@ Notes:
                        transport visibility per the established anti-pattern)
 ⑤ Orchestration      (NEW — TransportConfig::TelnetP2P { mode: Dial | Listen,
                        peer: PeerEndpoint, ... }; lifecycle + abort)
-④ B2F session        (REUSE run_exchange (dialer-master path) + listener-slave
-                       path that already exists for the CMS-secure-login mock
-                       tests in session.rs)
+④ B2F session        (REUSE run_exchange_with_role: ExchangeRole::Dial for
+                       outbound, ExchangeRole::Answer for inbound. The Answer
+                       path is already exercised by the AX.25 listener and
+                       by session.rs's master-role unit tests)
 ③ Telnet-login       (NEW — winlink/telnet_p2p_login.rs: CALLSIGN/Password
    wrapper             prompt issuer (listener) + answerer (dialer))
 ② Allowlist gate     (NEW — winlink/p2p_allowlist.rs: parse + match callsigns/IPs
