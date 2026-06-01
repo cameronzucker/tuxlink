@@ -1,0 +1,95 @@
+#!/usr/bin/env bash
+# pre-push — refuse pushes on merged-dead or closed-dead branches.
+#
+# Implements docs/adr/0017-branch-state-machine.md. A separate refuse from
+# pre-commit because some workflows ship a commit locally, then push later;
+# the push is the actual point where origin gets the orphan ref.
+#
+# Reads its branch input from git's standard pre-push protocol on stdin:
+#   <local-ref> <local-sha> <remote-ref> <remote-sha>
+# We refuse only when the local branch being pushed is merged-dead.
+#
+# Activate via:
+#   git config core.hooksPath .githooks
+#   # or run: scripts/install-githooks.sh
+
+set -eu
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+# shellcheck source=lib/branch-state.sh
+. "${REPO_ROOT}/.githooks/lib/branch-state.sh"
+
+OVERRIDE_VAR="TUXLINK_BRANCH_LIFECYCLE_OVERRIDE"
+OVERRIDE_SENTINEL="I-know-what-Im-doing"
+
+# git's pre-push stdin protocol: one line per ref being pushed.
+# Format: <local-ref> <local-sha> <remote-ref> <remote-sha>
+# We extract the branch name and check its state.
+#
+# Codex P1 #2 (2026-06-01): the local_ref may be HEAD, a SHA, or any
+# non-branch ref when the user pushes via `git push origin HEAD:refs/heads/foo`.
+# Resolution order:
+#   1. If local_ref starts with refs/heads/, strip the prefix.
+#   2. Else, if remote_ref starts with refs/heads/, use that (the push
+#      target IS the destination branch we want to classify).
+#   3. Else, resolve HEAD via symbolic-ref as a last resort.
+overall_refuse=0
+while read -r local_ref local_sha remote_ref remote_sha; do
+  # A delete (local_sha = all-zeros) is not a push of new content.
+  if [ "${local_sha}" = "0000000000000000000000000000000000000000" ]; then
+    continue
+  fi
+
+  branch=""
+  case "${local_ref}" in
+    refs/heads/*) branch="${local_ref#refs/heads/}" ;;
+    *)
+      case "${remote_ref}" in
+        refs/heads/*) branch="${remote_ref#refs/heads/}" ;;
+        *)
+          # Last resort: maybe the local_ref is HEAD or a SHA pointing at
+          # the current branch.
+          branch="$(git symbolic-ref --short HEAD 2>/dev/null || echo '')"
+          ;;
+      esac
+      ;;
+  esac
+
+  if [ -z "${branch}" ]; then
+    printf '⚠ branch lifecycle: pre-push could not resolve a branch name for ref %s → %s — allowing\n' \
+      "${local_ref}" "${remote_ref}" >&2
+    continue
+  fi
+
+  state="$(classify_branch_state "${branch}")"
+
+  case "${state}" in
+    protected|bot|pr-open|active|follow-up|unknown)
+      continue
+      ;;
+    merged-dead|closed-dead)
+      if [ "${!OVERRIDE_VAR:-}" = "${OVERRIDE_SENTINEL}" ]; then
+        branch_state_log_override "push" "${branch}" "${state}"
+        printf '⚠ branch lifecycle: %s OVERRIDDEN for push on %s (%s)\n' \
+          "${OVERRIDE_VAR}" "${branch}" "${state}" >&2
+        continue
+      elif [ -n "${!OVERRIDE_VAR:-}" ]; then
+        printf '⚠ branch lifecycle: %s was set but did not match sentinel %q — refusing\n' \
+          "${OVERRIDE_VAR}" "${OVERRIDE_SENTINEL}" >&2
+      fi
+      branch_state_refuse_message "${state}" "${branch}" "push" "${OVERRIDE_VAR}"
+      overall_refuse=1
+      ;;
+    *)
+      # Unknown classification (shouldn't happen).
+      printf '⚠ branch lifecycle: unrecognized state "%s" for branch %s — allowing push\n' \
+        "${state}" "${branch}" >&2
+      ;;
+  esac
+done
+
+if [ "${overall_refuse}" -ne 0 ]; then
+  exit 1
+fi
+
+exit 0
