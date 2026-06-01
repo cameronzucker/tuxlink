@@ -1,0 +1,97 @@
+Form: ON_IMS205_Initial.html, ON_IMS205_viewer.html
+
+
+To: 
+Subject: Ontario IMS205 - <var Incident_Name> - <var ActivityDateTime>  
+Msg:
+1. Incident Name: <var Incident_Name>
+
+2. Operational Period:
+From: <var DateFrom> <var TimeFrom>
+To: <var DateTo> <var TimeTo> 
+
+3. Basic Contact Information:
+Function: <var Function1>
+Assignment: <var Assignment1>
+System Type/Cache: <var System1>
+Channel/Phone/PIN: <var ChannelPhonePIN1>
+Frequency/Tone: <var FrequencyTone1>
+Remarks: <var Remarks1>
+
+Function: <var Function2>
+Assignment: <var Assignment2>
+System Type/Cache: <var System2>
+Channel/Phone/PIN: <var ChannelPhonePIN2>
+Frequency/Tone: <var FrequencyTone2>
+Remarks: <var Remarks2>
+
+Function: <var Function3>
+Assignment: <var Assignment3>
+System Type/Cache: <var System3>
+Channel/Phone/PIN: <var ChannelPhonePIN3>
+Frequency/Tone: <var FrequencyTone3>
+Remarks: <var Remarks3>
+
+Function: <var Function4>
+Assignment: <var Assignment4>
+System Type/Cache: <var System4>
+Channel/Phone/PIN: <var ChannelPhonePIN4>
+Frequency/Tone: <var FrequencyTone4>
+Remarks: <var Remarks4>
+
+Function: <var Function5>
+Assignment: <var Assignment5>
+System Type/Cache: <var System5>
+Channel/Phone/PIN: <var ChannelPhonePIN5>
+Frequency/Tone: <var FrequencyTone5>
+Remarks: <var Remarks5>
+
+Function: <var Function6>
+Assignment: <var Assignment6>
+System Type/Cache: <var System6>
+Channel/Phone/PIN: <var ChannelPhonePIN6>
+Frequency/Tone: <var FrequencyTone6>
+Remarks: <var Remarks6>
+
+Function: <var Function7>
+Assignment: <var Assignment7>
+System Type/Cache: <var System7>
+Channel/Phone/PIN: <var ChannelPhonePIN7>
+Frequency/Tone: <var FrequencyTone7>
+Remarks: <var Remarks7>
+
+Function: <var Function8>
+Assignment: <var Assignment8>
+System Type/Cache: <var System8>
+Channel/Phone/PIN: <var ChannelPhonePIN8>
+Frequency/Tone: <var FrequencyTone8>
+Remarks: <var Remarks8>
+
+Function: <var Function9>
+Assignment: <var Assignment9>
+System Type/Cache: <var System9>
+Channel/Phone/PIN: <var ChannelPhonePIN9>
+Frequency/Tone: <var FrequencyTone9>
+Remarks: <var Remarks9>
+
+Function: <var Function10>
+Assignment: <var Assignment10>
+System Type/Cache: <var System10>
+Channel/Phone/PIN: <var ChannelPhonePIN10>
+Frequency/Tone: <var FrequencyTone10>
+Remarks: <var Remarks10>
+
+--------------------------------------
+
+F4. Special Instructions:
+<var SpecialInstructions>
+
+--------------------------------------
+
+5. Prepared by Telecommunications Unit Leader:
+Name: <var PreparedBy>
+Position/Title: <var PositionTitle>
+Signature: <var Signature>
+IAP Page: <var IAPPage>
+Date/Time: <var ActivityDateTime>
+

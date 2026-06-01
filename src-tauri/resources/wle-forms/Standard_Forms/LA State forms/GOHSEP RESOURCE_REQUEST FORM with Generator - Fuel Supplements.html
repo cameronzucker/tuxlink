@@ -1,0 +1,1468 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml"><head>
+<meta http-equiv="Content-Type" content="text/html; charset=iso-8859-1" /><title>GOHSEP Resource Request </title>
+
+<style type="text/css">
+<!--
+@media print {
+.form-control, .form-control.nobug {
+border: 0;
+outline: 0;
+box-shadow: none;
+font-size:14px;
+}
+.form-control.nobug {
+transition: none; /*-- THIS IS IMPORTANT -- */
+}
+input, textarea {
+outline: none !important;
+box-shadow: none;
+border: none;
+overflow: visible;
+font-family: Arial, Helvetica, sans-serif;
+font-size: 11px;
+}
+.formtext {
+font-family: Arial, Helvetica, sans-serif;
+font-size: 10pt;
+font-weight: normal;
+}
+</style>
+<script>
+function shortmonth(monthnum) {
+var monthname;
+shortmonths = ["JAN", "FEB", "MAR","APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"] ;
+monthname = shortmonths [monthnum];s
+return monthname; }
+</script>
+<script>
+function SetDateTime(TType,TheFld, FocusFld) {
+var txt;
+var myprompt;
+var d = new Date(),
+thisyear = d.getFullYear();
+thismonth= d.getMonth();
+thisday = d.getDate();
+var monname;
+h = (d.getHours()<10?'0':'') + d.getHours()
+m = (d.getMinutes()<10?'0':'') + d.getMinutes()
+s = (d.getSeconds()<10?'0':'') + d.getSeconds();
+var now = new Date();
+var utch = now.getUTCHours();
+if (utch < 10) { utch = "0"+utch};
+var utcs = now.getUTCMinutes();
+if (utcs < 10) { utcs = "0"+utcs};
+var myUTCtime = utch+":"+utcs+"Z";
+var utcstr = d.toUTCString();
+var localt = d.toLocaleTimeString();
+var isostr = d.toISOString();
+monthname = shortmonth (thismonth);
+thismonth = thismonth + 1;
+switch (TType) {
+case 'hms' :
+myprompt = h + ':' + m + ':' + s;
+var RightNow = prompt("Time:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'hm' :
+myprompt = h + ':' + m;
+var RightNow = prompt("Time:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'm-d-y': myprompt = thismonth+ '-' + thisday+ '-'+ thisyear;
+var RightNow = prompt("Date:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'm/d/y': myprompt = thismonth+ '/' + thisday+ '/'+ thisyear;
+var RightNow = prompt("Date:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'd mmm y': myprompt = thisday+ ' ' + monthname+ ' '+ thisyear;
+var RightNow = prompt("Date:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'mmm-d-y': myprompt = monthname+'-'+thisday+ '-' + thisyear;
+var RightNow = prompt("Date:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'localampm': var myprompt = localt;
+var RightNow = prompt("Local time:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'fulldate': var myprompt = thisyear+ '-'+thismonth+'-'+thisday;
+var RightNow = prompt("Date:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'fulldatetime': var myprompt = thisyear+'-'+monthname+ '-'+thisday+' '+h + ':' + m ;
+var RightNow = prompt("Date time:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'autodate': var RightNow = thisyear+'-'+thismonth+ '-'+thisday ;
+//var RightNow = prompt("Date time:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'autotime': var RightNow = h + ':' + m ;
+//var RightNow = prompt("Date time:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'iso': var myprompt = isostr;
+var RightNow = prompt("Date time:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'utc': var myprompt = utcstr;
+var RightNow = prompt("Date time:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'zulu': var myprompt = isostr;
+myprompt = isostr.replace("T", " "); slen = myprompt.length;
+myprompt = myprompt.substr(0, slen-5)+'Z';
+var RightNow = prompt("Date time:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'UTChm': var myprompt = myUTCtime;
+var RightNow = prompt("Date time:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+}
+// if(FocusFld !== null && FocusFld !== '') {document.getElementById(FocusFld).focus()} --/
+}; </script>
+<script>
+function AutoGrowTextArea(textField)
+{
+if (textField.clientHeight < textField.scrollHeight)
+{
+textField.style.height = textField.scrollHeight + "px";
+if (textField.clientHeight < textField.scrollHeight)
+{
+textField.style.height = (textField.scrollHeight * 2 - textField.clientHeight) + "px";
+}
+}
+}
+function Countthelines(f) { var text1 = f
+var text2 = text1.replace(/\s+$/,"");
+var split2 = text2.split("\n"); var mytotal = split2.length * 17;
+if (mytotal < 150) {
+mytotal = 150;
+}
+var tstr = mytotal.toString();
+return tstr;
+}
+function newfix(f){
+var ThisText = document.getElementById(f).value;
+var makeit = Countthelines(ThisText);
+document.getElementById(f).style.height = makeit+"px"; }
+function Fixarea() {
+newfix("msg");
+newfix("reply");
+AutoGrowTextArea(document.getElementById("msg"));
+AutoGrowTextArea(document.getElementById("reply"));
+}
+function RWS(str){
+var text2 = str.replace(/\s+$/,"");
+return text2.trim();
+}
+</script>
+<style>
+<!--
+TD{ bgcolor="#ffffff" valign="top"}
+.SubmitBtn {font-size: 12px;
+font-family: Arial,Helvetica,sans-serif;
+font-weight: inherit;
+}
+input[type=text], textarea {
+  -webkit-transition: all 0.30s ease-in-out;
+  -moz-transition: all 0.30s ease-in-out;
+  -ms-transition: all 0.30s ease-in-out;
+  -o-transition: all 0.30s ease-in-out;
+  outline: none;
+  padding: 3px 0px 3px 3px;
+  margin: 5px 1px 3px 0px;
+  border: 1px solid #666666;
+}
+ 
+input[type=text]:focus, textarea:focus {
+  box-shadow: 0 0 5px rgba(81, 203, 238, 1);
+  padding: 3px 0px 3px 3px;
+  margin: 5px 1px 3px 0px;
+  border: 1px solid rgba(81, 203, 238, 1);
+}
+</script>
+.style24 {font-family: Arial,Helvetica,sans-serif; font-size: 20px}
+</style>
+<style>
+/*
+body {color:#000; background:#fff; font:100%/1.5 arial,sans-serif;}
+h2 {margin-top:0}
+*/
+/* Styling applied to classes only */
+/* Pop-up content shifted off-screen when not in view.
+Still readable by screen-reader software.
+When targeted it fills the browser window.
+*/
+.pop-up {position:absolute; top:0; left:-500em;}
+.pop-up:target {position:static; left:0;}
+/* The pop-up itself */
+.popBox {
+background:#ffffff;
+/* alternatively fixed width / height and negative margins from 50% */
+position:absolute; left:20%; right:20%; top:10%; bottom:20%;
+z-index:10;
+border:1px solid #3a3a3a;
+/* CSS3 where available: rounded corners, drop-shadow, and fade in. */
+border-radius:.25rem;
+box-shadow:0 .5rem .5rem rgba(0,0,0,.5);
+opacity:0;
+transition: opacity 0.8s ease-out;
+}
+:target .popBox {position:fixed; opacity:1;}
+/* Light box properties */
+.lightbox {
+display:none;
+text-indent:-200em;
+background-color:rgba(0,0,0,.4);
+width:100%;
+height:100%;
+position:fixed;
+top:0;
+left:0;
+bottom:0;
+right:0;
+z-index:5;
+}
+:target .lightbox {display:block;}
+/* The pop-ups close link, moved via CSS to the top right of the pop-up */
+.close:link,
+.close:visited {
+position: absolute;
+top: -0.75em;
+right: -0.75em;
+display: block;
+width: 2em;
+height: 2em;
+line-height: 1.8;
+padding: 0;
+text-align: center;
+text-decoration: none;
+background-color: #000;
+border: 2px solid #fff;
+color: #fff;
+border-radius: 50%;
+box-shadow: 0 0 .5rem .5rem rba(0,0,0,.5);
+}
+.close:before {content:"X";}
+.close:hover,
+.close:active,
+.close:focus {
+box-shadow: 0 0 .5rem .5rem rba(255,0,0,.5);
+background-color: #c00;
+color: #fff;
+}
+.close span {
+text-indent: -200em;
+display: block;
+}
+/* The pop-up content div will scroll if it has too much content */
+.popScroll {
+position:absolute;
+top: 1rem;
+left: 1rem;
+right: 1rem;
+bottom: 1rem;
+overflow-y: auto;
+*overflow-y: scroll;
+padding-right: 0.5em;
+}
+.popScroll h2 {margin-top:0}
+.style6 {
+    font-family: Arial, Helvetica, sans-serif;
+    font-size: 18px;
+    text-align: center;
+}
+.formtext1 {font-family: Arial, Helvetica, sans-serif;
+font-size: 11pt;
+font-weight: normal;
+}
+.formtext {
+    font-family: Arial, Helvetica, sans-serif;
+    font-size: 10pt;
+    font-weight: bold;
+    text-align: left;
+}
+.formtext2 {font-family: Arial, Helvetica, sans-serif;
+font-size: 10pt;
+font-weight: normal;
+}
+.formtext2 {font-family: Arial, Helvetica, sans-serif;
+font-size: 10pt;
+font-weight: normal;
+}
+.formtext3 {font-family: Arial, Helvetica, sans-serif;
+font-size: 10pt;
+font-weight: normal;
+}
+.formtext3 {
+    font-family: Arial, Helvetica, sans-serif;
+    font-size: 10pt;
+    font-weight: normal;
+    text-align: left;
+}
+.formtext4 {font-family: Arial, Helvetica, sans-serif;
+font-size: 10pt;
+font-weight: normal;
+}
+.formtext4 {    font-family: Arial, Helvetica, sans-serif;
+    font-size: 10pt;
+    font-weight: normal;
+    text-align: left;
+}
+.SubmitBtn1 {font-size: 12px;
+font-weight: inherit;
+}
+.pagebreak {        clear: both;
+      	min-height: 1px;
+        page-break-after: always;
+}
+    
+     .number-orange {
+    background-color: #FED8B1;
+    padding: 0 4px;
+    font-weight: bold;
+  }
+    .number-v {
+    background-color: #DCD0FF;
+    padding: 0 4px;
+    font-weight: bold;
+  }
+    
+</style>
+<script>
+function shortmonth(monthnum) {
+var monthname;
+shortmonths = ["JAN", "FEB", "MAR","APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"] ;
+monthname = shortmonths [monthnum];s
+return monthname; }
+</script>
+<script>
+function SetDateTime(TType,TheFld, FocusFld) {
+var txt;
+var myprompt;
+var d = new Date(),
+thisyear = d.getFullYear();
+thismonth= d.getMonth();
+thisday = d.getDate();
+var submonth = thismonth+1; ;
+if (submonth < 10) { submonth = "0"+submonth};
+var subday = thisday;
+if (thisday < 10) { thisday = "0"+thisday};
+var monname;
+h = (d.getHours()<10?'0':'') + d.getHours()
+m = (d.getMinutes()<10?'0':'') + d.getMinutes()
+s = (d.getSeconds()<10?'0':'') + d.getSeconds();
+var now = new Date();
+var utch = now.getUTCHours();
+if (utch < 10) { utch = "0"+utch};
+var utcs = now.getUTCMinutes();
+if (utcs < 10) { utcs = "0"+utcs};
+var myUTCtime = utch+":"+utcs+"Z";
+var utcstr = d.toUTCString();
+var localt = d.toLocaleTimeString();
+var isostr = d.toISOString();
+monthname = shortmonth (thismonth);
+thismonth = thismonth + 1;
+switch (TType) {
+case 'hms' :
+myprompt = h + ':' + m + ':' + s;
+var RightNow = prompt("Time:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'hm' :
+myprompt = h + ':' + m;
+var RightNow = prompt("Time:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'm-d-y': myprompt = thismonth+ '-' + thisday+ '-'+ thisyear;
+var RightNow = prompt("Date:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'm/d/y': myprompt = thismonth+ '/' + thisday+ '/'+ thisyear;
+var RightNow = prompt("Date:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'd mmm y': myprompt = thisday+ ' ' + monthname+ ' '+ thisyear;
+var RightNow = prompt("Date:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'mmm-d-y': myprompt = monthname+'-'+thisday+ '-' + thisyear;
+var RightNow = prompt("Date:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'localampm': var myprompt = localt;
+var RightNow = prompt("Local time:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'fulldate': var myprompt = thisyear+ '-'+thismonth+'-'+thisday;
+var RightNow = prompt("Date:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'fulldatetime': var myprompt = thisyear+'-'+thismonth+ '-'+thisday+' '+h + ':' + m ;
+var RightNow = prompt("Date time:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'autofulldatetime': var RightNow = thisyear+'-'+thismonth+ '-'+thisday+' '+h + ':' + m ;
+//var RightNow = prompt("Date time:", myprompt);
+//document.getElementById(TheFld).value = RightNow;
+//var ORTimestamp = thisyear+submonth+subday+h+m+s;
+//document.getElementById('TimeStampOR').value = ORTimestamp; break;
+case 'iso': var myprompt = isostr;
+var RightNow = prompt("Date time:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'utc': var myprompt = utcstr;
+var RightNow = prompt("Date time:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'zulu': var myprompt = isostr;
+myprompt = isostr.replace("T", " "); slen = myprompt.length;
+myprompt = myprompt.substr(0, slen-5)+'Z';
+var RightNow = prompt("Date time:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'UTChm': var myprompt = myUTCtime;
+var RightNow = prompt("Date time:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+}
+// if(FocusFld !== null && FocusFld !== '') {document.getElementById(FocusFld).focus()} --/
+}
+function AutoGrowTextArea(textField)
+{
+if (textField.clientHeight < textField.scrollHeight)
+{
+textField.style.height = textField.scrollHeight + "px";
+if (textField.clientHeight < textField.scrollHeight)
+{
+textField.style.height = (textField.scrollHeight * 2 - textField.clientHeight) + "px";
+}
+}
+}
+function Countthelines(f) { var text1 = f
+var text2 = text1.replace(/\s+$/,"");
+var split2 = text2.split("\n"); var mytotal = split2.length * 17;
+if (mytotal < 150) {
+mytotal = 150;
+}
+var tstr = mytotal.toString();
+return tstr;
+}
+function newfix(f){
+var ThisText = document.getElementById(f).value;
+var makeit = Countthelines(ThisText);
+document.getElementById(f).style.height = makeit+"px"; }
+function Fixarea() {
+newfix("msg");
+newfix("reply");
+AutoGrowTextArea(document.getElementById("msg"));
+AutoGrowTextArea(document.getElementById("reply"));
+}
+function RWS(str){
+var text2 = str.replace(/\s+$/,"");
+return text2.trim();
+}
+function Flip(theid,working) {
+x1 = document.getElementById(theid).value;
+if (x1 == '' || x1 == '') { document.getElementById(theid).value = working} 
+else { document.getElementById(theid).value = '';}
+}
+
+function setcolor(mfield, thevalaue)
+{
+var thefield = document.getElementById(mfield);
+document.getElementById(mfield).style.background  = "#ffffff";
+if (thevalaue =="YES") {document.getElementById(mfield).style.background = "#fccac7"; }
+ }
+
+// add save load
+
+
+function saveTextAsFile(fileNameToSaveAs, textToWrite) {
+var textToWrite = document.getElementById('parseme').value; 
+var fileNameToSaveAs = "GOHSEP RR data " + DateforFile()+".txt";
+fileNameToSaveAs = prompt("", fileNameToSaveAs);
+
+  /* Saves a text string as a blob file*/  
+  var ie = navigator.userAgent.match(/MSIE\s([\d.]+)/),
+      ie11 = navigator.userAgent.match(/Trident\/7.0/) && navigator.userAgent.match(/rv:11/),
+      ieEDGE = navigator.userAgent.match(/Edge/g),
+      ieVer=(ie ? ie[1] : (ie11 ? 11 : (ieEDGE ? 12 : -1)));
+
+  if (ie && ieVer<10) {
+    console.log("No blobs on IE ver<10");
+    return;
+  }
+
+  var textFileAsBlob = new Blob([textToWrite], {
+    type: 'text/plain'
+  });
+
+  if (ieVer>-1) {
+    window.navigator.msSaveBlob(textFileAsBlob, fileNameToSaveAs);
+
+  } else {
+    var downloadLink = document.createElement("a");
+    downloadLink.download = fileNameToSaveAs;
+    downloadLink.href = window.URL.createObjectURL(textFileAsBlob);
+    downloadLink.onclick = function(e) { document.body.removeChild(e.target); };
+    downloadLink.style.display = "none";
+    document.body.appendChild(downloadLink);
+    downloadLink.click();
+  }
+}
+
+
+
+
+
+function destroyClickedElement(event)
+{
+    document.body.removeChild(event.target);
+}
+
+function loadFileAsText()
+{
+
+    var fileToLoad = document.getElementById("fileToLoad").files[0];
+ 
+    var fileReader = new FileReader();
+    fileReader.onload = function(fileLoadedEvent) 
+    {
+        var textFromFileLoaded = fileLoadedEvent.target.result;
+        document.getElementById("inputTextToSave").value = textFromFileLoaded;
+    };
+    fileReader.readAsText(fileToLoad, "UTF-8");
+}
+
+
+function DateforFile(RightNow) {
+var txt;
+var d = new Date(),
+thisyear = d.getFullYear();
+thismonth= d.getMonth();
+thismonth = thismonth+1;
+if (thismonth < 10) { thismonth = "0" + thismonth}
+
+thisday = d.getDate();
+if (thisday < 10) { thisday = "0" + thisday}
+
+h = (d.getHours()<10?'0':'') + d.getHours()
+m = (d.getMinutes()<10?'0':'') + d.getMinutes()
+var myprompt = thisyear+ '-'+thismonth+'-'+thisday+' '+h + '_' + m ;
+return myprompt;
+}
+
+function isObject(arg) {
+  return Object.prototype.toString.call(arg)==='[object Object]';
+}
+
+function formDataToObject(elForm) {
+    document.getElementById('parseme').value ='';
+  if (!elForm instanceof Element) return;
+  var fields = elForm.querySelectorAll('input, select, textarea'),
+    o = {};
+  for (var i=0, imax=fields.length; i<imax; ++i) {
+    var field = fields[i],
+      sKey = field.name || field.id;
+    if (field.type==='button' || field.type==='image' || field.type==='submit' || !sKey) continue;
+    switch (field.type) {
+      case 'checkbox':
+        o[sKey] = +field.checked;
+        break;
+      case 'radio':
+        if (o[sKey]===undefined) o[sKey] = '';
+        if (field.checked) o[sKey] = field.value;
+        break;
+      case 'select-multiple':
+        var a = [];
+        for (var j=0, jmax=field.options.length; j<jmax; ++j) {
+          if (field.options[j].selected) a.push(field.options[j].value);
+        }
+        o[sKey] = a;
+        break;
+      default:
+        o[sKey] = field.value;
+    }
+  }
+ // alert('Form data:\n\n' + JSON.stringify(o, null, 2));
+ document.getElementById('parseme').value = JSON.stringify(o, null, 2);
+//  return o;
+}
+function testversion(thisversion, dataversion){
+   
+    if (thisversion !== dataversion){    
+        // var x=confirm(("VersionThe current template is "+thisversion+" the data file is "+dataversion+"\n do you want to continue?"))}
+        var x=confirm(("The selected data file was created with a previous version of this template.\nIt may not be compatible with this version of the template.\n Do you want to continue?"))}
+ return x
+}
+function populateForm(o) {
+
+o =  JSON.parse(document.getElementById('parseme').value);
+ //if (!isObject(o)) return;
+if (!isObject(o)) return;
+    var Theversion = document.getElementById('Templateversion').value; // save the template version before load
+var tversion =  o["Templateversion"]
+var x= testversion(Theversion, tversion);
+if (x== false) return;
+  for (var i in o) {
+    var el = document.getElementById(i) || document.querySelector('[name=' + i + ']');
+    if (el.type==='radio') el = document.querySelectorAll('[name=' + i + ']');
+    switch (typeof o[i]) {
+      case 'number':
+        el.checked = o[i];
+        break;
+      case 'object':
+        if (el.options && o[i] instanceof Array) {
+          for (var j=0, jmax=el.options.length; j<jmax; ++j) {
+            if (o[i].indexOf(el.options[j].value)>-1) el.options[j].selected = true;
+          }
+        }
+        break;
+      default:
+        if (el instanceof NodeList) {
+          for (var j=0, jmax=el.length; j<jmax; ++j) {
+            if (el[j].value===o[i]) el[j].checked = true;
+          }
+        } else {
+          el.value = o[i];
+        }
+    }
+  }
+    Fixfields();
+
+
+}
+
+function SaveData() {
+	
+			formDataToObject(document.getElementById('myform'))
+			saveTextAsFile();
+			
+			//saveTextAsFile();
+			}
+
+//-------
+ function readBlob(opt_startByte, opt_stopByte) {
+  
+    var files = document.getElementById('files').files;
+    if (!files.length) {
+      alert('Please select a file!');
+      return;
+    }
+
+    var file = files[0];
+    var start = parseInt(opt_startByte) || 0;
+    var stop = parseInt(opt_stopByte) || file.size - 1;
+
+    var reader = new FileReader();
+
+    // If we use onloadend, we need to check the readyState.
+    reader.onloadend = function(evt) {
+      if (evt.target.readyState == FileReader.DONE) { // DONE == 2
+        document.getElementById('byte_content').textContent = evt.target.result;
+        document.getElementById('byte_range').textContent = 
+            ['Read bytes: ', start + 1, ' - ', stop + 1,
+             ' of ', file.size, ' byte file'].join('');
+      }
+    };
+
+    var blob = file.slice(start, stop + 1);
+    reader.readAsBinaryString(blob);
+  }
+    	
+  window.onload = function () { 
+ 
+ //Check the support for the File API support 
+ if (window.File && window.FileReader && window.FileList && window.Blob) {
+    var fileSelected = document.getElementById('txtfiletoread');
+	
+    fileSelected.addEventListener('change', function (e) { 
+         //Set the extension for the file 
+         var fileExtension = /text.*/; 
+         //Get the file object 
+         var fileTobeRead = fileSelected.files[0];
+        //Check of the extension match 
+         if (fileTobeRead.type.match(fileExtension)) { 
+             //Initialize the FileReader object to read the 2file 
+			
+             var fileReader = new FileReader(); 
+             fileReader.onload = function (e) { 
+                 var fileContents = document.getElementById('filecontents'); 
+                
+				document.getElementById('parseme').value =fileReader.result;
+				populateForm(obj = document.getElementById('parseme').value);
+					 } 
+             fileReader.readAsText(fileTobeRead); 
+         } 
+         else { 
+             alert("Please select text file"); 
+         }
+ 
+    }, false);
+} 
+ else { 
+     alert("Files are not supported"); 
+ } 
+ //Fixfields();
+     // document.getElementById('OtherType').disabled = true;
+ }
+ 
+ function Fixfields() { 
+
+
+
+ AutoGrowTextArea(document.getElementById("DESC-DELIVERY2"));
+  AutoGrowTextArea(document.getElementById("Gen17"));
+    AutoGrowTextArea(document.getElementById("Fuel9"));
+
+}
+    function zap(){
+        // document.getElementById('OtherType').value = '';
+       // document.getElementById("OtherType").placeholder = ""
+       // document.getElementById('OtherType').disabled = true;
+    }
+</script>
+</head>
+<body >
+<form  style="font-family: Arial;" pbzloc="3" onsubmit="return confirm('To complete your form submission, click OK and close the open browser window. You will return to the new message window so you can post your message to the outbox');" method="post" id="myform" enctype="multipart/form-data" action="http://{FormServer}:{FormPort}">
+<div id="pop1" class="pop-up"><!-- The pop-up block -->
+  <div class="popBox"><!-- If the content becomes larger than the pop-up this div will scroll the content -->
+<div class="popScroll"><!-- Test for help starts here -->
+<p> </p>
+<h2>Resource Request Questions</h2>
+<p align="left">
+<br />
+ <strong>Incident Name:</strong> <p>
+ <strong> Priority</strong><p>
+  <strong>•	When do you need this request fulfilled?</strong><br>
+  o	0-4 hours<br>
+  o	4-8 hours<br>
+  o	8-12 hours<br>
+  o	12-36 hours<br>
+  o	Longer than 36 hours</p>
+<p><strong>Justification</strong><br>
+  •	Does the county or local jurisdiction have the ability to contract for these resources?<br>
+  o	Yes<br>
+  o	No</p>
+<p>•<strong>	Have you exhausted all mutual aid options in the surrounding counties?</strong><br>
+  o	Yes<br>
+  o	No</p>
+<p>•<strong>	Additional justification for the requested resource(s)</strong>:<br>
+  Justification Examples:<br>
+  Local jurisdiction does not have this resource...<br>
+  All existing resources have been contracted out...<br>
+  Surrounding counties are also impacted...<br>
+  No mutual aid is available...</p>
+<p><strong>Requesting Jurisdiction</strong><br>
+  •	Requester Agency:<br>
+  •	Operational Area:</p>
+<p><strong>Requested Resource</strong>s<br>
+  •	Resource Name:<br>
+  •	Quantity Requested (ea):<br>
+  •	Detailed Resource Description: (Vital characteristics, brand, specs, experience, size, etc.)<br>
+  •	Is an operator needed for this resource?</p>
+<p>•	<strong>Request Summary</strong> (Why is this resource needed and what will it do):</p>
+<p>•	<strong>Actions taken on this request so far</strong> (what have you done to obtain the resource on your own)?</p>
+<p><strong>Requester Information</strong><br>
+  •	Requester First &amp; Last Name:<br>
+  •	Requester Email:<br>
+  •	Requester Phone:<br>
+  •	Requester Title:</p>
+<p><strong>Delivery Information</strong><br>
+  •	Recipient First &amp; Last Name:<br>
+  •	Delivery Recipient Email:<br>
+  •	Delivery Recipient Phone:<br>
+  •	Delivery Recipient Title:<br>
+  •	Delivery Recipient Entity Name:<br>
+  •	Delivery Location:<br>
+  •	Delivery Notes:<br>
+ <br />
+</div>
+<!-- The close pop-up link correctly positioned at the end of the content block -->
+<a id="lnk" href="#links" class="close"><span>Back
+to links</span></a> </div>
+</div>
+<table width="905" border="1" cellpadding="1" cellspacing="0" style="height: 453px;">
+<colgroup><col width="657" /></colgroup> <tbody>
+<tr valign="top">
+  <td height="35" colspan="4"><table width="100%"  border="0" cellspacing="0" cellpadding="0">
+    <tr valign="top">
+      <td><div align="center">
+        <p class="style6"><br />
+          <span style="font-size: 20px; font-weight: bold;">GOHSEP RESOURCE REQUEST FORM</span><br />
+        <p class="style6">
+          <input type="button" value=" Load GOHSEP RR data" onclick="document.getElementById('txtfiletoread').click();" />
+          <input type="file" id="txtfiletoread" accept=".txt"  style="display: none;"/>&nbsp;</p>
+       <table width="100%" border="1" cellspacing="00" cellpadding="1">
+  <tbody>
+    <tr>
+      <td width="50%"><span style="background-color: gold">&nbsp;<strong>A.</strong>&nbsp;</span> RADO NAME: <span class="formtext2">
+        <input name="RADO" type="text" required="required" id="RADO" size="30" maxlength="30" />
+      </span></td>
+      <td width="50%"><span style="background-color: gold">&nbsp;<strong>B.</strong>&nbsp;</span> CALL SIGN: <span class="formtext2">
+        <input name="RADOCall" type="text" required="required" id="RADOCall" size="20" maxlength="20" />
+      </span></td>
+    </tr>
+    <tr>
+      <td><span style="background-color: gold">&nbsp;<strong>C.</strong>&nbsp;</span> DATE: <span class="formtext2">
+        <input name="RDateTime2" type="text" required="required" id="RDateTime2" onclick="SetDateTime('m-d-y','RDateTime2')"size="15" maxlength="49" />
+      </span></td>
+      <td><span style="background-color: gold">&nbsp;<strong>D.</strong>&nbsp;</span> TIME: <span class="formtext2">
+        <input name="RDateTime3" type="text" required="required" id="RDateTime3" onclick="SetDateTime('hm','RDateTime3')"size="15" maxlength="49" />
+      </span></td>
+    </tr>
+  </tbody>
+</table>
+
+          
+        </div></td>
+      </tr>
+  </table></td>
+  </tr>
+<tr valign="top" >
+  <td colspan="4" 
+      class="formtext" ><table width="100%" border="1" cellspacing="00" cellpadding="2">
+    <tbody>
+      <tr>
+        <td width="37%" bgcolor="#dee9f9"><strong>&nbsp;GENERAL INFORMATION</strong></td>
+        <td width="1%" rowspan="7">&nbsp;</td>
+        <td width="62%" bgcolor="#dee9f9"><strong>&nbsp;RESOURCE DESCRIPTION  &amp; DELIVERY INSTRUCTIONS</strong></td>
+        </tr>
+      <tr>
+        <td valign="top">INCIDENT #:<span class="formtext2"><br />
+          <span style="background-color: gold">&nbsp;<strong>1.</strong>&nbsp;</span> <input name="Incidentnum" type="text" required="required" id="Incidentnum" size="40" maxlength="40" />
+        </span></td>
+        <td rowspan="5" valign="top"><span style="background-color: gold">&nbsp;<strong>8.</strong>&nbsp;</span><br />
+ <textarea placeholder="RESOURCE DESCRIPTION & DELIVERY INSTRUCTIONS" cols="70" rows="10" name="DESC-DELIVERY" id="DESC-DELIVERY" onkeyup="AutoGrowTextArea(this)" onchange="this.value=RWS(this.value)"></textarea></td>
+        </tr>
+      <tr>
+        <td valign="top">REQUESTER NAME:<br />          <span class="formtext2">
+          <span style="background-color: gold">&nbsp;<strong>2.</strong>&nbsp;</span> <input name="RequesterName" type="text" required="required" id="RequesterName" size="40" maxlength="40" />
+        </span><br /></td>
+        </tr>
+      <tr>
+        <td valign="top">PARISH:<br />          <span class="formtext2">
+         <span style="background-color: gold">&nbsp;<strong>3.</strong>&nbsp;</span>  <input name="PARISH" type="text" required="required" id="PARISH" size="40" maxlength="40" />
+        </span><br /></td>
+        </tr>
+      <tr>
+        <td valign="top">DATE/TIME NEEDED:<br />          <span class="formtext2">
+         <span style="background-color: gold">&nbsp;<strong>4.</strong>&nbsp;</span>  <input name="RDateTime" type="text" required="required" id="RDateTime" onclick="SetDateTime('fulldatetime','RDateTime')"size="20" maxlength="49" />
+        </span><br /></td>
+        </tr>
+      <tr>
+        <td valign="top">DURATION NEEDED:<br />          <span class="formtext2">
+         <span style="background-color: gold">&nbsp;<strong>5.</strong>&nbsp;</span>  <input name="Duration" type="text" required="required" id="Duration" size="40" maxlength="40" />
+        </span><br /></td>
+        </tr>
+      <tr>
+        <td valign="top">TRACKING # (DTG/PARISH):<br />
+          <span class="formtext2">
+          <span style="background-color: gold">&nbsp;<strong>6.</strong>&nbsp;</span> <input name="TrackongNum" type="text" required="required" id="TrackongNum" size="40" maxlength="40" />
+          </span><br /></td>
+        <td valign="top">IS DELIVERY REQUIRED: <span class="formtext3">
+          <span style="background-color: gold">&nbsp;<strong>9.</strong>&nbsp;</span> <input name="BDeliveryNeeded" type="radio" value="YES" onclick=" document.getElementById('DeliveryNeeded').value = 'YES';  "//>
+        </span>YES &nbsp;&nbsp;&nbsp;&nbsp;<span class="formtext3">
+        <input name="BDeliveryNeeded" type="radio" value="NO" onclick=" document.getElementById('DeliveryNeeded').value = 'NO';  "//>
+        </span>NO <span class="formtext4" style="text-align: left">
+        <input name="DeliveryNeeded" type="hidden" id="DeliveryNeeded" />
+        </span></td>
+        </tr>
+      </tbody>
+    </table></td>
+</tr>
+<tr valign="top" bgcolor="#f8f8ff">
+  <td colspan="4" bgcolor="#f8f8ff" class="formtext" ><table width="100%" border="1" cellspacing="00" cellpadding="1">
+    <tbody>
+      <tr>
+        <td colspan="2" align="left" bgcolor="#dee9f9" style="font-weight: bold">RESOURCE TYPE <span style="background-color: gold">&nbsp;<strong>7.</strong>&nbsp;</span> </td>
+        <td width="24%" bgcolor="#dee9f9" style="font-weight: bold">REQUESTER POC</td>
+        <td width="37%" bgcolor="#dee9f9" style="font-weight: bold">DELIVERY INFORMATION</td>
+      </tr>
+      <tr>
+        <td width="21%" align="left" valign="top"><table width="122" align="left" cellpadding="0" cellspacing="0">
+          <col width="175" />
+          <tr>
+            <td width="108" align="left"><span class="formtext3">
+              <input name="BESOURCE" type="radio" value="YES" onclick=" zap(); document.getElementById('rESOURCEtYPE').value = 'Air Support';  "//>
+            </span>Air Support</td>
+          </tr>
+          <tr>
+            <td align="left"><span class="formtext3">
+              <input name="BESOURCE" type="radio" value="YES" onclick=" zap(); document.getElementById('rESOURCEtYPE').value = 'Ambulance';  "//>
+            </span>Ambulance</td>
+          </tr>
+          <tr>
+            <td align="left"><span class="formtext3">
+              <input name="BESOURCE" type="radio" value="YES" onclick=" zap(); document.getElementById('rESOURCEtYPE').value = 'Bottled Water';  "//>
+            </span>Bottled Water</td>
+          </tr>
+          <tr>
+            <td align="left"><span class="formtext3">
+              <input name="BESOURCE" type="radio" value="YES" onclick=" zap(); document.getElementById('rESOURCEtYPE').value = 'Bulk Water';  "//>
+            </span>Bulk Water</td>
+          </tr>
+          <tr>
+            <td align="left" nowrap="nowrap"><span class="formtext3">
+              <input name="BESOURCE" type="radio" value="YES" onclick=" zap(); document.getElementById('rESOURCEtYPE').value = 'Communications';  "//>
+            </span>Communications</td>
+          </tr>
+          <tr>
+            <td align="left"><span class="formtext3">
+              <input name="BESOURCE" type="radio" value="YES" onclick=" zap(); document.getElementById('rESOURCEtYPE').value = 'Cots';  "//>
+            </span>Cots</td>
+          </tr>
+          <tr>
+            <td align="left"><span class="formtext3">
+              <input name="BESOURCE" type="radio" value="YES" onclick=" zap(); document.getElementById('rESOURCEtYPE').value = 'Debris';  "//>
+            </span>Debris</td>
+          </tr>
+          <tr>
+            <td align="left"><span class="formtext3">
+              <input name="BESOURCE" type="radio" value="YES" onclick=" zap(); document.getElementById('rESOURCEtYPE').value = 'DSNAP';  "//>
+            </span>DSNAP</td>
+          </tr>
+          <tr>
+            <td align="left"><span class="formtext3">
+              <input name="BESOURCE" type="radio" value="YES" onclick=" zap(); document.getElementById('rESOURCEtYPE').value = 'Evacuation';  "//>
+            </span>Evacuation</td>
+          </tr>
+          <tr>
+            <td align="left"><span class="formtext3">
+              <input name="BESOURCE" type="radio" value="YES" onclick=" zap(); document.getElementById('rESOURCEtYPE').value = 'Fire Protection';  "//>
+            </span>Fire Protection</td>
+          </tr>
+          <tr>
+            <td align="left"><span class="formtext3">
+              <input name="BESOURCE" type="radio" value="YES" onclick=" zap(); document.getElementById('rESOURCEtYPE').value = 'Fuel (Fuel form required)';  "//>
+            </span>Fuel<br />
+            <span class="formtext2">( Fuel Form required)</span></td>
+          </tr>
+          <tr>
+            <td align="left"><span class="formtext3">
+              <input name="BESOURCE" type="radio" value="YES" onclick=" zap(); document.getElementById('rESOURCEtYPE').value = 'Fuel Tanks';  "//>
+            </span>Fuel Tanks</td>
+          </tr>
+          <tr>
+            <td align="left"><span class="formtext3">
+              <input name="BESOURCE" type="radio" value="YES" onclick=" zap(); document.getElementById('rESOURCEtYPE').value = 'Generator (Generator Form required)';  "//>
+            </span>Generator<br />
+<span class="formtext2">(Generator Form required)</span></td>
+          </tr>
+          <tr>
+            <td align="left" nowrap="nowrap"><span class="formtext3">
+              <input name="BESOURCE" type="radio" value="YES" onclick=" zap(); document.getElementById('rESOURCEtYPE').value = 'Generator and Fuel (Generator/Fuel Form required)';  "//>
+            </span>Generator AND Fuel<br />
+<span class="formtext2">(Generator &amp; Fuel Form required)</span></td>
+          </tr>
+          <tr>
+            <td align="left"><span class="formtext3">
+              <input name="BESOURCE" type="radio" value="YES" onclick=" zap(); document.getElementById('rESOURCEtYPE').value = 'Hazmat';  "//>
+            </span>Hazmat</td>
+          </tr>
+          <tr>
+            <td align="left"><span class="formtext3">
+              <input name="BESOURCE" type="radio" value="YES" onclick=" zap(); document.getElementById('rESOURCEtYPE').value = 'Ice';  "//>
+            </span>Ice</td>
+          </tr>
+          <tr>
+            <td align="left"><span class="formtext3">
+              <input name="BESOURCE" type="radio" value="YES" onclick=" zap(); document.getElementById('rESOURCEtYPE').value = 'Intel (Imagery)';  "//>
+            </span>Intel (Imagery)</td>
+          </tr>
+          <tr>
+            <td align="left"><span class="formtext3">
+              <input name="BESOURCE" type="radio" value="YES" onclick=" zap(); document.getElementById('rESOURCEtYPE').value = 'Intel (Info)';  "//>
+            </span>Intel (Info)</td>
+          </tr>
+          <tr>
+            <td align="left"><span class="formtext3">
+              <input name="BESOURCE" type="radio" value="YES" onclick=" zap(); document.getElementById('rESOURCEtYPE').value = 'Legal Support';  "//>
+              </span>Legal Support</td>
+          </tr>
+          </table></td>
+        <td width="18%" valign="top"><table width="131" cellpadding="0" cellspacing="0">
+          <col width="64" />
+          <tr>
+            <td align="left"><span class="formtext3">
+              <input name="BESOURCE" type="radio" value="YES" onclick=" zap(); document.getElementById('rESOURCEtYPE').value = 'Levee Support';  "//>
+            </span>Levee Support</td>
+          </tr>
+          <tr>
+            <td align="left"><span class="formtext3">
+              <input name="BESOURCE" type="radio" value="YES" onclick=" zap(); document.getElementById('rESOURCEtYPE').value = 'Liasion';  "//>
+            </span>Liasion</td>
+          </tr>
+          <tr>
+            <td width="120" align="left"><span class="formtext3">
+              <input name="BESOURCE" type="radio" value="YES" onclick=" zap(); document.getElementById('rESOURCEtYPE').value = 'Mass Fatality';  "//>
+            </span>Mass Fatality</td>
+          </tr>
+          <tr>
+            <td align="left"><span class="formtext3">
+              <input name="BESOURCE" type="radio" value="YES" onclick=" zap(); document.getElementById('rESOURCEtYPE').value = 'Mass Feeding';  "//>
+            </span>Mass Feeding</td>
+          </tr>
+          <tr>
+            <td align="left"><span class="formtext3">
+              <input name="BESOURCE" type="radio" value="YES" onclick=" zap(); document.getElementById('rESOURCEtYPE').value = 'Medical Support';  "//>
+            </span>Medical Support</td>
+          </tr>
+          <tr>
+            <td align="left"><span class="formtext3">
+              <input name="BESOURCE" type="radio" value="YES" onclick=" zap(); document.getElementById('rESOURCEtYPE').value = 'Mosquito Abate';  "//>
+            </span>Mosquito Abate.</td>
+          </tr>
+          <tr>
+            <td align="left"><span class="formtext3">
+              <input name="BESOURCE" type="radio" value="YES" onclick=" zap(); document.getElementById('rESOURCEtYPE').value = 'MRE (Meals)';  "//>
+            </span>MRE (Meals)</td>
+          </tr>
+          <tr>
+            <td align="left"><span class="formtext3">
+              <input name="BESOURCE" type="radio" value="YES" onclick=" zap(); document.getElementById('rESOURCEtYPE').value = 'PDA/IA';  "//>
+            </span>PDA/IA</td>
+          </tr>
+          <tr>
+            <td align="left"><span class="formtext3">
+              <input name="BESOURCE" type="radio" value="YES" onclick=" zap(); document.getElementById('rESOURCEtYPE').value = 'PDA/PA';  "//>
+            </span>PDA/PA</td>
+          </tr>
+          <tr>
+            <td align="left"><span class="formtext3">
+              <input name="BESOURCE" type="radio" value="YES" onclick=" zap(); document.getElementById('rESOURCEtYPE').value = 'Pets/Livestock';  "//>
+            </span>Pets/Livestock</td>
+          </tr>
+          <tr>
+            <td align="left"><span class="formtext3">
+              <input name="BESOURCE" type="radio" value="YES" onclick=" zap(); document.getElementById('rESOURCEtYPE').value = 'POD';  "//>
+            </span>POD</td>
+          </tr>
+          <tr>
+            <td align="left"><span class="formtext3">
+              <input name="BESOURCE" type="radio" value="YES" onclick=" zap(); document.getElementById('rESOURCEtYPE').value = 'Public Info';  "//>
+            </span>Public Info</td>
+          </tr>
+          <tr>
+            <td align="left" nowrap="nowrap"><span class="formtext3">
+              <input name="BESOURCE" type="radio" value="YES" onclick=" zap(); document.getElementById('rESOURCEtYPE').value = 'Roadway Inspect';  "//>
+            </span>Roadway Inspect.</td>
+          </tr>
+          <tr>
+            <td align="left"><span class="formtext3">
+              <input name="BESOURCE" type="radio" value="YES" onclick=" zap(); document.getElementById('rESOURCEtYPE').value = 'Sandbags';  "//>
+            </span>Sandbags</td>
+          </tr>
+          <tr>
+            <td align="left"><span class="formtext3">
+              <input name="BESOURCE" type="radio" value="YES" onclick=" zap(); document.getElementById('rESOURCEtYPE').value = 'Search/Rescue';  "//>
+            </span>Search/Rescue</td>
+          </tr>
+          <tr>
+            <td align="left"><span class="formtext3">
+              <input name="BESOURCE" type="radio" value="YES" onclick=" zap(); document.getElementById('rESOURCEtYPE').value = 'Security';  "//>
+            </span>Security</td>
+          </tr>
+          <tr>
+            <td align="left"><span class="formtext3">
+              <input name="BESOURCE" type="radio" value="YES" onclick=" zap(); document.getElementById('rESOURCEtYPE').value = 'Shelter Support';  "//>
+            </span>Shelter Support</td>
+          </tr>
+          <tr>
+            <td align="left"><span class="formtext3">
+              <input name="BESOURCE" type="radio" value="YES" onclick=" zap(); document.getElementById('rESOURCEtYPE').value = 'Tarps';  "//>
+            </span>Tarps</td>
+          </tr>
+          <tr>
+            <td align="left"><span class="formtext3">
+              <input name="BESOURCE" type="radio" value="YES" onclick=" zap(); document.getElementById('rESOURCEtYPE').value = 'Transportation';  "//>
+            </span>Transportation</td>
+          </tr>
+          <tr>
+            <td align="left"><span class="formtext3">
+              <input name="BESOURCE" type="radio" value="YES" onclick=" zap(); document.getElementById('rESOURCEtYPE').value = 'Utilities Restore';  "//>
+            </span>Utilities Restore</td>
+          </tr>
+          <tr>
+            <td nowrap="nowrap"><span class="formtext3">
+              <input name="BESOURCE" type="radio" value="YES" onclick=" zap(); document.getElementById('rESOURCEtYPE').value = 'Waste Water Plnt.';  "//>
+            </span>Waste Water Plnt.</td>
+          </tr>
+          <tr>
+            <td><span class="formtext3">
+              <input name="BESOURCE" type="radio" value="YES" onclick="zap(); document.getElementById('rESOURCEtYPE').value = 'Info Request';  "//>
+            </span>Info Request</td>
+          </tr>
+        </table></td>
+        <td rowspan="2" valign="top" bgcolor="#FFFFFF"><table width="100%" border="1" cellspacing="00" cellpadding="2">
+          <tbody>
+            <tr>
+              <td>FIRST NAME:<br />
+                <span class="formtext2">
+                <span style="background-color: gold">&nbsp;<strong>10.</strong>&nbsp;</span>  <input name="thename2" type="text" required="required" id="thename2"  size="30" maxlength="49" />
+                </span></td>
+            </tr>
+            <tr>
+              <td>LAST NAME:<br />
+                <span class="formtext2">
+                <span style="background-color: gold">&nbsp;<strong>11.</strong>&nbsp;</span> <input name="LastName" type="text" required="required" id="LastName"  size="30" maxlength="49" />
+                </span></td>
+            </tr>
+            <tr>
+              <td>AGENCY:<br />
+                <span class="formtext2">
+                <span style="background-color: gold">&nbsp;<strong>12.</strong>&nbsp;</span> 
+                <input name="Agency" type="text" id="Agency"  size="30" maxlength="49" />
+                </span></td>
+            </tr>
+            <tr>
+              <td>PHONE:<br />
+                <span class="formtext2">
+                <span style="background-color: gold">&nbsp;<strong>13.</strong>&nbsp;</span> <input name="ReqPhone" type="text" id="ReqPhone"  size="30" maxlength="49" />
+                </span></td>
+            </tr>
+            <tr>
+              <td> ALT. PHONE:<br />
+                <span class="formtext2">
+                <span style="background-color: gold">&nbsp;<strong>14.</strong>&nbsp;</span>
+                <input name="ReqPhone2" type="text" id="ReqPhone2"  size="30" maxlength="49" />
+                </span></td>
+            </tr>
+            <tr>
+              <td>E-MAIL:<br />
+                <span class="formtext2">
+                <span style="background-color: gold">&nbsp;<strong>15.</strong>&nbsp;</span>  <input name="ReqPhone3" type="text" id="ReqPhone3"  size="30" maxlength="49" />
+                </span></td>
+            </tr>
+          </tbody>
+        </table>
+          <span class="formtext3"><span class="formtext4" style="text-align: left">
+          <input name="rESOURCEtYPE" type="hidden" id="rESOURCEtYPE" />
+          </span></span><textarea name="parseme" cols="60" id="parseme" style="display: none;"></textarea></td>
+        <td rowspan="2" valign="top" bgcolor="#FFFFFF"><table width="100%" border="1" cellspacing="00" cellpadding="2">
+          <tbody>
+            <tr>
+              <td>POC NAME:<br />
+                <span class="formtext2">
+                <span style="background-color: gold">&nbsp;<strong>16.</strong>&nbsp;</span> <input name="POCname" type="text" id="POCname"  size="30" maxlength="49" />
+                </span></td>
+            </tr>
+            <tr>
+              <td>E-MAIL:<br />
+                <span class="formtext2">
+                <span style="background-color: gold">&nbsp;<strong>17.</strong>&nbsp;</span> <input name="POCemail" type="text" id="POCemail"  size="30" maxlength="49" />
+                </span></td>
+            </tr>
+            <tr>
+              <td>PHONE:<br />
+                <span class="formtext2">
+               <span style="background-color: gold">&nbsp;<strong>18.</strong>&nbsp;</span>  <input name="POCphone" type="text" id="POCphone"  size="30" maxlength="49" />
+                </span></td>
+            </tr>
+            <tr>
+              <td>ALT. PHONE:<br />
+                <span class="formtext2">
+                <span style="background-color: gold">&nbsp;<strong>19.</strong>&nbsp;</span> <input name="POCaltphone" type="text" id="POCaltphone"  size="30" maxlength="49" />
+                </span></td>
+            </tr>
+            <tr>
+              <td>NAME OF SITE:<br />
+                <span class="formtext2">
+               <span style="background-color: gold">&nbsp;<strong>20.</strong>&nbsp;</span>  
+               <input name="POCSite" type="text" id="POCSite"  size="45" maxlength="49" />
+                </span></td>
+            </tr>
+            <tr>
+              <td>ADDRESS:<br />
+              <span style="background-color: gold">&nbsp;<strong>21.</strong>&nbsp;</span>   <textarea placeholder="DELIVERY ADDRESS" cols="40" rows="3" name="DESC-DELIVERY2" id="DESC-DELIVERY2" onkeyup="AutoGrowTextArea(this)" onchange="this.value=RWS(this.value)"></textarea></td>
+            </tr>
+          </tbody>
+        </table></td>
+      </tr>
+      <tr>
+        <td colspan="2" align="left" class="formtext3">
+          <input name="BESOURCE" id="BESOURCEo"type="radio" value="YES" onclick=" zap(); document.getElementById('OtherType').disabled = false; document.getElementById('rESOURCEtYPE').value = ''; document.getElementById('OtherType').placeholder = 'Other...';document.getElementById('OtherType').focus() "//>
+          <span style="font-weight: bold">Other</span>
+          <span class="formtext2">
+            <input name="OtherType" type="text" id="OtherType" onchange="document.getElementById('rESOURCEtYPE').value = this.value" size="30" maxlength="30" />
+          </span></td>
+        </tr>
+    </tbody>
+  </table></td>
+</tr>
+<tr valign="top" bgcolor="#f8f8ff">
+  <td colspan="4" bgcolor="#dee9f9" class="formtext" >PARISH AUTHORIZATION</td>
+</tr>
+<tr valign="top" bgcolor="#f8f8ff">
+  <td width="453" bgcolor="#FFFFFF" class="formtext" >SIGNATURE:<br />
+    <span class="formtext2">
+    <span style="background-color: gold">&nbsp;<strong>22.</strong>&nbsp;</span> <input name="Signsture" type="text" required="required" id="Signsture"  size="50" maxlength="50" />
+    </span></td>
+  <td width="442" bgcolor="#FFFFFF" class="formtext" >POSITION/TITLE:<br />
+    <span class="formtext2">
+   <span style="background-color: gold">&nbsp;<strong>23.</strong>&nbsp;</span>  <input name="Position" type="text" required="required" id="Position"  size="60" maxlength="60" />
+    </span></td>
+  </tr>
+<tr class="formtext">
+  <td height="36" colspan="4" align="right">
+    <div align="right">&nbsp; GOHSEP Resource Request&nbsp;&nbsp;v 1.07<b><b>
+        <input name="Templateversion" type="hidden" id="Templateversion" value="GOHSEP Resource Request v 1.07" />
+        </b></b></div>
+    <div align="left"></div>
+    </td>
+</tr>
+</tbody>
+</table>
+&nbsp;
+    <div class="pagebreak"></div>
+<table width="938" border="1" cellpadding="4" cellspacing="0" bordercolor="#999999" style="font-size: 14px; width: 900px; ">
+  <tbody>
+    <tr>
+      <td width="918" height="26" bgcolor="#FED8B1" style="text-align: center; vertical-align: top; font-size: 16px;"><p><strong>Generator Form Supplement to GOHSEP Resource Request</strong><br />
+        Version 5/23/25        <br />
+        
+      </p></td>
+    </tr>
+    <tr>
+      <td height="750" align="left" style="vertical-align: top; text-align: left; font-size: 14px;"><p><strong>When requesting a generator, this form supplement must be completed and attached to your GOHSEP Resource Request Form.</strong></p>
+        <p></p>
+        <p><span class="number-orange">&nbsp;<strong>1.</strong></span>&nbsp; POC Information:
+          <input id="Gen1" maxlength="80" name="Gen1" size="80" />
+        </p>
+        <p><span class="number-orange">&nbsp;<strong>2.</strong></span>&nbsp; Location/Address:
+          <input  id="Gen2" maxlength="80" name="Gen2" size="80" />
+          </p>
+        <p><span class="number-orange">&nbsp;<strong>3.</strong></span>&nbsp;Parish Tracking Number:
+          <input   id="Gen3" maxlength="45" name="Gen3" size="50" />
+          </p>
+        <p><span class="number-orange">4.</span> Delivery Time:
+          <input placeholder="" id="Gen4" maxlength="45" name="Gen4" size="50" />
+          </p>
+        <p><span class="number-orange">5.</span> Do you have a backup generator: <strong><span style="font-size: 14px;"><strong><strong>
+          <input  name="bGen5" type="radio" value="YES"  onclick=" document.getElementById('Gen5').value = 'YES';"critical.style.background = '#fccac7'; " />
+          </strong></strong></span>YES
+          <input name="bGen5" type="radio" onclick=" document.getElementById('Gen5').value = 'NO';"critical.style.background = '#FFFFFF';" value="NO" />
+          NO </strong><span class="formtext4" style="text-align: left">
+          <input name="Gen5" type="hidden" id="Gen5" />
+          </span></p>
+        <p><span class="number-orange">6.</span> Have power requirements been determined? <strong><span style="font-size: 14px;"><strong><strong>
+        <input  name="bGen6" type="radio" value="YES"  onclick=" document.getElementById('Gen6').value = 'YES';"critical.style.background = '#fccac7'; " />
+        </strong></strong></span>YES
+        <input name="bGen6" type="radio" onclick=" document.getElementById('Gen6').value = 'NO';"critical.style.background = '#FFFFFF';" value="NO" />
+NO </strong><span class="formtext4" style="text-align: left">
+<input name="Gen6" type="hidden" id="Gen6" />
+</span><br />
+          <br />
+          <strong>Provide Generator Size: <br />
+            </strong><span class="number-orange">7.</span> KW:
+<input   id="Gen7" maxlength="10" name="Gen7" size="10" />
+          </p>
+        <p><span class="number-orange">8.</span> Voltage:
+<input   id="Gen8" maxlength="10" name="Gen8" size="10" />
+          </p>
+        <p><span class="number-orange">9.</span> Phase:
+<input   id="Gen9" maxlength="40" name="Gen9" size="40" />
+          </p>
+        <p><strong>Connection tie in: </strong><br />
+          <span class="number-orange">10.</span> Do you need cables?<strong><span style="font-size: 14px;"><strong><strong>
+          <input  name="bGen10" type="radio" value="YES"  onclick=" document.getElementById('Gen10').value = 'YES';"critical.style.background = '#fccac7'; " />
+          </strong></strong></span>YES
+          <input name="bGen10" type="radio" onclick=" document.getElementById('Gen10').value = 'NO';"critical.style.background = '#FFFFFF';" value="NO" />
+NO </strong><span class="formtext4" style="text-align: left">
+<input name="Gen10" type="hidden" id="Gen10" />
+</span></p>
+        <p><span class="number-orange">11.</span> How long should the cables be?
+<input   id="Gen8" maxlength="70" name="Gen11" size="70" />
+          </p>
+        <p><span class="number-orange">12.</span> Do you have a transfer switch?<strong><span style="font-size: 14px;"><strong><strong>
+          <input  name="bGen12" type="radio" value="YES"  onclick=" document.getElementById('Gen12').value = 'YES';"critical.style.background = '#fccac7'; " />
+        </strong></strong></span>YES
+        <input name="bGen12" type="radio" onclick=" document.getElementById('Gen12').value = 'NO';"critical.style.background = '#FFFFFF';" value="NO" />
+NO </strong><span class="formtext4" style="text-align: left">
+<input name="Gen12" type="hidden" id="Gen12" />
+</span></p>
+        <p><span class="number-orange">13</span>. Has an assessment been done on the facility?<strong><span style="font-size: 14px;"><strong><strong>
+          <input  name="bGen13" type="radio" value="YES"  onclick=" document.getElementById('Gen13').value = 'YES';"critical.style.background = '#fccac7'; " />
+        </strong></strong></span>YES
+        <input name="bGen13" type="radio" onclick=" document.getElementById('Gen13').value = 'NO';"critical.style.background = '#FFFFFF';" value="NO" />
+NO </strong><span class="formtext4" style="text-align: left">
+<input name="Gen13" type="hidden" id="Gen13" />
+</span></p>
+        <p><span class="number-orange">14.</span> Do you have an electrician that can hook up the generator?<strong><span style="font-size: 14px;"><strong><strong>
+          <input  name="bGen14" type="radio" value="YES"  onclick=" document.getElementById('Gen14').value = 'YES';"critical.style.background = '#fccac7'; " />
+        </strong></strong></span>YES
+        <input name="bGen14" type="radio" onclick=" document.getElementById('Gen14').value = 'NO';"critical.style.background = '#FFFFFF';" value="NO" />
+NO </strong><span class="formtext4" style="text-align: left">
+<input name="Gen14" type="hidden" id="Gen14" />
+</span></p>
+        <p><span class="number-orange">15.</span> Do you need GOHSEP to provide fuel for the generator?<strong><span style="font-size: 14px;"><strong><strong>
+          <input  name="bGen15" type="radio" value="YES"  onclick=" document.getElementById('Gen15').value = 'YES';"critical.style.background = '#fccac7'; " />
+        </strong></strong></span>YES
+        <input name="bGen15" type="radio" onclick=" document.getElementById('Gen15').value = 'NO';"critical.style.background = '#FFFFFF';" value="NO" />
+NO </strong><span class="formtext4" style="text-align: left">
+<input name="Gen15" type="hidden" id="Gen15" />
+</span></p>
+        <p><span class="number-orange">16.</span> Are there any space restrictions that would impact placement and refuel operations?<strong><span style="font-size: 14px;"><strong><strong>
+          <input  name="bGen16" type="radio" value="YES"  onclick=" document.getElementById('Gen16').value = 'YES';"critical.style.background = '#fccac7'; " />
+        </strong></strong></span>YES
+        <input name="bGen16" type="radio" onclick=" document.getElementById('Gen16').value = 'NO';"critical.style.background = '#FFFFFF';" value="NO" />
+NO </strong><span class="formtext4" style="text-align: left">
+<input name="Gen16" type="hidden" id="Gen16" />
+</span></p>
+        <p><span class="number-orange">17.</span> (If #15 was Yes, provide additional information that identifies constraints and special equipment/materials needed.) <br />
+          &nbsp;&nbsp;
+          <textarea  cols="120" rows="2" name="Gen17" id="Gen17"  onkeypress="if(event.keyCode==13){return false;}" onchange="this.value=RWS(this.value)" onkeyup="AutoGrowTextArea(this)"></textarea>
+          <br />
+          <br />
+        </p></td>
+    </tr>
+    </tbody>
+</table>
+<div class="pagebreak"></div>
+<table width="938" border="1" cellpadding="4" cellspacing="0" bordercolor="#999999" style="font-size: 14px; width: 900px; ">
+  <tbody>
+    <tr>
+      <td width="918" height="26" colspan="2" bgcolor="#DCD0FF" style="text-align: center; vertical-align: top; font-size: 16px;"><p><strong>Fuel Form Supplement to GOHSEP Resource Request</strong><br />
+          <br />
+      </p></td>
+    </tr>
+    <tr>
+      <td height="750" colspan="2" align="left" style="vertical-align: top; text-align: left; font-size: 14px;"><p>Louisiana Department of Agriculture and Forestry Fuel Form Supplement to GOHSEP Resource Request</p>
+        <p><strong>When requesting fuel, this form supplement must be completed and attached to your GOHSEP Resource Request Form. </strong></p>
+        <p><span class="number-v">1.</span> Date:
+<input   id="Fuel1" maxlength="15" name="Fuel1" size="15" onclick="SetDateTime('fulldatetime','Fuel1')" />
+        </p>
+        <p><span class="number-v">2.</span> Name of Incident:
+<input   id="Fuel2" maxlength="50" name="Fuel2" size="50" />
+        </p>
+        <p><span class="number-v">3.</span> Incident Number:
+<input   id="Fuel3" maxlength="50" name="Fuel3" size="50" />
+        </p>
+        <p><span class="number-v">4.</span> What is the Fueling mission?
+<input   id="Fuel4" maxlength="90" name="Fuel4" size="90" />
+        </p>
+        <p><span class="number-v">5.</span> What type of Equipment needs to be refueled (Vehicles, Generators, Bulk Fuel Tank, Other)?
+         &nbsp;&nbsp;&nbsp;
+         <input   id="Fuel5" maxlength="30" name="Fuel5" size="30" />
+        </p>
+        <p><span class="number-v">6.</span> What Fuel Type is needed (Gas, Diesel, Av Gas, Jet-A, Other)?
+<input   id="Fuel6" maxlength="50" name="Fuel6" size="50" />
+        </p>
+        <p><span class="number-v">7.</span> What is the Quantity of Fuel being requested?
+<input name="Fuel7"   id="Fuel7" size="25" maxlength="25" />
+        </p>
+        <p><span class="number-v">8.</span> What is the Priority of Fueling Mission (Urgent, Same Day, Next Day, Other)?
+<input name="Fuel8"   id="Fuel8" size="30" maxlength="60" />
+        </p>
+        <p><span class="number-v">9.</span> Are there any Special Conditions for the Fueling Mission (Length of hose required, special fitting or connections on tank)? <br />
+          &nbsp;
+          <textarea  cols="120" rows="1" name="Fuel9" id="Fuel9"  onkeypress="if(event.keyCode==13){return false;}" onchange="this.value=RWS(this.value)" onkeyup="AutoGrowTextArea(this)"></textarea>
+        </p>
+        <p><span class="number-v">10.</span> Are there any Time Restrictions for making the Fuel Delivery ? &nbsp;<strong><span style="font-size: 14px;"><strong><strong>
+        <input  name="bFuel10" type="radio" value="YES"  onclick=" document.getElementById('Fuel10').value = 'YES';"critical.style.background = '#fccac7'; " />
+        </strong></strong></span>YES
+        <input name="bFuel10" type="radio" onclick=" document.getElementById('Fuel10').value = 'NO';"critical.style.background = '#FFFFFF';" value="NO" />
+NO </strong><span class="formtext4" style="text-align: left">
+<input name="Fuel10" type="hidden" id="Fuel10" />
+</span></p>
+        <p><span class="number-v">11.</span> What is the best time for receiving?
+<input name="Fuel11"   id="Fuel11" size="70" maxlength="70" />
+        </p>
+        <p><strong>List two points of contact with working Phone Numbers:</strong><br />
+          <span class="number-v">12.</span> Contact Name:
+<input name="Fuel12"   id="Fuel12" size="50" maxlength="50" />
+        </p>
+        <p><span class="number-v">13.</span> Contact Phone:
+<input name="Fuel13"   id="Fuel13" size="70" maxlength="70" />
+        </p>
+        <p><span class="number-v">14.</span> Alternate Name:
+<input name="Fuel14"   id="Fuel14" size="50" maxlength="50" />
+        </p>
+        <p><span class="number-v">15.</span> Alternate Phone:
+<input name="Fuel15"   id="Fuel15" size="70" maxlength="70" />
+        </p>
+        <p><strong>For Bulk Fuel Deliveries to an Existing Bulk Fuel Storage Tank<br />
+          </strong><span class="number-v">16.</span> What is the Capacity of the Tank?
+<input name="Fuel16"   id="Fuel16" size="70" maxlength="70" />
+        </p>
+        <p><span class="number-v">17.</span> What is the Existing Inventory?
+<input name="Fuel17"   id="Fuel17" size="70" maxlength="70" />
+        </p>
+        <p><span class="number-v">18.</span> Is the Tank (Aboveground or Underground)?
+<input name="Fuel18"   id="Fuel18" size="60" maxlength="60" />
+        </p>
+        <p><span class="number-v">19.</span> Will there be a Site Representative present to meet with the driver prior to unloading to verify that the Tank will hold the quantity of product that was ordered ?<strong><span style="font-size: 14px;"><strong><strong>
+        <input  name="bFuel19" type="radio" value="YES"  onclick=" document.getElementById('Fuel19').value = 'YES';"critical.style.background = '#fccac7'; " />
+        </strong></strong></span>YES
+        <input name="bFuel19" type="radio" onclick=" document.getElementById('Fuel19').value = 'NO';"critical.style.background = '#FFFFFF';" value="NO" />
+NO </strong><span class="formtext4" style="text-align: left">
+<input name="Fuel19" type="hidden" id="Fuel19" />
+</span></p>
+        <p><strong>For Bulk Fuel Deliveries where Vendor must Provide the Bulk Fuel Storage Tank<br />
+          </strong><span class="number-v">20.</span> What is the Size of the Tank being requested in gallons?
+<input name="Fuel20"   id="Fuel20" size="20" maxlength="20" />
+        </p>
+        <p><span class="number-v">21.</span> What Power Source is available for the pump (AC or DC)?
+<input name="Fuel21"   id="Fuel21" size="20" maxlength="20" />
+        </p>
+        <p><span class="number-v">22.</span> Is a Forklift onsite to offload the Tank ?<strong><span style="font-size: 14px;"><strong><strong>
+          <input  name="bFuel22" type="radio" value="YES"  onclick=" document.getElementById('Fuel22').value = 'YES';"critical.style.background = '#fccac7'; " />
+        </strong></strong></span>YES
+        <input name="bFuel22" type="radio" onclick=" document.getElementById('Fuel22').value = 'NO';"critical.style.background = '#FFFFFF';" value="NO" />
+NO </strong><span class="formtext4" style="text-align: left">
+<input name="Fuel22" type="hidden" id="Fuel22" />
+</span></p>
+        <p><strong>Required Fuel Billing Information<br />
+          </strong><span class="number-v">23.</span> Party responsible for this fuel bill:
+<input name="Fuel23"   id="Fuel23" size="50" maxlength="50" />
+        </p>
+        <p><span class="number-v">24.</span> Billing address: 
+          <input name="Fuel24"   id="Fuel24" size="100" maxlength="70" />
+          <br />
+        </p>
+        <p><span class="number-v">25.</span> Billing point of Contact:
+<input name="Fuel25"   id="Fuel25" size="50" maxlength="50" />
+        </p>
+        <p><span class="number-v">26.</span> Billing phone Number:
+<input name="Fuel26"   id="Fuel26" size="70" maxlength="70" />
+        </p>
+        <p><span class="number-v">27.</span> Billing Authorized User:
+<input name="Fuel27"   id="Fuel27" size="50" maxlength="50" />
+        </p>
+        <p><span class="number-v">28.</span> Agency Number:
+<input name="Fuel28"   id="Fuel28" size="70" maxlength="70" />
+        </p>
+        <p>This form was modeled from AHS-20-39 (R. 1/14)</p></td>
+    </tr>
+    <tr>
+      <td colspan="2" style="height: 35px; text-align: justify; vertical-align: top;" height="54"><span style="font-family: Calibri;"> </span>
+        <table width="100%"  border="0" cellpadding="0" cellspacing="0" bordercolor="#FFFFFF">
+          <tr>
+            <td width="69%"><span style="font-family: Calibri;"> </span>
+              <input style="height: 28px; width: 52px; " title="After submitting, close browser, then address message for posting" class="SubmitBtn1" enctype="multipart/form-data" id="Submit2" method="Post" name="Submit2" value="Submit" type="submit" />
+              &nbsp;<span style="color: rgb(128, 0, 0);"> </span><span style="font-family: Calibri;">
+                <input name="savebtn2" type="button" id="savebtn2"  onclick="SaveData()" value="Save GOHSEP RR data" />
+                </span>&nbsp;&nbsp;<span ><span><span style="font-size: 12px;"></span></span></span>&nbsp;<span style="color: rgb(128, 0, 0);">&nbsp;</span>
+              <input class="BtnFormat2" value="Reset Form " name="ResetForm2" style="color: rgb(204, 0, 0);" type="reset" />
+              <span style="color: rgb(128, 0, 0);"> &nbsp; &nbsp;<span style="color: black;"> </span><span style="color: black;">&nbsp;&nbsp;
+                <input name="testCall" type="hidden" id="testCall" value="{MsgSender}" size="14" maxlength="13" />
+                <textarea name="parseme2" cols="60" id="parseme2" style="display: none;"></textarea>
+                
+              </span></span></td>
+            <td width="31%">&nbsp; GOHSEP Resource Request&nbsp;&nbsp;v 1.07<span style="font-size: 12px;"><big style="font-weight: bold;"></span></td>
+          </tr>
+        </table>
+        <span style="font-family: Calibri;"> </span></td>
+    </tr>
+  </tbody>
+</table>
+<p>&nbsp;</p>
+</form>
+</body></html>

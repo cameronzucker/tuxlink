@@ -1,0 +1,22 @@
+Form: Request for Information Strip Reader and Response Creator.html
+To: 
+Subject:<var EXname> Strip Response
+Msg:
+Original Request Strip
+
+<var Message>
+
+Response Strip:
+  
+<var myStrip>
+
+------------------------
+Express Sending Station: <MsgSender>
+Senders Express Version: <ProgramVersion>
+Senders Template Version: <var Templateversion>
+
+
+
+
+
+

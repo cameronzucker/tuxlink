@@ -1,0 +1,879 @@
+<!DOCTYPE html>
+<html><head>
+
+<title>WSDOT Roadway Damage Report </title><meta http-equiv="CONTENT-TYPE" content="text/html; charset=utf-8">
+<style>
+
+h1 {
+font-weight: bold;
+}
+textarea {
+word-wrap: normal;
+}
+input[type='submit'] {
+width: 200px;
+margin-left: 25px;
+}
+
+@media only screen and (max-width: 950px) {
+td>p {
+font-family: .5em, arial, sans-serif;
+}
+input[type="radio"] {
+display: block;
+}
+input[type="text"] {
+font-size: .9em;
+}
+textarea {
+font-size: .9em;
+}
+}
+@media only screen and (max-width: 700px) {
+#main_table,
+#entry_table,
+#guideline_table {
+min-width: 100%;
+}
+td>p {
+font-family: .3em, arial, sans-serif;
+}
+textarea {
+font-size: .7em;
+}
+}
+@media only screen and (max-width: 480px) {
+textarea {
+font-size: .35em;
+}
+}
+@media print {
+p {
+font-size: 10pt;
+}
+h1 {
+font-size: 12pt;
+}
+h2 {
+font-size: 12pt;
+}
+}
+.formtext {
+    font-family: Arial, Helvetica, sans-serif;
+    font-size: 11pt;
+    font-weight: normal;
+    text-align: left;
+}
+
+ input[type=button] {
+
+  border: 2px solid #0f88f2;;
+   border-radius:.25rem;
+  color: black;
+   font-size: 14px;
+  padding: 2px 2px;
+ background-color: white;
+  text-decoration: none;
+  margin: 2px 2px;
+  cursor: pointer;
+}
+input[type=submit] {
+ border: 2px solid green;
+  border-radius:.25rem;
+  background-color: white;
+  color: black;
+  padding: 2px 2px;
+  font-size: 14px;
+   cursor: pointer;
+}
+input[type=reset] {
+ border: 2px solid red;
+ border-radius:.25rem;
+  background-color: white;
+  color: black;
+  padding: 2px 2px;
+  font-size: 14px;
+   cursor: pointer;
+}
+.style2 {
+    font-size: 16px;
+    text-align: left;
+}
+.style3 {font-size: 18px}
+.Header {font-family: Arial, Helvetica, sans-serif;
+	font-size: 12px;
+	font-weight: bold;
+	color: #000;
+	text-align: center;
+	background-color: #EFEFEF;
+}
+.style4 {font-size: 12px; color: #000; text-align: center; background-color: #EFEFEF; font-family: Arial, Helvetica, sans-serif;}
+.style5 {color: #F8F8FF}
+.style21 {font-size: 17px; }
+</style>
+
+<script>
+
+function shortmonth(monthnum) {
+var monthname;
+shortmonths = ["JAN", "FEB", "MAR","APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"] ;
+monthname = shortmonths [monthnum];s
+return monthname; }
+
+function DateTime(TType,TheFld, FocusFld) {
+var txt;
+var  myprompt;
+var d = new Date(),
+ thisyear = d.getFullYear();
+  thismonth= d.getMonth();
+// thismonth= d.getMonth();
+ thisday = d.getDate();
+var monname;
+h = (d.getHours()<10?'0':'') + d.getHours()
+m = (d.getMinutes()<10?'0':'') + d.getMinutes()
+s = (d.getSeconds()<10?'0':'') + d.getSeconds();
+var utcstr = d.toUTCString();
+var localt  = d.toLocaleTimeString();
+var isostr = d.toISOString();
+monthname = shortmonth (thismonth);
+thismonth = thismonth + 1;
+thismonth = (thismonth<10?'0':'') +thismonth;
+switch (TType) {
+    case 'hms'  :
+	
+        myprompt = h + ':' + m + ':' + s;
+		var RightNow = prompt("Time:", myprompt);
+		document.getElementById(TheFld).value = RightNow;
+        break;
+		case 'hm'  :
+		sufx = " AM";
+		if (h>12){h=h-12; sufx = " PM"}
+ 
+        myprompt = h + ':' + m + sufx;
+		var RightNow = prompt("Time:", myprompt);
+		document.getElementById(TheFld).value = RightNow;
+        break;
+		case 'm-d-y':     
+			myprompt = thismonth+ '-' + thisday+ '-'+  thisyear;
+			var RightNow = prompt("Date:", myprompt);
+			document.getElementById(TheFld).value = RightNow;
+		   break;
+		 case 'm/d/y':     
+			myprompt = thismonth+ '/' + thisday+ '/'+  thisyear;
+			var RightNow = prompt("Date:", myprompt);
+			document.getElementById(TheFld).value = RightNow;
+		     break;
+		 case 'd mmm y':     
+			myprompt = thisday+ ' ' + monthname+ ' '+  thisyear;
+			var RightNow = prompt("Date:", myprompt);
+			document.getElementById(TheFld).value = RightNow;
+		   break;
+		   case 'mmm-d-y':     
+			myprompt = monthname+'-'+thisday+ '-' +  thisyear;
+			var RightNow = prompt("Date:", myprompt);
+			document.getElementById(TheFld).value = RightNow;
+		   break;
+        case 'localampm':     
+			var myprompt = localt;
+			var RightNow = prompt("Local time:", myprompt);
+			document.getElementById(TheFld).value = RightNow;
+		   break;
+
+		case 'fulldate':     
+			var myprompt = thisyear+ '-'+thismonth+'-'+thisday;
+			var RightNow = prompt("Date:", myprompt);
+			document.getElementById(TheFld).value = RightNow;
+		   break;
+		   case 'fulldatetime':     
+			var myprompt = thisyear+'-'+thismonth+ '-'+thisday+' '+h + ':' + m + ':' + s;
+			var RightNow = prompt("Date time:", myprompt);
+			document.getElementById(TheFld).value = RightNow;
+		   break;
+		    case 'iso':     
+			var myprompt = isostr;
+			var RightNow = prompt("Date time:", myprompt);
+			document.getElementById(TheFld).value = RightNow;
+		   break;
+		   case 'utc':     
+			var myprompt = utcstr;
+			var RightNow = prompt("Date time:", myprompt);
+			document.getElementById(TheFld).value = RightNow;
+		   break;
+		   case 'zulu':     
+			var myprompt = isostr;
+			myprompt = isostr.replace("T", "  "); 
+			slen = myprompt.length;
+			myprompt = myprompt.substr(0, slen-5)+'Z';
+			var RightNow = prompt("Date time:", myprompt);
+			document.getElementById(TheFld).value = RightNow;
+		   break;
+		}
+				
+	// if(FocusFld !== null && FocusFld !== '') {document.getElementById(FocusFld).focus()} --/
+	};
+
+
+function AutoGrowTextArea(textField)
+{
+if (textField.clientHeight < textField.scrollHeight)
+{
+textField.style.height = textField.scrollHeight + "px";
+if (textField.clientHeight < textField.scrollHeight)
+{
+textField.style.height = (textField.scrollHeight * 2 - textField.clientHeight) + "px";
+}
+}
+}
+function Countthelines(f) { var text1 = f
+var text2 = text1.replace(/\s+$/,"");
+var split2 = text2.split("\n"); var mytotal = split2.length * 17;
+if (mytotal < 150) {
+mytotal = 150;
+}
+var tstr = mytotal.toString();
+return tstr;
+}
+function newfix(f){
+var ThisText = document.getElementById(f).value;
+var makeit = Countthelines(ThisText);
+document.getElementById(f).style.height = makeit+"px"; }
+function Fixarea() {
+//newfix("msg");
+//newfix("reply");
+//AutoGrowTextArea(document.getElementById("msg"));
+//AutoGrowTextArea(document.getElementById("reply"));
+}
+function RWS(str){
+var text2 = str.replace(/\s+$/,"");
+return text2.trim();
+}
+
+
+// add save load
+
+
+function saveTextAsFile(fileNameToSaveAs, textToWrite) {
+var textToWrite = document.getElementById('parseme').value; 
+var fileNameToSaveAs = "WSDOT Roadway Damage Report " + DateforFile()+".txt";
+fileNameToSaveAs = prompt("", fileNameToSaveAs);
+
+  /* Saves a text string as a blob file*/  
+  var ie = navigator.userAgent.match(/MSIE\s([\d.]+)/),
+      ie11 = navigator.userAgent.match(/Trident\/7.0/) && navigator.userAgent.match(/rv:11/),
+      ieEDGE = navigator.userAgent.match(/Edge/g),
+      ieVer=(ie ? ie[1] : (ie11 ? 11 : (ieEDGE ? 12 : -1)));
+
+  if (ie && ieVer<10) {
+    console.log("No blobs on IE ver<10");
+    return;
+  }
+
+  var textFileAsBlob = new Blob([textToWrite], {
+    type: 'text/plain'
+  });
+
+  if (ieVer>-1) {
+    window.navigator.msSaveBlob(textFileAsBlob, fileNameToSaveAs);
+
+  } else {
+    var downloadLink = document.createElement("a");
+    downloadLink.download = fileNameToSaveAs;
+    downloadLink.href = window.URL.createObjectURL(textFileAsBlob);
+    downloadLink.onclick = function(e) { document.body.removeChild(e.target); };
+    downloadLink.style.display = "none";
+    document.body.appendChild(downloadLink);
+    downloadLink.click();
+  }
+}
+
+
+
+
+
+function destroyClickedElement(event)
+{
+    document.body.removeChild(event.target);
+}
+
+function loadFileAsText()
+{
+
+    var fileToLoad = document.getElementById("fileToLoad").files[0];
+ 
+    var fileReader = new FileReader();
+    fileReader.onload = function(fileLoadedEvent) 
+    {
+        var textFromFileLoaded = fileLoadedEvent.target.result;
+        document.getElementById("inputTextToSave").value = textFromFileLoaded;
+    };
+    fileReader.readAsText(fileToLoad, "UTF-8");
+}
+
+
+function DateforFile(RightNow) {
+var txt;
+var d = new Date(),
+thisyear = d.getFullYear();
+thismonth= d.getMonth();
+thismonth = thismonth+1;
+if (thismonth < 10) { thismonth = "0" + thismonth}
+
+thisday = d.getDate();
+if (thisday < 10) { thisday = "0" + thisday}
+
+h = (d.getHours()<10?'0':'') + d.getHours()
+m = (d.getMinutes()<10?'0':'') + d.getMinutes()
+var myprompt = thisyear+ '-'+thismonth+'-'+thisday+' '+h + '_' + m ;
+return myprompt;
+}
+
+function isObject(arg) {
+  return Object.prototype.toString.call(arg)==='[object Object]';
+}
+
+function formDataToObject(elForm) {
+  if (!elForm instanceof Element) return;
+  var fields = elForm.querySelectorAll('input, select, textarea'),
+    o = {};
+  for (var i=0, imax=fields.length; i<imax; ++i) {
+    var field = fields[i],
+      sKey = field.name || field.id;
+    if (field.type==='button' || field.type==='image' || field.type==='submit' || !sKey) continue;
+    switch (field.type) {
+      case 'checkbox':
+        o[sKey] = +field.checked;
+        break;
+      case 'radio':
+        if (o[sKey]===undefined) o[sKey] = '';
+        if (field.checked) o[sKey] = field.value;
+        break;
+      case 'select-multiple':
+        var a = [];
+        for (var j=0, jmax=field.options.length; j<jmax; ++j) {
+          if (field.options[j].selected) a.push(field.options[j].value);
+        }
+        o[sKey] = a;
+        break;
+      default:
+        o[sKey] = field.value;
+    }
+  }
+ // alert('Form data:\n\n' + JSON.stringify(o, null, 2));
+ document.getElementById('parseme').value = JSON.stringify(o, null, 2);
+//  return o;
+}
+
+function populateForm(o) {
+
+o =  JSON.parse(document.getElementById('parseme').value);
+ //if (!isObject(o)) return;
+if (!isObject(o)) return;
+  for (var i in o) {
+    var el = document.getElementById(i) || document.querySelector('[name=' + i + ']');
+    if (el.type==='radio') el = document.querySelectorAll('[name=' + i + ']');
+    switch (typeof o[i]) {
+      case 'number':
+        el.checked = o[i];
+        break;
+      case 'object':
+        if (el.options && o[i] instanceof Array) {
+          for (var j=0, jmax=el.options.length; j<jmax; ++j) {
+            if (o[i].indexOf(el.options[j].value)>-1) el.options[j].selected = true;
+          }
+        }
+        break;
+      default:
+        if (el instanceof NodeList) {
+          for (var j=0, jmax=el.length; j<jmax; ++j) {
+            if (el[j].value===o[i]) el[j].checked = true;
+          }
+        } else {
+          el.value = o[i];
+        }
+    }
+  }
+    Fixfields();
+
+
+}
+
+function SaveData() {
+	
+			formDataToObject(document.getElementById('myform'))
+			saveTextAsFile();
+			
+			//saveTextAsFile();
+			}
+
+//-------
+ function readBlob(opt_startByte, opt_stopByte) {
+  
+    var files = document.getElementById('files').files;
+    if (!files.length) {
+      alert('Please select a file!');
+      return;
+    }
+
+    var file = files[0];
+    var start = parseInt(opt_startByte) || 0;
+    var stop = parseInt(opt_stopByte) || file.size - 1;
+
+    var reader = new FileReader();
+
+    // If we use onloadend, we need to check the readyState.
+    reader.onloadend = function(evt) {
+      if (evt.target.readyState == FileReader.DONE) { // DONE == 2
+        document.getElementById('byte_content').textContent = evt.target.result;
+        document.getElementById('byte_range').textContent = 
+            ['Read bytes: ', start + 1, ' - ', stop + 1,
+             ' of ', file.size, ' byte file'].join('');
+      }
+    };
+
+    var blob = file.slice(start, stop + 1);
+    reader.readAsBinaryString(blob);
+  }
+    	
+  window.onload = function () { 
+ 
+ //Check the support for the File API support 
+ if (window.File && window.FileReader && window.FileList && window.Blob) {
+    var fileSelected = document.getElementById('txtfiletoread');
+	
+    fileSelected.addEventListener('change', function (e) { 
+         //Set the extension for the file 
+         var fileExtension = /text.*/; 
+         //Get the file object 
+         var fileTobeRead = fileSelected.files[0];
+        //Check of the extension match 
+         if (fileTobeRead.type.match(fileExtension)) { 
+             //Initialize the FileReader object to read the 2file 
+			
+             var fileReader = new FileReader(); 
+             fileReader.onload = function (e) { 
+                 var fileContents = document.getElementById('filecontents'); 
+                
+				document.getElementById('parseme').value =fileReader.result;
+				populateForm(obj = document.getElementById('parseme').value);
+					 } 
+             fileReader.readAsText(fileTobeRead); 
+         } 
+         else { 
+             alert("Please select text file"); 
+         }
+ 
+    }, false);
+} 
+ else { 
+     alert("Files are not supported"); 
+ } 
+       Checkboxes();
+ }
+ 
+ function Fixfields() { 
+ AutoGrowTextArea(document.getElementById("Remarks"));
+
+
+}
+// function setcolors() {
+ function Checkifinbrowser() {
+ var x= document.getElementById("testCall").value; 
+ var n = x.search("{Msg");
+ if (n>-1) { 
+ document.getElementById('Submit').style.visibility='hidden';
+  alert('You are running this form outside of Winlink.\n \nWhen you have completed the form, SAVE the data and then give or send the SAVED data file to the radio operator. The operator will load the SAVED data into the correct form and send via winlink. ');
+ } else {document.getElementById('Submit').style.visibility='visible';  }
+}
+
+    function Flip1(theid,working) {
+   
+x1 = document.getElementById(theid).value;
+if (x1 == '[ ]') { document.getElementById(theid).value = '[ X ]';
+    if(theid=='btnA14'){document.getElementById('Status').value =" OPEN"}
+    if(theid=='btnA15'){document.getElementById('Status').value =" Lane Closure"} 
+     if(theid=='btnA16'){document.getElementById('Status').value =" Restricted"}
+     if(theid=='btnA17'){document.getElementById('Status').value =" Full Closure"}           
+                 } 
+else { document.getElementById(theid).value = '[ ]';
+     }
+}
+function Flip(theid,working) {
+ 
+x1 = document.getElementById(theid).value; 
+if (x1 == '[ ]') { document.getElementById(theid).value = '[ X ]';
+ } 
+else { document.getElementById(theid).value = '[ ]';
+     }
+}
+
+    
+    function checkform(){
+var x1 =   document.getElementById('Status').value;
+var warning = "Please select Status item '3, 4, 5, or 6'"
+
+if (x1=="") {alert(warning);return false} else {return true}
+}
+    
+  function  clearflds() {
+   document.getElementById('A14').value ="[ ]";
+    document.getElementById('A15').value ="[ ]";
+    document.getElementById('A16').value ="[ ]";
+    document.getElementById('A17').value ="[ ]";  
+    }
+    function ckstatus(theid){
+    
+    if(theid=='A14'){document.getElementById('Status').value ="OPEN"}
+    if(theid=='A15'){document.getElementById('Status').value ="LANE CLOSURE"} 
+     if(theid=='A16'){document.getElementById('Status').value ="RESTRICTED"}
+     if(theid=='A17'){document.getElementById('Status').value ="FULL CLOSURE"}
+    }
+    
+     function Checkboxes (){
+    for (let i = 14; i < 41; i++) {
+   var v1= document.getElementById('fldA'+i).value;
+    //alert(i);
+  if (v1 ==='[ X ]'){document.getElementById('BtnA'+i).checked=true}
+        //alert('BtnA'+i);
+     
+}
+     }
+      
+</script></head>
+<body>
+<div style="text-align: center;" class="container" id="top">
+  <div align="center">
+    <input type="file" id="txtfiletoread" accept=".txt"  style="display: none;"/>
+&nbsp;<br>
+  </div>
+  <form  style="font-family: Arial;" pbzloc="3" onSubmit="  document.getElementById('parseme').value =''; return confirm('To complete your form submission, click OK and close the open browser window. You will return to the new message window so you can post your message to the outbox');" method="post" id="myform" enctype="multipart/form-data" action="http://{FormServer}:{FormPort}">
+    <table width="950" border="0" cellpadding="3" cellspacing="0" bordercolor="#DD5145" id="maintable" style="height: 440px; text-align: left; margin-left: auto; margin-right: auto;">
+<tbody>
+<tr>
+<td width="950" style="text-align: center; height: 40px; font-size: 20px;">
+<div align="left"></div>
+<table width="100%"  border="1" cellspacing="0" cellpadding="7">
+  <tr>
+    <td colspan="6"><table width="1068"  border="0" cellpadding="1" cellspacing="0">
+      <tr>
+        <td width="46%" height="71" valign="top"><p align="left"><strong>Washington State<br>
+        Department of Transportation </strong><br>
+        </p></td>
+        <td width="54%" valign="middle"><p align="right"><strong>Bridge &amp; Roadway<br>
+          Preliminary Damage Report</strong></p>
+            </td>
+	  <tr>
+	    <td align="left">{var IsExercise}</td>
+      </tr>
+    </table></td>
+    </tr>
+  <tr>
+    <td width="14%" valign="top" nowrap="nowrap" class="style2">1. <span style="text-align: left">Date</span><br>
+        <input name="InspectDate" type="text" id="InspectDate" onClick="DateTime('fulldate','InspectDate')" value="{var InspectDate}" size="15" readonly="readonly">
+    </span></td>
+    <td width="13%" align="left" valign="top" nowrap="nowrap"><span class="style2">2. Time </span><br>
+  
+        <input name="InspectTime" type="text" id="InspectTime" value="{var InspectTime}" size="10" readonly="readonly" />
+   </td>
+    <td colspan="4" align="left" valign="top" nowrap="nowrap" class="style2" style="text-align: left">&nbsp;Statusmof Bridge or Roadway
+        <br>
+        &nbsp;<span class="style3"><strong>&nbsp;{var Status}</strong></span><br></td>
+  </tr>
+  <tr>
+    <td colspan="2" align="left" valign="top" style="text-align: left"><span class="style2"><span class="formtext">&nbsp;6. </span>Region<br>
+      <span class="formtext"> &nbsp;
+        <input name="Region" type="text" id="Region" value="{var Region}" size="25" readonly="readonly" >
+        </span></span></td>
+    <td width="16%" align="left" valign="top" class="style2" style="text-align: left"><span class="formtext"><span class="style2">7. </span></span><span class="style2">County</span><br>
+      <span class="formtext">
+      <input name="County" type="text" id="County" value="{var County}" size="25" readonly="readonly" >
+      </span></p></td>
+    <td width="17%" align="left" valign="top" nowrap style="text-align: left"><span class="style2"><span class="formtext">8. </span>Route<br>
+      
+        <input name="Route" type="text" id="Route" value="{var Route}" size="10" readonly="readonly" >
+        </span></td>
+    <td width="14%" align="left" valign="top" class="style2" style="text-align: left">9. Milepost<br>
+     
+        <input name="Milepost" type="text" id="Milepost" value="{var Milepost}" size="15" readonly="readonly" />
+        </span></td>
+    <td width="26%" valign="top" nowrap="nowrap" class="style2" style="text-align: left">10. Bridge Number (if applicable)<br>
+      
+        <input name="Direction" type="text" id="Direction" value="{var Direction}" size="15" readonly="readonly" />
+        </td>
+  </tr>
+  <tr>
+    <td colspan="2" valign="top" class="style2" style="text-align: left">11. Location: 
+<span class="formtext">
+        <input name="Location" type="text" id="Location" value="{var Location}"  size="25" maxlength="25">
+      </span></p></td>
+    <td colspan="4" valign="top" style="text-align: left"><span class="style2"><span class="formtext">&nbsp;</span>12. Inspector's Name:<span class="formtext">&nbsp;</span>
+        <input name="Inspector" type="text" id="Inspector" value="{var Inspector}" size="30" readonly="readonly" >
+      </span></td>
+  </tr>
+  <tr>
+    <td colspan="6" valign="top"><div align="left">
+      <p><span class="style2">13. Remarks<br>
+        </span>
+        &nbsp;{var Remarks}</p>
+      <p><br>
+      </p>
+    </div>
+      <table width="100%" border="1" cellspacing="00" cellpadding="1">
+        <tbody>
+          <tr>
+            <td colspan="3" bgcolor="#dee9f9">Emergency Bridge Inspection</td>
+            </tr>
+          <tr>
+            <td colspan="3"><table width="100%" border="1" cellspacing="00" cellpadding="4">
+              <tbody>
+                <tr>
+                  <td width="45%" valign="top">Check box that corresponds with any problems below: Note: <em>Only check a box if you are going to close the bridge.</em></td>
+                  <td width="55%" valign="top"><p align="left" class="style21">If Bridge is <span style="color: rgba(94,233,7,1)"><strong>SAFE</strong></span><strong> to stay <span style="color: rgba(94,233,7,1)">OPEN</span></strong>, apply<strong style="color: rgba(94,233,7,1)"> GREEN</strong> tape with the date, time, and inspector's initials to right hand side of the bridge on the approaching corner.</p>
+                    <p align="left" class="style21">If <strong>Bridge is <span style="color: rgba(252,3,7,1)">UNSAFE</span> and to be <span style="color: rgba(254,4,8,1)">CLOSED</span>,</strong> apply<strong style="color: rgba(253,7,11,1)"> RED</strong> tape with date. time, and inspector's initials to right hand side of the bridge on the approaching corner.</p></td>
+                </tr>
+              </tbody>
+            </table></td>
+            </tr>
+          <tr>
+            <td width="36%" height="48" align="left" valign="top">14.
+              <input name="BtnA14" type="checkbox" id="BtnA14" onclick="return false"  value="checkbox"/>
+Bridge Approaches
+<input name="fldA14" type="hidden" id="fldA14" value="{var fldA14}" /></td>
+            <td width="34%" align="left" valign="top">21.
+              <input name="BtnA21" type="checkbox" id="BtnA21" onclick="return false" value="checkbox"/>
+Hinge or Expansion Joints
+<input name="fldA21" type="hidden" id="fldA21" value="{var fldA21}" /></td>
+            <td width="30%" rowspan="7" align="left" valign="top" class="style21"><strong>Check for:</strong><br>
+              General alignment of roadways and rails, and damaged utilities <br>
+              Raised or lowered approaches <br>
+              Cracks or buckling in the deck or roadway Raised or protruding joints or utility covers Cracking, crushing, spalling, or misalignment in columns, bent caps, abutments, beams, girders or wing walls Settlement around abutments, columns or walls <br>
+              Missing bolts or rivets and/or fractured, broken, missing, or damaged anchorage connections. Dislocation or movement of bearings <br>
+              Changes in water flow or debris accumulations <br>
+              Loss of soils around footings,walls and roadway embankments due to erosion or scour</td>
+          </tr>
+          <tr align="left">
+            <td height="41" valign="top">15.
+              <input name="BtnA15" type="checkbox" id="BtnA15" onclick="return false" value="checkbox"/>
+Wing Walls
+<input name="fldA15" type="hidden" id="fldA15" value="{var fldA15}" /></td>
+            <td valign="top">22.
+              <input name="BtnA22" type="checkbox" id="BtnA22" onclick="return false" value="checkbox"/>
+Railings, Parapet, and Curb
+<input name="fldA22" type="hidden" id="fldA22" value="{var fldA22}" /></td>
+            </tr>
+          <tr align="left">
+            <td height="39" valign="top">16.
+               <input name="BtnA16" type="checkbox" id="BtnA16" onclick="return false" value="checkbox"/>
+Bridge Abutments
+<input name="fldA16" type="hidden" id="fldA16" value="{var fldA16}" /></td>
+            <td valign="top">23.
+              <input name="BtnA23" type="checkbox" id="BtnA23" onclick="return false" value="checkbox"/>
+Utilities and Surrounding Areas
+<input name="fldA23" type="hidden" id="fldA23" value="{VAR fldA23}" /></td>
+            </tr>
+          <tr align="left">
+            <td height="42" valign="top">17.
+              <input name="BtnA17" type="checkbox" id="BtnA17"  onclick="return false" value="checkbox"/>
+Bent Caps, and Columns
+<input name="fldA17" type="hidden" id="fldA17" value="{var fldA17}" /></td>
+            <td valign="top">24.
+              <input name="BtnA24" type="checkbox" id="BtnA24"  onclick="return false" value="checkbox"/>
+Seismic Restraint Devices
+<input name="fldA24" type="hidden" id="fldA24" value="{var fldA24}" /></td>
+            </tr>
+          <tr align="left">
+            <td height="44" valign="top">18.
+              <input name="BtnA18" type="checkbox" id="BtnA18" onClick="Flip('fldA18', '[ X ]')" value="checkbox"/>
+Bearings
+<input name="fldA18" type="hidden" id="fldA18" value="{var fldA18}" /></td>
+            <td valign="top">25.
+              <input name="BtnA25" type="checkbox" id="BtnA25"  onclick="return false" value="checkbox"/>
+Debris Accumulation in Channel
+<input name="fldA25" type="hidden" id="fldA25" value="{var fldA25}" /></td>
+            </tr>
+          <tr align="left">
+            <td height="37" valign="top">19.
+              <input name="BtnA19" type="checkbox" id="BtnA19"  onclick="return false" value="checkbox"/>
+Beams or Girders
+<input name="fldA19" type="hidden" id="fldA19" value="{var fldA19}" /></td>
+            <td valign="top">26.
+              <input name="BtnA26" type="checkbox" id="BtnA26"  onclick="return false" value="checkbox"/>
+Undermined Footings
+<input name="fldA26" type="hidden" id="fldA26" value="{var fldA26}" /></td>
+            </tr>
+          <tr align="left">
+            <td valign="top">20.
+              <input name="BtnA20" type="checkbox" id="BtnA20" onclick="return false" value="checkbox"/>
+ Deck (top and underside)
+<input name="fldA20" type="hidden" id="fldA20" value="{var fldA20}" /></td>
+            <td valign="top">&nbsp;</td>
+            </tr>
+        </tbody>
+      </table></td>
+    </tr>
+  <tr bgcolor="#f8f8ff" class="style2">
+    <td height="27" colspan="3" valign="top" bgcolor="#dee9f9"><div align="center"><strong>Roadway</strong></div></td>
+    <td colspan="3" valign="top" bgcolor="#dee9f9"><div align="center"><strong>Geo-technical Issues </strong></div></td>
+  </tr>
+  <tr bgcolor="#f8f8ff" class="style2">
+    <td height="27" colspan="3" valign="top"><div align="left">
+27. 
+    <input name="BtnA27" type="checkbox" id="BtnA27"  onclick="return false" value="checkbox"/>
+    Cracking
+    <input name="fldA27" type="hidden" id="fldA27" value="{var fldA27}" />
+    </div></td>
+  <td colspan="3" valign="top"><div align="left">34.
+      <input name="BtnA34" type="checkbox" id="BtnA34" onclick="return false" value="checkbox"/> 
+      Shoulder settlement
+      
+      <input name="fldA34" type="hidden" id="fldA34" value="{var fldA34}" />
+  </div></td>
+    </tr>
+  <tr class="style2">
+    <td colspan="3" valign="top"><div align="left">
+      28. 
+          <input name="BtnA28" type="checkbox" id="BtnA28"  onclick="return false" checkbox"/> 
+      Buckling
+      
+      <input name="fldA28" type="hidden" id="fldA28" value="{var fldA28}" />
+    </div></td>
+    <td colspan="3" valign="top"><div align="left">35.
+        <input name="BtnA35" type="checkbox" id="BtnA35"  onclick="return false" value="checkbox"/> 
+        Sags in roadway safety features (guardrail)
+        
+        <input name="fldA35" type="hidden" id="fldA35" value="{var fldA35}" />
+    </div></td>
+  </tr>
+  <tr bgcolor="#f8f8ff" class="style2">
+    <td colspan="3" valign="top"><div align="left">
+      29. 
+          <input name="BtnA29" type="checkbox" id="BtnA29"  onclick="return false" value="checkbox"/> 
+      Heaving or rolling
+      
+      <input name="fldA29" type="hidden" id="fldA29" value="{var fldA29}" />
+    </div></td>
+    <td colspan="3" valign="top"><div align="left">36.
+        <input name="BtnA36" type="checkbox" id="BtnA36"  onclick="return false" value="checkbox"/> 
+        Movement above or below tilted trees
+        
+        <input name="fldA36" type="hidden" id="fldA36" value="{var fldA36}" />
+    </div></td>
+  </tr>
+  <tr class="style2">
+    <td colspan="3" valign="top"><div align="left">
+      30. 
+          <input name="BtnA30" type="checkbox" id="BtnA30"  onclick="return false" value="checkbox"/> 
+      Pavement separation
+      
+      <input name="fldA30" type="hidden" id="fldA30" value="{var fldA30}" />
+    </div></td>
+    <td colspan="3" valign="top"><div align="left">37.
+        <input name="BtnA37" type="checkbox" id="BtnA37"  onclick="return false" value="checkbox"/> 
+        Debris on roadway
+        
+        <input name="fldA37" type="hidden" id="fldA37" value="{var fldA37}" />
+    </div></td>
+  </tr>
+  <tr bgcolor="#f8f8ff" class="style2">
+    <td colspan="3" valign="top"><div align="left">
+      31.
+          <input name="BtnA31" type="checkbox" id="BtnA31" onclick="return false" value="checkbox"/> 
+      Change in configuration- striping or lane shift
+      
+      <input name="fldA31" type="hidden" id="fldA31" value="{var fldA31}" />
+    </div></td>
+    <td colspan="3" valign="top" bgcolor="#f8f8ff"><div align="left">38.
+        <input name="BtnA38" type="checkbox" id="BtnA38"  onclick="return false" value="checkbox"/> 
+        Sloughing slopes
+        
+        <input name="fldA38" type="hidden" id="fldA38" value="{var fldA38}" />
+    </div></td>
+  </tr>
+  <tr class="style2">
+    <td colspan="3" valign="top"><div align="left">
+      32. 
+          <input name="BtnA32" type="checkbox" id="BtnA32"  onclick="return false" value="checkbox"/> 
+      Change in roadway surface
+      
+      <input name="fldA32" type="hidden" id="fldA32" value="{var fldA32}" />
+    </div></td>
+    <td colspan="3" valign="top"><div align="left">39.
+        <input name="BtnA39" type="checkbox" id="BtnA39"  onclick="return false" value="checkbox"/>
+Unstable road blocks above roadway
+
+    <input name="fldA39" type="hidden" id="fldA39" value="{var fldA39}" />
+    </div></td>
+  </tr>
+  <tr bgcolor="#f8f8ff" class="style2">
+    <td colspan="3" valign="top"><div align="left">
+      33.
+          <input name="BtnA33" type="checkbox" id="BtnA33"  onclick="return false" value="checkbox"/> 
+      Signs, VMS and sign bridges
+      
+      <input name="fldA33" type="hidden" id="fldA33" value="{var fldA33}" />
+    </div></td>
+    <td colspan="3" valign="top" bgcolor="#f8f8ff"><div align="left">40.
+        <input name="BtnA40" type="checkbox" id="BtnA40"  onclick="return false"value="checkbox"/>
+Sinkhole
+
+    <input name="fldA40" type="hidden" id="fldA40" value="{var fldA40}" />
+    </div></td>
+  </tr>
+  <tr class="style2">
+    <td colspan="6" valign="top"><table width="316" border="0" align="right">
+      <tbody>
+        <tr>
+          <td colspan="2">Communications Log</td>
+          </tr>
+        <tr>
+          <td width="153">Sending Station</td>
+          <td width="101"><span class="formtext">
+            <input name="SendingStation" type="text" id="SendingStation" value="{var SendingStation}" size="15" readonly="readonly" />
+            </span></td>
+          </tr>
+        <tr>
+          <td>Receiving Station</td>
+          <td><span class="formtext">
+            <input name="REceivingStation" type="text" id="REceivingStation" value="{var REceivingStation}" size="15" readonly="readonly" />
+            </span></td>
+          </tr>
+        <tr>
+          <td>Radio frequency</td>
+          <td nowrap="nowrap"><span class="formtext">
+            <input name="Freq" type="text" id="Freq" value="{var Freq}" size="15" readonly="readonly" />
+            MHZ </span></td>
+          </tr>
+        <tr>
+          <td nowrap="nowrap">Sent/Recieved</td>
+          <td nowrap="nowrap"><span class="formtext">
+            <input name="TimeSend" type="text" id="TimeSend" value="{var TimeSend}" size="15" readonly="readonly" />
+            (local)</span></td>
+          </tr>
+        </tbody>
+      </table></td>
+  </tr>
+  </table>
+<p align="left" class="style2">
+  <input name="Templateversion" type="hidden"
+
+                                    id="Templateversion" value="WSDOT Roadway Report V 1.3.1" />
+  <span style="font-size: 12px;"><b><span style="font-weight: normal;">
+  <input name="testCall" type="hidden" id="testCall" value="{MsgSender}" size="14" maxlength="13" />
+  </span></b></span>
+<p align="left" class="style2">DOT Form DOT Form 580-020 revised 02/2024<br>
+  &nbsp;</span></span></span></span></span></span></span></span></span></span></span></span></span></span></span></span><span
+
+                                  class="style4">Version 2.0</span></td>
+</tr>
+</tbody>
+</table>
+    <div align="center"><tb> </tb>
+    </div>
+    <div class="row">
+<div class="col-lg-2">
+  <div align="left"></div>
+</div>
+</div>
+<!--end of row--> </form>
+</div>
+
+</body></html>

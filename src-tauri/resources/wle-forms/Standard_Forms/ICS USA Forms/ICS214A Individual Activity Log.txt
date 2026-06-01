@@ -1,0 +1,56 @@
+Form: ICS214A_Initial.html,ICS214A_Viewer.html
+
+To: 
+Subject: ICS 214A- <var Incident_Name> - <var Name1> - <var DateTimeFrom> to <var DateTimeTo>
+Readonly:True
+Msg:  
+ICS 214A
+<var FormTitle>
+PAGE #: <var Page> 
+
+1. Incident Name:	<var Incident_Name>
+2. Operational Period:
+ From:	<var DateTimeFrom>
+ To:	<var DateTimeTo>
+3: Individual Name:	<var Name1>
+4: ICS Section:	<var ICS_Position1>
+5: Assignment/Location:	<var Home_Agency1>
+----------------------------------------------
+6. ACTIVITY LOG OF MAJOR EVENTS
+TIME	ACTIVITIES
+<var Time1>	<var Activities1>
+<var Time2>	<var Activities2>
+<var Time3>	<var Activities3>
+<var Time4>	<var Activities4>
+<var Time5>	<var Activities5>
+<var Time6>	<var Activities6>
+<var Time7>	<var Activities7>
+<var Time8>	<var Activities8>
+<var Time9>	<var Activities9>
+<var Time10>	<var Activities10>
+<var Time11>	<var Activities11>
+<var Time12>	<var Activities12>
+<var Time13>	<var Activities13>
+<var Time14>	<var Activities14>
+<var Time15>	<var Activities15>
+<var Time16>	<var Activities16>
+<var Time17>	<var Activities17>
+<var Time18>	<var Activities18>
+<var Time19>	<var Activities19>
+<var Time20>	<var Activities20>
+<var Time21>	<var Activities21>
+<var Time22>	<var Activities22>
+<var Time23>	<var Activities23>
+<var Time24>	<var Activities24>
+---------------------------------------------
+7. PREPARED BY:	<var PreparedName>  
+ ---------------------------------------------
+Express Sending Station:	<MsgSender>
+Senders Express Version:	<ProgramVersion>
+Senders Template Version:	<var Templateversion>
+[No changes or editing of this message are allowed]
+
+
+
+
+

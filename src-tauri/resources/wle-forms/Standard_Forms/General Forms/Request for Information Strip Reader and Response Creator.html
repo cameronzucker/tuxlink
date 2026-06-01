@@ -1,0 +1,2068 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+<title>Response Creator</title>
+
+<!-- ============================================================
+     Response Creator - RI Strip Reader and Response Creator
+     Based on a concept by the SHARES Region 1 Interoperability Group
+     Version 1.5
+     ============================================================ -->
+
+<!-- ==================== STYLES ==================== -->
+<style type="text/css">
+
+  /* --- Base Typography --- */
+  body, td, th {
+    font-family: Arial, Helvetica, sans-serif;
+    font-size: 12px;
+  }
+
+  /* --- Form Elements --- */
+  input, select {
+    padding: 2px;
+    border-radius: 2px;
+    font-family: Arial, Helvetica, sans-serif;
+    font-size: 12px;
+  }
+
+  textarea {
+    padding: 2px;
+    border-radius: 2px;
+    font-family: Arial, Helvetica, sans-serif;
+    font-size: 12px;
+  }
+
+  /* --- Button Styles --- */
+  input[type=button] {
+    border: 1.5px solid #0f88f2;
+    border-radius: .25rem;
+    font-size: 14px;
+    padding: 2px 4px;
+    background-color: white;
+    cursor: pointer;
+  }
+
+  input[type=submit] {
+    border: 1.5px solid green;
+    border-radius: .25rem;
+    background-color: white;
+    padding: 2px 4px;
+    font-size: 14px;
+    cursor: pointer;
+  }
+
+  input[type=reset] {
+    border: 1.5px solid red;
+    border-radius: .25rem;
+    background-color: white;
+    padding: 2px 4px;
+    font-size: 14px;
+    cursor: pointer;
+  }
+
+  /* --- Utility Classes --- */
+  .MSGtext {
+    font-family: Arial, Helvetica, sans-serif;
+    font-size: 12px;
+  }
+
+  .style7 {
+    font-size: 10px;
+    color: #333333;
+    text-align: left;
+  }
+
+  .SubmitBtn1 {
+    font-size: 12px;
+  }
+
+  .zentriert1 {
+    font-size: 12px;
+  }
+
+  /* --- Pop-up Overlay System --- */
+  .pop-up {
+    position: absolute;
+    top: 0;
+    left: -500em;
+    visibility: visible;
+  }
+
+  .pop-up:target {
+    position: static;
+    left: 0;
+  }
+
+  .popBox {
+    background: #ffffff;
+    position: absolute;
+    left: 8%;
+    right: 8%;
+    top: 10%;
+    bottom: 10%;
+    z-index: 10;
+    border: 1px solid #3a3a3a;
+    border-radius: .25rem;
+    box-shadow: 0 .5rem .5rem rgba(0,0,0,.5);
+    opacity: 0;
+    transition: opacity 0.8s ease-out;
+    visibility: visible;
+  }
+
+  :target .popBox {
+    position: fixed;
+    opacity: 1;
+  }
+
+  /* Smaller pop-up variant (for strip selector) */
+  .popBoxS {
+    background: #ffffff;
+    position: absolute;
+    left: 5%;
+    right: 5%;
+    top: 2%;
+    bottom: 20%;
+    z-index: 10;
+    border: 1px solid #3a3a3a;
+    border-radius: .25rem;
+    box-shadow: 0 .5rem .5rem rgba(0,0,0,.5);
+    opacity: 0;
+    transition: opacity 0.8s ease-out;
+    visibility: visible;
+  }
+
+  :target .popBoxS {
+    position: fixed;
+    opacity: 1;
+  }
+
+  /* Lightbox backdrop */
+  .lightbox {
+    display: none;
+    background-color: rgba(0,0,0,.4);
+    width: 100%;
+    height: 100%;
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    right: 0;
+    z-index: 5;
+  }
+
+  :target .lightbox {
+    display: block;
+  }
+
+  /* Pop-up close button */
+  .close:link,
+  .close:visited {
+    position: absolute;
+    top: -0.75em;
+    right: -0.75em;
+    display: block;
+    width: 2em;
+    height: 2em;
+    line-height: 1.8;
+    padding: 0;
+    text-align: center;
+    text-decoration: none;
+    background-color: #000;
+    border: 2px solid #fff;
+    color: #fff;
+    border-radius: 50%;
+    box-shadow: 0 0 .5rem .5rem rgba(0,0,0,.5);
+    visibility: visible;
+  }
+
+  .close:before {
+    content: "X";
+  }
+
+  .close:hover,
+  .close:active,
+  .close:focus {
+    box-shadow: 0 0 .5rem .5rem rgba(255,0,0,.5);
+    background-color: #c00;
+    color: #fff;
+  }
+
+  .close span {
+    text-indent: -200em;
+    display: block;
+  }
+
+  /* Scrollable pop-up content area */
+  .popScroll {
+    position: absolute;
+    top: 1rem;
+    left: 1rem;
+    right: 1rem;
+    bottom: 1rem;
+    overflow-y: auto;
+    padding-right: 0.5em;
+    visibility: visible;
+  }
+
+  .popScroll h2 {
+    margin-top: 0;
+  }
+
+  /* --- Template Builder Styles --- */
+  #builderTable {
+    border-collapse: collapse;
+    width: 100%;
+  }
+
+  #builderTable td {
+    padding: 3px 4px;
+    vertical-align: middle;
+  }
+
+  #builderTable input[type=text] {
+    width: 95%;
+    font-size: 12px;
+  }
+
+  .builder-btn {
+    border: 1px solid #999;
+    border-radius: 3px;
+    background: #f0f0f0;
+    cursor: pointer;
+    font-size: 11px;
+    padding: 1px 5px;
+    margin: 0 1px;
+  }
+
+  .builder-btn:hover {
+    background: #ddd;
+  }
+
+  .builder-btn-del {
+    border-color: #c00;
+    color: #c00;
+  }
+
+  .builder-btn-del:hover {
+    background: #fdd;
+  }
+
+  .custom-tmpl-del {
+    font-size: 10px;
+    color: #c00;
+    cursor: pointer;
+    margin-left: 6px;
+    text-decoration: underline;
+  }
+
+  .custom-tmpl-del:hover {
+    color: #900;
+  }
+
+  .tmpl-action-link {
+    font-size: 10px;
+    cursor: pointer;
+    margin-left: 8px;
+    text-decoration: underline;
+  }
+
+  .tmpl-edit-link {
+    color: #0066cc;
+  }
+
+  .tmpl-edit-link:hover {
+    color: #004499;
+  }
+
+  .tmpl-del-link {
+    color: #c00;
+  }
+
+  .tmpl-del-link:hover {
+    color: #900;
+  }
+
+</style>
+
+<!-- ==================== JAVASCRIPT ==================== -->
+<script type="text/javascript">
+
+  /* -------------------------------------------------------
+     ORGANIZATION TITLE (localStorage persistence)
+     ------------------------------------------------------- */
+
+  /**
+   * Save organization name to localStorage.
+   */
+  function store() {
+    var org = document.getElementById("Organization").value;
+    localStorage.setItem("Organization", org);
+  }
+
+  /**
+   * Restore organization title from localStorage on page load.
+   */
+  function restoreTitle() {
+    var storedValue = localStorage.getItem("Organization");
+    if (storedValue) {
+      document.getElementById('Organization').value = storedValue;
+      document.getElementById('SubjectText').innerHTML = storedValue;
+    }
+  }
+
+  /**
+   * Prompt user to set the organization/agency title.
+   */
+  function setupTitle() {
+    var current = document.getElementById('Organization').value;
+    var result = prompt("Enter Agency/Group Title", current || '');
+    if (result && result.length > 0) {
+      document.getElementById('Organization').value = result;
+      document.getElementById('SubjectText').innerHTML = result;
+      store();
+    }
+  }
+
+  /* -------------------------------------------------------
+     CHARACTER COUNTER
+     ------------------------------------------------------- */
+
+  /**
+   * Update character count and enforce max length on the Message field.
+   */
+  function wordcount(s) {
+    var maxtotal = parseInt(document.getElementById('MaxChar').value);
+    if (s.length > maxtotal) {
+      s = s.slice(0, maxtotal);
+      alert('More than ' + maxtotal + ' characters.');
+    }
+    document.getElementById('Message').value = s;
+    document.getElementById('check2').value = s.length;
+  }
+
+  /* -------------------------------------------------------
+     PARSE STRIP - Build the Q&A Table
+     ------------------------------------------------------- */
+
+  /**
+   * Parse the RI strip in the Message field and build the Q&A table.
+   * Each slash-delimited field becomes a row with a label and input.
+   */
+  function parseStrip() {
+    // Clear any existing table rows and load-strip fields
+    resetTable();
+
+    var s1 = document.getElementById('Message').value.trim();
+
+    // Remove trailing double-slant
+    if (s1.slice(-2) === '//') {
+      s1 = s1.slice(0, -2);
+    }
+
+    // Normalize empty fields: // or / / become /   / (3 spaces)
+    s1 = s1.replaceAll('//', '/   /');
+    s1 = s1.replaceAll('/ /', '/   /');
+
+    var fields = s1.split('/');
+    var tableBody = document.getElementById("myTable").getElementsByTagName("tbody")[0];
+    var firstField = '';
+
+    fields.forEach(function(field, index) {
+      var row = document.createElement("tr");
+
+      // Label cell (Strip Question)
+      var labelCell = document.createElement("td");
+      var label = document.createElement("label");
+      var idName = 'ans_' + index;
+
+      // First field is the strip name - show as read-only
+      if (index === 0) {
+        firstField = field;
+        label.textContent = 'Strip Name';
+        label.setAttribute("for", idName);
+        labelCell.appendChild(label);
+
+        var inputCell = document.createElement("td");
+        var nameSpan = document.createElement("span");
+        nameSpan.textContent = field;
+        nameSpan.style.fontWeight = "bold";
+        inputCell.appendChild(nameSpan);
+        // Hidden input to preserve value for createStrip()
+        var hiddenInput = document.createElement("input");
+        hiddenInput.setAttribute("type", "hidden");
+        hiddenInput.setAttribute("id", idName);
+        hiddenInput.setAttribute("name", idName);
+        hiddenInput.value = field;
+        inputCell.appendChild(hiddenInput);
+
+        row.appendChild(labelCell);
+        row.appendChild(inputCell);
+        tableBody.appendChild(row);
+        return;  // skip to next field
+      }
+
+      label.textContent = field;
+      label.setAttribute("for", idName);
+      labelCell.appendChild(label);
+
+      // Input cell (Answer)
+      var inputCell = document.createElement("td");
+      var input = document.createElement("input");
+      input.setAttribute("type", "text");
+      input.setAttribute("id", idName);
+      input.setAttribute("name", idName);
+
+      // Make separator rows (empty labels) read-only
+      if (field.trim() === '') {
+        input.setAttribute("readonly", "readonly");
+      }
+
+      inputCell.appendChild(input);
+      row.appendChild(labelCell);
+      row.appendChild(inputCell);
+      tableBody.appendChild(row);
+    });
+
+    // Set the strip name for export
+    if (firstField) {
+      document.getElementById('EXname').value = firstField;
+    }
+
+    // Highlight separator rows
+    highlightSeparatorRows();
+
+    // Enable Enter key to move between answer fields
+    enableEnterKeyNavigation();
+  }
+
+  /**
+   * Add Enter key handler to all answer fields in the Q&A table.
+   * Pressing Enter moves focus to the next answer field, skipping
+   * read-only separator fields.
+   */
+  function enableEnterKeyNavigation() {
+    var table = document.getElementById("myTable");
+    var fields = table.querySelectorAll('input[id^="ans_"], select[id^="ans_"]');
+    for (var i = 0; i < fields.length; i++) {
+      (function(idx) {
+        fields[idx].addEventListener('keydown', function(e) {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            // Find the next focusable, non-readonly field
+            for (var next = idx + 1; next < fields.length; next++) {
+              if (!fields[next].readOnly && !fields[next].disabled) {
+                fields[next].focus();
+                return;
+              }
+            }
+          }
+        });
+      })(i);
+    }
+  }
+
+  /**
+   * Highlight table rows that contain multi-space separator fields.
+   */
+  function highlightSeparatorRows() {
+    var table = document.getElementById("myTable");
+    for (var i = 0; i < table.rows.length; i++) {
+      var row = table.rows[i];
+      var hasSpace = false;
+      for (var j = 0; j < row.cells.length; j++) {
+        var cellText = row.cells[j].textContent || row.cells[j].innerText;
+        if (cellText.includes("  ")) {
+          hasSpace = true;
+          break;
+        }
+      }
+      row.style.backgroundColor = hasSpace ? "LemonChiffon" : "";
+    }
+  }
+
+  /* -------------------------------------------------------
+     CREATE RESPONSE STRIP
+     ------------------------------------------------------- */
+
+  /**
+   * Build the response strip string from the answer fields.
+   */
+  function createStrip() {
+    var s1 = document.getElementById('Message').value;
+    var s2 = s1.split("/");
+    var fieldCount = s2.length;
+    var st = "";
+
+    for (var j = 0; j < fieldCount - 2; j++) {
+      var thisans = document.getElementById('ans_' + j).value;
+      if (thisans === '') {
+        thisans = "   ";  // preserve blank as 3 spaces
+      }
+      st = st + thisans + '/';
+    }
+
+    document.getElementById('myStrip').value = st + '/';
+  }
+
+  /* -------------------------------------------------------
+     LOAD EXISTING RESPONSE STRIP
+     ------------------------------------------------------- */
+
+  /**
+   * Template lookup for auto-detection when loading a response strip.
+   * Checks the single embedded templates collection.
+   */
+  function getTemplateForStrip(stripName) {
+    var key = stripName.toUpperCase();
+    if (EMBEDDED_TEMPLATES[key] && EMBEDDED_TEMPLATES[key].length > 0) {
+      return EMBEDDED_TEMPLATES[key];
+    }
+    return null;
+  }
+
+  /**
+   * Load a previously created response strip into the Q&A table for editing.
+   * Auto-detects known strip types and parses the template if needed.
+   */
+  function loadResponseStrip() {
+    var responseStr = document.getElementById('loadStripInput').value.trim();
+    if (responseStr.length === 0) {
+      alert('Please paste a response strip into the field above.');
+      return;
+    }
+
+    // Auto-detect the strip type from the first field
+    var firstField = responseStr.split('/')[0].trim();
+    var table = document.getElementById("myTable");
+
+    // Check if a different template needs to be loaded
+    var currentStripName = '';
+    var ans0 = document.getElementById('ans_0');
+    if (ans0) currentStripName = ans0.value.trim().toUpperCase();
+
+    if (table.rows.length <= 1 || currentStripName !== firstField.toUpperCase()) {
+      // Table is empty or loaded with a different strip type — re-parse
+      var templateStrip = getTemplateForStrip(firstField);
+      if (templateStrip) {
+        document.getElementById('Message').value = templateStrip;
+        wordcount(templateStrip);
+        parseStrip();
+      } else if (table.rows.length <= 1) {
+        alert('Please first select and parse a Standard Information Strip template,\n'
+            + 'then paste your response strip and click "Populate Table".');
+        return;
+      }
+      // If template not found but table already has rows, continue
+      // and populate with existing layout
+    }
+
+    // Remove trailing double-slant
+    if (responseStr.slice(-2) === '//') {
+      responseStr = responseStr.slice(0, -2);
+    }
+
+    // Normalize empty fields (same as parseStrip)
+    responseStr = responseStr.replaceAll('//', '/   /');
+    responseStr = responseStr.replaceAll('/ /', '/   /');
+
+    var values = responseStr.split('/');
+
+    // Populate answer fields
+    for (var j = 0; j < values.length; j++) {
+      var ansField = document.getElementById('ans_' + j);
+      if (ansField) {
+        var val = values[j].trim();
+        ansField.value = (val === '' || /^\s+$/.test(val)) ? '' : val;
+
+        // For the strip name row (ans_0), also update the visible span
+        if (j === 0 && ansField.type === 'hidden') {
+          var nameSpan = ansField.parentNode.querySelector('span');
+          if (nameSpan) {
+            nameSpan.textContent = ansField.value;
+          }
+          document.getElementById('EXname').value = ansField.value;
+        }
+      }
+    }
+
+    document.getElementById('loadStripStatus').innerHTML =
+      '<span style="color:green; font-weight:bold;">'
+      + '&#10004; Response strip loaded. Edit answers as needed, then click "Create Response Strip".'
+      + '</span>';
+  }
+
+  /* -------------------------------------------------------
+     SAVE / LOAD STRIP TO/FROM FILE
+     ------------------------------------------------------- */
+
+  /**
+   * Save the current response strip to a .txt file on the user's hard drive.
+   * Uses the browser's download mechanism (Blob + temporary link).
+   */
+  function saveStripToFile() {
+    var strip = document.getElementById('myStrip').value;
+    if (!strip || strip.trim().length === 0) {
+      alert('Please click "Create Response Strip" first to generate a strip.');
+      return;
+    }
+
+    // Build the file content: request strip + response strip
+    var request = document.getElementById('Message').value;
+    var content = "Request Strip:\r\n" + request + "\r\n\r\n"
+                + "Response Strip:\r\n" + strip + "\r\n";
+
+    // Generate a default filename with date-time stamp
+    var now = new Date();
+    var yyyy = now.getFullYear();
+    var mm = ('0' + (now.getMonth() + 1)).slice(-2);
+    var dd = ('0' + now.getDate()).slice(-2);
+    var hh = ('0' + now.getHours()).slice(-2);
+    var mi = ('0' + now.getMinutes()).slice(-2);
+
+    // Use the strip name (first field) if available
+    var stripName = document.getElementById('EXname').value || 'Strip';
+    stripName = stripName.replace(/[^a-zA-Z0-9_-]/g, '_');  // sanitize for filename
+
+    var filename = stripName + '_' + yyyy + mm + dd + '_' + hh + mi + '.txt';
+
+    // Prompt user to confirm or change filename
+    var userFilename = prompt("Save strip as:", filename);
+    if (!userFilename) return;  // user cancelled
+
+    // Create and trigger download
+    var blob = new Blob([content], { type: 'text/plain' });
+    var link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = userFilename;
+    link.style.display = 'none';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(link.href);
+  }
+
+  /**
+   * Load a previously saved strip file from the user's hard drive.
+   * Reads the file, extracts the Response Strip line, and places it
+   * in the Load Strip field for editing.
+   */
+  function loadStripFromFile() {
+    var fileInput = document.getElementById('stripFileInput');
+    fileInput.click();  // trigger the hidden file picker
+  }
+
+  /**
+   * Handler for when a strip file is selected via the file picker.
+   */
+  function handleStripFile(event) {
+    var file = event.target.files[0];
+    if (!file) return;
+
+    var reader = new FileReader();
+    reader.onload = function(e) {
+      var text = e.target.result;
+
+      // Try to extract just the Response Strip line
+      var responseMatch = text.match(/Response Strip:\s*\n(.+)/);
+      if (responseMatch) {
+        document.getElementById('loadStripInput').value = responseMatch[1].trim();
+      } else {
+        // If no header found, assume entire file is the strip
+        // (take the last non-empty line as the strip)
+        var lines = text.trim().split('\n');
+        var lastLine = '';
+        for (var i = lines.length - 1; i >= 0; i--) {
+          if (lines[i].trim().length > 0) {
+            lastLine = lines[i].trim();
+            break;
+          }
+        }
+        document.getElementById('loadStripInput').value = lastLine;
+      }
+
+      document.getElementById('loadStripStatus').innerHTML =
+        '<span style="color:blue; font-weight:bold;">'
+        + '&#128193; File loaded: ' + file.name
+        + ' &mdash; Click "Populate Table" to populate the table.'
+        + '</span>';
+    };
+    reader.readAsText(file);
+
+    // Reset the file input so the same file can be re-selected
+    event.target.value = '';
+  }
+
+  /* -------------------------------------------------------
+     CLIPBOARD
+     ------------------------------------------------------- */
+
+  /**
+   * Copy both the original request strip and the response strip to clipboard.
+   */
+  function copyToClipboard() {
+    var request = document.getElementById('Message').value;
+    var response = document.getElementById('myStrip').value;
+    var formattedText = "Original Request Strip:\n\n" + request
+                      + "\n\nResponse Strip:\n\n" + response;
+
+    navigator.clipboard.writeText(formattedText).then(function() {
+      alert("Strips copied to clipboard");
+    }).catch(function(err) {
+      // Fallback for older browsers
+      var copyText = document.getElementById('myStrip');
+      copyText.select();
+      copyText.setSelectionRange(0, 99999);
+      document.execCommand("copy");
+      alert("Strips copied to clipboard");
+    });
+  }
+
+  /* -------------------------------------------------------
+     INSERT STANDARD STRIP TEMPLATE
+     ------------------------------------------------------- */
+
+  /**
+   * Insert a predefined strip template into the Message field
+   * and close the strip selector pop-up.
+   */
+  function insertTemplate(strip) {
+    document.getElementById('Message').value = strip;
+    document.getElementById('closeme').click();
+    wordcount(strip);
+    var tarea = document.getElementById('Message');
+    tarea.selectionStart = tarea.selectionEnd = tarea.value.length;
+    tarea.focus();
+  }
+
+  /* -------------------------------------------------------
+     RESET
+     ------------------------------------------------------- */
+
+  /**
+   * Clear the Q&A table rows (except header), load-strip fields,
+   * and the generated strip output.
+   */
+  function resetTable() {
+    // Clear load-strip fields
+    var loadInput = document.getElementById('loadStripInput');
+    if (loadInput) loadInput.value = '';
+    var loadStatus = document.getElementById('loadStripStatus');
+    if (loadStatus) loadStatus.innerHTML = '';
+
+    // Clear generated strip
+    document.getElementById('myStrip').value = '';
+
+    // Remove all table rows except the header
+    var table = document.getElementById("myTable");
+    var rowCount = table.rows.length;
+    for (var x = rowCount - 1; x > 0; x--) {
+      table.deleteRow(x);
+    }
+  }
+
+  /* -------------------------------------------------------
+     TEMPLATE MANAGEMENT (embedded in file)
+
+     ALL templates (built-in and user-created) are stored in
+     EMBEDDED_TEMPLATES between marker comments. When a template
+     is added, edited, or deleted, a new copy of this HTML file
+     is generated for download.
+
+     Template editing controls ([edit]/[delete]) are shown on
+     non-protected templates in the strip selector popup.
+     ------------------------------------------------------- */
+
+  /** Template editing is always enabled for non-protected templates. */
+  var _tmplAuth = true;
+
+  /**
+   * All templates embedded in this file.
+   * DO NOT EDIT between the %%CT markers -- managed by the builder.
+   */
+  var EMBEDDED_TEMPLATES = /*%%CTSTART%%*/{"GYX-CAR SKYWARN":"GYX-CAR SKYWARN/DATE (MM-DD-YYYY)/TIME (HHMML)/CALL SIGN/SPOTTER ID (or NA)/SOURCE (Amateur Radio, Trained Spotter, Media, Public Service Radio, Other 3rd Party, Direct Messaging)/LOCATION (Road, Town; MGRS or USNG optional)/STATE & CWA (e.g. NH GYX, ME CAR, MA OA)/CURRENT WEATHER (Relevant info such as Temp, Barometer, Cloud Cover or Type. Be brief.)/SNOW, SLEET (inches or NA; if storm total add ST e.g. 2.6 or 3.5ST)/ICE ACCRETION (inches or NA)/RAINFALL (inches or NA, if storm total add ST e.g. 2.6 or 3.5ST)/HAIL SIZE (Inches or NA)/WIND DIRECTION & SPEED (AAA MPH - if applicable add the gust value e.g. NNE 7 21G)/STORM DAMAGE (Wind, flooding, ice jams, other details)/MODE(Personal Observation, FM Repeater, Winlink, DMR, Direct Messaging. For others leave blank)/NET (Name of radio net or other e.g. email, Slack)//","Placeholder":"","WXOBS":"WXOBS/CALL SIGN/SKYWARN ID (or NA)/CITY/STATE (AA)/MGRS (N)/NWS CWA (AAA,NA)/   /OBSERVATION TIME Z (DDHHMMZ)/   /WIND DIR (AAA)/AVE SPEED MPH (###)/GUSTS MPH (###)/   /CLOUDS (CLR,FEW,SKT,CB,OVC,TCU)/   /TEMP DEG F (###, -##)/   /BAROMETER MB (####.#)/BAROMETER 3 HR TREND (R,S,F)/   /PRECIP TYPE (RA,SN,SL,PL,GR,NONE)/CURRENT PRECIP INS (###.##,NA)/STORM TOTAL PRECIP INS (###.##,NA)/LIQUID EQUIV PRECIP INS (###.##,NA)/ /COMMENTS,DAMAGE//","SITREP":"","OPRED":""}/*%%CTEND%%*/;
+
+  /**
+   * Generate an updated copy of this HTML file with the current
+   * EMBEDDED_TEMPLATES data embedded, and trigger a download.
+   */
+  function generateUpdatedFile() {
+    // Temporarily clear dynamic DOM content for a clean file
+    var templateRows = document.getElementById('allTemplateRows');
+    var savedTmplRows = templateRows ? templateRows.innerHTML : '';
+    if (templateRows) templateRows.innerHTML = '';
+
+    var builderBody = document.getElementById('builderQBody');
+    var savedBuilder = builderBody ? builderBody.innerHTML : '';
+    if (builderBody) builderBody.innerHTML = '';
+
+    var qaTable = document.getElementById('myTable');
+    var savedQA = '';
+    if (qaTable) {
+      var rows = qaTable.rows;
+      var savedRows = [];
+      for (var r = rows.length - 1; r > 0; r--) {
+        savedRows.push(rows[r].outerHTML);
+        qaTable.deleteRow(r);
+      }
+      savedQA = savedRows.reverse().join('');
+    }
+
+    // Clear form fields to defaults for a clean file
+    var msgField = document.getElementById('Message');
+    var savedMsg = msgField ? msgField.value : '';
+    if (msgField) msgField.value = '';
+
+    var stripField = document.getElementById('myStrip');
+    var savedStrip = stripField ? stripField.value : '';
+    if (stripField) stripField.value = '';
+
+    var charField = document.getElementById('check2');
+    var savedChar = charField ? charField.value : '';
+    if (charField) charField.value = '0';
+
+    var loadInput = document.getElementById('loadStripInput');
+    var savedLoad = loadInput ? loadInput.value : '';
+    if (loadInput) loadInput.value = '';
+
+    var loadStatus = document.getElementById('loadStripStatus');
+    var savedStatus = loadStatus ? loadStatus.innerHTML : '';
+    if (loadStatus) loadStatus.innerHTML = '';
+
+    // Get the clean HTML source
+    var html = '<!DOCTYPE html>\n' + document.documentElement.outerHTML;
+
+    // Restore all dynamic content
+    if (templateRows) templateRows.innerHTML = savedTmplRows;
+    if (builderBody) builderBody.innerHTML = savedBuilder;
+    if (qaTable && savedQA) {
+      var tbody = qaTable.getElementsByTagName('tbody')[0];
+      tbody.insertAdjacentHTML('beforeend', savedQA);
+    }
+    if (msgField) msgField.value = savedMsg;
+    if (stripField) stripField.value = savedStrip;
+    if (charField) charField.value = savedChar;
+    if (loadInput) loadInput.value = savedLoad;
+    if (loadStatus) loadStatus.innerHTML = savedStatus;
+
+    // Replace the EMBEDDED_TEMPLATES data between markers
+    // (markers are built dynamically to avoid matching this code itself)
+    var startMarker = '/\x2a%%CTSTART%%\x2a/';
+    var endMarker = '/\x2a%%CTEND%%\x2a/';
+    var startIdx = html.indexOf(startMarker);
+    var endIdx = html.indexOf(endMarker);
+
+    if (startIdx === -1 || endIdx === -1) {
+      alert('Error: Could not locate template markers in file. Please report this issue.');
+      return null;
+    }
+
+    var newJson = JSON.stringify(EMBEDDED_TEMPLATES);
+    html = html.substring(0, startIdx + startMarker.length)
+         + newJson
+         + html.substring(endIdx);
+
+    return html;
+  }
+
+  /**
+   * Trigger a download of the updated HTML file.
+   */
+  function downloadUpdatedFile(html) {
+    if (!html) return;
+
+    var filename = 'Response_Creator.html';
+    var userFilename = prompt(
+      'Save updated form as:\n\n'
+      + '(Tip: Save with the same name to replace your current file,\n'
+      + 'or use a new name to keep both versions.)',
+      filename
+    );
+    if (!userFilename) return false;  // user cancelled
+
+    var blob = new Blob([html], { type: 'text/html' });
+    var link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = userFilename;
+    link.style.display = 'none';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(link.href);
+    return true;
+  }
+
+  /**
+   * Count the number of templates currently in EMBEDDED_TEMPLATES.
+   */
+  function countTemplates() {
+    return Object.keys(EMBEDDED_TEMPLATES).length;
+  }
+
+  /**
+   * Templates that cannot be edited or deleted.
+   */
+  var PROTECTED_TEMPLATES = ['GYX-CAR SKYWARN', 'WXOBS', 'Placeholder', 'SITREP', 'OPRED'];
+
+  /**
+   * Render ALL templates as rows in the strip selector popup (pop2).
+   * Each row has a clickable summary to insert it, plus [edit] and
+   * [delete] action links. Undefined templates show a "define" prompt.
+   */
+  function renderAllTemplates() {
+    var container = document.getElementById("allTemplateRows");
+    if (!container) return;
+
+    container.innerHTML = '';
+    var names = Object.keys(EMBEDDED_TEMPLATES);
+    var totalCount = names.length;
+    var altBg = false;
+
+    names.forEach(function(name) {
+      var strip = EMBEDDED_TEMPLATES[name];
+      var isDefined = (strip && strip.length > 0);
+      var tr = document.createElement("tr");
+
+      // Alternate row background
+      if (altBg) tr.style.backgroundColor = "#ffffe6";
+      altBg = !altBg;
+
+      // Name cell
+      var td1 = document.createElement("td");
+      td1.style.width = "12%";
+      td1.style.verticalAlign = "top";
+      td1.textContent = name;
+      tr.appendChild(td1);
+
+      // Content / actions cell
+      var td2 = document.createElement("td");
+
+      if (isDefined) {
+        // Clickable summary to insert template
+        var fields = strip.replace(/\/\/\s*$/, '').split('/');
+        var summary = fields.slice(0, 6).join(' / ');
+        if (fields.length > 6) summary += ' / ...';
+        summary += ' //';
+
+        var link = document.createElement("a");
+        link.href = "javascript:void(0)";
+        link.onclick = (function(s) {
+          return function() { insertTemplate(s); };
+        })(strip);
+        link.innerHTML = '<p style="margin:2px 0;">' + escapeHtml(summary) + '</p>';
+        td2.appendChild(link);
+      } else {
+        // Undefined template
+        var prompt = document.createElement("span");
+        prompt.style.color = "#999";
+        prompt.style.fontStyle = "italic";
+        var isProtectedEmpty = PROTECTED_TEMPLATES.indexOf(name) !== -1;
+        if (_tmplAuth && !isProtectedEmpty) {
+          prompt.innerHTML = '&nbsp;(Pending &mdash; click [edit] to create)';
+        } else {
+          prompt.innerHTML = '&nbsp;(Pending)';
+        }
+        td2.appendChild(prompt);
+      }
+
+      // Action links (only shown for non-protected templates)
+      var isProtected = PROTECTED_TEMPLATES.indexOf(name) !== -1;
+      if (_tmplAuth && !isProtected) {
+        var actions = document.createElement("span");
+        actions.style.marginLeft = "10px";
+        actions.style.fontSize = "10px";
+
+        // [edit] link
+        var editLink = document.createElement("span");
+        editLink.className = "tmpl-action-link tmpl-edit-link";
+        editLink.textContent = "[edit]";
+        editLink.title = "Edit this template in the builder";
+        editLink.onclick = (function(n, s) {
+          return function(e) {
+            e.stopPropagation();
+            editTemplate(n, s);
+          };
+        })(name, strip);
+        actions.appendChild(editLink);
+
+        // [delete] link (hidden if this is the last template)
+        if (totalCount > 1) {
+          var del = document.createElement("span");
+          del.className = "tmpl-action-link tmpl-del-link";
+          del.textContent = "[delete]";
+          del.title = "Delete this template and generate updated file";
+          del.onclick = (function(n) {
+            return function(e) {
+              e.stopPropagation();
+              deleteTemplate(n);
+            };
+          })(name);
+          actions.appendChild(del);
+        }
+
+        td2.appendChild(actions);
+      }
+      tr.appendChild(td2);
+      container.appendChild(tr);
+    });
+  }
+
+  /**
+   * Simple HTML escaping for display.
+   */
+  function escapeHtml(str) {
+    return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  /**
+   * Open the template builder pre-populated for editing an existing template.
+   * @param {string} name - The template name.
+   * @param {string} strip - The current strip string (may be empty).
+   */
+  function editTemplate(name, strip) {
+    if (PROTECTED_TEMPLATES.indexOf(name) !== -1) {
+      alert('The "' + name + '" strip is protected and cannot be edited.');
+      return;
+    }
+    document.getElementById('builderStripName').value = name;
+
+    var tbody = document.getElementById('builderQBody');
+    tbody.innerHTML = '';
+
+    if (strip && strip.length > 0) {
+      // Remove trailing //
+      var s = strip;
+      if (s.slice(-2) === '//') s = s.slice(0, -2);
+      var fields = s.split('/');
+
+      // Skip the first field (name) and separator-only fields
+      for (var i = 1; i < fields.length; i++) {
+        var q = fields[i].trim();
+        if (q === '' || /^\s+$/.test(q)) continue;
+        addBuilderQuestion(q);
+      }
+    }
+
+    // Add a couple of blank rows for new questions
+    addBuilderQuestion();
+    addBuilderQuestion();
+
+    window.location.hash = 'pop3';
+  }
+
+  /**
+   * Delete a template by name (with minimum-1 enforcement).
+   * Generates an updated HTML file without the deleted template.
+   */
+  function deleteTemplate(name) {
+    if (PROTECTED_TEMPLATES.indexOf(name) !== -1) {
+      alert('The "' + name + '" strip is protected and cannot be deleted.');
+      return;
+    }
+    if (countTemplates() <= 1) {
+      alert('Cannot delete the last remaining template.\n'
+          + 'There must always be at least one template.');
+      return;
+    }
+
+    if (!confirm('Delete template "' + name + '"?\n\n'
+        + 'This will generate an updated copy of the form file\n'
+        + 'without this template.')) {
+      return;
+    }
+
+    delete EMBEDDED_TEMPLATES[name];
+    renderAllTemplates();
+
+    // Generate and download the updated file
+    var html = generateUpdatedFile();
+    if (html) {
+      downloadUpdatedFile(html);
+    }
+  }
+
+  /* -------------------------------------------------------
+     TEMPLATE BUILDER
+     ------------------------------------------------------- */
+
+  /**
+   * Open the template builder popup and initialize it with empty fields.
+   */
+  function openTemplateBuilder() {
+    // Clear the builder fields
+    document.getElementById('builderStripName').value = '';
+    var tbody = document.getElementById('builderQBody');
+    tbody.innerHTML = '';
+
+    // Add a few starter question rows
+    for (var i = 0; i < 4; i++) {
+      addBuilderQuestion();
+    }
+
+    // Navigate directly to the builder popup
+    // (this automatically un-targets the strip selector popup)
+    window.location.hash = 'pop3';
+  }
+
+  /**
+   * Open the template builder pre-loaded with an existing strip for editing.
+   * This allows editing a strip currently in the Message field.
+   */
+  function editCurrentAsTemplate() {
+    var msg = document.getElementById('Message').value.trim();
+    if (!msg || msg.length < 3) {
+      alert('No strip in the Request field to edit as a template.');
+      return;
+    }
+
+    // Remove trailing //
+    if (msg.slice(-2) === '//') msg = msg.slice(0, -2);
+
+    var fields = msg.split('/');
+
+    // Block editing of protected strips
+    var stripName = (fields[0] || '').trim().toUpperCase();
+    if (PROTECTED_TEMPLATES.indexOf(stripName) !== -1) {
+      alert('The "' + stripName + '" strip is protected and cannot be edited.');
+      return;
+    }
+
+    // Set strip name from first field
+    document.getElementById('builderStripName').value = fields[0] || '';
+
+    // Populate question rows (skip the first field which is the name)
+    var tbody = document.getElementById('builderQBody');
+    tbody.innerHTML = '';
+
+    for (var i = 1; i < fields.length; i++) {
+      var q = fields[i].trim();
+      if (q === '' || /^\s+$/.test(q)) continue;  // skip separator fields
+      addBuilderQuestion(q);
+    }
+
+    // Add a couple of blank rows at the end for new questions
+    addBuilderQuestion();
+    addBuilderQuestion();
+
+    // Navigate directly to builder popup
+    window.location.hash = 'pop3';
+  }
+
+  /**
+   * Add a new question row to the template builder table.
+   * @param {string} value - Optional pre-filled question text.
+   */
+  function addBuilderQuestion(value) {
+    var tbody = document.getElementById('builderQBody');
+    var rowNum = tbody.rows.length + 1;
+    var tr = document.createElement("tr");
+
+    // Row number cell
+    var tdNum = document.createElement("td");
+    tdNum.style.width = "30px";
+    tdNum.style.textAlign = "center";
+    tdNum.className = "builder-row-num";
+    tdNum.textContent = rowNum;
+    tr.appendChild(tdNum);
+
+    // Question input cell
+    var tdInput = document.createElement("td");
+    var input = document.createElement("input");
+    input.type = "text";
+    input.placeholder = "Enter QUESTION (Answer Formatting)";
+    input.value = value || '';
+    input.addEventListener('input', function() {
+      var pos = this.selectionStart;
+      this.value = formatBuilderQuestion(this.value);
+      this.setSelectionRange(pos, pos);
+    });
+    input.addEventListener('keydown', function(e) {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        // Move to next question input in the builder table
+        var allInputs = tbody.querySelectorAll('input[type="text"]');
+        for (var k = 0; k < allInputs.length; k++) {
+          if (allInputs[k] === this && k + 1 < allInputs.length) {
+            allInputs[k + 1].focus();
+            return;
+          }
+        }
+        // If on the last row, add a new blank row and focus it
+        addBuilderQuestion();
+        var updatedInputs = tbody.querySelectorAll('input[type="text"]');
+        updatedInputs[updatedInputs.length - 1].focus();
+      }
+    });
+    tdInput.appendChild(input);
+    tr.appendChild(tdInput);
+
+    // Action buttons cell
+    var tdBtns = document.createElement("td");
+    tdBtns.style.width = "90px";
+    tdBtns.style.whiteSpace = "nowrap";
+
+    var btnUp = document.createElement("button");
+    btnUp.type = "button";
+    btnUp.className = "builder-btn";
+    btnUp.textContent = "\u25B2";
+    btnUp.title = "Move up";
+    btnUp.onclick = function() { moveBuilderRow(tr, -1); };
+
+    var btnDown = document.createElement("button");
+    btnDown.type = "button";
+    btnDown.className = "builder-btn";
+    btnDown.textContent = "\u25BC";
+    btnDown.title = "Move down";
+    btnDown.onclick = function() { moveBuilderRow(tr, 1); };
+
+    var btnDel = document.createElement("button");
+    btnDel.type = "button";
+    btnDel.className = "builder-btn builder-btn-del";
+    btnDel.textContent = "\u2716";
+    btnDel.title = "Remove this question";
+    btnDel.onclick = function() {
+      tr.parentNode.removeChild(tr);
+      renumberBuilderRows();
+    };
+
+    tdBtns.appendChild(btnUp);
+    tdBtns.appendChild(btnDown);
+    tdBtns.appendChild(btnDel);
+    tr.appendChild(tdBtns);
+
+    tbody.appendChild(tr);
+  }
+
+  /**
+   * Move a builder row up or down.
+   * @param {HTMLElement} row - The table row to move.
+   * @param {number} direction - -1 for up, +1 for down.
+   */
+  function moveBuilderRow(row, direction) {
+    var tbody = row.parentNode;
+    if (direction === -1 && row.previousElementSibling) {
+      tbody.insertBefore(row, row.previousElementSibling);
+    } else if (direction === 1 && row.nextElementSibling) {
+      tbody.insertBefore(row.nextElementSibling, row);
+    }
+    renumberBuilderRows();
+  }
+
+  /**
+   * Update the row numbers in the builder table after reordering/deleting.
+   */
+  function renumberBuilderRows() {
+    var tbody = document.getElementById('builderQBody');
+    var rows = tbody.rows;
+    for (var i = 0; i < rows.length; i++) {
+      rows[i].cells[0].textContent = i + 1;
+    }
+  }
+
+  /**
+   * Auto-format a builder question field value.
+   * Text outside parentheses is uppercased; text inside
+   * parentheses (including the parentheses) is left as entered.
+   * Example: "quesTion xXx (descripTion)" becomes
+   *          "QUESTION XXX (descripTion)"
+   */
+  function formatBuilderQuestion(text) {
+    if (!text) return '';
+    var result = '';
+    var depth = 0;
+    for (var i = 0; i < text.length; i++) {
+      var ch = text[i];
+      if (ch === '(') {
+        depth++;
+        result += ch;
+      } else if (ch === ')' && depth > 0) {
+        depth--;
+        result += ch;
+      } else if (depth > 0) {
+        result += ch;  // inside parens: preserve as-is
+      } else {
+        result += ch.toUpperCase();  // outside parens: uppercase
+      }
+    }
+    return result;
+  }
+
+  /**
+   * Save the template being built in the builder.
+   * Validates input, constructs the strip string, embeds it in
+   * EMBEDDED_TEMPLATES, generates an updated HTML file for download,
+   * and optionally inserts the new template into the Message field.
+   */
+  function saveBuilderTemplate() {
+    var name = document.getElementById('builderStripName').value.trim().toUpperCase();
+    if (!name) {
+      alert('Please enter a Strip Name.');
+      document.getElementById('builderStripName').focus();
+      return;
+    }
+
+    // Check for slashes in the name (not allowed)
+    if (name.indexOf('/') !== -1) {
+      alert('The strip name cannot contain slashes (/).');
+      document.getElementById('builderStripName').focus();
+      return;
+    }
+
+    // Block overwriting protected strips
+    if (PROTECTED_TEMPLATES.indexOf(name) !== -1) {
+      alert('The "' + name + '" strip is protected and cannot be overwritten.');
+      document.getElementById('builderStripName').focus();
+      return;
+    }
+
+    // Collect questions from builder rows
+    var tbody = document.getElementById('builderQBody');
+    var rows = tbody.rows;
+    var questions = [];
+    for (var i = 0; i < rows.length; i++) {
+      var input = rows[i].cells[1].querySelector('input');
+      var q = input ? input.value.trim() : '';
+      if (q.length > 0) {
+        // Replace any slashes in the question text
+        q = q.replace(/\//g, '-');
+        questions.push(q);
+      }
+    }
+
+    if (questions.length === 0) {
+      alert('Please enter at least one question field.');
+      return;
+    }
+
+    // Build the strip string
+    var strip = name + '/' + questions.join('/') + '//';
+
+    // Close the builder popup
+    window.location.hash = 'links';
+
+    // Generate default filename from strip name
+    var safeName = name.replace(/[^A-Za-z0-9_-]/g, '_');
+    var defaultFilename = safeName + '_RI_Strip.txt';
+
+    // Save using File System Access API (allows choosing location)
+    // with fallback for browsers that don't support it
+    saveRIStripToFile(strip, defaultFilename);
+  }
+
+  /**
+   * Save an RI Strip string to a file.
+   * Prompts for a filename, then triggers a browser download.
+   *
+   * Tip: To choose the save location each time, enable
+   * "Ask where to save each file before downloading" in your
+   * browser's download settings (Chrome, Edge, etc.).
+   */
+  function saveRIStripToFile(strip, defaultFilename) {
+    var userFilename = prompt(
+      'Save RI Strip to file:\n\n'
+      + 'Enter a filename:',
+      defaultFilename
+    );
+    if (!userFilename) {
+      alert('Save cancelled. The RI Strip was not saved.');
+      return;
+    }
+
+    var blob = new Blob([strip], { type: 'text/plain' });
+    var link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = userFilename;
+    link.style.display = 'none';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(link.href);
+
+    // Automatically save the spreadsheet header CSV
+    saveSpreadsheetHeaderFromStrip(strip, defaultFilename);
+
+    if (confirm('RI Strip and spreadsheet header saved.\n\n'
+        + 'Load this strip into the Request field now?')) {
+      document.getElementById('Message').value = strip;
+      wordcount(strip);
+    }
+  }
+
+  /**
+   * Extract capitalized field names from a strip string and save
+   * as a spreadsheet (CSV) header row.
+   *
+   * For each field, the text before the opening parenthesis is
+   * extracted and trimmed. If there is no parenthesis, the entire
+   * field text is used.
+   *
+   * Example:
+   *   "DATE (MM-DD-YYYY)" -> "DATE"
+   *   "CALL SIGN"         -> "CALL SIGN"
+   *
+   * Called automatically when saving an RI Strip.
+   */
+  function saveSpreadsheetHeaderFromStrip(strip, stripFilename) {
+    // Parse fields from the strip string
+    var s = strip;
+    if (s.slice(-2) === '//') s = s.slice(0, -2);
+    var fields = s.split('/');
+
+    // First field is the strip name
+    var headings = [];
+    for (var i = 0; i < fields.length; i++) {
+      var raw = fields[i].trim();
+      if (!raw) continue;
+      var parenIdx = raw.indexOf('(');
+      var heading;
+      if (parenIdx > 0) {
+        heading = raw.substring(0, parenIdx).trim().toUpperCase();
+      } else {
+        heading = raw.toUpperCase();
+      }
+      if (heading) headings.push(heading);
+    }
+
+    if (headings.length < 2) return;
+
+    // Build CSV: quote any heading that contains a comma
+    var csvCells = headings.map(function(h) {
+      return (h.indexOf(',') !== -1) ? '"' + h + '"' : h;
+    });
+    var csv = csvCells.join(',') + '\n';
+
+    // Derive CSV filename from strip filename
+    var csvFilename = stripFilename.replace(/\.txt$/i, '') + '_Header.csv';
+    if (csvFilename === stripFilename) {
+      csvFilename = stripFilename + '_Header.csv';
+    }
+
+    var blob = new Blob([csv], { type: 'text/csv' });
+    var link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = csvFilename;
+    link.style.display = 'none';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(link.href);
+  }
+
+  /**
+   * Open a file picker to load a previously saved RI Strip file.
+   * The file contents are placed into the Message (Request) field.
+   */
+  function loadRIStripFromFile() {
+    document.getElementById('riStripFileInput').click();
+  }
+
+  /**
+   * Handle the file selected by the RI Strip file picker.
+   */
+  function handleRIStripFile(event) {
+    var file = event.target.files[0];
+    if (!file) return;
+
+    var reader = new FileReader();
+    reader.onload = function(e) {
+      var content = e.target.result.trim();
+      if (content.length === 0) {
+        alert('The file is empty.');
+        return;
+      }
+
+      // Basic validation: should contain slashes and end with //
+      if (content.indexOf('/') === -1) {
+        alert('This file does not appear to contain a valid RI Strip.\n'
+            + 'An RI Strip uses slashes (/) to separate fields.');
+        return;
+      }
+
+      // Load into the Message field
+      document.getElementById('Message').value = content;
+      wordcount(content);
+
+      document.getElementById('riStripLoadStatus').innerHTML =
+        '<span style="color:blue; font-weight:bold;">'
+        + '&#128193; RI Strip loaded from: ' + file.name
+        + ' &mdash; Click "Parse Strip" to build the Q&amp;A table.'
+        + '</span>';
+    };
+    reader.readAsText(file);
+
+    // Reset the file input so the same file can be selected again
+    event.target.value = '';
+  }
+
+  /* -------------------------------------------------------
+     PAGE INITIALIZATION
+     ------------------------------------------------------- */
+
+  window.onload = function() {
+    restoreTitle();
+    renderAllTemplates();
+
+    // Block "/" character in all input fields (not textareas, which hold strip data)
+    document.addEventListener('keydown', function(e) {
+      if (e.key === '/' && e.target.tagName === 'INPUT' && e.target.type !== 'hidden') {
+        e.preventDefault();
+      }
+    });
+
+    // Also strip "/" from pasted content in input fields
+    document.addEventListener('input', function(e) {
+      if (e.target.tagName === 'INPUT' && e.target.type !== 'hidden') {
+        if (e.target.value.indexOf('/') !== -1) {
+          var pos = e.target.selectionStart - 1;
+          e.target.value = e.target.value.replace(/\//g, '');
+          if (pos >= 0) e.target.setSelectionRange(pos, pos);
+        }
+      }
+    });
+  };
+
+</script>
+</head>
+
+<!-- ==================== PAGE BODY ==================== -->
+<body>
+<div style="text-align: justify;">
+  <blockquote>
+
+    <form style="font-family: Arial;" id="myform" method="post"
+          enctype="multipart/form-data"
+          action="http://{FormServer}:{FormPort}"
+          onsubmit="alert('To complete your form submission, click OK and close the open browser window.');">
+
+      <!-- === Hidden file input for loading strip files === -->
+      <input type="file" id="stripFileInput" accept=".txt"
+             style="display:none;" onchange="handleStripFile(event)" />
+
+      <!-- === Hidden file input for loading RI Strip files === -->
+      <input type="file" id="riStripFileInput" accept=".txt"
+             style="display:none;" onchange="handleRIStripFile(event)" />
+
+      <!-- ============================================
+           POP-UP 1: Operator Info / Help
+           ============================================ -->
+      <div id="pop1" class="pop-up">
+        <div class="popBox">
+          <div class="popScroll">
+
+            <h2>RI Strip Response Creator</h2>
+
+            <h4>Summary</h4>
+            <p>This Request for Information Strip Reader and Response Creator form is
+            designed to accept Requests for Information (RI) strips with multiple elements
+            in a slant-separated format. The form parses the fields into individual elements,
+            each with a corresponding response field. Once filled out, the form creates a
+            Response to the Request for Information (RRI) in strip format.</p>
+
+            <h4>Installation</h4>
+            <p>The form consists of 2 files, an HTML file and a TXT file. When used with
+            Winlink Express, they are installed in the Templates folder. The form also works
+            outside of Winlink Express with any browser. Simply place the two files in a
+            convenient location (e.g. a thumb drive).</p>
+
+            <h4>Overview</h4>
+            <p>The Request for Information (RI) message strip format gathers information in
+            a compact and concise manner. The strip is a single row in a spreadsheet &mdash;
+            a slant-separated set of values. The RI serves as the header line; responses
+            form the data cells.</p>
+
+            <p>RI strips are transmission mode agnostic. They can be sent by any digital
+            radio mode, voice, CW, or incorporated into a radiogram.</p>
+
+            <h4>Using the Form</h4>
+            <p>In the RI entry field, directly enter or paste the RI strip. Click
+            "Parse Strip" to build a two-column table with each element and a corresponding
+            answer field. Fill in your responses and click "Create Response Strip."</p>
+
+            <p>If using Winlink Express, click "Submit" to load the strips into the message
+            pane. Otherwise, click "Copy Strip to Clipboard" or use "Save Strip to File"
+            to save directly to your hard drive.</p>
+
+            <p>To edit a previously created strip, paste it in the "Load Existing Response
+            Strip" field or use "Populate Table from File" to open a saved file. Click
+            "Populate Table" to populate the answer fields for editing.</p>
+
+            <h4>Creating Custom RI Strips</h4>
+            <p>You can create a custom RI Strip using the "Create New
+            RI Strip" button on the main page. The builder lets you enter a strip
+            name and question fields. When saved, the RI Strip is downloaded as a
+            text file to your computer.</p>
+
+            <p>To reuse a saved RI Strip, click "Load RI Strip from File" on the
+            main page to load it into the Request field, then click "Parse Strip"
+            to build the Q&amp;A table.</p>
+
+            <h4>RI Example</h4>
+            <p>ROSTER/HAM CALL SIGN/FIRST NAME/TOWN/COUNTY/STATE (2 LETTERS)/LAT (e.g. 44.123N)/LON
+            (e.g. 069.123W)/MGRS (9 CHARACTERS)/WINLINK (Y,N)/HF NBEMS (Y,N)/VHF NBEMS (Y,N)/BRIEF
+            COMMENTS//</p>
+
+            <p>Example response:</p>
+            <p>ROSTER/KB1TCE/STEVE/OWLS HEAD/KNOX/ME/44.048N/069.103W/19TDJ9172/Y/Y/Y/NEED PRACTICE
+            WITH HF NBEMS//</p>
+
+            <h4>MARS Mask Characters</h4>
+            <p>
+              <strong>#</strong> &mdash; Numerical character (no spaces)<br />
+              <strong>A</strong> &mdash; Alphabetic character (no spaces)<br />
+              <strong>N</strong> &mdash; Alpha-numeric character (no spaces)<br />
+              <strong>X</strong> &mdash; Free text (accepts special characters and blanks)<br />
+              <strong>Y, M, D, H</strong> &mdash; Year, Month, Day, Hour (translate to #)<br />
+              <strong>,</strong> &mdash; Comma-separated list of acceptable choices<br />
+              <strong>:</strong> &mdash; Colon, used for labeled fields (e.g. ASOF:)<br />
+              <strong>[ ]</strong> &mdash; Ignore masking between brackets (e.g. [MST])<br />
+              <strong>( )</strong> &mdash; Reserved characters, cannot be used as masks
+            </p>
+
+            <p>For questions or comments please contact KB1TCE via Winlink.</p>
+
+          </div>
+          <a class="close" href="#links"><span>Back to links</span></a>
+        </div>
+      </div>
+
+      <!-- ============================================
+           POP-UP 2: Standard Strip Selector
+           ============================================ -->
+      <div class="pop-up" id="pop2">
+        <div class="popBoxS">
+          <div class="popScroll">
+
+            <br />
+            <strong>Select a new RI Strip from the list. This will replace the current Request text.</strong>
+            <br /><br />
+
+            <table width="100%" border="1" cellspacing="0" cellpadding="2">
+              <tbody id="allTemplateRows">
+                <!-- All template rows rendered dynamically by renderAllTemplates() -->
+              </tbody>
+            </table>
+
+          </div>
+          <a href="#links" id="closeme" class="close"><span>Back to links</span></a>
+        </div>
+      </div>
+
+      <!-- ============================================
+           POP-UP 3: Template Builder
+           ============================================ -->
+      <div class="pop-up" id="pop3">
+        <div class="popBox">
+          <div class="popScroll">
+
+            <h2>Create New RI Strip</h2>
+            <p>Create a new RI Strip by entering the strip name and the Question fields.
+            When finished, click "Save RI Strip". Two files will be saved: the RI Strip
+            definition (.txt) and a spreadsheet header file (.csv) with the column
+            headings extracted from the strip fields.</p>
+
+            <table width="100%" border="0" cellpadding="4" cellspacing="0">
+              <tr>
+                <td width="110"><strong>Strip Name:</strong></td>
+                <td>
+                  <input type="text" id="builderStripName" size="40"
+                         placeholder="e.g. DAMAGE REPORT"
+                         style="font-weight: bold; text-transform: uppercase;" />
+                  <span class="style7">&nbsp;This becomes the first field in the strip and should be descriptive.</span>
+                </td>
+              </tr>
+            </table>
+
+            <br />
+            <strong>Strip Question Fields:</strong>
+            <p style="font-size: 11px; color: #666; margin-top: 2px;">
+              See RI Formatting Guidelines below for assistance.
+            </p>
+
+            <table id="builderTable" border="1" cellspacing="0" cellpadding="2">
+              <thead>
+                <tr style="background-color: #CBFFC9;">
+                  <td style="width: 30px; text-align: center;"><strong>#</strong></td>
+                  <td><strong>Question / Field Description</strong></td>
+                  <td style="width: 90px; text-align: center;"><strong>Actions</strong></td>
+                </tr>
+              </thead>
+              <tbody id="builderQBody">
+                <!-- Builder rows added dynamically by addBuilderQuestion() -->
+              </tbody>
+            </table>
+
+            <br />
+            <input type="button" value=" + Add Question "
+                   onclick="addBuilderQuestion();"
+                   style="font-size: 13px;" />
+            &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+            <input type="button" value=" Save RI Strip "
+                   onclick="saveBuilderTemplate();"
+                   style="font-size: 14px; font-weight: bold; padding: 3px 12px;
+                          border-color: green;" />
+            &nbsp;&nbsp;
+            <input type="button" value=" Cancel "
+                   onclick="window.location.hash='links';"
+                   style="font-size: 13px;" />
+
+            <br /><br />
+            <p><strong>RI Formatting Guidelines</strong></p>
+
+            <p>Each Question consists of the FIELD NAME and, in parenthesis,
+            how the Answer should be formatted. The former should be in upper
+            case, the latter in mixed case as appropriate.</p>
+
+            <p>Examples:
+              <span style="display: block; margin-left: 0.5in; margin-top: 0.3em; font-size: 11px; color: #666;">
+                DATE (MM-DD-YYYY)<br />
+                LOCATION (Road Name and Town)<br />
+                CALL SIGN (N)<br />
+                COMMENTS (X, Be Brief)
+              </span>
+            </p>
+
+            <p style="font-size: 11px; color: #666;">
+              For reference, the Military Auxiliary Radio Service (MARS) uses the
+              following for Answer Formatting. For example MGRS (N) would specify
+              a continuous string of letters and numerals e.g. 19TDJ93238788.
+              <span style="display: block; margin-left: 0.5in; margin-top: 0.5em;">
+                <strong>#</strong> &mdash; Numerical character (no spaces)<br />
+                <strong>A</strong> &mdash; Alphabetic character (no spaces)<br />
+                <strong>N</strong> &mdash; Alpha-numeric character (no spaces)<br />
+                <strong>X</strong> &mdash; Free text (accepts special characters and blanks)<br />
+                <strong>Y, M, D, H</strong> &mdash; Year, Month, Day, Hour (translate to #)<br />
+                <strong>,</strong> &mdash; Comma-separated list of acceptable choices<br />
+                <strong>:</strong> &mdash; Colon, used for labeled fields (e.g. ASOF:)<br />
+                <strong>[ ]</strong> &mdash; Ignore masking between brackets (e.g. [MST])<br />
+                <strong>( )</strong> &mdash; Reserved characters, cannot be used as masks
+              </span>
+              <br />
+              Do not use a slant (/) within a field. The slant is reserved as a
+              divider (delimiter) for the strip.
+            </p>
+
+            <p style="font-size: 11px; color: #666;">
+              <strong>Note:</strong> When you save an RI Strip, two files will be
+              downloaded: the strip definition (.txt) and a spreadsheet header
+              (.csv). You can load the strip file later using the "Load RI Strip
+              from File" button on the main page.
+              <br /><br />
+              <strong>Tips:</strong> To choose where files are saved, enable
+              "Ask where to save each file before downloading" in your browser's
+              download settings (Chrome: Settings &rarr; Downloads; Edge: Settings
+              &rarr; Downloads).
+              <span style="display: block; margin-left: 2.8em; font-size: 11px; color: #666;">
+                For more information on RIs and formatting see
+                <a href="https://ne-interop-emcomm.org/request.html">https://ne-interop-emcomm.org/request.html</a>
+              </span>
+            </p>
+
+          </div>
+          <a href="#links" class="close"><span>Close</span></a>
+        </div>
+      </div>
+
+      <!-- ============================================
+           MAIN FORM LAYOUT
+           ============================================ -->
+      <table style="text-align: left; width: 968px;" border="0">
+        <tbody>
+          <tr>
+            <td>
+              <table style="font-size: 14px; text-align: left; width: 968px;"
+                     border="1" bordercolor="#999999" cellpadding="6" cellspacing="0">
+                <tbody>
+
+                  <!-- === Title Bar === -->
+                  <tr>
+                    <td colspan="2" style="text-align: center; background-color: #ffffea;
+                        font-size: 20px; padding: 10px;">
+                      <b>Request for Information Strip Reader and Response Creator</b>
+                      <br />
+                      <span style="font-size: 14px;" id="SubjectText"></span>
+                      <table width="100%" border="0" cellpadding="1" cellspacing="0">
+                        <tbody>
+                          <tr>
+                            <td width="32%">
+                              <input type="button" value="Setup" onclick="setupTitle()" />
+                              <span class="style7">&nbsp;Click to add your agency/group
+                                name to title</span>
+                            </td>
+                            <td width="44%">
+                              <a href="#pop1">Operator Info - Read Please</a>
+                            </td>
+                            <td width="24%">&nbsp;</td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </td>
+                  </tr>
+
+                  <!-- === Request Strip Entry === -->
+                  <tr>
+                    <td colspan="2" style="vertical-align: top;">
+                      <div align="left">
+                        <p>
+                          &nbsp;&nbsp;&nbsp;
+                          <strong>Request</strong>&nbsp;
+                          <small style="color: #006600;">
+                            &nbsp;&nbsp;Character count:
+                            <span class="MSGtext">
+                              <input name="check2" id="check2" size="3" maxlength="3"
+                                     class="zentriert1" readonly="readonly" value="0"
+                                     type="text" />
+                            </span>
+                            &nbsp;of&nbsp;
+                          </small>
+                          <input name="MaxChar" type="text" id="MaxChar" value="900"
+                                 size="6" readonly="readonly" />
+                          &nbsp;&nbsp;&nbsp;
+                          <a href="#pop2">Insert a Standard Information Strip</a>
+                          &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+                          <a href="#pop6">Instructions for Standard RI Strips</a>
+                        </p>
+
+                        <textarea name="Message" cols="140" rows="5" id="Message"
+                                  placeholder="Max length is 900 characters"
+                                  title="Be brief and concise."
+                                  onkeyup="wordcount(this.value)"
+                                  onchange="wordcount(this.value)"></textarea>
+                        <br />
+
+                        <p>
+                          <input type="button" value=" Parse Strip "
+                                 onclick="parseStrip()" />
+                          &nbsp;&nbsp;Display/Refresh RI Table
+                        </p>
+
+                        <!-- === Q&A Table === -->
+                        <table id="myTable" width="60%" border="1"
+                               cellspacing="0" cellpadding="1">
+                          <tbody>
+                            <tr>
+                              <td width="42%" bgcolor="#CBFFC9">
+                                <strong>Strip Question</strong>
+                              </td>
+                              <td width="58%" bgcolor="#CBFFC9">
+                                &nbsp;&nbsp;<strong>Answer</strong>
+                              </td>
+                            </tr>
+                          </tbody>
+                        </table>
+
+                        <p>&nbsp;</p>
+                      </div>
+                    </td>
+                  </tr>
+
+                  <!-- === Create Response Strip === -->
+                  <tr>
+                    <td colspan="2" bgcolor="#f0f3ff"
+                        style="vertical-align: top; text-align: left; border-bottom: none;">
+                      <input type="button" value=" Create Response Strip "
+                             onclick="createStrip()" />
+                      &nbsp;&nbsp;&nbsp;
+                      <p>
+                        <input name="myStrip" type="text" id="myStrip"
+                               style="width: 900px; font-weight: bold;"
+                               size="900" readonly="readonly" />
+                      </p>
+                    </td>
+                  </tr>
+
+                  <!-- === Copy / Save / Submit / Reset Buttons === -->
+                  <tr>
+                    <td colspan="2" bgcolor="#f0f3ff"
+                        style="vertical-align: top; text-align: left; border-top: none;">
+                      <input type="button" value=" Copy Strip to Clipboard "
+                             onclick="copyToClipboard();" />
+                      &nbsp;&nbsp;&nbsp;
+                      <input type="button" value=" Save Strip to File "
+                             onclick="saveStripToFile();" />
+                      &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+                      <input class="SubmitBtn1" id="Submit" name="Submit"
+                             value="Submit Strip to Winlink Message" type="submit"
+                             style="height: 28px;"
+                             title="After submitting, close browser, then address message for posting" />
+                      &nbsp;&nbsp;&nbsp;
+                      <input type="reset" value="Reset Form"
+                             onclick="resetTable();" />
+
+                      <!-- Hidden fields for Winlink Express integration -->
+                      <input name="testCall" type="hidden" id="testCall"
+                             value="{MsgSender}" />
+                      <input name="Templateversion" type="hidden" id="Templateversion"
+                             value="RI Strip Reader and Response Creator v 1.6" />
+                      <input name="Organization" type="hidden" id="Organization"
+                             value="RRI" />
+                      <input name="EXname" type="hidden" id="EXname" />
+                    </td>
+                  </tr>
+
+                  <!-- === Load Existing Strip Section === -->
+                  <tr>
+                    <td colspan="2" style="vertical-align: top; background-color: #ffffff;">
+                      <div align="left">
+                        <p>
+                          <strong>Load Existing Response Strip for Editing</strong><br />
+                          Paste a previously created Response strip below for editing.
+                          Click "Populate Table" to populate the table's Answer
+                          column. The Request strip must be loaded and parsed (or will
+                          be auto-detected for known strip types).
+                        </p>
+
+                        <textarea name="loadStripInput" id="loadStripInput" cols="140"
+                                  rows="3"
+                                  placeholder="Paste an existing response strip here.">
+                        </textarea>
+                        <br />
+
+                        <input type="button" value=" Populate Table "
+                               onclick="loadResponseStrip()" />
+                        &nbsp;&nbsp;
+                        <input type="button" value=" Populate Table from File "
+                               onclick="loadStripFromFile()" />
+                        <br />
+                        <span id="loadStripStatus"></span>
+                      </div>
+                    </td>
+                  </tr>
+
+                  <!-- === Create / Load RI Strip Section === -->
+                  <tr>
+                    <td colspan="2" bgcolor="#f0f3ff" style="vertical-align: top;" >
+                      <div align="left">
+                        <p>
+                          <strong>Create or Load RI Strip</strong><br />
+                          Create a new RI Strip or load a previously saved one.
+                          The RI Strip will be placed in the Request field above.
+                        </p>
+
+                        <input type="button" value=" Create New RI Strip "
+                               onclick="openTemplateBuilder();" />
+                        &nbsp;&nbsp;
+                        <input type="button" value=" Load RI Strip from File "
+                               onclick="loadRIStripFromFile()" />
+                        <br />
+                        <span id="riStripLoadStatus"></span>
+                      </div>
+                    </td>
+                  </tr>
+
+                  <!-- === Version === -->
+                  <tr>
+                    <td colspan="2" style="text-align: right; background-color: #ffffea;">
+                      Based on a concept by the SHARES Region 1
+                      Interoperability Group &mdash; Version 1.6
+                    </td>
+                  </tr>
+
+                </tbody>
+              </table>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+
+    </form>
+  </blockquote>
+</div>
+
+<!-- ============================================
+     POP-UP 6: Instructions for Standard RI Strips
+     ============================================ -->
+<div id="pop6" class="pop-up">
+  <div class="popBox">
+    <div class="popScroll">
+
+      <h2>Instructions for Standard RI Strips</h2>
+
+      <p>This describes the Standard RI strips with instructions for properly responding
+      to these strips. The first group is the SKYWARN weather observation strip developed
+      for the Gray (GYX) and Caribou (CAR) Maine weather services, covering all of Maine
+      and New Hampshire. The second group consists of strips developed by Radio Relay
+      International for broader use.</p>
+
+      <h4>GYX-CAR SKYWARN RI Strip</h4>
+
+      <p>Responses are designed to load directly into the GYX Google Sheets database.
+      Here is the RI strip followed by an example response:</p>
+
+      <p>GYX-CAR SKYWARN/DATE (MM-DD-YYYY)/TIME (HHMML)/CALL SIGN/SPOTTER ID (or NA)
+      /SOURCE (Amateur Radio, Trained Spotter, Media, Public Service Radio, Other 3rd
+      Party, Direct Messaging)/LOCATION (Road, Town; MGRS or USNG optional)/STATE &amp;
+      CWA (e.g. NH GYX, ME CAR, MA OA)/CURRENT WEATHER (Relevant info such as Temp,
+      Barometer, Cloud Cover or Type. Be brief.)/SNOW, SLEET (inches or NA; if storm
+      total add ST e.g. 2.6 or 3.5ST)/ICE ACCRETION (inches or NA)/RAINFALL (inches or
+      NA, if storm total add ST e.g. 2.6 or 3.5ST)/HAIL SIZE (Inches or NA)/WIND
+      DIRECTION &amp; SPEED (AAA MPH - if applicable add the gust value e.g. NNE 7 21G)
+      /STORM DAMAGE (Wind, flooding, ice jams, other details)/MODE(Personal Observation,
+      FM Repeater, Winlink, DMR, Direct Messaging. For others leave blank)/NET (Name of
+      radio net or other e.g. email, Slack)//</p>
+
+      <p><b>Example:</b><br />
+      GYX-CAR SKYWARN/01-02-2026/1720L/WO1J/CU330/Amateur Radio/314 POPE RD,
+      WINDHAM/ME GYX/CLEAR &amp; COLD/1.4ST/NA/0.01ST/NA/WNW 2/NONE/Personal
+      Observation/REPEATER 147.045//</p>
+
+      <p>Formatting is important &mdash; follow the example answers exactly.</p>
+
+      <p>The <b>DATE</b> uses hyphens (MM-DD-YYYY). <b>STATE &amp; CWA</b> primary
+      options are: NH GYX, ME GYX, and ME CAR. For locations outside ME/NH, use STATE
+      and OA (e.g. MA OA).</p>
+
+      <p><b>SOURCE</b> requires one of the specific responses (case sensitive).</p>
+
+      <p><b>LOCATION</b>: road name and town. MGRS/USNG coordinates are desired but
+      optional.</p>
+
+      <p><b>CURRENT WEATHER</b>: brief synopsis (cloud cover, type, humidity, barometer,
+      etc.). Activation instructions may request specific information for this field.</p>
+
+      <p><b>SNOW, SLEET</b>: inches or NA. Append ST for storm totals (e.g. 3.5ST).
+      No need to include units.</p>
+
+      <p><b>ICE ACCRETION</b>: inches or NA.</p>
+
+      <p><b>RAINFALL</b>: same format as SNOW, SLEET.</p>
+
+      <p><b>HAIL SIZE</b>: inches or NA.</p>
+
+      <p><b>WIND DIRECTION &amp; SPEED</b>: direction in up to 3 letters (N, NW, ESE),
+      speed in MPH (units understood). Add gust value if applicable (e.g. NNE 7 21G).</p>
+
+      <p><b>STORM DAMAGE</b>: free text. Examples include damage to structures, vehicles,
+      trees/limbs down, power lines, road damage, flooding, coastal inundation or
+      erosion.</p>
+
+      <p><b>MODE</b>: how the observation was transmitted (case sensitive). Options:
+      Personal Observation, FM Repeater, Winlink, DMR, Direct Messaging.</p>
+
+      <p><b>NET</b>: name of the radio net or other channel (e.g. email, Slack).</p>
+
+      <p><b>Radiogram formatting note:</b> If sent via standard radiogram, dashes become
+      DASH, decimal points become R, commas become COMMA, periods become X, and email
+      addresses are spelled out (e.g. SKYWARN ATSIGN WX1GYX DOT NET).</p>
+
+      <h4>WXOBS (Radio Relay International)</h4>
+
+      <p>Example Response:<br />
+      WXOBS/KB1TCE/KN83/OWLS HEAD/ME/19TDJ9172/GYX/ /301438Z/ /SSW/3/8/ /OVC/ /71/
+      /1020.20/F/ /RA/ /0.40/0.40/0.40/NA/ /NO DAMAGE//</p>
+
+      <p>Use NA where not applicable. Leave blank if information is unavailable.</p>
+
+      <p>Cloud choices: CLR, FEW, SKT (Scattered), CB (Cumulonimbus), OVC (Overcast),
+      TCU (Towering Cumulus).</p>
+
+      <p>Precipitation choices: RA (Rain), SN (Snow), SL (Sleet), PL (Ice Pellets),
+      GR (Hail), FZRA (Freezing Rain).</p>
+
+    </div>
+    <a href="#links" class="close"><span>Back to links</span></a>
+  </div>
+</div>
+
+</body>
+</html>

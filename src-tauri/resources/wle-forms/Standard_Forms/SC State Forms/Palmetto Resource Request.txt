@@ -1,0 +1,24 @@
+Form:Palmetto RR.html,Palmetto RR Viewer.html
+To: 
+Subject: Palmetto RR, <var IncidentName>, <var RequestorNumber>
+Msg:
+1. Incident NamE: <var IncidentName>
+2. Detailed Description:
+<var DetailedDescription>
+
+3. County Name Requesting this Resource: <var CountyName>
+4. Delivery Point of Contact NAME: <var DEliveryContactName>
+5. Delivery Point of contact PHONE: <var ContactPhone>
+6. Deliver to Street Address: <var DelveryAddress>
+7. Deliver to City, State, Zip: <var DelveryAddressCity>
+8. Requestor Name:     <var RequestorName>
+9. Requestor Phone and Email Address: <var RequestorPhone>
+10. Palmetto Resource Request Number: <var RequestorNumber>
+--------------------------------------
+Document name: Palmetto Resource Request Form
+Updated by South Carolina ARES Approved by: SCEMD
+Date 6/8/2023 Version V2A
+------------------------------------
+Express Sending Station: <MsgSender>
+Senders Express Version: <ProgramVersion>
+Senders Template Version: <var Templateversion> 

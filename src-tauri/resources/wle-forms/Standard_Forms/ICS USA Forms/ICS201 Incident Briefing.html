@@ -1,0 +1,1584 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml"><head>
+    <meta http-equiv="content-type" content="application/xhtml+xml; charset=utf-8" />
+    
+    <title>ICS 201 INCIDENT BRIEFING</title><style type="text/css">
+body, td, th {
+font-family: Arial,Helvetica,sans-serif;
+font-size: 12px;
+}
+.zentriert {
+font-size: 12px;
+}
+input, select {
+    padding: 1px;
+    -moz-border-radius-topleft: 1px;
+    -moz-border-radius-topright: 1px;
+    -moz-border-radius-bottomright: 1px;
+    -moz-border-radius-bottomleft: 1px;
+    font-family: Arial,Helvetica,sans-serif;
+    font-size: 12px;
+    text-align: left;
+}
+textarea {
+margin: 2px;
+padding: 2px;
+-moz-border-radius-topleft: 1px;
+-moz-border-radius-topright: 1px;
+-moz-border-radius-bottomright: 1px;
+-moz-border-radius-bottomleft: 1px;
+font-family: Arial,Helvetica,sans-serif;
+font-size: 12px;
+}
+.rechtsbuendig {
+font-size: 12px;
+}
+.SubmitBtn {
+font-size: 12px;
+}
+.version {
+margin: 1px;
+color: #666666;
+position: relative;
+left: 0px;
+top: 1px;
+font-size: 12px;
+}
+#TextHeader {
+background-color: #dddddd;
+font-size: 12px;
+}
+    </style>
+    <style>
+/*
+body {color:#000; background:#fff; font:100%/1.5 arial,sans-serif;}
+h2 {margin-top:0}
+*/
+/* Styling applied to classes only */
+/* Pop-up content shifted off-screen when not in view.
+Still readable by screen-reader software.
+When targeted it fills the browser window.
+*/
+.pop-up {
+	position:absolute;
+	top:0;
+	left:-500em;
+	visibility: visible;
+}
+.pop-up:target {position:static; left:0;}
+/* The pop-up itself */
+.popBox {
+	background:#ffffff;
+	position:absolute;
+	left:20%;
+	right:20%;
+	top:10%;
+	bottom:10%;
+	z-index:10;
+	border:1px solid #3a3a3a;
+/* CSS3 where available: rounded corners, drop-shadow, and fade in. */
+border-radius:.25rem;
+box-shadow:0 .5rem .5rem rgba(0,0,0,.5);
+	opacity:0;
+	transition: opacity 0.8s ease-out;
+	visibility: visible;
+}
+:target .popBox {position:fixed; opacity:1;}
+/* Light box properties */
+.lightbox {
+display:none;
+text-indent:-200em;
+background-color:rgba(0,0,0,.4);
+width:100%;
+height:100%;
+position:fixed;
+top:0;
+left:0;
+bottom:0;
+right:0;
+z-index:5;
+}
+:target .lightbox {display:block;}
+/* The pop-ups close link, moved via CSS to the top right of the pop-up */
+.close:link,
+.close:visited {
+	position: absolute;
+	top: -0.75em;
+	right: -0.75em;
+	display: block;
+	width: 2em;
+	height: 2em;
+	line-height: 1.8;
+	padding: 0;
+	text-align: center;
+	text-decoration: none;
+	background-color: #000;
+	border: 2px solid #fff;
+	color: #fff;
+	border-radius: 50%;
+box-shadow: 0 0 .5rem .5rem rba(0,0,0,.5);
+	visibility: visible;
+}
+.close:before {content:"X";}
+.close:hover,
+.close:active,
+.close:focus {
+box-shadow: 0 0 .5rem .5rem rba(255,0,0,.5);
+background-color: #c00;
+color: #fff;
+}
+.close span {
+text-indent: -200em;
+display: block;
+}
+/* The pop-up content div will scroll if it has too much content */
+.popScroll {
+	position:absolute;
+	top: 1rem;
+	left: 1rem;
+	right: 1rem;
+	bottom: 1rem;
+	overflow-y: auto;
+*overflow-y: scroll;
+	padding-right: 0.5em;
+	visibility: visible;
+}
+.popScroll h2 {margin-top:0}
+.formtext {font-family: Arial, Helvetica, sans-serif;
+font-size: 11pt;
+font-weight: normal;
+}
+
+  input[type=button] {
+
+  border: 2px solid #0f88f2;;
+   border-radius:.25rem;
+  color: black;
+  padding: 2px 2px;
+ background-color: white;
+  text-decoration: none;
+  margin: 2px 2px;
+  cursor: pointer;
+}
+input[type=submit] {
+ border: 2px solid green;
+  border-radius:.25rem;
+  background-color: white;
+  color: black;
+  padding: 2px 2px;
+  font-size: 14px;
+   cursor: pointer;
+}
+input[type=reset] {
+ border: 2px solid red;
+ border-radius:.25rem;
+  background-color: white;
+  color: black;
+  padding: 2px 2px;
+  font-size: 14px;
+   cursor: pointer;
+}
+input[type=black1] {
+ border: 2px solid #999999;
+   width:125px;
+  border-radius:.25rem;
+
+  background-color: white;
+  color: black;
+  padding: 2px 2px;
+  font-size: 14px;
+   cursor: pointer;
+}
+    .SubmitBtn1 {font-size: 12px;
+font-family: Arial,Helvetica,sans-serif;
+}
+    .style50 {
+    font-family: Arial, Helvetica, sans-serif;
+    font-size: 10pt;
+    font-weight: normal;
+    color: #000000;
+}
+    .style51 {font-family: Arial, Helvetica, sans-serif; font-size: 10pt; font-weight: bold; }
+    .SubmitBtn2 {text-align: right;
+}
+    .Header {font-family: Arial, Helvetica, sans-serif;
+	font-size: 12px;
+	font-weight: bold;
+	color: #000;
+	text-align: center;
+	background-color: #EFEFEF;
+}
+@media print {
+
+ footer {page-break-after: always;}
+  .form-control, .form-control.nobug {
+    border: 0;
+    outline: 0;
+    box-shadow: none;
+			font-size:10px;
+
+  }
+  .form-control.nobug {
+    transition: none; /*-- THIS IS IMPORTANT -- */
+  }
+  }
+    .style3 {font-size: 12px; font-weight: bold; font-family: Arial, Helvetica, sans-serif; }
+.style6 {font-size: 12px;
+font-family: Arial, Helvetica, sans-serif;
+}
+    .style52 {font-family: A9}
+.style53 {font-weight: bold; font-size: 10pt;}
+    .SubmitBtn21 {text-align: right;
+}
+.SubmitBtn21 {text-align: right;
+}
+    </style>
+
+ <script type="text/javascript">
+function TimeNow(Timefld, FocusFld) {
+var txt;
+var d = new Date(),
+thisyear = d.getFullYear();
+thismonth= d.getMonth();
+thismonth = thismonth + 1;
+thisday = d.getDate();
+h = (d.getHours()<10?'0':'') + d.getHours()
+m = (d.getMinutes()<10?'0':'') + d.getMinutes()
+s = (d.getSeconds()<10?'0':'') + d.getSeconds();
+var myprompt = thismonth+'/'+thisday+'/' +thisyear+ ' '+h + ':' + m ;
+var RightNow = prompt("Time:", myprompt);
+document.getElementById(Timefld).value = RightNow;
+//document.getElementById(FocusFld).focus();
+} 
+</script>
+
+<script>
+
+// Test auto collect
+// Add parseme
+//    <textarea name="parseme" cols="60" id="parseme" style="display: none;"></textarea>
+function saveTextAsFile(fileNameToSaveAs, textToWrite) {
+var textToWrite = document.getElementById('parseme').value; 
+var fileNameToSaveAs = "ICS201 " + DateforFile()+".txt";
+fileNameToSaveAs = prompt("", fileNameToSaveAs);
+
+  /* Saves a text string as a blob file*/  
+  var ie = navigator.userAgent.match(/MSIE\s([\d.]+)/),
+      ie11 = navigator.userAgent.match(/Trident\/7.0/) && navigator.userAgent.match(/rv:11/),
+      ieEDGE = navigator.userAgent.match(/Edge/g),
+      ieVer=(ie ? ie[1] : (ie11 ? 11 : (ieEDGE ? 12 : -1)));
+
+  if (ie && ieVer<10) {
+    console.log("No blobs on IE ver<10");
+    return;
+  }
+
+  var textFileAsBlob = new Blob([textToWrite], {
+    type: 'text/plain'
+  });
+
+  if (ieVer>-1) {
+    window.navigator.msSaveBlob(textFileAsBlob, fileNameToSaveAs);
+
+  } else {
+    var downloadLink = document.createElement("a");
+    downloadLink.download = fileNameToSaveAs;
+    downloadLink.href = window.URL.createObjectURL(textFileAsBlob);
+    downloadLink.onclick = function(e) { document.body.removeChild(e.target); };
+    downloadLink.style.display = "none";
+    document.body.appendChild(downloadLink);
+    downloadLink.click();
+  }
+}
+
+
+
+
+
+function destroyClickedElement(event)
+{
+    document.body.removeChild(event.target);
+}
+
+function loadFileAsText()
+{
+
+    var fileToLoad = document.getElementById("fileToLoad").files[0];
+ 
+    var fileReader = new FileReader();
+    fileReader.onload = function(fileLoadedEvent) 
+    {
+        var textFromFileLoaded = fileLoadedEvent.target.result;
+        document.getElementById("inputTextToSave").value = textFromFileLoaded;
+    };
+    fileReader.readAsText(fileToLoad, "UTF-8");
+}
+
+
+function DateforFile(RightNow) {
+var txt;
+var d = new Date(),
+thisyear = d.getFullYear();
+thismonth= d.getMonth();
+thismonth = thismonth+1;
+if (thismonth < 10) { thismonth = "0" + thismonth}
+
+thisday = d.getDate();
+if (thisday < 10) { thisday = "0" + thisday}
+
+h = (d.getHours()<10?'0':'') + d.getHours()
+m = (d.getMinutes()<10?'0':'') + d.getMinutes()
+var myprompt = thisyear+ '-'+thismonth+'-'+thisday+' '+h + '_' + m ;
+return myprompt;
+}
+
+function isObject(arg) {
+  return Object.prototype.toString.call(arg)==='[object Object]';
+}
+
+function formDataToObject(elForm) {
+  if (!elForm instanceof Element) return;
+  var fields = elForm.querySelectorAll('input, select, textarea'),
+    o = {};
+  for (var i=0, imax=fields.length; i<imax; ++i) {
+    var field = fields[i],
+      sKey = field.name || field.id;
+    if (field.type==='button' || field.type==='image' || field.type==='submit' || !sKey) continue;
+    switch (field.type) {
+      case 'checkbox':
+        o[sKey] = +field.checked;
+        break;
+      case 'radio':
+        if (o[sKey]===undefined) o[sKey] = '';
+        if (field.checked) o[sKey] = field.value;
+        break;
+      case 'select-multiple':
+        var a = [];
+        for (var j=0, jmax=field.options.length; j<jmax; ++j) {
+          if (field.options[j].selected) a.push(field.options[j].value);
+        }
+        o[sKey] = a;
+        break;
+      default:
+        o[sKey] = field.value;
+    }
+  }
+ // alert('Form data:\n\n' + JSON.stringify(o, null, 2));
+ document.getElementById('parseme').value = JSON.stringify(o, null, 2);
+//  return o;
+}
+
+function populateForm(o) {
+
+o =  JSON.parse(document.getElementById('parseme').value);
+ //if (!isObject(o)) return;
+if (!isObject(o)) return;
+  for (var i in o) {
+    var el = document.getElementById(i) || document.querySelector('[name=' + i + ']');
+    if (el.type==='radio') el = document.querySelectorAll('[name=' + i + ']');
+    switch (typeof o[i]) {
+      case 'number':
+        el.checked = o[i];
+        break;
+      case 'object':
+        if (el.options && o[i] instanceof Array) {
+          for (var j=0, jmax=el.options.length; j<jmax; ++j) {
+            if (o[i].indexOf(el.options[j].value)>-1) el.options[j].selected = true;
+          }
+        }
+        break;
+      default:
+        if (el instanceof NodeList) {
+          for (var j=0, jmax=el.length; j<jmax; ++j) {
+            if (el[j].value===o[i]) el[j].checked = true;
+          }
+        } else {
+          el.value = o[i];
+        }
+    }
+  }
+ 
+}
+
+function SaveData() {
+	
+			formDataToObject(document.getElementById('myform'))
+			saveTextAsFile();
+			
+			//saveTextAsFile();
+			}
+
+//-------
+ function readBlob(opt_startByte, opt_stopByte) {
+  
+    var files = document.getElementById('files').files;
+    if (!files.length) {
+      alert('Please select a file!');
+      return;
+    }
+
+    var file = files[0];
+    var start = parseInt(opt_startByte) || 0;
+    var stop = parseInt(opt_stopByte) || file.size - 1;
+
+    var reader = new FileReader();
+
+    // If we use onloadend, we need to check the readyState.
+    reader.onloadend = function(evt) {
+      if (evt.target.readyState == FileReader.DONE) { // DONE == 2
+        document.getElementById('byte_content').textContent = evt.target.result;
+        document.getElementById('byte_range').textContent = 
+            ['Read bytes: ', start + 1, ' - ', stop + 1,
+             ' of ', file.size, ' byte file'].join('');
+      }
+    };
+
+    var blob = file.slice(start, stop + 1);
+    reader.readAsBinaryString(blob);
+  }
+    	
+  window.onload = function () { 
+ 
+ //Check the support for the File API support 
+ if (window.File && window.FileReader && window.FileList && window.Blob) {
+    var fileSelected = document.getElementById('txtfiletoread');
+	
+    fileSelected.addEventListener('change', function (e) { 
+         //Set the extension for the file 
+         var fileExtension = /text.*/; 
+         //Get the file object 
+         var fileTobeRead = fileSelected.files[0];
+        //Check of the extension match 
+         if (fileTobeRead.type.match(fileExtension)) { 
+             //Initialize the FileReader object to read the 2file 
+			
+             var fileReader = new FileReader(); 
+             fileReader.onload = function (e) { 
+                 var fileContents = document.getElementById('filecontents'); 
+                
+				document.getElementById('parseme').value =fileReader.result;
+				populateForm(obj = document.getElementById('parseme').value);
+			 } 
+             fileReader.readAsText(fileTobeRead); 
+         } 
+         else { 
+             alert("Please select text file"); 
+         }
+ 
+    }, false);
+} 
+ else { 
+     alert("Files are not supported"); 
+ } 
+// Checkifinbrowser();
+ }
+//var txt = document.getElementById('parseme').value;
+//var myobject = txt;
+//populateForm(myobject);
+
+ function getConfirmation() {
+               var retVal = confirm("Do you want to clear Activity Log ?");
+               if( retVal == true ) {
+			
+                for (x = 1; x <21; x++) {
+							
+			document.getElementById('ActivityTime'+x).value="";
+			document.getElementById('Activities'+x).value="";
+	
+			}
+                  return true;
+               } else {
+                 
+                  return false;
+               }
+            }
+
+function Checkifinbrowser() {
+ var x= document.getElementById("testCall").value; 
+ var n = x.search("{Msg");
+ if (n>-1) { 
+ document.getElementById('Submit').style.visibility='hidden';
+  alert('You are running this form outside of Winlink.\n \nWhen you have completed the form, SAVE the data and then give or send the SAVED data file to the radio operator. The operator will load the SAVED data into the correct form and send via winlink. ');
+ } else {document.getElementById('Submit').style.visibility='visible';  }
+}
+
+// export stuff 8-5-22
+function ExportData(ToDo) {
+var ToDo= document.getElementById("DoAttach").value; 
+if(ToDo!= 'attach') {return}
+		mydata= "Incident Name,Operational Period,Date from,Date To,Time from,Time To,Name,HIMT Position,Prepared  by,Time,Facility\n";
+			var mydata=mydata +  getEX(document.getElementById('Incident_Name').value)+",";
+
+			var mydata=mydata +  getEX(document.getElementById('OpNum').value)+",";
+			var mydata=mydata +  getEX(document.getElementById('DateFrom').value)+",";
+			var mydata=mydata +  getEX(document.getElementById('DateTo').value)+",";
+			var mydata=mydata +  getEX(document.getElementById('TimeFrom').value)+",";
+			var mydata=mydata +  getEX(document.getElementById('TimeTo').value)+",";
+			var mydata=mydata +  getEX(document.getElementById('Name').value)+",";
+			var mydata=mydata +  getEX(document.getElementById('ICS_Position1').value)+",";
+					var mydata=mydata+  getEX(document.getElementById('PreparedName').value)+",";
+			var mydata=mydata+  getEX(document.getElementById('PREPDateTime').value)+",";
+			var mydata=mydata+  getEX(document.getElementById('Facility').value);
+
+			var mydata=mydata+"\n\n\n";
+
+var mydata=mydata+"Date Time, Notable Activities\n";
+			 //var nametouse ='';
+			
+				var nametouse =  "ICS 214 data " + DateforFile()+".csv"
+				document.getElementById('attached_file').value =nametouse;
+				var excelheader = "Date / Time, Notable Activities";
+				//document.getElementById('attached_text2').value = excelheader+ mydata;
+for (x = 1; x <21; x++) {//ActivityTime20  Activities20
+var mydata=mydata+getEX(document.getElementById('ActivityTime'+x).value)+",";
+				var mydata=mydata+getEX(document.getElementById('Activities'+x).value);
+				var mydata=mydata+"\n";
+
+}
+			if  ( ToDo!= 'attach' ){ document.getElementById('attached_file').value ='';}
+			
+			
+			if  ( ToDo== 'attach' ){
+				var nametouse =  "ICS 251 data " + DateforFile()+".csv"
+				document.getElementById('attached_file').value =nametouse;
+				//var excelheader = "Incident Name,2. Operational Period,2a. Date from,2a. Date To,2a. Time from,2a. Time2  To,3. Department/Unit Reporting,3b. Department/Unit Contact number,4a. Power,4a. Power Comment,4b. Lighting,4b. Lighting Comment,4c. Water,4c. Water comment,4d. Sewage/Toilets,4d. Sewage/Toilets comment,4e. Nurse Call System,4e. Nurse Call System comment,4f. Medical Gases / Oxygen,4f. Medical Gases  comment,4g. Communications IT system,4g. Communications IT system comment,5. Remarks,6. Prepared by,6. Prepared Time,6. Facility"+"\n";
+				document.getElementById('attached_text').value =  mydata;
+			} //attached_file//document.getElementById('parseme').value = mydata;
+						//ExporttoExcel('csv',mydata);
+} //attached_file
+	
+			
+
+			
+function ExporttoExcel(fileNameToSaveAs, textToWrite) {
+var textToWrite = document.getElementById('parseme').value; 
+//var excelheader = "Incident Name,2. Operational Period,2a. Date from,2a. Date To,2a. Time from,2a. Time2  To,3. Name,4. HIMT Position,5. Date / Time, Notable Activities";
+//var textToWrite = excelheader + "\r" + textToWrite;
+var fileNameToSaveAs = "ICS 201 " + DateforFile()+".csv";
+fileNameToSaveAs = prompt("", fileNameToSaveAs);
+
+  /* Saves a text string as a blob file*/  
+  var ie = navigator.userAgent.match(/MSIE\s([\d.]+)/),
+      ie11 = navigator.userAgent.match(/Trident\/7.0/) && navigator.userAgent.match(/rv:11/),
+      ieEDGE = navigator.userAgent.match(/Edge/g),
+      ieVer=(ie ? ie[1] : (ie11 ? 11 : (ieEDGE ? 12 : -1)));
+
+  if (ie && ieVer<10) {
+    console.log("No blobs on IE ver<10");
+    return;
+  }
+
+  var textFileAsBlob = new Blob([textToWrite], {
+    type: 'text/plain'
+  });
+
+  if (ieVer>-1) {
+    window.navigator.msSaveBlob(textFileAsBlob, fileNameToSaveAs);
+
+  } else {
+    var downloadLink = document.createElement("a");
+    downloadLink.download = fileNameToSaveAs;
+    downloadLink.href = window.URL.createObjectURL(textFileAsBlob);
+    downloadLink.onclick = function(e) { document.body.removeChild(e.target); };
+    downloadLink.style.display = "none";
+    document.body.appendChild(downloadLink);
+    downloadLink.click();
+  }
+}
+function getEX (str) {
+
+if(str==null){return}
+var line=str;
+
+if (line =='--') {line=''}
+//if (line =='FALSE') {line=''}
+
+// fix quotes
+  line = line.replace(/[\u2014]/g, "--")        // emdash
+line = line.replace(/[\u2022]/g, "*")         // bullet
+line = line.replace(/[\u2018\u2019]/g, "'")   // smart single quotes
+line = line.replace(/[\u201C\u201D]/g, '"');  // smart double quotes
+ var addquote = false;
+ var position = line.search('"');
+if (position != -1){line = line.replace(/"/g, '""');addquote = true}
+
+var position = line.search(",");
+if (position != -1){ addquote = true}
+if (addquote==true) {var line = '"' +line+'"';} 
+
+
+return line;
+}
+
+function shortmonth(monthnum) {
+var monthname;
+shortmonths = ["JAN", "FEB", "MAR","APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"] ;
+monthname = shortmonths [monthnum];
+return monthname;
+}
+function DateTimef(TType,TheFld, FocusFld) {
+var txt;
+var myprompt;
+var d = new Date(),
+thisyear = d.getFullYear();
+thismonth= d.getMonth();
+thisday = d.getDate();
+var monname;
+h = (d.getHours()<10?'0':'') + d.getHours()
+m = (d.getMinutes()<10?'0':'') + d.getMinutes()
+s = (d.getSeconds()<10?'0':'') + d.getSeconds();
+var now = new Date();
+var utch = now.getUTCHours();
+if (utch < 10) { utch = "0"+utch};
+var utcs = now.getUTCMinutes();
+if (utcs < 10) { utcs = "0"+utcs};
+var myUTCtime = utch+":"+utcs+"Z";
+var utcstr = d.toUTCString();
+var localt = d.toLocaleTimeString();
+var isostr = d.toISOString();
+monthname = shortmonth (thismonth);
+thismonth = thismonth + 1;
+if (thismonth < 10) { thismonth = "0"+thismonth};
+if (thisday < 10) { thisday = "0"+thisday};
+switch (TType) {
+case 'hms' :
+myprompt = h + ':' + m + ':' + s;
+var RightNow = prompt("Time:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'hm' :
+myprompt = h + ':' + m;
+//myprompt = h+ m;
+var RightNow = prompt("Time:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'm-d-y': myprompt = thismonth+ '-' + thisday+ '-'+ thisyear;
+var RightNow = prompt("Date:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'm/d/y': myprompt = thismonth+ '/' + thisday+ '/'+ thisyear;
+var RightNow = prompt("Date:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'DateStamp-m-d-y': var RightNow = thismonth+ '-' + thisday+ '-'+ thisyear;
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'd mmm y': myprompt = thisday+ ' ' + monthname+ ' '+ thisyear;
+var RightNow = prompt("Date:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'mmm-d-y': myprompt = monthname+'-'+thisday+ '-' + thisyear;
+var RightNow = prompt("Date:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'localampm': var myprompt = localt;
+var RightNow = prompt("Local time:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'fulldate': var myprompt = thisyear+ '/'+thismonth+'/'+thisday;
+var RightNow = prompt("Date:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'fulldatetime': var myprompt = thisyear+'/'+thismonth+ ''+thisday+' '+h + ':' + m;
+var RightNow = prompt("Date time:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'iso': var myprompt = isostr;
+var RightNow = prompt("Date time:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'utc': var myprompt = utcstr;
+var RightNow = prompt("Date time:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'zulu': var myprompt = isostr;
+myprompt = isostr.replace("T", " "); slen = myprompt.length;
+myprompt = myprompt.substr(0, slen-5)+'Z';
+var RightNow = prompt("Date time:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'UTChm': var myprompt = myUTCtime;
+var RightNow = prompt("Date time:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+}
+
+// if(FocusFld !== null && FocusFld !== '') {document.getElementById(FocusFld).focus()} --/
+};
+
+function selectaddress(mychoice){  
+if(mychoice == 3) { location.href="#pop3"; } 
+ if(mychoice == 4) { location.href="#pop4"; } 
+}  
+function parsestring(mType) {
+var mytext = document.getElementById('parseme').value;
+var myType = mType;
+var lines = mytext.split('\n', 20);
+
+    for(var line = 0; line < lines.length ; line++){
+        // By tabs
+		//alert (lines[line]);
+var x = line +1;
+
+
+     if (line <21) {  var tabs = lines[line].split('\t',2);
+	 //ActivityTime20  Activities20
+
+         	if (tabs[0] != null){document.getElementById('ActivityTime'+x).value =tabs[0]};
+		 	if (tabs[1] != null){document.getElementById('Activities'+x).value = tabs[1]};
+			
+			
+			 }   
+			}
+	alert('Parsing completed');
+	}
+	
+	function parsestring5(mType) {
+var mytext = document.getElementById('parseme5').value;
+var myType = mType;
+var lines = mytext.split('\n', 15);
+
+    for(var line = 0; line < lines.length ; line++){        // By tabs
+		//alert (lines[line]);
+var x = line +1;
+
+     if (line <16) {  var tabs = lines[line].split('\t',6);
+	 //Resource1	ResID1	OrderT1	ETA1	cbox	ResNotes1
+
+         	if (tabs[0] != null){document.getElementById('Resource'+x).value =tabs[0]};
+		 	if (tabs[1] != null){document.getElementById('ResID'+x).value = tabs[1]};
+			if (tabs[2] != null){document.getElementById('OrderT'+x).value = tabs[2]};
+			if (tabs[3] != null){document.getElementById('ETA'+x).value = tabs[3]};
+			if (tabs[4] != null){document.getElementById('cbox'+x).value = tabs[4]}; if (tabs[4] == "X") {document.getElementById('cbox'+x).checked = true; document.getElementById('Tcbox'+x).value = 'X'; }
+			if (tabs[5] != null){document.getElementById('ResNotes'+x).value = tabs[5]};
+			
+			
+			 }   
+			}
+	alert('Parsing completed');
+	}
+	
+	function AutoGrowTextArea(textField)
+{
+if (textField.clientHeight < textField.scrollHeight)
+{
+textField.style.height = textField.scrollHeight + "px";
+if (textField.clientHeight < textField.scrollHeight)
+{
+textField.style.height = (textField.scrollHeight * 2 - textField.clientHeight) + "px";
+}
+}
+}
+
+function Flip(theid,working) {
+x1 = document.getElementById(theid).value;
+if (x1 == '' | x1 == '[ NO ]') { document.getElementById(theid).value = 'X';} 
+else { document.getElementById(theid).value = '';}
+}
+    function Flipmap(theid,working) {
+x1 = document.getElementById(theid).value;
+if (x1 == 'NO' | x1 == '[ NO ]') { document.getElementById(theid).value = 'YES';} 
+else { document.getElementById(theid).value = 'NO';}
+}
+// pste stuff
+
+</script>
+</head>
+<body>
+    <br />
+<form  style="font-family: Arial;" pbzloc="3" onsubmit="document.getElementById('parseme').value='';return confirm('To complete your form submission, click OK and close the open browser window. You will return to the new message window so you can post your message to the outbox');" method="post" id="myform" enctype="multipart/form-data" action="http://{FormServer}:{FormPort}">
+  <span class="style50"><span class="style51">
+  <input name="MapAttached" type="hidden" id="MapAttached" value="[ NO ]" />
+  </span></span>      
+  <div id="pop1" class="pop-up"><!-- The pop-up block -->
+        <div class="popBox"><!-- If the content becomes larger than the pop-up this div will scroll the content -->
+          <div class="popScroll">
+            <p> </p>
+            <h2>ICS 201 Incident Briefing</h2>
+<p dir="ltr"><strong>Purpose</strong>. The Incident Briefing (ICS 201) provides the Incident Commander (and the Command and General Staffs) with basic information regarding the incident situation and the resources allocated to the incident. In addition to a briefing document, the ICS 201 also serves as an initial action worksheet. It serves as a permanent record of the initial response to the incident.&nbsp;<br />
+</p>
+<p dir="ltr"><strong>Preparation.</strong> The briefing form is prepared by the Incident Commander for presentation to the incoming Incident Commander along with a more detailed oral briefing.&nbsp;</p>
+<p dir="ltr"><strong>Distribution.</strong> Ideally, the ICS 201 is duplicated and distributed before the initial briefing of the Command and General Staffs or other responders as appropriate. The &ldquo;Map/Sketch&rdquo; and &ldquo;Current and Planned Actions, Strategies, and Tactics&rdquo; sections (pages 1–2) of the briefing form are given to the Situation Unit, while the &ldquo;Current Organization&rdquo; and &ldquo;Resource Summary&rdquo; sections (pages 3–4) are given to the Resources Unit.&nbsp;<br />
+ 
+Notes:&nbsp;<br>
+• The ICS 201 can serve as part of the initial Incident Action Plan (IAP).&nbsp;<br>
+• If additional pages are needed for any form page, use a blank ICS 201 and repaginate as needed.&nbsp;</p>
+<strong><br />
+<p dir="ltr">Block Number Block Title&nbsp;</p>
+<p dir="ltr">Instructions&nbsp;</p>
+<br />
+<p dir="ltr">1 Incident Name&nbsp;</strong></p>
+<p dir="ltr">Enter the name assigned to the incident.</p>
+<br />
+</strong>
+<p dir="ltr"><strong>2 Incident Number</strong><br>
+Enter the number assigned to the incident.&nbsp;<strong><br />
+</strong></p>
+<p dir="ltr"><strong>3 Date/Time Initiated&nbsp;<br>
+  <br>
+  </strong>• Date, Time Enter date initiated (month/day/year) and time initiated (using the 24- hour clock).&nbsp;<strong><br />
+</strong></p>
+<strong>
+<p dir="ltr">4 Map/Sketch </p>
+</strong>
+<p dir="ltr">(include sketch, showing the total area of operations, the incident site/area, impacted and threatened areas, overflight results, trajectories, impacted shorelines, or other graphics depicting situational status and resource assignment)&nbsp;</p>
+<p dir="ltr">Show perimeter and other graphics depicting situational status, resource assignments, incident facilities, and other special information on a map/sketch or with attached maps. Utilize commonly accepted ICS map symbology. If specific geospatial reference points are needed about the incident&rsquo;s location or area outside the ICS organization at the incident, that information should be submitted on the Incident Status Summary (ICS 209). North should be at the top of page unless noted otherwise.&nbsp;</p>
+<strong><br />
+</strong>
+<dir="ltr"><strong>5 Situation Summary and Health and Safety Briefing </strong>(for briefings or transfer of command): Recognize potential incident Health and Safety Hazards and develop necessary measures (remove hazard, provide personal protective equipment, warn people of the hazard) to protect responders from those hazards. Self-explanatory<strong>.&nbsp;</strong></p>
+<strong><br />
+<p dir="ltr">6 Prepared by&nbsp;<br>
+</p>
+</strong>
+<p dir="ltr">• Name&nbsp;<br>
+  • Position/Title&nbsp;<br>
+  • Signature&nbsp;<br>
+  • Date/Time Enter the name, ICS position/title, and signature of the person preparing the form. Enter date (month/day/year) and time prepared (24-hour clock).&nbsp;</p>
+<strong><br />
+<p dir="ltr">7 Current and Planned Objectives&nbsp;</p>
+</strong>
+<p dir="ltr">Enter the objectives used in the incident and note any specific problem areas.&nbsp;</p>
+<strong><br />
+<p dir="ltr">8 Current and Planned Actions, Strategies, and Tactics&nbsp;<br>
+
+</strong>
+<p dir="ltr">• Time&nbsp;<br>
+  • Actions&nbsp;</p>
+<p dir="ltr">Enter the current and planned actions, strategies, and tactics and time they may or did occur to attain the objectives. If additional pages are needed, use a blank sheet or another ICS 201 (Page 2), and adjust page numbers accordingly.&nbsp;</p>
+<p dir="ltr">The Winlink ICS 201 allows for pasting data from a spreadsheet in this block.</p>
+<strong>
+<p dir="ltr">9 Current Organization (fill in additional organization as appropriate)&nbsp;</p>
+</strong>
+<p dir="ltr">• Incident Commander(s)&nbsp;<br>
+  • Liaison Officer&nbsp;<br>
+  • Safety Officer&nbsp;<br>
+  • Public Information Officer&nbsp;<br>
+  • Planning Section Chief&nbsp;<br>
+  • Operations Section Chief&nbsp;<br>
+  • Finance/Administration Section Chief<br>
+  • Logistics Section Chief&nbsp;<br>
+  • Enter on the organization chart the names of the individuals assigned to each position.&nbsp;<br>
+  • Modify the chart as necessary, and add any lines/spaces needed for Command Staff Assistants, Agency Representatives, and the organization of each of the General Staff Sections.&nbsp;<br>
+  • If Unified Command is being used, split the Incident Commander box.&nbsp;<br>
+• Indicate agency for each of the Incident Commanders listed if Unified Command is being used.&nbsp;<strong><br />
+</strong></p>
+<strong>
+<p dir="ltr">10 Resource Summary&nbsp;</p>
+</strong>
+<p dir="ltr">Enter the following information about the resources allocated to the incident. If additional pages are needed, use a blank sheet or another ICS 201 (Page 4), and adjust page numbers accordingly.&nbsp;</p>
+<p dir="ltr">• Resource: Enter the number and appropriate category, kind, or type of resource ordered.<br>
+  &nbsp;• Resource Identifier: Enter the relevant agency designator and/or resource designator (if any).&nbsp;• Date/Time Ordered: Enter the date (month/day/year) and time (24-hour clock) the resource was ordered.&nbsp;<br>
+  • ETA: Enter the estimated time of arrival (ETA) to the incident (use 24-hour clock).&nbsp;<br>
+  • Arrived: Enter an &ldquo;X&rdquo; or a checkmark upon arrival to the incident.&nbsp;<br>
+• Notes (location/ assignment/status): Enter notes such as the assigned location of the resource and/or the actual assignment and status.&nbsp;</p>
+<p dir="ltr">The Winlink ICS 201 allows for pasting data from a spreadsheet in this block.</p>
+<br>
+</p>
+          </div>
+          <!-- The close pop-up link correctly positioned at the end of the content block --><a href="#links" class="close"><span>Back
+        to links</span></a> </div>
+  </div>
+  	    <div class="pop-up" id="pop3">
+    <!-- The pop-up block -->
+    <div class="popBox">
+      <!-- If the content becomes larger than the pop-up this div will scroll the content -->
+      <div class="popScroll">
+        <p> </p>
+        <h2>Copy and Paste Data From Spreadsheet</h2>
+        <span class="style13">
+        <p align="left">Copy the data from the spreadsheet and paste  (2 columns X 20 lines) in box below, then click "Parse Data"<br />
+        TAB delineation only. Ensure fields match and data does not exceed field lengths, or HTML will miss some data. 
+        </p>
+        <textarea name="parseme" cols="100" rows="10" id="parseme" placeholder="Paste spreadsheet data here" ></textarea> 
+		<br />&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<input type="button" value="Parse Data" onClick="parsestring('2');document.getElementById('closeme').click();">
+		
+		
+        </span>
+        <p align="left"></p>
+        <a href="#links">Close this window</a> </div>
+      <!-- The close pop-up link correctly positioned at the end of the content block -->
+        <a href="#links" id="closeme">Close this window</a>  </div>
+  </div>
+    	    <div class="pop-up" id="pop4">
+    <!-- The pop-up block -->
+    <div class="popBox">
+      <!-- If the content becomes larger than the pop-up this div will scroll the content -->
+      <div class="popScroll">
+        <p> </p>
+        <h2>Copy and Paste Data From Spreadsheet</h2>
+        <span class="style13">
+        <p align="left">Copy the data from the spreadsheet and paste (5 Columns X 15 lines) in box below, then click "Parse Data"<br />
+        TAB delineation only. Ensure fields match and data does not exceed field lengths, or HTML will miss some data. 
+        </p>
+        <textarea name="parseme5" cols="100" rows="10" id="parseme5" placeholder="Paste spreadsheet data here" ></textarea> 
+		<br />&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<input type="button" value="Parse Data" onClick="parsestring5('5');document.getElementById('closeme').click();">
+		
+		
+        </span>
+        <p align="left"></p>
+        <a href="#links">Close this window</a> </div>
+      <!-- The close pop-up link correctly positioned at the end of the content block -->
+        <a href="#links" id="closeme2">Close this window</a> </div>
+  </div>
+      <table align="center" border="0" width="794">
+        <tbody>
+          <tr>
+            <td width="788">
+             <footer> <table width="950" height="950" border="1" cellpadding="1" cellspacing="0" bordercolor="#999999" style="width: 950px; height: 1019px;">
+                <tbody>
+                  <tr bgcolor="#dee9f9">
+                    <td colspan="3" style="height: 20px; text-align: center; vertical-align: top;"><p><span style="font-weight: bold;"></span> &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp;
+                      &nbsp; &nbsp;&nbsp; &nbsp;<big> ICS 201 INCIDENT BRIEFING <span style="font-weight: bold;"> </span></big><br />
+&nbsp; &nbsp; &nbsp;&nbsp; &nbsp; &nbsp;
+                      &nbsp; &nbsp; &nbsp; <span style="font-style: italic;">ICS
+                        -  Incident Command System</span></p>
+                      <p align="right"><span style="font-style: italic;"><span style="font-size: 12px;"><span style="font-size: 12px;">
+                        <input name="loadbtn" type="button" id="loadbtn" onclick="document.getElementById('txtfiletoread').click();" value=" Load ICS 201 data" />
+                      </span></span><small><span style="font-style: italic;">&nbsp;&nbsp;&nbsp;&nbsp;<span style="font-style: italic;"><small><span style="font-style: italic;">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span></small></span><span style="font-style: italic;"><small><span style="font-style: italic;">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span></small></span>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span>
+                      <input value="Form Instructions" onclick="location.href = '#pop1'" type="black1" />
+                      <small>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</small><small>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</small>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</small><br />
+					         <input type="file" id="txtfiletoread" accept=".txt"  style="display: none;"/>
+                        </span></p></td>
+                  </tr>
+                  <tr>
+                    <td width="33%" height="45" style="width: 50%; text-align: center; vertical-align: top;"><div align="left"> &nbsp;&nbsp; <strong>1. Incident Name</strong><br />
+                      &nbsp;
+&nbsp;&nbsp;
+<input required="required" id="Incident_Name" maxlength="30" name="Incident_Name" size="30" placeholder="Incident name" />
+<small><br />
+</small></div></td>
+                    <td width="28%" style="width: 50%; text-align: left; vertical-align: top;"><strong>&nbsp;&nbsp;2. Incident Number:</strong><br />
+                      &nbsp;
+&nbsp;&nbsp;
+<input required="required" id="IncidentNumber" maxlength="20" name="IncidentNumber" size="20" placeholder="Incident Number" /></td>
+                    <td width="39%" style="width: 50%; text-align: left; vertical-align: top;"><strong>&nbsp;&nbsp;3. Date/Time Initiated:</strong><br />
+                    &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Date: &nbsp;
+                    <input maxlength="12" id="DateFrom" name="DateFrom" size="12" placeholder="yyyy/mm/dd" onclick="DateTimef('fulldate','DateFrom');"/>
+                    <strong><br />
+                    </strong>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Time: &nbsp;<b>
+                    <input maxlength="10" id="TimeFrom" name="TimeFrom" size="10" placeholder="hh:mm"onclick="DateTimef('hm','TimeFrom');" />
+                    </b></b></td>
+                  </tr>
+<tr valign="top">
+<td height="197" colspan="3" style="text-align: center;"><div align="left"><br />
+&nbsp;<strong>&nbsp;</strong> <strong>4. Map/Sketch </strong>(include sketch, showing the total area of operations, the incident site/area, impacted and threatened areas, overflight results, trajectories, impacted shorelines, or other graphics depicting situational status and resource assignment as needed): <br />
+<br />
+&nbsp;<strong>&nbsp;</strong>
+<input name="Map2" type="checkbox" id="Map2" onclick="Flipmap('TMap2','YES')" value="YES" />
+&nbsp;&nbsp;&nbsp; A JPEG of map/sketch attached</small> <span style="font-family: Calibri;">
+<input name="TMap2" type="hidden" id="TMap2" value="NO" size="14" maxlength="13" />
+</span><br />
+</div></td>
+</tr>
+<tr align="left" valign="top">
+  <td height="312" colspan="4" style="vertical-align: top; text-align: left;"><p><strong><br />
+    &nbsp;5.Situation Summary and Health and Safety Briefing</strong> (for briefings or transfer of command): Recognize potential incident Health and Safety Hazards and develop necessary measures (remove hazard, provide personal protective equipment, warn people of the hazard) to protect responders from those hazards.<br />
+  </p>
+    <p>
+      &nbsp;&nbsp;
+  <textarea name="HealthBriefing" cols="120" rows="15" id="HealthBriefing" onkeyup="AutoGrowTextArea(this)" onchange="this.value=RWS(this.value)"></textarea>
+      </p></td>
+</tr>
+<tr>
+  <td height="88" colspan="4"><p>&nbsp;</p>
+    <p>. <strong>6. </strong><span class="style3"><span style="font-weight: normal;"><strong>Prepared by:</strong> Name
+      <input name="Prepedby" type="text" id="Prepedby" size="25"  tabindex="24"  maxlength="25" />
+  &nbsp;&nbsp;&nbsp;Position/Title:
+  <input name="Position" type="text" id="Position" size="20"  tabindex="25" maxlength="20" />
+  &nbsp;&nbsp;&nbsp;Signature:
+  <input name="Prepsig" type="text" id="Prepsig" size="25"  tabindex="26" maxlength="25" />
+    </span></span></p>
+    <p class="style6"><span class="style3"><span style="font-weight: normal;">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Date/Time:
+      <input  required="required" placeholder="Click to Add Date/Time" name="prepDateTime" maxlength="21" id="prepDateTime" size="21" tabindex="29" onclick="TimeNow('prepDateTime',this.id)" />
+    </span></span></p>
+    <p></p></td>
+</tr>
+<tr>
+  <td height="88" colspan="4"><div align="right"><span style="font-family: Calibri;">ICS 201   Page 1 of 4 <span class="formtext"><span style="font-family: Calibri;">&nbsp;</span></span><span class="formtext"><span style="font-family: Calibri;"></span></span></span></div></td>
+</tr>
+</tbody>
+</table>
+              <p>&nbsp;</p>
+             </footer> <footer>
+<table width="950" height="1170" border="1" cellpadding="1" cellspacing="0" bordercolor="#999999" style="width: 950px; height: 1019px;">
+  <tbody>
+    <tr valign="top">
+      <td width="100%" height="197" colspan="3" style="text-align: center;"><div align="left">
+        <p>&nbsp;&nbsp;<strong>&nbsp;7. Current and Planned Objectives:</strong></p>
+        <p><strong>&nbsp;&nbsp;
+          <textarea name="Objectives" cols="120" rows="15" id="Objectives" onkeyup="AutoGrowTextArea(this)" onchange="this.value=RWS(this.value)"></textarea>
+          <br />
+          </strong></p>
+        </div></td>
+    </tr>
+    <tr align="left" valign="top">
+      <td height="423" colspan="4" style="vertical-align: top; text-align: left;"><p><strong></strong>.<br />
+        </p>
+        <div align="left">&nbsp;&nbsp;
+          <p><strong>&nbsp;&nbsp;<strong>&nbsp;</strong>8. Current and Planned Actions, Strategies, and Tactics:&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+            <!-- <input type="file" id="txtfiletoread"size="30" /> -->
+            <input type="file" id="txtfiletoread2" accept=".txt" style="display: none;" />
+            &nbsp; &nbsp; &nbsp; </strong><a href="javascript:selectaddress(3);">Paste Data from a Spreadsheet </a>&nbsp;<strong>&nbsp;&nbsp;&nbsp;</strong> </p>
+          <table width="100%"  border="1" cellspacing="0" cellpadding="2">
+            <tr bgcolor="#dee9f9">
+              <td><strong>&nbsp;TIME</strong></td>
+              <td><strong>&nbsp;ACTIONS</strong></td>
+              </tr>
+            <tr>
+              <td height="1024" style="height: 15px; text-align: center; vertical-align: middle; background-color: white;"><input placeholder="Click for Date/Time" id="ActivityTime1" maxlength="20" name="ActivityTime1" onclick="TimeNow('ActivityTime1', 'Activities1')" /></td>
+              <td style="height: 15px; text-align: center; vertical-align: middle; background-color: white;"><div align="left">
+                <input id="Activities1" maxlength="100" name="Activities1" size="110" type="text" />
+                </div></td>
+              </tr>
+            <tr>
+              <td style="height: 15px; text-align: center; vertical-align: middle; background-color: white;"><input placeholder="Click for Date/Time" id="ActivityTime2" maxlength="20" name="ActivityTime2" onclick="TimeNow('ActivityTime2', 'Activities2')" /></td>
+              <td style="height: 15px; text-align: center; vertical-align: middle; background-color: white;"><div align="left">
+                <input id="Activities2" maxlength="100" name="Activities2" size="110" type="text" />
+                </div></td>
+              </tr>
+            <tr>
+              <td style="height: 15px; text-align: center; vertical-align: middle; background-color: white;"><input onclick="TimeNow('ActivityTime3', 'Activities3')" placeholder="Click for Date/Time" id="ActivityTime3" maxlength="20" name="ActivityTime3" /></td>
+              <td style="height: 15px; text-align: center; vertical-align: middle; background-color: white;"><div align="left">
+                <input id="Activities3" maxlength="100" name="Activities3" size="110" type="text" />
+                </div></td>
+              </tr>
+            <tr>
+              <td style="height: 15px; text-align: center; vertical-align: middle; background-color: white;"><input placeholder="Click for Date/Time" id="ActivityTime4" maxlength="20" name="ActivityTime4" onclick="TimeNow('ActivityTime4', 'Activities4')" /></td>
+              <td style="height: 15px; text-align: center; vertical-align: middle; background-color: white;"><div align="left">
+                <input id="Activities4" maxlength="100" name="Activities4" size="110" type="text" />
+                </div></td>
+              </tr>
+            <tr>
+              <td style="height: 15px; text-align: center; vertical-align: middle; background-color: white;"><input placeholder="Click for Date/Time" id="ActivityTime5" maxlength="20"name="ActivityTime5"onclick="TimeNow('ActivityTime5', 'Activities5')" /></td>
+              <td style="height: 15px; text-align: center; vertical-align: middle; background-color: white;"><div align="left">
+                <input id="Activities5" maxlength="100" name="Activities5" size="110" type="text" />
+                </div></td>
+              </tr>
+            <tr>
+              <td style="height: 15px; text-align: center; vertical-align: middle; background-color: white;"><input placeholder="Click for Date/Time" id="ActivityTime6" maxlength="20" name="ActivityTime6" onclick="TimeNow('ActivityTime6', 'Activities6')" /></td>
+              <td style="height: 15px; text-align: center; vertical-align: middle; background-color: white;"><div align="left">
+                <input id="Activities6" maxlength="100" name="Activities6" size="110" type="text" />
+                </div></td>
+              </tr>
+            <tr>
+              <td style="height: 15px; text-align: center; vertical-align: middle; background-color: white;"><input placeholder="Click for Date/Time" id="ActivityTime7" maxlength="20" name="ActivityTime7" onclick="TimeNow('ActivityTime7', 'Activities7')" /></td>
+              <td style="height: 15px; text-align: center; vertical-align: middle; background-color: white;"><div align="left">
+                <input id="Activities7" maxlength="100" name="Activities7" size="110" type="text" />
+                </div></td>
+              </tr>
+            <tr>
+              <td style="height: 15px; text-align: center; vertical-align: middle; background-color: white;"><input placeholder="Click for Date/Time" id="ActivityTime8" maxlength="20" name="ActivityTime8" onclick="TimeNow('ActivityTime8', 'Activities8')" /></td>
+              <td style="height: 15px; text-align: center; vertical-align: middle; background-color: white;"><div align="left">
+                <input id="Activities8" maxlength="100" name="Activities8" size="110" type="text" />
+                </div></td>
+              </tr>
+            <tr>
+              <td style="height: 15px; text-align: center; vertical-align: middle; background-color: white;"><input placeholder="Click for Date/Time" id="ActivityTime9" maxlength="20" name="ActivityTime9" onclick="TimeNow('ActivityTime9', 'Activities9')" /></td>
+              <td style="height: 15px; text-align: center; vertical-align: middle; background-color: white;"><div align="left">
+                <input id="Activities9" maxlength="100" name="Activities9" size="110" type="text" />
+                </div></td>
+              </tr>
+            <tr>
+              <td style="height: 15px; text-align: center; vertical-align: middle; background-color: white;"><input placeholder="Click for Date/Time" id="ActivityTime10" maxlength="20" name="ActivityTime10" onclick="TimeNow('ActivityTime10', 'Activities10')" /></td>
+              <td style="height: 15px; text-align: center; vertical-align: middle; background-color: white;"><div align="left">
+  <input id="Activities10" maxlength="100" name="Activities10" size="110" type="text" />
+                </div></td>
+              </tr>
+            <tr>
+              <td style="height: 15px; text-align: center; vertical-align: middle; background-color: white;"><input placeholder="Click for Date/Time" id="ActivityTime11" maxlength="20" name="ActivityTime11" onclick="TimeNow('ActivityTime11', 'Activities11')" /></td>
+              <td style="height: 15px; text-align: center; vertical-align: middle; background-color: white;"><div align="left">
+                <input id="Activities11" maxlength="100" name="Activities11" size="110" type="text" />
+                </div></td>
+              </tr>
+            <tr>
+              <td style="height: 15px; text-align: center; vertical-align: middle; background-color: white;"><input placeholder="Click for Date/Time" id="ActivityTime12" maxlength="20" name="ActivityTime12" onclick="TimeNow('ActivityTime12', 'Activities12')" /></td>
+              <td style="height: 15px; text-align: center; vertical-align: middle; background-color: white;"><div align="left">
+                <input id="Activities12" maxlength="100" name="Activities12" size="110" type="text" />
+                </div></td>
+              </tr>
+            <tr>
+              <td style="height: 15px; text-align: center; vertical-align: middle; background-color: white;"><input placeholder="Click for Date/Time" id="ActivityTime13" maxlength="20" name="ActivityTime13" onclick="TimeNow('ActivityTime13', 'Activities13')" /></td>
+              <td style="height: 15px; text-align: center; vertical-align: middle; background-color: white;"><div align="left">
+                <input id="Activities13" maxlength="100" name="Activities13" size="110" type="text" />
+                </div></td>
+              </tr>
+            <tr>
+              <td style="height: 15px; text-align: center; vertical-align: middle; background-color: white;"><input placeholder="Click for Date/Time" id="ActivityTime14" maxlength="20" name="ActivityTime14" onclick="TimeNow('ActivityTime14', 'Activities14')" /></td>
+              <td style="height: 15px; text-align: center; vertical-align: middle; background-color: white;"><div align="left">
+                <input id="Activities14" maxlength="100" name="Activities14" size="110" type="text" />
+  </div></td>
+              </tr>
+            <tr>
+              <td style="height: 15px; text-align: center; vertical-align: middle; background-color: white;"><input placeholder="Click for Date/Time" id="ActivityTime15" maxlength="20" name="ActivityTime15" onclick="TimeNow('ActivityTime15', 'Activities15')" /></td>
+              <td style="height: 15px; text-align: center; vertical-align: middle; background-color: white;"><div align="left">
+                <input id="Activities15" maxlength="100" name="Activities15" size="110" type="text" />
+                </div></td>
+              </tr>
+            <tr>
+              <td style="height: 15px; text-align: center; vertical-align: middle; background-color: white;"><input placeholder="Click for Date/Time" id="ActivityTime16" maxlength="20" name="ActivityTime16" onclick="TimeNow('ActivityTime16', 'Activities16')" /></td>
+              <td style="height: 15px; text-align: center; vertical-align: middle; background-color: white;"><div align="left">
+                <input id="Activities16" maxlength="100" name="Activities16" size="110" type="text" />
+                </div></td>
+              </tr>
+            <tr>
+              <td style="height: 15px; text-align: center; vertical-align: middle; background-color: white;"><input placeholder="Click for Date/Time" id="ActivityTime17" maxlength="20" name="ActivityTime17" onclick="TimeNow('ActivityTime17', 'Activities17')" /></td>
+              <td style="height: 15px; text-align: center; vertical-align: middle; background-color: white;"><div align="left">
+                <input id="Activities17" maxlength="100" name="Activities17" size="110" type="text" />
+                </div></td>
+              </tr>
+            <tr>
+              <td style="height: 15px; text-align: center; vertical-align: middle; background-color: white;"><input placeholder="Click for Date/Time" id="ActivityTime18" maxlength="20" name="ActivityTime18" onclick="TimeNow('ActivityTime18', 'Activities18')" /></td>
+              <td style="height: 15px; text-align: center; vertical-align: middle; background-color: white;"><div align="left">
+                <input id="Activities18" maxlength="100" name="Activities18" size="110" type="text" />
+                </div></td>
+              </tr>
+            <tr>
+              <td style="height: 15px; text-align: center; vertical-align: middle; background-color: white;"><input placeholder="Click for Date/Time" id="ActivityTime19" maxlength="20" name="ActivityTime19" onclick="TimeNow('ActivityTime19', 'Activities19')" /></td>
+              <td style="height: 15px; text-align: center; vertical-align: middle; background-color: white;"><div align="left">
+                <input id="Activities19" maxlength="100" name="Activities19" size="110" type="text" />
+                </div></td>
+              </tr>
+            <tr>
+              <td style="height: 15px; text-align: center; vertical-align: middle; background-color: white;"><input placeholder="Click for Date/Time" id="ActivityTime20" maxlength="20" name="ActivityTime20" onclick="TimeNow('ActivityTime20', 'Activities20')" /></td>
+              <td style="height: 15px; text-align: center; vertical-align: middle; background-color: white;"><div align="left">
+                <input id="Activities20" maxlength="100" name="Activities20" size="110" type="text" />
+                </div></td>
+              </tr>
+            </table>
+  </div>
+        <p>&nbsp;&nbsp;        </p></td>
+    </tr>
+    <tr>
+      <td height="25" colspan="4"><div align="right"><span class="formtext"><span style="font-family: Calibri;">&nbsp;&nbsp;&nbsp;        </span></span><span style="font-family: Calibri;">ICS 201   Page 2 of 4 <span class="formtext">&nbsp;</span></span></div></td>
+    </tr>
+  </tbody>
+</table>
+<br />
+                 </footer> <footer>
+			 <table width="727" border="1" cellpadding="1" cellspacing="0" bordercolor="#999999" style="width: 729px; height: 1019px;">
+			   <tbody>
+			     <tr>
+			       <td style="height: 20px; text-align: center; vertical-align: top;"><span style="font-weight: bold;"></span> &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp;&nbsp; &nbsp;<big><strong> ICS 201 INCIDENT BRIEFING</strong></big><br />
+			         &nbsp; &nbsp; &nbsp;&nbsp; &nbsp;<span style="font-style: italic;">
+			           <input type="file" id="txtfiletoread3" accept=".txt"  style="display: none;"/>
+			           </span></td>
+		         </tr>
+			     <tr>
+			       <td valign="top" style="text-align: center;"><div align="left">
+			         <p><br />
+			           &nbsp;&nbsp; <strong>&nbsp;9. Current  Management Team</strong> (fill in additional positions as appropiate)</p>
+			         <table width="96%"  border="0" align="center" cellpadding="2" cellspacing="0">
+			           <tr>
+			             <td width="22%" rowspan="5" bgcolor="#FFFFFF" class="style50" style="color: #FFFFFF">-</td>
+			             <td width="30%" bgcolor="#CCCCFF"><div align="center" class="style51">Incident Commander <br />
+			               <input name="icA1" type="text" style="text-align:center;"id="icA1" size="40" maxlength="40" />
+			               </div></td>
+			             <td width="4%">&nbsp;</td>
+			             <td width="44%" bgcolor="#FFCCFF" class="style50"><div align="center" style="color: rgba(0,0,0,1)"><strong>Liaison Officer </strong><br />
+			               <span class="style51">
+			                 <input style="text-align:center;" name="A5" id="A5" size="40" maxlength="40" />
+	                       </span></div></td>
+		               </tr>
+			           <tr>
+			             <td rowspan="4">&nbsp;</td>
+			             <td>&nbsp;</td>
+			             <td><div align="center"></div></td>
+		               </tr>
+			           <tr>
+			             <td>&nbsp;</td>
+			             <td bgcolor="#FFCCFF" class="style50"><div align="center"><span style="color: #000000;"><strong>Safety Officer</strong></span><br />
+			               <span class="style51">
+			                 <input style="text-align:center;" name="A6" id="A6" size="40" maxlength="40" />
+	                       </span></div></td>
+		               </tr>
+			           <tr>
+			             <td>&nbsp;</td>
+			             <td><div align="center"></div></td>
+		               </tr>
+			           <tr>
+			             <td>&nbsp;</td>
+			             <td bgcolor="#FFCCFF" class="style50"><div align="center" style="color: #000000"><strong>Public Information Officer</strong><br />
+			               <span class="style51">
+			                 <input style="text-align:center;" name="A7" id="A7" size="40" maxlength="40" />
+	                       </span><br />
+			               </div></td>
+		               </tr>
+		             </table>
+			         <div align="center"></div>
+			         <table width="100%"  border="0" cellspacing="0" cellpadding="2">
+			           <tr>
+			             <td height="19" valign="bottom" bgcolor="#FFFFFF">&nbsp;</td>
+			             <td style="border-top:solid 1px #060"><div align="center"></div></td>
+			             <td style="border-left:solid 1px #060"><div align="center"></div></td>
+			             <td style="border-top:solid 1px #060"><div align="center"></div></td>
+			             <td style="border-top:solid 1px #060"><div align="center"></div></td>
+			             <td valign="top" style="border-top:solid 1px #060"><div align="center"></div></td>
+			             <td style="border-top:solid 1px #060"><div align="center"></div></td>
+			             <td style="border-top:solid 1px #060"><div align="center"></div></td>
+		               </tr>
+			           <tr>
+			             <td width="1%" height="82" valign="bottom" bgcolor="#FFFFFF">&nbsp;</td>
+			             <td valign="top" bgcolor="#FF9933"><div align="center"><strong>Planning Section Chief<br />
+			               </strong><br />
+			               <span class="style51">
+			                 <input style="text-align:center;" name="A7A" id="A7A" size="30" maxlength="30" />
+	                       </span></div></td>
+			             <td valign="top" style="border-left:solid 1px #060">&nbsp;</td>
+			             <td valign="top" bgcolor="#E06666"><div align="center"><span class="style50"><strong>Operations Section Chief</strong><br /> 
+			               <br />
+			               <span class="style51">
+			                 <input style="text-align:center;" name="A16" id="A16" size="30" maxlength="30" />
+	                     </span> <br />
+		                 </span> <span class="style50"><span class="style51"> </span></span></div></td>
+			             <td valign="top">&nbsp;</td>
+			             <td valign="top" bgcolor="#6FA8DB"><div align="center"><span class="style50"><strong>Finance/Administration <br />
+			               Section Chief</strong><br />
+			               <br />
+			             </span><span class="style50"><span class="style51">
+			             <input style="text-align:center;" name="A21" id="A21" size="30" maxlength="30" />
+			             </span></span><br />
+			               <span class="style50"><span class="style51"> </span></span></div></td>
+			             <td valign="top"><td valign="top" bgcolor="#6AA84F"><div align="center"><strong>Logistics Section Chief<br />
+			               <br />
+			               <span class="style50"><span class="style51">
+			                 <input style="text-align:center;" name="A26" id="A26" size="30" maxlength="30" />
+			                 </span></span></strong></div></td>
+		               </tr>
+			           <tr>
+			             <td style="border-left:solid 1px #060"bgcolor="#FFFFFF"><div align="center"></div></td>
+			             <td valign="top" bgcolor="#f9ca9b"><div align="center"><span class="style50"><span class="style52"><strong>&nbsp; </strong>
+                                 <input  style="text-align:center;" name="A0" id="A0" size="30" maxlength="30" />
+                         </span></span></div></td>
+			             <td valign="top" style="border-left:solid 1px #060"><div align="center"></div></td>
+			             <td valign="top" bgcolor="#EA9999"><div align="center"><span class="style50"><span class="style52"><strong>&nbsp; </strong>
+			               <input style="text-align:center;" name="A17" id="A17" size="30" maxlength="30" />
+		                 </span></span></div></td>
+			             <td valign="top"><div align="center"></div></td>
+			             <td valign="top" bgcolor="#9FC4E8"><div align="center"><span class="style50"><span class="style52"><strong>&nbsp; </strong>
+			               <input style="text-align:center;"name="A22" id="A22" size="30" maxlength="30" />
+		                 </span></span></div></td>
+			             <td valign="top"><div align="center"></div></td>
+			             <td valign="top" bgcolor="#B6D7AB"><div align="center"><span class="style50"><span class="style52"><strong>&nbsp; </strong>
+			               <input  style="text-align:center;" name="A27" id="A27" size="30" maxlength="30" />
+		                 </span></span></div></td>
+		               </tr>
+			           <tr>
+			             <td bgcolor="#FFFFFF">&nbsp;</td>
+			             <td valign="top" bgcolor="#f9ca9b"><div align="center"><span class="style50"><span class="style52"><br />
+			               <span class="style53"> <span class="style51">
+			                 <input  style="text-align:center;" name="A8" id="A8" size="30" maxlength="30" />
+			                 </span></span></span></span></div></td>
+			             <td valign="top">&nbsp;</td>
+			             <td valign="top" bgcolor="#EA9999"><div align="center"><span class="style50"><span class="style52"><br />
+			               <span class="style53"> <span class="style51">
+			                 <input style="text-align:center;"  name="A18" id="A18" size="30" maxlength="30" />
+			                 </span></span></span></span></div></td>
+			             <td valign="top">&nbsp;</td>
+			             <td valign="top" bgcolor="#9FC4E8"><div align="center"><span class="style50"><span class="style52"><br />
+			               <span class="style53"> <span class="style51">
+			                 <input  style="text-align:center;" name="A23" id="A23" size="30" maxlength="30" />
+			                 </span></span></span></span></div></td>
+			             <td valign="top">&nbsp;</td>
+			             <td valign="top" bgcolor="#B6D7AB"><div align="center"><span class="style50"><span class="style52"><br />
+			               <span class="style53"> <span class="style51">
+			                 <input  style="text-align:center;" name="A28" id="A28" size="30" maxlength="30" />
+			                 </span></span></span></span></div></td>
+		               </tr>
+			           <tr>
+			             <td bgcolor="#FFFFFF">&nbsp;</td>
+			             <td valign="top" bgcolor="#f9ca9b"><div align="center"><span class="style50"><span class="style51"><br />
+                                 <span class="style52"><span class="style53">
+                                 <input  style="text-align:center;" name="A9" id="A9" size="30" maxlength="30" />
+                         </span></span></span></span></div></td>
+			             <td valign="top">&nbsp;</td>
+			             <td valign="top" bgcolor="#EA9999"><div align="center"><span class="style50"><span class="style51"><br />
+			               <span class="style52"><span class="style53">
+			                 <input  style="text-align:center;" name="A19a" id="A19a" size="30" maxlength="30" />
+			                 </span></span></span></span></div></td>
+			             <td valign="top">&nbsp;</td>
+			             <td valign="top" bgcolor="#9FC4E8"><div align="center"><span class="style50"><span class="style51"><br />
+			               <span class="style52"><span class="style53">
+			                 <input  style="text-align:center;" name="A24" id="A24" size="30" maxlength="30" />
+			                 </span></span></span></span></div></td>
+			             <td valign="top">&nbsp;</td>
+			             <td valign="top" bgcolor="#B6D7AB"><div align="center"><span class="style50"><span class="style51"><br />
+			               <span class="style52"><span class="style53">
+			                 <input  style="text-align:center;" name="A29" id="A29" size="30" maxlength="30" />
+			                 </span></span></span></span></div></td>
+		               </tr>
+			           <tr>
+			             <td bgcolor="#FFFFFF">&nbsp;</td>
+			             <td valign="top" bgcolor="#f9ca9b"><div align="center"><span class="style50"><br />
+			               <span class="style52"><span class="style53"><span class="style51">
+			                 <input  style="text-align:center;" name="A11" id="A11" size="30" maxlength="30" />
+			                 </span></span></span> <br />
+		                 <span class="style51"> </span></span></div></td>
+			             <td valign="top">&nbsp;</td>
+			             <td valign="top" bgcolor="#EA9999"><div align="center"><span class="style50"><br />
+			               <span class="style52"><span class="style53"><span class="style51">
+			                 <input  style="text-align:center;" name="A19" id="A19" size="30" maxlength="30" />
+			                 </span></span></span> <br />
+			               <span class="style51"> </span></span></div></td>
+			             <td valign="top">&nbsp;</td>
+			             <td valign="top" bgcolor="#9FC4E8"><div align="center"><span class="style50"><br />
+			               <span class="style52"><span class="style53"><span class="style51">
+			                 <input  style="text-align:center;" name="A25" id="A25" size="30" maxlength="30" />
+			                 </span></span></span> <br />
+			               <span class="style51"> </span></span></div></td>
+			             <td valign="top">&nbsp;</td>
+			             <td valign="top" bgcolor="#B6D7AB"><div align="center"><span class="style50"><br />
+			               <span class="style52"><span class="style53"><span class="style51">
+			                 <input  style="text-align:center;" name="A30" id="A30" size="30" maxlength="30" />
+			                 </span></span></span> <br />
+			               <span class="style51"> </span></span></div></td>
+		               </tr>
+			           <tr>
+			             <td bgcolor="#FFFFFF">&nbsp;</td>
+			             <td valign="top" bgcolor="#f9ca9b"><div align="center"><span class="style50"><br />
+			               <span class="style52"><span class="style53"><span class="style51">
+			                 <input  style="text-align:center;" name="A12" id="A12" size="30" maxlength="30" />
+			                 </span></span></span></span></div></td>
+			             <td valign="top">&nbsp;</td>
+			             <td valign="top" bgcolor="#EA9999"><div align="center"><span class="style50"><br />
+			               <span class="style52"><span class="style53"><span class="style51">
+			                 <input style="text-align:center;" name="A20" id="A20" size="30" maxlength="30" />
+			                 </span></span></span></span></div></td>
+			             <td valign="top">&nbsp;</td>
+			             <td valign="top" bgcolor="#9FC4E8"><div align="center"><span class="style50"><br />
+			               <span class="style52"><span class="style53"><span class="style51">
+			                 <input  style="text-align:center;" name="A25B" id="A25B" size="30" maxlength="30" />
+			                 </span></span></span></span></div></td>
+			             <td valign="top">&nbsp;</td>
+			             <td valign="top" bgcolor="#B6D7AB"><div align="center"><span class="style50"><br />
+			               <span class="style52"><span class="style53"><span class="style51">
+			                 <input  style="text-align:center;" name="A31" id="A31" size="30" maxlength="30" />
+			                 </span></span></span></span></div></td>
+		               </tr>
+		             </table>
+			         <p><br />
+			           <br />
+		             </p>
+			         </div></td>
+		         </tr>
+			     <tr>
+			       <td colspan="2" style="vertical-align: middle; text-align: center;"><div align="right"><span class="formtext"><span style="font-family: Calibri;">&nbsp;&nbsp;&nbsp;</span></span><span style="font-family: Calibri;">ICS 201  Page 3 of 4 <span class="formtext">&nbsp;</span></span></div></td>
+		         </tr>
+		       </tbody>
+		      </table>
+			       </footer> <footer>
+			 <table width="755"  border="1" cellpadding="1" cellspacing="0" bordercolor="#999999" style="width: 729px; height: 1019px;">
+                <tbody>
+                  <tr valign="top">
+                    <td width="749" height="634" align="center" nowrap="nowrap"><div align="left">
+                      <p align="center"><span style="height: 20px; vertical-align: top;"> <strong>ICS 201 INCIDENT BRIEFING</big></strong></span><br />
+&nbsp; &nbsp; &nbsp;&nbsp; &nbsp;</span></p>
+                      <p align="left">&nbsp;&nbsp; <small><strong>10. Summary of Resources Requested and Assigned &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+  <!-- <input type="file" id="txtfiletoread"size="30" /> -->
+  <input type="file" id="txtfiletoread" accept=".txt" style="display: none;" />
+  &nbsp; &nbsp; &nbsp; </strong><a href="javascript:selectaddress(4);">Paste Data from a Spreadsheet </a>&nbsp;<strong>&nbsp;&nbsp;&nbsp;</strong> </small></p>
+                      <table width="100%"  border="1" cellspacing="0" cellpadding="2">
+                        <tr bgcolor="#dee9f9">
+                          <td width="25%"><strong>Resource</strong></td>
+                          <td width="10%"><strong>Resource</strong><br />
+                            <strong>Identifier</strong></td>
+                          <td width="13%"><strong>DATE / TIME <br />
+                          ORDERED</strong></td>
+                          <td width="14%"><strong>ETA</strong></td>
+                          <td width="9%" style="text-align: center"><strong>Arrived</strong></td>
+                          <td width="29%" nowrap="nowrap"><strong>NOTES<br />
+                          (LOCATION / ASSIGNMENT / STATUS)</strong></td>
+                        </tr>
+                        <tr valign="top">
+                          <td style="text-align: left"><input name="Resource1" type="text" id="Resource1" size="30" maxlength="30" /></td>
+                          <td><input name="ResID1" type="text" id="ResID1" size="15" maxlength="15" /></td>
+                          <td><input name="OrderT1" id="OrderT1" onclick="TimeNow('OrderT1', 'Activities24')" size="15" maxlength="15" placeholder="Click for Date/Time" /></td>
+                          <td><input name="ETA1" type="text" id="ETA1" size="15" maxlength="15" /></td>
+                          <td style="text-align: center"><input name="cbox1" type="checkbox" id="cbox1"onclick="Flip('Tcbox1','X')"  value="X" /></td>
+                          <td><textarea onkeypress="if(event.keyCode==13){return false;}"  onkeyup="AutoGrowTextArea(this)" onchange="this.value=RWS(this.value)" name="ResNotes1" cols="30" rows="1" id="ResNotes1"></textarea>                          </td>
+                        </tr>
+                        <tr valign="top">
+                          <td style="text-align: left"><input name="Resource2" type="text" id="Resource2" size="30" maxlength="30" /></td>
+                          <td><input name="ResID2" type="text" id="ResID2" size="15" maxlength="15" /></td>
+                          <td><input name="OrderT2" id="OrderT2" onclick="TimeNow('OrderT2', 'Activities24')" size="15" maxlength="15" placeholder="Click for Date/Time" /></td>
+                          <td><input name="ETA2" type="text" id="ETA2" size="15" maxlength="15" /></td>
+                          <td style="text-align: center"><input name="cbox2" type="checkbox" id="cbox2"onclick="Flip('Tcbox2','X')" value="X" /></td>
+                          <td><textarea onkeypress="if(event.keyCode==13){return false;}"  onkeyup="AutoGrowTextArea(this)" onchange="this.value=RWS(this.value)" name="ResNotes2" cols="30" rows="1" id="ResNotes2"></textarea></td>
+                        </tr>
+                        <tr valign="top">
+                          <td style="text-align: left"><input name="Resource3" type="text" id="Resource3" size="30" maxlength="30" /></td>
+                          <td><input name="ResID3" type="text" id="ResID3" size="15" maxlength="15" /></td>
+                          <td><input name="OrderT3" id="OrderT3" onclick="TimeNow('OrderT3', 'Activities24')" size="15" maxlength="15" placeholder="Click for Date/Time" /></td>
+                          <td><input name="ETA3" type="text" id="ETA3" size="15" maxlength="15" /></td>
+                          <td style="text-align: center"><input name="cbox3" type="checkbox" id="cbox3" onclick="Flip('Tcbox3','X')" value="X" /></td>
+                          <td><textarea onkeypress="if(event.keyCode==13){return false;}"  onkeyup="AutoGrowTextArea(this)" onchange="this.value=RWS(this.value)" name="ResNotes3" cols="30" rows="1" id="ResNotes3"></textarea></td>
+                        </tr>
+                        <tr valign="top">
+                          <td style="text-align: left"><input name="Resource4" type="text" id="Resource4" size="30" maxlength="30" /></td>
+                          <td><input name="ResID4" type="text" id="ResID4" size="15" maxlength="15" /></td>
+                          <td><input name="OrderT4" id="OrderT4" onclick="TimeNow('OrderT4', 'Activities24')" size="15" maxlength="15" placeholder="Click for Date/Time" /></td>
+                          <td><input name="ETA4" type="text" id="ETA4" size="15" maxlength="15" /></td>
+                          <td style="text-align: center"><input name="cbox4" type="checkbox" id="cbox4" onclick="Flip('Tcbox4','X')"value="X" /></td>
+                          <td><textarea onkeypress="if(event.keyCode==13){return false;}"  onkeyup="AutoGrowTextArea(this)" onchange="this.value=RWS(this.value)" name="ResNotes4" cols="30" rows="1" id="ResNotes4"></textarea></td>
+                        </tr>
+                        <tr valign="top">
+                          <td style="text-align: left"><input name="Resource5" type="text" id="Resource5" size="30" maxlength="30" /></td>
+                          <td><input name="ResID5" type="text" id="ResID5" size="15" maxlength="15" /></td>
+                          <td><input name="OrderT5" id="OrderT5" onclick="TimeNow('OrderT5', 'Activities24')" size="15" maxlength="15" placeholder="Click for Date/Time" /></td>
+                          <td><input name="ETA5" type="text" id="ETA5" size="15" maxlength="15" /></td>
+                          <td style="text-align: center"><input name="cbox5" type="checkbox" id="cbox5"onclick="Flip('Tcbox5','X')" value="X" /></td>
+                          <td><textarea onkeypress="if(event.keyCode==13){return false;}"  onkeyup="AutoGrowTextArea(this)" onchange="this.value=RWS(this.value)" name="ResNotes5" cols="30" rows="1" id="ResNotes5"></textarea></td>
+                        </tr>
+                        <tr valign="top">
+                          <td style="text-align: left"><input name="Resource6" type="text" id="Resource6" size="30" maxlength="30" /></td>
+                          <td><input name="ResID6" type="text" id="ResID6" size="15" maxlength="15" /></td>
+                          <td><input name="OrderT6" id="OrderT6" onclick="TimeNow('OrderT6', 'Activities24')" size="15" maxlength="15" placeholder="Click for Date/Time" /></td>
+                          <td><input name="ETA6" type="text" id="ETA6" size="15" maxlength="15" /></td>
+                          <td style="text-align: center"><input name="cbox6" type="checkbox" id="cbox6" onclick="Flip('Tcbox6','X')" value="X" /></td>
+                          <td><textarea onkeypress="if(event.keyCode==13){return false;}"  onkeyup="AutoGrowTextArea(this)" onchange="this.value=RWS(this.value)" name="ResNotes6" cols="30" rows="1" id="ResNotes6"></textarea></td>
+                        </tr>
+                        <tr valign="top">
+                          <td style="text-align: left"><input name="Resource7" type="text" id="Resource7" size="30" maxlength="30" /></td>
+                          <td><input name="ResID7" type="text" id="ResID7" size="15" maxlength="15" /></td>
+                          <td><input name="OrderT7" id="OrderT7" onclick="TimeNow('OrderT7', 'Activities24')" size="15" maxlength="15" placeholder="Click for Date/Time" /></td>
+                          <td><input name="ETA7" type="text" id="ETA7" size="15" maxlength="15" /></td>
+                          <td style="text-align: center"><input name="cbox7" type="checkbox" id="cbox7" onclick="Flip('Tcbox7','X')"value="X" /></td>
+                          <td><textarea onkeypress="if(event.keyCode==13){return false;}"  onkeyup="AutoGrowTextArea(this)" onchange="this.value=RWS(this.value)" name="ResNotes7" cols="30" rows="1" id="ResNotes7"></textarea></td>
+                        </tr>
+                        <tr valign="top">
+                          <td style="text-align: left"><input name="Resource8" type="text" id="Resource8" size="30" maxlength="30" /></td>
+                          <td><input name="ResID8" type="text" id="ResID8" size="15" maxlength="15" /></td>
+                          <td><input name="OrderT8" id="OrderT8" onclick="TimeNow('OrderT8', 'Activities24')" size="15" maxlength="15" placeholder="Click for Date/Time" /></td>
+                          <td><input name="ETA8" type="text" id="ETA8" size="15" maxlength="15" /></td>
+                          <td style="text-align: center"><input name="cbox8" type="checkbox" id="cbox8" onclick="Flip('Tcbox8','X')" value="X" /></td>
+                          <td><textarea onkeypress="if(event.keyCode==13){return false;}"  onkeyup="AutoGrowTextArea(this)" onchange="this.value=RWS(this.value)" name="ResNotes8" cols="30" rows="1" id="ResNotes8"></textarea></td>
+                        </tr>
+                        <tr valign="top">
+                          <td style="text-align: left"><input name="Resource9" type="text" id="Resource9" size="30" maxlength="30" /></td>
+                          <td><input name="ResID9" type="text" id="ResID9" size="15" maxlength="15" /></td>
+                          <td><input name="OrderT9" id="OrderT9" onclick="TimeNow('OrderT9', 'Activities24')" size="15" maxlength="15" placeholder="Click for Date/Time" /></td>
+                          <td><input name="ETA9" type="text" id="ETA9" size="15" maxlength="15" /></td>
+                          <td style="text-align: center"><input name="cbox9" type="checkbox" id="cbox9"onclick="Flip('Tcbox9','X')" value="X" /></td>
+                          <td><textarea onkeypress="if(event.keyCode==13){return false;}"  onkeyup="AutoGrowTextArea(this)" onchange="this.value=RWS(this.value)" name="ResNotes9" cols="30" rows="1" id="ResNotes9"></textarea></td>
+                        </tr>
+                        <tr valign="top">
+                          <td style="text-align: left"><input name="Resource10" type="text" id="Resource10" size="30" maxlength="30" /></td>
+                          <td><input name="ResID10" type="text" id="ResID10" size="15" maxlength="15" /></td>
+                          <td><input name="OrderT10" id="OrderT10" onclick="TimeNow('OrderT10', 'Activities24')" size="15" maxlength="15" placeholder="Click for Date/Time" /></td>
+                          <td><input name="ETA10" type="text" id="ETA10" size="15" maxlength="15" /></td>
+                          <td style="text-align: center"><input name="cbox10" type="checkbox" id="cbox10" onclick="Flip('Tcbox10','X')"value="X" /></td>
+                          <td><textarea onkeypress="if(event.keyCode==13){return false;}"  onkeyup="AutoGrowTextArea(this)" onchange="this.value=RWS(this.value)" name="ResNotes10" cols="30" rows="1" id="ResNotes10"></textarea></td>
+                        </tr>
+                        <tr valign="top">
+                          <td style="text-align: left"><input name="Resource11" type="text" id="Resource11" size="30" maxlength="30" /></td>
+                          <td><input name="ResID11" type="text" id="ResID11" size="15" maxlength="15" /></td>
+                          <td>                            <input name="OrderT11" id="OrderT11" onclick="TimeNow('OrderT11', 'Activities24')" size="15" maxlength="15" placeholder="Click for Date/Time" /></td><td><input name="ETA11" type="text" id="ETA11" size="15" maxlength="15" /></td>
+                          <td style="text-align: center"><input name="cbox11" type="checkbox" id="cbox11" onclick="Flip('Tcbox11','X')"value="X" /></td>
+                          <td><textarea onkeypress="if(event.keyCode==13){return false;}"  onkeyup="AutoGrowTextArea(this)" onchange="this.value=RWS(this.value)" name="ResNotes11" cols="30" rows="1" id="ResNotes11"></textarea></td>
+                        </tr>
+                        <tr valign="top">
+                          <td style="text-align: left"><input name="Resource12" type="text" id="Resource12" size="30" maxlength="30" /></td>
+                          <td><input name="ResID12" type="text" id="ResID12" size="15" maxlength="15" /></td>
+                          <td><input name="OrderT12" id="OrderT12" onclick="TimeNow('OrderT12', 'Activities24')" size="15" maxlength="15" placeholder="Click for Date/Time" /></td>
+                          <td><input name="ETA12" type="text" id="ETA12" size="15" maxlength="15" /></td>
+                          <td style="text-align: center"><input name="cbox12" type="checkbox" id="cbox12" onclick="Flip('Tcbox12','X')"value="X" /></td>
+                          <td><textarea onkeypress="if(event.keyCode==13){return false;}"  onkeyup="AutoGrowTextArea(this)" onchange="this.value=RWS(this.value)" name="ResNotes12" cols="30" rows="1" id="ResNotes12"></textarea></td>
+                        </tr>
+                        <tr valign="top">
+                          <td style="text-align: left"><input name="Resource13" type="text" id="Resource13" size="30" maxlength="30" /></td>
+                          <td><input name="ResID13" type="text" id="ResID13" size="15" maxlength="15" /></td>
+                          <td><input name="OrderT13" id="OrderT13" onclick="TimeNow('OrderT13', 'Activities24')" size="15" maxlength="15" placeholder="Click for Date/Time" /></td>
+                          <td><input name="ETA13" type="text" id="ETA13" size="15" maxlength="15" /></td>
+                          <td style="text-align: center"><input name="cbox13" type="checkbox" id="cbox13" onclick="Flip('Tcbox13','X')" value="X" /></td>
+                          <td><textarea onkeypress="if(event.keyCode==13){return false;}"  onkeyup="AutoGrowTextArea(this)" onchange="this.value=RWS(this.value)" name="ResNotes13" cols="30" rows="1" id="ResNotes13"></textarea></td>
+                        </tr>
+                        <tr valign="top">
+                          <td style="text-align: left"><input name="Resource14" type="text" id="Resource14" size="30" maxlength="30" /></td>
+                          <td><input name="ResID14" type="text" id="ResID14" size="15" maxlength="15" /></td>
+                          <td><input name="OrderT14" id="OrderT14" onclick="TimeNow('OrderT14', 'Activities24')" size="15" maxlength="15" placeholder="Click for Date/Time" /></td>
+                          <td><input name="ETA14" type="text" id="ETA14" size="15" maxlength="15" /></td>
+                          <td style="text-align: center"><input name="cbox14" type="checkbox" id="cbox14" onclick="Flip('Tcbox14','X')"value="X" /></td>
+                          <td><textarea onkeypress="if(event.keyCode==13){return false;}"  onkeyup="AutoGrowTextArea(this)" onchange="this.value=RWS(this.value)" name="ResNotes14" cols="30" rows="1" id="ResNotes14"></textarea></td>
+                        </tr>
+                        <tr valign="top">
+                          <td style="text-align: left"><input name="Resource15" type="text" id="Resource15" size="30" maxlength="30" /></td>
+                          <td><input name="ResID15" type="text" id="ResID15" size="15" maxlength="15" /></td>
+                          <td><input name="OrderT15" id="OrderT15" onclick="TimeNow('OrderT15', 'Activities24')" size="15" maxlength="15" placeholder="Click for Date/Time" /></td>
+                          <td><input name="ETA15" type="text" id="ETA15" size="15" maxlength="15" /></td>
+                          <td style="text-align: center"><input name="cbox15" type="checkbox" id="cbox15" onclick="Flip('Tcbox15','X')"value="X" /></td>
+                          <td><textarea onkeypress="if(event.keyCode==13){return false;}"  onkeyup="AutoGrowTextArea(this)" onchange="this.value=RWS(this.value)" name="ResNotes15" cols="30" rows="1" id="ResNotes15"></textarea></td>
+                        </tr>
+                      </table>
+                      <p class="style6"><span style="font-family: Calibri;">
+                      <input name="Tcbox1" type="hidden" id="Tcbox1" value="" size="14" maxlength="13" />
+                      </span><span style="font-family: Calibri;">
+                      <input name="Tcbox2" type="hidden" id="Tcbox2" value="" size="14" maxlength="13" />
+                      </span><span style="font-family: Calibri;">
+                      <input name="Tcbox3" type="hidden" id="Tcbox3" value="" size="14" maxlength="13" />
+                      </span><span style="font-family: Calibri;">
+                      <input name="Tcbox4" type="hidden" id="Tcbox4" value="" size="14" maxlength="13" />
+                      </span><span style="font-family: Calibri;">
+                      <input name="Tcbox5" type="hidden" id="Tcbox5" value="" size="14" maxlength="13" />
+                      </span><span style="font-family: Calibri;">
+                      <input name="Tcbox6" type="hidden" id="Tcbox6" value="" size="14" maxlength="13" />
+                      </span><span style="font-family: Calibri;">
+                      <input name="Tcbox7" type="hidden" id="Tcbox7" value="" size="14" maxlength="13" />
+                      </span><span style="font-family: Calibri;">
+                      <input name="Tcbox8" type="hidden" id="Tcbox8" value="" size="14" maxlength="13" />
+                      </span><span style="font-family: Calibri;">
+                      <input name="Tcbox9" type="hidden" id="Tcbox9" value="" size="14" maxlength="13" />
+                      </span><span style="font-family: Calibri;">
+                      <input name="Tcbox10" type="hidden" id="Tcbox10" value="" size="14" maxlength="13" />
+                      </span><span style="font-family: Calibri;">
+                      <input name="Tcbox11" type="hidden" id="Tcbox11" value="" size="14" maxlength="13" />
+                      </span><span style="font-family: Calibri;">
+                      <input name="Tcbox12" type="hidden" id="Tcbox12" value="" size="14" maxlength="13" />
+                      </span><span style="font-family: Calibri;">
+                      <input name="Tcbox13" type="hidden" id="Tcbox13" value="" size="14" maxlength="13" />
+                      </span><span style="font-family: Calibri;">
+                      <input name="Tcbox14" type="hidden" id="Tcbox14" value="" size="14" maxlength="13" />
+                      </span><span style="font-family: Calibri;">
+                      <input name="Tcbox15" type="hidden" id="Tcbox15" value="" size="14" maxlength="13" />
+                      </span></p>
+                    </div></td>
+                  </tr>
+                  <tr valign="top">
+                    <td style="text-align: center;"><div align="left">
+                      <p><strong><br />
+                      &nbsp;&nbsp;
+                      <input class="SubmitBtn21" enctype="multipart/form-data"
+
+id="Submit" method="Post" name="Submit" size="8" 
+
+value="Submit" type="submit" onclick="return checkform()"; />
+&nbsp; 
+<input name="savebtn" type="button" id="savebtn" onclick="SaveData()" value="Save ICS 201 data" />
+&nbsp;&nbsp;<span><span><span style="font-size: 12px;"></span></span></span>
+<input class="BtnFormat2" value="Reset Form " name="ResetForm" 
+
+type="reset" />
+           <span
+
+style="color: rgb(128, 0, 0);"><span style="font-size: 12px;"><span
+
+style="color: rgb(128, 0, 0);"><span style="font-size: 12px;">              </span></span></span></span><br />
+                        </strong>                          </p>
+                      <p align="right"><strong><span style="font-family: Calibri;"><span
+
+                            style="font-size: 12px;"><span
+
+                            style="font-size: 12px;">
+                      <input name="testCall" type="hidden" id="testCall" value="{MsgSender}" size="14" maxlength="13" />
+                      <input name="Templateversion" type="hidden"
+
+                                    id="Templateversion" value="ICS 201 v.  0.1.2" />
+                      </span></span>ICS 201 v 0.1.2 Page 4 of 4 <span class="formtext"><span style="font-family: Calibri;">&nbsp;</span></span></span><br />
+                      </strong></p>
+                    </div></td>
+                  </tr>
+                </tbody>
+</table>              <p>&nbsp;</p>
+              <p>&nbsp;</p>
+<p>&nbsp;</p>
+      <span class="style50"><span class="style51">
+      </span></span>
+</form></body></html>

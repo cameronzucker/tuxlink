@@ -1,0 +1,83 @@
+Form:FRM 900-001.html,FRM 900-001 viewer.html
+
+To:
+Subject: RM 900-001 <var Incident_Name>,
+
+Msg:
+
+Msg:
+
+1. Incident Name:
+<var Incident_Name>
+Operational Period:
+Date From: <var DateFrom> Date To: <var DateTo>
+Time From: <var TimeFrom> Time To: <var TimeTo>
+Prepared By <var preparer> Position:
+Service Summary
+Resources Deployed
+# Workers <var workers> Worker hrs. <var workers2hours>
+# Canteens <var canteens>
+# Sites in Operation
+Feeding <var feeddingsites>
+# Vehicles <var Vehicles> 
+Distribution <var DistributionSites>
+
+Food Services
+# Meals <var Meals> # Snacks <var Snacks> # Cold Drinks <var Coldrinks> # Hot Drinks <var Hotdrinks
+Goods-in-Kind Distrubution (add additional rows as needed)
+<var Inkind1>	<var inkinct1>	<var Inkind2>	<var inkinct2>	<var Inkind3>	<var inkinct3>	<var Inkind4>	<var inkinct4>
+Finances
+Worker Expenses(food/lodging)	Response Expenses	Donations
+<var WorkerExpenses> <var ResponseExpenses>	<var DonationExpenses>
+
+Response Overview
+Current Situation Status
+<var CurrentSituation>
+
+Current TSA (The Salvation Army) Response Status
+<var CurrentTSA>
+
+Projected Situation Outlook
+<var projectedOutlook>
+
+Projected TSA Response for Next 3 Days
+<var ProjectTSAResponse>
+
+Section Specific Information
+Public Information
+<var SSI1>
+
+Liaison
+<varSSI2>
+
+Safety
+<var SSI3>
+
+Emotional & Spiritual Care
+<var SSI4>
+
+Operations
+<var SSI5>
+
+Logistics
+<var SSI6>
+
+Planning
+<var SSI7>
+
+ICS (Incident Command System) Contact Info
+Role Name	Email	Phone Number	Last Service Date
+IC <var icsname1> <var icsemail1> <var icsphone1> <var icslastdate1>
+Public
+Information <var icsname2>	<var icsemail2>	<var icsphone2>	<var icslastdate2>
+Liaison <var icsname3>	<var icsemail3>	<var icsphone3>	<var icslastdate3>
+Safety <var icsname4>	<var icsemail4>	<var icsphone4>	<var icslastdate4>
+Operations <var icsname5>	<var icsemail5>	<var icsphone5>	<var icslastdate5>
+Logistics <var icsname6>	<var icsemail6>	<var icsphone6>	<var icslastdate6>
+Planning <var icsname7>	<var icsemail7>	<var icsphone7>	<var icslastdate7>
+FinAdmin <var icsname8>	<var icsemail8>	<var icsphone8>	<var icslastdate8>
+------------------------------------
+Express Sending Station: <MsgSender>
+Senders Express Version: <ProgramVersion> 
+Senders Template Version: <var Templateversion>
+

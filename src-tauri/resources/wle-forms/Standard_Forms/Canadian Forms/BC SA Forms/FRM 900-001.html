@@ -1,0 +1,845 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>FRM 900-001</title>
+
+<style type="text/css">
+<!--
+@media print {
+.form-control, .form-control.nobug {
+border: 0;
+outline: 0;
+box-shadow: none;
+font-size:14px;
+}
+.form-control.nobug {
+transition: none; /*-- THIS IS IMPORTANT -- */
+}
+input, textarea {
+outline: none !important;
+box-shadow: none;
+border: none;
+overflow: visible;
+font-family: Arial, Helvetica, sans-serif;
+font-size: 10px;
+}
+.formtext {
+font-family: Arial, Helvetica, sans-serif;
+font-size: 10pt;
+font-weight: normal;
+}
+}
+  input[type=button] {
+
+  border: 2px solid #0f88f2;;
+   border-radius:.25rem;
+  color: black;
+  padding: 2px 2px;
+ background-color: white;
+  text-decoration: none;
+  margin: 2px 2px;
+  cursor: pointer;
+}
+input[type=submit] {
+ border: 2px solid green;
+  border-radius:.25rem;
+  background-color: white;
+  color: black;
+  padding: 2px 2px;
+  font-size: 14px;
+   cursor: pointer;
+}
+input[type=reset] {
+ border: 2px solid red;
+ border-radius:.25rem;
+  background-color: white;
+  color: black;
+  padding: 2px 2px;
+  font-size: 14px;
+   cursor: pointer;
+}
+input[type=black1] {
+ border: 2px solid #999999;
+   width:225px;
+  border-radius:.25rem;
+
+  background-color: white;
+  color: black;
+  padding: 2px 2px;
+  font-size: 14px;
+   cursor: pointer;
+}
+
+</style>
+ <script>
+function shortmonth(monthnum) {
+var monthname;
+shortmonths = ["JAN", "FEB", "MAR","APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"] ;
+monthname = shortmonths [monthnum];s
+return monthname; }
+</script>
+<script>
+function SetDateTime(TType,TheFld, FocusFld) {
+var txt;
+var myprompt;
+var d = new Date(),
+thisyear = d.getFullYear();
+thismonth= d.getMonth();
+thisday = d.getDate();
+var monname;
+h = (d.getHours()<10?'0':'') + d.getHours()
+m = (d.getMinutes()<10?'0':'') + d.getMinutes()
+s = (d.getSeconds()<10?'0':'') + d.getSeconds();
+var now = new Date();
+var utch = now.getUTCHours();
+if (utch < 10) { utch = "0"+utch};
+var utcs = now.getUTCMinutes();
+if (utcs < 10) { utcs = "0"+utcs};
+var myUTCtime = utch+":"+utcs+"Z";
+var utcstr = d.toUTCString();
+var localt = d.toLocaleTimeString();
+var isostr = d.toISOString();
+monthname = shortmonth (thismonth);
+thismonth = thismonth + 1;
+switch (TType) {
+case 'hms' :
+myprompt = h + ':' + m + ':' + s;
+var RightNow = prompt("Time:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'hm' :
+myprompt = h + ':' + m;
+var RightNow = prompt("Time:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'm-d-y': myprompt = thismonth+ '-' + thisday+ '-'+ thisyear;
+var RightNow = prompt("Date:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'm/d/y': myprompt = thismonth+ '/' + thisday+ '/'+ thisyear;
+var RightNow = prompt("Date:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'd mmm y': myprompt = thisday+ ' ' + monthname+ ' '+ thisyear;
+var RightNow = prompt("Date:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'mmm-d-y': myprompt = monthname+'-'+thisday+ '-' + thisyear;
+var RightNow = prompt("Date:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'localampm': var myprompt = localt;
+var RightNow = prompt("Local time:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'fulldate': var myprompt = thisyear+ '/'+thismonth+'/'+thisday;
+var RightNow = prompt("Date:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'fulldatetime': var myprompt = thisyear+'/'+thismonth+ ''+thisday+' '+h + ':' + m ;
+var RightNow = prompt("Date time:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'autodate': var RightNow = thisyear+'-'+thismonth+ '-'+thisday ;
+//var RightNow = prompt("Date time:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'autotime': var RightNow = h + ':' + m ;
+//var RightNow = prompt("Date time:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'iso': var myprompt = isostr;
+var RightNow = prompt("Date time:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'utc': var myprompt = utcstr;
+var RightNow = prompt("Date time:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'zulu': var myprompt = isostr;
+myprompt = isostr.replace("T", " "); slen = myprompt.length;
+myprompt = myprompt.substr(0, slen-5)+'Z';
+var RightNow = prompt("Date time:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'UTChm': var myprompt = myUTCtime;
+var RightNow = prompt("Date time:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+}
+// if(FocusFld !== null && FocusFld !== '') {document.getElementById(FocusFld).focus()} --/
+}; 
+    
+  function AutoGrowTextArea(textField)
+{
+if (textField.clientHeight < textField.scrollHeight)
+{
+textField.style.height = textField.scrollHeight + "px";
+if (textField.clientHeight < textField.scrollHeight)
+{
+textField.style.height = (textField.scrollHeight * 2 - textField.clientHeight) + "px";
+}
+}
+}  
+    
+    
+  function isNumberKey(evt)
+{
+var charCode = (evt.which) ? evt.which : event.keyCode
+if (charCode < 48 || charCode > 57)
+return false;
+return true;
+}
+  
+
+    function DateforFile(RightNow) {
+var txt;
+var d = new Date(),
+thisyear = d.getFullYear();
+thismonth= d.getMonth();
+thismonth = thismonth+1;
+if (thismonth < 10) { thismonth = "0" + thismonth}
+
+thisday = d.getDate();
+if (thisday < 10) { thisday = "0" + thisday}
+
+h = (d.getHours()<10?'0':'') + d.getHours()
+m = (d.getMinutes()<10?'0':'') + d.getMinutes()
+s = (d.getSeconds()<10?'0':'') + d.getSeconds();
+var myprompt = tththisday='.'+ismonth+'.'+thisyear+' '+h + '_' + m ;
+return myprompt;
+}
+    
+  // save data
+      
+      function SaveData() {
+	
+			formDataToObject(document.getElementById('myform'))
+			saveTextAsFile();
+			
+			//saveTextAsFile();
+			}
+
+//-------
+      function saveTextAsFile(fileNameToSaveAs, textToWrite) {
+
+var textToWrite = document.getElementById('parseme').value; 
+var fileNameToSaveAs = "frm 900-001 data " + DateforFile()+".txt";
+fileNameToSaveAs = prompt("", fileNameToSaveAs);
+
+  /* Saves a text string as a blob file*/  
+  var ie = navigator.userAgent.match(/MSIE\s([\d.]+)/),
+      ie11 = navigator.userAgent.match(/Trident\/7.0/) && navigator.userAgent.match(/rv:11/),
+      ieEDGE = navigator.userAgent.match(/Edge/g),
+      ieVer=(ie ? ie[1] : (ie11 ? 11 : (ieEDGE ? 12 : -1)));
+
+  if (ie && ieVer<10) {
+    console.log("No blobs on IE ver<10");
+    return;
+  }
+
+  var textFileAsBlob = new Blob([textToWrite], {
+    type: 'text/plain'
+  });
+
+  if (ieVer>-1) {
+    window.navigator.msSaveBlob(textFileAsBlob, fileNameToSaveAs);
+
+  } else {
+    var downloadLink = document.createElement("a");
+    downloadLink.download = fileNameToSaveAs;
+    downloadLink.href = window.URL.createObjectURL(textFileAsBlob);
+    downloadLink.onclick = function(e) { document.body.removeChild(e.target); };
+    downloadLink.style.display = "none";
+    document.body.appendChild(downloadLink);
+    downloadLink.click();
+  }
+}
+
+
+
+
+
+function destroyClickedElement(event)
+{
+    document.body.removeChild(event.target);
+}
+
+function loadFileAsText()
+{
+
+    var fileToLoad = document.getElementById("fileToLoad").files[0];
+ 
+    var fileReader = new FileReader();
+    fileReader.onload = function(fileLoadedEvent) 
+    {
+        var textFromFileLoaded = fileLoadedEvent.target.result;
+        document.getElementById("inputTextToSave").value = textFromFileLoaded;
+    };
+    fileReader.readAsText(fileToLoad, "UTF-8");
+}
+
+
+function DateforFile(RightNow) {
+var txt;
+var d = new Date(),
+thisyear = d.getFullYear();
+thismonth= d.getMonth();
+thismonth = thismonth+1;
+if (thismonth < 10) { thismonth = "0" + thismonth}
+
+thisday = d.getDate();
+if (thisday < 10) { thisday = "0" + thisday}
+
+h = (d.getHours()<10?'0':'') + d.getHours()
+m = (d.getMinutes()<10?'0':'') + d.getMinutes()
+var myprompt = thisday+'.'+thismonth+'.'+thisyear+' '+h + '_' + m ;
+return myprompt;
+}
+
+function isObject(arg) {
+  return Object.prototype.toString.call(arg)==='[object Object]';
+}
+
+function formDataToObject(elForm) {
+  if (!elForm instanceof Element) return;
+  var fields = elForm.querySelectorAll('input, select, textarea'),
+    o = {};
+  for (var i=0, imax=fields.length; i<imax; ++i) {
+    var field = fields[i],
+      sKey = field.name || field.id;
+    if (field.type==='button' || field.type==='image' || field.type==='submit' || !sKey) continue;
+    switch (field.type) {
+      case 'checkbox':
+        o[sKey] = +field.checked;
+        break;
+      case 'radio':
+        if (o[sKey]===undefined) o[sKey] = '';
+        if (field.checked) o[sKey] = field.value;
+        break;
+      case 'select-multiple':
+        var a = [];
+        for (var j=0, jmax=field.options.length; j<jmax; ++j) {
+          if (field.options[j].selected) a.push(field.options[j].value);
+        }
+        o[sKey] = a;
+        break;
+      default:
+        o[sKey] = field.value;
+    }
+  }
+ // alert('Form data:\n\n' + JSON.stringify(o, null, 2));
+ document.getElementById('parseme').value = JSON.stringify(o, null, 2);
+//  return o;
+}
+
+function populateForm(o) {
+   
+o =  JSON.parse(document.getElementById('parseme').value);
+ //if (!isObject(o)) return;
+if (!isObject(o)) return;
+  for (var i in o) {
+    var el = document.getElementById(i) || document.querySelector('[name=' + i + ']');
+    if (el.type==='radio') el = document.querySelectorAll('[name=' + i + ']');
+    switch (typeof o[i]) {
+      case 'number':
+        el.checked = o[i];
+        break;
+      case 'object':
+        if (el.options && o[i] instanceof Array) {
+          for (var j=0, jmax=el.options.length; j<jmax; ++j) {
+            if (o[i].indexOf(el.options[j].value)>-1) el.options[j].selected = true;
+          }
+        }
+        break;
+      default:
+        if (el instanceof NodeList) {
+          for (var j=0, jmax=el.length; j<jmax; ++j) {
+            if (el[j].value===o[i]) el[j].checked = true;
+          }
+        } else {
+          el.value = o[i];
+        }
+    }
+  }
+var x=document.getElementById("Statuscolor").value;
+  
+   document.getElementById("ColorBanner").style.background =x;
+}
+
+ function readBlob(opt_startByte, opt_stopByte) {
+  
+    var files = document.getElementById('files').files;
+    if (!files.length) {
+      alert('Please select a file!');
+      return;
+    }
+
+    var file = files[0];
+    var start = parseInt(opt_startByte) || 0;
+    var stop = parseInt(opt_stopByte) || file.size - 1;
+
+    var reader = new FileReader();
+
+    // If we use onloadend, we need to check the readyState.
+    reader.onloadend = function(evt) {
+      if (evt.target.readyState == FileReader.DONE) { // DONE == 2
+        document.getElementById('byte_content').textContent = evt.target.result;
+        document.getElementById('byte_range').textContent = 
+            ['Read bytes: ', start + 1, ' - ', stop + 1,
+             ' of ', file.size, ' byte file'].join('');
+      }
+    };
+
+    var blob = file.slice(start, stop + 1);
+    reader.readAsBinaryString(blob);
+  }
+    	
+  window.onload = function () { 
+ 
+ //Check the support for the File API support 
+ if (window.File && window.FileReader && window.FileList && window.Blob) {
+    var fileSelected = document.getElementById('txtfiletoread');
+	
+    fileSelected.addEventListener('change', function (e) { 
+         //Set the extension for the file 
+         var fileExtension = /text.*/; 
+         //Get the file object 
+         var fileTobeRead = fileSelected.files[0];
+        //Check of the extension match 
+         if (fileTobeRead.type.match(fileExtension)) { 
+             //Initialize the FileReader object to read the 2file 
+			
+             var fileReader = new FileReader(); 
+             fileReader.onload = function (e) { 
+                 var fileContents = document.getElementById('filecontents'); 
+                
+				document.getElementById('parseme').value =fileReader.result;
+				populateForm(obj = document.getElementById('parseme').value);
+					 } 
+             fileReader.readAsText(fileTobeRead); 
+         } 
+         else { 
+             alert("Please select text file"); 
+         }
+ 
+    }, false);
+} 
+ else { 
+     alert("Files are not supported"); 
+ } 
+ // getit();
+ TimeNow('Meldedatum', false)
+ }
+ 
+
+    
+    </script>
+    
+    
+    
+    
+</head>
+
+<body>
+ <form  style="font-family: Arial;" pbzloc="3" onsubmit="return confirm('To complete your form submission, click OK and close the open browser window. You will return to the new message window so you can post your message to the outbox');document.getElementById('parseme').value='';" method="post" id="myform" enctype="multipart/form-data" action="http://{FormServer}:{FormPort}"><table width="1000" height="1946" border="1" cellpadding="6" cellspacing="0" bordercolor="#999999" style="width: 900px; height: 533px; font-family: Gotham, 'Helvetica Neue', Helvetica, Arial, sans-serif;" pbzloc="11">
+  <!--DWLayoutTable-->
+  <tbody>
+    <tr valign="top">
+      <td height="70" colspan="8" style="vertical-align: top; background-color: rgb(255, 255, 204); font-family: Gotham, 'Helvetica Neue', Helvetica, Arial, sans-serif; font-weight: bold;"><div align="center"><strong>&nbsp; &nbsp; &nbsp; &nbsp;</strong>&nbsp;<big>FRM 900-001 SitRep</big><br />
+        <input type="button" value=" Load FRM 900 SitRep Data " onclick="document.getElementById('txtfiletoread').click();" />
+        <input type="file" id="txtfiletoread" accept=".txt"  style="display: none;"/>
+      </div></td>
+    </tr>
+    <tr>
+      <td colspan="5" valign="top" style="vertical-align: top; text-align: justify; height: 45px; width: 30%; font-family: Gotham, 'Helvetica Neue', Helvetica, Arial, sans-serif;">&nbsp;1. Incident Name:&nbsp;
+        &nbsp;&nbsp;&nbsp;
+        <p>&nbsp;&nbsp;
+          <input size="45" name="Incident_Name" maxlength="40" id="Incident_Name" required="required" title="Incident or Agency # optional." />
+          <textarea name="parseme" cols="60" id="parseme" style="display: none;"></textarea>
+        </p>
+        <p>
+          <textarea name="parseme" cols="60" id="parseme" style="display: none;"></textarea>
+          <br />
+        </td>
+      <td colspan="3" valign="top"><table border="0" cellpadding="2" cellspacing="0" style="width: 416px; height: 87px; font-family: Gotham, 'Helvetica Neue', Helvetica, Arial, sans-serif;">
+        <!--DWLayoutTable-->
+        <tbody>
+          <tr>
+            <td colspan="4">Operational Period:</td>
+            </tr>
+          <tr>
+            <td width="109" style="width: 28%;">Date From<big>:</big></td>
+            <td width="101"><b>
+              <input size="12" name="DateFrom" id="DateFrom" maxlength="12" required="required" />
+              </b></td>
+            <td width="71">Date To:</td>
+            <td width="101"><b>
+              <input size="12" name="DateTo" id="DateTo" maxlength="12" required="required" />
+              </b></td>
+            </tr>
+          <tr>
+            <td>Time From:</td>
+            <td><b>
+              <input title="Local 24 hr time" size="10" name="TimeFrom" id="TimeFrom" maxlength="10" required="required" />
+              </b></td>
+            <td>Time To:</td>
+            <td><b>
+              <input title="Local 24 hr time" size="10" name="TimeTo" id="TimeTo" maxlength="10" required="required" />
+              </b></td>
+            </tr>
+          <tr>
+         
+            </tr>
+          </tbody>
+      </table></td>
+    </tr>
+    <tr>
+      <td height="38" colspan="5" valign="top" style="vertical-align: top;  "> Prepared By        <b>
+        <input name="preparer" type="text" required="required" id="preparer" equired="required" size="30" maxlength="42" />
+      </b></td>
+      <td colspan="3" valign="top"><span style="vertical-align: top;  ">Position: 
+        <input name="position" type="text" required="required" id="position
+                                                                    parer3" equired="required" size="30" maxlength="42" />
+      </span></td>
+    </tr>
+    <tr>
+      <td height="32" colspan="8" style="text-align: left; vertical-align: top; font-style: italic;">Service Summary</td>
+    </tr>
+    <tr>
+      <td height="43" colspan="8" style="text-align: left; vertical-align: top; font-family: Gotham, 'Helvetica Neue', Helvetica, Arial, sans-serif;"><table width="100%" border="1" cellpadding="4" cellspacing="0">
+        <tbody>
+          <tr bgcolor="#f8f8ff">
+            <td colspan="5" bgcolor="#f8f8ff">Resources Deployed</td>
+            </tr>
+          <tr>
+            <td width="158"># Workers<br></td>
+            <td width="288"><b>
+              <input size="15" name="workers" id="workers" onkeypress="return isNumberKey(event)" maxlength="15" />
+            </b></td>
+            <td width="155">Worker hrs.</td>
+            <td colspan="2"><b>
+              <input size="15" name="workers2hours" id="workers2hours" onkeypress="return isNumberKey(event)" maxlength="15" />
+            </b></td>
+          </tr>
+          <tr>
+            <td height="31"># Canteens</td>
+            <td><b>
+              <input size="15" name="canteens" id="canteens" onkeypress="return isNumberKey(event)" maxlength="15" />
+            </b></td>
+            <td rowspan="2"># Sites in Operation</td>
+            <td width="121">Feeding</td>
+            <td width="122"><b>
+              <input size="15" name="feeddingsites" id="feeddingsites" onkeypress="return isNumberKey(event)" maxlength="15" />
+            </b></td>
+          </tr>
+          <tr>
+            <td># Vehicles</td>
+            <td><b>
+              <input size="15" name="Vehicles" id="Vehicles" onkeypress="return isNumberKey(event)" maxlength="15" />
+            </b></td>
+            <td>Distribution</td>
+            <td><b>
+              <input size="15" name="DistributionSites" id="DistributionSites" onkeypress="return isNumberKey(event)" maxlength="15" />
+            </b></td>
+          </tr>
+          </tbody>
+      </table></td>
+    </tr>
+    <tr>
+      <td height="15" colspan="8" bgcolor="#f8f8ff" style="text-align: left; vertical-align: top; font-family: Gotham, 'Helvetica Neue', Helvetica, Arial, sans-serif;">Food Services</td>
+    </tr>
+    <tr>
+      <td width="115" height="32" style="text-align: left; vertical-align: top;"># Meals</td>
+      <td width="59" style="text-align: left; vertical-align: top;"><b>
+        <input size="8" name="Meals" id="Meals" onkeypress="return isNumberKey(event)" maxlength="8" />
+      </b></td>
+      <td width="140" nowrap="nowrap" style="text-align: left; vertical-align: top;"># Snacks</td>
+      <td width="59" style="text-align: left; vertical-align: top;"><b>
+        <input size="8" name="Snacks" id="Snacks"onkeypress="return isNumberKey(event)" maxlength="8" />
+      </b></td>
+      <td width="120" style="text-align: left; vertical-align: top;"># Cold Drinks</td>
+      <td width="60" height="32" style="text-align: left; vertical-align: top;"><b>
+        <input size="8" name="Coldrinks" id="Coldrinks"onkeypress="return isNumberKey(event)" maxlength="8" />
+      </b></td>
+      <td width="129" height="32" style="text-align: left; vertical-align: top;"># Hot Drinks</td>
+      <td width="150" height="32" style="text-align: left; vertical-align: top;"><b>
+        <input size="8" name="Hotdrinks" id="Hotdrinks"onkeypress="return isNumberKey(event)" maxlength="8" />
+      </b></td>
+    </tr>
+    <tr>
+      <td height="32" colspan="8" bgcolor="#f8f8ff" style="text-align: left; vertical-align: top;">Goods-in-Kind Distrubution (add additional rows as needed)</td>
+    </tr>
+    <tr>
+      <td height="32" style="text-align: left; vertical-align: top;"><b>
+        <input name="Inkind1"" id="Inkind1" placeholder="(Item 1)" size="15" maxlength="15"Inkind1 />
+      </b></td>
+      <td height="32" style="text-align: left; vertical-align: top;"><b>
+        <input size="8" name="inkinct1" id="inkinct1"onkeypress="return isNumberKey(event)" maxlength="8" />
+      </b></td>
+      <td height="32" style="text-align: left; vertical-align: top;"><b>
+        <input size="15" placeholder="(Item 2)"name="Inkind2" id="Inkind2" maxlength="15" />
+      </b></td>
+      <td height="32" style="text-align: left; vertical-align: top;"><b>
+        <input size="8" name="inkinct2" id="inkinct2"onkeypress="return isNumberKey(event)" maxlength="8" />
+      </b></td>
+      <td height="32" style="text-align: left; vertical-align: top;"><b>
+        <input size="15" placeholder="(Item 3)"name="Inkind3" id="Inkind3" maxlength="15" />
+      </b></td>
+      <td height="32" style="text-align: left; vertical-align: top;"><b>
+        <input size="8" name="inkinct3" id="inkinct3" onkeypress="return isNumberKey(event)"maxlength="8" />
+      </b></td>
+      <td height="32" style="text-align: left; vertical-align: top;"><b><b>
+        <input size="15" placeholder="(Item 4)"name="Inkind4" id="Inkind4" maxlength="15" />
+      </b></b></td>
+      <td height="32" style="text-align: left; vertical-align: top;"><b>
+        <input size="8" name="inkinct4" id="inkinct4"onkeypress="return isNumberKey(event)" maxlength="8" />
+      </b></td>
+    </tr>
+    <tr>
+      <td height="32" colspan="8" bgcolor="#f8f8ff" style="text-align: left; vertical-align: top;">Finances</td>
+    </tr>
+    <tr>
+      <td height="32" colspan="8" style="text-align: left; vertical-align: top;"><table width="100%" border="1" cellspacing="0">
+        <tbody>
+          <tr>
+            <td width="28%">Worker Expenses<br>
+(food/lodging)</td>
+            <td width="38%"><p>Response  Expenses<br>
+              (Vehicles, food,  goods-in-kind, etc.)</p></td>
+            <td width="34%">Donations</td>
+          </tr>
+          <tr>
+            <td><textarea  tabindex="105"name="WorkerExpenses" cols="50" rows="2" id="WorkerExpenses"onkeyup="AutoGrowTextArea(this)" onchange="this.value=RWS(this.value)"></textarea></td>
+            <td><textarea  tabindex="105"name="ResponseExpenses" cols="50" rows="2" id="Expensestxt2"onkeyup="AutoGrowTextArea(this)" onchange="this.value=RWS(this.value)"></textarea></td>
+            <td><textarea  tabindex="105"name="DonationExpenses" cols="50" rows="2" id="DonationExpenses"onkeyup="AutoGrowTextArea(this)" onchange="this.value=RWS(this.value)"></textarea></td>
+          </tr>
+        </tbody>
+      </table></td>
+    </tr>
+    <tr>
+      <td height="32" colspan="8" style="text-align: left; vertical-align: top; font-style: italic; font-weight: bold;">Response Overview</td>
+    </tr>
+    <tr bgcolor="#f8f8ff">
+      <td height="32" colspan="8" style="text-align: left; vertical-align: top;">Current Situation Status</td>
+    </tr>
+    <tr>
+      <td height="32" colspan="8" style="text-align: left; vertical-align: top;"><textarea  tabindex="105"name="CurrentSituation" cols="120" rows="2" id="CurrentSituation"onkeyup="AutoGrowTextArea(this)" onchange="this.value=RWS(this.value)"></textarea></td>
+    </tr>
+    <tr bgcolor="#f8f8ff">
+      <td height="32" colspan="8" bgcolor="#f8f8ff" style="text-align: left; vertical-align: top;">Current TSA (The Salvation Army) Response Status</td>
+    </tr>
+    <tr>
+      <td height="43" colspan="8" style="text-align: left; vertical-align: top;"><textarea  tabindex="105"name="CurrentTSA" cols="120" rows="2" id="CurrentTSA"onkeyup="AutoGrowTextArea(this)" onchange="this.value=RWS(this.value)"></textarea></td>
+    </tr>
+    <tr bgcolor="#f8f8ff">
+      <td height="33" colspan="8" style="text-align: left; vertical-align: top;">Projected Situation Outlook</td>
+    </tr>
+    <tr>
+      <td height="43" colspan="8" style="text-align: left; vertical-align: top;"><textarea  tabindex="105"name="projectedOutlook" cols="120" rows="2" id="projectedOutlook"onkeyup="AutoGrowTextArea(this)" onchange="this.value=RWS(this.value)"></textarea></td>
+    </tr>
+    <tr bgcolor="#f8f8ff">
+      <td height="33" colspan="8" bgcolor="#f8f8ff" style="text-align: left; vertical-align: top; font-weight: normal;">Projected TSA Response for Next 3 Days</td>
+    </tr>
+    <tr>
+      <td height="43" colspan="8" style="text-align: left; vertical-align: top;"><textarea  tabindex="105"name="ProjectTSAResponse" cols="120" rows="2" id="ProjectTSAResponse"onkeyup="AutoGrowTextArea(this)" onchange="this.value=RWS(this.value)"></textarea></td>
+    </tr>
+    <tr>
+      <td height="43" colspan="8" bgcolor="#f8f8ff" style="text-align: left; vertical-align: top; font-weight: bold;">Section Specific Information</td>
+    </tr>
+    <tr>
+      <td height="43" colspan="8" style="text-align: left; vertical-align: top;">Public Information<br>
+        <textarea  tabindex="105"name="SSI1" cols="120" rows="2" id="CurrentTSA3"onkeyup="AutoGrowTextArea(this)" onchange="this.value=RWS(this.value)"></textarea>        <br></td>
+    </tr>
+    <tr>
+      <td height="43" colspan="8" style="text-align: left; vertical-align: top;">Liaison<br>
+        <textarea  tabindex="105"name="SSI2" cols="120" rows="2" id="SSI2"onkeyup="AutoGrowTextArea(this)" onchange="this.value=RWS(this.value)"></textarea>        <br></td>
+    </tr>
+    <tr>
+      <td height="43" colspan="8" style="text-align: left; vertical-align: top;">Safety<br>
+        <textarea  tabindex="105"name="SSI3" cols="120" rows="2" id="SSI3"onkeyup="AutoGrowTextArea(this)" onchange="this.value=RWS(this.value)"></textarea>        <br></td>
+    </tr>
+    <tr>
+      <td height="43" colspan="8" style="text-align: left; vertical-align: top;">Emotional &amp; Spiritual Care<br>
+        <textarea  tabindex="105"name="SSI4" cols="120" rows="2" id="SSI4"onkeyup="AutoGrowTextArea(this)" onchange="this.value=RWS(this.value)"></textarea>        <br></td>
+    </tr>
+    <tr>
+      <td height="43" colspan="8" style="text-align: left; vertical-align: top;">Operations<br>
+        <textarea  tabindex="105"name="SSI5" cols="120" rows="2" id="SSI5"onkeyup="AutoGrowTextArea(this)" onchange="this.value=RWS(this.value)"></textarea>        <br></td>
+    </tr>
+    <tr>
+      <td height="43" colspan="8" style="text-align: left; vertical-align: top;">Logistics<br>
+        <textarea  tabindex="105"name="SSI6" cols="120" rows="2" id="SSI6"onkeyup="AutoGrowTextArea(this)" onchange="this.value=RWS(this.value)"></textarea>        <br></td>
+    </tr>
+    <tr>
+      <td height="43" colspan="8" style="text-align: left; vertical-align: top;">Planning<br>
+        <textarea  tabindex="105"name="SSI7" cols="120" rows="2" id="SSI7"onkeyup="AutoGrowTextArea(this)" onchange="this.value=RWS(this.value)"></textarea></td>
+    </tr>
+    <tr>
+      <td height="43" colspan="8" bgcolor="#f8f8ff" style="text-align: left; vertical-align: top; font-weight: bold;">ICS (Incident Command System) Contact Info</td>
+    </tr>
+    <tr>
+      <td height="291" colspan="8" style="text-align: left; vertical-align: top; font-weight: normal;"><table width="100%" border="1" cellpadding="4" cellspacing="0">
+        <tbody>
+          <tr>
+            <td width="13%"><strong></i>Role</strong></td>
+            <td width="23%">Name</td>
+            <td width="20%">Email</td>
+            <td width="22%">Phone Number</td>
+            <td width="22%">Last Service Date</td>
+          </tr>
+          <tr>
+            <td>IC <br></td>
+            <td><span style="vertical-align: top;  ">
+              <input name="icsname1" type="text" id="icsname1" size="25" maxlength="25"  />
+            </span></td>
+            <td><span style="vertical-align: top;  ">
+              <input name="icsemail1" type="text" id="icsemail1" size="25" maxlength="25"  />
+            </span></td>
+            <td><span style="vertical-align: top;  ">
+              <input name="icsphone1" type="text" placeholder='Phone #' id="icsphone1" size="25" maxlength="25"  />
+            </span></td>
+            <td><span style="vertical-align: top;  ">
+              <input name="icslastdate1" type="text" id="icslastdate1" size="25" maxlength="25" />
+            </span></td>
+          </tr>
+          <tr>
+            <td>Public Information<br></td>
+            <td><span style="vertical-align: top;  ">
+              <input name="icsname2" type="text" id="icsname2" size="25" maxlength="25"  />
+            </span></td>
+            <td><span style="vertical-align: top;  ">
+              <input name="icsemail2" type="text" id="icsemail2" size="25" maxlength="25"  />
+            </span></td>
+            <td><span style="vertical-align: top;  ">
+              <input name="icsphone2" type="text" placeholder='Phone #' id="icsphone2" size="25" maxlength="25"  />
+            </span></td>
+            <td><span style="vertical-align: top;  ">
+              <input name="icslastdate2" type="text" id="icslastdate2" size="25" maxlength="25"  />
+            </span></td>
+          </tr>
+          <tr>
+            <td>Liaison<br></td>
+            <td><span style="vertical-align: top;  ">
+              <input name="icsname3" type="text" id="icsname3" size="25" maxlength="25"  />
+            </span></td>
+            <td><span style="vertical-align: top;  ">
+              <input name="icsemail3" type="text" id="icsemail3" size="25" maxlength="25"  />
+            </span></td>
+            <td><span style="vertical-align: top;  ">
+              <input name="icsphone3" type="text" placeholder='Phone #' id="icsphone3" size="25" maxlength="25"  />
+            </span></td>
+            <td><span style="vertical-align: top;  ">
+              <input name="icslastdate3" type="text" id="icslastdate3" size="25" maxlength="25"  />
+            </span></td>
+          </tr>
+          <tr>
+            <td>Safety<br></td>
+            <td><span style="vertical-align: top;  ">
+              <input name="icsname4" type="text" id="icsname4" size="25" maxlength="25"  />
+            </span></td>
+            <td><span style="vertical-align: top;  ">
+              <input name="icsemail4" type="text" id="icsemail4" size="25" maxlength="25"  />
+            </span></td>
+            <td><span style="vertical-align: top;  ">
+              <input name="icsphone4" type="text" placeholder='Phone #' id="icsphone4" size="25" maxlength="25"  />
+            </span></td>
+            <td><span style="vertical-align: top;  ">
+              <input name="icslastdate4" type="text" id="icslastdate4" size="25" maxlength="25"  />
+            </span></td>
+          </tr>
+          <tr>
+            <td>Operations<br></td>
+            <td><span style="vertical-align: top;  ">
+              <input name="icsname5" type="text" id="icsname5" size="25" maxlength="25"  />
+            </span></td>
+            <td><span style="vertical-align: top;  ">
+              <input name="icsemail5" type="text" id="icsemail5" size="25" maxlength="25"  />
+            </span></td>
+            <td><span style="vertical-align: top;  ">
+              <input name="icsphone5" type="text" placeholder='Phone #' r id="icsphone5" size="25" maxlength="25"  />
+            </span></td>
+            <td><span style="vertical-align: top;  ">
+              <input name="icslastdate5" type="text" id="icslastdate5" size="25" maxlength="25"  />
+            </span></td>
+          </tr>
+          <tr>
+            <td>Logistics<br></td>
+            <td><span style="vertical-align: top;  ">
+              <input name="icsname6" type="text" id="icsname6" size="25" maxlength="25"  />
+            </span></td>
+            <td><span style="vertical-align: top;  ">
+              <input name="icsemail6" type="text" id="icsemail6" size="25" maxlength="25"  />
+            </span></td>
+            <td><span style="vertical-align: top;  ">
+              <input name="icsphone6" type="text" placeholder='Phone #' id="icsphone6" size="25" maxlength="25"  />
+            </span></td>
+            <td><span style="vertical-align: top;  ">
+              <input name="icslastdate6" type="text" id="icslastdate6" size="25" maxlength="25"  />
+            </span></td>
+          </tr>
+          <tr>
+            <td>Planning</td>
+            <td><span style="vertical-align: top;  ">
+              <input name="icsname7" type="text" id="icsname7" size="25" maxlength="25"  />
+            </span></td>
+            <td><span style="vertical-align: top;  ">
+              <input name="icsemail7" type="text" id="icsemail7" size="25" maxlength="25"  />
+            </span></td>
+            <td><span style="vertical-align: top;  ">
+              <input name="icsphone7" type="text" placeholder='Phone #' id="icsphone7" size="25" maxlength="25"  />
+            </span></td>
+            <td><span style="vertical-align: top;  ">
+              <input name="icslastdate7" type="text" id="icslastdate7" size="25" maxlength="25"  />
+            </span></td>
+          </tr>
+          <tr>
+            <td height="28">FinAdmin</td>
+            <td><span style="vertical-align: top;  ">
+              <input name="icsname8" type="text" id="icsname8" size="25" maxlength="25"  />
+            </span></td>
+            <td><span style="vertical-align: top;  ">
+              <input name="icsemail8" type="text" id="icsemail8" size="25" maxlength="25"  />
+            </span></td>
+            <td><span style="vertical-align: top;  ">
+              <input name="icsphone8" type="text" placeholder='Phone #' id="icsphone8" size="25" maxlength="25"  />
+            </span></td>
+            <td><span style="vertical-align: top;  ">
+              <input name="icslastdate8" type="text" id="icslastdate8" size="25" maxlength="25"  />
+            </span></td>
+          </tr>
+        </tbody>
+      </table></td>
+    </tr>
+    <tr>
+      <td colspan="8" style="text-align: left; vertical-align: top;"><div align="left"></div>
+        <p align="left"><big> <span class="formtext"><span style="font-family: Calibri;"><small><span class="style10"><span class="style12" ></span></span></small>&nbsp;<big>
+          
+          <input value="Submit" style="color: green;" name="Submit" method="Post" id="Submit" enctype="multipart/form-data" class="SubmitBtn" type="submit" />
+        </big><b><span style="font-weight: normal;">&nbsp;</span></b><big>
+        <input type="button" value="Save FRM 900 SitRep Data"  style="color: blue;"onclick="SaveData()" />
+          </big>&nbsp; <small> </small> &nbsp;</span></span></big>
+          <input style="color: rgb(204, 0, 0);" name="ResetForm" value="Reset Form " class="BtnFormat2" type="reset" />
+          <b><span style="font-weight: normal;"> &nbsp;&nbsp;&nbsp;</span></b><small><span style="color: black;">
+          <input name="Templateversion" type="hidden"
+
+                                    id="Templateversion" value="FRM 900-01
+               
+               
+               
+               
+               v 1.0" />
+          </span></small></p></td>
+    </tr>
+  </tbody>
+</table>
+   <table width="983" border="1">
+     <tbody>
+      
+     </tbody>
+   </table>
+   <p>&nbsp;</p>
+    </form>
+</body>
+</html>

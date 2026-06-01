@@ -1,0 +1,52 @@
+Form: ICS202_Incident_Objectives.html,ICS202_Incident_Objectives_Viewer.html
+
+To: 
+Subject: ICS 202 IAP-<var IncidentName>, <var DateTime> 
+Readonly:True
+Msg: Incident Action Plan
+<var Title>
+
+1. Incident Name:  
+<var IncidentName>
+
+2. Operational Period:	
+Date From:	<var DateFrom>	Date To:	<var DateTo>
+Time From:	<var TimeFrom>	Time To:	<var TimeTo>
+
+3.Objective(s)
+<var Objectives>
+
+4. Operational Period Command Emphasis:
+<var Emphais>
+ 
+General Situational Awareness
+<var SitAwareness>
+
+5. Safety Plan Required: <var PlanNeeded>
+   Safety Plan(s) Located at: <var PlansAt>
+
+6. Incident Action Plan (the items checked below are included in this Incident Action Plan):
+<var fld1>	ICS 203 
+<var fld2>	ICS 204 
+<var fld3>	ICS 205 
+<var fld4>	ICS 205A 
+<var fld5>	ICS 206 
+<var fld6>	ICS 207 
+<var fld7>	ICS 208 
+<var fld8>	Map/Chart 
+<var fld9>	Weather forecast/Tides/Currents 
+Other Attachments 
+<var AddedOthers>
+
+7. Prepared by:	Name	<var Prepedby>	Position/Title:	<var Position>	Signature:	<var Prepsig> 
+
+8. Approved by Incident Commander:	Name:	<var ApprovedName>	Signature:	<var ApprovedSig> 
+Date/Time:	<var DateTime> 
+------------------------
+Express Sending Station: <MsgSender>
+Senders Express Version: <ProgramVersion>
+Senders Template Version: <var Templateversion>
+[No changes or editing of this message are allowed]
+
+
+

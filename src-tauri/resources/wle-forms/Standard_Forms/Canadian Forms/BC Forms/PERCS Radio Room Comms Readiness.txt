@@ -1,0 +1,34 @@
+Form: PERCS Radio Room Comms Readiness_Initial.html,PERCS Radio Room Comms Readiness_viewer.html
+SeqInc:
+
+To:<var Other1>
+Subject: PERCS Radio Room Comms Readiness-<var Callsign>, <var Location>, Msg # <seqnum> 
+	
+Msg:
+Message Number: <seqnum>
+ 
+From Radio Room: <var Callsign>
+Date/Time: <var DateTime>
+Location: <var Location>
+
+Our Radio Room is now:	<var RoomNow>	 
+
+We have access to a Winlink CMS gateway: <var Gateway>
+
+When on the air, we will be continuously monitoring these voice frequencies during this event and can be reached on these frequencies until our station shuts down.
+ HF
+ <var f6>
+ <var f7>
+ <var f8>
+
+<var SetName> UHF/VHF
+<var monitoring>
+
+
+Comments   
+<var Comments>
+
+------------------------------------
+Express Sending Station: <MsgSender>
+Senders Express Version: <ProgramVersion>
+Senders Template Version: <var Templateversion>

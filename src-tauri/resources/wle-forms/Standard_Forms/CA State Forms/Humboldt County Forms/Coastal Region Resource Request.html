@@ -1,0 +1,1047 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml"><head>
+<meta http-equiv="Content-Type" content="text/html; charset=iso-8859-1" /><title>Coastal Region Resource Request</title>
+
+<style type="text/css">
+<!--
+@media print {
+.form-control, .form-control.nobug {
+border: 0;
+outline: 0;
+box-shadow: none;
+font-size:14px;
+}
+.form-control.nobug {
+transition: none; /*-- THIS IS IMPORTANT -- */
+}
+input, textarea {
+outline: none !important;
+box-shadow: none;
+border: none;
+overflow: visible;
+font-family: Arial, Helvetica, sans-serif;
+font-size: 11px;
+}
+.formtext {
+font-family: Arial, Helvetica, sans-serif;
+font-size: 10pt;
+font-weight: normal;
+}
+</style>
+<script>
+function shortmonth(monthnum) {
+var monthname;
+shortmonths = ["JAN", "FEB", "MAR","APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"] ;
+monthname = shortmonths [monthnum];s
+return monthname; }
+</script>
+<script>
+function SetDateTime(TType,TheFld, FocusFld) {
+var txt;
+var myprompt;
+var d = new Date(),
+thisyear = d.getFullYear();
+thismonth= d.getMonth();
+thisday = d.getDate();
+var monname;
+h = (d.getHours()<10?'0':'') + d.getHours()
+m = (d.getMinutes()<10?'0':'') + d.getMinutes()
+s = (d.getSeconds()<10?'0':'') + d.getSeconds();
+var now = new Date();
+var utch = now.getUTCHours();
+if (utch < 10) { utch = "0"+utch};
+var utcs = now.getUTCMinutes();
+if (utcs < 10) { utcs = "0"+utcs};
+var myUTCtime = utch+":"+utcs+"Z";
+var utcstr = d.toUTCString();
+var localt = d.toLocaleTimeString();
+var isostr = d.toISOString();
+monthname = shortmonth (thismonth);
+thismonth = thismonth + 1;
+switch (TType) {
+case 'hms' :
+myprompt = h + ':' + m + ':' + s;
+var RightNow = prompt("Time:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'hm' :
+myprompt = h + ':' + m;
+var RightNow = prompt("Time:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'm-d-y': myprompt = thismonth+ '-' + thisday+ '-'+ thisyear;
+var RightNow = prompt("Date:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'm/d/y': myprompt = thismonth+ '/' + thisday+ '/'+ thisyear;
+var RightNow = prompt("Date:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'd mmm y': myprompt = thisday+ ' ' + monthname+ ' '+ thisyear;
+var RightNow = prompt("Date:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'mmm-d-y': myprompt = monthname+'-'+thisday+ '-' + thisyear;
+var RightNow = prompt("Date:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'localampm': var myprompt = localt;
+var RightNow = prompt("Local time:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'fulldate': var myprompt = thisyear+ '-'+thismonth+'-'+thisday;
+var RightNow = prompt("Date:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'fulldatetime': var myprompt = thisyear+'-'+monthname+ '-'+thisday+' '+h + ':' + m ;
+var RightNow = prompt("Date time:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'autodate': var RightNow = thisyear+'-'+thismonth+ '-'+thisday ;
+//var RightNow = prompt("Date time:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'autotime': var RightNow = h + ':' + m ;
+//var RightNow = prompt("Date time:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'iso': var myprompt = isostr;
+var RightNow = prompt("Date time:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'utc': var myprompt = utcstr;
+var RightNow = prompt("Date time:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'zulu': var myprompt = isostr;
+myprompt = isostr.replace("T", " "); slen = myprompt.length;
+myprompt = myprompt.substr(0, slen-5)+'Z';
+var RightNow = prompt("Date time:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'UTChm': var myprompt = myUTCtime;
+var RightNow = prompt("Date time:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+}
+// if(FocusFld !== null && FocusFld !== '') {document.getElementById(FocusFld).focus()} --/
+}; </script>
+<script>
+function AutoGrowTextArea(textField)
+{
+if (textField.clientHeight < textField.scrollHeight)
+{
+textField.style.height = textField.scrollHeight + "px";
+if (textField.clientHeight < textField.scrollHeight)
+{
+textField.style.height = (textField.scrollHeight * 2 - textField.clientHeight) + "px";
+}
+}
+}
+function Countthelines(f) { var text1 = f
+var text2 = text1.replace(/\s+$/,"");
+var split2 = text2.split("\n"); var mytotal = split2.length * 17;
+if (mytotal < 150) {
+mytotal = 150;
+}
+var tstr = mytotal.toString();
+return tstr;
+}
+function newfix(f){
+var ThisText = document.getElementById(f).value;
+var makeit = Countthelines(ThisText);
+document.getElementById(f).style.height = makeit+"px"; }
+function Fixarea() {
+newfix("msg");
+newfix("reply");
+AutoGrowTextArea(document.getElementById("msg"));
+AutoGrowTextArea(document.getElementById("reply"));
+}
+function RWS(str){
+var text2 = str.replace(/\s+$/,"");
+return text2.trim();
+}
+</script>
+<style>
+<!--
+TD{ bgcolor="#ffffff" valign="top"}
+.SubmitBtn {font-size: 12px;
+font-family: Arial,Helvetica,sans-serif;
+font-weight: inherit;
+}
+input[type=text], textarea {
+  -webkit-transition: all 0.30s ease-in-out;
+  -moz-transition: all 0.30s ease-in-out;
+  -ms-transition: all 0.30s ease-in-out;
+  -o-transition: all 0.30s ease-in-out;
+  outline: none;
+  padding: 3px 0px 3px 3px;
+  margin: 5px 1px 3px 0px;
+  border: 1px solid #666666;
+}
+ 
+input[type=text]:focus, textarea:focus {
+  box-shadow: 0 0 5px rgba(81, 203, 238, 1);
+  padding: 3px 0px 3px 3px;
+  margin: 5px 1px 3px 0px;
+  border: 1px solid rgba(81, 203, 238, 1);
+}
+</script>
+.style24 {font-family: Arial,Helvetica,sans-serif; font-size: 20px}
+</style>
+<style>
+/*
+body {color:#000; background:#fff; font:100%/1.5 arial,sans-serif;}
+h2 {margin-top:0}
+*/
+/* Styling applied to classes only */
+/* Pop-up content shifted off-screen when not in view.
+Still readable by screen-reader software.
+When targeted it fills the browser window.
+*/
+.pop-up {position:absolute; top:0; left:-500em;}
+.pop-up:target {position:static; left:0;}
+/* The pop-up itself */
+.popBox {
+background:#ffffff;
+/* alternatively fixed width / height and negative margins from 50% */
+position:absolute; left:20%; right:20%; top:10%; bottom:20%;
+z-index:10;
+border:1px solid #3a3a3a;
+/* CSS3 where available: rounded corners, drop-shadow, and fade in. */
+border-radius:.25rem;
+box-shadow:0 .5rem .5rem rgba(0,0,0,.5);
+opacity:0;
+transition: opacity 0.8s ease-out;
+}
+:target .popBox {position:fixed; opacity:1;}
+/* Light box properties */
+.lightbox {
+display:none;
+text-indent:-200em;
+background-color:rgba(0,0,0,.4);
+width:100%;
+height:100%;
+position:fixed;
+top:0;
+left:0;
+bottom:0;
+right:0;
+z-index:5;
+}
+:target .lightbox {display:block;}
+/* The pop-ups close link, moved via CSS to the top right of the pop-up */
+.close:link,
+.close:visited {
+position: absolute;
+top: -0.75em;
+right: -0.75em;
+display: block;
+width: 2em;
+height: 2em;
+line-height: 1.8;
+padding: 0;
+text-align: center;
+text-decoration: none;
+background-color: #000;
+border: 2px solid #fff;
+color: #fff;
+border-radius: 50%;
+box-shadow: 0 0 .5rem .5rem rba(0,0,0,.5);
+}
+.close:before {content:"X";}
+.close:hover,
+.close:active,
+.close:focus {
+box-shadow: 0 0 .5rem .5rem rba(255,0,0,.5);
+background-color: #c00;
+color: #fff;
+}
+.close span {
+text-indent: -200em;
+display: block;
+}
+/* The pop-up content div will scroll if it has too much content */
+.popScroll {
+position:absolute;
+top: 1rem;
+left: 1rem;
+right: 1rem;
+bottom: 1rem;
+overflow-y: auto;
+*overflow-y: scroll;
+padding-right: 0.5em;
+}
+.popScroll h2 {margin-top:0}
+.style6 {
+    font-family: Arial, Helvetica, sans-serif;
+    font-size: 20px;
+    text-align: center;
+}
+.style17 {
+color: #00CC00;
+font-weight: bold;
+}
+.style18 {font-size: 16px}
+.style20 {font-size: 14px}
+.style21 {
+	font-family: Arial, Helvetica, sans-serif;
+	font-size: 12px;
+}
+.style22 {font-size: 12px}
+.formtext1 {font-family: Arial, Helvetica, sans-serif;
+font-size: 11pt;
+font-weight: normal;
+}
+.formtext {
+    font-family: Arial, Helvetica, sans-serif;
+    font-size: 10pt;
+    font-weight: normal;
+    text-align: left;
+}
+.formtext2 {font-family: Arial, Helvetica, sans-serif;
+font-size: 10pt;
+font-weight: normal;
+}
+.formtext2 {font-family: Arial, Helvetica, sans-serif;
+font-size: 10pt;
+font-weight: normal;
+}
+.formtext3 {font-family: Arial, Helvetica, sans-serif;
+font-size: 10pt;
+font-weight: normal;
+}
+.formtext3 {    font-family: Arial, Helvetica, sans-serif;
+    font-size: 10pt;
+    font-weight: normal;
+    text-align: center;
+}
+.formtext4 {font-family: Arial, Helvetica, sans-serif;
+font-size: 10pt;
+font-weight: normal;
+}
+.formtext4 {    font-family: Arial, Helvetica, sans-serif;
+    font-size: 10pt;
+    font-weight: normal;
+    text-align: left;
+}
+.style201 {font-family: Arial, Helvetica, sans-serif; font-size: 11px; }
+.style4 {font-family: Arial, Helvetica, sans-serif; font-size: 12px;}
+.style181 {
+    font-size: 10px
+}
+</style>
+<script>
+function shortmonth(monthnum) {
+var monthname;
+shortmonths = ["JAN", "FEB", "MAR","APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"] ;
+monthname = shortmonths [monthnum];s
+return monthname; }
+</script>
+<script>
+function SetDateTime(TType,TheFld, FocusFld) {
+var txt;
+var myprompt;
+var d = new Date(),
+thisyear = d.getFullYear();
+thismonth= d.getMonth();
+thisday = d.getDate();
+var submonth = thismonth+1; ;
+if (submonth < 10) { submonth = "0"+submonth};
+var subday = thisday;
+if (thisday < 10) { thisday = "0"+thisday};
+var monname;
+h = (d.getHours()<10?'0':'') + d.getHours()
+m = (d.getMinutes()<10?'0':'') + d.getMinutes()
+s = (d.getSeconds()<10?'0':'') + d.getSeconds();
+var now = new Date();
+var utch = now.getUTCHours();
+if (utch < 10) { utch = "0"+utch};
+var utcs = now.getUTCMinutes();
+if (utcs < 10) { utcs = "0"+utcs};
+var myUTCtime = utch+":"+utcs+"Z";
+var utcstr = d.toUTCString();
+var localt = d.toLocaleTimeString();
+var isostr = d.toISOString();
+monthname = shortmonth (thismonth);
+thismonth = thismonth + 1;
+switch (TType) {
+case 'hms' :
+myprompt = h + ':' + m + ':' + s;
+var RightNow = prompt("Time:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'hm' :
+myprompt = h + ':' + m;
+var RightNow = prompt("Time:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'm-d-y': myprompt = thismonth+ '-' + thisday+ '-'+ thisyear;
+var RightNow = prompt("Date:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'm/d/y': myprompt = thismonth+ '/' + thisday+ '/'+ thisyear;
+var RightNow = prompt("Date:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'd mmm y': myprompt = thisday+ ' ' + monthname+ ' '+ thisyear;
+var RightNow = prompt("Date:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'mmm-d-y': myprompt = monthname+'-'+thisday+ '-' + thisyear;
+var RightNow = prompt("Date:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'localampm': var myprompt = localt;
+var RightNow = prompt("Local time:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'fulldate': var myprompt = thisyear+ '-'+thismonth+'-'+thisday;
+var RightNow = prompt("Date:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'fulldatetime': var myprompt = thisyear+'-'+thismonth+ '-'+thisday+' '+h + ':' + m ;
+var RightNow = prompt("Date time:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'autofulldatetime': var RightNow = thisyear+'-'+thismonth+ '-'+thisday+' '+h + ':' + m ;
+//var RightNow = prompt("Date time:", myprompt);
+//document.getElementById(TheFld).value = RightNow;
+//var ORTimestamp = thisyear+submonth+subday+h+m+s;
+//document.getElementById('TimeStampOR').value = ORTimestamp; break;
+case 'iso': var myprompt = isostr;
+var RightNow = prompt("Date time:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'utc': var myprompt = utcstr;
+var RightNow = prompt("Date time:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'zulu': var myprompt = isostr;
+myprompt = isostr.replace("T", " "); slen = myprompt.length;
+myprompt = myprompt.substr(0, slen-5)+'Z';
+var RightNow = prompt("Date time:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'UTChm': var myprompt = myUTCtime;
+var RightNow = prompt("Date time:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+}
+// if(FocusFld !== null && FocusFld !== '') {document.getElementById(FocusFld).focus()} --/
+}
+function AutoGrowTextArea(textField)
+{
+if (textField.clientHeight < textField.scrollHeight)
+{
+textField.style.height = textField.scrollHeight + "px";
+if (textField.clientHeight < textField.scrollHeight)
+{
+textField.style.height = (textField.scrollHeight * 2 - textField.clientHeight) + "px";
+}
+}
+}
+function Countthelines(f) { var text1 = f
+var text2 = text1.replace(/\s+$/,"");
+var split2 = text2.split("\n"); var mytotal = split2.length * 17;
+if (mytotal < 150) {
+mytotal = 150;
+}
+var tstr = mytotal.toString();
+return tstr;
+}
+function newfix(f){
+var ThisText = document.getElementById(f).value;
+var makeit = Countthelines(ThisText);
+document.getElementById(f).style.height = makeit+"px"; }
+function Fixarea() {
+newfix("msg");
+newfix("reply");
+AutoGrowTextArea(document.getElementById("msg"));
+AutoGrowTextArea(document.getElementById("reply"));
+}
+function RWS(str){
+var text2 = str.replace(/\s+$/,"");
+return text2.trim();
+}
+function Flip(theid,working) {
+x1 = document.getElementById(theid).value;
+if (x1 == '' || x1 == '') { document.getElementById(theid).value = working} 
+else { document.getElementById(theid).value = '';}
+}
+
+function setcolor(mfield, thevalaue)
+{
+var thefield = document.getElementById(mfield);
+document.getElementById(mfield).style.background  = "#ffffff";
+if (thevalaue =="YES") {document.getElementById(mfield).style.background = "#fccac7"; }
+ }
+
+// add save load
+
+
+function saveTextAsFile(fileNameToSaveAs, textToWrite) {
+var textToWrite = document.getElementById('parseme').value; 
+var fileNameToSaveAs = "Coastal Region RR data " + DateforFile()+".txt";
+fileNameToSaveAs = prompt("", fileNameToSaveAs);
+
+  /* Saves a text string as a blob file*/  
+  var ie = navigator.userAgent.match(/MSIE\s([\d.]+)/),
+      ie11 = navigator.userAgent.match(/Trident\/7.0/) && navigator.userAgent.match(/rv:11/),
+      ieEDGE = navigator.userAgent.match(/Edge/g),
+      ieVer=(ie ? ie[1] : (ie11 ? 11 : (ieEDGE ? 12 : -1)));
+
+  if (ie && ieVer<10) {
+    console.log("No blobs on IE ver<10");
+    return;
+  }
+
+  var textFileAsBlob = new Blob([textToWrite], {
+    type: 'text/plain'
+  });
+
+  if (ieVer>-1) {
+    window.navigator.msSaveBlob(textFileAsBlob, fileNameToSaveAs);
+
+  } else {
+    var downloadLink = document.createElement("a");
+    downloadLink.download = fileNameToSaveAs;
+    downloadLink.href = window.URL.createObjectURL(textFileAsBlob);
+    downloadLink.onclick = function(e) { document.body.removeChild(e.target); };
+    downloadLink.style.display = "none";
+    document.body.appendChild(downloadLink);
+    downloadLink.click();
+  }
+}
+
+
+
+
+
+function destroyClickedElement(event)
+{
+    document.body.removeChild(event.target);
+}
+
+function loadFileAsText()
+{
+
+    var fileToLoad = document.getElementById("fileToLoad").files[0];
+ 
+    var fileReader = new FileReader();
+    fileReader.onload = function(fileLoadedEvent) 
+    {
+        var textFromFileLoaded = fileLoadedEvent.target.result;
+        document.getElementById("inputTextToSave").value = textFromFileLoaded;
+    };
+    fileReader.readAsText(fileToLoad, "UTF-8");
+}
+
+
+function DateforFile(RightNow) {
+var txt;
+var d = new Date(),
+thisyear = d.getFullYear();
+thismonth= d.getMonth();
+thismonth = thismonth+1;
+if (thismonth < 10) { thismonth = "0" + thismonth}
+
+thisday = d.getDate();
+if (thisday < 10) { thisday = "0" + thisday}
+
+h = (d.getHours()<10?'0':'') + d.getHours()
+m = (d.getMinutes()<10?'0':'') + d.getMinutes()
+var myprompt = thisyear+ '-'+thismonth+'-'+thisday+' '+h + '_' + m ;
+return myprompt;
+}
+
+function isObject(arg) {
+  return Object.prototype.toString.call(arg)==='[object Object]';
+}
+
+function formDataToObject(elForm) {
+    document.getElementById('parseme').value ='';
+  if (!elForm instanceof Element) return;
+  var fields = elForm.querySelectorAll('input, select, textarea'),
+    o = {};
+  for (var i=0, imax=fields.length; i<imax; ++i) {
+    var field = fields[i],
+      sKey = field.name || field.id;
+    if (field.type==='button' || field.type==='image' || field.type==='submit' || !sKey) continue;
+    switch (field.type) {
+      case 'checkbox':
+        o[sKey] = +field.checked;
+        break;
+      case 'radio':
+        if (o[sKey]===undefined) o[sKey] = '';
+        if (field.checked) o[sKey] = field.value;
+        break;
+      case 'select-multiple':
+        var a = [];
+        for (var j=0, jmax=field.options.length; j<jmax; ++j) {
+          if (field.options[j].selected) a.push(field.options[j].value);
+        }
+        o[sKey] = a;
+        break;
+      default:
+        o[sKey] = field.value;
+    }
+  }
+ // alert('Form data:\n\n' + JSON.stringify(o, null, 2));
+ document.getElementById('parseme').value = JSON.stringify(o, null, 2);
+//  return o;
+}
+
+function populateForm(o) {
+
+o =  JSON.parse(document.getElementById('parseme').value);
+ //if (!isObject(o)) return;
+if (!isObject(o)) return;
+  for (var i in o) {
+    var el = document.getElementById(i) || document.querySelector('[name=' + i + ']');
+    if (el.type==='radio') el = document.querySelectorAll('[name=' + i + ']');
+    switch (typeof o[i]) {
+      case 'number':
+        el.checked = o[i];
+        break;
+      case 'object':
+        if (el.options && o[i] instanceof Array) {
+          for (var j=0, jmax=el.options.length; j<jmax; ++j) {
+            if (o[i].indexOf(el.options[j].value)>-1) el.options[j].selected = true;
+          }
+        }
+        break;
+      default:
+        if (el instanceof NodeList) {
+          for (var j=0, jmax=el.length; j<jmax; ++j) {
+            if (el[j].value===o[i]) el[j].checked = true;
+          }
+        } else {
+          el.value = o[i];
+        }
+    }
+  }
+    Fixfields();
+
+
+}
+
+function SaveData() {
+	
+			formDataToObject(document.getElementById('myform'))
+			saveTextAsFile();
+			
+			//saveTextAsFile();
+			}
+
+//-------
+ function readBlob(opt_startByte, opt_stopByte) {
+  
+    var files = document.getElementById('files').files;
+    if (!files.length) {
+      alert('Please select a file!');
+      return;
+    }
+
+    var file = files[0];
+    var start = parseInt(opt_startByte) || 0;
+    var stop = parseInt(opt_stopByte) || file.size - 1;
+
+    var reader = new FileReader();
+
+    // If we use onloadend, we need to check the readyState.
+    reader.onloadend = function(evt) {
+      if (evt.target.readyState == FileReader.DONE) { // DONE == 2
+        document.getElementById('byte_content').textContent = evt.target.result;
+        document.getElementById('byte_range').textContent = 
+            ['Read bytes: ', start + 1, ' - ', stop + 1,
+             ' of ', file.size, ' byte file'].join('');
+      }
+    };
+
+    var blob = file.slice(start, stop + 1);
+    reader.readAsBinaryString(blob);
+  }
+    	
+  window.onload = function () { 
+ 
+ //Check the support for the File API support 
+ if (window.File && window.FileReader && window.FileList && window.Blob) {
+    var fileSelected = document.getElementById('txtfiletoread');
+	
+    fileSelected.addEventListener('change', function (e) { 
+         //Set the extension for the file 
+         var fileExtension = /text.*/; 
+         //Get the file object 
+         var fileTobeRead = fileSelected.files[0];
+        //Check of the extension match 
+         if (fileTobeRead.type.match(fileExtension)) { 
+             //Initialize the FileReader object to read the 2file 
+			
+             var fileReader = new FileReader(); 
+             fileReader.onload = function (e) { 
+                 var fileContents = document.getElementById('filecontents'); 
+                
+				document.getElementById('parseme').value =fileReader.result;
+				populateForm(obj = document.getElementById('parseme').value);
+					 } 
+             fileReader.readAsText(fileTobeRead); 
+         } 
+         else { 
+             alert("Please select text file"); 
+         }
+ 
+    }, false);
+} 
+ else { 
+     alert("Files are not supported"); 
+ } 
+ //Fixfields();
+ }
+ 
+ function Fixfields() { 
+ AutoGrowTextArea(document.getElementById("fldII1"));
+  AutoGrowTextArea(document.getElementById("fldII5"));
+    AutoGrowTextArea(document.getElementById("fldIV7"));
+// now fix colors of priority
+var t7 = document.getElementById('fldII3').value;
+//alert(t7);
+document.getElementById('fldII3cell').style.background = "#ffffff";
+if (t7 =="Lifesaving") {document.getElementById('fldII3cell').style.background = "#fccac7"; } 
+if (t7 =="Life Sustaining") {document.getElementById('fldII3cell').style.background = "#ffc"; } 
+
+var t8 = document.getElementById('fldIII4').value;
+document.getElementById('fldIII4cell').style.background  = "#ffffff";
+if (t8 =="YES") {document.getElementById('fldIII4cell').style.background = "#fccac7"; } 
+
+
+}
+</script>
+</head>
+<body >
+<form  style="font-family: Arial;" pbzloc="3" onsubmit="return confirm('To complete your form submission, click OK and close the open browser window. You will return to the new message window so you can post your message to the outbox');" method="post" id="myform" enctype="multipart/form-data" action="http://{FormServer}:{FormPort}">
+<div id="pop1" class="pop-up"><!-- The pop-up block -->
+  <div class="popBox"><!-- If the content becomes larger than the pop-up this div will scroll the content -->
+<div class="popScroll"><!-- Test for help starts here -->
+<p> </p>
+<h2>Resource Request Questions</h2>
+<p align="left">
+<br />
+ <strong>Incident Name:</strong> <p>
+ <strong> Priority</strong><p>
+  <strong>•	When do you need this request fulfilled?</strong><br>
+  o	0-4 hours<br>
+  o	4-8 hours<br>
+  o	8-12 hours<br>
+  o	12-36 hours<br>
+  o	Longer than 36 hours</p>
+<p><strong>Justification</strong><br>
+  •	Does the county or local jurisdiction have the ability to contract for these resources?<br>
+  o	Yes<br>
+  o	No</p>
+<p>•<strong>	Have you exhausted all mutual aid options in the surrounding counties?</strong><br>
+  o	Yes<br>
+  o	No</p>
+<p>•<strong>	Additional justification for the requested resource(s)</strong>:<br>
+  Justification Examples:<br>
+  Local jurisdiction does not have this resource...<br>
+  All existing resources have been contracted out...<br>
+  Surrounding counties are also impacted...<br>
+  No mutual aid is available...</p>
+<p><strong>Requesting Jurisdiction</strong><br>
+  •	Requester Agency:<br>
+  •	Operational Area:</p>
+<p><strong>Requested Resource</strong>s<br>
+  •	Resource Name:<br>
+  •	Quantity Requested (ea):<br>
+  •	Detailed Resource Description: (Vital characteristics, brand, specs, experience, size, etc.)<br>
+  •	Is an operator needed for this resource?</p>
+<p>•	<strong>Request Summary</strong> (Why is this resource needed and what will it do):</p>
+<p>•	<strong>Actions taken on this request so far</strong> (what have you done to obtain the resource on your own)?</p>
+<p><strong>Requester Information</strong><br>
+  •	Requester First &amp; Last Name:<br>
+  •	Requester Email:<br>
+  •	Requester Phone:<br>
+  •	Requester Title:</p>
+<p><strong>Delivery Information</strong><br>
+  •	Recipient First &amp; Last Name:<br>
+  •	Delivery Recipient Email:<br>
+  •	Delivery Recipient Phone:<br>
+  •	Delivery Recipient Title:<br>
+  •	Delivery Recipient Entity Name:<br>
+  •	Delivery Location:<br>
+  •	Delivery Notes:<br>
+ <br />
+</div>
+<!-- The close pop-up link correctly positioned at the end of the content block -->
+<a id="lnk" href="#links" class="close"><span>Back
+to links</span></a> </div>
+</div>
+<table width="900" border="1" cellpadding="3" cellspacing="0" style="height: 453px;">
+<colgroup><col width="657" /></colgroup> <tbody>
+<tr valign="top">
+  <td width="823" height="35"><table width="100%"  border="0" cellspacing="0" cellpadding="0">
+    <tr valign="top">
+      <td><div align="center">
+        <p class="style6">COASTAL REGION RESOURCE REQUEST<br />
+          <span style="color: rgb(153, 102, 51);"><span style="font-weight: normal;"><span class="style4"><big style="color: rgb(204, 0, 0);"></span></span></span></p>
+        <p class="style6">
+          <input type="button" value=" Load Resource Request data" onclick="document.getElementById('txtfiletoread').click();" />
+          <input type="file" id="txtfiletoread" accept=".txt"  style="display: none;"/>&nbsp;<br />
+        </p>
+      </div></td>
+      </tr>
+  </table></td>
+  </tr>
+<tr valign="top" bgcolor="#f8f8ff">
+<td bgcolor="#dee9f9" class="formtext" ><strong>REQUESTING JURISDICTION INFORMATION</strong></td>
+</tr>
+<tr valign="top">
+  <td height="24" class="formtext"><span class="formtext4">
+    <table width="55"  border="1" cellspacing="0" cellpadding="4">
+      <tr>
+        <td width="46%" nowrap="nowrap" class="formtext" style="text-align: left"><span class="formtext4"><strong>Incident Name:</strong> <span class="formtext2">
+          <input name="Incidentname" type="text" required="required" id="Incidentname" size="35" maxlength="49" />
+          &nbsp;&nbsp;</span></span></td>
+        <td width="54%" nowrap="nowrap" class="formtext" style="text-align: left"><span class="formtext4" style="text-align: left"><span class="formtext2"><strong>Request Date/Time</strong>:
+          <input name="RDateTime" type="text" id="RDateTime" onclick="SetDateTime('fulldatetime','RDateTime')"size="20" maxlength="49" />
+          </span></span><span class="formtext4"><span class="formtext2">&nbsp;&nbsp;</span></span></td>
+        </tr>
+      <tr>
+        <td colspan="2" nowrap="nowrap" bgcolor="#f8f8ff" class="formtext" style="text-align: left; font-size: 11pt;"><span class="formtext4" style="text-align: left; font-size: 11pt;"><strong>Priority</strong></span></td>
+        </tr>
+      <tr>
+        <td colspan="2" nowrap="nowrap" class="formtext" style="text-align: left; font-size: 11pt;"><span class="formtext"><br />
+          When do you need this request fulfilled?<br />
+          </span>
+          <table width="880" cellspacing="1" cellpadding="1">
+            <tbody>
+              <tr>
+                <td height="25" colspan="2" align="center" valign="top"><input name="Priority" type="radio" value="0-4 hpurs" onclick="document.getElementById('Priorityval').value=this.value" />
+  &nbsp;0-4 Hours</td>
+                <td width="156" colspan="1" align="center" valign="top"><input name="Priority" type="radio" value="4-8 hours" onclick="document.getElementById('Priorityval').value=this.value" />4-8 hours<br /></td>
+                <td width="153" colspan="1" align="center" valign="top" bgcolor="#f8f8ff"><input name="Priority" type="radio" value="8-12 hours" onclick="document.getElementById('Priorityval').value=this.value" />
+                  8-12 hours</td>
+                <td colspan="2" align="center" valign="top"><input name="Priority" type="radio" value="12-36 hours" onclick="document.getElementById('Priorityval').value=this.value" />12-36 hours</td>
+                <td width="227" colspan="2" align="center" valign="top"><input name="Priority" type="radio" value="longer than 36 hours" onclick="document.getElementById('Priorityval').value=this.value" />longer than 36 hours<span class="formtext4" style="text-align: left; font-size: 11pt;"><b><small><big><small><b style="font-weight: normal;">
+                  <input name="Priorityval" type="hidden" id="Priorityval" />
+                  </b></small></big></small></b></span></td>
+                </tr>
+              </tbody>
+            </table>
+          <span class="formtext">        </span></td>
+        </tr>
+      <tr>
+        <td colspan="2" nowrap="nowrap" bgcolor="#f8f8ff" class="formtext" style="text-align: left"><span class="formtext4" style="text-align: left"><strong>Justification</strong></span></td>
+        </tr>
+      <tr>
+        <td colspan="2" nowrap="nowrap" class="formtext" style="text-align: left">Does the county or local jurisdiction have the ability to contract for these resources? 
+          <input name="AbilitytoContract" type="radio" value="Yes" onclick="document.getElementById('AbilitytoContractval').value=this.value" />
+          Yes&nbsp;&nbsp;<span class="formtext4" style="text-align: left">
+            <input name="AbilitytoContract" type="radio" value="No" onclick="document.getElementById('AbilitytoContractval').value=this.value" />
+            No
+            <b><small><big><small><b style="font-weight: normal;">
+              <input name="AbilitytoContractval" type="hidden" id="AbilitytoContractval" />
+              </b></small></big></small></b></span></td>
+        </tr>
+      <tr>
+        <td colspan="2" nowrap="nowrap" class="formtext" style="text-align: left"> Have you exhausted all mutual aid options in the surrounding counties? <span class="formtext4" style="text-align: left">
+          <input name="exhaustedmutual" type="radio" value="Yes" onclick="document.getElementById('exhaustedmutualval').value=this.value" />
+          </span> Yes &nbsp;&nbsp;<span class="formtext4" style="text-align: left"><span class="formtext4" style="text-align: left">
+            <input name="exhaustedmutual" type="radio" value="No" onclick="document.getElementById('exhaustedmutualval').value=this.value" />
+            </span> No <b><small><big><small><b style="font-weight: normal;">
+              <input name="exhaustedmutualval" type="hidden" id="exhaustedmutualval" />
+              </b></small></big></small></b></span></td>
+        </tr>
+      <tr>
+        <td height="122" colspan="2" valign="top" nowrap="nowrap" class="formtext" style="text-align: left; font-style: italic;"><p> Additional justification for the requested resource(s)
+          </p>
+          <table width="68%" border="0" cellspacing="00" cellpadding="1">
+            <tbody>
+              <tr>
+                <td width="14%">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span style="font-weight: normal; font-style: italic;">Examples</span>:</td>
+                <td width="42%" valign="top">&nbsp;&nbsp;: Local jurisdiction does not have this resource...</td>
+                <td width="44%" valign="top">&nbsp;All existing resources have been contracted out...<br /></td>
+                </tr>
+              <tr>
+                <td>&nbsp;</td>
+                <td valign="top">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Surrounding counties are also impacted..</td>
+                <td valign="top">&nbsp;No mutual aid is available...</td>
+                </tr>
+              </tbody>
+            </table>
+          <span class="formtext4" style="text-align: left">
+            <textarea cols="90" rows="2" name="Justification" id="Justification" placeholder='Additional Justification' onkeyup="AutoGrowTextArea(this)" onchange="this.value=RWS(this.value)"></textarea>
+            </span></p></td>
+        </tr>
+      <tr>
+        <td colspan="2" valign="top" nowrap="nowrap" bgcolor="#f8f8ff" class="formtext" style="text-align: left"><strong>Requesting Jurisdiction</strong></td>
+        </tr>
+      <tr>
+        <td colspan="2" valign="top" nowrap="nowrap" class="formtext" style="text-align: left"><p><span class="formtext4" style="text-align: left"> Requesting Jurisdiction Name:&nbsp;
+          <input name="ReqJuridiciton" type="text" id="ReqJuridiciton" size="60" maxlength="59"  />
+          &nbsp;</span></p></td>
+        </tr>
+      <tr>
+        <td colspan="2" nowrap="nowrap" class="formtext" style="text-align: left"><span class="formtext4" style="text-align: left"> Operational Area: <span class="formtext4" style="text-align: left">
+          <input name="OPerationalArea" type="text" id="OPerationalArea" size="60" maxlength="59"  />
+          </span></span></td>
+        </tr>
+      <tr>
+        <td colspan="2" nowrap="nowrap" bgcolor="#f8f8ff" class="formtext" style="text-align: left"><strong>Requested Resources</strong></td>
+        </tr>
+      <tr>
+        <td height="233" colspan="2" nowrap="nowrap" class="formtext" style="text-align: left"><table width="100%" border="1" cellspacing="00" cellpadding="1">
+          <tbody>
+            <tr>
+              <td width="25%" valign="top"><strong>&nbsp;Resource Name</strong></td>
+              <td width="11%" valign="top"><strong>&nbsp;Quantity Requested (ea)</strong></td>
+              <td width="46%" valign="top"><strong>&nbsp;Detailed Resource Description</strong>&nbsp;(Vital characteristics, brand, specs, experience, size, etc.)</td>
+              <td width="18%" valign="top"><strong>&nbsp;Is an operator needed                ?</strong></td>
+              </tr>
+            <tr>
+              <td><span class="formtext4" style="text-align: left">
+                <input name="Resouce1" type="text" id="Resouce1" size="35" maxlength="35"  />
+                </span></td>
+              <td><span class="formtext4" style="text-align: left">
+                <input name="Quanity1" type="text" id="Quanity1" size="15" maxlength="20"  />
+                </span></td>
+              <td><span style="font-style: normal; font-weight: normal;">
+                <textarea name="detailedDec1"  cols="60" rows="1" maxlength="80" id="detailedDec1" placeholder="" onkeypress="if(event.keyCode==13){return false;}"  onkeyup="AutoGrowTextArea(this)"  ></textarea>
+                </span></td>
+              <td><span class="formtext4" style="text-align: left">
+                <input name="OperNeed1" type="radio" value="Yes" onclick="document.getElementById('OperNeed1val').value=this.value" />
+                Yes&nbsp;&nbsp;<span class="formtext4" style="text-align: left">
+                  <input name="OperNeed1" type="radio" value="No" onclick="document.getElementById('OperNeed1val').value=this.value" />
+                  No <b><small><big><small><b style="font-weight: normal;">
+                    <input name="OperNeed1val" type="hidden" id="OperNeed1val" />
+                    </b></small></big></small></b></span></span></td>
+              </tr>
+            <tr>
+              <td><span class="formtext4" style="text-align: left">
+                <input name="Resouce2" type="text" id="Resouce2" size="35" maxlength="35"  />
+                </span></td>
+              <td><span class="formtext4" style="text-align: left">
+                <input name="Quanity2" type="text" id="Quanity2" size="15" maxlength="20"  />
+                </span></td>
+              <td><span style="font-style: normal; font-weight: normal;">
+                <textarea name="detailedDec2"  cols="60" rows="1" maxlength="80" id="detailedDec2" placeholder="" onkeypress="if(event.keyCode==13){return false;}"  onkeyup="AutoGrowTextArea(this)"  ></textarea>
+                </span></td>
+              <td><span class="formtext4" style="text-align: left"><span class="formtext4" style="text-align: left">
+                <input name="OperNeed2" type="radio" value="Yes" onclick="document.getElementById('OperNeed2val').value=this.value" />
+Yes&nbsp;&nbsp;<span class="formtext4" style="text-align: left">
+<input name="OperNeed2" type="radio" value="No" onclick="document.getElementById('OperNeed2val').value=this.value" />
+No </span></span><span class="formtext4" style="text-align: left"><b><small><big><small><b style="font-weight: normal;">
+                    <input name="OperNeed2val" type="hidden" id="OperNeed2val" />
+                    </b></small></big></small></b></span></span></td>
+              </tr>
+            <tr>
+              <td><span class="formtext4" style="text-align: left">
+                <input name="Resouce3" type="text" id="Resouce3" size="35" maxlength="35"  />
+                </span></td>
+              <td><span class="formtext4" style="text-align: left">
+                <input name="Quanity3" type="text" id="Quanity3" size="15" maxlength="20"  />
+                </span></td>
+              <td><span style="font-style: normal; font-weight: normal;">
+                <textarea name="detailedDec3"  cols="60" rows="1" maxlength="80" id="detailedDec3" placeholder="" onkeypress="if(event.keyCode==13){return false;}"  onkeyup="AutoGrowTextArea(this)"  ></textarea>
+                </span></td>
+              <td><span class="formtext4" style="text-align: left">
+                <input name="OperNeed3" type="radio" value="Yes" onclick="document.getElementById('OperNeed3val').value=this.value" />
+                Yes&nbsp;&nbsp;<span class="formtext4" style="text-align: left">
+                  <input name="OperNeed3" type="radio" value="No" onclick="document.getElementById('OperNeed3val').value=this.value" />
+                  No <b><small><big><small><b style="font-weight: normal;">
+                    <input name="OperNeed3val" type="hidden" id="OperNeed3val" />
+                    </b></small></big></small></b></span></span></td>
+              </tr>
+            </tbody>
+          </table></td>
+        </tr>
+      <tr>
+        <td colspan="2" nowrap="nowrap" class="formtext" style="text-align: left"><p>Request Summary (Why is this resource needed and what will it do): <br />
+          <textarea placeholder="Be Brief and Accurate" cols="130" rows="2" name="RequestSummary" id="RequestSummary" onkeyup="AutoGrowTextArea(this)" onchange="this.value=RWS(this.value)"></textarea>
+          </p></td>
+        </tr>
+      <tr>
+        <td colspan="2" nowrap="nowrap" class="formtext" style="text-align: left">Actions taken on this request so far (whathave you done to obtain the resource on your own)?<span class="formtext4" style="text-align: left"><span class="formtext4" style="text-align: left"><br />
+          <textarea placeholder="Be Brief and Accurate" cols="130" rows="2" name="ActionsTaken" id="ActionsTaken" onkeyup="AutoGrowTextArea(this)" onchange="this.value=RWS(this.value)"></textarea>
+          </span></span><br /></td>
+        </tr>
+      <tr>
+        <td colspan="2" nowrap="nowrap" bgcolor="#f8f8ff" class="formtext" style="text-align: left"><strong>Requester Information</strong></td>
+        </tr>
+      <tr>
+        <td colspan="2" nowrap="nowrap" class="formtext" style="text-align: left"><span class="formtext2">Requester First &amp; Last Name:
+          <input id="ReqFirstLastName" maxlength="30" name="ReqFirstLastName" required="required" size="30" />
+  &nbsp; <small><big>&nbsp;Requester Email:
+  <input id="ReqFemail" maxlength="30" name="ReqFemail" required="required" size="25" />
+  &nbsp;</big></small></span></td>
+        </tr>
+      <tr>
+        <td colspan="2" nowrap="nowrap" class="formtext" style="text-align: left"><span class="formtext4" style="text-align: left"><span class="formtext2"><small><big> Requester Phone:
+          <input id="ReqPhone" maxlength="25
+                                " name="ReqPhone" required="required" size="20" />
+  &nbsp;&nbsp;Requester Title:
+  <input id="ReqTitle" maxlength="25
+                                " name="ReqTitle" required="required" size="25" />
+          </big></small></span></span></td>
+        </tr>
+      <tr>
+        <td colspan="2" nowrap="nowrap" bgcolor="#f8f8ff" class="formtext" style="text-align: left"><strong>Delivery Information</strong></td>
+        </tr>
+      <tr>
+        <td colspan="2" nowrap="nowrap" class="formtext" style="text-align: left"><table width="100%"  border="0" cellspacing="0" cellpadding="2">
+          <tr>
+            <td width="49%">Recipient First &amp; Last Name::
+              <input  maxlength="38" name="DeliveryName" id="DeliveryName" size="40" /></td>
+            <td width="51%">Delivery Recipient Email: 
+              <input  maxlength="38" name="DeliveryEmail" id="DeliveryEmail" size="40"  /></td>
+            </tr>
+          <tr>
+            <td nowrap="nowrap">Delivery Recipient Phone:            <input maxlength="33" name="DEliveryPhone" id="DEliveryPhone" size="35"  /></td>
+            <td nowrap="nowrap">Delivery Recipient Title:
+              <input maxlength="24" name="DeliveryTitle" id="DeliveryTitle" size="25" />
+              &nbsp;</td>
+            </tr>
+          <tr>
+            <td>Delivery Recipient Entity Name:
+              <input maxlength="33" name="DeliveryEntityname" id="DeliveryEntityname" size="35"/></td>
+            <td>&nbsp;</td>
+            </tr>
+          </table></td>
+        </tr>
+      <tr>
+        <td colspan="2" nowrap="nowrap" class="formtext" style="text-align: left">Delivery Location:<br />          <textarea placeholder="Delivery Location
+                                 " cols="100" rows="2" name="DEliveryLocation" id="DEliveryLocation" onkeyup="AutoGrowTextArea(this)" onchange="this.value=RWS(this.value)"></textarea></td>
+        </tr>
+      <tr>
+        <td colspan="2" nowrap="nowrap" class="formtext" style="text-align: left">Delivery Notes:<br />
+          <span class="formtext4" style="text-align: left">
+          <textarea placeholder="Delivery Notes
+                                 " cols="100" rows="2" name="DEliveryNOtes" id="DEliveryNOtes" onkeyup="AutoGrowTextArea(this)" onchange="this.value=RWS(this.value)"></textarea>
+          </span></td>
+        </tr>
+      </table></td>
+</tr>
+<tr class="formtext">
+  <td height="36">
+    <div align="left"> <span class="formtext"><span style="font-family: Calibri;"><small><span style="font-family: Calibri;"><small><span style="font-family: Calibri;"><small><span class="formtext1"><span style="font-family: Calibri;"><small><big><big><small><span style="font-family: Calibri;">
+      <small><small><small><small><big><big><small>&nbsp;</small></big></big></small></small></small>
+        <input value="Submit" style="height: 28px; width: 70px; color: green;" size="8" name="Submit" method="Post" id="Submit" enctype="multipart/form-data" class="SubmitBtn" type="submit" />
+        </small>&nbsp;&nbsp;
+      <input type="button" value=" Save Resource Request data"  style="color: blue;"onclick="SaveData()" />
+      </span>&nbsp;</small></big></big></small></span></span></small></span></small></span></small></span></span>
+      <span class="formtext">
+        <input class="BtnFormat2" value="Reset Form " name="ResetForm" style="color: rgb(204, 0, 0);" type="reset" />
+        </span>&nbsp;
+      &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp;
+      &nbsp;&nbsp; &nbsp; &nbsp;
+      &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp;Coastal Region Resource Request&nbsp;&nbsp;v1.0<b><b>
+        <input name="Templateversion" type="hidden" id="Templateversion" value="astal Region Resource Request v1.0" />
+        </b></b><textarea name="parseme" cols="60" id="parseme" style="display: none;"></textarea> </div>
+    <div align="left"></div>
+    </td>
+</tr>
+</tbody>
+</table>
+</form>
+</body></html>

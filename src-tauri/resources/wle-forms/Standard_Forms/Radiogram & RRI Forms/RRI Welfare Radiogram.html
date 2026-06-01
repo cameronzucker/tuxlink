@@ -1,0 +1,2218 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns=&quot;http://www.w3.org/1999/xhtml&quot;>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+<title>RRI Welfare Radiogram</title>
+
+<script>
+
+
+
+ function Checkifinbrowser() {
+
+ var x= document.getElementById("testCall").value; 
+ var n = x.search("{Msg");
+ if (n>-1) { 
+ document.getElementById('Submit').style.visibility='hidden';
+  //alert('You are running this form outside of Winlink.\n \nWhen you have completed the form, SAVE the data and then give or send the SAVED data file to the radio operator. The operator will load the SAVED data into the correct form and send via winlink. ');
+ } else {document.getElementById('Submit').style.visibility='visible';  }
+}
+
+
+function AutoGrowTextArea(textField)
+{
+if (textField.clientHeight < textField.scrollHeight)
+{
+textField.style.height = textField.scrollHeight + "px";
+if (textField.clientHeight < textField.scrollHeight)
+{
+textField.style.height = (textField.scrollHeight * 2 - textField.clientHeight) + "px";
+}
+}
+}
+function Countthelines(f) { var text1 = f
+var text2 = text1.replace(/\s+$/,"");
+var split2 = text2.split("\n"); var mytotal = split2.length * 17;
+if (mytotal < 150) {
+mytotal = 150;
+}
+var tstr = mytotal.toString();
+return tstr;
+}
+function newfix(f){
+var ThisText = document.getElementById(f).value;
+var makeit = Countthelines(ThisText);
+document.getElementById(f).style.height = makeit+"px"; }
+function Fixarea() {
+newfix("Message");
+// newfix("reply");
+AutoGrowTextArea(document.getElementById("Message"));
+// AutoGrowTextArea(document.getElementById("reply"));
+}
+function RWS(str){
+var text2 = str.replace(/\s+$/,"");
+return text2.trim();
+}
+</script>
+<style type="text/css">
+body, td, th {
+font-family: Arial,Helvetica,sans-serif;
+font-size: 12px;
+font-weight: inherit;
+}
+.zentriert {
+font-size: 12px;
+font-weight: inherit;
+}
+input, select {
+padding: 2px;
+-moz-border-radius-topleft: 2px;
+-moz-border-radius-topright: 2px;
+-moz-border-radius-bottomright: 2px;
+-moz-border-radius-bottomleft: 2px;
+font-family: Arial,Helvetica,sans-serif;
+font-size: 12px;
+font-weight: inherit;
+}
+textarea {
+padding: 2px;
+-moz-border-radius-topleft: 2px;
+-moz-border-radius-topright: 2px;
+-moz-border-radius-bottomright: 2px;
+-moz-border-radius-bottomleft: 2px;
+font-family: Arial,Helvetica,sans-serif;
+font-size: 12px;
+font-weight: inherit;
+}
+.rechtsbuendig {
+font-size: 12px;
+font-weight: inherit;
+}
+.SubmitBtn {
+font-size: 12px;
+font-weight: inherit;
+}
+.version {
+color: #666666;
+position: relative;
+left: 3px;
+top: 3px;
+font-size: 12px;
+font-weight: inherit;
+}
+ input[type=button] {
+
+  border: 1.5px solid #0f88f2;;
+   border-radius:.25rem;
+  
+  font-size: 14px;
+  padding: 2px 2px;
+ background-color: white;
+  text-decoration: none;
+  margin: 2px 2px;
+  cursor: pointer;
+}
+input[type=submit] {
+ border: 1.5px solid green;
+  border-radius:.25rem;
+  background-color: white;
+ 
+  padding: 2px 2px;
+  font-size: 14px;
+   cursor: pointer;
+}
+input[type=reset] {
+ border: 1.5px solid red;
+ border-radius:.25rem;
+  background-color: white;
+ 
+  padding: 2px 2px;
+  font-size: 14px;
+   cursor: pointer;
+}
+input[type=regular] {
+ border: 2px solid #999999;
+  border-radius:.25rem;
+width:50px;
+  background-color: white;
+ 
+  padding: 2px 2px;
+  font-size: 12px;
+   cursor: pointer;
+}
+input[type=blue1] {
+ border: 1.5px solid #0f88f2;
+
+   border-radius:.25rem;
+  color: black;
+  padding: 2px 2px;
+  text-decoration: none;
+  margin: 2px 2px;
+  cursor: pointer;
+}
+
+</style>
+<script type="text/javascript">
+function TimeNow(Timefld) {
+var txt;
+var d = new Date(),
+thisyear = d.getFullYear();
+thismonth= d.getMonth();
+thismonth = thismonth+1;
+thisday = d.getDate();
+h = (d.getHours()<10?'0':'') + d.getHours()
+m = (d.getMinutes()<10?'0':'') + d.getMinutes()
+s = (d.getSeconds()<10?'0':'') + d.getSeconds();
+var myprompt = thisyear+ '-'+thismonth+'-'+thisday+' '+h + ':' + m ;
+var RightNow = prompt("", myprompt);
+document.getElementById(Timefld).value = RightNow;
+document.getElementById(FocusFld).focus();
+} </script>
+<style type="text/css">
+body, td, th {
+font-family: Arial,Helvetica,sans-serif;
+font-size: 12px;
+font-weight: inherit;
+}
+.zentriert {
+font-size: 12px;
+font-weight: inherit;
+}
+input, select {
+padding: 1px;
+-moz-border-radius-topleft: 2px;
+-moz-border-radius-topright: 2px;
+-moz-border-radius-bottomright: 2px;
+-moz-border-radius-bottomleft: 2px;
+font-family: Arial,Helvetica,sans-serif;
+font-size: 12px;
+font-weight: inherit;
+}
+textarea {
+padding: 1px;
+-moz-border-radius-topleft: 2px;
+-moz-border-radius-topright: 2px;
+-moz-border-radius-bottomright: 2px;
+-moz-border-radius-bottomleft: 2px;
+font-family: Arial,Helvetica,sans-serif;
+font-size: 12px;
+font-weight: inherit;
+}
+.rechtsbuendig {
+font-size: 12px;
+font-weight: inherit;
+}
+.SubmitBtn {
+font-size: 12px;
+font-weight: inherit;
+}
+.version {
+color: #666666;
+position: relative;
+left: 0px;
+top: 3px;
+font-size: 12px;
+font-weight: inherit;
+}
+</style>
+<style>
+/*
+body {color:#000; background:#fff; font:100%/1.5 arial,sans-serif;}
+h2 {margin-top:0}
+*/
+/* Styling applied to classes only */
+/* Pop-up content shifted off-screen when not in view.
+Still readable by screen-reader software.
+When targeted it fills the browser window.
+*/
+.pop-up {
+	position:absolute;
+	top:0;
+	left:-500em;
+	visibility: visible;
+}
+.pop-up:target {position:static; left:0;}
+/* The pop-up itself */
+.popBox {
+	background:#ffffff;
+	position:absolute;
+	left:15%;
+	right:15%;
+	top:15%;
+	bottom:15%;
+	z-index:10;
+	border:1px solid #3a3a3a;
+/* CSS3 where available: rounded corners, drop-shadow, and fade in. */
+border-radius:.25rem;
+box-shadow:0 .5rem .5rem rgba(0,0,0,.5);
+	opacity:0;
+	transition: opacity 0.8s ease-out;
+	visibility: visible;
+}
+:target .popBox {position:fixed; opacity:1;}
+/* Light box properties */
+.lightbox {
+display:none;
+text-indent:-200em;
+background-color:rgba(0,0,0,.4);
+width:100%;
+height:100%;
+position:fixed;
+top:0;
+left:0;
+bottom:0;
+right:0;
+z-index:5;
+}
+:target .lightbox {display:block;}
+/* The pop-ups close link, moved via CSS to the top right of the pop-up */
+.close:link,
+.close:visited {
+	position: absolute;
+	top: -0.75em;
+	right: -0.75em;
+	display: block;
+	width: 2em;
+	height: 2em;
+	line-height: 1.8;
+	padding: 0;
+	text-align: center;
+	text-decoration: none;
+	background-color: #000;
+	border: 2px solid #fff;
+	color: #fff;
+	border-radius: 50%;
+box-shadow: 0 0 .5rem .5rem rba(0,0,0,.5);
+	visibility: visible;
+}
+.close:before {content:"X";}
+.close:hover,
+.close:active,
+.close:focus {
+box-shadow: 0 0 .5rem .5rem rba(255,0,0,.5);
+background-color: #c00;
+color: #fff;
+}
+.close span {
+text-indent: -200em;
+display: block;
+}
+/* The pop-up content div will scroll if it has too much content */
+.popScroll {
+	position:absolute;
+	top: 1rem;
+	left: 1rem;
+	right: 1rem;
+	bottom: 1rem;
+	overflow-y: auto;
+*overflow-y: scroll;
+	padding-right: 0.5em;
+	visibility: visible;
+}
+.popScroll h2 {margin-top:0}
+.style18 {font-size: 13px}
+.MSGtext {  
+font-family: Arial,Helvetica,sans-serif;  
+  
+font-size: 12px;  
+}
+.style39 {font-size: 14}
+.style40 {font-family: Arial, Helvetica, sans-serif}
+.style41 {font-size: 12px}
+.SubmitBtn1 {font-size: 12px;
+font-weight: inherit;
+}
+.SubmitBtn1 {font-size: 12px;
+font-weight: inherit;
+}
+    
+    .popBoxS {
+	background:#ffffff;
+	position:absolute;
+	left:30%;
+	right:40%;
+	top:2%;
+	bottom:40%;
+	z-index:10;
+	border:1px solid #3a3a3a;
+/* CSS3 where available: rounded corners, drop-shadow, and fade in. */
+border-radius:.25rem;
+box-shadow:0 .5rem .5rem rgba(0,0,0,.5);
+	opacity:0;
+	transition: opacity 0.8s ease-out;
+	visibility: visible;
+}
+:target .popBoxS {position:fixed; opacity:1;}
+/* Light box properties */
+.lightbox {
+display:none;
+text-indent:-200em;
+background-color:rgba(0,0,0,.4);
+width:100%;
+height:100%;
+position:fixed;
+top:0;
+left:0;
+bottom:0;
+right:0;
+z-index:5;
+}
+:target .lightbox {display:block;}
+/* The pop-ups close link, moved via CSS to the top right of the pop-up */
+.close:link,
+.close:visited {
+	position: absolute;
+	top: -0.75em;
+	right: -0.75em;
+	display: block;
+	width: 2em;
+	height: 2em;
+	line-height: 1.8;
+	padding: 0;
+	text-align: center;
+	text-decoration: none;
+	background-color: #000;
+	border: 2px solid #fff;
+	color: #fff;
+	border-radius: 50%;
+box-shadow: 0 0 .5rem .5rem rba(0,0,0,.5);
+	visibility: visible;
+}
+.close:before {content:"X";}
+.close:hover,
+.close:active,
+.close:focus {
+box-shadow: 0 0 .5rem .5rem rba(255,0,0,.5);
+background-color: #c00;
+color: #fff;
+}
+.close span {
+text-indent: -200em;
+display: block;
+}
+/* The pop-up content div will scroll if it has too much content */
+.popScroll {
+	position:absolute;
+	top: 1rem;
+	left: 1rem;
+	right: 1rem;
+	bottom: 1rem;
+	overflow-y: auto;
+*overflow-y: scroll;
+	padding-right: 0.5em;
+	visibility: visible;
+}
+.popScroll h2 {margin-top:0}
+</style>
+<script type="text/javascript">  
+	function store(){
+ 	var formatted= document.getElementById("SeqNum");
+     localStorage.setItem("nextnum", parseInt(formatted.value));
+	 //alert (localStorage.getItem("ics205a"));
+    }
+
+	function getit() {
+	var storedValue = localStorage.getItem("nextnum");
+	if(storedValue ==null){ storedValue = 0;}
+		var nextnum = parseInt(storedValue)+1;
+	//document.getElementById('nextnum').value = storedValue;
+
+	document.getElementById("SeqNum").value=nextnum;
+store()
+	}
+	
+  var mydir;
+var TimeLocal;  
+  
+var TimeUTC;  
+  
+var thewordcnt;  
+  
+function shortmonth(monthnum) {  
+  
+var monthname;  
+  
+shortmonths = ["JAN", "FEB", "MAR","APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"] ;  
+  
+monthname = shortmonths [monthnum];  
+  
+return monthname;  
+  
+}  
+  
+var cnt;  
+  
+function cookie_counter () {  
+  
+var expdate = new Date();  
+  
+var counter;  
+  
+// Set expiration date to a year from now.  
+  
+expdate.setTime(expdate.getTime() + (24 * 60 * 60 * 1000 * 365)); if(!(counter = GetCookie())) counter = 0;  
+  
+counter++;  
+  
+SetCookie("Callsign", counter, expdate, "/", null, false);  
+  
+document.getElementById('NumberVal').value = counter;  
+  
+}  
+  
+var replace = true;  
+  
+function start() {  
+  
+// cookie_counter(); --//  
+  
+}  
+  
+function wordcount(s) {  
+  
+s = s.trim();  
+  
+s = s.replace(/(^\s*)|(\s*$)/gi,"");//exclude start and end white-space  
+  
+s = s.replace(/\n/g, " "); // Convert CR to spacing  
+  
+s = s.replace(/[ ]{2,}/gi," ");//2 or more space to 1  
+  
+var cnt = s.split(' ').length;   
+  s = s.trim();  // test 7-30
+strhasnothing= s.length;  
+  
+if (strhasnothing == 0 ){cnt = 0; }  
+  
+var arl = '';  
+  
+var thewordcnt = cnt;  
+  
+var elem = document.getElementById('WarningText');  
+  
+ elem.style.background = '#FFFFFF';  
+  
+ document.getElementById('WarningText').innerHTML = " ";  
+  
+if (cnt > 25) {// lert ("at 25 words"); #FFFF00  
+  
+// Stop you have reached 30 words  
+  
+ elem.style.background = '#FFFFFF';  
+  
+ document.getElementById('WarningText').innerHTML = " ";  
+  
+ if (cnt >25 ){  
+  
+ elem.style.background = '#ffffcc';  
+  
+ document.getElementById('WarningText').innerHTML = "You have entered more than 25 groups.";  
+  
+ }  
+  
+   
+  
+ if (cnt >= 30){  
+  
+ elem.style.background = '#ffcccc';  
+  
+document.getElementById('WarningText').innerHTML = "You have entered "+cnt+ " groups.";  
+  
+ }  
+  
+   
+  
+   
+  
+}  
+  
+//var wrdleft = document.getElementById('wordsleft');  
+  
+//wrdleft.value = 30 -cnt;  
+  
+var arl = "";  
+  
+var n = s.search(/ARL /i);  
+  
+var m = s.search(/ ARL /i);  
+  
+// need to check that one less than n is not a letter --/  
+  
+if (n==0) {arl = "ARL "};  
+  
+if (m>1) {arl = "ARL "}; // alert ( n +" " + m); --/  
+  
+var ele = document.getElementById('check');  
+
+ele.value = arl+cnt;  
+
+var ele2 = document.getElementById('check2');  
+
+ele2.value = arl+cnt;  
+
+}  
+  
+// add the ID of the field to change --/  
+  
+function punctwrdcnt(s, fieldid) {  
+  
+ if (thewordcnt == 3)  return;   
+  
+wordcount(s);  
+
+fixpunct(s, fieldid);  
+  
+wordcount(s);  
+
+}  
+
+function Strippunct(MSGText, fieldid) {  
+  
+//var MSGText = document.getElementById('MessageTXT').value; --/  
+  
+var n = MSGText;  
+  
+var n = n.replace(/(\r\n|\n|\r)/gm," ");  
+
+  
+//var n = n.replace(/(\D)\.(\D)/gm,'$1'+" X "+'$2');  
+
+//var n=n.replace(/" +" "+ \-d/gm, " X ");  
+  
+var n=n.replace(/\,/gm, "");  
+  
+var n=n.replace(/\-/gm, "");  
+  
+var n=n.replace(/\?/gm, "");  
+  
+var n=n.replace(/\!/gm, "");  
+  
+var n=n.replace(/\:/gm, "");  
+  
+var n=n.replace(/\@/gm, "");  
+  
+var n=n.replace(/\"/gm, "");  
+  
+//var n=n.replace(/\//gm, " SLASH ");  
+  
+var n=n.replace(/\\/gm, "");  
+  
+var n=n.replace(/\+/gm, "");  
+  
+var n=n.replace(/\;/gm, "");  
+  
+var n=n.replace(/\~/gm, "");  
+  
+var n=n.replace(/\_/gm, " UNDERSCORE ");  
+  
+var n=n.replace(/\'/gm, "");  
+  
+var n=n.replace(/\#/gm, "");  
+  
+var n=n.replace(/\%/gm, "");  
+  
+var n=n.replace(/\(/gm, "");  
+  
+var n=n.replace(/\)/gm, "");  
+  
+var n=n.replace(/\&/gm, "");  
+  
+var n=n.replace(/\*/gm, "");  
+  
+   
+  
+var n=n.replace(/\>/gm, " ");  
+  
+var n=n.replace(/\</gm, "");  
+  
+var n=n.replace(/\$/gm, "");  
+  
+var n=n.replace(/\^/gm, "");  
+  
+var n=n.replace(/\{/gm, "");  
+  
+var n=n.replace(/\}/gm, "");  
+  
+var n=n.replace(/\[/gm, "");  
+  
+var n=n.replace(/\]/gm, "");  
+  
+var n=n.replace(/\\/gm, "");  
+  
+var n=n.replace(/\`/gm, "");  
+  
+var n=n.replace(/\|/gm, "");  
+
+var n=n.replace(/\=/gm, "");  
+
+var n=n.replace(/\ /gm, " ");  
+  
+var n = n.replace(/\s+/g, ' ');   
+  
+document.getElementById(fieldid).value = n;  
+  
+return(n);  
+  
+}  
+  
+function fixpunct(MSGText, fieldid) {  
+  
+//var MSGText = document.getElementById('MessageTXT').value; --/  
+  
+var n = MSGText;  
+  
+var n = n.replace(/(\d)\.(\d)/gm,'$1'+"R"+'$2' );  
+    //test
+    var n = n.replace(/DASH (\d)/gm,"M"+'$1' );  
+  // end test
+var n = n.replace(/(\r\n|\n|\r)/gm," ");  
+
+var n = n.replace(/(\D)\.(\S)/gm,'$1'+" dot "+'$2');  
+
+var n = n.replace(/(\D)\.\s/gm,'$1'+" X ");	  
+  
+//var n = n.replace(/(\D)\.(\D)/gm,'$1'+" X "+'$2');  
+
+//var n=n.replace(/" +" "+ \-d/gm, " X ");  
+  
+var n=n.replace(/\,/gm, "");  
+  
+var n=n.replace(/\-/gm, " DASH ");  
+  
+var n=n.replace(/\?/gm, " QUERY ");  
+  
+var n=n.replace(/\!/gm, "");  
+  
+var n=n.replace(/\:/gm, "");  
+  
+var n=n.replace(/\@/gm, " ATSIGN ");  
+  
+var n=n.replace(/\"/gm, "");  
+  
+//var n=n.replace(/\//gm, " SLASH ");  
+  
+var n=n.replace(/\\/gm, " BACKSLASH ");  
+  
+var n=n.replace(/\+/gm, "");  
+  
+var n=n.replace(/\;/gm, "");  
+  
+var n=n.replace(/\~/gm, "");  
+  
+var n=n.replace(/\_/gm, " UNDERSCORE ");  
+  
+var n=n.replace(/\'/gm, "");  
+  
+var n=n.replace(/\#/gm, "");  
+  
+var n=n.replace(/\%/gm, "");  
+  
+var n=n.replace(/\(/gm, "");  
+  
+var n=n.replace(/\)/gm, "");  
+  
+var n=n.replace(/\&/gm, "");  
+  
+var n=n.replace(/\*/gm, "");  
+  
+   
+  
+var n=n.replace(/\>/gm, " ");  
+  
+var n=n.replace(/\</gm, "");  
+  
+var n=n.replace(/\$/gm, "");  
+  
+var n=n.replace(/\^/gm, "");  
+  
+var n=n.replace(/\{/gm, "");  
+  
+var n=n.replace(/\}/gm, "");  
+  
+var n=n.replace(/\[/gm, "");  
+  
+var n=n.replace(/\]/gm, "");  
+  
+var n=n.replace(/\\/gm, "");  
+  
+var n=n.replace(/\`/gm, "");  
+  
+var n=n.replace(/\|/gm, "");  
+
+var n=n.replace(/\=/gm, "");  
+
+var n=n.replace(/\ /gm, " ");  
+  
+var n = n.replace(/\s+/g, ' ');   
+  
+document.getElementById(fieldid).value = n;  
+  
+return(n);  
+  
+}  
+  
+//- Fix email --//  
+  
+function fixemail(MSGText) {  
+  
+//var MSGText = document.getElementById('MessageTXT').value; --/  
+  
+var n = MSGText;  
+  
+var n = n.replace(/(\r\n|\n|\r)/gm," ");  
+  
+var n=n.replace(/\./gm, " DOT ");  
+  
+var n=n.replace(/\@/gm, " ATSIGN ");  
+  
+var n=n.replace(/\  /gm, " ");  
+  
+var n=n.replace(/\//gm, " SLASH ");  
+
+var n=n.replace(/\_/gm, " UNDERSCORE ");  
+  
+document.getElementById('Email').value = n;  
+  
+return(n);  
+  
+}  
+  
+function fixzip(MSGText) {  
+  
+//var MSGText = document.getElementById('MessageTXT').value; --/  
+  
+var n = MSGText;  
+  
+var n=n.replace(/\-/gm, " DASH ");  
+  
+var n = n.replace(/(\r\n|\n|\r)/gm," ");  
+  
+var n=n.replace(/\  /gm, " ");  
+  
+document.getElementById('ZIP').value = n;  
+  
+return(n);  
+  
+}  
+  
+function fixphone(ph) {  
+  
+var n = ph;  
+
+n = n.replace(/[^\d\ ]/g, '');
+var n=n.replace(/\-/gm, "");  
+
+var n=n.replace(/\ /gm, "");  
+
+var n=n.replace(/\./gm, "");  
+// check for leading 1
+//if (n.startsWith('1') { alert("bad")}
+if (n.startsWith("1")) {n = n.substring(1);}
+
+if (n.length >0 && n.length <10) {alert ("Invalid Phone number!\n\nThe Phone number must contain 10 digits.\nDo not start with the long distance #1 as the first digit, not needed.\nIf you do not know the correct number, backspace and leave blank.\n\nNote: Invalid phone numbers will not be included in the message."); 
+
+document.getElementById('HPhone').focus();
+//document.getElementById('HPhone').select();
+ }  
+var n=n.replace(/\ /gm, "");  
+n= ( n.substring(0,3) + " " + n.substring(3,6) + " " + n.substring(6,10));  
+
+//var n = n.replace(/(\r\n|\n|\r)/gm,"");  
+  
+document.getElementById('HPhone').value = n;  
+
+return(n);  
+
+}  
+  
+//Checkifphoneisvalid  
+
+function Checkifphoneisvalid(ph) {  
+  
+//var MSGText = document.getElementById('MessageTXT').value; --/  
+
+
+var n = ph;  
+n = n.replace(/[^\d]/g, '');
+var n= n.replace(/\-/gm, "");  
+
+
+var n=n.replace(/\ /gm, "");  
+
+var n=n.replace(/\./gm, "");  
+// if letters were there replace(/[^\d-]/g, '');,
+//n = n.replace(/[^\d]/g, '');
+if (n.length >0 && n.length <10) {alert ("Invalid Phone number. The Phone number must contain 10 digits.\n If you do not know the correct number 10 digit #, backspace and leave blank."); 
+ document.getElementById('HPhone').select();  
+
+}  
+
+n= ( n.substring(0,3) + " " + n.substring(3,6) + " " + n.substring(6,10));  
+
+var n = n.replace(/(\r\n|\n|\r)/gm," ");  
+  
+document.getElementById('HPhone').value = n;  
+
+var input = document.getElementById('HPhone');  
+
+input.focus();  
+
+input.select();  
+
+}  
+
+function addthis(lnum) {  
+  
+var s = '';  
+  
+var x = lnum;  
+  
+x = x +1;  
+  
+var y = 5;  
+  
+var z = x % y;  
+  
+if (z == 0) { s = '\n'} else ( s = ' ');  
+//test 
+   
+return (s);  
+  
+}  
+  
+//function fixit (txtfld) {  
+  
+//punctwrdcnt(txtfld.value);  
+  
+//AutoGrowTextArea(txtfld);  
+  
+//} -- /  
+  
+function fix (){  
+  
+//if (document.getElementById('tformat').checked) {  
+  
+//useUTC= document.getElementById('tformat').value;  
+
+// alert (useUTC);  
+  
+
+  
+  
+var String1 = document.getElementById('MessageTXT').value;  
+  
+String1 = fixpunct(String1, 'MessageTXT');  
+  
+String1= String1.trim();  
+
+//var answer=String1.substring(0,String1.length - 2);  
+  
+var answer = String1.slice(-2);       
+String1= String1.trim();  //7-30
+if (answer== " X") {String1=String1.substring(0,String1.length - 2); }  
+
+String1= String1.trim();  
+
+//ALERT(String1);  
+
+var arl = "";  
+  
+var n = String1.search(/ARL /i);  
+  
+var m = String1.search(/ ARL /i);  
+  
+// need to check that one less than n is not a letter --/  
+  
+if (n==0) {arl = "ARL "};  
+  
+if (m>1) {arl = "ARL "}; var temp = String1.split(' ');  
+  
+var howmany = temp.length;  
+  
+//= arl+howmany;  
+  
+document.getElementById('check2').value = document.getElementById('check').value   
+  
+  
+var newstring = ''; var newstring = '';  
+  
+for (i = 0; i < temp.length; i++) { newstring = newstring +temp[i] + addthis (i);  
+  
+}  
+  
+newstring = newstring.toUpperCase();  
+  wordcount(newstring);
+document.getElementById('MessageTXT').value = newstring;// return ;  
+  
+}  
+
+  
+</script>
+</head>
+<body style="margin-left: 50px; width: 1024px;" onload="DateTime('UtC');setpath(); ">
+<script type="text/javascript">  
+  
+function TimeNow(Timefld) {  
+  
+var txt;  
+  
+var now = new Date();  
+  
+var h = now.getUTCHours();  
+  
+if (h < 10) { h = "0"+h};  
+  
+var s = now.getUTCMinutes();  
+  
+if (s < 10) { s = "0"+s};  
+  
+var myprompt = h+s+"Z";  
+  
+var RightNow = prompt("Time:", myprompt);  
+  
+document.getElementById(Timefld).value = RightNow;  
+  
+}  
+  
+function DateTime(ele) {  
+  
+var txt;  
+  
+var myprompt;  
+  
+var d = new Date(),  
+  
+thisyear = d.getFullYear();  
+  
+thismonth= d.getMonth();  
+  
+thisday = d.getDate();  
+  
+var monname;  
+  
+h = (d.getHours()<10?'0':'') + d.getHours()  
+  
+m = (d.getMinutes()<10?'0':'') + d.getMinutes()  
+  
+var Localtime = h + m+'L ';  
+  
+var now = new Date();  
+  
+var utch = now.getUTCHours();  
+  
+if (utch < 10) { utch = '0'+utch};  
+  
+var utcs = now.getUTCMinutes();  
+  
+if (utcs < 10) { utcs = '0'+utcs};  
+  
+var myUTCtime = utch+""+utcs+"Z";  
+  
+var utcstr = d.toUTCString();  
+  
+var localt = d.toLocaleTimeString();  
+  
+var isostr = d.toISOString();  
+  
+monthname = shortmonth (thismonth);  
+  
+thismonth = thismonth + 1;  
+  
+var UTCdate = d.getUTCDate();  
+  
+var UTCmon = d.getUTCMonth();  
+  
+var utcmonthname = shortmonth (UTCmon);  
+  
+var UTCmmdd =utcmonthname + " "+UTCdate;  
+  
+var Localdate = monthname+' '+thisday;  
+  
+var Rightnow =UTCmmdd;  
+  
+document.getElementById('Date').value = Rightnow;  
+  
+var Rightnow = myUTCtime;  
+if (ele === 'local' ) { Rightnow = Localtime};  
+if (ele === 'UTC' ) { Rightnow = myUTCtime}; 
+if (ele === 'empty' ) { Rightnow = ''}; 
+
+  
+document.getElementById('Time1').value = Rightnow;  
+  
+// if(FocusFld !== null && FocusFld !== '') {document.getElementById(FocusFld).focus()} --/  
+  
+};  
+  
+ 
+  
+function AutoGrowTextArea(textField)  
+  
+{  
+  
+if (textField.clientHeight < textField.scrollHeight)  
+  
+{  
+  
+textField.style.height = textField.scrollHeight + "px";  
+  
+if (textField.clientHeight < textField.scrollHeight)  
+  
+{  
+  
+textField.style.height = (textField.scrollHeight * 2 - textField.clientHeight) + "px";  
+  
+}  
+  
+}  
+  
+}  
+  
+function Countthelines(f) { var text1 = f  
+  
+var text2 = text1.replace(/\s+$/,"");  
+  
+var split2 = text2.split("\n"); var mytotal = split2.length * 17;  
+  
+if (mytotal < 100) {  
+  
+mytotal = 1100;  
+  
+}  
+  
+var tstr = mytotal.toString();  
+  
+return tstr;  
+  
+}  
+  
+function newfix(f){  
+  
+var ThisText = document.getElementById(f).value;  
+  
+var makeit = Countthelines(ThisText);  
+  
+document.getElementById(f).style.height = makeit+"px"; }  
+  
+function Fixarea() {  
+  
+newfix("Comments");  
+  
+// newfix("reply");  
+  
+AutoGrowTextArea(document.getElementById("Comments"));  
+  
+// AutoGrowTextArea(document.getElementById("reply"));  
+  
+}  
+  
+function RWS(str){  
+  
+var text2 = str.replace(/\s+$/,"");  
+
+var text2 = str.replace(/\.+$/,"");  
+
+var text2=text2.replace(/\./gm, " X ");  
+
+return text2.trim();  
+  
+}  
+  
+function isNumberKey(evt)  
+
+{  
+
+var charCode = (evt.which) ? evt.which : event.keyCode  
+
+if (charCode > 32 && (charCode < 45 || charCode > 57))  
+
+//if (charCode > 32 && (charCode < 40 ))  
+
+return false;  
+
+return true;  
+  
+}  
+function isNumberKeyspace(evt)  
+
+{  
+
+var charCode = event.keyCode;
+
+            if ((charCode > 46 && charCode < 91) || (charCode > 96 && charCode < 123) || charCode == 8)
+
+                return true;
+            else
+                return false;
+  
+}  
+
+  
+function puttogether() {  
+
+var p0 = document.getElementById('SVC' ).value;  
+
+var p1 = document.getElementById('SeqNum' ).value;  
+//test
+var p1 = p1.replace(/^0+/, '');
+var p1 =p0+p1 + ' ';  
+  
+var p2 = document.getElementById('Priority').value;  
+
+var criticaltag = p2;  
+var msp = p2;  
+  
+var p2 = p2+' ';  
+  
+var p3 = document.getElementById('Instructions').value;  
+  
+var p3=p3.replace(/\NONE/gm, "");  
+
+if (p3.length > 0) { p3 = p3 + ' '};  
+  
+//var p4 = document.getElementById('H_Info').value;  
+  
+//if (p4.length < 1) { p4  = ''} { p4 = p4 +' '};  
+  
+var p5 = document.getElementById('Callsign').value + ' ';  
+  
+var p6 = document.getElementById('check').value + ' ';  
+  
+//alert (p6)  
+  
+var p7 = document.getElementById('place').value + ' ';  
+  
+var p8 = document.getElementById('Time1').value + ' ';  
+  
+var p9 = document.getElementById('Date').value;  
+  
+var preamble = p1 + p2 + p3 +    p5 +  p6 +  p7 +p8 + p9 +'\n' ;  
+  
+var preamble=preamble.replace(/\  /gm, " ");  
+
+var a1 = document.getElementById('To1').value;  
+
+
+  
+var a2 = document.getElementById('Address').value;  
+  
+var a3 = document.getElementById('City').value;  
+  
+var a4 = document.getElementById('State').value;  
+  
+if (a4.length < 2) { a4 = ''};  
+  
+var a5 = document.getElementById('ZIP').value;  
+  
+var acountry = document.getElementById('country').value;  
+  
+if (acountry.length < 1) { acountry = ''};  
+  
+var a6 = document.getElementById('HPhone').value;  
+// now zap phone if invalid
+n = a6;
+n = n.replace(/[^\d\ ]/g, '');
+var n=n.replace(/\-/gm, "");  
+var n=n.replace(/\ /gm, "");  
+var n=n.replace(/\./gm, "");  
+if (n.length >0 && n.length <10) {a6 = ""}; 
+
+
+
+var a6a = document.getElementById('PhoneExtention').value;  
+
+// if (a6.length < 1) { a6 = 'NO PHONE'};  
+
+if (a6a.length > 0) {var a6a = " EXT "+a6a;}  
+
+var subjectphone = a6;  
+  
+var a7 = document.getElementById('Email').value;  
+  
+if (a7.length < 1) { a7 = ''};  
+  
+var a8 = document.getElementById('Opnote1').value;  
+  
+// put together address --/  
+  
+var Address = a1  + '\n' ;  
+  
+if (a2.length > 0) {Address = Address + a2  +'\n' };  
+  
+var Address = Address + a3 + ' '+ a4 + ' ' + a5 + ' ' + acountry +'\n' ;  
+  
+if (a6.length > 0) {Address = Address + a6 + " "+a6a+"\n";  };  
+  
+if (a7.length > 0) { Address = Address + a7 + "\n"; };  
+  
+if (a8.length > 0) {Address = Address +'OP NOTE '+ a8 +'\n'; } ;  
+  
+Address = Address +'BT' + '\n' ;  
+  
+mytext = preamble + Address;  
+  
+var m1 = document.getElementById('MessageTXT').value;  
+
+var answer=m1.substring(0,m1.length - 2);  
+
+m1 = m1.trim();  
+  
+mytext = mytext + m1 + '\n' + 'BT' + '\n' ;  
+  
+var s1 = document.getElementById('Sig').value;  
+  
+mytext = mytext + s1;  
+  
+
+  
+mytext = mytext + '\n' + 'AR';  
+
+// make caps mytext  
+
+document.getElementById('MsgToSend').value = mytext;  
+  
+ var res = a6.split(" ", 2);  
+  
+     if (res[1]  === undefined) {res[1]= '';};  
+  
+    var subjectphone = res[0] + ' ' + res[1];  
+  
+	  
+  
+if  (subjectphone.length < 1) {  alert ('nothing');} ;  
+  
+document.getElementById('FinalPhone').value = subjectphone;  
+  var sl = 'QTC 1 ' + msp + ' ' +  a3 + ' ' + a4 + ' ' + 'FROM' + ' ' +document.getElementById('Sig').value
+// 	var sl = 'QTC 1 ' + msp + ' ' +  a3 + ' ' + a4 + ' ' + a5 ;  
+//  var sl = 'IMPORTANT WELFARE MESSAGE FROM '+document.getElementById('Sig').value
+  
+document.getElementById('Subjectline').value = sl;  
+
+//  RRI-ARCHIVE@winlink.org  
+
+// now add Archive if necessary  
+
+SendItTo= document.getElementById('Mailthisto').value;  
+
+document.getElementById('ArchiveThis').value = '';  
+ var nn = SendItTo.search("RRI-Region");  
+if (nn>-1) {
+document.getElementById('ArchiveThis').value='RRI-ARCHIVE';
+}  
+ var nn = SendItTo.search("WH6FQE");  
+if (nn==0) {
+document.getElementById('ArchiveThis').value='RRI-ARCHIVE';
+}  
+}
+
+
+  
+  
+function ClearArchive (){
+SendItTo= document.getElementById('Mailthisto').value;  
+document.getElementById('ArchiveThis').value = '';  
+}
+
+function Flip(theid) {  
+
+x1 = document.getElementById(theid).value;  
+
+if (x1 == '' || x1 == '') { document.getElementById(theid).value = 'SVC '};  
+
+if (x1 == 'SVC'){ document.getElementById(theid).value = ''};  
+
+}  
+
+function selectaddress(){  
+
+ptype  = document.getElementById('Priority').value;  
+
+ location.href="#pop3";  
+
+   
+
+   
+
+ //location.href='#pop4';  
+
+}  
+  
+function ClearTo(){  
+
+document.getElementById('Mailthisto').value = ""  
+
+//Mailthisto  
+
+}  
+
+function allnumeric(inputtxt)
+   {
+      var numbers = /^[0-9]+$/;
+      if(inputtxt.value.match(numbers))
+      {
+      alert('Your Registration number has accepted....');
+      document.form1.text1.focus();
+      return true;
+      }
+      else
+      {
+      alert('Please input numeric characters only');
+      document.form1.text1.focus();
+      return false;
+      }
+   } 
+   
+  function setpath() {
+   
+  	var a2 = document.getElementById('t2').value;
+	
+	var a1 = a2.replace(/\\/g,"/");
+	//alert (a1);
+	 var mydir2 = "{FormFolder}/RadioGram Work Sheet.html";
+ 	//alert (mydir2);
+ 	mydir = mydir2;
+	 var url = window.location.pathname;
+	var filename = url.substring(url.lastIndexOf('/')+1);
+	//var nfilename = mypath.replace(filename, "RadioGram Work Sheet.html");
+	document.getElementById('filenamefld').value = ""+a1+"RadioGram Work Sheet.html";
+
+   }
+    function openPage(){
+var xx = document.getElementById('filenamefld').value
+//var xx="../../../../RMS Express/Standard Templates/RADIOGRAM RRI Forms/RadioGram Work Sheet.html";
+location.href =encodeURI( xx);
+}
+   
+        function showtemplate (){
+ var html= document.getElementById('worksheet').value; 
+   var wnd = window.open("about:blank", "");
+wnd.document.write(html);   }
+
+function insertthis(myprompt,str){
+   
+var msg=document.getElementById('MessageTXT').value;
+if(myprompt !==''){
+var RightNow = prompt( myprompt,'');
+str = str.replace('$',RightNow);}
+ //document.getElementById('MessageTXT').value = msg +str;
+    document.getElementById('MessageTXT').value = msg +' '+str;
+//document.getElementById('closeme').click();
+//wordcount(document.getElementById('Message').value);
+tarea =  document.getElementById('MessageTXT');
+    var msgsofar= document.getElementById('MessageTXT').value;
+tarea.selectionStart = tarea.selectionEnd = tarea.value.length;
+    wordcount(msgsofar);
+        tarea.focus();
+    msgsofar= msgsofar.trim();
+    msgsofar = fixpunct(msgsofar, 'MessageTXT');  
+   
+  //  fix();
+      wordcount(msgsofar);
+}
+ 
+ // Save as textfile
+function saveTextAsFile(fileNameToSaveAs, textToWrite) {
+var textToWrite = document.getElementById('parseme').value;  
+   TheName= document.getElementById('Sig').value; 
+    if (TheName ==''){alert ('You must enter the signature sender.');document.getElementById('Sig').focus();return} 
+
+//var fileNameToSaveAs = "Welfare Radiogram "+ DateforFile()+".txt";
+var fileNameToSaveAs =  "Welfare Radiogram " +TheName+" staged "+  DateforFile() + ".txt";
+
+  /* Saves a text string as a blob file*/  
+  var ie = navigator.userAgent.match(/MSIE\s([\d.]+)/),
+      ie11 = navigator.userAgent.match(/Trident\/7.0/) && navigator.userAgent.match(/rv:11/),
+      ieEDGE = navigator.userAgent.match(/Edge/g),
+      ieVer=(ie ? ie[1] : (ie11 ? 11 : (ieEDGE ? 12 : -1)));
+
+  if (ie && ieVer<10) {
+    console.log("No blobs on IE ver<10");
+    return;
+  }
+
+  var textFileAsBlob = new Blob([textToWrite], {
+    type: 'text/plain'
+  });
+
+  if (ieVer>-1) {
+    window.navigator.msSaveBlob(textFileAsBlob, fileNameToSaveAs);
+
+  } else {
+    var downloadLink = document.createElement("a");
+    downloadLink.download = fileNameToSaveAs;
+    downloadLink.href = window.URL.createObjectURL(textFileAsBlob);
+    downloadLink.onclick = function(e) { document.body.removeChild(e.target); };
+    downloadLink.style.display = "none";
+    document.body.appendChild(downloadLink);
+    downloadLink.click();
+  }
+}
+
+function DateforFile(RightNow) {
+var txt;
+var d = new Date(),
+thisyear = d.getFullYear();
+thismonth= d.getMonth();
+thismonth = thismonth+1;
+if (thismonth < 10) { thismonth = "0" + thismonth}
+
+thisday = d.getDate();
+if (thisday < 10) { thisday = "0" + thisday}
+
+h = (d.getHours()<10?'0':'') + d.getHours()
+m = (d.getMinutes()<10?'0':'') + d.getMinutes()
+s = (d.getSeconds()<10?'0':'') + d.getSeconds();
+var myprompt = thisyear+ '-'+thismonth+'-'+thisday+' '+h + '_' + m ;
+return myprompt;
+}
+
+function sendMail(){
+ var subjecttitle=  document.getElementById('Subjectline').value;
+   
+//var subjecttitle='RRI Welfare Radiogram'
+        var subjecttitle = prompt("Enter Subject for message", subjecttitle);
+
+var msgbody = document.getElementById('MsgToSend').value ;  
+	var msgbody = msgbody;
+	var msgbody = msgbody.replace(/\n/gm, '%0D%0A')
+	// '%0D%0A'replace
+ 	//var body = document.getElementById("contact_message").value;
+	theaddress=  document.getElementById('Mailthisto').value 
+    window.location.href = 'mailto:'+theaddress+'?subject='+subjecttitle+'&body='+msgbody;
+}
+
+// added 2-92013
+    function loadFileAsText()
+{
+
+    var fileToLoad = document.getElementById("fileToLoad").files[0];
+ 
+    var fileReader = new FileReader();
+    fileReader.onload = function(fileLoadedEvent) 
+    {
+        var textFromFileLoaded = fileLoadedEvent.target.result;
+        document.getElementById("inputTextToSave").value = textFromFileLoaded;
+    };
+    fileReader.readAsText(fileToLoad, "UTF-8");
+}
+
+
+function DateforFile(RightNow) {
+var txt;
+var d = new Date(),
+thisyear = d.getFullYear();
+thismonth= d.getMonth();
+thismonth = thismonth+1;
+if (thismonth < 10) { thismonth = "0" + thismonth}
+
+thisday = d.getDate();
+if (thisday < 10) { thisday = "0" + thisday}
+
+h = (d.getHours()<10?'0':'') + d.getHours()
+m = (d.getMinutes()<10?'0':'') + d.getMinutes()
+var myprompt = thisyear+ '-'+thismonth+'-'+thisday+' '+h + '_' + m ;
+return myprompt;
+}
+
+function isObject(arg) {
+  return Object.prototype.toString.call(arg)==='[object Object]';
+}
+
+function formDataToObject(elForm) {
+  if (!elForm instanceof Element) return;
+  var fields = elForm.querySelectorAll('input, select, textarea'),
+    o = {};
+  for (var i=0, imax=fields.length; i<imax; ++i) {
+    var field = fields[i],
+      sKey = field.name || field.id;
+    if (field.type==='button' || field.type==='image' || field.type==='submit' || !sKey) continue;
+    switch (field.type) {
+      case 'checkbox':
+        o[sKey] = +field.checked;
+        break;
+      case 'radio':
+        if (o[sKey]===undefined) o[sKey] = '';
+        if (field.checked) o[sKey] = field.value;
+        break;
+      case 'select-multiple':
+        var a = [];
+        for (var j=0, jmax=field.options.length; j<jmax; ++j) {
+          if (field.options[j].selected) a.push(field.options[j].value);
+        }
+        o[sKey] = a;
+        break;
+      default:
+        o[sKey] = field.value;
+    }
+  }
+ // alert('Form data:\n\n' + JSON.stringify(o, null, 2));
+ document.getElementById('parseme').value = JSON.stringify(o, null, 2);
+//  return o;
+}
+
+function populateForm(o) {
+
+o =  JSON.parse(document.getElementById('parseme').value);
+ //if (!isObject(o)) return;
+if (!isObject(o)) return;
+  for (var i in o) {
+    var el = document.getElementById(i) || document.querySelector('[name=' + i + ']');
+    if (el.type==='radio') el = document.querySelectorAll('[name=' + i + ']');
+    switch (typeof o[i]) {
+      case 'number':
+        el.checked = o[i];
+        break;
+      case 'object':
+        if (el.options && o[i] instanceof Array) {
+          for (var j=0, jmax=el.options.length; j<jmax; ++j) {
+            if (o[i].indexOf(el.options[j].value)>-1) el.options[j].selected = true;
+          }
+        }
+        break;
+      default:
+        if (el instanceof NodeList) {
+          for (var j=0, jmax=el.length; j<jmax; ++j) {
+            if (el[j].value===o[i]) el[j].checked = true;
+          }
+        } else {
+          el.value = o[i];
+        }
+    }
+  }
+  
+
+
+}
+
+function SaveData() {
+	
+			formDataToObject(document.getElementById('myform'))
+			saveTextAsFile();
+			
+			//saveTextAsFile();
+			}
+
+//-------
+ function readBlob(opt_startByte, opt_stopByte) {
+  
+    var files = document.getElementById('files').files;
+    if (!files.length) {
+      alert('Please select a file!');
+      return;
+    }
+
+    var file = files[0];
+    var start = parseInt(opt_startByte) || 0;
+    var stop = parseInt(opt_stopByte) || file.size - 1;
+
+    var reader = new FileReader();
+
+    // If we use onloadend, we need to check the readyState.
+    reader.onloadend = function(evt) {
+      if (evt.target.readyState == FileReader.DONE) { // DONE == 2
+        document.getElementById('byte_content').textContent = evt.target.result;
+        document.getElementById('byte_range').textContent = 
+            ['Read bytes: ', start + 1, ' - ', stop + 1,
+             ' of ', file.size, ' byte file'].join('');
+      }
+    };
+
+    var blob = file.slice(start, stop + 1);
+    reader.readAsBinaryString(blob);
+  }
+    
+    function Checkifinbrowser() {
+
+ var x= document.getElementById("testCall").value; 
+ var n = x.search("{Msg");
+ if (n>-1) { 
+ document.getElementById('Submit').style.visibility='hidden';
+// alert('You are running this form outside of Winlink.\n \nWhen you have completed the form, You may email the data or SAVE the data and then give or send the SAVED data file to the radio operator. The operator will load the SAVED data into the correct form and send via winlink. ');
+ } else {document.getElementById('Submit').style.visibility='visible';  }
+}
+
+    
+ window.onload = function () { 
+ 
+ //Check the support for the File API support 
+ if (window.File && window.FileReader && window.FileList && window.Blob) {
+    var fileSelected = document.getElementById('txtfiletoread');
+	
+    fileSelected.addEventListener('change', function (e) { 
+         //Set the extension for the file 
+         var fileExtension = /text.*/; 
+         //Get the file object 
+         var fileTobeRead = fileSelected.files[0];
+        //Check of the extension match 
+         if (fileTobeRead.type.match(fileExtension)) { 
+             //Initialize the FileReader object to read the 2file 
+			
+             var fileReader = new FileReader(); 
+             fileReader.onload = function (e) { 
+                 var fileContents = document.getElementById('filecontents'); 
+                
+				document.getElementById('parseme').value =fileReader.result;
+				populateForm(obj = document.getElementById('parseme').value);
+					 } 
+             fileReader.readAsText(fileTobeRead); 
+         } 
+         else { 
+             alert("Please select text file"); 
+         }
+ 
+    }, false);
+} 
+ else { 
+     alert("Files are not supported"); 
+ } 
+Checkifinbrowser();
+getit();
+ }
+ 
+
+</script>
+<form action="http://{FormServer}:{FormPort}" enctype="multipart/form-data" method="post"id="myform"  onsubmit="return confirm('To complete your form submission, click OK and close the open browser window. You will return to the new message window so you can post your message to the outbox');">
+  <div id="pop21" class="pop-up">
+    <!-- The pop-up block -->
+    <div class="popBox">
+      <!-- If the content becomes larger than the pop-up this div will scroll the content -->
+      <div class="popScroll">
+        <p> </p>
+</strong>
+<p><strong>The Amateur Radio Welfare Radiogram Text Creator</strong></p>   
+
+<p>The Winlink Express Amateur Radio Welfare Message Text Creator is a special purpose adaptation of the general purpose Amateur Radio 
+Radiogram Text Creator. It is fully compliant with the amateur radio radiogram format but includes some special features and excludes 
+items that are not necessary. It was developed as a cooperative effort between the Seattle Emergency Communication Hubs 
+(<a href="http://seattleemergencyhubs.org/" target="_blank">http://seattleemergencyhubs.org/</a>), Seattle Auxiliary Communication 
+Service (ACS) (<a href="https://www.seattleacs.org/" target="_blank">https://www.seattleacs.org/</a>), 
+Radio Relay International (<a href="https://radiorelay.org/" target="_blank">radiorelay.org</a>) and the Winlink Development 
+Team (<a href="http://www.winlink.org/" target="_blank">winlink.org</a>). The Northwest Washington American Red Cross provided 
+additional input with regard to the short message texts. </p>
+
+<p>This Text Creator template is intended for brief outbound Welfare/Safe and Well communications from a person in a disaster area to 
+family/loved ones. There are a couple of differences from the standard general purpose Radiogram Text Creator template:</p>
+
+<p>1. The preamble is simplified. Precedence is restricted to Welfare and Test Welfare and there are no handling instructions. 
+The time of origination and the date are not autofilled. Time (if used) and Date should reflect the time that the client submitted
+the message request. In high volume situations, this could be significantly before the radiogram is created. <br>   </p>
+
+<p>  2. There is a list of suggested short messages that may be inserted into the message text. These are, in some part, derived from the American Red Cross Safe &amp; Well list of short texts. In the drop down list, clicking on any item will transfer the text into the message pane;. More than one standard text can be added as well as free text but the check should still stay within 25 groups.</p>
+<p><strong>Some Guidelines</strong></p>
+<p>Be sure to inform the party that is sending the message that this isa one way communication with no guarantee of delivery. It&rsquo;s a volunteer service by amateur radio operators and a best effort is made in every case. </p>
+<p>The best practice is to get as much information about the addressee as possible. The traffic network is forgiving to some extent and the delivering operator can do some additional research if possible and practical. </p>
+<p>For example, the sending party may not know the postal (zip) code of the addressee. There are off-line look up lists that may be 
+downloaded free or for a nominal fee At the minimum, the state is required and the first two digits of the zip code followed by 000, 
+e.g. 04000. This will get the message to the correct state. At the minimum, enter 00000.</p>
+<p>Also, if the phone number or email address is known, the message may be delivered from any location that has one or both of those services available. </p>
+<p>Delivery methods include telephone, email and USPS letter. If the recipient can receive text messages, that should be indicated in the OP NOTE. </p>
+<p>For handling a volume of messages, it is recommended to use this template off-line. Simply save the html file to a thumb drive. 
+The off-line tool runs in a browser and outputs a file in the correct format for the radio operator to send.</p>
+
+<p>The purpose of any of the family of Winlink Express Radiogram Text Creators is to provide a structured forms-based approach to producing a correctly formatted radiogram with a text output that appears in the Winlink Express New Message panel. The completed radiogram can then be sent to a regional Winlink-RRI Liaison Station. That station will then inject the radiogram into the traffic system.</p>
+<p>A radiogram is simply a telegram message that is sent by a radio-only network that is comprised of amateur radio operators. These interoperable networks are sponsored by the ARRL (National Traffic System or NTS) and by Radio Relay International (RRI). The networks use phone, cw (Morse code) and digital modes. The cw and phone nets operate through a precisely sequenced and layered system of nets that cover local, section, region, area and transcontinental relays. The digital system consists of a mesh network configuration of automated data mode hubs that are accessed by appointed Digital Traffic Station (DTS) operators.</p>
+<p>The system is structured to move many messages out of a disaster zone to a point near the destination. </p>
+<p><strong>The Radiogram Format</strong></p>
+<p>The radiogram format has been in existence since 1949 and is very similar to the old commercial Western Union telegram as well as contemporary military formats.</p>
+<p>The radiogram has 4 primary sections, The following describes this Welfare specific version. </p>
+<p> &bull; The first line is the preamble and includes the message number (assigned by the originating station) and precedence (classification of the message i.e. Welfare or Test Welfare). This is followed by handling instructions for the delivering station. In this case there are no handling instructions since the message flow is one way from the affected area. The originating station is for the amateur radio call sign of the sending station. The check is the number of words/groups in the message body. The place of origination is the town and state (e.g. SEATTLE WA) where the message was created. This is followed by the time and date of origination. </p>
+<p> &bull; The preamble is followed by the recipients address and contact information. It is very important to note that routing through the entire system is based on the recipient&rsquo;s postal code, state and town. The street address and phone number (10 digits only 555 555 5555) and other information are used by the delivering station.</p>
+<p>It is understood that in a situation where there are people who are displaced from their homes that they may not have complete contact information. The network is guided by human operators and it is possible to deliver messages with some level of incomplete information. Name, town and state are very important. An email address and state is sufficient if it is valid. Likewise a mobile phone number is sufficient and even better if it can accept text messages. </p>
+<p> &bull; The message body is enclosed between breaks (BT). For compatibility with all transmission modes, the radiogram uses a limited character set, as is true throughout the radiogram. The period character is interesting as there are several uses. A period at the end of a sentence becomes an X. A decimal point is R, such as 146R750 The &quot;.com&rdquo; in an email address is DOT COM. Other substitutions include QUERY for the question mark, ATSIGN for @, UNDERSCORE for _. The slant bar (slash) / is a permitted character. Telephone numbers are 10 digits - area code, exchange and number with no dashes. An entered extension is numbers only and will add EXT to the front. The / (stroke) can be entered and will remain as a /.</p>
+<p>The Text Creator assists with all of this by making the substitutions for you, or not allowing certain characters.</p>
+<p> &bull; The last section is the signature of the sender. All radiograms must have a signature, (name). In the case of Welfare 3rd party messages, the signature is that of the person who provided the message - not the originating stations ham radio operator.</p>
+<p>The OP NOTE is for special instructions to the traffic handlers. This could be a note that the addressees phone number is a 
+daytime work number, additonal delivery instructions, etc. This is a pleace where the mobile phone provider (e.g. Verizon) 
+could be added to simplify the process for delivery by text messsage. </p>
+<p>Please keep the OP NOTE brief!</p>
+<p><strong>Getting the Message into the System</strong></p>
+<p>The traditional way to get a message into the network is to check into a local or section traffic net and transmit the message by voice or cw. As a Winlink operator, you will need to get your message to a Winlink-RRI Liaison Station. These are listed as tactical addresses in the drop down at the bottom of the form. When you are ready to send your message, select the Liaison Region that is associated with the addressee's location.</p>
+<p>The most up to date information on RRI and message handling is being provided by Radio Relay International <a href="https://radiorelay.org/" target="_blank">http://radiorelay.org/</a></p>
+<p>The Traffic Operations Aid or Pink Card is a concise 2-page summary of radiogram formatting and transmission procedures for voice, cw and digital. Have a copy at your operating position as you enter a message into the Winlink Text Creator.</p>
+<p>Direct link to the PDF: <a href="https://radiorelay.org/files/reference/RRI-TRAFFIC-OPERATIONS-AID-1720r3.pdf">https://radiorelay.org/files/reference/RRI-TRAFFIC-OPERATIONS-AID-1720r3.pdf</a></p>
+<p>The RRI Publications page https://radiorelay.org/publications has a number of other useful guides and aids. Two of special note are the Traffic Operations Field Manual FM-001 and the RRI Training Manual TR-001.</p>
+<p>Questions or suggestions concerning the Radiogram templates or their use may be submitted via Winlink to KB1TCE</p>
+<p>&nbsp;</p>
+		</p>
+      </div>
+      <!-- The close pop-up link correctly positioned at the end of the content block -->
+	    
+      <a href="#links"  id='closeme'class="close"><span>Back to links</span></a> </div>
+  </div>
+ <div class="pop-up" id="pop2">
+    <!-- The pop-up block -->
+    <div class="popBoxS">
+      <!-- If the content becomes larger than the pop-up this div will scroll the content -->
+      <div class="popScroll">
+     
+        <h2>Short Texts for Welfare Messages</h2>   
+      Insert one or two of these standard texts into the message by by clicking on message to insert. 
+      <!--  <p>Numbered messages have been established for some of the more common texts sent during emergencies. When this common text can be used, an <strong>ARL NUMBER </strong>is substituted for the text and sent. The delivering station reads the actual text to the address, not the <strong>ARL NUMBER</strong>.</p>
+        <p> Insert <strong>ARL</strong> followed by the number. Example <strong>ARL FIVE</strong> </p> 
+       
+        
+        <p><strong>One Group -- <span class="style1">For Possible RELIEF Use</span></strong><br />   -->
+          <br />  <Strong> All inserted messages will be added to the end of the current text.  </Strong> <br />
+		                         
+          <br />       
+                     
+
+<table width="100%"  border="1" cellspacing="0" cellpadding="2">
+            <tr>
+              <td><strong>27</strong></td>
+              <td><a href="javascript:insertthis('',' I am safe and well X ');">I am safe and well. </a></td>
+            </tr>
+            <tr bgcolor="#ffffe6">
+              <td><strong>28</strong></td>
+              <td>
+                <a href="javascript:insertthis('',' Household safe and well X ');">  Household safe and well. </a> </td>
+            </tr>
+            <tr>
+              <td><strong>29</strong></td>
+              <td><a href="javascript:insertthis('',' Currently at shelter X ');">Currently at shelter. </a></td>
+            </tr>
+            <tr bgcolor="#ffffe6">
+              <td><strong>30</strong></td>
+              <td><a href="javascript:insertthis('',' Currently at home X ');">Currently at home. </a></td>
+            </tr>
+            <tr>
+              <td>	<strong>31</strong></td>
+              <td><a href="javascript:insertthis('',' Currently at family/friends house X ');">Currently at family/friend’s house. </a></td>
+            </tr>
+            <tr bgcolor="#ffffe6">
+              <td><strong>32</strong></td>
+              <td><a href="javascript:insertthis('Name of Hotel:','Currently at a $ hotel X ');">Currently at a  hotel. </a></td>
+            </tr>
+            <tr>
+              <td><strong>33</strong></td>
+              <td><a href="javascript:insertthis('',' Safe but moving to a safer location X ');">Safe but moving to a safer location.  </a></td>
+            </tr>
+            <tr bgcolor="#ffffe6">
+              <td><strong>34</strong></td>
+              <td><a href="javascript:insertthis('',' Evacuating to a shelter X ');">Evacuating to a shelter.  </a></td>
+            </tr>
+            <tr>
+              <td><strong>35</strong></td>
+              <td nowrap><a href="javascript:insertthis('',' Evacuating to a family member/friends house X ');">Evacuating to a family member/friends house.   </a>&nbsp;</td>
+            </tr>
+            <tr bgcolor="#ffffe6">
+              <td><strong>36</strong></td>
+              <td><a href="javascript:insertthis('',' Evacuating and safe X ' );">Evacuating and safe.  </a></td>
+            </tr>
+            <tr>
+              <td><strong>37</strong></td>
+              <td>
+                <a href="javascript:insertthis('',' At home and plan to remain here X ');">At home and plan to remain here. </a></td>
+            </tr>
+            <tr bgcolor="#ffffe6">
+              <td><strong>38</strong></td>
+              <td><a href="javascript:insertthis('',' Will contact you when able X ');">Will contact you when able.  </a></td>
+            </tr>
+            <tr>
+              <td><strong>39</strong></td>
+              <td><a href="javascript:insertthis('','  	All communications are down X ');"> 	All communications are down.  </a></td>
+            </tr>
+            <tr bgcolor="#ffffe6">
+              <td height="22"><strong>40</strong></td>
+              <td><a href="javascript:insertthis('',' Share this message with others X ');">Share this message with others </a></td>
+            </tr>
+        </table>        
+      </div>
+      <!-- The close pop-up link correctly positioned at the end of the content block -->
+      <a href="#links" id='closeme'class="close"><span>Back to links</span></a> </div>
+  </div>
+  <!-- test addresses -->
+  <div class="pop-up" id="pop3">
+    <!-- The pop-up block -->
+    <div class="popBox">
+      <!-- If the content becomes larger than the pop-up this div will scroll the content -->
+      <div class="popScroll">
+        <p> </p>
+        <h2>RRI Liaison Stations</h2>
+        <span class="style13">
+        <p align="left">SELECT THE REGION LIAISON STATION WHERE THE ADDRESSEE IS LOCATED<br /><br />
+		You may enter any address if traffic NOT going to a Liason Station, just close this window, then enter the address in the entry box.
+        <br /><br />Please leave any auto-added Cc: address's as-is.<br />
+        </p>
+        <p align="left"><span class="style13">
+          <input name="radiobutton" value="RRI-Region1;"onclick="document.getElementById('Mailthisto').value=this.value;"  type="radio" />
+          Region 1 &nbsp; CT, MA, ME, NH, RI, VT &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp;<br />
+          </span><span class="style13">
+          <input name="radiobutton" value="RRI-Region2;" onclick="document.getElementById('Mailthisto').value=this.value; " type="radio" />
+          Region 2 &nbsp; NJ, NY &nbsp; &nbsp; <br />
+          </span><span class="style13">
+          <input name="radiobutton" value="RRI-Region3;" onclick="document.getElementById('Mailthisto').value=this.value; " type="radio" />
+          Region 3 &nbsp; DC, DE, MD, PA <br />
+          </span><span class="style13">
+          <input name="radiobutton" value="RRI-Region4;" onclick="document.getElementById('Mailthisto').value=this.value; " type="radio" />
+          Region 4 &nbsp; FL, GA, NC, SC, VA, VI <br />
+          </span><span class="style13">
+          <input name="radiobutton" value="RRI-Region5;" onclick="document.getElementById('Mailthisto').value=this.value; " type="radio" />
+          Region 5 &nbsp; AL, AR, LA, MS, OK, TN, TX <br />
+          </span><span class="style13">
+          <input name="radiobutton" value="RRI-Region6;" onclick="document.getElementById('Mailthisto').value=this.value; e" type="radio" />
+          Region 6 &nbsp; CA, NV <br />
+          </span><span class="style13">
+          <input name="radiobutton" value="RRI-Region7;" onclick="document.getElementById('Mailthisto').value=this.value; " type="radio" />
+          Region 7 &nbsp; AK, ID, MT, OR, WA, AB, BC<br />
+          </span><span class="style13">
+          <input name="radiobutton" value="RRI-Region8;" onclick="document.getElementById('Mailthisto').value=this.value; " type="radio" />
+          Region 8 &nbsp; MI, OH, WV<br />
+          </span>
+          <input name="radiobutton" value="RRI-Region9;" onclick="document.getElementById('Mailthisto').value=this.value; " type="radio" />
+          Region 9 &nbsp; IL, IN, KY, WI<br />
+          <input name="radiobutton" value="RRI-Region10;" onclick="document.getElementById('Mailthisto').value=this.value; " type="radio" />
+          Region 10 &nbsp; IA, KS, MN, MO, ND, NE, SD, MB, SK</span><br />
+          </span><span class="style13">
+          <input name="radiobutton" value="RRI-Region11;" onclick="document.getElementById('Mailthisto').value=this.value" type="radio" />
+          Region 11 &nbsp; NB, NS, ON, PQ<br />
+          </span>
+        <span class="style13">
+        <input name="radiobutton" value="RRI-Region12;" onclick="document.getElementById('Mailthisto').value=this.value; " type="radio" />
+        Region 12 &nbsp; AZ, CO, NM, UT, WY<br />
+		<span class="style13">
+		 <input name="radiobutton" value="RRI-Region12;" onclick="document.getElementById('Mailthisto').value=this.value; " type="radio" />
+        Region 12 &nbsp; AZ, CO, NM, UT, WY<br />
+		<span class="style13">
+		<input name="radiobutton" value="RRI-RegionHI;" onclick="document.getElementById('Mailthisto').value=this.value; " type="radio" />
+        Region HI &nbsp; Hawaii<br />
+        <span class="style13"> 
+                </span>
+            <input name="radiobutton" value="RRI-RegionPR" onclick="document.getElementById('Mailthisto').value=this.value; " type="radio" />
+        Region PR &nbsp;Puerto Rico<br />
+        <span class="style13"> <br />
+                </span>
+            
+        <p align="left"></p>
+        <a href="#links">Close this window</a> </div>
+      <!-- The close pop-up link correctly positioned at the end of the content block -->
+      <a href="#links" class="close"><span>Back to links</span></a> </div>
+  </div>
+  <!-- end resr -->
+  <!-- test addresses -->
+ 
+  <!-- end resr -->
+  <div align="left">
+    <table width="1111" height="731" border="1" cellpadding="1" cellspacing="1" style="width: 1122px; height: 613px;">
+      <tbody>
+        <tr>
+          <td colspan="8" style="vertical-align: top; background-color: rgb(204, 255, 255); font-size: 14px;" height="41"><div align="center">
+            <p><span class="style5"> <strong class="red"> <span class="style33"></span> </strong>
+                    <input name="SVC" id="SVC" type="hidden" />
+&nbsp;&nbsp; &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<strong>&nbsp;RRI Amateur Radio Welfare Radiogram Text Creator</strong></span>&nbsp;<span class="style5">&nbsp;</span><br />
+&nbsp;<a href="#pop21" class="style1"><em>Read Help and Instructions!</em></a><span class="style5">&nbsp;</span></strong></p>
+            
+            <div align="center">
+              <p><small><span style="text-align: center"center">
+                <input  name="loadbtn" type="button" id="loadbtn" onclick="document.getElementById('txtfiletoread').click();" value="Load Welfare Radiogram Data." />
+            </span></small><span style="font-size: 12px;">
+            <input name="testCall" type="hidden" id="testCall" value="{MsgSender}" size="14" maxlength="&lt;/table&gt;13" />
+            </span></p>
+            </div>
+          </div><textarea name="parseme" cols="60" id="parseme" style="display: none;"></textarea>
+        <input type="file" id="txtfiletoread" accept=".txt"  style="display: none;"/>
+</td>
+        </tr>
+        <tr class="Kopfzeile" valign="top">
+          <td style="width: 50px;" nowrap="nowrap" width="61"><p>Number<br />
+                  <input name="SeqNum" id="SeqNum"  title="You may overwrite. This number is controlled in Express: Message > Template settings." onchange="NumberVal.value=NumberVal.value.replace(/^0+/, '');" onkeypress="return isNumberKey(event)" value="{SeqNum}" size="8" maxlength="6" placeholder=" User Input" required="required" />
+              <br />
+                  <br />
+                  <!--   <input name="SVCB" id="SVCB" title="For NTS handler use only." value="SVC" onclick="Flip('SVC')" type="checkbox" />
+              SVC <span class="style37">(Handler use)</span><br /> -->
+          </p></td>
+          <td width="132" style="width: 110px;"><p>Precedence<br />
+                  <select size="2" name="Priority" id="Priority" onchange="ClearTo()">
+                    <!--  <option value="R" selected="selected">R</option>
+                <option class ="red" value="EMERGENCY">EMERGENCY</option>
+                <option value="P">P</option>      -->
+                    <option value="W" selected="selected">W</option>
+                    <!--   <option value="TEST P">TEST P</option>        -->
+                    <option value="TEST W">TEST W</option>
+              </select>
+                  <!--  <span class="style27"><span class="style1">Emergency</span>  not in<br />
+              use at this time.</span></p>    -->
+          </p></td>
+          <td width="167" style="white-space: nowrap; width: 140px;"><br />
+        Handling Instructions<span style="font-weight: normal;"> </span><br />
+        <select style="font-weight: normal;" size="3" name="Instructions" id="Instructions">
+          <option value="NONE" selected="selected">NONE</option>
+          <!--       <option title = "followed by a number): Collect landlines delivery authorize by addressee within ____ miles."  value="HXA">HXA</option>
+              <option title = "followed by a number): Cancel message if not delivered within ____ hours of filing time; - service originating station." value="HXB">HXB</option> -->
+          <!--   <option title = "Report to originating station the identity of station from which received, plus date, time and method of delivery." value="HXD">HXD</option>  -->
+          <!--     <option title = "Delivering station get reply from addressee, originate message back." value="HXE">HXE</option>
+              <option title = "(followed by a number): Hold delivery until _____ (date)." value="HXF">HXF</option>
+              <option title = "Delivery by mail or landlines toll call not required. If toll or other expense involved, cancel message and service originating station." value="HXG">HXG</option>     -->
+        </select>
+        <br />
+        <span style="font-style: italic"><a style=" font-weight: normal;" href="#pop11"><br />
+        <!--      HX Help</a></span><br />
+            <input name="H_Info" id="H_Info" placeholder="Add More HX Info" style="text-transform: uppercase;" title="Add additional HX Number or Date here" onchange="this.value=this.value.toUpperCase(); Strippunct(this.value, this.id);" value="" size="18" maxlength="18" />
+            <br />  -->
+      </a></span></td>
+          <td style="width: 75px;" text-align="" center="" width="145"><div align="center"><span style="font-weight: bold;"><br />
+          Station Of Origin
+                <input name="Callsign" class="zentriert " id="Callsign"  required="required" style="font-weight: normal;" title="Can be overwritten if different." onchange="javascript:this.value=this.value.toUpperCase(); " value="{Callsign}"onblur="if (this.value ==''| this value !== '{Callsign}');{alert ('You must enter the call sign of sender.');document.getElementById('Callsign').focus(} " size="18" maxlength="16" />
+              </span> <span class="style19">
+              <p>Change if not you. </p>
+          </span> </div></td>
+          <td style="text-align: center; vertical-align: top;" width="144"><span style="font-weight: bold;"><br />
+        Check</span><br style="font-weight: normal;" />
+        <label style="font-weight: normal;" for="check">
+        <input name="check" type="text" class="zentriert" id="check" readonly="readonly" value="0" size="10" maxlength="9" />
+        </label></td>
+          <td style="text-align: center; vertical-align: top; width: 100px;" width="167"><span style="font-weight: bold;"> 
+            <div align="center"><br />
+&nbsp;Place of Origin </div>
+          </span>
+              <div align="center">
+                <input name="place" id="place" size="28" maxlength="25" required="required" placeholder="ex: SEATTLE WA " onkeyup="Strippunct(this.value, this.id);" onchange="javascript:this.value=this.value.toUpperCase(); this.value=this.value.replace(/\./gm, ' '); " />
+            </div>            
+            <p align="center"><span class="style19">Location where this message was created</span><br />
+              <br />
+          </p>              </td>
+          <td width="132" style="font-weight: normal; vertical-align: top; text-align: center; width: 110px;"><strong><br />
+        Time</strong> <br />
+        <input name="Time1" style="width:45px"id="Time1" title="Optional, include time if relevant. The time should be when the message was written. If using local time follow the 4 digits with an L e.g. 1510L" size="7" maxlength="6" placeholder="Optional"/>
+&nbsp; <p align="center"><span class="style43">UTC default unless otherise noted </span><!--<input name="tformat" id="tformat" type="radio" value="local" onclick="DateTime('local')" />
+              Current Local Time<br />
+              &nbsp;&nbsp;
+<input name="tformat" type="radio" id="tformat" onclick="DateTime('empty')" value="empty" checked="checked"/>
+              <span class="style1">No Time</span> <br />  -->
+          </p></td>
+          <td width="131" style="font-weight: normal; vertical-align: top; text-align: center; width: 110px;"><strong><br />
+&nbsp;Date</strong> &nbsp; <br />
+<input name="Date" id="Date"  required="required" style="width:48px;text-transform: uppercase;" size="10" maxlength="6" placeholder="AUG 14"onchange="javascript:this.value=this.value.toUpperCase();"/>
+&nbsp;</td>
+        </tr>
+        <tr>
+          <td colspan="8" height="516"><div align="left">
+              <table width="1085" border="1" cellpadding="1" cellspacing="1" class="TabelleHintergrund" style="text-align: left; margin-left: auto; margin-right: auto; width: 1114px; height: 427px;">
+                <tbody>
+                  <tr>
+                    <td width="1077" colspan="2" nowrap="nowrap" style="vertical-align: top; text-align: center; font-weight: normal;"><p align="left"><span class="background_table"><span style="font-weight: bold;">&nbsp; <span class="style7">&nbsp;TO:
+                                  <input name="filenamefld" type="hidden" id="filenamefld" />
+                                  <input name="textfield" type="hidden" value="{FormFolder}" />
+                                  <input name="t2" type="hidden" id="t2" value="{FormFolder}" />
+                      </span></span></span></p>
+<p align="left" class="background_table">  &nbsp; &nbsp; <span style="font-weight: normal">Name:</span> &nbsp;&nbsp;
+  <input style="text-transform: uppercase;" placeholder="First and Last Name Minimum" maxlength="35" name="To1" id="To1" size="40" onkeyup="Strippunct(this.value, this.id); " required="required" onchange="javascript:this.value=this.value.toUpperCase();" onblur="javascript:this.value=this.value.toUpperCase();"/>
+  &nbsp;&nbsp;&nbsp;                        </p>
+<span class="background_table"><span style="font-family: Arial, Helvetica, sans-serif; font-weight: normal;"><span class="style7">
+                        <p align="left">&nbsp; &nbsp; Address:&nbsp;
+                            <input style="text-transform: uppercase;" placeholder="Optional" name="Address" id="Address" onkeyup="fixpunct(this.value, this.id)" onchange="javascript:this.value=this.value.toUpperCase(); this.value=this.value.replace(/\./gm, '');" onblur="javascript:this.value=this.value.toUpperCase();"size="80" maxlength="75" />
+&nbsp;&nbsp; </p>
+                        <p align="left">&nbsp; &nbsp; City / Town:&nbsp;
+                            <input style="text-transform: uppercase;" required="required" placeholder= "Verify your spelling" name="City" id="City" size="55" maxlength="50" onkeyup="Strippunct(this.value, this.id)" onchange="javascript:this.value=this.value.toUpperCase(); this.value=this.value.replace(/\./gm, '');" onblur="javascript:this.value=this.value.toUpperCase();"/>
+&nbsp; State or Province: &nbsp;
+                    <input style="text-transform: uppercase;" title="2 Digit State Code." name="State" id="State" size="6" maxlength="2" placeholder="ST" required="required" onchange="javascript:this.value=this.value.toUpperCase(); " onkeyup="Strippunct(this.value, this.id)"onblur="javascript:this.value=this.value.toUpperCase();this.value=this.value.toUpperCase();"/>
+                    <span class="style29"><a href="#pop6" class="style27">2 Letter Codes</a></span> &nbsp; &nbsp;Zip: &nbsp;
+                    <input name="ZIP" required="required" id="ZIP" placeholder="00000 if unknown" style="text-transform: uppercase;" title="If Zip not known, enter five zeroes 00000." onclick="this.select()"  onchange="javascript:this.value=this.value.toUpperCase();" 
+						onkeypress="if(event.keyCode==32){return false;}" size="15"  maxlength="12" />
+                        </p>
+                        <p align="left"> &nbsp; &nbsp; Country: &nbsp;
+                            <input style="text-transform: uppercase;" name="country" id="country" placeholder="OPTIONAL" size="30" maxlength="25" onkeyup="Strippunct(this.value, this.id);  " onchange="javascript:this.value=this.value.toUpperCase();"  onblur="javascript:this.value=this.value.toUpperCase();" />
+                        </p>
+                        <p align="left"> &nbsp; &nbsp; Phone:&nbsp;&nbsp;<span style="font-weight: normal;"> <span style="font-weight: normal;"> <span style="font-weight: normal;"><span style="font-weight: normal;">
+                          <input name="HPhone" id="HPhone" title="10 digits only. DO NOT start with a #1, the long distance code. Also without a phone # and/or email, delivery may not occur."  onkeypress="return isNumberKey(event)" onchange="javascript:fixphone(this.value); this.value=this.value.toUpperCase();"  size="13" maxlength="12" placeholder="555 555 5555" />
+                          </span></span> </span> </span>&nbsp;&nbsp;&nbsp;&nbsp;Extension:
+                          <input name="PhoneExtention" type="text" id="PhoneExtention" size="10" maxlength="5" title="Numbers only. EXT will be added for you." placeholder="#s ONLY"onkeypress="return isNumberKey(event)" onblur = "this.value = this.value.replace(/[^\d\ ]/g, '')";) />
+                          <span style="font-weight: normal;">&nbsp; &nbsp;<strong>&nbsp; &nbsp;E-mail:</strong>  </span> <span style="font-weight: normal;"> <span style="font-weight: bold;"><span style="font-weight: normal;"><span style="font-weight: normal;">
+                        <input maxlength="65" name="Email" id="Email" size="75" title= "Provide Email, phone number, or both. Without at least one delivery may not occur" placeholder="NEED EMAIL, PHONE, OR BOTH TO ENSURE DELIVERY."  onkeyup="fixpunct(this.value, this.id)" onchange="fixemail(this.value);" onblur="this.value= this.value.toUpperCase();"/>
+                        </span></span></span>&nbsp;
+                        
+                        &nbsp; </span></p>
+                        <p align="left"><span style="font-weight: normal;">&nbsp; &nbsp; Op Note for Message Delivery:&nbsp; <span style="font-weight: normal;">
+                          <input style="text-transform: uppercase;" title="This is for instructions to the traffic handlers. This could be a note that the addressee phone number is a daytime work number, special contact instructions, if the number will accept text (SMS) messages, etc." name="Opnote1" id="Opnote1" onkeyup="fixpunct(this.value, this.id)" onchange="javascript:this.value=this.value.toUpperCase(); this.value=this.value.replace(/\./gm, '');" size="80" maxlength="70" placeholder="BRIEF DETAILS ABOUT EMAIL PHONE OR SMS TEXT DELIVERY" onblur="javascript:this.value=this.value.toUpperCase();"/>
+                        </span></span></p>
+                      </span></span></span></td>
+                  </tr>
+                  <tr>
+                    <td colspan="2" id="MSG" style="vertical-align: top; text-align: center;"><p align="left" class="MSGtext" id="Message"><span style="font-weight: bold;">&nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; MESSAGE TEXT </span>Check:
+                            <input name="check2" id="check2" size="10" maxlength="9" class="zentriert" readonly="readonly" value="0" type="text" />
+                            <span class="style39">&nbsp;</span><span class="style40"><a href="#pop2">Click here to insert short prepared messages </a></span><span class="style39">&nbsp; </span><strong><span id="WarningText">&nbsp;</span></strong><br />
+&nbsp;&nbsp;&nbsp; <span style="font-weight: bold;">&nbsp; &nbsp; &nbsp; </span>
+                    <textarea title="Only punctuation converted to words are  ? @ - . _      The stroke sign / can be entered.  The rest can not." style="text-transform: uppercase;" cols="130" id="MessageTXT" name="MessageTXT" rows="7" placeholder="Suggestion is no more than 25 groups (words)" required="required" onkeyup="punctwrdcnt(this.value, this.id)" onchange="this.value=RWS(this.value); fix()"></textarea>
+                    <br />
+&nbsp;&nbsp;&nbsp;&nbsp; &nbsp; &nbsp; &nbsp;&nbsp;&nbsp;
+                    <input style="color: rgb(0, 102, 0);" value="Click here to preview for accuracy BEFORE you SUBMIT" onclick="fix()" id="mybtn" type="button" />
+                    <strong>&nbsp;</strong></p></td>
+                  </tr>
+                  <tr>
+                    <td style="text-align: center;" colspan="2"><div align="left">
+                        <p><span class="background_table">&nbsp; &nbsp; </span><strong>Signature (name) of person for whom message <span class="style41">originated</span></strong><span class="style41">:</span> &nbsp;&nbsp;
+                            <input style="text-transform: uppercase;" placeholder="Person who originated this message" required="required" maxlength="40" size="55" name="Sig" id="Sig" onkeyup="Strippunct(this.value, this.id); " onblur="javascript:this.value=this.value.toUpperCase();" />
+                            <input name="FinalPhone" id="FinalPhone"  type="hidden" />
+                            <input name="Subjectline" id="Subjectline" size="70"type="hidden" value = '' />
+                        </p>
+                    </div></td>
+                  </tr>
+                  <tr align="left" bgcolor="#ffffaa" valign="middle">
+                    <td colspan="2" style="vertical-align: top; height: 2%;" height="42"><p> <span class="style28">&gt;&gt;&gt;<a href="javascript:selectaddress();"> NOW CLICK HERE and select a Liaison Station </a>&lt;&lt;&lt; </span> &nbsp;
+                        <input name="Mailthisto" id="Mailthisto" size="40" maxlength="35" title="If not using a Liasion Station, then enter the address here." placeholder="YOU MAY ENTER ANY ADDRESS HERE" required="required" type="text" ; />
+                        <span style="font-size: 10px;"><big style="font-style: italic;">&nbsp; </big></span><big style="font-style: italic;"><small style="color: rgb(0, 153, 0); font-weight: bold;"></small></big></p>
+                        <big style="font-style: italic;"><small style="color: rgb(0, 153, 0); font-weight: bold;">
+                        <p> <span class="background_table">&nbsp;</span></p>
+                        </small><small><big><small style="color: rgb(0, 153, 0); "><span class="background_table"><span class="style411">&nbsp;<big style="font-style: italic;">&nbsp; <span style="font-size: 10px;">
+                        <input enctype="multipart/form-data" id="Submit" method="Post" name=" Submit " value="Submit" onclick="fix(); puttogether();" type="submit" />
+&nbsp; </span></big>&nbsp;&nbsp;&nbsp; </span></span></small><small><span style="font-family:  Arial, Helvetica, sans-serif;">
+                      <input name="savebtn" type="button" id="savebtn"  onclick="SaveData()" value="Save Welfare Radiogram Data" />
+                      </span></small><small><big><small style="color: rgb(0, 153, 0); "><span class="background_table"><span class="style411">&nbsp;</span></span></small></big></small></big></small><span class="background_table"></big>
+                        <input class="BtnFormat2" value="Reset Form " name="ResetForm" style="color: rgb(204, 0, 0);" type="reset" />
+  <span style="font-size: 10px;"> &nbsp;</span><span style="font-size: 10px;">&nbsp;
+    <input name="MsgToSend" type="hidden" id="MsgToSend" />
+  &nbsp;
+    <input name="ArchiveThis" type="hidden" id="ArchiveThis" />
+  &nbsp;<span class="style18">
+  <input name="Templateversion" type="hidden" id="Templateversion" value="RRI Welfare Radiogram v. 2.7" />
+  </span>&nbsp;&nbsp; &nbsp; </span> <span class="style36">Contact KB1TCE about this form: <em>Ver 2.7</em></span><small style="color: rgb(0, 153, 0); font-weight: bold;"></small></big></td>
+                  </tr>
+                </tbody>
+              </table>
+          </div></td>
+        </tr>
+      </tbody>
+      <div id="pop5" class="pop-up">
+        <!-- The pop-up block -->
+        <div class="popBox1">
+          <!-- If the content becomes larger than the pop-up this div will scroll the content -->
+          <div class="popScroll1">
+            <p> </p>
+            <h2>Overview</h2>
+            The Winlink Express Amateur Radio Radiogram Text Creator was developed as a partnership between Radio Relay International and the Winlink Development Team. Its purpose is to provide a structured forms-based approach to producing a correctly formatted radiogram with a text output that appears in the Winlink Express New Message panel. The completed radiogram can then be sent to a Winlink-RRI Liaison Station. That station will then inject the radiogram into the traffic system.
+            <p></p>
+            <p align="left"> Printed copies of a Client Worksheet can be handed out to facilitate template entry, when you have many wishing to send a Radiogram. This worksheet is an HTML, that you can open and then copy/paste to any text editor. It is located in the same folder as the Radiogram. Just click on "Multi Client Work Sheet.txt".</p>
+            <div align="left" class="style10">
+              <p><font style="margin: 25px font-size: 12pt">A radiogram is simply a telegram message that is sent by a radio-only network that is comprised of amateur radio operators. These interoperable networks are sponsored by the ARRL (National Traffic System or NTS) and by Radio Relay International (RRI). The networks use phone, cw and digital modes. The cw and phone nets operate through a precisely sequenced and layered system of nets that cover local, section, region, area and transcontinental relays. The digital system consists of a mesh network configuration of automated Pactor hubs that are accessed by appointed Digital Traffic Station operators. </font> </p>
+              The system is in final stages to be able to handle bulk disaster communications out of an affected area, but can be activated upon request in the interim, <span class="style14">see comments in green below.</span> It is in operation 24/7, handling a variety of personal greetings as well as exercise traffic. Thousands of messages are handled on a weekly basis and the networks welcome traffic. Examples include congratulatory messages, thanks for the QSO messages, happy birthday messages, etc. Also, a number of hams have established penpal relationships with hams and even non-ham friends and family members.
+              <p align="center"><strong>The Radiogram Format</strong></p>
+              <p>The radiogram format has been in existence since 1949 and is very similar to the old commercial Western Union telegram as well as contemporary military formats. </p>
+              <p>The radiogram has 4 primary sections:</p>
+              <ul>
+                <li>The first line is the preamble and includes the message number (assigned by the originating station), precedence (importance i.e. Routine, Welfare, etc.), handling instructions for the delivering station (e.g. HXC is a request for delivery confirmation from the delivering station), originating stations call sign, check (number of words/groups in the message body), town, state and date of origination. Note: If doing a message relay back into the system, be sure to use the original message number. The SVC check box is for NTS handler use for servicing back a message. Time is a user option.</li>
+              </ul>
+              <ul>
+                <li>The preamble is followed by the recipients address and contact information. It is very important to note that routing through the entire system is based on the recipients USA or Canadian postal code, state and town The street address and phone number (10 digits only 555 555 5555) and other information are used by the delivering station. The deliverer is a human who can exercise different methods as might be appropriate to complete the delivery. Also need a phone number, email, or both to ensure delivery. Keep in mind that sending INTO a disaster a welfare check is not recommended, as delivery will be most likely impossible. Sending outbound "I am OK and status" traffic from a shelter or any disaster venue is a good use of the Radiogram. </li>
+              </ul>
+              <ul>
+                <li>The message body is enclosed between breaks (BT). For compatibility with all transmission modes, the radiogram uses a limited character set, as is true throughout the radiogram. The period character is interesting as there are several uses. A period at the end of a sentence becomes an X. A decimal point is R, such as 146R750 The &quot;.com in an email address is DOT COM. Other substitutions include QUERY for the question mark, ATSIGN for @, UNDERSCORE for _. The slant bar (slash) / is a permitted character. Telephone numbers are 10 digits - area code, exchange and number with no dashes. An entered extension is numbers only and will add EXT to the front. The / (stroke) can be entered and will remain as a /. </li>
+              </ul>
+            </div>
+            <blockquote class="style10">
+              <p align="center" class="western style4" style="margin-bottom: 0in; line-height: 100%">The Text Creator assists with all of this by making the substitutions for you, or not allowing certain characters.</p>
+            </blockquote>
+            <div align="left" class="style10">
+              <ul>
+                <li><font color="#000000">The last section is the signature of the sender. All radiograms must have a signature, (name). In the case of 3rd party messages, the signature is that of the person who provided the message - not the originating stations ham radio operator. </font> </li>
+              </ul>
+              <blockquote>
+                <p>The first OP NOTE is for special instructions to the traffic handlers. This could be a note that the addressees phone number is a daytime work number, additonal delivery instructions, etc.<br />
+                    <br />
+              The last OP NOTE can be for return handling instructions, notes you feel are applicable to pass on. Please keep OP NOTES brief! <br />
+              <br />
+              If indicating a return email to obtain a delivery notification (SVC) do not use a Winlink address. You do not know if the final traffic handler is in your whitelist. Remember while you are using Winlink to input the traffic, the next delivery route may not be Winlink, it could be CW or voice. </p>
+              </blockquote>
+              <p align="center"><strong>Getting the Message into the System</strong> </p>
+              <font color="#000000">The traditional way to get a message into the network is to check into a local or section traffic net and transmit the message by voice or cw. As a Winlink operator, you will need to get your message to a </font>Winlink-RRI Liaison Station. These are listed as tactical addresses in the drop down at the bottom of the form. When you are ready to send your message, select the Liaison Region that is associated with the addressee's location.
+              <p><span class="style6 style1"><b>Note: </b></span>During the introductory phase of injecting messages into the traffic network by this template, not all of the procedures or personnel have been put in place to handle traffic with a precedence of EMERGENCY. <span class="style6"></span> </p>
+              <span class="style14">However if an event or disaster occurs that warrants originating EMERGENCY precedence traffic, please notify the&nbsp;RRI National Emergency Communications Coordinator immediately to request activation of the RRI National Emergency Communications Response Plan at 269-650-0215 or inject a message requesting RRI emergency activation via an available IATN (Inter-Area Traffic Network) circuit, or to KB1TCE@winlink.org </span>
+              <p></p>
+              <p align="center"><strong>References</strong> </p>
+              <font color="#000000">The most up to date information on RRI and message handling is being provided by Radio Relay International </font><font color="#0000ff"><u><a href="http://radio-relay.org/%20" target="_blank">http://radio-relay.org/</a></u></font>
+              <p></p>
+              <font color="#000000">The Traffic Operations Aid or Pink Card is a concise 2-page summary of radiogram formatting and transmission procedures for voice, cw and digital. Have a copy at your operating position as you enter a message into the Winlink Text Creator. </font>
+              <p><font color="#000000">Direct link to the PDF: </font><font color="#0000ff"><u><a href="http://radio-relay.org/wp-content/uploads/2017/05/RRI-TRAFFIC-OPERATIONS-AID-1720r3.pdf" target="_blank">http://radio-relay.org/wp-content/uploads/2017/05/RRI-TRAFFIC-OPERATIONS-AID-1720r3.pdf</a></u></font> </p>
+              <font color="#000000">The RRI Publications page </font><font color="#0000ff"><u><a href="http://radio-relay.org/about/publications/%20" target="_blank">http://radio-relay.org/about/publications/</a></u></font> <font color="#000000">has a number of other useful guides and aids. Two of special note are the Traffic Operations Field Manual FM-001 and the RRI Training Manual TR-001. </font> </div>
+            <p></p>
+            Note: If you desire for future use and with no Interent there are free Zip code data bases available to install.
+            <p></p>
+          <span class="western style4 style10 style1">Questions or suggestions concerning the Radiogram template or its use, may be submitted via Winlink to KB1TCE</span> </div>
+          <!-- The close pop-up link correctly positioned at the end of the content block -->
+        <a href="#links" class="close1"><span>Back to links</span></a> </div>
+      </div>
+    </table>
+  `
+  </div>
+	
+	<div id="pop6" class="pop-up">
+        <!-- The pop-up block -->
+        <div class="popBox">
+          <!-- If the content becomes larger than the pop-up this div will scroll the content -->
+          <div class="popScroll">
+            <p> </p>
+            <h2>USA State and Canada Province Codes</h2>	
+AB - Alberta<br />
+AK - Alaska<br />
+AL - Alabama<br />
+AR - Arkansas<br />
+AS - American Samoa<br />
+AZ - Arizona<br />
+BC - British Columbia<br />
+CA - California<br />
+CO - Colorado<br />
+CT - Connecticut<br />
+DC - District of Columbia<br />
+DE - Delaware<br />
+FL - Florida<br />
+GA - Georgia<br />
+HI - Hawaii<br />
+IA - Iowa<br />
+ID - Idaho<br />
+IL - Illinois<br />
+IN - Indiana<br />
+KS - Kansas<br />
+KY - Kentucky<br />
+LA - Louisiana<br />
+MA - Massachusetts<br />
+MB - Manitoba<br />
+MD - Maryland<br />
+ME - Maine<br />
+MI - Michigan<br />
+MN - Minnesota<br />
+MO - Missouri<br />
+MS - Mississippi<br />
+MT - Montana<br />
+NB - New Brunswick<br />
+NC - North Carolina<br />
+ND - North Dakota<br />
+NE - Nebraska<br />
+NH - New Hampshire<br />
+NJ - New Jersey<br />
+NL - Newfoundland and Labrador<br />
+NM - New Mexico<br />
+NS - Nova Scotia<br />
+NT - Northwest Territories<br />
+NU - Nunavut<br />
+NV - Nevada<br />
+NY - New York<br />
+OH - Ohio<br />
+OK - Oklahoma<br />
+ON - Ontario<br />
+OR - Oregon<br />
+PA - Pennsylvania<br />
+PE - Prince Edward Island<br />
+PR - Puerto Rico<br />
+QC - Quebec<br />
+RI - Rhode Island<br />
+SC - South Carolina<br />
+SD - South Dakota<br />
+SK - Saskatchewan<br />
+TN - Tennessee<br />
+TX - Texas<br />
+UT - Utah<br />
+VA - Virginia<br />
+VI - Virgin Islands<br />
+VT - Vermont<br />
+WA - Washington<br />
+WI - Wisconsin<br />
+WV - West Virginia<br />
+WY - Wyoming<br />
+YT - Yukon<br />
+            </td>            
+          </div>
+          <!-- The close pop-up link correctly positioned at the end of the content block -->
+      <a href="#links" class="close"><span>Back to links</span></a> </div>
+  </div>
+</form>
+</body>
+</html>

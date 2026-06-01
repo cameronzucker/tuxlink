@@ -1,0 +1,490 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml"><head>
+<meta http-equiv="content-type" content="application/xhtml+xml; charset=utf-8" /><title>Medical Incident Report</title>
+
+<style type="text/css">
+
+/*
+body {color:#000; background:#fff; font:100%/1.5 arial,sans-serif;}
+h2 {margin-top:0}
+*/
+/* Styling applied to classes only */
+/* Pop-up content shifted off-screen when not in view.
+Still readable by screen-reader software.
+When targeted it fills the browser window.
+*/
+.pop-up {
+	position:absolute;
+	top:0;
+	left:-500em;
+	visibility: visible;
+}
+.pop-up:target {position:static; left:0;}
+/* The pop-up itself */
+.popBox { 
+	background:#ffffff;
+	position:absolute;
+	left:25%;
+	right:25%;
+	top:20%;
+	bottom:20%;
+	z-index:10;
+	border:1px solid #3a3a3a;
+/* CSS3 where available: rounded corners, drop-shadow, and fade in. */
+border-radius:.25rem;
+box-shadow:0 .5rem .5rem rgba(0,0,0,.5);
+	opacity:0;
+	transition: opacity 0.8s ease-out;
+	visibility: visible;
+}
+:target .popBox {position:fixed; opacity:1;}
+/* Light box properties */
+.lightbox {
+display:none;
+text-indent:-200em;
+background-color:rgba(0,0,0,.4);
+width:100%;
+height:100%;
+position:fixed;
+top:0;
+left:0;
+bottom:0;
+right:0;
+z-index:5;
+}
+:target .lightbox {display:block;}
+/* The pop-ups close link, moved via CSS to the top right of the pop-up */
+.close:link,
+.close:visited {
+	position: absolute;
+	top: -0.75em;
+	right: -0.75em;
+	display: block;
+	width: 2em;
+	height: 2em;
+	line-height: 1.8;
+	padding: 0;
+	text-align: center;
+	text-decoration: none;
+	background-color: #000;
+	border: 2px solid #fff;
+	color: #fff;
+	border-radius: 50%;
+box-shadow: 0 0 .5rem .5rem rba(0,0,0,.5);
+	z-index: 12;
+	visibility: visible;
+}
+.close:before {content:"X";}
+.close:hover,
+.close:active,
+.close:focus {
+box-shadow: 0 0 .5rem .5rem rba(255,0,0,.5);
+background-color: #c00;
+color: #fff;
+}
+.close span {
+text-indent: -200em;
+display: block;
+}
+/* The pop-up content div will scroll if it has too much content */
+.popScroll {
+	position:absolute;
+	top: 1rem;
+	left: 1rem;
+	right: 1rem;
+	bottom: 1rem;
+	overflow-y: auto;
+*overflow-y: scroll;
+	padding-right: 0.5em;
+	z-index: 11;
+	visibility: visible;
+}
+.popScroll h2 {margin-top:0}
+.formtext1 {font-family: Arial, Helvetica, sans-serif;
+font-size: 10pt;
+font-weight: normal;
+}
+body, td, th {
+font-family: Arial,Helvetica,sans-serif;
+font-size: 12px;
+font-weight: inherit;
+}
+.zentriert {
+font-size: 12px;
+font-family: Arial,Helvetica,sans-serif;
+font-weight: inherit;
+}
+input, select {
+padding: 1px;
+-moz-border-radius-topleft: 2px;
+-moz-border-radius-topright: 2px;
+-moz-border-radius-bottomright: 2px;
+-moz-border-radius-bottomleft: 2px;
+font-family: Arial,Helvetica,sans-serif;
+font-size: 12px;
+font-weight: inherit;
+}
+textarea {
+padding: 1px;
+-moz-border-radius-topleft: 2px;
+-moz-border-radius-topright: 2px;
+-moz-border-radius-bottomright: 2px;
+-moz-border-radius-bottomleft: 2px;
+font-family: Arial,Helvetica,sans-serif;
+font-size: 12px;
+font-weight: inherit;
+}
+.rechtsbuendig {
+font-size: 12px;
+font-family: Arial,Helvetica,sans-serif;
+font-weight: inherit;
+}
+.SubmitBtn {
+font-size: 12px;
+font-family: Arial,Helvetica,sans-serif;
+font-weight: inherit;
+}
+.version {
+color: #666666;
+position: relative;
+left: 0px;
+top: 3px;
+font-size: 12px;
+font-family: Arial,Helvetica,sans-serif;
+font-weight: inherit;
+}
+</style>
+<style type="text/css">
+.style4 {
+	font-size: 18px;
+	font-style: italic;
+	font-weight: bold;
+}
+.style12 {
+    font-style: italic;
+}
+.style15 {color: #2A5F00; font-size: 12px; }
+.style20 {font-size: 18px}
+
+ input[type=button] {
+
+  border: 1.75px solid #0f88f2;;
+   border-radius:.25rem;
+  
+  font-size: 14px;
+  padding: 2px 2px;
+ background-color: white;
+  text-decoration: none;
+  margin: 2px 2px;
+  cursor: pointer;
+}
+input[type=submit] {
+ border: 1.75px solid green;
+  border-radius:.25rem;
+  background-color: white;
+ 
+  padding: 2px 2px;
+  font-size: 14px;
+   cursor: pointer;
+}
+input[type=reset] {
+ border: 1.75px solid red;
+ border-radius:.25rem;
+  background-color: white;
+ 
+  padding: 2px 2px;
+  font-size: 14px;
+   cursor: pointer;
+}
+input[type=regular] {
+ border: 1.75px solid #999999;
+  border-radius:.25rem;
+width:40px;
+  background-color: white;
+ 
+  padding: 2px 2px;
+  font-size: 12px;
+   cursor: pointer;
+}
+
+.style25 {font-family: Arial, Helvetica, sans-serif; color: #333333; }
+.style45 {font-size: 12px}
+.style45 {color: #2A5F00}
+.style3 {font-size: 12px; font-weight: bold; font-family: Arial, Helvetica, sans-serif; }
+.style121 {
+    font-style: normal;
+}
+</style>
+<script type="text/javascript">
+
+
+    
+</script>
+</head>
+<body >
+
+<span style="font-family:  Arial, Helvetica, sans-serif;"> </span>
+
+<form  style="font-family: Arial;" pbzloc="3" onsubmit="return confirm('To complete your form submission, click OK and close the open browser window. You will return to the new message window so you can post your message to the outbox');" method="post" id="myform" enctype="multipart/form-data" action="http://{FormServer}:{FormPort}">
+<table style="width: 951px; height: 406px;" align="center" border="0">
+<tbody>
+<tr>
+<td><span style="font-family:  Arial, Helvetica, sans-serif;;">&nbsp;</span>
+<table width="855"  border="3" cellpadding="4" cellspacing="0" bordercolor="#999999" style="font-size: 14px; width: 829px; ">
+<tbody>
+<tr>
+<td height="71" valign="top" bgcolor="#dee9f9" style="vertical-align: bottom;  text-align: center; background-color: "><p style="font-family:  Arial, Helvetica, sans-serif;;">&nbsp;
+  <span class="style4">Medical Incident Plan</span><span style="font-size: 14px;">
+  <input name="timestamp" type="hidden" id="timestamp" size="30" />
+  </span><span style="font-size: 14px;">
+  <input name="timestamp2" type="hidden" id="timestamp2" size="40" />
+  </span>
+  <input name="attached_file" type="hidden" id="attached_file" value="FormData.txt" />
+  <input name="Mapfilename" type="hidden" id="Mapfilename" value="Medical Incident Plan" />
+  <span class="style3">
+  <input name="Organization" type="hidden" id="Organization" value="Medical Team" />
+  </span><br />
+  <span style="font-size: 14px">{var Organization}</span><br />
+<span class="style20"  id="SubjectText">  </span></p>
+  <table width="100%"  border="0" cellpadding="0" cellspacing="0" bordercolor="#dee9f9">
+   
+  </table>
+ 
+  </tr>
+<tr>
+<td style="text-align: center; font-weight: bold;">FOR A NON-EMERGENCY INCIDENT, WORK THROUGH CHAIN OF COMMAND TO REPORT AND TRANSPORT INJURED<br />
+  PERSONNEL AS NECESSARY. FOR A MEDICAL EMERGENCY: IDENTIFY ON-SCENE INCIDENT COMMANDER BY NAME AND POSITION AND ANNOUNCE &quot;MEDICAL EMERGENCY&quot; TO INITIATE RESPONSE FROM IMT COMMUNICATIONS/DISPATCH.</td>
+</tr>
+<tr>
+  <td valign="top" style="text-align: left; font-weight: normal;"><p><span style="font-weight: bold">{var IsExercise}</span></p>
+    <p><span style="font-weight: bold">&nbsp;Use the following items to communicate situation to communications/dispatch</span>.<br />
+      <br />
+      <span style="font-weight: bold">1. CONTACT COMMUNICATIONS / DISPATCH </span><span style="font-weight: normal">(Verify correct frequency prior to starting report)</span><br />
+      &nbsp;&nbsp;&nbsp;<em>&nbsp;Ex: &quot;Communications, Div. Alpha. Stand-by for Emergency Traffic.&quot;</em><br />
+      <span style="font-weight: bold">2. INCIDENT STATUS:</span> Provide incident summary (including number of patients) and command structure.<br />
+      &nbsp;&nbsp;&nbsp;<em>&nbsp;Ex: “Communications, I have a Red priority patient, unconscious, struck by a falling tree. Requesting air ambulance to Forest Road 1 at (Lat./Long.) <br />
+  &nbsp;&nbsp;&nbsp;      This will be the &nbsp;&nbsp;&nbsp;Trout Meadow Medical, IC is TFLD Jones. EMT Smith is providing medical care.”</em></p></td>
+</tr>
+<tr>
+  <td  colspan="4" align="left" valign="top" style="vertical-align: top; text-align: left; height: 70px;"><table width="100%" border="1" cellpadding="2" cellspacing="0">
+    <tbody>
+      <tr>
+        <td width="19%">Severity of Emergency / Transport Priority</td>
+        <td colspan="2">{var Severity}<span style="font-size: 12px;"></span><br /></td>
+        </tr>
+      <tr>
+        <td style="text-align: center">Nature of Injury or Illness &amp; Mechanism of Injury</td>
+        <td width="53%">{var fild2a}</td>
+        <td width="28%" style="text-align: center">Brief Summary of Injury or Illness <br />
+          (Ex: Unconscious, Struck by Falling Tree)</td>
+        </tr>
+      <tr>
+        <td style="text-align: center">Evacuation Request</td>
+        <td>{var fild2b}</td>
+        <td style="text-align: center">Air Ambulance / Short Haul/Hoist Ground Ambulance / Other</td>
+        </tr>
+      <tr>
+        <td style="text-align: center">Patient Location</td>
+        <td>{var fild2c}</td>
+        <td style="text-align: center">Descriptive Location &amp; Lat. / Long. (WGS84)</td>
+        </tr>
+      <tr>
+        <td style="text-align: center">Incident Name</td>
+        <td>{var fild2d}</td>
+        <td style="text-align: center">Geographic Name + Medical (Ex: Trout Meadow Medical)</td>
+        </tr>
+      <tr>
+        <td style="text-align: center">On-Scene Incident Commander</td>
+        <td>{var fild2e}</td>
+        <td style="text-align: center">Name of on-scene IC of Incident within an Incident (Ex: TFLD Jones)</td>
+        </tr>
+      <tr>
+        <td style="text-align: center">Patient Care</td>
+        <td>{var fild2f}</td>
+        <td style="text-align: center">Name of Care Provider (Ex: EMT Smith)</td>
+        </tr>
+      </tbody>
+    </table></td>
+</tr>
+<tr>
+  <td  colspan="4" align="left" valign="middle" style="text-align: left"><p><strong>3.INITIAL PATIENT ASSESSMENT: Complete this section for each patient as applicable (start with the most severe patient)</strong></p>
+    <p>Patient Assessment: (See IRPG PAGE 106)<br />
+       {var fild3a}<span style="font-style: italic;">      </span></p>
+    <p>Treatment<br />
+       {var fild3b}<span style="font-style: italic;"> </span><span style="font-style: italic;">      </span></p></td>
+</tr>
+<tr>
+  <td  colspan="4" align="left" valign="top" style="text-align: left"><p><strong>4. EVACUATION PLAN:</strong><br />
+    Evacuation Location (if different): (Descriptive Location (drop point, intersection, etc.) or Lat. / Long.) Patient's ETA to Evacuation Location:</p>
+    <p> {var fild4a}</p>
+    <p>Helispot / Extraction Site Size and Hazards:</p>
+    <p>{var fild4b}<span style="font-style: italic;"> </span></p></td>
+</tr>
+<tr>
+  <td  colspan="4" align="left" valign="top" style="text-align: left; font-weight: normal;"><p><strong>5.ADDITIONAL RESOURCES / EQUIPMENT NEEDS:</strong><br />
+    {var fild5}
+    <br />
+  </p></td>
+</tr>
+<tr>
+  <td  colspan="4" align="left" valign="top" style="text-align: left"><p><strong>6.COMMUNICATIONS: Identify State Air/Ground EMS Frequencies and Hospital Contacts as applicable</strong></p>
+    <table width="100%" border="1" cellpadding="2" cellspacing="0">
+      <tbody>
+        <tr>
+          <td width="14%">Function</td>
+          <td width="21%">Channel Name/Number</td>
+          <td width="19%">Receive (RX)</td>
+          <td width="15%">Tone/NAC *</td>
+          <td width="16%">Transmit (TX)</td>
+          <td width="15%">Tone/NAC *</td>
+        </tr>
+        <tr>
+          <td>{var fld6a}</td>
+          <td>{var fld6b}</td>
+          <td>{var fld6c}</td>
+          <td>{var fld6d}</td>
+          <td>{var fld6e}</td>
+          <td>{var fld6f}</td>
+        </tr>
+        <tr>
+          <td>{var fld6g}</td>
+          <td>{var fld6h}</td>
+          <td>{var fld6i}</td>
+          <td>{var fld6j}</td>
+          <td>{var fld6k}</td>
+          <td>{var fld6l}</td>
+        </tr>
+        <tr>
+          <td height="20">{var fld6m}</td>
+          <td>{var fld6n}</td>
+          <td>{var fld6o}</td>
+          <td>{var fld6p}</td>
+          <td>{var fld6q}</td>
+          <td>{var fld6r}</td>
+        </tr>
+      </tbody>
+    </table></td>
+</tr>
+<tr>
+  <td  colspan="4" align="left" valign="top" style="text-align: left; font-weight: normal; font-style: normal;"><strong>7. CONTINGENCY: Considerations</strong>:<em> If primary options fail, what actions can be implemented in conjunction with primary evacuation method? Be thinking ahead..</em><br />
+  {var fild7}</td>
+</tr>
+<tr>
+  <td  colspan="4" align="left" valign="top" style="text-align: left"><strong>8. ADDITIONAL INFORMATION: Updates/Changes, etc.</strong><br />
+    <span style="text-align: left; font-weight: normal; font-style: normal;">{var fild8}</span></td>
+</tr>
+<tr>
+  <td  colspan="4" align="left" valign="top" style="text-align: left"><span style="font-weight: inherit"><strong>REMEMBER</strong></span><strong>: Confirm ETAs of resources ordered. Act according to your level of training. Be Alert. Keep Calm. Think Clearly. Act Decisively.</strong></td>
+</tr>
+<tr bgcolor="#F8F8FF">
+  <td  colspan="4" align="left" valign="top" style="text-align: left; font-style: normal; font-weight: normal;"><div align="left">
+    <p><span style="font-family:  Arial, Helvetica, sans-serif;;"><span style="font-size: 12px; font-weight: normal;"><span style="font-family:  Arial, Helvetica, sans-serif;; color: black;"></span></span></span><strong>Radio  Operator Location</strong> <br />
+      <span style="font-size: 13px">If with  patient, enter 'WITH PATIENT' in Location box.</span></p>
+    <p><span style="font-family:  Arial, Helvetica, sans-serif;;"><span style="font-size: 12px; font-weight: normal;">Date/Time</span></span> <span class="style15">&nbsp;</span>{var DateTime}&nbsp;</p>
+    <p><span style="color: black;"><span style="font-family:  Arial, Helvetica, sans-serif;; color: black;">&nbsp;</span></span>Latitude and longitude: LAT<em><span class="style121">&nbsp;<span style="font-weight: normal; color: #0C0B0B; font-style: normal;">
+          {var mapLat}</span> </span><span class="style45"> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span>LON <span class="style121"> </span></em>&nbsp;<span class="style121">{var mapLon}<span style="color: #000000">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;MGRS</span> {var MGRS}&nbsp;&nbsp;&nbsp;&nbsp;</span><em>&nbsp;</em>Grid<em>&nbsp;
+          {var Grid}
+</em>&nbsp;&nbsp;&nbsp;&nbsp;<small>&nbsp;&nbsp;&nbsp;&nbsp;Location source: {var locationSource}</small><small><span
+
+style="color: rgb(128, 0, 0);"><span style="font-size: 12px;">  </span></span></small></p>
+    <p>&nbsp;Location&nbsp;
+      {var Location}
+      &nbsp;&nbsp;
+      <input name="ExtGPS" type="hidden" id="ExtGPS" value="{GPS_SIGNED_DECIMAL}" />
+      <input name="WithSpaces" type="hidden" id="WithSpaces" />
+      <input name="NoSpaces" type="hidden" id="NoSpaces" />
+      <input name="addformat" type="hidden" id="addformat" />
+      <input name="testlonfld" type="hidden" id="testlonfld" value="{Longitude}" size="14" maxlength="13" />
+                                                                                                         <textarea name="parseme" cols="60" id="parseme" style="display: none;"></textarea>
+                      <em><span class="style12">
+                                                                                                         <input name="GPS2" type="hidden" id="GPS2" size="40" onchange="convertthis()" onkeypress="return isNumberKey(event)"  maxlength="40" title= "If entering manually use format: 38.5567,-121.7932" placeholder="Ex: 38.5567,-121.7932" />
+                                                                                                         <span class="style45"><span style="color: black;"><span style="font-family:  Arial, Helvetica, sans-serif;; color: black;">
+                                                                                                         <input name="GPS" type="hidden" id="GPS" value="{GPS_SIGNED_DECIMAL}" />
+                                                                                                         </span></span></span></span>
+                                                                                                         <input name="w3w" type="hidden" id="w3w" size="50" placeholder = "Ex: contrived.rides.thankfully" onkeypress="if(event.keyCode==13){return false;}"  onchange="convert3words(this.value);convertthis() ";/>
+                                                                                                         <em><span class="style12">&nbsp; </span></em> <em><span class="style12">&nbsp;<span style="color: black;"><span style="font-family:  Arial, Helvetica, sans-serif;; color: black;">
+                                                                                                         <input name="GPS" type="hidden" id="GPS" value="{GPS_SIGNED_DECIMAL}" />
+                    </span></span></span></em></em> <textarea name="FormData" cols="70" rows="25" id="FormData" style="display: NONE;">MapFileName:T=j1
+DateTime:T=j2
+0. Organization:T=j03
+
+</textarea></p>
+  </div></td>
+</tr>
+<tr>
+  <td height="38" align="right"><span style="font-family:  Arial, Helvetica, sans-serif;;">&nbsp; <span class="style25">Ver 0.6</span><span style="font-size: 12px;"><span style="font-family:  Arial, Helvetica, sans-serif;;"><span style="font-size: 12px;"><span style="font-family:  Arial, Helvetica, sans-serif;;"><span style="font-size: 12px;"><span style="font-family:  Arial, Helvetica, sans-serif;;"><span style="font-size: 12px;">
+  <span style="font-family:  Arial, Helvetica, sans-serif;;"><span style="font-size: 12px;"><span style="font-family:  Arial, Helvetica, sans-serif;;"><span style="font-size: 12px;"><span style="font-family:  Arial, Helvetica, sans-serif;;"><span style="font-size: 12px;"><span style="font-family:  Arial, Helvetica, sans-serif;;"><span style="font-size: 12px;">
+  <input name="Templateversion" type="hidden" id="Templateversion" value="Medical Incident Plan 0.6" />
+  </span></span></span></span></span></span></span></span></span></span></span></span></span></span>
+  <input name="testCall" type="hidden" id="testCall" value="{MsgSender}" size="14" maxlength="</table>13" />
+  </span></span></td>
+</tr>
+</tbody>
+</table>
+<span style="font-family:  Arial, Helvetica, sans-serif;;"><br />
+&nbsp;</span></td>
+</tr>
+</tbody>
+</table>
+<span style="font-family:  Arial, Helvetica, sans-serif;"><br />
+&nbsp;</span></table>
+<div id="pop1" class="pop-up"><!-- The pop-up block -->
+
+<div class="popBox"><!-- If the content becomes larger than the pop-up this div will scroll the content -->
+
+<div class="popScroll"><!-- Test for help starts here -->
+
+<p> </p>
+<strong>Check-in form Information</strong><br /><br />
+<strong>This form is normally sent only upon initial check in, unless other arrangements are made. There is a separate CHECK OUT form that can be used when closing the station.</strong><br /> <br />
+
+The SETUP Icon top left allows you to add your agency or groups name to the template. It will remain as such until you change it. You can clear the title by opening SETUP again and use your space bar.<br />
+<br />
+In the Send To: entry field, you can pre address the form. This will stay as such until you change or clear it. Many groups send the check in form to a common address(s).
+Separate calls or Emails with a semicolon; You can always modify prior to posting the message.
+<br />
+<br />
+Copy and paste to a spreadsheet is available, TAB separation, located in the bottom portion of the sent text message.<br />
+<br />
+
+Printing this form is dependent upon your selected
+
+printer and its settings. Various Web Browsers and and their viewing
+
+sizes are not all the same. Printing from a browsers print function
+
+may be different from the operating systems default print mode.
+
+Select what works for you, for both printing and viewing.
+
+You may print direct to the printer as a HTML or save as a
+
+PDF then print the PDF. In some instances Landscape mode may print
+
+better than Portrait. <br /> <br /> 
+
+ You may enter manually Decimal Degrees: 32.5042,-116.9834 or enter MGRS Coordinates: 11SNR0184195204 or 11S NR 01841 95204.
+ <br /> <br /> 
+Providing GPS information is optional but very valuable. We encourage you to do so.
+<br /> LAT/LON: The form accepts only Decimal Degree latitude and longitude. 4 decimals are preferred.
+<br /> N/E/S/W: North and East are positive numbers in Decimal Degrees, South and West are negative numbers in Decimal Degrees. For example, the Hollywood Sign is located at Decimal Degrees 34.1341, -118.3215
+
+NOTE: For auto entered GPS decimal coordinates to work, you must have a connected and configured GPS device working with Winlink Express. Otherwise manual entry in the indicated format can be used.
+</p><br />
+
+<p align="left">The Winlink Check-in, Check-out and Position Report forms endeavour to provide you with useful options such as latitude/longitude, and MGRS so you can move seamlessly between coordinate systems used by different organizations.</p>
+<strong>Without properly formatted GPS coordinates this form cannot be mapped in Winlink Express.
+</strong>
+<td width="0%"></p>
+
+</div>
+
+<!-- The close pop-up link correctly positioned at the end of the content block -->y
+
+<a href="#links" class="close"><span>Back
+
+to links</span></a> </div>
+
+</div>
+</form>
+</body></html>

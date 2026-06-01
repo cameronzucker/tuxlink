@@ -1,0 +1,91 @@
+Form: Hospital_Status_Initial.html,Hospital_Status_Viewer.html
+
+To:
+Subject:<var Title> HOSPITAL STATUS REPORT
+SeqInc:	
+Msg:
+<var Title> HOSPITAL STATUS REPORT
+
+REPORT INFORMATION: 
+<var IsExercise>
+
+Report Type:	<var aReportType>	<var updatenum>
+
+1. Incident Name:	<var Incident1>
+2. Date:	<var DateTime>
+3a. Facility Name:	<var FacilityName3a>  
+3b. Facility Type:	<var FacilType>  <var Othertype>
+4a. Contact Name:	<var Contact4>
+4b. Contact Phone:	<var Contactphone> X <var phoneX>
+4c. Cell Phone:	<var Cell4>
+4d. Contact Email Address:	<var Contactemail>
+4e. Street Address: <var StreetADDRESS> 
+City: <var City> State: <var State>  Zip Code:  <var ZipCode>
+Latitude: <var mapLat>, Longitude:<var mapLon>, MGRS: <var MGRS>; Location source: <var locationSource>    
+
+
+5. FACILITY OPERATING STATUS 
+* <var A5a> - Ability to provide essential care services * 
+    
+     STATUS definitions:
+     Normal 
+     Modified partially functional - no assistance needed (explain)
+     Limited partially functional,- Some assistance needed (explain)
+     Impaired- major assistance needed (explain)
+     Not functional major assistance needed (explain)
+--
+<var Comments5>
+
+6. COMMUNICATIONS Impacted	<var commipaired>
+6a. Email:	<var A6a>
+6b. Landline Phone:	<var A6b>
+6c. Fax:	<var A6c>
+6d. Internet:	<var A6d>
+6e. Cell Phone:	<var A6e>
+6f. Satellite Phone:	<var A6f>
+6g. Amateur Radio:	<var A6g>
+--
+<var Comments6>
+
+7. UTILITIES Impacted	<var utilitiesimpared>
+7a. Power:	<var A7a>
+7b. Water:	<var A7b>
+7c. Sanitation:	<var A7c>
+7d. Heating/Ventilation/AC:	<var A7d>
+--
+<var Comments7>
+
+8. EVACUATION	<var evacConcerns>
+8a.  Evacuating:	<var Evac8>  <var A8a>
+8b.  Partial Evacuation:	<var Partial8>  <var A8b>
+8c.  Total Evacuation:	<var Total8>   <var A8c>
+8d.  Shelter in place:	<var Shelter8>   <var A8d>
+--
+<var Comments8>
+
+9. CASUALTIES	<var thereArecausalties>
+  Estimated #	<var Immediate9> Immediate injuries = Critical care needed RED 
+  Estimated #	<var Delayed9> Delayed injuries = Moderate care needed YELLOW 
+  Estimated #	<var Minor9> Minor injuries = Care not needed immediately GREEN 
+  Estimated #	<var Fatalities9> Fatalities BLACK = Deceased 
+--
+<var Comments9>
+10. ADDITIONAL INFORMATION:
+  Internal disaster plan activated?	<var plan10a> 
+  Facility Command Center activated?	<var FCCActive10>
+  Emergency generator power in use?	<var generator10>
+  Will you send Resource Request within 4 hours?	<var ResourceRreq10>
+--
+<var Comments10>
+---
+Express Sending Station:	<MsgSender>
+Senders Template Version:	<var Templateversion>
+Senders Express Version:	<ProgramVersion>
+Map File Name:	<var MapFileName>
+
+
+
+
+
+
+

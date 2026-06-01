@@ -1,0 +1,41 @@
+Form:Local Weather Report Initial.html,Local Weather Report Viewer.html
+
+To:
+Subject: WX Report <var Location>, <var City>, <var DateTime>
+
+Msg:
+CURRENT LOCAL WEATHER CONDITIONS
+
+<var IsExercise>
+Call sign: <var Call>
+Observer Name: <var RepName>
+DateTime: <var DateTime>
+Location: <var Location>    
+Coordinates: LAT: <var mapLat>  LON: <var mapLon>   Location source: <var locationSource>
+
+City: <var City>       County: <var County>     State: <var State>   
+
+Current Conditions
+<var TheConditions>
+
+Temperature <var TempI>°F | <var TempM>°C
+Humidity <var Humidity> % 
+Dew Point <var DewI>°F | <var DewM>°C
+Barometer <var BarometerI> inHg | <var BarometerM> millibars  Three hour trend: <var Barmtrend>
+
+Wind Speed: <var WindSpeedI> mph |  <var WindSpeedM> km/h     Direction From: <var Direction>
+Wind Gusts: <var GustsI> mph |  <var GustsM> km/h  Gust Max: <var MaxGustsI> mph |  <var MaxGustsM> km/h
+
+Rain 1 HR: <var Rain1hrI> inches | <var Rain1hrM> millimeters     Rain Total: <var RaintotalI> inches | <var RaintotalM> millimeters
+Snow 1 HR: <var Snow1hrI> inches | <var Snow1hrM> centimeters    Snow Total: <var SnowTotalI> inches | <var SnowTotalM> centimeters  
+NWS Level: <var Warning>   <var WarningFld>
+
+Notes: 
+<var Comments>
+
+------------------------------------
+Express Sending Station: <MsgSender>
+Senders Express Version: <ProgramVersion> 
+Senders Template Version: <var Templateversion>
+
+

@@ -1,0 +1,46 @@
+Form: HICS 254_Initial.html,HICS 254_Viewer.html
+
+To: 
+Subject: HICS254-<var Incident_Name>, <var Facility>
+Readonly:True
+Msg:
+1. INCIDENT NAME:	<var Incident_Name>
+PAGE [<var Page>] OF [<var Page1>]
+Express Sender:	<var MsgSender>
+
+2. OPERATIONAL PERIOD: #:	[<var OpNum>]
+Date From:	<var DateFrom>
+Time From:	<var TimeFrom>
+
+Date To:	<var DateTo>
+Time To:	<var TimeTo>
+
+3. AREA (Triage or Specific Treatment Area) 	<var Area>
+    
+---------------------------------------------------------------------
+
+Field Tag #	Medical Record #	Name	Sex	DOB-Age	Triage Category	Procedures Location	Procedures Time	Disposition	Disposition Time
+<var Tag1>	<var Med1>	<var Name1>	<var Sex1>	<var Dob1>	<var TriaCat1>	<var Loc1>	<var Loct1>	<var Disp1> 	<var Dispt1>
+<var Tag2>	<var Med2>	<var Name2>	<var Sex2>	<var Dob2>	<var TriaCat2>	<var Loc2>	<var Loct2>	<var Disp2>	<var Dispt2>
+<var Tag3>	<var Med3>	<var Name3>	<var Sex3>	<var Dob3>	<var TriaCat3>	<var Loc3>	<var Loct3>	<var Disp3>	<var Dispt3>
+<var Tag4>	<var Med4>	<var Name4>	<var Sex4>	<var Dob4>	<var TriaCat4>	<var Loc4>	<var Loct4>	<var Disp4>	<var Dispt4>
+<var Tag5>	<var Med5>	<var Name5>	<var Sex5>	<var Dob5>	<var TriaCat5>	<var Loc5>	<var Loct5>	<var Disp5>	<var Dispt5>
+<var Tag6>	<var Med6>	<var Name6>	<var Sex6>	<var Dob6>	<var TriaCat6>	<var Loc6>	<var Loct6>	<var Disp6>	<var Dispt6>
+<var Tag7>	<var Med7>	<var Name7>	<var Sex7>	<var Dob7>	<var TriaCat7>	<var Loc7>	<var Loct7>	<var Disp7>	<var Dispt7>
+<var Tag8>	<var Med8>	<var Name8>	<var Sex8>	<var Dob8>	<var TriaCat8>	<var Loc8>	<var Loct8>	<var Disp8>	<var Dispt8>
+<var Tag9>	<var Med9>	<var Name9>	<var Sex9>	<var Dob9>	<var TriaCat9>	<var Loc9>	<var Loct9>	<var Disp9>	<var Dispt9>
+<var Tag10>	<var Med10>	<var Name10>	<var Sex10>	<var Dob10>	<var TriaCat10>	<var Loc10>	<var Loct10>	<var Disp10>	<var Dispt10>
+
+4. PREPARED by:	<var PreparedName>
+Date:	<var Date_Time>	Time:	<var Time>
+
+FACILITY:	<var Facility>
+
+------------------------------------
+Express Sending Station:	<MsgSender>
+Senders Express Version:	<ProgramVersion>
+Senders Template Version:	<var Templateversion>
+[No changes or editing of this message are allowed]
+
+
+

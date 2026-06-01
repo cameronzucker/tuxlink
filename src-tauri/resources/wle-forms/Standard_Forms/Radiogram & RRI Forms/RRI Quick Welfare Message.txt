@@ -1,0 +1,10 @@
+Form:RRI Quick Welfare Message.html
+
+To: <var SendToAddresses>
+Readonly:True
+Subject:I'M SAFE MSG	
+Msg:
+From <var From_Name> <var initial> <var ActivityDateTime1> ONE WAY MSG 
+<var Message>
+[No changes or editing of this message are allowed]
+

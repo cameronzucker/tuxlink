@@ -1,0 +1,22 @@
+Form: Bulletin Initial.html,Bulletin Viewer.html
+To: 
+Subject:<var Level>/ <var Subjectline> #<var BullNr> 	
+Msg:
+<var Title> Bulletin For: <var Name>
+Precedence: <var Level>
+Bulletin #: <var BullNr>
+Bulletin From: <var From_Name>
+Date/Time: <var ActivityDateTime1>
+
+<var Message>
+		
+------------------------------------
+Express Sending Station: <MsgSender>
+Express Version: <ProgramVersion>
+Template Version: <var Templateversion>
+
+
+
+
+
+

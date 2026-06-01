@@ -1,0 +1,5 @@
+Form:Catalog Info
+To: INQUIRY 
+Subject: REQUEST
+Msg:
+<var thisQuery>

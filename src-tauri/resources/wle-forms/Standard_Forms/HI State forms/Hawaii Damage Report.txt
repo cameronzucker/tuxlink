@@ -1,0 +1,27 @@
+Form: HI_DR_initial.html,HI_DR_Viewer.html
+
+To: 
+Subject:Hawaii Damage Rpt-<MsgSender>-<var Mdate> <var Mtime>
+SeqInc:
+Readonly:True
+Msg: 
+Damage Report <var eventType>
+
+ 1. Incident Name: <var inc_name>
+ 2. From: <var fm_name>
+ 3. County: <var to_county>
+ 4. Date: <var Mdate>
+ 5. Time: <var Mtime>
+ 6. Loc: <var mapLat>, <var mapLon>
+ 7. Damage: <var dmg_report>
+ 8. When: <var dmg_when>
+ 9. Where: <var dmg_where>
+10. Who: <var dmg_who>
+11. Injured: <var dmg_injuries>
+12. Recorded by: <var Recorded_name> - <var Recorded_call>
+
+<var eventType>
+------------------------------------
+Express Sending Station: <MsgSender>
+Senders Express Version: <ProgramVersion>
+Senders Template Version: <var TemplateVersion>

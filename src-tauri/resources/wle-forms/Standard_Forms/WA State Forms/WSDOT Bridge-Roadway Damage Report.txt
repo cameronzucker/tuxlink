@@ -1,0 +1,73 @@
+Form:WSDOT Bridge-Roadway Damage Report initial,WSDOT Bridge-Roadway Damage Report viewer.html
+Subject: WSDOT Roadway: <var Status>, <var Route>, MP: <var Milepost>, <var InspectDate> <var InspectTime>
+Msg:
+Washington State Department of Transportation
+
+WSDOT Roadway Damage Report
+<var isExercise>
+
+1. Date: <var InspectDate>
+2. Time: <var InspectTime>
+
+Status of Bridge or Roadway: <var Status>
+ 
+6. Region: <var Region>
+7. County: <var County>
+8. Route: <var Route>
+9. Milepost: <var Milepost>
+10. Bridge Number (if applicable): <var Direction>
+11. Location: <var Location>
+12. Inspector's Name: <var Inspector>
+13. Remarks
+ <var Remarks>
+
+---
+Emergency Bridge Inspection
+
+14. <var fldA14> Bridge Approaches 
+15. <var fldA15> Wing Walls 
+16. <var fldA16> Bridge Abutments
+17. <var fldA17> Bent Caps, and Columns 
+18. <var fldA18> Bearings
+19. <var fldA19> Beams or Girders 
+21. <var fldA21> Hinge or Expansion Joints 
+22. <var fldA22> Railings, Parapet, and Curb
+23. <var fldA23> Utilities and Surrounding Areas
+24. <var fldA24> Seismic Restraint Devices
+25. <var fldA25> Debris Accumulation in Channel
+26. <var fldA26> Undermined Footings 
+20. <var fldA20> Deck (top and underside) 
+ 
+------
+Roadway
+Geo-technical Issues
+
+27. <var fldA27> Cracking 
+28. <var fldA28> Buckling
+29. <var fldA29> Heaving or rolling
+30. <var fldA30> Pavement separation
+31. <var fldA31> Change in configuration- striping or lane shift
+32. <var fldA32> Change in roadway surface
+33. <var fldA33> Signs, VMS and sign bridges 
+34. <var fldA34> Shoulder settlement
+35. <var fldA35> Sags in roadway safety features (guardrail)
+36. <var fldA36> Movement above or below tilted trees
+37. <var fldA37> Debris on roadway
+38. <var fldA38> Sloughing slopes 
+39. <var fldA39> Unstable road blocks above roadway
+40. <var fldA40> Sinkhole
+------------------------
+
+Communications Log
+
+Sending Station: <var SendingStation>
+Receiving Station: <var REceivingStation>
+Radio frequency: <var Freq>   MHZ 
+Time Sent/Recieved: <var TimeSend>   (local)
+
+------------------------
+Express Sending Station: <MsgSender>
+Senders Express Version: <ProgramVersion>
+Senders Template Version: <var Templateversion>
+
+

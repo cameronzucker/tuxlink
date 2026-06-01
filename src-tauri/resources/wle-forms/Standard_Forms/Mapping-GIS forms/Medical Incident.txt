@@ -1,0 +1,58 @@
+Form:Medical Incident_Initial.html,Medical Incident viewer.html
+To:
+Subject: Medical Incident Plan,  <var Severity>, <var Location>, <var DateTime> 
+Readonly:True
+Msg:
+<var IsExercise>
+
+1. CONTACT COMMUNICATIONS / DISPATCH (Verify correct frequency prior to starting report)
+  * Incident Name: <var fild2d>
+    Organization: <var Organization>
+
+2. Severity of Emergency / Transport Priority: <var Severity>
+   Nature of Injury or Illness & Mechanism of Injury: <var fild2a>
+   Evacuation Request: <var fild2b>	
+   Patient Location: <var fild2c>
+   Incident Name: <var fild2d>	
+   On-Scene Incident Commander: <var fild2e>
+   Patient Care: <var fild2f>
+
+3. INITIAL PATIENT ASSESSMENT: 
+Patient Assessment: (See IRPG PAGE 106): 
+<var fild3a>
+
+Treatment
+ <var fild3b>
+
+4. EVACUATION PLAN: Evacuation Location (if different): 
+<var fild4a>
+
+Helispot / Extraction Site Size and Hazards: 
+<var fild4b>
+
+5.ADDITIONAL RESOURCES / EQUIPMENT NEEDS:
+<var fild5>
+
+6.COMMUNICATIONS: Identify State Air/Ground EMS Frequencies and Hospital Contacts as applicable
+
+Function	Channel Name/Number	Receive (RX)	Tone/NAC	Transmit (TX)	Tone/NAC
+<var fld6a>	<var fld6b>	<var fld6b>	<var fld6d>	<var fld6e>	<var fld6f>
+<var fld6g>	<var fld6h>	<var fld6i>	<var fld6j>	<var fld6k>	<var fld6l>
+<var fld6m>	<var fld6n>	<var fld6o>	<var fld6p>	<var fld6q>	<var fld6r>
+
+7. CONTINGENCY:
+<var fild7>
+
+8. ADDITIONAL INFORMATION: Updates/Changes, etc.
+<var fild8>
+----
+Date/Time  <var DateTime> 
+Location  <var Location>       
+-------------------------------------------------------------
+
+Express Sending Station: <MsgSender>
+Senders Express Version: <ProgramVersion> 
+Senders Template Version: <var Templateversion>
+Map file name: <var Mapfilename>
+
+

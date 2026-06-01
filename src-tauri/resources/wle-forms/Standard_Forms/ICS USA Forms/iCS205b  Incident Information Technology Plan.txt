@@ -1,0 +1,40 @@
+Form: ICS205b_Initial.html,ICS205b_viewer.html
+
+To: 
+Subject: ICS 205b - <var Incident> -  <var TheDAte>
+
+Msg:
+iCS205b  Incident Information Technology Plan (Form 205B)
+
+1. Incident Name: <var Incident>
+
+2. Date/Time Prepared: 
+ Date: <var TheDAte>
+ Time: <var DateTime2>
+
+3. Operational Period
+   Date  From  <var DateFrom>    to  <var DateTo>        
+   Time  From  <var TimeFrom>   to  <var TimeTo>   
+
+4. Information Technology Infrastructure & Services--------------------------------------
+Assignment	IT Resource Type	Name of Application or Resource	Usage or Description	Platform	Platform	Login/Install	Equipment Location
+Web Address, IP Address or SSID	POC Information	Remarks
+<var l1ine1>	<var l1ine2>	<var l1ine3>	<var l1ine4>	<var l1ine5>	<var l1ine6>	<var l1ine7>	<var l1ine8>	<var l1ine9>	<var l1ine10>
+<var l1ine11>	<var l1ine12>	<var l1ine13>	<var l1ine14>	<var l1ine15>	<var l1ine16>	<var l1ine17>	<var l1ine18>	<var l1ine19>	<var l1ine20>
+<var l1ine21>	<var l1ine22>	<var l1ine23>	<var l1ine24>	<var l1ine25>	<var l1ine26>	<var l1ine27>	<var l1ine28>	<var l1ine29>	<var l1ine30>
+<var l1ine31>	<var l1ine32>	<var l1ine33>	<var l1ine34>	<var l1ine35>	<var l1ine36>	<var l1ine37>	<var l1ine38>	<var l1ine39>	<var l1ine40>
+<var l1ine41>	<var l1ine42>	<var l1ine43>	<var l1ine44>	<var l1ine45>	<var l1ine46>	<var l1ine47>	<var l1ine48>	<var l1ine49>	<var l1ine50>
+<var l1ine51>	<var l1ine52>	<var l1ine53>	<var l1ine54>	<var l1ine55>	<var l1ine56>	<var l1ine57>	<var l1ine58>	<var l1ine59>	<var l1ine60>
+<var l1ine61>	<var l1ine62>	<var l1ine63>	<var l1ine64>	<var l1ine65>	<var l1ine66>	<var l1ine67>	<var l1ine68>	<var l1ine69>	<var l1ine70>
+<var l1ine71>	<var l1ine72>	<var l1ine73>	<var l1ine74>	<var l1ine75>	<var l1ine76>	<var l1ine77>	<var l1ine78>	<var l1ine79>	<var l1ine80>
+<var l1ine81>	<var l1ine82>	<var l1ine83>	<var l1ine84>	<var l1ine85>	<var l1ine86>	<var l1ine87>	<var l1ine88>	<var l1ine89>	<var l1ine90>
+<var l1ine91>	<var l1ine92>	<var l1ine93>	<var l1ine94>	<var l1ine95>	<var l1ine96>	<var l1ine97>	<var l1ine98>	<var l1ine99>	<var l1ine100>
+<var l1ine101>	<var l1ine102>	<var l1ine103>	<var l1ine104>	<var l1ine105>	<var l1ine106>	<var l1ine107>	<var l1ine108>	<var l1ine109>	<var l1ine110>
+
+5. Prepared By (Name and Position): [var NamePosition>    Phone #:  <var Phonenumber>     Signature: <var Sig>     Date / Time: <var Prepdatetime>
+
+6. Incident Location: <var Location>      State: <var State>        County: <var County>        City:   <var City>
+-----------------
+Express Sending Station: <MsgSender>
+Senders Express Version: <ProgramVersion>
+Senders Template Version: <var Templateversion>

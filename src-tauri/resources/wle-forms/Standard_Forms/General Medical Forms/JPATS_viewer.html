@@ -1,0 +1,1366 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml"><head>
+    <meta http-equiv="content-type" content="application/xhtml+xml; charset=utf-8" />
+    
+    <title>JPATS</title>
+	<style type="text/css">
+body, td, th {
+font-family: Arial,Helvetica,sans-serif;
+font-size: 12px;
+}
+.zentriert {
+font-size: 12px;
+font-family: Arial,Helvetica,sans-serif;
+}
+input, select {
+padding: 1px;
+font-family: Arial,Helvetica,sans-serif;
+font-size: 12px;
+}
+textarea {
+margin: 8px;
+padding: 8px;
+font-family: Arial,Helvetica,sans-serif;
+font-size: 12px;
+}
+.rechtsbuendig {
+font-size: 12px;
+font-family: Arial,Helvetica,sans-serif;
+}
+.SubmitBtn {
+font-size: 12px;
+font-family: Arial,Helvetica,sans-serif;
+}
+.version {
+margin: 5px;
+color: #666666;
+position: relative;
+left: 0px;
+top: 1px;
+font-family: Arial,Helvetica,sans-serif;
+font-size: 12px;
+}
+#TextHeader {
+background-color: #dddddd;
+font-size: 10px;
+font-family: Arial,Helvetica,sans-serif;
+}
+
+.upload-btn-wrapper {
+  position: relative;
+  overflow: hidden;
+  display: inline-block;
+}
+
+.btn {
+  border: 2px solid gray;
+  color: gray;
+  background-color: white;
+  padding: 8px 20px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: bold;
+}
+
+.upload-btn-wrapper input[type=file] {
+  font-size: 50px;
+  position: absolute;
+  left: 0;
+  top: 0;
+  opacity: 0;}
+    </style>
+    <style>
+/*
+body {color:#000; background:#fff; font:100%/1.5 arial,sans-serif;}
+h2 {margin-top:0}
+*/
+/* Styling applied to classes only */
+/* Pop-up content shifted off-screen when not in view.
+Still readable by screen-reader software.
+When targeted it fills the browser window.
+*/
+.pop-up {
+	position:absolute;
+	top:0;
+	left:-500em;
+	visibility: hidden;
+}
+.pop-up:target {position:static; left:0;}
+/* The pop-up itself */
+.popBox {
+	background:#ffffff;
+	position:absolute;
+	left:25%;
+	right:25%;
+	top:10%;
+	bottom:10%;
+	z-index:10;
+	border:1px solid #3a3a3a;
+/* CSS3 where available: rounded corners, drop-shadow, and fade in. */
+border-radius:.25rem;
+box-shadow:0 .5rem .5rem rgba(0,0,0,.5);
+	opacity:0;
+	transition: opacity 0.8s ease-out;
+	visibility: hidden;
+}
+:target .popBox {position:fixed; opacity:1;}
+/* Light box properties */
+.lightbox {
+display:none;
+text-indent:-200em;
+background-color:rgba(0,0,0,.4);
+width:100%;
+height:100%;
+position:fixed;
+top:0;
+left:0;
+bottom:0;
+right:0;
+z-index:5;
+}
+:target .lightbox {display:block;}
+/* The pop-ups close link, moved via CSS to the top right of the pop-up */
+.close:link,
+.close:visited {
+	position: absolute;
+	top: -0.75em;
+	right: -0.75em;
+	display: block;
+	width: 2em;
+	height: 2em;
+	line-height: 1.8;
+	padding: 0;
+	text-align: center;
+	text-decoration: none;
+	background-color: #000;
+	border: 2px solid #fff;
+	color: #fff;
+	border-radius: 50%;
+box-shadow: 0 0 .5rem .5rem rba(0,0,0,.5);
+	visibility: hidden;
+}
+.close:before {content:"X";}
+.close:hover,
+.close:active,
+.close:focus {
+box-shadow: 0 0 .5rem .5rem rba(255,0,0,.5);
+background-color: #c00;
+color: #fff;
+}
+.close span {
+text-indent: -200em;
+display: block;
+}
+/* The pop-up content div will scroll if it has too much content */
+.popScroll {
+	position:absolute;
+	top: 1rem;
+	left: 1rem;
+	right: 1rem;
+	bottom: 1rem;
+	overflow-y: auto;
+*overflow-y: scroll;
+	padding-right: 0.5em;
+	visibility: hidden;
+}
+.popScroll h2 {margin-top:0}
+.style2 {font-size: 10px}
+  input[type=button] {
+
+  border: 2px solid #0f88f2;;
+   border-radius:.25rem;
+  color: black;
+  padding: 2px 2px;
+ background-color: white;
+  text-decoration: none;
+  margin: 2px 2px;
+  cursor: pointer;
+}
+input[type=submit] {
+ border: 2px solid green;
+  border-radius:.25rem;
+  background-color: white;
+  color: black;
+  padding: 2px 2px;
+  font-size: 14px;
+   cursor: pointer;
+}
+input[type=reset] {
+ border: 2px solid red;
+ border-radius:.25rem;
+  background-color: white;
+  color: black;
+  padding: 2px 2px;
+  font-size: 14px;
+   cursor: pointer;
+}
+input[type=black1] {
+ border: 2px solid #999999;
+   width:240px;
+  border-radius:.25rem;
+
+  background-color: white;
+  color: black;
+  padding: 2px 2px;
+  font-size: 14px;
+   cursor: pointer;
+}
+  input[type=button] {
+
+  border: 2px solid #0f88f2;;
+   border-radius:.25rem;
+  color: black;
+  padding: 2px 2px;
+ background-color: white;
+  text-decoration: none;
+  margin: 2px 2px;
+  cursor: pointer;
+}
+input[type=submit] {
+ border: 2px solid green;
+  border-radius:.25rem;
+  background-color: white;
+  color: black;
+  padding: 2px 2px;
+  font-size: 14px;
+   cursor: pointer;
+}
+input[type=reset] {
+ border: 2px solid red;
+ border-radius:.25rem;
+  background-color: white;
+  color: black;
+  padding: 2px 2px;
+  font-size: 14px;
+   cursor: pointer;
+}
+input[type=black1] {
+ border: 2px solid #999999;
+   width:225px;
+  border-radius:.25rem;
+
+  background-color: white;
+  color: black;
+  padding: 2px 2px;
+  font-size: 14px;
+   cursor: pointer;
+}
+  input[type=button] {
+
+  border: 2px solid #0f88f2;;
+   border-radius:.25rem;
+  color: black;
+  padding: 2px 2px;
+ background-color: white;
+  text-decoration: none;
+  margin: 2px 2px;
+  cursor: pointer;
+}
+input[type=submit] {
+ border: 2px solid green;
+  border-radius:.25rem;
+  background-color: white;
+  color: black;
+  padding: 2px 2px;
+  font-size: 14px;
+   cursor: pointer;
+}
+input[type=reset] {
+ border: 2px solid red;
+ border-radius:.25rem;
+  background-color: white;
+  color: black;
+  padding: 2px 2px;
+  font-size: 14px;
+   cursor: pointer;
+}
+input[type=black1] {
+ border: 2px solid #999999;
+   width:225px;
+  border-radius:.25rem;
+width:120px;
+  background-color: white;
+  color: black;
+  padding: 2px 2px;
+  font-size: 14px;
+   cursor: pointer;
+}
+
+    .style4 {font-size: 16px}
+	
+	textarea {
+  padding: 4px 4px;
+  font-size: 10px;
+     resize: none;
+  overflow: hidden;
+  border: 2px solid #ccc;
+  border-radius: 4px;
+
+ }
+}
+.style10 {font-size: 10px; font-weight: bold; }
+    .style11 {color: rgb(153, 0, 0)}
+</style>
+    <script>
+
+function $(x) {
+    return document.getElementById(x);
+}
+
+
+
+
+function TimeNow(Timefld) {
+var txt;
+var d = new Date(),
+thisyear = d.getFullYear();
+thismonth= d.getMonth();
+thismonth = thismonth+1;
+if (thismonth < 10) { thismonth = "0" + thismonth}
+
+thisday = d.getDate();
+if (thisday < 10) { thisday = "0" + thisday}
+
+h = (d.getHours()<10?'0':'') + d.getHours()
+m = (d.getMinutes()<10?'0':'') + d.getMinutes()
+s = (d.getSeconds()<10?'0':'') + d.getSeconds();
+var myprompt = thisyear+ '-'+thismonth+'-'+thisday+' '+h + ':' + m ;
+var RightNow = prompt("", myprompt);
+document.getElementById(Timefld).value = RightNow;
+} 
+function DateforFile(RightNow) {
+var txt;
+var d = new Date(),
+thisyear = d.getFullYear();
+thismonth= d.getMonth();
+thismonth = thismonth+1;
+if (thismonth < 10) { thismonth = "0" + thismonth}
+
+thisday = d.getDate();
+if (thisday < 10) { thisday = "0" + thisday}
+
+h = (d.getHours()<10?'0':'') + d.getHours()
+m = (d.getMinutes()<10?'0':'') + d.getMinutes()
+s = (d.getSeconds()<10?'0':'') + d.getSeconds();
+var myprompt = thisyear+ '-'+thismonth+'-'+thisday+' '+h + '_' + m ;
+return myprompt;
+}
+</script>
+
+<script>
+function isNumberKeyD(evt)
+{
+var charCode = (evt.which) ? evt.which : event.keyCode
+if (charCode > 32 && (charCode < 45 || charCode > 57))
+//if (charCode > 32 && (charCode < 40 ))
+return false;
+return true;
+}
+function isNumberKey(evt)
+{
+var charCode = (evt.which) ? evt.which : event.keyCode
+if (charCode < 48 || charCode > 57)
+return false;
+return true;
+}
+
+
+
+function shortmonth(monthnum) {
+var monthname;
+shortmonths = ["JAN", "FEB", "MAR","APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"] ;
+monthname = shortmonths [monthnum];
+return monthname;
+}
+function DateTime(TType,TheFld, FocusFld) {
+var txt;
+var myprompt;
+var d = new Date(),
+thisyear = d.getFullYear();
+thismonth= d.getMonth();
+thisday = d.getDate();
+var monname;
+h = (d.getHours()<10?'0':'') + d.getHours()
+m = (d.getMinutes()<10?'0':'') + d.getMinutes()
+s = (d.getSeconds()<10?'0':'') + d.getSeconds();
+var now = new Date();
+var utch = now.getUTCHours();
+if (utch < 10) { utch = "0"+utch};
+var utcs = now.getUTCMinutes();
+if (utcs < 10) { utcs = "0"+utcs};
+var myUTCtime = utch+":"+utcs+"Z";
+var utcstr = d.toUTCString();
+var localt = d.toLocaleTimeString();
+var isostr = d.toISOString();
+monthname = shortmonth (thismonth);
+thismonth = thismonth + 1;
+switch (TType) {
+case 'hms' :
+myprompt = h + ':' + m + ':' + s;
+var RightNow = prompt("Time:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'hm' :
+myprompt = h + ':' + m;
+var RightNow = prompt("Time:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'm-d-y': myprompt = thismonth+ '-' + thisday+ '-'+ thisyear;
+var RightNow = prompt("Date:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'm/d/y': myprompt = thismonth+ '/' + thisday+ '/'+ thisyear;
+var RightNow = prompt("Date:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'DateStamp-m-d-y': var RightNow = thismonth+ '-' + thisday+ '-'+ thisyear;
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'd mmm y': myprompt = thisday+ ' ' + monthname+ ' '+ thisyear;
+var RightNow = prompt("Date:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'mmm-d-y': myprompt = monthname+'-'+thisday+ '-' + thisyear;
+var RightNow = prompt("Date:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'localampm': var myprompt = localt;
+var RightNow = prompt("Local time:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'fulldate': var myprompt = thisyear+ '-'+thismonth+'-'+thisday;
+var RightNow = prompt("Date:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'fulldatetime': var myprompt = thisyear+'-'+thismonth+ '-'+thisday+' '+h + ':' + m + ':' + s;
+var RightNow = prompt("Date time:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'iso': var myprompt = isostr;
+var RightNow = prompt("Date time:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'utc': var myprompt = utcstr;
+var RightNow = prompt("Date time:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'zulu': var myprompt = isostr;
+myprompt = isostr.replace("T", " "); slen = myprompt.length;
+myprompt = myprompt.substr(0, slen-5)+'Z';
+var RightNow = prompt("Date time:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'UTChm': var myprompt = myUTCtime;
+var RightNow = prompt("Date time:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+}
+// if(FocusFld !== null && FocusFld !== '') {document.getElementById(FocusFld).focus()} --/
+};
+function AutoGrowTextArea(textField)
+{
+
+if (textField.clientHeight < textField.scrollHeight)
+{
+textField.style.height = textField.scrollHeight + "px";
+if (textField.clientHeight < textField.scrollHeight)
+{
+textField.style.height = (textField.scrollHeight * 2 - textField.clientHeight) + "px";
+}
+}
+}
+function Countthelines(f) { var text1 = f
+var text2 = text1.replace(/\s+$/,"");
+var split2 = text2.split("\n"); var mytotal = split2.length * 17;
+if (mytotal < 150) {
+mytotal = 150;
+}
+var tstr = mytotal.toString();
+return tstr;
+}
+function newfix(f){
+var ThisText = document.getElementById("SpecialInstructions").value;
+var makeit = Countthelines(ThisText);
+document.getElementById(f).style.height = makeit+"px"; }
+
+function Fixarea() {
+newfix("SpecialInstructions");
+AutoGrowTextArea("SpecialInstructions");
+
+}
+function RWS(str){
+var text2 = str.replace(/\s+$/,"");
+return text2.trim();
+}
+function Collect(){
+var datatosave;
+datatosave = "JPATS"+ "\r";
+
+document.getElementById("Saveme").value = datatosave;
+
+}
+
+function saveTextAsFile(fileNameToSaveAs, textToWrite) {
+var textToWrite = document.getElementById('parseme').value; 
+var fileNameToSaveAs =  "JPATS data " + DateforFile()+".txt";
+fileNameToSaveAs = prompt("", fileNameToSaveAs);
+if (fileNameToSaveAs == null){return};
+  /* Saves a text string as a blob file*/  
+  var ie = navigator.userAgent.match(/MSIE\s([\d.]+)/),
+      ie11 = navigator.userAgent.match(/Trident\/7.0/) && navigator.userAgent.match(/rv:11/),
+      ieEDGE = navigator.userAgent.match(/Edge/g),
+      ieVer=(ie ? ie[1] : (ie11 ? 11 : (ieEDGE ? 12 : -1)));
+
+  if (ie && ieVer<10) {
+    console.log("No blobs on IE ver<10");
+    return;
+  }
+
+  var textFileAsBlob = new Blob([textToWrite], {
+    type: 'text/plain'
+  });
+
+  if (ieVer>-1) {
+    window.navigator.msSaveBlob(textFileAsBlob, fileNameToSaveAs);
+
+  } else {
+    var downloadLink = document.createElement("a");
+    downloadLink.download = fileNameToSaveAs;
+    downloadLink.href = window.URL.createObjectURL(textFileAsBlob);
+    downloadLink.onclick = function(e) { document.body.removeChild(e.target); };
+    downloadLink.style.display = "none";
+    document.body.appendChild(downloadLink);
+    downloadLink.click();
+  }
+}
+
+
+
+
+
+function destroyClickedElement(event)
+{
+    document.body.removeChild(event.target);
+}
+function SaveData() {
+	
+			formDataToObject(document.getElementById('myform'))
+			saveTextAsFile();
+			
+			//saveTextAsFile();
+			}
+
+function loadFileAsText()
+{
+
+    var fileToLoad = document.getElementById("fileToLoad").files[0];
+ 
+    var fileReader = new FileReader();
+    fileReader.onload = function(fileLoadedEvent) 
+    {
+        var textFromFileLoaded = fileLoadedEvent.target.result;
+        document.getElementById("inputTextToSave").value = textFromFileLoaded;
+    };
+    fileReader.readAsText(fileToLoad, "UTF-8");
+}
+
+function formDataToObject(elForm) {
+  if (!elForm instanceof Element) return;
+  var fields = elForm.querySelectorAll('input, select, textarea'),
+    o = {};
+  for (var i=0, imax=fields.length; i<imax; ++i) {
+    var field = fields[i],
+      sKey = field.name || field.id;
+    if (field.type==='button' || field.type==='image' || field.type==='submit' || !sKey) continue;
+    switch (field.type) {
+      case 'checkbox':
+        o[sKey] = +field.checked;
+        break;
+      case 'radio':
+        if (o[sKey]===undefined) o[sKey] = '';
+        if (field.checked) o[sKey] = field.value;
+        break;
+      case 'select-multiple':
+        var a = [];
+        for (var j=0, jmax=field.options.length; j<jmax; ++j) {
+          if (field.options[j].selected) a.push(field.options[j].value);
+        }
+        o[sKey] = a;
+        break;
+      default:
+        o[sKey] = field.value;
+    }
+  }
+ // ('Form data:\n\n' + JSON.stringify(o, null, 2));
+ document.getElementById('parseme').value = JSON.stringify(o, null, 2);
+//  return o;
+}
+
+function populateForm(o) {
+
+o =  JSON.parse(document.getElementById('parseme').value);
+ //if (!isObject(o)) return;
+//if (!isObject(o)) return;
+  for (var i in o) {
+    var el = document.getElementById(i) || document.querySelector('[name=' + i + ']');
+    if (el.type==='radio') el = document.querySelectorAll('[name=' + i + ']');
+    switch (typeof o[i]) {
+      case 'number':
+        el.checked = o[i];
+        break;
+      case 'object':
+        if (el.options && o[i] instanceof Array) {
+          for (var j=0, jmax=el.options.length; j<jmax; ++j) {
+            if (o[i].indexOf(el.options[j].value)>-1) el.options[j].selected = true;
+          }
+        }
+        break;
+      default:
+        if (el instanceof NodeList) {
+          for (var j=0, jmax=el.length; j<jmax; ++j) {
+            if (el[j].value===o[i]) el[j].checked = true;
+          }
+        } else {
+          el.value = o[i];
+        }
+    }
+  }
+  
+    Fixfields();
+
+
+}
+
+
+		
+		//
+
+
+	
+	function selectaddress(){  
+ location.href="#pop3";  
+} 
+ 
+//-------
+
+ function readBlob(opt_startByte, opt_stopByte) {
+  
+    var files = document.getElementById('files').files;
+    if (!files.length) {
+      ('Please select a file!');
+      return;
+    }
+
+    var file = files[0];
+    var start = parseInt(opt_startByte) || 0;
+    var stop = parseInt(opt_stopByte) || file.size - 1;
+
+    var reader = new FileReader();
+
+    // If we use onloadend, we need to check the readyState.
+    reader.onloadend = function(evt) {
+      if (evt.target.readyState == FileReader.DONE) { // DONE == 2
+        document.getElementById('byte_content').textContent = evt.target.result;
+        document.getElementById('byte_range').textContent = 
+            ['Read bytes: ', start + 1, ' - ', stop + 1,
+             ' of ', file.size, ' byte file'].join('');
+      }
+    };
+
+    var blob = file.slice(start, stop + 1);
+    reader.readAsBinaryString(blob);
+  }
+    	
+  window.onload = function () { 
+ 
+ //Check the support for the File API support 
+ if (window.File && window.FileReader && window.FileList && window.Blob) {
+    var fileSelected = document.getElementById('txtfiletoread');
+	
+    fileSelected.addEventListener('change', function (e) { 
+         //Set the extension for the file 
+         var fileExtension = /text.*/; 
+         //Get the file object 
+         var fileTobeRead = fileSelected.files[0];
+        //Check of the extension match 
+         if (fileTobeRead.type.match(fileExtension)) { 
+             //Initialize the FileReader object to read the 2file 
+			
+             var fileReader = new FileReader(); 
+             fileReader.onload = function (e) { 
+                 var fileContents = document.getElementById('filecontents'); 
+         
+				document.getElementById('parseme').value =fileReader.result;
+				populateForm(obj = document.getElementById('parseme').value);
+					 } 
+             fileReader.readAsText(fileTobeRead); 
+         } 
+         else { 
+             ("Please select text file"); 
+         }
+ 
+    }, false);
+} 
+ else { 
+     ("Files are not supported"); 
+ } 
+ Checkifinbrowser();
+ }
+
+ function Checkifinbrowser() {
+
+ var x= document.getElementById("testCall").value; 
+ var n = x.search("{Msg");
+ if (n>-1) { 
+ document.getElementById('Submit').style.visibility='hidden';
+  alert('You are running this form outside of Winlink.\n \nWhen you have completed the form, SAVE the data and then give or send the SAVED data file to the radio operator. The operator will load the SAVED data into the correct form and send via winlink. ');
+ } else {document.getElementById('Submit').style.visibility='visible';  }
+} 
+function isObject(arg) {
+  return Object.prototype.toString.call(arg)==='[object Object]';
+}
+
+function ExportData(doexport) {
+		var mydata= "";
+	for (x = 1; x <21; x++) {
+
+        //var tabs = lines[line].split('\t',11);
+		//ID1, Lastname1,Firstname1,Gender1,DOB1,Minor1,Orgfaclty1,PatientT1,HeathStatus1,Bedtype1,Disp1,Timestamp1
+         	
+			var mydata=mydata + getEX('ID'+x)+",";
+			
+		 		var mydata=mydata+getEX('Lastname'+x)+",";
+
+			var mydata=mydata+getEX('Firstname'+x)+",";
+		
+			var mydata=mydata+getEX('Gender'+x)+",";
+			
+			var mydata=mydata+getEX('DOB'+x)+",";
+			var mydata=mydata+getEX('Minor'+x)+",";
+			//var mydata=mydata+getEX('CCareT'+x)+","
+			//1
+			var mydata=mydata+getEX('Orgfaclty'+x)+",";
+			var mydata=mydata+getEX('PatientT'+x)+",";
+			
+			var mydata=mydata+getEX('HeathStatus'+x)+",";
+			var mydata=mydata+getEX('Bedtype'+x)+",";//
+			var mydata=mydata+getEX('Injurytype'+x)+",";
+			var mydata=mydata+getEX('Notes'+x)+",";
+			var mydata=mydata+getEX('Disp'+x)+",";//Disp1
+			var mydata=mydata+getEX('Timestamp'+x)+"\n";
+			
+			//var mydata=mydata+"\n";
+			document.getElementById('parseme').value = mydata;
+			
+			 }   
+			var excelheader= "Tracking #,Last Name,First Name,Sex,DOB - Age,Unaccompanied Minor,Originating Site/ facility name,Patient Type,Health Status,Bed Type,Injury Nature,Notes,Disposition,Time Stamp"+"\n" ;
+
+			
+	
+			document.getElementById('parseme').value = mydata;
+			document.getElementById('attached_text').value = excelheader+ mydata;
+			document.getElementById('attached_file').value = "JPATS data " + DateforFile()+".csv"
+		//var attached_file = "JPATS data " + DateforFile()+".csv"
+
+			if (doexport == true) {ExporttoCSV()};
+			
+			//saveTextAsFile();
+			}
+function ExporttoCSV(fileNameToSaveAs, textToWrite) {
+
+var textToWrite =document.getElementById('attached_text').value;
+//var excelheader= "Tracking #, Last Name,First Name,Gender,DOB,Unaccompanied Minor,Critical Care Transport Needed,Healthcare Facility,Patient Type,Health Status,Bed Type,Injury Nature,Disposition,Timestamp"+"\n" ;
+;var textToWrite = textToWrite;
+var fileNameToSaveAs = "JPATS " + DateforFile()+".csv";
+fileNameToSaveAs = prompt("", fileNameToSaveAs);
+
+  /* Saves a text string as a blob file*/  
+  var ie = navigator.userAgent.match(/MSIE\s([\d.]+)/),
+      ie11 = navigator.userAgent.match(/Trident\/7.0/) && navigator.userAgent.match(/rv:11/),
+      ieEDGE = navigator.userAgent.match(/Edge/g),
+      ieVer=(ie ? ie[1] : (ie11 ? 11 : (ieEDGE ? 12 : -1)));
+
+  if (ie && ieVer<10) {
+    console.log("No blobs on IE ver<10");
+    return;
+  }
+
+  var textFileAsBlob = new Blob([textToWrite], {
+    type: 'text/plain'
+  });
+
+  if (ieVer>-1) {
+    window.navigator.msSaveBlob(textFileAsBlob, fileNameToSaveAs);
+
+  } else {
+    var downloadLink = document.createElement("a");
+    downloadLink.download = fileNameToSaveAs;
+    downloadLink.href = window.URL.createObjectURL(textFileAsBlob);
+    downloadLink.onclick = function(e) { document.body.removeChild(e.target); };
+    downloadLink.style.display = "none";
+    document.body.appendChild(downloadLink);
+    downloadLink.click();
+  }
+}
+function Flip(theid,working) {
+x1 = document.getElementById(theid).value;
+if (x1 == '') { document.getElementById(theid).value = 'TRUE';} 
+else { document.getElementById(theid).value = 'FALSE';}
+}
+
+function getEX (str) {
+console.log (str);
+var line=document.getElementById(str).value;
+
+if (line =='--') {line=''}
+//if (line =='FALSE') {line=''}
+//console.log(str);
+// add conditionals
+ var addquote = false;
+ var position = line.search('"');
+if (position != -1){line = line.replace(/"/g, '""');addquote = true}
+
+var position = line.search(",");
+if (position != -1){ addquote = true}
+if (addquote==true) {var line = '"' +line+'"';} 
+
+
+return line;
+}
+function Fixfields(){
+for (x = 1; x <21; x++) {
+			var mydata=mydata + getEX('ID'+x)+",";
+
+AutoGrowTextArea(document.getElementById("Bedtype"+x));
+AutoGrowTextArea(document.getElementById("Injurytype"+x));
+}
+}
+function parsestring(mType) {
+var mytext = document.getElementById('parseme3').value;
+var myType = mType;
+var lines = mytext.split('\n', 20);
+
+    for(var line = 0; line < lines.length ; line++){
+        // By tabs
+		//alert (lines[line]);
+var x = line +1;
+// console.log(lines[line]);
+     if (line <21) {  var tabs = lines[line].split('\t',14);
+         	if (tabs[0] != null){document.getElementById('ID'+x).value =tabs[0]};
+		 	if (tabs[1] != null){document.getElementById('Lastname'+x).value = tabs[1]};
+			
+			if (tabs[2] != null){document.getElementById('Firstname'+x).value = tabs[2]};
+			if (tabs[3] != null){document.getElementById('Gender'+x).value = tabs[3]};
+			if (tabs[4] != null){document.getElementById('DOB'+x).value = tabs[4]};
+			if (tabs[5] != null){document.getElementById('Minor'+x).value = tabs[5]};
+			//if (tabs[6] != null){document.getElementById('CCareT'+x).value = tabs[6]};
+			if (tabs[6] != null){document.getElementById('Orgfaclty'+x).value = tabs[6]};
+			if (tabs[7] != null){document.getElementById('PatientT'+x).value = tabs[7]};
+			if (tabs[8] != null){document.getElementById('HeathStatus'+x).value = tabs[8]};
+			if (tabs[9] != null){document.getElementById('Bedtype'+x).value = tabs[9]};
+			
+			if (tabs[10] != null){document.getElementById('Injurytype'+x).value = tabs[10]};
+			if (tabs[11] != null){document.getElementById('Notes'+x).value = tabs[11]};
+			if (tabs[12] != null){document.getElementById('Disp'+x).value = tabs[12]};
+			if (tabs[13] != null){document.getElementById('Timestamp'+x).value = tabs[13]};
+			
+			
+			 }   
+			}
+	alert('Parsing completed');
+	}
+
+
+	function selectaddress(){  
+ location.href="#pop3";  
+}  
+			function CollectData() {
+		var mydata= "";
+	for (x = 1; x <21; x++) {
+
+			var mydata=mydata + getEX('ID'+x)+"\t";
+			
+		 		var mydata=mydata+getEX('Lastname'+x)+"\t";
+			var mydata=mydata+getEX('Firstname'+x)+"\t";
+			var mydata=mydata+getEX('Gender'+x)+"\t";			
+			var mydata=mydata+getEX('DOB'+x)+"\t";
+			var mydata=mydata+getEX('Minor'+x)+"\t";
+			//var mydata=mydata+getEX('CCareT'+x)+"\t"
+			var mydata=mydata+getEX('Orgfaclty'+x)+"\t";
+			var mydata=mydata+getEX('PatientT'+x)+"\t";
+			var mydata=mydata+getEX('HeathStatus'+x)+"\t";
+			var mydata=mydata+getEX('Bedtype'+x)+"\t";//
+			var mydata=mydata+getEX('Injurytype'+x)+"\t";
+			var mydata=mydata+getEX('Notes'+x)+"\t";
+			var mydata=mydata+getEX('Disp'+x)+"\t";//Disp1
+			var mydata=mydata+getEX('Timestamp'+x)+"\n";
+				document.getElementById('parseme3').value = mydata;
+			
+			 }   
+			var excelheader= "Tracking #\tLast Name\tFirst Name\tSex\tDOB - Age\tUnaccompanied Minor\tOriginating Site/ facility name\tPatient Type\tHealth Status\tBed Type\tInjury Nature\tNotes\tDisposition\tTime Stamp"+"\n" ;
+			document.getElementById('parseme3').value = mydata;
+			//document.getElementById('parseme3').value = mydata;
+			
+			}
+
+
+</script></head>
+<body style="color: rgb(0, 0, 0); background-color: rgb(255, 255, 255);" alink="#000099" link="#000099" vlink="#990099">
+    &nbsp;<br />
+    <form action="http://{FormServer}:{FormPort}" enctype="multipart/form-data" id="myform" method="post" onsubmit="return confirm('To complete your form submission, click OK and close the open browser window. You will return to the new message window so you can post your message to the outbox');" pbzloc="0">
+    
+        <table  border="0" align="center" style="height: 856px;">
+        <tbody>
+          <tr>
+            <td width="1314" valign="top" pbzloc="17">
+              <table  style="width: 1119px; height: 881px;" pbzloc="11" border="1" bordercolor="#999999" cellpadding="1" cellspacing="0">
+                <tbody>
+                  <tr valign="top" bgcolor="#ffffe6">
+                    <td colspan="3" style="vertical-align: top; "><div align="center">
+                      <p class="style4"> Joint Patient Assessment and Tracking System<br />
+                      &nbsp;<span style="font-style: italic;"><br />
+                      </span></p>
+                      
+                      </div></td>
+                  </tr>
+                  <tr>
+                    <td style="width: 50%; text-align: center; vertical-align: top;"><div align="left"><br />
+                      &nbsp;&nbsp; 1.
+                      Incident Name&nbsp;&nbsp;                      {var Incident_Name}<br />
+                      <br />
+                      <span style="color: rgb(204, 0, 0);">&nbsp;&nbsp; &nbsp;&nbsp; </span>Page<span style="color: rgb(204, 0, 0);"> </span> {var Page}                     <span >&nbsp;of&nbsp;&nbsp; {var Page1}                      &nbsp;&nbsp;&nbsp;&nbsp;  <br />
+                        
+              <textarea name="parseme" cols="60" id="parseme" style="display: none;"></textarea>
+  <input name="attached_file" type="hidden" id="attached_file" value= "JPATS data " + DateforFile()+".csv" />
+                <textarea name="attached_text"  cols="140" rows="3" id="attached_text" style="display: none;"></textarea>
+			   <textarea name="FormData"  cols="140" rows="3" id="FormData" style="display: none;"></textarea></div></td>
+<td style="width: 50%; vertical-align: top; text-align: justify;" colspan="2">&nbsp;&nbsp;
+
+<div align="left"> &nbsp;&nbsp;2. Operational Period
+&nbsp; <br />
+  <br />
+&nbsp;&nbsp; &nbsp;&nbsp; &nbsp;&nbsp;  Date From: &nbsp; {var DateFrom} <b>&nbsp; &nbsp;</b>To: &nbsp; {var DateTo} <b><br />
+  <br />
+  </b>&nbsp;&nbsp; &nbsp;&nbsp; &nbsp;&nbsp; Time From: &nbsp; {var TimeFrom}&nbsp;
+&nbsp;&nbsp; &nbsp;To: &nbsp; {var TimeTo}<br />
+  <br />
+</div></td>
+</tr>
+<tr align="left">
+<td colspan="3" style="text-align: center; vertical-align: top;">
+<p align="left">&nbsp;&nbsp; 3. Site name:&nbsp;&nbsp; &nbsp; {var Area}
+  <input type="file" id="txtfiletoread" accept=".txt" style="display: none;" />
+</p>
+<table height="0%" border="1" align="left" cellpadding="1" cellspacing="1" style="width: 1113px; ">
+  <tbody>
+    <tr valign="top" bgcolor="#ffffe6">
+      <td width="50" height="9%" id="TextHeader" style="font-weight: bold; vertical-align: top; text-align: center; background-color: rgb(204, 255, 255);">Tracking #</td>
+      <td width="126" id="TextHeader" style="font-weight: bold; text-align: center; vertical-align: top; background-color: rgb(204, 255, 255);"><div align="center">Last Name</div></td>
+      <td width="126" id="TextHeader" style="font-weight: bold; vertical-align: top; text-align: center; background-color: rgb(204, 255, 255);"><div align="center">First Name</div></td>
+      <td nowrap="nowrap" id="TextHeader" style="font-weight: bold; vertical-align: top; text-align: center; background-color: rgb(204, 255, 255);">Sex<br />
+          <span style="font-weight: normal;">Example:<br />
+        M =Male<br />
+        F = Female<br />
+        O = Other <br />
+        </span></td>
+      <td width="83" id="TextHeader" style="font-weight: bold; text-align: center; vertical-align: top; background-color: rgb(204, 255, 255);">DOB - Age<br />
+          <span style="font-weight: normal;">(numbers only)</span></td>
+      <td width="97" id="TextHeader" style="font-weight: bold; text-align: center; vertical-align: top; background-color: rgb(204, 255, 255);"> Unaccompanied <br />
+        Minor<br />
+        <span style="font-weight: normal;">Example<br />
+        Y = Yes<br />
+        N = No</span></td>
+      <td width="77" valign="top" id="TextHeader" style="text-align: center; vertical-align: top; background-color: rgb(204, 255, 255);"><div align="center"><span class="style10"><strong>Originating Site/ Facility Name </strong></span></div></td>
+      <td nowrap="nowrap" class="style2" id="TextHeader" style=" text-align: center; vertical-align: top; background-color: rgb(204, 255, 255);"><strong>Patient Type </strong><br />
+          <span style="font-weight: normal;">Example</span><br />
+        1 = Federal Patient<br />
+        2 = State & Local Patient<br />
+        3 = Federal Non-Medical<br />
+        4 = State & Local Non-Medical <br />
+      </td>
+      <td width="148" valign="top" nowrap="nowrap" style="font-weight: bold; background-color: rgb(204, 255, 255); text-align: center;"><span class="style2">Health Status </span><br />
+          <span style="font-weight: normal;"><span class="style2">Example<br />
+        1 = Critical<br />
+        2 = Priority<br />
+        3 = Routine<br />
+        4 = Deceased<br />
+        5 = N/A</span><br />
+        </span></td>
+      <td nowrap="nowrap" style="background-color: rgb(204, 255, 255); text-align: center;"><div align="center">
+          <div align="center" class="style2"><strong>Bed Type</strong><br />
+            Example<br />
+            1 = Medical/Surgical<br />
+            2 = Psychiatric<br />
+            3 = Burns<br />
+            4 = Pediatric<br />
+            5 = Critical<br />
+            6 = Unknown </div>
+      </div></td>
+      <td style="font-weight: bold; background-color: rgb(204, 255, 255); text-align: center;"><div align="center" class="style2">
+          <div align="center">Injury Nature</div>
+      </div></td>
+      <td style="font-weight: bold; background-color: rgb(204, 255, 255); text-align: center;"><div align="center" class="style2">
+          <div align="center">Notes</div>
+      </div></td>
+      <td width="76" id="TextHeader" style="font-weight: bold; text-align: center; vertical-align: top; background-color: rgb(204, 255, 255);"><div align="center">Disposition&nbsp;</div></td>
+      <td width="84" id="TextHeader" style="font-weight: bold; text-align: center; vertical-align: top; background-color: rgb(204, 255, 255);"><div align="center">Time Stamp</div></td>
+    </tr>
+    <tr valign="top">
+      <td height="4%" valign="middle" style="height: 10px;">{var ID1}</td>
+      <td valign="middle"><div align="left">{var Lastname1}</div></td>
+      <td valign="middle"><div align="left">{var Firstname1}</div></td>
+      <td valign="middle" nowrap="nowrap"><div align="center">{var Gender1} </div></td>
+      <td valign="middle"><div align="left">{var DOB1}</div></td>
+      <td valign="middle" nowrap="nowrap"> <div align="left">{var DOB1} <span class="style2"> </span> </div></td>
+      <td valign="middle"><div align="left">{var Orgfaclty1} </div></td>
+      <td valign="middle"> <div align="left">{var PatientT1} </div></td>
+      <td valign="middle"> <div align="left">{var HeathStatus1} </div></td>
+      <td><div align="left"><span style="width:90px; margin: 2px;  word-wrap:break-word; display:inline-block;">{var Bedtype1}</span></div></td>
+      <td><div align="left"><span style="width: 90px; margin: 2px;  word-wrap:break-word; display:inline-block;">{var Injurytype1}</span></div></td>
+      <td><div align="left"><span style="width:90px; margin: 2px;  word-wrap:break-word; display:inline-block;">{var Notes1}</span></div></td>
+      <td valign="middle">{var Disp1} </td>
+      <td valign="middle">{var Timestamp1}</td>
+    </tr>
+    <tr valign="top">
+      <td height="4%" valign="middle" style="height: 10px;">{var ID2}</td>
+      <td valign="middle"><div align="left">{var Lastname2}</div></td>
+      <td valign="middle"><div align="left">{var Firstname2}</div></td>
+      <td valign="middle" nowrap="nowrap"><div align="center">{var Gender2} </div></td>
+      <td valign="middle"><div align="left">{var DOB2}</div></td>
+      <td valign="middle" nowrap="nowrap"><div align="left">{var DOB2} <span class="style2"> </span> </div></td>
+      <td valign="middle"><div align="left">{var Orgfaclty2} </div></td>
+      <td valign="middle"><div align="left">{var PatientT2} </div></td>
+      <td valign="middle"><div align="left">{var HeathStatus2} </div></td>
+      <td><div align="left"><span style="width:90px; margin: 2px;  word-wrap:break-word; display:inline-block;">{var Bedtype2}</span></div></td>
+      <td><div align="left"><span style="width: 90px; margin: 2px;  word-wrap:break-word; display:inline-block;">{var Injurytype2}</span></div></td>
+      <td><div align="left"><span style="width:90px; margin: 2px;  word-wrap:break-word; display:inline-block;">{var Notes2}</span></div></td>
+      <td valign="middle">{var Disp2} </td>
+      <td valign="middle">{var Timestamp2}</td>
+    </tr>
+    <tr valign="top">
+      <td height="4%" valign="middle" style="height: 10px;">{var ID3}</td>
+      <td valign="middle"><div align="left">{var Lastname3}</div></td>
+      <td valign="middle"><div align="left">{var Firstname3}</div></td>
+      <td valign="middle" nowrap="nowrap"><div align="center">{var Gender3} </div></td>
+      <td valign="middle"><div align="left">{var DOB3}</div></td>
+      <td valign="middle" nowrap="nowrap"><div align="left">{var DOB3} <span class="style2"> </span> </div></td>
+      <td valign="middle"><div align="left">{var Orgfaclty3} </div></td>
+      <td valign="middle"><div align="left">{var PatientT3} </div></td>
+      <td valign="middle"><div align="left">{var HeathStatus3} </div></td>
+      <td><div align="left"><span style="width:90px; margin: 2px;  word-wrap:break-word; display:inline-block;">{var Bedtype3}</span></div></td>
+      <td><div align="left"><span style="width: 90px; margin: 2px;  word-wrap:break-word; display:inline-block;">{var Injurytype3}</span></div></td>
+      <td><div align="left"><span style="width:90px; margin: 2px;  word-wrap:break-word; display:inline-block;">{var Notes3}</span></div></td>
+      <td valign="middle">{var Disp3} </td>
+      <td valign="middle">{var Timestamp3}</td>
+    </tr>
+    <tr valign="top">
+      <td height="4%" valign="middle" style="height: 10px;">{var ID4}</td>
+      <td valign="middle"><div align="left">{var Lastname4}</div></td>
+      <td valign="middle"><div align="left">{var Firstname4}</div></td>
+      <td valign="middle" nowrap="nowrap"><div align="center">{var Gender4} </div></td>
+      <td valign="middle"><div align="left">{var DOB4}</div></td>
+      <td valign="middle" nowrap="nowrap"><div align="left">{var DOB4} <span class="style2"> </span> </div></td>
+      <td valign="middle"><div align="left">{var Orgfaclty4} </div></td>
+      <td valign="middle"><div align="left">{var PatientT4} </div></td>
+      <td valign="middle"><div align="left">{var HeathStatus4} </div></td>
+      <td><div align="left"><span style="width:90px; margin: 2px;  word-wrap:break-word; display:inline-block;">{var Bedtype4}</span></div></td>
+      <td><div align="left"><span style="width: 90px; margin: 2px;  word-wrap:break-word; display:inline-block;">{var Injurytype4}</span></div></td>
+      <td><div align="left"><span style="width:90px; margin: 2px;  word-wrap:break-word; display:inline-block;">{var Notes4}</span></div></td>
+      <td valign="middle">{var Disp4} </td>
+      <td valign="middle">{var Timestamp4}</td>
+    </tr>
+    <tr valign="top">
+      <td height="4%" valign="middle" style="height: 10px;">{var ID5}</td>
+      <td valign="middle"><div align="left">{var Lastname5}</div></td>
+      <td valign="middle"><div align="left">{var Firstname5}</div></td>
+      <td valign="middle" nowrap="nowrap"><div align="center">{var Gender5} </div></td>
+      <td valign="middle"><div align="left">{var DOB5}</div></td>
+      <td valign="middle" nowrap="nowrap"><div align="left">{var DOB5} <span class="style2"> </span> </div></td>
+      <td valign="middle"><div align="left">{var Orgfaclty5} </div></td>
+      <td valign="middle"><div align="left">{var PatientT5} </div></td>
+      <td valign="middle"><div align="left">{var HeathStatus5} </div></td>
+      <td><div align="left"><span style="width:90px; margin: 2px;  word-wrap:break-word; display:inline-block;">{var Bedtype5}</span></div></td>
+      <td><div align="left"><span style="width: 90px; margin: 2px;  word-wrap:break-word; display:inline-block;">{var Injurytype5}</span></div></td>
+      <td><div align="left"><span style="width:90px; margin: 2px;  word-wrap:break-word; display:inline-block;">{var Notes5}</span></div></td>
+      <td valign="middle">{var Disp5} </td>
+      <td valign="middle">{var Timestamp5}</td>
+    </tr>
+    <tr valign="top">
+      <td height="4%" valign="middle" style="height: 10px;">{var ID6}</td>
+      <td valign="middle"><div align="left">{var Lastname6}</div></td>
+      <td valign="middle"><div align="left">{var Firstname6}</div></td>
+      <td valign="middle" nowrap="nowrap"><div align="center">{var Gender6} </div></td>
+      <td valign="middle"><div align="left">{var DOB6}</div></td>
+      <td valign="middle" nowrap="nowrap"><div align="left">{var DOB6} <span class="style2"> </span> </div></td>
+      <td valign="middle"><div align="left">{var Orgfaclty6} </div></td>
+      <td valign="middle"><div align="left">{var PatientT6} </div></td>
+      <td valign="middle"><div align="left">{var HeathStatus6} </div></td>
+      <td><div align="left"><span style="width:90px; margin: 2px;  word-wrap:break-word; display:inline-block;">{var Bedtype6}</span></div></td>
+      <td><div align="left"><span style="width: 90px; margin: 2px;  word-wrap:break-word; display:inline-block;">{var Injurytype6}</span></div></td>
+      <td><div align="left"><span style="width:90px; margin: 2px;  word-wrap:break-word; display:inline-block;">{var Notes6}</span></div></td>
+      <td valign="middle">{var Disp6} </td>
+      <td valign="middle">{var Timestamp6}</td>
+    </tr>
+    <tr valign="top">
+      <td height="4%" valign="middle" style="height: 10px;">{var ID7}</td>
+      <td valign="middle"><div align="left">{var Lastname7}</div></td>
+      <td valign="middle"><div align="left">{var Firstname7}</div></td>
+      <td valign="middle" nowrap="nowrap"><div align="center">{var Gender7} </div></td>
+      <td valign="middle"><div align="left">{var DOB7}</div></td>
+      <td valign="middle" nowrap="nowrap"><div align="left">{var DOB7} <span class="style2"> </span> </div></td>
+      <td valign="middle"><div align="left">{var Orgfaclty7} </div></td>
+      <td valign="middle"><div align="left">{var PatientT7} </div></td>
+      <td valign="middle"><div align="left">{var HeathStatus7} </div></td>
+      <td><div align="left"><span style="width:90px; margin: 2px;  word-wrap:break-word; display:inline-block;">{var Bedtype7}</span></div></td>
+      <td><div align="left"><span style="width: 90px; margin: 2px;  word-wrap:break-word; display:inline-block;">{var Injurytype7}</span></div></td>
+      <td><div align="left"><span style="width:90px; margin: 2px;  word-wrap:break-word; display:inline-block;">{var Notes7}</span></div></td>
+      <td valign="middle">{var Disp7} </td>
+      <td valign="middle">{var Timestamp7}</td>
+    </tr>
+    <tr valign="top">
+      <td height="4%" valign="middle" style="height: 10px;">{var ID8}</td>
+      <td valign="middle"><div align="left">{var Lastname8}</div></td>
+      <td valign="middle"><div align="left">{var Firstname8}</div></td>
+      <td valign="middle" nowrap="nowrap"><div align="center">{var Gender8} </div></td>
+      <td valign="middle"><div align="left">{var DOB8}</div></td>
+      <td valign="middle" nowrap="nowrap"><div align="left">{var DOB8} <span class="style2"> </span> </div></td>
+      <td valign="middle"><div align="left">{var Orgfaclty8} </div></td>
+      <td valign="middle"><div align="left">{var PatientT8} </div></td>
+      <td valign="middle"><div align="left">{var HeathStatus8} </div></td>
+      <td><div align="left"><span style="width:90px; margin: 2px;  word-wrap:break-word; display:inline-block;">{var Bedtype8}</span></div></td>
+      <td><div align="left"><span style="width: 90px; margin: 2px;  word-wrap:break-word; display:inline-block;">{var Injurytype8}</span></div></td>
+      <td><div align="left"><span style="width:90px; margin: 2px;  word-wrap:break-word; display:inline-block;">{var Notes8}</span></div></td>
+      <td valign="middle">{var Disp8} </td>
+      <td valign="middle">{var Timestamp8}</td>
+    </tr>
+    <tr valign="top">
+      <td height="4%" valign="middle" style="height: 10px;">{var ID9}</td>
+      <td valign="middle"><div align="left">{var Lastname9}</div></td>
+      <td valign="middle"><div align="left">{var Firstname9}</div></td>
+      <td valign="middle" nowrap="nowrap"><div align="center">{var Gender9} </div></td>
+      <td valign="middle"><div align="left">{var DOB9}</div></td>
+      <td valign="middle" nowrap="nowrap"><div align="left">{var DOB9} <span class="style2"> </span> </div></td>
+      <td valign="middle"><div align="left">{var Orgfaclty9} </div></td>
+      <td valign="middle"><div align="left">{var PatientT9} </div></td>
+      <td valign="middle"><div align="left">{var HeathStatus9} </div></td>
+      <td><div align="left"><span style="width:90px; margin: 2px;  word-wrap:break-word; display:inline-block;">{var Bedtype9}</span></div></td>
+      <td><div align="left"><span style="width: 90px; margin: 2px;  word-wrap:break-word; display:inline-block;">{var Injurytype9}</span></div></td>
+      <td><div align="left"><span style="width:90px; margin: 2px;  word-wrap:break-word; display:inline-block;">{var Notes9}</span></div></td>
+      <td valign="middle">{var Disp9} </td>
+      <td valign="middle">{var Timestamp9}</td>
+    </tr>
+    <tr valign="top">
+      <td height="4%" valign="middle" style="height: 10px;">{var ID10}</td>
+      <td valign="middle"><div align="left">{var Lastname10}</div></td>
+      <td valign="middle"><div align="left">{var Firstname10}</div></td>
+      <td valign="middle" nowrap="nowrap"><div align="center">{var Gender10} </div></td>
+      <td valign="middle"><div align="left">{var DOB10}</div></td>
+      <td valign="middle" nowrap="nowrap"><div align="left">{var DOB10} <span class="style2"> </span> </div></td>
+      <td valign="middle"><div align="left">{var Orgfaclty10} </div></td>
+      <td valign="middle"><div align="left">{var PatientT10} </div></td>
+      <td valign="middle"><div align="left">{var HeathStatus10} </div></td>
+      <td><div align="left"><span style="width:90px; margin: 2px;  word-wrap:break-word; display:inline-block;">{var Bedtype10}</span></div></td>
+      <td><div align="left"><span style="width: 90px; margin: 2px;  word-wrap:break-word; display:inline-block;">{var Injurytype10}</span></div></td>
+      <td><div align="left"><span style="width:90px; margin: 2px;  word-wrap:break-word; display:inline-block;">{var Notes10}</span></div></td>
+      <td valign="middle">{var Disp10} </td>
+      <td valign="middle">{var Timestamp10}</td>
+    </tr>
+    <tr valign="top">
+      <td height="4%" valign="middle" style="height: 10px;">{var ID11}</td>
+      <td valign="middle"><div align="left">{var Lastname11}</div></td>
+      <td valign="middle"><div align="left">{var Firstname11}</div></td>
+      <td valign="middle" nowrap="nowrap"><div align="center">{var Gender11} </div></td>
+      <td valign="middle"><div align="left">{var DOB11}</div></td>
+      <td valign="middle" nowrap="nowrap"><div align="left">{var DOB11} <span class="style2"> </span> </div></td>
+      <td valign="middle"><div align="left">{var Orgfaclty11} </div></td>
+      <td valign="middle"><div align="left">{var PatientT11} </div></td>
+      <td valign="middle"><div align="left">{var HeathStatus11} </div></td>
+      <td><div align="left"><span style="width:90px; margin: 2px;  word-wrap:break-word; display:inline-block;">{var Bedtype11}</span></div></td>
+      <td><div align="left"><span style="width: 90px; margin: 2px;  word-wrap:break-word; display:inline-block;">{var Injurytype11}</span></div></td>
+      <td><div align="left"><span style="width:90px; margin: 2px;  word-wrap:break-word; display:inline-block;">{var Notes11}</span></div></td>
+      <td valign="middle">{var Disp11} </td>
+      <td valign="middle">{var Timestamp11}</td>
+    </tr>
+    <tr valign="top">
+      <td height="4%" valign="middle" style="height: 10px;">{var ID12}</td>
+      <td valign="middle"><div align="left">{var Lastname12}</div></td>
+      <td valign="middle"><div align="left">{var Firstname12}</div></td>
+      <td valign="middle" nowrap="nowrap"><div align="center">{var Gender12} </div></td>
+      <td valign="middle"><div align="left">{var DOB12}</div></td>
+      <td valign="middle" nowrap="nowrap"><div align="left">{var DOB12} <span class="style2"> </span> </div></td>
+      <td valign="middle"><div align="left">{var Orgfaclty12} </div></td>
+      <td valign="middle"><div align="left">{var PatientT12} </div></td>
+      <td valign="middle"><div align="left">{var HeathStatus12} </div></td>
+      <td><div align="left"><span style="width:90px; margin: 2px;  word-wrap:break-word; display:inline-block;">{var Bedtype12}</span></div></td>
+      <td><div align="left"><span style="width: 90px; margin: 2px;  word-wrap:break-word; display:inline-block;">{var Injurytype12}</span></div></td>
+      <td><div align="left"><span style="width:90px; margin: 2px;  word-wrap:break-word; display:inline-block;">{var Notes12}</span></div></td>
+      <td valign="middle">{var Disp12} </td>
+      <td valign="middle">{var Timestamp12}</td>
+    </tr>
+    <tr valign="top">
+      <td height="4%" valign="middle" style="height: 10px;">{var ID13}</td>
+      <td valign="middle"><div align="left">{var Lastname13}</div></td>
+      <td valign="middle"><div align="left">{var Firstname13}</div></td>
+      <td valign="middle" nowrap="nowrap"><div align="center">{var Gender13} </div></td>
+      <td valign="middle"><div align="left">{var DOB13}</div></td>
+      <td valign="middle" nowrap="nowrap"><div align="left">{var DOB13} <span class="style2"> </span> </div></td>
+      <td valign="middle"><div align="left">{var Orgfaclty13} </div></td>
+      <td valign="middle"><div align="left">{var PatientT13} </div></td>
+      <td valign="middle"><div align="left">{var HeathStatus13} </div></td>
+      <td><div align="left"><span style="width:90px; margin: 2px;  word-wrap:break-word; display:inline-block;">{var Bedtype13}</span></div></td>
+      <td><div align="left"><span style="width: 90px; margin: 2px;  word-wrap:break-word; display:inline-block;">{var Injurytype13}</span></div></td>
+      <td><div align="left"><span style="width:90px; margin: 2px;  word-wrap:break-word; display:inline-block;">{var Notes13}</span></div></td>
+      <td valign="middle">{var Disp13} </td>
+      <td valign="middle">{var Timestamp13}</td>
+    </tr>
+    <tr valign="top">
+      <td height="4%" valign="middle" style="height: 10px;">{var ID14}</td>
+      <td valign="middle"><div align="left">{var Lastname14}</div></td>
+      <td valign="middle"><div align="left">{var Firstname14}</div></td>
+      <td valign="middle" nowrap="nowrap"><div align="center">{var Gender14} </div></td>
+      <td valign="middle"><div align="left">{var DOB14}</div></td>
+      <td valign="middle" nowrap="nowrap"><div align="left">{var DOB14} <span class="style2"> </span> </div></td>
+      <td valign="middle"><div align="left">{var Orgfaclty14} </div></td>
+      <td valign="middle"><div align="left">{var PatientT14} </div></td>
+      <td valign="middle"><div align="left">{var HeathStatus14} </div></td>
+      <td><div align="left"><span style="width:90px; margin: 2px;  word-wrap:break-word; display:inline-block;">{var Bedtype14}</span></div></td>
+      <td><div align="left"><span style="width: 90px; margin: 2px;  word-wrap:break-word; display:inline-block;">{var Injurytype14}</span></div></td>
+      <td><div align="left"><span style="width:90px; margin: 2px;  word-wrap:break-word; display:inline-block;">{var Notes14}</span></div></td>
+      <td valign="middle">{var Disp14} </td>
+      <td valign="middle">{var Timestamp14}</td>
+    </tr>
+    <tr valign="top">
+      <td height="4%" valign="middle" style="height: 10px;">{var ID15}</td>
+      <td valign="middle"><div align="left">{var Lastname15}</div></td>
+      <td valign="middle"><div align="left">{var Firstname15}</div></td>
+      <td valign="middle" nowrap="nowrap"><div align="center">{var Gender15} </div></td>
+      <td valign="middle"><div align="left">{var DOB15}</div></td>
+      <td valign="middle" nowrap="nowrap"><div align="left">{var DOB15} <span class="style2"> </span> </div></td>
+      <td valign="middle"><div align="left">{var Orgfaclty15} </div></td>
+      <td valign="middle"><div align="left">{var PatientT15} </div></td>
+      <td valign="middle"><div align="left">{var HeathStatus15} </div></td>
+      <td><div align="left"><span style="width:90px; margin: 2px;  word-wrap:break-word; display:inline-block;">{var Bedtype15}</span></div></td>
+      <td><div align="left"><span style="width: 90px; margin: 2px;  word-wrap:break-word; display:inline-block;">{var Injurytype15}</span></div></td>
+      <td><div align="left"><span style="width:90px; margin: 2px;  word-wrap:break-word; display:inline-block;">{var Notes15}</span></div></td>
+      <td valign="middle">{var Disp15} </td>
+      <td valign="middle">{var Timestamp15}</td>
+    </tr>
+    <tr valign="top">
+      <td height="4%" valign="middle" style="height: 10px;">{var ID16}</td>
+      <td valign="middle"><div align="left">{var Lastname16}</div></td>
+      <td valign="middle"><div align="left">{var Firstname16}</div></td>
+      <td valign="middle" nowrap="nowrap"><div align="center">{var Gender16} </div></td>
+      <td valign="middle"><div align="left">{var DOB16}</div></td>
+      <td valign="middle" nowrap="nowrap"><div align="left">{var DOB16} <span class="style2"> </span> </div></td>
+      <td valign="middle"><div align="left">{var Orgfaclty16} </div></td>
+      <td valign="middle"><div align="left">{var PatientT16} </div></td>
+      <td valign="middle"><div align="left">{var HeathStatus16} </div></td>
+      <td><div align="left"><span style="width:90px; margin: 2px;  word-wrap:break-word; display:inline-block;">{var Bedtype16}</span></div></td>
+      <td><div align="left"><span style="width: 90px; margin: 2px;  word-wrap:break-word; display:inline-block;">{var Injurytype16}</span></div></td>
+      <td><div align="left"><span style="width:90px; margin: 2px;  word-wrap:break-word; display:inline-block;">{var Notes16}</span></div></td>
+      <td valign="middle">{var Disp16} </td>
+      <td valign="middle">{var Timestamp16}</td>
+    </tr>
+    <tr valign="top">
+      <td height="4%" valign="middle" style="height: 10px;">{var ID17}</td>
+      <td valign="middle"><div align="left">{var Lastname17}</div></td>
+      <td valign="middle"><div align="left">{var Firstname17}</div></td>
+      <td valign="middle" nowrap="nowrap"><div align="center">{var Gender17} </div></td>
+      <td valign="middle"><div align="left">{var DOB17}</div></td>
+      <td valign="middle" nowrap="nowrap"><div align="left">{var DOB17} <span class="style2"> </span> </div></td>
+      <td valign="middle"><div align="left">{var Orgfaclty17} </div></td>
+      <td valign="middle"><div align="left">{var PatientT17} </div></td>
+      <td valign="middle"><div align="left">{var HeathStatus17} </div></td>
+      <td><div align="left"><span style="width:90px; margin: 2px;  word-wrap:break-word; display:inline-block;">{var Bedtype17}</span></div></td>
+      <td><div align="left"><span style="width: 90px; margin: 2px;  word-wrap:break-word; display:inline-block;">{var Injurytype17}</span></div></td>
+      <td><div align="left"><span style="width:90px; margin: 2px;  word-wrap:break-word; display:inline-block;">{var Notes17}</span></div></td>
+      <td valign="middle">{var Disp17} </td>
+      <td valign="middle">{var Timestamp17}</td>
+    </tr>
+    <tr valign="top">
+      <td height="4%" valign="middle" style="height: 10px;">{var ID18}</td>
+      <td valign="middle"><div align="left">{var Lastname18}</div></td>
+      <td valign="middle"><div align="left">{var Firstname18}</div></td>
+      <td valign="middle" nowrap="nowrap"><div align="center">{var Gender18} </div></td>
+      <td valign="middle"><div align="left">{var DOB18}</div></td>
+      <td valign="middle" nowrap="nowrap"><div align="left">{var DOB18} <span class="style2"> </span> </div></td>
+      <td valign="middle"><div align="left">{var Orgfaclty18} </div></td>
+      <td valign="middle"><div align="left">{var PatientT18} </div></td>
+      <td valign="middle"><div align="left">{var HeathStatus18} </div></td>
+      <td><div align="left"><span style="width:90px; margin: 2px;  word-wrap:break-word; display:inline-block;">{var Bedtype18}</span></div></td>
+      <td><div align="left"><span style="width: 90px; margin: 2px;  word-wrap:break-word; display:inline-block;">{var Injurytype18}</span></div></td>
+      <td><div align="left"><span style="width:90px; margin: 2px;  word-wrap:break-word; display:inline-block;">{var Notes18}</span></div></td>
+      <td valign="middle">{var Disp18} </td>
+      <td valign="middle">{var Timestamp18}</td>
+    </tr>
+    <tr valign="top">
+      <td height="4%" valign="middle" style="height: 10px;">{var ID19}</td>
+      <td valign="middle"><div align="left">{var Lastname19}</div></td>
+      <td valign="middle"><div align="left">{var Firstname19}</div></td>
+      <td valign="middle" nowrap="nowrap"><div align="center">{var Gender19} </div></td>
+      <td valign="middle"><div align="left">{var DOB19}</div></td>
+      <td valign="middle" nowrap="nowrap"><div align="left">{var DOB19} <span class="style2"> </span> </div></td>
+      <td valign="middle"><div align="left">{var Orgfaclty19} </div></td>
+      <td valign="middle"><div align="left">{var PatientT19} </div></td>
+      <td valign="middle"><div align="left">{var HeathStatus19} </div></td>
+      <td><div align="left"><span style="width:90px; margin: 2px;  word-wrap:break-word; display:inline-block;">{var Bedtype19}</span></div></td>
+      <td><div align="left"><span style="width: 90px; margin: 2px;  word-wrap:break-word; display:inline-block;">{var Injurytype19}</span></div></td>
+      <td><div align="left"><span style="width:90px; margin: 2px;  word-wrap:break-word; display:inline-block;">{var Notes19}</span></div></td>
+      <td valign="middle">{var Disp19} </td>
+      <td valign="middle">{var Timestamp19}</td>
+    </tr>
+    <tr valign="top">
+      <td height="4%" valign="middle" style="height: 10px;">{var ID20}</td>
+      <td valign="middle"><div align="left">{var Lastname20}</div></td>
+      <td valign="middle"><div align="left">{var Firstname20}</div></td>
+      <td valign="middle" nowrap="nowrap"><div align="center">{var Gender20} </div></td>
+      <td valign="middle"><div align="left">{var DOB20}</div></td>
+      <td valign="middle" nowrap="nowrap"><div align="left">{var DOB20} <span class="style2"> </span> </div></td>
+      <td valign="middle"><div align="left">{var Orgfaclty20} </div></td>
+      <td valign="middle"><div align="left">{var PatientT20} </div></td>
+      <td valign="middle"><div align="left">{var HeathStatus20} </div></td>
+      <td><div align="left"><span style="width:90px; margin: 2px;  word-wrap:break-word; display:inline-block;">{var Bedtype20}</span></div></td>
+      <td><div align="left"><span style="width: 90px; margin: 2px;  word-wrap:break-word; display:inline-block;">{var Injurytype20}</span></div></td>
+      <td><div align="left"><span style="width:90px; margin: 2px;  word-wrap:break-word; display:inline-block;">{var Notes20}</span></div></td>
+      <td valign="middle">{var Disp20} </td>
+      <td valign="middle">{var Timestamp20}</td>
+    </tr>
+  </tbody>
+</table></td>
+</tr>
+<tr>
+<td style="height: 30px; text-align: center; vertical-align: middle;" colspan="3"><div align="left"><b><span style="font-weight: normal;"><br />
+&nbsp;&nbsp; 4. Submitted By</span></b><big>:</big>
+&nbsp; {var PreparedName}<b>&nbsp;&nbsp;&nbsp; &nbsp; &nbsp;&nbsp; &nbsp; &nbsp;</b>Date: 
+  {var Date_Time} 
+&nbsp; &nbsp; &nbsp;&nbsp;Time:<b>&nbsp;</b>
+  {var Time}
+  <b>
+&nbsp; <span style="color: rgb(153, 0, 0);">&nbsp;&nbsp; &nbsp; &nbsp;</span></b>Location:<span class="style11"> </span>{var Facility} &nbsp;&nbsp;
+  <b><br />
+&nbsp; &nbsp;&nbsp;</b>
+</div></td>
+</tr>
+<tr>
+  <td colspan="3"> &nbsp; &nbsp;
+&nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp;
+&nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp;
+&nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp;
+&nbsp; &nbsp; &nbsp;&nbsp; &nbsp;
+&nbsp; &nbsp; &nbsp;
+<div align="right"><span style="font-style: italic;">&nbsp;<span style="font-weight: bold;">&nbsp; &nbsp; &nbsp; &nbsp;&nbsp;</span>&nbsp; &nbsp;Vers 0.6&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 
+      <input name="testCall" type="hidden" id="testCall" value="{MsgSender}" size="14" maxlength="13" />
+      <span style="font-style: italic;">
+      <input name="Templateversion" type="hidden"
+
+                                    id="Templateversion" value="JPATS 0.6" />
+      </span></span></div></td></tr>
+</tbody>
+</table>
+<br />
+</td>
+</tr>
+</tbody>
+</table>
+</form>
+</body></html>

@@ -1,0 +1,88 @@
+Form: CAL EMMA RESOURCE_REQUEST_FORM_Initial.html,CAL EMMA RESOURCE_REQUEST_FORM_Viewer.html
+
+
+To: 
+Subject:CAL EMMA RESOURCE REQUEST: 
+Msg:
+EMMA FORM 1A  EMMA RESOURCE REQUEST 
+
+EMMA #: <var EMMANo>
+  (Generated in WebEOC/CalEOC by Requesting Jurisdiction)
+Incident Name:<var Incidentname>
+Request Date/Time: <var RDateTime>
+
+REQUESTING JURISDICTION INFORMATION
+Requesting Jurisdiction Name:  <var ReqJuridiciton>  
+24 Hour Phone Number: <var phone24>
+EMMA Coordinator / PRIMARY Point of Contact Name: <var coordinatePOC>
+Phone:  <var coordPhone>
+Alternate Phone:  <var coordaltphone>	FAX:  <var coordFax>
+E-Mail: <var PocEamil>
+Alternate Point of Contact: <var altPOC>
+Position / Title: <var AltTile>	Phone: <var AltPOCphone>
+Alternate Phone: <var altPOCAltPhone>
+FAX: <var altPOCfax>	Email : <var altPOCEmail>	 
+How is the EMMA Resource being ordered?       <var HowOrderdval>
+If Post-Event MOU/MOA, what costs will be reimbursed?
+
+(If different than reasonable costs outlined in Section 4.2 of EMMA Plan)
+
+<var rembCost1a>      <var rembCost2a>         <var rembCost3>      <var rembCost4a>
+Other:<var RemCostOther>
+
+Request Authorized By: (The following signature is an authorized official of the Requesting Jurisdiction. By signing, the Requesting Jurisdiction understands that this form does not constitute a contract with potential Providing Jurisdictions. A formal MOU must be established pre/post event with those jurisdiction requesting reimbursement for their services.)
+
+Print Name:Signature Date <var pNAME>        <var pNAME2>      <var pDATE>
+
+RESOURCE REQUESTED:
+(One Specific EOC Function or Position per request form.)
+Position Requested (Functional Title): <var PosTitle>
+
+Quantity: <var quantity>
+Start Date/Time: <var Stime>	
+End Date/Time: <var RDateTime3>
+
+Shift: <var shiftVal>
+Security Clearance?: <var securityval>
+Tasks to be performed:
+<var Tasks>
+  Attach Job Description   <var JObDecAttch>
+<var jobDES>
+
+Any special skills / certifications / licenses required?  <var SpecialSkills>	
+If yes, please explain:
+<var specExplain>
+
+EMMA resource needs to bring the following equipment (Laptop, vehicle, PPE, etc.):
+<var fldII4>
+
+Must be Self-Contained: <var shiftVal2>
+Requesting Jurisdiction will provide the following:
+<var provide1a>      <var provide2a>         <var provide3a>      <var provide4a>     Other: <var otherProvided>
+
+CHECK-IN LOCATION INFORMATION:
+Facility Name: <var facilityName>
+Address:<var facilityaddress>
+24 Hour Phone Number: <var facility24hrphone>
+
+Directions:                  Attach Map <var directionMapAttached>
+<var FaciltDirections>
+
+Point of Contact Name: <var facilPOC>
+Cell Phone: <var facilCEll>	
+Alt Phone: <var faciltAltphone>	
+Email: <var faciltemail>
+
+EXPECTED WORKING CONDITIONS
+Special health or environmental concerns in the assignment area:
+<var concernsEnmviro>
+
+Hardship living / housing conditions <var HarshipCondistions>
+Current Situation (Or attach most current Situation Report): Sit Rep attached: <var SitReapattacha>
+<var currentSit>
+
+------------------------
+Express Sending Station: <MsgSender>
+Senders Express Version: <ProgramVersion>
+Senders Template Version: <var Templateversion>
+

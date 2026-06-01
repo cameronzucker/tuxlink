@@ -1,0 +1,36 @@
+Form: HI_RFA_initial.html,HI_RFA_Viewer.html
+
+To: 
+Subject:Hawaii RFA-<MsgSender>-<var Mdate> <var Mtime>
+SeqInc:
+Readonly:True
+Msg: 
+Request for Assistance  <var eventType>
+
+ 1. Incident Name: <var inc_name>
+ 2. To: <var To_Name>
+ 3. From: <var fm_name>
+ 4. Date: <var Mdate>
+ 5. Time: <var Mtime>
+ 6. Priority: <var Priority>
+ 7. Date/time Needed: <var Need>
+ 8. POC: <var fm_poc>
+ 9. Date/time Release: <var Release>
+10. POC email: <var fm_pocEmail>
+11. POC ph: <var fm_pocPh>
+12. County: <var to_county>
+13. Requester's Org: <var fm_org>
+14. Loc: <var mapLat>, <var mapLon>
+15. Description: <var Message>
+16. Remarks: <var Remarks>
+17. Delivery addr: <var del_addr>
+18. Site POC: <var del_poc>
+19. Site Ph: <var del_ph>
+20. Delivery instructions: <var del_ins>
+21. Approved by: <var Approved_Name> - <var Approved_PosTitle>
+
+<var eventType>
+------------------------------------
+Express Sending Station: <MsgSender>
+Senders Express Version: <ProgramVersion>
+Senders Template Version: <var TemplateVersion>

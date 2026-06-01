@@ -1,0 +1,31 @@
+Form: ICS208_Safety Message_Plan _Initial.html,ICS208_Safety Message_Plan _Viewer.html
+
+To: 
+Subject: ICS 208 SAFETY MESSAGE-PLAN-<var IncidentName>, <var DateTime> 
+Readonly:True
+Msg: ICS 208 SAFETY MESSAGE-PLAN
+
+1. Incident Name:  
+<var IncidentName>
+
+2. Operational Period:	
+Date From:	<var DateFrom>	Date To:	<var DateTo>
+Time From:	<var TimeFrom>	Time To:	<var TimeTo>
+
+3. Safety Message/Expanded Safety Message, Safety Plan, Site Safety Plan:
+<var Objectives>
+
+4. Safety Plan Required: <var PlanNeeded>
+   Safety Plan(s) Located at: <var PlansAt>
+
+5. Prepared by:	Name	<var Prepedby>	Position/Title:	<var Position>	Signature:	<var Prepsig> 
+Date/Time:	<var DateTime> 
+
+------------------------
+Express Sending Station: <MsgSender>
+Senders Express Version: <ProgramVersion>
+Senders Template Version: <var Templateversion>
+[No changes or editing of this message are allowed]
+
+
+

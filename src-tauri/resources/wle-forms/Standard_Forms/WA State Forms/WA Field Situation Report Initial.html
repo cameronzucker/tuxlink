@@ -1,0 +1,2594 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+
+<html xmlns="http://www.w3.org/1999/xhtml"><head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8" /><title>Field Situation Report </title>
+
+<style type="text/css">
+.pop-up {
+	position:absolute;
+	top:0;
+	left:-500em;
+	visibility: visible;
+}
+.pop-up:target {position:static; left:0;}
+/* The pop-up itself */
+.popBox {
+	background:#ffffff;
+	position:absolute;
+	left:10%;
+	right:10%;
+	top:10%;
+	bottom:10%;
+	z-index:10;
+	border:1px solid #3a3a3a;
+/* CSS3 where available: rounded corners, drop-shadow, and fade in. */
+border-radius:.25rem;
+box-shadow:0 .5rem .5rem rgba(0,0,0,.5);
+	opacity:0;
+	transition: opacity 0.8s ease-out;
+	visibility: visible;
+}
+:target .popBox {position:fixed; opacity:1;}
+/* Light box properties */
+.lightbox {
+display:none;
+text-indent:-200em;
+background-color:rgba(0,0,0,.4);
+width:100%;
+height:100%;
+position:fixed;
+top:0;
+left:0;
+bottom:0;
+right:0;
+z-index:5;
+}
+:target .lightbox {display:block;}
+/* The pop-ups close link, moved via CSS to the top right of the pop-up */
+.close:link,
+.close:visited {
+	position: absolute;
+	top: -0.75em;
+	right: -0.75em;
+	display: block;
+	width: 2em;
+	height: 2em;
+	line-height: 1.8;
+	padding: 0;
+	text-align: center;
+	text-decoration: none;
+	background-color: #000;
+	border: 2px solid #fff;
+	color: #fff;
+	border-radius: 50%;
+box-shadow: 0 0 .5rem .5rem rba(0,0,0,.5);
+	visibility: visible;
+}
+.close:before {content:"X";}
+.close:hover,
+.close:active,
+.close:focus {
+box-shadow: 0 0 .5rem .5rem rba(255,0,0,.5);
+background-color: #c00;
+color: #fff;
+}
+.close span {
+text-indent: -200em;
+display: block;
+}
+/* The pop-up content div will scroll if it has too much content */
+.popScroll {
+	position:absolute;
+	top: 1rem;
+	left: 1rem;
+	right: 1rem;
+	bottom: 1rem;
+	overflow-y: auto;
+*overflow-y: scroll;
+	padding-right: 0.5em;
+	visibility: visible;
+}
+.popScroll h2 {margin-top:0}
+.style37 {color: black; font-size: 14px; }
+
+body, td, th {
+
+
+
+font-family: Arial,Helvetica,sans-serif;
+
+
+
+font-size: 12px;
+
+
+
+font-weight: inherit;
+
+
+
+}
+
+
+
+.zentriert {
+
+
+
+font-size: 12px;
+
+
+
+font-weight: inherit;
+
+
+
+}
+
+
+
+input, select {
+
+
+
+padding: 1px;
+
+
+
+-moz-border-radius-topleft: 2px;
+
+
+
+-moz-border-radius-topright: 2px;
+
+
+
+-moz-border-radius-bottomright: 2px;
+
+
+
+-moz-border-radius-bottomleft: 2px;
+
+
+
+font-family: Arial,Helvetica,sans-serif;
+
+
+
+font-size: 12px;
+
+
+
+font-weight: inherit;
+
+
+
+}
+
+
+
+textarea {
+
+
+
+padding: 1px;
+
+
+
+-moz-border-radius-topleft: 2px;
+
+
+
+-moz-border-radius-topright: 2px;
+
+
+
+-moz-border-radius-bottomright: 2px;
+
+
+
+-moz-border-radius-bottomleft: 2px;
+
+
+
+font-family: Arial,Helvetica,sans-serif;
+
+
+
+font-size: 12px;
+
+
+
+font-weight: inherit;
+
+
+
+}
+
+
+
+.rechtsbuendig {
+
+
+
+font-size: 12px;
+
+
+
+font-weight: inherit;
+
+
+
+}
+
+
+
+ input[type=button] {
+
+
+
+  border: 1.75px solid #0f88f2;;
+
+   border-radius:.25rem;
+
+  
+
+  font-size: 14px;
+
+  padding: 2px 2px;
+
+ background-color: white;
+
+  text-decoration: none;
+
+  margin: 2px 2px;
+
+  cursor: pointer;
+
+}
+
+input[type=submit] {
+
+ border: 1.75px solid green;
+
+  border-radius:.25rem;
+
+  background-color: white;
+
+ 
+
+  padding: 2px 2px;
+
+  font-size: 14px;
+
+   cursor: pointer;
+
+}
+
+input[type=reset] {
+
+ border: 1.75px solid red;
+
+ border-radius:.25rem;
+
+  background-color: white;
+
+ 
+
+  padding: 2px 2px;
+
+  font-size: 14px;
+
+   cursor: pointer;
+
+}
+
+input[type=regular] {
+
+ border: 1.75px solid #999999;
+
+  border-radius:.25rem;
+
+width:40px;
+
+  background-color: white;
+
+ 
+
+  padding: 2px 2px;
+
+  font-size: 12px;
+
+   cursor: pointer;
+
+}
+
+
+
+.style2 {font-size: 12px}
+
+.style3 {font-size: 14px}
+
+.SubmitBtn1 {font-size: 12px;
+
+font-family: Arial,Helvetica,sans-serif;
+
+font-weight: inherit;
+
+}
+
+.style37 {font-size: 14px}
+
+.style24 {color: #FF0000}
+
+.style39 {font-size: 14px; font-family: Arial, Helvetica, sans-serif; }
+.style12 {	color: #FF0000;
+	font-style: italic;
+}
+.style41 {color: black}
+.style43 {font-size: 16px; color: black; }
+.style45 {
+	color: #000000;
+	font-weight: bold;
+	font-size: 14px;
+}
+.style8 {font-size: 10px}
+.style12B {	font-size: 16px; color: blue;
+}
+.style50 {    color: #333333;
+    font-size: 14px;
+}
+.formtext {    font-family: Arial, Helvetica, sans-serif;
+    font-size: 11pt;
+    font-weight: normal;
+    margin: 10px;
+}
+</style>
+
+
+
+<script type="text/javascript">
+	function SetupTitle() {
+var myprompt = '';
+var myttemp = document.getElementById('Title').value;
+var RightNow = prompt("Enter Agency/Group Title",   myprompt);
+if (RightNow.length == 0) { RightNow = myttemp}
+document.getElementById('Title').value = RightNow;
+document.getElementById('SubjectText').innerHTML = RightNow;
+store();
+}
+
+
+function RestoreTitle() {
+
+var RightNow = document.getElementById('Title').value;
+
+//document.getElementById('Title').value = RightNow;
+document.getElementById('SubjectText').innerHTML = RightNow;
+//document.getElementById('loadbtn').value = 'Load '+RightNow+ '  data' ;
+//document.getElementById('savebtn').value = 'Save '+RightNow+ '  data' ;
+store();
+}
+
+  function store(){
+      return;
+
+ 	var formatted= document.getElementById("gpsLat");
+
+     localStorage.setItem("SharesLat", formatted.value);
+
+	 var formatted= document.getElementById("gpsLon");
+
+     localStorage.setItem("SharesLon", formatted.value);
+
+		 var formatted= document.getElementById("City");
+
+     localStorage.setItem("SharesCity", formatted.value);
+
+ var formatted= document.getElementById("MGRS");
+
+     localStorage.setItem("Sharesmgrs", formatted.value);
+	 var formatted= document.getElementById("Title");
+
+     localStorage.setItem("Title", formatted.value);
+
+
+    }
+
+
+
+	function getit() {
+        
+        return;
+
+
+	var storedValue = localStorage.getItem("SharesLat");
+
+	//document.getElementById('gpsLat').value = storedValue;
+
+var storedValue = localStorage.getItem("SharesLon");
+
+	//document.getElementById('gpsLon').value = storedValue;
+
+var storedValue = localStorage.getItem("SharesCity");
+
+	//document.getElementById('City').value = storedValue;
+
+var storedValue = localStorage.getItem("Sharesmgrs");
+ 
+	//document.getElementById('MGRS').value = storedValue;
+var storedValue = localStorage.getItem("Title");
+
+	document.getElementById('Title').value = storedValue;
+	RestoreTitle();
+
+	}
+
+//Add the stored GPS
+
+
+
+
+
+function AutoGrowTextArea(textField)
+
+
+
+{
+
+
+
+if (textField.clientHeight < textField.scrollHeight)
+
+
+
+{
+
+
+
+textField.style.height = textField.scrollHeight + "px";
+
+
+
+if (textField.clientHeight < textField.scrollHeight)
+
+
+
+{
+
+
+
+textField.style.height = (textField.scrollHeight * 2 - textField.clientHeight) + "px";
+
+
+
+}
+
+
+
+}
+
+
+
+}
+
+
+
+function Countthelines(f) { var text1 = f
+
+
+
+var text2 = text1.replace(/\s+$/,"");
+
+
+
+var split2 = text2.split("\n"); var mytotal = split2.length * 17;
+
+
+
+if (mytotal < 150) {
+
+
+
+mytotal = 150;
+
+
+
+}
+
+
+
+var tstr = mytotal.toString();
+
+
+
+return tstr;
+
+
+
+}
+
+
+
+function newfix(f){
+
+
+
+var ThisText = document.getElementById(f).value;
+
+
+
+var makeit = Countthelines(ThisText);
+
+
+
+document.getElementById(f).style.height = makeit+"px"; }
+
+
+
+function Fixarea() {
+
+
+
+newfix("Comments");
+
+
+
+// newfix("reply");
+
+
+
+AutoGrowTextArea(document.getElementById("Comments"));
+
+
+
+// AutoGrowTextArea(document.getElementById("reply"));
+
+
+
+}
+
+
+
+function RWS(text1){
+
+
+
+var text2 = text1.replace(/\s+$/,"");
+
+
+
+return text2.trim();
+
+
+
+}
+
+
+
+
+
+// add save load
+
+
+
+
+function saveTextAsFile(fileNameToSaveAs, textToWrite) {
+
+var textToWrite = document.getElementById('parseme').value; 
+
+var fileNameToSaveAs = "WA State Field Situation Data  " + DateforFile()+".txt";
+
+fileNameToSaveAs = prompt("", fileNameToSaveAs);
+
+
+
+  /* Saves a text string as a blob file*/  
+
+  var ie = navigator.userAgent.match(/MSIE\s([\d.]+)/),
+
+      ie11 = navigator.userAgent.match(/Trident\/7.0/) && navigator.userAgent.match(/rv:11/),
+
+      ieEDGE = navigator.userAgent.match(/Edge/g),
+
+      ieVer=(ie ? ie[1] : (ie11 ? 11 : (ieEDGE ? 12 : -1)));
+
+
+
+  if (ie && ieVer<10) {
+
+    console.log("No blobs on IE ver<10");
+
+    return;
+
+  }
+
+
+
+  var textFileAsBlob = new Blob([textToWrite], {
+
+    type: 'text/plain'
+
+  });
+
+
+
+  if (ieVer>-1) {
+
+    window.navigator.msSaveBlob(textFileAsBlob, fileNameToSaveAs);
+
+
+
+  } else {
+
+    var downloadLink = document.createElement("a");
+
+    downloadLink.download = fileNameToSaveAs;
+
+    downloadLink.href = window.URL.createObjectURL(textFileAsBlob);
+
+    downloadLink.onclick = function(e) { document.body.removeChild(e.target); };
+
+    downloadLink.style.display = "none";
+
+    document.body.appendChild(downloadLink);
+
+    downloadLink.click();
+
+  }
+
+}
+
+
+
+
+
+function destroyClickedElement(event)
+
+{
+
+    document.body.removeChild(event.target);
+
+}
+
+
+
+function loadFileAsText()
+
+{
+
+
+
+    var fileToLoad = document.getElementById("fileToLoad").files[0];
+
+ 
+
+    var fileReader = new FileReader();
+
+    fileReader.onload = function(fileLoadedEvent) 
+
+    {
+
+        var textFromFileLoaded = fileLoadedEvent.target.result;
+
+        document.getElementById("inputTextToSave").value = textFromFileLoaded;
+
+    };
+
+    fileReader.readAsText(fileToLoad, "UTF-8");
+
+}
+
+
+function shortmonth(monthnum) {
+var monthname;
+shortmonths = ["JAN", "FEB", "MAR","APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"] ;
+monthname = shortmonths [monthnum];s
+ return monthname;
+		
+}
+function DateTime(TType,TheFld, dopromt) {
+var txt;
+var  myprompt;
+var d = new Date(),
+ thisyear = d.getFullYear();
+ thismonth= d.getMonth();
+ thisday = d.getDate();
+var monname;
+h = (d.getHours()<10?'0':'') + d.getHours()
+m = (d.getMinutes()<10?'0':'') + d.getMinutes()
+s = (d.getSeconds()<10?'0':'') + d.getSeconds();
+var utcstr = d.toUTCString();
+var localt  = d.toLocaleTimeString();
+var isostr = d.toISOString();
+monthname = shortmonth (thismonth);
+thismonth = thismonth + 1;
+switch (TType) {
+    case 'hms'  :
+        myprompt = h + ':' + m + ':' + s;
+		var RightNow = prompt("Time:", myprompt);
+		document.getElementById(TheFld).value = RightNow;
+        break;
+		case 'hm'  :
+        myprompt = h + ':' + m;
+		var RightNow = prompt("Time:", myprompt);
+		document.getElementById(TheFld).value = RightNow;
+        break;
+		case 'm-d-y':     
+			myprompt = thismonth+ '-' + thisday+ '-'+  thisyear;
+			var RightNow = prompt("Date:", myprompt);
+			document.getElementById(TheFld).value = RightNow;
+		   break;
+		 case 'm/d/y':     
+			myprompt = thismonth+ '/' + thisday+ '/'+  thisyear;
+			var RightNow = prompt("Date:", myprompt);
+			document.getElementById(TheFld).value = RightNow;
+		     break;
+		 case 'd mmm y':     
+			myprompt = thisday+ ' ' + monthname+ ' '+  thisyear;
+			var RightNow = prompt("Date:", myprompt);
+			document.getElementById(TheFld).value = RightNow;
+		   break;
+		   case 'mmm-d-y':     
+			myprompt = monthname+'-'+thisday+ '-' +  thisyear;
+			var RightNow = prompt("Date:", myprompt);
+			document.getElementById(TheFld).value = RightNow;
+		   break;
+        case 'localampm':     
+			var myprompt = localt;
+			var RightNow = prompt("Local time:", myprompt);
+			document.getElementById(TheFld).value = RightNow;
+		   break;
+
+		case 'fulldate':     
+			var myprompt = thisyear+ '-'+thismonth+'-'+thisday;
+			var RightNow = prompt("Date:", myprompt);
+			document.getElementById(TheFld).value = RightNow;
+		   break;
+		   case 'fulldatetime':     
+			var myprompt = thisyear+'-'+thismonth+ '-'+thisday+' '+h + ':' + m + ':' ;
+			var RightNow = prompt("Date time:", myprompt);
+			document.getElementById(TheFld).value = RightNow;
+		   break;
+		    case 'iso':     
+			var myprompt = isostr;
+			var RightNow = prompt("Date time:", myprompt);
+			document.getElementById(TheFld).value = RightNow;
+		   break;
+		   case 'utc':     
+			var myprompt = utcstr;
+			if (dopromt) { document.getElementById(TheFld).value = myprompt; TimeStamp();
+} else {
+			var RightNow = prompt("UTC Date time:", myprompt);
+			document.getElementById(TheFld).value = RightNow;TimeStamp();
+}
+			
+		   break;
+		  
+		   case 'zulu':     
+			var myprompt = isostr;
+			myprompt = isostr.replace("T", "  "); 
+			slen = myprompt.length;
+			myprompt = myprompt.substr(0, slen-5)+'Z';
+			var RightNow = prompt("Date time:", myprompt);
+			document.getElementById(TheFld).value = RightNow;
+			TimeStamp();
+		   break;
+		 }
+				
+	// if(FocusFld !== null && FocusFld !== '') {document.getElementById(FocusFld).focus()} --/
+	};
+
+function DateforFile(RightNow) {
+
+var txt;
+
+var d = new Date(),
+
+thisyear = d.getFullYear();
+
+thismonth= d.getMonth();
+
+thismonth = thismonth+1;
+
+if (thismonth < 10) { thismonth = "0" + thismonth}
+
+
+
+thisday = d.getDate();
+
+if (thisday < 10) { thisday = "0" + thisday}
+
+
+
+h = (d.getHours()<10?'0':'') + d.getHours()
+
+m = (d.getMinutes()<10?'0':'') + d.getMinutes()
+
+var myprompt = thisyear+ '-'+thismonth+'-'+thisday+' '+h + '_' + m ;
+
+return myprompt;
+
+}
+
+
+
+function isObject(arg) {
+
+  return Object.prototype.toString.call(arg)==='[object Object]';
+
+}
+
+
+
+function formDataToObject(elForm) {
+
+  if (!elForm instanceof Element) return;
+
+  var fields = elForm.querySelectorAll('input, select, textarea'),
+
+    o = {};
+
+  for (var i=0, imax=fields.length; i<imax; ++i) {
+
+    var field = fields[i],
+
+      sKey = field.name || field.id;
+
+    if (field.type==='button' || field.type==='image' || field.type==='submit' || !sKey) continue;
+
+    switch (field.type) {
+
+      case 'checkbox':
+
+        o[sKey] = +field.checked;
+
+        break;
+
+      case 'radio':
+
+        if (o[sKey]===undefined) o[sKey] = '';
+
+        if (field.checked) o[sKey] = field.value;
+
+        break;
+
+      case 'select-multiple':
+
+        var a = [];
+
+        for (var j=0, jmax=field.options.length; j<jmax; ++j) {
+
+          if (field.options[j].selected) a.push(field.options[j].value);
+
+        }
+
+        o[sKey] = a;
+
+        break;
+
+      default:
+
+        o[sKey] = field.value;
+
+    }
+
+  }
+
+//alert('Form data:\n\n' + JSON.stringify(o, null, 2));
+
+ document.getElementById('parseme').value = JSON.stringify(o, null, 2);
+
+//  return o;
+
+}
+
+
+
+function populateForm(o) {
+
+var themap= document.getElementById('MapFileName').value;
+var theformdata = document.getElementById('FormData').value;
+
+o =  JSON.parse(document.getElementById('parseme').value);
+
+ //if (!isObject(o)) return;
+
+if (!isObject(o)) return;
+
+  for (var i in o) {
+
+    var el = document.getElementById(i) || document.querySelector('[name=' + i + ']');
+
+    if (el.type==='radio') el = document.querySelectorAll('[name=' + i + ']');
+
+    switch (typeof o[i]) {
+
+      case 'number':
+
+        el.checked = o[i];
+
+        break;
+
+      case 'object':
+
+        if (el.options && o[i] instanceof Array) {
+
+          for (var j=0, jmax=el.options.length; j<jmax; ++j) {
+
+            if (o[i].indexOf(el.options[j].value)>-1) el.options[j].selected = true;
+
+          }
+
+        }
+
+        break;
+
+      default:
+
+        if (el instanceof NodeList) {
+
+          for (var j=0, jmax=el.length; j<jmax; ++j) {
+
+            if (el[j].value===o[i]) el[j].checked = true;
+
+          }
+
+        } else {
+
+          el.value = o[i];
+
+        }
+
+    }
+
+  }
+
+
+document.getElementById('MapFileName').value= themap;
+document.getElementById('FormData').value = theformdata;
+
+    //Fixfields();
+
+
+
+
+
+}
+
+
+function SaveData() {
+
+	
+
+			formDataToObject(document.getElementById('myform'))
+
+			saveTextAsFile();
+
+			
+
+			//saveTextAsFile();
+
+			}
+
+
+
+//-------
+
+ function readBlob(opt_startByte, opt_stopByte) {
+
+  
+
+    var files = document.getElementById('files').files;
+
+    if (!files.length) {
+
+      alert('Please select a file!');
+
+      return;
+
+    }
+
+
+
+    var file = files[0];
+
+    var start = parseInt(opt_startByte) || 0;
+
+    var stop = parseInt(opt_stopByte) || file.size - 1;
+
+
+
+    var reader = new FileReader();
+
+
+
+    // If we use onloadend, we need to check the readyState.
+
+    reader.onloadend = function(evt) {
+
+      if (evt.target.readyState == FileReader.DONE) { // DONE == 2
+
+        document.getElementById('byte_content').textContent = evt.target.result;
+
+        document.getElementById('byte_range').textContent = 
+
+            ['Read bytes: ', start + 1, ' - ', stop + 1,
+
+             ' of ', file.size, ' byte file'].join('');
+
+      }
+
+    };
+
+
+
+    var blob = file.slice(start, stop + 1);
+
+    reader.readAsBinaryString(blob);
+
+  }
+
+    	
+
+  window.onload = function () { 
+
+ 
+
+ //Check the support for the File API support 
+
+ if (window.File && window.FileReader && window.FileList && window.Blob) {
+
+    var fileSelected = document.getElementById('txtfiletoread');
+    fileSelected.addEventListener('change', function (e) { 
+
+         //Set the extension for the file 
+
+         var fileExtension = /text.*/; 
+
+         //Get the file object 
+
+         var fileTobeRead = fileSelected.files[0];
+
+        //Check of the extension match 
+
+         if (fileTobeRead.type.match(fileExtension)) { 
+
+             //Initialize the FileReader object to read the 2file 
+
+			
+
+             var fileReader = new FileReader(); 
+
+             fileReader.onload = function (e) { 
+
+                 var fileContents = document.getElementById('filecontents'); 
+
+                
+
+				document.getElementById('parseme').value =fileReader.result;
+
+				populateForm(obj = document.getElementById('parseme').value);
+
+					 } 
+
+             fileReader.readAsText(fileTobeRead); 
+
+         } 
+
+         else { 
+
+             alert("Please select text file"); 
+
+         }
+
+ 
+
+    }, false);
+
+} 
+
+ else { 
+
+     alert("Files are not supported"); 
+}
+//Checkifinbrowser();
+getit();
+copyGPS();
+       CheckGPSType();   
+//checkLatLon();
+9
+
+//9 DateTime('autozulu','UDTGfld', true);
+TimeStamp();
+}
+function GetGPS(){
+var ans = document.getElementById('ExtGPS').value;
+
+if (ans  != '(Not available)'){
+//fill it with defaults
+//alert(ans);
+
+myMGRS=ans;
+var ans = ans.replace(" ", ",");
+
+
+ if (ans  != '{GPS_SIGNED_DECIMAL}') {document.getElementById('GPS2').value = ans};
+//now the mrgs
+
+var d= myMGRS.split(' ');
+MGRSString(d[0],d[1]);
+//store();
+//what3words.api.convertTo3wa({lat:51.508344, lng:-0.12549900}, 'en')<br />
+//lat:38.5565, lng:-121.7931  38.5566,-121.7931
+
+
+var mypram = {lat:+d[0], lng:+d[1]};
+//alert(mypram);
+what3words.api.convertTo3wa(mypram, 'en')
+  .then(function(response) {
+  theword = ("[convertTo3wa]", response);
+  document.getElementById('w3w').value = theword.words
+  
+  //alert(theword.words);
+  });
+} 
+  convertthis();
+
+}
+
+
+
+function parethisdate() {
+
+var thedatetime=  document.getElementById('UDTGfld').value;
+//d= new Date(Date.parse(thedatetime)).toString();
+var d= new Date(Date.parse(thedatetime));
+
+//alert (Date.parse(thedatetime));
+//d =parseDate(thedatetime);
+utcstr = d.toUTCString()
+//alert (utcstr);
+document.getElementById('timestamp2').value= utcstr;
+}
+
+function TimeStamp(){
+var d1 = new Date();
+mtime = d1.getTime();
+var thedatetime=  document.getElementById('TheDate').value;
+
+var thedatetime=thedatetime.replace(/-/g, ',');
+var thedatetime=thedatetime.replace(/:/g, ',');
+//alert ('the dt '+thedatetime);
+var thedatetime=thedatetime.replace(' ', ',');
+var thedatetime = thedatetime.replace("Z", "") ;
+//alert ('the dt '+thedatetime);
+var thesplit = thedatetime.split (',');
+var d = new Date(Date.UTC(parseInt(thesplit[0]),parseInt(thesplit[1]),parseInt(thesplit[2]),parseInt(thesplit[3]),parseInt(thesplit[4]),parseInt(thesplit[5])));
+//alert (thesplit[1]);
+//var d= new Date(Date.parse('2020/11/24 15:30:01'));
+  var nyyyy = d.getUTCFullYear();
+  nyyyy= nyyyy.toString();
+
+  var nMM = d.getUTCMonth();
+  if(nMM<10) {nMM= '0'+nMM}
+ nMM=nMM.toString()
+var ndd = d.getUTCDate();
+  if(ndd<10) {ndd= '0'+ndd}
+  ndd=ndd.toString()
+ // alert(ndd);
+  var nhh = d.getUTCHours();
+nhh=nhh.toString();
+ if(nhh.length <2) {nhh= '0'+nhh}
+// alert ('after hour'+nhh);
+    var nmm = d.getUTCMinutes();
+	  nmm=nmm.toString();
+	if(nmm.length <2) {nmm= '0'+nmm}
+	 var nss = d.getUTCSeconds();
+	
+  nss=nss.toString()
+   if(nss.length <2) {nss= '0'+nss}
+//
+var test = (thesplit[0])+(thesplit[1])+(thesplit[2])+(thesplit[3])+(thesplit[4])+(thesplit[5]);
+
+
+test = test.replace(/\s/g,'');
+ document.getElementById("timestamp").value = test; ;
+    document.getElementById("timestamp2").value= test;
+ //x=nyyyy+nmm+ndd+nhh+nmm+nss;
+   
+   
+  // document.getElementById("timestamp2").value = nyyyy+nMM+ndd+nhh+nmm+nss
+  // alert (nyyyy+nMM+ndd+nhh+nmm+nss);
+   var x=(document.getElementById("timestamp2").value);
+
+if (x.search("NaN")!==-1){alert ('Invalid date please enter UTC date time as yyyy-mm-dd hh:mm:ssZ\n \nDEFAULTING  to current UTC Time.');DateTime('autozulu','UDTGfld', true); }
+
+ 
+}
+ 
+ function Fixfields() {  
+
+ AutoGrowTextArea(document.getElementById("MsgTo"));
+
+ AutoGrowTextArea(document.getElementById("MsgCc"));
+
+ 
+
+AutoGrowTextArea(document.getElementById("Comm1"));
+
+AutoGrowTextArea(document.getElementById("Comm2"));
+
+AutoGrowTextArea(document.getElementById("Comm3"));
+
+AutoGrowTextArea(document.getElementById("Comm4"));
+AutoGrowTextArea(document.getElementById("Comm4b"));
+AutoGrowTextArea(document.getElementById("Comm4c"));
+
+
+AutoGrowTextArea(document.getElementById("Comm5"));
+
+AutoGrowTextArea(document.getElementById("Comm6"));
+
+AutoGrowTextArea(document.getElementById("Comm7"));
+
+AutoGrowTextArea(document.getElementById("Message"));
+
+//AutoGrowTextArea(document.getElementById("FacIns1"));
+
+
+
+
+
+
+
+
+
+}
+
+
+function Checkifinbrowser() {
+ var x= document.getElementById("testCall").value; 
+ var n = x.search("{Msg");
+ if (n>-1) { 
+
+ document.getElementById('Submit').style.visibility='hidden';
+
+//document.getElementById("MsgSender").value = '';
+//test 
+//document.getElementById('savebtn').style.visibility='hidden';
+ //document.getElementById('loadbtn').style.visibility='hidden';
+  //document.getElementById('resetbtn').style.visibility='hidden';
+   document.getElementById('MGRS').readOnly = true;
+    document.getElementById('gpsLat').readOnly = true;
+	 document.getElementById('gpsLon').readOnly = true;
+	 //document.getElementById('GPSnote').innerHTML= 'To enter coordinates, you must run this from Winlink Express.';
+
+
+  alert('You are running this form outside of Winlink.\n \nWhen you have completed the form, SAVE the data and then give or send the SAVED data file to the radio operator. The operator will load the SAVED data into the correct form and send via winlink. ');
+
+ } else {document.getElementById('Submit').style.visibility='visible';  }
+
+ 
+
+ // document.getElementById('testlnkbtn').style.visibility='hidden';
+
+}
+
+
+
+function copyGPS() {
+
+var z1 = '{Latitude}';
+var z2= '{Longitude}';
+document.getElementById('gpsLat').value =z1;
+document.getElementById('gpsLon').value =z2;
+
+var GPSstr= document.getElementById("ExtGPS").value;
+
+var nameArr = GPSstr.split(" ");
+
+var a =nameArr[0];
+
+var b =nameArr[1];
+
+
+
+if(!isNaN (a)){document.getElementById('gpsLat').value =a;store();}
+
+if(!isNaN (b)){document.getElementById('gpsLon').value =b;store();}
+//checkLatLon();
+}
+
+
+function isNumberKey(evt)
+{
+
+var charCode = (evt.which) ? evt.which : event.keyCode
+//if (charCode =45){alert('45')} 
+if(charCode ==13){return false;}
+
+if (charCode > 32 && (charCode < 45 || charCode > 57))
+//if (charCode > 32 && (charCode < 40 )) event.keyCode==13
+return false;
+return true;
+}
+
+function GetDefaults (){
+s = '{latitude}';
+var num =s;
+z1 =(Number(num));
+z2 = (isNaN (z1));
+alert(z1);
+if (z1 !== 'NaN') {alert('lat error'); }
+
+}
+
+function CheckLat(SkipMsg){
+var latCheck = 1;
+var num =document.getElementById('gpsLat').value;
+if (num=='') {document.getElementById('MGRS').value = '';
+		document.getElementById('GPS2').value = '';}
+z1 =(Number(num));
+z2 = (isNaN (z1));
+if (z1 == 'NaN') {alert ('error')}
+if ((num <-90)  || ( num >90) || isNaN (z1) ) { document.getElementById('gpsLat').value='';
+//alert ('Latitude must be between -90 and 90\n\nBy default the calculated Latitude from the Grid Square entered in Winlink Express Setup will be used. '); 
+alert ('Latitude must be between -90 and 90');
+ document.getElementById('gpsLat').value ='';
+		document.getElementById('gpsLat').focus();
+		document.getElementById('MGRS').value = '';
+		document.getElementById('GPS2').value = '';
+		var latCheck = 0;
+}
+
+return latCheck;
+}
+
+function CheckLon(SkipMsg){
+var lonCheck = 1;
+var num =document.getElementById('gpsLon').value;
+if (num=='') {document.getElementById('MGRS').value = '';
+		document.getElementById('GPS2').value = '';}
+z1 =(Number(num));
+z2 = (isNaN (z1));
+
+if ((num <-180) || ( num >180) || isNaN (z1) ) { document.getElementById('gpsLon').value='';
+alert ('Longitude must be between -180 and 180 '); 
+//alert ('Longitude must be between -180 and 180\n\nBy default the calculated Latitude from the Grid Square entered in Winlink Express Setup will be used. '); 
+ document.getElementById('gpsLon').value = '';
+		document.getElementById('MGRS').value = '';
+		document.getElementById('GPS2').value = '';
+		var lonCheck = 0;
+
+} 
+
+return lonCheck;
+}
+
+
+
+
+function checkLatLon() {
+var cnt = 1;
+//var x1=0; var x2=0;
+x1 = CheckLat(true);
+x2 = CheckLon(true);
+
+if (x1==1 && x2==1) {// now set string for latlon
+	var mlat = document.getElementById('gpsLat').value;
+	var mlon = document.getElementById('gpsLon').value;
+	document.getElementById('GPS2').value =mlat+','+mlon;
+	
+	convertthis();
+} 
+}
+
+function checkform(){
+
+num1 = parseFloat(document.getElementById('gpsLat').value);
+
+num2 = parseFloat (document.getElementById('gpsLon').value);
+
+if (isNaN(num1) | isNaN(num2)){  document.getElementById('gpsLon').value = '{longitude}';  
+document.getElementById('gpsLat').value = '{latitude}';
+checkLatLon();
+	return confirm('You have not entered valid GPS coordinates. \nBy default, the Latitude and Longitude will be calculated from your Grid Square.')}}
+
+
+function MGRSString ()
+
+//function MGRSString (51.172,-1.779)
+// 51.172,-1.779  38.556, -121.793
+{ //var Lat = 38.556; var Long=-121.793; 
+//var Lat1 = 38.556; var Long1=-121.793; 
+//var thestring= document.getElementById("GPS2").value;
+var thestring= document.getElementById("GPS2").value;
+ var res = thestring.split(",");
+ var Lat = parseFloat(res[0]); var Long=parseFloat(res[1]); 
+
+if (isNaN(Lat)) {return} 
+if (isNaN(Long)) {return} 
+ latLonToGridSquare(res[0],res[1]);
+// var Long = res[1]; ('long >'+Long+'<');
+ //Lat=38.556; Long=-121.793
+if (Lat < -80) return 'Too far South' ; if (Lat > 84) return 'Too far North' ;
+var c = 1 + Math.floor ((Long+180)/6);
+var e = c*6 - 183 ;
+var k = Lat*Math.PI/180; 
+var l = Long*Math.PI/180;
+var m = e*Math.PI/180;
+var n = Math.cos (k);
+var o = 0.006739496819936062*Math.pow (n,2);
+var p = 40680631590769/(6356752.314*Math.sqrt(1 + o));
+var q = Math.tan (k);
+var r = q*q;
+var s = (r*r*r) - Math.pow (q,6);
+var t = l - m;
+var u = 1.0 - r + o;
+var v = 5.0 - r + 9*o + 4.0*(o*o);
+var w = 5.0 - 18.0*r + (r*r) + 14.0*o - 58.0*r*o;
+var x = 61.0 - 58.0*r + (r*r) + 270.0*o - 330.0*r*o;
+var y = 61.0 - 479.0*r + 179.0*(r*r) - (r*r*r);
+var z = 1385.0 - 3111.0*r + 543.0*(r*r) - (r*r*r);
+
+var aa = p*n*t + (p/6.0*Math.pow (n,3)*u*Math.pow (t,3)) + (p/120.0*Math.pow (n,5)*w*Math.pow (t,5)) + (p/5040.0*Math.pow (n,7)*y*Math.pow (t,7));
+var ab = 6367449.14570093*(k - (0.00251882794504*Math.sin (2*k)) + (0.00000264354112*Math.sin (4*k)) - (0.00000000345262*Math.sin (6*k)) + (0.000000000004892*Math.sin (8*k))) + (q/2.0*p*Math.pow (n,2)*Math.pow (t,2)) + (q/24.0*p*Math.pow (n,4)*v*Math.pow (t,4)) + (q/720.0*p*Math.pow (n,6)*x*Math.pow (t,6)) + (q/40320.0*p*Math.pow (n,8)*z*Math.pow (t,8));
+aa = aa*0.9996 + 500000.0;
+
+ab = ab*0.9996; if (ab < 0.0) ab += 10000000.0;
+var ad = 'CDEFGHJKLMNPQRSTUVWXX'.charAt (Math.floor (Lat/8 + 10));
+var ae = Math.floor (aa/100000);
+var af = ['ABCDEFGH','JKLMNPQR','STUVWXYZ'][(c-1)%3].charAt (ae-1);
+var ag = Math.floor (ab/100000)%20;
+var ah = ['ABCDEFGHJKLMNPQRSTUV','FGHJKLMNPQRSTUVABCDE'][(c-1)%2].charAt (ag);
+function pad (val) {if (val < 10) {val = '0000' + val} else if (val < 100) {val = '000' + val} else if (val < 1000) {val = '00' + val} else if (val < 10000) {val = '0' + val};return val};
+aa = Math.floor (aa%100000); aa = pad (aa); 
+ab = Math.floor (ab%100000); ab = pad (ab);
+//var mrgs= c + ad + ' ' + af + ah + ' ' + aa + ' ' + ab;
+var MRGS2=c + ad + ' ' + af + ah + ' ' + aa + ' ' + ab;
+var mrgs= c + ad + af + ah  + aa + ab;
+document.getElementById('MGRS').value =mrgs;
+store();
+//document.getElementById('MGRS').value =mrgs;
+//document.getElementById('MGRS2').value =MRGS2;
+};
+function Flip(theid) {
+   
+x1 = document.getElementById(theid).value;
+if (x1 == ' ' || x1 == '') { document.getElementById(theid).value = "CHECKED"} 
+else { document.getElementById(theid).value = ' ';}
+}
+
+function checkformgrs(thestring){
+//var thestring= document.getElementById("MGRS").value;
+var thestring= thestring.replace(/\s/g, '');
+ document.getElementById("MGRS").value = thestring;
+var spc = thestring.split(" ");
+ var n = thestring.search(",");
+ var nlen=thestring.length;
+if (n>0) {alert('Please correct your coordinates --\nEnter valid MGRS string.\nExample: 10SFH0514968253 or 10S FH 05149 68253" '); document.getElementById('MGRS').value='';}
+if(nlen<12){alert('Please correct your coordinates --\nEnter valid MGRS string.\nExample: 10SFH0514968253 or 10S FH 05149 68253'); document.getElementById('MGRS').value=''; return}
+document.getElementById('gpsLat').value = '';
+document.getElementById('gpsLon').value = '';
+if (spc.length >2){(thestring);
+ } else{
+ 
+ var n = thestring.search(",")
+var spc = thestring.split(" ");
+//(spc.length);
+if (n ==-1) {// try to parse
+var str = document.getElementById("MGRS").value;  
+var res = str.substring(0, 3);
+    var res1 = str.substring(3, 5);
+	// check len
+	var checklen = str.substring(5, 20);
+	// alert (checklen);
+	
+if (checklen.length ==10) {
+     var res2 = checklen.substring(0, 5); 
+     var res3 = checklen.substring(5, 15);
+	} //if 8
+    if (checklen.length == 8) {
+	 var res2 = checklen.substring(0, 4); var res2 =  res2+'0';
+     var res3 = checklen.substring(4, 13); var res3 = res3 + '0'; 
+	}
+	LatLongFromMGRSstring(res+' '+res1+' '+res2+ ' '+res3);
+
+document.getElementById("MGRS").value = res+res1+res2+res3;
+}
+}
+}
+
+function convertthis(){
+//document.getElementById('MGRS').value ='';
+var nameArr=[];
+var thestring= document.getElementById("GPS2").value;
+//(thestring);
+document.getElementById("GPS2").value = thestring;
+ var n = thestring.search(",");
+ var n1= thestring.search(" ");
+var res = thestring.split(",");
+var p=res.length;
+//alert('p='+p+' ' +res[0]+' '+res[1]);
+if (p==2){MGRSString(); } else 
+{ ( "Please correct your coordinates --\nEnter Coordinates in decimal format with the Lat and Lon separated by a comma.\nExample: 38.556724, -121.793285 " );
+document.getElementById('GPS2').value ='';
+
+document.getElementById('MGRS').value ='';
+
+ document.getElementById("GPS2").focus()}
+}
+
+
+function LatLongFromMGRSstring (a) 
+{
+var b = a.trim();
+b = b.match(/\S+/g);
+if (b == null || b.length != 4) return [false,null,null];
+var c = (b[0].length < 3) ? b[0][0] : b[0].slice(0,2);
+var d = (b[0].length < 3) ? b[0][1] : b[0][2];
+var e = (c*6-183)*Math.PI / 180;
+var f = ["ABCDEFGH","JKLMNPQR","STUVWXYZ"][(c-1) % 3].indexOf(b[1][0]) + 1;
+var g = "CDEFGHJKLMNPQRSTUVWXX".indexOf(d);
+var h = ["ABCDEFGHJKLMNPQRSTUV","FGHJKLMNPQRSTUVABCDE"][(c-1) % 2].indexOf(b[1][1]);
+var i = [1.1,2.0,2.8,3.7,4.6,5.5,6.4,7.3,8.2,9.1,0,0.8,1.7,2.6,3.5,4.4,5.3,6.2,7.0,7.9];
+var j = [0,2,2,2,4,4,6,6,8,8,0,0,0,2,2,4,4,6,6,6];
+var k = i[g];
+var l = Number(j[g]) + h / 10;
+if (l < k) l += 2;
+var m = f*100000.0 + Number(b[2]);
+var n = l*1000000 + Number(b[3]);
+m -= 500000.0;
+if (d < 'N') n -= 10000000.0;
+m /= 0.9996; n /= 0.9996;
+var o = n / 6367449.14570093;
+var p = o + (0.0025188266133249035*Math.sin(2.0*o)) + (0.0000037009491206268*Math.sin(4.0*o)) + (0.0000000074477705265*Math.sin(6.0*o)) + (0.0000000000170359940*Math.sin(8.0*o));
+var q = Math.tan(p);
+var r = q*q;
+var s = r*r;
+var t = Math.cos(p);
+var u = 0.006739496819936062*Math.pow(t,2);
+var v = 40680631590769 / (6356752.314*Math.sqrt(1 + u));
+var w = v;
+var x = 1.0 / (w*t); w *= v;
+var y = q / (2.0*w); w *= v;
+var z = 1.0 / (6.0*w*t); w *= v;
+var aa = q / (24.0*w); w *= v;
+var ab = 1.0 / (120.0*w*t); w *= v;
+var ac = q / (720.0*w); w *= v;
+var ad = 1.0 / (5040.0*w*t); w *= v;
+var ae = q / (40320.0*w);
+var af = -1.0-u;
+var ag = -1.0-2*r-u;
+var ah = 5.0 + 3.0*r + 6.0*u-6.0*r*u-3.0*(u*u)-9.0*r*(u*u);
+var ai = 5.0 + 28.0*r + 24.0*s + 6.0*u + 8.0*r*u;
+var aj = -61.0-90.0*r-45.0*s-107.0*u + 162.0*r*u;
+var ak = -61.0-662.0*r-1320.0*s-720.0*(s*r);
+var al = 1385.0 + 3633.0*r + 4095.0*s + 1575*(s*r);
+var lat = p + y*af*(m*m) + aa*ah*Math.pow(m,4) + ac*aj*Math.pow(m,6) + ae*al*Math.pow(m,8);
+var lng = e + x*m + z*ag*Math.pow(m,3) + ab*ai*Math.pow(m,5) + ad*ak*Math.pow(m,7);
+lat = lat*180 / Math.PI;
+lat = lat.toFixed (4);
+lng = lng*180 / Math.PI;
+lng = lng.toFixed (4);
+
+document.getElementById('GPS2').value = lat+','+lng;
+//document.getElementById('dd').value = lat+','+lng;
+document.getElementById('gpsLat').value = lat;
+document.getElementById('gpsLon').value = lng;
+//gpsLat
+convertthis();
+//return [true,lat,lng];
+
+}
+
+function fix(s) {
+
+var s = s.replace(/(\r\n|\n|\r)/gm," "); 
+return s;
+
+}
+function MakeYesNo(s) {
+
+var s = s.replace(/M=1\n/gm,"M=YES\n"); 
+var s = s.replace(/M=2\n/gm,"M=NO\n");
+var s = s.replace(/M=0\n/gm,"M=Unknown\n");
+return s;
+
+}
+
+    function jsonfix (fld) { 
+      
+var jsontext =document.getElementById('FormData').value;
+temp1= document.getElementById(fld).value;
+var jsontext=jsontext.replace('$'+fld, temp1);
+     //   alert(jsontext);
+document.getElementById('FormData').value= jsontext;
+  
+}
+    
+
+function createjson () {
+var jsontext =document.getElementById('FormData').value;
+
+document.getElementById('parseme').value = '';
+
+//document.getElementById('FormData').value= jsontext;
+
+    
+jsonfix("WinlinkAddress");
+      jsonfix("transportation");
+     jsonfix("Utilitynote");
+     jsonfix("GasCompany");
+    
+jsonfix("WaterCompany");
+    jsonfix("SewerCompany");
+    jsonfix("ElectriCompany");
+          jsonfix("stablePWR");
+    
+jsonfix("Service");  
+    jsonfix("County"); 
+    jsonfix("Town");
+     jsonfix("gpsLat");
+     jsonfix("gpsLon");
+    jsonfix("msgTo");
+    jsonfix("WinlinkAddress");
+    jsonfix("Reportingparty");
+    jsonfix("location");
+     jsonfix("willUpdate");
+     jsonfix("Servedagency");
+     //  jsonfix("Servedagency");
+   
+    
+    jsonfix("GPS");
+    jsonfix("MGRS");
+    jsonfix("Grid");
+    jsonfix("locationSource");
+    jsonfix("FreqMonitored");
+    
+    jsonfix("Service");
+    jsonfix("Precedence");
+    jsonfix("TheDate");
+    jsonfix("btf1");
+    jsonfix("btf2");
+    jsonfix("btf3");
+        jsonfix("btf4");
+        jsonfix("btf5");
+        jsonfix("btf6");
+    
+            jsonfix("btf6");
+            jsonfix("btf6");
+            jsonfix("btf7");
+            jsonfix("btf8");
+            jsonfix("btf9");
+            jsonfix("btf10");
+    
+                jsonfix("btf11");
+                jsonfix("btf12");
+                jsonfix("btf13");
+                jsonfix("btf14");
+                jsonfix("btf15");
+                jsonfix("btf16");
+                jsonfix("btf17");
+                jsonfix("btf18");
+                jsonfix("btf19");            
+        jsonfix("btf20");
+                jsonfix("btf21");
+                jsonfix("btf22");
+    
+                    jsonfix("cProvider1");
+                    jsonfix("cProvider2");
+                    jsonfix("cProvider3");
+                    jsonfix("cProvider4"); 
+                    jsonfix("cProvider5");
+    
+       jsonfix("Functionality1");
+       jsonfix("Functionality2");
+       jsonfix("Functionality3");
+       jsonfix("Functionality4");
+       jsonfix("Functionality5");
+       jsonfix("Functionality6");
+       jsonfix("Functionality7");
+    
+       jsonfix("funStr1");
+       jsonfix("funStr2");
+       jsonfix("funStr3");
+       jsonfix("funStr4");
+       jsonfix("funStr5");
+       jsonfix("funStr6");
+       jsonfix("funStr7"); 
+    
+   jsonfix("Enviromentnaotes");   
+       jsonfix("Enviromentnaotes");   
+    jsonfix("Healthnotes");     
+   x= document.getElementById('FormData').value
+// alert(x);
+document.getElementById('FormData').value= x;   
+//document.getElementById('attached_text').value = jsontext;
+document.getElementById('attached_text').value = x;
+var attached_file = 'FormData.txt';
+
+}
+
+function splitPaste(str) {
+var str = str.replace(",", " ");
+var str = str.replace("  ", " ");
+var d= str.split(' ');
+var cnt = d.length;
+if (cnt >1) {
+document.getElementById('gpsLat').value =d[0];
+document.getElementById('gpsLon').value =d[1];//38.30336525671668, -122.02022176466537
+
+}
+}
+
+latLonToGridSquare = function(param1,param2){
+  var lat=-100.0;
+  var lon=0.0;
+  var adjLat,adjLon,GLat,GLon,nLat,nLon,gLat,gLon,rLat,rLon;
+  var U = 'ABCDEFGHIJKLMNOPQRSTUVWX'
+  var L = U.toLowerCase();
+  // support Chris Veness 2002-2012 LatLon library and
+  // other objects with lat/lon properties
+  // properties could be getter functions, numbers, or strings
+  function toNum(x){
+    if (typeof(x) === 'number') return x;
+    if (typeof(x) === 'string') return parseFloat(x);
+    if (typeof(x) === 'function') return parseFloat(x());
+   // 9-20-20 ( "HamGridSquare -- toNum -- can not convert input: "+x);
+  }
+  if (typeof(param1)==='object'){
+    if (param1.length === 2){
+      lat = toNum(param1[0]);
+      lon = toNum(param1[1]);
+    } else if (('lat' in param1) && ('lon' in param1)){
+      lat = toNum(param1.lat);
+      lon = toNum(param1.lon);
+    } else if (('latitude' in param1) && ('longitude' in param1)){
+      lat = toNum(param1.latitude);
+      lon = toNum(param1.longitude);
+    } else {
+      ( "Please correct your coordinates -- "+param1);
+    }
+  } else {
+    lat = toNum(param1);
+    lon = toNum(param2);
+  }
+  //if (isNaN(lat)) throw "lat is NaN";
+   if (isNaN(lat)) return;
+// if (isNaN(lon)) throw "lon is NaN";
+ if (isNaN(lon)) {return} 
+  if (Math.abs(lat) === 90.0) throw "grid squares invalid at N/S poles";
+  if (Math.abs(lat) > 90)  ("invalid latitude: "+lat);
+  if (Math.abs(lon) > 180) ( "invalid longitude: "+lon);
+  adjLat = lat + 90;
+  adjLon = lon + 180;
+  GLat = U[Math.trunc(adjLat/10)];
+  GLon = U[Math.trunc(adjLon/20)];
+  nLat = ''+Math.trunc(adjLat % 10);
+  nLon = ''+Math.trunc((adjLon/2) % 10);
+  rLat = (adjLat - Math.trunc(adjLat)) * 60;
+  rLon = (adjLon - 2*Math.trunc(adjLon/2)) *60;
+  gLat = L[Math.trunc(rLat/2.5)];
+  gLon = L[Math.trunc(rLon/5)];
+  var mygrid = GLon+GLat+nLon+nLat+gLon+gLat;
+  //( 'line 52 '+GLon+GLat+nLon+nLat+gLon+gLat);
+  document.getElementById('Grid').value =mygrid;
+}
+
+
+// JavaScript to test hemisphere
+
+function Testlon(){   
+    // get user loc via lat lon and then compare
+     
+    var homelon = "{Longitude}";
+       var msg = 'Verify entered coordinates before submitting form.'
+    var num =document.getElementById('gpsLon').value;
+ 
+    if ( (homelon <0 && num >0) || (homelon >0 && num <0)  ){
+        document.getElementById('gpsLon').style.backgroundColor = '#ffdde2';
+          alert('Warning\nThe entered longitude is in a different hemisphere than the Winlink Express or Position Report coordinates. Western longitudes are negative numbers. Eastern longitudes are positive numbers.\n\nClick OK to edit the longitude or ignore this warning and continue with the entered longitude.');
+      
+    }else {document.getElementById('gpsLon').style.backgroundColor = '';
+         }            
+}
+    
+    
+function Testlat(){
+    
+      // get user loc via lat lon and then compare
+   //var themsg = document.getElementById('mapLon').value;
+    var homelat = "{Latitude}";
+    var num =document.getElementById('gpsLat').value;    
+   
+    
+    if ( (homelat <0 && num >0) || (homelat >0 && num <0)  ){
+        document.getElementById('gpsLat').style.backgroundColor = '#ffdde2';
+       alert('Warning\nThe entered latitude is in a different hemisphere than the Winlink Express or Position Report coordinates. Southern latitudes are negative numbers. Northern latitudes are positive numbers.\n\nClick OK to edit the latitude or ignore this warning and continue with the entered latitude.');
+             }
+    else {document.getElementById('gpsLat').style.backgroundColor = '';
+               }    
+   
+}
+
+function CheckGPSType(){
+    var  gpstype ='';
+       var  gpsnote ='';
+      var  gpstype =document.getElementById('location_source').value;
+      if (gpstype === "GPS") { document.getElementById('locationSource').value='GPS'}
+if (gpstype === "SPECIFIED") { document.getElementById('locationSource').value='User specified'}
+if (gpstype === "FORM ENTRY") { document.getElementById('locationSource').value='Form entry'}
+if (gpstype === "GRID SQUARE") { document.getElementById('locationSource').value='Grid square'}
+    }
+
+function Cleanup(){
+    document.getElementById('parseme').value=''; document.getElementById('FormData').value='';
+ 
+}
+          
+</script></head>
+
+
+
+<body>
+
+
+
+<form  style="font-family: Arial;" pbzloc="3" onsubmit="alert('To complete your form submission, click OK and close the open browser window. You will return to the new message window so you can post your message to the outbox');" method="post" id="myform"  Cleanup(); enctype="multipart/form-data" action="http://{FormServer}:{FormPort}">
+
+<div id="pop1" class="pop-up"><!-- The pop-up block -->
+
+<div class="popBox"><!-- If the content becomes larger than the pop-up this div will scroll the content -->
+<div class="popScroll"><!-- Test for help starts here -->
+
+<span style="font-size: 14px;">
+ <div align="left"><strong> Field Situational Report
+  </strong>
+</div>
+<p><strong>Authors</strong></p>
+<p>The Field Situation Report was developed by Roger Mull KD4JQJ and Virginia Enzor NC4VA. For questions please contact them.&nbsp;</p>
+<p><strong>General Information</strong></p>
+<p>Stations use this form to report abnormal situations based on firsthand knowledge at their location.</p>
+<p>DO NOT SEND WHEN EVERYTHING IS NORMAL (BLUE SKY) REPORTS.</p>
+<p>Information in this report aids the SEOC Team in determining which areas are experiencing infrastructure degradation and failures.</p>
+<p>If your local situation is LIFE CRITICAL, report via 911. If 911 services are not available, a reporter may use this form and mark the block for LIFE CRITICAL; the reporter should describe the situation and provide the residential address.</p>
+<p><strong>Mapping</strong></p>
+<p>To display the Field Situational Report map you must provide the GPS coordinates of the event location if different from your grid square location registered in Winlink Express. Stations are encouraged to add GPS information for the event if different from your home (registered) location.</p>
+<p>If you leave the LAT/LON fields empty, by default, the LAT/LON calculated from your grid square in Express will be used.</p>
+<p>LAT/LON: The form accepts only Decimal Degree latitude and longitude. 4 decimals are preferred.</p>
+<p>N/E/S/W: North and East are positive numbers in Decimal Degrees, South and West are negative numbers in Decimal Degrees. For example, the Hollywood Sign is located at Decimal Degrees 34.1341, -118.3215</p>
+<p>You may also enter a valid MGRS position.</p>
+<p><strong>Geocoordinate Quality Check</strong></p>
+<p>The form checks whether the entered latitude and longitude are in the Grid Square registered in Winlink Express Settings. If the entered coordinates are outside the grid square a notice will be displayed to make the operator aware. The notice intends to make operators aware of potential location inaccuracies. The notice does not affect form submission.</p>
+<p><strong>Definitions</strong></p>
+<p>POTS - Plain Old Telephone Service</p>
+<p>VoIP - Voice over IP</p>
+<p>POC - Point of Contact</p>
+<p>NOAA - National Oceanic and Atmospheric Administration</p>
+<p>NWS - National Weather Service</p>
+<br />
+    </span>
+</div>
+
+<!-- The close pop-up link correctly positioned at the end of the content block -->
+
+<a href="#links" class="close"><span>Back
+
+to links</span></a> </div>
+</div>
+
+
+<table width="912" border="0" align="left" style="width: 1045px; height: 482px;">
+
+<tbody>
+
+<tr>
+
+<td width="906">
+
+<table style="font-size: 14px; width: 897px; height: 556px;" border="1" bordercolor="#999999" cellpadding="2" cellspacing="0">
+
+<tbody>
+
+<tr>
+  
+  <td colspan="2" style="vertical-align: top; height: 8%; background-color: #dee9f9; text-align: center;"><p align="center" class="style2">   <span class="style3">Washington State Field Situation Report</span>
+    <div align="center">    </div>
+  <table width="96%"  border="0" cellspacing="0" cellpadding="1">
+      <tr>
+        <td width="27%" nowrap="nowrap"><span class="style8">&nbsp;</span> <small><span style="font-size: 12px;"></span></small></td>
+        <td width="44%"><div align="center"><small style="color: rgb(0, 102, 0);">
+          <input name="loadbtn" type="button" id="loadbtn" onclick="document.getElementById('txtfiletoread').click();" value=" Load Field Situation data " /><input type="file" id="txtfiletoread" accept=".txt"  style="display: none;"/>
+
+          <span style="font-size: 12px;"><span style="font-size: 12px;">&nbsp;&nbsp;&nbsp;&nbsp; &nbsp;&nbsp;</span></span><span style="font-size: 12px;">
+            <input name="Title" type="hidden" id="Title" value="General" /></span></small></div></td>
+        <td width="29%"><div align="right"><span style="font-size: 12px;"><span style="font-size: 12px;"><span style="font-size: 12px;">&nbsp; &nbsp;&nbsp;</span></span>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span><span class="style43"><a href="#pop1" class="style41">Form info</a> </span>
+          </div>
+          <p></p></td>
+        </tr>
+  </table>
+    
+  </td>
+  
+</tr>
+
+<tr>
+
+<td colspan="2" valign="top" style="vertical-align: top; text-align: justify;"><span style="font-size: 14px;">
+
+<pbzloc ="1" style="font-weight: normal;"></pbzloc></span><pbzloc ="1" style="font-weight: normal;">
+
+<span style="font-size: 14px;">
+  <pbzloc ="1" style="font-weight: normal;">TO: 
+    <input name="msgTo" required="required"   id="msgTo" placeholder="Email or Winlink address" onkeydown="return (event.keyCode!=13);" size="40" maxlength="40"/>
+<br />
+    <br />
+    CC:    
+    <input  placeholder="Email or Winlink address" maxlength="90" size="90" name="MsgCC"   id="MsgCC" onkeydown="return (event.keyCode!=13);"/>
+    <br />
+    <br />
+  </pbzloc>
+  <pbzloc ="1" style="font-weight: normal;"><span style="font-size: 14px;">Reporting party: 
+      <input placeholder="Reporting Party" maxlength="25" size="25" name="Reportingparty"   id="Reportingparty" onkeydown="return (event.keyCode!=13);"/> 
+<br />
+    <br />Reporting party's location:
+<input placeholder="Reporting Party location" maxlength="80" size="80" name="location"   id="location" onkeydown="return (event.keyCode!=13);"/>
+<br />
+<br />
+Is reporting station able to provide updates as they occur at this location? <span class="style45"> </span> <strong><strong><strong> </strong></strong></strong><strong><strong><strong>
+<input name="Providepdate" type="radio" placeholder="Needs" onclick="document.getElementById('willUpdate').value =  this.value; Critical.style.background = '#fccac7'; " value="YES" checked="checked" />
+</strong></strong>YES
+<input name="Providepdate" type="radio"onclick="document.getElementById('willUpdate').value =  this.value; Critical.style.background = '#FFFFFF';" value="NO" />
+NO </strong>
+<input name="willUpdate" type="hidden" id="willUpdate" value="YES" size="30" />
+<br />
+<br />    
+Winlink Address:</span>
+    
+    <input  maxlength="25" size="25" name="WinlinkAddress" id="WinlinkAddress"value="{MsgSender}" /> 
+    
+    &nbsp;</pbzloc>
+  &nbsp;&nbsp;</span><span style="font-size: 14px;">Served Agency:
+  <input placeholder="Agency" maxlength="25" size="25" name="Servedagency"   id="Servedagency" onkeydown="return (event.keyCode!=13);"/>
+  </span>
+  <input name="attached_file" type="hidden" id="attached_file" value="FormData.txt" />
+  <input name="MapFileName" type="hidden" id="MapFileName" value="WA State Field Situation Report" size="30" />
+</p>
+<p><span class="style37">  County:&nbsp;<span style="font-size: 14px;">
+  <input name="County" type="text" id="County" />
+</span> &nbsp; &nbsp;</span> <span class="style37">Closest Town:&nbsp;<span style="font-size: 14px;">
+<input name="Town" type="text" id="Town" />
+</span> &nbsp; &nbsp;</span></p>
+<p><span class="style37">Latitude and longitude:&nbsp; &nbsp;LAT
+    <input name="gpsLat" type="text" id="gpsLat" placeholder="Ex: 38.5567" title= "If entering manually use format: 38.5567"  onchange="splitPaste(this.value);checkLatLon(); Testlat()"  onkeypress="return isNumberKey(event)" value="{Latitude}" size="12" />
+&nbsp;&nbsp;&nbsp;LON
+<input name="gpsLon"  type="text" id="gpsLon" placeholder="Ex: -116.9824"  onchange="CheckLon();checkLatLon();Testlon();document.getElementById('location_source').value ='FORM ENTRY';CheckGPSType();" " onkeypress="return isNumberKey(event)" value="{Longitude}" size="12"  />
+<span style="font-family: Arial, Helvetica, sans-serif;;">
+<input name="GPS" type="hidden" id="GPS" value="{GPS_SIGNED_DECIMAL}" />
+<span class="style24">.</span><span class="style12">
+<input name="MGRS" type="hidden" onkeypress="if(event.keyCode==13){return false;}"  title= "If entering manually use format: 11SNR0184195204 or 11S NR 01841 95204" placeholder="Ex:11SNR0184195204" id="MGRS" onchange="checkformgrs(this.value)"size="25" maxlength="25" />
+</span><em>&nbsp;&nbsp;
+<input name="Grid" type="hidden" id="Grid" value="{GridSquare}" size="8" maxlength="8" readonly="readonly" />
+<span class="style12">&nbsp;</span></em><span class="style12"></span></span></span>
+  <input name="locationSource" type="hidden" id="locationSource" placeholder=""  style="color:blue" value=""   />
+  <input name="location_source" type="hidden" id="location_source" placeholder=""  style="color:blue" value="{Location_Source}" />
+  <span class="style2"><span style="color: black;"><span style="font-family:  Arial, Helvetica, sans-serif;; color: black;"></span></span></span>
+  <input name="ExtGPS" type="hidden" id="ExtGPS" value="{GPS_SIGNED_DECIMAL}" />
+  <input name="GPS2" type="hidden" id="GPS2" size="40" onchange="convertthis()" onkeypress="return isNumberKey(event)"  maxlength="40" title= "If entering manually use format: 38.5567,-121.7932" placeholder="Ex: 38.5567,-121.7932" />
+  <span style="font-size: 14px;">
+  <input name="timestamp" type="hidden" id="timestamp" size="30" />
+  <input name="timestamp2" type="hidden" id="timestamp2" size="40" />
+  </span></p>
+<p><span class="style50" style="font-family: Arial, Helvetica, sans-serif;;; font-size: 14px;">HF frequencies<strong> </strong> monitored </span><span class="style37" style="font-family: Arial, Helvetica, sans-serif;;; font-size: 14px;">:
+        <input name="FreqMonitored" type="text" class="style37" id="FreqMonitored" />
+&nbsp;</strong></span><span class="style50" style="font-family: Arial, Helvetica, sans-serif;;; font-size: 14px;"><strong>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;  </strong></span><span class="style37" style="font-family: Arial, Helvetica, sans-serif;;; font-size: 14px;">Service<span style="font-family: Arial, Helvetica, sans-serif;;; font-size: 14px;">:</span>
+      <input name="bService" type="radio" tabindex="7" onclick="document.getElementById('Service').value = this.value;" value="AMATEUR" checked="checked" />
+</span><span class="style50" style="font-family: Arial, Helvetica, sans-serif;;; font-size: 14px;">      <span class="style50" style="font-family: Arial, Helvetica, sans-serif;;; font-size: 14px;">AMATEUR&nbsp;&nbsp;&nbsp;<span class="style50" style="font-family: Arial, Helvetica, sans-serif;;; font-size: 14px;"><span class="style50" style="font-family: Arial, Helvetica, sans-serif;;; font-size: 14px;">
+      <input name="bService" type="radio" tabindex="8" onclick="document.getElementById('Service').value = this.value;" value="SHARES" />
+      SHARES&nbsp;&nbsp;&nbsp;&nbsp;
+      <input name="Service" type="hidden" id="Service" value="AMATEUR" size="14" maxlength="13" />
+      </span></span></span></span></p>
+<p><span style="font-size: 14px;">PRECEDENCE:
+  <select name="Precedence" size="1" id="Precedence">
+    <option value="Z/ Flash ">Z/ Flash </option>
+    <option value="O/ Immediate ">O/ Immediate </option>
+    <option value="P/ Priority">P/ Priority</option>
+    <option value="R/ Routine" selected="selected">R/ Routine</option>
+  </select>
+  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp; DATE/TIME:
+  <input name="TheDate" id="TheDate" title="You can overwrite if needed." onkeydown="return (event.keyCode!=13);" onclick=" DateTime('fulldatetime','TheDate', false);" size="15" maxlength="20" />
+  &nbsp;</span><br />
+</p>
+<p><span style="font-size: 14px;"><pbzloc ="1" style="font-weight: normal;"></pbzloc></span></p></td>
+
+</tr>
+
+<tr>
+  <td id = "Critical"colspan="5" valign="top" bgcolor="#FFFFFF"><table width="100%" border="1" cellspacing="00" cellpadding="1">
+    <tbody>
+        <tr>
+          <td colspan="2" bgcolor="#f8f8ff"><span class="style39"><strong>Transportation-- observed damage or shutdown(s) and/or blockages:</strong></span></td>
+          </tr>
+        <tr>
+          <td width="23%" class="style37"><span style="font-size: 14px;">&nbsp;<span style="font-weight: bold;">
+          <input name="Btn1" type="checkbox" id="Btn1" onclick="Flip('btf1')"/>
+          <input name="btf1" type="hidden" id="btf1" value=" "
+
+                                     />
+          </span></span>Highway / Freeway </td>
+          <td width="77%" rowspan="7" valign="top"><p><strong>Observation  notes:</strong>            </p>
+            <p><span style="font-size: 14px;">
+              <textarea placeholder="If your local situation is LIFE CRITICAL, report via 911. If 911 services are not available, a reporter may use this form and mark the block for LIFE CRITICAL; the reporter should describe the situation and provide the residential address." name="transportation" cols="100" rows="2" id="transportation"  onkeypress="if(event.keyCode==13){return false;}" onkeyup="AutoGrowTextArea(this)" onchange="this.value=RWS(this.value)"></textarea>
+          </span></p></td>
+        </tr>
+        <tr>
+          <td class="style37"><span style="font-size: 14px;">&nbsp;<span style="font-weight: bold;">
+          <input name="Btn2" type="checkbox" id="Btn2" onclick="Flip('btf2')"/>
+          <input name="btf2" type="hidden" id="btf2" value=" "
+
+                                     />
+          </span></span>Mass Transit</td>
+          </tr>
+        <tr>
+          <td class="style37"><span style="font-size: 14px;">&nbsp;<span style="font-weight: bold;">
+          <input name="Btn3" type="checkbox" id="Btn3" onclick="Flip('btf3')"/>
+          <input name="btf3" type="hidden" id="btf3" value=" "
+
+                                     />
+          </span></span>Railroad</td>
+          </tr>
+        <tr>
+          <td class="style37"><span style="font-size: 14px;">&nbsp;<span style="font-weight: bold;">
+          <input name="Btn4" type="checkbox" id="Btn4" onclick="Flip('btf4')"/>
+          <input name="btf4" type="hidden" id="btf4" value=" "
+
+                                     />
+          </span></span>Airport</td>
+          </tr>
+        <tr>
+          <td class="style37"><span style="font-size: 14px;">&nbsp;<span style="font-weight: bold;">
+          <input name="Btn5" type="checkbox" id="Btn5" onclick="Flip('btf5')"/>
+          <input name="btf5" type="hidden" id="btf5" value=" "
+
+                                     />
+          </span></span>Seaport/ Ferry</td>
+          </tr>
+        <tr>
+          <td class="style37"><span style="font-size: 14px;">&nbsp;<span style="font-weight: bold;">
+          <input name="Btn6" type="checkbox" id="Btn6" onclick="Flip('btf6')"/>
+          <input name="btf6" type="hidden" id="btf6" value=" "
+
+                                     />
+          </span></span>Arterial Roads</td>
+          </tr>
+        <tr>
+          <td class="style37"><span style="font-size: 14px;">&nbsp;<span style="font-weight: bold;">
+          <input name="Btn7" type="checkbox" id="Btn7" onclick="Flip('btf7')"/>
+          <input name="btf7" type="hidden" id="btf7" value=" "
+
+                                     />
+          </span></span>Fuel Pipeline</td>
+        </tr>
+        </tbody>
+  </table>
+    <br />
+    <table width="100%" border="1" cellspacing="00" cellpadding="1">
+      <tbody>
+        <tr>
+          <td colspan="2" bgcolor="#f8f8ff"><p class="style39"><strong>Utilities-- observed damage or disruption(s)  in service:</strong></p></td>
+          </tr>
+        <tr>
+          <td width="21%"><span class="style37"><span style="font-size: 14px;"><span style="font-weight: bold;">
+            <input name="Btn8" type="checkbox" id="Btn8" onclick="Flip('btf8')"/>
+          <input name="btf8" type="hidden" id="btf8" value=" "
+
+                                     />
+          </span></span>Natural  Gas     </span><strong>  </strong></td>
+          <td width="79%" class="style3"> Company name, if known <span style="font-size: 14px;">
+            <input name="GasCompany" type="text" id="GasCompany" size="30" maxlength="30" />
+          </span></td>
+        </tr>
+        <tr>
+          <td class="style37"><span style="font-weight: bold;">
+          <input name="Btn9" type="checkbox" id="Btn9" onclick="Flip('btf9')"/>
+          <input name="btf9" type="hidden" id="btf9" value=" "
+
+                                     />
+          </span>Water</td>
+          <td class="style37"> Company name, if known <span style="font-size: 14px;">
+            <input name="WaterCompany" type="text" id="WaterCompany" size="30" maxlength="30" />
+          </span></td>
+        </tr>
+        <tr>
+          <td class="style37"><span style="font-weight: bold;">
+          <input name="Btn10" type="checkbox" id="Btn10" onclick="Flip('btf10')"/>
+          <input name="btf10" type="hidden" id="btf10" value=" "
+
+                                     />
+          </span>Sewer</td>
+          <td class="style37"> Company name, if known <span style="font-size: 14px;">
+            <input name="SewerCompany" type="text" id="SewerCompany" size="30" maxlength="30" />
+          </span></td>
+        </tr>
+        <tr>
+          <td class="style37"><span style="font-weight: bold;">
+          <input name="Btn11" type="checkbox" id="Btn11" onclick="Flip('btf11')"/>
+          <input name="btf11" type="hidden" id="btf11" value=" "
+
+                                     />
+          </span>Electric</td>
+          <td class="style37">Company name, if known <span style="font-size: 14px;">
+            <input name="ElectriCompany" type="text" id="ElectriCompany" size="30" maxlength="30" />
+          </span><br />
+            If you have power, is it stable? <strong><span style="font-size: 14px;"><strong>
+            <input name="stablePWRbtn" type="radio" placeholder="Needs" onclick="document.getElementById('stablePWR').value =  this.value; " value="YES" checked="checked" />
+            </strong></span></strong>YES<strong>
+<input name="stablePWRbtn" type="radio"onclick="document.getElementById('stablePWR').value =  this.value; Critical.style.background = '#FFFFFF';" value="NO" />
+</strong>NO <span style="font-weight: bold;">
+<input name="stablePWR" type="hidden" id="stablePWR" value=" YES"
+
+                                     />
+</span></td>
+        </tr>
+        <tr>
+          <td class="style37">Observations</td>
+          <td><span style="font-size: 14px;">
+            <textarea placeholder="Observations" name="Utilitynote" cols="100" rows="2" id="Utilitynote"  onkeypress="if(event.keyCode==13){return false;}" onkeyup="AutoGrowTextArea(this)" onchange="this.value=RWS(this.value)"></textarea>
+          </span></td>
+        </tr>
+      </tbody>
+</table><br>
+    <table width="100%" border="1" cellspacing="00" cellpadding="1">
+      <tbody>
+        <tr>
+          <td colspan="2" bgcolor="#f8f8ff"><strong class="style39">Environmental— hazards observed:</strong></td>
+        </tr>
+        <tr>
+          <td width="23%" height="31" class="style37"><span style="font-size: 14px;"><span style="font-weight: bold;">
+            <input name="Btn12" type="checkbox" id="Btn12" onclick="Flip('btf12')"/>
+            <input name="btf12" type="hidden" id="btf12" value=" "
+
+                                     />
+          </span>&nbsp;Air Quality </span></td>
+          <td width="77%" rowspan="6" valign="top"><p><strong>Observation  notes:</strong>            </p>
+            <p><span style="font-size: 14px;">
+              <textarea placeholder="Observations" name="Enviromentnaotes" cols="100" rows="2" id="Enviromentnaotes"  onkeypress="if(event.keyCode==13){return false;}" onkeyup="AutoGrowTextArea(this)" onchange="this.value=RWS(this.value)"></textarea>
+          </span></p></td>
+        </tr>
+        <tr>
+          <td class="style37"><span style="font-weight: bold;">
+            <input name="Btn13" type="checkbox" id="Btn13" onclick="Flip('btf13')"/>
+            <input name="btf13" type="hidden" id="btf13" value=" "
+
+                                     />
+          </span>Water Quality</td>
+        </tr>
+        <tr>
+          <td class="style37"><span style="font-weight: bold;">
+            <input name="Btn14" type="checkbox" id="Btn14" onclick="Flip('btf14')"/>
+            <input name="btf14" type="hidden" id="btf14" value=" "
+
+                                     />
+          </span>Landslide</td>
+        </tr>
+        <tr>
+          <td class="style37"><span style="font-weight: bold;">
+            <input name="Btn15" type="checkbox" id="Btn15" onclick="Flip('btf15')"/>
+            <input name="btf15" type="hidden" id="btf15" value=" "
+
+                                     />
+          </span>Avalanche</td>
+        </tr>
+        <tr>
+          <td class="style37"><span style="font-weight: bold;">
+            <input name="Btn16" type="checkbox" id="Btn16" onclick="Flip('btf16')"/>
+            <input name="btf16" type="hidden" id="btf16" value=" "
+
+                                     />
+          </span>Hazmat</td>
+        </tr>
+        <tr>
+          <td class="style37"><span style="font-weight: bold;">
+            <input name="Btn17" type="checkbox" id="Btn17" onclick="Flip('btf17')"/>
+            <input name="btf17" type="hidden" id="btf17" value=" "
+
+                                     />
+          </span>Flood/ Dam Issue(s)</td>
+        </tr>
+        </tbody>
+    </table><br>
+    <table width="100%" border="1" cellspacing="00" cellpadding="1">
+      <tbody>
+        <tr>
+          <td colspan="2" bgcolor="#f8f8ff" class="style39"><strong>Public Health Needs/ Medical Needs</strong></td>
+          </tr>
+        <tr>
+          <td width="24%" valign="top" class="style37"><span style="font-size: 14px;">
+            Observed?
+<input name="Healthob" type="radio" placeholder="Needs" onclick="document.getElementById('HealthObserved').value =  this.value; Critical.style.background = '#fccac7'; " value="YES" checked="checked" />
+            </strong></span></strong>YES<strong>
+          <input name="Healthob" type="radio"onclick="document.getElementById('HealthObserved').value =  this.value; Critical.style.background = '#FFFFFF';" value="NO" />
+          </strong>NO <span style="font-weight: bold;">
+          <input name="HealthObserved" type="hidden" id="HealthObserved" value=" NO"
+
+                                     />
+          </span></td>
+          <td width="76%"><strong>Observation  notes:</strong><br />
+            <span style="font-size: 14px;">
+            <textarea placeholder="Observations" name="Healthnotes" cols="100" rows="1" id="Healthnotes"  onkeypress="if(event.keyCode==13){return false;}" onkeyup="AutoGrowTextArea(this)" onchange="this.value=RWS(this.value)"></textarea>
+            </span> <br /></td>
+        </tr>
+      </tbody>
+    </table><br><br>
+    <table width="100%" border="1" cellspacing="00" cellpadding="1">
+      <tbody>
+        <tr>
+          <td colspan="2" bgcolor="#f8f8ff"><p class="style39"><strong class="style39">Communications</strong></p></td>
+        </tr>
+        <tr>
+          <td colspan="2"><strong>Check all that are non-functional:</strong></td>
+        </tr>
+        <tr>
+          <td width="21%"><span class="style37"><span style="font-weight: bold;">
+            <input name="Btn18" type="checkbox" id="Btn18" onclick="Flip('btf18')"/>
+            <input name="btf18" type="hidden" id="btf18" value=" "
+
+                                     />
+          </span>Landline phone  </span><strong>  </strong></td>
+          <td width="79%" class="style3"> Provider, if known <span style="font-size: 14px;">
+            <input name="cProvider1" type="text" id="cProvider1" size="30" maxlength="30" />
+          </span></td>
+        </tr>
+        <tr>
+          <td class="style37"><span style="font-size: 14px;"><span style="font-weight: bold;">
+            <input name="Btn19" type="checkbox" id="Btn19" onclick="Flip('btf19')"/>
+            <input name="btf19" type="hidden" id="btf19" value=" "
+
+                                     />
+          </span>Cable / VoIP Phone</span></td>
+          <td class="style37"> <span class="style3">Provider</span>, if known <span style="font-size: 14px;">
+            <input name="cProvider2" type="text" id="cProvider2" size="30" maxlength="30" />
+          </span></td>
+        </tr>
+        <tr>
+          <td class="style37"><span style="font-weight: bold;">
+            <input name="Btn20" type="checkbox" id="Btn20" onclick="Flip('btf20')"/>
+            <input name="btf20" type="hidden" id="btf20" value=" "
+
+                                     />
+          </span>Cell Voice </td>
+          <td class="style37"> <span class="style3">Provider</span>, if known <span style="font-size: 14px;">
+            <input name="cProvider3" type="text" id="cProvider3" size="30" maxlength="30" />
+          </span></td>
+        </tr>
+        <tr>
+          <td class="style37"><span style="font-weight: bold;">
+            <input name="Btn21" type="checkbox" id="Btn21" onclick="Flip('btf21')"/>
+            <input name="btf21" type="hidden" id="btf21" value=" "
+
+                                     />
+          </span>Cell Text</td>
+          <td class="style37"><span class="style3">Provider</span>, if known <span style="font-size: 14px;">
+            <input name="cProvider4" type="text" id="cProvider4" size="30" maxlength="30" />
+          </span><br /></td>
+        </tr>
+        <tr>
+          <td class="style37"><span style="font-weight: bold;">
+            <input name="Btn22" type="checkbox" id="Btn22" onclick="Flip('btf22')"/>
+            <input name="btf22" type="hidden" id="btf22" value=" "
+
+                                     />
+          </span>Cell Data</td>
+          <td><span class="style37"><span class="style3">Provider</span>, if known <span style="font-size: 14px;">
+            <input name="cProvider5" type="text" id="cProvider5" size="30" maxlength="30" />
+          </span></span></td>
+        </tr>
+      </tbody>
+    </table>
+ <br />
+      </p>
+    <table width="100%" border="1" cellspacing="00" cellpadding="1">
+      <tbody>
+        <tr>
+          <td bgcolor="#f8f8ff" class="style39"> <strong>Report the functionality of the following:</strong></td>
+        </tr>
+      </tbody>
+    </table>
+    <table width="100%"  border="0" cellspacing="0" cellpadding="4">
+      <tr valign="middle">
+        <td width="19%" valign="top"><span class="style37"> Cable Internet</span></td>
+        <td width="81%" valign="top"><span class="style37">
+          <input name="Func1" type="radio" value="YES" onclick="document.getElementById('Functionality1').value =  this.value"/>
+          Yes
+  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+  <input name="Func1" type="radio" value="YES but degraded" onclick="document.getElementById('Functionality1').value =  this.value"/>
+          Yes, but degraded
+  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+  <input name="Func1" type="radio" value="NO" onclick="document.getElementById('Functionality1').value =  this.value" />
+          No
+          
+  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+  <input name="Func1" type="radio" value="Unknown - N/A" checked="checked" onclick="document.getElementById('Functionality1').value =  this.value"/>
+          Not observed <span style="font-weight: normal;">
+          <input name="Functionality1" type="hidden" id="Functionality1" value=" Not observed"
+
+                                     />
+          </span><br />
+  <span style="font-size: 14px;">
+  <textarea  placeholder="Additional observations" name="funStr1" cols="100" rows="1" id="funStr1" onkeypress="if(event.keyCode==13){return false;}"  onkeyup="AutoGrowTextArea(this)" onchange="this.value=RWS(this.value)"></textarea>
+  </span></span></td>
+      </tr>
+      <tr valign="middle">
+        <td valign="top"><span style="font-size: 14px;">Cable Television</span><span class="style37"></span></td>
+        <td valign="top"><span class="style37">
+          <input name="Func2" type="radio" value="YES" onclick="document.getElementById('Functionality2').value =  this.value"/>
+Yes
+  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+  <input name="Func2" type="radio" value="YES but degraded" onclick="document.getElementById('Functionality2').value =  this.value"/>
+Yes, but degraded
+  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+  <input name="Func2" type="radio" value="NO" onclick="document.getElementById('Functionality2').value =  this.value" />
+No
+          
+  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+  <input name="Func2" type="radio" value="Unknown - N/A" checked="checked" onclick="document.getElementById('Functionality2').value =  this.value"/>
+Not observed <span style="font-weight: normal;">
+<input name="Functionality2" type="hidden" id="Functionality2" value=" Not observed"
+
+                                     />
+<br />
+<span style="font-size: 14px;">
+<textarea  placeholder="Additional observations" name="funStr2" cols="100" rows="1" id="funStr2" onkeypress="if(event.keyCode==13){return false;}"  onkeyup="AutoGrowTextArea(this)" onchange="this.value=RWS(this.value)"></textarea>
+</span><br />
+</span></span></td>
+      </tr>
+      <tr valign="middle">
+        <td valign="top" class="style37">Satellite Internet</td>
+        <td valign="top"><span class="style37">
+          <input name="Func3" type="radio" value="YES" onclick="document.getElementById('Functionality3').value =  this.value"/>
+Yes
+  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+  <input name="Func3" type="radio" value="YES but degraded" onclick="document.getElementById('Functionality3').value =  this.value"/>
+Yes, but degraded
+  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+  <input name="Func3" type="radio" value="NO" onclick="document.getElementById('Functionality3').value =  this.value" />
+No
+          
+  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+  <input name="Func3" type="radio" value="Unknown - N/A" checked="checked" onclick="document.getElementById('Functionality3').value =  this.value"/>
+Not observed <span style="font-weight: normal;">
+<input name="Functionality3" type="hidden" id="Functionality3" value=" Not observed"
+
+                                     />
+<br />
+<span style="font-size: 14px;">
+<textarea  placeholder="Additional observations" name="funStr3" cols="100" rows="1" id="funStr3" onkeypress="if(event.keyCode==13){return false;}"  onkeyup="AutoGrowTextArea(this)" onchange="this.value=RWS(this.value)"></textarea>
+</span></span></span></td>
+      </tr>
+      <tr>
+        <td valign="top" class="style37">Satellite Television</td>
+        <td valign="top"><span class="style37">
+          <input name="Func4" type="radio" value="YES" onclick="document.getElementById('Functionality4').value =  this.value"/>
+          Yes
+          &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+          <input name="Func4" type="radio" value="YES but degraded" onclick="document.getElementById('Functionality4').value =  this.value"/>
+          Yes, but degraded
+          &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+          <input name="Func4" type="radio" value="NO" onclick="document.getElementById('Functionality4').value =  this.value" />
+          No
+          
+          &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+          <input name="Func4" type="radio" value="Unknown - N/A" checked="checked" onclick="document.getElementById('Functionality4').value =  this.value"/>
+          Not observed <span style="font-weight: normal;">
+  <input name="Functionality4" type="hidden" id="Functionality4" value=" Not observed"
+
+                                     />
+  <br />
+  <span style="font-size: 14px;">
+  <textarea  placeholder="Additional observations" name="funStr4" cols="100" rows="1" id="funStr4" onkeypress="if(event.keyCode==13){return false;}"  onkeyup="AutoGrowTextArea(this)" onchange="this.value=RWS(this.value)"></textarea>
+  </span>          </span></span></td>
+        </tr>
+      <tr>
+        <td valign="top" class="style37">Over the Air Television </td>
+        <td valign="top"><span class="style37">
+          <input name="Func5" type="radio" value="YES" onclick="document.getElementById('Functionality5').value =  this.value"/>
+Yes
+          &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+          <input name="Func5" type="radio" value="YES but degraded" onclick="document.getElementById('Functionality5').value =  this.value"/>
+Yes, but degraded
+          &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+          <input name="Func5" type="radio" value="NO" onclick="document.getElementById('Functionality5').value =  this.value" />
+No
+          
+          &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+          <input name="Func5" type="radio" value="Unknown - N/A" checked="checked" onclick="document.getElementById('Functionality5').value =  this.value"/>
+Not observed <span style="font-weight: normal;">
+<input name="Functionality5" type="hidden" id="Functionality5" value=" Not observed"
+
+                                     />
+<br />
+<span style=class="style37;">
+<textarea  placeholder="Additional observations" name="funStr5" cols="100" rows="1" id="funStr5" onkeypress="if(event.keyCode==13){return false;}"  onkeyup="AutoGrowTextArea(this)" onchange="this.value=RWS(this.value)"></textarea>
+</span></span></span></td>
+      </tr>
+      <tr>
+        <td valign="top" class="style37">AM/FM Broadcast </td>
+        <td valign="top"><span class="style37">
+          <input name="Func6" type="radio" value="YES" onclick="document.getElementById('Functionality6').value =  this.value"/>
+Yes
+          &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+          <input name="Func6" type="radio" value="YES but degraded" onclick="document.getElementById('Functionality6').value =  this.value"/>
+Yes, but degraded
+          &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+          <input name="Func6" type="radio" value="NO" onclick="document.getElementById('Functionality6').value =  this.value" />
+No
+          
+          &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+          <input name="Func6" type="radio" value="Unknown - N/A" checked="checked" onclick="document.getElementById('Functionality6').value =  this.value"/>
+Not observed <span style="font-weight: normal;">
+<input name="Functionality6" type="hidden" id="Functionality6" value=" Not observed"
+
+                                     />
+<br />
+<span style="font-size: 14px;">
+<textarea  placeholder="Additional observations" name="funStr6" cols="100" rows="1" id="funStr6" onkeypress="if(event.keyCode==13){return false;}"  onkeyup="AutoGrowTextArea(this)" onchange="this.value=RWS(this.value)"></textarea>
+</span></span></span></td>
+      </tr>
+      <tr>
+        <td valign="top" class="style37"> NOAA Radio </td>
+        <td valign="top"><p class="style37">
+          <input name="Func7" type="radio" value="YES" onclick="document.getElementById('Functionality7').value =  this.value"/>
+          Yes
+          &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+          <input name="Func7" type="radio" value="YES but degraded" onclick="document.getElementById('Functionality7').value =  this.value"/>
+          Yes, but degraded
+          &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+          <input name="Func7" type="radio" value="NO" onclick="document.getElementById('Functionality7').value =  this.value" />
+          No
+          
+          &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+          <input name="Func7" type="radio" value="Unknown - N/A" checked="checked" onclick="document.getElementById('Functionality7').value =  this.value"/>
+          Not observed <span style="font-weight: normal;">
+  <input name="Functionality7" type="hidden" id="Functionality7" value=" Not observed"
+
+                                     />
+  <br />
+  <span style="font-size: 14px;">
+  <textarea  placeholder="Additional observations" name="funStr7" cols="100" rows="1" id="funStr7" onkeypress="if(event.keyCode==13){return false;}"  onkeyup="AutoGrowTextArea(this)" onchange="this.value=RWS(this.value)"></textarea>
+  </span></span></p></td>
+      </tr>
+      </table>
+   
+    </td>
+</tr>
+<tr>
+  <td colspan="5" bgcolor="#f8f8ff"><span style="text-align: left"><span class="formtext">Approved by:&nbsp; </span>
+      <input name="Approved_Name" id="Approved_Name" size="25" maxlength="30" required="required" />
+&nbsp;&nbsp;<span class="formtext"> Position
+
+/ Title: </span>&nbsp;
+<input required="required" name="Approved_PosTitle" id="Approved_PosTitle" size="25" maxlength="30" />
+  &nbsp;&nbsp;<span style="font-size: 14px;"> DATE/TIME:
+  <input name="ApproveTime" id="ApproveTime" title="You can overwrite if needed." onkeydown="return (event.keyCode!=13);" onclick=" DateTime('fulldatetime','ApproveTime', false);" size="15" maxlength="20" />
+  </span></span>
+    <p>
+  
+<textarea name="FormData" cols="70" rows="25" id="FormData" style="display: none";> 
+MapFileName:T=WA Field Situation Report
+Precedence:M:Z/ Flash,O/ Immediate,P/ Priority,R/ Routine=$Precedence
+Sender:T=$WinlinkAddress
+Reporting party:T=$Reportingparty
+location:T=$location
+DateTime:T=$TheDate
+Latitude:T=$gpsLat
+Longitude:T=$gpsLon
+Location source:M:GPS,User specified,Form entry,Grid square=$locationSource
+Winlink Address:T=$WinlinkAddress
+Served Agency:T=$Servedagency
+Transportation notes:T=$transportation
+Highway/Freeway:T=$btf1
+Mass Transit:T=$btf2
+Railroad:T=$btf3
+Airport:T=$btf4
+Seaport/Ferry:T=$btf5
+Arterial Roads:T=$btf6
+Fuel Pipeline:T=$btf7
+Natural Gas:T=$btf8
+Utility notes:T=$Utilitynote
+Gas Company:T=$GasCompany
+Water:T=$btf9
+Water Company:T=$WaterCompany
+Sewer:T=$btf10
+Sewer Company:T=$SewerCompany
+Electric:T=$btf11
+Electric Company:T=$ElectriCompany
+Stable Power:M:YES,NO=$stablePWR 
+Enviromental Notes:T=$Enviromentnaotes
+Air Quality:T=$btf12
+Water Quality:T=$btf13
+Landslide:T=$btf14
+Avalanche:T=$btf15
+Hazmat:T=$btf16
+Flood/ Dam Issue:T=$btf17
+Public Health Needs/ Medical Needs:T=$Healthnotes
+Landline phone:M:CHECKED=$btf18
+Landline phone provider:T=$cProvider1
+Cable/VoIP Phone:M:CHECKED=$btf19
+Cable/VoIP provider:T=$cProvider2
+Cell Voice:M:CHECKED=$btf20
+Cell Voice provider:T=$cProvider3
+Cell Text:M:CHECKED=$btf21
+Cell Text provider:T=$cProvider4
+Cell Data:M:CHECKED=$btf22
+Cell Data provider:T=$cProvider5
+Cable Internet:M:Yes,Yes degraded,No,Not observed=$Functionality1
+Cable Internet Note:T=$funStr1
+Cable Television:M:Yes,Yes degraded,No,Not observed=$Functionality2
+Cable Television note:T=$funStr2
+Satellite Internet:M:Yes,Yes degraded,No,Not observed=$Functionality3
+Satellite Internet note:T=$funStr3
+Satellite Television:M:Yes,Yes degraded,No,Not observed=$Functionality4
+Satellite Television note:T=$funStr4
+Over the Air Television:M:Yes,Yes degraded,No,Not observed=$Functionality5
+Over the Air Television note:T=$funStr5
+AM/FM Broadcast:M:Yes,Yes degraded,No,Not observed=$Functionality6
+AM/FM Broadcast note:T=$funStr6
+NOAA Radio:M:Yes,Yes degraded,No,Not observed=$Functionality7
+NOAA Radio note:T=$funStr7
+</textarea>
+  </textarea>
+  
+   <textarea name="parseme" cols="60" id="parseme" style="display: none;"></textarea> </td>
+</tr><tr>
+
+<td style="height: 35px; text-align: justify; vertical-align: top;"> 
+
+  <span style="font-family:  Arial, Helvetica, sans-serif;;"><small><span style="font-family:  Arial, Helvetica, sans-serif;">
+
+  &nbsp;&nbsp; <small>
+  <input value="Submit" style="height: 28px; width: 52px; " size="8" name="Submit" method="Post" id="Submit" onclick="createjson(); Cleanup(); ";enctype="multipart/form-data" class="SubmitBtn1" type="submit" />
+&nbsp;&nbsp;</small>
+  <input name="savebtn" type="button" id="savebtn"  onclick="SaveData()" value="Save Field Situation data " />
+
+  </span></small>&nbsp;<small> </small></span>
+
+  <input name="resetbtn" type="reset" id="resetbtn" value="Reset Form" />
+
+&nbsp; &nbsp; &nbsp; <b><big>
+
+</big></b>&nbsp;  <span style="color: rgb(128, 0, 0);"><span style="color: black;"><span style="font-style: italic;">&nbsp;</span>&nbsp;
+
+&nbsp; &nbsp;<span style="color: rgb(128, 0, 0);"><span style="color: black;">&nbsp; &nbsp;&nbsp;&nbsp;</span><span style="font-family:  Arial, Helvetica, sans-serif;;"><span style="font-size: 12px;"><span style="font-family:  Arial, Helvetica, sans-serif;;"><span style="font-size: 12px;"><span style="font-family:  Arial, Helvetica, sans-serif;;"><span style="font-size: 12px;"><span style="font-family:  Arial, Helvetica, sans-serif;;"><span style="font-size: 12px;">
+
+<span style="color: rgb(128, 0, 0);"><span style="color: black;"><span style="color: rgb(128, 0, 0);"><span style="font-family:  Arial, Helvetica, sans-serif;;"><span style="font-size: 12px;"><span style="font-family:  Arial, Helvetica, sans-serif;;"><span style="font-size: 12px;"><span style="font-family:  Arial, Helvetica, sans-serif;;"><span style="font-size: 12px;"><span style="font-family:  Arial, Helvetica, sans-serif;;"><span style="font-size: 12px;">
+<input name="testCall" type="hidden" id="testCall" value="{MsgSender}" size="14" maxlength="13" />
+</span></span></span></span></span></span></span></span></span></span></span></span></span></span></span></span></span></span></span><span style="color: black;">&nbsp;&nbsp;</span></span></span><span style="font-size: 12px;"><span style="font-size: 12px;"><span style="font-size: 12px;"><span style="font-size: 12px;">
+
+<span style="color: rgb(128, 0, 0);"><span style="font-size: 12px;"><span style="font-size: 12px;"><span style="font-size: 12px;"><span style="font-size: 12px;">
+<span style="color: rgb(128, 0, 0);"><span style="font-size: 12px;"><span style="font-size: 12px;"><span style="font-size: 12px;"><span style="font-size: 12px;"><span style="color: rgb(128, 0, 0);"><span style="font-size: 12px;"><span style="font-size: 12px;"><span style="font-size: 12px;"><span style="font-size: 12px;"><textarea name="attached_text"  cols="140" rows="3" id="attached_text" style="display: none;"></textarea>
+
+                                                                                                     <input name="Templateversion" type="hidden" id="Templateversion" value="Field Situation Report V 0.4" />
+</span></span></span></span></span></span></span></span></span></span></span></span></span></span></span></span></span></span></span></span></td>
+
+<td style="height: 35px; text-align: justify; vertical-align: top;"><div align="right"> <span style="font-size: 12px;"><span style="font-size: 12px;"><span style="font-size: 12px;"><span style="font-size: 12px;"><span class="style2"><span class="style37"><span style="font-size: 12px;"><span style="font-size: 12px;"><span style="font-size: 12px;"><span style="font-size: 12px;">Ver 0.4<span style="font-size: 12px;"><span style="font-size: 12px;"><span style="font-size: 12px;"><span style="font-size: 12px;"><span style="font-size: 12px;"><span style="font-size: 12px;">&nbsp;</span></span>&nbsp;</span></span></span></span></span></span></span></span></span></span></span></span></span></span></div></td>
+</tr>
+
+</tbody>
+
+</table>
+
+<br />
+
+&nbsp;</td>
+
+</tr>
+
+</tbody>
+
+</table>
+
+</form>
+
+</body></html>

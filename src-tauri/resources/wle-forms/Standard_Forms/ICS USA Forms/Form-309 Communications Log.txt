@@ -1,0 +1,248 @@
+Form:Form-309_Initial.html,Form-309_Viewer.html
+
+FROM: 
+Subject:Form 309- <var Title> - <var OpName> - <var OperId> - <var ActivityDateTime1> 
+Readonly:True
+
+Msg:
+<var Title> - Form 309
+
+PAGE #: <var Page>
+
+Task#: <var Task>
+Task Name: <var TaskName>
+
+Date/Time Prepared: <var ActivityDateTime1>
+Operational Period #: <var OpPer>
+
+Radio Operator Name:<var OpName>
+Station ID: <var OperId>
+Express Sender: <var MsgSender>
+
+         LOG
+----------------------------
+TIME: <var Time1>
+STATION ID:
+FROM: <var From1>
+TO:<var To1>
+SUBJECT:
+ <var Sub1>
+
+TIME: <var Time2>
+STATION ID:
+FROM: <var From2>
+TO: <var To2>
+SUBJECT:
+ <var Sub2>
+
+TIME: <var Time3>
+STATION ID:
+FROM: <var From3>
+TO: <var To3>
+SUBJECT:
+ <var Sub3>
+
+TIME: <var Time4>
+STATION ID:
+FROM: <var From4>
+TO: <var To4>
+SUBJECT:
+ <var Sub4>
+
+TIME: <var Time5>
+STATION ID:
+FROM: <var From5>
+TO: <var To5>
+SUBJECT:
+ <var Sub5>
+
+TIME: <var Time6>
+STATION ID:
+FROM: <var From6>
+TO: <var To6>
+SUBJECT:
+ <var Sub6>
+
+TIME: <var Time7>
+STATION ID:
+FROM: <var From7>
+TO: <var To7>
+SUBJECT:
+ <var Sub7>
+
+TIME: <var Time8>
+STATION ID:
+FROM: <var From8>
+TO: <var To8>
+SUBJECT:
+ <var Sub8>
+
+TIME: <var Time9>
+STATION ID:
+FROM: <var From9>
+TO: <var To9>
+SUBJECT:
+ <var Sub9>
+
+TIME: <var Time10>
+STATION ID:
+FROM: <var From10>
+TO: <var To10>
+SUBJECT:
+ <var Sub10>
+
+TIME: <var Time11>
+STATION ID:
+FROM: <var From11>
+TO: <var To11>
+SUBJECT:
+ <var Sub11>
+
+TIME: <var Time12>
+STATION ID:
+FROM: <var From12>
+TO: <var To12>
+SUBJECT:
+ <var Sub12>
+
+TIME: <var Time13>
+STATION ID:
+FROM: <var From13>
+TO: <var To13>
+SUBJECT:
+ <var Sub13>
+
+TIME: <var Time14>
+STATION ID:
+FROM: <var From14>
+TO: <var To14>
+SUBJECT:
+ <var Sub14>
+
+TIME: <var Time15>
+STATION ID:
+FROM: <var From15>
+TO: <var To15>
+SUBJECT:
+ <var Sub15>
+
+TIME: <var Time16>
+STATION ID:
+FROM: <var From16>
+TO: <var To16>
+SUBJECT:
+ <var Sub16>
+
+TIME: <var Time17>
+STATION ID:
+FROM: <var From17>
+TO: <var To17>
+SUBJECT:
+ <var Sub17>
+
+TIME: <var Time18>
+STATION ID:
+FROM: <var From18>
+TO: <var To18>
+SUBJECT:
+ <var Sub18>
+
+TIME: <var Time19>
+STATION ID:
+FROM: <var From19>
+TO: <var To19>
+SUBJECT:
+ <var Sub19>
+
+TIME: <var Time20>
+STATION ID:
+FROM: <var From20>
+TO: <var To20>
+SUBJECT:
+ <var Sub20>
+
+TIME: <var Time21>
+STATION ID:
+FROM: <var From21>
+TO: <var To21>
+SUBJECT:
+ <var Sub21>
+
+TIME: <var Time22>
+STATION ID:
+FROM: <var From22>
+TO: <var To22>
+SUBJECT:
+ <var Sub22>
+
+TIME: <var Time23>
+STATION ID:
+FROM: <var From23>
+TO: <var To23>
+SUBJECT:
+ <var Sub23>
+
+TIME: <var Time24>
+STATION ID:
+FROM: <var From24>
+TO: <var To24>
+SUBJECT:
+ <var Sub24>
+
+TIME: <var Time25>
+STATION ID:
+FROM: <var From25> 
+TO: <var To25>
+SUBJECT:
+ <var Sub25>
+
+TIME: <var Time26>
+STATION ID:
+FROM: <var From26>
+TO: <var To26>
+SUBJECT:
+ <var Sub26>
+
+TIME: <var Time27>
+STATION ID:
+FROM: <var From27>
+TO: <var To27>
+SUBJECT:
+ <var Sub27>
+
+TIME: <var Time28>
+STATION ID:
+FROM:  <var From28>
+TO: <var To28>
+SUBJECT:
+ <var Sub28>
+
+TIME: <var Time29>
+STATION ID:
+FROM: <var From29> 
+TO: <var To29>
+SUBJECT:
+ <var Sub29>
+
+TIME: <var Time30>
+STATION ID:
+FROM: <var From30> 
+TO: <var To30>
+SUBJECT:
+ <var Sub30>
+
+------------------
+Express Sending Station: <MsgSender>
+Senders Express Version: <ProgramVersion>
+Senders Template Version: <var Templateversion>
+[No changes or editing of this message are allowed]
+
+
+
+
+
+
+
+
+
+

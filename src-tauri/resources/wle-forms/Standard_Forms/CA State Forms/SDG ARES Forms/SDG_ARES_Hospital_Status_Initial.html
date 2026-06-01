@@ -1,0 +1,1447 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml"><head>
+<meta http-equiv="Content-Type" content="text/html; charset=iso-8859-1" /><title>SDG Hospital Status Report</title>
+
+<style type="text/css">
+<!--
+@media print {
+.form-control, .form-control.nobug {
+border: 0;
+outline: 0;
+box-shadow: none;
+font-size:14px;
+}
+.form-control.nobug {
+transition: none; /*-- THIS IS IMPORTANT -- */
+}
+input, textarea {
+outline: none !important;
+box-shadow: none;
+border: none;
+overflow: visible;
+font-family: Arial, Helvetica, sans-serif;
+font-size: 10px;
+}
+.formtext {
+font-family: Arial, Helvetica, sans-serif;
+font-size: 10pt;
+font-weight: normal;
+}
+}
+  input[type=button] {
+
+  border: 2px solid #0f88f2;;
+   border-radius:.25rem;
+  color: black;
+  padding: 2px 2px;
+ background-color: white;
+  text-decoration: none;
+  margin: 2px 2px;
+  cursor: pointer;
+}
+input[type=submit] {
+ border: 2px solid green;
+  border-radius:.25rem;
+  background-color: white;
+  color: black;
+  padding: 2px 2px;
+  font-size: 14px;
+   cursor: pointer;
+}
+input[type=reset] {
+ border: 2px solid red;
+ border-radius:.25rem;
+  background-color: white;
+  color: black;
+  padding: 2px 2px;
+  font-size: 14px;
+   cursor: pointer;
+}
+input[type=black1] {
+ border: 2px solid #999999;
+   width:225px;
+  border-radius:.25rem;
+
+  background-color: white;
+  color: black;
+  padding: 2px 2px;
+  font-size: 14px;
+   cursor: pointer;
+}
+
+</style>
+<script>
+function shortmonth(monthnum) {
+var monthname;
+shortmonths = ["JAN", "FEB", "MAR","APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"] ;
+monthname = shortmonths [monthnum];s
+return monthname; }
+</script>
+<script>
+function SetDateTime(TType,TheFld, FocusFld) {
+var txt;
+var myprompt;
+var d = new Date(),
+thisyear = d.getFullYear();
+thismonth= d.getMonth();
+thisday = d.getDate();
+var monname;
+h = (d.getHours()<10?'0':'') + d.getHours()
+m = (d.getMinutes()<10?'0':'') + d.getMinutes()
+s = (d.getSeconds()<10?'0':'') + d.getSeconds();
+var now = new Date();
+var utch = now.getUTCHours();
+if (utch < 10) { utch = "0"+utch};
+var utcs = now.getUTCMinutes();
+if (utcs < 10) { utcs = "0"+utcs};
+var myUTCtime = utch+":"+utcs+"Z";
+var utcstr = d.toUTCString();
+var localt = d.toLocaleTimeString();
+var isostr = d.toISOString();
+monthname = shortmonth (thismonth);
+thismonth = thismonth + 1;
+switch (TType) {
+case 'hms' :
+myprompt = h + ':' + m + ':' + s;
+var RightNow = prompt("Time:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'hm' :
+myprompt = h + ':' + m;
+var RightNow = prompt("Time:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'm-d-y': myprompt = thismonth+ '-' + thisday+ '-'+ thisyear;
+var RightNow = prompt("Date:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'm/d/y': myprompt = thismonth+ '/' + thisday+ '/'+ thisyear;
+var RightNow = prompt("Date:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'd mmm y': myprompt = thisday+ ' ' + monthname+ ' '+ thisyear;
+var RightNow = prompt("Date:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'mmm-d-y': myprompt = monthname+'-'+thisday+ '-' + thisyear;
+var RightNow = prompt("Date:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'localampm': var myprompt = localt;
+var RightNow = prompt("Local time:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'fulldate': var myprompt = thisyear+ '/'+thismonth+'/'+thisday;
+var RightNow = prompt("Date:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'fulldatetime': var myprompt = thisyear+'/'+thismonth+ ''+thisday+' '+h + ':' + m ;
+var RightNow = prompt("Date time:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'autodate': var RightNow = thisyear+'-'+thismonth+ '-'+thisday ;
+//var RightNow = prompt("Date time:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'autotime': var RightNow = h + ':' + m ;
+//var RightNow = prompt("Date time:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'iso': var myprompt = isostr;
+var RightNow = prompt("Date time:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'utc': var myprompt = utcstr;
+var RightNow = prompt("Date time:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'zulu': var myprompt = isostr;
+myprompt = isostr.replace("T", " "); slen = myprompt.length;
+myprompt = myprompt.substr(0, slen-5)+'Z';
+var RightNow = prompt("Date time:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'UTChm': var myprompt = myUTCtime;
+var RightNow = prompt("Date time:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+}
+// if(FocusFld !== null && FocusFld !== '') {document.getElementById(FocusFld).focus()} --/
+}; </script>
+<script>
+
+
+</script>
+<style>
+<!--
+TD{ bgcolor="#ffffff" valign="top"}
+.SubmitBtn {font-size: 12px;
+font-family: Arial,Helvetica,sans-serif;
+font-weight: inherit;
+}
+</script>
+.style24 {font-family: Arial,Helvetica,sans-serif; font-size: 20px}
+</style>
+<style>
+/*
+body {color:#000; background:#fff; font:100%/1.5 arial,sans-serif;}
+h2 {margin-top:0}
+*/
+/* Styling applied to classes only */
+/* Pop-up content shifted off-screen when not in view.
+Still readable by screen-reader software.
+When targeted it fills the browser window.
+*/
+.pop-up {position:absolute; top:0; left:-500em;}
+.pop-up:target {position:static; left:0;}
+/* The pop-up itself */
+.popBox {
+background:#ffffff;
+/* alternatively fixed width / height and negative margins from 50% */
+position:absolute; left:30%; right:30%; top:20%; bottom:25%;
+z-index:10;
+border:1px solid #3a3a3a;
+/* CSS3 where available: rounded corners, drop-shadow, and fade in. */
+border-radius:.25rem;
+box-shadow:0 .5rem .5rem rgba(0,0,0,.5);
+opacity:0;
+transition: opacity 0.8s ease-out;
+}
+:target .popBox {position:fixed; opacity:1;}
+/* Light box properties */
+.lightbox {
+display:none;
+text-indent:-200em;
+background-color:rgba(0,0,0,.4);
+width:100%;
+height:100%;
+position:fixed;
+top:0;
+left:0;
+bottom:0;
+right:0;
+z-index:5;
+}
+:target .lightbox {display:block;}
+/* The pop-ups close link, moved via CSS to the top right of the pop-up */
+.close:link,
+.close:visited {
+position: absolute;
+top: -0.75em;
+right: -0.75em;
+display: block;
+width: 2em;
+height: 2em;
+line-height: 1.8;
+padding: 0;
+text-align: center;
+text-decoration: none;
+background-color: #000;
+border: 2px solid #fff;
+color: #fff;
+border-radius: 50%;
+box-shadow: 0 0 .5rem .5rem rba(0,0,0,.5);
+}
+.close:before {content:"X";}
+.close:hover,
+.close:active,
+.close:focus {
+box-shadow: 0 0 .5rem .5rem rba(255,0,0,.5);
+background-color: #c00;
+color: #fff;
+}
+.close span {
+text-indent: -200em;
+display: block;
+}
+/* The pop-up content div will scroll if it has too much content */
+.popScroll {
+position:absolute;
+top: 1rem;
+left: 1rem;
+right: 1rem;
+bottom: 1rem;
+overflow-y: auto;
+*overflow-y: scroll;
+padding-right: 0.5em;
+}
+.popScroll h2 {margin-top:0}
+.style6 {
+font-family: Arial, Helvetica, sans-serif;
+font-size: 20px;
+}
+.style8 {
+	font-family: Arial, Helvetica, sans-serif;
+	font-size: 10px;
+}
+.style9 {font-size: 12px}
+.style13 {color: #000000}
+.formtext1 {font-family: Arial, Helvetica, sans-serif;
+font-size: 10pt;
+font-weight: normal;
+}
+.style17 {font-size: 14px}
+.style19 {color: #333333}
+.style20 {font-family: Arial, Helvetica, sans-serif; font-size: 10px; color: #333333; }
+.style3 {	color: #FF0000;
+	font-style: italic;
+}
+.style45 {font-size: 12px}
+.style45 {color: #2A5F00}
+.style5 {color: #FF0000}
+.style15 {color: #2A5F00; font-size: 12px; }
+.formtext {font-family: Arial, Helvetica, sans-serif;
+font-size: 10pt;
+font-weight: normal;
+}
+.formtext {font-family: Arial, Helvetica, sans-serif;
+font-size: 10pt;
+font-weight: normal;
+}
+.formtext11 {font-family: Arial, Helvetica, sans-serif;
+font-size: 11pt;
+font-weight: normal;
+}
+    input[type='radio'] { 
+     transform: scale(1.5); 
+ }
+</style>
+<script>
+function shortmonth(monthnum) {
+var monthname;
+shortmonths = ["JAN", "FEB", "MAR","APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"] ;
+monthname = shortmonths [monthnum];s
+return monthname; }
+</script>
+<script>
+function SetDateTime(TType,TheFld, FocusFld) {
+var txt;
+var myprompt;
+var d = new Date(),
+thisyear = d.getFullYear();
+thismonth= d.getMonth();
+thisday = d.getDate();
+var submonth = thismonth+1; ;
+if (submonth < 10) { submonth = "0"+submonth};
+var subday = thisday;
+
+if (thisday < 10) { thisday = "0"+thisday};
+var monname;
+h = (d.getHours()<10?'0':'') + d.getHours()
+m = (d.getMinutes()<10?'0':'') + d.getMinutes()
+s = (d.getSeconds()<10?'0':'') + d.getSeconds();
+var now = new Date();
+var utch = now.getUTCHours();
+if (utch < 10) { utch = "0"+utch};
+var utcs = now.getUTCMinutes();
+if (utcs < 10) { utcs = "0"+utcs};
+var myUTCtime = utch+":"+utcs+"Z";
+var utcstr = d.toUTCString();
+var localt = d.toLocaleTimeString();
+var isostr = d.toISOString();
+monthname = shortmonth (thismonth);
+thismonth = thismonth + 1;
+if (thismonth < 10) { thismonth = "0"+thismonth};
+switch (TType) {
+case 'hms' :
+myprompt = h + ':' + m ;
+var RightNow = prompt("Time:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'hm' :
+myprompt = h + ':' + m;
+var RightNow = prompt("Time:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'm-d-y': myprompt = thismonth+ '-' + thisday+ '-'+ thisyear;
+var RightNow = prompt("Date:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'm/d/y': myprompt = thismonth+ '/' + thisday+ '/'+ thisyear;
+var RightNow = prompt("Date:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'd mmm y': myprompt = thisday+ ' ' + monthname+ ' '+ thisyear;
+var RightNow = prompt("Date:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'mmm-d-y': myprompt = monthname+'-'+thisday+ '-' + thisyear;
+var RightNow = prompt("Date:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'localampm': var myprompt = localt;
+var RightNow = prompt("Local time:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'fulldate': var myprompt = thisyear+ '-'+thismonth+'-'+thisday;
+var RightNow = prompt("Date:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'fulldatetime': var myprompt = thisyear+'-'+thismonth+ '-'+thisday+' '+h + ':' + m ;
+var RightNow = prompt("Date time:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'autofulldatetime': var RightNow = thisyear+'-'+thismonth+ '-'+thisday+' '+h + ':' + m ;
+//var RightNow = prompt("Date time:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+//var ORTimestamp = thisyear+submonth+subday+h+m+s;
+//document.getElementById('TimeStampOR').value = ORTimestamp; break;
+case 'iso': var myprompt = isostr;
+var RightNow = prompt("Date time:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'utc': var myprompt = utcstr;
+var RightNow = prompt("Date time:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'zulu': var myprompt = isostr;
+myprompt = isostr.replace("T", " "); slen = myprompt.length;
+myprompt = myprompt.substr(0, slen-5)+'Z';
+var RightNow = prompt("Date time:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+case 'UTChm': var myprompt = myUTCtime;
+var RightNow = prompt("Date time:", myprompt);
+document.getElementById(TheFld).value = RightNow;
+break;
+}
+}
+
+function Countthelines(f) { var text1 = f
+var text2 = text1.replace(/\s+$/,"");
+var split2 = text2.split("\n"); var mytotal = split2.length * 17;
+if (mytotal < 150) {
+mytotal = 150;
+}
+var tstr = mytotal.toString();
+return tstr;
+}
+
+
+function Flip(theid,working) {
+x1 = document.getElementById(theid).value;
+if (x1 == '' || x1 == '') { document.getElementById(theid).value = working} 
+else { document.getElementById(theid).value = '';}
+}
+
+
+
+
+
+function putEventType(TheType) {
+document.getElementById('BLOCK12').style.background  = "#ffffff";
+document.getElementById('EventType').value = TheType;
+if (TheType == "ACTUAL INCIDENT") {document.getElementById('BLOCK12').style.background  = "#fccac7";}
+}
+
+// Test auto collect
+
+function saveTextAsFile(fileNameToSaveAs, textToWrite) {
+var textToWrite = document.getElementById('parseme').value; 
+var fileNameToSaveAs = "SDG Hospital Status " + DateforFile()+".txt";
+//fileNameToSaveAs = prompt("", fileNameToSaveAs);
+
+  /* Saves a text string as a blob file*/  
+  var ie = navigator.userAgent.match(/MSIE\s([\d.]+)/),
+      ie11 = navigator.userAgent.match(/Trident\/7.0/) && navigator.userAgent.match(/rv:11/),
+      ieEDGE = navigator.userAgent.match(/Edge/g),
+      ieVer=(ie ? ie[1] : (ie11 ? 11 : (ieEDGE ? 12 : -1)));
+
+  if (ie && ieVer<10) {
+    console.log("No blobs on IE ver<10");
+    return;
+  }
+
+  var textFileAsBlob = new Blob([textToWrite], {
+    type: 'text/plain'
+  });
+
+  if (ieVer>-1) {
+    window.navigator.msSaveBlob(textFileAsBlob, fileNameToSaveAs);
+
+  } else {
+    var downloadLink = document.createElement("a");
+    downloadLink.download = fileNameToSaveAs;
+    downloadLink.href = window.URL.createObjectURL(textFileAsBlob);
+    downloadLink.onclick = function(e) { document.body.removeChild(e.target); };
+    downloadLink.style.display = "none";
+    document.body.appendChild(downloadLink);
+    downloadLink.click();
+  }
+}
+
+
+
+
+
+function destroyClickedElement(event)
+{
+    document.body.removeChild(event.target);
+}
+
+function loadFileAsText()
+{
+
+    var fileToLoad = document.getElementById("fileToLoad").files[0];
+ 
+    var fileReader = new FileReader();
+    fileReader.onload = function(fileLoadedEvent) 
+    {
+        var textFromFileLoaded = fileLoadedEvent.target.result;
+        document.getElementById("inputTextToSave").value = textFromFileLoaded;
+    };
+    fileReader.readAsText(fileToLoad, "UTF-8");
+}
+
+
+function DateforFile(RightNow) {
+var txt;
+var d = new Date(),
+thisyear = d.getFullYear();
+thismonth= d.getMonth();
+thismonth = thismonth+1;
+if (thismonth < 10) { thismonth = "0" + thismonth}
+
+thisday = d.getDate();
+if (thisday < 10) { thisday = "0" + thisday}
+
+h = (d.getHours()<10?'0':'') + d.getHours()
+m = (d.getMinutes()<10?'0':'') + d.getMinutes()
+var myprompt = thisyear+ '-'+thismonth+'-'+thisday+' '+h + '_' + m ;
+return myprompt;
+}
+
+function isObject(arg) {
+  return Object.prototype.toString.call(arg)==='[object Object]';
+}
+
+function formDataToObject(elForm) {
+  if (!elForm instanceof Element) return;
+  var fields = elForm.querySelectorAll('input, select, textarea'),
+    o = {};
+  for (var i=0, imax=fields.length; i<imax; ++i) {
+    var field = fields[i],
+      sKey = field.name || field.id;
+    if (field.type==='button' || field.type==='image' || field.type==='submit' || !sKey) continue;
+    switch (field.type) {
+      case 'checkbox':
+        o[sKey] = +field.checked;
+        break;
+      case 'radio':
+        if (o[sKey]===undefined) o[sKey] = '';
+        if (field.checked) o[sKey] = field.value;
+        break;
+      case 'select-multiple':
+        var a = [];
+        for (var j=0, jmax=field.options.length; j<jmax; ++j) {
+          if (field.options[j].selected) a.push(field.options[j].value);
+        }
+        o[sKey] = a;
+        break;
+      default:
+        o[sKey] = field.value;
+    }
+  }
+ // alert('Form data:\n\n' + JSON.stringify(o, null, 2));
+ document.getElementById('parseme').value = JSON.stringify(o, null, 2);
+//  return o;
+}
+
+function populateForm(o) {
+
+o =  JSON.parse(document.getElementById('parseme').value);
+ //if (!isObject(o)) return;
+if (!isObject(o)) return;
+  for (var i in o) {
+    var el = document.getElementById(i) || document.querySelector('[name=' + i + ']');
+    if (el.type==='radio') el = document.querySelectorAll('[name=' + i + ']');
+    switch (typeof o[i]) {
+      case 'number':
+        el.checked = o[i];
+        break;
+      case 'object':
+        if (el.options && o[i] instanceof Array) {
+          for (var j=0, jmax=el.options.length; j<jmax; ++j) {
+            if (o[i].indexOf(el.options[j].value)>-1) el.options[j].selected = true;
+          }
+        }
+        break;
+      default:
+        if (el instanceof NodeList) {
+          for (var j=0, jmax=el.length; j<jmax; ++j) {
+            if (el[j].value===o[i]) el[j].checked = true;
+          }
+        } else {
+          el.value = o[i];
+        }
+    }
+  }
+   // Fixfields();
+
+
+}
+
+function SaveData() {
+			formDataToObject(document.getElementById('myform'))
+			saveTextAsFile();
+			
+			//saveTextAsFile();
+			}
+
+//-------
+ function readBlob(opt_startByte, opt_stopByte) {
+  
+    var files = document.getElementById('files').files;
+    if (!files.length) {
+      alert('Please select a file!');
+      return;
+    }
+
+    var file = files[0];
+    var start = parseInt(opt_startByte) || 0;
+    var stop = parseInt(opt_stopByte) || file.size - 1;
+
+    var reader = new FileReader();
+
+    // If we use onloadend, we need to check the readyState.
+    reader.onloadend = function(evt) {
+      if (evt.target.readyState == FileReader.DONE) { // DONE == 2
+        document.getElementById('byte_content').textContent = evt.target.result;
+        document.getElementById('byte_range').textContent = 
+            ['Read bytes: ', start + 1, ' - ', stop + 1,
+             ' of ', file.size, ' byte file'].join('');
+      }
+    };
+
+    var blob = file.slice(start, stop + 1);
+    reader.readAsBinaryString(blob);
+  }
+    	
+  window.onload = function () { 
+ 
+ //Check the support for the File API support 
+ if (window.File && window.FileReader && window.FileList && window.Blob) {
+    var fileSelected = document.getElementById('txtfiletoread');
+	
+    fileSelected.addEventListener('change', function (e) { 
+         //Set the extension for the file 
+         var fileExtension = /text.*/; 
+         //Get the file object 
+         var fileTobeRead = fileSelected.files[0];
+        //Check of the extension match 
+         if (fileTobeRead.type.match(fileExtension)) { 
+             //Initialize the FileReader object to read the 2file 
+			
+             var fileReader = new FileReader(); 
+             fileReader.onload = function (e) { 
+                 var fileContents = document.getElementById('filecontents'); 
+                
+				document.getElementById('parseme').value =fileReader.result;
+				populateForm(obj = document.getElementById('parseme').value);
+					 } 
+             fileReader.readAsText(fileTobeRead); 
+         } 
+         else { 
+             alert("Please select text file"); 
+         }
+ 
+    }, false);
+} 
+ else { 
+     alert("Files are not supported"); 
+ } 
+ 
+ 
+//Checkifinbrowser();
+
+ }
+
+function Checkifinbrowser() {
+ var x= document.getElementById("testCall").value; 
+ var n = x.search("{Msg");
+ if (n>-1) { 
+ document.getElementById('Submit').style.visibility='hidden';
+  alert('You are running this form outside of Winlink.\n \nWhen you have completed the form, SAVE the data and then give or send the SAVED data file to the radio operator. The operator will load the SAVED data into the correct form and send via winlink. ');
+ } else {document.getElementById('Submit').style.visibility='visible';  }
+}
+
+// add map stuff
+
+
+
+function isNumberKey(evt)  
+
+{  
+if(event.keyCode==13){return false;}
+if(event.keyCode==32){return false;}
+var charCode = (evt.which) ? evt.which : event.keyCode  
+
+if (charCode > 32 && (charCode < 43 || charCode > 57))  
+
+//if (charCode > 32 && (charCode < 40 ))  
+
+return false;  
+
+return true;  
+  
+}  
+function TimeNow(Timefld, doprompt) {
+var txt;
+var d = new Date();
+thisyear = d.getFullYear();
+thismonth= d.getMonth();
+thismonth = thismonth+1;
+if (thismonth < 10) { thismonth = "0"+thismonth};
+
+thisday = d.getDate();
+if (thisday < 10) { thisday = "0"+thisday};
+
+h = (d.getHours()<10?'0':'') + d.getHours()
+m = (d.getMinutes()<10?'0':'') + d.getMinutes()
+s = (d.getSeconds()<10?'0':'') + d.getSeconds();
+var myprompt = thisyear+ '/'+thismonth+'/'+thisday+' '+h + ':' + m;
+var RightNow = myprompt;
+if (doprompt) {var RightNow = prompt("", myprompt);}
+document.getElementById(Timefld).value = RightNow;
+ TimeStamp();} 
+
+
+function parsethisdate() {
+var thedatetime=  document.getElementById('DateTime').value;
+//d= new Date(Date.parse(thedatetime)).toString();
+var d= new Date(Date.parse(thedatetime));
+
+//alert (Date.parse(thedatetime));
+//d =parseDate(thedatetime);
+utcstr = d.toISOString()
+//alert (utcstr);
+document.getElementById('timestamp2').value= utcstr;
+return utcstr;
+}
+function TimeStamp(){
+var d1 = new Date();
+mtime = d1.getTime();
+//var thedatetime=  document.getElementById('UDTGfld').value;
+var thedatetime= parsethisdate();
+var thedatetime=thedatetime.replace(/-/g, ',');
+var thedatetime=thedatetime.replace(/:/g, ',');
+//alert ('the dt '+thedatetime);
+var thedatetime = thedatetime.replace("T", " ") 
+var thedatetime=thedatetime.replace(' ', ',');
+var thedatetime = thedatetime.replace("Z", "") ;
+var thedatetime = thedatetime.replace(".000", "") ;
+
+//alert ('the dt '+thedatetime);
+var thesplit = thedatetime.split (',');
+var d = new Date(Date.UTC(parseInt(thesplit[0]),parseInt(thesplit[1]),parseInt(thesplit[2]),parseInt(thesplit[3]),parseInt(thesplit[4]),parseInt(thesplit[5])));
+//alert (thesplit[1]);
+//var d= new Date(Date.parse('2020/11/24 15:30:01'));
+  var nyyyy = d.getUTCFullYear();
+  nyyyy= nyyyy.toString();
+
+  var nMM = d.getUTCMonth();
+  if(nMM<10) {nMM= '0'+nMM}
+ nMM=nMM.toString()
+var ndd = d.getUTCDate();
+  if(ndd<10) {ndd= '0'+ndd}
+  ndd=ndd.toString()
+ // alert(ndd);
+  var nhh = d.getUTCHours();
+nhh=nhh.toString();
+ if(nhh.length <2) {nhh= '0'+nhh}
+// alert ('after hour'+nhh);
+    var nmm = d.getUTCMinutes();
+	  nmm=nmm.toString();
+	if(nmm.length <2) {nmm= '0'+nmm}
+	 var nss = d.getUTCSeconds();
+	
+  nss=nss.toString()
+   if(nss.length <2) {nss= '0'+nss}
+//
+var test = (thesplit[0])+(thesplit[1])+(thesplit[2])+(thesplit[3])+(thesplit[4])+(thesplit[5]);
+
+
+test = test.replace(/\s/g,'');
+ document.getElementById("timestamp").value = test; ;
+  //  document.getElementById("timestamp2").value= test;
+ //x=nyyyy+nmm+ndd+nhh+nmm+nss;
+   
+   
+  // document.getElementById("timestamp2").value = nyyyy+nMM+ndd+nhh+nmm+nss
+  // alert (nyyyy+nMM+ndd+nhh+nmm+nss);
+  var x=(document.getElementById("timestamp").value);
+
+if (x.search("NaN")!==-1){alert ('Invalid date please enter UTC date time as yyyy-mm-dd hh:mm:ssZ\n \nDEFAULTING  to current UTC Time.');DateTime('autozulu','UDTGfld', true); }
+
+ 
+}
+
+
+
+// get buttonvalue
+function GV (Tfield) {
+	var test = document.querySelector('input[name='+Tfield+']:checked').value
+	return test;
+}
+function GFV (Tfield) { 
+	var test= document.getElementById(Tfield).value
+	var test = test.replace(/(\r\n|\n|\r)/gm," "); 
+
+	return test;
+}
+function GBV (Tfield) { 
+	var test= document.getElementById(Tfield).value
+	if (test !==''){test = 'Available'}
+
+	return test;
+}
+
+
+// fixstrings for csv
+function getEX (str) {
+var line =  str;
+if (line =='--') {line=''}
+line = line.replace(/[\u2014]/g, "--")   ;     // emdash
+line = line.replace(/[\u2022]/g, "*")  ;       // bullet
+line = line.replace(/[\u2018\u2019]/g, "'");   // smart single quotes
+line = line.replace(/[\u201C\u201D]/g, '"');  // smart double quotes
+ var addquote = false;
+ var position = line.search('"');
+if (position != -1){line = line.replace(/"/g, '""');addquote = true}
+var position = line.search(",");
+if (position != -1){ addquote = true}
+if (addquote==true) {var line = '"' +line+'"';} 
+return line;
+}
+    // JavaScript to test hemisphere
+
+function Testlon(){   
+    // get user loc via lat lon and then compare
+     
+    var homelon = "{Longitude}";
+       var msg = 'Verify entered coordinates before submitting form.'
+    var num =document.getElementById('mapLon').value;
+ 
+    if ( (homelon <0 && num >0) || (homelon >0 && num <0)  ){
+        document.getElementById('mapLon').style.backgroundColor = '#ffdde2';
+          alert('Warning\nThe entered longitude is in a different hemisphere than the Winlink Express or Position Report coordinates. Western longitudes are negative numbers. Eastern longitudes are positive numbers.\n\nClick OK to edit the longitude or ignore this warning and continue with the entered longitude.');
+      
+    }else {document.getElementById('mapLon').style.backgroundColor = '';
+         }            
+}
+    
+    
+
+     function Flip2(theid,working) {
+x1 = document.getElementById(theid).value;
+if (x1 == '') { document.getElementById(theid).value = '** THIS IS AN EXERCISE **';} 
+else { document.getElementById(theid).value = '';}
+}
+    
+</script>
+</head>
+<body >
+<form  style="font-family: Arial;" pbzloc="3" onsubmit="return confirm('To complete your form submission, click OK and close the open browser window. You will return to the new message window so you can post your message to the outbox');" method="post" id="myform" enctype="multipart/form-data" action="http://{FormServer}:{FormPort}">
+<div id="pop1" class="pop-up"><!-- The pop-up block -->
+
+<div class="popBox"><!-- If the content becomes larger than the pop-up this div will scroll the content -->
+
+<div class="popScroll"><!-- Test for help starts here -->
+
+<p> </p>
+
+
+
+
+
+<br />  <span class="formtext"> 
+Contact SDG staff on this forms use.
+
+
+<br />
+
+<br />
+
+* NOTE on printing:<br />
+
+<br />
+
+Printing this form is dependent upon your selected
+
+printer and its settings. Various Web Browsers and and their viewing
+
+sizes are not all the same. Printing from a browsers print function
+
+may be different from the operating systems default print mode.
+
+Select what works for you, for both printing and viewing.
+
+You may print direct to the printer as a HTML or save as a
+
+PDF then print the PDF. In some instances Landscape mode may print
+
+better than Portrait. <br /><br />
+More Information<br /><br />
+You can save your completed HTML to a text file. This will allow you to reload the Form
+with ALL entered form data. You do this prior to submitting the form. Then you can open a new Hospital Status Report and load the saved HTML form data. 
+NOTE: Date and Times will be the previous, so change if needed. This is much like using FireFox and the addon Formlet. It will save the info
+as a text file with the Date and Time as the text file name. Now you can use any browser, save your form, (as many versions as you like), and then re-populate.
+<br />
+<br />
+
+</span>
+</p>
+
+ <td width="0%"></p>
+
+</div>
+
+<!-- The close pop-up link correctly positioned at the end of the content block -->
+
+<a href="#links" class="close"><span>Back
+
+to links</span></a> </div>
+
+</div>
+<table width="1238"  border="1" cellpadding="3" cellspacing="0" style="width: 750px; height: 453px;">
+  <colgroup>
+    <col width="657" />
+    </colgroup>
+  <tbody>
+    <tr valign="top">
+      <td  colspan="2" align="left"><div " align="center"> <span class="style6">SAN DIEGO HOSPITAL STATUS REPORT FORM<br />
+        (Essential Elements</span><b><span class="style6"><strong><span style="font-weight: normal;"><b><strong><b><strong><b><strong>)</strong></b></strong></b></strong></b><span class="style17"><a href="#pop1"></a></span></span></strong></span></b><br />
+        <br />
+        <span class=""> </span>
+        <div " align="center">
+          <input type="button" value=" Load SDG Hospital Status Data " onclick="document.getElementById('txtfiletoread').click();" />
+          <input type="file" id="txtfiletoread" accept=".txt"  style="display: none;"/>
+        </div>
+      </div></td>
+    </tr>
+    <tr valign="top">
+      <td  colspan="2" align="left" class="formtext"><table width="100%"  border="1" cellpadding="3" cellspacing="0" bordercolor="#CCCCCC">
+        <tr valign="top">
+          <td colspan="3" nowrap="nowrap" class="" id= "BLOCK0cell7" ><span ">
+            <input name="exbtn" type="checkbox" id="exbtn" value="true" onclick="Flip2('IsExercise', '')"/>
+            THIS IS AN EXERCISE
+            <input name="IsExercise" type="hidden" id="IsExercise"  />
+            &nbsp;&nbsp;&nbsp;&nbsp;</span></td>
+        </tr>
+        <tr valign="top">
+          <td width="50%" nowrap="nowrap" class="formtext11"  id= "BLOCK0cell6" >Facility  Name:
+            <input tabindex="5" name="FacName" type="text" id="FacName" size="40" maxlength="40" /></td>
+          <td width="22%" nowrap="nowrap" class="formtext">Date From:
+            <input name="sd0A" type="text" required="required" id="sd0A" placeholder="Click to Add Date" tabindex="1"  onclick="SetDateTime('fulldate', 'sd0A')" size="14" />
+            &nbsp; </td>
+          <td width="28%" nowrap="nowrap" class="formtext">&nbsp;&nbsp;&nbsp;Time From:
+            <input name="sd0C" type="text" required="required" id="sd0C" placeholder="Click to Add Time" tabindex="2"  onclick="SetDateTime('hm', 'sd0C')" size="14"/></td>
+        </tr>
+        <tr valign="top">
+          <td colspan="3" nowrap="nowrap" class="formtext11" id= "BLOCK0cell5" >Facility Address:
+            <input tabindex="5" name="FacAddress" type="text" id="FacAddress" size="70" maxlength="70" /></td>
+        </tr>
+        <tr valign="top">
+          <td nowrap="nowrap" class="formtext11" id= "BLOCK0cell4" >Facility Type:
+            <input tabindex="5" name="FacType" type="text" id="FacType" size="40" maxlength="40" /></td>
+          <td nowrap="nowrap" class="formtext11"> Facility ID:
+            <input tabindex="5" name="FacID" type="text" id="FacID" size="20" maxlength="20" /></td>
+          <td nowrap="nowrap" class="formtext11">CLIA #:
+            <input tabindex="5" name="FacCLIA" type="text" id="FacCLIA" size="20" maxlength="20" /></td>
+        </tr>
+        <tr valign="top">
+          <td nowrap="nowrap" class="formtext11" id= "BLOCK0cell3" >Emergency Contact Name
+            <input name="FacEmhgName" type="text" required="required" id="FacEmhgName" tabindex="5" size="40" maxlength="40" /></td>
+          <td nowrap="nowrap" class="formtext11"> Phone #:
+            <input name="FacEmgPhone" type="text" required="required" id="FacEmgPhone" tabindex="5" size="30" maxlength="40" /></td>
+          <td nowrap="nowrap" class="formtext11">Fax #:
+            <input tabindex="5" name="FacEmgPhonw2" type="text" id="FacEmgFac" size="30" maxlength="40" /></td>
+        </tr>
+        <tr valign="top">
+          <td colspan="3" nowrap="nowrap" class="formtext11" id= "BLOCK0cell2" >Other Phone, Fax, Cell, or Radio:
+            <input tabindex="5" name="FacAddress2" type="text" id="FacAddress2" size="100" maxlength="100" /></td>
+        </tr>
+        <tr valign="top">
+          <td colspan="3" align="center" nowrap="nowrap" class="formtext11" id= "BLOCK0cell" >If you have more than one facility, please complete 1 form for each facility/location. Do not combine data from multiple   facilities into a single form.</td>
+        </tr>
+      </table>
+        <table width="100%" height="1054"  border="1" cellpadding="3" cellspacing="0" bordercolor="#CCCCCC">
+          <tr valign="top" bgcolor="#CCCCCC" class="formtext">
+            <td colspan="4" nowrap="nowrap" bgcolor="#F4F6F7" class="formtext11"><strong>CURRENT OPERATIONAL STATUS<em> ( Select One ) </em></strong></td>
+            <td colspan="4" nowrap="nowrap" bgcolor="#F4F6F7"><table width="100%" border="0" cellspacing="0" cellpadding="0">
+              <tbody>
+                <tr>
+                  <td width="37%"><strong>FACILITY CENSUS&nbsp;&nbsp;&nbsp;&nbsp;</strong></td>
+                  <td width="63%">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<strong>COUNT TOTAL</strong></td>
+                </tr>
+              </tbody>
+            </table></td>
+          </tr>
+          <tr valign="top" class="">
+            <td height="32" colspan="2" nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "2">Fully Functional</td>
+            <td colspan="2" nowrap="nowrap"  bgcolor="#FFFFFF" class="" id = "2"><span > &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+              <input name="OpStatusbtn"type="radio" class="formtext11" id="BLOCK"onclick="document.getElementById('OpStatus').value =  this.value" value="Fully Functional" />
+              <strong><b>
+                <input name="OpStatus" type="hidden" id="OpStatus" value="" size="10" />
+              </b></strong></span></td>
+            <td width="243" nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "2"> Total Patient/Resident Count</td>
+            <td colspan="2" nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "2"><input tabindex="5" name="g1" type="text" onkeypress="return isNumberKey(event)"  id="g1" size="15" maxlength="20" /></td>
+          </tr>
+          <tr valign="top" class="">
+            <td colspan="2" nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "7">Partially Functional</td>
+            <td colspan="2" nowrap="nowrap"  bgcolor="#FFFFFF" class="" id = "2"><span "> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+              <input name="OpStatusbtn"type="radio" class="formtext11" id="BLOCK"onclick="document.getElementById('OpStatus').value =  this.value" value="Partially Functional" />
+            </span></td>
+            <td nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "7">Staffed Bed Count</td>
+            <td colspan="2" nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "7"><input tabindex="5" name="g2" type="text"onkeypress="return isNumberKey(event)"  id="g2" size="15" maxlength="20" /></td>
+          </tr>
+          <tr valign="top" class="">
+            <td colspan="2" nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "6">Need to Evacuate</td>
+            <td colspan="2" nowrap="nowrap"  bgcolor="#FFFFFF" class="" id = "2"><span "> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+              <input name="OpStatusbtn"type="radio" class="formtext11" id="BLOCK"onclick="document.getElementById('OpStatus').value =  this.value" value="Need to Evacuate" />
+            </span></td>
+            <td nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "6">Unstaffed Bed Count</td>
+            <td colspan="2" nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "6"><input tabindex="5" name="g3" type="text"onkeypress="return isNumberKey(event)"  id="g3" size="15" maxlength="20" /></td>
+          </tr>
+          <tr valign="top" class="">
+            <td colspan="2" nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "5">Closed</td>
+            <td colspan="2" nowrap="nowrap"  bgcolor="#FFFFFF" class="" id = "2"><span "> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+              <input name="OpStatusbtn"type="radio" class="formtext11" id="BLOCK"onclick="document.getElementById('OpStatus').value =  this.value" value="Closed" />
+            </span></td>
+            <td nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "5">Patients WITHOUT Beds Count</td>
+            <td colspan="2" nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "5"><input tabindex="5" name="g4" type="text"onkeypress="return isNumberKey(event)"  id="g4" size="15" maxlength="20" /></td>
+          </tr>
+          <tr valign="top" class="">
+            <td colspan="2" nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "4">Evacuated</td>
+            <td colspan="2" nowrap="nowrap"  bgcolor="#FFFFFF" id = "2"><span "> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+              <input name="OpStatusbtn"type="radio" class="formtext11" id="BLOCK"onclick="document.getElementById('OpStatus').value =  this.value" value="Evacuated" />
+            </span></td>
+            <td nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "4">Total Bed Count</td>
+            <td colspan="2" nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "4"><input tabindex="5" name="g5" type="text"onkeypress="return isNumberKey(event)"  id="g5" size="15" maxlength="20" /></td>
+          </tr>
+          <tr valign="top" class="">
+            <td colspan="2" align="center" nowrap="nowrap"  bgcolor="#F4F6F7" class="formtext11" id = "10"><strong>Damage Assessment</strong></td>
+            <td width="74" align="center" nowrap="nowrap"  bgcolor="#F4F6F7" class="formtext11" id = "10"><strong>Yes</strong></td>
+            <td width="74" align="center" nowrap="nowrap"  bgcolor="#F4F6F7" class="formtext11" id = "10"><strong>No</strong></td>
+            <td align="center" nowrap="nowrap"  bgcolor="#F4F6F7" class="formtext11" id = "10"><strong>Services Available</strong></td>
+            <td width="72" align="center" nowrap="nowrap"  bgcolor="#F4F6F7" class="formtext11" id = "10"><strong>Yes</strong></td>
+            <td width="81" align="center" nowrap="nowrap"  bgcolor="#F4F6F7" class="formtext11" id = "10"><strong>No</strong></td>
+            <td width="90" align="center" nowrap="nowrap"  bgcolor="#F4F6F7" class="formtext11" id = "10"><strong>N/A</strong></td>
+          </tr>
+          <tr valign="top" class="">
+            <td colspan="2" nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td">Structural Damage<strong><b>
+              <input name="Damage1" type="hidden" id="Damage1" value="" size="10" />
+            </b></strong></td>
+            <td nowrap="nowrap"  bgcolor="#FFFFFF" class="" id = "td"><input name="DamageB1"type="radio" class="formtext11" id="BLOCK4"onclick="document.getElementById('Damage1'
+                    ).value =  this.value" value="Yes" /></td>
+            <td nowrap="nowrap"  bgcolor="#FFFFFF" class="" id = "td"><input name="DamageB1"type="radio" class="formtext11" id="BLOCK5"onclick="document.getElementById('Damage1').value =  this.value" value="No" /></td>
+            <td nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td">&nbsp;Laboratory <strong><b>
+              <input name="Service1" type="hidden" id="Service1" value="" size="10" />
+            </b></strong></td>
+            <td align="center" nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td"><input name="SeviceB1"type="radio" class="formtext11" id="BLOCK6"onclick="document.getElementById('Service1'
+                    ).value =  this.value" value="Yes" /></td>
+            <td align="center" nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td"><input name="SeviceB1"type="radio" class="formtext11" id="BLOCK7"onclick="document.getElementById('Service1'
+                    ).value =  this.value" value="No" /></td>
+            <td align="center" nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td"><input name="SeviceB1"type="radio" class="formtext11" id="BLOCK8"onclick="document.getElementById('Service1'
+                    ).value =  this.value" value="N/A" /></td>
+          </tr>
+          <tr valign="top" class="">
+            <td colspan="2" nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td">Partial Collapse<strong><b>
+              <input name="Damage2" type="hidden" id="Damage2" value="" size="10" />
+            </b></strong></td>
+            <td nowrap="nowrap"  bgcolor="#FFFFFF" id = "td"><input name="DamageB2"type="radio" class="formtext11" id="BLOCK4"onclick="document.getElementById('Damage2'
+                    ).value =  this.value" value="Yes" /></td>
+            <td nowrap="nowrap"  bgcolor="#FFFFFF" id = "td"><input name="DamageB2"type="radio" class="formtext11" id="BLOCK5"onclick="document.getElementById('Damage2').value =  this.value" value="No" /></td>
+            <td nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td">&nbsp;Memory Care Unit<strong><b>
+              <input name="Service2" type="hidden" id="Service2" size="10" />
+            </b></strong></td>
+            <td align="center" nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td"><input name="SeviceB2"type="radio" class="formtext11" id="BLOCK6"onclick="document.getElementById('Service2'
+                    ).value =  this.value" value="Yes" /></td>
+            <td align="center" nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td"><input name="SeviceB2"type="radio" class="formtext11" id="BLOCK7"onclick="document.getElementById('Service2'
+                    ).value =  this.value" value="No" /></td>
+            <td align="center" nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td"><input name="SeviceB2"type="radio" class="formtext11" id="BLOCK8"onclick="document.getElementById('Service2'
+                    ).value =  this.value" value="N/A" /></td>
+          </tr>
+          <tr valign="top" class="">
+            <td colspan="2" nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td">Total Collapse<strong><b>
+              <input name="Damage3" type="hidden" id="Damage3" value="" size="10" />
+            </b></strong></td>
+            <td nowrap="nowrap"  bgcolor="#FFFFFF" id = "td"><input name="DamageB3"type="radio" class="formtext11" id="BLOCK4"onclick="document.getElementById('Damage3'
+                    ).value =  this.value" value="Yes" /></td>
+            <td nowrap="nowrap"  bgcolor="#FFFFFF" id = "td"><input name="DamageB3"type="radio" class="formtext11" id="BLOCK5"onclick="document.getElementById('Damage3').value =  this.value" value="No" /></td>
+            <td nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td">&nbsp;Behavioral health Unit<strong><b>
+              <input name="Service3" type="hidden" id="Service3" value="" size="10" />
+            </b></strong></td>
+            <td align="center" nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td"><input name="SeviceB3"type="radio" class="formtext11" id="BLOCK6"onclick="document.getElementById('Service3'
+                    ).value =  this.value" value="Yes" /></td>
+            <td align="center" nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td"><input name="SeviceB3"type="radio" class="formtext11" id="BLOCK7"onclick="document.getElementById('Service3'
+                    ).value =  this.value" value="No" /></td>
+            <td align="center" nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td"><input name="SeviceB3"type="radio" class="formtext11" id="BLOCK8"onclick="document.getElementById('Service3'
+                    ).value =  this.value" value="N/A" /></td>
+          </tr>
+          <tr valign="top" class="">
+            <td colspan="2" nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td">Internal Disaster<strong><b>
+              <input name="Damage4" type="hidden" id="Damage4" value="" size="10" />
+            </b></strong></td>
+            <td nowrap="nowrap"  bgcolor="#FFFFFF" id = "td"><input name="DamageB4"type="radio" class="formtext11" id="BLOCK4"onclick="document.getElementById('Damage4'
+                    ).value =  this.value" value="Yes" /></td>
+            <td nowrap="nowrap"  bgcolor="#FFFFFF" id = "td"><input name="DamageB4"type="radio" class="formtext11" id="BLOCK5"onclick="document.getElementById('Damage4').value =  this.value" value="No" /></td>
+            <td nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td">&nbsp;Pharmacy<strong><b>
+              <input name="Service4" type="hidden" id="Service4" value="" size="10" />
+            </b></strong></td>
+            <td align="center" nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td"><input name="SeviceB4"type="radio" class="formtext11" id="BLOCK6"onclick="document.getElementById('Service4'
+                    ).value =  this.value" value="Yes" /></td>
+            <td align="center" nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td"><input name="SeviceB4"type="radio" class="formtext11" id="BLOCK7"onclick="document.getElementById('Service4'
+                    ).value =  this.value" value="No" /></td>
+            <td align="center" nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td"><input name="SeviceB4"type="radio" class="formtext11" id="BLOCK8"onclick="document.getElementById('Service4'
+                    ).value =  this.value" value="N/A" /></td>
+          </tr>
+          <tr valign="top" class="">
+            <td colspan="2" nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td">Flooding<strong><b>
+              <input name="Damage5" type="hidden" id="Damage5" value="" size="10" />
+            </b></strong></td>
+            <td nowrap="nowrap"  bgcolor="#FFFFFF" id = "td"><input name="DamageB5"type="radio" class="formtext11" id="BLOCK4"onclick="document.getElementById('Damage5'
+                    ).value =  this.value" value="Yes" /></td>
+            <td nowrap="nowrap"  bgcolor="#FFFFFF" id = "td"><input name="DamageB5"type="radio" class="formtext11" id="BLOCK5"onclick="document.getElementById('Damage5').value =  this.value" value="No" /></td>
+            <td nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td"> Nutrition/ Environmental<strong><b>
+              <input name="Service5" type="hidden" id="Service5" value="" size="10" />
+            </b></strong></td>
+            <td align="center" nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td"><input name="SeviceB5"type="radio" class="formtext11" id="BLOCK6"onclick="document.getElementById('Service5'
+                    ).value =  this.value" value="Yes" />
+              </h5></td>
+            <td align="center" nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td"><input name="SeviceB5"type="radio" class="formtext11" id="BLOCK7"onclick="document.getElementById('Service5'
+                    ).value =  this.value" value="No" /></td>
+            <td align="center" nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td"><input name="SeviceB5"type="radio" class="formtext11" id="BLOCK8"onclick="document.getElementById('Service5'
+                    ).value =  this.value" value="N/A" />
+              </h5></td>
+          </tr>
+          <tr valign="top" class="">
+            <td colspan="2" nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td">Utility Damage<strong><b>
+              <input name="Damage6" type="hidden" id="Damage6" value="" size="10" />
+            </b></strong></td>
+            <td nowrap="nowrap"  bgcolor="#FFFFFF" id = "td"><input name="DamageB6"type="radio" class="formtext11" id="BLOCK4"onclick="document.getElementById('Damage6'
+                    ).value =  this.value" value="Yes" /></td>
+            <td nowrap="nowrap"  bgcolor="#FFFFFF" id = "td"><input name="DamageB6"type="radio" class="formtext11" id="BLOCK5"onclick="document.getElementById('Damage6').value =  this.value" value="No" /></td>
+            <td nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td"> Emergency Dept<strong><b>
+              <input name="Service6" type="hidden" id="Service6" value="" size="10" />
+            </b></strong></td>
+            <td align="center" nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td"><input name="SeviceB6"type="radio" class="formtext11" id="BLOCK6"onclick="document.getElementById('Service6'
+                    ).value =  this.value" value="Yes" /></td>
+            <td align="center" nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td"><input name="SeviceB6"type="radio" class="formtext11" id="BLOCK7"onclick="document.getElementById('Service6'
+                    ).value =  this.value" value="No" /></td>
+            <td align="center" nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td"><input name="SeviceB6"type="radio" class="formtext11" id="BLOCK8"onclick="document.getElementById('Service6'
+                    ).value =  this.value" value="N/A" /></td>
+          </tr>
+          <tr valign="top" class="">
+            <td colspan="2" nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td">Poor Air Quality<strong><b>
+              <input name="Damage7" type="hidden" id="Damage7" value="" size="10" />
+            </b></strong></td>
+            <td nowrap="nowrap"  bgcolor="#FFFFFF" id = "td"><input name="DamageB7"type="radio" class="formtext11" id="BLOCK4"onclick="document.getElementById('Damage7'
+                    ).value =  this.value" value="Yes" /></td>
+            <td nowrap="nowrap"  bgcolor="#FFFFFF" id = "td"><input name="DamageB7"type="radio" class="formtext11" id="BLOCK5"onclick="document.getElementById('Damage7').value =  this.value" value="No" />
+              </h6></td>
+            <td nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td"> Operation Rooms<strong><b>
+              <input name="Service7" type="hidden" id="Service7" value="" size="10" />
+            </b></strong></td>
+            <td align="center" nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td"><input name="SeviceB7"type="radio" class="formtext11" id="BLOCK6"onclick="document.getElementById('Service7'
+                    ).value =  this.value" value="Yes" /></td>
+            <td align="center" nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td"><input name="SeviceB7"type="radio" class="formtext11" id="BLOCK7"onclick="document.getElementById('Service7'
+                    ).value =  this.value" value="No" /></td>
+            <td align="center" nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td"><input name="SeviceB7"type="radio" class="formtext11" id="BLOCK8"onclick="document.getElementById('Service7'
+                    ).value =  this.value" value="N/A" /></td>
+          </tr>
+          <tr valign="top" class="">
+            <td width="219" align="center" nowrap="nowrap"  bgcolor="#F4F6F7" class="formtext11" id = "td"><strong>Utility Status</strong></td>
+            <td width="74" align="center" nowrap="nowrap"  bgcolor="#F4F6F7" class="formtext11" id = "td"><strong>Yes</strong></td>
+            <td align="center" nowrap="nowrap"  bgcolor="#F4F6F7" class="formtext11" id = "td"><strong>No</strong></td>
+            <td align="center" nowrap="nowrap"  bgcolor="#F4F6F7" class="formtext11" id = "td"><strong>N/A</strong></td>
+            <td nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td">Radiology<strong><b>
+              <input name="Service8" type="hidden" id="Service8" value="" size="10" />
+            </b></strong></td>
+            <td align="center" nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td"><input name="SeviceB8"type="radio" class="formtext11" id="BLOCK6"onclick="document.getElementById('Service8'
+                    ).value =  this.value" value="Yes" /></td>
+            <td align="center" nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td"><input name="SeviceB8"type="radio" class="formtext11" id="BLOCK7"onclick="document.getElementById('Service8'
+                    ).value =  this.value" value="No" /></td>
+            <td align="center" nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td"><input name="SeviceB8"type="radio" class="formtext11" id="BLOCK8"onclick="document.getElementById('Service8'
+                    ).value =  this.value" value="N/A" /></td>
+          </tr>
+          <tr valign="top" class="">
+            <td nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td">Electrical Power<strong><b>
+              <input name="UStatus1" type="hidden" id="UStatus1" value="" size="10" />
+            </b></strong></td>
+            <td nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td"><input name="USatusB1"type="radio" class="formtext11" id="BLOCK6"onclick="document.getElementById('UStatus1'
+                    ).value =  this.value" value="Yes" /></td>
+            <td nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td"><input name="USatusB1"type="radio" class="formtext11" id="BLOCK7"onclick="document.getElementById('UStatus1'
+                    ).value =  this.value" value="No" /></td>
+            <td nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td"><input name="USatusB1"type="radio" class="formtext11" id="BLOCK8"onclick="document.getElementById('UStatus1'
+                    ).value =  this.value" value="N/A" /></td>
+            <td nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td">Morgue/Mass Fatality Area<strong><b>
+              <input name="Service9" type="hidden" id="Service9" value="" size="10" />
+            </b></strong></td>
+            <td align="center" nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td"><input name="SeviceB9"type="radio" class="formtext11" id="BLOCK6"onclick="document.getElementById('Service9'
+                    ).value =  this.value" value="Yes" /></td>
+            <td align="center" nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td"><input name="SeviceB9"type="radio" class="formtext11" id="BLOCK7"onclick="document.getElementById('Service9'
+                    ).value =  this.value" value="No" /></td>
+            <td align="center" nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td"><input name="SeviceB9"type="radio" class="formtext11" id="BLOCK8"onclick="document.getElementById('Service9'
+                    ).value =  this.value" value="N/A" /></td>
+          </tr>
+          <tr valign="top" class="">
+            <td nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td">HVAC<strong><b>
+              <input name="UStatus2" type="hidden" id="UStatus2" value="" size="10" />
+            </b></strong></td>
+            <td nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td"><input name="USatusB2"type="radio" class="formtext11" id="BLOCK6"onclick="document.getElementById('UStatus2'
+                    ).value =  this.value" value="Yes" /></td>
+            <td nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td"><input name="USatusB2"type="radio" class="formtext11" id="BLOCK7"onclick="document.getElementById('UStatus2'
+                    ).value =  this.value" value="No" /></td>
+            <td nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td"><input name="USatusB2"type="radio" class="formtext11" id="BLOCK8"onclick="document.getElementById('UStatus2'
+                    ).value =  this.value" value="N/A" /></td>
+            <td nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td">Dialysis<strong><b>
+              <input name="Service10" type="hidden" id="Service10" value="" size="10" />
+            </b></strong></td>
+            <td align="center" nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td"><input name="SeviceB10"type="radio" class="formtext11" id="BLOCK6"onclick="document.getElementById('Service10'
+                    ).value =  this.value" value="Yes" /></td>
+            <td align="center" nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td"><input name="SeviceB10"type="radio" class="formtext11" id="BLOCK7"onclick="document.getElementById('Service10'
+                    ).value =  this.value" value="No" /></td>
+            <td align="center" nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td"><input name="SeviceB10"type="radio" class="formtext11" id="BLOCK8"onclick="document.getElementById('Service10'
+                    ).value =  this.value" value="N/A" /></td>
+          </tr>
+          <tr valign="top" class="">
+            <td nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td">Natural Gas<strong><b>
+              <input name="UStatus3" type="hidden" id="UStatus3" value="" size="10" />
+            </b></strong></td>
+            <td nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td"><input name="USatusB3"type="radio" class="formtext11" id="BLOCK6"onclick="document.getElementById('UStatus3'
+                    ).value =  this.value" value="Yes" /></td>
+            <td nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td"><input name="USatusB3"type="radio" class="formtext11" id="BLOCK7"onclick="document.getElementById('UStatus3'
+                    ).value =  this.value" value="No" /></td>
+            <td nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td"><input name="USatusB3"type="radio" class="formtext11" id="BLOCK8"onclick="document.getElementById('UStatus3'
+                    ).value =  this.value" value="N/A" /></td>
+            <td colspan="4" align="center" nowrap="nowrap"  bgcolor="#F4F6F7" class="formtext11" id = "td"><strong>Surge</strong></td>
+          </tr>
+          <tr valign="top" class="">
+            <td nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td6">Water<strong><b>
+              <input name="UStatus4" type="hidden" id="UStatus4" value="" size="10" />
+            </b></strong></td>
+            <td nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td"><input name="USatusB4"type="radio" class="formtext11" id="BLOCK6"onclick="document.getElementById('UStatus4'
+                    ).value =  this.value" value="Yes" /></td>
+            <td nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td"><input name="USatusB4"type="radio" class="formtext11" id="BLOCK7"onclick="document.getElementById('UStatus4'
+                    ).value =  this.value" value="No" /></td>
+            <td nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td"><input name="USatusB4"type="radio" class="formtext11" id="BLOCK8"onclick="document.getElementById('UStatus4'
+                    ).value =  this.value" value="N/A" /></td>
+            <td colspan="2" nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td6"><strong>Casualty Information in the Last 12 Hours</strong></td>
+            <td nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td6"><strong>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Count</strong></td>
+          </tr>
+          <tr valign="top" class="">
+            <td nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td5">Wastewater/Sewer&nbsp;&nbsp;<strong><b>
+              <input name="UStatus5" type="hidden" id="UStatus5" value="" size="10" />
+            </b></strong></td>
+            <td nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td"><input name="USatusB5"type="radio" class="formtext11" id="BLOCK6"onclick="document.getElementById('UStatus5'
+                    ).value =  this.value" value="Yes" /></td>
+            <td nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td"><input name="USatusB5"type="radio" class="formtext11" id="BLOCK7"onclick="document.getElementById('UStatus5'
+                    ).value =  this.value" value="No" /></td>
+            <td nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td"><input name="USatusB5"type="radio" class="formtext11" id="BLOCK8"onclick="document.getElementById('UStatus5'
+                    ).value =  this.value" value="N/A" />
+              </h5></td>
+            <td colspan="2" nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td5"><strong>Patients Not Yet Seen</strong></td>
+            <td nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td5"><input tabindex="5" name="Serge1" type="text"onkeypress="return isNumberKey(event)"  id="Serge1" size="8" maxlength="8" /></td>
+          </tr>
+          <tr valign="top" class="">
+            <td nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td4">Internet/Wifi<strong><b>
+              <input name="UStatus6" type="hidden" id="UStatus6" value="" size="10" />
+            </b></strong></td>
+            <td nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td"><input name="USatusB6"type="radio" class="formtext11" id="BLOCK6"onclick="document.getElementById('UStatus6'
+                    ).value =  this.value" value="Yes" /></td>
+            <td nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td"><input name="USatusB6"type="radio" class="formtext11" id="BLOCK7"onclick="document.getElementById('UStatus6'
+                    ).value =  this.value" value="No" /></td>
+            <td nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td"><input name="USatusB6"type="radio" class="formtext11" id="BLOCK8"onclick="document.getElementById('UStatus6'
+                    ).value =  this.value" value="N/A" />
+              </h5></td>
+            <td colspan="2" nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td4">Patients Treated and Released</td>
+            <td nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td4"><input tabindex="5" name="Serge2" type="text"onkeypress="return isNumberKey(event)"  id="Serge2" size="8" maxlength="8" /></td>
+          </tr>
+          <tr valign="top" class="">
+            <td nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td3">Phone<strong><b>
+              <input name="UStatus7" type="hidden" id="UStatus7" value="" size="10" />
+            </b></strong></td>
+            <td nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td"><input name="USatusB7"type="radio" class="formtext11" id="BLOCK6"onclick="document.getElementById('UStatus7'
+                    ).value =  this.value" value="Yes" /></td>
+            <td nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td"><input name="USatusB7"type="radio" class="formtext11" id="BLOCK7"onclick="document.getElementById('UStatus7'
+                    ).value =  this.value" value="No" /></td>
+            <td nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td"><input name="USatusB7"type="radio" class="formtext11" id="BLOCK8"onclick="document.getElementById('UStatus7'
+                    ).value =  this.value" value="N/A" />
+              </h5></td>
+            <td colspan="2" nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td3">Patients Admitted (Last 12 hours):</td>
+            <td nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td3"><input tabindex="5" name="Serge3" type="text"onkeypress="return isNumberKey(event)"  id="Serge3" size="8" maxlength="8" /></td>
+          </tr>
+          <tr valign="top" class="">
+            <td nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td2">Elevator(s)<strong><b>
+              <input name="UStatus8" type="hidden" id="UStatus8" value="" size="10" />
+            </b></strong></td>
+            <td nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td"><input name="USatusB8"type="radio" class="formtext11" id="BLOCK6"onclick="document.getElementById('UStatus8'
+                    ).value =  this.value" value="Yes" /></td>
+            <td nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td"><input name="USatusB8"type="radio" class="formtext11" id="BLOCK7"onclick="document.getElementById('UStatus8'
+                    ).value =  this.value" value="No" /></td>
+            <td nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td"><input name="USatusB8"type="radio" class="formtext11" id="BLOCK8"onclick="document.getElementById('UStatus8'
+                    ).value =  this.value" value="N/A" />
+              </h5></td>
+            <td colspan="4" align="center" nowrap="nowrap"  bgcolor="#F4F6F7" class="formtext11" id = "td2"><strong>How Long Can You Go Without Assistance?</strong></td>
+          </tr>
+          <tr valign="top" class="">
+            <td height="29" align="center" valign="middle" nowrap="nowrap"  bgcolor="#F4F6F7" class="formtext11" id = "td12"><strong>Generator</strong></td>
+            <td align="center" valign="middle" nowrap="nowrap"  bgcolor="#F4F6F7" class="formtext11" id = "td"><strong>Yes</strong></td>
+            <td align="center" valign="middle" nowrap="nowrap"  bgcolor="#F4F6F7" class="formtext11" id = "td"><strong>No</strong></td>
+            <td align="center" valign="middle" nowrap="nowrap"  bgcolor="#F4F6F7" class="formtext11" id = "td"><strong>N/A</strong></td>
+            <td colspan="4" nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td12"><table width="100%" border="0" cellspacing="0" cellpadding="0">
+              <tbody>
+                <tr class="formtext11">
+                  <td class="formtext11"><input name="Jlongb1"type="radio" class="formtext11" id="BLOCK2"onclick="document.getElementById('HowLong'
+                    ).value =  this.value" value="Up to 12 hrs" />
+                    Up to 12 hrs
+                    <input name="Jlongb1"type="radio" class="formtext11" id="BLOCK14"onclick="document.getElementById('HowLong'
+                    ).value =  this.value" value="Up to 48 hrs" />
+                    Up to 48 hrs
+                    <input name="Jlongb1"type="radio" class="formtext11" id="BLOCK15"onclick="document.getElementById('HowLong'
+                    ).value =  this.value" value="Longer than 48 hrs" />
+                    Longer than 48 hrs<strong>
+                      <input name="HowLong" type="hidden" id="HowLong" value="" size="10" />
+                    </strong></td>
+                  </tr>
+              </tbody>
+            </table></td>
+          </tr>
+          <tr valign="top" class="">
+            <td align="left"  bgcolor="#FFFFFF" class="formtext11" id = "td10">On Generator Power<strong><b>
+              <input name="Gen1" type="hidden" id="Gen1" value="" size="10" />
+            </b></strong></td>
+            <td nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td"><input name="GenB1"type="radio" class="formtext11" id="BLOCK6"onclick="document.getElementById('Gen1'
+                    ).value =  this.value" value="Yes" /></td>
+            <td nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td"><input name="GenB1"type="radio" class="formtext11" id="BLOCK7"onclick="document.getElementById('Gen1'
+                    ).value =  this.value" value="No" /></td>
+            <td nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td"><input name="GenB1"type="radio" class="formtext11" id="BLOCK8"onclick="document.getElementById('Gen1'
+                    ).value =  this.value" value="N/A" />
+              </h5></td>
+            <td colspan="4" align="center" nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td11">&nbsp;</td>
+          </tr>
+          <tr valign="top" class="">
+            <td align="left"  bgcolor="#FFFFFF" class="formtext11" id = "td10">Generator Fuel <strong><b>
+              <input name="Gen2" type="hidden" id="Gen2" value="" size="10" />
+            </b></strong></td>
+            <td colspan="3" nowrap="nowrap"  bgcolor="#F4F6F7" class="formtext11" id = "td9">&nbsp;</td>
+            <td colspan="4" align="center" nowrap="nowrap"  bgcolor="#F4F6F7" class="formtext11" id = "td6"><strong>Important Contact</strong></td>
+          </tr>
+          <tr valign="top" class="">
+            <td align="left"  bgcolor="#FFFFFF" class="formtext11" id = "td17">(please check one):</td>
+            <td nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td9"><input name="GenB2"type="radio" class="formtext11" id="BLOCK3"onclick="document.getElementById('Gen2'
+                    ).value =  this.value" value="&lt;12hrs" />
+              &lt;12hrs</td>
+            <td nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td9"><input name="GenB2"type="radio" class="formtext11" id="BLOCK9"onclick="document.getElementById('Gen2'
+                    ).value =  this.value" value="&lt;48hrs" />
+              &lt;48hrs</td>
+            <td nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td9"><input name="GenB2"type="radio" class="formtext11" id="BLOCK10"onclick="document.getElementById('Gen2'
+                    ).value =  this.value" value="&gt;48hrs" />
+              &gt;48hrs</td>
+            <td colspan="4" nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td18">EMS/PHPR DOC main phone: 619-772-4247</td>
+          </tr>
+          <tr valign="top" class="">
+            <td align="center" nowrap="nowrap"  bgcolor="#F4F6F7" class="formtext11" id = "td15"><strong>Critical Needs</strong></td>
+            <td colspan="2" align="center" nowrap="nowrap"  bgcolor="#F4F6F7" class="formtext11" id = "td15"><strong>Assistance Needed</strong></td>
+            <td align="center" nowrap="nowrap"  bgcolor="#F4F6F7" class="formtext11" id = "td15"><strong>N/A</strong></td>
+            <td colspan="4" nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td16">EMS/PHPR DOC main fax: 858-277-1407 </td>
+          </tr>
+          <tr valign="top" class="">
+            <td nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td13">Food/Water<strong><b>
+              <input name="Critneed1" type="hidden" id="Critneed1" value="" size="10" />
+            </b></strong></td>
+            <td colspan="2" nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td13"><input name="CritneedB1"type="radio" class="formtext11" id="BLOCK11"onclick="document.getElementById('Critneed1'
+                    ).value =  this.value" value="Assistance Needed" /></td>
+            <td nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td13"><input name="CritneedB1"type="radio" class="formtext11" id="BLOCK13"onclick="document.getElementById('Critneed1'
+                    ).value =  this.value" value="N/A" /></td>
+            <td colspan="4" nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td14">MHOAC email: MHOAC.HHSA@sdcounty.ca.gov</td>
+          </tr>
+          <tr valign="top" class="">
+            <td height="33" nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td8">Linen/Laundry<strong><b>
+              <input name="Critneed2" type="hidden" id="Critneed2" value="" size="10" />
+            </b></strong></td>
+            <td colspan="2" nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td13"><input name="CritneedB2"type="radio" class="formtext11" id="BLOCK11"onclick="document.getElementById('Critneed2'
+                    ).value =  this.value" value="Assistance Needed" /></td>
+            <td nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td13"><input name="CritneedB2"type="radio" class="formtext11" id="BLOCK13"onclick="document.getElementById('Critneed2'
+                    ).value =  this.value" value="N/A" /></td>
+            <td colspan="4" nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td8">HCPS email: MOC.HCPS.HHSA@sdcounty.ca.gov</td>
+          </tr>
+          <tr valign="top" class="">
+            <td nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td7">PPE/Medical Supply<strong><b>
+              <input name="Critneed3" type="hidden" id="Critneed3" value="" size="10" />
+            </b></strong></td>
+            <td colspan="2" nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td13"><input name="CritneedB3"type="radio" class="formtext11" id="BLOCK11"onclick="document.getElementById('Critneed3'
+                    ).value =  this.value" value="Assistance Needed" /></td>
+            <td nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td13"><input name="CritneedB3"type="radio" class="formtext11" id="BLOCK13"onclick="document.getElementById('Critneed3'
+                    ).value =  this.value" value="N/A" /></td>
+            <td colspan="4" rowspan="4" nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td7"><p><br />
+              &nbsp;&nbsp;Please complete and submit the TRAIN Facility Wide form in addition 
+              &nbsp;to this form <br />
+              <strong>&nbsp;&nbsp;if   you need to evacuate:</strong> https://forms.office.com/g/GS5QyFRzJ6</p>
+              <p><br />
+                <textarea name="parseme" cols="80" rows="3" id="parseme" placeholder="data here"  style="display: none;"></textarea>
+              </p></td>
+          </tr>
+          <tr valign="top" class="">
+            <td nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td21">Pharmaceuticals<strong><b>
+              <input name="Critneed4" type="hidden" id="Critneed4" value="" size="10" />
+            </b></strong></td>
+            <td colspan="2" nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td13"><input name="CritneedB4"type="radio" class="formtext11" id="BLOCK11"onclick="document.getElementById('Critneed4'
+                    ).value =  this.value" value="Assistance Needed" /></td>
+            <td nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td13"><input name="CritneedB4"type="radio" class="formtext11" id="BLOCK13"onclick="document.getElementById('Critneed4'
+                    ).value =  this.value" value="N/A" /></td>
+          </tr>
+          <tr valign="top" class="">
+            <td nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td20">Staffing<strong><b>
+              <input name="Critneed5" type="hidden
+                                                                              " id="Critneed5" value="" size="10" />
+            </b></strong></td>
+            <td colspan="2" nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td13"><input name="CritneedB5"type="radio" class="formtext11" id="BLOCK11"onclick="document.getElementById('Critneed5'
+                    ).value =  this.value" value="Assistance Needed" /></td>
+            <td nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td13"><input name="CritneedB5"type="radio" class="formtext11" id="BLOCK13"onclick="document.getElementById('Critneed5'
+                    ).value =  this.value" value="N/A" /></td>
+          </tr>
+          <tr valign="top" class="">
+            <td colspan="4" nowrap="nowrap"  bgcolor="#FFFFFF" class="formtext11" id = "td19">Should you need to request any Critical Needs, please reach out directly <br />
+              via the phone or a WebEOC resource request  in   addition to submitting<br />
+              the survey.</td>
+          </tr>
+        </table></td>
+    </tr>
+    <tr valign="top" class="formtext">
+      <td colspan="2"><table width="100%"  border="0" cellspacing="0" cellpadding="3">
+        <tr valign="top" bgcolor="#ffffe6" style="outline: thin solid">
+          <td width="27%" nowrap="nowrap" bgcolor="#f8f8ff" id = "BLOCK12"><p><span class="style5"><span style="color: black;"><span style="font-family:  Arial, Helvetica, sans-serif;; color: black;"><strong>&nbsp; Radio Operator</strong>&nbsp;</span></span></span><span class="style3"><span style="color: black;"><span style="font-family:  Arial, Helvetica, sans-serif;; color: black;">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span></span></span> Name:
+            <input name="RadioOperator" type="text" required="required" id="RadioOperator" tabindex="106" size="25" maxlength="25" />
+            &nbsp;Report Date/Time : <span class="style15">&nbsp;</span>
+            <input name="ReportDate" required="required" id="ReportDate"  placeholder="Click to Add Date/Time"  tabindex="107" title="Can be overwritten if needed." onclick="SetDateTime('fulldatetime','ReportDate')" size="21" maxlength="19" />
+            <span style="font-size: 14px;">
+              <input name="timestamp" type="hidden" id="timestamp" size="30" />
+              <input name="attached_file1" type="hidden" id="attached_file1" value= "SDG Hospital data " + dateforfile()+="DateforFile()+"".csv" />
+              </span><span class="style3"><br />
+                </span><br />
+          </p></td>
+        </tr>
+      </table>
+        <table width="100%"  border="1" cellspacing="0" cellpadding="4">
+        </table></td>
+    </tr>
+    <tr class="formtext">
+      <td width="1102" height="34"><div align="left"> <span style="font-family: Calibri;"> &nbsp;
+        <input value="Submit" style="width: 70px; " size="8" name="Submit" method="Post" id="Submit"  onclick="formDataToObject(document.getElementById('myform'))"enctype="multipart/form-data" class="SubmitBtn" type="submit" />
+        &nbsp;
+        <input type="button" value="Save SDG Hospital Status Data "  onclick="SaveData()"  /><input name="Templateversion" type="hidden" id="Templateversion" value="SDG Hospital Status Report Ver 0.3" />
+        &nbsp;</span>
+        <input class="BtnFormat2" value="Reset Form " name="ResetForm" size="8"" type="reset" />
+        &nbsp; &nbsp; &nbsp;&nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp;</div></td>
+      <td style="width: 120px;" width="120"><div align="left"> <span style="font-size: 12px;">
+        
+        </span>Ver 0.3
+        <input name="testCall" type="hidden" id="testCall" value="{MsgSender}" size="14" maxlength="13" />
+      </div></td>
+    </tr>
+  </tbody>
+</table>
+</form>
+</body></html>
