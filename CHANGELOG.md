@@ -4,6 +4,59 @@ All notable changes to Tuxlink are documented here.
 
 This project adheres to [Semantic Versioning](https://semver.org) with project-specific rules described in [VERSIONING.md](VERSIONING.md). Entries from `v0.0.2` onward are generated automatically by [`release-please`](https://github.com/googleapis/release-please) from [Conventional Commits](https://www.conventionalcommits.org).
 
+## [0.9.0](https://github.com/cameronzucker/tuxlink/compare/v0.8.0...v0.9.0) (2026-06-01)
+
+
+### Features
+
+* **compose:** Phase 6 form integration per spec §7.1/§7.3 (tuxlink-v1p) ([608f3ff](https://github.com/cameronzucker/tuxlink/commit/608f3ff2f9f1e80c4253437957b38ac05bb850ed))
+* **forms-ts:** FormPicker modal per spec §7.1 (tuxlink-v1p) ([1ba4d50](https://github.com/cameronzucker/tuxlink/commit/1ba4d50320e94707e6328bf29062ae8378f47dbb))
+* **forms-ts:** Ics213Form per spec §7.1 (tuxlink-v1p) ([b70dfb9](https://github.com/cameronzucker/tuxlink/commit/b70dfb926b5ef8bf3ffe84130b14b1eb5398def1))
+* **forms-ts:** Ics213View per spec §7.2 (tuxlink-v1p) ([3d8e764](https://github.com/cameronzucker/tuxlink/commit/3d8e7646dcb529faf4cc8a99fbb1dffe527dd53c))
+* **forms-ts:** KeyValueView fallback for unknown forms (tuxlink-v1p) ([cce1512](https://github.com/cameronzucker/tuxlink/commit/cce1512c17205320140c9e0ba5250bc83ceba242))
+* **forms-ts:** register ICS-213 in form registry (tuxlink-v1p) ([4101706](https://github.com/cameronzucker/tuxlink/commit/4101706fa26a51d0317f1a491aabeed2b7667562))
+* **forms-ts:** registry contract per spec §5.2 (tuxlink-v1p) ([a1e37cc](https://github.com/cameronzucker/tuxlink/commit/a1e37ccc91c6b0005b5e6a2c183ca5e3e6d19e0d))
+* **forms-ts:** TS types mirror per spec §6.1 (tuxlink-v1p) ([4b1f4b9](https://github.com/cameronzucker/tuxlink/commit/4b1f4b9a93ad212b66ba86a0f1603539bf9ce0b0))
+* **forms:** bundle 4 additional Phase 9 forms per spec §8 (tuxlink-v1p) ([13a5c3a](https://github.com/cameronzucker/tuxlink/commit/13a5c3a9c22a832c3ff9d3f02484348b9d58e77a))
+* **forms:** bundle ICS-213 form per spec §8 (tuxlink-v1p) ([eb78349](https://github.com/cameronzucker/tuxlink/commit/eb783493ad9d07e0c0419561cfaace0f976a80c9))
+* **forms:** create module + types per spec §6.1 (tuxlink-v1p) ([ba34575](https://github.com/cameronzucker/tuxlink/commit/ba34575f43b65306e0b27a0718a73180f53c3224))
+* **forms:** detect_form_attachment per spec §3 + §10 (tuxlink-v1p) ([3f99cc8](https://github.com/cameronzucker/tuxlink/commit/3f99cc83a81ef5ee866874212c4d75f85f3da1ed))
+* **forms:** parse_form_xml — hardened per spec §3 + §10 (tuxlink-v1p) ([d3b6bca](https://github.com/cameronzucker/tuxlink/commit/d3b6bcaa9cb06335eaee34026887a77a7f6d2a6d))
+* **forms:** serialize_form_xml + render_body_template per spec §3 (tuxlink-v1p) ([e0ee300](https://github.com/cameronzucker/tuxlink/commit/e0ee300422621c2c9a85a493e7a8375c4cbabaf2))
+* **forms:** validation module — form_id regex + size caps (tuxlink-v1p) ([b9ffb7f](https://github.com/cameronzucker/tuxlink/commit/b9ffb7f1a07b78a95a8f74f163e3d1b55ffb8271))
+* **ipc:** send_form Tauri command per spec rev-3 §5.1 (tuxlink-v1p) ([b9985e8](https://github.com/cameronzucker/tuxlink/commit/b9985e83459995ed6c1a4bdf62a4df93cd1d0135))
+* **mailbox:** display-side attachment filename sanitization (tuxlink-v1p) ([91ff113](https://github.com/cameronzucker/tuxlink/commit/91ff113c596be839f8d784bab35b4bfe750cb033))
+* **mailbox:** form-render dispatch in MessageView per spec §6.2 (tuxlink-v1p) ([7390316](https://github.com/cameronzucker/tuxlink/commit/7390316036bb0e74f27003b287d79c47c85c4b8e))
+* **mailbox:** Reply-with-form button per spec §7.4 (Codex P2 [#6](https://github.com/cameronzucker/tuxlink/issues/6)) (tuxlink-v1p) ([5350809](https://github.com/cameronzucker/tuxlink/commit/53508095fc41f1c85b284698846ea28cf02ac668))
+* **parse:** add form_id + form_payload to ParsedMessageDto (tuxlink-v1p) ([8f0f700](https://github.com/cameronzucker/tuxlink/commit/8f0f700ff552332bf75107d35823f1b19e55443c))
+* **radio:** SessionLogSection — shared log section per spec §4.3 (radio-panel-telnet P2.1) ([125994f](https://github.com/cameronzucker/tuxlink/commit/125994f994c136211dbbe7daf79f6aad3f8bc10c))
+* **radio:** TelnetRadioPanel + shared CSS primitives (radio-panel-telnet P2.2) ([5801ae0](https://github.com/cameronzucker/tuxlink/commit/5801ae00feb25b913bcd07bc8d84e3a8189e6c63))
+* **reply:** reply-to-form + reply-with-form per spec §7.4 (tuxlink-v1p) ([2386144](https://github.com/cameronzucker/tuxlink/commit/2386144492d05d285947ccb40babc04d5f6b8442))
+* **shell:** route Telnet selection to TelnetRadioPanel (radio-panel-telnet P2.3) ([7efe1eb](https://github.com/cameronzucker/tuxlink/commit/7efe1eb1d3fecb56457133a1d06d6ebb06beed50))
+* **status:** event-driven backend_status — frontend sees every transition (operator smoke fix [#4](https://github.com/cameronzucker/tuxlink/issues/4)) ([9d3c2cd](https://github.com/cameronzucker/tuxlink/commit/9d3c2cd74fa9e067421018900048b2f6928074f8))
+
+
+### Bug Fixes
+
+* backend status honesty + reading-pane/panel decoupling (operator smoke fixes [#2](https://github.com/cameronzucker/tuxlink/issues/2)) ([8617768](https://github.com/cameronzucker/tuxlink/commit/8617768019327b50a270738cfd57767bfea61743))
+* **cms:** hold Connected status visible for 1.5s before disconnect (operator smoke [#5](https://github.com/cameronzucker/tuxlink/issues/5)) ([2a5a0af](https://github.com/cameronzucker/tuxlink/commit/2a5a0afe50797230276085443834f2348fc25804))
+* **forms-ts:** innerhtml-ban test uses import.meta.glob (no @types/node) (tuxlink-v1p) ([2d8fa1f](https://github.com/cameronzucker/tuxlink/commit/2d8fa1fd3f76a4b29223556ae3f8fbd93a795720))
+* **forms:** apply Codex review P1+P2 findings (tuxlink-v1p) ([dbda3d8](https://github.com/cameronzucker/tuxlink/commit/dbda3d87770248bbac0d917e45fba3a4e8cebf81))
+* **forms:** apply Codex round 2 findings (tuxlink-v1p) ([fd7e373](https://github.com/cameronzucker/tuxlink/commit/fd7e3739fbcec823f150c77344e10d6aea608446))
+* **forms:** author per-form CSS, scrollable body, resize handles (tuxlink-v1p, tuxlink-ydrd) ([415b7c2](https://github.com/cameronzucker/tuxlink/commit/415b7c20ef9f1a6404a80fdeed32b3e4c762f40b))
+* **forms:** style FormPicker + add keyboard navigation (tuxlink-v1p) ([4451d27](https://github.com/cameronzucker/tuxlink/commit/4451d27ee08e7c38e46886f98cf50a88ce6dba84))
+* **parse:** detect forms via attachment name, not body XML prefix (tuxlink-v1p) ([7dc0368](https://github.com/cameronzucker/tuxlink/commit/7dc036874b705257f3e0db777c1e3fcb7b793653))
+* **radio:** close snapshot/listen race in useSessionLog via seq-dedup merge (Codex R2) ([693e904](https://github.com/cameronzucker/tuxlink/commit/693e9040d3a1c12559f37462f56634cc475e0605))
+* **radio:** restore Telnet controls + bump type scale + larger log section (operator smoke fixes) ([1ec6305](https://github.com/cameronzucker/tuxlink/commit/1ec63054d5cc948ec3320571432f4415084e2542))
+* **radio:** session log fills remaining vertical space in radio panel ([ee9bb35](https://github.com/cameronzucker/tuxlink/commit/ee9bb35f57573a929911ba26a4a68500fa8c6b25))
+* **radio:** wire SessionLogSection to backend events + read CMS endpoint from config (radio-panel-telnet P2 Codex fixes) ([42df27a](https://github.com/cameronzucker/tuxlink/commit/42df27afe8b727d7b1fc0ca3577974432092f52b))
+* **search:** populate subject in search results (tuxlink-g4dj) ([92626a0](https://github.com/cameronzucker/tuxlink/commit/92626a0da6368ddf49fbd18e661d0b2e1b21ef29))
+
+
+### Refactors
+
+* **shell:** delete TelnetCmsPanel + reading-pane fallback to MessageView (radio-panel-telnet P2.4) ([7a86c1b](https://github.com/cameronzucker/tuxlink/commit/7a86c1b1f2fbb728dd693f31e286daa12d3d7b44))
+
 ## [0.8.0](https://github.com/cameronzucker/tuxlink/compare/v0.7.1...v0.8.0) (2026-05-31)
 
 
