@@ -1,0 +1,124 @@
+# Branch lifecycle audit — implements ADR 0017's independent auditor
+# layer. Companion to the .githooks/pre-commit + .githooks/pre-push
+# hooks: the hooks gate commits/pushes from sessions WITH the hooks
+# installed; this workflow is the global view that catches web-UI
+# merges, hookless sessions, --no-verify bypasses, and direct API
+# merges retroactively.
+#
+# Findings post to a single rolling tracking issue (label
+# `branch-audit`) — updated nightly rather than spamming a new issue
+# per run. When the audit comes back clean, the workflow closes the
+# tracking issue.
+#
+# Codex 2026-06-01 P1 #9: "Claude hooks are not universal enforcement.
+# Add an independent auditor: CI/scheduled branch audit, local
+# pre-push protection where feasible, and converge-build's own
+# enforcement."
+
+name: branch-lifecycle-audit
+
+on:
+  schedule:
+    # 04:00 UTC nightly (off-peak; well after typical end-of-day pushes).
+    - cron: '0 4 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: read
+
+concurrency:
+  group: branch-audit
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout (full history)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          # We need ALL refs to enumerate remote branches.
+          ref: main
+
+      - name: Run branch audit
+        id: audit
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash scripts/branch-audit.sh
+
+      - name: Find existing tracking issue
+        id: find_issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          existing="$(gh issue list \
+            --label branch-audit \
+            --state open \
+            --limit 1 \
+            --json number \
+            --jq '.[0].number // empty')"
+          echo "issue_number=${existing}" >>"$GITHUB_OUTPUT"
+
+      - name: Ensure label exists
+        if: steps.audit.outputs.clean == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if ! gh label list --json name --jq '.[].name' | grep -qx branch-audit; then
+            gh label create branch-audit \
+              --color FBCA04 \
+              --description 'Auto-managed by .github/workflows/branch-audit.yml'
+          fi
+
+      - name: Create or update tracking issue
+        if: steps.audit.outputs.clean == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BODY_FILE: ${{ steps.audit.outputs.body_file }}
+          ISSUE_NUMBER: ${{ steps.find_issue.outputs.issue_number }}
+        run: |
+          if [ -z "${ISSUE_NUMBER}" ]; then
+            gh issue create \
+              --title 'Branch lifecycle audit — orphan-post-merge commits detected' \
+              --label branch-audit \
+              --body-file "${BODY_FILE}"
+          else
+            gh issue edit "${ISSUE_NUMBER}" --body-file "${BODY_FILE}"
+            gh issue comment "${ISSUE_NUMBER}" \
+              --body "Audit re-run on $(date -u +%Y-%m-%dT%H:%M:%SZ) — body updated above."
+          fi
+
+      - name: Close tracking issue if clean
+        if: steps.audit.outputs.clean == 'true' && steps.find_issue.outputs.issue_number != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_NUMBER: ${{ steps.find_issue.outputs.issue_number }}
+        run: |
+          gh issue close "${ISSUE_NUMBER}" \
+            --reason completed \
+            --comment "Audit on $(date -u +%Y-%m-%dT%H:%M:%SZ) found no orphan-post-merge branches. Closing tracking issue."
+
+      - name: Summary on workflow page
+        if: always()
+        env:
+          ORPHAN: ${{ steps.audit.outputs.orphan_count }}
+          CLOSED: ${{ steps.audit.outputs.closed_dead_with_ahead_count }}
+          SQUASH: ${{ steps.audit.outputs.squash_merged_count }}
+          UNKNOWN: ${{ steps.audit.outputs.unknown_count }}
+          CLEAN: ${{ steps.audit.outputs.clean }}
+        run: |
+          {
+            echo "## Branch lifecycle audit"
+            echo ""
+            echo "| Metric | Count |"
+            echo "|---|---:|"
+            echo "| Orphan-post-merge branches | ${ORPHAN:-?} |"
+            echo "| Closed-without-merge branches with ahead-of-main commits | ${CLOSED:-?} |"
+            echo "| Squash/rebase-merged branches (ADR 0010 violation; orphan check skipped) | ${SQUASH:-?} |"
+            echo "| Unknown-classification branches | ${UNKNOWN:-?} |"
+            echo "| Status | ${CLEAN:-?} |"
+          } >>"$GITHUB_STEP_SUMMARY"
