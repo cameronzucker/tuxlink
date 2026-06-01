@@ -1,11 +1,15 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "compose",
-  "description": "Compose windows (label `compose-<draftId>`, Task 14 / spec §5.4). Least-privilege grant: ONLY the event IPC the compose frontend needs. tuxlink-h2y: the window-class `core:window:allow-close` + `allow-destroy` grants were dropped — every close path now routes through the `compose_close_self` app command (a self-only Rust `destroy()`), so a compromised compose window can no longer close/destroy OTHER windows (e.g. main). App commands (e.g. `message_send`, `compose_close_self`) are not ACL-gated in Tauri 2 — they are reachable because this capability gives the compose window an IPC bridge.",
+  "description": "Compose windows (label `compose-<draftId>`, Task 14 / spec §5.4). Least-privilege grant for the compose frontend. tuxlink-h2y: window-class `core:window:allow-close` + `allow-destroy` remain DENIED — every close path routes through the `compose_close_self` app command (self-only Rust `destroy()`), so a compromised compose window can no longer close/destroy OTHER windows (e.g. main). The minimize/toggle-maximize/start-resize-dragging grants below are intentionally NOT routed through self-only commands: their blast radius is annoyance-class (minimizing another window, kicking off a resize drag) rather than destruction-class (losing unsaved work in another window). The close architecture's stricter pattern stays in force for close specifically. App commands (e.g. `message_send`, `compose_close_self`) are not ACL-gated in Tauri 2 — they are reachable because this capability gives the compose window an IPC bridge.",
   "windows": ["compose-*"],
   "permissions": [
     "core:event:allow-listen",
     "core:event:allow-unlisten",
-    "core:window:allow-start-dragging"
+    "core:window:allow-start-dragging",
+    "core:window:allow-start-resize-dragging",
+    "core:window:allow-minimize",
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-is-maximized"
   ]
 }
