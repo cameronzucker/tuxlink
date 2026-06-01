@@ -226,6 +226,26 @@ The [`.claude/hooks/block-destructive-git.sh`](.claude/hooks/block-destructive-g
 
 **If you think you need a banned command:** stop and surface the situation to the user with a proposed non-destructive alternative.
 
+## Git workflow — branch lifecycle state machine (ADR 0017)
+
+A branch's PR state determines whether the branch accepts further commits/pushes. Once a PR is merged or closed-without-merge, the branch is **dead** — `git commit` and `git push` to it are denied by `.githooks/pre-commit` + `.githooks/pre-push`. The discipline replaces the orphan-post-merge anti-pattern (the 2026-06-01 v1p incident) with explicit lifecycle transitions: `active → pr-open → merged-dead`, plus `follow-up` for new branches off a merged predecessor.
+
+**Activate the hooks (first-run step on any clone):**
+
+```bash
+bash scripts/install-githooks.sh
+```
+
+`scripts/install-githooks.sh` sets `core.hooksPath .githooks` and verifies the hook scripts are executable. Idempotent; safe to re-run after `git pull`.
+
+**Documented escape hatch** (loud + audited at `dev/scratch/branch-lifecycle-overrides.log`):
+
+```bash
+TUXLINK_BRANCH_LIFECYCLE_OVERRIDE=I-know-what-Im-doing git commit ...
+```
+
+**Full state model + classification heuristics + alternatives considered:** [ADR 0017](docs/adr/0017-branch-state-machine.md).
+
 ## Live radio network operations — READ BEFORE ANY TRANSMISSION
 
 No automation, test, subagent, CI job, scheduled task, or AI agent
