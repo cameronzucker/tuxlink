@@ -1755,20 +1755,30 @@ pub(crate) async fn config_set_grid_impl(
     if let Some(msg) = validate_grid_input(&g) {
         return Err(UiError::Rejected(msg.to_string()));
     }
-    let mut cfg = config::read_config().map_err(|e| UiError::Internal {
-        detail: e.to_string(),
+
+    // Critical section per spec §3.3 + R3 F1 + F7: hold the arbiter mutex
+    // from read_config through write_config_atomic through arbiter mutation
+    // so disk and arbiter state cannot diverge across concurrent callers.
+    // The backend.set_config push happens AFTER mutex release
+    // (eventually-consistent — pre-existing pattern).
+    let new_cfg = arbiter.with_inner(|i| -> Result<config::Config, UiError> {
+        let mut cfg = config::read_config()
+            .map_err(|e| UiError::Internal { detail: e.to_string() })?;
+        cfg.identity.grid = Some(g.clone());
+        cfg.privacy.position_source = config::PositionSource::Manual;  // RESTORED per spec §3.1 (Codex P1 #3)
+        config::write_config_atomic(&cfg)
+            .map_err(|e| UiError::Internal { detail: e.to_string() })?;
+        // Mirror in-memory: T1 invariant — set_manual pins source = Manual.
+        i.manual_grid = Some(g.clone());
+        i.source = config::PositionSource::Manual;
+        Ok(cfg)
     })?;
-    cfg.identity.grid = Some(g.clone());
-    cfg.privacy.position_source = config::PositionSource::Manual;  // RESTORED per spec §3.1 (Codex P1 #3)
-    config::write_config_atomic(&cfg).map_err(|e| UiError::Internal {
-        detail: e.to_string(),
-    })?;
-    arbiter.set_manual(&g);
+
     // tuxlink-ka7/p5u: refresh the live backend (config_set_* wildcard). The grid
     // feeds effective_broadcast_locator's config fallback, so a stale snapshot would
     // broadcast the old grid until restart.
     if let Some(backend) = backend {
-        backend.set_config(cfg);
+        backend.set_config(new_cfg);
     }
     Ok(())
 }
@@ -1822,19 +1832,25 @@ pub(crate) async fn position_set_source_impl(
             // stable preference; effective_broadcast_locator handles the no-fix
             // fallback to manual_grid (State 4 / State 5).
             //
-            // Persist first; if the write fails, return WITHOUT having flipped
-            // in-memory (mirrors config_set_grid's persist-first invariant).
-            let mut cfg = config::read_config()
-                .map_err(|e| UiError::Internal { detail: e.to_string() })?;
-            cfg.privacy.position_source = config::PositionSource::Gps;
-            config::write_config_atomic(&cfg)
-                .map_err(|e| UiError::Internal { detail: e.to_string() })?;
-            // Flip in-memory only after a successful persist. use_gps is
-            // infallible (T2).
-            arbiter.use_gps();
+            // Critical section per spec §3.3 + R3 F1 + F7: hold the arbiter
+            // mutex from read_config through write_config_atomic through
+            // arbiter mutation so disk and arbiter state cannot diverge across
+            // concurrent callers. Persist-first invariant preserved — on a
+            // write_config_atomic error the closure returns without mutating
+            // the arbiter's in-memory source.
+            let new_cfg = arbiter.with_inner(|i| -> Result<config::Config, UiError> {
+                let mut cfg = config::read_config()
+                    .map_err(|e| UiError::Internal { detail: e.to_string() })?;
+                cfg.privacy.position_source = config::PositionSource::Gps;
+                config::write_config_atomic(&cfg)
+                    .map_err(|e| UiError::Internal { detail: e.to_string() })?;
+                // Mirror in-memory: use_gps semantics (T2 — infallible).
+                i.source = config::PositionSource::Gps;
+                Ok(cfg)
+            })?;
             // tuxlink-ka7/p5u: refresh the live backend (config_set_* wildcard).
             if let Some(backend) = backend {
-                backend.set_config(cfg);
+                backend.set_config(new_cfg);
             }
             Ok(())
         }
@@ -2975,6 +2991,104 @@ mod tests {
             cfg.privacy.position_source,
             PositionSource::Gps,
             "position_source = Gps must be persisted to config"
+        );
+
+        // Restore env (best-effort).
+        // SAFETY: symmetric with the set_var above; single-threaded test.
+        unsafe {
+            match prior {
+                Some(v) => std::env::set_var("TUXLINK_CONFIG_DIR", v),
+                None => std::env::remove_var("TUXLINK_CONFIG_DIR"),
+            }
+        }
+    }
+
+    // R3 F1 + F7 (T6): concurrent config_set_grid + position_set_source must
+    // serialize via the arbiter mutex. The final state must be consistent —
+    // arbiter.source() must equal config.privacy.position_source after all
+    // tasks join — and no task may panic (which would indicate a poisoned
+    // mutex). Without the with_inner transactional wrapper, the disk write
+    // and arbiter mutation are independently ordered, producing a TOCTOU
+    // window where the LAST disk-writer and the LAST arbiter-mutator can be
+    // different tasks → disk source != arbiter source.
+    //
+    // To maximize the chance of catching the race in a single test run, tasks
+    // synchronize via a tokio Barrier so all 100 spawned tasks unblock at the
+    // same instant, then each task runs its sequence repeatedly. This
+    // compresses the contention window relative to the simple-spawn-and-go
+    // pattern.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+    async fn concurrent_config_set_grid_and_position_set_source_serialize() {
+        use crate::config::CONFIG_SCHEMA_VERSION;
+        use tokio::sync::Barrier;
+
+        let _env_guard = position_set_source_env_lock();
+        let tmp = tempfile::tempdir().expect("create tempdir");
+        let prior = std::env::var("TUXLINK_CONFIG_DIR").ok();
+        // SAFETY: single-threaded test (env_lock); no concurrent env reads within this block.
+        unsafe { std::env::set_var("TUXLINK_CONFIG_DIR", tmp.path()); }
+
+        // Seed a minimal valid config so read_config inside the spawned tasks
+        // has something to deserialize on first call.
+        let seed = format!(
+            r#"{{
+                "schema_version": {ver},
+                "wizard_completed": true,
+                "connect": {{ "connect_to_cms": false, "transport": "Telnet" }},
+                "identity": {{ "callsign": null, "identifier": "W1TEST", "grid": "EM75" }},
+                "privacy": {{ "gps_state": "Off", "position_precision": "FourCharGrid", "position_source": "Gps" }}
+            }}"#,
+            ver = CONFIG_SCHEMA_VERSION,
+        );
+        std::fs::write(tmp.path().join("config.json"), seed)
+            .expect("seed config.json into tempdir");
+
+        let arbiter = std::sync::Arc::new(PositionArbiter::new(
+            PositionSource::Gps,
+            None,
+            PositionPrecision::FourCharGrid,
+        ));
+
+        // 50 grid-setters + 50 source-setters, total 100. Each task does
+        // ITERATIONS rounds. The barrier releases all 100 tasks at once for
+        // peak contention.
+        const TASKS_PER_KIND: usize = 50;
+        const ITERATIONS: usize = 20;
+        let barrier = std::sync::Arc::new(Barrier::new(TASKS_PER_KIND * 2));
+
+        let mut handles = Vec::new();
+        for i in 0..TASKS_PER_KIND {
+            let a1 = arbiter.clone();
+            let b1 = barrier.clone();
+            handles.push(tokio::spawn(async move {
+                b1.wait().await;
+                for _ in 0..ITERATIONS {
+                    let grid = format!("EM{:02}", i % 100);
+                    let _ = config_set_grid_impl(grid, a1.clone(), None).await;
+                }
+            }));
+            let a2 = arbiter.clone();
+            let b2 = barrier.clone();
+            handles.push(tokio::spawn(async move {
+                b2.wait().await;
+                for _ in 0..ITERATIONS {
+                    let _ = position_set_source_impl("Gps".to_string(), a2.clone(), None).await;
+                }
+            }));
+        }
+        for h in handles {
+            h.await.expect("task panicked — arbiter mutex was poisoned");
+        }
+
+        // Final state must be consistent — source from disk == source from arbiter.
+        // With the with_inner transactional wrapper, the LAST critical section to
+        // release the mutex writes BOTH the on-disk source AND the arbiter source
+        // atomically, so the two values must agree.
+        let cfg = crate::config::read_config().expect("read back the persisted config");
+        assert_eq!(
+            arbiter.source(),
+            cfg.privacy.position_source,
+            "final arbiter source must match final on-disk source (R3 F1 + F7)"
         );
 
         // Restore env (best-effort).

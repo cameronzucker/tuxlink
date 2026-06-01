@@ -20,11 +20,16 @@ const FIX_STALENESS: std::time::Duration = std::time::Duration::from_secs(30);
 pub struct PositionArbiter {
     inner: Mutex<Inner>,
 }
-struct Inner {
-    source: PositionSource,
-    manual_grid: Option<String>,  // last hand-set grid (full precision)
-    last_fix: Option<Fix>,        // newest GPS fix, regardless of source
-    precision: PositionPrecision,
+
+/// Per spec §3.3 + R3 F1 + F7 (T6): callers needing a transactional critical
+/// section (read config → write config → mutate arbiter) hold this struct via
+/// [`PositionArbiter::with_inner`]. Fields are `pub(crate)` so the closure
+/// passed to `with_inner` can read/write directly while the mutex is held.
+pub(crate) struct Inner {
+    pub(crate) source: PositionSource,
+    pub(crate) manual_grid: Option<String>,  // last hand-set grid (full precision)
+    pub(crate) last_fix: Option<Fix>,        // newest GPS fix, regardless of source
+    pub(crate) precision: PositionPrecision,
 }
 
 impl Inner {
@@ -107,6 +112,21 @@ impl PositionArbiter {
 
     pub fn has_fresh_fix(&self) -> bool {
         self.inner.lock().unwrap().last_fix.as_ref().is_some_and(|f| f.is_fresh(FIX_STALENESS))
+    }
+
+    /// Hold the arbiter mutex for a full transactional critical section. Used
+    /// by commands that need to read config → write config → mutate arbiter
+    /// atomically (spec §3.3, R3 F1 + F7 from the 2026-06-01 position-subsystem
+    /// restoration adrev).
+    ///
+    /// Without this wrapper, `config_set_grid` and `position_set_source` had a
+    /// TOCTOU window: one task could persist `position_source = X` to disk
+    /// while another task's later `arbiter.set_manual` / `use_gps` overwrote
+    /// the arbiter source with `Y`, leaving disk and arbiter disagreeing on
+    /// the final source.
+    pub(crate) fn with_inner<R>(&self, f: impl FnOnce(&mut Inner) -> R) -> R {
+        let mut i = self.inner.lock().unwrap();
+        f(&mut i)
     }
 }
 
