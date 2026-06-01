@@ -78,12 +78,31 @@
      the whole body would push the action row off-screen. */
   min-height: 0;
   overflow-y: auto;
+  /* Hard horizontal clamp — defensive cap so any element that escapes its
+     `.radio-panel-sec`'s wrap/truncate net cannot push the panel into
+     horizontal scroll. The panel is 360 px wide and is not meant to scroll
+     horizontally. Operator smoke 2026-05-31 round 3 — "elements off-screen
+     to the right". */
+  overflow-x: hidden;
+  min-width: 0;
 }
 
-/* Section primitive — used by mode panels and shared sections */
+/* Section primitive — used by mode panels and shared sections. The
+   `min-width: 0` + `box-sizing: border-box` pair is operator-smoke load-
+   bearing: without it, a wide child (a long status line, a long stats
+   row, an SVG with intrinsic width > panel width) propagates its width
+   up the flex chain and pushes the entire section past the panel's
+   336 px content box. With both, the section is hard-bounded to the
+   panel width and children must wrap / truncate / shrink to fit.
+   See operator smoke 2026-05-31 round 3 — "elements pushed off-screen
+   to the right". */
 .radio-panel-sec {
   padding: 8px 12px;
   border-bottom: 1px dashed rgba(255, 255, 255, 0.08);
+  min-width: 0;
+  box-sizing: border-box;
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }
 .radio-panel-sec:last-child {
   border-bottom: none;
@@ -163,6 +182,35 @@
   outline: none;
   border-color: rgba(34, 197, 94, 0.45);
   background: rgba(0, 0, 0, 0.32);
+}
+
+/* Operator smoke 2026-05-31 round 3: "Our dropdowns for baud and SSID
+   in AX.25 are grey, which makes them appear greyed out."
+   <select> elements inherit `.radio-panel-input` styling but browsers
+   ALSO apply a system-default UI shell (light grey background with grey
+   arrow) which reads as "disabled" in the dark theme. The appearance
+   reset + custom SVG indicator gives the operator an obvious
+   interactive affordance and keeps the dark-on-dark palette consistent
+   across text inputs and selects. Same chevron is used in the dashboard
+   ribbon's callsign select (AppShell.css `.dash-callsign-select`). */
+select.radio-panel-input {
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'><path fill='%2394a3b8' d='M0 0l5 6 5-6z'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  padding-right: 26px;
+  cursor: pointer;
+}
+select.radio-panel-input:hover {
+  border-color: rgba(255, 255, 255, 0.24);
+}
+/* Force dark option rows so the popup list isn't blinding white-on-white
+   in browsers that style <option> per the OS rather than per the page. */
+select.radio-panel-input option {
+  background: var(--surface, #0f1218);
+  color: var(--text, #cbd5e1);
 }
 
 /* Quick-pick chip row beneath the host input. */

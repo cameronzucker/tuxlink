@@ -62,7 +62,7 @@ export function TelnetRadioPanel({ onClose }: TelnetRadioPanelProps) {
   const [busy, setBusy] = useState(false);
   const [host, setHost] = useState<string>(DEFAULT_HOST);
   const [transport, setTransport] = useState<CmsTransport>(DEFAULT_TRANSPORT);
-  const logEntries = useSessionLog();
+  const { entries: logEntries, clear: clearLog } = useSessionLog();
 
   useEffect(() => {
     let cancelled = false;
@@ -187,7 +187,7 @@ export function TelnetRadioPanel({ onClose }: TelnetRadioPanelProps) {
         ))}
       </section>
 
-      <SessionLogSection entries={logEntries} />
+      <SessionLogSection entries={logEntries} onClear={clearLog} />
 
       <section className="radio-panel-sec radio-panel-act">
         <button

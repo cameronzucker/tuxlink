@@ -1,0 +1,712 @@
+// src/radio/modes/ArdopRadioPanel.tsx
+//
+// Spec §5.3 — ARDOP Winlink panel. Replaces the legacy ArdopDock +
+// ArdopHfStub pair (P4.6 deletes both). Composes RadioPanel chrome
+// + Connect form + Live + Signal + Session log + Actions.
+//
+// Live data: useModemStatus subscribes to the backend's 4 Hz
+// `modem:status` event stream. The S/N + throughput sparklines pull
+// from rolling 60-sample buffers (`useSampleHistory`) that tick once
+// per second off the latest status snapshot. Quality + recent-frame
+// state come directly from ModemStatus (PINGACK-derived; tuxlink-1637,
+// P4.3) and from a derived state-driven frame history.
+//
+// RADIO-1 SAFETY: every connect path passes through the consent
+// modal + backend-minted token + atomic consume_consent_token gate.
+// The frontend never generates tokens. After a connect (success or
+// failure) the local token copy is cleared so the next Connect click
+// re-opens the modal — preserved from ArdopDock.
+//
+// Open WebGUI: ardopcf's built-in WebGUI listens on `cmd_port - 1`
+// per its USAGE doc. We read the live cmd_port from config rather
+// than hardcoding 8514 so the link tracks operator overrides. Guard
+// mirrors the backend's build_ardop_extra_args check: cmd_port < 2
+// yields an unbindable webgui_port, so we surface an error rather
+// than open a dead URL.
+
+import { useEffect, useRef, useState } from 'react';
+import type { ChangeEvent } from 'react';
+import { invoke } from '@tauri-apps/api/core';
+import { open as shellOpen } from '@tauri-apps/plugin-shell';
+import { RadioPanel, type RadioPanelState } from '../RadioPanel';
+import { SessionLogSection } from '../sections/SessionLogSection';
+import { useSessionLog } from '../sections/useSessionLog';
+import { SignalSection } from '../sections/SignalSection';
+import { Sparkline } from '../charts/Sparkline';
+import { useSampleHistory } from '../useSampleHistory';
+import { useModemStatus } from '../../modem/useModemStatus';
+import { useConsent } from '../../modem/useConsent';
+import { ConsentModal } from '../../modem/ConsentModal';
+import type { ModemState, ModemStatus } from '../../modem/types';
+import type { ArdopFrameType } from '../charts/FrameRibbon';
+import './ArdopRadioPanel.css';
+
+export interface ArdopRadioPanelProps {
+  onClose: () => void;
+}
+
+// ARQ state cells — same set the legacy ArdopDock surfaced; kept here
+// because the new panel still shows the same 9-cell state strip.
+const ARQ_CELLS = ['DISC', 'CON', 'IDLE', 'ISS', 'IRS', 'BUSY', 'RX', 'TX', 'DREQ'] as const;
+type ArqCell = (typeof ARQ_CELLS)[number];
+
+function isArqCellOn(cell: ArqCell, s: ModemStatus): boolean {
+  switch (cell) {
+    case 'DISC':
+      return s.state === 'stopped' || s.state === 'idle' || s.state === 'disconnecting';
+    case 'CON':
+      return s.state === 'connected-irs' || s.state === 'connected-iss';
+    case 'IDLE':
+      return s.state === 'idle';
+    case 'ISS':
+      return s.state === 'connected-iss';
+    case 'IRS':
+      return s.state === 'connected-irs';
+    case 'BUSY':
+      return s.arqFlags.busy;
+    case 'RX':
+      return s.arqFlags.rx;
+    case 'TX':
+      return s.arqFlags.tx;
+    case 'DREQ':
+      return s.state === 'connecting';
+  }
+}
+
+/**
+ * Map the modem state machine into the RadioPanel chrome's `state` prop.
+ * The chrome's state set is a coarser palette (connecting / connected /
+ * disconnecting / error / disconnected) than the modem's 9-state machine.
+ */
+function mapModemStateToPanelState(modemState: ModemState): RadioPanelState {
+  switch (modemState) {
+    case 'stopped':
+    case 'idle':
+      return 'disconnected';
+    case 'spawning':
+    case 'initializing':
+    case 'connecting':
+      return 'connecting';
+    case 'connected-irs':
+    case 'connected-iss':
+      return 'connected';
+    case 'disconnecting':
+      return 'disconnecting';
+    case 'error':
+      return 'error';
+  }
+}
+
+/**
+ * Derive a coarse ArdopFrameType from a ModemStatus snapshot. ardopcf does
+ * not directly emit per-frame subprotocol-type events on the cmd socket
+ * today; we approximate from the state machine + ARQ flags so the ribbon
+ * still gives an at-a-glance read on recent on-air activity. A real
+ * per-frame event stream is a future enhancement (see spec §5.3 follow-up).
+ */
+function frameTypeFromStatus(s: ModemStatus): ArdopFrameType {
+  if (s.state === 'connecting') return 'CON';
+  if (s.arqFlags.tx || s.arqFlags.rx) return 'DATA';
+  if (s.state === 'connected-irs' || s.state === 'connected-iss') return 'ACK';
+  if (s.state === 'error') return 'REJ';
+  return 'IDLE';
+}
+
+/**
+ * Rolling buffer of derived frame types. Captures one frame-type sample
+ * per `intervalMs` tick (default 1000 ms) so the ribbon corresponds to
+ * "last N seconds of activity," matching the S/N sparkline's cadence.
+ *
+ * Hold the latest status in a ref so the interval reads the freshest
+ * snapshot without restarting the timer on every render.
+ */
+function useFrameHistory(
+  status: ModemStatus,
+  length: number,
+  intervalMs: number = 1000,
+): ArdopFrameType[] {
+  const [frames, setFrames] = useState<ArdopFrameType[]>(() =>
+    new Array(length).fill('IDLE' as ArdopFrameType),
+  );
+  const latest = useRef<ModemStatus>(status);
+  latest.current = status;
+
+  useEffect(() => {
+    const id = setInterval(() => {
+      setFrames((prev) => [...prev.slice(1), frameTypeFromStatus(latest.current)]);
+    }, intervalMs);
+    return () => clearInterval(id);
+  }, [intervalMs]);
+
+  return frames;
+}
+
+function Meter({
+  label,
+  value,
+  warn,
+}: {
+  label: string;
+  value: string;
+  warn?: boolean;
+}) {
+  return (
+    <div className={`ardop-meter${warn ? ' warn' : ''}`} data-testid={`ardop-meter-${label.toLowerCase().replace(/[^a-z0-9]/g, '-')}`}>
+      <span className="ardop-meter-k">{label}</span>
+      <span className="ardop-meter-v">{value}</span>
+    </div>
+  );
+}
+
+function fmtUptime(sec: number): string {
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  return m === 0 ? `${s}s` : `${m}m ${s}s`;
+}
+
+// ARQ bandwidth options — wire shape expected by ardopcf's `ARQBW`. `null`
+// renders as empty <option value=""> meaning "Auto (ardopcf default)".
+// Mirrors SettingsPanel.tsx — restored to the Connect section per Codex P1
+// 2026-05-31 so the operator doesn't have to leave the radio panel.
+const ARQ_BANDWIDTH_OPTIONS: { value: number | null; label: string }[] = [
+  { value: null, label: 'Auto (ardopcf default)' },
+  { value: 200, label: '200 Hz (most robust)' },
+  { value: 500, label: '500 Hz (marginal HF)' },
+  { value: 1000, label: '1000 Hz' },
+  { value: 2000, label: '2000 Hz (best throughput)' },
+];
+
+/**
+ * Frontend mirror of Rust's `config::ArdopUiConfig`. Keys are snake_case
+ * because the Rust struct lacks `#[serde(rename_all = "camelCase")]`. The
+ * Radio section below edits a subset (capture_device / playback_device /
+ * ptt_serial_path). Other fields are loaded + written back untouched so a
+ * partial write doesn't clobber bandwidth_hz / cmd_port / binary.
+ *
+ * Mirrors the same shape SettingsPanel.tsx uses (the original editor that
+ * the operator-flagged smoke wanted available inline in the radio panel
+ * for parity with AX.25's ModemLinkSection).
+ */
+interface ArdopFullConfig {
+  binary: string;
+  capture_device: string;
+  playback_device: string;
+  ptt_serial_path: string | null;
+  cmd_port: number;
+  bandwidth_hz: number | null;
+  /** Optional WebGUI port pin. null → derive from `cmd_port - 1` (the
+   *  ardopcf convention). Set when an operator runs an ardopcf build
+   *  that binds the WebGUI somewhere non-standard; the spawn passes
+   *  `-G <webgui_port>` from the SAME source so the URL never drifts
+   *  from where ardopcf is actually listening (operator smoke
+   *  2026-05-31 round 3 — "Open WebGUI returns connection refused"). */
+  webgui_port: number | null;
+}
+
+/** Mirror of Rust's `ArdopUiConfig::resolved_webgui_port`. Single source
+ *  of truth for "where does the WebGUI bind?" — the spawn flag and the
+ *  Open-WebGUI button URL MUST agree, so both go through this helper. */
+function resolveWebguiPort(cfg: Pick<ArdopFullConfig, 'cmd_port' | 'webgui_port'>): number | null {
+  if (cfg.webgui_port !== null && cfg.webgui_port !== undefined) {
+    return cfg.webgui_port;
+  }
+  if (cfg.cmd_port >= 2) {
+    return cfg.cmd_port - 1;
+  }
+  return null;
+}
+
+export function ArdopRadioPanel({ onClose }: ArdopRadioPanelProps) {
+  const { status } = useModemStatus();
+  const [target, setTarget] = useState('');
+  // ARQ bandwidth (restored 2026-05-31 — Codex P1). Loaded from
+  // config_get_ardop on mount; persisted via config_set_ardop on change.
+  // null = "leave at ardopcf default."
+  const [bandwidth, setBandwidth] = useState<number | null>(null);
+  // Full ARDOP config — operator smoke 2026-05-31 added a Radio section
+  // here so audio devices + PTT serial path are editable inline (parity
+  // with AX.25's ModemLinkSection on the Packet panel). Loaded on mount,
+  // persisted via config_set_ardop on each blur.
+  const [ardopConfig, setArdopConfig] = useState<ArdopFullConfig | null>(null);
+  const [captureInput, setCaptureInput] = useState<string>('');
+  const [playbackInput, setPlaybackInput] = useState<string>('');
+  const [pttSerialInput, setPttSerialInput] = useState<string>('');
+  // WebGUI port override (operator smoke 2026-05-31 round 3). Stored as a
+  // string in the input so the operator can type freely; commits to the
+  // backend on blur after a non-empty numeric parse. Empty input → null
+  // (revert to "derive from cmd_port - 1" — the default).
+  const [webguiPortInput, setWebguiPortInput] = useState<string>('');
+  const consent = useConsent();
+  const [showConsent, setShowConsent] = useState(false);
+  const [connecting, setConnecting] = useState(false);
+  const [connectError, setConnectError] = useState<string | null>(null);
+  const [disconnecting, setDisconnecting] = useState(false);
+  const [exchanging, setExchanging] = useState(false);
+
+  const { entries: logEntries, clear: clearLog } = useSessionLog();
+
+  // Rolling 60-sample buffers (1 Hz tick) for the S/N + throughput
+  // sparklines. The hook reads the latest reading out of a ref every
+  // tick, so the buffer always reflects the freshest modem snapshot.
+  const snrHistory = useSampleHistory(status.snDb, 60);
+  const throughputHistory = useSampleHistory(status.throughputBps, 60);
+  const frameHistory = useFrameHistory(status, 60);
+
+  // Load ARDOP config on mount: bandwidth (existing) + audio/PTT (added
+  // 2026-05-31 for the Radio section).
+  useEffect(() => {
+    let cancelled = false;
+    invoke<ArdopFullConfig>('config_get_ardop')
+      .then((c) => {
+        if (cancelled || !c) return;
+        if (typeof c.bandwidth_hz !== 'undefined') {
+          setBandwidth(c.bandwidth_hz);
+        }
+        setArdopConfig(c);
+        setCaptureInput(c.capture_device ?? '');
+        setPlaybackInput(c.playback_device ?? '');
+        setPttSerialInput(c.ptt_serial_path ?? '');
+        // Display the resolved port (override OR cmd_port-1) as a hint so
+        // the operator sees what URL the button will open. Empty → no
+        // override pinned yet, so the input shows the derived default as
+        // a placeholder rather than a value.
+        setWebguiPortInput(c.webgui_port !== null && c.webgui_port !== undefined ? String(c.webgui_port) : '');
+      })
+      .catch(() => {
+        /* pre-wizard / config absent — keep null default */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  /** Persist an updated ARDOP config slice. Mirrors SettingsPanel's
+   *  merge-then-write pattern so two writers can't clobber each other
+   *  (the bandwidth selector + this Radio section both edit subsets). */
+  const persistArdop = (patch: Partial<ArdopFullConfig>) => {
+    if (!ardopConfig) return;
+    const next = { ...ardopConfig, ...patch };
+    setArdopConfig(next);
+    void invoke('config_set_ardop', { value: next }).catch(() => {
+      /* persist errors surface in the session log via the backend */
+    });
+  };
+
+  const commitCapture = () => {
+    const trimmed = captureInput.trim();
+    persistArdop({ capture_device: trimmed });
+  };
+  const commitPlayback = () => {
+    const trimmed = playbackInput.trim();
+    persistArdop({ playback_device: trimmed });
+  };
+  const commitPttSerial = () => {
+    const trimmed = pttSerialInput.trim();
+    // Empty string → null on the wire (means "use VOX").
+    persistArdop({ ptt_serial_path: trimmed === '' ? null : trimmed });
+  };
+  const commitWebguiPort = () => {
+    const trimmed = webguiPortInput.trim();
+    if (trimmed === '') {
+      // Empty → clear override; backend reverts to "derive from cmd_port - 1".
+      persistArdop({ webgui_port: null });
+      return;
+    }
+    const n = Number(trimmed);
+    // Reject NaN, non-integer, and out-of-u16-range values. On reject, also
+    // resync the input to whatever's persisted so the operator's bad value
+    // doesn't linger in the field.
+    if (!Number.isInteger(n) || n < 1 || n > 65535) {
+      setWebguiPortInput(
+        ardopConfig?.webgui_port !== null && ardopConfig?.webgui_port !== undefined
+          ? String(ardopConfig.webgui_port)
+          : '',
+      );
+      setConnectError(`Invalid WebGUI port "${trimmed}" — must be 1..65535. Reverted.`);
+      return;
+    }
+    persistArdop({ webgui_port: n });
+  };
+
+  const onBandwidthChange = (e: ChangeEvent<HTMLSelectElement>) => {
+    // value="" represents the "Auto" option → null. Otherwise parse as int.
+    const raw = e.target.value;
+    const next = raw === '' ? null : parseInt(raw, 10);
+    setBandwidth(next);
+    // Persist via merge: read current ardop config, splice bandwidth, write
+    // back. Mirrors SettingsPanel.tsx's pattern so two writers can't clobber
+    // each other's fields.
+    void (async () => {
+      try {
+        const current = await invoke<Record<string, unknown>>('config_get_ardop');
+        await invoke('config_set_ardop', {
+          value: { ...current, bandwidth_hz: next },
+        });
+      } catch {
+        // Persist errors surface via the session log; UI keeps the new value.
+      }
+    })();
+  };
+
+  const isStopped = status.state === 'stopped';
+  const isExchangeReady =
+    status.state === 'connected-irs' || status.state === 'connected-iss';
+  // Effective B2F target: ONLY the backend-reported peer authorizes a TX
+  // target (preserved from ArdopDock; RADIO-1 hazard if we ever fall back
+  // to the stopped-state `target` input).
+  const effectiveTarget: string | null = status.peer?.trim() ?? null;
+
+  const doConnect = async (tok: string) => {
+    setConnecting(true);
+    setConnectError(null);
+    try {
+      await invoke('modem_ardop_connect', {
+        target: target.trim(),
+        consentToken: tok,
+      });
+    } catch (e) {
+      setConnectError(String(e));
+    } finally {
+      setConnecting(false);
+      // RADIO-1 per-invocation consent: backend consumed the token in
+      // consume_consent_token (atomic equality-check-and-clear). Clear
+      // the local copy so the next Connect click re-opens the modal.
+      // Preserved from ArdopDock.
+      consent.clear();
+    }
+  };
+
+  const onStartClick = () => {
+    setConnectError(null);
+    if (consent.token) {
+      void doConnect(consent.token);
+    } else {
+      setShowConsent(true);
+    }
+  };
+
+  const onSendReceiveClick = async () => {
+    if (!isExchangeReady || effectiveTarget === null) return;
+    setExchanging(true);
+    setConnectError(null);
+    try {
+      // RADIO-1 SAFETY: token minted on BACKEND; frontend never generates.
+      const tok = await invoke<string>('modem_mint_consent');
+      await invoke('modem_ardop_b2f_exchange', {
+        target: effectiveTarget,
+        consentToken: tok,
+      });
+    } catch (e) {
+      setConnectError(`Send/Receive failed: ${e}`);
+    } finally {
+      setExchanging(false);
+    }
+  };
+
+  const onStopClick = async () => {
+    setDisconnecting(true);
+    setConnectError(null);
+    try {
+      await invoke('modem_ardop_disconnect');
+    } catch (e) {
+      setConnectError(String(e));
+    } finally {
+      setDisconnecting(false);
+    }
+  };
+
+  const onOpenWebGuiClick = async () => {
+    setConnectError(null);
+    try {
+      // Re-read the live config so the URL reflects any in-flight Settings
+      // change. Use the resolved-port helper (mirror of Rust's
+      // `ArdopUiConfig::resolved_webgui_port`) so this site agrees with the
+      // spawn's `-G` flag by construction. Operator smoke 2026-05-31 round 3
+      // — "Open WebGUI opens but connection refused" — was rooted in the
+      // possibility of those two sources drifting; routing both through the
+      // same helper rules that bug class out.
+      const ardop = await invoke<ArdopFullConfig>('config_get_ardop');
+      const webguiPort = resolveWebguiPort(ardop);
+      if (webguiPort === null) {
+        setConnectError(
+          `Cannot open WebGUI: cmd_port=${ardop.cmd_port} too low and no explicit webgui_port override set`,
+        );
+        return;
+      }
+      // The button is only rendered while ardopcf is running (`!isStopped`),
+      // so by the time we get here ardopcf SHOULD be bound to webguiPort.
+      // If the operator still gets "connection refused," the most likely
+      // causes are: (a) the ardopcf binary on PATH doesn't honor `-G`
+      // (older build), (b) ardopcf bound but crashed during init, or
+      // (c) the operator pinned `webgui_port` to a wrong value. Surface
+      // a useful error template covering those.
+      await shellOpen(`http://localhost:${webguiPort}/`);
+    } catch (e) {
+      setConnectError(
+        `Failed to open WebGUI: ${e}. If the URL opens but reports "connection refused," ardopcf may not have bound the WebGUI — check that the binary on PATH supports the -G flag and that webgui_port matches its actual bind port.`,
+      );
+    }
+  };
+
+  const onConsentConfirm = async () => {
+    setShowConsent(false);
+    try {
+      // RADIO-1 SAFETY: token minted on backend; frontend never generates.
+      const tok = await invoke<string>('modem_mint_consent');
+      consent.grant(tok);
+      void doConnect(tok);
+    } catch (e) {
+      setConnectError(`failed to mint consent token: ${e}`);
+    }
+  };
+
+  const onTargetChange = (e: ChangeEvent<HTMLInputElement>) => {
+    setTarget(e.target.value);
+  };
+
+  const headerSub = `${status.peer ?? '—'} · ${status.widthHz ? `${status.widthHz} Hz` : '—'}`;
+
+  return (
+    <RadioPanel
+      mode={{ kind: 'ardop-hf', intent: 'cms' }}
+      state={mapModemStateToPanelState(status.state)}
+      sub={headerSub}
+      onClose={onClose}
+    >
+      {isStopped && (
+        <section className="radio-panel-sec">
+          <h5>Connect</h5>
+          <label className="radio-panel-input-row">
+            <span>Target</span>
+            <input
+              type="text"
+              className="radio-panel-input"
+              data-testid="ardop-target-input"
+              value={target}
+              onChange={onTargetChange}
+              placeholder="W7RMS-10"
+              spellCheck={false}
+              autoCapitalize="characters"
+              autoCorrect="off"
+            />
+          </label>
+          <label className="radio-panel-input-row">
+            <span>Bandwidth</span>
+            <select
+              className="radio-panel-input"
+              data-testid="ardop-bandwidth-select"
+              value={bandwidth ?? ''}
+              onChange={onBandwidthChange}
+            >
+              {ARQ_BANDWIDTH_OPTIONS.map((opt) => (
+                <option key={String(opt.value)} value={opt.value ?? ''}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        </section>
+      )}
+
+      {/* Radio (audio devices + PTT serial path). Operator smoke 2026-05-31:
+          AX.25 has the ModemLinkSection for TNC link selection; ARDOP needed
+          parallel pickers for audio + PTT so the operator doesn't have to
+          jump to the Settings panel. Editable in the stopped state — ardopcf
+          consumes these at spawn time, so changing them mid-session has no
+          effect until restart. We surface them in stopped state only to
+          avoid implying live-changeability. (Bandwidth follows the same
+          pattern in the Connect section above.) */}
+      {isStopped && (
+        <section className="radio-panel-sec" data-testid="ardop-radio-section">
+          <h5>Radio</h5>
+          <label className="radio-panel-input-row">
+            <span>Capture</span>
+            <input
+              type="text"
+              className="radio-panel-input"
+              data-testid="ardop-capture-input"
+              value={captureInput}
+              spellCheck={false}
+              autoCapitalize="off"
+              autoCorrect="off"
+              placeholder="plughw:1,0"
+              onChange={(e) => setCaptureInput(e.target.value)}
+              onBlur={commitCapture}
+            />
+          </label>
+          <label className="radio-panel-input-row">
+            <span>Playback</span>
+            <input
+              type="text"
+              className="radio-panel-input"
+              data-testid="ardop-playback-input"
+              value={playbackInput}
+              spellCheck={false}
+              autoCapitalize="off"
+              autoCorrect="off"
+              placeholder="plughw:1,0"
+              onChange={(e) => setPlaybackInput(e.target.value)}
+              onBlur={commitPlayback}
+            />
+          </label>
+          <label className="radio-panel-input-row">
+            <span>PTT</span>
+            <input
+              type="text"
+              className="radio-panel-input"
+              data-testid="ardop-ptt-input"
+              value={pttSerialInput}
+              spellCheck={false}
+              autoCapitalize="off"
+              autoCorrect="off"
+              placeholder="/dev/ttyUSB0 (empty = VOX)"
+              onChange={(e) => setPttSerialInput(e.target.value)}
+              onBlur={commitPttSerial}
+            />
+          </label>
+          {/* WebGUI port — operator smoke 2026-05-31 round 3. Defaults to
+              `cmd_port - 1` (the ardopcf convention). Override when running
+              an ardopcf build that binds the WebGUI somewhere else. Empty
+              input clears the override. The spawn passes `-G <webgui_port>`
+              from the SAME source as this field so the "Open WebGUI" button
+              never drifts from where ardopcf is actually listening. */}
+          <label className="radio-panel-input-row">
+            <span>WebGUI</span>
+            <input
+              type="text"
+              inputMode="numeric"
+              className="radio-panel-input"
+              data-testid="ardop-webgui-port-input"
+              value={webguiPortInput}
+              spellCheck={false}
+              autoCapitalize="off"
+              autoCorrect="off"
+              placeholder={
+                ardopConfig
+                  ? `${Math.max(1, (ardopConfig.cmd_port || 8515) - 1)} (auto = cmd_port - 1)`
+                  : '8514 (auto = cmd_port - 1)'
+              }
+              onChange={(e) => setWebguiPortInput(e.target.value)}
+              onBlur={commitWebguiPort}
+            />
+          </label>
+        </section>
+      )}
+
+      {!isStopped && (
+        <section className="radio-panel-sec">
+          <h5>ARQ state</h5>
+          <div className="ardop-arq-grid">
+            {ARQ_CELLS.map((cell) => (
+              <div
+                key={cell}
+                className="ardop-arq-cell"
+                data-testid={`arq-cell-${cell}`}
+                data-on={isArqCellOn(cell, status)}
+              >
+                {cell}
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {!isStopped && (
+        <section className="radio-panel-sec">
+          <h5>Live</h5>
+          {status.snDb !== null && (
+            <Meter
+              label="S/N"
+              value={`${status.snDb > 0 ? '+' : ''}${status.snDb.toFixed(1)} dB`}
+            />
+          )}
+          {status.vuDbfs !== null && (
+            <Meter label="VU" value={`${status.vuDbfs.toFixed(0)} dBFS`} />
+          )}
+          {status.throughputBps !== null && (
+            <Meter label="Throughput" value={`${status.throughputBps} bps`} warn />
+          )}
+          <Sparkline samples={throughputHistory} height={28} />
+          <pre className="radio-panel-mono ardop-stats">
+{`Peer   ${status.peer ?? '—'}
+Mode   ${status.mode ?? '—'}
+Width  ${status.widthHz !== null ? `${status.widthHz} Hz` : '—'}
+PTT    ${status.pttBackend ?? '—'}
+RX     ${status.bytesRx} B  ·  TX ${status.bytesTx} B
+Up     ${fmtUptime(status.uptimeSec)}`}
+          </pre>
+        </section>
+      )}
+
+      <SignalSection
+        quality={status.quality}
+        snrSamples={snrHistory}
+        recentFrames={frameHistory}
+        snrCurrent={status.snDb}
+      />
+
+      <SessionLogSection entries={logEntries} onClear={clearLog} />
+
+      <section className="radio-panel-sec radio-panel-act">
+        {isStopped && (
+          <button
+            type="button"
+            className="radio-panel-btn radio-panel-btn-primary"
+            data-testid="ardop-start-btn"
+            disabled={target.trim() === '' || connecting}
+            onClick={onStartClick}
+          >
+            {connecting ? 'Connecting…' : 'Start'}
+          </button>
+        )}
+        {!isStopped && (
+          <>
+            <button
+              type="button"
+              className="radio-panel-btn radio-panel-btn-primary"
+              data-testid="ardop-send-receive-btn"
+              disabled={!isExchangeReady || exchanging || effectiveTarget === null}
+              onClick={onSendReceiveClick}
+            >
+              {exchanging ? 'Exchanging…' : 'Send/Receive'}
+            </button>
+            <button
+              type="button"
+              className="radio-panel-btn radio-panel-btn-bad"
+              data-testid="ardop-stop-btn"
+              disabled={disconnecting}
+              onClick={onStopClick}
+            >
+              {disconnecting ? 'Stopping…' : 'Stop'}
+            </button>
+          </>
+        )}
+        <button
+          type="button"
+          className="radio-panel-btn"
+          data-testid="ardop-open-webgui-btn"
+          onClick={onOpenWebGuiClick}
+          disabled={isStopped}
+          title={
+            isStopped
+              ? 'Start ARDOP first — ardopcf must be running for its WebGUI to be reachable'
+              : "Open ardopcf's built-in Spectrum/Waterfall view in browser"
+          }
+        >
+          Open WebGUI
+        </button>
+        {connectError !== null && (
+          <p className="radio-panel-error" role="alert">{connectError}</p>
+        )}
+      </section>
+
+      {showConsent && (
+        <ConsentModal
+          target={target.trim()}
+          onCancel={() => setShowConsent(false)}
+          onConfirm={onConsentConfirm}
+        />
+      )}
+    </RadioPanel>
+  );
+}

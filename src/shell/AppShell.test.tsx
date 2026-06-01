@@ -275,25 +275,32 @@ describe('<AppShell> — Mock B topology', () => {
     );
   });
 
-  it('selecting the CMS Packet connection swaps the reader for the packet panel', async () => {
+  it('selecting the CMS Packet connection mounts the PacketRadioPanel (P3: panel moved to right-hand radio panel)', async () => {
     renderShell();
     expect(screen.getByTestId('message-view-empty')).toBeInTheDocument();
     fireEvent.click(screen.getByTestId('sess-cms'));
     fireEvent.click(screen.getByTestId('proto-cms-packet'));
-    expect(await screen.findByTestId('packet-panel-root')).toBeInTheDocument();
-    expect(screen.queryByTestId('message-view-empty')).toBeNull();
-    // The status bar stays put. (The bottom session-log strip was removed in
-    // radio-panel-shell P1.6; the log moves into the radio panel in P2-P4.)
+    // P3: Packet UI lives in the right radio panel. The reading pane
+    // falls back to the message view (same pattern as Telnet (P2) and
+    // ARDOP (P4)).
+    const panel = await screen.findByTestId('radio-panel-root');
+    expect(panel).toBeInTheDocument();
+    expect(await screen.findByTestId('radio-panel-title')).toHaveTextContent(/Packet/);
+    // Reading pane stays on the message view (no Packet form there anymore).
+    expect(screen.getByTestId('message-view-empty')).toBeInTheDocument();
     expect(screen.getByTestId('status-bar')).toBeInTheDocument();
   });
 
-  it('selecting a folder clears the packet panel back to the reader', async () => {
+  it('selecting a folder dismisses the PacketRadioPanel (selectedConnection clears)', async () => {
     renderShell();
     fireEvent.click(screen.getByTestId('sess-cms'));
     fireEvent.click(screen.getByTestId('proto-cms-packet'));
-    await screen.findByTestId('packet-panel-root');
+    await screen.findByTestId('radio-panel-root');
     fireEvent.click(screen.getByTestId('folder-sent'));
-    expect(screen.queryByTestId('packet-panel-root')).toBeNull();
+    // Folder switch clears selectedConnection (intentional — onSelectFolder
+    // resets the reading-pane context). Panel unmounts unless a modem is
+    // active. In this test there's no active modem, so the panel goes away.
+    expect(screen.queryByTestId('radio-panel-root')).toBeNull();
     expect(screen.getByTestId('message-view-empty')).toBeInTheDocument();
   });
 

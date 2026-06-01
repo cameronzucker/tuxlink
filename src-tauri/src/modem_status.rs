@@ -39,6 +39,12 @@ pub struct ModemStatus {
     pub uptime_sec: u64,
     pub arq_flags: ArqFlags,
     pub last_error: Option<String>,
+    /// ardopcf Quality score (0..=100), populated from PINGACK / PING events.
+    /// `None` until the first ping has been observed; held across the rest
+    /// of the session as the last-known reading. Closes tuxlink-1637 — the
+    /// Signal-section "Quality" big-number indicator (spec §5.3) reads
+    /// this field via the `modem:status` event.
+    pub quality: Option<u8>,
 }
 
 impl ModemStatus {
@@ -57,6 +63,7 @@ impl ModemStatus {
             uptime_sec: 0,
             arq_flags: ArqFlags { busy: false, rx: false, tx: false },
             last_error: None,
+            quality: None,
         }
     }
 }
@@ -393,6 +400,7 @@ mod tests {
             uptime_sec: 222,
             arq_flags: ArqFlags { busy: true, rx: true, tx: false },
             last_error: None,
+            quality: Some(72),
         };
         let json = serde_json::to_string(&s).unwrap();
         let back: ModemStatus = serde_json::from_str(&json).unwrap();

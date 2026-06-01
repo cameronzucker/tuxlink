@@ -85,4 +85,22 @@ impl SessionLogState {
             })
             .unwrap_or_default()
     }
+
+    /// Drop every retained line. The `next_seq` counter is preserved so
+    /// post-clear lines continue to get strictly-increasing identifiers
+    /// (frontend snapshot-then-tail dedup still works; a panel that mounted
+    /// before the clear and is still tracking `last_seq` cannot accidentally
+    /// match a recycled id).
+    ///
+    /// Operator smoke 2026-05-31: `useSessionLog`'s `clear()` only reset
+    /// React state, so switching modes (which re-mounts the panel) refetched
+    /// the snapshot and the "cleared" lines reappeared. This drains the
+    /// shared backend buffer so the snapshot is genuinely empty after clear.
+    ///
+    /// No-op on a poisoned lock (matches `append`'s posture).
+    pub fn clear(&self) {
+        if let Ok(mut g) = self.inner.write() {
+            g.buf.clear();
+        }
+    }
 }

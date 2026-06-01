@@ -33,6 +33,11 @@ export interface SessionLogSectionProps {
   initialAutoScroll?: boolean;
   /** Optional copy handler; defaults to copying the rendered text. */
   onCopy?: () => void;
+  /** Optional clear handler (operator smoke 2026-05-31). When provided, a
+   *  Clear button renders next to Copy; clicking it invokes onClear and the
+   *  log view resets. The backend snapshot buffer is NOT cleared — clear is
+   *  panel-local; new lines after the clear repopulate the view normally. */
+  onClear?: () => void;
 }
 
 export function SessionLogSection({
@@ -40,6 +45,7 @@ export function SessionLogSection({
   initialShowRaw = false,
   initialAutoScroll = true,
   onCopy,
+  onClear,
 }: SessionLogSectionProps) {
   const [showRaw, setShowRaw] = useState(initialShowRaw);
   const [autoScroll, setAutoScroll] = useState(initialAutoScroll);
@@ -87,9 +93,17 @@ export function SessionLogSection({
           Auto-scroll
         </label>
         <button type="button" className="log-copy"
+                data-testid="log-copy-btn"
                 onClick={onCopy ?? (() => copyEntries(filtered))}>
           Copy ↗
         </button>
+        {onClear && (
+          <button type="button" className="log-clear"
+                  data-testid="log-clear-btn"
+                  onClick={onClear}>
+            Clear
+          </button>
+        )}
       </div>
     </section>
   );

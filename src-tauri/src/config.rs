@@ -504,6 +504,43 @@ pub struct ArdopUiConfig {
     /// outbound calls (tuxlink-j0ij).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bandwidth_hz: Option<u32>,
+    /// ardopcf built-in WebGUI port. `None` (the default) means "derive from
+    /// `cmd_port - 1`" per ardopcf's documented convention (default
+    /// 8515 → 8514). An explicit `Some(port)` overrides the derivation so the
+    /// operator can pin the WebGUI to a known port when ardopcf is built or
+    /// configured to bind somewhere non-standard.
+    ///
+    /// Persisted shape decided by operator smoke 2026-05-31 round 3: the
+    /// "Open WebGUI" button targets `http://localhost:<webgui_port>/` and the
+    /// spawn passes `-G <webgui_port>` — both ends MUST read from the same
+    /// source, so the derivation logic and the override flag are colocated on
+    /// the config struct rather than recomputed at each call site.
+    ///
+    /// Use [`ArdopUiConfig::resolved_webgui_port`] to read the effective
+    /// port; do not access this field directly.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub webgui_port: Option<u16>,
+}
+
+impl ArdopUiConfig {
+    /// Resolve the effective WebGUI port: explicit `webgui_port` if set,
+    /// otherwise `cmd_port - 1` (ardopcf's documented convention).
+    ///
+    /// Returns `None` when `cmd_port < 2` AND no explicit override is set —
+    /// that case can't derive a valid bindable TCP port and the WebGUI is
+    /// disabled in the spawn (no `-G` flag emitted). Both `build_ardop_extra_args`
+    /// and the frontend `onOpenWebGuiClick` consult this single helper so they
+    /// agree on the port regardless of operator overrides.
+    pub fn resolved_webgui_port(&self) -> Option<u16> {
+        if let Some(p) = self.webgui_port {
+            return Some(p);
+        }
+        if self.cmd_port >= 2 {
+            Some(self.cmd_port - 1)
+        } else {
+            None
+        }
+    }
 }
 
 impl Default for ArdopUiConfig {
@@ -515,6 +552,10 @@ impl Default for ArdopUiConfig {
             ptt_serial_path: None,
             cmd_port: 8515,
             bandwidth_hz: None,
+            // None → derive from cmd_port - 1 (8514 with the default cmd_port).
+            // Operator can pin explicitly via the radio panel when ardopcf's
+            // build/config has the WebGUI somewhere non-standard.
+            webgui_port: None,
         }
     }
 }
@@ -815,6 +856,7 @@ mod tests {
             ptt_serial_path: Some("/dev/ttyUSB0".into()),
             cmd_port: 8515,
             bandwidth_hz: None,
+            webgui_port: None,
         };
         let json = serde_json::to_string(&cfg).unwrap();
         let back: ArdopUiConfig = serde_json::from_str(&json).unwrap();
@@ -837,6 +879,7 @@ mod tests {
             ptt_serial_path: None,
             cmd_port: 8515,
             bandwidth_hz: Some(500),
+            webgui_port: None,
         };
         let json = serde_json::to_string(&cfg).unwrap();
         assert!(
@@ -863,6 +906,7 @@ mod tests {
             ptt_serial_path: None,
             cmd_port: 8515,
             bandwidth_hz: None,
+            webgui_port: None,
         };
         let json = serde_json::to_string(&cfg).unwrap();
         assert!(
@@ -877,6 +921,84 @@ mod tests {
             back.bandwidth_hz, None,
             "pre-j0ij config (no bandwidth_hz key) must deserialize as None"
         );
+    }
+
+    // --- Operator smoke 2026-05-31 round 3: webgui_port override + resolution ---
+
+    #[test]
+    fn resolved_webgui_port_falls_back_to_cmd_port_minus_one() {
+        // Default: webgui_port = None → derive from cmd_port - 1. With the
+        // default cmd_port=8515, this yields 8514 — the value the frontend
+        // expects and the value the `-G` spawn flag sets. Single helper rules
+        // out the drift class that caused round-3's "connection refused."
+        let cfg = ArdopUiConfig::default();
+        assert_eq!(cfg.resolved_webgui_port(), Some(8514));
+    }
+
+    #[test]
+    fn resolved_webgui_port_uses_explicit_override_when_set() {
+        // Operator pin: explicit webgui_port wins over the derivation. Lets
+        // an operator point both ends (spawn + button) at a non-conventional
+        // ardopcf build/configuration.
+        let mut cfg = ArdopUiConfig::default();
+        cfg.cmd_port = 8515;
+        cfg.webgui_port = Some(9999);
+        assert_eq!(cfg.resolved_webgui_port(), Some(9999));
+    }
+
+    #[test]
+    fn resolved_webgui_port_returns_none_when_unresolvable() {
+        // cmd_port < 2 AND no explicit override → no valid port can be
+        // derived; the spawn omits `-G` and the frontend surfaces an error.
+        for low in [0u16, 1u16] {
+            let mut cfg = ArdopUiConfig::default();
+            cfg.cmd_port = low;
+            cfg.webgui_port = None;
+            assert_eq!(cfg.resolved_webgui_port(), None,
+                "cmd_port={low}: must be unresolvable without override");
+        }
+        // ... but an explicit override still wins even when cmd_port is too low:
+        let mut cfg = ArdopUiConfig::default();
+        cfg.cmd_port = 0;
+        cfg.webgui_port = Some(8514);
+        assert_eq!(cfg.resolved_webgui_port(), Some(8514));
+    }
+
+    #[test]
+    fn ardop_ui_config_round_trips_with_webgui_port_override() {
+        // Operator-pinned webgui_port must round-trip cleanly. Mirrors the
+        // bandwidth_hz pattern (skip_serializing_if when None).
+        let cfg = ArdopUiConfig {
+            binary: "ardopcf".into(),
+            capture_device: "plughw:1,0".into(),
+            playback_device: "plughw:1,0".into(),
+            ptt_serial_path: None,
+            cmd_port: 8515,
+            bandwidth_hz: None,
+            webgui_port: Some(9080),
+        };
+        let json = serde_json::to_string(&cfg).unwrap();
+        assert!(
+            json.contains("\"webgui_port\":9080"),
+            "serialized config must contain webgui_port: 9080 — got: {json}"
+        );
+        let back: ArdopUiConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.webgui_port, Some(9080));
+    }
+
+    #[test]
+    fn ardop_ui_config_omits_webgui_port_when_none() {
+        let cfg = ArdopUiConfig::default();
+        let json = serde_json::to_string(&cfg).unwrap();
+        assert!(
+            !json.contains("webgui_port"),
+            "None webgui_port must be omitted from serialized JSON — got: {json}"
+        );
+        // Pre-existing configs that lack the key must deserialize as None
+        // (additive migration; consistent with bandwidth_hz).
+        let no_wg_json = r#"{"binary":"ardopcf","capture_device":"","playback_device":"","cmd_port":8515}"#;
+        let back: ArdopUiConfig = serde_json::from_str(no_wg_json).unwrap();
+        assert_eq!(back.webgui_port, None);
     }
 
     #[test]

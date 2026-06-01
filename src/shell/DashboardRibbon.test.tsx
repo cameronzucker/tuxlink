@@ -134,3 +134,73 @@ describe('DashboardRibbon — packet connection', () => {
     expect(screen.getByTestId('ribbon-connection')).toHaveTextContent('Idle · CMS-SSL');
   });
 });
+
+// ---------------------------------------------------------------------------
+// Operator smoke 2026-05-31: SSID propagates to callsign + is settable inline
+// ---------------------------------------------------------------------------
+
+describe('DashboardRibbon — SSID propagation + inline edit', () => {
+  it('renders bare callsign when no ssid is supplied', () => {
+    render(<DashboardRibbon data={makeData({ callsign: 'N7CPZ' })} />);
+    expect(screen.getByTestId('ribbon-callsign')).toHaveTextContent('N7CPZ');
+    expect(screen.queryByTestId('ribbon-ssid-select')).toBeNull();
+  });
+
+  it('renders callsign with -SSID suffix when ssid is supplied (no edit handler)', () => {
+    // When onSsidChange is not provided we render the plain text span — the
+    // dropdown only mounts in editable mode. The displayed value is the
+    // effective call (base-SSID).
+    render(<DashboardRibbon data={makeData({ callsign: 'N7CPZ' })} ssid={7} />);
+    expect(screen.getByTestId('ribbon-callsign')).toHaveTextContent('N7CPZ-7');
+    expect(screen.queryByTestId('ribbon-ssid-select')).toBeNull();
+  });
+
+  it('exposes a bare callsign chip + adjacent -N picker when onSsidChange is provided (tuxlink-i63g)', () => {
+    // Operator smoke 2026-05-31 round 4 (tuxlink-i63g): the round-3 "one
+    // select with `<base>-<N>` options" approach was rejected. Two
+    // surfaces are correct: a callsign chip showing the BARE callsign
+    // (no `-N`) and an adjacent picker whose options are JUST `-N`. The
+    // chip never carries the SSID suffix in the editable branch — that
+    // would re-introduce the two-SSID-surface bug.
+    render(<DashboardRibbon data={makeData({ callsign: 'N7CPZ' })} ssid={3} onSsidChange={() => {}} />);
+    const sel = screen.getByTestId('ribbon-ssid-select') as HTMLSelectElement;
+    expect(sel.value).toBe('3');
+    expect(Array.from(sel.options).map((o) => o.value)).toEqual(
+      ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12', '13', '14', '15'],
+    );
+    // Callsign chip is rendered alongside the picker, bare (no `-3`).
+    expect(screen.getByTestId('ribbon-callsign-text')).toHaveTextContent(/^N7CPZ$/);
+    // Confirm the `<base>-<N>` formatted call is NOT present anywhere as
+    // text within the callsign cell — that was the round-3 regression.
+    expect(screen.queryByText('N7CPZ-3')).toBeNull();
+  });
+
+  it('each picker option label is just `-N` (no callsign prefix) (tuxlink-i63g)', () => {
+    // Operator smoke 2026-05-31 round 4 (tuxlink-i63g): option labels
+    // must be JUST the SSID (`-0`..`-15`), not the full call. The bare
+    // form keeps the picker narrow enough that the WebKitGTK popup
+    // scrollbar gutter does not visually clip the second digit of `-10`
+    // through `-15`.
+    render(<DashboardRibbon data={makeData({ callsign: 'W7CPZ' })} ssid={0} onSsidChange={() => {}} />);
+    const sel = screen.getByTestId('ribbon-ssid-select') as HTMLSelectElement;
+    const labels = Array.from(sel.options).map((o) => o.textContent);
+    expect(labels).toEqual([
+      '-0', '-1', '-2', '-3', '-4', '-5', '-6', '-7',
+      '-8', '-9', '-10', '-11', '-12', '-13', '-14', '-15',
+    ]);
+  });
+
+  it('does not render the SSID select when callsign is empty (pre-wizard)', () => {
+    // Matches the prior "no dangling dash" behavior: don't render an empty
+    // or broken select before the operator has set a callsign.
+    render(<DashboardRibbon data={makeData({ callsign: '' })} ssid={0} onSsidChange={() => {}} />);
+    expect(screen.queryByTestId('ribbon-ssid-select')).toBeNull();
+  });
+
+  it('fires onSsidChange when the operator selects a new SSID', () => {
+    const onSsidChange = vi.fn();
+    render(<DashboardRibbon data={makeData({ callsign: 'N7CPZ' })} ssid={0} onSsidChange={onSsidChange} />);
+    fireEvent.change(screen.getByTestId('ribbon-ssid-select'), { target: { value: '10' } });
+    expect(onSsidChange).toHaveBeenCalledWith(10);
+  });
+});

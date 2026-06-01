@@ -43,11 +43,13 @@ import { dispatchMenuAction, type MenuHandlers } from './chrome/dispatchMenuActi
 import { useMessage } from '../mailbox/useMessage';
 import { openReplyWindow } from '../mailbox/replyActions';
 import { newDraftId } from '../routing';
-import { PacketConnectionPanelContainer } from '../packet/PacketConnectionPanel';
 import { effectiveCall } from '../packet/packetConfig';
 import { derivePacketUiState, type PacketUiState } from '../packet/packetStatus';
+import { usePacketConfig } from '../packet/usePacketConfig';
 import { isBuilt } from '../connections/sessionTypes';
 import { TelnetRadioPanel } from '../radio/modes/TelnetRadioPanel';
+import { PacketRadioPanel } from '../radio/modes/PacketRadioPanel';
+import { ArdopRadioPanel } from '../radio/modes/ArdopRadioPanel';
 import { StubPanel } from '../connections/StubPanel';
 import { SearchBar } from '../search/SearchBar';
 import { SearchDropdown } from '../search/SearchDropdown';
@@ -55,9 +57,7 @@ import { deparseQuery } from '../search/parseQuery';
 import { SavedSearchesPanel } from '../search/SavedSearchesPanel';
 import { useSearch } from '../search/useSearch';
 import { useSavedSearches } from '../search/useSavedSearches';
-import { ArdopHfStub } from '../connections/ArdopHfStub';
 import { useModemStatus } from '../modem/useModemStatus';
-import { ArdopDock } from '../modem/ArdopDock';
 import { computePanelMode } from '../radio/radioPanelVisibility';
 import type { RadioPanelMode } from '../radio/types';
 import { PlaceholderRadioPanel } from '../radio/modes/PlaceholderRadioPanel';
@@ -213,6 +213,12 @@ export function AppShell() {
   // dashboard ribbon, the status bar, and the window title.
   const statusData = useStatusData();
 
+  // Packet config — loaded once at AppShell and shared with the ribbon (callsign
+  // SSID suffix + inline editor) AND the PacketRadioPanel (which reads its own
+  // config and emits writes; the shared listener here picks those up). Operator
+  // smoke 2026-05-31 caught that the prior code hardcoded SSID=0 in the ribbon.
+  const packetConfig = usePacketConfig();
+
   // Modem (ARDOP HF) status — feeds the radio-panel visibility check + the
   // panes-grid column-count swap (tuxlink-4ek Task 4.3 baseline; radio-panel-
   // shell P1.5+ migrated to computePanelMode). The panel appears:
@@ -352,9 +358,13 @@ export function AppShell() {
       derivePacketUiState(
         statusData.status ?? null,
         selectedConnection?.protocol === 'packet',
-        effectiveCall(statusData.callsign, 0), // placeholder SSID for now
+        // Operator smoke 2026-05-31: the prior hard-coded `0` made the ribbon
+        // callsign show `<base>-0` regardless of the configured SSID. Source
+        // the SSID from the shared packet config so the ribbon, status bar,
+        // and PacketRadioPanel all agree on `<base>-<ssid>`.
+        effectiveCall(statusData.callsign, packetConfig.ssid),
       ),
-    [statusData.status, selectedConnection, statusData.callsign],
+    [statusData.status, selectedConnection, statusData.callsign, packetConfig.ssid],
   );
 
   return (
@@ -406,11 +416,13 @@ export function AppShell() {
           connecting={connecting}
           onAbort={onAbort}
           packet={packetUi}
+          ssid={packetConfig.config ? packetConfig.ssid : undefined}
+          onSsidChange={packetConfig.config ? packetConfig.setSsid : undefined}
         />
       </div>
 
       <div
-        className={`panes${radioPanelMode !== null ? ' panes--with-dock' : ''}${radioPanelMode?.kind === 'ardop-hf' ? ' panes--with-legacy-dock' : ''}`}
+        className={`panes${radioPanelMode !== null ? ' panes--with-dock' : ''}`}
         data-testid="shell-panes"
       >
         <FolderSidebar
@@ -445,25 +457,30 @@ export function AppShell() {
             return <MessageView selectedMessage={selectedMessage} />;
           }
           if (sessionType === 'cms' && protocol === 'packet') {
-            return <PacketConnectionPanelContainer baseCall={statusData.callsign} intent="cms-gateway" />;
+            // P3: PacketRadioPanel owns the Packet dial UI in the right
+            // radio panel; reading pane falls back to mail (same pattern
+            // as Telnet (P2) and ARDOP (P4)).
+            return <MessageView selectedMessage={selectedMessage} />;
           }
           if (sessionType === 'cms' && protocol === 'ardop-hf') {
-            // The actual dial UI lives in the right-hand ArdopDock; the
-            // reading-pane just directs the operator there (tuxlink-4ek 4.3).
-            return <ArdopHfStub />;
+            // P4: the ArdopRadioPanel owns the ARDOP HF dial UI; the
+            // reading pane falls back to mail (same pattern as Telnet,
+            // P2). Eliminates the P1 dual-mount of placeholder + ArdopDock.
+            return <MessageView selectedMessage={selectedMessage} />;
           }
           if (sessionType === 'p2p' && protocol === 'packet') {
-            return <PacketConnectionPanelContainer baseCall={statusData.callsign} intent="p2p" />;
+            // P3 (P2P branch): same — PacketRadioPanel handles the dial UI.
+            return <MessageView selectedMessage={selectedMessage} />;
           }
           // Built but unhandled — defensive stub
           return <StubPanel sessionType={sessionType} protocol={protocol} />;
         })()}
-        {/* Spec P2: Telnet uses the real TelnetRadioPanel; Packet / VARA /
-            ARDOP HF still mount the placeholder until their phases land
-            (P3 Packet, P4 ARDOP, P5 VARA). For ARDOP HF the legacy
-            ArdopDock continues to mount alongside the placeholder until
-            P4 removes it — this dual mount is the established P1
-            behavior. */}
+        {/* Per-mode radio panels. Telnet (P2), Packet (P3), and ARDOP HF
+            (P4) ship their real implementations; VARA HF / VARA FM still
+            fall through to the placeholder until P5 lands. The P1 dual-
+            mount of ArdopDock + placeholder for ARDOP HF is GONE — the
+            ArdopRadioPanel covers the full dial-and-live-state surface
+            on its own. */}
         {radioPanelMode && radioPanelMode.kind === 'telnet' && (
           <TelnetRadioPanel
             onClose={() => {
@@ -472,16 +489,36 @@ export function AppShell() {
             }}
           />
         )}
-        {radioPanelMode && radioPanelMode.kind !== 'telnet' && (
-          <PlaceholderRadioPanel
-            mode={radioPanelMode}
+        {radioPanelMode && radioPanelMode.kind === 'packet' && (
+          <PacketRadioPanel
+            intent={radioPanelMode.intent}
+            baseCall={statusData.callsign}
             onClose={() => {
               setSelectedConnection(null);
               setPinRadioPanel(false);
             }}
           />
         )}
-        {radioPanelMode?.kind === 'ardop-hf' && <ArdopDock />}
+        {radioPanelMode && radioPanelMode.kind === 'ardop-hf' && (
+          <ArdopRadioPanel
+            onClose={() => {
+              setSelectedConnection(null);
+              setPinRadioPanel(false);
+            }}
+          />
+        )}
+        {radioPanelMode &&
+          radioPanelMode.kind !== 'telnet' &&
+          radioPanelMode.kind !== 'packet' &&
+          radioPanelMode.kind !== 'ardop-hf' && (
+            <PlaceholderRadioPanel
+              mode={radioPanelMode}
+              onClose={() => {
+                setSelectedConnection(null);
+                setPinRadioPanel(false);
+              }}
+            />
+          )}
       </div>
 
       <StatusBar show={showStatusBar} unread={counts.inbox ?? 0} state={statusData.state} packet={packetUi} />

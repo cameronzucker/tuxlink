@@ -13,7 +13,7 @@
 // in TelnetRadioPanel. Same pattern reused by Packet (P3) and ARDOP
 // (P4) per spec §4.3.
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { listen } from '@tauri-apps/api/event';
 import { invoke } from '@tauri-apps/api/core';
 import type { LogLineDto } from '../../session/logProjection';
@@ -113,10 +113,35 @@ export function mergeLogLines(prev: LogLineDto[], batch: LogLineDto[]): LogLineD
   return result;
 }
 
+export interface UseSessionLogResult {
+  /** Accumulated entries, projected for SessionLogSection's `entries` prop. */
+  entries: SessionLogEntry[];
+  /**
+   * Clear the rendered entries. Operator smoke 2026-05-31 (round 2): panels
+   * needed a way to reset their log view without re-mounting.
+   *
+   * The clear targets BOTH layers:
+   *
+   *   1. Backend: invokes `session_log_clear` to drain the shared ring
+   *      buffer. Without this, switching modes (which re-mounts the panel)
+   *      refetched the snapshot via `session_log_snapshot` and the
+   *      "cleared" entries reappeared. (Round-1 fix only touched local
+   *      state; round-2 added the backend drain.)
+   *
+   *   2. Local React state: `setLines([])` keeps the UI responsive even
+   *      when the backend invoke rejects (pre-bootstrap / offline). The
+   *      backend call is best-effort; its rejection is swallowed.
+   *
+   * `next_seq` is preserved across the backend clear (see SessionLogState),
+   * so post-clear lines stay monotonic and any panel still tracking a
+   * stale `last_seq` cursor can't accidentally match a recycled id.
+   */
+  clear: () => void;
+}
+
 /**
  * Subscribe to the backend's `session_log:line` stream + seed from the
- * `session_log_snapshot` buffer. Returns the accumulated SessionLogEntry
- * list, suitable for SessionLogSection's `entries` prop.
+ * `session_log_snapshot` buffer. Returns `{ entries, clear }`.
  *
  * Codex R2 fix: subscribe FIRST, then fetch snapshot. Both paths merge
  * by `seq` so the late-resolving snapshot cannot overwrite a live event
@@ -127,7 +152,7 @@ export function mergeLogLines(prev: LogLineDto[], batch: LogLineDto[]): LogLineD
  * (pre-wizard, no Tauri context): snapshot resolves to [] silently,
  * listen attaches a no-op that cleans up on unmount.
  */
-export function useSessionLog(): SessionLogEntry[] {
+export function useSessionLog(): UseSessionLogResult {
   const [lines, setLines] = useState<LogLineDto[]>([]);
 
   useEffect(() => {
@@ -174,5 +199,16 @@ export function useSessionLog(): SessionLogEntry[] {
     };
   }, []);
 
-  return toSessionLogEntries(lines);
+  const clear = useCallback(() => {
+    // Backend drain first — without this, the panel's snapshot re-fetch on
+    // re-mount (mode switch) re-loads the just-cleared entries. Best-effort:
+    // a rejection (offline / pre-bootstrap) is swallowed so the local clear
+    // still happens and the UI stays responsive.
+    void invoke('session_log_clear').catch(() => {
+      /* backend absent or offline — local clear still applies below */
+    });
+    setLines([]);
+  }, []);
+
+  return { entries: toSessionLogEntries(lines), clear };
 }

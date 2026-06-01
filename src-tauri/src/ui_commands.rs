@@ -1244,6 +1244,23 @@ pub async fn session_log_snapshot(
     Ok(state.snapshot().into_iter().map(LogLineDto::from).collect())
 }
 
+/// Drain the shared session-log ring buffer (operator smoke 2026-05-31).
+///
+/// Previously `useSessionLog`'s `clear()` only reset the panel's React state.
+/// When the operator switched modes, the new panel re-mounted, refetched the
+/// snapshot via `session_log_snapshot`, and the "cleared" entries reappeared.
+/// This command empties the backend buffer so the snapshot is genuinely empty
+/// after clear. `next_seq` is preserved so post-clear ids stay monotonic — a
+/// stale panel still holding a `last_seq` cursor cannot accidentally match a
+/// recycled id.
+#[tauri::command]
+pub fn session_log_clear(
+    state: State<'_, std::sync::Arc<SessionLogState>>,
+) -> Result<(), UiError> {
+    state.clear();
+    Ok(())
+}
+
 // ============================================================================
 // tuxlink-ng3 — app_quit (HTML chrome File→Quit / Ctrl+Q)
 // ============================================================================
@@ -2556,6 +2573,63 @@ mod tests {
         assert_eq!(v["seq"], 1);
         assert_eq!(v["timestampIso"], "2026-05-20T00:00:01Z");
         assert!(v.get("timestamp_iso").is_none(), "no snake_case key on wire");
+    }
+
+    // Operator smoke 2026-05-31: SessionLogState::clear drains the buffer.
+    // Subsequent snapshot() returns empty; the next append still gets a
+    // strictly-greater seq (no recycling — stale `last_seq` cursors stay
+    // monotonic past a clear). This is the unit-test for the same drain
+    // path the `session_log_clear` command invokes.
+    #[test]
+    fn session_log_state_clear_drains_buffer_and_preserves_seq_monotonic() {
+        let ring = SessionLogState::new(8);
+        let line = || LogLine {
+            seq: 0,
+            timestamp_iso: "2026-05-31T00:00:00Z".into(),
+            level: LogLevel::Info,
+            source: LogSource::Backend,
+            message: "x".into(),
+        };
+        let seq1 = ring.append(line());
+        let seq2 = ring.append(line());
+        assert_eq!(seq1, 1);
+        assert_eq!(seq2, 2);
+        assert_eq!(ring.snapshot().len(), 2);
+
+        ring.clear();
+        assert_eq!(ring.snapshot().len(), 0, "snapshot is empty after clear");
+
+        // The next append must NOT recycle seq=1 — a panel that mounted
+        // before clear and still tracks last_seq=2 must not match the new
+        // line as a duplicate.
+        let seq3 = ring.append(line());
+        assert_eq!(seq3, 3, "next_seq is preserved across clear");
+        assert_eq!(ring.snapshot().len(), 1);
+    }
+
+    // Integration-style test for the command path: append → clear (via the
+    // same code path the command calls) → snapshot returns empty. Mirrors
+    // what `session_log_clear` does on the wire without a tauri runtime.
+    #[test]
+    fn session_log_clear_command_path_empties_snapshot() {
+        let ring = std::sync::Arc::new(SessionLogState::new(8));
+        ring.append(LogLine {
+            seq: 0,
+            timestamp_iso: "2026-05-31T00:00:00Z".into(),
+            level: LogLevel::Info,
+            source: LogSource::Backend,
+            message: "before-clear".into(),
+        });
+        assert!(!ring.snapshot().is_empty(), "buffer has a line before clear");
+
+        // This is the body of `session_log_clear` — calling it through the
+        // Arc the way the tauri State guard does, without spinning up a
+        // tauri runtime.
+        ring.clear();
+
+        let after: Vec<LogLineDto> =
+            ring.snapshot().into_iter().map(LogLineDto::from).collect();
+        assert!(after.is_empty(), "snapshot is empty after clear");
     }
 
     // ========================================================================

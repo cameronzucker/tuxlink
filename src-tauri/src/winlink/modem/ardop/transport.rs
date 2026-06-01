@@ -722,6 +722,30 @@ fn apply_ardop_event_to_status(event: Command, status: &mut ModemStatus) {
         Command::Status(_) => {
             // Free-form STATUS strings (S/N etc.) parsing is v2.
         }
+        Command::PingAck { sn_db, quality } => {
+            // ardopcf's response to an operator-issued ping. Surfaces both
+            // structured S/N (replacing the v2-deferred STATUS string scrape)
+            // and the 0..=100 quality score the Signal-section "Quality"
+            // indicator displays. tuxlink-1637.
+            //
+            // `as f32` widens i32 losslessly for the dB range we care about
+            // (typical -10 dB ..= +30 dB; even pathological -2^15..=2^15
+            // fits exactly).
+            status.sn_db = Some(sn_db as f32);
+            // Clamp to u8 — ardopcf documents 0..=100 but defend against an
+            // out-of-band value rather than silently truncating wraparound.
+            status.quality = Some(quality.min(u8::MAX as u32) as u8);
+        }
+        Command::Ping {
+            sn_db, quality, ..
+        } => {
+            // Incoming ping witnessed by the local TNC; carries the same
+            // S/N + quality measurement, taken on the received signal.
+            // Treat structurally the same as PingAck — the Signal section
+            // doesn't distinguish self-pings from witnessed pings.
+            status.sn_db = Some(sn_db as f32);
+            status.quality = Some(quality.min(u8::MAX as u32) as u8);
+        }
         Command::EchoBack(_) => {
             // Setter echo-backs ("MYCALL", etc.) aren't status-relevant.
         }
@@ -861,6 +885,61 @@ mod drain_tests {
         assert_eq!(s, s_before, "Status events must not mutate ModemStatus");
         apply_ardop_event_to_status(Command::EchoBack("MYCALL".into()), &mut s);
         assert_eq!(s, s_before, "EchoBack events must not mutate ModemStatus");
+    }
+
+    // ── tuxlink-1637: PINGACK / PING → ModemStatus.{sn_db,quality} ───────
+
+    #[test]
+    fn pingack_populates_sn_db_and_quality() {
+        let mut s = ModemStatus::stopped();
+        apply_ardop_event_to_status(
+            Command::PingAck { sn_db: 12, quality: 87 },
+            &mut s,
+        );
+        assert_eq!(s.sn_db, Some(12.0));
+        assert_eq!(s.quality, Some(87));
+    }
+
+    #[test]
+    fn pingack_with_negative_sn_widens_to_f32() {
+        let mut s = ModemStatus::stopped();
+        apply_ardop_event_to_status(
+            Command::PingAck { sn_db: -5, quality: 30 },
+            &mut s,
+        );
+        assert_eq!(s.sn_db, Some(-5.0));
+        assert_eq!(s.quality, Some(30));
+    }
+
+    #[test]
+    fn ping_event_populates_sn_db_and_quality_same_as_pingack() {
+        // Witnessed pings carry identical structured telemetry; the Signal
+        // section doesn't distinguish self-pings from witnessed pings.
+        let mut s = ModemStatus::stopped();
+        apply_ardop_event_to_status(
+            Command::Ping {
+                caller: "W4PHS".into(),
+                target: "W7RMS".into(),
+                sn_db: 10,
+                quality: 75,
+            },
+            &mut s,
+        );
+        assert_eq!(s.sn_db, Some(10.0));
+        assert_eq!(s.quality, Some(75));
+    }
+
+    #[test]
+    fn pingack_quality_above_100_is_clamped_to_u8_max() {
+        // ardopcf documents quality as 0..=100, but defensively clamp an
+        // out-of-band value to u8::MAX rather than silently truncating
+        // (e.g. quality=300 would wrap to 44 under `as u8`).
+        let mut s = ModemStatus::stopped();
+        apply_ardop_event_to_status(
+            Command::PingAck { sn_db: 8, quality: 300 },
+            &mut s,
+        );
+        assert_eq!(s.quality, Some(u8::MAX));
     }
 
     // ── tuxlink-n2uz: accumulator + derived-meter tests ──────────────────
