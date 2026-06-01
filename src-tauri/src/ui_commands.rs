@@ -1820,7 +1820,9 @@ pub struct PositionStatusDto {
     /// gps_state). Empty string when no grid is available. Serializes as
     /// `broadcast_grid` (snake_case) matching the TS PositionStatusDto.
     pub broadcast_grid: String,
-    /// The live source actually used to derive the active grid (tuxlink-pjih).
+    /// The active source — the chip selection (`PositionArbiter::source()`).
+    /// Task 5 of the position-subsystem restoration removes this field;
+    /// retained here pending that task per spec §3.1.
     pub active_source: config::PositionSource,
 }
 
@@ -1832,7 +1834,7 @@ pub async fn position_status(
     Ok(PositionStatusDto {
         gps_ready: arbiter.has_fresh_fix(),
         broadcast_grid: crate::position::effective_broadcast_locator(&cfg, Some(&arbiter)),
-        active_source: arbiter.effective_source(),
+        active_source: arbiter.source(),
     })
 }
 
@@ -2460,26 +2462,6 @@ mod tests {
         assert!(validate_grid_input("EM7").is_some(), "3-char should be invalid");
     }
 
-    // tuxlink-pjih (2026-06-01): set_manual no longer pins source = Manual;
-    // it just updates the fallback grid. The stored source preference stays
-    // where the operator put it. The displayed grid follows GPS-fresh-else-
-    // manual (verified in `position::arbiter::tests`); this test pins the
-    // ui_commands-side invariant that set_manual is grid-only.
-    #[test]
-    fn arbiter_set_manual_updates_grid_without_changing_stored_source() {
-        use crate::config::{PositionPrecision, PositionSource};
-        use crate::position::PositionArbiter;
-
-        let arbiter = PositionArbiter::new(PositionSource::Gps, None, PositionPrecision::FourCharGrid);
-        assert_eq!(arbiter.source(), PositionSource::Gps);
-        arbiter.set_manual("EM75");
-        assert_eq!(arbiter.source(), PositionSource::Gps, "set_manual must not flip stored source (tuxlink-pjih)");
-        // With no fresh GPS fix, active_grid falls back to manual_grid.
-        assert_eq!(arbiter.active_grid().as_deref(), Some("EM75"));
-        // effective_source reflects the live fallback path.
-        assert_eq!(arbiter.effective_source(), PositionSource::Manual);
-    }
-
     // Step 4c — multibyte UTF-8 input must not panic and must return Some (invalid).
     #[test]
     fn validate_grid_multibyte_does_not_panic() {
@@ -2850,11 +2832,11 @@ mod tests {
         let dto = PositionStatusDto {
             gps_ready: arbiter.has_fresh_fix(),
             broadcast_grid: crate::position::effective_broadcast_locator(&cfg, Some(&arbiter)),
-            active_source: arbiter.effective_source(),
+            active_source: arbiter.source(),
         };
         assert!(dto.gps_ready);
         assert_eq!(dto.broadcast_grid, "DM33", "GPS fix grid must appear in broadcast_grid");
-        assert_eq!(dto.active_source, PositionSource::Gps, "active_source must be Gps when fresh fix is producing the displayed grid (tuxlink-pjih)");
+        assert_eq!(dto.active_source, PositionSource::Gps, "active_source mirrors arbiter.source(); constructed Gps");
         // Verify snake_case serialization.
         let v = serde_json::to_value(&dto).unwrap();
         assert_eq!(v["gps_ready"], true, "gps_ready serializes snake_case");
@@ -2875,10 +2857,10 @@ mod tests {
         let dto = PositionStatusDto {
             gps_ready: arbiter.has_fresh_fix(),
             broadcast_grid: crate::position::effective_broadcast_locator(&cfg, Some(&arbiter)),
-            active_source: arbiter.effective_source(),
+            active_source: arbiter.source(),
         };
         assert!(!dto.gps_ready);
-        assert_eq!(dto.active_source, PositionSource::Manual, "active_source must be Manual when no fresh fix (tuxlink-pjih)");
+        assert_eq!(dto.active_source, PositionSource::Manual, "active_source mirrors arbiter.source(); constructed Manual");
         let v = serde_json::to_value(&dto).unwrap();
         assert_eq!(v["gps_ready"], false);
         // Manual arbiter with "CN87" → broadcast_grid = "CN87".
@@ -2900,7 +2882,7 @@ mod tests {
         let dto = PositionStatusDto {
             gps_ready: arbiter.has_fresh_fix(),
             broadcast_grid: crate::position::effective_broadcast_locator(&cfg, Some(&arbiter)),
-            active_source: arbiter.effective_source(),
+            active_source: arbiter.source(),
         };
         assert_eq!(
             dto.broadcast_grid, "DM33",

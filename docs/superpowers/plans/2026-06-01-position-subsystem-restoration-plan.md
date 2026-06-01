@@ -77,7 +77,7 @@ Expected: `Finished ... profile [unoptimized + debuginfo] target(s) in ...`.
 
 **Context:** pjih's `arbiter.set_manual` does NOT pin `source = Manual`; pjih's `arbiter.active_grid` returns `fresh fix else manual_grid` regardless of `source`. The position-subsystem restoration restores: `set_manual` pins `source = Manual`; `active_grid` is `match self.source { Manual → manual_grid; Gps → fresh fix else manual_grid }`. `effective_source` is removed entirely.
 
-- [ ] **Step 1: Write the failing test (temporal sticky sequence per R4 P0 #1).**
+- [x] **Step 1: Write the failing test (temporal sticky sequence per R4 P0 #1).**
 
 Open `src-tauri/src/position/arbiter.rs`. Locate the `#[cfg(test)] mod tests` block. Find any pjih-era test (e.g. `set_manual_updates_grid_without_changing_stored_source`) — DELETE it. ADD the following test at the end of `mod tests`:
 
@@ -108,7 +108,7 @@ Open `src-tauri/src/position/arbiter.rs`. Locate the `#[cfg(test)] mod tests` bl
     }
 ```
 
-- [ ] **Step 2: Run the test to verify it fails.**
+- [x] **Step 2: Run the test to verify it fails.**
 
 ```bash
 cargo test --manifest-path src-tauri/Cargo.toml --lib \
@@ -117,7 +117,7 @@ cargo test --manifest-path src-tauri/Cargo.toml --lib \
 
 Expected: FAIL. The pjih `arbiter.set_manual` does not flip `source = Manual`, so the first assertion (`arbiter.source() == Manual` after `set_manual`) fails.
 
-- [ ] **Step 3: Restore `Inner.source` field + restore `set_manual` source-pinning + restore `active_grid` source-gating + remove `effective_source` from `Inner` and `PositionArbiter`.**
+- [x] **Step 3: Restore `Inner.source` field + restore `set_manual` source-pinning + restore `active_grid` source-gating + remove `effective_source` from `Inner` and `PositionArbiter`.**
 
 In `src-tauri/src/position/arbiter.rs`, edit the `Inner` struct and `impl Inner` + `impl PositionArbiter`. The target state matches the pre-pjih implementation; the canonical pre-pjih code:
 
@@ -171,7 +171,7 @@ Within the same edit, delete any remaining pjih-era code:
 - The `PositionArbiter::effective_source(&self)` public method.
 - Any pjih comments referencing "tuxlink-pjih" or "GPS-fresh always wins" — replace with the pre-pjih comments.
 
-- [ ] **Step 4: Run the test to verify it passes.**
+- [x] **Step 4: Run the test to verify it passes.**
 
 ```bash
 cargo test --manifest-path src-tauri/Cargo.toml --lib \
@@ -180,7 +180,7 @@ cargo test --manifest-path src-tauri/Cargo.toml --lib \
 
 Expected: PASS.
 
-- [ ] **Step 5: Run all arbiter tests to confirm no other regressions.**
+- [x] **Step 5: Run all arbiter tests to confirm no other regressions.**
 
 ```bash
 cargo test --manifest-path src-tauri/Cargo.toml --lib position::arbiter 2>&1 | tail -20
