@@ -155,37 +155,38 @@ describe('DashboardRibbon — SSID propagation + inline edit', () => {
     expect(screen.queryByTestId('ribbon-ssid-select')).toBeNull();
   });
 
-  it('exposes a single click-to-edit callsign select when onSsidChange is provided', () => {
-    // Operator smoke 2026-05-31 round 3: the ribbon previously rendered a
-    // static callsign span PLUS a separate SSID select. Now there is ONE
-    // surface — the select itself displays the full callsign, and each
-    // option shows the full `<base>-<N>` form so picking an option directly
-    // mutates what reads in the ribbon.
+  it('exposes a bare callsign chip + adjacent -N picker when onSsidChange is provided (tuxlink-i63g)', () => {
+    // Operator smoke 2026-05-31 round 4 (tuxlink-i63g): the round-3 "one
+    // select with `<base>-<N>` options" approach was rejected. Two
+    // surfaces are correct: a callsign chip showing the BARE callsign
+    // (no `-N`) and an adjacent picker whose options are JUST `-N`. The
+    // chip never carries the SSID suffix in the editable branch — that
+    // would re-introduce the two-SSID-surface bug.
     render(<DashboardRibbon data={makeData({ callsign: 'N7CPZ' })} ssid={3} onSsidChange={() => {}} />);
     const sel = screen.getByTestId('ribbon-ssid-select') as HTMLSelectElement;
     expect(sel.value).toBe('3');
-    // 0..15 inclusive — wire values stay numeric.
     expect(Array.from(sel.options).map((o) => o.value)).toEqual(
       ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12', '13', '14', '15'],
     );
-    // The plain-text callsign span MUST NOT be rendered alongside the
-    // select — that would re-introduce the two-surface bug.
-    expect(screen.queryByText('N7CPZ-3', { selector: 'span.dash-callsign-text' })).toBeNull();
+    // Callsign chip is rendered alongside the picker, bare (no `-3`).
+    expect(screen.getByTestId('ribbon-callsign-text')).toHaveTextContent(/^N7CPZ$/);
+    // Confirm the `<base>-<N>` formatted call is NOT present anywhere as
+    // text within the callsign cell — that was the round-3 regression.
+    expect(screen.queryByText('N7CPZ-3')).toBeNull();
   });
 
-  it('each option label is the full callsign-SSID form (W7CPZ-0 .. W7CPZ-15)', () => {
-    // Operator smoke 2026-05-31 round 3: option labels were previously bare
-    // integers (`0`..`15`). With the select-IS-the-display refactor, each
-    // option must show the full call so the operator never sees two SSID
-    // surfaces. Verifies the label text + ordering.
+  it('each picker option label is just `-N` (no callsign prefix) (tuxlink-i63g)', () => {
+    // Operator smoke 2026-05-31 round 4 (tuxlink-i63g): option labels
+    // must be JUST the SSID (`-0`..`-15`), not the full call. The bare
+    // form keeps the picker narrow enough that the WebKitGTK popup
+    // scrollbar gutter does not visually clip the second digit of `-10`
+    // through `-15`.
     render(<DashboardRibbon data={makeData({ callsign: 'W7CPZ' })} ssid={0} onSsidChange={() => {}} />);
     const sel = screen.getByTestId('ribbon-ssid-select') as HTMLSelectElement;
     const labels = Array.from(sel.options).map((o) => o.textContent);
     expect(labels).toEqual([
-      'W7CPZ-0', 'W7CPZ-1', 'W7CPZ-2', 'W7CPZ-3',
-      'W7CPZ-4', 'W7CPZ-5', 'W7CPZ-6', 'W7CPZ-7',
-      'W7CPZ-8', 'W7CPZ-9', 'W7CPZ-10', 'W7CPZ-11',
-      'W7CPZ-12', 'W7CPZ-13', 'W7CPZ-14', 'W7CPZ-15',
+      '-0', '-1', '-2', '-3', '-4', '-5', '-6', '-7',
+      '-8', '-9', '-10', '-11', '-12', '-13', '-14', '-15',
     ]);
   });
 

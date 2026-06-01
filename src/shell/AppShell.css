@@ -147,18 +147,28 @@
   font-weight: 700;
   font-size: 14px;
 }
-/* Inline SSID picker (operator smoke 2026-05-31 round 3). The select IS
-   the displayed callsign — each option is the full `<base>-<N>` token.
-   Styled to read as the original .dash-value.callsign text (transparent
-   bg, no border) with a small chevron indicator that hints the chip is
-   interactive. The appearance reset is REQUIRED so the OS-default
-   light-grey select shell doesn't read as "disabled" against the dark
-   dashboard background — same pattern used by .radio-panel-input below
-   the radio panel for the baud / SSID / bandwidth selectors. */
+/* Callsign + inline SSID picker (operator smoke 2026-05-31 round 4 —
+   tuxlink-i63g). The round-3 "one select with full `<base>-<N>` options"
+   approach was rejected: operator wanted the picker to be just the SSID
+   (`-N`), and at 2-digit SSIDs (`-10`..`-15`) the OS popup scroll bar
+   visually clipped the second digit. Restored pattern: bare callsign
+   text chip + adjacent narrow picker whose options are just `-N`. The
+   `.dash-ssid-select` modifier sets an explicit min-width that gives the
+   open popup enough room for `-15` PLUS the OS scrollbar gutter without
+   them overlapping. The appearance reset stays as it was — without it
+   the OS-default light-grey select shell reads as "disabled" against the
+   dark dashboard background. */
 .layout-b .dashboard .dash-callsign-row {
   display: inline-flex;
   align-items: baseline;
   gap: 4px;
+}
+.layout-b .dashboard .dash-callsign-text {
+  font-family: var(--mono);
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--accent-2);
 }
 .layout-b .dashboard .dash-callsign-select {
   font-family: var(--mono);
@@ -183,11 +193,20 @@
   border-color: var(--accent-2);
   outline: none;
 }
+/* SSID-only picker variant — explicit min-width so the open popup is wide
+   enough to fit `-15` next to the OS scrollbar gutter without clipping.
+   Mono font is ~8.4px per char at 14px, so `-15` is ~25px; with 16px right
+   padding (chevron) + ~14px scrollbar gutter + 4px option padding, 72px
+   min keeps the second digit visible on WebKitGTK. */
+.layout-b .dashboard .dash-ssid-select {
+  min-width: 72px;
+}
 /* Option list itself (when the OS popup opens) uses the system color, but
    force a sane dark fallback so the dropdown isn't blinding white-on-white. */
 .layout-b .dashboard .dash-callsign-select option {
   background: var(--surface, #0f1218);
   color: var(--text, #cbd5e1);
+  padding: 0 4px;
 }
 .layout-b .dashboard .dash-value.good {
   color: var(--success);
