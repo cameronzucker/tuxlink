@@ -2,6 +2,7 @@
 //! and the full-parity revision in docs/superpowers/specs/2026-05-31-html-forms-full-parity-design.md.
 
 pub mod catalog;
+pub mod multipart;
 pub mod parse;
 pub mod serialize;
 pub mod skin;
