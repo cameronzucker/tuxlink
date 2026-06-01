@@ -4,6 +4,7 @@
 pub mod catalog;
 pub mod parse;
 pub mod serialize;
+pub mod skin;
 pub mod templates;
 pub mod types;
 pub mod validation;
