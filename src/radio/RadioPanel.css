@@ -70,6 +70,13 @@
 
 .radio-panel-body {
   flex: 1;
+  display: flex;
+  flex-direction: column;
+  /* min-height:0 lets nested flex children (the SessionLog section) shrink
+     past their content's intrinsic min-height when the window gets short.
+     Without this, the inner log-scroll's overflow:auto wouldn't kick in and
+     the whole body would push the action row off-screen. */
+  min-height: 0;
   overflow-y: auto;
 }
 

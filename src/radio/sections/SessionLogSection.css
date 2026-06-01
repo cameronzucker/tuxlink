@@ -1,12 +1,29 @@
 /* src/radio/sections/SessionLogSection.css
  *
- * Operator smoke 2026-05-31 feedback:
- *   - prior max-height 132px was too small (operator-flagged whitespace)
- *   - prior 9-10px font scale was nearly unreadable vs the rest of the UI
+ * Operator smoke 2026-05-31 feedback (revised):
+ *   - the log was already too small at 132px; first bump → 320px max
+ *   - revised: should fill ALL remaining vertical space in the panel
+ *     since the panel has nothing else to do with it. SessionLogSection
+ *     becomes a flex child that grows; the inner log-scroll fills the
+ *     section's body area; the 320px cap is dropped.
+ *   - 12-13px type scale retained
  *
- * Now: 320px log surface, 12-13px type scale. Timestamp column widens
- * to 64px to fit HH:MM:SS at the larger size without truncation.
+ * Layout contract: the .radio-panel-body is a flex column; this section
+ * has flex:1 (grow) so it absorbs the slack between Server/Transport
+ * (top) and Actions (bottom). The inner log-scroll has flex:1 within
+ * the section so it fills the section's body area below the h5 + above
+ * the controls row.
  */
+.session-log-section {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  /* min-height keeps the log readable on tall windows even when there
+     are no entries yet; min-height:0 on the scroll lets it shrink
+     gracefully on short windows so the controls row stays visible. */
+  min-height: 240px;
+}
+
 .session-log-section .log-scroll {
   font-family: ui-monospace, 'SF Mono', Menlo, monospace;
   font-size: 12px;
@@ -14,8 +31,8 @@
   background: rgba(0, 0, 0, 0.22);
   border-radius: 3px;
   padding: 8px 10px;
-  max-height: 320px;
-  min-height: 200px;
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
   color: var(--text-faint, #94a3b8);
 }
