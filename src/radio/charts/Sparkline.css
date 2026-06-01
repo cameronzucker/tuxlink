@@ -1,0 +1,28 @@
+/* src/radio/charts/Sparkline.css
+ *
+ * Spec §5.3 — shared sparkline palette. Default-green; warn-amber and
+ * bad-red are applied per-sample via `.warn` / `.bad` modifier classes.
+ */
+
+.sparkline {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  padding: 4px 0;
+  border-radius: 2px;
+}
+
+.sparkline-bar {
+  flex: 1;
+  background: linear-gradient(0deg, #4ade80, rgba(74, 222, 128, 0.2));
+  border-radius: 1px 1px 0 0;
+  min-width: 2px;
+}
+
+.sparkline-bar.warn {
+  background: linear-gradient(0deg, #fbbf24, rgba(251, 191, 36, 0.2));
+}
+
+.sparkline-bar.bad {
+  background: linear-gradient(0deg, #f87171, rgba(248, 113, 113, 0.2));
+}
