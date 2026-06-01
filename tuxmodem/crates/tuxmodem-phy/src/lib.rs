@@ -14,5 +14,6 @@ pub mod constellations;
 pub mod sync;
 pub mod subcarrier_snr;
 pub mod ofdm_main;
+pub mod robustness_floor;
 pub mod error;
 pub use error::PhyError;
