@@ -1,22 +1,31 @@
-/* src/radio/sections/SessionLogSection.css */
+/* src/radio/sections/SessionLogSection.css
+ *
+ * Operator smoke 2026-05-31 feedback:
+ *   - prior max-height 132px was too small (operator-flagged whitespace)
+ *   - prior 9-10px font scale was nearly unreadable vs the rest of the UI
+ *
+ * Now: 320px log surface, 12-13px type scale. Timestamp column widens
+ * to 64px to fit HH:MM:SS at the larger size without truncation.
+ */
 .session-log-section .log-scroll {
   font-family: ui-monospace, 'SF Mono', Menlo, monospace;
-  font-size: 10px;
-  line-height: 1.5;
-  background: rgba(0, 0, 0, 0.18);
+  font-size: 12px;
+  line-height: 1.55;
+  background: rgba(0, 0, 0, 0.22);
   border-radius: 3px;
-  padding: 6px 8px;
-  max-height: 132px;
+  padding: 8px 10px;
+  max-height: 320px;
+  min-height: 200px;
   overflow-y: auto;
   color: var(--text-faint, #94a3b8);
 }
 
 .session-log-section .log-entry {
   display: grid;
-  grid-template-columns: 56px 1fr;
-  gap: 6px;
-  padding: 3px 0;
-  border-top: 1px solid rgba(255, 255, 255, 0.04);
+  grid-template-columns: 64px 1fr;
+  gap: 8px;
+  padding: 4px 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
 }
 .session-log-section .log-entry:first-child {
   border-top: none;
@@ -25,7 +34,7 @@
 
 .session-log-section .log-ts {
   color: #64748b;
-  font-size: 9px;
+  font-size: 11px;
   padding-top: 1px;
   white-space: nowrap;
 }
@@ -38,39 +47,39 @@
 .log-entry-ok   .log-msg  { color: #4ade80; }
 .log-entry-warn .log-msg  { color: #fbbf24; }
 .log-entry-warn .log-msg::before { content: '⚠ '; }
-.log-entry-raw  .log-msg  { color: var(--text-faint, #94a3b8); font-style: italic; opacity: 0.7; }
+.log-entry-raw  .log-msg  { color: var(--text-faint, #94a3b8); font-style: italic; opacity: 0.75; }
 
 .log-entry-alert {
   background: rgba(239, 68, 68, 0.08);
   border-left: 3px solid #f87171;
-  padding-left: 6px;
-  margin: 2px -8px;
-  padding-right: 8px;
-  padding-top: 4px;
-  padding-bottom: 4px;
+  padding-left: 8px;
+  margin: 2px -10px;
+  padding-right: 10px;
+  padding-top: 5px;
+  padding-bottom: 5px;
   border-top: none;
 }
 .log-entry-alert + .log-entry { border-top: 1px solid rgba(255, 255, 255, 0.04); }
 .log-entry-alert .log-msg { color: #f87171; }
 .log-entry-alert .log-msg::before { content: '⊘ '; font-weight: 600; }
-.log-entry-alert .log-msg .log-raw { color: #fecaca; font-style: italic; opacity: 0.8; }
+.log-entry-alert .log-msg .log-raw { color: #fecaca; font-style: italic; opacity: 0.85; }
 
 .session-log-section .log-controls {
   display: flex;
-  gap: 6px;
-  margin-top: 6px;
-  font-size: 9px;
+  gap: 10px;
+  margin-top: 8px;
+  font-size: 12px;
   align-items: center;
 }
 .session-log-section .log-controls label {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 5px;
   color: var(--text-faint, #94a3b8);
   cursor: pointer;
 }
 .session-log-section .log-controls label input {
-  transform: scale(0.85);
+  transform: scale(1);
 }
 .session-log-section .log-copy {
   background: transparent;
@@ -79,5 +88,8 @@
   cursor: pointer;
   margin-left: auto;
   padding: 0;
-  font-size: 9px;
+  font-size: 12px;
+}
+.session-log-section .log-copy:hover {
+  text-decoration: underline;
 }
