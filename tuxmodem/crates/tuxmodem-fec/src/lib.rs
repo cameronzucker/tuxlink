@@ -26,6 +26,7 @@
 #![deny(unsafe_code)]
 #![warn(missing_docs)]
 
+pub mod codec;
 pub mod codes;
 pub mod crc;
 pub mod decode;
