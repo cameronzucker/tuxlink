@@ -609,8 +609,9 @@ export function Compose({ draftId }: ComposeProps) {
         )}
         {formMode.kind === 'form' && (() => {
           const entry = lookupForm(formMode.formId);
-          if (!entry) {
-            // Unknown form ID (shouldn't happen since picker shows registered only)
+          if (!entry || !entry.Form) {
+            // Unknown form ID, or view-only entry with no compose-side Form
+            // (shouldn't happen since the picker is scoped to composableForms()).
             setFormMode({ kind: 'plain' });
             return null;
           }
