@@ -34,6 +34,23 @@ pub enum P2pTelnetError {
     Exchange(ExchangeError),
 }
 
+impl std::fmt::Display for P2pTelnetError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            P2pTelnetError::Resolve { host, port, source } => {
+                write!(f, "DNS resolve failed for {host}:{port}: {source}")
+            }
+            P2pTelnetError::Connect { addr, source } => {
+                write!(f, "TCP connect to {addr} failed: {source}")
+            }
+            P2pTelnetError::Login(e) => write!(f, "P2P login failed: {e}"),
+            P2pTelnetError::Exchange(e) => write!(f, "B2F exchange failed: {e}"),
+        }
+    }
+}
+
+impl std::error::Error for P2pTelnetError {}
+
 impl From<DialerLoginError> for P2pTelnetError {
     fn from(e: DialerLoginError) -> Self {
         P2pTelnetError::Login(e)

@@ -274,6 +274,11 @@ pub fn run() {
             crate::modem_commands::modem_ardop_connect, // tuxlink-4ek Task 3.3 (RADIO-1-gated spawn + ARQ connect)
             crate::modem_commands::modem_mint_consent, // tuxlink-4ek Task 6.2 (RADIO-1 token mint — backend-only)
             crate::modem_commands::modem_ardop_b2f_exchange, // tuxlink-ytg (B2F over ARDOP — Winlink mail flows)
+            // tuxlink-0pnb Task 4: P2P-Telnet dial + per-peer password management
+            crate::ui_commands::telnet_p2p_dial,
+            crate::ui_commands::p2p_peer_password_set,
+            crate::ui_commands::p2p_peer_password_clear,
+            crate::ui_commands::p2p_peer_password_status,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

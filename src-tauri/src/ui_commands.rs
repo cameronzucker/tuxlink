@@ -1946,6 +1946,144 @@ pub(crate) fn validate_cms_host(host: &str) -> Option<&'static str> {
     None
 }
 
+// ============================================================================
+// tuxlink-0pnb — P2P-Telnet dial + peer-password management (PR 1)
+// Spec: docs/design/2026-06-01-tcp-p2p-telnet-design.md §4.6
+// Plan: 2026-06-01-tcp-p2p-telnet-pr1-client-dial.md Task 4
+// ============================================================================
+
+/// Whether the per-peer password is stored in the keyring. Read-only so the
+/// UI can render a Set / Not Set indicator without reading the secret itself.
+///
+/// Mirrors the `PeerPasswordStatus` type in the plan spec.
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub enum PeerPasswordStatus {
+    Set,
+    NotSet,
+}
+
+/// Request object for [`telnet_p2p_dial`].
+#[derive(Debug, Deserialize)]
+pub struct P2pDialRequest {
+    /// Hostname or IP address of the peer's TCP listener.
+    pub host: String,
+    /// TCP port on the peer.
+    pub port: u16,
+    /// Callsign of the peer station (used for the login exchange + optional
+    /// password lookup in the keyring).
+    pub peer_callsign: String,
+    /// Our own callsign, sent in the B2F handshake.
+    pub my_callsign: String,
+    /// Our Maidenhead grid locator for the B2F handshake.
+    pub locator: String,
+}
+
+/// Result returned by [`telnet_p2p_dial`].
+#[derive(Debug, Serialize)]
+pub struct P2pDialResult {
+    /// Number of outbound messages sent successfully.
+    pub sent_count: usize,
+    /// Number of inbound messages received.
+    pub received_count: usize,
+}
+
+/// Write the per-peer station password to the OS keyring.
+///
+/// Overwrites any existing entry. `callsign` is uppercased before storage so
+/// case variants do not create duplicate entries (see `credentials::p2p_peer_account`).
+#[tauri::command]
+pub async fn p2p_peer_password_set(callsign: String, password: String) -> Result<(), UiError> {
+    crate::winlink::credentials::p2p_peer_password_write(&callsign, &password).map_err(|e| {
+        UiError::Internal { detail: e.to_string() }
+    })
+}
+
+/// Delete the per-peer station password from the OS keyring.
+///
+/// Idempotent: succeeds when no entry exists (spec §4.4). Useful for clearing
+/// a stored password without navigating back to a settings form.
+#[tauri::command]
+pub async fn p2p_peer_password_clear(callsign: String) -> Result<(), UiError> {
+    crate::winlink::credentials::p2p_peer_password_delete(&callsign).map_err(|e| {
+        UiError::Internal { detail: e.to_string() }
+    })
+}
+
+/// Return whether a peer-station password is stored in the keyring.
+///
+/// Returns [`PeerPasswordStatus::Set`] when an entry exists,
+/// [`PeerPasswordStatus::NotSet`] when absent. Any other keyring error is
+/// surfaced as `UiError::Internal`.
+#[tauri::command]
+pub async fn p2p_peer_password_status(
+    callsign: String,
+) -> Result<PeerPasswordStatus, UiError> {
+    use crate::winlink::credentials::KeyringError;
+    match crate::winlink::credentials::p2p_peer_password_read(&callsign) {
+        Ok(_) => Ok(PeerPasswordStatus::Set),
+        Err(KeyringError::NoEntry { .. }) => Ok(PeerPasswordStatus::NotSet),
+        Err(e) => Err(UiError::Internal { detail: e.to_string() }),
+    }
+}
+
+/// Dial a P2P peer over TCP-Telnet and run a full B2F message exchange.
+///
+/// Looks up the per-peer password from the keyring (absent = no password
+/// challenge attempted). PR 1 ships an empty outbox stub; real outbox
+/// integration comes in a follow-on PR that wires the draft store.
+///
+/// RADIO-1: This command drives TCP to a peer station — no RF, so no
+/// Part 97 consent gate is needed. The peer may transmit RF independently,
+/// but tuxlink does not trigger it.
+#[tauri::command]
+pub async fn telnet_p2p_dial(req: P2pDialRequest) -> Result<P2pDialResult, UiError> {
+    use crate::winlink::credentials::KeyringError;
+    use crate::winlink::session::ExchangeConfig;
+    use crate::winlink::telnet_p2p;
+
+    // Look up peer password if configured (None = no password challenge attempted).
+    let peer_password = match crate::winlink::credentials::p2p_peer_password_read(
+        &req.peer_callsign,
+    ) {
+        Ok(p) => Some(p),
+        Err(KeyringError::NoEntry { .. }) => None,
+        Err(e) => {
+            return Err(UiError::Internal { detail: e.to_string() });
+        }
+    };
+
+    let config = ExchangeConfig {
+        mycall: req.my_callsign.clone(),
+        targetcall: req.peer_callsign.clone(),
+        locator: req.locator.clone(),
+        // P2P never uses B2F secure-login (spec §4.3 — no secure-login for P2P).
+        password: None,
+    };
+
+    // PR 1: empty outbox stub. Real outbox integration comes when the draft
+    // store is wired in a follow-on PR (mirrors how cms_connect defers until
+    // the backend is populated).
+    let outbound: Vec<crate::winlink::session::OutboundMessage> = Vec::new();
+
+    let result = telnet_p2p::connect_and_exchange(
+        &req.host,
+        req.port,
+        &req.peer_callsign,
+        peer_password.as_deref(),
+        &config,
+        outbound,
+        &|line: &str| eprintln!("[p2p progress] {line}"),
+        &|line: &str| eprintln!("[p2p wire] {line}"),
+        |_proposals| Vec::new(),
+    )
+    .map_err(|e| UiError::Transport { reason: e.to_string() })?;
+
+    Ok(P2pDialResult {
+        sent_count: result.sent.len(),
+        received_count: result.received.len(),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2988,5 +3126,38 @@ mod tests {
         assert_eq!(mapped.len(), 2);
         assert_eq!(mapped[0].filename, "a.txt");
         assert_eq!(mapped[1].bytes, [3, 4, 5]);
+    }
+
+    // ========================================================================
+    // tuxlink-0pnb Task 4 — PeerPasswordStatus serialization + P2pDialResult
+    // ========================================================================
+
+    // PeerPasswordStatus serializes as a plain string variant (no content wrapper).
+    // Mirrors how the TS side will pattern-match on the value.
+    #[test]
+    fn peer_password_status_serializes_as_plain_string() {
+        let set = serde_json::to_value(PeerPasswordStatus::Set).unwrap();
+        assert_eq!(set, "Set");
+        let not_set = serde_json::to_value(PeerPasswordStatus::NotSet).unwrap();
+        assert_eq!(not_set, "NotSet");
+    }
+
+    // PeerPasswordStatus round-trips through JSON (Deserialize impl exercised).
+    #[test]
+    fn peer_password_status_round_trips_through_json() {
+        let original = PeerPasswordStatus::NotSet;
+        let json = serde_json::to_string(&original).unwrap();
+        let decoded: PeerPasswordStatus = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded, PeerPasswordStatus::NotSet);
+    }
+
+    // P2pDialResult serializes sent_count + received_count so the frontend
+    // can display exchange totals after a successful dial.
+    #[test]
+    fn p2p_dial_result_serializes_counts() {
+        let dto = P2pDialResult { sent_count: 3, received_count: 1 };
+        let v = serde_json::to_value(&dto).unwrap();
+        assert_eq!(v["sent_count"], 3);
+        assert_eq!(v["received_count"], 1);
     }
 }
