@@ -1761,36 +1761,59 @@ pub async fn config_set_grid(
 // commit. `position_status` reads LIVE arbiter state (NOT config), so
 // `gps_ready` is intentionally absent from `ConfigViewDto` (spec §position-686).
 
-/// Switch the active position source (operator-driven). v0.1 supports switching
-/// TO GPS only — Manual is pinned by editing the grid (`config_set_grid`), which
-/// requires a grid value. "Gps" calls `arbiter.use_gps()` (requires a fresh fix);
-/// on success, persists `position_source = Gps` so the choice survives restart.
+/// Persist the operator's chip selection (`config.privacy.position_source`)
+/// and flip the in-memory arbiter source.
+///
+/// `'Gps'` succeeds unconditionally per spec §1.1 (the relaxation): the
+/// pre-check on `arbiter.has_fresh_fix()` was removed in Task 3 of the
+/// position-subsystem restoration (Codex P0 #1), mirroring the T2 change
+/// that made `arbiter.use_gps()` infallible. If no fresh fix exists when
+/// the operator picks GPS, `active_grid` falls back to `manual_grid`
+/// (State 4 / State 5 per the 2026-05-22 spec row 3) — the chip selection
+/// is a stable preference, not a snapshot of "GPS is currently usable."
+///
+/// `'Manual'` is rejected — manual pinning happens via `config_set_grid`,
+/// which `arbiter.set_manual` keys to `source = Manual` (T1 restored the
+/// source-pinning invariant).
+///
+/// Persists config BEFORE flipping the in-memory arbiter, so a write
+/// failure returns `UiError::Internal` without an in-memory/persisted skew
+/// (mirrors `config_set_grid`'s persist-first invariant).
 #[tauri::command]
 pub async fn position_set_source(
     source: String,
     arbiter: tauri::State<'_, std::sync::Arc<crate::position::PositionArbiter>>,
     state: State<'_, BackendState>,
 ) -> Result<(), UiError> {
+    position_set_source_impl(source, arbiter.inner().clone(), state.current()).await
+}
+
+/// Tauri-attribute-free body of [`position_set_source`], factored out so the
+/// command is unit-testable without a Tauri app handle. See the command's
+/// rustdoc for the contract.
+pub(crate) async fn position_set_source_impl(
+    source: String,
+    arbiter: std::sync::Arc<crate::position::PositionArbiter>,
+    backend: Option<std::sync::Arc<dyn crate::winlink_backend::WinlinkBackend>>,
+) -> Result<(), UiError> {
     match source.as_str() {
         "Gps" => {
-            // Pre-check the fix WITHOUT flipping yet, so the common "no fix" case
-            // short-circuits before we persist anything (mirrors config_set_grid's
-            // persist-first invariant: in-memory never gets ahead of persisted config).
-            if !arbiter.has_fresh_fix() {
-                return Err(UiError::Unavailable {
-                    reason: "Cannot switch to GPS: no usable GPS fix".into(),
-                });
-            }
-            // Persist first; if the write fails, return WITHOUT having flipped in-memory.
-            let mut cfg = config::read_config().map_err(|e| UiError::Internal { detail: e.to_string() })?;
+            // Per spec §1.1: no `has_fresh_fix` gate. The chip selection is a
+            // stable preference; effective_broadcast_locator handles the no-fix
+            // fallback to manual_grid (State 4 / State 5).
+            //
+            // Persist first; if the write fails, return WITHOUT having flipped
+            // in-memory (mirrors config_set_grid's persist-first invariant).
+            let mut cfg = config::read_config()
+                .map_err(|e| UiError::Internal { detail: e.to_string() })?;
             cfg.privacy.position_source = config::PositionSource::Gps;
-            config::write_config_atomic(&cfg).map_err(|e| UiError::Internal { detail: e.to_string() })?;
-            // Flip in-memory only after a successful persist. use_gps is now
-            // infallible (Task 2). Task 3 will remove the has_fresh_fix pre-check
-            // above + UiError::Unavailable error path entirely.
+            config::write_config_atomic(&cfg)
+                .map_err(|e| UiError::Internal { detail: e.to_string() })?;
+            // Flip in-memory only after a successful persist. use_gps is
+            // infallible (T2).
             arbiter.use_gps();
             // tuxlink-ka7/p5u: refresh the live backend (config_set_* wildcard).
-            if let Some(backend) = state.current() {
+            if let Some(backend) = backend {
                 backend.set_config(cfg);
             }
             Ok(())
@@ -2767,6 +2790,88 @@ mod tests {
             matches!(result, Err(UiError::Rejected(_))),
             "unknown source string maps to UiError::Rejected"
         );
+    }
+
+    /// Serializes tests that mutate the process-global TUXLINK_CONFIG_DIR env
+    /// var. Mirrors the pattern in `modem_commands::tests::env_lock` — `set_var`
+    /// is not thread-safe under cargo's parallel test pool, so each test that
+    /// touches the env grabs this mutex for the duration of its
+    /// set→read→restore sequence. Without this gate, env-mutating tests in this
+    /// binary race (tuxlink-j0ij precedent).
+    fn position_set_source_env_lock() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        LOCK.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    // Codex P0 #1 / spec §1.1: position_set_source('Gps') mirrors the arbiter
+    // relaxation. Returns Ok(()) without a fresh fix; persists
+    // position_source = Gps. T2 made `arbiter.use_gps()` infallible; T3
+    // removes the `has_fresh_fix()` pre-check + `UiError::Unavailable` error
+    // path from the command, so the command is now infallible-on-this-branch.
+    #[tokio::test]
+    async fn position_set_source_gps_succeeds_without_fresh_fix() {
+        use crate::config::CONFIG_SCHEMA_VERSION;
+
+        let _env_guard = position_set_source_env_lock();
+        let tmp = tempfile::tempdir().expect("create tempdir");
+        let prior = std::env::var("TUXLINK_CONFIG_DIR").ok();
+        // SAFETY: single-threaded test (env_lock); no concurrent env reads within this block.
+        unsafe { std::env::set_var("TUXLINK_CONFIG_DIR", tmp.path()); }
+
+        // Seed a minimal valid config with position_source = Manual so we can
+        // assert it FLIPS to Gps via the command (offline path: no callsign).
+        let seed = format!(
+            r#"{{
+                "schema_version": {ver},
+                "wizard_completed": true,
+                "connect": {{ "connect_to_cms": false, "transport": "Telnet" }},
+                "identity": {{ "callsign": null, "identifier": "W1TEST", "grid": "EM75" }},
+                "privacy": {{ "gps_state": "Off", "position_precision": "FourCharGrid", "position_source": "Manual" }}
+            }}"#,
+            ver = CONFIG_SCHEMA_VERSION,
+        );
+        std::fs::write(tmp.path().join("config.json"), seed)
+            .expect("seed config.json into tempdir");
+
+        let arbiter = std::sync::Arc::new(PositionArbiter::new(
+            PositionSource::Manual,
+            Some("EM75".to_string()),
+            PositionPrecision::FourCharGrid,
+        ));
+        assert!(!arbiter.has_fresh_fix(), "fixture has no fix");
+
+        let result = position_set_source_impl(
+            "Gps".to_string(),
+            arbiter.clone(),
+            /* backend = */ None,
+        )
+        .await;
+
+        assert!(
+            result.is_ok(),
+            "position_set_source('Gps') must succeed without a fresh fix per spec §1.1; got {result:?}"
+        );
+        assert_eq!(
+            arbiter.source(),
+            PositionSource::Gps,
+            "arbiter source must flip to Gps"
+        );
+
+        let cfg = crate::config::read_config().expect("read back the persisted config");
+        assert_eq!(
+            cfg.privacy.position_source,
+            PositionSource::Gps,
+            "position_source = Gps must be persisted to config"
+        );
+
+        // Restore env (best-effort).
+        // SAFETY: symmetric with the set_var above; single-threaded test.
+        unsafe {
+            match prior {
+                Some(v) => std::env::set_var("TUXLINK_CONFIG_DIR", v),
+                None => std::env::remove_var("TUXLINK_CONFIG_DIR"),
+            }
+        }
     }
 
     // Helpers for position_status DTO unit tests.
