@@ -4,6 +4,19 @@ import type { ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { MailboxFolder, MessageMeta } from '../mailbox/types';
 
+// Vite-native raw-import of AppShell.css for the tuxlink-8rng chrome-width
+// assertions below. Uses the same pattern as src/forms/innerhtml-ban.test.ts:
+// `import.meta.glob` with `eager + ?raw + default` returns the CSS as a string
+// at module-evaluation time, so no @types/node / node:fs dependency is needed
+// and `pnpm tsc --noEmit` stays clean. Pitfall TEST-1
+// (docs/pitfalls/implementation-pitfalls.md) forbids node:fs in tests.
+const APP_SHELL_CSS_MODULES = import.meta.glob('./AppShell.css', {
+  eager: true,
+  query: '?raw',
+  import: 'default',
+}) as Record<string, string>;
+const appShellCss = APP_SHELL_CSS_MODULES['./AppShell.css'];
+
 // ---------------------------------------------------------------------------
 // Tauri IPC mocks. The Mock B shell mounts the HTML chrome (TitleBar + MenuBar
 // + ResizeHandles), the dashboard ribbon + status bar (useStatusData →
@@ -453,5 +466,32 @@ describe('<AppShell> — find-messages wiring (Task 17)', () => {
     expect(
       searchBar.compareDocumentPosition(panes) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Radio-panel chrome width — tuxlink-8rng
+//
+// Operator 2026-06-01 surfaced ARDOP-panel content clipping at the 360 px
+// width; a prior CSS clamp (commit cc82bf4) only partially fixed it.
+// Operator-approved fix: widen the panel column to 400 px. The mailbox
+// column absorbs the 40 px reduction (340 → 300) so the 1fr reading-pane
+// keeps its share. This test pins the grid-template-columns declaration
+// in AppShell.css so any future regression that quietly walks the width
+// back is caught at unit-test time. The rule must apply to BOTH the
+// 4-col (`panes--with-dock`) and 5-col (`.panes--with-legacy-dock`)
+// variants per operator's "all modes" directive.
+// ---------------------------------------------------------------------------
+describe('AppShell.css radio-panel chrome width (tuxlink-8rng)', () => {
+  it('declares the radio-panel column at 400px in .panes--with-dock', () => {
+    expect(appShellCss).toMatch(
+      /\.layout-b \.panes--with-dock\s*\{[^}]*200px\s+300px\s+1fr\s+400px/,
+    );
+  });
+
+  it('declares the radio-panel column at 400px in .panes--with-legacy-dock', () => {
+    expect(appShellCss).toMatch(
+      /\.layout-b \.panes--with-dock\.panes--with-legacy-dock\s*\{[^}]*200px\s+300px\s+1fr\s+400px\s+290px/,
+    );
   });
 });

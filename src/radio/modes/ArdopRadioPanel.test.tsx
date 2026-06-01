@@ -443,5 +443,135 @@ describe('<ArdopRadioPanel>', () => {
       render(<ArdopRadioPanel onClose={() => {}} />);
       expect(screen.queryByTestId('ardop-radio-section')).not.toBeInTheDocument();
     });
+
+    // tuxlink-jmfm Task 3: Settings ARDOP fieldset was deleted in Task 2;
+    // cmd_port + binary were the two controls without an inline-edit
+    // surface in the panel. These tests pin the rows + their persist-on-blur
+    // behavior so the operator can edit both inline.
+    it('Radio section has a cmd_port input row (tuxlink-jmfm)', async () => {
+      render(<ArdopRadioPanel onClose={() => {}} />);
+      await waitFor(() =>
+        expect(screen.getByTestId('ardop-cmd-port-input')).toBeInTheDocument(),
+      );
+    });
+
+    it('Radio section has an ardopcf binary input row (tuxlink-jmfm)', async () => {
+      render(<ArdopRadioPanel onClose={() => {}} />);
+      await waitFor(() =>
+        expect(screen.getByTestId('ardop-binary-input')).toBeInTheDocument(),
+      );
+    });
+
+    it('cmd_port input persists on blur (tuxlink-jmfm)', async () => {
+      const core = await import('@tauri-apps/api/core');
+      const invokeMock = core.invoke as ReturnType<typeof vi.fn>;
+      render(<ArdopRadioPanel onClose={() => {}} />);
+      // Wait for initial load (default config has cmd_port=8515 so the
+      // input renders that value once ardopConfig hydrates).
+      await waitFor(() => {
+        expect((screen.getByTestId('ardop-cmd-port-input') as HTMLInputElement).value).toBe('8515');
+      });
+      const cmd = screen.getByTestId('ardop-cmd-port-input') as HTMLInputElement;
+      fireEvent.change(cmd, { target: { value: '8520' } });
+      fireEvent.blur(cmd);
+      await waitFor(() => {
+        expect(invokeMock).toHaveBeenCalledWith(
+          'config_set_ardop',
+          expect.objectContaining({
+            value: expect.objectContaining({ cmd_port: 8520 }),
+          }),
+        );
+      });
+    });
+
+    it('binary input persists on blur (tuxlink-jmfm)', async () => {
+      const core = await import('@tauri-apps/api/core');
+      const invokeMock = core.invoke as ReturnType<typeof vi.fn>;
+      render(<ArdopRadioPanel onClose={() => {}} />);
+      // Wait for initial load (default config has binary='ardopcf').
+      await waitFor(() => {
+        expect((screen.getByTestId('ardop-binary-input') as HTMLInputElement).value).toBe('ardopcf');
+      });
+      const bin = screen.getByTestId('ardop-binary-input') as HTMLInputElement;
+      fireEvent.change(bin, { target: { value: '/usr/local/bin/ardopcf' } });
+      fireEvent.blur(bin);
+      await waitFor(() => {
+        expect(invokeMock).toHaveBeenCalledWith(
+          'config_set_ardop',
+          expect.objectContaining({
+            value: expect.objectContaining({ binary: '/usr/local/bin/ardopcf' }),
+          }),
+        );
+      });
+    });
+
+    // Code-quality review follow-up (tuxlink-jmfm Task 3): three Important
+    // findings on the initial T3 commit (9b73157) — commitBinary silently
+    // dropped empty input; commitCmdPort used parseInt (lossy) instead of
+    // Number + Number.isInteger (strict); commitCmdPort was missing the
+    // n <= 65535 upper bound that commitWebguiPort enforces.
+    it('commitBinary reverts on empty input (tuxlink-jmfm follow-up)', async () => {
+      const core = await import('@tauri-apps/api/core');
+      const invokeMock = core.invoke as ReturnType<typeof vi.fn>;
+      render(<ArdopRadioPanel onClose={() => {}} />);
+      // Wait for initial load (default config has binary='ardopcf').
+      await waitFor(() => {
+        expect((screen.getByTestId('ardop-binary-input') as HTMLInputElement).value).toBe('ardopcf');
+      });
+      const bin = screen.getByTestId('ardop-binary-input') as HTMLInputElement;
+      // Clear writes count BEFORE the operator action so we can assert
+      // config_set_ardop was NOT called by the empty-input commit.
+      invokeMock.mockClear();
+      fireEvent.change(bin, { target: { value: '' } });
+      fireEvent.blur(bin);
+      // The input MUST resync to the persisted 'ardopcf' (not stay empty).
+      await waitFor(() => {
+        expect((screen.getByTestId('ardop-binary-input') as HTMLInputElement).value).toBe('ardopcf');
+      });
+      // And no persist call should have fired.
+      const setCalls = invokeMock.mock.calls.filter(([cmd]) => cmd === 'config_set_ardop');
+      expect(setCalls).toHaveLength(0);
+    });
+
+    it('commitCmdPort rejects non-numeric input strictly (tuxlink-jmfm follow-up)', async () => {
+      const core = await import('@tauri-apps/api/core');
+      const invokeMock = core.invoke as ReturnType<typeof vi.fn>;
+      render(<ArdopRadioPanel onClose={() => {}} />);
+      await waitFor(() => {
+        expect((screen.getByTestId('ardop-cmd-port-input') as HTMLInputElement).value).toBe('8515');
+      });
+      const cmd = screen.getByTestId('ardop-cmd-port-input') as HTMLInputElement;
+      // Clear writes count BEFORE the operator action so we can assert
+      // config_set_ardop was NOT called by the bad-input commit.
+      // parseInt('8515abc', 10) === 8515 would have silently accepted this;
+      // Number('8515abc') === NaN rejects.
+      invokeMock.mockClear();
+      fireEvent.change(cmd, { target: { value: '8515abc' } });
+      fireEvent.blur(cmd);
+      await waitFor(() => {
+        expect((screen.getByTestId('ardop-cmd-port-input') as HTMLInputElement).value).toBe('8515');
+      });
+      const setCalls = invokeMock.mock.calls.filter(([c]) => c === 'config_set_ardop');
+      expect(setCalls).toHaveLength(0);
+    });
+
+    it('commitCmdPort rejects port > 65535 (tuxlink-jmfm follow-up)', async () => {
+      const core = await import('@tauri-apps/api/core');
+      const invokeMock = core.invoke as ReturnType<typeof vi.fn>;
+      render(<ArdopRadioPanel onClose={() => {}} />);
+      await waitFor(() => {
+        expect((screen.getByTestId('ardop-cmd-port-input') as HTMLInputElement).value).toBe('8515');
+      });
+      const cmd = screen.getByTestId('ardop-cmd-port-input') as HTMLInputElement;
+      invokeMock.mockClear();
+      fireEvent.change(cmd, { target: { value: '99999' } });
+      fireEvent.blur(cmd);
+      // Input MUST revert to the persisted 8515.
+      await waitFor(() => {
+        expect((screen.getByTestId('ardop-cmd-port-input') as HTMLInputElement).value).toBe('8515');
+      });
+      const setCalls = invokeMock.mock.calls.filter(([c]) => c === 'config_set_ardop');
+      expect(setCalls).toHaveLength(0);
+    });
   });
 });

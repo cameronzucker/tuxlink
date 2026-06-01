@@ -17,5 +17,14 @@ export default defineConfig({
     globals: false,
     setupFiles: ['./src/test-setup.ts'],
     include: ['src/**/*.{test,spec}.{ts,tsx}'],
+    // Vitest defaults `css: false`, which makes ALL CSS imports return ''
+    // — including `?raw` queries through Vite's CSS plugin. Opt CSS files
+    // imported as raw text back in so tests can assert against the actual
+    // CSS source (e.g. AppShell.test.tsx tuxlink-8rng chrome-width pins).
+    // Pattern: import.meta.glob('./X.css', { eager: true, query: '?raw',
+    // import: 'default' }) — the Vite-native swap for the node:fs
+    // readFileSync that pitfall TEST-1 (docs/pitfalls/implementation-
+    // pitfalls.md) forbids.
+    css: { include: [/\.css\?raw$/] },
   },
 });

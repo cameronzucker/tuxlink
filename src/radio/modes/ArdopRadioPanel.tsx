@@ -231,6 +231,12 @@ export function ArdopRadioPanel({ onClose }: ArdopRadioPanelProps) {
   const [captureInput, setCaptureInput] = useState<string>('');
   const [playbackInput, setPlaybackInput] = useState<string>('');
   const [pttSerialInput, setPttSerialInput] = useState<string>('');
+  // cmd_port + binary inputs (tuxlink-jmfm Task 3). PR #185 commit 4c88618
+  // added Capture / Playback / PTT / WebGUI; Task 2 of the radio-panel-width
+  // plan deleted the Settings ARDOP fieldset, so cmd_port + binary needed an
+  // inline-edit surface in the panel to remain reachable.
+  const [cmdPortInput, setCmdPortInput] = useState<string>('');
+  const [binaryInput, setBinaryInput] = useState<string>('');
   // WebGUI port override (operator smoke 2026-05-31 round 3). Stored as a
   // string in the input so the operator can type freely; commits to the
   // backend on blur after a non-empty numeric parse. Empty input → null
@@ -266,6 +272,8 @@ export function ArdopRadioPanel({ onClose }: ArdopRadioPanelProps) {
         setCaptureInput(c.capture_device ?? '');
         setPlaybackInput(c.playback_device ?? '');
         setPttSerialInput(c.ptt_serial_path ?? '');
+        setCmdPortInput(String(c.cmd_port));
+        setBinaryInput(c.binary ?? '');
         // Display the resolved port (override OR cmd_port-1) as a hint so
         // the operator sees what URL the button will open. Empty → no
         // override pinned yet, so the input shows the derived default as
@@ -326,6 +334,44 @@ export function ArdopRadioPanel({ onClose }: ArdopRadioPanelProps) {
       return;
     }
     persistArdop({ webgui_port: n });
+  };
+  // cmd_port commit: strict parse (Number + Number.isInteger; rejects
+  // "8515abc" where parseInt would have silently accepted 8515), reject
+  // out-of-u16-range, skip no-op writes. Mirrors commitWebguiPort exactly
+  // so the two sibling port-input handlers behave identically — the prior
+  // asymmetry (parseInt + no upper bound on cmd_port; Number + 65535 on
+  // webgui_port) was a code smell.
+  const commitCmdPort = () => {
+    if (!ardopConfig) return;
+    const trimmed = cmdPortInput.trim();
+    const n = Number(trimmed);
+    if (!Number.isInteger(n) || n < 1 || n > 65535) {
+      // Revert the input to whatever's persisted so the operator's bad
+      // value doesn't linger in the field.
+      setCmdPortInput(String(ardopConfig.cmd_port));
+      setConnectError(`Invalid cmd_port "${trimmed}" — must be 1..65535. Reverted.`);
+      return;
+    }
+    if (n === ardopConfig.cmd_port) return;
+    persistArdop({ cmd_port: n });
+  };
+  // binary commit: empty trimmed reverts the input to the persisted value
+  // (matches commitCmdPort's revert-on-invalid pattern). Without this, an
+  // operator who clears the field and tabs out sees the input go visually
+  // empty, ardopConfig.binary unchanged, then the useEffect resync on next
+  // mount overwrites the empty input back to the persisted value — looks
+  // like "my edit silently vanished." The revert surfaces the truth
+  // immediately and writes a connectError explaining why.
+  const commitBinary = () => {
+    if (!ardopConfig) return;
+    const trimmed = binaryInput.trim();
+    if (trimmed === '') {
+      setBinaryInput(ardopConfig.binary);
+      setConnectError('Binary path cannot be empty — reverted to persisted value.');
+      return;
+    }
+    if (trimmed === ardopConfig.binary) return;
+    persistArdop({ binary: trimmed });
   };
 
   const onBandwidthChange = (e: ChangeEvent<HTMLSelectElement>) => {
@@ -588,6 +634,40 @@ export function ArdopRadioPanel({ onClose }: ArdopRadioPanelProps) {
               }
               onChange={(e) => setWebguiPortInput(e.target.value)}
               onBlur={commitWebguiPort}
+            />
+          </label>
+          {/* cmd_port + binary (tuxlink-jmfm Task 3). The Settings ARDOP
+              fieldset was deleted in Task 2; without these rows the
+              operator would have no UI surface to edit either control. */}
+          <label className="radio-panel-input-row">
+            <span>Cmd port</span>
+            <input
+              type="text"
+              inputMode="numeric"
+              className="radio-panel-input"
+              data-testid="ardop-cmd-port-input"
+              value={cmdPortInput}
+              spellCheck={false}
+              autoCapitalize="off"
+              autoCorrect="off"
+              placeholder="8515 (ardopcf default)"
+              onChange={(e) => setCmdPortInput(e.target.value)}
+              onBlur={commitCmdPort}
+            />
+          </label>
+          <label className="radio-panel-input-row">
+            <span>Binary</span>
+            <input
+              type="text"
+              className="radio-panel-input"
+              data-testid="ardop-binary-input"
+              value={binaryInput}
+              spellCheck={false}
+              autoCapitalize="off"
+              autoCorrect="off"
+              placeholder="ardopcf"
+              onChange={(e) => setBinaryInput(e.target.value)}
+              onBlur={commitBinary}
             />
           </label>
         </section>
