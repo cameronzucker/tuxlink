@@ -34,10 +34,7 @@ pub fn rng_from_seed(seed: u64) -> Xoshiro256PlusPlus {
 ///
 /// Returns interleaved (re, im) pairs as f32 to keep the hot path on
 /// f32 arithmetic; cast at the call site if higher precision is needed.
-pub fn complex_gaussian_block(
-    rng: &mut Xoshiro256PlusPlus,
-    n: usize,
-) -> Vec<(f32, f32)> {
+pub fn complex_gaussian_block(rng: &mut Xoshiro256PlusPlus, n: usize) -> Vec<(f32, f32)> {
     let normal = Normal::new(0.0_f32, std::f32::consts::FRAC_1_SQRT_2).unwrap();
     (0..n)
         .map(|_| (normal.sample(rng), normal.sample(rng)))

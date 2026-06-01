@@ -26,12 +26,18 @@ fn synthetic_iq_bytes(n: usize) -> Vec<u8> {
 fn cli_emits_json_with_citations() {
     let mut child = Command::new(cli_path())
         .args([
-            "--condition", "moderate",
-            "--sample-rate", "8000",
-            "--channel-seed", "1",
-            "--noise-seed", "2",
-            "--target-snr-db", "10",
-            "--fft-size", "1024",
+            "--condition",
+            "moderate",
+            "--sample-rate",
+            "8000",
+            "--channel-seed",
+            "1",
+            "--noise-seed",
+            "2",
+            "--target-snr-db",
+            "10",
+            "--fft-size",
+            "1024",
         ])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -43,7 +49,12 @@ fn cli_emits_json_with_citations() {
     drop(child.stdin.take());
 
     let out = child.wait_with_output().expect("wait");
-    assert!(out.status.success(), "cli exited with {:?}; stderr={}", out.status, String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "cli exited with {:?}; stderr={}",
+        out.status,
+        String::from_utf8_lossy(&out.stderr)
+    );
 
     let stdout = String::from_utf8(out.stdout).expect("utf8");
     assert!(stdout.contains("Watterson"));

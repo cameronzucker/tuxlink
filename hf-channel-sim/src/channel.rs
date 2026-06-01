@@ -4,10 +4,10 @@
 //!
 //! Per Watterson, Juroshek, Bensema (1970) and ITU-R F.520 / F.1487.
 //!
-//! The model: y[n] = (f₁[n]·s[n] + f₂[n]·s[n−D]) / √2
-//!   where f₁, f₂ are independent spectrum-shaped complex-Gaussian
-//!   fading processes (Task 4), and D is the delay in samples
-//!   corresponding to Δτ seconds at the simulation sample rate.
+//! The model: `y[n] = (f₁[n]·s[n] + f₂[n]·s[n−D]) / √2`
+//!   where `f₁`, `f₂` are independent spectrum-shaped complex-Gaussian
+//!   fading processes (Task 4), and `D` is the delay in samples
+//!   corresponding to `Δτ` seconds at the simulation sample rate.
 
 use crate::fading::generate_fading_block;
 use crate::params::{ChannelCondition, WattersonParams};
@@ -74,11 +74,7 @@ impl WattersonChannel {
     }
 
     /// Construct from a standardized ITU-R F.520 / F.1487 condition.
-    pub fn from_condition(
-        seed: u64,
-        condition: ChannelCondition,
-        sample_rate_hz: f64,
-    ) -> Self {
+    pub fn from_condition(seed: u64, condition: ChannelCondition, sample_rate_hz: f64) -> Self {
         Self::new(seed, condition.params(), sample_rate_hz)
     }
 
@@ -195,8 +191,7 @@ mod tests {
             })
             .collect();
 
-        let mut one_shot =
-            WattersonChannel::from_condition(99, ChannelCondition::Moderate, 8000.0);
+        let mut one_shot = WattersonChannel::from_condition(99, ChannelCondition::Moderate, 8000.0);
         let out_full = one_shot.process_block(&input);
 
         let mut streaming =
@@ -236,6 +231,8 @@ mod tests {
         // non-zero at both locations and ~zero between them.
         assert!(resp[0].norm() > 0.1, "peak 1 missing: {}", resp[0].norm());
         assert!(resp[16].norm() > 0.1, "peak 2 missing: {}", resp[16].norm());
+        // Index `i` is wanted in the failure message; enumerate would obscure that.
+        #[allow(clippy::needless_range_loop)]
         for i in 1..16 {
             assert!(
                 resp[i].norm() < 0.01,

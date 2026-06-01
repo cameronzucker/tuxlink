@@ -13,10 +13,18 @@ use rustfft::FftPlanner;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
+/// Per-sub-carrier SNR characterization produced by [`estimate_subcarrier_snr`].
+///
+/// Holds both time-averaged per-bin mean SNR and per-window snapshots in dB,
+/// plus the FFT parameters needed to map bins to frequencies. JSON-
+/// serializable for AI-agent consumption.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SubcarrierSnrEstimate {
+    /// FFT size used (number of frequency bins per window).
     pub fft_size: usize,
+    /// Simulation sample rate in Hz; combine with `fft_size` to derive bin frequencies.
     pub sample_rate_hz: f64,
+    /// Number of FFT-sized windows the estimator processed.
     pub window_count: usize,
     /// Time-averaged per-bin SNR in dB. Length == fft_size.
     pub mean_snr_db: Vec<f32>,
@@ -168,10 +176,20 @@ mod tests {
         let est = estimate_subcarrier_snr(&clean, &observed, 1024, 8000.0);
         // Replace infinities with finite values so JSON survives.
         let safe = SubcarrierSnrEstimate {
-            mean_snr_db: est.mean_snr_db.iter().map(|x| if x.is_finite() { *x } else { 999.0 }).collect(),
-            snapshots: est.snapshots.iter().map(|s| {
-                s.iter().map(|x| if x.is_finite() { *x } else { 999.0 }).collect()
-            }).collect(),
+            mean_snr_db: est
+                .mean_snr_db
+                .iter()
+                .map(|x| if x.is_finite() { *x } else { 999.0 })
+                .collect(),
+            snapshots: est
+                .snapshots
+                .iter()
+                .map(|s| {
+                    s.iter()
+                        .map(|x| if x.is_finite() { *x } else { 999.0 })
+                        .collect()
+                })
+                .collect(),
             ..est
         };
         let json = serde_json::to_string(&safe).unwrap();

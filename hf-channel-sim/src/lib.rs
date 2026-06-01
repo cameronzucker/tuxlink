@@ -17,16 +17,18 @@
 //! Watterson 1970 + ITU-R F.520 + ITU-R F.1487, applied to baseband audio-
 //! band samples. Deterministic, reproducible, AI-agent-friendly.
 
-pub mod params;
-pub mod rng;
-pub mod fading;
-pub mod channel;
-pub mod noise;
-pub mod analysis;
-pub mod report;
+#![deny(missing_docs)]
 
-pub use params::{ChannelCondition, WattersonParams};
+pub mod analysis;
+pub mod channel;
+pub mod fading;
+pub mod noise;
+pub mod params;
+pub mod report;
+pub mod rng;
+
+pub use analysis::{estimate_subcarrier_snr, SubcarrierSnrEstimate};
 pub use channel::WattersonChannel;
 pub use noise::AwgnGenerator;
-pub use analysis::{estimate_subcarrier_snr, SubcarrierSnrEstimate};
+pub use params::{ChannelCondition, WattersonParams};
 pub use report::{run_characterization, CharacterizationInputs, CharacterizationReport};

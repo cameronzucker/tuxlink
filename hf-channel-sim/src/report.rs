@@ -10,25 +10,48 @@ use crate::params::ChannelCondition;
 use num_complex::Complex;
 use serde::{Deserialize, Serialize};
 
+/// Input parameters fully specifying a characterization run. Same inputs +
+/// same clean signal produce the same [`CharacterizationReport`] (modulo
+/// `crate_version`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CharacterizationInputs {
+    /// Standardized ITU-R F.520 / F.1487 channel condition.
     pub condition: ChannelCondition,
+    /// Simulation sample rate in Hz.
     pub sample_rate_hz: f64,
+    /// Number of complex samples in the clean reference signal.
     pub signal_length_samples: usize,
+    /// Seed for the channel's Watterson fading process.
     pub channel_seed: u64,
+    /// Seed for the AWGN generator (independent of `channel_seed`).
     pub noise_seed: u64,
+    /// Requested SNR in dB after the channel, before measurement.
     pub target_snr_db: f64,
+    /// FFT size used by the per-sub-carrier SNR analyzer.
     pub fft_size: usize,
 }
 
+/// Canonical JSON-serializable output of a characterization run. Carries
+/// inputs, observed power statistics, achieved-vs-target SNR drift, the
+/// full per-sub-carrier SNR estimate, and the foundational-paper citation
+/// chain (ADR 0014 §5).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CharacterizationReport {
+    /// Version of the `hf-channel-sim` crate that produced this report.
     pub crate_version: String,
+    /// Open-source references the implementation is grounded in
+    /// (Watterson 1970, ITU-R F.520, F.1487, etc.).
     pub foundational_citations: Vec<String>,
+    /// Input parameter set for this run.
     pub inputs: CharacterizationInputs,
+    /// Mean `|y|²` of the post-channel signal (pre-AWGN).
     pub observed_signal_power: f64,
+    /// Mean `|y|²` of the added AWGN component.
     pub observed_noise_power: f64,
+    /// Achieved signal-to-noise ratio in dB. May drift from
+    /// `inputs.target_snr_db` due to per-realization channel power variance.
     pub achieved_snr_db: f64,
+    /// Per-sub-carrier SNR characterization, suitable as bit-loading input.
     pub subcarrier_snr: SubcarrierSnrEstimate,
 }
 
@@ -48,22 +71,16 @@ pub fn run_characterization(
     );
     let channel_out = channel.process_block(clean_signal);
 
-    let observed_signal_power: f64 = channel_out
-        .iter()
-        .map(|c| c.norm_sqr() as f64)
-        .sum::<f64>()
-        / channel_out.len() as f64;
+    let observed_signal_power: f64 =
+        channel_out.iter().map(|c| c.norm_sqr() as f64).sum::<f64>() / channel_out.len() as f64;
 
     let mut observed = channel_out.clone();
     let mut awgn = AwgnGenerator::new(inputs.noise_seed);
     awgn.add_noise(&mut observed, inputs.target_snr_db);
 
     // Achieved noise power is observed_total_power - observed_signal_power.
-    let observed_total: f64 = observed
-        .iter()
-        .map(|c| c.norm_sqr() as f64)
-        .sum::<f64>()
-        / observed.len() as f64;
+    let observed_total: f64 =
+        observed.iter().map(|c| c.norm_sqr() as f64).sum::<f64>() / observed.len() as f64;
     let observed_noise_power = observed_total - observed_signal_power;
     let achieved_snr_db = if observed_noise_power > 0.0 {
         10.0 * (observed_signal_power / observed_noise_power).log10()

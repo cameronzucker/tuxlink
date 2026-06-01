@@ -7,9 +7,7 @@
 //! pipe-friendly. No interactive prompts; all parameters via CLI flags.
 
 use clap::Parser;
-use hf_channel_sim::{
-    run_characterization, CharacterizationInputs, ChannelCondition,
-};
+use hf_channel_sim::{run_characterization, ChannelCondition, CharacterizationInputs};
 use num_complex::Complex;
 use std::io::{self, Read, Write};
 

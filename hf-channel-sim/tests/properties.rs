@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 use hf_channel_sim::{
-    run_characterization, CharacterizationInputs, ChannelCondition,
-    WattersonChannel,
+    run_characterization, ChannelCondition, CharacterizationInputs, WattersonChannel,
 };
 use num_complex::Complex;
 use proptest::prelude::*;

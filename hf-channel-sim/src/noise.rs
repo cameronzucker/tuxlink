@@ -11,12 +11,17 @@ use crate::rng::{complex_gaussian_block, rng_from_seed};
 use num_complex::Complex;
 use rand_xoshiro::Xoshiro256PlusPlus;
 
+/// Seeded complex-AWGN generator. Deterministic per `seed`; independent of
+/// channel state so noise realizations can be swept while the channel is
+/// fixed (and vice versa).
 pub struct AwgnGenerator {
     seed: u64,
     rng: Xoshiro256PlusPlus,
 }
 
 impl AwgnGenerator {
+    /// Construct a new generator from a `u64` seed. Same seed produces the
+    /// same complex-Gaussian byte-stream across runs and machines.
     pub fn new(seed: u64) -> Self {
         Self {
             seed,
@@ -24,6 +29,8 @@ impl AwgnGenerator {
         }
     }
 
+    /// Rewind to the initial state (equivalent to `AwgnGenerator::new(seed)`
+    /// where `seed` is the seed this generator was constructed with).
     pub fn reset(&mut self) {
         self.rng = rng_from_seed(self.seed);
     }
@@ -40,11 +47,8 @@ impl AwgnGenerator {
         if signal.is_empty() {
             return;
         }
-        let sig_power: f64 = signal
-            .iter()
-            .map(|c| (c.norm_sqr() as f64))
-            .sum::<f64>()
-            / signal.len() as f64;
+        let sig_power: f64 =
+            signal.iter().map(|c| c.norm_sqr() as f64).sum::<f64>() / signal.len() as f64;
         if sig_power == 0.0 {
             return; // nothing to scale noise against
         }
@@ -54,14 +58,13 @@ impl AwgnGenerator {
         let noise_amplitude = (noise_power as f32).sqrt();
 
         let pairs = complex_gaussian_block(&mut self.rng, signal.len());
-        for (s, (nre, nim)) in signal.iter_mut().zip(pairs.into_iter()) {
+        for (s, (nre, nim)) in signal.iter_mut().zip(pairs) {
             // complex_gaussian_block returns unit-variance complex; scale to
             // target amplitude.
-            *s = *s
-                + Complex {
-                    re: nre * noise_amplitude,
-                    im: nim * noise_amplitude,
-                };
+            *s += Complex {
+                re: nre * noise_amplitude,
+                im: nim * noise_amplitude,
+            };
         }
     }
 }

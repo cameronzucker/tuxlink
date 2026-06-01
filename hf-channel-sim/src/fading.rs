@@ -33,7 +33,10 @@ pub fn generate_fading_block(
     doppler_spread_hz: f64,
     fft_planner: &mut FftPlanner<f32>,
 ) -> Vec<Complex<f32>> {
-    assert!(block_len.is_power_of_two(), "block_len must be power of two");
+    assert!(
+        block_len.is_power_of_two(),
+        "block_len must be power of two"
+    );
 
     // 1. White complex-Gaussian draw.
     let pairs = complex_gaussian_block(rng, block_len);
@@ -56,6 +59,9 @@ pub fn generate_fading_block(
     let sigma = doppler_spread_hz / 2.0;
     let two_sigma_sq = 2.0 * sigma * sigma;
     let bin_hz = sample_rate_hz / block_len as f64;
+    // Bin index `i` is semantically required (DC vs Nyquist vs aliased-negative
+    // FFT-bin conventions); enumerate() would obscure that.
+    #[allow(clippy::needless_range_loop)]
     for i in 0..block_len {
         let raw_f = i as f64 * bin_hz;
         let f = if i <= block_len / 2 {
@@ -67,9 +73,13 @@ pub fn generate_fading_block(
             (-(f * f) / two_sigma_sq).exp().sqrt() as f32
         } else {
             // doppler_spread_hz == 0 ⇒ DC only (static channel).
-            if i == 0 { 1.0 } else { 0.0 }
+            if i == 0 {
+                1.0
+            } else {
+                0.0
+            }
         };
-        buf[i] = buf[i] * mag;
+        buf[i] *= mag;
     }
 
     // 4. Inverse FFT.
@@ -80,7 +90,7 @@ pub fn generate_fading_block(
     //    preserves unit scale.
     let inv_n = 1.0 / block_len as f32;
     for s in &mut buf {
-        *s = *s * inv_n;
+        *s *= inv_n;
     }
 
     // 6. Renormalize to unit average power. After shaping, the average
@@ -90,7 +100,7 @@ pub fn generate_fading_block(
     if mean_power > 0.0 {
         let scale = 1.0 / mean_power.sqrt();
         for s in &mut buf {
-            *s = *s * scale;
+            *s *= scale;
         }
     }
 
@@ -108,7 +118,10 @@ mod tests {
         let mut planner = FftPlanner::<f32>::new();
         let block = generate_fading_block(&mut rng, 1024, 8000.0, 1.0, &mut planner);
         let power: f32 = block.iter().map(|c| c.norm_sqr()).sum::<f32>() / 1024.0;
-        assert!((power - 1.0).abs() < 1e-4, "expected unit power, got {power}");
+        assert!(
+            (power - 1.0).abs() < 1e-4,
+            "expected unit power, got {power}"
+        );
     }
 
     #[test]
@@ -146,10 +159,13 @@ mod tests {
         let mut lag1_corr = |doppler: f64, seed: u64| -> f32 {
             let mut rng = rng_from_seed(seed);
             let b = generate_fading_block(&mut rng, 4096, 8000.0, doppler, &mut planner);
-            let mut num = Complex { re: 0.0_f32, im: 0.0 };
+            let mut num = Complex {
+                re: 0.0_f32,
+                im: 0.0,
+            };
             let mut den = 0.0_f32;
             for i in 0..b.len() - 1 {
-                num = num + b[i + 1] * b[i].conj();
+                num += b[i + 1] * b[i].conj();
                 den += b[i].norm_sqr();
             }
             num.norm() / den
