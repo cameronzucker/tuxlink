@@ -1080,7 +1080,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 
 **Context:** Per spec §4.1, the frontend `PositionStatusDto` mirror drops `active_source`; `useStatusData`'s `position_source` reads from `config?.position_source`.
 
-- [ ] **Step 1: Update the failing fixture tests.**
+- [x] **Step 1: Update the failing fixture tests.**
 
 In `src/shell/status.test.ts`, find every `PositionStatusDto` literal that includes `active_source: 'Gps'` or `active_source: 'Manual'`. DELETE the `active_source` lines. Example transformation:
 
@@ -1133,7 +1133,7 @@ it('ribbon position_source reads from config_read, NOT from position_status (per
 });
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail.**
+- [x] **Step 2: Run the tests to verify they fail.**
 
 ```bash
 pnpm vitest run src/shell/status.test.ts 2>&1 | tail -15
@@ -1141,7 +1141,7 @@ pnpm vitest run src/shell/status.test.ts 2>&1 | tail -15
 
 Expected: TypeScript compile failure on the `PositionStatusDto` literals that DON'T have `active_source` (because the interface still requires it).
 
-- [ ] **Step 3: Update the `PositionStatusDto` interface + `useStatusData` source-reading logic.**
+- [x] **Step 3: Update the `PositionStatusDto` interface + `useStatusData` source-reading logic.**
 
 In `src/shell/useStatus.ts`, REMOVE the `active_source` member from `PositionStatusDto`:
 
@@ -1170,7 +1170,7 @@ position_source: positionStatus?.active_source ?? config?.position_source ?? 'Gp
 position_source: config?.position_source ?? 'Gps',
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass.**
+- [x] **Step 4: Run the tests to verify they pass.**
 
 ```bash
 pnpm vitest run src/shell/status.test.ts 2>&1 | tail -10
@@ -1178,7 +1178,7 @@ pnpm vitest run src/shell/status.test.ts 2>&1 | tail -10
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit.**
+- [x] **Step 5: Commit.**
 
 ```bash
 git add src/shell/useStatus.ts src/shell/status.test.ts
