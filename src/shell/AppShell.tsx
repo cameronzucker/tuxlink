@@ -172,6 +172,11 @@ export function AppShell() {
   const { messages, error } = useMailbox(selectedFolder);
   const inbox = useMailbox('inbox');
   const sent = useMailbox('sent');
+  // tuxlink-qxqj: the redesigned mailbox bar surfaces outbox-queue depth so
+  // the operator knows what's waiting on the next CMS connect without
+  // navigating to the Outbox folder. Cheap query — the 10s refetch matches
+  // inbox/sent's polling cadence; no extra IPC burden.
+  const outbox = useMailbox('outbox');
   const notConnected = isNotConfigured(error);
 
   // Search-result wiring (tuxlink-c7qz): when search is active, swap the
@@ -521,7 +526,11 @@ export function AppShell() {
           )}
       </div>
 
-      <StatusBar show={showStatusBar} unread={counts.inbox ?? 0} state={statusData.state} packet={packetUi} />
+      <StatusBar
+        show={showStatusBar}
+        unread={counts.inbox ?? 0}
+        outboxQueued={outbox.messages.length}
+      />
 
       <SettingsPanel open={settingsOpen} onClose={() => setSettingsOpen(false)} />
 
