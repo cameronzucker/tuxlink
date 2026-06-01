@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+# pre-commit — refuse commits on merged-dead or closed-dead branches.
+#
+# Implements docs/adr/0017-branch-state-machine.md. Sources the shared
+# classifier from .githooks/lib/branch-state.sh.
+#
+# Activate via:
+#   git config core.hooksPath .githooks
+#   # or run: scripts/install-githooks.sh
+
+set -eu
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+# shellcheck source=lib/branch-state.sh
+. "${REPO_ROOT}/.githooks/lib/branch-state.sh"
+
+# Documented escape-hatch env var. Setting it to any non-empty value
+# bypasses the refuse (loud + audited).
+OVERRIDE_VAR="TUXLINK_BRANCH_LIFECYCLE_OVERRIDE"
+
+branch="$(git symbolic-ref --short HEAD 2>/dev/null || echo HEAD)"
+state="$(classify_branch_state "${branch}")"
+
+case "${state}" in
+  protected|bot|pr-open|active|follow-up)
+    # All allowed states; exit clean.
+    exit 0
+    ;;
+  unknown)
+    # gh unavailable or detached HEAD — warn but allow. CI nightly catches
+    # what slips through.
+    if [ -t 2 ]; then
+      printf '\033[33m⚠ branch lifecycle: could not consult gh (auth missing? quota? detached HEAD?) — allowing commit\033[0m\n' >&2
+    else
+      printf '⚠ branch lifecycle: gh consult failed — allowing commit\n' >&2
+    fi
+    exit 0
+    ;;
+  merged-dead|closed-dead)
+    # Check the documented override.
+    if [ -n "${!OVERRIDE_VAR:-}" ]; then
+      branch_state_log_override "commit" "${branch}" "${state}"
+      printf '⚠ branch lifecycle: %s OVERRIDDEN for commit on %s (%s)\n' \
+        "${OVERRIDE_VAR}" "${branch}" "${state}" >&2
+      printf '  logged to dev/scratch/branch-lifecycle-overrides.log\n' >&2
+      exit 0
+    fi
+    branch_state_refuse_message "${state}" "${branch}" "commit" "${OVERRIDE_VAR}"
+    exit 1
+    ;;
+  *)
+    # Unknown classification (shouldn't happen but fail open).
+    printf '⚠ branch lifecycle: unrecognized state "%s" — allowing commit\n' "${state}" >&2
+    exit 0
+    ;;
+esac

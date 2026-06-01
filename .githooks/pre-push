@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+# pre-push — refuse pushes on merged-dead or closed-dead branches.
+#
+# Implements docs/adr/0017-branch-state-machine.md. A separate refuse from
+# pre-commit because some workflows ship a commit locally, then push later;
+# the push is the actual point where origin gets the orphan ref.
+#
+# Reads its branch input from git's standard pre-push protocol on stdin:
+#   <local-ref> <local-sha> <remote-ref> <remote-sha>
+# We refuse only when the local branch being pushed is merged-dead.
+#
+# Activate via:
+#   git config core.hooksPath .githooks
+#   # or run: scripts/install-githooks.sh
+
+set -eu
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+# shellcheck source=lib/branch-state.sh
+. "${REPO_ROOT}/.githooks/lib/branch-state.sh"
+
+OVERRIDE_VAR="TUXLINK_BRANCH_LIFECYCLE_OVERRIDE"
+
+# git's pre-push stdin protocol: one line per ref being pushed.
+# Format: <local-ref> <local-sha> <remote-ref> <remote-sha>
+# We extract the local ref name and check its state.
+overall_refuse=0
+while read -r local_ref local_sha remote_ref remote_sha; do
+  # A delete (local_sha = all-zeros) is not a push of new content.
+  if [ "${local_sha}" = "0000000000000000000000000000000000000000" ]; then
+    continue
+  fi
+
+  # Strip refs/heads/ prefix to get the branch name.
+  branch="${local_ref#refs/heads/}"
+
+  state="$(classify_branch_state "${branch}")"
+
+  case "${state}" in
+    protected|bot|pr-open|active|follow-up|unknown)
+      continue
+      ;;
+    merged-dead|closed-dead)
+      if [ -n "${!OVERRIDE_VAR:-}" ]; then
+        branch_state_log_override "push" "${branch}" "${state}"
+        printf '⚠ branch lifecycle: %s OVERRIDDEN for push on %s (%s)\n' \
+          "${OVERRIDE_VAR}" "${branch}" "${state}" >&2
+        continue
+      fi
+      branch_state_refuse_message "${state}" "${branch}" "push" "${OVERRIDE_VAR}"
+      overall_refuse=1
+      ;;
+    *)
+      # Unknown classification (shouldn't happen).
+      printf '⚠ branch lifecycle: unrecognized state "%s" for branch %s — allowing push\n' \
+        "${state}" "${branch}" >&2
+      ;;
+  esac
+done
+
+if [ "${overall_refuse}" -ne 0 ]; then
+  exit 1
+fi
+
+exit 0
