@@ -27,6 +27,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { ChangeEvent } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { open as shellOpen } from '@tauri-apps/plugin-shell';
 import { RadioPanel, type RadioPanelState } from '../RadioPanel';
 import { SessionLogSection } from '../sections/SessionLogSection';
 import { useSessionLog } from '../sections/useSessionLog';
@@ -376,7 +377,13 @@ export function ArdopRadioPanel({ onClose }: ArdopRadioPanelProps) {
         return;
       }
       const webguiPort = ardop.cmd_port - 1;
-      window.open(`http://localhost:${webguiPort}/`, '_blank');
+      // Tauri's WebView does NOT implement `window.open` like a browser — that
+      // call silently no-ops in the runtime, which is why the smoke flagged
+      // this button as broken. The shell plugin's `open()` shells out to the
+      // OS's default URL handler (xdg-open on Linux) and actually launches the
+      // operator's system browser. Same plugin Step2Credentials uses for the
+      // Winlink Register link.
+      await shellOpen(`http://localhost:${webguiPort}/`);
     } catch (e) {
       setConnectError(`Failed to open WebGUI: ${e}`);
     }

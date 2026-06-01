@@ -24,6 +24,13 @@ vi.mock('@tauri-apps/api/event', () => ({
   listen: vi.fn(async () => () => {}),
 }));
 
+// `shellOpen` is the Tauri-plugin-shell `open()` used to launch the system
+// browser for the WebGUI button. Mocked here so the test can assert on the
+// URL passed without going through the real Tauri runtime.
+vi.mock('@tauri-apps/plugin-shell', () => ({
+  open: vi.fn(async () => undefined),
+}));
+
 // Mock useModemStatus so each test feeds the panel a specific ModemStatus.
 const mockUseModemStatus = vi.fn();
 vi.mock('../../modem/useModemStatus', () => ({
@@ -181,20 +188,21 @@ describe('<ArdopRadioPanel>', () => {
     }
   });
 
-  it('Open WebGUI button opens a URL on cmd_port - 1 (defaults to 8514)', async () => {
+  it('Open WebGUI button opens a URL on cmd_port - 1 (defaults to 8514) via tauri-plugin-shell', async () => {
     mockUseModemStatus.mockReturnValue({
       status: RUNNING,
       loading: false,
       error: null,
     });
-    const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null);
+    const shell = await import('@tauri-apps/plugin-shell');
+    const shellOpenMock = shell.open as ReturnType<typeof vi.fn>;
+    shellOpenMock.mockClear();
     render(<ArdopRadioPanel onClose={() => {}} />);
     const webguiBtn = screen.getByTestId('ardop-open-webgui-btn');
     fireEvent.click(webguiBtn);
     await waitFor(() => {
-      expect(openSpy).toHaveBeenCalledWith('http://localhost:8514/', '_blank');
+      expect(shellOpenMock).toHaveBeenCalledWith('http://localhost:8514/');
     });
-    openSpy.mockRestore();
   });
 
   it('does not open WebGUI when cmd_port is below 2 (surfaces an error instead)', async () => {
@@ -218,14 +226,15 @@ describe('<ArdopRadioPanel>', () => {
       loading: false,
       error: null,
     });
-    const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null);
+    const shell = await import('@tauri-apps/plugin-shell');
+    const shellOpenMock = shell.open as ReturnType<typeof vi.fn>;
+    shellOpenMock.mockClear();
     render(<ArdopRadioPanel onClose={() => {}} />);
     fireEvent.click(screen.getByTestId('ardop-open-webgui-btn'));
     await waitFor(() => {
       expect(screen.getByRole('alert')).toHaveTextContent(/cmd_port/);
     });
-    expect(openSpy).not.toHaveBeenCalled();
-    openSpy.mockRestore();
+    expect(shellOpenMock).not.toHaveBeenCalled();
   });
 
   it('close button fires onClose', () => {
