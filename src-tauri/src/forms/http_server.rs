@@ -53,7 +53,7 @@ use axum::{
     body::{to_bytes, Body},
     extract::{Path as AxumPath, State},
     http::{header, HeaderMap, Method, Request, StatusCode},
-    response::{Html, IntoResponse, Response},
+    response::{IntoResponse, Response},
     routing::{any, get},
     Router,
 };
@@ -69,6 +69,36 @@ use super::wle_templates::Template;
 /// in practice; 1 MB is generous headroom and prevents trivial DOS.
 const MAX_SUBMIT_BODY_BYTES: usize = 1_048_576;
 
+/// Content-Security-Policy header value sent with HTML responses.
+///
+/// Rationale (Codex 2026-06-01 P1 #2): without an explicit CSP, a malicious
+/// custom-form HTML file on a loopback origin can still load external
+/// scripts / images / submit to external URLs (Tauri capabilities only
+/// constrain Tauri IPC, not ordinary browser loads). This locks the
+/// origin to its own assets.
+///
+/// - `default-src 'self'` — no external resources by default
+/// - `script-src 'self' 'unsafe-inline'` — WLE templates have inline
+///   `<script>` blocks; same-origin scripts (e.g. /bridge.js if we ship
+///   one) are allowed
+/// - `style-src 'self' 'unsafe-inline'` — WLE templates have inline styles
+///   (`<style>` blocks + style="" attributes)
+/// - `img-src 'self' data:` — allow inline data URIs for embedded
+///   images / icons
+/// - `connect-src 'self'` — prevent `fetch()` to external endpoints
+/// - `form-action 'self'` — prevent form submission to external URLs (the
+///   exfiltration attack Codex called out)
+/// - `frame-src 'none'` + `object-src 'none'` — no iframes/objects
+const FORM_CSP: &str =
+    "default-src 'self'; \
+     script-src 'self' 'unsafe-inline'; \
+     style-src 'self' 'unsafe-inline'; \
+     img-src 'self' data:; \
+     connect-src 'self'; \
+     form-action 'self'; \
+     frame-src 'none'; \
+     object-src 'none'";
+
 /// State shared with the axum router. Cheap to clone (Arc-wrapped channel).
 #[derive(Clone)]
 struct SessionState {
@@ -78,6 +108,9 @@ struct SessionState {
     template_folder_path: PathBuf,
     /// Channel for emitting parsed submissions back to the caller.
     submit_tx: mpsc::UnboundedSender<ParsedBody>,
+    /// Port the listener is bound to. Used to validate the Origin header
+    /// on POST / per Codex 2026-06-01 P1 #3.
+    port: u16,
 }
 
 /// One open form session. Drop the value (or call [`close`]) to tear
@@ -124,6 +157,7 @@ impl FormSession {
             form_html,
             template_folder_path: folder,
             submit_tx,
+            port,
         });
 
         let router = build_router(state);
@@ -215,13 +249,47 @@ async fn root_handler(
     req: Request<Body>,
 ) -> Response {
     match *req.method() {
-        Method::GET => Html(state.form_html.clone()).into_response(),
+        Method::GET => html_with_csp(&state.form_html),
         Method::POST => submit_handler(state, req).await,
         _ => (StatusCode::METHOD_NOT_ALLOWED, "method not allowed").into_response(),
     }
 }
 
+/// Wrap an HTML body with the Content-Security-Policy header that locks
+/// the form-server origin to its own assets (Codex 2026-06-01 P1 #2).
+fn html_with_csp(body: &str) -> Response {
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        header::CONTENT_TYPE,
+        "text/html; charset=utf-8".parse().unwrap(),
+    );
+    headers.insert(
+        header::CONTENT_SECURITY_POLICY,
+        FORM_CSP.parse().unwrap(),
+    );
+    (headers, body.to_string()).into_response()
+}
+
+/// Validate the request's Origin header against the local server's origin.
+///
+/// Per Codex 2026-06-01 P1 #3, the embedded WebKitGTK webview sends an
+/// `Origin: http://127.0.0.1:<port>` header on POST submits from the
+/// loaded form. Any other origin (or absent header) indicates the request
+/// is NOT from the legitimate form session — most likely a same-host
+/// process that discovered the ephemeral port. Reject with 403.
+fn origin_matches_local(headers: &HeaderMap, port: u16) -> bool {
+    let expected = format!("http://127.0.0.1:{}", port);
+    headers
+        .get(header::ORIGIN)
+        .and_then(|v| v.to_str().ok())
+        .map(|o| o == expected)
+        .unwrap_or(false)
+}
+
 async fn submit_handler(state: Arc<SessionState>, req: Request<Body>) -> Response {
+    if !origin_matches_local(req.headers(), state.port) {
+        return (StatusCode::FORBIDDEN, "origin mismatch").into_response();
+    }
     let content_type = req
         .headers()
         .get(header::CONTENT_TYPE)
@@ -259,7 +327,7 @@ async fn submit_handler(state: Arc<SessionState>, req: Request<Body>) -> Respons
         // Receiver dropped; the session is closing. Return success anyway
         // so the form's onsubmit doesn't show a confusing error.
     }
-    Html(SUBMITTED_HTML).into_response()
+    html_with_csp(SUBMITTED_HTML)
 }
 
 const SUBMITTED_HTML: &str = r#"<!doctype html>
@@ -342,6 +410,11 @@ mod tests {
     use tempfile::TempDir;
     use tower::ServiceExt;
 
+    /// Test port — used both for state.port AND for the synthesized
+    /// Origin header on POST tests so the origin-matches-local check
+    /// passes for happy-path requests.
+    const TEST_PORT: u16 = 34567;
+
     fn make_state(html: &str) -> (Arc<SessionState>, mpsc::UnboundedReceiver<ParsedBody>) {
         let td = TempDir::new().unwrap();
         let folder = td.path().to_path_buf();
@@ -354,8 +427,13 @@ mod tests {
             form_html: html.to_string(),
             template_folder_path: folder,
             submit_tx: tx,
+            port: TEST_PORT,
         });
         (state, rx)
+    }
+
+    fn local_origin() -> String {
+        format!("http://127.0.0.1:{}", TEST_PORT)
     }
 
     #[tokio::test]
@@ -407,6 +485,7 @@ mod tests {
                     .method("POST")
                     .uri("/")
                     .header("Content-Type", "application/x-www-form-urlencoded")
+                    .header("Origin", local_origin())
                     .body(Body::from("Subject=Hi&Submit=Submit"))
                     .unwrap(),
             )
@@ -416,6 +495,64 @@ mod tests {
         let parsed = rx.recv().await.unwrap();
         assert_eq!(parsed.fields["Subject"][0], "Hi");
         assert_eq!(parsed.submitter, Some("Submit".to_string()));
+    }
+
+    #[tokio::test]
+    async fn post_root_rejects_missing_origin() {
+        let (state, _rx) = make_state("");
+        let router = build_router(state);
+        let resp = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/")
+                    .header("Content-Type", "application/x-www-form-urlencoded")
+                    // No Origin header — should be 403 per Codex 2026-06-01 P1 #3.
+                    .body(Body::from("Subject=Hi"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn post_root_rejects_foreign_origin() {
+        let (state, _rx) = make_state("");
+        let router = build_router(state);
+        let resp = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/")
+                    .header("Content-Type", "application/x-www-form-urlencoded")
+                    .header("Origin", "http://evil.example.com")
+                    .body(Body::from("Subject=Hi"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn get_root_response_carries_csp_header() {
+        let (state, _rx) = make_state("<html><head></head></html>");
+        let router = build_router(state);
+        let resp = router
+            .oneshot(Request::builder().uri("/").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let csp = resp
+            .headers()
+            .get(header::CONTENT_SECURITY_POLICY)
+            .expect("CSP header expected on form HTML response")
+            .to_str()
+            .unwrap()
+            .to_string();
+        assert!(csp.contains("default-src 'self'"));
+        assert!(csp.contains("form-action 'self'"));
+        assert!(csp.contains("connect-src 'self'"));
     }
 
     #[tokio::test]
@@ -438,6 +575,7 @@ mod tests {
                         "Content-Type",
                         format!("multipart/form-data; boundary={boundary}"),
                     )
+                    .header("Origin", local_origin())
                     .body(Body::from(body))
                     .unwrap(),
             )
@@ -535,6 +673,7 @@ mod tests {
                     .method("POST")
                     .uri("/")
                     .header("Content-Type", "application/x-www-form-urlencoded")
+                    .header("Origin", local_origin())
                     .body(Body::from(huge))
                     .unwrap(),
             )

@@ -15,7 +15,7 @@
 use std::path::PathBuf;
 
 #[test]
-fn forms_webview_capability_has_only_core_default() {
+fn forms_webview_capability_has_empty_permissions_acl() {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("capabilities/forms-webview.json");
     let raw = std::fs::read_to_string(&path)
@@ -27,13 +27,16 @@ fn forms_webview_capability_has_only_core_default() {
         .expect("permissions must be an array");
     let perms: Vec<&str> = perms.iter().filter_map(|v| v.as_str()).collect();
 
-    // Hardcoded minimum allowlist at P1: ONLY core:default.
+    // Hardcoded minimum allowlist at P1: EMPTY.
+    // Codex 2026-06-01 P1 round flagged `core:default` as non-minimal — it
+    // expands to event/window/webview/app/resource defaults, contradicting
+    // the no-IPC threat model. The empty list keeps the webview confined
+    // to ordinary browser loads + the loopback HTTP origin.
     // If you're widening this, you're changing the security model — file
     // a bd issue and route through Codex adrev before flipping the assert.
-    assert_eq!(
-        perms,
-        vec!["core:default"],
-        "forms-webview capability widened beyond the design's §10 threat model"
+    assert!(
+        perms.is_empty(),
+        "forms-webview capability widened beyond the design's §10 threat model: {perms:?}"
     );
 }
 
