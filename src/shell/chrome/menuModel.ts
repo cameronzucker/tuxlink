@@ -12,7 +12,7 @@ export interface MenuNode {
   accel?: string;
   separator?: boolean;
   submenu?: MenuNode[];
-  /** Not-yet-wired item: rendered disabled with a "v0.1" badge so it reads as
+  /** Not-yet-wired item: rendered disabled with a "soon" badge so it reads as
    *  "coming" rather than broken (tuxlink-39b). Keeps its id in the vocabulary. */
   disabled?: boolean;
 }
@@ -60,7 +60,7 @@ export const MENU_TREE: TopMenu[] = [
     ] },
   ] },
   { label: 'Tools', items: [
-    // Not-yet-wired (v0.0.1): disabled + badged so they read as "coming", not broken.
+    // Not-yet-wired: disabled + badged so they read as "coming", not broken.
     { id: 'menu:tools:templates', label: 'Templates', disabled: true },
     { id: 'menu:tools:rig_control', label: 'Rig Control', disabled: true },
     { separator: true },

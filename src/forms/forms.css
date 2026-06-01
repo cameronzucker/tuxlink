@@ -6,7 +6,7 @@
  * the forms module gets the styles automatically. The selectors
  * use :where() for zero specificity so app-shell overrides win.
  *
- * Scope of this file: every classname authored by the v0.1 HTML
+ * Scope of this file: every classname authored by the HTML
  * Forms work (FormPicker excepted — see FormPicker.css). The
  * design target is "functional + readable at the 720x560 compose
  * default," not "exhaustively styled" — per-form decorative polish

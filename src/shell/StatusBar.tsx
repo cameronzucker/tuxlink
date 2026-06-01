@@ -1,7 +1,7 @@
 /**
  * StatusBar — bottom status bar (Mock B `.statusbar`).
  *
- * Mock B: ● <connection> · <N> unread                                v0.0.1
+ * Mock B: ● <connection> · <N> unread                                vX.Y.Z
  * The rich operator info (callsign/grid/GPS) lives in the DashboardRibbon up
  * top; this bar carries connection-ready state + unread count + app version.
  * Toggleable via View → Toggle Status Bar.

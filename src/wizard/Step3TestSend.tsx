@@ -343,7 +343,7 @@ export function Step3TestSend() {
             >
               Go to inbox
             </button>
-            {/* [Open Settings] — v0.0.1: rendered disabled with tooltip per spec §3.4 */}
+            {/* [Open Settings] — rendered disabled with tooltip per spec §3.4 */}
             <button
               type="button"
               data-testid="open-settings-btn"

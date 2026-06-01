@@ -138,7 +138,7 @@
   font-weight: 600;
 }
 
-/* 5 — attachment strip (names + sizes only in v0.0.1) */
+/* 5 — attachment strip (names + sizes only for now) */
 .reading-pane .msg-attachments {
   margin-top: 18px;
   padding-top: 12px;
