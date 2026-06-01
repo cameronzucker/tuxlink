@@ -3,8 +3,9 @@
 > **Status: Canonical.** Subordinate to
 > [2026-05-31-clean-sheet-modem-overview.md](2026-05-31-clean-sheet-modem-overview.md).
 > Incorporates overview §5.A.1 (multi-mode ladder, bit-adaptive OFDM main
-> family + FSK weak-signal floor), §5.A.2 (PHY-family routing implication),
-> §5.A.6 (best-effort compute).
+> family + robustness-modes-family floor with wide-band low-density-OFDM
+> default + situational narrow-FSK), §5.A.2 (PHY-family routing
+> implication), §5.A.6 (best-effort compute).
 
 ## §1. Role
 
@@ -26,13 +27,28 @@ stitched into one ladder:
   are turned off. Throughput emerges from the bit-loading curve × bandwidth
   × channel conditions × audio-passband response.
 
-- **FSK weak-signal floor mode** (bottom of the ladder). Short-block
-  fixed-payload FSK-class modulation with very strong FEC, designed to
-  operate at SNRs where the OFDM family cannot push data through. Explicit
-  design goal: beat ARDOP's narrowest-mode SNR floor. Conceptual primitive
-  borrowed from FT8/JS8 weak-signal design (foundation doc §6.1) —
-  primitive only, not specific protocol parameters per
-  `feedback_clean_sheet_concepts_only`.
+- **Robustness modes family** (bottom of the ladder). A small set of modes
+  parameterized by what's limiting the link:
+  - **Default — wide-band low-density-constellation OFDM.** When the
+    limiting condition is per-Hz noise floor with full bandwidth
+    available (typical tuxmodem case — own-frequency point-to-point or
+    point-to-gateway, no crowding), use BPSK per sub-carrier across the
+    full available passband with very strong FEC (rate-1/4 LDPC
+    short-block or similar). Aggregate throughput scales with sub-carrier
+    count; each sub-carrier sits independently above its Shannon
+    threshold. Significantly outperforms FT8-class narrow-FSK at the same
+    SNR floor by using wider bandwidth — at low per-sub-carrier SNR,
+    higher-density constellations are below Shannon and cannot decode
+    regardless of FEC, so going *wider* (not denser) is the only path to
+    aggregate throughput. Design goal: beat ARDOP's narrowest-mode SNR
+    floor at the noise-floor case.
+  - **Situational — narrow-FSK** (FT8/JS8 conceptual primitive, 8-FSK).
+    Reserved for the rare-for-tuxmodem case where the assigned frequency
+    is genuinely bandwidth-constrained (crowded emcomm net, narrow
+    available spectrum slice). Conceptual primitive borrowed from FT8/JS8
+    weak-signal design (foundation doc §6.1) — primitive only, not
+    specific protocol parameters per
+    `feedback_clean_sheet_concepts_only`.
 
 PHY composes: per-family modulation (OFDM with per-sub-carrier bit-loading,
 or FSK with short-block FEC), synchronization (carrier frequency offset
@@ -64,11 +80,13 @@ family.
 2. **HF channel impairment envelope** per ITU-R F.520 (good/moderate/poor/
    flutter). PHY must demodulate usefully across the envelope; per-family
    responsibilities differ — OFDM family handles "good" through "moderate"
-   with bit-loading degradation; FSK floor handles "poor" / "flutter" with
-   strong-FEC short-block.
+   with bit-loading degradation; robustness floor (default: wide-band
+   low-density OFDM) handles "poor" / "flutter" with strong-FEC + many
+   sub-carriers; situational narrow-FSK handles crowded-band cases.
 3. **Sync robustness across families.** Sync (carrier offset, symbol
    timing, frame sync) likely shares infrastructure between families — but
-   the FSK floor needs more sync robustness than the OFDM family because
+   the robustness-family modes need more sync robustness than the OFDM
+   family because
    it operates at the floor. Open: whether sync is per-family or shared
    primitives + family-specific tuning.
 4. **Per-sub-carrier SNR estimation interface** (subsystem #1 §3.6 + this
@@ -89,7 +107,7 @@ family.
 | §3.Q1 | Number of OFDM modes within the family? | Open. ARDOP uses 4 (200/500/1000/2000 Hz). tuxmodem may use fewer (3?) or more (5+). Settle informed by audio-passband measurements on the bench-rig radios + bit-loading characterization at each width. |
 | §3.Q2 | Per-mode OFDM bandwidth choices? | Open. With bit-adaptive OFDM, exact mode bandwidths are less load-bearing than for fixed-constellation OFDM — the bit-loading adapts within the chosen bandwidth — but enumerated values still need pinning before subsystem #7 link-adaptation policy can step among them. |
 | §3.Q3 | Sub-carrier count + spacing per OFDM mode? | Open. ADSL pattern uses 4.3125 kHz sub-carrier spacing with 256 sub-carriers; HF audio-band scales would be very different (tens to low hundreds of Hz sub-carrier spacing). |
-| §3.Q4 | FSK-floor specifics — number of tones (2-FSK, 4-FSK, 8-FSK?), symbol rate, block size? | Open. Conceptual primitive from FT8 (8-FSK, 0.16 baud) is one reference point; faster/wider tradeoffs are possible. Settle informed by channel-sim SNR-floor measurements. |
+| §3.Q4 | Robustness-modes-family specifics — default wide-band low-density OFDM parameters (sub-carrier count, FEC code rate) + situational narrow-FSK parameters (number of tones, symbol rate, block size) | Open. Default mode: BPSK per sub-carrier across ~2.3 kHz passband with rate-1/4 LDPC short-block is the starting point (yields ~575 bps net at -5 dB per-sub-carrier SNR — ~100x FT8 throughput at same SNR). Narrow-FSK situational mode borrows FT8 8-FSK 0.16 baud as conceptual reference point. Settle informed by channel-sim SNR-floor measurements. |
 | §3.Q5 | Sync sequence design — preamble length, pilot insertion, frame-sync correlation? | Open. Affects acquisition reliability under noise. |
 | §3.Q6 | Sample rate at the audio interface — 8/16/24/48 kHz? | Open. 48 kHz is the modern default; lower rates are computationally cheaper but constrain the sub-carrier grid. |
 | §3.Q7 | Equalization strategy — rely on cyclic prefix (OFDM intrinsic), decision-feedback, MLSE, none? | Open. Major complexity-vs-performance tradeoff. |

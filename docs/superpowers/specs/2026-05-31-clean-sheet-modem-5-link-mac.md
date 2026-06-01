@@ -15,7 +15,7 @@ payload size) and decides:
 - **Long messages (typical mail exchange):** route to the bit-adaptive
   OFDM family at the link-adaptation-chosen mode. ARQ applies.
 - **Short critical payloads (status / position / ICS-213-class) under
-  degraded channel conditions:** route to the FSK weak-signal floor mode.
+  degraded channel conditions:** route to the robustness-modes-family floor mode.
   No ARQ; retransmit-the-whole-message semantics (FT8-pattern).
 - **Short messages under good channel conditions:** stay in the OFDM
   family — there's no SNR-floor advantage to dropping down.

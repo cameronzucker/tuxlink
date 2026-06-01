@@ -3,7 +3,7 @@
 > **Status: Canonical.** Subordinate to
 > [2026-05-31-clean-sheet-modem-overview.md](2026-05-31-clean-sheet-modem-overview.md).
 > Incorporates overview §5.A.1 (multi-mode ladder with two families — OFDM
-> + FSK-floor), §5.A.2 (payload-size-aware MAC routing makes link
+> + robustness-modes-family), §5.A.2 (payload-size-aware MAC routing makes link
 > adaptation a 2D policy).
 
 ## §1.A Two-dimensional adaptation policy (per overview §5.A.1 + §5.A.2)
@@ -15,10 +15,10 @@ PHY architecture:
 **Outer loop — mode-family selection:**
 
 - Observe channel quality (SNR, FER, throughput, bit-loading curve shape).
-- If channel quality is above the FSK-floor threshold → operate in the
+- If channel quality is above the robustness-modes-family threshold → operate in the
   bit-adaptive OFDM family.
 - If channel quality degrades past the OFDM family's usable envelope AND
-  outgoing payload is short critical → drop into the FSK weak-signal floor.
+  outgoing payload is short critical → drop into the robustness-modes-family floor.
 
 **Inner loop — within-OFDM-family:**
 
@@ -39,7 +39,7 @@ PHY architecture:
 **Coordination with ARQ:**
 
 - ARQ is mode-conditional (subsystem #6 §1.A). When link adaptation
-  switches mode families (OFDM ↔ FSK floor), the ARQ state machine
+  switches mode families (OFDM ↔ robustness floor), the ARQ state machine
   enables / disables accordingly.
 
 ## §1. Role

@@ -3,7 +3,7 @@
 > **Status: Canonical.** Subordinate to
 > [2026-05-31-clean-sheet-modem-overview.md](2026-05-31-clean-sheet-modem-overview.md).
 > Incorporates overview §5.A.2 (ARQ is **mode-conditional**: ARQ applies above
-> the FSK weak-signal floor mode; the floor mode itself operates ARQ-disabled
+> the robustness-modes-family floor mode; the floor mode itself operates ARQ-disabled
 > with retransmit-the-whole-message semantics — FT8 pattern). ARQ is a
 > per-mode attribute, not a project-wide universal.
 
@@ -14,7 +14,7 @@ ARQ is not a universal layer applied above the PHY. It's mode-conditional:
 - **OFDM family modes:** ARQ applies. Frames carry sequence numbers; lost
   frames are retransmitted. Selective-repeat ARQ is preferred under HF
   burst-error patterns (per the AX.25 v2.2 + ARDOP references).
-- **FSK weak-signal floor mode:** ARQ does NOT apply at the frame level.
+- **robustness-modes-family floor mode:** ARQ does NOT apply at the frame level.
   Short critical payloads are sent in a single FSK block. On reception
   failure, the SENDER retransmits the whole block (the receiver doesn't
   NACK; cycle-based retry is implicit). This is the FT8/JS8 pattern —
@@ -24,7 +24,7 @@ This means subsystem #6 implementation has TWO modes:
 
 - **Full ARQ** for OFDM family (selective-repeat, sequence numbers,
   ACK/NACK or piggybacked ACK).
-- **No ARQ** for FSK floor (the link-layer just sends the frame; if it
+- **No ARQ** for robustness floor (the link-layer just sends the frame; if it
   doesn't decode, MAC-level retry resends).
 
 ## §1. Role

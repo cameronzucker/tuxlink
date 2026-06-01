@@ -33,14 +33,64 @@ clients (Pat / ARIM / etc.).
 
 **Success-criterion shape (settled 2026-05-31):**
 
-- **Total occupied bandwidth — variable / multi-mode** (operator-selectable + link-adaptation-selectable across modes). The mode ladder spans two PHY families (see §5.A.1); each mode within the OFDM family carries its own bandwidth, ranging from sub-100 Hz at the FSK-floor end up to whatever the operator + adaptation choose at the wide end. **No single fixed-bandwidth design.**
-- **Decode threshold — beat ARDOP's narrowest-mode floor.** The FSK weak-signal floor mode targets stronger SNR-floor performance than ARDOP's narrowest mode. Specific dB number is to be measured against ITU-R F.520 "moderate" conditions in the channel simulator; brainstorm-time commitment is to the *strategic posture* (be more robust than the open-source reference, validated empirically).
-- **Net throughput — emergent from bit-loading, exceeds VARA per measurement.** Throughput is not pre-committed to a number. The bit-adaptive OFDM family (§5.A.1) achieves throughput as a function of (bandwidth × per-sub-carrier SNR × audio-passband rolloff). Success criterion is "exceed VARA at comparable channel conditions, validated by channel-simulator measurement against named F.520 conditions."
-- **ARQ-corrected end-to-end reliability** — applies above the FSK-floor mode; the floor mode itself may operate ARQ-disabled with retransmit-the-whole-message semantics (FT8-pattern). Specific reliability target to be set per-subsystem during implementation.
-- **Compatibility with reference radios:** works on G90 + FT-818 over the bench rig (`docs/hardware/bench-rig-two-host-topology.md`).
-- **Independent-creation defense preserved per ADR 0014** throughout the project lifecycle.
-- **License posture: AGPLv3-only** for tuxmodem (the modem itself + the channel-simulator crate). Tuxlink-the-client license is a separate workstream not settled here.
-- **Compute target: best-effort** — anything that runs Rust + ALSA cleanly. Pi 5 is primary dev target; no pre-committed minimum.
+The success criterion is **multi-axis**, not single-metric. Tuxmodem is not
+trying to be the technically-best HF modem on raw performance alone — that bar
+is "VARA + 5 years of operational tuning" and an architectural-only assault on
+it is unlikely to win cleanly. Instead, tuxmodem aims to be a **compelling
+alternative** along axes the closed-source incumbent cannot match. Specifically:
+
+- **Performance: competitive with VARA, not strictly exceeding.** The modem
+  should deliver close-to-VARA throughput at close-to-VARA SNR floors under
+  ITU-R F.520 conditions, with the gap small enough that operators find it a
+  reasonable choice. The bit-adaptive OFDM family (§5.A.1) is architecturally
+  sound for the comparison; modern FEC (LDPC short-block, polar) gives credible
+  margin. But "close to" is the goal, not "strictly beat." If subsystem #1
+  measurements show, say, 80% of VARA's throughput at the same SNR floor,
+  that's a usable result given the differentiation below.
+- **Differentiation: open source + well-documented + AI-native for
+  improvement.** This is where tuxmodem competes:
+  - **Open source (AGPLv3-only):** legally accessible, forkable, auditable.
+    VARA can't be.
+  - **Well-documented:** architectural docs, subsystem specs, foundations
+    bibliography, design provenance — all in the repo. Operators and
+    contributors can understand what the modem is doing and why.
+  - **AI-native for improvement:** the codebase, architecture, and
+    documentation are designed to be productive substrate for AI-collaborative
+    development. Subsystem decomposition is agent-scopeable; the channel
+    simulator (#1) provides agents with a deterministic validation harness;
+    the bench rig provides operator-validated ground truth. This isn't just
+    "we use AI tools" — it's "the project's evolution velocity is faster
+    than legacy modems *because* the substrate is AI-friendly." Per the
+    project ethos (Tuxlink is Cameron's learning sandbox for transferable
+    AI-assisted development techniques), this is a first-class success
+    criterion.
+- **Decode threshold — beat ARDOP at the noise-floor case.** Tuxmodem's
+  wide-band noise-floor mode (§5.A.1) targets stronger SNR-floor performance
+  than ARDOP's narrowest mode at the same per-Hz noise floor. Specific dB
+  number is to be measured against ITU-R F.520 in the channel simulator;
+  brainstorm-time commitment is to the strategic posture (be a meaningful
+  improvement over the open-source reference, validated empirically).
+- **ARQ-corrected end-to-end reliability** — applies above the noise-floor
+  family; floor modes may operate ARQ-disabled with retransmit-the-whole-
+  message semantics (FT8-pattern). Specific reliability target set per-
+  subsystem during implementation.
+- **Compatibility with reference radios:** works on G90 + FT-818 over the
+  bench rig (`docs/hardware/bench-rig-two-host-topology.md`).
+- **Independent-creation defense preserved per ADR 0014** throughout the
+  project lifecycle.
+- **License posture: AGPLv3-only** for tuxmodem (the modem itself + the
+  channel-simulator crate). Tuxlink-the-client license is a separate
+  workstream not settled here.
+- **Compute target: best-effort** — anything that runs Rust + ALSA cleanly.
+  Pi 5 is primary dev target; no pre-committed minimum.
+
+**Reframing rationale (2026-05-31 operator-confirmed):** The earlier "exceed
+VARA" framing set an aggressive bar that's risky to gate the program on (VARA
+has years of on-air tuning we won't replicate quickly). The reframed
+criterion — be a *compelling alternative*, not necessarily the technically
+best — gives the program a credible path to the "make something besides Yet
+Another Open Source Radio Modem" outcome: close-enough performance, open
+source, documented, and uniquely positioned for AI-collaborative evolution.
 
 ## §1. Subsystem decomposition
 
@@ -430,6 +480,36 @@ in five rules every subsystem spec must follow:
    the watched-failure-mode entry "this section's framing might tempt
    investigation of prior art; stop instead."
 
+6. **AI-native development substrate is a first-class success criterion**
+   (per the §0 multi-axis success criterion and the project ethos —
+   tuxlink is operator's learning sandbox for AI-collaborative development
+   techniques transferable to high-stakes work). This means the design
+   is explicitly evaluated on whether it makes AI-collaborative
+   contribution *easier*, not just whether it would make sense to a
+   human-only team. Concretely:
+
+   - **Subsystems are agent-scopeable.** Each subsystem spec is the
+     contract an agent can take on as a discrete unit of work. The
+     subsystem boundaries respect what fits in an agent's context
+     window without losing coherence.
+   - **The channel simulator (#1) is the agent's validation harness.**
+     Deterministic, reproducible, scriptable — an agent can verify
+     candidate PHY changes against F.520 conditions without operator-
+     in-the-loop validation. This is the substrate that converts modem
+     development from "ham-radio-expert-only" work into "any competent
+     AI agent with the brief can iterate productively."
+   - **Documentation is substrate, not artifact.** Architectural specs,
+     subsystem specs, foundations bibliography, design provenance —
+     each is written to be a productive input for AI agents iterating on
+     the relevant layer. Cross-references are explicit + dense enough
+     that an agent landing in any subsystem spec can find related
+     context without expensive exploration.
+   - **The contribution / improvement cadence is faster than legacy
+     modems precisely because the substrate is AI-friendly.** This is
+     where tuxmodem can credibly out-evolve closed-source alternatives
+     over time even if it lands slightly behind on per-test-case
+     performance at v0.5+.
+
 ## §5. Architectural decisions from the 2026-05-31 brainstorm
 
 The eight open questions from the draft are resolved here. Each decision
@@ -453,21 +533,47 @@ architecturally-distinct families:
   off. Throughput emerges from the bit-loading curve × bandwidth × channel
   conditions, not from a pre-committed numeric target.
 
-- **FSK weak-signal floor mode** (bottom of the ladder). Borrows the conceptual
-  primitive of FT8/JS8/JS8Call: short-block fixed-payload modulation with very
-  strong FEC, designed to operate at SNRs where the OFDM family cannot push
-  data through. **Explicit design goal: beat ARDOP's narrowest-mode SNR
-  floor.** May operate ARQ-disabled with retransmit-the-whole-message
-  semantics for short critical payloads.
+- **Robustness modes family** (bottom of the ladder). A small set of modes
+  parameterized by what's limiting the link. NOT a single waveform — the
+  right floor strategy depends on the limiting condition:
+
+  - **Default: wide-band low-density-constellation OFDM.** When the limiting
+    condition is per-Hz noise floor with bandwidth available (typical
+    tuxmodem case — own-frequency point-to-point or point-to-gateway, no
+    crowding), use BPSK per sub-carrier across the full available passband
+    with very strong FEC (rate-1/4 LDPC short-block or similar). Aggregate
+    throughput scales with sub-carrier count because each sub-carrier
+    independently sits above its (low-density) Shannon threshold. **This
+    significantly outperforms FT8-class narrow-FSK at the same SNR floor**
+    by leveraging wider bandwidth — at -5 dB per-sub-carrier SNR with
+    rate-1/4 LDPC, BPSK is comfortably decodable; higher-density
+    constellations are below Shannon and cannot decode regardless of FEC
+    sophistication (the rationale recap: Shannon's capacity bound is a
+    hard wall; below the per-constellation threshold, no FEC recovers
+    data; the win comes from going *wider*, not denser).
+  - **Situational: narrow-FSK** (FT8-class 8-FSK conceptual primitive).
+    Reserved for the rare-for-tuxmodem case where the assigned frequency
+    is genuinely bandwidth-constrained (crowded emcomm net during a major
+    event, narrow available spectrum slice). Borrows the conceptual
+    primitive of FT8/JS8 weak-signal design (foundation doc §6.1, per
+    `feedback_clean_sheet_concepts_only` — primitive only, not specific
+    protocol parameters).
+
+  Both robustness-family modes may operate ARQ-disabled with
+  retransmit-the-whole-message semantics for short critical payloads.
+  Explicit design goal: **beat ARDOP's narrowest-mode SNR floor at the
+  noise-floor case** (default wide-band low-density mode).
 
 **Clean-sheet provenance:** Bit-adaptive OFDM with per-sub-carrier bit-loading
 is openly documented in ITU-T G.992 (ADSL) and G.993 (VDSL) standards plus
 extensive academic literature. Applying this DSL technique to HF audio-band
 is a clean derivation from public DSP foundations, not a copy of any HF
-prior-art protocol. The FSK weak-signal family draws on the *conceptual
-primitive* of FT8/JS8 weak-signal design (per the foundation doc §6.1, and
-per `feedback_clean_sheet_concepts_only` — primitives, not specific protocol
-choices).
+prior-art protocol. The narrow-FSK situational mode draws on the *conceptual
+primitive* of FT8/JS8 weak-signal design (foundation doc §6.1) — primitive
+only, not specific parameters. Wide-band low-density OFDM at the noise floor
+is a textbook DSP design choice driven by Shannon's per-constellation
+capacity bound; the architecture is dictated by physics, not by any prior-art
+modem's choices.
 
 #### §5.A.2 — Payload-size-aware MAC routing
 
@@ -475,8 +581,11 @@ The MAC layer routes outgoing frames into different PHY-family paths based on
 payload size + observed channel conditions:
 
 - **Short critical payloads** (status reports, position beacons, ICS-213
-  message classes, etc.) route to the FSK weak-signal floor mode when channel
-  conditions degrade past the OFDM family's usable envelope.
+  message classes, etc.) route to the robustness-modes-family floor when
+  channel conditions degrade past the OFDM family's usable envelope. The
+  default robustness mode is wide-band low-density OFDM (not narrow-FSK)
+  for typical own-frequency tuxmodem operation; the narrow-FSK mode is
+  reserved for crowded-band situations.
 - **Long messages** stay in the bit-adaptive OFDM family with ARQ;
   link-adaptation selects which OFDM mode within the family.
 
@@ -494,7 +603,7 @@ Settled by ADR 0015 prior to this brainstorm. Tuxmodem plugs into the same
 abstraction ardopcf already uses and (eventually) VARA-over-network will use:
 TCP-reachable, two-port (cmd + data), process-supervised. The protocol
 *vocabulary* (what specific commands tuxmodem exposes for bit-loading
-control, FSK-floor mode selection, payload-size-aware routing) becomes a
+control, robustness-modes-family mode selection, payload-size-aware routing) becomes a
 subsystem #8 implementation detail.
 
 #### §5.A.4 — AGPLv3-only license posture
@@ -571,19 +680,25 @@ in the bench-rig spec.
 These remain open *inside* the per-subsystem specs, subordinate to §5.A.
 They settle during subsystem implementation rather than at brainstorm time:
 
-- **Specific dB number for FSK-floor SNR threshold** — measured empirically
-  against ITU-R F.520 "moderate" in subsystem #1 once the candidate floor
-  PHY exists. Strategic posture: "beat ARDOP's narrowest mode" is the
-  acceptance criterion; the specific number falls out of measurement.
+- **Specific dB number for the noise-floor robustness mode's SNR threshold** —
+  measured empirically against ITU-R F.520 "moderate" in subsystem #1 once
+  the candidate wide-band low-density OFDM PHY exists. Strategic posture:
+  "beat ARDOP's narrowest mode at the noise-floor case" is the acceptance
+  criterion; the specific number falls out of measurement.
 - **Specific code family within FEC** — LDPC short-block vs. polar codes
-  for the FSK floor; per-sub-carrier strategy for the OFDM family. Settle in
-  subsystem #4's canonical spec, informed by channel-simulator runs.
+  for the robustness modes; per-sub-carrier strategy for the OFDM main
+  family. Settle in subsystem #4's canonical spec, informed by channel-
+  simulator runs.
+- **Robustness-family mode count + parameters** — at minimum the default
+  wide-band low-density mode + one situational narrow-FSK mode. Settle in
+  subsystem #3 (PHY) informed by which limiting-conditions tuxmodem
+  actually targets in practice.
 - **OFDM mode count + bandwidths in the ladder** — how many discrete modes
   in the OFDM family, and what bandwidths each occupies. Settle in
   subsystem #3 informed by audio-passband measurements on the bench-rig
   radios.
 - **Host-protocol command vocabulary** — what specific commands tuxmodem
-  exposes for bit-loading control, FSK-floor mode selection, payload-size
+  exposes for bit-loading control, robustness-modes-family mode selection, payload-size
   routing. Settle in subsystem #8 once subsystem #5 / #6 freeze.
 - **Channel-simulator cross-validation reference** — ITS, GNU Radio OOT,
   or both. Settle in subsystem #1 as part of the simulator's quality gate.

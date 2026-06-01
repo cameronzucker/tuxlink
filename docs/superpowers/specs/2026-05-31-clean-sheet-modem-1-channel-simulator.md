@@ -3,7 +3,7 @@
 > **Status: Canonical.** Subordinate to
 > [2026-05-31-clean-sheet-modem-overview.md](2026-05-31-clean-sheet-modem-overview.md);
 > incorporates the §5.A.1 (multi-mode PHY ladder, bit-adaptive OFDM main +
-> FSK weak-signal floor), §5.A.4 (AGPLv3-only license), §5.A.5 (standalone
+> robustness-modes-family floor), §5.A.4 (AGPLv3-only license), §5.A.5 (standalone
 > public crate from day one), and §5.A.6 (best-effort compute) decisions
 > from the 2026-05-31 brainstorm.
 >
