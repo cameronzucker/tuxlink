@@ -135,6 +135,20 @@ export function GridEdit({ grid, source, gpsReady, onCommit, onUseGps }: GridEdi
       >
         {source === 'Manual' ? 'MANUAL' : 'GPS'}
       </span>
+      {/* State 2 hint (tuxlink-c79g T11, spec §2.2 + §4.2): when source = Manual
+          AND a fresh fix is available, render a PASSIVE "GPS ready" status text
+          beside the chip. Pre-pjih had this as a clickable <button data-testid="use-gps">
+          with "GPS ready — tap to switch" framing; the restoration is a passive
+          <span> — the chip itself is the click surface for switching to GPS. */}
+      {source === 'Manual' && gpsReady && (
+        <span
+          className="dash-gps-ready-status"
+          data-testid="gps-ready-status"
+          role="status"
+        >
+          ● GPS ready
+        </span>
+      )}
     </div>
   );
 }

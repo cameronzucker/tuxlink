@@ -105,3 +105,20 @@ test('calls onUseGps when source chip is clicked while source = Manual', () => {
   fireEvent.click(screen.getByTestId('source-chip'));
   expect(onUseGps).toHaveBeenCalledTimes(1);
 });
+
+// tuxlink-c79g Task 11: per spec §2.2 + §4.2, the State 2 "GPS ready" hint is
+// passive text — NOT a <button>. Pre-pjih had it as <button data-testid="use-gps">;
+// the restoration renders a passive <span className="dash-gps-ready-status">.
+test('GPS-ready hint in State 2 is a <span> (passive), not a <button>', () => {
+  render(
+    <GridEdit
+      grid="EM75"
+      source="Manual"
+      gpsReady={true}
+      onCommit={vi.fn()}
+      onUseGps={vi.fn()}
+    />,
+  );
+  const hint = screen.getByText(/GPS ready/i);
+  expect(hint.tagName).toBe('SPAN');
+});
