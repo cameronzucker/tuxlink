@@ -173,6 +173,24 @@ impl RfcommSocket {
         Ok(sock)
     }
 
+    /// Duplicate the RFCOMM socket fd into an `RfcommAbort` handle (tuxlink-0ja).
+    ///
+    /// The operator's Cancel runs on a separate thread from the AX.25 state machine
+    /// holding the original socket. Calling `shutdown(SHUT_RDWR)` from that other
+    /// thread on a duped fd referring to the SAME kernel socket interrupts any
+    /// in-flight `read`/`write` on the original — the canonical "disarm at the OS
+    /// layer" mechanism that telnet's TCP path already uses (`TcpStream::try_clone`
+    /// + `shutdown`). `libc::dup` creates a new fd entry pointing at the same open
+    /// file description, so the shutdown is visible to both fds.
+    pub fn try_clone_abort(&self) -> std::io::Result<RfcommAbort> {
+        // SAFETY: dup our own valid socket fd.
+        let dup_fd = unsafe { libc::dup(self.fd) };
+        if dup_fd < 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        Ok(RfcommAbort { fd: dup_fd })
+    }
+
     fn set_timeout(&self, opt: libc::c_int, d: std::time::Duration) -> std::io::Result<()> {
         let tv = libc::timeval {
             tv_sec: d.as_secs() as libc::time_t,
@@ -253,6 +271,35 @@ impl std::io::Write for RfcommSocket {
 impl Drop for RfcommSocket {
     fn drop(&mut self) {
         // SAFETY: close our own fd exactly once (RfcommSocket owns it, !Copy).
+        unsafe { libc::close(self.fd) };
+    }
+}
+
+/// Operator-side abort handle for an `RfcommSocket` — a duped fd pointing at the
+/// same kernel socket as the live link (tuxlink-0ja). `abort()` calls
+/// `shutdown(SHUT_RDWR)` on the dup, which interrupts any in-flight `read`/`write`
+/// on the original from another thread (the strongest disarm: kernel-level, not
+/// just a flag check). Mirrors the TCP path's `TcpStream::try_clone` +
+/// `shutdown(Shutdown::Both)` pattern. Owns the duped fd and closes it on drop.
+pub struct RfcommAbort {
+    fd: libc::c_int,
+}
+
+impl crate::winlink::ax25::link::LinkAbort for RfcommAbort {
+    fn abort(&self) {
+        // SAFETY: shutdown on our own duped fd. SHUT_RDWR (= 2) interrupts both
+        // directions on the underlying socket — visible to the original fd too.
+        // The return code is intentionally discarded; an already-closed or
+        // never-connected socket is a benign no-op for abort.
+        unsafe {
+            libc::shutdown(self.fd, libc::SHUT_RDWR);
+        }
+    }
+}
+
+impl Drop for RfcommAbort {
+    fn drop(&mut self) {
+        // SAFETY: close our own duped fd exactly once.
         unsafe { libc::close(self.fd) };
     }
 }
@@ -371,6 +418,86 @@ Protocol Descriptor List:
     Channel: 3
 ";
         assert_eq!(parse_spp_channel(records), None);
+    }
+
+    // tuxlink-0ja: invoking RfcommAbort::abort() from another thread MUST interrupt
+    // a blocked read on the original socket fd at the kernel layer — the previous
+    // flag-based AbortableByteLink wrapper for the Bluetooth path had the same
+    // check-then-write TOCTOU as serial. RfcommAbort is fd-only (libc::shutdown
+    // works on any AF_* SOCK_STREAM fd), so exercise it against a UNIX socketpair
+    // as the Bluetooth-free stand-in. No Bluetooth stack required — runs on CI.
+    #[test]
+    fn rfcomm_abort_shutdown_unblocks_a_blocked_read_on_the_paired_fd() {
+        use crate::winlink::ax25::link::LinkAbort;
+        use std::os::unix::io::FromRawFd;
+
+        // socketpair gives two connected fds; we treat ONE as the "live link" we
+        // try to read from, and the OTHER as the fd we'll dup and shutdown via
+        // RfcommAbort.
+        let mut fds: [libc::c_int; 2] = [-1, -1];
+        // SAFETY: socketpair on UNIX domain, SOCK_STREAM, default protocol.
+        let rc = unsafe {
+            libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, fds.as_mut_ptr())
+        };
+        assert_eq!(rc, 0, "socketpair failed");
+        // SAFETY: take ownership of the two fds via raw constructors so they're
+        // closed on drop, and so std handles read semantics for us.
+        let mut reader = unsafe { std::os::unix::net::UnixStream::from_raw_fd(fds[0]) };
+        let abort_target = fds[1];
+
+        // Set a long read timeout so the read doesn't return on its own — we want
+        // to verify the SHUTDOWN is what unblocks it.
+        reader
+            .set_read_timeout(Some(std::time::Duration::from_secs(10)))
+            .unwrap();
+
+        let reader_thread = std::thread::spawn(move || {
+            use std::io::Read;
+            let mut buf = [0u8; 4];
+            let result = reader.read(&mut buf);
+            // The shutdown on the peer fd makes our read either return 0 (FIN) or
+            // an error of class ConnectionReset / BrokenPipe / ConnectionAborted —
+            // any of those is acceptable evidence that the kernel interrupted us.
+            // What MUST NOT happen: a successful read of nonzero bytes (would mean
+            // shutdown never landed).
+            match result {
+                Ok(0) => {}
+                Ok(n) => panic!("read returned {n} bytes — shutdown did not disarm"),
+                Err(e) => assert!(
+                    matches!(
+                        e.kind(),
+                        std::io::ErrorKind::ConnectionReset
+                            | std::io::ErrorKind::ConnectionAborted
+                            | std::io::ErrorKind::BrokenPipe
+                            | std::io::ErrorKind::UnexpectedEof
+                            | std::io::ErrorKind::NotConnected
+                    ),
+                    "unexpected read error after shutdown: {e:?}"
+                ),
+            }
+        });
+
+        // Give the reader a moment to enter the blocking read. (50ms is comfortably
+        // longer than thread spawn + syscall entry; the read timeout is 10s so this
+        // is conservative.)
+        std::thread::sleep(std::time::Duration::from_millis(50));
+
+        // Dup abort_target so RfcommAbort can own its own copy and we still own
+        // abort_target for cleanup; mirrors how connect_link_with_abort dups.
+        // SAFETY: dup our own valid fd.
+        let dup = unsafe { libc::dup(abort_target) };
+        assert!(dup >= 0, "dup failed");
+        let abort = RfcommAbort { fd: dup };
+
+        abort.abort(); // libc::shutdown(SHUT_RDWR) — kernel-level disarm
+
+        reader_thread.join().expect("reader thread panicked");
+
+        // Cleanup: close abort_target (RfcommAbort took its own dup, reader
+        // closed its end on drop). SAFETY: closing our own fd exactly once.
+        unsafe {
+            libc::close(abort_target);
+        }
     }
 
     #[test]
