@@ -3,7 +3,7 @@
 **Date:** 2026-06-02
 **Author:** pika-cedar-tanager
 **bd issues:** tuxlink-ca5x (Archive wiring, Phase 1) · tuxlink-f62f (custom user folders, Phase 2)
-**Status:** Proposed (pending operator review of decisions D1–D10)
+**Status:** Accepted 2026-06-02 — all recommendations in D1–D10 stand.
 **Mock companion:** [docs/design/mockups/2026-06-02-user-folders-mocks.html](../../design/mockups/2026-06-02-user-folders-mocks.html) — high-fidelity dark mock; sidebar variants A/B/C; Move-to picker; new-folder + delete dialogs; decisions table.
 
 ---
@@ -245,14 +245,20 @@ The search index ([src-tauri/src/search/](../../../src-tauri/src/search/)) curre
 
 ---
 
-## 6. Open questions for the operator
+## 6. Decisions (settled 2026-06-02)
 
-The mock's decision table (D1–D10) carries the recommendation for each; this section lists the items genuinely worth a back-and-forth.
+Operator approved the recommendation column wholesale. The full decision table is in the mock; the load-bearing settled outcomes are:
 
-1. **D1 — sidebar placement.** The mock recommends Concept B. If you'd rather Archive feel system-tier (Concept C), say so — the spec changes from "open set including archive" to "closed system enum + open user set" and Phase 1 stays smaller, but Phase 2 grows.
-2. **D4 — `.folders.json` vs SQLite table.** If you'd rather have the folder registry in the existing search-index SQLite (since it's already there), it's slightly less plumbing in the storage layer but couples folder ops to index availability. The JSON sidecar is independent.
-3. **D7 — slug strictness.** The proposed `[a-z0-9-]+` keeps things filesystem-safe but rejects Unicode display content from slugs. Display names allow whatever the operator wants up to 40 chars; slugs are derived (`ARES Drills` → `ares-drills`). If you want Unicode slugs (because case-folding Unicode in filesystem paths is gnarly), say so.
-4. **Multi-select / drag-drop.** The spec defers these to Phase 3 (filed separately). If you want them in Phase 2, that's another 1-2 days of work.
+- **D1** — Sidebar placement: **B** (separate "Folders" section, `+` button on the heading).
+- **D2** — Archive: pre-seeded user folder; reserved name at creation only.
+- **D3** — Flat structure (no nesting in v1).
+- **D4** — Backend registry: `<root>/.folders.json` sidecar.
+- **D5** — Move via right-click context menu + `A` shortcut for Archive; multi-select + drag-drop deferred to Phase 3.
+- **D6** — Delete non-empty folder: prompt with radio choice (move-to-inbox default).
+- **D7** — Slug: `[a-z0-9-]+`, 1–40 chars; display name 3–40 chars; reserved names: Inbox/Sent/Outbox/Drafts.
+- **D8** — Search: slug match + quoted display-name match against the FOLDER: token.
+- **D9** — User folders show total count (matching Sent), not unread.
+- **D10** — Compose target = Drafts only for v1; folder-target on send deferred.
 
 ---
 
