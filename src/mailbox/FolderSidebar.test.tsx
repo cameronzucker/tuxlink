@@ -63,19 +63,20 @@ describe('<FolderSidebar> (Mock B)', () => {
 });
 
 describe('FolderSidebar — Packet connection entry (accordion)', () => {
-  it('renders a selectable Packet (AX.25) item with a state dot (under cms accordion)', () => {
+  // tuxlink-bcgj: the transport-state dot (off/listening/connected) was
+  // removed for visual cohesion — the same info already renders in the
+  // DashboardRibbon connection chip. The Packet row now mirrors every
+  // other transport row (label + selection only).
+  it('renders a selectable Packet (AX.25) item (under cms accordion)', () => {
     render(
-      <FolderSidebar
-        selectedFolder="inbox"
-        onSelectFolder={() => {}}
-        packetState="listening"
-      />,
+      <FolderSidebar selectedFolder="inbox" onSelectFolder={() => {}} />,
     );
     // Expand the CMS accordion to reveal protocols
     fireEvent.click(screen.getByTestId('sess-cms'));
     const item = screen.getByTestId('proto-cms-packet');
     expect(item).toHaveTextContent('Packet (AX.25)');
-    expect(screen.getByTestId('conn-packet-dot').className).toContain('listening');
+    // The conn-dot was removed — no transport-state indicator in the sidebar.
+    expect(screen.queryByTestId('conn-packet-dot')).toBeNull();
   });
 
   it('clicking CMS Packet calls onSelectConnection with the full key', () => {
@@ -85,7 +86,6 @@ describe('FolderSidebar — Packet connection entry (accordion)', () => {
         selectedFolder="inbox"
         onSelectFolder={() => {}}
         onSelectConnection={onSelectConnection}
-        packetState="off"
       />,
     );
     fireEvent.click(screen.getByTestId('sess-cms'));
@@ -99,7 +99,6 @@ describe('FolderSidebar — Packet connection entry (accordion)', () => {
         selectedFolder="inbox"
         onSelectFolder={() => {}}
         selectedConnection={{ sessionType: 'cms', protocol: 'packet' }}
-        packetState="connected"
       />,
     );
     // The accordion auto-expands because selectedConnection is pre-set — no manual click needed.
