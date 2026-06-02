@@ -96,8 +96,9 @@ export function saveSortState(state: SortState): void {
 
 /// Folder context for the sort. Matches the MailboxFolder union but kept as a
 /// string literal here so this module stays free of mailbox-shell imports
-/// beyond MessageMeta itself.
-export type SortFolder = 'inbox' | 'outbox' | 'sent' | 'drafts' | 'deleted';
+/// beyond MessageMeta itself. `archive` arrived in tuxlink-ca5x; its sort
+/// behavior matches the inbox path (`from` is the salient correspondent).
+export type SortFolder = 'inbox' | 'outbox' | 'sent' | 'drafts' | 'deleted' | 'archive';
 
 /// Lowercase + trim for case-insensitive locale compare. `localeCompare` already
 /// handles diacritics; the lowercase normalizes "alpha" vs "Alpha" tie order.

@@ -246,6 +246,27 @@ describe('<MessageViewLoaded> reply action bar', () => {
     expect(openReplyWindow).toHaveBeenCalledWith(m, 'forward');
   });
 
+  // tuxlink-ca5x: Archive button is rendered only when the parent supplies
+  // onArchive. AppShell omits it when the open message is already in Archive,
+  // so absence is the no-op signal.
+  it('renders Archive button when onArchive is supplied', () => {
+    const onArchive = vi.fn();
+    render(<MessageViewLoaded message={parsed()} onArchive={onArchive} />);
+    expect(screen.getByTestId('archive-btn')).toBeInTheDocument();
+  });
+
+  it('does NOT render Archive button when onArchive is omitted', () => {
+    render(<MessageViewLoaded message={parsed()} />);
+    expect(screen.queryByTestId('archive-btn')).toBeNull();
+  });
+
+  it('clicking Archive fires onArchive', () => {
+    const onArchive = vi.fn();
+    render(<MessageViewLoaded message={parsed()} onArchive={onArchive} />);
+    fireEvent.click(screen.getByTestId('archive-btn'));
+    expect(onArchive).toHaveBeenCalledOnce();
+  });
+
   // Codex P2 #6 (T8.1 follow-up): "Reply with form…" is a fourth action that
   // appears ONLY for messages whose form_id resolves in the registry (so the
   // operator can author a same-form reply with sender↔recipient swap).

@@ -8,6 +8,7 @@ function handlers(): MenuHandlers {
     reply: vi.fn(),
     replyAll: vi.fn(),
     forward: vi.fn(),
+    archive: vi.fn(),
     toggleStatusBar: vi.fn(),
     toggleRadioPanel: vi.fn(),
     selectFolder: vi.fn(),
@@ -97,6 +98,20 @@ describe('dispatchMenuAction', () => {
     expect(h.reply).toHaveBeenCalledOnce();
     expect(h.replyAll).toHaveBeenCalledOnce();
     expect(h.forward).toHaveBeenCalledOnce();
+  });
+
+  // tuxlink-ca5x: Archive routes both through the Message menu (move open
+  // message to Archive) and the Mailbox menu (navigate to the Archive folder).
+  it('routes message:archive to archive', () => {
+    const h = handlers();
+    dispatchMenuAction('menu:message:archive', h);
+    expect(h.archive).toHaveBeenCalledOnce();
+  });
+
+  it('routes mailbox:archive to selectFolder with the archive id', () => {
+    const h = handlers();
+    dispatchMenuAction('menu:mailbox:archive', h);
+    expect(h.selectFolder).toHaveBeenCalledWith('archive');
   });
 
   it('is a safe no-op for stub/unhandled ids', () => {

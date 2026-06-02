@@ -9,6 +9,9 @@ export interface MenuHandlers {
   reply: () => void;
   replyAll: () => void;
   forward: () => void;
+  /** Move the open message to Archive (tuxlink-ca5x). No-op when nothing is
+   *  open or when the open message is already in Archive. */
+  archive: () => void;
   // toggleSessionLog removed in radio-panel-shell P1.6 — the bottom session-log
   // strip is gone; the log moves into the radio panel as a per-mode section.
   toggleStatusBar: () => void;
@@ -43,6 +46,7 @@ export function dispatchMenuAction(id: MenuActionId, h: MenuHandlers): void {
     case 'menu:message:reply': h.reply(); return;
     case 'menu:message:reply_all': h.replyAll(); return;
     case 'menu:message:forward': h.forward(); return;
+    case 'menu:message:archive': h.archive(); return;
     case 'menu:view:status_bar': h.toggleStatusBar(); return;
     case 'menu:view:radio_panel': h.toggleRadioPanel(); return;
     // tuxlink-39b: the consolidated GPS & Privacy settings item opens the inline
@@ -65,6 +69,7 @@ export function dispatchMenuAction(id: MenuActionId, h: MenuHandlers): void {
     case 'menu:mailbox:inbox':
     case 'menu:mailbox:sent':
     case 'menu:mailbox:outbox':
+    case 'menu:mailbox:archive':
       h.selectFolder(id.slice('menu:mailbox:'.length) as MailboxFolder);
       return;
   }

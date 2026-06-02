@@ -22,12 +22,15 @@ interface MailboxItem {
   v01?: boolean;
 }
 
-/// Mailbox section (mock B order). Inbox/Sent/Outbox functional; Archive deferred.
+/// Mailbox section (mock B order). All four folders functional as of
+/// tuxlink-ca5x (user-folders Phase 1). The Phase 2 open-set folder model
+/// (tuxlink-f62f) will lift Archive into a dedicated "Folders" section
+/// alongside user-created folders; for Phase 1 it stays here.
 const MAILBOX_ITEMS: readonly MailboxItem[] = [
   { id: 'inbox', label: 'Inbox', icon: '▣', enabled: true },
   { id: 'sent', label: 'Sent', icon: '▢', enabled: true },
   { id: 'outbox', label: 'Outbox', icon: '▢', enabled: true },
-  { label: 'Archive', icon: '▢', enabled: false, v01: true },
+  { id: 'archive', label: 'Archive', icon: '▢', enabled: true },
 ];
 
 export interface FolderSidebarProps {

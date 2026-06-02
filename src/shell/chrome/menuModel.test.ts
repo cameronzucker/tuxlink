@@ -5,10 +5,10 @@ import { MENU_ACTION_IDS, ACCELERATORS } from './menuModel';
 // is the stable contract regardless of producer. Order matches the menu layout.
 const EXPECTED_IDS = [
   'menu:file:quit',
-  'menu:message:new', 'menu:message:reply', 'menu:message:reply_all', 'menu:message:forward', 'menu:message:print',
+  'menu:message:new', 'menu:message:reply', 'menu:message:reply_all', 'menu:message:forward', 'menu:message:archive', 'menu:message:print',
   'menu:session:connect', 'menu:session:disconnect', 'menu:session:log',
   'menu:session:verify_cms', 'menu:session:show_transport',
-  'menu:mailbox:inbox', 'menu:mailbox:sent', 'menu:mailbox:outbox',
+  'menu:mailbox:inbox', 'menu:mailbox:sent', 'menu:mailbox:outbox', 'menu:mailbox:archive',
   'menu:view:status_bar', 'menu:view:radio_panel',
   'menu:view:scheme:default',
   'menu:view:scheme:daylight',

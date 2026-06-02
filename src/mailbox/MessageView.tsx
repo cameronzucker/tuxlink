@@ -135,8 +135,18 @@ function parseAddress(s: string): { name: string; addr: string } {
 /**
  * Fully-loaded message view (Mock B `.reading-pane`). Accepts a `ParsedMessage`
  * directly so tests can inject synthetic data without a Tauri runtime.
+ *
+ * `onArchive` (tuxlink-ca5x) renders an Archive button in the action bar when
+ * supplied. AppShell builds the closure and omits it when the open message
+ * is already in Archive (where archiving is a no-op).
  */
-export function MessageViewLoaded({ message }: { message: ParsedMessage }) {
+export function MessageViewLoaded({
+  message,
+  onArchive,
+}: {
+  message: ParsedMessage;
+  onArchive?: () => void;
+}) {
   const from = parseAddress(message.from);
   const toAddrs = message.to.map(parseAddress);
   // Form metadata (the Mock B "Form" row + form-attached box). Dev-only today;
@@ -185,6 +195,17 @@ export function MessageViewLoaded({ message }: { message: ParsedMessage }) {
               Reply with form…
             </button>
           )}
+        {onArchive && (
+          <button
+            type="button"
+            className="action-btn"
+            data-testid="archive-btn"
+            title="Archive (A)"
+            onClick={onArchive}
+          >
+            Archive
+          </button>
+        )}
       </div>
 
       {/* 2 — subject heading */}
@@ -298,6 +319,10 @@ export function MessageViewLoaded({ message }: { message: ParsedMessage }) {
 export interface MessageViewProps {
   /** The selected message (folder + id). Null when nothing is selected. */
   selectedMessage: MessageSelection | null;
+  /** Move-to-Archive callback (tuxlink-ca5x). When supplied, the loaded
+   *  reading pane renders an Archive button. AppShell omits this when the
+   *  open message is already in Archive. */
+  onArchive?: () => void;
 }
 
 /**
@@ -318,7 +343,7 @@ function parseRawSizeFromDetail(detail: string | undefined): number | undefined 
  * `useMessage`; renders one of five states (empty / loading / not-found /
  * parse-error / loaded). Selection comes from AppShell's `selectedMessage`.
  */
-export default function MessageView({ selectedMessage }: MessageViewProps) {
+export default function MessageView({ selectedMessage, onArchive }: MessageViewProps) {
   const { data, isLoading, isError, error } = useMessage(selectedMessage);
 
   if (!selectedMessage) {
@@ -355,5 +380,5 @@ export default function MessageView({ selectedMessage }: MessageViewProps) {
     return <MessageViewParseError rawSize={rawSize} />;
   }
 
-  return <MessageViewLoaded message={data} />;
+  return <MessageViewLoaded message={data} onArchive={onArchive} />;
 }

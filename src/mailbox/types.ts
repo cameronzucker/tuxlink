@@ -65,8 +65,11 @@ export interface AttachmentMeta {
 
 /// Sidebar folder identifiers. `drafts` is a local (localStorage) store, not
 /// a backend folder; `deleted` is a disabled placeholder for now (spec
-/// §2.2). The Rust `parse_folder` rejects both for backend commands.
-export type MailboxFolder = 'inbox' | 'outbox' | 'sent' | 'drafts' | 'deleted';
+/// §2.2). `archive` is the first user folder, exposed in Phase 1 of the
+/// user-folders work (docs/superpowers/specs/2026-06-02-user-folders-design.md);
+/// open-set user-folder slugs land in Phase 2. The Rust `parse_folder`
+/// rejects `drafts`/`deleted` for backend commands.
+export type MailboxFolder = 'inbox' | 'outbox' | 'sent' | 'drafts' | 'deleted' | 'archive';
 
 /// Serializable backend error. Mirrors `UiError` in
 /// `src-tauri/src/ui_commands.rs` via Tauri's

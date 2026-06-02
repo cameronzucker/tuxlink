@@ -77,6 +77,7 @@ const FOLDER_LABELS: Record<MailboxFolder, string> = {
   sent: 'Sent',
   drafts: 'Drafts',
   deleted: 'Deleted',
+  archive: 'Archive',
 };
 
 export interface SelectedMessage {
@@ -199,6 +200,10 @@ export function AppShell() {
   // navigating to the Outbox folder. Cheap query — the 10s refetch matches
   // inbox/sent's polling cadence; no extra IPC burden.
   const outbox = useMailbox('outbox');
+  // tuxlink-ca5x: Archive count for the sidebar badge. Per spec §6 (D9), user
+  // folders show total count (matching Sent), not unread — archived messages
+  // are almost always already read; "0 unread / 180 total" would mislead.
+  const archive = useMailbox('archive');
   const notConnected = isNotConfigured(error);
 
   // Search-result wiring (tuxlink-c7qz): when search is active, swap the
@@ -240,6 +245,7 @@ export function AppShell() {
     inbox: inbox.messages.filter((m) => m.unread).length,
     outbox: outbox.messages.length,
     sent: sent.messages.length,
+    archive: archive.messages.length,
   };
 
   // Status data (callsign / grid / connection) — single poll, shared by the
@@ -326,6 +332,30 @@ export function AppShell() {
   // TanStack dedupes (no extra IPC). `data` is undefined when nothing is selected.
   const { data: openMessage } = useMessage(selectedMessage);
 
+  // tuxlink-ca5x: archive the open message. Best-effort — a backend failure
+  // logs server-side; the operator can retry, and the next refetch resyncs
+  // the row state. No-op when nothing is selected or the open message is
+  // already in Archive. Clears the selection after a successful move so the
+  // reading pane goes empty (the moved row no longer lives in the current folder).
+  const archiveOpen = useCallback(async () => {
+    if (!selectedMessage) return;
+    if (selectedMessage.folder === 'archive') return;
+    try {
+      await invoke('mailbox_move', {
+        from: selectedMessage.folder,
+        to: 'archive',
+        id: selectedMessage.id,
+      });
+      // Invalidate both the source and the destination folder lists so the
+      // moved row disappears from the source and appears in Archive on the
+      // next refetch. The broader `['mailbox']` invalidation hits both at once.
+      void queryClient.invalidateQueries({ queryKey: ['mailbox'] });
+      setSelectedMessage(null);
+    } catch {
+      /* surfaced via Rust logs; next refetch resyncs */
+    }
+  }, [selectedMessage, queryClient]);
+
   const handlers: MenuHandlers = useMemo(() => ({
     openCompose: () => { void invoke('compose_window_open', { draftId: newDraftId() }); },
     connect: onConnect,
@@ -336,6 +366,7 @@ export function AppShell() {
     reply: () => { if (openMessage) void openReplyWindow(openMessage, 'reply').catch(() => {}); },
     replyAll: () => { if (openMessage) void openReplyWindow(openMessage, 'replyAll').catch(() => {}); },
     forward: () => { if (openMessage) void openReplyWindow(openMessage, 'forward').catch(() => {}); },
+    archive: () => { void archiveOpen(); },
     toggleStatusBar: () => setShowStatusBar((s) => !s),
     toggleRadioPanel: () => setPinRadioPanel((s) => !s),
     selectFolder: (folder) => { setSelectedFolder(folder); setSelectedMessage(null); setSelectedConnection(null); },
@@ -355,7 +386,14 @@ export function AppShell() {
       });
     },
     quit: () => { void invoke('app_quit'); },
-  }), [onConnect, openMessage]);
+  }), [onConnect, openMessage, archiveOpen]);
+
+  // The Archive button render gate: only show when something is selected AND
+  // it's not already in Archive (where archive is a no-op). MessageView reads
+  // the absence of onArchive as "don't render the button."
+  const onArchiveMessage = (selectedMessage && selectedMessage.folder !== 'archive')
+    ? archiveOpen
+    : undefined;
 
   const onMenuAction = useCallback((id: string) => dispatchMenuAction(id, handlers), [handlers]);
   useAccelerators(onMenuAction);
@@ -491,7 +529,7 @@ export function AppShell() {
         />
         {(() => {
           if (selectedConnection === null) {
-            return <MessageView selectedMessage={selectedMessage} />;
+            return <MessageView selectedMessage={selectedMessage} onArchive={onArchiveMessage} />;
           }
           if (!isBuilt(selectedConnection)) {
             return <StubPanel sessionType={selectedConnection.sessionType} protocol={selectedConnection.protocol} />;
@@ -501,36 +539,36 @@ export function AppShell() {
             // P2: Telnet UI now lives in the right-hand TelnetRadioPanel.
             // The reading pane falls back to messages so the operator
             // can read mail while the connection panel handles transport.
-            return <MessageView selectedMessage={selectedMessage} />;
+            return <MessageView selectedMessage={selectedMessage} onArchive={onArchiveMessage} />;
           }
           if (sessionType === 'cms' && protocol === 'packet') {
             // P3: PacketRadioPanel owns the Packet dial UI in the right
             // radio panel; reading pane falls back to mail (same pattern
             // as Telnet (P2) and ARDOP (P4)).
-            return <MessageView selectedMessage={selectedMessage} />;
+            return <MessageView selectedMessage={selectedMessage} onArchive={onArchiveMessage} />;
           }
           if (sessionType === 'cms' && protocol === 'ardop-hf') {
             // P4: the ArdopRadioPanel owns the ARDOP HF dial UI; the
             // reading pane falls back to mail (same pattern as Telnet,
             // P2). Eliminates the P1 dual-mount of placeholder + ArdopDock.
-            return <MessageView selectedMessage={selectedMessage} />;
+            return <MessageView selectedMessage={selectedMessage} onArchive={onArchiveMessage} />;
           }
           if (sessionType === 'p2p' && protocol === 'packet') {
             // P3 (P2P branch): same — PacketRadioPanel handles the dial UI.
-            return <MessageView selectedMessage={selectedMessage} />;
+            return <MessageView selectedMessage={selectedMessage} onArchive={onArchiveMessage} />;
           }
           if (sessionType === 'p2p' && protocol === 'telnet') {
             // P2P Telnet (tuxlink-0pnb): TelnetP2pRadioPanel owns the dial
             // UI in the right panel; reading pane falls back to mail, same
             // pattern as Telnet CMS (P2) and Packet P2P (P3).
-            return <MessageView selectedMessage={selectedMessage} />;
+            return <MessageView selectedMessage={selectedMessage} onArchive={onArchiveMessage} />;
           }
           if (sessionType === 'cms' && (protocol === 'vara-hf' || protocol === 'vara-fm')) {
             // tuxlink-dfmf Phase 2: VaraRadioPanel owns the VARA dial UI
             // in the right panel; reading pane falls back to mail (same
             // pattern as Telnet/Packet/ARDOP). Phase 2 surfaces TCP
             // transport + config; RF CONNECT arrives in Phase 3.
-            return <MessageView selectedMessage={selectedMessage} />;
+            return <MessageView selectedMessage={selectedMessage} onArchive={onArchiveMessage} />;
           }
           // Built but unhandled — defensive stub
           return <StubPanel sessionType={sessionType} protocol={protocol} />;
