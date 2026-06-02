@@ -16,7 +16,20 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { TelnetP2pRadioPanel } from './TelnetP2pRadioPanel';
+
+/// Wrap the panel in a fresh QueryClient per test so the `useQueryClient`
+/// hook resolves (tuxlink-l55l added mailbox-query invalidation after a
+/// successful dial). `retry: false` keeps test runs deterministic.
+function renderPanel(props: { onClose?: () => void } = {}) {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={qc}>
+      <TelnetP2pRadioPanel onClose={props.onClose ?? (() => {})} />
+    </QueryClientProvider>,
+  );
+}
 
 // Tauri IPC mocks. `invoke` returns command-specific defaults; `listen`
 // captures the registered handler so tests can dispatch synthetic
@@ -75,30 +88,30 @@ describe('<TelnetP2pRadioPanel>', () => {
   // ── Panel title ───────────────────────────────────────────────────────────
 
   it('renders the Telnet P2P panel title', async () => {
-    render(<TelnetP2pRadioPanel onClose={() => {}} />);
+    renderPanel();
     expect(screen.getByTestId('radio-panel-title')).toHaveTextContent('Telnet P2P');
   });
 
   // ── Peer Station section ──────────────────────────────────────────────────
 
   it('renders peer host input with default 127.0.0.1', () => {
-    render(<TelnetP2pRadioPanel onClose={() => {}} />);
+    renderPanel();
     const hostInput = screen.getByTestId('p2p-host-input') as HTMLInputElement;
     expect(hostInput.value).toBe('127.0.0.1');
   });
 
   it('renders peer callsign input', () => {
-    render(<TelnetP2pRadioPanel onClose={() => {}} />);
+    renderPanel();
     expect(screen.getByTestId('p2p-peer-callsign-input')).toBeInTheDocument();
   });
 
   it('renders localhost quick-pick chip', () => {
-    render(<TelnetP2pRadioPanel onClose={() => {}} />);
+    renderPanel();
     expect(screen.getByTestId('p2p-pick-127.0.0.1')).toBeInTheDocument();
   });
 
   it('clicking the localhost quick-pick chip sets the host input', () => {
-    render(<TelnetP2pRadioPanel onClose={() => {}} />);
+    renderPanel();
     const hostInput = screen.getByTestId('p2p-host-input') as HTMLInputElement;
     fireEvent.change(hostInput, { target: { value: '192.168.1.50' } });
     expect(hostInput.value).toBe('192.168.1.50');
@@ -107,7 +120,7 @@ describe('<TelnetP2pRadioPanel>', () => {
   });
 
   it('typing in the host input and blurring trims whitespace', () => {
-    render(<TelnetP2pRadioPanel onClose={() => {}} />);
+    renderPanel();
     const hostInput = screen.getByTestId('p2p-host-input') as HTMLInputElement;
     fireEvent.change(hostInput, { target: { value: '  192.168.1.50  ' } });
     fireEvent.blur(hostInput);
@@ -115,7 +128,7 @@ describe('<TelnetP2pRadioPanel>', () => {
   });
 
   it('peer callsign input forces uppercase', () => {
-    render(<TelnetP2pRadioPanel onClose={() => {}} />);
+    renderPanel();
     const callsignInput = screen.getByTestId('p2p-peer-callsign-input') as HTMLInputElement;
     fireEvent.change(callsignInput, { target: { value: 'w7aux' } });
     expect(callsignInput.value).toBe('W7AUX');
@@ -124,14 +137,14 @@ describe('<TelnetP2pRadioPanel>', () => {
   // ── Transport section (plaintext-only note) ───────────────────────────────
 
   it('renders the Transport section with plaintext note (no TLS option)', () => {
-    render(<TelnetP2pRadioPanel onClose={() => {}} />);
+    renderPanel();
     // Transport section explains plaintext-only — no radio buttons, no TLS
     // option. WLE P2P is plaintext-only per spec §4.3.
     expect(screen.getByText(/Plaintext only/)).toBeInTheDocument();
   });
 
   it('port input defaults to 8772 and is operator-editable', () => {
-    render(<TelnetP2pRadioPanel onClose={() => {}} />);
+    renderPanel();
     const portInput = screen.getByTestId('p2p-port-input') as HTMLInputElement;
     expect(portInput.value).toBe('8772');
     fireEvent.change(portInput, { target: { value: '9000' } });
@@ -141,12 +154,12 @@ describe('<TelnetP2pRadioPanel>', () => {
   // ── Peer Password section ─────────────────────────────────────────────────
 
   it('renders password status badge showing Not set initially', () => {
-    render(<TelnetP2pRadioPanel onClose={() => {}} />);
+    renderPanel();
     expect(screen.getByTestId('p2p-password-status')).toHaveTextContent('Not set');
   });
 
   it('renders Set and Clear password buttons', () => {
-    render(<TelnetP2pRadioPanel onClose={() => {}} />);
+    renderPanel();
     expect(screen.getByTestId('p2p-password-set-btn')).toBeInTheDocument();
     expect(screen.getByTestId('p2p-password-clear-btn')).toBeInTheDocument();
   });
@@ -159,7 +172,7 @@ describe('<TelnetP2pRadioPanel>', () => {
       if (cmd === 'session_log_snapshot') return [];
       return undefined;
     });
-    render(<TelnetP2pRadioPanel onClose={() => {}} />);
+    renderPanel();
     fireEvent.change(screen.getByTestId('p2p-peer-callsign-input'), {
       target: { value: 'W7AUX' },
     });
@@ -178,7 +191,7 @@ describe('<TelnetP2pRadioPanel>', () => {
       if (cmd === 'session_log_snapshot') return [];
       return undefined;
     });
-    render(<TelnetP2pRadioPanel onClose={() => {}} />);
+    renderPanel();
     fireEvent.change(screen.getByTestId('p2p-peer-callsign-input'), {
       target: { value: 'W7AUX' },
     });
@@ -195,7 +208,7 @@ describe('<TelnetP2pRadioPanel>', () => {
 
   it('reads my_callsign and locator from config_read on mount', async () => {
     const core = await import('@tauri-apps/api/core');
-    render(<TelnetP2pRadioPanel onClose={() => {}} />);
+    renderPanel();
     await waitFor(() => {
       expect(core.invoke).toHaveBeenCalledWith('config_read');
     });
@@ -209,19 +222,19 @@ describe('<TelnetP2pRadioPanel>', () => {
       return undefined;
     });
     // Should not throw; panel renders with empty callsign/locator defaults.
-    render(<TelnetP2pRadioPanel onClose={() => {}} />);
+    renderPanel();
     expect(screen.getByTestId('p2p-host-input')).toBeInTheDocument();
   });
 
   // ── Session log section ───────────────────────────────────────────────────
 
   it('renders the Session log section', () => {
-    render(<TelnetP2pRadioPanel onClose={() => {}} />);
+    renderPanel();
     expect(screen.getByTestId('session-log-section')).toBeInTheDocument();
   });
 
   it('renders backend log lines that arrive on session_log:line', async () => {
-    render(<TelnetP2pRadioPanel onClose={() => {}} />);
+    renderPanel();
     await waitFor(() => expect(lastSessionLogHandler).not.toBeNull());
     act(() => {
       lastSessionLogHandler!({
@@ -242,7 +255,7 @@ describe('<TelnetP2pRadioPanel>', () => {
   // ── Connect / Stop actions ────────────────────────────────────────────────
 
   it('renders Connect and Stop actions', () => {
-    render(<TelnetP2pRadioPanel onClose={() => {}} />);
+    renderPanel();
     expect(screen.getByRole('button', { name: /Connect/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Stop/i })).toBeInTheDocument();
   });
@@ -270,7 +283,7 @@ describe('<TelnetP2pRadioPanel>', () => {
         return undefined;
       },
     );
-    render(<TelnetP2pRadioPanel onClose={() => {}} />);
+    renderPanel();
     await waitFor(() =>
       expect((core.invoke as ReturnType<typeof vi.fn>)).toHaveBeenCalledWith('config_read'),
     );
@@ -309,7 +322,7 @@ describe('<TelnetP2pRadioPanel>', () => {
         return undefined;
       },
     );
-    render(<TelnetP2pRadioPanel onClose={() => {}} />);
+    renderPanel();
     await waitFor(() =>
       expect((core.invoke as ReturnType<typeof vi.fn>)).toHaveBeenCalledWith('config_read'),
     );
@@ -321,7 +334,7 @@ describe('<TelnetP2pRadioPanel>', () => {
 
   it('clicking Stop fires telnet_p2p_abort', async () => {
     const { invoke } = await import('@tauri-apps/api/core');
-    render(<TelnetP2pRadioPanel onClose={() => {}} />);
+    renderPanel();
     fireEvent.click(screen.getByRole('button', { name: /Stop/i }));
     expect(invoke).toHaveBeenCalledWith('telnet_p2p_abort');
   });
@@ -335,7 +348,7 @@ describe('<TelnetP2pRadioPanel>', () => {
       if (cmd === 'telnet_p2p_connect') return { sent_count: 3, received_count: 1 };
       return undefined;
     });
-    render(<TelnetP2pRadioPanel onClose={() => {}} />);
+    renderPanel();
     await waitFor(() =>
       expect((core.invoke as ReturnType<typeof vi.fn>)).toHaveBeenCalledWith('config_read'),
     );
@@ -357,7 +370,7 @@ describe('<TelnetP2pRadioPanel>', () => {
       if (cmd === 'telnet_p2p_connect') throw new Error('Connection refused');
       return undefined;
     });
-    render(<TelnetP2pRadioPanel onClose={() => {}} />);
+    renderPanel();
     await waitFor(() =>
       expect((core.invoke as ReturnType<typeof vi.fn>)).toHaveBeenCalledWith('config_read'),
     );
@@ -373,12 +386,12 @@ describe('<TelnetP2pRadioPanel>', () => {
   // ── Header sub shows host:port ────────────────────────────────────────────
 
   it('header sub shows host:port with default values on mount', () => {
-    render(<TelnetP2pRadioPanel onClose={() => {}} />);
+    renderPanel();
     expect(screen.getByText('127.0.0.1:8772')).toBeInTheDocument();
   });
 
   it('header sub includes peer callsign when entered', async () => {
-    render(<TelnetP2pRadioPanel onClose={() => {}} />);
+    renderPanel();
     fireEvent.change(screen.getByTestId('p2p-peer-callsign-input'), {
       target: { value: 'W7AUX' },
     });
@@ -391,7 +404,7 @@ describe('<TelnetP2pRadioPanel>', () => {
 
   it('close button calls onClose', () => {
     const onClose = vi.fn();
-    render(<TelnetP2pRadioPanel onClose={onClose} />);
+    renderPanel({ onClose });
     fireEvent.click(screen.getByTestId('radio-panel-close'));
     expect(onClose).toHaveBeenCalledOnce();
   });

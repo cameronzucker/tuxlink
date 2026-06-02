@@ -44,6 +44,7 @@
 import { useEffect, useState } from 'react';
 import type { KeyboardEvent } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { useQueryClient } from '@tanstack/react-query';
 import { RadioPanel } from '../RadioPanel';
 import { SessionLogSection } from '../sections/SessionLogSection';
 import { useSessionLog } from '../sections/useSessionLog';
@@ -87,6 +88,7 @@ export function TelnetP2pRadioPanel({ onClose }: TelnetP2pRadioPanelProps) {
   const [result, setResult] = useState<DialResult | null>(null);
   const [connectError, setConnectError] = useState<string | null>(null);
   const { entries: logEntries, clear: clearLog } = useSessionLog();
+  const queryClient = useQueryClient();
 
   // Load my_callsign + locator from config on mount (same pattern as
   // TelnetRadioPanel's host/transport fetch — one call, cancelled on unmount).
@@ -186,6 +188,10 @@ export function TelnetP2pRadioPanel({ onClose }: TelnetP2pRadioPanelProps) {
         },
       });
       setResult(res);
+      // tuxlink-l55l: sent messages moved Outbox→Sent and received messages
+      // landed in Inbox during the exchange. Refresh both views so the
+      // operator sees them without waiting for the 10s refetch.
+      await queryClient.invalidateQueries({ queryKey: ['mailbox'] });
     } catch (e) {
       setConnectError(String(e));
     } finally {
