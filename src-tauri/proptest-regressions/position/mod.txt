@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc f0d1afd4af94d8056bfdf20144057279b9190e1af3891283fa6f8fb69d6e5476 # shrinks to source = Gps, gps_state = LocalUiOnly, config_grid_opt = Some("EM75"), apply_fix = false
