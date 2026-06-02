@@ -616,25 +616,6 @@
 }
 
 /* ============================================================================
- * Packet connection state dot (sidebar Connections section) — Task 10
- * ============================================================================ */
-.layout-b .sidebar .conn-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--text-faint);
-  flex: 0 0 auto;
-  display: inline-block;
-  margin-right: 4px;
-}
-.layout-b .sidebar .conn-dot.off { background: var(--text-faint); }
-.layout-b .sidebar .conn-dot.listening,
-.layout-b .sidebar .conn-dot.connected {
-  background: var(--success);
-  box-shadow: 0 0 6px rgba(93, 214, 160, 0.5);
-}
-
-/* ============================================================================
  * Session-type accordion protocol rows — indented under the session header.
  * ========================================================================== */
 .layout-b .sidebar .nav-item.proto {

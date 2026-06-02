@@ -14,9 +14,6 @@ import type { SessionTypeId, ConnectionKey } from '../connections/sessionTypes';
 // Re-export ConnectionKey so existing importers (AppShell.tsx, etc.) keep resolving.
 export type { ConnectionKey } from '../connections/sessionTypes';
 
-/** Packet transport dot state for the sidebar indicator. */
-export type PacketDotState = 'off' | 'listening' | 'connected';
-
 interface MailboxItem {
   id?: MailboxFolder; // present → a functional folder
   label: string;
@@ -42,8 +39,6 @@ export interface FolderSidebarProps {
   selectedConnection?: ConnectionKey | null;
   /** Select a connection (opens its reading-pane panel). */
   onSelectConnection?: (conn: ConnectionKey) => void;
-  /** Packet transport dot state (green = listening/connected). */
-  packetState?: PacketDotState;
 }
 
 export function FolderSidebar({
@@ -52,7 +47,6 @@ export function FolderSidebar({
   counts = {},
   selectedConnection = null,
   onSelectConnection,
-  packetState = 'off',
 }: FolderSidebarProps) {
   const [expanded, setExpanded] = useState<Partial<Record<SessionTypeId, boolean>>>({});
 
@@ -122,8 +116,11 @@ export function FolderSidebar({
               const isActive =
                 selectedConnection?.sessionType === s.id &&
                 selectedConnection?.protocol === p.id;
-              const isPacketRow = p.id === 'packet';
 
+              // tuxlink-bcgj: the Packet row used to carry a transport-state
+              // dot (off/listening/connected). It duplicated the DashboardRibbon's
+              // connection chip + made the sidebar asymmetric (no other
+              // transport had a dot). Removed for visual cohesion.
               return (
                 <button
                   key={p.id}
@@ -136,14 +133,6 @@ export function FolderSidebar({
                   aria-current={isActive ? 'true' : undefined}
                   onClick={() => onSelectConnection?.({ sessionType: s.id, protocol: p.id })}
                 >
-                  {/* Transport-state dot for the active packet row */}
-                  {isPacketRow && (
-                    <span
-                      className={`conn-dot ${packetState}`}
-                      data-testid="conn-packet-dot"
-                      aria-hidden="true"
-                    />
-                  )}
                   {p.label}
                   {!p.built && <span className="v01-badge">soon</span>}
                 </button>

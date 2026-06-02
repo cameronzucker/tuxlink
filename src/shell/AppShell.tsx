@@ -460,7 +460,6 @@ export function AppShell() {
           counts={counts}
           selectedConnection={selectedConnection}
           onSelectConnection={onSelectConnection}
-          packetState={packetUi.connected ? 'connected' : packetUi.listening ? 'listening' : 'off'}
         />
         <MessageList
           folder={selectedFolder}
