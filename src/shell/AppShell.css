@@ -315,53 +315,130 @@
   outline-offset: 2px;
   border-radius: 2px;
 }
-/* Source chip: MANUAL (amber/warn) and GPS (outlined/neutral) */
-.layout-b .dashboard .dash-source-chip {
+/* ============================================================================
+ * Source segmented control (tuxlink-z5pz, 2026-06-02): radio-group with two
+ * <button role="radio"> segments — GPS + MANUAL — rendered side-by-side as a
+ * connected button-group. Replaces the T12 single-chip pattern.
+ *
+ * Design tokens reused from the prior .dash-source-chip styles:
+ *   - .manual selected fill = --accent / --accent-soft (amber/warn)
+ *   - .gps selected fill (with fresh fix) = --success (green) +
+ *     rgba(93, 214, 160, *) translucent green
+ *   - .gps selected-but-no-fix (State 4/5) = dimmed via opacity + neutral hue
+ *   - Outlined (unselected) segments use --border-strong
+ *
+ * The control is intentionally compact — natural content width, no
+ * stretch-to-row (feedback_no_stretched_full_width_ui).
+ * ========================================================================== */
+.layout-b .dashboard .dash-source-segments {
+  display: inline-flex;
+  /* Connect the two segments — shared border between them. The container
+     carries the outer border-radius; each segment carries its own border. */
+  border-radius: 3px;
+  /* Use a small font-size to match the prior chip footprint (~22px tall). */
+  line-height: 1;
+}
+.layout-b .dashboard .dash-source-segment {
   font-family: var(--sans);
   font-size: 9px;
   font-weight: 700;
   letter-spacing: 0.07em;
   text-transform: uppercase;
-  border-radius: 3px;
-  padding: 1px 5px;
+  padding: 1px 6px;
   line-height: 1.5;
   white-space: nowrap;
-}
-.layout-b .dashboard .dash-source-chip.manual {
-  /* Amber/warn tone — mirrors .dash-status-dot.connecting accent */
-  color: var(--accent);
-  background: var(--accent-soft);
-  border: 1px solid rgba(245, 159, 60, 0.3);
-}
-.layout-b .dashboard .dash-source-chip.gps {
-  /* GPS selected but no live fix: outlined neutral (acquiring / no-fix). */
+  cursor: pointer;
+  /* Outlined defaults (the unselected look) — neutral text on transparent
+     background with a single-pixel border. Matches the T12 outlined GPS
+     chip's visual weight. */
   color: var(--text-faint);
   background: transparent;
   border: 1px solid var(--border-strong);
+  /* Join the segments: GPS on the left rounds the left edge, MANUAL on the
+     right rounds the right edge, and they share the middle border. */
 }
-.layout-b .dashboard .dash-source-chip.gps.locked {
-  /* GPS is the active source AND a fix is locked → green (success), so it reads
-     as live/working rather than greyed-out-as-if-disabled (tuxlink-39b). */
+.layout-b .dashboard .dash-source-segment.gps {
+  border-top-left-radius: 3px;
+  border-bottom-left-radius: 3px;
+  border-right: none; /* Shared border with MANUAL — MANUAL carries it */
+}
+.layout-b .dashboard .dash-source-segment.manual {
+  border-top-right-radius: 3px;
+  border-bottom-right-radius: 3px;
+}
+/* Selected MANUAL: amber/warn fill — mirrors .dash-status-dot.connecting */
+.layout-b .dashboard .dash-source-segment.manual.selected {
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-color: rgba(245, 159, 60, 0.4);
+}
+/* Selected GPS with a fresh fix (State 3): green/success fill — reads as
+   ACTIVE (live/working) rather than greyed-out-as-if-disabled (tuxlink-39b
+   lineage). */
+.layout-b .dashboard .dash-source-segment.gps.selected.gps-ready {
   color: var(--success);
   background: rgba(93, 214, 160, 0.12);
   border-color: rgba(93, 214, 160, 0.4);
 }
-/* GPS-ready affordance: a subtle inline prompt to switch while Manual */
-.layout-b .dashboard .dash-use-gps {
+/* Selected GPS WITHOUT a fresh fix (State 4/5): dimmed — selected, but the
+   visual signal is muted to differentiate from State 3. This is the
+   .dash-source-segment.gps.selected:not(.gps-ready) selector chain that
+   spec §2.4 names as the State 4/5 differentiation cue. */
+.layout-b .dashboard .dash-source-segment.gps.selected:not(.gps-ready) {
+  color: var(--text-faint);
+  background: rgba(93, 214, 160, 0.05);
+  border-color: var(--border-strong);
+  opacity: 0.75;
+}
+/* In-segment GPS-ready indicator (Manual + fresh fix): the ' ●' suffix on
+   the GPS segment's text reads as available/switch-hint. The outlined GPS
+   segment with the gps-ready class but NOT selected (i.e. source = Manual
+   && gpsReady) gets a slight success-tint hint to reinforce "GPS is
+   currently available." */
+.layout-b .dashboard .dash-source-segment.gps.gps-ready:not(.selected) {
+  color: var(--success);
+  border-color: rgba(93, 214, 160, 0.3);
+}
+/* Hover state: discoverability cue for the unselected segment. The selected
+   segment doesn't change on hover (clicking it is a no-op). */
+.layout-b .dashboard .dash-source-segment:not(.selected):hover {
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text);
+}
+.layout-b .dashboard .dash-source-segment:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  /* Bring the focus ring above the shared border between segments. */
+  z-index: 1;
+  position: relative;
+}
+
+/* State 4 / State 5 secondary affordances: status text + Set manually button.
+   Compact inline weight to keep the row from wrapping. */
+.layout-b .dashboard .dash-gps-no-fix-status {
   font-family: var(--sans);
   font-size: 10px;
-  color: var(--success);
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+.layout-b .dashboard .dash-set-manually {
+  font-family: var(--sans);
+  font-size: 10px;
+  color: var(--accent);
   background: none;
   border: none;
   padding: 0 2px;
   margin: 0;
   cursor: pointer;
   white-space: nowrap;
-  opacity: 0.75;
 }
-.layout-b .dashboard .dash-use-gps:hover {
-  opacity: 1;
+.layout-b .dashboard .dash-set-manually:hover {
   text-decoration: underline;
+}
+.layout-b .dashboard .dash-set-manually:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 2px;
 }
 /* Inline edit state: input + error message */
 .layout-b .dashboard .dash-grid-edit-container {
