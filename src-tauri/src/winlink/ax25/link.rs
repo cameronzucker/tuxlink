@@ -10,7 +10,8 @@
 use serde::{Deserialize, Serialize};
 use std::io::{Read, Write};
 use std::net::TcpStream;
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 /// How long a single read on the KISS link may block before returning (a short
@@ -53,128 +54,50 @@ pub enum KissLinkConfig {
 pub trait ByteLink: Read + Write + Send {}
 impl<T: Read + Write + Send> ByteLink for T {}
 
-/// Operator-side handle that disarms a live KISS link at the OS layer (tuxlink-0ja).
-///
-/// The orchestration layer stashes one of these in its abort slot at connect time
-/// (mirroring how telnet stashes a try-cloned `TcpStream`); the operator's Cancel
-/// invokes `abort()`, which performs the strongest disarm the underlying transport
-/// supports:
-///
-/// * `TcpStream` / `RfcommAbort` (socket transports) — `shutdown(SHUT_RDWR)` on a
-///   try-cloned fd from another thread DETERMINISTICALLY interrupts an in-flight
-///   read or write at the kernel layer. This is the same mechanism the existing
-///   TCP-KISS arm uses; `RfcommAbort` ports it to the Bluetooth path.
-/// * `SerialAbort` — serial ports have no socket-shutdown equivalent, so abort drops
-///   the underlying `serialport` handle (sets the shared slot to `None`). All
-///   subsequent reads/writes through `DisarmableLink` see the empty slot and return
-///   `ConnectionAborted` synchronously; an in-flight write that holds the slot lock
-///   completes first (bounded — ≤ one ~20-byte SABM at 1200 baud ≈ 166 ms — and the
-///   datalink connect loop is hard-capped at ≤ 2 SABMs). This closes the
-///   check-then-write TOCTOU the previous flag-based gate left open.
-pub trait LinkAbort: Send + Sync {
-    fn abort(&self);
+/// Wraps a `ByteLink` so a shared abort flag can unwind a blocked read. A serial
+/// KISS link (unlike TCP) has no socket to shut down, so `answer()`/`connect()`
+/// can't be aborted by closing the pipe; instead a Stop sets the flag, and the
+/// next `read` returns `ConnectionAborted` — which `recv_frame` already maps to an
+/// abort, unwinding the poll loop. The serial read's short poll timeout
+/// (`LINK_POLL_TIMEOUT`) bounds how soon the flag is observed (tuxlink-nj1).
+struct AbortableByteLink {
+    inner: Box<dyn ByteLink>,
+    abort: Arc<AtomicBool>,
 }
 
-impl LinkAbort for TcpStream {
-    fn abort(&self) {
-        let _ = self.shutdown(std::net::Shutdown::Both);
-    }
-}
-
-/// Shared slot for `DisarmableLink` + `SerialAbort`. `None` means the operator has
-/// aborted; reads and writes through the link observe that synchronously and
-/// return `ConnectionAborted` — the kernel-shutdown equivalent for transports that
-/// have no socket to `shutdown()`.
-type DisarmSlot = Arc<Mutex<Option<Box<dyn ByteLink>>>>;
-
-/// A `ByteLink` whose inner transport can be torn down from another thread by
-/// clearing the shared slot (serial / `/dev/rfcommN` paths — see `LinkAbort`).
-struct DisarmableLink {
-    slot: DisarmSlot,
-}
-
-impl Read for DisarmableLink {
+impl Read for AbortableByteLink {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        let mut guard = self
-            .slot
-            .lock()
-            .map_err(|_| std::io::Error::other("disarm slot poisoned"))?;
-        match guard.as_mut() {
-            None => Err(std::io::Error::new(
+        if self.abort.load(Ordering::SeqCst) {
+            return Err(std::io::Error::new(
                 std::io::ErrorKind::ConnectionAborted,
                 "packet listen aborted",
-            )),
-            Some(inner) => inner.read(buf),
+            ));
         }
+        self.inner.read(buf)
     }
 }
 
-impl Write for DisarmableLink {
+impl Write for AbortableByteLink {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        // tuxlink-2y4 / tuxlink-0ja: gate every transmit on the disarm slot. The lock
-        // makes the slot check + `inner.write` happen-before-atomic w.r.t. an aborting
-        // thread setting the slot to `None`, so the previous AbortableByteLink TOCTOU
-        // (check-then-write — a Cancel landing between the flag load and `inner.write`
-        // could still leak one in-flight SABM) is closed for the SUBSEQUENT-write case.
-        // The IN-FLIGHT case (Cancel arriving while a write call holds the lock)
-        // remains bounded: the lock-blocked abort waits ≤ one short serial write
-        // (~166 ms for a 20-byte SABM at 1200 baud); the datalink connect loop is
-        // hard-capped at ≤ 2 SABMs total. Bluetooth gets the strict in-flight
-        // interrupt via the socket-shutdown path (RfcommAbort), not this slot.
-        let mut guard = self
-            .slot
-            .lock()
-            .map_err(|_| std::io::Error::other("disarm slot poisoned"))?;
-        match guard.as_mut() {
-            None => Err(std::io::Error::new(
+        // tuxlink-2y4 RADIO-1: gate every transmit on the abort flag, mirroring read().
+        // connect()'s push_kiss_params + each SABM go through here; a Cancel set before
+        // the write means the radio is NEVER keyed. The 2026-05-22 incident keyed for
+        // ~110 s because only read() checked the flag — write() forwarded unconditionally.
+        // RESIDUAL (tuxlink-0ja): this is check-then-write — a Cancel landing between the
+        // load and `inner.write` can still leak ONE in-flight frame. Bounded (the connect
+        // loop is hard-capped at ≤2 SABMs), not a runaway; the complete fix disarms the
+        // transport on abort. Until then this flag gate is the load-bearing stop.
+        if self.abort.load(Ordering::SeqCst) {
+            return Err(std::io::Error::new(
                 std::io::ErrorKind::ConnectionAborted,
                 "packet transmit aborted",
-            )),
-            Some(inner) => inner.write(buf),
+            ));
         }
+        self.inner.write(buf)
     }
     fn flush(&mut self) -> std::io::Result<()> {
-        let mut guard = self
-            .slot
-            .lock()
-            .map_err(|_| std::io::Error::other("disarm slot poisoned"))?;
-        match guard.as_mut() {
-            None => Err(std::io::Error::new(
-                std::io::ErrorKind::ConnectionAborted,
-                "packet flush aborted",
-            )),
-            Some(inner) => inner.flush(),
-        }
+        self.inner.flush()
     }
-}
-
-/// `LinkAbort` for a serial / RFCOMM-TTY transport: dropping the inner port (by
-/// setting the shared slot to `None`) closes the underlying fd. The next read or
-/// write through the paired `DisarmableLink` sees the empty slot and returns
-/// `ConnectionAborted`.
-struct SerialAbort {
-    slot: DisarmSlot,
-}
-
-impl LinkAbort for SerialAbort {
-    fn abort(&self) {
-        // Lock-poisoned is fine — the next caller will recover, and the slot is
-        // already in a state where it's about to be cleared anyway. Use `Ok` so a
-        // poisoned lock doesn't strand the abort.
-        if let Ok(mut guard) = self.slot.lock() {
-            *guard = None;
-        }
-    }
-}
-
-/// Wrap an inner `ByteLink` so it can be disarmed from another thread (the serial
-/// pattern). Returns the wrapper (hand to `datalink::connect`/`answer`) and the
-/// `LinkAbort` handle (stash in the orchestration's abort slot).
-fn disarmable(inner: Box<dyn ByteLink>) -> (DisarmableLink, SerialAbort) {
-    let slot: DisarmSlot = Arc::new(Mutex::new(Some(inner)));
-    let link = DisarmableLink { slot: slot.clone() };
-    let abort = SerialAbort { slot };
-    (link, abort)
 }
 
 /// Open a KISS byte-pipe per `cfg`. The returned `Box<dyn ByteLink>` is handed to
@@ -188,72 +111,62 @@ pub fn connect_link(cfg: &KissLinkConfig) -> std::io::Result<Box<dyn ByteLink>> 
             Ok(Box::new(stream))
         }
         KissLinkConfig::Serial { .. } => connect_serial(cfg),
-        KissLinkConfig::Bluetooth { mac } => Ok(Box::new(connect_bluetooth(mac)?)),
+        KissLinkConfig::Bluetooth { mac } => connect_bluetooth(mac),
     }
 }
 
 /// Open a Bluetooth RFCOMM **socket** to `mac` (tuxlink-nx2). Resolves the SPP
 /// channel from SDP at connect time (it rotates), then connects an
 /// `AF_BLUETOOTH`/`BTPROTO_RFCOMM` socket — no `rfcomm bind`, no root, no TTY.
-fn connect_bluetooth(mac: &str) -> std::io::Result<crate::winlink::ax25::rfcomm::RfcommSocket> {
+fn connect_bluetooth(mac: &str) -> std::io::Result<Box<dyn ByteLink>> {
     let channel = crate::winlink::ax25::rfcomm::resolve_spp_channel(mac);
-    crate::winlink::ax25::rfcomm::RfcommSocket::connect(
+    let sock = crate::winlink::ax25::rfcomm::RfcommSocket::connect(
         mac,
         channel,
         LINK_POLL_TIMEOUT,
         LINK_WRITE_TIMEOUT,
-    )
+    )?;
+    Ok(Box::new(sock))
 }
 
-/// Like `connect_link`, but wires the orchestration layer's abort handle into the
-/// link so a blocked connect/answer can be Stopped at the OS layer (tuxlink-0ja).
-///
-/// Every transport now yields a `Box<dyn LinkAbort>` — the orchestration's abort
-/// slot stashes it and calls `.abort()` on Cancel:
-///
-/// * TCP / RFCOMM socket — `shutdown(SHUT_RDWR)` on a try-cloned fd from another
-///   thread interrupts an in-flight read/write at the kernel layer (the strongest
-///   disarm available, mirroring what telnet already does).
-/// * Serial — drops the held `serialport` handle (closes the underlying fd). The
-///   paired `DisarmableLink`'s next read/write sees the empty slot and returns
-///   `ConnectionAborted`. An in-flight write holding the slot lock completes first
-///   (bounded — see `DisarmableLink::write`).
+/// Like `connect_link`, but wires the orchestration layer's abort signal into the
+/// link so a blocked connect/answer can be Stopped. TCP yields a try_clone'd
+/// `TcpStream` whose `shutdown()` makes reads return 0 (the immediate fast path).
+/// Serial has no socket, so it wraps the link in `AbortableByteLink` keyed on the
+/// shared `abort` flag: setting the flag makes the next read return
+/// `ConnectionAborted`, unwinding the state machine (tuxlink-nj1) — so serial yields
+/// `None` for the socket handle, with abort delivered via the flag instead.
 pub fn connect_link_with_abort(
     cfg: &KissLinkConfig,
-) -> std::io::Result<(Box<dyn ByteLink>, Box<dyn LinkAbort>)> {
+    abort: Arc<AtomicBool>,
+) -> std::io::Result<(Box<dyn ByteLink>, Option<std::net::TcpStream>)> {
     match cfg {
         KissLinkConfig::Tcp { host, port } => {
             let stream = TcpStream::connect((host.as_str(), *port))?;
             stream.set_read_timeout(Some(LINK_POLL_TIMEOUT)).ok();
             stream.set_write_timeout(Some(LINK_WRITE_TIMEOUT)).ok();
-            // A `shutdown()` on the clone makes the boxed original's `read` return 0
-            // (FIN), which `recv_frame` maps to ConnectionAborted, unwinding a blocked
-            // answer()/connect(). It also makes a subsequent `write` fail at the kernel
-            // — the strict in-flight disarm.
+            // TCP keeps the immediate socket-shutdown fast path: a `shutdown()` on the
+            // clone makes the boxed original's `read` return 0 (FIN), which `recv_frame`
+            // maps to ConnectionAborted, unwinding a blocked answer()/connect(). The
+            // `abort` flag is unused on this arm (the FIN, not the flag, does the work).
             let abort_sock = stream.try_clone()?;
-            Ok((Box::new(stream), Box::new(abort_sock)))
+            Ok((Box::new(stream), Some(abort_sock)))
         }
-        // Serial has no socket-shutdown equivalent (the `serialport` crate exposes no
-        // `try_clone`+shutdown analog), so route abort through the slot pattern
-        // (tuxlink-0ja): clearing the shared `Option<Box<dyn ByteLink>>` from
-        // SerialAbort::abort() makes the next DisarmableLink read/write fail with
-        // ConnectionAborted, unwinding a blocked answer()/connect(). Strictly better
-        // than the previous AbortableByteLink check-then-write flag because the slot
-        // check + `inner.write` are atomic under the lock.
+        // Serial has no try_clone/shutdown equivalent, so route abort through the
+        // shared flag (tuxlink-nj1): AbortableByteLink turns a set flag into a
+        // ConnectionAborted read on the next poll, unwinding a blocked answer()/
+        // connect(). No TCP socket handle to return.
         KissLinkConfig::Serial { .. } => {
             let inner = connect_serial(cfg)?;
-            let (link, abort) = disarmable(inner);
-            Ok((Box::new(link), Box::new(abort)))
+            Ok((Box::new(AbortableByteLink { inner, abort }), None))
         }
-        // RFCOMM socket — same family as TCP (real socket fd), so use the same
-        // `shutdown(SHUT_RDWR)` pattern: try_clone the fd, hand the original back as
-        // the ByteLink, return RfcommAbort holding the clone (tuxlink-0ja). Strict
-        // in-flight disarm — the previous flag-based AbortableByteLink wrapper here
-        // had the same TOCTOU class as the serial path.
+        // The RFCOMM socket has no try_clone/shutdown wired here, so (like Serial)
+        // abort is delivered via the shared flag: the socket's SO_RCVTIMEO
+        // (LINK_POLL_TIMEOUT) bounds how soon AbortableByteLink turns a set flag into
+        // a ConnectionAborted read, unwinding a blocked answer()/connect().
         KissLinkConfig::Bluetooth { mac } => {
-            let sock = connect_bluetooth(mac)?;
-            let abort = sock.try_clone_abort()?;
-            Ok((Box::new(sock), Box::new(abort)))
+            let inner = connect_bluetooth(mac)?;
+            Ok((Box::new(AbortableByteLink { inner, abort }), None))
         }
     }
 }
@@ -279,15 +192,14 @@ mod link_serial_tests {
         );
     }
 
-    // tuxlink-0ja: invoking the SerialAbort handle must make the DisarmableLink's
-    // next write FAIL WITHOUT forwarding to the inner link. The previous
-    // AbortableByteLink check-then-write flag-gate left a sub-microsecond window
-    // where one in-flight SABM could still key the radio after Cancel; the slot
-    // pattern closes that. No hardware, no RF.
+    // tuxlink-2y4 RADIO-1: a set abort flag must make write() return ConnectionAborted
+    // WITHOUT forwarding to the inner link — so connect()'s SABM + push_kiss_params
+    // never key the radio after Cancel. read() already gated; write() did NOT — the
+    // runaway-keying hole (the 2026-05-22 ~110 s incident). No hardware, no RF.
     #[test]
-    fn disarmable_link_write_refuses_to_key_after_abort() {
-        use std::sync::Mutex as StdMutex;
-        struct Recording(Arc<StdMutex<Vec<u8>>>);
+    fn abortable_link_write_refuses_to_key_after_abort() {
+        use std::sync::Mutex;
+        struct Recording(Arc<Mutex<Vec<u8>>>);
         impl Read for Recording {
             fn read(&mut self, _b: &mut [u8]) -> std::io::Result<usize> {
                 Ok(0)
@@ -302,11 +214,11 @@ mod link_serial_tests {
                 Ok(())
             }
         }
-        let written = Arc::new(StdMutex::new(Vec::new()));
-        let inner: Box<dyn ByteLink> = Box::new(Recording(written.clone()));
-        let (mut link, abort) = disarmable(inner);
-        // Disarm before any write — the slot is now empty.
-        abort.abort();
+        let written = Arc::new(Mutex::new(Vec::new()));
+        let mut link = AbortableByteLink {
+            inner: Box::new(Recording(written.clone())),
+            abort: Arc::new(AtomicBool::new(true)), // already cancelled
+        };
         // Both write() and write_all() (what send_frame/push_kiss_params use) must fail.
         assert_eq!(
             link.write(b"SABM").unwrap_err().kind(),
@@ -317,70 +229,6 @@ mod link_serial_tests {
             written.lock().unwrap().is_empty(),
             "no bytes may reach the radio after abort"
         );
-    }
-
-    // tuxlink-0ja: before abort, DisarmableLink is fully transparent — bytes flow
-    // both ways. After abort, the slot is permanently empty: every subsequent
-    // operation fails with ConnectionAborted. There is no "rearm" path; the disarm
-    // is one-shot per connection (the orchestration drops the link+abort at
-    // exchange end and opens fresh handles for the next connect).
-    #[test]
-    fn disarmable_link_passes_bytes_until_aborted_then_stays_disarmed() {
-        use std::sync::Mutex as StdMutex;
-        struct Recording {
-            buf: Arc<StdMutex<Vec<u8>>>,
-            to_read: Arc<StdMutex<Vec<u8>>>,
-        }
-        impl Read for Recording {
-            fn read(&mut self, b: &mut [u8]) -> std::io::Result<usize> {
-                let mut src = self.to_read.lock().unwrap();
-                let n = src.len().min(b.len());
-                b[..n].copy_from_slice(&src[..n]);
-                src.drain(..n);
-                Ok(n)
-            }
-        }
-        impl Write for Recording {
-            fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
-                self.buf.lock().unwrap().extend_from_slice(b);
-                Ok(b.len())
-            }
-            fn flush(&mut self) -> std::io::Result<()> {
-                Ok(())
-            }
-        }
-        let written = Arc::new(StdMutex::new(Vec::new()));
-        let to_read = Arc::new(StdMutex::new(vec![0xC0u8, 0x42, 0xC0]));
-        let inner: Box<dyn ByteLink> = Box::new(Recording {
-            buf: written.clone(),
-            to_read: to_read.clone(),
-        });
-        let (mut link, abort) = disarmable(inner);
-
-        // Pre-abort: write passes through, read passes through.
-        link.write_all(b"hello").unwrap();
-        assert_eq!(written.lock().unwrap().as_slice(), b"hello");
-        let mut buf = [0u8; 3];
-        assert_eq!(link.read(&mut buf).unwrap(), 3);
-        assert_eq!(buf, [0xC0, 0x42, 0xC0]);
-
-        // Disarm.
-        abort.abort();
-
-        // Post-abort: writes and reads BOTH fail, even after the first failure (no
-        // rearm — the slot is permanently empty).
-        for _ in 0..3 {
-            assert_eq!(
-                link.write(b"x").unwrap_err().kind(),
-                std::io::ErrorKind::ConnectionAborted
-            );
-            assert_eq!(
-                link.read(&mut buf).unwrap_err().kind(),
-                std::io::ErrorKind::ConnectionAborted
-            );
-        }
-        // And no bytes leaked past the first hello.
-        assert_eq!(written.lock().unwrap().as_slice(), b"hello");
     }
 }
 
@@ -448,23 +296,28 @@ mod link_tcp_tests {
     }
 
     #[test]
-    fn connect_link_with_abort_tcp_arm_disarms_at_the_kernel() {
+    fn connect_link_with_abort_yields_a_tcp_abort_handle_that_closes_the_link() {
         // A loopback KISS modem stand-in that holds the connection open until the
         // client side is shut down (no RF, 127.0.0.1 only).
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
         let server = thread::spawn(move || {
             let (mut sock, _) = listener.accept().unwrap();
+            // Block until the peer's FIN arrives, then return.
             let mut sink = Vec::new();
             let _ = sock.read_to_end(&mut sink);
         });
 
         let cfg = KissLinkConfig::Tcp { host: addr.ip().to_string(), port: addr.port() };
-        let (mut link, abort) = connect_link_with_abort(&cfg).unwrap();
+        let (mut link, abort) = connect_link_with_abort(&cfg, Arc::new(AtomicBool::new(false))).unwrap();
+        // TCP must yield Some(_) abort handle.
+        let abort = abort.expect("TCP arm must yield a Some(TcpStream) abort handle");
 
+        // Shutting the returned clone makes the boxed original's read return 0 (FIN).
+        // Use a longer read timeout on the original so the post-shutdown read returns 0
+        // (FIN) rather than the short poll-timeout TimedOut.
         link.write_all(&[0xC0]).unwrap(); // ensure the link is live before aborting
-        abort.abort(); // LinkAbort — under the hood: shutdown(SHUT_RDWR) on the cloned fd
-
+        abort.shutdown(std::net::Shutdown::Both).unwrap();
         // Read until we observe a 0-byte read (the FIN), tolerating any interim
         // timeouts from the short LINK_POLL_TIMEOUT.
         let mut buf = [0u8; 8];
@@ -497,16 +350,36 @@ mod link_tcp_tests {
     #[test]
     fn connect_link_with_abort_serial_open_errors_cleanly() {
         // Serial arm: a missing device path still errors cleanly (no None panic).
+        // (When it DOES open, the abort handle is None — a clean serial abort is a
+        // follow-up; here we only assert the open-error path matches connect_link.)
         let cfg = KissLinkConfig::Serial {
             device: "/dev/tuxlink-no-such-device".into(),
             baud: 9600,
         };
-        let err = connect_link_with_abort(&cfg)
+        let err = connect_link_with_abort(&cfg, Arc::new(AtomicBool::new(false)))
             .err()
             .expect("expected a clean open error, got Ok");
         assert!(
             matches!(err.kind(), std::io::ErrorKind::NotFound | std::io::ErrorKind::Other),
             "expected a clean open error, got {err:?}"
         );
+    }
+
+    #[test]
+    fn abortable_link_read_returns_connectionaborted_once_the_flag_is_set() {
+        // tuxlink-nj1: a serial KISS link has no socket to shut down, so a Stop
+        // sets a shared flag that AbortableByteLink turns into a ConnectionAborted
+        // read — which recv_frame already maps to "abort", unwinding a blocked
+        // answer()/connect() poll loop. Before the flag, reads pass through.
+        let flag = Arc::new(AtomicBool::new(false));
+        let inner: Box<dyn ByteLink> = Box::new(std::io::Cursor::new(vec![0xC0u8, 0x00, 0x42, 0xC0]));
+        let mut link = AbortableByteLink { inner, abort: flag.clone() };
+        let mut buf = [0u8; 4];
+        assert_eq!(link.read(&mut buf).unwrap(), 4, "reads pass through before Stop");
+        flag.store(true, Ordering::SeqCst);
+        let err = link
+            .read(&mut buf)
+            .expect_err("after Stop, read must abort (not EOF, not inner data)");
+        assert_eq!(err.kind(), std::io::ErrorKind::ConnectionAborted);
     }
 }
