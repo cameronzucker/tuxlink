@@ -4,6 +4,13 @@ All notable changes to Tuxlink are documented here.
 
 This project adheres to [Semantic Versioning](https://semver.org) with project-specific rules described in [VERSIONING.md](VERSIONING.md). Entries from `v0.0.2` onward are generated automatically by [`release-please`](https://github.com/googleapis/release-please) from [Conventional Commits](https://www.conventionalcommits.org).
 
+## [0.15.1](https://github.com/cameronzucker/tuxlink/compare/v0.15.0...v0.15.1) (2026-06-02)
+
+
+### Bug Fixes
+
+* **modem/vara:** drop platformBlocked from onStartClick handler — was no-op-ing Start on aarch64 (tuxlink-poh6) ([70bb12f](https://github.com/cameronzucker/tuxlink/commit/70bb12f3420b724b3611544fd3680eb04c8316c9))
+
 ## [0.15.0](https://github.com/cameronzucker/tuxlink/compare/v0.14.1...v0.15.0) (2026-06-02)
 
 
