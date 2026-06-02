@@ -72,7 +72,7 @@ function mapVaraStateToPanelState(s: VaraStatusDto['state']): RadioPanelState {
 }
 
 export function VaraRadioPanel({ mode, onClose }: VaraRadioPanelProps) {
-  const { config, setConfig, loading } = useVaraConfig();
+  const { config, setConfig } = useVaraConfig();
   const [status, setStatus] = useState<VaraStatusDto>({
     state: 'closed',
     lastError: null,
@@ -251,7 +251,7 @@ export function VaraRadioPanel({ mode, onClose }: VaraRadioPanelProps) {
             autoCapitalize="off"
             autoCorrect="off"
             placeholder="127.0.0.1"
-            disabled={loading || isOpen}
+            disabled={isOpen}
             onChange={(e) => setHostInput(e.target.value)}
             onBlur={commitHost}
           />
@@ -268,7 +268,7 @@ export function VaraRadioPanel({ mode, onClose }: VaraRadioPanelProps) {
             autoCapitalize="off"
             autoCorrect="off"
             placeholder="8300"
-            disabled={loading || isOpen}
+            disabled={isOpen}
             onChange={(e) => setCmdPortInput(e.target.value)}
             onBlur={() => commitPort(cmdPortInput, 'cmd_port', setCmdPortInput)}
             onKeyDown={onPortKey}
@@ -286,7 +286,7 @@ export function VaraRadioPanel({ mode, onClose }: VaraRadioPanelProps) {
             autoCapitalize="off"
             autoCorrect="off"
             placeholder="8301"
-            disabled={loading || isOpen}
+            disabled={isOpen}
             onChange={(e) => setDataPortInput(e.target.value)}
             onBlur={() => commitPort(dataPortInput, 'data_port', setDataPortInput)}
             onKeyDown={onPortKey}
@@ -298,7 +298,7 @@ export function VaraRadioPanel({ mode, onClose }: VaraRadioPanelProps) {
             className="radio-panel-input"
             data-testid="vara-bandwidth-select"
             value={config.bandwidth_hz ?? ''}
-            disabled={loading || isOpen}
+            disabled={isOpen}
             onChange={onBandwidthChange}
           >
             {BANDWIDTH_OPTIONS.map((opt) => (
@@ -329,7 +329,7 @@ export function VaraRadioPanel({ mode, onClose }: VaraRadioPanelProps) {
           type="button"
           className="radio-panel-btn radio-panel-btn-primary"
           data-testid="vara-start-btn"
-          disabled={busy || loading || isOpen}
+          disabled={busy || isOpen}
           onClick={onStartClick}
           title={
             isOpen
