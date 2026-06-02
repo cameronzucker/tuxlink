@@ -4,6 +4,13 @@ All notable changes to Tuxlink are documented here.
 
 This project adheres to [Semantic Versioning](https://semver.org) with project-specific rules described in [VERSIONING.md](VERSIONING.md). Entries from `v0.0.2` onward are generated automatically by [`release-please`](https://github.com/googleapis/release-please) from [Conventional Commits](https://www.conventionalcommits.org).
 
+## [0.17.2](https://github.com/cameronzucker/tuxlink/compare/v0.17.1...v0.17.2) (2026-06-02)
+
+
+### Bug Fixes
+
+* **linux:** install both tuxlink.desktop + com.tuxlink.app.desktop variants (tuxlink-xcay) ([536de53](https://github.com/cameronzucker/tuxlink/commit/536de539d73bca66d7db606b70b9681325a83965))
+
 ## [0.17.1](https://github.com/cameronzucker/tuxlink/compare/v0.17.0...v0.17.1) (2026-06-02)
 
 
