@@ -238,65 +238,73 @@ describe('<MessageList>', () => {
 });
 
 describe('<MessageList> — sort wiring (tuxlink-2x0l)', () => {
-  it('omits the sort header when onSortModeChange is absent', () => {
+  it('omits the sort header when onSortStateChange is absent', () => {
     render(<MessageList folder="inbox" messages={[meta()]} selectedId={null} onSelect={() => {}} />);
     expect(screen.queryByTestId('rows-pane-header')).toBeNull();
-    expect(screen.queryByTestId('message-list-sort')).toBeNull();
+    expect(screen.queryByTestId('message-list-sort-trigger')).toBeNull();
   });
 
-  it('renders the sort header when onSortModeChange is provided', () => {
+  it('renders the sort header (icon trigger only — popup is lazily portaled)', () => {
     render(
       <MessageList
         folder="inbox"
         messages={[meta()]}
         selectedId={null}
         onSelect={() => {}}
-        sortMode="date-desc"
-        onSortModeChange={() => {}}
+        sortState={{ key: 'date', direction: 'desc' }}
+        onSortStateChange={() => {}}
       />,
     );
     expect(screen.getByTestId('rows-pane-header')).toBeInTheDocument();
-    expect(screen.getByTestId('message-list-sort')).toBeInTheDocument();
+    expect(screen.getByTestId('message-list-sort-trigger')).toBeInTheDocument();
+    // Popup not open yet.
+    expect(screen.queryByTestId('message-list-sort-menu')).toBeNull();
   });
 
-  it('user changing sort fires onSortModeChange with the picked mode', () => {
-    const onSortModeChange = vi.fn();
+  it('opening the popup and picking a key fires onSortStateChange with key+direction', () => {
+    const onSortStateChange = vi.fn();
     render(
       <MessageList
         folder="inbox"
         messages={[meta()]}
         selectedId={null}
         onSelect={() => {}}
-        sortMode="date-desc"
-        onSortModeChange={onSortModeChange}
+        sortState={{ key: 'date', direction: 'desc' }}
+        onSortStateChange={onSortStateChange}
       />,
     );
-    fireEvent.change(screen.getByTestId('message-list-sort-select'), { target: { value: 'sender-asc' } });
-    expect(onSortModeChange).toHaveBeenCalledWith('sender-asc');
+    fireEvent.pointerDown(screen.getByTestId('message-list-sort-trigger'), { button: 0 });
+    fireEvent.click(screen.getByTestId('message-list-sort-key-size'));
+    expect(onSortStateChange).toHaveBeenCalledWith({ key: 'size', direction: 'desc' });
   });
 
-  it('reflects sortMode through to the sort control (controlled-input contract)', () => {
+  it('reflects sortState through to the popup (controlled-input contract)', () => {
     const { rerender } = render(
       <MessageList
         folder="inbox"
         messages={[meta()]}
         selectedId={null}
         onSelect={() => {}}
-        sortMode="subject-asc"
-        onSortModeChange={() => {}}
+        sortState={{ key: 'subject', direction: 'asc' }}
+        onSortStateChange={() => {}}
       />,
     );
-    expect((screen.getByTestId('message-list-sort-select') as HTMLSelectElement).value).toBe('subject-asc');
+    fireEvent.pointerDown(screen.getByTestId('message-list-sort-trigger'), { button: 0 });
+    expect(screen.getByTestId('message-list-sort-key-subject')).toHaveAttribute('aria-checked', 'true');
+    // Rerender with a new sortState while the popup is still open. Radix's
+    // RadioGroup updates the checked indicator in-place from the controlled
+    // `value` prop without remounting the items.
     rerender(
       <MessageList
         folder="inbox"
         messages={[meta()]}
         selectedId={null}
         onSelect={() => {}}
-        sortMode="date-asc"
-        onSortModeChange={() => {}}
+        sortState={{ key: 'date', direction: 'asc' }}
+        onSortStateChange={() => {}}
       />,
     );
-    expect((screen.getByTestId('message-list-sort-select') as HTMLSelectElement).value).toBe('date-asc');
+    expect(screen.getByTestId('message-list-sort-key-date')).toHaveAttribute('aria-checked', 'true');
+    expect(screen.getByTestId('message-list-sort-key-subject')).toHaveAttribute('aria-checked', 'false');
   });
 });
