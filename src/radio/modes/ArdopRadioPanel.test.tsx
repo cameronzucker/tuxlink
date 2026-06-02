@@ -574,4 +574,195 @@ describe('<ArdopRadioPanel>', () => {
       expect(setCalls).toHaveLength(0);
     });
   });
+
+  // tuxlink-y7x7: ALSA + PTT pickers (capture/playback dropdown from
+  // ardop_list_audio_devices, PTT dropdown from packet_list_serial_devices).
+  // Restores the picker UX the placeholder-ghost text inputs only pretended
+  // to have. Manual-fallback inputs preserved under the old testIds so the
+  // existing Radio-section tests above still apply.
+  describe('Radio section device pickers', () => {
+    it('loads ALSA capture + playback lists on mount via ardop_list_audio_devices', async () => {
+      const core = await import('@tauri-apps/api/core');
+      const invokeMock = core.invoke as ReturnType<typeof vi.fn>;
+      invokeMock.mockImplementation(async (cmd: string) => {
+        if (cmd === 'config_get_ardop') {
+          return {
+            binary: 'ardopcf',
+            capture_device: '',
+            playback_device: '',
+            ptt_serial_path: null,
+            cmd_port: 8515,
+            bandwidth_hz: null,
+            webgui_port: null,
+          };
+        }
+        if (cmd === 'ardop_list_audio_devices') {
+          return {
+            captures: [
+              { name: 'plughw:CARD=Device,DEV=0', description: 'USB Audio CODEC', isHardware: true },
+              { name: 'default', description: 'Default Audio Device', isHardware: false },
+            ],
+            playbacks: [
+              { name: 'plughw:CARD=Device,DEV=0', description: 'USB Audio CODEC', isHardware: true },
+            ],
+          };
+        }
+        if (cmd === 'packet_list_serial_devices') return [];
+        if (cmd === 'session_log_snapshot') return [];
+        return undefined;
+      });
+      render(<ArdopRadioPanel onClose={() => {}} />);
+      await waitFor(() => {
+        expect(invokeMock).toHaveBeenCalledWith('ardop_list_audio_devices');
+      });
+      const captureSel = await screen.findByTestId('ardop-capture-select') as HTMLSelectElement;
+      const playbackSel = await screen.findByTestId('ardop-playback-select') as HTMLSelectElement;
+      const capValues = Array.from(captureSel.options).map((o) => o.value);
+      const playValues = Array.from(playbackSel.options).map((o) => o.value);
+      expect(capValues).toContain('plughw:CARD=Device,DEV=0');
+      expect(capValues).toContain('default');
+      expect(playValues).toContain('plughw:CARD=Device,DEV=0');
+    });
+
+    it('selecting a capture device persists capture_device via config_set_ardop', async () => {
+      const core = await import('@tauri-apps/api/core');
+      const invokeMock = core.invoke as ReturnType<typeof vi.fn>;
+      invokeMock.mockImplementation(async (cmd: string) => {
+        if (cmd === 'config_get_ardop') {
+          return {
+            binary: 'ardopcf',
+            capture_device: '',
+            playback_device: '',
+            ptt_serial_path: null,
+            cmd_port: 8515,
+            bandwidth_hz: null,
+            webgui_port: null,
+          };
+        }
+        if (cmd === 'ardop_list_audio_devices') {
+          return {
+            captures: [
+              { name: 'plughw:CARD=Device,DEV=0', description: 'USB Audio CODEC', isHardware: true },
+            ],
+            playbacks: [],
+          };
+        }
+        if (cmd === 'packet_list_serial_devices') return [];
+        if (cmd === 'session_log_snapshot') return [];
+        return undefined;
+      });
+      render(<ArdopRadioPanel onClose={() => {}} />);
+      const captureSel = await screen.findByTestId('ardop-capture-select') as HTMLSelectElement;
+      await waitFor(() => {
+        expect(Array.from(captureSel.options).map((o) => o.value))
+          .toContain('plughw:CARD=Device,DEV=0');
+      });
+      invokeMock.mockClear();
+      fireEvent.change(captureSel, { target: { value: 'plughw:CARD=Device,DEV=0' } });
+      await waitFor(() => {
+        expect(invokeMock).toHaveBeenCalledWith(
+          'config_set_ardop',
+          expect.objectContaining({
+            value: expect.objectContaining({ capture_device: 'plughw:CARD=Device,DEV=0' }),
+          }),
+        );
+      });
+    });
+
+    it('Refresh button re-invokes ardop_list_audio_devices', async () => {
+      const core = await import('@tauri-apps/api/core');
+      const invokeMock = core.invoke as ReturnType<typeof vi.fn>;
+      render(<ArdopRadioPanel onClose={() => {}} />);
+      await waitFor(() => {
+        expect(invokeMock).toHaveBeenCalledWith('ardop_list_audio_devices');
+      });
+      const callsBefore = invokeMock.mock.calls.filter(
+        ([c]) => c === 'ardop_list_audio_devices',
+      ).length;
+      fireEvent.click(screen.getByTestId('ardop-capture-refresh'));
+      await waitFor(() => {
+        const callsAfter = invokeMock.mock.calls.filter(
+          ([c]) => c === 'ardop_list_audio_devices',
+        ).length;
+        expect(callsAfter).toBe(callsBefore + 1);
+      });
+    });
+
+    it('PTT picker filters to USB serial entries + includes (none = VOX) option', async () => {
+      const core = await import('@tauri-apps/api/core');
+      const invokeMock = core.invoke as ReturnType<typeof vi.fn>;
+      invokeMock.mockImplementation(async (cmd: string) => {
+        if (cmd === 'config_get_ardop') {
+          return {
+            binary: 'ardopcf',
+            capture_device: '',
+            playback_device: '',
+            ptt_serial_path: null,
+            cmd_port: 8515,
+            bandwidth_hz: null,
+            webgui_port: null,
+          };
+        }
+        if (cmd === 'ardop_list_audio_devices') return { captures: [], playbacks: [] };
+        if (cmd === 'packet_list_serial_devices') {
+          return [
+            { path: '/dev/ttyUSB0', kind: 'usb', label: 'USB serial' },
+            // UART excluded — ARDOP PTT picker only surfaces USB-class.
+            { path: '/dev/ttyAMA0', kind: 'uart', label: 'On-board UART' },
+          ];
+        }
+        if (cmd === 'session_log_snapshot') return [];
+        return undefined;
+      });
+      render(<ArdopRadioPanel onClose={() => {}} />);
+      const pttSel = await screen.findByTestId('ardop-ptt-select') as HTMLSelectElement;
+      await waitFor(() => {
+        expect(Array.from(pttSel.options).map((o) => o.value)).toContain('/dev/ttyUSB0');
+      });
+      const values = Array.from(pttSel.options).map((o) => o.value);
+      // (none = VOX) is an empty-string option at the top.
+      expect(values).toContain('');
+      expect(values).toContain('/dev/ttyUSB0');
+      expect(values).not.toContain('/dev/ttyAMA0');
+    });
+
+    it('selecting (none) in PTT picker persists ptt_serial_path=null (VOX)', async () => {
+      const core = await import('@tauri-apps/api/core');
+      const invokeMock = core.invoke as ReturnType<typeof vi.fn>;
+      invokeMock.mockImplementation(async (cmd: string) => {
+        if (cmd === 'config_get_ardop') {
+          return {
+            binary: 'ardopcf',
+            capture_device: '',
+            playback_device: '',
+            ptt_serial_path: '/dev/ttyUSB0',
+            cmd_port: 8515,
+            bandwidth_hz: null,
+            webgui_port: null,
+          };
+        }
+        if (cmd === 'ardop_list_audio_devices') return { captures: [], playbacks: [] };
+        if (cmd === 'packet_list_serial_devices') {
+          return [{ path: '/dev/ttyUSB0', kind: 'usb', label: 'USB serial' }];
+        }
+        if (cmd === 'session_log_snapshot') return [];
+        return undefined;
+      });
+      render(<ArdopRadioPanel onClose={() => {}} />);
+      const pttSel = await screen.findByTestId('ardop-ptt-select') as HTMLSelectElement;
+      await waitFor(() => {
+        expect(pttSel.value).toBe('/dev/ttyUSB0');
+      });
+      invokeMock.mockClear();
+      fireEvent.change(pttSel, { target: { value: '' } });
+      await waitFor(() => {
+        expect(invokeMock).toHaveBeenCalledWith(
+          'config_set_ardop',
+          expect.objectContaining({
+            value: expect.objectContaining({ ptt_serial_path: null }),
+          }),
+        );
+      });
+    });
+  });
 });

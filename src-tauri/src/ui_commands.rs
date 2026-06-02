@@ -1495,6 +1495,102 @@ pub async fn packet_list_serial_devices() -> Result<Vec<SerialDeviceDto>, UiErro
     Ok(discover_serial_devices(std::path::Path::new("/dev")))
 }
 
+/// An ALSA audio device the operator can pick for ARDOP capture or playback.
+/// Surfaced from `arecord -L` / `aplay -L` so the picker shows ALSA's own
+/// canonical name (the `plughw:CARD=…`, `pulse`, `default` ladder) rather
+/// than asking the operator to remember the syntax (tuxlink-y7x7).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AlsaDeviceDto {
+    /// Canonical ALSA name fed to ardopcf via `-c` / `-p`, e.g.
+    /// `"plughw:CARD=Device,DEV=0"` or `"default"`.
+    pub name: String,
+    /// One-line human label from the ALSA tool's description block, e.g.
+    /// `"USB Audio CODEC"`. May be empty for unusual entries.
+    pub description: String,
+    /// True for direct-hardware entries (`plughw:CARD=…`, `hw:CARD=…`).
+    /// The picker sorts these to the top so the operator's first choice
+    /// from the dropdown is the kind ARDOP actually wants (a real audio
+    /// interface, not a sysdefault / plugin chain).
+    pub is_hardware: bool,
+}
+
+/// Bundled lists for ARDOP — capture (`arecord -L`) and playback (`aplay -L`)
+/// share the same enumeration shape but list different devices, so one Tauri
+/// call returns both rather than forcing the frontend to spawn two.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AlsaDevicesDto {
+    pub captures: Vec<AlsaDeviceDto>,
+    pub playbacks: Vec<AlsaDeviceDto>,
+}
+
+/// Parse the multi-line `arecord -L` / `aplay -L` output. The format is one
+/// device per block: a NAME line at column 0, then one or more indented
+/// description lines (lines that start with whitespace). A new column-0 line
+/// ends the current block and starts the next. Pure (no I/O) so the parser
+/// is unit-testable without an ALSA stack. Sorted with hardware devices
+/// first so the operator's natural top-of-list choice is the right kind.
+pub fn parse_alsa_devices(output: &str) -> Vec<AlsaDeviceDto> {
+    fn finish(
+        name: Option<String>,
+        desc_lines: &[String],
+        out: &mut Vec<AlsaDeviceDto>,
+    ) {
+        if let Some(n) = name {
+            let is_hardware = n.starts_with("plughw:CARD=") || n.starts_with("hw:CARD=");
+            out.push(AlsaDeviceDto {
+                name: n,
+                description: desc_lines.join(" — "),
+                is_hardware,
+            });
+        }
+    }
+    let mut devices: Vec<AlsaDeviceDto> = Vec::new();
+    let mut current_name: Option<String> = None;
+    let mut desc_lines: Vec<String> = Vec::new();
+    for raw in output.lines() {
+        if raw.is_empty() {
+            continue;
+        }
+        let is_indented = raw.starts_with(' ') || raw.starts_with('\t');
+        if is_indented {
+            // Description line for the current block.
+            desc_lines.push(raw.trim().to_string());
+        } else {
+            // New device block — flush the previous one first.
+            finish(current_name.take(), &desc_lines, &mut devices);
+            desc_lines.clear();
+            current_name = Some(raw.to_string());
+        }
+    }
+    // Flush the final block.
+    finish(current_name, &desc_lines, &mut devices);
+    // Stable sort: hardware first (preserve input order within each group).
+    devices.sort_by_key(|d| !d.is_hardware);
+    devices
+}
+
+/// List ALSA capture + playback devices for the ARDOP picker (tuxlink-y7x7).
+/// Shells to `arecord -L` and `aplay -L`. Soft-failure posture mirrors
+/// `packet_list_serial_devices` / `packet_list_bluetooth_devices`: missing
+/// binary OR non-zero exit yields an empty list for that axis (the picker
+/// renders "no devices found — refresh after plugging in" and falls back to
+/// the manual-text input).
+#[tauri::command]
+pub async fn ardop_list_audio_devices() -> Result<AlsaDevicesDto, UiError> {
+    let run = |bin: &str| match std::process::Command::new(bin).arg("-L").output() {
+        Ok(o) if o.status.success() => {
+            parse_alsa_devices(&String::from_utf8_lossy(&o.stdout))
+        }
+        _ => Vec::new(),
+    };
+    Ok(AlsaDevicesDto {
+        captures: run("arecord"),
+        playbacks: run("aplay"),
+    })
+}
+
 // ============================================================================
 // Task 8 (tuxlink-7fr) — packet_connect / packet_set_listen
 // ============================================================================
@@ -2453,6 +2549,73 @@ mod tests {
     #[test]
     fn discover_serial_devices_empty_when_dir_missing() {
         assert!(discover_serial_devices(std::path::Path::new("/no/such/dir/xyzzy")).is_empty());
+    }
+
+    // tuxlink-y7x7: ALSA parser regression-pin. Real `arecord -L` output is a
+    // multi-line ladder of device blocks (name at col 0, one or more indented
+    // description lines). The parser must (a) match each block correctly,
+    // (b) preserve multi-line descriptions, (c) classify `plughw:CARD=`/
+    // `hw:CARD=` entries as hardware, (d) sort hardware first so the picker's
+    // natural top-of-list choice is the right kind.
+    #[test]
+    fn parse_alsa_devices_classifies_hardware_and_sorts_first() {
+        // Trimmed from a real `arecord -L` snapshot — plugins (null, default,
+        // pulse), a hardware USB-CODEC entry with a two-line description, and
+        // a sysdefault as the trailing block.
+        let output = "\
+null
+    Discard all samples (playback) or generate zero samples (capture)
+default
+    Default Audio Device
+plughw:CARD=Device,DEV=0
+    USB Audio CODEC
+    Hardware device with all software conversions
+pulse
+    PulseAudio Sound Server
+";
+        let devs = parse_alsa_devices(output);
+        // Hardware sorts first regardless of input order.
+        assert_eq!(devs[0].name, "plughw:CARD=Device,DEV=0");
+        assert!(devs[0].is_hardware);
+        // Multi-line description survives — both lines joined.
+        assert!(devs[0].description.contains("USB Audio CODEC"));
+        assert!(devs[0].description.contains("Hardware device"));
+        // Plugins follow, none classified as hardware.
+        let plugin_names: Vec<_> = devs[1..].iter().map(|d| d.name.clone()).collect();
+        assert!(plugin_names.contains(&"null".to_string()));
+        assert!(plugin_names.contains(&"default".to_string()));
+        assert!(plugin_names.contains(&"pulse".to_string()));
+        assert!(devs[1..].iter().all(|d| !d.is_hardware));
+    }
+
+    #[test]
+    fn parse_alsa_devices_classifies_hw_card_as_hardware() {
+        // `hw:CARD=…` is the non-converting variant; should also be hardware.
+        let output = "\
+hw:CARD=Device,DEV=0
+    USB Audio CODEC raw
+";
+        let devs = parse_alsa_devices(output);
+        assert_eq!(devs.len(), 1);
+        assert!(devs[0].is_hardware);
+    }
+
+    #[test]
+    fn parse_alsa_devices_handles_no_description_lines() {
+        // A block with only a name line (no indented description) must still
+        // parse to a device with an empty description, not get dropped.
+        let output = "default\nplughw:CARD=Device,DEV=0\n    USB Audio CODEC\n";
+        let devs = parse_alsa_devices(output);
+        let names: Vec<_> = devs.iter().map(|d| d.name.as_str()).collect();
+        assert!(names.contains(&"default"));
+        let default_entry = devs.iter().find(|d| d.name == "default").unwrap();
+        assert_eq!(default_entry.description, "");
+    }
+
+    #[test]
+    fn parse_alsa_devices_empty_input_returns_empty_list() {
+        assert!(parse_alsa_devices("").is_empty());
+        assert!(parse_alsa_devices("\n\n\n").is_empty());
     }
 
     // MessageMetaDto serializes camelCase (bodySize, hasAttachments) so the
