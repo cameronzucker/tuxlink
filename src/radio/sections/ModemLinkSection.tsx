@@ -7,41 +7,58 @@
 // panel column. Renders a 3-way segmented picker (TCP / USB / BT) over
 // the matching field set, and emits a flat ModemLinkFields object to
 // the parent on every persist trigger (segment switch + blur on text
-// fields). The parent owns the actual persist call (e.g.
-// `invoke('packet_config_set', { dto })`).
+// fields, dropdown select). The parent owns the actual persist call
+// (e.g. `invoke('packet_config_set', { dto })`).
 //
-// Shape note: serial USB and Bluetooth both produce `linkKind: 'Serial'`
-// in the wire DTO — the segment is a UI affordance, not a wire field.
-// The BT segment exists so the next iteration (BT-as-RFCOMM-MAC, see
-// `packetTypes.ts` PacketLinkKind) can split out without re-shaping the
-// section's props.
+// tuxlink-mqu3: USB and BT segments now ALSO load the available devices
+// from the backend and render dropdowns + Refresh + manual-text fallback
+// — restoring the picker UX the legacy `PacketConnectionPanel` shipped
+// (commit 7c30135) and the original migration ("densified for 360 px"
+// = e2ca267) dropped. The BT segment emits `linkKind: 'Bluetooth'` +
+// `btMac` — the in-app RFCOMM-socket transport (tuxlink-nx2) that bypasses
+// the broken `/dev/rfcommN` serialport TTY path.
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
+import { invoke } from '@tauri-apps/api/core';
 import './ModemLinkSection.css';
 
-/** UI-segment identity. Bluetooth currently maps to the same `Serial`
- *  wire kind as USB; we keep the segment distinct for the picker
- *  affordance (and so the wire shape can split to `Bluetooth` later
- *  without re-wiring the section). */
+/** UI-segment identity. Each maps to a distinct wire `linkKind`: TCP →
+ *  `Tcp`, USB → `Serial`, BT → `Bluetooth`. The UI segment is the
+ *  authoritative source for the kind; the field set follows. */
 type ModemSegment = 'tcp' | 'usb' | 'bt';
+
+/** A USB-class serial device returned by `packet_list_serial_devices`. */
+interface SerialDeviceDto {
+  path: string;
+  kind: 'usb' | 'bluetooth' | 'uart';
+  label: string;
+}
+
+/** A paired Bluetooth radio returned by `packet_list_bluetooth_devices`. */
+interface BluetoothDeviceDto {
+  mac: string;
+  name: string;
+}
 
 /** The flat field set emitted by `onChange`. Mirrors the PacketConfigDto
  *  subset that the modem editor owns; parent merges this into its config
  *  DTO and persists via `packet_config_set`. */
 export interface ModemLinkFields {
-  linkKind: 'Tcp' | 'Serial';
+  linkKind: 'Tcp' | 'Serial' | 'Bluetooth';
   tcpHost: string | null;
   tcpPort: number | null;
   serialDevice: string | null;
   serialBaud: number | null;
+  /** Bluetooth radio MAC (non-null when `linkKind === 'Bluetooth'`). The
+   *  dial side hands this to `KissLinkConfig::Bluetooth { mac }` — the
+   *  RFCOMM-socket transport. Restored 2026-06-02 per tuxlink-mqu3. */
+  btMac: string | null;
 }
 
 export interface ModemLinkSectionProps {
-  /** Current link kind from the persisted config. `'Tcp'` shows the
-   *  host+port editor; `'Serial'` shows the serial device+baud editor.
-   *  The UI segment defaults to 'usb' when kind='Serial' (USB is the
-   *  common case; the operator switches the segment to 'bt' explicitly). */
-  kind: 'Tcp' | 'Serial';
+  /** Current link kind from the persisted config. Drives the active
+   *  segment on first render + when the config reloads underneath. */
+  kind: 'Tcp' | 'Serial' | 'Bluetooth';
   /** TCP host (used when kind='Tcp'). */
   host?: string;
   /** TCP port (used when kind='Tcp'). */
@@ -50,6 +67,8 @@ export interface ModemLinkSectionProps {
   serialDevice?: string;
   /** Serial host-link baud (used when kind='Serial'). */
   serialBaud?: number;
+  /** Bluetooth radio MAC (used when kind='Bluetooth'). */
+  btMac?: string;
   /** Emit the flat field set after every persist trigger. */
   onChange: (fields: ModemLinkFields) => void;
 }
@@ -67,8 +86,10 @@ const DEFAULT_SERIAL_BAUD = 1200;
  *  Bluetooth SPP adapters. Wire field on PacketConfigDto = serialBaud. */
 const SERIAL_BAUD_OPTIONS = [1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200] as const;
 
-function initialSegment(kind: 'Tcp' | 'Serial'): ModemSegment {
-  return kind === 'Tcp' ? 'tcp' : 'usb';
+function initialSegment(kind: 'Tcp' | 'Serial' | 'Bluetooth'): ModemSegment {
+  if (kind === 'Tcp') return 'tcp';
+  if (kind === 'Bluetooth') return 'bt';
+  return 'usb';
 }
 
 export function ModemLinkSection({
@@ -77,6 +98,7 @@ export function ModemLinkSection({
   port,
   serialDevice,
   serialBaud,
+  btMac,
   onChange,
 }: ModemLinkSectionProps) {
   // Controlled local state so editing TCP host / port doesn't bounce
@@ -88,9 +110,16 @@ export function ModemLinkSection({
   const [hostInput, setHostInput] = useState(host ?? DEFAULT_TCP_HOST);
   const [portInput, setPortInput] = useState(String(port ?? DEFAULT_TCP_PORT));
   const [deviceInput, setDeviceInput] = useState(serialDevice ?? '');
+  const [btMacInput, setBtMacInput] = useState(btMac ?? '');
   // Track baud as local state so changes apply immediately on the new value
   // (rather than the stale prop) when the operator selects from the dropdown.
   const [baudInput, setBaudInput] = useState<number>(serialBaud ?? DEFAULT_SERIAL_BAUD);
+
+  // Device enumeration state (tuxlink-mqu3). Loaded on segment-activation
+  // and on Refresh; an empty list is normal (no TNC plugged in / no paired
+  // radio) and surfaced as "no devices found — refresh after plugging in".
+  const [serialDevices, setSerialDevices] = useState<SerialDeviceDto[]>([]);
+  const [btDevices, setBtDevices] = useState<BluetoothDeviceDto[]>([]);
 
   // Re-seed when props change underneath (parent loaded a new config).
   useEffect(() => {
@@ -98,10 +127,34 @@ export function ModemLinkSection({
     setHostInput(host ?? DEFAULT_TCP_HOST);
     setPortInput(String(port ?? DEFAULT_TCP_PORT));
     setDeviceInput(serialDevice ?? '');
+    setBtMacInput(btMac ?? '');
     setBaudInput(serialBaud ?? DEFAULT_SERIAL_BAUD);
-  }, [kind, host, port, serialDevice, serialBaud]);
+  }, [kind, host, port, serialDevice, serialBaud, btMac]);
 
-  const emit = (seg: ModemSegment, baudOverride?: number) => {
+  const loadSerialDevices = useCallback(() => {
+    void invoke<SerialDeviceDto[]>('packet_list_serial_devices')
+      .then((list) => setSerialDevices(list))
+      .catch(() => setSerialDevices([]));
+  }, []);
+
+  const loadBluetoothDevices = useCallback(() => {
+    void invoke<BluetoothDeviceDto[]>('packet_list_bluetooth_devices')
+      .then((list) => setBtDevices(list))
+      .catch(() => setBtDevices([]));
+  }, []);
+
+  // Auto-load the active segment's device list when it becomes visible.
+  // Refresh is operator-driven (a button); this gets the first list on
+  // segment-switch without forcing them to click Refresh first.
+  useEffect(() => {
+    if (segment === 'usb') loadSerialDevices();
+    else if (segment === 'bt') loadBluetoothDevices();
+  }, [segment, loadSerialDevices, loadBluetoothDevices]);
+
+  const emit = (
+    seg: ModemSegment,
+    overrides?: { baud?: number; device?: string; mac?: string },
+  ) => {
     if (seg === 'tcp') {
       onChange({
         linkKind: 'Tcp',
@@ -109,14 +162,31 @@ export function ModemLinkSection({
         tcpPort: Number(portInput) || DEFAULT_TCP_PORT,
         serialDevice: null,
         serialBaud: null,
+        btMac: null,
       });
-    } else {
+    } else if (seg === 'usb') {
+      const device = (overrides?.device ?? deviceInput).trim();
       onChange({
         linkKind: 'Serial',
         tcpHost: null,
         tcpPort: null,
-        serialDevice: deviceInput.trim() || (serialDevice ?? null),
-        serialBaud: baudOverride ?? baudInput,
+        // Empty input is a no-op rather than wiping the persisted device —
+        // segment-switches shouldn't clear an existing path when the
+        // operator hasn't typed anything yet.
+        serialDevice: device || (serialDevice ?? null),
+        serialBaud: overrides?.baud ?? baudInput,
+        btMac: null,
+      });
+    } else {
+      // bt segment
+      const mac = (overrides?.mac ?? btMacInput).trim();
+      onChange({
+        linkKind: 'Bluetooth',
+        tcpHost: null,
+        tcpPort: null,
+        serialDevice: null,
+        serialBaud: null,
+        btMac: mac || (btMac ?? null),
       });
     }
   };
@@ -125,6 +195,12 @@ export function ModemLinkSection({
     setSegment(seg);
     emit(seg);
   };
+
+  // Filter to USB-class entries for the USB segment. The backend also
+  // returns UART (`ttyAMA0`, `ttyS0`) for completeness; the legacy picker
+  // surfaced only USB serial adapters here. UART devices are accessible via
+  // the manual-fallback input for the rare GPIO-KISS case.
+  const usbList = serialDevices.filter((d) => d.kind === 'usb');
 
   return (
     <section className="radio-panel-sec" data-testid="modem-link-section">
@@ -188,10 +264,41 @@ export function ModemLinkSection({
             />
           </label>
         </>
-      ) : (
+      ) : segment === 'usb' ? (
         <>
           <label className="radio-panel-input-row">
-            <span>{segment === 'bt' ? 'BT dev' : 'Device'}</span>
+            <span>Device</span>
+            <select
+              className="radio-panel-input"
+              data-testid="modem-usb-select"
+              value={usbList.some((d) => d.path === deviceInput) ? deviceInput : ''}
+              onChange={(e) => {
+                const next = e.target.value;
+                setDeviceInput(next);
+                emit('usb', { device: next });
+              }}
+            >
+              <option value="" disabled>
+                {usbList.length === 0 ? 'No USB serial devices found' : 'Choose USB device…'}
+              </option>
+              {usbList.map((d) => (
+                <option key={d.path} value={d.path}>
+                  {d.path} — {d.label}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              className="radio-panel-btn-sm"
+              data-testid="modem-usb-refresh"
+              onClick={loadSerialDevices}
+              aria-label="Refresh USB device list"
+            >
+              ↻
+            </button>
+          </label>
+          <label className="radio-panel-input-row">
+            <span>Manual</span>
             <input
               type="text"
               className="radio-panel-input"
@@ -200,9 +307,9 @@ export function ModemLinkSection({
               spellCheck={false}
               autoCapitalize="off"
               autoCorrect="off"
-              placeholder={segment === 'bt' ? '/dev/rfcomm0' : '/dev/ttyUSB0'}
+              placeholder="/dev/ttyUSB0 (unlisted)"
               onChange={(e) => setDeviceInput(e.target.value)}
-              onBlur={() => emit(segment)}
+              onBlur={() => emit('usb')}
             />
           </label>
           <label className="radio-panel-input-row">
@@ -214,13 +321,62 @@ export function ModemLinkSection({
               onChange={(e) => {
                 const next = Number(e.target.value);
                 setBaudInput(next);
-                emit(segment, next);
+                emit('usb', { baud: next });
               }}
             >
               {SERIAL_BAUD_OPTIONS.map((b) => (
                 <option key={b} value={b}>{b}</option>
               ))}
             </select>
+          </label>
+        </>
+      ) : (
+        <>
+          <label className="radio-panel-input-row">
+            <span>BT dev</span>
+            <select
+              className="radio-panel-input"
+              data-testid="modem-bt-select"
+              value={btDevices.some((d) => d.mac === btMacInput) ? btMacInput : ''}
+              onChange={(e) => {
+                const next = e.target.value;
+                setBtMacInput(next);
+                emit('bt', { mac: next });
+              }}
+            >
+              <option value="" disabled>
+                {btDevices.length === 0 ? 'No paired devices — pair a radio in BlueZ' : 'Choose paired device…'}
+              </option>
+              {btDevices.map((d) => (
+                <option key={d.mac} value={d.mac}>
+                  {d.name || d.mac} — {d.mac}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              className="radio-panel-btn-sm"
+              data-testid="modem-bt-refresh"
+              onClick={loadBluetoothDevices}
+              aria-label="Refresh Bluetooth device list"
+            >
+              ↻
+            </button>
+          </label>
+          <label className="radio-panel-input-row">
+            <span>Manual</span>
+            <input
+              type="text"
+              className="radio-panel-input"
+              data-testid="modem-bt-mac"
+              value={btMacInput}
+              spellCheck={false}
+              autoCapitalize="off"
+              autoCorrect="off"
+              placeholder="AA:BB:CC:DD:EE:FF (unpaired)"
+              onChange={(e) => setBtMacInput(e.target.value)}
+              onBlur={() => emit('bt')}
+            />
           </label>
         </>
       )}
