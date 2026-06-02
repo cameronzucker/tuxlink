@@ -141,9 +141,32 @@ const sentMsgs: MessageMeta[] = [
   },
 ];
 
+// tuxlink-gp8b: outbox fixture (a single queued draft) so the sidebar
+// queue-depth badge has something to render. Distinct from inbox/sent so a
+// count-mixup regression would fail the assertion.
+const outboxMsgs: MessageMeta[] = [
+  {
+    id: 'OUTBOX1',
+    subject: 'Queued draft',
+    from: 'W4PHS@winlink.org',
+    to: ['KK4XYZ@winlink.org'],
+    date: '2026-06-02T10:00:00Z',
+    unread: false,
+    bodySize: 80,
+    hasAttachments: false,
+  },
+];
+
 vi.mock('../mailbox/useMailbox', () => ({
   useMailbox: (folder: MailboxFolder) => ({
-    messages: folder === 'inbox' ? inboxMsgs : folder === 'sent' ? sentMsgs : [],
+    messages:
+      folder === 'inbox'
+        ? inboxMsgs
+        : folder === 'sent'
+        ? sentMsgs
+        : folder === 'outbox'
+        ? outboxMsgs
+        : [],
     isLoading: false,
     isError: false,
     error: null,
@@ -193,6 +216,21 @@ describe('<AppShell> — Mock B topology', () => {
     expect(screen.getByTestId('folder-inbox')).toHaveAttribute('aria-current', 'true');
     expect(screen.getByTestId('folder-count-inbox')).toHaveTextContent('1'); // 1 unread
     expect(screen.getByTestId('folder-count-sent')).toHaveTextContent('1'); // 1 total
+  });
+
+  // tuxlink-gp8b: PR #219 wired the Outbox folder entry into the sidebar but
+  // never extended the `counts` map AppShell passes to FolderSidebar — so the
+  // status bar's "1 to send" segment and the sidebar drew from the same
+  // outbox.messages.length but only one rendered. This pins the queue-depth
+  // badge so a future counts-object regression fails fast at the test layer
+  // instead of waiting for an operator to notice the mismatch with the status
+  // bar.
+  it('sidebar Outbox shows queue depth matching the status bar (tuxlink-gp8b)', () => {
+    renderShell();
+    // The single queued outbox draft must surface as a `1` badge — same value
+    // the status bar's "1 to send" derives from.
+    expect(screen.getByTestId('folder-count-outbox')).toHaveTextContent('1');
+    expect(screen.getByTestId('status-bar-outbox')).toHaveTextContent('1 to send');
   });
 
   it('selecting a row updates ONLY the reader and does not remount the shell', () => {
