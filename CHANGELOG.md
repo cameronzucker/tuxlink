@@ -4,7 +4,12 @@ All notable changes to Tuxlink are documented here.
 
 This project adheres to [Semantic Versioning](https://semver.org) with project-specific rules described in [VERSIONING.md](VERSIONING.md). Entries from `v0.0.2` onward are generated automatically by [`release-please`](https://github.com/googleapis/release-please) from [Conventional Commits](https://www.conventionalcommits.org).
 
-## [0.13.2](https://github.com/cameronzucker/tuxlink/compare/v0.13.1...v0.13.2) (2026-06-02)
+## [0.14.0](https://github.com/cameronzucker/tuxlink/compare/v0.13.1...v0.14.0) (2026-06-02)
+
+
+### Features
+
+* **modem/vara:** wire VARA TCP transport into UI (Phase 2 — tuxlink-dfmf) ([1f6c3ef](https://github.com/cameronzucker/tuxlink/commit/1f6c3ef1dcc7cc6f03dc24e6caf93550069d35c1))
 
 
 ### Refactors
