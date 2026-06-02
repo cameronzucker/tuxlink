@@ -31,6 +31,19 @@ updates:
     labels:
       - dependencies
       - npm
+    # Block major-version proposals for libraries that need coordinated
+    # upgrades not safe to auto-bump in isolation. Patch + minor updates
+    # still come through normally; only semver-major bumps are suppressed.
+    ignore:
+      # vitest 4+ requires Vite 6 (imports vite/module-runner). We're on
+      # Vite 5; merging would break the entire test suite. Tracked for a
+      # deliberate Vite 5 → 6 + vitest 2 → 4 migration as one coordinated
+      # PR (tuxlink-ztuv). Remove this ignore rule as part of that work.
+      - dependency-name: "vitest"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@vitest/*"
+        update-types: ["version-update:semver-major"]
+
     # Groups bundle related packages into a SINGLE PR so peer-pair version
     # drift can't slip through. Closes the failure mode behind tuxlink-ola6:
     # dependabot bumped `react` 19.2.6 → 19.2.7 in PR #252 but left
