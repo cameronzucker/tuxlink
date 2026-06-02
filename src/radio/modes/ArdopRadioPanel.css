@@ -11,6 +11,12 @@
  *   - .ardop-meter / .ardop-meter-k / .ardop-meter-v — S/N / VU /
  *     Throughput readouts in the Live section
  *   - .ardop-stats — Peer/Mode/Width/PTT/Bytes/Up monospace block
+ *
+ * tuxlink-he7h (2026-06-01): replaced hard-coded rgba/hex literals with
+ * theme tokens. The ARQ on-state was `rgba(34, 197, 94, 0.14)` mint over
+ * `#4ade80` pastel text — invisible in the light schemes. Now uses
+ * `var(--accent-soft)` over `var(--accent)` which contrasts in every
+ * scheme. The `.warn` meter value flips to `var(--accent-2)`.
  */
 
 .ardop-arq-grid {
@@ -36,7 +42,7 @@
   font-size: 12px;
   padding: 6px 4px;
   text-align: center;
-  border: 1px solid rgba(255, 255, 255, 0.14);
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.14));
   border-radius: 3px;
   color: var(--text-faint, #94a3b8);
   letter-spacing: 0.02em;
@@ -53,9 +59,10 @@
 }
 
 .ardop-arq-cell[data-on='true'] {
-  background: rgba(34, 197, 94, 0.14);
-  border-color: rgba(34, 197, 94, 0.55);
-  color: #4ade80;
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 600;
 }
 
 /* Live-section meter row (S/N, VU, Throughput). One row per metric. */
@@ -64,7 +71,7 @@
   justify-content: space-between;
   align-items: baseline;
   padding: 5px 0;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  border-bottom: 1px solid var(--border-soft, rgba(255, 255, 255, 0.04));
 }
 .ardop-meter:last-of-type {
   border-bottom: none;
@@ -88,7 +95,7 @@
 }
 
 .ardop-meter.warn .ardop-meter-v {
-  color: #fbbf24;
+  color: var(--accent-2, #fbbf24);
 }
 
 /* The Peer/Mode/Width/PTT/Bytes/Up monospace block. */
@@ -98,8 +105,8 @@
   font-size: 12px;
   line-height: 1.7;
   padding: 8px 10px;
-  background: rgba(0, 0, 0, 0.22);
-  border: 1px solid rgba(255, 255, 255, 0.10);
+  background: var(--surface-2);
+  border: 1px solid var(--border-soft);
   border-radius: 3px;
   margin: 8px 0 0;
   /* Operator smoke 2026-05-31 round 3: a `<pre>` with `white-space: pre`
