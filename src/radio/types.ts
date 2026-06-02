@@ -17,7 +17,7 @@ import type { ConnectionKey } from '../mailbox/FolderSidebar';
  * RadioPanelMountReason; null means the panel is not mounted.
  */
 export type RadioPanelMode =
-  | { kind: 'telnet'; intent: 'cms' }
+  | { kind: 'telnet'; intent: 'cms' | 'p2p' }
   | { kind: 'packet'; intent: 'cms' | 'p2p' }
   | { kind: 'ardop-hf'; intent: 'cms' }
   | { kind: 'vara-hf'; intent: 'cms' | 'p2p' }    // forward-looking

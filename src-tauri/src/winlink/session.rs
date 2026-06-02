@@ -421,6 +421,29 @@ pub enum ExchangeError {
     TooManyTurns,
 }
 
+impl std::fmt::Display for ExchangeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ExchangeError::ConnectionClosed => write!(f, "connection closed mid-exchange"),
+            ExchangeError::UnexpectedResponse(s) => write!(f, "unexpected response: {s}"),
+            ExchangeError::UnknownCommand(s) => write!(f, "unknown command: {s}"),
+            ExchangeError::ChecksumMismatch => write!(f, "proposal batch checksum mismatch"),
+            ExchangeError::AnswerCountMismatch => write!(f, "answer count did not match proposal count"),
+            ExchangeError::BadProposal(e) => write!(f, "bad proposal: {e:?}"),
+            ExchangeError::BadAnswer(e) => write!(f, "bad answer: {e:?}"),
+            ExchangeError::Transfer(e) => write!(f, "transfer error: {e:?}"),
+            ExchangeError::Decompress(e) => write!(f, "decompression error: {e:?}"),
+            ExchangeError::Parse(e) => write!(f, "message parse error: {e:?}"),
+            ExchangeError::Handshake(e) => write!(f, "handshake error: {e:?}"),
+            ExchangeError::PasswordRequired => write!(f, "server required a password but none was configured"),
+            ExchangeError::RemoteError(s) => write!(f, "remote error: {s}"),
+            ExchangeError::TooManyTurns => write!(f, "exchange exceeded turn cap"),
+        }
+    }
+}
+
+impl std::error::Error for ExchangeError {}
+
 #[cfg(test)]
 mod tests {
     use super::*;

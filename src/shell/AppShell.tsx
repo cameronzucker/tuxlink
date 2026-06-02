@@ -49,6 +49,7 @@ import { derivePacketUiState, type PacketUiState } from '../packet/packetStatus'
 import { usePacketConfig } from '../packet/usePacketConfig';
 import { isBuilt } from '../connections/sessionTypes';
 import { TelnetRadioPanel } from '../radio/modes/TelnetRadioPanel';
+import { TelnetP2pRadioPanel } from '../radio/modes/TelnetP2pRadioPanel';
 import { PacketRadioPanel } from '../radio/modes/PacketRadioPanel';
 import { ArdopRadioPanel } from '../radio/modes/ArdopRadioPanel';
 import { StubPanel } from '../connections/StubPanel';
@@ -482,6 +483,12 @@ export function AppShell() {
             // P3 (P2P branch): same — PacketRadioPanel handles the dial UI.
             return <MessageView selectedMessage={selectedMessage} />;
           }
+          if (sessionType === 'p2p' && protocol === 'telnet') {
+            // P2P Telnet (tuxlink-0pnb): TelnetP2pRadioPanel owns the dial
+            // UI in the right panel; reading pane falls back to mail, same
+            // pattern as Telnet CMS (P2) and Packet P2P (P3).
+            return <MessageView selectedMessage={selectedMessage} />;
+          }
           // Built but unhandled — defensive stub
           return <StubPanel sessionType={sessionType} protocol={protocol} />;
         })()}
@@ -491,8 +498,16 @@ export function AppShell() {
             mount of ArdopDock + placeholder for ARDOP HF is GONE — the
             ArdopRadioPanel covers the full dial-and-live-state surface
             on its own. */}
-        {radioPanelMode && radioPanelMode.kind === 'telnet' && (
+        {radioPanelMode && radioPanelMode.kind === 'telnet' && radioPanelMode.intent === 'cms' && (
           <TelnetRadioPanel
+            onClose={() => {
+              setSelectedConnection(null);
+              setPinRadioPanel(false);
+            }}
+          />
+        )}
+        {radioPanelMode && radioPanelMode.kind === 'telnet' && radioPanelMode.intent === 'p2p' && (
+          <TelnetP2pRadioPanel
             onClose={() => {
               setSelectedConnection(null);
               setPinRadioPanel(false);

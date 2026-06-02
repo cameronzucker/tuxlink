@@ -1946,6 +1946,318 @@ pub(crate) fn validate_cms_host(host: &str) -> Option<&'static str> {
     None
 }
 
+// ============================================================================
+// tuxlink-0pnb — P2P-Telnet connect + peer-password management (PR 1)
+// Spec: docs/design/2026-06-01-tcp-p2p-telnet-design.md §4.6
+// Plan: 2026-06-01-tcp-p2p-telnet-pr1-client-dial.md Task 4
+// ============================================================================
+
+/// Whether the per-peer password is stored in the keyring. Read-only so the
+/// UI can render a Set / Not Set indicator without reading the secret itself.
+///
+/// Mirrors the `PeerPasswordStatus` type in the plan spec.
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub enum PeerPasswordStatus {
+    Set,
+    NotSet,
+}
+
+/// Request object for [`telnet_p2p_connect`].
+#[derive(Debug, Deserialize)]
+pub struct P2pDialRequest {
+    /// Hostname or IP address of the peer's TCP listener.
+    pub host: String,
+    /// TCP port on the peer.
+    pub port: u16,
+    /// Callsign of the peer station (used for the login exchange + optional
+    /// password lookup in the keyring).
+    pub peer_callsign: String,
+    /// Our own callsign, sent in the B2F handshake.
+    pub my_callsign: String,
+    /// Our Maidenhead grid locator for the B2F handshake.
+    pub locator: String,
+}
+
+/// Result returned by [`telnet_p2p_connect`].
+#[derive(Debug, Serialize)]
+pub struct P2pDialResult {
+    /// Number of outbound messages sent successfully.
+    pub sent_count: usize,
+    /// Number of inbound messages received.
+    pub received_count: usize,
+}
+
+/// Single-flight + abort coordination for the P2P-Telnet connect path (mirrors
+/// `NativeBackend`'s `connect_in_progress` + `aborting` flags). Held in
+/// Tauri managed state so `telnet_p2p_connect` and `telnet_p2p_abort` share it.
+///
+/// `in_progress`: set to `true` for the duration of a connect; prevents a
+/// second concurrent connect from racing on the status/log pipeline.
+///
+/// `aborting`: set by `telnet_p2p_abort`; checked by the post-connect outcome
+/// handler so an abort request during an in-flight exchange is reflected in the
+/// session log and status rather than being silently swallowed.
+///
+/// Abort limitation (PR 1): `telnet_p2p::connect_and_exchange` runs synchronously
+/// inside `spawn_blocking` and does not accept an abort handle. The abort command
+/// emits a Disconnected status event and logs an abort notice, but cannot
+/// forcibly terminate the blocking exchange mid-flight. The exchange completes
+/// naturally and the final outcome is logged. A follow-on PR may thread an
+/// abort-capable `TcpStream` handle through `connect_and_exchange` to enable
+/// hard-stop (mirroring how `NativeBackend::abort` calls `TcpStream::shutdown`).
+pub struct P2pConnectState {
+    pub in_progress: std::sync::atomic::AtomicBool,
+    pub aborting: std::sync::atomic::AtomicBool,
+}
+
+/// Write the per-peer station password to the OS keyring.
+///
+/// Overwrites any existing entry. `callsign` is uppercased before storage so
+/// case variants do not create duplicate entries (see `credentials::p2p_peer_account`).
+#[tauri::command]
+pub async fn p2p_peer_password_set(callsign: String, password: String) -> Result<(), UiError> {
+    crate::winlink::credentials::p2p_peer_password_write(&callsign, &password).map_err(|e| {
+        UiError::Internal { detail: e.to_string() }
+    })
+}
+
+/// Delete the per-peer station password from the OS keyring.
+///
+/// Idempotent: succeeds when no entry exists (spec §4.4). Useful for clearing
+/// a stored password without navigating back to a settings form.
+#[tauri::command]
+pub async fn p2p_peer_password_clear(callsign: String) -> Result<(), UiError> {
+    crate::winlink::credentials::p2p_peer_password_delete(&callsign).map_err(|e| {
+        UiError::Internal { detail: e.to_string() }
+    })
+}
+
+/// Return whether a peer-station password is stored in the keyring.
+///
+/// Returns [`PeerPasswordStatus::Set`] when an entry exists,
+/// [`PeerPasswordStatus::NotSet`] when absent. Any other keyring error is
+/// surfaced as `UiError::Internal`.
+#[tauri::command]
+pub async fn p2p_peer_password_status(
+    callsign: String,
+) -> Result<PeerPasswordStatus, UiError> {
+    use crate::winlink::credentials::KeyringError;
+    match crate::winlink::credentials::p2p_peer_password_read(&callsign) {
+        Ok(_) => Ok(PeerPasswordStatus::Set),
+        Err(KeyringError::NoEntry { .. }) => Ok(PeerPasswordStatus::NotSet),
+        Err(e) => Err(UiError::Internal { detail: e.to_string() }),
+    }
+}
+
+/// Emit a `backend_status:change` event for the P2P-Telnet connection path
+/// (mirrors the bootstrap emitter task that does this for `NativeBackend`).
+/// P2P connects bypass `WinlinkBackend` entirely, so they must emit the event
+/// directly to keep the StatusBar and connection-status ribbon in sync.
+fn emit_p2p_status(app: &AppHandle, status: StatusDto) {
+    let _ = app.emit("backend_status:change", &status);
+}
+
+/// Connect to a P2P peer over TCP-Telnet and run a full B2F message exchange.
+///
+/// Mirrors `cms_connect` in structure:
+///   1. Emits session log lines at each phase (Connecting → Login → B2F → result).
+///   2. Emits `backend_status:change` events at each phase transition so the
+///      StatusBar reflects the P2P connection state without polling the
+///      `WinlinkBackend` (P2P bypasses it; the events are emitted directly here).
+///   3. Single-flight via `P2pConnectState.in_progress` — a second concurrent
+///      connect is rejected rather than racing on the log/status pipeline.
+///   4. Returns `Err` on failure so the frontend spinner can stop; human-facing
+///      detail lives in the session log.
+///
+/// Looks up the per-peer password from the keyring (absent = no password
+/// challenge attempted). PR 1 ships an empty outbox stub; real outbox
+/// integration comes in a follow-on PR that wires the draft store.
+///
+/// RADIO-1: This command drives TCP to a peer station — no RF, so no
+/// Part 97 consent gate is needed. The peer may transmit RF independently,
+/// but tuxlink does not trigger it.
+#[tauri::command]
+pub async fn telnet_p2p_connect(
+    app: AppHandle,
+    p2p_state: State<'_, P2pConnectState>,
+    log: State<'_, std::sync::Arc<SessionLogState>>,
+    req: P2pDialRequest,
+) -> Result<P2pDialResult, UiError> {
+    use std::sync::atomic::Ordering;
+    use crate::winlink::credentials::KeyringError;
+    use crate::winlink::session::ExchangeConfig;
+    use crate::winlink::telnet_p2p;
+
+    // Single-flight: reject a second concurrent connect.
+    if p2p_state
+        .in_progress
+        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+        .is_err()
+    {
+        return Err(UiError::Internal {
+            detail: "a P2P connection is already in progress".to_string(),
+        });
+    }
+    // Clear any stale abort flag from a prior connect.
+    p2p_state.aborting.store(false, Ordering::SeqCst);
+
+    // Emit Connecting status — the StatusBar subscribes to backend_status:change
+    // and updates immediately (no 2s poll wait).
+    let peer_label = if req.peer_callsign.is_empty() {
+        format!("{}:{}", req.host, req.port)
+    } else {
+        format!("{} @ {}:{}", req.peer_callsign, req.host, req.port)
+    };
+    emit_p2p_status(
+        &app,
+        StatusDto::Connecting { transport: "P2P-Telnet".to_string() },
+    );
+    emit_session_line(
+        &app,
+        &log,
+        LogLevel::Info,
+        format!("Connecting to {} (P2P-Telnet)…", peer_label),
+    );
+
+    // Look up peer password if configured (None = no password challenge attempted).
+    let peer_password = match crate::winlink::credentials::p2p_peer_password_read(
+        &req.peer_callsign,
+    ) {
+        Ok(p) => Some(p),
+        Err(KeyringError::NoEntry { .. }) => None,
+        Err(e) => {
+            p2p_state.in_progress.store(false, Ordering::SeqCst);
+            emit_p2p_status(&app, StatusDto::Disconnected);
+            return Err(UiError::Internal { detail: e.to_string() });
+        }
+    };
+
+    let config = ExchangeConfig {
+        mycall: req.my_callsign.clone(),
+        targetcall: req.peer_callsign.clone(),
+        locator: req.locator.clone(),
+        // P2P never uses B2F secure-login (spec §4.3 — no secure-login for P2P).
+        password: None,
+    };
+
+    // PR 1: empty outbox stub. Real outbox integration comes when the draft
+    // store is wired in a follow-on PR (mirrors how cms_connect defers until
+    // the backend is populated).
+    let outbound: Vec<crate::winlink::session::OutboundMessage> = Vec::new();
+
+    // Clone values for the spawn_blocking task.
+    let host = req.host.clone();
+    let port = req.port;
+    let peer_callsign = req.peer_callsign.clone();
+
+    // Wire progress + wire-log callbacks into the session log (mirrors cms_connect's
+    // ProgressSink / WireSink wiring in bootstrap::install_native).
+    let app_progress = app.clone();
+    let log_progress = log.inner().clone();
+    let app_wire = app.clone();
+    let log_wire = log.inner().clone();
+
+    let result = tokio::task::spawn_blocking(move || {
+        telnet_p2p::connect_and_exchange(
+            &host,
+            port,
+            &peer_callsign,
+            peer_password.as_deref(),
+            &config,
+            outbound,
+            &move |line: &str| {
+                emit_session_line(&app_progress, &log_progress, LogLevel::Info, line.to_string());
+            },
+            &move |line: &str| {
+                emit_session_line(&app_wire, &log_wire, LogLevel::Info, line.to_string());
+            },
+            |_proposals| Vec::new(),
+        )
+    })
+    .await
+    .map_err(|e| UiError::Internal { detail: format!("P2P connect task failed: {e}") })?;
+
+    // Release single-flight flag before processing the outcome.
+    p2p_state.in_progress.store(false, Ordering::SeqCst);
+
+    let was_aborted = p2p_state.aborting.load(Ordering::SeqCst);
+
+    match result {
+        Ok(exchange) => {
+            let summary = format!(
+                "P2P exchange complete. Sent {}, received {}.",
+                exchange.sent.len(),
+                exchange.received.len(),
+            );
+            emit_session_line(&app, &log, LogLevel::Info, summary);
+            // Brief Connected window (mirrors cms_connect's 1.5s hold so the
+            // operator has perceptible visual confirmation). P2P sessions are
+            // also transient (connect → B2F → done), not a held socket.
+            emit_p2p_status(
+                &app,
+                StatusDto::Connected {
+                    transport: "P2P-Telnet".to_string(),
+                    peer: peer_label,
+                    since_iso: chrono::Utc::now().to_rfc3339(),
+                },
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+            emit_p2p_status(&app, StatusDto::Disconnected);
+            Ok(P2pDialResult {
+                sent_count: exchange.sent.len(),
+                received_count: exchange.received.len(),
+            })
+        }
+        Err(e) => {
+            if was_aborted {
+                emit_session_line(
+                    &app,
+                    &log,
+                    LogLevel::Warn,
+                    "P2P connection aborted.".to_string(),
+                );
+            } else {
+                emit_session_line(
+                    &app,
+                    &log,
+                    LogLevel::Error,
+                    format!("P2P connect failed: {e}"),
+                );
+            }
+            emit_p2p_status(&app, StatusDto::Disconnected);
+            Err(UiError::Transport { reason: e.to_string() })
+        }
+    }
+}
+
+/// Abort an in-flight [`telnet_p2p_connect`] (mirrors [`cms_abort`]).
+///
+/// Sets the abort flag so the post-connect handler reports "aborted" rather
+/// than "error". Emits a Disconnected status event immediately so the StatusBar
+/// responds without waiting for the blocking exchange to finish.
+///
+/// Abort limitation (PR 1): `telnet_p2p::connect_and_exchange` does not accept
+/// an abort handle, so this cannot forcibly kill the in-flight blocking task.
+/// The exchange runs to completion (or errors naturally); the aborting flag
+/// controls how the outcome is reported. A follow-on PR may wire
+/// `TcpStream::shutdown` into `connect_and_exchange` for hard-stop support
+/// (matching `NativeBackend::abort`).
+#[tauri::command]
+pub async fn telnet_p2p_abort(
+    app: AppHandle,
+    p2p_state: State<'_, P2pConnectState>,
+    log: State<'_, std::sync::Arc<SessionLogState>>,
+) -> Result<(), UiError> {
+    use std::sync::atomic::Ordering;
+
+    emit_session_line(&app, &log, LogLevel::Info, "Aborting P2P connection…".to_string());
+    p2p_state.aborting.store(true, Ordering::SeqCst);
+    // Emit Disconnected immediately — the blocking task will still run to
+    // completion, but the StatusBar should respond right away.
+    emit_p2p_status(&app, StatusDto::Disconnected);
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2988,5 +3300,38 @@ mod tests {
         assert_eq!(mapped.len(), 2);
         assert_eq!(mapped[0].filename, "a.txt");
         assert_eq!(mapped[1].bytes, [3, 4, 5]);
+    }
+
+    // ========================================================================
+    // tuxlink-0pnb Task 4 — PeerPasswordStatus serialization + P2pDialResult
+    // ========================================================================
+
+    // PeerPasswordStatus serializes as a plain string variant (no content wrapper).
+    // Mirrors how the TS side will pattern-match on the value.
+    #[test]
+    fn peer_password_status_serializes_as_plain_string() {
+        let set = serde_json::to_value(PeerPasswordStatus::Set).unwrap();
+        assert_eq!(set, "Set");
+        let not_set = serde_json::to_value(PeerPasswordStatus::NotSet).unwrap();
+        assert_eq!(not_set, "NotSet");
+    }
+
+    // PeerPasswordStatus round-trips through JSON (Deserialize impl exercised).
+    #[test]
+    fn peer_password_status_round_trips_through_json() {
+        let original = PeerPasswordStatus::NotSet;
+        let json = serde_json::to_string(&original).unwrap();
+        let decoded: PeerPasswordStatus = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded, PeerPasswordStatus::NotSet);
+    }
+
+    // P2pDialResult serializes sent_count + received_count so the frontend
+    // can display exchange totals after a successful dial.
+    #[test]
+    fn p2p_dial_result_serializes_counts() {
+        let dto = P2pDialResult { sent_count: 3, received_count: 1 };
+        let v = serde_json::to_value(&dto).unwrap();
+        assert_eq!(v["sent_count"], 3);
+        assert_eq!(v["received_count"], 1);
     }
 }

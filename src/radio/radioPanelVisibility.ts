@@ -32,7 +32,7 @@ export function computePanelMode(
     const { sessionType, protocol } = reason.sidebarSelected;
     const intent: 'cms' | 'p2p' = sessionType === 'p2p' ? 'p2p' : 'cms';
     switch (protocol) {
-      case 'telnet':   return { kind: 'telnet',   intent: 'cms' };
+      case 'telnet':   return { kind: 'telnet',   intent };
       case 'packet':   return { kind: 'packet',   intent };
       case 'ardop-hf': return { kind: 'ardop-hf', intent: 'cms' };
       case 'vara-hf':  return { kind: 'vara-hf',  intent };

@@ -23,6 +23,9 @@ describe('session-type catalog', () => {
     expect(isBuilt({ sessionType: 'cms', protocol: 'packet' })).toBe(true);
     expect(isBuilt({ sessionType: 'p2p', protocol: 'packet' })).toBe(true);
   });
+  it('isBuilt is true for p2p+telnet (tuxlink-0pnb shipped client-dial)', () => {
+    expect(isBuilt({ sessionType: 'p2p', protocol: 'telnet' })).toBe(true);
+  });
   it('protocolsFor returns correct list for known id and [] for unknown id', () => {
     expect(protocolsFor('cms' as any).map((p) => p.id)).toContain('telnet');
     expect(protocolsFor('bogus' as any)).toEqual([]);

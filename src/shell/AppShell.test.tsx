@@ -331,6 +331,17 @@ describe('<AppShell> — Mock B topology', () => {
     expect(await screen.findByTestId('radio-panel-title')).toHaveTextContent('Telnet Winlink');
   });
 
+  it('renders the TelnetP2pRadioPanel when p2p+telnet is selected (tuxlink-0pnb client-dial)', async () => {
+    renderShell();
+    fireEvent.click(screen.getByTestId('sess-p2p'));
+    fireEvent.click(screen.getByTestId('proto-p2p-telnet'));
+    // p2p+telnet shares the radio-panel-root mount with cms+telnet but the
+    // title swaps to "Telnet P2P" via the intent-aware panelTitle().
+    const panel = await screen.findByTestId('radio-panel-root');
+    expect(panel).toBeInTheDocument();
+    expect(await screen.findByTestId('radio-panel-title')).toHaveTextContent('Telnet P2P');
+  });
+
   it('keeps the radio panel open when the operator clicks a message (2026-05-31 decoupling fix)', async () => {
     // Operator-flagged bug: clicking a message while the Telnet panel was open
     // unmounted the panel because onSelectMessage cleared selectedConnection.

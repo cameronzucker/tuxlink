@@ -57,7 +57,7 @@ export const SESSION_TYPES: SessionTypeEntry[] = [
     built: true,
     protocols: [
       { ...PKT, built: true },
-      { ...TEL, built: false },
+      { ...TEL, built: true },
       { ...VHF, built: false },
       { ...VFM, built: false },
     ],
