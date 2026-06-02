@@ -91,6 +91,16 @@ const GROUPS: TokenGroup[] = [
     ],
   },
   {
+    label: 'Radio dock',
+    help: 'The radio panel chrome — separate from the project accent so the dock can keep a green identity even when accent is amber/brown.',
+    tokens: [
+      { id: 'modem-accent', label: 'Modem accent', help: 'MODEM title, Connect button, ARQ on-state.' },
+      { id: 'modem-accent-2', label: 'Modem accent (bright)', help: 'Hover state for the Connect button.' },
+      { id: 'modem-accent-soft', label: 'Modem accent (soft)', help: 'Radio panel header background tint.' },
+      { id: 'modem-accent-fg', label: 'On-modem-accent text', help: 'The text color drawn on top of the modem accent.' },
+    ],
+  },
+  {
     label: 'Status / semantic',
     help: 'Success/error/info colors used in dots, badges, alerts.',
     tokens: [

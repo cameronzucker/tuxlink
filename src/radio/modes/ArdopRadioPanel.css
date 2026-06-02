@@ -59,9 +59,12 @@
 }
 
 .ardop-arq-cell[data-on='true'] {
-  background: var(--accent-soft);
-  border-color: var(--accent);
-  color: var(--accent);
+  /* tuxlink-2ief: ARQ on-state uses the modem-accent (green family)
+     instead of the project --accent (orange family). The ARQ strip is
+     part of the modem identity. */
+  background: var(--modem-accent-soft);
+  border-color: var(--modem-accent);
+  color: var(--modem-accent);
   font-weight: 600;
 }
 

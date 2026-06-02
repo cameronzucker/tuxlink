@@ -57,8 +57,42 @@ export const CUSTOM_THEME_STORAGE_KEY = 'tuxlink.customTheme';
  *  Two literal `--tux-*` tokens (`tux-accent-fg`, `tux-danger-fg`) are
  *  included because they don't alias a primitive — they live in the literal
  *  block of each preset and need explicit values to keep accent-on-accent
- *  contrast legible in custom themes. */
+ *  contrast legible in custom themes.
+ *
+ *  tuxlink-2ief: the modem-accent family was added as a dedicated identity
+ *  for the radio panel chrome, decoupled from the project accent. Themes
+ *  saved before this token set existed are migrated on load by filling
+ *  missing tokens with the default-dark fallback (see `loadCustomTheme`). */
 export const CUSTOM_THEME_TOKENS = [
+  'bg',
+  'surface',
+  'surface-2',
+  'elevated',
+  'border',
+  'border-strong',
+  'border-soft',
+  'text',
+  'text-dim',
+  'text-faint',
+  'accent',
+  'accent-2',
+  'unread-dot',
+  'success',
+  'error',
+  'info',
+  'form-tag',
+  'modem-accent',
+  'modem-accent-2',
+  'modem-accent-soft',
+  'modem-accent-fg',
+  'tux-accent-fg',
+  'tux-danger-fg',
+] as const;
+
+/** The required tokens — every saved theme must carry these (they predate
+ *  the modem-accent split). New tokens added after this set fill in from
+ *  DEFAULT_DARK_TOKENS during load, so an old saved theme keeps working. */
+const REQUIRED_CUSTOM_TOKENS: readonly CustomThemeToken[] = [
   'bg',
   'surface',
   'surface-2',
@@ -78,7 +112,7 @@ export const CUSTOM_THEME_TOKENS = [
   'form-tag',
   'tux-accent-fg',
   'tux-danger-fg',
-] as const;
+];
 
 export type CustomThemeToken = (typeof CUSTOM_THEME_TOKENS)[number];
 
@@ -120,9 +154,16 @@ export function saveColorScheme(scheme: ColorScheme): void {
   }
 }
 
-/** Read the persisted custom theme, or null if absent / malformed. The loader
- *  is strict: a malformed or partial entry returns null so the designer can
- *  detect first-use vs edit-existing without a separate flag. */
+/** Read the persisted custom theme, or null if absent / malformed.
+ *
+ *  Validation:
+ *   - name + mode + tokens-is-object are hard requirements.
+ *   - Every `REQUIRED_CUSTOM_TOKENS` entry must be a non-empty string.
+ *   - Tokens added after the v1 set (e.g. the modem-accent family from
+ *     tuxlink-2ief) are filled from DEFAULT_DARK_TOKENS if missing or
+ *     empty. This keeps pre-existing custom themes loading after a
+ *     token-set upgrade — the operator gets sensible defaults for the
+ *     new tokens until they re-edit the theme. */
 export function loadCustomTheme(): CustomTheme | null {
   try {
     const raw = localStorage.getItem(CUSTOM_THEME_STORAGE_KEY);
@@ -133,16 +174,26 @@ export function loadCustomTheme(): CustomTheme | null {
     if (typeof obj.name !== 'string' || !obj.name) return null;
     if (obj.mode !== 'light' && obj.mode !== 'dark') return null;
     if (!obj.tokens || typeof obj.tokens !== 'object') return null;
-    const tokens = obj.tokens as Record<string, unknown>;
-    for (const t of CUSTOM_THEME_TOKENS) {
-      if (typeof tokens[t] !== 'string' || !(tokens[t] as string).trim()) {
+    const raw_tokens = obj.tokens as Record<string, unknown>;
+    for (const t of REQUIRED_CUSTOM_TOKENS) {
+      if (typeof raw_tokens[t] !== 'string' || !(raw_tokens[t] as string).trim()) {
         return null;
       }
+    }
+    // Fill any not-yet-present tokens (added after v1 of the schema) from
+    // the default-dark snapshot so the theme stays applicable on upgrade.
+    const tokens = {} as Record<CustomThemeToken, string>;
+    for (const t of CUSTOM_THEME_TOKENS) {
+      const v = raw_tokens[t];
+      tokens[t] =
+        typeof v === 'string' && v.trim()
+          ? v
+          : DEFAULT_DARK_TOKENS[t];
     }
     return {
       name: obj.name,
       mode: obj.mode,
-      tokens: tokens as Record<CustomThemeToken, string>,
+      tokens,
     };
   } catch {
     return null;
@@ -229,6 +280,10 @@ export const DEFAULT_DARK_TOKENS: Record<CustomThemeToken, string> = {
   'error': '#ee6b6b',
   'info': '#6bb8ee',
   'form-tag': '#c084fc',
+  'modem-accent': '#4ade80',
+  'modem-accent-2': '#86efac',
+  'modem-accent-soft': 'rgba(34, 197, 94, 0.10)',
+  'modem-accent-fg': '#0d1b14',
   'tux-accent-fg': '#1a0e02',
   'tux-danger-fg': '#1a0e02',
 };
@@ -253,6 +308,10 @@ export const DAYLIGHT_TOKENS: Record<CustomThemeToken, string> = {
   'error': '#a3171e',
   'info': '#0b4f9c',
   'form-tag': '#5b21b6',
+  'modem-accent': '#0a6d3b',
+  'modem-accent-2': '#137a47',
+  'modem-accent-soft': 'rgba(10, 109, 59, 0.10)',
+  'modem-accent-fg': '#ffffff',
   'tux-accent-fg': '#ffffff',
   'tux-danger-fg': '#ffffff',
 };
