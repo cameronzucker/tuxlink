@@ -65,33 +65,65 @@ Tuxlink is a proper native desktop Winlink client for Linux. The first-run exper
 needs no README and no YouTube tutorial, and the Winlink CMS password never touches a
 config file on disk.
 
-## v0.2.0 features
+## Current features
 
-- **Native Winlink engine** — the Winlink B2F protocol implemented directly in Rust.
-  Connects to the CMS over telnet (TLS port 8773 / plaintext port 8772), proposes and
-  accepts messages, and files them into the local mailbox. No external modem daemon or
-  sidecar process for CMS.
-- **Desktop GUI** — Tauri 2.x + React 18; native OS menu bar; AppShell with dashboard
-  ribbon, folder sidebar (Inbox / Sent / Outbox / Archive), message list, reading pane,
-  session-log strip, and status bar.
-- **Onboarding wizard** — callsign + Winlink CMS password (stored in the OS keyring,
-  never on disk) for CMS setup, or an offline / radio-only path. Mounts the mailbox on
-  completion.
-- **AX.25 1200-baud packet** — connected-mode AX.25 over a KISS TNC (USB serial or
-  Bluetooth RFCOMM), carrying the same B2F exchange. Inline connection panel; no pop-up
-  windows.
-- **ARDOP HF transport (radio-free MVP)** — ARQ transport core built on top of an
-  `ardopcf` daemon: wire codec, command/data sockets, ARQ connect/disconnect, byte-stream
-  data path, and a `ManagedModem` process supervisor. Backend-only in v0.2; the Connect
-  panel doesn't expose ARDOP as a selectable transport yet — a follow-up release wires
-  the UI.
-- **GPS privacy controls** — position broadcast is off, local-display-only, or broadcast
-  at a chosen precision; the default reduces broadcast position to a 4-character
-  Maidenhead grid (~1°). Position is never broadcast more precisely than you opt into.
-- **Mailbox + Compose** — Inbox / Sent / Outbox / Archive; reading pane with reply;
-  compose new messages and replies.
-- **Session log** — both a human-readable projection of the CMS session and the raw B2F
-  wire dialogue, toggleable.
+The shipped surface area as of the latest pre-alpha build:
+
+- **Native Winlink engine.** B2F implemented directly in Rust. CMS over
+  telnet (TLS or plaintext), full propose / accept exchange, mailbox
+  persistence. No external modem daemon or sidecar process for CMS.
+- **Desktop GUI.** Tauri 2.x + React 18 rendered via WebKitGTK 4.1.
+  Custom title bar + native-style menu bar; dashboard ribbon (callsign,
+  grid, time, connection, Connect button); folder sidebar
+  (Inbox / Outbox / Sent / Drafts) with per-mode connection entries;
+  message list with search highlighting; reading pane; mode-aware radio
+  panel; mailbox bar.
+- **Onboarding wizard.** Callsign, grid, default transport, optional test
+  send. CMS credentials live in the OS keyring (secret-service on Linux),
+  never in a config file on disk.
+- **Telnet.** Operator-to-CMS-over-internet sessions for development,
+  training, or fall-back when HF is poor.
+- **AX.25 1200-baud packet.** Connected-mode AX.25 over a KISS TNC
+  (USB serial, Bluetooth RFCOMM, or KISS-TCP to a soundcard modem like
+  Dire Wolf). Inline radio panel with SSID picker.
+- **ARDOP HF.** Full UI for the ARDOP transport — pre-flight, dial,
+  abort, quality scoring, session log. Driven by a local `ardopcf`
+  daemon over its command + data sockets.
+- **VARA TCP transport** (early — backend codec + smoke probe ship; the
+  UI integration is in flight).
+- **HTML Forms.** Position report, ICS-213, ICS-309, Bulletin, Damage
+  Assessment compose + render. Catalog refresh path is in progress.
+- **Compose.** New message / Reply / Reply All / Forward; Cc carried
+  end-to-end via the native B2F path; drafts auto-save to a local store
+  keyed by stable draft id; form-based composition shares the same
+  window.
+- **Find Messages.** Token-driven full-text search across folders
+  (`FOLDER:`, `FROM:`, `SUBJECT:`, `BEFORE:`, `AFTER:`, `UNREAD:`,
+  `HAS:`) plus saved + recent searches.
+- **GPS privacy controls.** Position broadcast is off, local-display-
+  only, or broadcast at a chosen precision; the default reduces broadcast
+  to a 4-character Maidenhead grid (~1°). Higher precision is opt-in.
+- **Color schemes.** Six bundled presets (Default dark, Daylight, High
+  contrast (light), Paper, Night/tactical red, Grayscale) plus an inline
+  Theme Designer for custom palettes — motivated by outdoor / bright-sun
+  LCD readability.
+- **Session log.** Per-mode session-log surface inside the radio panel —
+  both the human-readable projection of the CMS session and the raw B2F
+  wire dialogue.
+
+## User guide
+
+In-app documentation lives at **Help → Documentation** — bundled topics
+cover the wizard, every transport, the mailbox, composing, HTML forms,
+search, settings, color schemes, keyboard shortcuts, and troubleshooting.
+The source markdown is in [`docs/user-guide/`](docs/user-guide/) for
+reading outside the app.
+
+**Help → About Tuxlink** shows the running build's version, license, and
+links to the source repository.
+
+**Help → Report Issue** opens the project's GitHub issue tracker in your
+default browser.
 
 ## Interface
 
@@ -128,16 +160,18 @@ Tuxlink is honest about its edges:
   be registered with Winlink (in progress); until then, CMS connectivity targets the test
   server.
 
-## Not in v0.2.0
+## Not yet shipped
 
-- **VARA HF / VARA FM** — VARA is x86 Windows software. It runs under WINE on **x86
-  Linux** (no Windows OS required) but **not on ARM** (e.g. Raspberry Pi). A clean-room
-  native HF modem is planned for v0.5+.
 - **Hamlib rig control** and USB rig autodetect.
-- **Email attachments.**
-- **ICS-213 / HTML form rendering** (Red Cross, SHARES).
-- **Packaging** — `.deb`, `.rpm`, and Flatpak are not yet built; build from source for now
-  (a prebuilt AppImage via CI is forthcoming).
+- **VARA HF / VARA FM as third-party binary.** VARA is x86 Windows software
+  that runs under WINE on x86 Linux but not on ARM. The Tuxlink position is
+  to ship a clean-room native HF modem (v0.5+) instead of bundling VARA;
+  early VARA-TCP wire compatibility is landing for operators who want to
+  bring their own VARA install.
+- **Packaging.** `.deb` / `.rpm` / AppImage / Flatpak are not yet built;
+  the install path is build-from-source.
+- **Trash / Deleted folder behavior.** The Deleted folder is a UI
+  placeholder; delete-from-mailbox semantics are pending.
 
 ## Architecture
 

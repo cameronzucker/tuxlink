@@ -19,6 +19,13 @@ export interface MenuHandlers {
   openSettings: () => void;
   /** Open the inline Theme Designer (View → Color Scheme → Customize…), tuxlink-vgth. */
   openThemeDesigner: () => void;
+  /** Open the inline About Tuxlink dialog (tuxlink-35g0). */
+  openAbout: () => void;
+  /** Open the inline Help / Documentation panel (tuxlink-35g0). */
+  openHelp: () => void;
+  /** Open the project's GitHub issue tracker in the operator's default
+   *  browser (tuxlink-35g0). */
+  reportIssue: () => void;
   quit: () => void;
 }
 
@@ -46,6 +53,15 @@ export function dispatchMenuAction(id: MenuActionId, h: MenuHandlers): void {
     // tuxlink-vgth: opens the inline Theme Designer panel.
     case 'menu:view:customize_theme':
       h.openThemeDesigner(); return;
+    // tuxlink-35g0: Help menu wiring. About + Documentation are inline
+    // overlays; Report Issue opens the project's issue tracker in the
+    // operator's default browser via @tauri-apps/plugin-shell.
+    case 'menu:help:about':
+      h.openAbout(); return;
+    case 'menu:help:docs':
+      h.openHelp(); return;
+    case 'menu:help:report_issue':
+      h.reportIssue(); return;
     case 'menu:mailbox:inbox':
     case 'menu:mailbox:sent':
     case 'menu:mailbox:outbox':
