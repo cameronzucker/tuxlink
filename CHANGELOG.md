@@ -4,6 +4,13 @@ All notable changes to Tuxlink are documented here.
 
 This project adheres to [Semantic Versioning](https://semver.org) with project-specific rules described in [VERSIONING.md](VERSIONING.md). Entries from `v0.0.2` onward are generated automatically by [`release-please`](https://github.com/googleapis/release-please) from [Conventional Commits](https://www.conventionalcommits.org).
 
+## [0.13.2](https://github.com/cameronzucker/tuxlink/compare/v0.13.1...v0.13.2) (2026-06-02)
+
+
+### Refactors
+
+* **shell:** drop sidebar conn-dot — duplicates DashboardRibbon (tuxlink-bcgj) ([120a1f9](https://github.com/cameronzucker/tuxlink/commit/120a1f94b206568bc6a10a910ee56bb1b76e0fe7))
+
 ## [0.13.1](https://github.com/cameronzucker/tuxlink/compare/v0.13.0...v0.13.1) (2026-06-02)
 
 
