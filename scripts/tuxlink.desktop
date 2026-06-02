@@ -2,7 +2,7 @@
 Name=Tuxlink
 GenericName=Winlink HF/VHF/UHF radio client
 Comment=Open-source Winlink-compatible amateur-radio email client (Pat-fork-replacement)
-Exec=tuxlink
+Exec=/usr/bin/env tuxlink
 Icon=tuxlink
 Type=Application
 Categories=Network;HamRadio;
