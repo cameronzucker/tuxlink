@@ -107,6 +107,11 @@ pub fn run() {
         // same instance. Starts Stopped with no token (mint via the RADIO-1
         // modal flow).
         .manage(std::sync::Arc::new(crate::modem_status::ModemSession::new()))
+        // tuxlink-dfmf: VARA session state — holds the TCP transport handle
+        // + a status snapshot. Mutex-protected so concurrent UI commands
+        // (start/stop/status) serialize on the transport handle. Phase 2
+        // minimal surface; full session state machine arrives in Phase 3.
+        .manage(std::sync::Arc::new(crate::winlink::modem::vara::VaraSession::new()))
         // tuxlink-0pnb: P2P-Telnet single-flight + abort coordination (mirrors
         // NativeBackend's connect_in_progress + aborting flags, but held in
         // managed state because P2P bypasses WinlinkBackend entirely).
@@ -281,6 +286,15 @@ pub fn run() {
             crate::modem_commands::modem_ardop_connect, // tuxlink-4ek Task 3.3 (RADIO-1-gated spawn + ARQ connect)
             crate::modem_commands::modem_mint_consent, // tuxlink-4ek Task 6.2 (RADIO-1 token mint — backend-only)
             crate::modem_commands::modem_ardop_b2f_exchange, // tuxlink-ytg (B2F over ARDOP — Winlink mail flows)
+            // tuxlink-dfmf Phase 2: VARA UI wiring. Minimal TCP-transport lifecycle —
+            // open/close/status — plus persisted config + the Pi-availability gating
+            // probe. RF connect-to-peer (RADIO-1-gated) lives in a Phase 3 follow-up.
+            crate::winlink::modem::vara::commands::config_get_vara,
+            crate::winlink::modem::vara::commands::config_set_vara,
+            crate::winlink::modem::vara::commands::vara_start_session,
+            crate::winlink::modem::vara::commands::vara_stop_session,
+            crate::winlink::modem::vara::commands::vara_status,
+            crate::winlink::modem::vara::commands::platform_info,
             // tuxlink-0pnb Task 4 (refactored): P2P-Telnet connect + abort + peer-password management.
             // telnet_p2p_dial renamed to telnet_p2p_connect (StatusBar pipeline wiring);
             // telnet_p2p_abort added to mirror cms_abort (operator cancel semantics).

@@ -31,10 +31,12 @@
 //! reserved for operator-driven flows.
 
 pub mod command;
+pub mod commands;
 pub mod transport;
 pub mod wire;
 
 pub use command::{
     Bandwidth, CommandParseError, Compression, InboundCommand, OutboundCommand,
 };
+pub use commands::{PlatformInfo, VaraSession, VaraState, VaraStatus};
 pub use transport::{VaraConfig, VaraTransport};

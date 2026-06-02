@@ -8,11 +8,26 @@ describe('session-type catalog', () => {
       'cms', 'radio-only', 'post-office', 'p2p', 'network-po',
     ]);
   });
-  it('CMS offers Telnet (built) and Packet (built); VARA shown but not built', () => {
+  it('CMS offers Telnet, Packet, ARDOP HF, and VARA HF/FM as built protocols', () => {
+    // tuxlink-dfmf Phase 2: cms.vara-hf + cms.vara-fm flipped to built:true
+    // (UI ships TCP-transport + config + Pi-availability gating; RF CONNECT
+    // is Phase 3 territory). The "shown but not built" wording belonged
+    // to the pre-Phase-2 era when the protocols had sidebar entries but
+    // no panel. P2P VARA stays unbuilt — see the next test.
     const protos = protocolsFor('cms');
     expect(protos.find((p) => p.id === 'telnet')?.built).toBe(true);
     expect(protos.find((p) => p.id === 'packet')?.built).toBe(true);
+    expect(protos.find((p) => p.id === 'vara-hf')?.built).toBe(true);
+    expect(protos.find((p) => p.id === 'vara-fm')?.built).toBe(true);
+  });
+  it('P2P VARA HF/FM stay unbuilt for Phase 2 (Phase 3 enables peer-connect)', () => {
+    // The P2P intent's VARA entries remain unbuilt because the peer-dial
+    // flow needs the session state machine + RADIO-1 consent (Phase 3 —
+    // tuxlink-fzl7). Only flipping CMS in Phase 2 keeps the operator-
+    // facing scope bounded to what the implementation actually covers.
+    const protos = protocolsFor('p2p');
     expect(protos.find((p) => p.id === 'vara-hf')?.built).toBe(false);
+    expect(protos.find((p) => p.id === 'vara-fm')?.built).toBe(false);
   });
   it('isBuilt is false for any protocol under an unbuilt intent (radio-only)', () => {
     const key: ConnectionKey = { sessionType: 'radio-only', protocol: 'packet' };

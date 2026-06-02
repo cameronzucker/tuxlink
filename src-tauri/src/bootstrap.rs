@@ -339,6 +339,7 @@ mod tests {
             pat_mbo_address: None,
             packet: PacketConfig::default(),
             modem_ardop: None,
+            modem_vara: None,
         }
     }
 

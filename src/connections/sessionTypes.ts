@@ -24,8 +24,12 @@ export const SESSION_TYPES: SessionTypeEntry[] = [
       { ...TEL, built: true },
       { ...PKT, built: true },
       { ...ARD, built: true },
-      { ...VHF, built: false },
-      { ...VFM, built: false },
+      // tuxlink-dfmf Phase 2: VARA HF/FM UI wired for the CMS intent. RF
+      // CONNECT (Phase 3) adds the consent-gated peer-dial path; Phase 2
+      // surfaces the TCP transport + config to the operator. P2P-VARA
+      // stays unbuilt for now — flip once the P2P intent is exercised.
+      { ...VHF, built: true },
+      { ...VFM, built: true },
     ],
   },
   {
