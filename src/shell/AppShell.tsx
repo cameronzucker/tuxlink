@@ -22,7 +22,7 @@ import { getCurrentWindow } from '@tauri-apps/api/window';
 import { useQueryClient } from '@tanstack/react-query';
 import { MessageList } from '../mailbox/MessageList';
 import type { HighlightRange } from '../mailbox/MessageList';
-import { type SortMode, loadSortMode, saveSortMode } from '../mailbox/messageSort';
+import { type SortState, loadSortState, saveSortState } from '../mailbox/messageSort';
 import { useMailbox } from '../mailbox/useMailbox';
 import { isNotConfigured } from '../mailbox/types';
 import type { MailboxFolder, MessageMeta } from '../mailbox/types';
@@ -153,10 +153,10 @@ export function AppShell() {
   // Message-list sort (tuxlink-2x0l). Lazy-init from localStorage so the
   // first render already uses the persisted preference (no flash of default).
   // Global preference for now; per-folder defaults are a Phase 3 idea.
-  const [sortMode, setSortMode] = useState<SortMode>(() => loadSortMode());
-  const onSortModeChange = useCallback((mode: SortMode) => {
-    setSortMode(mode);
-    saveSortMode(mode);
+  const [sortState, setSortState] = useState<SortState>(() => loadSortState());
+  const onSortStateChange = useCallback((next: SortState) => {
+    setSortState(next);
+    saveSortState(next);
   }, []);
 
   // Connection panel: null = no panel; a {sessionType, protocol} key selects the reading-pane connection pane.
@@ -486,8 +486,8 @@ export function AppShell() {
           notConnected={search.isActive ? false : notConnected}
           matchHighlights={searchHighlights}
           showFolderTag={searchIsCrossFolder}
-          sortMode={sortMode}
-          onSortModeChange={onSortModeChange}
+          sortState={sortState}
+          onSortStateChange={onSortStateChange}
         />
         {(() => {
           if (selectedConnection === null) {

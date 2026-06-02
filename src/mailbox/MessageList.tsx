@@ -17,7 +17,7 @@
 import React from 'react';
 import { Virtuoso } from 'react-virtuoso';
 import type { MailboxFolder, MessageMeta } from './types';
-import { DEFAULT_SORT_MODE, type SortMode, sortMessages } from './messageSort';
+import { DEFAULT_SORT_STATE, type SortState, sortMessages } from './messageSort';
 import { MessageListSortControl } from './MessageListSortControl';
 
 /// Empty-folder copy (spec §5.2).
@@ -197,13 +197,14 @@ export interface MessageListProps {
   /// When true, rows render a folder badge when message.folder is set
   /// (cross-folder search mode, spec §7.2).
   showFolderTag?: boolean;
-  /// Current sort mode for the list. Default `date-desc` (matches the
-  /// backend's date-desc baseline so the no-prop case is "newest first").
-  sortMode?: SortMode;
-  /// User picked a new sort mode in the header control. When absent the
-  /// control is hidden (the list still sorts by `sortMode` for callers that
-  /// want to drive sort externally without exposing the picker).
-  onSortModeChange?: (mode: SortMode) => void;
+  /// Current sort state for the list. Default `{ key: 'date', direction: 'desc' }`
+  /// (matches the backend's date-desc baseline so the no-prop case is
+  /// "newest first").
+  sortState?: SortState;
+  /// User picked a new sort key or direction in the header control. When
+  /// absent the control is hidden (the list still sorts by `sortState` for
+  /// callers that want to drive sort externally without exposing the picker).
+  onSortStateChange?: (state: SortState) => void;
 }
 
 /// The list pane. Renders the mock's `.rows-pane` as its root (the 420px left
@@ -216,21 +217,21 @@ export function MessageList({
   notConnected = false,
   matchHighlights,
   showFolderTag,
-  sortMode = DEFAULT_SORT_MODE,
-  onSortModeChange,
+  sortState = DEFAULT_SORT_STATE,
+  onSortStateChange,
 }: MessageListProps) {
   // Sort client-side so changing modes doesn't require a backend re-fetch.
-  // Memo keyed on (messages, sortMode, folder) — folder affects sender-* in
+  // Memo keyed on (messages, sortState, folder) — folder affects sender-* in
   // sent/outbox where the key is the recipient, not the sender.
   const sortedMessages = React.useMemo(
-    () => sortMessages(messages, sortMode, folder),
-    [messages, sortMode, folder],
+    () => sortMessages(messages, sortState, folder),
+    [messages, sortState, folder],
   );
   return (
     <div className="rows-pane" data-testid="rows-pane">
-      {onSortModeChange && (
+      {onSortStateChange && (
         <div className="rows-pane-header" data-testid="rows-pane-header">
-          <MessageListSortControl value={sortMode} onChange={onSortModeChange} />
+          <MessageListSortControl value={sortState} onChange={onSortStateChange} />
         </div>
       )}
       {sortedMessages.length === 0 ? (
