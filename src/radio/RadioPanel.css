@@ -39,9 +39,13 @@
      traditional green identity in default dark, while per-theme
      overrides keep contrast in light themes. Decoupled from --accent
      so the project's general accent (orange in default dark, brown
-     in light) doesn't desaturate the modem chrome. */
+     in light) doesn't desaturate the modem chrome.
+     tuxlink-vxh8: border uses color-mix at 18% to reproduce the
+     original green underline (was --border-strong slate-gray after
+     tuxlink-he7h dropped the literal). Subtle but reads as part of
+     the green-tinted header strip. */
   background: var(--modem-accent-soft);
-  border-bottom: 1px solid var(--border-strong, #2a3140);
+  border-bottom: 1px solid color-mix(in srgb, var(--modem-accent) 18%, transparent);
   display: flex;
   align-items: center;
   gap: 8px;
@@ -318,21 +322,24 @@ select.radio-panel-input option {
   border: 1px solid;
   flex: 1;
 }
-/* Primary action (Connect, Start, Save). Filled-modem-accent so the
- * paired --modem-accent-fg gives reliable contrast across every theme.
- * tuxlink-2ief: was --accent (project accent — orange in default dark);
- * now --modem-accent (green family) so the radio dock's primary button
- * matches its header chrome. Per-theme overrides keep the high-contrast
- * fix in light themes (deep green on white, brown-fg on red in night-red,
- * etc.). */
+/* Primary action (Connect, Start, Save). Outlined-with-bright-text —
+ * the original radio dock aesthetic that pre-dated PR #217.
+ * tuxlink-2ief's first pass used filled-accent (var(--modem-accent) bg
+ * + var(--modem-accent-fg) text) for max contrast across themes; operator
+ * (tuxlink-vxh8): filled green is too loud against the rest of the dark
+ * UI. Restored to outlined-low-alpha-bg + accent text + accent-medium-
+ * alpha border via color-mix, reproducing the original literal alphas
+ * (12% bg, 35% border) but driven by per-theme --modem-accent so light
+ * schemes still get high contrast (deep green text + low-alpha-deep-green
+ * tint stays readable on white). */
 .radio-panel-btn-primary {
-  background: var(--modem-accent);
-  border-color: var(--modem-accent);
-  color: var(--modem-accent-fg);
+  background: var(--modem-accent-soft);
+  border-color: color-mix(in srgb, var(--modem-accent) 35%, transparent);
+  color: var(--modem-accent);
 }
 .radio-panel-btn-primary:hover:not(:disabled) {
-  background: var(--modem-accent-2);
-  border-color: var(--modem-accent-2);
+  background: color-mix(in srgb, var(--modem-accent) 18%, transparent);
+  border-color: var(--modem-accent);
 }
 /* Danger / Abort action. Filled-error mirrors the primary pattern so the
  * contrast holds across themes (the prior outlined-red faded on light). */
