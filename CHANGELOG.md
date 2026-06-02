@@ -4,6 +4,13 @@ All notable changes to Tuxlink are documented here.
 
 This project adheres to [Semantic Versioning](https://semver.org) with project-specific rules described in [VERSIONING.md](VERSIONING.md). Entries from `v0.0.2` onward are generated automatically by [`release-please`](https://github.com/googleapis/release-please) from [Conventional Commits](https://www.conventionalcommits.org).
 
+## [0.15.0](https://github.com/cameronzucker/tuxlink/compare/v0.14.1...v0.15.0) (2026-06-02)
+
+
+### Features
+
+* **shell:** switch ribbon liveGrid to ui_grid for LocalUiOnly-aware display (tuxlink-va1i) ([0475950](https://github.com/cameronzucker/tuxlink/commit/047595060cde80684de6d48a5614dcf9c77f103a))
+
 ## [0.14.1](https://github.com/cameronzucker/tuxlink/compare/v0.14.0...v0.14.1) (2026-06-02)
 
 
