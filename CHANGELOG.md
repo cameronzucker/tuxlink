@@ -4,6 +4,19 @@ All notable changes to Tuxlink are documented here.
 
 This project adheres to [Semantic Versioning](https://semver.org) with project-specific rules described in [VERSIONING.md](VERSIONING.md). Entries from `v0.0.2` onward are generated automatically by [`release-please`](https://github.com/googleapis/release-please) from [Conventional Commits](https://www.conventionalcommits.org).
 
+## [0.17.0](https://github.com/cameronzucker/tuxlink/compare/v0.16.0...v0.17.0) (2026-06-02)
+
+
+### Features
+
+* **linux:** install Tuxlink taskbar icon via .desktop entry + XDG icon paths (tuxlink-mj7i) ([bbc4465](https://github.com/cameronzucker/tuxlink/commit/bbc4465a6417ff1c7ec37d9b6c78b8b35bc85040))
+
+
+### Bug Fixes
+
+* **radio:** filter ARDOP Capture/Playback dropdowns to hardware-only (tuxlink-y7nq) ([0bc5090](https://github.com/cameronzucker/tuxlink/commit/0bc509025dc8bdd1b2607b2d47720c8b3066a8db))
+* **search:** recover from SchemaDrift at build_service so SearchService installs ([2b046f7](https://github.com/cameronzucker/tuxlink/commit/2b046f7ba3676f7b7788e5a5e3562e8d727fa0dd))
+
 ## [0.16.0](https://github.com/cameronzucker/tuxlink/compare/v0.15.1...v0.16.0) (2026-06-02)
 
 
