@@ -173,14 +173,22 @@
 
 /* Editable input row — paired left-label + right-input grid that
  * matches readonly-row dimensions so static and editable rows align
- * vertically in the same section. */
+ * vertically in the same section.
+ *
+ * tuxlink-jrf7: `1fr` resolves to `minmax(auto, 1fr)`, so the input
+ * column's intrinsic-min (long ALSA paths, `/dev/serial/by-id/usb-…`
+ * PTT paths, full WebGUI URLs) pushed the row past the 376 px content
+ * box at 400 px panel width. `minmax(0, 1fr)` lets the input column
+ * shrink to fit the panel; the input itself already has
+ * `width: 100%; box-sizing: border-box` so it follows the cell. */
 .radio-panel-input-row {
   display: grid;
-  grid-template-columns: 72px 1fr;
+  grid-template-columns: 72px minmax(0, 1fr);
   gap: 8px;
   align-items: center;
   margin-bottom: 6px;
   font-size: 13px;
+  min-width: 0;
 }
 .radio-panel-input-row > span {
   color: var(--text-faint, #94a3b8);
