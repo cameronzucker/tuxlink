@@ -27,6 +27,9 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "category": "Network",
+    "shortDescription": "Open-source Winlink-compatible amateur-radio email client",
+    "longDescription": "Tuxlink is an open-source Winlink-compatible amateur-radio email client written in Rust + React. Replaces Pat (the prior fork dependency) with a native, no-credentials-on-disk implementation. Supports HF, VHF, and UHF transports including ARDOP, VARA, and AX.25.",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -34,6 +37,15 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "resources": ["resources/wle-forms/**/*"]
+    "resources": ["resources/wle-forms/**/*"],
+    "linux": {
+      "deb": {
+        "section": "hamradio",
+        "priority": "optional",
+        "files": {
+          "/usr/share/applications/com.tuxlink.app.desktop": "../scripts/com.tuxlink.app.desktop"
+        }
+      }
+    }
   }
 }
