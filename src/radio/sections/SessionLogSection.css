@@ -13,6 +13,12 @@
  * (top) and Actions (bottom). The inner log-scroll has flex:1 within
  * the section so it fills the section's body area below the h5 + above
  * the controls row.
+ *
+ * tuxlink-he7h (2026-06-01): replaced hard-coded rgba/hex literals with
+ * theme tokens so the log renders correctly under the light themes.
+ * Semantic entry colors (ok / warn / alert / raw) still use semantic
+ * tokens (--success / --accent-2 / --error / --text-faint) so meaning
+ * carries across schemes.
  */
 .session-log-section {
   flex: 1;
@@ -28,13 +34,14 @@
   font-family: ui-monospace, 'SF Mono', Menlo, monospace;
   font-size: 12px;
   line-height: 1.55;
-  background: rgba(0, 0, 0, 0.22);
+  background: var(--surface-2);
+  border: 1px solid var(--border-soft);
   border-radius: 3px;
   padding: 8px 10px;
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  color: var(--text-faint, #94a3b8);
+  color: var(--text-dim, #94a3b8);
 }
 
 .session-log-section .log-entry {
@@ -42,7 +49,7 @@
   grid-template-columns: 64px 1fr;
   gap: 8px;
   padding: 4px 0;
-  border-top: 1px solid rgba(255, 255, 255, 0.05);
+  border-top: 1px solid var(--border-soft);
 }
 .session-log-section .log-entry:first-child {
   border-top: none;
@@ -50,7 +57,7 @@
 }
 
 .session-log-section .log-ts {
-  color: #64748b;
+  color: var(--text-faint, #64748b);
   font-size: 11px;
   padding-top: 1px;
   white-space: nowrap;
@@ -61,14 +68,14 @@
 }
 
 .log-entry-info .log-msg  { color: var(--text, #cbd5e1); }
-.log-entry-ok   .log-msg  { color: #4ade80; }
-.log-entry-warn .log-msg  { color: #fbbf24; }
+.log-entry-ok   .log-msg  { color: var(--success, #4ade80); }
+.log-entry-warn .log-msg  { color: var(--accent-2, #fbbf24); }
 .log-entry-warn .log-msg::before { content: '⚠ '; }
 .log-entry-raw  .log-msg  { color: var(--text-faint, #94a3b8); font-style: italic; opacity: 0.75; }
 
 .log-entry-alert {
-  background: rgba(239, 68, 68, 0.08);
-  border-left: 3px solid #f87171;
+  background: var(--tux-danger-surface);
+  border-left: 3px solid var(--error, #f87171);
   padding-left: 8px;
   margin: 2px -10px;
   padding-right: 10px;
@@ -76,10 +83,10 @@
   padding-bottom: 5px;
   border-top: none;
 }
-.log-entry-alert + .log-entry { border-top: 1px solid rgba(255, 255, 255, 0.04); }
-.log-entry-alert .log-msg { color: #f87171; }
+.log-entry-alert + .log-entry { border-top: 1px solid var(--border-soft); }
+.log-entry-alert .log-msg { color: var(--error, #f87171); }
 .log-entry-alert .log-msg::before { content: '⊘ '; font-weight: 600; }
-.log-entry-alert .log-msg .log-raw { color: #fecaca; font-style: italic; opacity: 0.85; }
+.log-entry-alert .log-msg .log-raw { color: var(--error, #fecaca); font-style: italic; opacity: 0.7; }
 
 .session-log-section .log-controls {
   display: flex;
@@ -92,7 +99,7 @@
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  color: var(--text-faint, #94a3b8);
+  color: var(--text-dim, #94a3b8);
   cursor: pointer;
 }
 .session-log-section .log-controls label input {
@@ -101,7 +108,7 @@
 .session-log-section .log-copy {
   background: transparent;
   border: none;
-  color: #67e8f9;
+  color: var(--info, #67e8f9);
   cursor: pointer;
   margin-left: auto;
   padding: 0;
@@ -115,12 +122,12 @@
 .session-log-section .log-clear {
   background: transparent;
   border: none;
-  color: #94a3b8;
+  color: var(--text-dim, #94a3b8);
   cursor: pointer;
   padding: 0;
   font-size: 12px;
 }
 .session-log-section .log-clear:hover {
-  color: #f87171;
+  color: var(--error, #f87171);
   text-decoration: underline;
 }

@@ -5,6 +5,15 @@
  * smoke 2026-05-31 flagged this as nearly unreadable vs the rest of the
  * shell. Bumped to 12-14 px range; section labels stay slightly smaller
  * but readable.
+ *
+ * tuxlink-he7h (2026-06-01): replaced hard-coded rgba/hex literals with
+ * theme-token references. The prior `rgba(34, 197, 94, 0.06)` mint header
+ * and `#4ade80` pastel-green title (and matching close-button + input
+ * literals) predate the light themes (Daylight / High contrast / Paper)
+ * and bypass the `[data-theme]` cascade — in light schemes those rgbas
+ * resolve to invisible-on-white instead of the dark-theme intent. State
+ * dots and the connected-indicator still use semantic tokens
+ * (--success / --accent-2 / --error) so the meaning carries across themes.
  */
 .radio-panel {
   background: var(--surface, #0f1218);
@@ -26,8 +35,8 @@
 
 .radio-panel-h {
   padding: 10px 12px;
-  background: rgba(34, 197, 94, 0.06);
-  border-bottom: 1px solid rgba(34, 197, 94, 0.18);
+  background: var(--accent-soft);
+  border-bottom: 1px solid var(--border-strong, #2a3140);
   display: flex;
   align-items: center;
   gap: 8px;
@@ -37,17 +46,17 @@
   width: 10px;
   height: 10px;
   border-radius: 50%;
-  background: #64748b;
+  background: var(--text-faint, #64748b);
   flex-shrink: 0;
 }
-.radio-panel-dot[data-state='connecting']    { background: #fbbf24; }
-.radio-panel-dot[data-state='connected']     { background: #4ade80; box-shadow: 0 0 5px #4ade80; }
-.radio-panel-dot[data-state='disconnecting'] { background: #fbbf24; }
-.radio-panel-dot[data-state='error']         { background: #f87171; }
+.radio-panel-dot[data-state='connecting']    { background: var(--accent-2, #fbbf24); }
+.radio-panel-dot[data-state='connected']     { background: var(--success, #4ade80); box-shadow: 0 0 5px var(--success, #4ade80); }
+.radio-panel-dot[data-state='disconnecting'] { background: var(--accent-2, #fbbf24); }
+.radio-panel-dot[data-state='error']         { background: var(--error, #f87171); }
 
 .radio-panel-name {
   font-weight: 600;
-  color: #4ade80;
+  color: var(--accent, #4ade80);
   font-size: 14px;
   letter-spacing: 0.02em;
 }
@@ -60,9 +69,9 @@
 }
 
 .radio-panel-close {
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  color: var(--text-faint, #94a3b8);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text-dim, #94a3b8);
   padding: 4px 9px;
   border-radius: 3px;
   font-size: 13px;
@@ -70,7 +79,8 @@
   line-height: 1;
 }
 .radio-panel-close:hover {
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--elevated);
+  color: var(--text);
 }
 
 .radio-panel-body {
@@ -106,7 +116,7 @@
    pushed off-screen to the right". */
 .radio-panel-sec {
   padding: 8px 12px;
-  border-bottom: 1px dashed rgba(255, 255, 255, 0.08);
+  border-bottom: 1px dashed var(--border-soft, rgba(255, 255, 255, 0.08));
   min-width: 0;
   box-sizing: border-box;
   max-width: 100%;
@@ -129,7 +139,7 @@
 .radio-panel-sec h5 .live {
   margin-left: auto;
   font-size: 10px;
-  color: #4ade80;
+  color: var(--success, #4ade80);
   letter-spacing: 0;
   text-transform: none;
 }
@@ -146,8 +156,8 @@
   font-size: 13px;
 }
 .radio-panel-readonly {
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.10);
+  background: var(--surface-2);
+  border: 1px solid var(--border-soft);
   border-radius: 3px;
   padding: 5px 8px;
   font-size: 13px;
@@ -176,8 +186,8 @@
   color: var(--text-faint, #94a3b8);
 }
 .radio-panel-input {
-  background: rgba(0, 0, 0, 0.22);
-  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
   border-radius: 3px;
   padding: 5px 8px;
   font-size: 13px;
@@ -188,8 +198,8 @@
 }
 .radio-panel-input:focus {
   outline: none;
-  border-color: rgba(34, 197, 94, 0.45);
-  background: rgba(0, 0, 0, 0.32);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--tux-focus-ring, var(--accent));
 }
 
 /* Operator smoke 2026-05-31 round 3: "Our dropdowns for baud and SSID
@@ -200,7 +210,11 @@
    reset + custom SVG indicator gives the operator an obvious
    interactive affordance and keeps the dark-on-dark palette consistent
    across text inputs and selects. Same chevron is used in the dashboard
-   ribbon's callsign select (AppShell.css `.dash-callsign-select`). */
+   ribbon's callsign select (AppShell.css `.dash-callsign-select`).
+   tuxlink-he7h: the SVG chevron fill is data-URI-encoded so it can't
+   read CSS vars directly. Kept the dark-theme gray here as a defensive
+   fallback — the broader CSS-literal sweep (tuxlink-46tb) will swap
+   data-URI SVGs for mask-image + background-color via currentColor. */
 select.radio-panel-input {
   appearance: none;
   -webkit-appearance: none;
@@ -212,7 +226,7 @@ select.radio-panel-input {
   cursor: pointer;
 }
 select.radio-panel-input:hover {
-  border-color: rgba(255, 255, 255, 0.24);
+  border-color: var(--accent);
 }
 /* Force dark option rows so the popup list isn't blinding white-on-white
    in browsers that style <option> per the OS rather than per the page. */
@@ -229,9 +243,9 @@ select.radio-panel-input option {
   margin-top: 4px;
 }
 .radio-panel-chip {
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  color: var(--text-faint, #94a3b8);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text-dim, #94a3b8);
   padding: 3px 8px;
   font-size: 12px;
   border-radius: 12px;
@@ -239,8 +253,9 @@ select.radio-panel-input option {
   font-family: ui-monospace, monospace;
 }
 .radio-panel-chip:hover {
-  background: rgba(255, 255, 255, 0.10);
+  background: var(--elevated);
   color: var(--text, #cbd5e1);
+  border-color: var(--border-strong);
 }
 
 /* Transport radio row (port-coupled selector). */
@@ -287,23 +302,30 @@ select.radio-panel-input option {
   border: 1px solid;
   flex: 1;
 }
+/* Primary action (Connect, Start, Save). Filled-accent so the on-accent
+ * text color (--tux-accent-fg) gives reliable contrast across every
+ * theme — the previous outlined-green pattern washed out in the light
+ * themes because rgba(34,197,94,0.12) on white is barely visible. */
 .radio-panel-btn-primary {
-  background: rgba(34, 197, 94, 0.12);
-  border-color: rgba(34, 197, 94, 0.35);
-  color: #4ade80;
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--tux-accent-fg);
 }
 .radio-panel-btn-primary:hover:not(:disabled) {
-  background: rgba(34, 197, 94, 0.18);
+  background: var(--accent-2);
+  border-color: var(--accent-2);
 }
+/* Danger / Abort action. Filled-error mirrors the primary pattern so the
+ * contrast holds across themes (the prior outlined-red faded on light). */
 .radio-panel-btn-bad {
-  background: rgba(239, 68, 68, 0.10);
-  border-color: rgba(239, 68, 68, 0.30);
-  color: #f87171;
+  background: var(--error);
+  border-color: var(--error);
+  color: var(--tux-danger-fg);
   flex: 0 0 auto;
   padding: 8px 14px;
 }
 .radio-panel-btn-bad:hover:not(:disabled) {
-  background: rgba(239, 68, 68, 0.16);
+  filter: brightness(1.1);
 }
 .radio-panel-btn:disabled {
   opacity: 0.5;
