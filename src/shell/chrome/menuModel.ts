@@ -32,15 +32,19 @@ export const MENU_TREE: TopMenu[] = [
     { id: 'menu:message:reply', label: 'Reply', accel: 'Ctrl+R' },
     { id: 'menu:message:reply_all', label: 'Reply All', accel: 'Ctrl+Shift+R' },
     { id: 'menu:message:forward', label: 'Forward' },
-    { id: 'menu:message:print', label: 'Print', accel: 'Ctrl+P' },
+    // Not-yet-wired: dispatchMenuAction has no Print handler, so disable +
+    // badge rather than render as a dead-clickable button (tuxlink-dpf).
+    { id: 'menu:message:print', label: 'Print', disabled: true },
   ] },
   { label: 'Session', items: [
     { id: 'menu:session:connect', label: 'Connect', accel: 'F5' },
-    { id: 'menu:session:disconnect', label: 'Disconnect' },
+    // Not-yet-wired: dispatchMenuAction routes these to its safe no-op default
+    // (tuxlink-dpf). Disabled + badged so they read as "coming", not broken.
+    { id: 'menu:session:disconnect', label: 'Disconnect', disabled: true },
     { separator: true },
-    { id: 'menu:session:log', label: 'Session Log' },
-    { id: 'menu:session:verify_cms', label: 'Verify CMS Connection' },
-    { id: 'menu:session:show_transport', label: 'Show transport' },
+    { id: 'menu:session:log', label: 'Session Log', disabled: true },
+    { id: 'menu:session:verify_cms', label: 'Verify CMS Connection', disabled: true },
+    { id: 'menu:session:show_transport', label: 'Show transport', disabled: true },
   ] },
   { label: 'Mailbox', items: [
     { id: 'menu:mailbox:inbox', label: 'Inbox' },
