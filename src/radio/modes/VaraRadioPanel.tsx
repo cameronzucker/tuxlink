@@ -25,6 +25,7 @@ import { useSessionLog } from '../sections/useSessionLog';
 import { useVaraConfig } from '../useVaraConfig';
 import type { VaraUiConfig } from '../useVaraConfig';
 import type { RadioPanelMode } from '../types';
+import './VaraRadioPanel.css';
 
 /** Mirror of Rust's `commands::VaraStatus`. camelCase per the Rust
  *  `#[serde(rename_all = "camelCase")]` on the struct. */
@@ -225,12 +226,14 @@ export function VaraRadioPanel({ mode, onClose }: VaraRadioPanelProps) {
     >
       {platformBlocked && (
         <section className="radio-panel-sec" data-testid="vara-platform-banner">
-          <p className="radio-panel-error" role="alert">
-            VARA requires an x86 / x86_64 host. This machine is{' '}
-            <code>{platform?.arch}</code> ({platform?.os}); Wine cannot run VARA on this
-            architecture (Pi 5 16K-page kernel blocks Wine entirely). Controls below
-            are disabled. Run tuxlink on an x86 / x86_64 machine to use VARA, or use
-            ARDOP HF / Packet on this host.
+          <p className="radio-panel-info" role="status">
+            <strong>VARA cannot run locally on this host.</strong> This machine is{' '}
+            <code>{platform?.arch}</code> ({platform?.os}); Wine cannot run VARA on
+            this architecture (Pi 5 16K-page kernel blocks Wine entirely). Point{' '}
+            <code>host</code> below at a remote VARA instance (e.g., another machine
+            on your LAN running VARA on x86 Windows or x86 Linux + Wine) and Start
+            will connect to it over TCP. Editing the config or starting against a
+            remote host is fully supported from this Pi.
           </p>
         </section>
       )}
@@ -248,7 +251,7 @@ export function VaraRadioPanel({ mode, onClose }: VaraRadioPanelProps) {
             autoCapitalize="off"
             autoCorrect="off"
             placeholder="127.0.0.1"
-            disabled={loading || isOpen || platformBlocked}
+            disabled={loading || isOpen}
             onChange={(e) => setHostInput(e.target.value)}
             onBlur={commitHost}
           />
@@ -265,7 +268,7 @@ export function VaraRadioPanel({ mode, onClose }: VaraRadioPanelProps) {
             autoCapitalize="off"
             autoCorrect="off"
             placeholder="8300"
-            disabled={loading || isOpen || platformBlocked}
+            disabled={loading || isOpen}
             onChange={(e) => setCmdPortInput(e.target.value)}
             onBlur={() => commitPort(cmdPortInput, 'cmd_port', setCmdPortInput)}
             onKeyDown={onPortKey}
@@ -283,7 +286,7 @@ export function VaraRadioPanel({ mode, onClose }: VaraRadioPanelProps) {
             autoCapitalize="off"
             autoCorrect="off"
             placeholder="8301"
-            disabled={loading || isOpen || platformBlocked}
+            disabled={loading || isOpen}
             onChange={(e) => setDataPortInput(e.target.value)}
             onBlur={() => commitPort(dataPortInput, 'data_port', setDataPortInput)}
             onKeyDown={onPortKey}
@@ -295,7 +298,7 @@ export function VaraRadioPanel({ mode, onClose }: VaraRadioPanelProps) {
             className="radio-panel-input"
             data-testid="vara-bandwidth-select"
             value={config.bandwidth_hz ?? ''}
-            disabled={loading || isOpen || platformBlocked}
+            disabled={loading || isOpen}
             onChange={onBandwidthChange}
           >
             {BANDWIDTH_OPTIONS.map((opt) => (
@@ -326,13 +329,13 @@ export function VaraRadioPanel({ mode, onClose }: VaraRadioPanelProps) {
           type="button"
           className="radio-panel-btn radio-panel-btn-primary"
           data-testid="vara-start-btn"
-          disabled={busy || loading || isOpen || platformBlocked}
+          disabled={busy || loading || isOpen}
           onClick={onStartClick}
           title={
-            platformBlocked
-              ? 'VARA cannot run on this architecture (see banner above)'
-              : isOpen
-                ? 'Already open — Stop first to reconnect'
+            isOpen
+              ? 'Already open — Stop first to reconnect'
+              : platformBlocked
+                ? 'VARA cannot run on this host (aarch64); point host at a remote VARA instance to use it from here'
                 : 'Open TCP transport to VARA (does not transmit)'
           }
         >
