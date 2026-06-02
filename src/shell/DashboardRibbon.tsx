@@ -159,6 +159,18 @@ export function DashboardRibbon({ data, onConnect, connecting, onAbort, packet, 
             await invoke('position_set_source', { source: 'Gps' });
             queryClient.invalidateQueries({ queryKey: ['config_read'] });
           }}
+          /* tuxlink-z5pz (spec §4.1 amended): the MANUAL segment's click in
+             the source segmented control fires onUseManual + enters edit
+             mode. The DashboardRibbon-side handler is a no-op — the actual
+             work happens inside GridEdit (enterEdit() opens the grid input;
+             the operator's Enter-commit fires the existing onCommit path
+             above, which is the T4 config_set_grid that atomically persists
+             cfg.privacy.position_source = Manual + the new grid value).
+             onUseManual is wired explicitly (Choice B per the spec §4.1
+             prop-shape directive) so DashboardRibbon retains a test-spy
+             hook in case future optimistic-invalidate behavior is added
+             here, mirroring the onUseGps shape. */
+          onUseManual={() => {}}
         />
       </div>
       <div className="dash-divider" />

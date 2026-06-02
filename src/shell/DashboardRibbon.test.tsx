@@ -274,12 +274,13 @@ describe('DashboardRibbon — optimistic config_read refresh (tuxlink-c79g T14)'
   });
 
   it('invalidates [config_read] within one render cycle after position_set_source resolves', async () => {
-    // Source = Manual + gpsReady so the MANUAL chip is the click target that
+    // Source = Manual + gpsReady so the GPS segment is the click target that
     // fires onUseGps → invoke('position_set_source', { source: 'Gps' }).
+    // tuxlink-z5pz: testid renamed from source-chip to source-segment-gps.
     const data = makeData({ position_source: 'Manual', grid: 'DN31', gpsReady: true });
     const { invalidateSpy } = renderWithClient(<DashboardRibbon data={data} />);
 
-    fireEvent.click(screen.getByTestId('source-chip'));
+    fireEvent.click(screen.getByTestId('source-segment-gps'));
 
     await waitFor(() => {
       expect(invoke).toHaveBeenCalledWith('position_set_source', { source: 'Gps' });
