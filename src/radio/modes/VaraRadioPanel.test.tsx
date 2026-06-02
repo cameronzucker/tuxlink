@@ -197,7 +197,12 @@ describe('<VaraRadioPanel>', () => {
     expect(invokeSpy).toHaveBeenCalledWith('vara_stop_session');
   });
 
-  it('renders the Pi-availability banner on ARM and disables Start', async () => {
+  it('renders the Pi-availability banner on ARM but keeps controls editable (tuxlink-ze98)', async () => {
+    // Pre-tuxlink-ze98 the panel disabled all controls when platformBlocked
+    // — wrong, because tuxlink CAN connect to a REMOTE VARA over TCP from a
+    // Pi (the modem just can't run LOCALLY on aarch64 due to no Wine).
+    // Post-fix: banner is informational, controls stay editable, Start
+    // remains clickable so the operator can point at a remote VARA host.
     const core = await import('@tauri-apps/api/core');
     (core.invoke as ReturnType<typeof vi.fn>).mockImplementation(
       makeInvoke({ platform_info: armPlatform }),
@@ -206,9 +211,16 @@ describe('<VaraRadioPanel>', () => {
     await waitFor(() => {
       expect(screen.getByTestId('vara-platform-banner')).toBeInTheDocument();
     });
-    expect(screen.getByTestId('vara-start-btn')).toBeDisabled();
-    // Host input is also disabled on blocked platforms.
-    expect(screen.getByTestId('vara-host-input')).toBeDisabled();
+    // Form fields must NOT be disabled by platform-block alone — the
+    // operator needs to edit the host to point at a remote VARA.
+    expect(screen.getByTestId('vara-host-input')).not.toBeDisabled();
+    expect(screen.getByTestId('vara-cmd-port-input')).not.toBeDisabled();
+    expect(screen.getByTestId('vara-data-port-input')).not.toBeDisabled();
+    expect(screen.getByTestId('vara-bandwidth-select')).not.toBeDisabled();
+    // Start must remain clickable — TCP-connect to a remote host is the
+    // supported path for Pi operators. (If it fails because nothing is
+    // listening, the lastError will surface that honestly.)
+    expect(screen.getByTestId('vara-start-btn')).not.toBeDisabled();
   });
 
   it('does not render the banner on x86_64', async () => {
