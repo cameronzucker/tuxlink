@@ -9,6 +9,7 @@
 
 import { useEffect, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { useQueryClient } from '@tanstack/react-query';
 import type { StatusBarData, StatusTone } from './useStatus';
 import { GridEdit } from './GridEdit';
 import { DEV_FIXTURE, DEV_POSITION, DEV_CONNECTION_DASH } from '../mailbox/devFixture';
@@ -72,6 +73,12 @@ export interface DashboardRibbonProps {
 export function DashboardRibbon({ data, onConnect, connecting, onAbort, packet, ssid, onSsidChange }: DashboardRibbonProps) {
   const { utc, local } = useClock();
   const { callsign, grid, state, connection: connectionFromData } = data;
+  // Task 14 (tuxlink-c79g, spec §4.3 + Codex P1 #4): after a grid commit or a
+  // source flip resolves, invalidate the config_read query so the source chip
+  // + grid value refresh within one render cycle instead of waiting up to 5s
+  // for the next config poll. Local optimistic state via useState was rejected
+  // because two sources of truth risk divergence on error paths.
+  const queryClient = useQueryClient();
   // Non-editable fallback (no onSsidChange handler — pre-wizard / external
   // consumers): show the effective `<base>-<N>` so the operator still sees
   // their AX.25 call. The editable path below splits callsign + SSID into
@@ -144,7 +151,14 @@ export function DashboardRibbon({ data, onConnect, connecting, onAbort, packet, 
           grid={grid}
           source={data.position_source}
           gpsReady={data.gpsReady ?? false}
-          onCommit={(g) => invoke('config_set_grid', { grid: g })}
+          onCommit={async (g) => {
+            await invoke('config_set_grid', { grid: g });
+            queryClient.invalidateQueries({ queryKey: ['config_read'] });
+          }}
+          onUseGps={async () => {
+            await invoke('position_set_source', { source: 'Gps' });
+            queryClient.invalidateQueries({ queryKey: ['config_read'] });
+          }}
         />
       </div>
       <div className="dash-divider" />

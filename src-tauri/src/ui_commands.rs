@@ -1711,14 +1711,15 @@ pub(crate) fn validate_grid_input(s: &str) -> Option<&'static str> {
 ///   arbiter is the runtime source of truth for broadcast position
 ///   (spec §position-686).
 ///
-/// **tuxlink-pjih (2026-06-01):** previously this command also persisted
-/// `cfg.privacy.position_source = Manual` and the arbiter's `set_manual`
-/// pinned the runtime source to `Manual`. Operator complaint was that
-/// setting a manual grid caused the GPS-derived grid to stop displaying
-/// even when a fresh GPS fix was available. Resolution: setting a manual
-/// grid now updates ONLY the fallback grid; the stored source preference
-/// and live arbiter source are no longer pinned. The displayed grid
-/// follows GPS-fresh-else-manual (see [`PositionArbiter::active_grid`]).
+/// **Position-subsystem restoration (tuxlink-c79g, 2026-06-01):** the pjih
+/// patch removed both the on-disk `position_source = Manual` persistence
+/// and the arbiter's source-pinning inside `set_manual`. Spec §3.1 +
+/// Codex P1 #3 restore both: this command now persists
+/// `cfg.privacy.position_source = Manual` (T4) and the arbiter pins
+/// `source = Manual` inside `set_manual` (T1). The on-disk preference and
+/// the in-memory runtime source stay aligned; switching back to GPS
+/// happens via `position_set_source("Gps")`, not by a fresh GPS fix
+/// (sticky-manual invariant per spec §2 State 4 / State 5).
 ///
 /// The arbiter is managed as an `Arc<PositionArbiter>` so it is shared between
 /// this command and (Task 11) the gpsd task.
@@ -1732,23 +1733,52 @@ pub async fn config_set_grid(
     arbiter: tauri::State<'_, std::sync::Arc<crate::position::PositionArbiter>>,
     state: State<'_, BackendState>,
 ) -> Result<(), UiError> {
+    config_set_grid_impl(grid, arbiter.inner().clone(), state.current()).await
+}
+
+/// Tauri-attribute-free body of [`config_set_grid`], factored out so the
+/// command is unit-testable without a Tauri app handle. See the command's
+/// rustdoc for the contract.
+///
+/// Per spec §3.1 + Codex P1 #3 (position-subsystem restoration): persists
+/// `cfg.privacy.position_source = Manual` to disk alongside the grid update
+/// (pjih dropped this; T4 restores it). The arbiter's `set_manual` is the
+/// in-memory mirror — T1 restored the source-pinning invariant inside
+/// `set_manual` itself, so the on-disk `position_source = Manual` value and
+/// the arbiter's runtime `source` stay aligned.
+pub(crate) async fn config_set_grid_impl(
+    grid: String,
+    arbiter: std::sync::Arc<crate::position::PositionArbiter>,
+    backend: Option<std::sync::Arc<dyn crate::winlink_backend::WinlinkBackend>>,
+) -> Result<(), UiError> {
     let g = grid.trim().to_string();
     if let Some(msg) = validate_grid_input(&g) {
         return Err(UiError::Rejected(msg.to_string()));
     }
-    let mut cfg = config::read_config().map_err(|e| UiError::Internal {
-        detail: e.to_string(),
+
+    // Critical section per spec §3.3 + R3 F1 + F7: hold the arbiter mutex
+    // from read_config through write_config_atomic through arbiter mutation
+    // so disk and arbiter state cannot diverge across concurrent callers.
+    // The backend.set_config push happens AFTER mutex release
+    // (eventually-consistent — pre-existing pattern).
+    let new_cfg = arbiter.with_inner(|i| -> Result<config::Config, UiError> {
+        let mut cfg = config::read_config()
+            .map_err(|e| UiError::Internal { detail: e.to_string() })?;
+        cfg.identity.grid = Some(g.clone());
+        cfg.privacy.position_source = config::PositionSource::Manual;  // RESTORED per spec §3.1 (Codex P1 #3)
+        config::write_config_atomic(&cfg)
+            .map_err(|e| UiError::Internal { detail: e.to_string() })?;
+        // Mirror in-memory: T1 invariant — set_manual pins source = Manual.
+        i.manual_grid = Some(g.clone());
+        i.source = config::PositionSource::Manual;
+        Ok(cfg)
     })?;
-    cfg.identity.grid = Some(g.clone());
-    config::write_config_atomic(&cfg).map_err(|e| UiError::Internal {
-        detail: e.to_string(),
-    })?;
-    arbiter.set_manual(&g);
+
     // tuxlink-ka7/p5u: refresh the live backend (config_set_* wildcard). The grid
     // feeds effective_broadcast_locator's config fallback, so a stale snapshot would
     // broadcast the old grid until restart.
-    if let Some(backend) = state.current() {
-        backend.set_config(cfg);
+    if let Some(backend) = backend {
+        backend.set_config(new_cfg);
     }
     Ok(())
 }
@@ -1761,37 +1791,66 @@ pub async fn config_set_grid(
 // commit. `position_status` reads LIVE arbiter state (NOT config), so
 // `gps_ready` is intentionally absent from `ConfigViewDto` (spec §position-686).
 
-/// Switch the active position source (operator-driven). v0.1 supports switching
-/// TO GPS only — Manual is pinned by editing the grid (`config_set_grid`), which
-/// requires a grid value. "Gps" calls `arbiter.use_gps()` (requires a fresh fix);
-/// on success, persists `position_source = Gps` so the choice survives restart.
+/// Persist the operator's chip selection (`config.privacy.position_source`)
+/// and flip the in-memory arbiter source.
+///
+/// `'Gps'` succeeds unconditionally per spec §1.1 (the relaxation): the
+/// pre-check on `arbiter.has_fresh_fix()` was removed in Task 3 of the
+/// position-subsystem restoration (Codex P0 #1), mirroring the T2 change
+/// that made `arbiter.use_gps()` infallible. If no fresh fix exists when
+/// the operator picks GPS, `active_grid` falls back to `manual_grid`
+/// (State 4 / State 5 per the 2026-05-22 spec row 3) — the chip selection
+/// is a stable preference, not a snapshot of "GPS is currently usable."
+///
+/// `'Manual'` is rejected — manual pinning happens via `config_set_grid`,
+/// which `arbiter.set_manual` keys to `source = Manual` (T1 restored the
+/// source-pinning invariant).
+///
+/// Persists config BEFORE flipping the in-memory arbiter, so a write
+/// failure returns `UiError::Internal` without an in-memory/persisted skew
+/// (mirrors `config_set_grid`'s persist-first invariant).
 #[tauri::command]
 pub async fn position_set_source(
     source: String,
     arbiter: tauri::State<'_, std::sync::Arc<crate::position::PositionArbiter>>,
     state: State<'_, BackendState>,
 ) -> Result<(), UiError> {
+    position_set_source_impl(source, arbiter.inner().clone(), state.current()).await
+}
+
+/// Tauri-attribute-free body of [`position_set_source`], factored out so the
+/// command is unit-testable without a Tauri app handle. See the command's
+/// rustdoc for the contract.
+pub(crate) async fn position_set_source_impl(
+    source: String,
+    arbiter: std::sync::Arc<crate::position::PositionArbiter>,
+    backend: Option<std::sync::Arc<dyn crate::winlink_backend::WinlinkBackend>>,
+) -> Result<(), UiError> {
     match source.as_str() {
         "Gps" => {
-            // Pre-check the fix WITHOUT flipping yet, so the common "no fix" case
-            // short-circuits before we persist anything (mirrors config_set_grid's
-            // persist-first invariant: in-memory never gets ahead of persisted config).
-            if !arbiter.has_fresh_fix() {
-                return Err(UiError::Unavailable {
-                    reason: "Cannot switch to GPS: no usable GPS fix".into(),
-                });
-            }
-            // Persist first; if the write fails, return WITHOUT having flipped in-memory.
-            let mut cfg = config::read_config().map_err(|e| UiError::Internal { detail: e.to_string() })?;
-            cfg.privacy.position_source = config::PositionSource::Gps;
-            config::write_config_atomic(&cfg).map_err(|e| UiError::Internal { detail: e.to_string() })?;
-            // Flip in-memory only after a successful persist. use_gps re-checks freshness
-            // atomically; the pre-check→use_gps window is sub-millisecond vs a 30s staleness,
-            // so a fix expiring in between is not a real-world concern.
-            arbiter.use_gps().map_err(|e| UiError::Unavailable { reason: format!("Cannot switch to GPS: {e}") })?;
+            // Per spec §1.1: no `has_fresh_fix` gate. The chip selection is a
+            // stable preference; effective_broadcast_locator handles the no-fix
+            // fallback to manual_grid (State 4 / State 5).
+            //
+            // Critical section per spec §3.3 + R3 F1 + F7: hold the arbiter
+            // mutex from read_config through write_config_atomic through
+            // arbiter mutation so disk and arbiter state cannot diverge across
+            // concurrent callers. Persist-first invariant preserved — on a
+            // write_config_atomic error the closure returns without mutating
+            // the arbiter's in-memory source.
+            let new_cfg = arbiter.with_inner(|i| -> Result<config::Config, UiError> {
+                let mut cfg = config::read_config()
+                    .map_err(|e| UiError::Internal { detail: e.to_string() })?;
+                cfg.privacy.position_source = config::PositionSource::Gps;
+                config::write_config_atomic(&cfg)
+                    .map_err(|e| UiError::Internal { detail: e.to_string() })?;
+                // Mirror in-memory: use_gps semantics (T2 — infallible).
+                i.source = config::PositionSource::Gps;
+                Ok(cfg)
+            })?;
             // tuxlink-ka7/p5u: refresh the live backend (config_set_* wildcard).
-            if let Some(backend) = state.current() {
-                backend.set_config(cfg);
+            if let Some(backend) = backend {
+                backend.set_config(new_cfg);
             }
             Ok(())
         }
@@ -1807,12 +1866,14 @@ pub async fn position_set_source(
 ///   [`crate::position::effective_broadcast_locator`], honoring both precision and
 ///   the `gps_state` privacy control. The ribbon displays this so it always shows
 ///   exactly what is/would be transmitted (Codex P1-B). Empty string = no grid.
-/// - `active_source`: the LIVE source actually producing the displayed grid —
-///   `Gps` while a fresh fix exists, `Manual` when falling back to the
-///   manually-set grid. tuxlink-pjih: the UI source chip reads this so it
-///   stays truthful even when the operator's stored preference disagrees.
 ///
 /// Polled by useStatusData (2s).
+///
+/// Spec §3.1: this DTO does NOT carry `active_source`. The frontend's source
+/// chip reads source from `config_read`; optimistic updates after
+/// `config_set_grid` + `position_set_source` ensure the chip flips within one
+/// render cycle (Task 14 wires this). See
+/// `docs/superpowers/specs/2026-06-01-position-subsystem-restoration-design.md`.
 #[derive(Debug, Serialize, Clone, PartialEq)]
 pub struct PositionStatusDto {
     pub gps_ready: bool,
@@ -1820,8 +1881,6 @@ pub struct PositionStatusDto {
     /// gps_state). Empty string when no grid is available. Serializes as
     /// `broadcast_grid` (snake_case) matching the TS PositionStatusDto.
     pub broadcast_grid: String,
-    /// The live source actually used to derive the active grid (tuxlink-pjih).
-    pub active_source: config::PositionSource,
 }
 
 #[tauri::command]
@@ -1832,7 +1891,6 @@ pub async fn position_status(
     Ok(PositionStatusDto {
         gps_ready: arbiter.has_fresh_fix(),
         broadcast_grid: crate::position::effective_broadcast_locator(&cfg, Some(&arbiter)),
-        active_source: arbiter.effective_source(),
     })
 }
 
@@ -2772,26 +2830,6 @@ mod tests {
         assert!(validate_grid_input("EM7").is_some(), "3-char should be invalid");
     }
 
-    // tuxlink-pjih (2026-06-01): set_manual no longer pins source = Manual;
-    // it just updates the fallback grid. The stored source preference stays
-    // where the operator put it. The displayed grid follows GPS-fresh-else-
-    // manual (verified in `position::arbiter::tests`); this test pins the
-    // ui_commands-side invariant that set_manual is grid-only.
-    #[test]
-    fn arbiter_set_manual_updates_grid_without_changing_stored_source() {
-        use crate::config::{PositionPrecision, PositionSource};
-        use crate::position::PositionArbiter;
-
-        let arbiter = PositionArbiter::new(PositionSource::Gps, None, PositionPrecision::FourCharGrid);
-        assert_eq!(arbiter.source(), PositionSource::Gps);
-        arbiter.set_manual("EM75");
-        assert_eq!(arbiter.source(), PositionSource::Gps, "set_manual must not flip stored source (tuxlink-pjih)");
-        // With no fresh GPS fix, active_grid falls back to manual_grid.
-        assert_eq!(arbiter.active_grid().as_deref(), Some("EM75"));
-        // effective_source reflects the live fallback path.
-        assert_eq!(arbiter.effective_source(), PositionSource::Manual);
-    }
-
     // Step 4c — multibyte UTF-8 input must not panic and must return Some (invalid).
     #[test]
     fn validate_grid_multibyte_does_not_panic() {
@@ -2801,6 +2839,102 @@ mod tests {
         assert!(validate_grid_input("ABé").is_some());
         // Also a longer multibyte string
         assert!(validate_grid_input("EM75é1").is_some());
+    }
+
+    // ========================================================================
+    // Position-subsystem restoration T4 (tuxlink-c79g) — config_set_grid
+    // pins position_source = Manual in BOTH config and arbiter.
+    // ========================================================================
+
+    // Codex P1 #3 + spec §3.1: config_set_grid persists
+    // cfg.privacy.position_source = Manual on disk AND the arbiter's
+    // `set_manual` pins source = Manual in memory (T1). This test asserts
+    // the cross-layer persistence — pjih dropped the config persistence,
+    // T4 restores it.
+    //
+    // Uses the same env-lock + tempdir + seed-config pattern as
+    // `position_set_source_gps_succeeds_without_fresh_fix` (Task 3) since
+    // both tests mutate the process-global TUXLINK_CONFIG_DIR env var and
+    // exercise the config read→write round-trip.
+    #[tokio::test]
+    async fn config_set_grid_pins_manual_source_in_config_and_arbiter() {
+        use crate::config::CONFIG_SCHEMA_VERSION;
+
+        let _env_guard = position_set_source_env_lock();
+        let tmp = tempfile::tempdir().expect("create tempdir");
+        let prior = std::env::var("TUXLINK_CONFIG_DIR").ok();
+        // SAFETY: single-threaded test (env_lock); no concurrent env reads within this block.
+        unsafe { std::env::set_var("TUXLINK_CONFIG_DIR", tmp.path()); }
+
+        // Seed a minimal valid config with position_source = Gps so we can
+        // assert it FLIPS to Manual via the command.
+        let seed = format!(
+            r#"{{
+                "schema_version": {ver},
+                "wizard_completed": true,
+                "connect": {{ "connect_to_cms": false, "transport": "Telnet" }},
+                "identity": {{ "callsign": null, "identifier": "W1TEST", "grid": null }},
+                "privacy": {{ "gps_state": "Off", "position_precision": "FourCharGrid", "position_source": "Gps" }}
+            }}"#,
+            ver = CONFIG_SCHEMA_VERSION,
+        );
+        std::fs::write(tmp.path().join("config.json"), seed)
+            .expect("seed config.json into tempdir");
+
+        let arbiter = std::sync::Arc::new(PositionArbiter::new(
+            PositionSource::Gps,
+            None,
+            PositionPrecision::FourCharGrid,
+        ));
+        assert_eq!(
+            arbiter.source(),
+            PositionSource::Gps,
+            "fixture starts with source = Gps so we can assert the flip to Manual"
+        );
+
+        let result = config_set_grid_impl(
+            "EM75".to_string(),
+            arbiter.clone(),
+            /* backend = */ None,
+        )
+        .await;
+
+        assert!(result.is_ok(), "config_set_grid must succeed; got {result:?}");
+
+        // Arbiter side: set_manual pins source = Manual (T1) and updates manual_grid.
+        assert_eq!(
+            arbiter.source(),
+            PositionSource::Manual,
+            "arbiter source must be pinned to Manual after config_set_grid (T1 invariant)"
+        );
+        assert_eq!(
+            arbiter.active_grid().as_deref(),
+            Some("EM75"),
+            "arbiter active_grid must follow the manual grid"
+        );
+
+        // Config side: position_source = Manual must be persisted to disk.
+        // This is the bit pjih dropped and T4 restores (Codex P1 #3, spec §3.1).
+        let cfg = crate::config::read_config().expect("read back the persisted config");
+        assert_eq!(
+            cfg.privacy.position_source,
+            PositionSource::Manual,
+            "config_set_grid must persist position_source = Manual to disk"
+        );
+        assert_eq!(
+            cfg.identity.grid.as_deref(),
+            Some("EM75"),
+            "config_set_grid must persist identity.grid"
+        );
+
+        // Restore env (best-effort).
+        // SAFETY: symmetric with the set_var above; single-threaded test.
+        unsafe {
+            match prior {
+                Some(v) => std::env::set_var("TUXLINK_CONFIG_DIR", v),
+                None => std::env::remove_var("TUXLINK_CONFIG_DIR"),
+            }
+        }
     }
 
     // ========================================================================
@@ -3086,30 +3220,6 @@ mod tests {
     // ========================================================================
     use crate::position::{Fix, PositionArbiter};
 
-    // position_set_source: use_gps with no fix → Err → maps to UiError::Unavailable.
-    // Tests the use_gps → UiError mapping at unit level (the full State-bearing
-    // command path requires a Tauri app runtime; the arbiter primitive is the
-    // critical correctness gate per spec §position-686).
-    #[test]
-    fn use_gps_no_fix_maps_to_ui_error_unavailable() {
-        let arbiter = PositionArbiter::new(
-            PositionSource::Manual,
-            Some("CN87".into()),
-            PositionPrecision::FourCharGrid,
-        );
-        // No fix applied → use_gps() must be Err.
-        let result = arbiter.use_gps();
-        assert!(result.is_err(), "use_gps without a fix must fail");
-        // Map the &'static str Err to UiError::Unavailable (the command's mapping).
-        let ui_err = UiError::Unavailable {
-            reason: format!("Cannot switch to GPS: {}", result.unwrap_err()),
-        };
-        assert!(
-            matches!(ui_err, UiError::Unavailable { .. }),
-            "Err from use_gps maps to UiError::Unavailable"
-        );
-    }
-
     // position_set_source: unknown source string → UiError::Rejected.
     #[test]
     fn unknown_position_source_maps_to_rejected() {
@@ -3121,6 +3231,186 @@ mod tests {
             matches!(result, Err(UiError::Rejected(_))),
             "unknown source string maps to UiError::Rejected"
         );
+    }
+
+    /// Serializes tests that mutate the process-global TUXLINK_CONFIG_DIR env
+    /// var. Mirrors the pattern in `modem_commands::tests::env_lock` — `set_var`
+    /// is not thread-safe under cargo's parallel test pool, so each test that
+    /// touches the env grabs this mutex for the duration of its
+    /// set→read→restore sequence. Without this gate, env-mutating tests in this
+    /// binary race (tuxlink-j0ij precedent).
+    fn position_set_source_env_lock() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        LOCK.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    // Codex P0 #1 / spec §1.1: position_set_source('Gps') mirrors the arbiter
+    // relaxation. Returns Ok(()) without a fresh fix; persists
+    // position_source = Gps. T2 made `arbiter.use_gps()` infallible; T3
+    // removes the `has_fresh_fix()` pre-check + `UiError::Unavailable` error
+    // path from the command, so the command is now infallible-on-this-branch.
+    #[tokio::test]
+    async fn position_set_source_gps_succeeds_without_fresh_fix() {
+        use crate::config::CONFIG_SCHEMA_VERSION;
+
+        let _env_guard = position_set_source_env_lock();
+        let tmp = tempfile::tempdir().expect("create tempdir");
+        let prior = std::env::var("TUXLINK_CONFIG_DIR").ok();
+        // SAFETY: single-threaded test (env_lock); no concurrent env reads within this block.
+        unsafe { std::env::set_var("TUXLINK_CONFIG_DIR", tmp.path()); }
+
+        // Seed a minimal valid config with position_source = Manual so we can
+        // assert it FLIPS to Gps via the command (offline path: no callsign).
+        let seed = format!(
+            r#"{{
+                "schema_version": {ver},
+                "wizard_completed": true,
+                "connect": {{ "connect_to_cms": false, "transport": "Telnet" }},
+                "identity": {{ "callsign": null, "identifier": "W1TEST", "grid": "EM75" }},
+                "privacy": {{ "gps_state": "Off", "position_precision": "FourCharGrid", "position_source": "Manual" }}
+            }}"#,
+            ver = CONFIG_SCHEMA_VERSION,
+        );
+        std::fs::write(tmp.path().join("config.json"), seed)
+            .expect("seed config.json into tempdir");
+
+        let arbiter = std::sync::Arc::new(PositionArbiter::new(
+            PositionSource::Manual,
+            Some("EM75".to_string()),
+            PositionPrecision::FourCharGrid,
+        ));
+        assert!(!arbiter.has_fresh_fix(), "fixture has no fix");
+
+        let result = position_set_source_impl(
+            "Gps".to_string(),
+            arbiter.clone(),
+            /* backend = */ None,
+        )
+        .await;
+
+        assert!(
+            result.is_ok(),
+            "position_set_source('Gps') must succeed without a fresh fix per spec §1.1; got {result:?}"
+        );
+        assert_eq!(
+            arbiter.source(),
+            PositionSource::Gps,
+            "arbiter source must flip to Gps"
+        );
+
+        let cfg = crate::config::read_config().expect("read back the persisted config");
+        assert_eq!(
+            cfg.privacy.position_source,
+            PositionSource::Gps,
+            "position_source = Gps must be persisted to config"
+        );
+
+        // Restore env (best-effort).
+        // SAFETY: symmetric with the set_var above; single-threaded test.
+        unsafe {
+            match prior {
+                Some(v) => std::env::set_var("TUXLINK_CONFIG_DIR", v),
+                None => std::env::remove_var("TUXLINK_CONFIG_DIR"),
+            }
+        }
+    }
+
+    // R3 F1 + F7 (T6): concurrent config_set_grid + position_set_source must
+    // serialize via the arbiter mutex. The final state must be consistent —
+    // arbiter.source() must equal config.privacy.position_source after all
+    // tasks join — and no task may panic (which would indicate a poisoned
+    // mutex). Without the with_inner transactional wrapper, the disk write
+    // and arbiter mutation are independently ordered, producing a TOCTOU
+    // window where the LAST disk-writer and the LAST arbiter-mutator can be
+    // different tasks → disk source != arbiter source.
+    //
+    // To maximize the chance of catching the race in a single test run, tasks
+    // synchronize via a tokio Barrier so all 100 spawned tasks unblock at the
+    // same instant, then each task runs its sequence repeatedly. This
+    // compresses the contention window relative to the simple-spawn-and-go
+    // pattern.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+    async fn concurrent_config_set_grid_and_position_set_source_serialize() {
+        use crate::config::CONFIG_SCHEMA_VERSION;
+        use tokio::sync::Barrier;
+
+        let _env_guard = position_set_source_env_lock();
+        let tmp = tempfile::tempdir().expect("create tempdir");
+        let prior = std::env::var("TUXLINK_CONFIG_DIR").ok();
+        // SAFETY: single-threaded test (env_lock); no concurrent env reads within this block.
+        unsafe { std::env::set_var("TUXLINK_CONFIG_DIR", tmp.path()); }
+
+        // Seed a minimal valid config so read_config inside the spawned tasks
+        // has something to deserialize on first call.
+        let seed = format!(
+            r#"{{
+                "schema_version": {ver},
+                "wizard_completed": true,
+                "connect": {{ "connect_to_cms": false, "transport": "Telnet" }},
+                "identity": {{ "callsign": null, "identifier": "W1TEST", "grid": "EM75" }},
+                "privacy": {{ "gps_state": "Off", "position_precision": "FourCharGrid", "position_source": "Gps" }}
+            }}"#,
+            ver = CONFIG_SCHEMA_VERSION,
+        );
+        std::fs::write(tmp.path().join("config.json"), seed)
+            .expect("seed config.json into tempdir");
+
+        let arbiter = std::sync::Arc::new(PositionArbiter::new(
+            PositionSource::Gps,
+            None,
+            PositionPrecision::FourCharGrid,
+        ));
+
+        // 50 grid-setters + 50 source-setters, total 100. Each task does
+        // ITERATIONS rounds. The barrier releases all 100 tasks at once for
+        // peak contention.
+        const TASKS_PER_KIND: usize = 50;
+        const ITERATIONS: usize = 20;
+        let barrier = std::sync::Arc::new(Barrier::new(TASKS_PER_KIND * 2));
+
+        let mut handles = Vec::new();
+        for i in 0..TASKS_PER_KIND {
+            let a1 = arbiter.clone();
+            let b1 = barrier.clone();
+            handles.push(tokio::spawn(async move {
+                b1.wait().await;
+                for _ in 0..ITERATIONS {
+                    let grid = format!("EM{:02}", i % 100);
+                    let _ = config_set_grid_impl(grid, a1.clone(), None).await;
+                }
+            }));
+            let a2 = arbiter.clone();
+            let b2 = barrier.clone();
+            handles.push(tokio::spawn(async move {
+                b2.wait().await;
+                for _ in 0..ITERATIONS {
+                    let _ = position_set_source_impl("Gps".to_string(), a2.clone(), None).await;
+                }
+            }));
+        }
+        for h in handles {
+            h.await.expect("task panicked — arbiter mutex was poisoned");
+        }
+
+        // Final state must be consistent — source from disk == source from arbiter.
+        // With the with_inner transactional wrapper, the LAST critical section to
+        // release the mutex writes BOTH the on-disk source AND the arbiter source
+        // atomically, so the two values must agree.
+        let cfg = crate::config::read_config().expect("read back the persisted config");
+        assert_eq!(
+            arbiter.source(),
+            cfg.privacy.position_source,
+            "final arbiter source must match final on-disk source (R3 F1 + F7)"
+        );
+
+        // Restore env (best-effort).
+        // SAFETY: symmetric with the set_var above; single-threaded test.
+        unsafe {
+            match prior {
+                Some(v) => std::env::set_var("TUXLINK_CONFIG_DIR", v),
+                None => std::env::remove_var("TUXLINK_CONFIG_DIR"),
+            }
+        }
     }
 
     // Helpers for position_status DTO unit tests.
@@ -3147,6 +3437,21 @@ mod tests {
         }
     }
 
+    // Spec §3.1: PositionStatusDto must NOT carry active_source post-restore.
+    #[test]
+    fn position_status_dto_does_not_carry_active_source() {
+        // Use serde to introspect the serialized shape.
+        let dto = PositionStatusDto {
+            gps_ready: true,
+            broadcast_grid: "CN87".to_string(),
+        };
+        let v = serde_json::to_value(&dto).unwrap();
+        assert!(v.get("active_source").is_none(),
+            "PositionStatusDto must not have active_source field (spec §3.1)");
+        assert_eq!(v.get("gps_ready").and_then(|x| x.as_bool()), Some(true));
+        assert_eq!(v.get("broadcast_grid").and_then(|x| x.as_str()), Some("CN87"));
+    }
+
     // position_status: arbiter with a fresh fix + BroadcastAtPrecision
     // → PositionStatusDto { gps_ready: true, broadcast_grid: "DM33" }.
     #[test]
@@ -3162,16 +3467,13 @@ mod tests {
         let dto = PositionStatusDto {
             gps_ready: arbiter.has_fresh_fix(),
             broadcast_grid: crate::position::effective_broadcast_locator(&cfg, Some(&arbiter)),
-            active_source: arbiter.effective_source(),
         };
         assert!(dto.gps_ready);
         assert_eq!(dto.broadcast_grid, "DM33", "GPS fix grid must appear in broadcast_grid");
-        assert_eq!(dto.active_source, PositionSource::Gps, "active_source must be Gps when fresh fix is producing the displayed grid (tuxlink-pjih)");
         // Verify snake_case serialization.
         let v = serde_json::to_value(&dto).unwrap();
         assert_eq!(v["gps_ready"], true, "gps_ready serializes snake_case");
         assert_eq!(v["broadcast_grid"], "DM33", "broadcast_grid serializes snake_case");
-        assert_eq!(v["active_source"], "Gps", "active_source serializes snake_case + PascalCase value");
     }
 
     // position_status: fresh arbiter (no fix) → PositionStatusDto { gps_ready: false }.
@@ -3187,10 +3489,8 @@ mod tests {
         let dto = PositionStatusDto {
             gps_ready: arbiter.has_fresh_fix(),
             broadcast_grid: crate::position::effective_broadcast_locator(&cfg, Some(&arbiter)),
-            active_source: arbiter.effective_source(),
         };
         assert!(!dto.gps_ready);
-        assert_eq!(dto.active_source, PositionSource::Manual, "active_source must be Manual when no fresh fix (tuxlink-pjih)");
         let v = serde_json::to_value(&dto).unwrap();
         assert_eq!(v["gps_ready"], false);
         // Manual arbiter with "CN87" → broadcast_grid = "CN87".
@@ -3212,12 +3512,32 @@ mod tests {
         let dto = PositionStatusDto {
             gps_ready: arbiter.has_fresh_fix(),
             broadcast_grid: crate::position::effective_broadcast_locator(&cfg, Some(&arbiter)),
-            active_source: arbiter.effective_source(),
         };
         assert_eq!(
             dto.broadcast_grid, "DM33",
             "gps_state=Off: broadcast_grid must be config grid, NOT the GPS fix"
         );
+    }
+
+    // Codex P1 #3: Manual source ignores fresh GPS at the BROADCAST boundary.
+    // (Different from arbiter::tests because effective_broadcast_locator
+    // also enforces gps_state privacy gating.)
+    #[test]
+    fn manual_source_ignores_fresh_gps_fix_at_broadcast_boundary() {
+        let mut cfg = make_config_for_position_status(
+            crate::config::GpsState::BroadcastAtPrecision,
+            None,
+        );
+        cfg.privacy.position_source = crate::config::PositionSource::Manual;
+        let arbiter = crate::position::PositionArbiter::new(
+            crate::config::PositionSource::Manual,
+            Some("EM75".to_string()),
+            crate::config::PositionPrecision::FourCharGrid,
+        );
+        arbiter.apply_gps_fix(crate::position::Fix::test("DM33ab"));
+        let locator = crate::position::effective_broadcast_locator(&cfg, Some(&arbiter));
+        assert_eq!(locator, "EM75",
+            "Manual source must broadcast manual_grid regardless of fresh GPS fix");
     }
 
     // ========================================================================

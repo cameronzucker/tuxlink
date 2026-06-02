@@ -9,11 +9,26 @@
  * DEV_FIXTURE is false under vitest, so the component renders from `data`.
  */
 
-import { describe, it, expect, vi } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import {
+  render as rtlRender,
+  screen,
+  fireEvent,
+  waitFor,
+  type RenderOptions,
+} from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { DashboardRibbon } from './DashboardRibbon';
 import type { StatusBarData, StatusTone } from './useStatus';
 import type { PacketUiState } from '../packet/packetStatus';
+
+// Task 14 (tuxlink-c79g): the optimistic-update tests below exercise the
+// invoke('config_set_grid') and invoke('position_set_source') write paths and
+// assert that queryClient.invalidateQueries({ queryKey: ['config_read'] }) is
+// called after each. The earlier tests don't drive write paths so they didn't
+// need a tauri-core mock; the Task 14 tests add one here.
+vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn(() => Promise.resolve()) }));
+import { invoke } from '@tauri-apps/api/core';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -29,6 +44,16 @@ function makeData(overrides: Partial<StatusBarData> = {}): StatusBarData {
     position_source: 'Gps',
     ...overrides,
   };
+}
+
+// Task 14 wired `useQueryClient` into DashboardRibbon, so EVERY test now needs
+// a QueryClientProvider in scope. Wrap the testing-library render so each test
+// gets its own fresh QueryClient (no cross-test cache leakage). Tests that
+// need a handle on the client (the optimistic-update tests below) bypass this
+// helper and instantiate the client + spy directly.
+function render(ui: React.ReactElement, options?: RenderOptions) {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return rtlRender(<QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>, options);
 }
 
 // ---------------------------------------------------------------------------
@@ -202,5 +227,63 @@ describe('DashboardRibbon — SSID propagation + inline edit', () => {
     render(<DashboardRibbon data={makeData({ callsign: 'N7CPZ' })} ssid={0} onSsidChange={onSsidChange} />);
     fireEvent.change(screen.getByTestId('ribbon-ssid-select'), { target: { value: '10' } });
     expect(onSsidChange).toHaveBeenCalledWith(10);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task 14 (tuxlink-c79g): optimistic config_read refresh after grid + source
+// writes. Per spec §4.3 + Codex P1 #4, both onCommit (config_set_grid) and
+// onUseGps (position_set_source) MUST call queryClient.invalidateQueries({
+// queryKey: ['config_read'] }) after the invoke resolves so the source chip's
+// `source` value flips within one render cycle instead of waiting up to 5s
+// for the next config poll.
+// ---------------------------------------------------------------------------
+
+describe('DashboardRibbon — optimistic config_read refresh (tuxlink-c79g T14)', () => {
+  beforeEach(() => {
+    vi.mocked(invoke).mockClear();
+    vi.mocked(invoke).mockResolvedValue(undefined);
+  });
+
+  function renderWithClient(ui: React.ReactElement) {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+    const utils = render(
+      <QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>,
+    );
+    return { ...utils, queryClient, invalidateSpy };
+  }
+
+  it('invalidates [config_read] within one render cycle after config_set_grid resolves', async () => {
+    // Start in Manual + no GPS fix so the grid value button is rendered (State 1).
+    const data = makeData({ position_source: 'Manual', grid: 'DN31', gpsReady: false });
+    const { invalidateSpy } = renderWithClient(<DashboardRibbon data={data} />);
+
+    // Enter inline edit, type a new grid, press Enter to commit.
+    fireEvent.click(screen.getByTestId('grid-value-display'));
+    const input = screen.getByTestId('grid-input') as HTMLInputElement;
+    fireEvent.change(input, { target: { value: 'EM75' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+
+    // The wrapped onCommit awaits invoke('config_set_grid', ...) then calls
+    // invalidateQueries. Wait for the assertion to satisfy the async edge.
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith('config_set_grid', { grid: 'EM75' });
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['config_read'] });
+    });
+  });
+
+  it('invalidates [config_read] within one render cycle after position_set_source resolves', async () => {
+    // Source = Manual + gpsReady so the MANUAL chip is the click target that
+    // fires onUseGps → invoke('position_set_source', { source: 'Gps' }).
+    const data = makeData({ position_source: 'Manual', grid: 'DN31', gpsReady: true });
+    const { invalidateSpy } = renderWithClient(<DashboardRibbon data={data} />);
+
+    fireEvent.click(screen.getByTestId('source-chip'));
+
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith('position_set_source', { source: 'Gps' });
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['config_read'] });
+    });
   });
 });

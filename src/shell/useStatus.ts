@@ -53,20 +53,19 @@ export interface ConfigViewDto {
   position_source: PositionSource;
 }
 
-/** Mirrors PositionStatusDto from ui_commands.rs (tuxlink-686, Task 11 + Codex P1-B,
- * tuxlink-pjih). Live arbiter state — NOT config. Polled at 2s by useStatusData.
+/** Mirrors PositionStatusDto from ui_commands.rs (tuxlink-686, Task 11 + Codex P1-B).
+ * Live arbiter state — NOT config. Polled at 2s by useStatusData.
  * `broadcast_grid` is the effective on-air locator (honoring gps_state) — the
  * ribbon shows this so it always matches what is/would be transmitted. Empty
- * string means no grid is available. `active_source` is the LIVE source
- * actually producing the displayed grid — the source chip reads this so it
- * stays truthful even when the operator's stored preference disagrees. */
+ * string means no grid is available.
+ *
+ * Per spec §4.1 (position-subsystem-restoration, tuxlink-c79g): the source chip
+ * reads `position_source` from `config_read` — NOT from this DTO. Sticky-Manual
+ * is preserved at the config boundary; live-status is grid-availability only. */
 export interface PositionStatusDto {
   gps_ready: boolean;
   /** Effective on-air locator (honoring gps_state + precision). Empty = no grid. */
   broadcast_grid: string;
-  /** Live source: 'Gps' when a fresh fix is producing the active grid,
-   * 'Manual' when falling back to the manually-set grid (tuxlink-pjih). */
-  active_source: PositionSource;
 }
 
 /**
@@ -426,12 +425,12 @@ export function useStatusData(): StatusBarData {
     gridTooltip: gridResult.tooltip,
     state: formatStatusState(status),
     connection: formatConnectionState(status, configTransport),
-    // tuxlink-pjih: source chip reads the LIVE active source from positionStatus
-    // (Gps when fresh fix is producing the displayed grid; Manual when falling
-    // back to the manually-set grid). Falls back to the stored config preference
-    // when positionStatus hasn't loaded yet (pre-arbiter / first paint), then to
-    // 'Gps' as the project's default-on intent.
-    position_source: positionStatus?.active_source ?? config?.position_source ?? 'Gps',
+    // Per spec §4.1 (position-subsystem-restoration, tuxlink-c79g): source chip
+    // reads from the stored config preference, NOT from live position_status.
+    // This preserves sticky-Manual at the frontend boundary — a fresh GPS fix
+    // does not flip the chip back to Gps. Defaults to 'Gps' (project default-on)
+    // until config_read resolves.
+    position_source: config?.position_source ?? 'Gps',
     gpsReady: positionStatus?.gps_ready ?? false,
     status,
   };

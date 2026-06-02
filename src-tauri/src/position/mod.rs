@@ -28,13 +28,12 @@ pub fn effective_broadcast_locator(
             .map(|g| broadcast_grid(g, config.privacy.position_precision))
             .unwrap_or_default()
     };
-    // tuxlink-pjih: the privacy gate stays keyed on the operator's STORED
-    // preference `a.source()` — distinct from `a.effective_source()` (which
-    // is the live derived source for UI display). The gate's purpose is the
-    // operator-intent guard: "I'm operating in GPS mode, but my privacy
-    // settings forbid live GPS broadcast — fall back to the operator-stored
-    // config grid." This intent is encoded in the persisted preference,
-    // not in whether a fresh fix happens to exist right now.
+    // Position-subsystem restoration: the privacy gate keys on
+    // `a.source()` — the chip selection that IS the operator's authoritative
+    // intent under the 2026-05-22 source contract. "GPS mode + privacy
+    // forbids live GPS broadcast" falls back to the operator-stored config
+    // grid; `source` reflects that intent directly (no separate
+    // "effective" derivation).
     match arbiter {
         None => config_grid(),
         Some(a)
