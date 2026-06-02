@@ -27,7 +27,7 @@
 
 use mail_parser::{HeaderName, MimeHeaders, MessageParser};
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::app_backend::{BackendPhase, BackendState};
 use crate::config::{self, CmsTransport, GpsState, PositionPrecision, PositionSource};
@@ -2128,8 +2128,15 @@ fn emit_p2p_status(app: &AppHandle, status: StatusDto) {
 ///      detail lives in the session log.
 ///
 /// Looks up the per-peer password from the keyring (absent = no password
-/// challenge attempted). PR 1 ships an empty outbox stub; real outbox
-/// integration comes in a follow-on PR that wires the draft store.
+/// challenge attempted).
+///
+/// Outbox handling (tuxlink-l55l): the Outbox folder is read once before
+/// dial and ALL queued messages are offered. P2P routing is the peer's job
+/// (the WLE-as-Post-Office model — recipient delivery is delegated to the
+/// peer's CMS uplink), so no per-peer filtering is applied here. After a
+/// successful exchange, received messages are filed into Inbox and
+/// successfully-sent MIDs are moved Outbox → Sent, mirroring
+/// `native_telnet_exchange` (winlink_backend.rs).
 ///
 /// RADIO-1: This command drives TCP to a peer station — no RF, so no
 /// Part 97 consent gate is needed. The peer may transmit RF independently,
@@ -2170,11 +2177,55 @@ pub async fn telnet_p2p_connect(
         &app,
         StatusDto::Connecting { transport: "P2P-Telnet".to_string() },
     );
+
+    // tuxlink-l55l: build a Mailbox at the same on-disk location the native
+    // backend uses (`<app_data>/native-mbox`, per `bootstrap::install_native`).
+    // P2P bypasses `WinlinkBackend` entirely, so it walks the same filesystem
+    // store directly. The shared search index (`SearchService`) is attached
+    // when present so messages received over P2P land in the search corpus
+    // alongside CMS-received ones.
+    let mbox_dir = match app.path().app_data_dir() {
+        Ok(dir) => dir.join("native-mbox"),
+        Err(e) => {
+            p2p_state.in_progress.store(false, Ordering::SeqCst);
+            emit_p2p_status(&app, StatusDto::Disconnected);
+            return Err(UiError::Internal {
+                detail: format!("could not resolve app data dir: {e}"),
+            });
+        }
+    };
+    let mut mailbox = crate::native_mailbox::Mailbox::new(mbox_dir);
+    if let Some(svc) = app.try_state::<crate::search::commands::SearchService>() {
+        mailbox = mailbox.with_index(svc.index.clone());
+    }
+
+    // tuxlink-l55l: read the outbox BEFORE opening the socket — same ordering
+    // as `native_telnet_exchange` (P1.3 Codex review). A malformed outbox
+    // fails fast without consuming an on-air slot or surprising the peer.
+    let outbound = match crate::winlink_backend::build_outbound_proposals(&mailbox) {
+        Ok(v) => v,
+        Err(e) => {
+            p2p_state.in_progress.store(false, Ordering::SeqCst);
+            emit_p2p_status(&app, StatusDto::Disconnected);
+            emit_session_line(
+                &app,
+                &log,
+                LogLevel::Error,
+                format!("Outbox read failed: {e}"),
+            );
+            return Err(UiError::Internal { detail: format!("outbox read: {e}") });
+        }
+    };
+
+    let outbound_count = outbound.len();
     emit_session_line(
         &app,
         &log,
         LogLevel::Info,
-        format!("Connecting to {} (P2P-Telnet)…", peer_label),
+        format!(
+            "Connecting to {} (P2P-Telnet, {} queued)…",
+            peer_label, outbound_count
+        ),
     );
 
     // Look up peer password if configured (None = no password challenge attempted).
@@ -2197,11 +2248,6 @@ pub async fn telnet_p2p_connect(
         // P2P never uses B2F secure-login (spec §4.3 — no secure-login for P2P).
         password: None,
     };
-
-    // PR 1: empty outbox stub. Real outbox integration comes when the draft
-    // store is wired in a follow-on PR (mirrors how cms_connect defers until
-    // the backend is populated).
-    let outbound: Vec<crate::winlink::session::OutboundMessage> = Vec::new();
 
     // Clone values for the spawn_blocking task.
     let host = req.host.clone();
@@ -2242,6 +2288,38 @@ pub async fn telnet_p2p_connect(
 
     match result {
         Ok(exchange) => {
+            // tuxlink-l55l: file received messages into Inbox and move
+            // successfully-sent MIDs from Outbox to Sent. Mirrors the
+            // post-exchange handling in `native_telnet_exchange`. Failures
+            // here are logged but don't fail the exchange — the bytes are on
+            // disk either way; a duplicate-send next dial is the worst-case
+            // outcome of a stuck Outbox→Sent move and the operator is told
+            // about it via the session log.
+            for message in &exchange.received {
+                if let Err(e) = mailbox.store(MailboxFolder::Inbox, &message.to_bytes()) {
+                    emit_session_line(
+                        &app,
+                        &log,
+                        LogLevel::Warn,
+                        format!("Inbox store failed: {e}"),
+                    );
+                }
+            }
+            for mid in &exchange.sent {
+                if let Err(e) = mailbox.move_to(
+                    MailboxFolder::Outbox,
+                    MailboxFolder::Sent,
+                    &MessageId(mid.clone()),
+                ) {
+                    emit_session_line(
+                        &app,
+                        &log,
+                        LogLevel::Warn,
+                        format!("Outbox→Sent move failed for {mid}: {e}"),
+                    );
+                }
+            }
+
             let summary = format!(
                 "P2P exchange complete. Sent {}, received {}.",
                 exchange.sent.len(),

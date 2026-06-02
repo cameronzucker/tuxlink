@@ -217,6 +217,118 @@ pub fn resolve_packet_endpoint(
     }
 }
 
+/// Build the per-message proposals + compressed bodies for a B2F exchange
+/// from a Mailbox's Outbox folder. Skips messages whose bytes fail to parse
+/// or whose body cannot be turned into a proposal — mirroring the inline
+/// pattern in `native_telnet_exchange` / `native_packet_exchange` /
+/// `run_ardop_b2f_exchange` (winlink_backend.rs).
+///
+/// Pulled out so paths that bypass `NativeBackend::connect` (in particular
+/// `ui_commands::telnet_p2p_connect` for tuxlink-l55l) build the same shape
+/// of outbound without duplicating the loop.
+pub fn build_outbound_proposals(
+    mailbox: &Mailbox,
+) -> Result<Vec<session::OutboundMessage>, BackendError> {
+    let mut outbound = Vec::new();
+    for meta in mailbox.list(MailboxFolder::Outbox)? {
+        let body = mailbox.read(MailboxFolder::Outbox, &meta.id)?;
+        if let Ok(message) = Message::from_bytes(&body.raw_rfc5322) {
+            if let Some((proposal, compressed)) = message.to_proposal() {
+                let title = message.header("Subject").unwrap_or_default().to_string();
+                outbound.push(session::OutboundMessage { proposal, title, compressed });
+            }
+        }
+    }
+    Ok(outbound)
+}
+
+#[cfg(test)]
+mod build_outbound_proposals_tests {
+    use super::*;
+    use crate::native_mailbox::Mailbox;
+    use crate::winlink::compose::compose_message;
+    use tempfile::tempdir;
+
+    #[test]
+    fn empty_outbox_returns_empty_vec() {
+        let dir = tempdir().unwrap();
+        let mailbox = Mailbox::new(dir.path());
+        let out = build_outbound_proposals(&mailbox).unwrap();
+        assert!(out.is_empty(), "empty outbox should produce no proposals; got {out:?}");
+    }
+
+    #[test]
+    fn queued_drafts_produce_one_proposal_each() {
+        let dir = tempdir().unwrap();
+        let mailbox = Mailbox::new(dir.path());
+
+        // tuxlink-l55l: two queued outbound drafts addressed to two different
+        // recipients — P2P semantics send ALL of them; recipient routing is
+        // the peer's job (WLE-as-Post-Office). Build via the same path the
+        // compose flow uses so the bytes are a valid Winlink message.
+        let m1 = compose_message(
+            "N7CPZ",
+            &["W7AUX"],
+            &[],
+            "P2P-test-1",
+            "first body",
+            1_716_200_000,
+        );
+        let m2 = compose_message(
+            "N7CPZ",
+            &["cameronzucker@gmail.com"],
+            &[],
+            "P2P-test-2",
+            "second body",
+            1_716_200_001,
+        );
+        mailbox.store(MailboxFolder::Outbox, &m1.to_bytes()).unwrap();
+        mailbox.store(MailboxFolder::Outbox, &m2.to_bytes()).unwrap();
+
+        let out = build_outbound_proposals(&mailbox).unwrap();
+        assert_eq!(
+            out.len(),
+            2,
+            "two queued drafts should produce two proposals; got {} ({out:?})",
+            out.len()
+        );
+        let titles: Vec<&str> = out.iter().map(|o| o.title.as_str()).collect();
+        assert!(titles.contains(&"P2P-test-1"));
+        assert!(titles.contains(&"P2P-test-2"));
+    }
+
+    #[test]
+    fn no_per_peer_filtering_ships_all_drafts() {
+        // P2P semantics (handoff): tuxlink should NOT filter outbox by peer
+        // callsign at dial-time. The peer (typically WLE) acts as the
+        // post-office and routes via its own CMS uplink. This test pins the
+        // contract: queue a draft addressed to a third party, dial peer X,
+        // and the draft must still be offered.
+        let dir = tempdir().unwrap();
+        let mailbox = Mailbox::new(dir.path());
+
+        let third_party = compose_message(
+            "N7CPZ",
+            &["unrelated@example.org"],
+            &[],
+            "Routed-through-peer",
+            "body",
+            1_716_200_002,
+        );
+        mailbox
+            .store(MailboxFolder::Outbox, &third_party.to_bytes())
+            .unwrap();
+
+        let out = build_outbound_proposals(&mailbox).unwrap();
+        assert_eq!(
+            out.len(),
+            1,
+            "drafts addressed to a third party MUST still be offered to the peer; got {out:?}"
+        );
+        assert_eq!(out[0].title, "Routed-through-peer");
+    }
+}
+
 /// Backend-instance identifier minted at backend construction time. Embedded
 /// in every `Session` so `disconnect` can validate the session came from
 /// this backend instance (v2 P0 #1). Process-local `AtomicU64` counter; no
