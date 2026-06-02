@@ -43,6 +43,7 @@
         "section": "hamradio",
         "priority": "optional",
         "files": {
+          "/usr/share/applications/tuxlink.desktop": "../scripts/tuxlink.desktop",
           "/usr/share/applications/com.tuxlink.app.desktop": "../scripts/com.tuxlink.app.desktop"
         }
       }
