@@ -4,6 +4,13 @@ All notable changes to Tuxlink are documented here.
 
 This project adheres to [Semantic Versioning](https://semver.org) with project-specific rules described in [VERSIONING.md](VERSIONING.md). Entries from `v0.0.2` onward are generated automatically by [`release-please`](https://github.com/googleapis/release-please) from [Conventional Commits](https://www.conventionalcommits.org).
 
+## [0.17.1](https://github.com/cameronzucker/tuxlink/compare/v0.17.0...v0.17.1) (2026-06-02)
+
+
+### Bug Fixes
+
+* **deps:** bump react-dom 19.2.6 → 19.2.7 to match react (tuxlink-ola6) ([ed633d7](https://github.com/cameronzucker/tuxlink/commit/ed633d71a78ad93f5922e2737bc45a200b081ef3))
+
 ## [0.17.0](https://github.com/cameronzucker/tuxlink/compare/v0.16.0...v0.17.0) (2026-06-02)
 
 
