@@ -433,6 +433,17 @@ export function ArdopRadioPanel({ onClose }: ArdopRadioPanelProps) {
   const isExchangeReady =
     status.state === 'connected-irs' || status.state === 'connected-iss';
 
+  // tuxlink-y7nq: filter ALSA enumerations to hardware-only for the dropdown.
+  // `arecord -L` / `aplay -L` return a dozen plugin / converter chains
+  // (lavrate, samplerate, speex, upmix, vdownmix, jack, oss, null, sysdefault,
+  // usbstream HDMI passthroughs, etc.) that aren't useful for ARDOP. The
+  // backend already classifies `plughw:CARD=…` / `hw:CARD=…` entries as
+  // `isHardware`; here we use that as a FILTER (not just a sort key as the
+  // initial tuxlink-y7x7 ship did). Manual-fallback input below the dropdown
+  // covers the rare advanced case (someone explicitly wants `pulse`/`default`).
+  const captureHardware = captureDevices.filter((d) => d.isHardware);
+  const playbackHardware = playbackDevices.filter((d) => d.isHardware);
+
   // tuxlink-y7x7: load device lists when the Radio section becomes editable
   // (Stopped state). Refresh buttons re-invoke via these same callbacks.
   // Soft-failure posture: any rejection (ardopcf binary absent on CI,
@@ -641,7 +652,7 @@ export function ArdopRadioPanel({ onClose }: ArdopRadioPanelProps) {
             <select
               className="radio-panel-input"
               data-testid="ardop-capture-select"
-              value={captureDevices.some((d) => d.name === captureInput) ? captureInput : ''}
+              value={captureHardware.some((d) => d.name === captureInput) ? captureInput : ''}
               onChange={(e) => {
                 const next = e.target.value;
                 setCaptureInput(next);
@@ -649,13 +660,12 @@ export function ArdopRadioPanel({ onClose }: ArdopRadioPanelProps) {
               }}
             >
               <option value="" disabled>
-                {captureDevices.length === 0
-                  ? 'No ALSA capture devices found'
+                {captureHardware.length === 0
+                  ? 'No USB audio interfaces found — plug one in and Refresh'
                   : 'Choose capture device…'}
               </option>
-              {captureDevices.map((d) => (
+              {captureHardware.map((d) => (
                 <option key={d.name} value={d.name}>
-                  {d.isHardware ? '▸ ' : ''}
                   {d.name}
                   {d.description ? ` — ${d.description}` : ''}
                 </option>
@@ -691,7 +701,7 @@ export function ArdopRadioPanel({ onClose }: ArdopRadioPanelProps) {
             <select
               className="radio-panel-input"
               data-testid="ardop-playback-select"
-              value={playbackDevices.some((d) => d.name === playbackInput) ? playbackInput : ''}
+              value={playbackHardware.some((d) => d.name === playbackInput) ? playbackInput : ''}
               onChange={(e) => {
                 const next = e.target.value;
                 setPlaybackInput(next);
@@ -699,13 +709,12 @@ export function ArdopRadioPanel({ onClose }: ArdopRadioPanelProps) {
               }}
             >
               <option value="" disabled>
-                {playbackDevices.length === 0
-                  ? 'No ALSA playback devices found'
+                {playbackHardware.length === 0
+                  ? 'No USB audio interfaces found — plug one in and Refresh'
                   : 'Choose playback device…'}
               </option>
-              {playbackDevices.map((d) => (
+              {playbackHardware.map((d) => (
                 <option key={d.name} value={d.name}>
-                  {d.isHardware ? '▸ ' : ''}
                   {d.name}
                   {d.description ? ` — ${d.description}` : ''}
                 </option>
