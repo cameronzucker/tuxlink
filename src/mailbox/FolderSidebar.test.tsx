@@ -129,10 +129,14 @@ describe('FolderSidebar — Connections accordion', () => {
     expect(onSelectConnection).toHaveBeenCalledWith({ sessionType: 'cms', protocol: 'telnet' });
   });
   it('a "soon" protocol is disabled and does not fire selection', () => {
+    // tuxlink-dfmf flipped cms.vara-hf/vara-fm to built:true (Phase 2 UI).
+    // p2p.vara-hf remains unbuilt, so it's the test target for the
+    // disabled-protocol behavior. Test target is intent-agnostic — any
+    // built parent with at least one unbuilt protocol works.
     const onSelectConnection = vi.fn();
     render(<FolderSidebar selectedFolder="inbox" onSelectFolder={vi.fn()} onSelectConnection={onSelectConnection} />);
-    fireEvent.click(screen.getByTestId('sess-cms'));
-    const vara = screen.getByTestId('proto-cms-vara-hf');
+    fireEvent.click(screen.getByTestId('sess-p2p'));
+    const vara = screen.getByTestId('proto-p2p-vara-hf');
     expect(vara).toBeDisabled();
     fireEvent.click(vara);
     expect(onSelectConnection).not.toHaveBeenCalled();

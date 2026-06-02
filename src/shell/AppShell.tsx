@@ -55,6 +55,7 @@ import { TelnetRadioPanel } from '../radio/modes/TelnetRadioPanel';
 import { TelnetP2pRadioPanel } from '../radio/modes/TelnetP2pRadioPanel';
 import { PacketRadioPanel } from '../radio/modes/PacketRadioPanel';
 import { ArdopRadioPanel } from '../radio/modes/ArdopRadioPanel';
+import { VaraRadioPanel } from '../radio/modes/VaraRadioPanel';
 import { StubPanel } from '../connections/StubPanel';
 import { SearchBar } from '../search/SearchBar';
 import { SearchDropdown } from '../search/SearchDropdown';
@@ -507,15 +508,22 @@ export function AppShell() {
             // pattern as Telnet CMS (P2) and Packet P2P (P3).
             return <MessageView selectedMessage={selectedMessage} />;
           }
+          if (sessionType === 'cms' && (protocol === 'vara-hf' || protocol === 'vara-fm')) {
+            // tuxlink-dfmf Phase 2: VaraRadioPanel owns the VARA dial UI
+            // in the right panel; reading pane falls back to mail (same
+            // pattern as Telnet/Packet/ARDOP). Phase 2 surfaces TCP
+            // transport + config; RF CONNECT arrives in Phase 3.
+            return <MessageView selectedMessage={selectedMessage} />;
+          }
           // Built but unhandled — defensive stub
           return <StubPanel sessionType={sessionType} protocol={protocol} />;
         })()}
-        {/* Per-mode radio panels. Telnet (P2), Packet (P3), and ARDOP HF
-            (P4) ship their real implementations; VARA HF / VARA FM still
-            fall through to the placeholder until P5 lands. The P1 dual-
-            mount of ArdopDock + placeholder for ARDOP HF is GONE — the
-            ArdopRadioPanel covers the full dial-and-live-state surface
-            on its own. */}
+        {/* Per-mode radio panels. Telnet (P2), Packet (P3), ARDOP HF (P4),
+            and VARA HF/FM (Phase 2 — tuxlink-dfmf) ship their real
+            implementations; any other mode (none today) would fall through
+            to the placeholder. The P1 dual-mount of ArdopDock + placeholder
+            for ARDOP HF is GONE — the ArdopRadioPanel covers the full
+            dial-and-live-state surface on its own. */}
         {radioPanelMode && radioPanelMode.kind === 'telnet' && radioPanelMode.intent === 'cms' && (
           <TelnetRadioPanel
             onClose={() => {
@@ -551,9 +559,21 @@ export function AppShell() {
           />
         )}
         {radioPanelMode &&
+          (radioPanelMode.kind === 'vara-hf' || radioPanelMode.kind === 'vara-fm') && (
+            <VaraRadioPanel
+              mode={radioPanelMode}
+              onClose={() => {
+                setSelectedConnection(null);
+                setPinRadioPanel(false);
+              }}
+            />
+          )}
+        {radioPanelMode &&
           radioPanelMode.kind !== 'telnet' &&
           radioPanelMode.kind !== 'packet' &&
-          radioPanelMode.kind !== 'ardop-hf' && (
+          radioPanelMode.kind !== 'ardop-hf' &&
+          radioPanelMode.kind !== 'vara-hf' &&
+          radioPanelMode.kind !== 'vara-fm' && (
             <PlaceholderRadioPanel
               mode={radioPanelMode}
               onClose={() => {

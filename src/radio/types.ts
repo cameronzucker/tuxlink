@@ -20,8 +20,8 @@ export type RadioPanelMode =
   | { kind: 'telnet'; intent: 'cms' | 'p2p' }
   | { kind: 'packet'; intent: 'cms' | 'p2p' }
   | { kind: 'ardop-hf'; intent: 'cms' }
-  | { kind: 'vara-hf'; intent: 'cms' | 'p2p' }    // forward-looking
-  | { kind: 'vara-fm'; intent: 'cms' | 'p2p' };   // forward-looking
+  | { kind: 'vara-hf'; intent: 'cms' | 'p2p' }
+  | { kind: 'vara-fm'; intent: 'cms' | 'p2p' };
 
 /**
  * The reason the radio panel is currently mounted. Multiple reasons can

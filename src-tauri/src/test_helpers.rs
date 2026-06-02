@@ -37,5 +37,6 @@ pub fn native_test_config() -> Config {
         pat_mbo_address: None,
         packet: PacketConfig::default(),
         modem_ardop: None,
+        modem_vara: None,
     }
 }

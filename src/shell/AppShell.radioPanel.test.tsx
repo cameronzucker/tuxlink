@@ -7,8 +7,10 @@
 //
 // As of P4 (radio-panel-ardop), the legacy ArdopDock is GONE — ARDOP HF
 // routes to the new ArdopRadioPanel inside the RadioPanel slot, with no
-// secondary mount. The placeholder remains for VARA HF / VARA FM only.
-// The `panes--with-legacy-dock` class is no longer applied to anything.
+// secondary mount. tuxlink-dfmf Phase 2 (this session) adds the
+// VaraRadioPanel dispatch for vara-hf / vara-fm; the placeholder no
+// longer mounts for any built mode. The `panes--with-legacy-dock` class
+// is no longer applied to anything.
 //
 // This file lives separately from AppShell.test.tsx so the panel-mount story
 // is readable in isolation. The provider wrapping + Tauri IPC mocks mirror
@@ -41,6 +43,17 @@ vi.mock('@tauri-apps/api/core', () => ({
     // but it's safe to return a benign default here so test-time imports
     // don't hit `undefined` and surface noisy errors.
     if (cmd === 'config_get_ardop') return { cmd_port: 8515 };
+    // tuxlink-dfmf: VARA panel benign defaults so the panel can mount in
+    // shell tests without touching the live VaraSession.
+    if (cmd === 'config_get_vara') {
+      return { host: '127.0.0.1', cmd_port: 8300, data_port: 8301, bandwidth_hz: null };
+    }
+    if (cmd === 'vara_status') {
+      return { state: 'closed', lastError: null, boundHost: null, boundCmdPort: null };
+    }
+    if (cmd === 'platform_info') {
+      return { arch: 'x86_64', os: 'linux', varaSupported: true };
+    }
     if (cmd === 'packet_config_get') {
       return {
         ssid: 7,
@@ -215,6 +228,34 @@ describe('<AppShell> radio panel', () => {
     const shellPanes = screen.getByTestId('shell-panes');
     expect(shellPanes).toHaveClass('panes--with-dock');
     expect(shellPanes).not.toHaveClass('panes--with-legacy-dock');
+  });
+
+  // tuxlink-dfmf Phase 2: VARA HF / VARA FM now route to the VaraRadioPanel
+  // instead of the placeholder. The host-input testid (`vara-host-input`)
+  // is unique to the VARA panel — its presence confirms VaraRadioPanel
+  // mounted, and the placeholder's absence confirms the fall-through no
+  // longer catches VARA modes.
+  it('renders VaraRadioPanel when VARA HF is selected (modem stopped)', () => {
+    mockUseModemStatus.mockReturnValue({ status: STOPPED, loading: false, error: null });
+    renderShell();
+    expect(screen.queryByTestId('radio-panel-root')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('sess-cms'));
+    fireEvent.click(screen.getByTestId('proto-cms-vara-hf'));
+    expect(screen.getByTestId('radio-panel-root')).toBeInTheDocument();
+    expect(screen.getByTestId('vara-host-input')).toBeInTheDocument();
+    // The placeholder must NOT mount alongside — VaraRadioPanel owns
+    // the slot.
+    expect(screen.queryByTestId('radio-panel-placeholder')).not.toBeInTheDocument();
+  });
+
+  it('renders VaraRadioPanel when VARA FM is selected (modem stopped)', () => {
+    mockUseModemStatus.mockReturnValue({ status: STOPPED, loading: false, error: null });
+    renderShell();
+    fireEvent.click(screen.getByTestId('sess-cms'));
+    fireEvent.click(screen.getByTestId('proto-cms-vara-fm'));
+    expect(screen.getByTestId('radio-panel-root')).toBeInTheDocument();
+    expect(screen.getByTestId('radio-panel-title')).toHaveTextContent('Vara FM');
+    expect(screen.queryByTestId('radio-panel-placeholder')).not.toBeInTheDocument();
   });
 
   // tuxlink-mnk4: View → Toggle Radio Panel (Ctrl+Shift+M) must actually

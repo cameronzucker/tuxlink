@@ -2580,6 +2580,7 @@ mod tests {
             pat_mbo_address: None,
             packet: PacketConfig::default(),
             modem_ardop: None,
+            modem_vara: None,
         }
     }
 
@@ -2787,6 +2788,7 @@ mod tests {
             pat_mbo_address: None,
             packet: PacketConfig::default(),
             modem_ardop: None,
+            modem_vara: None,
         };
         let tmp = tempfile::tempdir().expect("tmpdir");
         let state = BackendState::new();
@@ -3512,6 +3514,7 @@ mod tests {
             pat_mbo_address: None,
             packet: crate::config::PacketConfig::default(),
             modem_ardop: None,
+            modem_vara: None,
         }
     }
 

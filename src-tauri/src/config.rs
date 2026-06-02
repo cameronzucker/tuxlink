@@ -35,6 +35,13 @@ pub struct Config {
     /// `#[serde(default)]` migrates old config files that predate this field.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub modem_ardop: Option<ArdopUiConfig>,
+    /// VARA modem settings (additive; absent until the operator configures VARA).
+    /// `#[serde(default)]` migrates old config files that predate this field.
+    /// VARA is a third-party closed-source modem that runs as a separate
+    /// process exposing two TCP sockets (cmd + data). Tuxlink connects as a
+    /// client; tuxlink does NOT manage the VARA process lifecycle.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub modem_vara: Option<VaraUiConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -560,6 +567,45 @@ impl Default for ArdopUiConfig {
     }
 }
 
+/// Frontend-shaped VARA modem settings. Persisted as `[modem_vara]` in config.
+/// Phase 2 (bd-tuxlink-dfmf) — minimal TCP-transport config; full session-state
+/// integration (B2F over VARA, RADIO-1 connect-to-peer) arrives in Phase 3.
+///
+/// VARA differs from ARDOP in two ways tuxlink models:
+///   1. VARA is a separate third-party process tuxlink does NOT spawn — only
+///      `host` + `cmd_port` + `data_port` are needed (no `binary`, no audio
+///      device hints; VARA handles its own audio).
+///   2. VARA exposes 3 variants — HF Standard (2300 Hz), HF Tactical (2750
+///      Hz), and VARA FM (~6800 Hz). The variant is selected operator-side
+///      via `bandwidth_hz` and which VARA instance the operator pointed
+///      tuxlink at (different binaries listen on different ports).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VaraUiConfig {
+    /// VARA cmd-socket host. Default `127.0.0.1` (local-machine VARA).
+    pub host: String,
+    /// VARA command socket port. Default `8300`.
+    pub cmd_port: u16,
+    /// VARA data socket port. Default `8301` (conventionally `cmd_port + 1`).
+    pub data_port: u16,
+    /// VARA bandwidth in Hz. Common values: 500 (narrow HF), 2300 (HF
+    /// Standard), 2750 (HF Tactical), ~6800 (VARA FM). `None` = leave VARA
+    /// at whatever bandwidth it was last configured for (don't send `BW` at
+    /// session start).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bandwidth_hz: Option<u32>,
+}
+
+impl Default for VaraUiConfig {
+    fn default() -> Self {
+        Self {
+            host: "127.0.0.1".into(),
+            cmd_port: 8300,
+            data_port: 8301,
+            bandwidth_hz: None,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1058,5 +1104,82 @@ mod tests {
         let cfg_no_ardop: Config = serde_json::from_str(&json_no_ardop)
             .expect("old config without modem_ardop must deserialize (migration)");
         assert!(cfg_no_ardop.modem_ardop.is_none(), "modem_ardop must default to None when absent");
+    }
+
+    // --- tuxlink-dfmf: VaraUiConfig persistence + migration tests ---
+
+    #[test]
+    fn vara_ui_config_defaults_to_localhost_8300_8301() {
+        let cfg = VaraUiConfig::default();
+        assert_eq!(cfg.host, "127.0.0.1");
+        assert_eq!(cfg.cmd_port, 8300);
+        assert_eq!(cfg.data_port, 8301);
+        assert_eq!(cfg.bandwidth_hz, None);
+    }
+
+    #[test]
+    fn vara_ui_config_round_trips_through_serde() {
+        let cfg = VaraUiConfig {
+            host: "192.168.1.50".into(),
+            cmd_port: 8400,
+            data_port: 8401,
+            bandwidth_hz: Some(2750),
+        };
+        let json = serde_json::to_string(&cfg).unwrap();
+        let back: VaraUiConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, cfg);
+    }
+
+    #[test]
+    fn vara_ui_config_omits_bandwidth_when_none() {
+        let cfg = VaraUiConfig::default();
+        let json = serde_json::to_string(&cfg).unwrap();
+        assert!(
+            !json.contains("bandwidth_hz"),
+            "None bandwidth must NOT appear in serialized output (skip_serializing_if), got: {json}"
+        );
+    }
+
+    #[test]
+    fn config_modem_vara_round_trips_when_some() {
+        let json = format!(
+            r#"{{
+                "schema_version": {ver},
+                "wizard_completed": true,
+                "connect": {{ "connect_to_cms": false, "transport": "Telnet" }},
+                "identity": {{ "callsign": null, "identifier": "W1TEST", "grid": null }},
+                "privacy": {{ "gps_state": "Off", "position_precision": "FourCharGrid" }},
+                "modem_vara": {{
+                    "host": "192.168.1.50",
+                    "cmd_port": 8400,
+                    "data_port": 8401,
+                    "bandwidth_hz": 2750
+                }}
+            }}"#,
+            ver = CONFIG_SCHEMA_VERSION
+        );
+        let cfg: Config = serde_json::from_str(&json).expect("Config with modem_vara must deserialize");
+        assert!(cfg.modem_vara.is_some());
+        let vara = cfg.modem_vara.as_ref().unwrap();
+        assert_eq!(vara.host, "192.168.1.50");
+        assert_eq!(vara.cmd_port, 8400);
+        assert_eq!(vara.bandwidth_hz, Some(2750));
+    }
+
+    #[test]
+    fn config_modem_vara_absent_migrates_to_none() {
+        let json = format!(
+            r#"{{
+                "schema_version": {ver},
+                "wizard_completed": true,
+                "connect": {{ "connect_to_cms": false, "transport": "Telnet" }},
+                "identity": {{ "callsign": null, "identifier": "W1TEST", "grid": null }},
+                "privacy": {{ "gps_state": "Off", "position_precision": "FourCharGrid" }}
+            }}"#,
+            ver = CONFIG_SCHEMA_VERSION
+        );
+        let cfg: Config = serde_json::from_str(&json)
+            .expect("old config without modem_vara must deserialize (migration)");
+        assert!(cfg.modem_vara.is_none(), "modem_vara must default to None when absent");
     }
 }

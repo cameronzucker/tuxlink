@@ -1305,6 +1305,7 @@ mod tests {
             pat_mbo_address: None,
             packet: crate::config::PacketConfig::default(),
             modem_ardop: None,
+            modem_vara: None,
         };
         assert!(check_identity_present(&cfg).is_err());
     }
