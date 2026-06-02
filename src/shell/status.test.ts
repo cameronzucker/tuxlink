@@ -335,6 +335,7 @@ describe('useStatusData — position_source mapping (tuxlink-686)', () => {
     const positionDto: PositionStatusDto = {
       gps_ready: true, // ← but a fresh fix exists
       broadcast_grid: 'EM75',
+      ui_grid: 'EM75',
     };
     vi.mocked(invoke).mockImplementation(async (cmd: string) => {
       if (cmd === 'config_read') return configDto;
@@ -372,7 +373,7 @@ describe('useStatusData — gpsReady (tuxlink-686 Task 11)', () => {
       position_precision: 'FourCharGrid',
       position_source: 'Gps',
     };
-    const positionDto: PositionStatusDto = { gps_ready: true, broadcast_grid: 'CN87' };
+    const positionDto: PositionStatusDto = { gps_ready: true, broadcast_grid: 'CN87', ui_grid: 'CN87' };
 
     vi.mocked(invoke).mockImplementation(async (cmd: string) => {
       if (cmd === 'config_read') return configDto;
@@ -413,22 +414,22 @@ describe('useStatusData — gpsReady (tuxlink-686 Task 11)', () => {
     expect(result.current.gpsReady).toBe(false);
   });
 
-  // Codex P1-B: ribbon grid sources from live broadcast_grid when present.
-  it('sources ribbon grid from position_status.broadcast_grid when present (Codex P1-B)', async () => {
+  // tuxlink-va1i (was Codex P1-B): ribbon grid sources from live ui_grid when present.
+  it('sources ribbon grid from position_status.ui_grid when present (tuxlink-va1i)', async () => {
     const configDto: ConfigViewDto = {
       connect_to_cms: false,
       transport: 'CmsSsl',
       host: 'cms-z.winlink.org',
       callsign: null,
       identifier: 'MYSTATION',
-      // Config grid is DM33 (stale config snapshot); live broadcast grid differs.
+      // Config grid is DM33 (stale config snapshot); live UI grid differs.
       grid: 'DM33',
       gps_state: 'BroadcastAtPrecision',
       position_precision: 'FourCharGrid',
       position_source: 'Gps',
     };
-    // Live position_status returns the effective on-air locator = CN87 (GPS fix).
-    const positionDto: PositionStatusDto = { gps_ready: true, broadcast_grid: 'CN87' };
+    // Live position_status returns ui_grid = CN87 (precision-reduced live fix).
+    const positionDto: PositionStatusDto = { gps_ready: true, broadcast_grid: 'CN87', ui_grid: 'CN87' };
 
     vi.mocked(invoke).mockImplementation(async (cmd: string) => {
       if (cmd === 'config_read') return configDto;
@@ -442,12 +443,12 @@ describe('useStatusData — gpsReady (tuxlink-686 Task 11)', () => {
       await new Promise((r) => setTimeout(r, 0));
     });
 
-    // Ribbon must show the live broadcast_grid, not the stale config grid.
+    // Ribbon must show the live ui_grid, not the stale config grid.
     expect(result.current.grid).toBe('CN87');
   });
 
-  // Codex P1-B: fallback to config grid when broadcast_grid is empty string (no GPS fix).
-  it('falls back to config grid when broadcast_grid is empty (no position)', async () => {
+  // tuxlink-va1i: fallback to config grid when ui_grid is empty (no position).
+  it('falls back to config grid when ui_grid is empty (no position)', async () => {
     const configDto: ConfigViewDto = {
       connect_to_cms: false,
       transport: 'CmsSsl',
@@ -459,8 +460,8 @@ describe('useStatusData — gpsReady (tuxlink-686 Task 11)', () => {
       position_precision: 'FourCharGrid',
       position_source: 'Gps',
     };
-    // Empty broadcast_grid = no position available.
-    const positionDto: PositionStatusDto = { gps_ready: false, broadcast_grid: '' };
+    // Empty ui_grid + empty broadcast_grid = no position available.
+    const positionDto: PositionStatusDto = { gps_ready: false, broadcast_grid: '', ui_grid: '' };
 
     vi.mocked(invoke).mockImplementation(async (cmd: string) => {
       if (cmd === 'config_read') return configDto;
@@ -474,8 +475,53 @@ describe('useStatusData — gpsReady (tuxlink-686 Task 11)', () => {
       await new Promise((r) => setTimeout(r, 0));
     });
 
-    // Empty broadcast_grid → fall back to config-derived grid "DM33".
+    // Empty ui_grid → fall back to config-derived grid "DM33".
     expect(result.current.grid).toBe('DM33');
+  });
+
+  // tuxlink-va1i: the load-bearing divergent case — under LocalUiOnly + source=Gps
+  // + fresh fix with SixCharGrid precision, the backend's two-helper split produces
+  // ui_grid="DM33ww" (live precision-reduced fix, full 6-char) while broadcast_grid
+  // stays at "DM33" (the static config_grid; LocalUiOnly suppresses on-air leak).
+  // The ribbon MUST display ui_grid ("DM33ww"), NOT broadcast_grid ("DM33"). Pre-va1i
+  // the derivation read broadcast_grid and the ribbon would have shown "DM33" —
+  // misleading the operator about their actual location while the on-air locator
+  // (correctly) stayed at the config fallback.
+  it('liveGrid reads from positionStatus.ui_grid (not broadcast_grid) — tuxlink-va1i', async () => {
+    const configDto: ConfigViewDto = {
+      connect_to_cms: false,
+      transport: 'CmsSsl',
+      host: 'cms-z.winlink.org',
+      callsign: null,
+      identifier: 'MYSTATION',
+      grid: 'DM33',
+      gps_state: 'LocalUiOnly',
+      position_precision: 'SixCharGrid',
+      position_source: 'Gps',
+    };
+    // The divergent case: ui_grid is the live 6-char fix; broadcast_grid is the
+    // config_grid on-air fallback under LocalUiOnly.
+    const positionDto: PositionStatusDto = {
+      gps_ready: true,
+      broadcast_grid: 'DM33',    // ← what would be transmitted (config fallback)
+      ui_grid: 'DM33ww',          // ← what the operator should see locally
+    };
+
+    vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+      if (cmd === 'config_read') return configDto;
+      if (cmd === 'backend_status') return null;
+      if (cmd === 'position_status') return positionDto;
+      return null;
+    });
+
+    const { result } = renderHook(() => useStatusData());
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+
+    // Ribbon resolves to ui_grid ("DM33ww"), NOT broadcast_grid ("DM33").
+    expect(result.current.grid).toBe('DM33ww');
+    expect(result.current.grid).not.toBe('DM33');
   });
 });
 

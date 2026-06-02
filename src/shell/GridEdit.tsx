@@ -2,15 +2,21 @@
  * GridEdit — inline-edit cell for the ribbon Grid value + MANUAL/GPS source chip.
  *
  * Click the grid cell → inline input; Enter validates + commits; Esc cancels.
- * Renders a MANUAL/GPS source chip beside the value reflecting the LIVE source
- * (Gps when a fresh fix is producing the displayed grid; Manual when falling
- * back to the manually-set grid). tuxlink-pjih: the prior "GPS ready — tap to
- * switch" affordance was removed; under the new arbiter semantics GPS-fresh
- * ALWAYS wins the displayed grid, so the explicit "switch to GPS" step is
- * structurally unreachable.
+ * Renders a MANUAL/GPS source chip beside the value reflecting the configured
+ * source (Manual when the operator has pinned a grid; Gps when the arbiter is
+ * sourcing from gpsd). Sticky-Manual is preserved at the config boundary — a
+ * fresh GPS fix does NOT flip the chip back to Gps (spec §4.1).
  *
- * Spec: docs/superpowers/specs/2026-05-19-main-ui-cluster-design.md §Task 8
- * bd issue: tuxlink-686, tuxlink-pjih
+ * The displayed grid is the LOCAL DISPLAY locator (ui_grid from the backend's
+ * two-helper split, tuxlink-va1i, spec §2.5 + §4.1) — under LocalUiOnly +
+ * source=Gps + fresh fix this can differ from what's transmitted on-air
+ * (broadcast_grid stays at the static config grid for privacy). The
+ * pre-restoration framing — that the displayed grid always matches the on-air
+ * locator and "GPS-fresh always wins" — has been superseded by the va1i
+ * amendment.
+ *
+ * Spec: docs/superpowers/specs/2026-06-01-position-subsystem-restoration-design.md §2.5, §4.1
+ * bd issue: tuxlink-686, tuxlink-c79g, tuxlink-va1i
  */
 
 import { useState } from 'react';
@@ -28,8 +34,8 @@ function extractErrorMessage(err: unknown): string {
 }
 
 export interface GridEditProps {
-  grid: string | null;                              // current broadcast grid (data.grid)
-  source: PositionSource;                           // 'Manual' | 'Gps' (LIVE source per tuxlink-pjih)
+  grid: string | null;                              // current LOCAL DISPLAY grid (ui_grid via data.grid, tuxlink-va1i)
+  source: PositionSource;                           // 'Manual' | 'Gps' — configured source per spec §4.1 (sticky-Manual preserved)
   gpsReady: boolean;                                // a usable fix exists (sourced in Task 11)
   onCommit: (grid: string) => void | Promise<void>; // receives the NORMALIZED grid
   onUseGps: () => void;                             // RESTORED per spec §4.1 — fires when chip is clicked while source = Manual

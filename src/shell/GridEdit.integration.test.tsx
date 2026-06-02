@@ -82,6 +82,7 @@ test('integration §6.3: State 1 → click source chip → State 4 → Set manua
   const positionDto = (): PositionStatusDto => ({
     gps_ready: false,
     broadcast_grid: 'EM75',
+    ui_grid: 'EM75',
   });
 
   vi.mocked(invoke).mockReset();
