@@ -61,11 +61,15 @@
 .ardop-arq-cell[data-on='true'] {
   /* tuxlink-2ief: ARQ on-state uses the modem-accent (green family)
      instead of the project --accent (orange family). The ARQ strip is
-     part of the modem identity. */
-  background: var(--modem-accent-soft);
-  border-color: var(--modem-accent);
+     part of the modem identity.
+     tuxlink-vxh8: the first pass used full --modem-accent for border +
+     bumped font-weight to 600; operator flagged that as too bright for
+     dark mode. Restored to the original outlined-subtle look: low-alpha
+     bg + mid-alpha border + accent text + default weight. color-mix at
+     14% and 55% reproduces the original literal alphas. */
+  background: color-mix(in srgb, var(--modem-accent) 14%, transparent);
+  border-color: color-mix(in srgb, var(--modem-accent) 55%, transparent);
   color: var(--modem-accent);
-  font-weight: 600;
 }
 
 /* Live-section meter row (S/N, VU, Throughput). One row per metric. */
