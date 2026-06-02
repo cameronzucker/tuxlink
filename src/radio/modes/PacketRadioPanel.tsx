@@ -152,6 +152,8 @@ export function PacketRadioPanel({ intent, baseCall, onClose }: PacketRadioPanel
   const headerSub = config
     ? config.linkKind === 'Tcp'
       ? `${config.tcpHost ?? '127.0.0.1'}:${config.tcpPort ?? 8001}`
+      : config.linkKind === 'Bluetooth'
+      ? `BT ${config.btMac ?? '(no device)'}`
       : `${config.serialDevice ?? '(no device)'}`
     : undefined;
 
@@ -163,11 +165,18 @@ export function PacketRadioPanel({ intent, baseCall, onClose }: PacketRadioPanel
       onClose={onClose}
     >
       <ModemLinkSection
-        kind={config?.linkKind === 'Serial' ? 'Serial' : 'Tcp'}
+        kind={
+          config?.linkKind === 'Bluetooth'
+            ? 'Bluetooth'
+            : config?.linkKind === 'Serial'
+            ? 'Serial'
+            : 'Tcp'
+        }
         host={config?.tcpHost ?? undefined}
         port={config?.tcpPort ?? undefined}
         serialDevice={config?.serialDevice ?? undefined}
         serialBaud={config?.serialBaud ?? undefined}
+        btMac={config?.btMac ?? undefined}
         onChange={onLinkChange}
       />
 
