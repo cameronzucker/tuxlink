@@ -31,6 +31,31 @@ updates:
     labels:
       - dependencies
       - npm
+    # Groups bundle related packages into a SINGLE PR so peer-pair version
+    # drift can't slip through. Closes the failure mode behind tuxlink-ola6:
+    # dependabot bumped `react` 19.2.6 → 19.2.7 in PR #252 but left
+    # `react-dom` at 19.2.6 → React 19's strict peer-parity check threw
+    # at mount → app white-screened.
+    groups:
+      react:
+        patterns:
+          - "react"
+          - "react-dom"
+          - "@types/react"
+          - "@types/react-dom"
+      radix-ui:
+        patterns:
+          - "@radix-ui/*"
+      tauri-apps:
+        patterns:
+          - "@tauri-apps/*"
+      testing-library:
+        patterns:
+          - "@testing-library/*"
+      vitest:
+        patterns:
+          - "vitest"
+          - "@vitest/*"
 
   # GitHub Actions
   - package-ecosystem: github-actions
