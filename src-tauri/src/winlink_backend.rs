@@ -15,7 +15,7 @@
 
 use async_trait::async_trait;
 use futures::stream::{BoxStream, StreamExt};
-use std::net::TcpStream;
+use std::net::{Shutdown, TcpStream};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use thiserror::Error;
@@ -48,7 +48,7 @@ impl MailboxFolder {
 // Native backend wiring (see the NativeBackend section below).
 use crate::config::{broadcast_grid, CmsTransport, Config};
 use crate::native_mailbox::Mailbox;
-use crate::winlink::ax25::{Address, KissLinkConfig, LinkAbort};
+use crate::winlink::ax25::{Address, KissLinkConfig};
 use crate::winlink::message::Message;
 use crate::winlink::proposal::Answer;
 use crate::winlink::session::ExchangeRole;
@@ -583,14 +583,10 @@ pub struct NativeBackend {
     /// the session log as `LogSource::Wire` so it surfaces under "Raw output". No-op
     /// by default; production wires it in `bootstrap::install_native`.
     wire: WireSink,
-    /// Disarm handle for the in-flight connect transport (tuxlink-9z2 / tuxlink-0ja):
-    /// a transport-specific `LinkAbort` set once the link is open, taken + invoked by
-    /// [`WinlinkBackend::abort`] to unblock a slow TLS/login/exchange phase or to
-    /// disarm an AX.25 link mid-SABM. TCP/RFCOMM-socket transports do
-    /// `shutdown(SHUT_RDWR)` on a cloned fd; serial drops the held port (closes the
-    /// fd) so the paired `DisarmableLink`'s next read/write fails with
-    /// `ConnectionAborted`.
-    abort_handle: Arc<Mutex<Option<Box<dyn LinkAbort>>>>,
+    /// Shutdown handle for the in-flight connect socket (tuxlink-9z2): a clone of
+    /// the connecting `TcpStream`, set once TCP connects, taken + shut down by
+    /// [`WinlinkBackend::abort`] to unblock a slow TLS/login/exchange phase.
+    abort_handle: Arc<Mutex<Option<TcpStream>>>,
     /// Set by `abort` so the connect's resulting error maps to `Cancelled` (status
     /// `Disconnected`) rather than `Error`.
     aborting: Arc<AtomicBool>,
@@ -610,7 +606,7 @@ pub struct NativeBackend {
 /// (Codex #1 + #7): normal return, early `?`, or a panic in the blocking task.
 struct ConnectGuard {
     in_progress: Arc<AtomicBool>,
-    handle: Arc<Mutex<Option<Box<dyn LinkAbort>>>>,
+    handle: Arc<Mutex<Option<TcpStream>>>,
 }
 
 impl Drop for ConnectGuard {
@@ -867,14 +863,13 @@ impl WinlinkBackend for NativeBackend {
     }
 
     async fn abort(&self) -> Result<(), BackendError> {
-        // Mark the abort (so the in-flight connect's error maps to Cancelled), disarm
-        // the connecting transport via its `LinkAbort` (TCP/RFCOMM = kernel-level
-        // shutdown on a cloned fd; serial = drop the held port), and return to
-        // Disconnected. A no-op if nothing is in flight (handle is None).
+        // Mark the abort (so the in-flight connect's error maps to Cancelled), shut
+        // down the connecting socket to unblock a slow TLS/login/exchange phase, and
+        // return to Disconnected. A no-op if nothing is in flight (handle is None).
         self.aborting.store(true, Ordering::SeqCst);
         if let Ok(mut slot) = self.abort_handle.lock() {
-            if let Some(disarm) = slot.take() {
-                disarm.abort();
+            if let Some(sock) = slot.take() {
+                let _ = sock.shutdown(Shutdown::Both);
             }
         }
         self.set_status(BackendStatus::Disconnected);
@@ -1171,7 +1166,7 @@ fn native_packet_connect(
     resolved: ResolvedPacket,
     progress: &dyn Fn(&str),
     wire_log: &dyn Fn(&str),
-    abort_handle: &Mutex<Option<Box<dyn LinkAbort>>>,
+    abort_handle: &Mutex<Option<TcpStream>>,
     aborting: Arc<AtomicBool>,
 ) -> Result<(), BackendError> {
     let params = config.packet.params.clone().into_params();
@@ -1179,25 +1174,29 @@ fn native_packet_connect(
     let base = resolved.base_mycall.clone();
 
     progress("Opening KISS link…");
-    // Open the KISS link with a transport-specific disarm handle (tuxlink-0ja). Every
-    // transport now yields a `LinkAbort`: TCP/RFCOMM-socket do `shutdown(SHUT_RDWR)`
-    // on a cloned fd (deterministic kernel-level interrupt); serial drops the held
-    // port (closes the fd) so the paired DisarmableLink's next read/write fails
-    // with `ConnectionAborted`. The previous flag-based AbortableByteLink path for
-    // serial/Bluetooth was a check-then-write TOCTOU; the slot pattern closes it.
-    let (bytelink, disarm) = crate::winlink::ax25::connect_link_with_abort(&link)
-        .map_err(|e| BackendError::TransportFailed { reason: format!("KISS link: {e}"), source: None })?;
-    // Check `aborting` INSIDE the abort_handle lock (mirrors native_connect /
-    // Codex #2): abort() sets `aborting` then locks to take the slot, so doing
-    // the check + store under the same lock means whichever side acquires it
-    // first, the disarm still fires if an abort has already landed — no TOCTOU
-    // window. If an abort landed during the (un-abortable) TCP-connect window,
-    // fire the disarm now so answer()/connect() fails fast.
-    if let Ok(mut slot) = abort_handle.lock() {
-        if aborting.load(Ordering::SeqCst) {
-            disarm.abort();
-        } else {
-            *slot = Some(disarm);
+    // Open the KISS link with an abort handle (tuxlink-9z2 pattern, mirroring
+    // native_connect's register_socket). The TCP arm yields a try_clone'd TcpStream
+    // the operator's abort() can `.shutdown()`; shutting it makes the link's read
+    // return 0 (FIN), which recv_frame maps to ConnectionAborted, unwinding a blocked
+    // answer()/connect() poll loop. The SERIAL arm has no socket, so it wraps the link
+    // in AbortableByteLink keyed on the SAME `aborting` flag: abort() sets the flag and
+    // the next serial read returns ConnectionAborted, unwinding the loop (tuxlink-nj1).
+    let (bytelink, abort_socket) =
+        crate::winlink::ax25::connect_link_with_abort(&link, aborting.clone())
+            .map_err(|e| BackendError::TransportFailed { reason: format!("KISS link: {e}"), source: None })?;
+    if let Some(sock) = abort_socket {
+        // Check `aborting` INSIDE the abort_handle lock (mirrors native_connect /
+        // Codex #2): abort() sets `aborting` then locks to take the socket, so doing
+        // the check + store under the same lock means whichever side acquires it
+        // first, the socket still ends up shut down if an abort has already fired —
+        // no TOCTOU window. If an abort landed during the (un-abortable) TCP-connect
+        // window, shut the socket down now so answer()/connect() fails fast.
+        if let Ok(mut slot) = abort_handle.lock() {
+            if aborting.load(Ordering::SeqCst) {
+                let _ = sock.shutdown(Shutdown::Both);
+            } else {
+                *slot = Some(sock);
+            }
         }
     }
 
@@ -1392,7 +1391,7 @@ fn native_connect(
     mode: CmsTransport,
     progress: &dyn Fn(&str),
     wire_log: &dyn Fn(&str),
-    abort_handle: &Mutex<Option<Box<dyn LinkAbort>>>,
+    abort_handle: &Mutex<Option<TcpStream>>,
     aborting: &AtomicBool,
     position: Option<&crate::position::PositionArbiter>,
 ) -> Result<(), BackendError> {
@@ -1457,25 +1456,23 @@ fn native_connect(
     // overrides it as a dev escape hatch. See `resolve_cms_host`.
     let host = resolve_cms_host(config);
 
-    // Hand each freshly-connected socket to the abort handle (tuxlink-9z2 /
-    // tuxlink-0ja) so an operator abort can disarm it via `LinkAbort::abort`
-    // (`shutdown(SHUT_RDWR)` on the cloned TcpStream). A clone failure just leaves
-    // abort a no-op for this attempt — connect proceeds normally. If an abort
-    // already landed during the (un-abortable) TCP-connect window, disarm
+    // Hand each freshly-connected socket to the abort handle (tuxlink-9z2) so an
+    // operator abort can `.shutdown()` it. A clone failure just leaves abort a
+    // no-op for this attempt — connect proceeds normally. If an abort already
+    // landed during the (un-abortable) TCP-connect window, shut this socket down
     // immediately so the connect fails fast instead of running to completion in
     // the background.
     let register_socket = |sock: &TcpStream| {
         if let Ok(clone) = sock.try_clone() {
-            let disarm: Box<dyn LinkAbort> = Box::new(clone);
             // Check `aborting` INSIDE the abort_handle lock (Codex #2): abort() sets
-            // `aborting` then locks to take the slot, so doing the check + store
-            // under the same lock means whichever side acquires it first, the disarm
-            // still fires if an abort has landed — no TOCTOU window.
+            // `aborting` then locks to take the socket, so doing the check + store
+            // under the same lock means whichever side acquires it first, the socket
+            // still ends up shut down if an abort has fired — no TOCTOU window.
             if let Ok(mut slot) = abort_handle.lock() {
                 if aborting.load(Ordering::SeqCst) {
-                    disarm.abort();
+                    let _ = clone.shutdown(Shutdown::Both);
                 } else {
-                    *slot = Some(disarm);
+                    *slot = Some(clone);
                 }
             }
         }
