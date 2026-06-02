@@ -235,6 +235,31 @@ describe('custom theme persistence', () => {
     clearCustomTheme();
     expect(loadCustomTheme()).toBeNull();
   });
+
+  // tuxlink-2ief: schema-upgrade migration. A theme saved before the
+  // modem-accent token family existed is still loadable; the loader
+  // fills the new tokens from DEFAULT_DARK_TOKENS so the radio dock
+  // still has a sensible identity until the operator re-edits the theme.
+  it('migrates a saved theme missing post-v1 tokens by filling from DEFAULT_DARK_TOKENS', () => {
+    const theme = makeFixtureCustomTheme();
+    const v1Tokens = { ...theme.tokens };
+    // Strip the modem-accent family (added post-v1).
+    delete (v1Tokens as Partial<Record<CustomThemeToken, string>>)['modem-accent'];
+    delete (v1Tokens as Partial<Record<CustomThemeToken, string>>)['modem-accent-2'];
+    delete (v1Tokens as Partial<Record<CustomThemeToken, string>>)['modem-accent-soft'];
+    delete (v1Tokens as Partial<Record<CustomThemeToken, string>>)['modem-accent-fg'];
+    const partial = { ...theme, tokens: v1Tokens };
+    localStorage.setItem(CUSTOM_THEME_STORAGE_KEY, JSON.stringify(partial));
+
+    const loaded = loadCustomTheme();
+    expect(loaded).not.toBeNull();
+    expect(loaded!.tokens['modem-accent']).toBe(DEFAULT_DARK_TOKENS['modem-accent']);
+    expect(loaded!.tokens['modem-accent-2']).toBe(DEFAULT_DARK_TOKENS['modem-accent-2']);
+    expect(loaded!.tokens['modem-accent-soft']).toBe(DEFAULT_DARK_TOKENS['modem-accent-soft']);
+    expect(loaded!.tokens['modem-accent-fg']).toBe(DEFAULT_DARK_TOKENS['modem-accent-fg']);
+    // The unmigrated tokens round-trip unchanged.
+    expect(loaded!.tokens.accent).toBe(theme.tokens.accent);
+  });
 });
 
 describe('tokensForBase', () => {

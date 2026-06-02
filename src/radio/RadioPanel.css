@@ -35,7 +35,12 @@
 
 .radio-panel-h {
   padding: 10px 12px;
-  background: var(--accent-soft);
+  /* tuxlink-2ief: --modem-accent-soft carries the radio dock's
+     traditional green identity in default dark, while per-theme
+     overrides keep contrast in light themes. Decoupled from --accent
+     so the project's general accent (orange in default dark, brown
+     in light) doesn't desaturate the modem chrome. */
+  background: var(--modem-accent-soft);
   border-bottom: 1px solid var(--border-strong, #2a3140);
   display: flex;
   align-items: center;
@@ -56,7 +61,10 @@
 
 .radio-panel-name {
   font-weight: 600;
-  color: var(--accent, #4ade80);
+  /* tuxlink-2ief: the "MODEM · …" title carries modem-accent (green
+     family by default) instead of the general accent (orange family) —
+     keeps the radio dock identifiable across themes. */
+  color: var(--modem-accent, #4ade80);
   font-size: 14px;
   letter-spacing: 0.02em;
 }
@@ -302,18 +310,21 @@ select.radio-panel-input option {
   border: 1px solid;
   flex: 1;
 }
-/* Primary action (Connect, Start, Save). Filled-accent so the on-accent
- * text color (--tux-accent-fg) gives reliable contrast across every
- * theme — the previous outlined-green pattern washed out in the light
- * themes because rgba(34,197,94,0.12) on white is barely visible. */
+/* Primary action (Connect, Start, Save). Filled-modem-accent so the
+ * paired --modem-accent-fg gives reliable contrast across every theme.
+ * tuxlink-2ief: was --accent (project accent — orange in default dark);
+ * now --modem-accent (green family) so the radio dock's primary button
+ * matches its header chrome. Per-theme overrides keep the high-contrast
+ * fix in light themes (deep green on white, brown-fg on red in night-red,
+ * etc.). */
 .radio-panel-btn-primary {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--tux-accent-fg);
+  background: var(--modem-accent);
+  border-color: var(--modem-accent);
+  color: var(--modem-accent-fg);
 }
 .radio-panel-btn-primary:hover:not(:disabled) {
-  background: var(--accent-2);
-  border-color: var(--accent-2);
+  background: var(--modem-accent-2);
+  border-color: var(--modem-accent-2);
 }
 /* Danger / Abort action. Filled-error mirrors the primary pattern so the
  * contrast holds across themes (the prior outlined-red faded on light). */
