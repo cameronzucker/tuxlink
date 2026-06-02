@@ -262,6 +262,7 @@ pub fn run() {
             crate::ui_commands::packet_listen,        // tuxlink-7fr (arm Listen — answer inbound)
             crate::ui_commands::packet_set_listen,    // tuxlink-7fr (sticky listen)
             crate::ui_commands::packet_list_serial_devices, // tuxlink-7fr (USB/BT device picker)
+            crate::ui_commands::packet_list_bluetooth_devices, // tuxlink-mqu3 (BT-MAC picker restoration)
             crate::ui_commands::ardop_list_audio_devices,   // tuxlink-y7x7 (ARDOP ALSA picker restoration)
             crate::ui_commands::config_set_grid,      // Task 5 (tuxlink-686)
             crate::ui_commands::position_set_source,  // Task 11 (tuxlink-686)

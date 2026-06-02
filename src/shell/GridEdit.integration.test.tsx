@@ -4,7 +4,7 @@
  * The test class pjih violated: per-layer arbiter tests and per-layer GridEdit
  * tests passed independently, but no test exercised the COMPOSED flow that
  * justifies the position-subsystem restoration. The pjih PR shipped a regression
- * (sticky-Manual broken, source chip flipping to Gps on any grid set) and the
+ * (sticky-Manual broken, source segment flipping to Gps on any grid set) and the
  * CI was green because no test exercised the full backend → frontend round
  * trip.
  *
@@ -15,12 +15,12 @@
  *   1. Mount full GridEdit + useStatusData hook with mocked Tauri commands.
  *   2. Initial mocked state: config.position_source = Manual + manual_grid = EM75
  *      + position_status.gps_ready = false.
- *   3. Assert State 1 (source chip MANUAL + grid value EM75).
- *   4. Click the source chip when source = Manual.
+ *   3. Assert State 1 (MANUAL segment selected + grid value EM75).
+ *   4. Click the GPS segment in the segmented control (tuxlink-z5pz amendment).
  *   5. Assert invoke('position_set_source', { source: 'Gps' }) was called.
  *   6. Update mocked config_read.position_source to 'Gps'.
- *   7. Assert State 4 (chip GPS dimmed + grid value `· EM75` + status text +
- *      Set manually button present).
+ *   7. Assert State 4 (GPS segment selected + dimmed + grid value `· EM75` +
+ *      status text + Set manually button present).
  *   8. Click the Set manually button.
  *   9. Assert grid input mounts AND receives focus.
  *
@@ -29,7 +29,7 @@
  * passed; only the composed flow exercises the contract pjih violated.
  *
  * Spec: docs/superpowers/specs/2026-06-01-position-subsystem-restoration-design.md §6.3
- * Plan: docs/superpowers/plans/2026-06-01-position-subsystem-restoration-plan.md (Task 15)
+ * (Updated 2026-06-02 for the tuxlink-z5pz segmented-control amendment.)
  */
 
 import { test, expect, vi } from 'vitest';
@@ -113,28 +113,30 @@ test('integration §6.3: State 1 → click source chip → State 4 → Set manua
   );
 
   // -------------------------------------------------------------------------
-  // Step 3: Assert State 1 — chip MANUAL + grid value EM75.
-  // Spec §3.2 row 1: source = Manual && !gpsReady → MANUAL chip, grid `EM75`.
+  // Step 3: Assert State 1 — MANUAL segment selected + grid value EM75.
+  // Spec §3.2 row 1: source = Manual && !gpsReady → MANUAL segment selected,
+  // grid `EM75`.
   // -------------------------------------------------------------------------
   await waitFor(() => {
-    expect(screen.getByTestId('source-chip').textContent).toBe('MANUAL');
+    expect(screen.getByTestId('source-segment-manual')).toHaveAttribute('aria-checked', 'true');
   });
+  expect(screen.getByTestId('source-segment-gps')).toHaveAttribute('aria-checked', 'false');
   expect(screen.getByTestId('grid-value-display').textContent).toBe('EM75');
   expect(screen.queryByTestId('set-manually-button')).not.toBeInTheDocument();
   expect(screen.queryByTestId('gps-no-fix-status')).not.toBeInTheDocument();
 
   // -------------------------------------------------------------------------
-  // Step 4: Click the source chip when source = Manual.
-  // The chip is a real <button> (per §2.1) so fireEvent.click fires onUseGps,
+  // Step 4: Click the GPS segment in the source segmented control (tuxlink-z5pz).
+  // The segment is a real <button role="radio">; fireEvent.click fires onUseGps,
   // which wraps invoke('position_set_source', { source: 'Gps' }) +
   // queryClient.invalidateQueries({ queryKey: ['config_read'] }).
   // -------------------------------------------------------------------------
-  fireEvent.click(screen.getByTestId('source-chip'));
+  fireEvent.click(screen.getByTestId('source-segment-gps'));
 
   // -------------------------------------------------------------------------
   // Step 5: Assert invoke('position_set_source', { source: 'Gps' }) was called.
   // This is the FRONTEND → BACKEND boundary — the contract pjih violated by
-  // not preserving the source-chip-as-real-button semantic.
+  // not preserving the source-segment-as-real-button semantic.
   // -------------------------------------------------------------------------
   await waitFor(() => {
     expect(vi.mocked(invoke)).toHaveBeenCalledWith('position_set_source', { source: 'Gps' });
@@ -156,20 +158,22 @@ test('integration §6.3: State 1 → click source chip → State 4 → Set manua
   await waitFor(
     () => {
       // After the next config_read poll resolves, useStatusData's state has
-      // position_source = 'Gps' and the chip text flips to 'GPS'.
-      expect(screen.getByTestId('source-chip').textContent).toBe('GPS');
+      // position_source = 'Gps' and the GPS segment flips to selected.
+      expect(screen.getByTestId('source-segment-gps')).toHaveAttribute('aria-checked', 'true');
     },
     { timeout: 8000, interval: 200 },
   );
 
   // -------------------------------------------------------------------------
-  // Step 7: Assert State 4 — chip GPS dimmed + grid value `· EM75` interpunct
-  // + status text 'GPS no fix · broadcasting fallback' + Set manually present.
-  // Spec §3.2 row 4 + §2.3 + §2.4 + §2.5.
+  // Step 7: Assert State 4 — GPS segment selected + dimmed + grid value
+  // `· EM75` interpunct + status text 'GPS no fix · broadcasting fallback' +
+  // Set manually present. Spec §3.2 row 4 + §2.3 + §2.4 + §2.5.
   // -------------------------------------------------------------------------
-  const chip = screen.getByTestId('source-chip');
-  expect(chip.tagName).toBe('SPAN');
-  expect(chip.className).toContain('dimmed');
+  const gpsSegment = screen.getByTestId('source-segment-gps');
+  expect(gpsSegment.tagName).toBe('BUTTON');
+  expect(gpsSegment.classList.contains('selected')).toBe(true);
+  expect(gpsSegment.classList.contains('gps-ready')).toBe(false);
+  expect(gpsSegment.classList.contains('dimmed')).toBe(true);
   expect(screen.getByTestId('grid-value-display').textContent).toMatch(/·\s+EM75/);
   expect(screen.getByTestId('gps-no-fix-status').textContent).toMatch(/GPS no fix\s*·\s*broadcasting fallback/);
   expect(screen.getByTestId('set-manually-button')).toBeInTheDocument();

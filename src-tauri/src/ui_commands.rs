@@ -1495,6 +1495,76 @@ pub async fn packet_list_serial_devices() -> Result<Vec<SerialDeviceDto>, UiErro
     Ok(discover_serial_devices(std::path::Path::new("/dev")))
 }
 
+/// A paired Bluetooth radio the operator can dial as a KISS modem via the
+/// in-app RFCOMM socket (tuxlink-nx2 — no `rfcomm bind`, no `/dev/rfcommN`).
+/// Surfaced from `bluetoothctl devices Paired` so the picker shows BlueZ's
+/// own list (the canonical "what's paired right now") rather than a `/dev`
+/// snapshot that requires a separate `sudo rfcomm bind` first.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BluetoothDeviceDto {
+    /// Bluetooth MAC, e.g. `"38:D2:00:01:55:5C"`. This is what the dial side
+    /// hands to `KissLinkConfig::Bluetooth { mac }`.
+    pub mac: String,
+    /// Human-readable name BlueZ keeps for the device (the radio's friendly
+    /// name, e.g. `"UV-PRO"`). Used as the dropdown label; if BlueZ has no
+    /// name yet, the picker can fall back to the MAC.
+    pub name: String,
+}
+
+/// Parse `bluetoothctl devices Paired` output into a list of paired devices.
+/// One line per device: `Device <MAC> <NAME>` (the prefix is literal). Pure
+/// (no I/O) so the parser is unit-testable without a Bluetooth stack. Invalid
+/// MACs are dropped via `parse_bdaddr` — the picker should not offer an
+/// un-dialable entry (the dial-side `RfcommSocket::connect` parses the same
+/// way, so any MAC that survives here will round-trip cleanly).
+pub fn parse_paired_bluetooth(output: &str) -> Vec<BluetoothDeviceDto> {
+    output
+        .lines()
+        .filter_map(|raw| {
+            let line = raw.trim_start();
+            let rest = line.strip_prefix("Device ")?;
+            // `Device <MAC> <NAME>` — MAC is the first whitespace-delimited
+            // token; everything after the next space is the name (which may
+            // contain spaces). A missing name yields an empty string, which
+            // the picker renders as the MAC.
+            let mut parts = rest.splitn(2, ' ');
+            let mac = parts.next()?.trim();
+            // Validate the MAC via the AX.25 parser — same routine the
+            // dial side uses, so any MAC that lands in the dropdown will
+            // also `RfcommSocket::connect` cleanly.
+            crate::winlink::ax25::rfcomm::parse_bdaddr(mac)?;
+            let name = parts.next().unwrap_or("").trim().to_string();
+            Some(BluetoothDeviceDto { mac: mac.to_string(), name })
+        })
+        .collect()
+}
+
+/// List paired Bluetooth devices for the picker (tuxlink-mqu3). Shells out to
+/// `bluetoothctl devices Paired` (BlueZ ≥ 5.66 / Pi packs 5.82); a missing
+/// `bluetoothctl` binary OR a failed command yields an empty list rather than
+/// an error — same posture as `packet_list_serial_devices` ("none present →
+/// the operator pairs a radio and refreshes"). The MAC validator drops any
+/// malformed line; pure parser exposed as `parse_paired_bluetooth` for tests.
+#[tauri::command]
+pub async fn packet_list_bluetooth_devices() -> Result<Vec<BluetoothDeviceDto>, UiError> {
+    let output = std::process::Command::new("bluetoothctl")
+        .args(["devices", "Paired"])
+        .output();
+    match output {
+        Ok(o) if o.status.success() => {
+            Ok(parse_paired_bluetooth(&String::from_utf8_lossy(&o.stdout)))
+        }
+        // `bluetoothctl` not installed, exit non-zero, or process spawn error:
+        // empty list (matches the serial-discovery posture of "soft failure
+        // yields an empty list"). The picker shows "no paired devices —
+        // pair one and refresh"; a real error would surface as a dial
+        // failure when the operator picks a device that doesn't actually
+        // exist.
+        _ => Ok(Vec::new()),
+    }
+}
+
 /// An ALSA audio device the operator can pick for ARDOP capture or playback.
 /// Surfaced from `arecord -L` / `aplay -L` so the picker shows ALSA's own
 /// canonical name (the `plughw:CARD=…`, `pulse`, `default` ladder) rather
@@ -2549,6 +2619,60 @@ mod tests {
     #[test]
     fn discover_serial_devices_empty_when_dir_missing() {
         assert!(discover_serial_devices(std::path::Path::new("/no/such/dir/xyzzy")).is_empty());
+    }
+
+    // tuxlink-mqu3: BluetoothDeviceDto parser regression-pin. Real `bluetoothctl
+    // devices Paired` output on the dev Pi: a single `Device <MAC> <NAME>` line.
+    // The picker fan-out needs the parser to (a) match the literal prefix, (b)
+    // split MAC vs name on the first space, (c) accept names with spaces, (d)
+    // drop malformed lines (bad MAC, missing prefix) so the dropdown never
+    // shows an un-dialable entry.
+    #[test]
+    fn parse_paired_bluetooth_extracts_mac_and_name() {
+        let output = "Device 38:D2:00:01:55:5C UV-PRO\n";
+        let found = parse_paired_bluetooth(output);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].mac, "38:D2:00:01:55:5C");
+        assert_eq!(found[0].name, "UV-PRO");
+    }
+
+    #[test]
+    fn parse_paired_bluetooth_handles_multiple_devices_and_names_with_spaces() {
+        // Mixed: a clean UV-PRO line + a name with spaces + a lowercase MAC.
+        let output = "\
+Device 38:D2:00:01:55:5C UV-PRO
+Device aa:bb:cc:dd:ee:ff My Pixel 8
+Device 11:22:33:44:55:66 Some BT Speaker
+";
+        let found = parse_paired_bluetooth(output);
+        assert_eq!(found.len(), 3);
+        assert_eq!(found[1].name, "My Pixel 8", "name must keep internal spaces");
+        assert_eq!(found[2].mac, "11:22:33:44:55:66");
+    }
+
+    #[test]
+    fn parse_paired_bluetooth_drops_malformed_lines() {
+        // Missing prefix, malformed MAC (too few octets / wrong sep), and a
+        // bare prefix with no MAC must all be dropped — the dropdown only
+        // offers entries the dial side can actually use.
+        let output = "\
+not a device line
+Device 38:D2:00:01:55 ShortMac
+Device 38-D2-00-01-55-5C WrongSeparator
+Device
+Device 38:D2:00:01:55:5C OnlyValid
+";
+        let found = parse_paired_bluetooth(output);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].name, "OnlyValid");
+    }
+
+    #[test]
+    fn parse_paired_bluetooth_empty_for_no_devices() {
+        // bluetoothctl with zero paired devices prints nothing (or a single
+        // newline). Empty input → empty list, no panic, no spurious entry.
+        assert!(parse_paired_bluetooth("").is_empty());
+        assert!(parse_paired_bluetooth("\n").is_empty());
     }
 
     // tuxlink-y7x7: ALSA parser regression-pin. Real `arecord -L` output is a
