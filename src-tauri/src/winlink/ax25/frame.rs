@@ -177,6 +177,28 @@ impl Control {
     pub fn has_info(&self) -> bool {
         matches!(self, Control::I { .. })
     }
+
+    /// The C/R bit this control type encodes with by default, per AX.25 v2.2 §2.4.1.2
+    /// (tuxlink-b0i). `Frame::encode_as_command` / `Frame::encode_as_response`
+    /// override this when a future caller needs to flip the polarity (e.g., a T1
+    /// enquiry RR poll); the default `Frame::encode` uses the value here.
+    ///
+    /// * **`SABM` / `DISC` / `I`** — always commands; v2.2 fixes dest C-bit=1, src
+    ///   C-bit=0.
+    /// * **`UA` / `DM`** — always responses; v2.2 fixes dest C-bit=0, src C-bit=1.
+    /// * **`RR` / `RNR` / `REJ`** — context-dependent. In tuxlink's connected-mode
+    ///   driver these are sent exclusively in response to inbound I-frames
+    ///   (`accept_inbound_i`'s RR ack and REJ for out-of-order) — never as
+    ///   T1-timeout-triggered enquiry polls — so the default is `false` (response).
+    ///   When a T1-enquiry path is added, that send site must call
+    ///   `Frame::encode_as_command()` to override.
+    pub fn cr_command_default(&self) -> bool {
+        match *self {
+            Control::Sabm { .. } | Control::Disc { .. } | Control::I { .. } => true,
+            Control::Ua { .. } | Control::Dm { .. } => false,
+            Control::Rr { .. } | Control::Rnr { .. } | Control::Rej { .. } => false,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -215,15 +237,31 @@ pub struct Path {
 }
 
 impl Path {
-    pub fn encode(&self) -> Result<Vec<u8>, FrameError> {
+    /// Encode the address path with C/R bits set per AX.25 v2.2 §2.4.1.2 (tuxlink-b0i).
+    ///
+    /// `cr_command=true` means COMMAND framing: dest C-bit=1, src C-bit=0
+    /// (SABM/DISC/I; an enquiry-poll RR/RNR/REJ if one were emitted).
+    /// `cr_command=false` means RESPONSE framing: dest C-bit=0, src C-bit=1
+    /// (UA/DM; the RR/REJ acks `accept_inbound_i` emits).
+    ///
+    /// A strict v2.2 decoder (RMS gateway, BPQ, Direwolf) rejects or mis-handles a
+    /// frame whose dest+src C-bits don't match its semantic role; the previous
+    /// hardcoded `dest=1, src=0` (always command) shipped responses with command
+    /// bits — visible only against an independent decoder, never against tuxlink's
+    /// own loopback. Callers don't pick this bit directly: `Frame::encode` derives
+    /// it from `Control::cr_command_default()` so each control type encodes per
+    /// spec automatically.
+    pub fn encode(&self, cr_command: bool) -> Result<Vec<u8>, FrameError> {
         if self.digis.len() > 2 {
             return Err(FrameError::BadAddressLength);
         }
         let mut out = Vec::with_capacity(7 * (2 + self.digis.len()));
-        // dest (cr=true for a command frame; refined in P2), src, digis.
-        out.extend_from_slice(&self.dest.encode(true, false));
+        // dest + src C-bits are complements per v2.2 — command has dest=1, src=0;
+        // response has dest=0, src=1. v2.0 had both 0; a v2.2 decoder still accepts
+        // a v2.0-bit frame but distinguishes command/response by these bits.
+        out.extend_from_slice(&self.dest.encode(cr_command, false));
         let src_last = self.digis.is_empty();
-        out.extend_from_slice(&self.src.encode(false, src_last));
+        out.extend_from_slice(&self.src.encode(!cr_command, src_last));
         for (i, d) in self.digis.iter().enumerate() {
             let last = i == self.digis.len() - 1;
             out.extend_from_slice(&d.encode(false, last)); // H bit (cr) = 0 on TX
@@ -268,7 +306,7 @@ mod path_tests {
             src: Address { call: "N7CPZ".into(), ssid: 7 },
             digis: vec![],
         };
-        let bytes = p.encode().unwrap();
+        let bytes = p.encode(true).unwrap();
         assert_eq!(bytes.len(), 14); // 2 addresses * 7
         assert_eq!(bytes[6] & 0x01, 0x00, "dest is not last");
         assert_eq!(bytes[13] & 0x01, 0x01, "src is last (direct)");
@@ -280,7 +318,7 @@ mod path_tests {
             src: Address { call: "N7CPZ".into(), ssid: 7 },
             digis: vec![Address { call: "W7RPT".into(), ssid: 1 }],
         };
-        let bytes = p.encode().unwrap();
+        let bytes = p.encode(true).unwrap();
         assert_eq!(bytes.len(), 21);
         assert_eq!(bytes[13] & 0x01, 0x00, "src not last when a digi follows");
         assert_eq!(bytes[20] & 0x01, 0x01, "digi is last");
@@ -300,7 +338,58 @@ mod path_tests {
                 Address { call: "E".into(), ssid: 0 },
             ],
         };
-        assert!(p.encode().is_err());
+        assert!(p.encode(true).is_err());
+    }
+
+    // tuxlink-b0i / AX.25 v2.2 §2.4.1.2 conformance.
+    //
+    // Command framing: dest C-bit=1, src C-bit=0. The C-bit is bit 7 of the SSID
+    // octet (offset 6 of each 7-byte address). For a direct path, dest is at
+    // bytes 0..7 and src at 7..14, so the C-bits are bytes[6]&0x80 and bytes[13]&0x80.
+    #[test]
+    fn path_encode_command_sets_dest_c1_src_c0() {
+        let p = Path {
+            dest: Address { call: "W7AUX".into(), ssid: 10 },
+            src: Address { call: "N7CPZ".into(), ssid: 7 },
+            digis: vec![],
+        };
+        let bytes = p.encode(/*cr_command=*/ true).unwrap();
+        assert_eq!(bytes[6] & 0x80, 0x80, "command: dest C-bit must be 1");
+        assert_eq!(bytes[13] & 0x80, 0x00, "command: src C-bit must be 0");
+    }
+    // Response framing: dest C-bit=0, src C-bit=1. The bug closed by tuxlink-b0i:
+    // before the fix Path::encode hardcoded dest=1, src=0 for every frame, so a
+    // UA/DM (always-response per v2.2) shipped with command C-bits — a strict
+    // v2.2 decoder (RMS gateway, BPQ, Direwolf) may reject or mis-handle that.
+    #[test]
+    fn path_encode_response_sets_dest_c0_src_c1() {
+        let p = Path {
+            dest: Address { call: "W7AUX".into(), ssid: 10 },
+            src: Address { call: "N7CPZ".into(), ssid: 7 },
+            digis: vec![],
+        };
+        let bytes = p.encode(/*cr_command=*/ false).unwrap();
+        assert_eq!(bytes[6] & 0x80, 0x00, "response: dest C-bit must be 0");
+        assert_eq!(bytes[13] & 0x80, 0x80, "response: src C-bit must be 1");
+    }
+    // The digipeater H bits are always 0 on TX regardless of command/response —
+    // the C-bit logic applies to dest and src only. (Once a digi repeats the
+    // frame, that digi sets its OWN H bit to 1; we never repeat, so always 0.)
+    #[test]
+    fn path_encode_digipeater_h_bit_is_zero_regardless_of_command_response() {
+        let p = Path {
+            dest: Address { call: "W7AUX".into(), ssid: 10 },
+            src: Address { call: "N7CPZ".into(), ssid: 7 },
+            digis: vec![Address { call: "W7RPT".into(), ssid: 1 }],
+        };
+        for cr_command in [true, false] {
+            let bytes = p.encode(cr_command).unwrap();
+            assert_eq!(
+                bytes[20] & 0x80,
+                0x00,
+                "digi H-bit must be 0 on TX (cr_command={cr_command})"
+            );
+        }
     }
 }
 
@@ -343,11 +432,36 @@ impl Frame {
         Ok(Frame { path, control, info })
     }
 
+    /// Encode the frame to its on-wire bytes with C/R bits derived automatically
+    /// from `self.control` (tuxlink-b0i). The default route for every send site;
+    /// callers needing to force a non-default C/R polarity (e.g., a future T1
+    /// enquiry that sends RR as a command-poll instead of an ack-response) call
+    /// [`Frame::encode_as_command`] or [`Frame::encode_as_response`] instead.
     pub fn encode(&self) -> Result<Vec<u8>, FrameError> {
+        self.encode_with_cr(self.control.cr_command_default())
+    }
+
+    /// Encode the frame with COMMAND C/R bits (dest=1, src=0). Use for the future
+    /// T1-enquiry RR-poll path that tuxlink does not yet implement; current
+    /// production sites all use [`Frame::encode`] and get the correct polarity
+    /// from the control type's default.
+    pub fn encode_as_command(&self) -> Result<Vec<u8>, FrameError> {
+        self.encode_with_cr(true)
+    }
+
+    /// Encode the frame with RESPONSE C/R bits (dest=0, src=1). For
+    /// SABM/DISC/I-frames this would mis-frame a command as a response; provided
+    /// for completeness/symmetry with [`Frame::encode_as_command`]. Current
+    /// production sites all use [`Frame::encode`].
+    pub fn encode_as_response(&self) -> Result<Vec<u8>, FrameError> {
+        self.encode_with_cr(false)
+    }
+
+    fn encode_with_cr(&self, cr_command: bool) -> Result<Vec<u8>, FrameError> {
         if !self.info.is_empty() && !self.control.has_info() {
             return Err(FrameError::InfoOnNonInfoFrame);
         }
-        let mut out = self.path.encode()?;
+        let mut out = self.path.encode(cr_command)?;
         out.push(self.control.encode());
         if self.control.has_info() {
             out.push(PID_NO_L3);
@@ -391,6 +505,89 @@ mod frame_encode_tests {
     fn rejects_info_on_non_info_frame() {
         let f = Frame { path: sample_path(), control: Control::Ua { pf: true }, info: b"x".to_vec() };
         assert!(f.encode().is_err());
+    }
+
+    // tuxlink-b0i / AX.25 v2.2 §2.4.1.2.
+    //
+    // For a direct (no-digi) path, the dest C-bit is bytes[6]&0x80 and the src
+    // C-bit is bytes[13]&0x80. Frame::encode picks the polarity from
+    // Control::cr_command_default() — these tests pin the per-control-type
+    // outcome that closes the bug where every frame shipped with command bits.
+
+    /// Command frames (SABM/DISC/I): dest C=1, src C=0 per v2.2 §2.4.1.2.
+    /// SABM was correct under the old code (cr=command was the right default);
+    /// this is the regression-pin so a future refactor doesn't flip the default.
+    #[test]
+    fn sabm_encodes_with_command_cr_bits() {
+        let f = Frame { path: sample_path(), control: Control::Sabm { pf: true }, info: vec![] };
+        let bytes = f.encode().unwrap();
+        assert_eq!(bytes[6] & 0x80, 0x80, "SABM: dest C-bit must be 1 (command)");
+        assert_eq!(bytes[13] & 0x80, 0x00, "SABM: src C-bit must be 0 (command)");
+    }
+    #[test]
+    fn disc_encodes_with_command_cr_bits() {
+        let f = Frame { path: sample_path(), control: Control::Disc { pf: true }, info: vec![] };
+        let bytes = f.encode().unwrap();
+        assert_eq!(bytes[6] & 0x80, 0x80, "DISC: dest C-bit must be 1 (command)");
+        assert_eq!(bytes[13] & 0x80, 0x00, "DISC: src C-bit must be 0 (command)");
+    }
+    #[test]
+    fn i_frame_encodes_with_command_cr_bits() {
+        let f = Frame {
+            path: sample_path(),
+            control: Control::I { ns: 0, nr: 0, pf: false },
+            info: b"HELLO".to_vec(),
+        };
+        let bytes = f.encode().unwrap();
+        assert_eq!(bytes[6] & 0x80, 0x80, "I: dest C-bit must be 1 (command)");
+        assert_eq!(bytes[13] & 0x80, 0x00, "I: src C-bit must be 0 (command)");
+    }
+
+    /// Response frames (UA/DM): dest C=0, src C=1 per v2.2 §2.4.1.2. This is the
+    /// regression the bug describes — the LISTEN/answer path sent UA with command
+    /// C-bits, breaking against a strict v2.2 decoder.
+    #[test]
+    fn ua_encodes_with_response_cr_bits() {
+        let f = Frame { path: sample_path(), control: Control::Ua { pf: true }, info: vec![] };
+        let bytes = f.encode().unwrap();
+        assert_eq!(bytes[6] & 0x80, 0x00, "UA: dest C-bit must be 0 (response)");
+        assert_eq!(bytes[13] & 0x80, 0x80, "UA: src C-bit must be 1 (response)");
+    }
+    #[test]
+    fn dm_encodes_with_response_cr_bits() {
+        let f = Frame { path: sample_path(), control: Control::Dm { pf: true }, info: vec![] };
+        let bytes = f.encode().unwrap();
+        assert_eq!(bytes[6] & 0x80, 0x00, "DM: dest C-bit must be 0 (response)");
+        assert_eq!(bytes[13] & 0x80, 0x80, "DM: src C-bit must be 1 (response)");
+    }
+
+    /// Context-dependent S-frames (RR/RNR/REJ): in tuxlink's connected-mode driver
+    /// these are sent only as ACKs from `accept_inbound_i` (RR for in-order,
+    /// REJ for out-of-order), so the default is response (dest=0, src=1) — the
+    /// other half of the bug from sustained-exchange acks.
+    #[test]
+    fn rr_encodes_with_response_cr_bits_by_default() {
+        let f = Frame { path: sample_path(), control: Control::Rr { nr: 1, pf: false }, info: vec![] };
+        let bytes = f.encode().unwrap();
+        assert_eq!(bytes[6] & 0x80, 0x00, "RR-ack: dest C-bit must be 0 (response)");
+        assert_eq!(bytes[13] & 0x80, 0x80, "RR-ack: src C-bit must be 1 (response)");
+    }
+    #[test]
+    fn rej_encodes_with_response_cr_bits_by_default() {
+        let f = Frame { path: sample_path(), control: Control::Rej { nr: 0, pf: false }, info: vec![] };
+        let bytes = f.encode().unwrap();
+        assert_eq!(bytes[6] & 0x80, 0x00, "REJ-ack: dest C-bit must be 0 (response)");
+        assert_eq!(bytes[13] & 0x80, 0x80, "REJ-ack: src C-bit must be 1 (response)");
+    }
+    /// The override path — `encode_as_command` — is the future T1-enquiry hook so
+    /// a poll-RR ships with command C-bits. tuxlink doesn't emit one today, but
+    /// the encoder must honor the override.
+    #[test]
+    fn rr_encode_as_command_overrides_to_command_cr_bits() {
+        let f = Frame { path: sample_path(), control: Control::Rr { nr: 1, pf: true }, info: vec![] };
+        let bytes = f.encode_as_command().unwrap();
+        assert_eq!(bytes[6] & 0x80, 0x80, "RR-poll: dest C-bit must be 1 (command)");
+        assert_eq!(bytes[13] & 0x80, 0x00, "RR-poll: src C-bit must be 0 (command)");
     }
 }
 
