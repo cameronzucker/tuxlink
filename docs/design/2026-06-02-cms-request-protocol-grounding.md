@@ -296,3 +296,188 @@ Loop pauses here. Operator answers the three decisions; next session's
 agent files the revised sub-issues (A/B/C/D/E above with operator's
 choices baked in) and starts implementation. The sprint tracker
 (`tuxlink-2u4n`) and this doc stay in place across sessions.
+
+---
+
+# Update 2026-06-02 (afternoon) — empirical findings from WLE reference install (tuxlink-tkdc)
+
+Operator pointed at a real RMS Express install at
+`dev/scratch/winlink-re/install/RMS Express/RMS Express/N7CPZ/` with the
+operator's actual callsign data + sent message archive. This resolves
+Q1 and Q2 fully and narrows Q3.
+
+## Source 1: `N7CPZ/Data/Winlink Queries.txt` — the catalog database itself
+
+WLE ships (and auto-updates) a flat catalog file with **1477 entries
+across 127 categories**, pipe-delimited:
+
+```
+CATEGORY|FILENAME|DESCRIPTION|SIZE
+```
+
+Sample lines:
+
+```
+WX_BUOY|NDBC44009|Station 44009 Buoy Report 3427'35" N 7441'31"|15696
+WL2K_HELP|INQUIRIES|Description of the Winlink inquiry system - how to use|1886
+WL2K_RMS|PUB_PACKET|Packet Public Gateways Frequency List|219867
+WL2K_RMS|PUB_VARA|VARA Public Gateways Frequency List|75234
+WL2K_RMS|PUB_ARDOP|ARDOP Public Gateways Frequency List|26706
+WL2K_RMS|PUB_PACTOR|Pactor Public Gateways Frequency List|32933
+WL2K_RMS|PUB_ROBUST|Robust Packet Public Gateways Frequency List|2831
+WL2K_USERS|CMS_STATUS|Real time Operational Status of Winlink CMS's|2018
+WL2K_USERS|CMS_TRAFFIC|Winlink Message Traffic History|2106
+WL2K_HELP|UPDA_CAT_WE|How to update the Winlink Express catalog list.|3649
+WL2K_HELP|CUSTOM.GRIB|How to request and use Custom GRIB files from SailDocs|4943
+```
+
+Categories observed include: `ARCTIC_ICE`, `ARES_RACES`, `AURORA`,
+`HF_NETS`, `HONDURAS`, `INDIAN_OCEAN`, `METAR`, `METAREA_I..XVI`,
+`NEWS`, `NICARAGUA`, `PROPAGATION`, `SAT_KEPS`, `SAT_PIX`,
+`S/PACIFIC_WX`, `UK_CADET`, `WL2K_HELP`, `WL2K_RMS`, `WL2K_TERMS`,
+`WL2K_USERS`, `WX_*` (many), and more.
+
+**Action:** bundle this file as-is with the app (`src-tauri/resources/
+catalog/winlink-queries.txt`), parse on load, render as a category-tree
+picker. The catalog updates itself via the `WL2K_HELP/UPDA_CAT_WE`
+help doc + an "update catalog" UI affordance that fetches a fresh
+catalog file (the update process itself is one of the things the help
+doc describes — TBD next iteration).
+
+## Source 2: `N7CPZ/Messages/*.mime` — literal wire format
+
+Multiple inquiry messages in N7CPZ's outbox. All identical structure:
+
+```
+Date: <RFC 2822>
+From: <CALLSIGN>@winlink.org
+Reply-To: <CALLSIGN>@winlink.org
+Subject: REQUEST
+To: INQUIRY@winlink.org
+Message-ID: <generated MID>
+X-Cancel: <yyyy/mm/dd hh:mm>
+X-Source: <CALLSIGN>
+MIME-Version: 1.0
+
+multipart/mixed; boundary="<random>"
+  text/plain; charset="iso-8859-1"; Content-Transfer-Encoding: quoted-printable
+    <FILENAME>
+    [<FILENAME>]
+    [<FILENAME>]
+    ...
+```
+
+**Confirmed examples from N7CPZ's outbox:**
+
+| Sent | Body |
+|---|---|
+| `3TK09WKG9QBC.mime` | `AZ_ZON_NOFLA` + `CMS_TRAFFIC` |
+| `0NXS7HZNEKA7.mime` | `WCVS.JPG` |
+| `3LL2MO1TF24M.mime` | `PROP_SGAS_27` |
+| `347UN33R5VOJ.mime` | `CMS_STATUS` + `PROP_WWV` |
+| `5YTNBV3JOZA8.mime` | `PUB_PACKET` + `PUB_VARA` ← **literal RMS list request** |
+
+Confirms:
+- Constant `To:` = `INQUIRY@winlink.org`, `Subject:` = `REQUEST`
+- Body is one filename per line — the FILENAME column from the catalog
+  database, **without** category prefix
+- Multiple inquiries per message supported (just add more lines)
+- Each inquiry triggers a separate reply message from the CMS
+
+## Q1 RESOLVED: Catalog inquiry list source
+
+**Answer: Operator-provided starter (option a), via the WLE catalog file.**
+
+Bundle `winlink-queries.txt` (1477 entries) with the app. Render as a
+tree picker grouped by `CATEGORY`. Composition: build a message to
+`INQUIRY@winlink.org` with `Subject: REQUEST` and the selected
+filenames in the body, one per line. Send through the existing
+outgoing rails (`tuxlink-l55l`). Replies arrive in inbox as regular
+Private messages.
+
+The empirical-discovery path (option b) is no longer needed — we have
+the literal catalog. The ship-empty path (option c) is unnecessary too.
+
+## Q2 RESOLVED: RMS station list
+
+**Answer: WLE legacy IS the catalog mechanism (in-band via
+`INQUIRY@winlink.org`).** The `WL2K_RMS` category has filenames
+`PUB_PACKET`, `PUB_VARA`, `PUB_ARDOP`, `PUB_PACTOR`, `PUB_ROBUST`. A
+"Request RMS List" UI action composes a message with the chosen mode's
+filename in the body. The response is a text body listing all
+gateways for that mode.
+
+The HTTPS `api.winlink.org/gateway/status.json` Pat uses is a
+**separate, modern, online-only path** — it is NOT what WLE does.
+Operator's choice on whether to offer HTTPS as a fast-path:
+
+| Option | Behavior | Effort | Trade |
+|---|---|---|---|
+| **A1. Catalog only** (WLE parity) | Works over RF; matches legacy WLE muscle memory; requires a CMS round-trip | Folds entirely into Q1's catalog framework | Slow first load (mail round-trip); always works |
+| **A2. HTTPS only** | Pat-style; fast; JSON parse + table render | New code (HTTPS fetch + JSON DTO) | Useless on RF-only deploys |
+| **A3. Both with auto-fallback** | HTTPS when online, in-band when not | A1 + A2 + a routing decision | Best operator experience; most code |
+
+My recommendation: **A1 ships with Q1 catalog as a single feature**
+(zero-extra-cost; uses the same framework). A2/A3 are a follow-up
+issue if you want HTTPS later — defer.
+
+## Q3 NARROWED: GRIB scope
+
+WLE's catalog database contains **zero** GRIB filenames — only
+`WL2K_HELP/CUSTOM.GRIB` and `WL2K_HELP/MAXSAEA_GRIB` which are HELP
+DOCS about Saildocs, not actual GRIB inquiry items. So:
+
+**Option (b) is ruled out** — there is no Winlink-CMS GRIB to add;
+WLE itself doesn't request GRIB from the CMS. Saildocs is the only
+path.
+
+Real choices:
+
+| Option | Behavior | Effort |
+|---|---|---|
+| **B1. Saildocs only — WLE parity** | Parameter form (region picker + grid spacing + valid times + params) → compose to `query@saildocs.com` with `send gfs:...` body → response arrives as a Private message with GRIB-1 attachment → "save attachment, open externally" (zyGrib / OpenCPN / Expedition) | One PR — UI form + composer; reuses existing outgoing rails |
+| **B2. B1 + in-app GRIB viewer** | Above + GRIB-1 binary parser + map renderer with wind barbs / isobars / wave heights | Significant additional surface; probably a separate v0.x+1 sprint |
+
+My recommendation: **B1 only for v0.x parity**. WLE itself punts
+visualization to external viewers; matching that is honest scope.
+B2 belongs in a future sprint.
+
+## Revised sprint architecture
+
+The original A/B/C/D/E breakdown collapses to **just two issues**:
+
+1. **CATALOG framework + RMS in-band fold-in** (Q1 + Q2 A1):
+   - Bundle `winlink-queries.txt`
+   - Parser + in-memory `CatalogEntry[]` model
+   - Tree picker UI under a new "Message → Catalog Request" menu (matches WLE)
+   - "Send request" composes `To: INQUIRY@winlink.org`, `Subject: REQUEST`, body = newline-joined filenames
+   - Responses land in inbox as regular Private messages (no new render path needed for v0.x — the existing reader pane handles text)
+   - Includes RMS list, bulletins, station status, propagation, ICAO METAR, etc. — all 1477 entries
+2. **GRIB request via Saildocs** (Q3 B1):
+   - Parameter form (region + grid + times + params)
+   - Composer to `query@saildocs.com`
+   - GRIB-1 attachment is saved-as / open-externally on receipt
+
+**Bulletins fold into issue 1** (they're catalog entries in
+`ARES_RACES`, `NEWS`, etc.). **Station list folds into issue 1** for the
+in-band path; A2/A3 HTTPS RMS list is a follow-up issue if wanted.
+
+## Sub-issues to file (next iteration)
+
+- **tuxlink-XXX (P2)**: Implement issue 1 above — Catalog Request framework
+  + bundled `winlink-queries.txt` + tree picker UI + composer + UTM
+  for the inquiry response routing.
+- **tuxlink-XXX (P2)**: Implement issue 2 above — GRIB via Saildocs
+  parameter form + composer.
+- **tuxlink-XXX (P3, follow-up)**: HTTPS RMS list fast-path (Pat-style
+  `api.winlink.org/gateway/status.json`) — only if operator decides
+  online-fast-path is worth the additional code.
+
+## Operator decision still needed
+
+Just one: **B1 vs B2 for GRIB**. (My recommendation: B1; matches WLE.)
+Q1 and Q2 are fully answered by the empirical evidence — no operator
+input needed; defaults are obvious.
+
+Once B1/B2 is picked, the sprint can resume with a much smaller scope
+than originally framed.
