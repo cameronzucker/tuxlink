@@ -523,6 +523,66 @@ pub trait WinlinkBackend: Send + Sync {
         Err(BackendError::NotImplemented)
     }
 
+    // ========================================================================
+    // User folders (tuxlink-f62f — Phase 2 of the user-folders work).
+    // ========================================================================
+
+    /// List the user folders registered for this backend. `NativeBackend`
+    /// reads `<root>/.folders.json`; default is empty.
+    async fn list_user_folders(
+        &self,
+    ) -> Result<Vec<crate::user_folders::UserFolder>, BackendError> {
+        Ok(Vec::new())
+    }
+
+    /// Create a new user folder with the given display name. Validates and
+    /// slug-derives. Default `NotImplemented`.
+    async fn create_user_folder(
+        &self,
+        _display_name: &str,
+    ) -> Result<crate::user_folders::UserFolder, BackendError> {
+        Err(BackendError::NotImplemented)
+    }
+
+    /// Delete a user folder. `on_messages` controls cascade behavior
+    /// (spec §6 D6). Default `NotImplemented`.
+    async fn delete_user_folder(
+        &self,
+        _slug: &str,
+        _on_messages: crate::native_mailbox::DeleteAction,
+    ) -> Result<(), BackendError> {
+        Err(BackendError::NotImplemented)
+    }
+
+    /// List the messages in a user folder. Default empty.
+    async fn list_user_messages(
+        &self,
+        _slug: &str,
+    ) -> Result<Vec<MessageMeta>, BackendError> {
+        Ok(Vec::new())
+    }
+
+    /// Read one message from a user folder. Default `NotFound`.
+    async fn read_user_message(
+        &self,
+        _slug: &str,
+        id: &MessageId,
+    ) -> Result<MessageBody, BackendError> {
+        Err(BackendError::NotFound(id.clone()))
+    }
+
+    /// Move a message between any two folder references (system↔user etc).
+    /// `NativeBackend` delegates to [`Mailbox::move_between`]; default
+    /// `NotImplemented`.
+    async fn move_between_folders(
+        &self,
+        _from: crate::native_mailbox::FolderRef,
+        _to: crate::native_mailbox::FolderRef,
+        _id: &MessageId,
+    ) -> Result<(), BackendError> {
+        Err(BackendError::NotImplemented)
+    }
+
     /// Returns `Ok(id)` with the MID assigned at queue time.
     ///
     /// `NativeBackend` assigns a real filesystem-derived MID at queue time.
@@ -755,6 +815,51 @@ impl WinlinkBackend for NativeBackend {
         id: &MessageId,
     ) -> Result<(), BackendError> {
         self.mailbox.move_to(from, to, id)
+    }
+
+    async fn list_user_folders(
+        &self,
+    ) -> Result<Vec<crate::user_folders::UserFolder>, BackendError> {
+        Ok(self.mailbox.list_user_folders())
+    }
+
+    async fn create_user_folder(
+        &self,
+        display_name: &str,
+    ) -> Result<crate::user_folders::UserFolder, BackendError> {
+        self.mailbox.create_user_folder(display_name)
+    }
+
+    async fn delete_user_folder(
+        &self,
+        slug: &str,
+        on_messages: crate::native_mailbox::DeleteAction,
+    ) -> Result<(), BackendError> {
+        self.mailbox.delete_user_folder(slug, on_messages)
+    }
+
+    async fn list_user_messages(
+        &self,
+        slug: &str,
+    ) -> Result<Vec<MessageMeta>, BackendError> {
+        self.mailbox.list_user(slug)
+    }
+
+    async fn read_user_message(
+        &self,
+        slug: &str,
+        id: &MessageId,
+    ) -> Result<MessageBody, BackendError> {
+        self.mailbox.read_user(slug, id)
+    }
+
+    async fn move_between_folders(
+        &self,
+        from: crate::native_mailbox::FolderRef,
+        to: crate::native_mailbox::FolderRef,
+        id: &MessageId,
+    ) -> Result<(), BackendError> {
+        self.mailbox.move_between(from, to, id)
     }
 
     async fn send_message(

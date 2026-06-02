@@ -16,7 +16,7 @@
 
 import React from 'react';
 import { Virtuoso } from 'react-virtuoso';
-import type { MailboxFolder, MessageMeta } from './types';
+import type { MailboxFolderRef, MessageMeta } from './types';
 import { DEFAULT_SORT_STATE, type SortState, sortMessages } from './messageSort';
 import { MessageListSortControl } from './MessageListSortControl';
 
@@ -73,10 +73,11 @@ export function formatSize(bytes: number): string {
 
 /// The single correspondent shown on a row. For Sent/Outbox the recipient(s)
 /// are salient; everywhere else (Inbox/Drafts/Deleted) the sender is.
-export function correspondentLabel(msg: MessageMeta, folder: MailboxFolder): string {
+export function correspondentLabel(msg: MessageMeta, folder: MailboxFolderRef): string {
   if (folder === 'sent' || folder === 'outbox') {
     return msg.to.length > 0 ? msg.to.join(', ') : msg.from;
   }
+  // System inbox/drafts/deleted/archive AND any user-folder slug: show `from`.
   return msg.from;
 }
 
@@ -110,7 +111,7 @@ function applyHighlights(text: string, ranges: HighlightRange[], field: 'subject
 
 export interface MessageRowProps {
   message: MessageMeta;
-  folder: MailboxFolder;
+  folder: MailboxFolderRef;
   selected: boolean;
   onSelect: (id: string) => void;
   /// Highlight ranges for this row (from a search result). Absent → no highlights.
@@ -184,7 +185,7 @@ export function MessageRow({ message, folder, selected, onSelect, matchHighlight
 }
 
 export interface MessageListProps {
-  folder: MailboxFolder;
+  folder: MailboxFolderRef;
   messages: MessageMeta[];
   selectedId: string | null;
   onSelect: (id: string) => void;

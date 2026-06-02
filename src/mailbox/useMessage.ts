@@ -17,7 +17,7 @@
 import { useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { useQuery, useQueryClient, type UseQueryOptions } from '@tanstack/react-query';
-import type { ParsedMessage, MailboxFolder, UiError } from './types';
+import type { ParsedMessage, MailboxFolderRef, UiError } from './types';
 import { DEV_FIXTURE, devMessageFor } from './devFixture';
 
 // ============================================================================
@@ -30,15 +30,15 @@ import { DEV_FIXTURE, devMessageFor } from './devFixture';
 // Query-key factory (exported for tests)
 // ============================================================================
 
-export type MessageQueryKey = ['message', MailboxFolder, string];
+export type MessageQueryKey = ['message', MailboxFolderRef, string];
 
 /** Build the TanStack Query key for a single message (folder + id tuple). */
-export function buildMessageQueryKey(folder: MailboxFolder, id: string): MessageQueryKey {
+export function buildMessageQueryKey(folder: MailboxFolderRef, id: string): MessageQueryKey {
   return ['message', folder, id];
 }
 
 export interface MessageSelection {
-  folder: MailboxFolder;
+  folder: MailboxFolderRef;
   id: string;
 }
 

@@ -175,6 +175,34 @@ pub fn parse_folder(folder: &str) -> Result<MailboxFolder, UiError> {
     }
 }
 
+/// Parse a folder string as a [`crate::native_mailbox::FolderRef`] — system
+/// folder OR user-folder slug (tuxlink-f62f). Drafts/deleted are still
+/// rejected as backend folders.
+///
+/// Order of precedence: system folder match first (preserves existing
+/// behavior for "inbox"/"sent"/"outbox"/"archive"), then slug validation.
+/// A string that's neither a known system folder nor a valid slug → Err.
+pub fn parse_folder_ref(folder: &str) -> Result<crate::native_mailbox::FolderRef, UiError> {
+    use crate::native_mailbox::FolderRef;
+    match folder {
+        "inbox" => Ok(FolderRef::System(MailboxFolder::Inbox)),
+        "outbox" => Ok(FolderRef::System(MailboxFolder::Outbox)),
+        "sent" => Ok(FolderRef::System(MailboxFolder::Sent)),
+        "archive" => Ok(FolderRef::System(MailboxFolder::Archive)),
+        "drafts" => Err(UiError::Internal {
+            detail: "drafts is a local folder, not a backend folder".to_string(),
+        }),
+        "deleted" => Err(UiError::Unavailable {
+            reason: "the Deleted folder is not available in v0.0.1".to_string(),
+        }),
+        other => {
+            crate::user_folders::validate_slug(other)
+                .map_err(|e| UiError::Internal { detail: format!("invalid folder slug: {e}") })?;
+            Ok(FolderRef::User(other.to_string()))
+        }
+    }
+}
+
 // ============================================================================
 // Commands (spec §3.2)
 // ============================================================================
@@ -189,11 +217,15 @@ pub async fn mailbox_list(
     folder: String,
     state: State<'_, BackendState>,
 ) -> Result<Vec<MessageMetaDto>, UiError> {
-    let parsed = parse_folder(&folder)?;
+    use crate::native_mailbox::FolderRef;
+    let parsed = parse_folder_ref(&folder)?;
     let backend = state
         .current()
         .ok_or_else(|| UiError::NotConfigured("backend offline".to_string()))?;
-    let metas = backend.list_messages(parsed).await?;
+    let metas = match parsed {
+        FolderRef::System(f) => backend.list_messages(f).await?,
+        FolderRef::User(slug) => backend.list_user_messages(&slug).await?,
+    };
     Ok(metas.into_iter().map(MessageMetaDto::from).collect())
 }
 
@@ -643,17 +675,24 @@ pub async fn message_read(
     id: String,
     state: State<'_, BackendState>,
 ) -> Result<ParsedMessageDto, UiError> {
-    let parsed_folder = parse_folder(&folder)?;
+    use crate::native_mailbox::FolderRef;
+    let parsed = parse_folder_ref(&folder)?;
     let mid = MessageId::new(&id);
     let backend = state
         .current()
         .ok_or_else(|| UiError::NotConfigured("backend offline".to_string()))?;
-    let body = backend.read_message_in(parsed_folder, &mid).await?;
+    let body = match &parsed {
+        FolderRef::System(f) => backend.read_message_in(*f, &mid).await?,
+        FolderRef::User(slug) => backend.read_user_message(slug, &mid).await?,
+    };
     // Opening a message marks it read (tuxlink-xgn). Best-effort: a marker-write
     // failure must not fail the read the user just performed, so the error is
     // discarded (the message simply stays unread and self-heals on the next
-    // open). For backends without read-state this is the trait's no-op default.
-    let _ = backend.mark_read(parsed_folder, &mid).await;
+    // open). User folders don't track unread today so the mark is a no-op for
+    // them — only system folders flow through `mark_read`.
+    if let FolderRef::System(f) = &parsed {
+        let _ = backend.mark_read(*f, &mid).await;
+    }
     parse_raw_rfc5322(&id, &body.raw_rfc5322)
 }
 
@@ -677,13 +716,92 @@ pub async fn mailbox_move(
     id: String,
     state: State<'_, BackendState>,
 ) -> Result<(), UiError> {
-    let parsed_from = parse_folder(&from)?;
-    let parsed_to = parse_folder(&to)?;
+    let from_ref = parse_folder_ref(&from)?;
+    let to_ref = parse_folder_ref(&to)?;
     let mid = MessageId::new(&id);
     let backend = state
         .current()
         .ok_or_else(|| UiError::NotConfigured("backend offline".to_string()))?;
-    backend.move_message(parsed_from, parsed_to, &mid).await?;
+    backend.move_between_folders(from_ref, to_ref, &mid).await?;
+    Ok(())
+}
+
+// ---- user-folder commands (tuxlink-f62f) -----------------------------------
+
+/// DTO mirror of [`crate::user_folders::UserFolder`] over Tauri's camelCase
+/// IPC. Display name + slug + creation time; the registry persists nothing
+/// else today.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UserFolderDto {
+    pub slug: String,
+    pub display_name: String,
+    pub created_at: String,
+}
+
+impl From<crate::user_folders::UserFolder> for UserFolderDto {
+    fn from(f: crate::user_folders::UserFolder) -> Self {
+        UserFolderDto {
+            slug: f.slug,
+            display_name: f.display_name,
+            created_at: f.created_at,
+        }
+    }
+}
+
+/// List the operator's user-created folders. Frontend `useUserFolders` calls
+/// this; sidebar renders the result + the `+` button.
+#[tauri::command]
+pub async fn user_folders_list(
+    state: State<'_, BackendState>,
+) -> Result<Vec<UserFolderDto>, UiError> {
+    let backend = state
+        .current()
+        .ok_or_else(|| UiError::NotConfigured("backend offline".to_string()))?;
+    let folders = backend.list_user_folders().await?;
+    Ok(folders.into_iter().map(UserFolderDto::from).collect())
+}
+
+/// Create a new user folder with the given display name. Slug is derived
+/// (`ARES Drills` → `ares-drills`); reserved names + duplicate slugs are
+/// rejected as `BackendError::MessageRejected` → surfaced as `UiError`.
+#[tauri::command]
+pub async fn folder_create(
+    display_name: String,
+    state: State<'_, BackendState>,
+) -> Result<UserFolderDto, UiError> {
+    let backend = state
+        .current()
+        .ok_or_else(|| UiError::NotConfigured("backend offline".to_string()))?;
+    let folder = backend.create_user_folder(&display_name).await?;
+    Ok(UserFolderDto::from(folder))
+}
+
+/// Delete a user folder. `on_messages` controls cascade behavior (spec §6 D6):
+/// - `"move_to_inbox"` (safe default) — re-home each message to Inbox
+/// - `"move_to_archive"` — re-home each message to Archive
+/// - `"delete"` — permanently remove the messages
+#[tauri::command]
+pub async fn folder_delete(
+    slug: String,
+    on_messages: String,
+    state: State<'_, BackendState>,
+) -> Result<(), UiError> {
+    use crate::native_mailbox::DeleteAction;
+    let action = match on_messages.as_str() {
+        "move_to_inbox" => DeleteAction::MoveToInbox,
+        "move_to_archive" => DeleteAction::MoveToArchive,
+        "delete" => DeleteAction::Delete,
+        other => {
+            return Err(UiError::Internal {
+                detail: format!("unknown on_messages action: {other}"),
+            })
+        }
+    };
+    let backend = state
+        .current()
+        .ok_or_else(|| UiError::NotConfigured("backend offline".to_string()))?;
+    backend.delete_user_folder(&slug, action).await?;
     Ok(())
 }
 

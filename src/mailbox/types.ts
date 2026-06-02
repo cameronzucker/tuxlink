@@ -65,11 +65,29 @@ export interface AttachmentMeta {
 
 /// Sidebar folder identifiers. `drafts` is a local (localStorage) store, not
 /// a backend folder; `deleted` is a disabled placeholder for now (spec
-/// §2.2). `archive` is the first user folder, exposed in Phase 1 of the
-/// user-folders work (docs/superpowers/specs/2026-06-02-user-folders-design.md);
-/// open-set user-folder slugs land in Phase 2. The Rust `parse_folder`
-/// rejects `drafts`/`deleted` for backend commands.
+/// §2.2). `archive` is a system folder (Phase 1, tuxlink-ca5x); Phase 2
+/// (tuxlink-f62f) open-set user-folder slugs are STRINGS that ride alongside
+/// this union via `MailboxFolderRef`.
 export type MailboxFolder = 'inbox' | 'outbox' | 'sent' | 'drafts' | 'deleted' | 'archive';
+
+/// Any folder reference the Tauri `mailbox_list`/`mailbox_move`/`message_read`
+/// commands accept on the wire: a system folder OR a user-folder slug
+/// (lowercase ASCII `[a-z0-9-]+`). The Rust backend dispatches on the string
+/// at parse time. Frontend code that knows it's working with a system folder
+/// should still type as `MailboxFolder` for compile-time safety; the broader
+/// `MailboxFolderRef` is used at the boundary where user-folder slugs are
+/// also valid.
+export type MailboxFolderRef = MailboxFolder | string;
+
+/// One operator-created mailbox folder (tuxlink-f62f). The slug is the
+/// stable identifier (URL/path-safe; used by `mailbox_list` / `mailbox_move`
+/// over the wire). The display name is what the UI shows; it can be edited
+/// without churning messages on disk because the slug never changes.
+export interface UserFolder {
+  slug: string;
+  displayName: string;
+  createdAt: string; // RFC 3339 UTC
+}
 
 /// Serializable backend error. Mirrors `UiError` in
 /// `src-tauri/src/ui_commands.rs` via Tauri's

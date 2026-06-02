@@ -25,7 +25,9 @@ import type { HighlightRange } from '../mailbox/MessageList';
 import { type SortState, loadSortState, saveSortState } from '../mailbox/messageSort';
 import { useMailbox } from '../mailbox/useMailbox';
 import { isNotConfigured } from '../mailbox/types';
-import type { MailboxFolder, MessageMeta } from '../mailbox/types';
+import type { MailboxFolder, MailboxFolderRef, MessageMeta } from '../mailbox/types';
+import { useUserFolders } from '../mailbox/useUserFolders';
+import { NewFolderDialog } from '../mailbox/NewFolderDialog';
 import type { MessageMetaDto } from '../search/types';
 import { DEV_SELECTED } from '../mailbox/devFixture';
 import { FolderSidebar } from '../mailbox/FolderSidebar';
@@ -70,7 +72,7 @@ import type { RadioPanelMode } from '../radio/types';
 import { PlaceholderRadioPanel } from '../radio/modes/PlaceholderRadioPanel';
 import './AppShell.css';
 
-/// Human label for a folder (titlebar). Mirrors the sidebar labels.
+/// Human label for a system folder (titlebar). Mirrors the sidebar labels.
 const FOLDER_LABELS: Record<MailboxFolder, string> = {
   inbox: 'Inbox',
   outbox: 'Outbox',
@@ -80,8 +82,21 @@ const FOLDER_LABELS: Record<MailboxFolder, string> = {
   archive: 'Archive',
 };
 
+/// Folder-label lookup that handles both system folders and user-folder
+/// slugs. For system folders → `FOLDER_LABELS`; for user folders → the
+/// display name from the registry; for an unknown slug → the slug itself
+/// (graceful fallback while the registry refetches after a create/rename).
+function folderLabel(
+  folder: MailboxFolderRef,
+  userFolders: { slug: string; displayName: string }[],
+): string {
+  if (folder in FOLDER_LABELS) return FOLDER_LABELS[folder as MailboxFolder];
+  const uf = userFolders.find((f) => f.slug === folder);
+  return uf?.displayName ?? folder;
+}
+
 export interface SelectedMessage {
-  folder: MailboxFolder;
+  folder: MailboxFolderRef;
   id: string;
 }
 
@@ -126,7 +141,13 @@ function computeHighlights(
 }
 
 export function AppShell() {
-  const [selectedFolder, setSelectedFolder] = useState<MailboxFolder>('inbox');
+  // selectedFolder accepts either a system-folder identifier or a user-folder
+  // slug (tuxlink-f62f). The Tauri commands take either string at the boundary;
+  // string-equal is enough to drive the sidebar's active-row highlight.
+  const [selectedFolder, setSelectedFolder] = useState<MailboxFolderRef>('inbox');
+  // tuxlink-f62f: NewFolderDialog visibility (opened from the sidebar's
+  // Folders section `+` button).
+  const [newFolderOpen, setNewFolderOpen] = useState(false);
   // DEV_SELECTED is null outside the vite dev server, so this starts null (the
   // real empty-reading-pane state) in tests + production.
   const [selectedMessage, setSelectedMessage] = useState<SelectedMessage | null>(DEV_SELECTED);
@@ -204,6 +225,9 @@ export function AppShell() {
   // folders show total count (matching Sent), not unread — archived messages
   // are almost always already read; "0 unread / 180 total" would mislead.
   const archive = useMailbox('archive');
+  // tuxlink-f62f: operator-created user folders, rendered in the sidebar's
+  // Folders section. Backend reads `<root>/.folders.json`.
+  const { folders: userFolders } = useUserFolders();
   const notConnected = isNotConfigured(error);
 
   // Search-result wiring (tuxlink-c7qz): when search is active, swap the
@@ -321,11 +345,11 @@ export function AppShell() {
   // Native titlebar: mock B shows "Tuxlink — Inbox". Track the active folder.
   useEffect(() => {
     try {
-      void getCurrentWindow().setTitle(`Tuxlink — ${FOLDER_LABELS[selectedFolder]}`);
+      void getCurrentWindow().setTitle(`Tuxlink — ${folderLabel(selectedFolder, userFolders)}`);
     } catch {
       /* no Tauri runtime (tests) — title is cosmetic */
     }
-  }, [selectedFolder]);
+  }, [selectedFolder, userFolders]);
 
   // The parsed message the reading pane is showing — drives menu/accelerator
   // Reply/Reply All/Forward. Same query key as MessageView's useMessage, so
@@ -349,6 +373,25 @@ export function AppShell() {
       // Invalidate both the source and the destination folder lists so the
       // moved row disappears from the source and appears in Archive on the
       // next refetch. The broader `['mailbox']` invalidation hits both at once.
+      void queryClient.invalidateQueries({ queryKey: ['mailbox'] });
+      setSelectedMessage(null);
+    } catch {
+      /* surfaced via Rust logs; next refetch resyncs */
+    }
+  }, [selectedMessage, queryClient]);
+
+  // tuxlink-f62f: move the open message to any folder (system OR user). Used
+  // by the reading-pane "Move ▾" dropdown. Self-target is a no-op the UI
+  // also suppresses by disabling the current-folder row in the picker.
+  const moveOpen = useCallback(async (to: MailboxFolderRef) => {
+    if (!selectedMessage) return;
+    if (selectedMessage.folder === to) return;
+    try {
+      await invoke('mailbox_move', {
+        from: selectedMessage.folder,
+        to,
+        id: selectedMessage.id,
+      });
       void queryClient.invalidateQueries({ queryKey: ['mailbox'] });
       setSelectedMessage(null);
     } catch {
@@ -398,7 +441,7 @@ export function AppShell() {
   const onMenuAction = useCallback((id: string) => dispatchMenuAction(id, handlers), [handlers]);
   useAccelerators(onMenuAction);
 
-  const onSelectFolder = useCallback((folder: MailboxFolder) => {
+  const onSelectFolder = useCallback((folder: MailboxFolderRef) => {
     setSelectedFolder(folder);
     setSelectedMessage(null);
     setSelectedConnection(null);
@@ -453,7 +496,7 @@ export function AppShell() {
 
   return (
     <div className="layout-b" data-testid="app-shell-root">
-      <TitleBar folderLabel={FOLDER_LABELS[selectedFolder]} />
+      <TitleBar folderLabel={folderLabel(selectedFolder, userFolders)} />
       <MenuBar onAction={onMenuAction} />
       <ResizeHandles />
       <div className="ribbon-with-search">
@@ -513,6 +556,8 @@ export function AppShell() {
           selectedFolder={selectedFolder}
           onSelectFolder={onSelectFolder}
           counts={counts}
+          userFolders={userFolders}
+          onCreateFolder={() => setNewFolderOpen(true)}
           selectedConnection={selectedConnection}
           onSelectConnection={onSelectConnection}
         />
@@ -529,7 +574,7 @@ export function AppShell() {
         />
         {(() => {
           if (selectedConnection === null) {
-            return <MessageView selectedMessage={selectedMessage} onArchive={onArchiveMessage} />;
+            return <MessageView selectedMessage={selectedMessage} onArchive={onArchiveMessage} userFolders={userFolders} onMove={moveOpen} />;
           }
           if (!isBuilt(selectedConnection)) {
             return <StubPanel sessionType={selectedConnection.sessionType} protocol={selectedConnection.protocol} />;
@@ -539,36 +584,36 @@ export function AppShell() {
             // P2: Telnet UI now lives in the right-hand TelnetRadioPanel.
             // The reading pane falls back to messages so the operator
             // can read mail while the connection panel handles transport.
-            return <MessageView selectedMessage={selectedMessage} onArchive={onArchiveMessage} />;
+            return <MessageView selectedMessage={selectedMessage} onArchive={onArchiveMessage} userFolders={userFolders} onMove={moveOpen} />;
           }
           if (sessionType === 'cms' && protocol === 'packet') {
             // P3: PacketRadioPanel owns the Packet dial UI in the right
             // radio panel; reading pane falls back to mail (same pattern
             // as Telnet (P2) and ARDOP (P4)).
-            return <MessageView selectedMessage={selectedMessage} onArchive={onArchiveMessage} />;
+            return <MessageView selectedMessage={selectedMessage} onArchive={onArchiveMessage} userFolders={userFolders} onMove={moveOpen} />;
           }
           if (sessionType === 'cms' && protocol === 'ardop-hf') {
             // P4: the ArdopRadioPanel owns the ARDOP HF dial UI; the
             // reading pane falls back to mail (same pattern as Telnet,
             // P2). Eliminates the P1 dual-mount of placeholder + ArdopDock.
-            return <MessageView selectedMessage={selectedMessage} onArchive={onArchiveMessage} />;
+            return <MessageView selectedMessage={selectedMessage} onArchive={onArchiveMessage} userFolders={userFolders} onMove={moveOpen} />;
           }
           if (sessionType === 'p2p' && protocol === 'packet') {
             // P3 (P2P branch): same — PacketRadioPanel handles the dial UI.
-            return <MessageView selectedMessage={selectedMessage} onArchive={onArchiveMessage} />;
+            return <MessageView selectedMessage={selectedMessage} onArchive={onArchiveMessage} userFolders={userFolders} onMove={moveOpen} />;
           }
           if (sessionType === 'p2p' && protocol === 'telnet') {
             // P2P Telnet (tuxlink-0pnb): TelnetP2pRadioPanel owns the dial
             // UI in the right panel; reading pane falls back to mail, same
             // pattern as Telnet CMS (P2) and Packet P2P (P3).
-            return <MessageView selectedMessage={selectedMessage} onArchive={onArchiveMessage} />;
+            return <MessageView selectedMessage={selectedMessage} onArchive={onArchiveMessage} userFolders={userFolders} onMove={moveOpen} />;
           }
           if (sessionType === 'cms' && (protocol === 'vara-hf' || protocol === 'vara-fm')) {
             // tuxlink-dfmf Phase 2: VaraRadioPanel owns the VARA dial UI
             // in the right panel; reading pane falls back to mail (same
             // pattern as Telnet/Packet/ARDOP). Phase 2 surfaces TCP
             // transport + config; RF CONNECT arrives in Phase 3.
-            return <MessageView selectedMessage={selectedMessage} onArchive={onArchiveMessage} />;
+            return <MessageView selectedMessage={selectedMessage} onArchive={onArchiveMessage} userFolders={userFolders} onMove={moveOpen} />;
           }
           // Built but unhandled — defensive stub
           return <StubPanel sessionType={sessionType} protocol={protocol} />;
@@ -652,6 +697,18 @@ export function AppShell() {
       <AboutDialog open={aboutOpen} onClose={() => setAboutOpen(false)} />
 
       <HelpPanel open={helpOpen} onClose={() => setHelpOpen(false)} />
+
+      <NewFolderDialog
+        open={newFolderOpen}
+        onClose={() => setNewFolderOpen(false)}
+        onCreated={(slug) => {
+          // Navigate to the new folder so the operator sees their creation
+          // succeed (matches the create-and-select expectation of every
+          // mail client). The folder is empty until messages are moved in.
+          setSelectedFolder(slug);
+          setSelectedMessage(null);
+        }}
+      />
 
       {savedSearchesOpen && (
         <SavedSearchesPanel onClose={() => setSavedSearchesOpen(false)} />
