@@ -8,11 +8,15 @@
 
 .radio-panel-segmented {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  /* tuxlink-jrf7: `1fr` resolves to `minmax(auto, 1fr)`, so the three
+     uppercase segment labels can push the strip past the panel content
+     box. `minmax(0, 1fr)` lets each cell shrink. */
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 4px;
   margin-bottom: 6px;
 }
 .radio-panel-segmented button {
+  min-width: 0;
   padding: 4px 6px;
   border-radius: 3px;
   text-align: center;
@@ -24,6 +28,8 @@
   letter-spacing: 0.04em;
   text-transform: uppercase;
   cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .radio-panel-segmented button:hover {
   background: rgba(255, 255, 255, 0.07);

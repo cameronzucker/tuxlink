@@ -13,9 +13,30 @@
 
 .signal-section .signal-top {
   display: grid;
-  grid-template-columns: 104px 1fr;
+  /* tuxlink-jrf7: `1fr` resolves to `minmax(auto, 1fr)`, so the trend
+     column's intrinsic-min (long S/N labels, Sparkline floor) can push
+     the row wider than the 376 px content box at 400 px panel width.
+     `minmax(0, 1fr)` lets the trend column shrink below its intrinsic.
+     Same fix pattern as the ARQ grid in ArdopRadioPanel.css. */
+  grid-template-columns: 104px minmax(0, 1fr);
   gap: 10px;
   align-items: center;
+}
+
+.signal-section .snr-trend {
+  /* Defensive: allows children (Sparkline, lab-rows) to shrink below
+     their intrinsic min. Required for the grid-cell `minmax(0, 1fr)`
+     to actually shrink the column under content pressure. */
+  min-width: 0;
+}
+
+.signal-section .snr-trend .lab-row .v {
+  /* The S/N value (e.g. "−12.3 dB") can grow long under bad-signal
+     conditions; truncate within the row rather than push the grid track. */
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .signal-section .quality {

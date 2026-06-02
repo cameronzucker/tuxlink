@@ -19,6 +19,13 @@
 
 .frame-cell {
   flex: 1;
+  /* tuxlink-jrf7: `flex: 1` is `flex: 1 1 0`, but `min-width` defaults
+     to `auto` which is the content's intrinsic min-width. With ~14
+     cells × ~10-14 px label width, the row's intrinsic min outgrew
+     the panel. `min-width: 0` lets each cell shrink below its label
+     intrinsic; `overflow: hidden` keeps the label from forcing width. */
+  min-width: 0;
+  overflow: hidden;
   border-radius: 2px;
   font-family: ui-monospace, monospace;
   /* Operator smoke 2026-05-31: bumped from 8 px → 11 px so labels are
