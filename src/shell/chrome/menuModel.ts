@@ -32,6 +32,10 @@ export const MENU_TREE: TopMenu[] = [
     { id: 'menu:message:reply', label: 'Reply', accel: 'Ctrl+R' },
     { id: 'menu:message:reply_all', label: 'Reply All', accel: 'Ctrl+Shift+R' },
     { id: 'menu:message:forward', label: 'Forward' },
+    { separator: true },
+    // tuxlink-ca5x (user-folders Phase 1): move open message to Archive.
+    // The `A` accelerator is gated on input-focus (see useAccelerators.ts).
+    { id: 'menu:message:archive', label: 'Archive', accel: 'A' },
     // Not-yet-wired: dispatchMenuAction has no Print handler, so disable +
     // badge rather than render as a dead-clickable button (tuxlink-dpf).
     { id: 'menu:message:print', label: 'Print', disabled: true },
@@ -50,6 +54,7 @@ export const MENU_TREE: TopMenu[] = [
     { id: 'menu:mailbox:inbox', label: 'Inbox' },
     { id: 'menu:mailbox:sent', label: 'Sent' },
     { id: 'menu:mailbox:outbox', label: 'Outbox' },
+    { id: 'menu:mailbox:archive', label: 'Archive' },
   ] },
   { label: 'View', items: [
     // Session-log items removed in radio-panel-shell P1.6 — the bottom
@@ -118,6 +123,11 @@ export interface Accelerator {
   ctrl: boolean;      // Ctrl OR Meta (CmdOrCtrl)
   shift: boolean;
   id: MenuActionId;
+  /** When true, the accelerator is suppressed while a text input / textarea /
+   *  contenteditable element is focused — required for plain-letter bindings
+   *  (e.g. `A` for Archive) so they don't intercept typing. Modifier-bound
+   *  accelerators (Ctrl+*, Ctrl+Shift+*, F-keys) don't set this. (tuxlink-ca5x) */
+  suppressInTextInput?: boolean;
 }
 
 // Operator-locked set (2026-05-21). F5 and Ctrl+Shift+O both fire connect.
@@ -130,4 +140,7 @@ export const ACCELERATORS: Accelerator[] = [
   { combo: 'Ctrl+Shift+M', key: 'm', ctrl: true, shift: true, id: 'menu:view:radio_panel' },
   { combo: 'F5', key: 'F5', ctrl: false, shift: false, id: 'menu:session:connect' },
   { combo: 'Ctrl+Shift+O', key: 'o', ctrl: true, shift: true, id: 'menu:session:connect' },
+  // tuxlink-ca5x: Archive shortcut — plain `A`, gated on text-input focus so
+  // typing the letter 'a' in the search bar or compose body doesn't archive.
+  { combo: 'A', key: 'a', ctrl: false, shift: false, id: 'menu:message:archive', suppressInTextInput: true },
 ];

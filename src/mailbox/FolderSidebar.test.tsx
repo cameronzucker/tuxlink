@@ -18,12 +18,12 @@ describe('<FolderSidebar> (Mock B)', () => {
     expect(screen.getByTestId('sess-radio-only')).toBeInTheDocument();
   });
 
-  it('Inbox + Sent + Outbox are enabled; Archive is disabled (deferred)', () => {
+  it('Inbox + Sent + Outbox + Archive are all enabled (tuxlink-ca5x)', () => {
     render(<FolderSidebar selectedFolder="inbox" onSelectFolder={() => {}} />);
     expect(screen.getByTestId('folder-inbox')).not.toBeDisabled();
     expect(screen.getByTestId('folder-sent')).not.toBeDisabled();
     expect(screen.getByTestId('folder-outbox')).not.toBeDisabled();
-    expect(screen.getByTestId('folder-archive')).toBeDisabled();
+    expect(screen.getByTestId('folder-archive')).not.toBeDisabled();
   });
 
   it('clicking Outbox fires onSelectFolder with the outbox id', () => {
@@ -46,11 +46,11 @@ describe('<FolderSidebar> (Mock B)', () => {
     expect(onSelect).toHaveBeenCalledWith('sent');
   });
 
-  it('clicking a disabled folder does NOT fire onSelectFolder', () => {
+  it('clicking Archive fires onSelectFolder with the archive id (tuxlink-ca5x)', () => {
     const onSelect = vi.fn();
     render(<FolderSidebar selectedFolder="inbox" onSelectFolder={onSelect} />);
     fireEvent.click(screen.getByTestId('folder-archive'));
-    expect(onSelect).not.toHaveBeenCalled();
+    expect(onSelect).toHaveBeenCalledWith('archive');
   });
 
   it('shows counts for Inbox + Sent (suppresses zero/missing)', () => {

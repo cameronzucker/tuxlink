@@ -21,6 +21,7 @@ const BACKEND_FOLDERS: ReadonlySet<MailboxFolder> = new Set<MailboxFolder>([
   'inbox',
   'outbox',
   'sent',
+  'archive',
 ]);
 
 export function isBackendFolder(folder: MailboxFolder): boolean {

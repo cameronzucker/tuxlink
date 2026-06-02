@@ -657,6 +657,36 @@ pub async fn message_read(
     parse_raw_rfc5322(&id, &body.raw_rfc5322)
 }
 
+// ---- mailbox_move command (tuxlink-ca5x) -----------------------------------
+
+/// Move a message between folders. Used by the reading-pane Archive button
+/// and the `A` accelerator (spec: docs/superpowers/specs/2026-06-02-user-folders-design.md §4).
+///
+/// `from` is the message's current folder (from `selectedMessage.folder`);
+/// `to` is the destination (Inbox/Sent/Outbox/Archive today; user-folder slugs
+/// in Phase 2). Drafts is rejected on both sides — it is a local-only store.
+///
+/// Mirrors the cache-invalidation contract `useMessage` uses for `mark_read`:
+/// the move succeeds at the storage layer and the frontend invalidates the
+/// affected folder queries so the row disappears from the source list and
+/// appears in the destination on the next refetch.
+#[tauri::command]
+pub async fn mailbox_move(
+    from: String,
+    to: String,
+    id: String,
+    state: State<'_, BackendState>,
+) -> Result<(), UiError> {
+    let parsed_from = parse_folder(&from)?;
+    let parsed_to = parse_folder(&to)?;
+    let mid = MessageId::new(&id);
+    let backend = state
+        .current()
+        .ok_or_else(|| UiError::NotConfigured("backend offline".to_string()))?;
+    backend.move_message(parsed_from, parsed_to, &mid).await?;
+    Ok(())
+}
+
 // Task 14 — message_send command (spec §3.2, §5.4)
 // ============================================================================
 // Appended here per the append-only ownership model (spec §7). The
@@ -2835,6 +2865,25 @@ hw:CARD=Device,DEV=0
         let mid: Option<MessageId> = Some(MessageId::new("MID-12345"));
         let result: Option<String> = mid.map(|id| id.0);
         assert_eq!(result, Some("MID-12345".to_string()));
+    }
+
+    // tuxlink-ca5x: `parse_folder("archive")` must succeed end-to-end. The
+    // string "archive" arrives from `mailbox_list` (folder browse), `message_read`
+    // (open a message), and `mailbox_move` (Archive button + A shortcut).
+    #[test]
+    fn parse_folder_accepts_archive() {
+        let parsed = parse_folder("archive").expect("archive must parse");
+        assert_eq!(parsed, MailboxFolder::Archive);
+    }
+
+    // tuxlink-ca5x: drafts + deleted remain non-backend even after Archive
+    // joined the wire vocabulary. Regression-pin: a future careless union of
+    // "any string is a folder slug" (Phase 2 work) must not silently flip
+    // these to Ok.
+    #[test]
+    fn parse_folder_still_rejects_drafts_and_deleted() {
+        assert!(parse_folder("drafts").is_err());
+        assert!(parse_folder("deleted").is_err());
     }
 
     #[test]

@@ -508,6 +508,21 @@ pub trait WinlinkBackend: Send + Sync {
         Ok(())
     }
 
+    /// Move a message between folders (tuxlink-ca5x). The Inbox → Archive path
+    /// is the canonical use today; future user folders (tuxlink-f62f) flow
+    /// through the same trait method. `NativeBackend` overrides this to
+    /// dispatch to its [`Mailbox::move_to`] (which carries the read-marker
+    /// across folders + best-effort updates the search index). Default
+    /// returns [`BackendError::NotImplemented`].
+    async fn move_message(
+        &self,
+        _from: MailboxFolder,
+        _to: MailboxFolder,
+        _id: &MessageId,
+    ) -> Result<(), BackendError> {
+        Err(BackendError::NotImplemented)
+    }
+
     /// Returns `Ok(id)` with the MID assigned at queue time.
     ///
     /// `NativeBackend` assigns a real filesystem-derived MID at queue time.
@@ -731,6 +746,15 @@ impl WinlinkBackend for NativeBackend {
 
     async fn mark_read(&self, folder: MailboxFolder, id: &MessageId) -> Result<(), BackendError> {
         self.mailbox.mark_read(folder, id)
+    }
+
+    async fn move_message(
+        &self,
+        from: MailboxFolder,
+        to: MailboxFolder,
+        id: &MessageId,
+    ) -> Result<(), BackendError> {
+        self.mailbox.move_to(from, to, id)
     }
 
     async fn send_message(

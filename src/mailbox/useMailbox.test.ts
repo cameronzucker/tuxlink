@@ -2,10 +2,14 @@ import { describe, it, expect } from 'vitest';
 import { isBackendFolder } from './useMailbox';
 
 describe('isBackendFolder', () => {
-  it('treats inbox/outbox/sent as backend folders', () => {
+  it('treats inbox/outbox/sent/archive as backend folders', () => {
     expect(isBackendFolder('inbox')).toBe(true);
     expect(isBackendFolder('outbox')).toBe(true);
     expect(isBackendFolder('sent')).toBe(true);
+    // tuxlink-ca5x: Archive is wired through the same `mailbox_list` Tauri
+    // command as the other system folders — it just dispatches with
+    // folder="archive".
+    expect(isBackendFolder('archive')).toBe(true);
   });
 
   it('treats drafts/deleted as NON-backend folders (no command dispatch)', () => {

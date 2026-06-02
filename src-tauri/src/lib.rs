@@ -244,6 +244,7 @@ pub fn run() {
             // orchestrator integration commit (spec §4.3) to keep the shared
             // `invoke_handler` edit in one diff.
             crate::ui_commands::mailbox_list,          // Task 12 (tuxlink-zsm)
+            crate::ui_commands::mailbox_move,          // tuxlink-ca5x (user-folders Phase 1)
             crate::ui_commands::message_read,          // Task 13 (tuxlink-y5c)
             crate::ui_commands::message_send,          // Task 14 (tuxlink-dm8)
             crate::ui_commands::send_form,             // HTML Forms v0.1 (tuxlink-v1p Task 3.1)

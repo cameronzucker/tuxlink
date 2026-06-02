@@ -546,6 +546,57 @@ mod index_hook_tests {
         assert_eq!(folder, "sent");
     }
 
+    // tuxlink-ca5x: Inbox → Archive is the canonical user-facing move (the
+    // Archive button + A shortcut). The file moves to the archive directory,
+    // the inbox copy is gone, the index folder column updates, and a read-marker
+    // (if present) travels along so read-state isn't lost. (Note: the on-disk
+    // segment name is "inbox" here, not the "in" form that surfaces via
+    // winlink_backend::as_path_segment — `native_mailbox::folder_dir` uses the
+    // longer form.)
+    #[test]
+    fn move_inbox_to_archive_relocates_message_and_marker_and_index() {
+        let dir = tempdir().unwrap();
+        let (mbox, idx) = build_mailbox_with_index(dir.path());
+        let id = mbox.store(MailboxFolder::Inbox, &raw("hello", "body")).unwrap();
+        mbox.mark_read(MailboxFolder::Inbox, &id).unwrap();
+        // Sanity: marker exists in inbox before move.
+        assert!(dir.path().join("inbox").join(format!("{}.read", id.0)).exists());
+
+        mbox.move_to(MailboxFolder::Inbox, MailboxFolder::Archive, &id).unwrap();
+
+        // The b2f file lives in archive/ and is gone from inbox/.
+        assert!(dir.path().join("archive").join(format!("{}.b2f", id.0)).exists());
+        assert!(!dir.path().join("inbox").join(format!("{}.b2f", id.0)).exists());
+        // The read marker traveled with the message — no orphan in inbox/.
+        assert!(dir.path().join("archive").join(format!("{}.read", id.0)).exists());
+        assert!(!dir.path().join("inbox").join(format!("{}.read", id.0)).exists());
+
+        // Search index reflects the new folder.
+        let folder: String = idx
+            .lock()
+            .unwrap()
+            .conn
+            .query_row("SELECT folder FROM messages_meta WHERE mid = ?1", [&id.0], |r| r.get(0))
+            .unwrap();
+        assert_eq!(folder, "archive");
+    }
+
+    // tuxlink-ca5x: moving a missing message is a no-op-safe Ok, not an error.
+    // The Archive button race window — user clicks Archive twice quickly, the
+    // second backend call would otherwise see the file already gone — closes
+    // cleanly without surfacing an error.
+    #[test]
+    fn move_nonexistent_message_is_ok_safe() {
+        let dir = tempdir().unwrap();
+        let mbox = Mailbox::new(dir.path().to_path_buf());
+        let res = mbox.move_to(
+            MailboxFolder::Inbox,
+            MailboxFolder::Archive,
+            &MessageId("does-not-exist".to_string()),
+        );
+        assert!(res.is_ok(), "moving a missing message must be a no-op-safe Ok");
+    }
+
     #[test]
     fn mark_read_updates_unread_in_index() {
         let dir = tempdir().unwrap();
