@@ -79,9 +79,11 @@ src-tauri/target/
 src-tauri/WixTools/
 src-tauri/gen/
 
-# Editor — share .vscode/extensions.json only (recommended-extensions list)
-.vscode/*
-!.vscode/extensions.json
+# Editor — per-machine VS Code state stays local. Recommended-extensions
+# popup (.vscode/extensions.json) was tracked previously but stripped per
+# tuxlink-2bp0 (operator: ship-like-a-finished-product ethos; editor
+# preferences aren't project policy).
+.vscode/
 .idea/
 .DS_Store
 *.swp
