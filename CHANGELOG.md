@@ -4,6 +4,13 @@ All notable changes to Tuxlink are documented here.
 
 This project adheres to [Semantic Versioning](https://semver.org) with project-specific rules described in [VERSIONING.md](VERSIONING.md). Entries from `v0.0.2` onward are generated automatically by [`release-please`](https://github.com/googleapis/release-please) from [Conventional Commits](https://www.conventionalcommits.org).
 
+## [0.14.1](https://github.com/cameronzucker/tuxlink/compare/v0.14.0...v0.14.1) (2026-06-02)
+
+
+### Bug Fixes
+
+* **shell:** thread outbox queue depth into sidebar counts (tuxlink-gp8b) ([f447a98](https://github.com/cameronzucker/tuxlink/commit/f447a986c9b24a32a48455dd9b2f746d85c234f3))
+
 ## [0.14.0](https://github.com/cameronzucker/tuxlink/compare/v0.13.1...v0.14.0) (2026-06-02)
 
 
