@@ -4,6 +4,23 @@ All notable changes to Tuxlink are documented here.
 
 This project adheres to [Semantic Versioning](https://semver.org) with project-specific rules described in [VERSIONING.md](VERSIONING.md). Entries from `v0.0.2` onward are generated automatically by [`release-please`](https://github.com/googleapis/release-please) from [Conventional Commits](https://www.conventionalcommits.org).
 
+## [0.16.0](https://github.com/cameronzucker/tuxlink/compare/v0.15.1...v0.16.0) (2026-06-02)
+
+
+### Features
+
+* **mailbox:** MessageList sort UI — operator-selectable sort with persistence ([3dc193a](https://github.com/cameronzucker/tuxlink/commit/3dc193aef0d2ba55997527d3de842963d36e273e))
+
+
+### Bug Fixes
+
+* **menu:** mark unwired Message/Session items disabled+badged (tuxlink-dpf) ([d796e98](https://github.com/cameronzucker/tuxlink/commit/d796e981d7f9f4c1774972492e0482d7884b3f3d))
+
+
+### Refactors
+
+* **status:** useStatusData via react-query so invalidate triggers refetch ([4636944](https://github.com/cameronzucker/tuxlink/commit/46369446b3431b8d6ca44da62e22dbf04bdba098))
+
 ## [0.15.1](https://github.com/cameronzucker/tuxlink/compare/v0.15.0...v0.15.1) (2026-06-02)
 
 
