@@ -14,7 +14,8 @@
  *   DTO values; the `useStatusData` hook (bottom) is tested via mocked invoke.
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { DEV_FIXTURE, DEV_CALLSIGN, DEV_GRID } from '../mailbox/devFixture';
@@ -295,101 +296,90 @@ export interface StatusBarData {
 }
 
 /**
- * Poll config_read (5s) + backend_status (2s) and derive the StatusBar's
- * display values via the pure formatters above. This is the status fetch that
- * lived in DashboardRibbon (now parked); Mock D surfaces callsign/grid/state in
- * the status bar instead of a top ribbon. Both commands degrade gracefully:
- * config absent → empty callsign/grid; backend None → status null → "Idle".
+ * Query keys for the status hook's three polls. Exported so DashboardRibbon
+ * (and any future write-path) can target the cache with `invalidateQueries`
+ * and trigger an immediate refetch (tuxlink-i9vn — pre-refactor T14 invalidated
+ * `['config_read']` against a raw setInterval that ignored it).
+ */
+export const STATUS_QUERY_KEYS = {
+  config: ['config_read'] as const,
+  backend: ['backend_status'] as const,
+  position: ['position_status'] as const,
+};
+
+/**
+ * Poll config_read (5s) + backend_status (2s) + position_status (2s) via
+ * react-query, and derive the StatusBar's display values via the pure
+ * formatters above. The hook surfaces callsign/grid/state in the status bar.
+ *
+ * The previous implementation used raw useState + useEffect + setInterval. T14
+ * (DashboardRibbon write paths) added `queryClient.invalidateQueries({
+ * queryKey: ['config_read'] })` after grid/source edits to flip the source
+ * chip within one render cycle — but that invalidate had no real refetch
+ * target. tuxlink-i9vn converts the polls to useQuery so invalidation actually
+ * triggers a refetch.
+ *
+ * All three commands degrade gracefully: config absent → empty callsign/grid;
+ * backend None → status null → "Idle"; gpsd unavailable → gpsReady false.
+ * `enabled: !DEV_FIXTURE` keeps the dev fixture path free of invocations.
  */
 export function useStatusData(): StatusBarData {
-  const [config, setConfig] = useState<ConfigViewDto | null>(null);
-  const [status, setStatus] = useState<StatusDto | null>(null);
-  const [positionStatus, setPositionStatus] = useState<PositionStatusDto | null>(null);
+  const queryClient = useQueryClient();
 
-  useEffect(() => {
-    if (DEV_FIXTURE) return; // dev fixture supplies fixed config; don't poll
-    let mounted = true;
-    const load = () => {
-      invoke<ConfigViewDto>('config_read')
-        .then((c) => {
-          if (mounted) setConfig(c);
-        })
-        .catch(() => {
-          /* config absent / pre-wizard: status bar shows just the state word */
-        });
-    };
-    load();
-    const id = setInterval(load, 5000);
-    return () => {
-      mounted = false;
-      clearInterval(id);
-    };
-  }, []);
+  const configQuery = useQuery({
+    queryKey: STATUS_QUERY_KEYS.config,
+    queryFn: () => invoke<ConfigViewDto>('config_read'),
+    refetchInterval: 5000,
+    enabled: !DEV_FIXTURE,
+    // App.tsx already sets retry:false globally; restate here so this hook's
+    // semantics survive any future change to the root QueryClient defaults.
+    retry: false,
+  });
 
-  useEffect(() => {
-    if (DEV_FIXTURE) return; // dev fixture is always "Idle"; don't poll
-    let mounted = true;
-    let unlistenStatus: (() => void) | null = null;
+  const backendQuery = useQuery({
+    queryKey: STATUS_QUERY_KEYS.backend,
+    queryFn: () => invoke<StatusDto | null>('backend_status'),
+    refetchInterval: 2000,
+    enabled: !DEV_FIXTURE,
+    retry: false,
+  });
 
-    const load = () => {
-      invoke<StatusDto | null>('backend_status')
-        .then((s) => {
-          if (mounted) setStatus(s ?? null);
-        })
-        .catch(() => {
-          if (mounted) setStatus(null);
-        });
-    };
+  const positionQuery = useQuery({
+    queryKey: STATUS_QUERY_KEYS.position,
+    queryFn: () => invoke<PositionStatusDto>('position_status'),
+    refetchInterval: 2000,
+    enabled: !DEV_FIXTURE,
+    retry: false,
+  });
 
-    // Event-driven path (2026-05-31): backend emits `backend_status:change`
-    // on every transition (see src-tauri/src/bootstrap.rs). Without this,
-    // the 2s poll missed sub-second CMS-Z exchanges and the user only saw
-    // Connecting → Disconnected without the brief Connected window. The
-    // poll below stays as a snapshot backstop in case events drop (broadcast
-    // channel overflow, late-mounting UI, etc.).
-    listen<StatusDto>('backend_status:change', (event) => {
-      if (mounted) setStatus(event.payload);
-    })
-      .then((u) => {
-        if (mounted) unlistenStatus = u;
-        else u();
-      })
-      .catch(() => {
-        // listen() unavailable (test env / no Tauri context) — polling
-        // alone still works.
-      });
-
-    load();
-    const id = setInterval(load, 2000);
-    return () => {
-      mounted = false;
-      clearInterval(id);
-      if (unlistenStatus) unlistenStatus();
-    };
-  }, []);
-
-  // tuxlink-686 Task 11: poll position_status (live arbiter, NOT config) at 2s.
-  // Populates gpsReady for the ribbon's "GPS ready — tap to switch" affordance.
-  // Degrades gracefully on error (catch → leave null → gpsReady: false).
+  // Event-driven path (2026-05-31): backend emits `backend_status:change` on
+  // every transition (see src-tauri/src/bootstrap.rs). Without this, the 2s
+  // poll missed sub-second CMS-Z exchanges and the user only saw Connecting
+  // → Disconnected without the brief Connected window. We poke the
+  // react-query cache directly via setQueryData so the listener and the
+  // refetchInterval write to the same place. The 2s poll stays as a snapshot
+  // backstop in case events drop (broadcast-channel overflow, late-mounting
+  // UI, etc.).
   useEffect(() => {
     if (DEV_FIXTURE) return;
     let mounted = true;
-    const load = () => {
-      invoke<PositionStatusDto>('position_status')
-        .then((ps) => {
-          if (mounted) setPositionStatus(ps);
-        })
-        .catch(() => {
-          // gpsd error/blip: keep the last known value (don't clear — avoids flashing the affordance off on a single missed poll)
-        });
-    };
-    load();
-    const id = setInterval(load, 2000);
+    let unlisten: (() => void) | null = null;
+    listen<StatusDto>('backend_status:change', (event) => {
+      if (mounted) queryClient.setQueryData(STATUS_QUERY_KEYS.backend, event.payload);
+    })
+      .then((u) => {
+        if (mounted) unlisten = u;
+        else u();
+      })
+      .catch(() => {
+        // listen() unavailable (test env / no Tauri context) — the poll alone
+        // still works.
+      });
     return () => {
       mounted = false;
-      clearInterval(id);
+      if (unlisten) unlisten();
     };
-  }, []);
+  }, [queryClient]);
 
   // Dev fixture: report the mock's fixed station (W4PHS · EM75xx · Idle) so the
   // status bar + window title reproduce the mock instead of the live config.
@@ -405,6 +395,18 @@ export function useStatusData(): StatusBarData {
       status: null,
     };
   }
+
+  // useQuery returns `undefined` until the first success; the pre-refactor
+  // code used `null` for the unloaded state. Normalize to the prior null
+  // semantics so downstream branching (`if (config)`) keeps working.
+  const config: ConfigViewDto | null = configQuery.data ?? null;
+  // backend_status's queryFn can return null (Rust `Option<BackendStatus>`).
+  // useQuery's data may also be undefined pre-load. Both map to null.
+  const status: StatusDto | null = backendQuery.data ?? null;
+  // position_status: keep the "last known value" semantics. useQuery already
+  // does this — on a transient rejection, data stays at the previous success.
+  // Pre-load is undefined → null.
+  const positionStatus: PositionStatusDto | null = positionQuery.data ?? null;
 
   const callsign = config
     ? formatCallsign({
