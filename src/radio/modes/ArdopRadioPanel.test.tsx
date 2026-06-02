@@ -620,8 +620,69 @@ describe('<ArdopRadioPanel>', () => {
       const capValues = Array.from(captureSel.options).map((o) => o.value);
       const playValues = Array.from(playbackSel.options).map((o) => o.value);
       expect(capValues).toContain('plughw:CARD=Device,DEV=0');
-      expect(capValues).toContain('default');
+      // tuxlink-y7nq: non-hardware entries (`default`, `pulse`, plugin chains)
+      // are filtered out of the dropdown — the operator can still type them
+      // via the manual-fallback input below the dropdown.
+      expect(capValues).not.toContain('default');
       expect(playValues).toContain('plughw:CARD=Device,DEV=0');
+    });
+
+    // tuxlink-y7nq: pin the hardware-only filter so a future regression
+    // (e.g., re-introducing the plugin chains to the dropdown) fails here.
+    it('Capture/Playback dropdowns hide ALSA plugin chains, keeping plughw/hw:CARD only', async () => {
+      const core = await import('@tauri-apps/api/core');
+      const invokeMock = core.invoke as ReturnType<typeof vi.fn>;
+      invokeMock.mockImplementation(async (cmd: string) => {
+        if (cmd === 'config_get_ardop') {
+          return {
+            binary: 'ardopcf',
+            capture_device: '',
+            playback_device: '',
+            ptt_serial_path: null,
+            cmd_port: 8515,
+            bandwidth_hz: null,
+            webgui_port: null,
+          };
+        }
+        if (cmd === 'ardop_list_audio_devices') {
+          // Representative of a real `arecord -L` snapshot: plugin chains +
+          // sysdefault + a single hardware USB CODEC entry.
+          return {
+            captures: [
+              { name: 'null', description: 'Discard all samples', isHardware: false },
+              { name: 'default', description: 'Default Audio Device', isHardware: false },
+              { name: 'pulse', description: 'PulseAudio Sound Server', isHardware: false },
+              { name: 'lavrate', description: 'Rate Converter', isHardware: false },
+              { name: 'plughw:CARD=Device,DEV=0', description: 'USB Audio CODEC', isHardware: true },
+              { name: 'hw:CARD=Device,DEV=0', description: 'USB Audio CODEC raw', isHardware: true },
+            ],
+            playbacks: [
+              { name: 'null', description: 'Discard all samples', isHardware: false },
+              { name: 'plughw:CARD=Device,DEV=0', description: 'USB Audio CODEC', isHardware: true },
+            ],
+          };
+        }
+        if (cmd === 'packet_list_serial_devices') return [];
+        if (cmd === 'session_log_snapshot') return [];
+        return undefined;
+      });
+      render(<ArdopRadioPanel onClose={() => {}} />);
+      const captureSel = await screen.findByTestId('ardop-capture-select') as HTMLSelectElement;
+      const playbackSel = await screen.findByTestId('ardop-playback-select') as HTMLSelectElement;
+      await waitFor(() => {
+        expect(Array.from(captureSel.options).map((o) => o.value))
+          .toContain('plughw:CARD=Device,DEV=0');
+      });
+      const capValues = Array.from(captureSel.options).map((o) => o.value);
+      // Hardware kept, plugin chains dropped.
+      expect(capValues).toContain('plughw:CARD=Device,DEV=0');
+      expect(capValues).toContain('hw:CARD=Device,DEV=0');
+      for (const noisy of ['null', 'default', 'pulse', 'lavrate']) {
+        expect(capValues).not.toContain(noisy);
+      }
+      const playValues = Array.from(playbackSel.options).map((o) => o.value);
+      expect(playValues).toContain('plughw:CARD=Device,DEV=0');
+      expect(playValues).not.toContain('null');
     });
 
     it('selecting a capture device persists capture_device via config_set_ardop', async () => {
