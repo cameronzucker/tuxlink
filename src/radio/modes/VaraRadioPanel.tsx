@@ -225,17 +225,20 @@ export function VaraRadioPanel({ mode, onClose }: VaraRadioPanelProps) {
       onClose={onClose}
     >
       {platformBlocked && (
-        <section className="radio-panel-sec" data-testid="vara-platform-banner">
-          <p className="radio-panel-info" role="status">
-            <strong>VARA cannot run locally on this host.</strong> This machine is{' '}
-            <code>{platform?.arch}</code> ({platform?.os}); Wine cannot run VARA on
-            this architecture (Pi 5 16K-page kernel blocks Wine entirely). Point{' '}
-            <code>host</code> below at a remote VARA instance (e.g., another machine
-            on your LAN running VARA on x86 Windows or x86 Linux + Wine) and Start
-            will connect to it over TCP. Editing the config or starting against a
-            remote host is fully supported from this Pi.
-          </p>
-        </section>
+        <p
+          className="radio-panel-info radio-panel-info-compact"
+          role="status"
+          data-testid="vara-platform-banner"
+          title={
+            'VARA is x86 Windows software; Wine cannot run on this architecture ' +
+            `(${platform?.arch}, ${platform?.os}). Point Host at a remote machine ` +
+            'running VARA (x86 Windows, or x86 Linux + Wine); tuxlink connects to ' +
+            'it over TCP.'
+          }
+        >
+          VARA can&rsquo;t run on <code>{platform?.arch}</code> — point Host at a remote
+          x86 VARA instance.
+        </p>
       )}
 
       <section className="radio-panel-sec">

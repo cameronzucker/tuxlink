@@ -27,3 +27,15 @@
   background: var(--surface-code, rgba(148, 163, 184, 0.15));
   border-radius: 3px;
 }
+
+/* Compact variant — single-line inline notice. Used for the platform-block
+ * banner (tuxlink-3inw) where the prior multi-paragraph treatment read like
+ * documentation rather than a UI element. Full rationale stays available
+ * via the title tooltip on hover.
+ */
+.radio-panel-info-compact {
+  margin: 4px 12px 0;
+  padding: 4px 8px;
+  font-size: 11px;
+  line-height: 1.4;
+}
