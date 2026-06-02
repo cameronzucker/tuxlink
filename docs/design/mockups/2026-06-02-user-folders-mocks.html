@@ -1,0 +1,984 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Tuxlink — user-folder mechanism brainstorm</title>
+<style>
+:root {
+  --bg:           #0d1318;
+  --surface:      #141c23;
+  --surface-2:    #1a2330;
+  --elevated:     #1e2832;
+  --border:       #1f2832;
+  --border-strong:#2c3744;
+  --border-soft:  #1a2028;
+  --text:         #e4ebf2;
+  --text-dim:     #94a0ad;
+  --text-faint:   #5d6975;
+  --accent:       #f59f3c;
+  --accent-2:     #ffba6e;
+  --accent-soft:  rgba(245, 159, 60, 0.12);
+  --modem-accent: #5dd6a0;
+  --modem-accent-soft: rgba(93, 214, 160, 0.14);
+  --unread-dot:   #ffd166;
+  --success:      #5dd6a0;
+  --error:        #ee6b6b;
+  --info:         #6bb8ee;
+  --form-tag:     #c084fc;
+  --mono:         "JetBrains Mono", "Fira Code", "Source Code Pro", "Ubuntu Mono", Consolas, monospace;
+  --sans:         "Inter", "Cantarell", "Ubuntu", "Segoe UI", system-ui, sans-serif;
+}
+* { box-sizing: border-box; }
+html, body {
+  margin: 0; padding: 0;
+  background: #060a0e;
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+.page { max-width: 1480px; margin: 0 auto; padding: 28px 24px 80px; }
+h1 {
+  font-size: 22px; font-weight: 600; margin: 0 0 4px;
+}
+.subtitle {
+  color: var(--text-dim); font-size: 14px; margin: 0 0 22px;
+}
+
+.legend {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px 18px;
+  margin-bottom: 36px;
+  font-size: 13px;
+}
+.legend h3 { margin: 0 0 8px; font-size: 13px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-faint); font-weight: 600; }
+.legend p { margin: 0 0 8px; color: var(--text-dim); }
+.legend strong { color: var(--text); }
+.legend code { font-family: var(--mono); color: var(--accent-2); font-size: 12px; }
+
+.section {
+  margin-bottom: 56px;
+}
+.section-header {
+  display: flex; align-items: baseline; gap: 14px;
+  margin-bottom: 14px;
+  padding: 0 4px;
+}
+.section-letter {
+  font-size: 32px; font-weight: 800; color: var(--accent);
+  letter-spacing: -0.02em; line-height: 1;
+}
+.section-title {
+  font-size: 18px; font-weight: 600; margin: 0;
+}
+.section-desc {
+  color: var(--text-dim); font-size: 13px; margin-left: auto; max-width: 700px; text-align: right;
+}
+
+/* === The "window chrome" wrapper for each mock === */
+.window {
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  overflow: hidden;
+  display: grid;
+  grid-template-columns: 220px 360px 1fr;
+  height: 720px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+}
+.window.two-col { grid-template-columns: 220px 1fr; }
+.window-titlebar {
+  grid-column: 1 / -1;
+  background: #0a0e12;
+  border-bottom: 1px solid var(--border-strong);
+  padding: 8px 14px;
+  font-size: 12px;
+  color: var(--text-dim);
+  font-family: var(--mono);
+  display: flex; align-items: center; gap: 10px;
+}
+.window-titlebar .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--text-faint); }
+.window-titlebar .dot.r { background: #ff5f57; }
+.window-titlebar .dot.y { background: #febc2e; }
+.window-titlebar .dot.g { background: #28c840; }
+
+/* === Sidebar === */
+.sidebar {
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  padding: 14px 8px;
+  overflow-y: auto;
+}
+.section-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-faint);
+  padding: 12px 10px 6px;
+  font-weight: 600;
+  display: flex; align-items: center; justify-content: space-between;
+}
+.section-label .add-btn {
+  background: transparent;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  color: var(--text-dim);
+  font-size: 14px;
+  width: 20px; height: 20px;
+  display: inline-flex; align-items: center; justify-content: center;
+  cursor: pointer;
+  font-family: var(--sans);
+  line-height: 1;
+  padding: 0;
+}
+.section-label .add-btn:hover { color: var(--accent); border-color: var(--accent); }
+.nav-item {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 10px;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-size: 13px;
+  width: 100%;
+  text-align: left;
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: var(--sans);
+  position: relative;
+}
+.nav-item:hover { background: var(--surface-2); }
+.nav-item.active {
+  background: var(--accent-soft);
+  color: var(--accent-2);
+  font-weight: 500;
+}
+.nav-item .icon { font-size: 11px; color: var(--text-dim); width: 14px; display: inline-flex; justify-content: center; }
+.nav-item.active .icon { color: var(--accent-2); }
+.nav-item .count {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.nav-item.active .count { color: var(--accent-2); }
+.nav-item.disabled {
+  color: var(--text-faint);
+  cursor: not-allowed;
+}
+.nav-item.disabled .icon { color: var(--text-faint); opacity: 0.5; }
+.nav-item.unread-bold { font-weight: 600; }
+.nav-item.unread-bold .count { color: var(--unread-dot); font-weight: 600; }
+.v01-badge {
+  font-size: 9px;
+  background: rgba(255,255,255,0.06);
+  color: var(--text-dim);
+  padding: 1px 5px;
+  border-radius: 3px;
+  margin-left: auto;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.nav-item.user-folder { padding-left: 22px; }
+.nav-item.user-folder .icon { color: var(--text-faint); }
+.create-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 10px;
+  color: var(--text-faint);
+  font-size: 12px;
+  font-style: italic;
+  cursor: pointer;
+}
+.create-row:hover { color: var(--accent); background: var(--surface-2); border-radius: 4px; }
+
+/* === Message list === */
+.msglist {
+  background: var(--bg);
+  border-right: 1px solid var(--border);
+  overflow-y: auto;
+  padding: 4px 0;
+}
+.msglist-header {
+  padding: 12px 16px 8px;
+  display: flex; justify-content: space-between; align-items: baseline;
+  border-bottom: 1px solid var(--border-soft);
+}
+.msglist-header .folder-name {
+  font-size: 14px;
+  font-weight: 600;
+}
+.msglist-header .count-suffix {
+  color: var(--text-dim);
+  font-size: 12px;
+  font-family: var(--mono);
+}
+.msgrow {
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border-soft);
+  cursor: pointer;
+}
+.msgrow:hover { background: var(--surface); }
+.msgrow.active { background: var(--accent-soft); }
+.msgrow.unread .from { font-weight: 600; }
+.msgrow .row1 { display: flex; justify-content: space-between; align-items: baseline; }
+.msgrow .from { color: var(--text); font-size: 13px; }
+.msgrow .date { color: var(--text-faint); font-size: 11px; font-family: var(--mono); }
+.msgrow .subject { color: var(--text-dim); font-size: 12px; margin: 2px 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.msgrow .preview { color: var(--text-faint); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.msgrow.unread::before {
+  content: '';
+  display: inline-block;
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--unread-dot);
+  position: absolute;
+  margin-left: -10px;
+  margin-top: 6px;
+}
+.msgrow .form-tag {
+  display: inline-block;
+  background: rgba(192,132,252,0.15);
+  color: var(--form-tag);
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  margin-left: 6px;
+  font-family: var(--mono);
+  letter-spacing: 0.04em;
+}
+
+/* === Reading pane === */
+.reading {
+  background: var(--bg);
+  padding: 18px 24px;
+  overflow-y: auto;
+}
+.reading h2 { margin: 0 0 4px; font-size: 16px; }
+.reading .meta { color: var(--text-dim); font-size: 12px; margin-bottom: 14px; }
+.reading .body { color: var(--text); font-size: 13px; line-height: 1.65; }
+.reading .body p { margin: 0 0 10px; }
+.reading .toolbar {
+  display: flex; gap: 8px; margin-bottom: 14px;
+  padding-bottom: 12px; border-bottom: 1px solid var(--border-soft);
+}
+.btn {
+  background: transparent;
+  border: 1px solid var(--border-strong);
+  color: var(--text);
+  padding: 4px 10px;
+  border-radius: 4px;
+  font-size: 12px;
+  cursor: pointer;
+  font-family: var(--sans);
+}
+.btn:hover { border-color: var(--accent); color: var(--accent-2); }
+.btn.primary {
+  border-color: var(--modem-accent);
+  color: var(--modem-accent);
+}
+.btn.primary:hover { background: var(--modem-accent-soft); }
+.btn-group { position: relative; }
+.btn .caret { font-size: 9px; margin-left: 4px; opacity: 0.5; }
+
+/* === Context menu === */
+.ctxmenu {
+  position: absolute;
+  background: var(--elevated);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  padding: 4px 0;
+  font-size: 12px;
+  z-index: 50;
+  min-width: 200px;
+  box-shadow: 0 6px 20px rgba(0,0,0,0.6);
+}
+.ctxmenu .item {
+  padding: 6px 14px;
+  cursor: pointer;
+  display: flex; align-items: center; gap: 10px;
+  color: var(--text);
+}
+.ctxmenu .item:hover { background: var(--surface-2); }
+.ctxmenu .item.has-sub::after {
+  content: '▸';
+  margin-left: auto;
+  color: var(--text-faint);
+}
+.ctxmenu .item.danger { color: var(--error); }
+.ctxmenu .divider { height: 1px; background: var(--border); margin: 4px 0; }
+.ctxmenu .header {
+  padding: 6px 14px 4px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-faint);
+}
+.ctxmenu .item .shortcut {
+  margin-left: auto;
+  color: var(--text-faint);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+/* === Modal === */
+.modal-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0,0,0,0.55);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 40;
+}
+.modal {
+  background: var(--elevated);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  padding: 20px 24px;
+  width: 380px;
+  box-shadow: 0 12px 40px rgba(0,0,0,0.7);
+}
+.modal h3 { margin: 0 0 12px; font-size: 14px; font-weight: 600; }
+.modal label { display: block; font-size: 12px; color: var(--text-dim); margin-bottom: 4px; }
+.modal input[type="text"] {
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 13px;
+  padding: 6px 10px;
+  width: 100%;
+  border-radius: 4px;
+}
+.modal input[type="text"]:focus { outline: none; border-color: var(--accent); }
+.modal .help { font-size: 11px; color: var(--text-faint); margin-top: 4px; }
+.modal .actions {
+  display: flex; gap: 8px; justify-content: flex-end; margin-top: 18px;
+}
+.modal .radio-group { margin: 8px 0; }
+.modal .radio-row { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 8px; }
+.modal .radio-row label { margin: 0; cursor: pointer; }
+.modal .radio-row .desc { font-size: 11px; color: var(--text-faint); }
+
+/* === Three-concept comparison grid === */
+.compare {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 16px;
+  margin-bottom: 36px;
+}
+.compare .col {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0;
+  overflow: hidden;
+}
+.compare .col-header {
+  padding: 12px 14px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+.compare .col-letter {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--accent);
+}
+.compare .col-title {
+  font-size: 13px;
+  font-weight: 600;
+  margin-left: 6px;
+}
+.compare .col-sub {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-top: 4px;
+}
+.compare .compare-sidebar {
+  padding: 8px 4px 12px;
+  height: 360px;
+  overflow: hidden;
+}
+.compare .nav-item { font-size: 12px; padding: 4px 8px; }
+.compare .section-label { font-size: 9px; padding: 8px 8px 4px; }
+.compare .col-notes {
+  padding: 12px 14px;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.compare .col-notes strong { color: var(--text); }
+.compare .pros, .compare .cons { margin: 4px 0; }
+.compare .pros::before { content: '+ '; color: var(--success); font-weight: 600; }
+.compare .cons::before { content: '− '; color: var(--error); font-weight: 600; }
+
+.decision-table {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0;
+  margin-bottom: 36px;
+  overflow: hidden;
+}
+.decision-table table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.decision-table th {
+  background: #0a0e12;
+  padding: 10px 14px;
+  text-align: left;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-faint);
+  font-weight: 600;
+  border-bottom: 1px solid var(--border);
+}
+.decision-table td { padding: 10px 14px; border-bottom: 1px solid var(--border-soft); vertical-align: top; }
+.decision-table tr:last-child td { border-bottom: none; }
+.decision-table .id { font-family: var(--mono); color: var(--accent-2); font-size: 11px; }
+.decision-table .question { color: var(--text); font-weight: 500; }
+.decision-table .options { color: var(--text-dim); }
+.decision-table .rec { color: var(--success); font-size: 11px; margin-top: 4px; }
+.decision-table .rec strong { color: var(--success); }
+.decision-table code { font-family: var(--mono); font-size: 11px; color: var(--accent-2); background: var(--bg); padding: 1px 4px; border-radius: 3px; }
+</style>
+</head>
+<body>
+<div class="page">
+  <h1>User folders — unified mechanism brainstorm</h1>
+  <p class="subtitle">Combines tuxlink-ca5x (Archive wiring) + tuxlink-f62f (custom folders) into one design. 2026-06-02 · pika-cedar-tanager.</p>
+
+  <div class="legend">
+    <h3>Premise</h3>
+    <p>Archive and custom folders are the <strong>same shape</strong>: a movable mailbox destination. The backend already supports an <code>archive</code> folder end-to-end (see <code>native_mailbox.rs::move_to</code>); only the frontend renders it disabled. Custom folders extend the same mechanism: open-set folder names with create/rename/delete UI.</p>
+    <p><strong>What this mock decides:</strong> sidebar placement (3 variants), folder ops surface area (context menu + dialogs), and message-move affordances. Backend storage model is sketched in the spec but is not the visual question here.</p>
+    <p><strong>Sample mailbox:</strong> realistic NW Oregon ARES traffic — ICS-213, weekly net check-ins, NTS, position reports. Callsigns are the operator's actual rotation (KE7VAR, W7AAR, KD7HBA, N7ALT) lightly fictionalized.</p>
+  </div>
+
+  <!-- ============================================================ -->
+  <!-- COMPARISON GRID — three concepts at small scale, side-by-side -->
+  <!-- ============================================================ -->
+  <div class="section-header">
+    <span class="section-letter">▤</span>
+    <h2 class="section-title">Three placement concepts, at a glance</h2>
+    <p class="section-desc">Pick the sidebar layout first; the rest of the spec falls out of it.</p>
+  </div>
+
+  <div class="compare">
+    <!-- CONCEPT A: flat list -->
+    <div class="col">
+      <div class="col-header">
+        <span class="col-letter">A</span><span class="col-title">Flat list under Mailbox</span>
+        <div class="col-sub">Archive + user folders intermixed below system folders. Winlink Express style.</div>
+      </div>
+      <div class="compare-sidebar sidebar">
+        <div class="section-label">Mailbox</div>
+        <button class="nav-item active"><span class="icon">▣</span>Inbox<span class="count">12</span></button>
+        <button class="nav-item"><span class="icon">▢</span>Sent<span class="count">47</span></button>
+        <button class="nav-item"><span class="icon">▢</span>Outbox<span class="count">0</span></button>
+        <button class="nav-item"><span class="icon">▢</span>Drafts<span class="count">3</span></button>
+        <button class="nav-item"><span class="icon">▢</span>Archive<span class="count">180</span></button>
+        <button class="nav-item"><span class="icon">▢</span>ARES Drills<span class="count">8</span></button>
+        <button class="nav-item"><span class="icon">▢</span>Disaster Prep<span class="count">3</span></button>
+        <button class="nav-item"><span class="icon">▢</span>KE7VAR thread<span class="count">1</span></button>
+        <div class="create-row">+ New folder</div>
+        <div class="section-label">Connections</div>
+        <button class="nav-item"><span class="icon">▸</span>VHF / Packet</button>
+        <button class="nav-item"><span class="icon">▸</span>HF / ARDOP</button>
+      </div>
+      <div class="col-notes">
+        <div class="pros">Single mental model — every folder is "just a folder"</div>
+        <div class="pros">Matches Winlink Express convention exactly</div>
+        <div class="cons">Sidebar scales poorly past ~6 user folders</div>
+        <div class="cons">"Where do I create one?" — the trailing <em>+ New folder</em> row scrolls off-screen</div>
+      </div>
+    </div>
+
+    <!-- CONCEPT B: separate FOLDERS section -->
+    <div class="col">
+      <div class="col-header">
+        <span class="col-letter">B</span><span class="col-title">Separate "Folders" section</span>
+        <div class="col-sub">System folders stay above; user folders get their own section with a persistent <em>+</em> button.</div>
+      </div>
+      <div class="compare-sidebar sidebar">
+        <div class="section-label">Mailbox</div>
+        <button class="nav-item active"><span class="icon">▣</span>Inbox<span class="count">12</span></button>
+        <button class="nav-item"><span class="icon">▢</span>Sent<span class="count">47</span></button>
+        <button class="nav-item"><span class="icon">▢</span>Outbox<span class="count">0</span></button>
+        <button class="nav-item"><span class="icon">▢</span>Drafts<span class="count">3</span></button>
+        <div class="section-label">Folders <button class="add-btn" title="New folder">+</button></div>
+        <button class="nav-item"><span class="icon">▢</span>Archive<span class="count">180</span></button>
+        <button class="nav-item"><span class="icon">▢</span>ARES Drills<span class="count">8</span></button>
+        <button class="nav-item"><span class="icon">▢</span>Disaster Prep<span class="count">3</span></button>
+        <button class="nav-item"><span class="icon">▢</span>KE7VAR thread<span class="count">1</span></button>
+        <div class="section-label">Connections</div>
+        <button class="nav-item"><span class="icon">▸</span>VHF / Packet</button>
+        <button class="nav-item"><span class="icon">▸</span>HF / ARDOP</button>
+      </div>
+      <div class="col-notes">
+        <div class="pros"><strong>Recommended.</strong> Clear separation; <em>+</em> stays visible regardless of list length</div>
+        <div class="pros">Archive lives among user folders ⇒ enforces "Archive is a user folder" mental model</div>
+        <div class="pros">Connections section already uses this pattern → consistent</div>
+        <div class="cons">Archive feels slightly demoted vs Inbox/Sent</div>
+      </div>
+    </div>
+
+    <!-- CONCEPT C: Archive in Mailbox, custom under Folders -->
+    <div class="col">
+      <div class="col-header">
+        <span class="col-letter">C</span><span class="col-title">Archive system, custom in folders</span>
+        <div class="col-sub">Archive treated as a first-class system folder; only user-created folders live in the Folders section.</div>
+      </div>
+      <div class="compare-sidebar sidebar">
+        <div class="section-label">Mailbox</div>
+        <button class="nav-item active"><span class="icon">▣</span>Inbox<span class="count">12</span></button>
+        <button class="nav-item"><span class="icon">▢</span>Sent<span class="count">47</span></button>
+        <button class="nav-item"><span class="icon">▢</span>Outbox<span class="count">0</span></button>
+        <button class="nav-item"><span class="icon">▢</span>Drafts<span class="count">3</span></button>
+        <button class="nav-item"><span class="icon">▢</span>Archive<span class="count">180</span></button>
+        <div class="section-label">Folders <button class="add-btn" title="New folder">+</button></div>
+        <button class="nav-item"><span class="icon">▢</span>ARES Drills<span class="count">8</span></button>
+        <button class="nav-item"><span class="icon">▢</span>Disaster Prep<span class="count">3</span></button>
+        <button class="nav-item"><span class="icon">▢</span>KE7VAR thread<span class="count">1</span></button>
+        <div class="section-label">Connections</div>
+        <button class="nav-item"><span class="icon">▸</span>VHF / Packet</button>
+        <button class="nav-item"><span class="icon">▸</span>HF / ARDOP</button>
+      </div>
+      <div class="col-notes">
+        <div class="pros">Archive feels first-class (matches Gmail/Outlook expectation)</div>
+        <div class="pros">Smallest backend lift: Archive stays enum, custom = new mechanism</div>
+        <div class="cons">Two mechanisms in the user model — "why can't I rename Archive?"</div>
+        <div class="cons">Two mechanisms in the code — system enum + user-folder dynamic set, both flowing through every list / move / search</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================================ -->
+  <!-- FULL-FIDELITY CONCEPT B - the recommended one -->
+  <!-- ============================================================ -->
+  <div class="section-header">
+    <span class="section-letter">B</span>
+    <h2 class="section-title">Recommended: separate "Folders" section — full-fidelity walkthrough</h2>
+    <p class="section-desc">Inbox selected, Archive folder hovered, sample ARES traffic in the list.</p>
+  </div>
+
+  <div class="window">
+    <div class="window-titlebar">
+      <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
+      <span>tuxlink — KE7VAR · CMS Online · Native 0.0.1</span>
+    </div>
+    <div class="sidebar">
+      <div class="section-label">Mailbox</div>
+      <button class="nav-item active unread-bold"><span class="icon">▣</span>Inbox<span class="count">12</span></button>
+      <button class="nav-item"><span class="icon">▢</span>Sent<span class="count">47</span></button>
+      <button class="nav-item"><span class="icon">▢</span>Outbox<span class="count">0</span></button>
+      <button class="nav-item"><span class="icon">▢</span>Drafts<span class="count">3</span></button>
+
+      <div class="section-label">Folders <button class="add-btn" title="New folder">+</button></div>
+      <button class="nav-item user-folder"><span class="icon">▢</span>Archive<span class="count">180</span></button>
+      <button class="nav-item user-folder"><span class="icon">▢</span>ARES Drills<span class="count">8</span></button>
+      <button class="nav-item user-folder"><span class="icon">▢</span>Disaster Prep<span class="count">3</span></button>
+      <button class="nav-item user-folder"><span class="icon">▢</span>KE7VAR thread<span class="count">1</span></button>
+
+      <div class="section-label">Connections</div>
+      <button class="nav-item"><span class="icon">▾</span>VHF / Packet</button>
+      <button class="nav-item" style="padding-left:22px"><span class="icon">●</span>AX.25 packet</button>
+      <button class="nav-item"><span class="icon">▸</span>HF / ARDOP</button>
+      <button class="nav-item"><span class="icon">▸</span>HF / VARA</button>
+    </div>
+
+    <div class="msglist">
+      <div class="msglist-header">
+        <div class="folder-name">Inbox</div>
+        <div class="count-suffix">12 unread · 84 total</div>
+      </div>
+      <div class="msgrow unread" style="position:relative;">
+        <div class="row1">
+          <div class="from">W7AAR (Jim)</div>
+          <div class="date">14:22</div>
+        </div>
+        <div class="subject">Re: Sunday Net check-ins for May 31<span class="form-tag">ICS-213</span></div>
+        <div class="preview">Got it. 38 stations checked in, 6 short-time visitors. Sending the roster…</div>
+      </div>
+      <div class="msgrow unread" style="position:relative;">
+        <div class="row1">
+          <div class="from">KD7HBA (Rachel)</div>
+          <div class="date">12:08</div>
+        </div>
+        <div class="subject">Multnomah Co drill — Phase 2 timeline</div>
+        <div class="preview">Phase 2 (deployment) is locked for June 14. Phase 3 demob June 15 EOD…</div>
+      </div>
+      <div class="msgrow unread" style="position:relative;">
+        <div class="row1">
+          <div class="from">N7ALT (Dale)</div>
+          <div class="date">10:47</div>
+        </div>
+        <div class="subject">NTS traffic — 4 messages for Region 7</div>
+        <div class="preview">QTC 4. Holding for the next session. Routine, all from WA7 net last night…</div>
+      </div>
+      <div class="msgrow active" style="position:relative;">
+        <div class="row1">
+          <div class="from">KE7VAR (self)</div>
+          <div class="date">09:12</div>
+        </div>
+        <div class="subject">Position update — Mt Tabor Park<span class="form-tag">POS</span></div>
+        <div class="preview">CN85, 45.5118N 122.5947W, grid CN85sm. Mobile via VX-8DR, working WSPR…</div>
+      </div>
+      <div class="msgrow" style="position:relative;">
+        <div class="row1">
+          <div class="from">W7AAR (Jim)</div>
+          <div class="date">May 31</div>
+        </div>
+        <div class="subject">Battery pack readiness — group order?</div>
+        <div class="preview">Talked to Bioenno about a 10-pack of 12V20Ah LiFePO4. Group discount kicks in…</div>
+      </div>
+      <div class="msgrow" style="position:relative;">
+        <div class="row1">
+          <div class="from">KD7HBA (Rachel)</div>
+          <div class="date">May 31</div>
+        </div>
+        <div class="subject">Re: Quarterly equipment audit</div>
+        <div class="preview">Audit complete. Two missing handhelds — KC7BB and N7DRC haven't replied…</div>
+      </div>
+      <div class="msgrow" style="position:relative;">
+        <div class="row1">
+          <div class="from">winlink@k7nhv-10</div>
+          <div class="date">May 30</div>
+        </div>
+        <div class="subject">System message: gateway maintenance June 7</div>
+        <div class="preview">K7NHV-10 will be offline for upgrade June 7 02:00-04:00 UTC. Use K7LED-10…</div>
+      </div>
+    </div>
+
+    <div class="reading">
+      <div class="toolbar">
+        <button class="btn primary">Reply</button>
+        <button class="btn">Reply all</button>
+        <button class="btn">Forward</button>
+        <div style="flex:1"></div>
+        <div class="btn-group">
+          <button class="btn">Move to<span class="caret">▾</span></button>
+        </div>
+        <button class="btn" title="Archive (A)">Archive</button>
+        <button class="btn" title="Delete (Del)">⌫</button>
+      </div>
+      <h2>Position update — Mt Tabor Park</h2>
+      <div class="meta">From <strong>KE7VAR</strong> · To <strong>W7AAR</strong>, <strong>KD7HBA</strong> · 2026-06-02 09:12 UTC · via CMS</div>
+      <div class="body">
+        <p>Net,</p>
+        <p>Position fix from Mt Tabor Park, mobile in the truck. Grid CN85sm. Current grid square broadcast set to 4-char (CN85) per default; 6-char included this msg for the drill exercise.</p>
+        <p>Coordinates: 45.5118&deg; N, 122.5947&deg; W. Elevation 195 m AGL relative to PDX. WX 14&deg;C, broken cumulus, wind 8 kt from 290.</p>
+        <p>Working WSPR on 14 MHz; will be on 145.490 simplex for the next 90 min if anyone needs a sked.</p>
+        <p>73,<br>Cam / KE7VAR</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================================ -->
+  <!-- RIGHT-CLICK ON A MESSAGE — Move to picker -->
+  <!-- ============================================================ -->
+  <div class="section-header" style="margin-top:48px">
+    <span class="section-letter">⌘</span>
+    <h2 class="section-title">Message context menu — Move to picker</h2>
+    <p class="section-desc">Right-click on a message row. System folders + user folders separated; recently-used folders pinned at top.</p>
+  </div>
+
+  <div class="window two-col">
+    <div class="window-titlebar">
+      <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
+      <span>Context menu on "Multnomah Co drill — Phase 2 timeline" from KD7HBA</span>
+    </div>
+    <div class="sidebar">
+      <div class="section-label">Mailbox</div>
+      <button class="nav-item active"><span class="icon">▣</span>Inbox<span class="count">12</span></button>
+      <button class="nav-item"><span class="icon">▢</span>Sent<span class="count">47</span></button>
+      <button class="nav-item"><span class="icon">▢</span>Outbox<span class="count">0</span></button>
+      <button class="nav-item"><span class="icon">▢</span>Drafts<span class="count">3</span></button>
+      <div class="section-label">Folders <button class="add-btn">+</button></div>
+      <button class="nav-item user-folder"><span class="icon">▢</span>Archive<span class="count">180</span></button>
+      <button class="nav-item user-folder"><span class="icon">▢</span>ARES Drills<span class="count">8</span></button>
+      <button class="nav-item user-folder"><span class="icon">▢</span>Disaster Prep<span class="count">3</span></button>
+      <button class="nav-item user-folder"><span class="icon">▢</span>KE7VAR thread<span class="count">1</span></button>
+    </div>
+    <div style="position:relative;">
+      <div style="padding:14px 16px;">
+        <div class="msgrow active" style="position:relative;border:1px solid var(--accent);border-radius:4px;">
+          <div class="row1">
+            <div class="from">KD7HBA (Rachel)</div>
+            <div class="date">12:08</div>
+          </div>
+          <div class="subject">Multnomah Co drill — Phase 2 timeline</div>
+          <div class="preview">Phase 2 (deployment) is locked for June 14. Phase 3 demob June 15 EOD…</div>
+        </div>
+      </div>
+      <!-- ctx menu -->
+      <div class="ctxmenu" style="left:280px;top:18px;">
+        <div class="item">Open <span class="shortcut">Enter</span></div>
+        <div class="item">Reply <span class="shortcut">R</span></div>
+        <div class="item">Reply all <span class="shortcut">⇧R</span></div>
+        <div class="item">Forward <span class="shortcut">F</span></div>
+        <div class="divider"></div>
+        <div class="item">Mark unread <span class="shortcut">U</span></div>
+        <div class="item">Archive <span class="shortcut">A</span></div>
+        <div class="item has-sub" style="background:var(--surface-2);">Move to&hellip; <span class="shortcut">V</span></div>
+        <div class="divider"></div>
+        <div class="item danger">Delete <span class="shortcut">⌫</span></div>
+      </div>
+      <!-- submenu -->
+      <div class="ctxmenu" style="left:484px;top:140px;">
+        <div class="header">Recently used</div>
+        <div class="item">▢ ARES Drills</div>
+        <div class="item">▢ Archive</div>
+        <div class="divider"></div>
+        <div class="header">All folders</div>
+        <div class="item">▢ Archive</div>
+        <div class="item">▢ ARES Drills</div>
+        <div class="item">▢ Disaster Prep</div>
+        <div class="item">▢ KE7VAR thread</div>
+        <div class="divider"></div>
+        <div class="item" style="color:var(--accent);">+ New folder&hellip;</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================================ -->
+  <!-- NEW FOLDER DIALOG -->
+  <!-- ============================================================ -->
+  <div class="section-header" style="margin-top:48px">
+    <span class="section-letter">+</span>
+    <h2 class="section-title">New folder dialog</h2>
+    <p class="section-desc">Triggered from the sidebar <em>+</em> button OR from the Move-to submenu's <em>+ New folder…</em> entry. The latter pre-fills with the source message context so the move-and-create flow is one step.</p>
+  </div>
+
+  <div class="window two-col">
+    <div class="window-titlebar">
+      <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
+      <span>New folder dialog</span>
+    </div>
+    <div class="sidebar" style="filter:brightness(0.6);">
+      <div class="section-label">Mailbox</div>
+      <button class="nav-item"><span class="icon">▣</span>Inbox<span class="count">12</span></button>
+      <button class="nav-item"><span class="icon">▢</span>Sent<span class="count">47</span></button>
+    </div>
+    <div style="position:relative; filter: brightness(0.6);">
+      <div style="padding:14px 16px;color:var(--text-faint);">
+        Backdrop disabled while modal is open.
+      </div>
+    </div>
+    <div class="modal-backdrop">
+      <div class="modal">
+        <h3>New folder</h3>
+        <label for="newname">Folder name</label>
+        <input type="text" id="newname" value="June Drill" placeholder="e.g. ARES Drills">
+        <div class="help">3-40 characters. Letters, numbers, spaces, dashes. Reserved names (Inbox, Sent, Outbox, Drafts, Archive) rejected.</div>
+        <div class="actions">
+          <button class="btn">Cancel</button>
+          <button class="btn primary">Create</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================================ -->
+  <!-- RENAME + DELETE — context menu on a folder -->
+  <!-- ============================================================ -->
+  <div class="section-header" style="margin-top:48px">
+    <span class="section-letter">⚙</span>
+    <h2 class="section-title">Folder context menu — rename, delete</h2>
+    <p class="section-desc">Right-click on a user folder. System folders (Inbox, Sent, Outbox, Drafts) have no context menu; user folders + Archive do.</p>
+  </div>
+
+  <div class="window two-col">
+    <div class="window-titlebar">
+      <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
+      <span>Right-click on "KE7VAR thread" user folder</span>
+    </div>
+    <div class="sidebar" style="position:relative;">
+      <div class="section-label">Mailbox</div>
+      <button class="nav-item"><span class="icon">▣</span>Inbox<span class="count">12</span></button>
+      <button class="nav-item"><span class="icon">▢</span>Sent<span class="count">47</span></button>
+      <button class="nav-item"><span class="icon">▢</span>Outbox<span class="count">0</span></button>
+      <button class="nav-item"><span class="icon">▢</span>Drafts<span class="count">3</span></button>
+      <div class="section-label">Folders <button class="add-btn">+</button></div>
+      <button class="nav-item user-folder"><span class="icon">▢</span>Archive<span class="count">180</span></button>
+      <button class="nav-item user-folder"><span class="icon">▢</span>ARES Drills<span class="count">8</span></button>
+      <button class="nav-item user-folder"><span class="icon">▢</span>Disaster Prep<span class="count">3</span></button>
+      <button class="nav-item user-folder active"><span class="icon">▢</span>KE7VAR thread<span class="count">1</span></button>
+      <div class="ctxmenu" style="left:180px;top:280px;">
+        <div class="item">Open <span class="shortcut">Enter</span></div>
+        <div class="divider"></div>
+        <div class="item">Rename&hellip;</div>
+        <div class="item">Mark all read</div>
+        <div class="item">Empty folder&hellip;</div>
+        <div class="divider"></div>
+        <div class="item danger">Delete folder&hellip;</div>
+      </div>
+    </div>
+    <div style="padding:14px 16px;color:var(--text-faint);">
+      Right-click target: <strong style="color:var(--text);">KE7VAR thread</strong> (user folder, 1 message). The context menu shows rename + empty + delete. System folders (above the Folders heading) suppress this menu entirely.
+      <hr style="border:none;border-top:1px solid var(--border-soft);margin:14px 0;">
+      <strong style="color:var(--text);">Delete folder dialog (next step):</strong>
+      <div class="modal" style="margin-top:14px;">
+        <h3>Delete "KE7VAR thread"?</h3>
+        <p style="color:var(--text-dim); font-size:12px; margin:0 0 12px;">This folder contains <strong>1 message</strong>. What should happen to it?</p>
+        <div class="radio-group">
+          <div class="radio-row">
+            <input type="radio" name="del" id="del-mv" checked>
+            <div>
+              <label for="del-mv">Move message to Inbox</label>
+              <div class="desc">Safe default. Folder is deleted; the message reappears in Inbox.</div>
+            </div>
+          </div>
+          <div class="radio-row">
+            <input type="radio" name="del" id="del-arc">
+            <div>
+              <label for="del-arc">Move message to Archive</label>
+              <div class="desc">For long-term keep-but-out-of-sight.</div>
+            </div>
+          </div>
+          <div class="radio-row">
+            <input type="radio" name="del" id="del-rm">
+            <div>
+              <label for="del-rm" style="color:var(--error);">Delete message too</label>
+              <div class="desc">Permanent. Not recoverable without a backup.</div>
+            </div>
+          </div>
+        </div>
+        <div class="actions">
+          <button class="btn">Cancel</button>
+          <button class="btn" style="border-color:var(--error);color:var(--error);">Delete folder</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================================ -->
+  <!-- DECISION TABLE -->
+  <!-- ============================================================ -->
+  <div class="section-header" style="margin-top:48px">
+    <span class="section-letter">▶</span>
+    <h2 class="section-title">Decisions the operator needs to settle</h2>
+    <p class="section-desc">Each row has a recommendation; brainstorming converges by either accepting or redirecting each one.</p>
+  </div>
+
+  <div class="decision-table">
+    <table>
+      <thead>
+        <tr><th style="width:70px">ID</th><th>Question</th><th>Options</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="id">D1</td>
+          <td class="question">Sidebar placement</td>
+          <td class="options">
+            A) Flat list under Mailbox &middot;
+            B) Separate "Folders" section &middot;
+            C) Archive system, custom in folders
+            <div class="rec"><strong>Recommend B</strong> — Connections section already uses the pattern; <em>+</em> button stays visible; unifies the user-folder mental model.</div>
+          </td>
+        </tr>
+        <tr>
+          <td class="id">D2</td>
+          <td class="question">Archive: system or user folder?</td>
+          <td class="options">
+            Pre-seeded user folder (renamable, deletable) &middot;
+            System folder (always present, undeletable)
+            <div class="rec"><strong>Recommend user folder</strong> — the backend already has it as a string-named directory, not a special table. Reserve the name "Archive" so a new install always has one, but treat it like any other user folder for ops. A user who deletes Archive can recreate it.</div>
+          </td>
+        </tr>
+        <tr>
+          <td class="id">D3</td>
+          <td class="question">Folder structure: flat or nested?</td>
+          <td class="options">
+            Flat (Winlink Express convention) &middot;
+            Nested (Outlook style)
+            <div class="rec"><strong>Recommend flat for v1</strong> — Winlink Express convention; matches Cameron's preference; nesting can be added later if asked.</div>
+          </td>
+        </tr>
+        <tr>
+          <td class="id">D4</td>
+          <td class="question">Backend storage</td>
+          <td class="options">
+            <code>&lt;root&gt;/&lt;folder-slug&gt;/&lt;mid&gt;.b2f</code> — directories as folders (matches today) &middot;
+            Separate <code>user_folders.json</code> metadata index &middot;
+            SQLite table
+            <div class="rec"><strong>Recommend directories + metadata sidecar</strong>. Folder = directory; <code>&lt;root&gt;/.folders.json</code> maps slug → display-name + creation-time. Rename = update JSON (slug stays); delete = empty dir + remove JSON entry. <code>archive/</code> is a default entry in <code>.folders.json</code> at first launch.</div>
+          </td>
+        </tr>
+        <tr>
+          <td class="id">D5</td>
+          <td class="question">Move semantics</td>
+          <td class="options">
+            Single-message context menu &middot;
+            Multi-select &middot;
+            Drag-drop &middot;
+            Keyboard shortcut (A for Archive)
+            <div class="rec"><strong>Recommend context menu + A-shortcut for v1</strong>. Multi-select + drag-drop deferred. The Archive button in the reading-pane toolbar is the one-tap path; <em>Move to</em> submenu is the deliberate path.</div>
+          </td>
+        </tr>
+        <tr>
+          <td class="id">D6</td>
+          <td class="question">Delete non-empty folder</td>
+          <td class="options">
+            Refuse with error &middot;
+            Prompt: move to Inbox / Archive / delete &middot;
+            Cascade silently
+            <div class="rec"><strong>Recommend prompt</strong> (mock above shows the dialog). Inbox is the safe default; user explicitly opts into "delete the messages too."</div>
+          </td>
+        </tr>
+        <tr>
+          <td class="id">D7</td>
+          <td class="question">Folder name constraints</td>
+          <td class="options">
+            Reserved: Inbox, Sent, Outbox, Drafts, Archive (Archive only if it doesn't already exist as a user folder) &middot;
+            Case-insensitive uniqueness &middot;
+            3-40 chars &middot;
+            Allowed: letters, numbers, spaces, dashes (no slashes, no leading dots)
+            <div class="rec"><strong>Recommend as listed.</strong> Slug = lowercase + hyphenate spaces; display name preserves case + spaces.</div>
+          </td>
+        </tr>
+        <tr>
+          <td class="id">D8</td>
+          <td class="question">Search interaction</td>
+          <td class="options">
+            <code>folder:archive</code> token works &middot;
+            <code>folder:ares-drills</code> resolves on slug &middot;
+            Quoted multi-word: <code>folder:"ARES Drills"</code>
+            <div class="rec"><strong>Recommend slug lookup + quoted display-name lookup.</strong> Already supported by <code>ChipStrip</code>'s <code>FOLDER:</code> token; index needs to learn new folder names dynamically.</div>
+          </td>
+        </tr>
+        <tr>
+          <td class="id">D9</td>
+          <td class="question">Unread badge on user folders?</td>
+          <td class="options">
+            Only Inbox shows unread (today) &middot;
+            All folders show unread &middot;
+            All folders show <em>total</em> instead
+            <div class="rec"><strong>Recommend total count for user folders</strong> — matches Sent today; user-archived messages are almost always already read, and showing "0 unread / 180 total" on Archive would be misleading. Match Sent's behavior.</div>
+          </td>
+        </tr>
+        <tr>
+          <td class="id">D10</td>
+          <td class="question">Compose: target folder?</td>
+          <td class="options">
+            Drafts → user-folder on send &middot;
+            Drafts only (current behavior, defer "save to user folder") &middot;
+            Allow user to choose target folder before send
+            <div class="rec"><strong>Recommend defer.</strong> Sent goes to Sent; saves go to Drafts. Moving drafts to user folders is a v1.5 concern. Don't over-design.</div>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="legend">
+    <h3>Implementation sequence (if Concept B + the rec column are accepted)</h3>
+    <p><strong>Phase 0 (this brainstorm):</strong> ship this mock + spec, settle decisions D1–D10, write the spec doc under <code>docs/superpowers/specs/2026-06-02-user-folders-design.md</code>.</p>
+    <p><strong>Phase 1 — tuxlink-ca5x (Archive only):</strong> small. Frontend: add <code>'archive'</code> to <code>MailboxFolder</code> + <code>BACKEND_FOLDERS</code>; flip the disabled flag; wire a Reading-pane Archive button + <code>A</code> shortcut that calls <code>mailbox_move(from, 'archive', mid)</code>. Backend: thin <code>move_message</code> Tauri command wrapping the existing <code>Mailbox::move_to</code>. No new storage. ~1 day, ~10 files.</p>
+    <p><strong>Phase 2 — tuxlink-f62f (open-set folders):</strong> the architectural work. <code>UserFolder</code> registry (<code>.folders.json</code>), <code>folder_create/rename/delete</code> commands, dynamic <code>MAILBOX_ITEMS</code>, Move-to submenu, new-folder dialog, folder context menu, delete-confirmation dialog. Slug validation, reserved-name list, search-index dynamic folder names. Tests for the full lifecycle. ~3-5 days.</p>
+    <p><strong>Phase 3 — deferred (file separately if wanted):</strong> multi-select move, drag-drop move, nested folders, draft-to-folder, folder reorder.</p>
+  </div>
+
+</div>
+</body>
+</html>
