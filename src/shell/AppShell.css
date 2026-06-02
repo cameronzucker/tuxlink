@@ -82,13 +82,16 @@
 }
 
 /* Search zone — left side of the ribbon row; contains SearchBar + dropdown.
- * Grows with available space (Gmail-style) but capped so the DashboardRibbon
- * stays readable. min-width keeps it useful on narrow windows. */
+ * Pinned to a fixed flex-basis (tuxlink-z5l0) so SearchBar content changes
+ * (saved-search badge, meta text, longer queries) don't reflow the dashboard's
+ * callsign / grid / connection items. The dashboard's .dashboard already has
+ * flex: 1 1 auto and absorbs remaining width. Prior Gmail-style
+ * `flex: 1 1 auto; min-width: 360px; max-width: 720px` reflowed the ribbon
+ * on every window resize and on saved-search badge appear/disappear; operator
+ * pushback 2026-06-02. */
 .layout-b .search-zone {
   position: relative;
-  flex: 1 1 auto;
-  min-width: 360px;
-  max-width: 720px;
+  flex: 0 0 560px;
   display: flex;
   align-items: center;
   padding: 0 16px;
