@@ -1,16 +1,26 @@
 // src/radio/useVaraConfig.ts
 //
-// Shared VARA-config hook (mirrors usePacketConfig). The VaraRadioPanel
-// reads/writes the persisted VARA settings (host, cmd_port, data_port,
-// bandwidth) through this hook; the StatusBar / DashboardRibbon can later
-// subscribe to the same hook for status indicators without duplicating the
-// load + persist plumbing.
+// Shared VARA-config hook (mirrors usePacketConfig exactly). The
+// VaraRadioPanel reads/writes the persisted VARA settings (host, cmd_port,
+// data_port, bandwidth) through this hook; the StatusBar / DashboardRibbon
+// can later subscribe to the same hook for status indicators without
+// duplicating the load + persist plumbing.
 //
-// Pattern: loads via `config_get_vara` on mount; persists via
-// `config_set_vara` on `setConfig`; broadcasts writes via a same-window
-// CustomEvent so multiple consumers re-seed without a round-trip through
-// the backend. Pre-wizard (no config file yet) the hook holds the struct
-// default and writes are no-ops until the wizard creates the config file.
+// Pattern (verbatim from usePacketConfig): the hook starts with the struct
+// default; `config_get_vara` overwrites it when the load completes. No
+// `loading` state — callers either don't need one, or check via a stable
+// signal of their choosing (e.g., comparing config to the default). The
+// prior version (tuxlink-6dzo) carried a `loading: boolean` that wired into
+// the panel's `disabled` prop, which created a UI-locking failure mode if
+// loading ever stayed true (and on the Pi it did, for reasons still under
+// investigation — Strict Mode race vs. invoke channel vs. JS exception
+// before .finally). The hook now matches usePacketConfig's posture so the
+// same bug class is impossible by construction.
+//
+// Race window: if the operator types into a field BEFORE config_get_vara
+// resolves AND the load returns a value different from the default, the
+// load overwrites the operator's edit. In practice the load completes in
+// milliseconds, so this race is vanishingly rare; the simpler hook wins.
 
 import { useCallback, useEffect, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
@@ -46,9 +56,6 @@ export interface UseVaraConfig {
   /** Currently-loaded config. Always non-null — the hook substitutes
    *  the struct default before the first load completes and on load error. */
   config: VaraUiConfig;
-  /** True until the first `config_get_vara` round-trip completes. UI may
-   *  use this to disable form controls during the initial hydration. */
-  loading: boolean;
   /** Persist a new config. Optimistic local update + backend write +
    *  same-window broadcast. Errors surface in the session log via the
    *  backend; the hook holds the optimistic value regardless. */
@@ -57,7 +64,6 @@ export interface UseVaraConfig {
 
 export function useVaraConfig(): UseVaraConfig {
   const [config, setConfigState] = useState<VaraUiConfig>(VARA_DEFAULT_CONFIG);
-  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
@@ -84,13 +90,8 @@ export function useVaraConfig(): UseVaraConfig {
         });
       })
       .catch(() => {
-        // Pre-wizard / config absent — keep the default. Don't clear loading
-        // on the error path: a never-loaded config is functionally the
-        // default. Match the success-path "loading=false" so the UI
-        // hydrates either way.
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
+        // Pre-wizard / config absent — keep the default. (No loading state
+        // to clear; the hook is already serving usable defaults.)
       });
 
     return () => {
@@ -113,5 +114,5 @@ export function useVaraConfig(): UseVaraConfig {
     });
   }, []);
 
-  return { config, loading, setConfig };
+  return { config, setConfig };
 }
