@@ -4,6 +4,13 @@ All notable changes to Tuxlink are documented here.
 
 This project adheres to [Semantic Versioning](https://semver.org) with project-specific rules described in [VERSIONING.md](VERSIONING.md). Entries from `v0.0.2` onward are generated automatically by [`release-please`](https://github.com/googleapis/release-please) from [Conventional Commits](https://www.conventionalcommits.org).
 
+## [0.13.1](https://github.com/cameronzucker/tuxlink/compare/v0.13.0...v0.13.1) (2026-06-02)
+
+
+### Bug Fixes
+
+* **radio:** theme-token the radio-panel chrome so light schemes don't wash out (tuxlink-he7h) ([6c40548](https://github.com/cameronzucker/tuxlink/commit/6c405481dbb1e3a9b615c20dd53a04d80b9f9a1b))
+
 ## [0.13.0](https://github.com/cameronzucker/tuxlink/compare/v0.12.0...v0.13.0) (2026-06-02)
 
 
