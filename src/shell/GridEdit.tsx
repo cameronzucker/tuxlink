@@ -150,9 +150,12 @@ export function GridEdit({ grid, source, gpsReady, onCommit, onUseGps, onUseManu
   // Per spec §2.1 + §2.2: GPS segment label includes a ' ●' suffix when
   // source = Manual && gpsReady (the in-segment ready indicator that replaces
   // the T11 standalone gps-ready-status span). When source = Gps or gpsReady
-  // is false, the label is just 'GPS'.
+  // is false, the label is just 'GPS'. The '●' glyph is wrapped in
+  // aria-hidden="true" so screen readers don't announce "black circle"; the
+  // semantic "fresh fix available" cue rides through aria-label on the
+  // segment instead.
   const showGpsReadyDot = source === 'Manual' && gpsReady;
-  const gpsLabel = showGpsReadyDot ? 'GPS ●' : 'GPS';
+  const gpsAriaLabel = showGpsReadyDot ? 'GPS — fresh fix available' : 'GPS';
 
   // Per spec §2.4: the State 4/5 visual is encoded as
   // .dash-source-segment.gps.selected:not(.gps-ready). The implementation
@@ -201,11 +204,12 @@ export function GridEdit({ grid, source, gpsReady, onCommit, onUseGps, onUseManu
           type="button"
           role="radio"
           aria-checked={source === 'Gps'}
+          aria-label={gpsAriaLabel}
           data-testid="source-segment-gps"
           className={gpsClassName}
           onClick={source === 'Gps' ? undefined : onUseGps}
         >
-          {gpsLabel}
+          GPS{showGpsReadyDot ? <span aria-hidden="true"> ●</span> : null}
         </button>
         <button
           type="button"

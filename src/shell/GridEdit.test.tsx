@@ -211,6 +211,24 @@ test('in_segment_gps_ready_indicator_is_absent_when_source_is_Gps_even_if_gpsRea
   expect(screen.getByTestId('source-segment-gps').textContent).toBe('GPS');
 });
 
+test('GPS_segment_indicator_dot_is_aria_hidden_and_aria_label_conveys_fresh_fix', () => {
+  // The '●' glyph would announce as "black circle" without aria-hidden.
+  // The semantic "fresh fix available" cue rides through aria-label instead.
+  render(<GridEdit grid="EM75" source="Manual" gpsReady={true} onCommit={vi.fn()} onUseGps={vi.fn()} onUseManual={vi.fn()} />);
+  const gps = screen.getByTestId('source-segment-gps');
+  expect(gps).toHaveAttribute('aria-label', 'GPS — fresh fix available');
+  // The dot lives inside an aria-hidden span — assert the SR-relevant accessible
+  // name is the aria-label, not the textContent.
+  const dot = gps.querySelector('span[aria-hidden="true"]');
+  expect(dot).not.toBeNull();
+  expect(dot?.textContent).toBe(' ●');
+});
+
+test('GPS_segment_aria_label_is_plain_GPS_when_not_advertising_fresh_fix', () => {
+  render(<GridEdit grid="DM33" source="Gps" gpsReady={true} onCommit={vi.fn()} onUseGps={vi.fn()} onUseManual={vi.fn()} />);
+  expect(screen.getByTestId('source-segment-gps')).toHaveAttribute('aria-label', 'GPS');
+});
+
 // =========================================================================
 // `Set manually` button tests (preserved from v3 — no segmented-control impact)
 // =========================================================================
