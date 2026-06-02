@@ -17,6 +17,7 @@ pub use params::Ax25Params;
 pub use datalink::{connect, answer, Ax25Stream};
 pub use link::connect_link;
 pub use link::connect_link_with_abort;
+pub use link::LinkAbort;
 
 #[cfg(test)]
 mod module_smoke {
