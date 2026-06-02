@@ -220,9 +220,15 @@ export function AppShell() {
 
   const visibleMessages = searchResultMessages ?? messages;
 
-  // Sidebar badges (mock B): Inbox = unread count ("3"), Sent = total ("87").
+  // Sidebar badges (mock B): Inbox = unread count ("3"), Outbox = queue depth
+  // ("1 to send" mirrored from the status bar — same `outbox.messages.length`),
+  // Sent = total ("87"). tuxlink-gp8b: Outbox was wired into the sidebar by
+  // tuxlink-su2h (PR #219) but its count never made it into this object, so the
+  // sidebar showed no badge while the status bar showed the same number — same
+  // source data, two surfaces, only one rendered.
   const counts: Partial<Record<MailboxFolder, number>> = {
     inbox: inbox.messages.filter((m) => m.unread).length,
+    outbox: outbox.messages.length,
     sent: sent.messages.length,
   };
 
