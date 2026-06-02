@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=Tuxlink
+GenericName=Winlink HF/VHF/UHF radio client
+Comment=Open-source Winlink-compatible amateur-radio email client (Pat-fork-replacement)
+Exec=tuxlink
+Icon=com.tuxlink.app
+Type=Application
+Categories=Network;HamRadio;
+StartupWMClass=com.tuxlink.app
+Terminal=false

@@ -44,6 +44,16 @@ To build an AppImage locally, install `cargo-tauri` and run `cargo tauri build -
 
 CI scope today (per `.github/workflows/release.yml`): on PRs touching the integration surface and on `v*` tags, CI runs `cargo build --release` from `src-tauri/`. CI does NOT yet bundle an AppImage or upload a release artifact — that's deferred to Task 17 (`tuxlink-cs7`).
 
+### Linux taskbar icon (dev mode)
+
+The Tuxlink icon ships with the app, but Linux window managers (GNOME / KDE / labwc / Sway) need a `.desktop` entry installed in your user's XDG paths to map the running window to its icon. Production `.deb` builds install this automatically; for `tauri dev` from source, run once after first clone:
+
+```bash
+bash scripts/install-desktop-entry.sh
+```
+
+This copies `src-tauri/icons/*` into `~/.local/share/icons/hicolor/<size>/apps/com.tuxlink.app.png` and writes `~/.local/share/applications/com.tuxlink.app.desktop`. Idempotent; safe to re-run after `git pull`. Linux-only (macOS uses the `.app` bundle; Windows uses the MSI installer).
+
 ## Runtime prerequisites for end-users
 
 On Linux, tuxlink stores the Winlink CMS password in the OS keyring via the secret-service D-Bus interface (per [ADR 0016](adr/0016-native-b2f-outbound-with-attachments.md)). This requires a secret-service-compatible keyring daemon to be running. The AppImage cannot bundle this — it's an OS service.
