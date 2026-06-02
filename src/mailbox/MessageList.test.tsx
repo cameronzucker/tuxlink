@@ -236,3 +236,67 @@ describe('<MessageList>', () => {
     expect(screen.getByTestId('message-list')).toBeInTheDocument();
   });
 });
+
+describe('<MessageList> — sort wiring (tuxlink-2x0l)', () => {
+  it('omits the sort header when onSortModeChange is absent', () => {
+    render(<MessageList folder="inbox" messages={[meta()]} selectedId={null} onSelect={() => {}} />);
+    expect(screen.queryByTestId('rows-pane-header')).toBeNull();
+    expect(screen.queryByTestId('message-list-sort')).toBeNull();
+  });
+
+  it('renders the sort header when onSortModeChange is provided', () => {
+    render(
+      <MessageList
+        folder="inbox"
+        messages={[meta()]}
+        selectedId={null}
+        onSelect={() => {}}
+        sortMode="date-desc"
+        onSortModeChange={() => {}}
+      />,
+    );
+    expect(screen.getByTestId('rows-pane-header')).toBeInTheDocument();
+    expect(screen.getByTestId('message-list-sort')).toBeInTheDocument();
+  });
+
+  it('user changing sort fires onSortModeChange with the picked mode', () => {
+    const onSortModeChange = vi.fn();
+    render(
+      <MessageList
+        folder="inbox"
+        messages={[meta()]}
+        selectedId={null}
+        onSelect={() => {}}
+        sortMode="date-desc"
+        onSortModeChange={onSortModeChange}
+      />,
+    );
+    fireEvent.change(screen.getByTestId('message-list-sort-select'), { target: { value: 'sender-asc' } });
+    expect(onSortModeChange).toHaveBeenCalledWith('sender-asc');
+  });
+
+  it('reflects sortMode through to the sort control (controlled-input contract)', () => {
+    const { rerender } = render(
+      <MessageList
+        folder="inbox"
+        messages={[meta()]}
+        selectedId={null}
+        onSelect={() => {}}
+        sortMode="subject-asc"
+        onSortModeChange={() => {}}
+      />,
+    );
+    expect((screen.getByTestId('message-list-sort-select') as HTMLSelectElement).value).toBe('subject-asc');
+    rerender(
+      <MessageList
+        folder="inbox"
+        messages={[meta()]}
+        selectedId={null}
+        onSelect={() => {}}
+        sortMode="date-asc"
+        onSortModeChange={() => {}}
+      />,
+    );
+    expect((screen.getByTestId('message-list-sort-select') as HTMLSelectElement).value).toBe('date-asc');
+  });
+});

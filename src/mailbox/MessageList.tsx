@@ -17,6 +17,8 @@
 import React from 'react';
 import { Virtuoso } from 'react-virtuoso';
 import type { MailboxFolder, MessageMeta } from './types';
+import { DEFAULT_SORT_MODE, type SortMode, sortMessages } from './messageSort';
+import { MessageListSortControl } from './MessageListSortControl';
 
 /// Empty-folder copy (spec §5.2).
 export const EMPTY_FOLDER_COPY =
@@ -195,6 +197,13 @@ export interface MessageListProps {
   /// When true, rows render a folder badge when message.folder is set
   /// (cross-folder search mode, spec §7.2).
   showFolderTag?: boolean;
+  /// Current sort mode for the list. Default `date-desc` (matches the
+  /// backend's date-desc baseline so the no-prop case is "newest first").
+  sortMode?: SortMode;
+  /// User picked a new sort mode in the header control. When absent the
+  /// control is hidden (the list still sorts by `sortMode` for callers that
+  /// want to drive sort externally without exposing the picker).
+  onSortModeChange?: (mode: SortMode) => void;
 }
 
 /// The list pane. Renders the mock's `.rows-pane` as its root (the 420px left
@@ -207,17 +216,31 @@ export function MessageList({
   notConnected = false,
   matchHighlights,
   showFolderTag,
+  sortMode = DEFAULT_SORT_MODE,
+  onSortModeChange,
 }: MessageListProps) {
+  // Sort client-side so changing modes doesn't require a backend re-fetch.
+  // Memo keyed on (messages, sortMode, folder) — folder affects sender-* in
+  // sent/outbox where the key is the recipient, not the sender.
+  const sortedMessages = React.useMemo(
+    () => sortMessages(messages, sortMode, folder),
+    [messages, sortMode, folder],
+  );
   return (
     <div className="rows-pane" data-testid="rows-pane">
-      {messages.length === 0 ? (
+      {onSortModeChange && (
+        <div className="rows-pane-header" data-testid="rows-pane-header">
+          <MessageListSortControl value={sortMode} onChange={onSortModeChange} />
+        </div>
+      )}
+      {sortedMessages.length === 0 ? (
         <div className="message-list message-list-empty" data-testid="message-list-empty">
           {notConnected ? NOT_CONNECTED_COPY : EMPTY_FOLDER_COPY}
         </div>
       ) : (
         <div className="message-list" data-testid="message-list">
           <Virtuoso
-            data={messages}
+            data={sortedMessages}
             computeItemKey={(_index, msg) => msg.id}
             itemContent={(_index, msg) => (
               <MessageRow

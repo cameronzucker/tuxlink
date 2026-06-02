@@ -577,6 +577,43 @@
   line-height: 1.5;
 }
 
+/* Sort control row above the virtualized list (tuxlink-2x0l). Compact
+ * single-row header; only renders when AppShell provides onSortModeChange. */
+.layout-b .rows-pane .rows-pane-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 18px;
+  border-bottom: 1px solid var(--border-soft);
+  background: var(--surface);
+  font-size: 12px;
+  color: var(--text-dim);
+  flex: 0 0 auto;
+}
+.layout-b .message-list-sort {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.layout-b .message-list-sort-label {
+  color: var(--text-dim);
+  font-size: 12px;
+}
+.layout-b .message-list-sort-select {
+  font: inherit;
+  font-size: 12px;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 6px;
+  cursor: pointer;
+}
+.layout-b .message-list-sort-select:focus-visible {
+  outline: 2px solid var(--tux-focus-ring);
+  outline-offset: 1px;
+}
+
 .layout-b .row {
   display: grid;
   padding: 11px 18px;

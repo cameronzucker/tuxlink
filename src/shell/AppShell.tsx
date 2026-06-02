@@ -22,6 +22,7 @@ import { getCurrentWindow } from '@tauri-apps/api/window';
 import { useQueryClient } from '@tanstack/react-query';
 import { MessageList } from '../mailbox/MessageList';
 import type { HighlightRange } from '../mailbox/MessageList';
+import { type SortMode, loadSortMode, saveSortMode } from '../mailbox/messageSort';
 import { useMailbox } from '../mailbox/useMailbox';
 import { isNotConfigured } from '../mailbox/types';
 import type { MailboxFolder, MessageMeta } from '../mailbox/types';
@@ -148,6 +149,15 @@ export function AppShell() {
   // Inline About + Help overlays (tuxlink-35g0), opened from the Help menu.
   const [aboutOpen, setAboutOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
+
+  // Message-list sort (tuxlink-2x0l). Lazy-init from localStorage so the
+  // first render already uses the persisted preference (no flash of default).
+  // Global preference for now; per-folder defaults are a Phase 3 idea.
+  const [sortMode, setSortMode] = useState<SortMode>(() => loadSortMode());
+  const onSortModeChange = useCallback((mode: SortMode) => {
+    setSortMode(mode);
+    saveSortMode(mode);
+  }, []);
 
   // Connection panel: null = no panel; a {sessionType, protocol} key selects the reading-pane connection pane.
   const [selectedConnection, setSelectedConnection] = useState<ConnectionKey | null>(null);
@@ -476,6 +486,8 @@ export function AppShell() {
           notConnected={search.isActive ? false : notConnected}
           matchHighlights={searchHighlights}
           showFolderTag={searchIsCrossFolder}
+          sortMode={sortMode}
+          onSortModeChange={onSortModeChange}
         />
         {(() => {
           if (selectedConnection === null) {
