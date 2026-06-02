@@ -14,8 +14,10 @@
  * rendered widgets are NOT tested here — the M2 operator smoke is the runtime gate.
  */
 
+import React from 'react';
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { renderHook, act } from '@testing-library/react';
+import { renderHook, waitFor } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { invoke } from '@tauri-apps/api/core';
 import {
   formatConnectionState,
@@ -37,6 +39,18 @@ import {
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: vi.fn(),
 }));
+
+// tuxlink-i9vn: useStatusData now uses react-query, so renderHook needs a
+// QueryClientProvider in scope. Each test gets its own fresh client so the
+// queryCache doesn't leak across tests.
+function renderUseStatusData() {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false, refetchOnWindowFocus: false } },
+  });
+  const wrapper = ({ children }: { children: React.ReactNode }) =>
+    React.createElement(QueryClientProvider, { client: queryClient }, children);
+  return renderHook(() => useStatusData(), { wrapper });
+}
 
 // ============================================================================
 // (1) formatStatus idle — backend absent, offline mode
@@ -302,20 +316,15 @@ describe('useStatusData — position_source mapping (tuxlink-686)', () => {
       return null;
     });
 
-    const { result } = renderHook(() => useStatusData());
-    // Wait for the async config_read effect to resolve and re-render.
-    await act(async () => {
-      await new Promise((r) => setTimeout(r, 0));
-    });
-
-    expect(result.current.position_source).toBe('Manual');
+    const { result } = renderUseStatusData();
+    await waitFor(() => expect(result.current.position_source).toBe('Manual'));
   });
 
   it('defaults position_source to Gps when config has not yet loaded', () => {
     // invoke never resolves — simulates the pre-load state where config is null.
     vi.mocked(invoke).mockImplementation(() => new Promise(() => {}));
 
-    const { result } = renderHook(() => useStatusData());
+    const { result } = renderUseStatusData();
     // Synchronously: config is still null → default 'Gps' is applied.
     expect(result.current.position_source).toBe('Gps');
   });
@@ -343,12 +352,9 @@ describe('useStatusData — position_source mapping (tuxlink-686)', () => {
       if (cmd === 'position_status') return positionDto;
       return null;
     });
-    const { result } = renderHook(() => useStatusData());
-    await act(async () => {
-      await new Promise((r) => setTimeout(r, 0));
-    });
-    expect(result.current.position_source).toBe('Manual');
+    const { result } = renderUseStatusData();
     // Sticky-Manual property at the frontend boundary: a fresh fix doesn't override.
+    await waitFor(() => expect(result.current.position_source).toBe('Manual'));
   });
 });
 
@@ -382,12 +388,8 @@ describe('useStatusData — gpsReady (tuxlink-686 Task 11)', () => {
       return null;
     });
 
-    const { result } = renderHook(() => useStatusData());
-    await act(async () => {
-      await new Promise((r) => setTimeout(r, 0));
-    });
-
-    expect(result.current.gpsReady).toBe(true);
+    const { result } = renderUseStatusData();
+    await waitFor(() => expect(result.current.gpsReady).toBe(true));
   });
 
   it('defaults gpsReady=false when position_status rejects (gpsd unavailable)', async () => {
@@ -396,20 +398,17 @@ describe('useStatusData — gpsReady (tuxlink-686 Task 11)', () => {
       return null;
     });
 
-    const { result } = renderHook(() => useStatusData());
-    await act(async () => {
-      await new Promise((r) => setTimeout(r, 0));
-    });
-
-    // position_status rejection → catch → positionStatus stays null → gpsReady false
-    expect(result.current.gpsReady).toBe(false);
+    const { result } = renderUseStatusData();
+    // Even after the query settles with an error, positionStatus stays null →
+    // gpsReady defaults false. Wait long enough for the query to fail+settle.
+    await waitFor(() => expect(result.current.gpsReady).toBe(false));
   });
 
   it('defaults gpsReady=false before position_status resolves (pre-load state)', () => {
     // invoke never resolves — simulates the pre-load state.
     vi.mocked(invoke).mockImplementation(() => new Promise(() => {}));
 
-    const { result } = renderHook(() => useStatusData());
+    const { result } = renderUseStatusData();
     // Synchronously: positionStatus is null → gpsReady defaults false.
     expect(result.current.gpsReady).toBe(false);
   });
@@ -438,13 +437,9 @@ describe('useStatusData — gpsReady (tuxlink-686 Task 11)', () => {
       return null;
     });
 
-    const { result } = renderHook(() => useStatusData());
-    await act(async () => {
-      await new Promise((r) => setTimeout(r, 0));
-    });
-
+    const { result } = renderUseStatusData();
     // Ribbon must show the live ui_grid, not the stale config grid.
-    expect(result.current.grid).toBe('CN87');
+    await waitFor(() => expect(result.current.grid).toBe('CN87'));
   });
 
   // tuxlink-va1i: fallback to config grid when ui_grid is empty (no position).
@@ -470,13 +465,9 @@ describe('useStatusData — gpsReady (tuxlink-686 Task 11)', () => {
       return null;
     });
 
-    const { result } = renderHook(() => useStatusData());
-    await act(async () => {
-      await new Promise((r) => setTimeout(r, 0));
-    });
-
+    const { result } = renderUseStatusData();
     // Empty ui_grid → fall back to config-derived grid "DM33".
-    expect(result.current.grid).toBe('DM33');
+    await waitFor(() => expect(result.current.grid).toBe('DM33'));
   });
 
   // tuxlink-va1i: the load-bearing divergent case — under LocalUiOnly + source=Gps
@@ -514,14 +505,12 @@ describe('useStatusData — gpsReady (tuxlink-686 Task 11)', () => {
       return null;
     });
 
-    const { result } = renderHook(() => useStatusData());
-    await act(async () => {
-      await new Promise((r) => setTimeout(r, 0));
-    });
-
+    const { result } = renderUseStatusData();
     // Ribbon resolves to ui_grid ("DM33ww"), NOT broadcast_grid ("DM33").
-    expect(result.current.grid).toBe('DM33ww');
-    expect(result.current.grid).not.toBe('DM33');
+    await waitFor(() => {
+      expect(result.current.grid).toBe('DM33ww');
+      expect(result.current.grid).not.toBe('DM33');
+    });
   });
 });
 
