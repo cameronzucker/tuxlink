@@ -153,7 +153,7 @@ R5 P0 #2 caught that the position-subsystem restoration v1 picked the `use_gps()
 
 ---
 
-## §2 — UI surface (source chip clickable + `Set manually` button + State 1 vs State 4 differentiation)
+## §2 — UI surface (source segmented control + `Set manually` button + State 1 vs State 4 differentiation)
 
 ### §2.1 — Source segmented control DOM and click semantics (2026-06-02 follow-up — tuxlink-z5pz; supersedes the T12 conditional-chip pattern)
 
@@ -191,6 +191,8 @@ R5 P0 #2 caught that the position-subsystem restoration v1 picked the `use_gps()
 - Clicking the OTHER segment fires the source switch:
   - **GPS segment when `source = Manual`** fires `onUseGps`, which calls `invoke('position_set_source', { source: 'Gps' })` (infallible per [§1.1 the relaxation](#11--the-use_gps--position_set_source-gps-relaxation)).
   - **MANUAL segment when `source = Gps`** fires `onUseManual`, which calls `GridEdit.tsx`'s `enterEdit()` handler — the same affordance the `Set manually` button uses. The operator then types their manual grid; on Enter-commit, the existing T4-restored `config_set_grid(grid)` command persists `cfg.privacy.position_source = Manual` AND the new grid value. The MANUAL segment click does NOT call `position_set_source('Manual')` — that command's `'Manual'` arm returns `UiError::Rejected` by existing-spec design (the operator-only path INTO `source = Manual` is via the `config_set_grid` command with a grid value, not via `position_set_source` with a bare source token). See [§3.1](#31--backend-revert--relaxation-table) for the reuse of the T4 path.
+  - **MANUAL segment click ALWAYS enters edit mode, regardless of whether `manual_grid` was previously set.** Rationale: a stale `manual_grid` from a prior session may not reflect the operator's current location — forcing explicit re-entry keeps the on-air broadcast grounded in a recent operator decision. The operator can press Enter without changing the pre-filled value to re-commit the existing `manual_grid` if appropriate.
+  - **If the operator cancels the edit (Escape), source remains `Gps`** — no `config_set_grid` runs, so the source-flip-to-Manual side-effect of `config_set_grid` (per Task 4 of the position-subsystem-restoration) is never triggered.
 
 **Props (`GridEditProps`).**
 - `onUseGps: () => void` — preserved from T10. Fires on the GPS segment click when `source = Manual`.
@@ -571,6 +573,7 @@ The position-subsystem restoration v1's §5 migration table was literally backwa
 - `clicking_GPS_segment_when_source_is_Manual_fires_onUseGps` (in `GridEdit.test.tsx`): renders with `source = 'Manual'`; fires a click on `getByTestId('source-segment-gps')`; asserts the `onUseGps` mock was called.
 
 - `clicking_MANUAL_segment_when_source_is_Gps_fires_onUseManual_and_enters_edit_mode` (in `GridEdit.test.tsx`): renders with `source = 'Gps'`; fires a click on `getByTestId('source-segment-manual')`; asserts the `onUseManual` mock was called; asserts the grid input mounts and receives focus (`document.activeElement === gridInput`). Pins the MANUAL-segment-click → `enterEdit()` flow from [§2.1](#21--source-segmented-control-dom-and-click-semantics-2026-06-02-follow-up--tuxlink-z5pz-supersedes-the-t12-conditional-chip-pattern).
+- `manual_segment_click_then_escape_keeps_source_gps` (in `GridEdit.test.tsx`): renders with `source = 'Gps'`; clicks `getByTestId('source-segment-manual')` to enter edit mode; fires an Escape keydown on the grid input; asserts `config_set_grid` is NOT called AND any local `position_source` derivation stays `'Gps'`. Pins the Escape-cancel contract from [§2.1](#21--source-segmented-control-dom-and-click-semantics-2026-06-02-follow-up--tuxlink-z5pz-supersedes-the-t12-conditional-chip-pattern) — cancelling the edit must NOT trigger the T4-sticky source-flip side-effect.
 
 - `clicking_already_selected_GPS_segment_is_a_noop` (in `GridEdit.test.tsx`): renders with `source = 'Gps'`; fires a click on `getByTestId('source-segment-gps')`; asserts NEITHER `onUseGps` NOR `onUseManual` mock was called.
 
