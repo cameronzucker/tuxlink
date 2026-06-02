@@ -53,19 +53,33 @@ export interface ConfigViewDto {
   position_source: PositionSource;
 }
 
-/** Mirrors PositionStatusDto from ui_commands.rs (tuxlink-686, Task 11 + Codex P1-B).
- * Live arbiter state — NOT config. Polled at 2s by useStatusData.
- * `broadcast_grid` is the effective on-air locator (honoring gps_state) — the
- * ribbon shows this so it always matches what is/would be transmitted. Empty
- * string means no grid is available.
+/** Mirrors PositionStatusDto from ui_commands.rs (tuxlink-va1i: amended for the
+ * UI/on-air locator decoupling — see spec 2026-06-01-position-subsystem-
+ * restoration-design.md §2.5 + §4.1).
  *
- * Per spec §4.1 (position-subsystem-restoration, tuxlink-c79g): the source chip
- * reads `position_source` from `config_read` — NOT from this DTO. Sticky-Manual
- * is preserved at the config boundary; live-status is grid-availability only. */
+ * Live arbiter state — NOT config. Polled at 2s by useStatusData.
+ *
+ * Two-helper split (tuxlink-va1i): the backend now exposes BOTH
+ *   - `broadcast_grid` — effective ON-AIR locator (what would be transmitted)
+ *   - `ui_grid` — effective LOCAL DISPLAY locator (what the ribbon shows)
+ * They coincide in most states; under LocalUiOnly + source=Gps + fresh fix they
+ * intentionally diverge: ui_grid reflects the live precision-reduced fix while
+ * broadcast_grid stays at the static config grid (privacy honored, local
+ * visibility intact). Empty string means no grid is available.
+ *
+ * Per spec §4.1: the source chip reads `position_source` from `config_read` —
+ * NOT from this DTO. Sticky-Manual is preserved at the config boundary;
+ * live-status is grid-availability only. */
 export interface PositionStatusDto {
   gps_ready: boolean;
-  /** Effective on-air locator (honoring gps_state + precision). Empty = no grid. */
+  /** Effective ON-AIR locator (what would be transmitted, honoring gps_state +
+   *  precision). Empty = no grid. Distinct from `ui_grid` under LocalUiOnly. */
   broadcast_grid: string;
+  /** Effective LOCAL DISPLAY locator for the ribbon (tuxlink-va1i, spec §2.5 +
+   *  §4.1). Empty = no grid. Distinct from `broadcast_grid` under LocalUiOnly +
+   *  source=Gps + fresh fix: ui_grid shows the live fix; broadcast_grid stays
+   *  at the static config grid. */
+  ui_grid: string;
 }
 
 /**
@@ -409,13 +423,18 @@ export function useStatusData(): StatusBarData {
   // informative (it will be correct once the first poll completes).
   const configTransport: CmsTransport = config?.transport ?? 'CmsSsl';
 
-  // Codex P1-B: source the ribbon's grid from the LIVE position_status
-  // broadcast_grid (the effective on-air locator, honoring gps_state). Falls
-  // back to the config-derived grid when position_status has not yet loaded or
-  // returns an empty string (pre-wizard, gpsd unavailable, etc.). This ensures
-  // the ribbon always shows exactly what is/would be transmitted.
-  const liveGrid = positionStatus?.broadcast_grid
-    ? positionStatus.broadcast_grid
+  // tuxlink-va1i (spec §2.5 + §4.1): source the ribbon's grid from the LIVE
+  // position_status.ui_grid — the effective LOCAL DISPLAY locator. Distinct
+  // from broadcast_grid: under LocalUiOnly + source=Gps + fresh fix, ui_grid
+  // reflects the live precision-reduced fix (operator sees their actual
+  // location) while broadcast_grid stays at the static config grid (privacy
+  // honored on-air). Pre-va1i the derivation read broadcast_grid and the two
+  // concerns were collapsed onto one helper; the amendment restores the
+  // distinction. Falls back to the config-derived grid when position_status
+  // has not yet loaded or returns an empty string (pre-wizard, gpsd
+  // unavailable, etc.).
+  const liveGrid = positionStatus?.ui_grid
+    ? positionStatus.ui_grid
     : null;
   const ribbonGrid = liveGrid ?? gridResult.broadcast;
 
