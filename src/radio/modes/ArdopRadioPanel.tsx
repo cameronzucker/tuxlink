@@ -24,7 +24,7 @@
 // yields an unbindable webgui_port, so we surface an error rather
 // than open a dead URL.
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ChangeEvent } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { open as shellOpen } from '@tauri-apps/plugin-shell';
@@ -187,6 +187,31 @@ const ARQ_BANDWIDTH_OPTIONS: { value: number | null; label: string }[] = [
  * the operator-flagged smoke wanted available inline in the radio panel
  * for parity with AX.25's ModemLinkSection).
  */
+/** ALSA device returned by `ardop_list_audio_devices` (tuxlink-y7x7). The
+ *  picker sorts hardware entries first so the operator's top-of-list pick
+ *  is the kind ardopcf actually wants. */
+interface AlsaDeviceDto {
+  name: string;
+  description: string;
+  isHardware: boolean;
+}
+
+/** Bundled capture + playback lists from one `ardop_list_audio_devices`
+ *  invocation (tuxlink-y7x7). */
+interface AlsaDevicesDto {
+  captures: AlsaDeviceDto[];
+  playbacks: AlsaDeviceDto[];
+}
+
+/** Serial device from `packet_list_serial_devices`. Reused here for PTT
+ *  enumeration — the same backend command that drives the AX.25 USB
+ *  picker (tuxlink-mqu3). */
+interface SerialDeviceDto {
+  path: string;
+  kind: 'usb' | 'bluetooth' | 'uart';
+  label: string;
+}
+
 interface ArdopFullConfig {
   binary: string;
   capture_device: string;
@@ -242,6 +267,16 @@ export function ArdopRadioPanel({ onClose }: ArdopRadioPanelProps) {
   // backend on blur after a non-empty numeric parse. Empty input → null
   // (revert to "derive from cmd_port - 1" — the default).
   const [webguiPortInput, setWebguiPortInput] = useState<string>('');
+  // tuxlink-y7x7: device-enumeration state for the Radio section pickers.
+  // Captures + playbacks come from `ardop_list_audio_devices` (which shells
+  // to `arecord -L` / `aplay -L`); PTT comes from `packet_list_serial_devices`
+  // (reusing the AX.25 USB picker's enumeration — same `/dev/ttyUSB*`
+  // candidates apply to ardopcf's `-k <serial-path>` PTT keying). Empty
+  // lists are normal (no USB audio interface plugged in / no USB-serial
+  // CAT cable attached) — the manual-fallback input is the escape hatch.
+  const [captureDevices, setCaptureDevices] = useState<AlsaDeviceDto[]>([]);
+  const [playbackDevices, setPlaybackDevices] = useState<AlsaDeviceDto[]>([]);
+  const [pttDevices, setPttDevices] = useState<SerialDeviceDto[]>([]);
   const consent = useConsent();
   const [showConsent, setShowConsent] = useState(false);
   const [connecting, setConnecting] = useState(false);
@@ -397,6 +432,34 @@ export function ArdopRadioPanel({ onClose }: ArdopRadioPanelProps) {
   const isStopped = status.state === 'stopped';
   const isExchangeReady =
     status.state === 'connected-irs' || status.state === 'connected-iss';
+
+  // tuxlink-y7x7: load device lists when the Radio section becomes editable
+  // (Stopped state). Refresh buttons re-invoke via these same callbacks.
+  // Soft-failure posture: any rejection (ardopcf binary absent on CI,
+  // bluetoothctl missing, /dev unreadable) clears the list and the picker
+  // shows a "no devices found — refresh after plugging in" hint rather
+  // than an error.
+  const loadAudioDevices = useCallback(() => {
+    void invoke<AlsaDevicesDto>('ardop_list_audio_devices')
+      .then((dto) => {
+        setCaptureDevices(dto?.captures ?? []);
+        setPlaybackDevices(dto?.playbacks ?? []);
+      })
+      .catch(() => {
+        setCaptureDevices([]);
+        setPlaybackDevices([]);
+      });
+  }, []);
+  const loadPttDevices = useCallback(() => {
+    void invoke<SerialDeviceDto[]>('packet_list_serial_devices')
+      .then((list) => setPttDevices(list ?? []))
+      .catch(() => setPttDevices([]));
+  }, []);
+  useEffect(() => {
+    if (!isStopped) return;
+    loadAudioDevices();
+    loadPttDevices();
+  }, [isStopped, loadAudioDevices, loadPttDevices]);
   // Effective B2F target: ONLY the backend-reported peer authorizes a TX
   // target (preserved from ArdopDock; RADIO-1 hazard if we ever fall back
   // to the stopped-state `target` input).
@@ -565,8 +628,51 @@ export function ArdopRadioPanel({ onClose }: ArdopRadioPanelProps) {
       {isStopped && (
         <section className="radio-panel-sec" data-testid="ardop-radio-section">
           <h5>Radio</h5>
+          {/* tuxlink-y7x7: Capture / Playback / PTT now load real device
+              lists from the backend and render dropdown + Refresh + manual
+              fallback (same pattern as ModemLinkSection's AX.25 picker).
+              The previous text-input ghosts (placeholder="plughw:1,0") were
+              auto-fill theatre — empty fields silently failed at ardopcf
+              spawn because no `-c`/`-p` was ever passed. Pickers list
+              hardware devices first so the operator's natural pick is the
+              kind ardopcf actually wants. */}
           <label className="radio-panel-input-row">
             <span>Capture</span>
+            <select
+              className="radio-panel-input"
+              data-testid="ardop-capture-select"
+              value={captureDevices.some((d) => d.name === captureInput) ? captureInput : ''}
+              onChange={(e) => {
+                const next = e.target.value;
+                setCaptureInput(next);
+                persistArdop({ capture_device: next });
+              }}
+            >
+              <option value="" disabled>
+                {captureDevices.length === 0
+                  ? 'No ALSA capture devices found'
+                  : 'Choose capture device…'}
+              </option>
+              {captureDevices.map((d) => (
+                <option key={d.name} value={d.name}>
+                  {d.isHardware ? '▸ ' : ''}
+                  {d.name}
+                  {d.description ? ` — ${d.description}` : ''}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              className="radio-panel-btn-sm"
+              data-testid="ardop-capture-refresh"
+              onClick={loadAudioDevices}
+              aria-label="Refresh capture device list"
+            >
+              ↻
+            </button>
+          </label>
+          <label className="radio-panel-input-row">
+            <span>Manual</span>
             <input
               type="text"
               className="radio-panel-input"
@@ -575,13 +681,48 @@ export function ArdopRadioPanel({ onClose }: ArdopRadioPanelProps) {
               spellCheck={false}
               autoCapitalize="off"
               autoCorrect="off"
-              placeholder="plughw:1,0"
+              placeholder="plughw:CARD=… (unlisted)"
               onChange={(e) => setCaptureInput(e.target.value)}
               onBlur={commitCapture}
             />
           </label>
           <label className="radio-panel-input-row">
             <span>Playback</span>
+            <select
+              className="radio-panel-input"
+              data-testid="ardop-playback-select"
+              value={playbackDevices.some((d) => d.name === playbackInput) ? playbackInput : ''}
+              onChange={(e) => {
+                const next = e.target.value;
+                setPlaybackInput(next);
+                persistArdop({ playback_device: next });
+              }}
+            >
+              <option value="" disabled>
+                {playbackDevices.length === 0
+                  ? 'No ALSA playback devices found'
+                  : 'Choose playback device…'}
+              </option>
+              {playbackDevices.map((d) => (
+                <option key={d.name} value={d.name}>
+                  {d.isHardware ? '▸ ' : ''}
+                  {d.name}
+                  {d.description ? ` — ${d.description}` : ''}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              className="radio-panel-btn-sm"
+              data-testid="ardop-playback-refresh"
+              onClick={loadAudioDevices}
+              aria-label="Refresh playback device list"
+            >
+              ↻
+            </button>
+          </label>
+          <label className="radio-panel-input-row">
+            <span>Manual</span>
             <input
               type="text"
               className="radio-panel-input"
@@ -590,13 +731,49 @@ export function ArdopRadioPanel({ onClose }: ArdopRadioPanelProps) {
               spellCheck={false}
               autoCapitalize="off"
               autoCorrect="off"
-              placeholder="plughw:1,0"
+              placeholder="plughw:CARD=… (unlisted)"
               onChange={(e) => setPlaybackInput(e.target.value)}
               onBlur={commitPlayback}
             />
           </label>
           <label className="radio-panel-input-row">
             <span>PTT</span>
+            <select
+              className="radio-panel-input"
+              data-testid="ardop-ptt-select"
+              // Empty value renders as the (none — VOX) row; a non-empty
+              // persisted path that isn't in the enumerated list also falls
+              // back to the empty option so the dropdown isn't lying.
+              value={pttDevices.some((d) => d.path === pttSerialInput) ? pttSerialInput : ''}
+              onChange={(e) => {
+                const next = e.target.value;
+                setPttSerialInput(next);
+                // Empty selection → null on the wire (= use VOX keying);
+                // a path selection persists the path verbatim.
+                persistArdop({ ptt_serial_path: next === '' ? null : next });
+              }}
+            >
+              <option value="">(none — use VOX)</option>
+              {pttDevices
+                .filter((d) => d.kind === 'usb')
+                .map((d) => (
+                  <option key={d.path} value={d.path}>
+                    {d.path} — {d.label}
+                  </option>
+                ))}
+            </select>
+            <button
+              type="button"
+              className="radio-panel-btn-sm"
+              data-testid="ardop-ptt-refresh"
+              onClick={loadPttDevices}
+              aria-label="Refresh PTT serial device list"
+            >
+              ↻
+            </button>
+          </label>
+          <label className="radio-panel-input-row">
+            <span>Manual</span>
             <input
               type="text"
               className="radio-panel-input"
@@ -605,7 +782,7 @@ export function ArdopRadioPanel({ onClose }: ArdopRadioPanelProps) {
               spellCheck={false}
               autoCapitalize="off"
               autoCorrect="off"
-              placeholder="/dev/ttyUSB0 (empty = VOX)"
+              placeholder="/dev/ttyUSB0 (unlisted; empty = VOX)"
               onChange={(e) => setPttSerialInput(e.target.value)}
               onBlur={commitPttSerial}
             />

@@ -717,6 +717,7 @@ fn config_skips_pat_mbo_address_on_write() {
         pat_mbo_address: Some("LEGACY-VALUE".into()),
         packet: tuxlink_lib::config::PacketConfig::default(),
         modem_ardop: None,
+        modem_vara: None,
     };
     let json = serde_json::to_string(&cfg).unwrap();
     assert!(
