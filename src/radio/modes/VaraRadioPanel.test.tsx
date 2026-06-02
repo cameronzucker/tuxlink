@@ -223,6 +223,34 @@ describe('<VaraRadioPanel>', () => {
     expect(screen.getByTestId('vara-start-btn')).not.toBeDisabled();
   });
 
+  it('actually invokes vara_start_session on Start click under armPlatform (tuxlink-poh6)', async () => {
+    // Regression test for tuxlink-poh6: the previous fix (tuxlink-ze98)
+    // removed platformBlocked from the disabled prop but LEFT it in the
+    // onStartClick early-return guard. Button was clickable, handler
+    // refused. The fix removes the guard from the handler too.
+    const core = await import('@tauri-apps/api/core');
+    const invokeSpy = core.invoke as ReturnType<typeof vi.fn>;
+    invokeSpy.mockImplementation(
+      makeInvoke({
+        platform_info: armPlatform,
+        vara_start_session: openStatus,
+      }),
+    );
+    render(<VaraRadioPanel mode={HF_MODE} onClose={() => {}} />);
+    await waitFor(() => {
+      expect(screen.getByTestId('vara-start-btn')).not.toBeDisabled();
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('vara-start-btn'));
+    });
+
+    // The handler must have fired vara_start_session, NOT silently no-op'd.
+    await waitFor(() => {
+      expect(invokeSpy).toHaveBeenCalledWith('vara_start_session');
+    });
+  });
+
   it('does not render the banner on x86_64', async () => {
     render(<VaraRadioPanel mode={HF_MODE} onClose={() => {}} />);
     await waitFor(() => {

@@ -177,7 +177,13 @@ export function VaraRadioPanel({ mode, onClose }: VaraRadioPanelProps) {
   };
 
   const onStartClick = async () => {
-    if (busy || platformBlocked) return;
+    // tuxlink-poh6: previously this guard included `platformBlocked`, which
+    // silently no-op'd Start clicks on aarch64. The whole point of removing
+    // `platformBlocked` from the `disabled` prop (tuxlink-ze98 / PR #231)
+    // was so the operator CAN start a session against a remote VARA host
+    // from a Pi. The handler must agree — the only gate here is in-flight
+    // re-entrancy via `busy`.
+    if (busy) return;
     setBusy(true);
     setActionError(null);
     try {
