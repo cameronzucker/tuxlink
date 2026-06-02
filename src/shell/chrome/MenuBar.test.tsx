@@ -43,4 +43,23 @@ describe('MenuBar', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Tools' }));
     expect(screen.queryByRole('button', { name: /Preferences/ })).not.toBeInTheDocument();
   });
+
+  // tuxlink-dpf: the not-yet-wired dispatchMenuAction targets used to render
+  // as ordinary enabled buttons that silently no-op'd on click. They now
+  // match the Tools/Templates convention (disabled + "soon" badge).
+  it.each([
+    { menu: 'Message', item: 'Print' },
+    { menu: 'Session', item: 'Disconnect' },
+    { menu: 'Session', item: 'Session Log' },
+    { menu: 'Session', item: 'Verify CMS Connection' },
+    { menu: 'Session', item: 'Show transport' },
+  ])('$menu → $item renders disabled with no action firing', ({ menu, item }) => {
+    const onAction = vi.fn();
+    render(<MenuBar onAction={onAction} />);
+    fireEvent.click(screen.getByRole('button', { name: menu }));
+    const button = screen.getByRole('button', { name: new RegExp(item) });
+    expect(button).toBeDisabled();
+    fireEvent.click(button);
+    expect(onAction).not.toHaveBeenCalled();
+  });
 });
