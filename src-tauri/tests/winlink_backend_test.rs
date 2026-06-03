@@ -229,7 +229,7 @@ fn native_session_emits_wire_log_on_send() {
     use std::cell::RefCell;
     use std::io::Cursor;
     use tuxlink_lib::winlink::message::Message;
-    use tuxlink_lib::winlink::session::{ExchangeConfig, OutboundMessage};
+    use tuxlink_lib::winlink::session::{ExchangeConfig, OutboundMessage, SessionIntent};
 
     // Build one outbound message.
     let mut msg = Message::new();
@@ -262,6 +262,7 @@ fn native_session_emits_wire_log_on_send() {
         targetcall: "SERVICE".into(),
         locator: "CN87".into(),
         password: None,
+        intent: SessionIntent::Cms,
     };
 
     // Capture wire log lines.
@@ -310,7 +311,7 @@ async fn two_native_backends_exchange_with_attachment() {
     use std::net::TcpListener;
     use tuxlink_lib::native_mailbox::Mailbox;
     use tuxlink_lib::winlink::message::Message;
-    use tuxlink_lib::winlink::session::{ExchangeConfig, ExchangeRole, OutboundMessage};
+    use tuxlink_lib::winlink::session::{ExchangeConfig, ExchangeRole, OutboundMessage, SessionIntent};
     use tuxlink_lib::winlink::telnet::{connect_and_exchange, Transport, CMS_TARGET_CALL};
     use tuxlink_lib::winlink_backend::{
         MailboxFolder, NativeBackend, OutboundAttachment, OutboundMessage as BackendOutbound,
@@ -396,6 +397,7 @@ async fn two_native_backends_exchange_with_attachment() {
             targetcall: CMS_TARGET_CALL.to_string(),
             locator: "CN87".into(),
             password: None,
+            intent: SessionIntent::Cms,
         };
         let result = tuxlink_lib::winlink::session::run_exchange_with_role(
             &mut reader,
@@ -436,6 +438,7 @@ async fn two_native_backends_exchange_with_attachment() {
         targetcall: CMS_TARGET_CALL.to_string(),
         locator: "CN87".into(),
         password: None,
+        intent: SessionIntent::Cms,
     };
     connect_and_exchange(
         "127.0.0.1",

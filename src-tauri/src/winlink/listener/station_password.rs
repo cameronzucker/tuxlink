@@ -305,9 +305,10 @@ mod tests {
         }
     }
 
-    fn mock_password() -> (StationPassword, Arc<Mutex<HashMap<(String, String), String>>>) {
-        let store: Arc<Mutex<HashMap<(String, String), String>>> =
-            Arc::new(Mutex::new(HashMap::new()));
+    type MockStore = Arc<Mutex<HashMap<(String, String), String>>>;
+
+    fn mock_password() -> (StationPassword, MockStore) {
+        let store: MockStore = Arc::new(Mutex::new(HashMap::new()));
         let store_for_factory = Arc::clone(&store);
         let factory: EntryFactory = Box::new(move |service: &str, account: &str| {
             Box::new(MockEntry {
