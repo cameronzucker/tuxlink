@@ -138,6 +138,7 @@ mod tests {
     use crate::winlink::message::Message;
     use crate::winlink::modem::ardop::session::{ConnectInfo, InitConfig, SessionError};
     use crate::winlink::proposal::{batch_checksum_line, Answer};
+    use crate::winlink::session::SessionIntent;
     use crate::winlink::transfer;
     use std::io::Cursor;
     use std::sync::Mutex as StdMutex;
@@ -236,6 +237,7 @@ mod tests {
             targetcall: "wl2k".into(),
             locator: "CN87".into(),
             password: None,
+            intent: SessionIntent::Cms,
         }
     }
 
