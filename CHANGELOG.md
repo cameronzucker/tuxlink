@@ -4,6 +4,13 @@ All notable changes to Tuxlink are documented here.
 
 This project adheres to [Semantic Versioning](https://semver.org) with project-specific rules described in [VERSIONING.md](VERSIONING.md). Entries from `v0.0.2` onward are generated automatically by [`release-please`](https://github.com/googleapis/release-please) from [Conventional Commits](https://www.conventionalcommits.org).
 
+## [0.24.2](https://github.com/cameronzucker/tuxlink/compare/v0.24.1...v0.24.2) (2026-06-03)
+
+
+### Performance
+
+* **help:** GPU-composite the reading pane + bottom-pad to 160 px (tuxlink-q5td) ([36f186c](https://github.com/cameronzucker/tuxlink/commit/36f186c4f86dc2f01f4795952a0e7a66256e2afd))
+
 ## [0.24.1](https://github.com/cameronzucker/tuxlink/compare/v0.24.0...v0.24.1) (2026-06-03)
 
 
