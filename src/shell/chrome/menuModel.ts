@@ -46,9 +46,11 @@ export const MENU_TREE: TopMenu[] = [
     // query@saildocs.com.
     { id: 'menu:message:grib_request', label: 'GRIB File Request…' },
     { separator: true },
-    // Not-yet-wired: dispatchMenuAction has no Print handler, so disable +
-    // badge rather than render as a dead-clickable button (tuxlink-dpf).
-    { id: 'menu:message:print', label: 'Print', disabled: true },
+    // tuxlink-j0m3: Print fires window.print() via the openMessage-gated
+    // handler in AppShell. No-op when nothing is selected, which keeps
+    // Ctrl+P from opening the print dialog on an empty reading pane.
+    // @media print stylesheet follow-up tracked at tuxlink-zdfj.
+    { id: 'menu:message:print', label: 'Print', accel: 'Ctrl+P' },
   ] },
   { label: 'Session', items: [
     { id: 'menu:session:connect', label: 'Connect', accel: 'F5' },

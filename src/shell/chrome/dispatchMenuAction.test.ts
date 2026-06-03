@@ -9,6 +9,7 @@ function handlers(): MenuHandlers {
     replyAll: vi.fn(),
     forward: vi.fn(),
     archive: vi.fn(),
+    print: vi.fn(),
     toggleStatusBar: vi.fn(),
     toggleRadioPanel: vi.fn(),
     selectFolder: vi.fn(),
@@ -114,6 +115,15 @@ describe('dispatchMenuAction', () => {
     const h = handlers();
     dispatchMenuAction('menu:mailbox:archive', h);
     expect(h.selectFolder).toHaveBeenCalledWith('archive');
+  });
+
+  // tuxlink-j0m3: Print fires the webview's native print dialog via the
+  // open-message-gated handler in AppShell. The dispatcher's job is just
+  // to route the id — open-message gating happens inside the handler.
+  it('routes message:print to print', () => {
+    const h = handlers();
+    dispatchMenuAction('menu:message:print', h);
+    expect(h.print).toHaveBeenCalledOnce();
   });
 
   it('is a safe no-op for stub/unhandled ids', () => {
