@@ -20,7 +20,15 @@ permissions:
 
 jobs:
   build-linux:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            arch: amd64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v6
 
@@ -52,9 +60,9 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             src-tauri/target
-          key: ${{ runner.os }}-tuxlink-${{ hashFiles('src-tauri/Cargo.lock') }}
+          key: ${{ runner.os }}-${{ matrix.arch }}-tuxlink-${{ hashFiles('src-tauri/Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-tuxlink-
+            ${{ runner.os }}-${{ matrix.arch }}-tuxlink-
 
       - name: Install JS dependencies
         run: pnpm install --frozen-lockfile
@@ -75,14 +83,14 @@ jobs:
       - name: Compute SHA256 sums
         run: |
           cd dist-artifacts
-          sha256sum *.deb *.rpm *.AppImage > SHA256SUMS
-          cat SHA256SUMS
+          sha256sum *.deb *.rpm *.AppImage > SHA256SUMS-${{ matrix.arch }}
+          cat SHA256SUMS-${{ matrix.arch }}
 
       - name: Upload PR artifacts
         if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@v4
         with:
-          name: linux-bundles
+          name: linux-bundles-${{ matrix.arch }}
           path: dist-artifacts/*
           retention-days: 7
 
