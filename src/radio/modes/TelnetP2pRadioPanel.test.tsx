@@ -80,7 +80,8 @@ const defaultInvokeImpl = async (cmd: string) => {
     return { port: 8774, bind_addr: '127.0.0.1', ttl_secs: 3600 };
   }
   if (cmd === 'telnet_station_password_is_set') {
-    return false;
+    // Backend returns StationPasswordStatus enum string, not bool.
+    return 'NotSet';
   }
   if (cmd === 'telnet_allowed_stations_get') {
     return { allow_all: true, callsigns: [], ips: [] };
@@ -564,8 +565,10 @@ describe('<TelnetP2pRadioPanel>', () => {
 
   it('Station password Clear fires telnet_station_password_clear', async () => {
     const core = await import('@tauri-apps/api/core');
+    // Backend returns the StationPasswordStatus enum, NOT a bool — Codex
+    // 2026-06-03 fix.
     (core.invoke as ReturnType<typeof vi.fn>).mockImplementation(async (cmd: string) => {
-      if (cmd === 'telnet_station_password_is_set') return true;
+      if (cmd === 'telnet_station_password_is_set') return 'Set';
       return defaultInvokeImpl(cmd);
     });
     renderPanel();
@@ -593,7 +596,11 @@ describe('<TelnetP2pRadioPanel>', () => {
     await waitFor(() => {
       expect(invoke).toHaveBeenCalledWith(
         'telnet_listen_config_set',
-        expect.objectContaining({ ttl_secs: 15 * 60 }),
+        // Codex 2026-06-03: backend signature is `req: TelnetListenConfigDto`,
+        // so the DTO must be wrapped in `{ req: ... }`.
+        expect.objectContaining({
+          req: expect.objectContaining({ ttl_secs: 15 * 60 }),
+        }),
       );
     });
   });

@@ -46,7 +46,20 @@ Three concrete pieces:
 
 **(c)** `ui_commands.rs::ardop_set_listen(enabled)` stops returning Err (which the Codex round had it doing because it couldn't actually arm). With wiring it becomes a real toggle.
 
-The B2F handoff on Accept is the same shape as Packet's. Mailbox Inbox-persist + Outbox-drain on inbound exchange is DEFERRED for ARDOP in this round (matching the same deferral for Telnet at tuxlink-k3ru). A new bd issue will be filed during execution covering "ARDOP listener inbound-mail symmetry" mirroring tuxlink-k3ru's scope. The listener gate + LISTEN-flip + CONNECTED routing + B2F handshake ship complete; the operator sees inbound peers connect + exchange protocol-level data, but received messages won't land in the Inbox until the symmetry follow-up ships. Packet listener already has full mailbox symmetry via `native_packet_exchange` (shipped in PR #318).
+**Scope correction during execution (Codex review 2026-06-03 [P3]):** the original spec text said "CONNECTED routing + B2F handshake ship complete." That overreached. What actually shipped in this PR is the LISTEN-flag-toggle on a running modem only. The CONNECTED-event router + B2F answerer routing + mailbox symmetry are tracked together at **tuxlink-syqb** (the focused successor to tuxlink-95g8 that filed during this PR's execution).
+
+What ships in this PR for ARDOP:
+- `ardop_listen()` validates allowlist, mints arms record, sends `LISTEN TRUE` to a running ardopcf modem.
+- `ardop_set_listen(false)` sends `LISTEN FALSE`.
+- Operator can verify the modem flag flips at the modem layer (ardopcf logs).
+
+What requires tuxlink-syqb to ship:
+- A way to start the ARDOP modem in listen-only mode (without an outbound dial).
+- An inbound-CONNECTED router that runs the listener-arms gate on each ardopcf CONNECTED event.
+- B2F answerer handoff on Accept, mirroring native_packet_exchange's flow.
+- Mailbox Inbox-persist + Outbox-drain symmetry (mirrors tuxlink-k3ru for Telnet).
+
+Packet listener already has full mailbox symmetry via `native_packet_exchange` (shipped in PR #318).
 
 ### 1.3 Frontend (three React panels)
 

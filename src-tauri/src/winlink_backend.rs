@@ -1483,7 +1483,14 @@ fn native_packet_connect(
                             "Packet allowlist load failed: {reason_str}. Failing closed (reject all inbound until repaired)."
                         ));
                         load_failed_reason = Some(reason_str);
-                        AllowedStations::default()
+                        // Codex review 2026-06-03 [P1] (tuxlink-7vea): after the
+                        // foundation default flip to allow_all=TRUE,
+                        // AllowedStations::default() now accepts everyone — so
+                        // a corrupt allowlist file would silently widen the
+                        // gate to fail-OPEN. Explicit restrict-mode here keeps
+                        // the load-error path fail-CLOSED as the progress
+                        // message claims.
+                        AllowedStations::new().with_allow_all(false)
                     }
                 }
             };

@@ -304,7 +304,11 @@ export function ArdopRadioPanel({ onClose }: ArdopRadioPanelProps) {
       allowedRemoveCallsign: 'ardop_allowed_stations_remove',
       allowedRemoveCallsignArgKey: 'callsign',
       allowedSetAllowAll: 'ardop_allowed_stations_set_allow_all',
-      allowedSetAllowAllArgKey: 'allow_all',
+      // Tauri auto-camelCases Rust arg `allow_all: bool` → JS wire key `allowAll`.
+      // Codex review 2026-06-03 [P2] (tuxlink-7vea): the prior `allow_all` key
+      // here meant Tauri delivered no value to the Rust handler and the operator
+      // couldn't toggle.
+      allowedSetAllowAllArgKey: 'allowAll',
     },
   });
 

@@ -76,7 +76,10 @@ export function PacketRadioPanel({ intent, baseCall, onClose }: PacketRadioPanel
       allowedRemoveCallsign: 'packet_allowed_stations_remove',
       allowedRemoveCallsignArgKey: 'callsign',
       allowedSetAllowAll: 'packet_allowed_stations_set_allow_all',
-      allowedSetAllowAllArgKey: 'allow_all',
+      // Tauri auto-camelCases Rust arg `allow_all: bool` → JS wire key `allowAll`.
+      // Codex review 2026-06-03 [P2] (tuxlink-7vea): the prior `allow_all` key
+      // here meant Tauri delivered no value to the Rust handler.
+      allowedSetAllowAllArgKey: 'allowAll',
     },
   });
 

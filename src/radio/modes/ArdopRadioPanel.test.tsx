@@ -908,7 +908,7 @@ describe('<ArdopRadioPanel>', () => {
       await waitFor(() => {
         expect(invokeMock).toHaveBeenCalledWith(
           'ardop_allowed_stations_set_allow_all',
-          { allow_all: false },
+          { allowAll: false },
         );
       });
     });

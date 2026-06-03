@@ -206,7 +206,7 @@ describe('<PacketRadioPanel>', () => {
     await waitFor(() => {
       expect(invoke).toHaveBeenCalledWith(
         'packet_allowed_stations_set_allow_all',
-        { allow_all: false },
+        { allowAll: false },
       );
     });
   });

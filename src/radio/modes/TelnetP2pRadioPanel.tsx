@@ -167,10 +167,14 @@ export function TelnetP2pRadioPanel({ onClose }: TelnetP2pRadioPanelProps) {
       .catch(() => {
         // Backend default applies — keep the local fallback.
       });
-    invoke<boolean>('telnet_station_password_is_set')
-      .then((isSet) => {
+    // Codex review 2026-06-03 [P2] (tuxlink-7vea): the backend returns
+    // `StationPasswordStatus` (serialized as the literal string "Set" or
+    // "NotSet"), NOT a bool. The prior bool coercion was always truthy on
+    // a fresh install and showed "Set" when no password existed.
+    invoke<'Set' | 'NotSet'>('telnet_station_password_is_set')
+      .then((status) => {
         if (cancelled) return;
-        setStationPasswordStatus(isSet ? 'Set' : 'NotSet');
+        setStationPasswordStatus(status);
       })
       .catch(() => {
         if (!cancelled) setStationPasswordStatus('NotSet');
@@ -182,10 +186,14 @@ export function TelnetP2pRadioPanel({ onClose }: TelnetP2pRadioPanelProps) {
 
   // Persist listener config edits. Merge-then-write so partial edits
   // (e.g., changing only port) don't clobber the other fields.
+  // Codex review 2026-06-03 [P2] (tuxlink-7vea): the backend command takes
+  // a single `req: TelnetListenConfigDto` parameter; the prior call passed
+  // the DTO fields at the top level so Tauri rejected the invoke as
+  // missing `req` and the catch swallowed the error.
   const persistListenConfig = (patch: Partial<TelnetListenConfig>) => {
     const next = { ...listenConfig, ...patch };
     setListenConfig(next);
-    void invoke('telnet_listen_config_set', next).catch(() => {
+    void invoke('telnet_listen_config_set', { req: next }).catch(() => {
       // Persist errors surface in the session log via the backend.
     });
   };

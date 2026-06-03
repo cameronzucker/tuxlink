@@ -2290,23 +2290,39 @@ pub async fn ardop_listen(
         });
     }
 
-    // Send LISTEN TRUE to the running ardopcf modem. This requires the
-    // modem to already be running (the cmd writer is installed during
-    // `modem_ardop_connect`'s init path).
-    session
-        .send_listen_command(true)
-        .map_err(|e| UiError::Internal {
-            detail: format!(
-                "ARDOP listener arm refused — modem is not running. \
-                 Start the modem first (Connect to a peer or open the ARDOP \
-                 modem panel), then re-arm. Underlying error: {e}"
-            ),
-        })?;
-
+    // Codex review 2026-06-03 [P2] (tuxlink-7vea): append the arms record
+    // to the forensics log BEFORE flipping the modem's LISTEN flag. The
+    // prior order sent LISTEN TRUE first and then appended — if the
+    // forensics-log write failed (config dir unwritable, disk full), the
+    // command returned an error but ardopcf was left in LISTEN mode with
+    // no successful arm record. Now: log first, then toggle. If LISTEN
+    // TRUE fails, the operator sees a forensics-record-without-LISTEN
+    // (recoverable, the next disarm cleans up the record).
     let arms = ListenerArmsRecord::arm(TransportKind::Ardop, DEFAULT_TTL);
     let log_path = ardop_arms_log_path();
     arms.append_to_log(&log_path)
         .map_err(|e| UiError::Internal { detail: e.to_string() })?;
+
+    // Send LISTEN TRUE to the running ardopcf modem. This requires the
+    // modem to already be running (the cmd writer is installed during
+    // `modem_ardop_connect`'s init path — i.e., after an outbound dial).
+    // Codex review 2026-06-03 [P3] (tuxlink-7vea): the prior error
+    // message told the operator to "open the ARDOP modem panel," but
+    // opening the panel does not start ardopcf — only an outbound
+    // Connect does. Tightened to the actually-available action; the full
+    // listen-only start flow is tracked at tuxlink-syqb.
+    session
+        .send_listen_command(true)
+        .map_err(|e| UiError::Internal {
+            detail: format!(
+                "ARDOP listener arm refused — the modem is not running. \
+                 In the current build the modem only starts when you Connect \
+                 to a peer (an outbound dial). Start the modem via an ARDOP \
+                 Connect first, then re-arm the listener. Listen-only \
+                 modem start is tracked at tuxlink-syqb. \
+                 Underlying error: {e}"
+            ),
+        })?;
 
     let mins = arms.ttl.as_secs() / 60;
     emit_session_line(
