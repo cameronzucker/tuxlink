@@ -239,7 +239,7 @@ fn build_router(state: Arc<SessionState>) -> Router {
     Router::new()
         .route("/", any(root_handler))
         .route("/skin.css", get(skin_handler))
-        .route("/folder/*path", get(folder_handler))
+        .route("/folder/{*path}", get(folder_handler))
         .with_state(state)
 }
 
