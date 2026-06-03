@@ -4,6 +4,13 @@ All notable changes to Tuxlink are documented here.
 
 This project adheres to [Semantic Versioning](https://semver.org) with project-specific rules described in [VERSIONING.md](VERSIONING.md). Entries from `v0.0.2` onward are generated automatically by [`release-please`](https://github.com/googleapis/release-please) from [Conventional Commits](https://www.conventionalcommits.org).
 
+## [0.25.0](https://github.com/cameronzucker/tuxlink/compare/v0.24.3...v0.25.0) (2026-06-03)
+
+
+### Features
+
+* **help:** widen reading column — Wide 980→1280 px, default to Wide (tuxlink-d7a7) ([8711908](https://github.com/cameronzucker/tuxlink/commit/87119088af67ab23a23bb747e90380ad918c8e34))
+
 ## [0.24.3](https://github.com/cameronzucker/tuxlink/compare/v0.24.2...v0.24.3) (2026-06-03)
 
 
