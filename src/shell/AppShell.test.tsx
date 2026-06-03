@@ -552,24 +552,25 @@ describe('<AppShell> — find-messages wiring (Task 17)', () => {
 //
 // Operator 2026-06-01 surfaced ARDOP-panel content clipping at the 360 px
 // width; a prior CSS clamp (commit cc82bf4) only partially fixed it.
-// Operator-approved fix: widen the panel column to 400 px. The mailbox
-// column absorbs the 40 px reduction (340 → 300) so the 1fr reading-pane
-// keeps its share. This test pins the grid-template-columns declaration
-// in AppShell.css so any future regression that quietly walks the width
-// back is caught at unit-test time. The rule must apply to BOTH the
-// 4-col (`panes--with-dock`) and 5-col (`.panes--with-legacy-dock`)
-// variants per operator's "all modes" directive.
+// tuxlink-8rng widened the radio-panel column to 400 px and originally
+// shrank the mailbox column 380 → 300 to fund 80 px of the panel. Operator
+// pushback (tuxlink-40u8, 2026-06-03): compressing the mailbox column AND
+// the reading pane at the same time feels unpolished. The mailbox now
+// stays at 380 px and the panel's full 400 px comes from the 1fr
+// reading-pane. These tests pin the grid-template-columns declaration so
+// the layout doesn't quietly walk back. Rule applies to both the 4-col
+// (`panes--with-dock`) and 5-col (`.panes--with-legacy-dock`) variants.
 // ---------------------------------------------------------------------------
-describe('AppShell.css radio-panel chrome width (tuxlink-8rng)', () => {
+describe('AppShell.css radio-panel chrome width (tuxlink-8rng + tuxlink-40u8)', () => {
   it('declares the radio-panel column at 400px in .panes--with-dock', () => {
     expect(appShellCss).toMatch(
-      /\.layout-b \.panes--with-dock\s*\{[^}]*200px\s+300px\s+1fr\s+400px/,
+      /\.layout-b \.panes--with-dock\s*\{[^}]*200px\s+380px\s+1fr\s+400px/,
     );
   });
 
   it('declares the radio-panel column at 400px in .panes--with-legacy-dock', () => {
     expect(appShellCss).toMatch(
-      /\.layout-b \.panes--with-dock\.panes--with-legacy-dock\s*\{[^}]*200px\s+300px\s+1fr\s+400px\s+290px/,
+      /\.layout-b \.panes--with-dock\.panes--with-legacy-dock\s*\{[^}]*200px\s+380px\s+1fr\s+400px\s+290px/,
     );
   });
 });
