@@ -4,6 +4,13 @@ All notable changes to Tuxlink are documented here.
 
 This project adheres to [Semantic Versioning](https://semver.org) with project-specific rules described in [VERSIONING.md](VERSIONING.md). Entries from `v0.0.2` onward are generated automatically by [`release-please`](https://github.com/googleapis/release-please) from [Conventional Commits](https://www.conventionalcommits.org).
 
+## [0.23.4](https://github.com/cameronzucker/tuxlink/compare/v0.23.3...v0.23.4) (2026-06-03)
+
+
+### Bug Fixes
+
+* **perf:** adrev follow-ups — row-date staleness + sidebar memo + lazy-MessageView fallback (tuxlink-268k) ([b03d887](https://github.com/cameronzucker/tuxlink/commit/b03d88786ee530628851938e0f3f828863897cff))
+
 ## [0.23.3](https://github.com/cameronzucker/tuxlink/compare/v0.23.2...v0.23.3) (2026-06-03)
 
 
