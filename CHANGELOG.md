@@ -4,6 +4,13 @@ All notable changes to Tuxlink are documented here.
 
 This project adheres to [Semantic Versioning](https://semver.org) with project-specific rules described in [VERSIONING.md](VERSIONING.md). Entries from `v0.0.2` onward are generated automatically by [`release-please`](https://github.com/googleapis/release-please) from [Conventional Commits](https://www.conventionalcommits.org).
 
+## [0.23.3](https://github.com/cameronzucker/tuxlink/compare/v0.23.2...v0.23.3) (2026-06-03)
+
+
+### Performance
+
+* **mailbox:** lazy-split MessageView + React.memo FolderSidebar (tuxlink-u8z7) ([99b4a50](https://github.com/cameronzucker/tuxlink/commit/99b4a50110653103b6931250579fadcea644af5c))
+
 ## [0.23.2](https://github.com/cameronzucker/tuxlink/compare/v0.23.1...v0.23.2) (2026-06-03)
 
 
