@@ -10,16 +10,42 @@
   background: var(--bg);
   display: flex;
   justify-content: center;
+  /* tuxlink-q5td — scroll performance. WebKitGTK was repainting the
+   * whole content article on every scroll frame, making scroll feel
+   * notably less smooth than the main client (which has lower DOM depth
+   * per render). Two compositing hints: `transform: translateZ(0)`
+   * forces a GPU layer for the scroll container; `will-change: transform`
+   * declares intent so the layer is set up before the first scroll
+   * rather than mid-gesture. Trade-off is one extra layer's worth of
+   * GPU memory — negligible for a small window. */
+  transform: translateZ(0);
+  will-change: transform;
 }
 
 .tux-help-reading-inner {
   /* Width preset (tuxlink-ew3k). --help-reading-max-width is set on
    * .tux-help-root by HelpView (driven by useReadingWidth) — 720 px for
    * narrow (original spec §5.3 default), 980 px for wide (Wikipedia-style
-   * wider column for big screens). */
+   * wider column for big screens).
+   *
+   * Bottom padding bumped 80 → 160 px (tuxlink-q5td): the prior value
+   * left the last paragraph nearly flush with the window bottom, which
+   * read as unfinished. 160 px gives Wikipedia-style breathing room
+   * even when the operator scrolls to the absolute end. */
   max-width: var(--help-reading-max-width, 720px);
   width: 100%;
-  padding: 36px 48px 80px;
+  padding: 36px 48px 160px;
+}
+
+/* `contain: content` tells WebKit that .tux-help-reading-content's
+ * subtree doesn't affect anything outside it (paint/layout/style are
+ * contained). The browser can then skip work on the article during
+ * scroll. Safe here because the article IS a self-contained block —
+ * none of its children are absolutely positioned outside it, no
+ * floats escape, no z-index from inside reaches outside. (tuxlink-q5td
+ * — scroll perf.) */
+.tux-help-reading-content {
+  contain: content;
 }
 
 .tux-help-reading-content {
