@@ -4,6 +4,13 @@ All notable changes to Tuxlink are documented here.
 
 This project adheres to [Semantic Versioning](https://semver.org) with project-specific rules described in [VERSIONING.md](VERSIONING.md). Entries from `v0.0.2` onward are generated automatically by [`release-please`](https://github.com/googleapis/release-please) from [Conventional Commits](https://www.conventionalcommits.org).
 
+## [0.23.0](https://github.com/cameronzucker/tuxlink/compare/v0.22.1...v0.23.0) (2026-06-03)
+
+
+### Features
+
+* **menu:** wire menu:message:print (Ctrl+P) — tuxlink-j0m3 ([d6a47ae](https://github.com/cameronzucker/tuxlink/commit/d6a47aea376a59894058f576578b61d71356d6fa))
+
 ## [0.22.1](https://github.com/cameronzucker/tuxlink/compare/v0.22.0...v0.22.1) (2026-06-03)
 
 
