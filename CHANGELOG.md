@@ -4,6 +4,13 @@ All notable changes to Tuxlink are documented here.
 
 This project adheres to [Semantic Versioning](https://semver.org) with project-specific rules described in [VERSIONING.md](VERSIONING.md). Entries from `v0.0.2` onward are generated automatically by [`release-please`](https://github.com/googleapis/release-please) from [Conventional Commits](https://www.conventionalcommits.org).
 
+## [0.22.0](https://github.com/cameronzucker/tuxlink/compare/v0.21.0...v0.22.0) (2026-06-03)
+
+
+### Features
+
+* **connections:** wire P2P-VARA HF/FM in the sidebar (tuxlink-kb3s) ([2935590](https://github.com/cameronzucker/tuxlink/commit/2935590541ab0bae014d8aa12ff516e61b2e3b2e))
+
 ## [0.21.0](https://github.com/cameronzucker/tuxlink/compare/v0.20.1...v0.21.0) (2026-06-03)
 
 
