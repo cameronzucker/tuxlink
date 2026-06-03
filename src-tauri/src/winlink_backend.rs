@@ -685,6 +685,13 @@ pub struct NativeBackend {
     /// superseding the stale `config` snapshot's grid. `None` in tests / the
     /// no-arbiter path, where `cms_locator(config)` is the fallback.
     position: Option<Arc<crate::position::PositionArbiter>>,
+    /// Test-injected Packet listener allowlist (tuxlink-inde). When `Some`, the
+    /// Packet `Listen` path uses this in-memory list instead of loading from
+    /// `<config-dir>/listener/packet/allowed_stations.json`. Production
+    /// (`bootstrap`/UI) leaves this `None` so the disk file is authoritative;
+    /// tests inject a permissive list (e.g. `allow_all=TRUE`) to bypass the
+    /// architectural default of "reject all until operator curates."
+    packet_allowlist_override: Option<crate::winlink::listener::AllowedStations>,
 }
 
 /// Clears the single-flight + abort state when a `connect` ends, however it ends
@@ -740,6 +747,7 @@ impl NativeBackend {
             aborting: Arc::new(AtomicBool::new(false)),
             connect_in_progress: Arc::new(AtomicBool::new(false)),
             position: None,
+            packet_allowlist_override: None,
         }
     }
 
@@ -755,6 +763,20 @@ impl NativeBackend {
     /// constructors and tests are unaffected.
     pub fn with_position(mut self, arbiter: Arc<crate::position::PositionArbiter>) -> Self {
         self.position = Some(arbiter);
+        self
+    }
+
+    /// Inject a Packet listener allowlist (tuxlink-inde). When set, the
+    /// `Listen` role bypasses the disk-backed
+    /// `<config-dir>/listener/packet/allowed_stations.json` lookup and uses
+    /// this in-memory list instead. Production wires the disk file via
+    /// `bootstrap`/UI; tests use this to permit the dialer's callsign without
+    /// touching the user's filesystem.
+    pub fn with_packet_allowlist(
+        mut self,
+        allowed: crate::winlink::listener::AllowedStations,
+    ) -> Self {
+        self.packet_allowlist_override = Some(allowed);
         self
     }
 
@@ -1099,11 +1121,22 @@ impl NativeBackend {
         let wire = self.wire.clone();
         let abort_handle = self.abort_handle.clone();
         let aborting = self.aborting.clone();
+        let allowlist_override = self.packet_allowlist_override.clone();
 
         self.set_status(initial_status);
 
         let outcome = tokio::task::spawn_blocking(move || {
-            native_packet_connect(&config, &mailbox, link, resolved, &*progress, &*wire, &abort_handle, aborting)
+            native_packet_connect(
+                &config,
+                &mailbox,
+                link,
+                resolved,
+                &*progress,
+                &*wire,
+                &abort_handle,
+                aborting,
+                allowlist_override,
+            )
         })
         .await
         .map_err(|e| BackendError::Internal {
@@ -1315,6 +1348,7 @@ fn native_packet_connect(
     wire_log: &dyn Fn(&str),
     abort_handle: &Mutex<Option<TcpStream>>,
     aborting: Arc<AtomicBool>,
+    allowlist_override: Option<crate::winlink::listener::AllowedStations>,
 ) -> Result<(), BackendError> {
     let params = config.packet.params.clone().into_params();
     let locator = cms_locator(config);
@@ -1397,6 +1431,63 @@ fn native_packet_connect(
             )
         }
         None => {
+            // ── Listener-arms gate (tuxlink-inde) — armed BEFORE answer()
+            //
+            // Codex review 2026-06-03 [P2 — arm-time]: the original code
+            // created `arms` AFTER `ax25::answer()` returned, so the TTL
+            // gate was effectively a no-op (the arms record was always
+            // freshly-minted at peer-receipt time, never compared against
+            // the operator's true arm moment). The TTL check now meaningfully
+            // expires the listener if a SABM arrives more than DEFAULT_TTL
+            // after the operator armed: a peer that lands past the consent
+            // window gets RejectExpired rather than silent accept.
+            //
+            // Reject path: drop the stream. Ax25Stream::drop fires DISC because
+            // the link is established (the UA we just sent armed Drop teardown
+            // via tuxlink-2y4). Reject events append to the shared forensics
+            // log alongside the arm record.
+            //
+            // The full architecture (multi-peer continuous-armed listener with
+            // shared arms record across multiple SABMs in one armed window)
+            // is the follow-up; current model is one-arm one-answer cycle.
+            use crate::winlink::listener::packet_gate::{
+                gate_inbound_peer_now, listener_forensics_log_path, peer_id_from_ax25,
+                reject_reason, ListenerRejectEvent,
+            };
+            use crate::winlink::listener::{
+                packet_gate, AllowedStations, ListenerArmsRecord, ListenerDecision, TransportKind,
+            };
+
+            // Codex review 2026-06-03 [P2 — load-error visibility]: the
+            // previous code silently substituted AllowedStations::default()
+            // (allow_all=FALSE, empty list) on a corrupt-or-unreadable
+            // allowlist file. The operator saw a normal "allowlist" reject
+            // and couldn't tell whether the gate was working as configured
+            // OR the allowlist had been wiped. We now (a) surface the load
+            // error verbatim via progress(), and (b) use a distinct
+            // "allowlist-load-error" reject reason so the forensics log +
+            // session log clearly distinguish "configured allowlist denied
+            // this peer" from "couldn't load the allowlist; failing closed."
+            let mut load_failed_reason: Option<String> = None;
+            let allowed = if let Some(injected) = allowlist_override.clone() {
+                // Test injection (tuxlink-inde): bypasses the disk-file lookup.
+                // Production never sets this; `bootstrap`/UI relies on the file.
+                injected
+            } else {
+                match AllowedStations::load_from(&packet_gate::packet_allowed_stations_path()) {
+                    Ok(a) => a,
+                    Err(e) => {
+                        let reason_str = format!("{e}");
+                        progress(&format!(
+                            "Packet allowlist load failed: {reason_str}. Failing closed (reject all inbound until repaired)."
+                        ));
+                        load_failed_reason = Some(reason_str);
+                        AllowedStations::default()
+                    }
+                }
+            };
+            let arms = ListenerArmsRecord::arm_default(TransportKind::Packet);
+
             progress("Listening for an inbound peer…");
             let (peer, stream) = crate::winlink::ax25::answer(
                 bytelink,
@@ -1408,6 +1499,40 @@ fn native_packet_connect(
                 source: None,
             })?;
             progress(&format!("Answered {}.", peer.call));
+
+            let peer_id = peer_id_from_ax25(peer.clone());
+            let decision = gate_inbound_peer_now(&peer_id, &allowed, &arms);
+
+            if decision != ListenerDecision::Accept {
+                // If the gate rejected with "allowlist" AND we know the load
+                // failed, upgrade the reject reason to a distinct
+                // "allowlist-load-error" so the operator can distinguish.
+                let reason: &str = match (&decision, &load_failed_reason) {
+                    (ListenerDecision::RejectAllowlist, Some(_)) => "allowlist-load-error",
+                    _ => reject_reason(&decision).unwrap_or("unknown"),
+                };
+                let log_path = listener_forensics_log_path();
+                let event =
+                    ListenerRejectEvent::new(TransportKind::Packet, reason, &peer_id);
+                let _ = event.append_to_log(&log_path);
+
+                let msg = format!(
+                    "Rejected inbound from {} (reason: {}). Dropping link.",
+                    peer.call, reason,
+                );
+                progress(&msg);
+
+                // Drop the stream → Ax25Stream::drop sends DISC + best-effort
+                // awaits UA/DM.
+                drop(stream);
+                return Err(BackendError::AuthFailed {
+                    reason: format!(
+                        "listener gate rejected inbound peer {} ({})",
+                        peer.call, reason
+                    ),
+                });
+            }
+
             // Listen (Answer role) does not need a password — peers do not challenge.
             // password: None is intentional; no read_password call here.
             native_packet_exchange(
@@ -2848,7 +2973,14 @@ mod native_read_state_tests {
         seed.store(MailboxFolder::Outbox, &raw).unwrap();
 
         let dialer = NativeBackend::new(config_with_call("N7CPZ"), dialer_dir.path());
-        let answerer = NativeBackend::new(config_with_call("W7AUX"), answerer_dir.path());
+        // The answerer's listener gate (tuxlink-inde) defaults to "reject all"
+        // — fresh tuxlink with no operator-curated allowlist rejects every
+        // inbound peer. For this happy-path E2E test we inject an
+        // allow_all=TRUE list so the dialer's N7CPZ-7 SABM is accepted.
+        let answerer = NativeBackend::new(config_with_call("W7AUX"), answerer_dir.path())
+            .with_packet_allowlist(
+                crate::winlink::listener::AllowedStations::new().with_allow_all(true),
+            );
 
         let listen = TransportConfig::Packet {
             link: KissLinkConfig::Tcp { host: wire.ip().to_string(), port: wire.port() },
