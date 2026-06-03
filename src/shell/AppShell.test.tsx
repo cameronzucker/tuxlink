@@ -349,7 +349,9 @@ describe('<AppShell> — Mock B topology', () => {
     // P3: Packet UI lives in the right radio panel. The reading pane
     // falls back to the message view (same pattern as Telnet (P2) and
     // ARDOP (P4)).
-    const panel = await screen.findByTestId('radio-panel-root');
+    // tuxlink-twym: bump timeout — radio panels are now React.lazy and the
+    // dynamic-import resolve can race the default 1s waitFor on Pi-class CI.
+    const panel = await screen.findByTestId('radio-panel-root', undefined, { timeout: 5000 });
     expect(panel).toBeInTheDocument();
     expect(await screen.findByTestId('radio-panel-title')).toHaveTextContent(/Packet/);
     // Reading pane stays on the message view (no Packet form there anymore).
@@ -361,7 +363,7 @@ describe('<AppShell> — Mock B topology', () => {
     renderShell();
     fireEvent.click(screen.getByTestId('sess-cms'));
     fireEvent.click(screen.getByTestId('proto-cms-packet'));
-    await screen.findByTestId('radio-panel-root');
+    await screen.findByTestId('radio-panel-root', undefined, { timeout: 5000 });
     fireEvent.click(screen.getByTestId('folder-sent'));
     // Folder switch clears selectedConnection (intentional — onSelectFolder
     // resets the reading-pane context). Panel unmounts unless a modem is
@@ -376,7 +378,9 @@ describe('<AppShell> — Mock B topology', () => {
     fireEvent.click(screen.getByTestId('proto-cms-telnet'));
     // Telnet UI now lives in the right radio panel (data-testid=radio-panel-root)
     // with the Telnet Winlink title; the reading pane shows the MessageView fallback.
-    const panel = await screen.findByTestId('radio-panel-root');
+    // tuxlink-twym: bump timeout — radio panels are now React.lazy and the
+    // dynamic-import resolve can race the default 1s waitFor on Pi-class CI.
+    const panel = await screen.findByTestId('radio-panel-root', undefined, { timeout: 5000 });
     expect(panel).toBeInTheDocument();
     expect(await screen.findByTestId('radio-panel-title')).toHaveTextContent('Telnet Winlink');
   });
@@ -387,7 +391,9 @@ describe('<AppShell> — Mock B topology', () => {
     fireEvent.click(screen.getByTestId('proto-p2p-telnet'));
     // p2p+telnet shares the radio-panel-root mount with cms+telnet but the
     // title swaps to "Telnet P2P" via the intent-aware panelTitle().
-    const panel = await screen.findByTestId('radio-panel-root');
+    // tuxlink-twym: bump timeout — radio panels are now React.lazy and the
+    // dynamic-import resolve can race the default 1s waitFor on Pi-class CI.
+    const panel = await screen.findByTestId('radio-panel-root', undefined, { timeout: 5000 });
     expect(panel).toBeInTheDocument();
     expect(await screen.findByTestId('radio-panel-title')).toHaveTextContent('Telnet P2P');
   });
@@ -400,7 +406,7 @@ describe('<AppShell> — Mock B topology', () => {
     renderShell();
     fireEvent.click(screen.getByTestId('sess-cms'));
     fireEvent.click(screen.getByTestId('proto-cms-telnet'));
-    await screen.findByTestId('radio-panel-root');
+    await screen.findByTestId('radio-panel-root', undefined, { timeout: 5000 });
     fireEvent.click(screen.getByTestId('message-row-INBOX1'));
     // Panel must still be present; the click on the message no longer clears
     // selectedConnection.
@@ -417,7 +423,7 @@ describe('<AppShell> — Mock B topology', () => {
     // selectedMessage is set; reading pane shows MessageView for INBOX1.
     fireEvent.click(screen.getByTestId('sess-cms'));
     fireEvent.click(screen.getByTestId('proto-cms-telnet'));
-    await screen.findByTestId('radio-panel-root');
+    await screen.findByTestId('radio-panel-root', undefined, { timeout: 5000 });
     // The message row stays highlighted (selectedMessage was preserved).
     const messageRow = screen.getByTestId('message-row-INBOX1');
     expect(messageRow).toHaveAttribute('aria-selected', 'true');
