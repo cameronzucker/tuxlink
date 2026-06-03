@@ -4,6 +4,13 @@ All notable changes to Tuxlink are documented here.
 
 This project adheres to [Semantic Versioning](https://semver.org) with project-specific rules described in [VERSIONING.md](VERSIONING.md). Entries from `v0.0.2` onward are generated automatically by [`release-please`](https://github.com/googleapis/release-please) from [Conventional Commits](https://www.conventionalcommits.org).
 
+## [0.20.1](https://github.com/cameronzucker/tuxlink/compare/v0.20.0...v0.20.1) (2026-06-03)
+
+
+### Performance
+
+* **shell:** pre-paint skeleton + lazy-load panels for cold-start (tuxlink-k0q3) ([d910598](https://github.com/cameronzucker/tuxlink/commit/d9105989ff164454d171c61bcbed83059195f16e))
+
 ## [0.20.0](https://github.com/cameronzucker/tuxlink/compare/v0.19.0...v0.20.0) (2026-06-03)
 
 
