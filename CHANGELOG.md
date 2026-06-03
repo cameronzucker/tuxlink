@@ -9,7 +9,14 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
 
 ### Bug Fixes
 
+* **examples:** add missing initial_listen field to ardop_connect ([fd8cecd](https://github.com/cameronzucker/tuxlink/commit/fd8cecd82f78094fab23a8536bff011c8df0904e))
 * **perf:** break infinite theme-broadcast loop pegging WebKit + Rust at idle (tuxlink-och6) [P0] ([a4329a5](https://github.com/cameronzucker/tuxlink/commit/a4329a58b2f61ecc42ca4d6bb81a0fc6c1859575))
+* **tests:** add missing intent field to ExchangeConfig (3 sites) ([fc7de9e](https://github.com/cameronzucker/tuxlink/commit/fc7de9eadd38e7c50bb67e2ee54d52dcc90be55d))
+
+
+### Refactors
+
+* address 15 clippy lints surfaced by new CI gate ([62d8797](https://github.com/cameronzucker/tuxlink/commit/62d879725f32125ec075a6168b3422b5ea5b73b0))
 
 ## [0.24.2](https://github.com/cameronzucker/tuxlink/compare/v0.24.1...v0.24.2) (2026-06-03)
 
