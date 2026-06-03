@@ -118,11 +118,9 @@ pub fn slug_from_display(name: &str) -> String {
         if lo.is_ascii_alphanumeric() {
             out.push(lo);
             prev_dash = false;
-        } else if lo == ' ' || lo == '-' || lo == '_' {
-            if !prev_dash && !out.is_empty() {
-                out.push('-');
-                prev_dash = true;
-            }
+        } else if (lo == ' ' || lo == '-' || lo == '_') && !prev_dash && !out.is_empty() {
+            out.push('-');
+            prev_dash = true;
         }
     }
     while out.ends_with('-') {

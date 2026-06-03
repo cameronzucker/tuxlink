@@ -289,7 +289,7 @@ fn is_valid_hhmm(s: &str) -> bool {
     };
     let Ok(hh) = h.parse::<u32>() else { return false };
     let Ok(mm) = m.parse::<u32>() else { return false };
-    if h.len() == 0 || h.len() > 2 || m.len() != 2 {
+    if h.is_empty() || h.len() > 2 || m.len() != 2 {
         return false;
     }
     hh <= 23 && mm <= 59

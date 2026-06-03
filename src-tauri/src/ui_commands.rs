@@ -3854,10 +3854,7 @@ hw:CARD=Device,DEV=0
     fn extract_attachment_bytes_round_trips_binary_payload() {
         // Use a non-text binary blob (GRIB-1 magic bytes + some noise) to
         // stand in for a real Saildocs GRIB attachment.
-        let payload: Vec<u8> = b"GRIB\x00\x01\x02\x03\xff\xfe\xfd random binary \x00\x00"
-            .iter()
-            .copied()
-            .collect();
+        let payload: Vec<u8> = b"GRIB\x00\x01\x02\x03\xff\xfe\xfd random binary \x00\x00".to_vec();
         let raw = build_mime_with_attachment("forecast.grb", &payload);
         let msg = mail_parser::MessageParser::new()
             .parse(raw.as_slice())
@@ -4340,7 +4337,7 @@ hw:CARD=Device,DEV=0
     async fn config_set_grid_pins_manual_source_in_config_and_arbiter() {
         use crate::config::CONFIG_SCHEMA_VERSION;
 
-        let _env_guard = position_set_source_env_lock();
+        let _env_guard = position_set_source_env_lock().await;
         let tmp = tempfile::tempdir().expect("create tempdir");
         let prior = std::env::var("TUXLINK_CONFIG_DIR").ok();
         // SAFETY: single-threaded test (env_lock); no concurrent env reads within this block.
@@ -4719,9 +4716,15 @@ hw:CARD=Device,DEV=0
     /// touches the env grabs this mutex for the duration of its
     /// set→read→restore sequence. Without this gate, env-mutating tests in this
     /// binary race (tuxlink-j0ij precedent).
-    fn position_set_source_env_lock() -> std::sync::MutexGuard<'static, ()> {
-        static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-        LOCK.lock().unwrap_or_else(|e| e.into_inner())
+    ///
+    /// Uses `tokio::sync::Mutex` rather than `std::sync::Mutex` because the
+    /// callers are `#[tokio::test]` async functions that hold the guard across
+    /// `.await` points; std::sync::Mutex would block the worker thread when
+    /// contended (clippy::await_holding_lock), while tokio's Mutex yields to
+    /// the executor.
+    async fn position_set_source_env_lock() -> tokio::sync::MutexGuard<'static, ()> {
+        static LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+        LOCK.lock().await
     }
 
     // Codex P0 #1 / spec §1.1: position_set_source('Gps') mirrors the arbiter
@@ -4733,7 +4736,7 @@ hw:CARD=Device,DEV=0
     async fn position_set_source_gps_succeeds_without_fresh_fix() {
         use crate::config::CONFIG_SCHEMA_VERSION;
 
-        let _env_guard = position_set_source_env_lock();
+        let _env_guard = position_set_source_env_lock().await;
         let tmp = tempfile::tempdir().expect("create tempdir");
         let prior = std::env::var("TUXLINK_CONFIG_DIR").ok();
         // SAFETY: single-threaded test (env_lock); no concurrent env reads within this block.
@@ -4814,7 +4817,7 @@ hw:CARD=Device,DEV=0
         use crate::config::CONFIG_SCHEMA_VERSION;
         use tokio::sync::Barrier;
 
-        let _env_guard = position_set_source_env_lock();
+        let _env_guard = position_set_source_env_lock().await;
         let tmp = tempfile::tempdir().expect("create tempdir");
         let prior = std::env::var("TUXLINK_CONFIG_DIR").ok();
         // SAFETY: single-threaded test (env_lock); no concurrent env reads within this block.

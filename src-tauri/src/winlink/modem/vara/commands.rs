@@ -1,11 +1,11 @@
 //! Tauri commands for VARA modem operations (Phase 2 — bd-tuxlink-dfmf).
 //!
-//! Scope: minimal TCP-transport lifecycle (`start_vara_session` opens the cmd
-//! + data socket pair; `stop_vara_session` closes them; `vara_status` returns
-//! a snapshot). Full session-state machine (B2F-over-VARA, RADIO-1-gated
-//! `CONNECT` to a peer, ARQ-state derivation) is Phase 3 territory and is
-//! NOT in this surface — opening the TCP sockets does NOT transmit, so this
-//! surface is RADIO-1-safe on its own.
+//! Scope: minimal TCP-transport lifecycle. `start_vara_session` opens the
+//! command and data sockets; `stop_vara_session` closes them; `vara_status`
+//! returns a snapshot. Full session-state machine (B2F-over-VARA, RADIO-1-
+//! gated `CONNECT` to a peer, ARQ-state derivation) is Phase 3 territory and
+//! is NOT in this surface — opening the TCP sockets does NOT transmit, so
+//! this surface is RADIO-1-safe on its own.
 //!
 //! ## Why a separate file
 //!
