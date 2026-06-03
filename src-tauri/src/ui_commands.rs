@@ -2831,6 +2831,17 @@ fn save_telnet_allowed_stations(
         .map_err(|e| UiError::Internal { detail: e.to_string() })
 }
 
+/// Codex review 2026-06-03 [P3]: process-wide mutex serialising
+/// load-mutate-save against the Telnet allowlist file. The UI exposes
+/// independent add/remove commands for callsigns + IPs + allow_all; without
+/// this mutex two concurrent UI calls race (both load same file → both
+/// mutate in-memory copies → second save clobbers first). Lock for the
+/// whole load-mutate-save cycle, not just save.
+fn telnet_allowlist_file_lock() -> &'static std::sync::Mutex<()> {
+    static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+    LOCK.get_or_init(|| std::sync::Mutex::new(()))
+}
+
 // ── Allowlist commands ──────────────────────────────────────────
 
 #[derive(Debug, Serialize)]
@@ -2856,6 +2867,7 @@ pub async fn telnet_allowed_stations_get() -> Result<TelnetAllowedStationsDto, U
 /// pattern (`N7*` — matches every callsign starting with `N7`).
 #[tauri::command]
 pub async fn telnet_allowed_stations_add_callsign(callsign: String) -> Result<(), UiError> {
+    let _guard = telnet_allowlist_file_lock().lock().unwrap();
     let mut a = load_telnet_allowed_stations()?;
     a.add_callsign_pattern(callsign);
     save_telnet_allowed_stations(&a)
@@ -2865,6 +2877,7 @@ pub async fn telnet_allowed_stations_add_callsign(callsign: String) -> Result<()
 /// canonical stored form (uppercased, trimmed).
 #[tauri::command]
 pub async fn telnet_allowed_stations_remove_callsign(callsign: String) -> Result<(), UiError> {
+    let _guard = telnet_allowlist_file_lock().lock().unwrap();
     let mut a = load_telnet_allowed_stations()?;
     let target = callsign.trim().to_uppercase();
     let kept: Vec<String> = a.callsigns().iter().filter(|c| **c != target).cloned().collect();
@@ -2884,6 +2897,7 @@ pub async fn telnet_allowed_stations_remove_callsign(callsign: String) -> Result
 /// (`192.168.*.50`, `192.168.1.*`, `192.168.1.5`) per telnet-p2p.md §4.3.
 #[tauri::command]
 pub async fn telnet_allowed_stations_add_ip(pattern: String) -> Result<(), UiError> {
+    let _guard = telnet_allowlist_file_lock().lock().unwrap();
     let mut a = load_telnet_allowed_stations()?;
     a.add_ip_pattern(pattern);
     save_telnet_allowed_stations(&a)
@@ -2891,6 +2905,7 @@ pub async fn telnet_allowed_stations_add_ip(pattern: String) -> Result<(), UiErr
 
 #[tauri::command]
 pub async fn telnet_allowed_stations_remove_ip(pattern: String) -> Result<(), UiError> {
+    let _guard = telnet_allowlist_file_lock().lock().unwrap();
     let mut a = load_telnet_allowed_stations()?;
     let target = pattern.trim().to_string();
     let kept_ips: Vec<String> = a.ips().iter().filter(|i| **i != target).cloned().collect();
@@ -2910,6 +2925,7 @@ pub async fn telnet_allowed_stations_remove_ip(pattern: String) -> Result<(), Ui
 /// defaults FALSE; operator opts into permissive parity-with-WLE explicitly.
 #[tauri::command]
 pub async fn telnet_allowed_stations_set_allow_all(enabled: bool) -> Result<(), UiError> {
+    let _guard = telnet_allowlist_file_lock().lock().unwrap();
     let mut a = load_telnet_allowed_stations()?;
     a.set_allow_all(enabled);
     save_telnet_allowed_stations(&a)
@@ -3099,7 +3115,20 @@ pub async fn telnet_listen(
                     line.to_string(),
                 );
             },
-            |_proposals: &[_]| Vec::new(),
+            |proposals: &[crate::winlink::proposal::Proposal]| {
+                // Codex review 2026-06-03 [P1]: returning an empty Vec made
+                // `receive_turn` fail with `AnswerCountMismatch` on any
+                // inbound batch, so the listener couldn't actually accept
+                // P2P mail. Mirror the Packet listener's policy
+                // (`winlink_backend::native_packet_exchange` ~line 1279):
+                // accept every proposal at the B2F layer; mailbox dedup is
+                // a follow-up (filed as a new bd issue tracking inbound-
+                // mail symmetry — outbox-on-inbound + inbox-persistence).
+                proposals
+                    .iter()
+                    .map(|_| crate::winlink::proposal::Answer::Accept { resume_offset: 0 })
+                    .collect()
+            },
         );
         // Clear the handle once the loop exits.
         let mut guard = state_for_thread.inner.lock().unwrap();

@@ -213,6 +213,23 @@ pub fn run_accept_loop<F>(
                 return;
             }
         };
+
+        // Codex review 2026-06-03 [P2]: close the TOCTOU between the shutdown
+        // check at the loop top and the actual `accept()` call. If
+        // `telnet_set_listen(false)` flipped `shutdown` AND the wakeup connect
+        // raced into our accept queue (or any other queued peer landed
+        // between the check and the syscall return), the prior code handed
+        // the peer to handle_one_session and let it complete auth + B2F
+        // AFTER the operator disarmed. Re-check shutdown immediately after
+        // the syscall returns and drop the just-accepted stream if so.
+        if shutdown.load(Ordering::SeqCst) {
+            progress(&format!(
+                "Telnet listener disarmed during accept; dropping peer {peer_addr}."
+            ));
+            drop(stream);
+            return;
+        }
+
         progress(&format!("Inbound Telnet connection from {peer_addr}…"));
 
         // Per-session: handle synchronously (MaxConnections=1 parity).
@@ -397,7 +414,15 @@ where
     }
 
     // ── Phase 3: Handoff to B2F answerer ──────────────────────────
-    run_b2f_answerer(reader, writer, config, progress, wire_log, decide)
+    // Codex review 2026-06-03 [P2]: the master handshake (FBB/WLE-strict
+    // peers) addresses the `targetcall` field — leaving it empty puts
+    // `; DE <mycall>` on the wire and can break strict peers. Clone the
+    // listener-shared `ExchangeConfig` per-session and inject the parsed
+    // CALLSIGN response (the peer's claimed callsign, canonicalised by
+    // `parse_telnet_callsign`).
+    let mut per_session_config = config.clone();
+    per_session_config.targetcall = claimed.call.clone();
+    run_b2f_answerer(reader, writer, &per_session_config, progress, wire_log, decide)
 }
 
 /// Drive `run_exchange_with_role(ExchangeRole::Answer)` over the connected
