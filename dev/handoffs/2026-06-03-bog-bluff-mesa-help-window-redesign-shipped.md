@@ -174,8 +174,15 @@ and earlier): not this session's property; see prior handoffs at
     reference, keyboard-shortcut list).
 - **No RF / live-CMS work** — RADIO-1 untouched. The help window is
   pure documentation rendering.
-- **Main checkout in-flight rebase** — SAME state as session start:
-  `task-amd-main-ui` mid-rebase. Did NOT touch.
+- **Main checkout rebase resolved mid-session.** At session start, the
+  main checkout was mid-rebase on `task-amd-main-ui` (per the pika-
+  cedar-tanager handoff and confirmed by `git status` at session
+  start). By session end, the rebase was no longer in progress — no
+  `.git/rebase-merge/` or `.git/rebase-apply/`. This agent did NOT
+  touch the rebase; resolution happened externally (operator action
+  or another concurrent session). HEAD remains on
+  `task-amd-main-ui`. Local `main` is ~135 PRs behind `origin/main`
+  (operator-side hygiene; not blocking).
 - **Subagent-driven execution failure mode** documented: the Pi's
   multi-worktree cargo contention makes the subagent dispatch's
   per-task cargo cycles vulnerable to timeout. Inline executing-plans
@@ -267,8 +274,11 @@ If you have no specific task: filter `bd ready` for RF-path work
 feedback_rf_path_scope_filter — operator green-light + smoke plan
 required (RADIO-1 stays active).
 
-Main checkout is STILL mid-rebase on task-amd-main-ui (operator's
-state since 2026-06-02). Do not touch it. Writes go through worktrees.
+Main checkout is on task-amd-main-ui (NOT mid-rebase as of
+2026-06-03 session end — the rebase resolved during the session).
+Local `main` is ~135 PRs behind origin/main (operator-side hygiene,
+not blocking). Do not touch the main checkout. Writes go through
+worktrees.
 
 Standing follow-ups filed this prior session:
 - tuxlink-h7q7 (P2): main-client FZ-M1 audit (parallel to merged help
