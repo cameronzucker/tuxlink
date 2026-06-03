@@ -138,11 +138,15 @@ export const TUXLINK_DRAG_MIME = 'application/x-tuxlink-message';
 /// Effective only when callers stabilize callback props with useCallback.
 export const MessageRow = memo(function MessageRow({ message, folder, selected, onSelect, matchHighlight, showFolderTag, onContextMenu }: MessageRowProps) {
   // tuxlink-sndh: memoize per-row derived data so it's reused across renders
-  // when the row's own props haven't changed. The date string is the most
-  // visible expense — `formatRowDate(message.date)` calls `new Date()` each
-  // tick when uncached.
+  // when the row's own props haven't changed.
   const size = useMemo(() => formatSize(message.bodySize), [message.bodySize]);
-  const dateLabel = useMemo(() => formatRowDate(message.date), [message.date]);
+  // tuxlink-268k (Codex P2): `formatRowDate` is time-dependent — it reads
+  // `new Date()` to derive 'Today' / 'Yesterday' / 'N days ago'. Keying a
+  // useMemo on just `message.date` would freeze the label across a UTC day
+  // boundary; an app left open past midnight would keep showing yesterday's
+  // labels. Don't memoize this — the call is cheap (one Date + locale fmt)
+  // and we need it to track wall-clock time.
+  const dateLabel = formatRowDate(message.date);
   const correspondent = useMemo(
     () => correspondentLabel(message, folder),
     [message, folder],

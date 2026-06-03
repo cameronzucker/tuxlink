@@ -75,7 +75,7 @@ const DeleteFolderDialog = lazy(() =>
 // ICS-309, bulletin, position, damage-assessment renderer at module load).
 // AppShell uses the eager MessageViewEmpty as both the no-selection render
 // AND the Suspense fallback while the lazy chunk loads on first selection.
-import { MessageViewEmpty } from '../mailbox/MessageViewEmpty';
+import { MessageViewEmpty, MessageViewLoading } from '../mailbox/MessageViewEmpty';
 const MessageView = lazy(() => import('../mailbox/MessageView'));
 import { TitleBar } from './chrome/TitleBar';
 import { MenuBar } from './chrome/MenuBar';
@@ -597,6 +597,22 @@ export function AppShell() {
     setSelectedConnection(conn);
   }, []);
 
+  // tuxlink-268k (Codex P3): stabilize the two inline FolderSidebar
+  // callbacks so the React.memo wrap actually skips re-renders. Before
+  // these existed inline at the call site, the shallow-compare always
+  // failed on every shell render even when the sidebar's visible state
+  // hadn't changed.
+  const onCreateFolder = useCallback(() => {
+    setNewFolderOpen(true);
+  }, []);
+  const onFolderContextMenu = useCallback(
+    (slug: string, x: number, y: number) => {
+      const f = userFolders.find((uf) => uf.slug === slug);
+      if (f) setFolderCtxMenu({ folder: f, x, y });
+    },
+    [userFolders],
+  );
+
   const onSelectMessage = useCallback(
     (id: string) => {
       // When a search is active, the clicked row may live in a folder other
@@ -696,12 +712,9 @@ export function AppShell() {
           onSelectFolder={onSelectFolder}
           counts={counts}
           userFolders={userFolders}
-          onCreateFolder={() => setNewFolderOpen(true)}
+          onCreateFolder={onCreateFolder}
           onDropMessage={moveByIdToFolder}
-          onFolderContextMenu={(slug, x, y) => {
-            const f = userFolders.find((uf) => uf.slug === slug);
-            if (f) setFolderCtxMenu({ folder: f, x, y });
-          }}
+          onFolderContextMenu={onFolderContextMenu}
           selectedConnection={selectedConnection}
           onSelectConnection={onSelectConnection}
         />
@@ -723,12 +736,13 @@ export function AppShell() {
           // tuxlink-djnl: shared render fragment for the reading pane. When
           // nothing is selected, render the eager MessageViewEmpty directly
           // (no lazy fetch — cold-start sees this). When a message IS
-          // selected, gate the lazy MessageView behind Suspense with the
-          // empty pane as the visual fallback while the chunk + forms
-          // registry load (first selection only; cached thereafter).
+          // selected, gate the lazy MessageView behind Suspense with a
+          // loading-specific fallback (tuxlink-268k Codex P3: previously
+          // used MessageViewEmpty, which flashed the "Select a message"
+          // copy under a highlighted row during the brief chunk fetch).
           const readingPane = selectedMessage
             ? (
-                <Suspense fallback={<MessageViewEmpty />}>
+                <Suspense fallback={<MessageViewLoading />}>
                   <MessageView selectedMessage={selectedMessage} onArchive={onArchiveMessage} userFolders={userFolders} onMove={moveOpen} />
                 </Suspense>
               )
