@@ -1,0 +1,868 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Tuxlink — Multi-transport listener UI mocks</title>
+<style>
+:root {
+  --bg:           #0d1318;
+  --surface:      #141c23;
+  --surface-2:    #1a2330;
+  --elevated:     #1e2832;
+  --border:       #1f2832;
+  --border-strong:#2c3744;
+  --border-soft:  #1a2028;
+  --text:         #e4ebf2;
+  --text-dim:     #94a0ad;
+  --text-faint:   #5d6975;
+  --accent:       #f59f3c;
+  --accent-2:     #ffba6e;
+  --accent-soft:  rgba(245, 159, 60, 0.12);
+  --good:         #5dd6a0;
+  --good-soft:    rgba(93, 214, 160, 0.14);
+  --bad:          #ee6b6b;
+  --bad-soft:     rgba(238, 107, 107, 0.14);
+  --warn:         #ffd166;
+  --info:         #6bb8ee;
+  --mono:         "JetBrains Mono", "Fira Code", "Source Code Pro", "Ubuntu Mono", Consolas, monospace;
+  --sans:         "Inter", "Cantarell", "Ubuntu", "Segoe UI", system-ui, sans-serif;
+}
+* { box-sizing: border-box; }
+html, body {
+  margin: 0; padding: 0;
+  background: #060a0e;
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+.page { max-width: 1480px; margin: 0 auto; padding: 28px 24px 80px; }
+h1 { font-size: 22px; font-weight: 600; margin: 0 0 4px; }
+.subtitle { color: var(--text-dim); font-size: 14px; margin: 0 0 22px; }
+
+.legend {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px 18px;
+  margin-bottom: 36px;
+  font-size: 13px;
+}
+.legend h3 { margin: 0 0 8px; font-size: 13px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-faint); font-weight: 600; }
+.legend p { margin: 0 0 8px; color: var(--text-dim); }
+.legend strong { color: var(--text); }
+.legend code { font-family: var(--mono); color: var(--accent-2); font-size: 12px; }
+
+.section { margin-bottom: 56px; }
+.section-header {
+  display: flex; align-items: baseline; gap: 14px;
+  margin-bottom: 14px; padding: 0 4px;
+}
+.section-letter {
+  font-size: 32px; font-weight: 800; color: var(--accent);
+  letter-spacing: -0.02em; line-height: 1;
+}
+.section-title { font-size: 18px; font-weight: 600; margin: 0; }
+.section-desc { color: var(--text-dim); font-size: 13px; margin-left: auto; max-width: 700px; text-align: right; }
+
+.row { display: flex; gap: 24px; align-items: flex-start; flex-wrap: wrap; }
+.col { display: flex; flex-direction: column; gap: 14px; }
+
+/* ────────────────────────────────────────────────────────────────
+   Radio Panel — emulates the production component (360px column)
+   ──────────────────────────────────────────────────────────────── */
+.radio-panel {
+  width: 380px;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  overflow: hidden;
+  font-size: 13px;
+}
+.radio-panel-head {
+  display: flex; align-items: center; gap: 10px;
+  padding: 12px 14px;
+  background: linear-gradient(180deg, var(--surface-2) 0%, var(--surface) 100%);
+  border-bottom: 1px solid var(--border);
+}
+.radio-panel-head-icon {
+  width: 28px; height: 28px;
+  background: var(--accent-soft);
+  border-radius: 6px;
+  display: grid; place-items: center;
+  color: var(--accent);
+  font-size: 12px; font-weight: 700;
+  letter-spacing: 0.04em;
+}
+.radio-panel-head-title { font-weight: 600; font-size: 14px; flex: 1; }
+.radio-panel-head-sub { color: var(--text-faint); font-size: 12px; font-family: var(--mono); }
+.radio-panel-head-close {
+  width: 22px; height: 22px;
+  background: transparent; border: 0;
+  color: var(--text-faint); cursor: pointer;
+  font-size: 16px; line-height: 1;
+}
+.radio-panel-body { padding: 14px; display: flex; flex-direction: column; gap: 14px; }
+
+.radio-panel-sec { display: flex; flex-direction: column; gap: 8px; }
+.radio-panel-sec h5 {
+  margin: 0 0 2px;
+  font-size: 11px; font-weight: 600; letter-spacing: 0.08em;
+  text-transform: uppercase; color: var(--text-faint);
+}
+.radio-panel-input-row {
+  display: flex; align-items: center; gap: 10px;
+}
+.radio-panel-input-row > span:first-child {
+  width: 70px; font-size: 12px; color: var(--text-dim);
+}
+.radio-panel-input {
+  flex: 1;
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  padding: 6px 8px;
+  color: var(--text);
+  font-size: 13px;
+  font-family: var(--sans);
+}
+.radio-panel-input.mono { font-family: var(--mono); }
+.radio-panel-btn {
+  width: 100%;
+  padding: 9px 12px;
+  border-radius: 7px;
+  border: 1px solid transparent;
+  font-size: 13px; font-weight: 600;
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+}
+.radio-panel-btn-primary {
+  background: var(--accent);
+  color: #1a1206;
+}
+.radio-panel-btn-primary:hover { background: var(--accent-2); }
+.radio-panel-btn-bad {
+  background: var(--bad);
+  color: #1a0606;
+}
+.radio-panel-btn-ghost {
+  background: transparent;
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+.radio-panel-mono { font-family: var(--mono); color: var(--text-dim); font-size: 12px; margin: 0; }
+.radio-panel-help { color: var(--text-faint); font-size: 11px; margin: 0; line-height: 1.4; }
+
+.chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 3px 8px;
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  font-size: 11px;
+  font-family: var(--mono);
+}
+.chip-x {
+  background: transparent; border: 0; color: var(--text-faint);
+  cursor: pointer; padding: 0 0 0 4px; font-size: 11px;
+}
+.chip-x:hover { color: var(--bad); }
+.chip-row { display: flex; flex-wrap: wrap; gap: 5px; }
+
+.armed-pill {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 8px;
+  background: var(--good-soft);
+  border: 1px solid var(--good);
+  border-radius: 999px;
+  color: var(--good);
+  font-size: 11px; font-weight: 600;
+}
+.armed-pill::before {
+  content: '';
+  width: 6px; height: 6px;
+  background: var(--good);
+  border-radius: 50%;
+  box-shadow: 0 0 6px var(--good);
+  animation: pulse 2s ease-in-out infinite;
+}
+.disarmed-pill {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 8px;
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  color: var(--text-dim);
+  font-size: 11px; font-weight: 600;
+}
+.disarmed-pill::before {
+  content: '';
+  width: 6px; height: 6px;
+  background: var(--text-faint);
+  border-radius: 50%;
+}
+@keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: 0.5 } }
+
+.deferred-banner {
+  background: var(--bad-soft);
+  border: 1px solid var(--bad);
+  border-radius: 5px;
+  padding: 6px 10px;
+  font-size: 11px;
+  color: #ffd0d0;
+  line-height: 1.35;
+}
+.deferred-banner strong { color: var(--bad); }
+.deferred-banner code { color: var(--warn); font-family: var(--mono); font-size: 10px; }
+
+.warn-banner {
+  background: rgba(255, 209, 102, 0.08);
+  border: 1px solid rgba(255, 209, 102, 0.5);
+  border-radius: 5px;
+  padding: 6px 10px;
+  font-size: 11px;
+  color: var(--warn);
+  line-height: 1.35;
+}
+
+.expander {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.expander-summary {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 10px;
+  background: var(--surface-2);
+  cursor: pointer;
+  font-size: 12px;
+  user-select: none;
+}
+.expander-summary::-webkit-details-marker { display: none; }
+.expander-summary::before {
+  content: '▶';
+  font-size: 9px;
+  color: var(--text-faint);
+  transition: transform 0.15s;
+}
+.expander[open] .expander-summary::before { transform: rotate(90deg); }
+.expander-body {
+  padding: 10px;
+  background: var(--bg);
+  display: flex; flex-direction: column; gap: 8px;
+  border-top: 1px solid var(--border);
+}
+.expander-count {
+  margin-left: auto;
+  color: var(--text-faint);
+  font-size: 11px;
+  font-family: var(--mono);
+}
+
+.label-row { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-dim); }
+.toggle {
+  position: relative;
+  width: 28px; height: 16px;
+  background: var(--border-strong);
+  border-radius: 999px;
+  cursor: pointer;
+}
+.toggle::after {
+  content: '';
+  position: absolute;
+  top: 2px; left: 2px;
+  width: 12px; height: 12px;
+  background: var(--text);
+  border-radius: 50%;
+  transition: left 0.15s;
+}
+.toggle.on { background: var(--accent); }
+.toggle.on::after { left: 14px; background: #1a1206; }
+
+.note {
+  background: var(--surface-2);
+  border-left: 3px solid var(--info);
+  padding: 8px 10px;
+  font-size: 12px;
+  color: var(--text-dim);
+  border-radius: 0 4px 4px 0;
+  line-height: 1.4;
+}
+
+.diff-note {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px 14px;
+  font-size: 12px;
+  color: var(--text-dim);
+  line-height: 1.5;
+  max-width: 380px;
+}
+.diff-note h4 { margin: 0 0 6px; font-size: 12px; color: var(--text); font-weight: 600; }
+.diff-note .pro::before { content: '+ '; color: var(--good); font-weight: 700; }
+.diff-note .con::before { content: '− '; color: var(--bad); font-weight: 700; }
+.diff-note ul { margin: 4px 0 6px; padding-left: 0; list-style: none; }
+.diff-note li { padding: 2px 0; font-size: 12px; }
+
+.callout {
+  margin-top: 8px;
+  padding: 10px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.callout strong { color: var(--text); }
+
+.panel-row {
+  display: flex; gap: 20px; align-items: flex-start;
+  flex-wrap: wrap;
+}
+.panel-stack { display: flex; flex-direction: column; gap: 10px; }
+.panel-label {
+  font-size: 12px;
+  color: var(--accent);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.log-line {
+  font-family: var(--mono); font-size: 11px; padding: 2px 0;
+  color: var(--text-dim);
+}
+.log-line .ts { color: var(--text-faint); }
+.log-line .lvl-info { color: var(--info); }
+.log-line .lvl-warn { color: var(--warn); }
+.log-line .lvl-good { color: var(--good); }
+.log-box {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 8px 10px;
+  max-height: 90px; overflow: hidden;
+}
+</style>
+</head>
+<body>
+<div class="page">
+
+<h1>Multi-transport listener UI mocks</h1>
+<p class="subtitle">tuxlink-xehu/inde/dhbl — frontend wiring for the listener-arms gate · 2026-06-03 · plover-magnolia-salamander</p>
+
+<div class="legend">
+  <h3>What we're designing</h3>
+  <p>The three transport-listener PRs (#318/319/320) shipped <strong>backend-only</strong>. The architecture doc §2.3 calls for three UI affordances per transport: <strong>listener toggle</strong>, <strong>allowed-stations editor</strong>, <strong>station-password setter</strong> (Telnet only). The existing per-transport <code>RadioPanel</code> pattern (one panel per <code>{transport, intent}</code>) is the home for these affordances — no new navigation, no popup windows.</p>
+  <p><strong>Showing:</strong> 2 layout options for the most complex case (Telnet-P2P listener) at the top, then the chosen pattern applied to Packet + ARDOP below.</p>
+  <p><strong>What's NOT in scope here:</strong> the global "incoming session" notification surface (separate, comes later); the listener-status indicator in the StatusBar (a one-line addition; same pattern as existing modem status); the listener forensics log viewer (also separate).</p>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════ -->
+<!--   SECTION A — Telnet listener: Option A vs Option B           -->
+<!-- ════════════════════════════════════════════════════════════ -->
+
+<div class="section">
+  <div class="section-header">
+    <div class="section-letter">A</div>
+    <h2 class="section-title">Telnet-P2P — Option A: inline accordions, one Listen section</h2>
+    <div class="section-desc">All listener affordances live inside the existing "Listen" sub-section; details collapse by default.</div>
+  </div>
+
+  <div class="panel-row">
+
+    <!-- Telnet-P2P Panel, Option A — disarmed state -->
+    <div class="panel-stack">
+      <div class="panel-label">Disarmed state (default)</div>
+      <div class="radio-panel">
+        <div class="radio-panel-head">
+          <div class="radio-panel-head-icon">TEL</div>
+          <div class="radio-panel-head-title">Telnet P2P</div>
+          <div class="radio-panel-head-sub">127.0.0.1:8772</div>
+          <button class="radio-panel-head-close">×</button>
+        </div>
+        <div class="radio-panel-body">
+
+          <section class="radio-panel-sec">
+            <h5>Peer Station</h5>
+            <label class="radio-panel-input-row"><span>Host</span><input class="radio-panel-input" value="127.0.0.1"></label>
+            <label class="radio-panel-input-row"><span>Port</span><input class="radio-panel-input" value="8772"></label>
+            <label class="radio-panel-input-row"><span>Callsign</span><input class="radio-panel-input mono" value=""></label>
+          </section>
+
+          <section class="radio-panel-sec">
+            <h5>Peer Password</h5>
+            <div class="chip-row">
+              <span class="chip" style="background:transparent;border-color:transparent;color:var(--text-faint)">Not set</span>
+              <button class="chip">Set…</button>
+            </div>
+          </section>
+
+          <!-- NEW: Listen section, Option A — disarmed -->
+          <section class="radio-panel-sec" style="border-top:1px dashed var(--border-strong); padding-top:12px">
+            <h5>Listen (Accept Inbound)</h5>
+
+            <button class="radio-panel-btn radio-panel-btn-primary">
+              Arm listener · TTL 1 h
+            </button>
+            <p class="radio-panel-help">
+              Binds <code style="font-family:var(--mono);color:var(--accent-2)">127.0.0.1:8774</code>.
+              Arms inbound consent under RADIO-1.
+            </p>
+
+            <details class="expander">
+              <summary class="expander-summary">
+                Listener setup
+                <span class="expander-count">8774 · loopback</span>
+              </summary>
+              <div class="expander-body">
+                <label class="radio-panel-input-row"><span>Bind</span><input class="radio-panel-input mono" value="127.0.0.1"></label>
+                <label class="radio-panel-input-row"><span>Port</span><input class="radio-panel-input mono" value="8774"></label>
+                <label class="radio-panel-input-row"><span>TTL</span>
+                  <select class="radio-panel-input">
+                    <option>15 min</option><option>30 min</option>
+                    <option selected>1 hour</option><option>4 hours</option>
+                  </select>
+                </label>
+                <p class="radio-panel-help">Loopback is the safer default; LAN binding opens your station to every device on the network.</p>
+              </div>
+            </details>
+
+            <details class="expander">
+              <summary class="expander-summary">
+                Allowed stations
+                <span class="expander-count">2 callsigns · 1 IP</span>
+              </summary>
+              <div class="expander-body">
+                <div class="label-row"><div class="toggle"></div>Allow any peer (parity with WLE default)</div>
+                <p class="radio-panel-help">When OFF (tuxlink default), only peers on the lists below are accepted.</p>
+                <div class="chip-row">
+                  <span class="chip">N7CPZ <button class="chip-x">×</button></span>
+                  <span class="chip">W7AUX-7 <button class="chip-x">×</button></span>
+                  <button class="chip" style="border-style:dashed">+ callsign</button>
+                </div>
+                <div class="chip-row">
+                  <span class="chip">192.168.1.* <button class="chip-x">×</button></span>
+                  <button class="chip" style="border-style:dashed">+ IP pattern</button>
+                </div>
+                <p class="radio-panel-help">Match logic: callsign-allow OR IP-allow (WLE-parity).</p>
+              </div>
+            </details>
+
+            <details class="expander">
+              <summary class="expander-summary">
+                Station password
+                <span class="expander-count">set in keyring</span>
+              </summary>
+              <div class="expander-body">
+                <div class="chip-row">
+                  <span class="chip" style="border-color:var(--good);color:var(--good)">●  set</span>
+                  <button class="chip">Change…</button>
+                  <button class="chip">Clear</button>
+                </div>
+                <p class="radio-panel-help">Stored in OS keyring. Sent to peers as a CR-terminated challenge before B2F begins.</p>
+              </div>
+            </details>
+          </section>
+
+          <!-- Connect dialer omitted in this stretch for brevity -->
+
+        </div>
+      </div>
+    </div>
+
+    <!-- Telnet-P2P Panel, Option A — armed state -->
+    <div class="panel-stack">
+      <div class="panel-label">Armed state</div>
+      <div class="radio-panel">
+        <div class="radio-panel-head">
+          <div class="radio-panel-head-icon">TEL</div>
+          <div class="radio-panel-head-title">Telnet P2P</div>
+          <div class="radio-panel-head-sub">127.0.0.1:8772</div>
+          <button class="radio-panel-head-close">×</button>
+        </div>
+        <div class="radio-panel-body">
+
+          <section class="radio-panel-sec">
+            <h5>Peer Station</h5>
+            <label class="radio-panel-input-row"><span>Host</span><input class="radio-panel-input" value="127.0.0.1"></label>
+            <label class="radio-panel-input-row"><span>Port</span><input class="radio-panel-input" value="8772"></label>
+            <label class="radio-panel-input-row"><span>Callsign</span><input class="radio-panel-input mono" value=""></label>
+          </section>
+
+          <section class="radio-panel-sec">
+            <h5>Peer Password</h5>
+            <div class="chip-row">
+              <span class="chip" style="background:transparent;border-color:transparent;color:var(--text-faint)">Not set</span>
+              <button class="chip">Set…</button>
+            </div>
+          </section>
+
+          <section class="radio-panel-sec" style="border-top:1px dashed var(--border-strong); padding-top:12px">
+            <h5>Listen (Accept Inbound) <span class="armed-pill" style="margin-left:auto">ARMED  ·  47 min left</span></h5>
+
+            <button class="radio-panel-btn radio-panel-btn-bad">
+              Disarm listener
+            </button>
+            <p class="radio-panel-help">
+              Bound to <code style="font-family:var(--mono);color:var(--accent-2)">127.0.0.1:8774</code> ·
+              Consent UUID <code style="font-family:var(--mono);color:var(--text-faint);font-size:10px">a3f2…</code>
+            </p>
+
+            <div class="log-box">
+              <div class="log-line"><span class="ts">14:21:08</span> <span class="lvl-info">●</span> Telnet listener armed on 127.0.0.1:8774 (TTL 3600s)</div>
+              <div class="log-line"><span class="ts">14:23:15</span> <span class="lvl-good">●</span> Inbound from 192.168.1.5 — N7CPZ accepted</div>
+              <div class="log-line"><span class="ts">14:23:16</span> <span class="lvl-info">●</span> B2F exchange running</div>
+              <div class="log-line"><span class="ts">14:26:42</span> <span class="lvl-warn">●</span> Inbound from 203.0.113.4 — W4RAD rejected (allowlist)</div>
+            </div>
+
+            <details class="expander">
+              <summary class="expander-summary">Listener setup<span class="expander-count">8774 · loopback</span></summary>
+              <div class="expander-body">
+                <label class="radio-panel-input-row"><span>Bind</span><input class="radio-panel-input mono" value="127.0.0.1" disabled></label>
+                <label class="radio-panel-input-row"><span>Port</span><input class="radio-panel-input mono" value="8774" disabled></label>
+                <p class="radio-panel-help">Disabled while armed. Disarm to change bind or port.</p>
+              </div>
+            </details>
+
+            <details class="expander">
+              <summary class="expander-summary">Allowed stations<span class="expander-count">2 callsigns · 1 IP</span></summary>
+              <div class="expander-body">
+                <p class="radio-panel-help">Edits apply on the next inbound — already-armed sessions keep the snapshot they were armed with.</p>
+                <div class="chip-row">
+                  <span class="chip">N7CPZ <button class="chip-x">×</button></span>
+                  <span class="chip">W7AUX-7 <button class="chip-x">×</button></span>
+                  <button class="chip" style="border-style:dashed">+ callsign</button>
+                </div>
+              </div>
+            </details>
+
+          </section>
+
+        </div>
+      </div>
+    </div>
+
+    <div class="diff-note">
+      <h4>Option A — trade-offs</h4>
+      <ul>
+        <li class="pro">Single "Listen" header anchor; all listener stuff under one branch.</li>
+        <li class="pro">Collapsed by default → quiet UI when not used.</li>
+        <li class="pro">Visible count chip (<code>2 callsigns · 1 IP</code>) tells operator the list is non-empty without expanding.</li>
+        <li class="con">Three triangles in a row can feel a bit busy.</li>
+        <li class="con">"Listener setup" expander is mostly inert after first config — possibly hidden too deeply.</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════ -->
+
+<div class="section">
+  <div class="section-header">
+    <div class="section-letter">B</div>
+    <h2 class="section-title">Telnet-P2P — Option B: three flat sub-sections at peer-level</h2>
+    <div class="section-desc">Listener affordances live as three same-level sub-sections, parallel to Peer Station / Peer Password.</div>
+  </div>
+
+  <div class="panel-row">
+
+    <div class="panel-stack">
+      <div class="panel-label">Disarmed state (default)</div>
+      <div class="radio-panel">
+        <div class="radio-panel-head">
+          <div class="radio-panel-head-icon">TEL</div>
+          <div class="radio-panel-head-title">Telnet P2P</div>
+          <div class="radio-panel-head-sub">127.0.0.1:8772</div>
+          <button class="radio-panel-head-close">×</button>
+        </div>
+        <div class="radio-panel-body">
+
+          <section class="radio-panel-sec">
+            <h5>Peer Station</h5>
+            <label class="radio-panel-input-row"><span>Host</span><input class="radio-panel-input" value="127.0.0.1"></label>
+            <label class="radio-panel-input-row"><span>Port</span><input class="radio-panel-input" value="8772"></label>
+            <label class="radio-panel-input-row"><span>Callsign</span><input class="radio-panel-input mono" value=""></label>
+          </section>
+
+          <section class="radio-panel-sec">
+            <h5>Peer Password</h5>
+            <div class="chip-row">
+              <span class="chip" style="background:transparent;border-color:transparent;color:var(--text-faint)">Not set</span>
+              <button class="chip">Set…</button>
+            </div>
+          </section>
+
+          <!-- separator to make the listener half visually distinct -->
+          <div style="border-top:1px dashed var(--border-strong); margin:2px 0; position:relative;">
+            <span style="position:absolute;top:-9px;left:14px;background:var(--surface);padding:0 6px;font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:var(--text-faint);font-weight:600">Listener</span>
+          </div>
+
+          <section class="radio-panel-sec">
+            <h5>Listen</h5>
+            <button class="radio-panel-btn radio-panel-btn-primary">Arm listener · TTL 1 h</button>
+            <p class="radio-panel-help">Binds <code style="font-family:var(--mono);color:var(--accent-2)">127.0.0.1:8774</code>.</p>
+          </section>
+
+          <section class="radio-panel-sec">
+            <h5>Listener Setup</h5>
+            <label class="radio-panel-input-row"><span>Bind</span><input class="radio-panel-input mono" value="127.0.0.1"></label>
+            <label class="radio-panel-input-row"><span>Port</span><input class="radio-panel-input mono" value="8774"></label>
+            <label class="radio-panel-input-row"><span>TTL</span>
+              <select class="radio-panel-input">
+                <option>15 min</option><option>30 min</option>
+                <option selected>1 hour</option><option>4 hours</option>
+              </select>
+            </label>
+          </section>
+
+          <section class="radio-panel-sec">
+            <h5>Allowed Stations <span class="expander-count" style="margin-left:auto">2 callsigns · 1 IP</span></h5>
+            <div class="label-row"><div class="toggle"></div>Allow any peer</div>
+            <div class="chip-row">
+              <span class="chip">N7CPZ <button class="chip-x">×</button></span>
+              <span class="chip">W7AUX-7 <button class="chip-x">×</button></span>
+              <button class="chip" style="border-style:dashed">+ callsign</button>
+            </div>
+            <div class="chip-row">
+              <span class="chip">192.168.1.* <button class="chip-x">×</button></span>
+              <button class="chip" style="border-style:dashed">+ IP pattern</button>
+            </div>
+          </section>
+
+          <section class="radio-panel-sec">
+            <h5>Station Password</h5>
+            <div class="chip-row">
+              <span class="chip" style="border-color:var(--good);color:var(--good)">● set</span>
+              <button class="chip">Change…</button>
+              <button class="chip">Clear</button>
+            </div>
+            <p class="radio-panel-help">Keyring-stored. Prompted to peer unconditionally; verified only when set.</p>
+          </section>
+
+        </div>
+      </div>
+    </div>
+
+    <div class="diff-note">
+      <h4>Option B — trade-offs</h4>
+      <ul>
+        <li class="pro">Every affordance has equal visual weight; matches architecture-doc §2.3 framing.</li>
+        <li class="pro">No expanders — operator sees state at a glance.</li>
+        <li class="pro">Splitting the panel into "Dialer half" + "Listener half" via a separator labels the two roles cleanly.</li>
+        <li class="con">Long panel — most operators don't touch most of these after first setup.</li>
+        <li class="con">5 sections in the listener half can feel heavy next to the 2 in the dialer half.</li>
+        <li class="con">Concurrent dial + listen state can compete visually for "primary action."</li>
+      </ul>
+    </div>
+
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════ -->
+<!--   SECTION C — Recommended: A with one tweak                   -->
+<!-- ════════════════════════════════════════════════════════════ -->
+
+<div class="section">
+  <div class="section-header">
+    <div class="section-letter">C</div>
+    <h2 class="section-title">Recommended: Option A — extended Listen section with collapsible details</h2>
+    <div class="section-desc">A's compactness wins for the default case; B's flatness is for operators who never collapse anything.</div>
+  </div>
+
+  <div class="callout">
+    <strong>Why A:</strong> the dialer half is already two compact sections. Mirroring that compactness in the listener half (one anchored "Listen" header + collapsibles) keeps the panel balanced. After first-run, the operator's typical interaction is just <em>arm/disarm</em> + glance at the allowed-list count chip; the details only open when they want to edit.
+    The cost (three triangles) is real but small — and the count chip means an empty allowlist is loudly visible without expansion.
+  </div>
+
+</div>
+
+<!-- ════════════════════════════════════════════════════════════ -->
+<!--   SECTION D — Same shape on Packet                            -->
+<!-- ════════════════════════════════════════════════════════════ -->
+
+<div class="section">
+  <div class="section-header">
+    <div class="section-letter">D</div>
+    <h2 class="section-title">Packet (AX.25 P2P) — same shape, fewer affordances</h2>
+    <div class="section-desc">Extends the existing "Listen" section in PacketRadioPanel. No station password (Packet has no in-band challenge layer).</div>
+  </div>
+
+  <div class="panel-row">
+
+    <div class="panel-stack">
+      <div class="panel-label">Disarmed</div>
+      <div class="radio-panel">
+        <div class="radio-panel-head">
+          <div class="radio-panel-head-icon">PKT</div>
+          <div class="radio-panel-head-title">Packet (P2P)</div>
+          <div class="radio-panel-head-sub">127.0.0.1:8001 · KISS-TCP</div>
+          <button class="radio-panel-head-close">×</button>
+        </div>
+        <div class="radio-panel-body">
+
+          <section class="radio-panel-sec">
+            <h5>My station</h5>
+            <p class="radio-panel-mono">Operating as <strong>N7CPZ-7</strong></p>
+          </section>
+
+          <section class="radio-panel-sec">
+            <h5>Listen</h5>
+            <button class="radio-panel-btn radio-panel-btn-primary">
+              Listen for an incoming call
+            </button>
+            <label class="label-row" style="margin-top:6px">
+              <input type="checkbox" checked> Auto-arm Listen at startup
+            </label>
+
+            <details class="expander">
+              <summary class="expander-summary">
+                Allowed stations
+                <span class="expander-count">1 callsign</span>
+              </summary>
+              <div class="expander-body">
+                <div class="label-row"><div class="toggle"></div>Allow any peer (WLE-parity)</div>
+                <p class="radio-panel-help">Tuxlink default is OFF — fresh installs reject every peer until you curate this list.</p>
+                <div class="chip-row">
+                  <span class="chip">N7CPZ-7 <button class="chip-x">×</button></span>
+                  <button class="chip" style="border-style:dashed">+ callsign</button>
+                </div>
+              </div>
+            </details>
+          </section>
+
+          <section class="radio-panel-sec">
+            <h5>Connect</h5>
+            <label class="radio-panel-input-row"><span>To</span><input class="radio-panel-input mono" placeholder="callsign"></label>
+            <button class="radio-panel-btn radio-panel-btn-primary">Start</button>
+          </section>
+
+        </div>
+      </div>
+    </div>
+
+    <div class="diff-note">
+      <h4>Packet — what's different</h4>
+      <ul>
+        <li class="pro">Existing "Auto-arm at startup" checkbox stays — it's already familiar.</li>
+        <li class="pro">Only one expander (no IP wildcards, no password) — quieter than Telnet.</li>
+        <li class="pro">No "Listener setup" expander — KISS-TCP host/port lives in the existing Modem Link section above.</li>
+        <li class="con">The "Allow any peer" default flipped to OFF is a real behavior change from prior builds — needs a one-time toast or onboarding note so operators don't think their listener is broken.</li>
+      </ul>
+    </div>
+
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════ -->
+<!--   SECTION E — Same shape on ARDOP with deferred-banner        -->
+<!-- ════════════════════════════════════════════════════════════ -->
+
+<div class="section">
+  <div class="section-header">
+    <div class="section-letter">E</div>
+    <h2 class="section-title">ARDOP P2P — same shape, with deferred-wiring honesty banner</h2>
+    <div class="section-desc">The gate is fully wired but the live modem doesn't actually go into LISTEN mode yet — operator must see this clearly.</div>
+  </div>
+
+  <div class="panel-row">
+
+    <div class="panel-stack">
+      <div class="panel-label">Disarmed — current build limitation surfaced</div>
+      <div class="radio-panel">
+        <div class="radio-panel-head">
+          <div class="radio-panel-head-icon">ARD</div>
+          <div class="radio-panel-head-title">ARDOP (P2P)</div>
+          <div class="radio-panel-head-sub">127.0.0.1:8200</div>
+          <button class="radio-panel-head-close">×</button>
+        </div>
+        <div class="radio-panel-body">
+
+          <section class="radio-panel-sec">
+            <h5>My station</h5>
+            <p class="radio-panel-mono">Operating as <strong>N7CPZ</strong> · grid <strong>CN87</strong></p>
+          </section>
+
+          <section class="radio-panel-sec">
+            <h5>Listen (Accept Inbound)</h5>
+
+            <div class="warn-banner">
+              <strong>Partial wiring (tuxlink-95g8):</strong> Arming logs operator consent + persists the arms record, but the modem's <code>LISTEN TRUE</code> flag does NOT yet flip on a running transport. Inbound peers will not actually connect until the live-modem wiring lands.
+            </div>
+
+            <button class="radio-panel-btn radio-panel-btn-primary" style="opacity:0.85">
+              Arm listener (consent only · TTL 1 h)
+            </button>
+
+            <details class="expander">
+              <summary class="expander-summary">
+                Allowed stations
+                <span class="expander-count">no callsigns</span>
+              </summary>
+              <div class="expander-body">
+                <div class="label-row"><div class="toggle"></div>Allow any peer (parity with WLE behaviour)</div>
+                <p class="radio-panel-help">ARDOP has no station-password layer — the allowlist is the only application-layer gate.</p>
+                <div class="chip-row">
+                  <button class="chip" style="border-style:dashed">+ callsign</button>
+                </div>
+              </div>
+            </details>
+
+            <p class="radio-panel-help">
+              Want full ARDOP listener? Track <code style="font-family:var(--mono);color:var(--accent-2)">tuxlink-95g8</code>.
+            </p>
+          </section>
+
+          <section class="radio-panel-sec">
+            <h5>Connect</h5>
+            <label class="radio-panel-input-row"><span>To</span><input class="radio-panel-input mono" placeholder="callsign"></label>
+            <button class="radio-panel-btn radio-panel-btn-primary">Start</button>
+          </section>
+
+        </div>
+      </div>
+    </div>
+
+    <div class="diff-note">
+      <h4>ARDOP — what's different</h4>
+      <ul>
+        <li class="pro">Honest-state banner up top so operator doesn't expect inbound to work.</li>
+        <li class="pro">Arm button is still wired (logs consent + persists arms record + appends forensics) — useful for verifying the UX path.</li>
+        <li class="pro">No password expander (ARDOP has none).</li>
+        <li class="con">Banner adds vertical weight; once tuxlink-95g8 lands, it goes away.</li>
+        <li class="con">"Arming" without the modem-flip can be confusing even with the banner — does muted button + "consent only" label say it loudly enough?</li>
+      </ul>
+    </div>
+
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════ -->
+<!--   SECTION F — Open questions for operator                     -->
+<!-- ════════════════════════════════════════════════════════════ -->
+
+<div class="section">
+  <div class="section-header">
+    <div class="section-letter">F</div>
+    <h2 class="section-title">Open questions</h2>
+    <div class="section-desc">Things worth confirming before we lock in.</div>
+  </div>
+
+  <div class="callout">
+    <ol style="margin:0; padding-left:20px; line-height:1.7;">
+      <li><strong>A vs B</strong> — collapsible details (A) vs always-flat sub-sections (B)?</li>
+      <li><strong>"Peer Password" vs "Station Password"</strong> on Telnet-P2P — same panel, similar names, different roles (per-peer outbound vs per-station inbound). Is the label disambiguation enough, or should we rename one (e.g. "Per-peer dial password" + "My station password")?</li>
+      <li><strong>Live count chip vs no chip</strong> on the "Allowed stations" expander summary — does <code style="font-family:var(--mono);color:var(--accent-2)">2 callsigns · 1 IP</code> help operator confidence enough to keep, or is it visual noise?</li>
+      <li><strong>"Allow any peer" toggle default OFF</strong> on Packet diverges from WLE-parity + from prior tuxlink behaviour (the listener used to accept all). Surface as a one-time toast on first migrated launch? Or just let the empty allowlist + reject-all behaviour announce itself?</li>
+      <li><strong>ARDOP deferred-state UX</strong> — is the warn banner + muted button enough? Or should the arm button be disabled entirely with a "Requires tuxlink-95g8" tooltip?</li>
+    </ol>
+  </div>
+
+</div>
+
+</div>
+</body>
+</html>

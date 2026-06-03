@@ -2247,52 +2247,82 @@ pub async fn ardop_allowed_stations_set_allow_all(allow_all: bool) -> Result<(),
 /// Arm the ARDOP listener for the default TTL (1 hour per architecture §5).
 ///
 /// Mints a [`crate::winlink::listener::ListenerArmsRecord`], appends it to
-/// the forensics JSONL log, and emits a session-log message recording the
-/// per-invocation operator consent (RADIO-1 framing: arming the listener
-/// IS the per-invocation consent for inbound sessions on this transport
-/// during the armed window).
+/// the cross-transport forensics JSONL log, and sends `LISTEN TRUE` to the
+/// running ardopcf modem so the modem accepts inbound ARQ connections at
+/// the modem layer. The arm window authorizes inbound peer connections
+/// during the TTL — when a peer arrives the radio keys to send the ARQ
+/// response handshake. On TTL expiry the gate stops accepting new inbound
+/// peers.
 ///
-/// This command does NOT itself flip the modem's `LISTEN` flag — that
-/// happens at next ARDOP `init_tnc` (operator's outbound-Connect path
-/// constructs `InitConfig { initial_listen: false, .. }`; the listener
-/// arming flow constructs with `initial_listen: true`). Wiring the
-/// runtime flip on an already-running transport is a follow-up
-/// coordination task — the foundation gate (allowed-stations + arms TTL)
-/// is the load-bearing security boundary and is fully shipped here.
+/// Behavior:
+/// 1. Validate the allowlist file loads (corrupt file → reject the arm so the
+///    operator can repair before they think the gate is active).
+/// 2. Mint a `ListenerArmsRecord` + append to the cross-transport forensics
+///    log.
+/// 3. Send `LISTEN TRUE` to the running ardopcf modem via the side-channel
+///    cmd writer installed during modem-init. If the modem isn't running,
+///    surface a clear "start the modem first" error.
 ///
-/// RADIO-1: arming a listener authorizes inbound peer connections to
-/// transmit (the radio keys to send the ARQ response handshake) during
-/// the armed window. The TTL is the consent boundary.
+/// NOT YET DONE in this PR — separate follow-up (filed during execution as a
+/// new bd issue mirroring tuxlink-k3ru's Telnet symmetry): when ardopcf
+/// emits CONNECTED for an inbound peer, route the event through
+/// `gate_inbound_peer_now` and on Accept hand the modem data stream to the
+/// B2F answerer. Without that routing the modem accepts peers at the ARQ
+/// layer (operator can see it in the status display) but no mail exchange
+/// runs at the application layer.
 #[tauri::command]
 pub async fn ardop_listen(
     app: AppHandle,
     log: State<'_, std::sync::Arc<SessionLogState>>,
+    session: State<'_, std::sync::Arc<crate::modem_status::ModemSession>>,
 ) -> Result<(), UiError> {
     use crate::winlink::listener::{ListenerArmsRecord, TransportKind, DEFAULT_TTL};
 
-    // Codex review 2026-06-03 [P2]: validate the allowlist file is loadable
-    // BEFORE minting the arms record and telling the operator the listener
-    // is armed. A corrupt/unreadable allowlist file would otherwise let the
-    // operator think the gate is configured + active when in fact the
-    // backend's load_from in the connect path will silently fall back to
-    // the defensive default (every peer rejected). Surface as UiError so
-    // the operator can repair the file before re-arming.
     let allowlist_path = ardop_allowed_stations_path();
     if let Err(e) = crate::winlink::listener::AllowedStations::load_from(&allowlist_path) {
         return Err(UiError::Internal {
             detail: format!(
                 "ARDOP listener arm refused: allowlist file at {} could not be loaded: {e}. \
                  Repair or delete the file (a missing file is fine — it falls back to the \
-                 tuxlink defensive default of allow_all=false + empty list).",
+                 tuxlink WLE-parity default of allow_all=true + empty list).",
                 allowlist_path.display()
             ),
         });
     }
 
+    // Codex review 2026-06-03 [P2] (tuxlink-7vea): append the arms record
+    // to the forensics log BEFORE flipping the modem's LISTEN flag. The
+    // prior order sent LISTEN TRUE first and then appended — if the
+    // forensics-log write failed (config dir unwritable, disk full), the
+    // command returned an error but ardopcf was left in LISTEN mode with
+    // no successful arm record. Now: log first, then toggle. If LISTEN
+    // TRUE fails, the operator sees a forensics-record-without-LISTEN
+    // (recoverable, the next disarm cleans up the record).
     let arms = ListenerArmsRecord::arm(TransportKind::Ardop, DEFAULT_TTL);
     let log_path = ardop_arms_log_path();
     arms.append_to_log(&log_path)
         .map_err(|e| UiError::Internal { detail: e.to_string() })?;
+
+    // Send LISTEN TRUE to the running ardopcf modem. This requires the
+    // modem to already be running (the cmd writer is installed during
+    // `modem_ardop_connect`'s init path — i.e., after an outbound dial).
+    // Codex review 2026-06-03 [P3] (tuxlink-7vea): the prior error
+    // message told the operator to "open the ARDOP modem panel," but
+    // opening the panel does not start ardopcf — only an outbound
+    // Connect does. Tightened to the actually-available action; the full
+    // listen-only start flow is tracked at tuxlink-syqb.
+    session
+        .send_listen_command(true)
+        .map_err(|e| UiError::Internal {
+            detail: format!(
+                "ARDOP listener arm refused — the modem is not running. \
+                 In the current build the modem only starts when you Connect \
+                 to a peer (an outbound dial). Start the modem via an ARDOP \
+                 Connect first, then re-arm the listener. Listen-only \
+                 modem start is tracked at tuxlink-syqb. \
+                 Underlying error: {e}"
+            ),
+        })?;
 
     let mins = arms.ttl.as_secs() / 60;
     emit_session_line(
@@ -2300,41 +2330,41 @@ pub async fn ardop_listen(
         &log,
         LogLevel::Info,
         format!(
-            "ARDOP listener armed for {mins} min (consent uuid {})",
+            "ARDOP listener armed for {mins} min (consent uuid {}). \
+             Modem is now in LISTEN TRUE mode at the modem layer.",
             &arms.consent_uuid
         ),
     );
     Ok(())
 }
 
-/// Toggle the sticky ARDOP-listen-default flag (persisted on the
-/// AllowedStations file as a side-effect: the foundation doesn't have a
-/// separate "armed_default" boolean today, so we model "enabled = TRUE"
-/// as "allow_all stays whatever it was; arming/disarming is per-session
-/// per `ardop_listen`").
-///
-/// The signature exists for parity with `packet_set_listen` and the spec
-/// §4.1 deliverable list. Currently a no-op marker for parity until the
-/// follow-up runtime-flip wiring lands: see `ardop_listen` for the
-/// armed-window mint. Returns `Ok(())` so the frontend's toggle event
-/// doesn't error.
+/// Toggle the ARDOP listener on/off. `enabled == true` is equivalent to
+/// `ardop_listen()` (sends LISTEN TRUE + mints arms record). `enabled == false`
+/// sends LISTEN FALSE to the running ardopcf modem.
 #[tauri::command]
-pub async fn ardop_set_listen(enabled: bool) -> Result<(), UiError> {
-    // Codex review 2026-06-03 [P2]: the prior no-op stub returned Ok(())
-    // for any call, which let the frontend show "listener enabled/disabled"
-    // even though no config was persisted and no live modem was sent
-    // `LISTEN TRUE/FALSE`. The runtime-flip wiring is tracked under
-    // tuxlink-95g8. Until that lands, this command MUST surface the
-    // missing-implementation state rather than silently succeeding so the
-    // operator can't be misled about whether the modem is actually
-    // listening.
-    let _ = enabled;
-    Err(UiError::Internal {
-        detail: "ardop_set_listen is not yet wired to the live modem (see tuxlink-95g8 \
-                 — ARDOP listener live-modem wiring follow-up). Use ardop_listen() to \
-                 mint an arms record + log operator consent in the meantime."
-            .into(),
-    })
+pub async fn ardop_set_listen(
+    app: AppHandle,
+    log: State<'_, std::sync::Arc<SessionLogState>>,
+    session: State<'_, std::sync::Arc<crate::modem_status::ModemSession>>,
+    enabled: bool,
+) -> Result<(), UiError> {
+    if enabled {
+        return ardop_listen(app, log, session).await;
+    }
+    session
+        .send_listen_command(false)
+        .map_err(|e| UiError::Internal {
+            detail: format!(
+                "ARDOP listener disarm error — modem may not be running. {e}"
+            ),
+        })?;
+    emit_session_line(
+        &app,
+        &log,
+        LogLevel::Info,
+        "ARDOP listener disarmed (LISTEN FALSE sent to modem).".to_string(),
+    );
+    Ok(())
 }
 
 /// Resolve the cross-transport listener forensics JSONL log path:

@@ -5,15 +5,20 @@
 //! `serde_json` matching the existing config-file pattern at
 //! `src-tauri/src/config.rs`.
 //!
-//! ## Defaults (DIVERGENCE FROM WLE)
+//! ## Defaults (WLE-parity)
 //!
-//! Winlink Express defaults `Allow All Connections: TRUE` — every inbound
-//! callsign is accepted unless explicitly blocklisted. Tuxlink inverts that:
-//! `Allow All Connections: FALSE` is the default, and the allowlist is
-//! empty, so a freshly-armed listener with no editing rejects every peer.
-//! This matches the operator-feedback class encoded in the user-memory
-//! entry `no-disk-creds-default` (defensive posture by default; operator
-//! explicitly opts into permissiveness).
+//! `Allow All Connections: TRUE` is the default — every inbound callsign
+//! is accepted unless explicitly restricted (operator adds callsigns and
+//! flips `allow_all` to FALSE).
+//!
+//! Earlier tuxlink architecture defaulted FALSE on a "defensive posture"
+//! framing, but operator review (2026-06-03) corrected this: TCP-layer
+//! access is the actual security boundary, not application-layer allowlist
+//! presence; default-FALSE footguns operators into "armed listener rejects
+//! everyone" first-run loops without earning the security it claimed.
+//! Security-conscious operators explicitly configure a station password
+//! and/or callsign restrictions. See `docs/design/2026-06-03-multi-transport-listener-architecture.md` §5
+//! + project memory `allowed-stations-default-true` for the design rationale.
 //!
 //! ## Wildcard matching
 //!
@@ -71,7 +76,7 @@ pub enum AllowedStationsError {
 ///
 /// ```json
 /// {
-///   "allow_all": false,
+///   "allow_all": true,
 ///   "callsigns": ["N7CPZ", "W4PHS-*"],
 ///   "ips": ["192.168.1.5", "192.168.*"]
 /// }
@@ -90,10 +95,14 @@ pub struct AllowedStations {
 }
 
 impl Default for AllowedStations {
-    /// `Allow All Connections: FALSE`, empty allowlist — DIVERGES from WLE.
+    /// `Allow All Connections: TRUE`, empty allowlist — matches WLE.
+    ///
+    /// Operator review 2026-06-03 reversed the prior default-FALSE design.
+    /// Rationale in module-level docs + the spec at
+    /// `docs/superpowers/specs/2026-06-03-listener-ui-design.md` §1.1.
     fn default() -> Self {
         Self {
-            allow_all: false,
+            allow_all: true,
             callsigns: Vec::new(),
             ips: Vec::new(),
         }
@@ -108,9 +117,8 @@ impl AllowedStations {
 
     /// Toggle the master "allow all" flag.
     ///
-    /// When TRUE, `accept` returns true for any peer (matching WLE's permissive
-    /// default). When FALSE (the tuxlink default), the operator-curated
-    /// callsign + IP lists are consulted.
+    /// When TRUE (the WLE-parity default), `accept` returns true for any peer.
+    /// When FALSE, the operator-curated callsign + IP lists are consulted.
     pub fn with_allow_all(mut self, allow: bool) -> Self {
         self.allow_all = allow;
         self
@@ -162,9 +170,12 @@ impl AllowedStations {
         }
     }
 
-    /// Clear all entries and reset `allow_all` to FALSE.
+    /// Clear all entries and reset `allow_all` to the foundation default (TRUE,
+    /// WLE-parity). Equivalent to replacing the instance with `Self::default()`
+    /// in place; the caller may follow with `set_allow_all(false)` if they
+    /// want restrict-mode after the clear.
     pub fn clear(&mut self) {
-        self.allow_all = false;
+        self.allow_all = true;
         self.callsigns.clear();
         self.ips.clear();
     }
@@ -402,21 +413,25 @@ mod tests {
     // ── Default state ────────────────────────────────────────────
 
     #[test]
-    fn default_rejects_every_peer() {
+    fn default_accepts_every_peer_wle_parity() {
+        // Operator review 2026-06-03 (tuxlink-7vea): default flipped to
+        // allow_all=TRUE to match WLE + avoid first-run "armed listener
+        // rejects everyone" footgun.
         let allowed = AllowedStations::default();
-        assert!(!allowed.allow_all());
+        assert!(allowed.allow_all());
         assert!(allowed.callsigns().is_empty());
         assert!(allowed.ips().is_empty());
 
-        assert!(!allowed.accept(&peer_call("N7CPZ", 0)));
-        assert!(!allowed.accept(&peer_addr([192, 168, 1, 5], 8774)));
+        assert!(allowed.accept(&peer_call("N7CPZ", 0)));
+        assert!(allowed.accept(&peer_addr([192, 168, 1, 5], 8774)));
     }
 
     // ── add_callsign / add_ip ────────────────────────────────────
 
     #[test]
     fn add_callsign_accepts_listed_rejects_others() {
-        let mut allowed = AllowedStations::new();
+        // Restrict-mode (allow_all=false) is required to exercise rejection.
+        let mut allowed = AllowedStations::new().with_allow_all(false);
         allowed.add_callsign(addr("N7CPZ", 0));
 
         assert!(allowed.accept(&peer_call("N7CPZ", 0)));
@@ -441,7 +456,7 @@ mod tests {
 
     #[test]
     fn add_ip_accepts_listed_rejects_others() {
-        let mut allowed = AllowedStations::new();
+        let mut allowed = AllowedStations::new().with_allow_all(false);
         allowed.add_ip(std::net::IpAddr::V4(Ipv4Addr::new(192, 168, 1, 5)));
 
         assert!(allowed.accept(&peer_addr([192, 168, 1, 5], 8774)));
@@ -460,7 +475,7 @@ mod tests {
 
     #[test]
     fn allow_all_false_with_empty_list_rejects() {
-        let allowed = AllowedStations::new();
+        let allowed = AllowedStations::new().with_allow_all(false);
         assert!(!allowed.accept(&peer_call("N7CPZ", 0)));
     }
 
@@ -468,7 +483,7 @@ mod tests {
 
     #[test]
     fn wildcard_callsign_matches_prefix_no_ssid_in_pattern() {
-        let mut allowed = AllowedStations::new();
+        let mut allowed = AllowedStations::new().with_allow_all(false);
         allowed.add_callsign_pattern("N7*");
         assert!(allowed.accept(&peer_call("N7CPZ", 0)));
         assert!(allowed.accept(&peer_call("N7CPZ", 1)));
@@ -478,7 +493,7 @@ mod tests {
 
     #[test]
     fn wildcard_callsign_with_ssid_in_pattern_constrains_ssid() {
-        let mut allowed = AllowedStations::new();
+        let mut allowed = AllowedStations::new().with_allow_all(false);
         allowed.add_callsign_pattern("N7CPZ-1");
         assert!(allowed.accept(&peer_call("N7CPZ", 1)));
         assert!(!allowed.accept(&peer_call("N7CPZ", 2)));
@@ -495,7 +510,7 @@ mod tests {
 
     #[test]
     fn wildcard_ip_matches_prefix() {
-        let mut allowed = AllowedStations::new();
+        let mut allowed = AllowedStations::new().with_allow_all(false);
         allowed.add_ip_pattern("192.168.*");
         assert!(allowed.accept(&peer_addr([192, 168, 1, 5], 8774)));
         assert!(allowed.accept(&peer_addr([192, 168, 0, 0], 8774)));
@@ -504,7 +519,7 @@ mod tests {
 
     #[test]
     fn exact_ip_does_not_match_neighbours() {
-        let mut allowed = AllowedStations::new();
+        let mut allowed = AllowedStations::new().with_allow_all(false);
         allowed.add_ip_pattern("192.168.1.5");
         assert!(allowed.accept(&peer_addr([192, 168, 1, 5], 8774)));
         assert!(!allowed.accept(&peer_addr([192, 168, 1, 6], 8774)));
@@ -514,15 +529,17 @@ mod tests {
 
     #[test]
     fn clear_resets_to_default() {
-        let mut allowed = AllowedStations::new().with_allow_all(true);
+        let mut allowed = AllowedStations::new().with_allow_all(false);
         allowed.add_callsign(addr("N7CPZ", 0));
         allowed.add_ip(std::net::IpAddr::V4(Ipv4Addr::new(192, 168, 1, 5)));
         allowed.clear();
 
-        assert!(!allowed.allow_all());
+        // Per tuxlink-7vea default flip: clear() resets to allow_all=TRUE.
+        assert!(allowed.allow_all());
         assert!(allowed.callsigns().is_empty());
         assert!(allowed.ips().is_empty());
-        assert!(!allowed.accept(&peer_call("N7CPZ", 0)));
+        // With WLE-parity default, an empty allowlist accepts everyone.
+        assert!(allowed.accept(&peer_call("N7CPZ", 0)));
     }
 
     // ── JSON round-trip ──────────────────────────────────────────

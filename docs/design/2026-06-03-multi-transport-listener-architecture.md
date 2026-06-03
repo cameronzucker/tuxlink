@@ -241,14 +241,14 @@ The 4 transport-listener issues (xehu, inde, dhbl, NEW3) can ship in parallel on
 - **No on-air tests in this work.** RADIO-1 governs the on-air smoke; operator runs once each transport is unit+integration green.
 - **WLE-as-truth comparison:** for the protocol-on-the-wire surfaces (Telnet-login challenge, ARDOP `LISTEN TRUE` semantics, VARA `LISTEN ON` semantics), record the deep-dive's documented WLE behavior + verify tuxlink matches via observed byte stream.
 
-## 5. Operator decisions outstanding
+## 5. Operator decisions
 
-| Decision | Default if no input |
+| Decision | Resolution |
 |---|---|
-| AllowedStations default: FALSE (restrict by default) vs TRUE (WLE-compatible permissive)? | FALSE per `no-disk-creds-default`-class defensive posture |
+| AllowedStations default: FALSE (restrict by default) vs TRUE (WLE-compatible permissive)? | **TRUE per WLE-parity** (operator review 2026-06-03 / tuxlink-7vea). Earlier defensive-posture framing was reversed: TCP-layer access is the actual security boundary, not application-layer allowlist presence. Default-FALSE footgunned operators into "armed listener rejects everyone" first-run loops without earning the security it claimed. Security-conscious operators explicitly configure a station password and/or callsign restrictions. See `docs/superpowers/specs/2026-06-03-listener-ui-design.md` §1.1 + project memory `allowed-stations-default-true`. |
 | StationPassword challenge for Packet — skip entirely (no in-band place to ask), challenge at B2F start (protocol extension), or sidecar (separate first-packet protocol)? | Skip for Packet — defer to allowlist as the only Packet gate |
-| Listener-armed TTL — default 1 hour / 8 hours / no expiry? | 1 hour default; operator-configurable; "no expiry" disabled by default per RADIO-1 framing |
-| RADIO-1 confirmation modal when arming vs implicit "arming is the consent"? | Implicit; UI affordance makes the consent semantic clear without a modal |
+| Listener-armed TTL — default 1 hour / 8 hours / no expiry? | 1 hour default; operator-configurable; "no expiry" disabled by default |
+| Confirmation modal when arming vs implicit "arming is the consent"? | Implicit; UI affordance makes the consent semantic clear without a modal |
 
 ## 6. References
 

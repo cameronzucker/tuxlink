@@ -74,6 +74,18 @@ const defaultInvokeImpl = async (cmd: string) => {
   if (cmd === 'session_log_snapshot') {
     return [];
   }
+  // Listener defaults — backend ships allow_all=true (post-flip per
+  // tuxlink-7vea); see commit 5261f59.
+  if (cmd === 'telnet_listen_config_get') {
+    return { port: 8774, bind_addr: '127.0.0.1', ttl_secs: 3600 };
+  }
+  if (cmd === 'telnet_station_password_is_set') {
+    // Backend returns StationPasswordStatus enum string, not bool.
+    return 'NotSet';
+  }
+  if (cmd === 'telnet_allowed_stations_get') {
+    return { allow_all: true, callsigns: [], ips: [] };
+  }
   return undefined;
 };
 
@@ -398,6 +410,215 @@ describe('<TelnetP2pRadioPanel>', () => {
     await waitFor(() => {
       expect(screen.getByText('W7AUX @ 127.0.0.1:8772')).toBeInTheDocument();
     });
+  });
+
+  // ── Listen section (tuxlink-7vea) ────────────────────────────────────────
+  //
+  // The Listen section was added per spec 2026-06-03-listener-ui-design.md
+  // §1.3. Tests assert the full mutation surface (arm/disarm, allowlist
+  // add/remove, allow-any-peer toggle, station-password set/clear, listener
+  // config edits) and the armed-state indicator.
+
+  it('renders the Listen section', async () => {
+    renderPanel();
+    expect(await screen.findByTestId('telnet-listen-section')).toBeInTheDocument();
+  });
+
+  it('Arm button click fires telnet_listen and flips the status to ARMED', async () => {
+    const { invoke } = await import('@tauri-apps/api/core');
+    renderPanel();
+    await waitFor(() =>
+      expect(screen.getByTestId('telnet-listen-arm-btn')).toBeInTheDocument(),
+    );
+    fireEvent.click(screen.getByTestId('telnet-listen-arm-btn'));
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith('telnet_listen');
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId('telnet-listen-status')).toHaveTextContent(/ARMED/);
+    });
+  });
+
+  it('Disarm button click fires telnet_set_listen with enabled=false', async () => {
+    const { invoke } = await import('@tauri-apps/api/core');
+    renderPanel();
+    // First arm so the disarm button appears.
+    await waitFor(() =>
+      expect(screen.getByTestId('telnet-listen-arm-btn')).toBeInTheDocument(),
+    );
+    fireEvent.click(screen.getByTestId('telnet-listen-arm-btn'));
+    await waitFor(() =>
+      expect(screen.getByTestId('telnet-listen-disarm-btn')).toBeInTheDocument(),
+    );
+    fireEvent.click(screen.getByTestId('telnet-listen-disarm-btn'));
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith('telnet_set_listen', { enabled: false });
+    });
+  });
+
+  it('Allow-any-peer toggle fires telnet_allowed_stations_set_allow_all', async () => {
+    const { invoke } = await import('@tauri-apps/api/core');
+    renderPanel();
+    await waitFor(() =>
+      expect(screen.getByTestId('telnet-allowed-expander')).toBeInTheDocument(),
+    );
+    fireEvent.click(screen.getByTestId('telnet-allowed-expander'));
+    await waitFor(() =>
+      expect(screen.getByTestId('telnet-allowed-allow-all-toggle')).toBeInTheDocument(),
+    );
+    fireEvent.click(screen.getByTestId('telnet-allowed-allow-all-toggle'));
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith(
+        'telnet_allowed_stations_set_allow_all',
+        { enabled: false },
+      );
+    });
+  });
+
+  it('adding a callsign fires telnet_allowed_stations_add_callsign', async () => {
+    const { invoke } = await import('@tauri-apps/api/core');
+    renderPanel();
+    await waitFor(() =>
+      expect(screen.getByTestId('telnet-allowed-expander')).toBeInTheDocument(),
+    );
+    fireEvent.click(screen.getByTestId('telnet-allowed-expander'));
+    await waitFor(() =>
+      expect(screen.getByTestId('telnet-allowed-callsign-add-btn')).toBeInTheDocument(),
+    );
+    fireEvent.click(screen.getByTestId('telnet-allowed-callsign-add-btn'));
+    const input = await screen.findByTestId('telnet-allowed-callsign-add-input');
+    fireEvent.change(input, { target: { value: 'w7aux' } });
+    fireEvent.keyDown(input, { key: 'Enter', code: 'Enter' });
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith(
+        'telnet_allowed_stations_add_callsign',
+        { callsign: 'W7AUX' },
+      );
+    });
+  });
+
+  it('removing a callsign fires telnet_allowed_stations_remove_callsign', async () => {
+    const core = await import('@tauri-apps/api/core');
+    (core.invoke as ReturnType<typeof vi.fn>).mockImplementation(async (cmd: string) => {
+      if (cmd === 'telnet_allowed_stations_get') {
+        return { allow_all: false, callsigns: ['N7CPZ'], ips: [] };
+      }
+      return defaultInvokeImpl(cmd);
+    });
+    renderPanel();
+    await waitFor(() =>
+      expect(screen.getByTestId('telnet-allowed-expander')).toBeInTheDocument(),
+    );
+    fireEvent.click(screen.getByTestId('telnet-allowed-expander'));
+    await waitFor(() =>
+      expect(screen.getByTestId('telnet-allowed-callsign-remove-N7CPZ')).toBeInTheDocument(),
+    );
+    fireEvent.click(screen.getByTestId('telnet-allowed-callsign-remove-N7CPZ'));
+    await waitFor(() => {
+      expect(core.invoke).toHaveBeenCalledWith(
+        'telnet_allowed_stations_remove_callsign',
+        { callsign: 'N7CPZ' },
+      );
+    });
+  });
+
+  it('adding an IP pattern fires telnet_allowed_stations_add_ip', async () => {
+    const { invoke } = await import('@tauri-apps/api/core');
+    renderPanel();
+    await waitFor(() =>
+      expect(screen.getByTestId('telnet-allowed-expander')).toBeInTheDocument(),
+    );
+    fireEvent.click(screen.getByTestId('telnet-allowed-expander'));
+    await waitFor(() =>
+      expect(screen.getByTestId('telnet-allowed-ip-add-btn')).toBeInTheDocument(),
+    );
+    fireEvent.click(screen.getByTestId('telnet-allowed-ip-add-btn'));
+    const input = await screen.findByTestId('telnet-allowed-ip-add-input');
+    fireEvent.change(input, { target: { value: '192.168.1.*' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith(
+        'telnet_allowed_stations_add_ip',
+        { pattern: '192.168.1.*' },
+      );
+    });
+  });
+
+  it('Station password Set fires telnet_station_password_set', async () => {
+    const { invoke } = await import('@tauri-apps/api/core');
+    const promptSpy = vi.spyOn(window, 'prompt').mockReturnValue('hunter2');
+    renderPanel();
+    await waitFor(() =>
+      expect(screen.getByTestId('telnet-station-pw-expander')).toBeInTheDocument(),
+    );
+    fireEvent.click(screen.getByTestId('telnet-station-pw-expander'));
+    const setBtn = await screen.findByTestId('telnet-station-pw-set-btn');
+    fireEvent.click(setBtn);
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith(
+        'telnet_station_password_set',
+        { password: 'hunter2' },
+      );
+    });
+    promptSpy.mockRestore();
+  });
+
+  it('Station password Clear fires telnet_station_password_clear', async () => {
+    const core = await import('@tauri-apps/api/core');
+    // Backend returns the StationPasswordStatus enum, NOT a bool — Codex
+    // 2026-06-03 fix.
+    (core.invoke as ReturnType<typeof vi.fn>).mockImplementation(async (cmd: string) => {
+      if (cmd === 'telnet_station_password_is_set') return 'Set';
+      return defaultInvokeImpl(cmd);
+    });
+    renderPanel();
+    await waitFor(() =>
+      expect(screen.getByTestId('telnet-station-pw-expander')).toBeInTheDocument(),
+    );
+    fireEvent.click(screen.getByTestId('telnet-station-pw-expander'));
+    const clearBtn = await screen.findByTestId('telnet-station-pw-clear-btn');
+    await waitFor(() => expect(clearBtn).not.toBeDisabled());
+    fireEvent.click(clearBtn);
+    await waitFor(() => {
+      expect(core.invoke).toHaveBeenCalledWith('telnet_station_password_clear');
+    });
+  });
+
+  it('listener setup TTL change fires telnet_listen_config_set', async () => {
+    const { invoke } = await import('@tauri-apps/api/core');
+    renderPanel();
+    await waitFor(() =>
+      expect(screen.getByTestId('telnet-listen-setup-expander')).toBeInTheDocument(),
+    );
+    fireEvent.click(screen.getByTestId('telnet-listen-setup-expander'));
+    const ttlSelect = await screen.findByTestId('telnet-listen-ttl-select');
+    fireEvent.change(ttlSelect, { target: { value: String(15 * 60) } });
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith(
+        'telnet_listen_config_set',
+        // Codex 2026-06-03: backend signature is `req: TelnetListenConfigDto`,
+        // so the DTO must be wrapped in `{ req: ... }`.
+        expect.objectContaining({
+          req: expect.objectContaining({ ttl_secs: 15 * 60 }),
+        }),
+      );
+    });
+  });
+
+  it('listener-config get is fetched on mount', async () => {
+    const core = await import('@tauri-apps/api/core');
+    renderPanel();
+    await waitFor(() => {
+      expect(core.invoke).toHaveBeenCalledWith('telnet_listen_config_get');
+    });
+  });
+
+  it('allowlist count chip reflects allow_all default', async () => {
+    renderPanel();
+    await waitFor(() =>
+      expect(screen.getByTestId('telnet-allowed-count')).toBeInTheDocument(),
+    );
+    expect(screen.getByTestId('telnet-allowed-count')).toHaveTextContent(/allow any/);
   });
 
   // ── Close button ──────────────────────────────────────────────────────────
