@@ -19,6 +19,7 @@ function handlers(): MenuHandlers {
     openHelp: vi.fn(),
     reportIssue: vi.fn(),
     openCatalogRequest: vi.fn(),
+    openGribRequest: vi.fn(),
     quit: vi.fn(),
   };
 }
@@ -154,5 +155,12 @@ describe('dispatchMenuAction', () => {
     const h = handlers();
     dispatchMenuAction('menu:message:catalog_request', h);
     expect(h.openCatalogRequest).toHaveBeenCalledOnce();
+  });
+
+  // tuxlink-vrpk: Saildocs GRIB request panel.
+  it('routes Message → GRIB File Request to openGribRequest', () => {
+    const h = handlers();
+    dispatchMenuAction('menu:message:grib_request', h);
+    expect(h.openGribRequest).toHaveBeenCalledOnce();
   });
 });

@@ -41,6 +41,10 @@ export const MENU_TREE: TopMenu[] = [
     // Opens the CatalogRequestPanel; routes through the existing outgoing
     // rails to INQUIRY@winlink.org.
     { id: 'menu:message:catalog_request', label: 'Catalog Request…' },
+    // tuxlink-vrpk: Saildocs GRIB request (3rd-party SMTP, not Winlink CMS).
+    // Opens GribRequestPanel; routes through outgoing rails to
+    // query@saildocs.com.
+    { id: 'menu:message:grib_request', label: 'GRIB File Request…' },
     { separator: true },
     // Not-yet-wired: dispatchMenuAction has no Print handler, so disable +
     // badge rather than render as a dead-clickable button (tuxlink-dpf).

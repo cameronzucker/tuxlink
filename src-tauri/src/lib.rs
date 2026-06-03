@@ -5,6 +5,7 @@ pub mod compose_window;
 pub mod config;
 pub mod consent_gate;
 pub mod forms;
+pub mod grib;
 pub mod native_mailbox;
 pub mod position;
 pub mod search;
@@ -292,6 +293,8 @@ pub fn run() {
             // catalog file + in-band INQUIRY@winlink.org composer/sender.
             crate::catalog::commands::catalog_list,
             crate::catalog::commands::catalog_send_inquiry,
+            // tuxlink-vrpk: GRIB request via Saildocs (3rd-party SMTP).
+            crate::grib::commands::grib_send_request,
             crate::modem_commands::config_get_ardop,   // tuxlink-4ek (ARDOP config read)
             crate::modem_commands::config_set_ardop,   // tuxlink-4ek (ARDOP config write)
             crate::modem_commands::modem_get_status,   // tuxlink-4ek Task 3.2 (session snapshot)
