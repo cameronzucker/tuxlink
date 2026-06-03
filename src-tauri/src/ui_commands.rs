@@ -2787,6 +2787,361 @@ pub async fn telnet_p2p_abort(
     Ok(())
 }
 
+// ============================================================================
+// tuxlink-xehu — Telnet-P2P listener (allowlist + keyring + arm/disarm)
+// Spec: docs/design/2026-06-03-multi-transport-listener-architecture.md §4.1
+// Wire: dev/scratch/winlink-re/findings/telnet-p2p.md
+// ============================================================================
+
+/// Shared state for the in-flight Telnet listener: the shutdown flag (set by
+/// `telnet_set_listen(false)` and read by the accept loop) + the bound listener
+/// handle so the accept loop can be woken by closing the socket.
+///
+/// Held as `Arc<Mutex<...>>` so the spawn_blocking accept-loop thread + the
+/// Tauri command thread can both manipulate it.
+#[derive(Default)]
+pub struct TelnetListenState {
+    pub inner: std::sync::Mutex<Option<TelnetListenHandle>>,
+}
+
+/// In-flight handle for a running Telnet listener.
+pub struct TelnetListenHandle {
+    pub shutdown: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    pub bound_addr: std::net::SocketAddr,
+}
+
+/// Filesystem location of the Telnet listener's allowlist file.
+fn telnet_allowed_stations_path() -> std::path::PathBuf {
+    let mut p = crate::config::config_path();
+    p.pop(); // strip `config.json`
+    p.join("listener").join("telnet").join("allowed_stations.json")
+}
+
+fn load_telnet_allowed_stations()
+    -> Result<crate::winlink::listener::AllowedStations, UiError>
+{
+    crate::winlink::listener::AllowedStations::load_from(&telnet_allowed_stations_path())
+        .map_err(|e| UiError::Internal { detail: e.to_string() })
+}
+
+fn save_telnet_allowed_stations(
+    a: &crate::winlink::listener::AllowedStations,
+) -> Result<(), UiError> {
+    a.save_to(&telnet_allowed_stations_path())
+        .map_err(|e| UiError::Internal { detail: e.to_string() })
+}
+
+// ── Allowlist commands ──────────────────────────────────────────
+
+#[derive(Debug, Serialize)]
+pub struct TelnetAllowedStationsDto {
+    pub allow_all: bool,
+    pub callsigns: Vec<String>,
+    pub ips: Vec<String>,
+}
+
+/// Read the Telnet listener's allowlist (allow_all + callsigns + IPs).
+#[tauri::command]
+pub async fn telnet_allowed_stations_get() -> Result<TelnetAllowedStationsDto, UiError> {
+    let a = load_telnet_allowed_stations()?;
+    Ok(TelnetAllowedStationsDto {
+        allow_all: a.allow_all(),
+        callsigns: a.callsigns().to_vec(),
+        ips: a.ips().to_vec(),
+    })
+}
+
+/// Add a callsign to the Telnet listener's allowlist. Callsign may be a bare
+/// callsign (`N7CPZ`), a callsign-with-SSID (`N7CPZ-1`), or a tail-wildcard
+/// pattern (`N7*` — matches every callsign starting with `N7`).
+#[tauri::command]
+pub async fn telnet_allowed_stations_add_callsign(callsign: String) -> Result<(), UiError> {
+    let mut a = load_telnet_allowed_stations()?;
+    a.add_callsign_pattern(callsign);
+    save_telnet_allowed_stations(&a)
+}
+
+/// Remove a callsign from the Telnet listener's allowlist. Match is on the
+/// canonical stored form (uppercased, trimmed).
+#[tauri::command]
+pub async fn telnet_allowed_stations_remove_callsign(callsign: String) -> Result<(), UiError> {
+    let mut a = load_telnet_allowed_stations()?;
+    let target = callsign.trim().to_uppercase();
+    let kept: Vec<String> = a.callsigns().iter().filter(|c| **c != target).cloned().collect();
+    let allow_all = a.allow_all();
+    let ips_kept: Vec<String> = a.ips().to_vec();
+    a = crate::winlink::listener::AllowedStations::new().with_allow_all(allow_all);
+    for c in kept {
+        a.add_callsign_pattern(c);
+    }
+    for ip in ips_kept {
+        a.add_ip_pattern(ip);
+    }
+    save_telnet_allowed_stations(&a)
+}
+
+/// Add an IP pattern. Patterns are 4-token IPv4 with optional `*` per octet
+/// (`192.168.*.50`, `192.168.1.*`, `192.168.1.5`) per telnet-p2p.md §4.3.
+#[tauri::command]
+pub async fn telnet_allowed_stations_add_ip(pattern: String) -> Result<(), UiError> {
+    let mut a = load_telnet_allowed_stations()?;
+    a.add_ip_pattern(pattern);
+    save_telnet_allowed_stations(&a)
+}
+
+#[tauri::command]
+pub async fn telnet_allowed_stations_remove_ip(pattern: String) -> Result<(), UiError> {
+    let mut a = load_telnet_allowed_stations()?;
+    let target = pattern.trim().to_string();
+    let kept_ips: Vec<String> = a.ips().iter().filter(|i| **i != target).cloned().collect();
+    let allow_all = a.allow_all();
+    let calls_kept: Vec<String> = a.callsigns().to_vec();
+    a = crate::winlink::listener::AllowedStations::new().with_allow_all(allow_all);
+    for c in calls_kept {
+        a.add_callsign_pattern(c);
+    }
+    for ip in kept_ips {
+        a.add_ip_pattern(ip);
+    }
+    save_telnet_allowed_stations(&a)
+}
+
+/// Toggle the master `Allow All Connections` flag. DIVERGES from WLE: tuxlink
+/// defaults FALSE; operator opts into permissive parity-with-WLE explicitly.
+#[tauri::command]
+pub async fn telnet_allowed_stations_set_allow_all(enabled: bool) -> Result<(), UiError> {
+    let mut a = load_telnet_allowed_stations()?;
+    a.set_allow_all(enabled);
+    save_telnet_allowed_stations(&a)
+}
+
+// ── Station password commands ────────────────────────────────────
+
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub enum StationPasswordStatus {
+    Set,
+    NotSet,
+}
+
+/// Set the Telnet listener's station password. The operator-typed value is
+/// **uppercased + trimmed** before storage per telnet-p2p.md §9.4 Option A —
+/// reject the WLE silent-fail-on-lowercase bug by normalising at write time.
+#[tauri::command]
+pub async fn telnet_station_password_set(password: String) -> Result<(), UiError> {
+    let sp = crate::winlink::listener::StationPassword::new();
+    let normalised = crate::winlink::telnet_listen::normalize_station_password(&password);
+    sp.set(&normalised)
+        .map_err(|e| UiError::Internal { detail: e.to_string() })
+}
+
+#[tauri::command]
+pub async fn telnet_station_password_clear() -> Result<(), UiError> {
+    let sp = crate::winlink::listener::StationPassword::new();
+    sp.clear().map_err(|e| UiError::Internal { detail: e.to_string() })
+}
+
+#[tauri::command]
+pub async fn telnet_station_password_is_set() -> Result<StationPasswordStatus, UiError> {
+    let sp = crate::winlink::listener::StationPassword::new();
+    Ok(if sp.is_set() {
+        StationPasswordStatus::Set
+    } else {
+        StationPasswordStatus::NotSet
+    })
+}
+
+// ── Listener config commands ─────────────────────────────────────
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TelnetListenConfigDto {
+    pub port: u16,
+    pub bind_addr: String,
+    pub ttl_secs: u64,
+}
+
+#[tauri::command]
+pub async fn telnet_listen_config_get() -> Result<TelnetListenConfigDto, UiError> {
+    let cfg = config::read_config().map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    Ok(TelnetListenConfigDto {
+        port: cfg.telnet_listen.port,
+        bind_addr: cfg.telnet_listen.bind_addr,
+        ttl_secs: cfg.telnet_listen.ttl_secs,
+    })
+}
+
+#[tauri::command]
+pub async fn telnet_listen_config_set(req: TelnetListenConfigDto) -> Result<(), UiError> {
+    let mut cfg =
+        config::read_config().map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    cfg.telnet_listen.port = req.port;
+    cfg.telnet_listen.bind_addr = req.bind_addr;
+    cfg.telnet_listen.ttl_secs = req.ttl_secs;
+    config::write_config_atomic(&cfg)
+        .map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    Ok(())
+}
+
+// ── Listen toggle ────────────────────────────────────────────────
+
+/// Arm the Telnet listener. Reads the per-listener config + allowlist +
+/// keyring password, binds the TCP socket, and spawns a blocking accept loop
+/// on a background task. Idempotent: a second call while a listener is
+/// already running returns `Internal { detail: "already listening" }`.
+///
+/// RADIO-1: Telnet is an IP transport — no RF, no Part 97 consent. The
+/// listener accepting an inbound peer does NOT cause a radio to transmit
+/// (it's a TCP socket). This command does NOT require a RADIO-1 consent
+/// token — the arming itself is the operator's per-invocation consent for
+/// inbound TCP peers, framed by the arm window (TTL).
+#[tauri::command]
+pub async fn telnet_listen(
+    app: AppHandle,
+    state: State<'_, std::sync::Arc<TelnetListenState>>,
+    log: State<'_, std::sync::Arc<SessionLogState>>,
+) -> Result<(), UiError> {
+    use crate::winlink::listener::{ListenerArmsRecord, TransportKind};
+    use crate::winlink::session::ExchangeConfig;
+    use std::sync::atomic::AtomicBool;
+    use std::sync::Arc;
+
+    // Refuse second arm while one is in flight.
+    {
+        let guard = state.inner.lock().unwrap();
+        if guard.is_some() {
+            return Err(UiError::Internal {
+                detail: "Telnet listener is already armed".into(),
+            });
+        }
+    }
+
+    let cfg = config::read_config()
+        .map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    let mycall = cfg.identity.callsign.clone().unwrap_or_default();
+    if mycall.is_empty() {
+        return Err(UiError::NotConfigured(
+            "no callsign configured — cannot arm listener without identity".into(),
+        ));
+    }
+    let locator = cfg.identity.grid.clone().unwrap_or_default();
+
+    // Bind the TCP socket up-front so a bind failure is surfaced
+    // synchronously to the operator (port conflict / permission).
+    let listener = crate::winlink::telnet_listen::bind(
+        &cfg.telnet_listen.bind_addr,
+        cfg.telnet_listen.port,
+    )
+    .map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    let bound_addr = listener
+        .local_addr()
+        .map_err(|e| UiError::Internal { detail: e.to_string() })?;
+
+    // Load the allowlist + station password.
+    let allowed = load_telnet_allowed_stations()?;
+    let password = crate::winlink::listener::StationPassword::new();
+    let arms = ListenerArmsRecord::arm(
+        TransportKind::Telnet,
+        std::time::Duration::from_secs(cfg.telnet_listen.ttl_secs),
+    );
+
+    let exchange_cfg = ExchangeConfig {
+        mycall,
+        targetcall: String::new(), // filled in per-session by run_exchange_with_role
+        locator,
+        password: None,
+    };
+
+    let shutdown = Arc::new(AtomicBool::new(false));
+    // Stash the handle in shared state BEFORE spawning so a fast
+    // `telnet_set_listen(false)` from the operator finds the flag.
+    {
+        let mut guard = state.inner.lock().unwrap();
+        *guard = Some(TelnetListenHandle {
+            shutdown: Arc::clone(&shutdown),
+            bound_addr,
+        });
+    }
+
+    emit_session_line(
+        &app,
+        &log,
+        LogLevel::Info,
+        format!("Telnet listener armed on {bound_addr} (TTL {}s)", cfg.telnet_listen.ttl_secs),
+    );
+
+    // Hand off the bound listener + arms record to a blocking task.
+    let app_progress = app.clone();
+    let log_progress = log.inner().clone();
+    let app_wire = app.clone();
+    let log_wire = log.inner().clone();
+
+    let state_for_thread = Arc::clone(state.inner());
+    tokio::task::spawn_blocking(move || {
+        crate::winlink::telnet_listen::run_accept_loop(
+            listener,
+            allowed,
+            password,
+            arms,
+            exchange_cfg,
+            shutdown,
+            &move |line: &str| {
+                emit_session_line(
+                    &app_progress,
+                    &log_progress,
+                    LogLevel::Info,
+                    line.to_string(),
+                );
+            },
+            &move |line: &str| {
+                emit_session_line(
+                    &app_wire,
+                    &log_wire,
+                    LogLevel::Info,
+                    line.to_string(),
+                );
+            },
+            |_proposals: &[_]| Vec::new(),
+        );
+        // Clear the handle once the loop exits.
+        let mut guard = state_for_thread.inner.lock().unwrap();
+        *guard = None;
+    });
+    Ok(())
+}
+
+/// Toggle the listener on/off. `enabled == true` = arm (same as
+/// `telnet_listen()`); `enabled == false` = disarm (signal shutdown +
+/// close the bound socket to wake the accept loop).
+#[tauri::command]
+pub async fn telnet_set_listen(
+    app: AppHandle,
+    state: State<'_, std::sync::Arc<TelnetListenState>>,
+    log: State<'_, std::sync::Arc<SessionLogState>>,
+    enabled: bool,
+) -> Result<(), UiError> {
+    use std::sync::atomic::Ordering;
+    if enabled {
+        // Equivalent to telnet_listen().
+        telnet_listen(app, state, log).await
+    } else {
+        let mut guard = state.inner.lock().unwrap();
+        if let Some(handle) = guard.take() {
+            handle.shutdown.store(true, Ordering::SeqCst);
+            // Open a transient connection to wake the accept loop.
+            let _ = std::net::TcpStream::connect_timeout(
+                &handle.bound_addr,
+                std::time::Duration::from_millis(500),
+            );
+            emit_session_line(
+                &app,
+                &log,
+                LogLevel::Info,
+                "Telnet listener disarmed.".into(),
+            );
+        }
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3209,6 +3564,7 @@ hw:CARD=Device,DEV=0
             packet: PacketConfig::default(),
             modem_ardop: None,
             modem_vara: None,
+            telnet_listen: crate::config::TelnetListenUiConfig::default(),
         }
     }
 
@@ -3417,6 +3773,7 @@ hw:CARD=Device,DEV=0
             packet: PacketConfig::default(),
             modem_ardop: None,
             modem_vara: None,
+            telnet_listen: crate::config::TelnetListenUiConfig::default(),
         };
         let tmp = tempfile::tempdir().expect("tmpdir");
         let state = BackendState::new();
@@ -4143,6 +4500,7 @@ hw:CARD=Device,DEV=0
             packet: crate::config::PacketConfig::default(),
             modem_ardop: None,
             modem_vara: None,
+            telnet_listen: crate::config::TelnetListenUiConfig::default(),
         }
     }
 

@@ -96,6 +96,7 @@ fn native_test_config() -> tuxlink_lib::config::Config {
         packet: PacketConfig::default(),
         modem_ardop: None,
         modem_vara: None,
+        telnet_listen: tuxlink_lib::config::TelnetListenUiConfig::default(),
     }
 }
 

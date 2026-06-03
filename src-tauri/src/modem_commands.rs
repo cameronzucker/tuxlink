@@ -1306,6 +1306,7 @@ mod tests {
             packet: crate::config::PacketConfig::default(),
             modem_ardop: None,
             modem_vara: None,
+            telnet_listen: crate::config::TelnetListenUiConfig::default(),
         };
         assert!(check_identity_present(&cfg).is_err());
     }

@@ -42,6 +42,14 @@ pub struct Config {
     /// client; tuxlink does NOT manage the VARA process lifecycle.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub modem_vara: Option<VaraUiConfig>,
+    /// Telnet-P2P listener settings (additive; defaults when absent). The
+    /// allowlist + station password live OUTSIDE this struct (the allowlist in
+    /// `<config-dir>/listener/telnet/allowed_stations.json`, the password in
+    /// the OS keyring); this struct carries only the bind + TTL knobs.
+    ///
+    /// bd: tuxlink-xehu
+    #[serde(default)]
+    pub telnet_listen: TelnetListenUiConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -602,6 +610,47 @@ impl Default for VaraUiConfig {
             cmd_port: 8300,
             data_port: 8301,
             bandwidth_hz: None,
+        }
+    }
+}
+
+// ============================================================================
+// Telnet-P2P listener config (tuxlink-xehu)
+// ============================================================================
+
+/// Telnet-P2P listener settings. The allowlist + station password live OUTSIDE
+/// this struct (allowlist in `<config-dir>/listener/telnet/allowed_stations.json`,
+/// password in the OS keyring) so this struct carries only the bind + TTL knobs.
+///
+/// ## Defaults (DIVERGE from WLE)
+///
+/// | Knob       | tuxlink default | WLE default     | Why                                |
+/// |------------|-----------------|-----------------|------------------------------------|
+/// | `port`     | 8774            | 8774            | parity (telnet-p2p.md §1)          |
+/// | `bind_addr`| `"127.0.0.1"`   | `"Default"` ≈ 0.0.0.0 | telnet-p2p.md §9.3 — operator opts into LAN |
+/// | `ttl_secs` | 3600 (1 hour)   | infinite        | RADIO-1 framing — arming = consent for armed window |
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct TelnetListenUiConfig {
+    /// TCP port the listener binds. Default 8774 per
+    /// `dev/scratch/winlink-re/findings/telnet-p2p.md §1` (NOT 8772 — that's
+    /// the RMS-Relay hub port).
+    pub port: u16,
+    /// Bind address. Default `127.0.0.1` (loopback) — DIVERGES from WLE's
+    /// "all interfaces" default per telnet-p2p.md §9.3. Operator opts into
+    /// LAN/all by setting this to `"0.0.0.0"` or a specific NIC address.
+    pub bind_addr: String,
+    /// Arm-window TTL in seconds. Default 3600 (1 hour). Operator can set
+    /// shorter for narrower consent windows.
+    pub ttl_secs: u64,
+}
+
+impl Default for TelnetListenUiConfig {
+    fn default() -> Self {
+        Self {
+            port: 8774,
+            bind_addr: "127.0.0.1".into(),
+            ttl_secs: 3600,
         }
     }
 }

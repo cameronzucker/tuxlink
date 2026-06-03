@@ -1864,6 +1864,7 @@ mod native_read_state_tests {
             packet: PacketConfig::default(),
             modem_ardop: None,
             modem_vara: None,
+            telnet_listen: crate::config::TelnetListenUiConfig::default(),
         }
     }
 
@@ -2674,6 +2675,7 @@ mod native_read_state_tests {
             packet: PacketConfig::default(),
             modem_ardop: None,
             modem_vara: None,
+            telnet_listen: crate::config::TelnetListenUiConfig::default(),
         }
     }
 
