@@ -1,5 +1,6 @@
 pub mod app_backend;
 pub mod bootstrap;
+pub mod catalog;
 pub mod compose_window;
 pub mod config;
 pub mod consent_gate;
@@ -286,6 +287,10 @@ pub fn run() {
             crate::search::commands::tauri_search_record_recent,
             crate::search::commands::tauri_search_clear_recent,
             crate::search::commands::tauri_search_rebuild_index,
+            // tuxlink-ddiq: WLE catalog-request (Inquiry) framework. Bundled
+            // catalog file + in-band INQUIRY@winlink.org composer/sender.
+            crate::catalog::commands::catalog_list,
+            crate::catalog::commands::catalog_send_inquiry,
             crate::modem_commands::config_get_ardop,   // tuxlink-4ek (ARDOP config read)
             crate::modem_commands::config_set_ardop,   // tuxlink-4ek (ARDOP config write)
             crate::modem_commands::modem_get_status,   // tuxlink-4ek Task 3.2 (session snapshot)

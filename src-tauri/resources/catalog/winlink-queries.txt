@@ -1,0 +1,1477 @@
+﻿ARCTIC_ICE|FICN10CWIS|Iceberg Canada East Coast Waters|769
+ARCTIC_ICE|FICN15CWIS|Ice Hazard Daily Canada Hudson Bay & App|2177
+ARCTIC_ICE|FICN16CWIS|Ice Hazard Daily Canada Eastern Arctic|1909
+ARCTIC_ICE|FICN17CWIS|Ice Hazard Daily Gulf of St Lawrence|4090
+ARCTIC_ICE|FICN18CWIS|Ice Hazard Daily East Coast Newfoundland|2177
+ARCTIC_ICE|FZAK80|Sea Ice Advisory Western and Arctic Alaskan Coastal Waters|4402
+ARES_RACES|FL_AUX|Florida AUXCOMM Status|614
+ARES_RACES|FL_P2P_NET|Florida P2P Net Schedule using Winlink Express software|8734
+ARES_RACES|TX_D16_RACES|Texas RACES District 16 - ICS-205|1698
+ARES_RACES|TX_MOCO_ARES|Montgomery County, Texas ARES ICS-205|1441
+ARES_RACES|TX_RACES|Texas RACES Statewide Communications|767
+AURORA|AUR_TOMORROW|NOAA Aurora Viewline for Tomorrow Night|33327
+AURORA|AUR_TONIGHT|NOAA Aurora Viewline for Tonight|32878
+HF_NETS|HF_NETS|Maritime HF Nets and frequencies for cruisers|4928
+HONDURAS|CATACAMAS|15 day WX forecast for CATACAMAS|11365
+HONDURAS|GRACIAS|15 day WX forecast for GRACIAS|11365
+HONDURAS|JUTICALPA|15 day WX forecast for JUTICALPA|11365
+HONDURAS|LA-CEIBA|15 Day WX forecast for LA CEIBA|11365
+HONDURAS|LA-ESPERANZA|15 Day WX forecast for LA ESPERANZA|11365
+HONDURAS|PUERTOLEMPIR|15 day WX forecast for PUERTO LEMPERIRA|11365
+HONDURAS|ROATAN|15 day WX forecast for ROATAN|11365
+HONDURAS|SANPEDROSULA|15 Day WX forecast for SAN PEDRO SULA|11365
+INDIAN_OCEAN|WX_INDIAN0|High Seas Perth Indian|1574
+METAR|ALB_TIR_ICAO|Airport metar weather - Icao Tirana - Albania|62
+METAR|CRO_DUB_ICAO|Airport metar weather - Icao Dubrovnik - Croatia|91
+METAR|CRO_PUL_ICAO|Airport metar weather - Icao Pula - Croatia|62
+METAR|CRO_RIJ_ICAO|Airport metar weather - Icao Rijeka - Croatia|84
+METAR|CRO_SPL_ICAO|Airport metar weather - Icao Split - Croatia|83
+METAR|CRO_ZAD_ICAO|Airport metar weather - Icao Zadar - Croatia|68
+METAR|FRA_AJA_ICAO|Airport metar weather - Icao Ajaccio - West Corse - France|81
+METAR|FRA_BAS_ICAO|Airport metar weather - Icao Bastia - Est Corse - France|124
+METAR|FRA_BEZ_ICAO|Airport metar weather - Icao Beziers - Lion Gulf - France|68
+METAR|FRA_CAL_ICAO|Airport metar weather - Icao Calvi - North Corse - France|75
+METAR|FRA_FIG_ICAO|Airport metar weather - Icao Figari - South Corse - France|67
+METAR|FRA_HYE_ICAO|Airport metar weather - Icao Hyeres - South France|75
+METAR|FRA_MAR_ICAO|Airport metar weather - Icao Marseille - South France|79
+METAR|FRA_NIC_ICAO|Airport metar weather - Icao Nice - Cote Azur - South France|62
+METAR|GRE_AND_ICAO|Airport metar weather - Icao Andravida - Ionian Greece|56
+METAR|GRE_ARA_ICAO|Airport metar weather - Icao Araxos - Ionian Greece|56
+METAR|GRE_IRA_ICAO|Airport metar weather - Icao Iraklion - Ionian Greece|62
+METAR|GRE_KEF_ICAO|Airport metar weather - Icao Kefallinia - Ionian Greece|62
+METAR|GRE_KER_ICAO|Airport metar weather - Icao Kerkira - Ionian Greece|76
+METAR|GRE_PRE_ICAO|Airport metar weather - Icao Preveza - Ionian Greece|56
+METAR|ITA_ALG_ICAO|Airport metar weather - Icao Alghero - Sardinia - Italy|70
+METAR|ITA_ARG_ICAO|Airport metar weather - Icao Argentario - Tirrenian Italy|64
+METAR|ITA_BAR_ICAO|Airport metar weather - Icao Bari- Ionian Italy|56
+METAR|ITA_BRI_ICAO|Airport metar weather - Icao Brindisi - Adriatic Italy|56
+METAR|ITA_CAG_ICAO|Airport metar weather - Icao Cagliari - Sardinia - Italy|56
+METAR|ITA_CAT_ICAO|Airport metar weather - Icao Catania - Sicily - Italy|56
+METAR|ITA_CME_ICAO|Airport metar weather - Icao Capo Mele - Tirrenian Italy|56
+METAR|ITA_CRO_ICAO|Airport metar weather - Icao Crotone - Ionian Italy|62
+METAR|ITA_ELB_ICAO|Airport metar weather - Icao Elba Island - Tirrenian Italy|79
+METAR|ITA_FAL_ICAO|Airport metar weather - Icao Falconara - Adriatic Italy|78
+METAR|ITA_GEN_ICAO|Airport metar weather - Icao Genova - Tirrenian Italy|69
+METAR|ITA_LAM_ICAO|Airport metar weather - Icao Lamezia - Tirrenian Italy|72
+METAR|ITA_NAP_ICAO|Airport metar weather - Icao Naples - Tirrenian Italy|76
+METAR|ITA_OLB_ICAO|Airport metar weather - Icao Olbia - Sardinia - Italy|70
+METAR|ITA_PAL_ICAO|Airport metar weather - Icao Palermo - Sicily - Italy|87
+METAR|ITA_PAN_ICAO|Airport metar weather - Icao Pantelleria - Italy|75
+METAR|ITA_PES_ICAO|Airport metar weather - Icao Pescara - Adriatic Italy|73
+METAR|ITA_PIS_ICAO|Airport metar weather - Icao Pisa - Tirrenian Italy|56
+METAR|ITA_ROM_ICAO|Airport metar weather - Icao Rome - Tirrenian Italy|62
+METAR|ITA_SAR_ICAO|Airport metar weather - Icao Sarzana - Tirrenian Italy|73
+METAR|ITA_TRA_ICAO|Airport metar weather - Icao Trapani - Sicily - Italy|62
+METAR|ITA_TRI_ICAO|Airport metar weather - Icao Trieste - NorthEast Italy|70
+METAR|ITA_VEN_ICAO|Airport metar weather - Icao Venice - Adriatic Italy|62
+METAR|MAL_LUQ_ICAO|Airport metar weather - Icao Luqa - Malta|68
+METAR|METAR_READER|Cannot get Reader via WL2K.  Use document to get|1770
+METAR|SLO_POR_ICAO|Airport metar weather - Icao Portoroz- Slovenia|56
+METAR|SPA_ALI_ICAO|Airport metar weather - Icao Alicante - Spain|93
+METAR|SPA_ALM_ICAO|Airport metar weather - Icao Almeria - Spain|79
+METAR|SPA_BAR_ICAO|Airport metar weather - Icao Barcelona - Spain|68
+METAR|SPA_GER_ICAO|Airport metar weather - Icao Gerona - Spain|70
+METAR|SPA_IBI_ICAO|Airport metar weather - Icao Ibiza - Spain|76
+METAR|SPA_MAH_ICAO|Airport metar weather - Icao Mahon - Menorca - Spain|56
+METAR|SPA_PAL_ICAO|Airport metar weather - Icao Palma - Mallorca - Spain|86
+METAR|SPA_ROT_ICAO|Airport metar weather - Icao Rota - Spain|70
+METAR|SPA_VAL_ICAO|Airport metar weather - Icao Valencia - Spain|76
+METAREA_I|INMARSAT_HF|GMDSS_METAREA1_INMARSAT High Seas Forecast|5412
+METAREA_I|INMARSAT_IF|GMDSS_METAREA1_INMARSAT Inshore Forecast|4362
+METAREA_I|INMARSAT_OW|GMDSS_METAREA1_INMARSAT Offshore Warning|5420
+METAREA_II|MA_II.HSF.E|METAREA II High Seas Fcst evening report|7283
+METAREA_II|MA_II.HSF.M|METAREA II High Seas Fcst morning report|7872
+METAREA_III|E_MED_FCSTDE|Wettervorhersagen fr das stliche Mittelmeer|4434
+METAREA_III|E_MED_FCSTEN|Forecast for the Mediterranean Sea, eastern part -English|4434
+METAREA_III|MED_FCSTEN|Weather bulletin on METAREA 3, METEO-FRANCE Toulouse|11268
+METAREA_III|W_MED_FCSTDE|Wettervorhersagen fr das westliche Mittelmeer incl. Biskaya|4434
+METAREA_III|W_MED_FCSTEN|Forecast for the Mediterranean Sea, western part - English|4434
+METAREA_III|WOMQ50_LFPW|WARNING ON METAREA 3, METEO-FRANCE (text)|578
+METAREA_IV|MA_IV.HSF|METAREA IV (W Atl 35W, 7N-67N/GOM&Car Sea) High Seas Fcst|6060
+METAREA_IX|MA_IX_HS|Hi Seas Forecast Metarea 9|1468
+METAREA_IX|MA_IX_MMB|Met Area IX - GULF-PART OF MET AREA IX|490
+METAREA_V|MA_V.WSB.BRA|METAREA V WEATHER AND SEA BULLETIN - Brazilian|6064
+METAREA_V|MA_V.WSB.ENG|METAREA V WEATHER AND SEA BULLETIN - English|6750
+METAREA_VIII|MA_VIII_N_HS|Hi Sea Forecast Metarea 8 North|1076
+METAREA_X|IDY21030|METAREA X Ocean Wind Warn #4|0
+METAREA_XII|MA_XII.HSF|METAREA XII (30N-67N) High Seas Fcst|5338
+METAREA_XIV|MA_XIV.HSFOR|METAREA XIV Marine Weather Bulletin for Forties|1180
+METAREA_XIV|MA_XIV.HSPAC|METAREA XIV Pacific high seas Forecast|1525
+METAREA_XIV|MA_XIV.HSSO|METAREA XIV 55S to ice edge between 160E and 120W|1368
+METAREA_XIV|MA_XIV.HSSUB|METAREA XIV Subtropic high seas Forecast|708
+METAREA_XVI|FQPR01_SPIM|HIGH SEAS FORECAST FOR METAREA XVI FROM PERUVIAN NAVY|1081
+METAREA_XVI|NWP_SEP.ADV3|Tropical Weather Advisory Pacific 180>Malay Pen. & SA>135E|2745
+METAREA|MET_MAP|2009 Metarea map|40599
+NEWS|SSA_NEWS|SSA (Sweden's national association for Hams) weekly bulletin|0
+NICARAGUA|WASPAM|10 day WX forecast for WASPAM|11365
+PROPAGATION|AUS_HAP_ADE|Australian Hourly Area Prediction (HAP) chart - Adelaide|16085
+PROPAGATION|AUS_HAP_BRI|Australian Hourly Area Prediction (HAP) chart - Brisbane|16378
+PROPAGATION|AUS_HAP_CAN|Australian Hourly Area Prediction (HAP) chart - Canberra|16365
+PROPAGATION|AUS_HAP_DAR|Australian Hourly Area Prediction (HAP) chart - Darwin|16306
+PROPAGATION|AUS_HAP_HOB|Australian Hourly Area Prediction (HAP) chart - Hobart|16345
+PROPAGATION|AUS_HAP_MEL|Australian Hourly Area Prediction (HAP) chart - Melbourne|16467
+PROPAGATION|AUS_HAP_NORI|Australian Hourly Area Prediction (HAP) chart - Norfolk Isl|16016
+PROPAGATION|AUS_HAP_PER|Australian Hourly Area Prediction (HAP) chart - Perth|15133
+PROPAGATION|AUS_HAP_SYD|Australian Hourly Area Prediction (HAP) chart - Sydney|16501
+PROPAGATION|BIN_HAP_DEN|Bali, Indonesia Hrly  Prediction (HAP) chart - Denpasar|14446
+PROPAGATION|FIJ_HAP_FITO|Fiji Hourly Prediction (HAP) chart - Fiji/Tonga Area|15896
+PROPAGATION|IONO_GL_HELP|How to use the Global Ionosphere Map|2632
+PROPAGATION|IONO_GLO_E|7-days ionosphere from ionosondes - centered 180 deg. Long.|84375
+PROPAGATION|IONO_GLO_W|7-days ionosphere from ionosondes - centered 0 deg. Long.|83935
+PROPAGATION|IONOG_ROME|Ionogram from Rome, Italy|21902
+PROPAGATION|IONOG_TUCU|Ionogram from Tucumn,Argentina|17713
+PROPAGATION|NZ_HAP_AUC|New Zealand Hourly Area Prediction (HAP) chart - Auckland|16031
+PROPAGATION|PNG_HAP_PMO|Papua New Guinea Hrly  Prediction (HAP) chart - Port Moresby|16145
+PROPAGATION|PROP.27DO|27 Day A and K Index Weekly forecast|1606
+PROPAGATION|PROP_3DAY|Three Day Space Weather Predictions|2799
+PROPAGATION|PROP_3DPROB|NOAA 3 Day Geomagnetic Activity Probabilities|879
+PROPAGATION|PROP_ADVIS|NOAA SPACE WEATHER ADVISORY OUTLOOK|1171
+PROPAGATION|PROP_DRAP|NOAA  D Region Absorption Predictions (D-RAP)|19628
+PROPAGATION|PROP_RSGA|USAF/NOAA Report of Solar Geophysical Activity|1541
+PROPAGATION|PROP_SGAS_27|27-day Radio Flux - Geomagnetic Indices|1606
+PROPAGATION|PROP_SGAS|Daily Solar and Geophysical Activity Summary (used for SSN)|1538
+PROPAGATION|PROP_SOLWIND|NOAA WSA-ENLIL Solar Wind Prediction|40274
+PROPAGATION|PROP_WWV|Daily WWV Solar Flux, A & K Index summary|621
+PROPAGATION|PROP3DNOAA|NOAA Geomagnetic Activity Observation and Forecast|2042
+PROPAGATION|PROPWKHI|NOAA Wkly HiliTES and Forecasts of Solar and Geomagnetic Act|2990
+PROPAGATION|SI_HAP_HON|Solomon Islands Hourly Area Prediction (HAP) chart - Honiara|15815
+S/PACIFIC_WX|AM_SAMOA|Area Forecast Discussion for American Samoa|1175
+S/PACIFIC_WX|CALEDONIA_1|South Pacific High Sea Report (New Caledonia included)|2565
+S/PACIFIC_WX|COOK_ISLANDS|Cook Islands + Marine|960
+S/PACIFIC_WX|CORAL_SEA_WX|Brisbane Australia Coral Sea .Area Eq/28S 142E/170E|1213
+S/PACIFIC_WX|FIJI_MARINE|Fiji Islands Marine area|6813
+S/PACIFIC_WX|FIJI_NADI|Fleet Code from Fiji including French Polynesea|795
+S/PACIFIC_WX|FIJI_SWPAC|MAR WX BULL ISLANDS AREA EQ TO 25S BTWN 160E AND 120W.|1088
+S/PACIFIC_WX|FIJI2MARQ|Fiji to Marquesas Wave Height & Direction|13521
+S/PACIFIC_WX|FRE_POLY_CE|French Polynsea Marine Wx in French Short Term Forecast|5780
+S/PACIFIC_WX|FRE_POLY_ME|French Polynsea Marine Wx in French Short Term Forecast|5780
+S/PACIFIC_WX|HI_SEAS_FOR|H SEA FCST S PAC EQ TO 25S BTWN 120W AND 160E|2489
+S/PACIFIC_WX|HI_SEAS_IMG|H SEA FCST S PAC - Image accompanies HI_SEAS_FOR|96759
+S/PACIFIC_WX|KIR_BAN_TAR|KIRIBATI AND BANABA WEATHER BULLETIN|1275
+S/PACIFIC_WX|NAURU|WEATHER BULLETIN ISSUED FOR NAURU|312
+S/PACIFIC_WX|NEAUS_COR|Northeast Australia and Coral Sea Wave Height & Direction|15948
+S/PACIFIC_WX|NUIE_ISLAND|Nuie Island (local)|763
+S/PACIFIC_WX|NZ_MAR_WARN|New Zealand MetService Coastal Forecasts and Warnings|818
+S/PACIFIC_WX|PACIFIC|NZ Pacific High Seas Forecast|1019
+S/PACIFIC_WX|SOLOMAN_IS|Weather Forecast issued by the Solomon Islands|3095
+S/PACIFIC_WX|TASMAN_SEA|Melbourne Australia Tasman Sea  Area 28S to 50S 129E to 170E|2018
+S/PACIFIC_WX|TC_ADVISRY|Tropical Cyclone Advisories Issued from Nadi|1554
+S/PACIFIC_WX|TD_SUMMARY|Tropical Depression Summaries Iss from Nadi (12) hourly)|266
+S/PACIFIC_WX|TOKELAU|WEATHER BULLETIN ISSUED FOR TOKELAU|437
+S/PACIFIC_WX|TONGA|Tonga Islands + Marine|4916
+S/PACIFIC_WX|WEATHERGRAM|Latest Bob McDavitt NZ Weathergram|0
+SAT_KEPS|AMSAT.KEPS|AMSAT 2 line KEP  elements for sats in NASA format|15340
+SAT_KEPS|HAM.2KEPS|2 Line Keplerian Elements for Ham Satellites|14700
+SAT_KEPS|ISS.2KEPS|2 Line Keplerian Elements for the ISS (Space Station)|4435
+SAT_KEPS|VIS.2KEPS|2 Line Keplerian Elements for Visible Satellites|24864
+SAT_KEPS|WX.2KEPS|2 Line Keplerian Elements for Weather Satellites|11760
+SAT_PIX|AKSTATE.JPG|GOES18 Sat Pic of Alaska & NW Canada|20553
+SAT_PIX|ALIR.JPG|GOES IR Sat Image for Gulf of Alaska|13731
+SAT_PIX|ALVS.JPG|GOES Visible Sat Image for Gulf of Alaska|35785
+SAT_PIX|AUSIR00.JPG|IR SAT IMAGE - AUSTRALIA at 0000 UTC|34994
+SAT_PIX|AUSIR06.JPG|IR SAT IMAGE - AUSTRALIA at 0600 UTC|36193
+SAT_PIX|AUSIR12.JPG|IR SAT IMAGE - AUSTRALIA at 1200 UTC|35084
+SAT_PIX|AUSIR18.JPG|IR SAT IMAGE - AUSTRALIA at 1800 UTC|35347
+SAT_PIX|CAIR4.JPG|GOES16 Sat Pix of Carribean - True color daylight - IR night|17057
+SAT_PIX|CEN_AMER_IRH|Current IR Sat Image for Central America & Caribbean HiRes|19095
+SAT_PIX|CENAMER_VISH|Current Visible Satelite Image for Central America HiRes|17085
+SAT_PIX|COSTATE.JPG|GOES16 Sat Pic of  Continental U.S.|10811
+SAT_PIX|GEIR.JPG|Eastern Pacific Southern Hemisphere IR|55205
+SAT_PIX|GLAPXRBL.JPG|GOES16 Sat Pic of North Cent U.S. True color day - IR night|18047
+SAT_PIX|GLSTATE.JPG|GOES16 Sat Pic of U.S. Great Lakes States|6614
+SAT_PIX|GULFAMER.JPG|GOES19 Pix of Gulf of AMERICA - True color daylight - IR nig|15331
+SAT_PIX|GUSTATE.JPG|GOES16 Sat Pic of U.S. Gulf States|17282
+SAT_PIX|GWIR.JPG|Western Pacific Southern Hemisphere IR|22752
+SAT_PIX|HISTATE.JPG|GOES18 Sat Pic of Hawaiian Islands|5521
+SAT_PIX|NAR420.JPG|Northern Hemisphere IR color|44400
+SAT_PIX|NESTATE.JPG|GOES16 Sat Pic of Northeastern U.S. States|13797
+SAT_PIX|NPLSTATE.JPG|GOES16 Sat Pic of Northern U.S. Plains States|11233
+SAT_PIX|NWATIR4.JPG|GOES IR Sat Image NW Atl - Color in daylight IR at night|16770
+SAT_PIX|PAC_ISL0000|Pacific Islands 140E-160W/0-25S 0000UTC|42988
+SAT_PIX|PAC_ISL0600|Pacific Islands 140E-160W/0-25S 0600UTC|35389
+SAT_PIX|PAC_ISL1200|Pacific Islands 140E-160W/0-25S 1200UTC|43029
+SAT_PIX|PAC_ISL1800|Pacific Islands 140E-160W/0-25S 1800UTC|41526
+SAT_PIX|PACHI_IR.JPG|GOES IR Sat Image Pacific Hawaiin Islands|12171
+SAT_PIX|PACNE_IR.JPG|GOES IR Sat Image Northeast Pacific - Lower Resolution|24148
+SAT_PIX|PACTR_IR.JPG|GOES IR Sat Image Tropical Pacific|22883
+SAT_PIX|SCSTATE.JPG|GOES16 Sat Pic of South Central U.S. States|6005
+SAT_PIX|SESTATE.JPG|GOES16 Sat Pic of U.S. Southeastern & Gulf States|37311
+SAT_PIX|SPLSTATE.JPG|GOES16 Sat Pic of Southern U.S. Plains States|29729
+SAT_PIX|SWCSTATE.JPG|GOES16 Sat Pic of Central Southwestern U.S. States|36812
+SAT_PIX|SWSTATE.JPG|GOES16 Sat Pic of Southwestern U.S. States|36220
+SAT_PIX|WCCOL.JPG|GOES18 Sat Pic of U.S. West Coast|36158
+SAT_PIX|WCIR.JPG|GOES IR Sat image for west coast USA|11903
+SAT_PIX|WCVS.JPG|GOES Visible Sat image for west coast USA|11007
+UK_CADET|UK_PROP_D|Propagation, Short Term 3 to 7 hours. 2 hour window|9201
+WL2K_HELP|ACCEPTLIST|User Options for Accept List management|4109
+WL2K_HELP|AIRM_TELNET|How to setup Airmail Telnet module.|1421
+WL2K_HELP|CHANGE_CALL|Best practices for when you change your callsign.|1423
+WL2K_HELP|CUSTOM.GRIB|How to request and use Custom GRIB files from SailDocs|4943
+WL2K_HELP|DIDUNO|Winlink hints and tips|2450
+WL2K_HELP|FIRM_UPDATE|How to load new SCS Firmware with Airmail|1057
+WL2K_HELP|INQUIRIES|Description of the Winlink inquiry system - how to use|1886
+WL2K_HELP|IRIDIUM|Setting Up Iridium with Airmail for WL2K Telnet|4128
+WL2K_HELP|MAXSAEA_GRIB|WARNING, ISSUE with MAXSEA GRIB FILES|3235
+WL2K_HELP|METAR|How to use the METAR strings|12475
+WL2K_HELP|P3FREQLIST|How to add the Pactor 3 Freq to your Airmail Frequency List|1993
+WL2K_HELP|PHOTO.REDUCE|Using the Microsoft Photo Editor to reduce size|1945
+WL2K_HELP|PRECEDENCE|Options for controling message handling by precedence|2001
+WL2K_HELP|UPDA_CAT_AIR|How to update the Airmail catalog list.|2772
+WL2K_HELP|UPDA_CAT_WE|How to update the Winlink Express catalog list.|3649
+WL2K_HELP|UPDATE_CAT|How to update the catalog list|6405
+WL2K_HELP|US_AMAT_FREQ|ICOM U.S. Amateur Frequency list with Privileges|62715
+WL2K_HELP|USER.OPTIONS|User definable Parameters in WL2K|2940
+WL2K_HELP|WL2K.DISC|WL2K Disclaimer for service, bulletins and weather|2973
+WL2K_HELP|WL2K.QTH|Submitting and requesting position reports|4268
+WL2K_RMS|PUB_ARDOP|ARDOP Public Gateways Frequency List|26706
+WL2K_RMS|PUB_PACKET|Packet Public Gateways Frequency List|219867
+WL2K_RMS|PUB_PACTOR|Pactor Public Gateways Frequency List|32933
+WL2K_RMS|PUB_ROBUST|Robust Packet Public Gateways Frequency List|2831
+WL2K_RMS|PUB_VARA|VARA Public Gateways Frequency List|75234
+WL2K_TERMS|TERMS_COND|For Amateur Radio Ops: Winlink Terms, Conditions, Privacy|29977
+WL2K_USERS|CMS_STATUS|Real time Operational Status of Winlink CMS's|2018
+WL2K_USERS|CMS_TRAFFIC|Winlink Message Traffic History|2106
+WL2K_USERS|WL2K_MOBILES|Mobile user posting reports in the last 30 days|20000
+WL2K_USERS|WL2K_NEARBY|Closest 30 WL2K Mobiles to Your Last Reported Position|20000
+WX_AK_COAST|FZAK51.PAFC|N GULF OF AK COAST 100 NM OUT -  KODIAK ISLAND & COOK IN|12066
+WX_AK_COAST|FZAK51.PAJK|SE AK INSIDE WATERS FROM DIXON ENTRANCE TO SKAGWAY|6552
+WX_AK_COAST|FZAK52.PAFC|SW AK + BRISTOL BAY+ PENIA WATERS &  ALEUTIAN IS -100 out|17095
+WX_AK_COAST|FZAK52.PAJK|SE AK COASTAL FM DIXON ENTR TO CAPE SUCKLING OUT 100 NM|7000
+WX_AK_COAST|FZAK58.PADQ|CHINIAK & MARMOT BAYS|10778
+WX_AK_COAST|FZAK58.PAVW|VALDEZ PORT+NARROWS AND ARM|12066
+WX_AK_COAST|FZAK67.PAJK|AK COASTAL GULF OF ALASKA|1904
+WX_AK_COAST|FZAK80.PAFC|SEA ICE ADV - WESTERN &  ARCTIC AK COASTAL WAT|5621
+WX_AK_COAST|FZPN01.KWBC|Offshore Forecasts Gulf of Alaska & Bering Sea|9758
+WX_AK_COAST|PKZ199.TXT|Aleutian Isls & SW Alaska|764
+WX_AK_COAST|SRUS88.PAFC|Alaska Buoy & Coastal Observations|57355
+WX_ARCTIC|FQCN10.CWNT|Technical Marine Synopsis Western Arctic|389
+WX_ARCTIC|FQCN11.CWNT|Technical Marine Synopsis Eastern Arctic & Hudson Bay|459
+WX_ARCTIC|FQCN13.CWNT|Marine Forecast MacKenzie & Lake Athabasca|209
+WX_ARCTIC|FQCN16.CWNT|Marine Forecast for Puvirnituq, James Bay|191
+WX_ARCTIC|FQCN17.CWNT|Marine Forecast for Fox Basin - Hudson Strait|1417
+WX_ARCTIC|FQCN18.CWNT|Marine Forecast for Davis Strait|1664
+WX_ARCTIC|FQCN26.CWNT|Wave Height Forecast E Hudson Bay|196
+WX_ARCTIC|FQCN56.CWNT|Ext Marine Forecast for Western Hudson Bay|208
+WX_ARCTIC|FQCN57.CWNT|Exended Marine Forecast for S Nunavit|1318
+WX_ARCTIC|FQCN58.CWNT|Exended Marine Forecast for E Nunavit|2348
+WX_ATLANTIC|123_SM.GIF|Tropical Cyclone Marine Graphic|52021
+WX_ATLANTIC|ABNT20.KNHC|Tropical Weather Outlook|277
+WX_ATLANTIC|AGNT40.KWNM|N ATLC. Ocean W of 50W from 30N to 50|5763
+WX_ATLANTIC|WTNT21.KNHC|ATL TROPICAL 1 FORECAST/ADVISORY|1319
+WX_ATLANTIC|WTNT22.KNHC|ATL TROPICAL 2 FORECAST/ADVISORY|1101
+WX_ATLANTIC|WTNT23.KNHC|ATL TROPICAL 3 FORECAST/ADVISORY|2482
+WX_ATLANTIC|WTNT24.KNHC|ATL TROPICAL 4  FORECAST/ADVISORY|2489
+WX_ATLANTIC|WTNT25.KNHC|ATL TROPICAL 5 FORECAST/ADVISORY|1113
+WX_ATLANTIC|WTNT31.KNHC|ATL TROPICAL 1 PUBLIC ADVISORY|1760
+WX_ATLANTIC|WTNT32.KNHC|ATL TROPICAL 2 PUBLIC ADVISORY|1524
+WX_ATLANTIC|WTNT33.KNHC|ATL TROPICAL 3 PUBLIC ADVISORY|3091
+WX_ATLANTIC|WTNT34.KNHC|ATL TROPICAL 4 PUBLIC ADVISORY|2793
+WX_ATLANTIC|WTNT35.KNHC|ATL TROPICAL 5 PUBLIC ADVISORY|2160
+WX_ATLANTIC|WTNT41.KNHC|ATL TROPICAL 1 DISCUSSION|1637
+WX_ATLANTIC|WTNT42.KNHC|ATL TROPICAL 2 DISCUSSION|1135
+WX_ATLANTIC|WTNT43.KNHC|ATL TROPICAL 3 DISCUSSION|2177
+WX_ATLANTIC|WTNT44.KNHC|ATL TROPICAL 4 DISCUSSION|2728
+WX_ATLANTIC|WTNT45.KNHC|ATL TROPICAL 5 DISCUSSION|1479
+WX_AUS|AUS_HISEA.NE|NORTH EASTERN AREA EQUATOR TO 28S, 142E TO 170E|1048
+WX_BALT_DE|DWD_MAP_BALT|Map of Forecast Areas of German Coastal Baltic|37309
+WX_BALTIC|DWD_DE_FAX|Sendeplan Pinneberg Fax (Deutsch - attachment)|30974
+WX_BALTIC|DWD_DE_RTTY1|Sendeplan Pinneberg RTTY 1 (Deutsch - attachment)|23547
+WX_BALTIC|DWD_DE_RTTY2|Sendeplan Pinneberg RTTY 2 (Deutsch - attachment)|23581
+WX_BALTIC|DWD_EN_FAX|Broadcast Schedule Pinneberg Fax (English - attachment)|7236
+WX_BALTIC|DWD_EN_RTTY1|Broadcast Schedule Pinneberg RTTY 1 (English - attachment)|26234
+WX_BALTIC|DWD_EN_RTTY2|Broadcast Schedule Pinneberg RTTY 2 (English - attachment)|28847
+WX_BALTIC|DWD_SEA_D_PB|Seewetterbericht Ostsee als PDF (Deutsch - attachment)|64031
+WX_BALTIC|DWD_SEA_DE_5|Seewetterbericht Nord- und Ostsee 5 Tage (Deutsch)|3790
+WX_BALTIC|DWD_SEA_DE|Seewetterbericht Nord- und Ostsee (Deutsch)|3790
+WX_BALTIC|DWD_SEA_EN_5|Marine Forecast North and Baltic Sea 5 Days (English)|3790
+WX_BALTIC|DWD_SEA_EN|Marine Forecast North and Baltic Sea  (English)|3790
+WX_BALTIC|NAVTEXBALTIC|NAVTEX of Baltic Sea (English)|3790
+WX_BC_COAST|FQCN13.CWVR|Marine Forecast BC Coast|6466
+WX_BC_COAST|FQCN53.CWVR|Extended Marine Forecast BC Coast|4018
+WX_BERMUDA|BMMARINE.HTM|Bermuda Marine Forecast|2684
+WX_BUOY|CMANLKWF1|CMAN Station LKWF1 (Lake Worth) Report 26.6N 80.0W|26972
+WX_BUOY|CMANSPGF1|CMAN Station SPGF1 (West End) Report 26.7N 79.0W|9324
+WX_BUOY|NDBC41001|Station 41001 Buoy Report 34.6N 72.6W|13116
+WX_BUOY|NDBC41002|Station 41002 Buoy Report 32.3N 75.4W|6961
+WX_BUOY|NDBC41004|Station 41004 Buoy Report 32.5N 79.1W|12632
+WX_BUOY|NDBC41008|Station 41008 Buoy Report 31.4N 80.9W|13385
+WX_BUOY|NDBC41009|Station 41009 Buoy Report 28.5N 80.2W|23614
+WX_BUOY|NDBC41010|Station 41010 Buoy Report 28.9N 78.5W|18882
+WX_BUOY|NDBC42020|Station 42020 Buoy Report 26.9N 96.7W|14056
+WX_BUOY|NDBC42036|Station 42036 Buoy Report 28.5N 84.5W|13686
+WX_BUOY|NDBC42040|Station 42040 Buoy Report 29.2N 88.2W|12778
+WX_BUOY|NDBC44009|Station 44009 Buoy Report 3427'35" N 7441'31"|15696
+WX_BUOY|NDBC44013|Station 44013 Buoy Report 42.3 N 70.6 W|17926
+WX_BUOY|NDBC44014|Station 44014 Buoy Report 3636'10" N 7450'13" W|18517
+WX_BUOY|NDBC44033|Station 44033 Buoy Report 443'18" N 6859'47" Penobscot Bay|13116
+WX_BUOY|NDBC46011|Station 46011 Buoy Report 3456'13" N 12059'58" W|11230
+WX_BUOY|NDBC46014|Station 46014 Buoy Report 3913'29" N 12358'47" W|13039
+WX_BUOY|NDBC46026|Station 46026 Buoy Report 3745'0" N 12250'18" W|14057
+WX_BUOY|NDBC46028|Station 46028 Buoy Report 3546'12" N 12154'11" W|12670
+WX_BUOY|NDBC46041|Station 46041 Buoy Report 4721'9" N 12444'22" W|27904
+WX_BUOY|NDBC46047|Station 46047 Buoy Report 3225'6" N 11932'6" W|12228
+WX_BUOY|NDBC46054|Station 46054 Buoy Report 3416'26" N 12028'5" W|13112
+WX_BUOY|NDBC46072|Station 46072 Buoy Report 5138'42" N 1728'42" W|11476
+WX_BUOY|NDBC46145|Station 46145 Buoy Report 5422'12" N 13225'12" W|10694
+WX_BUOY|NDBC46147|Station 46147 Buoy Report 5149'48" N 13113'12" W|9070
+WX_BUOY|NDBC46183|Station 46183 Buoy Report 5337'12" N 1316'0" W|7904
+WX_BUOY|NDBC46185|Station 46185 Buoy Report 5225'12" N 12947'24" W|7866
+WX_BUOY|NDBC46204|Station 46204 Buoy Report 5122'48" N 12846'12" W|10851
+WX_BUOY|NDBC46205|Station 46205 Buoy Report 5410'48" N 13419'12" W|10551
+WX_BUOY|NDBC46207|Station 46207 Buoy Report 5052'12" N 12955'12" W|10504
+WX_BUOY|NDBC51002|Station 51002 Buoy Report 174'12" N 15745'18" W|6643
+WX_BUOY|NDBC62001|Station 62001 Buoy Report 4513'48" N 50'0" W|7456
+WX_BUOY|NDBC62305|Station 62305 Buoy Report 5024'0" N 00'0" E|6428
+WX_CANADA|FPCN11.CWHX|Nova Scotia|4270
+WX_CANADA|FPCN11.CWNT|Great Slave Lake and Mackenzie River|7613
+WX_CANADA|FPCN11.CWTO|Southern Ontario & National Capital Region|28380
+WX_CANADA|FPCN11.CWUL|Western Quebec|6538
+WX_CANADA|FPCN11.CWVR|Coastal British Columbia|4187
+WX_CANADA|FPCN11.CWWG|Southern Manitoba|735
+WX_CANADA|FPCN12.CWNT|Mackenzie Delta and Arctic coast|857
+WX_CANADA|FPCN12.CWQB|Northern Quebec|2338
+WX_CANADA|FPCN12.CWTO|Northern Ontario|16146
+WX_CANADA|FPCN12.CWWG|Central & Northern Manitoba|6396
+WX_CANADA|FPCN13.CWHX|Isles de la Madeleine|849
+WX_CANADA|FPCN13.CWNT|Kivalliq area of Nunavut|3141
+WX_CANADA|FPCN13.CWQB|Central Quebec|4858
+WX_CANADA|FPCN13.CWTO|Far Northern Ontario|9269
+WX_CANADA|FPCN13.CWVR|Southwest Interior of BC|3251
+WX_CANADA|FPCN13.CWWG|Southern Saskatchewan|8117
+WX_CANADA|FPCN14.CWHX|New Brunswick|2642
+WX_CANADA|FPCN14.CWNT|Kitikmeot Area of Nunavit|1633
+WX_CANADA|FPCN14.CWVR|Columbia Districts of BC|3170
+WX_CANADA|FPCN14.CWWG|Northern Saskatchewan|2044
+WX_CANADA|FPCN14.CWXK|Eastern Quebec|6637
+WX_CANADA|FPCN15.CWHX|Prince Edward Island|550
+WX_CANADA|FPCN15.CWNT|High Arctic Area of Nunavit|1495
+WX_CANADA|FPCN15.CWQB|Extreme Northern Quebec|889
+WX_CANADA|FPCN15.CWVR|Kootenay Districts of BC|3841
+WX_CANADA|FPCN15.CWWG|Southern Alberta and the Mountain Park|8654
+WX_CANADA|FPCN16.CWHX|Newfoundland|8706
+WX_CANADA|FPCN16.CWNT|Qikiqtaaluk area of Nunavut|4251
+WX_CANADA|FPCN16.CWVR|Central Interior of BC|4865
+WX_CANADA|FPCN16.CWWG|Central and Northern Alberta|1018
+WX_CANADA|FPCN17.CWHX|Labrador|4222
+WX_CANADA|FPCN17.CWVR|Southeastern Yukon & Northern BC|2541
+WX_CANADA|FPCN18.CWVR|Peace River District in BC|1784
+WX_CANADA|FPCN19.CWVR|Western Yukon & Northwestern BC|5528
+WX_CANADA|FPCN43.CWHX|Iles-de-la-Madeleine - Court Terme|0
+WX_CANADA|FPCN51.CWWG|Manitoba|10121
+WX_CANADA|FPCN52.CWTO|Northern Ontario|17586
+WX_CANADA|FPCN55.CWQB|Nord & Centre du Quebec - Long Terme|0
+WX_CANADA|FPCN55.CWUL|Ouest du Quebec -Long Terme|0
+WX_CANADA|FPCN55.CWXK|Est du Quebec - Long Terme|0
+WX_CANADA|FPCN71.CWUL|Ouest du Quebec - Court Terme|0
+WX_CANADA|FPCN72.CWQB|Nord du Quebec - Court Terme|0
+WX_CANADA|FPCN73.CWHX|Iles-de-la-Madeleine - Court Terme|0
+WX_CANADA|FPCN73.CWQB|Centre du Quebec - Court Terme|0
+WX_CANADA|FPCN74.CWXK|Est du Quebec - Court Terme|0
+WX_CANADA|FPCN75.CWQB|Extrme nord du Qubec - Court Terme|0
+WX_CANARIES|PROXI.DIAS|Zonas costeras (proximos dias): Islas Canarias|2580
+WX_CAR_GULF|ACCA62.TJSG|Tropical WX Outlook for Atlantic, Car Sea and GOM (Spanish)|336
+WX_CAR_GULF|AMZ001.TXT|SYNOPSIS FOR CARIB. TROPICAL N ATL.  07N TO 19N/55W AND 64W|1109
+WX_CAR_GULF|AMZ040.TXT|CARIBBEAN N OF 18N W OF 85W INCLUDING YUCATAN BASIN|1087
+WX_CAR_GULF|AMZ042.TXT|CARIB N OF 18N  76W AND/ 85W INCL CAYMAN BASIN|1189
+WX_CAR_GULF|AMZ044.TXT|CARIBBEAN APPROACHES TO THE WINDWARD PASSAGE|1739
+WX_CAR_GULF|AMZ045.TXT|GULF OF HONDURAS|1124
+WX_CAR_GULF|AMZ046.TXT|CARIBBEAN FROM 15N TO 18N BETWEEN 80W AND 85W|1325
+WX_CAR_GULF|AMZ047.TXT|CARIBBEAN FROM 15N TO 18N BETWEEN 72W AND 80W|1126
+WX_CAR_GULF|AMZ050.TXT|CARIBBEAN N OF 15N BETWEEN 64W AND 72W|1131
+WX_CAR_GULF|AMZ053.TXT|W CENTRAL CARIBBEAN FROM 11N TO 15N W OF 80W|1127
+WX_CAR_GULF|AMZ054.TXT|CARIB 11N TO 15N / 72W AND 80W INC COLOMBIA BASIN|1345
+WX_CAR_GULF|AMZ057.TXT|CARIB S OF 15N / 64W AND 72W INC VENEZUELA BASIN|1230
+WX_CAR_GULF|AMZ101.TXT|SW N ATLC INCLUDING THE BAHAMAS|1219
+WX_CAR_GULF|AMZ710.TXT|Coastal forecast PR & US V.I. Atlantic off shore waters|1734
+WX_CAR_GULF|AMZ710S.TXT|Coastal forecast PR & US V.I. Atlantic off shore waters|1734
+WX_CAR_GULF|AMZ711.TXT|Coastal forecast PR & US V.I. Atlantic off shore waters|1734
+WX_CAR_GULF|AMZ711S.TXT|Coastal forecast PR & US V.I. Atlantic off shore waters|1734
+WX_CAR_GULF|AMZ723.TXT|Coastal forecast PR & US V.I. Near shore E waters|1436
+WX_CAR_GULF|AMZ723S.TXT|Coastal forecast PR & US V.I. Near shore E waters|1436
+WX_CAR_GULF|AMZ726.TXT|Coastal forecast PR & US V.I. Caribbean waters to 64W|1659
+WX_CAR_GULF|AMZ726S.TXT|Coastal forecast PR & US V.I. Caribbean waters to 64W (S|2298
+WX_CAR_GULF|AMZ733.TXT|Coastal forecast PR & US V.I. Carib waters to 64W|864
+WX_CAR_GULF|AMZ733S.TXT|Coastal forecast PR & US V.I. Carib waters to 64W (Spanish)|864
+WX_CAR_GULF|AMZ742.TXT|Coastal forecast PR & US V.I. Caribbean waters to 68W|1046
+WX_CAR_GULF|AMZ742S.TXT|Coastal forecast PR & US V.I. Carib waters to 68W (Spanish)|1046
+WX_CAR_GULF|AMZ745.TXT|Coastal weather statement PR & US V.I. Near shore W waters|963
+WX_CAR_GULF|AMZ745S.TXT|Coastal weather s PR & US V.I. Near shore W waters (Spanish)|911
+WX_CAR_GULF|AWCA82.PR|PUERTO RICO Summary|2198
+WX_CAR_GULF|AWCA82.VI|Virgin Islands Summary|1744
+WX_CAR_GULF|FPBA31.TXT|BAHAMAS PUB FRCST, WITH NW, CENTRAL, & SE BAHAMAS|7916
+WX_CAR_GULF|FZNP03.KNHC|Tropical WX Outlook for Atlantic, Car Sea and GOM|393
+WX_CAR_GULF|FZNT23.KNHC|OFFSHORE FORECAST FOR THE SW AND TROP. N ATL. AND CAR SEA|20739
+WX_CAR_GULF|GMZ001.TXT|Synopsis for Gulf of America|855
+WX_CAR_GULF|GMZ040.TXT|Synopsis for NW Gulf of America including Stetson Bank|1180
+WX_CAR_GULF|GMZ041.TXT|Syn SW La Offshore Waters inc Flwr Garden Bank Marine Sanctu|1112
+WX_CAR_GULF|GMZ045.TXT|W Cent Gulf of America from 22N to 26N between 91W and 94W|1102
+WX_CAR_GULF|GMZ046.TXT|Central Gulf of America from 22N to 26N between 87W and 91W|1471
+WX_CAR_GULF|GMZ047.TXT|SE Gulf of America fm 22N to 26N E of 87W incl Straits of Fl|1154
+WX_CAR_GULF|GMZ048.TXT|SW Gulf of America S of 22N W of 94W|1463
+WX_CAR_GULF|GMZ049.TXT|Central Bay of Campeche|1038
+WX_CAR_GULF|GMZ050.TXT|E Bay of Campeche including Campeche Bank|1257
+WX_CAR_GULF|GMZ056.TXT|N Central Gulf of America Offshore Waters|1034
+WX_CAR_GULF|GMZ057.TXT|NE Gulf of America N of 26N E of 87W|1107
+WX_CAR_GULF|GMZ058.TXT|Synopsis for Southwestern Gulf of America|1000
+WX_CAR_GULF|GRTOFS|Gulf Stream Horizontal Current Velocity|50182
+WX_CAR_GULF|SAFR.SYN|NORTH ATLC, CARIB, GULF Mex|553
+WX_CROATIA|C_DALMAT.WND|Wind map adriatic sea central dalmatia part (Split)|36454
+WX_EASTPAC|NE_PJBA99|SEA-STATE ANALYSIS|24055
+WX_EASTPAC|NE_PJBI10|48 HOUR WIND & WAVE FORECAST|30651
+WX_EASTPAC|NE_PJBI20|48 HOUR WAVE PERIOD FORECAST/DIRECTION|33171
+WX_EASTPAC|NE_PJBM88|96 HOUR WAVE PERIOD FORECAST/DIRECTION|33653
+WX_EASTPAC|NE_PJBM98|96 HOUR WIND & WAVE FORECAST|31155
+WX_EASTPAC|NE_PPBA1O|500MB ANALYSIS|29707
+WX_EASTPAC|NE_PPBE11|24-HOUR 500 MB FORECAST|28663
+WX_EASTPAC|NE_PPBE1O|24-HOUR SURFACE FORECAST|31123
+WX_EASTPAC|NE_PPBI1O|48 HOUR 500MB FORECAST|26787
+WX_EASTPAC|NE_PPBM50|96 HOUR 500MB FORECAST|30785
+WX_EASTPAC|NE_PWBA90|WIND / WAVE ANALYSIS|19759
+WX_EASTPAC|NE_PWBE10|24 HOUR WIND & WAVE FORECAST|34739
+WX_EASTPAC|NE_PWBM99|96-HOUR SURFACE FORECAST|32377
+WX_EASTPAC|NE_PWFK11|96-HOUR HIGH WIND AND WAVES FORECAST|10161
+WX_EASTPAC|NE_PYBA90|NORTHEAST PACIFIC SURFACE ANALYSIS 120w TO 170W|28813
+WX_EASTPAC|NE_PYBA91|PACIFIC SURFACE ANALYSIS 170w TO 140E|28813
+WX_EASTPAC|SE_PJFI11|48 HOUR WAVE PERIOD FORECAST/DIRECTION|20957
+WX_EASTPAC|SE_PJFK93|72 HOUR WAVE PERIOD FORECAST/DIRECTION|20757
+WX_EASTPAC|SE_PKFA10|SOUTHEAST SEA-STATE ANALYSIS|16281
+WX_EASTPAC|SE_PWFE10|24 HOUR WIND & WAVE FORECAST|18179
+WX_EASTPAC|SE_PWFI10|48 HOUR WIND & WAVE FORECAST|18027
+WX_EASTPAC|SE_PWFK10|72 HOUR WIND & WAVE FORECAST|17737
+WX_EASTPAC|SE_PYEB11|WESTERN TROPICAL SURFACE ANALYSIS|42409
+WX_EASTPAC|SE_PYFA90|SOUTHEAST PACIFIC SURFACE ANALYSIS 140W TO 80W|28247
+WX_EASTPAC|SE_PYFE1O|24-HOUR SURFACE FORECAST|23205
+WX_EASTPAC|SE_PYFI1O|48-HOUR SURFACE FORECAST|21575
+WX_EASTPAC|SE_PYFK10|72-HOUR SURFACE FORECAST|22951
+WX_FAROE|DK_FAROE|Marine Forecasts for Faroe Islands Sea Areas (English)|3790
+WX_FAX|ATSA00Z.GIF|Atlantic Tropical Surface (00Z) Color 0W-120W,40N-0N|24817
+WX_FAX|EPTCA.GIF|East Pac Tropical Cyclone Activity (seasonal)|66464
+WX_FAX|HFGULF.TXT|New Orleans Gulf of Mexico Radio WEFAX schedule|4473
+WX_FAX|HFHIPAC.TXT|Honolulu HI Radio WEFAX schedule|5682
+WX_FAX|HFMARSH.TXT|Marshfield (Boston) West Atl Radio WEFAX schedule|5487
+WX_FAX|HFREYES.TXT|Pt Reyes Pacific Radio WEFAX schedule|6503
+WX_FAX|HI_FAXSYMBLS|NWS WX FAX guide to WX FAX Symbols - large file|100755
+WX_FAX|NADIFIJIMETH|S Pac by Nadi, Fiji Met Svc 155E-155W,05S-35S Hi-Res|78201
+WX_FAX|NADIFIJIMETL|S Pac by Nadi, Fiji Met Svc 155E-155W,05S-35S Lo-Res|29264
+WX_FAX|NEW_ZEALAND|HF Radio Marine FAX  schedules New Zealand|1348
+WX_FAX|NZMET_CUR|NZ Met Srv current SRFC Pressure 10s to 60s 130w to 160e|20989
+WX_FAX|NZMET_H30|NZ Met Srv 30hr fcst SRFC Pressure 10s to 60s 130w to 160e|20216
+WX_FAX|NZMET_H48|NZ Met Srv 48hr fcst SRFC Pressure 10s to 60s 130w to 160e|29168
+WX_FAX|NZMET_H72|NZ Met Srv 72hr fcst SRFC Pressure 10s to 60s 130w to 160e|29013
+WX_FAX|PAN2GALA|Wave Height & Direction Panama to the Galapagos|11371
+WX_FAX|PHAK50.TIF|72HR 500MB Forecast VT12Z 10E-95W NW Atlantic|31699
+WX_FAX|PJAA99.TIF|12Z Sea State Analysis 10E-95W NW Atlantic|22743
+WX_FAX|PJAI10.TIF|Atlantic 48 Hr Wind & Wave  Fcst  Wefax 10E-95W|26225
+WX_FAX|PJAI20.TIF|Atlantic 48 Hr Wave Period Fcst Wefax 10E-95W N|31471
+WX_FAX|PJAI88.TIF|48HR Wave Period Forecast VVT00Z 10E-95W NW Atlantic|31815
+WX_FAX|PJAI89.TIF|48HR Wave Period Forecast VT12Z 10E-95W NW Atlantic|31799
+WX_FAX|PJAI98.TIF|48HR Wind/Wave Forecast VT00Z 10E-98W NW Atlantic|23841
+WX_FAX|PJAI99.TIF|48HR Wind/Wave Forecast VT12Z 10E-98W NW Atlantic|24845
+WX_FAX|PJAK88.TIF|72HR Wind/Wave Forecast VT12Z 10E-95W NW Atlantic|27751
+WX_FAX|PJAM88.TIF|96HR Wind/Wave Forecast VT12Z 10E-95W NW Atlantic|25933
+WX_FAX|PJAM98.TIF|Atlantic 96 Hr Wind Wave Forecast 0W-90W, 60N-20N|30688
+WX_FAX|PJBI10.TIF|E Pac 48Hr Wind Wave Fcstl Wefax 115W-135W N|30643
+WX_FAX|PJBI20.TIF|E Pac 48Hr Wave Period Fcst Wefax 115W-135E|33883
+WX_FAX|PJEA11.TIF|W Atl Sea State (current) 0-35N, 40-100W Wefax|19203
+WX_FAX|PJEA88.TIF|Gulf of Mex  & Trop Atl Sea state Anal 00Z Wefax|20395
+WX_FAX|PJEI88.TIF|Gulf of Mex  & Trop Atl  Wave/Swell 48 Hr  Fcst Wefax|20779
+WX_FAX|PJEK88.TIF|Gulf of Mex  & Trop Atl Wind/Seas 72 Hr 00Z Fcst  Wefax|21431
+WX_FAX|PJEK89.TIF|Gulf of Mex  & Trop Atl  Wind/Wave 72 Hr  Fcst 12Z Wefax|22081
+WX_FAX|PJFI11.TIF|Mex. West Coast, 48HR Wind Period/Swell Dir.(Most Current)|19939
+WX_FAX|PKAK88.TIF|72HR Wave Period Forecast VT12Z 10E-95W NW Atlantic|31385
+WX_FAX|PKFA10.TIF|Mex. West Coast, Tropical Sea State Analysis (Most Current)|49906
+WX_FAX|PPAA10.TIF|Atlantic 500mb Surface Anal (most current) Wefax 45W-85W N|35640
+WX_FAX|PPAA50.TIF|00Z 500MB Analysis 10E-95W NW Atlantic|35178
+WX_FAX|PPAA51.TIF|12Z 500MB Analysis 10E-95W NW Atlantic|34682
+WX_FAX|PPAE00.TIF|24HR Surface Forecast VT00Z 40W-98W NW Atlantic|31502
+WX_FAX|PPAE01.TIF|24HR Surface Forecast VT12Z 40W-98W NW Atlantic|31773
+WX_FAX|PPAE10.TIF|Atlantic 24Hr Surface Fcst. Wefax 45W-85W N|29836
+WX_FAX|PPAE11.TIF|Atlantic 24Hr 500mb Surface Fcst Wefax 45W-85W N|24179
+WX_FAX|PPAE50.TIF|24HR 500MB Forecast VT00Z 10E-95W NW Atlantic|34958
+WX_FAX|PPAE51.TIF|24HR 500MB Forecast VT12Z 10E-95W NW Atlantic|32253
+WX_FAX|PPAG11.TIF|Atlantic 36Hr 500mb Surface Fcst Wefax 20N to 60N|24155
+WX_FAX|PPAG50.TIF|36HR 500MB Forecast VT12Z 10E-95W NW Atlantic|30079
+WX_FAX|PPAG51.TIF|36HR 500MB Forecast VT00Z 10E-95W NW Atlantic|26927
+WX_FAX|PPAI10.TIF|Atlantic 48Hr 500mb Surface Fcst Wefax 20N to 60N|37844
+WX_FAX|PPAI50.TIF|48HR 500MB Forecast VT00Z 10E-95W NW Atlantic|25375
+WX_FAX|PPAI51.TIF|48HR 500MB Forecast VT12Z 10E-95W NW Atlantic|29969
+WX_FAX|PPAK98.TIF|Atlantic 48Hr Surface Fcst. (most current) Wefax 12Z|31112
+WX_FAX|PPAM50.TIF|Atlantic 96Hr 500mb Surface Fcst 00Z Wefax 45W-85W N|29383
+WX_FAX|PPBA10.TIF|E Pac 500mb Anal  (most current) Wefax 115W-135W N|29421
+WX_FAX|PPBE10.TIF|E Pac 24Hr Surface Fcst Wefax 115W-155W N|29238
+WX_FAX|PPBI10.TIF|E Pac 500mb 48Hr Fcst  Wefax 115W-135W N|28878
+WX_FAX|PPBM50.TIF|E Pac 500mb 96Hr Fcst  00Z Wefax 115W-135W N|30905
+WX_FAX|PWAA88.TIF|00Z Wind/Wave Analysis 40W-98W NW Atlantic|26654
+WX_FAX|PWAA89.TIF|12Z Wind/Wave Analysis 40W-98W NW Atlantic|25503
+WX_FAX|PWAA90.TIF|W Atl Sea State Analysis (most current) Wefax 45W-85W|26279
+WX_FAX|PWAB88.TIF|06Z Wind/Wave Analysis 40W-98W NW Atlantic|25701
+WX_FAX|PWAD89.TIF|18Z Wind/Wave Analysis 40W-98W NW Atlantic|25771
+WX_FAX|PWAE10.TIF|Atlantic 24 Hr Wind & Wave  Fcst Wefax 45W-85W N|33636
+WX_FAX|PWAE89.TIF|24HR Wind/Wave Forecast VT00Z 40W-98W NW Atlantic|26785
+WX_FAX|PWAE98.TIF|24HR Wind/Wave Forecast VT00Z 40W-98W NW Atlantic|28577
+WX_FAX|PWAE99.TIF|24HR Wind/Wave Forecast VT12Z 40W-98W NW Atlantic|25703
+WX_FAX|PWAM99.TIF|96 Hr 00Z Surface Forecast Wefax 10E-95W N|29154
+WX_FAX|PWBA90.TIF|E Pac Sea State Anal (most current) Wefax 115W-155W N|21655
+WX_FAX|PWBE10.TIF|E Pac 24Hr Wind Wave Fcstl Wefax 115W-155W N|33156
+WX_FAX|PWBI10.TIF|E Pac 48Hr Surface Fcst Wefax 115W-135W N|26561
+WX_FAX|PWBM99.TIF|E Pac 96Hr Surface Fcst 00Z Wefax 115W-135W N|25580
+WX_FAX|PWEE11.TIF|Gulf of Mex  & Trop Atl Wind/Seas 24 Hr (current)  Fcst|21481
+WX_FAX|PWEE89.TIF|Gulf of Mex  & Trop Atl Wind/Wave 24 Hr 00Z Fcst Wefax|60912
+WX_FAX|PWEE91.TIF|Gulf of Mex  & Trop Atl Wind/Wave 24 Hr 12Z Fcst Wefax|21815
+WX_FAX|PWEI11.TIF|Gulf of Mex  & Trop Atl Wind/Seas 48 Hr Fcst  Wefax|22559
+WX_FAX|PWEI88.TIF|Gulf of Mex  & Trop Atl  Wind/Wave 48 Hr  00Z Fcst Wefax|20467
+WX_FAX|PWEI89.TIF|Gulf of Mex  & Trop Atl  Wind/Wave 48 Hr  Fcst 12Z Wefax|21053
+WX_FAX|PWEK11.TIF|Tropical Cyclone/High Wind&Wave (current)  Warning Wefax|15585
+WX_FAX|PWEK88.TIF|Tropical Cyclone/High Wind&Wave 21Z Warning Wefax|16021
+WX_FAX|PWEK89.TIF|Tropical Cyclone/High Wind&Wave 03Z Warning Wefax|16013
+WX_FAX|PWEK90.TIF|Tropical Cyclone Danger Area VT09Z 05N-60N 00W-100W|15543
+WX_FAX|PWEK91.TIF|Tropical Cyclone Danger Area VT15Z 05N-60N 00W-100W|12881
+WX_FAX|PWFA11.TIF|Pacific Streamline Analysis 130E-110W|13750
+WX_FAX|PWFE10.TIF|Mex. West Coast, 24HR Wind/Wave Forecast (Most Current)|18253
+WX_FAX|PWFI10.TIF|Mex. West Coast, 48HR Wind/Wave Forecast (Most Current)|19325
+WX_FAX|PWFI88.TIF|48 hr Wind/Wave Fcst 30N-20S E of 145W|20781
+WX_FAX|PWFI90.TIF|48/72 hr Wind/Wave Fcst 30N-20S E of 145W|21255
+WX_FAX|PWFK10.TIF|Mex. West Coast, 72HR Wind/Wave Forecast (Most Current)|19647
+WX_FAX|PYAA01.TIF|Atlantic Surface Anal. Wefax 00Z Part1 10E - 45W|29739
+WX_FAX|PYAA02.TIF|Atlantic Surface Anal. Wefax 00Z|36239
+WX_FAX|PYAA03.TIF|06Z Surface Analysis Part 1 10E-45W NW Atlantic|33941
+WX_FAX|PYAA04.TIF|Atlantic Surface Anal. Wefax 06Z|31825
+WX_FAX|PYAA05.TIF|12Z Surface Analysis Part 1 10E-45W NW Atlantic|31171
+WX_FAX|PYAA06.TIF|Atlantic Surface Anal. Wefax  12Z|30987
+WX_FAX|PYAA07.TIF|18Z Surface Analysis Part 1 10E-45W NW Atlantic|30337
+WX_FAX|PYAA08.TIF|Atlantic Surface Anal. Wefax  18Z|31925
+WX_FAX|PYAA10.TIF|00Z Prelim Surface Analysis 45W-85W NW Atlantic|34435
+WX_FAX|PYAA11.TIF|Atlantic Surface Anal. Wefax 10E-45W N|77114
+WX_FAX|PYAA12.TIF|Atlantic Surface Anal. (most current) Wefax 40W-95W N|88821
+WX_FAX|PYAA20.TIF|Continental US Surface Analysis (most current) Wefax|28937
+WX_FAX|PYAB01.TIF|06Z Prelim Surface Analysis 45W-85W NW Atlantic|35348
+WX_FAX|PYAC01.TIF|12Z Prelim Surface Analysis 45W-85W NW Atlantic|35698
+WX_FAX|PYAD01.TIF|18Z Prelim Surface Analysis 45W-85W NW Atlantic|36590
+WX_FAX|PYAD10.TIF|Atlantic Prelim Surface Anal. (most current) Wefax 45W-85W N|35587
+WX_FAX|PYBA01.TIF|E Pac Surface Anal 00Z Wefax 115W-165W 20N-60N|0
+WX_FAX|PYBA12.TIF|Full Pacific Surface 24 hour Forecast|62240
+WX_FAX|PYBA90.TIF|E Pac Surface Anal (most current) Wefax 115W-175W N|73818
+WX_FAX|PYBA91.TIF|E Pac Surface Anal (most current) Wefax 175W-135E N|79416
+WX_FAX|PYEA11.TIF|E Atl Tropical Surface Anal  (Currrent)   5S40N 0W65W|32529
+WX_FAX|PYEA85.TIF|E Atl Tropical Surface Anal 12Z   5S40N 0W65W|33654
+WX_FAX|PYEA86.TIF|E Atl Tropical Surface Anal 00Z   5S40N 0W65W|32988
+WX_FAX|PYEB11.TIF|US/ W Atl Tropical Surface (Most Currrent)  0N50N-65W125W|39073
+WX_FAX|PYEB85.TIF|Trop Atl Tropical Surf Anal  West 12Z Wefax|40737
+WX_FAX|PYEB86.TIF|Trop Atl Tropical Surf Analysis  West 00Z Wefax|40522
+WX_FAX|PYEE10.TIF|24Hr Trop Surf Fcast (E Half, most current) 0N-31N,35W-100W|21066
+WX_FAX|PYEI10.TIF|48Hr Trop Surf Fcast (E Half, most current) 0N-31N,35W-100W|20968
+WX_FAX|PYEK10.TIF|72Hr Trop Surf Fcast (E Half, most current) 0N-31N,35W-100W|20204
+WX_FAX|PYFA96.TIF|Tropical Surface Analysis 00Z - 30N-20S, E of 145W|27903
+WX_FAX|PYFA98.TIF|Tropical Surface Analysis 12Z 30N-20S, E of 145W|27778
+WX_FAX|PYFE10.TIF|24Hr Trop Surf Fcast (W Half, most current) 20S-30N,80W-145W|21226
+WX_FAX|PYFE79.TIF|24 Hr Tropical Surface Fcst 00Z - 30N-20S, E of 145W|21708
+WX_FAX|PYFE80.TIF|24 Hr Tropical Surface Fcst 12Z - 30N-20S, E of 145W|21471
+WX_FAX|PYFE87.TIF|24HR Pacific Surface Forecast VT00Z 30S-50N 110W-130E|13318
+WX_FAX|PYFI10.TIF|48Hr Trop Surf Fcast (W Half, most current) 20S-30N,80W-145W|21307
+WX_FAX|PYFI81.TIF|48 Hr Tropical Surface Fcst 00Z - 30N-20S, E of 145W|21223
+WX_FAX|PYFI82.TIF|48 Hr Tropical Surface Fcst 12Z - 30N-20S, E of 145W|20716
+WX_FAX|PYFI87.TIF|48HR Pacific Surface Forecast VT00Z 30S-50N 110W-130E|13036
+WX_FAX|PYFI88.TIF|48HR Pacific Surface Forecast VT12Z 30S-50N 110W-130E|12474
+WX_FAX|PYFK10.TIF|72Hr Trop Surf Fcast (W Half, most current) 20S-30N,80W-145W|22152
+WX_FAX|PYFK83.TIF|72 Hr Tropical Surface Fcst 00Z - 30N-20S, E of 145W|21230
+WX_FAX|PYFK84.TIF|72 Hr Tropical Surface Fcst 12Z - 30N-20S, E of 145W|20822
+WX_FAX|PYFK87.TIF|72HR Pacific Surface Forecast VT00Z 30S-50N 110W-130E|12678
+WX_FAX|QDTM10.TIF|Atlantic 48Hr Surface Fcst. (most current) Wefax 10E-95W N|31384
+WX_FAX|QDTM85.TIF|48 Hr Tropical Surface Fcst 12Z - 30N-20S, E of 145W|33053
+WX_FAX|QDTM86.TIF|Atlantic 48Hr Surface Fcst. (most current) Wefax 12Z|27842
+WX_FAX|QDTUA11.TIF|N Hemisphere 500MB Heights/Temp|86461
+WX_FAX|SA_SYN_CHART|South Africa Synoptic Chart 40W-70E, 10S-70s|265632
+WX_FAX|SEPAC_WAV|Southeast Pacific Wave Height & Direction|19570
+WX_FAX|SPAC_TAZ_WAV|SW Pac Taz and Coral Seas Wave Ht/Dir|20853
+WX_FAX|USWXRAD.GIF|U.S Weather  Radar (Accuweather) GIF|9306
+WX_FAX|WIND_WAV_24|Pacific Wind Wave Analysis and 24 Hour Forecasts|80815
+WX_FAX|WIND_WAV_48|Pacific Wind Wave Analysis and 48 Hour Forecasts|78471
+WX_FAX|WIND_WAV_72|Pacific Wind Wave Analysis and 72 Hour Forecasts|75862
+WX_FAX|WIND_WAV_ANA|NE Pacific 24 hr Wind Wave Analysis and Forecasts|55638
+WX_FRANCE|LIGHTNING|Lightning in west Europa|39182
+WX_GT_LAKES|FQCN10.CWTO|Tech Marine Synopsis Great Lakes & St Lawrence R|663
+WX_GT_LAKES|FQCN13.CWTO|Great Lakes & St Lawrence R|4635
+WX_GT_LAKES|FQCN13.CWUL|St Lawrence & Saguenay Rivers|3728
+WX_GT_LAKES|FQCN19.CWTO|L Nipigon, L of the Woods, N.Channel, L Simcoe, L Nipissing|275
+WX_GT_LAKES|FQCN23.CWTO|Wave Heights  Great Lakes|1737
+WX_GT_LAKES|FQCN30.CWTO|MAFOR Great Lakes|668
+WX_GT_LAKES|FQCN53.CWTO|Extended Marine Forecast Great Lakes & St Lawrence R|1548
+WX_GT_LAKES|FZUS61.KBUF|Lake Ontario (US)|3033
+WX_GT_LAKES|FZUS61.KCLE|Lake Erie (US)|5074
+WX_GT_LAKES|FZUS63.KDTX|Lake Huron (US)|5224
+WX_GT_LAKES|FZUS63.KLOT|Lake Michigan (US)|8801
+WX_GT_LAKES|FZUS63.KMQT|Lake Superior (US)|11185
+WX_GT_LAKES|LCZ460_LC|Lake St Clair (FZUS63 & LCZ460)|1818
+WX_GT_LAKES|LSWIN.PNG|Great Lakes - Lake Superior Wind|45953
+WX_HIGH_SEAS|FZNP01.KWBC|NE Pacific|5514
+WX_HIGH_SEAS|FZNP02.KWBC|East Pacific|5361
+WX_HIGH_SEAS|FZNP03.KWHC|Mexico Highseas|2278
+WX_HIGH_SEAS|FZNP04.KNHC|Peru High Seas|3087
+WX_HIGH_SEAS|FZNT01.KWBC|West Atlantic|6099
+WX_HIGH_SEAS|FZNT02.KNHC|Tropical Atlantic|2170
+WX_HIGH_SEAS|FZPN03.KNHC|East Pacific from Equator to 30N E of 140W|2818
+WX_HIGH_SEAS|FZPN40.PHFO|North Mid Pacific|1424
+WX_HIGH_SEAS|FZPS40.PHFO|S. Mid-Pacific|2584
+WX_LABRADOR|FQCN15.CYQX|Marine Forecast for Labrador|3964
+WX_LABRADOR|FQCN21.CYQX|Marine Synopsis for Labrador|936
+WX_LABRADOR|FQCN25.CYQX|Sea State Forecast for Labrador|1284
+WX_LABRADOR|FQCN55.CYQX|Extended Marine Forecast for Labrador|1877
+WX_MANITOBA|FQCN13.CWWG|Marine Forecast For Manitoba Lakes|1513
+WX_MANITOBA|FQCN53.CWWG|Extended Marine Forecast For Manitoba Lakes|213
+WX_MARITIMES|FQCN13.CWHX|Marine Forecast for the Maritimes|8282
+WX_MARITIMES|FQCN14.CWHX|Marine Forecast for Halifax Harbour & Approaches|660
+WX_MARITIMES|FQCN19.CWHX|Marine Forecast for the Bras DOr Lakes|220
+WX_MARITIMES|FQCN20.CWHX|Marine Synopsis for the Maritimes|519
+WX_MARITIMES|FQCN23.CWHX|Sea State Forecast for the Maritimes|745
+WX_MARITIMES|FQCN53.CWHX|Extended Marine Forecast for the Maritimes|2452
+WX_MED|ADR_ENG|Weather Forecast for the Adriatic (English)|1628
+WX_MED|ADR_GER|Weather Forecast for the Adriatic (German)|1303
+WX_MED|ADR_ITL|Weather Forecast for the Adriatic (Italian)|1550
+WX_MED|DWD_MED_DE|Seewetterbericht Mittelmeer (Deutsch)|1628
+WX_MED|DWD_MED|Marine Forecast for Mediterranean Sea (English)|1628
+WX_MED|GEO24_EUR|500mb geopotential height for Euro_Mediterranean Area : +24H|37191
+WX_MED|GEO48_EUR|500mb geopotential height for Euro_Mediterranean Area : +48H|37607
+WX_MED|GEO72_EUR|500mb geopotential height for Euro_Mediterranean Area : +72H|36493
+WX_MED|GEOP_EUR|500mb geopotential height for Euro_Mediterranean Area : ana|36242
+WX_MED|GMDSS_MED3|Met Forecast for Med, Adriatic, Ionean, & Aegean Seas|6298
+WX_MED|MED_CEN|Weather Forecast for Central Med|5174
+WX_MED|MED_EAS|Weather Forecast for East Med|5658
+WX_MED|MED_MAP|Map of Areas for MED Weather Forecasts|53603
+WX_MED|MED_WES|Weather Forecast for West Med|3272
+WX_MED|WIN24_CEU|10m wind speed for Central Mediterranean Area : +24H|26466
+WX_MED|WIN24_EUR|10m wind speed for Euro_Mediterranean Area  : +24H|32234
+WX_MED|WIN48_CEU|10m wind speed for Central Mediterranean Area : +48H|28131
+WX_MED|WIN48_EUR|10m wind speed for Euro_Mediterranean Area  : +48H|32688
+WX_MED|WIN72_CEU|10m wind speed for Central Mediterranean Area : +72H|27125
+WX_MED|WIN72_EUR|10m wind speed for Euro_Mediterranean Area  : +72H|33431
+WX_MED|WIND_CEU|10m wind speed for Central Mediterranean Area : Analysis|27806
+WX_MED|WIND_EUR|10m wind speed for Euro_Mediterranean Area  : Analysis|32798
+WX_MED|WMEDHI_120FO|Wind & Sea 120H frcst med sea. Hi Res.  Large file|64350
+WX_MED|WMEDHI_24FOR|Wind & Sea 24H frcst med sea. Hi Res. Large file|65890
+WX_MED|WMEDHI_48FOR|Wind & Sea 48H frcst med sea.  Hi Res.  Large file|67069
+WX_MED|WMEDHI_72FOR|Wind & Sea 72H frcst med sea.  Hi Res. Large file|64662
+WX_MED|WMEDHI_96FOR|Wind & Sea 96H frcst med sea.  Hi Res.  Large file.|65357
+WX_MED|WMEDHI_ACT|Wind & Sea actual med sea 0001 Forecast Hi Res. Large File|66801
+WX_MED|WMEDLO_120FO|Wind & Sea 120H frcst med sea.  reduced res. smaller file|30261
+WX_MED|WMEDLO_24FOR|Wind & Sea 24H frcst med sea. Low Res. Smaller file|30320
+WX_MED|WMEDLO_48FOR|Wind & Sea 48H frcst med sea.  Lo Res.  Smaller file|31099
+WX_MED|WMEDLO_72FOR|Wind & Sea 72H frcst med sea.  Lo Res. Smaller file|30217
+WX_MED|WMEDLO_96FOR|Wind & Sea 96H frcst med sea.  Lo Res.  Smaller file.|30629
+WX_MED|WMEDLO_ACT|Wind & Sea actual med sea 0001 Forecast Lo Res. Smaller File|30803
+WX_NAVTEX|FQCN33.CWHX|Maritimes West NAVTEX Forecast|1269
+WX_NAVTEX|FQCN33.CWVR|BC Coast South NAVTEX Forecast|1777
+WX_NAVTEX|FQCN33.CYQX|Newfoundland East NAVTEX Forecast|1476
+WX_NAVTEX|FQCN34.CYQX|Newfoundland West NAVTEX Forecast|497
+WX_NAVTEX|FQCN35.CWVR|BC Coast North NAVTEX Forecast|1337
+WX_NAVTEX|FQCN35.CYQX|Labrador NAVTEX Forecast|1779
+WX_NAVTEX|FQCN37.CWHX|Gulf of St Lawrence NAVTEX Forecast|618
+WX_NAVTEX|FQCN37.CWUL|St Lawrence River NAVTEX Forecast|1160
+WX_NAVTEX|FQCN37.CYQX|Labrador (Strait of Belle Isle) NAVTEX Forecast|847
+WX_NAVTEX|FZNT23.KWNM|Eastport ME to Sandy Hook NJ|3168
+WX_NAVTEX|FZNT24.KWNM|Sandy Hook NJ to Murrells Inlet SC|3158
+WX_NAVTEX|FZNT25.KNHC|SW N Atlantic S of 31N & W of 65W|2845
+WX_NAVTEX|FZNT25.KWNM|Murrels Inlet SC to Flagler Beach FL|2142
+WX_NAVTEX|FZNT26.KNHC|Caribbean Sea & SW N Atlantic|1625
+WX_NAVTEX|FZNT27.KNHC|Gulf of Mexico|2279
+WX_NAVTEX|FZPN22.KWNM|Pt Piedras CA to Mexican Border|2147
+WX_NAVTEX|FZPN23.KWNM|Pt St George CA to Pt Piedras CA|2428
+WX_NAVTEX|FZPN24.KWNM|US-Can Border to Pt St George CA|2466
+WX_NFLD|FQCN10.CYQX|Marine Synopsis for Newfoundland|591
+WX_NFLD|FQCN13.CYQX|Marine Forecast for Newfoundland|6184
+WX_NFLD|FQCN23.CYQX|Sea State Forecast for Newfoundland|916
+WX_NOAA|NOAA.TXT|NOAA Weather Satellites.  CSV Format|10287
+WX_NORTH_NED|NED_EN_COAST|Marine Forecast for Netherlands Coastal Waters (English)|3790
+WX_NORTH_NED|NED_EN_SHELF|Marine Forecast Dutch Continental Shelf (English)|3790
+WX_NORTH_NED|NED_NL_COAST|Marifoonbericht (Dutch)|3790
+WX_NORTH_NED|NED_NL_SHELF|Scheepsweerbericht (Dutch)|3790
+WX_NORTHSEA|DWD_SEA_D_PN|Seewetterbericht Ostsee als PDF (Deutsch)|64031
+WX_NORWAY|NOR_COAST_E|Marine Forecast Coastal Waters (English)|0
+WX_NORWAY|NOR_COAST_N|Marine Forecast Coastal Waters (Norwegian)|0
+WX_NORWAY|NOR_FISH_E|Marine Forecast Fishing Banks (English)|0
+WX_NORWAY|NOR_FISH_N|Marine Forecast Fishing Banks (Norwegian)|0
+WX_NORWAY|NOR_INLAND|Text forecast for Inland Norway (Norwegian)|0
+WX_NORWAY|NOR_MAP|Map Norwegian Fishing Banks for Forecast Areas|26832
+WX_OFFSHORE|ANZ898|Synopsis for New England waters|6267
+WX_OFFSHORE|AXNT20.KNHC|32N to South America and over to Africa, discussion|4755
+WX_OFFSHORE|FZAK62.PAFC|BERING SEA OFFSHORE FORECAST|2236
+WX_OFFSHORE|FZHW60.PHFO|OFFSHORE WATERS FORECAST HAWAII|832
+WX_OFFSHORE|FZNT21.KWBC|New England|5010
+WX_OFFSHORE|FZNT22.KWBC|Mid-Atlantic|11748
+WX_OFFSHORE|FZNT24.KNHC|Gulf of Mexico|9741
+WX_OFFSHORE|FZPN25.KWBC|Washington, Oregon|8381
+WX_OFFSHORE|FZPN26.KWBC|California|8788
+WX_OFFSHORE|FZPN27.KNHC|Offshore Forecast for the E Pacific within 250 nm of Mexico|15143
+WX_OFFSHORE|PHZ180|HAWAIIAN OFFSHORE BEYOND 40  OUT TO 240 N MILES|918
+WX_PACIFIC|ABPZ20.KNHC|EAST N PAC TROPICAL OUTLOOK EAST OF 140 W|627
+WX_PACIFIC|ACPN50.PHFO|CEN N PAC.TROPICAL OUTLOOK BETWEEN 140W AND 180|616
+WX_PACIFIC|ACPN60.PHFO|CEN N PAC.TROPICAL MONTHLY SUMMARY BETWEEN 140W AND 180|1387
+WX_PACIFIC|ATPQ40.PGUM|W.N.PAC BETWEEN EQUATOR & 25N FROM 130E TO 180|1568
+WX_PACIFIC|AXPZ20.KNHC|EAST PAC TROPICAL WX DISCUSSION  EAST OF 140W|3708
+WX_PACIFIC|FIJI._WX|MARINE WX BULLETIN EQUATOR TO 25S BTWN 160E AND 120W|1358
+WX_PACIFIC|FZPQ52_PGUM|Micronesia Coastal Waters forcast for Chuuk, Yap, and Palau|4766
+WX_PACIFIC|PALAU|Micronesia Waters for Palau|1701
+WX_PACIFIC|ROTA|Marianas Waters for Rota|1484
+WX_PACIFIC|SAIPAN|Marianas Waters for Saipan|1558
+WX_PACIFIC|SAMOA5|Samoa (South West Pacific Marine Forecast)|1575
+WX_PACIFIC|TINIAN|Marianas Waters for Tinian|1622
+WX_PACIFIC|TWOCP|CEN PAC TROPICAL WX OUTLOOK|616
+WX_PACIFIC|WRKOFFPZ7|East Pacific within 250 NM of Mexico (experimental)|14457
+WX_PACIFIC|WTPA21.PHFO|CEN PAC TROPICAL  FORECAST/ADVISORY|2359
+WX_PACIFIC|WTPA22.PHFO|CEN PAC TROPICAL 2 FORECAST/ADVISORY|1406
+WX_PACIFIC|WTPN31.PGTW|W. PAC TROPICAL Storm 1 Warning|7560
+WX_PACIFIC|WTPN32.PGTW|W. PAC TROPICAL Storm 2 Warning|5398
+WX_PACIFIC|WTPN33.PGTW|W. PAC TROPICAL Storm 3 Warning|4453
+WX_PACIFIC|WTPN34.PGTW|W. PAC TROPICAL Storm 4 Warning|2734
+WX_PACIFIC|WTPQ31.PGUM|W PAC TROPICAL 1 PUBLIC ADVISORY|1403
+WX_PACIFIC|WTPQ32.PGUM|W PAC TROPICAL 2 PUBLIC ADVISORY|1306
+WX_PACIFIC|WTPQ33.PGUM|W PAC TROPICAL 3 PUBLIC ADVISORY|1311
+WX_PACIFIC|WTPQ34.PGUM|W PAC TROPICAL 4 PUBLIC ADVISORY|1021
+WX_PACIFIC|WTPZ21.KNHC|E PAC TROPICAL 1 FORECAST/ADVISORY|1513
+WX_PACIFIC|WTPZ22.KNHC|E PAC TROPICAL 2 FORECAST/ADVISORY|1873
+WX_PACIFIC|WTPZ23.KNHC|E PAC TROPICAL 3 FORECAST/ADVISORY|1922
+WX_PACIFIC|WTPZ24.KNHC|E PAC TROPICAL 4 FORECAST/ADVISORY|1482
+WX_PACIFIC|WTPZ25.KNHC|E PAC TROPICAL 5 FORECAST/ADVISORY|1109
+WX_PACIFIC|WTPZ41.KNHC|E PAC TROPICAL 1 DISCUSSION|1379
+WX_PACIFIC|WTPZ42.KNHC|E PAC TROPICAL 2 DISCUSSION|1440
+WX_PACIFIC|WTPZ43.KNHC|E PAC TROP 3 DISC (watch date.  only created during storm)|2741
+WX_PACIFIC|WTPZ44.KNHC|E PAC TROPICAL 4 DISCUSSION|1333
+WX_PACIFIC|WTPZ45.KNHC|E PAC TROPICAL 5 DISCUSSION|1102
+WX_PANAMAR|PANAMAR_CAM|Pamar Canal Authority (Real Time WX RADAR)|54408
+WX_PORTUGAL|AZORES_CST_P|Portugal's Azore's Coastal waters (Portuguese)|0
+WX_PORTUGAL|AZORES_OFF_E|Portugal's Azore's Offshore waters (English)|0
+WX_PORTUGAL|AZORES_OFF_P|Portugal's Azore's Offshore waters (Portuguese)|0
+WX_PORTUGAL|MADE_CST_P|Madeira Coastal waters (Portuguese)|0
+WX_PORTUGAL|MADE_OFF_E|Madeira Offshore waters (English)|0
+WX_PORTUGAL|MADE_OFF_P|Madeira Offshore waters (Portuguese)|0
+WX_PORTUGAL|PORT_CST_P|Portugal's Continental Coast waters (Portuguese)|0
+WX_PORTUGAL|PORT_OFF_E|Portugal's Continental Offshore waters (English)|0
+WX_PORTUGAL|PORT_OFF_M|Portugal Offshore Areas map|28404
+WX_PORTUGAL|PORT_OFF_P|Portugal's Continental Offshore waters (Portuguese)|0
+WX_S_AFRICA|ZACOASTAL|Weather bulletin coastal waters to 50 miles offshore|4190
+WX_S_AFRICA|ZASHIPPING_E|Wx FOR HIGH SEAS METAREA VII, EAST OF 20E|4232
+WX_S_AFRICA|ZASHIPPING_W|Wx FOR HIGH SEAS METAREA VII, WEST OF 20E|2560
+WX_S_AFRICA|ZASHIPPING|Weather bulletin for high seas, METAREA VII|9635
+WX_SPAIN|ANDAL_OCC1|Next hours forecast, Andalucia Occ. y Ceuta (In Spanish)|5936
+WX_SWEDEN|SWE_MARINE|Marine Forecast Swedish Coast (Swedish)|0
+WX_UK|UK_EXT_OUT|Extended outlook, Great Britain|13892
+WX_UK|UK_HIGH_SEAS|High seas forecast, Great Britain|13892
+WX_UK|UK_INSHORE|Inshore Waters Forecast Cape Wrath to Channel Islands|7628
+WX_UK|UK_SHIPPING|Shipping Forecast, Great Britain|13892
+WX_US_AK|AK_DIS_EXTEN|EXTENDED FORECAST DISCUSSION FOR ALASKA|2856
+WX_US_AK|AK_MOT_KLHAH|Motoring Forecast for South Klondike and Haines Highways|2305
+WX_US_AK|AK_TAB_JUNE|Tabular Forecast Alaska Juneau NWS|4103
+WX_US_AK|AK_TAB_SOCEN|Tabular Forecast for Southcentral Alaska|3863
+WX_US_AK|AK_TAB_SWALE|Tabular Forecast for Southwest Alaska and the Aleutian isl|3015
+WX_US_AK|AK_ZON_ANC1|Zone Forecast Alaska Anchorage NWS Aniak and Sleetmute|19318
+WX_US_AK|AK_ZON_ANC2|Zone Forecast Alaska Anchorage NWS Eagle River, Indian|35743
+WX_US_AK|AK_ZON_EFAI|Zone Forecast Alaska w/East Brooks Range Fairbanks NWS|25973
+WX_US_AK|AK_ZON_JUNE|Zone Forecast Alaska Juneau NWS|20828
+WX_US_AK|AK_ZON_WARCO|Zone Forecast Alaska Western Arctic Coast Fairbanks NWS|13991
+WX_US_AK|AK_ZON_WFAI|Zone Forecast Alaska w/West Brooks Range Fairbanks NWS|18377
+WX_US_AL|AL_FOR_AL|Alabama State Forecast|751
+WX_US_AL|AL_TAB_BIRM|Tabular Forecast for Central Alabama from Birmingham NWS|3800
+WX_US_AL|AL_TAB_SWAL|Tabular State Forecast for SW AL-SE MS-and NW FL Panhandle|1960
+WX_US_AL|AL_ZON_BIRM|Zone Forecast for Alabama from Birmingham NWS|80103
+WX_US_AL|AL_ZON_MOBIL|Zone Forecast for Alabama from Mobile NWS|55360
+WX_US_AL|AL_ZON_TVAHU|Zone Forecast for The Tennessee Valley Huntsville AL NWS|19721
+WX_US_AR|AR_TAB_4STAR|Tabular State Forecast for Four State Area-Arkansas|2738
+WX_US_AR|AR_TAB_ARLAP|Tabular State Forecast for A LARGE PART OF ARKANSAS|6630
+WX_US_AR|AR_TAB_NW|Tabular State Forecast for NW AR|3868
+WX_US_AR|AR_ZON_NW|Zone Forecasts for Northwest Arkansas|87327
+WX_US_AR|AR_ZON_SE|Zone Forecast for Southeast Arkansas|79562
+WX_US_AZ|AZ_TAB_NORT|Tabular State Forecast for Northern Arizona|5030
+WX_US_AZ|AZ_TAB_PHOE|Tabular State Forecast for Arizona Phoenix NWS|9145
+WX_US_AZ|AZ_TAB_SE|Tabular State Forecast for Southeast Arizona|3740
+WX_US_AZ|AZ_TAB_SW|Tabular State Forecast for Southwest Arizona|1885
+WX_US_AZ|AZ_ZON_NOFLA|Zone Forecast for Northern Arizona from Flagstaff NWS|19521
+WX_US_AZ|AZ_ZON_SE|Zone Forecast Product for Southeast Arizona|9220
+WX_US_AZ|AZ_ZON_SW|Zone Forecast Product for Southwest Arizona|20118
+WX_US_CA|CA_TAB_CENSJ|Tabular Forecast for Central California - San Joaq Valley|10607
+WX_US_CA|CA_TAB_CESAC|Tabular State Forecast for Central California - Sac Valley|4695
+WX_US_CA|CA_TAB_EXSW|Tabular State Forecast for Extreme Southwestern California|15477
+WX_US_CA|CA_TAB_INCEN|Tabular State Frcst for Interior Central California|60713
+WX_US_CA|CA_TAB_NOCEN|TABULAR FORECAST FOR NORTHERN AND CENTRAL CALIFORNIA|6480
+WX_US_CA|CA_TAB_NOEUR|Tabular Forecast for Northern California from Eureka NWS|7131
+WX_US_CA|CA_TAB_NORT|Tabular Forecast for Northern California and Southern OR|4690
+WX_US_CA|CA_TAB_SE|Tabular Forecast for Southeast Calif|1884
+WX_US_CA|CA_TAB_SF|Tabular State Forecast for San Francisco Bay Area|9110
+WX_US_CA|CA_TAB_SO|Tabular State Forecast for Southern California|21822
+WX_US_CA|CA_TAB_SW|Tabular State Forecast for Southwestern California|5964
+WX_US_CA|CA_TAB_WEST|Tabular State Forecast for Western California|7131
+WX_US_CA|CA_ZON_EURE|Zone Forecast for California from Eureka|14215
+WX_US_CA|CA_ZON_EXSW|Zone Forecast Product for Extreme Southwest California|18849
+WX_US_CA|CA_ZON_INTNO|Zone Forecast for Interior Northern California|25915
+WX_US_CA|CA_ZON_NORT|Zone Forecast for Northern California and Southern Oregon|24240
+WX_US_CA|CA_ZON_SESWA|Zone Forecast for Southwest Arizona/Southeast California|20018
+WX_US_CA|CA_ZON_SFCEN|Zone Forecast San Francisco Bay Area/Central California|20393
+WX_US_CA|CA_ZON_WESNE|Zone Forecast West Nevada-East Sierra-NE California Reno NWS|9817
+WX_US_CO|CO_TAB_DENBO|Tabular State Forecast for Colorado Denver/Boulder NWS|2455
+WX_US_CO|CO_ZON_EAST|Zone Forecast for Eastern Colorado|22808
+WX_US_CO|CO_ZON_NE|Zone Forecast Product for Northeast Colorado|24125
+WX_US_CO|CO_ZON_PUEB|Zone Forecast for Colorado Pueblo NWS|59986
+WX_US_CO|CO_ZON_WEST|Zone Forecast for Western Colorado|49717
+WX_US_COAST|FZUS51.KAKQ|VA Chesapeake, Fenwick Is DE to Currituck Sound NC|17157
+WX_US_COAST|FZUS51.KBOX|Merrimack R MA to Watch Hill RI|15192
+WX_US_COAST|FZUS51.KCAR|Eastport ME to Stonington ME|4793
+WX_US_COAST|FZUS51.KGYX|Stonington ME to Merrimack R MA|5278
+WX_US_COAST|FZUS51.KLWX|Tidal Potomac & MD Chesapeake|11709
+WX_US_COAST|FZUS51.KOKX|Montauk Pt NY to Sandy Hook NJ|13193
+WX_US_COAST|FZUS51.KPHI|Sandy Hook NJ to Fenwick Is DE|12067
+WX_US_COAST|FZUS52.KCHS|South Santee R SC to Savannah GA|7868
+WX_US_COAST|FZUS52.KEYW|Ocean Reef FL to 20W of Dry Tortugas|13175
+WX_US_COAST|FZUS52.KILM|Surf City NC to South Santee R SC|7680
+WX_US_COAST|FZUS52.KJAX|Altamaha Sound GA to Flagler Beach FL|5996
+WX_US_COAST|FZUS52.KMFL|Jupiter Inlet FL to Ocean Reef FL|8460
+WX_US_COAST|FZUS52.KMHX|Currituck Beach Light to Surf City NC|19475
+WX_US_COAST|FZUS52.KMLB|Flagler Beach FL to Jupiter Inlet FL|14093
+WX_US_COAST|FZUS52.KTAE|Apalachicola FL to Suannee R FL|6970
+WX_US_COAST|FZUS52.KTBW|Bonita Beach FL to Suwannee R|16501
+WX_US_COAST|FZUS54.KBRO|Baffin Bay TX to Mouth of Rio Grande R|8277
+WX_US_COAST|FZUS54.KCRP|Baffin Bay TX to Matagordo Ship Channel|8359
+WX_US_COAST|FZUS54.KHGX|High Is to Matagorda Ship Channel|6881
+WX_US_COAST|FZUS54.KLCH|Lower Atchafalaya R to Cameron LA|20993
+WX_US_COAST|FZUS54.KLIX|Pascagoula MS to Atchafalaya R|16546
+WX_US_COAST|FZUS54.KMOB|Destin FL to Pascagoula MS|11023
+WX_US_COAST|FZUS56.KEKA|Pt St. George CA to Point Arena CA|5698
+WX_US_COAST|FZUS56.KLOX|Pt Piedras Blancas to Santa Cruz Is|12421
+WX_US_COAST|FZUS56.KMFR|Florence OR to Pt St. George CA|8777
+WX_US_COAST|FZUS56.KMTR|Point Arena CA to Point Piedras Blancas CA|14393
+WX_US_COAST|FZUS56.KPQR|Cape Shoalwater WA to Florence OR|10604
+WX_US_COAST|FZUS56.KSEW|Coastal & Inland Waters of Western WA|18269
+WX_US_COAST|FZUS56.KSGX|San Mateo Pt to Mexican Border|4166
+WX_US_CT|CT_TAB_CTNJN|Tabular Forecast for South CT, NE NJ, and SW NY|4143
+WX_US_CT|CT_TAB_SOCT|Tabular State Forecast for S CT|4144
+WX_US_CT|CT_TAB_SONE|Tabular State Forecast for Southern New England|4941
+WX_US_CT|CT_ZON_SONE|Zone Forecast Product for Southern New England|46890
+WX_US_DE|DE_ZON_KEN|Kent County Delaware Zone Forecast|1691
+WX_US_DE|DE_ZON_NEC|New Castle County Delaware Zone Forecast|1968
+WX_US_DE|DE_ZON_SUS|Sussex County Delaware Zone Forecast|1644
+WX_US_FL|FL_FOR_KEYS|Short Term Forecast Key West NWS|1107
+WX_US_FL|FL_TAB_AMSFL|Tabular State Forecast for SW AL-SE MS-and NW FL Panhandle|1960
+WX_US_FL|FL_TAB_EACEN|Tabular State Forecast for East Central Florida|3341
+WX_US_FL|FL_TAB_KEYS|Tabular State Forecast for the Florida Keys|1335
+WX_US_FL|FL_TAB_MIA|Tabular State Forecast for Florida - Miami NWS|3519
+WX_US_FL|FL_TAB_NE|Tabular State Forecast for NE FL|3256
+WX_US_FL|FL_TAB_NESEG|Tabular Frcst for Northeast Florida and Southeast GA|3255
+WX_US_FL|FL_TAB_TAL|Tabular State Forecast for Florida - TALLAHASSEE FL AREA|6298
+WX_US_FL|FL_TAB_WCSW|Tabular Forecast for West, Central, and Southwest Florida|6463
+WX_US_FL|FL_ZON_KEYS|Zone Forecasts for the Florida Keys|24090
+WX_US_FL|FL_ZON_MEL|Zone Forecast Product from Melbourne NWS office|46412
+WX_US_FL|FL_ZON_MIA|Zone Forecast Product for Florida Miami NWS Office|19582
+WX_US_FL|FL_ZON_NESEG|Zone Frcst for Northeast Florida and Southeast GA|84307
+WX_US_FL|FL_ZON_TALL|Zone Forecast from Tallahassee FL NWS office|124123
+WX_US_FL|FL_ZON_WCSW|Zone Forecasts for West Central and Southwest Florida|38800
+WX_US_GA|GA_TAB_PEACH|Tab Forecast for Georgia Peachtree City GA NWS|9028
+WX_US_GA|GA_TAB_SE|Tabular State Forecast for Southeast Georgia|8590
+WX_US_GA|GA_TAB_SEGA|Tabular State Forecast for SE GA|3255
+WX_US_GA|GA_TAB_SENEF|Tabular Forecast for Northeast Florida and Southeast GA|3254
+WX_US_GA|GA_ZON_NCPEA|Zone Forecast for North and Central GA Peachtree City NWS|48558
+WX_US_GA|GA_ZON_PEACH|Zone Forecast for Georgia Peachtree City GA NWS|736
+WX_US_GA|GA_ZON_SENEF|Zone Frcst for Northeast Florida and Southeast GA|86137
+WX_US_GUAM|AFDPQ.PGUM|Guam Area Forecast Discussion|16797
+WX_US_GUAM|FZPQ50.PGUM|Micronesia|4419
+WX_US_GUAM|GUAM_SA|Pacific Streamline Analysis (130E-110W,30S-30N)|66208
+WX_US_GUAM|GUAM_SL|North Pacific Surface Analysis (130E-110W,EQ-60N)|41196
+WX_US_GUAM|PMZ161|Koror Palau|1358
+WX_US_GUAM|PMZ171|Yap|1606
+WX_US_GUAM|PMZ172|Chuuk|1930
+WX_US_GUAM|PMZ173|Pohnpei|2085
+WX_US_GUAM|PMZ174|Kosrae|2075
+WX_US_GUAM|PMZ181|Majuro|1999
+WX_US_HI|HI_CO_40NM|HAWAIIAN COASTAL WITHIN 40 NM - CHANNELS|23788
+WX_US_HI|HI_CO_BTWIS|CHANNELS BETWEEN THE ISLANDS - Coastal Waters|1561
+WX_US_HI|HI_CO_NAVTX|HAWAII WATERS NAVTEX MARINE FORECAST|2889
+WX_US_HI|HI_FOR_EXTEN|EXTENDED FORECAST DISCUSSION FOR HAWAII|1000
+WX_US_HI|HI_FOR_HIISL|State Forecast for Hawaii|2392
+WX_US_HI|HI_TAB_HAWA|Tabular State Forecast for Hawaii|4250
+WX_US_HI|HI_ZON_HIISL|Zone Forecast for Hawaii|90290
+WX_US_HRLY_T|ABUS23.KWBC|HOURLY TEMPERATURE/WEATHER FOR WESTERN UNITED STATES|1130
+WX_US_HRLY_T|ABUS24.KWBC|HOURLY TEMPERATURE/WEATHER FOR EASTERN UNITED STATES|1322
+WX_US_HRLY_T|ABUS25.KWBC|HOURLY TEMPERATURE/WEATHER FOR CENTRAL UNITED STATES|1274
+WX_US_IA|IA_FOR_DESM|State Forecast for Iowa Des Moines NWS|852
+WX_US_IA|IA_TAB_DESM|Tabular Forecast for Iowa Des Moines NWS|5402
+WX_US_IA|IA_ZON_QUAD|Zone Forecasts Quad Cities IA IL|48164
+WX_US_IA|IA_ZON_SW|Zone Forecasts for Southwest Iowa|46117
+WX_US_ID|ID_TAB_NCENT|Tabular State Forecast for north central Idaho|6330
+WX_US_ID|ID_TAB_SE|Tabular State Forecast for Southeast Idaho|7575
+WX_US_ID|ID_TAB_SW|Tabular State Forecast for Southwest Idaho|6596
+WX_US_ID|ID_ZON_NORTH|Zone Forecast Product for North Idaho|16276
+WX_US_ID|ID_ZON_POCAT|Zone Forecasts for Idaho Pocatello NWS|18903
+WX_US_ID|ID_ZON_SW|Zone Forecasts for Southwest Idaho/|25801
+WX_US_IL|IL_TAB_LINC|Tabular Forecast for Illinois Lincoln NWS|6463
+WX_US_IL|IL_ZON_CHIRO|Zone Forecasts for Chicago/Romeoville, IL|62800
+WX_US_IL|IL_ZON_LINC|Zone Forecasts for Illinois Lincoln NWS|69952
+WX_US_IL|IL_ZON_QUAD|Zone Forecasts Quad Cities IA IL|67835
+WX_US_IN|IN_TAB_INDI|Tabular State Forecast for Indiana indianapolis NWS|4858
+WX_US_IN|IN_ZON_NORT|Zone Forecast Northern Indiana|82173
+WX_US_IN|IN_ZON_SOUT|Zone Forecast Product for Southern Indiana|120287
+WX_US_KS|KS_TAB_WICH|Tabular Forecast for Kansas Wichita NWS|7177
+WX_US_KS|KS_ZON_NORT|Zone Forecasts for North Central Kansas|63616
+WX_US_KS|KS_ZON_NW|Zone Forecast for Northwest Kansas|26393
+WX_US_KS|KS_ZON_TOPE|Zone Forecast for Kansas Topeka NWS|39080
+WX_US_KS|KS_ZON_WICH|Zone Forecast for Kansas Wichita NWS|56224
+WX_US_KY|KY_ZON_CEAPP|Zone Forecast for Central Appalachians|91811
+WX_US_KY|KY_ZON_CENT|Zone Forecast for Central Kentucky|102563
+WX_US_KY|KY_ZON_EAST|Zone Forecast for Eastern Kentucky|72284
+WX_US_KY|KY_ZON_PADU|Zone Forecast for Kentucky from Paducah KY NWS|87669
+WX_US_LA|LA_TAB_4STLA|Tabular State Forecast for Four State Area-Lousiana|2738
+WX_US_LA|LA_TAB_SE|Tabular Forecast for Southeast Louisiana and South Miss|2216
+WX_US_LA|LA_TAB_SW|Tabular Forecast for Southwest Louisiana and Southeast texas|2290
+WX_US_LA|LA_ZON_NE|Zone Forecast for Northeast Louisiana|73573
+WX_US_LA|LA_ZON_NEWOR|Zone Forecast Product for Louisiana from New Orleans NWS|100755
+WX_US_LA|LA_ZON_SHREV|Zone Forecast for Shreveport NWS|95735
+WX_US_LA|LA_ZON_SW|Zone Forecast for Southeast Texas and Southwest Louisiana|33774
+WX_US_MA|MA_TAB_SONE|Tabular Forecast for Southern New England|4941
+WX_US_MA|MA_ZON_SONE|Zone Forecast for Southern New England|46121
+WX_US_MD|MD_FOR_BALT|Short Term Forecast Balt MD|1454
+WX_US_MD|MD_TAB_MD|Tabular Forecast for Maryland and the Eastern West Virginia|3278
+WX_US_MD|MD_ZON_BALT|Zone Forecast Baltimore MD  NWS 1|72845
+WX_US_ME|ME_TAB_CAR|Tabular Forecast for Maine Caribou NWS|2893
+WX_US_ME|ME_TAB_WEST|Tabular State Forecast for Western Maine|5441
+WX_US_ME|ME_ZON_ANDR|Androscoggin County Maine Zone Forecast|1709
+WX_US_ME|ME_ZON_ARONE|NE Aroostook County Maine Zone Forecast|1692
+WX_US_ME|ME_ZON_ARONW|NW Aroostook County Maine Zone Forecast|1874
+WX_US_ME|ME_ZON_AROSE|SE Aroostook County Maine Zone Forecast|1874
+WX_US_ME|ME_ZON_CUMCI|Central Interior Cumberland County Maine Zone Forecast|1434
+WX_US_ME|ME_ZON_CUMCO|Coastal Cumberland County Maine Zone Forecast|1864
+WX_US_ME|ME_ZON_CUMIH|Interior Cumberland Highlands County Maine Zone Forecast|1874
+WX_US_ME|ME_ZON_FRANN|Northern Franklin County Maine Zone Forecast|1979
+WX_US_ME|ME_ZON_FRANS|Southern Franklin County Maine Zone Forecast|1643
+WX_US_ME|ME_ZON_HANCC|Central Hancock County Maine Zone Forecast|1874
+WX_US_ME|ME_ZON_HANCI|Interior Hancock County Maine Zone Forecast|1874
+WX_US_ME|ME_ZON_KENN|Kennebec County Maine Zone Forecast|2020
+WX_US_ME|ME_ZON_KNOX|Knox County Maine Zone Forecast|1856
+WX_US_ME|ME_ZON_LINC|Lincoln County Maine Zone Forecast|1588
+WX_US_ME|ME_ZON_OXFON|Northern Oxford County Maine Zone Forecast|1874
+WX_US_ME|ME_ZON_OXFOS|Southern Oxford County Maine Zone Forecast|1874
+WX_US_ME|ME_ZON_PENOC|Central Penobscot County Maine Zone Forecast|1833
+WX_US_ME|ME_ZON_PENON|Northern Penobscot County Maine Zone Forecast|1874
+WX_US_ME|ME_ZON_PENOS|Southern Penobscot County Maine Zone Forecast|1874
+WX_US_ME|ME_ZON_PISCC|Central Piscataquis County Maine Zone Forecast|1874
+WX_US_ME|ME_ZON_PISCN|Northern Piscataquis County Maine Zone Forecast|1874
+WX_US_ME|ME_ZON_PISCS|Southern Piscataquis County Maine Zone Forecast|1874
+WX_US_ME|ME_ZON_SAGA|Sagadahoc County Maine Zone Forecast|1874
+WX_US_ME|ME_ZON_SOMEC|Central Somerset County Maine Zone Forecast|1874
+WX_US_ME|ME_ZON_SOMEN|Northern Somerset County Maine Zone Forecast|1874
+WX_US_ME|ME_ZON_SOMES|Southern Somerset County Maine Zone Forecast|1664
+WX_US_ME|ME_ZON_WALDC|Central Waldo County Maine Zone Forecast|1614
+WX_US_ME|ME_ZON_WALDI|Interior Waldo County Maine Zone Forecast|1609
+WX_US_ME|ME_ZON_WASCE|Central Washington County Maine Zone Forecast|1874
+WX_US_ME|ME_ZON_WASCO|Coastal Washington County Maine Zone Forecast|1874
+WX_US_ME|ME_ZON_WASN|Northern Piscataquis County Maine Zone Forecast|1874
+WX_US_ME|ME_ZON_YORKC|Coastal York County Maine Zone Forecast|1521
+WX_US_ME|ME_ZON_YORKI|Interior York County Maine Zone Forecast|1874
+WX_US_MI|MI_FOR_UPPER|STATE FORECAST FOR UPPER MICHIGAN|701
+WX_US_MI|MI_TAB_GRRAP|Tabular State Forecast for Michigan from Grand Rapids NWS|7511
+WX_US_MI|MI_TAB_TWICI|Tabular State Forecast for Michigan from Twin Cities NWS|3946
+WX_US_MI|MI_ZON_GAYL|Zone Forecast Product for Michigan from Gaylord NWS|52622
+WX_US_MI|MI_ZON_NE|Zone Frcst for Northeast Minnesota and Northwest Wisconsin|31969
+WX_US_MI|MI_ZON_SE|Zone Forecast for Southeast Michigan|32790
+WX_US_MI|MI_ZON_SW|Zone Forecast Southwest Michigan|41500
+WX_US_MI|MI_ZON_WCU|Zone Fcst for west and central Upper Michigan Marquette NWS|23004
+WX_US_MN|MN_FOR_TWIN|State Forecast for Minnesota Twin Cities NWS|846
+WX_US_MN|MN_ZON_NW|Zone Forecast for NW Minnesota|35696
+WX_US_MN|MN_ZON_TWIN|Zone Forecast for Michigan Twin Cities NWS|60640
+WX_US_MO|MO_TAB_STLOU|Tabular State Forecast for Missouri Saint Louis MO|6841
+WX_US_MO|MO_ZON_KCPHI|Zone Forecast Kansas City/Pleasant Hill MO|19157
+WX_US_MO|MO_ZON_SPRIN|Zone Forecast Springfield MO|74455
+WX_US_MO|MO_ZON_STLOU|Zone Forecasts Saint Louis MO nws|24292
+WX_US_MS|MS_FOR_JACK|STATE FORECAST FOR MISSISSIPPI from Jackson NWS|5283
+WX_US_MS|MS_TAB_MSARL|Tabular Forecast for the Ark-LA-Miss|2434
+WX_US_MS|MS_TAB_SEALF|Tabular State Forecast for SW AL-SE MS-and NW FL Panhandle|1961
+WX_US_MS|MS_TAB_SOUT|Tabular Forecast for South Misssissippi|2217
+WX_US_MS|MS_ZON_CENT|Zone Forecast for Central Mississippi|69430
+WX_US_MT|MT_FOR_CENSW|Forecast Central and Southwest Montana Area|2311
+WX_US_MT|MT_FOR_GRFAL|Forecast For Montana Great Falls NWS|4074
+WX_US_MT|MT_TAB_NE|Tabular State Forecast for Northeast Montana|4293
+WX_US_MT|MT_TAB_NOCEN|Tabular Forecast for North Central and SW Montana|5048
+WX_US_MT|MT_TAB_SCSEN|Tabular Forecast for SCen and SE MT/NCen WY|3599
+WX_US_MT|MT_TAB_WEST|Tabular Forecast for Western Montana|6330
+WX_US_MT|MT_ZON_CENSW|Zone Forecast for Central and Southwest Montana|47350
+WX_US_MT|MT_ZON_MISS|Zone Forecast for Montana Missoula NWS|19860
+WX_US_MT|MT_ZON_NE|ZONE FORECAST for Northeast Montana|18751
+WX_US_MT|MT_ZON_SCSE|Zone Forecast for South Central and Southeast Montana|53159
+WX_US_NC|NC_TAB_NC|Tabular State Forecast for North Carolina|4457
+WX_US_NC|NC_ZON_EAST|Zone Forecast for Eastern North Carolina|28635
+WX_US_NC|NC_ZON_RALE|Zone Forecast for North Carolina Raleigh NWS|28137
+WX_US_NC|NC_ZON_WILM|Zone Forecast for North Carolina Wilmington NWS|20614
+WX_US_ND|ND_TAB|Tabular State Forecast for North Dakota|2752
+WX_US_ND|ND_ZON_WCEN|Zone Forecast for Western and Central North Dakota|48099
+WX_US_NE|NE_TAB_OMAHA|Tabular State Forecast for Nebraska Omaha/Valley NWS|3298
+WX_US_NE|NE_ZON_EAST|Zone Forecasts for Eastern Nebraska|79785
+WX_US_NE|NE_ZON_PLATT|Zone Forecast for Nebraska North Platte NWS|0
+WX_US_NE|NE_ZON_SOCEN|Zone Forecasts for South Central Nebraska|35679
+WX_US_NE|NE_ZON_SW|Zone Forecast for SW Nebraska|27183
+WX_US_NE|NE_ZON_WEPHA|Zone Forecast for Western Nebraska Panhandle|0
+WX_US_NH|NH_TAB_NHWEM|Tabular Forecast for New Hampshire and Western Maine|5440
+WX_US_NH|NH_ZON_BELK|Belknap County New Hampshire Zone Forecast|1419
+WX_US_NH|NH_ZON_CARRN|Northern Carroll County New Hampshire Zone Forecast|42537
+WX_US_NH|NH_ZON_CARRS|Southern Carroll County New Hampshire Zone Forecast|1864
+WX_US_NH|NH_ZON_CHES|Cheshire County New Hampshire Zone Forecast|2166
+WX_US_NH|NH_ZON_COOSN|Northern Coos County New Hampshire Zone Forecast|42537
+WX_US_NH|NH_ZON_COOSS|Southern Coos County New Hampshire Zone Forecast|1768
+WX_US_NH|NH_ZON_GRAFN|Northern Grafton County New Hampshire Zone Forecast|42537
+WX_US_NH|NH_ZON_GRAFS|Sourthern Grafton County New Hampshire Zone Forecast|42537
+WX_US_NH|NH_ZON_HILLE|Eastern Hillsborough County New Hampshire Zone Forecast|1939
+WX_US_NH|NH_ZON_HILLW|West & Cent Hillsborough County New Hampshire Zone Forecast|1606
+WX_US_NH|NH_ZON_MERR|Merrimack County New Hampshire Zone Forecast|1597
+WX_US_NH|NH_ZON_NHWEM|Zone Forecast for New Hampshire and Western Maine|50496
+WX_US_NH|NH_ZON_ROCKC|Coastal Rockingham County New Hampshire Zone Forecast|1784
+WX_US_NH|NH_ZON_ROCKI|Interior Rockingham County New Hampshire Zone Forecast|1357
+WX_US_NH|NH_ZON_STRAF|Strafford County New Hampshire Zone Forecast|1373
+WX_US_NH|NH_ZON_SULI|Sullivan County New Hampshire Zone Forecast|42537
+WX_US_NJ|NJ_TAB_NE|Tabular State Forecast for NE New Jersey|4144
+WX_US_NJ|NJ_TAB_NJ|Tabular State Forecast for New Jersey|2870
+WX_US_NJ|NJ_TAB_NJNYC|Tabular Forecast for NE NJ, SW NY, and South CT|4144
+WX_US_NJ|NJ_ZON_ANTC|Coastal Atlantic County New Jersey Zone Forecast|1587
+WX_US_NJ|NJ_ZON_ANTI|Inland Atlantic County New Jersey Zone Forecast|1654
+WX_US_NJ|NJ_ZON_BERE|Eastern Bergen County New Jersey Zone Forecast|1577
+WX_US_NJ|NJ_ZON_BERW|Western Bergen County New Jersey Zone Forecast|1623
+WX_US_NJ|NJ_ZON_BURNW|NW Burlington County New Jersey Zone Forecast|1651
+WX_US_NJ|NJ_ZON_BURSE|SE Burlington County New Jersey Zone Forecast|1769
+WX_US_NJ|NJ_ZON_CAM|Camden County New Jersey Zone Forecast|2241
+WX_US_NJ|NJ_ZON_CPMC|Coastal Cape May County New Jersey Zone Forecast|1572
+WX_US_NJ|NJ_ZON_CPMI|Inland Cape May County New Jersey Zone Forecast|1919
+WX_US_NJ|NJ_ZON_CUM|Cumberland County New Jersey Zone Forecast|2349
+WX_US_NJ|NJ_ZON_ESSE|Eastern Essex County New Jersey Zone Forecast|1874
+WX_US_NJ|NJ_ZON_ESSW|Western Essex County New Jersey Zone Forecast|1769
+WX_US_NJ|NJ_ZON_GLOU|Gloucester County New Jersey Zone Forecast|2350
+WX_US_NJ|NJ_ZON_HUD|Hudson County New Jersey Zone Forecast|1874
+WX_US_NJ|NJ_ZON_HUN|Hunterdon County New Jersey Zone Forecast|1874
+WX_US_NJ|NJ_ZON_MER|Mercer County New Jersey Zone Forecast|1788
+WX_US_NJ|NJ_ZON_MID|Middlesex County New Jersey Zone Forecast|1400
+WX_US_NJ|NJ_ZON_MONE|Eastern Monmouth County New Jersey Zone Forecast|1420
+WX_US_NJ|NJ_ZON_MONW|Western Monmouth County New Jersey Zone Forecast|1375
+WX_US_NJ|NJ_ZON_MOR|Morris County New Jersey Zone Forecast|1874
+WX_US_NJ|NJ_ZON_NJ|Zone Forecast Product for New Jersey|69890
+WX_US_NJ|NJ_ZON_OCEC|Coastal Ocean County New Jersey Zone Forecast|2090
+WX_US_NJ|NJ_ZON_OCEI|Inland Ocean County New Jersey Zone Forecast|1402
+WX_US_NJ|NJ_ZON_PASSE|Eastern Passaic County New Jersey Zone Forecast|1372
+WX_US_NJ|NJ_ZON_PASSW|Western Passaic County New Jersey Zone Forecast|1257
+WX_US_NJ|NJ_ZON_SAL|Salem County New Jersey Zone Forecast|1505
+WX_US_NJ|NJ_ZON_SOM|Somerset County New Jersey Zone Forecast|1874
+WX_US_NJ|NJ_ZON_SUS|Sussex County New Jersey Zone Forecast|2037
+WX_US_NJ|NJ_ZON_UNIE|Eastern Union County New Jersey Zone Forecast|1604
+WX_US_NJ|NJ_ZON_UNIW|Western Union County New Jersey Zone Forecast|1874
+WX_US_NJ|NJ_ZON_WAR|Warren Union County New Jersey Zone Forecast|1874
+WX_US_NM|NM_TAB_ELPAS|Tabular Forecast for New Mexico El Paso Tx/Santa Teresa|8273
+WX_US_NM|NM_TAB_NOCEN|Tabular Forecast for North and Central New Mexico|10481
+WX_US_NM|NM_ZON_NOCEN|Zone Forecast for North and Central New Mexico|67015
+WX_US_NV|NV_DIS_NV|Nevada Area Forecast Discussion|3405
+WX_US_NV|NV_TAB_MJGB|Tabular Frcst for NV Mojave Desert and Southern Great Basin|6849
+WX_US_NV|NV_TAB_NOCEN|Tabular Forcast for Northern and Central Nevada Elko NWS|4650
+WX_US_NV|NV_TAB_RENO|Tabular State Forecast for Nevada from Reno NWS|4409
+WX_US_NV|NV_ZON_ELKO|Zone Forecast for Nevada Elko NWS|24051
+WX_US_NV|NV_ZON_WESNE|Zone Forecast West Nevada-East Sierra-NE California Reno NWS|8104
+WX_US_NY|NY_TAB_ALBAN|Tabular State Forecast for NEW YORK Albany WS Office|3393
+WX_US_NY|NY_TAB_BUFFA|Tabular State Forecast for New York - Buffalo NWS Office|4466
+WX_US_NY|NY_TAB_NYCTN|Tabular Forecast for SW NY, South CT, and NE NJ,|4143
+WX_US_NY|NY_TAB_SE|Tabular State Forecast for SE New York|4144
+WX_US_NY|NY_TAB|Tabular State Forecast for New York|4467
+WX_US_NY|NY_ZON_CENT|Zone Forecast for Central New York and N-east Pennsylvania|30447
+WX_US_NY|NY_ZON_EAST|Zone Forecast for Eastern New York and Western New Enlgand|43050
+WX_US_NY|NY_ZON_WEST|Zone Forecasts for Western New York|26728
+WX_US_OH|OH_TAB_SE|Tabular State Forecast for SE Ohio|5928
+WX_US_OH|OH_TAB_WILM|Tabular Forecast for Ohio Wilminton OH NWS|5158
+WX_US_OH|OH_ZON_MIDDL|Zone Forecast Product for Middle Ohio|87046
+WX_US_OH|OH_ZON_NENWP|Zone Forecast for Northern Ohio and Northwest Pennsylvania|49310
+WX_US_OH|OH_ZON_WILM|Zone Forecast Wilmington OH NWS|82082
+WX_US_OK|OK_TAB_4STOK|Tabular State Forecast for Four State Area-Oklanoma|2738
+WX_US_OK|OK_TAB_EAST|Tabular State Forecast for E OK|3868
+WX_US_OK|OK_TAB_OKLA|Tabular State Forecast for Oklahoma|6193
+WX_US_OK|OK_ZON_EAST|Zone Forecasts for Eastern Oklahoma|61508
+WX_US_OK|OK_ZON_OKLA|Zone Forecast Product for Oklahoma|142321
+WX_US_OK|OK_ZON_PANH|Zone Forecast Product for The Oklahoma Panhandle|21151
+WX_US_OR|OR_TAB_NE|Tabular Forecast for Northeast Oregon and Southeast Wash|4394
+WX_US_OR|OR_TAB_SE|Tabular State Forecast for Southeast Oregon|6596
+WX_US_OR|OR_TAB_SO|Tabular Forecast for southern Oregon and northern Calif|4691
+WX_US_OR|OR_ZON_BAK|Baker County Zone Forecast,|2530
+WX_US_OR|OR_ZON_BENL|Benton County Lowlands Zone Forecast, Corvallis, Monroe|3500
+WX_US_OR|OR_ZON_BLUFH|FOOTHILLS OF THE BLUE MOUNTAINS OF OREGON Zone Forecast|1501
+WX_US_OR|OR_ZON_BLUN|Northern Blue Mountains of Oregon Zone Forecast, Meacham|3500
+WX_US_OR|OR_ZON_BLUNF|Foothills of North Blue Mountains of Oregon Zone Forecast|3500
+WX_US_OR|OR_ZON_BLUS|Southern Blue Mountains of Oregon Zone Forecast, Ukiah|3500
+WX_US_OR|OR_ZON_BLUSF|Foothills of Southern Blue Mountains of Oregon Zone Forecast|3500
+WX_US_OR|OR_ZON_CASCN|North Oregon Cascades Zone Forecast, Lost Lake, Gov Camp|2940
+WX_US_OR|OR_ZON_CASCS|South Central Oregon Cascades Oregon Zone Forecast|2061
+WX_US_OR|OR_ZON_CASLA|Cascades of Lane County Zone Forecast, Will Pass, Waldo Lake|2290
+WX_US_OR|OR_ZON_CASML|Cascades of Marion and Linn Counties Zone Forecast|2810
+WX_US_OR|OR_ZON_CCI84|Central Columbia River Gorge I-84 Corridor Zone Forecast|2520
+WX_US_OR|OR_ZON_CLAT|Clatsop County Zone Forecast, Astoria, Seaside, Cannon Beach|2302
+WX_US_OR|OR_ZON_CLKFH|Clackamas County Cascade Foothill Zone Forecast, Welches|2350
+WX_US_OR|OR_ZON_COAC|Central Coast Zone Forecast, Newport, Florence, Lincoln City|2425
+WX_US_OR|OR_ZON_COALC|Central Oregon Coast Range Lowlands  Zone Forecast, Mapleton|2347
+WX_US_OR|OR_ZON_COALN|North Oregon Coast Range Lowlands  Zone Forecast, Vernonia|2143
+WX_US_OR|OR_ZON_COARC|Central Oregon Coast Range Zone Forecast, Valsetz, Horton|2199
+WX_US_OR|OR_ZON_COARN|North Oregon Coast Range  Zone Forecast, Sunset, Summit,|1997
+WX_US_OR|OR_ZON_COLGE|East Columbia River Gorge Zone Forecast, Arlington/TheDalles|36745
+WX_US_OR|OR_ZON_COLLO|Lower Columbia River Zone Forecast, Scapoose, St. Helens,|36745
+WX_US_OR|OR_ZON_COLOB|Lower Columbia Basin Zone Forecast, Boardman/Hermiston/Ione|36745
+WX_US_OR|OR_ZON_CURRC|Curry County Coast Oregon Zone Forecast w/Brookings, Gold Be|2149
+WX_US_OR|OR_ZON_CURRE|Eastern Curry and Josephine County Oregon Zone Forecast|1736
+WX_US_OR|OR_ZON_CW500|West Columbia River Gorge > 500ft Zone Forecast, Corbett|3500
+WX_US_OR|OR_ZON_CWI84|West Columbia River Gorge I-84 Corridor Zone Forecast|2610
+WX_US_OR|OR_ZON_DOUEF|Eastern Douglas County Foothills Oregon Zone Forecast|36745
+WX_US_OR|OR_ZON_DOUGC|Central Douglas County Oregon Zone Forecast|36745
+WX_US_OR|OR_ZON_ECWVA|East Central Willamette Valley Zone Forecast, Salem, Wilsonv|2544
+WX_US_OR|OR_ZON_GRROV|Grande Ronde Valley Zone Forecast, LaGrande, Elgin, Union|36745
+WX_US_OR|OR_ZON_HAR|Harney County Zone Forecast,|36745
+WX_US_OR|OR_ZON_HRUP|Upper Hood River Valley Zone Forecast|3500
+WX_US_OR|OR_ZON_JDBAS|John Day Basin Zone Forecast, John Day, Spray, Mitchell|3500
+WX_US_OR|OR_ZON_KLALA|North and East Klamath & West Lake County Zone Forecast|1710
+WX_US_OR|OR_ZON_KLAM|Klamath Basin Oregon Zone Forecast|2524
+WX_US_OR|OR_ZON_LAKCE|Central and Eastern Lake County Zone Forecast|36745
+WX_US_OR|OR_ZON_LANFH|Lane County Cascade Foothills Zone Forecast, Vida, Oakridge|2648
+WX_US_OR|OR_ZON_LANL|Lane County Lowlands Zone Forecast, Eugene, Cottage Grove|2613
+WX_US_OR|OR_ZON_LINL|Linn County Lowlands Zone Forecast, Albany, Harrisburg|3500
+WX_US_OR|OR_ZON_MALFH|Cascade Foothills of Marion and Linn Counties Zone Forecast|2946
+WX_US_OR|OR_ZON_NESCW|Zone Forecasts for Northeast Oregon and South Central Washin|38792
+WX_US_OR|OR_ZON_NORCE|North Central Oregon Zone Forecast, Dufur, Maupin, Moro|3500
+WX_US_OR|OR_ZON_NW|Zone Forecast Product for Northwest Oregon|61467
+WX_US_OR|OR_ZON_NWSG|NORTHERN WHEELER AND SOUTHERN GILLIAM County Zone Forecast|3500
+WX_US_OR|OR_ZON_OJDHI|Ochoco-John Day Highlands Zone Forecast, Brothers, Seneca|3500
+WX_US_OR|OR_ZON_ORCE|Central Oregon Zone Forecast, Bend, Madras, Prineville|1533
+WX_US_OR|OR_ZON_PDXE|East Portland Metro Zone Forecast, Gresham, Troutdale|2759
+WX_US_OR|OR_ZON_PDXI|Inner Portland Zone Forecast, Portland, Lake Oswego,|1754
+WX_US_OR|OR_ZON_PDXOS|Outer Southeast Portland Metro Zone Forecast, Boring, Sandy|2419
+WX_US_OR|OR_ZON_PDXWH|Portland West Hills Zone Forecast, Sylvan Hill, Skyline Dr|2188
+WX_US_OR|OR_ZON_SCOAN|South Coast Oregon Zone Forecast W/CB, NB, Reedsport, Coq|36745
+WX_US_OR|OR_ZON_SE|Zone Forecasts for Southeast Oregon|20621
+WX_US_OR|OR_ZON_SISK|Siskiyou Mountains and S Cascades Oregon Zone Forecast|1668
+WX_US_OR|OR_ZON_TILL|Tillamook County Zone Forecast, Manzanita, Neskowin, Pac Cit|36745
+WX_US_OR|OR_ZON_TRVAL|Lower Treasure Valley Zone Forecast,|36745
+WX_US_OR|OR_ZON_TUAV|Tualatin Valley Zone Forecast, Sherwood, Tigard, Forest Grov|2463
+WX_US_OR|OR_ZON_WAL|Wallowa County Zone Forecast, Enterprise, Joseph, Wallowa|36745
+WX_US_OR|OR_ZON_WCWVA|West Central Willamette Valley Zone Forecast, Newberg|1970
+WX_US_OUTDR|OUT_CO_DEBO|Outdoor Activities Forecast NWS Denver/Boulder|2413
+WX_US_PA|PA_TAB_PENN|Tabular State Forecast for Pennsylvania|5454
+WX_US_PA|PA_ZON_CENT|Zone Forecast Product for Central Pennsylvania|62252
+WX_US_PA|PA_ZON_NEPEN|Zone Forecast for Central New York and N-east Pennsylvania|48812
+WX_US_PA|PA_ZON_NWNO|Zone Forecast for Northern Ohio and Northwest Pennsylvania|61856
+WX_US_PA|PA_ZON_PITTS|Zone Forecast Pittsburgh PA|81770
+WX_US_PA|PA_ZON_SE|Zone Forecast Product for Southeast Pennsylvania|58000
+WX_US_PR|AMZ745|Puerto Rico & U.S. Virgin Is Waters|1802
+WX_US_PR|FPCA62.TAB|Tabular State Fcst for PUERTO RICO AND U.S. VIRGIN ISLANDS|4263
+WX_US_PR|FZCA52.TJSJ|San Juan, PR - coastal waters|19897
+WX_US_PR|FZCA62.TJSJ|San Juan, PR (Spanish)|1463
+WX_US_RAD|US.RAD.ALASK|SNAPSHOT CURRENT RADAR U.S. ALASKA|13943
+WX_US_RAD|US.RAD.AR|SNAPSHOT CURRENT RADAR U.S. ARKANSAS|15182
+WX_US_RAD|US.RAD.AZ|SNAPSHOT CURRENT RADAR U.S. ARIZONA|13748
+WX_US_RAD|US.RAD.CCA|SNAPSHOT CURRENT RADAR U.S. S CENTRAL CA|14856
+WX_US_RAD|US.RAD.CCO|SNAPSHOT CURRENT RADAR U.S. CENTRAL COLORADO|14017
+WX_US_RAD|US.RAD.CEFL|SNAPSHOT CURRENT RADAR U.S. CENTRAL FLORIDA|14395
+WX_US_RAD|US.RAD.CEOK|SNAPSHOT CURRENT RADAR U.S. CENTRAL OKLAHOMA|14799
+WX_US_RAD|US.RAD.CGI|SNAPSHOT CURRENT RADAR U.S. CAPE GIARDEAU MO AREA|19476
+WX_US_RAD|US.RAD.CME|SNAPSHOT CURRENT RADAR U.S. COASTAL MAINE|17137
+WX_US_RAD|US.RAD.CMT|SNAPSHOT CURRENT RADAR U.S. CENTRAL MT|13555
+WX_US_RAD|US.RAD.CND|SNAPSHOT CURRENT RADAR U.S. CENTRAL NORTH DAKOTA|12859
+WX_US_RAD|US.RAD.CNE|SNAPSHOT CURRENT RADAR U.S. CENTRAL NEBRASKA|16088
+WX_US_RAD|US.RAD.CNESC|SNAPSHOT CURRENT RADAR U.S. CST NE S CAROL & CST SE N CAROL|15761
+WX_US_RAD|US.RAD.CNM|SNAPSHOT CURRENT RADAR U.S. CENTRAL NEW MEXICO|12019
+WX_US_RAD|US.RAD.CNNY|SNAPSHOT CURRENT RADAR U.S. CENTRAL N NEW YORK & MONTREAL CA|17114
+WX_US_RAD|US.RAD.COCAC|SNAPSHOT CURRENT RADAR U.S. CA COAST MONTEREY - SANTA MONICA|12799
+WX_US_RAD|US.RAD.COCAS|SNAPSHOT CURRENT RADAR U.S. CA CST SAN LUIS OBISPO - SAN DIE|13799
+WX_US_RAD|US.RAD.CONUS|SNAPSHOT CURRENT RADAR U.S. CONUS|18896
+WX_US_RAD|US.RAD.CSC|SNAPSHOT CURRENT RADAR U.S. COASTAL SC|19448
+WX_US_RAD|US.RAD.CTN|SNAPSHOT CURRENT RADAR U.S. CENT TENNESSEE & CENT KENTUCKY|17398
+WX_US_RAD|US.RAD.CTX|SNAPSHOT CURRENT RADAR U.S. CENTRAL TEXAS|19925
+WX_US_RAD|US.RAD.CWI|SNAPSHOT CURRENT RADAR U.S. CENTRAL WISCONSIN / N ILLINOIS|18035
+WX_US_RAD|US.RAD.EALAK|SNAPSHOT CURRENT RADAR U.S. E ALEUTIAN ISL TO PALMER AK|17799
+WX_US_RAD|US.RAD.ECA|SNAPSHOT CURRENT RADAR U.S. E CENT ALABAMA & W GEORGIA|22109
+WX_US_RAD|US.RAD.ECMS|SNAPSHOT CURRENT RADAR U.S. E CENTRAL MISSOURI & S ILLINOIS|16324
+WX_US_RAD|US.RAD.ECNE|SNAPSHOT CURRENT RADAR U.S. E CENTRAL NEBRASKA & S S DAKOTA|14758
+WX_US_RAD|US.RAD.ECNM|SNAPSHOT CURRENT RADAR U.S. E CENTRAL NEW MEXICO|12459
+WX_US_RAD|US.RAD.EFLPH|SNAPSHOT CURRENT RADAR U.S. EAST FLORIDA PH & S GEORGIA|14348
+WX_US_RAD|US.RAD.EIA|SNAPSHOT CURRENT RADAR U.S. E IOWA / W IL|17342
+WX_US_RAD|US.RAD.EKS|SNAPSHOT CURRENT RADAR U.S. E KANSAS|15183
+WX_US_RAD|US.RAD.EKSWM|SNAPSHOT CURRENT RADAR U.S. E KANSAS / W MISSOURI|16183
+WX_US_RAD|US.RAD.EMI|SNAPSHOT CURRENT RADAR U.S. E MICH / N INDIANA|21037
+WX_US_RAD|US.RAD.ENC|SNAPSHOT CURRENT RADAR U.S. EASTERN NORTH CAROLINA|17578
+WX_US_RAD|US.RAD.END|SNAPSHOT CURRENT RADAR U.S. E N. DAKOTA & W MINNESOTA|16494
+WX_US_RAD|US.RAD.ENE|SNAPSHOT CURRENT RADAR U.S. E NE / E KS / NW MS / SW IA|15478
+WX_US_RAD|US.RAD.ENY|SNAPSHOT CURRENT RADAR U.S. E NEW YORK|21907
+WX_US_RAD|US.RAD.ETN|SNAPSHOT CURRENT RADAR U.S. E TENN / E KENT & W N. CAROLINA|17625
+WX_US_RAD|US.RAD.EVA|SNAPSHOT CURRENT RADAR U.S. E VIRGINIA & E N CAROLINA|20613
+WX_US_RAD|US.RAD.EWA|SNAPSHOT CURRENT RADAR U.S. E WASHINGTON & IDAHO PH|16987
+WX_US_RAD|US.RAD.EWI|SNAPSHOT CURRENT RADAR U.S. E WISCONSIN / L MICH|18987
+WX_US_RAD|US.RAD.FLKW|SNAPSHOT CURRENT RADAR U.S. S FL & KEY WEST|11708
+WX_US_RAD|US.RAD.GA|SNAPSHOT CURRENT RADAR U.S. GEORGIA|23888
+WX_US_RAD|US.RAD.GRLAK|SNAPSHOT CURRENT RADAR U.S. CENT GREAT LAKES|27620
+WX_US_RAD|US.RAD.GUAM|SNAPSHOT CURRENT RADAR U.S. GUAM|9062
+WX_US_RAD|US.RAD.HAWAI|SNAPSHOT CURRENT RADAR U.S. HAWAII|9344
+WX_US_RAD|US.RAD.HIKO|SNAPSHOT CURRENT RADAR U.S. HAWAII KAUAI & OAHU|9717
+WX_US_RAD|US.RAD.HIMH|SNAPSHOT CURRENT RADAR U.S. HAWAII MAUI & HAWAII ISL|10408
+WX_US_RAD|US.RAD.HIMMH|SNAPSHOT CURRENT RADAR U.S. HAWAII MAUI MOLOKAI & HAWAII ISL|10408
+WX_US_RAD|US.RAD.HOMMH|SNAPSHOT CURRENT RADAR U.S. HI OAH MAUI MOLOKAI & HAWAII ISL|10408
+WX_US_RAD|US.RAD.IA|SNAPSHOT CURRENT RADAR U.S. IOWA|23085
+WX_US_RAD|US.RAD.IL|SNAPSHOT CURRENT RADAR U.S. ILLINOIS|25799
+WX_US_RAD|US.RAD.IN|SNAPSHOT CURRENT RADAR U.S. INDIANA|19168
+WX_US_RAD|US.RAD.KY|SNAPSHOT CURRENT RADAR U.S. KENTUCKY|18181
+WX_US_RAD|US.RAD.LINY|SNAPSHOT CURRENT RADAR U.S. LONG ISL NY / CONN / RI / N NJ|20702
+WX_US_RAD|US.RAD.MARI|SNAPSHOT CURRENT RADAR U.S. RI & MA|17754
+WX_US_RAD|US.RAD.MD|SNAPSHOT CURRENT RADAR U.S. MD / RI PA VA|20495
+WX_US_RAD|US.RAD.MI|SNAPSHOT CURRENT RADAR U.S. E MICH / N INDIANA|20263
+WX_US_RAD|US.RAD.MIUP|SNAPSHOT CURRENT RADAR U.S. MICHIGAN UP / N WISCONSIN|14256
+WX_US_RAD|US.RAD.NAL|SNAPSHOT CURRENT RADAR U.S. N ALABAMA|16799
+WX_US_RAD|US.RAD.NALTN|SNAPSHOT CURRENT RADAR U.S. N ALA & S TENN & NW GEO|17315
+WX_US_RAD|US.RAD.NCA|SNAPSHOT CURRENT RADAR U.S. N COASTAL CA|11799
+WX_US_RAD|US.RAD.NCAZ|SNAPSHOT CURRENT RADAR U.S. SE SOUTH DAKOTA / W MINN|20799
+WX_US_RAD|US.RAD.NCCA|SNAPSHOT CURRENT RADAR U.S. N CENTRAL CA|17860
+WX_US_RAD|US.RAD.NCMI|SNAPSHOT CURRENT RADAR U.S. NORTH CENTRAL MINNESOTA|18997
+WX_US_RAD|US.RAD.NCMT|SNAPSHOT CURRENT RADAR U.S. NORTH CENTRAL MT|13555
+WX_US_RAD|US.RAD.NCNV|SNAPSHOT CURRENT RADAR U.S. N CENTRAL NEVADA|11799
+WX_US_RAD|US.RAD.NCTX|SNAPSHOT CURRENT RADAR U.S. CENTRAL TEXAS|19925
+WX_US_RAD|US.RAD.NEAST|SNAPSHOT CURRENT RADAR U.S. NORTHEAST|23785
+WX_US_RAD|US.RAD.NEFL|SNAPSHOT CURRENT RADAR U.S. N FLORIDA / SE GEORGIA|20625
+WX_US_RAD|US.RAD.NEIA|SNAPSHOT CURRENT RADAR U.S. NE IOWA & S WISCONSIN|21799
+WX_US_RAD|US.RAD.NEIL|SNAPSHOT CURRENT RADAR U.S. NE ILLINOIS $ SE WISCONSIN|24992
+WX_US_RAD|US.RAD.NEMT|SNAPSHOT CURRENT RADAR U.S. NORTHEAST MONTANA|15799
+WX_US_RAD|US.RAD.NEOH|SNAPSHOT CURRENT RADAR U.S. NE OHIO & NW PENNSYLVANIA|17958
+WX_US_RAD|US.RAD.NEOK|SNAPSHOT CURRENT RADAR U.S. NE OKLAHOMA & NW ARK & SE KANSAS|14612
+WX_US_RAD|US.RAD.NEOR|SNAPSHOT CURRENT RADAR U.S. NE OREGON & SE WASHINGTON|13744
+WX_US_RAD|US.RAD.NESD|SNAPSHOT CURRENT RADAR U.S. NE S DAKOTA & SE N DAKOTA|15799
+WX_US_RAD|US.RAD.NFL|SNAPSHOT CURRENT RADAR U.S. N FLORIDA / S GEORGIA|20220
+WX_US_RAD|US.RAD.NGA|SNAPSHOT CURRENT RADAR U.S. N GEORGIA / NE ALABAMA|18992
+WX_US_RAD|US.RAD.NIN|SNAPSHOT CURRENT RADAR U.S. N INDIANA & S MICHIGAN|18963
+WX_US_RAD|US.RAD.NJ|SNAPSHOT CURRENT RADAR U.S. NJ SWCT DE EPA|19690
+WX_US_RAD|US.RAD.NKS|SNAPSHOT CURRENT RADAR U.S. N KANSAS / SW NEB & E CO|12799
+WX_US_RAD|US.RAD.NNC|SNAPSHOT CURRENT RADAR U.S. N CAROLINA / SE VIRGINIA|17752
+WX_US_RAD|US.RAD.NNY|SNAPSHOT CURRENT RADAR U.S. NNY & MONTREAL CA|17560
+WX_US_RAD|US.RAD.NOH|SNAPSHOT CURRENT RADAR U.S. N OHIO & E MI|18379
+WX_US_RAD|US.RAD.NROC|SNAPSHOT CURRENT RADAR U.S. NORTH ROCKIES|18326
+WX_US_RAD|US.RAD.NSEAK|SNAPSHOT CURRENT RADAR U.S. N SE ALASKA TO SOUTH CENTRAL AK|15799
+WX_US_RAD|US.RAD.NTX|SNAPSHOT CURRENT RADAR U.S. N TEXAS / SW OKLAHOMA|13987
+WX_US_RAD|US.RAD.NUT|SNAPSHOT CURRENT RADAR U.S. N UTAH / SE IDAHO & E NEVADA|16690
+WX_US_RAD|US.RAD.NVA|SNAPSHOT CURRENT RADAR U.S. N VIRGINIA / MARYLAND SE PENN|21738
+WX_US_RAD|US.RAD.NWAL|SNAPSHOT CURRENT RADAR U.S. NW ALABAMA / NE MISS / SW TENN|18670
+WX_US_RAD|US.RAD.NWAR|SNAPSHOT CURRENT RADAR U.S. NW ARKANSAS & NE TEXAS|14799
+WX_US_RAD|US.RAD.NWFL|SNAPSHOT CURRENT RADAR U.S. NW FLORIDA/SE AL/SW GA|15948
+WX_US_RAD|US.RAD.NWI|SNAPSHOT CURRENT RADAR U.S. N WI & E MN|16485
+WX_US_RAD|US.RAD.NWLA|SNAPSHOT CURRENT RADAR U.S. NW LOUISANA & E TX & SW ARKANSAS|13799
+WX_US_RAD|US.RAD.NWMI|SNAPSHOT CURRENT RADAR U.S. NW MICHIGAN & E UP|20799
+WX_US_RAD|US.RAD.NWNY|SNAPSHOT CURRENT RADAR U.S. NNY & TORONTO CA|16293
+WX_US_RAD|US.RAD.NWOR|SNAPSHOT CURRENT RADAR U.S. NW OREGON & SW WASHINGTON|17449
+WX_US_RAD|US.RAD.NWPA|SNAPSHOT CURRENT RADAR U.S. NW PA|18679
+WX_US_RAD|US.RAD.NWSC|SNAPSHOT CURRENT RADAR U.S. NW S CAROLINA / NE GA & SW N CAR|18799
+WX_US_RAD|US.RAD.NWWA|SNAPSHOT CURRENT RADAR U.S. W WASHINGTON & NW OREGON|15799
+WX_US_RAD|US.RAD.OKPH|SNAPSHOT CURRENT RADAR U.S. OKLAHOMA PH & TEXAS PH|22987
+WX_US_RAD|US.RAD.PACSW|SNAPSHOT CURRENT RADAR U.S. PACIFIC SOUTHWEST|16852
+WX_US_RAD|US.RAD.PNW|SNAPSHOT CURRENT RADAR U.S. PACIFIC NORTHWEST|17596
+WX_US_RAD|US.RAD.PR|SNAPSHOT CURRENT RADAR U.S. PUERTO RICO|10837
+WX_US_RAD|US.RAD.PSND|SNAPSHOT CURRENT RADAR U.S. PUGET SOUND & SJDF|20799
+WX_US_RAD|US.RAD.SAL|SNAPSHOT CURRENT RADAR U.S. S ALABAMA / S MISS & W FL|17799
+WX_US_RAD|US.RAD.SAZ|SNAPSHOT CURRENT RADAR U.S. S ARIZONA|12730
+WX_US_RAD|US.RAD.SCA|SNAPSHOT CURRENT RADAR U.S. S CALF TO LOS ANGELES|14262
+WX_US_RAD|US.RAD.SCAK|SNAPSHOT CURRENT RADAR U.S. SOUTH CENTRAL ALASKA|16799
+WX_US_RAD|US.RAD.SCCA|SNAPSHOT CURRENT RADAR U.S. S CENTRAL CALIFORNIA|18799
+WX_US_RAD|US.RAD.SCKS|SNAPSHOT CURRENT RADAR U.S. S CENTRAL KS|17799
+WX_US_RAD|US.RAD.SCMT|SNAPSHOT CURRENT RADAR U.S. SOUTH CENTRAL MT|13417
+WX_US_RAD|US.RAD.SCTX|SNAPSHOT CURRENT RADAR U.S. S CENTRAL TEXAS|13278
+WX_US_RAD|US.RAD.SEAK|SNAPSHOT CURRENT RADAR U.S. SOUTHEAST ALASKA|17818
+WX_US_RAD|US.RAD.SEAST|SNAPSHOT CURRENT RADAR U.S. SOUTHEAST|20658
+WX_US_RAD|US.RAD.SECO|SNAPSHOT CURRENT RADAR U.S. SE COLORADO|13799
+WX_US_RAD|US.RAD.SECTX|SNAPSHOT CURRENT RADAR U.S. SE COASTAL TEXAS|18799
+WX_US_RAD|US.RAD.SEID|SNAPSHOT CURRENT RADAR U.S. SE IDAHO & N UTAH|14799
+WX_US_RAD|US.RAD.SEKS|SNAPSHOT CURRENT RADAR U.S. SE KANSAS / NE OKLAHOMA|16799
+WX_US_RAD|US.RAD.SELA|SNAPSHOT CURRENT RADAR U.S. SE LOUISIANA / S MISSIPPI|16359
+WX_US_RAD|US.RAD.SENM|SNAPSHOT CURRENT RADAR U.S. SE NEW MEXICO|18799
+WX_US_RAD|US.RAD.SESD|SNAPSHOT CURRENT RADAR U.S. SE SOUTH DAKOTA / W MINN|20799
+WX_US_RAD|US.RAD.SEVA|SNAPSHOT CURRENT RADAR U.S. SE VIRGINIA & E S CAROLINA|21173
+WX_US_RAD|US.RAD.SFL|SNAPSHOT CURRENT RADAR U.S. SOUTHERN FLORIDA|17422
+WX_US_RAD|US.RAD.SIN|SNAPSHOT CURRENT RADAR U.S. S INDIANNA / N KENTUCKY & W OHIO|24799
+WX_US_RAD|US.RAD.SINAK|SNAPSHOT CUR RADAR U.S. S CENT TO INT PALMER 2 FORT YUKON|11367
+WX_US_RAD|US.RAD.SMS|SNAPSHOT CURRENT RADAR U.S. S MISSISSIPPI|19799
+WX_US_RAD|US.RAD.SMVAL|SNAPSHOT CURRENT RADAR U.S. SOUTH MISS VALLEY|27034
+WX_US_RAD|US.RAD.SMVLR|LOW RES SNAPSHOT CURRENT RADAR U.S. SOUTH MISS VALLEY|14288
+WX_US_RAD|US.RAD.SNV|SNAPSHOT CURRENT RADAR U.S. S NV / NW AZ / E CA|20799
+WX_US_RAD|US.RAD.SPLA|SNAPSHOT CURRENT RADAR U.S. SOUTH PLAINS|19562
+WX_US_RAD|US.RAD.SROC|SNAPSHOT CURRENT RADAR U.S. SOUTH ROCKIES|15529
+WX_US_RAD|US.RAD.SWAK|SNAPSHOT CURRENT RADAR U.S. SOUTHWEST ALASKA|13818
+WX_US_RAD|US.RAD.SWAZ|SNAPSHOT CURRENT RADAR U.S. SW ARIZONA & SE CALIFORNIA|12636
+WX_US_RAD|US.RAD.SWCA|SNAPSHOT CURRENT RADAR U.S. SW CALIFORNIA|14204
+WX_US_RAD|US.RAD.SWID|SNAPSHOT CURRENT RADAR U.S. SW ID & SE OR|13799
+WX_US_RAD|US.RAD.SWME|SNAPSHOT CURRENT RADAR U.S. SW MAINE / NEW HAMPSHIRE & NE VT|18018
+WX_US_RAD|US.RAD.SWNM|SNAPSHOT CURRENT RADAR U.S. SW NW TO S CENTRAL NM|20799
+WX_US_RAD|US.RAD.SWOR|SNAPSHOT CURRENT RADAR U.S. SW OREGON / NW CALIFORNIA|13799
+WX_US_RAD|US.RAD.SWTX|SNAPSHOT CURRENT RADAR U.S. SW TX|12237
+WX_US_RAD|US.RAD.SWUT|SNAPSHOT CURRENT RADAR U.S. SW UTAH / NW AZ & SE NV|12890
+WX_US_RAD|US.RAD.TN|SNAPSHOT CURRENT RADAR U.S. TENNESSEE / W KENTUCKY|18289
+WX_US_RAD|US.RAD.TXCO|SNAPSHOT CURRENT RADAR U.S. NE COAST TEXAS & S CST LOUISIANA|20799
+WX_US_RAD|US.RAD.TXPH|SNAPSHOT CURRENT RADAR U.S. TEXAS PANHANDLE (SOUTHERN PART)|12799
+WX_US_RAD|US.RAD.TXPI|SNAPSHOT CURRENT RADAR U.S. TX & PADRE ISL|11799
+WX_US_RAD|US.RAD.UMVAL|SNAPSHOT CURRENT RADAR U.S. UP MISS VALLEY|22240
+WX_US_RAD|US.RAD.UMVLR|LOW RES SNAPSHOT CURRENT RADAR U.S. UP MISS VALLEY|20890
+WX_US_RAD|US.RAD.WCNV|SNAPSHOT CURRENT RADAR U.S. W CENTRAL NEVADA & E CA|12799
+WX_US_RAD|US.RAD.WCO|SNAPSHOT CURRENT RADAR U.S. W COLORADO / E UTAH|12955
+WX_US_RAD|US.RAD.WCTX|SNAPSHOT CURRENT RADAR U.S. W CENTRAL TX|20799
+WX_US_RAD|US.RAD.WFNAK|SNAPSHOT CURRENT RADAR U.S. POINT HOPE TO HOOPER BAY ALASKA|12818
+WX_US_RAD|US.RAD.WLA|SNAPSHOT CURRENT RADAR U.S. W LOUISIANA & NE TEXAS|16799
+WX_US_RAD|US.RAD.WMI|SNAPSHOT CURRENT RADAR U.S. W MICH / N INDIANA|16683
+WX_US_RAD|US.RAD.WMO|SNAPSHOT CURRENT RADAR U.S. W MISSOURI & NE ARKANSAS|15799
+WX_US_RAD|US.RAD.WMT|SNAPSHOT CURRENT RADAR U.S. WESTERN MONTANA|14799
+WX_US_RAD|US.RAD.WOH|SNAPSHOT CURRENT RADAR U.S. W OHIO / SE INDIANA & N KENTUCKY|20799
+WX_US_RAD|US.RAD.WSD|SNAPSHOT CURRENT RADAR U.S. WESTERN SOUTH DAKOTA|12799
+WX_US_RAD|US.RAD.WTN|SNAPSHOT CURRENT RADAR U.S. W TENN / E ARK / N MISS|22799
+WX_US_RAD|US.RAD.WWV|SNAPSHOT CURRENT RADAR U.S. W W. VA & SE OHIO & W VA|23045
+WX_US_RAD|US.RAD.WY|SNAPSHOT CURRENT RADAR U.S. WYOMING|13799
+WX_US_RAD|US.RAD.WYCO|SNAPSHOT CURRENT RADAR U.S. WYOMING & COLORADO|14799
+WX_US_RI|RI_TAB_SONE|Tabular Forecast for Southern New England|4941
+WX_US_RI|RI_ZON_SONE|Zone Forecast for Southern New England|46043
+WX_US_SAMOA|FZZS50.NSTU|Samoa|1656
+WX_US_SAMOA|SAMOA1|Samoa (Coastal waters of Swain Island)|2071
+WX_US_SAMOA|SAMOA3|Samoa Coast Waters text forecast with Small Craft Warnings|1649
+WX_US_SC|SC_ZON_CENT|Zone Forecast for Central South Carolina|32388
+WX_US_SC|SC_ZON_GRESP|Zone Forecast Greenville-Spartanburg S Carolina|71239
+WX_US_SC|SC_ZON_SC|Zone Forecast Product for S. Carolina|31726
+WX_US_SD|SD_ZON_SE|Zone Forecasts for SE South Dakota|82233
+WX_US_SD|SD_ZON_WEST|Zone Forecast for Western SD|62492
+WX_US_SELCTY|SELCTY_PART1|SELECTED CITIES WEATHER SUMMARY AND FORECASTS...PART 1 OF 4|2731
+WX_US_SELCTY|SELCTY_PART2|SELECTED CITIES WEATHER SUMMARY AND FORECASTS...PART 2 OF 4|3227
+WX_US_SELCTY|SELCTY_PART3|SELECTED CITIES WEATHER SUMMARY AND FORECASTS...PART 3 OF 4|3413
+WX_US_SELCTY|SELCTY_PART4|SELECTED CITIES WEATHER SUMMARY AND FORECASTS...PART 4 OF 4|2952
+WX_US_TN|TN_HAZ_MEMP|TN HAZARDOUS WX OUTLOOK MEMPHIS FCST AREA|1440
+WX_US_TN|TN_HAZ_MOR|TN HAZARDOUS WX OUTLOOK MORRISTOWN FCST AREA|1500
+WX_US_TN|TN_HAZ_NASH|TN HAZARDOUS WX OUTLOOK NASHVILLE FCST AREA|1850
+WX_US_TN|TN_TAB_MIDD|Tabular State Forecast for Middle Tennessee|4913
+WX_US_TN|TN_TAB_MISOU|Tabular State Forecast for The Mid South  Tennessee|4904
+WX_US_TN|TN_TAB_MORR|Tabular State Forecast for The Morristown Forecast Area|3417
+WX_US_TN|TN_TAB_TVAAL|Tabular State Forecast for the Tennessee Valley and Alabama|4649
+WX_US_TN|TN_ZON_MORR|Zone Forecast for Morristown TN Area|68203
+WX_US_TN|TN_ZON_MSOU|Zone Forecast for the MidSouth Tennessee|99317
+WX_US_TN|TN_ZON_NASH|Zone Forecast for Tennessee Nashville NWS|56241
+WX_US_TX|TX_TAB_4STTX|Tabular State Forecast for Four State Area-Texas|2738
+WX_US_TX|TX_TAB_DESOU|Tabular State Forecast for Deep South Texas|3357
+WX_US_TX|TX_TAB_FOWOR|Tabular State Forecast for Texas - FORT WORTH NWS|3439
+WX_US_TX|TX_TAB_FWEST|Tabular State Forecast for FAR WEST TEXAS|8273
+WX_US_TX|TX_TAB_MIDLA|Tabular State Forecast for Texas - MIDLAND  NWS|9690
+WX_US_TX|TX_TAB_PANH|Tabular State Forecast for Texas Panhandle|6463
+WX_US_TX|TX_TAB_SANAN|Tabular State Forecast for Texas - San Angelo NWS|5854
+WX_US_TX|TX_TAB_SE|Tabular Forecast for Southwest Louisiana and Southeast texas|2289
+WX_US_TX|TX_TAB_SOCEN|Tabular State Forecast for South Central Texas|3642
+WX_US_TX|TX_TAB_SOEA|Tabular State Forecast for Southeast Texas|6484
+WX_US_TX|TX_TAB_SOPLA|Tabular State Forecast for the South Plains Area Lubbock TX|2821
+WX_US_TX|TX_TAB_STEXA|Tabular State Forecast for South Texas|7245
+WX_US_TX|TX_TAB_TEXAS|Tabular State Forecast for Texas|5855
+WX_US_TX|TX_ZON_ABIL|Zone Forecast for Texas Abilene NWS Office|49340
+WX_US_TX|TX_ZON_FOWOR|Zone Forecast for Texas Fort Worth TX NWS|61309
+WX_US_TX|TX_ZON_MIDL|Zone Forecast for Texas Midland/Odessa NWS Office|47169
+WX_US_TX|TX_ZON_PANH|Zone Forecast for The Texas Panhandle|27807
+WX_US_TX|TX_ZON_SCEN|Zone Forecast for South Central Texas|37058
+WX_US_TX|TX_ZON_SE|Zone Forecast for Southeast Texas and Southwest Louisiana|44969
+WX_US_TX|TX_ZON_SEHOU|Zone Forecast for Southeast Texas Houston/Galveston NWS|49301
+WX_US_TX|TX_ZON_SOUT|Zone Forecast for South Texas Corpus Christi NWS|29825
+WX_US_TX|TX_ZON_SPLAI|Zone Forecasts for the South Plains Area|24692
+WX_US_TX|TX_ZON_TEXAS|Zone Forecast Product for Texas|20033
+WX_US_UT|UT_TAB_MJGRB|Tabular Forecast Mojave Desert and S Great Basin|6849
+WX_US_UT|UT_TAB_SLC|Tabular State Forecast for Utah Salt Lake City|7153
+WX_US_UT|UT_ZON_EAST|Zone Forecast for Eastern Utah|34700
+WX_US_UT|UT_ZON_SLC|Zone Forecast for Utah Salt Lake City NWS|43671
+WX_US_VA|VA_TAB_VA|Tabular State Forecast for VIRGINIA|3229
+WX_US_VA|VA_ZON_VA|Zone Forecast Product for Virginia|57034
+WX_US_VA|VA_ZON_WAKE|Zone Forecast Product National Weather Service Wakefield VA|80372
+WX_US_VT|VT_TAB_BURL|Tabular Forecast for VERMONT Burlington VT NWS|2495
+WX_US_VT|VT_ZON_ADDIW|Western Addison County Vermont Zone Forecast|42537
+WX_US_VT|VT_ZON_BENN|Bennington County Vermont Zone Forecast|42537
+WX_US_VT|VT_ZON_CALE|Caledonia County Vermont Zone Forecast|42537
+WX_US_VT|VT_ZON_CHITE|Eastern Chittenden County Vermont Zone Forecast|42537
+WX_US_VT|VT_ZON_CHITW|Western Chittenden County Vermont Zone Forecast|42537
+WX_US_VT|VT_ZON_ESSE|Essex County Vermont Zone Forecast|42537
+WX_US_VT|VT_ZON_FRANE|Eastern Franklin County New Vermont Zone Forecast|42537
+WX_US_VT|VT_ZON_FRANW|Western Franklin County New Vermont Zone Forecast|42537
+WX_US_VT|VT_ZON_GRAI|Grand Isle County Vermont Zone Forecast|42537
+WX_US_VT|VT_ZON_LAMO|Lamoille County Vermont Zone Forecast|42537
+WX_US_VT|VT_ZON_ORAN|Orange County Vermont Zone Forecast|42537
+WX_US_VT|VT_ZON_ORLE|Orleans County Vermont Zone Forecast|42537
+WX_US_VT|VT_ZON_RUTLE|Eastern Rutland County Vermont Zone Forecast|42537
+WX_US_VT|VT_ZON_RUTLW|Western Rutland County Vermont Zone Forecast|42537
+WX_US_VT|VT_ZON_STAT|Zone Forecast for VERMONT Whole State|34124
+WX_US_VT|VT_ZON_WASH|Washington County Vermont Zone Forecast|42537
+WX_US_VT|VT_ZON_WINDE|Eastern Windham County Vermont Zone Forecast|42537
+WX_US_VT|VT_ZON_WINDW|Western Windham County Vermont Zone Forecast|1713
+WX_US_VT|VT_ZON_WINSE|Eastern Windsor County Vermont Zone Forecast|42537
+WX_US_VT|VT_ZON_WINSW|Western Windsor County Vermont Zone Forecast|42537
+WX_US_WA|WA_FOR_EAST|Zone Forecast for Eastern Washington|19711
+WX_US_WA|WA_FOR_WA|State Forecast for Washington|3360
+WX_US_WA|WA_TAB_EAST|Tabular Forecast for Eastern Washington and Northern Idaho|5480
+WX_US_WA|WA_TAB_NW|Tabular Forecast for Northwest Washington|7128
+WX_US_WA|WA_TAB_SENEO|Tabular Forecast for Southeast Washington and Northeast OR|4393
+WX_US_WA|WA_TAB_SW|Tabular State Forecast for Southwest Washington|2695
+WX_US_WA|WA_ZON_BLUF|Foothills of the Blue Mountains of Washington Zone Forecast|3500
+WX_US_WA|WA_ZON_BLUNE|Northeast Blue Mountains of Washington Zone Forecast|3500
+WX_US_WA|WA_ZON_BLUNW|Northwest Blue Mountains of Washington Zone Forecast|1583
+WX_US_WA|WA_ZON_CAKCF|F-hills & Valleys of cent King County Cascades Zone Forecast|3500
+WX_US_WA|WA_ZON_CANFV|Foothills and Valleys of the North Cascades Zone Forecast|2233
+WX_US_WA|WA_ZON_CAPKF|F-hills & Vally Pierce & S King Count Cascades Zone Forecast|2551
+WX_US_WA|WA_ZON_CASEL|Lower Slopes of East Washington Cascades Zone Forecast|3500
+WX_US_WA|WA_ZON_CASEU|Up Slopes of East Washington Cascades Zone Forecast Roslyn|3500
+WX_US_WA|WA_ZON_CASKF|F-hills & Valleys of SNO & King Count Cascades Zone Forecast|3500
+WX_US_WA|WA_ZON_CASKS|Cascades of Southern King County Zone Forecast|2517
+WX_US_WA|WA_ZON_CASPL|Cascades of Pierce and Lewis Counties Zone Forecast|2391
+WX_US_WA|WA_ZON_CASS|South Washington Cascades Zone Forecast -Mt St Helens|2596
+WX_US_WA|WA_ZON_CASSF|South Washington Cascade Foothills Zone Forecast Toutle, Amb|2593
+WX_US_WA|WA_ZON_CASSK|Cascades of Snohomish and N. King Counties Zone Forecast|2650
+WX_US_WA|WA_ZON_CASWH|Cascades of Whatcom and Skagit Counties Zone Forecast|2351
+WX_US_WA|WA_ZON_CATLF|F-hill & Vally Thurston & Lewis Count Cascades Zone Forecast|2520
+WX_US_WA|WA_ZON_CHEC|Central Chelan County of Washington Zone Forecast|3500
+WX_US_WA|WA_ZON_CHEW|Western Chelan County of Washington Zone Forecast|3500
+WX_US_WA|WA_ZON_CHRVL|Middle Chehalis River Valley Washington Zone Forecast|2188
+WX_US_WA|WA_ZON_CHRVM|Middle Chehalis River Valley Washington Zone Forecast|2072
+WX_US_WA|WA_ZON_CLAEL|East Clark County Lowlands of Washington Zone Forecast|3500
+WX_US_WA|WA_ZON_CLANL|North Clark County Lowlands of Washington Zone Forecast|3500
+WX_US_WA|WA_ZON_COAN|Northern Washington Coast Zone Forecast, Neah Bay, La Push|3500
+WX_US_WA|WA_ZON_COAS|South Washington Coast Zone Forecast, Raymond, Long Beach|3500
+WX_US_WA|WA_ZON_COLGC|Central Columbia River Gorge SR 14 Zone Forecast Toutle, Amb|3500
+WX_US_WA|WA_ZON_COLGE|Eastern Columbia River Gorge of Washington Zone Forecast|1643
+WX_US_WA|WA_ZON_COLGW|West Columbia River Gorge SR 14 Zone Forecast Toutle, Amb|2090
+WX_US_WA|WA_ZON_COLLB|Lower Columbia Basin of Washington Zone Forecast Tri-Cities|935
+WX_US_WA|WA_ZON_COWL|Cowlitz County Lowlands of Washington Zone Forecast|3500
+WX_US_WA|WA_ZON_EVEDM|Downtown Everett/Marysville Area of Washington Zone Forecast|3500
+WX_US_WA|WA_ZON_GRHC|Grays Harbor County Coast of Washington Zone Forecast|2012
+WX_US_WA|WA_ZON_HOCN|Northern Hood Canal of Washington Zone Forecast|1475
+WX_US_WA|WA_ZON_HOCS|Southern Hood Canal of Washington Zone Forecast|2429
+WX_US_WA|WA_ZON_ISL|Island County of Washington Zone Forecast Oak Harbor|2029
+WX_US_WA|WA_ZON_KITE|Eastern Kitsap County of Washington Zone Forecast|2287
+WX_US_WA|WA_ZON_LAC1|Lake Crescent Area W/ US 101  of Washington Zone Forecast|3500
+WX_US_WA|WA_ZON_LEWA|Lewiston Area of Washington Zone Forecast Peck, Pomeroy|3500
+WX_US_WA|WA_ZON_LEWTL|Lowlands of Lewis & S Thurston Coun Washington Zone Forecast|2618
+WX_US_WA|WA_ZON_LYNE|Shoreline/Lynnwood/South Everett of Washington Zone Forecast|2612
+WX_US_WA|WA_ZON_MOSL|Moses Lake Area Washington Zone Forecast Moses Lake, Ephrata|3500
+WX_US_WA|WA_ZON_NEMON|Northeast Mountains of Washington Zone Forecast|3500
+WX_US_WA|WA_ZON_OKAH|Okanogan Highlands of Washington Zone Forecast|3500
+WX_US_WA|WA_ZON_OKAV|Okanogan Valley of Washington Zone Forecast|3500
+WX_US_WA|WA_ZON_OKAW|Western Okanogan County of Washington Zone Forecast|3500
+WX_US_WA|WA_ZON_OLMNT|Olympics of Washington Zone Forecast|2270
+WX_US_WA|WA_ZON_OLPWS|Foothill of W & S Olympic Peninsula Washington Zone Forecast|3500
+WX_US_WA|WA_ZON_OLYPS|Olympia and Southern Puget Sound Washington Zone Forecast|1418
+WX_US_WA|WA_ZON_PALOW|Palouse Washington Zone Forecast Pullman, Colfax|3500
+WX_US_WA|WA_ZON_PIKIL|Lowlands of Pierce & S King County Washington Zone Forecast|2723
+WX_US_WA|WA_ZON_PORT|Port Townsend Area of Washington Zone Forecast|1781
+WX_US_WA|WA_ZON_SEA|City of Seattle Washington Zone Forecast Bellevue, Redmo|2486
+WX_US_WA|WA_ZON_SIMH|Simcoe Highlands of Washington Zone Forecast Goldendale|3500
+WX_US_WA|WA_ZON_SJ|San Juan County Washington Zone Forecast, Friday&Roche Harbo|1556
+WX_US_WA|WA_ZON_SPOK|Spokane Area Washington Zone Forecast Rockford, Cheney|3500
+WX_US_WA|WA_ZON_STJFE|Eastern Strait of Juan de Fuca of Washington Zone Forecast|2016
+WX_US_WA|WA_ZON_STJFW|Western Strait of Juan de Fuca of Washington Zone Forecast|3500
+WX_US_WA|WA_ZON_SW|Zone Forecast Product for Southwest Washington|71603
+WX_US_WA|WA_ZON_VANI|Inner Vancouver Metro of Washington Zone Forecast|2125
+WX_US_WA|WA_ZON_WENA|Wenatchee Area of Washington Zone Forecast|3500
+WX_US_WA|WA_ZON_WEST|Zone Forecast Product for Western Washington|74003
+WX_US_WA|WA_ZON_WHAL|Lowlands of W Skagit and NW Snohomish Counties Zone Forecast|2757
+WX_US_WA|WA_ZON_WIBH|Willapa and Black Hills of Washington Zone Forecast|3500
+WX_US_WA|WA_ZON_WILH|Willapa Hills of Washington Zone Forecast|3500
+WX_US_WA|WA_ZON_WWAE|Eastside of Western Washington Zone Forecast Bellevue, Redmo|2054
+WX_US_WA|WA_ZON_WWL|Willapa and Wahkiakum Lowlands of Washington Zone Forecast|3500
+WX_US_WA|WA_ZON_YAKV|Yakima Valley Washington Zone Forecast Yakima, Naches, Sunny|3500
+WX_US_WI|WI_TAB_WISC|Tabular State Forecast for Wisconsin|2644
+WX_US_WI|WI_ZON_NCNE|Zone Forecast North-Central and Northeast Wisconsin|32736
+WX_US_WI|WI_ZON_NW|Zone Frcst for Northeast Minnesota and Northwest Wisconsin|48371
+WX_US_WI|WI_ZON_SCSE|ZONE FORECAST SOUTH-CENTRAL AND SOUTHEAST WISCONSIN|34746
+WX_US_WV|WV_TAB_PANH|Tabular State Forecast for West Virginia Panhandle|3261
+WX_US_WY|WY_TAB_STATE|Tabular State Forecast for WYOMING|8156
+WX_US_WY|WY_ZO_WESCEN|Zone Forecast Product for Western and Central Wyoming|54790
+WX_US_WY|WY_ZON_SE|Zone Forecast Product for Southeast Wyoming|48572
+WX_US|CONV_OUT|Convective Outlook forecast for severe WX|100
+WX_US|GFS_UV300|GFS 300mb Wind Speed/Streamlins (kts) image|43000
+WX_US|US.ALL.SHORT|SHORT RANGE FORECAST DISCUSSION ALL U.S.|2847
+WX_US|US.ALL|EXTENDED FORECAST DISCUSSION|6131
+WX_US|US.CARIBBEAN|EXTENDED FORECAST DISCUSSION FOR CARIBBEAN|5062

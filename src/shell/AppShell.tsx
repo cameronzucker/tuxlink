@@ -34,6 +34,7 @@ import { FolderSidebar } from '../mailbox/FolderSidebar';
 import type { ConnectionKey } from '../mailbox/FolderSidebar';
 import { DashboardRibbon } from './DashboardRibbon';
 import { SettingsPanel } from './SettingsPanel';
+import { CatalogRequestPanel } from '../catalog/CatalogRequestPanel';
 import { StatusBar } from './StatusBar';
 import { useStatusData } from './useStatus';
 import { applyColorScheme, saveColorScheme } from './colorScheme';
@@ -171,6 +172,10 @@ export function AppShell() {
   // Inline About + Help overlays (tuxlink-35g0), opened from the Help menu.
   const [aboutOpen, setAboutOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
+  // Inline Catalog Request panel (tuxlink-ddiq), opened from Message →
+  // Catalog Request. Picks WLE catalog inquiries and queues a request
+  // message in the outbox routed to INQUIRY@winlink.org.
+  const [catalogRequestOpen, setCatalogRequestOpen] = useState(false);
 
   // Message-list sort (tuxlink-2x0l). Lazy-init from localStorage so the
   // first render already uses the persisted preference (no flash of default).
@@ -428,6 +433,7 @@ export function AppShell() {
          * exchange surfaces shell-tool availability anyway. */
       });
     },
+    openCatalogRequest: () => setCatalogRequestOpen(true),
     quit: () => { void invoke('app_quit'); },
   }), [onConnect, openMessage, archiveOpen]);
 
@@ -697,6 +703,10 @@ export function AppShell() {
       <AboutDialog open={aboutOpen} onClose={() => setAboutOpen(false)} />
 
       <HelpPanel open={helpOpen} onClose={() => setHelpOpen(false)} />
+
+      {catalogRequestOpen && (
+        <CatalogRequestPanel onClose={() => setCatalogRequestOpen(false)} />
+      )}
 
       <NewFolderDialog
         open={newFolderOpen}

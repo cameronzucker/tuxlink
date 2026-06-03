@@ -36,6 +36,12 @@ export const MENU_TREE: TopMenu[] = [
     // tuxlink-ca5x (user-folders Phase 1): move open message to Archive.
     // The `A` accelerator is gated on input-focus (see useAccelerators.ts).
     { id: 'menu:message:archive', label: 'Archive', accel: 'A' },
+    { separator: true },
+    // tuxlink-ddiq: WLE catalog-request feature (Inquiry messages).
+    // Opens the CatalogRequestPanel; routes through the existing outgoing
+    // rails to INQUIRY@winlink.org.
+    { id: 'menu:message:catalog_request', label: 'Catalog Request…' },
+    { separator: true },
     // Not-yet-wired: dispatchMenuAction has no Print handler, so disable +
     // badge rather than render as a dead-clickable button (tuxlink-dpf).
     { id: 'menu:message:print', label: 'Print', disabled: true },

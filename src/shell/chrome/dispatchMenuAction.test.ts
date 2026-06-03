@@ -18,6 +18,7 @@ function handlers(): MenuHandlers {
     openAbout: vi.fn(),
     openHelp: vi.fn(),
     reportIssue: vi.fn(),
+    openCatalogRequest: vi.fn(),
     quit: vi.fn(),
   };
 }
@@ -146,5 +147,12 @@ describe('dispatchMenuAction', () => {
     const h = handlers();
     dispatchMenuAction('menu:tools:settings_privacy', h);
     expect(h.openSettings).toHaveBeenCalledOnce();
+  });
+
+  // tuxlink-ddiq: WLE catalog-request panel.
+  it('routes Message → Catalog Request to openCatalogRequest', () => {
+    const h = handlers();
+    dispatchMenuAction('menu:message:catalog_request', h);
+    expect(h.openCatalogRequest).toHaveBeenCalledOnce();
   });
 });

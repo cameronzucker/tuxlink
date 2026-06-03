@@ -29,6 +29,9 @@ export interface MenuHandlers {
   /** Open the project's GitHub issue tracker in the operator's default
    *  browser (tuxlink-35g0). */
   reportIssue: () => void;
+  /** Open the inline Catalog Request panel (tuxlink-ddiq) — WLE catalog
+   *  inquiry picker that routes through INQUIRY@winlink.org. */
+  openCatalogRequest: () => void;
   quit: () => void;
 }
 
@@ -47,6 +50,7 @@ export function dispatchMenuAction(id: MenuActionId, h: MenuHandlers): void {
     case 'menu:message:reply_all': h.replyAll(); return;
     case 'menu:message:forward': h.forward(); return;
     case 'menu:message:archive': h.archive(); return;
+    case 'menu:message:catalog_request': h.openCatalogRequest(); return;
     case 'menu:view:status_bar': h.toggleStatusBar(); return;
     case 'menu:view:radio_panel': h.toggleRadioPanel(); return;
     // tuxlink-39b: the consolidated GPS & Privacy settings item opens the inline
