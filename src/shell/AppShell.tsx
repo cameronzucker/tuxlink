@@ -39,6 +39,7 @@ import type { ConnectionKey } from '../mailbox/FolderSidebar';
 import { DashboardRibbon } from './DashboardRibbon';
 import { SettingsPanel } from './SettingsPanel';
 import { CatalogRequestPanel } from '../catalog/CatalogRequestPanel';
+import { GribRequestPanel } from '../grib/GribRequestPanel';
 import { StatusBar } from './StatusBar';
 import { useStatusData } from './useStatus';
 import { applyColorScheme, saveColorScheme } from './colorScheme';
@@ -190,6 +191,9 @@ export function AppShell() {
   // Catalog Request. Picks WLE catalog inquiries and queues a request
   // message in the outbox routed to INQUIRY@winlink.org.
   const [catalogRequestOpen, setCatalogRequestOpen] = useState(false);
+  // Inline GRIB request panel (tuxlink-vrpk), opened from Message → GRIB
+  // File Request. Composes a Saildocs request and queues it in the outbox.
+  const [gribRequestOpen, setGribRequestOpen] = useState(false);
 
   // Message-list sort (tuxlink-2x0l). Lazy-init from localStorage so the
   // first render already uses the persisted preference (no flash of default).
@@ -484,6 +488,7 @@ export function AppShell() {
       });
     },
     openCatalogRequest: () => setCatalogRequestOpen(true),
+    openGribRequest: () => setGribRequestOpen(true),
     quit: () => { void invoke('app_quit'); },
   }), [onConnect, openMessage, archiveOpen]);
 
@@ -764,6 +769,10 @@ export function AppShell() {
 
       {catalogRequestOpen && (
         <CatalogRequestPanel onClose={() => setCatalogRequestOpen(false)} />
+      )}
+
+      {gribRequestOpen && (
+        <GribRequestPanel onClose={() => setGribRequestOpen(false)} />
       )}
 
       <NewFolderDialog
