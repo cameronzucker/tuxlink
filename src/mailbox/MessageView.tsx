@@ -22,6 +22,7 @@ import './MessageView.css';
 import { useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { save as saveDialog } from '@tauri-apps/plugin-dialog';
+import { MessageViewEmpty } from './MessageViewEmpty';
 import type { ParsedMessage, AttachmentMeta, MailboxFolderRef, UserFolder } from './types';
 import { useMessage, type MessageSelection } from './useMessage';
 import { asUiError, isNotConfigured } from './types';
@@ -35,7 +36,12 @@ import { MoveToButton } from './MoveToButton';
 // Exported constants (used by tests)
 // ============================================================================
 
-export const SELECT_MESSAGE_COPY = 'Select a message to read.';
+// tuxlink-djnl: MessageViewEmpty + its copy live in MessageViewEmpty.tsx so
+// AppShell can import the empty state eagerly without pulling MessageView's
+// forms-registry dependency graph. Re-exported here for backward compat
+// with existing tests that import { SELECT_MESSAGE_COPY, MessageViewEmpty }
+// from './MessageView'.
+export { MessageViewEmpty, SELECT_MESSAGE_COPY } from './MessageViewEmpty';
 export const NOT_FOUND_COPY = 'Message not found. It may have been deleted or moved.';
 export const PARSE_ERROR_PREFIX = 'This message could not be parsed';
 export const FORM_PLACEHOLDER = 'Form rendering coming soon.';
@@ -54,18 +60,6 @@ function fireReply(message: ParsedMessage, mode: ReplyMode): void {
 // ============================================================================
 // State sub-components — rendered inside a centered reading-pane
 // ============================================================================
-
-/** Shown when no message is selected. */
-export function MessageViewEmpty() {
-  return (
-    <div
-      className="reading-pane reading-pane--center"
-      data-testid="message-view-empty"
-    >
-      {SELECT_MESSAGE_COPY}
-    </div>
-  );
-}
 
 /** Shown when the backend returns UiError::NotFound (deleted / moved message). */
 export function MessageViewNotFound() {

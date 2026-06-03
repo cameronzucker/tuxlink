@@ -6,7 +6,7 @@
 // by SESSION_TYPES. Selecting a built protocol calls
 // `onSelectConnection({ sessionType, protocol })`. Styling lives in AppShell.css.
 
-import { useState, useEffect } from 'react';
+import { memo, useState, useEffect } from 'react';
 import type { MailboxFolder, MailboxFolderRef, UserFolder } from './types';
 import { SESSION_TYPES } from '../connections/sessionTypes';
 import type { SessionTypeId, ConnectionKey } from '../connections/sessionTypes';
@@ -90,7 +90,12 @@ function readDragPayload(e: React.DragEvent): DragPayload | null {
   }
 }
 
-export function FolderSidebar({
+// tuxlink-djnl: React.memo so shell-level renders (status polls, search
+// keystrokes, modem-state changes) skip the sidebar when its inputs are
+// unchanged. counts is memoized in AppShell (PR #305); userFolders is
+// react-query data (stable across no-op refetches); all callbacks are
+// useCallback'd at the AppShell layer.
+export const FolderSidebar = memo(function FolderSidebar({
   selectedFolder,
   onSelectFolder,
   counts = {},
@@ -312,4 +317,4 @@ export function FolderSidebar({
       ))}
     </nav>
   );
-}
+});

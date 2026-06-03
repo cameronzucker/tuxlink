@@ -245,23 +245,29 @@ describe('<AppShell> — Mock B topology', () => {
     expect(screen.getByTestId('status-bar-outbox')).toHaveTextContent('1 to send');
   });
 
-  it('selecting a row updates ONLY the reader and does not remount the shell', () => {
+  it('selecting a row updates ONLY the reader and does not remount the shell', async () => {
     renderShell();
     const shellBefore = screen.getByTestId('app-shell-root');
     const sidebarBefore = screen.getByTestId('folder-sidebar');
 
     fireEvent.click(screen.getByTestId('message-row-INBOX1'));
 
-    expect(screen.queryByTestId('message-view-empty')).not.toBeInTheDocument();
+    // tuxlink-djnl: MessageView is now React.lazy. While the chunk is in
+    // flight the Suspense fallback is the same MessageViewEmpty visible at
+    // "no selection" — so don't assert its absence; instead wait for the
+    // loaded state (or the error state, whichever the mock backend resolves).
+    await screen.findByTestId('message-view-loaded', undefined, { timeout: 10000 });
     expect(screen.getByTestId('app-shell-root')).toBe(shellBefore);
     expect(screen.getByTestId('folder-sidebar')).toBe(sidebarBefore);
     expect(screen.getByTestId('virtuoso-mock')).toBeInTheDocument();
   });
 
-  it('selecting a different folder resets the message selection and swaps the list', () => {
+  it('selecting a different folder resets the message selection and swaps the list', async () => {
     renderShell();
     fireEvent.click(screen.getByTestId('message-row-INBOX1'));
-    expect(screen.queryByTestId('message-view-empty')).not.toBeInTheDocument();
+    // Wait for the lazy MessageView chunk to resolve before asserting the
+    // folder-switch behavior — same race as above (tuxlink-djnl).
+    await screen.findByTestId('message-view-loaded', undefined, { timeout: 10000 });
 
     fireEvent.click(screen.getByTestId('folder-sent'));
     expect(screen.getByTestId('message-view-empty')).toBeInTheDocument();
@@ -327,8 +333,10 @@ describe('<AppShell> — Mock B topology', () => {
   it('Message → Reply opens a reply window for the selected message', async () => {
     renderShell();
     fireEvent.click(screen.getByTestId('message-row-INBOX1'));
-    // Wait for useMessage to resolve the selected message (message_read mock).
-    await screen.findByTestId('message-view-loaded');
+    // Wait for the lazy MessageView chunk + useMessage resolve. tuxlink-djnl
+    // bumped the timeout from the default 1s — under the full parallel
+    // suite the dynamic import can race the original 1s window.
+    await screen.findByTestId('message-view-loaded', undefined, { timeout: 10000 });
     vi.mocked(invoke).mockClear();
     // The Reply menu item's accessible name is "ReplyCtrl+R" (label + accel
     // span, no separating space) — anchored regex picks it over "Reply All".
@@ -351,7 +359,7 @@ describe('<AppShell> — Mock B topology', () => {
     // ARDOP (P4)).
     // tuxlink-twym: bump timeout — radio panels are now React.lazy and the
     // dynamic-import resolve can race the default 1s waitFor on Pi-class CI.
-    const panel = await screen.findByTestId('radio-panel-root', undefined, { timeout: 5000 });
+    const panel = await screen.findByTestId('radio-panel-root', undefined, { timeout: 10000 });
     expect(panel).toBeInTheDocument();
     expect(await screen.findByTestId('radio-panel-title')).toHaveTextContent(/Packet/);
     // Reading pane stays on the message view (no Packet form there anymore).
@@ -363,7 +371,7 @@ describe('<AppShell> — Mock B topology', () => {
     renderShell();
     fireEvent.click(screen.getByTestId('sess-cms'));
     fireEvent.click(screen.getByTestId('proto-cms-packet'));
-    await screen.findByTestId('radio-panel-root', undefined, { timeout: 5000 });
+    await screen.findByTestId('radio-panel-root', undefined, { timeout: 10000 });
     fireEvent.click(screen.getByTestId('folder-sent'));
     // Folder switch clears selectedConnection (intentional — onSelectFolder
     // resets the reading-pane context). Panel unmounts unless a modem is
@@ -380,7 +388,7 @@ describe('<AppShell> — Mock B topology', () => {
     // with the Telnet Winlink title; the reading pane shows the MessageView fallback.
     // tuxlink-twym: bump timeout — radio panels are now React.lazy and the
     // dynamic-import resolve can race the default 1s waitFor on Pi-class CI.
-    const panel = await screen.findByTestId('radio-panel-root', undefined, { timeout: 5000 });
+    const panel = await screen.findByTestId('radio-panel-root', undefined, { timeout: 10000 });
     expect(panel).toBeInTheDocument();
     expect(await screen.findByTestId('radio-panel-title')).toHaveTextContent('Telnet Winlink');
   });
@@ -393,7 +401,7 @@ describe('<AppShell> — Mock B topology', () => {
     // title swaps to "Telnet P2P" via the intent-aware panelTitle().
     // tuxlink-twym: bump timeout — radio panels are now React.lazy and the
     // dynamic-import resolve can race the default 1s waitFor on Pi-class CI.
-    const panel = await screen.findByTestId('radio-panel-root', undefined, { timeout: 5000 });
+    const panel = await screen.findByTestId('radio-panel-root', undefined, { timeout: 10000 });
     expect(panel).toBeInTheDocument();
     expect(await screen.findByTestId('radio-panel-title')).toHaveTextContent('Telnet P2P');
   });
@@ -406,7 +414,7 @@ describe('<AppShell> — Mock B topology', () => {
     renderShell();
     fireEvent.click(screen.getByTestId('sess-cms'));
     fireEvent.click(screen.getByTestId('proto-cms-telnet'));
-    await screen.findByTestId('radio-panel-root', undefined, { timeout: 5000 });
+    await screen.findByTestId('radio-panel-root', undefined, { timeout: 10000 });
     fireEvent.click(screen.getByTestId('message-row-INBOX1'));
     // Panel must still be present; the click on the message no longer clears
     // selectedConnection.
@@ -423,7 +431,7 @@ describe('<AppShell> — Mock B topology', () => {
     // selectedMessage is set; reading pane shows MessageView for INBOX1.
     fireEvent.click(screen.getByTestId('sess-cms'));
     fireEvent.click(screen.getByTestId('proto-cms-telnet'));
-    await screen.findByTestId('radio-panel-root', undefined, { timeout: 5000 });
+    await screen.findByTestId('radio-panel-root', undefined, { timeout: 10000 });
     // The message row stays highlighted (selectedMessage was preserved).
     const messageRow = screen.getByTestId('message-row-INBOX1');
     expect(messageRow).toHaveAttribute('aria-selected', 'true');
