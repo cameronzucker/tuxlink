@@ -174,3 +174,31 @@
   color: var(--text-faint);
   font-variant-numeric: tabular-nums;
 }
+/* tuxlink-0fyj — Save As button + status pills */
+.reading-pane .msg-attachment-save {
+  font: inherit;
+  font-size: 11px;
+  padding: 2px 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  background: var(--surface-1);
+  color: var(--text);
+  cursor: pointer;
+}
+.reading-pane .msg-attachment-save:hover:not(:disabled) {
+  background: var(--surface-3, var(--surface-1));
+}
+.reading-pane .msg-attachment-save:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+.reading-pane .msg-attachment-status {
+  font-size: 11px;
+  font-weight: 500;
+}
+.reading-pane .msg-attachment-status--ok {
+  color: var(--accent-success, #4ade80);
+}
+.reading-pane .msg-attachment-status--err {
+  color: var(--accent-danger, #f87171);
+}

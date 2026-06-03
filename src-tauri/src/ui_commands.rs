@@ -696,6 +696,52 @@ pub async fn message_read(
     parse_raw_rfc5322(&id, &body.raw_rfc5322)
 }
 
+// ---- message_attachment_save command (tuxlink-0fyj) ------------------------
+
+/// Save a named attachment from a stored message to a destination path on disk.
+///
+/// Reads the message's raw RFC5322 from the storage layer, parses MIME via
+/// `mail_parser`, extracts the bytes of the part whose `attachment_name()`
+/// matches `filename`, and writes them to `dest_path`. The frontend's flow is
+/// `@tauri-apps/plugin-dialog`'s `save()` → invoke this command with the chosen
+/// path → toast 'Saved'. The attachment body never crosses the IPC boundary —
+/// only the destination path does.
+///
+/// Errors map to UiError as: missing folder/message → NotFound (propagated from
+/// the backend); attachment-name not in the message → NotFound; filesystem
+/// failure → Internal { detail: <io error> }.
+#[tauri::command]
+pub async fn message_attachment_save(
+    folder: String,
+    id: String,
+    filename: String,
+    dest_path: String,
+    state: State<'_, BackendState>,
+) -> Result<(), UiError> {
+    use crate::native_mailbox::FolderRef;
+    let parsed = parse_folder_ref(&folder)?;
+    let mid = MessageId::new(&id);
+    let backend = state
+        .current()
+        .ok_or_else(|| UiError::NotConfigured("backend offline".to_string()))?;
+    let body = match &parsed {
+        FolderRef::System(f) => backend.read_message_in(*f, &mid).await?,
+        FolderRef::User(slug) => backend.read_user_message(slug, &mid).await?,
+    };
+    let msg = mail_parser::MessageParser::new()
+        .parse(body.raw_rfc5322.as_slice())
+        .ok_or_else(|| UiError::Internal {
+            detail: format!("could not parse message {id}"),
+        })?;
+    let bytes = extract_attachment_bytes(&msg, &filename).ok_or_else(|| {
+        UiError::NotFound(format!("attachment '{filename}' not in message {id}"))
+    })?;
+    std::fs::write(&dest_path, &bytes).map_err(|e| UiError::Internal {
+        detail: format!("write {dest_path}: {e}"),
+    })?;
+    Ok(())
+}
+
 // ---- mailbox_move command (tuxlink-ca5x) -----------------------------------
 
 /// Move a message between folders. Used by the reading-pane Archive button
@@ -2975,6 +3021,101 @@ hw:CARD=Device,DEV=0
             parse_raw_rfc5322("OVER", &huge),
             Err(UiError::Internal { .. })
         ));
+    }
+
+    // ---- tuxlink-0fyj: message_attachment_save extraction tests ----------
+
+    /// Build a synthetic multipart/mixed message with a single named binary
+    /// attachment whose body is the bytes `payload`. The base64 encoding is
+    /// done inline (no extra crate dep) so the test can stay self-contained.
+    fn build_mime_with_attachment(filename: &str, payload: &[u8]) -> Vec<u8> {
+        // base64 encode payload (RFC 4648 standard alphabet, no line wrap).
+        const ALPHABET: &[u8; 64] =
+            b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        let mut b64 = String::new();
+        let mut i = 0;
+        while i + 3 <= payload.len() {
+            let n = ((payload[i] as u32) << 16) | ((payload[i + 1] as u32) << 8) | (payload[i + 2] as u32);
+            b64.push(ALPHABET[((n >> 18) & 0x3f) as usize] as char);
+            b64.push(ALPHABET[((n >> 12) & 0x3f) as usize] as char);
+            b64.push(ALPHABET[((n >> 6) & 0x3f) as usize] as char);
+            b64.push(ALPHABET[(n & 0x3f) as usize] as char);
+            i += 3;
+        }
+        if i < payload.len() {
+            let rem = payload.len() - i;
+            let b0 = payload[i] as u32;
+            let b1 = if rem > 1 { payload[i + 1] as u32 } else { 0 };
+            let n = (b0 << 16) | (b1 << 8);
+            b64.push(ALPHABET[((n >> 18) & 0x3f) as usize] as char);
+            b64.push(ALPHABET[((n >> 12) & 0x3f) as usize] as char);
+            if rem == 2 {
+                b64.push(ALPHABET[((n >> 6) & 0x3f) as usize] as char);
+                b64.push('=');
+            } else {
+                b64.push('=');
+                b64.push('=');
+            }
+        }
+        format!(
+            "From: sender@example.com\r\n\
+             To: recipient@example.com\r\n\
+             Subject: test\r\n\
+             Date: Tue, 03 Jun 2026 02:00:00 +0000\r\n\
+             MIME-Version: 1.0\r\n\
+             Content-Type: multipart/mixed; boundary=\"BOUND\"\r\n\
+             \r\n\
+             --BOUND\r\n\
+             Content-Type: text/plain\r\n\
+             \r\n\
+             body\r\n\
+             --BOUND\r\n\
+             Content-Type: application/octet-stream\r\n\
+             Content-Disposition: attachment; filename=\"{filename}\"\r\n\
+             Content-Transfer-Encoding: base64\r\n\
+             \r\n\
+             {b64}\r\n\
+             --BOUND--\r\n"
+        )
+        .into_bytes()
+    }
+
+    #[test]
+    fn extract_attachment_bytes_round_trips_binary_payload() {
+        // Use a non-text binary blob (GRIB-1 magic bytes + some noise) to
+        // stand in for a real Saildocs GRIB attachment.
+        let payload: Vec<u8> = b"GRIB\x00\x01\x02\x03\xff\xfe\xfd random binary \x00\x00"
+            .iter()
+            .copied()
+            .collect();
+        let raw = build_mime_with_attachment("forecast.grb", &payload);
+        let msg = mail_parser::MessageParser::new()
+            .parse(raw.as_slice())
+            .expect("synthetic MIME parses");
+        let got = extract_attachment_bytes(&msg, "forecast.grb")
+            .expect("named attachment found");
+        assert_eq!(got, payload, "decoded bytes must match the source payload");
+    }
+
+    #[test]
+    fn extract_attachment_bytes_returns_none_for_unknown_filename() {
+        let raw = build_mime_with_attachment("a.bin", b"abc");
+        let msg = mail_parser::MessageParser::new().parse(raw.as_slice()).unwrap();
+        assert!(extract_attachment_bytes(&msg, "missing.bin").is_none());
+    }
+
+    #[test]
+    fn message_attachment_save_write_path_persists_bytes_to_disk() {
+        // The Tauri-State-bound `message_attachment_save` command can't be
+        // driven from a sync unit test (it needs a BackendState). This test
+        // covers the write-half of the command: given extracted bytes + a
+        // destination, std::fs::write produces a byte-identical file.
+        let payload = b"GRIB\x00\x01some bytes\xff\xfe";
+        let tmp = tempfile::tempdir().unwrap();
+        let dest = tmp.path().join("saved.grb");
+        std::fs::write(&dest, payload).expect("write succeeds");
+        let read_back = std::fs::read(&dest).expect("read succeeds");
+        assert_eq!(read_back, payload);
     }
 
     // Task 14 test (6): Ok(None) from send_message maps to a SUCCESS on the
