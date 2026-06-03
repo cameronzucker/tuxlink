@@ -57,6 +57,7 @@ multer = "3"                                     # NEW (tuxlink-ytya P1) — mul
 percent-encoding = "2"                           # NEW (tuxlink-ytya P1) — urlencoded body parse where multer doesn't apply
 walkdir = "2"                                    # NEW (tuxlink-ytya P1) — bundled + custom WLE template recursive enumeration
 bytes = "1"                                      # NEW (tuxlink-ytya P1) — request body buffer passed to multer's stream-once wrapper
+subtle = "2.6"                                   # NEW (tuxlink-3o2o) — constant-time byte comparison for StationPassword::verify; prevents timing side-channels on listener-mode password challenges
 
 [dev-dependencies]
 mockito = "1.5"
