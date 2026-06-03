@@ -1,11 +1,21 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, lazy, Suspense } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { invoke } from '@tauri-apps/api/core';
-import { Wizard } from './wizard/Wizard';
 import { AppShell } from './shell/AppShell';
-import { Compose } from './compose/Compose';
 import { parseComposeRoute } from './routing';
 import './App.css';
+
+// tuxlink-perf-coldstart: lazy-load the first-run wizard and the compose-webview
+// component. Neither is on the main window's cold-start critical path — the
+// wizard only appears on first launch; <Compose> only renders inside compose
+// webviews (separate windows with their own paint cycle). Removing them from
+// the eager import graph trims the bundle that gates first paint of AppShell.
+const Wizard = lazy(() =>
+  import('./wizard/Wizard').then((m) => ({ default: m.Wizard })),
+);
+const Compose = lazy(() =>
+  import('./compose/Compose').then((m) => ({ default: m.Compose })),
+);
 
 // One QueryClient for the app lifetime. Mailbox/status queries live under it
 // (Task 12 useMailbox, Task 16 useStatus). Retry is off so a NotConfigured
@@ -36,9 +46,15 @@ export default function App() {
   }, [isComposeWindow]);
 
   // Compose webview: render the compose form for its draft id and nothing else
-  // (no wizard probe, no shell). Spec §5.4.
+  // (no wizard probe, no shell). Spec §5.4. Lazy-loaded — Suspense fallback is
+  // an empty div so the index.html skeleton stays visible until <Compose>
+  // hydrates rather than flashing a spinner.
   if (isComposeWindow) {
-    return <Compose draftId={composeDraftId as string} />;
+    return (
+      <Suspense fallback={<div data-testid="app-loading" />}>
+        <Compose draftId={composeDraftId as string} />
+      </Suspense>
+    );
   }
 
   if (wizardCompleted === null) return <div data-testid="app-loading">Loading…</div>;
@@ -52,6 +68,8 @@ export default function App() {
   ) : (
     // tuxlink-eh7: hand off to the shell the moment onboarding finishes — no
     // app restart needed (App.tsx otherwise reads wizard_completed only once).
-    <Wizard onComplete={() => setWizardCompleted(true)} />
+    <Suspense fallback={<div data-testid="app-loading" />}>
+      <Wizard onComplete={() => setWizardCompleted(true)} />
+    </Suspense>
   );
 }

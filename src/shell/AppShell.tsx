@@ -16,7 +16,7 @@
 // Compose is a separate floating Tauri window (compose_window.rs), opened from
 // File → New Message and the reading-pane reply actions.
 
-import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
+import { useState, useCallback, useEffect, useMemo, useRef, lazy, Suspense } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { useQueryClient } from '@tanstack/react-query';
@@ -27,9 +27,6 @@ import { useMailbox } from '../mailbox/useMailbox';
 import { isNotConfigured } from '../mailbox/types';
 import type { MailboxFolder, MailboxFolderRef, MessageMeta } from '../mailbox/types';
 import { useUserFolders } from '../mailbox/useUserFolders';
-import { NewFolderDialog } from '../mailbox/NewFolderDialog';
-import { RenameFolderDialog } from '../mailbox/RenameFolderDialog';
-import { DeleteFolderDialog } from '../mailbox/DeleteFolderDialog';
 import { FolderContextMenu } from '../mailbox/FolderContextMenu';
 import type { UserFolder } from '../mailbox/types';
 import type { MessageMetaDto } from '../search/types';
@@ -37,16 +34,45 @@ import { DEV_SELECTED } from '../mailbox/devFixture';
 import { FolderSidebar } from '../mailbox/FolderSidebar';
 import type { ConnectionKey } from '../mailbox/FolderSidebar';
 import { DashboardRibbon } from './DashboardRibbon';
-import { SettingsPanel } from './SettingsPanel';
-import { CatalogRequestPanel } from '../catalog/CatalogRequestPanel';
-import { GribRequestPanel } from '../grib/GribRequestPanel';
 import { StatusBar } from './StatusBar';
 import { useStatusData } from './useStatus';
 import { applyColorScheme, saveColorScheme } from './colorScheme';
-import { ThemeDesigner } from './ThemeDesigner';
-import { AboutDialog } from './AboutDialog';
-import { HelpPanel } from './HelpPanel';
 import { open as shellOpen } from '@tauri-apps/plugin-shell';
+
+// tuxlink-perf-coldstart: lazy-load every overlay/dialog panel. None of these
+// are on the cold-start critical path — they only paint when the operator
+// opens them via a menu or button. Removing them from the eager import graph
+// trims the bundle that gates first paint of the main shell. Each lazy panel
+// is also gated at its call site (`{flag && <Suspense>…</Suspense>}`) so the
+// module + its CSS aren't fetched until the open flag flips true.
+const SettingsPanel = lazy(() =>
+  import('./SettingsPanel').then((m) => ({ default: m.SettingsPanel })),
+);
+const ThemeDesigner = lazy(() =>
+  import('./ThemeDesigner').then((m) => ({ default: m.ThemeDesigner })),
+);
+const AboutDialog = lazy(() =>
+  import('./AboutDialog').then((m) => ({ default: m.AboutDialog })),
+);
+const HelpPanel = lazy(() =>
+  import('./HelpPanel').then((m) => ({ default: m.HelpPanel })),
+);
+const CatalogRequestPanel = lazy(() =>
+  import('../catalog/CatalogRequestPanel').then((m) => ({ default: m.CatalogRequestPanel })),
+);
+const GribRequestPanel = lazy(() =>
+  import('../grib/GribRequestPanel').then((m) => ({ default: m.GribRequestPanel })),
+);
+const NewFolderDialog = lazy(() =>
+  import('../mailbox/NewFolderDialog').then((m) => ({ default: m.NewFolderDialog })),
+);
+const RenameFolderDialog = lazy(() =>
+  import('../mailbox/RenameFolderDialog').then((m) => ({ default: m.RenameFolderDialog })),
+);
+const DeleteFolderDialog = lazy(() =>
+  import('../mailbox/DeleteFolderDialog').then((m) => ({ default: m.DeleteFolderDialog })),
+);
+
 import MessageView from '../mailbox/MessageView';
 import { TitleBar } from './chrome/TitleBar';
 import { MenuBar } from './chrome/MenuBar';
@@ -759,51 +785,88 @@ export function AppShell() {
         outboxQueued={outbox.messages.length}
       />
 
-      <SettingsPanel open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+      {/* tuxlink-perf-coldstart: lazy-mounted overlays. Each module + its CSS
+       *  loads on first open; subsequent opens reuse the cached chunk. The
+       *  Suspense fallback is null so a click-to-open never flashes a spinner
+       *  on top of the shell — Vite chunks for these panels are tiny so the
+       *  network/disk wait is effectively the JS evaluate phase. */}
+      {settingsOpen && (
+        <Suspense fallback={null}>
+          <SettingsPanel open={true} onClose={() => setSettingsOpen(false)} />
+        </Suspense>
+      )}
 
-      <ThemeDesigner open={themeDesignerOpen} onClose={() => setThemeDesignerOpen(false)} />
+      {themeDesignerOpen && (
+        <Suspense fallback={null}>
+          <ThemeDesigner open={true} onClose={() => setThemeDesignerOpen(false)} />
+        </Suspense>
+      )}
 
-      <AboutDialog open={aboutOpen} onClose={() => setAboutOpen(false)} />
+      {aboutOpen && (
+        <Suspense fallback={null}>
+          <AboutDialog open={true} onClose={() => setAboutOpen(false)} />
+        </Suspense>
+      )}
 
-      <HelpPanel open={helpOpen} onClose={() => setHelpOpen(false)} />
+      {helpOpen && (
+        <Suspense fallback={null}>
+          <HelpPanel open={true} onClose={() => setHelpOpen(false)} />
+        </Suspense>
+      )}
 
       {catalogRequestOpen && (
-        <CatalogRequestPanel onClose={() => setCatalogRequestOpen(false)} />
+        <Suspense fallback={null}>
+          <CatalogRequestPanel onClose={() => setCatalogRequestOpen(false)} />
+        </Suspense>
       )}
 
       {gribRequestOpen && (
-        <GribRequestPanel onClose={() => setGribRequestOpen(false)} />
+        <Suspense fallback={null}>
+          <GribRequestPanel onClose={() => setGribRequestOpen(false)} />
+        </Suspense>
       )}
 
-      <NewFolderDialog
-        open={newFolderOpen}
-        onClose={() => setNewFolderOpen(false)}
-        onCreated={(slug) => {
-          // Navigate to the new folder so the operator sees their creation
-          // succeed (matches the create-and-select expectation of every
-          // mail client). The folder is empty until messages are moved in.
-          setSelectedFolder(slug);
-          setSelectedMessage(null);
-        }}
-      />
+      {newFolderOpen && (
+        <Suspense fallback={null}>
+          <NewFolderDialog
+            open={true}
+            onClose={() => setNewFolderOpen(false)}
+            onCreated={(slug) => {
+              // Navigate to the new folder so the operator sees their creation
+              // succeed (matches the create-and-select expectation of every
+              // mail client). The folder is empty until messages are moved in.
+              setSelectedFolder(slug);
+              setSelectedMessage(null);
+            }}
+          />
+        </Suspense>
+      )}
 
-      <RenameFolderDialog
-        folder={renameFolder}
-        onClose={() => setRenameFolder(null)}
-      />
+      {renameFolder !== null && (
+        <Suspense fallback={null}>
+          <RenameFolderDialog
+            folder={renameFolder}
+            onClose={() => setRenameFolder(null)}
+          />
+        </Suspense>
+      )}
 
-      <DeleteFolderDialog
-        folder={deleteFolder}
-        onClose={() => setDeleteFolder(null)}
-        onDeleted={(slug) => {
-          // If the operator was viewing the now-gone folder, navigate back
-          // to Inbox so they don't sit on a slug that no longer resolves.
-          if (selectedFolder === slug) {
-            setSelectedFolder('inbox');
-            setSelectedMessage(null);
-          }
-        }}
-      />
+      {deleteFolder !== null && (
+        <Suspense fallback={null}>
+          <DeleteFolderDialog
+            folder={deleteFolder}
+            onClose={() => setDeleteFolder(null)}
+            onDeleted={(slug) => {
+              // If the operator was viewing the now-gone folder, navigate back
+              // to Inbox so they don't sit on a slug that no longer resolves.
+              if (selectedFolder === slug) {
+                setSelectedFolder('inbox');
+                setSelectedMessage(null);
+              }
+            }}
+          />
+        </Suspense>
+      )}
 
       {folderCtxMenu && (
         <FolderContextMenu

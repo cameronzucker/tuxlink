@@ -5,10 +5,110 @@
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Tuxlink</title>
+    <!--
+      Cold-start pre-paint (tuxlink-perf-coldstart). On a Pi5 the React bundle
+      takes ~1-2s to evaluate from cold; before this change the window painted
+      body bg only (white) during that window. The inline <script> below
+      stamps data-theme on <html> synchronously so the inline <style> below
+      can paint the correct bg color (mirrored from src/App.css). The
+      .tx-boot-skeleton block paints Tuxlink-shaped chrome (top bar shape +
+      sidebar block) so the operator sees geometry, not a blank rectangle.
+      React replaces #root on mount; the skeleton disappears with it.
+    -->
+    <script>
+      (function () {
+        try {
+          var scheme = localStorage.getItem('tuxlink.colorScheme') || 'default';
+          var presets = [
+            'default',
+            'daylight',
+            'high-contrast-light',
+            'paper',
+            'night-red',
+            'grayscale',
+            'custom',
+          ];
+          if (presets.indexOf(scheme) === -1) scheme = 'default';
+          if (scheme === 'custom') {
+            try {
+              var raw = localStorage.getItem('tuxlink.customTheme');
+              if (raw) {
+                var theme = JSON.parse(raw);
+                if (theme && theme.tokens) {
+                  document.documentElement.dataset.theme = 'custom';
+                  for (var k in theme.tokens) {
+                    if (typeof theme.tokens[k] === 'string') {
+                      document.documentElement.style.setProperty(
+                        '--' + k,
+                        theme.tokens[k],
+                      );
+                    }
+                  }
+                  if (theme.mode) document.documentElement.style.colorScheme = theme.mode;
+                  return;
+                }
+              }
+            } catch (_) { /* fall through to default */ }
+            scheme = 'default';
+          }
+          if (scheme !== 'default') {
+            document.documentElement.dataset.theme = scheme;
+          }
+        } catch (_) {
+          /* localStorage unavailable — leave default theme */
+        }
+      })();
+    </script>
+    <style>
+      /* Critical bg colors per theme — KEEP IN SYNC with src/App.css :root and
+       * :root[data-theme=...] blocks. Loaded inline so the body paints the
+       * correct color immediately rather than flashing white while App.css
+       * streams in with the bundle. */
+      html { background: #0d1318; }
+      html[data-theme='night-red'] { background: #0a0000; }
+      html[data-theme='grayscale'] { background: #0d0d0d; }
+      html[data-theme='daylight'] { background: #f4f6f9; }
+      html[data-theme='high-contrast-light'] { background: #ffffff; }
+      html[data-theme='paper'] { background: #f5efe0; }
+      /* Custom theme bg comes from inline --bg on <html> via the boot script. */
+
+      body { margin: 0; min-height: 100vh; }
+
+      /* Skeleton chrome — visible until React mounts and replaces #root. Shape
+       * mirrors the real AppShell (titlebar / dashboard ribbon / sidebar +
+       * reading pane) so the operator sees Tuxlink geometry, not a blank box.
+       * Opacity keeps it from looking interactable. */
+      .tx-boot-skeleton {
+        position: fixed;
+        inset: 0;
+        display: grid;
+        grid-template-rows: 36px 44px 1fr;
+        opacity: 0.6;
+        pointer-events: none;
+      }
+      .tx-boot-titlebar { background: rgba(127, 127, 127, 0.12); }
+      .tx-boot-ribbon { background: rgba(127, 127, 127, 0.06); }
+      .tx-boot-body {
+        display: grid;
+        grid-template-columns: 220px 1fr;
+        gap: 1px;
+      }
+      .tx-boot-sidebar { background: rgba(127, 127, 127, 0.08); }
+      .tx-boot-pane { background: transparent; }
+    </style>
   </head>
 
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <div class="tx-boot-skeleton" aria-hidden="true">
+        <div class="tx-boot-titlebar"></div>
+        <div class="tx-boot-ribbon"></div>
+        <div class="tx-boot-body">
+          <div class="tx-boot-sidebar"></div>
+          <div class="tx-boot-pane"></div>
+        </div>
+      </div>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
