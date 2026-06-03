@@ -12,6 +12,12 @@ export interface MenuHandlers {
   /** Move the open message to Archive (tuxlink-ca5x). No-op when nothing is
    *  open or when the open message is already in Archive. */
   archive: () => void;
+  /** Print the open message via the webview's native print dialog
+   *  (tuxlink-j0m3). No-op when nothing is open — Ctrl+P with no
+   *  selection shouldn't open the system print dialog on an empty
+   *  reading pane. Follow-up tuxlink-zdfj filed for the @media print
+   *  stylesheet that drops the dashboard/sidebar/statusbar chrome. */
+  print: () => void;
   // toggleSessionLog removed in radio-panel-shell P1.6 — the bottom session-log
   // strip is gone; the log moves into the radio panel as a per-mode section.
   toggleStatusBar: () => void;
@@ -53,6 +59,7 @@ export function dispatchMenuAction(id: MenuActionId, h: MenuHandlers): void {
     case 'menu:message:reply_all': h.replyAll(); return;
     case 'menu:message:forward': h.forward(); return;
     case 'menu:message:archive': h.archive(); return;
+    case 'menu:message:print': h.print(); return;
     case 'menu:message:catalog_request': h.openCatalogRequest(); return;
     case 'menu:message:grib_request': h.openGribRequest(); return;
     case 'menu:view:status_bar': h.toggleStatusBar(); return;

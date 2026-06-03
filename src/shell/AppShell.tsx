@@ -505,6 +505,13 @@ export function AppShell() {
     replyAll: () => { if (openMessage) void openReplyWindow(openMessage, 'replyAll').catch(() => {}); },
     forward: () => { if (openMessage) void openReplyWindow(openMessage, 'forward').catch(() => {}); },
     archive: () => { void archiveOpen(); },
+    // tuxlink-j0m3: fire the webview's native print dialog when a message
+    // is open. No-op otherwise — Ctrl+P on an empty reading pane would
+    // print the bare chrome and is rarely useful. The print stylesheet
+    // (which drops the dashboard/sidebar/statusbar from the printed page)
+    // is a follow-up; the unstyled output is still readable for the
+    // "save this message" use case.
+    print: () => { if (openMessage) window.print(); },
     toggleStatusBar: () => setShowStatusBar((s) => !s),
     toggleRadioPanel: () => setPinRadioPanel((s) => !s),
     selectFolder: (folder) => { setSelectedFolder(folder); setSelectedMessage(null); setSelectedConnection(null); },
