@@ -20,14 +20,17 @@ describe('session-type catalog', () => {
     expect(protos.find((p) => p.id === 'vara-hf')?.built).toBe(true);
     expect(protos.find((p) => p.id === 'vara-fm')?.built).toBe(true);
   });
-  it('P2P VARA HF/FM stay unbuilt for Phase 2 (Phase 3 enables peer-connect)', () => {
-    // The P2P intent's VARA entries remain unbuilt because the peer-dial
-    // flow needs the session state machine + RADIO-1 consent (Phase 3 —
-    // tuxlink-fzl7). Only flipping CMS in Phase 2 keeps the operator-
-    // facing scope bounded to what the implementation actually covers.
+  it('P2P VARA HF/FM are built — Phase 2 surface ships for both intents (tuxlink-kb3s)', () => {
+    // PR #221's scope-bounding ("only flip CMS in Phase 2") was a
+    // packaging choice, not a technical constraint — the VaraRadioPanel
+    // + useVaraConfig + radioPanelVisibility router are all intent-
+    // agnostic. tuxlink-kb3s flips P2P VARA HF/FM to built:true so the
+    // operator can configure + open the VARA TCP transport under either
+    // intent. RF CONNECT-to-peer (Phase 3, tuxlink-fzl7) lands parallel
+    // to CMS's Phase 3 dial.
     const protos = protocolsFor('p2p');
-    expect(protos.find((p) => p.id === 'vara-hf')?.built).toBe(false);
-    expect(protos.find((p) => p.id === 'vara-fm')?.built).toBe(false);
+    expect(protos.find((p) => p.id === 'vara-hf')?.built).toBe(true);
+    expect(protos.find((p) => p.id === 'vara-fm')?.built).toBe(true);
   });
   it('isBuilt is false for any protocol under an unbuilt intent (radio-only)', () => {
     const key: ConnectionKey = { sessionType: 'radio-only', protocol: 'packet' };

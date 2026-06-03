@@ -703,11 +703,12 @@ export function AppShell() {
             // pattern as Telnet CMS (P2) and Packet P2P (P3).
             return <MessageView selectedMessage={selectedMessage} onArchive={onArchiveMessage} userFolders={userFolders} onMove={moveOpen} />;
           }
-          if (sessionType === 'cms' && (protocol === 'vara-hf' || protocol === 'vara-fm')) {
-            // tuxlink-dfmf Phase 2: VaraRadioPanel owns the VARA dial UI
-            // in the right panel; reading pane falls back to mail (same
-            // pattern as Telnet/Packet/ARDOP). Phase 2 surfaces TCP
-            // transport + config; RF CONNECT arrives in Phase 3.
+          if (protocol === 'vara-hf' || protocol === 'vara-fm') {
+            // tuxlink-dfmf Phase 2 + tuxlink-kb3s: VaraRadioPanel owns the
+            // VARA dial UI in the right panel under either CMS or P2P
+            // intent; reading pane falls back to mail (same pattern as
+            // Telnet/Packet/ARDOP). Phase 2 surfaces TCP transport +
+            // config; RF CONNECT arrives in Phase 3.
             return <MessageView selectedMessage={selectedMessage} onArchive={onArchiveMessage} userFolders={userFolders} onMove={moveOpen} />;
           }
           // Built but unhandled — defensive stub

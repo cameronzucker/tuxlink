@@ -62,8 +62,13 @@ export const SESSION_TYPES: SessionTypeEntry[] = [
     protocols: [
       { ...PKT, built: true },
       { ...TEL, built: true },
-      { ...VHF, built: false },
-      { ...VFM, built: false },
+      // tuxlink-kb3s: P2P VARA HF/FM flipped to built:true. The Phase 2
+      // surface (TCP open/close + bandwidth config, no transmit) is the
+      // same panel rendered for CMS VARA — VaraRadioPanel + useVaraConfig
+      // + the visibility router are all intent-agnostic. RF CONNECT-to-
+      // peer is Phase 3 (tuxlink-fzl7), parallel to CMS's Phase 3 dial.
+      { ...VHF, built: true },
+      { ...VFM, built: true },
     ],
   },
   {

@@ -267,6 +267,31 @@ describe('<AppShell> radio panel', () => {
     expect(screen.queryByTestId('radio-panel-placeholder')).not.toBeInTheDocument();
   });
 
+  // tuxlink-kb3s: P2P VARA HF/FM flipped to built:true. The panel itself
+  // is intent-agnostic — it mounts under either CMS or P2P and only the
+  // header title's suffix changes (Winlink vs P2P). These tests pin the
+  // P2P mount behavior alongside the CMS tests above.
+  it('renders VaraRadioPanel with P2P title when VARA HF is selected under P2P', () => {
+    mockUseModemStatus.mockReturnValue({ status: STOPPED, loading: false, error: null });
+    renderShell();
+    fireEvent.click(screen.getByTestId('sess-p2p'));
+    fireEvent.click(screen.getByTestId('proto-p2p-vara-hf'));
+    expect(screen.getByTestId('radio-panel-root')).toBeInTheDocument();
+    expect(screen.getByTestId('vara-host-input')).toBeInTheDocument();
+    expect(screen.getByTestId('radio-panel-title')).toHaveTextContent('Vara HF P2P');
+    expect(screen.queryByTestId('radio-panel-placeholder')).not.toBeInTheDocument();
+  });
+
+  it('renders VaraRadioPanel with P2P title when VARA FM is selected under P2P', () => {
+    mockUseModemStatus.mockReturnValue({ status: STOPPED, loading: false, error: null });
+    renderShell();
+    fireEvent.click(screen.getByTestId('sess-p2p'));
+    fireEvent.click(screen.getByTestId('proto-p2p-vara-fm'));
+    expect(screen.getByTestId('radio-panel-root')).toBeInTheDocument();
+    expect(screen.getByTestId('radio-panel-title')).toHaveTextContent('Vara FM P2P');
+    expect(screen.queryByTestId('radio-panel-placeholder')).not.toBeInTheDocument();
+  });
+
   // tuxlink-mnk4: View → Toggle Radio Panel (Ctrl+Shift+M) must actually
   // toggle the panel. The menu item + accelerator have been wired through
   // dispatchMenuAction since the tuxlink-mnk4 fix; the menu item was

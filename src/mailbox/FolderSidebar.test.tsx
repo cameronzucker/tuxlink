@@ -225,16 +225,18 @@ describe('FolderSidebar — Connections accordion', () => {
     expect(onSelectConnection).toHaveBeenCalledWith({ sessionType: 'cms', protocol: 'telnet' });
   });
   it('a "soon" protocol is disabled and does not fire selection', () => {
-    // tuxlink-dfmf flipped cms.vara-hf/vara-fm to built:true (Phase 2 UI).
-    // p2p.vara-hf remains unbuilt, so it's the test target for the
-    // disabled-protocol behavior. Test target is intent-agnostic — any
-    // built parent with at least one unbuilt protocol works.
+    // tuxlink-kb3s also flipped p2p.vara-hf/vara-fm to built:true, so the
+    // prior p2p-vara test target is no longer disabled. Radio-only's
+    // protocols remain unbuilt (parent intent unbuilt; needs Hybrid-Network
+    // routing backend), so radio-only-telnet is the new disabled-protocol
+    // test target. Test target is intent-agnostic — any unbuilt protocol
+    // row exhibits the disabled-button behavior.
     const onSelectConnection = vi.fn();
     render(<FolderSidebar selectedFolder="inbox" onSelectFolder={vi.fn()} onSelectConnection={onSelectConnection} />);
-    fireEvent.click(screen.getByTestId('sess-p2p'));
-    const vara = screen.getByTestId('proto-p2p-vara-hf');
-    expect(vara).toBeDisabled();
-    fireEvent.click(vara);
+    fireEvent.click(screen.getByTestId('sess-radio-only'));
+    const telnet = screen.getByTestId('proto-radio-only-telnet');
+    expect(telnet).toBeDisabled();
+    fireEvent.click(telnet);
     expect(onSelectConnection).not.toHaveBeenCalled();
   });
 
