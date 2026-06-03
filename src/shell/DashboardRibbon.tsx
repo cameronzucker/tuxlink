@@ -7,7 +7,7 @@
  * shared `useStatusData` poll (passed in by AppShell); the live clock is local.
  */
 
-import { useEffect, useState } from 'react';
+import { memo, useEffect, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { useQueryClient } from '@tanstack/react-query';
 import type { StatusBarData, StatusTone } from './useStatus';
@@ -80,7 +80,11 @@ export interface DashboardRibbonProps {
   onSsidChange?: (n: number) => void;
 }
 
-export function DashboardRibbon({ data, onConnect, connecting, onAbort, packet, ssid, onSsidChange }: DashboardRibbonProps) {
+// tuxlink-djnl: React.memo so 2s status-poll renders (now reference-stable
+// via useStatusData's useMemo) and other shell-level renders skip the ribbon
+// when its props haven't changed. The 1s clock tick already lives inside the
+// scoped ClockCell subtree, so a memo'd ribbon stays still while time advances.
+export const DashboardRibbon = memo(function DashboardRibbon({ data, onConnect, connecting, onAbort, packet, ssid, onSsidChange }: DashboardRibbonProps) {
   const { callsign, grid, state, connection: connectionFromData } = data;
   // Task 14 (tuxlink-c79g, spec §4.3 + Codex P1 #4): after a grid commit or a
   // source flip resolves, invalidate the config_read query so the source chip
@@ -242,4 +246,4 @@ export function DashboardRibbon({ data, onConnect, connecting, onAbort, packet, 
       )}
     </div>
   );
-}
+});
