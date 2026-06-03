@@ -27,14 +27,16 @@ beforeEach(() => {
 });
 
 describe('useHelpTheme', () => {
-  it('queries theme_get_scheme on mount and applies the result', async () => {
+  it('queries theme_get_scheme on mount and applies the result without rebroadcasting (tuxlink-och6)', async () => {
     invokeMock.mockResolvedValue('night-red');
     renderHook(() => useHelpTheme());
-    await waitFor(() => expect(applyMock).toHaveBeenCalledWith('night-red'));
+    // The hook MUST pass { broadcast: false } so applyColorScheme's own
+    // broadcast doesn't loop back through the help window's own listener.
+    await waitFor(() => expect(applyMock).toHaveBeenCalledWith('night-red', { broadcast: false }));
     expect(invokeMock).toHaveBeenCalledWith('theme_get_scheme');
   });
 
-  it('subscribes to color_scheme_changed and re-applies on event', async () => {
+  it('subscribes to color_scheme_changed and re-applies on event without rebroadcasting (tuxlink-och6)', async () => {
     invokeMock.mockResolvedValue(null);
     renderHook(() => useHelpTheme());
     await waitFor(() => expect(listenMock).toHaveBeenCalled());
@@ -42,7 +44,7 @@ describe('useHelpTheme', () => {
     // Invoke the handler the hook registered.
     const handler = listenMock.mock.calls[0][1];
     handler({ payload: 'daylight' });
-    expect(applyMock).toHaveBeenCalledWith('daylight');
+    expect(applyMock).toHaveBeenCalledWith('daylight', { broadcast: false });
   });
 
   it('does not apply on mount when theme_get_scheme returns null', async () => {

@@ -224,18 +224,33 @@ export function clearCustomTheme(): void {
  *  as inline `style` properties when scheme is 'custom'. Switching to a
  *  preset clears any prior inline custom-token style so themes don't leak.
  *
- *  tuxlink-0gsy (spec §8.2): after applying, broadcast the new scheme to
- *  any other webview windows (currently: help) via the theme_broadcast_scheme
+ *  tuxlink-0gsy (spec §8.2): when called from an operator-initiated path
+ *  (menu flip, designer apply, startup), broadcasts the new scheme to any
+ *  other webview windows (currently: help) via the theme_broadcast_scheme
  *  Tauri command. Fire-and-forget — silently swallows errors in test envs
- *  without a Tauri runtime. */
-export function applyColorScheme(scheme: ColorScheme): void {
+ *  without a Tauri runtime.
+ *
+ *  tuxlink-och6 (2026-06-03): the broadcast MUST be skipped when this is
+ *  called in response to a `color_scheme_changed` event from another
+ *  window, otherwise the listener (useHelpTheme.ts) creates an infinite
+ *  loop: receive → apply → broadcast → emit-to-all-windows-including-sender
+ *  → receive → … Each iteration is one IPC round-trip + DOM mutation; the
+ *  Pi5 sat at WebKit 70% + Rust 40% at idle until this guard landed. Pass
+ *  `{ broadcast: false }` when applying in response to an event. */
+export function applyColorScheme(
+  scheme: ColorScheme,
+  options?: { broadcast?: boolean },
+): void {
   const root = document.documentElement;
-  // Broadcast first so other windows see the change at the same time the
-  // local apply completes. The dynamic import keeps tauri/api/core out of
-  // test-environment bundles that mock the module.
-  void import('@tauri-apps/api/core')
-    .then(({ invoke }) => invoke('theme_broadcast_scheme', { scheme }))
-    .catch(() => {});
+  const broadcast = options?.broadcast !== false;
+  if (broadcast) {
+    // Broadcast first so other windows see the change at the same time the
+    // local apply completes. The dynamic import keeps tauri/api/core out of
+    // test-environment bundles that mock the module.
+    void import('@tauri-apps/api/core')
+      .then(({ invoke }) => invoke('theme_broadcast_scheme', { scheme }))
+      .catch(() => {});
+  }
   // Always strip prior inline custom-token style before applying — a stale
   // override from the last 'custom' selection would otherwise bleed through
   // any new preset. Presets live in CSS; the designer lives in inline style.
