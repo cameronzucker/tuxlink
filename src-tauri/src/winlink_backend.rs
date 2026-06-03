@@ -554,6 +554,16 @@ pub trait WinlinkBackend: Send + Sync {
         Err(BackendError::NotImplemented)
     }
 
+    /// Rename a user folder (display name only; slug is stable per spec §3.1).
+    /// Default `NotImplemented`.
+    async fn rename_user_folder(
+        &self,
+        _slug: &str,
+        _new_display_name: &str,
+    ) -> Result<crate::user_folders::UserFolder, BackendError> {
+        Err(BackendError::NotImplemented)
+    }
+
     /// List the messages in a user folder. Default empty.
     async fn list_user_messages(
         &self,
@@ -836,6 +846,14 @@ impl WinlinkBackend for NativeBackend {
         on_messages: crate::native_mailbox::DeleteAction,
     ) -> Result<(), BackendError> {
         self.mailbox.delete_user_folder(slug, on_messages)
+    }
+
+    async fn rename_user_folder(
+        &self,
+        slug: &str,
+        new_display_name: &str,
+    ) -> Result<crate::user_folders::UserFolder, BackendError> {
+        self.mailbox.rename_user_folder(slug, new_display_name)
     }
 
     async fn list_user_messages(

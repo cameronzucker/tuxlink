@@ -777,6 +777,22 @@ pub async fn folder_create(
     Ok(UserFolderDto::from(folder))
 }
 
+/// Rename a user folder (display name only; slug stays stable per spec §3.1).
+/// The new display name is validated and surfaced as `UiError::Rejected`
+/// on validation failure. Missing slug → `UiError::NotFound`.
+#[tauri::command]
+pub async fn folder_rename(
+    slug: String,
+    display_name: String,
+    state: State<'_, BackendState>,
+) -> Result<UserFolderDto, UiError> {
+    let backend = state
+        .current()
+        .ok_or_else(|| UiError::NotConfigured("backend offline".to_string()))?;
+    let folder = backend.rename_user_folder(&slug, &display_name).await?;
+    Ok(UserFolderDto::from(folder))
+}
+
 /// Delete a user folder. `on_messages` controls cascade behavior (spec §6 D6):
 /// - `"move_to_inbox"` (safe default) — re-home each message to Inbox
 /// - `"move_to_archive"` — re-home each message to Archive
