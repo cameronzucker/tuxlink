@@ -13,7 +13,11 @@
 }
 
 .tux-help-reading-inner {
-  max-width: 720px;       /* reading column constrained per spec §5.3 */
+  /* Width preset (tuxlink-ew3k). --help-reading-max-width is set on
+   * .tux-help-root by HelpView (driven by useReadingWidth) — 720 px for
+   * narrow (original spec §5.3 default), 980 px for wide (Wikipedia-style
+   * wider column for big screens). */
+  max-width: var(--help-reading-max-width, 720px);
   width: 100%;
   padding: 36px 48px 80px;
 }

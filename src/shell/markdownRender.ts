@@ -139,14 +139,29 @@ export function parseMarkdown(source: string): Block[] {
       continue;
     }
 
-    // Unordered list.
+    // Unordered list. Each item starts with "- "; continuation lines
+    // (indented, no bullet marker) are joined into the current item.
+    // tuxlink-ew3k bug 5: the prior loop stopped on the first non-bullet
+    // line, leaving "- foo\n  bar" as one list item ("foo") plus an
+    // orphan paragraph ("bar") — visible at the bottom of 07-settings.md
+    // where the second link wraps across two source lines.
     if (/^\s*-\s+/.test(line)) {
-      const items: InlineText[] = [];
-      while (i < lines.length && /^\s*-\s+/.test(lines[i])) {
-        items.push(parseInline(lines[i].replace(/^\s*-\s+/, '')));
-        i++;
+      const items: string[] = [];
+      while (i < lines.length) {
+        const cur = lines[i];
+        if (/^\s*-\s+/.test(cur)) {
+          // New item.
+          items.push(cur.replace(/^\s*-\s+/, ''));
+          i++;
+        } else if (items.length > 0 && /^\s+\S/.test(cur)) {
+          // Continuation of the current item: indented, non-empty.
+          items[items.length - 1] += ' ' + cur.trim();
+          i++;
+        } else {
+          break;
+        }
       }
-      blocks.push({ kind: 'list', items });
+      blocks.push({ kind: 'list', items: items.map(parseInline) });
       continue;
     }
 

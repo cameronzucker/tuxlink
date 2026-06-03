@@ -112,4 +112,25 @@ describe('parseMarkdown', () => {
     const blocks = parseMarkdown('# A\n\n\n\nB');
     expect(blocks).toHaveLength(2);
   });
+
+  // tuxlink-ew3k bug 5: an indented continuation line after a list item
+  // (with no bullet marker) used to leak out as a separate paragraph,
+  // visible at the bottom of docs/user-guide/07-settings.md. Fix joins
+  // the continuation into the current item.
+  it('joins indented continuation lines into the current list item', () => {
+    const src =
+      '- [Connections](02-connections.md) — what each transport needs.\n' +
+      '- [Pitfalls — RADIO-1](../pitfalls/implementation-pitfalls.md) — the\n' +
+      '  bounded-airtime / abort discipline that gates every on-air operation.';
+    const blocks = parseMarkdown(src);
+    expect(blocks).toHaveLength(1);
+    const list = blocks[0] as Block & { kind: 'list' };
+    expect(list.kind).toBe('list');
+    expect(list.items).toHaveLength(2);
+    const secondText = list.items[1].runs
+      .map((r) => ('text' in r ? r.text : ''))
+      .join('');
+    expect(secondText).toContain('bounded-airtime');
+    expect(secondText).toContain('on-air operation');
+  });
 });
