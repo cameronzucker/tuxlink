@@ -26,3 +26,27 @@ export function MessageViewEmpty() {
     </div>
   );
 }
+
+/**
+ * Suspense fallback for the lazy MessageView chunk. tuxlink-268k (Codex P3):
+ * when `selectedMessage` is set but the lazy chunk is still loading, showing
+ * `MessageViewEmpty` flashes the wrong copy ('Select a message to read')
+ * paired with a highlighted row. This pane is the loading-specific
+ * placeholder: matches `.reading-pane` shape, neutral copy, no misleading
+ * "no selection" cue.
+ *
+ * On a warmly-cached chunk this is visible for ~one frame; on a cold first
+ * open (forms registry parse) it can show for ~100ms on Pi5. Either way,
+ * better than the empty-pane copy lie.
+ */
+export function MessageViewLoading() {
+  return (
+    <div
+      className="reading-pane reading-pane--center"
+      data-testid="message-view-loading"
+      aria-busy="true"
+    >
+      Loading message…
+    </div>
+  );
+}
