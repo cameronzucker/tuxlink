@@ -48,6 +48,10 @@ import { useQueryClient } from '@tanstack/react-query';
 import { RadioPanel } from '../RadioPanel';
 import { SessionLogSection } from '../sections/SessionLogSection';
 import { useSessionLog } from '../sections/useSessionLog';
+import { AllowedStationsEditor } from '../sections/AllowedStationsEditor';
+import { ListenArmButton } from '../sections/ListenArmButton';
+import { useListenerState } from '../sections/useListenerState';
+import '../sections/ListenSection.css';
 
 export interface TelnetP2pRadioPanelProps {
   onClose: () => void;
@@ -77,6 +81,32 @@ const QUICK_PICKS: { host: string; label: string }[] = [
   { host: '127.0.0.1', label: 'localhost' },
 ];
 
+// Telnet listener config wire shape — `telnet_listen_config_get` returns
+// the bound port + bind address + TTL the next arm() will use. Mirrors
+// the Rust DTO at ui_commands.rs.
+interface TelnetListenConfig {
+  port: number;
+  bind_addr: string;
+  ttl_secs: number;
+}
+
+// TTL preset options surfaced in the Listener setup expander. The
+// backend accepts any positive value; these are operator-convenience
+// presets that mirror the spec §1.3 layout. The first preset (15 min)
+// is the safest default for "I'm just smoking it"; 1 hour matches the
+// mock's selected default.
+const TTL_PRESETS: { label: string; secs: number }[] = [
+  { label: '15 min', secs: 15 * 60 },
+  { label: '30 min', secs: 30 * 60 },
+  { label: '1 hour', secs: 60 * 60 },
+  { label: '4 hours', secs: 4 * 60 * 60 },
+];
+
+// Station password status — mirrors `p2p_peer_password_status`'s wire
+// shape (the Telnet station password and Telnet P2P peer password use
+// the same Set/NotSet enum).
+type StationPasswordStatus = 'Set' | 'NotSet';
+
 export function TelnetP2pRadioPanel({ onClose }: TelnetP2pRadioPanelProps) {
   const [busy, setBusy] = useState(false);
   const [host, setHost] = useState<string>(DEFAULT_HOST);
@@ -89,6 +119,114 @@ export function TelnetP2pRadioPanel({ onClose }: TelnetP2pRadioPanelProps) {
   const [connectError, setConnectError] = useState<string | null>(null);
   const { entries: logEntries, clear: clearLog } = useSessionLog();
   const queryClient = useQueryClient();
+
+  // Listener config (bind addr / port / TTL). Loaded on mount; edits
+  // persist via `telnet_listen_config_set`. Defaults match the backend
+  // (`127.0.0.1`, port 8774, 1h TTL — see ui_commands.rs).
+  const [listenConfig, setListenConfig] = useState<TelnetListenConfig>({
+    port: 8774,
+    bind_addr: '127.0.0.1',
+    ttl_secs: 3600,
+  });
+
+  // Station-password status — driven by `telnet_station_password_is_set`
+  // on mount + after each Set/Clear. Mirrors the Peer Password pattern
+  // above but lives in the listener section.
+  const [stationPasswordStatus, setStationPasswordStatus] =
+    useState<StationPasswordStatus>('NotSet');
+
+  // Listener arms + allowlist plumbing via the shared hook. The Telnet
+  // commands take `enabled`/`callsign`/`pattern` args by name.
+  const listener = useListenerState({
+    commands: {
+      listen: 'telnet_listen',
+      setListen: 'telnet_set_listen',
+      allowedGet: 'telnet_allowed_stations_get',
+      allowedAddCallsign: 'telnet_allowed_stations_add_callsign',
+      allowedAddCallsignArgKey: 'callsign',
+      allowedRemoveCallsign: 'telnet_allowed_stations_remove_callsign',
+      allowedRemoveCallsignArgKey: 'callsign',
+      allowedSetAllowAll: 'telnet_allowed_stations_set_allow_all',
+      allowedSetAllowAllArgKey: 'enabled',
+      allowedAddIp: 'telnet_allowed_stations_add_ip',
+      allowedAddIpArgKey: 'pattern',
+      allowedRemoveIp: 'telnet_allowed_stations_remove_ip',
+      allowedRemoveIpArgKey: 'pattern',
+    },
+    ttlSecs: listenConfig.ttl_secs,
+  });
+
+  // Load listener config + station-password status on mount.
+  useEffect(() => {
+    let cancelled = false;
+    invoke<TelnetListenConfig>('telnet_listen_config_get')
+      .then((c) => {
+        if (cancelled) return;
+        if (c) setListenConfig(c);
+      })
+      .catch(() => {
+        // Backend default applies — keep the local fallback.
+      });
+    invoke<boolean>('telnet_station_password_is_set')
+      .then((isSet) => {
+        if (cancelled) return;
+        setStationPasswordStatus(isSet ? 'Set' : 'NotSet');
+      })
+      .catch(() => {
+        if (!cancelled) setStationPasswordStatus('NotSet');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Persist listener config edits. Merge-then-write so partial edits
+  // (e.g., changing only port) don't clobber the other fields.
+  const persistListenConfig = (patch: Partial<TelnetListenConfig>) => {
+    const next = { ...listenConfig, ...patch };
+    setListenConfig(next);
+    void invoke('telnet_listen_config_set', next).catch(() => {
+      // Persist errors surface in the session log via the backend.
+    });
+  };
+
+  const handleSetStationPassword = async () => {
+    // v0.1: window.prompt — matches the Peer Password Set flow above
+    // so operators don't see two different password-entry idioms in the
+    // same panel. The secret never enters component state.
+    const pw = window.prompt(
+      'Enter station password (sent to inbound peers as a challenge; blank = cancel):',
+    );
+    if (pw === null || pw === '') return;
+    try {
+      await invoke('telnet_station_password_set', { password: pw });
+      setStationPasswordStatus('Set');
+    } catch {
+      // Backend errors surface in the session log.
+    }
+  };
+
+  const handleClearStationPassword = async () => {
+    try {
+      await invoke('telnet_station_password_clear');
+      setStationPasswordStatus('NotSet');
+    } catch {
+      // Session log carries any backend error.
+    }
+  };
+
+  // Summary chip counts — drive the expander-count text without
+  // recomputing on every render mid-key.
+  const allowedSummary = (() => {
+    const c = listener.allowed.callsigns.length;
+    const i = listener.allowed.ips.length;
+    if (listener.allowed.allowAll) return 'allow any';
+    if (c === 0 && i === 0) return 'restrict to none';
+    const parts: string[] = [];
+    if (c > 0) parts.push(`${c} callsign${c === 1 ? '' : 's'}`);
+    if (i > 0) parts.push(`${i} IP${i === 1 ? '' : 's'}`);
+    return parts.join(' · ');
+  })();
 
   // Load my_callsign + locator from config on mount (same pattern as
   // TelnetRadioPanel's host/transport fetch — one call, cancelled on unmount).
@@ -327,6 +465,165 @@ export function TelnetP2pRadioPanel({ onClose }: TelnetP2pRadioPanelProps) {
           Optional. Sent only if the peer challenges for a password.
           Stored in OS keyring — never in config or logs.
         </p>
+      </section>
+
+      {/* Listen (Accept Inbound) — listener arms + allowlist + station
+          password. Replaces the prior backend-only listener affordances
+          per spec 2026-06-03-listener-ui-design.md §1.3. */}
+      <section
+        className="radio-panel-sec"
+        data-testid="telnet-listen-section"
+      >
+        <h5>Listen (Accept Inbound)</h5>
+
+        <ListenArmButton
+          armed={listener.armed}
+          minutesRemaining={listener.minutesRemaining}
+          busy={listener.busy}
+          helpText={`Accepts inbound Telnet P2P sessions on ${listenConfig.bind_addr}:${listenConfig.port} until disarmed or the TTL expires.`}
+          onArm={listener.arm}
+          onDisarm={listener.disarm}
+          testIdPrefix="telnet-listen"
+        />
+        {listener.error && (
+          <p
+            className="radio-panel-radio-help"
+            data-testid="telnet-listen-error"
+            style={{ color: 'var(--error, #f87171)' }}
+          >
+            {listener.error}
+          </p>
+        )}
+
+        {/* Listener setup — bind address + port + TTL. Closed by
+            default since most operators take the backend defaults. */}
+        <details
+          className="expander"
+          data-testid="telnet-listen-setup-expander"
+        >
+          <summary className="expander-summary">
+            Listener setup
+            <span className="expander-count" data-testid="telnet-listen-setup-count">
+              {`${listenConfig.port} · ${listenConfig.bind_addr === '127.0.0.1' ? 'loopback' : listenConfig.bind_addr}`}
+            </span>
+          </summary>
+          <div className="expander-body">
+            <label className="radio-panel-input-row">
+              <span>Bind</span>
+              <input
+                type="text"
+                className="radio-panel-input"
+                data-testid="telnet-listen-bind-input"
+                value={listenConfig.bind_addr}
+                spellCheck={false}
+                autoCapitalize="off"
+                autoCorrect="off"
+                onChange={(e) =>
+                  setListenConfig((c) => ({ ...c, bind_addr: e.target.value }))
+                }
+                onBlur={() =>
+                  persistListenConfig({ bind_addr: listenConfig.bind_addr.trim() })
+                }
+              />
+            </label>
+            <label className="radio-panel-input-row">
+              <span>Port</span>
+              <input
+                type="number"
+                className="radio-panel-input"
+                data-testid="telnet-listen-port-input"
+                value={listenConfig.port}
+                min={MIN_PORT}
+                max={MAX_PORT}
+                onChange={(e) => {
+                  const n = parseInt(e.target.value, 10);
+                  if (!Number.isNaN(n) && n >= MIN_PORT && n <= MAX_PORT) {
+                    persistListenConfig({ port: n });
+                  }
+                }}
+              />
+            </label>
+            <label className="radio-panel-input-row">
+              <span>TTL</span>
+              <select
+                className="radio-panel-input"
+                data-testid="telnet-listen-ttl-select"
+                value={listenConfig.ttl_secs}
+                onChange={(e) =>
+                  persistListenConfig({ ttl_secs: parseInt(e.target.value, 10) })
+                }
+              >
+                {TTL_PRESETS.map((p) => (
+                  <option key={p.secs} value={p.secs}>
+                    {p.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <p className="radio-panel-help">
+              Loopback binds only on the local machine. LAN binding opens
+              the listener to every device on the network.
+            </p>
+          </div>
+        </details>
+
+        {/* Allowed stations — callsigns + IP patterns. */}
+        <details className="expander" data-testid="telnet-allowed-expander">
+          <summary className="expander-summary">
+            Allowed stations
+            <span className="expander-count" data-testid="telnet-allowed-count">
+              {allowedSummary}
+            </span>
+          </summary>
+          <AllowedStationsEditor
+            allowAll={listener.allowed.allowAll}
+            callsigns={listener.allowed.callsigns}
+            ips={listener.allowed.ips}
+            helpText="Match logic: callsign-allow OR IP-allow. A peer is admitted if either list matches; when Allow-any-peer is ON, both lists are advisory."
+            onSetAllowAll={listener.setAllowAll}
+            onAddCallsign={listener.addCallsign}
+            onRemoveCallsign={listener.removeCallsign}
+            onAddIp={listener.addIp}
+            onRemoveIp={listener.removeIp}
+            testIdPrefix="telnet-allowed"
+          />
+        </details>
+
+        {/* Station Password — keyring-backed; sent to peers as
+            CR-terminated challenge before B2F per WLE wire parity. */}
+        <details className="expander" data-testid="telnet-station-pw-expander">
+          <summary className="expander-summary">
+            Station Password
+            <span className="expander-count" data-testid="telnet-station-pw-count">
+              {stationPasswordStatus === 'Set' ? 'set in keyring' : 'not set'}
+            </span>
+          </summary>
+          <div className="expander-body">
+            <div className="radio-panel-chip-row">
+              <button
+                type="button"
+                className="radio-panel-chip"
+                data-testid="telnet-station-pw-set-btn"
+                onClick={handleSetStationPassword}
+              >
+                {stationPasswordStatus === 'Set' ? 'Change…' : 'Set…'}
+              </button>
+              <button
+                type="button"
+                className="radio-panel-chip"
+                data-testid="telnet-station-pw-clear-btn"
+                disabled={stationPasswordStatus !== 'Set'}
+                onClick={handleClearStationPassword}
+              >
+                Clear
+              </button>
+            </div>
+            <p className="radio-panel-help">
+              Stored in OS keyring — never in config or logs. Sent to every
+              inbound peer as a CR-terminated challenge before B2F begins.
+            </p>
+          </div>
+        </details>
       </section>
 
       <SessionLogSection entries={logEntries} onClear={clearLog} />

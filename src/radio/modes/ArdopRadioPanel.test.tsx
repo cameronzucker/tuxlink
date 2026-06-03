@@ -57,6 +57,10 @@ const defaultInvokeImpl = async (cmd: string) => {
     };
   }
   if (cmd === 'modem_mint_consent') return 'test-token';
+  // Listener defaults (tuxlink-7vea backend default flip).
+  if (cmd === 'ardop_allowed_stations_get') {
+    return { allow_all: true, callsigns: [] };
+  }
   return undefined;
 };
 
@@ -824,6 +828,155 @@ describe('<ArdopRadioPanel>', () => {
           }),
         );
       });
+    });
+  });
+
+  // ── Listen section (tuxlink-7vea) ────────────────────────────────────────
+  //
+  // The ARDOP listener (allowlist + arms record + LISTEN TRUE/FALSE wiring)
+  // landed on this branch alongside the UI. The panel does NOT carry a
+  // station-password expander (ARDOP has none per ardop-p2p.md divergence 2)
+  // and does NOT carry a listener-setup expander (modem TCP details live
+  // in the Radio section above).
+
+  describe('Listen section', () => {
+    beforeEach(() => {
+      mockUseModemStatus.mockReturnValue({ status: STOPPED });
+    });
+
+    it('renders the Listen section', async () => {
+      render(<ArdopRadioPanel onClose={() => {}} />);
+      expect(await screen.findByTestId('ardop-listen-section')).toBeInTheDocument();
+    });
+
+    it('Arm button click fires ardop_listen', async () => {
+      const core = await import('@tauri-apps/api/core');
+      const invokeMock = core.invoke as ReturnType<typeof vi.fn>;
+      invokeMock.mockImplementation(defaultInvokeImpl);
+      render(<ArdopRadioPanel onClose={() => {}} />);
+      const armBtn = await screen.findByTestId('ardop-listen-arm-btn');
+      fireEvent.click(armBtn);
+      await waitFor(() => {
+        expect(invokeMock).toHaveBeenCalledWith('ardop_listen');
+      });
+    });
+
+    it('Disarm button (after arming) fires ardop_set_listen with enabled=false', async () => {
+      const core = await import('@tauri-apps/api/core');
+      const invokeMock = core.invoke as ReturnType<typeof vi.fn>;
+      invokeMock.mockImplementation(defaultInvokeImpl);
+      render(<ArdopRadioPanel onClose={() => {}} />);
+      const armBtn = await screen.findByTestId('ardop-listen-arm-btn');
+      fireEvent.click(armBtn);
+      const disarmBtn = await screen.findByTestId('ardop-listen-disarm-btn');
+      fireEvent.click(disarmBtn);
+      await waitFor(() => {
+        expect(invokeMock).toHaveBeenCalledWith('ardop_set_listen', {
+          enabled: false,
+        });
+      });
+    });
+
+    it('shows an error when ardop_listen rejects', async () => {
+      const core = await import('@tauri-apps/api/core');
+      const invokeMock = core.invoke as ReturnType<typeof vi.fn>;
+      invokeMock.mockImplementation(async (cmd: string) => {
+        if (cmd === 'ardop_listen') {
+          throw new Error('ARDOP modem not running');
+        }
+        return defaultInvokeImpl(cmd);
+      });
+      render(<ArdopRadioPanel onClose={() => {}} />);
+      const armBtn = await screen.findByTestId('ardop-listen-arm-btn');
+      fireEvent.click(armBtn);
+      await waitFor(() => {
+        expect(screen.getByTestId('ardop-listen-error')).toHaveTextContent(
+          /ARDOP modem not running/,
+        );
+      });
+    });
+
+    it('Allow-any-peer toggle fires ardop_allowed_stations_set_allow_all', async () => {
+      const core = await import('@tauri-apps/api/core');
+      const invokeMock = core.invoke as ReturnType<typeof vi.fn>;
+      invokeMock.mockImplementation(defaultInvokeImpl);
+      render(<ArdopRadioPanel onClose={() => {}} />);
+      const expander = await screen.findByTestId('ardop-allowed-expander');
+      fireEvent.click(expander);
+      const toggle = await screen.findByTestId('ardop-allowed-allow-all-toggle');
+      fireEvent.click(toggle);
+      await waitFor(() => {
+        expect(invokeMock).toHaveBeenCalledWith(
+          'ardop_allowed_stations_set_allow_all',
+          { allow_all: false },
+        );
+      });
+    });
+
+    it('adding a callsign fires ardop_allowed_stations_add', async () => {
+      const core = await import('@tauri-apps/api/core');
+      const invokeMock = core.invoke as ReturnType<typeof vi.fn>;
+      invokeMock.mockImplementation(defaultInvokeImpl);
+      render(<ArdopRadioPanel onClose={() => {}} />);
+      const expander = await screen.findByTestId('ardop-allowed-expander');
+      fireEvent.click(expander);
+      const addBtn = await screen.findByTestId('ardop-allowed-callsign-add-btn');
+      fireEvent.click(addBtn);
+      const input = await screen.findByTestId('ardop-allowed-callsign-add-input');
+      fireEvent.change(input, { target: { value: 'w7rms' } });
+      fireEvent.keyDown(input, { key: 'Enter' });
+      await waitFor(() => {
+        expect(invokeMock).toHaveBeenCalledWith(
+          'ardop_allowed_stations_add',
+          { callsign: 'W7RMS' },
+        );
+      });
+    });
+
+    it('removing a callsign fires ardop_allowed_stations_remove', async () => {
+      const core = await import('@tauri-apps/api/core');
+      const invokeMock = core.invoke as ReturnType<typeof vi.fn>;
+      invokeMock.mockImplementation(async (cmd: string) => {
+        if (cmd === 'ardop_allowed_stations_get') {
+          return { allow_all: false, callsigns: ['W7RMS'] };
+        }
+        return defaultInvokeImpl(cmd);
+      });
+      render(<ArdopRadioPanel onClose={() => {}} />);
+      const expander = await screen.findByTestId('ardop-allowed-expander');
+      fireEvent.click(expander);
+      const removeBtn = await screen.findByTestId('ardop-allowed-callsign-remove-W7RMS');
+      fireEvent.click(removeBtn);
+      await waitFor(() => {
+        expect(invokeMock).toHaveBeenCalledWith(
+          'ardop_allowed_stations_remove',
+          { callsign: 'W7RMS' },
+        );
+      });
+    });
+
+    it('ARDOP allowed-stations editor does NOT render an IP row', async () => {
+      const core = await import('@tauri-apps/api/core');
+      (core.invoke as ReturnType<typeof vi.fn>).mockImplementation(defaultInvokeImpl);
+      render(<ArdopRadioPanel onClose={() => {}} />);
+      const expander = await screen.findByTestId('ardop-allowed-expander');
+      fireEvent.click(expander);
+      await waitFor(() =>
+        expect(screen.getByTestId('ardop-allowed-callsign-row')).toBeInTheDocument(),
+      );
+      expect(screen.queryByTestId('ardop-allowed-ip-row')).not.toBeInTheDocument();
+    });
+
+    it('Listen section does NOT render a Station Password expander', async () => {
+      render(<ArdopRadioPanel onClose={() => {}} />);
+      await screen.findByTestId('ardop-listen-section');
+      expect(screen.queryByTestId('ardop-station-pw-expander')).not.toBeInTheDocument();
+    });
+
+    it('Listen section does NOT render a Listener setup expander', async () => {
+      render(<ArdopRadioPanel onClose={() => {}} />);
+      await screen.findByTestId('ardop-listen-section');
+      expect(screen.queryByTestId('ardop-listen-setup-expander')).not.toBeInTheDocument();
     });
   });
 });

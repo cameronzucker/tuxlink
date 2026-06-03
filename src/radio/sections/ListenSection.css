@@ -1,0 +1,133 @@
+/* src/radio/sections/ListenSection.css
+ *
+ * Styles for the per-transport "Listen (Accept Inbound)" section that
+ * lives inside TelnetP2pRadioPanel / PacketRadioPanel / ArdopRadioPanel.
+ *
+ * Pattern source: docs/design/mockups/2026-06-03-listener-ui-mocks.html
+ * (Option A — collapsible details). The mock uses native <details>/
+ * <summary> elements wrapped in a `.expander` container, which gives
+ * us free a11y (Enter/Space, screen-reader semantics) and zero JS state.
+ *
+ * Token palette: re-uses the existing dark-theme primitives from App.css
+ * (--surface / --surface-2 / --bg / --border / --text-faint / --accent /
+ * --error). All theme presets in App.css cascade through automatically.
+ */
+
+/* The wrapping container around <details>. */
+.expander {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+/* <summary> styled as a clickable row with a chevron + an optional
+   count chip on the right. user-select:none keeps double-click from
+   selecting text instead of toggling. */
+.expander-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: var(--surface-2);
+  cursor: pointer;
+  font-size: 12px;
+  user-select: none;
+  color: var(--text, #cbd5e1);
+  list-style: none;
+}
+.expander-summary::-webkit-details-marker {
+  display: none;
+}
+.expander-summary::before {
+  content: '▶';
+  font-size: 9px;
+  color: var(--text-faint, #5d6975);
+  transition: transform 0.15s;
+}
+.expander[open] > .expander-summary::before {
+  transform: rotate(90deg);
+}
+
+/* Inner body — sits in the deeper --bg color so the open/closed
+   distinction reads at a glance. */
+.expander-body {
+  padding: 10px;
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border-top: 1px solid var(--border);
+}
+
+/* Count chip — right-aligned in the summary row, mono-typed so the
+   "8774 · loopback" / "2 callsigns · 1 IP" forms read as data. */
+.expander-count {
+  margin-left: auto;
+  color: var(--text-faint, #5d6975);
+  font-size: 11px;
+  font-family: var(--mono, monospace);
+}
+
+/* Status indicator for the armed listener — pill-shaped, lives next to
+   the Arm/Disarm button. Two variants: armed (good-colored bg) +
+   disarmed (faint). */
+.listen-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-family: var(--mono, monospace);
+  border: 1px solid;
+}
+.listen-status.armed {
+  background: rgba(93, 214, 160, 0.12);
+  color: var(--success, #5dd6a0);
+  border-color: rgba(93, 214, 160, 0.4);
+}
+.listen-status.disarmed {
+  background: transparent;
+  color: var(--text-faint, #5d6975);
+  border-color: var(--border, #1f2832);
+}
+
+/* Allow-any-peer toggle row — checkbox + label inline. */
+.listen-allow-all-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-dim, #94a0ad);
+}
+
+/* Inline chip-x close button used to remove individual callsign / IP
+   entries from a chip row. */
+.radio-panel-chip-x {
+  background: transparent;
+  border: 0;
+  color: var(--text-faint, #5d6975);
+  cursor: pointer;
+  margin-left: 4px;
+  padding: 0 2px;
+  font-size: 12px;
+}
+.radio-panel-chip-x:hover {
+  color: var(--error, #ee6b6b);
+}
+
+/* Dashed-border chip for the "+ add" affordance. */
+.radio-panel-chip-add {
+  border-style: dashed !important;
+}
+
+/* Help-text utility — the spec calls for description copy in several
+   places. Re-use the existing radio-panel-radio-help styling without
+   forcing the operator-confusing "radio-" prefix. */
+.radio-panel-help {
+  font-size: 11px;
+  color: var(--text-faint, #94a3b8);
+  line-height: 1.4;
+  margin: 0;
+}

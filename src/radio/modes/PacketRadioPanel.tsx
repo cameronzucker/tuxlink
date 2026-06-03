@@ -31,8 +31,11 @@ import { RadioPanel } from '../RadioPanel';
 import { SessionLogSection } from '../sections/SessionLogSection';
 import { useSessionLog } from '../sections/useSessionLog';
 import { ModemLinkSection, type ModemLinkFields } from '../sections/ModemLinkSection';
+import { AllowedStationsEditor } from '../sections/AllowedStationsEditor';
+import { useListenerState } from '../sections/useListenerState';
 import { effectiveCall, pathPreview, ssidOptions } from '../../packet/packetConfig';
 import type { PacketConfigDto } from '../../packet/packetTypes';
+import '../sections/ListenSection.css';
 
 export interface PacketRadioPanelProps {
   /** Session intent — governs whether Listen is shown.
@@ -56,6 +59,26 @@ export function PacketRadioPanel({ intent, baseCall, onClose }: PacketRadioPanel
   // packet_set_listen. Restored 2026-05-31 from legacy PacketConnectionPanel.
   const [listenDefault, setListenDefault] = useState<boolean>(true);
   const { entries: logEntries, clear: clearLog } = useSessionLog();
+
+  // Packet listener allowlist plumbing (spec §1.3). Packet has no
+  // IP-pattern layer (AX.25 isn't IP-routed); we pass undefined for
+  // IP handlers so the AllowedStationsEditor hides that row entirely.
+  // The Packet `*_set_allow_all` arg-key is `allow_all` (snake-case,
+  // matches the backend handler signature in packet_commands.rs); the
+  // add/remove handlers take `callsign`.
+  const packetListener = useListenerState({
+    commands: {
+      listen: 'packet_listen',
+      setListen: 'packet_set_listen',
+      allowedGet: 'packet_allowed_stations_get',
+      allowedAddCallsign: 'packet_allowed_stations_add',
+      allowedAddCallsignArgKey: 'callsign',
+      allowedRemoveCallsign: 'packet_allowed_stations_remove',
+      allowedRemoveCallsignArgKey: 'callsign',
+      allowedSetAllowAll: 'packet_allowed_stations_set_allow_all',
+      allowedSetAllowAllArgKey: 'allow_all',
+    },
+  });
 
   // Load packet config on mount. If packet_config_get rejects (pre-wizard)
   // we leave config=null and the panel renders with fallback defaults; any
@@ -248,6 +271,36 @@ export function PacketRadioPanel({ intent, baseCall, onClose }: PacketRadioPanel
             />
             Auto-arm Listen at startup
           </label>
+
+          {/* Allowed stations expander — spec §1.3. AX.25 has no IP
+              layer, so the editor's IP row is hidden. The summary's
+              count chip surfaces the current list shape so the
+              operator can see whether they have a curated allowlist
+              without expanding the accordion. */}
+          <details className="expander" data-testid="packet-allowed-expander">
+            <summary className="expander-summary">
+              Allowed stations
+              <span
+                className="expander-count"
+                data-testid="packet-allowed-count"
+              >
+                {packetListener.allowed.allowAll
+                  ? 'allow any'
+                  : packetListener.allowed.callsigns.length === 0
+                  ? 'restrict to none'
+                  : `${packetListener.allowed.callsigns.length} callsign${packetListener.allowed.callsigns.length === 1 ? '' : 's'}`}
+              </span>
+            </summary>
+            <AllowedStationsEditor
+              allowAll={packetListener.allowed.allowAll}
+              callsigns={packetListener.allowed.callsigns}
+              helpText="Inbound peers whose AX.25 source callsign matches the list are admitted. AX.25 has no IP layer, so callsign matching is the only application-layer gate."
+              onSetAllowAll={packetListener.setAllowAll}
+              onAddCallsign={packetListener.addCallsign}
+              onRemoveCallsign={packetListener.removeCallsign}
+              testIdPrefix="packet-allowed"
+            />
+          </details>
         </section>
       )}
 

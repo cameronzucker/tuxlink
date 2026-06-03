@@ -39,7 +39,11 @@ import { useConsent } from '../../modem/useConsent';
 import { ConsentModal } from '../../modem/ConsentModal';
 import type { ModemState, ModemStatus } from '../../modem/types';
 import type { ArdopFrameType } from '../charts/FrameRibbon';
+import { AllowedStationsEditor } from '../sections/AllowedStationsEditor';
+import { ListenArmButton } from '../sections/ListenArmButton';
+import { useListenerState } from '../sections/useListenerState';
 import './ArdopRadioPanel.css';
+import '../sections/ListenSection.css';
 
 export interface ArdopRadioPanelProps {
   onClose: () => void;
@@ -285,6 +289,24 @@ export function ArdopRadioPanel({ onClose }: ArdopRadioPanelProps) {
   const [exchanging, setExchanging] = useState(false);
 
   const { entries: logEntries, clear: clearLog } = useSessionLog();
+
+  // ARDOP listener arms + allowlist plumbing (spec §1.3). ARDOP has no
+  // station-password layer (per ardop-p2p.md divergence 2) so the
+  // panel does NOT render the password expander. The set-allow-all
+  // arg-key is `allow_all` (snake_case to match the backend handler).
+  const ardopListener = useListenerState({
+    commands: {
+      listen: 'ardop_listen',
+      setListen: 'ardop_set_listen',
+      allowedGet: 'ardop_allowed_stations_get',
+      allowedAddCallsign: 'ardop_allowed_stations_add',
+      allowedAddCallsignArgKey: 'callsign',
+      allowedRemoveCallsign: 'ardop_allowed_stations_remove',
+      allowedRemoveCallsignArgKey: 'callsign',
+      allowedSetAllowAll: 'ardop_allowed_stations_set_allow_all',
+      allowedSetAllowAllArgKey: 'allow_all',
+    },
+  });
 
   // Rolling 60-sample buffers (1 Hz tick) for the S/N + throughput
   // sparklines. The hook reads the latest reading out of a ref every
@@ -910,6 +932,55 @@ Up     ${fmtUptime(status.uptimeSec)}`}
         recentFrames={frameHistory}
         snrCurrent={status.snDb}
       />
+
+      {/* Listen (Accept Inbound) — spec §1.3. ARDOP modem TCP host/port
+          already lives in the Radio section above, so this section does
+          NOT carry a Listener-setup expander. ARDOP also has no
+          station-password layer (ardop-p2p.md divergence 2), so no
+          Station Password expander either — the allowlist is the only
+          application-layer gate. */}
+      <section className="radio-panel-sec" data-testid="ardop-listen-section">
+        <h5>Listen (Accept Inbound)</h5>
+        <ListenArmButton
+          armed={ardopListener.armed}
+          minutesRemaining={ardopListener.minutesRemaining}
+          busy={ardopListener.busy}
+          helpText="Accepts inbound ARDOP P2P sessions until disarmed or the TTL expires. The modem must be running before arming the listener."
+          onArm={ardopListener.arm}
+          onDisarm={ardopListener.disarm}
+          testIdPrefix="ardop-listen"
+        />
+        {ardopListener.error && (
+          <p
+            className="radio-panel-radio-help"
+            data-testid="ardop-listen-error"
+            style={{ color: 'var(--error, #f87171)' }}
+          >
+            {ardopListener.error}
+          </p>
+        )}
+        <details className="expander" data-testid="ardop-allowed-expander">
+          <summary className="expander-summary">
+            Allowed stations
+            <span className="expander-count" data-testid="ardop-allowed-count">
+              {ardopListener.allowed.allowAll
+                ? 'allow any'
+                : ardopListener.allowed.callsigns.length === 0
+                ? 'restrict to none'
+                : `${ardopListener.allowed.callsigns.length} callsign${ardopListener.allowed.callsigns.length === 1 ? '' : 's'}`}
+            </span>
+          </summary>
+          <AllowedStationsEditor
+            allowAll={ardopListener.allowed.allowAll}
+            callsigns={ardopListener.allowed.callsigns}
+            helpText="ARDOP has no station-password layer — the callsign allowlist is the only application-layer gate."
+            onSetAllowAll={ardopListener.setAllowAll}
+            onAddCallsign={ardopListener.addCallsign}
+            onRemoveCallsign={ardopListener.removeCallsign}
+            testIdPrefix="ardop-allowed"
+          />
+        </details>
+      </section>
 
       <SessionLogSection entries={logEntries} onClear={clearLog} />
 
