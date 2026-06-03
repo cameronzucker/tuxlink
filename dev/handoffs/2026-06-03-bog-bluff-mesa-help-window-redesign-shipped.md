@@ -13,9 +13,18 @@
 
 ```
 1. Read THIS handoff first. §3 covers PR #312 state + smoke gate.
-2. The main checkout is STILL mid-rebase on task-amd-main-ui (same state
-   as the 2026-06-03 pika-cedar-tanager handoff start; this session did
-   NOT touch the rebase). Operator decides when to continue or abort it.
+2. Main checkout state (CORRECTED late-session, see §6):
+   - NOT mid-rebase. The rebase from session start resolved between
+     start and end (by operator or another concurrent session — not
+     by this agent). Verify with `git -C /home/administrator/Code/tuxlink
+     status` at session start.
+   - HEAD is on task-amd-main-ui (a feature branch). Operator decides
+     whether that branch still needs work.
+   - Local `main` branch is ~135 PRs behind origin/main. Operator-side
+     hygiene — not blocking PR review or merge. `git -C
+     /home/administrator/Code/tuxlink fetch origin && git -C
+     /home/administrator/Code/tuxlink branch -f main origin/main`
+     (without checking out) would resync.
 3. PR #312 status decides what happens next:
    - If merged: dispose this worktree per ADR 0009 (commands in §4).
    - If not yet merged: leave the worktree alone; smoke gate is still
