@@ -39,6 +39,7 @@
 pub mod allowed_stations;
 pub mod arms_record;
 pub mod decide;
+pub mod packet_gate;
 pub mod peer;
 pub mod station_password;
 pub mod transport;

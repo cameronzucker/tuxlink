@@ -2,7 +2,7 @@ import { useEffect, useState, lazy, Suspense } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { invoke } from '@tauri-apps/api/core';
 import { AppShell } from './shell/AppShell';
-import { parseComposeRoute } from './routing';
+import { parseComposeRoute, parseHelpRoute } from './routing';
 import './App.css';
 
 // tuxlink-perf-coldstart: lazy-load the first-run wizard and the compose-webview
@@ -15,6 +15,11 @@ const Wizard = lazy(() =>
 );
 const Compose = lazy(() =>
   import('./compose/Compose').then((m) => ({ default: m.Compose })),
+);
+// tuxlink-0gsy: separate Tauri webview for Help → Documentation. Same lazy
+// pattern as compose to keep it off the main window's cold-start critical path.
+const HelpView = lazy(() =>
+  import('./help/HelpView').then((m) => ({ default: m.HelpView })),
 );
 
 // One QueryClient for the app lifetime. Mailbox/status queries live under it
@@ -35,15 +40,18 @@ export default function App() {
   // webview's lifetime (hooks below run unconditionally regardless).
   const composeDraftId = parseComposeRoute(window.location.pathname);
   const isComposeWindow = composeDraftId !== null;
+  // tuxlink-0gsy: help webview branch — single-instance, no params (spec §4.1).
+  const isHelpWindow = parseHelpRoute(window.location.pathname);
 
   // Wizard-completed probe — only meaningful for the main window. Skipped for
-  // compose windows (which render <Compose> below regardless).
+  // compose windows (which render <Compose> below regardless) and help windows
+  // (which render <HelpView> below regardless).
   useEffect(() => {
-    if (isComposeWindow) return;
+    if (isComposeWindow || isHelpWindow) return;
     invoke<boolean>('get_wizard_completed')
       .then(setWizardCompleted)
       .catch(() => setWizardCompleted(false));
-  }, [isComposeWindow]);
+  }, [isComposeWindow, isHelpWindow]);
 
   // Compose webview: render the compose form for its draft id and nothing else
   // (no wizard probe, no shell). Spec §5.4. Lazy-loaded — Suspense fallback is
@@ -53,6 +61,16 @@ export default function App() {
     return (
       <Suspense fallback={<div data-testid="app-loading" />}>
         <Compose draftId={composeDraftId as string} />
+      </Suspense>
+    );
+  }
+
+  // Help webview: render <HelpView> for /help. Same lazy + Suspense pattern.
+  // Spec §4.1.
+  if (isHelpWindow) {
+    return (
+      <Suspense fallback={<div data-testid="app-loading" />}>
+        <HelpView />
       </Suspense>
     );
   }

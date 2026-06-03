@@ -471,3 +471,18 @@ mod rebuild_tests {
         assert_eq!(svc.index.lock().unwrap().count().unwrap(), 3);
     }
 }
+
+/// User-guide search command (tuxlink-0gsy / spec §9.3). Frontend
+/// (useHelpSearch) debounces; this command is a thin forward to the
+/// underlying Index::search_docs path.
+#[tauri::command]
+pub fn docs_search(
+    svc: tauri::State<SearchService>,
+    query: String,
+) -> Result<Vec<crate::search::docs_index::DocsHit>, String> {
+    svc.index
+        .lock()
+        .unwrap()
+        .search_docs(&query)
+        .map_err(|e| e.to_string())
+}

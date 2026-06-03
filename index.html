@@ -70,7 +70,11 @@
       html[data-theme='daylight'] { background: #f4f6f9; }
       html[data-theme='high-contrast-light'] { background: #ffffff; }
       html[data-theme='paper'] { background: #f5efe0; }
-      /* Custom theme bg comes from inline --bg on <html> via the boot script. */
+      /* tuxlink-01vd: custom themes need an explicit rule that reads the
+       * inline `--bg` token the boot script set on <html>. Without this rule
+       * the default `html { background: #0d1318; }` wins and custom-theme
+       * users flash default-dark before App.css streams in. */
+      html[data-theme='custom'] { background: var(--bg, #0d1318); }
 
       body { margin: 0; min-height: 100vh; }
 

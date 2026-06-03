@@ -40,3 +40,13 @@ export function newDraftId(): string {
   const rand = Math.random().toString(36).slice(2, 8);
   return `draft-${ts}-${rand}`;
 }
+
+/**
+ * If `pathname` is the help route (`/help` or `/help/`), return true.
+ * The help window is single-instance with no parameters (tuxlink-0gsy /
+ * spec §4.1) — boolean is sufficient; no equivalent to parseComposeRoute's
+ * id return.
+ */
+export function parseHelpRoute(pathname: string): boolean {
+  return pathname === '/help' || pathname === '/help/';
+}

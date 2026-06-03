@@ -54,9 +54,6 @@ const ThemeDesigner = lazy(() =>
 const AboutDialog = lazy(() =>
   import('./AboutDialog').then((m) => ({ default: m.AboutDialog })),
 );
-const HelpPanel = lazy(() =>
-  import('./HelpPanel').then((m) => ({ default: m.HelpPanel })),
-);
 const CatalogRequestPanel = lazy(() =>
   import('../catalog/CatalogRequestPanel').then((m) => ({ default: m.CatalogRequestPanel })),
 );
@@ -86,19 +83,38 @@ import { effectiveCall } from '../packet/packetConfig';
 import { derivePacketUiState, type PacketUiState } from '../packet/packetStatus';
 import { usePacketConfig } from '../packet/usePacketConfig';
 import { isBuilt } from '../connections/sessionTypes';
-import { TelnetRadioPanel } from '../radio/modes/TelnetRadioPanel';
-import { TelnetP2pRadioPanel } from '../radio/modes/TelnetP2pRadioPanel';
-import { PacketRadioPanel } from '../radio/modes/PacketRadioPanel';
-import { ArdopRadioPanel } from '../radio/modes/ArdopRadioPanel';
-import { VaraRadioPanel } from '../radio/modes/VaraRadioPanel';
 import { StubPanel } from '../connections/StubPanel';
 import { SearchBar } from '../search/SearchBar';
-import { SearchDropdown } from '../search/SearchDropdown';
 import { deparseQuery } from '../search/parseQuery';
-import { SavedSearchesPanel } from '../search/SavedSearchesPanel';
+
+// tuxlink-twym: lazy-load the five real radio panels + the two search
+// overlays. All seven are conditionally mounted (mode-switch / dropdown
+// open / saved-search panel open), so React.lazy + Suspense with the
+// existing call-site gate is a free win — chunks only fetch on first open.
+const TelnetRadioPanel = lazy(() =>
+  import('../radio/modes/TelnetRadioPanel').then((m) => ({ default: m.TelnetRadioPanel })),
+);
+const TelnetP2pRadioPanel = lazy(() =>
+  import('../radio/modes/TelnetP2pRadioPanel').then((m) => ({ default: m.TelnetP2pRadioPanel })),
+);
+const PacketRadioPanel = lazy(() =>
+  import('../radio/modes/PacketRadioPanel').then((m) => ({ default: m.PacketRadioPanel })),
+);
+const ArdopRadioPanel = lazy(() =>
+  import('../radio/modes/ArdopRadioPanel').then((m) => ({ default: m.ArdopRadioPanel })),
+);
+const VaraRadioPanel = lazy(() =>
+  import('../radio/modes/VaraRadioPanel').then((m) => ({ default: m.VaraRadioPanel })),
+);
+const SearchDropdown = lazy(() =>
+  import('../search/SearchDropdown').then((m) => ({ default: m.SearchDropdown })),
+);
+const SavedSearchesPanel = lazy(() =>
+  import('../search/SavedSearchesPanel').then((m) => ({ default: m.SavedSearchesPanel })),
+);
 import { useSearch } from '../search/useSearch';
 import { useSavedSearches } from '../search/useSavedSearches';
-import { useModemStatus } from '../modem/useModemStatus';
+import { useModemIsActive } from '../modem/useModemStatus';
 import { computePanelMode } from '../radio/radioPanelVisibility';
 import type { RadioPanelMode } from '../radio/types';
 import { PlaceholderRadioPanel } from '../radio/modes/PlaceholderRadioPanel';
@@ -210,9 +226,10 @@ export function AppShell() {
   // Inline theme designer overlay (tuxlink-vgth), opened from View → Color
   // Scheme → Customize…. Same backdrop pattern as SettingsPanel.
   const [themeDesignerOpen, setThemeDesignerOpen] = useState(false);
-  // Inline About + Help overlays (tuxlink-35g0), opened from the Help menu.
+  // Inline About overlay (tuxlink-35g0), opened from the Help menu.
+  // Help → Documentation now opens a separate Tauri webview window via
+  // help_window_open (tuxlink-0gsy / spec §4); no in-process state.
   const [aboutOpen, setAboutOpen] = useState(false);
-  const [helpOpen, setHelpOpen] = useState(false);
   // Inline Catalog Request panel (tuxlink-ddiq), opened from Message →
   // Catalog Request. Picks WLE catalog inquiries and queues a request
   // message in the outbox routed to INQUIRY@winlink.org.
@@ -314,12 +331,17 @@ export function AppShell() {
   // tuxlink-su2h (PR #219) but its count never made it into this object, so the
   // sidebar showed no badge while the status bar showed the same number — same
   // source data, two surfaces, only one rendered.
-  const counts: Partial<Record<MailboxFolder, number>> = {
-    inbox: inbox.messages.filter((m) => m.unread).length,
-    outbox: outbox.messages.length,
-    sent: sent.messages.length,
-    archive: archive.messages.length,
-  };
+  // tuxlink-sndh: memoize so the sidebar's Folder rows don't re-render
+  // every time AppShell does. Inputs are stable across non-mailbox renders.
+  const counts: Partial<Record<MailboxFolder, number>> = useMemo(
+    () => ({
+      inbox: inbox.messages.filter((m) => m.unread).length,
+      outbox: outbox.messages.length,
+      sent: sent.messages.length,
+      archive: archive.messages.length,
+    }),
+    [inbox.messages, outbox.messages, sent.messages, archive.messages],
+  );
 
   // Status data (callsign / grid / connection) — single poll, shared by the
   // dashboard ribbon, the status bar, and the window title.
@@ -341,17 +363,22 @@ export function AppShell() {
   //     "use the modem dock on the right" message points at nothing and the
   //     operator can't spawn the modem at all — tuxlink-mnk4), OR
   //   - when the View → Toggle Radio Panel pin is on (Ctrl+Shift+M).
-  const { status: modemStatus } = useModemStatus();
+  // tuxlink-sndh: use the focused `useModemIsActive()` selector instead of
+  // the full `useModemStatus()` to avoid re-rendering the entire shell every
+  // 250ms when the Rust modem broadcaster ticks. AppShell only needs to know
+  // whether the modem is in any active state; the live-meter panels keep
+  // using the full hook for their sparklines.
+  const modemIsActive = useModemIsActive();
   // Spec §3.3 visibility rule. computePanelMode applies the OR of
   // (sidebar selection, active modem, pinned toggle) and returns the mode
   // to display, or null when the panel should not mount.
   // In v1, only the ARDOP modem exists; when it's running, the active
   // context is Ardop Winlink. Multi-modem coordination is out of scope
   // per spec §8.
-  const activeModem: RadioPanelMode | null =
-    modemStatus.state !== 'stopped'
-      ? { kind: 'ardop-hf', intent: 'cms' }
-      : null;
+  const activeModem: RadioPanelMode | null = useMemo(
+    () => (modemIsActive ? { kind: 'ardop-hf', intent: 'cms' } : null),
+    [modemIsActive],
+  );
 
   const radioPanelMode = computePanelMode({
     sidebarSelected: selectedConnection,
@@ -495,6 +522,13 @@ export function AppShell() {
     replyAll: () => { if (openMessage) void openReplyWindow(openMessage, 'replyAll').catch(() => {}); },
     forward: () => { if (openMessage) void openReplyWindow(openMessage, 'forward').catch(() => {}); },
     archive: () => { void archiveOpen(); },
+    // tuxlink-j0m3: fire the webview's native print dialog when a message
+    // is open. No-op otherwise — Ctrl+P on an empty reading pane would
+    // print the bare chrome and is rarely useful. The print stylesheet
+    // (which drops the dashboard/sidebar/statusbar from the printed page)
+    // is a follow-up; the unstyled output is still readable for the
+    // "save this message" use case.
+    print: () => { if (openMessage) window.print(); },
     toggleStatusBar: () => setShowStatusBar((s) => !s),
     toggleRadioPanel: () => setPinRadioPanel((s) => !s),
     selectFolder: (folder) => { setSelectedFolder(folder); setSelectedMessage(null); setSelectedConnection(null); },
@@ -502,7 +536,17 @@ export function AppShell() {
     openSettings: () => setSettingsOpen(true),
     openThemeDesigner: () => setThemeDesignerOpen(true),
     openAbout: () => setAboutOpen(true),
-    openHelp: () => setHelpOpen(true),
+    // tuxlink-0gsy / spec §4.1: Help → Documentation opens the separate
+    // Tauri webview at /help instead of the old inline modal. The command
+    // is idempotent (single-instance — re-clicks focus the existing window).
+    openHelp: () => {
+      void invoke('help_window_open').catch((err) => {
+        // The Help menu item should never become a no-op; log so an
+        // unexpected runtime failure surfaces in the operator's console
+        // rather than miss silently.
+        console.error('help_window_open failed:', err);
+      });
+    },
     reportIssue: () => {
       // tuxlink-35g0: open the project's GitHub issue tracker in the
       // operator's default browser. The URL is hard-coded — the source
@@ -606,22 +650,24 @@ export function AppShell() {
             metaText={metaText}
           />
           {dropdownOpen && (
-            <SearchDropdown
-              saved={saved.saved}
-              recent={saved.recent}
-              activeSavedId={search.activeSaved?.id ?? null}
-              onRunSaved={(s) => { search.setActiveSavedSearch(s); setDropdownOpen(false); }}
-              onRunRecent={(r) => { search.setRawText(deparseQuery(r.spec)); setDropdownOpen(false); }}
-              onPromoteRecent={async (r, name) => {
-                // Codex adrev fix (find-messages P2): use promote_recent so the
-                // recent entry is removed atomically — avoids duplicate in dropdown.
-                await saved.promoteRecent(name, r.spec);
-              }}
-              onUnsaveActive={async () => { if (search.activeSaved) await saved.unsave(search.activeSaved.id); }}
-              onManage={() => { setSavedSearchesOpen(true); setDropdownOpen(false); }}
-              onClose={() => setDropdownOpen(false)}
-              onClearRecent={() => { void saved.clearRecent(); }}
-            />
+            <Suspense fallback={null}>
+              <SearchDropdown
+                saved={saved.saved}
+                recent={saved.recent}
+                activeSavedId={search.activeSaved?.id ?? null}
+                onRunSaved={(s) => { search.setActiveSavedSearch(s); setDropdownOpen(false); }}
+                onRunRecent={(r) => { search.setRawText(deparseQuery(r.spec)); setDropdownOpen(false); }}
+                onPromoteRecent={async (r, name) => {
+                  // Codex adrev fix (find-messages P2): use promote_recent so the
+                  // recent entry is removed atomically — avoids duplicate in dropdown.
+                  await saved.promoteRecent(name, r.spec);
+                }}
+                onUnsaveActive={async () => { if (search.activeSaved) await saved.unsave(search.activeSaved.id); }}
+                onManage={() => { setSavedSearchesOpen(true); setDropdownOpen(false); }}
+                onClose={() => setDropdownOpen(false)}
+                onClearRecent={() => { void saved.clearRecent(); }}
+              />
+            </Suspense>
           )}
         </div>
         <DashboardRibbon
@@ -703,11 +749,12 @@ export function AppShell() {
             // pattern as Telnet CMS (P2) and Packet P2P (P3).
             return <MessageView selectedMessage={selectedMessage} onArchive={onArchiveMessage} userFolders={userFolders} onMove={moveOpen} />;
           }
-          if (sessionType === 'cms' && (protocol === 'vara-hf' || protocol === 'vara-fm')) {
-            // tuxlink-dfmf Phase 2: VaraRadioPanel owns the VARA dial UI
-            // in the right panel; reading pane falls back to mail (same
-            // pattern as Telnet/Packet/ARDOP). Phase 2 surfaces TCP
-            // transport + config; RF CONNECT arrives in Phase 3.
+          if (protocol === 'vara-hf' || protocol === 'vara-fm') {
+            // tuxlink-dfmf Phase 2 + tuxlink-kb3s: VaraRadioPanel owns the
+            // VARA dial UI in the right panel under either CMS or P2P
+            // intent; reading pane falls back to mail (same pattern as
+            // Telnet/Packet/ARDOP). Phase 2 surfaces TCP transport +
+            // config; RF CONNECT arrives in Phase 3.
             return <MessageView selectedMessage={selectedMessage} onArchive={onArchiveMessage} userFolders={userFolders} onMove={moveOpen} />;
           }
           // Built but unhandled — defensive stub
@@ -720,48 +767,58 @@ export function AppShell() {
             for ARDOP HF is GONE — the ArdopRadioPanel covers the full
             dial-and-live-state surface on its own. */}
         {radioPanelMode && radioPanelMode.kind === 'telnet' && radioPanelMode.intent === 'cms' && (
-          <TelnetRadioPanel
-            onClose={() => {
-              setSelectedConnection(null);
-              setPinRadioPanel(false);
-            }}
-          />
-        )}
-        {radioPanelMode && radioPanelMode.kind === 'telnet' && radioPanelMode.intent === 'p2p' && (
-          <TelnetP2pRadioPanel
-            onClose={() => {
-              setSelectedConnection(null);
-              setPinRadioPanel(false);
-            }}
-          />
-        )}
-        {radioPanelMode && radioPanelMode.kind === 'packet' && (
-          <PacketRadioPanel
-            intent={radioPanelMode.intent}
-            baseCall={statusData.callsign}
-            onClose={() => {
-              setSelectedConnection(null);
-              setPinRadioPanel(false);
-            }}
-          />
-        )}
-        {radioPanelMode && radioPanelMode.kind === 'ardop-hf' && (
-          <ArdopRadioPanel
-            onClose={() => {
-              setSelectedConnection(null);
-              setPinRadioPanel(false);
-            }}
-          />
-        )}
-        {radioPanelMode &&
-          (radioPanelMode.kind === 'vara-hf' || radioPanelMode.kind === 'vara-fm') && (
-            <VaraRadioPanel
-              mode={radioPanelMode}
+          <Suspense fallback={null}>
+            <TelnetRadioPanel
               onClose={() => {
                 setSelectedConnection(null);
                 setPinRadioPanel(false);
               }}
             />
+          </Suspense>
+        )}
+        {radioPanelMode && radioPanelMode.kind === 'telnet' && radioPanelMode.intent === 'p2p' && (
+          <Suspense fallback={null}>
+            <TelnetP2pRadioPanel
+              onClose={() => {
+                setSelectedConnection(null);
+                setPinRadioPanel(false);
+              }}
+            />
+          </Suspense>
+        )}
+        {radioPanelMode && radioPanelMode.kind === 'packet' && (
+          <Suspense fallback={null}>
+            <PacketRadioPanel
+              intent={radioPanelMode.intent}
+              baseCall={statusData.callsign}
+              onClose={() => {
+                setSelectedConnection(null);
+                setPinRadioPanel(false);
+              }}
+            />
+          </Suspense>
+        )}
+        {radioPanelMode && radioPanelMode.kind === 'ardop-hf' && (
+          <Suspense fallback={null}>
+            <ArdopRadioPanel
+              onClose={() => {
+                setSelectedConnection(null);
+                setPinRadioPanel(false);
+              }}
+            />
+          </Suspense>
+        )}
+        {radioPanelMode &&
+          (radioPanelMode.kind === 'vara-hf' || radioPanelMode.kind === 'vara-fm') && (
+            <Suspense fallback={null}>
+              <VaraRadioPanel
+                mode={radioPanelMode}
+                onClose={() => {
+                  setSelectedConnection(null);
+                  setPinRadioPanel(false);
+                }}
+              />
+            </Suspense>
           )}
         {radioPanelMode &&
           radioPanelMode.kind !== 'telnet' &&
@@ -805,12 +862,6 @@ export function AppShell() {
       {aboutOpen && (
         <Suspense fallback={null}>
           <AboutDialog open={true} onClose={() => setAboutOpen(false)} />
-        </Suspense>
-      )}
-
-      {helpOpen && (
-        <Suspense fallback={null}>
-          <HelpPanel open={true} onClose={() => setHelpOpen(false)} />
         </Suspense>
       )}
 
@@ -880,7 +931,9 @@ export function AppShell() {
       )}
 
       {savedSearchesOpen && (
-        <SavedSearchesPanel onClose={() => setSavedSearchesOpen(false)} />
+        <Suspense fallback={null}>
+          <SavedSearchesPanel onClose={() => setSavedSearchesOpen(false)} />
+        </Suspense>
       )}
     </div>
   );

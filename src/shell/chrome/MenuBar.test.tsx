@@ -47,8 +47,8 @@ describe('MenuBar', () => {
   // tuxlink-dpf: the not-yet-wired dispatchMenuAction targets used to render
   // as ordinary enabled buttons that silently no-op'd on click. They now
   // match the Tools/Templates convention (disabled + "soon" badge).
+  // Print was on this list until tuxlink-j0m3 wired the handler.
   it.each([
-    { menu: 'Message', item: 'Print' },
     { menu: 'Session', item: 'Disconnect' },
     { menu: 'Session', item: 'Session Log' },
     { menu: 'Session', item: 'Verify CMS Connection' },
@@ -61,5 +61,17 @@ describe('MenuBar', () => {
     expect(button).toBeDisabled();
     fireEvent.click(button);
     expect(onAction).not.toHaveBeenCalled();
+  });
+
+  // tuxlink-j0m3: Print is wired — enabled, fires the action id. The
+  // open-message gate lives in the handler (AppShell), not the menu.
+  it('Message → Print is enabled and fires menu:message:print', () => {
+    const onAction = vi.fn();
+    render(<MenuBar onAction={onAction} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Message' }));
+    const print = screen.getByRole('button', { name: /Print/ });
+    expect(print).not.toBeDisabled();
+    fireEvent.click(print);
+    expect(onAction).toHaveBeenCalledWith('menu:message:print');
   });
 });

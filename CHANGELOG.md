@@ -4,6 +4,48 @@ All notable changes to Tuxlink are documented here.
 
 This project adheres to [Semantic Versioning](https://semver.org) with project-specific rules described in [VERSIONING.md](VERSIONING.md). Entries from `v0.0.2` onward are generated automatically by [`release-please`](https://github.com/googleapis/release-please) from [Conventional Commits](https://www.conventionalcommits.org).
 
+## [0.23.2](https://github.com/cameronzucker/tuxlink/compare/v0.23.1...v0.23.2) (2026-06-03)
+
+
+### Performance
+
+* **shell:** memoize useStatusData + React.memo ribbon + status bar (tuxlink-djnl) ([d218856](https://github.com/cameronzucker/tuxlink/commit/d2188566fe781266181869c6f8ff97ac114b9af1))
+
+## [0.23.1](https://github.com/cameronzucker/tuxlink/compare/v0.23.0...v0.23.1) (2026-06-03)
+
+
+### Performance
+
+* **shell:** lazy-load 5 radio panels + 2 search overlays (tuxlink-twym) ([f8e932b](https://github.com/cameronzucker/tuxlink/commit/f8e932b8b326536e50929520e489e3cabf7de4bd))
+
+## [0.23.0](https://github.com/cameronzucker/tuxlink/compare/v0.22.1...v0.23.0) (2026-06-03)
+
+
+### Features
+
+* **menu:** wire menu:message:print (Ctrl+P) — tuxlink-j0m3 ([d6a47ae](https://github.com/cameronzucker/tuxlink/commit/d6a47aea376a59894058f576578b61d71356d6fa))
+
+## [0.22.1](https://github.com/cameronzucker/tuxlink/compare/v0.22.0...v0.22.1) (2026-06-03)
+
+
+### Performance
+
+* **shell:** kill 4Hz render storm + memoize message rows + scope clock tick (tuxlink-sndh) ([080e879](https://github.com/cameronzucker/tuxlink/commit/080e879b6aa242324f6e7a3d2846366616280e18))
+
+## [0.22.0](https://github.com/cameronzucker/tuxlink/compare/v0.21.0...v0.22.0) (2026-06-03)
+
+
+### Features
+
+* **connections:** wire P2P-VARA HF/FM in the sidebar (tuxlink-kb3s) ([2935590](https://github.com/cameronzucker/tuxlink/commit/2935590541ab0bae014d8aa12ff516e61b2e3b2e))
+
+## [0.21.0](https://github.com/cameronzucker/tuxlink/compare/v0.20.1...v0.21.0) (2026-06-03)
+
+
+### Features
+
+* **winlink/listener:** shared listener-arms foundation (tuxlink-3o2o) ([ed3de34](https://github.com/cameronzucker/tuxlink/commit/ed3de34eb19d268f37a831e5595bb22611934086))
+
 ## [0.20.1](https://github.com/cameronzucker/tuxlink/compare/v0.20.0...v0.20.1) (2026-06-03)
 
 
