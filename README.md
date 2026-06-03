@@ -25,11 +25,12 @@ application that implements the Winlink B2F protocol directly.
 > Anything below `v1.0` remains incomplete, breakable, and unsuitable for
 > production or emergency-communications use.
 >
-> No installable artifacts exist. Running Tuxlink today requires building
-> from source in a Tauri development environment on a developer machine
-> with the full toolchain. The UI remains in active flux; the screenshots
-> and mockups below may depict surfaces that are out-of-date,
-> partially-implemented, or under active redesign.
+> No installable artifacts exist. Running Tuxlink today requires
+> [building from source](docs/development.md) in a Tauri development
+> environment on a developer machine with the full toolchain. The UI
+> remains in active flux; the screenshots and mockups below may depict
+> surfaces that are out-of-date, partially-implemented, or under
+> active redesign.
 >
 > Feature claims describe what has working code paths. They do not imply
 > the integrated product is ready to operate. **Do not rely on Tuxlink
