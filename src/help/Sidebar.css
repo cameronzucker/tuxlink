@@ -65,3 +65,91 @@
 .tux-help-sb-name {
   flex: 1;
 }
+
+/* Search box (spec §9.4). */
+.tux-help-sb-search {
+  position: relative;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.tux-help-sb-search-input {
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  padding: 10px 32px 10px 12px;
+  min-height: 44px;
+  font-size: 14px;
+  color: var(--text);
+  font-family: var(--sans);
+  outline: none;
+}
+.tux-help-sb-search-input::placeholder { color: var(--text-faint); }
+.tux-help-sb-search-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent-soft);
+}
+.tux-help-sb-search-clear {
+  position: absolute;
+  right: 20px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: transparent;
+  border: none;
+  color: var(--text-faint);
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 4px;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.tux-help-sb-search-clear:hover { color: var(--text); }
+
+/* Hit list (spec §9.4). */
+.tux-help-sb-hits {
+  display: flex;
+  flex-direction: column;
+}
+.tux-help-sb-status {
+  padding: 14px 16px;
+  font-size: 13px;
+  color: var(--text-dim);
+  font-style: italic;
+}
+.tux-help-sb-hit {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 14px;
+  min-height: 44px;
+  border-left: 3px solid transparent;
+  color: var(--text);
+  text-decoration: none;
+  cursor: pointer;
+}
+.tux-help-sb-hit:hover { background: rgba(245, 159, 60, 0.04); }
+.tux-help-sb-hit.active {
+  background: var(--accent-soft);
+  border-left-color: var(--accent);
+}
+.tux-help-sb-hit-title {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text);
+}
+.tux-help-sb-hit.active .tux-help-sb-hit-title { color: var(--accent); }
+.tux-help-sb-hit-snippet {
+  font-size: 12px;
+  color: var(--text-dim);
+  line-height: 1.4;
+}
+.tux-help-sb-hit-snippet mark {
+  background: var(--accent-soft);
+  color: var(--accent);
+  padding: 0 2px;
+  border-radius: 2px;
+}

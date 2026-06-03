@@ -5,6 +5,7 @@ import { TextSizeDropdown } from './TextSizeDropdown';
 import { TOPICS, getTopicBySlug } from './topics';
 import { useFontSize, stepFontSize, DEFAULT_FONT_PRESET } from './useFontSize';
 import { useHelpTheme } from './useHelpTheme';
+import { useHelpSearch } from './useHelpSearch';
 import './HelpView.css';
 
 const DEFAULT_SLUG = '01-getting-started';
@@ -13,15 +14,14 @@ const DEFAULT_SLUG = '01-getting-started';
  * HelpView — root component mounted at /help in a separate Tauri webview
  * window (label "help"). Replaces the modal HelpPanel from PR #214.
  *
- * Spec: docs/superpowers/specs/2026-06-03-help-window-design.md §4, §5, §7.
- *
- * Theme inheritance (Task 5), search (Tasks 6-7), and the old-modal
- * removal (Task 8) land in subsequent commits.
+ * Spec: docs/superpowers/specs/2026-06-03-help-window-design.md §4, §5, §7, §9.
  */
 export function HelpView() {
   useHelpTheme();   // first — paint into the correct theme as early as possible
   const [activeSlug, setActiveSlug] = useState<string>(DEFAULT_SLUG);
+  const [searchQuery, setSearchQuery] = useState<string>('');
   const { preset, setPreset } = useFontSize();
+  const { data: hits } = useHelpSearch(searchQuery);
 
   const handleSelect = useCallback((slug: string) => setActiveSlug(slug), []);
   const handleNavigate = useCallback((slug: string) => {
@@ -30,7 +30,7 @@ export function HelpView() {
 
   // Browser-style accelerators: Ctrl+= / Ctrl++ → up, Ctrl+- → down, Ctrl+0 → reset.
   // Skip when an input / textarea is focused so the sidebar search input
-  // (which lands in Task 7) doesn't lose its own minus / equals keystrokes.
+  // doesn't lose its own minus / equals keystrokes.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (!(e.ctrlKey || e.metaKey)) return;
@@ -62,7 +62,13 @@ export function HelpView() {
         <TextSizeDropdown value={preset} onChange={setPreset} />
       </header>
       <div className="tux-help-body">
-        <Sidebar activeSlug={activeSlug} onSelect={handleSelect} />
+        <Sidebar
+          activeSlug={activeSlug}
+          onSelect={handleSelect}
+          searchQuery={searchQuery}
+          onSearchChange={setSearchQuery}
+          hits={hits}
+        />
         <ReadingPane topic={activeTopic} onNavigate={handleNavigate} />
       </div>
     </div>
