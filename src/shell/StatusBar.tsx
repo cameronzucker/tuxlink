@@ -25,6 +25,7 @@
  * downstream tests and tooling don't churn.
  */
 
+import { memo } from 'react';
 import { DEV_FIXTURE } from '../mailbox/devFixture';
 import './StatusBar.css';
 
@@ -43,7 +44,10 @@ export interface StatusBarProps {
   outboxQueued: number;
 }
 
-export function StatusBar({ show, unread, outboxQueued }: StatusBarProps) {
+// tuxlink-djnl: React.memo so 2s status polls / shell-level renders don't
+// re-render the status bar when its inputs are unchanged (primitive props
+// shallow-compare cleanly).
+export const StatusBar = memo(function StatusBar({ show, unread, outboxQueued }: StatusBarProps) {
   if (!show) return null;
 
   // Dev fixture hard-codes a recognizable queue depth for the Mock-B
@@ -68,4 +72,4 @@ export function StatusBar({ show, unread, outboxQueued }: StatusBarProps) {
       </div>
     </div>
   );
-}
+});

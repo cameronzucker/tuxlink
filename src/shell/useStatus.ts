@@ -14,7 +14,7 @@
  *   DTO values; the `useStatusData` hook (bottom) is tested via mocked invoke.
  */
 
-import { useEffect } from 'react';
+import { useEffect, useMemo } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
@@ -381,21 +381,6 @@ export function useStatusData(): StatusBarData {
     };
   }, [queryClient]);
 
-  // Dev fixture: report the mock's fixed station (W4PHS · EM75xx · Idle) so the
-  // status bar + window title reproduce the mock instead of the live config.
-  if (DEV_FIXTURE) {
-    return {
-      callsign: DEV_CALLSIGN,
-      grid: DEV_GRID,
-      gridTooltip: null,
-      state: { label: 'Idle', tone: 'idle' },
-      connection: 'Idle · CMS-SSL',
-      position_source: 'Gps',
-      gpsReady: false,
-      status: null,
-    };
-  }
-
   // useQuery returns `undefined` until the first success; the pre-refactor
   // code used `null` for the unloaded state. Normalize to the prior null
   // semantics so downstream branching (`if (config)`) keeps working.
@@ -440,22 +425,63 @@ export function useStatusData(): StatusBarData {
     : null;
   const ribbonGrid = liveGrid ?? gridResult.broadcast;
 
-  return {
-    callsign,
-    grid: ribbonGrid,
-    gridTooltip: gridResult.tooltip,
-    state: formatStatusState(status),
-    connection: formatConnectionState(status, configTransport),
-    // Per spec §4.1 (position-subsystem-restoration, tuxlink-c79g): source chip
-    // reads from the stored config preference, NOT from live position_status.
-    // This preserves sticky-Manual at the frontend boundary — a fresh GPS fix
-    // does not flip the chip back to Gps. Defaults to 'Gps' (project default-on)
-    // until config_read resolves.
-    position_source: config?.position_source ?? 'Gps',
-    gpsReady: positionStatus?.gps_ready ?? false,
-    status,
-  };
+  // tuxlink-djnl: memoize the assembled StatusBarData so consumers
+  // (DashboardRibbon, StatusBar, the `activeModem` useMemo in AppShell) see a
+  // stable reference across no-op polls. react-query already preserves
+  // identity on `.data` when the underlying value is unchanged; the useMemo
+  // dep list pins on those refs so the assembled object is also stable. Per
+  // Codex adrev: without this, every 2s poll tick built a fresh object even
+  // when nothing actually changed, and downstream memo'd children re-rendered.
+  //
+  // DEV_FIXTURE branches inside the useMemo (rather than via an earlier
+  // return) so the hook order stays stable — `react-hooks/rules-of-hooks`
+  // would flag a conditional-after-early-return for a hook this far down.
+  return useMemo<StatusBarData>(
+    () => {
+      if (DEV_FIXTURE) {
+        return DEV_FIXTURE_STATUS;
+      }
+      return {
+        callsign,
+        grid: ribbonGrid,
+        gridTooltip: gridResult.tooltip,
+        state: formatStatusState(status),
+        connection: formatConnectionState(status, configTransport),
+        // Per spec §4.1 (position-subsystem-restoration, tuxlink-c79g): source chip
+        // reads from the stored config preference, NOT from live position_status.
+        // This preserves sticky-Manual at the frontend boundary — a fresh GPS fix
+        // does not flip the chip back to Gps. Defaults to 'Gps' (project default-on)
+        // until config_read resolves.
+        position_source: config?.position_source ?? 'Gps',
+        gpsReady: positionStatus?.gps_ready ?? false,
+        status,
+      };
+    },
+    [
+      callsign,
+      ribbonGrid,
+      gridResult.tooltip,
+      status,
+      configTransport,
+      config?.position_source,
+      positionStatus?.gps_ready,
+    ],
+  );
 }
+
+// Dev-fixture station data — the mock's fixed station (W4PHS · EM75xx · Idle)
+// so the status bar + window title reproduce the mock instead of the live
+// config. Frozen literal so DEV_FIXTURE consumers see a stable reference.
+const DEV_FIXTURE_STATUS: StatusBarData = {
+  callsign: DEV_CALLSIGN,
+  grid: DEV_GRID,
+  gridTooltip: null,
+  state: { label: 'Idle', tone: 'idle' },
+  connection: 'Idle · CMS-SSL',
+  position_source: 'Gps',
+  gpsReady: false,
+  status: null,
+};
 
 // ============================================================================
 // Internal helpers
