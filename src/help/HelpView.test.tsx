@@ -13,6 +13,15 @@ vi.mock('@tauri-apps/api/core', () => ({
 vi.mock('@tauri-apps/api/event', () => ({
   listen: vi.fn().mockResolvedValue(() => {}),
 }));
+// tuxlink-ew3k: HelpTitleBar + ResizeHandles call getCurrentWindow().
+vi.mock('@tauri-apps/api/window', () => ({
+  getCurrentWindow: () => ({
+    minimize: vi.fn(async () => {}),
+    toggleMaximize: vi.fn(async () => {}),
+    close: vi.fn(async () => {}),
+    startResizeDragging: vi.fn(async () => {}),
+  }),
+}));
 
 beforeEach(() => {
   localStorage.clear();

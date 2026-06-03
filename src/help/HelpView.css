@@ -1,15 +1,19 @@
-/* HelpView — outer grid + responsive collapse for FZ-M1.
-   Spec §5, §6. */
+/* HelpView — outer grid (custom titlebar + header + body), responsive
+ * collapse for FZ-M1. Spec §5, §6. */
 
 .tux-help-root {
   display: grid;
-  grid-template-rows: auto 1fr;
+  grid-template-rows: auto auto 1fr;   /* titlebar + header + body */
   height: 100vh;
   background: var(--bg);
   color: var(--text);
   font-family: var(--sans);
-  /* Default text size (spec §7.2 D3) — overridden by useFontSize once mounted. */
-  --help-font-size: 18px;
+  position: relative;   /* anchor ResizeHandles (position:absolute) */
+  /* NOTE: --help-font-size is NOT defaulted here — useFontSize sets it on
+   * <html> on mount. A default at this scope would silently win over the
+   * <html>-level value because closer-ancestor custom properties override
+   * higher-ancestor ones (tuxlink-ew3k bug 3 — text-size dropdown looked
+   * non-functional because this rule pinned the size at 18px). */
 }
 
 .tux-help-header {
@@ -36,6 +40,25 @@
   grid-template-columns: 260px 1fr;
   min-height: 0;
 }
+
+/* Width-preset toggle button in the header (tuxlink-ew3k). */
+.tux-help-width-toggle {
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  color: var(--text);
+  padding: 8px 12px;
+  min-height: 40px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-family: var(--sans);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.tux-help-width-toggle:hover { background: var(--surface-2); }
+.tux-help-width-toggle .lab { color: var(--text-dim); }
+.tux-help-width-toggle .val { color: var(--text); font-weight: 500; }
 
 /* Responsive collapse — spec §6.1 / §6.2. Sidebar drawer behavior lands
    in a follow-up; v1 hides the sidebar at narrow widths so the reading

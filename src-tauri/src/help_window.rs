@@ -48,6 +48,12 @@ pub fn help_window_open(app: AppHandle, caller: WebviewWindow) -> Result<(), Str
     .inner_size(1100.0, 700.0)
     .min_inner_size(640.0, 480.0)
     .resizable(true)
+    // tuxlink-ew3k: custom in-app titlebar (HelpTitleBar mounted by
+    // HelpView). Spec §3.2 had deferred custom chrome to v1.1 to avoid
+    // duplicating drag-region wiring; the duplication turned out minimal
+    // and OS-native GTK gray looked jarring next to the main client's
+    // dark Tuxlink chrome.
+    .decorations(false)
     .build();
 
     match build_result {

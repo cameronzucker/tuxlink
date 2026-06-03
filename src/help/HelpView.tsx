@@ -1,9 +1,12 @@
 import { useState, useCallback, useEffect } from 'react';
+import { HelpTitleBar } from './HelpTitleBar';
+import { ResizeHandles } from '../shell/chrome/ResizeHandles';
 import { Sidebar } from './Sidebar';
 import { ReadingPane } from './ReadingPane';
 import { TextSizeDropdown } from './TextSizeDropdown';
 import { TOPICS, getTopicBySlug } from './topics';
 import { useFontSize, stepFontSize, DEFAULT_FONT_PRESET } from './useFontSize';
+import { useReadingWidth } from './useReadingWidth';
 import { useHelpTheme } from './useHelpTheme';
 import { useHelpSearch } from './useHelpSearch';
 import './HelpView.css';
@@ -15,12 +18,17 @@ const DEFAULT_SLUG = '01-getting-started';
  * window (label "help"). Replaces the modal HelpPanel from PR #214.
  *
  * Spec: docs/superpowers/specs/2026-06-03-help-window-design.md §4, §5, §7, §9.
+ *
+ * tuxlink-ew3k polish round 1: custom titlebar (HelpTitleBar), width-preset
+ * toggle (useReadingWidth), scroll reset on topic switch, parseMarkdown
+ * memoization, markdown list-continuation fix, font-size CSS-scope fix.
  */
 export function HelpView() {
   useHelpTheme();   // first — paint into the correct theme as early as possible
   const [activeSlug, setActiveSlug] = useState<string>(DEFAULT_SLUG);
   const [searchQuery, setSearchQuery] = useState<string>('');
   const { preset, setPreset } = useFontSize();
+  const { width: readingWidth, toggle: toggleReadingWidth } = useReadingWidth();
   const { data: hits } = useHelpSearch(searchQuery);
 
   const handleSelect = useCallback((slug: string) => setActiveSlug(slug), []);
@@ -56,9 +64,25 @@ export function HelpView() {
 
   return (
     <div className="tux-help-root" data-testid="tux-help-root">
+      {/* tuxlink-ew3k: borderless GTK window has no native resize grips —
+       * ResizeHandles overlays 8 invisible edge/corner zones that proxy to
+       * Tauri's startResizeDragging. Position:absolute, doesn't consume a
+       * grid row. */}
+      <ResizeHandles />
+      <HelpTitleBar />
       <header className="tux-help-header">
         <span className="tux-help-title">User Guide</span>
         <div className="tux-help-spacer" />
+        <button
+          type="button"
+          className="tux-help-width-toggle"
+          onClick={toggleReadingWidth}
+          aria-label={`Switch reading width — currently ${readingWidth}`}
+          title="Toggle between Narrow and Wide reading column"
+        >
+          <span className="lab">Width:</span>
+          <span className="val">{readingWidth}</span>
+        </button>
         <TextSizeDropdown value={preset} onChange={setPreset} />
       </header>
       <div className="tux-help-body">
