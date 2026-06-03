@@ -10,8 +10,13 @@ on:
       - main
     paths:
       - 'src-tauri/**'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
       - '.github/workflows/release.yml'
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   build-linux:
@@ -25,6 +30,17 @@ jobs:
           sudo apt-get install -y libax25-dev libudev-dev libwebkit2gtk-4.1-dev \
             build-essential curl wget file libxdo-dev libssl-dev \
             libayatana-appindicator3-dev librsvg2-dev
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -40,7 +56,39 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-tuxlink-
 
-      - name: Build release
+      - name: Install JS dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build + bundle (deb, rpm, AppImage)
+        run: pnpm tauri build --bundles deb,rpm,appimage
+
+      - name: Collect bundle artifacts
         run: |
-          cd src-tauri
-          cargo build --release
+          bundle_dir=src-tauri/target/release/bundle
+          out_dir=dist-artifacts
+          mkdir -p "$out_dir"
+          find "$bundle_dir/deb" -name "*.deb" -exec cp {} "$out_dir/" \;
+          find "$bundle_dir/rpm" -name "*.rpm" -exec cp {} "$out_dir/" \;
+          find "$bundle_dir/appimage" -name "*.AppImage" -exec cp {} "$out_dir/" \;
+          ls -lh "$out_dir"
+
+      - name: Compute SHA256 sums
+        run: |
+          cd dist-artifacts
+          sha256sum *.deb *.rpm *.AppImage > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Upload PR artifacts
+        if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-bundles
+          path: dist-artifacts/*
+          retention-days: 7
+
+      - name: Upload to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist-artifacts/*
+          fail_on_unmatched_files: true
