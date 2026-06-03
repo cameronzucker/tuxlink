@@ -98,7 +98,7 @@ import { deparseQuery } from '../search/parseQuery';
 import { SavedSearchesPanel } from '../search/SavedSearchesPanel';
 import { useSearch } from '../search/useSearch';
 import { useSavedSearches } from '../search/useSavedSearches';
-import { useModemStatus } from '../modem/useModemStatus';
+import { useModemIsActive } from '../modem/useModemStatus';
 import { computePanelMode } from '../radio/radioPanelVisibility';
 import type { RadioPanelMode } from '../radio/types';
 import { PlaceholderRadioPanel } from '../radio/modes/PlaceholderRadioPanel';
@@ -314,12 +314,17 @@ export function AppShell() {
   // tuxlink-su2h (PR #219) but its count never made it into this object, so the
   // sidebar showed no badge while the status bar showed the same number — same
   // source data, two surfaces, only one rendered.
-  const counts: Partial<Record<MailboxFolder, number>> = {
-    inbox: inbox.messages.filter((m) => m.unread).length,
-    outbox: outbox.messages.length,
-    sent: sent.messages.length,
-    archive: archive.messages.length,
-  };
+  // tuxlink-sndh: memoize so the sidebar's Folder rows don't re-render
+  // every time AppShell does. Inputs are stable across non-mailbox renders.
+  const counts: Partial<Record<MailboxFolder, number>> = useMemo(
+    () => ({
+      inbox: inbox.messages.filter((m) => m.unread).length,
+      outbox: outbox.messages.length,
+      sent: sent.messages.length,
+      archive: archive.messages.length,
+    }),
+    [inbox.messages, outbox.messages, sent.messages, archive.messages],
+  );
 
   // Status data (callsign / grid / connection) — single poll, shared by the
   // dashboard ribbon, the status bar, and the window title.
@@ -341,17 +346,22 @@ export function AppShell() {
   //     "use the modem dock on the right" message points at nothing and the
   //     operator can't spawn the modem at all — tuxlink-mnk4), OR
   //   - when the View → Toggle Radio Panel pin is on (Ctrl+Shift+M).
-  const { status: modemStatus } = useModemStatus();
+  // tuxlink-sndh: use the focused `useModemIsActive()` selector instead of
+  // the full `useModemStatus()` to avoid re-rendering the entire shell every
+  // 250ms when the Rust modem broadcaster ticks. AppShell only needs to know
+  // whether the modem is in any active state; the live-meter panels keep
+  // using the full hook for their sparklines.
+  const modemIsActive = useModemIsActive();
   // Spec §3.3 visibility rule. computePanelMode applies the OR of
   // (sidebar selection, active modem, pinned toggle) and returns the mode
   // to display, or null when the panel should not mount.
   // In v1, only the ARDOP modem exists; when it's running, the active
   // context is Ardop Winlink. Multi-modem coordination is out of scope
   // per spec §8.
-  const activeModem: RadioPanelMode | null =
-    modemStatus.state !== 'stopped'
-      ? { kind: 'ardop-hf', intent: 'cms' }
-      : null;
+  const activeModem: RadioPanelMode | null = useMemo(
+    () => (modemIsActive ? { kind: 'ardop-hf', intent: 'cms' } : null),
+    [modemIsActive],
+  );
 
   const radioPanelMode = computePanelMode({
     sidebarSelected: selectedConnection,

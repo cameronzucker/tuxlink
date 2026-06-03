@@ -25,9 +25,14 @@ import { STOPPED, type ModemStatus } from '../modem/types';
 
 // Mock the useModemStatus hook directly so the test controls the modem state
 // without touching `invoke('modem_get_status')` or the `listen` event channel.
+// tuxlink-sndh: AppShell now consumes `useModemIsActive()` (the focused
+// selector) instead of `useModemStatus()`. Derive the boolean from the same
+// mock so the existing per-test `mockUseModemStatus.mockReturnValue(...)`
+// setup keeps working unchanged.
 const mockUseModemStatus = vi.fn();
 vi.mock('../modem/useModemStatus', () => ({
   useModemStatus: () => mockUseModemStatus(),
+  useModemIsActive: () => mockUseModemStatus().status.state !== 'stopped',
   MODEM_STATUS_EVENT: 'modem:status',
 }));
 
