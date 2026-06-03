@@ -355,6 +355,9 @@ fn init_config_from_persisted_config() -> InitConfig {
         gridsquare,
         arq_timeout_s: ARQ_TIMEOUT_SECS,
         arq_bandwidth_hz,
+        // tuxlink-dhbl: outbound-connect path leaves LISTEN FALSE at init.
+        // The listener-arm UI command flips it via `set_listen` at runtime.
+        initial_listen: false,
     }
 }
 
