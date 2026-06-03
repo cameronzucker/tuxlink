@@ -1,37 +1,29 @@
 /**
- * MessageContextMenu — right-click context menu on a message row (tuxlink-ejph).
+ * MessageContextMenu — right-click context menu on a message row (tuxlink-ejph;
+ * styling refactored under tuxlink-i2nr).
  *
- * Phase 2 (tuxlink-f62f, PR #284) shipped a reading-pane "Move ▾" dropdown as
- * the only path to move a message into a user folder. That's not the natural
- * mail-client mental model — operators expect right-click → "Move to" — which
- * the user-folders spec §6 D5 had promised as the v1 path. This component
- * delivers it.
+ * Renders as a positioned overlay at the right-click coordinates. Flat action
+ * list so the operator picks a destination in one click. Esc / outside-click /
+ * after-action all close.
  *
- * Renders as a positioned overlay at the right-click coordinates. Action rows
- * are flat (no nested submenus) so the operator can pick a destination folder
- * in a single click. Clicking outside or pressing Escape closes.
+ * Styling matches `.message-list-sort-menu`/`.tux-ctx-*` (userFolders.css) so
+ * hover highlight + spacing are consistent with the rest of the project's
+ * inline menus.
  */
 
 import { useEffect, useRef } from 'react';
 import type { MailboxFolderRef, UserFolder } from './types';
 import type { MessageMeta } from './types';
+import './userFolders.css';
 
 export interface MessageContextMenuProps {
-  /// The right-clicked message + the folder it currently lives in.
   message: MessageMeta;
   folder: MailboxFolderRef;
-  /// Screen-coordinate origin (from the right-click event's clientX/Y).
   x: number;
   y: number;
-  /// Operator-created folders, shown as Move-to destinations.
   userFolders: UserFolder[];
-  /// Move the message to the chosen folder. Receives both the source folder
-  /// (so the backend can find the file) and the destination.
   onMoveTo: (toFolder: MailboxFolderRef) => void;
-  /// Archive shortcut — equivalent to onMoveTo('archive') but distinguished
-  /// in the menu UI per spec §6 D5 (Archive is the one-tap path).
   onArchive: () => void;
-  /// Close the menu (Esc / outside-click / after-action).
   onClose: () => void;
 }
 
@@ -56,7 +48,6 @@ export function MessageContextMenu({
 }: MessageContextMenuProps) {
   const ref = useRef<HTMLDivElement>(null);
 
-  // Esc closes.
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (e.key === 'Escape') onClose();
@@ -65,8 +56,6 @@ export function MessageContextMenu({
     return () => document.removeEventListener('keydown', onKey);
   }, [onClose]);
 
-  // Outside-click closes. The handler runs on mousedown so the click that
-  // dismisses doesn't also activate whatever was underneath.
   useEffect(() => {
     function onMouseDown(e: MouseEvent) {
       const node = ref.current;
@@ -83,11 +72,7 @@ export function MessageContextMenu({
     };
   }
 
-  // Clip to viewport edges — if the right-click happens near the right or
-  // bottom edge, shift the menu inward so it doesn't render off-screen.
-  // Defaults assume 240px wide and 320px tall; the actual layout is dynamic
-  // but these caps catch the common case without measuring on every render.
-  const MENU_W = 240;
+  const MENU_W = 220;
   const MENU_H = 320;
   const left = Math.min(x, window.innerWidth - MENU_W - 4);
   const top = Math.min(y, window.innerHeight - MENU_H - 4);
@@ -98,31 +83,10 @@ export function MessageContextMenu({
       role="menu"
       aria-label="Message actions"
       data-testid="message-context-menu"
-      style={{
-        position: 'fixed',
-        left,
-        top,
-        minWidth: MENU_W,
-        background: 'var(--elevated, #1e2832)',
-        border: '1px solid var(--border-strong, #2c3744)',
-        borderRadius: 6,
-        padding: '4px 0',
-        fontSize: 12,
-        color: 'var(--text, #e4ebf2)',
-        boxShadow: '0 6px 20px rgba(0, 0, 0, 0.6)',
-        zIndex: 200,
-      }}
+      className="tux-ctx-menu"
+      style={{ position: 'fixed', left, top, minWidth: MENU_W }}
     >
-      <div
-        data-testid="ctx-msg-header"
-        style={{
-          padding: '6px 14px 4px',
-          fontSize: 10,
-          textTransform: 'uppercase',
-          letterSpacing: '0.06em',
-          color: 'var(--text-faint, #5d6975)',
-        }}
-      >
+      <div className="tux-ctx-label" data-testid="ctx-msg-header">
         Move to
       </div>
       {SYSTEM_DESTINATIONS.map((d) => {
@@ -135,10 +99,10 @@ export function MessageContextMenu({
             data-testid={`ctx-move-${d.slug}`}
             disabled={self}
             onClick={actAndClose(() => !self && onMoveTo(d.slug))}
-            style={{ ...itemStyle, opacity: self ? 0.4 : 1, cursor: self ? 'default' : 'pointer' }}
+            className="tux-ctx-item"
           >
             {d.label}
-            {self && <span style={hintStyle}> (current)</span>}
+            {self && <span className="tux-ctx-item-hint">(current)</span>}
           </button>
         );
       })}
@@ -148,29 +112,15 @@ export function MessageContextMenu({
         data-testid="ctx-archive"
         disabled={folder === 'archive'}
         onClick={actAndClose(onArchive)}
-        style={{
-          ...itemStyle,
-          opacity: folder === 'archive' ? 0.4 : 1,
-          cursor: folder === 'archive' ? 'default' : 'pointer',
-        }}
+        className="tux-ctx-item"
       >
         Archive
-        {folder === 'archive' && <span style={hintStyle}> (current)</span>}
+        {folder === 'archive' && <span className="tux-ctx-item-hint">(current)</span>}
       </button>
       {userFolders.length > 0 && (
         <>
-          <div style={separatorStyle} />
-          <div
-            style={{
-              padding: '6px 14px 4px',
-              fontSize: 10,
-              textTransform: 'uppercase',
-              letterSpacing: '0.06em',
-              color: 'var(--text-faint, #5d6975)',
-            }}
-          >
-            Folders
-          </div>
+          <div className="tux-ctx-separator" />
+          <div className="tux-ctx-label">Folders</div>
           {userFolders.map((uf) => {
             const self = uf.slug === folder;
             return (
@@ -181,29 +131,17 @@ export function MessageContextMenu({
                 data-testid={`ctx-move-${uf.slug}`}
                 disabled={self}
                 onClick={actAndClose(() => !self && onMoveTo(uf.slug))}
-                style={{ ...itemStyle, opacity: self ? 0.4 : 1, cursor: self ? 'default' : 'pointer' }}
+                className="tux-ctx-item"
               >
                 {uf.displayName}
-                {self && <span style={hintStyle}> (current)</span>}
+                {self && <span className="tux-ctx-item-hint">(current)</span>}
               </button>
             );
           })}
         </>
       )}
-      {/* Footer hint so the operator notices the source-of-truth message
-          even though the menu is positioned over the row. */}
-      <div style={separatorStyle} />
-      <div
-        data-testid="ctx-msg-id"
-        style={{
-          padding: '4px 14px 6px',
-          fontSize: 10,
-          color: 'var(--text-faint, #5d6975)',
-          whiteSpace: 'nowrap',
-          overflow: 'hidden',
-          textOverflow: 'ellipsis',
-        }}
-      >
+      <div className="tux-ctx-separator" />
+      <div className="tux-ctx-footer" data-testid="ctx-msg-id">
         {truncate(message.subject, 32)}
       </div>
     </div>
@@ -214,28 +152,3 @@ function truncate(s: string, max: number): string {
   if (s.length <= max) return s;
   return s.slice(0, max - 1) + '…';
 }
-
-const itemStyle: React.CSSProperties = {
-  display: 'block',
-  width: '100%',
-  textAlign: 'left',
-  padding: '6px 14px',
-  background: 'transparent',
-  border: 'none',
-  color: 'inherit',
-  fontSize: 12,
-  fontFamily: 'inherit',
-  cursor: 'pointer',
-};
-
-const separatorStyle: React.CSSProperties = {
-  height: 1,
-  background: 'var(--border, #1f2832)',
-  margin: '4px 0',
-};
-
-const hintStyle: React.CSSProperties = {
-  color: 'var(--text-faint, #5d6975)',
-  fontSize: 11,
-  marginLeft: 6,
-};

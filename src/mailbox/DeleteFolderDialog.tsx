@@ -1,31 +1,26 @@
 /**
- * DeleteFolderDialog — inline modal for deleting a user folder (tuxlink-ejph,
- * spec §6 D6).
+ * DeleteFolderDialog — inline modal for deleting a user folder (tuxlink-ejph;
+ * styling refactored under tuxlink-i2nr).
  *
- * Radio choice for what to do with messages inside:
+ * Radio choice for what to do with messages inside (spec §6 D6):
  *  - move_to_inbox (safe default)
  *  - move_to_archive
  *  - delete (permanent)
  *
- * Mirrors the mock's "What should happen to it?" picker. After a successful
- * delete, the folder is gone from the registry + cascade applied; cache
- * invalidation in the mutation hook drops the sidebar row.
+ * Shares `.tux-folder-*` styling with NewFolderDialog + RenameFolderDialog;
+ * radio rows use `.tux-folder-radio-*` which mirror SettingsPanel's option
+ * rows for consistent hover behavior.
  */
 
 import { useEffect, useState } from 'react';
 import { useDeleteUserFolder, type DeleteFolderAction } from './useUserFolders';
 import type { UserFolder } from './types';
+import './userFolders.css';
 
 export interface DeleteFolderDialogProps {
-  /// The folder being deleted. `null` closes the dialog.
   folder: UserFolder | null;
-  /// Best-effort message count inside the folder, for the dialog headline.
-  /// Absent → headline omits the count (still safe).
   messageCount?: number;
   onClose: () => void;
-  /// Fired after a successful delete with the cascade action chosen, so
-  /// callers can (e.g.) navigate away if they were viewing the now-gone
-  /// folder.
   onDeleted?: (slug: string, action: DeleteFolderAction) => void;
 }
 
@@ -84,20 +79,11 @@ export function DeleteFolderDialog({
 
   return (
     <div
-      className="modal-backdrop"
+      className="tux-folder-backdrop"
       role="presentation"
       data-testid="delete-folder-backdrop"
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
-      }}
-      style={{
-        position: 'fixed',
-        inset: 0,
-        background: 'rgba(0, 0, 0, 0.55)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        zIndex: 1000,
       }}
     >
       <form
@@ -105,55 +91,72 @@ export function DeleteFolderDialog({
         role="dialog"
         aria-label={`Delete ${folder.displayName}`}
         data-testid="delete-folder-dialog"
-        style={dialogStyle}
+        className="tux-folder-dialog"
       >
-        <h3 style={{ margin: '0 0 12px', fontSize: 14, fontWeight: 600 }}>
-          Delete &ldquo;{folder.displayName}&rdquo;?
-        </h3>
-        <p style={{ fontSize: 12, color: 'var(--text-dim, #94a0ad)', margin: '0 0 12px' }}>
-          What should happen to its messages{countCopy}?
-        </p>
-        <div role="radiogroup" aria-label="Cascade action">
-          <Row
-            id="del-mv-inbox"
-            value="move_to_inbox"
-            active={action}
-            label="Move messages to Inbox"
-            desc="Safe default. Folder is deleted; the messages reappear in Inbox."
-            onSelect={() => setAction('move_to_inbox')}
-          />
-          <Row
-            id="del-mv-archive"
-            value="move_to_archive"
-            active={action}
-            label="Move messages to Archive"
-            desc="For long-term keep-but-out-of-sight."
-            onSelect={() => setAction('move_to_archive')}
-          />
-          <Row
-            id="del-rm"
-            value="delete"
-            active={action}
-            label="Delete messages too"
-            desc="Permanent. Not recoverable without a backup."
-            danger
-            onSelect={() => setAction('delete')}
-          />
+        <div className="tux-folder-header">
+          <h3 className="tux-folder-title">
+            Delete &ldquo;{folder.displayName}&rdquo;?
+          </h3>
+          <button
+            type="button"
+            className="tux-folder-close"
+            aria-label="Close"
+            onClick={onClose}
+          >
+            ×
+          </button>
         </div>
-        {error && (
-          <div data-testid="delete-folder-error" role="alert" style={errorStyle}>
-            {error}
+        <div className="tux-folder-body">
+          <div className="tux-folder-help">
+            What should happen to its messages{countCopy}?
           </div>
-        )}
-        <div style={actionsStyle}>
-          <button type="button" onClick={onClose} data-testid="delete-folder-cancel" style={btnStyle}>
+          <div role="radiogroup" aria-label="Cascade action" className="tux-folder-radio-group">
+            <Row
+              id="del-mv-inbox"
+              value="move_to_inbox"
+              active={action}
+              label="Move messages to Inbox"
+              desc="Safe default. Folder is deleted; the messages reappear in Inbox."
+              onSelect={() => setAction('move_to_inbox')}
+            />
+            <Row
+              id="del-mv-archive"
+              value="move_to_archive"
+              active={action}
+              label="Move messages to Archive"
+              desc="For long-term keep-but-out-of-sight."
+              onSelect={() => setAction('move_to_archive')}
+            />
+            <Row
+              id="del-rm"
+              value="delete"
+              active={action}
+              label="Delete messages too"
+              desc="Permanent. Not recoverable without a backup."
+              danger
+              onSelect={() => setAction('delete')}
+            />
+          </div>
+          {error && (
+            <div data-testid="delete-folder-error" role="alert" className="tux-folder-error">
+              {error}
+            </div>
+          )}
+        </div>
+        <div className="tux-folder-actions">
+          <button
+            type="button"
+            onClick={onClose}
+            data-testid="delete-folder-cancel"
+            className="tux-folder-btn"
+          >
             Cancel
           </button>
           <button
             type="submit"
             disabled={del.isPending}
             data-testid="delete-folder-confirm"
-            style={{ ...btnStyle, borderColor: 'var(--error, #ee6b6b)', color: 'var(--error, #ee6b6b)' }}
+            className="tux-folder-btn tux-folder-btn-danger"
           >
             {del.isPending ? 'Deleting…' : 'Delete folder'}
           </button>
@@ -178,13 +181,7 @@ function Row({ id, value, active, label, desc, danger, onSelect }: RowProps) {
     <label
       htmlFor={id}
       data-testid={`delete-folder-row-${value}`}
-      style={{
-        display: 'flex',
-        alignItems: 'flex-start',
-        gap: 8,
-        marginBottom: 8,
-        cursor: 'pointer',
-      }}
+      className={`tux-folder-radio-row${danger ? ' tux-folder-radio-row-danger' : ''}`}
     >
       <input
         type="radio"
@@ -194,46 +191,10 @@ function Row({ id, value, active, label, desc, danger, onSelect }: RowProps) {
         checked={active === value}
         onChange={onSelect}
       />
-      <span>
-        <span style={{ fontSize: 12, color: danger ? 'var(--error, #ee6b6b)' : 'inherit' }}>
-          {label}
-        </span>
-        <span style={{ display: 'block', fontSize: 11, color: 'var(--text-faint, #5d6975)' }}>
-          {desc}
-        </span>
+      <span className="tux-folder-radio-text">
+        <span className="tux-folder-radio-label">{label}</span>
+        <span className="tux-folder-radio-help">{desc}</span>
       </span>
     </label>
   );
 }
-
-const dialogStyle: React.CSSProperties = {
-  background: 'var(--surface, #141c23)',
-  color: 'var(--text, #e4ebf2)',
-  border: '1px solid var(--border-strong, #2c3744)',
-  borderRadius: 8,
-  padding: '20px 24px',
-  width: 400,
-  boxShadow: '0 12px 40px rgba(0, 0, 0, 0.7)',
-  fontFamily: 'inherit',
-};
-const errorStyle: React.CSSProperties = {
-  fontSize: 12,
-  color: 'var(--error, #ee6b6b)',
-  marginTop: 8,
-};
-const actionsStyle: React.CSSProperties = {
-  display: 'flex',
-  gap: 8,
-  justifyContent: 'flex-end',
-  marginTop: 18,
-};
-const btnStyle: React.CSSProperties = {
-  background: 'transparent',
-  border: '1px solid var(--border-strong, #2c3744)',
-  color: 'inherit',
-  padding: '4px 10px',
-  borderRadius: 4,
-  fontSize: 12,
-  cursor: 'pointer',
-  fontFamily: 'inherit',
-};
