@@ -19,6 +19,9 @@
 // without the full hook + QueryClientProvider.
 
 import './MessageView.css';
+import { useState } from 'react';
+import { invoke } from '@tauri-apps/api/core';
+import { save as saveDialog } from '@tauri-apps/plugin-dialog';
 import type { ParsedMessage, AttachmentMeta, MailboxFolderRef, UserFolder } from './types';
 import { useMessage, type MessageSelection } from './useMessage';
 import { asUiError, isNotConfigured } from './types';
@@ -315,20 +318,132 @@ export function MessageViewLoaded({
         </pre>
       )}
 
-      {/* 5 — attachment strip — names + sizes only (no download/preview yet) */}
+      {/* 5 — attachment strip — names + sizes + Save (tuxlink-0fyj) */}
       {message.attachments.length > 0 && (
-        <div className="msg-attachments" data-testid="message-attachments">
-          <span className="msg-attachments-label">Attachments:</span>
-          <ul className="msg-attachment-list">
-            {message.attachments.map((a: AttachmentMeta, i: number) => (
-              <li key={i} className="msg-attachment-item">
-                <span className="msg-attachment-name">{sanitizeAttachmentName(a.filename)}</span>
-                <span className="msg-attachment-size">{formatAttachSize(a.size)}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
+        <AttachmentStrip
+          attachments={message.attachments}
+          messageId={message.id}
+          folder={currentFolder}
+        />
       )}
+    </div>
+  );
+}
+
+// ============================================================================
+// Attachment strip (tuxlink-0fyj — Save As)
+// ============================================================================
+
+/**
+ * Per-attachment download status. Cleared after a few seconds so the UI
+ * never shows a stale success/failure label.
+ */
+type AttachStatus =
+  | { kind: 'idle' }
+  | { kind: 'saving' }
+  | { kind: 'saved'; path: string }
+  | { kind: 'error'; detail: string };
+
+/**
+ * Click-to-save attachment strip. Each item is a button that opens the
+ * native Save As dialog, then routes through `message_attachment_save`
+ * to write the decoded bytes to the chosen path.
+ *
+ * Disabled when `folder` is undefined (tests injecting bare ParsedMessage
+ * without selection context). The Save button is also suppressed for
+ * dev/legacy callers that omit it.
+ */
+export function AttachmentStrip({
+  attachments,
+  messageId,
+  folder,
+}: {
+  attachments: AttachmentMeta[];
+  messageId: string;
+  folder: MailboxFolderRef | undefined;
+}) {
+  const [status, setStatus] = useState<Record<number, AttachStatus>>({});
+
+  async function handleSave(index: number, a: AttachmentMeta) {
+    if (!folder) return;
+    setStatus((s) => ({ ...s, [index]: { kind: 'saving' } }));
+    try {
+      const destPath = await saveDialog({
+        defaultPath: sanitizeAttachmentName(a.filename),
+        title: `Save ${a.filename}`,
+      });
+      if (!destPath) {
+        setStatus((s) => ({ ...s, [index]: { kind: 'idle' } }));
+        return;
+      }
+      await invoke('message_attachment_save', {
+        folder,
+        id: messageId,
+        filename: a.filename,
+        destPath,
+      });
+      setStatus((s) => ({ ...s, [index]: { kind: 'saved', path: destPath } }));
+      // Auto-clear after 4s so the row returns to the actionable state.
+      setTimeout(() => {
+        setStatus((s) => {
+          if (s[index]?.kind !== 'saved') return s;
+          const next = { ...s };
+          delete next[index];
+          return next;
+        });
+      }, 4000);
+    } catch (e) {
+      setStatus((s) => ({
+        ...s,
+        [index]: { kind: 'error', detail: String(e) },
+      }));
+    }
+  }
+
+  return (
+    <div className="msg-attachments" data-testid="message-attachments">
+      <span className="msg-attachments-label">Attachments:</span>
+      <ul className="msg-attachment-list">
+        {attachments.map((a: AttachmentMeta, i: number) => {
+          const st = status[i] ?? { kind: 'idle' };
+          const safeName = sanitizeAttachmentName(a.filename);
+          return (
+            <li key={i} className="msg-attachment-item">
+              <span className="msg-attachment-name">{safeName}</span>
+              <span className="msg-attachment-size">{formatAttachSize(a.size)}</span>
+              {folder && (
+                <button
+                  type="button"
+                  className="msg-attachment-save"
+                  data-testid={`attachment-save-${i}`}
+                  disabled={st.kind === 'saving'}
+                  onClick={() => handleSave(i, a)}
+                  title={`Save ${safeName} to disk`}
+                >
+                  {st.kind === 'saving' ? 'Saving…' : 'Save'}
+                </button>
+              )}
+              {st.kind === 'saved' && (
+                <span
+                  className="msg-attachment-status msg-attachment-status--ok"
+                  data-testid={`attachment-status-${i}`}
+                >
+                  ✓ Saved
+                </span>
+              )}
+              {st.kind === 'error' && (
+                <span
+                  className="msg-attachment-status msg-attachment-status--err"
+                  data-testid={`attachment-status-${i}`}
+                  title={st.detail}
+                >
+                  ✗ Failed
+                </span>
+              )}
+            </li>
+          );
+        })}
+      </ul>
     </div>
   );
 }
