@@ -4,6 +4,13 @@ All notable changes to Tuxlink are documented here.
 
 This project adheres to [Semantic Versioning](https://semver.org) with project-specific rules described in [VERSIONING.md](VERSIONING.md). Entries from `v0.0.2` onward are generated automatically by [`release-please`](https://github.com/googleapis/release-please) from [Conventional Commits](https://www.conventionalcommits.org).
 
+## [0.20.0](https://github.com/cameronzucker/tuxlink/compare/v0.19.0...v0.20.0) (2026-06-03)
+
+
+### Features
+
+* **mailbox:** MessageView attachment Save As (tuxlink-0fyj) ([f6b7171](https://github.com/cameronzucker/tuxlink/commit/f6b71714cdce17f886a1c4857013d0e18c6ad9cc))
+
 ## [0.19.0](https://github.com/cameronzucker/tuxlink/compare/v0.18.0...v0.19.0) (2026-06-03)
 
 
