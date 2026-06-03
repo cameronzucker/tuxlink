@@ -4,6 +4,13 @@ All notable changes to Tuxlink are documented here.
 
 This project adheres to [Semantic Versioning](https://semver.org) with project-specific rules described in [VERSIONING.md](VERSIONING.md). Entries from `v0.0.2` onward are generated automatically by [`release-please`](https://github.com/googleapis/release-please) from [Conventional Commits](https://www.conventionalcommits.org).
 
+## [0.24.3](https://github.com/cameronzucker/tuxlink/compare/v0.24.2...v0.24.3) (2026-06-03)
+
+
+### Bug Fixes
+
+* **perf:** break infinite theme-broadcast loop pegging WebKit + Rust at idle (tuxlink-och6) [P0] ([a4329a5](https://github.com/cameronzucker/tuxlink/commit/a4329a58b2f61ecc42ca4d6bb81a0fc6c1859575))
+
 ## [0.24.2](https://github.com/cameronzucker/tuxlink/compare/v0.24.1...v0.24.2) (2026-06-03)
 
 
