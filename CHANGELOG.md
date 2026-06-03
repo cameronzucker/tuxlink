@@ -4,6 +4,13 @@ All notable changes to Tuxlink are documented here.
 
 This project adheres to [Semantic Versioning](https://semver.org) with project-specific rules described in [VERSIONING.md](VERSIONING.md). Entries from `v0.0.2` onward are generated automatically by [`release-please`](https://github.com/googleapis/release-please) from [Conventional Commits](https://www.conventionalcommits.org).
 
+## [0.21.0](https://github.com/cameronzucker/tuxlink/compare/v0.20.1...v0.21.0) (2026-06-03)
+
+
+### Features
+
+* **winlink/listener:** shared listener-arms foundation (tuxlink-3o2o) ([ed3de34](https://github.com/cameronzucker/tuxlink/commit/ed3de34eb19d268f37a831e5595bb22611934086))
+
 ## [0.20.1](https://github.com/cameronzucker/tuxlink/compare/v0.20.0...v0.20.1) (2026-06-03)
 
 
