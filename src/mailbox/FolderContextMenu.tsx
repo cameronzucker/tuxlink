@@ -1,17 +1,14 @@
 /**
- * FolderContextMenu — right-click context menu on a user folder (tuxlink-ejph,
- * spec §6).
+ * FolderContextMenu — right-click context menu on a user folder (tuxlink-ejph;
+ * styling refactored under tuxlink-i2nr).
  *
- * Renders as a positioned overlay at the right-click coordinates. Currently
- * offers Rename + Delete; future entries (Mark all read, Empty folder) drop
- * in here once their backend commands land.
- *
- * Mirrors the MessageContextMenu interaction model: Esc / outside-click
- * close, action click closes-after-fire.
+ * Mirrors MessageContextMenu's interaction model and shares the `.tux-ctx-*`
+ * styling for visual consistency across the project's inline menus.
  */
 
 import { useEffect, useRef } from 'react';
 import type { UserFolder } from './types';
+import './userFolders.css';
 
 export interface FolderContextMenuProps {
   folder: UserFolder;
@@ -60,32 +57,10 @@ export function FolderContextMenu({
       role="menu"
       aria-label="Folder actions"
       data-testid="folder-context-menu"
-      style={{
-        position: 'fixed',
-        left,
-        top,
-        minWidth: MENU_W,
-        background: 'var(--elevated, #1e2832)',
-        border: '1px solid var(--border-strong, #2c3744)',
-        borderRadius: 6,
-        padding: '4px 0',
-        fontSize: 12,
-        color: 'var(--text, #e4ebf2)',
-        boxShadow: '0 6px 20px rgba(0, 0, 0, 0.6)',
-        zIndex: 200,
-      }}
+      className="tux-ctx-menu"
+      style={{ position: 'fixed', left, top, minWidth: MENU_W }}
     >
-      <div
-        style={{
-          padding: '6px 14px 4px',
-          fontSize: 10,
-          textTransform: 'uppercase',
-          letterSpacing: '0.06em',
-          color: 'var(--text-faint, #5d6975)',
-        }}
-      >
-        {folder.displayName}
-      </div>
+      <div className="tux-ctx-label">{folder.displayName}</div>
       <button
         type="button"
         role="menuitem"
@@ -94,11 +69,11 @@ export function FolderContextMenu({
           onRename();
           onClose();
         }}
-        style={itemStyle}
+        className="tux-ctx-item"
       >
         Rename…
       </button>
-      <div style={separatorStyle} />
+      <div className="tux-ctx-separator" />
       <button
         type="button"
         role="menuitem"
@@ -107,29 +82,10 @@ export function FolderContextMenu({
           onDelete();
           onClose();
         }}
-        style={{ ...itemStyle, color: 'var(--error, #ee6b6b)' }}
+        className="tux-ctx-item tux-ctx-item-danger"
       >
         Delete folder…
       </button>
     </div>
   );
 }
-
-const itemStyle: React.CSSProperties = {
-  display: 'block',
-  width: '100%',
-  textAlign: 'left',
-  padding: '6px 14px',
-  background: 'transparent',
-  border: 'none',
-  color: 'inherit',
-  fontSize: 12,
-  fontFamily: 'inherit',
-  cursor: 'pointer',
-};
-
-const separatorStyle: React.CSSProperties = {
-  height: 1,
-  background: 'var(--border, #1f2832)',
-  margin: '4px 0',
-};

@@ -1,0 +1,279 @@
+/* User-folder menus + dialogs (tuxlink-i2nr).
+   Refactor of the inline-styled Phase 2/3 components to match the project's
+   .message-list-sort-* + .tux-settings-* conventions for visual + interaction
+   consistency. Hover highlight uses the same accent-soft surface as the
+   other Radix-backed menus. */
+
+/* ============================================================================
+   Generic right-click context menu (MessageContextMenu, FolderContextMenu) +
+   the Move-to dropdown content. Mirrors .message-list-sort-menu shell + item
+   styling so hover/keyboard focus look identical to the sort popup.
+   ============================================================================ */
+
+.tux-ctx-menu {
+  min-width: 200px;
+  padding: 4px 0;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  font-size: 12px;
+  font-family: var(--sans);
+  z-index: 200;
+}
+
+.tux-ctx-label {
+  padding: 6px 12px 4px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+}
+
+.tux-ctx-item {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  gap: 8px;
+  padding: 6px 12px;
+  background: transparent;
+  border: none;
+  color: var(--text);
+  font-size: 12px;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  outline: none;
+  user-select: none;
+}
+
+/* Radix DropdownMenu items get data-highlighted; plain <button>-based menus
+   use :hover. Both surfaces should look identical so the menu doesn't break
+   the user's muscle memory across surfaces. */
+.tux-ctx-item:hover:not(:disabled),
+.tux-ctx-item[data-highlighted] {
+  background: var(--accent-soft);
+  color: var(--text);
+}
+
+.tux-ctx-item:disabled {
+  color: var(--text-faint);
+  cursor: default;
+  opacity: 0.6;
+}
+
+.tux-ctx-item-hint {
+  color: var(--text-faint);
+  font-size: 11px;
+  margin-left: 6px;
+}
+
+.tux-ctx-item-danger {
+  color: var(--error);
+}
+.tux-ctx-item-danger:hover:not(:disabled),
+.tux-ctx-item-danger[data-highlighted] {
+  /* Keep the destructive cue on hover. */
+  color: var(--error);
+  background: rgba(238, 107, 107, 0.12);
+}
+
+.tux-ctx-separator {
+  height: 1px;
+  margin: 4px 0;
+  background: var(--border-soft);
+}
+
+.tux-ctx-footer {
+  padding: 4px 12px 6px;
+  font-size: 10px;
+  color: var(--text-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ============================================================================
+   Dialogs (NewFolderDialog, RenameFolderDialog, DeleteFolderDialog). Mirror
+   the .tux-settings-* shell so the operator sees the same panel surface
+   regardless of which inline overlay opened.
+   ============================================================================ */
+
+.tux-folder-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.55);
+}
+
+.tux-folder-dialog {
+  width: min(420px, calc(100vw - 48px));
+  max-height: calc(100vh - 96px);
+  overflow-y: auto;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+  font-family: var(--sans);
+  color: var(--text);
+}
+
+.tux-folder-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border);
+}
+.tux-folder-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+.tux-folder-close {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 4px;
+}
+.tux-folder-close:hover { color: var(--text); }
+
+.tux-folder-body {
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.tux-folder-field-label {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.tux-folder-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 7px 9px;
+  font-family: var(--sans);
+  font-size: 13px;
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+}
+.tux-folder-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.tux-folder-help {
+  font-size: 11px;
+  color: var(--text-faint);
+  line-height: 1.4;
+}
+
+.tux-folder-error {
+  padding: 8px 10px;
+  border-radius: 4px;
+  font-size: 12px;
+  color: var(--error);
+  background: rgba(238, 107, 107, 0.12);
+  border: 1px solid rgba(238, 107, 107, 0.3);
+}
+
+.tux-folder-radio-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.tux-folder-radio-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.tux-folder-radio-row:hover { background: var(--surface-2); }
+.tux-folder-radio-row input[type='radio'] {
+  margin-top: 2px;
+  accent-color: var(--accent);
+  flex: 0 0 auto;
+}
+.tux-folder-radio-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.tux-folder-radio-label {
+  font-size: 13px;
+  color: var(--text);
+}
+.tux-folder-radio-help {
+  font-size: 11px;
+  color: var(--text-faint);
+  line-height: 1.4;
+}
+.tux-folder-radio-row-danger .tux-folder-radio-label {
+  color: var(--error);
+}
+
+.tux-folder-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 14px 18px;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.tux-folder-btn {
+  font-family: var(--sans);
+  font-size: 12px;
+  padding: 5px 12px;
+  border-radius: 4px;
+  border: 1px solid var(--border-strong);
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+}
+.tux-folder-btn:hover:not(:disabled) {
+  background: var(--surface-2);
+}
+.tux-folder-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.tux-folder-btn-primary {
+  border-color: var(--success, #5dd6a0);
+  color: var(--success, #5dd6a0);
+}
+.tux-folder-btn-primary:hover:not(:disabled) {
+  background: rgba(93, 214, 160, 0.12);
+}
+.tux-folder-btn-danger {
+  border-color: var(--error);
+  color: var(--error);
+}
+.tux-folder-btn-danger:hover:not(:disabled) {
+  background: rgba(238, 107, 107, 0.12);
+}
+
+/* ============================================================================
+   Move-to Radix DropdownMenu trigger button (lives in MessageView toolbar).
+   The action-btn styling is the project default; this just adds a caret hint.
+   ============================================================================ */
+.tux-move-caret {
+  margin-left: 2px;
+  font-size: 10px;
+  opacity: 0.7;
+}
