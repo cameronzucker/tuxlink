@@ -4,6 +4,18 @@ All notable changes to Tuxlink are documented here.
 
 This project adheres to [Semantic Versioning](https://semver.org) with project-specific rules described in [VERSIONING.md](VERSIONING.md). Entries from `v0.0.2` onward are generated automatically by [`release-please`](https://github.com/googleapis/release-please) from [Conventional Commits](https://www.conventionalcommits.org).
 
+## [0.19.0](https://github.com/cameronzucker/tuxlink/compare/v0.18.0...v0.19.0) (2026-06-03)
+
+
+### Features
+
+* **grib:** Saildocs GRIB-request framework (tuxlink-vrpk) ([e5f049a](https://github.com/cameronzucker/tuxlink/commit/e5f049aa1f9b41b90bf04feb5c70269a7a420b2e))
+
+
+### Bug Fixes
+
+* **forms:** update axum wildcard path syntax for 0.8 (tuxlink-prz6) ([a5be99b](https://github.com/cameronzucker/tuxlink/commit/a5be99baa4ffd42058fc1b4e617b858ffe422eae))
+
 ## [0.18.0](https://github.com/cameronzucker/tuxlink/compare/v0.17.2...v0.18.0) (2026-06-03)
 
 
