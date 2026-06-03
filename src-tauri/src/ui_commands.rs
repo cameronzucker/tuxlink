@@ -2057,6 +2057,128 @@ pub async fn packet_set_listen(enabled: bool) -> Result<(), UiError> {
     Ok(())
 }
 
+// ============================================================================
+// Packet allowlist overlay (tuxlink-inde)
+// ============================================================================
+//
+// DTOs + Tauri commands for the operator-curated allowlist that gates inbound
+// Packet-P2P sessions. Per
+// `docs/design/2026-06-03-multi-transport-listener-architecture.md` §4.1 +
+// `dev/scratch/winlink-re/findings/packet-p2p.md` §"Allowed-stations model",
+// this is a tuxlink divergence over the shipped Packet listener: WLE has no
+// listener-side allowlist for Packet because AX.25 always accepts at the link
+// layer. Tuxlink overlays one at the answerer to give the operator explicit
+// control over which peers are answered.
+//
+// Storage: `<config-dir>/listener/packet/allowed_stations.json` via
+// `winlink::listener::packet_gate::packet_allowed_stations_path()` — same
+// resolution chain as `config::config_path`.
+//
+// Default: `allow_all=false`, empty list — fresh tuxlink REJECTS every peer.
+
+/// Frontend-facing view of the Packet allowlist.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PacketAllowedStationsDto {
+    pub allow_all: bool,
+    pub callsigns: Vec<String>,
+}
+
+impl PacketAllowedStationsDto {
+    fn from_allowed(allowed: &crate::winlink::listener::AllowedStations) -> Self {
+        Self {
+            allow_all: allowed.allow_all(),
+            callsigns: allowed.callsigns().to_vec(),
+        }
+    }
+}
+
+/// Helper: load → mutate → save, in one place so the four mutation commands
+/// stay one-liners and the read/write code path is single-sourced.
+fn with_packet_allowed_stations<F>(mutate: F) -> Result<(), UiError>
+where
+    F: FnOnce(&mut crate::winlink::listener::AllowedStations),
+{
+    let path = crate::winlink::listener::packet_gate::packet_allowed_stations_path();
+    let mut allowed = crate::winlink::listener::AllowedStations::load_from(&path)
+        .map_err(|e| UiError::Internal { detail: format!("load allowlist: {e}") })?;
+    mutate(&mut allowed);
+    allowed
+        .save_to(&path)
+        .map_err(|e| UiError::Internal { detail: format!("save allowlist: {e}") })?;
+    Ok(())
+}
+
+/// Read the Packet allowlist. First-run (file missing) returns the tuxlink
+/// default: `allow_all=false`, empty list.
+#[tauri::command]
+pub async fn packet_allowed_stations_get() -> Result<PacketAllowedStationsDto, UiError> {
+    let path = crate::winlink::listener::packet_gate::packet_allowed_stations_path();
+    let allowed = crate::winlink::listener::AllowedStations::load_from(&path)
+        .map_err(|e| UiError::Internal { detail: format!("load allowlist: {e}") })?;
+    Ok(PacketAllowedStationsDto::from_allowed(&allowed))
+}
+
+/// Add a callsign (or `CALL*` tail-wildcard pattern) to the Packet allowlist.
+/// Idempotent — adding the same pattern twice is a no-op.
+#[tauri::command]
+pub async fn packet_allowed_stations_add(callsign: String) -> Result<(), UiError> {
+    let trimmed = callsign.trim().to_string();
+    if trimmed.is_empty() {
+        return Err(UiError::Internal {
+            detail: "callsign must not be empty".into(),
+        });
+    }
+    with_packet_allowed_stations(|a| a.add_callsign_pattern(trimmed))
+}
+
+/// Remove a callsign (or pattern) from the Packet allowlist. Matches the
+/// stored form (uppercased + trimmed); calling with a callsign that is not
+/// in the list is a no-op.
+#[tauri::command]
+pub async fn packet_allowed_stations_remove(callsign: String) -> Result<(), UiError> {
+    let needle = callsign.trim().to_uppercase();
+    if needle.is_empty() {
+        return Err(UiError::Internal {
+            detail: "callsign must not be empty".into(),
+        });
+    }
+    let path = crate::winlink::listener::packet_gate::packet_allowed_stations_path();
+    let mut allowed = crate::winlink::listener::AllowedStations::load_from(&path)
+        .map_err(|e| UiError::Internal { detail: format!("load allowlist: {e}") })?;
+    // The struct doesn't expose a remove_callsign API, so reconstruct without
+    // the entry. (Mirrors the "clear + re-add survivors" pattern; bd follow-up
+    // could expose a first-class remove on the AllowedStations API.)
+    let keep: Vec<String> = allowed
+        .callsigns()
+        .iter()
+        .filter(|c| c.as_str() != needle.as_str())
+        .cloned()
+        .collect();
+    let ips: Vec<String> = allowed.ips().to_vec();
+    let allow_all = allowed.allow_all();
+    allowed.clear();
+    allowed.set_allow_all(allow_all);
+    for c in keep {
+        allowed.add_callsign_pattern(c);
+    }
+    for ip in ips {
+        allowed.add_ip_pattern(ip);
+    }
+    allowed
+        .save_to(&path)
+        .map_err(|e| UiError::Internal { detail: format!("save allowlist: {e}") })?;
+    Ok(())
+}
+
+/// Flip the master "allow all" toggle. TRUE matches WLE's permissive default
+/// (every peer accepted); FALSE is the tuxlink default (callsigns list gates
+/// every inbound).
+#[tauri::command]
+pub async fn packet_allowed_stations_set_allow_all(allow_all: bool) -> Result<(), UiError> {
+    with_packet_allowed_stations(|a| a.set_allow_all(allow_all))
+}
+
 // Task 5 (tuxlink-686) — config_set_grid + validate_grid_input
 // bd issue: tuxlink-686
 // ============================================================================

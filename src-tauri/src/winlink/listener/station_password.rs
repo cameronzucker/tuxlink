@@ -90,6 +90,27 @@ impl StationPassword {
         Self { factory }
     }
 
+    /// Construct a `StationPassword` whose factory always returns
+    /// `keyring::Error::NoEntry` — making `is_set()` return FALSE and `verify`
+    /// return FALSE without touching the real OS keyring.
+    ///
+    /// Intended for transports where the password-challenge layer is not
+    /// applicable (notably Packet — `dev/scratch/winlink-re/findings/packet-p2p.md
+    /// §"Auth"` documents that AX.25 has no in-band place to challenge the
+    /// peer before B2F). Per `docs/design/2026-06-03-multi-transport-listener-architecture.md`
+    /// §5 the Packet transport default is "skip the password gate"; the cleanest
+    /// way to express that at the call site is to pass a `no_keyring()`
+    /// `StationPassword` so `listener_decide` short-circuits the password
+    /// branch via `is_set() == false`.
+    ///
+    /// bd: tuxlink-inde
+    pub fn no_keyring() -> Self {
+        let factory: EntryFactory = Box::new(|_service: &str, _account: &str| {
+            Box::new(NoKeyringEntry) as Box<dyn EntryLike>
+        });
+        Self { factory }
+    }
+
     /// Returns TRUE if a password is currently set, OR the keyring backend
     /// returns any error other than `NoEntry`.
     ///
@@ -179,6 +200,31 @@ impl EntryLike for RealEntry {
     }
     fn delete_password(&self) -> Result<(), keyring::Error> {
         self.0.delete_credential()
+    }
+}
+
+// ──────────────────────────────────────────────────────────────
+// No-keyring entry (Packet listener: password gate intentionally disabled)
+// ──────────────────────────────────────────────────────────────
+
+/// `EntryLike` that always reports `NoEntry` — never touches the OS keyring.
+///
+/// Backs `StationPassword::no_keyring()`; see that constructor for context.
+struct NoKeyringEntry;
+
+impl EntryLike for NoKeyringEntry {
+    fn get_password(&self) -> Result<String, keyring::Error> {
+        Err(keyring::Error::NoEntry)
+    }
+    fn set_password(&self, _password: &str) -> Result<(), keyring::Error> {
+        // Intentionally rejected: this entry models "no password configured."
+        // Storing one would silently re-enable the password gate via the
+        // is_set()/verify path, breaking the "Packet skips the password layer"
+        // contract this entry exists to enforce.
+        Err(keyring::Error::NoEntry)
+    }
+    fn delete_password(&self) -> Result<(), keyring::Error> {
+        Err(keyring::Error::NoEntry)
     }
 }
 
@@ -368,6 +414,36 @@ mod tests {
         assert!(!sp.verify("Zbcdef")); // first-byte differ
         assert!(!sp.verify("abcdeZ")); // last-byte differ
         assert!(sp.verify("abcdef"));
+    }
+
+    // ── no_keyring() constructor (Packet listener path) ──────────
+
+    #[test]
+    fn no_keyring_is_set_returns_false() {
+        // Packet uses StationPassword::no_keyring() so listener_decide skips
+        // the password challenge via the is_set()==false branch (per spec
+        // §4.2 + packet-p2p.md §"Auth": no in-band place to challenge).
+        let sp = StationPassword::no_keyring();
+        assert!(!sp.is_set(), "no_keyring() backed StationPassword must report is_set()==false");
+    }
+
+    #[test]
+    fn no_keyring_verify_always_returns_false() {
+        let sp = StationPassword::no_keyring();
+        assert!(!sp.verify(""));
+        assert!(!sp.verify("anything"));
+    }
+
+    #[test]
+    fn no_keyring_set_is_rejected() {
+        // Defense-in-depth: even if a caller tries to set a password on a
+        // no_keyring()-backed StationPassword, the entry rejects (so is_set()
+        // stays false). Protects the "Packet skips the password layer"
+        // contract from accidental enablement.
+        let sp = StationPassword::no_keyring();
+        let result = sp.set("hunter2");
+        assert!(result.is_err(), "no_keyring().set() must reject");
+        assert!(!sp.is_set(), "no_keyring().is_set() must remain false");
     }
 
     // ── Mock keyring round-trip ──────────────────────────────────
