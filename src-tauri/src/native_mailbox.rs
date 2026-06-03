@@ -278,6 +278,87 @@ impl Mailbox {
         Ok(folder)
     }
 
+    /// Materialize a handful of synthetic Winlink B2F messages in the inbox
+    /// directory — only when the inbox is empty AND the caller is in a dev
+    /// build (the bootstrap-level guard is responsible for the cfg gate).
+    /// Lets the operator exercise the mailbox + user-folder UI end-to-end
+    /// without a real CMS sync, since production CMS rejects unregistered
+    /// clients (memory: project_cms_rejects_unknown_clients) and the project
+    /// has no other source of inbox content for local validation
+    /// (tuxlink-456u).
+    ///
+    /// Messages are composed via `winlink::compose::compose_message` so they
+    /// pass the same parsing path as real CMS-sourced traffic. The sender +
+    /// subjects mirror the frontend's TS dev fixture so the operator sees
+    /// familiar content. Returns the count of messages seeded (0 if the
+    /// inbox already has content).
+    pub fn seed_dev_inbox(&self, mycall: &str) -> Result<usize, BackendError> {
+        let inbox = self.folder_dir(MailboxFolder::Inbox);
+        if inbox.exists() {
+            for entry in fs::read_dir(&inbox)? {
+                let e = entry?;
+                if e.path().extension().and_then(|x| x.to_str()) == Some("b2f") {
+                    return Ok(0);
+                }
+            }
+        }
+
+        let now = chrono::Utc::now().timestamp() as u64;
+        let day = 24 * 60 * 60;
+        let samples: &[(&str, &[&str], &str, &str, u64)] = &[
+            (
+                "W7AAR",
+                &[mycall],
+                "Re: Sunday Net check-ins for May 31",
+                "Got it. 38 stations checked in, 6 short-time visitors. Sending the roster.\n\n73,\nJim / W7AAR",
+                now - 3600,
+            ),
+            (
+                "KD7HBA",
+                &[mycall],
+                "Multnomah Co drill — Phase 2 timeline",
+                "Phase 2 (deployment) is locked for June 14. Phase 3 demob June 15 EOD. Please reply with your availability.\n\n73,\nRachel / KD7HBA",
+                now - 7200,
+            ),
+            (
+                "N7ALT",
+                &[mycall],
+                "NTS traffic — 4 messages for Region 7",
+                "QTC 4. Holding for the next session. Routine, all from WA7 net last night.\n\n73,\nDale / N7ALT",
+                now - 12000,
+            ),
+            (
+                "W7AAR",
+                &[mycall],
+                "Battery pack readiness — group order?",
+                "Talked to Bioenno about a 10-pack of 12V20Ah LiFePO4. Group discount kicks in at 5 units. Interest?\n\n73,\nJim",
+                now - day,
+            ),
+            (
+                "KD7HBA",
+                &[mycall],
+                "Re: Quarterly equipment audit",
+                "Audit complete. Two missing handhelds — KC7BB and N7DRC haven't replied. Following up by phone tomorrow.\n\n73,\nRachel",
+                now - day - 3600,
+            ),
+            (
+                "winlink@k7nhv-10",
+                &[mycall],
+                "System message: gateway maintenance June 7",
+                "K7NHV-10 will be offline for upgrade June 7 02:00-04:00 UTC. Use K7LED-10 as the secondary while we're down.\n\n— K7NHV-10 sysop",
+                now - 2 * day,
+            ),
+        ];
+
+        let mut count = 0usize;
+        for (from, to, subject, body, secs) in samples {
+            let msg = crate::winlink::compose::compose_message(from, to, &[], subject, body, *secs);
+            self.store(MailboxFolder::Inbox, &msg.to_bytes())?;
+            count += 1;
+        }
+        Ok(count)
+    }
+
     /// Rename a user folder. Only the display name changes — the slug stays
     /// stable so messages don't have to move on disk (spec §3.1). Validates
     /// the new display name + reserved-name list. Missing slug → `NotFound`.
@@ -852,6 +933,56 @@ mod index_hook_tests {
             &MessageId("does-not-exist".to_string()),
         );
         assert!(res.is_ok(), "moving a missing message must be a no-op-safe Ok");
+    }
+
+    // tuxlink-456u: seed_dev_inbox writes real B2F files on first run when the
+    // inbox is empty, so the operator can verify mailbox moves end-to-end
+    // without a real CMS sync (production CMS rejects unregistered clients).
+    #[test]
+    fn seed_dev_inbox_writes_messages_when_empty() {
+        let dir = tempdir().unwrap();
+        let mbox = Mailbox::new(dir.path().to_path_buf());
+        let n = mbox.seed_dev_inbox("KE7VAR").unwrap();
+        assert!(n > 0, "seed should write at least one message");
+
+        let listed = mbox.list(MailboxFolder::Inbox).unwrap();
+        assert_eq!(listed.len(), n);
+        for m in &listed {
+            assert!(m.to.iter().any(|t| t.contains("KE7VAR")));
+        }
+    }
+
+    #[test]
+    fn seed_dev_inbox_is_idempotent_when_inbox_nonempty() {
+        let dir = tempdir().unwrap();
+        let mbox = Mailbox::new(dir.path().to_path_buf());
+        let first = mbox.seed_dev_inbox("KE7VAR").unwrap();
+        assert!(first > 0);
+        let second = mbox.seed_dev_inbox("KE7VAR").unwrap();
+        assert_eq!(second, 0, "second seed must no-op when inbox has content");
+        let listed = mbox.list(MailboxFolder::Inbox).unwrap();
+        assert_eq!(listed.len(), first);
+    }
+
+    #[test]
+    fn seed_dev_inbox_messages_are_movable() {
+        // The bug the seed exists to fix: dev-fixture frontend messages had
+        // no on-disk files, so moves silently no-op'd. The seed produces real
+        // files; move_between can find + relocate them.
+        let dir = tempdir().unwrap();
+        let mbox = Mailbox::new(dir.path().to_path_buf());
+        mbox.seed_dev_inbox("KE7VAR").unwrap();
+        let _ = mbox.create_user_folder("ARES Drills").unwrap();
+        let listed = mbox.list(MailboxFolder::Inbox).unwrap();
+        let id = &listed[0].id;
+        mbox.move_between(
+            FolderRef::System(MailboxFolder::Inbox),
+            FolderRef::User("ares-drills".into()),
+            id,
+        )
+        .unwrap();
+        assert!(!dir.path().join("inbox").join(format!("{}.b2f", id.0)).exists());
+        assert!(dir.path().join("ares-drills").join(format!("{}.b2f", id.0)).exists());
     }
 
     // ========================================================================

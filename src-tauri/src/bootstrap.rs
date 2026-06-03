@@ -194,6 +194,37 @@ fn install_native(app_handle: &AppHandle, state: &BackendState, cfg: Config) {
         .try_state::<crate::search::commands::SearchService>()
         .map(|svc| svc.index.clone());
 
+    // tuxlink-456u: dev-build inbox seed. The production CMS rejects
+    // unregistered clients (project_cms_rejects_unknown_clients), so the
+    // operator can't sync real messages to verify the mailbox + user-folder
+    // UI end-to-end. In dev builds only, seed a handful of synthetic B2F
+    // messages into the inbox the first time it's empty. They're real
+    // on-disk files (composed via winlink::compose::compose_message), so
+    // mailbox_move and every other mailbox op exercises the actual storage
+    // layer — closing the verification Catch-22 from PR #287's smoke.
+    #[cfg(debug_assertions)]
+    {
+        let mycall = cfg
+            .identity
+            .callsign
+            .clone()
+            .unwrap_or_else(|| "DEV0DEV".to_string());
+        let seed_mbox = crate::native_mailbox::Mailbox::new(mbox_dir.clone());
+        match seed_mbox.seed_dev_inbox(&mycall) {
+            Ok(n) if n > 0 => emit_backend_line(
+                app_handle,
+                LogLevel::Info,
+                format!("Dev build: seeded {n} sample inbox messages."),
+            ),
+            Ok(_) => {}
+            Err(e) => emit_backend_line(
+                app_handle,
+                LogLevel::Warn,
+                format!("Dev build: inbox seed skipped ({e})."),
+            ),
+        }
+    }
+
     let mut backend = NativeBackend::with_progress(cfg, mbox_dir, progress)
         .with_wire_log(wire)
         .with_position(arbiter);
