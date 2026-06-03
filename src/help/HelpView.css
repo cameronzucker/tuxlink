@@ -1,0 +1,46 @@
+/* HelpView — outer grid + responsive collapse for FZ-M1.
+   Spec §5, §6. */
+
+.tux-help-root {
+  display: grid;
+  grid-template-rows: auto 1fr;
+  height: 100vh;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--sans);
+  /* Default text size (spec §7.2 D3) — overridden by useFontSize once mounted. */
+  --help-font-size: 18px;
+}
+
+.tux-help-header {
+  display: flex;
+  align-items: center;
+  padding: 10px 16px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  gap: 12px;
+  flex: 0 0 auto;
+  min-height: 54px;
+}
+
+.tux-help-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.tux-help-spacer { flex: 1; }
+
+.tux-help-body {
+  display: grid;
+  grid-template-columns: 260px 1fr;
+  min-height: 0;
+}
+
+/* Responsive collapse — spec §6.1 / §6.2. Sidebar drawer behavior lands
+   in a follow-up; v1 hides the sidebar at narrow widths so the reading
+   pane gets full width on FZ-M1 portrait / narrow side-by-side. */
+@media (max-width: 960px) {
+  .tux-help-body { grid-template-columns: 1fr; }
+  .tux-help-sidebar { display: none; }
+}

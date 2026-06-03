@@ -54,9 +54,6 @@ const ThemeDesigner = lazy(() =>
 const AboutDialog = lazy(() =>
   import('./AboutDialog').then((m) => ({ default: m.AboutDialog })),
 );
-const HelpPanel = lazy(() =>
-  import('./HelpPanel').then((m) => ({ default: m.HelpPanel })),
-);
 const CatalogRequestPanel = lazy(() =>
   import('../catalog/CatalogRequestPanel').then((m) => ({ default: m.CatalogRequestPanel })),
 );
@@ -210,9 +207,10 @@ export function AppShell() {
   // Inline theme designer overlay (tuxlink-vgth), opened from View → Color
   // Scheme → Customize…. Same backdrop pattern as SettingsPanel.
   const [themeDesignerOpen, setThemeDesignerOpen] = useState(false);
-  // Inline About + Help overlays (tuxlink-35g0), opened from the Help menu.
+  // Inline About overlay (tuxlink-35g0), opened from the Help menu.
+  // Help → Documentation now opens a separate Tauri webview window via
+  // help_window_open (tuxlink-0gsy / spec §4); no in-process state.
   const [aboutOpen, setAboutOpen] = useState(false);
-  const [helpOpen, setHelpOpen] = useState(false);
   // Inline Catalog Request panel (tuxlink-ddiq), opened from Message →
   // Catalog Request. Picks WLE catalog inquiries and queues a request
   // message in the outbox routed to INQUIRY@winlink.org.
@@ -519,7 +517,17 @@ export function AppShell() {
     openSettings: () => setSettingsOpen(true),
     openThemeDesigner: () => setThemeDesignerOpen(true),
     openAbout: () => setAboutOpen(true),
-    openHelp: () => setHelpOpen(true),
+    // tuxlink-0gsy / spec §4.1: Help → Documentation opens the separate
+    // Tauri webview at /help instead of the old inline modal. The command
+    // is idempotent (single-instance — re-clicks focus the existing window).
+    openHelp: () => {
+      void invoke('help_window_open').catch((err) => {
+        // The Help menu item should never become a no-op; log so an
+        // unexpected runtime failure surfaces in the operator's console
+        // rather than miss silently.
+        console.error('help_window_open failed:', err);
+      });
+    },
     reportIssue: () => {
       // tuxlink-35g0: open the project's GitHub issue tracker in the
       // operator's default browser. The URL is hard-coded — the source
@@ -823,12 +831,6 @@ export function AppShell() {
       {aboutOpen && (
         <Suspense fallback={null}>
           <AboutDialog open={true} onClose={() => setAboutOpen(false)} />
-        </Suspense>
-      )}
-
-      {helpOpen && (
-        <Suspense fallback={null}>
-          <HelpPanel open={true} onClose={() => setHelpOpen(false)} />
         </Suspense>
       )}
 

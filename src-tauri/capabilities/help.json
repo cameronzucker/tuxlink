@@ -1,0 +1,17 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "help",
+  "description": "Help window (label 'help', tuxlink-0gsy / spec §3). Least-privilege grant: events for theme-change subscription, shell:open for external links from rendered markdown, window-manipulation for OS-decoration drag/resize/close.",
+  "windows": ["help"],
+  "permissions": [
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
+    "core:window:allow-start-dragging",
+    "core:window:allow-start-resize-dragging",
+    "core:window:allow-minimize",
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-close",
+    "core:window:allow-is-maximized",
+    "shell:allow-open"
+  ]
+}

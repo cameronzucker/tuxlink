@@ -1,0 +1,106 @@
+/* ReadingPane — typography scaled by --help-font-size (set by useFontSize).
+   The default 18 px is established in HelpView.css; this file only consumes
+   the variable and scales nested elements relative to it.
+   Spec: docs/superpowers/specs/2026-06-03-help-window-design.md §5.3, §7.2. */
+
+.tux-help-reading {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  background: var(--bg);
+  display: flex;
+  justify-content: center;
+}
+
+.tux-help-reading-inner {
+  max-width: 720px;       /* reading column constrained per spec §5.3 */
+  width: 100%;
+  padding: 36px 48px 80px;
+}
+
+.tux-help-reading-content {
+  font-family: var(--sans);
+  color: var(--text);
+  font-size: var(--help-font-size, 18px);
+  line-height: 1.65;
+}
+
+.tux-help-reading-content h1 {
+  font-size: calc(var(--help-font-size, 18px) * 1.7);
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  margin: 0 0 0.6em;
+  color: var(--text);
+}
+.tux-help-reading-content h2 {
+  font-size: calc(var(--help-font-size, 18px) * 1.3);
+  font-weight: 600;
+  margin: 1.6em 0 0.6em;
+  color: var(--accent-2);
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 0.3em;
+}
+.tux-help-reading-content h3 {
+  font-size: calc(var(--help-font-size, 18px) * 1.1);
+  font-weight: 600;
+  margin: 1.2em 0 0.4em;
+  color: var(--text);
+}
+.tux-help-reading-content p { margin: 0.8em 0; }
+.tux-help-reading-content ul { padding-left: 1.4em; margin: 0.8em 0; }
+.tux-help-reading-content li { margin: 0.35em 0; }
+.tux-help-reading-content strong { color: var(--accent-2); font-weight: 600; }
+.tux-help-reading-content code {
+  font-family: var(--mono);
+  background: var(--surface);
+  color: var(--accent);
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: calc(var(--help-font-size, 18px) * 0.9);
+  border: 1px solid var(--border);
+}
+.tux-help-reading-content pre {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 12px 14px;
+  overflow-x: auto;
+  margin: 1em 0;
+}
+.tux-help-reading-content pre code {
+  background: transparent;
+  border: none;
+  padding: 0;
+  color: var(--text);
+}
+.tux-help-reading-content a {
+  color: var(--info);
+  text-decoration: none;
+  border-bottom: 1px dotted var(--info);
+  cursor: pointer;
+}
+.tux-help-reading-content a:hover {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+.tux-help-reading-content table {
+  border-collapse: collapse;
+  margin: 1em 0;
+  width: 100%;
+}
+.tux-help-reading-content th,
+.tux-help-reading-content td {
+  border: 1px solid var(--border);
+  padding: 6px 10px;
+  text-align: left;
+}
+.tux-help-reading-content th {
+  background: var(--surface);
+  font-weight: 600;
+}
+.tux-help-reading-content .tux-help-mark {
+  background: var(--accent-soft);
+  color: var(--accent);
+  padding: 0 2px;
+  border-radius: 2px;
+}

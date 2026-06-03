@@ -1,0 +1,54 @@
+/* Text-size dropdown (spec §7.1). Touch-target floor: button + menu
+   items each ≥44px tall padded for FZ-M1 (spec §6.3). */
+
+.tux-help-textsize {
+  position: relative;
+}
+
+.tux-help-textsize-button {
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  color: var(--text);
+  padding: 10px 14px;        /* 10+22+10 = 44 with line-height */
+  min-height: 44px;
+  border-radius: 6px;
+  font-size: 14px;
+  font-family: var(--sans);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+.tux-help-textsize-button:hover { background: var(--surface-2); }
+
+.tux-help-textsize-button .lab { color: var(--text-dim); }
+.tux-help-textsize-button .val { color: var(--text); font-weight: 500; }
+.tux-help-textsize-button .chev { color: var(--text-faint); font-size: 10px; }
+
+.tux-help-textsize-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  background: var(--elevated);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  min-width: 200px;
+  padding: 4px;
+  z-index: 10;
+}
+
+.tux-help-textsize-item {
+  padding: 10px 14px;
+  min-height: 44px;
+  font-size: 14px;
+  color: var(--text);
+  cursor: pointer;
+  border-radius: 4px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.tux-help-textsize-item:hover { background: var(--surface-2); }
+.tux-help-textsize-item.active { background: var(--accent-soft); color: var(--accent); }
+.tux-help-textsize-item .check { color: var(--accent); }

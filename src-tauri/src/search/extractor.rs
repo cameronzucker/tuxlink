@@ -267,3 +267,159 @@ mod tests {
         assert!(sent.date_sent.is_some());
     }
 }
+
+/// Strip markdown syntax for FTS5 ingestion (tuxlink-0gsy / spec §9.1).
+/// Conservative parse — handles the subset that docs/user-guide/*.md uses:
+/// ATX headings, bold (`**...**`), italic (`_..._`), inline code
+/// (`` `...` ``), links (`[text](url)`), fenced code blocks
+/// (```` ```...``` ````), and unordered list markers (`-`, `*`).
+///
+/// Output preserves linebreaks. URLs are dropped; link text is kept.
+pub fn extract_markdown(md: &str) -> String {
+    let mut out = String::with_capacity(md.len());
+    let mut in_code_fence = false;
+    for raw_line in md.lines() {
+        let line = raw_line.trim_end();
+        // Fenced code-block toggle.
+        if line.trim_start().starts_with("```") {
+            in_code_fence = !in_code_fence;
+            continue;
+        }
+        if in_code_fence {
+            if !out.is_empty() { out.push('\n'); }
+            out.push_str(line);
+            continue;
+        }
+        // Strip leading ATX-heading marker(s) + indentation.
+        let mut s = line.trim_start();
+        while s.starts_with('#') { s = &s[1..]; }
+        s = s.trim_start();
+        // Strip leading unordered-list marker.
+        if let Some(rest) = s.strip_prefix("- ") {
+            s = rest;
+        } else if let Some(rest) = s.strip_prefix("* ") {
+            s = rest;
+        }
+        let stripped = strip_inline_md(s);
+        if !out.is_empty() { out.push('\n'); }
+        out.push_str(&stripped);
+    }
+    while out.ends_with('\n') { out.pop(); }
+    out
+}
+
+/// Strip inline `**bold**`, `_italic_`, `` `code` ``, and `[text](url)` →
+/// `text`. Left-to-right, first-match-wins so nested syntax falls through
+/// naturally.
+fn strip_inline_md(input: &str) -> String {
+    let bytes = input.as_bytes();
+    let mut out = String::with_capacity(input.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        // Link: [text](url)
+        if bytes[i] == b'[' {
+            if let Some(close_text) = find_byte_md(&bytes[i..], b']') {
+                let after_text = i + close_text + 1;
+                if after_text < bytes.len() && bytes[after_text] == b'(' {
+                    if let Some(close_url) = find_byte_md(&bytes[after_text..], b')') {
+                        let text = &input[i + 1..i + close_text];
+                        out.push_str(text);
+                        i = after_text + close_url + 1;
+                        continue;
+                    }
+                }
+            }
+        }
+        // Bold: **text**
+        if i + 1 < bytes.len() && &bytes[i..i + 2] == b"**" {
+            if let Some(close) = find_seq_md(&bytes[i + 2..], b"**") {
+                let text = &input[i + 2..i + 2 + close];
+                out.push_str(text);
+                i = i + 2 + close + 2;
+                continue;
+            }
+        }
+        // Inline code: `text`
+        if bytes[i] == b'`' {
+            if let Some(close) = find_byte_md(&bytes[i + 1..], b'`') {
+                let text = &input[i + 1..i + 1 + close];
+                out.push_str(text);
+                i = i + 1 + close + 1;
+                continue;
+            }
+        }
+        // Italic: _text_ (only at word boundaries so identifiers like `foo_bar` survive)
+        if bytes[i] == b'_' && (i == 0 || bytes[i - 1] == b' ') {
+            if let Some(close) = find_byte_md(&bytes[i + 1..], b'_') {
+                let text = &input[i + 1..i + 1 + close];
+                out.push_str(text);
+                i = i + 1 + close + 1;
+                continue;
+            }
+        }
+        out.push(bytes[i] as char);
+        i += 1;
+    }
+    out
+}
+
+fn find_byte_md(s: &[u8], b: u8) -> Option<usize> {
+    s.iter().position(|&x| x == b)
+}
+fn find_seq_md(s: &[u8], seq: &[u8]) -> Option<usize> {
+    if seq.is_empty() || s.len() < seq.len() { return None; }
+    for i in 0..=s.len() - seq.len() {
+        if &s[i..i + seq.len()] == seq { return Some(i); }
+    }
+    None
+}
+
+#[cfg(test)]
+mod markdown_tests {
+    use super::*;
+
+    #[test]
+    fn strips_h1_h2_h3_markers_keeps_text() {
+        assert_eq!(
+            extract_markdown("# Heading 1\n## Heading 2\n### Heading 3"),
+            "Heading 1\nHeading 2\nHeading 3",
+        );
+    }
+
+    #[test]
+    fn strips_bold_italic_code_inline_formatting() {
+        assert_eq!(
+            extract_markdown("**bold** _italic_ `code`"),
+            "bold italic code",
+        );
+    }
+
+    #[test]
+    fn link_text_preserved_url_stripped() {
+        assert_eq!(
+            extract_markdown("See [the mailbox](03-mailbox.md) for details."),
+            "See the mailbox for details.",
+        );
+    }
+
+    #[test]
+    fn fenced_code_block_inlined_as_text() {
+        let md = "```bash\nfoo --bar\n```";
+        let out = extract_markdown(md);
+        assert!(out.contains("foo --bar"));
+        assert!(!out.contains("```"));
+    }
+
+    #[test]
+    fn unordered_list_markers_dropped() {
+        assert_eq!(
+            extract_markdown("- item one\n- item two"),
+            "item one\nitem two",
+        );
+    }
+
+    #[test]
+    fn empty_input_returns_empty() {
+        assert_eq!(extract_markdown(""), "");
+    }
+}

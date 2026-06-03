@@ -1,0 +1,1469 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Tuxlink — Help Window Mocks (2026-06-03)</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+/* ============================================================
+   Tuxlink dark theme tokens (from src/App.css)
+   ============================================================ */
+:root {
+  --bg: #0d1318;
+  --surface: #141c23;
+  --surface-2: #1a2330;
+  --elevated: #1e2832;
+  --border: #1f2832;
+  --border-strong: #2c3744;
+  --border-soft: #1a2028;
+  --text: #e4ebf2;
+  --text-dim: #94a0ad;
+  --text-faint: #5d6975;
+  --accent: #f59f3c;
+  --accent-2: #ffba6e;
+  --accent-soft: rgba(245, 159, 60, 0.12);
+  --success: #5dd6a0;
+  --error: #ee6b6b;
+  --info: #6bb8ee;
+  --mono: 'JetBrains Mono', 'SF Mono', 'Fira Code', Menlo, Consolas, monospace;
+  --sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+}
+
+/* ============================================================
+   Page chrome (the surrounding page that lists the variants)
+   ============================================================ */
+* { box-sizing: border-box; }
+html, body {
+  margin: 0; padding: 0;
+  background: #0a0f13;
+  color: var(--text);
+  font-family: var(--sans);
+}
+.page {
+  max-width: 1320px;
+  margin: 0 auto;
+  padding: 48px 32px 96px;
+}
+.page > header {
+  margin-bottom: 32px;
+}
+.page > header h1 {
+  margin: 0 0 6px;
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+.page > header .sub {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 15px;
+  line-height: 1.5;
+  max-width: 78ch;
+}
+.page > header .meta {
+  margin: 14px 0 0;
+  color: var(--text-faint);
+  font-size: 13px;
+  font-family: var(--mono);
+}
+.variants {
+  display: flex;
+  flex-direction: column;
+  gap: 56px;
+}
+.variant {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.variant > h2 {
+  margin: 0;
+  font-size: 19px;
+  font-weight: 600;
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+.variant > h2 .badge {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border: 1px solid rgba(245, 159, 60, 0.4);
+  padding: 2px 8px;
+  border-radius: 3px;
+  font-weight: 500;
+}
+.variant > p.lede {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 14px;
+  line-height: 1.55;
+  max-width: 78ch;
+}
+.variant > .takeaway {
+  margin: 0;
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.55;
+  max-width: 78ch;
+  padding: 10px 14px;
+  background: var(--surface);
+  border-left: 3px solid var(--accent);
+  border-radius: 2px;
+}
+.variant > .takeaway strong {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* ============================================================
+   Mock Tauri window frame (shared by all variants)
+   ============================================================ */
+.tauri-window {
+  width: 1180px;
+  height: 740px;
+  background: var(--bg);
+  border-radius: 10px;
+  overflow: hidden;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.55), 0 2px 8px rgba(0, 0, 0, 0.3);
+  display: flex;
+  flex-direction: column;
+  border: 1px solid #000;
+}
+/* Custom titlebar matching the app's chrome */
+.tauri-titlebar {
+  height: 36px;
+  background: linear-gradient(to bottom, #0f161c 0%, #0a1015 100%);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  -webkit-app-region: drag;
+  flex: 0 0 auto;
+}
+.tauri-titlebar .app-icon {
+  width: 16px; height: 16px;
+  background: var(--accent);
+  border-radius: 3px;
+  margin-right: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: 700;
+  color: #1a0e02;
+}
+.tauri-titlebar .title {
+  font-size: 12px;
+  color: var(--text-dim);
+  font-weight: 500;
+  letter-spacing: 0.02em;
+}
+.tauri-titlebar .spacer { flex: 1; }
+.tauri-titlebar .win-controls {
+  display: flex;
+  gap: 2px;
+}
+.tauri-titlebar .win-controls button {
+  width: 32px;
+  height: 24px;
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  font-size: 12px;
+  cursor: pointer;
+  border-radius: 3px;
+}
+.tauri-titlebar .win-controls button:hover { background: var(--surface); }
+.tauri-titlebar .win-controls button.close:hover { background: var(--error); color: #1a0e02; }
+
+/* Main body inside the Tauri frame */
+.tauri-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  min-height: 0;
+}
+
+/* Shared: font-control pill cluster (used in all variants) */
+.font-controls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 3px;
+}
+.font-controls button {
+  background: transparent;
+  border: none;
+  color: var(--text);
+  width: 32px;
+  height: 26px;
+  border-radius: 3px;
+  cursor: pointer;
+  font-family: var(--sans);
+  font-weight: 600;
+}
+.font-controls button:hover { background: var(--surface-2); }
+.font-controls .label {
+  color: var(--text-dim);
+  font-size: 12px;
+  font-family: var(--mono);
+  padding: 0 8px;
+  min-width: 48px;
+  text-align: center;
+}
+.font-controls .a-small { font-size: 11px; }
+.font-controls .a-large { font-size: 18px; }
+
+/* Shared: reading content (the rendered markdown look) */
+.reading-content {
+  font-family: var(--sans);
+  color: var(--text);
+  line-height: 1.65;
+}
+.reading-content h1 {
+  font-size: 1.7em;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  margin: 0 0 0.6em;
+  color: var(--text);
+}
+.reading-content h2 {
+  font-size: 1.3em;
+  font-weight: 600;
+  margin: 1.6em 0 0.6em;
+  color: var(--accent-2);
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 0.3em;
+}
+.reading-content p {
+  margin: 0.8em 0;
+}
+.reading-content ul {
+  padding-left: 1.4em;
+  margin: 0.8em 0;
+}
+.reading-content li {
+  margin: 0.35em 0;
+}
+.reading-content strong {
+  color: var(--accent-2);
+  font-weight: 600;
+}
+.reading-content code {
+  font-family: var(--mono);
+  background: var(--surface);
+  color: var(--accent);
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 0.9em;
+  border: 1px solid var(--border);
+}
+.reading-content a {
+  color: var(--info);
+  text-decoration: none;
+  border-bottom: 1px dotted var(--info);
+}
+.reading-content a:hover { color: var(--accent); border-bottom-color: var(--accent); }
+
+/* ============================================================
+   VARIANT A — Sidebar ToC + reading pane (evolution of current)
+   ============================================================ */
+.v-a {}
+.v-a .doc-header {
+  display: flex;
+  align-items: center;
+  padding: 10px 16px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  flex: 0 0 auto;
+  gap: 12px;
+}
+.v-a .doc-header .doc-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+}
+.v-a .doc-header .doc-sub {
+  font-size: 12px;
+  color: var(--text-dim);
+  font-family: var(--mono);
+}
+.v-a .doc-header .spacer { flex: 1; }
+.v-a .doc-header .search {
+  display: flex;
+  align-items: center;
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  padding: 6px 10px;
+  width: 240px;
+  gap: 8px;
+}
+.v-a .doc-header .search input {
+  background: transparent;
+  border: none;
+  color: var(--text);
+  font-size: 13px;
+  outline: none;
+  width: 100%;
+  font-family: var(--sans);
+}
+.v-a .doc-header .search input::placeholder { color: var(--text-faint); }
+.v-a .doc-header .search .icon { color: var(--text-faint); font-size: 13px; }
+
+.v-a .doc-split {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+.v-a .sidebar {
+  width: 260px;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 260px;
+  overflow-y: auto;
+}
+.v-a .sidebar .sb-section {
+  padding: 12px 14px 6px;
+  font-size: 11px;
+  color: var(--text-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 600;
+}
+.v-a .sidebar .sb-item {
+  padding: 10px 14px;
+  font-size: 14px;
+  color: var(--text-dim);
+  border-left: 3px solid transparent;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.v-a .sidebar .sb-item .num {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-faint);
+  min-width: 18px;
+}
+.v-a .sidebar .sb-item:hover {
+  color: var(--text);
+  background: rgba(245, 159, 60, 0.04);
+}
+.v-a .sidebar .sb-item.active {
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-left-color: var(--accent);
+  font-weight: 500;
+}
+.v-a .sidebar .sb-item.active .num { color: var(--accent); }
+
+.v-a .reading {
+  flex: 1;
+  overflow-y: auto;
+  background: var(--bg);
+  display: flex;
+  justify-content: center;
+}
+.v-a .reading-inner {
+  max-width: 720px;
+  width: 100%;
+  padding: 36px 48px 80px;
+}
+.v-a .reading-content {
+  font-size: 18px; /* the bigger default */
+}
+
+/* ============================================================
+   VARIANT B — Top tabs + full-width reading (browser-like)
+   ============================================================ */
+.v-b {}
+.v-b .toolbar {
+  display: flex;
+  align-items: center;
+  padding: 8px 16px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  gap: 12px;
+  flex: 0 0 auto;
+}
+.v-b .toolbar .nav-arrows { display: flex; gap: 2px; }
+.v-b .toolbar .nav-arrows button {
+  width: 32px;
+  height: 28px;
+  background: transparent;
+  border: 1px solid var(--border-strong);
+  color: var(--text-dim);
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 14px;
+}
+.v-b .toolbar .nav-arrows button:hover { background: var(--surface-2); color: var(--text); }
+.v-b .toolbar .nav-arrows button[disabled] { opacity: 0.4; cursor: default; }
+.v-b .toolbar .current {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.v-b .toolbar .current .breadcrumb {
+  color: var(--text-faint);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+.v-b .toolbar .spacer { flex: 1; }
+
+.v-b .tabstrip {
+  display: flex;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  padding: 0 8px;
+  overflow-x: auto;
+  flex: 0 0 auto;
+}
+.v-b .tab {
+  padding: 10px 16px;
+  font-size: 13px;
+  color: var(--text-dim);
+  white-space: nowrap;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.v-b .tab .num {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-faint);
+}
+.v-b .tab:hover { color: var(--text); }
+.v-b .tab.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+  background: var(--bg);
+  font-weight: 500;
+}
+.v-b .tab.active .num { color: var(--accent); }
+
+.v-b .reading {
+  flex: 1;
+  overflow-y: auto;
+  background: var(--bg);
+  display: flex;
+  justify-content: center;
+}
+.v-b .reading-inner {
+  max-width: 720px;
+  width: 100%;
+  padding: 40px 48px 80px;
+}
+.v-b .reading-content { font-size: 18px; }
+
+/* ============================================================
+   VARIANT C — Reading-focused + ToC drawer (max reading width)
+   ============================================================ */
+.v-c {}
+.v-c .minibar {
+  display: flex;
+  align-items: center;
+  padding: 8px 18px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  gap: 12px;
+  flex: 0 0 auto;
+}
+.v-c .minibar .menu-btn {
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  color: var(--text);
+  padding: 6px 12px;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--sans);
+}
+.v-c .minibar .menu-btn:hover { background: var(--surface-2); }
+.v-c .minibar .menu-btn .ham {
+  display: inline-block;
+  width: 14px;
+  position: relative;
+}
+.v-c .minibar .menu-btn .ham::before,
+.v-c .minibar .menu-btn .ham::after,
+.v-c .minibar .menu-btn .ham span {
+  content: '';
+  display: block;
+  height: 1.5px;
+  background: var(--text);
+  margin: 2px 0;
+}
+.v-c .minibar .current-topic {
+  font-size: 13px;
+  color: var(--text-dim);
+  font-family: var(--mono);
+}
+.v-c .minibar .spacer { flex: 1; }
+.v-c .minibar .pager {
+  display: flex;
+  gap: 4px;
+}
+.v-c .minibar .pager button {
+  background: transparent;
+  border: 1px solid var(--border-strong);
+  color: var(--text-dim);
+  padding: 5px 10px;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 12px;
+}
+.v-c .minibar .pager button:hover { color: var(--text); background: var(--surface-2); }
+
+.v-c .reading {
+  flex: 1;
+  overflow-y: auto;
+  background: var(--bg);
+  display: flex;
+  justify-content: center;
+}
+.v-c .reading-inner {
+  max-width: 760px;
+  width: 100%;
+  padding: 48px 56px 80px;
+}
+.v-c .reading-content { font-size: 19px; }
+
+/* Optional: simulated drawer showing how ToC would appear in variant C */
+.v-c-drawer-hint {
+  position: relative;
+}
+.v-c .drawer-shadow {
+  position: absolute;
+  top: 0; left: 0;
+  width: 300px;
+  height: 100%;
+  background: var(--elevated);
+  border-right: 1px solid var(--border-strong);
+  box-shadow: 4px 0 12px rgba(0, 0, 0, 0.4);
+  padding: 16px 0;
+  display: flex;
+  flex-direction: column;
+  z-index: 5;
+}
+.v-c .drawer-shadow .dh-title {
+  font-size: 11px;
+  color: var(--text-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 600;
+  padding: 0 18px 8px;
+}
+.v-c .drawer-shadow .dh-item {
+  padding: 10px 18px;
+  font-size: 14px;
+  color: var(--text-dim);
+  cursor: pointer;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+.v-c .drawer-shadow .dh-item .num {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-faint);
+  min-width: 18px;
+}
+.v-c .drawer-shadow .dh-item:hover { color: var(--text); background: rgba(245, 159, 60, 0.04); }
+.v-c .drawer-shadow .dh-item.active { color: var(--accent); background: var(--accent-soft); }
+.v-c .drawer-shadow .dh-item.active .num { color: var(--accent); }
+
+/* Background "dim" hint behind drawer */
+.v-c .drawer-dim {
+  position: absolute;
+  top: 0; left: 300px; right: 0; bottom: 0;
+  background: rgba(0, 0, 0, 0.4);
+  z-index: 4;
+}
+
+/* Section divider between variants */
+.divider {
+  height: 1px;
+  background: linear-gradient(to right, transparent, var(--border-strong), transparent);
+  margin: 16px 0;
+}
+
+/* Notes / footer */
+.global-notes {
+  margin-top: 64px;
+  padding: 24px 28px;
+  background: var(--surface);
+  border-left: 3px solid var(--accent);
+  border-radius: 4px;
+  color: var(--text-dim);
+  font-size: 14px;
+  line-height: 1.6;
+}
+.global-notes h3 {
+  color: var(--accent-2);
+  font-size: 16px;
+  font-weight: 600;
+  margin: 0 0 12px;
+}
+.global-notes ul { padding-left: 1.4em; margin: 8px 0; }
+.global-notes li { margin: 6px 0; }
+.global-notes strong { color: var(--text); }
+
+</style>
+</head>
+<body>
+
+<div class="page">
+  <header>
+    <h1>Tuxlink Help — separate-window mocks</h1>
+    <p class="sub">
+      Three layout candidates for the redesigned Help window. All three replace
+      the current modal-over-client overlay with a separate Tauri webview
+      (mimicking the existing <code style="font-family: var(--mono); color: var(--accent); font-size: 13px;">compose_window.rs</code> precedent), default to
+      a larger reading size (~18&ndash;19&nbsp;px), and ship an in-app font-size
+      control. The variants differ in how the table of contents and topic
+      navigation are presented.
+    </p>
+    <p class="meta">
+      bd-tuxlink-0gsy &middot; agent bog-bluff-mesa &middot; 2026-06-03 &middot;
+      content sample drawn from <code style="color: var(--text-dim);">docs/user-guide/02-connections.md</code>
+    </p>
+  </header>
+
+  <div class="variants">
+
+    <!-- ===================== VARIANT A ===================== -->
+    <section class="variant v-a">
+      <h2>Variant A — Sidebar ToC + reading pane <span class="badge">closest evolution</span></h2>
+      <p class="lede">
+        Direct evolution of the current modal: a 260&nbsp;px left sidebar lists all
+        ten topics, the right pane renders the active one. Header carries an
+        optional search affordance and the font-size cluster. Familiar to any
+        operator who has used the current modal; no relearning needed.
+      </p>
+
+      <div class="tauri-window">
+        <!-- Tauri titlebar -->
+        <div class="tauri-titlebar">
+          <div class="app-icon">T</div>
+          <div class="title">Tuxlink Documentation</div>
+          <div class="spacer"></div>
+          <div class="win-controls">
+            <button>&minus;</button><button>&square;</button><button class="close">&times;</button>
+          </div>
+        </div>
+
+        <div class="tauri-body">
+          <!-- Header strip -->
+          <div class="doc-header">
+            <span class="doc-title">User Guide</span>
+            <span class="doc-sub">v0.0.1-pre-alpha</span>
+            <div class="spacer"></div>
+            <div class="search">
+              <span class="icon">&#x1F50D;</span>
+              <input type="text" placeholder="Search topics…" />
+            </div>
+            <div class="font-controls">
+              <button class="a-small" title="Smaller">A&minus;</button>
+              <span class="label">100%</span>
+              <button class="a-large" title="Larger">A+</button>
+            </div>
+          </div>
+
+          <div class="doc-split">
+            <!-- Sidebar -->
+            <nav class="sidebar">
+              <div class="sb-section">Getting started</div>
+              <div class="sb-item"><span class="num">01</span> Getting started</div>
+              <div class="sb-item active"><span class="num">02</span> Connections</div>
+              <div class="sb-section">Using Tuxlink</div>
+              <div class="sb-item"><span class="num">03</span> Mailbox</div>
+              <div class="sb-item"><span class="num">04</span> Composing</div>
+              <div class="sb-item"><span class="num">05</span> Forms</div>
+              <div class="sb-item"><span class="num">06</span> Search</div>
+              <div class="sb-section">Configuration</div>
+              <div class="sb-item"><span class="num">07</span> Settings</div>
+              <div class="sb-item"><span class="num">08</span> Color schemes</div>
+              <div class="sb-item"><span class="num">09</span> Keyboard shortcuts</div>
+              <div class="sb-section">Reference</div>
+              <div class="sb-item"><span class="num">10</span> Troubleshooting</div>
+            </nav>
+
+            <!-- Reading pane -->
+            <main class="reading">
+              <div class="reading-inner">
+                <div class="reading-content">
+                  <h1>Connections</h1>
+                  <p>
+                    Tuxlink reaches a Winlink Common Message Server (CMS) over one
+                    of three transports: telnet over the internet, packet radio
+                    over VHF/UHF, or ARDOP over HF. Pick the one that matches your
+                    radio, license class, and current operating conditions.
+                  </p>
+
+                  <h2>Packet (1200-baud AX.25)</h2>
+                  <p>
+                    Packet uses AX.25 over a TNC or a soundcard modem (Dire Wolf
+                    with KISS TCP). It carries short Winlink B2F sessions over
+                    VHF / UHF FM.
+                  </p>
+                  <ul>
+                    <li><strong>Bandwidth:</strong> 1200 baud &mdash; small messages, no large attachments.</li>
+                    <li><strong>Latency:</strong> seconds (line-of-sight VHF) to minutes (digipeated).</li>
+                    <li><strong>License gate:</strong> any U.S. amateur class (no Morse requirement).</li>
+                    <li><strong>Use cases:</strong> local emcomm, neighborhood nets, training.</li>
+                  </ul>
+                  <p>
+                    The SSID picker in the dashboard ribbon attaches <code>-N</code>
+                    to the callsign for each AX.25 session (<code>N7CPZ-7</code> is
+                    the convention for Winlink).
+                  </p>
+                </div>
+              </div>
+            </main>
+          </div>
+        </div>
+      </div>
+
+      <p class="takeaway">
+        <strong>Strengths:</strong> Familiar; topics always visible; section
+        groupings give structure (Getting started / Using / Config / Reference);
+        search and font controls both prominent in header.
+        <strong>Weaknesses:</strong> Reading pane is narrower (~720 px max);
+        sidebar takes 22% of horizontal real estate even when the operator
+        knows where they are.
+      </p>
+    </section>
+
+    <div class="divider"></div>
+
+    <!-- ===================== VARIANT B ===================== -->
+    <section class="variant v-b">
+      <h2>Variant B — Top tab strip + full-width reading <span class="badge">browser-like</span></h2>
+      <p class="lede">
+        Topics live as horizontal tabs across the top, mirroring how operators
+        already navigate browser docs (MDN, Read the Docs). Reading pane is
+        full window width with content constrained to a comfortable
+        ~720&nbsp;px reading column centered in it. Toolbar offers Back / Forward
+        history nav (operators read non-linearly).
+      </p>
+
+      <div class="tauri-window">
+        <div class="tauri-titlebar">
+          <div class="app-icon">T</div>
+          <div class="title">Tuxlink Documentation</div>
+          <div class="spacer"></div>
+          <div class="win-controls">
+            <button>&minus;</button><button>&square;</button><button class="close">&times;</button>
+          </div>
+        </div>
+
+        <div class="tauri-body">
+          <!-- Toolbar -->
+          <div class="toolbar">
+            <div class="nav-arrows">
+              <button title="Back">&larr;</button>
+              <button title="Forward" disabled>&rarr;</button>
+            </div>
+            <div class="current">
+              <span class="breadcrumb">User Guide&nbsp;/&nbsp;</span> Connections
+            </div>
+            <div class="spacer"></div>
+            <div class="font-controls">
+              <button class="a-small">A&minus;</button>
+              <span class="label">100%</span>
+              <button class="a-large">A+</button>
+            </div>
+          </div>
+
+          <!-- Tab strip -->
+          <div class="tabstrip">
+            <div class="tab"><span class="num">01</span> Getting started</div>
+            <div class="tab active"><span class="num">02</span> Connections</div>
+            <div class="tab"><span class="num">03</span> Mailbox</div>
+            <div class="tab"><span class="num">04</span> Composing</div>
+            <div class="tab"><span class="num">05</span> Forms</div>
+            <div class="tab"><span class="num">06</span> Search</div>
+            <div class="tab"><span class="num">07</span> Settings</div>
+            <div class="tab"><span class="num">08</span> Color schemes</div>
+            <div class="tab"><span class="num">09</span> Keyboard</div>
+            <div class="tab"><span class="num">10</span> Troubleshooting</div>
+          </div>
+
+          <!-- Reading -->
+          <main class="reading">
+            <div class="reading-inner">
+              <div class="reading-content">
+                <h1>Connections</h1>
+                <p>
+                  Tuxlink reaches a Winlink Common Message Server (CMS) over one
+                  of three transports: telnet over the internet, packet radio
+                  over VHF/UHF, or ARDOP over HF.
+                </p>
+
+                <h2>Packet (1200-baud AX.25)</h2>
+                <p>
+                  Packet uses AX.25 over a TNC or a soundcard modem (Dire Wolf
+                  with KISS TCP). It carries short Winlink B2F sessions over
+                  VHF / UHF FM.
+                </p>
+                <ul>
+                  <li><strong>Bandwidth:</strong> 1200 baud &mdash; small messages.</li>
+                  <li><strong>Latency:</strong> seconds (line-of-sight VHF) to minutes.</li>
+                  <li><strong>License gate:</strong> any U.S. amateur class.</li>
+                </ul>
+                <p>
+                  The SSID picker in the dashboard ribbon attaches <code>-N</code>
+                  to the callsign for each AX.25 session (<code>N7CPZ-7</code> is
+                  the convention for Winlink).
+                </p>
+              </div>
+            </div>
+          </main>
+        </div>
+      </div>
+
+      <p class="takeaway">
+        <strong>Strengths:</strong> All ten topics visible at once without a
+        sidebar; full-width window for the reader; Back / Forward history nav
+        matches how older users navigate browser docs.
+        <strong>Weaknesses:</strong> Section groupings lost (10 flat tabs is
+        a lot); horizontal scrolling on the tab strip if window narrows;
+        unfamiliar pattern for a desktop documentation viewer.
+      </p>
+    </section>
+
+    <div class="divider"></div>
+
+    <!-- ===================== VARIANT C ===================== -->
+    <section class="variant v-c">
+      <h2>Variant C — Reading-focused + ToC drawer <span class="badge">max reading width</span></h2>
+      <p class="lede">
+        The window is dominated by the reading pane (~760&nbsp;px content column
+        in a 1180&nbsp;px window). A &ldquo;Contents&rdquo; button at top-left opens a
+        drawer with the topic list when needed; otherwise it stays out of the
+        way. Drawer is shown open in the second frame below.
+      </p>
+
+      <!-- Frame 1 — drawer closed (default reading state) -->
+      <div class="tauri-window">
+        <div class="tauri-titlebar">
+          <div class="app-icon">T</div>
+          <div class="title">Tuxlink Documentation &mdash; Connections</div>
+          <div class="spacer"></div>
+          <div class="win-controls">
+            <button>&minus;</button><button>&square;</button><button class="close">&times;</button>
+          </div>
+        </div>
+
+        <div class="tauri-body">
+          <div class="minibar">
+            <button class="menu-btn"><span class="ham"><span></span></span> Contents</button>
+            <div class="current-topic">02 / 10 &middot; Connections</div>
+            <div class="spacer"></div>
+            <div class="pager">
+              <button>&larr; Mailbox</button>
+              <button>Mailbox &rarr;</button>
+            </div>
+            <div class="font-controls">
+              <button class="a-small">A&minus;</button>
+              <span class="label">100%</span>
+              <button class="a-large">A+</button>
+            </div>
+          </div>
+
+          <main class="reading">
+            <div class="reading-inner">
+              <div class="reading-content">
+                <h1>Connections</h1>
+                <p>
+                  Tuxlink reaches a Winlink Common Message Server (CMS) over one
+                  of three transports: telnet over the internet, packet radio
+                  over VHF/UHF, or ARDOP over HF. Pick the one that matches your
+                  radio, license class, and current operating conditions.
+                </p>
+
+                <h2>Packet (1200-baud AX.25)</h2>
+                <p>
+                  Packet uses AX.25 over a TNC or a soundcard modem (Dire Wolf
+                  with KISS TCP). It carries short Winlink B2F sessions over
+                  VHF / UHF FM.
+                </p>
+                <ul>
+                  <li><strong>Bandwidth:</strong> 1200 baud &mdash; small messages, no large attachments.</li>
+                  <li><strong>License gate:</strong> any U.S. amateur class.</li>
+                </ul>
+              </div>
+            </div>
+          </main>
+        </div>
+      </div>
+
+      <p class="lede" style="margin-top: 24px;">
+        Same window with the Contents drawer open (overlay; semi-dim
+        background hints at the reading pane behind it):
+      </p>
+
+      <!-- Frame 2 — drawer open -->
+      <div class="tauri-window">
+        <div class="tauri-titlebar">
+          <div class="app-icon">T</div>
+          <div class="title">Tuxlink Documentation &mdash; Connections</div>
+          <div class="spacer"></div>
+          <div class="win-controls">
+            <button>&minus;</button><button>&square;</button><button class="close">&times;</button>
+          </div>
+        </div>
+
+        <div class="tauri-body v-c-drawer-hint">
+          <div class="minibar" style="position: relative; z-index: 6;">
+            <button class="menu-btn" style="background: var(--accent-soft); border-color: var(--accent); color: var(--accent);"><span class="ham"><span></span></span> Contents</button>
+            <div class="current-topic">02 / 10 &middot; Connections</div>
+            <div class="spacer"></div>
+            <div class="pager">
+              <button>&larr; Mailbox</button>
+              <button>Mailbox &rarr;</button>
+            </div>
+            <div class="font-controls">
+              <button class="a-small">A&minus;</button>
+              <span class="label">100%</span>
+              <button class="a-large">A+</button>
+            </div>
+          </div>
+
+          <div style="position: relative; flex: 1; overflow: hidden;">
+            <!-- Drawer overlay -->
+            <div class="drawer-shadow">
+              <div class="dh-title">Getting started</div>
+              <div class="dh-item"><span class="num">01</span> Getting started</div>
+              <div class="dh-item active"><span class="num">02</span> Connections</div>
+              <div class="dh-title">Using Tuxlink</div>
+              <div class="dh-item"><span class="num">03</span> Mailbox</div>
+              <div class="dh-item"><span class="num">04</span> Composing</div>
+              <div class="dh-item"><span class="num">05</span> Forms</div>
+              <div class="dh-item"><span class="num">06</span> Search</div>
+              <div class="dh-title">Configuration</div>
+              <div class="dh-item"><span class="num">07</span> Settings</div>
+              <div class="dh-item"><span class="num">08</span> Color schemes</div>
+              <div class="dh-item"><span class="num">09</span> Keyboard</div>
+              <div class="dh-title">Reference</div>
+              <div class="dh-item"><span class="num">10</span> Troubleshooting</div>
+            </div>
+            <div class="drawer-dim"></div>
+
+            <!-- Reading underneath (partially obscured by drawer) -->
+            <main class="reading" style="height: 100%;">
+              <div class="reading-inner">
+                <div class="reading-content">
+                  <h1>Connections</h1>
+                  <p>
+                    Tuxlink reaches a Winlink Common Message Server (CMS) over
+                    one of three transports&hellip;
+                  </p>
+                </div>
+              </div>
+            </main>
+          </div>
+        </div>
+      </div>
+
+      <p class="takeaway">
+        <strong>Strengths:</strong> Most reading area of the three (~760 px column);
+        cleanest visual chrome; explicit topic pager (&ldquo;&larr; Mailbox &nbsp; Mailbox &rarr;&rdquo;)
+        gives sequential reading affordance.
+        <strong>Weaknesses:</strong> ToC requires an extra click (worst for
+        an unfamiliar user trying to discover the doc structure); drawer
+        overlay competes with reading pane visually.
+      </p>
+    </section>
+
+  </div>
+
+  <div class="divider"></div>
+
+  <!-- ===================== FONT CONTROL STUDY ===================== -->
+  <section class="variant">
+    <h2>Font-size control study — 4 affordance candidates <span class="badge">widget-level</span></h2>
+    <p class="lede">
+      Layout A is locked. The next call is what the size-changing widget
+      itself looks like, since the userbase can't be assumed to know that
+      <code style="color: var(--accent); font-family: var(--mono); font-size: 13px;">Ctrl+</code>
+      and
+      <code style="color: var(--accent); font-family: var(--mono); font-size: 13px;">Ctrl&minus;</code>
+      exist. Each row below shows the widget at production size, sitting
+      where it would in Variant A's header. All four still keep
+      <code style="color: var(--accent); font-family: var(--mono); font-size: 13px;">Ctrl+</code> /
+      <code style="color: var(--accent); font-family: var(--mono); font-size: 13px;">Ctrl&minus;</code> /
+      <code style="color: var(--accent); font-family: var(--mono); font-size: 13px;">Ctrl0</code>
+      as power-user shortcuts.
+    </p>
+
+      <style>
+        .fc-study .header-frame {
+          background: var(--surface);
+          border: 1px solid var(--border);
+          border-radius: 6px;
+          padding: 14px 18px;
+          display: flex;
+          align-items: center;
+          gap: 14px;
+        }
+        .fc-study .header-frame .title {
+          font-size: 15px;
+          font-weight: 600;
+          color: var(--text);
+        }
+        .fc-study .header-frame .spacer { flex: 1; }
+        .fc-study .header-frame .placeholder-search {
+          background: var(--bg);
+          border: 1px solid var(--border-strong);
+          border-radius: 6px;
+          padding: 8px 12px;
+          font-size: 13px;
+          color: var(--text-faint);
+          width: 220px;
+        }
+
+        /* 1. Large A-/100%/A+ pills */
+        .fc-1 {
+          display: flex; align-items: center; gap: 6px;
+          background: var(--bg);
+          border: 1px solid var(--border-strong);
+          border-radius: 8px;
+          padding: 4px;
+        }
+        .fc-1 button {
+          background: transparent;
+          border: none;
+          color: var(--text);
+          width: 44px; height: 36px;
+          border-radius: 5px;
+          cursor: pointer;
+          font-family: var(--sans);
+          font-weight: 600;
+        }
+        .fc-1 button:hover { background: var(--surface-2); }
+        .fc-1 .label {
+          color: var(--text);
+          font-size: 14px;
+          font-family: var(--mono);
+          font-weight: 500;
+          padding: 0 10px;
+          min-width: 56px;
+          text-align: center;
+        }
+        .fc-1 .small  { font-size: 13px; }
+        .fc-1 .large  { font-size: 22px; line-height: 1; }
+
+        /* 2. Stepped preset segmented control */
+        .fc-2 {
+          display: inline-flex;
+          background: var(--bg);
+          border: 1px solid var(--border-strong);
+          border-radius: 8px;
+          padding: 4px;
+          gap: 2px;
+        }
+        .fc-2 .seg {
+          background: transparent;
+          border: none;
+          color: var(--text-dim);
+          padding: 8px 14px;
+          font-size: 13px;
+          border-radius: 5px;
+          cursor: pointer;
+          font-family: var(--sans);
+        }
+        .fc-2 .seg:hover { color: var(--text); background: var(--surface-2); }
+        .fc-2 .seg.active {
+          background: var(--accent);
+          color: #1a0e02;
+          font-weight: 600;
+        }
+
+        /* 3. Dropdown "Text size: Large" */
+        .fc-3-wrap { position: relative; }
+        .fc-3-button {
+          background: var(--bg);
+          border: 1px solid var(--border-strong);
+          color: var(--text);
+          padding: 8px 14px;
+          border-radius: 6px;
+          font-size: 14px;
+          cursor: pointer;
+          display: inline-flex;
+          align-items: center;
+          gap: 10px;
+          font-family: var(--sans);
+        }
+        .fc-3-button:hover { background: var(--surface-2); }
+        .fc-3-button .lab { color: var(--text-dim); }
+        .fc-3-button .val { color: var(--text); font-weight: 500; }
+        .fc-3-button .chev { color: var(--text-faint); font-size: 10px; }
+        .fc-3-menu {
+          position: absolute;
+          top: calc(100% + 6px);
+          right: 0;
+          background: var(--elevated);
+          border: 1px solid var(--border-strong);
+          border-radius: 6px;
+          box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+          min-width: 180px;
+          padding: 4px;
+          z-index: 3;
+        }
+        .fc-3-menu .item {
+          padding: 8px 14px;
+          font-size: 14px;
+          color: var(--text);
+          cursor: pointer;
+          border-radius: 4px;
+          display: flex;
+          justify-content: space-between;
+        }
+        .fc-3-menu .item:hover { background: var(--surface-2); }
+        .fc-3-menu .item.active { background: var(--accent-soft); color: var(--accent); }
+        .fc-3-menu .item .check { color: var(--accent); }
+
+        /* 4. Pills + presets together */
+        .fc-4 {
+          display: flex;
+          flex-direction: column;
+          gap: 6px;
+          align-items: flex-end;
+        }
+
+        /* Live preview rows */
+        .preview-row {
+          display: flex;
+          gap: 24px;
+          align-items: flex-start;
+          padding: 18px;
+          background: var(--bg);
+          border: 1px solid var(--border);
+          border-radius: 6px;
+          margin-top: 12px;
+        }
+        .preview-row .label {
+          font-size: 11px;
+          color: var(--text-faint);
+          font-family: var(--mono);
+          text-transform: uppercase;
+          letter-spacing: 0.06em;
+          width: 90px;
+          padding-top: 3px;
+          flex: 0 0 90px;
+        }
+        .preview-row .sample {
+          flex: 1;
+          color: var(--text);
+          font-family: var(--sans);
+          line-height: 1.55;
+          max-width: 660px;
+        }
+        .preview-row .sample strong { color: var(--accent-2); font-weight: 600; }
+        .preview-row .sample code {
+          font-family: var(--mono);
+          background: var(--surface);
+          color: var(--accent);
+          padding: 1px 6px;
+          border-radius: 3px;
+          font-size: 0.88em;
+          border: 1px solid var(--border);
+        }
+        .preview-row.size-16 .sample { font-size: 16px; }
+        .preview-row.size-18 .sample { font-size: 18px; }
+        .preview-row.size-20 .sample { font-size: 20px; }
+        .preview-row.size-22 .sample { font-size: 22px; }
+        .preview-row.size-24 .sample { font-size: 24px; }
+
+        .fc-row {
+          margin-top: 18px;
+          display: flex;
+          flex-direction: column;
+          gap: 8px;
+        }
+        .fc-row .row-title {
+          font-size: 13px;
+          font-weight: 600;
+          color: var(--text);
+          display: flex;
+          gap: 12px;
+          align-items: baseline;
+        }
+        .fc-row .row-title .tag {
+          font-family: var(--mono);
+          font-size: 11px;
+          color: var(--accent);
+          background: var(--accent-soft);
+          padding: 1px 7px;
+          border-radius: 3px;
+        }
+        .fc-row .row-note {
+          font-size: 13px;
+          color: var(--text-dim);
+          margin: 4px 0 0;
+        }
+      </style>
+
+      <div class="fc-study">
+
+        <!-- Widget 1 — Large A−/100%/A+ pills -->
+        <div class="fc-row">
+          <div class="row-title"><span class="tag">1</span> Large A&minus; / 100% / A+ pills (header pill cluster, sized for older eyes)</div>
+          <div class="header-frame">
+            <span class="title">User Guide</span>
+            <div class="spacer"></div>
+            <div class="placeholder-search">Search topics&hellip;</div>
+            <div class="fc-1">
+              <button class="small" title="Smaller">A&minus;</button>
+              <span class="label">100%</span>
+              <button class="large" title="Larger">A+</button>
+            </div>
+          </div>
+          <p class="row-note">
+            Two 44&nbsp;&times;&nbsp;36&nbsp;px buttons, percent always visible. Symbol scaled
+            so the &ldquo;A&rdquo; on each button reads as a visual size hint. Universal
+            pattern; older operators have seen this on browsers and PDF
+            readers. Granular (each click is one step, default ~10%).
+          </p>
+        </div>
+
+        <!-- Widget 2 — Stepped preset segmented control -->
+        <div class="fc-row">
+          <div class="row-title"><span class="tag">2</span> Stepped preset segmented control (named sizes)</div>
+          <div class="header-frame">
+            <span class="title">User Guide</span>
+            <div class="spacer"></div>
+            <div class="placeholder-search">Search topics&hellip;</div>
+            <div class="fc-2">
+              <button class="seg">Normal</button>
+              <button class="seg active">Large</button>
+              <button class="seg">X&#8209;Large</button>
+              <button class="seg">Huge</button>
+            </div>
+          </div>
+          <p class="row-note">
+            One click to a known size. Visually unambiguous &mdash; the user
+            doesn&rsquo;t have to guess what &ldquo;125%&rdquo; looks like, they pick a
+            named tier. Trade-off: less granular (4 fixed steps); the
+            chrome is wider than the pills.
+          </p>
+        </div>
+
+        <!-- Widget 3 — Dropdown -->
+        <div class="fc-row">
+          <div class="row-title"><span class="tag">3</span> Dropdown menu (button shows current size, opens preset list)</div>
+          <div class="header-frame">
+            <span class="title">User Guide</span>
+            <div class="spacer"></div>
+            <div class="placeholder-search">Search topics&hellip;</div>
+            <div class="fc-3-wrap">
+              <button class="fc-3-button">
+                <span class="lab">Text size:</span><span class="val">Large</span><span class="chev">&#x25BC;</span>
+              </button>
+              <!-- Open menu shown for clarity -->
+              <div class="fc-3-menu">
+                <div class="item"><span>Normal</span></div>
+                <div class="item active"><span>Large</span><span class="check">&check;</span></div>
+                <div class="item"><span>X&#8209;Large</span></div>
+                <div class="item"><span>Huge</span></div>
+              </div>
+            </div>
+          </div>
+          <p class="row-note">
+            Most self-documenting widget &mdash; the button itself says
+            &ldquo;Text size: Large&rdquo;. Trade-off: two clicks to change instead of
+            one; the open menu floats over the doc header area.
+          </p>
+        </div>
+
+        <!-- Widget 4 — Pills + presets together -->
+        <div class="fc-row">
+          <div class="row-title"><span class="tag">4</span> Pills + preset row (fine + coarse together)</div>
+          <div class="header-frame">
+            <span class="title">User Guide</span>
+            <div class="spacer"></div>
+            <div class="fc-4">
+              <div class="fc-1">
+                <button class="small">A&minus;</button>
+                <span class="label">100%</span>
+                <button class="large">A+</button>
+              </div>
+              <div class="fc-2" style="padding: 2px;">
+                <button class="seg" style="padding: 4px 10px; font-size: 12px;">Normal</button>
+                <button class="seg active" style="padding: 4px 10px; font-size: 12px;">Large</button>
+                <button class="seg" style="padding: 4px 10px; font-size: 12px;">X&#8209;Large</button>
+                <button class="seg" style="padding: 4px 10px; font-size: 12px;">Huge</button>
+              </div>
+            </div>
+          </div>
+          <p class="row-note">
+            Coarse (preset row, one click to a named tier) plus fine
+            (A&minus;/A+ pills, granular step). Covers both audiences in one
+            widget at the cost of more chrome.
+          </p>
+        </div>
+
+      </div>
+
+      <!-- Live size preview -->
+      <div class="fc-row" style="margin-top: 28px;">
+        <div class="row-title">Live size preview &mdash; what these tiers actually look like at the proposed defaults</div>
+
+        <div class="preview-row size-16">
+          <div class="label">16 px<br/><span style="color: var(--text-dim);">today / chrome</span></div>
+          <div class="sample">
+            Packet uses <strong>AX.25</strong> over a TNC or a soundcard modem (Dire Wolf
+            with KISS TCP). It carries short Winlink B2F sessions over VHF / UHF FM.
+            Bandwidth: <code>1200 baud</code> &mdash; small messages, no large attachments.
+          </div>
+        </div>
+        <div class="preview-row size-18">
+          <div class="label">18 px<br/><span style="color: var(--text-dim);">"Normal"</span></div>
+          <div class="sample">
+            Packet uses <strong>AX.25</strong> over a TNC or a soundcard modem (Dire Wolf
+            with KISS TCP). It carries short Winlink B2F sessions over VHF / UHF FM.
+            Bandwidth: <code>1200 baud</code> &mdash; small messages, no large attachments.
+          </div>
+        </div>
+        <div class="preview-row size-20">
+          <div class="label">20 px<br/><span style="color: var(--text-dim);">"Large"</span></div>
+          <div class="sample">
+            Packet uses <strong>AX.25</strong> over a TNC or a soundcard modem (Dire Wolf
+            with KISS TCP). It carries short Winlink B2F sessions over VHF / UHF FM.
+            Bandwidth: <code>1200 baud</code> &mdash; small messages, no large attachments.
+          </div>
+        </div>
+        <div class="preview-row size-22">
+          <div class="label">22 px<br/><span style="color: var(--text-dim);">"X-Large"</span></div>
+          <div class="sample">
+            Packet uses <strong>AX.25</strong> over a TNC or a soundcard modem (Dire Wolf
+            with KISS TCP). It carries short Winlink B2F sessions over VHF / UHF FM.
+            Bandwidth: <code>1200 baud</code> &mdash; small messages, no large attachments.
+          </div>
+        </div>
+        <div class="preview-row size-24">
+          <div class="label">24 px<br/><span style="color: var(--text-dim);">"Huge"</span></div>
+          <div class="sample">
+            Packet uses <strong>AX.25</strong> over a TNC or a soundcard modem (Dire Wolf
+            with KISS TCP). It carries short Winlink B2F sessions over VHF / UHF FM.
+            Bandwidth: <code>1200 baud</code> &mdash; small messages, no large attachments.
+          </div>
+        </div>
+      </div>
+
+  </section>
+
+  <!-- ===================== DEVICE TARGET ===================== -->
+  <div class="global-notes" style="border-left-color: var(--info); margin-top: 56px;">
+    <h3 style="color: var(--info);">Device-target constraint — Panasonic FZ-M1</h3>
+    <p style="margin: 0 0 12px;">
+      The help window (and the main client &mdash; tracked separately as
+      a parallel bd issue) must explicitly support the
+      <strong>Panasonic FZ-M1</strong>: a 7&Prime; rugged tablet with
+      <strong>1280&nbsp;&times;&nbsp;800</strong> WXGA at ~216&nbsp;PPI, capacitive touch,
+      common in emergency-response deployments. This constrains the
+      help-window design in four concrete ways:
+    </p>
+    <ul>
+      <li>
+        <strong>Default window size cannot exceed the screen.</strong>
+        The mock above is 1180&nbsp;&times;&nbsp;740; the FZ-M1 has ~1280&nbsp;&times;&nbsp;760
+        effective area after OS chrome. The help window&rsquo;s default size
+        target is <strong>~1100&nbsp;&times;&nbsp;700</strong> &mdash; comfortable on FZ-M1
+        without forcing maximize, still spacious on a desktop.
+      </li>
+      <li>
+        <strong>Sidebar collapse below a width threshold.</strong> Variant A&rsquo;s
+        260&nbsp;px sidebar + ~720&nbsp;px reading column + padding totals roughly
+        1080&nbsp;px. Below that &mdash; or if the operator narrows the window
+        for split-screen with the client &mdash; the sidebar should collapse
+        to a hamburger button (Variant C&rsquo;s drawer pattern) automatically.
+        Breakpoint: ~960&nbsp;px window width.
+      </li>
+      <li>
+        <strong>Touch targets &ge; 44&nbsp;&times;&nbsp;44&nbsp;px.</strong> The FZ-M1 is a
+        touch device. The font-control widget sizes above (44&nbsp;&times;&nbsp;36&nbsp;px
+        pills, 8&nbsp;&times;&nbsp;14&nbsp;px-padded segment buttons) need to bump up so
+        every tap target clears the touch-comfort floor. Sidebar items
+        and topic-navigation pager buttons too.
+      </li>
+      <li>
+        <strong>High-DPI text sizing.</strong> &ldquo;Normal&rdquo; on the size scale
+        is the operator&rsquo;s comfortable reading size <em>at the device they&rsquo;re using</em>.
+        The CSS uses logical pixels, so the OS scale factor handles
+        physical sizing &mdash; but the size-tier labels (&ldquo;Normal / Large /
+        X-Large&rdquo;) should be tested on the FZ-M1 directly before
+        finalizing the px values.
+      </li>
+    </ul>
+    <p style="margin: 12px 0 0; color: var(--text-faint); font-size: 13px;">
+      Sister bd issue covers the main client&rsquo;s parallel audit (ribbon,
+      mailbox, radio panel, compose, settings, wizard) at FZ-M1
+      dimensions.
+    </p>
+  </div>
+
+  <!-- ===================== GLOBAL NOTES ===================== -->
+  <div class="global-notes">
+    <h3>Shared across all three variants</h3>
+    <ul>
+      <li>
+        <strong>Default reading size 18&ndash;19&nbsp;px</strong> (vs the 14&nbsp;px chrome
+        elsewhere). Older eyes are the explicit user. The font-control cluster
+        lets each operator dial it further.
+      </li>
+      <li>
+        <strong>Font-size buttons + <code>Ctrl+</code> / <code>Ctrl-</code> / <code>Ctrl0</code> shortcuts</strong>
+        (matches browser muscle memory). Setting is persisted in the help
+        window's local storage so it's remembered across launches.
+      </li>
+      <li>
+        <strong>Separate Tauri webview window</strong> labeled <code>help</code>, lifecycle
+        independent of main client. Single-instance: clicking Help when the
+        window is already open <em>focuses</em> it rather than spawning a
+        duplicate. <code>tauri-plugin-window-state</code> persists size and position
+        (same plugin compose-window uses).
+      </li>
+      <li>
+        <strong>Theme follow.</strong> The help window inherits the main client's
+        current theme on launch and updates live if the operator changes
+        themes mid-session. (Open question: is there value in letting the
+        operator override to &ldquo;always light&rdquo; for reading? Older users often
+        prefer dark text on light paper for long reads.)
+      </li>
+      <li>
+        <strong>External links</strong> still go through
+        <code>@tauri-apps/plugin-shell::open</code> to the system browser (unchanged
+        from current behavior). Inter-topic <code>.md</code> links stay in-window.
+      </li>
+      <li>
+        <strong>Print.</strong> Not in v1 (small marginal lift, can add later as
+        a header button that triggers the webview's print dialog).
+      </li>
+    </ul>
+  </div>
+
+</div>
+
+</body>
+</html>

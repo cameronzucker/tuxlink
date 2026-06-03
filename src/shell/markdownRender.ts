@@ -8,7 +8,7 @@
 // covers exactly that and nothing else.
 //
 // The renderer is a pure function: markdown string → array of typed blocks.
-// React consumption lives in HelpPanel; this module knows nothing about
+// React consumption lives in src/help/ReadingPane.tsx; this module knows nothing about
 // the DOM, which lets the parser be tested in isolation.
 
 export interface InlineText {
