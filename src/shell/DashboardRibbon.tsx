@@ -16,7 +16,13 @@ import { DEV_FIXTURE, DEV_POSITION, DEV_CONNECTION_DASH } from '../mailbox/devFi
 import { formatPacketConnection, type PacketUiState } from '../packet/packetStatus';
 import { effectiveCall as renderEffectiveCall, ssidOptions } from '../packet/packetConfig';
 
-function useClock() {
+/**
+ * Self-contained clock cell (tuxlink-sndh). Lives in its own subtree so the
+ * 1-second tick only repaints the clock's two text nodes — not the entire
+ * dashboard ribbon (which holds GridEdit, the SSID picker, the connect
+ * controls, and the packet conn label, none of which depend on `now`).
+ */
+function ClockCell() {
   const [now, setNow] = useState(() => new Date());
   useEffect(() => {
     const id = setInterval(() => setNow(new Date()), 1000);
@@ -29,7 +35,11 @@ function useClock() {
     hour12: false,
     timeZoneName: 'short',
   });
-  return { utc, local };
+  return (
+    <div className="dash-value" data-testid="ribbon-time">
+      {utc} · {local}
+    </div>
+  );
 }
 
 /** Map a status tone to the mock's dash-status-dot variant. */
@@ -71,7 +81,6 @@ export interface DashboardRibbonProps {
 }
 
 export function DashboardRibbon({ data, onConnect, connecting, onAbort, packet, ssid, onSsidChange }: DashboardRibbonProps) {
-  const { utc, local } = useClock();
   const { callsign, grid, state, connection: connectionFromData } = data;
   // Task 14 (tuxlink-c79g, spec §4.3 + Codex P1 #4): after a grid commit or a
   // source flip resolves, invalidate the config_read query so the source chip
@@ -189,9 +198,7 @@ export function DashboardRibbon({ data, onConnect, connecting, onAbort, packet, 
 
       <div className="dash-item">
         <div className="dash-label">UTC / Local</div>
-        <div className="dash-value" data-testid="ribbon-time">
-          {utc} · {local}
-        </div>
+        <ClockCell />
       </div>
       <div className="dash-divider" />
 

@@ -14,7 +14,7 @@
 // Virtualization via react-virtuoso (rows tested via the exported `MessageRow`;
 // the real Virtuoso renders into a zero-height scroller under jsdom).
 
-import React from 'react';
+import React, { memo, useCallback, useMemo } from 'react';
 import { Virtuoso } from 'react-virtuoso';
 import type { MailboxFolderRef, MessageMeta, UserFolder } from './types';
 import { MessageContextMenu } from './MessageContextMenu';
@@ -133,9 +133,29 @@ export const TUXLINK_DRAG_MIME = 'application/x-tuxlink-message';
 
 /// One Mock D list row (3-line `.row`). Pure presentation + click / Enter →
 /// `onSelect(id)`. Exported for direct unit testing.
-export function MessageRow({ message, folder, selected, onSelect, matchHighlight, showFolderTag, onContextMenu }: MessageRowProps) {
-  const size = formatSize(message.bodySize);
+/// tuxlink-sndh: wrapped in React.memo so a parent re-render (e.g. modem-status
+/// tick, search keystroke, status poll) doesn't repaint every virtuoso row.
+/// Effective only when callers stabilize callback props with useCallback.
+export const MessageRow = memo(function MessageRow({ message, folder, selected, onSelect, matchHighlight, showFolderTag, onContextMenu }: MessageRowProps) {
+  // tuxlink-sndh: memoize per-row derived data so it's reused across renders
+  // when the row's own props haven't changed. The date string is the most
+  // visible expense — `formatRowDate(message.date)` calls `new Date()` each
+  // tick when uncached.
+  const size = useMemo(() => formatSize(message.bodySize), [message.bodySize]);
+  const dateLabel = useMemo(() => formatRowDate(message.date), [message.date]);
+  const correspondent = useMemo(
+    () => correspondentLabel(message, folder),
+    [message, folder],
+  );
   const highlights = matchHighlight ?? [];
+  const subjectNode = useMemo(
+    () => applyHighlights(message.subject, highlights, 'subject'),
+    [message.subject, highlights],
+  );
+  const previewNode = useMemo(
+    () => (message.preview ? applyHighlights(message.preview, highlights, 'preview') : null),
+    [message.preview, highlights],
+  );
   // The row's effective source-folder for drag operations: the message's own
   // folder if present (cross-folder search hits) else the list's active folder.
   const srcFolder = (message.folder as string | undefined) ?? (folder as string);
@@ -173,10 +193,10 @@ export function MessageRow({ message, folder, selected, onSelect, matchHighlight
       {/* line 1 — sender (with unread dot) + date */}
       <div className="from" data-testid="row-correspondent">
         {message.unread && <span className="unread-dot" data-testid="row-unread-dot" aria-hidden="true" />}
-        <span className="from-text">{correspondentLabel(message, folder)}</span>
+        <span className="from-text">{correspondent}</span>
       </div>
       <div className="date" data-testid="row-date">
-        {formatRowDate(message.date)}
+        {dateLabel}
       </div>
 
       {/* line 2 — [folder-tag] [form-tag] subject + size */}
@@ -192,7 +212,7 @@ export function MessageRow({ message, folder, selected, onSelect, matchHighlight
           </span>
         )}
         <span className="subject-text" data-testid="row-subject">
-          {applyHighlights(message.subject, highlights, 'subject')}
+          {subjectNode}
         </span>
         {size && (
           <span className="size" data-testid="row-size">
@@ -204,12 +224,12 @@ export function MessageRow({ message, folder, selected, onSelect, matchHighlight
       {/* line 3 — preview snippet (omitted when absent) */}
       {message.preview && (
         <div className="preview" data-testid="row-preview">
-          {applyHighlights(message.preview, highlights, 'preview')}
+          {previewNode}
         </div>
       )}
     </div>
   );
-}
+});
 
 export interface MessageListProps {
   folder: MailboxFolderRef;
@@ -281,11 +301,16 @@ export function MessageList({
     x: number;
     y: number;
   } | null>(null);
-  const onContextMenu = onMoveMessage || onArchiveMessage
-    ? (e: React.MouseEvent, message: MessageMeta) => {
-        setCtxMenu({ message, x: e.clientX, y: e.clientY });
-      }
-    : undefined;
+  // tuxlink-sndh: stabilize the callback so the memoized MessageRow can
+  // skip re-render when nothing else about the row's props changed.
+  const ctxAvailable = Boolean(onMoveMessage || onArchiveMessage);
+  const onContextMenu = useCallback(
+    (e: React.MouseEvent, message: MessageMeta) => {
+      setCtxMenu({ message, x: e.clientX, y: e.clientY });
+    },
+    [],
+  );
+  const rowContextMenu = ctxAvailable ? onContextMenu : undefined;
   // The source folder is the row's own message.folder when present
   // (cross-folder search hits) and falls back to the list's active folder
   // otherwise. The Tauri backend uses this as the `from` arg for the move.
@@ -317,7 +342,7 @@ export function MessageList({
                 onSelect={onSelect}
                 matchHighlight={matchHighlights?.[msg.id]}
                 showFolderTag={showFolderTag}
-                onContextMenu={onContextMenu}
+                onContextMenu={rowContextMenu}
               />
             )}
           />
