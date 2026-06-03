@@ -20,7 +20,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import type { MailboxFolder, MessageMeta } from '../mailbox/types';
+import type { MessageMeta } from '../mailbox/types';
 import { STOPPED, type ModemStatus } from '../modem/types';
 
 // Mock the useModemStatus hook directly so the test controls the modem state
@@ -109,13 +109,21 @@ vi.mock('react-virtuoso', () => ({
 }));
 
 vi.mock('../mailbox/useMailbox', () => ({
-  useMailbox: (_folder: MailboxFolder) => ({
+  useMailbox: (_folder: string) => ({
     messages: [],
     isLoading: false,
     isError: false,
     error: null,
   }),
-  isBackendFolder: (f: MailboxFolder) => f === 'inbox' || f === 'outbox' || f === 'sent',
+  isBackendFolder: (f: string) => f === 'inbox' || f === 'outbox' || f === 'sent',
+  isUserFolderSlug: (s: string) => /^[a-z0-9-]+$/.test(s) && !s.startsWith('-') && !s.endsWith('-'),
+}));
+
+vi.mock('../mailbox/useUserFolders', () => ({
+  useUserFolders: () => ({ folders: [], isLoading: false, isError: false, error: null }),
+  useCreateUserFolder: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useDeleteUserFolder: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  USER_FOLDERS_QUERY_KEY: ['userFolders'],
 }));
 
 import { AppShell } from './AppShell';

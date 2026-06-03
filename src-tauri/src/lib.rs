@@ -10,6 +10,7 @@ pub mod search;
 pub mod session_log;
 pub mod tray;
 pub mod ui_commands;
+pub mod user_folders;
 pub mod winlink;
 pub mod winlink_backend;
 pub mod wizard;
@@ -245,6 +246,9 @@ pub fn run() {
             // `invoke_handler` edit in one diff.
             crate::ui_commands::mailbox_list,          // Task 12 (tuxlink-zsm)
             crate::ui_commands::mailbox_move,          // tuxlink-ca5x (user-folders Phase 1)
+            crate::ui_commands::user_folders_list,     // tuxlink-f62f (user-folders Phase 2)
+            crate::ui_commands::folder_create,         // tuxlink-f62f
+            crate::ui_commands::folder_delete,         // tuxlink-f62f
             crate::ui_commands::message_read,          // Task 13 (tuxlink-y5c)
             crate::ui_commands::message_send,          // Task 14 (tuxlink-dm8)
             crate::ui_commands::send_form,             // HTML Forms v0.1 (tuxlink-v1p Task 3.1)

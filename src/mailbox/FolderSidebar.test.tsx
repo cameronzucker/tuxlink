@@ -62,6 +62,103 @@ describe('<FolderSidebar> (Mock B)', () => {
   });
 });
 
+// ============================================================================
+// User folders — Phase 2 (tuxlink-f62f). The "Folders" section appears below
+// the system folders; the `+` button opens NewFolderDialog (via the parent's
+// `onCreateFolder` callback).
+// ============================================================================
+
+describe('<FolderSidebar> — user folders (tuxlink-f62f)', () => {
+  const sampleFolders = [
+    { slug: 'ares-drills', displayName: 'ARES Drills', createdAt: '2026-06-02T12:00:00Z' },
+    { slug: 'disaster-prep', displayName: 'Disaster Prep', createdAt: '2026-06-02T13:00:00Z' },
+  ];
+
+  it('renders the Folders section heading', () => {
+    render(<FolderSidebar selectedFolder="inbox" onSelectFolder={vi.fn()} />);
+    expect(screen.getByText('Folders')).toBeInTheDocument();
+  });
+
+  it('shows the empty-hint copy when no user folders exist + create is wired', () => {
+    render(
+      <FolderSidebar
+        selectedFolder="inbox"
+        onSelectFolder={vi.fn()}
+        onCreateFolder={vi.fn()}
+      />,
+    );
+    expect(screen.getByTestId('folders-empty-hint')).toHaveTextContent('Click + to create one');
+  });
+
+  it('does NOT show the + button when onCreateFolder is absent', () => {
+    render(<FolderSidebar selectedFolder="inbox" onSelectFolder={vi.fn()} />);
+    expect(screen.queryByTestId('folder-create-btn')).toBeNull();
+  });
+
+  it('clicking the + button fires onCreateFolder', () => {
+    const onCreateFolder = vi.fn();
+    render(
+      <FolderSidebar
+        selectedFolder="inbox"
+        onSelectFolder={vi.fn()}
+        onCreateFolder={onCreateFolder}
+      />,
+    );
+    fireEvent.click(screen.getByTestId('folder-create-btn'));
+    expect(onCreateFolder).toHaveBeenCalledOnce();
+  });
+
+  it('renders one row per user folder, with display name + testid', () => {
+    render(
+      <FolderSidebar
+        selectedFolder="inbox"
+        onSelectFolder={vi.fn()}
+        userFolders={sampleFolders}
+      />,
+    );
+    const ares = screen.getByTestId('user-folder-ares-drills');
+    const disaster = screen.getByTestId('user-folder-disaster-prep');
+    expect(ares).toHaveTextContent('ARES Drills');
+    expect(disaster).toHaveTextContent('Disaster Prep');
+  });
+
+  it('clicking a user-folder row fires onSelectFolder with the slug', () => {
+    const onSelectFolder = vi.fn();
+    render(
+      <FolderSidebar
+        selectedFolder="inbox"
+        onSelectFolder={onSelectFolder}
+        userFolders={sampleFolders}
+      />,
+    );
+    fireEvent.click(screen.getByTestId('user-folder-ares-drills'));
+    expect(onSelectFolder).toHaveBeenCalledWith('ares-drills');
+  });
+
+  it('marks the selected user folder with aria-current', () => {
+    render(
+      <FolderSidebar
+        selectedFolder="ares-drills"
+        onSelectFolder={vi.fn()}
+        userFolders={sampleFolders}
+      />,
+    );
+    expect(screen.getByTestId('user-folder-ares-drills')).toHaveAttribute('aria-current', 'true');
+    expect(screen.getByTestId('user-folder-disaster-prep')).not.toHaveAttribute('aria-current');
+  });
+
+  it('hides the empty hint when at least one user folder exists', () => {
+    render(
+      <FolderSidebar
+        selectedFolder="inbox"
+        onSelectFolder={vi.fn()}
+        userFolders={sampleFolders}
+      />,
+    );
+    expect(screen.queryByTestId('folders-empty-hint')).toBeNull();
+  });
+});
+
 describe('FolderSidebar — Packet connection entry (accordion)', () => {
   // tuxlink-bcgj: the transport-state dot (off/listening/connected) was
   // removed for visual cohesion — the same info already renders in the

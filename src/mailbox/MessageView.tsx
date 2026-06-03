@@ -19,13 +19,14 @@
 // without the full hook + QueryClientProvider.
 
 import './MessageView.css';
-import type { ParsedMessage, AttachmentMeta } from './types';
+import type { ParsedMessage, AttachmentMeta, MailboxFolderRef, UserFolder } from './types';
 import { useMessage, type MessageSelection } from './useMessage';
 import { asUiError, isNotConfigured } from './types';
 import { openReplyWindow, hasReplyWithFormSupport, type ReplyMode } from './replyActions';
 import { sanitizeAttachmentName } from './sanitize';
 import { devFormMeta } from './devFixture';
 import { lookupForm, KeyValueView } from '../forms';
+import { MoveToButton } from './MoveToButton';
 
 // ============================================================================
 // Exported constants (used by tests)
@@ -143,9 +144,22 @@ function parseAddress(s: string): { name: string; addr: string } {
 export function MessageViewLoaded({
   message,
   onArchive,
+  currentFolder,
+  userFolders,
+  onMove,
 }: {
   message: ParsedMessage;
   onArchive?: () => void;
+  /// Current folder of the open message (used by `MoveToButton` to disable
+  /// the self-target row and gate the Archive button). Optional so existing
+  /// tests that inject a bare `ParsedMessage` keep working — the move +
+  /// archive UI is suppressed when this is absent.
+  currentFolder?: MailboxFolderRef;
+  /// Operator's user folders, shown in the Move-to dropdown. tuxlink-f62f.
+  userFolders?: UserFolder[];
+  /// Move-to-folder callback. When supplied + `currentFolder` is present,
+  /// the reading-pane toolbar renders a "Move ▾" dropdown alongside Archive.
+  onMove?: (to: MailboxFolderRef) => void;
 }) {
   const from = parseAddress(message.from);
   const toAddrs = message.to.map(parseAddress);
@@ -205,6 +219,13 @@ export function MessageViewLoaded({
           >
             Archive
           </button>
+        )}
+        {onMove && currentFolder && (
+          <MoveToButton
+            currentFolder={currentFolder}
+            userFolders={userFolders ?? []}
+            onMove={onMove}
+          />
         )}
       </div>
 
@@ -323,6 +344,11 @@ export interface MessageViewProps {
    *  reading pane renders an Archive button. AppShell omits this when the
    *  open message is already in Archive. */
   onArchive?: () => void;
+  /** Operator's user folders, shown in the Move-to dropdown (tuxlink-f62f). */
+  userFolders?: UserFolder[];
+  /** Move-to-folder callback. When supplied, the reading pane renders a
+   *  "Move ▾" dropdown that lists system folders + user folders. */
+  onMove?: (to: MailboxFolderRef) => void;
 }
 
 /**
@@ -343,7 +369,12 @@ function parseRawSizeFromDetail(detail: string | undefined): number | undefined 
  * `useMessage`; renders one of five states (empty / loading / not-found /
  * parse-error / loaded). Selection comes from AppShell's `selectedMessage`.
  */
-export default function MessageView({ selectedMessage, onArchive }: MessageViewProps) {
+export default function MessageView({
+  selectedMessage,
+  onArchive,
+  userFolders,
+  onMove,
+}: MessageViewProps) {
   const { data, isLoading, isError, error } = useMessage(selectedMessage);
 
   if (!selectedMessage) {
@@ -380,5 +411,13 @@ export default function MessageView({ selectedMessage, onArchive }: MessageViewP
     return <MessageViewParseError rawSize={rawSize} />;
   }
 
-  return <MessageViewLoaded message={data} onArchive={onArchive} />;
+  return (
+    <MessageViewLoaded
+      message={data}
+      onArchive={onArchive}
+      currentFolder={selectedMessage.folder}
+      userFolders={userFolders}
+      onMove={onMove}
+    />
+  );
 }

@@ -7,7 +7,7 @@
 // `onSelectConnection({ sessionType, protocol })`. Styling lives in AppShell.css.
 
 import { useState, useEffect } from 'react';
-import type { MailboxFolder } from './types';
+import type { MailboxFolder, MailboxFolderRef, UserFolder } from './types';
 import { SESSION_TYPES } from '../connections/sessionTypes';
 import type { SessionTypeId, ConnectionKey } from '../connections/sessionTypes';
 
@@ -34,10 +34,24 @@ const MAILBOX_ITEMS: readonly MailboxItem[] = [
 ];
 
 export interface FolderSidebarProps {
-  selectedFolder: MailboxFolder;
-  onSelectFolder: (folder: MailboxFolder) => void;
-  /// Per-folder counts (Inbox = unread, Sent = total). Missing/zero → no count.
+  /** Currently-selected folder. Accepts either a system-folder identifier
+   *  (one of `MailboxFolder`) OR a user-folder slug; the sidebar uses
+   *  string-equal to decide which row gets the active style. */
+  selectedFolder: MailboxFolderRef;
+  /** Select a folder. Argument is either a `MailboxFolder` (for system
+   *  rows) or a user-folder slug (for user rows). The parent (AppShell)
+   *  passes both to `setSelectedFolder` interchangeably; the Tauri
+   *  commands accept either string at the boundary (tuxlink-f62f). */
+  onSelectFolder: (folder: MailboxFolderRef) => void;
+  /// Per-folder counts for system folders (Inbox = unread, Sent = total).
+  /// Missing/zero → no count. User-folder counts are deferred to Phase 2.5
+  /// (N+1 query optimization — backend `user_folders_list_with_counts`).
   counts?: Partial<Record<MailboxFolder, number>>;
+  /** User-created folders (tuxlink-f62f). Rendered in a dedicated "Folders"
+   *  section below "Mailbox", with a `+` button that fires `onCreateFolder`. */
+  userFolders?: UserFolder[];
+  /** Open the New Folder dialog (sidebar `+` button). */
+  onCreateFolder?: () => void;
   /** Currently selected connection (drives the reading-pane connection panel). */
   selectedConnection?: ConnectionKey | null;
   /** Select a connection (opens its reading-pane panel). */
@@ -48,6 +62,8 @@ export function FolderSidebar({
   selectedFolder,
   onSelectFolder,
   counts = {},
+  userFolders = [],
+  onCreateFolder,
   selectedConnection = null,
   onSelectConnection,
 }: FolderSidebarProps) {
@@ -97,6 +113,72 @@ export function FolderSidebar({
           </button>
         );
       })}
+
+      {/* User folders (tuxlink-f62f). The Folders section header carries a
+          `+` button that fires onCreateFolder; the section is rendered even
+          when empty so the operator's path to creating a first folder is
+          always visible. */}
+      <div
+        className="section-label"
+        style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}
+      >
+        <span>Folders</span>
+        {onCreateFolder && (
+          <button
+            type="button"
+            data-testid="folder-create-btn"
+            onClick={onCreateFolder}
+            aria-label="New folder"
+            title="New folder"
+            style={{
+              background: 'transparent',
+              border: '1px solid var(--border-strong, #2c3744)',
+              borderRadius: 3,
+              color: 'inherit',
+              fontSize: 13,
+              width: 18,
+              height: 18,
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              cursor: 'pointer',
+              padding: 0,
+              lineHeight: 1,
+            }}
+          >
+            +
+          </button>
+        )}
+      </div>
+      {userFolders.map((uf) => {
+        const active = uf.slug === selectedFolder;
+        return (
+          <button
+            key={uf.slug}
+            type="button"
+            data-testid={`user-folder-${uf.slug}`}
+            className={['nav-item', active ? 'active' : ''].filter(Boolean).join(' ')}
+            aria-current={active ? 'true' : undefined}
+            onClick={() => onSelectFolder(uf.slug)}
+          >
+            <span className="icon" aria-hidden="true">▢</span>
+            {uf.displayName}
+          </button>
+        );
+      })}
+      {userFolders.length === 0 && (
+        <div
+          data-testid="folders-empty-hint"
+          style={{
+            padding: '4px 10px',
+            fontSize: 11,
+            fontStyle: 'italic',
+            color: 'var(--text-faint, #5d6975)',
+          }}
+        >
+          {onCreateFolder ? 'Click + to create one' : 'No custom folders yet'}
+        </div>
+      )}
 
       <div className="section-label">Connections</div>
       {SESSION_TYPES.map((s) => (

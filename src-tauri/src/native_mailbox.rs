@@ -12,9 +12,10 @@
 //! is not required for the store to work.
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
+use crate::user_folders::{self, UserFolder};
 use crate::winlink::message::Message;
 use crate::winlink_backend::{BackendError, MailboxFolder, MessageBody, MessageId, MessageMeta};
 
@@ -218,6 +219,237 @@ impl Mailbox {
         };
         self.root.join(name)
     }
+
+    // ========================================================================
+    // User folders (tuxlink-f62f — Phase 2 of the user-folders work).
+    //
+    // Spec: docs/superpowers/specs/2026-06-02-user-folders-design.md §3.1.
+    // System folders (Inbox/Sent/Outbox/Archive) live in the closed
+    // `MailboxFolder` enum and use `folder_dir`; user folders are open-set
+    // string-keyed slugs that live alongside, under `<root>/<slug>/`. The
+    // `.folders.json` registry at the mailbox root tracks display names +
+    // creation times.
+    // ========================================================================
+
+    /// List the user folders as recorded in `<root>/.folders.json`, sorted by
+    /// creation time ascending (so first-created sticks to the top). Missing
+    /// registry → empty list (first-launch path is normal).
+    pub fn list_user_folders(&self) -> Vec<UserFolder> {
+        let mut reg = user_folders::load_registry(&self.root);
+        reg.folders.sort_by(|a, b| a.created_at.cmp(&b.created_at));
+        reg.folders
+    }
+
+    /// Create a new user folder. Validates the display name, derives a slug,
+    /// rejects collisions with system folder names + existing user folder
+    /// slugs, then creates the on-disk directory + persists the registry.
+    /// Returns the newly created `UserFolder` so the caller can echo back to
+    /// the UI (no extra round-trip).
+    pub fn create_user_folder(&self, display_name: &str) -> Result<UserFolder, BackendError> {
+        let display = display_name.trim();
+        user_folders::validate_display_name(display)
+            .map_err(BackendError::MessageRejected)?;
+        let slug = user_folders::slug_from_display(display);
+        user_folders::validate_slug(&slug).map_err(BackendError::MessageRejected)?;
+
+        let mut reg = user_folders::load_registry(&self.root);
+        for existing in &reg.folders {
+            if existing.slug == slug {
+                return Err(BackendError::MessageRejected(format!(
+                    "a folder with that name already exists ('{slug}')"
+                )));
+            }
+        }
+
+        let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+        let folder = UserFolder {
+            slug: slug.clone(),
+            display_name: display.to_string(),
+            created_at: now,
+        };
+
+        // Create the directory FIRST — if the FS write fails we don't poison
+        // the registry with a folder whose dir doesn't exist.
+        let dir = user_folders::folder_dir(&self.root, &slug);
+        fs::create_dir_all(&dir)?;
+
+        reg.folders.push(folder.clone());
+        user_folders::save_registry(&self.root, &reg)?;
+        Ok(folder)
+    }
+
+    /// Delete a user folder. `on_messages` controls what happens to messages
+    /// inside (spec §6 D6):
+    /// - `MoveToInbox` (safe default) — re-home each `.b2f` to the inbox dir
+    /// - `MoveToArchive` — re-home each `.b2f` to the archive dir
+    /// - `Delete` — remove the directory and its contents
+    ///
+    /// Either way, the folder directory is removed and the registry entry
+    /// erased on success. Missing folder → no-op-safe Ok.
+    pub fn delete_user_folder(
+        &self,
+        slug: &str,
+        on_messages: DeleteAction,
+    ) -> Result<(), BackendError> {
+        let dir = user_folders::folder_dir(&self.root, slug);
+        let mut reg = user_folders::load_registry(&self.root);
+        let in_registry = reg.folders.iter().any(|f| f.slug == slug);
+
+        if dir.exists() {
+            match on_messages {
+                DeleteAction::Delete => {
+                    fs::remove_dir_all(&dir)?;
+                }
+                DeleteAction::MoveToInbox | DeleteAction::MoveToArchive => {
+                    let dst_dir = self.folder_dir(match on_messages {
+                        DeleteAction::MoveToInbox => MailboxFolder::Inbox,
+                        DeleteAction::MoveToArchive => MailboxFolder::Archive,
+                        DeleteAction::Delete => unreachable!(),
+                    });
+                    fs::create_dir_all(&dst_dir)?;
+                    for entry in fs::read_dir(&dir)? {
+                        let path = entry?.path();
+                        if let Some(name) = path.file_name() {
+                            let dst = dst_dir.join(name);
+                            fs::rename(&path, &dst)?;
+                        }
+                    }
+                    fs::remove_dir_all(&dir)?;
+                }
+            }
+        }
+
+        if in_registry {
+            reg.folders.retain(|f| f.slug != slug);
+            user_folders::save_registry(&self.root, &reg)?;
+        }
+        Ok(())
+    }
+
+    /// List messages in a user folder. Mirrors [`Mailbox::list`]'s sort order
+    /// (newest first, id ascending as tiebreaker). User folders don't track
+    /// unread state today; every message reports `unread: false`.
+    pub fn list_user(&self, slug: &str) -> Result<Vec<MessageMeta>, BackendError> {
+        let dir = user_folders::folder_dir(&self.root, slug);
+        Self::list_dir(&dir, /*surface_unread=*/ false)
+    }
+
+    /// Read a raw message from a user folder. Returns `NotFound` if the slug
+    /// or mid is unknown.
+    pub fn read_user(&self, slug: &str, id: &MessageId) -> Result<MessageBody, BackendError> {
+        let path = user_folders::folder_dir(&self.root, slug).join(format!("{}.b2f", id.0));
+        let raw = fs::read(&path).map_err(|_| BackendError::NotFound(id.clone()))?;
+        Ok(MessageBody { id: id.clone(), raw_rfc5322: raw })
+    }
+
+    /// Move a message between any two folders, where each side is a folder
+    /// reference (system or user). The MVP move primitive — spec §4.4.
+    ///
+    /// Both source and destination are validated (system folders by the
+    /// enum, user folders by the registry membership check). Source missing
+    /// → no-op-safe Ok (matches `Mailbox::move_to`). Read-marker travels
+    /// with the message.
+    pub fn move_between(
+        &self,
+        from: FolderRef,
+        to: FolderRef,
+        id: &MessageId,
+    ) -> Result<(), BackendError> {
+        let src_dir = self.resolve_dir(&from);
+        let dst_dir = self.resolve_dir(&to);
+        let src = src_dir.join(format!("{}.b2f", id.0));
+        let raw = match fs::read(&src) {
+            Ok(raw) => raw,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(e) => return Err(e.into()),
+        };
+        fs::create_dir_all(&dst_dir)?;
+        fs::write(dst_dir.join(format!("{}.b2f", id.0)), raw)?;
+        fs::remove_file(&src)?;
+        // Carry the read-marker if present.
+        let src_marker = src_dir.join(format!("{}.read", id.0));
+        if src_marker.exists() {
+            fs::write(dst_dir.join(format!("{}.read", id.0)), [])?;
+            fs::remove_file(&src_marker)?;
+        }
+
+        // Best-effort search-index update. The destination folder string is
+        // either the system-folder dir name (so `update_folder` matches the
+        // existing index column convention) or the user-folder slug.
+        if let Some(idx) = self.index.as_ref() {
+            let dst_str = match &to {
+                FolderRef::System(f) => folder_str(*f).to_string(),
+                FolderRef::User(slug) => slug.clone(),
+            };
+            match idx.lock() {
+                Ok(guard) => {
+                    if let Err(e) = guard.update_folder(&id.0, &dst_str) {
+                        eprintln!("search-index update_folder failed for mid={}: {e}", id.0);
+                    }
+                }
+                Err(e) => eprintln!("search-index lock poisoned during update_folder: {e}"),
+            }
+        }
+        Ok(())
+    }
+
+    fn resolve_dir(&self, r: &FolderRef) -> PathBuf {
+        match r {
+            FolderRef::System(f) => self.folder_dir(*f),
+            FolderRef::User(slug) => user_folders::folder_dir(&self.root, slug),
+        }
+    }
+
+    /// Shared list-dir helper used by both system and user folder listing.
+    /// Returns metadatas sorted newest-first with id ascending as tiebreaker.
+    /// `surface_unread` controls whether a missing `.read` sidecar marks the
+    /// message unread — only the inbox surfaces this today (spec §2.1).
+    fn list_dir(dir: &Path, surface_unread: bool) -> Result<Vec<MessageMeta>, BackendError> {
+        if !dir.exists() {
+            return Ok(Vec::new());
+        }
+        let mut metas = Vec::new();
+        for entry in fs::read_dir(dir)? {
+            let path = entry?.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("b2f") {
+                continue;
+            }
+            let raw = fs::read(&path)?;
+            if let Ok(msg) = Message::from_bytes(&raw) {
+                let mut meta = meta_from_message(&msg);
+                meta.unread = surface_unread && !path.with_extension("read").exists();
+                metas.push(meta);
+            }
+        }
+        metas.sort_by(|a, b| {
+            let ka = sort_key_from_rfc3339(&a.date);
+            let kb = sort_key_from_rfc3339(&b.date);
+            kb.cmp(&ka).then_with(|| a.id.0.cmp(&b.id.0))
+        });
+        Ok(metas)
+    }
+}
+
+/// What to do with messages remaining in a user folder when the folder is
+/// deleted (spec §6 D6).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeleteAction {
+    /// Move each message to Inbox (safe default).
+    MoveToInbox,
+    /// Move each message to Archive.
+    MoveToArchive,
+    /// Permanently delete each message.
+    Delete,
+}
+
+/// A folder reference that can be either a system folder (closed enum) or a
+/// user folder (open-set slug). Used by [`Mailbox::move_between`] so the move
+/// primitive supports all four combinations (system↔system, system↔user,
+/// user↔system, user↔user) under a single API.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FolderRef {
+    System(MailboxFolder),
+    User(String),
 }
 
 fn direction_for_folder(f: MailboxFolder) -> crate::search::extractor::Direction {
@@ -595,6 +827,139 @@ mod index_hook_tests {
             &MessageId("does-not-exist".to_string()),
         );
         assert!(res.is_ok(), "moving a missing message must be a no-op-safe Ok");
+    }
+
+    // ========================================================================
+    // tuxlink-f62f: user-folder lifecycle + cross-kind move integration tests.
+    // ========================================================================
+
+    #[test]
+    fn user_folder_create_list_delete_roundtrip() {
+        let dir = tempdir().unwrap();
+        let mbox = Mailbox::new(dir.path().to_path_buf());
+
+        // Empty at first launch.
+        assert!(mbox.list_user_folders().is_empty());
+
+        // Create two folders.
+        let ares = mbox.create_user_folder("ARES Drills").unwrap();
+        assert_eq!(ares.slug, "ares-drills");
+        assert_eq!(ares.display_name, "ARES Drills");
+        let prep = mbox.create_user_folder("Disaster Prep").unwrap();
+        assert_eq!(prep.slug, "disaster-prep");
+
+        // Listed in creation order.
+        let list = mbox.list_user_folders();
+        assert_eq!(list.len(), 2);
+        assert_eq!(list[0].slug, "ares-drills");
+        assert_eq!(list[1].slug, "disaster-prep");
+
+        // The on-disk directories exist.
+        assert!(dir.path().join("ares-drills").is_dir());
+        assert!(dir.path().join("disaster-prep").is_dir());
+        // The registry file exists.
+        assert!(dir.path().join(".folders.json").exists());
+
+        // Delete with Delete cascade (no messages inside; safe).
+        mbox.delete_user_folder("ares-drills", DeleteAction::Delete).unwrap();
+        let after = mbox.list_user_folders();
+        assert_eq!(after.len(), 1);
+        assert_eq!(after[0].slug, "disaster-prep");
+        assert!(!dir.path().join("ares-drills").exists());
+    }
+
+    #[test]
+    fn create_rejects_reserved_names_and_duplicates() {
+        let dir = tempdir().unwrap();
+        let mbox = Mailbox::new(dir.path().to_path_buf());
+
+        // Reserved system names (case-insensitive).
+        assert!(mbox.create_user_folder("Inbox").is_err());
+        assert!(mbox.create_user_folder("ARCHIVE").is_err());
+
+        // First create OK, duplicate rejected.
+        mbox.create_user_folder("ARES Drills").unwrap();
+        assert!(mbox.create_user_folder("ARES Drills").is_err());
+        // Same slug from a different display would also collide.
+        assert!(mbox.create_user_folder("ares drills").is_err());
+    }
+
+    #[test]
+    fn move_between_inbox_and_user_folder_relocates_message() {
+        let dir = tempdir().unwrap();
+        let mbox = Mailbox::new(dir.path().to_path_buf());
+        let id = mbox.store(MailboxFolder::Inbox, &raw("hello", "body")).unwrap();
+        let _ = mbox.create_user_folder("ARES Drills").unwrap();
+
+        // Inbox → user folder.
+        mbox.move_between(
+            FolderRef::System(MailboxFolder::Inbox),
+            FolderRef::User("ares-drills".into()),
+            &id,
+        )
+        .unwrap();
+        assert!(dir.path().join("ares-drills").join(format!("{}.b2f", id.0)).exists());
+        assert!(!dir.path().join("inbox").join(format!("{}.b2f", id.0)).exists());
+
+        // User folder → Archive.
+        mbox.move_between(
+            FolderRef::User("ares-drills".into()),
+            FolderRef::System(MailboxFolder::Archive),
+            &id,
+        )
+        .unwrap();
+        assert!(dir.path().join("archive").join(format!("{}.b2f", id.0)).exists());
+        assert!(!dir.path().join("ares-drills").join(format!("{}.b2f", id.0)).exists());
+    }
+
+    #[test]
+    fn delete_user_folder_with_move_to_inbox_relocates_messages() {
+        let dir = tempdir().unwrap();
+        let mbox = Mailbox::new(dir.path().to_path_buf());
+        let _ = mbox.create_user_folder("ARES Drills").unwrap();
+        // Plant a message in the user folder via the move primitive.
+        let id = mbox.store(MailboxFolder::Inbox, &raw("hello", "body")).unwrap();
+        mbox.move_between(
+            FolderRef::System(MailboxFolder::Inbox),
+            FolderRef::User("ares-drills".into()),
+            &id,
+        )
+        .unwrap();
+
+        // Delete with MoveToInbox cascade.
+        mbox.delete_user_folder("ares-drills", DeleteAction::MoveToInbox).unwrap();
+
+        // Message is back in the inbox; user folder is gone.
+        assert!(dir.path().join("inbox").join(format!("{}.b2f", id.0)).exists());
+        assert!(!dir.path().join("ares-drills").exists());
+        assert!(mbox.list_user_folders().is_empty());
+    }
+
+    #[test]
+    fn delete_user_folder_with_delete_cascade_removes_messages() {
+        let dir = tempdir().unwrap();
+        let mbox = Mailbox::new(dir.path().to_path_buf());
+        let _ = mbox.create_user_folder("ARES Drills").unwrap();
+        let id = mbox.store(MailboxFolder::Inbox, &raw("hello", "body")).unwrap();
+        mbox.move_between(
+            FolderRef::System(MailboxFolder::Inbox),
+            FolderRef::User("ares-drills".into()),
+            &id,
+        )
+        .unwrap();
+
+        mbox.delete_user_folder("ares-drills", DeleteAction::Delete).unwrap();
+        assert!(!dir.path().join("ares-drills").exists());
+        assert!(!dir.path().join("inbox").join(format!("{}.b2f", id.0)).exists());
+        assert!(mbox.list_user_folders().is_empty());
+    }
+
+    #[test]
+    fn list_user_returns_empty_for_unknown_slug() {
+        let dir = tempdir().unwrap();
+        let mbox = Mailbox::new(dir.path().to_path_buf());
+        let metas = mbox.list_user("nope").unwrap();
+        assert!(metas.is_empty());
     }
 
     #[test]

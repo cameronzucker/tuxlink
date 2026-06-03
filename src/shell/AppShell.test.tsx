@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, within, act } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import type { MailboxFolder, MessageMeta } from '../mailbox/types';
+import type { MessageMeta } from '../mailbox/types';
 
 // Vite-native raw-import of AppShell.css for the tuxlink-8rng chrome-width
 // assertions below. Uses the same pattern as src/forms/innerhtml-ban.test.ts:
@@ -158,7 +158,7 @@ const outboxMsgs: MessageMeta[] = [
 ];
 
 vi.mock('../mailbox/useMailbox', () => ({
-  useMailbox: (folder: MailboxFolder) => ({
+  useMailbox: (folder: string) => ({
     messages:
       folder === 'inbox'
         ? inboxMsgs
@@ -171,7 +171,18 @@ vi.mock('../mailbox/useMailbox', () => ({
     isError: false,
     error: null,
   }),
-  isBackendFolder: (f: MailboxFolder) => f === 'inbox' || f === 'outbox' || f === 'sent',
+  isBackendFolder: (f: string) => f === 'inbox' || f === 'outbox' || f === 'sent',
+  isUserFolderSlug: (s: string) => /^[a-z0-9-]+$/.test(s) && !s.startsWith('-') && !s.endsWith('-'),
+}));
+
+// tuxlink-f62f: AppShell calls useUserFolders to populate the sidebar's
+// Folders section. Tests don't exercise that path; an empty list keeps the
+// section rendering its empty-hint without firing the real Tauri command.
+vi.mock('../mailbox/useUserFolders', () => ({
+  useUserFolders: () => ({ folders: [], isLoading: false, isError: false, error: null }),
+  useCreateUserFolder: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useDeleteUserFolder: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  USER_FOLDERS_QUERY_KEY: ['userFolders'],
 }));
 
 import { invoke } from '@tauri-apps/api/core';
