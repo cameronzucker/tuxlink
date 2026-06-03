@@ -1,5 +1,7 @@
 # WLE-client connection-mode parity — closure plan
 
+> **⚠ AMENDED 2026-06-03** — the §2 table and §3.1 "inbound P2P parity = Telnet-P2P only" cross-cutting finding are SUPERSEDED for the non-Telnet transports. WLE doesn't bind an application-layer socket for Packet/ARDOP/VARA-P2P, but the TNC/modem owns the listen at the link/physical layer — inbound sessions arrive via TNC connect-indication or modem `CONNECTED` event, and tuxlink needs the receive side across every P2P-capable transport. See **[`2026-06-03-multi-transport-listener-architecture.md`](2026-06-03-multi-transport-listener-architecture.md)** for the corrected dispositions, 3 new bd issues (tuxlink-3o2o shared listener-arms layer P1 + tuxlink-t9b6 RADIO-1 framing P2 + tuxlink-xnoy VARA listener completion P2), and the re-sequenced Tier 1 listener-foundation roadmap. The affected closure-plan rows are: §2 row 2.4 (tuxlink-inde — was 🟠 defer-listener; **is** 🟢 ship divergence overlay, P1); §2 row 2.7 (tuxlink-dhbl — was 🟠 defer-listener; **is** 🟢 ship LISTEN TRUE + event routing + UI, P1); §2 row 2.8/2.9 (tuxlink-qpqh/do6j — scope expanded to include VARA listener completion).
+>
 > Date: 2026-06-02 · Agent: thistle-swallow-cedar · bd: tuxlink-a6ic (umbrella) + tuxlink-smpu (this synthesis)
 >
 > Plan input: APPROVED office-hours design doc at `~/.gstack/projects/cameronzucker-tuxlink/cameronzucker-main-design-20260602-184111.md` (9/10, 2 spec-review iterations).
