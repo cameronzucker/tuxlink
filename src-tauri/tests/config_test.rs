@@ -718,6 +718,7 @@ fn config_skips_pat_mbo_address_on_write() {
         packet: tuxlink_lib::config::PacketConfig::default(),
         modem_ardop: None,
         modem_vara: None,
+        telnet_listen: tuxlink_lib::config::TelnetListenUiConfig::default(),
     };
     let json = serde_json::to_string(&cfg).unwrap();
     assert!(

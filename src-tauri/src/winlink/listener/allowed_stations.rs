@@ -299,17 +299,77 @@ fn prefix_or_exact(pattern: &str, value: &str) -> bool {
     }
 }
 
-/// Test whether a pattern (with optional `*` tail wildcard) matches an IP.
+/// Test whether a pattern matches an IP.
 ///
-/// The IP is rendered to its standard string form (`Ipv4: A.B.C.D`,
-/// `Ipv6: a:b:c::d`) and tail-matched against the pattern.
+/// For IPv4 patterns shaped as 4 dot-separated tokens (e.g. `192.168.1.5`,
+/// `192.168.*.50`, `192.168.1.*`), each token is matched per-octet — the `*`
+/// token is a per-octet wildcard accepted in any position, leading zeros are
+/// normalised, and a missing octet is a no-match. This mirrors WLE's
+/// `CheckAllowedIPAddress` algorithm (`dev/scratch/winlink-re/findings/
+/// telnet-p2p.md §4.3`) so a tuxlink-curated allowlist that operators copy
+/// from a WLE deployment matches the same peers.
+///
+/// For any other pattern shape (IPv6, free-form tail wildcard), the legacy
+/// string-prefix matcher is used — `strip_suffix('*')` + `starts_with`. This
+/// keeps `192.168.*` matching `192.168.1.5` (the common short form) AND lets
+/// operators write IPv6 patterns like `2001:db8:*` even though IPv6 listeners
+/// are explicitly rejected by the Telnet listener.
 fn ip_matches(pattern: &str, ip: &IpAddr) -> bool {
+    if let IpAddr::V4(v4) = ip {
+        if let Some(true) = try_match_v4_per_octet(pattern, v4) {
+            return true;
+        }
+        if let Some(false) = try_match_v4_per_octet(pattern, v4) {
+            // A well-formed 4-octet IPv4 pattern that does not match should
+            // NOT fall back to the tail-wildcard string compare — otherwise
+            // a pattern like `1.1.1.1` would still string-prefix-match a
+            // rendered IPv4 starting with `1.1.1.1` if the pattern ended in
+            // `*` (it doesn't here, but stay strict).
+            return false;
+        }
+    }
     let rendered = ip.to_string();
     if let Some(prefix) = pattern.strip_suffix('*') {
         rendered.starts_with(prefix)
     } else {
         pattern == rendered
     }
+}
+
+/// Try to match `pattern` as a 4-token IPv4 per-octet pattern against `ip`.
+///
+/// Returns `None` when `pattern` is not a well-formed 4-token IPv4 pattern
+/// (caller falls back to the legacy tail-wildcard matcher). Returns
+/// `Some(true)` / `Some(false)` for a well-formed pattern's match result.
+///
+/// Per-token rules:
+/// - `*` matches any octet value (operator can place it in ANY position).
+/// - A decimal string matches its parsed `u8` value (leading zeros tolerated;
+///   any failed parse → `None` so the caller falls back to legacy).
+fn try_match_v4_per_octet(pattern: &str, ip: &std::net::Ipv4Addr) -> Option<bool> {
+    let parts: Vec<&str> = pattern.split('.').collect();
+    if parts.len() != 4 {
+        return None;
+    }
+    let octets = ip.octets();
+    for (i, token) in parts.iter().enumerate() {
+        let token = token.trim_start_matches('0');
+        let token_for_compare = if token.is_empty() && parts[i] != "*" {
+            "0" // `"0"` → `""` → restore for compare; preserves leading-zero tolerance
+        } else {
+            token
+        };
+        if parts[i] == "*" {
+            continue;
+        }
+        // Any non-decimal token = not-a-valid-pattern; fall back to legacy.
+        match token_for_compare.parse::<u8>() {
+            Ok(v) if v == octets[i] => {}
+            Ok(_) => return Some(false),
+            Err(_) => return None, // not a v4 pattern after all
+        }
+    }
+    Some(true)
 }
 
 // ──────────────────────────────────────────────────────────────

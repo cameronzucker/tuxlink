@@ -133,6 +133,10 @@ pub fn run() {
             in_progress: std::sync::atomic::AtomicBool::new(false),
             aborting: std::sync::atomic::AtomicBool::new(false),
         })
+        // tuxlink-xehu: Telnet-P2P listener shared state — the in-flight
+        // listener's shutdown flag + bound socket addr. None when no listener
+        // is armed; Some(...) when one is running.
+        .manage(std::sync::Arc::new(crate::ui_commands::TelnetListenState::default()))
         .setup(|app| {
             use tauri::Manager as _;  // brings .state() into scope for the setup closure
             // Install system tray icon + menu (tuxlink-rit / Task 8).
@@ -346,6 +350,21 @@ pub fn run() {
             crate::ui_commands::p2p_peer_password_set,
             crate::ui_commands::p2p_peer_password_clear,
             crate::ui_commands::p2p_peer_password_status,
+            // tuxlink-xehu: Telnet-P2P listener — allowlist + keyring station password +
+            // arm/disarm with TTL. Wire spec: dev/scratch/winlink-re/findings/telnet-p2p.md.
+            crate::ui_commands::telnet_listen,
+            crate::ui_commands::telnet_set_listen,
+            crate::ui_commands::telnet_allowed_stations_get,
+            crate::ui_commands::telnet_allowed_stations_add_callsign,
+            crate::ui_commands::telnet_allowed_stations_remove_callsign,
+            crate::ui_commands::telnet_allowed_stations_add_ip,
+            crate::ui_commands::telnet_allowed_stations_remove_ip,
+            crate::ui_commands::telnet_allowed_stations_set_allow_all,
+            crate::ui_commands::telnet_station_password_set,
+            crate::ui_commands::telnet_station_password_clear,
+            crate::ui_commands::telnet_station_password_is_set,
+            crate::ui_commands::telnet_listen_config_get,
+            crate::ui_commands::telnet_listen_config_set,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
