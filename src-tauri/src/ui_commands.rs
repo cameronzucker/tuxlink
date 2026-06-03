@@ -2095,10 +2095,21 @@ impl PacketAllowedStationsDto {
 
 /// Helper: load → mutate → save, in one place so the four mutation commands
 /// stay one-liners and the read/write code path is single-sourced.
+/// Codex review 2026-06-03 [P3]: process-wide mutex serialising the
+/// load-mutate-save cycle on the Packet allowlist file. Mirror of the
+/// Telnet listener's same fix (tuxlink-xehu); without it two concurrent
+/// UI commands (e.g. packet_allowed_stations_add + packet_allowed_stations_set_allow_all)
+/// race — both load the same file, mutate in-memory, second save clobbers first.
+fn packet_allowlist_file_lock() -> &'static std::sync::Mutex<()> {
+    static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+    LOCK.get_or_init(|| std::sync::Mutex::new(()))
+}
+
 fn with_packet_allowed_stations<F>(mutate: F) -> Result<(), UiError>
 where
     F: FnOnce(&mut crate::winlink::listener::AllowedStations),
 {
+    let _guard = packet_allowlist_file_lock().lock().unwrap();
     let path = crate::winlink::listener::packet_gate::packet_allowed_stations_path();
     let mut allowed = crate::winlink::listener::AllowedStations::load_from(&path)
         .map_err(|e| UiError::Internal { detail: format!("load allowlist: {e}") })?;
@@ -2143,6 +2154,7 @@ pub async fn packet_allowed_stations_remove(callsign: String) -> Result<(), UiEr
             detail: "callsign must not be empty".into(),
         });
     }
+    let _guard = packet_allowlist_file_lock().lock().unwrap();
     let path = crate::winlink::listener::packet_gate::packet_allowed_stations_path();
     let mut allowed = crate::winlink::listener::AllowedStations::load_from(&path)
         .map_err(|e| UiError::Internal { detail: format!("load allowlist: {e}") })?;

@@ -1431,6 +1431,63 @@ fn native_packet_connect(
             )
         }
         None => {
+            // ── Listener-arms gate (tuxlink-inde) — armed BEFORE answer()
+            //
+            // Codex review 2026-06-03 [P2 — arm-time]: the original code
+            // created `arms` AFTER `ax25::answer()` returned, so the TTL
+            // gate was effectively a no-op (the arms record was always
+            // freshly-minted at peer-receipt time, never compared against
+            // the operator's true arm moment). The TTL check now meaningfully
+            // expires the listener if a SABM arrives more than DEFAULT_TTL
+            // after the operator armed: a peer that lands past the consent
+            // window gets RejectExpired rather than silent accept.
+            //
+            // Reject path: drop the stream. Ax25Stream::drop fires DISC because
+            // the link is established (the UA we just sent armed Drop teardown
+            // via tuxlink-2y4). Reject events append to the shared forensics
+            // log alongside the arm record.
+            //
+            // The full architecture (multi-peer continuous-armed listener with
+            // shared arms record across multiple SABMs in one armed window)
+            // is the follow-up; current model is one-arm one-answer cycle.
+            use crate::winlink::listener::packet_gate::{
+                gate_inbound_peer_now, listener_forensics_log_path, peer_id_from_ax25,
+                reject_reason, ListenerRejectEvent,
+            };
+            use crate::winlink::listener::{
+                packet_gate, AllowedStations, ListenerArmsRecord, ListenerDecision, TransportKind,
+            };
+
+            // Codex review 2026-06-03 [P2 — load-error visibility]: the
+            // previous code silently substituted AllowedStations::default()
+            // (allow_all=FALSE, empty list) on a corrupt-or-unreadable
+            // allowlist file. The operator saw a normal "allowlist" reject
+            // and couldn't tell whether the gate was working as configured
+            // OR the allowlist had been wiped. We now (a) surface the load
+            // error verbatim via progress(), and (b) use a distinct
+            // "allowlist-load-error" reject reason so the forensics log +
+            // session log clearly distinguish "configured allowlist denied
+            // this peer" from "couldn't load the allowlist; failing closed."
+            let mut load_failed_reason: Option<String> = None;
+            let allowed = if let Some(injected) = allowlist_override.clone() {
+                // Test injection (tuxlink-inde): bypasses the disk-file lookup.
+                // Production never sets this; `bootstrap`/UI relies on the file.
+                injected
+            } else {
+                match AllowedStations::load_from(&packet_gate::packet_allowed_stations_path()) {
+                    Ok(a) => a,
+                    Err(e) => {
+                        let reason_str = format!("{e}");
+                        progress(&format!(
+                            "Packet allowlist load failed: {reason_str}. Failing closed (reject all inbound until repaired)."
+                        ));
+                        load_failed_reason = Some(reason_str);
+                        AllowedStations::default()
+                    }
+                }
+            };
+            let arms = ListenerArmsRecord::arm_default(TransportKind::Packet);
+
             progress("Listening for an inbound peer…");
             let (peer, stream) = crate::winlink::ax25::answer(
                 bytelink,
@@ -1443,57 +1500,17 @@ fn native_packet_connect(
             })?;
             progress(&format!("Answered {}.", peer.call));
 
-            // ── Listener-arms gate (tuxlink-inde) ─────────────────
-            //
-            // The shipped Packet listener accepts any peer that completes the
-            // AX.25 SABM-UA handshake. The tuxlink-divergence overlay (per
-            // docs/design/2026-06-03-multi-transport-listener-architecture.md §4.1
-            // + dev/scratch/winlink-re/findings/packet-p2p.md §"Allowed-stations
-            // model") gates the answerer at the application layer: callsign
-            // allowlist + arm-window TTL. The station-password layer is
-            // intentionally absent for Packet (packet-p2p.md §"Auth": AX.25
-            // has no in-band place to challenge before B2F); the gate uses
-            // StationPassword::no_keyring so listener_decide skips that branch.
-            //
-            // Reject path: drop the stream. Ax25Stream::drop fires DISC because
-            // the link is established (the UA we just sent armed Drop teardown
-            // via tuxlink-2y4). Reject events append to the shared forensics
-            // log alongside the arm record.
-            use crate::winlink::listener::packet_gate::{
-                gate_inbound_peer_now, listener_forensics_log_path, peer_id_from_ax25,
-                reject_reason, ListenerRejectEvent,
-            };
-            use crate::winlink::listener::{
-                packet_gate, AllowedStations, ListenerArmsRecord, ListenerDecision, TransportKind,
-            };
-
-            let allowed = if let Some(injected) = allowlist_override.clone() {
-                // Test injection (tuxlink-inde): bypasses the disk-file lookup.
-                // Production never sets this; `bootstrap`/UI relies on the file.
-                injected
-            } else {
-                AllowedStations::load_from(
-                    &packet_gate::packet_allowed_stations_path(),
-                )
-                .unwrap_or_else(|e| {
-                    // Fail closed on load error: a corrupt allowlist file should
-                    // not silently widen the gate. Empty + allow_all=FALSE rejects
-                    // every peer; the operator sees the reject in the session log
-                    // and can repair the file. (Logging the load error here would
-                    // require the wire_log signature for binary detail — keeping
-                    // the failure path observable via the session-line reject is
-                    // enough for v1 of this overlay.)
-                    let _ = e;
-                    AllowedStations::default()
-                })
-            };
-            let arms = ListenerArmsRecord::arm_default(TransportKind::Packet);
-
             let peer_id = peer_id_from_ax25(peer.clone());
             let decision = gate_inbound_peer_now(&peer_id, &allowed, &arms);
 
             if decision != ListenerDecision::Accept {
-                let reason = reject_reason(&decision).unwrap_or("unknown");
+                // If the gate rejected with "allowlist" AND we know the load
+                // failed, upgrade the reject reason to a distinct
+                // "allowlist-load-error" so the operator can distinguish.
+                let reason: &str = match (&decision, &load_failed_reason) {
+                    (ListenerDecision::RejectAllowlist, Some(_)) => "allowlist-load-error",
+                    _ => reject_reason(&decision).unwrap_or("unknown"),
+                };
                 let log_path = listener_forensics_log_path();
                 let event =
                     ListenerRejectEvent::new(TransportKind::Packet, reason, &peer_id);
@@ -1506,11 +1523,14 @@ fn native_packet_connect(
                 progress(&msg);
 
                 // Drop the stream → Ax25Stream::drop sends DISC + best-effort
-                // awaits UA/DM. We return Ok (the listener completed its job
-                // cleanly: it received an inbound and refused it per operator
-                // policy; this is not an error from the backend's perspective).
+                // awaits UA/DM.
                 drop(stream);
-                return Ok(());
+                return Err(BackendError::AuthFailed {
+                    reason: format!(
+                        "listener gate rejected inbound peer {} ({})",
+                        peer.call, reason
+                    ),
+                });
             }
 
             // Listen (Answer role) does not need a password — peers do not challenge.
