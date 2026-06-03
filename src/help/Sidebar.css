@@ -1,0 +1,67 @@
+/* Sidebar — section-grouped topic list. Spec §5.1, §5.4.
+   Touch targets ≥44px tall per spec §6.3. */
+
+.tux-help-sidebar {
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  overflow-y: auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 8px 0;
+}
+
+.tux-help-sb-section {
+  display: flex;
+  flex-direction: column;
+}
+
+.tux-help-sb-section-title {
+  padding: 12px 14px 6px;
+  font-size: 11px;
+  color: var(--text-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 600;
+}
+
+.tux-help-sb-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;             /* visible padding */
+  min-height: 44px;               /* touch-comfort floor */
+  font-size: 14px;
+  color: var(--text-dim);
+  border-left: 3px solid transparent;
+  cursor: pointer;
+  text-decoration: none;
+  user-select: none;
+}
+
+.tux-help-sb-item:hover {
+  color: var(--text);
+  background: rgba(245, 159, 60, 0.04);
+}
+
+.tux-help-sb-item.active {
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-left-color: var(--accent);
+  font-weight: 500;
+}
+
+.tux-help-sb-num {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-faint);
+  min-width: 18px;
+}
+
+.tux-help-sb-item.active .tux-help-sb-num {
+  color: var(--accent);
+}
+
+.tux-help-sb-name {
+  flex: 1;
+}
