@@ -1,5 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, waitFor, screen } from '@testing-library/react';
+// tuxlink-n4hz regression test imports useQueryClient at the top so the mock
+// factory below references the SAME module instance App.tsx imports. A
+// require() inside the factory would resolve via CJS and get a duplicate
+// instance whose context lookup would fail even with the provider present.
+import { useQueryClient } from '@tanstack/react-query';
 
 // --- Tauri IPC mocks --------------------------------------------------------
 // App.tsx no longer subscribes to the "menu" channel (tuxlink-ng3 Task 10), but
@@ -39,6 +44,18 @@ vi.mock('./compose/Compose', () => ({
   Compose: ({ draftId }: { draftId: string }) => (
     <div data-testid="compose-root" data-draft-id={draftId} />
   ),
+}));
+// tuxlink-n4hz regression: the real HelpView calls useHelpSearch → useQuery,
+// which throws "No QueryClient set" if App.tsx's QueryClientProvider doesn't
+// wrap the help branch. Mock HelpView to a sentinel that USES the
+// react-query context — the call to useQueryClient throws if the provider
+// isn't above it, surfacing the regression as a test failure rather than as
+// a production crash.
+vi.mock('./help/HelpView', () => ({
+  HelpView: () => {
+    useQueryClient();   // throws if no QueryClientProvider above us
+    return <div data-testid="help-root" />;
+  },
 }));
 
 import { invoke } from '@tauri-apps/api/core';
@@ -134,5 +151,32 @@ describe('<App> compose-window routing (spec §5.4 / Codex F7)', () => {
     await waitFor(() => expect(screen.getByTestId('compose-root')).toBeInTheDocument());
     // No subscription to the menu channel from a compose window.
     expect(listenMock).not.toHaveBeenCalledWith('menu', expect.any(Function));
+  });
+});
+
+// tuxlink-n4hz: regression for the post-merge crash in PR #312. When the help
+// webview mounted, HelpView's useHelpSearch hook called useQuery without a
+// QueryClientProvider above it and React rendered nothing. Lifting
+// QueryClientProvider up to wrap all routing branches in App.tsx is the fix;
+// this test asserts the provider IS above HelpView (the mock above throws if
+// useQueryClient fails).
+describe('<App> help-window routing (tuxlink-0gsy / tuxlink-n4hz)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    listenMock.mockImplementation(async () => () => {});
+  });
+  afterEach(() => setPath('/'));
+
+  it('renders <HelpView> with QueryClientProvider above it for /help', async () => {
+    currentLabel = 'help';
+    setPath('/help');
+    routeInvoke(true);
+    render(<App />);
+    // HelpView mounts (which itself requires the QueryClient context per the
+    // sentinel mock above); main-window trees do NOT.
+    await waitFor(() => expect(screen.getByTestId('help-root')).toBeInTheDocument());
+    expect(screen.queryByTestId('wizard-root')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('app-shell-root')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('compose-root')).not.toBeInTheDocument();
   });
 });

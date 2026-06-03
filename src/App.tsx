@@ -1,4 +1,4 @@
-import { useEffect, useState, lazy, Suspense } from 'react';
+import { useEffect, useState, lazy, Suspense, type ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { invoke } from '@tauri-apps/api/core';
 import { AppShell } from './shell/AppShell';
@@ -53,41 +53,50 @@ export default function App() {
       .catch(() => setWizardCompleted(false));
   }, [isComposeWindow, isHelpWindow]);
 
-  // Compose webview: render the compose form for its draft id and nothing else
-  // (no wizard probe, no shell). Spec §5.4. Lazy-loaded — Suspense fallback is
-  // an empty div so the index.html skeleton stays visible until <Compose>
-  // hydrates rather than flashing a spinner.
+  // Select the branch's content first; QueryClientProvider wraps the whole
+  // tree below so every branch has access to react-query context (tuxlink-n4hz:
+  // HelpView's useHelpSearch hook calls useQuery — without the provider the
+  // help window crashes with "No QueryClient set"; tests didn't catch it
+  // because each unit test wraps its own QueryClient. Lift the provider above
+  // the branch switch so production matches the test-time assumption.)
+  let content: ReactNode;
   if (isComposeWindow) {
-    return (
+    // Compose webview: render the compose form for its draft id and nothing
+    // else (no wizard probe, no shell). Spec §5.4. Lazy-loaded — Suspense
+    // fallback is an empty div so the index.html skeleton stays visible until
+    // <Compose> hydrates rather than flashing a spinner.
+    content = (
       <Suspense fallback={<div data-testid="app-loading" />}>
         <Compose draftId={composeDraftId as string} />
       </Suspense>
     );
-  }
-
-  // Help webview: render <HelpView> for /help. Same lazy + Suspense pattern.
-  // Spec §4.1.
-  if (isHelpWindow) {
-    return (
+  } else if (isHelpWindow) {
+    // Help webview: render <HelpView> for /help. Same lazy + Suspense pattern.
+    // Spec §4.1.
+    content = (
       <Suspense fallback={<div data-testid="app-loading" />}>
         <HelpView />
       </Suspense>
     );
-  }
-
-  if (wizardCompleted === null) return <div data-testid="app-loading">Loading…</div>;
-
-  // Post-wizard, the main shell renders (Task 12). Pre-wizard, the onboarding
-  // wizard. The shell needs the QueryClient for its mailbox queries.
-  return wizardCompleted ? (
-    <QueryClientProvider client={queryClient}>
-      <AppShell />
-    </QueryClientProvider>
-  ) : (
+  } else if (wizardCompleted === null) {
+    content = <div data-testid="app-loading">Loading…</div>;
+  } else if (wizardCompleted) {
+    // Post-wizard, the main shell renders (Task 12).
+    content = <AppShell />;
+  } else {
+    // Pre-wizard, the onboarding wizard.
     // tuxlink-eh7: hand off to the shell the moment onboarding finishes — no
     // app restart needed (App.tsx otherwise reads wizard_completed only once).
-    <Suspense fallback={<div data-testid="app-loading" />}>
-      <Wizard onComplete={() => setWizardCompleted(true)} />
-    </Suspense>
+    content = (
+      <Suspense fallback={<div data-testid="app-loading" />}>
+        <Wizard onComplete={() => setWizardCompleted(true)} />
+      </Suspense>
+    );
+  }
+
+  return (
+    <QueryClientProvider client={queryClient}>
+      {content}
+    </QueryClientProvider>
   );
 }
