@@ -376,6 +376,7 @@ pub enum TelnetError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::session::SessionIntent;
     use std::io::{Cursor, Read, Write};
     use std::net::TcpListener;
     use std::thread;
@@ -417,6 +418,7 @@ mod tests {
             targetcall: "SERVICE".into(),
             locator: "CN87".into(),
             password: None,
+            intent: SessionIntent::Cms,
         };
         let result = connect_and_exchange(
             &addr.ip().to_string(),
@@ -577,6 +579,7 @@ mod tests {
             targetcall: "SERVICE".into(),
             locator: "CN87".into(),
             password: None,
+            intent: SessionIntent::Cms,
         };
         let recorded = std::cell::RefCell::new(Vec::<String>::new());
         connect_and_exchange(
@@ -630,6 +633,7 @@ mod tests {
             targetcall: "SERVICE".into(),
             locator: "CN87".into(),
             password: None,
+            intent: SessionIntent::Cms,
         };
         let wire = std::cell::RefCell::new(Vec::<String>::new());
         connect_and_exchange(

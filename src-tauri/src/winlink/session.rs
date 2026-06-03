@@ -72,6 +72,121 @@ pub struct ExchangeConfig {
     /// The station password, used only if the server sends a challenge. Supplied
     /// by the caller (from the OS keyring); never stored here.
     pub password: Option<String>,
+    /// Which message pool this session belongs to. Determines the routing
+    /// flag tag the local mailbox applies to messages received over this
+    /// session, and gates outbound delivery (a `RadioOnly` session refuses
+    /// to send a `Cms`-tagged message and vice versa, per WLE
+    /// `B2Protocol.cs:860-900`). Defaults to [`SessionIntent::Cms`] —
+    /// every existing caller predates §2.13 and behaves as a CMS dial.
+    pub intent: SessionIntent,
+}
+
+/// Which message pool a B2F session belongs to.
+///
+/// Mirrors WLE's `B2SessionType` enum (`B2Protocol.cs:51-60` in the
+/// `RMS_Express_v11.0.0.0` decompile, surfaced via the dial-time
+/// session-type dropdown in `Main.cs:5820-6040`). Per the deep-dive at
+/// [`dev/scratch/winlink-re/findings/client-of-rms-relay.md`] §3.1,
+/// each intent maps 1:1 to a single-character [`RoutingFlag`] that the
+/// local mailbox uses to gate cross-pool message delivery — e.g., a
+/// message stored under flag `R` cannot leave over a `Cms` session and
+/// vice versa.
+///
+/// The intent is **operator-typed** at the dial-target picker; see also
+/// `src/connections/sessionTypes.ts` for the user-facing labels the
+/// sidebar surfaces.
+///
+/// ## Diverges from WLE
+///
+/// - Tuxlink does NOT replicate WLE's `Automatic` / `RMSRelay` runtime-
+///   transition variants. The operator's typed intent is the
+///   authoritative source of pool membership for outbound messages;
+///   post-connect banner parsing (see [`super::relay_banner`])
+///   refines the operator's *view* of the remote but does NOT
+///   silently re-pool already-composed messages mid-session. The
+///   banner parser surfaces what the remote IS so the UI can show a
+///   persistent state strip; it does not mutate routing flags.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SessionIntent {
+    /// Default — talking to the global Winlink CMS, either directly
+    /// (Telnet/TLS to `cms.winlink.org:8773`) or via a transparent
+    /// relay-to-CMS proxy (deep-dive path 1A's `Use RMS Relay`
+    /// checkbox).
+    #[default]
+    Cms,
+    /// R pool — RF-only Hybrid network. Messages never traverse the
+    /// internet. Deep-dive path 1B (`TelnetSessionRadioOnly` and the
+    /// cross-transport Pactor / Packet / VARA / ARDOP Radio-only
+    /// variants).
+    RadioOnly,
+    /// L pool — store-and-forward at a local RMS Relay "post office".
+    /// Operator dials a LAN-local relay endpoint instead of the global
+    /// CMS, and messages stay in the local pool until the operator
+    /// later forwards them.
+    PostOffice,
+    /// MESH — Network Post Office. Deep-dive path 1C
+    /// (`TelnetMESHSession` with `B2PeerToPeer=false`). Telnet to a
+    /// locally-run RMS Relay instance, or via AREDN mesh. Carries no
+    /// routing flag at the message layer (the relay tags inbound by
+    /// its own configuration).
+    Mesh,
+    /// Peer-to-peer — direct station, no CMS, no creds, no routing
+    /// flag. The local mailbox stores P2P messages unpooled.
+    P2p,
+}
+
+/// Single-character routing flag tagged on every message that crosses
+/// a B2F session, per WLE's `B2Protocol.cs:860-900` (`B2CheckSendMessage`)
+/// + `L1125-1155` (inbound `RoutingFlag` tagging on receive).
+///
+/// `None` means "no flag" — applies to [`SessionIntent::P2p`] and
+/// [`SessionIntent::Mesh`] sessions per the WLE behavior; the local
+/// mailbox treats unflagged messages as belonging to no pool.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RoutingFlag {
+    /// `C` — CMS-routed message.
+    Cms,
+    /// `R` — Radio-only / Hybrid-network message.
+    RadioOnly,
+    /// `L` — Local-RMS-Relay / Post-Office message.
+    PostOffice,
+}
+
+impl RoutingFlag {
+    /// Single ASCII character used to tag the message in the mailbox.
+    pub fn as_char(self) -> char {
+        match self {
+            Self::Cms => 'C',
+            Self::RadioOnly => 'R',
+            Self::PostOffice => 'L',
+        }
+    }
+
+    /// Parse the single-character tag from a stored mailbox header.
+    /// Case-sensitive — WLE's `B2Protocol.cs:1144-1149` compares against
+    /// uppercase literals only.
+    pub fn from_char(c: char) -> Option<Self> {
+        match c {
+            'C' => Some(Self::Cms),
+            'R' => Some(Self::RadioOnly),
+            'L' => Some(Self::PostOffice),
+            _ => None,
+        }
+    }
+}
+
+impl SessionIntent {
+    /// The routing flag a message takes when it crosses this session.
+    /// Returns `None` for [`SessionIntent::P2p`] and [`SessionIntent::Mesh`]
+    /// — the local mailbox stores unflagged messages for these intents.
+    pub fn routing_flag(self) -> Option<RoutingFlag> {
+        match self {
+            Self::Cms => Some(RoutingFlag::Cms),
+            Self::RadioOnly => Some(RoutingFlag::RadioOnly),
+            Self::PostOffice => Some(RoutingFlag::PostOffice),
+            Self::Mesh | Self::P2p => None,
+        }
+    }
 }
 
 /// The result of a whole exchange.
@@ -452,6 +567,80 @@ mod tests {
     use crate::winlink::transfer;
     use std::io::Cursor;
 
+    // ============================================================================
+    // SessionIntent + RoutingFlag (tuxlink-kld3 — RMS-Relay client foundation)
+    // ============================================================================
+
+    #[test]
+    fn session_intent_default_is_cms() {
+        // Every pre-§2.13 caller built ExchangeConfig without an intent
+        // field. The Default impl preserves their CMS-dial semantics.
+        assert_eq!(SessionIntent::default(), SessionIntent::Cms);
+    }
+
+    #[test]
+    fn cms_intent_carries_cms_routing_flag() {
+        assert_eq!(
+            SessionIntent::Cms.routing_flag(),
+            Some(RoutingFlag::Cms),
+        );
+        assert_eq!(RoutingFlag::Cms.as_char(), 'C');
+    }
+
+    #[test]
+    fn radio_only_intent_carries_r_routing_flag() {
+        // R-pool message tagging — WLE B2Protocol.cs:1144 enforces that
+        // a `Cms` session refuses to send an `R`-tagged message and
+        // vice versa.
+        assert_eq!(
+            SessionIntent::RadioOnly.routing_flag(),
+            Some(RoutingFlag::RadioOnly),
+        );
+        assert_eq!(RoutingFlag::RadioOnly.as_char(), 'R');
+    }
+
+    #[test]
+    fn post_office_intent_carries_l_routing_flag() {
+        assert_eq!(
+            SessionIntent::PostOffice.routing_flag(),
+            Some(RoutingFlag::PostOffice),
+        );
+        assert_eq!(RoutingFlag::PostOffice.as_char(), 'L');
+    }
+
+    #[test]
+    fn p2p_intent_carries_no_routing_flag() {
+        // P2P messages live unpooled in the local mailbox — no `C`/`R`/`L`
+        // tag, the mailbox stores them as "direct peer" instead.
+        assert_eq!(SessionIntent::P2p.routing_flag(), None);
+    }
+
+    #[test]
+    fn mesh_intent_carries_no_routing_flag() {
+        // Network Post Office / MESH sessions don't carry a flag at the
+        // message layer either — the relay's own configuration tags
+        // inbound messages downstream.
+        assert_eq!(SessionIntent::Mesh.routing_flag(), None);
+    }
+
+    #[test]
+    fn routing_flag_round_trips_via_char() {
+        for f in [RoutingFlag::Cms, RoutingFlag::RadioOnly, RoutingFlag::PostOffice] {
+            assert_eq!(RoutingFlag::from_char(f.as_char()), Some(f));
+        }
+    }
+
+    #[test]
+    fn routing_flag_from_char_rejects_unknown_and_lowercase() {
+        // WLE's parser is case-sensitive (`B2Protocol.cs:1144-1149`).
+        // Lowercase MUST NOT round-trip to a known flag.
+        assert_eq!(RoutingFlag::from_char('c'), None);
+        assert_eq!(RoutingFlag::from_char('r'), None);
+        assert_eq!(RoutingFlag::from_char('l'), None);
+        assert_eq!(RoutingFlag::from_char('X'), None);
+        assert_eq!(RoutingFlag::from_char(' '), None);
+    }
+
     fn outbound_message(mid: &str, subject: &str, body: &[u8]) -> (OutboundMessage, Vec<u8>) {
         let mut msg = Message::new();
         msg.set_header("Mid", mid);
@@ -600,6 +789,7 @@ mod tests {
             targetcall: "SERVICE".into(),
             locator: "CN87".into(),
             password: Some("MYPASS".into()),
+            intent: SessionIntent::Cms,
         };
         let result = run_exchange_with_role(
             &mut reader,
@@ -634,6 +824,7 @@ mod tests {
             targetcall: "SERVICE".into(),
             locator: "CN87".into(),
             password: Some("MYPASS".into()),
+            intent: SessionIntent::Cms,
         };
         let result = run_exchange(&mut reader, &mut writer, &config, vec![], |_| vec![], None).unwrap();
 
@@ -673,6 +864,7 @@ mod tests {
             targetcall: "SERVICE".into(),
             locator: "CN87".into(),
             password: None,
+            intent: SessionIntent::Cms,
         };
         let result = run_exchange(&mut reader, &mut writer, &config, vec![], |_| {
             vec![Answer::Accept { resume_offset: 0 }]
@@ -693,6 +885,7 @@ mod tests {
             targetcall: "SERVICE".into(),
             locator: "CN87".into(),
             password: None,
+            intent: SessionIntent::Cms,
         };
         assert_eq!(
             run_exchange(&mut reader, &mut writer, &config, vec![], |_| vec![], None),
@@ -769,6 +962,7 @@ mod tests {
             targetcall: "W7AUX".into(),
             locator: "CN87".into(),
             password: None, // peers never challenge; no secret in P2P
+            intent: SessionIntent::P2p,
         };
         let result = run_exchange_with_role(
             &mut reader,

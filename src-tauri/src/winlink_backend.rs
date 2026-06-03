@@ -51,7 +51,7 @@ use crate::native_mailbox::Mailbox;
 use crate::winlink::ax25::{Address, KissLinkConfig};
 use crate::winlink::message::Message;
 use crate::winlink::proposal::Answer;
-use crate::winlink::session::ExchangeRole;
+use crate::winlink::session::{ExchangeRole, SessionIntent};
 use crate::winlink::{compose, session, telnet};
 use std::path::PathBuf;
 
@@ -1300,6 +1300,7 @@ fn native_packet_exchange<S: std::io::Read + std::io::Write + Send + 'static>(
         targetcall: targetcall.to_string(),
         locator: locator.to_string(), // config-derived locator (controller directive)
         password,
+        intent: SessionIntent::Cms,
     };
 
     progress("AX.25 connected; negotiating messages…");
@@ -1721,6 +1722,7 @@ fn native_connect(
         targetcall: telnet::CMS_TARGET_CALL.to_string(),
         locator,
         password,
+        intent: SessionIntent::Cms,
     };
 
     // The CMS host comes from the operator's configured `config.connect.host`
@@ -1862,6 +1864,7 @@ pub fn run_ardop_b2f_exchange(
         targetcall: target.to_string(),
         locator,
         password,
+        intent: SessionIntent::Cms,
     };
 
     let result = b2f::run_b2f_exchange(
@@ -2380,6 +2383,7 @@ mod native_read_state_tests {
             targetcall: telnet::CMS_TARGET_CALL.to_string(),
             locator: "CN87".into(),
             password: None,
+            intent: SessionIntent::Cms,
         };
         let result = telnet::connect_and_exchange(
             &host,

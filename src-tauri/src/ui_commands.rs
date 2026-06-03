@@ -2927,7 +2927,7 @@ pub async fn telnet_p2p_connect(
 ) -> Result<P2pDialResult, UiError> {
     use std::sync::atomic::Ordering;
     use crate::winlink::credentials::KeyringError;
-    use crate::winlink::session::ExchangeConfig;
+    use crate::winlink::session::{ExchangeConfig, SessionIntent};
     use crate::winlink::telnet_p2p;
 
     // Single-flight: reject a second concurrent connect.
@@ -3024,6 +3024,7 @@ pub async fn telnet_p2p_connect(
         locator: req.locator.clone(),
         // P2P never uses B2F secure-login (spec §4.3 — no secure-login for P2P).
         password: None,
+        intent: SessionIntent::P2p,
     };
 
     // Clone values for the spawn_blocking task.
@@ -3400,7 +3401,7 @@ pub async fn telnet_listen(
     log: State<'_, std::sync::Arc<SessionLogState>>,
 ) -> Result<(), UiError> {
     use crate::winlink::listener::{ListenerArmsRecord, TransportKind};
-    use crate::winlink::session::ExchangeConfig;
+    use crate::winlink::session::{ExchangeConfig, SessionIntent};
     use std::sync::atomic::AtomicBool;
     use std::sync::Arc;
 
@@ -3448,6 +3449,7 @@ pub async fn telnet_listen(
         targetcall: String::new(), // filled in per-session by run_exchange_with_role
         locator,
         password: None,
+        intent: SessionIntent::P2p,
     };
 
     let shutdown = Arc::new(AtomicBool::new(false));

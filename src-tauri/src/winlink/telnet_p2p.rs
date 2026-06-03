@@ -11,7 +11,9 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use super::proposal::{Answer, Proposal};
-use super::session::{self, ExchangeConfig, ExchangeError, ExchangeResult, ExchangeRole, OutboundMessage};
+use super::session::{
+    self, ExchangeConfig, ExchangeError, ExchangeResult, ExchangeRole, OutboundMessage,
+};
 use super::telnet_p2p_login::{self, DialerLoginError, DialerLoginOutcome};
 
 /// How long to wait on a single read or write before giving up.
@@ -183,6 +185,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::session::SessionIntent;
     use std::net::TcpListener;
     use std::thread;
 
@@ -248,6 +251,7 @@ mod tests {
             targetcall: "W7AUX".to_string(),
             locator: "CN87".to_string(),
             password: None,
+            intent: SessionIntent::P2p,
         };
 
         let result = connect_and_exchange(
@@ -276,6 +280,7 @@ mod tests {
             targetcall: "W7AUX".to_string(),
             locator: "CN87".to_string(),
             password: None,
+            intent: SessionIntent::P2p,
         };
         let result = connect_and_exchange(
             "127.0.0.1",

@@ -620,6 +620,7 @@ pub fn should_reject_ipv6(addr: &IpAddr) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::session::SessionIntent;
     use crate::winlink::credentials::EntryLike;
     use crate::winlink::listener::arms_record::DEFAULT_TTL;
     use crate::winlink::listener::station_password::EntryFactory;
@@ -819,6 +820,7 @@ mod tests {
             targetcall: "PEER".into(),
             locator: "CN87".into(),
             password: None,
+            intent: SessionIntent::P2p,
         };
 
         // Server accept-once.
@@ -894,6 +896,7 @@ mod tests {
             targetcall: "PEER".into(),
             locator: "CN87".into(),
             password: None,
+            intent: SessionIntent::P2p,
         };
 
         let server = thread::spawn(move || {
@@ -959,6 +962,7 @@ mod tests {
             targetcall: "PEER".into(),
             locator: "CN87".into(),
             password: None,
+            intent: SessionIntent::P2p,
         };
 
         let server = thread::spawn(move || {
@@ -1017,6 +1021,7 @@ mod tests {
             targetcall: "PEER".into(),
             locator: "CN87".into(),
             password: None,
+            intent: SessionIntent::P2p,
         };
 
         let server = thread::spawn(move || {
@@ -1186,6 +1191,7 @@ mod tests {
             targetcall: "PEER".into(),
             locator: "CN87".into(),
             password: None,
+            intent: SessionIntent::P2p,
         };
 
         let server = thread::spawn(move || {
@@ -1243,6 +1249,7 @@ mod tests {
             targetcall: "PEER".into(),
             locator: "CN87".into(),
             password: None,
+            intent: SessionIntent::P2p,
         };
         let shutdown = std::sync::Arc::new(AtomicBool::new(false));
         let shutdown_for_loop = shutdown.clone();
