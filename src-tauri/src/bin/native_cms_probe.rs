@@ -12,7 +12,7 @@
 
 use tuxlink_lib::config;
 use tuxlink_lib::winlink::proposal::Answer;
-use tuxlink_lib::winlink::session::ExchangeConfig;
+use tuxlink_lib::winlink::session::{ExchangeConfig, SessionIntent};
 use tuxlink_lib::winlink::telnet::{self, Transport};
 
 fn main() {
@@ -54,6 +54,7 @@ fn main() {
         targetcall: telnet::CMS_TARGET_CALL.to_string(),
         locator,
         password,
+        intent: SessionIntent::Cms,
     };
 
     let result = telnet::connect_and_exchange(
