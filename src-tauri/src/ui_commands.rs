@@ -2085,6 +2085,17 @@ fn ardop_allowed_stations_path() -> std::path::PathBuf {
     crate::winlink::modem::ardop::listener::allowed_stations_path(&cfg_dir)
 }
 
+/// Codex review 2026-06-03 [P3]: process-wide mutex serialising the
+/// load-mutate-save cycle on the ARDOP allowlist file. Mirror of the
+/// Telnet (tuxlink-xehu) + Packet (tuxlink-inde) fixes. Without it,
+/// concurrent UI commands race: both load the same file, mutate
+/// in-memory copies, second save clobbers first or stomps on a half-
+/// written temp file.
+fn ardop_allowlist_file_lock() -> &'static std::sync::Mutex<()> {
+    static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+    LOCK.get_or_init(|| std::sync::Mutex::new(()))
+}
+
 /// Flat camelCase DTO for the AllowedStations list (Tauri wire shape).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -2123,6 +2134,7 @@ pub async fn ardop_allowed_stations_add(callsign: String) -> Result<(), UiError>
     if trimmed.is_empty() {
         return Err(UiError::Internal { detail: "callsign must not be empty".into() });
     }
+    let _guard = ardop_allowlist_file_lock().lock().unwrap();
     let path = ardop_allowed_stations_path();
     let mut allowed = crate::winlink::listener::AllowedStations::load_from(&path)
         .map_err(|e| UiError::Internal { detail: e.to_string() })?;
@@ -2142,6 +2154,7 @@ pub async fn ardop_allowed_stations_remove(callsign: String) -> Result<(), UiErr
     if needle.is_empty() {
         return Err(UiError::Internal { detail: "callsign must not be empty".into() });
     }
+    let _guard = ardop_allowlist_file_lock().lock().unwrap();
     let path = ardop_allowed_stations_path();
     let allowed = crate::winlink::listener::AllowedStations::load_from(&path)
         .map_err(|e| UiError::Internal { detail: e.to_string() })?;
@@ -2172,6 +2185,7 @@ pub async fn ardop_allowed_stations_remove(callsign: String) -> Result<(), UiErr
 /// `callsigns` list.
 #[tauri::command]
 pub async fn ardop_allowed_stations_set_allow_all(allow_all: bool) -> Result<(), UiError> {
+    let _guard = ardop_allowlist_file_lock().lock().unwrap();
     let path = ardop_allowed_stations_path();
     let mut allowed = crate::winlink::listener::AllowedStations::load_from(&path)
         .map_err(|e| UiError::Internal { detail: e.to_string() })?;
@@ -2208,6 +2222,25 @@ pub async fn ardop_listen(
 ) -> Result<(), UiError> {
     use crate::winlink::listener::{ListenerArmsRecord, TransportKind, DEFAULT_TTL};
 
+    // Codex review 2026-06-03 [P2]: validate the allowlist file is loadable
+    // BEFORE minting the arms record and telling the operator the listener
+    // is armed. A corrupt/unreadable allowlist file would otherwise let the
+    // operator think the gate is configured + active when in fact the
+    // backend's load_from in the connect path will silently fall back to
+    // the defensive default (every peer rejected). Surface as UiError so
+    // the operator can repair the file before re-arming.
+    let allowlist_path = ardop_allowed_stations_path();
+    if let Err(e) = crate::winlink::listener::AllowedStations::load_from(&allowlist_path) {
+        return Err(UiError::Internal {
+            detail: format!(
+                "ARDOP listener arm refused: allowlist file at {} could not be loaded: {e}. \
+                 Repair or delete the file (a missing file is fine — it falls back to the \
+                 tuxlink defensive default of allow_all=false + empty list).",
+                allowlist_path.display()
+            ),
+        });
+    }
+
     let arms = ListenerArmsRecord::arm(TransportKind::Ardop, DEFAULT_TTL);
     let log_path = ardop_arms_log_path();
     arms.append_to_log(&log_path)
@@ -2239,22 +2272,39 @@ pub async fn ardop_listen(
 /// doesn't error.
 #[tauri::command]
 pub async fn ardop_set_listen(enabled: bool) -> Result<(), UiError> {
-    // Future: when the runtime-flip wiring lands, this command will call
-    // `set_listen` on the live transport (if one is installed). For now
-    // it's accepted unconditionally so the frontend toggle has a stable
-    // target.
+    // Codex review 2026-06-03 [P2]: the prior no-op stub returned Ok(())
+    // for any call, which let the frontend show "listener enabled/disabled"
+    // even though no config was persisted and no live modem was sent
+    // `LISTEN TRUE/FALSE`. The runtime-flip wiring is tracked under
+    // tuxlink-95g8. Until that lands, this command MUST surface the
+    // missing-implementation state rather than silently succeeding so the
+    // operator can't be misled about whether the modem is actually
+    // listening.
     let _ = enabled;
-    Ok(())
+    Err(UiError::Internal {
+        detail: "ardop_set_listen is not yet wired to the live modem (see tuxlink-95g8 \
+                 — ARDOP listener live-modem wiring follow-up). Use ardop_listen() to \
+                 mint an arms record + log operator consent in the meantime."
+            .into(),
+    })
 }
 
-/// Resolve the ARDOP listener forensics JSONL log path:
-/// `<config-dir>/listener/ardop/arms.jsonl`. Append-only.
+/// Resolve the cross-transport listener forensics JSONL log path:
+/// `<config-dir>/listener/listener_arms.jsonl`. Append-only.
+///
+/// Codex review 2026-06-03 [P3]: the prior per-transport
+/// `<config-dir>/listener/ardop/arms.jsonl` split arm events across
+/// transports, but the shared `ListenerArmsRecord` contract + the Packet
+/// gate's `packet_gate::listener_forensics_log_path` write to one
+/// cross-transport file. Use the same path here so an operator (or
+/// future audit reader) gets a unified history of arm + reject events
+/// across all listeners.
 fn ardop_arms_log_path() -> std::path::PathBuf {
     let cfg_dir = config::config_path()
         .parent()
         .map(std::path::Path::to_path_buf)
         .unwrap_or_else(|| std::path::PathBuf::from("."));
-    cfg_dir.join("listener").join("ardop").join("arms.jsonl")
+    cfg_dir.join("listener").join("listener_arms.jsonl")
 }
 
 // Task 5 (tuxlink-686) — config_set_grid + validate_grid_input

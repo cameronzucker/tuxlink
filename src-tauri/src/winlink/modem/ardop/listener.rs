@@ -313,12 +313,30 @@ pub fn serve_inbound_one(
                             peer,
                         });
                     }
+                    // Codex review 2026-06-03 [P2]: previously the reject
+                    // paths used `let _ = arq_disconnect(...)` and silently
+                    // swallowed any disconnect error — if ardopcf fails to
+                    // ack DISCONNECT or the socket is broken, the caller
+                    // sees a clean rejection while the modem is still
+                    // connected to the rejected peer (and may stay keyed).
+                    // Promote disconnect failures to `SessionError::Fault`
+                    // so the caller is forced to reset the transport.
                     ListenerDecision::RejectAllowlist => {
-                        let _ = arq_disconnect(sock, Duration::from_secs(5));
+                        if let Err(e) = arq_disconnect(sock, Duration::from_secs(5)) {
+                            return Err(SessionError::Fault(format!(
+                                "reject-allowlist disconnect failed for {peer_call}: {e}; \
+                                 modem may still be connected to the rejected peer"
+                            )));
+                        }
                         return Ok(InboundOutcome::RejectedAllowlist { peer });
                     }
                     ListenerDecision::RejectExpired => {
-                        let _ = arq_disconnect(sock, Duration::from_secs(5));
+                        if let Err(e) = arq_disconnect(sock, Duration::from_secs(5)) {
+                            return Err(SessionError::Fault(format!(
+                                "reject-expired disconnect failed for {peer_call}: {e}; \
+                                 modem may still be connected to the rejected peer"
+                            )));
+                        }
                         return Ok(InboundOutcome::RejectedExpired { peer });
                     }
                     // ARDOP has no password layer → the foundation never
@@ -328,7 +346,12 @@ pub fn serve_inbound_one(
                     // password, treat it as a defensive "reject + log
                     // allowlist class" rather than an Accept by default.
                     ListenerDecision::RejectPassword => {
-                        let _ = arq_disconnect(sock, Duration::from_secs(5));
+                        if let Err(e) = arq_disconnect(sock, Duration::from_secs(5)) {
+                            return Err(SessionError::Fault(format!(
+                                "reject-password (defensive) disconnect failed for {peer_call}: {e}; \
+                                 modem may still be connected to the rejected peer"
+                            )));
+                        }
                         return Ok(InboundOutcome::RejectedAllowlist { peer });
                     }
                 }
