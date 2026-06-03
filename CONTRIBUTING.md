@@ -83,24 +83,27 @@ Tuxlink employs a **per-task-branch model** during pre-1.0 development:
 
 A PreToolUse hook rejects direct commits to `main` or `feat/v0.0.1` unless the `ALLOW_INTEGRATION_COMMIT=1` env var is set (carve-out for the merge-commit step). See [CLAUDE.md](CLAUDE.md), [docs/adr/0004-per-task-branch-model.md](docs/adr/0004-per-task-branch-model.md), and [docs/adr/0010-no-squash-merge.md](docs/adr/0010-no-squash-merge.md).
 
-## Local verification
+## Verification
 
-Before pushing a task branch, run the test suite:
+CI is the non-GUI verification gate. [`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs on every PR + push to `main` and `feat/v0.0.1`, exercising both `ubuntu-latest` (amd64) and `ubuntu-24.04-arm` (arm64):
 
-```bash
-# Rust unit + integration tests
-cd src-tauri && cargo test --verbose
+- `pnpm typecheck` (TypeScript, `tsc --noEmit`)
+- `pnpm vitest run` (frontend tests)
+- `pnpm build` (Vite production build; catches issues vitest + tsc miss)
+- `cargo clippy --all-targets --locked -- -D warnings`
+- `cargo test --locked --verbose`
 
-# Frontend tests
-pnpm vitest run
+Both arches must pass; the matrix is the required gate. Agents may push freely and rely on CI feedback rather than running the full suite locally — that frees the dev Pi's CPU for the work that genuinely needs it.
 
-# Full lint pass
-cd src-tauri && cargo clippy --all-targets -- -D warnings
-pnpm typecheck
+### Local checks still required
 
-# Browser smoke (UI-touching tasks only; see docs/pitfalls/testing-pitfalls.md)
-pnpm tauri dev   # walk the user flow that the change affects
-```
+**UI-touching tasks:** run `pnpm tauri dev` and walk the user flow the change affects. CI cannot smoke the GUI; that's on the operator or agent. See [docs/pitfalls/testing-pitfalls.md](docs/pitfalls/testing-pitfalls.md) for failure modes that static review misses.
+
+The canonical "launch a clean tauri dev against `origin/main`" workflow is `pnpm dev:converged` (see [`scripts/converge-build.sh`](scripts/converge-build.sh)).
+
+### Local checks still useful (but no longer required)
+
+Running any single check locally to iterate quickly is fine. For Rust-heavy changes, `cargo check --manifest-path src-tauri/Cargo.toml --locked` gives fast compile-error feedback without full compilation. None of these are required gates; CI runs the full suite on push.
 
 ## Architecture decisions
 
