@@ -52,6 +52,27 @@ Configuration: Tools → Settings → ARDOP HF — capture / playback ALSA
 devices, optional PTT serial path, command port (default 8515), and ARQ
 bandwidth.
 
+## VARA HF
+
+VARA is a separate HF protocol with a different waveform. Tuxlink does
+not bundle a VARA modem — the operator runs VARA HF on a separate machine
+(Wine on x86 Linux, or a Windows host) and Tuxlink connects to its TCP
+command + data ports.
+
+- **Bandwidth:** Standard (~2300 Hz) is operationally confirmed against
+  RMS gateways; Tactical (~2750 Hz) and Narrow (~500 Hz) depend on the
+  modem's licensed feature set.
+- **Latency:** seconds to minutes per session, generally faster than
+  ARDOP for the same SNR.
+- **License gate:** General or higher (HF digital modes).
+- **Use cases:** the same envelope as ARDOP, when the operator already
+  has VARA running and wants the higher throughput.
+
+Configuration lives in the VARA radio panel itself (not Settings) —
+**Host** (default `127.0.0.1`), **Cmd Port** (default `8300`), **Data
+Port** (default `8301`), and an optional fixed **Bandwidth** override.
+Empty bandwidth means "leave at VARA's default."
+
 ## What "Connect" does
 
 The Connect button at the top right of the dashboard ribbon runs ONE CMS
@@ -75,5 +96,5 @@ For an emergency RF stop, the right call is the radio's power switch
 
 ## Where next
 
-- [The mailbox](03-mailbox.md) — Inbox, Outbox, Sent, Drafts.
+- [The mailbox](03-mailbox.md) — Inbox, Outbox, Sent, Drafts, Archive.
 - [Settings](07-settings.md) — GPS, privacy, ARDOP, connection.

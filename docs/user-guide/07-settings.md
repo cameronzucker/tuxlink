@@ -50,6 +50,13 @@ The settings persist on field blur. Connection failures surface in the
 session log; the panel itself reports inline errors for the
 GPS/precision pair.
 
+## VARA HF
+
+VARA configuration does not live in Tools → Settings — the VARA radio
+panel itself owns the **Host**, **Cmd Port**, **Data Port**, and optional
+**Bandwidth** fields. See [Connections](02-connections.md) for the
+defaults and what each field controls.
+
 ## Color schemes
 
 View → Color Scheme picks the active theme. Tuxlink ships with three
@@ -62,5 +69,10 @@ list.
 ## Where next
 
 - [Connections](02-connections.md) — what each transport needs.
-- [Pitfalls — RADIO-1](../pitfalls/implementation-pitfalls.md) — the
-  bounded-airtime / abort discipline that gates every on-air operation.
+- [Troubleshooting](10-troubleshooting.md) — when a setting does not take effect.
+
+The project tracks the bounded-airtime / abort discipline that gates
+every on-air operation under the internal "RADIO-1" pitfall. The
+operator's responsibility under that discipline is summarized in
+[Connections — Aborting](02-connections.md); the developer-facing
+contract lives outside the bundled user-guide.

@@ -19,7 +19,7 @@ Tokens are `KEY:value` pairs. Combining tokens narrows the result set
 
 | Token | What it filters | Example |
 |---|---|---|
-| `FOLDER:` | The folder scope. Values: `inbox`, `outbox`, `sent`, or `all`. | `FOLDER:sent storm` |
+| `FOLDER:` | The folder scope. Values: `inbox`, `outbox`, `sent`, `archive`, `all`, or any user-folder name. | `FOLDER:sent storm` |
 | `FROM:` | The sender callsign. Exact match. | `FROM:N7CPZ-7` |
 | `TO:` | A recipient callsign. Exact match. | `TO:WL2K` |
 | `SUBJECT:` | A subject substring. | `SUBJECT:test` |
