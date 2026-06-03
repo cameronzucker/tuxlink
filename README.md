@@ -71,8 +71,8 @@ proprietary Windows reference client; Linux operators run it under
 WINE. [Pat](https://getpat.io/) is an open-source Go client that has
 served the Linux Winlink community for years: cross-platform, packaged
 for Debian and Ubuntu, with support for telnet, ARDOP, VARA HF/FM,
-PACTOR, and AX.25 (via Direwolf, the Linux kernel stack, or a serial
-TNC). Pat's interface combines a command-line tool with an optional
+PACTOR, and AX.25 (via Direwolf or a serial TNC). Pat's interface
+combines a command-line tool with an optional
 browser-served local web UI; operator credentials reside in
 `~/.config/pat/config.json`; transport configuration (Direwolf,
 ardopcf, the rig-control layer) typically routes new operators through
