@@ -273,22 +273,19 @@ fn canonicalize_address(addr: &Address) -> String {
 ///
 /// The pattern is case-insensitive.
 ///
-/// If the pattern omits SSID (no `-` in the pattern), only the base callsign
-/// portion of the address is compared (so `N7*` matches `N7CPZ-1` and
-/// `N7CPZ` alike). If the pattern includes SSID, the full canonical form
-/// is matched (so `N7CPZ-1` does NOT match `N7CPZ-2`).
+/// Always compares against the peer's canonical form (`N7CPZ` for SSID=0,
+/// `N7CPZ-1` for SSID=1, etc.). The pattern is interpreted verbatim — to
+/// match all SSIDs for a callsign, the operator types `N7CPZ*` (which is
+/// then a prefix wildcard on the canonical form).
+///
+/// Per Codex review finding 2026-06-03: prior behavior had bare `N7CPZ`
+/// silently match `N7CPZ-1`, `N7CPZ-15`, etc., broadening the operator's
+/// "exact" allowlist entry to all SSIDs. That was the wrong default —
+/// SSID-agnostic matching is now opt-in via explicit wildcard.
 fn callsign_matches(pattern: &str, addr: &Address) -> bool {
     let pat_norm = pattern.trim().to_uppercase();
-    let canonical = canonicalize_address(addr); // e.g. "N7CPZ" or "N7CPZ-1"
-
-    if pat_norm.contains('-') {
-        // SSID-aware match
-        prefix_or_exact(&pat_norm, &canonical)
-    } else {
-        // SSID-agnostic match: compare against the base callsign only
-        let base = addr.call.trim().to_uppercase();
-        prefix_or_exact(&pat_norm, &base)
-    }
+    let canonical = canonicalize_address(addr); // "N7CPZ" or "N7CPZ-1" etc.
+    prefix_or_exact(&pat_norm, &canonical)
 }
 
 /// Tail-wildcard match. If `pattern` ends in `*`, treat the prefix as a

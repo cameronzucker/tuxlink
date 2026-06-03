@@ -38,7 +38,12 @@ use crate::winlink::credentials::EntryLike;
 const SERVICE: &str = "tuxlink";
 
 /// Fixed account key for the per-listener station password.
-const ACCOUNT: &str = "listener-station-password";
+///
+/// Prefixed `p2p-listener:` to namespace it away from the CMS callsign-based
+/// account keys at the same `tuxlink` keyring service (per Codex review
+/// finding 2026-06-03 — operator-typed listener-station-password could
+/// otherwise collide with a CMS callsign equal to "listener-station-password").
+const ACCOUNT: &str = "p2p-listener:station-password";
 
 // ──────────────────────────────────────────────────────────────
 // Errors
@@ -85,14 +90,25 @@ impl StationPassword {
         Self { factory }
     }
 
-    /// Returns TRUE if a password is currently set in the keyring.
+    /// Returns TRUE if a password is currently set, OR the keyring backend
+    /// returns any error other than `NoEntry`.
     ///
-    /// A backend error other than `NoEntry` is treated as "not set" (defensive
-    /// posture — we'd rather fall back to no-challenge than panic, and the
-    /// listener-arms decision path will still gate on `AllowedStations`).
+    /// **Fail-closed semantics:** a transient keyring backend failure must NOT
+    /// silently bypass the password gate. If we can't read the keyring, we
+    /// don't know whether a password is configured — so we assume one IS, and
+    /// the verify path will reject (since it also fails closed on backend
+    /// errors). Only an explicit `NoEntry` returns FALSE.
+    ///
+    /// Per Codex review finding 2026-06-03: prior behavior treated all errors
+    /// as "not set," which meant a momentarily-locked keyring + valid allowlist
+    /// peer = accept without challenge. That's the wrong default.
     pub fn is_set(&self) -> bool {
         let entry = (self.factory)(SERVICE, ACCOUNT);
-        entry.get_password().is_ok()
+        match entry.get_password() {
+            Ok(_) => true,
+            Err(keyring::Error::NoEntry) => false,
+            Err(_) => true, // fail closed: unknown state ⇒ require challenge
+        }
     }
 
     /// Verify a candidate password against the stored one in constant time.
@@ -170,21 +186,33 @@ impl EntryLike for RealEntry {
 // Constant-time string compare
 // ──────────────────────────────────────────────────────────────
 
-/// Constant-time string equality on `str` inputs.
+/// Constant-time string equality on `str` inputs WITHOUT length oracle.
 ///
-/// The length-mismatch fast-path returns FALSE without consulting the bytes;
-/// once the lengths are equal, `subtle::ConstantTimeEq::ct_eq` ensures the
-/// byte comparison runs in time independent of WHERE the bytes differ.
+/// Prior implementation early-returned FALSE on length mismatch, which leaked
+/// the length of the stored password through verify timing. Per Codex review
+/// finding 2026-06-03 — even the length of an operator's listener password
+/// is sensitive (constrains the attack space and rate-limits brute-force).
 ///
-/// This is exposed at module scope (not as a `StationPassword` method) so
-/// future helpers — for example, a per-peer-password verify — can reuse it.
+/// Current implementation hashes both inputs through SHA-256 then compares
+/// the fixed-size 32-byte digests in constant time. The verify runs in time
+/// independent of the input lengths.
+///
+/// SHA-256 is appropriate here because:
+/// - Output is fixed-size (32 bytes), so digest comparison is length-oracle-free.
+/// - The hash is used as a comparison primitive, NOT as a password-derivation
+///   function — the stored password is in the OS keyring already (secure
+///   storage), and this hash is computed fresh on every verify.
 fn ct_eq_strings(a: &str, b: &str) -> bool {
-    let a_bytes = a.as_bytes();
-    let b_bytes = b.as_bytes();
-    if a_bytes.len() != b_bytes.len() {
-        return false;
-    }
-    a_bytes.ct_eq(b_bytes).unwrap_u8() == 1
+    use sha2::{Digest, Sha256};
+    let mut ha = Sha256::new();
+    ha.update(a.as_bytes());
+    let digest_a = ha.finalize();
+
+    let mut hb = Sha256::new();
+    hb.update(b.as_bytes());
+    let digest_b = hb.finalize();
+
+    digest_a.as_slice().ct_eq(digest_b.as_slice()).unwrap_u8() == 1
 }
 
 // ──────────────────────────────────────────────────────────────

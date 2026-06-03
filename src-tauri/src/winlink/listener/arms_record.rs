@@ -102,18 +102,27 @@ impl ListenerArmsRecord {
         Self::arm(transport, DEFAULT_TTL)
     }
 
-    /// Returns TRUE if the arm window has elapsed (or was disarmed).
+    /// Returns TRUE if the arm window has elapsed (or was disarmed) OR the
+    /// wall clock has moved backwards since arming.
     ///
-    /// `now < armed_at` (clock went backwards across a sync) is treated as
-    /// "not expired" — the safer default is to honour the arm. The forensics
-    /// log will record the original `armed_at` so the auditor can spot the
-    /// anomaly.
+    /// `now < armed_at` (clock went backwards across a sync, daylight-saving
+    /// shift, NTP step, container time-skew) is treated as **EXPIRED** — fail
+    /// closed. Allowing a backwards-clock to reset elapsed-time to zero
+    /// effectively extends the operator's consent window beyond the chosen TTL.
+    ///
+    /// Per Codex review finding 2026-06-03: prior `unwrap_or_default()` made
+    /// the function silently accept clock-rollback as "0 elapsed," extending
+    /// the armed window. The current implementation treats `Err(_)` from
+    /// `duration_since` as "anomalous clock state — re-arm explicitly."
+    /// Forensics log retains the original `armed_at` for auditor inspection.
     pub fn is_expired(&self, now: SystemTime) -> bool {
         if self.ttl.is_zero() {
             return true;
         }
-        let elapsed = now.duration_since(self.armed_at).unwrap_or_default();
-        elapsed >= self.ttl
+        match now.duration_since(self.armed_at) {
+            Ok(elapsed) => elapsed >= self.ttl,
+            Err(_) => true, // clock rollback ⇒ expired
+        }
     }
 
     /// Time remaining in the arm window. Returns `None` once expired.
@@ -121,7 +130,7 @@ impl ListenerArmsRecord {
         if self.is_expired(now) {
             return None;
         }
-        let elapsed = now.duration_since(self.armed_at).unwrap_or_default();
+        let elapsed = now.duration_since(self.armed_at).ok()?;
         self.ttl.checked_sub(elapsed)
     }
 
@@ -257,11 +266,14 @@ mod tests {
     }
 
     #[test]
-    fn is_expired_with_clock_backwards_returns_false() {
+    fn is_expired_with_clock_backwards_returns_true() {
+        // Per Codex review finding 2026-06-03 (P2 fail-closed on clock rollback):
+        // a backwards clock SHOULD expire the arm — silently extending the consent
+        // window beyond the operator's chosen TTL is the wrong default.
         let mut r = ListenerArmsRecord::arm(TransportKind::Telnet, Duration::from_secs(3600));
         r.armed_at = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
         let now = r.armed_at - Duration::from_secs(10); // clock went backwards
-        assert!(!r.is_expired(now), "clock-backwards should NOT prematurely expire");
+        assert!(r.is_expired(now), "clock-backwards SHOULD fail closed (expired)");
     }
 
     #[test]

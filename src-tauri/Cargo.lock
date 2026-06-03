@@ -5190,6 +5190,7 @@ dependencies = [
  "serde_json",
  "serial_test",
  "serialport",
+ "sha2",
  "subtle",
  "tauri",
  "tauri-build",

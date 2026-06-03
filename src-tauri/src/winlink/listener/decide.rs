@@ -78,22 +78,34 @@ pub fn listener_decide_at(
     arms: &ListenerArmsRecord,
     now: SystemTime,
 ) -> ListenerDecision {
-    // 1. Allowlist gate.
+    // 1. Allowlist gate (no secrets involved).
     if !allowed.accept(peer) {
         return ListenerDecision::RejectAllowlist;
     }
 
-    // 2. Password challenge — gated on whether one is configured.
+    // 2. Arms TTL — fail closed without consulting the password (per Codex
+    //    review 2026-06-03: an expired listener should not exercise the
+    //    password gate, otherwise the reject class + timing of password ops
+    //    expose information about the stored secret to an expired-session
+    //    probe).
+    if arms.is_expired(now) {
+        return ListenerDecision::RejectExpired;
+    }
+
+    // 3. Password challenge — gated on whether one is configured.
     if password.is_set() {
-        let supplied = password_input.unwrap_or("");
+        // Missing input when a password IS configured = reject. Do NOT
+        // collapse `None` into empty string — an operator who configured an
+        // empty-string password (currently allowed by StationPassword::set)
+        // would otherwise accept a missing-input peer, which is the wrong
+        // direction (per Codex review 2026-06-03).
+        let supplied = match password_input {
+            Some(s) => s,
+            None => return ListenerDecision::RejectPassword,
+        };
         if !password.verify(supplied) {
             return ListenerDecision::RejectPassword;
         }
-    }
-
-    // 3. Arms TTL.
-    if arms.is_expired(now) {
-        return ListenerDecision::RejectExpired;
     }
 
     ListenerDecision::Accept
@@ -321,10 +333,14 @@ mod tests {
         assert_eq!(decision, ListenerDecision::RejectAllowlist);
     }
 
-    // ── Precedence: password reject beats expired reject ────────
+    // ── Precedence: expired reject beats password reject ────────
 
     #[test]
-    fn password_reject_takes_precedence_over_expired_reject() {
+    fn expired_reject_takes_precedence_over_password_reject() {
+        // Per Codex review finding 2026-06-03 (P2 expire-arms-before-checking-passwords):
+        // an expired listener must NOT exercise the password gate. Returning
+        // RejectExpired without consulting the secret prevents reject-class +
+        // timing oracles on expired-session password probes.
         let peer = peer_n7cpz();
         let allowed = allowed_with_n7cpz();
         let password = mock_password();
@@ -333,9 +349,28 @@ mod tests {
 
         let now = now_2h_after(&arms); // expired
 
-        // Wrong password + expired → password wins (operator-audit signal)
+        // Wrong password + expired → expired wins (fail closed without secret)
         let decision =
             listener_decide_at(&peer, Some("WRONG"), &allowed, &password, &arms, now);
+        assert_eq!(decision, ListenerDecision::RejectExpired);
+    }
+
+    // ── Missing password input when password is set ────────
+
+    #[test]
+    fn missing_password_input_when_password_set_rejects() {
+        // Per Codex review finding 2026-06-03 (P1 reject-missing-password-explicitly):
+        // None as password_input when StationPassword::is_set() is TRUE must
+        // RejectPassword, not silently accept (the prior `unwrap_or("")` path
+        // could collapse to Accept if the stored password was empty-string).
+        let peer = peer_n7cpz();
+        let allowed = allowed_with_n7cpz();
+        let password = mock_password();
+        password.set("hunter2").unwrap();
+        let arms = arms_fresh();
+        let now = now_30min_after(&arms);
+
+        let decision = listener_decide_at(&peer, None, &allowed, &password, &arms, now);
         assert_eq!(decision, ListenerDecision::RejectPassword);
     }
 }
