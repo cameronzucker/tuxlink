@@ -27,6 +27,20 @@ vi.mock('@tauri-apps/api/event', () => ({
 // react-virtuoso renders nothing under jsdom; stub so MessageList mounts.
 vi.mock('react-virtuoso', () => ({ Virtuoso: () => <div data-testid="virtuoso-mock" /> }));
 
+// tuxlink-k0q3 + tuxlink-01vd: Wizard and Compose are now React.lazy-loaded
+// inside App.tsx. Vitest's dynamic-import path is slow on the Pi5 (the test
+// previously raced the lazy resolve against waitFor's 1000ms default). Mock
+// the modules so the lazy import returns synchronously — the test asserts
+// routing, not Wizard internals.
+vi.mock('./wizard/Wizard', () => ({
+  Wizard: () => <div data-testid="wizard-root">[wizard mock]</div>,
+}));
+vi.mock('./compose/Compose', () => ({
+  Compose: ({ draftId }: { draftId: string }) => (
+    <div data-testid="compose-root" data-draft-id={draftId} />
+  ),
+}));
+
 import { invoke } from '@tauri-apps/api/core';
 
 function routeInvoke(wizardCompleted: boolean) {
