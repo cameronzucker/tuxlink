@@ -406,7 +406,10 @@ mod tests {
     }
 
     fn allowed_with(call: &str, ssid: u8) -> AllowedStations {
-        let mut a = AllowedStations::new();
+        // Restrict-mode so the allowlist gates on the callsign list.
+        // (Foundation default since tuxlink-7vea is allow_all=TRUE; tests
+        // exercising the allowlist gate must opt back into restrict-mode.)
+        let mut a = AllowedStations::new().with_allow_all(false);
         a.add_callsign(addr(call, ssid));
         a
     }

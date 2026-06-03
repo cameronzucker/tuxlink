@@ -232,7 +232,10 @@ mod tests {
     }
 
     fn allowed_with(call: &str, ssid: u8) -> AllowedStations {
-        let mut a = AllowedStations::new();
+        // Restrict-mode so the allowlist gates on the callsign list.
+        // (Foundation default since tuxlink-7vea is allow_all=TRUE; tests
+        // exercising the allowlist gate must opt back into restrict-mode.)
+        let mut a = AllowedStations::new().with_allow_all(false);
         a.add_callsign(addr(call, ssid));
         a
     }
@@ -278,8 +281,8 @@ mod tests {
 
     #[test]
     fn allow_all_permits_any_peer() {
-        // DIVERGENCE-INVERSION: allow_all=TRUE is the opt-in to WLE-style
-        // permissive behavior. Default is FALSE (rejects all).
+        // Foundation default since tuxlink-7vea is allow_all=TRUE (WLE-parity).
+        // This test is a positive control: a fresh AllowedStations accepts.
         let peer = peer_id_from_ax25(addr("RANDOM", 7));
         let allowed = AllowedStations::new().with_allow_all(true);
         let arms = fresh_arms();
@@ -290,16 +293,17 @@ mod tests {
     }
 
     #[test]
-    fn default_allowlist_rejects_known_callsigns_too() {
-        // Empty + allow_all=FALSE is the tuxlink default; freshly-installed
-        // tuxlink rejects EVERY peer until operator curates.
+    fn default_allowlist_accepts_known_callsigns_wle_parity() {
+        // Tuxlink-7vea: AllowedStations::default() is allow_all=TRUE (WLE-parity).
+        // Empty list + allow_all=TRUE accepts every peer — fresh tuxlink no
+        // longer footguns operators by rejecting everyone until they curate.
         let peer = peer_id_from_ax25(addr("N7CPZ", 0));
         let allowed = AllowedStations::default();
         let arms = fresh_arms();
         let now = within_window(&arms);
 
         let decision = gate_inbound_peer(&peer, &allowed, &arms, now);
-        assert_eq!(decision, ListenerDecision::RejectAllowlist);
+        assert_eq!(decision, ListenerDecision::Accept);
     }
 
     // ── Arms TTL gate ────────────────────────────────────────────

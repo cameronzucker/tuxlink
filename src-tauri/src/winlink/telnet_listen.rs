@@ -795,7 +795,10 @@ mod tests {
     }
 
     fn allowed_with(calls: &[(&str, u8)]) -> AllowedStations {
-        let mut a = AllowedStations::new();
+        // Restrict-mode so the allowlist gates on the callsign list.
+        // (Foundation default since tuxlink-7vea is allow_all=TRUE; tests
+        // exercising the allowlist gate must opt back into restrict-mode.)
+        let mut a = AllowedStations::new().with_allow_all(false);
         for (call, ssid) in calls {
             a.add_callsign(Address {
                 call: (*call).to_string(),
@@ -1145,7 +1148,9 @@ mod tests {
 
     #[test]
     fn ipv4_per_octet_wildcard_matches_192_168_1_star() {
-        let mut a = AllowedStations::new();
+        // Restrict-mode to exercise the wildcard match logic (foundation
+        // default since tuxlink-7vea is allow_all=TRUE).
+        let mut a = AllowedStations::new().with_allow_all(false);
         a.add_ip_pattern("192.168.1.*");
 
         let peer = PeerId::SocketAddr("192.168.1.50:55000".parse().unwrap());
@@ -1160,7 +1165,7 @@ mod tests {
     fn ipv4_per_octet_wildcard_matches_middle_position() {
         // WLE supports wildcards in ANY position, not just the trailing one
         // (telnet-p2p.md §4.3 — `192.168.*.50` matches 192.168.x.50 for any x).
-        let mut a = AllowedStations::new();
+        let mut a = AllowedStations::new().with_allow_all(false);
         a.add_ip_pattern("192.168.*.50");
 
         let peer = PeerId::SocketAddr("192.168.7.50:55000".parse().unwrap());
