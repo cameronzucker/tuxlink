@@ -18,6 +18,13 @@ swallowing key events.
 | Ctrl+R | Reply (when a message is selected) |
 | Ctrl+Shift+R | Reply All (when a message is selected) |
 | Ctrl+P | Print |
+| A | Archive the selected message |
+
+The plain-letter `A` is gated on input focus — pressing it while typing
+into a text input, textarea, or contenteditable does not archive. This
+keeps the accelerator out of the operator's way when composing or
+searching. Catalog Request (Message menu) has no accelerator; the
+inquiry-message workflow is launched from the menu only.
 
 ## Session
 
@@ -60,6 +67,12 @@ The compose window owns its own keyboard surface:
 | Ctrl+F | Focus the search bar |
 
 (Native browser shortcut — the search bar's input accepts focus directly.)
+
+## Help
+
+The Help menu (About Tuxlink, Documentation, Report Issue) has no
+keyboard accelerator. The Documentation window itself opens via the
+menu item; once open it carries its own search affordance.
 
 ## Where next
 

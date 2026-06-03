@@ -39,8 +39,15 @@ body (the operator can still read the underlying text).
 
 The full-parity work is tracked in the project's HTML Forms epic
 (`docs/superpowers/specs/2026-05-31-html-forms-full-parity-design.md`).
-The catalog refresh path will pull new templates from winlink.org without
-a Tuxlink update.
+
+## Catalog request (WLE inquiry)
+
+Message → Catalog Request… opens a panel that sends a Winlink Express
+inquiry-message to the CMS — the request that pulls a fresh list of
+available form templates, bulletins, and other catalog items. The reply
+arrives on the next CMS connect and lands in the Inbox alongside ordinary
+mail. The catalog refresh path lets Tuxlink pick up new forms from
+winlink.org without a client update.
 
 ## Position precision and GPS
 

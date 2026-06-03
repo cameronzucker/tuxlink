@@ -15,7 +15,21 @@ reading pane.
   shows the total. Read-only locally.
 - **Drafts** — saved compose drafts not yet sent. The draft store is
   local to the operator's machine.
-- **Deleted** — placeholder; the trash folder is not yet wired.
+- **Archive** — messages the operator has moved out of the Inbox for
+  long-term reference. The `A` accelerator (when a message row has focus
+  and no text input is taking keystrokes) archives the selected message.
+
+## User folders
+
+The operator can create additional folders below the four built-ins to
+organize messages by net, deployment, correspondent, or any other axis.
+The folder sidebar's New Folder affordance opens a dialog for the name;
+right-click an existing user folder for Rename or Delete. The
+**Move to…** control in the reading-pane toolbar moves the selected
+message between the built-ins and any user folder.
+
+User folders are local to the operator's machine — they do not round-trip
+through the CMS.
 
 ## The message list
 
@@ -27,7 +41,9 @@ Each row shows:
 - Indicators: unread dot, form tag (HTML-form messages), attachment clip,
   body-size hint.
 
-The list is newest-first by date.
+The list defaults to newest-first by date. The **Sort** control above the
+list switches between Date, Subject, and From — ascending or descending —
+and persists the choice per folder.
 
 ## The reading pane
 

@@ -39,15 +39,25 @@ successful send.
 
 ## Attachments
 
-Attachments are added via the compose window's attachment control. Size
-limits depend on the transport:
+The compose window has a drop-zone for attachments, but the send-side
+multipart wire-up is not yet shipped — dropping a file shows a notice in
+the console and does not attach. Outbound attachments are tracked under
+the HTML Forms epic.
+
+Received attachments DO work end-to-end. The message reading pane shows
+an attachment strip with name and size; clicking an entry opens the
+native Save As dialog and writes the file to disk via the backend.
+
+Indicative size limits once outbound is wired (the receiver still applies
+its own caps):
 
 - **Telnet:** ~1 MB practical limit (CMS-side per-message cap).
 - **Packet:** ~1 KB practical limit (1200-baud session airtime).
 - **ARDOP:** ~10 KB practical limit (HF session airtime).
+- **VARA:** ~50 KB practical limit (HF session airtime at higher
+  throughput).
 
-Exceeding the limit will not refuse send locally but the receiver may
-truncate or drop. For multi-MB attachments, use Telnet.
+For multi-MB inbound attachments, the sender should use Telnet.
 
 ## HTML forms
 

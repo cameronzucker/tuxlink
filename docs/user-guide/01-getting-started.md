@@ -2,27 +2,35 @@
 
 Tuxlink is a native Linux desktop Winlink client. On first launch it opens a
 short wizard that captures the minimum identity required to send and receive
-mail: a callsign, a Maidenhead grid, and a default transport.
+mail: a callsign, a Maidenhead grid, and the credentials Winlink needs to
+confirm that callsign belongs to the operator.
 
 ## First launch
 
-The wizard collects four pieces of information in order:
+The wizard flow is short:
 
-1. **Callsign.** A licensed amateur callsign. Tuxlink does not check the
+1. **Welcome.** A landing screen that explains what comes next and links
+   to the project's privacy notes.
+2. **Credentials.** A licensed amateur callsign, a 4- or 6-character
+   Maidenhead grid, and the Winlink password. Tuxlink does not check the
    license database — it is the operator's responsibility to enter a real,
-   currently-valid call.
-2. **Grid.** A 4- or 6-character Maidenhead locator. If GPS is wired and
-   enabled later, the broadcast grid will update from GPS at the chosen
-   precision; this entry is the manual fallback.
-3. **Default transport.** Telnet (CMS over the internet), Packet (1200-baud
-   AX.25 over a radio modem), or ARDOP HF. The first-run choice is just the
-   starting point — the sidebar lists every configured transport and the
-   operator can switch any time.
-4. **Test send.** Optional. A one-line message that exercises the CMS path
-   end-to-end so the operator confirms the wizard's choices before exiting.
+   currently-valid call. If GPS is wired and enabled later, the broadcast
+   grid updates from GPS at the chosen precision; the entered grid stays
+   as the manual fallback. An **offline-identity** path is offered for
+   operators who want to use Tuxlink without registering credentials —
+   the password step is deferred to first CMS connect.
+3. **CMS verify.** Optional. A connect-only verification (no transmission)
+   that confirms the credentials work against the CMS endpoint before the
+   shell loads. Skipping this step is fine; the first real Connect will
+   surface any auth issue.
 
 The wizard writes to `~/.local/share/com.tuxlink.app/config.json`. Deleting
 that file resets the wizard on next launch.
+
+Available transports — Telnet (CMS over the internet), Packet (1200-baud
+AX.25 over a radio modem), ARDOP HF, and VARA HF — surface in the folder
+sidebar once the shell opens. The operator picks which transport the next
+Connect will use by clicking its entry; nothing is locked in by the wizard.
 
 ## After the wizard
 
@@ -30,8 +38,8 @@ The main window appears:
 
 - **Dashboard ribbon** (top) — operator-facing identity (callsign, grid,
   position, UTC/local time, connection state, the Connect button).
-- **Folder sidebar** (left) — Inbox, Outbox, Sent, Drafts, plus the
-  configured connections.
+- **Folder sidebar** (left) — Inbox, Outbox, Sent, Drafts, Archive, any
+  user-created folders, plus the configured connections.
 - **Message list** (centre) — the selected folder's messages or the
   results of a search.
 - **Reading pane** (right) — the selected message, or a connection panel
@@ -51,12 +59,12 @@ Ctrl+Shift+O) sends it.
 - "Not configured" in the message list = the backend has no callsign or
   no transport yet. Re-run the wizard via Tools → Settings, or delete the
   config file.
-- "CMS unreachable" — the wizard's test-send failed. The fallback options
-  are to retry with a different CMS endpoint (Settings) or pick a
-  different transport at the wizard's third step.
+- "CMS unreachable" — the optional verify step failed. Either retry with a
+  different CMS endpoint (Settings) or skip verification and let the first
+  real Connect surface the failure with full session log context.
 
 ## Where next
 
-- [Connections](02-connections.md) — what Telnet / Packet / ARDOP each do.
+- [Connections](02-connections.md) — what Telnet / Packet / ARDOP / VARA each do.
 - [Composing messages](04-composing.md) — drafts, Cc, attachments, forms.
 - [Keyboard shortcuts](09-keyboard.md) — the full accelerator list.
