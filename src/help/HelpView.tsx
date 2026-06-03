@@ -4,6 +4,7 @@ import { ReadingPane } from './ReadingPane';
 import { TextSizeDropdown } from './TextSizeDropdown';
 import { TOPICS, getTopicBySlug } from './topics';
 import { useFontSize, stepFontSize, DEFAULT_FONT_PRESET } from './useFontSize';
+import { useHelpTheme } from './useHelpTheme';
 import './HelpView.css';
 
 const DEFAULT_SLUG = '01-getting-started';
@@ -18,6 +19,7 @@ const DEFAULT_SLUG = '01-getting-started';
  * removal (Task 8) land in subsequent commits.
  */
 export function HelpView() {
+  useHelpTheme();   // first — paint into the correct theme as early as possible
   const [activeSlug, setActiveSlug] = useState<string>(DEFAULT_SLUG);
   const { preset, setPreset } = useFontSize();
 

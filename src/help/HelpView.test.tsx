@@ -5,6 +5,12 @@ import { HelpView } from './HelpView';
 vi.mock('@tauri-apps/plugin-shell', () => ({
   open: vi.fn(),
 }));
+vi.mock('@tauri-apps/api/core', () => ({
+  invoke: vi.fn().mockResolvedValue(null),
+}));
+vi.mock('@tauri-apps/api/event', () => ({
+  listen: vi.fn().mockResolvedValue(() => {}),
+}));
 
 beforeEach(() => {
   localStorage.clear();

@@ -7,6 +7,7 @@ pub mod consent_gate;
 pub mod forms;
 pub mod grib;
 pub mod help_window;
+pub mod theme_state;
 pub mod native_mailbox;
 pub mod position;
 pub mod search;
@@ -83,6 +84,10 @@ pub fn run() {
                 .build(),
         )
         .manage(crate::wizard::WizardMutex::new())
+        // tuxlink-0gsy (spec §8.2): managed theme-state singleton — the help
+        // window calls theme_get_scheme to bootstrap and listens for
+        // color_scheme_changed events emitted by theme_broadcast_scheme.
+        .manage(crate::theme_state::ThemeState::default())
         // Task 5 (tuxlink-686): managed PositionArbiter — shared by config_set_grid
         // and (Task 11) the gpsd task. Built above the Builder so the binding
         // remains available for Task 11's clone. `.clone()` here increments the
@@ -271,6 +276,8 @@ pub fn run() {
             crate::compose_window::compose_window_open, // Task 14 (tuxlink-dm8)
             crate::compose_window::compose_close_self,  // tuxlink-h2y (self-only close)
             crate::help_window::help_window_open,       // tuxlink-0gsy (spec §3)
+            crate::theme_state::theme_get_scheme,       // tuxlink-0gsy (spec §8.2)
+            crate::theme_state::theme_broadcast_scheme, // tuxlink-0gsy (spec §8.2)
             crate::ui_commands::app_quit,             // tuxlink-ng3 (HTML File→Quit / Ctrl+Q)
             crate::ui_commands::packet_config_get,    // tuxlink-7fr (packet config read)
             crate::ui_commands::packet_config_set,    // tuxlink-7fr (packet config write)
