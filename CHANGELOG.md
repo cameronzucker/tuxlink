@@ -4,6 +4,13 @@ All notable changes to Tuxlink are documented here.
 
 This project adheres to [Semantic Versioning](https://semver.org) with project-specific rules described in [VERSIONING.md](VERSIONING.md). Entries from `v0.0.2` onward are generated automatically by [`release-please`](https://github.com/googleapis/release-please) from [Conventional Commits](https://www.conventionalcommits.org).
 
+## [0.18.0](https://github.com/cameronzucker/tuxlink/compare/v0.17.2...v0.18.0) (2026-06-03)
+
+
+### Features
+
+* **mailbox:** user-folder mechanism — Phase 2 MVP (tuxlink-f62f) ([c2dd4be](https://github.com/cameronzucker/tuxlink/commit/c2dd4beaf86d3c7c5e08c58db31b58262860a839))
+
 ## [0.17.2](https://github.com/cameronzucker/tuxlink/compare/v0.17.1...v0.17.2) (2026-06-02)
 
 
