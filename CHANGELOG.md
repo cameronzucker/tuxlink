@@ -4,6 +4,14 @@ All notable changes to Tuxlink are documented here.
 
 This project adheres to [Semantic Versioning](https://semver.org) with project-specific rules described in [VERSIONING.md](VERSIONING.md). Entries from `v0.0.2` onward are generated automatically by [`release-please`](https://github.com/googleapis/release-please) from [Conventional Commits](https://www.conventionalcommits.org).
 
+## [0.24.1](https://github.com/cameronzucker/tuxlink/compare/v0.24.0...v0.24.1) (2026-06-03)
+
+
+### Bug Fixes
+
+* **shell:** wrap QueryClientProvider around all App.tsx routing branches (tuxlink-n4hz) ([2ac208b](https://github.com/cameronzucker/tuxlink/commit/2ac208b368e355e3f575999415f0cf54647abfee))
+* **ui:** radio panel takes its 400px from the reader only, not the message list (tuxlink-40u8) ([f7a8daa](https://github.com/cameronzucker/tuxlink/commit/f7a8daa0d55b1da7844a939eb628c61b7990e1b2))
+
 ## [0.24.0](https://github.com/cameronzucker/tuxlink/compare/v0.23.4...v0.24.0) (2026-06-03)
 
 
