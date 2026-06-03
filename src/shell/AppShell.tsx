@@ -28,6 +28,10 @@ import { isNotConfigured } from '../mailbox/types';
 import type { MailboxFolder, MailboxFolderRef, MessageMeta } from '../mailbox/types';
 import { useUserFolders } from '../mailbox/useUserFolders';
 import { NewFolderDialog } from '../mailbox/NewFolderDialog';
+import { RenameFolderDialog } from '../mailbox/RenameFolderDialog';
+import { DeleteFolderDialog } from '../mailbox/DeleteFolderDialog';
+import { FolderContextMenu } from '../mailbox/FolderContextMenu';
+import type { UserFolder } from '../mailbox/types';
 import type { MessageMetaDto } from '../search/types';
 import { DEV_SELECTED } from '../mailbox/devFixture';
 import { FolderSidebar } from '../mailbox/FolderSidebar';
@@ -149,6 +153,16 @@ export function AppShell() {
   // tuxlink-f62f: NewFolderDialog visibility (opened from the sidebar's
   // Folders section `+` button).
   const [newFolderOpen, setNewFolderOpen] = useState(false);
+  // tuxlink-ejph: rename / delete dialogs + folder context menu state.
+  // `renameFolder` / `deleteFolder` hold the target folder when the dialog
+  // is open, null when closed. The context menu carries position + slug.
+  const [renameFolder, setRenameFolder] = useState<UserFolder | null>(null);
+  const [deleteFolder, setDeleteFolder] = useState<UserFolder | null>(null);
+  const [folderCtxMenu, setFolderCtxMenu] = useState<{
+    folder: UserFolder;
+    x: number;
+    y: number;
+  } | null>(null);
   // DEV_SELECTED is null outside the vite dev server, so this starts null (the
   // real empty-reading-pane state) in tests + production.
   const [selectedMessage, setSelectedMessage] = useState<SelectedMessage | null>(DEV_SELECTED);
@@ -404,6 +418,42 @@ export function AppShell() {
     }
   }, [selectedMessage, queryClient]);
 
+  // tuxlink-ejph: explicit-id move + archive handlers for the right-click
+  // context menu on a message row. Unlike moveOpen/archiveOpen above, these
+  // act on the right-clicked message (NOT necessarily the selected one), so
+  // they take id + fromFolder as args. Also handle the case where the
+  // right-clicked message is currently open (the reading pane should clear).
+  const moveByIdToFolder = useCallback(async (
+    id: string,
+    fromFolder: MailboxFolderRef,
+    toFolder: MailboxFolderRef,
+  ) => {
+    if (fromFolder === toFolder) return;
+    try {
+      await invoke('mailbox_move', { from: fromFolder, to: toFolder, id });
+      void queryClient.invalidateQueries({ queryKey: ['mailbox'] });
+      // Clear selection if the moved message was the one open — its folder
+      // changed under the reading pane.
+      setSelectedMessage((cur) => (cur?.id === id ? null : cur));
+    } catch {
+      /* surfaced via Rust logs */
+    }
+  }, [queryClient]);
+
+  const archiveByIdAndFolder = useCallback(async (
+    id: string,
+    fromFolder: MailboxFolderRef,
+  ) => {
+    if (fromFolder === 'archive') return;
+    try {
+      await invoke('mailbox_move', { from: fromFolder, to: 'archive', id });
+      void queryClient.invalidateQueries({ queryKey: ['mailbox'] });
+      setSelectedMessage((cur) => (cur?.id === id ? null : cur));
+    } catch {
+      /* surfaced via Rust logs */
+    }
+  }, [queryClient]);
+
   const handlers: MenuHandlers = useMemo(() => ({
     openCompose: () => { void invoke('compose_window_open', { draftId: newDraftId() }); },
     connect: onConnect,
@@ -564,6 +614,11 @@ export function AppShell() {
           counts={counts}
           userFolders={userFolders}
           onCreateFolder={() => setNewFolderOpen(true)}
+          onDropMessage={moveByIdToFolder}
+          onFolderContextMenu={(slug, x, y) => {
+            const f = userFolders.find((uf) => uf.slug === slug);
+            if (f) setFolderCtxMenu({ folder: f, x, y });
+          }}
           selectedConnection={selectedConnection}
           onSelectConnection={onSelectConnection}
         />
@@ -577,6 +632,9 @@ export function AppShell() {
           showFolderTag={searchIsCrossFolder}
           sortState={sortState}
           onSortStateChange={onSortStateChange}
+          userFolders={userFolders}
+          onMoveMessage={moveByIdToFolder}
+          onArchiveMessage={archiveByIdAndFolder}
         />
         {(() => {
           if (selectedConnection === null) {
@@ -719,6 +777,35 @@ export function AppShell() {
           setSelectedMessage(null);
         }}
       />
+
+      <RenameFolderDialog
+        folder={renameFolder}
+        onClose={() => setRenameFolder(null)}
+      />
+
+      <DeleteFolderDialog
+        folder={deleteFolder}
+        onClose={() => setDeleteFolder(null)}
+        onDeleted={(slug) => {
+          // If the operator was viewing the now-gone folder, navigate back
+          // to Inbox so they don't sit on a slug that no longer resolves.
+          if (selectedFolder === slug) {
+            setSelectedFolder('inbox');
+            setSelectedMessage(null);
+          }
+        }}
+      />
+
+      {folderCtxMenu && (
+        <FolderContextMenu
+          folder={folderCtxMenu.folder}
+          x={folderCtxMenu.x}
+          y={folderCtxMenu.y}
+          onRename={() => setRenameFolder(folderCtxMenu.folder)}
+          onDelete={() => setDeleteFolder(folderCtxMenu.folder)}
+          onClose={() => setFolderCtxMenu(null)}
+        />
+      )}
 
       {savedSearchesOpen && (
         <SavedSearchesPanel onClose={() => setSavedSearchesOpen(false)} />

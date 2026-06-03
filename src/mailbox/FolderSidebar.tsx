@@ -52,10 +52,42 @@ export interface FolderSidebarProps {
   userFolders?: UserFolder[];
   /** Open the New Folder dialog (sidebar `+` button). */
   onCreateFolder?: () => void;
+  /** Drag-drop: drop a message row onto a folder (tuxlink-ejph). The DataTransfer
+   *  payload `application/x-tuxlink-message` carries `{ id, folder }` from the
+   *  source row; the sidebar handles the drop on each folder row and fires
+   *  this callback with the dragged message id + source folder + dropped-on
+   *  destination. */
+  onDropMessage?: (id: string, fromFolder: MailboxFolderRef, toFolder: MailboxFolderRef) => void;
+  /** Right-click on a user folder (tuxlink-ejph). Opens FolderContextMenu. */
+  onFolderContextMenu?: (slug: string, x: number, y: number) => void;
   /** Currently selected connection (drives the reading-pane connection panel). */
   selectedConnection?: ConnectionKey | null;
   /** Select a connection (opens its reading-pane panel). */
   onSelectConnection?: (conn: ConnectionKey) => void;
+}
+
+/// Custom DataTransfer MIME for tuxlink message drags. Mirrors the export in
+/// MessageList.tsx — duplicated here so this module stays free of MessageList
+/// imports (FolderSidebar is rendered before MessageList in the panes grid).
+const TUXLINK_DRAG_MIME = 'application/x-tuxlink-message';
+
+interface DragPayload {
+  id: string;
+  folder: string;
+}
+
+/// Parse the DataTransfer payload set by MessageRow on dragstart. Returns
+/// null when the payload is missing or malformed — drop is then a no-op.
+function readDragPayload(e: React.DragEvent): DragPayload | null {
+  try {
+    const raw = e.dataTransfer.getData(TUXLINK_DRAG_MIME);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<DragPayload>;
+    if (typeof parsed.id !== 'string' || typeof parsed.folder !== 'string') return null;
+    return { id: parsed.id, folder: parsed.folder };
+  } catch {
+    return null;
+  }
 }
 
 export function FolderSidebar({
@@ -64,9 +96,38 @@ export function FolderSidebar({
   counts = {},
   userFolders = [],
   onCreateFolder,
+  onDropMessage,
+  onFolderContextMenu,
   selectedConnection = null,
   onSelectConnection,
 }: FolderSidebarProps) {
+  // Drag-over visual state — which folder slug currently has the drag hovering.
+  // null when nothing is being dragged or the drag is outside a folder.
+  const [dragOver, setDragOver] = useState<string | null>(null);
+
+  // Drop handler factory — wraps the payload parse + the AppShell callback.
+  const makeDropHandler = (toFolder: MailboxFolderRef) => (e: React.DragEvent) => {
+    e.preventDefault();
+    setDragOver(null);
+    const payload = readDragPayload(e);
+    if (!payload) return;
+    if (payload.folder === toFolder) return; // no-op self-drop
+    onDropMessage?.(payload.id, payload.folder as MailboxFolderRef, toFolder);
+  };
+
+  // dragOver listeners — call preventDefault so the drop event actually fires
+  // (HTML5 DnD requires dragover.preventDefault to mark a valid drop target).
+  const makeDragOver = (slug: string) => (e: React.DragEvent) => {
+    if (!onDropMessage) return;
+    // Only accept drags carrying our payload (browser drags get ignored).
+    if (!e.dataTransfer.types.includes(TUXLINK_DRAG_MIME)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    if (dragOver !== slug) setDragOver(slug);
+  };
+  const handleDragLeave = (slug: string) => () => {
+    if (dragOver === slug) setDragOver(null);
+  };
   const [expanded, setExpanded] = useState<Partial<Record<SessionTypeId, boolean>>>({});
 
   // Ensure the selected session type is always visible — auto-expand its accordion
@@ -85,9 +146,16 @@ export function FolderSidebar({
         const isFolder = item.id !== undefined && item.enabled;
         const active = isFolder && item.id === selectedFolder;
         const count = item.id ? counts[item.id] : undefined;
-        const className = ['nav-item', active ? 'active' : '', item.enabled ? '' : 'disabled']
+        const isDropTarget = isFolder && dragOver === item.id;
+        const className = [
+          'nav-item',
+          active ? 'active' : '',
+          item.enabled ? '' : 'disabled',
+          isDropTarget ? 'drop-target' : '',
+        ]
           .filter(Boolean)
           .join(' ');
+        const dropSlug = item.id;
         return (
           <button
             key={item.label}
@@ -99,6 +167,10 @@ export function FolderSidebar({
             onClick={() => {
               if (isFolder) onSelectFolder(item.id as MailboxFolder);
             }}
+            onDragOver={isFolder && dropSlug ? makeDragOver(dropSlug) : undefined}
+            onDragLeave={isFolder && dropSlug ? handleDragLeave(dropSlug) : undefined}
+            onDrop={isFolder && dropSlug ? makeDropHandler(dropSlug as MailboxFolderRef) : undefined}
+            style={isDropTarget ? { outline: '1px dashed var(--accent, #f59f3c)' } : undefined}
           >
             <span className="icon" aria-hidden="true">
               {item.icon}
@@ -152,14 +224,27 @@ export function FolderSidebar({
       </div>
       {userFolders.map((uf) => {
         const active = uf.slug === selectedFolder;
+        const isDropTarget = dragOver === uf.slug;
         return (
           <button
             key={uf.slug}
             type="button"
             data-testid={`user-folder-${uf.slug}`}
-            className={['nav-item', active ? 'active' : ''].filter(Boolean).join(' ')}
+            className={['nav-item', active ? 'active' : '', isDropTarget ? 'drop-target' : '']
+              .filter(Boolean)
+              .join(' ')}
             aria-current={active ? 'true' : undefined}
             onClick={() => onSelectFolder(uf.slug)}
+            onContextMenu={(e) => {
+              if (onFolderContextMenu) {
+                e.preventDefault();
+                onFolderContextMenu(uf.slug, e.clientX, e.clientY);
+              }
+            }}
+            onDragOver={makeDragOver(uf.slug)}
+            onDragLeave={handleDragLeave(uf.slug)}
+            onDrop={makeDropHandler(uf.slug)}
+            style={isDropTarget ? { outline: '1px dashed var(--accent, #f59f3c)' } : undefined}
           >
             <span className="icon" aria-hidden="true">▢</span>
             {uf.displayName}

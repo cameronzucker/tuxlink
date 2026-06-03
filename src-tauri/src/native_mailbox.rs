@@ -278,6 +278,31 @@ impl Mailbox {
         Ok(folder)
     }
 
+    /// Rename a user folder. Only the display name changes — the slug stays
+    /// stable so messages don't have to move on disk (spec §3.1). Validates
+    /// the new display name + reserved-name list. Missing slug → `NotFound`.
+    pub fn rename_user_folder(
+        &self,
+        slug: &str,
+        new_display_name: &str,
+    ) -> Result<UserFolder, BackendError> {
+        let display = new_display_name.trim();
+        user_folders::validate_display_name(display)
+            .map_err(BackendError::MessageRejected)?;
+        let mut reg = user_folders::load_registry(&self.root);
+        let folder = reg
+            .folders
+            .iter_mut()
+            .find(|f| f.slug == slug)
+            .ok_or_else(|| crate::winlink_backend::BackendError::NotFound(
+                crate::winlink_backend::MessageId(slug.into()),
+            ))?;
+        folder.display_name = display.to_string();
+        let renamed = folder.clone();
+        user_folders::save_registry(&self.root, &reg)?;
+        Ok(renamed)
+    }
+
     /// Delete a user folder. `on_messages` controls what happens to messages
     /// inside (spec §6 D6):
     /// - `MoveToInbox` (safe default) — re-home each `.b2f` to the inbox dir
@@ -952,6 +977,43 @@ mod index_hook_tests {
         assert!(!dir.path().join("ares-drills").exists());
         assert!(!dir.path().join("inbox").join(format!("{}.b2f", id.0)).exists());
         assert!(mbox.list_user_folders().is_empty());
+    }
+
+    // tuxlink-ejph: renaming a user folder updates display_name but NOT the
+    // slug — the on-disk dir name stays the same so messages don't have to
+    // move. Subsequent list_user_folders() reflects the new name.
+    #[test]
+    fn rename_user_folder_updates_display_name_only() {
+        let dir = tempdir().unwrap();
+        let mbox = Mailbox::new(dir.path().to_path_buf());
+        let f = mbox.create_user_folder("ARES Drills").unwrap();
+        assert_eq!(f.slug, "ares-drills");
+
+        let renamed = mbox.rename_user_folder("ares-drills", "June Drills").unwrap();
+        assert_eq!(renamed.slug, "ares-drills", "slug must stay stable");
+        assert_eq!(renamed.display_name, "June Drills");
+
+        // The on-disk directory still uses the original slug (no churn).
+        assert!(dir.path().join("ares-drills").is_dir());
+
+        // Registry persists the new display name.
+        let list = mbox.list_user_folders();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].display_name, "June Drills");
+        assert_eq!(list[0].slug, "ares-drills");
+    }
+
+    #[test]
+    fn rename_user_folder_rejects_reserved_names_and_missing_slug() {
+        let dir = tempdir().unwrap();
+        let mbox = Mailbox::new(dir.path().to_path_buf());
+        mbox.create_user_folder("ARES Drills").unwrap();
+
+        // Reserved system folder names rejected.
+        assert!(mbox.rename_user_folder("ares-drills", "Inbox").is_err());
+
+        // Unknown slug → NotFound.
+        assert!(mbox.rename_user_folder("nope", "Whatever").is_err());
     }
 
     #[test]

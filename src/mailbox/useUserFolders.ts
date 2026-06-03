@@ -66,6 +66,20 @@ export function useCreateUserFolder() {
   });
 }
 
+/// Mutation: rename a user folder. Display name only; slug stays stable
+/// (spec §3.1) so on-disk messages don't churn. Invalidates `['userFolders']`
+/// on success so the sidebar picks up the new label. tuxlink-ejph (Phase 3).
+export function useRenameUserFolder() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ slug, displayName }: { slug: string; displayName: string }) =>
+      invoke<UserFolder>('folder_rename', { slug, displayName }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: USER_FOLDERS_QUERY_KEY });
+    },
+  });
+}
+
 /// What to do with messages remaining in a user folder when the folder is
 /// deleted (spec §6 D6). Mirrors the Rust `DeleteAction` enum on the wire.
 export type DeleteFolderAction = 'move_to_inbox' | 'move_to_archive' | 'delete';

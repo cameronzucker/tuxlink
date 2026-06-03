@@ -250,6 +250,7 @@ pub fn run() {
             crate::ui_commands::user_folders_list,     // tuxlink-f62f (user-folders Phase 2)
             crate::ui_commands::folder_create,         // tuxlink-f62f
             crate::ui_commands::folder_delete,         // tuxlink-f62f
+            crate::ui_commands::folder_rename,         // tuxlink-ejph (Phase 3)
             crate::ui_commands::message_read,          // Task 13 (tuxlink-y5c)
             crate::ui_commands::message_send,          // Task 14 (tuxlink-dm8)
             crate::ui_commands::send_form,             // HTML Forms v0.1 (tuxlink-v1p Task 3.1)

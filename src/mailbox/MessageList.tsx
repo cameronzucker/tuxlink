@@ -16,7 +16,8 @@
 
 import React from 'react';
 import { Virtuoso } from 'react-virtuoso';
-import type { MailboxFolderRef, MessageMeta } from './types';
+import type { MailboxFolderRef, MessageMeta, UserFolder } from './types';
+import { MessageContextMenu } from './MessageContextMenu';
 import { DEFAULT_SORT_STATE, type SortState, sortMessages } from './messageSort';
 import { MessageListSortControl } from './MessageListSortControl';
 
@@ -119,13 +120,25 @@ export interface MessageRowProps {
   /// When true and message.folder is set, render a folder badge inline-left of
   /// the subject (cross-folder search mode, spec §7.2).
   showFolderTag?: boolean;
+  /// Right-click handler (tuxlink-ejph). Receives the click event + the
+  /// message so the parent can position a context menu at the cursor.
+  /// Absent → browser default context menu (no overlay rendered).
+  onContextMenu?: (e: React.MouseEvent, message: MessageMeta) => void;
 }
+
+/// Custom DataTransfer MIME for tuxlink message drags (tuxlink-ejph). The
+/// payload is JSON `{ id, folder }` so the drop target knows both pieces.
+/// Distinct MIME so we don't conflict with browser drags of text/links.
+export const TUXLINK_DRAG_MIME = 'application/x-tuxlink-message';
 
 /// One Mock D list row (3-line `.row`). Pure presentation + click / Enter →
 /// `onSelect(id)`. Exported for direct unit testing.
-export function MessageRow({ message, folder, selected, onSelect, matchHighlight, showFolderTag }: MessageRowProps) {
+export function MessageRow({ message, folder, selected, onSelect, matchHighlight, showFolderTag, onContextMenu }: MessageRowProps) {
   const size = formatSize(message.bodySize);
   const highlights = matchHighlight ?? [];
+  // The row's effective source-folder for drag operations: the message's own
+  // folder if present (cross-folder search hits) else the list's active folder.
+  const srcFolder = (message.folder as string | undefined) ?? (folder as string);
   return (
     <div
       role="row"
@@ -135,11 +148,25 @@ export function MessageRow({ message, folder, selected, onSelect, matchHighlight
         .filter(Boolean)
         .join(' ')}
       onClick={() => onSelect(message.id)}
+      onContextMenu={(e) => {
+        if (onContextMenu) {
+          e.preventDefault();
+          onContextMenu(e, message);
+        }
+      }}
       onKeyDown={(e) => {
         if (e.key === 'Enter' || e.key === ' ') {
           e.preventDefault();
           onSelect(message.id);
         }
+      }}
+      draggable
+      onDragStart={(e) => {
+        e.dataTransfer.setData(
+          TUXLINK_DRAG_MIME,
+          JSON.stringify({ id: message.id, folder: srcFolder }),
+        );
+        e.dataTransfer.effectAllowed = 'move';
       }}
       tabIndex={0}
     >
@@ -206,6 +233,19 @@ export interface MessageListProps {
   /// absent the control is hidden (the list still sorts by `sortState` for
   /// callers that want to drive sort externally without exposing the picker).
   onSortStateChange?: (state: SortState) => void;
+  /// Operator's user folders, shown in the right-click context menu's
+  /// Move-to list (tuxlink-ejph). Absent → no user-folder rows; the menu
+  /// still shows Inbox/Sent/Archive.
+  userFolders?: UserFolder[];
+  /// Right-click → Move-to handler (tuxlink-ejph). Receives the message,
+  /// the source folder (so the backend can find the file — the row's own
+  /// `message.folder` takes precedence for cross-folder search results),
+  /// and the destination folder slug.
+  onMoveMessage?: (id: string, fromFolder: MailboxFolderRef, toFolder: MailboxFolderRef) => void;
+  /// Right-click → Archive handler. Distinct from `onMoveMessage(_, _, 'archive')`
+  /// so callers can stash Archive shortcuts (e.g. for telemetry) without
+  /// instrumenting the generic move path.
+  onArchiveMessage?: (id: string, fromFolder: MailboxFolderRef) => void;
 }
 
 /// The list pane. Renders the mock's `.rows-pane` as its root (the 420px left
@@ -220,6 +260,9 @@ export function MessageList({
   showFolderTag,
   sortState = DEFAULT_SORT_STATE,
   onSortStateChange,
+  userFolders,
+  onMoveMessage,
+  onArchiveMessage,
 }: MessageListProps) {
   // Sort client-side so changing modes doesn't require a backend re-fetch.
   // Memo keyed on (messages, sortState, folder) — folder affects sender-* in
@@ -228,6 +271,28 @@ export function MessageList({
     () => sortMessages(messages, sortState, folder),
     [messages, sortState, folder],
   );
+
+  // Right-click context menu state (tuxlink-ejph). Wires onContextMenu on
+  // each row to a positioned overlay. Only mounted when handlers are
+  // supplied — absence acts as feature-flag for tests that don't exercise
+  // the menu.
+  const [ctxMenu, setCtxMenu] = React.useState<{
+    message: MessageMeta;
+    x: number;
+    y: number;
+  } | null>(null);
+  const onContextMenu = onMoveMessage || onArchiveMessage
+    ? (e: React.MouseEvent, message: MessageMeta) => {
+        setCtxMenu({ message, x: e.clientX, y: e.clientY });
+      }
+    : undefined;
+  // The source folder is the row's own message.folder when present
+  // (cross-folder search hits) and falls back to the list's active folder
+  // otherwise. The Tauri backend uses this as the `from` arg for the move.
+  const ctxSourceFolder = ctxMenu
+    ? ((ctxMenu.message.folder as MailboxFolderRef | undefined) ?? folder)
+    : folder;
+
   return (
     <div className="rows-pane" data-testid="rows-pane">
       {onSortStateChange && (
@@ -252,10 +317,27 @@ export function MessageList({
                 onSelect={onSelect}
                 matchHighlight={matchHighlights?.[msg.id]}
                 showFolderTag={showFolderTag}
+                onContextMenu={onContextMenu}
               />
             )}
           />
         </div>
+      )}
+      {ctxMenu && (
+        <MessageContextMenu
+          message={ctxMenu.message}
+          folder={ctxSourceFolder}
+          x={ctxMenu.x}
+          y={ctxMenu.y}
+          userFolders={userFolders ?? []}
+          onMoveTo={(to) => {
+            onMoveMessage?.(ctxMenu.message.id, ctxSourceFolder, to);
+          }}
+          onArchive={() => {
+            onArchiveMessage?.(ctxMenu.message.id, ctxSourceFolder);
+          }}
+          onClose={() => setCtxMenu(null)}
+        />
       )}
     </div>
   );
