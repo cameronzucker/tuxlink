@@ -11,7 +11,12 @@ use thiserror::Error;
 /// render with a non-empty subject. Existing v1 indices return SchemaDrift
 /// from `Index::open`; the operator runs `tauri_search_rebuild_index` to
 /// recreate from the mbox source.
-pub const SCHEMA_VERSION: u32 = 2;
+///
+/// v2 → v3 (tuxlink-0gsy): add `docs_fts` virtual table for user-guide
+/// search. Existing v2 indices return SchemaDrift; the mod.rs build_service
+/// recovery path recreates fresh and the docs table is repopulated on first
+/// launch from the bundled docs/user-guide/*.md.
+pub const SCHEMA_VERSION: u32 = 3;
 
 #[derive(Error, Debug)]
 pub enum IndexError {
@@ -94,6 +99,16 @@ impl Index {
             CREATE INDEX idx_meta_from      ON messages_meta(from_addr);
             CREATE INDEX idx_meta_form_type ON messages_meta(form_type);
             CREATE INDEX idx_meta_folder    ON messages_meta(folder);
+
+            -- tuxlink-0gsy (spec §9.1): docs_fts holds bundled user-guide
+            -- topics for help-window search. Populated by build_service on
+            -- first launch from search/docs_bundle.rs's compiled-in markdown.
+            CREATE VIRTUAL TABLE docs_fts USING fts5 (
+                slug              UNINDEXED,
+                title,
+                body,
+                tokenize = 'porter unicode61 remove_diacritics 2'
+            );
 
             COMMIT;
             "#,
@@ -478,8 +493,8 @@ mod tests {
         }
         let err = Index::open(path).unwrap_err();
         match err {
-            IndexError::SchemaDrift { found: 0, current: 2 } => {}
-            other => panic!("expected SchemaDrift {{ found: 0, current: 2 }}, got {other:?}"),
+            IndexError::SchemaDrift { found: 0, current: SCHEMA_VERSION } => {}
+            other => panic!("expected SchemaDrift {{ found: 0, current: {SCHEMA_VERSION} }}, got {other:?}"),
         }
     }
 }

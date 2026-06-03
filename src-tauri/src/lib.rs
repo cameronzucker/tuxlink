@@ -278,6 +278,7 @@ pub fn run() {
             crate::help_window::help_window_open,       // tuxlink-0gsy (spec §3)
             crate::theme_state::theme_get_scheme,       // tuxlink-0gsy (spec §8.2)
             crate::theme_state::theme_broadcast_scheme, // tuxlink-0gsy (spec §8.2)
+            crate::search::commands::docs_search,       // tuxlink-0gsy (spec §9.3)
             crate::ui_commands::app_quit,             // tuxlink-ng3 (HTML File→Quit / Ctrl+Q)
             crate::ui_commands::packet_config_get,    // tuxlink-7fr (packet config read)
             crate::ui_commands::packet_config_set,    // tuxlink-7fr (packet config write)

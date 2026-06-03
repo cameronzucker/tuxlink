@@ -6,6 +6,8 @@
 //! See `docs/design/2026-05-30-find-messages-design.md` for the full design.
 
 pub mod commands;
+pub mod docs_bundle;   // tuxlink-0gsy (spec §9)
+pub mod docs_index;    // tuxlink-0gsy (spec §9)
 pub mod extractor;
 pub mod index;
 pub mod query;
@@ -53,6 +55,15 @@ pub fn build_service(data_dir: &Path) -> Result<SearchService, CommandError> {
         }
         Err(other) => return Err(other.into()),
     };
+    // tuxlink-0gsy (spec §9.1): populate the docs_fts table on first launch
+    // or after a schema-drift recreation. The bundled docs are baked into
+    // the binary via include_str! in docs_bundle.rs, so first-launch
+    // indexing has no I/O dependency on the install directory layout.
+    if index.docs_is_empty().map_err(CommandError::from)? {
+        index.populate_docs(crate::search::docs_bundle::BUNDLED_TOPICS)
+            .map_err(CommandError::from)?;
+    }
+
     let saved = Mutex::new(
         SavedStore::open(data_dir.join("saved-searches.json")).map_err(CommandError::from)?,
     );
