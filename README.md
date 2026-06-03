@@ -83,8 +83,7 @@ single Tauri application, that pursues feature parity with WLE.
 First-run requires no README and no YouTube tutorial. The OS keyring
 holds the Winlink CMS password; Tuxlink never persists it to a config
 file on disk. The mailbox, compose pane, and session log render inside
-a desktop window: no browser tab to maintain, no external CMS sidecar,
-no config-file credentials.
+a desktop window: no browser tab to maintain, no external CMS sidecar.
 
 ## Current features
 
@@ -100,8 +99,7 @@ The shipped surface area as of the latest pre-alpha build:
   message list with search highlighting; reading pane; mode-aware
   radio panel; mailbox bar.
 - **Onboarding wizard.** Callsign, grid, default transport, optional
-  test send. CMS credentials reside in the OS keyring (secret-service
-  on Linux), never in a config file on disk.
+  test send.
 - **Telnet.** Operator-to-CMS-over-internet sessions for development,
   training, or fall-back when HF propagation is poor.
 - **AX.25 1200-baud packet.** Connected-mode AX.25 over a KISS TNC
