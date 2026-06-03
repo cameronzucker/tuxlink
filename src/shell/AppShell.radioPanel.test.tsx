@@ -177,10 +177,13 @@ describe('<AppShell> radio panel', () => {
     expect(screen.getByTestId('shell-panes')).not.toHaveClass('panes--with-legacy-dock');
   });
 
-  it('renders the ArdopRadioPanel + 4-col grid class when modem is running (ardop-hf)', () => {
+  it('renders the ArdopRadioPanel + 4-col grid class when modem is running (ardop-hf)', async () => {
     mockUseModemStatus.mockReturnValue({ status: RUNNING, loading: false, error: null });
     renderShell();
-    expect(screen.getByTestId('radio-panel-root')).toBeInTheDocument();
+    // tuxlink-twym: radio panels are now React.lazy → findByTestId awaits the
+    // dynamic import (Suspense fallback is null, so the synchronous getByTestId
+    // would race the resolution).
+    expect(await screen.findByTestId('radio-panel-root', undefined, { timeout: 5000 })).toBeInTheDocument();
     // P4: the placeholder is no longer mounted for ARDOP HF — the
     // ArdopRadioPanel itself owns the slot. SignalSection is one of its
     // mounted children and uniquely identifies the panel.
@@ -191,14 +194,14 @@ describe('<AppShell> radio panel', () => {
     expect(screen.getByTestId('shell-panes')).not.toHaveClass('panes--with-legacy-dock');
   });
 
-  it('renders the ArdopRadioPanel for transient (non-stopped) states like connecting', () => {
+  it('renders the ArdopRadioPanel for transient (non-stopped) states like connecting', async () => {
     mockUseModemStatus.mockReturnValue({
       status: { ...STOPPED, state: 'connecting' },
       loading: false,
       error: null,
     });
     renderShell();
-    expect(screen.getByTestId('radio-panel-root')).toBeInTheDocument();
+    expect(await screen.findByTestId('radio-panel-root', undefined, { timeout: 5000 })).toBeInTheDocument();
     expect(screen.getByTestId('signal-section')).toBeInTheDocument();
     const shellPanes = screen.getByTestId('shell-panes');
     expect(shellPanes).toHaveClass('panes--with-dock');
@@ -210,7 +213,7 @@ describe('<AppShell> radio panel', () => {
 
   // P4: ARDOP HF selected → ArdopRadioPanel mounts (single mount). The
   // pre-P4 dual-mount of placeholder + legacy ArdopDock is gone.
-  it('renders ArdopRadioPanel when ARDOP HF is selected (modem stopped)', () => {
+  it('renders ArdopRadioPanel when ARDOP HF is selected (modem stopped)', async () => {
     mockUseModemStatus.mockReturnValue({ status: STOPPED, loading: false, error: null });
     renderShell();
     expect(screen.queryByTestId('radio-panel-root')).not.toBeInTheDocument();
@@ -218,7 +221,7 @@ describe('<AppShell> radio panel', () => {
     // Expand Winlink (CMS) accordion, then pick ARDOP HF.
     fireEvent.click(screen.getByTestId('sess-cms'));
     fireEvent.click(screen.getByTestId('proto-cms-ardop-hf'));
-    expect(screen.getByTestId('radio-panel-root')).toBeInTheDocument();
+    expect(await screen.findByTestId('radio-panel-root', undefined, { timeout: 5000 })).toBeInTheDocument();
     // ArdopRadioPanel mounts; SignalSection is unique to it among the
     // built panels (Telnet / Packet don't mount SignalSection).
     expect(screen.getByTestId('signal-section')).toBeInTheDocument();
@@ -233,10 +236,10 @@ describe('<AppShell> radio panel', () => {
   // sidebar selection (the "operator clicked Close while ARDOP was on-air"
   // scenario) must show the Ardop panel. P4 means the ArdopRadioPanel
   // itself is the mount — no separate dock.
-  it('shows ArdopRadioPanel when modem is running with no sidebar selection', () => {
+  it('shows ArdopRadioPanel when modem is running with no sidebar selection', async () => {
     mockUseModemStatus.mockReturnValue({ status: RUNNING, loading: false, error: null });
     renderShell();
-    expect(screen.getByTestId('radio-panel-root')).toBeInTheDocument();
+    expect(await screen.findByTestId('radio-panel-root', undefined, { timeout: 5000 })).toBeInTheDocument();
     expect(screen.getByTestId('signal-section')).toBeInTheDocument();
     expect(screen.queryByTestId('ardop-dock-root')).not.toBeInTheDocument();
     const shellPanes = screen.getByTestId('shell-panes');
@@ -249,25 +252,25 @@ describe('<AppShell> radio panel', () => {
   // is unique to the VARA panel — its presence confirms VaraRadioPanel
   // mounted, and the placeholder's absence confirms the fall-through no
   // longer catches VARA modes.
-  it('renders VaraRadioPanel when VARA HF is selected (modem stopped)', () => {
+  it('renders VaraRadioPanel when VARA HF is selected (modem stopped)', async () => {
     mockUseModemStatus.mockReturnValue({ status: STOPPED, loading: false, error: null });
     renderShell();
     expect(screen.queryByTestId('radio-panel-root')).not.toBeInTheDocument();
     fireEvent.click(screen.getByTestId('sess-cms'));
     fireEvent.click(screen.getByTestId('proto-cms-vara-hf'));
-    expect(screen.getByTestId('radio-panel-root')).toBeInTheDocument();
+    expect(await screen.findByTestId('radio-panel-root', undefined, { timeout: 5000 })).toBeInTheDocument();
     expect(screen.getByTestId('vara-host-input')).toBeInTheDocument();
     // The placeholder must NOT mount alongside — VaraRadioPanel owns
     // the slot.
     expect(screen.queryByTestId('radio-panel-placeholder')).not.toBeInTheDocument();
   });
 
-  it('renders VaraRadioPanel when VARA FM is selected (modem stopped)', () => {
+  it('renders VaraRadioPanel when VARA FM is selected (modem stopped)', async () => {
     mockUseModemStatus.mockReturnValue({ status: STOPPED, loading: false, error: null });
     renderShell();
     fireEvent.click(screen.getByTestId('sess-cms'));
     fireEvent.click(screen.getByTestId('proto-cms-vara-fm'));
-    expect(screen.getByTestId('radio-panel-root')).toBeInTheDocument();
+    expect(await screen.findByTestId('radio-panel-root', undefined, { timeout: 5000 })).toBeInTheDocument();
     expect(screen.getByTestId('radio-panel-title')).toHaveTextContent('Vara FM');
     expect(screen.queryByTestId('radio-panel-placeholder')).not.toBeInTheDocument();
   });
@@ -276,23 +279,23 @@ describe('<AppShell> radio panel', () => {
   // is intent-agnostic — it mounts under either CMS or P2P and only the
   // header title's suffix changes (Winlink vs P2P). These tests pin the
   // P2P mount behavior alongside the CMS tests above.
-  it('renders VaraRadioPanel with P2P title when VARA HF is selected under P2P', () => {
+  it('renders VaraRadioPanel with P2P title when VARA HF is selected under P2P', async () => {
     mockUseModemStatus.mockReturnValue({ status: STOPPED, loading: false, error: null });
     renderShell();
     fireEvent.click(screen.getByTestId('sess-p2p'));
     fireEvent.click(screen.getByTestId('proto-p2p-vara-hf'));
-    expect(screen.getByTestId('radio-panel-root')).toBeInTheDocument();
+    expect(await screen.findByTestId('radio-panel-root', undefined, { timeout: 5000 })).toBeInTheDocument();
     expect(screen.getByTestId('vara-host-input')).toBeInTheDocument();
     expect(screen.getByTestId('radio-panel-title')).toHaveTextContent('Vara HF P2P');
     expect(screen.queryByTestId('radio-panel-placeholder')).not.toBeInTheDocument();
   });
 
-  it('renders VaraRadioPanel with P2P title when VARA FM is selected under P2P', () => {
+  it('renders VaraRadioPanel with P2P title when VARA FM is selected under P2P', async () => {
     mockUseModemStatus.mockReturnValue({ status: STOPPED, loading: false, error: null });
     renderShell();
     fireEvent.click(screen.getByTestId('sess-p2p'));
     fireEvent.click(screen.getByTestId('proto-p2p-vara-fm'));
-    expect(screen.getByTestId('radio-panel-root')).toBeInTheDocument();
+    expect(await screen.findByTestId('radio-panel-root', undefined, { timeout: 5000 })).toBeInTheDocument();
     expect(screen.getByTestId('radio-panel-title')).toHaveTextContent('Vara FM P2P');
     expect(screen.queryByTestId('radio-panel-placeholder')).not.toBeInTheDocument();
   });
@@ -301,13 +304,13 @@ describe('<AppShell> radio panel', () => {
   // toggle the panel. The menu item + accelerator have been wired through
   // dispatchMenuAction since the tuxlink-mnk4 fix; the menu item was
   // renamed from "Toggle Radio Dock" in radio-panel-shell P1.7.
-  it('Ctrl+Shift+M toggles the panel when the modem is stopped and no sidebar selection', () => {
+  it('Ctrl+Shift+M toggles the panel when the modem is stopped and no sidebar selection', async () => {
     mockUseModemStatus.mockReturnValue({ status: STOPPED, loading: false, error: null });
     renderShell();
     expect(screen.queryByTestId('radio-panel-root')).not.toBeInTheDocument();
 
     fireEvent.keyDown(window, { key: 'm', ctrlKey: true, shiftKey: true });
-    expect(screen.getByTestId('radio-panel-root')).toBeInTheDocument();
+    expect(await screen.findByTestId('radio-panel-root', undefined, { timeout: 5000 })).toBeInTheDocument();
 
     fireEvent.keyDown(window, { key: 'm', ctrlKey: true, shiftKey: true });
     expect(screen.queryByTestId('radio-panel-root')).not.toBeInTheDocument();

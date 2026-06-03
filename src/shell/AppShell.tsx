@@ -86,16 +86,35 @@ import { effectiveCall } from '../packet/packetConfig';
 import { derivePacketUiState, type PacketUiState } from '../packet/packetStatus';
 import { usePacketConfig } from '../packet/usePacketConfig';
 import { isBuilt } from '../connections/sessionTypes';
-import { TelnetRadioPanel } from '../radio/modes/TelnetRadioPanel';
-import { TelnetP2pRadioPanel } from '../radio/modes/TelnetP2pRadioPanel';
-import { PacketRadioPanel } from '../radio/modes/PacketRadioPanel';
-import { ArdopRadioPanel } from '../radio/modes/ArdopRadioPanel';
-import { VaraRadioPanel } from '../radio/modes/VaraRadioPanel';
 import { StubPanel } from '../connections/StubPanel';
 import { SearchBar } from '../search/SearchBar';
-import { SearchDropdown } from '../search/SearchDropdown';
 import { deparseQuery } from '../search/parseQuery';
-import { SavedSearchesPanel } from '../search/SavedSearchesPanel';
+
+// tuxlink-twym: lazy-load the five real radio panels + the two search
+// overlays. All seven are conditionally mounted (mode-switch / dropdown
+// open / saved-search panel open), so React.lazy + Suspense with the
+// existing call-site gate is a free win — chunks only fetch on first open.
+const TelnetRadioPanel = lazy(() =>
+  import('../radio/modes/TelnetRadioPanel').then((m) => ({ default: m.TelnetRadioPanel })),
+);
+const TelnetP2pRadioPanel = lazy(() =>
+  import('../radio/modes/TelnetP2pRadioPanel').then((m) => ({ default: m.TelnetP2pRadioPanel })),
+);
+const PacketRadioPanel = lazy(() =>
+  import('../radio/modes/PacketRadioPanel').then((m) => ({ default: m.PacketRadioPanel })),
+);
+const ArdopRadioPanel = lazy(() =>
+  import('../radio/modes/ArdopRadioPanel').then((m) => ({ default: m.ArdopRadioPanel })),
+);
+const VaraRadioPanel = lazy(() =>
+  import('../radio/modes/VaraRadioPanel').then((m) => ({ default: m.VaraRadioPanel })),
+);
+const SearchDropdown = lazy(() =>
+  import('../search/SearchDropdown').then((m) => ({ default: m.SearchDropdown })),
+);
+const SavedSearchesPanel = lazy(() =>
+  import('../search/SavedSearchesPanel').then((m) => ({ default: m.SavedSearchesPanel })),
+);
 import { useSearch } from '../search/useSearch';
 import { useSavedSearches } from '../search/useSavedSearches';
 import { useModemIsActive } from '../modem/useModemStatus';
@@ -616,22 +635,24 @@ export function AppShell() {
             metaText={metaText}
           />
           {dropdownOpen && (
-            <SearchDropdown
-              saved={saved.saved}
-              recent={saved.recent}
-              activeSavedId={search.activeSaved?.id ?? null}
-              onRunSaved={(s) => { search.setActiveSavedSearch(s); setDropdownOpen(false); }}
-              onRunRecent={(r) => { search.setRawText(deparseQuery(r.spec)); setDropdownOpen(false); }}
-              onPromoteRecent={async (r, name) => {
-                // Codex adrev fix (find-messages P2): use promote_recent so the
-                // recent entry is removed atomically — avoids duplicate in dropdown.
-                await saved.promoteRecent(name, r.spec);
-              }}
-              onUnsaveActive={async () => { if (search.activeSaved) await saved.unsave(search.activeSaved.id); }}
-              onManage={() => { setSavedSearchesOpen(true); setDropdownOpen(false); }}
-              onClose={() => setDropdownOpen(false)}
-              onClearRecent={() => { void saved.clearRecent(); }}
-            />
+            <Suspense fallback={null}>
+              <SearchDropdown
+                saved={saved.saved}
+                recent={saved.recent}
+                activeSavedId={search.activeSaved?.id ?? null}
+                onRunSaved={(s) => { search.setActiveSavedSearch(s); setDropdownOpen(false); }}
+                onRunRecent={(r) => { search.setRawText(deparseQuery(r.spec)); setDropdownOpen(false); }}
+                onPromoteRecent={async (r, name) => {
+                  // Codex adrev fix (find-messages P2): use promote_recent so the
+                  // recent entry is removed atomically — avoids duplicate in dropdown.
+                  await saved.promoteRecent(name, r.spec);
+                }}
+                onUnsaveActive={async () => { if (search.activeSaved) await saved.unsave(search.activeSaved.id); }}
+                onManage={() => { setSavedSearchesOpen(true); setDropdownOpen(false); }}
+                onClose={() => setDropdownOpen(false)}
+                onClearRecent={() => { void saved.clearRecent(); }}
+              />
+            </Suspense>
           )}
         </div>
         <DashboardRibbon
@@ -731,48 +752,58 @@ export function AppShell() {
             for ARDOP HF is GONE — the ArdopRadioPanel covers the full
             dial-and-live-state surface on its own. */}
         {radioPanelMode && radioPanelMode.kind === 'telnet' && radioPanelMode.intent === 'cms' && (
-          <TelnetRadioPanel
-            onClose={() => {
-              setSelectedConnection(null);
-              setPinRadioPanel(false);
-            }}
-          />
-        )}
-        {radioPanelMode && radioPanelMode.kind === 'telnet' && radioPanelMode.intent === 'p2p' && (
-          <TelnetP2pRadioPanel
-            onClose={() => {
-              setSelectedConnection(null);
-              setPinRadioPanel(false);
-            }}
-          />
-        )}
-        {radioPanelMode && radioPanelMode.kind === 'packet' && (
-          <PacketRadioPanel
-            intent={radioPanelMode.intent}
-            baseCall={statusData.callsign}
-            onClose={() => {
-              setSelectedConnection(null);
-              setPinRadioPanel(false);
-            }}
-          />
-        )}
-        {radioPanelMode && radioPanelMode.kind === 'ardop-hf' && (
-          <ArdopRadioPanel
-            onClose={() => {
-              setSelectedConnection(null);
-              setPinRadioPanel(false);
-            }}
-          />
-        )}
-        {radioPanelMode &&
-          (radioPanelMode.kind === 'vara-hf' || radioPanelMode.kind === 'vara-fm') && (
-            <VaraRadioPanel
-              mode={radioPanelMode}
+          <Suspense fallback={null}>
+            <TelnetRadioPanel
               onClose={() => {
                 setSelectedConnection(null);
                 setPinRadioPanel(false);
               }}
             />
+          </Suspense>
+        )}
+        {radioPanelMode && radioPanelMode.kind === 'telnet' && radioPanelMode.intent === 'p2p' && (
+          <Suspense fallback={null}>
+            <TelnetP2pRadioPanel
+              onClose={() => {
+                setSelectedConnection(null);
+                setPinRadioPanel(false);
+              }}
+            />
+          </Suspense>
+        )}
+        {radioPanelMode && radioPanelMode.kind === 'packet' && (
+          <Suspense fallback={null}>
+            <PacketRadioPanel
+              intent={radioPanelMode.intent}
+              baseCall={statusData.callsign}
+              onClose={() => {
+                setSelectedConnection(null);
+                setPinRadioPanel(false);
+              }}
+            />
+          </Suspense>
+        )}
+        {radioPanelMode && radioPanelMode.kind === 'ardop-hf' && (
+          <Suspense fallback={null}>
+            <ArdopRadioPanel
+              onClose={() => {
+                setSelectedConnection(null);
+                setPinRadioPanel(false);
+              }}
+            />
+          </Suspense>
+        )}
+        {radioPanelMode &&
+          (radioPanelMode.kind === 'vara-hf' || radioPanelMode.kind === 'vara-fm') && (
+            <Suspense fallback={null}>
+              <VaraRadioPanel
+                mode={radioPanelMode}
+                onClose={() => {
+                  setSelectedConnection(null);
+                  setPinRadioPanel(false);
+                }}
+              />
+            </Suspense>
           )}
         {radioPanelMode &&
           radioPanelMode.kind !== 'telnet' &&
@@ -891,7 +922,9 @@ export function AppShell() {
       )}
 
       {savedSearchesOpen && (
-        <SavedSearchesPanel onClose={() => setSavedSearchesOpen(false)} />
+        <Suspense fallback={null}>
+          <SavedSearchesPanel onClose={() => setSavedSearchesOpen(false)} />
+        </Suspense>
       )}
     </div>
   );
