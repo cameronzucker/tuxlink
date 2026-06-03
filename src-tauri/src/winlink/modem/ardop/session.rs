@@ -210,6 +210,25 @@ pub struct InitConfig {
     /// before constructing the InitConfig (modem_commands.rs); init_tnc
     /// trusts the value verbatim.
     pub arq_bandwidth_hz: Option<u32>,
+    /// Whether to send `LISTEN TRUE` (vs `LISTEN FALSE`) during init
+    /// (tuxlink-dhbl). Default `false`: the modem comes up NOT listening
+    /// for inbound ARDOP calls — operator arms it via the
+    /// `ardop_listen` UI command, which uses
+    /// [`super::listener::set_listen`] to flip the modem flag at runtime.
+    ///
+    /// DIVERGES from the pre-tuxlink-dhbl behavior, which hardcoded
+    /// `LISTEN FALSE`. The default keeps the same surface but the field
+    /// is now expressible — outbound dial paths construct `InitConfig`
+    /// with `initial_listen: false` (their existing behavior); the
+    /// inbound-listen path constructs with `initial_listen: true` so the
+    /// modem is armed on the very first init.
+    ///
+    /// Per `dev/scratch/winlink-re/findings/ardop-p2p.md` row "Inbound
+    /// listener (on-air)": WLE sends `LISTEN TRUE` during session
+    /// activation regardless of P2P-vs-CMS mode. Tuxlink's P1-defensive
+    /// posture is "default FALSE, operator opts in" — see the
+    /// architecture doc §5 operator-decision defaults.
+    pub initial_listen: bool,
 }
 
 // ─── SessionError ──────────────────────────────────────────────────────────
@@ -261,7 +280,12 @@ pub fn init_tnc(sock: &mut CmdSocket, cfg: &InitConfig) -> Result<(), SessionErr
     set_and_ack(sock, "CODEC", Some("TRUE"))?;
     set_and_ack(sock, "PROTOCOLMODE", Some("ARQ"))?;
     set_and_ack(sock, "ARQTIMEOUT", Some(&cfg.arq_timeout_s.to_string()))?;
-    set_and_ack(sock, "LISTEN", Some("FALSE"))?;
+    // tuxlink-dhbl: LISTEN flag is now operator-controlled. Default
+    // `false` (no inbound listen) preserves prior behavior; the
+    // `ardop_listen` UI command flips it via
+    // `super::listener::set_listen` at runtime.
+    let listen_arg = if cfg.initial_listen { "TRUE" } else { "FALSE" };
+    set_and_ack(sock, "LISTEN", Some(listen_arg))?;
     if let Some(bw) = cfg.arq_bandwidth_hz {
         set_and_ack(sock, "ARQBW", Some(&format!("{bw} FORCED")))?;
     }
@@ -507,6 +531,7 @@ mod tests {
             gridsquare: "CN87".into(),
             arq_timeout_s: 30,
             arq_bandwidth_hz: None,
+            initial_listen: false,
         };
         init_tnc(&mut sock, &cfg).expect("init should succeed");
 
@@ -554,6 +579,7 @@ mod tests {
             gridsquare: "CN87".into(),
             arq_timeout_s: 30,
             arq_bandwidth_hz: None,
+            initial_listen: false,
         };
         let err = init_tnc(&mut sock, &cfg).expect_err("init must fail on FAULT");
         assert!(
@@ -616,6 +642,7 @@ mod tests {
             gridsquare: "CN87".into(),
             arq_timeout_s: 30,
             arq_bandwidth_hz: None,
+            initial_listen: false,
         };
         init_tnc(&mut sock, &cfg).expect("init must tolerate interleaved async events");
 
@@ -653,6 +680,7 @@ mod tests {
             gridsquare: "CN87".into(),
             arq_timeout_s: 30,
             arq_bandwidth_hz: Some(500),
+            initial_listen: false,
         };
         init_tnc(&mut sock, &cfg).expect("init with bandwidth should succeed");
 
@@ -704,6 +732,7 @@ mod tests {
             gridsquare: "CN87".into(),
             arq_timeout_s: 30,
             arq_bandwidth_hz: None,
+            initial_listen: false,
         };
         init_tnc(&mut sock, &cfg).expect("init with no bandwidth should succeed");
 

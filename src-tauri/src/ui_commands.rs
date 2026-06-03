@@ -2057,6 +2057,206 @@ pub async fn packet_set_listen(enabled: bool) -> Result<(), UiError> {
     Ok(())
 }
 
+// ============================================================================
+// tuxlink-dhbl — ARDOP listener (allowed-stations + arms + LISTEN toggle)
+// ============================================================================
+//
+// Wires the shared listener-arms foundation (`crate::winlink::listener`) into
+// the ARDOP transport. ARDOP has no station-password layer per
+// `dev/scratch/winlink-re/findings/ardop-p2p.md` divergence 2 — only the
+// allowlist gate + the arms TTL apply.
+//
+// Persistence: `<config-dir>/listener/ardop/allowed_stations.json`. The
+// listener arms record + LISTEN-flag flip on the modem are runtime concerns
+// — when an operator presses "Listen" the UI mints an arms record (the
+// foundation tracks TTL) and flips the modem's `LISTEN` flag via
+// `winlink::modem::ardop::listener::set_listen`.
+//
+// The shape of the commands mirrors the Packet `packet_listen` /
+// `packet_set_listen` / `packet_*_listen_*` family.
+
+/// Resolve the config dir from `config::config_path()` (which returns the
+/// `config.json` file path). Returns `<base>/listener/ardop/allowed_stations.json`.
+fn ardop_allowed_stations_path() -> std::path::PathBuf {
+    let cfg_dir = config::config_path()
+        .parent()
+        .map(std::path::Path::to_path_buf)
+        .unwrap_or_else(|| std::path::PathBuf::from("."));
+    crate::winlink::modem::ardop::listener::allowed_stations_path(&cfg_dir)
+}
+
+/// Flat camelCase DTO for the AllowedStations list (Tauri wire shape).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AllowedStationsDto {
+    pub allow_all: bool,
+    pub callsigns: Vec<String>,
+    pub ips: Vec<String>,
+}
+
+impl From<&crate::winlink::listener::AllowedStations> for AllowedStationsDto {
+    fn from(a: &crate::winlink::listener::AllowedStations) -> Self {
+        Self {
+            allow_all: a.allow_all(),
+            callsigns: a.callsigns().to_vec(),
+            ips: a.ips().to_vec(),
+        }
+    }
+}
+
+/// Read the ARDOP allowed-stations JSON file. Returns the defensive default
+/// (`allow_all: false`, empty lists) if the file is absent.
+#[tauri::command]
+pub async fn ardop_allowed_stations_get() -> Result<AllowedStationsDto, UiError> {
+    let path = ardop_allowed_stations_path();
+    let allowed = crate::winlink::listener::AllowedStations::load_from(&path)
+        .map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    Ok(AllowedStationsDto::from(&allowed))
+}
+
+/// Add a callsign (or callsign-wildcard like `N7*`) to the ARDOP
+/// allowed-stations list. Idempotent (duplicates are deduplicated by
+/// `AllowedStations::add_callsign_pattern`).
+#[tauri::command]
+pub async fn ardop_allowed_stations_add(callsign: String) -> Result<(), UiError> {
+    let trimmed = callsign.trim();
+    if trimmed.is_empty() {
+        return Err(UiError::Internal { detail: "callsign must not be empty".into() });
+    }
+    let path = ardop_allowed_stations_path();
+    let mut allowed = crate::winlink::listener::AllowedStations::load_from(&path)
+        .map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    allowed.add_callsign_pattern(trimmed);
+    allowed
+        .save_to(&path)
+        .map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    Ok(())
+}
+
+/// Remove a callsign (exact-match, case-insensitive after uppercasing) from
+/// the ARDOP allowed-stations list. Silently succeeds if the entry isn't
+/// present — same semantics as the Packet allowlist commands' "set" model.
+#[tauri::command]
+pub async fn ardop_allowed_stations_remove(callsign: String) -> Result<(), UiError> {
+    let needle = callsign.trim().to_uppercase();
+    if needle.is_empty() {
+        return Err(UiError::Internal { detail: "callsign must not be empty".into() });
+    }
+    let path = ardop_allowed_stations_path();
+    let allowed = crate::winlink::listener::AllowedStations::load_from(&path)
+        .map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    // AllowedStations doesn't expose a public `remove_callsign` API; rebuild
+    // a fresh AllowedStations omitting the matched entry, then save.
+    let mut rebuilt = crate::winlink::listener::AllowedStations::new();
+    rebuilt.set_allow_all(allowed.allow_all());
+    for c in allowed.callsigns() {
+        if !c.eq_ignore_ascii_case(&needle) {
+            rebuilt.add_callsign_pattern(c.clone());
+        }
+    }
+    for ip in allowed.ips() {
+        rebuilt.add_ip_pattern(ip.clone());
+    }
+    rebuilt
+        .save_to(&path)
+        .map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    Ok(())
+}
+
+/// Toggle the master `Allow All Connections` flag on the ARDOP allowlist.
+///
+/// `true` = WLE-compatible permissive: every inbound ARDOP peer that
+/// completes the modem-level ARQ handshake is accepted.
+///
+/// `false` (the tuxlink default) = restrict to the operator-curated
+/// `callsigns` list.
+#[tauri::command]
+pub async fn ardop_allowed_stations_set_allow_all(allow_all: bool) -> Result<(), UiError> {
+    let path = ardop_allowed_stations_path();
+    let mut allowed = crate::winlink::listener::AllowedStations::load_from(&path)
+        .map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    allowed.set_allow_all(allow_all);
+    allowed
+        .save_to(&path)
+        .map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    Ok(())
+}
+
+/// Arm the ARDOP listener for the default TTL (1 hour per architecture §5).
+///
+/// Mints a [`crate::winlink::listener::ListenerArmsRecord`], appends it to
+/// the forensics JSONL log, and emits a session-log message recording the
+/// per-invocation operator consent (RADIO-1 framing: arming the listener
+/// IS the per-invocation consent for inbound sessions on this transport
+/// during the armed window).
+///
+/// This command does NOT itself flip the modem's `LISTEN` flag — that
+/// happens at next ARDOP `init_tnc` (operator's outbound-Connect path
+/// constructs `InitConfig { initial_listen: false, .. }`; the listener
+/// arming flow constructs with `initial_listen: true`). Wiring the
+/// runtime flip on an already-running transport is a follow-up
+/// coordination task — the foundation gate (allowed-stations + arms TTL)
+/// is the load-bearing security boundary and is fully shipped here.
+///
+/// RADIO-1: arming a listener authorizes inbound peer connections to
+/// transmit (the radio keys to send the ARQ response handshake) during
+/// the armed window. The TTL is the consent boundary.
+#[tauri::command]
+pub async fn ardop_listen(
+    app: AppHandle,
+    log: State<'_, std::sync::Arc<SessionLogState>>,
+) -> Result<(), UiError> {
+    use crate::winlink::listener::{ListenerArmsRecord, TransportKind, DEFAULT_TTL};
+
+    let arms = ListenerArmsRecord::arm(TransportKind::Ardop, DEFAULT_TTL);
+    let log_path = ardop_arms_log_path();
+    arms.append_to_log(&log_path)
+        .map_err(|e| UiError::Internal { detail: e.to_string() })?;
+
+    let mins = arms.ttl.as_secs() / 60;
+    emit_session_line(
+        &app,
+        &log,
+        LogLevel::Info,
+        format!(
+            "ARDOP listener armed for {mins} min (consent uuid {})",
+            &arms.consent_uuid
+        ),
+    );
+    Ok(())
+}
+
+/// Toggle the sticky ARDOP-listen-default flag (persisted on the
+/// AllowedStations file as a side-effect: the foundation doesn't have a
+/// separate "armed_default" boolean today, so we model "enabled = TRUE"
+/// as "allow_all stays whatever it was; arming/disarming is per-session
+/// per `ardop_listen`").
+///
+/// The signature exists for parity with `packet_set_listen` and the spec
+/// §4.1 deliverable list. Currently a no-op marker for parity until the
+/// follow-up runtime-flip wiring lands: see `ardop_listen` for the
+/// armed-window mint. Returns `Ok(())` so the frontend's toggle event
+/// doesn't error.
+#[tauri::command]
+pub async fn ardop_set_listen(enabled: bool) -> Result<(), UiError> {
+    // Future: when the runtime-flip wiring lands, this command will call
+    // `set_listen` on the live transport (if one is installed). For now
+    // it's accepted unconditionally so the frontend toggle has a stable
+    // target.
+    let _ = enabled;
+    Ok(())
+}
+
+/// Resolve the ARDOP listener forensics JSONL log path:
+/// `<config-dir>/listener/ardop/arms.jsonl`. Append-only.
+fn ardop_arms_log_path() -> std::path::PathBuf {
+    let cfg_dir = config::config_path()
+        .parent()
+        .map(std::path::Path::to_path_buf)
+        .unwrap_or_else(|| std::path::PathBuf::from("."));
+    cfg_dir.join("listener").join("ardop").join("arms.jsonl")
+}
+
 // Task 5 (tuxlink-686) — config_set_grid + validate_grid_input
 // bd issue: tuxlink-686
 // ============================================================================

@@ -1511,6 +1511,7 @@ mod tests {
             gridsquare: "CN87".into(),
             arq_timeout_s: 30,
             arq_bandwidth_hz: None,
+            initial_listen: false,
         };
         transport.init(&cfg).expect("init must succeed");
 
@@ -1661,6 +1662,7 @@ mod tests {
             gridsquare: "CN87".into(),
             arq_timeout_s: 30,
             arq_bandwidth_hz: None,
+            initial_listen: false,
         };
         t.init(&cfg).expect("init must succeed");
 
@@ -1717,6 +1719,7 @@ mod tests {
             gridsquare: "CN87".into(),
             arq_timeout_s: 30,
             arq_bandwidth_hz: None,
+            initial_listen: false,
         };
         t.init(&cfg).expect("init must succeed");
 
@@ -1776,6 +1779,7 @@ mod tests {
             gridsquare: "CN87".into(),
             arq_timeout_s: 30,
             arq_bandwidth_hz: None,
+            initial_listen: false,
         };
         t.init(&cfg).expect("init must succeed");
         t.connect_arq("W7ABC", 3, Duration::from_secs(5))
@@ -1840,6 +1844,7 @@ mod tests {
             gridsquare: "CN87".into(),
             arq_timeout_s: 30,
             arq_bandwidth_hz: None,
+            initial_listen: false,
         };
         t.init(&cfg).unwrap();
         let info = t.connect_arq("K7XYZ", 1, Duration::from_secs(5)).unwrap();
@@ -1913,6 +1918,7 @@ mod tests {
             gridsquare: "CN87".into(),
             arq_timeout_s: 30,
             arq_bandwidth_hz: None,
+            initial_listen: false,
         };
         t.init(&cfg).expect("init must succeed");
 
@@ -2119,6 +2125,7 @@ data_thread.join(timeout=2.0)
             gridsquare: "CN87".into(),
             arq_timeout_s: 30,
             arq_bandwidth_hz: None,
+            initial_listen: false,
         };
         transport.init(&init_cfg).expect("init must succeed");
 
