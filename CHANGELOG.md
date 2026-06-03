@@ -4,6 +4,13 @@ All notable changes to Tuxlink are documented here.
 
 This project adheres to [Semantic Versioning](https://semver.org) with project-specific rules described in [VERSIONING.md](VERSIONING.md). Entries from `v0.0.2` onward are generated automatically by [`release-please`](https://github.com/googleapis/release-please) from [Conventional Commits](https://www.conventionalcommits.org).
 
+## [0.22.1](https://github.com/cameronzucker/tuxlink/compare/v0.22.0...v0.22.1) (2026-06-03)
+
+
+### Performance
+
+* **shell:** kill 4Hz render storm + memoize message rows + scope clock tick (tuxlink-sndh) ([080e879](https://github.com/cameronzucker/tuxlink/commit/080e879b6aa242324f6e7a3d2846366616280e18))
+
 ## [0.22.0](https://github.com/cameronzucker/tuxlink/compare/v0.21.0...v0.22.0) (2026-06-03)
 
 
