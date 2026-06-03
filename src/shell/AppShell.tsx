@@ -70,7 +70,13 @@ const DeleteFolderDialog = lazy(() =>
   import('../mailbox/DeleteFolderDialog').then((m) => ({ default: m.DeleteFolderDialog })),
 );
 
-import MessageView from '../mailbox/MessageView';
+// tuxlink-djnl: lazy-load MessageView so the cold-start path doesn't pull
+// the forms registry (src/forms/index.ts side-effect imports every ICS-213,
+// ICS-309, bulletin, position, damage-assessment renderer at module load).
+// AppShell uses the eager MessageViewEmpty as both the no-selection render
+// AND the Suspense fallback while the lazy chunk loads on first selection.
+import { MessageViewEmpty } from '../mailbox/MessageViewEmpty';
+const MessageView = lazy(() => import('../mailbox/MessageView'));
 import { TitleBar } from './chrome/TitleBar';
 import { MenuBar } from './chrome/MenuBar';
 import { ResizeHandles } from './chrome/ResizeHandles';
@@ -714,8 +720,21 @@ export function AppShell() {
           onArchiveMessage={archiveByIdAndFolder}
         />
         {(() => {
+          // tuxlink-djnl: shared render fragment for the reading pane. When
+          // nothing is selected, render the eager MessageViewEmpty directly
+          // (no lazy fetch — cold-start sees this). When a message IS
+          // selected, gate the lazy MessageView behind Suspense with the
+          // empty pane as the visual fallback while the chunk + forms
+          // registry load (first selection only; cached thereafter).
+          const readingPane = selectedMessage
+            ? (
+                <Suspense fallback={<MessageViewEmpty />}>
+                  <MessageView selectedMessage={selectedMessage} onArchive={onArchiveMessage} userFolders={userFolders} onMove={moveOpen} />
+                </Suspense>
+              )
+            : <MessageViewEmpty />;
           if (selectedConnection === null) {
-            return <MessageView selectedMessage={selectedMessage} onArchive={onArchiveMessage} userFolders={userFolders} onMove={moveOpen} />;
+            return readingPane;
           }
           if (!isBuilt(selectedConnection)) {
             return <StubPanel sessionType={selectedConnection.sessionType} protocol={selectedConnection.protocol} />;
@@ -725,29 +744,29 @@ export function AppShell() {
             // P2: Telnet UI now lives in the right-hand TelnetRadioPanel.
             // The reading pane falls back to messages so the operator
             // can read mail while the connection panel handles transport.
-            return <MessageView selectedMessage={selectedMessage} onArchive={onArchiveMessage} userFolders={userFolders} onMove={moveOpen} />;
+            return readingPane;
           }
           if (sessionType === 'cms' && protocol === 'packet') {
             // P3: PacketRadioPanel owns the Packet dial UI in the right
             // radio panel; reading pane falls back to mail (same pattern
             // as Telnet (P2) and ARDOP (P4)).
-            return <MessageView selectedMessage={selectedMessage} onArchive={onArchiveMessage} userFolders={userFolders} onMove={moveOpen} />;
+            return readingPane;
           }
           if (sessionType === 'cms' && protocol === 'ardop-hf') {
             // P4: the ArdopRadioPanel owns the ARDOP HF dial UI; the
             // reading pane falls back to mail (same pattern as Telnet,
             // P2). Eliminates the P1 dual-mount of placeholder + ArdopDock.
-            return <MessageView selectedMessage={selectedMessage} onArchive={onArchiveMessage} userFolders={userFolders} onMove={moveOpen} />;
+            return readingPane;
           }
           if (sessionType === 'p2p' && protocol === 'packet') {
             // P3 (P2P branch): same — PacketRadioPanel handles the dial UI.
-            return <MessageView selectedMessage={selectedMessage} onArchive={onArchiveMessage} userFolders={userFolders} onMove={moveOpen} />;
+            return readingPane;
           }
           if (sessionType === 'p2p' && protocol === 'telnet') {
             // P2P Telnet (tuxlink-0pnb): TelnetP2pRadioPanel owns the dial
             // UI in the right panel; reading pane falls back to mail, same
             // pattern as Telnet CMS (P2) and Packet P2P (P3).
-            return <MessageView selectedMessage={selectedMessage} onArchive={onArchiveMessage} userFolders={userFolders} onMove={moveOpen} />;
+            return readingPane;
           }
           if (protocol === 'vara-hf' || protocol === 'vara-fm') {
             // tuxlink-dfmf Phase 2 + tuxlink-kb3s: VaraRadioPanel owns the
@@ -755,7 +774,7 @@ export function AppShell() {
             // intent; reading pane falls back to mail (same pattern as
             // Telnet/Packet/ARDOP). Phase 2 surfaces TCP transport +
             // config; RF CONNECT arrives in Phase 3.
-            return <MessageView selectedMessage={selectedMessage} onArchive={onArchiveMessage} userFolders={userFolders} onMove={moveOpen} />;
+            return readingPane;
           }
           // Built but unhandled — defensive stub
           return <StubPanel sessionType={sessionType} protocol={protocol} />;
