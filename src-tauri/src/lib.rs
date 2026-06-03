@@ -6,6 +6,7 @@ pub mod config;
 pub mod consent_gate;
 pub mod forms;
 pub mod grib;
+pub mod help_window;
 pub mod native_mailbox;
 pub mod position;
 pub mod search;
@@ -269,6 +270,7 @@ pub fn run() {
             crate::ui_commands::session_log_clear,     // Operator smoke 2026-05-31 — buffer drain
             crate::compose_window::compose_window_open, // Task 14 (tuxlink-dm8)
             crate::compose_window::compose_close_self,  // tuxlink-h2y (self-only close)
+            crate::help_window::help_window_open,       // tuxlink-0gsy (spec §3)
             crate::ui_commands::app_quit,             // tuxlink-ng3 (HTML File→Quit / Ctrl+Q)
             crate::ui_commands::packet_config_get,    // tuxlink-7fr (packet config read)
             crate::ui_commands::packet_config_set,    // tuxlink-7fr (packet config write)
