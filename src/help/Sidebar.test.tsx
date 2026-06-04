@@ -5,7 +5,7 @@ import { getTopicBySlug } from './topics';
 import type { DocsHit } from './useHelpSearch';
 
 // Helper: minimal default props for the grouped-list mode.
-function groupedProps(active = '01-getting-started') {
+function groupedProps(active = '01-what-is-tuxlink') {
   return {
     activeSlug: active,
     onSelect: vi.fn(),
@@ -16,16 +16,20 @@ function groupedProps(active = '01-getting-started') {
 }
 
 describe('Sidebar (grouped-list mode)', () => {
-  it('renders all four section headers', () => {
+  it('renders all eight section headers', () => {
     const { container } = render(<Sidebar {...groupedProps()} />);
     const headers = Array.from(
       container.querySelectorAll('.tux-help-sb-section-title'),
     ).map((el) => el.textContent);
     expect(headers).toEqual([
-      'Getting started',
-      'Using Tuxlink',
-      'Configuration',
+      'Quickstart',
+      'Winlink fundamentals',
+      'Radio integration',
+      'Digital modes',
+      'Using tuxlink',
+      'Operating practices',
       'Reference',
+      'Migration',
     ]);
   });
 
@@ -36,17 +40,17 @@ describe('Sidebar (grouped-list mode)', () => {
   });
 
   it('marks the active topic with aria-current=page', () => {
-    render(<Sidebar {...groupedProps('02-connections')} />);
+    render(<Sidebar {...groupedProps('02-first-launch-wizard')} />);
     const active = screen.getByRole('link', { current: 'page' });
-    expect(active.textContent).toMatch(/Connections/);
+    expect(active.textContent).toMatch(/First-launch wizard/);
   });
 
   it('calls onSelect with the slug when a topic is clicked', () => {
     const props = groupedProps();
     render(<Sidebar {...props} />);
-    const mailbox = getTopicBySlug('03-mailbox')!;
+    const mailbox = getTopicBySlug('18-the-mailbox')!;
     fireEvent.click(screen.getByText(mailbox.displayName));
-    expect(props.onSelect).toHaveBeenCalledWith('03-mailbox');
+    expect(props.onSelect).toHaveBeenCalledWith('18-the-mailbox');
   });
 });
 

@@ -2,17 +2,26 @@ import { describe, it, expect } from 'vitest';
 import { TOPICS, SECTIONS, getTopicBySlug } from './topics';
 
 describe('topics registry', () => {
-  it('exposes ten topics', () => {
-    expect(TOPICS).toHaveLength(10);
+  it('exposes thirty-two topics', () => {
+    expect(TOPICS).toHaveLength(32);
   });
 
   it('every topic has a non-empty slug, number, displayName, body, sectionId', () => {
     for (const t of TOPICS) {
-      expect(t.slug).toMatch(/^\d{2}-[a-z-]+$/);
+      expect(t.slug).toMatch(/^\d{2}-[a-z0-9-]+$/);
       expect(t.number).toMatch(/^\d{2}$/);
       expect(t.displayName.length).toBeGreaterThan(0);
       expect(t.body.length).toBeGreaterThan(0);
-      expect(['getting-started', 'using', 'config', 'reference']).toContain(t.sectionId);
+      expect([
+        'quickstart',
+        'winlink-fundamentals',
+        'radio-integration',
+        'digital-modes',
+        'using-tuxlink',
+        'operating-practices',
+        'reference',
+        'migration',
+      ]).toContain(t.sectionId);
     }
   });
 
@@ -38,12 +47,12 @@ describe('topics registry', () => {
   });
 
   it('parses the displayName from the first # heading', () => {
-    const intro = TOPICS.find((t) => t.slug === '01-getting-started');
-    expect(intro?.displayName).toBe('Getting started');
+    const intro = TOPICS.find((t) => t.slug === '01-what-is-tuxlink');
+    expect(intro?.displayName).toBe('What is tuxlink');
   });
 
   it('getTopicBySlug returns the matching topic or undefined', () => {
-    expect(getTopicBySlug('02-connections')?.displayName).toBe('Connections');
+    expect(getTopicBySlug('02-first-launch-wizard')?.displayName).toBe('First-launch wizard');
     expect(getTopicBySlug('99-no-such')).toBeUndefined();
   });
 });

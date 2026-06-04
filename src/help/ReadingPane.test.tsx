@@ -8,9 +8,9 @@ vi.mock('@tauri-apps/plugin-shell', () => ({
   open: vi.fn(),
 }));
 
-const intro = getTopicBySlug('01-getting-started')!;
-const conn = getTopicBySlug('02-connections')!;
-const mailbox = getTopicBySlug('03-mailbox')!;
+const intro = getTopicBySlug('01-what-is-tuxlink')!;
+const conn = getTopicBySlug('08-picking-a-transport')!;
+const mailbox = getTopicBySlug('18-the-mailbox')!;
 
 /** Build a minimal synthetic HelpTopic so tests aren't tied to real topic content. */
 function makeTopic(slug: string, body: string): HelpTopic {
@@ -19,7 +19,7 @@ function makeTopic(slug: string, body: string): HelpTopic {
     number: slug.slice(0, 2),
     displayName: slug,
     body,
-    sectionId: 'using',
+    sectionId: 'using-tuxlink',
   };
 }
 
@@ -33,7 +33,7 @@ describe('ReadingPane', () => {
 
   it('renders rendered markdown body content', () => {
     render(<ReadingPane topic={conn} onNavigate={() => {}} />);
-    // The connections topic mentions ARDOP repeatedly (paragraph + headings).
+    // The picking-a-transport topic mentions ARDOP repeatedly (paragraph + headings).
     // Confirm the parser surfaced at least one match.
     const matches = screen.getAllByText(/ARDOP/i);
     expect(matches.length).toBeGreaterThan(0);
@@ -54,7 +54,7 @@ describe('ReadingPane', () => {
     expect(onNavigate).toHaveBeenCalled();
     // The slug derived from the link's href should match the digits-name pattern.
     const slug = (onNavigate.mock.calls[0][0] as string);
-    expect(slug).toMatch(/^\d{2}-[a-z-]+$/);
+    expect(slug).toMatch(/^\d{2}-[a-z0-9-]+$/);
   });
 });
 

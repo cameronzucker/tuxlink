@@ -6,10 +6,18 @@
  * Spec: docs/superpowers/specs/2026-06-03-help-window-design.md §4.3.
  */
 
-export type HelpSectionId = 'getting-started' | 'using' | 'config' | 'reference';
+export type HelpSectionId =
+  | 'quickstart'
+  | 'winlink-fundamentals'
+  | 'radio-integration'
+  | 'digital-modes'
+  | 'using-tuxlink'
+  | 'operating-practices'
+  | 'reference'
+  | 'migration';
 
 export interface HelpTopic {
-  slug: string;         // "01-getting-started"
+  slug: string;         // "01-what-is-tuxlink"
   number: string;       // "01"
   displayName: string;  // parsed from the first # heading
   body: string;         // raw markdown
@@ -23,27 +31,81 @@ export interface HelpSection {
 }
 
 // Section grouping is hand-authored — filename ordering is stable but the
-// Getting-started / Using / Config / Reference grouping is editorial.
+// 8-section IA grouping is editorial (spec §3.1).
 export const SECTIONS: readonly HelpSection[] = [
   {
-    id: 'getting-started',
-    displayName: 'Getting started',
-    topicSlugs: ['01-getting-started', '02-connections'],
+    id: 'quickstart',
+    displayName: 'Quickstart',
+    topicSlugs: ['01-what-is-tuxlink', '02-first-launch-wizard', '03-sending-your-first'],
   },
   {
-    id: 'using',
-    displayName: 'Using Tuxlink',
-    topicSlugs: ['03-mailbox', '04-composing', '05-forms', '06-search'],
+    id: 'winlink-fundamentals',
+    displayName: 'Winlink fundamentals',
+    topicSlugs: [
+      '04-the-winlink-ecosystem',
+      '05-cms-and-rms',
+      '06-the-b2f-protocol',
+      '07-mailbox-model',
+      '08-picking-a-transport',
+    ],
   },
   {
-    id: 'config',
-    displayName: 'Configuration',
-    topicSlugs: ['07-settings', '08-color-schemes', '09-keyboard'],
+    id: 'radio-integration',
+    displayName: 'Radio integration',
+    topicSlugs: [
+      '09-ptt-overview',
+      '10-digirig',
+      '11-signalink-and-others',
+      '12-cat-and-rigctld',
+      '13-radio-specific-notes',
+    ],
+  },
+  {
+    id: 'digital-modes',
+    displayName: 'Digital modes',
+    topicSlugs: [
+      '14-packet-on-ax25',
+      '15-ardop-deep-dive',
+      '16-vara-hf-deep-dive',
+      '17-choosing-the-right-mode',
+    ],
+  },
+  {
+    id: 'using-tuxlink',
+    displayName: 'Using tuxlink',
+    topicSlugs: [
+      '18-the-mailbox',
+      '19-composing',
+      '20-html-forms',
+      '21-search',
+      '22-user-folders',
+      '23-catalog-requests',
+    ],
+  },
+  {
+    id: 'operating-practices',
+    displayName: 'Operating practices',
+    topicSlugs: [
+      '24-emcomm-and-ics',
+      '25-net-check-ins',
+      '26-position-and-privacy',
+    ],
   },
   {
     id: 'reference',
     displayName: 'Reference',
-    topicSlugs: ['10-troubleshooting'],
+    topicSlugs: [
+      '27-settings',
+      '28-keyboard',
+      '29-troubleshooting',
+      '30-glossary',
+      '31-credits',
+    ],
+  },
+  {
+    id: 'migration',
+    displayName: 'Migration',
+    topicSlugs: ['32-from-express-or-pat'],
   },
 ];
 
