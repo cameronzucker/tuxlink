@@ -1085,7 +1085,7 @@ pub async fn send_webview_form(
     let catalog = forms::wle_templates::list(&bundle, custom_opt).map_err(|e| {
         UiError::Internal { detail: e.to_string() }
     })?;
-    let _template = catalog
+    let template = catalog
         .iter()
         .find(|t| t.id == form_id)
         .ok_or_else(|| UiError::Internal {
@@ -1096,10 +1096,19 @@ pub async fn send_webview_form(
     //    - xml_file_version "1.0" matches WLE's value.
     //    - rms_express_version identifies the originator client.
     //    - display_form / reply_template follow WLE's filename convention:
-    //      <id>_Viewer.html for the display template, <id>_SendReply.0 for
-    //      the reply template. Both are best-effort; a recipient running a
-    //      WLE viewer that doesn't have those filenames falls back to the
-    //      generic form viewer (the XML still renders).
+    //      Resolved against the authoring template's sibling folder via
+    //      `resolve_viewer_for` (2026-06-04 Codex adrev P1.3) — falls
+    //      back to `<id>_Viewer.html` only when the catalog walker
+    //      can't find a paired viewer. Before the resolver, the
+    //      hard-coded `<id>_Viewer.html` produced wrong display_form
+    //      values for half the bundle (e.g. authoring "Bulletin Initial"
+    //      → claimed display_form "Bulletin Initial_Viewer.html" when
+    //      the actual viewer is "Bulletin Viewer.html").
+    //      `reply_template` keeps the `<id>_SendReply.0` convention
+    //      because tuxlink doesn't currently generate per-form
+    //      reply templates; recipients fall back to the generic viewer.
+    let display_form = forms::wle_templates::resolve_viewer_for(&template.path)
+        .unwrap_or_else(|| format!("{form_id}_Viewer.html"));
     let now = chrono::Utc::now();
     let params = forms::types::FormParameters {
         xml_file_version: "1.0".to_string(),
@@ -1107,7 +1116,7 @@ pub async fn send_webview_form(
         submission_datetime: now.format("%Y%m%d%H%M%S").to_string(),
         senders_callsign,
         grid_square,
-        display_form: format!("{form_id}_Viewer.html"),
+        display_form,
         reply_template: format!("{form_id}_SendReply.0"),
     };
 
@@ -1307,14 +1316,23 @@ pub struct OpenViewerResult {
 ///    `DOMContentLoaded` and assigns `document.querySelectorAll(
 ///    '[name="X"]').value = ...` for each field, covering hidden inputs.
 ///
-/// The Viewer filename is resolved in two passes:
+/// The Viewer filename is resolved in three passes (2026-06-04 Codex
+/// adrev P1.3 — the prior two-pass resolution failed for the bulk of the
+/// bundled catalog because the `<form_id>_Viewer.html` convention only
+/// covers a minority of WLE templates):
 /// - For form_ids in the BUNDLED_FORMS catalog
 ///   (ICS-213, ICS-309, Bulletin, Position, Damage Assessment), use the
 ///   `FormDef::display_form` field — these have non-conventional names
 ///   like `Bulletin Viewer.html` or `GPS Position Report.html`.
-/// - Otherwise fall back to the `<form_id>_Viewer.html` convention. This
-///   matches the convention `send_webview_form` writes into outbound
-///   XML, so a tuxlink-authored received form has a discoverable viewer.
+/// - Walk the authoring template's sibling folder via
+///   [`forms::wle_templates::resolve_viewer_for`] for a paired viewer.
+///   Covers `Bulletin Initial.html` ↔ `Bulletin Viewer.html`,
+///   `Hawaii Siren Report.html` ↔ `Hawaii Siren Report Viewer.html`,
+///   `ICS213_Initial.html` ↔ `ICS213_Viewer.html`, etc.
+/// - Last-resort fallback to `<form_id>_Viewer.html` for tuxlink-authored
+///   forms (the convention `send_webview_form` writes into outbound XML
+///   when its own resolver fails — covers the round-trip case where
+///   the sender claims a viewer file the receiver doesn't have).
 ///
 /// Errors:
 /// - `unknown form: <id>` — neither the bundled catalog nor the live
@@ -1352,13 +1370,24 @@ pub async fn open_webview_viewer(
         .find(|t| t.id == form_id)
         .ok_or_else(|| format!("unknown form: {form_id}"))?;
 
-    // 2. Resolve the Viewer filename. Native bundled forms have a
-    //    canonical `FormDef::display_form` (e.g. `Bulletin Viewer.html`,
-    //    `GPS Position Report.html`); for everything else, fall back to
-    //    the `<form_id>_Viewer.html` convention `send_webview_form`
-    //    writes into outbound XML.
+    // 2. Resolve the Viewer filename. Priority order:
+    //    a. Native bundled forms (BUNDLED_FORMS, the 5 hard-coded
+    //       templates with `FormDef::display_form`): use the explicit
+    //       filename (e.g. `Bulletin Viewer.html`,
+    //       `GPS Position Report.html`).
+    //    b. Walk the authoring template's sibling folder for a paired
+    //       viewer via `resolve_viewer_for` (2026-06-04 Codex adrev P1.3).
+    //       Covers the WLE catalog's inconsistent naming conventions
+    //       (`Bulletin Initial.html` ↔ `Bulletin Viewer.html`,
+    //       `Hawaii Siren Report.html` ↔ `Hawaii Siren Report Viewer.html`,
+    //       `Field Situation Report Initial.html` ↔
+    //       `Field Situation Report viewer.html`, etc.).
+    //    c. Last-resort fallback to `<form_id>_Viewer.html` — the
+    //       convention `send_webview_form` writes into outbound XML
+    //       when no paired viewer is found.
     let viewer_filename = forms::catalog::find_form(&form_id)
         .map(|f| f.display_form.to_string())
+        .or_else(|| forms::wle_templates::resolve_viewer_for(&template.path))
         .unwrap_or_else(|| format!("{form_id}_Viewer.html"));
 
     // 3. The Viewer file lives next to the form template (same folder).
@@ -6459,18 +6488,70 @@ hw:CARD=Device,DEV=0
     // decisions: WLE filename conventions for display_form / reply_template,
     // attachment filename, body composition, and subject fallback.
 
-    /// `display_form` follows the WLE convention `<id>_Viewer.html`. This is
-    /// what catalog-form recipients use to find the viewer template for
-    /// rendering the structured form view.
+    /// `display_form` falls back to the `<id>_Viewer.html` convention when
+    /// `resolve_viewer_for` finds no paired viewer (e.g. when the operator
+    /// drops a custom form into `~/.local/share/tuxlink/forms/custom/`
+    /// without a companion `_Viewer.html`).
+    ///
+    /// 2026-06-04 Codex adrev P1.3: the resolver-driven path is the
+    /// happy path now; this test pins the fallback. The
+    /// `send_webview_form_display_form_uses_resolver_for_wle_bundle`
+    /// test below covers the resolver path with the realistic Bulletin /
+    /// Hawaii / underscored bundle conventions.
     #[test]
-    fn send_webview_form_display_form_follows_wle_convention() {
+    fn send_webview_form_display_form_falls_back_to_id_underscore_viewer() {
         let form_id = "ICS205";
         let display_form = format!("{form_id}_Viewer.html");
         assert_eq!(display_form, "ICS205_Viewer.html");
-        // The Bulletin form, the ARC family, and the custom-namespace forms
-        // all follow the same convention — no per-form variants.
+        // The fallback applies to any form_id without a sibling viewer
+        // file in the catalog walker's view.
         let form_id = "ARC213";
         assert_eq!(format!("{form_id}_Viewer.html"), "ARC213_Viewer.html");
+    }
+
+    /// 2026-06-04 Codex adrev P1.3: in the realistic WLE bundle, the
+    /// authoring template's sibling Viewer file does NOT follow the
+    /// `<id>_Viewer.html` convention for the bulk of templates. The
+    /// resolver walks the same folder and picks the actual paired
+    /// viewer regardless of which naming convention WLE used.
+    #[test]
+    fn send_webview_form_display_form_uses_resolver_for_wle_bundle() {
+        use crate::forms::wle_templates::resolve_viewer_for;
+        use tempfile::TempDir;
+
+        let td = TempDir::new().unwrap();
+        let folder = td.path().join("General Forms");
+        std::fs::create_dir_all(&folder).unwrap();
+
+        // Bulletin Initial.html ↔ Bulletin Viewer.html
+        let bulletin = folder.join("Bulletin Initial.html");
+        std::fs::write(&bulletin, "<html></html>").unwrap();
+        std::fs::write(folder.join("Bulletin Viewer.html"), "<html></html>").unwrap();
+        let resolved = resolve_viewer_for(&bulletin).expect("Bulletin viewer resolved");
+        assert_eq!(resolved, "Bulletin Viewer.html");
+
+        // ICS213_Initial.html ↔ ICS213_Viewer.html
+        let ics_folder = td.path().join("ICS Forms");
+        std::fs::create_dir_all(&ics_folder).unwrap();
+        let ics = ics_folder.join("ICS213_Initial.html");
+        std::fs::write(&ics, "<html></html>").unwrap();
+        std::fs::write(ics_folder.join("ICS213_Viewer.html"), "<html></html>").unwrap();
+        let resolved = resolve_viewer_for(&ics).expect("ICS213 viewer resolved");
+        assert_eq!(resolved, "ICS213_Viewer.html");
+
+        // Hawaii Siren Report.html ↔ Hawaii Siren Report Viewer.html
+        // (authoring template has no "Initial" suffix at all)
+        let hi_folder = td.path().join("HI State forms");
+        std::fs::create_dir_all(&hi_folder).unwrap();
+        let hi = hi_folder.join("Hawaii Siren Report.html");
+        std::fs::write(&hi, "<html></html>").unwrap();
+        std::fs::write(
+            hi_folder.join("Hawaii Siren Report Viewer.html"),
+            "<html></html>",
+        )
+        .unwrap();
+        let resolved = resolve_viewer_for(&hi).expect("Hawaii viewer resolved");
+        assert_eq!(resolved, "Hawaii Siren Report Viewer.html");
     }
 
     /// `reply_template` follows the WLE convention `<id>_SendReply.0`. The

@@ -354,6 +354,17 @@ fn substitute_template(raw: &str, port: u16, folder: &str) -> String {
 /// Placeholders that don't match any field value are replaced with an empty
 /// string, matching WLE's behavior for missing fields. Without this, the
 /// raw `{var Foo}` text would render in the viewer.
+///
+/// 2026-06-04 Codex adrev P2.2: Some bundled viewers put `{var X}` inside
+/// `<script>` blocks (e.g. `s = "{var Comments}"` in Hawaii Siren Report
+/// Viewer). HTML-escaping the substituted value leaves raw newlines /
+/// backslashes / unescaped quotes that corrupt the JS string. To avoid
+/// that, this function tracks `<script>` nesting and SKIPS substitution
+/// inside script blocks — the field values are bound by the DOM-injection
+/// path (`inject_field_value_script`) instead, which JS-escapes correctly.
+/// Substituting `{var X}` inside a `<script>` block to "" leaves
+/// syntactically-valid (if semantically empty) JS, which is safer than
+/// the corrupt-string alternative.
 fn substitute_var_placeholders(
     html: &str,
     field_values: &std::collections::HashMap<String, String>,
@@ -365,27 +376,147 @@ fn substitute_var_placeholders(
         .collect();
     let mut out = String::with_capacity(html.len());
     let mut rest = html;
-    while let Some(start) = rest.find("{var ") {
-        out.push_str(&rest[..start]);
-        let after_start = &rest[start + "{var ".len()..];
-        if let Some(end) = after_start.find('}') {
-            let name = after_start[..end].trim();
-            let value = lowered
-                .get(&name.to_lowercase())
-                .copied()
-                .unwrap_or("");
-            out.push_str(&html_escape(value));
-            rest = &after_start[end + 1..];
+    let mut in_script = false;
+    loop {
+        // Find the next salient event: a `{var ` placeholder, an opening
+        // `<script` (when outside a script), or a closing `</script>`
+        // (when inside one). Whichever has the smallest offset in `rest`
+        // wins; we copy everything up to it, advance past it, and repeat.
+        let next_var = rest.find("{var ");
+        let next_script_open = if !in_script {
+            // Match `<script` (case-insensitive, with optional attributes
+            // and the trailing `>` or whitespace). The cheapest reliable
+            // detection in pure Rust without bringing a parser in: search
+            // for the lowercased substring and verify the character before
+            // wasn't alphanumeric (so we don't match `<noscript` etc).
+            find_tag_open(rest, "script")
         } else {
-            // Unterminated placeholder; emit the raw `{var ` and continue.
-            // This is malformed-template tolerance; should never happen in
-            // a well-formed WLE viewer.
-            out.push_str("{var ");
-            rest = after_start;
+            None
+        };
+        let next_script_close = if in_script {
+            find_tag_close(rest, "script")
+        } else {
+            None
+        };
+
+        // Pick the earliest event among the three.
+        let event = [
+            next_var.map(|i| (i, Event::Var)),
+            next_script_open.map(|i| (i, Event::ScriptOpen)),
+            next_script_close.map(|i| (i, Event::ScriptClose)),
+        ]
+        .into_iter()
+        .flatten()
+        .min_by_key(|(i, _)| *i);
+
+        let Some((idx, kind)) = event else {
+            // No more events; flush the remainder and return.
+            out.push_str(rest);
+            return out;
+        };
+
+        match kind {
+            Event::Var => {
+                out.push_str(&rest[..idx]);
+                let after_start = &rest[idx + "{var ".len()..];
+                if let Some(end) = after_start.find('}') {
+                    let name = after_start[..end].trim();
+                    let value = lowered
+                        .get(&name.to_lowercase())
+                        .copied()
+                        .unwrap_or("");
+                    if in_script {
+                        // Skip substitution inside script blocks. Emit an
+                        // empty string in place of the placeholder so the
+                        // resulting JS is syntactically valid (e.g.
+                        // `s = "{var Comments}"` becomes `s = ""` rather
+                        // than `s = "raw\nfield\nvalue"` corrupting the
+                        // string literal). The DOM-injection path
+                        // (`inject_field_value_script`) re-binds the same
+                        // field value via querySelectorAll('[name="X"]'),
+                        // so any hidden input that the JS reads via
+                        // `document.getElementById('X').value` still gets
+                        // the right value at DOMContentLoaded.
+                    } else {
+                        out.push_str(&html_escape(value));
+                    }
+                    rest = &after_start[end + 1..];
+                } else {
+                    // Unterminated placeholder; emit the raw `{var ` and
+                    // continue. This is malformed-template tolerance.
+                    out.push_str("{var ");
+                    rest = after_start;
+                }
+            }
+            Event::ScriptOpen => {
+                // Copy through the opening tag (we don't transform tags
+                // themselves; just track state). Advance past the `>`
+                // that terminates the open tag.
+                let after_open = idx + "<script".len();
+                if let Some(rel_end) = rest[after_open..].find('>') {
+                    let absolute_end = after_open + rel_end + 1;
+                    out.push_str(&rest[..absolute_end]);
+                    rest = &rest[absolute_end..];
+                    in_script = true;
+                } else {
+                    // Malformed: `<script` with no closing `>`. Copy the
+                    // rest and bail.
+                    out.push_str(rest);
+                    return out;
+                }
+            }
+            Event::ScriptClose => {
+                // Copy through the closing tag.
+                let close_len = "</script>".len();
+                let absolute_end = idx + close_len;
+                out.push_str(&rest[..absolute_end]);
+                rest = &rest[absolute_end..];
+                in_script = false;
+            }
         }
     }
-    out.push_str(rest);
-    out
+}
+
+#[derive(Debug, Clone, Copy)]
+enum Event {
+    Var,
+    ScriptOpen,
+    ScriptClose,
+}
+
+/// Find the next `<tag` opener (case-insensitive) in `s`. Returns the
+/// byte offset of the `<`. Verifies the next char after the tag name
+/// is non-alphanumeric so `<script` doesn't match `<scriptingFoo`
+/// (rare in real HTML but defensive).
+fn find_tag_open(s: &str, tag: &str) -> Option<usize> {
+    let lower = s.to_ascii_lowercase();
+    let needle = format!("<{tag}");
+    let mut search_from = 0;
+    while let Some(pos) = lower[search_from..].find(&needle) {
+        let abs = search_from + pos;
+        let after = abs + needle.len();
+        // The byte right after `<script` must be `>`, whitespace, or `/`
+        // (self-closing) to qualify as the real script tag.
+        match lower.as_bytes().get(after) {
+            Some(&b) if b == b'>' || b == b'/' || b == b' ' || b == b'\t' || b == b'\n' || b == b'\r' => {
+                return Some(abs);
+            }
+            None => return None,
+            _ => {
+                // Not a real tag; advance past this match.
+                search_from = abs + 1;
+            }
+        }
+    }
+    None
+}
+
+/// Find the next `</tag>` (case-insensitive) in `s`. Returns the byte
+/// offset of the `<`.
+fn find_tag_close(s: &str, tag: &str) -> Option<usize> {
+    let lower = s.to_ascii_lowercase();
+    let needle = format!("</{tag}>");
+    lower.find(&needle)
 }
 
 /// HTML-escape a string for insertion into a text context (and as a basic
@@ -1394,6 +1525,120 @@ mod tests {
         let out = substitute_var_placeholders("<p>{var Name}</p>", &fv);
         assert!(out.contains("&lt;script&gt;"));
         assert!(!out.contains("<script>"));
+    }
+
+    /// 2026-06-04 Codex adrev P2.2: `{var X}` placeholders inside
+    /// `<script>` blocks are NOT substituted (they collapse to an empty
+    /// string). HTML-escaping the substituted value would leave raw
+    /// newlines / unescaped quotes that corrupt the JS string literal.
+    /// The DOM-injection path (`inject_field_value_script`) re-binds
+    /// the same values via `querySelectorAll('[name="X"]').value = ...`
+    /// at DOMContentLoaded so hidden-input round-trips still work.
+    #[test]
+    fn substitute_var_placeholders_skips_inside_script_blocks() {
+        let mut fv = std::collections::HashMap::new();
+        // A multi-line field value — naively HTML-escaped, it would
+        // leave raw newlines inside the JS string literal and break the
+        // surrounding `<script>` block.
+        fv.insert("comments".to_string(), "line one\nline two".to_string());
+
+        let html = r#"<html><body>
+<script type="text/javascript">
+function DoCheck() {
+s = "{var Comments}";
+}
+</script>
+<p>Inline: {var Comments}</p>
+</body></html>"#;
+
+        let out = substitute_var_placeholders(html, &fv);
+
+        // The `s = "{var Comments}"` inside the script block must
+        // collapse to `s = ""` — NOT `s = "line one\nline two"` (raw
+        // newline) which would be invalid JS.
+        assert!(
+            out.contains(r#"s = """#),
+            "script-context substitution must yield empty string, got: {out}"
+        );
+        // The script literal must NOT contain the raw value.
+        let script_start = out.find("<script").unwrap();
+        let script_end = out.find("</script>").unwrap();
+        let script_block = &out[script_start..script_end];
+        assert!(
+            !script_block.contains("line one"),
+            "raw field value leaked into script block: {script_block}"
+        );
+
+        // The inline `<p>{var Comments}</p>` (outside the script) is
+        // still substituted (HTML-escaped, newlines preserved verbatim).
+        assert!(
+            out.contains("line one\nline two") || out.contains("line one") && out.contains("line two"),
+            "inline substitution outside script must still happen, got: {out}"
+        );
+    }
+
+    /// Substitutions OUTSIDE script blocks are unchanged by the
+    /// script-context skip. Re-checks the existing behavior survives
+    /// the P2.2 fix.
+    #[test]
+    fn substitute_var_placeholders_outside_script_unchanged() {
+        let mut fv = std::collections::HashMap::new();
+        fv.insert("subjectline".to_string(), "Hello".to_string());
+        let html = r#"<html><head><title>{var Subjectline}</title></head>
+<body>
+<p>Subject: {var Subjectline}</p>
+<script>// trailing script with no var placeholder</script>
+<p>Footer: {var Subjectline}</p>
+</body></html>"#;
+        let out = substitute_var_placeholders(html, &fv);
+        // All three NON-script occurrences substituted to "Hello".
+        // (Two in the body + one in the head before the script.)
+        let occurrences = out.matches("Hello").count();
+        assert_eq!(occurrences, 3, "expected 3 substitutions outside script, got: {out}");
+    }
+
+    /// Multiple `<script>` blocks in the same document are each tracked
+    /// correctly — placeholders between them (in body text) still get
+    /// substituted.
+    #[test]
+    fn substitute_var_placeholders_multiple_script_blocks() {
+        let mut fv = std::collections::HashMap::new();
+        fv.insert("name".to_string(), "Alice".to_string());
+
+        let html = r#"<html><body>
+<script>var x = "{var Name}";</script>
+<p>Hello, {var Name}!</p>
+<script>var y = "{var Name}";</script>
+<p>Goodbye, {var Name}.</p>
+</body></html>"#;
+
+        let out = substitute_var_placeholders(html, &fv);
+
+        // Script-block placeholders → empty:
+        assert!(out.contains(r#"var x = """#), "first script block not skipped: {out}");
+        assert!(out.contains(r#"var y = """#), "second script block not skipped: {out}");
+        // Body-text placeholders → "Alice":
+        assert!(out.contains("Hello, Alice!"), "first inline substitution missing: {out}");
+        assert!(out.contains("Goodbye, Alice."), "second inline substitution missing: {out}");
+    }
+
+    /// `<script>` tags with attributes (e.g. `<script type="text/javascript">`,
+    /// `<script src="x.js">`) are still detected.
+    #[test]
+    fn substitute_var_placeholders_script_with_attributes() {
+        let mut fv = std::collections::HashMap::new();
+        fv.insert("comments".to_string(), "raw\nnewline".to_string());
+
+        let html = r#"<script type="text/javascript" defer>
+s = "{var Comments}";
+</script>"#;
+
+        let out = substitute_var_placeholders(html, &fv);
+        assert!(
+            out.contains(r#"s = """#),
+            "attributed script block not skipped: {out}"
+        );
+        assert!(!out.contains("raw\nnewline"), "raw value leaked into script: {out}");
     }
 
     #[test]

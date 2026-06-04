@@ -332,7 +332,7 @@
   border: 1px solid var(--tux-border);
   border-radius: 8px;
   padding: 24px;
-  max-width: 320px;
+  max-width: 380px;
   width: 90%;
 }
 
@@ -341,6 +341,17 @@
   font-size: 14px;
   color: var(--tux-fg);
   text-align: center;
+}
+
+/* P1.1 (2026-06-04 Codex adrev): a secondary explainer paragraph used by
+   the close-prompt dialog when the user is in webview-form mode and we
+   need to explain why Save Draft isn't available. */
+.compose-dialog__sub {
+  margin: 0 0 16px;
+  font-size: 12px;
+  color: var(--tux-fg-muted, var(--tux-fg));
+  text-align: left;
+  line-height: 1.4;
 }
 
 .compose-dialog__actions {

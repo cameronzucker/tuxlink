@@ -104,6 +104,64 @@ export function parsedBodyToFieldValues(payload: ParsedBody): Record<string, str
   return fieldValues;
 }
 
+/**
+ * Decide what the unsaved-changes close prompt should offer for a given
+ * Compose form mode. Returns the dialog shape — primary message + which
+ * action buttons appear — so the rendering branch is testable without
+ * mounting the full Compose component (which requires a Tauri runtime).
+ *
+ * P1.1 (2026-06-04 Codex adrev): in `webview-form` mode the form
+ * contents live inside the embedded child webview and Compose has no
+ * IPC introspection into them. Offering "Save Draft" would persist only
+ * the formId metadata while silently losing every field value the
+ * operator typed. The dialog drops the Save button in that mode and
+ * surfaces a sub-explainer that tells the operator how to recover
+ * (Cancel back to the form → press its Send button).
+ */
+export type ClosePromptShape = {
+  primary: string;
+  sub?: string;
+  buttons: readonly ('save' | 'discard' | 'cancel')[];
+};
+export function closePromptShape(
+  formModeKind: 'plain' | 'pick' | 'form' | 'webview-form',
+  action: 'close' | 'switch-to-form' | null,
+): ClosePromptShape {
+  if (formModeKind === 'webview-form') {
+    return {
+      primary: "Form contents can't be saved as a draft. Submit it now, or discard.",
+      sub:
+        "The form's field values live inside the embedded form window, " +
+        "where Compose can't reach them. Cancel to return to the form and " +
+        'press its Send button — otherwise the field contents are lost.',
+      buttons: ['discard', 'cancel'] as const,
+    };
+  }
+  return {
+    primary:
+      action === 'switch-to-form'
+        ? 'Save changes before switching to a form?'
+        : 'This draft has unsaved changes.',
+    buttons: ['save', 'discard', 'cancel'] as const,
+  };
+}
+
+/**
+ * Decide whether the manual "Save Draft" affordance (toolbar button +
+ * Ctrl+S keyboard shortcut) is available for a given form mode.
+ *
+ * P1.1 (2026-06-04 Codex adrev): false in `webview-form` mode because
+ * Save Draft would only persist formId metadata while silently dropping
+ * the operator's typed field values. Autosave still runs in webview-form
+ * mode but only persists the formId so a restored draft picks up the
+ * same picker mode.
+ */
+export function isSaveDraftAvailable(
+  formModeKind: 'plain' | 'pick' | 'form' | 'webview-form',
+): boolean {
+  return formModeKind !== 'webview-form';
+}
+
 interface ClosePromptState {
   open: boolean;
   action: CloseAction;
@@ -272,6 +330,12 @@ export function Compose({ draftId }: ComposeProps) {
     const handler = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key === 's') {
         e.preventDefault();
+        // P1.1 (2026-06-04 Codex adrev): Save Draft in webview-form mode
+        // can't capture the form's in-flight contents (they live inside
+        // the embedded webview). No-op the Ctrl+S so we don't pretend to
+        // save something we can't. Autosave already persists the formId
+        // for mode restoration.
+        if (!isSaveDraftAvailable(formMode.kind)) return;
         handleSaveDraft();
       }
       if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
@@ -282,7 +346,7 @@ export function Compose({ draftId }: ComposeProps) {
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [to, cc, subject, body, requestAck, draftId]);
+  }, [to, cc, subject, body, requestAck, draftId, formMode.kind]);
 
   // ============================================================================
   // Save draft
@@ -843,14 +907,23 @@ export function Compose({ draftId }: ComposeProps) {
             {sendState === 'sending' ? 'Sending…' : 'Post to Outbox'}
           </button>
         )}
-        <button
-          className="compose-btn compose-btn--secondary"
-          onClick={handleSaveDraft}
-          title="Save draft (Ctrl+S)"
-          data-testid="compose-save-draft-btn"
-        >
-          Save Draft
-        </button>
+        {/* P1.1 (2026-06-04 Codex adrev): Save Draft only makes sense when
+            Compose owns the form state. In webview-form mode the form
+            contents live inside the embedded child webview, and Compose
+            has no IPC introspection into them — Save Draft would only
+            persist the formId metadata while silently losing every
+            field value the operator typed. Hide the button entirely
+            rather than offer a confusing "save" that drops content. */}
+        {isSaveDraftAvailable(formMode.kind) && (
+          <button
+            className="compose-btn compose-btn--secondary"
+            onClick={handleSaveDraft}
+            title="Save draft (Ctrl+S)"
+            data-testid="compose-save-draft-btn"
+          >
+            Save Draft
+          </button>
+        )}
         {formMode.kind === 'plain' && (
           <button
             className="compose-btn compose-btn--secondary"
@@ -864,47 +937,68 @@ export function Compose({ draftId }: ComposeProps) {
 
       {/* ------------------------------------------------------------------ */}
       {/* Unsaved-changes close prompt (spec §5.4)                           */}
+      {/*                                                                    */}
+      {/* P1.1 (2026-06-04 Codex adrev): In webview-form mode the form       */}
+      {/* contents live inside the embedded child webview — Compose has no   */}
+      {/* IPC introspection into them. Offering "Save Draft" here would      */}
+      {/* persist only the formId metadata while silently losing every       */}
+      {/* field value the operator typed. Show a clearer message and offer   */}
+      {/* only Discard + Cancel; the operator can return to the form and     */}
+      {/* press its own Send button to submit.                               */}
       {/* ------------------------------------------------------------------ */}
-      {closePrompt.open && (
-        <div
-          className="compose-overlay"
-          role="dialog"
-          aria-modal="true"
-          aria-label="Unsaved changes"
-          data-testid="compose-close-prompt"
-        >
-          <div className="compose-dialog">
-            <p className="compose-dialog__msg">
-              {closePrompt.action === 'switch-to-form'
-                ? 'Save changes before switching to a form?'
-                : 'This draft has unsaved changes.'}
-            </p>
-            <div className="compose-dialog__actions">
-              <button
-                className="compose-btn compose-btn--primary"
-                onClick={handleSaveAndProceed}
-                data-testid="compose-close-save"
-              >
-                Save Draft
-              </button>
-              <button
-                className="compose-btn compose-btn--danger"
-                onClick={handleDiscardAndProceed}
-                data-testid="compose-close-discard"
-              >
-                Discard
-              </button>
-              <button
-                className="compose-btn compose-btn--ghost"
-                onClick={handleCancelClose}
-                data-testid="compose-close-cancel"
-              >
-                Cancel
-              </button>
+      {closePrompt.open && (() => {
+        const shape = closePromptShape(formMode.kind, closePrompt.action);
+        return (
+          <div
+            className="compose-overlay"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Unsaved changes"
+            data-testid="compose-close-prompt"
+          >
+            <div className="compose-dialog">
+              <p className="compose-dialog__msg">{shape.primary}</p>
+              {shape.sub && (
+                <p
+                  className="compose-dialog__sub"
+                  data-testid="compose-close-sub"
+                >
+                  {shape.sub}
+                </p>
+              )}
+              <div className="compose-dialog__actions">
+                {shape.buttons.includes('save') && (
+                  <button
+                    className="compose-btn compose-btn--primary"
+                    onClick={handleSaveAndProceed}
+                    data-testid="compose-close-save"
+                  >
+                    Save Draft
+                  </button>
+                )}
+                {shape.buttons.includes('discard') && (
+                  <button
+                    className="compose-btn compose-btn--danger"
+                    onClick={handleDiscardAndProceed}
+                    data-testid="compose-close-discard"
+                  >
+                    Discard
+                  </button>
+                )}
+                {shape.buttons.includes('cancel') && (
+                  <button
+                    className="compose-btn compose-btn--ghost"
+                    onClick={handleCancelClose}
+                    data-testid="compose-close-cancel"
+                  >
+                    Cancel
+                  </button>
+                )}
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
     </div>
   );
 }
