@@ -36,12 +36,18 @@ export const SESSION_TYPES: SessionTypeEntry[] = [
     id: 'radio-only',
     label: 'Radio-only',
     blurb: 'RF-only Hybrid network (pool R).',
-    built: false,
+    // tuxlink-0ye6 Phase 2: radio-only flipped to built:true.
+    // ardop-hf + vara-hf + vara-fm are the RF-bearing protocols; their
+    // panels are intent-agnostic (same VaraRadioPanel / ArdopRadioPanel
+    // surface, just with a radio-only context). Telnet + Packet are not
+    // RF-bearing and stay unbuilt for this intent.
+    built: true,
     protocols: [
       { ...TEL, built: false },
       { ...PKT, built: false },
-      { ...VHF, built: false },
-      { ...VFM, built: false },
+      { ...ARD, built: true },
+      { ...VHF, built: true },
+      { ...VFM, built: true },
     ],
   },
   {
