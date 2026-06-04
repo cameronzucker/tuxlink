@@ -4,6 +4,9 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::{mpsc, Notify};
 
+use crate::winlink::listener::transport::TransportKind;
+use crate::winlink::session::SessionIntent;
+
 /// Hard-close handle for a cmd-socket clone (tuxlink-0ye6 Task 4.1 / Codex
 /// Round 4 P1 #3). Paired with the cooperative write half installed via
 /// [`ModemSession::install_abort_writer`] so a wedged peer (one that doesn't
@@ -75,7 +78,17 @@ pub const ARBITER_YIELD_TIMEOUT: Duration = Duration::from_secs(3);
 /// Codex Round 2 P1 #4 that lock MUST be dropped before any async await,
 /// so each session's `take_transport_for_outbound` snapshots+records
 /// under the lock then awaits the yield channel with the lock released.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// **Serde shape (Codex Round 4 P2 — tuxlink-0ye6 Task 3.0):** the parent
+/// `ModemStatus` / `VaraStatus` structs carry `#[serde(rename_all =
+/// "camelCase")]`, but that only renames struct FIELDS — enum variants
+/// need their own `rename_all` derive. Without this, frontend would
+/// receive `"ListenerArmed"` (PascalCase) while expecting `"listenerArmed"`
+/// (camelCase) for the `transportOwner` field. Variants serialize as:
+/// `none`, `listenerArmed`, `listenerInbound`, `outboundPending`,
+/// `outbound`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub enum TransportOwner {
     /// Session closed — no transport handle is installed. Outbound
     /// requests reject with "session not open".
@@ -98,6 +111,28 @@ pub enum TransportOwner {
     Outbound,
 }
 
+/// Coarse classification of an in-flight ARQ exchange (tuxlink-0ye6
+/// Task 3.0 / Codex Round 2 P1 #5). Distinct from [`ModemState`] /
+/// [`VaraState`] (which model the transport posture) — `ExchangeState`
+/// describes what *kind* of exchange is currently running over an open
+/// transport. `None` on the parent DTO means "no exchange in flight."
+///
+/// Serialized kebab-case per the Round 2 plan: `"dialing"` / `"outbound"`
+/// / `"inbound"` on the wire.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ExchangeState {
+    /// `connect_arq` in flight — the outbound dial is bringing up the
+    /// ARQ link but B2F has not started yet.
+    Dialing,
+    /// CONNECTED; B2F handshake or message drain is running (outbound
+    /// dial side).
+    Outbound,
+    /// Listener accepted an inbound peer; B2F handshake or message
+    /// drain is running (peer-initiated side).
+    Inbound,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "kebab-case")]
 pub enum ModemState {
@@ -110,6 +145,20 @@ pub enum ModemState {
     ConnectedIss,
     Disconnecting,
     Error,
+    /// cmd-port unresponsive or ardopcf process exit detected by the
+    /// per-session heartbeat probe (Codex Round 3 P1 #4 / spec §2.6,
+    /// added with tuxlink-0ye6 Task 3.0). Operator's only recovery is
+    /// Close Session → reopen; the backend tears down the dead handle
+    /// on Close. The frontend `useRadioSessionLifecycle` hook maps this
+    /// state to its `'crash-recovery'` UI surface, distinct from
+    /// `Error` (per-action failure).
+    ///
+    /// Heartbeat infrastructure that drives this transition is deferred
+    /// to a follow-up task (the probe needs Tauri commands
+    /// `vara_open_session` / `ardop_open_session` that don't exist yet
+    /// — Phase 3.2 / 3.5). This variant ships now so that follow-up
+    /// task is a pure additive wire-in.
+    SocketLost,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -141,6 +190,56 @@ pub struct ModemStatus {
     /// Signal-section "Quality" big-number indicator (spec §5.3) reads
     /// this field via the `modem:status` event.
     pub quality: Option<u8>,
+    // ── Lifecycle fields (tuxlink-0ye6 Task 3.0 / Codex Round 2 P1 #5 +
+    // Round 3 P1 #3 + Round 4 P1 #1) ──────────────────────────────────
+    //
+    // The shared `useRadioSessionLifecycle` hook (Phase 5 / Task 5.2)
+    // derives the open-session UI state from these fields rather than
+    // holding it in React local state. Without them the frontend cannot
+    // detect listener-armed / exchange-in-flight / active-mode without a
+    // separate command surface per concern.
+    //
+    /// True iff a listener consumer task is currently armed on this
+    /// transport. Reflects the operator's "session-open" affordance plus
+    /// the listener-arm side effect for intents that auto-arm
+    /// (`SessionIntent::auto_arms_listener` — `P2p` + `RadioOnly`).
+    ///
+    /// Stub today: returns `false` until Phase 3.6 wires this to the real
+    /// listener-consumer state. The DTO field ships now so the wire-in is
+    /// purely additive (no DTO shape change downstream).
+    pub listener_armed: bool,
+    /// In-flight ARQ exchange classification. `None` means no exchange is
+    /// running over the transport (the transport may still be open + the
+    /// listener may still be armed; this field tracks the exchange layer
+    /// specifically). See [`ExchangeState`].
+    ///
+    /// Stub today: returns `None` until Phase 3.5 (outbound `b2f_exchange`)
+    /// + Phase 3.4 (listener consumer task) wire this from the arbiter +
+    /// exchange-runner state.
+    pub exchange: Option<ExchangeState>,
+    /// Coarse ownership of the live transport — the arbiter's view
+    /// (tuxlink-0ye6 Task 4.3). Real value, sourced from
+    /// [`ModemSession::transport_owner`]. Frontend uses this to disable
+    /// outbound dial while the listener holds the transport for an
+    /// inbound exchange, and to render the "modem busy" pill.
+    pub transport_owner: TransportOwner,
+    /// The intent of the currently-open session, if any (Codex Round 3
+    /// P1 #3 / Round 4 P1 #1). `None` when no session is open. Used by
+    /// the frontend sidebar-navigation guard (spec §2.5) to detect mode
+    /// drift when the operator clicks a different sidebar entry while a
+    /// session is still open under the original intent.
+    ///
+    /// Stub today: returns `None` until Phase 3.2 + 3.5 wire this to
+    /// the session-open command.
+    pub active_intent: Option<SessionIntent>,
+    /// The transport-kind of the currently-open session, if any. Pairs
+    /// with [`Self::active_intent`] for the navigation-drift guard:
+    /// VARA HF and VARA FM are distinct sidebar entries that the
+    /// backend gates separately, so the frontend needs both intent +
+    /// transport-kind to detect a navigation drift.
+    ///
+    /// Stub today: returns `None` until Phase 3.2 + 3.5 wire this.
+    pub active_transport_kind: Option<TransportKind>,
 }
 
 impl ModemStatus {
@@ -160,6 +259,11 @@ impl ModemStatus {
             arq_flags: ArqFlags { busy: false, rx: false, tx: false },
             last_error: None,
             quality: None,
+            listener_armed: false,
+            exchange: None,
+            transport_owner: TransportOwner::None,
+            active_intent: None,
+            active_transport_kind: None,
         }
     }
 }
@@ -317,7 +421,22 @@ impl ModemSession {
     }
 
     pub fn status_snapshot(&self) -> ModemStatus {
-        self.inner.lock().unwrap().status.clone()
+        let inner = self.inner.lock().unwrap();
+        let mut snap = inner.status.clone();
+        // Overlay live lifecycle fields (tuxlink-0ye6 Task 3.0). The
+        // cached `inner.status` may have stale lifecycle values from a
+        // prior `set_status` overwrite; the session's mutex-protected
+        // `transport_owner` is the authoritative source. The remaining
+        // four fields (listener_armed / exchange / active_intent /
+        // active_transport_kind) read through the stub accessors today —
+        // Phase 3.2 / 3.4 / 3.5 wires them to real session state.
+        snap.transport_owner = inner.transport_owner;
+        drop(inner); // release the lock before calling the stubs
+        snap.listener_armed = self.listener_armed();
+        snap.exchange = self.current_exchange();
+        snap.active_intent = self.active_intent();
+        snap.active_transport_kind = self.active_transport_kind();
+        snap
     }
 
     pub fn set_status(&self, s: ModemStatus) {
@@ -336,15 +455,28 @@ impl ModemSession {
     /// The transport's `drain_status_events` MUST be non-blocking — see
     /// [`crate::winlink::modem::ModemTransport::drain_status_events`].
     pub fn tick_and_snapshot(&self) -> ModemStatus {
-        let mut inner = self.inner.lock().unwrap();
-        // Clone the snapshot before mutating so that a panic inside
-        // `drain_status_events` leaves the persisted status untouched
-        // (poison-aware: the next acquirer will see the pre-drain state).
-        let mut snap = inner.status.clone();
-        if let Some(transport) = inner.transport.as_mut() {
-            transport.drain_status_events(&mut snap);
-        }
-        inner.status = snap.clone();
+        // Phase 1: drain transport events into the cached snapshot
+        // under the lock, persist it back. Then drop the lock to read
+        // the live lifecycle fields via the stub accessors (they take
+        // the same mutex — calling them inside the guard would deadlock).
+        let (mut snap, transport_owner) = {
+            let mut inner = self.inner.lock().unwrap();
+            // Clone the snapshot before mutating so that a panic inside
+            // `drain_status_events` leaves the persisted status untouched
+            // (poison-aware: the next acquirer will see the pre-drain state).
+            let mut working = inner.status.clone();
+            if let Some(transport) = inner.transport.as_mut() {
+                transport.drain_status_events(&mut working);
+            }
+            inner.status = working.clone();
+            (working, inner.transport_owner)
+        };
+        // Phase 2: overlay live lifecycle fields (tuxlink-0ye6 Task 3.0).
+        snap.transport_owner = transport_owner;
+        snap.listener_armed = self.listener_armed();
+        snap.exchange = self.current_exchange();
+        snap.active_intent = self.active_intent();
+        snap.active_transport_kind = self.active_transport_kind();
         snap
     }
 
@@ -411,6 +543,48 @@ impl ModemSession {
             .lock()
             .map(|g| g.transport_owner)
             .unwrap_or(TransportOwner::None)
+    }
+
+    // ── Lifecycle stub accessors (tuxlink-0ye6 Task 3.0) ────────────────
+    //
+    // The status DTO (`ModemStatus`) exposes `listener_armed`,
+    // `exchange`, `active_intent`, and `active_transport_kind`. The
+    // real production values for these will be wired in by Phase 3.2
+    // (open_session / close_session commands), 3.4 (listener consumer
+    // task), and 3.5 (`b2f_exchange` outbound command). Until then the
+    // DTO ships with stable stub returns so the wire-in is a pure
+    // additive change downstream.
+
+    /// Listener-armed state. STUB: returns `false`.
+    // TODO: wire to listener state once Phase 3 commands land
+    // (tuxlink-0ye6 Task 3.4 / 3.6 — the listener consumer task is the
+    // authoritative source).
+    pub fn listener_armed(&self) -> bool {
+        false
+    }
+
+    /// Current in-flight exchange classification. STUB: returns `None`.
+    // TODO: wire to listener state once Phase 3 commands land
+    // (tuxlink-0ye6 Task 3.5 outbound + 3.4 inbound — the
+    // exchange-runner sets the classification at handshake boundary).
+    pub fn current_exchange(&self) -> Option<ExchangeState> {
+        None
+    }
+
+    /// Intent of the currently-open session. STUB: returns `None`.
+    // TODO: wire to listener state once Phase 3 commands land
+    // (tuxlink-0ye6 Task 3.2 — `ardop_open_session(intent)` captures
+    // the operator-selected intent into session state).
+    pub fn active_intent(&self) -> Option<SessionIntent> {
+        None
+    }
+
+    /// Transport-kind of the currently-open session. STUB: returns `None`.
+    // TODO: wire to listener state once Phase 3 commands land
+    // (tuxlink-0ye6 Task 3.2 — `ardop_open_session` captures the
+    // transport-kind into session state; pairs with active_intent).
+    pub fn active_transport_kind(&self) -> Option<TransportKind> {
+        None
     }
 
     /// Test-only helper: drive the owner state directly. Used by unit
@@ -837,6 +1011,11 @@ mod tests {
             arq_flags: ArqFlags { busy: true, rx: true, tx: false },
             last_error: None,
             quality: Some(72),
+            listener_armed: false,
+            exchange: None,
+            transport_owner: TransportOwner::None,
+            active_intent: None,
+            active_transport_kind: None,
         };
         let json = serde_json::to_string(&s).unwrap();
         let back: ModemStatus = serde_json::from_str(&json).unwrap();
@@ -1362,5 +1541,196 @@ mod tests {
         );
 
         let _ = outbound.await;
+    }
+
+    // ── tuxlink-0ye6 Task 3.0 — DTO widening + ExchangeState + SocketLost ─
+    //
+    // Codex Round 2 P1 #5 + Round 3 P1 #3 + Round 3 P1 #4 + Round 4 P1 #1
+    // + Round 4 P2.
+
+    #[test]
+    fn transport_owner_serializes_camel_case() {
+        // Codex Round 4 P2: enum variants need their own rename_all derive
+        // — the parent struct's `camelCase` only renames fields. Without
+        // the derive on TransportOwner, the wire form would be PascalCase
+        // ("ListenerArmed") while frontend expects camelCase.
+        assert_eq!(
+            serde_json::to_string(&TransportOwner::None).unwrap(),
+            "\"none\""
+        );
+        assert_eq!(
+            serde_json::to_string(&TransportOwner::ListenerArmed).unwrap(),
+            "\"listenerArmed\""
+        );
+        assert_eq!(
+            serde_json::to_string(&TransportOwner::ListenerInbound).unwrap(),
+            "\"listenerInbound\""
+        );
+        assert_eq!(
+            serde_json::to_string(&TransportOwner::OutboundPending).unwrap(),
+            "\"outboundPending\""
+        );
+        assert_eq!(
+            serde_json::to_string(&TransportOwner::Outbound).unwrap(),
+            "\"outbound\""
+        );
+    }
+
+    #[test]
+    fn transport_owner_round_trips() {
+        for owner in [
+            TransportOwner::None,
+            TransportOwner::ListenerArmed,
+            TransportOwner::ListenerInbound,
+            TransportOwner::OutboundPending,
+            TransportOwner::Outbound,
+        ] {
+            let json = serde_json::to_string(&owner).unwrap();
+            let back: TransportOwner = serde_json::from_str(&json).unwrap();
+            assert_eq!(back, owner, "round-trip failed for {owner:?}");
+        }
+    }
+
+    #[test]
+    fn exchange_state_serializes_kebab_case() {
+        // ExchangeState uses `rename_all = "kebab-case"` per the Round 2
+        // plan; the wire form is `"dialing"` / `"outbound"` / `"inbound"`.
+        assert_eq!(
+            serde_json::to_string(&ExchangeState::Dialing).unwrap(),
+            "\"dialing\""
+        );
+        assert_eq!(
+            serde_json::to_string(&ExchangeState::Outbound).unwrap(),
+            "\"outbound\""
+        );
+        assert_eq!(
+            serde_json::to_string(&ExchangeState::Inbound).unwrap(),
+            "\"inbound\""
+        );
+    }
+
+    #[test]
+    fn exchange_state_round_trips() {
+        for state in [
+            ExchangeState::Dialing,
+            ExchangeState::Outbound,
+            ExchangeState::Inbound,
+        ] {
+            let json = serde_json::to_string(&state).unwrap();
+            let back: ExchangeState = serde_json::from_str(&json).unwrap();
+            assert_eq!(back, state);
+        }
+    }
+
+    #[test]
+    fn modem_state_socket_lost_serializes() {
+        // Spec §2.6 / §5: cmd-port unresponsive / ardopcf process exit
+        // transitions to socket-lost; recovery is Close Session → reopen.
+        // Wire form is kebab-case ("socket-lost") matching the existing
+        // ModemState serde discipline.
+        let json = serde_json::to_string(&ModemState::SocketLost).unwrap();
+        assert_eq!(json, "\"socket-lost\"");
+        let back: ModemState = serde_json::from_str("\"socket-lost\"").unwrap();
+        assert_eq!(back, ModemState::SocketLost);
+    }
+
+    #[test]
+    fn modem_status_dto_includes_lifecycle_fields() {
+        // Compile-time check that the new fields exist on the DTO with
+        // the expected types. A failure here means the DTO shape drifted
+        // away from the spec (Codex Round 2 P1 #5 + Round 3 P1 #3).
+        let s = ModemStatus::stopped();
+        let _: bool = s.listener_armed;
+        let _: Option<ExchangeState> = s.exchange;
+        let _: TransportOwner = s.transport_owner;
+        let _: Option<SessionIntent> = s.active_intent;
+        let _: Option<TransportKind> = s.active_transport_kind;
+    }
+
+    #[test]
+    fn modem_status_serializes_lifecycle_fields_camel_case() {
+        // Round 4 P1 #1: the lifecycle fields serialize as camelCase on
+        // the wire (per the parent struct's rename_all derive), and the
+        // enum variant values use their respective per-enum rename_all
+        // (camelCase for TransportOwner, kebab for SessionIntent /
+        // TransportKind / ExchangeState).
+        let s = ModemStatus {
+            state: ModemState::ConnectedIrs,
+            peer: None,
+            mode: None,
+            width_hz: None,
+            ptt_backend: None,
+            sn_db: None,
+            vu_dbfs: None,
+            throughput_bps: None,
+            bytes_rx: 0,
+            bytes_tx: 0,
+            uptime_sec: 0,
+            arq_flags: ArqFlags { busy: false, rx: false, tx: false },
+            last_error: None,
+            quality: None,
+            listener_armed: true,
+            exchange: Some(ExchangeState::Outbound),
+            transport_owner: TransportOwner::ListenerInbound,
+            active_intent: Some(SessionIntent::P2p),
+            active_transport_kind: Some(TransportKind::Ardop),
+        };
+        let json = serde_json::to_string(&s).unwrap();
+        assert!(
+            json.contains("\"listenerArmed\":true"),
+            "field `listener_armed` must serialize as `listenerArmed`; got {json}"
+        );
+        assert!(
+            json.contains("\"exchange\":\"outbound\""),
+            "ExchangeState::Outbound serializes kebab-case; got {json}"
+        );
+        assert!(
+            json.contains("\"transportOwner\":\"listenerInbound\""),
+            "TransportOwner::ListenerInbound serializes camelCase; got {json}"
+        );
+        assert!(
+            json.contains("\"activeIntent\":\"p2p\""),
+            "SessionIntent::P2p serializes kebab-case; got {json}"
+        );
+        assert!(
+            json.contains("\"activeTransportKind\":\"ardop\""),
+            "TransportKind::Ardop serializes kebab-case; got {json}"
+        );
+        // Round-trip end-to-end.
+        let back: ModemStatus = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, s);
+    }
+
+    #[test]
+    fn modem_session_stub_accessors_return_defaults() {
+        // The stub accessors return defaults today; the test pins those
+        // defaults so the wire-in task (Phase 3.2 / 3.4 / 3.5) explicitly
+        // changes the contract rather than silently shifting it.
+        let session = ModemSession::new();
+        assert!(!session.listener_armed(), "stub returns false");
+        assert!(session.current_exchange().is_none(), "stub returns None");
+        assert!(session.active_intent().is_none(), "stub returns None");
+        assert!(
+            session.active_transport_kind().is_none(),
+            "stub returns None"
+        );
+    }
+
+    #[test]
+    fn modem_session_status_snapshot_overlays_transport_owner() {
+        // `status_snapshot()` overlays the live `transport_owner` from
+        // the session inner-mutex on top of the cached `inner.status`,
+        // so a transport_owner change is reflected without a full
+        // tick + drain cycle.
+        let session = ModemSession::new();
+        assert_eq!(
+            session.status_snapshot().transport_owner,
+            TransportOwner::None
+        );
+        session.set_transport_owner_for_test(TransportOwner::ListenerArmed);
+        assert_eq!(
+            session.status_snapshot().transport_owner,
+            TransportOwner::ListenerArmed
+        );
     }
 }

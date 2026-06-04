@@ -26,14 +26,18 @@
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, State};
 use tokio::sync::{mpsc, Notify};
 
 use crate::config::{self, VaraUiConfig};
-use crate::modem_status::{ShutdownableStream, TransportOwner, ARBITER_YIELD_TIMEOUT};
+use crate::modem_status::{
+    ExchangeState, ShutdownableStream, TransportOwner, ARBITER_YIELD_TIMEOUT,
+};
 use crate::session_log::SessionLogState;
 use crate::ui_commands::LogLineDto;
+use crate::winlink::listener::transport::TransportKind;
+use crate::winlink::session::SessionIntent;
 use crate::winlink_backend::{LogLevel, LogLine, LogSource};
 
 use super::command::{Bandwidth, OutboundCommand};
@@ -64,7 +68,12 @@ fn emit_vara_log(
 
 /// Coarse VARA transport state. `Connecting` is the in-flight window between
 /// "operator clicked Start" and "TCP open succeeded or failed."
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+///
+/// Serialized lowercase: `"closed"`, `"connecting"`, `"open"`, `"error"`,
+/// `"socket-lost"`. The `SocketLost` variant uses kebab-case (via
+/// `rename_all = "lowercase"` — a single-word "socketlost" would be
+/// ambiguous; the serde rename below makes the wire form `"socket-lost"`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum VaraState {
     /// No TCP transport open. Steady state after fresh start or after Stop.
@@ -79,12 +88,20 @@ pub enum VaraState {
     /// Last attempt failed. `last_error` carries the reason. Transitions
     /// back to `Closed` on the next `start_vara_session`.
     Error,
+    /// cmd-port unresponsive (heartbeat-detected): see spec §2.6 +
+    /// [`crate::modem_status::ModemState::SocketLost`] (tuxlink-0ye6 Task
+    /// 3.0 / Codex Round 3 P1 #4). Operator's only recovery is Close
+    /// Session → reopen. Heartbeat infrastructure that drives this
+    /// transition is deferred to a follow-up task; the variant ships now
+    /// so that follow-up is a pure additive wire-in.
+    #[serde(rename = "socket-lost")]
+    SocketLost,
 }
 
 /// Snapshot of the VARA session state for the frontend. Returned from
 /// `vara_status` and from the start/stop commands so the UI can update
 /// without a follow-up poll.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VaraStatus {
     /// Current transport state.
@@ -96,6 +113,16 @@ pub struct VaraStatus {
     pub bound_host: Option<String>,
     /// Resolved cmd_port the session is currently bound to.
     pub bound_cmd_port: Option<u16>,
+    // ── Lifecycle fields (tuxlink-0ye6 Task 3.0 / Codex Round 2 P1 #5 +
+    // Round 3 P1 #3 + Round 4 P1 #1) — mirror of `ModemStatus`. See the
+    // ModemStatus field docs in `src-tauri/src/modem_status.rs` for the
+    // semantics; the comments are not duplicated here because the two
+    // DTOs share the contract.
+    pub listener_armed: bool,
+    pub exchange: Option<ExchangeState>,
+    pub transport_owner: TransportOwner,
+    pub active_intent: Option<SessionIntent>,
+    pub active_transport_kind: Option<TransportKind>,
 }
 
 impl VaraStatus {
@@ -105,6 +132,11 @@ impl VaraStatus {
             last_error: None,
             bound_host: None,
             bound_cmd_port: None,
+            listener_armed: false,
+            exchange: None,
+            transport_owner: TransportOwner::None,
+            active_intent: None,
+            active_transport_kind: None,
         }
     }
 }
@@ -227,11 +259,71 @@ impl VaraSession {
     }
 
     /// Read-only snapshot of the current status. Cheap; safe to poll.
+    ///
+    /// Overlays the live `transport_owner` from the session inner-mutex
+    /// (the cached `inner.status` may have stale lifecycle fields). The
+    /// other four lifecycle fields (`listener_armed` / `exchange` /
+    /// `active_intent` / `active_transport_kind`) read through the stub
+    /// accessors today — Phase 3.2 / 3.4 / 3.5 wires them to real session
+    /// state (tuxlink-0ye6 Task 3.0).
     pub fn snapshot(&self) -> VaraStatus {
-        self.inner
+        // Phase 1: acquire the mutex, clone the cached snapshot + the
+        // live transport_owner, drop the guard.
+        let (mut snap, transport_owner) = self
+            .inner
             .lock()
-            .map(|g| g.status.clone())
-            .unwrap_or_else(|poison| poison.into_inner().status.clone())
+            .map(|g| (g.status.clone(), g.transport_owner))
+            .unwrap_or_else(|poison| {
+                let g = poison.into_inner();
+                (g.status.clone(), g.transport_owner)
+            });
+        // Phase 2: overlay live lifecycle fields (no mutex held — the
+        // stub accessors take their own lock and would deadlock if
+        // called inside a guard).
+        snap.transport_owner = transport_owner;
+        snap.listener_armed = self.listener_armed();
+        snap.exchange = self.current_exchange();
+        snap.active_intent = self.active_intent();
+        snap.active_transport_kind = self.active_transport_kind();
+        snap
+    }
+
+    // ── Lifecycle stub accessors (tuxlink-0ye6 Task 3.0) ────────────────
+    //
+    // See `ModemSession`'s parallel accessors in
+    // `src-tauri/src/modem_status.rs` for the shared contract. The real
+    // values are wired in by Phase 3.2 (open_session / close_session),
+    // 3.4 (listener consumer task), and 3.5 (`b2f_exchange` outbound).
+
+    /// Listener-armed state. STUB: returns `false`.
+    // TODO: wire to listener state once Phase 3 commands land
+    // (tuxlink-0ye6 Task 3.4 — the listener consumer task is the
+    // authoritative source).
+    pub fn listener_armed(&self) -> bool {
+        false
+    }
+
+    /// Current in-flight exchange classification. STUB: returns `None`.
+    // TODO: wire to listener state once Phase 3 commands land
+    // (tuxlink-0ye6 Task 3.5 outbound + 3.4 inbound).
+    pub fn current_exchange(&self) -> Option<ExchangeState> {
+        None
+    }
+
+    /// Intent of the currently-open session. STUB: returns `None`.
+    // TODO: wire to listener state once Phase 3 commands land
+    // (tuxlink-0ye6 Task 3.2 — `vara_open_session(intent)` captures the
+    // operator-selected intent into session state).
+    pub fn active_intent(&self) -> Option<SessionIntent> {
+        None
+    }
+
+    /// Transport-kind of the currently-open session. STUB: returns `None`.
+    // TODO: wire to listener state once Phase 3 commands land
+    // (tuxlink-0ye6 Task 3.2 — `vara_open_session(transport_kind)`
+    // discriminates VaraHf vs VaraFm at the session layer).
+    pub fn active_transport_kind(&self) -> Option<TransportKind> {
+        None
     }
 
     /// Take ownership of the open transport, leaving the session in
@@ -283,6 +375,14 @@ impl VaraSession {
                 last_error: None,
                 bound_host,
                 bound_cmd_port,
+                // Lifecycle fields (tuxlink-0ye6 Task 3.0): defaults at
+                // restoration — Phase 3 wires the real values via the
+                // session-state accessors.
+                listener_armed: false,
+                exchange: None,
+                transport_owner: TransportOwner::None,
+                active_intent: None,
+                active_transport_kind: None,
             };
             guard.transport = Some(t);
             guard.transport_owner = TransportOwner::None;
@@ -793,6 +893,13 @@ pub fn vara_start_session_inner(
         last_error: None,
         bound_host: Some(ui_cfg.host.clone()),
         bound_cmd_port: Some(ui_cfg.cmd_port),
+        // Lifecycle fields (tuxlink-0ye6 Task 3.0): defaults during
+        // transport-layer start; Phase 3 wires real session state.
+        listener_armed: false,
+        exchange: None,
+        transport_owner: TransportOwner::None,
+        active_intent: None,
+        active_transport_kind: None,
     };
 
     let transport_cfg = build_transport_config(ui_cfg);
@@ -806,6 +913,11 @@ pub fn vara_start_session_inner(
                 last_error: Some(format!("TCP connect failed: {e}")),
                 bound_host: Some(ui_cfg.host.clone()),
                 bound_cmd_port: Some(ui_cfg.cmd_port),
+                listener_armed: false,
+                exchange: None,
+                transport_owner: TransportOwner::None,
+                active_intent: None,
+                active_transport_kind: None,
             };
             return Err(format!("TCP connect failed: {e}"));
         }
@@ -844,6 +956,11 @@ pub fn vara_start_session_inner(
         last_error: None,
         bound_host: Some(ui_cfg.host.clone()),
         bound_cmd_port: Some(ui_cfg.cmd_port),
+        listener_armed: false,
+        exchange: None,
+        transport_owner: TransportOwner::None,
+        active_intent: None,
+        active_transport_kind: None,
     };
 
     Ok(guard.status.clone())
@@ -1019,6 +1136,11 @@ mod tests {
                 last_error: Some("prior failure".into()),
                 bound_host: None,
                 bound_cmd_port: None,
+                listener_armed: false,
+                exchange: None,
+                transport_owner: TransportOwner::None,
+                active_intent: None,
+                active_transport_kind: None,
             };
             assert!(guard.transport.is_none(), "guard tests pre-state");
         }
@@ -1102,6 +1224,11 @@ mod tests {
                 last_error: None,
                 bound_host: Some("127.0.0.1".into()),
                 bound_cmd_port: Some(cmd_port),
+                listener_armed: false,
+                exchange: None,
+                transport_owner: TransportOwner::None,
+                active_intent: None,
+                active_transport_kind: None,
             };
         }
         assert_eq!(session.snapshot().state, VaraState::Open);
@@ -1377,6 +1504,11 @@ mod tests {
                 last_error: None,
                 bound_host: Some("127.0.0.1".into()),
                 bound_cmd_port: None,
+                listener_armed: false,
+                exchange: None,
+                transport_owner: TransportOwner::None,
+                active_intent: None,
+                active_transport_kind: None,
             };
         }
         assert_eq!(session.transport_owner(), TransportOwner::None);
@@ -1657,5 +1789,114 @@ mod tests {
 
         // Let outbound finish (timing out).
         let _ = outbound.await;
+    }
+
+    // ── tuxlink-0ye6 Task 3.0 — DTO widening + SocketLost on VaraState ─
+    //
+    // Mirrors `modem_status::tests` for the VARA-side DTO. Same coverage:
+    // new fields exist, camelCase wire format, kebab/camel enum variants
+    // serialize correctly, stub accessors return defaults.
+
+    #[test]
+    fn vara_status_dto_includes_lifecycle_fields() {
+        // Compile-time check that the new fields exist on the DTO with
+        // the expected types (Codex Round 2 P1 #5 + Round 3 P1 #3).
+        let s = VaraStatus::closed();
+        let _: bool = s.listener_armed;
+        let _: Option<ExchangeState> = s.exchange;
+        let _: TransportOwner = s.transport_owner;
+        let _: Option<SessionIntent> = s.active_intent;
+        let _: Option<TransportKind> = s.active_transport_kind;
+    }
+
+    #[test]
+    fn vara_status_serializes_lifecycle_fields_camel_case() {
+        // Round 4 P1 #1: assert the active session mode fields are
+        // present + serialized as camelCase, with enum-variant values
+        // using their respective per-enum rename_all (kebab for
+        // ExchangeState / SessionIntent / TransportKind; camel for
+        // TransportOwner).
+        let snap = VaraStatus {
+            state: VaraState::Open,
+            last_error: None,
+            bound_host: None,
+            bound_cmd_port: None,
+            listener_armed: true,
+            exchange: Some(ExchangeState::Outbound),
+            transport_owner: TransportOwner::Outbound,
+            active_intent: Some(SessionIntent::P2p),
+            active_transport_kind: Some(TransportKind::VaraHf),
+        };
+        let json = serde_json::to_string(&snap).unwrap();
+        assert!(
+            json.contains("\"listenerArmed\":true"),
+            "got {json}"
+        );
+        assert!(
+            json.contains("\"exchange\":\"outbound\""),
+            "ExchangeState kebab-case; got {json}"
+        );
+        assert!(
+            json.contains("\"transportOwner\":\"outbound\""),
+            "TransportOwner camelCase; got {json}"
+        );
+        assert!(
+            json.contains("\"activeIntent\":\"p2p\""),
+            "SessionIntent kebab-case; got {json}"
+        );
+        assert!(
+            json.contains("\"activeTransportKind\":\"vara-hf\""),
+            "TransportKind kebab-case; got {json}"
+        );
+        // Round-trip end-to-end (VaraStatus now derives Deserialize for
+        // this purpose — tuxlink-0ye6 Task 3.0).
+        let back: VaraStatus = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.state, snap.state);
+        assert_eq!(back.listener_armed, snap.listener_armed);
+        assert_eq!(back.exchange, snap.exchange);
+        assert_eq!(back.transport_owner, snap.transport_owner);
+        assert_eq!(back.active_intent, snap.active_intent);
+        assert_eq!(back.active_transport_kind, snap.active_transport_kind);
+    }
+
+    #[test]
+    fn vara_state_socket_lost_serializes() {
+        // Codex Round 3 P1 #4: cmd-port unresponsive → SocketLost. Wire
+        // form is kebab-case `"socket-lost"` (single-word "socketlost"
+        // would be ambiguous; the per-variant `serde(rename)` makes it
+        // explicit).
+        let json = serde_json::to_string(&VaraState::SocketLost).unwrap();
+        assert_eq!(json, "\"socket-lost\"");
+        let back: VaraState = serde_json::from_str("\"socket-lost\"").unwrap();
+        assert_eq!(back, VaraState::SocketLost);
+    }
+
+    #[test]
+    fn vara_session_stub_accessors_return_defaults() {
+        // The stub accessors return defaults today; this test pins the
+        // contract so the wire-in task (Phase 3.2 / 3.4) changes it
+        // explicitly rather than silently shifting.
+        let session = VaraSession::new();
+        assert!(!session.listener_armed());
+        assert!(session.current_exchange().is_none());
+        assert!(session.active_intent().is_none());
+        assert!(session.active_transport_kind().is_none());
+    }
+
+    #[test]
+    fn vara_session_snapshot_overlays_transport_owner() {
+        // `snapshot()` overlays the live transport_owner from session
+        // inner-mutex on top of the cached `inner.status`. Mirrors
+        // ModemSession's parallel test.
+        let session = VaraSession::new();
+        assert_eq!(
+            session.snapshot().transport_owner,
+            TransportOwner::None
+        );
+        session.set_transport_owner_for_test(TransportOwner::ListenerArmed);
+        assert_eq!(
+            session.snapshot().transport_owner,
+            TransportOwner::ListenerArmed
+        );
     }
 }
