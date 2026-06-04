@@ -103,15 +103,22 @@
   font-style: italic;
 }
 
-/* ── Map mount-point stub ──
+/* ── Map widget (Leaflet) ──
  *
- * Reserves vertical space for the Leaflet widget (follow-up commit).
- * When empty (pre-Leaflet) the div collapses to 0px via min-height: 0
- * so it doesn't introduce phantom whitespace in the form layout.
- * The Leaflet integration commit will set an explicit height here. */
+ * .position-form-v2__map collapses to 0 by default (no grid → no widget
+ * rendered → no phantom whitespace). The --active modifier is added by
+ * PositionFormV2 when grid is non-empty and sets an explicit 240px height.
+ *
+ * Explicit pixel height is required: Leaflet's MapContainer needs a
+ * concrete height on its container to render; auto / percentage heights
+ * produce a 0px tall map (blank black bar). */
 .position-form-v2__map {
-  min-height: 0;
-  /* Leaflet integration will set:  height: 240px; border-radius: 4px; etc. */
+  overflow: hidden;
+}
+
+.position-form-v2__map--active {
+  height: 240px;
+  border-radius: 4px;
 }
 
 /* ── Action buttons ── */

@@ -60,3 +60,33 @@ export function gridToLatLon(grid: string): LatLon | null {
 function isDigit(ch: string): boolean {
   return ch >= '0' && ch <= '9';
 }
+
+/**
+ * Convert WGS-84 lat/lon (degrees) to a 6-char Maidenhead locator.
+ *
+ * Inputs are clamped to valid ranges so this never throws. Returns a
+ * 6-character string like 'CN87us'. Mirrors lat_lon_to_grid() in
+ * src-tauri/src/position/maidenhead.rs — keep the two in sync if the
+ * algorithm changes.
+ */
+export function latLonToGrid(lat: number, lon: number): string {
+  // Clamp to valid ranges (matching the Rust implementation)
+  const clampedLon = (Math.min(Math.max(lon, -180), 179.999) + 180) / 20;
+  const clampedLat = (Math.min(Math.max(lat, -90), 89.999) + 90) / 10;
+
+  const lonField = Math.floor(clampedLon);
+  const latField = Math.floor(clampedLat);
+  const lonSq = Math.floor((clampedLon - lonField) * 10);
+  const latSq = Math.floor((clampedLat - latField) * 10);
+  const lonSub = Math.floor((clampedLon - lonField - lonSq / 10) * 240);
+  const latSub = Math.floor((clampedLat - latField - latSq / 10) * 240);
+
+  return (
+    String.fromCharCode(65 + lonField) +  // A-R field (lon)
+    String.fromCharCode(65 + latField) +  // A-R field (lat)
+    String.fromCharCode(48 + lonSq) +     // 0-9 square (lon)
+    String.fromCharCode(48 + latSq) +     // 0-9 square (lat)
+    String.fromCharCode(97 + lonSub) +    // a-x subsquare (lon) — lowercase
+    String.fromCharCode(97 + latSub)      // a-x subsquare (lat) — lowercase
+  );
+}

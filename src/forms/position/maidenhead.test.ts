@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { gridToLatLon } from './maidenhead';
+import { gridToLatLon, latLonToGrid } from './maidenhead';
 
 describe('gridToLatLon', () => {
   it('returns null for invalid input — wrong length', () => {
@@ -73,5 +73,58 @@ describe('gridToLatLon', () => {
     expect(upper!.lat).toBeCloseTo(lower!.lat, 6);
     expect(upper!.lon).toBeCloseTo(lower!.lon, 6);
     expect(upper!.lat).toBeCloseTo(mixed!.lat, 6);
+  });
+});
+
+describe('latLonToGrid', () => {
+  it('known reference: Munich (48.143, 11.608) → JN58td', () => {
+    expect(latLonToGrid(48.143, 11.608)).toBe('JN58td');
+  });
+
+  it('round-trip: gridToLatLon("CN87us") center → latLonToGrid → "CN87us"', () => {
+    const ll = gridToLatLon('CN87us');
+    expect(ll).not.toBeNull();
+    // gridToLatLon returns the CENTER of the subsquare; latLonToGrid of the
+    // center must land back in the same subsquare.
+    expect(latLonToGrid(ll!.lat, ll!.lon)).toBe('CN87us');
+  });
+
+  it('round-trip: JN58td center round-trips', () => {
+    const ll = gridToLatLon('JN58td');
+    expect(ll).not.toBeNull();
+    expect(latLonToGrid(ll!.lat, ll!.lon)).toBe('JN58td');
+  });
+
+  it('clamps lat=90 (north pole) without throwing', () => {
+    const result = latLonToGrid(90, 0);
+    expect(typeof result).toBe('string');
+    expect(result).toHaveLength(6);
+  });
+
+  it('clamps lat=-90 (south pole) without throwing', () => {
+    const result = latLonToGrid(-90, 0);
+    expect(typeof result).toBe('string');
+    expect(result).toHaveLength(6);
+  });
+
+  it('clamps lon=180 without throwing', () => {
+    const result = latLonToGrid(0, 180);
+    expect(typeof result).toBe('string');
+    expect(result).toHaveLength(6);
+  });
+
+  it('clamps lon=-180 without throwing', () => {
+    const result = latLonToGrid(0, -180);
+    expect(typeof result).toBe('string');
+    expect(result).toHaveLength(6);
+  });
+
+  it('origin (0, 0) matches Rust reference JJ00aa', () => {
+    // Rust: lat_lon_to_grid(0.0, 0.0) == "JJ00aa" (origin CORNER, not center)
+    expect(latLonToGrid(0, 0)).toBe('JJ00aa');
+  });
+
+  it('Montevideo reference (-34.91, -56.21) → GF15vc', () => {
+    expect(latLonToGrid(-34.91, -56.21)).toBe('GF15vc');
   });
 });

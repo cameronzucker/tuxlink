@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import type { FormComposeProps } from '../forms/forms';
 import { gridToLatLon } from '../forms/position/maidenhead';
+import { PositionMapWidget } from './PositionMapWidget';
 import './PositionFormV2.css';
 
 interface PositionFix {
@@ -133,11 +134,20 @@ export function PositionFormV2({
         </p>
       )}
 
-      {/* Map widget mount-point — Leaflet integration ships in a follow-up
-          commit on this branch (operator decision 2026-06-04: Leaflet +
-          offline tiles). This div is intentionally empty. */}
-      <div className="position-form-v2__map" data-testid="position-map-mount">
-        {/* Map widget mounts here when wired. */}
+      <div
+        className={`position-form-v2__map${grid ? ' position-form-v2__map--active' : ''}`}
+        data-testid="position-map-mount"
+      >
+        {grid && (
+          <PositionMapWidget
+            grid={grid}
+            onGridChange={(newGrid) => {
+              setGrid(newGrid);
+              setGridError(null);
+              onChange?.({ grid: newGrid, message: remark });
+            }}
+          />
+        )}
       </div>
 
       <label htmlFor="position-remark">Remark (optional)</label>
