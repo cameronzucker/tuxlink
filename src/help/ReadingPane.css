@@ -209,40 +209,17 @@
  * CSS custom-property strings at init time (see mermaidLoader.ts comment),
  * so we post-render-theme the SVG output through these selectors instead.
  * theme:'base' in initialize() leaves these classes unstyled, allowing full
- * CSS override without specificity fights. */
-
-/* SVG <text> elements (sequence-diagram actor names, message labels,
- * note text, etc.) use `fill` not `color`. Without this catch-all the
- * text inherits Mermaid's base-theme black against our dark node fills
- * — the regression that produced unreadable black-on-dark-blue. */
-.mermaid-diagram text {
-  fill: var(--text);
-  font-family: var(--sans);
-}
-
-/* HTML labels inside <foreignObject> wrappers — flowchart node labels,
- * edge labels, cluster labels. Setting `color` on the outer wrapper
- * cascades to inner <p>, <span>, <div>, which Mermaid nests several
- * deep. */
-.mermaid-diagram .label,
-.mermaid-diagram .nodeLabel,
-.mermaid-diagram .edgeLabel,
-.mermaid-diagram foreignObject div,
-.mermaid-diagram foreignObject span,
-.mermaid-diagram foreignObject p {
-  color: var(--text);
-  font-family: var(--sans);
-}
-
-/* Edge label background — Mermaid emits a small rect / div behind each
- * edge label so the label is readable over the connecting line. Default
- * is white; override to surface so it blends with the diagram. */
-.mermaid-diagram .edgeLabel .labelBkg,
-.mermaid-diagram .edgeLabel rect,
-.mermaid-diagram .label-container {
-  background-color: var(--surface);
-  fill: var(--surface);
-}
+ * CSS override without specificity fights.
+ *
+ * Diagnostic history: an earlier revision of this block added broader
+ * selectors (`.label-container`, `.edgeLabel .labelBkg`, `foreignObject
+ * div/span/p`, sequence-diagram specifics) trying to cover more cases.
+ * The result rendered diagrams *entirely* invisible — `fill` inheritance
+ * down SVG groups carried `var(--surface)` into descendants whose intent
+ * was a different fill. This revision is the surgical minimum that
+ * addresses the original black-on-dark-blue regression without breaking
+ * other diagram structure: theme the shapes, theme the edges, color
+ * the labels (both SVG <text> and foreignObject HTML), nothing else. */
 
 /* Flowchart node shapes. */
 .mermaid-diagram .node rect,
@@ -251,57 +228,39 @@
 .mermaid-diagram .node polygon,
 .mermaid-diagram .node path {
   fill: var(--elevated);
-  stroke: var(--border);
+  stroke: var(--border-strong);
 }
 
-/* Flowchart edges + arrow heads. Mermaid renders arrows via SVG
- * `marker` elements; the marker's fill needs to match the edge stroke
- * or arrowheads appear black against the dark theme. */
+/* Flowchart cluster / subgraph boxes. */
+.mermaid-diagram .cluster rect {
+  fill: var(--surface);
+  stroke: var(--border-strong);
+}
+
+/* Flowchart edges. */
 .mermaid-diagram .edgePath path,
 .mermaid-diagram .flowchart-link {
   stroke: var(--border-strong);
 }
-.mermaid-diagram .marker,
-.mermaid-diagram marker path,
-.mermaid-diagram defs marker path {
-  fill: var(--border-strong);
-  stroke: var(--border-strong);
+
+/* SVG <text> uses `fill`, not `color`. Mermaid's base theme leaves
+ * text at near-black via an inline `fill="black"` attribute, which
+ * means a plain CSS rule loses to the inline attribute. `!important`
+ * is the minimum-friction defeat for the inline. */
+.mermaid-diagram text {
+  fill: var(--text) !important;
+  font-family: var(--sans);
 }
 
-/* Flowchart clusters / subgraph boxes. */
-.mermaid-diagram .cluster rect {
-  fill: var(--surface);
-  stroke: var(--border);
+/* HTML labels inside <foreignObject> (flowchart node + edge labels in
+ * Mermaid v11). `color` cascades into nested <p>, <span>, etc. */
+.mermaid-diagram .label {
+  color: var(--text);
+  font-family: var(--sans);
 }
-
-/* Sequence diagrams — actor boxes, lifeline, activation bars, notes,
- * loop / alt / opt label boxes. Sequence-diagram selectors are distinct
- * from flowchart selectors; cover them explicitly. */
-.mermaid-diagram .actor {
-  fill: var(--elevated);
-  stroke: var(--border);
+.mermaid-diagram .label foreignObject > * {
+  color: var(--text);
 }
-.mermaid-diagram .actor-line,
-.mermaid-diagram line.actor-line {
-  stroke: var(--border-strong);
-}
-.mermaid-diagram .messageLine0,
-.mermaid-diagram .messageLine1 {
-  stroke: var(--border-strong);
-}
-.mermaid-diagram .note,
-.mermaid-diagram rect.note {
-  fill: var(--surface);
-  stroke: var(--border);
-}
-.mermaid-diagram .activation0,
-.mermaid-diagram .activation1,
-.mermaid-diagram .activation2 {
-  fill: var(--elevated);
-  stroke: var(--border);
-}
-.mermaid-diagram .labelBox,
-.mermaid-diagram .loopLine {
-  fill: var(--surface);
-  stroke: var(--border);
+.mermaid-diagram foreignObject div {
+  color: var(--text);
 }
