@@ -90,6 +90,7 @@
   border: 1px solid var(--border);
 }
 .tux-help-reading-content pre {
+  position: relative;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 4px;
