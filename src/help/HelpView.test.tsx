@@ -45,7 +45,7 @@ describe('HelpView', () => {
 
   it('opens to the first topic by default', () => {
     renderHelp();
-    expect(screen.getByRole('heading', { level: 1, name: /getting started/i })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 1, name: /what is tuxlink/i })).toBeInTheDocument();
   });
 
   it('renders the header strip with the User Guide title', () => {

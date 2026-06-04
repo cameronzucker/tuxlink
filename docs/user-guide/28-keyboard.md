@@ -1,4 +1,4 @@
-# Keyboard shortcuts
+# Keyboard
 
 Tuxlink's accelerators are bound at the application level — they fire
 regardless of which pane has focus, except when a text input is
@@ -76,5 +76,5 @@ menu item; once open it carries its own search affordance.
 
 ## Where next
 
-- [Settings](07-settings.md) — non-shortcut preferences.
-- [Composing messages](04-composing.md) — Reply / Forward semantics.
+- [Settings](27-settings.md) — non-shortcut preferences.
+- [Composing](19-composing.md) — Reply / Forward semantics.

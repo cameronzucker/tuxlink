@@ -60,5 +60,5 @@ hit.
 
 ## Where next
 
-- [The mailbox](03-mailbox.md) — folder browsing.
-- [Keyboard shortcuts](09-keyboard.md) — search focus shortcuts.
+- [The mailbox](18-the-mailbox.md) — folder browsing.
+- [Keyboard](28-keyboard.md) — search focus shortcuts.

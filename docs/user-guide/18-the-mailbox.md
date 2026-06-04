@@ -73,10 +73,10 @@ messages.
 The search bar above the message list filters / cross-folder-searches.
 Free-text matches against subject and from. Special tokens (`FOLDER:`,
 `FROM:`, etc.) compose. The dropdown carries saved searches and recent
-searches. See [Search](06-search.md) for the full vocabulary.
+searches. See [Search](21-search.md) for the full vocabulary.
 
 ## Where next
 
-- [Composing messages](04-composing.md) — drafts, Cc, Reply / Forward.
-- [HTML forms](05-forms.md) — Position, ICS-213, ICS-309, others.
-- [Search](06-search.md) — the search-token vocabulary.
+- [Composing](19-composing.md) — drafts, Cc, Reply / Forward.
+- [HTML forms](20-html-forms.md) — Position, ICS-213, ICS-309, others.
+- [Search](21-search.md) — the search-token vocabulary.

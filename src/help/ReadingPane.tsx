@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { open as shellOpen } from '@tauri-apps/plugin-shell';
-import { parseMarkdown } from '../shell/markdownRender';
-import type { Block, InlineText, InlineRun } from '../shell/markdownRender';
+import { renderMarkdown } from '../shell/markdownRender';
+import { sanitizeHtml } from '../shell/sanitizeHtml';
+import { useMermaidRender } from './useMermaidRender';
+import { addCopyButtons } from './copyButton';
 import type { HelpTopic } from './topics';
 import './ReadingPane.css';
 
@@ -12,6 +14,7 @@ interface ReadingPaneProps {
 
 export function ReadingPane({ topic, onNavigate }: ReadingPaneProps) {
   const scrollRef = useRef<HTMLElement | null>(null);
+  const contentRef = useRef<HTMLElement | null>(null);
 
   const handleClick = useCallback(
     (event: React.MouseEvent<HTMLDivElement>) => {
@@ -20,28 +23,46 @@ export function ReadingPane({ topic, onNavigate }: ReadingPaneProps) {
       if (!anchor) return;
       const href = anchor.getAttribute('href') ?? '';
 
-      // Inter-topic .md links — accept bare ("03-mailbox.md") OR a relative
-      // prefix ("./03-mailbox.md", "../user-guide/03-mailbox.md").
-      const mdMatch = href.match(/^(?:.*\/)?(\d{2}-[a-z-]+)\.md$/);
+      // Case 1: same-topic anchor (#section-id) — let native scroll fire.
+      if (href.startsWith('#')) {
+        // Native scroll into view via the browser; nothing to do.
+        return;
+      }
+
+      // Case 2: cross-topic with anchor (e.g. 02-connections.md#vara-hf).
+      // Must be tested before the bare .md case so the anchor is captured.
+      const mdWithAnchorMatch = href.match(/^(?:.*\/)?(\d{2}-[a-z0-9-]+)\.md(#[\w-]+)$/);
+      if (mdWithAnchorMatch) {
+        event.preventDefault();
+        const slug = mdWithAnchorMatch[1];
+        const anchorId = mdWithAnchorMatch[2];
+        onNavigate(slug);
+        // Schedule scroll-to-anchor after the next render completes.
+        requestAnimationFrame(() => {
+          const el = document.querySelector(anchorId);
+          if (el) el.scrollIntoView({ behavior: 'auto', block: 'start' });
+        });
+        return;
+      }
+
+      // Case 3: cross-topic without anchor (existing behavior).
+      // Accept bare ("03-mailbox.md") OR a relative prefix.
+      const mdMatch = href.match(/^(?:.*\/)?(\d{2}-[a-z0-9-]+)\.md$/);
       if (mdMatch) {
         event.preventDefault();
         onNavigate(mdMatch[1]);
         return;
       }
-      // tuxlink-ew3k bug 5: docs/user-guide/07-settings.md ends with a link
-      // to ../pitfalls/implementation-pitfalls.md (outside the bundled
-      // user-guide tree). We can't render that topic in-window. Intercept
-      // and no-op so the webview doesn't navigate off /help. The right
-      // long-term fix lives in the docs revision (tuxlink-s8qu).
+
+      // Case 4: out-of-bundle .md (e.g. ../pitfalls/implementation-pitfalls.md).
+      // tuxlink-ew3k bug 5: the build-time linter is the primary gate; this
+      // no-op is belt-and-suspenders so the webview doesn't navigate off /help.
       if (/^\.{0,2}\/.*\.md$/.test(href)) {
         event.preventDefault();
         return;
       }
 
-      // Anchor (#section) links — let the browser handle natively (scrolls).
-      if (href.startsWith('#')) return;
-
-      // External http(s) links — route to the OS browser via shell:open.
+      // Case 5: external http(s) — route to the OS browser via shell:open.
       if (/^https?:\/\//.test(href)) {
         event.preventDefault();
         void shellOpen(href);
@@ -52,8 +73,23 @@ export function ReadingPane({ topic, onNavigate }: ReadingPaneProps) {
 
   // tuxlink-ew3k bug 6: parseMarkdown ran on every render — measurable
   // sluggishness on long topics. Memoize by the topic body so the parse
-  // only re-runs when the active topic (or its content) changes.
-  const blocks = useMemo(() => parseMarkdown(topic.body), [topic.body]);
+  // only re-runs when the active topic (or its content) changes. The
+  // V2 pipeline emits HTML; we sanitize it via DOMPurify before injection
+  // through dangerouslySetInnerHTML.
+  const html = useMemo(
+    () => sanitizeHtml(renderMarkdown(topic.body)),
+    [topic.body],
+  );
+
+  useMermaidRender(contentRef);
+
+  // Decorate <pre> blocks with copy buttons after the HTML lands. Re-runs
+  // when the topic body changes so a newly-rendered topic gets its buttons.
+  useEffect(() => {
+    if (contentRef.current) {
+      addCopyButtons(contentRef.current);
+    }
+  }, [html]);
 
   // tuxlink-ew3k bug 1: when the operator switched topics, the scroll
   // position carried over. Reset to top whenever the active topic changes.
@@ -68,64 +104,12 @@ export function ReadingPane({ topic, onNavigate }: ReadingPaneProps) {
       ref={(el) => { scrollRef.current = el; }}
     >
       <div className="tux-help-reading-inner">
-        <article className="tux-help-reading-content">
-          {blocks.map((b, i) => (
-            <BlockView key={i} block={b} />
-          ))}
-        </article>
+        <article
+          className="tux-help-reading-content"
+          ref={(el) => { contentRef.current = el; }}
+          dangerouslySetInnerHTML={{ __html: html }}
+        />
       </div>
     </main>
   );
-}
-
-function BlockView({ block }: { block: Block }) {
-  switch (block.kind) {
-    case 'heading':
-      if (block.level === 1) return <h1><Inline t={block.text} /></h1>;
-      if (block.level === 2) return <h2><Inline t={block.text} /></h2>;
-      return <h3><Inline t={block.text} /></h3>;
-    case 'paragraph':
-      return <p><Inline t={block.text} /></p>;
-    case 'list':
-      return (
-        <ul>
-          {block.items.map((it, i) => (
-            <li key={i}><Inline t={it} /></li>
-          ))}
-        </ul>
-      );
-    case 'code':
-      return <pre><code>{block.text}</code></pre>;
-    case 'table':
-      return (
-        <table>
-          <thead>
-            <tr>{block.headers.map((h, i) => <th key={i}><Inline t={h} /></th>)}</tr>
-          </thead>
-          <tbody>
-            {block.rows.map((r, i) => (
-              <tr key={i}>{r.map((c, j) => <td key={j}><Inline t={c} /></td>)}</tr>
-            ))}
-          </tbody>
-        </table>
-      );
-  }
-}
-
-function Inline({ t }: { t: InlineText }) {
-  return (
-    <>
-      {t.runs.map((run, i) => <Run key={i} run={run} />)}
-    </>
-  );
-}
-
-function Run({ run }: { run: InlineRun }) {
-  switch (run.kind) {
-    case 'text':   return <>{run.text}</>;
-    case 'bold':   return <strong>{run.text}</strong>;
-    case 'italic': return <em>{run.text}</em>;
-    case 'code':   return <code>{run.text}</code>;
-    case 'link':   return <a href={run.href}>{run.text}</a>;
-  }
 }

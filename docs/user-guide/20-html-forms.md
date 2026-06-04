@@ -58,5 +58,5 @@ precision (6-character: ~5 km) per the project's privacy posture.
 
 ## Where next
 
-- [Settings](07-settings.md) — GPS state, broadcast precision, ARDOP.
-- [Composing messages](04-composing.md) — non-form composition.
+- [Settings](27-settings.md) — GPS state, broadcast precision, ARDOP.
+- [Composing](19-composing.md) — non-form composition.

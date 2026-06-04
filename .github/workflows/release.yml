@@ -10,6 +10,10 @@ on:
       - main
     paths:
       - 'src-tauri/**'
+      - 'src/**'
+      - 'scripts/**'
+      - 'docs/user-guide/**'
+      - 'scripts/lint-docs-links.ts'
       - 'package.json'
       - 'pnpm-lock.yaml'
       - '.github/workflows/release.yml'
@@ -66,6 +70,9 @@ jobs:
 
       - name: Install JS dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Lint docs links
+        run: pnpm lint:docs
 
       - name: Build + bundle (deb, rpm, AppImage)
         run: pnpm tauri build --bundles deb,rpm,appimage

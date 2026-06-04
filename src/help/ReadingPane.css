@@ -90,6 +90,7 @@
   border: 1px solid var(--border);
 }
 .tux-help-reading-content pre {
+  position: relative;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 4px;
@@ -133,4 +134,96 @@
   color: var(--accent);
   padding: 0 2px;
   border-radius: 2px;
+}
+
+/* ============================================================================
+ * Tier 3 elements — callouts, copy button, definition lists, footnotes,
+ * mermaid diagrams.
+ * Spec: docs/superpowers/specs/2026-06-03-docs-knowledge-base-design.md §4.
+ * ========================================================================== */
+
+/* Callouts (per markdownExtensions/callouts.ts)
+ * <div class="callout callout-{note|warning|tip|danger}"> */
+.callout {
+  margin: 1.5em 0;
+  padding: 1em 1.25em;
+  border-left: 4px solid var(--border-strong);
+  border-radius: 4px;
+  background: var(--elevated);
+}
+.callout-note    { border-left-color: var(--info); }
+.callout-warning { border-left-color: var(--accent-2); }
+.callout-tip     { border-left-color: var(--success); }
+.callout-danger  { border-left-color: var(--error); }
+.callout > p:first-child { margin-top: 0; }
+.callout > p:last-child  { margin-bottom: 0; }
+
+/* Copy button — injected by copyButton.ts, positioned top-right of each <pre> */
+.copy-button {
+  position: absolute;
+  top: 0.5em;
+  right: 0.5em;
+  font-size: 0.75em;
+  padding: 0.25em 0.5em;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--surface);
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.copy-button:hover { color: var(--text); }
+
+/* Definition lists */
+.tux-help-reading-content dl { margin: 1em 0; }
+.tux-help-reading-content dt {
+  font-weight: 600;
+  margin-top: 1em;
+}
+.tux-help-reading-content dd {
+  margin-left: 1.5em;
+  margin-top: 0.25em;
+}
+
+/* Footnotes — marked with footnote plugin emits <section class="footnotes"> */
+.tux-help-reading-content sup a {
+  text-decoration: none;
+  font-size: 0.75em;
+}
+.tux-help-reading-content section.footnotes {
+  margin-top: 3em;
+  padding-top: 1em;
+  border-top: 1px solid var(--border);
+  font-size: 0.9em;
+}
+
+/* Mermaid diagram wrapper — injected by useMermaidRender.ts as
+ * <div class="mermaid-diagram"><svg …></svg></div> */
+.mermaid-diagram {
+  display: flex;
+  justify-content: center;
+  margin: 1.5em 0;
+}
+.mermaid-diagram svg { max-width: 100%; height: auto; }
+
+/* Mermaid theming via CSS — Mermaid v11's khroma color parser rejects
+ * CSS custom-property strings at init time (see mermaidLoader.ts comment),
+ * so we post-render-theme the SVG output through these selectors instead.
+ * theme:'base' in initialize() leaves these classes unstyled, allowing full
+ * CSS override without specificity fights. */
+.mermaid-diagram .label { color: var(--text); font-family: var(--sans); }
+.mermaid-diagram .label foreignObject > * { color: var(--text); }
+.mermaid-diagram .node rect,
+.mermaid-diagram .node circle,
+.mermaid-diagram .node ellipse,
+.mermaid-diagram .node polygon,
+.mermaid-diagram .node path {
+  fill: var(--elevated);
+  stroke: var(--border);
+}
+.mermaid-diagram .edgePath path {
+  stroke: var(--border-strong);
+}
+.mermaid-diagram .cluster rect {
+  fill: var(--surface);
+  stroke: var(--border);
 }

@@ -1,4 +1,4 @@
-# Composing messages
+# Composing
 
 The Compose surface is a floating window — the only popup window in
 Tuxlink, retained because in-app overlay-modal composition badly fits the
@@ -64,10 +64,10 @@ For multi-MB inbound attachments, the sender should use Telnet.
 The Compose surface can also send an HTML-form-based message (Position
 report, ICS-213, ICS-309, Bulletin, Damage Assessment). The form's
 payload is encoded as part of the B2F body; the receiver client renders
-the form. See [HTML forms](05-forms.md) for details.
+the form. See [HTML forms](20-html-forms.md) for details.
 
 ## Where next
 
-- [HTML forms](05-forms.md) — the form-based composition path.
-- [Connections](02-connections.md) — when to pick which transport.
-- [Keyboard shortcuts](09-keyboard.md) — compose-window accelerators.
+- [HTML forms](20-html-forms.md) — the form-based composition path.
+- [Picking a transport](08-picking-a-transport.md) — when to pick which transport.
+- [Keyboard](28-keyboard.md) — compose-window accelerators.

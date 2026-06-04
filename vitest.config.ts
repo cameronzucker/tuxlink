@@ -16,7 +16,7 @@ export default defineConfig({
     environment: 'jsdom',
     globals: false,
     setupFiles: ['./src/test-setup.ts'],
-    include: ['src/**/*.{test,spec}.{ts,tsx}'],
+    include: ['src/**/*.{test,spec}.{ts,tsx}', 'scripts/**/*.{test,spec}.ts'],
     // Vitest defaults `css: false`, which makes ALL CSS imports return ''
     // — including `?raw` queries through Vite's CSS plugin. Opt CSS files
     // imported as raw text back in so tests can assert against the actual

@@ -16,6 +16,11 @@
 set -eu
 
 REPO_ROOT="$(git rev-parse --show-toplevel)"
+
+# Build-time link linter for the user-guide tree (per tuxlink-ymiv spec §5.8)
+echo "→ Linting user-guide cross-links..."
+(cd "${REPO_ROOT}" && pnpm lint:docs) || { echo "✗ Link linter failed."; exit 1; }
+
 # shellcheck source=lib/branch-state.sh
 . "${REPO_ROOT}/.githooks/lib/branch-state.sh"
 
