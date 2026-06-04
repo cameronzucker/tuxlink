@@ -4,6 +4,13 @@ All notable changes to Tuxlink are documented here.
 
 This project adheres to [Semantic Versioning](https://semver.org) with project-specific rules described in [VERSIONING.md](VERSIONING.md). Entries from `v0.0.2` onward are generated automatically by [`release-please`](https://github.com/googleapis/release-please) from [Conventional Commits](https://www.conventionalcommits.org).
 
+## [0.26.1](https://github.com/cameronzucker/tuxlink/compare/v0.26.0...v0.26.1) (2026-06-04)
+
+
+### Bug Fixes
+
+* **types:** shim marked-extended-tables (no types shipped) ([07b1fdb](https://github.com/cameronzucker/tuxlink/commit/07b1fdbfcfa684dff0ff2d20ff0d1e400a5b02d3))
+
 ## [0.26.0](https://github.com/cameronzucker/tuxlink/compare/v0.25.0...v0.26.0) (2026-06-04)
 
 
