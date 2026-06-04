@@ -1496,7 +1496,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 
 Hierarchical tree (folders) + flat-search picker for the WLE catalog plus the operator's custom forms. Drives the entry into either native form components (ICS-213, Bulletin) or `WebviewFormHost` (everything else).
 
-- [ ] **Step 1: Test scaffold.**
+- [x] **Step 1: Test scaffold.**
 
 ```tsx
 import { describe, it, expect, vi } from 'vitest';
@@ -1550,13 +1550,13 @@ describe('<CatalogBrowser>', () => {
 });
 ```
 
-- [ ] **Step 2: Implement.**
+- [x] **Step 2: Implement.**
 
 (Skeleton; the full component is ~150 lines. Key invariants: client-side
 search filter; folders sorted alphabetically; Custom forms folder always
 last; arrow keys for accordion nav optional in P1.)
 
-- [ ] **Step 3: Wire to Compose.tsx.**
+- [x] **Step 3: Wire to Compose.tsx.**
 
 In `src/compose/Compose.tsx`, replace the `FormPicker` import + render with
 `CatalogBrowser`:
@@ -1639,7 +1639,7 @@ const handleWebviewSubmit = useCallback(async (formId: string, payload: ParsedBo
 }, [to, cc, callsign, grid, draftId]);
 ```
 
-- [ ] **Step 4: Verify + commit.**
+- [x] **Step 4: Verify + commit.**
 
 ```bash
 pnpm exec vitest run src/compose/ 2>&1 | tail -10

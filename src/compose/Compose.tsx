@@ -38,7 +38,9 @@ import { invoke } from '@tauri-apps/api/core';
 import { clearDraft, loadDraft, saveDraft, splitAddrs } from './useDraft';
 import { ComposeTitleBar } from './ComposeTitleBar';
 import { ResizeHandles } from '../shell/chrome/ResizeHandles';
-import { FormPicker, lookupForm, composableForms } from '../forms';
+import { lookupForm } from '../forms';
+import { CatalogBrowser } from './CatalogBrowser';
+import { WebviewFormHost, type ParsedBody } from './WebviewFormHost';
 import './Compose.css';
 
 // ============================================================================
@@ -68,7 +70,13 @@ type SendState = 'idle' | 'sending' | 'success' | 'error';
 type FormMode =
   | { kind: 'plain' }
   | { kind: 'pick' }
-  | { kind: 'form'; formId: string; values: Record<string, string> };
+  | { kind: 'form'; formId: string; values: Record<string, string> }
+  // P1 Task 10: webview-form mode is the entry for any catalog form whose
+  // id has no native React Form in the registry. The WebviewFormHost owns
+  // the in-flight form state inside the embedded webview, so this branch
+  // carries no `values` — the form submits via the loopback POST and
+  // round-trips a ParsedBody back through `handleWebviewSubmit`.
+  | { kind: 'webview-form'; formId: string };
 
 type CloseAction = 'close' | 'switch-to-form' | null;
 
@@ -290,6 +298,56 @@ export function Compose({ draftId }: ComposeProps) {
       await invoke<string>('send_form', {
         formId,
         fieldValues: values,
+        to: splitAddrs(to),
+        cc: splitAddrs(cc),
+        sendersCallsign: callsign,
+        gridSquare: grid,
+      });
+      sentRef.current = true;
+      setSendState('success');
+      clearDraft(draftId);
+      savedSnapshotRef.current = { to: '', cc: '', subject: '', body: '', requestAck: false };
+    } catch (err: unknown) {
+      setSendState('error');
+      if (err && typeof err === 'object' && 'detail' in err) {
+        const detail = (err as { detail: unknown }).detail;
+        setErrorMsg(typeof detail === 'string' ? detail : JSON.stringify(detail));
+      } else {
+        setErrorMsg(String(err));
+      }
+    }
+  }, [sendState, to, cc, draftId, callsign, grid]);
+
+  // ============================================================================
+  // Webview-form submit (T10)
+  // ============================================================================
+  //
+  // The embedded WLE form POSTs back through the loopback http_server, which
+  // round-trips a ParsedBody (multi-value string fields keyed by HTML name)
+  // through the `form-submitted` event. We collapse the multi-value shape
+  // into the single-string-per-field `fieldValues` that `send_form` expects,
+  // then mirror handleFormSubmit's post-send cleanup so the success banner
+  // + draft clear behave identically across native and webview entries.
+
+  const handleWebviewSubmit = useCallback(async (formId: string, payload: ParsedBody) => {
+    if (sendState === 'sending') return;
+    setSendState('sending');
+    setErrorMsg(null);
+    // Convert ParsedBody (multi-value fields) → fieldValues (single string
+    // per name). Per design §5.3: WLE forms use repeated names + checkbox
+    // groups; collapsing multi-values via newline preserves the convention
+    // forms::parse expects. The synthetic 'Submit' button name is dropped
+    // because the WLE templates POST the submit button's value back; the
+    // backend serializer ignores it but it's clearer to strip explicitly.
+    const fieldValues: Record<string, string> = {};
+    for (const [k, vs] of Object.entries(payload.fields)) {
+      if (k === 'Submit') continue;
+      fieldValues[k] = vs.length === 1 ? vs[0] : vs.join('\n');
+    }
+    try {
+      await invoke<string>('send_form', {
+        formId,
+        fieldValues,
         to: splitAddrs(to),
         cc: splitAddrs(cc),
         sendersCallsign: callsign,
@@ -605,17 +663,30 @@ export function Compose({ draftId }: ComposeProps) {
           />
         )}
         {formMode.kind === 'pick' && (
-          <FormPicker
-            forms={composableForms().map((f) => ({ id: f.id, name: f.name }))}
-            onPick={(id) => setFormMode({ kind: 'form', formId: id, values: {} })}
+          <CatalogBrowser
+            onPick={(id) => {
+              // Native registry takes precedence: forms with a compose-
+              // side React `Form` component route into native form mode
+              // (ICS-213, Bulletin in P0). Everything else (the bulk
+              // of the WLE catalog + the operator's custom forms)
+              // routes into webview-form mode via WebviewFormHost.
+              const entry = lookupForm(id);
+              if (entry?.Form) {
+                setFormMode({ kind: 'form', formId: id, values: {} });
+              } else {
+                setFormMode({ kind: 'webview-form', formId: id });
+              }
+            }}
             onCancel={() => setFormMode({ kind: 'plain' })}
           />
         )}
         {formMode.kind === 'form' && (() => {
           const entry = lookupForm(formMode.formId);
           if (!entry || !entry.Form) {
-            // Unknown form ID, or view-only entry with no compose-side Form
-            // (shouldn't happen since the picker is scoped to composableForms()).
+            // Unknown form ID, or view-only entry with no compose-side Form.
+            // The picker routes view-only ids to 'webview-form' mode, so this
+            // branch should only fire on a stale draft restored from
+            // localStorage whose formId no longer maps to a native entry.
             setFormMode({ kind: 'plain' });
             return null;
           }
@@ -629,6 +700,13 @@ export function Compose({ draftId }: ComposeProps) {
             />
           );
         })()}
+        {formMode.kind === 'webview-form' && (
+          <WebviewFormHost
+            formId={formMode.formId}
+            onSubmit={(payload) => handleWebviewSubmit(formMode.formId, payload)}
+            onCancel={() => setFormMode({ kind: 'plain' })}
+          />
+        )}
       </div>
 
       {/* ------------------------------------------------------------------ */}
