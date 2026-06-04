@@ -12,12 +12,14 @@ import markedExtendedTables from 'marked-extended-tables';
 import markedFootnote from 'marked-footnote';
 import { headingAnchors } from './markdownExtensions/headingAnchors';
 import { callouts } from './markdownExtensions/callouts';
+import { defLists } from './markdownExtensions/defLists';
 
 const marked = new Marked();
 marked.use(headingAnchors);
 marked.use(callouts);
 marked.use(markedExtendedTables());
 marked.use(markedFootnote());
+marked.use(defLists);
 
 /**
  * Parse a markdown string and return HTML.
