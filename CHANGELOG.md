@@ -4,6 +4,14 @@ All notable changes to Tuxlink are documented here.
 
 This project adheres to [Semantic Versioning](https://semver.org) with project-specific rules described in [VERSIONING.md](VERSIONING.md). Entries from `v0.0.2` onward are generated automatically by [`release-please`](https://github.com/googleapis/release-please) from [Conventional Commits](https://www.conventionalcommits.org).
 
+## [0.29.0](https://github.com/cameronzucker/tuxlink/compare/v0.28.0...v0.29.0) (2026-06-04)
+
+
+### Features
+
+* **tuxmodem-phy:** preamble round-trip primitive (tuxlink-iyl9, Phase 12 slice 1) ([a2579e9](https://github.com/cameronzucker/tuxlink/commit/a2579e9fdf5266499a43fa331f98f0a9d02f4499))
+* **tuxmodem-tx:** --write-wav PATH (encode to file, no device/PTT) — tuxlink-4dv9 ([8d43671](https://github.com/cameronzucker/tuxlink/commit/8d43671536d887a8b47c92c0a8060833ccb9a7df))
+
 ## [0.28.0](https://github.com/cameronzucker/tuxlink/compare/v0.27.0...v0.28.0) (2026-06-04)
 
 
