@@ -59,6 +59,27 @@ A backend background task per session probes the cmd-port (VARA: benign cmd like
 
 The frontend hook `useRadioSessionLifecycle` (§6.1) maps `socket-lost` to its `crash-recovery` UI state, distinct from `error` (the latter is a per-action error like a failed connect; the former is an out-of-band death of the modem).
 
+### 2.7 AppShell active-session routing (Codex Round 5 P1 #1)
+
+`AppShell` currently derives `activeModem` from `useModemIsActive()` and hard-codes `{ kind: 'ardop-hf', intent: 'cms' }` as the default. If an operator opens a VARA HF P2P session and then clears the sidebar selection (or hard-refreshes), the shell remounts as ARDOP-HF/CMS, driving the wrong intent into any subsequent Connect / Send-Receive. **The shell must subscribe to backend status and derive `activeModem = { kind: status.active_transport_kind, intent: status.active_intent }` when a session is open.** When no session is open, fall back to the sidebar's selection (or the original CMS default).
+
+Implementation: a new `useActiveSession()` hook polls or subscribes to backend status (queries `modem_get_status` + `vara_status` — either modem could own an active session). The shell consumes this hook's output for routing decisions. Plan task: new Task 6.0 (or amendment to Task 6.1) adds the hook + wires it into `AppShell`.
+
+### 2.8 AllowedStations live-edit reaches the listener (Codex Round 5 P1 #2)
+
+§2's "allowlist editor lives inside the open-session view and is live-editable; edits apply to subsequent inbound, not the active exchange" requires backend changes that the v1–v4 plans did not include. The existing ARDOP and VARA listener commands MOVE the `AllowedStations` value INTO the consumer task at arm time; edits to the source-of-truth after that have no effect on subsequent inbound peers — a peer removed in the UI can still be accepted.
+
+**Fix:** the listener consumer task holds an `Arc<AllowedStationsHandle>` (not the value itself) and consults it at the moment of each inbound accept decision. The `AllowedStationsEditor` writes through the same handle. This is a backend refactor that lands BEFORE the shared panel work uses the editor — see plan Phase 4 (extended) for the implementation tasks. Without this, the UI claims live-editable behavior the backend doesn't honor.
+
+### 2.9 Listener TTL during long sessions (Codex Round 5 P2)
+
+`ListenerArmsRecord::DEFAULT_TTL` (1 hour) rejects inbound peers as expired even though §2 equates `session open` with "listener armed until Close Session." Two valid fixes: (a) change the backend arms contract for session-scoped auto-arm so TTL doesn't apply, or (b) surface + auto-refresh the TTL in the panel. Operator decision deferred to next session; **the safe default for the plan is (a)** — session-scoped auto-arm is conceptually distinct from operator-set "listen for 30 min then disarm." Plan task in Phase 4 amends the arms record to support a session-scoped variant.
+
+### 2.10 Out-of-scope-for-alpha integration touches (Codex Round 5 P2)
+
+- **VARA platform banner.** `VaraRadioPanel`'s current `platform_info` banner is the only UI explaining the Pi/aarch64 case (local VARA can't run; remote VARA TCP is valid). The adapter / settings-expander work for the shared panel MUST carry this over before deleting `VaraRadioPanel.css`. New Task 5.5b: render `platform_info` in the VARA adapters' `renderSettingsExpander` (or in a sibling banner slot).
+- **`panelTitle()` helper for radio-only.** Widening `RadioPanelMode.intent` (Task 2.1) doesn't update `panelTitle()`, which currently maps every non-CMS intent to "P2P." Radio-only would render as P2P in the chrome. New Task 2.1b (or amendment to 2.1): update `panelTitle()` to discriminate cms / p2p / radio-only with appropriate strings; add test coverage for radio-only title generation.
+
 ## 3. Capability matrix
 
 | Intent | Outbound | Listener | Target shape | Creds | Routing flag |
