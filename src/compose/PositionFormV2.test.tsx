@@ -18,7 +18,9 @@ vi.mock('@tauri-apps/api/core', () => ({
 describe('<PositionFormV2>', () => {
   it('renders the current GPS grid with a fresh-fix indicator', async () => {
     render(<PositionFormV2 onSubmit={vi.fn()} onCancel={vi.fn()} />);
-    expect(await screen.findByDisplayValue('CN87us')).toBeInTheDocument();
+    // GPS-returned grids are normalised to uppercase (Minor 1 fix — be consistent
+    // with the user-typed uppercase normalization in the input handler).
+    expect(await screen.findByDisplayValue('CN87US')).toBeInTheDocument();
     expect(screen.getByText(/fresh.*GPS/i)).toBeInTheDocument();
   });
 
@@ -32,7 +34,8 @@ describe('<PositionFormV2>', () => {
   it('Send button calls onSubmit with the wire-format payload', async () => {
     const onSubmit = vi.fn();
     render(<PositionFormV2 onSubmit={onSubmit} onCancel={vi.fn()} />);
-    await screen.findByDisplayValue('CN87us');
+    // GPS-returned grid normalised to uppercase (Minor 1 fix)
+    await screen.findByDisplayValue('CN87US');
     fireEvent.click(screen.getByRole('button', { name: /send/i }));
     await waitFor(() => expect(onSubmit).toHaveBeenCalled());
     const arg = onSubmit.mock.calls[0][0] as Record<string, string>;
@@ -91,11 +94,54 @@ describe('<PositionFormV2>', () => {
     render(<PositionFormV2 onChange={onChange} onSubmit={vi.fn()} onCancel={vi.fn()} />);
     const input = await screen.findByLabelText(/Maidenhead grid/i);
     fireEvent.change(input, { target: { value: 'FN31' } });
+    // onChange fires synchronously in the input event handler — no waitFor needed,
+    // but wrap for safety in case the GPS effect settles concurrently.
     await waitFor(() => {
       const lastCall = onChange.mock.calls[onChange.mock.calls.length - 1][0] as Record<string, string>;
       expect(lastCall.grid).toBe('FN31');
       expect('message' in lastCall).toBe(true);
     });
+  });
+
+  it('fires onChange with UI-shape payload when the user types in the remark textarea', async () => {
+    const onChange = vi.fn();
+    render(<PositionFormV2 onChange={onChange} onSubmit={vi.fn()} onCancel={vi.fn()} />);
+    const textarea = await screen.findByLabelText(/Remark/i);
+    fireEvent.change(textarea, { target: { value: 'Hello net' } });
+    await waitFor(() => {
+      const lastCall = onChange.mock.calls[onChange.mock.calls.length - 1][0] as Record<string, string>;
+      expect(lastCall.message).toBe('Hello net');
+      expect('grid' in lastCall).toBe(true);
+    });
+  });
+
+  // ── Inline grid error (Important 1 fix) ────────────────────────────────────
+
+  it('shows inline grid error and blocks onSubmit for an invalid Maidenhead grid', async () => {
+    const onSubmit = vi.fn();
+    render(<PositionFormV2 onSubmit={onSubmit} onCancel={vi.fn()} />);
+    // Wait for GPS pull to settle, then override with an invalid grid
+    const input = await screen.findByLabelText(/Maidenhead grid/i);
+    fireEvent.change(input, { target: { value: 'ZZ99' } });
+    fireEvent.click(screen.getByRole('button', { name: /send/i }));
+    // gridError rendered inline below the input
+    expect(screen.getByRole('alert')).toHaveTextContent(/Invalid Maidenhead grid/i);
+    // onSubmit must NOT have been called
+    expect(onSubmit).not.toHaveBeenCalled();
+    // Form is still interactive — grid input still present
+    expect(screen.getByLabelText(/Maidenhead grid/i)).toBeInTheDocument();
+  });
+
+  it('clears the inline grid error when the operator starts editing the grid', async () => {
+    const onSubmit = vi.fn();
+    render(<PositionFormV2 onSubmit={onSubmit} onCancel={vi.fn()} />);
+    const input = await screen.findByLabelText(/Maidenhead grid/i);
+    fireEvent.change(input, { target: { value: 'ZZ99' } });
+    fireEvent.click(screen.getByRole('button', { name: /send/i }));
+    expect(screen.getByRole('alert')).toHaveTextContent(/Invalid Maidenhead grid/i);
+    // Operator edits the grid — error should clear
+    fireEvent.change(input, { target: { value: 'CN87' } });
+    expect(screen.queryByRole('alert')).toBeNull();
   });
 
   // ── No-fix UX (Important 3) ─────────────────────────────────────────────

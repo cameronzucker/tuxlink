@@ -42,10 +42,8 @@ describe('gridToLatLon', () => {
     // u=20 → lon+20*(5/60)≈1.6667; s=18 → lat+18*(2.5/60)=0.75
     // center offset: lon+2.5/60≈0.04167; lat+1.25/60≈0.02083
     // lon ≈ -140+16+1.6667+0.04167 = -122.2917; lat ≈ 40+7+0.75+0.02083 = 47.7708
-    expect(result!.lat).toBeGreaterThan(47.0);
-    expect(result!.lat).toBeLessThan(48.5);
-    expect(result!.lon).toBeGreaterThan(-123.5);
-    expect(result!.lon).toBeLessThan(-121.5);
+    expect(Math.abs(result!.lat - 47.7708)).toBeLessThan(0.05);
+    expect(Math.abs(result!.lon - (-122.2917))).toBeLessThan(0.05);
   });
 
   it('JN58td round-trips within ±0.05° (Munich reference)', () => {

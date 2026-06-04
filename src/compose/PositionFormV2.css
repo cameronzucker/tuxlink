@@ -86,6 +86,14 @@
   outline-offset: 1px;
 }
 
+/* ── Inline grid validation error (submit-time only) ── */
+
+.position-form-v2__grid-error {
+  margin: 0;
+  font-size: 11px;
+  color: var(--error, #ee6b6b);
+}
+
 /* ── No-fix inline hint ── */
 
 .position-form-v2__no-fix-hint {

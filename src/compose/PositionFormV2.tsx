@@ -24,6 +24,13 @@ interface PositionFix {
  *   onChange emits { grid, message: remark } (UI shape) so autosave stores
  *   what the operator can directly edit. On mount, initialValues?.grid and
  *   initialValues?.message rehydrate the inputs without a reverse-Maidenhead.
+ *
+ * onChange pattern: fired inside input event handlers (ICS-213 convention),
+ *   NOT in a useEffect dep array. Compose.tsx passes an inline arrow for
+ *   onChange which creates a new reference on every Compose render; a
+ *   useEffect dep on onChange would fire on every render → setFormMode →
+ *   re-render → repeat (infinite loop in production). The event-handler
+ *   pattern fires only when the operator actually edits a field.
  */
 export function PositionFormV2({
   initialValues,
@@ -33,12 +40,21 @@ export function PositionFormV2({
 }: FormComposeProps) {
   const [fix, setFix] = useState<PositionFix | null>(null);
   // Seed from draft if present; GPS pull fills in when no draft.
-  const [grid, setGrid] = useState(initialValues?.grid ?? '');
+  // Uppercase on init so GPS-returned lowercase subsquares display consistently
+  // with the user-typed uppercase normalization in the input handler.
+  const [grid, setGrid] = useState((initialValues?.grid ?? '').toUpperCase());
   const [remark, setRemark] = useState(initialValues?.message ?? '');
   const [error, setError] = useState<string | null>(null);
+  // gridError is only for submit-time Maidenhead validation — kept separate
+  // from `error` so a bad grid doesn't replace the whole form with the fatal
+  // GPS-IPC-failure alert. Cleared when the operator starts editing the grid.
+  const [gridError, setGridError] = useState<string | null>(null);
 
   // Pull current fix from PositionArbiter. Only sets grid if there is no
   // draft initialValues.grid — drafts win over GPS pull.
+  // Note: this effect only calls setGrid/setFix/setError (internal state);
+  // it does NOT call onChange. onChange fires only from input event handlers
+  // below, so the GPS pull does not trigger a spurious autosave notification.
   useEffect(() => {
     let mounted = true;
     invoke<PositionFix>('position_current_fix')
@@ -46,7 +62,8 @@ export function PositionFormV2({
         if (!mounted) return;
         setFix(f);
         // Only pre-fill grid from GPS if the draft didn't provide one.
-        if (f.grid && !initialValues?.grid) setGrid(f.grid);
+        // Uppercase for consistency with the input handler's normalization.
+        if (f.grid && !initialValues?.grid) setGrid(f.grid.toUpperCase());
       })
       .catch((e) => {
         if (mounted) setError(String(e));
@@ -57,20 +74,15 @@ export function PositionFormV2({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Lift form state into draft autosave (UI shape: grid + message so drafts
-  // rehydrate directly without a reverse-Maidenhead conversion).
-  useEffect(() => {
-    onChange?.({ grid, message: remark });
-  }, [grid, remark, onChange]);
-
   const noFixAvailable = fix !== null && fix.grid === null;
 
   const onSubmitClick = () => {
     const ll = gridToLatLon(grid);
     if (!ll) {
-      setError('Invalid grid — fix the Maidenhead grid before sending');
+      setGridError('Invalid Maidenhead grid — use format like CN87us or EM26');
       return;
     }
+    setGridError(null);
     onSubmit({
       thetime: new Date().toISOString(),
       lat: ll.lat.toFixed(4),
@@ -103,10 +115,18 @@ export function PositionFormV2({
         id="position-grid"
         type="text"
         value={grid}
-        onChange={(e) => setGrid(e.target.value.toUpperCase())}
+        onChange={(e) => {
+          const newGrid = e.target.value.toUpperCase();
+          setGrid(newGrid);
+          setGridError(null);
+          onChange?.({ grid: newGrid, message: remark });
+        }}
         placeholder="CN87us"
         autoFocus={noFixAvailable && !grid}
       />
+      {gridError && (
+        <p role="alert" className="position-form-v2__grid-error">{gridError}</p>
+      )}
       {noFixAvailable && (
         <p className="position-form-v2__no-fix-hint" role="note">
           No GPS fix — enter grid manually
@@ -124,7 +144,11 @@ export function PositionFormV2({
       <textarea
         id="position-remark"
         value={remark}
-        onChange={(e) => setRemark(e.target.value)}
+        onChange={(e) => {
+          const newMessage = e.target.value;
+          setRemark(newMessage);
+          onChange?.({ grid, message: newMessage });
+        }}
         rows={3}
       />
 
