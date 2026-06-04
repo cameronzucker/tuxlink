@@ -22,7 +22,7 @@ describe('useMermaidRender', () => {
     const container = document.createElement('div');
     container.innerHTML = '<pre><code class="language-mermaid">graph TD\nA-->B</code></pre>';
 
-    renderHook(() => useMermaidRender({ current: container }));
+    renderHook(() => useMermaidRender({ current: container }, container.innerHTML));
 
     await waitFor(() => {
       expect(container.innerHTML).toContain('<svg');
@@ -34,10 +34,33 @@ describe('useMermaidRender', () => {
     container.innerHTML = '<p>no mermaid here</p>';
     const original = container.innerHTML;
 
-    renderHook(() => useMermaidRender({ current: container }));
+    renderHook(() => useMermaidRender({ current: container }, original));
 
     // Wait briefly, confirm no change
     await new Promise(r => setTimeout(r, 100));
     expect(container.innerHTML).toBe(original);
+  });
+
+  it('re-renders mermaid when the content signal changes (tuxlink-f95k)', async () => {
+    // Regression for tuxlink-f95k: switching topics after first mount must
+    // re-scan + re-render mermaid blocks. Keying the effect on containerRef
+    // alone misses this because the ref identity is stable across renders.
+    const container = document.createElement('div');
+
+    // First render: no mermaid block. Hook mounts but does nothing.
+    container.innerHTML = '<p>topic A — no mermaid</p>';
+    const { rerender } = renderHook(
+      ({ signal }: { signal: string }) =>
+        useMermaidRender({ current: container }, signal),
+      { initialProps: { signal: container.innerHTML } },
+    );
+
+    // Simulate a topic switch: the container now holds a mermaid block.
+    container.innerHTML = '<pre><code class="language-mermaid">graph TD\nC-->D</code></pre>';
+    rerender({ signal: container.innerHTML });
+
+    await waitFor(() => {
+      expect(container.innerHTML).toContain('<svg');
+    }, { timeout: 3000 });
   });
 });
