@@ -13,26 +13,33 @@ separately; tuxlink connects to its TCP command + data ports.
 This topic covers the tier model, the Wine setup on Linux, the tuxlink-side
 wiring, and the operator-visible behaviours.
 
-## Licensing tiers
+## Bandwidth modes and licensing
 
-VARA HF ships in three tiers, distinguished by the available on-air
-bandwidth:
+VARA HF exposes three on-air bandwidth modes. Tuxlink's wire codec
+(`src-tauri/src/winlink/modem/vara/command.rs`) names them by their
+`BW<hz>` wire tokens:
 
-| Tier | Bandwidth | License cost | Operationally confirmed in tuxlink |
+| Mode | Bandwidth | Wire token | Licensing |
 |---|---|---|---|
-| **Standard / Free** | ~2300 Hz | Free | Yes — confirmed against real RMS gateways on a Xiegu G90 |
-| **Tactical** | ~2750 Hz | Paid license | Not separately confirmed by this project |
-| **Narrow / Wide** | extended set | Paid license | Not separately confirmed |
+| **Narrow** | 500 Hz | `BW500` | Available across tiers |
+| **Standard** | 2300 Hz | `BW2300` | Free / Standard tier |
+| **Tactical / Wide** | 2750 Hz | `BW2750` | Paid tier |
 
-The licensing tier is a property of the VARA installation, not tuxlink. A
-tuxlink station running VARA Standard talks to VARA's command port the
-same way as a station running Tactical; the modem decides on-air what is
-allowed.
+The licensing tier is a property of the VARA installation, not tuxlink.
+A tuxlink station running the free VARA tier sends `BW2300` over the
+command port the same way a paid-tier station sends `BW2750`; the modem
+decides on-air what is allowed.
 
-For an EmComm-ready Linux station, the Standard tier covers most operating
-scenarios. Standard is operationally confirmed working from this project's
-perspective; the higher tiers are believed to work but should be smoke-
-tested before committing to them.
+**Operationally confirmed from this project:** VARA HF Standard (2300 Hz)
+working against real RMS gateways on a Xiegu G90 (per the project's
+firsthand-operation memory). Narrow and Tactical have not been
+separately confirmed by this project, though tuxlink's wire codec sends
+the right tokens for each.
+
+For an EmComm-ready Linux station, the Standard tier covers most
+operating scenarios. Tactical's wider bandwidth produces faster
+throughput on a clean channel; Narrow is a fallback for very poor
+conditions where 500 Hz is the only bandwidth that survives.
 
 ## VARA on Linux (Wine)
 

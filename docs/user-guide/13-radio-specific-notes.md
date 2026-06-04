@@ -10,6 +10,11 @@ jack will run Winlink with tuxlink — but the entries below have either been
 operationally confirmed or have well-known community-tested settings worth
 reproducing.
 
+The Hamlib model numbers below were verified against the Hamlib source at
+the time of writing (Hamlib master, accessed June 2026). Model IDs do
+shift between Hamlib versions; `rigctl --list | grep <model>` against the
+installed Hamlib confirms the current number for any rig.
+
 ## Xiegu G90 (HF, 20 W)
 
 The G90 is a small QRP HF transceiver popular for portable operating. It
@@ -18,8 +23,8 @@ real RMS gateways on VARA HF Standard.
 
 | Setting | Value |
 |---|---|
-| Hamlib model | `3081` |
-| CAT baud | 19200 |
+| Hamlib model | `3088` (verify with `rigctl --list \| grep G90`) |
+| CAT baud | 19200 (fixed — the Hamlib backend pins both min and max) |
 | CAT data | 8N1 |
 | Data jack | mini-DIN 6-pin |
 | Recommended interface | DigiRig (G90 cable kit) |
@@ -44,8 +49,9 @@ audio + CAT in a single cable. No external interface required.
 
 | Setting | Value |
 |---|---|
-| Hamlib model | `3061` |
-| CAT baud | 19200 (or higher; check radio menu) |
+| Hamlib model | `3073` (verify with `rigctl --list \| grep IC-7300`) |
+| CAT baud | 4800–115200 supported by Hamlib; the radio's menu sets the actual baud (default in many firmwares is 9600; raise to 19200 or higher for responsiveness) |
+| CAT data | 8N1 |
 | Data jack | None needed (USB audio + CAT both via the rear USB port) |
 | Recommended interface | None — direct USB |
 | VARA HF Standard | Works (well-documented community setup) |
@@ -68,8 +74,9 @@ configuration mirrors the IC-7300; the difference is form factor + power.
 
 | Setting | Value |
 |---|---|
-| Hamlib model | `3085` |
-| CAT baud | 19200 |
+| Hamlib model | `3085` (verify with `rigctl --list \| grep IC-705`) |
+| CAT baud | 4800–19200 supported by Hamlib; set the radio's CI-V baud to match (default 19200 is the common choice) |
+| CAT data | 8N1 |
 | Data jack | None needed (USB) |
 | Recommended interface | None — direct USB |
 | VARA HF Standard | Works |
@@ -89,8 +96,9 @@ The FT-991A is an all-band transceiver with built-in USB audio + CAT.
 
 | Setting | Value |
 |---|---|
-| Hamlib model | `1027` |
-| CAT baud | 38400 (default), settable in radio menu |
+| Hamlib model | `1035` (verify with `rigctl --list \| grep FT-991`) — the FT-991 backend covers the FT-991A |
+| CAT baud | 4800 minimum per Hamlib; the radio's menu sets the actual rate (common settings are 19200 or 38400 — match the menu) |
+| CAT data | 8N2, no parity |
 | Data jack | mini-DIN if going via interface; or USB direct |
 | Recommended interface | None — direct USB |
 | VARA HF Standard | Works |
@@ -98,8 +106,9 @@ The FT-991A is an all-band transceiver with built-in USB audio + CAT.
 
 Notes:
 
-- **CAT baud.** The 991A defaults to higher CAT baud than most other rigs.
-  Match in rigctld and tuxlink config.
+- **CAT data bits.** The 991A's CAT format is 8N2 — two stop bits, no parity.
+  Standard rigctld config gets this from the Hamlib backend automatically;
+  hand-rolled CAT clients need to match.
 - **TX audio.** The radio's data-mode menu has a per-band audio routing
   setting; set to USB for HF data modes.
 
@@ -109,8 +118,9 @@ A popular fixed-station HF rig in established stations.
 
 | Setting | Value |
 |---|---|
-| Hamlib model | `2014` (TS-590S), `2032` (TS-590SG) |
-| CAT baud | 9600 (default) or 19200 |
+| Hamlib model | `2031` (TS-590S), `2037` (TS-590SG) — verify with `rigctl --list \| grep TS-590` |
+| CAT baud | 4800–115200 supported by Hamlib; common setting is 9600 (default) or 19200 |
+| CAT data | 8N1 |
 | Data jack | mini-DIN 6-pin |
 | Recommended interface | DigiRig or SignaLink with TS-590-specific cable |
 | VARA HF Standard | Works (community-tested) |

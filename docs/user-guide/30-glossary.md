@@ -48,8 +48,9 @@ B2F
 
 Bandwidth
 :   For digital modes, the on-air RF bandwidth of the signal. ARDOP
-    offers 200/500/1000/2000 Hz; VARA HF offers 2300 Hz (Standard) up to
-    higher widths in licensed tiers; Packet 1200 baud occupies ~3 kHz.
+    offers 200/500/1000/2000 Hz; VARA HF offers 500 Hz (Narrow), 2300 Hz
+    (Standard), and 2750 Hz (Tactical / Wide); Packet 1200 baud occupies
+    ~3 kHz.
 
 BB6PRO
 :   A "Black Box" all-in-one radio-to-PC interface (audio + CAT + PTT in
@@ -323,9 +324,11 @@ TS-590
 ## V
 
 VARA HF
-:   A proprietary HF data mode developed by EA5HVK. Multiple licensed
-    tiers (Standard / Tactical / Narrow). Tuxlink connects to a separately
-    running VARA installation over TCP. See
+:   A proprietary HF data mode developed by EA5HVK. Three on-air
+    bandwidths — Narrow (500 Hz), Standard (2300 Hz), and Tactical /
+    Wide (2750 Hz) — with licensing tiers that gate which bandwidths the
+    operator can transmit at. Tuxlink connects to a separately running
+    VARA installation over TCP. See
     [VARA HF deep dive](16-vara-hf-deep-dive.md).
 
 VHF / UHF

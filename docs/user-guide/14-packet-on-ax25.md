@@ -16,14 +16,20 @@ AX.25 is a packet protocol — variable-length frames carrying addressing,
 control, and payload over a half-duplex RF link. The protocol-relevant
 properties:
 
-- **Frame size.** Up to 256 bytes of payload per frame (the "I-frame" type
-  that carries data). Some networks negotiate up to 2048 bytes; tuxlink
-  uses the conservative 256-byte default.
+- **Frame size.** Tuxlink defaults to `paclen = 128` bytes of payload per
+  I-frame (the AX.25 I-frame is the type that carries data). The AX.25
+  standard allows up to 256, and some networks negotiate higher via
+  extended mode, but 128 is the conservative interoperable default
+  tuxlink ships.
+- **Window size.** Tuxlink defaults to `maxframe = 4` — up to four
+  unacknowledged I-frames in flight at once. The mod-8 numbering AX.25
+  uses caps the window at 7.
 - **Addressing.** Source + destination callsigns, optionally with a path
   of digipeaters. Each callsign carries a `-N` SSID suffix (`-7` is the
   Winlink convention for the operator's mailbox endpoint).
-- **Modulation.** 1200-baud AFSK over FM. The two audio tones (1200 Hz
-  and 2200 Hz) carry the bit stream. Mark and space.
+- **Modulation.** 1200-baud AFSK over FM, the Bell 202 standard the
+  amateur packet network adopted in the 1980s. Two audio tones — 1200 Hz
+  (mark) and 2200 Hz (space) — carry the bit stream.
 - **Connected mode.** Two stations establish a virtual circuit (the SABM
   / UA handshake), exchange numbered I-frames, and tear down with DISC.
   Frames are acknowledged; missed frames are retransmitted. This is the
@@ -102,10 +108,14 @@ the lines for over-the-air transport.
 
 ## Bandwidth and message size
 
-1200-baud AX.25 is **slow**. The on-air bit rate is 1200 bits per second;
-after AX.25 framing overhead, error checking, and protocol acknowledgements,
-the effective payload throughput is around 600–900 bits per second. A
-1 KB message takes about 15 seconds; a 10 KB message takes 2–3 minutes.
+1200-baud AX.25 is **slow**. The on-air bit rate is 1200 bits per second
+(150 bytes per second at the link layer); after AX.25 framing overhead
+(addressing, control, FCS), B2F's per-message header, and the
+acknowledgement round trips, the operator-visible throughput is in the
+50–100 bytes per second range on a clean local channel — significantly
+less on a noisy channel with retransmissions. Order-of-magnitude planning:
+a 1 KB message takes tens of seconds; a 10 KB message takes several
+minutes; a 100 KB message takes the better part of an hour.
 
 Practical limits:
 

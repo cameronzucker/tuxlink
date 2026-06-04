@@ -1,128 +1,193 @@
 # Catalog requests
 
-A catalog request is a special Winlink message that asks the CMS for a piece
-of catalog data — the RMS gateway list, the weather catalog, the position
-report list, or one of several others. The CMS answers asynchronously with
-a regular Winlink message containing the catalog response, which lands in
-the local Inbox like any other received message.
+A catalog request is a special Winlink message that asks the CMS to send back
+a piece of pre-published data — the active-users list, the help bulletin,
+the public packet gateway list, the public VARA gateway list, and so on.
+Each catalog item lives on the CMS as a named file; the operator asks for
+a file by name, and the CMS replies with one regular Winlink message per
+requested file. The response lands in the Inbox the next time the operator
+connects.
 
-This topic covers what catalog requests are, the ones tuxlink uses, and how
-the operator drives them.
+This topic covers the request wire format, the catalog item naming
+convention, and the related but separate mechanisms tuxlink uses for
+gateway lists and weather data.
 
-## What a catalog request looks like
+## The request shape
 
-A catalog request is a Winlink message addressed to a special address —
-typically `query@winlink.org` or similar — with a specific subject line
-that names the requested catalog. The body usually carries query
-parameters (filter to a region, restrict to a band, etc.).
+Tuxlink composes a Winlink message with these fields:
 
-When the CMS receives a catalog request, it queues a response. The next
-time the operator's tuxlink station connects (via any transport), the
-response arrives in the Inbox.
+```
+To:      INQUIRY@winlink.org
+Subject: REQUEST
+Body:    PUB_PACKET
+         PUB_VARA
+```
 
-Catalog requests are inherently **two-pass**:
+- The recipient is the literal address `INQUIRY@winlink.org`. This is the
+  CMS endpoint that fans inquiries out to catalog responders.
+- The Subject is always the literal `REQUEST`.
+- The Body is a newline-separated list of catalog item filenames. One or
+  more items per request — the CMS replies with one separate Private
+  message per filename.
 
-1. The operator composes and sends the request (one session).
-2. The operator connects again to receive the response (a later session).
+This is the wire format tuxlink's catalog composer
+(`src-tauri/src/catalog/composer.rs`) emits, verified against a Winlink
+Express outbox fixture (the canonical 2026-06-02 protocol-grounding
+research). It is also the standard format compatible Winlink clients
+use.
 
-For Telnet, both can happen in quick succession — minutes apart. For RF,
-the gap is usually longer; the operator has to come back and connect again
-later.
+## Catalog item naming
 
-## Catalogs tuxlink uses
+Catalog items are filenames using letters, digits, and underscores. They
+are case-insensitive on the CMS side; tuxlink normalises to uppercase by
+convention.
 
-### RMS gateway list
+Common items:
 
-Subject: `request RMS_LIST` (the exact incantation varies; tuxlink's
-catalog request form fills it in for the operator).
+| Item | What it returns |
+|---|---|
+| `PUB_PACKET` | The list of active Packet RMS gateways |
+| `PUB_VARA` | The list of active VARA HF RMS gateways |
+| `WL2K_HELP` | The Winlink help bulletin |
+| `WL2K_USERS` | The active-users list |
 
-Returns: the canonical list of every RMS gateway worldwide — callsign,
-frequency, mode, bandwidth, position, last-heard time. This is the data
-that drives the [Picking a gateway](05-cms-and-rms.md) decision.
+The catalog catalog itself — the index of every available item — is a
+catalog item. Operators new to the system request that index first, then
+pick from its contents.
 
-Tuxlink stores the returned list and exposes it via the radio panel's
-gateway picker. A periodic refresh — operator-initiated, no automated
-catalog request — keeps the list current.
-
-### Weather catalog
-
-Subject: `request WX_<region>`. Returns forecast and observation data for
-the requested region.
-
-This is operationally relevant for emcomm responders making movement
-decisions, marine mobile operators planning routes, expedition operators
-choosing band conditions.
-
-### Position report (PR_) and Catalog of Catalogs
-
-Other catalogs include the position-report list (who has reported in
-recently from where), the catalog of catalogs (an index of all available
-catalog queries), and ad-hoc query types added by the CMS administrators.
+> [!NOTE]
+> The catalog item names above are stable across the network, but the
+> full set evolves: catalog responders add items, retire items, and
+> occasionally rename them. The catalog index is the authoritative
+> current list at any time.
 
 ## Driving a catalog request
 
 **Tools → Catalog request** opens a small form:
 
-1. **Pick a catalog** — dropdown lists the catalogs tuxlink knows about.
-2. **Region / parameter** — text field, prefilled with sensible defaults
-   for the catalog (your callsign's grid square, the current weather
-   region, etc.).
-3. **Send via** — pick a transport. Telnet is the fastest for catalog
-   requests because the request itself is small and the response is
-   not enormous.
+1. **Pick catalog items** — checklist of items the operator has used
+   before, plus a "fetch the index" affordance.
+2. **Add manual filename** — text field for items not in the picker.
+3. **Send via** — pick a transport. Telnet is the fastest path for
+   catalog requests because the response messages can be large and the
+   round trip is well-suited to a Telnet session.
 
-The form generates a properly-formatted Winlink message, drops it in the
-Outbox, and the next Connect sends it.
+The form generates a properly-formatted Winlink message, drops it in
+the Outbox, and the next Connect sends it.
 
 ## The response
 
-Catalog responses arrive in the Inbox like any other message. The body is
-plain text (or, for some catalogs, formatted with a known structure
-tuxlink's parser recognises). The RMS gateway list response, specifically,
-is parsed by tuxlink — selecting it from the Inbox triggers an "Update
-catalog" affordance that pulls the parsed list into the local cache.
+Catalog responses arrive in the Inbox like any other received Winlink
+message. The body is plain text (for the index, help bulletin, etc.) or
+formatted with a structure tuxlink's parser recognises (for the gateway
+lists). Selecting a parseable response surfaces an "Update from this
+catalog item" affordance that pulls the parsed data into the local
+cache.
 
 A response that doesn't get parsed (or that the operator dismisses) still
 sits in the Inbox as a readable message — no data is lost.
 
+The CMS replies to each requested filename with a separate message, so
+a request that bundled three filenames produces three Inbox messages on
+the next Connect.
+
+## The RMS gateway list — two mechanisms
+
+The Winlink network publishes the RMS gateway list two ways. Tuxlink's
+gateway-list refresh tries each in order of operator preference:
+
+1. **HTTPS REST.** `https://api.winlink.org/gateway/status.json` returns
+   a JSON document with every active RMS gateway: callsign, frequency,
+   mode, bandwidth, grid square, last-heard time. Fast — single HTTPS
+   round trip — but requires internet. Tuxlink uses this when online and
+   the operator hasn't explicitly preferred the in-band path.
+2. **In-band catalog inquiry.** Sending `PUB_PACKET` and `PUB_VARA`
+   (and possibly `PUB_ARDOP` and similar) catalog requests pulls the
+   per-mode gateway lists as Winlink messages over the operator's
+   current transport. Works over RF when internet is unavailable;
+   slower than the HTTPS path; the response is the published catalog
+   format, parsed into the same local gateway list the HTTPS path
+   populates.
+
+The catalog inquiry path matters specifically for emcomm operators
+running RF-only with no internet — it is how a station with no upstream
+connectivity refreshes its gateway list mid-event.
+
+## Weather data — not a Winlink catalog item
+
+A common newcomer surprise: weather data on Winlink is NOT a catalog
+inquiry, and it does NOT come from `INQUIRY@winlink.org`. Weather is a
+**third-party service** (Saildocs) that happens to use Winlink as the
+mail transport.
+
+To fetch a GRIB file or a NWS text forecast, tuxlink composes a regular
+outgoing message addressed to:
+
+```
+To:      query@saildocs.com
+Subject: (anything)
+Body:    send gfs:40N,60N,140W,120W|2,2|24,48,72|PRESS,WIND
+```
+
+- The recipient is Saildocs, NOT Winlink.
+- The Body is Saildocs' own request grammar (`send <category>:<args>`).
+- The response is a GRIB-1 binary file (for `gfs` and similar weather-
+  model requests) or plain text (for NWS bulletins).
+
+The full Saildocs grammar is documented at https://saildocs.com/gribinfo.
+Tuxlink offers a dedicated GRIB request form that hides this grammar
+behind a region picker and parameter checkboxes — see the
+[HTML Forms](20-html-forms.md) topic.
+
+The reason this matters operationally: Saildocs is a separate service.
+Its availability is independent of Winlink's. An operator can request
+weather even when the Winlink catalog system is congested. The trade-off
+is that Saildocs occasionally rate-limits unauthenticated traffic;
+heavy-use stations register with Saildocs for higher limits.
+
 ## How often to refresh
 
 The RMS gateway list changes slowly — gateways come and go, but the
-quarterly turnover is small. A monthly refresh is sufficient for a station
-that operates regularly. For a station that is dormant for months and
-then comes back for an emcomm event, a refresh just before the event is
-the right call.
+quarterly turnover is small. A monthly refresh is sufficient for a
+station that operates regularly. For a station that is dormant for
+months and then comes back for an emcomm event, a refresh just before
+the event is the right call.
 
-The weather catalog is the opposite — it's perishable. A 12-hour-old
-weather catalog response is operationally useless. The pattern is fetch
-just before you need it.
+The Winlink help bulletin and active-users list are static-ish — refresh
+when curious, not on schedule.
+
+GRIB / weather data is the opposite — it's perishable. A 12-hour-old
+weather file is operationally useless. Fetch just before you need it.
 
 ## Size and bandwidth
 
-| Catalog | Typical response size | Practical transport |
+| Item | Typical response size | Practical transport |
 |---|---|---|
-| RMS gateway list (global) | 200–400 KB | Telnet — too big for HF radio |
-| RMS gateway list (regional filter) | 30–100 KB | VARA HF Standard works |
-| Weather catalog (region) | 10–50 KB | VARA HF, ARDOP 1000 Hz |
-| Position report list (region) | 5–30 KB | Any HF transport |
+| `PUB_PACKET` (global) | 100–300 KB | Telnet preferred; VARA HF Standard works for regional subset |
+| `PUB_VARA` (global) | 100–300 KB | Same |
+| `WL2K_HELP` | ~5–20 KB | Any transport |
+| `WL2K_USERS` (global) | 50–200 KB | Telnet preferred |
+| GRIB regional 24-hour forecast | 10–50 KB | VARA HF, ARDOP 1000 Hz |
+| Saildocs NWS text forecast | 2–20 KB | Any HF transport |
 
-A global RMS gateway list pulled over Packet would tie up the channel for
-30+ minutes. The right answer for HF refresh is a regional filter — the
-request form supports this.
+A global Packet list pulled over Packet would tie up the channel for 30+
+minutes. The right answer for HF refresh is either the HTTPS path (when
+online) or a regional-filter inquiry (when supported by the catalog item).
 
 ## When catalog requests are inappropriate
 
 Catalog requests are NOT appropriate during an active emcomm event when
-operating time is tight and the gateway list / weather is already
-sufficient. They are appropriate during the **pre-event preparation**
-phase, when the operator has time and a good Telnet path.
+operating time is tight and the gateway list is already sufficient. They
+are appropriate during the **pre-event preparation** phase, when the
+operator has time and a good Telnet path.
 
 For routine non-emcomm operating, catalog requests are background work —
 slot them between traffic.
 
 ## Where next
 
-- [The Winlink ecosystem](04-the-winlink-ecosystem.md) — what catalogs the CMS serves.
-- [CMS and RMS gateways](05-cms-and-rms.md) — what the gateway list is for.
-- [Picking a transport](08-picking-a-transport.md) — which transport for which catalog size.
+- [The Winlink ecosystem](04-the-winlink-ecosystem.md) — where the CMS sits.
+- [CMS and RMS gateways](05-cms-and-rms.md) — what the gateway list describes.
+- [Picking a transport](08-picking-a-transport.md) — which transport for which size of response.
 - [The mailbox](18-the-mailbox.md) — where catalog responses land.
+- [HTML Forms](20-html-forms.md) — the GRIB request form.

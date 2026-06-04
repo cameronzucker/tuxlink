@@ -64,12 +64,14 @@ Two problems are solved by this:
 Manual one-shot for testing:
 
 ```bash
-rigctld -m 3081 -r /dev/ttyUSB0 -s 19200 -t 4532
+rigctld -m 3088 -r /dev/ttyUSB0 -s 19200 -t 4532
 ```
 
-- `-m 3081` — the Hamlib model number for the Xiegu G90. Other models:
-  `1042` (FT-818), `2014` (TS-590S), `3061` (IC-7300). `rigctl --list`
-  enumerates every supported model.
+- `-m 3088` — the Hamlib model number for the Xiegu G90 (as of Hamlib
+  master, June 2026). Other models: `1041` (FT-818), `2031` (TS-590S),
+  `3073` (IC-7300), `3085` (IC-705), `1035` (FT-991/991A). `rigctl --list`
+  enumerates every supported model; numeric IDs occasionally shift between
+  Hamlib versions.
 - `-r /dev/ttyUSB0` — the radio's CAT serial device. With the
   [DigiRig udev rule](10-digirig.md), this is `/dev/digirig-cat`.
 - `-s 19200` — baud rate. Must match the radio's CAT-port setting.
@@ -84,7 +86,7 @@ Description=Hamlib rigctld
 After=network.target
 
 [Service]
-ExecStart=/usr/bin/rigctld -m 3081 -r /dev/digirig-cat -s 19200 -t 4532
+ExecStart=/usr/bin/rigctld -m 3088 -r /dev/digirig-cat -s 19200 -t 4532
 Restart=on-failure
 
 [Install]
