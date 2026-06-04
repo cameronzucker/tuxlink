@@ -133,11 +133,11 @@ describe('<VaraRadioPanel>', () => {
     });
   });
 
-  it('invokes vara_start_session on Start click and updates status', async () => {
+  it('invokes vara_open_session on Start click and updates status', async () => {
     const core = await import('@tauri-apps/api/core');
     const invokeSpy = core.invoke as ReturnType<typeof vi.fn>;
     invokeSpy.mockImplementation(
-      makeInvoke({ vara_start_session: openStatus }),
+      makeInvoke({ vara_open_session: openStatus }),
     );
     render(<VaraRadioPanel mode={HF_MODE} onClose={() => {}} />);
     await waitFor(() => {
@@ -151,13 +151,43 @@ describe('<VaraRadioPanel>', () => {
     await waitFor(() => {
       expect(screen.getByTestId('vara-state-display')).toHaveTextContent('State: open');
     });
-    expect(invokeSpy).toHaveBeenCalledWith('vara_start_session');
+    expect(invokeSpy).toHaveBeenCalledWith('vara_open_session', {
+      intent: 'cms',
+      transportKind: 'vara-hf',
+    });
+  });
+
+  it('passes transportKind: vara-fm when mounted in vara-fm mode (Codex Round 3 P1 #3)', async () => {
+    // Regression: the panel must pass mode.kind through as transportKind so
+    // the backend records the operator-meaningful vara-hf vs vara-fm
+    // discriminator on session state. Without this, the two modes share an
+    // open session and the frontend can't detect sidebar-nav drift mid-session.
+    const core = await import('@tauri-apps/api/core');
+    const invokeSpy = core.invoke as ReturnType<typeof vi.fn>;
+    invokeSpy.mockImplementation(
+      makeInvoke({ vara_open_session: openStatus }),
+    );
+    render(<VaraRadioPanel mode={FM_MODE} onClose={() => {}} />);
+    await waitFor(() => {
+      expect(screen.getByTestId('vara-start-btn')).not.toBeDisabled();
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('vara-start-btn'));
+    });
+
+    await waitFor(() => {
+      expect(invokeSpy).toHaveBeenCalledWith('vara_open_session', {
+        intent: 'cms',
+        transportKind: 'vara-fm',
+      });
+    });
   });
 
   it('surfaces start-failure error inline', async () => {
     const core = await import('@tauri-apps/api/core');
     (core.invoke as ReturnType<typeof vi.fn>).mockImplementation(
-      makeInvoke({ vara_start_session: new Error('TCP connect failed: Connection refused (os error 111)') }),
+      makeInvoke({ vara_open_session: new Error('TCP connect failed: Connection refused (os error 111)') }),
     );
     render(<VaraRadioPanel mode={HF_MODE} onClose={() => {}} />);
     await waitFor(() => {
@@ -223,7 +253,7 @@ describe('<VaraRadioPanel>', () => {
     expect(screen.getByTestId('vara-start-btn')).not.toBeDisabled();
   });
 
-  it('actually invokes vara_start_session on Start click under armPlatform (tuxlink-poh6)', async () => {
+  it('actually invokes vara_open_session on Start click under armPlatform (tuxlink-poh6)', async () => {
     // Regression test for tuxlink-poh6: the previous fix (tuxlink-ze98)
     // removed platformBlocked from the disabled prop but LEFT it in the
     // onStartClick early-return guard. Button was clickable, handler
@@ -233,7 +263,7 @@ describe('<VaraRadioPanel>', () => {
     invokeSpy.mockImplementation(
       makeInvoke({
         platform_info: armPlatform,
-        vara_start_session: openStatus,
+        vara_open_session: openStatus,
       }),
     );
     render(<VaraRadioPanel mode={HF_MODE} onClose={() => {}} />);
@@ -245,9 +275,12 @@ describe('<VaraRadioPanel>', () => {
       fireEvent.click(screen.getByTestId('vara-start-btn'));
     });
 
-    // The handler must have fired vara_start_session, NOT silently no-op'd.
+    // The handler must have fired vara_open_session, NOT silently no-op'd.
     await waitFor(() => {
-      expect(invokeSpy).toHaveBeenCalledWith('vara_start_session');
+      expect(invokeSpy).toHaveBeenCalledWith('vara_open_session', {
+        intent: 'cms',
+        transportKind: 'vara-hf',
+      });
     });
   });
 

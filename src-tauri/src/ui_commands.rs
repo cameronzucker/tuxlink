@@ -2745,7 +2745,7 @@ fn ardop_arms_log_path() -> std::path::PathBuf {
 // Key shape divergences from ARDOP:
 // - VARA is NOT spawned by tuxlink. The operator runs VARA externally
 //   (Windows native, or under Wine on x86 Linux). `vara_listen` therefore
-//   refuses to arm unless `vara_start_session` has already opened the TCP
+//   refuses to arm unless `vara_open_session` has already opened the TCP
 //   transport (state == Open). There is no "start the modem first" auto-spawn.
 // - VARA's LISTEN setter uses `LISTEN ON` / `LISTEN OFF` (not ARDOP's
 //   `LISTEN TRUE` / `LISTEN FALSE`).
@@ -2873,10 +2873,20 @@ pub struct VaraListenHandle {
     pub shutdown: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
+/// Returns `true` when a VARA listener consumer task is currently armed
+/// (a `VaraListenHandle` is present in `listen_state.inner`). Cheap; safe
+/// to poll. Used by the `vara_open_session` auto-arm path's unit tests to
+/// assert intent-driven arming without spinning up a real consumer task.
+impl VaraListenState {
+    pub fn is_armed(&self) -> bool {
+        self.inner.lock().map(|g| g.is_some()).unwrap_or(false)
+    }
+}
+
 /// Arm the VARA listener for the default TTL (1 hour per architecture §5).
 ///
 /// **Precondition:** VARA must already be in state==Open (operator must
-/// have run `vara_start_session` first). Unlike ARDOP, tuxlink does NOT
+/// have run `vara_open_session` first). Unlike ARDOP, tuxlink does NOT
 /// spawn VARA — it's an externally-managed Windows process (native or
 /// under Wine) and the operator owns the lifecycle. An arm against a
 /// closed session returns `UiError::Internal` with a clear remediation.
@@ -2897,6 +2907,35 @@ pub async fn vara_listen(
     log: State<'_, std::sync::Arc<SessionLogState>>,
     vara_session: State<'_, std::sync::Arc<crate::winlink::modem::vara::VaraSession>>,
     listen_state: State<'_, std::sync::Arc<VaraListenState>>,
+) -> Result<(), UiError> {
+    // Thin wrapper. The body lives in `arm_vara_listener_inner` so the
+    // `vara_open_session` auto-arm path can call it without going through
+    // the Tauri command dispatcher (which would require an AppHandle from
+    // inside the inner command + double-acquire the same State).
+    arm_vara_listener_inner(
+        &app,
+        log.inner(),
+        vara_session.inner(),
+        listen_state.inner(),
+    )
+    .await
+}
+
+/// Inner body of [`vara_listen`] — factored out so the
+/// `vara_open_session` auto-arm path (tuxlink-0ye6 Task 3.2) can call it
+/// directly without re-dispatching through Tauri. Borrowed args (no
+/// `State`-typed params) because the open-session path already holds the
+/// same managed-state Arcs via its own `State` extractors.
+///
+/// Note: intent is not currently load-bearing inside the consumer task
+/// (the listener accepts any allowlisted peer regardless of intent), but
+/// reserving the parameter at the inner boundary makes Phase 3's
+/// `RadioOnly`-specific routing-flag wiring a no-source-shape change.
+pub(crate) async fn arm_vara_listener_inner(
+    app: &AppHandle,
+    log: &std::sync::Arc<SessionLogState>,
+    vara_session: &std::sync::Arc<crate::winlink::modem::vara::VaraSession>,
+    listen_state: &std::sync::Arc<VaraListenState>,
 ) -> Result<(), UiError> {
     use crate::winlink::listener::{ListenerArmsRecord, TransportKind, DEFAULT_TTL};
 
@@ -2933,7 +2972,7 @@ pub async fn vara_listen(
         return Err(UiError::Internal {
             detail: format!(
                 "VARA listener arm refused — VARA transport is not Open (current state: {:?}). \
-                 Press Start on the VARA panel first (vara_start_session) so the TCP transport \
+                 Press Start on the VARA panel first (vara_open_session) so the TCP transport \
                  is open before arming the listener.",
                 snap.state
             ),
@@ -2977,11 +3016,11 @@ pub async fn vara_listen(
     let arbiter: std::sync::Arc<crate::position::PositionArbiter> =
         (*app.state::<std::sync::Arc<crate::position::PositionArbiter>>()).clone();
     let vara_session_arc: std::sync::Arc<crate::winlink::modem::vara::VaraSession> =
-        (*vara_session).clone();
+        vara_session.clone();
     let arms_for_task = arms.clone();
     let app_clone = app.clone();
-    let log_clone: std::sync::Arc<SessionLogState> = (*log).clone();
-    let listen_state_for_task = (*listen_state).clone();
+    let log_clone: std::sync::Arc<SessionLogState> = log.clone();
+    let listen_state_for_task = listen_state.clone();
     let bound_host = snap.bound_host.clone();
     let bound_cmd_port = snap.bound_cmd_port;
     tokio::task::spawn_blocking(move || {
@@ -3002,8 +3041,8 @@ pub async fn vara_listen(
 
     let mins = arms.ttl.as_secs() / 60;
     emit_session_line(
-        &app,
-        &log,
+        app,
+        log,
         LogLevel::Info,
         format!(
             "VARA listener armed for {mins} min (consent uuid {}). \

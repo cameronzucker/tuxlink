@@ -23,7 +23,7 @@
 //!   setter back as `InboundCommand::Unknown("LISTEN ON")` (no first-class
 //!   Listen-echo variant in the inbound enum), so we send + drain pending
 //!   events for a short window rather than blocking on a specific echo
-//!   shape. Same posture as `commands::vara_start_session_inner` for the
+//!   shape. Same posture as `commands::vara_open_session_inner` for the
 //!   MYCALL/BW setters.
 //! - [`serve_inbound_one`] — single-shot wait for an inbound `CONNECTED`
 //!   event, run the gate, and either return [`InboundOutcome::Accepted`]
@@ -227,7 +227,7 @@ const LISTEN_DRAIN_BUDGET: Duration = Duration::from_millis(500);
 /// a specific echo because VARA doesn't expose an EchoBack message
 /// shape comparable to ARDOP's — setter acknowledgement is implicit.
 /// Matches the existing VARA setter pattern in
-/// `commands::vara_start_session_inner` (which sends MYCALL/BW without
+/// `commands::vara_open_session_inner` (which sends MYCALL/BW without
 /// awaiting an echo).
 ///
 /// Errors propagate from the underlying TCP write. Drain failures are

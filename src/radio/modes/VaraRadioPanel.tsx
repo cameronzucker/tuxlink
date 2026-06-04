@@ -221,7 +221,18 @@ export function VaraRadioPanel({ mode, onClose }: VaraRadioPanelProps) {
     setBusy(true);
     setActionError(null);
     try {
-      const next = await invoke<VaraStatusDto>('vara_start_session');
+      // tuxlink-0ye6 Task 3.2: `vara_start_session` → `vara_open_session(intent, transportKind)`.
+      // intent is hardcoded 'cms' transitionally — Phase 5's RadioSessionPanel
+      // will derive the intent from the operator-typed RadioPanelMode props.
+      // transportKind is the panel's mode.kind ('vara-hf' vs 'vara-fm') so
+      // the backend can record the operator-meaningful discriminator on
+      // session state (the wire transport is identical between the two —
+      // Codex Round 3 P1 #3: lets the frontend detect sidebar-nav drift
+      // mid-session).
+      const next = await invoke<VaraStatusDto>('vara_open_session', {
+        intent: 'cms',
+        transportKind: mode.kind,
+      });
       setStatus(next);
     } catch (e) {
       setActionError(`Start failed: ${String(e)}`);

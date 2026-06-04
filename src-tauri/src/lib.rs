@@ -143,7 +143,7 @@ pub fn run() {
         // tuxlink-9ls2: VARA listener shared state — the in-flight consumer
         // task's shutdown flag. Mirrors the ARDOP listener; VARA differs only
         // in that the transport is externally-managed (operator must
-        // vara_start_session before vara_listen can arm).
+        // vara_open_session before vara_listen can arm).
         .manage(std::sync::Arc::new(crate::ui_commands::VaraListenState::default()))
         .setup(|app| {
             use tauri::Manager as _;  // brings .state() into scope for the setup closure
@@ -312,7 +312,7 @@ pub fn run() {
             crate::ui_commands::ardop_allowed_stations_remove,
             crate::ui_commands::ardop_allowed_stations_set_allow_all,
             // tuxlink-9ls2: VARA P2P listener — same shape as ARDOP but the
-            // operator-managed transport requires vara_start_session first.
+            // operator-managed transport requires vara_open_session first.
             crate::ui_commands::vara_listen,
             crate::ui_commands::vara_set_listen,
             crate::ui_commands::vara_allowed_stations_get,
@@ -353,7 +353,7 @@ pub fn run() {
             // probe. RF connect-to-peer (RADIO-1-gated) lives in a Phase 3 follow-up.
             crate::winlink::modem::vara::commands::config_get_vara,
             crate::winlink::modem::vara::commands::config_set_vara,
-            crate::winlink::modem::vara::commands::vara_start_session,
+            crate::winlink::modem::vara::commands::vara_open_session,
             crate::winlink::modem::vara::commands::vara_stop_session,
             crate::winlink::modem::vara::commands::vara_status,
             crate::winlink::modem::vara::commands::platform_info,

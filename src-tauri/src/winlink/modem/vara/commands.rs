@@ -232,6 +232,17 @@ struct VaraSessionInner {
     /// / `return_transport_from_outbound` (outbound). See [`TransportOwner`]
     /// for the state machine; transitions are guarded by this mutex.
     transport_owner: TransportOwner,
+    /// Intent of the currently-open session (tuxlink-0ye6 Task 3.2). Set by
+    /// `vara_open_session` after a successful TCP open; cleared in
+    /// `vara_stop_session_inner` on transport teardown. `None` whenever
+    /// `transport.is_none()` — i.e., status is `Closed` or `Error`.
+    active_intent: Option<SessionIntent>,
+    /// Transport-kind discriminator (vara-hf vs vara-fm) for the open
+    /// session. Same lifecycle as [`Self::active_intent`]. The wire
+    /// transport (TCP host/port) is identical between the two; this field
+    /// records the operator-meaningful distinction so the frontend can
+    /// detect sidebar-nav drift mid-session (Codex Round 3 P1 #3).
+    active_transport_kind: Option<TransportKind>,
 }
 
 impl VaraSession {
@@ -249,6 +260,8 @@ impl VaraSession {
                 abort_writer: None,
                 abort_stream: None,
                 transport_owner: TransportOwner::None,
+                active_intent: None,
+                active_transport_kind: None,
             }),
             transport_yield_request: Arc::new(Notify::new()),
             transport_yield_rx: tokio::sync::Mutex::new(yield_rx),
@@ -310,20 +323,20 @@ impl VaraSession {
         None
     }
 
-    /// Intent of the currently-open session. STUB: returns `None`.
-    // TODO: wire to listener state once Phase 3 commands land
-    // (tuxlink-0ye6 Task 3.2 — `vara_open_session(intent)` captures the
-    // operator-selected intent into session state).
+    /// Intent of the currently-open session (tuxlink-0ye6 Task 3.2). Set by
+    /// `vara_open_session` on successful TCP open; cleared by
+    /// `vara_stop_session_inner`. Returns `None` when the session is closed
+    /// or the mutex is poisoned.
     pub fn active_intent(&self) -> Option<SessionIntent> {
-        None
+        self.inner.lock().ok().and_then(|g| g.active_intent)
     }
 
-    /// Transport-kind of the currently-open session. STUB: returns `None`.
-    // TODO: wire to listener state once Phase 3 commands land
-    // (tuxlink-0ye6 Task 3.2 — `vara_open_session(transport_kind)`
-    // discriminates VaraHf vs VaraFm at the session layer).
+    /// Transport-kind of the currently-open session (tuxlink-0ye6 Task 3.2).
+    /// Discriminates `VaraHf` vs `VaraFm` even though the wire transport
+    /// (TCP) is identical — Codex Round 3 P1 #3: lets the frontend detect
+    /// sidebar-nav drift mid-session. Same lifecycle as [`Self::active_intent`].
     pub fn active_transport_kind(&self) -> Option<TransportKind> {
-        None
+        self.inner.lock().ok().and_then(|g| g.active_transport_kind)
     }
 
     /// Take ownership of the open transport, leaving the session in
@@ -621,7 +634,7 @@ impl VaraSession {
         let transport = guard
             .transport
             .as_mut()
-            .ok_or_else(|| "VARA session is not Open — call vara_start_session first".to_string())?;
+            .ok_or_else(|| "VARA session is not Open — call vara_open_session first".to_string())?;
         transport
             .send(&OutboundCommand::Listen(true))
             .map_err(|e| format!("LISTEN ON write failed: {e}"))
@@ -808,21 +821,41 @@ pub fn bandwidth_from_hz(hz: u32) -> Option<Bandwidth> {
     }
 }
 
-/// Start a VARA session: open the cmd + data TCP socket pair, optionally
-/// send the `BW <hz>` setter, return the new status snapshot.
+/// Open a VARA session: open the cmd + data TCP socket pair, optionally
+/// send the `BW <hz>` setter, record the session intent + transport-kind,
+/// and (when `intent.auto_arms_listener()` is true) auto-arm the listener
+/// before returning. Returns the new status snapshot.
 ///
 /// Does NOT send `CONNECT` and does NOT transmit. Opening these sockets is
 /// equivalent to opening a TCP connection to localhost:8300 — RADIO-1-safe.
-/// The RF-transmitting `CONNECT` flow lands in Phase 3 with the full
+/// The RF-transmitting `CONNECT` flow lands in Phase 3.5 with the full
 /// session-state machine and a consent token gate.
+///
+/// **Signature (tuxlink-0ye6 Task 3.2 + Codex Round 2 P2):** accepts both
+/// `intent: SessionIntent` AND `transport_kind: TransportKind`. The
+/// transport-kind discriminates `VaraHf` vs `VaraFm` even though the wire
+/// transport (TCP host/port) is identical — Codex Round 3 P1 #3: lets the
+/// frontend detect sidebar-nav drift mid-session. Without both args the
+/// Phase 5 RadioSessionPanel IPC would fail at deserialization.
+///
+/// **Auto-arm (spec §2 + §3):** the listener is auto-armed inline when
+/// `intent.auto_arms_listener()` is true — `P2p` (any peer) and `RadioOnly`
+/// (R-pool peer) auto-arm; `Cms` does not (CMS is outbound-only from the
+/// client's view). If the auto-arm fails after the transport opens, the
+/// open still succeeds; the operator can retry the arm via `vara_listen`
+/// (the failure is logged but doesn't tear down the transport — the
+/// transport-open contract and the arm contract are distinct).
 ///
 /// If a session is already open, returns Err — operator must `vara_stop_session`
 /// first. (This is conservative; a future iteration might re-open transparently.)
 #[tauri::command]
-pub fn vara_start_session(
+pub async fn vara_open_session(
     app: AppHandle,
     session: State<'_, std::sync::Arc<VaraSession>>,
     log: State<'_, Arc<SessionLogState>>,
+    listen_state: State<'_, std::sync::Arc<crate::ui_commands::VaraListenState>>,
+    intent: SessionIntent,
+    transport_kind: TransportKind,
 ) -> Result<VaraStatus, String> {
     let ui_cfg = config_get_vara();
     // Pull the operator's callsign from persisted identity. Pre-wizard /
@@ -837,10 +870,23 @@ pub fn vara_start_session(
         &app,
         &log,
         LogLevel::Info,
-        format!("VARA: opening TCP transport to {host_label}"),
+        format!(
+            "VARA: opening TCP transport to {host_label} (intent={:?}, transport={})",
+            intent,
+            transport_kind.as_str(),
+        ),
     );
-    match vara_start_session_inner(&session, &ui_cfg, callsign.as_deref()) {
-        Ok(status) => {
+    // Inner-returned status is intentionally discarded — we re-snapshot
+    // after the optional auto-arm so the wire-returned status reflects
+    // `listener_armed = true` when auto-arm fires.
+    match vara_open_session_inner(
+        &session,
+        &ui_cfg,
+        callsign.as_deref(),
+        intent,
+        transport_kind,
+    ) {
+        Ok(_status) => {
             let with_mycall = if callsign.is_some() {
                 " (MYCALL sent)"
             } else {
@@ -852,29 +898,63 @@ pub fn vara_start_session(
                 LogLevel::Info,
                 format!("VARA: transport open at {host_label}{with_mycall}"),
             );
-            Ok(status)
         }
         Err(e) => {
             emit_vara_log(
                 &app,
                 &log,
                 LogLevel::Error,
-                format!("VARA: start failed — {e}"),
+                format!("VARA: open failed — {e}"),
             );
-            Err(e)
+            return Err(e);
         }
     }
+
+    // Auto-arm the listener when the intent calls for it (spec §2 + §3).
+    // The arm is best-effort: a failure here does NOT tear down the
+    // transport — open and arm are distinct contracts, and the operator
+    // can retry the arm via the Listen toggle if it fails.
+    if intent.auto_arms_listener() {
+        if let Err(e) = crate::ui_commands::arm_vara_listener_inner(
+            &app,
+            log.inner(),
+            session.inner(),
+            listen_state.inner(),
+        )
+        .await
+        {
+            emit_vara_log(
+                &app,
+                &log,
+                LogLevel::Warn,
+                format!(
+                    "VARA: auto-arm failed after open ({:?}); transport remains open. \
+                     Toggle Listen on the panel to retry the arm.",
+                    e
+                ),
+            );
+        }
+    }
+
+    // Re-snapshot so the returned status reflects the auto-arm outcome
+    // (listener_armed flips true when the arm spawned the consumer task).
+    Ok(session.snapshot())
 }
 
-/// Inner helper for [`vara_start_session`] with factored-out config + callsign
+/// Inner helper for [`vara_open_session`] with factored-out config + callsign
 /// args so tests can drive it without touching the persisted config file or a
 /// Tauri runtime. `callsign` is `Some` when the wizard has set an operator
 /// callsign; when `Some`, MYCALL is sent on the cmd socket after TCP open
 /// (before BW) so VARA's host protocol recognizes the App handshake.
-pub fn vara_start_session_inner(
+///
+/// Records `intent` + `transport_kind` on `VaraSessionInner` after the open
+/// succeeds; cleared in [`vara_stop_session_inner`] on teardown.
+pub fn vara_open_session_inner(
     session: &std::sync::Arc<VaraSession>,
     ui_cfg: &VaraUiConfig,
     callsign: Option<&str>,
+    intent: SessionIntent,
+    transport_kind: TransportKind,
 ) -> Result<VaraStatus, String> {
     // Acquire the lock for the duration of the open. We hold the lock across
     // `VaraTransport::connect` (TCP connect, ~ms on localhost; bounded by
@@ -951,6 +1031,8 @@ pub fn vara_start_session_inner(
     }
 
     guard.transport = Some(transport);
+    guard.active_intent = Some(intent);
+    guard.active_transport_kind = Some(transport_kind);
     guard.status = VaraStatus {
         state: VaraState::Open,
         last_error: None,
@@ -959,8 +1041,13 @@ pub fn vara_start_session_inner(
         listener_armed: false,
         exchange: None,
         transport_owner: TransportOwner::None,
-        active_intent: None,
-        active_transport_kind: None,
+        // Mirror inner fields into the cached snapshot. `snapshot()`
+        // overlays the live accessors on top of the cached struct, but
+        // mirroring here keeps `inner.status` self-consistent for
+        // anything that reads it without going through the snapshot path
+        // (e.g., direct guard reads in tests).
+        active_intent: Some(intent),
+        active_transport_kind: Some(transport_kind),
     };
 
     Ok(guard.status.clone())
@@ -1008,6 +1095,12 @@ pub fn vara_stop_session_inner(
     // case state is "MYCALL/BW set, no CONNECT issued" — pure TCP teardown
     // is the right semantics.
     guard.transport = None;
+    // Clear session-state recorded by `vara_open_session_inner`. The
+    // forthcoming `vara_close_session` rename (Task 3.3) will own this
+    // reset directly; today's `vara_stop_session` carries it transitionally
+    // so an open→stop→open cycle starts from a clean slate.
+    guard.active_intent = None;
+    guard.active_transport_kind = None;
     guard.status = VaraStatus::closed();
     Ok(guard.status.clone())
 }
@@ -1089,7 +1182,7 @@ mod tests {
     }
 
     #[test]
-    fn vara_start_session_fails_when_tcp_unreachable() {
+    fn vara_open_session_fails_when_tcp_unreachable() {
         // Bind to a known-unreachable port to force a connect error without
         // racing a real listener. Port 1 is reserved + unprivileged, so the
         // TCP connect will fail fast.
@@ -1102,7 +1195,14 @@ mod tests {
             data_port: 2,
             bandwidth_hz: None,
         };
-        let err = vara_start_session_inner(&session, &ui_cfg, None).unwrap_err();
+        let err = vara_open_session_inner(
+            &session,
+            &ui_cfg,
+            None,
+            SessionIntent::Cms,
+            TransportKind::VaraHf,
+        )
+        .unwrap_err();
         assert!(err.contains("TCP connect failed"), "got: {err}");
 
         // Status must reflect Error and the transport must remain None so
@@ -1111,10 +1211,14 @@ mod tests {
         assert_eq!(snap.state, VaraState::Error);
         assert!(snap.last_error.is_some(), "last_error must be populated");
         assert_eq!(snap.bound_host.as_deref(), Some("127.0.0.1"));
+        // Failed open must NOT populate active_intent / active_transport_kind —
+        // the fields only carry meaning for an open transport.
+        assert_eq!(snap.active_intent, None, "intent must not leak on failed open");
+        assert_eq!(snap.active_transport_kind, None, "transport_kind must not leak on failed open");
     }
 
     #[test]
-    fn vara_start_session_double_start_rejected() {
+    fn vara_open_session_double_start_rejected() {
         // Build a session that's already in "Open" state by hand (so we
         // don't need a live VARA to test the guard).
         let session = Arc::new(VaraSession::new());
@@ -1153,7 +1257,14 @@ mod tests {
             data_port: 2,
             bandwidth_hz: None,
         };
-        let err = vara_start_session_inner(&session, &ui_cfg, None).unwrap_err();
+        let err = vara_open_session_inner(
+            &session,
+            &ui_cfg,
+            None,
+            SessionIntent::Cms,
+            TransportKind::VaraHf,
+        )
+        .unwrap_err();
         assert!(
             err.contains("TCP connect failed"),
             "after a prior error, start should re-attempt and fail at TCP (not the double-start guard); got: {err}"
@@ -1406,7 +1517,7 @@ mod tests {
     // a callsign + still propagates the connect-failure cleanly. Byte-on-
     // wire MYCALL verification is the operator smoke step.
     #[test]
-    fn vara_start_session_accepts_callsign_arg_without_panicking() {
+    fn vara_open_session_accepts_callsign_arg_without_panicking() {
         let session = Arc::new(VaraSession::new());
         let ui_cfg = VaraUiConfig {
             host: "127.0.0.1".into(),
@@ -1416,18 +1527,185 @@ mod tests {
         };
         // With Some(callsign): same error path (TCP fails before MYCALL can
         // be sent), proving the new arg doesn't break the error semantics.
-        let err = vara_start_session_inner(&session, &ui_cfg, Some("W1ABC")).unwrap_err();
+        let err = vara_open_session_inner(
+            &session,
+            &ui_cfg,
+            Some("W1ABC"),
+            SessionIntent::Cms,
+            TransportKind::VaraHf,
+        )
+        .unwrap_err();
         assert!(err.contains("TCP connect failed"), "got: {err}");
 
         // Same with None (pre-wizard path).
-        let err2 = vara_start_session_inner(&session, &ui_cfg, None).unwrap_err();
+        let err2 = vara_open_session_inner(
+            &session,
+            &ui_cfg,
+            None,
+            SessionIntent::Cms,
+            TransportKind::VaraHf,
+        )
+        .unwrap_err();
         assert!(err2.contains("TCP connect failed"), "got: {err2}");
 
         // Same with empty / whitespace callsign — should be treated as "no
         // callsign" by the inner (MYCALL skipped). Verified indirectly by the
         // call not panicking.
-        let err3 = vara_start_session_inner(&session, &ui_cfg, Some("   ")).unwrap_err();
+        let err3 = vara_open_session_inner(
+            &session,
+            &ui_cfg,
+            Some("   "),
+            SessionIntent::Cms,
+            TransportKind::VaraHf,
+        )
+        .unwrap_err();
         assert!(err3.contains("TCP connect failed"), "got: {err3}");
+    }
+
+    // ── tuxlink-0ye6 Task 3.2: vara_open_session captures intent + transport_kind ──
+    //
+    // Scope: the inner records the operator-typed `intent` + `transport_kind`
+    // into session state on successful open; the stub accessors added in
+    // Task 3.0 now return REAL values from that state. The outer
+    // `vara_open_session` command's auto-arm wiring (which depends on
+    // `arm_vara_listener_inner`, which requires a Tauri AppHandle) is covered
+    // by the integration smoke checklist in the PR body; this unit test
+    // covers the state-recording half independently.
+
+    /// Spin up a real loopback `VaraTransport` so we can drive
+    /// `vara_open_session_inner` end-to-end without a live VARA process.
+    /// Returns `(session, host, cmd_port, cleanup-handle)` — the handle joins
+    /// the acceptor thread pair on drop so the test doesn't leak.
+    fn loopback_vara_open_session(
+        intent: SessionIntent,
+        transport_kind: TransportKind,
+    ) -> Arc<VaraSession> {
+        use std::net::TcpListener;
+        use std::thread;
+        use std::time::Duration;
+
+        let cmd_l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let cmd_port = cmd_l.local_addr().unwrap().port();
+        let data_l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let data_port = data_l.local_addr().unwrap().port();
+
+        // Acceptors hold the sockets open long enough for the inner to
+        // complete TCP connect + the MYCALL/BW best-effort writes.
+        let cmd_handle = thread::spawn(move || {
+            let (_c, _) = cmd_l.accept().unwrap();
+            thread::sleep(Duration::from_millis(500));
+        });
+        let data_handle = thread::spawn(move || {
+            let (_c, _) = data_l.accept().unwrap();
+            thread::sleep(Duration::from_millis(500));
+        });
+
+        let session = Arc::new(VaraSession::new());
+        let ui_cfg = VaraUiConfig {
+            host: "127.0.0.1".into(),
+            cmd_port,
+            data_port,
+            bandwidth_hz: None,
+        };
+        vara_open_session_inner(&session, &ui_cfg, None, intent, transport_kind)
+            .expect("loopback open must succeed");
+
+        // Detach the acceptors — they finish on their own after the sleep.
+        // Tests that need post-open assertions read the session before the
+        // acceptors exit; the brief 500ms window is plenty for an assertion.
+        std::mem::drop((cmd_handle, data_handle));
+        session
+    }
+
+    #[test]
+    fn vara_open_session_inner_populates_active_intent_for_cms() {
+        // Codex Round 2 P2: both intent + transport_kind flow through; the
+        // stub accessors added in Task 3.0 now return REAL values.
+        let session = loopback_vara_open_session(SessionIntent::Cms, TransportKind::VaraHf);
+        let snap = session.snapshot();
+        assert_eq!(snap.state, VaraState::Open, "loopback open should succeed");
+        assert_eq!(
+            snap.active_intent,
+            Some(SessionIntent::Cms),
+            "active_intent must reflect the operator-typed intent"
+        );
+        assert_eq!(
+            snap.active_transport_kind,
+            Some(TransportKind::VaraHf),
+            "active_transport_kind must reflect the operator-typed kind"
+        );
+    }
+
+    #[test]
+    fn vara_open_session_inner_populates_active_intent_for_p2p() {
+        let session = loopback_vara_open_session(SessionIntent::P2p, TransportKind::VaraHf);
+        let snap = session.snapshot();
+        assert_eq!(snap.active_intent, Some(SessionIntent::P2p));
+        assert_eq!(snap.active_transport_kind, Some(TransportKind::VaraHf));
+    }
+
+    #[test]
+    fn vara_open_session_inner_records_vara_fm_distinct_from_vara_hf() {
+        // Codex Round 3 P1 #3: the wire transport is identical (TCP) for
+        // vara-hf vs vara-fm, but the operator-meaningful discriminator must
+        // be recorded on session state so the frontend can detect sidebar-nav
+        // drift mid-session.
+        let session = loopback_vara_open_session(SessionIntent::RadioOnly, TransportKind::VaraFm);
+        let snap = session.snapshot();
+        assert_eq!(snap.active_intent, Some(SessionIntent::RadioOnly));
+        assert_eq!(
+            snap.active_transport_kind,
+            Some(TransportKind::VaraFm),
+            "vara-fm must be recorded distinctly from vara-hf"
+        );
+    }
+
+    #[test]
+    fn vara_stop_session_clears_active_intent_and_transport_kind() {
+        // Open with non-default intent + kind, stop, verify both fields clear.
+        // Without this clear, an open→stop→open cycle would carry stale
+        // metadata into the second session if the second open failed before
+        // setting the fields (e.g., TCP connect to unreachable host).
+        let session = loopback_vara_open_session(SessionIntent::P2p, TransportKind::VaraFm);
+        let snap_open = session.snapshot();
+        assert_eq!(snap_open.active_intent, Some(SessionIntent::P2p));
+
+        vara_stop_session_inner(&session).expect("stop must succeed");
+
+        let snap_closed = session.snapshot();
+        assert_eq!(snap_closed.state, VaraState::Closed);
+        assert_eq!(
+            snap_closed.active_intent, None,
+            "stop must clear active_intent so a follow-up open starts clean"
+        );
+        assert_eq!(
+            snap_closed.active_transport_kind, None,
+            "stop must clear active_transport_kind so a follow-up open starts clean"
+        );
+    }
+
+    #[test]
+    fn auto_arms_listener_intent_classification_matches_spec_matrix() {
+        // The auto-arm decision is whether `intent.auto_arms_listener()` is
+        // true; vara_open_session calls arm_vara_listener_inner iff true.
+        // This test pins the decision matrix at the call site so a future
+        // regression in `SessionIntent::auto_arms_listener` is caught here
+        // even before the integration smoke surfaces it on a live VARA.
+        //
+        // (The matrix itself is also covered in session.rs::tests; this is
+        // the integration-side guard so a refactor that decouples the call
+        // site from the enum method has a unit-level alarm.)
+        assert!(!SessionIntent::Cms.auto_arms_listener(), "Cms is outbound-only");
+        assert!(SessionIntent::P2p.auto_arms_listener(), "P2p auto-arms");
+        assert!(SessionIntent::RadioOnly.auto_arms_listener(), "RadioOnly auto-arms");
+        assert!(
+            !SessionIntent::PostOffice.auto_arms_listener(),
+            "PostOffice not in alpha scope"
+        );
+        assert!(
+            !SessionIntent::Mesh.auto_arms_listener(),
+            "Mesh not in alpha scope"
+        );
     }
 
     // ── tuxlink-0ye6 Task 4.3: transport arbiter (TransportOwner state machine) ─
