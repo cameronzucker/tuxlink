@@ -18,9 +18,16 @@ use std::collections::HashMap;
 use bytes::Bytes;
 use multer::Multipart;
 use percent_encoding::percent_decode_str;
+use serde::Serialize;
 
 /// Parsed body — fields plus an optional submitter button value.
-#[derive(Debug, Default, Clone)]
+///
+/// `Serialize` is derived so the command layer (P1 Task 8 — `ui_commands::
+/// open_webview_form`) can forward this verbatim to the frontend via
+/// `AppHandle::emit_to(...)` as the `form-submitted` event payload. The
+/// React `WebviewFormHost` listens for that event and lifts the parsed
+/// body into compose state.
+#[derive(Debug, Default, Clone, Serialize)]
 pub struct ParsedBody {
     /// Field name → ordered list of values. Repeated names (table rows,
     /// checkbox groups) keep their submission order.

@@ -1029,6 +1029,128 @@ pub async fn send_form(
     Ok(mid.0)
 }
 
+// ============================================================================
+// HTML Forms — webview infrastructure command surface (P1 Task 8)
+// ============================================================================
+//
+// Three thin shim commands wire the (already-shipped) Rust forms::http_server +
+// forms::wle_templates modules to the React CatalogBrowser + WebviewFormHost
+// (P1 Tasks 9 + 10). The hard work lives in the Rust modules; these
+// commands marshal AppHandle resource paths, manage the
+// `FormSessionRegistry` lookups, and bridge the parsed-submit channel onto
+// a Tauri event.
+//
+// Plan: docs/superpowers/plans/2026-06-01-html-forms-p1-webview-infra.md Task 8.
+// Spec: docs/superpowers/specs/2026-05-31-html-forms-full-parity-design.md §8.2.
+
+/// Result of [`open_webview_form`]. The React side passes `url` to the
+/// child `WebviewWindow` (label `compose-form-<token>`), keeps `token`
+/// for the `close_webview_form_server` teardown call, and reads `port`
+/// for diagnostics only (the form's submit POSTs are path-less per the
+/// WLE contract, so the port is informational — not required for the
+/// frontend's submit-listener wiring).
+#[derive(Debug, Clone, Serialize)]
+pub struct OpenFormResult {
+    pub url: String,
+    pub port: u16,
+    pub token: String,
+}
+
+/// Enumerate every form template visible to tuxlink — bundled WLE Standard
+/// Forms snapshot + the operator's custom-forms directory. Custom forms
+/// with the same `id` as a bundled form shadow the bundled entry. Powers
+/// the React `CatalogBrowser` (P1 Task 10).
+///
+/// The custom-forms root is only walked if it exists on disk; this is the
+/// expected behavior for the install-time path (operator may never have
+/// created `~/.local/share/tuxlink/forms/custom/`).
+#[tauri::command]
+pub async fn forms_list_catalog(
+    app: AppHandle,
+) -> Result<Vec<crate::forms::wle_templates::Template>, String> {
+    let bundle =
+        crate::forms::wle_templates::bundle_root_for_app(&app).map_err(|e| e.to_string())?;
+    let custom = crate::forms::wle_templates::custom_root_for_app(&app);
+    let custom_opt = if custom.exists() {
+        Some(custom.as_path())
+    } else {
+        None
+    };
+    crate::forms::wle_templates::list(&bundle, custom_opt).map_err(|e| e.to_string())
+}
+
+/// Open a new webview form session: spawn the loopback http_server bound
+/// to a fresh ephemeral port, register it in `FormSessionRegistry` under a
+/// freshly-minted token, and start a forwarder task that drains parsed
+/// submissions onto the `form-submitted` event scoped to the child
+/// webview's label (`compose-form-<token>`).
+///
+/// Returns the URL the React side passes to a child `WebviewWindow` plus
+/// the port and token. The URL is `http://127.0.0.1:<port>/` — NO path
+/// component; the WLE form template's `{FormServer}:{FormPort}`
+/// substitution wires the submit endpoint there directly.
+///
+/// Errors:
+/// - `unknown form: <id>` — the form_id is not in the bundled/custom
+///   catalog (typo / stale frontend cache).
+/// - any I/O error from reading the bundled snapshot or binding the
+///   loopback listener.
+#[tauri::command]
+pub async fn open_webview_form(
+    form_id: String,
+    app: AppHandle,
+    registry: State<'_, std::sync::Arc<crate::forms::http_server::FormSessionRegistry>>,
+) -> Result<OpenFormResult, String> {
+    let bundle =
+        crate::forms::wle_templates::bundle_root_for_app(&app).map_err(|e| e.to_string())?;
+    let custom = crate::forms::wle_templates::custom_root_for_app(&app);
+    let custom_opt = if custom.exists() {
+        Some(custom.as_path())
+    } else {
+        None
+    };
+    let cat = crate::forms::wle_templates::list(&bundle, custom_opt)
+        .map_err(|e| e.to_string())?;
+    let template = cat
+        .into_iter()
+        .find(|t| t.id == form_id)
+        .ok_or_else(|| format!("unknown form: {form_id}"))?;
+
+    let opened = registry.open(template).await?;
+    let port = opened.port;
+    let token = opened.token.clone();
+    let url = format!("http://127.0.0.1:{port}/");
+
+    // Forwarder task: drain ParsedBody submissions from the http_server's
+    // in-process channel onto a Tauri event scoped to the child webview's
+    // label. The task self-terminates when:
+    //   - the session is closed (`close_webview_form_server` drops the
+    //     `FormSession`, which drops the `submit_tx`, which closes the
+    //     channel — `recv()` returns None and the loop exits), OR
+    //   - the runtime shuts down (tokio aborts the task).
+    let app_for_forwarder = app.clone();
+    let label = format!("compose-form-{token}");
+    let mut submit_rx = opened.submit_rx;
+    tokio::spawn(async move {
+        while let Some(parsed) = submit_rx.recv().await {
+            let _ = app_for_forwarder.emit_to(label.as_str(), "form-submitted", parsed);
+        }
+    });
+
+    Ok(OpenFormResult { url, port, token })
+}
+
+/// Tear down a webview form session. Idempotent — closing an unknown
+/// token returns `Ok(())` (the React unmount cleanup path runs whether
+/// or not the session is already gone).
+#[tauri::command]
+pub async fn close_webview_form_server(
+    token: String,
+    registry: State<'_, std::sync::Arc<crate::forms::http_server::FormSessionRegistry>>,
+) -> Result<(), String> {
+    registry.close(&token).await
+}
+
 /// Run one CMS connection: send everything queued in the outbox and download any
 /// waiting messages (tuxlink-0ic). Drives the backend's `connect` over the
 /// configured transport, then drops the session (the native exchange completes

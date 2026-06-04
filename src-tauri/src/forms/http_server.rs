@@ -117,9 +117,14 @@ struct SessionState {
 /// down the serve task and free the port.
 pub struct FormSession {
     pub port: u16,
-    /// Receive submissions from the form. Caller awaits this; the channel
-    /// closes when the session is dropped.
-    pub submit_rx: mpsc::UnboundedReceiver<ParsedBody>,
+    /// Receive submissions from the form. The receiver is held in an
+    /// `Option` so the command layer can `take_submit_rx()` and move it
+    /// into a forwarder task without removing the session from the
+    /// registry (the registry retains the `FormSession` for its
+    /// AbortHandle on `close`). Direct callers of `FormSession::open`
+    /// (e.g., the http_server integration test) still see the channel
+    /// here.
+    submit_rx: Option<mpsc::UnboundedReceiver<ParsedBody>>,
     /// AbortHandle for the spawned serve task; calling `abort()` shuts
     /// down the listener (the inner JoinHandle is intentionally not kept
     /// — Drop relies solely on the AbortHandle for sync teardown).
@@ -170,7 +175,7 @@ impl FormSession {
         // AbortHandle is what we hold for shutdown.
         Ok(Self {
             port,
-            submit_rx,
+            submit_rx: Some(submit_rx),
             abort,
         })
     }
@@ -179,6 +184,14 @@ impl FormSession {
     /// share the same origin; submit lands at `/` per the WLE contract.
     pub fn url(&self) -> String {
         format!("http://127.0.0.1:{}/", self.port)
+    }
+
+    /// Move the submit receiver out of the session. Returns `None` if it
+    /// has already been taken. Used by [`FormSessionRegistry::open`] to
+    /// hand the receiver to a forwarder task while the registry retains
+    /// the [`FormSession`] for its `AbortHandle`.
+    pub fn take_submit_rx(&mut self) -> Option<mpsc::UnboundedReceiver<ParsedBody>> {
+        self.submit_rx.take()
     }
 
     /// Explicit shutdown. Aborts the serve task; the listener is dropped
@@ -399,6 +412,121 @@ async fn folder_handler(
         }
         Err(_) => (StatusCode::NOT_FOUND, "not found").into_response(),
     }
+}
+
+// ============================================================================
+// FormSessionRegistry — multi-session ownership for the command layer (P1 Task 8)
+// ============================================================================
+
+/// Owns every open [`FormSession`] keyed by a per-open token. The token is
+/// minted by [`FormSessionRegistry::open`] (16 hex chars from `rand::random`
+/// matching the modem-consent-token shape) and is the lookup key used by
+/// the `close_webview_form_server(token)` Tauri command + the
+/// `compose-form-<token>` webview label.
+///
+/// ## Why the token is NOT in the URL
+///
+/// Per the 2026-06-01 WLE snapshot recon (see module docs above), the
+/// form's `<form action="http://{FormServer}:{FormPort}">` substitution
+/// gives the submit endpoint NO path component — so a path-embedded token
+/// can't survive the WLE template contract. The token here is intra-tuxlink
+/// only: it scopes the registry lookup + the child webview's label.
+/// Loopback + ephemeral-port + the capability scope + the Origin header
+/// check on POST are the security boundary, not the token.
+///
+/// ## Concurrency
+///
+/// `tokio::sync::Mutex` (not `std::sync::Mutex`) so the async command
+/// handlers can hold the guard across the `FormSession::open` await
+/// without blocking the runtime. Sessions are stored as `Option` slots so
+/// the `submit_rx` can be `take()`n out for the forwarder task at
+/// open-time without removing the session entry from the map (the entry
+/// is removed by `close`).
+pub struct FormSessionRegistry {
+    sessions: tokio::sync::Mutex<std::collections::HashMap<String, FormSession>>,
+}
+
+/// Receiver half handed to the command layer's forwarder task on open.
+/// Owning this struct gives the caller exclusive access to submit
+/// notifications until either `close()` drops the session or the
+/// frontend's child webview closes (which the operator-flow eventually
+/// triggers via `close_webview_form_server`).
+pub struct OpenedSession {
+    pub token: String,
+    pub port: u16,
+    pub submit_rx: mpsc::UnboundedReceiver<ParsedBody>,
+}
+
+impl FormSessionRegistry {
+    pub fn new() -> Self {
+        Self {
+            sessions: tokio::sync::Mutex::new(std::collections::HashMap::new()),
+        }
+    }
+
+    /// Open a new form session and register it. Returns the token + bound
+    /// port + the submit receiver. Caller (the `open_webview_form` Tauri
+    /// command) MUST spawn a forwarder task that drains `submit_rx` onto
+    /// the `form-submitted` event scoped to the child webview's label.
+    pub async fn open(&self, template: Template) -> Result<OpenedSession, String> {
+        let mut session = FormSession::open(template).await?;
+        let port = session.port;
+        // Take the receiver out so the registry only retains the abort
+        // handle + port (the receiver is owned by the forwarder task).
+        let submit_rx = session.take_submit_rx().ok_or_else(|| {
+            "FormSession::take_submit_rx returned None on a fresh session".to_string()
+        })?;
+        let token = mint_session_token();
+        // Token collisions in a 16-hex-char namespace are astronomically
+        // rare, but be defensive: keep minting until we hit an empty slot.
+        let mut guard = self.sessions.lock().await;
+        let mut tok = token;
+        while guard.contains_key(&tok) {
+            tok = mint_session_token();
+        }
+        guard.insert(tok.clone(), session);
+        Ok(OpenedSession {
+            token: tok,
+            port,
+            submit_rx,
+        })
+    }
+
+    /// Tear down a registered session. Idempotent: closing an unknown
+    /// token is a no-op (returns `Ok(())`) so the frontend's cleanup path
+    /// can call this without bothering to know whether the session was
+    /// already collapsed by a Drop / runtime shutdown.
+    pub async fn close(&self, token: &str) -> Result<(), String> {
+        let mut guard = self.sessions.lock().await;
+        // Drop the FormSession; its Drop impl aborts the serve task.
+        let _ = guard.remove(token);
+        Ok(())
+    }
+
+    /// Test helper — returns the number of currently-registered sessions.
+    #[cfg(test)]
+    pub async fn session_count(&self) -> usize {
+        self.sessions.lock().await.len()
+    }
+}
+
+impl Default for FormSessionRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Mint a 16-hex-char session token. Mirrors the modem-consent-token
+/// shape (see `modem_status::mint_consent_token`): enough for in-process
+/// uniqueness, NOT a secret — security on this surface is loopback +
+/// ephemeral port + capability scope + the per-request Origin check.
+fn mint_session_token() -> String {
+    (0..16)
+        .map(|_| {
+            let n: u8 = rand::random::<u8>() & 0xF;
+            std::char::from_digit(n as u32, 16).unwrap()
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -717,5 +845,115 @@ mod tests {
             .send()
             .await;
         assert!(after.is_err(), "listener should be down after close()");
+    }
+
+    // ============================================================
+    // FormSessionRegistry — P1 Task 8 command-layer plumbing
+    // ============================================================
+
+    fn make_template_on_disk(td: &TempDir, name: &str) -> Template {
+        let path = td.path().join(format!("{name}.html"));
+        std::fs::write(
+            &path,
+            "<html><head></head><body>registry-test</body></html>",
+        )
+        .unwrap();
+        Template {
+            id: name.to_string(),
+            label: name.to_string(),
+            folder: "".to_string(),
+            source: TemplateSource::Bundled,
+            path,
+        }
+    }
+
+    #[tokio::test]
+    async fn registry_open_returns_token_port_and_receiver() {
+        let td = TempDir::new().unwrap();
+        let template = make_template_on_disk(&td, "RegOpen");
+        let registry = FormSessionRegistry::new();
+        let opened = registry.open(template).await.unwrap();
+        assert!(!opened.token.is_empty(), "token must be non-empty");
+        assert_eq!(opened.token.len(), 16, "token shape: 16 hex chars");
+        assert!(
+            opened.token.chars().all(|c| c.is_ascii_hexdigit()),
+            "token must be hex"
+        );
+        assert!(opened.port != 0, "port must be the bound ephemeral port");
+        assert_eq!(registry.session_count().await, 1);
+    }
+
+    #[tokio::test]
+    async fn registry_open_mints_distinct_tokens_for_concurrent_sessions() {
+        let td = TempDir::new().unwrap();
+        let t1 = make_template_on_disk(&td, "Multi1");
+        let t2 = make_template_on_disk(&td, "Multi2");
+        let registry = FormSessionRegistry::new();
+        let a = registry.open(t1).await.unwrap();
+        let b = registry.open(t2).await.unwrap();
+        assert_ne!(a.token, b.token, "concurrent sessions get distinct tokens");
+        assert_ne!(
+            a.port, b.port,
+            "concurrent sessions bind distinct ephemeral ports"
+        );
+        assert_eq!(registry.session_count().await, 2);
+    }
+
+    #[tokio::test]
+    async fn registry_close_drops_the_session_and_is_idempotent() {
+        let td = TempDir::new().unwrap();
+        let template = make_template_on_disk(&td, "Closing");
+        let registry = FormSessionRegistry::new();
+        let opened = registry.open(template).await.unwrap();
+        let url = format!("http://127.0.0.1:{}/", opened.port);
+        assert_eq!(registry.session_count().await, 1);
+
+        registry.close(&opened.token).await.unwrap();
+        assert_eq!(registry.session_count().await, 0, "session entry removed");
+
+        // Idempotent: closing again is fine.
+        registry.close(&opened.token).await.unwrap();
+        assert_eq!(registry.session_count().await, 0);
+
+        // Listener is down (FormSession::drop -> abort).
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_millis(500))
+            .build()
+            .unwrap();
+        let after = client.get(&url).send().await;
+        assert!(after.is_err(), "listener must be down after close()");
+    }
+
+    #[tokio::test]
+    async fn registry_close_unknown_token_is_ok() {
+        let registry = FormSessionRegistry::new();
+        // No session ever opened; closing an unknown token must succeed.
+        registry.close("0000000000000000").await.unwrap();
+        assert_eq!(registry.session_count().await, 0);
+    }
+
+    #[tokio::test]
+    async fn registry_take_submit_rx_is_consumed_by_open() {
+        // After registry.open, the receiver lives with the caller; the
+        // session retained in the registry has no rx (the forwarder task
+        // owns it). Sanity: re-taking from the retained session would
+        // return None.
+        let td = TempDir::new().unwrap();
+        let template = make_template_on_disk(&td, "Taken");
+        let registry = FormSessionRegistry::new();
+        let _opened = registry.open(template).await.unwrap();
+        let mut guard = registry.sessions.lock().await;
+        let session = guard.values_mut().next().unwrap();
+        assert!(
+            session.take_submit_rx().is_none(),
+            "submit_rx already moved into the OpenedSession"
+        );
+    }
+
+    #[test]
+    fn mint_session_token_returns_16_hex_chars() {
+        let t = mint_session_token();
+        assert_eq!(t.len(), 16);
+        assert!(t.chars().all(|c| c.is_ascii_hexdigit()));
     }
 }

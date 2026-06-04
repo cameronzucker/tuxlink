@@ -1267,7 +1267,7 @@ Three commands wire the Rust side to React:
 | `open_webview_form(form_id)` | `{ url: String, port: u16, token: String }` | Spawns http_server + returns the webview's URL |
 | `close_webview_form_server(token)` | `()` | Tears down the http_server when the form closes |
 
-- [ ] **Step 1: Implement + test.**
+- [x] **Step 1: Implement + test.**
 
 (Tests use the `tauri::test::mock_app` pattern; see existing examples in `ui_commands.rs` if present, else file a small test scaffold.)
 
@@ -1328,7 +1328,7 @@ pub async fn close_webview_form_server(
 }
 ```
 
-- [ ] **Step 2: Register in `invoke_handler`.**
+- [x] **Step 2: Register in `invoke_handler`.**
 
 ```rust
 .invoke_handler(tauri::generate_handler![
@@ -1339,7 +1339,7 @@ pub async fn close_webview_form_server(
 ])
 ```
 
-- [ ] **Step 3: Commit.**
+- [x] **Step 3: Commit.**
 
 (Codex adrev folded into the http_server round in Task 6; the commands here are thin shims.)
 
