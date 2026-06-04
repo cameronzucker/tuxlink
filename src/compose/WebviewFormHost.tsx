@@ -117,6 +117,11 @@ export function WebviewFormHost({ formId, onSubmit, onCancel }: WebviewFormHostP
     onSubmitRef.current = onSubmit;
   });
 
+  // Cancel handle for any in-flight requestAnimationFrame reposition.
+  // Populated inside the main effect; the cleanup invokes it so a pending
+  // RAF callback doesn't fire after the component unmounts.
+  const rafCancelRef = useRef<(() => void) | null>(null);
+
   useEffect(() => {
     let cancelled = false;
     let unlisten: UnlistenFn | null = null;
@@ -192,38 +197,59 @@ export function WebviewFormHost({ formId, onSubmit, onCancel }: WebviewFormHostP
           height: initialH,
         });
 
-        // Re-measure + reposition on placeholder resize (parent window
-        // resize, layout shifts, etc.). ResizeObserver fires on element
-        // dimension changes — the same trigger we want for repositioning.
-        // We also want to track POSITION changes (e.g. the compose body
-        // is reshaped above the placeholder), so we observe the document
-        // body too via the same observer; the callback re-reads the
-        // placeholder's bounding rect, which catches both kinds of
-        // changes.
-        resizeObserver = new ResizeObserver(() => {
-          if (cancelled || !webview || !mountRef.current) return;
-          const rect = mountRef.current.getBoundingClientRect();
-          const x = Math.max(0, Math.floor(rect.left));
-          const y = Math.max(0, Math.floor(rect.top));
-          const w = Math.max(1, Math.floor(rect.width));
-          const h = Math.max(1, Math.floor(rect.height));
-          // Fire-and-forget: setPosition/setSize return promises but the
-          // failure mode is "webview is gone," which the cleanup path
-          // will handle on next teardown. We do not await here because
-          // ResizeObserver callbacks should remain synchronous.
-          void webview.setPosition(new LogicalPosition(x, y)).catch(() => {});
-          void webview.setSize(new LogicalSize(w, h)).catch(() => {});
+        // tuxlink-rqrn I1: subscribe to Tauri's lifecycle events on the
+        // child webview. The JS-side `new Webview(...)` is synchronous,
+        // but actual webview creation on the Rust side is async — if it
+        // fails (capability mismatch, OOM, host crash), we'd otherwise
+        // sit in `status='open'` with an empty placeholder. `tauri://error`
+        // surfaces failure; `tauri://created` confirms success.
+        webview.once('tauri://error', (event) => {
+          if (!cancelled) {
+            setError(String(event.payload ?? 'webview creation failed'));
+            setStatus('error');
+          }
         });
+
+        // Re-measure + reposition on placeholder resize. ResizeObserver
+        // fires on element dimension changes. The document.body observer
+        // catches WINDOW resizes (body bbox changes); layout reflows that
+        // shift the placeholder WITHOUT resizing the body itself are an
+        // accepted limitation (rare in practice given the compose body's
+        // fixed-flex layout — placeholder is `flex: 1 1 auto` and the
+        // compose-body height-source IS the window). tuxlink-rqrn I3:
+        // setPosition + setSize IPC calls are coalesced via
+        // requestAnimationFrame so window-drag-resize doesn't fire many
+        // IPC round-trips per second.
+        let rafHandle: number | null = null;
+        const scheduleReposition = () => {
+          if (cancelled || !webview || !mountRef.current) return;
+          if (rafHandle !== null) return;  // already scheduled
+          rafHandle = requestAnimationFrame(() => {
+            rafHandle = null;
+            if (cancelled || !webview || !mountRef.current) return;
+            const rect = mountRef.current.getBoundingClientRect();
+            const x = Math.max(0, Math.floor(rect.left));
+            const y = Math.max(0, Math.floor(rect.top));
+            const w = Math.max(1, Math.floor(rect.width));
+            const h = Math.max(1, Math.floor(rect.height));
+            // Fire-and-forget: setPosition/setSize return promises but
+            // the failure mode is "webview is gone," which the cleanup
+            // path handles on next teardown.
+            void webview.setPosition(new LogicalPosition(x, y)).catch(() => {});
+            void webview.setSize(new LogicalSize(w, h)).catch(() => {});
+          });
+        };
+        resizeObserver = new ResizeObserver(scheduleReposition);
         resizeObserver.observe(mountEl);
-        // Also observe the document.body so global layout reflows that
-        // change the placeholder's POSITION (but not its size) still
-        // trigger a re-measure. Without this, a sibling element growing
-        // above the placeholder would shift the placeholder down but
-        // not change its size — the webview would stay at the stale
-        // (x, y) coords.
         if (typeof document !== 'undefined' && document.body) {
           resizeObserver.observe(document.body);
         }
+        rafCancelRef.current = () => {
+          if (rafHandle !== null) {
+            cancelAnimationFrame(rafHandle);
+            rafHandle = null;
+          }
+        };
 
         setStatus('open');
       } catch (e) {
@@ -238,6 +264,8 @@ export function WebviewFormHost({ formId, onSubmit, onCancel }: WebviewFormHostP
       cancelled = true;
       unlisten?.();
       resizeObserver?.disconnect();
+      rafCancelRef.current?.();
+      rafCancelRef.current = null;
       if (activeToken) {
         invoke('close_webview_form_server', { token: activeToken }).catch(() => {
           /* idempotent — backend treats unknown tokens as Ok(()) */

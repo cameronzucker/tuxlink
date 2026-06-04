@@ -41,11 +41,13 @@ const mocks = vi.hoisted(() => {
   const webviewClose = vi.fn(async () => {});
   const webviewSetPosition = vi.fn(async () => {});
   const webviewSetSize = vi.fn(async () => {});
+  const webviewOnce = vi.fn(async () => () => {});
   const WebviewMock = vi.fn().mockImplementation(function (this: object) {
     Object.assign(this, {
       close: webviewClose,
       setPosition: webviewSetPosition,
       setSize: webviewSetSize,
+      once: webviewOnce,
     });
   });
   // Stand-in for the parent `Window` returned by getCurrentWindow(). The
@@ -75,6 +77,7 @@ const mocks = vi.hoisted(() => {
     webviewClose,
     webviewSetPosition,
     webviewSetSize,
+    webviewOnce,
     WebviewMock,
     parentWindowStub,
     getCurrentWindow,
