@@ -4,6 +4,19 @@ All notable changes to Tuxlink are documented here.
 
 This project adheres to [Semantic Versioning](https://semver.org) with project-specific rules described in [VERSIONING.md](VERSIONING.md). Entries from `v0.0.2` onward are generated automatically by [`release-please`](https://github.com/googleapis/release-please) from [Conventional Commits](https://www.conventionalcommits.org).
 
+## [0.32.0](https://github.com/cameronzucker/tuxlink/compare/v0.31.0...v0.32.0) (2026-06-04)
+
+
+### Features
+
+* **tux-rig-watchdog:** PR_SET_PDEATHSIG belt-and-suspenders parent-death detection (tuxlink-a2z0) ([2f2030b](https://github.com/cameronzucker/tuxlink/commit/2f2030b313d1828fa3a29c939610958070714982))
+* **tuxmodem-tx:** --watchdog flag spawns tux-rig-watchdog for SIGKILL-safe TX (tuxlink-8xfa, Phase 1.5 slice 2) ([62af099](https://github.com/cameronzucker/tuxlink/commit/62af09981053e2cd39b097d9df04a1847cf8ba3c))
+
+
+### Bug Fixes
+
+* **help:** mermaid theming wins ID-scoped specificity via !important ([a11a7ae](https://github.com/cameronzucker/tuxlink/commit/a11a7aec4659dd715125679ac3841e58465403c0))
+
 ## [0.31.0](https://github.com/cameronzucker/tuxlink/compare/v0.30.0...v0.31.0) (2026-06-04)
 
 
