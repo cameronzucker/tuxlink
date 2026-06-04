@@ -1,0 +1,92 @@
+/* WebviewFormViewer — chrome + embed-region styling for the receive-side
+ * Viewer-mode fallback (P1 Task 11). Mirrors WebviewFormHost's structure;
+ * the only meaningful render-time difference is the chrome carries a Close
+ * button instead of Cancel + Submit-fallback (the viewer is read-only).
+ *
+ * The form HTML renders inside an in-window child Tauri Webview that is
+ * pixel-positioned to overlay the `.webview-form-viewer__embed` placeholder
+ * div below (see WebviewFormViewer.tsx mount-mechanism note). The
+ * placeholder is invisible at runtime — it's a layout-reservation device
+ * that gives the webview a stable rect to sit on. */
+
+.webview-form-viewer {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 14px;
+  /* Fill the parent reading-pane region so the embed div has room to
+   * grow. MessageView decides the outer height via its own layout. */
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.webview-form-viewer__status {
+  color: var(--text-dim);
+  line-height: 1.5;
+}
+
+.webview-form-viewer__status code {
+  font-family: var(--mono);
+  color: var(--text);
+  background: var(--surface-2);
+  padding: 1px 6px;
+  border-radius: 3px;
+  border: 1px solid var(--border);
+}
+
+.webview-form-viewer__error {
+  background: var(--tux-danger-surface);
+  border: 1px solid var(--error);
+  color: var(--text);
+  padding: 10px 12px;
+  border-radius: 4px;
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+/* Layout-reservation div the child Webview is pixel-positioned over.
+ * Grows to fill remaining vertical space so the embedded viewer has a
+ * stable rect. Background is a faint placeholder color visible only
+ * during the brief 'opening' phase before the webview paints over it. */
+.webview-form-viewer__embed {
+  flex: 1 1 auto;
+  min-height: 240px;
+  background: var(--surface-2);
+  border: 1px solid var(--border-soft);
+  border-radius: 4px;
+}
+
+.webview-form-viewer__chrome {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-soft);
+}
+
+.webview-form-viewer__btn {
+  font-family: var(--sans);
+  font-size: 13px;
+  padding: 6px 14px;
+  background: var(--surface-2);
+  color: var(--text);
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.webview-form-viewer__btn:hover:not(:disabled) {
+  background: var(--elevated);
+}
+
+.webview-form-viewer__btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}

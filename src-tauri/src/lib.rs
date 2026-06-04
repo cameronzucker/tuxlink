@@ -300,6 +300,12 @@ pub fn run() {
             // FormDefs; the webview path needs a parallel command that
             // synthesizes the XML envelope from field_values + WLE conventions.
             crate::ui_commands::send_webview_form,
+            // HTML Forms P1 Task 11 (tuxlink-tzr5): receive-side Viewer fallback.
+            // MessageView calls this for messages whose form_id has no native
+            // React View component; the http_server serves the WLE
+            // *_Viewer.html with the parsed FormPayload bound into its
+            // {var X} placeholders + hidden inputs.
+            crate::ui_commands::open_webview_viewer,
             crate::ui_commands::cms_connect,           // tuxlink-0ic (native connect)
             crate::ui_commands::cms_abort,             // tuxlink-9z2 (abort in-flight connect)
             crate::ui_commands::config_read,           // Task 16 (tuxlink-hvv)

@@ -1668,7 +1668,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 
 Per design §8.3: when MessageView sees a `form_id` it doesn't have a native View for, mount a webview that loads the WLE `_Viewer.html` template with the parsed FormPayload injected as form values.
 
-- [ ] **Step 1: Extend http_server with a `Viewer` session kind.**
+- [x] **Step 1: Extend http_server with a `Viewer` session kind.**
 
 In `forms::http_server`, add an `open_session_viewer` method that:
 - Mints a token (same as form mode)
@@ -1677,15 +1677,15 @@ In `forms::http_server`, add an `open_session_viewer` method that:
 - Returns the URL
 - The /submit endpoint returns 404 (read-only mode)
 
-- [ ] **Step 2: New Tauri command: `open_webview_viewer(form_id, payload)`.**
+- [x] **Step 2: New Tauri command: `open_webview_viewer(form_id, payload)`.**
 
 Symmetric to `open_webview_form` but takes a FormPayload to bind.
 
-- [ ] **Step 3: MessageView changes.**
+- [x] **Step 3: MessageView changes.**
 
 When `lookupForm(message.formId)` doesn't have a View component (i.e., it's a custom or unknown form), render a `<WebviewFormViewer>` component that calls `open_webview_viewer` and mounts the webview. Falls back to `KeyValueView` if the Viewer template is also missing.
 
-- [ ] **Step 4: Verify + commit.**
+- [x] **Step 4: Verify + commit.**
 
 ```bash
 pnpm exec vitest run src/mailbox/ 2>&1 | tail -10

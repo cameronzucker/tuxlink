@@ -36,14 +36,26 @@
 //! - `GET /` → serve the form HTML with WLE substitutions + skin link
 //! - `POST /` → accept the form submission; parse body; emit ParsedBody
 //!   on the in-process channel; respond with a brief "Submitted ✓" page
+//!   (Form sessions only — Viewer sessions return 404)
 //! - `GET /skin.css` → serve the static tuxlink skin (`forms::skin`)
 //! - `GET /folder/<path>/<file>` → serve adjacent assets from the
 //!   template's folder (P1 minimal support for `{FormFolder}` references;
 //!   path-traversal rejected via canonicalize)
 //! - anything else → 404
 //!
+//! ## Session kinds (Task 11)
+//!
+//! Sessions come in two kinds — [`SessionKind::Form`] (the historical
+//! authoring path, with a submit channel) and [`SessionKind::Viewer`] (the
+//! P1 Task 11 receive-side fallback for unknown-form-id messages, with no
+//! submit channel; the POST route returns 404 in this mode). The kind is
+//! captured in [`SessionState`] and consulted by the root handler. Viewer
+//! sessions additionally inject FormPayload field values via a JS snippet
+//! appended before `</body>` so the form's hidden inputs and `{var X}`
+//! inline placeholders display the received data.
+//!
 //! Plan: docs/superpowers/plans/2026-06-01-html-forms-p1-webview-infra.md
-//!       Task 6.
+//!       Task 6 (Form mode) + Task 11 (Viewer mode).
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -99,14 +111,36 @@ const FORM_CSP: &str =
      frame-src 'none'; \
      object-src 'none'";
 
+/// Session mode discriminator (P1 Task 11).
+///
+/// Form sessions are the historical send-side authoring path: the form's
+/// `<form action="http://{FormServer}:{FormPort}">` POST lands at `/` and
+/// produces a `ParsedBody` on the submit channel. Viewer sessions are the
+/// receive-side fallback for unknown form_ids — the field values are
+/// pre-bound into the HTML server-side, and the POST route returns 404 so
+/// the operator cannot resubmit a received form.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SessionKind {
+    Form,
+    Viewer,
+}
+
 /// State shared with the axum router. Cheap to clone (Arc-wrapped channel).
 #[derive(Clone)]
 struct SessionState {
-    /// Pre-substituted form HTML, ready to serve at GET /.
+    /// Discriminator branching the POST handler (Form = parse + emit;
+    /// Viewer = 404). Captured at open time; immutable for the session.
+    kind: SessionKind,
+    /// Pre-substituted form HTML, ready to serve at GET /. For Viewer
+    /// sessions this also has FormPayload field values bound via an
+    /// appended `<script>` tag (see [`inject_field_value_script`]).
     form_html: String,
     /// Absolute path to the template's parent folder, for /folder/* asset serving.
     template_folder_path: PathBuf,
-    /// Channel for emitting parsed submissions back to the caller.
+    /// Channel for emitting parsed submissions back to the caller. Always
+    /// present, but for Viewer sessions the receiver is dropped at open
+    /// time (no forwarder task is spawned) and the POST handler returns
+    /// 404 before ever touching this channel.
     submit_tx: mpsc::UnboundedSender<ParsedBody>,
     /// Port the listener is bound to. Used to validate the Origin header
     /// on POST / per Codex 2026-06-01 P1 #3.
@@ -158,6 +192,7 @@ impl FormSession {
 
         let (submit_tx, submit_rx) = mpsc::unbounded_channel();
         let state = Arc::new(SessionState {
+            kind: SessionKind::Form,
             form_html,
             template_folder_path: folder,
             submit_tx,
@@ -175,6 +210,83 @@ impl FormSession {
         Ok(Self {
             port,
             submit_rx: Some(submit_rx),
+            abort,
+        })
+    }
+
+    /// Open a Viewer-mode session for the receive-side fallback (P1 Task 11).
+    ///
+    /// `viewer_path` points to a WLE `*_Viewer.html` template; the file
+    /// stem isn't required to match a Template id (catalog `Template`s key
+    /// off the *form* file stem like `ICS213_Initial`, but Viewer files
+    /// have suffixes like `_Viewer` or sometimes a free-form name like
+    /// `Bulletin Viewer.html`). The folder is resolved from the parent dir
+    /// and used for `{FormFolder}` substitution + adjacent-asset serving.
+    ///
+    /// `field_values` is the parsed FormPayload's `(field_id, value)`
+    /// mapping. Two substitution passes bind it into the HTML:
+    /// 1. WLE `{var Name}` placeholders → `value` (server-side string
+    ///    substitution; matches the WLE viewer convention for inline
+    ///    text display).
+    /// 2. A `<script>` tag appended before `</body>` runs on
+    ///    `DOMContentLoaded` and assigns `document.querySelectorAll(
+    ///    '[name="Name"]').forEach(el => el.value = "value")` for each
+    ///    field. This covers hidden inputs the viewer relies on (some
+    ///    viewers use `<input name="..." />` for round-tripping data
+    ///    instead of `{var}` placeholders).
+    ///
+    /// POST `/` returns 404 in this mode — the operator cannot resubmit
+    /// a received form. The submit channel is created (it lives on
+    /// [`SessionState`]) but never drained; the receiver returned in
+    /// [`FormSession::submit_rx`] is `None` so callers can't accidentally
+    /// wire up a forwarder task against a dead channel.
+    pub async fn open_viewer(
+        viewer_path: PathBuf,
+        folder: String,
+        field_values: &std::collections::HashMap<String, String>,
+    ) -> Result<Self, String> {
+        let raw = std::fs::read_to_string(&viewer_path)
+            .map_err(|e| format!("read viewer template: {e}"))?;
+        let folder_path = viewer_path
+            .parent()
+            .ok_or_else(|| "viewer template has no parent folder".to_string())?
+            .to_path_buf();
+
+        let listener = TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], 0)))
+            .await
+            .map_err(|e| format!("bind 127.0.0.1:0: {e}"))?;
+        let port = listener
+            .local_addr()
+            .map_err(|e| format!("local_addr: {e}"))?
+            .port();
+
+        let substituted = substitute_template(&raw, port, &folder);
+        let with_vars = substitute_var_placeholders(&substituted, field_values);
+        let form_html = inject_field_value_script(&with_vars, field_values);
+
+        let (submit_tx, _submit_rx) = mpsc::unbounded_channel();
+        // _submit_rx is dropped here: Viewer mode has no submit forwarder.
+        // The POST handler rejects with 404 before ever sending on submit_tx,
+        // but the tx is retained on SessionState because SessionState's shape
+        // is shared with Form mode (cleaner than two near-identical structs).
+        let state = Arc::new(SessionState {
+            kind: SessionKind::Viewer,
+            form_html,
+            template_folder_path: folder_path,
+            submit_tx,
+            port,
+        });
+
+        let router = build_router(state);
+        let serve_handle: JoinHandle<()> = tokio::spawn(async move {
+            let _ = axum::serve(listener, router).await;
+        });
+        let abort = serve_handle.abort_handle();
+        Ok(Self {
+            port,
+            // Viewer sessions never expose a receiver — there's nothing to
+            // forward, the POST handler always 404s.
+            submit_rx: None,
             abort,
         })
     }
@@ -226,6 +338,178 @@ fn substitute_template(raw: &str, port: u16, folder: &str) -> String {
     inject_skin_link(&with_subs)
 }
 
+/// Substitute WLE Viewer `{var Name}` placeholders with the received field
+/// values (P1 Task 11). Used by Viewer mode only — Form mode never has
+/// pre-bound values.
+///
+/// Lookup is case-insensitive on the placeholder name to tolerate the
+/// viewer-vs-XML casing drift in WLE's catalog (the inbound XML may carry
+/// field IDs as `subjectline` while the viewer template references
+/// `{var Subjectline}`). Field values are HTML-attribute-escaped before
+/// substitution to neutralize XSS in payload values from untrusted senders;
+/// the CSP `form-action 'self'` + scoped capability + loopback origin are
+/// the primary defense, but the input passes through `<` / `>` / `&` /
+/// quotes regardless and HTML-escaping costs nothing.
+///
+/// Placeholders that don't match any field value are replaced with an empty
+/// string, matching WLE's behavior for missing fields. Without this, the
+/// raw `{var Foo}` text would render in the viewer.
+fn substitute_var_placeholders(
+    html: &str,
+    field_values: &std::collections::HashMap<String, String>,
+) -> String {
+    // Lowercase the keys once for case-insensitive matching.
+    let lowered: std::collections::HashMap<String, &str> = field_values
+        .iter()
+        .map(|(k, v)| (k.to_lowercase(), v.as_str()))
+        .collect();
+    let mut out = String::with_capacity(html.len());
+    let mut rest = html;
+    while let Some(start) = rest.find("{var ") {
+        out.push_str(&rest[..start]);
+        let after_start = &rest[start + "{var ".len()..];
+        if let Some(end) = after_start.find('}') {
+            let name = after_start[..end].trim();
+            let value = lowered
+                .get(&name.to_lowercase())
+                .copied()
+                .unwrap_or("");
+            out.push_str(&html_escape(value));
+            rest = &after_start[end + 1..];
+        } else {
+            // Unterminated placeholder; emit the raw `{var ` and continue.
+            // This is malformed-template tolerance; should never happen in
+            // a well-formed WLE viewer.
+            out.push_str("{var ");
+            rest = after_start;
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+/// HTML-escape a string for insertion into a text context (and as a basic
+/// guard for attribute contexts where the substituted placeholder might be
+/// inside `<input value="{var X}">`). Conservative: escapes `&`, `<`, `>`,
+/// `"`, and `'`. Not for use on URLs.
+fn html_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for ch in s.chars() {
+        match ch {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&#39;"),
+            _ => out.push(ch),
+        }
+    }
+    out
+}
+
+/// Escape a string for embedding inside a JavaScript double-quoted string
+/// literal. Handles backslash, double-quote, newline, carriage-return, and
+/// the `</` sequence (which would otherwise close the surrounding `<script>`
+/// tag from inside a JS string — the classic XSS via `</script>` payload).
+fn js_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for ch in s.chars() {
+        match ch {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            // Escape `<` to prevent `</script>` from terminating the script
+            // element when injected payload contains it. < is the
+            // standard JS escape for `<` inside string literals.
+            '<' => out.push_str("\\u003C"),
+            _ => out.push(ch),
+        }
+    }
+    out
+}
+
+/// Append a `<script>` tag inside the HTML that, on `DOMContentLoaded`,
+/// binds each `field_values` entry into matching `[name="X"]` form inputs.
+///
+/// This complements [`substitute_var_placeholders`] for WLE viewers that
+/// round-trip data through hidden inputs (`<input type="hidden" name="X">`)
+/// rather than `{var X}` inline placeholders. The script:
+///
+/// - Waits for `DOMContentLoaded` so all inputs are in the DOM
+/// - Iterates every field value, calls
+///   `document.querySelectorAll('[name="X"]')` and sets `.value = ...`
+/// - Skips fields whose name contains characters that would break the
+///   CSS selector (defensive — WLE field IDs are alphanumeric+underscore
+///   in practice, but a hostile sender could craft a payload).
+///
+/// The script is appended immediately before `</body>` if present; otherwise
+/// at the end of the document (browsers tolerate trailing scripts outside
+/// `<body>`).
+fn inject_field_value_script(
+    html: &str,
+    field_values: &std::collections::HashMap<String, String>,
+) -> String {
+    // Build the JS object literal that drives the per-field assignments.
+    // Skip names with characters that aren't safe inside our quoted
+    // selector — those are payloads, not WLE field IDs.
+    let safe_name = |n: &str| n.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-');
+    let mut entries: Vec<(String, String)> = field_values
+        .iter()
+        .filter(|(k, _)| safe_name(k))
+        .map(|(k, v)| (js_escape(k), js_escape(v)))
+        .collect();
+    // Sort for deterministic output (test stability).
+    entries.sort_by(|a, b| a.0.cmp(&b.0));
+
+    let mut pairs = String::new();
+    for (k, v) in entries {
+        pairs.push_str(&format!("    [\"{k}\", \"{v}\"],\n"));
+    }
+
+    let script = format!(
+        r#"<script>
+(function() {{
+  var bind = function() {{
+    var fields = [
+{pairs}    ];
+    for (var i = 0; i < fields.length; i++) {{
+      var name = fields[i][0];
+      var value = fields[i][1];
+      var nodes = document.querySelectorAll('[name="' + name + '"]');
+      for (var j = 0; j < nodes.length; j++) {{
+        nodes[j].value = value;
+      }}
+    }}
+  }};
+  if (document.readyState === 'loading') {{
+    document.addEventListener('DOMContentLoaded', bind);
+  }} else {{
+    bind();
+  }}
+}})();
+</script>
+"#
+    );
+
+    // Prefer to insert before `</body>` (case-insensitive).
+    let lower = html.to_lowercase();
+    if let Some(pos) = lower.rfind("</body>") {
+        let mut out = String::with_capacity(html.len() + script.len());
+        out.push_str(&html[..pos]);
+        out.push_str(&script);
+        out.push_str(&html[pos..]);
+        out
+    } else {
+        // No `</body>`; append at the end. Browsers parse this as if it
+        // were a trailing script element.
+        let mut out = String::with_capacity(html.len() + script.len());
+        out.push_str(html);
+        out.push_str(&script);
+        out
+    }
+}
+
 /// Insert `<link rel="stylesheet" href="/skin.css">` into <head>. If there's
 /// no `<head>`, prepend it before the doctype/html (browsers tolerate that).
 fn inject_skin_link(html: &str) -> String {
@@ -255,14 +539,21 @@ fn build_router(state: Arc<SessionState>) -> Router {
         .with_state(state)
 }
 
-/// GET / serves the form; POST / accepts the submit.
+/// GET / serves the form; POST / accepts the submit (Form mode) OR returns
+/// 404 (Viewer mode, P1 Task 11 — received forms are read-only).
 async fn root_handler(
     State(state): State<Arc<SessionState>>,
     req: Request<Body>,
 ) -> Response {
     match *req.method() {
         Method::GET => html_with_csp(&state.form_html),
-        Method::POST => submit_handler(state, req).await,
+        Method::POST => match state.kind {
+            SessionKind::Form => submit_handler(state, req).await,
+            // Viewer sessions: the operator can't resubmit a received form.
+            // 404 (not 405) so a misbehaving form template that POSTs by
+            // accident gets the same response shape as an unmapped route.
+            SessionKind::Viewer => (StatusCode::NOT_FOUND, "not found").into_response(),
+        },
         _ => (StatusCode::METHOD_NOT_ALLOWED, "method not allowed").into_response(),
     }
 }
@@ -456,6 +747,14 @@ pub struct OpenedSession {
     pub submit_rx: mpsc::UnboundedReceiver<ParsedBody>,
 }
 
+/// Result of [`FormSessionRegistry::open_viewer`] (P1 Task 11). No submit
+/// receiver: Viewer sessions are read-only — the http_server returns 404 on
+/// POST `/`, so there is nothing for a forwarder task to drain.
+pub struct OpenedViewerSession {
+    pub token: String,
+    pub port: u16,
+}
+
 impl FormSessionRegistry {
     pub fn new() -> Self {
         Self {
@@ -489,6 +788,34 @@ impl FormSessionRegistry {
             port,
             submit_rx,
         })
+    }
+
+    /// Open a Viewer-mode session for the receive-side fallback (P1 Task 11)
+    /// and register it. Returns the token + bound port. There is no submit
+    /// receiver: Viewer sessions 404 the POST route, so no forwarder task
+    /// is needed.
+    ///
+    /// Caller is responsible for resolving the Viewer template path. Native
+    /// forms can look up `FormDef::display_form` from `forms::catalog`; pure-
+    /// catalog forms fall back to the `<form_id>_Viewer.html` convention
+    /// (the same convention `send_webview_form` uses when minting the
+    /// outbound XML's `display_form` field).
+    pub async fn open_viewer(
+        &self,
+        viewer_path: PathBuf,
+        folder: String,
+        field_values: &std::collections::HashMap<String, String>,
+    ) -> Result<OpenedViewerSession, String> {
+        let session = FormSession::open_viewer(viewer_path, folder, field_values).await?;
+        let port = session.port;
+        let token = mint_session_token();
+        let mut guard = self.sessions.lock().await;
+        let mut tok = token;
+        while guard.contains_key(&tok) {
+            tok = mint_session_token();
+        }
+        guard.insert(tok.clone(), session);
+        Ok(OpenedViewerSession { token: tok, port })
     }
 
     /// Tear down a registered session. Idempotent: closing an unknown
@@ -543,6 +870,16 @@ mod tests {
     const TEST_PORT: u16 = 34567;
 
     fn make_state(html: &str) -> (Arc<SessionState>, mpsc::UnboundedReceiver<ParsedBody>) {
+        make_state_with_kind(html, SessionKind::Form)
+    }
+
+    /// Same as [`make_state`] but lets the caller pick the session kind. Used
+    /// by Viewer-mode tests (P1 Task 11) to assert that POST / returns 404
+    /// in Viewer mode without otherwise affecting the router shape.
+    fn make_state_with_kind(
+        html: &str,
+        kind: SessionKind,
+    ) -> (Arc<SessionState>, mpsc::UnboundedReceiver<ParsedBody>) {
         let td = TempDir::new().unwrap();
         let folder = td.path().to_path_buf();
         // Leak the tempdir so the path stays valid for the test's lifetime.
@@ -551,6 +888,7 @@ mod tests {
         std::mem::forget(td);
         let (tx, rx) = mpsc::unbounded_channel();
         let state = Arc::new(SessionState {
+            kind,
             form_html: html.to_string(),
             template_folder_path: folder,
             submit_tx: tx,
@@ -954,5 +1292,294 @@ mod tests {
         let t = mint_session_token();
         assert_eq!(t.len(), 16);
         assert!(t.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    // ============================================================
+    // Viewer mode — P1 Task 11 receive-side fallback
+    // ============================================================
+
+    fn make_viewer_template_on_disk(td: &TempDir, name: &str, body: &str) -> PathBuf {
+        let path = td.path().join(format!("{name}.html"));
+        std::fs::write(&path, body).unwrap();
+        path
+    }
+
+    #[tokio::test]
+    async fn viewer_session_post_root_returns_404() {
+        // The 404 is the canonical "read-only" signal — a Viewer session
+        // doesn't accept resubmissions. Test via direct router construction
+        // so we don't depend on the on-disk template path.
+        let (state, _rx) =
+            make_state_with_kind("<html><body>viewer</body></html>", SessionKind::Viewer);
+        let router = build_router(state);
+        let resp = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/")
+                    .header("Content-Type", "application/x-www-form-urlencoded")
+                    .header("Origin", local_origin())
+                    .body(Body::from("Subject=AfterReceive"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn viewer_session_get_root_still_serves_html() {
+        // Read-only mode still serves the HTML on GET — only POST is locked
+        // down. This guards against a regression that, e.g., over-restricts
+        // the router and refuses the legitimate fetch from the loaded
+        // webview.
+        let (state, _rx) = make_state_with_kind(
+            "<html><body>viewer content here</body></html>",
+            SessionKind::Viewer,
+        );
+        let router = build_router(state);
+        let resp = router
+            .oneshot(Request::builder().uri("/").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = to_bytes(resp.into_body(), 64_000).await.unwrap();
+        let s = String::from_utf8_lossy(&body);
+        assert!(s.contains("viewer content here"));
+    }
+
+    #[test]
+    fn substitute_var_placeholders_replaces_known_keys() {
+        let mut fv = std::collections::HashMap::new();
+        fv.insert("Subjectline".to_string(), "Hello".to_string());
+        fv.insert("Name".to_string(), "Net Control".to_string());
+        let html = "<p>Subj: {var Subjectline}, From: {var Name}</p>";
+        let out = substitute_var_placeholders(html, &fv);
+        assert_eq!(out, "<p>Subj: Hello, From: Net Control</p>");
+    }
+
+    #[test]
+    fn substitute_var_placeholders_is_case_insensitive() {
+        // WLE viewers often use PascalCase placeholders (`{var Subjectline}`)
+        // while inbound XML field IDs are typically lowercase
+        // (`subjectline`). The lookup MUST tolerate either casing or the
+        // viewer will render blank for every field on real-world payloads.
+        let mut fv = std::collections::HashMap::new();
+        fv.insert("subjectline".to_string(), "Hello".to_string());
+        let out = substitute_var_placeholders("Subj: {var Subjectline}", &fv);
+        assert_eq!(out, "Subj: Hello");
+    }
+
+    #[test]
+    fn substitute_var_placeholders_empties_unknown_keys() {
+        // Missing keys substitute to "" (matches WLE's behavior). Without
+        // this, raw `{var Foo}` text would survive into the rendered page.
+        let fv = std::collections::HashMap::new();
+        let out = substitute_var_placeholders("<p>{var Missing}</p>", &fv);
+        assert_eq!(out, "<p></p>");
+    }
+
+    #[test]
+    fn substitute_var_placeholders_escapes_html() {
+        // Defense-in-depth against payload XSS: HTML-escape the substituted
+        // value. Even though CSP + capability scope contain the blast
+        // radius, escaping costs nothing and prevents in-viewer HTML
+        // injection from confusing the operator (e.g. a payload with a
+        // fake "Submit" button).
+        let mut fv = std::collections::HashMap::new();
+        fv.insert(
+            "Name".to_string(),
+            r#"<script>alert("x")</script>"#.to_string(),
+        );
+        let out = substitute_var_placeholders("<p>{var Name}</p>", &fv);
+        assert!(out.contains("&lt;script&gt;"));
+        assert!(!out.contains("<script>"));
+    }
+
+    #[test]
+    fn inject_field_value_script_emits_dom_content_loaded_listener() {
+        let mut fv = std::collections::HashMap::new();
+        fv.insert("subjectline".to_string(), "Test".to_string());
+        let html = "<html><body></body></html>";
+        let out = inject_field_value_script(html, &fv);
+        assert!(
+            out.contains("DOMContentLoaded"),
+            "field-value injector must wait for DOMContentLoaded"
+        );
+        assert!(out.contains(r#"querySelectorAll('[name="' + name + '"]')"#));
+    }
+
+    #[test]
+    fn inject_field_value_script_serializes_field_pairs() {
+        let mut fv = std::collections::HashMap::new();
+        fv.insert("subjectline".to_string(), "Hello".to_string());
+        fv.insert("inc_name".to_string(), "Waldo".to_string());
+        let out = inject_field_value_script("<html><body></body></html>", &fv);
+        assert!(out.contains(r#"["subjectline", "Hello"]"#));
+        assert!(out.contains(r#"["inc_name", "Waldo"]"#));
+    }
+
+    #[test]
+    fn inject_field_value_script_inserts_before_body_close() {
+        let mut fv = std::collections::HashMap::new();
+        fv.insert("a".to_string(), "1".to_string());
+        let out = inject_field_value_script("<html><body><p>x</p></body></html>", &fv);
+        let script_pos = out.find("<script>").expect("script injected");
+        let body_close = out.find("</body>").expect("body close present");
+        assert!(
+            script_pos < body_close,
+            "script must appear before </body>; got script@{script_pos} body@{body_close}"
+        );
+    }
+
+    #[test]
+    fn inject_field_value_script_appends_when_no_body_close() {
+        let mut fv = std::collections::HashMap::new();
+        fv.insert("a".to_string(), "1".to_string());
+        let out = inject_field_value_script("<html><p>x</p></html>", &fv);
+        assert!(out.contains("<script>"), "script must still be present");
+    }
+
+    #[test]
+    fn inject_field_value_script_escapes_quotes_and_close_script() {
+        // The classic XSS via `</script>` in a JS string literal: the
+        // payload terminates the host script tag and starts a new one.
+        // js_escape encodes < as < so this can't happen.
+        let mut fv = std::collections::HashMap::new();
+        fv.insert(
+            "a".to_string(),
+            r#"</script><script>alert(1)</script>"#.to_string(),
+        );
+        let out = inject_field_value_script("<html><body></body></html>", &fv);
+        // Confirm raw `</script>` from the payload doesn't appear (it would
+        // mean we leaked the injected payload as live HTML markup).
+        // Note: the host `<script>` tag closes with `</script>` itself, so
+        // we count "</script>" occurrences and assert there's exactly one
+        // (the host tag's own closing).
+        let close_count = out.matches("</script>").count();
+        assert_eq!(
+            close_count, 1,
+            "exactly one </script> expected (the host tag's close); found {close_count}"
+        );
+        // And the escaped form should be present.
+        assert!(out.contains("\\u003C"));
+    }
+
+    #[test]
+    fn inject_field_value_script_skips_unsafe_field_names() {
+        // CSS-selector-unsafe characters in a field name are a payload
+        // signal, not a WLE field ID. Skip those entries entirely rather
+        // than risk constructing a malformed querySelectorAll.
+        let mut fv = std::collections::HashMap::new();
+        fv.insert(r#"a"]&[name="b"#.to_string(), "evil".to_string());
+        fv.insert("legitimate".to_string(), "ok".to_string());
+        let out = inject_field_value_script("<html><body></body></html>", &fv);
+        assert!(out.contains(r#"["legitimate", "ok"]"#));
+        assert!(!out.contains(r#"a"]"#));
+    }
+
+    #[tokio::test]
+    async fn full_open_viewer_session_serves_viewer_html_via_real_tcp() {
+        // Mirror full_open_session_serves_form_html_via_real_tcp for Viewer
+        // mode: end-to-end bind + serve a viewer template, assert the
+        // served body carries the substituted `{var X}` placeholders + the
+        // injected field-value script, and that POST returns 404.
+        let td = TempDir::new().unwrap();
+        let viewer_path = make_viewer_template_on_disk(
+            &td,
+            "Test_Viewer",
+            "<html><head></head><body>Subject: {var Subjectline}</body></html>",
+        );
+        let mut fv = std::collections::HashMap::new();
+        fv.insert("subjectline".to_string(), "Hello World".to_string());
+
+        let mut session = FormSession::open_viewer(
+            viewer_path,
+            String::new(), // no folder substitution needed in this template
+            &fv,
+        )
+        .await
+        .unwrap();
+        let url = session.url();
+
+        // GET / serves the viewer HTML with both substitution paths applied.
+        let resp = reqwest::get(&url).await.unwrap();
+        assert_eq!(resp.status(), 200);
+        let body = resp.text().await.unwrap();
+        assert!(
+            body.contains("Subject: Hello World"),
+            "{{var Subjectline}} must be substituted; got body: {body}"
+        );
+        assert!(
+            body.contains("DOMContentLoaded"),
+            "JS injection script must be present"
+        );
+
+        // POST / returns 404 in Viewer mode.
+        let client = reqwest::Client::new();
+        let post_resp = client
+            .post(&url)
+            .header("Origin", &url[..url.len() - 1]) // strip trailing /
+            .body("Subject=Retry")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(post_resp.status(), 404);
+
+        // submit_rx is always None for viewer sessions.
+        assert!(
+            session.take_submit_rx().is_none(),
+            "viewer sessions never expose a submit_rx"
+        );
+        session.close();
+    }
+
+    #[tokio::test]
+    async fn registry_open_viewer_returns_token_and_port() {
+        let td = TempDir::new().unwrap();
+        let viewer_path = make_viewer_template_on_disk(
+            &td,
+            "RegViewer",
+            "<html><body>viewer</body></html>",
+        );
+        let registry = FormSessionRegistry::new();
+        let fv = std::collections::HashMap::new();
+        let opened = registry
+            .open_viewer(viewer_path, String::new(), &fv)
+            .await
+            .unwrap();
+        assert_eq!(opened.token.len(), 16);
+        assert!(opened.token.chars().all(|c| c.is_ascii_hexdigit()));
+        assert!(opened.port != 0);
+        assert_eq!(registry.session_count().await, 1);
+    }
+
+    #[tokio::test]
+    async fn registry_open_viewer_then_close_works() {
+        let td = TempDir::new().unwrap();
+        let viewer_path = make_viewer_template_on_disk(
+            &td,
+            "ClosingViewer",
+            "<html><body>viewer</body></html>",
+        );
+        let registry = FormSessionRegistry::new();
+        let fv = std::collections::HashMap::new();
+        let opened = registry
+            .open_viewer(viewer_path, String::new(), &fv)
+            .await
+            .unwrap();
+        let url = format!("http://127.0.0.1:{}/", opened.port);
+        assert_eq!(registry.session_count().await, 1);
+
+        registry.close(&opened.token).await.unwrap();
+        assert_eq!(registry.session_count().await, 0);
+
+        // Listener is down.
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_millis(500))
+            .build()
+            .unwrap();
+        let after = client.get(&url).send().await;
+        assert!(after.is_err(), "listener must be down after close()");
     }
 }

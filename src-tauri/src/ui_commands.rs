@@ -1272,13 +1272,118 @@ pub async fn open_webview_form(
 
 /// Tear down a webview form session. Idempotent — closing an unknown
 /// token returns `Ok(())` (the React unmount cleanup path runs whether
-/// or not the session is already gone).
+/// or not the session is already gone). Used by BOTH Form-mode and
+/// Viewer-mode sessions (the registry holds them both; close-by-token
+/// is mode-agnostic).
 #[tauri::command]
 pub async fn close_webview_form_server(
     token: String,
     registry: State<'_, std::sync::Arc<crate::forms::http_server::FormSessionRegistry>>,
 ) -> Result<(), String> {
     registry.close(&token).await
+}
+
+/// Result of [`open_webview_viewer`] (P1 Task 11). Symmetric to
+/// [`OpenFormResult`] except the React side never subscribes to a
+/// `form-submitted` event for viewer sessions — there is no submit path.
+/// `token` is the lookup key for `close_webview_form_server` teardown;
+/// `port` is informational only.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenViewerResult {
+    pub url: String,
+    pub port: u16,
+    pub token: String,
+}
+
+/// Open a Viewer-mode webview session for a received form whose `form_id`
+/// has no native React `View` component registered (P1 Task 11). The
+/// caller supplies the parsed FormPayload's `(field_id, value)` map; the
+/// http_server binds the values into the WLE `*_Viewer.html` template via
+/// two complementary substitution paths:
+/// 1. `{var X}` placeholders in the HTML → field value (server-side
+///    string replace, matching the WLE viewer convention)
+/// 2. A `<script>` tag appended before `</body>` runs on
+///    `DOMContentLoaded` and assigns `document.querySelectorAll(
+///    '[name="X"]').value = ...` for each field, covering hidden inputs.
+///
+/// The Viewer filename is resolved in two passes:
+/// - For form_ids in the BUNDLED_FORMS catalog
+///   (ICS-213, ICS-309, Bulletin, Position, Damage Assessment), use the
+///   `FormDef::display_form` field — these have non-conventional names
+///   like `Bulletin Viewer.html` or `GPS Position Report.html`.
+/// - Otherwise fall back to the `<form_id>_Viewer.html` convention. This
+///   matches the convention `send_webview_form` writes into outbound
+///   XML, so a tuxlink-authored received form has a discoverable viewer.
+///
+/// Errors:
+/// - `unknown form: <id>` — neither the bundled catalog nor the live
+///   catalog (the form's INITIAL `.html` in any bundled / custom folder)
+///   knows this form. The frontend falls back to KeyValueView.
+/// - `viewer template not found: <path>` — the form is in the catalog
+///   but the resolved Viewer file doesn't exist on disk (catalog drift /
+///   custom form without a companion viewer). Frontend falls back to
+///   KeyValueView.
+/// - any I/O error from binding the loopback listener.
+#[tauri::command]
+pub async fn open_webview_viewer(
+    form_id: String,
+    field_values: std::collections::HashMap<String, String>,
+    app: AppHandle,
+    registry: State<'_, std::sync::Arc<crate::forms::http_server::FormSessionRegistry>>,
+) -> Result<OpenViewerResult, String> {
+    use crate::forms;
+
+    // 1. Resolve the live catalog so we can find the form's folder (for
+    //    {FormFolder} substitution + adjacent-asset serving). The Viewer
+    //    file lives next to the form's INITIAL .html in the same folder.
+    let bundle =
+        forms::wle_templates::bundle_root_for_app(&app).map_err(|e| e.to_string())?;
+    let custom = forms::wle_templates::custom_root_for_app(&app);
+    let custom_opt = if custom.exists() {
+        Some(custom.as_path())
+    } else {
+        None
+    };
+    let cat = forms::wle_templates::list(&bundle, custom_opt)
+        .map_err(|e| e.to_string())?;
+    let template = cat
+        .iter()
+        .find(|t| t.id == form_id)
+        .ok_or_else(|| format!("unknown form: {form_id}"))?;
+
+    // 2. Resolve the Viewer filename. Native bundled forms have a
+    //    canonical `FormDef::display_form` (e.g. `Bulletin Viewer.html`,
+    //    `GPS Position Report.html`); for everything else, fall back to
+    //    the `<form_id>_Viewer.html` convention `send_webview_form`
+    //    writes into outbound XML.
+    let viewer_filename = forms::catalog::find_form(&form_id)
+        .map(|f| f.display_form.to_string())
+        .unwrap_or_else(|| format!("{form_id}_Viewer.html"));
+
+    // 3. The Viewer file lives next to the form template (same folder).
+    let form_parent = template
+        .path
+        .parent()
+        .ok_or_else(|| "template has no parent folder".to_string())?;
+    let viewer_path = form_parent.join(&viewer_filename);
+    if !viewer_path.exists() {
+        return Err(format!(
+            "viewer template not found: {}",
+            viewer_path.display()
+        ));
+    }
+
+    // 4. Open the viewer session. No forwarder task — the POST handler
+    //    returns 404 in Viewer mode, so there's nothing to drain.
+    let opened = registry
+        .open_viewer(viewer_path, template.folder.clone(), &field_values)
+        .await?;
+    let port = opened.port;
+    let token = opened.token.clone();
+    let url = format!("http://127.0.0.1:{port}/");
+
+    Ok(OpenViewerResult { url, port, token })
 }
 
 /// Run one CMS connection: send everything queued in the outbox and download any
