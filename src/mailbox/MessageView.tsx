@@ -24,6 +24,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { save as saveDialog } from '@tauri-apps/plugin-dialog';
 import { MessageViewEmpty } from './MessageViewEmpty';
 import type { ParsedMessage, AttachmentMeta, MailboxFolderRef, UserFolder } from './types';
+import type { FormPayload } from '../forms/types';
 import { useMessage, type MessageSelection } from './useMessage';
 import { asUiError, isNotConfigured } from './types';
 import { openReplyWindow, hasReplyWithFormSupport, type ReplyMode } from './replyActions';
@@ -31,6 +32,7 @@ import { sanitizeAttachmentName } from './sanitize';
 import { devFormMeta } from './devFixture';
 import { lookupForm, KeyValueView } from '../forms';
 import { MoveToButton } from './MoveToButton';
+import { WebviewFormViewer } from './WebviewFormViewer';
 
 // ============================================================================
 // Exported constants (used by tests)
@@ -124,6 +126,94 @@ function parseAddress(s: string): { name: string; addr: string } {
   const m = s.match(/^\s*(.*?)\s*<([^>]+)>\s*$/);
   if (m) return { name: m[1].replace(/^"|"$/g, '').trim(), addr: m[2].trim() };
   return { name: '', addr: s.trim() };
+}
+
+// ============================================================================
+// Form-body rendering (Tasks 13 + 11)
+// ============================================================================
+
+/**
+ * Render the body region for a message whose `isForm` is true and whose
+ * payload parsed successfully. Routing precedence (per spec §8.3):
+ *
+ *   1. If `lookupForm(formId)` returns a `FormRegistryEntry` (native view —
+ *      ICS-213, ICS-309, Bulletin, Position, Damage Assessment),
+ *      use the entry's `View` component. This is the highest-fidelity
+ *      rendering and remains the canonical path for the 5 bundled forms.
+ *   2. Otherwise (catalog / custom / unknown formId), mount a
+ *      `WebviewFormViewer`. The Rust side serves the WLE
+ *      `*_Viewer.html` template with the parsed payload's field values
+ *      bound into both `{var X}` placeholders and `[name="X"]` inputs.
+ *   3. If the WebviewFormViewer fails (resolved Viewer template missing
+ *      on disk — catalog drift or a custom form without a companion
+ *      `_Viewer.html`), fall through to `KeyValueView`. This guarantees
+ *      something always renders for the operator.
+ *
+ * Step (3) is gated by local state (`viewerFailed`) so a transient
+ * open-error from the Rust side doesn't permanently bury the message
+ * behind KeyValueView for the rest of the session — the next time the
+ * operator selects this message, MessageView remounts with fresh state
+ * and the viewer attempt re-runs.
+ */
+function FormMessageBody({
+  formId,
+  payload,
+  bodyText,
+}: {
+  formId: string;
+  payload: FormPayload;
+  bodyText: string;
+}) {
+  // Track viewer-fallback failure so we can fall through to KeyValueView.
+  // Reset semantics: state lives for the lifetime of this component
+  // instance (one per message-selection). Selecting a different message
+  // remounts, clearing the flag.
+  const [viewerFailed, setViewerFailed] = useState(false);
+
+  // Native-View path: registered forms render via their dedicated React
+  // component (preserves existing behavior for ICS-213 et al.).
+  const entry = lookupForm(formId);
+  if (entry) {
+    const ViewComponent = entry.View;
+    return (
+      <div className="form-attached" data-testid="message-form-rendered">
+        <ViewComponent payload={payload} />
+      </div>
+    );
+  }
+
+  // KeyValueView fallback: either the viewer reported failure, OR an
+  // operator-flagged escape hatch. Renders the raw field/value pairs from
+  // the parsed payload alongside the original body text. This is the
+  // safety net that guarantees the message stays readable even if every
+  // upstream path fails.
+  if (viewerFailed) {
+    return (
+      <div className="form-attached" data-testid="message-form-unknown">
+        <KeyValueView payload={payload} bodyText={bodyText} />
+      </div>
+    );
+  }
+
+  // Viewer-mode fallback (P1 Task 11): convert the payload's
+  // `[fieldId, value]` pairs into a plain object the Tauri command can
+  // marshal into a HashMap. The Rust side handles {var X} substitution
+  // + JS injection for `[name="X"]` inputs.
+  const fieldValues: Record<string, string> = {};
+  for (const [k, v] of payload.fields) {
+    fieldValues[k] = v;
+  }
+
+  return (
+    <div className="form-attached" data-testid="message-form-viewer">
+      <WebviewFormViewer
+        formId={formId}
+        fieldValues={fieldValues}
+        onClose={() => setViewerFailed(true)}
+        onFallback={() => setViewerFailed(true)}
+      />
+    </div>
+  );
 }
 
 // ============================================================================
@@ -274,27 +364,22 @@ export function MessageViewLoaded({
       </dl>
 
       {/* 4 — body. Form messages dispatch to a registered View component
-          (e.g., Ics213View). If the form_id is not registered, KeyValueView
-          renders the raw field/value pairs as a graceful fallback. If
-          isForm is true but there's no parsed payload (parse failed),
-          fall back to the legacy "form attached" placeholder. Plain
-          messages render the decoded body. */}
-      {message.isForm && message.formId && message.formPayload ? (() => {
-        const entry = lookupForm(message.formId);
-        if (entry) {
-          const ViewComponent = entry.View;
-          return (
-            <div className="form-attached" data-testid="message-form-rendered">
-              <ViewComponent payload={message.formPayload} />
-            </div>
-          );
-        }
-        return (
-          <div className="form-attached" data-testid="message-form-unknown">
-            <KeyValueView payload={message.formPayload} bodyText={message.body} />
-          </div>
-        );
-      })() : message.isForm ? (
+          (e.g., Ics213View). If the form_id is not registered, the Viewer-
+          mode webview fallback (P1 Task 11) tries to render the WLE
+          `_Viewer.html` template with the parsed payload bound; if that
+          fails (template missing on disk), KeyValueView renders the raw
+          field/value pairs as a final fallback. If isForm is true but
+          there's no parsed payload (parse failed), fall back to the
+          legacy "form attached" placeholder. Plain messages render the
+          decoded body. */}
+      {message.isForm && message.formId && message.formPayload ? (
+        <FormMessageBody
+          key={message.id}
+          formId={message.formId}
+          payload={message.formPayload}
+          bodyText={message.body}
+        />
+      ) : message.isForm ? (
         // isForm true but no payload — parse failed server-side or message
         // is a form by attachment-name but XML couldn't be parsed.
         <div className="form-attached" data-testid="message-form-placeholder">

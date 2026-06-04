@@ -1,0 +1,103 @@
+/* WebviewFormHost — chrome + embed-region styling.
+ *
+ * The form HTML renders inside an in-window child Tauri Webview that is
+ * pixel-positioned to overlay the `.webview-form-host__embed` placeholder
+ * div below (see WebviewFormHost.tsx mount-mechanism note). Child webviews
+ * paint above the parent's WebContents in z-order, so the placeholder is
+ * invisible at runtime — it's a layout-reservation device that gives the
+ * webview a stable rect to sit on. The form's own theming is handled by
+ * forms::skin on the Rust side before the HTML is served. */
+
+.webview-form-host {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 14px;
+  /* Fill the parent compose-body region so the embed div has room to
+   * grow. Compose decides the outer height via its own layout. */
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.webview-form-host__status {
+  color: var(--text-dim);
+  line-height: 1.5;
+}
+
+.webview-form-host__status code {
+  font-family: var(--mono);
+  color: var(--text);
+  background: var(--surface-2);
+  padding: 1px 6px;
+  border-radius: 3px;
+  border: 1px solid var(--border);
+}
+
+.webview-form-host__error {
+  background: var(--tux-danger-surface);
+  border: 1px solid var(--error);
+  color: var(--text);
+  padding: 10px 12px;
+  border-radius: 4px;
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+/* Layout-reservation div the child Webview is pixel-positioned over.
+ * Grows to fill remaining vertical space so the embedded form has a
+ * stable rect. Background is a faint placeholder color visible only
+ * during the brief 'opening' phase before the webview paints over it. */
+.webview-form-host__embed {
+  flex: 1 1 auto;
+  min-height: 240px;
+  background: var(--surface-2);
+  border: 1px solid var(--border-soft);
+  border-radius: 4px;
+}
+
+.webview-form-host__chrome {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-soft);
+}
+
+.webview-form-host__btn {
+  font-family: var(--sans);
+  font-size: 13px;
+  padding: 6px 14px;
+  background: var(--surface-2);
+  color: var(--text);
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.webview-form-host__btn:hover:not(:disabled) {
+  background: var(--elevated);
+}
+
+.webview-form-host__btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.webview-form-host__btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* Visually distinguish the diagnostic fallback button from the live
+ * Cancel button so the operator doesn't mistake it for the primary
+ * submit path (per design §5.4 — fallback is a rescue tool). */
+.webview-form-host__btn--fallback {
+  font-style: italic;
+}

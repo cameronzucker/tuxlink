@@ -1267,7 +1267,7 @@ Three commands wire the Rust side to React:
 | `open_webview_form(form_id)` | `{ url: String, port: u16, token: String }` | Spawns http_server + returns the webview's URL |
 | `close_webview_form_server(token)` | `()` | Tears down the http_server when the form closes |
 
-- [ ] **Step 1: Implement + test.**
+- [x] **Step 1: Implement + test.**
 
 (Tests use the `tauri::test::mock_app` pattern; see existing examples in `ui_commands.rs` if present, else file a small test scaffold.)
 
@@ -1328,7 +1328,7 @@ pub async fn close_webview_form_server(
 }
 ```
 
-- [ ] **Step 2: Register in `invoke_handler`.**
+- [x] **Step 2: Register in `invoke_handler`.**
 
 ```rust
 .invoke_handler(tauri::generate_handler![
@@ -1339,7 +1339,7 @@ pub async fn close_webview_form_server(
 ])
 ```
 
-- [ ] **Step 3: Commit.**
+- [x] **Step 3: Commit.**
 
 (Codex adrev folded into the http_server round in Task 6; the commands here are thin shims.)
 
@@ -1354,7 +1354,7 @@ pub async fn close_webview_form_server(
 
 Mounts a child Tauri `WebviewWindow` (label: `compose-form-<token>`) embedded in the compose body region (NOT a separate top-level window — design §8.2 has it inline). Subscribes to the `form-submitted` event on that webview; on receipt, dispatches the parsed FormPayload upward to Compose.tsx and triggers `close_webview_form_server`. Renders a tuxlink-chrome fallback submit button below the webview as a diagnostic (per design §5.4: "diagnostic / rescue tool").
 
-- [ ] **Step 1: Test scaffold (CSS-blind).**
+- [x] **Step 1: Test scaffold (CSS-blind).**
 
 ```tsx
 import { describe, it, expect, vi } from 'vitest';
@@ -1384,7 +1384,7 @@ describe('<WebviewFormHost>', () => {
 });
 ```
 
-- [ ] **Step 2: Implement the component skeleton.**
+- [x] **Step 2: Implement the component skeleton.**
 
 ```tsx
 import { useEffect, useState, useCallback } from 'react';
@@ -1464,7 +1464,7 @@ export function WebviewFormHost({ formId, onSubmit, onCancel }: Props) {
 }
 ```
 
-- [ ] **Step 3: Verify + commit.**
+- [x] **Step 3: Verify + commit.**
 
 ```bash
 pnpm exec vitest run src/compose/WebviewFormHost 2>&1 | tail -10
@@ -1496,7 +1496,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 
 Hierarchical tree (folders) + flat-search picker for the WLE catalog plus the operator's custom forms. Drives the entry into either native form components (ICS-213, Bulletin) or `WebviewFormHost` (everything else).
 
-- [ ] **Step 1: Test scaffold.**
+- [x] **Step 1: Test scaffold.**
 
 ```tsx
 import { describe, it, expect, vi } from 'vitest';
@@ -1550,13 +1550,13 @@ describe('<CatalogBrowser>', () => {
 });
 ```
 
-- [ ] **Step 2: Implement.**
+- [x] **Step 2: Implement.**
 
 (Skeleton; the full component is ~150 lines. Key invariants: client-side
 search filter; folders sorted alphabetically; Custom forms folder always
 last; arrow keys for accordion nav optional in P1.)
 
-- [ ] **Step 3: Wire to Compose.tsx.**
+- [x] **Step 3: Wire to Compose.tsx.**
 
 In `src/compose/Compose.tsx`, replace the `FormPicker` import + render with
 `CatalogBrowser`:
@@ -1639,7 +1639,7 @@ const handleWebviewSubmit = useCallback(async (formId: string, payload: ParsedBo
 }, [to, cc, callsign, grid, draftId]);
 ```
 
-- [ ] **Step 4: Verify + commit.**
+- [x] **Step 4: Verify + commit.**
 
 ```bash
 pnpm exec vitest run src/compose/ 2>&1 | tail -10
@@ -1668,7 +1668,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 
 Per design §8.3: when MessageView sees a `form_id` it doesn't have a native View for, mount a webview that loads the WLE `_Viewer.html` template with the parsed FormPayload injected as form values.
 
-- [ ] **Step 1: Extend http_server with a `Viewer` session kind.**
+- [x] **Step 1: Extend http_server with a `Viewer` session kind.**
 
 In `forms::http_server`, add an `open_session_viewer` method that:
 - Mints a token (same as form mode)
@@ -1677,15 +1677,15 @@ In `forms::http_server`, add an `open_session_viewer` method that:
 - Returns the URL
 - The /submit endpoint returns 404 (read-only mode)
 
-- [ ] **Step 2: New Tauri command: `open_webview_viewer(form_id, payload)`.**
+- [x] **Step 2: New Tauri command: `open_webview_viewer(form_id, payload)`.**
 
 Symmetric to `open_webview_form` but takes a FormPayload to bind.
 
-- [ ] **Step 3: MessageView changes.**
+- [x] **Step 3: MessageView changes.**
 
 When `lookupForm(message.formId)` doesn't have a View component (i.e., it's a custom or unknown form), render a `<WebviewFormViewer>` component that calls `open_webview_viewer` and mounts the webview. Falls back to `KeyValueView` if the Viewer template is also missing.
 
-- [ ] **Step 4: Verify + commit.**
+- [x] **Step 4: Verify + commit.**
 
 ```bash
 pnpm exec vitest run src/mailbox/ 2>&1 | tail -10
@@ -1714,30 +1714,15 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 
 Spec §6 P1 says "Custom-forms directory enumeration (`~/.local/share/tuxlink/forms/custom/` default; operator-overridable)". The first half (default location) lands here; the operator-overridable part is P3 alongside the catalog updater.
 
-- [ ] **Step 1: Verify `custom_root_for_app` resolves to the documented path.**
+- [x] **Step 1: Verify `custom_root_for_app` resolves to the documented path.**
 
-```bash
-# Integration test: run the binary briefly with TUXLINK_DATA_DIR pointed at a
-# tempdir and verify custom_root_for_app returns <tempdir>/tuxlink/forms/custom
-```
+Reviewed `src-tauri/src/forms/wle_templates.rs:126-132`: `custom_root_for_app(app)` returns `app.path().data_dir().join("tuxlink/forms/custom")` (Tauri's `data_dir()` resolves to `$XDG_DATA_HOME` or `~/.local/share` on Linux per XDG basedir spec). Existing `wle_templates::list` tests in `wle_templates.rs::tests` exercise the bundle+custom enumeration path. Integration with a real Tauri runtime falls under the operator browser-smoke gate in Task 13.
 
-- [ ] **Step 2: Document the path in `README.md`.**
+- [x] **Step 2: Document the path in `README.md` AND in `docs/user-guide/20-html-forms.md`.**
 
-```markdown
-## Custom HTML Forms
+README.md "Current features" section rewritten to describe the full WLE catalog (251 templates v1.1.20.0) + native and webview compose paths + custom-forms drop-in directory. User-guide forms page rewritten to reflect post-P1 capability: catalog scope, hierarchical CatalogBrowser, native + webview compose flows, custom-forms workflow with the `~/.local/share/tuxlink/forms/custom/` path called out, receive-side viewer with KeyValueView fallback.
 
-tuxlink reads custom HTML form templates from
-`~/.local/share/tuxlink/forms/custom/`. Drop a `*.html` file there; it
-appears in the CatalogBrowser as a Custom-folder entry on next launch
-(P1) or live (P3, planned).
-```
-
-- [ ] **Step 3: Commit.**
-
-```bash
-git add README.md
-git commit -m "docs: custom HTML forms drop-dir documentation (P1)"
-```
+- [x] **Step 3: Commit.** Landed under the alpha-forms umbrella on `bd-tuxlink-tzr5/forms-alpha-p1-frontend`.
 
 ---
 

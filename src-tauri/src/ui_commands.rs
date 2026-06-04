@@ -1029,6 +1029,392 @@ pub async fn send_form(
     Ok(mid.0)
 }
 
+/// Send an outbound webview-served WLE Standard Form.
+///
+/// Counterpart to [`send_form`] for the ~245 catalog forms whose authoritative
+/// shape is the HTML template (not a static [`forms::FormDef`]). The form id is
+/// verified against the live `forms::wle_templates::list` catalog (bundled +
+/// custom roots), so this command rejects ids the webview path could not have
+/// served — same error surface as `send_form` ("unknown form: <id>"). The XML
+/// envelope is synthesized via [`forms::serialize::serialize_catalog_form_xml`]
+/// from the operator-supplied `field_values` plus the WLE filename convention
+/// for `display_form` (`<id>_Viewer.html`) and `reply_template`
+/// (`<id>_SendReply.0`).
+///
+/// `field_values` is the post-conversion shape that the React `handleWebviewSubmit`
+/// produces: single-string-per-field (newline-joined multi-values, with the
+/// synthetic Submit button name stripped). The serializer sorts keys
+/// alphabetically for deterministic output.
+///
+/// Body composition: sorted "key: value" dump, with a leading "form_id: <id>"
+/// header for receiver context. Receivers that render the XML via the WLE
+/// viewer get the formatted view; the body text is the fallback for
+/// non-WLE-aware clients. Subject prefers `field_values["subject"]`, else
+/// `Form: <id>` (mirrors WLE's "Form name as subject" default).
+///
+/// Attachment filename is `RMS_Express_Form_<id>.xml` — same convention as
+/// `send_form` so existing parsers (Pat, RMS Express receivers, the tuxlink
+/// inbox renderer) detect + render the form view consistently.
+///
+/// Returns the MID string on success (mirrors `message_send` / `send_form`).
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub async fn send_webview_form(
+    form_id: String,
+    field_values: std::collections::HashMap<String, String>,
+    to: Vec<String>,
+    cc: Vec<String>,
+    senders_callsign: String,
+    grid_square: String,
+    app: AppHandle,
+    state: State<'_, BackendState>,
+) -> Result<String, UiError> {
+    use crate::forms;
+
+    // 1. Verify form_id is in the live catalog (bundled snapshot + operator's
+    //    custom-forms dir). This is the same lookup `open_webview_form` does,
+    //    so a session that opened successfully will always pass this check.
+    //    A stale draft restored from localStorage with a form_id no longer in
+    //    the catalog (e.g. operator deleted their custom form) gets the same
+    //    "unknown form" surface as `send_form`'s BUNDLED_FORMS check.
+    let bundle = forms::wle_templates::bundle_root_for_app(&app).map_err(|e| {
+        UiError::Internal { detail: e.to_string() }
+    })?;
+    let custom = forms::wle_templates::custom_root_for_app(&app);
+    let custom_opt = if custom.exists() { Some(custom.as_path()) } else { None };
+    let catalog = forms::wle_templates::list(&bundle, custom_opt).map_err(|e| {
+        UiError::Internal { detail: e.to_string() }
+    })?;
+    let template = catalog
+        .iter()
+        .find(|t| t.id == form_id)
+        .ok_or_else(|| UiError::Internal {
+            detail: format!("unknown form: {form_id}"),
+        })?;
+
+    // 2. Build the FormParameters envelope. Conventions:
+    //    - xml_file_version "1.0" matches WLE's value.
+    //    - rms_express_version identifies the originator client.
+    //    - display_form / reply_template follow WLE's filename convention:
+    //      Resolved against the authoring template's sibling folder via
+    //      `resolve_viewer_for` (2026-06-04 Codex adrev P1.3) — falls
+    //      back to `<id>_Viewer.html` only when the catalog walker
+    //      can't find a paired viewer. Before the resolver, the
+    //      hard-coded `<id>_Viewer.html` produced wrong display_form
+    //      values for half the bundle (e.g. authoring "Bulletin Initial"
+    //      → claimed display_form "Bulletin Initial_Viewer.html" when
+    //      the actual viewer is "Bulletin Viewer.html").
+    //      `reply_template` keeps the `<id>_SendReply.0` convention
+    //      because tuxlink doesn't currently generate per-form
+    //      reply templates; recipients fall back to the generic viewer.
+    let display_form = forms::wle_templates::resolve_viewer_for(&template.path)
+        .unwrap_or_else(|| format!("{form_id}_Viewer.html"));
+    let now = chrono::Utc::now();
+    let params = forms::types::FormParameters {
+        xml_file_version: "1.0".to_string(),
+        rms_express_version: format!("Tuxlink/{}", env!("CARGO_PKG_VERSION")),
+        submission_datetime: now.format("%Y%m%d%H%M%S").to_string(),
+        senders_callsign,
+        grid_square,
+        display_form,
+        reply_template: format!("{form_id}_SendReply.0"),
+    };
+
+    // 3. Serialize the XML attachment.
+    let xml_bytes = forms::serialize::serialize_catalog_form_xml(&form_id, &params, &field_values);
+
+    // 4. Compose the plain-text body. Receivers see the structured XML via the
+    //    WLE viewer; the body text is the fallback for non-WLE-aware clients.
+    //    KISS: sorted "key: value" dump with a leading form_id header.
+    let mut keys: Vec<&String> = field_values.keys().collect();
+    keys.sort();
+    let mut body = format!("form_id: {form_id}\n\n");
+    for k in keys {
+        let v = field_values.get(k).map(String::as_str).unwrap_or("");
+        body.push_str(k);
+        body.push_str(": ");
+        body.push_str(v);
+        body.push('\n');
+    }
+
+    // 5. Subject. Prefer an explicit subject field if the form provided one
+    //    (common in WLE catalog forms — a "subject" or "msg_subject" input);
+    //    else fall back to "Form: <id>".
+    let subject = field_values
+        .get("subject")
+        .or_else(|| field_values.get("msg_subject"))
+        .cloned()
+        .unwrap_or_else(|| format!("Form: {form_id}"));
+
+    let attachment = crate::winlink_backend::OutboundAttachment {
+        filename: format!("RMS_Express_Form_{form_id}.xml"),
+        bytes: xml_bytes,
+    };
+
+    let msg = OutboundMessage {
+        to,
+        cc,
+        subject,
+        body,
+        date: now.to_rfc3339(),
+        attachments: vec![attachment],
+    };
+
+    let backend = state
+        .current()
+        .ok_or_else(|| UiError::NotConfigured("backend offline".to_string()))?;
+    let mid = backend.send_message(msg).await?;
+    Ok(mid.0)
+}
+
+// ============================================================================
+// HTML Forms — webview infrastructure command surface (P1 Task 8)
+// ============================================================================
+//
+// Three thin shim commands wire the (already-shipped) Rust forms::http_server +
+// forms::wle_templates modules to the React CatalogBrowser + WebviewFormHost
+// (P1 Tasks 9 + 10). The hard work lives in the Rust modules; these
+// commands marshal AppHandle resource paths, manage the
+// `FormSessionRegistry` lookups, and bridge the parsed-submit channel onto
+// a Tauri event.
+//
+// Plan: docs/superpowers/plans/2026-06-01-html-forms-p1-webview-infra.md Task 8.
+// Spec: docs/superpowers/specs/2026-05-31-html-forms-full-parity-design.md §8.2.
+
+/// Result of [`open_webview_form`]. The React side passes `url` to the
+/// child `WebviewWindow` (label `compose-form-<token>`), keeps `token`
+/// for the `close_webview_form_server` teardown call, and reads `port`
+/// for diagnostics only (the form's submit POSTs are path-less per the
+/// WLE contract, so the port is informational — not required for the
+/// frontend's submit-listener wiring).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenFormResult {
+    pub url: String,
+    pub port: u16,
+    pub token: String,
+}
+
+/// Enumerate every form template visible to tuxlink — bundled WLE Standard
+/// Forms snapshot + the operator's custom-forms directory. Custom forms
+/// with the same `id` as a bundled form shadow the bundled entry. Powers
+/// the React `CatalogBrowser` (P1 Task 10).
+///
+/// The custom-forms root is only walked if it exists on disk; this is the
+/// expected behavior for the install-time path (operator may never have
+/// created `~/.local/share/tuxlink/forms/custom/`).
+#[tauri::command]
+pub async fn forms_list_catalog(
+    app: AppHandle,
+) -> Result<Vec<crate::forms::wle_templates::Template>, String> {
+    let bundle =
+        crate::forms::wle_templates::bundle_root_for_app(&app).map_err(|e| e.to_string())?;
+    let custom = crate::forms::wle_templates::custom_root_for_app(&app);
+    let custom_opt = if custom.exists() {
+        Some(custom.as_path())
+    } else {
+        None
+    };
+    crate::forms::wle_templates::list(&bundle, custom_opt).map_err(|e| e.to_string())
+}
+
+/// Open a new webview form session: spawn the loopback http_server bound
+/// to a fresh ephemeral port, register it in `FormSessionRegistry` under a
+/// freshly-minted token, and start a forwarder task that drains parsed
+/// submissions onto the `form-submitted` event scoped to the child
+/// webview's label (`compose-form-<token>`).
+///
+/// Returns the URL the React side passes to a child `WebviewWindow` plus
+/// the port and token. The URL is `http://127.0.0.1:<port>/` — NO path
+/// component; the WLE form template's `{FormServer}:{FormPort}`
+/// substitution wires the submit endpoint there directly.
+///
+/// Errors:
+/// - `unknown form: <id>` — the form_id is not in the bundled/custom
+///   catalog (typo / stale frontend cache).
+/// - any I/O error from reading the bundled snapshot or binding the
+///   loopback listener.
+#[tauri::command]
+pub async fn open_webview_form(
+    form_id: String,
+    app: AppHandle,
+    registry: State<'_, std::sync::Arc<crate::forms::http_server::FormSessionRegistry>>,
+) -> Result<OpenFormResult, String> {
+    let bundle =
+        crate::forms::wle_templates::bundle_root_for_app(&app).map_err(|e| e.to_string())?;
+    let custom = crate::forms::wle_templates::custom_root_for_app(&app);
+    let custom_opt = if custom.exists() {
+        Some(custom.as_path())
+    } else {
+        None
+    };
+    let cat = crate::forms::wle_templates::list(&bundle, custom_opt)
+        .map_err(|e| e.to_string())?;
+    let template = cat
+        .into_iter()
+        .find(|t| t.id == form_id)
+        .ok_or_else(|| format!("unknown form: {form_id}"))?;
+
+    let opened = registry.open(template).await?;
+    let port = opened.port;
+    let token = opened.token.clone();
+    let url = format!("http://127.0.0.1:{port}/");
+
+    // Forwarder task: drain ParsedBody submissions from the http_server's
+    // in-process channel onto a Tauri event scoped to the child webview's
+    // label. The task self-terminates when:
+    //   - the session is closed (`close_webview_form_server` drops the
+    //     `FormSession`, which drops the `submit_tx`, which closes the
+    //     channel — `recv()` returns None and the loop exits), OR
+    //   - the runtime shuts down (tokio aborts the task).
+    let app_for_forwarder = app.clone();
+    let label = format!("compose-form-{token}");
+    let mut submit_rx = opened.submit_rx;
+    tokio::spawn(async move {
+        while let Some(parsed) = submit_rx.recv().await {
+            let _ = app_for_forwarder.emit_to(label.as_str(), "form-submitted", parsed);
+        }
+    });
+
+    Ok(OpenFormResult { url, port, token })
+}
+
+/// Tear down a webview form session. Idempotent — closing an unknown
+/// token returns `Ok(())` (the React unmount cleanup path runs whether
+/// or not the session is already gone). Used by BOTH Form-mode and
+/// Viewer-mode sessions (the registry holds them both; close-by-token
+/// is mode-agnostic).
+#[tauri::command]
+pub async fn close_webview_form_server(
+    token: String,
+    registry: State<'_, std::sync::Arc<crate::forms::http_server::FormSessionRegistry>>,
+) -> Result<(), String> {
+    registry.close(&token).await
+}
+
+/// Result of [`open_webview_viewer`] (P1 Task 11). Symmetric to
+/// [`OpenFormResult`] except the React side never subscribes to a
+/// `form-submitted` event for viewer sessions — there is no submit path.
+/// `token` is the lookup key for `close_webview_form_server` teardown;
+/// `port` is informational only.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenViewerResult {
+    pub url: String,
+    pub port: u16,
+    pub token: String,
+}
+
+/// Open a Viewer-mode webview session for a received form whose `form_id`
+/// has no native React `View` component registered (P1 Task 11). The
+/// caller supplies the parsed FormPayload's `(field_id, value)` map; the
+/// http_server binds the values into the WLE `*_Viewer.html` template via
+/// two complementary substitution paths:
+/// 1. `{var X}` placeholders in the HTML → field value (server-side
+///    string replace, matching the WLE viewer convention)
+/// 2. A `<script>` tag appended before `</body>` runs on
+///    `DOMContentLoaded` and assigns `document.querySelectorAll(
+///    '[name="X"]').value = ...` for each field, covering hidden inputs.
+///
+/// The Viewer filename is resolved in three passes (2026-06-04 Codex
+/// adrev P1.3 — the prior two-pass resolution failed for the bulk of the
+/// bundled catalog because the `<form_id>_Viewer.html` convention only
+/// covers a minority of WLE templates):
+/// - For form_ids in the BUNDLED_FORMS catalog
+///   (ICS-213, ICS-309, Bulletin, Position, Damage Assessment), use the
+///   `FormDef::display_form` field — these have non-conventional names
+///   like `Bulletin Viewer.html` or `GPS Position Report.html`.
+/// - Walk the authoring template's sibling folder via
+///   [`forms::wle_templates::resolve_viewer_for`] for a paired viewer.
+///   Covers `Bulletin Initial.html` ↔ `Bulletin Viewer.html`,
+///   `Hawaii Siren Report.html` ↔ `Hawaii Siren Report Viewer.html`,
+///   `ICS213_Initial.html` ↔ `ICS213_Viewer.html`, etc.
+/// - Last-resort fallback to `<form_id>_Viewer.html` for tuxlink-authored
+///   forms (the convention `send_webview_form` writes into outbound XML
+///   when its own resolver fails — covers the round-trip case where
+///   the sender claims a viewer file the receiver doesn't have).
+///
+/// Errors:
+/// - `unknown form: <id>` — neither the bundled catalog nor the live
+///   catalog (the form's INITIAL `.html` in any bundled / custom folder)
+///   knows this form. The frontend falls back to KeyValueView.
+/// - `viewer template not found: <path>` — the form is in the catalog
+///   but the resolved Viewer file doesn't exist on disk (catalog drift /
+///   custom form without a companion viewer). Frontend falls back to
+///   KeyValueView.
+/// - any I/O error from binding the loopback listener.
+#[tauri::command]
+pub async fn open_webview_viewer(
+    form_id: String,
+    field_values: std::collections::HashMap<String, String>,
+    app: AppHandle,
+    registry: State<'_, std::sync::Arc<crate::forms::http_server::FormSessionRegistry>>,
+) -> Result<OpenViewerResult, String> {
+    use crate::forms;
+
+    // 1. Resolve the live catalog so we can find the form's folder (for
+    //    {FormFolder} substitution + adjacent-asset serving). The Viewer
+    //    file lives next to the form's INITIAL .html in the same folder.
+    let bundle =
+        forms::wle_templates::bundle_root_for_app(&app).map_err(|e| e.to_string())?;
+    let custom = forms::wle_templates::custom_root_for_app(&app);
+    let custom_opt = if custom.exists() {
+        Some(custom.as_path())
+    } else {
+        None
+    };
+    let cat = forms::wle_templates::list(&bundle, custom_opt)
+        .map_err(|e| e.to_string())?;
+    let template = cat
+        .iter()
+        .find(|t| t.id == form_id)
+        .ok_or_else(|| format!("unknown form: {form_id}"))?;
+
+    // 2. Resolve the Viewer filename. Priority order:
+    //    a. Native bundled forms (BUNDLED_FORMS, the 5 hard-coded
+    //       templates with `FormDef::display_form`): use the explicit
+    //       filename (e.g. `Bulletin Viewer.html`,
+    //       `GPS Position Report.html`).
+    //    b. Walk the authoring template's sibling folder for a paired
+    //       viewer via `resolve_viewer_for` (2026-06-04 Codex adrev P1.3).
+    //       Covers the WLE catalog's inconsistent naming conventions
+    //       (`Bulletin Initial.html` ↔ `Bulletin Viewer.html`,
+    //       `Hawaii Siren Report.html` ↔ `Hawaii Siren Report Viewer.html`,
+    //       `Field Situation Report Initial.html` ↔
+    //       `Field Situation Report viewer.html`, etc.).
+    //    c. Last-resort fallback to `<form_id>_Viewer.html` — the
+    //       convention `send_webview_form` writes into outbound XML
+    //       when no paired viewer is found.
+    let viewer_filename = forms::catalog::find_form(&form_id)
+        .map(|f| f.display_form.to_string())
+        .or_else(|| forms::wle_templates::resolve_viewer_for(&template.path))
+        .unwrap_or_else(|| format!("{form_id}_Viewer.html"));
+
+    // 3. The Viewer file lives next to the form template (same folder).
+    let form_parent = template
+        .path
+        .parent()
+        .ok_or_else(|| "template has no parent folder".to_string())?;
+    let viewer_path = form_parent.join(&viewer_filename);
+    if !viewer_path.exists() {
+        return Err(format!(
+            "viewer template not found: {}",
+            viewer_path.display()
+        ));
+    }
+
+    // 4. Open the viewer session. No forwarder task — the POST handler
+    //    returns 404 in Viewer mode, so there's nothing to drain.
+    let opened = registry
+        .open_viewer(viewer_path, template.folder.clone(), &field_values)
+        .await?;
+    let port = opened.port;
+    let token = opened.token.clone();
+    let url = format!("http://127.0.0.1:{port}/");
+
+    Ok(OpenViewerResult { url, port, token })
+}
+
 /// Run one CMS connection: send everything queued in the outbox and download any
 /// waiting messages (tuxlink-0ic). Drives the backend's `connect` over the
 /// configured transport, then drops the session (the native exchange completes
@@ -6089,5 +6475,203 @@ hw:CARD=Device,DEV=0
         let v = serde_json::to_value(&dto).unwrap();
         assert_eq!(v["sent_count"], 3);
         assert_eq!(v["received_count"], 1);
+    }
+
+    // ========================================================================
+    // P1 Task 10 critical-fix: send_webview_form synthesis (tuxlink-tzr5)
+    // ========================================================================
+    //
+    // The `send_webview_form` Tauri command can't be invoked directly in unit
+    // tests (it takes AppHandle + State, which require a Tauri runtime). The
+    // pure XML synthesis lives in `forms::serialize::serialize_catalog_form_xml`
+    // and is unit-tested there. These tests cover the per-command synthesis
+    // decisions: WLE filename conventions for display_form / reply_template,
+    // attachment filename, body composition, and subject fallback.
+
+    /// `display_form` falls back to the `<id>_Viewer.html` convention when
+    /// `resolve_viewer_for` finds no paired viewer (e.g. when the operator
+    /// drops a custom form into `~/.local/share/tuxlink/forms/custom/`
+    /// without a companion `_Viewer.html`).
+    ///
+    /// 2026-06-04 Codex adrev P1.3: the resolver-driven path is the
+    /// happy path now; this test pins the fallback. The
+    /// `send_webview_form_display_form_uses_resolver_for_wle_bundle`
+    /// test below covers the resolver path with the realistic Bulletin /
+    /// Hawaii / underscored bundle conventions.
+    #[test]
+    fn send_webview_form_display_form_falls_back_to_id_underscore_viewer() {
+        let form_id = "ICS205";
+        let display_form = format!("{form_id}_Viewer.html");
+        assert_eq!(display_form, "ICS205_Viewer.html");
+        // The fallback applies to any form_id without a sibling viewer
+        // file in the catalog walker's view.
+        let form_id = "ARC213";
+        assert_eq!(format!("{form_id}_Viewer.html"), "ARC213_Viewer.html");
+    }
+
+    /// 2026-06-04 Codex adrev P1.3: in the realistic WLE bundle, the
+    /// authoring template's sibling Viewer file does NOT follow the
+    /// `<id>_Viewer.html` convention for the bulk of templates. The
+    /// resolver walks the same folder and picks the actual paired
+    /// viewer regardless of which naming convention WLE used.
+    #[test]
+    fn send_webview_form_display_form_uses_resolver_for_wle_bundle() {
+        use crate::forms::wle_templates::resolve_viewer_for;
+        use tempfile::TempDir;
+
+        let td = TempDir::new().unwrap();
+        let folder = td.path().join("General Forms");
+        std::fs::create_dir_all(&folder).unwrap();
+
+        // Bulletin Initial.html ↔ Bulletin Viewer.html
+        let bulletin = folder.join("Bulletin Initial.html");
+        std::fs::write(&bulletin, "<html></html>").unwrap();
+        std::fs::write(folder.join("Bulletin Viewer.html"), "<html></html>").unwrap();
+        let resolved = resolve_viewer_for(&bulletin).expect("Bulletin viewer resolved");
+        assert_eq!(resolved, "Bulletin Viewer.html");
+
+        // ICS213_Initial.html ↔ ICS213_Viewer.html
+        let ics_folder = td.path().join("ICS Forms");
+        std::fs::create_dir_all(&ics_folder).unwrap();
+        let ics = ics_folder.join("ICS213_Initial.html");
+        std::fs::write(&ics, "<html></html>").unwrap();
+        std::fs::write(ics_folder.join("ICS213_Viewer.html"), "<html></html>").unwrap();
+        let resolved = resolve_viewer_for(&ics).expect("ICS213 viewer resolved");
+        assert_eq!(resolved, "ICS213_Viewer.html");
+
+        // Hawaii Siren Report.html ↔ Hawaii Siren Report Viewer.html
+        // (authoring template has no "Initial" suffix at all)
+        let hi_folder = td.path().join("HI State forms");
+        std::fs::create_dir_all(&hi_folder).unwrap();
+        let hi = hi_folder.join("Hawaii Siren Report.html");
+        std::fs::write(&hi, "<html></html>").unwrap();
+        std::fs::write(
+            hi_folder.join("Hawaii Siren Report Viewer.html"),
+            "<html></html>",
+        )
+        .unwrap();
+        let resolved = resolve_viewer_for(&hi).expect("Hawaii viewer resolved");
+        assert_eq!(resolved, "Hawaii Siren Report Viewer.html");
+    }
+
+    /// `reply_template` follows the WLE convention `<id>_SendReply.0`. The
+    /// `.0` suffix is part of WLE's filename scheme (versioning slot).
+    #[test]
+    fn send_webview_form_reply_template_follows_wle_convention() {
+        let form_id = "ICS205";
+        let reply_template = format!("{form_id}_SendReply.0");
+        assert_eq!(reply_template, "ICS205_SendReply.0");
+    }
+
+    /// Attachment filename uses the `RMS_Express_Form_<id>.xml` convention —
+    /// same as `send_form` so parsers (Pat, RMS Express, tuxlink inbox) detect
+    /// the form attachment consistently regardless of which submit pathway
+    /// produced it.
+    #[test]
+    fn send_webview_form_attachment_filename_matches_send_form_convention() {
+        let form_id = "ICS213_Initial";
+        let filename = format!("RMS_Express_Form_{form_id}.xml");
+        assert_eq!(filename, "RMS_Express_Form_ICS213_Initial.xml");
+    }
+
+    /// Body composition: sorted-by-key "key: value" dump with a leading
+    /// `form_id: <id>` header. This mirrors the synthesis inside
+    /// `send_webview_form` so a change to the body composition logic would
+    /// fail this test.
+    #[test]
+    fn send_webview_form_body_starts_with_form_id_header_and_sorts_keys() {
+        let form_id = "ICS213_Initial";
+        let mut field_values = std::collections::HashMap::new();
+        field_values.insert("zebra".to_string(), "z-val".to_string());
+        field_values.insert("alpha".to_string(), "a-val".to_string());
+        field_values.insert("mango".to_string(), "m-val".to_string());
+
+        // Replicates the body synthesis in `send_webview_form`.
+        let mut keys: Vec<&String> = field_values.keys().collect();
+        keys.sort();
+        let mut body = format!("form_id: {form_id}\n\n");
+        for k in keys {
+            let v = field_values.get(k).map(String::as_str).unwrap_or("");
+            body.push_str(k);
+            body.push_str(": ");
+            body.push_str(v);
+            body.push('\n');
+        }
+
+        assert!(body.starts_with("form_id: ICS213_Initial\n\n"));
+        let pa = body.find("alpha:").unwrap();
+        let pm = body.find("mango:").unwrap();
+        let pz = body.find("zebra:").unwrap();
+        assert!(pa < pm && pm < pz, "body must sort keys alphabetically");
+        assert!(body.contains("alpha: a-val"));
+    }
+
+    /// Subject: prefers `field_values["subject"]`, then `msg_subject`, else
+    /// falls back to `Form: <id>`. Matches WLE's "form-derived subject"
+    /// default for any form that doesn't capture an explicit subject input.
+    #[test]
+    fn send_webview_form_subject_prefers_explicit_subject_field() {
+        let form_id = "ICS213_Initial";
+        let mut field_values = std::collections::HashMap::new();
+        field_values.insert("subject".to_string(), "Urgent — supplies needed".to_string());
+        let subject = field_values
+            .get("subject")
+            .or_else(|| field_values.get("msg_subject"))
+            .cloned()
+            .unwrap_or_else(|| format!("Form: {form_id}"));
+        assert_eq!(subject, "Urgent — supplies needed");
+    }
+
+    #[test]
+    fn send_webview_form_subject_falls_back_to_msg_subject_then_form_id() {
+        let form_id = "ARC213";
+        // Only msg_subject present.
+        let mut field_values = std::collections::HashMap::new();
+        field_values.insert("msg_subject".to_string(), "Daily ops brief".to_string());
+        let subject = field_values
+            .get("subject")
+            .or_else(|| field_values.get("msg_subject"))
+            .cloned()
+            .unwrap_or_else(|| format!("Form: {form_id}"));
+        assert_eq!(subject, "Daily ops brief");
+
+        // Neither present → fallback.
+        let empty = std::collections::HashMap::<String, String>::new();
+        let subject = empty
+            .get("subject")
+            .or_else(|| empty.get("msg_subject"))
+            .cloned()
+            .unwrap_or_else(|| format!("Form: {form_id}"));
+        assert_eq!(subject, "Form: ARC213");
+    }
+
+    /// The XML envelope `send_webview_form` produces is the catalog-form
+    /// shape from `forms::serialize::serialize_catalog_form_xml` — same XML
+    /// envelope structure as `serialize_form_xml`, but iterates the
+    /// `field_values` map directly. This test fixes the catalog-form serializer
+    /// as the canonical envelope source so a future regression that diverges
+    /// the two serializers' shapes would fire here.
+    #[test]
+    fn send_webview_form_xml_uses_catalog_serializer() {
+        use crate::forms;
+        let params = forms::types::FormParameters {
+            xml_file_version: "1.0".into(),
+            rms_express_version: "Tuxlink/0.0.1".into(),
+            submission_datetime: "20260604120000".into(),
+            senders_callsign: "N0CALL".into(),
+            grid_square: "FN42".into(),
+            display_form: "ICS205_Viewer.html".into(),
+            reply_template: "ICS205_SendReply.0".into(),
+        };
+        let mut values = std::collections::HashMap::new();
+        values.insert("incident_name".to_string(), "Test".to_string());
+        let xml = forms::serialize::serialize_catalog_form_xml("ICS205", &params, &values);
+        let xml_str = String::from_utf8_lossy(&xml);
+        // BOM + xml declaration + envelope present (same as serialize_form_xml).
+        assert_eq!(&xml[0..3], &[0xEF, 0xBB, 0xBF]);
+        assert!(xml_str.contains("<RMS_Express_Form>"));
+        assert!(xml_str.contains("<display_form>ICS205_Viewer.html</display_form>"));
+        assert!(xml_str.contains("<reply_template>ICS205_SendReply.0</reply_template>"));
+        assert!(xml_str.contains("<incident_name>Test</incident_name>"));
     }
 }

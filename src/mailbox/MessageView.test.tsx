@@ -155,7 +155,14 @@ describe('<MessageViewLoaded>', () => {
     expect(screen.getByText('WALDO')).toBeInTheDocument();
   });
 
-  it('renders KeyValueView fallback when form_id is unknown', () => {
+  // P1 Task 11: unknown form_ids first try the Viewer-mode webview fallback
+  // before falling through to KeyValueView. The webview path is gated on
+  // a Rust-side template-resolution that can't run in jsdom, so this test
+  // verifies the FIRST hop (`message-form-viewer`) is rendered. The
+  // KeyValueView fallback fires when WebviewFormViewer reports
+  // onFallback (covered in WebviewFormViewer.test.tsx) or when the operator
+  // dismisses the viewer (covered below + in WebviewFormViewer.test.tsx).
+  it('renders WebviewFormViewer first for unknown form_id (P1 task 11)', () => {
     const msg = {
       id: 'TEST-UNKNOWN', subject: 'unknown', from: 'X@winlink.org',
       to: ['Y@winlink.org'], cc: [], date: '2026-05-30T14:30:00Z',
@@ -172,8 +179,73 @@ describe('<MessageViewLoaded>', () => {
       },
     };
     render(<MessageViewLoaded message={msg as any} />);
+    expect(screen.getByTestId('message-form-viewer')).toBeInTheDocument();
+    // The viewer chrome is present; the embedded webview itself doesn't
+    // mount in jsdom (Tauri APIs no-op).
+    expect(screen.getByTestId('webview-form-viewer')).toBeInTheDocument();
+  });
+
+  // P1 Task 11: when the operator closes the viewer (or onFallback fires),
+  // FormMessageBody falls through to KeyValueView so the field/value pairs
+  // remain visible. Tests the gated `viewerFailed` state by simulating the
+  // operator clicking Close.
+  it('falls back to KeyValueView when WebviewFormViewer Close is clicked', () => {
+    const msg = {
+      id: 'TEST-FALLBACK', subject: 'fallback', from: 'X@winlink.org',
+      to: ['Y@winlink.org'], cc: [], date: '2026-05-30T14:30:00Z',
+      body: 'plain rendered', attachments: [], isForm: true, routing: null,
+      formId: 'Catalog_Only_Form',
+      formPayload: {
+        formId: 'Catalog_Only_Form',
+        formParameters: {
+          xmlFileVersion: '1.0', rmsExpressVersion: '',
+          submissionDatetime: '', sendersCallsign: '', gridSquare: '',
+          displayForm: '', replyTemplate: '',
+        },
+        fields: [['custom_field', 'custom_value']],
+      },
+    };
+    render(<MessageViewLoaded message={msg as any} />);
+    expect(screen.getByTestId('message-form-viewer')).toBeInTheDocument();
+    // Simulate operator clicking the viewer's Close button.
+    fireEvent.click(screen.getByTestId('webview-form-viewer-close-btn'));
+    // Now KeyValueView renders the raw payload.
     expect(screen.getByTestId('message-form-unknown')).toBeInTheDocument();
-    expect(screen.getByText('random_field')).toBeInTheDocument();
+    expect(screen.getByText('custom_field')).toBeInTheDocument();
+  });
+
+  // P1 Task 11 regression guard: viewerFailed state must NOT persist across
+  // message selections. Without key={message.id} on <FormMessageBody>, React
+  // would reuse the same component instance — Close-on-message-A would leak
+  // the failed flag to message B and the viewer would never re-attempt.
+  it('viewerFailed state resets per message (no cross-message leak)', () => {
+    const msgA = {
+      id: 'MSG-A', subject: 'A', from: 'X@winlink.org',
+      to: ['Y@winlink.org'], cc: [], date: '2026-05-30T14:30:00Z',
+      body: '', attachments: [], isForm: true, routing: null,
+      formId: 'Catalog_A',
+      formPayload: {
+        formId: 'Catalog_A',
+        formParameters: {
+          xmlFileVersion: '1.0', rmsExpressVersion: '',
+          submissionDatetime: '', sendersCallsign: '', gridSquare: '',
+          displayForm: '', replyTemplate: '',
+        },
+        fields: [['fa', 'va']],
+      },
+    };
+    const msgB = { ...msgA, id: 'MSG-B', subject: 'B', formId: 'Catalog_B',
+      formPayload: { ...msgA.formPayload, formId: 'Catalog_B', fields: [['fb', 'vb']] } };
+    const { rerender } = render(<MessageViewLoaded message={msgA as any} />);
+    // Viewer renders for A; operator clicks Close → KeyValueView.
+    expect(screen.getByTestId('message-form-viewer')).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('webview-form-viewer-close-btn'));
+    expect(screen.getByTestId('message-form-unknown')).toBeInTheDocument();
+    // Switch to a different message — viewer should attempt again (NOT stuck
+    // on KeyValueView from the prior message's failed-state).
+    rerender(<MessageViewLoaded message={msgB as any} />);
+    expect(screen.getByTestId('message-form-viewer')).toBeInTheDocument();
+    expect(screen.queryByTestId('message-form-unknown')).toBeNull();
   });
 
   // Attachment strip lists names + sizes; no download/preview yet.

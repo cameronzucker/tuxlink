@@ -14,5 +14,5 @@ pub mod wle_templates;
 
 // Re-exports for ergonomic access.
 pub use parse::{detect_form_attachment, parse_form_xml};
-pub use serialize::{render_body_template, serialize_form_xml};
+pub use serialize::{render_body_template, serialize_catalog_form_xml, serialize_form_xml};
 pub use types::{FieldKind, FormDef, FormField, FormParameters, FormPayload};

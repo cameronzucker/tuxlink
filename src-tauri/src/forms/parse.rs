@@ -381,13 +381,51 @@ mod tests {
 
     #[test]
     fn rejects_unsafe_form_id() {
+        // Path-traversal sentinels (slashes) are still rejected.
         assert_eq!(
             detect_form_attachment("RMS_Express_Form_../etc/passwd.xml"),
             None
         );
         assert_eq!(
-            detect_form_attachment("RMS_Express_Form_foo bar.xml"),
+            detect_form_attachment("RMS_Express_Form_foo/bar.xml"),
             None
+        );
+        // Control characters (newline, tab, NUL) are still rejected.
+        assert_eq!(
+            detect_form_attachment("RMS_Express_Form_foo\nbar.xml"),
+            None
+        );
+        assert_eq!(
+            detect_form_attachment("RMS_Express_Form_foo\x00bar.xml"),
+            None
+        );
+    }
+
+    /// 2026-06-04 Codex adrev P1.2: bundled WLE catalog has form filenames
+    /// with spaces (e.g. `RMS_Express_Form_Quick Message Initial.xml`,
+    /// `RMS_Express_Form_Hawaii Siren Report.xml`). The pre-P1.2
+    /// validator rejected these — the receive side could not parse a
+    /// form tuxlink itself sent. Detection must now succeed for
+    /// space-bearing IDs while continuing to reject path separators
+    /// and control chars (above).
+    #[test]
+    fn accepts_wle_catalog_form_ids_with_spaces() {
+        assert_eq!(
+            detect_form_attachment("RMS_Express_Form_Quick Message Initial.xml"),
+            Some("Quick Message Initial".to_string())
+        );
+        assert_eq!(
+            detect_form_attachment("RMS_Express_Form_Hawaii Siren Report.xml"),
+            Some("Hawaii Siren Report".to_string())
+        );
+        assert_eq!(
+            detect_form_attachment("RMS_Express_Form_Bulletin Initial.xml"),
+            Some("Bulletin Initial".to_string())
+        );
+        // Dotted stems (versioning, etc.) are accepted:
+        assert_eq!(
+            detect_form_attachment("RMS_Express_Form_Form.v1.xml"),
+            Some("Form.v1".to_string())
         );
     }
 }

@@ -38,7 +38,9 @@ import { invoke } from '@tauri-apps/api/core';
 import { clearDraft, loadDraft, saveDraft, splitAddrs } from './useDraft';
 import { ComposeTitleBar } from './ComposeTitleBar';
 import { ResizeHandles } from '../shell/chrome/ResizeHandles';
-import { FormPicker, lookupForm, composableForms } from '../forms';
+import { lookupForm } from '../forms';
+import { CatalogBrowser } from './CatalogBrowser';
+import { WebviewFormHost, type ParsedBody } from './WebviewFormHost';
 import './Compose.css';
 
 // ============================================================================
@@ -68,9 +70,97 @@ type SendState = 'idle' | 'sending' | 'success' | 'error';
 type FormMode =
   | { kind: 'plain' }
   | { kind: 'pick' }
-  | { kind: 'form'; formId: string; values: Record<string, string> };
+  | { kind: 'form'; formId: string; values: Record<string, string> }
+  // P1 Task 10: webview-form mode is the entry for any catalog form whose
+  // id has no native React Form in the registry. The WebviewFormHost owns
+  // the in-flight form state inside the embedded webview, so this branch
+  // carries no `values` — the form submits via the loopback POST and
+  // round-trips a ParsedBody back through `handleWebviewSubmit`.
+  | { kind: 'webview-form'; formId: string };
 
 type CloseAction = 'close' | 'switch-to-form' | null;
+
+/**
+ * Collapse a ParsedBody (multi-value HTML form fields keyed by name)
+ * into the single-string-per-field shape that `send_webview_form`
+ * expects. The synthetic `Submit` button name is dropped — WLE
+ * templates POST the submit button's value back and we don't want it
+ * appearing as a "submit" field in the synthesized XML envelope.
+ *
+ * Multi-value collapse: single values → bare string; >1 value →
+ * newline-joined. Per design §5.3 this matches WLE's expectation for
+ * checkbox / multi-select groups.
+ *
+ * Exported for direct unit-testing of the conversion logic without
+ * having to mount the full Compose component (handleWebviewSubmit is
+ * a useCallback in Compose's component scope).
+ */
+export function parsedBodyToFieldValues(payload: ParsedBody): Record<string, string> {
+  const fieldValues: Record<string, string> = {};
+  for (const [k, vs] of Object.entries(payload.fields)) {
+    if (k === 'Submit') continue;
+    fieldValues[k] = vs.length === 1 ? vs[0] : vs.join('\n');
+  }
+  return fieldValues;
+}
+
+/**
+ * Decide what the unsaved-changes close prompt should offer for a given
+ * Compose form mode. Returns the dialog shape — primary message + which
+ * action buttons appear — so the rendering branch is testable without
+ * mounting the full Compose component (which requires a Tauri runtime).
+ *
+ * P1.1 (2026-06-04 Codex adrev): in `webview-form` mode the form
+ * contents live inside the embedded child webview and Compose has no
+ * IPC introspection into them. Offering "Save Draft" would persist only
+ * the formId metadata while silently losing every field value the
+ * operator typed. The dialog drops the Save button in that mode and
+ * surfaces a sub-explainer that tells the operator how to recover
+ * (Cancel back to the form → press its Send button).
+ */
+export type ClosePromptShape = {
+  primary: string;
+  sub?: string;
+  buttons: readonly ('save' | 'discard' | 'cancel')[];
+};
+export function closePromptShape(
+  formModeKind: 'plain' | 'pick' | 'form' | 'webview-form',
+  action: 'close' | 'switch-to-form' | null,
+): ClosePromptShape {
+  if (formModeKind === 'webview-form') {
+    return {
+      primary: "Form contents can't be saved as a draft. Submit it now, or discard.",
+      sub:
+        "The form's field values live inside the embedded form window, " +
+        "where Compose can't reach them. Cancel to return to the form and " +
+        'press its Send button — otherwise the field contents are lost.',
+      buttons: ['discard', 'cancel'] as const,
+    };
+  }
+  return {
+    primary:
+      action === 'switch-to-form'
+        ? 'Save changes before switching to a form?'
+        : 'This draft has unsaved changes.',
+    buttons: ['save', 'discard', 'cancel'] as const,
+  };
+}
+
+/**
+ * Decide whether the manual "Save Draft" affordance (toolbar button +
+ * Ctrl+S keyboard shortcut) is available for a given form mode.
+ *
+ * P1.1 (2026-06-04 Codex adrev): false in `webview-form` mode because
+ * Save Draft would only persist formId metadata while silently dropping
+ * the operator's typed field values. Autosave still runs in webview-form
+ * mode but only persists the formId so a restored draft picks up the
+ * same picker mode.
+ */
+export function isSaveDraftAvailable(
+  formModeKind: 'plain' | 'pick' | 'form' | 'webview-form',
+): boolean {
+  return formModeKind !== 'webview-form';
+}
 
 interface ClosePromptState {
   open: boolean;
@@ -127,6 +217,17 @@ export function Compose({ draftId }: ComposeProps) {
     if (formMode.kind === 'form') {
       return Object.values(formMode.values).some((v) => v.trim().length > 0);
     }
+    // Webview-form mode: the form state lives inside the embedded child
+    // webview (we have no introspection into its inputs across the IPC
+    // boundary). Conservatively treat it as dirty whenever the form is
+    // open — the operator has potentially significant work in flight,
+    // and the close-gate ("really close?") is the right behavior for a
+    // false-positive dirty signal (the alternative — silently closing
+    // a form with unsaved field data — is the failure we are guarding
+    // against). Important #4 from the P1 Task 10 code review.
+    if (formMode.kind === 'webview-form') {
+      return true;
+    }
     return (
       to !== s.to ||
       cc !== s.cc ||
@@ -158,11 +259,22 @@ export function Compose({ draftId }: ComposeProps) {
         requestAck: draft.requestAck,
       };
       if (draft.formId) {
-        setFormMode({
-          kind: 'form',
-          formId: draft.formId,
-          values: draft.formFields ?? {},
-        });
+        // Restore to whichever form mode matches: native form (with values)
+        // if the React registry has a Form for this id; webview-form
+        // otherwise. This mirrors CatalogBrowser's pick routing so a
+        // restored draft picks up the same UI path. Important #3 from
+        // the P1 Task 10 code review: previously, webview-form drafts saved
+        // with formId: undefined and silently restored as plain-text.
+        const entry = lookupForm(draft.formId);
+        if (entry?.Form) {
+          setFormMode({
+            kind: 'form',
+            formId: draft.formId,
+            values: draft.formFields ?? {},
+          });
+        } else {
+          setFormMode({ kind: 'webview-form', formId: draft.formId });
+        }
       }
     }
   }, [draftId]);
@@ -189,9 +301,20 @@ export function Compose({ draftId }: ComposeProps) {
       // Do NOT autosave after a successful send — the draft was intentionally
       // cleared and the interval must not recreate it (Codex P1 fix).
       if (!sentRef.current) {
+        // Persist formId in BOTH native form and webview-form modes so a
+        // restored draft picks up the same picker mode (Important #3 from
+        // the P1 Task 10 code review: previously, webview-form drafts saved
+        // with formId: undefined and silently restored as plain-text).
+        // formFields is only populated in native form mode — the webview's
+        // in-flight state lives in the embedded webview, not in Compose's
+        // React state, so we cannot snapshot it from this side.
+        const persistedFormId =
+          formMode.kind === 'form' || formMode.kind === 'webview-form'
+            ? formMode.formId
+            : undefined;
         saveDraft({
           draftId, to, cc, subject, body, requestAck,
-          formId: formMode.kind === 'form' ? formMode.formId : undefined,
+          formId: persistedFormId,
           formFields: formMode.kind === 'form' ? formMode.values : undefined,
         });
       }
@@ -207,6 +330,12 @@ export function Compose({ draftId }: ComposeProps) {
     const handler = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key === 's') {
         e.preventDefault();
+        // P1.1 (2026-06-04 Codex adrev): Save Draft in webview-form mode
+        // can't capture the form's in-flight contents (they live inside
+        // the embedded webview). No-op the Ctrl+S so we don't pretend to
+        // save something we can't. Autosave already persists the formId
+        // for mode restoration.
+        if (!isSaveDraftAvailable(formMode.kind)) return;
         handleSaveDraft();
       }
       if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
@@ -217,16 +346,22 @@ export function Compose({ draftId }: ComposeProps) {
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [to, cc, subject, body, requestAck, draftId]);
+  }, [to, cc, subject, body, requestAck, draftId, formMode.kind]);
 
   // ============================================================================
   // Save draft
   // ============================================================================
 
   const handleSaveDraft = useCallback(() => {
+    // Persist formId in BOTH native form and webview-form modes
+    // (Important #3 from the P1 Task 10 code review).
+    const persistedFormId =
+      formMode.kind === 'form' || formMode.kind === 'webview-form'
+        ? formMode.formId
+        : undefined;
     saveDraft({
       draftId, to, cc, subject, body, requestAck,
-      formId: formMode.kind === 'form' ? formMode.formId : undefined,
+      formId: persistedFormId,
       formFields: formMode.kind === 'form' ? formMode.values : undefined,
     });
     savedSnapshotRef.current = { to, cc, subject, body, requestAck };
@@ -290,6 +425,56 @@ export function Compose({ draftId }: ComposeProps) {
       await invoke<string>('send_form', {
         formId,
         fieldValues: values,
+        to: splitAddrs(to),
+        cc: splitAddrs(cc),
+        sendersCallsign: callsign,
+        gridSquare: grid,
+      });
+      sentRef.current = true;
+      setSendState('success');
+      clearDraft(draftId);
+      savedSnapshotRef.current = { to: '', cc: '', subject: '', body: '', requestAck: false };
+    } catch (err: unknown) {
+      setSendState('error');
+      if (err && typeof err === 'object' && 'detail' in err) {
+        const detail = (err as { detail: unknown }).detail;
+        setErrorMsg(typeof detail === 'string' ? detail : JSON.stringify(detail));
+      } else {
+        setErrorMsg(String(err));
+      }
+    }
+  }, [sendState, to, cc, draftId, callsign, grid]);
+
+  // ============================================================================
+  // Webview-form submit (T10)
+  // ============================================================================
+  //
+  // The embedded WLE form POSTs back through the loopback http_server, which
+  // round-trips a ParsedBody (multi-value string fields keyed by HTML name)
+  // through the `form-submitted` event. We collapse the multi-value shape
+  // into the single-string-per-field `fieldValues` that send_webview_form
+  // expects, then mirror handleFormSubmit's post-send cleanup so the success
+  // banner + draft clear behave identically across native and webview entries.
+  //
+  // Routes to `send_webview_form` (NOT `send_form`) because send_form only
+  // knows the 5 native BUNDLED_FORMS templates; ~245 catalog forms need the
+  // webview-aware command that synthesizes the XML envelope from
+  // field_values + WLE filename conventions. Critical #1 from the P1 Task 10
+  // code review — without this, the entire P1 catalog-picker path fails at
+  // submit time with "unknown form: <id>".
+
+  const handleWebviewSubmit = useCallback(async (formId: string, payload: ParsedBody) => {
+    if (sendState === 'sending') return;
+    setSendState('sending');
+    setErrorMsg(null);
+    // Convert ParsedBody (multi-value fields) → fieldValues (single string
+    // per name). The exported helper at module scope is unit-tested
+    // independently — see Compose.test.tsx.
+    const fieldValues = parsedBodyToFieldValues(payload);
+    try {
+      await invoke<string>('send_webview_form', {
+        formId,
+        fieldValues,
         to: splitAddrs(to),
         cc: splitAddrs(cc),
         sendersCallsign: callsign,
@@ -394,9 +579,15 @@ export function Compose({ draftId }: ComposeProps) {
   };
 
   const handleSaveAndProceed = useCallback(() => {
+    // Persist formId in BOTH native form and webview-form modes
+    // (Important #3 from the P1 Task 10 code review).
+    const persistedFormId =
+      formMode.kind === 'form' || formMode.kind === 'webview-form'
+        ? formMode.formId
+        : undefined;
     saveDraft({
       draftId, to, cc, subject, body, requestAck,
-      formId: formMode.kind === 'form' ? formMode.formId : undefined,
+      formId: persistedFormId,
       formFields: formMode.kind === 'form' ? formMode.values : undefined,
     });
     const action = closePrompt.action;
@@ -605,17 +796,30 @@ export function Compose({ draftId }: ComposeProps) {
           />
         )}
         {formMode.kind === 'pick' && (
-          <FormPicker
-            forms={composableForms().map((f) => ({ id: f.id, name: f.name }))}
-            onPick={(id) => setFormMode({ kind: 'form', formId: id, values: {} })}
+          <CatalogBrowser
+            onPick={(id) => {
+              // Native registry takes precedence: forms with a compose-
+              // side React `Form` component route into native form mode
+              // (ICS-213, Bulletin in P0). Everything else (the bulk
+              // of the WLE catalog + the operator's custom forms)
+              // routes into webview-form mode via WebviewFormHost.
+              const entry = lookupForm(id);
+              if (entry?.Form) {
+                setFormMode({ kind: 'form', formId: id, values: {} });
+              } else {
+                setFormMode({ kind: 'webview-form', formId: id });
+              }
+            }}
             onCancel={() => setFormMode({ kind: 'plain' })}
           />
         )}
         {formMode.kind === 'form' && (() => {
           const entry = lookupForm(formMode.formId);
           if (!entry || !entry.Form) {
-            // Unknown form ID, or view-only entry with no compose-side Form
-            // (shouldn't happen since the picker is scoped to composableForms()).
+            // Unknown form ID, or view-only entry with no compose-side Form.
+            // The picker routes view-only ids to 'webview-form' mode, so this
+            // branch should only fire on a stale draft restored from
+            // localStorage whose formId no longer maps to a native entry.
             setFormMode({ kind: 'plain' });
             return null;
           }
@@ -629,6 +833,13 @@ export function Compose({ draftId }: ComposeProps) {
             />
           );
         })()}
+        {formMode.kind === 'webview-form' && (
+          <WebviewFormHost
+            formId={formMode.formId}
+            onSubmit={(payload) => handleWebviewSubmit(formMode.formId, payload)}
+            onCancel={() => setFormMode({ kind: 'plain' })}
+          />
+        )}
       </div>
 
       {/* ------------------------------------------------------------------ */}
@@ -696,14 +907,23 @@ export function Compose({ draftId }: ComposeProps) {
             {sendState === 'sending' ? 'Sending…' : 'Post to Outbox'}
           </button>
         )}
-        <button
-          className="compose-btn compose-btn--secondary"
-          onClick={handleSaveDraft}
-          title="Save draft (Ctrl+S)"
-          data-testid="compose-save-draft-btn"
-        >
-          Save Draft
-        </button>
+        {/* P1.1 (2026-06-04 Codex adrev): Save Draft only makes sense when
+            Compose owns the form state. In webview-form mode the form
+            contents live inside the embedded child webview, and Compose
+            has no IPC introspection into them — Save Draft would only
+            persist the formId metadata while silently losing every
+            field value the operator typed. Hide the button entirely
+            rather than offer a confusing "save" that drops content. */}
+        {isSaveDraftAvailable(formMode.kind) && (
+          <button
+            className="compose-btn compose-btn--secondary"
+            onClick={handleSaveDraft}
+            title="Save draft (Ctrl+S)"
+            data-testid="compose-save-draft-btn"
+          >
+            Save Draft
+          </button>
+        )}
         {formMode.kind === 'plain' && (
           <button
             className="compose-btn compose-btn--secondary"
@@ -717,47 +937,68 @@ export function Compose({ draftId }: ComposeProps) {
 
       {/* ------------------------------------------------------------------ */}
       {/* Unsaved-changes close prompt (spec §5.4)                           */}
+      {/*                                                                    */}
+      {/* P1.1 (2026-06-04 Codex adrev): In webview-form mode the form       */}
+      {/* contents live inside the embedded child webview — Compose has no   */}
+      {/* IPC introspection into them. Offering "Save Draft" here would      */}
+      {/* persist only the formId metadata while silently losing every       */}
+      {/* field value the operator typed. Show a clearer message and offer   */}
+      {/* only Discard + Cancel; the operator can return to the form and     */}
+      {/* press its own Send button to submit.                               */}
       {/* ------------------------------------------------------------------ */}
-      {closePrompt.open && (
-        <div
-          className="compose-overlay"
-          role="dialog"
-          aria-modal="true"
-          aria-label="Unsaved changes"
-          data-testid="compose-close-prompt"
-        >
-          <div className="compose-dialog">
-            <p className="compose-dialog__msg">
-              {closePrompt.action === 'switch-to-form'
-                ? 'Save changes before switching to a form?'
-                : 'This draft has unsaved changes.'}
-            </p>
-            <div className="compose-dialog__actions">
-              <button
-                className="compose-btn compose-btn--primary"
-                onClick={handleSaveAndProceed}
-                data-testid="compose-close-save"
-              >
-                Save Draft
-              </button>
-              <button
-                className="compose-btn compose-btn--danger"
-                onClick={handleDiscardAndProceed}
-                data-testid="compose-close-discard"
-              >
-                Discard
-              </button>
-              <button
-                className="compose-btn compose-btn--ghost"
-                onClick={handleCancelClose}
-                data-testid="compose-close-cancel"
-              >
-                Cancel
-              </button>
+      {closePrompt.open && (() => {
+        const shape = closePromptShape(formMode.kind, closePrompt.action);
+        return (
+          <div
+            className="compose-overlay"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Unsaved changes"
+            data-testid="compose-close-prompt"
+          >
+            <div className="compose-dialog">
+              <p className="compose-dialog__msg">{shape.primary}</p>
+              {shape.sub && (
+                <p
+                  className="compose-dialog__sub"
+                  data-testid="compose-close-sub"
+                >
+                  {shape.sub}
+                </p>
+              )}
+              <div className="compose-dialog__actions">
+                {shape.buttons.includes('save') && (
+                  <button
+                    className="compose-btn compose-btn--primary"
+                    onClick={handleSaveAndProceed}
+                    data-testid="compose-close-save"
+                  >
+                    Save Draft
+                  </button>
+                )}
+                {shape.buttons.includes('discard') && (
+                  <button
+                    className="compose-btn compose-btn--danger"
+                    onClick={handleDiscardAndProceed}
+                    data-testid="compose-close-discard"
+                  >
+                    Discard
+                  </button>
+                )}
+                {shape.buttons.includes('cancel') && (
+                  <button
+                    className="compose-btn compose-btn--ghost"
+                    onClick={handleCancelClose}
+                    data-testid="compose-close-cancel"
+                  >
+                    Cancel
+                  </button>
+                )}
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
     </div>
   );
 }
