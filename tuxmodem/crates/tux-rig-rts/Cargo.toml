@@ -1,0 +1,23 @@
+[package]
+name = "tux-rig-rts"
+version = "0.0.1"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Serial-RTS PTT primitive for amateur-radio digital-mode interfaces that expose PTT as the RTS line of a USB-serial port (Digirig Mobile / Digirig Lite / SignaLink USB in RTS mode / any custom CP2102-class adapter wired the same way). Toggles RTS via TIOCMBIS / TIOCMBIC ioctls on /dev/ttyUSB* without configuring baud-rate or framing — communication isn't the point, just the modem-control line. Phase 1 of the tuxmodem hardware bring-up (tuxlink-mxyz); eventually rolls into the unified tux-rig crate per ADR 0015."
+keywords = ["ptt", "ham-radio", "digirig", "rts", "serial"]
+categories = ["hardware-support", "command-line-utilities"]
+
+[dependencies]
+thiserror.workspace = true
+# `libc` for: ioctl(TIOCMBIS/TIOCMBIC/TIOCMGET) + signal handling in the CLI.
+libc = "0.2"
+
+[dev-dependencies]
+# none for Phase 1 — std + thiserror is the full surface.
+
+[[bin]]
+name = "tux-rig-rts"
+path = "src/bin/tux-rig-rts.rs"
