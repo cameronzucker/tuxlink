@@ -23,28 +23,46 @@ export function ReadingPane({ topic, onNavigate }: ReadingPaneProps) {
       if (!anchor) return;
       const href = anchor.getAttribute('href') ?? '';
 
-      // Inter-topic .md links — accept bare ("03-mailbox.md") OR a relative
-      // prefix ("./03-mailbox.md", "../user-guide/03-mailbox.md").
+      // Case 1: same-topic anchor (#section-id) — let native scroll fire.
+      if (href.startsWith('#')) {
+        // Native scroll into view via the browser; nothing to do.
+        return;
+      }
+
+      // Case 2: cross-topic with anchor (e.g. 02-connections.md#vara-hf).
+      // Must be tested before the bare .md case so the anchor is captured.
+      const mdWithAnchorMatch = href.match(/^(?:.*\/)?(\d{2}-[a-z-]+)\.md(#[\w-]+)$/);
+      if (mdWithAnchorMatch) {
+        event.preventDefault();
+        const slug = mdWithAnchorMatch[1];
+        const anchorId = mdWithAnchorMatch[2];
+        onNavigate(slug);
+        // Schedule scroll-to-anchor after the next render completes.
+        requestAnimationFrame(() => {
+          const el = document.querySelector(anchorId);
+          if (el) el.scrollIntoView({ behavior: 'auto', block: 'start' });
+        });
+        return;
+      }
+
+      // Case 3: cross-topic without anchor (existing behavior).
+      // Accept bare ("03-mailbox.md") OR a relative prefix.
       const mdMatch = href.match(/^(?:.*\/)?(\d{2}-[a-z-]+)\.md$/);
       if (mdMatch) {
         event.preventDefault();
         onNavigate(mdMatch[1]);
         return;
       }
-      // tuxlink-ew3k bug 5: docs/user-guide/07-settings.md ends with a link
-      // to ../pitfalls/implementation-pitfalls.md (outside the bundled
-      // user-guide tree). We can't render that topic in-window. Intercept
-      // and no-op so the webview doesn't navigate off /help. The right
-      // long-term fix lives in the docs revision (tuxlink-s8qu).
+
+      // Case 4: out-of-bundle .md (e.g. ../pitfalls/implementation-pitfalls.md).
+      // tuxlink-ew3k bug 5: the build-time linter is the primary gate; this
+      // no-op is belt-and-suspenders so the webview doesn't navigate off /help.
       if (/^\.{0,2}\/.*\.md$/.test(href)) {
         event.preventDefault();
         return;
       }
 
-      // Anchor (#section) links — let the browser handle natively (scrolls).
-      if (href.startsWith('#')) return;
-
-      // External http(s) links — route to the OS browser via shell:open.
+      // Case 5: external http(s) — route to the OS browser via shell:open.
       if (/^https?:\/\//.test(href)) {
         event.preventDefault();
         void shellOpen(href);
