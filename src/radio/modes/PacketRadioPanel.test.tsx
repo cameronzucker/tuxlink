@@ -142,26 +142,49 @@ describe('<PacketRadioPanel>', () => {
   it('changing SSID persists the new config via packet_config_set', async () => {
     const { invoke } = await import('@tauri-apps/api/core');
     render(<PacketRadioPanel intent="cms" baseCall="N7CPZ" onClose={() => {}} />);
-    await waitFor(() => expect(screen.getByTestId('packet-ssid-select')).toBeInTheDocument());
+    // The SSID handler short-circuits when `config` is null; wait for the
+    // mock packet_config_get response to land in component state BEFORE
+    // firing the change. The select renders the loaded DEFAULT_CONFIG.ssid
+    // (0) so we wait for that value to appear. Without this wait the test
+    // races on CI (passes locally on the Pi where the microtask queue
+    // drains faster).
+    await waitFor(() => {
+      // DEFAULT_CONFIG.ssid === 7; the select renders 0 before the mock
+      // resolves, then 7 once setConfig fires. Waiting for 7 ensures
+      // `config` is non-null when fireEvent.change runs.
+      const sel = screen.getByTestId('packet-ssid-select') as HTMLSelectElement;
+      expect(sel.value).toBe('7');
+    });
     fireEvent.change(screen.getByTestId('packet-ssid-select'), { target: { value: '10' } });
-    expect(invoke).toHaveBeenCalledWith(
-      'packet_config_set',
-      expect.objectContaining({ dto: expect.objectContaining({ ssid: 10 }) }),
-    );
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith(
+        'packet_config_set',
+        expect.objectContaining({ dto: expect.objectContaining({ ssid: 10 }) }),
+      );
+    });
   });
 
   it('switching modem segment (TCP → USB) persists via packet_config_set', async () => {
     const { invoke } = await import('@tauri-apps/api/core');
     render(<PacketRadioPanel intent="cms" baseCall="N7CPZ" onClose={() => {}} />);
+    // Same race as the SSID test — wait for config to be loaded into
+    // component state before firing the click (the handler short-circuits
+    // when `config` is null).
+    await waitFor(() => {
+      const sel = screen.getByTestId('packet-ssid-select') as HTMLSelectElement;
+      expect(sel.value).toBe('7');
+    });
     await waitFor(() => expect(screen.getByTestId('modem-seg-usb')).toBeInTheDocument());
     (invoke as ReturnType<typeof vi.fn>).mockClear();
     fireEvent.click(screen.getByTestId('modem-seg-usb'));
-    expect(invoke).toHaveBeenCalledWith(
-      'packet_config_set',
-      expect.objectContaining({
-        dto: expect.objectContaining({ linkKind: 'Serial' }),
-      }),
-    );
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith(
+        'packet_config_set',
+        expect.objectContaining({
+          dto: expect.objectContaining({ linkKind: 'Serial' }),
+        }),
+      );
+    });
   });
 
   // ── Listener allowed-stations editor (tuxlink-7vea) ──────────────────────
