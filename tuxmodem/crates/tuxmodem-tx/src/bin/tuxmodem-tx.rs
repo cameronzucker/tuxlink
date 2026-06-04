@@ -78,13 +78,18 @@ fn run(args: Args) -> Result<(), String> {
     let payload = resolve_payload(args.payload.as_deref().unwrap())
         .map_err(|e| e.to_string())?;
     let mode = Mode::parse(args.mode.as_deref().unwrap()).map_err(|e| e.to_string())?;
-    let buffer = encode_payload(mode, &payload).map_err(|e| e.to_string())?;
+    let buffer = encode_payload(mode, &payload, args.frame_mode).map_err(|e| e.to_string())?;
 
     let budget = AirtimeBudget::from_buffer_defaults(&buffer);
     let max = args.max_airtime.unwrap_or(DEFAULT_MAX_AIRTIME);
     let effective = check_budget(&budget, max).map_err(|e| e.to_string())?;
 
-    println!("encoded {} byte(s) payload under mode {}", payload.len(), mode.short_name());
+    println!(
+        "encoded {} byte(s) payload under mode {} (frame-mode: {})",
+        payload.len(),
+        mode.short_name(),
+        args.frame_mode.short_name(),
+    );
     println!(
         "  buffer duration:      {:.3} s  ({} samples)",
         buffer.duration_seconds(),
