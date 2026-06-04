@@ -183,6 +183,22 @@ h1 { font-size: 22px; font-weight: 600; margin: 0 0 4px; }
     section is collapsed to a one-line stub in these mocks to focus attention on the banner.
     All copy is tuxlink-original (Q3) — the WLE wording cross-walk appears in section H.
   </p>
+  <p>
+    <strong>R5 (2026-06-04) revision note:</strong> the design spec was revised after a 5-round
+    adversarial review; this mockup file shows the original copy strings + UI from the design phase.
+    For the authoritative R5 copy strings + the strict Mode-4 phrase allowlist + the new Mode 6
+    (maintenance/temporary unavailability) + the Dismiss button (replacing the top-right ×) +
+    a11y semantics, see the
+    <a href="../../superpowers/specs/2026-06-04-smart-auth-diagnostics-design.md">design spec</a>
+    sections §3, §4, §6, §14 (dispositions appendix).
+  </p>
+  <p>
+    <strong>Privacy note on the <code>;PR: ········</code> rendering in log stubs:</strong> the
+    masked form depicted here reflects a NEW redaction filter (<code>redaction::redact_wire_line</code>
+    in §6.2 of the spec) introduced by this PR. On main TODAY the same wire line renders as
+    <code>;PR: 72768415</code> in the session log — that's the BLOCKER R2 #1 shipped-bug leak the
+    redaction filter remediates.
+  </p>
   <table>
     <tr><th>Failure mode</th><th>Banner color</th><th>Recovery affordances</th></tr>
     <tr><td><strong>Mode 1</strong> Network unreachable</td><td><code>--bad</code> (red-left-border)</td><td>Copy log</td></tr>
@@ -414,7 +430,7 @@ h1 { font-size: 22px; font-weight: 600; margin: 0 0 4px; }
   <div class="section-header">
     <div class="section-letter">E</div>
     <h2 class="section-title">Mode 4 — CMS rejected the callsign</h2>
-    <p class="section-desc">Callsign isn't registered on the CMS, or has been suspended (e.g., late license renewal). Wire fixture is provisional until operator-consented RF spot-check (see open question §1 of <a href="../../superpowers/specs/2026-06-04-smart-auth-diagnostics-design.md">design spec</a>).</p>
+    <p class="section-desc">Callsign isn't registered on the CMS, or has been suspended (e.g., late license renewal). Wire fixture in the rendered banner below is provisional until operator-consented RF spot-check (see open question §1 of <a href="../../superpowers/specs/2026-06-04-smart-auth-diagnostics-design.md">design spec</a>); the spec ships with a strict phrase allowlist that falls through to uncategorized for unrecognized payloads.</p>
   </div>
   <div class="row">
     <div class="radio-panel">
@@ -439,8 +455,7 @@ h1 { font-size: 22px; font-weight: 600; margin: 0 0 4px; }
         </div>
         <div class="diag-raw">
           <span class="diag-raw-toggle open">Wire response (CMS said)</span>
-          <pre class="diag-raw-content">*** Callsign not authorized - Disconnecting (88.90.2.192)
-[provisional — actual wire string TBD via operator-consented RF spot-check]</pre>
+          <pre class="diag-raw-content">*** Callsign not authorized - Disconnecting (88.90.2.192)</pre>
         </div>
       </div>
 

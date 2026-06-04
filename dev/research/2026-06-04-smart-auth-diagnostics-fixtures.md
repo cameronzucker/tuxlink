@@ -36,9 +36,42 @@ tuxlink's `session.rs::remote_error` ([session.rs:376-378](src-tauri/src/winlink
 already strips `***` and trims; the trimmed payload is what feeds the taxonomy
 parser.
 
+### 2.1 Privacy — `(;PQ, ;PR)` token pair is brute-forceable (R5 BLOCKER)
+
+The R5 adversarial review surfaced a load-bearing privacy flaw:
+
+- The secure-login response (`;PR`) is **~26.6 effective bits** (30-bit
+  MD5 truncation rendered as 8 decimal digits, see
+  [secure.rs:34-43](../../src-tauri/src/winlink/secure.rs#L34-L43)).
+- The salt is a **public 64-byte constant**
+  ([secure.rs:14-19](../../src-tauri/src/winlink/secure.rs#L14-L19),
+  paclink-unix-derived).
+- Therefore: an attacker capturing **both** `;PQ` (challenge) and `;PR`
+  (response) from a single shared log can offline-brute-force the
+  password at ~1 MD5 per guess. The pair is effectively
+  password-equivalent.
+
+**Implication:** the new `redaction.rs` module
+([spec §6.2](../../docs/superpowers/specs/2026-06-04-smart-auth-diagnostics-design.md#62-the-redaction-filter-centralized-scrubber))
+redacts BOTH `;PQ` and `;PR` symmetrically at every sink. The canonical
+wl2k-go test vector
+`(challenge: "23753528", password: "FOOBAR", response: "72768415")`
+([wl2k-go/fbb/secure_test.go:13](../scratch/ax25-prior-art/wl2k-go/fbb/secure_test.go#L13))
+serves as the redaction-filter test: BOTH `23753528` AND `72768415`
+must NOT appear in any redacted output.
+
+This also retroactively patches a shipped bug on `main` — today's
+`telnet.rs::WireTap` logs the raw `;PR: <token>\r` line into the session
+log buffer, which then feeds the existing "Copy log" affordance.
+
 ---
 
-## 3. Five failure modes — fixtures + classification
+## 3. Six failure modes — fixtures + classification
+
+R5 adversarial-review updates: Mode 4's substring detector was replaced
+with a strict phrase allowlist (§3.4 below); Mode 6 (Temporary server
+unavailability) was added (§3.6 below); Mode 1 is sub-discriminated by
+`TransportFailureKind` (§3.1 below).
 
 ### Mode 1 — Network unreachable
 
@@ -122,9 +155,30 @@ shape is the same `*** ...` family but with a payload distinct from "secure logi
 - `*** Callsign not authorized` (or similar — TBD via operator-consented RF spot-check per bd issue's "RF-via-RMS is the ground-truth escape hatch")
 - Pat's account-existence check uses a separate HTTPS API ([cmsapi.AccountExists](dev/scratch/ax25-prior-art/pat/app/winlink_api.go#L128)), not the B2F wire — so the B2F-side string is what we need.
 
-**Classifier rule (provisional, to be hardened by RF spot-check fixture):**
-`*** ` prefix + payload (lowercased) contains `"callsign"` AND any of
-`{"not", "unknown", "unauthorized", "denied", "deny"}` → Mode 4.
+**Classifier rule (R5 revision — strict phrase allowlist):** the previous
+substring detector (`"callsign"` + any of `{"not","unknown",…}`) produced
+false-positives on Mode 3 payloads containing both `"callsign"` and
+`"not"` (`*** Callsign N7CPZ: secure login failed - account password does not match`).
+R5 replaces it with a strict case-insensitive phrase allowlist:
+
+```
+"callsign not authorized"
+"callsign not recognized"
+"callsign not recognised"
+"unknown callsign"
+"callsign denied"
+"callsign suspended"
+"callsign deactivated"
+```
+
+Anything containing "callsign" without one of those exact phrases falls
+through to uncategorized. **Mode 3 takes precedence on co-occurrence**
+(spec §6.4).
+
+The allowlist is provisional until operator-consented RF spot-check
+(bd-tuxlink-7do4-followup-rf) yields the real prod-CMS wire strings.
+Adding a wrong-but-plausible phrase to the allowlist is a defect;
+deleting a correct one is recoverable.
 
 **Corpus corroboration:**
 - "Admin help request: re-enable callsign after late renewal (AG6WR)"
@@ -159,6 +213,27 @@ event log (Q7) is critical here — it lets us prove we got past the handshake.
 **Recovery:** "Connection dropped after a successful login — try again. Your
 credentials are fine." Affordances: (iii) test credentials (proves Mode 5 vs.
 intermittent Mode 3), (iv) copy log.
+
+### Mode 6 — Temporary server unavailability (R5 ADDITION)
+
+**Wire seam:** `*** ` prefix + payload (lowercased) contains any of:
+`"maintenance"`, `"temporarily unavailable"`, `"try again later"`,
+`"server busy"`, `"too many connections"`, `"rate limit"`. Takes
+precedence over uncategorized when these tokens are present.
+
+**Corpus corroboration:**
+- Mock §G's example "*** Maintenance window — CMS will return at 14:00 UTC. - Disconnecting" was previously categorized as uncategorized; under Mode 6 it now classifies correctly.
+- "Any Problems with CMS this morning. Not responding to RMS connect or Telnet connect." — these threads spike during ARSFI maintenance windows.
+
+**Provisional patterns (open question 5):** the exact phrasing the prod
+CMS uses for maintenance-window / rate-limit responses is not yet
+inventoried. The R5 allowlist captures common-English variants; corpus
+mining for additional patterns is filed as
+bd-tuxlink-7do4-followup-mode6.
+
+**Recovery:** "The Winlink server is temporarily unavailable. Try again
+in a few minutes." Affordances: (iv) copy log only. NO retry / test-
+creds — those would just hammer a server that's already saying "wait."
 
 ---
 
