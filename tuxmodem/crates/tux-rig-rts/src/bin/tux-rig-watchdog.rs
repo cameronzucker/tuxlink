@@ -119,6 +119,14 @@ fn run(parsed: Parsed) -> Result<(), String> {
         .device
         .ok_or_else(|| "missing --device <path>".to_string())?;
 
+    // Belt-and-suspenders: ask the kernel to send us SIGTERM when our
+    // parent process dies, regardless of how that death happens. This
+    // is independent of the stdin-EOF detection (the existing mechanism)
+    // — if the parent does something unusual (e.g. dup2 a different
+    // stream onto fd 0 before exec), the stdin watcher might miss it
+    // but PR_SET_PDEATHSIG will still fire. Linux-only.
+    install_pdeathsig();
+
     let tty = LinuxTty::open(&device)
         .map_err(|e| format!("opening PTT device {device:?}: {e}"))?;
     let mut ptt = RtsPtt::new(tty).map_err(|e| format!("initializing PTT: {e}"))?;
@@ -178,6 +186,37 @@ fn run(parsed: Parsed) -> Result<(), String> {
         outcome_label(outcome)
     );
     Ok(())
+}
+
+/// Linux-only: ask the kernel to deliver SIGTERM when our parent
+/// process dies, regardless of how (clean exit, SIGKILL, segfault).
+/// The existing SIGTERM handler turns this into the standard
+/// 'release PTT and exit' path.
+///
+/// Note: this fires when the IMMEDIATE parent dies, not necessarily
+/// the original spawner — if the watchdog gets reparented to init
+/// (e.g. parent forked us as a daemon), PR_SET_PDEATHSIG won't fire
+/// when the original spawner dies. tuxmodem-tx doesn't daemonize the
+/// watchdog so this case shouldn't arise in production.
+#[cfg(target_os = "linux")]
+fn install_pdeathsig() {
+    // PR_SET_PDEATHSIG = 1 (sys/prctl.h). libc::prctl takes the constant
+    // as a c_int + a SIGTERM value as the second arg.
+    // SAFETY: prctl is async-signal-safe and the args here are integers;
+    // single-threaded at this point (no other thread spawned yet).
+    #[allow(unsafe_code)]
+    unsafe {
+        libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM as libc::c_ulong, 0, 0, 0);
+    }
+    // If prctl fails (e.g. kernel without PR_SET_PDEATHSIG support),
+    // the stdin-EOF path is the existing fallback. Don't surface the
+    // error — it's best-effort defense-in-depth.
+}
+
+#[cfg(not(target_os = "linux"))]
+fn install_pdeathsig() {
+    // Non-Linux: no-op. macOS and Windows don't have PR_SET_PDEATHSIG;
+    // the stdin-EOF detection is the portable path.
 }
 
 fn outcome_label(o: WatchdogOutcome) -> &'static str {
