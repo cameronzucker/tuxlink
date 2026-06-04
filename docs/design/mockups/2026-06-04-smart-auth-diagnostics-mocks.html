@@ -1,0 +1,584 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Tuxlink — Smart Auth-Failure Diagnostic Banner mocks (tuxlink-7do4)</title>
+<style>
+:root {
+  --bg: #0d1318; --surface: #141c23; --surface-2: #1a2330; --elevated: #1e2832;
+  --border: #1f2832; --border-strong: #2c3744; --border-soft: #1a2028;
+  --text: #e4ebf2; --text-dim: #94a0ad; --text-faint: #5d6975;
+  --accent: #f59f3c; --accent-2: #ffba6e; --accent-soft: rgba(245, 159, 60, 0.12);
+  --good: #5dd6a0; --good-soft: rgba(93, 214, 160, 0.14);
+  --bad: #ee6b6b; --bad-soft: rgba(238, 107, 107, 0.14);
+  --bad-border: rgba(238, 107, 107, 0.28);
+  --warn: #ffd166; --warn-soft: rgba(255, 209, 102, 0.14); --info: #6bb8ee;
+  --modem-accent: #4ade80; --modem-accent-soft: rgba(74, 222, 128, 0.10);
+  --mono: "JetBrains Mono", "Fira Code", "Source Code Pro", "Ubuntu Mono", Consolas, monospace;
+  --sans: "Inter", "Cantarell", "Ubuntu", "Segoe UI", system-ui, sans-serif;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; background: #060a0e; color: var(--text);
+  font-family: var(--sans); font-size: 14px; line-height: 1.5; -webkit-font-smoothing: antialiased; }
+.page { max-width: 1480px; margin: 0 auto; padding: 28px 24px 80px; }
+h1 { font-size: 22px; font-weight: 600; margin: 0 0 4px; }
+.subtitle { color: var(--text-dim); font-size: 14px; margin: 0 0 22px; }
+.subtitle a { color: var(--accent-2); }
+
+.legend { background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+  padding: 14px 18px; margin-bottom: 36px; font-size: 13px; }
+.legend h3 { margin: 0 0 8px; font-size: 13px; text-transform: uppercase;
+  letter-spacing: 0.04em; color: var(--text-faint); font-weight: 600; }
+.legend p { margin: 0 0 10px; color: var(--text-dim); }
+.legend strong { color: var(--text); }
+.legend code { font-family: var(--mono); color: var(--accent-2); font-size: 12px; }
+.legend table { border-collapse: collapse; margin-top: 6px; font-size: 12px; width: 100%; }
+.legend th { text-align: left; color: var(--text-faint); padding: 4px 10px; font-weight: 600;
+  border-bottom: 1px solid var(--border); text-transform: uppercase; letter-spacing: 0.04em; font-size: 11px; }
+.legend td { padding: 4px 10px; color: var(--text-dim); border-bottom: 1px solid var(--border-soft); vertical-align: top; }
+.legend td strong { color: var(--text); }
+.legend td code { color: var(--accent-2); }
+
+.section { margin-bottom: 56px; }
+.section-header { display: flex; align-items: baseline; gap: 14px; margin-bottom: 18px; padding: 0 4px; }
+.section-letter { font-size: 32px; font-weight: 800; color: var(--accent); letter-spacing: -0.02em; line-height: 1; }
+.section-title { font-size: 18px; font-weight: 600; margin: 0; }
+.section-desc { color: var(--text-dim); font-size: 13px; margin-left: auto; max-width: 760px; text-align: right; }
+
+.row { display: flex; gap: 24px; align-items: flex-start; flex-wrap: wrap; }
+
+/* Modem dock — matches production .radio-panel: 400px wide */
+.radio-panel { width: 400px; background: var(--surface); border: 1px solid var(--border-strong);
+  border-radius: 8px; overflow: hidden; flex-shrink: 0; }
+.panel-header { padding: 10px 12px; border-bottom: 1px solid color-mix(in srgb, var(--modem-accent) 18%, transparent);
+  background: var(--modem-accent-soft);
+  display: flex; align-items: center; gap: 8px; }
+.panel-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+.panel-dot.idle    { background: var(--text-faint); }
+.panel-dot.error   { background: var(--bad); }
+.panel-dot.connecting { background: var(--warn); }
+.panel-dot.connected  { background: var(--modem-accent); box-shadow: 0 0 5px var(--modem-accent); }
+.panel-name { font-weight: 600; color: var(--modem-accent); font-size: 14px; letter-spacing: 0.02em; }
+.panel-sub { font-family: var(--mono); font-size: 12px; color: var(--text-faint); margin-left: auto; }
+
+.sec { padding: 12px 14px; border-bottom: 1px solid var(--border-soft); }
+.sec:last-child { border-bottom: none; }
+.sec h5 { margin: 0 0 8px; font-size: 11px; text-transform: uppercase;
+  letter-spacing: 0.06em; color: var(--text-faint); font-weight: 600; }
+.row-input { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+.row-input > span { font-size: 12px; color: var(--text-dim); width: 60px; flex-shrink: 0; }
+.input, .select { background: var(--bg); border: 1px solid var(--border-strong);
+  color: var(--text); padding: 5px 8px; border-radius: 4px; font-family: var(--mono);
+  font-size: 12px; flex: 1; min-width: 0; }
+.input::placeholder { color: var(--text-faint); }
+
+.chip-row { display: flex; gap: 6px; margin-top: 6px; }
+.chip { background: var(--surface-2); color: var(--text-dim); padding: 3px 8px; border-radius: 3px;
+  font-size: 11px; border: 1px solid var(--border); font-family: var(--mono); cursor: default; }
+
+.radio-row { display: flex; gap: 8px; align-items: flex-start; margin-bottom: 6px; }
+.radio-row input { margin-top: 3px; }
+.radio-row .radio-label { font-size: 12px; font-weight: 500; }
+.radio-row .radio-help { font-size: 11px; color: var(--text-faint); display: block; }
+
+.btn { padding: 5px 12px; border-radius: 4px; border: none; cursor: pointer;
+  font-size: 12px; font-weight: 500; font-family: var(--sans); }
+.btn-primary { background: var(--accent); color: #0a0d10; }
+.btn-bad { background: var(--bad); color: #fff; }
+.btn-ghost { background: transparent; border: 1px solid var(--border-strong); color: var(--text-dim); }
+.btn-ghost:hover { border-color: var(--accent); color: var(--accent); }
+.btn-row { display: flex; gap: 8px; }
+
+/* THE BANNER — the actual artifact under design */
+.diag-banner {
+  margin: 12px 14px;
+  background: var(--bad-soft);
+  border: 1px solid var(--bad-border);
+  border-left: 3px solid var(--bad);
+  border-radius: 6px;
+  padding: 10px 12px;
+}
+.diag-banner.uncat { background: var(--warn-soft); border-color: rgba(255, 209, 102, 0.28); border-left-color: var(--warn); }
+.diag-banner.success { background: var(--good-soft); border-color: rgba(93, 214, 160, 0.28); border-left-color: var(--good); }
+.diag-banner.testing { background: rgba(107, 184, 238, 0.10); border-color: rgba(107, 184, 238, 0.28); border-left-color: var(--info); }
+
+.diag-head { display: flex; align-items: flex-start; gap: 8px; }
+.diag-icon { font-size: 16px; line-height: 1.2; flex-shrink: 0; }
+.diag-icon.bad { color: var(--bad); }
+.diag-icon.uncat { color: var(--warn); }
+.diag-icon.success { color: var(--good); }
+.diag-icon.info { color: var(--info); }
+.diag-title { font-size: 13px; font-weight: 600; flex: 1; line-height: 1.35; }
+.diag-dismiss { background: transparent; border: none; color: var(--text-faint);
+  cursor: pointer; padding: 0; font-size: 14px; line-height: 1; }
+.diag-dismiss:hover { color: var(--text); }
+
+.diag-body { font-size: 12px; color: var(--text-dim); margin: 4px 0 8px; line-height: 1.45; }
+
+.diag-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
+.diag-btn { padding: 4px 9px; border-radius: 3px; font-size: 11px; font-weight: 500;
+  font-family: var(--sans); cursor: pointer; }
+.diag-btn-primary { background: var(--accent); border: 1px solid var(--accent); color: #0a0d10; }
+.diag-btn-secondary { background: transparent; border: 1px solid var(--border-strong); color: var(--text); }
+.diag-btn-secondary:hover { border-color: var(--accent); color: var(--accent); }
+.diag-btn-link { background: transparent; border: 1px solid var(--border); color: var(--info); }
+.diag-btn-link:hover { background: rgba(107, 184, 238, 0.08); }
+.diag-btn-link::after { content: " ↗"; opacity: 0.7; }
+
+.diag-raw { margin-top: 6px; padding-top: 6px; border-top: 1px dashed var(--border); }
+.diag-raw-toggle { font-size: 11px; color: var(--text-faint); cursor: pointer;
+  user-select: none; font-family: var(--mono); }
+.diag-raw-toggle::before { content: "▸ "; font-family: var(--sans); }
+.diag-raw-toggle.open::before { content: "▾ "; }
+.diag-raw-content { font-family: var(--mono); font-size: 11px; color: var(--text-dim);
+  background: var(--bg); border: 1px solid var(--border); border-radius: 3px;
+  padding: 6px 8px; margin-top: 4px; word-break: break-all;
+  line-height: 1.45; max-height: 120px; overflow-y: auto; }
+
+/* Inline re-enter password form (Mode 3 expanded) */
+.diag-form { margin-top: 6px; display: flex; flex-direction: column; gap: 6px;
+  padding: 8px; background: var(--surface-2); border-radius: 4px; }
+.diag-form .row-input { margin-bottom: 0; }
+
+.diag-help { font-size: 11px; color: var(--text-faint); margin: 0; }
+
+/* Session log section — collapsed for brevity */
+.log-stub { background: var(--bg); border-top: 1px solid var(--border);
+  padding: 10px 14px; font-family: var(--mono); font-size: 11px; color: var(--text-faint); }
+.log-stub::before { content: "│ "; color: var(--text-dim); }
+
+/* Action row */
+.act-row { padding: 12px 14px; display: flex; gap: 8px; border-top: 1px solid var(--border-soft); }
+
+/* Cross-walk pane */
+.crosswalk { background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
+  padding: 12px 14px; width: 480px; font-size: 12px; }
+.crosswalk h4 { margin: 0 0 8px; font-size: 12px; text-transform: uppercase;
+  letter-spacing: 0.04em; color: var(--text-faint); font-weight: 600; }
+.crosswalk .label { color: var(--text-faint); font-size: 11px; text-transform: uppercase;
+  letter-spacing: 0.04em; margin: 8px 0 3px; }
+.crosswalk .wle { color: var(--text-dim); padding: 4px 6px; background: var(--surface-2);
+  border-radius: 3px; font-style: italic; font-size: 12px; }
+.crosswalk .tux { color: var(--text); padding: 4px 6px; background: var(--surface-2);
+  border-radius: 3px; font-size: 12px; }
+.crosswalk .wire { color: var(--accent-2); font-family: var(--mono); font-size: 11px;
+  padding: 4px 6px; background: var(--bg); border-radius: 3px; word-break: break-all; }
+</style>
+</head>
+<body>
+<div class="page">
+<h1>Smart Auth-Failure Diagnostic Banner — mocks</h1>
+<p class="subtitle">
+  tuxlink-7do4 · 2026-06-04 · agent harrier-moraine-tanager · pairs with
+  <a href="../../superpowers/specs/2026-06-04-smart-auth-diagnostics-design.md">design spec</a> +
+  <a href="../../../dev/research/2026-06-04-smart-auth-diagnostics-fixtures.md">fixture provenance</a>.
+</p>
+
+<div class="legend">
+  <h3>Mock conventions</h3>
+  <p>
+    Each section shows the Smart Auth-Failure Diagnostic Banner pinned to the Telnet modem dock,
+    above the session-log section. The dock width is the production-CSS <code>400px</code>
+    (matches <code>.radio-panel</code> in <code>src/radio/RadioPanel.css</code>). The session-log
+    section is collapsed to a one-line stub in these mocks to focus attention on the banner.
+    All copy is tuxlink-original (Q3) — the WLE wording cross-walk appears in section H.
+  </p>
+  <table>
+    <tr><th>Failure mode</th><th>Banner color</th><th>Recovery affordances</th></tr>
+    <tr><td><strong>Mode 1</strong> Network unreachable</td><td><code>--bad</code> (red-left-border)</td><td>Copy log</td></tr>
+    <tr><td><strong>Mode 2</strong> CMS rejected client</td><td><code>--bad</code></td><td>Copy log</td></tr>
+    <tr><td><strong>Mode 3</strong> Password rejected</td><td><code>--bad</code></td><td>Re-enter pw (i) · Test creds (iii) · Reset on winlink.org · Copy log</td></tr>
+    <tr><td><strong>Mode 4</strong> Callsign rejected</td><td><code>--bad</code></td><td>Re-run wizard (ii) · Verify on winlink.org · Copy log</td></tr>
+    <tr><td><strong>Mode 5</strong> Session dropped after auth</td><td><code>--bad</code></td><td>Test creds (iii) · Copy log</td></tr>
+    <tr><td>Uncategorized fallback</td><td><code>--warn</code> (yellow)</td><td>Re-run wizard · Copy log</td></tr>
+  </table>
+</div>
+
+<!-- ============ SECTION A: Mode 3 (default / canonical case) ============ -->
+<div class="section">
+  <div class="section-header">
+    <div class="section-letter">A</div>
+    <h2 class="section-title">Mode 3 — Password rejected (the most common case)</h2>
+    <p class="section-desc">Default banner state. ~618 corpus threads mention password issues. Wire response detected via <code>strings.Contains(lower(payload), "secure login failed")</code> — wl2k-go's <code>IsLoginFailure</code> ([handshake.go:27](../../../dev/scratch/ax25-prior-art/wl2k-go/fbb/handshake.go#L27)).</p>
+  </div>
+  <div class="row">
+    <div class="radio-panel">
+      <div class="panel-header">
+        <span class="panel-dot error"></span>
+        <span class="panel-name">MODEM · Telnet CMS</span>
+        <span class="panel-sub">cms-z.winlink.org:8772</span>
+      </div>
+      <div class="sec">
+        <h5>Server</h5>
+        <div class="row-input"><span>Host</span><input class="input" value="cms-z.winlink.org" disabled></div>
+        <div class="chip-row"><span class="chip">cms-z (dev)</span><span class="chip">server (prod)</span></div>
+      </div>
+      <div class="sec">
+        <h5>Transport</h5>
+        <div class="radio-row"><input type="radio" disabled><span><span class="radio-label">TLS · 8773</span><span class="radio-help">Production server.winlink.org</span></span></div>
+        <div class="radio-row"><input type="radio" checked disabled><span><span class="radio-label">Plaintext · 8772</span><span class="radio-help">cms-z (dev) — no TLS listener</span></span></div>
+      </div>
+
+      <!-- THE BANNER -->
+      <div class="diag-banner">
+        <div class="diag-head">
+          <span class="diag-icon bad">⚠</span>
+          <span class="diag-title">Your password wasn't accepted by the Winlink server.</span>
+          <button class="diag-dismiss" title="Dismiss">×</button>
+        </div>
+        <p class="diag-body">Reset it on winlink.org or re-enter it here.</p>
+        <div class="diag-actions">
+          <button class="diag-btn diag-btn-primary">Re-enter password</button>
+          <button class="diag-btn diag-btn-secondary">Test credentials again</button>
+          <button class="diag-btn diag-btn-link">Reset on winlink.org</button>
+          <button class="diag-btn diag-btn-secondary">Copy log</button>
+        </div>
+        <div class="diag-raw">
+          <span class="diag-raw-toggle">Wire response (CMS said)</span>
+        </div>
+      </div>
+
+      <div class="log-stub">10:42:18  [WL2K-5.0-B2FWIHJM$] received</div>
+      <div class="log-stub">10:42:18  ;PQ: 23753528 received — secure challenge</div>
+      <div class="log-stub">10:42:18  ;PR: ········ sent</div>
+      <div class="log-stub">10:42:19  *** [1] Secure login failed - account password does not match. - Disconnecting</div>
+
+      <div class="act-row">
+        <button class="btn btn-primary">Start</button>
+        <button class="btn btn-bad">Stop</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ SECTION B: Mode 3 expanded — inline re-enter password ============ -->
+<div class="section">
+  <div class="section-header">
+    <div class="section-letter">B</div>
+    <h2 class="section-title">Mode 3 — Re-enter password (affordance i, inline form)</h2>
+    <p class="section-desc">Inline expansion after clicking "Re-enter password". Submit writes via keyring (no env-var, no config-file per `feedback_no_disk_creds_default`). Does NOT auto-retry — the user clicks Start.</p>
+  </div>
+  <div class="row">
+    <div class="radio-panel">
+      <div class="panel-header">
+        <span class="panel-dot error"></span>
+        <span class="panel-name">MODEM · Telnet CMS</span>
+        <span class="panel-sub">cms-z.winlink.org:8772</span>
+      </div>
+      <div class="sec">
+        <h5>Server</h5>
+        <div class="row-input"><span>Host</span><input class="input" value="cms-z.winlink.org" disabled></div>
+      </div>
+
+      <div class="diag-banner">
+        <div class="diag-head">
+          <span class="diag-icon bad">⚠</span>
+          <span class="diag-title">Your password wasn't accepted by the Winlink server.</span>
+          <button class="diag-dismiss" title="Dismiss">×</button>
+        </div>
+        <div class="diag-form">
+          <div class="row-input"><span>Password</span><input class="input" type="password" value="········"></div>
+          <div class="btn-row">
+            <button class="diag-btn diag-btn-primary">Save to keyring</button>
+            <button class="diag-btn diag-btn-secondary">Cancel</button>
+          </div>
+          <p class="diag-help">Stored in your OS keyring — never written to disk or environment variables.</p>
+        </div>
+      </div>
+
+      <div class="log-stub">10:42:19  *** [1] Secure login failed - account password does not match.</div>
+      <div class="act-row"><button class="btn btn-primary">Start</button><button class="btn btn-bad">Stop</button></div>
+    </div>
+
+    <div class="radio-panel">
+      <div class="panel-header">
+        <span class="panel-dot connecting"></span>
+        <span class="panel-name">MODEM · Telnet CMS</span>
+        <span class="panel-sub">cms-z.winlink.org:8772</span>
+      </div>
+      <div class="sec"><h5>Server</h5><div class="row-input"><span>Host</span><input class="input" value="cms-z.winlink.org" disabled></div></div>
+
+      <div class="diag-banner testing">
+        <div class="diag-head">
+          <span class="diag-icon info">⟳</span>
+          <span class="diag-title">Testing your new password against the Winlink server…</span>
+        </div>
+        <p class="diag-body">This runs a no-message handshake and quits — your live mail session won't be touched.</p>
+      </div>
+
+      <div class="log-stub">10:42:51  Connecting to cms-z.winlink.org:8772 (test mode)</div>
+      <div class="act-row"><button class="btn btn-primary" disabled>Connecting…</button><button class="btn btn-bad">Stop</button></div>
+    </div>
+
+    <div class="radio-panel">
+      <div class="panel-header">
+        <span class="panel-dot connected"></span>
+        <span class="panel-name">MODEM · Telnet CMS</span>
+        <span class="panel-sub">cms-z.winlink.org:8772</span>
+      </div>
+      <div class="sec"><h5>Server</h5><div class="row-input"><span>Host</span><input class="input" value="cms-z.winlink.org" disabled></div></div>
+
+      <div class="diag-banner success">
+        <div class="diag-head">
+          <span class="diag-icon success">✓</span>
+          <span class="diag-title">Credentials accepted. Click Start to begin your session.</span>
+          <button class="diag-dismiss" title="Dismiss">×</button>
+        </div>
+      </div>
+
+      <div class="log-stub">10:42:54  Auth OK · session test complete · disconnected cleanly</div>
+      <div class="act-row"><button class="btn btn-primary">Start</button><button class="btn btn-bad">Stop</button></div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ SECTION C: Mode 1 ============ -->
+<div class="section">
+  <div class="section-header">
+    <div class="section-letter">C</div>
+    <h2 class="section-title">Mode 1 — Network unreachable</h2>
+    <p class="section-desc">Detected before any CMS byte arrives. Transport-layer `std::io::Error` (DNS, TCP, TLS).</p>
+  </div>
+  <div class="row">
+    <div class="radio-panel">
+      <div class="panel-header">
+        <span class="panel-dot error"></span>
+        <span class="panel-name">MODEM · Telnet CMS</span>
+        <span class="panel-sub">cms-z.winlink.org:8772</span>
+      </div>
+      <div class="sec"><h5>Server</h5><div class="row-input"><span>Host</span><input class="input" value="cms-z.winlink.org" disabled></div></div>
+
+      <div class="diag-banner">
+        <div class="diag-head">
+          <span class="diag-icon bad">⚠</span>
+          <span class="diag-title">Couldn't reach the Winlink server.</span>
+          <button class="diag-dismiss" title="Dismiss">×</button>
+        </div>
+        <p class="diag-body">Check your internet connection. The server may also be temporarily offline.</p>
+        <div class="diag-actions">
+          <button class="diag-btn diag-btn-secondary">Copy log</button>
+        </div>
+        <div class="diag-raw">
+          <span class="diag-raw-toggle open">Wire response (transport said)</span>
+          <pre class="diag-raw-content">TCP connect to cms-z.winlink.org:8772 failed: Connection refused (os error 111)</pre>
+        </div>
+      </div>
+
+      <div class="log-stub">10:48:02  TCP connect to cms-z.winlink.org:8772</div>
+      <div class="log-stub">10:48:02  Connection refused (os error 111)</div>
+      <div class="act-row"><button class="btn btn-primary">Start</button><button class="btn btn-bad">Stop</button></div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ SECTION D: Mode 2 ============ -->
+<div class="section">
+  <div class="section-header">
+    <div class="section-letter">D</div>
+    <h2 class="section-title">Mode 2 — CMS rejected the client</h2>
+    <p class="section-desc">Tuxlink-only failure mode today: the production CMS rejects unregistered client SIDs (per <code>project_cms_rejects_unknown_clients</code>). User-facing recovery is "file a report" — this is a tuxlink-side issue, not an operator-side one.</p>
+  </div>
+  <div class="row">
+    <div class="radio-panel">
+      <div class="panel-header">
+        <span class="panel-dot error"></span>
+        <span class="panel-name">MODEM · Telnet CMS</span>
+        <span class="panel-sub">server.winlink.org:8773</span>
+      </div>
+      <div class="sec"><h5>Server</h5><div class="row-input"><span>Host</span><input class="input" value="server.winlink.org" disabled></div></div>
+
+      <div class="diag-banner">
+        <div class="diag-head">
+          <span class="diag-icon bad">⚠</span>
+          <span class="diag-title">The Winlink CMS rejected this client.</span>
+          <button class="diag-dismiss" title="Dismiss">×</button>
+        </div>
+        <p class="diag-body">This is a tuxlink-side issue, not a problem with your account. Please file a report with the session log.</p>
+        <div class="diag-actions">
+          <button class="diag-btn diag-btn-primary">Copy log</button>
+        </div>
+        <div class="diag-raw">
+          <span class="diag-raw-toggle open">Wire response (CMS said)</span>
+          <pre class="diag-raw-content">*** Unknown client types are not allowed on production servers - Disconnecting (88.89.220.254)</pre>
+        </div>
+      </div>
+
+      <div class="log-stub">10:52:18  *** Unknown client types are not allowed on production servers</div>
+      <div class="act-row"><button class="btn btn-primary">Start</button><button class="btn btn-bad">Stop</button></div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ SECTION E: Mode 4 ============ -->
+<div class="section">
+  <div class="section-header">
+    <div class="section-letter">E</div>
+    <h2 class="section-title">Mode 4 — CMS rejected the callsign</h2>
+    <p class="section-desc">Callsign isn't registered on the CMS, or has been suspended (e.g., late license renewal). Wire fixture is provisional until operator-consented RF spot-check (see open question §1 of <a href="../../superpowers/specs/2026-06-04-smart-auth-diagnostics-design.md">design spec</a>).</p>
+  </div>
+  <div class="row">
+    <div class="radio-panel">
+      <div class="panel-header">
+        <span class="panel-dot error"></span>
+        <span class="panel-name">MODEM · Telnet CMS</span>
+        <span class="panel-sub">cms-z.winlink.org:8772</span>
+      </div>
+      <div class="sec"><h5>Server</h5><div class="row-input"><span>Host</span><input class="input" value="cms-z.winlink.org" disabled></div></div>
+
+      <div class="diag-banner">
+        <div class="diag-head">
+          <span class="diag-icon bad">⚠</span>
+          <span class="diag-title">The Winlink server didn't accept your callsign.</span>
+          <button class="diag-dismiss" title="Dismiss">×</button>
+        </div>
+        <p class="diag-body">Verify your account is active on winlink.org. If your license recently expired, your account may have been temporarily deactivated.</p>
+        <div class="diag-actions">
+          <button class="diag-btn diag-btn-primary">Re-run wizard</button>
+          <button class="diag-btn diag-btn-link">Verify on winlink.org</button>
+          <button class="diag-btn diag-btn-secondary">Copy log</button>
+        </div>
+        <div class="diag-raw">
+          <span class="diag-raw-toggle open">Wire response (CMS said)</span>
+          <pre class="diag-raw-content">*** Callsign not authorized - Disconnecting (88.90.2.192)
+[provisional — actual wire string TBD via operator-consented RF spot-check]</pre>
+        </div>
+      </div>
+
+      <div class="log-stub">10:55:10  *** Callsign not authorized - Disconnecting</div>
+      <div class="act-row"><button class="btn btn-primary">Start</button><button class="btn btn-bad">Stop</button></div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ SECTION F: Mode 5 ============ -->
+<div class="section">
+  <div class="section-header">
+    <div class="section-letter">F</div>
+    <h2 class="section-title">Mode 5 — Session dropped after a successful login</h2>
+    <p class="section-desc">Discriminated from Mode 1 by the presence of `HandshakeCompleted` in the structured event log. Credentials proved fine — the drop is RF or network blip.</p>
+  </div>
+  <div class="row">
+    <div class="radio-panel">
+      <div class="panel-header">
+        <span class="panel-dot error"></span>
+        <span class="panel-name">MODEM · Telnet CMS</span>
+        <span class="panel-sub">cms-z.winlink.org:8772</span>
+      </div>
+      <div class="sec"><h5>Server</h5><div class="row-input"><span>Host</span><input class="input" value="cms-z.winlink.org" disabled></div></div>
+
+      <div class="diag-banner">
+        <div class="diag-head">
+          <span class="diag-icon bad">⚠</span>
+          <span class="diag-title">The connection dropped after a successful login.</span>
+          <button class="diag-dismiss" title="Dismiss">×</button>
+        </div>
+        <p class="diag-body">Your credentials are fine — try connecting again. Persistent drops may indicate a flaky network path.</p>
+        <div class="diag-actions">
+          <button class="diag-btn diag-btn-primary">Test credentials again</button>
+          <button class="diag-btn diag-btn-secondary">Copy log</button>
+        </div>
+        <div class="diag-raw">
+          <span class="diag-raw-toggle open">Structured event timeline</span>
+          <pre class="diag-raw-content">10:57:01  TCP connected — cms-z.winlink.org:8772
+10:57:01  Remote SID received — B2FWIHJM$
+10:57:01  Secure challenge received (;PQ: 8…)
+10:57:01  Secure response sent (;PR: ········)
+10:57:02  Handshake completed ✓
+10:57:09  Connection closed mid-exchange (no error line, EOF)</pre>
+        </div>
+      </div>
+
+      <div class="log-stub">10:57:09  Connection closed — mid-exchange EOF · post-handshake</div>
+      <div class="act-row"><button class="btn btn-primary">Start</button><button class="btn btn-bad">Stop</button></div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ SECTION G: Uncategorized ============ -->
+<div class="section">
+  <div class="section-header">
+    <div class="section-letter">G</div>
+    <h2 class="section-title">Uncategorized fallback</h2>
+    <p class="section-desc">Any `*** ...` payload not matching Modes 2–4. Banner uses warning yellow (not red) — we don't know what's wrong, but the user shouldn't be alarmed about a credential or callsign problem when we can't actually confirm one.</p>
+  </div>
+  <div class="row">
+    <div class="radio-panel">
+      <div class="panel-header">
+        <span class="panel-dot error"></span>
+        <span class="panel-name">MODEM · Telnet CMS</span>
+        <span class="panel-sub">cms-z.winlink.org:8772</span>
+      </div>
+      <div class="sec"><h5>Server</h5><div class="row-input"><span>Host</span><input class="input" value="cms-z.winlink.org" disabled></div></div>
+
+      <div class="diag-banner uncat">
+        <div class="diag-head">
+          <span class="diag-icon uncat">⚠</span>
+          <span class="diag-title">Connection failed.</span>
+          <button class="diag-dismiss" title="Dismiss">×</button>
+        </div>
+        <p class="diag-body">The Winlink server returned an unrecognised response. See the session log for details, or copy the log to share with help channels.</p>
+        <div class="diag-actions">
+          <button class="diag-btn diag-btn-primary">Re-run wizard</button>
+          <button class="diag-btn diag-btn-secondary">Copy log</button>
+        </div>
+        <div class="diag-raw">
+          <span class="diag-raw-toggle open">Wire response (CMS said)</span>
+          <pre class="diag-raw-content">*** Maintenance window — CMS will return at 14:00 UTC. - Disconnecting</pre>
+        </div>
+      </div>
+
+      <div class="log-stub">11:01:33  *** Maintenance window — CMS will return at 14:00 UTC.</div>
+      <div class="act-row"><button class="btn btn-primary">Start</button><button class="btn btn-bad">Stop</button></div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ SECTION H: Cross-walk ============ -->
+<div class="section">
+  <div class="section-header">
+    <div class="section-letter">H</div>
+    <h2 class="section-title">Tuxlink-original vs. WLE wording cross-walk (Q3 reference)</h2>
+    <p class="section-desc">The decompiled WLE wording, the underlying wire response, and tuxlink's banner copy — for migrating operators familiar with WLE's wording.</p>
+  </div>
+  <div class="row">
+    <div class="crosswalk">
+      <h4>Mode 3 — Password rejected</h4>
+      <div class="label">WLE shows</div><div class="wle">"PASSWORD NOT RECOGNISED"</div>
+      <div class="label">CMS actually said</div><div class="wire">*** [1] Secure login failed - account password does not match. - Disconnecting (88.90.2.192)</div>
+      <div class="label">Tuxlink shows</div><div class="tux">"Your password wasn't accepted by the Winlink server."</div>
+    </div>
+    <div class="crosswalk">
+      <h4>Mode 4 — Callsign rejected</h4>
+      <div class="label">WLE shows</div><div class="wle">"Callsign not authorized — please verify registration"</div>
+      <div class="label">CMS actually said</div><div class="wire">*** Callsign not authorized - Disconnecting (provisional)</div>
+      <div class="label">Tuxlink shows</div><div class="tux">"The Winlink server didn't accept your callsign."</div>
+    </div>
+    <div class="crosswalk">
+      <h4>Mode 2 — Client rejected</h4>
+      <div class="label">WLE shows</div><div class="wle">(N/A — WLE is on the allowlist; doesn't trigger this state)</div>
+      <div class="label">CMS actually said</div><div class="wire">*** Unknown client types are not allowed on production servers</div>
+      <div class="label">Tuxlink shows</div><div class="tux">"The Winlink CMS rejected this client."</div>
+    </div>
+    <div class="crosswalk">
+      <h4>Mode 1 — Network unreachable</h4>
+      <div class="label">WLE shows</div><div class="wle">Usually a Windows network-stack alert; varies by failure subtype</div>
+      <div class="label">Transport actually said</div><div class="wire">TCP connect failed: Connection refused (os error 111)</div>
+      <div class="label">Tuxlink shows</div><div class="tux">"Couldn't reach the Winlink server."</div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ Reviewer footer ============ -->
+<div class="legend">
+  <h3>Open questions for adrev to weigh</h3>
+  <ul>
+    <li><strong>Banner pin point:</strong> the banner sits between Transport and Session Log sections. An alternative is to pin it at the very top of the panel body (above Server). Pro: more discoverable. Con: pushes Transport/Server controls down on every successful connect, which is most connects.</li>
+    <li><strong>Raw-response default state:</strong> collapsed by default with click-to-expand. Alternative: expanded by default for Modes 2 + uncategorized (where the wire string IS the diagnostic information). The mock shows the expanded variant for those modes.</li>
+    <li><strong>External-link confirmation:</strong> "Reset on winlink.org" opens the browser immediately. Should there be a confirmation step ("This will open your default browser to winlink.org. Continue?") to avoid surprising users? Default proposal: no — modern apps don't gate this.</li>
+    <li><strong>Test-credentials latency:</strong> the "Testing…" state can take 5-30 seconds depending on network. Should there be a progress bar or a more elaborate spinner? Default: subtle `⟳` glyph; the session-log timestamps show progress.</li>
+  </ul>
+</div>
+
+</div>
+</body>
+</html>
