@@ -374,6 +374,7 @@ export function MessageViewLoaded({
           decoded body. */}
       {message.isForm && message.formId && message.formPayload ? (
         <FormMessageBody
+          key={message.id}
           formId={message.formId}
           payload={message.formPayload}
           bodyText={message.body}

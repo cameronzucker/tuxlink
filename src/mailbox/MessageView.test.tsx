@@ -214,6 +214,40 @@ describe('<MessageViewLoaded>', () => {
     expect(screen.getByText('custom_field')).toBeInTheDocument();
   });
 
+  // P1 Task 11 regression guard: viewerFailed state must NOT persist across
+  // message selections. Without key={message.id} on <FormMessageBody>, React
+  // would reuse the same component instance — Close-on-message-A would leak
+  // the failed flag to message B and the viewer would never re-attempt.
+  it('viewerFailed state resets per message (no cross-message leak)', () => {
+    const msgA = {
+      id: 'MSG-A', subject: 'A', from: 'X@winlink.org',
+      to: ['Y@winlink.org'], cc: [], date: '2026-05-30T14:30:00Z',
+      body: '', attachments: [], isForm: true, routing: null,
+      formId: 'Catalog_A',
+      formPayload: {
+        formId: 'Catalog_A',
+        formParameters: {
+          xmlFileVersion: '1.0', rmsExpressVersion: '',
+          submissionDatetime: '', sendersCallsign: '', gridSquare: '',
+          displayForm: '', replyTemplate: '',
+        },
+        fields: [['fa', 'va']],
+      },
+    };
+    const msgB = { ...msgA, id: 'MSG-B', subject: 'B', formId: 'Catalog_B',
+      formPayload: { ...msgA.formPayload, formId: 'Catalog_B', fields: [['fb', 'vb']] } };
+    const { rerender } = render(<MessageViewLoaded message={msgA as any} />);
+    // Viewer renders for A; operator clicks Close → KeyValueView.
+    expect(screen.getByTestId('message-form-viewer')).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('webview-form-viewer-close-btn'));
+    expect(screen.getByTestId('message-form-unknown')).toBeInTheDocument();
+    // Switch to a different message — viewer should attempt again (NOT stuck
+    // on KeyValueView from the prior message's failed-state).
+    rerender(<MessageViewLoaded message={msgB as any} />);
+    expect(screen.getByTestId('message-form-viewer')).toBeInTheDocument();
+    expect(screen.queryByTestId('message-form-unknown')).toBeNull();
+  });
+
   // Attachment strip lists names + sizes; no download/preview yet.
   it('lists attachment names and sizes', () => {
     render(
