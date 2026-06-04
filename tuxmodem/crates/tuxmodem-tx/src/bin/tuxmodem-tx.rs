@@ -104,6 +104,23 @@ fn run(args: Args) -> Result<(), String> {
         return Ok(());
     }
 
+    if let Some(path) = args.write_wav.as_deref() {
+        // ---- write-wav mode: emit the encoded waveform to a 48 kHz
+        //      f32 mono WAV. No audio device, no PTT. Pairs with
+        //      `tuxmodem-rx --decode-wav <PATH>` for a fully agent-
+        //      runnable loopback test.
+        buffer
+            .write_wav(path)
+            .map_err(|e| format!("writing WAV to {}: {e}", path.display()))?;
+        println!(
+            "--write-wav: wrote {} samples ({:.3} s) to {}",
+            buffer.samples().len(),
+            buffer.duration_seconds(),
+            path.display()
+        );
+        return Ok(());
+    }
+
     // ---- full mode: open device + ptt, install signal handlers, transmit ----
     let device = args.device.as_deref().unwrap();
     let ptt_path = args.ptt_device.as_deref().unwrap();
@@ -173,11 +190,15 @@ fn install_signal_flag(sig: libc::c_int, flag: Arc<AtomicBool>) -> Result<(), St
 }
 
 const USAGE: &str = "\
-tuxmodem-tx — payload → PHY → PTT + audio composition (Phase 3, tuxlink-i3bz)
+tuxmodem-tx — payload → PHY → PTT + audio composition
 
 USAGE:
     tuxmodem-tx --dry-run --payload <TEXT|@FILE> --mode <NAME>
         Encode + report the airtime budget WITHOUT opening any device.
+
+    tuxmodem-tx --write-wav <PATH> --payload <TEXT|@FILE> --mode <NAME>
+        Encode + write the waveform to a 48 kHz f32 mono WAV file.
+        No audio device, no PTT. Pairs with `tuxmodem-rx --decode-wav`.
 
     tuxmodem-tx --payload <TEXT|@FILE> --mode <NAME> \\
                 --device <AUDIO> --ptt-device <TTY> \\
@@ -188,8 +209,9 @@ OPTIONS:
         --mode <NAME>          PHY mode (currently: `wide-floor` / `floor-wblo`)
         --payload <ARG>        payload text, or `@<path>` to read from a file
         --dry-run              encode + report only; no audio, no PTT
-    -d, --device <NAME>        CPAL audio device name (required without --dry-run)
-    -p, --ptt-device <PATH>    serial TTY path for RTS PTT (required without --dry-run)
+        --write-wav <PATH>     encode + write WAV; no audio device, no PTT
+    -d, --device <NAME>        CPAL audio device name (required for full TX)
+    -p, --ptt-device <PATH>    serial TTY path for RTS PTT (required for full TX)
         --max-airtime <SECS>   override DEFAULT_MAX_AIRTIME (default 30; hard cap 60)
     -h, --help                 this usage
 
@@ -199,6 +221,10 @@ DISCOVERING AUDIO DEVICES:
 EXAMPLES:
     # Validate the encode pipeline with no RF risk:
     tuxmodem-tx --dry-run --payload \"TEST\" --mode wide-floor
+
+    # Emit the waveform as a WAV for offline / agent loopback testing:
+    tuxmodem-tx --write-wav /tmp/test.wav --payload \"TEST\" --mode wide-floor
+    tuxmodem-rx --decode-wav /tmp/test.wav --expected \"TEST\"
 
     # Actual on-air TX (operator-only — agents must not run this):
     tuxmodem-tx --payload \"TEST\" --mode wide-floor \\

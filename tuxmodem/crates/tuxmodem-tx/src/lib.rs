@@ -39,7 +39,7 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 use std::time::{Duration, Instant};
 
@@ -373,6 +373,12 @@ pub struct Args {
     pub ptt_device: Option<String>,
     /// Encode + report ONLY; don't open any device.
     pub dry_run: bool,
+    /// Encode + write the waveform to a 48 kHz f32 mono WAV at this
+    /// path. No audio device opens, no PTT asserts. Mutually exclusive
+    /// with full-TX mode (`--device` + `--ptt-device`); the dry-run
+    /// flag is a strict subset (also no device, also no PTT, but
+    /// additionally no file is written).
+    pub write_wav: Option<PathBuf>,
     /// Override [`DEFAULT_MAX_AIRTIME`] for this run. Hard-capped at
     /// [`HARD_CAP_AIRTIME`].
     pub max_airtime: Option<Duration>,
@@ -389,6 +395,7 @@ impl Args {
             device: None,
             ptt_device: None,
             dry_run: false,
+            write_wav: None,
             max_airtime: None,
             help: false,
         };
@@ -424,6 +431,12 @@ impl Args {
                     );
                 }
                 "--dry-run" => args.dry_run = true,
+                "--write-wav" => {
+                    let v = iter
+                        .next()
+                        .ok_or_else(|| "--write-wav requires a path".to_string())?;
+                    args.write_wav = Some(PathBuf::from(v));
+                }
                 "--max-airtime" => {
                     let v = iter
                         .next()
@@ -440,9 +453,18 @@ impl Args {
         Ok(args)
     }
 
-    /// Validate the parsed args against the mode's requirements. Dry
-    /// runs only need mode + payload; full runs additionally need
-    /// device + ptt-device.
+    /// Validate the parsed args against the chosen output mode.
+    ///
+    /// Three output modes exist:
+    /// - **dry-run** (`--dry-run`): encode + report; no device, no
+    ///   PTT, no file written.
+    /// - **write-wav** (`--write-wav <PATH>`): encode + write waveform
+    ///   to a 48 kHz f32 mono WAV file; no device, no PTT.
+    /// - **full-tx** (default): encode + assert PTT + play to
+    ///   `--device`; requires `--device` + `--ptt-device`.
+    ///
+    /// `--dry-run` and `--write-wav` are mutually exclusive (they
+    /// disagree on whether to write the file). Setting both errors.
     pub fn validate(&self) -> Result<(), String> {
         if self.mode.is_none() {
             return Err("missing --mode <name> (try `--mode wide-floor`)".to_string());
@@ -450,17 +472,24 @@ impl Args {
         if self.payload.is_none() {
             return Err("missing --payload <text|@file>".to_string());
         }
-        if !self.dry_run {
+        if self.dry_run && self.write_wav.is_some() {
+            return Err(
+                "--dry-run and --write-wav are mutually exclusive — pick one"
+                    .to_string(),
+            );
+        }
+        if !self.dry_run && self.write_wav.is_none() {
+            // Full-TX mode: device + ptt-device required.
             if self.device.is_none() {
                 return Err(
-                    "missing --device <name> (required without --dry-run; \
-                     use --list via tuxmodem-audio-play to discover names)"
+                    "missing --device <name> (required for full TX; use \
+                     --dry-run or --write-wav for hardware-free runs)"
                         .to_string(),
                 );
             }
             if self.ptt_device.is_none() {
                 return Err(
-                    "missing --ptt-device <path> (required without --dry-run; \
+                    "missing --ptt-device <path> (required for full TX; \
                      e.g. /dev/digirig)"
                         .to_string(),
                 );
@@ -726,6 +755,87 @@ mod tests {
         let a = Args::parse(&s(&["--dry-run", "--payload", "hi"])).unwrap();
         let err = a.validate().unwrap_err();
         assert!(err.contains("--mode"));
+    }
+
+    // ─── --write-wav follow-up (tuxlink-4dv9) ───────────────────────
+
+    #[test]
+    fn args_parse_write_wav_with_path() {
+        let a = Args::parse(&s(&[
+            "--write-wav", "/tmp/foo.wav", "--mode", "wide-floor", "--payload", "TEST",
+        ]))
+        .unwrap();
+        assert_eq!(
+            a.write_wav.as_deref(),
+            Some(std::path::Path::new("/tmp/foo.wav"))
+        );
+        a.validate().unwrap();
+    }
+
+    #[test]
+    fn args_parse_write_wav_without_value_errors() {
+        let err = Args::parse(&s(&["--write-wav"])).unwrap_err();
+        assert!(err.contains("--write-wav"));
+    }
+
+    #[test]
+    fn args_parse_write_wav_doesnt_require_device_or_ptt() {
+        // The whole point: --write-wav is a hardware-free mode like
+        // --dry-run, so neither --device nor --ptt-device should be
+        // required when --write-wav is set.
+        let a = Args::parse(&s(&[
+            "--write-wav", "/tmp/x.wav", "--mode", "wide-floor", "--payload", "hi",
+        ]))
+        .unwrap();
+        a.validate().unwrap();
+        assert!(a.device.is_none());
+        assert!(a.ptt_device.is_none());
+    }
+
+    #[test]
+    fn args_parse_dry_run_and_write_wav_are_mutually_exclusive() {
+        let a = Args::parse(&s(&[
+            "--dry-run", "--write-wav", "/tmp/x.wav", "--mode", "wide-floor",
+            "--payload", "hi",
+        ]))
+        .unwrap();
+        let err = a.validate().unwrap_err();
+        assert!(err.contains("mutually exclusive"));
+    }
+
+    #[test]
+    fn args_parse_full_tx_default_when_neither_dry_run_nor_write_wav() {
+        // Sanity: without dry-run AND without write-wav, validate
+        // still requires device + ptt-device (the full-TX path).
+        let a = Args::parse(&s(&["--mode", "wide-floor", "--payload", "hi"])).unwrap();
+        let err = a.validate().unwrap_err();
+        assert!(err.contains("--device") || err.contains("--ptt-device"));
+    }
+
+    #[test]
+    fn write_wav_roundtrip_via_audiobuffer_write_then_read_then_decode() {
+        // The headline acceptance test for --write-wav: encode →
+        // write_wav → re-read_wav → demod via the floor's receive →
+        // assert payload recovered. Proves the CLI's --write-wav
+        // workflow without spawning the binary.
+        use tuxmodem_phy::audio_io::AudioBuffer;
+        use tuxmodem_phy::robustness_floor::wideband_lowdensity::WidebandLowDensityFloor;
+
+        let payload = b"WAVTEST";
+        let mode = Mode::WideFloor;
+        let buffer = encode_payload(mode, payload).unwrap();
+        let dir = std::env::temp_dir();
+        let path = dir.join(format!(
+            "tuxmodem-tx-write-wav-test-{}.wav",
+            std::process::id()
+        ));
+        buffer.write_wav(&path).unwrap();
+        let read_back = AudioBuffer::read_wav(&path).unwrap();
+        let _ = std::fs::remove_file(&path);
+        let decoded = WidebandLowDensityFloor::new()
+            .receive(read_back.samples())
+            .unwrap();
+        assert_eq!(decoded, payload);
     }
 
     // ─── run_transmission orchestration (mock PTT + mock player) ────
