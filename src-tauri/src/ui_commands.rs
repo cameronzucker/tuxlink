@@ -3929,6 +3929,39 @@ pub async fn position_status(
 }
 
 // ============================================================================
+// tuxlink-hnkn P2 — position_current_fix (PositionFormV2 pre-fill)
+// ============================================================================
+// Thin shim over PositionArbiter that returns the active grid + source label
+// + freshness flag to the React Position Report compose form.  The form
+// pre-fills the grid input with this value so the operator can confirm (or
+// manually override) before sending.
+//
+// `source` is stringified from the PositionSource enum via Debug (yielding
+// "Gps" or "Manual").  The React consumer is case-insensitive on source
+// comparison, so the PascalCase output is intentional and documented.
+
+/// Wire-shape returned to PositionFormV2.tsx by `position_current_fix`.
+#[derive(Debug, Clone, Serialize)]
+pub struct PositionFix {
+    pub grid: Option<String>,
+    /// Source label — "Gps" | "Manual" (Debug-derived from PositionSource).
+    pub source: String,
+    /// True when the GPS fix is < 30 s old (FIX_STALENESS from arbiter).
+    pub fresh: bool,
+}
+
+#[tauri::command]
+pub async fn position_current_fix(
+    arbiter: tauri::State<'_, std::sync::Arc<crate::position::PositionArbiter>>,
+) -> Result<PositionFix, String> {
+    Ok(PositionFix {
+        grid: arbiter.active_grid(),
+        source: format!("{:?}", arbiter.source()),
+        fresh: arbiter.has_fresh_fix(),
+    })
+}
+
+// ============================================================================
 // tuxlink-39b — config_set_privacy (GPS-state + precision control surface)
 // ============================================================================
 // Closes the gap found in the post-merge smoke of #113: gps_state +
