@@ -79,9 +79,11 @@ visible to other Winlink stations, and do not survive a copy of the
 mailbox to a fresh tuxlink install on a different machine unless the
 operator copies the folder list across too.
 
-The folder list is stored at
-`~/.local/share/com.tuxlink.app/folders.json`. Copying that file alongside
-the `mailbox/` directory propagates folder structure between machines.
+The folder registry is stored at
+`~/.local/share/com.tuxlink.app/native-mbox/.folders.json` — a dot-prefixed
+sidecar inside the mailbox root, alongside the message folders. Copying
+the `native-mbox/` directory whole carries the folder registry along
+with the messages and propagates folder structure between machines.
 
 This is by design — folders are an operator-side organisational tool, not
 a CMS-side mailbox feature. Different operators may organise their local

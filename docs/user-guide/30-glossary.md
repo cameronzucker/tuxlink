@@ -187,9 +187,11 @@ LZHUF
 ## M
 
 Maidenhead
-:   The grid square system encoding position into 2 / 4 / 6 / 8 character
-    locator strings. Tuxlink's broadcast default is 4-character (county-
-    scale resolution). See
+:   The grid square system encoding position into 2 / 4 / 6 / 8 (or 10)
+    character locator strings. Each pair adds resolution: a 4-character
+    grid is the size of a small county or two; 6-character is a town;
+    8-character is a few blocks. Tuxlink's broadcast default is the
+    4-character grid. See
     [Position and privacy](26-position-and-privacy.md).
 
 `marked`

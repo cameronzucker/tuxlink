@@ -34,7 +34,7 @@ environment over.
 | `connect_aliases` | Per-transport panel (Telnet / Packet / ARDOP / VARA) |
 | `service.command` (auto-connect rules) | (Future work; tracked as the AutoConnect feature) |
 | `forms.path` | Built-in — Tuxlink ships the Winlink Forms catalog |
-| `mailbox.path` | `~/.local/share/com.tuxlink.app/mailbox/` |
+| `mailbox.path` | `~/.local/share/com.tuxlink.app/native-mbox/` |
 
 Pat's web UI is gone in tuxlink. Tuxlink is a desktop application —
 the surfaces are inline windows + panels, not a browser. For operators
@@ -145,7 +145,7 @@ For an operator moving from Express or Pat to tuxlink:
 6. **Migrate the local archive.** Optional — tuxlink starts with an empty
    mailbox. If preserving history matters, the Pat mailbox or Express's
    exported messages can be copied into tuxlink's
-   `~/.local/share/com.tuxlink.app/mailbox/` directory. The format is
+   `~/.local/share/com.tuxlink.app/native-mbox/` directory. The format is
    different; expect a one-time conversion script (or hand-conversion for
    small archives).
 7. **Run as primary for a defined window** (a week, two weeks). If no

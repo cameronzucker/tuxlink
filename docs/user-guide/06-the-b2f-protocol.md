@@ -77,14 +77,24 @@ F<code> <type> <mid> <size> <compressed-size> 0
 A batch ends with a checksum line `F> <hex>` so the receiver can detect a
 line-noise corruption before answering.
 
-The receiver answers with `FS <one-character-per-proposal>`:
+The receiver answers with `FS <one-character-per-proposal>`. Each
+character carries one of three answers, and B2F accepts both a letter
+form and a symbol form (both forms appear in the wild and mean the same
+thing):
 
-- `Y` — yes, send it.
-- `N` — no, reject (already have it, do not want).
-- `=` — defer (have it but accept for re-delivery elsewhere — rarely seen
-  in tuxlink sessions).
+| Answer | Letter form | Symbol form | Meaning |
+|---|---|---|---|
+| Accept | `Y` | `+` | Yes, send it. |
+| Reject | `N` or `R` | `-` | No, do not send (already have it, or do not want). |
+| Defer | `L` or `H` | `=` | Defer to a later turn — rarely seen in tuxlink sessions. |
 
-Accepted messages then transfer, one after the other, in the order proposed.
+Plus an accept-at-offset variant (`A`/`a`/`!` followed by a byte offset)
+that says "I already have the first N bytes — resume from there." This
+is how a partially-transferred message resumes after a mid-session
+dropout, without retransmitting the bytes that already landed.
+
+Accepted messages then transfer, one after the other, in the order
+proposed.
 
 ## End of exchange
 

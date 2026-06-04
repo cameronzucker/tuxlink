@@ -24,8 +24,10 @@ The wizard flow is short:
    shell loads. Skipping this step is fine; the first real Connect will
    surface any auth issue.
 
-The wizard writes to `~/.local/share/com.tuxlink.app/config.json`. Deleting
-that file resets the wizard on next launch.
+The wizard writes to `~/.config/tuxlink/config.json` (the XDG-config
+location, separate from the mailbox data at
+`~/.local/share/com.tuxlink.app/native-mbox/`). Deleting the config file
+resets the wizard on next launch.
 
 Available transports — Telnet (CMS over the internet), Packet (1200-baud
 AX.25 over a radio modem), ARDOP HF, and VARA HF — surface in the folder

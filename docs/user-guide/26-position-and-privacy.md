@@ -31,17 +31,21 @@ carries the rounded grid).
 The Maidenhead Locator System encodes position into letter / number tokens
 of varying precision:
 
-| Precision | Format example | Resolution |
+| Precision | Format example | Resolution at mid-latitudes |
 |---|---|---|
-| 4-character | `CN85` | ~100 km × ~100 km square |
-| 6-character | `CN85qe` | ~5 km × ~5 km square |
-| 8-character | `CN85qe72` | ~250 m × ~250 m square |
-| Full GPS | `37.7749, -122.4194` | sub-meter |
+| 4-character | `CN85` | ~110 km north–south × ~150–200 km east–west — a small county or two |
+| 6-character | `CN85qe` | ~5 km × ~7–10 km — a small town's footprint |
+| 8-character | `CN85qe72` | ~460 m × ~700–900 m — a few city blocks |
+| Full GPS | `37.7749, -122.4194` | sub-meter, depending on receiver |
 
-A 4-character grid identifies the operator's general region — a county or
-two. A 6-character grid identifies the operator's neighborhood. An 8-character
-grid identifies the operator's street. Full GPS identifies the operator's
-chair.
+The east–west dimension shrinks with latitude (it's based on degrees of
+longitude, which converge at the poles), so a 4-character grid covers
+less ground at 60° N than at 30° N.
+
+A 4-character grid identifies the operator's general region — a county
+or two. A 6-character grid identifies the operator's town. An 8-character
+grid identifies a few city blocks around the operator. Full GPS
+identifies the operator's chair.
 
 Tuxlink defaults to 4-character because the privacy / utility curve is
 asymmetric: 4-character is sufficient for most operating uses (gateway

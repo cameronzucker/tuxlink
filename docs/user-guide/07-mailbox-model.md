@@ -62,12 +62,13 @@ sequenceDiagram
 
 ## Persistence
 
-Messages live in `~/.local/share/com.tuxlink.app/mailbox/` as files. Each
-folder is a subdirectory; each message is one file. The format is
-B2F-style (the same compressed envelope the protocol moves on the wire,
-plus a small per-message metadata sidecar).
+Messages live at `~/.local/share/com.tuxlink.app/native-mbox/` as files.
+Each folder is a subdirectory under that root; each message is one file
+inside its folder. The format is B2F-style (the same compressed envelope
+the protocol moves on the wire, plus a small per-message metadata
+sidecar).
 
-The mailbox is portable: copying the `mailbox/` directory to another
+The mailbox is portable: copying the `native-mbox/` directory to another
 machine moves the operator's history. The CMS-side state is unaffected —
 deleting the local mailbox does not delete anything from the CMS, and
 restoring an old mailbox does not resurrect messages that have since been
