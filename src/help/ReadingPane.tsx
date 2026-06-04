@@ -81,7 +81,7 @@ export function ReadingPane({ topic, onNavigate }: ReadingPaneProps) {
     [topic.body],
   );
 
-  useMermaidRender(contentRef);
+  useMermaidRender(contentRef, html);
 
   // Decorate <pre> blocks with copy buttons after the HTML lands. Re-runs
   // when the topic body changes so a newly-rendered topic gets its buttons.

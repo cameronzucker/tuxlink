@@ -18,7 +18,10 @@ import { loadMermaid } from './mermaidLoader';
 
 let renderCounter = 0;
 
-export function useMermaidRender(containerRef: RefObject<HTMLElement | null>): void {
+export function useMermaidRender(
+  containerRef: RefObject<HTMLElement | null>,
+  contentSignal: string,
+): void {
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
@@ -52,5 +55,8 @@ export function useMermaidRender(containerRef: RefObject<HTMLElement | null>): v
     return () => {
       cancelled = true;
     };
-  }, [containerRef]);
+    // contentSignal is the rendered HTML string. Keying the effect on it
+    // ensures topic-switches re-scan + re-render mermaid blocks; keying on
+    // containerRef alone would only fire on mount (the ref identity is stable).
+  }, [containerRef, contentSignal]);
 }
