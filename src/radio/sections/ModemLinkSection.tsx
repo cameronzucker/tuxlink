@@ -132,14 +132,18 @@ export function ModemLinkSection({
   }, [kind, host, port, serialDevice, serialBaud, btMac]);
 
   const loadSerialDevices = useCallback(() => {
+    // tuxlink-61yg: defend against the Tauri invoke resolving to undefined
+    // (mock setups that don't define this command return undefined, which
+    // would set state to undefined and crash the next render at the
+    // `serialDevices.filter(...)` line below).
     void invoke<SerialDeviceDto[]>('packet_list_serial_devices')
-      .then((list) => setSerialDevices(list))
+      .then((list) => setSerialDevices(Array.isArray(list) ? list : []))
       .catch(() => setSerialDevices([]));
   }, []);
 
   const loadBluetoothDevices = useCallback(() => {
     void invoke<BluetoothDeviceDto[]>('packet_list_bluetooth_devices')
-      .then((list) => setBtDevices(list))
+      .then((list) => setBtDevices(Array.isArray(list) ? list : []))
       .catch(() => setBtDevices([]));
   }, []);
 
