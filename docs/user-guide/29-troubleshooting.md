@@ -3,6 +3,37 @@
 Quick diagnostics for the most common issues, plus where to look when
 things are not working.
 
+For a Connect-fails situation specifically, this decision tree narrows
+the cause:
+
+```mermaid
+flowchart TD
+    A["Connect fails"]
+    B{"Session log shows<br/>any output?"}
+    C["UI / wizard issue<br/>('Not configured')"]
+    D{"Got past TCP<br/>connect?"}
+    E["Network / DNS / firewall<br/>(CMS times out)"]
+    F{"Got past login?"}
+    G["Wrong credentials<br/>(password or callsign)"]
+    H{"B2F handshake<br/>completed?"}
+    I["Server / RMS rejected<br/>(check session log)"]
+    J{"Transferred any<br/>messages?"}
+    K["Mid-session dropout<br/>(RF, line noise, abort)"]
+    L["Session completed<br/>but failed differently<br/>— read the log"]
+
+    A --> B
+    B -- "No" --> C
+    B -- "Yes" --> D
+    D -- "No" --> E
+    D -- "Yes" --> F
+    F -- "No" --> G
+    F -- "Yes" --> H
+    H -- "No" --> I
+    H -- "Yes" --> J
+    J -- "No" --> K
+    J -- "Yes" --> L
+```
+
 ## "Not configured" in the message list
 
 The backend has no callsign / grid / transport. Either re-run the wizard

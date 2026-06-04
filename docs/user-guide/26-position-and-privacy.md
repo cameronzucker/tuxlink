@@ -94,6 +94,12 @@ Some operating contexts justify higher precision broadcasts:
 
 ## Changing the settings
 
+<!-- screenshot-needed: docs/user-guide/images/26-position-and-privacy/dashboard-grid-display.png
+     Show: the dashboard ribbon showing the operator's grid square (CN85
+     or similar 4-character) displayed alongside callsign + connection
+     state. Dashboard ribbon crop, ~800x80 (full width, ribbon only). -->
+
+
 **Tools → Settings → GPS & Privacy** opens the inline panel. The settings:
 
 - **GPS state.** Three options: Off (no GPS read), On (read GPS, use

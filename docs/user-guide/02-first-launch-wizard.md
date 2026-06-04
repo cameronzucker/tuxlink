@@ -38,6 +38,27 @@ The wizard flow is short:
    shell loads. Skipping this step is fine; the first real Connect will
    surface any auth issue.
 
+```mermaid
+flowchart TD
+    A["Launch tuxlink"]
+    B{"Config file<br/>exists?"}
+    C["Welcome step"]
+    D["Credentials step<br/>(callsign + grid + password)"]
+    E{"Offline identity?"}
+    F["CMS verify (optional)"]
+    G{"Verify passes?"}
+    H["Skip verify"]
+    I["Shell loads"]
+
+    A --> B
+    B -- "No" --> C --> D --> E
+    E -- "No" --> F --> G
+    G -- "Yes" --> I
+    G -- "No" --> D
+    E -- "Yes" --> H --> I
+    B -- "Yes" --> I
+```
+
 The wizard writes to `~/.config/tuxlink/config.json` (the XDG-config
 location, separate from the mailbox data at
 `~/.local/share/com.tuxlink.app/native-mbox/`). Deleting the config file

@@ -102,6 +102,36 @@ The CMS replies to each requested filename with a separate message, so
 a request that bundled three filenames produces three Inbox messages on
 the next Connect.
 
+```mermaid
+sequenceDiagram
+    participant Op as Operator
+    participant TX as Tuxlink
+    participant CMS as Winlink CMS
+
+    Op->>TX: Tools → Catalog request
+    Op->>TX: Pick PUB_PACKET + PUB_VARA
+    Op->>TX: Send via Telnet
+    TX->>TX: Compose to INQUIRY@winlink.org<br/>Subject: REQUEST<br/>Body: PUB_PACKET\nPUB_VARA
+    TX->>TX: Land in Outbox
+    Op->>TX: Connect
+    TX->>CMS: B2F deliver request
+    CMS-->>TX: B2F accept
+    Note over CMS: Backend fans out request,<br/>queues 2 response messages
+    Op->>TX: Connect (later)
+    CMS->>TX: B2F deliver PUB_PACKET response
+    CMS->>TX: B2F deliver PUB_VARA response
+    TX->>TX: Both land in Inbox
+    Op->>TX: Click PUB_PACKET response
+    TX-->>Op: "Update from this catalog item" affordance
+    Op->>TX: Click affordance
+    TX->>TX: Parse + cache locally
+```
+
+That's the canonical request → response → parse flow. For details on
+which catalog filenames exist, see the catalog index item; the catalog
+network publishes the index plus the list of catalog items as a
+catalog item itself.
+
 ## The RMS gateway list — two mechanisms
 
 The Winlink network publishes the RMS gateway list two ways. Tuxlink's

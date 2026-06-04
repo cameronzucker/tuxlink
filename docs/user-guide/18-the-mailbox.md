@@ -74,6 +74,21 @@ A CMS connect does two passes against the selected transport:
 2. **Inbox pull.** Any waiting mail is downloaded and inserted into the
    Inbox folder.
 
+```mermaid
+stateDiagram-v2
+    [*] --> Drafts : Compose, Save
+    Drafts --> Outbox : Send
+    Outbox --> InFlight : Connect (outbox flush)
+    InFlight --> Sent : CMS accept
+    InFlight --> Outbox : CMS reject (rare)
+    [*] --> Inbox : Connect (inbox pull)
+    Inbox --> Archive : Operator → Move
+    Sent --> Archive : Operator → Move
+    Drafts --> [*] : Operator → Delete (discard)
+    Inbox --> [*] : Operator → Delete (permanent)
+    Archive --> [*] : Operator → Delete (permanent)
+```
+
 The Mailbox bar's "N to send" segment is the canonical "is there work to
 do" indicator — when it shows a number, the next Connect will move those
 messages.

@@ -81,6 +81,35 @@ A clean session ends with a "Disconnected — success" line. The Outbox empties
 to zero, the Sent folder gains one message, and the Inbox gains one message
 (the round-trip copy).
 
+End-to-end the round trip is:
+
+```mermaid
+sequenceDiagram
+    participant Op as Operator
+    participant TX as Tuxlink
+    participant CMS as Winlink CMS
+
+    Op->>TX: Ctrl+N → Compose to self
+    Op->>TX: Save to Outbox
+    Op->>TX: Click Telnet connection
+    Op->>TX: F5 → Connect
+    TX->>CMS: TCP connect
+    TX->>CMS: Login (callsign + MD5 response)
+    TX->>CMS: B2F propose Outbox message
+    CMS-->>TX: B2F accept
+    TX->>CMS: B2F transfer
+    TX->>TX: Move Outbox → Sent
+    CMS->>TX: B2F propose round-trip copy
+    TX-->>CMS: B2F accept
+    CMS->>TX: B2F transfer
+    TX->>TX: Land in Inbox
+    TX->>CMS: FF (close)
+    CMS-->>TX: FF
+    TX-->>Op: Disconnected — success
+```
+
+(the round-trip copy).
+
 ## Read the result
 
 Click **Inbox** in the sidebar. The new message is at the top. Click it; the
