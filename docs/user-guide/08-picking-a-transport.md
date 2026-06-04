@@ -1,4 +1,4 @@
-# Connections
+# Picking a transport
 
 A *connection* in Tuxlink is the specific transport-and-endpoint pairing
 used for one CMS exchange. The folder sidebar lists every configured
@@ -96,5 +96,5 @@ For an emergency RF stop, the right call is the radio's power switch
 
 ## Where next
 
-- [The mailbox](03-mailbox.md) — Inbox, Outbox, Sent, Drafts, Archive.
-- [Settings](07-settings.md) — GPS, privacy, ARDOP, connection.
+- [The mailbox](18-the-mailbox.md) — Inbox, Outbox, Sent, Drafts, Archive.
+- [Settings](27-settings.md) — GPS, privacy, ARDOP, connection.

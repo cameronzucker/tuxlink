@@ -1,4 +1,4 @@
-# Getting started
+# First-launch wizard
 
 Tuxlink is a native Linux desktop Winlink client. On first launch it opens a
 short wizard that captures the minimum identity required to send and receive
@@ -65,6 +65,6 @@ Ctrl+Shift+O) sends it.
 
 ## Where next
 
-- [Connections](02-connections.md) — what Telnet / Packet / ARDOP / VARA each do.
-- [Composing messages](04-composing.md) — drafts, Cc, attachments, forms.
-- [Keyboard shortcuts](09-keyboard.md) — the full accelerator list.
+- [Picking a transport](08-picking-a-transport.md) — what Telnet / Packet / ARDOP / VARA each do.
+- [Composing](19-composing.md) — drafts, Cc, attachments, forms.
+- [Keyboard](28-keyboard.md) — the full accelerator list.

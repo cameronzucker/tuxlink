@@ -84,6 +84,6 @@ operator's default browser. Include:
 
 ## Where next
 
-- [Settings](07-settings.md) — every preference's effect.
-- [Connections](02-connections.md) — what each transport needs.
-- [Getting started](01-getting-started.md) — wizard recovery.
+- [Settings](27-settings.md) — every preference's effect.
+- [Picking a transport](08-picking-a-transport.md) — what each transport needs.
+- [First-launch wizard](02-first-launch-wizard.md) — wizard recovery.
