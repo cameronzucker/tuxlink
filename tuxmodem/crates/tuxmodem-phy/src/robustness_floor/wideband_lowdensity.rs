@@ -145,10 +145,32 @@ impl WidebandLowDensityFloor {
     }
 
     /// Demodulate one OFDM symbol back to a byte payload. Trailing
-    /// zero bytes from the bit-padding are trimmed; multi-symbol
-    /// framing (which would carry the exact byte count explicitly)
-    /// lands in Phase 10.
+    /// zero bytes from the bit-padding are trimmed; for byte-exact
+    /// recovery (including trailing 0x00 in the payload), use
+    /// [`Self::receive_multi`] which carries an explicit length header.
     pub fn receive(&self, samples: &[f32]) -> Result<Vec<u8>, PhyError> {
+        let mut bytes = self.decode_symbol_bytes(samples);
+        let last_nonzero = bytes
+            .iter()
+            .rposition(|&b| b != 0)
+            .map(|i| i + 1)
+            .unwrap_or(0);
+        bytes.truncate(last_nonzero);
+        Ok(bytes)
+    }
+
+    /// Bytes per OFDM symbol after bit→byte packing (full bytes only;
+    /// any trailing sub-byte bits in the data sub-carriers are unused
+    /// padding).
+    pub fn data_bytes_per_symbol(&self) -> usize {
+        self.params.data_indices().len() / 8
+    }
+
+    /// Demod one symbol to its full byte capacity, WITHOUT the
+    /// trailing-zero-trim heuristic that [`Self::receive`] applies.
+    /// Used internally by multi-symbol framing where trailing zeros
+    /// are a legitimate part of a chunk and must NOT be discarded.
+    fn decode_symbol_bytes(&self, samples: &[f32]) -> Vec<u8> {
         let bits_per_sc = self.bits_per_subcarrier();
         let rx = OfdmReceiver::new(&self.params);
         let llrs = rx.demodulate_one_symbol(samples, &bits_per_sc);
@@ -167,13 +189,102 @@ impl WidebandLowDensityFloor {
             }
             bytes.push(b);
         }
-        let last_nonzero = bytes
-            .iter()
-            .rposition(|&b| b != 0)
-            .map(|i| i + 1)
-            .unwrap_or(0);
-        bytes.truncate(last_nonzero);
-        Ok(bytes)
+        bytes
+    }
+
+    /// Modulate a payload of arbitrary length (up to u16::MAX bytes)
+    /// as N OFDM symbols with a 2-byte length-prefix header.
+    ///
+    /// Frame format:
+    /// ```text
+    /// [ len: u16 BE ][ payload bytes (padded with 0x00 to capacity) ]
+    /// │              │
+    /// │              └── payload.len() bytes
+    /// └── 2 bytes
+    /// ```
+    ///
+    /// Packed into N = ceil((2 + payload.len()) / data_bytes_per_symbol)
+    /// OFDM symbols. The last symbol's unused capacity is zero-padded
+    /// at the byte level (receive_multi truncates to declared length).
+    ///
+    /// Output sample count: N × symbol_size_samples.
+    ///
+    /// Errors with [`PhyError::PayloadTooLarge`] when the payload
+    /// exceeds u16::MAX bytes.
+    pub fn transmit_multi(&self, payload: &[u8]) -> Result<Vec<f32>, PhyError> {
+        if payload.len() > u16::MAX as usize {
+            return Err(PhyError::PayloadTooLarge {
+                actual: payload.len(),
+                capacity: u16::MAX as usize,
+            });
+        }
+        let cap = self.data_bytes_per_symbol();
+        // Build header + payload as a contiguous byte stream.
+        let total_len = 2 + payload.len();
+        let symbols_needed = total_len.div_ceil(cap);
+        let mut stream = Vec::with_capacity(symbols_needed * cap);
+        stream.push((payload.len() >> 8) as u8);
+        stream.push((payload.len() & 0xff) as u8);
+        stream.extend_from_slice(payload);
+        // Pad to full symbol capacity.
+        stream.resize(symbols_needed * cap, 0);
+
+        let mut out = Vec::with_capacity(symbols_needed * self.symbol_size_samples());
+        for chunk in stream.chunks(cap) {
+            let symbol = self.transmit(chunk)?;
+            out.extend_from_slice(&symbol);
+        }
+        Ok(out)
+    }
+
+    /// Demodulate a multi-symbol framed payload produced by
+    /// [`Self::transmit_multi`]. Reads the 2-byte length header from
+    /// the first symbol, determines how many additional symbols to
+    /// decode, then concatenates + truncates to the declared length.
+    ///
+    /// Returns [`PhyError::FrameDetect`] when:
+    /// - the input is shorter than one symbol's worth of samples
+    /// - the declared length implies more symbols than the input
+    ///   contains
+    pub fn receive_multi(&self, samples: &[f32]) -> Result<Vec<u8>, PhyError> {
+        let symbol_size = self.symbol_size_samples();
+        let cap = self.data_bytes_per_symbol();
+        if samples.len() < symbol_size {
+            return Err(PhyError::FrameDetect(format!(
+                "input shorter than one symbol: have {} samples, need {symbol_size}",
+                samples.len()
+            )));
+        }
+        // Decode first symbol to read the length header.
+        let first_bytes = self.decode_symbol_bytes(&samples[..symbol_size]);
+        if first_bytes.len() < 2 {
+            return Err(PhyError::FrameDetect(
+                "first symbol decoded fewer than 2 bytes — cannot read length header".into(),
+            ));
+        }
+        let declared_len = ((first_bytes[0] as usize) << 8) | (first_bytes[1] as usize);
+        let total_len = 2 + declared_len;
+        let symbols_needed = total_len.div_ceil(cap);
+        if samples.len() < symbols_needed * symbol_size {
+            return Err(PhyError::FrameDetect(format!(
+                "declared length {declared_len} requires {symbols_needed} symbols \
+                 ({} samples), have {}",
+                symbols_needed * symbol_size,
+                samples.len()
+            )));
+        }
+
+        // Concatenate all symbols' bytes.
+        let mut stream = Vec::with_capacity(symbols_needed * cap);
+        stream.extend_from_slice(&first_bytes);
+        for s in 1..symbols_needed {
+            let start = s * symbol_size;
+            let chunk = self.decode_symbol_bytes(&samples[start..start + symbol_size]);
+            stream.extend_from_slice(&chunk);
+        }
+        // Truncate to declared length (skip header).
+        let payload = stream[2..2 + declared_len].to_vec();
+        Ok(payload)
     }
 }
 
@@ -345,5 +456,172 @@ mod tests {
         // by exactly PREAMBLE_LEN_SAMPLES.
         let with_preamble = floor.transmit_with_preamble(b"OLD").unwrap();
         assert_eq!(with_preamble.len(), a.len() + PREAMBLE_LEN_SAMPLES);
+    }
+
+    // ─── Multi-symbol framing (Phase 10 slice 1, tuxlink-cwjp) ──────
+
+    fn cap() -> usize {
+        WidebandLowDensityFloor::new().data_bytes_per_symbol()
+    }
+
+    fn assert_multi_roundtrip(payload: &[u8]) {
+        let floor = WidebandLowDensityFloor::new();
+        let samples = floor.transmit_multi(payload).unwrap();
+        let decoded = floor.receive_multi(&samples).unwrap();
+        assert_eq!(
+            decoded, payload,
+            "roundtrip failed for {}-byte payload",
+            payload.len()
+        );
+    }
+
+    #[test]
+    fn data_bytes_per_symbol_is_positive() {
+        assert!(cap() > 0);
+        // Wide mode: 74 data subcarriers / 8 bits/byte = 9 bytes.
+        assert_eq!(cap(), 9);
+    }
+
+    #[test]
+    fn multi_roundtrip_empty_payload() {
+        assert_multi_roundtrip(b"");
+    }
+
+    #[test]
+    fn multi_roundtrip_1_byte_payload() {
+        assert_multi_roundtrip(b"X");
+    }
+
+    #[test]
+    fn multi_roundtrip_5_byte_payload() {
+        // Fits in first symbol with header (2 + 5 = 7 ≤ 9).
+        assert_multi_roundtrip(b"HELLO");
+    }
+
+    #[test]
+    fn multi_roundtrip_7_byte_payload_first_symbol_boundary() {
+        // Exactly fills the first symbol's capacity (2 + 7 = 9).
+        assert_multi_roundtrip(b"BORDER!");
+    }
+
+    #[test]
+    fn multi_roundtrip_8_byte_payload_two_symbol_boundary() {
+        // Spills 1 byte into a second symbol (2 + 8 = 10 > 9).
+        assert_multi_roundtrip(b"OVERFLOW");
+    }
+
+    #[test]
+    fn multi_roundtrip_10_byte_payload() {
+        assert_multi_roundtrip(b"TenBytePay");
+    }
+
+    #[test]
+    fn multi_roundtrip_100_byte_payload() {
+        let payload: Vec<u8> = (0..100).map(|i| (i % 251) as u8).collect();
+        assert_multi_roundtrip(&payload);
+    }
+
+    #[test]
+    fn multi_roundtrip_1000_byte_payload() {
+        // Stress: ~111 symbols. Tests that no off-by-one in the
+        // symbol count + length-header arithmetic shifts the alignment.
+        let payload: Vec<u8> = (0..1000).map(|i| (i % 251) as u8).collect();
+        assert_multi_roundtrip(&payload);
+    }
+
+    #[test]
+    fn multi_roundtrip_preserves_trailing_zero_bytes() {
+        // The whole reason multi-symbol uses an explicit length header:
+        // single-symbol receive() trims trailing zeros, losing payload
+        // data. receive_multi MUST preserve them.
+        let payload = b"AB\x00\x00\x00";
+        assert_multi_roundtrip(payload);
+    }
+
+    #[test]
+    fn multi_roundtrip_preserves_leading_zero_bytes() {
+        let payload = b"\x00\x00DATA";
+        assert_multi_roundtrip(payload);
+    }
+
+    #[test]
+    fn multi_roundtrip_all_zeros_payload() {
+        // Edge case: every byte is 0x00. The length header keeps it
+        // recoverable.
+        assert_multi_roundtrip(&[0u8; 30]);
+    }
+
+    #[test]
+    fn transmit_multi_payload_too_large_rejects() {
+        let floor = WidebandLowDensityFloor::new();
+        let oversized = vec![0u8; u16::MAX as usize + 1];
+        let err = floor.transmit_multi(&oversized).unwrap_err();
+        assert!(matches!(err, PhyError::PayloadTooLarge { .. }));
+    }
+
+    #[test]
+    fn receive_multi_rejects_input_shorter_than_one_symbol() {
+        let floor = WidebandLowDensityFloor::new();
+        let too_short = vec![0.0_f32; 10];
+        let err = floor.receive_multi(&too_short).unwrap_err();
+        assert!(matches!(err, PhyError::FrameDetect(_)));
+    }
+
+    #[test]
+    fn receive_multi_rejects_truncated_multi_symbol_input() {
+        // Encode a 100-byte payload (spans many symbols); pass only
+        // the first symbol's samples to receive_multi.
+        let floor = WidebandLowDensityFloor::new();
+        let payload: Vec<u8> = (0..100).map(|i| (i % 251) as u8).collect();
+        let full = floor.transmit_multi(&payload).unwrap();
+        let truncated = &full[..floor.symbol_size_samples()];
+        let err = floor.receive_multi(truncated).unwrap_err();
+        match err {
+            PhyError::FrameDetect(msg) => assert!(
+                msg.contains("requires") && msg.contains("symbols"),
+                "expected truncation message, got: {msg}",
+            ),
+            other => panic!("expected FrameDetect, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn transmit_multi_length_for_small_payload_is_one_symbol() {
+        let floor = WidebandLowDensityFloor::new();
+        // 5-byte payload + 2-byte header = 7 ≤ 9, so 1 symbol.
+        let samples = floor.transmit_multi(b"HELLO").unwrap();
+        assert_eq!(samples.len(), floor.symbol_size_samples());
+    }
+
+    #[test]
+    fn transmit_multi_length_grows_in_symbol_steps() {
+        let floor = WidebandLowDensityFloor::new();
+        let symbol_size = floor.symbol_size_samples();
+        // 100-byte payload + 2-byte header = 102 bytes; with 9
+        // bytes/symbol that's 12 symbols (102/9 = 11.33 → 12).
+        let samples = floor.transmit_multi(&vec![0u8; 100]).unwrap();
+        assert_eq!(samples.len(), 12 * symbol_size);
+    }
+
+    #[test]
+    fn transmit_multi_does_not_use_preamble() {
+        // First samples of transmit_multi should match first samples
+        // of bare transmit() (encoded length-header bytes), NOT the
+        // Zadoff-Chu preamble. Preamble integration is a separate slice.
+        let floor = WidebandLowDensityFloor::new();
+        let preamble = PreambleGenerator::new().generate();
+        let multi = floor.transmit_multi(b"AB").unwrap();
+        // If multi started with the preamble, the first samples would
+        // match preamble samples. Check they DON'T.
+        let mut matches = 0;
+        for (a, b) in multi.iter().zip(preamble.iter()).take(50) {
+            if (a - b).abs() < 1e-6 {
+                matches += 1;
+            }
+        }
+        assert!(
+            matches < 30,
+            "multi output {matches}/50 samples match preamble — looks preamble-prefixed"
+        );
     }
 }
