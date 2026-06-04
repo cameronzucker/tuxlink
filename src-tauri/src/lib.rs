@@ -347,7 +347,6 @@ pub fn run() {
             crate::modem_commands::modem_get_status,   // tuxlink-4ek Task 3.2 (session snapshot)
             crate::modem_commands::modem_ardop_disconnect, // tuxlink-4ek Task 3.2 (clear consent + reset)
             crate::modem_commands::modem_ardop_connect, // tuxlink-4ek Task 3.3 (RADIO-1-gated spawn + ARQ connect)
-            crate::modem_commands::modem_mint_consent, // tuxlink-4ek Task 6.2 (RADIO-1 token mint — backend-only)
             crate::modem_commands::modem_ardop_b2f_exchange, // tuxlink-ytg (B2F over ARDOP — Winlink mail flows)
             // tuxlink-dfmf Phase 2: VARA UI wiring. Minimal TCP-transport lifecycle —
             // open/close/status — plus persisted config + the Pi-availability gating

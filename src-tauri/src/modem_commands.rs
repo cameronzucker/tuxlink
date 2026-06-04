@@ -109,16 +109,6 @@ pub fn modem_get_status(session: State<'_, Arc<ModemSession>>) -> ModemStatus {
     modem_get_status_inner(&session)
 }
 
-/// Mint a fresh per-session consent token and return it to the frontend.
-/// The `modem_ardop_connect` and `modem_ardop_b2f_exchange` paths no longer
-/// require a token (Task 1.1 and Task 1.2 respectively).  This command is
-/// retained until Task 1.4 completes the full consent-token removal sweep.
-/// See [`ModemSession::mint_consent_token`] for storage semantics.
-#[tauri::command]
-pub fn modem_mint_consent(session: State<'_, Arc<ModemSession>>) -> String {
-    session.mint_consent_token()
-}
-
 /// Disconnect the modem: takes the live transport handle, resets status to
 /// Stopped, and shuts the transport down (best-effort `DISCONNECT` on the
 /// cmd socket).
@@ -800,21 +790,14 @@ mod tests {
     }
 
     #[test]
-    fn modem_ardop_disconnect_clears_consent_when_session_was_running() {
+    fn modem_ardop_disconnect_resets_status_to_stopped() {
         let session = Arc::new(ModemSession::new());
-        let token = session.mint_consent_token();
-        // simulate a running session: representative "connected" snapshot.
-        // Plan deviation: the plan's text wrote `ModemState::ConnectedIdle`
-        // which doesn't exist (Task 1.1 used `Idle` / `ConnectedIrs` / `ConnectedIss`).
-        // `ConnectedIrs` is a faithful "running" stand-in.
         let mut s = ModemStatus::stopped();
         s.state = ModemState::ConnectedIrs;
         session.set_status(s);
 
         modem_ardop_disconnect_inner(&session).unwrap();
 
-        // After disconnect, consent token must be invalidated and status reset.
-        assert!(!session.has_valid_token(&token));
         assert_eq!(session.status_snapshot().state, ModemState::Stopped);
     }
 

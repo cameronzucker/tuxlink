@@ -88,7 +88,6 @@ pub struct ModemSession {
 
 struct ModemSessionInner {
     status: ModemStatus,
-    consent_token: Option<String>,
     /// Live transport handle, present after a successful
     /// `modem_ardop_connect`. `Box<dyn ModemTransport>` is `Send` (per
     /// `winlink/modem/mod.rs:47`), so the surrounding `Mutex` is still
@@ -113,16 +112,11 @@ struct ModemSessionInner {
 
 // Manual `Debug` impl: `Box<dyn ModemTransport>` does not implement `Debug`,
 // so `#[derive(Debug)]` would fail. Print the non-transport fields verbatim
-// and a placeholder for the transport handle. The consent token is redacted
-// even in Debug — it's not a secret, but no value to log a live one.
+// and a placeholder for the transport handle.
 impl std::fmt::Debug for ModemSessionInner {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ModemSessionInner")
             .field("status", &self.status)
-            .field(
-                "consent_token",
-                &self.consent_token.as_ref().map(|_| "<redacted>"),
-            )
             .field(
                 "transport",
                 &self
@@ -143,7 +137,6 @@ impl ModemSession {
         Self {
             inner: Mutex::new(ModemSessionInner {
                 status: ModemStatus::stopped(),
-                consent_token: None,
                 transport: None,
                 abort_writer: None,
             }),
@@ -183,52 +176,6 @@ impl ModemSession {
         snap
     }
 
-    /// Generate + remember a new consent token. Returns the token so the
-    /// frontend can pass it to `modem_ardop_connect`.
-    pub fn mint_consent_token(&self) -> String {
-        // 16 random hex chars — enough for in-process uniqueness; not a secret.
-        let token: String = (0..16)
-            .map(|_| {
-                let n: u8 = rand::random::<u8>() & 0xF;
-                std::char::from_digit(n as u32, 16).unwrap()
-            })
-            .collect();
-        self.inner.lock().unwrap().consent_token = Some(token.clone());
-        token
-    }
-
-    /// WARNING: non-destructive equality check; does NOT consume the token.
-    /// Reserved for tests and disconnect-path verification. The per-invocation
-    /// consent path (RADIO-1) MUST use [`consume_consent_token`] so a single
-    /// minted token cannot authorize more than one on-air connect.
-    pub fn has_valid_token(&self, candidate: &str) -> bool {
-        let inner = self.inner.lock().unwrap();
-        inner.consent_token.as_deref() == Some(candidate)
-    }
-
-    /// Atomically verify a candidate token matches the stored token AND clear
-    /// it in the same lock acquisition. Returns true iff the candidate matched
-    /// (and the stored token is now `None`). Returns false if there was no
-    /// stored token, or if the candidate didn't match.
-    ///
-    /// This is the per-invocation consent path: every successful call consumes
-    /// the token, so the operator must mint a fresh one (via the RADIO-1
-    /// modal) before the next on-air connect. Closes the replay window the
-    /// 2026-05-30 Codex adrev round flagged on the non-destructive
-    /// `has_valid_token` check.
-    pub fn consume_consent_token(&self, candidate: &str) -> bool {
-        let mut inner = self.inner.lock().unwrap();
-        let matches = inner.consent_token.as_deref() == Some(candidate);
-        if matches {
-            inner.consent_token = None;
-        }
-        matches
-    }
-
-    pub fn clear_consent_token(&self) {
-        self.inner.lock().unwrap().consent_token = None;
-    }
-
     /// Install a live `ModemTransport` handle in the session. Called from
     /// `modem_ardop_connect_post_consume_with_factory` after a successful
     /// `init` + `connect_arq`.
@@ -245,18 +192,13 @@ impl ModemSession {
         self.inner.lock().unwrap().transport.take()
     }
 
-    /// Atomically take the transport handle, clear the consent token, and
-    /// reset the status to `Stopped`. Returns the prior transport (if any)
-    /// so the caller can call `transport.disconnect(...) + drop` OUTSIDE
-    /// the lock — never call I/O while holding the session mutex.
+    /// Atomically take the transport handle and reset the status to `Stopped`.
+    /// Returns the prior transport (if any) so the caller can call
+    /// `transport.disconnect(...) + drop` OUTSIDE the lock — never call I/O
+    /// while holding the session mutex.
     ///
     /// Single lock acquisition: observers see a consistent
-    /// `(token=None, status=Stopped, transport=None, abort_writer=None)`
-    /// state. Closes the inconsistent-intermediate window the Task 3.2
-    /// code-quality review flagged on `modem_ardop_disconnect_inner` (the
-    /// prior split between `clear_consent_token()` + `set_status(Stopped)`
-    /// widened once Task 3.3 stretched the disconnect path across
-    /// `transport.disconnect()` I/O + SIGINT).
+    /// `(status=Stopped, transport=None, abort_writer=None)` state.
     ///
     /// tuxlink-o3f2: also clears `abort_writer`, since the underlying
     /// TCP write half is owned by the transport's cmd socket and will
@@ -264,7 +206,6 @@ impl ModemSession {
     /// pointing at a dead socket is a footgun for the next connect.
     pub fn reset_to_stopped(&self) -> Option<Box<dyn crate::winlink::modem::ModemTransport>> {
         let mut inner = self.inner.lock().unwrap();
-        inner.consent_token = None;
         inner.status = ModemStatus::stopped();
         inner.abort_writer = None;
         inner.transport.take()
@@ -473,48 +414,20 @@ mod tests {
     }
 
     #[test]
-    fn modem_session_starts_stopped_with_no_token() {
+    fn modem_session_has_no_consent_token_methods() {
+        // SENTINEL: do NOT uncomment — these lines must NOT compile after
+        // Task 1.4 lands.
+        // let session = ModemSession::new();
+        // let _ = session.mint_consent_token();
+        // let _ = session.consume_consent_token("foo");
+        // let _ = session.clear_consent_token();
+        // let _ = session.has_valid_token("foo");
+    }
+
+    #[test]
+    fn modem_session_starts_stopped() {
         let s = ModemSession::new();
         assert_eq!(s.status_snapshot().state, ModemState::Stopped);
-        assert!(!s.has_valid_token("any-token"));
-    }
-
-    #[test]
-    fn modem_session_accepts_minted_token_and_invalidates_on_clear() {
-        let s = ModemSession::new();
-        let t = s.mint_consent_token();
-        assert!(s.has_valid_token(&t));
-        s.clear_consent_token();
-        assert!(!s.has_valid_token(&t));
-    }
-
-    #[test]
-    fn consume_consent_token_returns_true_and_clears_on_match() {
-        let s = ModemSession::new();
-        let t = s.mint_consent_token();
-        // First call: matches and consumes.
-        assert!(s.consume_consent_token(&t));
-        // After consumption the token is gone — a replay must fail.
-        assert!(!s.has_valid_token(&t));
-        assert!(!s.consume_consent_token(&t));
-    }
-
-    #[test]
-    fn consume_consent_token_returns_false_on_mismatch() {
-        let s = ModemSession::new();
-        let _t = s.mint_consent_token();
-        // Wrong candidate must NOT consume the stored token.
-        assert!(!s.consume_consent_token("wrong-token"));
-        // The minted token is still valid because the failed consume did not
-        // clear it. (Equality check failed, so no clear.)
-        assert!(s.has_valid_token(&_t));
-    }
-
-    #[test]
-    fn consume_consent_token_returns_false_when_no_token_stored() {
-        let s = ModemSession::new();
-        // No mint at all → consume must return false (and not panic).
-        assert!(!s.consume_consent_token("any-candidate"));
     }
 
     #[test]
