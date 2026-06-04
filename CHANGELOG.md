@@ -4,6 +4,13 @@ All notable changes to Tuxlink are documented here.
 
 This project adheres to [Semantic Versioning](https://semver.org) with project-specific rules described in [VERSIONING.md](VERSIONING.md). Entries from `v0.0.2` onward are generated automatically by [`release-please`](https://github.com/googleapis/release-please) from [Conventional Commits](https://www.conventionalcommits.org).
 
+## [0.31.0](https://github.com/cameronzucker/tuxlink/compare/v0.30.0...v0.31.0) (2026-06-04)
+
+
+### Features
+
+* **tux-rig-rts:** tux-rig-watchdog SIGKILL-safe PTT daemon (tuxlink-23ps, Phase 1.5) ([09f8702](https://github.com/cameronzucker/tuxlink/commit/09f87020168023fe9e218e62e8afa9f0333ca57d))
+
 ## [0.30.0](https://github.com/cameronzucker/tuxlink/compare/v0.29.0...v0.30.0) (2026-06-04)
 
 
