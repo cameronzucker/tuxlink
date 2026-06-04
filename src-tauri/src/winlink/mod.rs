@@ -10,6 +10,7 @@
 //! back-and-forth exchange with the CMS, the telnet connection, and the
 //! on-disk mailbox.
 
+pub mod auth_taxonomy;
 pub mod ax25;
 pub mod b2f_events;
 pub mod credentials;
