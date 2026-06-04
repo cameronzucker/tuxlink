@@ -1050,6 +1050,7 @@ pub async fn send_form(
 /// WLE contract, so the port is informational — not required for the
 /// frontend's submit-listener wiring).
 #[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct OpenFormResult {
     pub url: String,
     pub port: u16,

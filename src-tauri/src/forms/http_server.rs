@@ -122,8 +122,7 @@ pub struct FormSession {
     /// into a forwarder task without removing the session from the
     /// registry (the registry retains the `FormSession` for its
     /// AbortHandle on `close`). Direct callers of `FormSession::open`
-    /// (e.g., the http_server integration test) still see the channel
-    /// here.
+    /// obtain the receiver via `take_submit_rx()`.
     submit_rx: Option<mpsc::UnboundedReceiver<ParsedBody>>,
     /// AbortHandle for the spawned serve task; calling `abort()` shuts
     /// down the listener (the inner JoinHandle is intentionally not kept
@@ -436,12 +435,12 @@ async fn folder_handler(
 ///
 /// ## Concurrency
 ///
-/// `tokio::sync::Mutex` (not `std::sync::Mutex`) so the async command
-/// handlers can hold the guard across the `FormSession::open` await
-/// without blocking the runtime. Sessions are stored as `Option` slots so
-/// the `submit_rx` can be `take()`n out for the forwarder task at
-/// open-time without removing the session entry from the map (the entry
-/// is removed by `close`).
+/// `tokio::sync::Mutex` (not `std::sync::Mutex`) is forward-defensive:
+/// the current `open` and `close` methods don't hold the guard across an
+/// await, but if a future change does, a `std::sync::Mutex` would block
+/// the tokio runtime worker — `tokio::sync::Mutex` won't. The receiver
+/// is `take()`n out of the session at open-time into a forwarder task;
+/// the session itself stays in the map until `close` removes it.
 pub struct FormSessionRegistry {
     sessions: tokio::sync::Mutex<std::collections::HashMap<String, FormSession>>,
 }
