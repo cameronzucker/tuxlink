@@ -4,6 +4,19 @@ All notable changes to Tuxlink are documented here.
 
 This project adheres to [Semantic Versioning](https://semver.org) with project-specific rules described in [VERSIONING.md](VERSIONING.md). Entries from `v0.0.2` onward are generated automatically by [`release-please`](https://github.com/googleapis/release-please) from [Conventional Commits](https://www.conventionalcommits.org).
 
+## [0.27.0](https://github.com/cameronzucker/tuxlink/compare/v0.26.2...v0.27.0) (2026-06-04)
+
+
+### Features
+
+* **tux-rig-cm108:** CM108-HID PTT primitive + CLI (tuxlink-u1js) ([9714c3d](https://github.com/cameronzucker/tuxlink/commit/9714c3d4e0160cd7c099b82570b7b54617f82354))
+
+
+### Bug Fixes
+
+* **help:** surgical mermaid CSS revert — invisible-diagram regression ([57aee1c](https://github.com/cameronzucker/tuxlink/commit/57aee1c7e090daf4fc8ff64bf375debc5c11fe07))
+* **packaging:** drop reverse-DNS .desktop overlay (tuxlink-mpds) ([fcc4926](https://github.com/cameronzucker/tuxlink/commit/fcc49267be17d2519fe021b9fa0ece82d0061327))
+
 ## [0.26.2](https://github.com/cameronzucker/tuxlink/compare/v0.26.1...v0.26.2) (2026-06-04)
 
 
