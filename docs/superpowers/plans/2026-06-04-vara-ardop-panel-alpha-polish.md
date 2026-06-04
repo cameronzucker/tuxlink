@@ -2,12 +2,16 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Spec:** [docs/superpowers/specs/2026-06-04-vara-ardop-panel-alpha-design.md](../specs/2026-06-04-vara-ardop-panel-alpha-design.md) (commit `73333e2`)
+**Spec:** [docs/superpowers/specs/2026-06-04-vara-ardop-panel-alpha-design.md](../specs/2026-06-04-vara-ardop-panel-alpha-design.md)
 **bd umbrella:** tuxlink-0ye6 (P1; subsumes tuxlink-fzl7 + tuxlink-12sc per dep edges)
 
-**Goal:** Replace the current per-protocol `ArdopRadioPanel` + `VaraRadioPanel` with a single shared `RadioSessionPanel` driven by sidebar intent (cms / p2p / radio-only), introducing a WLE-grounded Open/Close Session lifecycle that auto-arms the listener (for p2p/radio-only) and unlocks outbound dial — while stripping tuxlink-added safeguards (`CONNECT_DEADLINE`, `ConsentModal`, `useConsent`, RADIO-1 identifier surface).
+**Revision history:**
+- 2026-06-04 v1 — mink-harrier-cardinal initial draft (PR #360 merged spec + plan + mocks on main).
+- 2026-06-04 v2 — cypress-glade-peregrine plan-fix bundle (tuxlink-fl6e). Applies operator decisions on bd tuxlink-8gq3 (drop backend consent gate), tuxlink-qtgg (modem-native airtime bound; no replacement cap), tuxlink-d8bq (ship radio-only listener as designed) AND the Codex Round 1 P1+P2 fixes (existing SessionIntent — extend not duplicate; ABORT cmd not DISCONNECT for VARA; ARDOP connect_arq inside b2f_exchange not at open; backend session arbiter for transport ownership; backend-status-driven lifecycle; per-protocol transportKind on adapters). Codex rounds 2-5 pending.
 
-**Architecture:** One React component (`RadioSessionPanel`) parameterized by `RadioPanelMode` props, with a per-protocol adapter (`ardopAdapter`, `varaHfAdapter`, `varaFmAdapter`) supplying Tauri command names + the settings-expander render function. Backend grows a `SessionIntent { Cms, P2p, RadioOnly }` enum and per-protocol `*_open_session(intent)` / `*_close_session()` / `*_b2f_exchange(target, intent)` Tauri commands; `*_open_session` opens the transport AND auto-arms the listener (for intent in `{p2p, radio-only}`) as one operation. The `consent_token` parameter is removed from all ARDOP commands; a backend in-process busy guard against frontend double-call replaces the RADIO-1 modal.
+**Goal:** Replace the current per-protocol `ArdopRadioPanel` + `VaraRadioPanel` with a single shared `RadioSessionPanel` driven by sidebar intent (cms / p2p / radio-only), introducing a WLE-shaped Open/Close Session lifecycle that auto-arms the listener (for p2p/radio-only) and unlocks outbound dial — while fully removing tuxlink-added safeguards (`CONNECT_DEADLINE`, `ConsentModal`, `useConsent`, backend `mint_consent_token` / `consume_consent_token` round-trip, RADIO-1 identifier surface). The Part 97 consent is the operator's click on the lifecycle / Connect / Send/Receive button; no in-process token round-trip is added.
+
+**Architecture:** One React component (`RadioSessionPanel`) parameterized by `RadioPanelMode` props, with a per-protocol adapter (`ardopAdapter`, `varaHfAdapter`, `varaFmAdapter`) supplying Tauri command names + the per-protocol `transportKind` value (so VARA FM is not silently logged as VARA HF) + the settings-expander render function. Lifecycle state derives from the backend status snapshot (`modem_get_status` / `vara_status`) via subscription — local React `useState` is for transient UI affordances only, never the lifecycle source of truth. Backend extends the EXISTING `SessionIntent` enum at `src-tauri/src/winlink/session.rs:109` with serde derives + an `auto_arms_listener` method (Codex Round 1 P1 #6: the enum already exists; the earlier plan would have created a duplicate). New per-protocol `*_open_session(intent, transport_kind)` / `*_close_session()` Tauri commands open the transport + arm the listener (for intent in `{p2p, radio-only}`); `*_open_session` does NOT call `connect_arq` / `CONNECT` (Codex Round 1 P1 #1: that happens inside the Connect-button command `modem_*_b2f_exchange`). VARA's `abort_in_flight` sends `ABORT\r` (Codex Round 1 P1 #4: VARA's codec models Abort separately from Disconnect; ABORT is hard tear-down within ~2s, DISCONNECT can wait for the current burst). A backend session arbiter (Phase 4 Task 4.3) serializes transport ownership between the listener consumer task and outbound dial (Codex Round 1 P1 #5: without it the spec's "listener stays armed while operator dials outbound" is architecturally undefined). The `CONNECT_DEADLINE = 120s` constant is dropped entirely with no replacement wall-clock cap — bound is ardopcf's `ARQTIMEOUT` plus the operator's ABORT button (operator decision bd tuxlink-qtgg).
 
 **Tech Stack:** TypeScript / React (frontend, Vite + Vitest), Rust / Tauri 2 (backend, `cargo test`), `pnpm` for JS dependency management.
 
@@ -15,9 +19,14 @@
 
 ## How to use this plan
 
-- **Base branch:** branch off `origin/main` as `bd-tuxlink-0ye6/vara-ardop-panel-alpha-polish` (per ADR 0004 + ADR 0008's worktree-issue-ownership rule). Create a worktree at `worktrees/tuxlink-0ye6/` and claim it on the bd issue.
-- **Phases are sequential.** Phase 1 (safeguard strip) is a clean-slate prerequisite for Phases 3 + 5. Phase 2 (type widening) unblocks Phases 3 + 5. Phases 3 + 4 are backend; 5 + 6 are frontend.
-- **Within a phase, tasks are roughly sequential** unless explicitly noted as parallelizable.
+- **Base branch:** branch off `origin/main` as `bd-tuxlink-0ye6/vara-ardop-panel-alpha-polish-v2` (or a similar new slug — the original PR #360 worktree is merged-dead; the impl run needs a fresh worktree off current main). Per ADR 0004 + ADR 0008's worktree-issue-ownership rule. Create a worktree at `worktrees/tuxlink-0ye6-v2/` and claim it on the bd issue.
+- **Phase order matters.** Per Codex Round 1 P2 #11: each phase MUST end with the test suite green. Phase 1 (safeguard strip) intentionally goes FIRST — that's the operator's directive (drop the modal + token round-trip; modem-native airtime bound). It still ends green: each task's "expect FAIL → make it green" cycle holds within the task, and no task pushes interim broken state. Phase 4 (ABORT side-channel + session arbiter) is a **precondition for Phase 1.5** (the actual `Duration::MAX` substitution in `connect_arq`) — Task 1.5 references this dependency and gates on it; in practice this means working Phase 4.1 before Task 1.5's Step 3.
+- **Within a phase, tasks are sequential** unless explicitly noted as parallelizable. The dependency edges below override "naive" task ordering:
+  - Task 1.5 (drop CONNECT_DEADLINE) depends on Task 4.1 (VARA ABORT) landing first.
+  - Task 3.6 (ARDOP b2f_exchange does `connect_arq`) depends on Task 3.5 (ardop_open_session spawns ardopcf without `connect_arq`).
+  - Task 4.3 (session arbiter) is a precondition for Phase 5 (shared panel).
+  - Tasks 3.2 / 3.3 / 3.4 / 3.5 / 3.6 accept `transport_kind` per Task 5.1's amendment — work it in when implementing each, not as a separate sweep.
+- **No "expect broken tests" framing.** Codex Round 1 P2 #11 explicitly flagged any "don't fix yet" / "tests stay red until next task" framing as unacceptable. If a task description below contains such language, treat it as a defect and ensure the task lands green; flag it in commit body so the issue is traceable.
 - **TDD discipline:** each task has Write-test → Verify-fails → Implement → Verify-passes → Commit. Don't skip "verify-fails" — that's the gate that catches false-positive tests.
 - **Commit cadence:** one commit per task unless a task says otherwise. Use conventional types (`feat`/`fix`/`refactor`/`test`/`chore`). Include `Agent:` trailer with your session moniker + `Co-Authored-By:` (per CLAUDE.md).
 - **Push cadence:** push the instant a unit is committed + tests green (per the `never-hold-a-push` memory). Don't batch.
@@ -29,12 +38,16 @@
 
 **Files this plan will CREATE:**
 
-- `src/radio/modes/RadioSessionPanel.tsx` — shared component
+- `src/radio/modes/RadioSessionPanel.tsx` — shared component (backend-status-driven lifecycle)
 - `src/radio/modes/RadioSessionPanel.css` — sibling styles
 - `src/radio/modes/RadioSessionPanel.test.tsx` — component tests
-- `src/radio/modes/radioSessionAdapters.ts` — per-protocol adapter interface + impls
+- `src/radio/modes/radioSessionAdapters.ts` — per-protocol adapter (carries `transportKind`)
 - `src/radio/modes/radioSessionAdapters.test.ts` — adapter tests
-- `src-tauri/src/winlink/session_intent.rs` — `SessionIntent` enum (or extend `winlink/mod.rs`)
+- `src/radio/modes/useRadioSessionLifecycle.ts` — hook deriving lifecycle from backend status snapshot
+
+**Files this plan will NOT create** (Codex Round 1 P1 #6):
+
+- ~~`src-tauri/src/winlink/session_intent.rs`~~ — `SessionIntent` already exists at `src-tauri/src/winlink/session.rs:109`; we EXTEND it (add serde derives + `auto_arms_listener` method), we do not duplicate it.
 
 **Files this plan will DELETE:**
 
@@ -49,11 +62,13 @@
 - `src/radio/types.ts` — widen `RadioPanelMode.intent` to include `radio-only`
 - `src/radio/radioPanelVisibility.ts` — thread `radio-only` through visibility router
 - `src/radio/RadioPanel.tsx` — switch ardop-hf/vara-hf/vara-fm to render `RadioSessionPanel`
-- `src-tauri/src/modem_commands.rs` — drop `CONNECT_DEADLINE`, drop `consent_token` params, add `intent` params, add ARDOP session-lifecycle commands
-- `src-tauri/src/ui_commands.rs` — rename `vara_start_session` → `vara_open_session(intent)`, `vara_stop_session` → `vara_close_session()`, add `modem_vara_b2f_exchange`, wire ABORT side-channel
-- `src-tauri/src/lib.rs` — register new Tauri commands, drop deleted ones
-- `src-tauri/src/winlink/modem/vara/transport.rs` — add `try_clone_abort_writer` for VARA
-- `src-tauri/src/winlink/modem/vara/session.rs` (if separate) — add `abort_in_flight` mirroring ARDOP
+- `src-tauri/src/modem_commands.rs` — drop `CONNECT_DEADLINE` (no replacement), drop `consent_token` params, add `intent` + `transport_kind` params, add ARDOP session-lifecycle commands, add `connect_arq` step to `modem_ardop_b2f_exchange`
+- `src-tauri/src/ui_commands.rs` — rename `vara_start_session` → `vara_open_session(intent, transport_kind)`, `vara_stop_session` → `vara_close_session()`, add `modem_vara_b2f_exchange(target, intent, transport_kind)`, wire ABORT side-channel
+- `src-tauri/src/lib.rs` — register new Tauri commands, drop deleted ones (`modem_mint_consent` goes; `vara_start_session` / `vara_stop_session` get renamed)
+- `src-tauri/src/winlink/session.rs` — add serde derives + `auto_arms_listener` to existing `SessionIntent`; add backend session arbiter on `ModemSession` (Task 4.3)
+- `src-tauri/src/winlink/modem/vara/transport.rs` — add `try_clone_abort_writer` (ABORT side-channel)
+- `src-tauri/src/winlink/modem/vara/session.rs` — add `abort_in_flight` (sends `ABORT\r`, not `DISCONNECT\r`) + arbiter on `VaraSession`
+- `src-tauri/src/winlink/modem/vara/listener.rs` — yield + reclaim transport via arbiter (Task 4.3)
 - `src/modem/useModemStatus.ts` — if it references consent fields, drop them
 
 ---
@@ -240,23 +255,31 @@ cargo --manifest-path src-tauri/Cargo.toml test \
 
 Expected: PASS.
 
-- [ ] **Step 5: Run all backend tests to surface fallout from signature change**
+- [ ] **Step 5: Run all backend tests; fix every breakage from the signature change in THIS commit**
 
 ```bash
 cargo --manifest-path src-tauri/Cargo.toml test
 ```
 
-Expected: some failures in tests that still pass `consent_token` — that's fine, Tasks 1.2 + 1.3 fix the callers. Note them; don't fix yet.
+Expected: PASS for everything. **Codex Round 1 P2 #11 + operator commit-discipline:** the earlier draft permitted fallout from this task to stay red until Tasks 1.2 + 1.3. That's a phase-greenness defect. Instead: inside THIS task, update every caller of `modem_ardop_connect` to pass the new signature (no `consent_token`), and update every test that asserted on the old signature. If that means Tasks 1.2 + 1.3 partially collapse into this one — that's fine, a green phase is the priority.
+
+If touching the callers makes Task 1.1 too large, split Task 1.1 itself into 1.1a + 1.1b at a green-test boundary. Don't push a red suite.
 
 - [ ] **Step 6: Commit**
 
 ```bash
 git add src-tauri/src/modem_commands.rs src-tauri/src/winlink/modem/ardop/session.rs
+# Plus whichever caller / test files needed updates to keep the suite green.
 git commit -m "refactor(modem-ardop): replace consent-token gate with busy guard
 
 Drops the RADIO-1 consume_consent_token atomic; the consent modal goes
-away in a follow-up task. Internal AtomicBool busy guard preserves the
+away in Task 1.3. Internal AtomicBool busy guard preserves the
 dup-call defense without a user-facing modal.
+
+Per Codex Round 1 P2 #11 + operator decision bd tuxlink-8gq3: this
+task keeps the full test suite green by updating every direct caller
+of the old signature in the same commit. If callers collapse with
+Tasks 1.2/1.3 work, that's intentional.
 
 Spec §2 \"No tuxlink-added safeguards\"; bd tuxlink-0ye6.
 
@@ -548,39 +571,65 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 git push
 ```
 
-### Task 1.5: Drop `CONNECT_DEADLINE` constant + 120s bound
+### Task 1.5: Drop `CONNECT_DEADLINE` constant + 120s bound (no replacement)
 
 **Files:**
 - Modify: `src-tauri/src/modem_commands.rs:25` — delete `const CONNECT_DEADLINE: Duration = ...`
-- Modify: `src-tauri/src/modem_commands.rs` connect path — replace `CONNECT_DEADLINE` with the modem-native deadline or `Duration::MAX` if no modem-native default exists
+- Modify: `src-tauri/src/modem_commands.rs` connect path — pass `Duration::MAX` (or equivalent — see Step 3) so the modem-native `ARQTIMEOUT` is the wall-clock bound. **Do NOT introduce a `CONNECT_TCP_WEDGE_GUARD` or any other tuxlink-added wall-clock cap.**
 
-**Rationale per spec §2:** ardopcf's `ARQTIMEOUT` and the radio operator's TX-timer are the legitimate bounds. The tuxlink-added 120s cap was reactive to the 2026-05-22 runaway, but the proper fix (per the spec) is the side-channel ABORT (Task 4.x for VARA; ARDOP already has it post-tuxlink-o3f2). Dropping the cap lets operators dial long-haul / weak-signal connects without the artificial cutoff.
+**Rationale per spec §2 + operator decision 2026-06-04 (bd tuxlink-qtgg):** ardopcf's `ARQTIMEOUT` (configurable; default 30s for idle, but bounds keyed airtime via `ARQTIMEOUT × CONNECT_REPEAT` cycles) and the operator's ABORT-button click are the legitimate bounds. The tuxlink-added 120s cap was reactive to the 2026-05-22 runaway; the proper fix is the side-channel ABORT (ARDOP already has it post-tuxlink-o3f2; VARA gets it in revised Phase 4). An earlier draft of this plan introduced a 600s "TCP-wedge guard" as a replacement — Codex Round 1 P1 #3 + operator decision bd tuxlink-qtgg both reject this: 600s is real airtime, 5× the original cap, and the operator-click on Open Session / Connect / Send-Receive plus the ABORT button is the bound. Long-haul / weak-signal connects that genuinely run minutes are operator-chosen RF behavior; the agent does not second-guess the operator's airtime budget.
 
-- [ ] **Step 1: Write the failing test — connect-with-deadline behavior is removed**
+**Precondition:** Task 4.1 (revised — VARA ABORT side-channel via `ABORT\r`, not `DISCONNECT\r`) MUST land before this task, so that VARA's Close Session can reliably stop TX within ~2s. ARDOP's ABORT side-channel already exists. Both protocols must have a working ABORT before the 120s cap is dropped.
 
-If any current test asserts the 120s bound (`grep -rn "CONNECT_DEADLINE\|120" src-tauri/src/modem_commands.rs`), it's the failing test. Otherwise:
+- [ ] **Step 1: Verify ARDOP ABORT path is wired** (sanity check before stripping the cap)
+
+```bash
+# Confirm ARDOP's abort path exists and is invokable from Tauri.
+grep -rn "abort_in_flight\|install_abort_writer" src-tauri/src/modem_commands.rs src-tauri/src/winlink/modem/ardop/ | head -20
+```
+
+Expected: matches for `abort_in_flight` exist on ARDOP's `ModemSession` and are invoked by `modem_ardop_close_session` (or equivalent).
+
+If the ARDOP abort path is NOT wired or is broken, STOP. Fix it before continuing. The 120s cap is the current backstop; we don't drop it without a working replacement.
+
+- [ ] **Step 2: Verify VARA ABORT path is wired** (revised Phase 4 precondition)
+
+```bash
+# Phase 4.1 (revised) must have landed.
+grep -rn "abort_in_flight\|install_abort_writer" src-tauri/src/winlink/modem/vara/ src-tauri/src/ui_commands.rs | head -20
+grep -rn 'ABORT' src-tauri/src/winlink/modem/vara/codec.rs | head -10
+```
+
+Expected: matches for `abort_in_flight` exist on VARA's `VaraSession`; codec emits `ABORT\r` for `Command::Abort`.
+
+If the VARA abort path is NOT wired, STOP. Phase 4.1 (revised) is the precondition.
+
+- [ ] **Step 3: Write the failing test — `CONNECT_DEADLINE` symbol is gone**
 
 ```rust
 #[test]
-fn connect_arq_no_longer_uses_connect_deadline_constant() {
-    // Sentinel: this file must not contain the symbol after Task 1.5.
+fn modem_commands_does_not_define_connect_deadline() {
     let source = include_str!("modem_commands.rs");
     assert!(
         !source.contains("CONNECT_DEADLINE"),
-        "modem_commands.rs still references CONNECT_DEADLINE — spec §2 mandates removal"
+        "modem_commands.rs still references CONNECT_DEADLINE — spec §2 + operator decision bd tuxlink-qtgg mandate removal"
+    );
+    assert!(
+        !source.contains("CONNECT_TCP_WEDGE_GUARD"),
+        "modem_commands.rs introduces a CONNECT_TCP_WEDGE_GUARD substitute — Codex Round 1 P1 #3 + operator decision bd tuxlink-qtgg reject any tuxlink-added wall-clock cap"
     );
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [ ] **Step 4: Run test to verify it fails**
 
 ```bash
-cargo --manifest-path src-tauri/Cargo.toml test connect_arq_no_longer_uses_connect_deadline_constant
+cargo --manifest-path src-tauri/Cargo.toml test modem_commands_does_not_define_connect_deadline
 ```
 
 Expected: FAIL — `CONNECT_DEADLINE` is currently defined and referenced.
 
-- [ ] **Step 3: Drop the constant + replace at the call site**
+- [ ] **Step 5: Drop the constant + pass `Duration::MAX` (or equivalent) at the call site**
 
 In `src-tauri/src/modem_commands.rs`, delete:
 
@@ -588,44 +637,53 @@ In `src-tauri/src/modem_commands.rs`, delete:
 const CONNECT_DEADLINE: Duration = Duration::from_secs(120);
 ```
 
-At the call site (`transport.connect_arq(target, CONNECT_REPEAT, CONNECT_DEADLINE)`), pass a long deadline that lets ardopcf's `ARQTIMEOUT` (Task 0.x: the existing `ARQ_TIMEOUT_SECS = 30` already covers idle; the modem-native connect timeout depends on `ARQTIMEOUT × CONNECT_REPEAT` plus protocol overhead). A safe `Duration::from_secs(600)` (10 minutes) sentinel is acceptable as a defense-in-depth ceiling against a wedged TCP socket; it's not a tuxlink-added bounded-airtime cap, it's a TCP-wedge guard. Alternative: pass `Duration::MAX` and rely on operator-driven Close Session.
+At the call site `transport.connect_arq(target, CONNECT_REPEAT, CONNECT_DEADLINE)`:
 
-Pick: `Duration::from_secs(600)` as a TCP-wedge guard, documented as such in a one-line comment:
+- If `connect_arq` requires a `Duration` parameter for the wall-clock timeout, pass `Duration::MAX` — semantic intent: "no wall-clock bound; the bound is ARQTIMEOUT × CONNECT_REPEAT plus operator ABORT."
+- If `connect_arq`'s signature allows `Option<Duration>` or similar opt-out, prefer that.
+- If the `Duration::MAX` value tickles an overflow in downstream `tokio::time::timeout`-style code, refactor the connect path to skip the timeout wrapper entirely. Do not work around overflow by re-introducing a short-ish cap.
+
+Document the choice with a one-line comment:
 
 ```rust
-// TCP-wedge guard, not an airtime cap — operator's Close Session aborts
-// the on-air connect via the side-channel writer (tuxlink-o3f2).
-const CONNECT_TCP_WEDGE_GUARD: Duration = Duration::from_secs(600);
+// No tuxlink wall-clock bound on ARQCALL; bound is ardopcf's ARQTIMEOUT × CONNECT_REPEAT
+// plus the operator's ABORT-button click (Close Session → abort_in_flight).
+// Operator decision 2026-06-04 (bd tuxlink-qtgg) + Codex Round 1 P1 #3.
+transport.connect_arq(target, CONNECT_REPEAT, Duration::MAX).await?;
 ```
 
-Update the call site to use the new name. The constant rename signals the semantic shift (no longer a Part 97 airtime concern; just a stuck-socket defense).
-
-- [ ] **Step 4: Run test to verify it passes**
+- [ ] **Step 6: Run test to verify it passes**
 
 ```bash
-cargo --manifest-path src-tauri/Cargo.toml test connect_arq_no_longer_uses_connect_deadline_constant
+cargo --manifest-path src-tauri/Cargo.toml test modem_commands_does_not_define_connect_deadline
 ```
 
 Expected: PASS.
 
-- [ ] **Step 5: Run full backend test suite**
+- [ ] **Step 7: Run full backend test suite**
 
 ```bash
 cargo --manifest-path src-tauri/Cargo.toml test
 ```
 
-Expected: clean.
+Expected: clean. If any test had asserted "connect-fails-after-120s," replace it with a test that confirms the ABORT path interrupts a long connect (which Phase 4.1 should already cover).
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
 git add -A src-tauri/src/modem_commands.rs
-git commit -m "refactor(modem-ardop): drop CONNECT_DEADLINE = 120s bound
+git commit -m "refactor(modem-ardop): drop CONNECT_DEADLINE entirely (no replacement)
 
-Spec §2 mandates removal of tuxlink-added safeguards. Replaced with a
-600s TCP-wedge guard documented as a stuck-socket defense, not an
-airtime cap. The legitimate abort path is the ABORT side-channel from
-tuxlink-o3f2; the operator's Close Session click drives it.
+Operator decision 2026-06-04 (bd tuxlink-qtgg) + Codex Round 1 P1 #3:
+no tuxlink-added wall-clock cap on ARQCALL. The bound on keyed airtime
+is ardopcf's ARQTIMEOUT × CONNECT_REPEAT plus the operator's ABORT-button
+click. Precondition: ABORT side-channel reliable (already on ARDOP via
+tuxlink-o3f2; on VARA via revised Phase 4.1).
+
+An earlier draft of this task introduced a 600s 'TCP-wedge guard' as a
+defense-in-depth replacement; that approach was rejected by Codex Round 1
+(real airtime, 5× the original, conflicts with no-tuxlink-added-safeguards)
+and by the operator's direct ratification.
 
 Agent: <YOUR-MONIKER>
 Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
@@ -967,132 +1025,134 @@ git push
 
 ## Phase 3 — Backend `SessionIntent` enum + session lifecycle commands
 
-### Task 3.1: Add `SessionIntent` enum
+### Task 3.1: Extend the existing `SessionIntent` enum with serde + `auto_arms_listener`
+
+**Codex Round 1 P1 #6 + memory `feedback_verify_handoff_runtime_provenance`:** `SessionIntent` ALREADY EXISTS at `src-tauri/src/winlink/session.rs:109-136` with variants `Cms` (default), `RadioOnly`, `PostOffice`, `Mesh`, `P2p`, and an `impl` block at `:178` exposing `routing_flag(self) -> Option<RoutingFlag>`. Existing derives: `Debug, Clone, Copy, PartialEq, Eq, Default`. An earlier draft of this plan would have created a duplicate enum at `src-tauri/src/winlink/session_intent.rs` — DO NOT DO THAT. Extend the existing one.
 
 **Files:**
-- Create: `src-tauri/src/winlink/session_intent.rs` (or extend `src-tauri/src/winlink/mod.rs` with the enum if that's the project's convention for small modules)
-- Modify: `src-tauri/src/winlink/mod.rs` to `pub mod session_intent; pub use session_intent::SessionIntent;`
+- Modify: `src-tauri/src/winlink/session.rs` — add `Serialize, Deserialize` derives + `#[serde(rename_all = "kebab-case")]` + `auto_arms_listener(self) -> bool` method
+- Do NOT create `src-tauri/src/winlink/session_intent.rs`. Do NOT touch `src-tauri/src/winlink/mod.rs` for a re-export — `SessionIntent` is already exposed via the existing module structure (verify with `grep -rn "use.*SessionIntent" src-tauri/src/`).
 
-- [ ] **Step 1: Write the failing test — SessionIntent serializes to camelCase strings**
+**Pre-flight check before writing tests:**
 
-In `src-tauri/src/winlink/session_intent.rs` (test module at the bottom of the file):
+```bash
+# Confirm the enum + impl are where Codex said they are.
+grep -n "pub enum SessionIntent\|impl SessionIntent\|fn routing_flag" /home/administrator/Code/tuxlink/worktrees/bd-tuxlink-fl6e-plan-revision-codex-r1/src-tauri/src/winlink/session.rs | head
+```
+
+Expected: matches at `:109`, `:178`, `:182` (or close — file may have drifted by a few lines since 2026-06-04).
+
+- [ ] **Step 1: Write the failing tests — serde round-trip + `auto_arms_listener`**
+
+Add to the existing `mod tests` block in `src-tauri/src/winlink/session.rs`:
 
 ```rust
-use serde_json;
-
 #[test]
-fn session_intent_serializes_to_kebab_case_strings() {
-    let cms = SessionIntent::Cms;
-    let p2p = SessionIntent::P2p;
-    let ro  = SessionIntent::RadioOnly;
-    assert_eq!(serde_json::to_string(&cms).unwrap(), "\"cms\"");
-    assert_eq!(serde_json::to_string(&p2p).unwrap(), "\"p2p\"");
-    assert_eq!(serde_json::to_string(&ro).unwrap(),  "\"radio-only\"");
+fn session_intent_serializes_kebab_case() {
+    use serde_json;
+    assert_eq!(serde_json::to_string(&SessionIntent::Cms).unwrap(),         "\"cms\"");
+    assert_eq!(serde_json::to_string(&SessionIntent::P2p).unwrap(),         "\"p2p\"");
+    assert_eq!(serde_json::to_string(&SessionIntent::RadioOnly).unwrap(),   "\"radio-only\"");
+    assert_eq!(serde_json::to_string(&SessionIntent::PostOffice).unwrap(),  "\"post-office\"");
+    assert_eq!(serde_json::to_string(&SessionIntent::Mesh).unwrap(),        "\"mesh\"");
 }
 
 #[test]
 fn session_intent_deserializes_kebab_case() {
+    use serde_json;
     let cms: SessionIntent = serde_json::from_str("\"cms\"").unwrap();
     let p2p: SessionIntent = serde_json::from_str("\"p2p\"").unwrap();
     let ro:  SessionIntent = serde_json::from_str("\"radio-only\"").unwrap();
+    let po:  SessionIntent = serde_json::from_str("\"post-office\"").unwrap();
+    let me:  SessionIntent = serde_json::from_str("\"mesh\"").unwrap();
     assert_eq!(cms, SessionIntent::Cms);
     assert_eq!(p2p, SessionIntent::P2p);
     assert_eq!(ro,  SessionIntent::RadioOnly);
+    assert_eq!(po,  SessionIntent::PostOffice);
+    assert_eq!(me,  SessionIntent::Mesh);
+}
+
+#[test]
+fn auto_arms_listener_matches_spec_matrix() {
+    // Per spec §3 capability matrix — only intents that accept inbound auto-arm.
+    assert!(!SessionIntent::Cms.auto_arms_listener());
+    assert!( SessionIntent::P2p.auto_arms_listener());
+    assert!( SessionIntent::RadioOnly.auto_arms_listener());
+    // PostOffice + Mesh are out of alpha scope (sessionTypes.ts `built: false`); their
+    // auto-arm behavior is defined-but-unused. Codify the current intent so a future
+    // change is a deliberate decision, not a silent flip.
+    assert!(!SessionIntent::PostOffice.auto_arms_listener());
+    assert!(!SessionIntent::Mesh.auto_arms_listener());
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [ ] **Step 2: Run tests to verify they fail**
 
 ```bash
-cargo --manifest-path src-tauri/Cargo.toml test session_intent_serializes
+cargo --manifest-path src-tauri/Cargo.toml test --package tuxlink-tauri \
+  session_intent_serializes_kebab_case \
+  session_intent_deserializes_kebab_case \
+  auto_arms_listener_matches_spec_matrix
 ```
 
-Expected: FAIL — `SessionIntent` doesn't exist yet.
+Expected: FAIL — `Serialize` / `Deserialize` not derived; `auto_arms_listener` not defined.
 
-- [ ] **Step 3: Implement the enum**
+- [ ] **Step 3: Add derives + method**
 
-In `src-tauri/src/winlink/session_intent.rs`:
+In `src-tauri/src/winlink/session.rs`, at the `#[derive(...)]` line (currently `:109`):
 
 ```rust
-//! `SessionIntent` — the operator's intent at session-open time:
-//! Cms (Winlink CMS gateway), P2p (direct peer), or RadioOnly (R-pool peer).
-//!
-//! Wire format is kebab-case ("cms" / "p2p" / "radio-only") so the
-//! Tauri JSON payloads match the sidebar's session-type IDs verbatim.
+// BEFORE:
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 
-use serde::{Deserialize, Serialize};
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+// AFTER:
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "kebab-case")]
-pub enum SessionIntent {
-    Cms,
-    P2p,
-    RadioOnly,
-}
-
-impl SessionIntent {
-    /// True for intents that arm a listener at session open (per spec §2).
-    pub fn auto_arms_listener(self) -> bool {
-        matches!(self, SessionIntent::P2p | SessionIntent::RadioOnly)
-    }
-
-    /// The B2F routing flag this intent drains (per spec §3 capability matrix).
-    /// None means "no flag filter; drain everything queued for this transport."
-    pub fn routing_flag(self) -> Option<char> {
-        match self {
-            SessionIntent::Cms => Some('C'),
-            SessionIntent::P2p => None,
-            SessionIntent::RadioOnly => Some('R'),
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    // … the tests from Step 1 …
-
-    #[test]
-    fn auto_arms_listener_matches_spec_matrix() {
-        assert!(!SessionIntent::Cms.auto_arms_listener());
-        assert!( SessionIntent::P2p.auto_arms_listener());
-        assert!( SessionIntent::RadioOnly.auto_arms_listener());
-    }
-
-    #[test]
-    fn routing_flag_matches_spec_matrix() {
-        assert_eq!(SessionIntent::Cms.routing_flag(),       Some('C'));
-        assert_eq!(SessionIntent::P2p.routing_flag(),       None);
-        assert_eq!(SessionIntent::RadioOnly.routing_flag(), Some('R'));
-    }
-}
 ```
 
-In `src-tauri/src/winlink/mod.rs`, add:
+(If `serde` isn't already a project dependency for this file's enclosing crate, verify with `cargo --manifest-path src-tauri/Cargo.toml tree | grep serde`. It's used elsewhere in the project so should be present; if not, `serde = { workspace = true, features = ["derive"] }` in `src-tauri/Cargo.toml`.)
+
+In the existing `impl SessionIntent` block (currently around `:178`), add:
 
 ```rust
-pub mod session_intent;
-pub use session_intent::SessionIntent;
+/// True for intents that auto-arm a listener at Open Session (per spec §2 + §3).
+/// Driven by whether the intent has an inbound side: P2p (any peer) and RadioOnly
+/// (R-pool peer) yes; Cms (CMS gateway is outbound-only from the client's view),
+/// PostOffice and Mesh (out of alpha scope) no.
+pub fn auto_arms_listener(self) -> bool {
+    matches!(self, SessionIntent::P2p | SessionIntent::RadioOnly)
+}
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+**Do NOT** change `routing_flag(self) -> Option<RoutingFlag>` — the existing signature is correct. An earlier draft would have added a parallel `routing_flag(self) -> Option<char>` returning a raw `char`; that would have created a redundant API surface. Keep the existing `RoutingFlag`-returning method; callers that need the `char` go through `RoutingFlag::as_char()`.
+
+- [ ] **Step 4: Run tests to verify they pass**
 
 ```bash
-cargo --manifest-path src-tauri/Cargo.toml test session_intent
+cargo --manifest-path src-tauri/Cargo.toml test --package tuxlink-tauri \
+  session_intent_serializes_kebab_case \
+  session_intent_deserializes_kebab_case \
+  auto_arms_listener_matches_spec_matrix
+# Plus the full file's existing tests, to confirm we didn't break the routing_flag suite.
+cargo --manifest-path src-tauri/Cargo.toml test --package tuxlink-tauri winlink::session::tests
 ```
 
-Expected: all four tests PASS.
+Expected: all PASS.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src-tauri/src/winlink/session_intent.rs src-tauri/src/winlink/mod.rs
-git commit -m "feat(winlink): add SessionIntent enum (Cms / P2p / RadioOnly)
+git add src-tauri/src/winlink/session.rs
+git commit -m "feat(winlink): extend SessionIntent with serde + auto_arms_listener
 
-Spec §3 capability matrix. Backed by serde kebab-case so wire format
-matches the sidebar session-type IDs verbatim. Methods declare which
-intents auto-arm the listener and which routing flags each drains.
+Codex Round 1 P1 #6: SessionIntent already exists at winlink/session.rs
+with Cms/RadioOnly/PostOffice/Mesh/P2p variants and a routing_flag method.
+Earlier plan would have created a duplicate; this commit extends in place.
+
+Adds serde Serialize/Deserialize with kebab-case (so the wire format
+matches the sidebar's session-type IDs verbatim) and an auto_arms_listener
+method matching spec §2's capability matrix (P2p + RadioOnly auto-arm;
+Cms doesn't; PostOffice + Mesh are out of alpha and don't either).
 
 Agent: <YOUR-MONIKER>
 Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
@@ -1530,12 +1590,37 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 git push
 ```
 
-### Task 3.6: Widen `modem_ardop_b2f_exchange` to accept `intent: SessionIntent`
+### Task 3.6: Widen `modem_ardop_b2f_exchange` to perform `connect_arq` + B2F + DISCONNECT, accepting `intent: SessionIntent`
+
+**Codex Round 1 P1 #1:** the current `modem_ardop_b2f_exchange` assumes `modem_ardop_connect` already brought the ARQ link up. After Phase 3, the only way to open the transport is `ardop_open_session`, which (per Task 3.5) does NOT call `connect_arq`. If `modem_ardop_b2f_exchange` runs as written, it sends the B2F handshake over an unconnected data stream → silent failure / on-air weirdness. Fix: Connect button's command (`modem_ardop_b2f_exchange`) performs `connect_arq(target, ...)` BEFORE the B2F handshake, with a test asserting ARQCALL is sent before any B2F byte.
 
 **Files:**
-- Modify: `src-tauri/src/modem_commands.rs` — add `intent` parameter; thread to routing-flag filter
+- Modify: `src-tauri/src/modem_commands.rs` — add `connect_arq` step + `intent` parameter; thread intent to routing-flag filter
 
-- [ ] **Step 1: Write the failing test — exchange filters mailbox by intent's routing flag**
+- [ ] **Step 1: Write the failing test — ARQCALL is sent before B2F handshake**
+
+```rust
+#[tokio::test]
+async fn modem_ardop_b2f_exchange_sends_arqcall_before_b2f() {
+    let state = setup_test_state_with_ardop_stub_capturing_cmds();
+    let _ = modem_ardop_b2f_exchange(
+        state.app_handle, state.session,
+        "K7LED-7".to_string(),
+        SessionIntent::P2p,
+    );
+
+    let cmds = state.captured_cmd_sequence();
+    let arqcall_idx = cmds.iter().position(|c| c.starts_with("ARQCALL"))
+        .expect("ARDOP b2f exchange must send ARQCALL");
+    let b2f_idx = cmds.iter().position(|c| c == "B2F_HANDSHAKE_FIRST_BYTE_SENTINEL")
+        .expect("ARDOP b2f exchange must send B2F handshake bytes");
+    assert!(arqcall_idx < b2f_idx, "ARQCALL must precede B2F handshake (Codex Round 1 P1 #1)");
+}
+```
+
+If the captured-cmd-sequence stub doesn't exist, factor a small helper out of the existing modem-stub harness so commands sent through the transport's writer are recorded in order. The B2F sentinel is whatever marker the test stub uses to identify B2F vs cmd-port bytes.
+
+- [ ] **Step 2: Write the failing test — exchange filters mailbox by intent's routing flag**
 
 ```rust
 #[tokio::test]
@@ -1556,15 +1641,15 @@ async fn modem_ardop_b2f_exchange_radio_only_drains_only_r_flagged() {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [ ] **Step 3: Run tests to verify they fail**
 
 ```bash
-cargo --manifest-path src-tauri/Cargo.toml test modem_ardop_b2f_exchange_radio_only
+cargo --manifest-path src-tauri/Cargo.toml test modem_ardop_b2f_exchange
 ```
 
-Expected: FAIL — current signature doesn't take `intent`.
+Expected: FAIL — current code doesn't `connect_arq` first, and signature doesn't take `intent`.
 
-- [ ] **Step 3: Add intent parameter + thread through**
+- [ ] **Step 4: Add `connect_arq` step + `intent` parameter**
 
 ```rust
 #[tauri::command]
@@ -1577,6 +1662,22 @@ pub fn modem_ardop_b2f_exchange(
     let mut transport = session.take_transport().ok_or_else(|| {
         "ARDOP transport not open — press Open Session before dialing".to_string()
     })?;
+
+    // Bring the ARQ link up. Connect button = Connect + B2F + DISCONNECT (spec §6.1).
+    // Codex Round 1 P1 #1: do NOT skip this — ardop_open_session does not call
+    // connect_arq, so we must do it here, or the B2F handshake runs over an
+    // unconnected data stream.
+    //
+    // No tuxlink wall-clock cap on ARQCALL (operator decision bd tuxlink-qtgg);
+    // bound is ardopcf's ARQTIMEOUT × CONNECT_REPEAT + operator ABORT.
+    if let Err(e) = transport.connect_arq(&target, CONNECT_REPEAT, Duration::MAX) {
+        // Drop the transport back so Open Session is still valid; surface the
+        // connect failure as the exchange error.
+        let _ = transport.disconnect(Duration::from_secs(5));
+        drop(transport);
+        let _ = session.reset_to_stopped();
+        return Err(format!("ARDOP connect failed: {e}"));
+    }
 
     let outcome = run_b2f_with_transport(&app, &mut *transport, &target, intent);
 
@@ -1593,31 +1694,41 @@ fn run_b2f_with_transport(
     target: &str,
     intent: SessionIntent,
 ) -> Result<(), String> {
-    // ... existing body, but pass intent into run_ardop_b2f_exchange so
-    // the mailbox drain filter uses intent.routing_flag().
+    // Existing body — pass intent through to the mailbox-drain filter via
+    // intent.routing_flag().
     crate::winlink_backend::run_ardop_b2f_exchange(
         transport, target, intent, &cfg, &mailbox, Some(&arbiter),
     ).map_err(|e| format!("ARDOP B2F exchange failed: {e}"))
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+**Failure-path note:** if `connect_arq` fails (no response, busy, operator-aborted via ABORT), we tear down the transport and surface the error to the frontend. The session remains in "open" state from `ardop_open_session`'s perspective — operator can retry Connect or click Close Session. We do NOT auto-close the session on connect failure: that would surprise the operator who might want to retry without re-spawning ardopcf.
+
+- [ ] **Step 5: Run tests to verify they pass**
 
 ```bash
 cargo --manifest-path src-tauri/Cargo.toml test modem_ardop_b2f_exchange
 ```
 
-Expected: PASS.
+Expected: PASS for both tests.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
 git add -A
-git commit -m "feat(ardop): widen modem_ardop_b2f_exchange to accept SessionIntent
+git commit -m "feat(ardop): connect_arq inside modem_ardop_b2f_exchange + intent parameter
 
-Spec §3 capability matrix — Cms drains C-flagged, P2p drains unflagged,
-RadioOnly drains R-flagged. Intent flows through to the mailbox drain
-filter via SessionIntent::routing_flag().
+Codex Round 1 P1 #1: ardop_open_session (Task 3.5) spawns ardopcf only;
+the Connect button's command must bring the ARQ link up itself, run B2F,
+and disconnect. Earlier draft would have run B2F over an unconnected
+stream after Phase 3 landed.
+
+Also widens the command to accept SessionIntent so the mailbox drain
+filter routes by spec §3 capability matrix (Cms→C, P2p→none, RadioOnly→R).
+
+Operator decision bd tuxlink-qtgg + Codex Round 1 P1 #3: no tuxlink
+wall-clock cap on the connect_arq step — bound is ardopcf's ARQTIMEOUT
+plus operator ABORT.
 
 Agent: <YOUR-MONIKER>
 Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
@@ -1626,42 +1737,64 @@ git push
 
 ---
 
-## Phase 4 — VARA disarm ABORT side-channel (tuxlink-12sc)
+## Phase 4 — VARA ABORT side-channel + backend session arbiter (tuxlink-12sc + Codex P1 #5)
 
-### Task 4.1: Add `try_clone_abort_writer` + `install_abort_writer` for VARA
+**Phase contract:** by the end of Phase 4, the backend can (a) interrupt a VARA exchange within ~2s via `ABORT\r` (tuxlink-12sc / Codex P1 #4) and (b) atomically arbitrate transport ownership between the auto-armed listener consumer task and the outbound dial command (Codex P1 #5). Both are preconditions for Phase 5's shared panel — without (b) the auto-arm-vs-outbound race makes the shared panel architecturally undefined.
+
+### Task 4.1: Add `try_clone_abort_writer` + `install_abort_writer` for VARA (sends `ABORT\r`, not `DISCONNECT\r`)
 
 **Files:**
 - Modify: `src-tauri/src/winlink/modem/vara/transport.rs` — add abort-writer trait method
 - Modify: `src-tauri/src/winlink/modem/vara/session.rs` (or wherever `VaraSession` lives) — add `install_abort_writer` + `abort_in_flight` mirroring ARDOP's `ModemSession`
 
-**Rationale per spec §9 watched failure mode:** Without this, operator's Close Session click could take 30s+ to interrupt an active B2F (VARA's natural timeout). The ABORT side-channel makes it immediate.
+**Rationale per spec §9 watched failure mode + Codex Round 1 P1 #4:** Without this, operator's Close Session click could take 30s+ to interrupt an active B2F (VARA's natural timeout). The ABORT side-channel makes it immediate (~2s per spec §2 contract).
 
-VARA's cmd-port protocol does NOT have a direct ABORT word like ardopcf's. Per VARA HF/FM spec, the closest is `DISCONNECT` sent on the cmd port — the modem aborts the link and acks. So "abort writer" for VARA is the cmd-port writer; `abort_in_flight` sends `DISCONNECT\r`.
+**An earlier draft of this task wired the abort writer as `DISCONNECT\r`** on the cmd port, on the (wrong) assumption that VARA's cmd protocol has no ABORT word. **Codex Round 1 corrected this:** the VARA command codec at `src-tauri/src/winlink/modem/vara/command.rs:62-65` ALREADY models `Command::Abort` (`"ABORT"`) distinct from `Command::Disconnect` (`"DISCONNECT"`). The VARA HF/FM spec treats them differently — `ABORT` is hard tear-down (interrupts in-flight TX); `DISCONNECT` is graceful (waits for the current burst, can be slow on weak signal modes). The "must interrupt within ~2s" spec requirement is met by `ABORT`, not by `DISCONNECT`.
 
-- [ ] **Step 1: Write the failing test — abort_in_flight sends DISCONNECT on cmd port**
+**Verify before writing tests:**
+
+```bash
+grep -n "Abort\|ABORT" /home/administrator/Code/tuxlink/worktrees/bd-tuxlink-fl6e-plan-revision-codex-r1/src-tauri/src/winlink/modem/vara/command.rs | head
+```
+
+Expected: `Abort` variant + `Self::Abort => "ABORT".into()` line + `"ABORT" => Self::Abort` parser line.
+
+- [ ] **Step 1: Write the failing test — abort_in_flight sends `ABORT\r` first on cmd port**
 
 ```rust
 #[test]
-fn vara_abort_in_flight_writes_disconnect_to_cmd_port() {
+fn vara_abort_in_flight_writes_abort_as_first_command() {
     let session = VaraSession::new();
     let (writer, captured) = test_cmd_writer();
     session.install_abort_writer(Box::new(writer));
 
     session.abort_in_flight().expect("abort writes succeed");
 
-    assert_eq!(captured.lock().unwrap().as_slice(), b"DISCONNECT\r");
+    let bytes = captured.lock().unwrap().clone();
+    // ABORT\r must be the first command on the wire.
+    assert!(
+        bytes.starts_with(b"ABORT\r"),
+        "Codex Round 1 P1 #4: ABORT must be sent FIRST (got {:?}). DISCONNECT can wait for the current burst.",
+        String::from_utf8_lossy(&bytes),
+    );
+    // DISCONNECT may optionally follow to release the slot cleanly; that's fine,
+    // but if it appears it must be AFTER ABORT, not before.
+    if let Some(disc_idx) = bytes.windows(b"DISCONNECT\r".len()).position(|w| w == b"DISCONNECT\r") {
+        let abort_idx = bytes.windows(b"ABORT\r".len()).position(|w| w == b"ABORT\r").unwrap();
+        assert!(abort_idx < disc_idx, "ABORT must precede any DISCONNECT");
+    }
 }
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
 
 ```bash
-cargo --manifest-path src-tauri/Cargo.toml test vara_abort_in_flight
+cargo --manifest-path src-tauri/Cargo.toml test vara_abort_in_flight_writes_abort_as_first_command
 ```
 
 Expected: FAIL — methods don't exist.
 
-- [ ] **Step 3: Implement the methods**
+- [ ] **Step 3: Implement the methods (send `ABORT\r`, optionally followed by `DISCONNECT\r`)**
 
 In `src-tauri/src/winlink/modem/vara/session.rs`:
 
@@ -1676,10 +1809,19 @@ impl VaraSession {
         *self.abort_writer.lock().unwrap() = Some(writer);
     }
 
+    /// Hard-tear-down the current VARA ARQ link. Sends `ABORT\r` first (per
+    /// Codex Round 1 P1 #4 + spec §9 — VARA's codec models Abort as hard
+    /// tear-down distinct from Disconnect's graceful path). Optionally
+    /// follows with `DISCONNECT\r` to release the slot cleanly; ABORT alone
+    /// satisfies the spec's ~2s interrupt requirement.
     pub fn abort_in_flight(&self) -> Result<(), String> {
         let mut guard = self.abort_writer.lock().unwrap();
         let writer = guard.as_mut().ok_or("no abort writer installed")?;
-        writer.write_all(b"DISCONNECT\r").map_err(|e| format!("abort write: {e}"))?;
+        writer.write_all(b"ABORT\r").map_err(|e| format!("abort write: {e}"))?;
+        // Best-effort follow-up DISCONNECT — if it fails we still consider
+        // the abort successful because ABORT alone halts TX. Don't propagate
+        // the error.
+        let _ = writer.write_all(b"DISCONNECT\r");
         writer.flush().map_err(|e| format!("abort flush: {e}"))
     }
 }
@@ -1690,7 +1832,7 @@ In `src-tauri/src/winlink/modem/vara/transport.rs`, add a `try_clone_abort_write
 - [ ] **Step 4: Run test to verify it passes**
 
 ```bash
-cargo --manifest-path src-tauri/Cargo.toml test vara_abort_in_flight
+cargo --manifest-path src-tauri/Cargo.toml test vara_abort_in_flight_writes_abort_as_first_command
 ```
 
 Expected: PASS.
@@ -1699,12 +1841,22 @@ Expected: PASS.
 
 ```bash
 git add -A
-git commit -m "feat(vara-transport): add abort_in_flight side-channel (DISCONNECT\\r)
+git commit -m "feat(vara-transport): add abort_in_flight side-channel (ABORT\\r, not DISCONNECT)
 
-Spec §9 watched failure mode + tuxlink-12sc. VARA's cmd-port protocol
-has no explicit ABORT — DISCONNECT on the cmd port is the immediate-stop
-signal that the modem honors even mid-B2F. Mirror ARDOP's install/clone
-pattern so vara_close_session can interrupt active exchanges.
+Spec §9 watched failure mode + tuxlink-12sc + Codex Round 1 P1 #4.
+
+VARA's cmd-port codec already models Command::Abort separately from
+Command::Disconnect (command.rs:62-65). ABORT is hard tear-down — halts
+TX within ~2s, satisfying the spec's interrupt requirement. DISCONNECT
+is graceful — waits for the current burst, can be slow on weak-signal
+modes, and does NOT satisfy the spec.
+
+An earlier draft of this task wired DISCONNECT on the assumption that
+VARA had no ABORT word; that assumption was wrong and was caught by
+the Codex Round 1 cross-provider review.
+
+Implementation sends ABORT first, optionally followed by DISCONNECT to
+release the slot cleanly. Test asserts ABORT precedes any DISCONNECT.
 
 Agent: <YOUR-MONIKER>
 Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
@@ -1800,17 +1952,215 @@ git push
 bd close tuxlink-12sc
 ```
 
+### Task 4.3: Backend session arbiter — serialize transport ownership between listener consumer + outbound dial
+
+**Codex Round 1 P1 #5:** the existing ARDOP and VARA listener consumer tasks take ownership of the transport for the entire armed window via `take_transport` / `return_transport` on `ModemSession` / `VaraSession`. The spec's "listener stays armed while operator can redial outbound" model is racy without coordination: outbound either finds no transport to dial with (consumer holds it) or pulls it out from under the consumer (silently disarms the listener). Phase 5's shared panel assumes both can coexist within the armed window — that assumption is only true if the backend arbiter sequences them.
+
+**Files:**
+- Modify: `src-tauri/src/winlink/session.rs` (or wherever `ModemSession` lives) — add `take_transport_for_outbound` / `return_transport_from_outbound` pair distinct from the listener's `take_transport` / `return_transport`
+- Modify: `src-tauri/src/winlink/modem/vara/session.rs` — same pair on `VaraSession`
+- Modify: listener consumer tasks (`src-tauri/src/winlink/modem/vara/listener.rs`, ARDOP equivalent) to yield + reclaim the transport when the arbiter signals outbound starts/ends
+- Modify: `modem_ardop_b2f_exchange` (Task 3.6) + `modem_vara_b2f_exchange` (Task 3.4) — call `take_transport_for_outbound` instead of bare `take_transport`; return via `return_transport_from_outbound`
+
+**Arbiter contract** (the load-bearing semantics; tests assert against these):
+
+1. At any moment, AT MOST ONE of `{listener-consumer, outbound-exchange}` owns the transport.
+2. If the listener is armed but idle (no inbound in flight), outbound can request the transport: arbiter signals the listener consumer to yield; consumer yields the transport via `return_transport_to_arbiter`; arbiter hands it to outbound via `take_transport_for_outbound`; outbound completes (success or error); outbound returns the transport via `return_transport_from_outbound`; arbiter hands it back to the listener consumer; consumer re-arms and re-enters its accept loop.
+3. If an inbound exchange is in flight when outbound requests the transport, the arbiter rejects outbound with a "modem busy — inbound in progress" error. The frontend disables the Connect button while inbound is in flight (Task 5.7).
+4. If outbound is in flight and the operator clicks Close Session, the arbiter calls `abort_in_flight` on the outbound side (Task 4.1+4.2) before tearing down the listener; the arbiter's yield-loop unblocks once the outbound side reports done.
+
+The arbiter does NOT need to be a separate type — it can be a small inner state machine on `ModemSession` / `VaraSession` with an enum like `enum TransportOwner { None, ListenerArmed, ListenerInbound, Outbound }` and atomic transitions guarded by the existing mutex.
+
+- [ ] **Step 1: Write the failing test — outbound yields the transport back to the listener after success**
+
+```rust
+#[tokio::test]
+async fn vara_arbiter_returns_transport_to_listener_after_outbound() {
+    let state = setup_test_state();
+    // Open with P2p so listener auto-arms.
+    let _ = vara_open_session(state.app.clone(), state.log.clone(),
+                              state.vara_session.clone(), state.listen_state.clone(),
+                              SessionIntent::P2p, TransportKind::VaraHf).await;
+    assert_eq!(state.vara_session.transport_owner(), TransportOwner::ListenerArmed);
+
+    // Run an outbound exchange (against a stub that immediately returns Ok).
+    let _ = modem_vara_b2f_exchange(state.app.clone(), state.vara_session.clone(),
+                                    "K7LED-7".into(), SessionIntent::P2p,
+                                    TransportKind::VaraHf).await;
+
+    // Listener should be re-armed; transport should be back with the consumer.
+    assert_eq!(state.vara_session.transport_owner(), TransportOwner::ListenerArmed);
+    assert!(state.listen_state.is_armed());
+}
+```
+
+- [ ] **Step 2: Write the failing test — outbound during inbound returns "modem busy"**
+
+```rust
+#[tokio::test]
+async fn vara_arbiter_rejects_outbound_during_inbound_exchange() {
+    let state = setup_test_state_with_listener_accepting();
+    // Simulate an inbound exchange holding the transport.
+    state.vara_session.simulate_inbound_in_progress();
+    assert_eq!(state.vara_session.transport_owner(), TransportOwner::ListenerInbound);
+
+    let result = modem_vara_b2f_exchange(state.app.clone(), state.vara_session.clone(),
+                                         "K7LED-7".into(), SessionIntent::P2p,
+                                         TransportKind::VaraHf).await;
+
+    assert!(result.is_err());
+    assert!(result.unwrap_err().contains("inbound in progress"));
+}
+```
+
+- [ ] **Step 3: Run tests to verify they fail**
+
+```bash
+cargo --manifest-path src-tauri/Cargo.toml test vara_arbiter
+```
+
+Expected: FAIL — the arbiter state machine, `take_transport_for_outbound`, and `transport_owner` accessor don't exist.
+
+- [ ] **Step 4: Implement the arbiter on `VaraSession`**
+
+Sketch (adapt to actual VaraSession internals):
+
+```rust
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TransportOwner {
+    None,                // session closed; no transport
+    ListenerArmed,       // listener consumer holds transport, no inbound exchange in flight
+    ListenerInbound,     // listener consumer holds transport, inbound exchange in flight
+    Outbound,            // outbound exchange holds transport
+}
+
+impl VaraSession {
+    pub fn transport_owner(&self) -> TransportOwner {
+        // Read from inner state
+    }
+
+    /// Outbound request: yield from listener if needed, hand transport to outbound.
+    /// Returns Err if inbound exchange is in flight.
+    pub async fn take_transport_for_outbound(&self) -> Result<VaraTransport, String> {
+        let mut guard = self.inner.lock().await;
+        match guard.transport_owner {
+            TransportOwner::None => Err("session not open".into()),
+            TransportOwner::ListenerInbound => Err("modem busy — inbound exchange in progress".into()),
+            TransportOwner::ListenerArmed => {
+                // Signal listener consumer to yield; await the yield channel.
+                // (The consumer task watches an inner notify and returns its
+                // held transport when notified.)
+                guard.transport_yield_request.notify_one();
+                let transport = self.transport_yield_rx.recv().await.ok_or("listener yield channel closed")?;
+                guard.transport_owner = TransportOwner::Outbound;
+                Ok(transport)
+            }
+            TransportOwner::Outbound => Err("outbound exchange already in flight".into()),
+        }
+    }
+
+    /// Outbound completes: hand transport back; arbiter re-arms listener.
+    pub fn return_transport_from_outbound(&self, transport: VaraTransport) {
+        let mut guard = self.inner.lock().unwrap();
+        guard.transport_owner = TransportOwner::ListenerArmed;
+        // Hand transport back to the listener consumer via its inner channel.
+        let _ = self.transport_return_tx.send(transport);
+    }
+}
+```
+
+The listener consumer task watches `transport_yield_request` + the existing `take_transport` path; when notified, it sends its held transport back through `transport_yield_rx` and awaits a fresh transport on `transport_return_rx`. When the fresh transport arrives, it re-enters its accept loop.
+
+ARDOP mirrors the same pattern on `ModemSession`.
+
+- [ ] **Step 5: Wire `modem_vara_b2f_exchange` (Task 3.4) + `modem_ardop_b2f_exchange` (Task 3.6) through the arbiter**
+
+Replace bare `take_transport()` calls with `take_transport_for_outbound().await?`. Replace bare `return_transport(...)` with `return_transport_from_outbound(...)`.
+
+- [ ] **Step 6: Run tests to verify they pass**
+
+```bash
+cargo --manifest-path src-tauri/Cargo.toml test vara_arbiter
+# Plus the listener-consumer tests, the outbound-dial tests, and the
+# vara_open_session / vara_close_session round-trip tests.
+cargo --manifest-path src-tauri/Cargo.toml test vara
+```
+
+Expected: all PASS.
+
+- [ ] **Step 7: Add a watched-failure-mode integration test — close-during-outbound aborts then re-arms**
+
+```rust
+#[tokio::test]
+async fn vara_close_session_during_outbound_aborts_outbound_and_disarms_listener() {
+    let state = setup_test_state();
+    let _ = vara_open_session(/* p2p */).await;
+    // Spawn outbound; it'll block on the stub mid-B2F.
+    let outbound_handle = tokio::spawn({
+        let s = state.clone();
+        async move { modem_vara_b2f_exchange(/* p2p */).await }
+    });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(state.vara_session.transport_owner(), TransportOwner::Outbound);
+
+    // Close mid-outbound: arbiter must abort outbound first, then disarm listener.
+    let close_start = std::time::Instant::now();
+    let _ = vara_close_session(/* ... */).await;
+    let close_elapsed = close_start.elapsed();
+
+    assert!(close_elapsed < Duration::from_secs(3),
+            "close took {:?} — arbiter didn't sequence abort + disarm fast enough",
+            close_elapsed);
+    let _ = outbound_handle.await;
+    assert_eq!(state.vara_session.transport_owner(), TransportOwner::None);
+    assert!(!state.listen_state.is_armed());
+}
+```
+
+Run + verify pass.
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add -A
+git commit -m "feat(vara,ardop): backend session arbiter for transport ownership
+
+Codex Round 1 P1 #5. ListenerArmed + outbound dial both contend for the
+single modem transport. Without an arbiter the spec's 'listener stays
+armed while operator can redial outbound' is racy — outbound either
+finds no transport (consumer holds it) or pulls it out from under the
+consumer (silently disarms). Arbiter sequences:
+
+  ListenerArmed → (yield) → Outbound → (return) → ListenerArmed
+
+with strict mutual exclusion and an explicit 'modem busy' error when
+outbound requests during an inbound exchange in flight. Close Session
+during outbound aborts outbound first via ABORT side-channel, then
+disarms listener.
+
+Precondition for Phase 5 (shared panel) — without this, auto-arm +
+within-session outbound dial is architecturally undefined.
+
+Agent: <YOUR-MONIKER>
+Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
+git push
+```
+
 ---
 
 ## Phase 5 — Shared `RadioSessionPanel` component + adapters
 
-### Task 5.1: Define the `RadioSessionAdapter` interface
+### Task 5.1: Define the `RadioSessionAdapter` interface (carries `transportKind`; commands invoked with it)
 
 **Files:**
 - Create: `src/radio/modes/radioSessionAdapters.ts`
 - Create: `src/radio/modes/radioSessionAdapters.test.ts`
 
-- [ ] **Step 1: Write the failing test — adapter interface shape**
+**Codex Round 1 P2 #10:** the backend listener layer distinguishes `TransportKind::VaraHf` from `TransportKind::VaraFm` for arms / reject forensics. If the adapter sends only `{ intent }` to `vara_open_session`, VARA FM sessions are silently logged + gated as VARA HF. The adapter MUST carry a `transportKind` value and the Tauri commands MUST accept it. Tests cover both HF and FM paths.
+
+**Codex Round 1 P2 #9:** the shared panel's lifecycle state derives from the backend status snapshot (`modem_get_status` for ARDOP, `vara_status` for VARA) via subscription, NOT from React `useState('closed')` as the source of truth. The adapter exposes the status command name and the type of the status DTO it returns; the panel reads from `useQuery`-shaped data, not local state. Local state is allowed only for transient form values + in-flight button affordances.
+
+- [ ] **Step 1: Write the failing test — adapter interface shape, including `transportKind`**
 
 In `src/radio/modes/radioSessionAdapters.test.ts`:
 
@@ -1818,12 +2168,13 @@ In `src/radio/modes/radioSessionAdapters.test.ts`:
 import { ardopAdapter, varaHfAdapter, varaFmAdapter, type RadioSessionAdapter } from './radioSessionAdapters';
 
 describe('RadioSessionAdapter', () => {
-  it('each adapter declares the four Tauri command names', () => {
+  it('each adapter declares the Tauri command names', () => {
     const adapters: RadioSessionAdapter[] = [ardopAdapter, varaHfAdapter, varaFmAdapter];
     for (const a of adapters) {
       expect(a.commands.openSession).toMatch(/^(ardop|vara)_open_session$/);
       expect(a.commands.closeSession).toMatch(/^(ardop|vara)_close_session$/);
       expect(a.commands.b2fExchange).toMatch(/^modem_(ardop|vara)_b2f_exchange$/);
+      expect(a.commands.status).toMatch(/^(modem_get_status|vara_status)$/);
       expect(a.commands.allowedStationsGet).toMatch(/_allowed_stations_get$/);
     }
   });
@@ -1833,16 +2184,47 @@ describe('RadioSessionAdapter', () => {
     expect(varaHfAdapter.kind).toBe('vara-hf');
     expect(varaFmAdapter.kind).toBe('vara-fm');
   });
+
+  // Codex Round 1 P2 #10 — VARA HF + FM must distinguish at the backend
+  // listener layer, so the adapter MUST carry a transportKind and the
+  // Tauri commands MUST accept it.
+  it('VARA HF and FM adapters carry distinct transportKind values', () => {
+    expect(varaHfAdapter.transportKind).toBe('vara-hf');
+    expect(varaFmAdapter.transportKind).toBe('vara-fm');
+    expect(ardopAdapter.transportKind).toBe('ardop');
+  });
+
+  // Sanity: VaraFmAdapter must NOT be `{ ...varaHfAdapter, kind: 'vara-fm' }`
+  // because that would share transportKind too — silently logging FM as HF.
+  it('varaFmAdapter is not a spread of varaHfAdapter with only kind overridden', () => {
+    expect(varaFmAdapter.transportKind).not.toBe(varaHfAdapter.transportKind);
+  });
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+Also add a backend-side test in `src-tauri/src/ui_commands.rs` tests (or wherever VARA listener arms are recorded):
+
+```rust
+#[tokio::test]
+async fn vara_open_session_records_transport_kind_for_vara_fm() {
+    let state = setup_test_state();
+    let _ = vara_open_session(state.app.clone(), state.log.clone(),
+                              state.vara_session.clone(), state.listen_state.clone(),
+                              SessionIntent::P2p, TransportKind::VaraFm).await;
+    let last_arm = state.listen_state.last_arm_record().unwrap();
+    assert_eq!(last_arm.transport_kind, TransportKind::VaraFm,
+               "Codex Round 1 P2 #10: VARA FM session must be logged as VaraFm, not VaraHf");
+}
+```
+
+- [ ] **Step 2: Run tests to verify they fail**
 
 ```bash
 pnpm exec vitest run src/radio/modes/radioSessionAdapters.test.ts
+cargo --manifest-path src-tauri/Cargo.toml test vara_open_session_records_transport_kind_for_vara_fm
 ```
 
-Expected: FAIL — file doesn't exist.
+Expected: FAIL — adapter file doesn't exist, `vara_open_session` doesn't take `transport_kind`.
 
 - [ ] **Step 3: Define the interface + three adapter consts**
 
@@ -1852,10 +2234,17 @@ In `src/radio/modes/radioSessionAdapters.ts`:
 import type { ReactNode } from 'react';
 import type { RadioPanelMode } from '../types';
 
+/** Matches the backend's `TransportKind` discriminator. Kebab-case wire format
+ *  per the SessionIntent serde convention. */
+export type TransportKind = 'ardop' | 'vara-hf' | 'vara-fm';
+
 export interface RadioSessionCommands {
   openSession: string;     // 'ardop_open_session' / 'vara_open_session'
   closeSession: string;    // 'ardop_close_session' / 'vara_close_session'
   b2fExchange: string;     // 'modem_ardop_b2f_exchange' / 'modem_vara_b2f_exchange'
+  /** Status command name. The shared panel subscribes to this (poll or event)
+   *  and derives lifecycle state from the returned DTO — NOT from local
+   *  useState (Codex Round 1 P2 #9). */
   status: string;          // 'modem_get_status' / 'vara_status'
   allowedStationsGet: string;
   allowedStationsAdd: string;
@@ -1865,6 +2254,9 @@ export interface RadioSessionCommands {
 
 export interface RadioSessionAdapter {
   kind: RadioPanelMode['kind'];
+  /** Sent as part of every command payload so the backend's listener layer
+   *  distinguishes ARDOP / VARA HF / VARA FM (Codex Round 1 P2 #10). */
+  transportKind: TransportKind;
   commands: RadioSessionCommands;
   /** Render the per-protocol "Modem settings" expander content. */
   renderSettingsExpander: () => ReactNode;
@@ -1872,6 +2264,7 @@ export interface RadioSessionAdapter {
 
 export const ardopAdapter: RadioSessionAdapter = {
   kind: 'ardop-hf',
+  transportKind: 'ardop',
   commands: {
     openSession: 'ardop_open_session',
     closeSession: 'ardop_close_session',
@@ -1882,11 +2275,12 @@ export const ardopAdapter: RadioSessionAdapter = {
     allowedStationsRemove: 'ardop_allowed_stations_remove',
     allowedStationsSetAllowAll: 'ardop_allowed_stations_set_allow_all',
   },
-  renderSettingsExpander: () => null, // Task 5.6 fills this from ArdopRadioPanel's Radio section
+  renderSettingsExpander: () => null, // Task 5.6 fills from ArdopRadioPanel's Radio section
 };
 
 export const varaHfAdapter: RadioSessionAdapter = {
   kind: 'vara-hf',
+  transportKind: 'vara-hf',
   commands: {
     openSession: 'vara_open_session',
     closeSession: 'vara_close_session',
@@ -1900,11 +2294,27 @@ export const varaHfAdapter: RadioSessionAdapter = {
   renderSettingsExpander: () => null, // Task 5.6 fills from VaraRadioPanel's host/port/bandwidth section
 };
 
+// EXPLICIT object literal, NOT a spread of varaHfAdapter — Codex Round 1 P2 #10:
+// a spread that overrides only `kind` would silently share transportKind, causing
+// VARA FM sessions to be logged + gated as VARA HF at the backend listener layer.
 export const varaFmAdapter: RadioSessionAdapter = {
-  ...varaHfAdapter,
   kind: 'vara-fm',
+  transportKind: 'vara-fm',
+  commands: {
+    openSession: 'vara_open_session',
+    closeSession: 'vara_close_session',
+    b2fExchange: 'modem_vara_b2f_exchange',
+    status: 'vara_status',
+    allowedStationsGet: 'vara_allowed_stations_get',
+    allowedStationsAdd: 'vara_allowed_stations_add',
+    allowedStationsRemove: 'vara_allowed_stations_remove',
+    allowedStationsSetAllowAll: 'vara_allowed_stations_set_allow_all',
+  },
+  renderSettingsExpander: () => null,
 };
 ```
+
+**On the backend side**, widen `vara_open_session` / `vara_close_session` / `modem_vara_b2f_exchange` to accept `transport_kind: TransportKind` (matching the existing Rust enum at `src-tauri/src/connections/...`). Thread it to the listener-record write path so VARA FM is distinguishable in arm logs + reject forensics. Tasks 3.2 / 3.3 / 3.4 / 3.5 / 3.6 above need amendment — when working those tasks, include the `transport_kind` parameter even though Task 5.1 is where the surface-level shared-panel work lives. Tests there must cover both HF and FM.
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -1928,14 +2338,29 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 git push
 ```
 
-### Task 5.2: Build `RadioSessionPanel` shell (header + Open/Close button + session-log; no outbound or listener yet)
+### Task 5.2: Build `RadioSessionPanel` shell (header + Open/Close button + session-log; backend-status-driven lifecycle)
 
 **Files:**
 - Create: `src/radio/modes/RadioSessionPanel.tsx`
 - Create: `src/radio/modes/RadioSessionPanel.test.tsx`
 - Create: `src/radio/modes/RadioSessionPanel.css`
 
-- [ ] **Step 1: Write the failing test — Open Session button renders and invokes the adapter's openSession command**
+**Codex Round 1 P2 #9 amendment** (load-bearing):
+
+The earlier sketch below stored `lifecycle` purely in React `useState`. Local state is NOT the source of truth — derive lifecycle from the backend status snapshot the adapter exposes (`adapter.commands.status`).
+
+Pattern:
+
+- A `useRadioSessionLifecycle(adapter, mode)` hook polls or subscribes to the backend status command on a tight interval (e.g. 500ms while UI is mounted, or events if the backend emits them). It derives `lifecycle: SessionLifecycleState` from the DTO fields (transport-open vs closed, listener armed vs not, exchange in flight vs not, last error).
+- The component renders from the hook's output. Open/Close buttons disable while `lifecycle === 'opening' | 'closing'`. Local `useState` is allowed ONLY for transient affordances (pending-spinner ticks, form field values, error banner dismissal) — never for "is the session open".
+- Hot reload, window remount, ardopcf crash, VARA socket drop, rapid Open/Close all recover correctly because the hook re-reads truth from the backend on next tick.
+- The hook MUST handle status-call errors: if the backend status command returns an error, that's an `'error'` lifecycle state with the error text exposed via `lastError`. If the call itself fails (Tauri IPC disconnect), surface as a `'crash-recovery'` state distinct from `'error'`.
+
+Add `'opening' | 'closing' | 'crash-recovery'` as lifecycle states; the sketch below already has the first two but not the third.
+
+The local-state sketch in Step 3 below is RETAINED for reference but the worker MUST replace `useState<SessionLifecycleState>` with the `useRadioSessionLifecycle` hook before commit. A passing test for "lifecycle recovers from a simulated backend crash" is required in Step 1.
+
+- [ ] **Step 1: Write the failing test — Open Session button renders and invokes the adapter's openSession command (with `transportKind`)**
 
 ```tsx
 // src/radio/modes/RadioSessionPanel.test.tsx
@@ -1957,8 +2382,33 @@ it('Open Session button invokes the adapter\'s openSession command with sidebar 
   await userEvent.click(screen.getByTestId('open-session-btn'));
   expect(invokes.find((i) => i.cmd === 'vara_open_session')).toEqual({
     cmd: 'vara_open_session',
-    args: { intent: 'p2p' },
+    args: { intent: 'p2p', transportKind: 'vara-hf' },  // Codex P2 #10 — transportKind required
   });
+});
+
+it('lifecycle recovers from backend status crash by reading next snapshot', async () => {
+  // Simulate: status call returns crashed → recovered.
+  let statusCallCount = 0;
+  vi.mocked(invoke).mockImplementation(async (cmd) => {
+    if (cmd === 'vara_status') {
+      statusCallCount += 1;
+      if (statusCallCount <= 2) throw new Error('socket closed');
+      return { state: 'open', listener_armed: true, exchange: null };
+    }
+    return null;
+  });
+
+  render(
+    <RadioSessionPanel
+      mode={{ kind: 'vara-hf', intent: 'p2p' }}
+      adapter={varaHfAdapter}
+      onClose={() => {}}
+    />
+  );
+
+  // First two ticks: crash-recovery; third: open-idle.
+  await screen.findByText(/recovering|reconnecting/i);
+  await screen.findByTestId('lifecycle-open-idle', undefined, { timeout: 2000 });
 });
 ```
 
