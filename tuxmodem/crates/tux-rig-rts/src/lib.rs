@@ -59,6 +59,7 @@
 
 pub mod error;
 pub mod ptt;
+pub mod watchdog;
 pub mod writer;
 
 #[cfg(target_os = "linux")]
@@ -66,6 +67,7 @@ pub mod linux;
 
 pub use error::{RtsError, RtsResult};
 pub use ptt::{Ptt, PttState};
+pub use watchdog::{run_watchdog, WatchdogOutcome, DEFAULT_MAX_DURATION, HARD_CAP_DURATION};
 pub use writer::{MockTtyWriter, RtsPtt, TtyOp, TtyWriter};
 
 #[cfg(target_os = "linux")]
