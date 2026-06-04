@@ -45,6 +45,41 @@ We build a WLE-shaped lifecycle first. Once it's walkable, we revisit whether th
 
 **Radio-only listener divergence.** Tuxlink intentionally extends WLE's R-pool client semantics to include accepting inbound R-pool peer sessions. Allowlisted peer connects → B2F runs with `SessionIntent::RadioOnly` → message routing flag tagged `R`. **This is a tuxlink design choice, not WLE-evidence-backed.** Decompiled WLE evidence frames Radio-only as a client/RMS-Relay routing mode (`RoutingFlag::R`), not as an end-user peer listener. Allowing inbound R-pool peer answers turns tuxlink into a leaf-relay-shaped node that can tag messages into the WLE Hybrid pool in ways unmodified WLE peers may not expect. The allowlist (default `allow_all=true` per project memory `allowed-stations-default-true`; per-callsign restrictions opt-in) keeps the operational surface explicit. Operator decision 2026-06-04 (bd tuxlink-d8bq) is to ship this divergence as designed in alpha, with the divergence labeled in the panel UI ("Accept inbound R-pool peer · tuxlink divergence") and the build-walk-revise loop as the gate for revisiting if real-world operation shows interop friction.
 
+### 2.5 Sidebar navigation while session is open (Codex Round 3 P1 #3)
+
+Operator clicks a different sidebar entry while a session is open. **Default behavior (until a future operator decision overrides) is block nav + confirmation modal:** show "Session open for {intent}/{transport_kind}; Close Session before switching?" Cancel keeps the operator on the open-session panel. This avoids dropping an active inbound exchange.
+
+The backend status DTO exposes `active_intent` + `active_transport_kind` (Task 3.0) so the frontend can detect the open session without holding it in React local state. The shared panel renders the per-sidebar-selection mode unless the active session's intent/transport_kind differs from the sidebar's selection — in which case the open-session panel renders + a confirmation modal blocks nav.
+
+**Watched failure mode:** operator hard-refreshes the dev build (Ctrl+R in `pnpm tauri dev`); React unmounts but the backend session stays open. On remount the panel re-derives lifecycle from the status snapshot (§6.1 / Task 5.2 amendment) and renders the original session. The sidebar selection state may need backend storage to re-route to the right panel on hard-refresh — out of alpha scope unless operator escalates.
+
+### 2.6 Socket-liveness + crash recovery (Codex Round 3 P1 #4)
+
+A backend background task per session probes the cmd-port (VARA: benign cmd like `MYCALL\r` every 5s; ARDOP: cmd-port read + `Child::try_wait` every 5s). After 2 consecutive failed probes (or modem process exit), the state machine transitions to **`socket-lost`** (added to §5). Operator's only recovery from `socket-lost` is Close Session → reopen.
+
+The frontend hook `useRadioSessionLifecycle` (§6.1) maps `socket-lost` to its `crash-recovery` UI state, distinct from `error` (the latter is a per-action error like a failed connect; the former is an out-of-band death of the modem).
+
+### 2.7 AppShell active-session routing (Codex Round 5 P1 #1)
+
+`AppShell` currently derives `activeModem` from `useModemIsActive()` and hard-codes `{ kind: 'ardop-hf', intent: 'cms' }` as the default. If an operator opens a VARA HF P2P session and then clears the sidebar selection (or hard-refreshes), the shell remounts as ARDOP-HF/CMS, driving the wrong intent into any subsequent Connect / Send-Receive. **The shell must subscribe to backend status and derive `activeModem = { kind: status.active_transport_kind, intent: status.active_intent }` when a session is open.** When no session is open, fall back to the sidebar's selection (or the original CMS default).
+
+Implementation: a new `useActiveSession()` hook polls or subscribes to backend status (queries `modem_get_status` + `vara_status` — either modem could own an active session). The shell consumes this hook's output for routing decisions. Plan task: new Task 6.0 (or amendment to Task 6.1) adds the hook + wires it into `AppShell`.
+
+### 2.8 AllowedStations live-edit reaches the listener (Codex Round 5 P1 #2)
+
+§2's "allowlist editor lives inside the open-session view and is live-editable; edits apply to subsequent inbound, not the active exchange" requires backend changes that the v1–v4 plans did not include. The existing ARDOP and VARA listener commands MOVE the `AllowedStations` value INTO the consumer task at arm time; edits to the source-of-truth after that have no effect on subsequent inbound peers — a peer removed in the UI can still be accepted.
+
+**Fix:** the listener consumer task holds an `Arc<AllowedStationsHandle>` (not the value itself) and consults it at the moment of each inbound accept decision. The `AllowedStationsEditor` writes through the same handle. This is a backend refactor that lands BEFORE the shared panel work uses the editor — see plan Phase 4 (extended) for the implementation tasks. Without this, the UI claims live-editable behavior the backend doesn't honor.
+
+### 2.9 Listener TTL during long sessions (Codex Round 5 P2)
+
+`ListenerArmsRecord::DEFAULT_TTL` (1 hour) rejects inbound peers as expired even though §2 equates `session open` with "listener armed until Close Session." Two valid fixes: (a) change the backend arms contract for session-scoped auto-arm so TTL doesn't apply, or (b) surface + auto-refresh the TTL in the panel. Operator decision deferred to next session; **the safe default for the plan is (a)** — session-scoped auto-arm is conceptually distinct from operator-set "listen for 30 min then disarm." Plan task in Phase 4 amends the arms record to support a session-scoped variant.
+
+### 2.10 Out-of-scope-for-alpha integration touches (Codex Round 5 P2)
+
+- **VARA platform banner.** `VaraRadioPanel`'s current `platform_info` banner is the only UI explaining the Pi/aarch64 case (local VARA can't run; remote VARA TCP is valid). The adapter / settings-expander work for the shared panel MUST carry this over before deleting `VaraRadioPanel.css`. New Task 5.5b: render `platform_info` in the VARA adapters' `renderSettingsExpander` (or in a sibling banner slot).
+- **`panelTitle()` helper for radio-only.** Widening `RadioPanelMode.intent` (Task 2.1) doesn't update `panelTitle()`, which currently maps every non-CMS intent to "P2P." Radio-only would render as P2P in the chrome. New Task 2.1b (or amendment to 2.1): update `panelTitle()` to discriminate cms / p2p / radio-only with appropriate strings; add test coverage for radio-only title generation.
+
 ## 3. Capability matrix
 
 | Intent | Outbound | Listener | Target shape | Creds | Routing flag |
@@ -138,6 +173,8 @@ Transitions:
 - `open · idle → open · dialing → open · exchange → open · idle`: outbound flow
 - `open · idle → open · inbound-exchange → open · idle`: inbound flow (only when listener armed)
 - `open · {anything} → closed`: tear down
+- `open · {anything} → socket-lost`: cmd-port unresponsive or modem process exit (Codex Round 3 P1 #4 / §2.6 — backend heartbeat detects)
+- `socket-lost → closed`: operator clicks Close Session; backend tears down the dead handle
 
 ## 6. Implementation plan
 
