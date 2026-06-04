@@ -199,20 +199,33 @@ Tuxlink is honest about its edges:
 
 ## Architecture
 
-Tuxlink is a **single Rust crate** (`src-tauri/`) employing Tauri 2.x
-as the desktop framework, with a **React 18 + TypeScript frontend**
-(`src/`) that WebKitGTK 4.1 renders. The Winlink engine (CMS
-connection, the B2F exchange, the mailbox, and the AX.25 packet path)
-consists of native Rust; no external modem or sidecar process
-intervenes for CMS.
+Tuxlink is a **Rust workspace** with two roots: the desktop application
+(`src-tauri/` — Tauri 2.x with a **React 18 + TypeScript frontend** in
+`src/` rendered by WebKitGTK 4.1) and the in-progress clean-room HF
+modem (`tuxmodem/` — six standalone crates: `tuxmodem-phy`,
+`tuxmodem-fec`, `tuxmodem-tx`, `tuxmodem-rx`, `tux-rig-rts`,
+`tux-rig-cm108`). The Winlink engine (CMS connection, the B2F exchange,
+the mailbox, and the AX.25 packet path) consists of native Rust in
+`src-tauri/`; no external modem or sidecar process intervenes for CMS.
+
+The `tuxmodem/` workspace builds the v0.5+ clean-room HF modem
+referenced in [Not yet shipped](#not-yet-shipped). Working code paths
+today: OFDM encode/decode under the wide-band low-density floor mode,
+Zadoff-Chu preamble-based frame sync, multi-symbol length-prefix
+framing (payloads up to ~65 KB), CPAL audio I/O, serial-RTS PTT for
+Digirig-class adapters, a SIGKILL-safe PTT watchdog daemon, and
+operator-runnable CLIs (`tuxmodem-tx` / `tuxmodem-rx` /
+`tux-rig-watchdog` / `tuxmodem-audio-play` / `tux-rig-rts`). The modem
+is not yet wired into the desktop app's Winlink session lifecycle.
 
 The OS keyring (secret-service on Linux, Keychain on macOS,
 CredentialManager on Windows) holds the Winlink CMS password. Tuxlink
 never persists it to a config file on disk.
 
-Tuxlink will adopt a layered multi-crate workspace in v0.5+; the
-current v0.x series deliberately ships as a single crate (see
-[ADR 0002](docs/adr/0002-tauri-react-single-crate.md)).
+The desktop app (`src-tauri/`) deliberately ships as a single crate in
+the v0.x series — see [ADR 0002](docs/adr/0002-tauri-react-single-crate.md).
+The `tuxmodem/` workspace is the layered multi-crate target for the
+clean-room HF modem (v0.5+).
 
 See [CLAUDE.md](CLAUDE.md) for the agent workflow, ethos, and safety
 rails this project operates under.
