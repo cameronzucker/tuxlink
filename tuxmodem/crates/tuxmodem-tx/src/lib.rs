@@ -457,6 +457,15 @@ pub struct Args {
     /// Override [`DEFAULT_MAX_AIRTIME`] for this run. Hard-capped at
     /// [`HARD_CAP_AIRTIME`].
     pub max_airtime: Option<Duration>,
+    /// Spawn `tux-rig-watchdog` as a child process to hold PTT (Phase 1.5
+    /// SIGKILL-safe TX). When set, the parent does NOT touch the tty
+    /// device directly — the watchdog asserts on startup, releases on
+    /// stdin EOF (set when this process exits, including under SIGKILL).
+    pub watchdog: bool,
+    /// Optional explicit path to the `tux-rig-watchdog` binary. When
+    /// `None` and `watchdog` is set, the spawn falls back to looking up
+    /// `tux-rig-watchdog` on `PATH`.
+    pub watchdog_bin: Option<PathBuf>,
     /// User asked for `--help`.
     pub help: bool,
 }
@@ -473,6 +482,8 @@ impl Args {
             dry_run: false,
             write_wav: None,
             max_airtime: None,
+            watchdog: false,
+            watchdog_bin: None,
             help: false,
         };
         let mut iter = argv.iter().peekable();
@@ -527,6 +538,13 @@ impl Args {
                         format!("--max-airtime must be an integer count of seconds: {v}")
                     })?;
                     args.max_airtime = Some(Duration::from_secs(secs));
+                }
+                "--watchdog" => args.watchdog = true,
+                "--watchdog-bin" => {
+                    let v = iter
+                        .next()
+                        .ok_or_else(|| "--watchdog-bin requires a path".to_string())?;
+                    args.watchdog_bin = Some(PathBuf::from(v));
                 }
                 "--help" | "-h" => args.help = true,
                 other => return Err(format!("unknown argument: {other}")),
@@ -1287,5 +1305,46 @@ mod tests {
         ]))
         .unwrap();
         assert_eq!(a.frame_mode, FrameMode::MultiSync);
+    }
+
+    // ─── Watchdog integration (Phase 1.5 slice 2, tuxlink-8xfa) ─────
+
+    #[test]
+    fn args_parse_watchdog_flag_default_false() {
+        let a = Args::parse(&s(&[
+            "--mode", "wide-floor", "--dry-run", "--payload", "hi",
+        ]))
+        .unwrap();
+        assert!(!a.watchdog);
+        assert!(a.watchdog_bin.is_none());
+    }
+
+    #[test]
+    fn args_parse_watchdog_flag_set() {
+        let a = Args::parse(&s(&[
+            "--watchdog", "--mode", "wide-floor", "--dry-run", "--payload", "hi",
+        ]))
+        .unwrap();
+        assert!(a.watchdog);
+    }
+
+    #[test]
+    fn args_parse_watchdog_bin_with_path() {
+        let a = Args::parse(&s(&[
+            "--watchdog", "--watchdog-bin", "/usr/local/bin/tux-rig-watchdog",
+            "--mode", "wide-floor", "--dry-run", "--payload", "hi",
+        ]))
+        .unwrap();
+        assert!(a.watchdog);
+        assert_eq!(
+            a.watchdog_bin.as_deref(),
+            Some(std::path::Path::new("/usr/local/bin/tux-rig-watchdog"))
+        );
+    }
+
+    #[test]
+    fn args_parse_watchdog_bin_without_value_errors() {
+        let err = Args::parse(&s(&["--watchdog-bin"])).unwrap_err();
+        assert!(err.contains("--watchdog-bin"));
     }
 }
