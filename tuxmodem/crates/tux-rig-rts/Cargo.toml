@@ -21,3 +21,7 @@ libc = "0.2"
 [[bin]]
 name = "tux-rig-rts"
 path = "src/bin/tux-rig-rts.rs"
+
+[[bin]]
+name = "tux-rig-watchdog"
+path = "src/bin/tux-rig-watchdog.rs"
