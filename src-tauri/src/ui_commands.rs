@@ -3500,6 +3500,32 @@ pub async fn telnet_listen(
         format!("Telnet listener armed on {bound_addr} (TTL {}s)", cfg.telnet_listen.ttl_secs),
     );
 
+    // Build the same on-disk mailbox the Packet listener + telnet_p2p_connect
+    // use (`<app_data>/native-mbox`). The listener thread needs this so
+    // inbound exchanges can persist received messages to Inbox + drain the
+    // Outbox into the answerer's outbound vec — symmetry with Packet's
+    // `native_packet_exchange` that closes the original tuxlink-k3ru gap.
+    let mailbox = match app.path().app_data_dir() {
+        Ok(dir) => {
+            let mut mb = crate::native_mailbox::Mailbox::new(dir.join("native-mbox"));
+            if let Some(svc) = app.try_state::<crate::search::commands::SearchService>() {
+                mb = mb.with_index(svc.index.clone());
+            }
+            Some(Arc::new(mb))
+        }
+        Err(e) => {
+            emit_session_line(
+                &app,
+                &log,
+                LogLevel::Warn,
+                format!(
+                    "Telnet listener: app data dir unavailable — inbound mail won't persist this session: {e}"
+                ),
+            );
+            None
+        }
+    };
+
     // Hand off the bound listener + arms record to a blocking task.
     let app_progress = app.clone();
     let log_progress = log.inner().clone();
@@ -3514,6 +3540,7 @@ pub async fn telnet_listen(
             password,
             arms,
             exchange_cfg,
+            mailbox,
             shutdown,
             &move |line: &str| {
                 emit_session_line(
