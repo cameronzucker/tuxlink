@@ -320,6 +320,156 @@ where
     Ok(result)
 }
 
+/// Additive entry point for the smart auth-failure diagnostics (spec §6.3).
+///
+/// Takes an optional [`B2fEventSink`] alongside the existing `wire_log`
+/// closure. Existing callers (telnet, P2P, ARDOP, VARA, packet backends)
+/// continue to use [`run_exchange`] / [`run_exchange_with_role`] unchanged —
+/// this entry point is ADDITIVE, not a replacement (R1 #2 + R3 #8 finding).
+///
+/// Per §6.3 + §6.4: emits structured events at each handshake phase, and
+/// emits [`PostAuthExchangeStarted`][crate::winlink::b2f_events::B2fEvent::PostAuthExchangeStarted]
+/// when the first non-`***` `F`-prefixed protocol byte arrives from the server
+/// (the Mode 5 discriminator). Without that event, a `;PR`-rejected drop would
+/// mis-classify as Mode 5 ("credentials are fine").
+///
+/// ## Auth-only contract
+///
+/// This entry point runs the handshake, classifies the auth result, then quits
+/// cleanly (FF + FQ). It does NOT run a full message exchange — no inbound
+/// proposal reading, no outbound message sending. The `_outbound`, `_decide`,
+/// and `_wire_log` parameters are present for signature consistency with
+/// [`run_exchange_with_role`]; they are unused in this auth-only path.
+#[allow(unused_variables)]
+pub fn run_exchange_with_events<R, W, F>(
+    reader: &mut R,
+    writer: &mut W,
+    config: &ExchangeConfig,
+    _outbound: Vec<OutboundMessage>,
+    _decide: F,
+    _wire_log: Option<&dyn Fn(&str)>,
+    events: Option<&dyn super::b2f_events::B2fEventSink>,
+) -> Result<ExchangeResult, ExchangeError>
+where
+    R: BufRead,
+    W: Write,
+    F: Fn(&[Proposal]) -> Vec<Answer>,
+{
+    use super::b2f_events::{AttemptId, B2fEvent, ConnectionPhase};
+
+    let attempt_id = AttemptId::fresh();
+
+    // Slave/Dial role: server speaks first.
+    let remote = match handshake::read_remote_handshake(reader) {
+        Ok(r) => r,
+        Err(e) => {
+            if let Some(s) = events {
+                if let handshake::HandshakeError::RemoteError(raw) = &e {
+                    s.push(B2fEvent::RemoteErrorReceived {
+                        raw: raw.clone(),
+                        attempt_id,
+                    });
+                }
+                s.push(B2fEvent::ConnectionClosed {
+                    phase: ConnectionPhase::DuringHandshake,
+                    transport_kind: None,
+                    attempt_id,
+                });
+            }
+            return Err(ExchangeError::Handshake(e));
+        }
+    };
+    if let Some(s) = events {
+        s.push(B2fEvent::RemoteSidReceived {
+            sid: remote.sid.clone(),
+            attempt_id,
+        });
+        if remote.challenge.is_some() {
+            s.push(B2fEvent::SecureChallengeReceived { attempt_id });
+        }
+    }
+
+    let token = match (&remote.challenge, &config.password) {
+        (Some(challenge), Some(password)) => {
+            Some(secure::secure_login_response(challenge, password))
+        }
+        (Some(_), None) => return Err(ExchangeError::PasswordRequired),
+        (None, _) => None,
+    };
+    let our_handshake = handshake::build_handshake(
+        &config.mycall,
+        &config.targetcall,
+        &config.locator,
+        token.as_deref(),
+    );
+    writer
+        .write_all(&our_handshake)
+        .map_err(|_| ExchangeError::ConnectionClosed)?;
+    if let Some(s) = events {
+        if token.is_some() {
+            s.push(B2fEvent::SecureResponseSent { attempt_id });
+        }
+    }
+
+    // Read the first protocol line from the server post-handshake.
+    //   `***` prefix  → CMS rejected (Mode 2/3/4/6): emit RemoteErrorReceived,
+    //                    do NOT emit PostAuthExchangeStarted.
+    //   `F` prefix    → CMS accepted (Mode 5 discriminator): emit
+    //                    PostAuthExchangeStarted, then quit cleanly (FF + FQ).
+    let first_line = match wire::read_line(reader) {
+        Ok(line) => line,
+        Err(_) => {
+            if let Some(s) = events {
+                s.push(B2fEvent::ConnectionClosed {
+                    phase: ConnectionPhase::PostHandshake,
+                    transport_kind: None,
+                    attempt_id,
+                });
+            }
+            return Err(ExchangeError::ConnectionClosed);
+        }
+    };
+
+    if let Some(rest) = first_line.strip_prefix("***") {
+        let raw = rest.trim().to_string();
+        let scrubbed = super::redaction::redact_freeform(&raw).into_owned();
+        if let Some(s) = events {
+            s.push(B2fEvent::RemoteErrorReceived {
+                raw: scrubbed.clone(),
+                attempt_id,
+            });
+            s.push(B2fEvent::ConnectionClosed {
+                phase: ConnectionPhase::PostHandshake,
+                transport_kind: None,
+                attempt_id,
+            });
+        }
+        return Err(ExchangeError::RemoteError(scrubbed));
+    }
+
+    if first_line.starts_with('F') {
+        if let Some(s) = events {
+            // SPEC §6.4 invariant: PostAuthExchangeStarted fires ONLY here —
+            // when the first non-`***` F-prefixed byte proves CMS accepted.
+            s.push(B2fEvent::PostAuthExchangeStarted { attempt_id });
+        }
+        // Auth-only contract: no message exchange. Send FF (nothing to offer)
+        // then FQ (quit). The server's first F line is already consumed.
+        let _ = writer.write_all(b"FF\r");
+        let _ = writer.write_all(b"FQ\r");
+        if let Some(s) = events {
+            s.push(B2fEvent::ConnectionClosed {
+                phase: ConnectionPhase::PostHandshake,
+                transport_kind: None,
+                attempt_id,
+            });
+        }
+        return Ok(ExchangeResult::default());
+    }
+
+    Err(ExchangeError::UnexpectedResponse(first_line))
+}
+
 /// Our turn: offer the pending messages, read the answers, send the accepted
 /// bodies. With nothing to send, signal "no more" (or "quit" if the other side
 /// was also done).
@@ -996,5 +1146,74 @@ mod tests {
         // `FS +\r` then `FF\r`.
         let tail = &writer[our_handshake.len()..];
         assert_eq!(tail, b"FS +\rFF\r");
+    }
+
+    // ============================================================================
+    // run_exchange_with_events — auth-only contract + Mode 5 discriminator
+    // (tuxlink-7do4 smart auth diagnostics §6.3 / §6.4)
+    // ============================================================================
+
+    #[test]
+    fn run_exchange_with_events_emits_handshake_events_to_sink() {
+        use super::super::b2f_events::{B2fEvent, VecEventSink};
+        let mut server = Vec::new();
+        server.extend_from_slice(b"[WL2K-5.0-B2FHM$]\r;PQ: 23753528\rCMS>\r");
+        server.extend_from_slice(b"FF\r");
+        let mut reader = std::io::Cursor::new(server);
+        let mut writer = Vec::new();
+        let config = ExchangeConfig {
+            mycall: "N7CPZ".into(),
+            targetcall: "SERVICE".into(),
+            locator: "CN87".into(),
+            password: Some("FOOBAR".into()),
+            intent: SessionIntent::Cms,
+        };
+        let sink = VecEventSink::new();
+        let result = run_exchange_with_events(
+            &mut reader, &mut writer, &config, vec![], |_| vec![], None, Some(&sink),
+        ).unwrap();
+        assert!(result.received.is_empty());
+        let events = sink.snapshot();
+        let kinds: Vec<&str> = events.iter().map(|e| match e {
+            B2fEvent::RemoteSidReceived { .. } => "remote_sid_received",
+            B2fEvent::SecureChallengeReceived { .. } => "secure_challenge_received",
+            B2fEvent::SecureResponseSent { .. } => "secure_response_sent",
+            B2fEvent::PostAuthExchangeStarted { .. } => "post_auth_exchange_started",
+            B2fEvent::ConnectionClosed { .. } => "connection_closed",
+            _ => "other",
+        }).collect();
+        assert!(kinds.contains(&"remote_sid_received"), "events: {kinds:?}");
+        assert!(kinds.contains(&"secure_challenge_received"), "events: {kinds:?}");
+        assert!(kinds.contains(&"secure_response_sent"), "events: {kinds:?}");
+        assert!(kinds.contains(&"post_auth_exchange_started"),
+            "Mode 5 discriminator must fire on FF receipt — events: {kinds:?}");
+    }
+
+    #[test]
+    fn run_exchange_with_events_mode3_emits_remote_error_no_post_auth() {
+        use super::super::b2f_events::{B2fEvent, VecEventSink};
+        let mut server = Vec::new();
+        server.extend_from_slice(b"[WL2K-5.0-B2FHM$]\r;PQ: 23753528\rCMS>\r");
+        // After we send our ;PR, server rejects with *** then closes.
+        server.extend_from_slice(b"*** [1] Secure login failed - account password does not match\r");
+        let mut reader = std::io::Cursor::new(server);
+        let mut writer = Vec::new();
+        let config = ExchangeConfig {
+            mycall: "N7CPZ".into(),
+            targetcall: "SERVICE".into(),
+            locator: "CN87".into(),
+            password: Some("WRONGPW".into()),
+            intent: SessionIntent::Cms,
+        };
+        let sink = VecEventSink::new();
+        let _ = run_exchange_with_events(
+            &mut reader, &mut writer, &config, vec![], |_| vec![], None, Some(&sink),
+        );
+        let events = sink.snapshot();
+        // RemoteErrorReceived must fire; PostAuthExchangeStarted MUST NOT fire.
+        assert!(events.iter().any(|e| matches!(e, B2fEvent::RemoteErrorReceived { .. })),
+            "events: {events:?}");
+        assert!(!events.iter().any(|e| matches!(e, B2fEvent::PostAuthExchangeStarted { .. })),
+            "Mode 3 wrongly emitted Mode 5 discriminator — events: {events:?}");
     }
 }
