@@ -8,10 +8,10 @@
 // knowledge-base-design.md §4.
 
 import { Marked } from 'marked';
+import { headingAnchors } from './markdownExtensions/headingAnchors';
 
-const marked = new Marked({
-  // No options yet — Tier 3 extensions wired in subsequent tasks.
-});
+const marked = new Marked();
+marked.use(headingAnchors);
 
 /**
  * Parse a markdown string and return HTML.
