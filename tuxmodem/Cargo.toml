@@ -5,6 +5,7 @@ members = [
     "crates/tuxmodem-phy",
     "crates/tux-rig-cm108",
     "crates/tux-rig-rts",
+    "crates/tuxmodem-rx",
 ]
 
 [workspace.package]
