@@ -86,6 +86,15 @@
   outline-offset: 1px;
 }
 
+/* ── No-fix inline hint ── */
+
+.position-form-v2__no-fix-hint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--tux-warn-fg, #a16207);
+  font-style: italic;
+}
+
 /* ── Map mount-point stub ──
  *
  * Reserves vertical space for the Leaflet widget (follow-up commit).
