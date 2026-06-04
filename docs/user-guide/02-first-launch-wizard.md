@@ -7,6 +7,20 @@ confirm that callsign belongs to the operator.
 
 ## First launch
 
+<!-- screenshot-needed: docs/user-guide/images/02-first-launch-wizard/welcome.png
+     Show: the wizard's Welcome step on first launch. Include the title
+     bar so the operator sees what greets them. ~1280x800 window crop. -->
+
+<!-- screenshot-needed: docs/user-guide/images/02-first-launch-wizard/credentials.png
+     Show: the Credentials step with callsign + Maidenhead grid + Winlink
+     password fields. Use a placeholder callsign (N0CALL) and grid
+     (CN85qe). Step content crop ~900x600. -->
+
+<!-- screenshot-needed: docs/user-guide/images/02-first-launch-wizard/cms-verify.png
+     Show: the optional CMS verify step with the verify button and a
+     successful-verify outcome (green checkmark or "Credentials
+     verified" line). Step content crop ~900x600. -->
+
 The wizard flow is short:
 
 1. **Welcome.** A landing screen that explains what comes next and links
@@ -35,6 +49,13 @@ sidebar once the shell opens. The operator picks which transport the next
 Connect will use by clicking its entry; nothing is locked in by the wizard.
 
 ## After the wizard
+
+<!-- screenshot-needed: docs/user-guide/images/02-first-launch-wizard/main-window-overview.png
+     Show: the main shell after wizard completes — dashboard ribbon at
+     top, folder sidebar at left, message list centre, reading pane
+     right, mailbox bar at bottom. Full window, ~1280x800. Label-overlays
+     NOT needed (per spec §5.5 — captions in prose are preferred over
+     baked-in arrows). -->
 
 The main window appears:
 

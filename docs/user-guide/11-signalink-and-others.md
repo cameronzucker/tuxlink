@@ -21,6 +21,21 @@ The SignaLink has:
 - A front-panel **TX**, **RX**, and **PWR** LED triplet.
 - Three front-panel knobs: TX level, RX level, delay.
 
+```mermaid
+flowchart LR
+    PC["PC"]
+    SL["SignaLink USB<br/>(audio + optional<br/>hardware PTT mod)"]
+    Radio["Radio<br/>(mic or data jack)"]
+    Ant["Antenna"]
+    CAT["Separate USB-CAT cable<br/>(if CAT control needed)"]
+
+    PC -- "USB-A<br/>(audio)" --> SL
+    SL -- "radio-specific cable<br/>(audio + PTT)" --> Radio
+    PC -. "(optional)" .- CAT
+    CAT -. "(optional)" .- Radio
+    Radio -- "RF" --> Ant
+```
+
 **Differences from DigiRig:**
 
 | Aspect | SignaLink | DigiRig |

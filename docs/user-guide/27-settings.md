@@ -5,6 +5,12 @@ the inline Settings panel. Closing the panel persists changes.
 
 ## GPS state
 
+<!-- screenshot-needed: docs/user-guide/images/27-settings/gps-and-privacy-panel.png
+     Show: Tools → Settings → GPS & Privacy panel with the three GPS
+     state options (Off / On / Always-broadcast) and the broadcast
+     precision dropdown visible (4-character Maidenhead selected by
+     default). Inline settings panel crop, ~600x500. -->
+
 Three options control whether GPS is read and whether the read value is
 broadcast.
 
@@ -58,6 +64,12 @@ panel itself owns the **Host**, **Cmd Port**, **Data Port**, and optional
 defaults and what each field controls.
 
 ## Color schemes
+
+<!-- screenshot-needed: docs/user-guide/images/27-settings/color-scheme-picker.png
+     Show: Tools → Settings → Color schemes panel with the six bundled
+     scheme tiles visible (Default, Light, High contrast, etc.). The
+     currently-active scheme should be marked. Settings-panel crop,
+     ~700x500. -->
 
 The color scheme controls the entire UI's appearance — surfaces, text,
 accents, semantic state colors (success / error / info). Schemes are

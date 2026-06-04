@@ -7,6 +7,12 @@ the CMS handshake without involving RF.
 
 ## Compose
 
+<!-- screenshot-needed: docs/user-guide/images/03-sending-your-first/compose-window.png
+     Show: the Compose window with To, Subject, and Body fields filled in
+     for a round-trip-to-self test. Use the operator's actual callsign
+     in To (placeholder if not yet operating). ~900x600 compose-window
+     crop. -->
+
 Press **Ctrl+N** (or click **New Message** in the dashboard ribbon) to open the
 compose window. The compose surface is its own window, not a panel inside the
 main shell — closing it does not close the rest of tuxlink.
@@ -22,6 +28,12 @@ message-list updates immediately; the Outbox folder badge in the sidebar
 increments.
 
 ## Pick a transport
+
+<!-- screenshot-needed: docs/user-guide/images/03-sending-your-first/telnet-connection-panel.png
+     Show: the folder sidebar with Telnet selected (highlighted), and the
+     reading pane showing the Telnet connection panel with host + status
+     + empty session log area. Pre-Connect state. Full window or split
+     between sidebar + reading pane, ~1100x700. -->
 
 In the folder sidebar, click the **Telnet** connection entry. The reading
 pane swaps from the compose draft view to the Telnet connection panel —
@@ -52,6 +64,18 @@ The session log streams:
 3. Outbox flush — your queued message goes up.
 4. Inbox pull — the same message comes back down (you sent to yourself).
 5. Session close.
+
+<!-- screenshot-needed: docs/user-guide/images/03-sending-your-first/session-log-success.png
+     Show: the Telnet connection panel after a successful round-trip,
+     with the session log scrolled to show all 5 phases visible (TCP
+     connect, login, outbox flush, inbox pull, disconnect-success).
+     Reading-pane crop, ~700x500. -->
+
+<!-- screenshot-needed: docs/user-guide/images/03-sending-your-first/inbox-roundtrip-result.png
+     Show: the Inbox selected in the sidebar with the round-trip message
+     at the top of the message list, just-arrived. Sidebar + message list,
+     ~700x500. -->
+
 
 A clean session ends with a "Disconnected — success" line. The Outbox empties
 to zero, the Sent folder gains one message, and the Inbox gains one message

@@ -126,6 +126,29 @@ The session log carries VARA's state-change messages plus the B2F
 exchange — same shape as the ARDOP session log, different modem
 underneath.
 
+```mermaid
+sequenceDiagram
+    participant TX as Tuxlink
+    participant VC as VARA cmd :8300
+    participant VD as VARA data :8301
+    participant Radio as Radio
+    participant RMS as RMS gateway
+
+    TX->>VC: LISTEN OFF
+    TX->>VC: MYCALL <callsign>
+    TX->>VC: BW2300 (or BW2750 / BW500)
+    TX->>VC: CONNECT <RMS-call>
+    VC->>Radio: Key PTT, transmit CONNECT
+    Radio-->>RMS: RF
+    RMS->>Radio: ACK + negotiation
+    VC-->>TX: CONNECTED <bandwidth>
+    Note over TX,VD: B2F session opens on data port
+    TX<<->>VD: B2F handshake + proposals + transfer
+    TX->>VC: DISCONNECT
+    VC->>Radio: Send DISCONNECT
+    VC-->>TX: DISCONNECTED
+```
+
 ## Audio calibration
 
 VARA is, if anything, more demanding than ARDOP on audio calibration. The

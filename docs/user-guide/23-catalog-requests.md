@@ -63,6 +63,11 @@ pick from its contents.
 
 ## Driving a catalog request
 
+<!-- screenshot-needed: docs/user-guide/images/23-catalog-requests/catalog-request-form.png
+     Show: the Tools → Catalog request form with the checklist of
+     catalog items, the manual filename text field, and the Send via
+     transport picker. Form crop, ~600x500. -->
+
 **Tools → Catalog request** opens a small form:
 
 1. **Pick catalog items** — checklist of items the operator has used
