@@ -1,0 +1,15 @@
+# Anyone re-running the scrape will create these locally; they should
+# never end up in git. The committed corpus.jsonl + themes.tsv are the
+# durable artifacts; everything below is scratch.
+cookies.json
+corpus-raw.jsonl
+corpus-clean.jsonl
+corpus-deep.jsonl
+seen-urls.json
+thread-urls.txt
+scrape-deep.log
+diagnose-*.png
+probe-*.html
+probe-*.png
+deep-list.png
+thread-list.png
