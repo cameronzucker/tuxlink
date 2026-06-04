@@ -42,6 +42,19 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use crate::audio_io::{AudioBuffer, SAMPLE_RATE_HZ};
 use crate::error::PhyError;
 
+/// Outcome of an abortable playback call. `Completed` = the buffer
+/// played in full and the device's tail-drain finished. `Aborted` =
+/// the caller's abort flag was observed and the CPAL stream was
+/// dropped before the buffer was fully consumed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PlayOutcome {
+    /// Buffer played in full; tail-drain elapsed.
+    Completed,
+    /// Caller's abort flag observed; stream dropped early. The remainder
+    /// of the buffer did NOT reach the device.
+    Aborted,
+}
+
 /// Outcome of an abortable capture call. `Completed` = the target
 /// sample count was reached. `Aborted` = the caller's abort flag was
 /// observed before the target count.
@@ -213,7 +226,35 @@ impl AudioOutput {
     /// Mono buffers are expanded to the device's channel count by
     /// duplicating each sample to every channel. The PHY's pinned
     /// 48 kHz f32 mono format is the only supported input.
+    ///
+    /// Equivalent to [`Self::play_blocking_with_abort`] with a never-set
+    /// abort flag — provided for callers that don't need abort semantics.
     pub fn play_blocking(&mut self, buffer: &AudioBuffer) -> Result<(), PhyError> {
+        let abort = AtomicBool::new(false);
+        match self.play_blocking_with_abort(buffer, &abort)? {
+            PlayOutcome::Completed => Ok(()),
+            PlayOutcome::Aborted => {
+                // Unreachable in practice — the flag is never set —
+                // but the type system doesn't know that.
+                Err(PhyError::AudioIo("playback aborted without request".into()))
+            }
+        }
+    }
+
+    /// Play the buffer to the device with caller-driven abort.
+    ///
+    /// Polls `abort` every ~20 ms. When the flag is observed `true`,
+    /// drops the CPAL stream immediately (silencing the audio thread)
+    /// and returns [`PlayOutcome::Aborted`]. The remainder of the buffer
+    /// does NOT reach the device.
+    ///
+    /// Used by `tuxmodem-tx` to wire SIGINT/SIGTERM → release-PTT-fast
+    /// without waiting for the buffer to finish playing.
+    pub fn play_blocking_with_abort(
+        &mut self,
+        buffer: &AudioBuffer,
+        abort: &AtomicBool,
+    ) -> Result<PlayOutcome, PhyError> {
         let channels = usize::from(self.config.channels());
         // Interleave mono → device-channels. For stereo, each sample
         // duplicates to L + R; for 5.1, it duplicates to all 6.
@@ -268,25 +309,39 @@ impl AudioOutput {
 
         stream.play().map_err(audio_err("stream.play"))?;
 
-        // Bound the recv with a generous timeout proportional to the
-        // buffer duration. If the device hangs the callback we don't
-        // want play_blocking to block forever.
-        let budget = Duration::from_secs_f32(buffer.duration_seconds() + 2.0);
-        match done_rx.recv_timeout(budget) {
-            Ok(()) => {}
-            Err(mpsc::RecvTimeoutError::Timeout) => {
-                return Err(PhyError::AudioIo(format!(
-                    "playback timeout after {:.2}s",
-                    budget.as_secs_f32()
-                )));
+        // Poll the abort flag on a tight cadence while waiting for the
+        // callback's "done" signal. Abort latency is bounded by the
+        // poll interval — keep it tight enough to feel responsive on a
+        // ctrl-C without burning CPU.
+        let total_budget = Duration::from_secs_f32(buffer.duration_seconds() + 2.0);
+        let deadline = Instant::now() + total_budget;
+        let poll = Duration::from_millis(20);
+        loop {
+            if abort.load(Ordering::Acquire) {
+                // Drop the stream NOW. This stops the CPAL audio
+                // thread on its next callback — typically within a
+                // few ms — so the radio sees the audio fall silent
+                // shortly before the caller releases PTT.
+                drop(stream);
+                return Ok(PlayOutcome::Aborted);
             }
-            Err(mpsc::RecvTimeoutError::Disconnected) => {
-                // The callback dropped its sender without signaling
-                // done — check if it surfaced an error.
-                if let Ok(msg) = err_rx.try_recv() {
-                    return Err(PhyError::AudioIo(format!("stream error: {msg}")));
+            match done_rx.recv_timeout(poll) {
+                Ok(()) => break,
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    if Instant::now() >= deadline {
+                        return Err(PhyError::AudioIo(format!(
+                            "playback timeout after {:.2}s",
+                            total_budget.as_secs_f32()
+                        )));
+                    }
+                    // Otherwise: keep polling.
                 }
-                return Err(PhyError::AudioIo("playback ended unexpectedly".into()));
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    if let Ok(msg) = err_rx.try_recv() {
+                        return Err(PhyError::AudioIo(format!("stream error: {msg}")));
+                    }
+                    return Err(PhyError::AudioIo("playback ended unexpectedly".into()));
+                }
             }
         }
 
@@ -296,7 +351,7 @@ impl AudioOutput {
         std::thread::sleep(Duration::from_millis(100));
         // Stream drops here, closing the CPAL handle.
         drop(stream);
-        Ok(())
+        Ok(PlayOutcome::Completed)
     }
 }
 
