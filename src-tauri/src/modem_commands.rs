@@ -18,7 +18,7 @@ use crate::winlink::modem::ardop::ArdopConfig;
 use crate::winlink::modem::{InitConfig, ModemTransport};
 use crate::winlink::session::SessionIntent;
 
-/// RADIO-1 bounded-airtime cap: the worst-case `connect_arq` wall-clock budget.
+/// Worst-case `connect_arq` wall-clock budget (bounded-airtime cap).
 ///
 /// 2026-05-22 incident: a ~110s runaway connect (no working abort) forced an
 /// operator radio power-off. The cap prevents the same pattern here — if
@@ -57,8 +57,8 @@ pub fn modem_get_status_inner(session: &Arc<ModemSession>) -> ModemStatus {
     session.status_snapshot()
 }
 
-/// Inner helper: atomically clear RADIO-1 consent, reset status to Stopped,
-/// take the transport handle, then shut the transport down OUTSIDE the lock.
+/// Inner helper: reset status to Stopped, take the transport handle, then
+/// shut the transport down OUTSIDE the lock.
 /// Uses [`ModemSession::reset_to_stopped`] so observers see a single
 /// consistent transition rather than the prior two-step (clear-consent then
 /// set-status) which left a window where the token was invalidated but the

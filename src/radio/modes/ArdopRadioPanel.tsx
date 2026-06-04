@@ -245,12 +245,6 @@ function resolveWebguiPort(cfg: Pick<ArdopFullConfig, 'cmd_port' | 'webgui_port'
 export function ArdopRadioPanel({ onClose }: ArdopRadioPanelProps) {
   const { status } = useModemStatus();
   const [target, setTarget] = useState('');
-  // Dial intent (tuxlink-9ls2). 'cms' = gateway dial (Winlink CMS via RMS),
-  // 'p2p' = peer-to-peer dial directly to another station. Backend default
-  // remains 'cms' to match the prior hardcoded behavior; the operator picks
-  // 'p2p' explicitly. The selector only matters at Send/Receive time —
-  // ConnectARQ doesn't care about intent.
-  const [intent, setIntent] = useState<'cms' | 'p2p'>('cms');
   // ARQ bandwidth (restored 2026-05-31 — Codex P1). Loaded from
   // config_get_ardop on mount; persisted via config_set_ardop on change.
   // null = "leave at ardopcf default."
@@ -499,8 +493,9 @@ export function ArdopRadioPanel({ onClose }: ArdopRadioPanelProps) {
     loadPttDevices();
   }, [isStopped, loadAudioDevices, loadPttDevices]);
   // Effective B2F target: ONLY the backend-reported peer authorizes a TX
-  // target (preserved from ArdopDock; RADIO-1 hazard if we ever fall back
-  // to the stopped-state `target` input).
+  // Operator-click is the Part 97 consent gate. effectiveTarget is always the
+  // backend-reported peer, not the stopped-state `target` input, so TX only
+  // fires when the modem has an active connection.
   const effectiveTarget: string | null = status.peer?.trim() ?? null;
 
   const doConnect = async () => {
@@ -529,7 +524,7 @@ export function ArdopRadioPanel({ onClose }: ArdopRadioPanelProps) {
     try {
       await invoke('modem_ardop_b2f_exchange', {
         target: effectiveTarget,
-        intent,
+        intent: 'cms',
       });
     } catch (e) {
       setConnectError(`Send/Receive failed: ${e}`);
@@ -591,7 +586,7 @@ export function ArdopRadioPanel({ onClose }: ArdopRadioPanelProps) {
 
   return (
     <RadioPanel
-      mode={{ kind: 'ardop-hf', intent }}
+      mode={{ kind: 'ardop-hf', intent: 'cms' }}
       state={mapModemStateToPanelState(status.state)}
       sub={headerSub}
       onClose={onClose}
@@ -600,23 +595,6 @@ export function ArdopRadioPanel({ onClose }: ArdopRadioPanelProps) {
         <section className="radio-panel-sec">
           <h5>Connect</h5>
           <label className="radio-panel-input-row">
-            <span>Dial as</span>
-            <select
-              className="radio-panel-input"
-              data-testid="ardop-intent-select"
-              value={intent}
-              onChange={(e) => setIntent(e.target.value as 'cms' | 'p2p')}
-              title={
-                intent === 'cms'
-                  ? 'Winlink CMS via an RMS gateway. Outbound mail tagged C-pool; the keyring password (if any) is offered on a ;PQ challenge.'
-                  : 'Peer-to-peer to a direct station. Outbound mail unpooled; no password offered (peers never challenge per FBB).'
-              }
-            >
-              <option value="cms">Winlink (CMS gateway)</option>
-              <option value="p2p">P2P (direct peer)</option>
-            </select>
-          </label>
-          <label className="radio-panel-input-row">
             <span>Target</span>
             <input
               type="text"
@@ -624,7 +602,7 @@ export function ArdopRadioPanel({ onClose }: ArdopRadioPanelProps) {
               data-testid="ardop-target-input"
               value={target}
               onChange={onTargetChange}
-              placeholder={intent === 'cms' ? 'W7RMS-10' : 'W4PHS'}
+              placeholder="W7RMS-10"
               spellCheck={false}
               autoCapitalize="characters"
               autoCorrect="off"

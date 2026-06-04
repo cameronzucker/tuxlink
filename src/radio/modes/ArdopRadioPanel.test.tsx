@@ -376,6 +376,12 @@ describe('<ArdopRadioPanel>', () => {
     expect(onClose).toHaveBeenCalled();
   });
 
+  it('does not render a "Dial as" intent toggle', () => {
+    render(<ArdopRadioPanel onClose={() => {}} />);
+    expect(screen.queryByTestId('ardop-intent-select')).toBeNull();
+    expect(screen.queryByText(/Dial as/i)).toBeNull();
+  });
+
   // Operator smoke 2026-05-31: Radio section parity with AX.25's
   // ModemLinkSection — audio capture + playback + PTT serial editable inline.
   describe('Radio section', () => {
