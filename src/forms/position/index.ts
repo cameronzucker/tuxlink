@@ -1,13 +1,13 @@
 import { PositionView } from './PositionView';
+import { PositionFormV2 } from '../../compose/PositionFormV2';
 import { registerForm } from '../forms';
 
-// Form field intentionally omitted — the v1 native React PositionForm was
-// pulled because it had no GPS auto-pull from PositionArbiter (operator
-// critique 2026-05-31). The native rebuild ships in Phase 2 of the
-// full-parity design (docs/superpowers/specs/2026-05-31-html-forms-full-parity-design.md).
-// Receive-side rendering via PositionView is preserved.
+// PositionFormV2 — native rebuild with PositionArbiter pre-fill (tuxlink-hnkn P2).
+// Replaces the v1 form that was pulled (operator critique 2026-05-31: no GPS
+// auto-pull). Receive-side PositionView is unchanged.
 registerForm({
   id: 'Position_Report',
   name: 'GPS Position Report',
+  Form: PositionFormV2,
   View: PositionView,
 });
