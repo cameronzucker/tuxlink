@@ -1164,15 +1164,96 @@ fn vara_status_serializes_lifecycle_fields_camel_case() {
         listener_armed: true,
         exchange: Some(ExchangeState::Outbound),
         transport_owner: TransportOwner::Outbound,
+        active_intent: Some(SessionIntent::P2p),
+        active_transport_kind: Some(TransportKind::VaraHf),
     };
     let json = serde_json::to_string(&snap).unwrap();
     assert!(json.contains("\"listenerArmed\":true"));
     assert!(json.contains("\"exchange\":\"outbound\""));
     assert!(json.contains("\"transportOwner\":\"outbound\""));
+    // Codex Round 4 P1 #1: assert active session mode fields are present + serialized.
+    assert!(json.contains("\"activeIntent\":\"p2p\""));
+    assert!(json.contains("\"activeTransportKind\":\"vara-hf\""));
+}
+
+// Codex Round 4 P1 #1: active session mode tests — these were missing from
+// the Round 3 fix that introduced active_intent + active_transport_kind.
+#[test]
+fn vara_status_carries_active_intent_when_session_open() {
+    let session = VaraSession::new();
+    session.simulate_open(SessionIntent::P2p, TransportKind::VaraHf);
+    let snap = session.snapshot();
+    assert_eq!(snap.active_intent, Some(SessionIntent::P2p));
+    assert_eq!(snap.active_transport_kind, Some(TransportKind::VaraHf));
+}
+
+#[test]
+fn vara_status_active_intent_is_none_when_closed() {
+    let session = VaraSession::new();
+    // Session has never been opened.
+    let snap = session.snapshot();
+    assert!(snap.active_intent.is_none());
+    assert!(snap.active_transport_kind.is_none());
+}
+
+// Codex Round 4 P1 #2: socket-lost heartbeat tests — these were missing from
+// the Round 3 fix that introduced SocketLost state.
+#[tokio::test]
+async fn vara_session_transitions_to_socket_lost_after_two_failed_probes() {
+    let state = setup_test_state_with_dead_cmd_socket();
+    let _ = vara_open_session(/* p2p */).await;
+    assert_eq!(state.vara_session.snapshot().state, VaraState::Open);
+
+    // Simulate the heartbeat probing twice with no response.
+    state.advance_heartbeat_clock(Duration::from_secs(11)); // 2× 5s + slack
+
+    let snap = state.vara_session.snapshot();
+    assert_eq!(snap.state, VaraState::SocketLost,
+               "Codex Round 4 P1 #2: 2 consecutive heartbeat failures → SocketLost");
+}
+
+#[tokio::test]
+async fn modem_status_transitions_to_socket_lost_when_ardopcf_exits() {
+    let state = setup_test_state_with_ardop_child_that_exits();
+    let _ = ardop_open_session(/* p2p */).await;
+    assert_eq!(state.modem_session.snapshot().state, ModemState::Idle);
+
+    // Kill the stub child.
+    state.kill_ardopcf_child();
+    // Advance one heartbeat interval.
+    state.advance_heartbeat_clock(Duration::from_secs(6));
+
+    let snap = state.modem_session.snapshot();
+    assert_eq!(snap.state, ModemState::SocketLost,
+               "Codex Round 4 P1 #2: ardopcf process exit → SocketLost");
 }
 ```
 
-Mirror these for `ModemStatus`.
+Mirror these for `ModemStatus` (the active_intent + serde test; ARDOP also needs the `active_intent` field added). The socket-lost tests above already cover both protocols.
+
+**TransportOwner enum casing** (Codex Round 4 P2): the `TransportOwner` enum needs its own `#[serde(rename_all = "camelCase")]` derive — `camelCase` on the parent struct only renames FIELDS, not enum variants. Required addition:
+
+```rust
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum TransportOwner {
+    None,
+    ListenerArmed,
+    ListenerInbound,
+    Outbound,
+    OutboundPending,
+}
+
+#[test]
+fn transport_owner_serializes_camel_case() {
+    assert_eq!(serde_json::to_string(&TransportOwner::ListenerArmed).unwrap(),
+               "\"listenerArmed\"");
+    assert_eq!(serde_json::to_string(&TransportOwner::ListenerInbound).unwrap(),
+               "\"listenerInbound\"");
+    assert_eq!(serde_json::to_string(&TransportOwner::OutboundPending).unwrap(),
+               "\"outboundPending\"");
+}
+```
 
 - [ ] **Step 2: Run tests to verify they fail**
 
@@ -2124,30 +2205,63 @@ pub trait ShutdownableStream {
 
 **Tests for the failure path** (REQUIRED — extends Step 1's test list):
 
+**Codex Round 4 P1 #3 amendment** (load-bearing): the earlier wedged-peer test below writes only `ABORT\r` to a localhost TCP socket; that tiny write completes immediately even when the peer never reads (Linux's TCP send buffer absorbs the bytes). The `<2s` assertion passes via the cooperative path and never exercises the timeout/shutdown_both fallback — the test is a false positive. Fix: use a **mock writer that explicitly errors on write** with a `WriteZero` or `WouldBlock` `io::Error`, plus a **shutdown spy** that records whether `shutdown_both()` was called. The test asserts BOTH that the cooperative write errored (mock returns Err) AND that the fallback shut down the stream.
+
 ```rust
+use std::io::{self, Write};
+use std::sync::{Arc, Mutex};
+
+// Mock writer that fails on write_all (simulates wedged peer where write times out).
+struct BlockedWriter;
+impl Write for BlockedWriter {
+    fn write(&mut self, _buf: &[u8]) -> io::Result<usize> {
+        Err(io::Error::new(io::ErrorKind::WouldBlock, "test: wedged peer"))
+    }
+    fn flush(&mut self) -> io::Result<()> { Ok(()) }
+}
+
+// Shutdown spy — records whether shutdown_both was invoked.
+struct ShutdownSpy { called: Arc<Mutex<bool>> }
+impl ShutdownableStream for ShutdownSpy {
+    fn shutdown_both(&mut self) -> io::Result<()> {
+        *self.called.lock().unwrap() = true;
+        Ok(())
+    }
+}
+
 #[test]
-fn vara_abort_in_flight_completes_within_2s_when_peer_does_not_drain() {
-    // Set up a TCP listener that ACCEPTs but never recv()s — simulates the
-    // wedged VARA process case.
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let port = listener.local_addr().unwrap().port();
-    let _peer = std::thread::spawn(move || {
-        let (_s, _) = listener.accept().unwrap();
-        std::thread::sleep(Duration::from_secs(30));  // never drain
-    });
-    let stream = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
-    stream.set_write_timeout(Some(Duration::from_millis(1500))).unwrap();
-    let writer = Box::new(stream.try_clone().unwrap()) as Box<dyn Write + Send>;
-    let shutdown = Box::new(stream) as Box<dyn ShutdownableStream + Send>;
+fn vara_abort_in_flight_falls_back_to_hard_close_when_write_fails() {
     let session = VaraSession::new();
-    session.install_abort_writer(writer, shutdown);
+    let shutdown_called = Arc::new(Mutex::new(false));
+    let spy = ShutdownSpy { called: shutdown_called.clone() };
+    session.install_abort_writer(Box::new(BlockedWriter), Box::new(spy));
 
     let start = std::time::Instant::now();
-    let _ = session.abort_in_flight();  // Cooperative write times out → hard-close fallback.
+    let result = session.abort_in_flight();
     let elapsed = start.elapsed();
+
+    // Cooperative path returned Err, fallback should have closed.
+    assert!(result.is_err(), "cooperative write must surface as Err");
+    assert!(*shutdown_called.lock().unwrap(),
+            "Codex Round 4 P1 #3: hard-close fallback MUST run when cooperative write fails");
     assert!(elapsed < Duration::from_secs(2),
-            "abort_in_flight took {:?} — Codex Round 3 P1 #1 bound is 2s",
+            "Codex Round 3 P1 #1: bound is 2s even on hard-close fallback; got {:?}",
             elapsed);
+}
+
+// Codex Round 4 P1 #4: ARDOP mirror. Same harness for ModemSession.
+#[test]
+fn ardop_abort_in_flight_falls_back_to_hard_close_when_write_fails() {
+    let session = ModemSession::new();
+    let shutdown_called = Arc::new(Mutex::new(false));
+    let spy = ShutdownSpy { called: shutdown_called.clone() };
+    session.install_abort_writer(Box::new(BlockedWriter), Box::new(spy));
+
+    let result = session.abort_in_flight();
+
+    assert!(result.is_err());
+    assert!(*shutdown_called.lock().unwrap(),
+            "Codex Round 4 P1 #4: ARDOP abort must also bound write + hard-close on failure");
 }
 ```
 
@@ -2156,7 +2270,9 @@ In `src-tauri/src/winlink/modem/vara/transport.rs`, add `try_clone_abort_writer`
 2. Calls `set_write_timeout(Some(Duration::from_millis(1500)))` on the clone.
 3. Returns both the boxed writer AND the shutdown handle (or a tuple) for `install_abort_writer`.
 
-Mirror ARDOP's pattern; ARDOP's abort path also needs the same write-deadline treatment as part of this task's amendment (Codex Round 3 P1 #1 doesn't only affect VARA — both protocols' cooperative abort writes need bounded write timeouts + hard-close fallback).
+**Mirror ARDOP's pattern** — ARDOP's `ModemSession::abort_in_flight` also writes to a cloned `TcpStream` and currently has the same unbounded-write risk. Codex Round 4 P1 #4 explicitly requires the bounded-write + hard-close treatment for ARDOP too, with the dedicated ARDOP test above. Both protocols' tests must pass to mark Task 4.1 complete.
+
+**Update `install_abort_writer` signature** (Codex Round 4 P2): the new pair signature is `(Box<dyn Write + Send>, Box<dyn ShutdownableStream + Send>)`. Previous Task 4.1/4.2 snippets that show only `(Box<dyn Write + Send>)` are obsolete — when implementing, use the two-argument form. The test setup MUST pass a shutdown spy to exercise the fallback.
 
 - [ ] **Step 4: Run test to verify it passes**
 
