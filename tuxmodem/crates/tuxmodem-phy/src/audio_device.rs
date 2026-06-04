@@ -34,7 +34,7 @@
 //! worry about.
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc;
+use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
@@ -52,6 +52,20 @@ pub enum PlayOutcome {
     Completed,
     /// Caller's abort flag observed; stream dropped early. The remainder
     /// of the buffer did NOT reach the device.
+    Aborted,
+}
+
+/// Outcome of an abortable capture call. `Completed` = the target
+/// sample count was reached. `Aborted` = the caller's abort flag was
+/// observed before the target count.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RecordOutcome {
+    /// Target sample count reached cleanly.
+    Completed,
+    /// Caller's abort flag observed; the returned buffer carries
+    /// whatever samples had been captured up to that point (which may
+    /// be the empty buffer if the abort fired before any samples
+    /// arrived).
     Aborted,
 }
 
@@ -338,6 +352,253 @@ impl AudioOutput {
         // Stream drops here, closing the CPAL handle.
         drop(stream);
         Ok(PlayOutcome::Completed)
+    }
+}
+
+/// Information about an available input device.
+#[derive(Debug, Clone)]
+pub struct InputDeviceInfo {
+    /// CPAL device name — the value to pass to [`AudioInput::open`]
+    /// for an exact match.
+    pub name: String,
+    /// Number of channels the device's default config offers.
+    pub default_channels: u16,
+    /// Minimum sample rate the device supports across all configs.
+    pub min_sample_rate_hz: u32,
+    /// Maximum sample rate the device supports across all configs.
+    pub max_sample_rate_hz: u32,
+    /// True if the device supports the PHY's pinned 48 kHz rate in
+    /// at least one f32 input config.
+    pub supports_48k_f32: bool,
+}
+
+/// Enumerate input devices that CPAL's default host can see.
+///
+/// Mirrors [`list_output_devices`] for the capture side. Returns even
+/// devices that won't work for the PHY (wrong rate, wrong format) —
+/// the operator picks based on [`InputDeviceInfo::supports_48k_f32`].
+pub fn list_input_devices() -> Result<Vec<InputDeviceInfo>, PhyError> {
+    let host = cpal::default_host();
+    let devices = host.input_devices().map_err(audio_err("input_devices"))?;
+    let mut out = Vec::new();
+    for device in devices {
+        let name = device.name().map_err(audio_err("device name"))?;
+        let default = device
+            .default_input_config()
+            .map_err(audio_err("default_input_config"))?;
+        let mut min_rate = u32::MAX;
+        let mut max_rate = 0u32;
+        let mut supports = false;
+        if let Ok(configs) = device.supported_input_configs() {
+            for cfg in configs {
+                let lo = cfg.min_sample_rate().0;
+                let hi = cfg.max_sample_rate().0;
+                min_rate = min_rate.min(lo);
+                max_rate = max_rate.max(hi);
+                if lo <= SAMPLE_RATE_HZ
+                    && hi >= SAMPLE_RATE_HZ
+                    && cfg.sample_format() == cpal::SampleFormat::F32
+                {
+                    supports = true;
+                }
+            }
+        }
+        if min_rate == u32::MAX {
+            min_rate = default.sample_rate().0;
+            max_rate = default.sample_rate().0;
+        }
+        out.push(InputDeviceInfo {
+            name,
+            default_channels: default.channels(),
+            min_sample_rate_hz: min_rate,
+            max_sample_rate_hz: max_rate,
+            supports_48k_f32: supports,
+        });
+    }
+    Ok(out)
+}
+
+/// Live capture from a soundcard. Constructed via [`Self::open`]; each
+/// [`Self::record_blocking_with_abort`] call builds and tears down a
+/// CPAL stream of its own (matching [`AudioOutput`]'s pattern — see
+/// the module-level "Blocking semantics" doc).
+pub struct AudioInput {
+    device: cpal::Device,
+    config: cpal::SupportedStreamConfig,
+}
+
+impl AudioInput {
+    /// Open the named device, or the host's default input when
+    /// `device_name` is `None`. Errors if the named device isn't
+    /// found OR if it can't be configured for 48 kHz f32.
+    pub fn open(device_name: Option<&str>) -> Result<Self, PhyError> {
+        let host = cpal::default_host();
+        let device = match device_name {
+            None => host
+                .default_input_device()
+                .ok_or_else(|| PhyError::AudioIo("no default input device".into()))?,
+            Some(name) => {
+                let devices = host.input_devices().map_err(audio_err("input_devices"))?;
+                let mut found: Option<cpal::Device> = None;
+                for d in devices {
+                    let dn = d.name().map_err(audio_err("device name"))?;
+                    if dn == name {
+                        found = Some(d);
+                        break;
+                    }
+                }
+                found.ok_or_else(|| {
+                    PhyError::AudioIo(format!("input device not found: {name}"))
+                })?
+            }
+        };
+
+        // Find a config that includes 48 kHz f32. Prefer mono when
+        // available; otherwise we'll de-interleave channel 0 in the
+        // capture callback.
+        let configs = device
+            .supported_input_configs()
+            .map_err(audio_err("supported_input_configs"))?;
+        let target_rate = cpal::SampleRate(SAMPLE_RATE_HZ);
+        let mut mono: Option<cpal::SupportedStreamConfigRange> = None;
+        let mut other: Option<cpal::SupportedStreamConfigRange> = None;
+        for cfg in configs {
+            if cfg.sample_format() != cpal::SampleFormat::F32 {
+                continue;
+            }
+            if cfg.min_sample_rate() > target_rate || cfg.max_sample_rate() < target_rate {
+                continue;
+            }
+            if cfg.channels() == 1 {
+                mono = Some(cfg);
+                break;
+            }
+            if other.is_none() {
+                other = Some(cfg);
+            }
+        }
+        let chosen = mono
+            .or(other)
+            .ok_or_else(|| {
+                PhyError::AudioIo(format!(
+                    "device does not support {SAMPLE_RATE_HZ} Hz f32 input"
+                ))
+            })?
+            .with_sample_rate(target_rate);
+
+        Ok(Self {
+            device,
+            config: chosen,
+        })
+    }
+
+    /// The CPAL device name this input is bound to.
+    pub fn device_name(&self) -> Result<String, PhyError> {
+        self.device.name().map_err(audio_err("device name"))
+    }
+
+    /// Channel count this input is configured for (1 = mono; > 1
+    /// gets de-interleaved to channel 0 in the capture callback).
+    pub fn channels(&self) -> u16 {
+        self.config.channels()
+    }
+
+    /// Capture `target_samples` mono samples (at 48 kHz), polling the
+    /// caller's `abort` flag every ~20 ms. Returns the captured buffer
+    /// + the [`RecordOutcome`].
+    ///
+    /// For multi-channel input devices, only channel 0 is kept —
+    /// keeps the API mono-only on the PHY side, matching what
+    /// `WidebandLowDensityFloor::receive` expects.
+    pub fn record_blocking_with_abort(
+        &mut self,
+        target_samples: usize,
+        abort: &AtomicBool,
+    ) -> Result<(RecordOutcome, AudioBuffer), PhyError> {
+        let channels = usize::from(self.config.channels());
+        if channels == 0 {
+            return Err(PhyError::AudioIo(
+                "input device reports 0 channels".into(),
+            ));
+        }
+        // Shared accumulator the capture callback writes into.
+        // Mutex (not std::sync::RwLock or atomic) because CPAL's
+        // callback runs on a different thread and we need exclusive
+        // append access.
+        let acc: Arc<Mutex<Vec<f32>>> = Arc::new(Mutex::new(Vec::with_capacity(target_samples)));
+        let acc_cb = Arc::clone(&acc);
+        let (err_tx, err_rx) = mpsc::channel::<String>();
+
+        let stream = self
+            .device
+            .build_input_stream(
+                &self.config.config(),
+                move |samples: &[f32], _info| {
+                    // De-interleave: take channel 0 of each frame.
+                    let mut guard = acc_cb.lock().unwrap();
+                    if guard.len() >= target_samples {
+                        return;
+                    }
+                    for frame in samples.chunks_exact(channels) {
+                        if guard.len() >= target_samples {
+                            break;
+                        }
+                        guard.push(frame[0]);
+                    }
+                },
+                move |err| {
+                    let _ = err_tx.send(err.to_string());
+                },
+                None,
+            )
+            .map_err(audio_err("build_input_stream"))?;
+
+        stream.play().map_err(audio_err("stream.play"))?;
+
+        // Generous wall-clock budget: target duration + 2 s slack.
+        let target_duration =
+            Duration::from_secs_f32(target_samples as f32 / SAMPLE_RATE_HZ as f32);
+        let total_budget = target_duration + Duration::from_secs(2);
+        let deadline = Instant::now() + total_budget;
+        let poll = Duration::from_millis(20);
+        let outcome = loop {
+            if abort.load(Ordering::Acquire) {
+                break RecordOutcome::Aborted;
+            }
+            if let Ok(msg) = err_rx.try_recv() {
+                drop(stream);
+                return Err(PhyError::AudioIo(format!("stream error: {msg}")));
+            }
+            {
+                let guard = acc.lock().unwrap();
+                if guard.len() >= target_samples {
+                    break RecordOutcome::Completed;
+                }
+            }
+            if Instant::now() >= deadline {
+                drop(stream);
+                return Err(PhyError::AudioIo(format!(
+                    "capture timeout after {:.2}s (got {}/{} samples)",
+                    total_budget.as_secs_f32(),
+                    acc.lock().unwrap().len(),
+                    target_samples,
+                )));
+            }
+            std::thread::sleep(poll);
+        };
+
+        drop(stream);
+        let mut samples = Arc::try_unwrap(acc)
+            .map_err(|_| PhyError::AudioIo("capture acc still shared after stream drop".into()))?
+            .into_inner()
+            .map_err(|e| PhyError::AudioIo(format!("capture acc poisoned: {e}")))?;
+        // For a Completed outcome the buffer should be exactly target
+        // long; trim any over-shoot the callback might have written in
+        // a final chunk. Aborted outcomes return whatever was captured.
+        if matches!(outcome, RecordOutcome::Completed) {
+            samples.truncate(target_samples);
+        }
+        Ok((outcome, AudioBuffer::from_samples(samples)))
     }
 }
 
