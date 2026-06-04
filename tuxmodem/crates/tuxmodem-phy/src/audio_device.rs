@@ -1,0 +1,355 @@
+//! Real-time audio output via CPAL.
+//!
+//! Bridges the PHY's mono 48 kHz f32 [`crate::audio_io::AudioBuffer`]
+//! into a live soundcard stream. Feature-gated behind `audio-device`
+//! so the workspace's non-hardware crates and CI builds don't pull
+//! in CPAL's ALSA/CoreAudio/WASAPI deps unless this surface is
+//! actually wanted.
+//!
+//! ## Sample format
+//!
+//! The PHY emits **mono 48 kHz f32** per the spec pinned in
+//! [`crate::audio_io::SAMPLE_RATE_HZ`]. CPAL device support varies
+//! by host; we negotiate against the device's reported configs:
+//!
+//! - 48 kHz sample rate is required; mismatches surface as
+//!   [`PhyError::AudioIo`] (no resampling — the PHY's mode tables
+//!   are tied to this rate).
+//! - Channel count is whatever the device offers, prefer mono when
+//!   available. For stereo-only devices, each mono sample is
+//!   duplicated to both channels in [`AudioOutput::play_blocking`].
+//! - Sample format is `f32` (matching the PHY); 16-bit-PCM-only
+//!   devices will error rather than auto-convert (we don't want to
+//!   silently clip the PHY's full-scale output).
+//!
+//! ## Blocking semantics
+//!
+//! [`AudioOutput::play_blocking`] starts a fresh CPAL stream, pumps
+//! the buffer into the device's callback, waits until the callback
+//! has consumed all samples, then drains the device's internal
+//! ring before returning. After return, the stream is closed and
+//! the next `play_blocking` call builds a fresh one. This costs a
+//! few hundred ms of setup per call but keeps each call
+//! self-contained — no global stream state for the caller to
+//! worry about.
+
+use std::sync::mpsc;
+use std::time::Duration;
+
+use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+
+use crate::audio_io::{AudioBuffer, SAMPLE_RATE_HZ};
+use crate::error::PhyError;
+
+/// Information about an available output device.
+#[derive(Debug, Clone)]
+pub struct DeviceInfo {
+    /// CPAL device name — the value to pass to [`AudioOutput::open`]
+    /// for an exact match.
+    pub name: String,
+    /// Number of channels the device's default config offers.
+    pub default_channels: u16,
+    /// Minimum sample rate the device supports across all configs.
+    pub min_sample_rate_hz: u32,
+    /// Maximum sample rate the device supports across all configs.
+    pub max_sample_rate_hz: u32,
+    /// True if the device supports the PHY's pinned 48 kHz rate in
+    /// at least one f32 output config.
+    pub supports_48k_f32: bool,
+}
+
+/// Enumerate output devices that CPAL's default host can see.
+///
+/// Returns even devices that won't work for the PHY (wrong sample
+/// rate, wrong sample format, etc.) — the operator picks based on
+/// the [`DeviceInfo::supports_48k_f32`] flag.
+pub fn list_output_devices() -> Result<Vec<DeviceInfo>, PhyError> {
+    let host = cpal::default_host();
+    let devices = host.output_devices().map_err(audio_err("output_devices"))?;
+    let mut out = Vec::new();
+    for device in devices {
+        let name = device
+            .name()
+            .map_err(audio_err("device name"))?;
+        let default = device
+            .default_output_config()
+            .map_err(audio_err("default_output_config"))?;
+        let mut min_rate = u32::MAX;
+        let mut max_rate = 0u32;
+        let mut supports = false;
+        if let Ok(configs) = device.supported_output_configs() {
+            for cfg in configs {
+                let lo = cfg.min_sample_rate().0;
+                let hi = cfg.max_sample_rate().0;
+                min_rate = min_rate.min(lo);
+                max_rate = max_rate.max(hi);
+                if lo <= SAMPLE_RATE_HZ
+                    && hi >= SAMPLE_RATE_HZ
+                    && cfg.sample_format() == cpal::SampleFormat::F32
+                {
+                    supports = true;
+                }
+            }
+        }
+        if min_rate == u32::MAX {
+            // No supported_output_configs() entries — fall back to the
+            // default config's rate.
+            min_rate = default.sample_rate().0;
+            max_rate = default.sample_rate().0;
+        }
+        out.push(DeviceInfo {
+            name,
+            default_channels: default.channels(),
+            min_sample_rate_hz: min_rate,
+            max_sample_rate_hz: max_rate,
+            supports_48k_f32: supports,
+        });
+    }
+    Ok(out)
+}
+
+/// Live output to a soundcard. Constructed via [`Self::open`]; each
+/// [`Self::play_blocking`] call builds and tears down a CPAL stream
+/// of its own (see module docs for rationale).
+pub struct AudioOutput {
+    device: cpal::Device,
+    config: cpal::SupportedStreamConfig,
+}
+
+impl AudioOutput {
+    /// Open the named device, or the host's default output when
+    /// `device_name` is `None`. Errors if the named device isn't
+    /// found OR if it can't be configured for 48 kHz f32.
+    pub fn open(device_name: Option<&str>) -> Result<Self, PhyError> {
+        let host = cpal::default_host();
+        let device = match device_name {
+            None => host
+                .default_output_device()
+                .ok_or_else(|| PhyError::AudioIo("no default output device".into()))?,
+            Some(name) => {
+                let devices = host.output_devices().map_err(audio_err("output_devices"))?;
+                let mut found: Option<cpal::Device> = None;
+                for d in devices {
+                    let dn = d.name().map_err(audio_err("device name"))?;
+                    if dn == name {
+                        found = Some(d);
+                        break;
+                    }
+                }
+                found.ok_or_else(|| {
+                    PhyError::AudioIo(format!("output device not found: {name}"))
+                })?
+            }
+        };
+
+        // Find a config that includes 48 kHz f32. Prefer mono when
+        // available — fewer samples to push per audio frame.
+        let configs = device
+            .supported_output_configs()
+            .map_err(audio_err("supported_output_configs"))?;
+        let target_rate = cpal::SampleRate(SAMPLE_RATE_HZ);
+        let mut mono: Option<cpal::SupportedStreamConfigRange> = None;
+        let mut other: Option<cpal::SupportedStreamConfigRange> = None;
+        for cfg in configs {
+            if cfg.sample_format() != cpal::SampleFormat::F32 {
+                continue;
+            }
+            if cfg.min_sample_rate() > target_rate || cfg.max_sample_rate() < target_rate {
+                continue;
+            }
+            if cfg.channels() == 1 {
+                mono = Some(cfg);
+                break;
+            }
+            if other.is_none() {
+                other = Some(cfg);
+            }
+        }
+        let chosen = mono
+            .or(other)
+            .ok_or_else(|| {
+                PhyError::AudioIo(format!(
+                    "device does not support {SAMPLE_RATE_HZ} Hz f32 output"
+                ))
+            })?
+            .with_sample_rate(target_rate);
+
+        Ok(Self {
+            device,
+            config: chosen,
+        })
+    }
+
+    /// The CPAL device name this output is bound to.
+    pub fn device_name(&self) -> Result<String, PhyError> {
+        self.device.name().map_err(audio_err("device name"))
+    }
+
+    /// Channel count this output is configured for (1 = mono,
+    /// 2 = stereo; higher counts get the mono sample replicated to
+    /// every channel).
+    pub fn channels(&self) -> u16 {
+        self.config.channels()
+    }
+
+    /// Play the buffer to the device, blocking until the device's
+    /// ring drains. After return, the stream is closed.
+    ///
+    /// Mono buffers are expanded to the device's channel count by
+    /// duplicating each sample to every channel. The PHY's pinned
+    /// 48 kHz f32 mono format is the only supported input.
+    pub fn play_blocking(&mut self, buffer: &AudioBuffer) -> Result<(), PhyError> {
+        let channels = usize::from(self.config.channels());
+        // Interleave mono → device-channels. For stereo, each sample
+        // duplicates to L + R; for 5.1, it duplicates to all 6.
+        let mut frames: Vec<f32> = Vec::with_capacity(buffer.samples().len() * channels);
+        for s in buffer.samples() {
+            for _ in 0..channels {
+                frames.push(*s);
+            }
+        }
+
+        let total = frames.len();
+        let (done_tx, done_rx) = mpsc::channel::<()>();
+        let (err_tx, err_rx) = mpsc::channel::<String>();
+        // CPAL needs to own the frames + the cursor. Move both into
+        // the callback closure; clone the channels needed for signalling.
+        let mut cursor = 0usize;
+        let done_tx_cb = done_tx.clone();
+        let stream = self
+            .device
+            .build_output_stream(
+                &self.config.config(),
+                move |out: &mut [f32], _info| {
+                    let remaining = total.saturating_sub(cursor);
+                    let to_copy = out.len().min(remaining);
+                    if to_copy > 0 {
+                        out[..to_copy]
+                            .copy_from_slice(&frames[cursor..cursor + to_copy]);
+                        cursor += to_copy;
+                    }
+                    // Zero-fill any remainder of this callback's
+                    // frame so the device doesn't replay stale data
+                    // after we're done.
+                    for s in out[to_copy..].iter_mut() {
+                        *s = 0.0;
+                    }
+                    // Once we've reached the end and JUST consumed
+                    // the last samples, signal done. send() may fail
+                    // if the receiver dropped early — that's fine.
+                    if cursor >= total && to_copy > 0 {
+                        let _ = done_tx_cb.send(());
+                    }
+                },
+                move |err| {
+                    let _ = err_tx.send(err.to_string());
+                },
+                None,
+            )
+            .map_err(audio_err("build_output_stream"))?;
+        // Drop the original done_tx so an early callback failure can
+        // still close the channel and unblock the recv below.
+        drop(done_tx);
+
+        stream.play().map_err(audio_err("stream.play"))?;
+
+        // Bound the recv with a generous timeout proportional to the
+        // buffer duration. If the device hangs the callback we don't
+        // want play_blocking to block forever.
+        let budget = Duration::from_secs_f32(buffer.duration_seconds() + 2.0);
+        match done_rx.recv_timeout(budget) {
+            Ok(()) => {}
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                return Err(PhyError::AudioIo(format!(
+                    "playback timeout after {:.2}s",
+                    budget.as_secs_f32()
+                )));
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                // The callback dropped its sender without signaling
+                // done — check if it surfaced an error.
+                if let Ok(msg) = err_rx.try_recv() {
+                    return Err(PhyError::AudioIo(format!("stream error: {msg}")));
+                }
+                return Err(PhyError::AudioIo("playback ended unexpectedly".into()));
+            }
+        }
+
+        // Brief tail-drain for the device's internal ring buffer to
+        // play out before we drop the stream. Without this the last
+        // ~10-50 ms of audio gets truncated on some ALSA configs.
+        std::thread::sleep(Duration::from_millis(100));
+        // Stream drops here, closing the CPAL handle.
+        drop(stream);
+        Ok(())
+    }
+}
+
+/// Wrap a CPAL error type into [`PhyError::AudioIo`] with a context tag.
+fn audio_err<E: std::fmt::Display>(context: &'static str) -> impl FnOnce(E) -> PhyError {
+    move |e| PhyError::AudioIo(format!("{context}: {e}"))
+}
+
+// ─── tests ──────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Most behavior tests live in the binary's MockOutput unit tests
+    // (where we can stub the device side without CPAL). What we CAN
+    // unit-test here is the channel-expansion arithmetic — the same
+    // expansion the production play_blocking does, factored for
+    // independent verification.
+    fn expand_mono_to_channels(samples: &[f32], channels: usize) -> Vec<f32> {
+        let mut out = Vec::with_capacity(samples.len() * channels);
+        for s in samples {
+            for _ in 0..channels {
+                out.push(*s);
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn channel_expansion_mono_to_mono_is_identity() {
+        let mono = vec![0.1, 0.2, 0.3];
+        assert_eq!(expand_mono_to_channels(&mono, 1), vec![0.1, 0.2, 0.3]);
+    }
+
+    #[test]
+    fn channel_expansion_mono_to_stereo_duplicates() {
+        let mono = vec![0.5, -0.5];
+        assert_eq!(
+            expand_mono_to_channels(&mono, 2),
+            vec![0.5, 0.5, -0.5, -0.5]
+        );
+    }
+
+    #[test]
+    fn channel_expansion_mono_to_quad_duplicates_to_all_four() {
+        let mono = vec![1.0];
+        assert_eq!(expand_mono_to_channels(&mono, 4), vec![1.0, 1.0, 1.0, 1.0]);
+    }
+
+    #[test]
+    fn channel_expansion_empty_input_yields_empty_output() {
+        let mono: Vec<f32> = vec![];
+        assert_eq!(expand_mono_to_channels(&mono, 2), Vec::<f32>::new());
+    }
+
+    #[test]
+    fn audio_err_includes_context_tag() {
+        // Sanity check on the error wrapper — failures from cpal
+        // should arrive with a context tag so the operator can tell
+        // which call site fired.
+        let wrapped = audio_err("build_output_stream")("oh no");
+        match wrapped {
+            PhyError::AudioIo(msg) => {
+                assert!(msg.contains("build_output_stream"));
+                assert!(msg.contains("oh no"));
+            }
+            other => panic!("expected AudioIo, got {other:?}"),
+        }
+    }
+}
