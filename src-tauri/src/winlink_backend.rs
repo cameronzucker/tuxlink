@@ -231,7 +231,21 @@ pub fn build_outbound_proposals(
 ) -> Result<Vec<session::OutboundMessage>, BackendError> {
     let mut outbound = Vec::new();
     for meta in mailbox.list(MailboxFolder::Outbox)? {
-        let body = mailbox.read(MailboxFolder::Outbox, &meta.id)?;
+        // Codex review 2026-06-03 [P2 #6] (tuxlink-61yg): per-message read
+        // failures used to propagate `?` and discard the entire batch.
+        // A single bad/missing file would silently withhold ALL readable
+        // mail from the session. Now: skip and continue. A folder-wide
+        // listing failure still propagates (the outer `?`).
+        let body = match mailbox.read(MailboxFolder::Outbox, &meta.id) {
+            Ok(b) => b,
+            Err(e) => {
+                eprintln!(
+                    "build_outbound_proposals: skipping outbox message {:?}: {e}",
+                    meta.id
+                );
+                continue;
+            }
+        };
         if let Ok(message) = Message::from_bytes(&body.raw_rfc5322) {
             if let Some((proposal, compressed)) = message.to_proposal() {
                 let title = message.header("Subject").unwrap_or_default().to_string();
@@ -1892,6 +1906,67 @@ pub fn run_ardop_b2f_exchange(
     })?;
 
     // File received messages into the inbox; move delivered ones to sent.
+    for message in &result.received {
+        mailbox.store(MailboxFolder::Inbox, &message.to_bytes())?;
+    }
+    for mid in &result.sent {
+        mailbox.move_to(
+            MailboxFolder::Outbox,
+            MailboxFolder::Sent,
+            &MessageId(mid.clone()),
+        )?;
+    }
+    Ok(())
+}
+
+/// Run the ARDOP B2F exchange as the **answerer** for the ARDOP listener
+/// (tuxlink-61yg). Mirror of `run_ardop_b2f_exchange` but with
+/// `ExchangeRole::Answer` + `SessionIntent::P2p`, parameterised on the
+/// connected peer's callsign.
+///
+/// Loads operator Outbox BEFORE the exchange so pending mail rides the
+/// inbound session out to the peer. After the exchange completes, persists
+/// `result.received` to Inbox + moves `result.sent` MIDs from Outbox to
+/// Sent. Same Inbox-FIRST ordering as the dialer path's Codex P1.4 fix.
+pub fn run_ardop_b2f_answer(
+    transport: &mut dyn crate::winlink::modem::ModemTransport,
+    peer_callsign: &str,
+    config: &Config,
+    mailbox: &Mailbox,
+    position: Option<&crate::position::PositionArbiter>,
+) -> Result<(), BackendError> {
+    use crate::winlink::modem::ardop::b2f;
+    let callsign = config
+        .identity
+        .callsign
+        .clone()
+        .ok_or_else(|| BackendError::NotConfigured("identity.callsign".into()))?
+        .trim()
+        .to_uppercase();
+    let locator = crate::position::effective_broadcast_locator(config, position);
+
+    let outbound = build_outbound_proposals(mailbox)?;
+    let exchange_config = session::ExchangeConfig {
+        mycall: callsign,
+        targetcall: peer_callsign.to_string(),
+        locator,
+        password: None,
+        intent: SessionIntent::P2p,
+    };
+    let result = b2f::run_b2f_exchange(
+        transport,
+        ExchangeRole::Answer,
+        &exchange_config,
+        outbound,
+        |proposals| {
+            proposals
+                .iter()
+                .map(|_| Answer::Accept { resume_offset: 0 })
+                .collect()
+        },
+    )
+    .map_err(|e| BackendError::TransportFailed { reason: format!("{e}"), source: None })?;
+
     for message in &result.received {
         mailbox.store(MailboxFolder::Inbox, &message.to_bytes())?;
     }

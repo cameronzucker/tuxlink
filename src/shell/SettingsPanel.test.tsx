@@ -35,7 +35,15 @@ describe('SettingsPanel', () => {
 
   it('persists a gps_state change via config_set_privacy (keeps current precision)', async () => {
     render(<SettingsPanel open onClose={vi.fn()} />);
-    const off = await screen.findByRole('radio', { name: /^off/i });
+    // tuxlink-61yg CI fix: the gpsState/precision change handlers short-
+    // circuit when config isn't loaded yet (`gpsState && persist(...)`,
+    // `precision && persist(...)`). Wait for the mock config_read to land
+    // in state — signaled by the "Broadcast At Precision" radio becoming
+    // checked — before firing the click. Without this wait the test
+    // races on slow CI (passes locally where microtasks drain faster).
+    const broadcast = await screen.findByRole('radio', { name: /broadcast at precision/i });
+    await waitFor(() => expect(broadcast).toBeChecked());
+    const off = screen.getByRole('radio', { name: /^off/i });
     fireEvent.click(off);
     await waitFor(() => {
       expect(invokeMock).toHaveBeenCalledWith('config_set_privacy', {
@@ -47,7 +55,10 @@ describe('SettingsPanel', () => {
 
   it('persists a precision change via config_set_privacy (keeps current gps_state)', async () => {
     render(<SettingsPanel open onClose={vi.fn()} />);
-    const six = await screen.findByRole('radio', { name: /6-char grid/i });
+    // Same race as above — wait for config to load before firing the click.
+    const broadcast = await screen.findByRole('radio', { name: /broadcast at precision/i });
+    await waitFor(() => expect(broadcast).toBeChecked());
+    const six = screen.getByRole('radio', { name: /6-char grid/i });
     fireEvent.click(six);
     await waitFor(() => {
       expect(invokeMock).toHaveBeenCalledWith('config_set_privacy', {

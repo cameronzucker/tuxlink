@@ -103,4 +103,27 @@ pub trait ModemTransport: Send {
     fn try_clone_abort_writer(&self) -> Option<std::net::TcpStream> {
         None
     }
+
+    /// Wait for an inbound CONNECTED event during listener mode.
+    ///
+    /// Backends that support listener mode (ARDOP, VARA) override this to
+    /// poll the cmd-socket / modem-control channel for a `Connected { peer,
+    /// bandwidth }` event with a bounded wait. Returns `Ok(Some(info))` when
+    /// a peer connects, `Ok(None)` when the wait times out (caller loops),
+    /// or `Err` on transport failure (caller exits the listener).
+    ///
+    /// The default impl returns `Ok(None)` immediately (no listener support).
+    /// The ARDOP impl drains the cmd socket, skipping status events and
+    /// returning on the first Connected.
+    ///
+    /// bd: tuxlink-61yg
+    fn wait_for_listener_connect(
+        &mut self,
+        _timeout: std::time::Duration,
+    ) -> Result<
+        Option<crate::winlink::modem::ardop::session::ConnectInfo>,
+        crate::winlink::modem::ardop::session::SessionError,
+    > {
+        Ok(None)
+    }
 }
