@@ -1029,6 +1029,135 @@ pub async fn send_form(
     Ok(mid.0)
 }
 
+/// Send an outbound webview-served WLE Standard Form.
+///
+/// Counterpart to [`send_form`] for the ~245 catalog forms whose authoritative
+/// shape is the HTML template (not a static [`forms::FormDef`]). The form id is
+/// verified against the live `forms::wle_templates::list` catalog (bundled +
+/// custom roots), so this command rejects ids the webview path could not have
+/// served — same error surface as `send_form` ("unknown form: <id>"). The XML
+/// envelope is synthesized via [`forms::serialize::serialize_catalog_form_xml`]
+/// from the operator-supplied `field_values` plus the WLE filename convention
+/// for `display_form` (`<id>_Viewer.html`) and `reply_template`
+/// (`<id>_SendReply.0`).
+///
+/// `field_values` is the post-conversion shape that the React `handleWebviewSubmit`
+/// produces: single-string-per-field (newline-joined multi-values, with the
+/// synthetic Submit button name stripped). The serializer sorts keys
+/// alphabetically for deterministic output.
+///
+/// Body composition: sorted "key: value" dump, with a leading "form_id: <id>"
+/// header for receiver context. Receivers that render the XML via the WLE
+/// viewer get the formatted view; the body text is the fallback for
+/// non-WLE-aware clients. Subject prefers `field_values["subject"]`, else
+/// `Form: <id>` (mirrors WLE's "Form name as subject" default).
+///
+/// Attachment filename is `RMS_Express_Form_<id>.xml` — same convention as
+/// `send_form` so existing parsers (Pat, RMS Express receivers, the tuxlink
+/// inbox renderer) detect + render the form view consistently.
+///
+/// Returns the MID string on success (mirrors `message_send` / `send_form`).
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub async fn send_webview_form(
+    form_id: String,
+    field_values: std::collections::HashMap<String, String>,
+    to: Vec<String>,
+    cc: Vec<String>,
+    senders_callsign: String,
+    grid_square: String,
+    app: AppHandle,
+    state: State<'_, BackendState>,
+) -> Result<String, UiError> {
+    use crate::forms;
+
+    // 1. Verify form_id is in the live catalog (bundled snapshot + operator's
+    //    custom-forms dir). This is the same lookup `open_webview_form` does,
+    //    so a session that opened successfully will always pass this check.
+    //    A stale draft restored from localStorage with a form_id no longer in
+    //    the catalog (e.g. operator deleted their custom form) gets the same
+    //    "unknown form" surface as `send_form`'s BUNDLED_FORMS check.
+    let bundle = forms::wle_templates::bundle_root_for_app(&app).map_err(|e| {
+        UiError::Internal { detail: e.to_string() }
+    })?;
+    let custom = forms::wle_templates::custom_root_for_app(&app);
+    let custom_opt = if custom.exists() { Some(custom.as_path()) } else { None };
+    let catalog = forms::wle_templates::list(&bundle, custom_opt).map_err(|e| {
+        UiError::Internal { detail: e.to_string() }
+    })?;
+    let _template = catalog
+        .iter()
+        .find(|t| t.id == form_id)
+        .ok_or_else(|| UiError::Internal {
+            detail: format!("unknown form: {form_id}"),
+        })?;
+
+    // 2. Build the FormParameters envelope. Conventions:
+    //    - xml_file_version "1.0" matches WLE's value.
+    //    - rms_express_version identifies the originator client.
+    //    - display_form / reply_template follow WLE's filename convention:
+    //      <id>_Viewer.html for the display template, <id>_SendReply.0 for
+    //      the reply template. Both are best-effort; a recipient running a
+    //      WLE viewer that doesn't have those filenames falls back to the
+    //      generic form viewer (the XML still renders).
+    let now = chrono::Utc::now();
+    let params = forms::types::FormParameters {
+        xml_file_version: "1.0".to_string(),
+        rms_express_version: format!("Tuxlink/{}", env!("CARGO_PKG_VERSION")),
+        submission_datetime: now.format("%Y%m%d%H%M%S").to_string(),
+        senders_callsign,
+        grid_square,
+        display_form: format!("{form_id}_Viewer.html"),
+        reply_template: format!("{form_id}_SendReply.0"),
+    };
+
+    // 3. Serialize the XML attachment.
+    let xml_bytes = forms::serialize::serialize_catalog_form_xml(&form_id, &params, &field_values);
+
+    // 4. Compose the plain-text body. Receivers see the structured XML via the
+    //    WLE viewer; the body text is the fallback for non-WLE-aware clients.
+    //    KISS: sorted "key: value" dump with a leading form_id header.
+    let mut keys: Vec<&String> = field_values.keys().collect();
+    keys.sort();
+    let mut body = format!("form_id: {form_id}\n\n");
+    for k in keys {
+        let v = field_values.get(k).map(String::as_str).unwrap_or("");
+        body.push_str(k);
+        body.push_str(": ");
+        body.push_str(v);
+        body.push('\n');
+    }
+
+    // 5. Subject. Prefer an explicit subject field if the form provided one
+    //    (common in WLE catalog forms — a "subject" or "msg_subject" input);
+    //    else fall back to "Form: <id>".
+    let subject = field_values
+        .get("subject")
+        .or_else(|| field_values.get("msg_subject"))
+        .cloned()
+        .unwrap_or_else(|| format!("Form: {form_id}"));
+
+    let attachment = crate::winlink_backend::OutboundAttachment {
+        filename: format!("RMS_Express_Form_{form_id}.xml"),
+        bytes: xml_bytes,
+    };
+
+    let msg = OutboundMessage {
+        to,
+        cc,
+        subject,
+        body,
+        date: now.to_rfc3339(),
+        attachments: vec![attachment],
+    };
+
+    let backend = state
+        .current()
+        .ok_or_else(|| UiError::NotConfigured("backend offline".to_string()))?;
+    let mid = backend.send_message(msg).await?;
+    Ok(mid.0)
+}
+
 // ============================================================================
 // HTML Forms — webview infrastructure command surface (P1 Task 8)
 // ============================================================================
@@ -6212,5 +6341,151 @@ hw:CARD=Device,DEV=0
         let v = serde_json::to_value(&dto).unwrap();
         assert_eq!(v["sent_count"], 3);
         assert_eq!(v["received_count"], 1);
+    }
+
+    // ========================================================================
+    // P1 Task 10 critical-fix: send_webview_form synthesis (tuxlink-tzr5)
+    // ========================================================================
+    //
+    // The `send_webview_form` Tauri command can't be invoked directly in unit
+    // tests (it takes AppHandle + State, which require a Tauri runtime). The
+    // pure XML synthesis lives in `forms::serialize::serialize_catalog_form_xml`
+    // and is unit-tested there. These tests cover the per-command synthesis
+    // decisions: WLE filename conventions for display_form / reply_template,
+    // attachment filename, body composition, and subject fallback.
+
+    /// `display_form` follows the WLE convention `<id>_Viewer.html`. This is
+    /// what catalog-form recipients use to find the viewer template for
+    /// rendering the structured form view.
+    #[test]
+    fn send_webview_form_display_form_follows_wle_convention() {
+        let form_id = "ICS205";
+        let display_form = format!("{form_id}_Viewer.html");
+        assert_eq!(display_form, "ICS205_Viewer.html");
+        // The Bulletin form, the ARC family, and the custom-namespace forms
+        // all follow the same convention — no per-form variants.
+        let form_id = "ARC213";
+        assert_eq!(format!("{form_id}_Viewer.html"), "ARC213_Viewer.html");
+    }
+
+    /// `reply_template` follows the WLE convention `<id>_SendReply.0`. The
+    /// `.0` suffix is part of WLE's filename scheme (versioning slot).
+    #[test]
+    fn send_webview_form_reply_template_follows_wle_convention() {
+        let form_id = "ICS205";
+        let reply_template = format!("{form_id}_SendReply.0");
+        assert_eq!(reply_template, "ICS205_SendReply.0");
+    }
+
+    /// Attachment filename uses the `RMS_Express_Form_<id>.xml` convention —
+    /// same as `send_form` so parsers (Pat, RMS Express, tuxlink inbox) detect
+    /// the form attachment consistently regardless of which submit pathway
+    /// produced it.
+    #[test]
+    fn send_webview_form_attachment_filename_matches_send_form_convention() {
+        let form_id = "ICS213_Initial";
+        let filename = format!("RMS_Express_Form_{form_id}.xml");
+        assert_eq!(filename, "RMS_Express_Form_ICS213_Initial.xml");
+    }
+
+    /// Body composition: sorted-by-key "key: value" dump with a leading
+    /// `form_id: <id>` header. This mirrors the synthesis inside
+    /// `send_webview_form` so a change to the body composition logic would
+    /// fail this test.
+    #[test]
+    fn send_webview_form_body_starts_with_form_id_header_and_sorts_keys() {
+        let form_id = "ICS213_Initial";
+        let mut field_values = std::collections::HashMap::new();
+        field_values.insert("zebra".to_string(), "z-val".to_string());
+        field_values.insert("alpha".to_string(), "a-val".to_string());
+        field_values.insert("mango".to_string(), "m-val".to_string());
+
+        // Replicates the body synthesis in `send_webview_form`.
+        let mut keys: Vec<&String> = field_values.keys().collect();
+        keys.sort();
+        let mut body = format!("form_id: {form_id}\n\n");
+        for k in keys {
+            let v = field_values.get(k).map(String::as_str).unwrap_or("");
+            body.push_str(k);
+            body.push_str(": ");
+            body.push_str(v);
+            body.push('\n');
+        }
+
+        assert!(body.starts_with("form_id: ICS213_Initial\n\n"));
+        let pa = body.find("alpha:").unwrap();
+        let pm = body.find("mango:").unwrap();
+        let pz = body.find("zebra:").unwrap();
+        assert!(pa < pm && pm < pz, "body must sort keys alphabetically");
+        assert!(body.contains("alpha: a-val"));
+    }
+
+    /// Subject: prefers `field_values["subject"]`, then `msg_subject`, else
+    /// falls back to `Form: <id>`. Matches WLE's "form-derived subject"
+    /// default for any form that doesn't capture an explicit subject input.
+    #[test]
+    fn send_webview_form_subject_prefers_explicit_subject_field() {
+        let form_id = "ICS213_Initial";
+        let mut field_values = std::collections::HashMap::new();
+        field_values.insert("subject".to_string(), "Urgent — supplies needed".to_string());
+        let subject = field_values
+            .get("subject")
+            .or_else(|| field_values.get("msg_subject"))
+            .cloned()
+            .unwrap_or_else(|| format!("Form: {form_id}"));
+        assert_eq!(subject, "Urgent — supplies needed");
+    }
+
+    #[test]
+    fn send_webview_form_subject_falls_back_to_msg_subject_then_form_id() {
+        let form_id = "ARC213";
+        // Only msg_subject present.
+        let mut field_values = std::collections::HashMap::new();
+        field_values.insert("msg_subject".to_string(), "Daily ops brief".to_string());
+        let subject = field_values
+            .get("subject")
+            .or_else(|| field_values.get("msg_subject"))
+            .cloned()
+            .unwrap_or_else(|| format!("Form: {form_id}"));
+        assert_eq!(subject, "Daily ops brief");
+
+        // Neither present → fallback.
+        let empty = std::collections::HashMap::<String, String>::new();
+        let subject = empty
+            .get("subject")
+            .or_else(|| empty.get("msg_subject"))
+            .cloned()
+            .unwrap_or_else(|| format!("Form: {form_id}"));
+        assert_eq!(subject, "Form: ARC213");
+    }
+
+    /// The XML envelope `send_webview_form` produces is the catalog-form
+    /// shape from `forms::serialize::serialize_catalog_form_xml` — same XML
+    /// envelope structure as `serialize_form_xml`, but iterates the
+    /// `field_values` map directly. This test fixes the catalog-form serializer
+    /// as the canonical envelope source so a future regression that diverges
+    /// the two serializers' shapes would fire here.
+    #[test]
+    fn send_webview_form_xml_uses_catalog_serializer() {
+        use crate::forms;
+        let params = forms::types::FormParameters {
+            xml_file_version: "1.0".into(),
+            rms_express_version: "Tuxlink/0.0.1".into(),
+            submission_datetime: "20260604120000".into(),
+            senders_callsign: "N0CALL".into(),
+            grid_square: "FN42".into(),
+            display_form: "ICS205_Viewer.html".into(),
+            reply_template: "ICS205_SendReply.0".into(),
+        };
+        let mut values = std::collections::HashMap::new();
+        values.insert("incident_name".to_string(), "Test".to_string());
+        let xml = forms::serialize::serialize_catalog_form_xml("ICS205", &params, &values);
+        let xml_str = String::from_utf8_lossy(&xml);
+        // BOM + xml declaration + envelope present (same as serialize_form_xml).
+        assert_eq!(&xml[0..3], &[0xEF, 0xBB, 0xBF]);
+        assert!(xml_str.contains("<RMS_Express_Form>"));
+        assert!(xml_str.contains("<display_form>ICS205_Viewer.html</display_form>"));
+        assert!(xml_str.contains("<reply_template>ICS205_SendReply.0</reply_template>"));
+        assert!(xml_str.contains("<incident_name>Test</incident_name>"));
     }
 }

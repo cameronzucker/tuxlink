@@ -121,4 +121,48 @@ describe('<CatalogBrowser>', () => {
     fireEvent.click(screen.getByTestId('catalog-browser-cancel'));
     expect(onCancel).toHaveBeenCalled();
   });
+
+  // ---- P1 Task 10 critical-fix polish (tuxlink-tzr5) -----------------
+
+  it('Escape key triggers onCancel (Important #6)', async () => {
+    const onCancel = vi.fn();
+    render(<CatalogBrowser onPick={vi.fn()} onCancel={onCancel} />);
+    await screen.findByText('Custom');
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(onCancel).toHaveBeenCalled();
+  });
+
+  it('focuses the search input on mount (Important #7)', async () => {
+    render(<CatalogBrowser onPick={vi.fn()} onCancel={vi.fn()} />);
+    // The auto-focus useEffect runs synchronously after mount; findBy
+    // for the initial state ensures we yield to the effect queue first.
+    await screen.findByText('Custom');
+    const input = screen.getByTestId('catalog-browser-search');
+    expect(document.activeElement).toBe(input);
+  });
+
+  it('does not declare tree/listbox/treeitem/option ARIA roles (Important #5)', async () => {
+    // We dropped the ARIA tree/listbox roles because we don't implement
+    // full WAI-ARIA tree keyboard nav (Arrow Up/Down, Right/Left,
+    // Home/End, typeahead). The native button semantics carry the
+    // keyboard story sufficiently for this audience. This assertion
+    // pins the decision so a future refactor doesn't accidentally
+    // re-introduce role attributes that promise behavior we don't
+    // implement.
+    render(<CatalogBrowser onPick={vi.fn()} onCancel={vi.fn()} />);
+    await screen.findByText('Custom');
+    expect(screen.queryByRole('tree')).toBeNull();
+    expect(screen.queryByRole('treeitem')).toBeNull();
+    expect(screen.queryByRole('listbox')).toBeNull();
+    // The dialog role is retained on the outer container — keep that.
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+  });
+
+  it('does not declare option roles in search-results mode (Important #5)', async () => {
+    render(<CatalogBrowser onPick={vi.fn()} onCancel={vi.fn()} />);
+    const input = await screen.findByPlaceholderText(/search forms/i);
+    fireEvent.change(input, { target: { value: 'arc' } });
+    expect(screen.queryByRole('listbox')).toBeNull();
+    expect(screen.queryByRole('option')).toBeNull();
+  });
 });

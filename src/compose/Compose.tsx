@@ -80,6 +80,30 @@ type FormMode =
 
 type CloseAction = 'close' | 'switch-to-form' | null;
 
+/**
+ * Collapse a ParsedBody (multi-value HTML form fields keyed by name)
+ * into the single-string-per-field shape that `send_webview_form`
+ * expects. The synthetic `Submit` button name is dropped — WLE
+ * templates POST the submit button's value back and we don't want it
+ * appearing as a "submit" field in the synthesized XML envelope.
+ *
+ * Multi-value collapse: single values → bare string; >1 value →
+ * newline-joined. Per design §5.3 this matches WLE's expectation for
+ * checkbox / multi-select groups.
+ *
+ * Exported for direct unit-testing of the conversion logic without
+ * having to mount the full Compose component (handleWebviewSubmit is
+ * a useCallback in Compose's component scope).
+ */
+export function parsedBodyToFieldValues(payload: ParsedBody): Record<string, string> {
+  const fieldValues: Record<string, string> = {};
+  for (const [k, vs] of Object.entries(payload.fields)) {
+    if (k === 'Submit') continue;
+    fieldValues[k] = vs.length === 1 ? vs[0] : vs.join('\n');
+  }
+  return fieldValues;
+}
+
 interface ClosePromptState {
   open: boolean;
   action: CloseAction;
@@ -135,6 +159,17 @@ export function Compose({ draftId }: ComposeProps) {
     if (formMode.kind === 'form') {
       return Object.values(formMode.values).some((v) => v.trim().length > 0);
     }
+    // Webview-form mode: the form state lives inside the embedded child
+    // webview (we have no introspection into its inputs across the IPC
+    // boundary). Conservatively treat it as dirty whenever the form is
+    // open — the operator has potentially significant work in flight,
+    // and the close-gate ("really close?") is the right behavior for a
+    // false-positive dirty signal (the alternative — silently closing
+    // a form with unsaved field data — is the failure we are guarding
+    // against). Important #4 from the P1 Task 10 code review.
+    if (formMode.kind === 'webview-form') {
+      return true;
+    }
     return (
       to !== s.to ||
       cc !== s.cc ||
@@ -166,11 +201,22 @@ export function Compose({ draftId }: ComposeProps) {
         requestAck: draft.requestAck,
       };
       if (draft.formId) {
-        setFormMode({
-          kind: 'form',
-          formId: draft.formId,
-          values: draft.formFields ?? {},
-        });
+        // Restore to whichever form mode matches: native form (with values)
+        // if the React registry has a Form for this id; webview-form
+        // otherwise. This mirrors CatalogBrowser's pick routing so a
+        // restored draft picks up the same UI path. Important #3 from
+        // the P1 Task 10 code review: previously, webview-form drafts saved
+        // with formId: undefined and silently restored as plain-text.
+        const entry = lookupForm(draft.formId);
+        if (entry?.Form) {
+          setFormMode({
+            kind: 'form',
+            formId: draft.formId,
+            values: draft.formFields ?? {},
+          });
+        } else {
+          setFormMode({ kind: 'webview-form', formId: draft.formId });
+        }
       }
     }
   }, [draftId]);
@@ -197,9 +243,20 @@ export function Compose({ draftId }: ComposeProps) {
       // Do NOT autosave after a successful send — the draft was intentionally
       // cleared and the interval must not recreate it (Codex P1 fix).
       if (!sentRef.current) {
+        // Persist formId in BOTH native form and webview-form modes so a
+        // restored draft picks up the same picker mode (Important #3 from
+        // the P1 Task 10 code review: previously, webview-form drafts saved
+        // with formId: undefined and silently restored as plain-text).
+        // formFields is only populated in native form mode — the webview's
+        // in-flight state lives in the embedded webview, not in Compose's
+        // React state, so we cannot snapshot it from this side.
+        const persistedFormId =
+          formMode.kind === 'form' || formMode.kind === 'webview-form'
+            ? formMode.formId
+            : undefined;
         saveDraft({
           draftId, to, cc, subject, body, requestAck,
-          formId: formMode.kind === 'form' ? formMode.formId : undefined,
+          formId: persistedFormId,
           formFields: formMode.kind === 'form' ? formMode.values : undefined,
         });
       }
@@ -232,9 +289,15 @@ export function Compose({ draftId }: ComposeProps) {
   // ============================================================================
 
   const handleSaveDraft = useCallback(() => {
+    // Persist formId in BOTH native form and webview-form modes
+    // (Important #3 from the P1 Task 10 code review).
+    const persistedFormId =
+      formMode.kind === 'form' || formMode.kind === 'webview-form'
+        ? formMode.formId
+        : undefined;
     saveDraft({
       draftId, to, cc, subject, body, requestAck,
-      formId: formMode.kind === 'form' ? formMode.formId : undefined,
+      formId: persistedFormId,
       formFields: formMode.kind === 'form' ? formMode.values : undefined,
     });
     savedSnapshotRef.current = { to, cc, subject, body, requestAck };
@@ -325,27 +388,27 @@ export function Compose({ draftId }: ComposeProps) {
   // The embedded WLE form POSTs back through the loopback http_server, which
   // round-trips a ParsedBody (multi-value string fields keyed by HTML name)
   // through the `form-submitted` event. We collapse the multi-value shape
-  // into the single-string-per-field `fieldValues` that `send_form` expects,
-  // then mirror handleFormSubmit's post-send cleanup so the success banner
-  // + draft clear behave identically across native and webview entries.
+  // into the single-string-per-field `fieldValues` that send_webview_form
+  // expects, then mirror handleFormSubmit's post-send cleanup so the success
+  // banner + draft clear behave identically across native and webview entries.
+  //
+  // Routes to `send_webview_form` (NOT `send_form`) because send_form only
+  // knows the 5 native BUNDLED_FORMS templates; ~245 catalog forms need the
+  // webview-aware command that synthesizes the XML envelope from
+  // field_values + WLE filename conventions. Critical #1 from the P1 Task 10
+  // code review — without this, the entire P1 catalog-picker path fails at
+  // submit time with "unknown form: <id>".
 
   const handleWebviewSubmit = useCallback(async (formId: string, payload: ParsedBody) => {
     if (sendState === 'sending') return;
     setSendState('sending');
     setErrorMsg(null);
     // Convert ParsedBody (multi-value fields) → fieldValues (single string
-    // per name). Per design §5.3: WLE forms use repeated names + checkbox
-    // groups; collapsing multi-values via newline preserves the convention
-    // forms::parse expects. The synthetic 'Submit' button name is dropped
-    // because the WLE templates POST the submit button's value back; the
-    // backend serializer ignores it but it's clearer to strip explicitly.
-    const fieldValues: Record<string, string> = {};
-    for (const [k, vs] of Object.entries(payload.fields)) {
-      if (k === 'Submit') continue;
-      fieldValues[k] = vs.length === 1 ? vs[0] : vs.join('\n');
-    }
+    // per name). The exported helper at module scope is unit-tested
+    // independently — see Compose.test.tsx.
+    const fieldValues = parsedBodyToFieldValues(payload);
     try {
-      await invoke<string>('send_form', {
+      await invoke<string>('send_webview_form', {
         formId,
         fieldValues,
         to: splitAddrs(to),
@@ -452,9 +515,15 @@ export function Compose({ draftId }: ComposeProps) {
   };
 
   const handleSaveAndProceed = useCallback(() => {
+    // Persist formId in BOTH native form and webview-form modes
+    // (Important #3 from the P1 Task 10 code review).
+    const persistedFormId =
+      formMode.kind === 'form' || formMode.kind === 'webview-form'
+        ? formMode.formId
+        : undefined;
     saveDraft({
       draftId, to, cc, subject, body, requestAck,
-      formId: formMode.kind === 'form' ? formMode.formId : undefined,
+      formId: persistedFormId,
       formFields: formMode.kind === 'form' ? formMode.values : undefined,
     });
     const action = closePrompt.action;

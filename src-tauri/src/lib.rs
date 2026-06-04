@@ -295,6 +295,11 @@ pub fn run() {
             crate::ui_commands::forms_list_catalog,
             crate::ui_commands::open_webview_form,
             crate::ui_commands::close_webview_form_server,
+            // HTML Forms P1 Task 10 critical-fix (tuxlink-tzr5): catalog-form
+            // submit pathway — `send_form` only knows the 5 BUNDLED_FORMS
+            // FormDefs; the webview path needs a parallel command that
+            // synthesizes the XML envelope from field_values + WLE conventions.
+            crate::ui_commands::send_webview_form,
             crate::ui_commands::cms_connect,           // tuxlink-0ic (native connect)
             crate::ui_commands::cms_abort,             // tuxlink-9z2 (abort in-flight connect)
             crate::ui_commands::config_read,           // Task 16 (tuxlink-hvv)

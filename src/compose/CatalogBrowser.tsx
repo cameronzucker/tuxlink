@@ -18,7 +18,7 @@
 // Plan: docs/superpowers/plans/2026-06-01-html-forms-p1-webview-infra.md Task 10.
 // Spec: docs/superpowers/specs/2026-05-31-html-forms-full-parity-design.md §7.
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import './CatalogBrowser.css';
 
@@ -110,6 +110,34 @@ export function CatalogBrowser({ onPick, onCancel }: CatalogBrowserProps) {
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
+  // Ref + auto-focus for the search input. Important #7 from the P1 Task 10
+  // code review: without an initial-focus target, assistive-tech users land
+  // in an aria-modal="true" dialog with no announced focus position. Search
+  // is the right default focus because it's the primary entry point for
+  // browsing the 250-entry catalog (typeahead beats expand-every-folder).
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
+  useEffect(() => {
+    searchInputRef.current?.focus();
+  }, []);
+
+  // Escape closes the picker. Important #6 from the P1 Task 10 code review:
+  // FormPicker had Escape→onCancel; CatalogBrowser was missing it. Use a
+  // document-level keydown so the operator doesn't have to tab into a
+  // specific control first. The keep-a-stable-ref pattern is overkill for
+  // a single-callback dependency; including onCancel in deps is correct
+  // (React re-creates the listener on each render if Compose's onCancel
+  // changes identity, but Compose passes a stable arrow there isn't a
+  // useCallback gap that matters in practice).
+  useEffect(() => {
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        onCancel();
+      }
+    };
+    document.addEventListener('keydown', handleKey);
+    return () => document.removeEventListener('keydown', handleKey);
+  }, [onCancel]);
 
   useEffect(() => {
     let cancelled = false;
@@ -168,6 +196,7 @@ export function CatalogBrowser({ onPick, onCancel }: CatalogBrowserProps) {
         <h3 className="catalog-browser__title">Pick a form to author</h3>
 
         <input
+          ref={searchInputRef}
           type="text"
           className="catalog-browser__search"
           placeholder="Search forms…"
@@ -234,18 +263,22 @@ interface FolderTreeProps {
 }
 
 function FolderTree({ folders, expanded, onToggle, onPick }: FolderTreeProps) {
+  // Important #5 from the P1 Task 10 code review: the WAI-ARIA tree
+  // pattern requires full keyboard nav (Up/Down/Right/Left/Home/End/
+  // typeahead), and implementing that for a 250-entry, expand/collapse
+  // tree is a significant complexity addition relative to the value for
+  // this audience. Per operator memory `feedback_userbase_old_internet_
+  // navigation`, the sidebar-ToC + reading-pane pattern (native button
+  // semantics + tab/enter/space) is the right default. The buttons here
+  // already participate in tab order and respond to Enter/Space; no tree
+  // role needed.
   if (folders.length === 0) return null;
   return (
-    <ul className="catalog-browser__folders" role="tree">
+    <ul className="catalog-browser__folders">
       {folders.map((folder) => {
         const isOpen = expanded.has(folder.name);
         return (
-          <li
-            key={folder.name}
-            className="catalog-browser__folder"
-            role="treeitem"
-            aria-expanded={isOpen}
-          >
+          <li key={folder.name} className="catalog-browser__folder">
             <button
               type="button"
               className="catalog-browser__folder-row"
@@ -266,7 +299,7 @@ function FolderTree({ folders, expanded, onToggle, onPick }: FolderTreeProps) {
               </span>
             </button>
             {isOpen && (
-              <ul className="catalog-browser__templates" role="group">
+              <ul className="catalog-browser__templates">
                 {folder.templates.map((t) => (
                   <li key={t.id} className="catalog-browser__template-row">
                     <button
@@ -294,15 +327,18 @@ interface SearchResultsListProps {
 }
 
 function SearchResultsList({ results, onPick }: SearchResultsListProps) {
+  // Same Important #5 rationale as FolderTree: dropped the listbox/option
+  // ARIA roles because we don't implement listbox keyboard nav. Buttons
+  // get tab order + Enter/Space for free.
   if (results.length === 0) {
     return (
       <div className="catalog-browser__empty">No forms match that search.</div>
     );
   }
   return (
-    <ul className="catalog-browser__search-results" role="listbox">
+    <ul className="catalog-browser__search-results">
       {results.map((t) => (
-        <li key={t.id} role="option" aria-selected="false">
+        <li key={t.id}>
           <button
             type="button"
             className="catalog-browser__template-btn"

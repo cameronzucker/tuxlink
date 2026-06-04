@@ -103,6 +103,19 @@ export function WebviewFormHost({ formId, onSubmit, onCancel }: WebviewFormHostP
   // below (which runs AFTER the first paint, so getBoundingClientRect()
   // returns real coordinates) and by the ResizeObserver callback.
   const mountRef = useRef<HTMLDivElement | null>(null);
+  // Hold the latest `onSubmit` in a ref so the `form-submitted` listener
+  // (registered ONCE per mount, in the [formId]-deps effect below) always
+  // sees the freshest closure. Without this, the listener would close over
+  // the initial `onSubmit` and miss recipient/subject edits the operator
+  // made AFTER opening the form (Critical #2 from the P1 Task 10 code
+  // review: Compose's handleWebviewSubmit captures `to`/`cc` via
+  // useCallback deps; if we re-register the listener on every onSubmit
+  // change we tear down the webview each render, but if we don't update
+  // *something*, stale-recipient submits go through to the wrong people).
+  const onSubmitRef = useRef(onSubmit);
+  useEffect(() => {
+    onSubmitRef.current = onSubmit;
+  });
 
   useEffect(() => {
     let cancelled = false;
@@ -132,9 +145,13 @@ export function WebviewFormHost({ formId, onSubmit, onCancel }: WebviewFormHostP
         // (forms-webview.json) gives the child webview zero IPC powers,
         // so the only path back to tuxlink is the loopback POST that
         // populates this event channel.
+        //
+        // The listener invokes the LATEST onSubmit via the ref — the
+        // listener is registered once per mount; the ref propagates prop
+        // changes (recipient edits, subject changes) without re-listening.
         const ul = await listen<ParsedBody>(
           'form-submitted',
-          (e) => onSubmit(e.payload),
+          (e) => onSubmitRef.current(e.payload),
           { target: label },
         );
         if (cancelled) {
@@ -230,12 +247,12 @@ export function WebviewFormHost({ formId, onSubmit, onCancel }: WebviewFormHostP
         /* the webview may already be closed by the OS, or never created */
       });
     };
-    // onSubmit is intentionally omitted from deps: the listener is
-    // registered once per mount with the initial callback, and Compose
-    // re-renders shouldn't tear the webview down. If Compose needs to
-    // swap the handler, that's a remount (different formId or
-    // unmount/remount cycle).
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // [formId]-only deps are intentional: the listener is registered once
+    // per mount; subsequent `onSubmit` prop changes propagate via
+    // onSubmitRef (updated in the small effect above on every render).
+    // This avoids the stale-closure bug from the eslint-disabled version
+    // (P1 Task 10 critical-fix) where recipient edits made AFTER opening
+    // the form weren't reflected at submit time.
   }, [formId]);
 
   return (
