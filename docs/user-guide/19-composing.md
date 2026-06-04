@@ -6,6 +6,11 @@ operator pattern of "write while reading something else."
 
 ## Open compose
 
+<!-- screenshot-needed: docs/user-guide/images/19-composing/compose-window-empty.png
+     Show: a fresh empty Compose window with all fields visible (To, Cc,
+     Subject, Body). No focus on any field — neutral state. Full compose
+     window, ~900x600. -->
+
 Three paths:
 
 - **File → New Message** (Ctrl+N) opens a blank compose window.
@@ -38,6 +43,11 @@ the Drafts folder rehydrates the fields. The draft is deleted on
 successful send.
 
 ## Attachments
+
+<!-- screenshot-needed: docs/user-guide/images/19-composing/attachment-strip.png
+     Show: a received message in the reading pane with the attachment
+     strip visible at the top, displaying file name + size for one or two
+     attachments. Reading-pane crop, ~700x400. -->
 
 The compose window has a drop-zone for attachments, but the send-side
 multipart wire-up is not yet shipped — dropping a file shows a notice in

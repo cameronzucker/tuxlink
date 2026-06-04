@@ -92,6 +92,43 @@ The CMS / RMS split is what makes Winlink scale and survive bad days:
   RMS at night may be hearable across a continent, while the same RMS at
   noon is unreachable.
 
+## The Hybrid Network — radio-only Winlink
+
+The CMS/RMS split assumes the RMS gateway has an internet uplink to the
+CMS. The Hybrid Network — also called Radio-only Winlink — is what runs
+when no RMS within RF range has internet either.
+
+In that mode, **the RMS network forms an HF mesh.** RMS gateways carry
+traffic between each other over HF when their internet uplinks are down,
+relaying through whichever gateway in the mesh does have a working
+uplink. From the operator's perspective, the call still looks like a B2F
+session to a single RMS; behind the scenes, the message hops one or more
+RF links across the mesh before reaching a CMS-connected gateway.
+
+```mermaid
+flowchart LR
+    Op["Operator (tuxlink)<br/>no internet"] -->|HF RF| RMSlocal["Local RMS<br/>no internet"]
+    RMSlocal -->|HF RF inter-RMS| RMSrelay["Relay RMS<br/>partial internet"]
+    RMSrelay -->|HF RF inter-RMS| RMSup["CMS-connected RMS"]
+    RMSup -->|Internet| CMS[CMS cluster]
+    CMS -->|Internet / SMTP| Dest["Recipient mailbox<br/>or external email"]
+```
+
+Hybrid operation matters during disaster scenarios — a regional internet
+outage where local gateways lose their uplinks. The mesh continues
+delivering Winlink traffic at HF data-rate speed (slow but functional) so
+long as at least one gateway in the chain retains connectivity. Hybrid is
+a Winlink-side capability; tuxlink does not configure or signal it. From
+tuxlink's session log a Hybrid-routed call is indistinguishable from a
+direct-internet RMS call.
+
+For an EmComm-focused operator, the takeaway is: **picking an RMS does
+not need to require knowing whether that RMS has internet.** If it's
+reachable on the air, and the mesh has at least one CMS-connected
+member, the traffic gets through. Latency goes up (more hops) and
+throughput depends on the slowest link, but the protocol surface tuxlink
+sees stays the same.
+
 ## Picking a gateway
 
 The operator (not tuxlink) picks the gateway for each radio connect. The

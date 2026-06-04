@@ -3,6 +3,10 @@ resolver = "2"
 members = [
     "crates/tuxmodem-fec",
     "crates/tuxmodem-phy",
+    "crates/tux-rig-cm108",
+    "crates/tux-rig-rts",
+    "crates/tuxmodem-tx",
+    "crates/tuxmodem-rx",
 ]
 
 [workspace.package]
@@ -22,6 +26,7 @@ thiserror = "1"
 hf-channel-sim = { path = "../hf-channel-sim" }
 tuxmodem-fec = { path = "crates/tuxmodem-fec" }
 tuxmodem-phy = { path = "crates/tuxmodem-phy" }
+tux-rig-rts = { path = "crates/tux-rig-rts" }
 bitvec = "1"
 crc = "3"
 rand = "0.8"

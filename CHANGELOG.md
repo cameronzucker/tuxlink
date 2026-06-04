@@ -4,6 +4,69 @@ All notable changes to Tuxlink are documented here.
 
 This project adheres to [Semantic Versioning](https://semver.org) with project-specific rules described in [VERSIONING.md](VERSIONING.md). Entries from `v0.0.2` onward are generated automatically by [`release-please`](https://github.com/googleapis/release-please) from [Conventional Commits](https://www.conventionalcommits.org).
 
+## [0.32.0](https://github.com/cameronzucker/tuxlink/compare/v0.31.0...v0.32.0) (2026-06-04)
+
+
+### Features
+
+* **tux-rig-watchdog:** PR_SET_PDEATHSIG belt-and-suspenders parent-death detection (tuxlink-a2z0) ([2f2030b](https://github.com/cameronzucker/tuxlink/commit/2f2030b313d1828fa3a29c939610958070714982))
+* **tuxmodem-tx:** --watchdog flag spawns tux-rig-watchdog for SIGKILL-safe TX (tuxlink-8xfa, Phase 1.5 slice 2) ([62af099](https://github.com/cameronzucker/tuxlink/commit/62af09981053e2cd39b097d9df04a1847cf8ba3c))
+
+
+### Bug Fixes
+
+* **help:** mermaid theming wins ID-scoped specificity via !important ([a11a7ae](https://github.com/cameronzucker/tuxlink/commit/a11a7aec4659dd715125679ac3841e58465403c0))
+
+## [0.31.0](https://github.com/cameronzucker/tuxlink/compare/v0.30.0...v0.31.0) (2026-06-04)
+
+
+### Features
+
+* **tux-rig-rts:** tux-rig-watchdog SIGKILL-safe PTT daemon (tuxlink-23ps, Phase 1.5) ([09f8702](https://github.com/cameronzucker/tuxlink/commit/09f87020168023fe9e218e62e8afa9f0333ca57d))
+
+## [0.30.0](https://github.com/cameronzucker/tuxlink/compare/v0.29.0...v0.30.0) (2026-06-04)
+
+
+### Features
+
+* **tuxmodem-phy:** multi-symbol + preamble composition (tuxlink-k2xv, Phase 10 slice 2) ([5ce564e](https://github.com/cameronzucker/tuxlink/commit/5ce564e636131e01691f983e2aa7cea62cbcac95))
+* **tuxmodem-phy:** multi-symbol framing primitive (tuxlink-cwjp, Phase 10 slice 1) ([23cfc93](https://github.com/cameronzucker/tuxlink/commit/23cfc93f7d2a805aeb7570a1e67d6608dad9496c))
+
+## [0.29.0](https://github.com/cameronzucker/tuxlink/compare/v0.28.0...v0.29.0) (2026-06-04)
+
+
+### Features
+
+* **tuxmodem-phy:** preamble round-trip primitive (tuxlink-iyl9, Phase 12 slice 1) ([a2579e9](https://github.com/cameronzucker/tuxlink/commit/a2579e9fdf5266499a43fa331f98f0a9d02f4499))
+* **tuxmodem-tx:** --write-wav PATH (encode to file, no device/PTT) — tuxlink-4dv9 ([8d43671](https://github.com/cameronzucker/tuxlink/commit/8d43671536d887a8b47c92c0a8060833ccb9a7df))
+
+## [0.28.0](https://github.com/cameronzucker/tuxlink/compare/v0.27.0...v0.28.0) (2026-06-04)
+
+
+### Features
+
+* **tuxmodem-phy:** audio_device module + tuxmodem-audio-play bench CLI (tuxlink-h8pp) ([05391b7](https://github.com/cameronzucker/tuxlink/commit/05391b79c9e9ee5b64f500b8fbf83b206dbc32b3))
+
+## [0.27.0](https://github.com/cameronzucker/tuxlink/compare/v0.26.2...v0.27.0) (2026-06-04)
+
+
+### Features
+
+* **tux-rig-cm108:** CM108-HID PTT primitive + CLI (tuxlink-u1js) ([9714c3d](https://github.com/cameronzucker/tuxlink/commit/9714c3d4e0160cd7c099b82570b7b54617f82354))
+
+
+### Bug Fixes
+
+* **help:** surgical mermaid CSS revert — invisible-diagram regression ([57aee1c](https://github.com/cameronzucker/tuxlink/commit/57aee1c7e090daf4fc8ff64bf375debc5c11fe07))
+* **packaging:** drop reverse-DNS .desktop overlay (tuxlink-mpds) ([fcc4926](https://github.com/cameronzucker/tuxlink/commit/fcc49267be17d2519fe021b9fa0ece82d0061327))
+
+## [0.26.2](https://github.com/cameronzucker/tuxlink/compare/v0.26.1...v0.26.2) (2026-06-04)
+
+
+### Bug Fixes
+
+* **help:** Mermaid contrast + search-result stale-slug navigation (tuxlink-b5oa) ([ebbef4c](https://github.com/cameronzucker/tuxlink/commit/ebbef4c813551ee493dd3be0ef12f646bde77605))
+
 ## [0.26.1](https://github.com/cameronzucker/tuxlink/compare/v0.26.0...v0.26.1) (2026-06-04)
 
 

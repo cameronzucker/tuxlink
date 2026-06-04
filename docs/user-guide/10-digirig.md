@@ -29,6 +29,19 @@ Two cables go between the DigiRig and the radio: one for audio + PTT, one
 for CAT. Both are radio-specific — the DigiRig store and aftermarket
 sellers stock pre-made cables for most popular rigs.
 
+```mermaid
+flowchart LR
+    PC["PC<br/>(Pi 5 / laptop)"]
+    DR["DigiRig"]
+    Radio["Radio<br/>(G90 / IC-7300 / etc.)"]
+    Ant["Antenna"]
+
+    PC -- "USB-C<br/>(audio + 2x serial)" --> DR
+    DR -- "audio mini-DIN<br/>(TX / RX / PTT)" --> Radio
+    DR -- "CAT mini-DIN<br/>(serial control)" --> Radio
+    Radio -- "RF" --> Ant
+```
+
 ## OS-side devices
 
 When the DigiRig is plugged in to a Linux box, three devices show up:
@@ -91,6 +104,11 @@ too low) or an over-deviated signal (level too high) that gateways will
 not decode.
 
 ## PTT routing
+
+<!-- screenshot-needed: docs/user-guide/images/10-digirig/modem-panel-device-picker.png
+     Show: the ARDOP (or VARA) radio panel's audio-device and PTT-device
+     picker dropdowns with the DigiRig entries selected. Radio panel
+     section crop, ~500x400. -->
 
 The PTT line is one of the DigiRig's two serial ports. RTS asserted = PTT
 pressed. The hardware translates this to whatever the radio's PTT input

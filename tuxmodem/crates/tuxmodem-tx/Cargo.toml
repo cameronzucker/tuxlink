@@ -1,0 +1,24 @@
+[package]
+name = "tuxmodem-tx"
+version = "0.0.1"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "tuxmodem-tx — the plug-into-radio composition layer. Takes a payload, runs it through tuxmodem-phy's encoder, asserts PTT via tux-rig-rts, plays the audio, releases PTT. Phase 3 of the tuxmodem hardware bring-up (tuxlink-i3bz). Library + CLI."
+keywords = ["ham-radio", "modem", "ofdm", "ptt", "transmitter"]
+categories = ["hardware-support", "command-line-utilities"]
+
+[dependencies]
+thiserror.workspace = true
+tuxmodem-phy = { workspace = true, features = ["audio-device"] }
+tux-rig-rts.workspace = true
+libc = "0.2"
+
+[dev-dependencies]
+# none — Mock writer + AudioBuffer-only tests cover the testable surface.
+
+[[bin]]
+name = "tuxmodem-tx"
+path = "src/bin/tuxmodem-tx.rs"

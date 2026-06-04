@@ -86,6 +86,23 @@ log on, exchange traffic with the net controller, and log off. Three roles:
 - **Line operators.** Everyone else — check in, take or pass traffic, log
   out.
 
+```mermaid
+flowchart TD
+    NCS["Net Control<br/>(NCS)"]
+    L1["Line operator A"]
+    L2["Line operator B"]
+    L3["Line operator C"]
+    LIA["Liaison<br/>(to outside net)"]
+    OUT["Outside net<br/>(national HF traffic,<br/>served-agency traffic)"]
+
+    L1 -- "check-in + traffic" --> NCS
+    L2 -- "check-in + traffic" --> NCS
+    L3 -- "check-in + traffic" --> NCS
+    LIA -- "check-in" --> NCS
+    NCS -- "directed traffic" --> LIA
+    LIA <-- "inbound / outbound" --> OUT
+```
+
 Tuxlink's role in a Winlink net is the same as any Winlink client — open
 a session at the net's scheduled time, send queued outbound traffic,
 receive inbound. The session log is the operator's record; an ICS-309 form

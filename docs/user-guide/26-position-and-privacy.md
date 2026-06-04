@@ -13,6 +13,54 @@ square (resolution ~100 km), and the operator opts in to higher precision.**
 This topic covers what that means, how to change it, and what the privacy
 tradeoff looks like in practice.
 
+## The amateur no-encryption rule and Open Message Viewer
+
+Two facts shape every privacy decision on amateur Winlink:
+
+1. **Amateur Winlink messages cannot be encrypted.** Part 97 (US;
+   equivalents elsewhere) prohibits encrypted content on amateur
+   frequencies. Every byte that crosses an amateur RF link is sent in the
+   clear. This is intentional — the rule exists to keep amateur radio
+   open to monitoring and to prevent commercial / hidden use of the
+   amateur allocations. It is not optional.
+2. **Every amateur Winlink message is publicly retrievable.** Winlink
+   operates the **Open Message Viewer** — a public web tool that lets
+   anyone search and read messages that traversed amateur RF links.
+   The retention window covers months of recent traffic. Search by
+   callsign, recipient, or date range surfaces sent and received
+   amateur-side messages.
+
+The combined implication: any message an operator sends or receives over
+an amateur Winlink path — VARA, ARDOP, Packet — is effectively a public
+record. The CMS (running on internet infrastructure) is not the
+attacker; OMV is operated by Winlink itself as transparency
+infrastructure consistent with the no-encryption rule.
+
+**Operating consequences:**
+
+- **Do not send personally-sensitive content over amateur Winlink.**
+  Medical details, financial details, addresses of vulnerable
+  individuals, anything that would harm the recipient if widely seen —
+  these belong on a different medium. Email over commercial internet,
+  encrypted messaging apps, or any non-amateur channel is the right
+  carrier for that traffic.
+- **EmComm protocol drafts standardize on this.** Forms like the ICS-213
+  general message and the Winlink Check-in form are designed for
+  callsign / location / status traffic that is comfortable being public.
+  When operating EmComm, the protocol-designed forms have already done
+  the privacy thinking.
+- **Position is a special case** — it's a header field that gets
+  indexed, displayed, and retained even for messages whose body content
+  doesn't mention position. That's why the rest of this topic focuses
+  on the position-precision default specifically.
+
+Whether messages routed entirely over Telnet (internet transport, no
+amateur RF in the path) appear in OMV is a Winlink-side policy question
+that operators should verify against current Winlink documentation
+before relying on it. The conservative posture: treat any message sent
+under an amateur callsign as potentially publicly visible regardless of
+transport.
+
 ## The two settings
 
 Two independent settings control position behaviour:
@@ -93,6 +141,12 @@ Some operating contexts justify higher precision broadcasts:
   known. Switch to grid square only or disable broadcast.
 
 ## Changing the settings
+
+<!-- screenshot-needed: docs/user-guide/images/26-position-and-privacy/dashboard-grid-display.png
+     Show: the dashboard ribbon showing the operator's grid square (CN85
+     or similar 4-character) displayed alongside callsign + connection
+     state. Dashboard ribbon crop, ~800x80 (full width, ribbon only). -->
+
 
 **Tools → Settings → GPS & Privacy** opens the inline panel. The settings:
 

@@ -116,6 +116,41 @@ or **ARDOP** for HF reach.
 | All license tiers on this radio | Packet over VHF FM (Technician-accessible) |
 | Closed-source modem is a no-go | ARDOP (the open answer) |
 
+## Modes Winlink supports that tuxlink does not
+
+Winlink's ecosystem covers more transports than tuxlink ships. The
+notable absence:
+
+**PACTOR (I, II, III, IV).** PACTOR is a long-running HF data mode that
+predates VARA and ARDOP, with strong real-world EmComm deployment. It
+runs on SCS hardware modems (the most common is the SCS Tracker, P4
+Dragon, or DR-7800 — all closed-source proprietary hardware costing
+$1500–$2500). The radio side of the chain is a standard SSB rig; the
+modem is the differentiator. PACTOR I is the only no-cost-to-receive
+mode in the family; PACTOR II–IV require a licensed firmware unlock per
+hardware unit.
+
+Tuxlink does not ship a PACTOR transport. The reasons are pragmatic:
+
+1. **Hardware lock-in.** SCS is the sole vendor and the modem is
+   proprietary. Building tuxlink-side support without an SCS modem in
+   hand to verify is a non-starter.
+2. **Audience overlap.** The HF Winlink stations that own SCS modems
+   are largely the same population running Winlink Express on a Windows
+   laptop — exactly the audience tuxlink is not targeting at v0.0.1.
+3. **VARA and ARDOP cover the use case.** For an operator who does not
+   already own an SCS modem, the modem cost is steep relative to the
+   VARA Standard tier (free) or ARDOP (free, open) running on the same
+   sound card the operator already has.
+
+The tuxlink listener type system reserves a `Pactor` transport slot for
+future use, but no listener path is wired up; selecting it in a
+catalog entry produces a "transport not supported" disposition.
+
+If PACTOR support matters to a specific operator, the canonical path is
+to keep running Winlink Express on Windows for that PACTOR session and
+use tuxlink for everything else.
+
 ## Pre-flight checklist
 
 > [!WARNING]

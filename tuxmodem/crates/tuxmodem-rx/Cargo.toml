@@ -1,0 +1,24 @@
+[package]
+name = "tuxmodem-rx"
+version = "0.0.1"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "tuxmodem-rx — the receive complement to tuxmodem-tx. Captures audio from a CPAL input device (or reads a WAV file), demodulates one OFDM symbol via tuxmodem-phy's WidebandLowDensityFloor::receive, prints the decoded payload + optional BER vs an expected reference. Phase 4 of the tuxmodem hardware bring-up (tuxlink-xvrb). Library + CLI."
+keywords = ["ham-radio", "modem", "ofdm", "receive", "demodulator"]
+categories = ["hardware-support", "command-line-utilities"]
+
+[dependencies]
+thiserror.workspace = true
+tuxmodem-phy = { workspace = true, features = ["audio-device"] }
+libc = "0.2"
+
+[dev-dependencies]
+# No extras — encode-then-decode roundtrip in lib tests uses tuxmodem-phy's
+# WidebandLowDensityFloor::transmit (already a runtime dep via tuxmodem-phy).
+
+[[bin]]
+name = "tuxmodem-rx"
+path = "src/bin/tuxmodem-rx.rs"

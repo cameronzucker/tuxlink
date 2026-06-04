@@ -29,3 +29,13 @@ audio-device = ["dep:cpal"]   # opt-in real-device I/O
 [dependencies.cpal]
 workspace = true
 optional = true
+
+# `tuxmodem-audio-play` is a bench-tool binary that exists only when
+# the `audio-device` feature is on. Per Cargo, `required-features`
+# silently excludes the bin from the default build — `cargo build`
+# (no features) doesn't try to build it, and `cargo build --features
+# audio-device` does.
+[[bin]]
+name = "tuxmodem-audio-play"
+path = "src/bin/tuxmodem-audio-play.rs"
+required-features = ["audio-device"]

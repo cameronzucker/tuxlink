@@ -26,6 +26,19 @@ Each method has a context where it's the right answer:
 - **Use a hardware PTT line for** everything else. This is the default for
   serious Winlink work.
 
+```mermaid
+flowchart TD
+    A["Does the interface have a<br/>dedicated PTT line<br/>(DigiRig, SignaLink mod)?"]
+    A -->|Yes| HW["Hardware PTT<br/>(RTS on serial)"]
+    A -->|No| B["Is rigctld running for CAT?"]
+    B -->|No| C["Does the radio have a PTT<br/>input you can wire to?"]
+    C -->|Yes| COM["COM serial PTT<br/>(RTS / DTR + wire)"]
+    C -->|No| VOX["VOX<br/>(training / FM packet only)"]
+    B -->|Yes| D["Is the rigctld port<br/>exclusively for CAT,<br/>or shared with another tool?"]
+    D -->|Exclusive| CAT["CAT command PTT<br/>(T 1 / T 0 via rigctld)"]
+    D -->|Shared| HW
+```
+
 ## VOX
 
 VOX (Voice Operated Transmit) keys the radio when audio exceeds a

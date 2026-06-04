@@ -35,6 +35,11 @@ see the form rendered identically.
 
 ## Reading received forms
 
+<!-- screenshot-needed: docs/user-guide/images/20-html-forms/ics-213-received.png
+     Show: an ICS-213-tagged message selected in the reading pane,
+     with the form's fields (To, From, Subject, Message text, etc.)
+     rendered inline. Reading-pane crop, ~700x600. -->
+
 A form-tagged message in the message list shows a colored form indicator.
 Selecting the message opens the reading pane with the form rendered
 inline:
@@ -50,12 +55,18 @@ inline:
 
 ## Composing a form
 
+<!-- screenshot-needed: docs/user-guide/images/20-html-forms/catalog-browser.png
+     Show: the Compose window with the CatalogBrowser open — folder
+     tree on the left, flat-search input at top, an expanded folder
+     (e.g. ICS USA Forms) with one form highlighted. ~900x500. -->
+
 Open Compose, click the **Forms** picker. The CatalogBrowser opens with
 a hierarchical folder tree (alphabetical, with the operator's Custom
 folder pinned last) plus a flat-search input that filters across folders
 by substring. Pick a form; the Compose body swaps to the form's field
 set (native or webview depending on the form). Fill the required fields,
-optionally add free body text, and Send.
+optionally add free body text, and Send. The B2F payload on-air is the
+same shape whether composed in Tuxlink or Winlink Express.
 
 Escape closes the picker; the search input auto-focuses on open.
 
