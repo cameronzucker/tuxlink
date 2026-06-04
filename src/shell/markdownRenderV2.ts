@@ -8,12 +8,14 @@
 // knowledge-base-design.md §4.
 
 import { Marked } from 'marked';
+import markedExtendedTables from 'marked-extended-tables';
 import { headingAnchors } from './markdownExtensions/headingAnchors';
 import { callouts } from './markdownExtensions/callouts';
 
 const marked = new Marked();
 marked.use(headingAnchors);
 marked.use(callouts);
+marked.use(markedExtendedTables());
 
 /**
  * Parse a markdown string and return HTML.
