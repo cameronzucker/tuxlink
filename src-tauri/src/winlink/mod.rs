@@ -19,6 +19,7 @@ pub mod listener;
 pub mod lzhuf;
 pub mod message;
 pub mod proposal;
+pub mod redaction;
 pub mod relay_banner;
 pub mod secure;
 pub mod session;
