@@ -4,6 +4,21 @@ All notable changes to Tuxlink are documented here.
 
 This project adheres to [Semantic Versioning](https://semver.org) with project-specific rules described in [VERSIONING.md](VERSIONING.md). Entries from `v0.0.2` onward are generated automatically by [`release-please`](https://github.com/googleapis/release-please) from [Conventional Commits](https://www.conventionalcommits.org).
 
+## [0.26.0](https://github.com/cameronzucker/tuxlink/compare/v0.25.0...v0.26.0) (2026-06-04)
+
+
+### Features
+
+* **winlink/ardop:** ARDOP listener end-to-end (tuxlink-61yg) ([36936b8](https://github.com/cameronzucker/tuxlink/commit/36936b8cf70f42b514aba767bdd028d0bbc1871b))
+* **winlink/telnet:** Telnet listener inbound mailbox symmetry (tuxlink-61yg) ([ea52c38](https://github.com/cameronzucker/tuxlink/commit/ea52c387d63152141bb93d6e412c996ca7c2d6d5))
+
+
+### Bug Fixes
+
+* **listener:** address Codex review findings on end-to-end PR (tuxlink-61yg) ([73df469](https://github.com/cameronzucker/tuxlink/commit/73df469b5cb93d39b11c485f672678b0307ad47a))
+* **radio:** defend ModemLinkSection against undefined invoke responses (tuxlink-61yg) ([a897613](https://github.com/cameronzucker/tuxlink/commit/a8976133c69e96677f1365481c8cbf751510c0e5))
+* **winlink/ardop:** clippy borrowed_box on arq_disconnect_via_cmd_writer (tuxlink-61yg) ([d156a42](https://github.com/cameronzucker/tuxlink/commit/d156a423e37209698d72ec9493e0177fddfa77d3))
+
 ## [0.25.0](https://github.com/cameronzucker/tuxlink/compare/v0.24.3...v0.25.0) (2026-06-03)
 
 
