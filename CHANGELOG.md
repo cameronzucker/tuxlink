@@ -4,6 +4,13 @@ All notable changes to Tuxlink are documented here.
 
 This project adheres to [Semantic Versioning](https://semver.org) with project-specific rules described in [VERSIONING.md](VERSIONING.md). Entries from `v0.0.2` onward are generated automatically by [`release-please`](https://github.com/googleapis/release-please) from [Conventional Commits](https://www.conventionalcommits.org).
 
+## [0.26.2](https://github.com/cameronzucker/tuxlink/compare/v0.26.1...v0.26.2) (2026-06-04)
+
+
+### Bug Fixes
+
+* **help:** Mermaid contrast + search-result stale-slug navigation (tuxlink-b5oa) ([ebbef4c](https://github.com/cameronzucker/tuxlink/commit/ebbef4c813551ee493dd3be0ef12f646bde77605))
+
 ## [0.26.1](https://github.com/cameronzucker/tuxlink/compare/v0.26.0...v0.26.1) (2026-06-04)
 
 
