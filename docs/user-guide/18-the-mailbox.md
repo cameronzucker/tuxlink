@@ -6,6 +6,16 @@ reading pane.
 
 ## Folders
 
+<!-- screenshot-needed: docs/user-guide/images/18-the-mailbox/folder-sidebar.png
+     Show: the folder sidebar with Inbox / Outbox / Sent / Drafts / Archive
+     visible plus any user folders. Inbox should show an unread badge >0.
+     Sidebar crop only, ~300x600. -->
+
+<!-- screenshot-needed: docs/user-guide/images/18-the-mailbox/message-list-with-sort.png
+     Show: the message list with the Sort control visible at the top
+     (e.g., sorting by Date descending). Several messages visible. Message
+     list area only, ~500x500. -->
+
 - **Inbox** — messages the CMS has delivered to the operator's callsign.
   The badge shows the unread count.
 - **Outbox** — outbound messages queued for the next CMS connect. The
@@ -63,6 +73,21 @@ A CMS connect does two passes against the selected transport:
    move to Sent.
 2. **Inbox pull.** Any waiting mail is downloaded and inserted into the
    Inbox folder.
+
+```mermaid
+stateDiagram-v2
+    [*] --> Drafts : Compose, Save
+    Drafts --> Outbox : Send
+    Outbox --> InFlight : Connect (outbox flush)
+    InFlight --> Sent : CMS accept
+    InFlight --> Outbox : CMS reject (rare)
+    [*] --> Inbox : Connect (inbox pull)
+    Inbox --> Archive : Operator → Move
+    Sent --> Archive : Operator → Move
+    Drafts --> [*] : Operator → Delete (discard)
+    Inbox --> [*] : Operator → Delete (permanent)
+    Archive --> [*] : Operator → Delete (permanent)
+```
 
 The Mailbox bar's "N to send" segment is the canonical "is there work to
 do" indicator — when it shows a number, the next Connect will move those

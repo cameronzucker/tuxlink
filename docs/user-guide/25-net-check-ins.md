@@ -29,6 +29,11 @@ publishes. Each net has its own conventions for the subject line.
 
 ## The Winlink Check-in form
 
+<!-- screenshot-needed: docs/user-guide/images/25-net-check-ins/winlink-checkin-form.png
+     Show: the Winlink Check-in form open in tuxlink's compose surface,
+     with the form fields visible (Date, Status, Band, Mode, To, Calling
+     station, Operator, Location, GPS, Comments). Form crop, ~700x600. -->
+
 The canonical Winlink check-in form is **Standard Forms → General Forms →
 Winlink Check-in** in the Winlink Forms catalog. The form is HTML — the
 operator fills it in via a browser-style surface in tuxlink, the form
@@ -139,6 +144,22 @@ If running the net (acting as Net Control), the workflow differs:
 4. **Take traffic.** Connect periodically through the net to receive
    inbound traffic; relay or respond as appropriate.
 5. **Close the net.** Send a close-out message to the regional address.
+
+```mermaid
+flowchart TD
+    A["Open the net<br/>(pre-announce message)"]
+    B["Wait for check-in window<br/>(5-10 minutes)"]
+    C["Connect → gather check-ins"]
+    D["Roll-call from Inbox"]
+    E["Take traffic<br/>(periodic Connect)"]
+    F{"More traffic<br/>expected?"}
+    G["Close the net<br/>(close-out message)"]
+    H["Author ICS-309<br/>(communications log)"]
+
+    A --> B --> C --> D --> E --> F
+    F -- "Yes" --> E
+    F -- "No" --> G --> H
+```
 
 Net Control's workflow benefits from a [user folder](22-user-folders.md)
 per net — the night's check-ins, traffic, and outbound messages live in

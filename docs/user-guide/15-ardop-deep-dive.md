@@ -117,6 +117,23 @@ The exchange:
    any other transport (see [topic 06](06-the-b2f-protocol.md)).
 6. The session ends; ARDOP sends DISCONNECT; the channel is released.
 
+The ARDOP modem itself runs a small state machine across this. From the
+operator's perspective, watching the radio panel:
+
+```mermaid
+stateDiagram-v2
+    [*] --> DISC : ardopcf starts
+    DISC --> CALL : CONNECT <RMS> sent
+    CALL --> ACK : RMS hears + answers
+    CALL --> DISC : timeout / no answer
+    ACK --> CONN : bandwidth + modulation negotiated
+    CONN --> CONN : B2F frames flowing
+    CONN --> DISCING : DISCONNECT initiated
+    CONN --> DISC : RF dropout / abort
+    DISCING --> DISC : clean teardown
+    DISC --> [*]
+```
+
 Visible in the session log:
 
 ```

@@ -19,11 +19,21 @@ The following forms have working compose + read paths in this build:
 
 ## Reading received forms
 
+<!-- screenshot-needed: docs/user-guide/images/20-html-forms/ics-213-received.png
+     Show: an ICS-213-tagged message selected in the reading pane,
+     with the form's fields (To, From, Subject, Message text, etc.)
+     rendered inline. Reading-pane crop, ~700x600. -->
+
 A form-tagged message in the message list shows a colored form indicator.
 Selecting the message opens the reading pane with the form rendered
 inline: every field surfaces with its value alongside the raw body.
 
 ## Composing a form
+
+<!-- screenshot-needed: docs/user-guide/images/20-html-forms/forms-picker.png
+     Show: the Compose window with the Forms picker dropdown open,
+     showing several form names (ICS-213, ICS-205, Winlink Check-in,
+     etc.). Compose window with dropdown visible, ~900x500. -->
 
 Open Compose, click the **Forms** picker, choose a form. The compose
 window swaps the freeform body for the form's field set. Fill the
