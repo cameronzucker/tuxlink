@@ -106,11 +106,14 @@ pub enum FrameMode {
     /// the WAV manually to the symbol of interest.
     #[default]
     Raw,
-    /// Preamble + OFDM symbol. The receiver finds the preamble in the
-    /// input and decodes the symbol that follows; arbitrary-length
-    /// captures work without manual trimming. Pairs with
+    /// Preamble + single OFDM symbol. Payload limited to one symbol's
+    /// capacity (~9 bytes for the Wide mode). Pairs with
     /// `tuxmodem-tx --frame-mode sync`.
     Sync,
+    /// Preamble + multi-symbol body carrying a 2-byte length-prefix
+    /// header. Supports arbitrary-length payloads up to u16::MAX
+    /// bytes. Pairs with `tuxmodem-tx --frame-mode multi-sync`.
+    MultiSync,
 }
 
 impl FrameMode {
@@ -119,6 +122,7 @@ impl FrameMode {
         match name {
             "raw" => Ok(Self::Raw),
             "sync" => Ok(Self::Sync),
+            "multi-sync" => Ok(Self::MultiSync),
             other => Err(RxError::UnknownFrameMode {
                 name: other.to_string(),
             }),
@@ -131,6 +135,7 @@ impl FrameMode {
         match self {
             Self::Raw => "raw",
             Self::Sync => "sync",
+            Self::MultiSync => "multi-sync",
         }
     }
 }
@@ -191,6 +196,12 @@ pub fn decode_one_symbol(
                 .map_err(RxError::Phy)?;
             Ok(bytes)
         }
+        (Mode::WideFloor, FrameMode::MultiSync) => {
+            let (_start, bytes) = WidebandLowDensityFloor::new()
+                .receive_multi_with_sync(samples)
+                .map_err(RxError::Phy)?;
+            Ok(bytes)
+        }
     }
 }
 
@@ -210,6 +221,12 @@ pub fn decode_one_symbol_with_offset(
         (Mode::WideFloor, FrameMode::Sync) => {
             let (start, bytes) = WidebandLowDensityFloor::new()
                 .receive_with_sync(samples)
+                .map_err(RxError::Phy)?;
+            Ok((Some(start), bytes))
+        }
+        (Mode::WideFloor, FrameMode::MultiSync) => {
+            let (start, bytes) = WidebandLowDensityFloor::new()
+                .receive_multi_with_sync(samples)
                 .map_err(RxError::Phy)?;
             Ok((Some(start), bytes))
         }
@@ -876,6 +893,134 @@ mod tests {
         let _ = std::fs::remove_file(&path);
         let decoded =
             decode_one_symbol(Mode::WideFloor, read_back.samples(), FrameMode::Sync).unwrap();
+        assert_eq!(decoded, payload);
+    }
+
+    // ─── MultiSync (Phase 10 slice 3, tuxlink-ot37) ─────────────────
+
+    #[test]
+    fn frame_mode_parse_accepts_multi_sync() {
+        assert_eq!(FrameMode::parse("multi-sync").unwrap(), FrameMode::MultiSync);
+    }
+
+    #[test]
+    fn frame_mode_short_name_multi_sync_round_trips() {
+        assert_eq!(
+            FrameMode::parse(FrameMode::MultiSync.short_name()).unwrap(),
+            FrameMode::MultiSync
+        );
+    }
+
+    #[test]
+    fn decode_multi_sync_roundtrip_via_transmit_multi_with_preamble() {
+        let payload = b"HELLO_MULTI";
+        let samples = WidebandLowDensityFloor::new()
+            .transmit_multi_with_preamble(payload)
+            .unwrap();
+        let decoded =
+            decode_one_symbol(Mode::WideFloor, &samples, FrameMode::MultiSync).unwrap();
+        assert_eq!(decoded, payload);
+    }
+
+    #[test]
+    fn decode_multi_sync_handles_100_byte_payload() {
+        let payload: Vec<u8> = (0..100).map(|i| (i * 13 % 251) as u8).collect();
+        let samples = WidebandLowDensityFloor::new()
+            .transmit_multi_with_preamble(&payload)
+            .unwrap();
+        let decoded =
+            decode_one_symbol(Mode::WideFloor, &samples, FrameMode::MultiSync).unwrap();
+        assert_eq!(decoded, payload);
+    }
+
+    #[test]
+    fn decode_multi_sync_handles_1000_byte_payload() {
+        let payload: Vec<u8> = (0..1000).map(|i| (i % 251) as u8).collect();
+        let samples = WidebandLowDensityFloor::new()
+            .transmit_multi_with_preamble(&payload)
+            .unwrap();
+        let decoded =
+            decode_one_symbol(Mode::WideFloor, &samples, FrameMode::MultiSync).unwrap();
+        assert_eq!(decoded, payload);
+    }
+
+    #[test]
+    fn decode_multi_sync_handles_leading_silence() {
+        let payload: Vec<u8> = (0..30).map(|i| (i * 7 % 251) as u8).collect();
+        let core = WidebandLowDensityFloor::new()
+            .transmit_multi_with_preamble(&payload)
+            .unwrap();
+        let mut samples = vec![0.0_f32; 1500];
+        samples.extend_from_slice(&core);
+        let decoded =
+            decode_one_symbol(Mode::WideFloor, &samples, FrameMode::MultiSync).unwrap();
+        assert_eq!(decoded, payload);
+    }
+
+    #[test]
+    fn decode_multi_sync_with_offset_reports_preamble_start() {
+        let payload = b"OFFSET";
+        let core = WidebandLowDensityFloor::new()
+            .transmit_multi_with_preamble(payload)
+            .unwrap();
+        let mut samples = vec![0.0_f32; 800];
+        samples.extend_from_slice(&core);
+        let (start, decoded) = decode_one_symbol_with_offset(
+            Mode::WideFloor,
+            &samples,
+            FrameMode::MultiSync,
+        )
+        .unwrap();
+        let start = start.expect("multi-sync mode should return Some(start)");
+        let offset_err = (start as i64 - 800).unsigned_abs() as usize;
+        assert!(
+            offset_err <= 2,
+            "detected start {start} should be within ±2 of expected 800"
+        );
+        assert_eq!(decoded, payload);
+    }
+
+    #[test]
+    fn decode_multi_sync_returns_phy_error_on_silence() {
+        let silence = vec![0.0_f32; 10_000];
+        let err = decode_one_symbol(Mode::WideFloor, &silence, FrameMode::MultiSync)
+            .unwrap_err();
+        assert!(matches!(err, RxError::Phy(PhyError::FrameDetect(_))));
+    }
+
+    #[test]
+    fn args_parse_frame_mode_multi_sync() {
+        let a = Args::parse(&s(&[
+            "--decode-wav", "/tmp/in.wav", "--frame-mode", "multi-sync",
+        ]))
+        .unwrap();
+        assert_eq!(a.frame_mode, FrameMode::MultiSync);
+    }
+
+    #[test]
+    fn end_to_end_multi_sync_roundtrip_via_wav_file() {
+        // Mirrors end_to_end_sync_roundtrip_via_wav_file but with a
+        // 100-byte payload that Sync (single-symbol) couldn't carry.
+        let payload: Vec<u8> = (0..100).map(|i| ((i * 17 + 3) % 251) as u8).collect();
+        let buffer = AudioBuffer::from_samples(
+            WidebandLowDensityFloor::new()
+                .transmit_multi_with_preamble(&payload)
+                .unwrap(),
+        );
+        let dir = std::env::temp_dir();
+        let path = dir.join(format!(
+            "tuxmodem-rx-multi-sync-roundtrip-{}.wav",
+            std::process::id()
+        ));
+        buffer.write_wav(&path).unwrap();
+        let read_back = read_wav(&path).unwrap();
+        let _ = std::fs::remove_file(&path);
+        let decoded = decode_one_symbol(
+            Mode::WideFloor,
+            read_back.samples(),
+            FrameMode::MultiSync,
+        )
+        .unwrap();
         assert_eq!(decoded, payload);
     }
 }

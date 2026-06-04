@@ -263,6 +263,11 @@ OPTIONS:
         --decode-wav <PATH>       WAV to demodulate
         --record-wav <PATH>       WAV to capture into
         --mode <NAME>             PHY mode (default: wide-floor)
+        --frame-mode <NAME>       frame format: raw / sync / multi-sync (default: raw)
+                                  - raw:        first symbol_size samples, no preamble
+                                  - sync:       find preamble, decode single symbol (≤9 bytes)
+                                  - multi-sync: find preamble, decode N symbols via
+                                                length-prefix header (up to u16::MAX bytes)
         --expected <ARG>          expected payload (text or @file) for BER
     -d, --device <NAME>           CPAL input device name (for --record-wav)
         --duration <SECS>         capture duration in seconds (for --record-wav)
@@ -274,6 +279,10 @@ EXAMPLES:
 
     # Decode a captured symbol; report BER against a known expected payload:
     tuxmodem-rx --decode-wav captured.wav --expected \"TEST\"
+
+    # Decode a multi-symbol payload with preamble alignment:
+    tuxmodem-rx --decode-wav off-air.wav --expected \"LONG-MESSAGE\" \\
+                --frame-mode multi-sync
 
     # Capture 10 s of audio from the Digirig's input:
     tuxmodem-rx --record-wav off-air.wav --device 'USB Audio Device' --duration 10
