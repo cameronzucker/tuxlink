@@ -118,6 +118,12 @@ or **ARDOP** for HF reach.
 
 ## Pre-flight checklist
 
+> [!WARNING]
+> **The pre-flight precedes on-air transmission.** Every item below is
+> in the licensee's chain of responsibility before pressing Connect.
+> The Connect press itself is the per-session consent gate; the
+> pre-flight is the operator's verification that consent is informed.
+
 Before every RF session:
 
 1. **Conditions check.** Glance at the waterfall, listen to the band, or

@@ -75,6 +75,12 @@ pick from its contents.
 The form generates a properly-formatted Winlink message, drops it in
 the Outbox, and the next Connect sends it.
 
+> [!WARNING]
+> **A catalog request over RF is on-air transmission like any other
+> Winlink message.** If the Send transport is ARDOP, VARA HF, or Packet,
+> the Connect keys the radio under the operator's callsign — same gate
+> as any RF Winlink session. Telnet does not transmit on air.
+
 ## The response
 
 Catalog responses arrive in the Inbox like any other received Winlink

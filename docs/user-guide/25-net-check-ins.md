@@ -27,55 +27,88 @@ The recipient is the net's controlling address — typically a callsign or
 a group alias (`ARES-DIST7@winlink.org`, etc.) that the net's controller
 publishes. Each net has its own conventions for the subject line.
 
-## ARES check-in
+## The Winlink Check-in form
 
-The Amateur Radio Emergency Service runs the largest emcomm nets in the US.
-ARES check-ins use the standard ICS-213 form (see
-[Emcomm and ICS](24-emcomm-and-ics.md)) with the net's specific subject line.
+The canonical Winlink check-in form is **Standard Forms → General Forms →
+Winlink Check-in** in the Winlink Forms catalog. The form is HTML — the
+operator fills it in via a browser-style surface in tuxlink, the form
+serialises to a structured text body in the outbound message, and Net
+Control's receiving station displays a uniformly-rendered check-in
+regardless of which client the sender used.
 
-A typical ARES check-in:
+The form's fields (per the canonical Winlink template):
 
-```
-To: ARES-NORCAL@winlink.org
-Subject: Check-in 2026-06-15 evening net
-Body:
-Net: NorCal ARES Evening
-Station: WA1XYZ, Cameron, CN85qe
-Mode: VARA HF Standard, 40m
-Status: Home station, mains power, available for traffic
-Time: 1830 PDT
-```
+- **Date / Time** — UTC and local.
+- **Status** — real exercise, training scenario, net, or routine.
+- **Band** — the operating band used (e.g., 40m).
+- **Mode** — the digital mode used (e.g., VARA HF Standard).
+- **To** — net control callsign (autofilled by recipient address).
+- **Calling station call** — your callsign, including portable suffix
+  if applicable (`OH8STN/P`, etc.).
+- **Operator call** — phonetic spelling.
+- **Operator** — the licensee on the controls, if filing for another
+  station.
+- **Location** — physical operating location (text).
+- **GPS coordinates** — auto-filled if GPS is wired and the privacy
+  setting allows (see [Position and privacy](26-position-and-privacy.md)).
+- **Comments** — free text. Net controllers often specify what they
+  want here in the net's pre-announce.
 
-In tuxlink: **Compose → Use form → ICS-213**. The form prefills the
-sender's callsign and grid from the wizard. The operator fills in net,
-status, and time, then Sends. The message lands in the Outbox; the next
-Connect to a CMS-reachable transport sends it.
+In tuxlink: **Compose → Use form → Winlink Check-in**. Fill, Submit, and
+the form's serialised body lands in the compose window as the message
+body. Save to Outbox, Connect, done.
+
+## ARES nets
+
+The Amateur Radio Emergency Service (ARES) runs the largest emcomm net
+network in the US. ARES nets at the district or section level publish
+their check-in protocol — the controlling callsign or alias, the
+preferred subject line, and any extra fields expected in the form's
+Comments section.
+
+ARES nets typically use the **Winlink Check-in** form above. Some
+districts use ICS-213 (the general-message form) for the check-in itself
+when the local net has been organised that way; both work. The net's
+pre-announce specifies which.
+
+A representative ARES check-in flow:
+
+1. Tuxlink's Compose → Use form → Winlink Check-in.
+2. Fill **To** with the net's published address (e.g.,
+   `ARES-NORCAL@winlink.org`).
+3. Fill **Status** = "Net", **Band** = (your operating band),
+   **Mode** = (your transport).
+4. **Comments**: whatever the net's pre-announce asked for — sometimes
+   "available for traffic," sometimes a specific protocol step.
+5. Submit, Save to Outbox, Connect.
 
 ## Winlink Wednesday
 
-Winlink Wednesday is a weekly informal exercise net run on the Wednesday
-of every week. Operators check in via Winlink (any transport) to
-demonstrate they can reach the CMS that day. Useful for keeping skills
-sharp.
+Winlink Wednesday is a weekly informal exercise net run on Wednesdays.
+Operators check in via Winlink (any transport) to demonstrate they can
+reach the CMS that day. Useful for keeping skills sharp.
 
-The check-in is simpler than ARES — typically a free-form message to the
-Winlink Wednesday regional address with a short body confirming reach.
+The check-in is simpler than a formal ARES net — usually a free-form
+message to the Winlink Wednesday regional address, or a Winlink Check-in
+form with **Status** = "Training". The regional coordinator publishes
+the exact address and any net-specific expectations.
 
-In tuxlink: free-form compose to the regional WW address (published by
-the regional coordinator), Send, Connect.
+## SHARES and federal nets
 
-## SHARES and military nets
+SHARES (Shared Resources high-frequency program) is the federal
+emergency-management amateur radio program — voluntary, but operated
+under federal coordination. SHARES participation requires registration;
+unregistered operators cannot check into SHARES nets.
 
-SHARES (Shared Resources) is the federal emergency-management amateur
-radio net. Its check-in form is more structured than ARES and uses a
-specific SHARES catalog form rather than ICS-213. The tuxlink
-HTML Forms catalog includes the SHARES check-in form for operators
-participating in SHARES nets.
+SHARES nets use Winlink with the protocols their net controllers
+publish. Tuxlink's Winlink Forms catalog includes the standard Winlink
+Check-in form that most non-traffic SHARES check-ins use. Net-specific
+SHARES forms (when a particular net uses one) ship through the same
+forms catalog as ARES and Winlink Wednesday forms.
 
-For SHARES operators: the check-in workflow is the same shape — Compose,
-pick the SHARES check-in form, fill, Send, Connect. The form-validation
-is stricter (some fields are required and the receiver validates
-mechanically).
+For SHARES operators: the same Compose → Use form → Submit → Connect
+workflow applies. Net-specific protocols come from the net's published
+documentation, not from tuxlink.
 
 ## Position reports
 
@@ -110,6 +143,16 @@ If running the net (acting as Net Control), the workflow differs:
 Net Control's workflow benefits from a [user folder](22-user-folders.md)
 per net — the night's check-ins, traffic, and outbound messages live in
 one place for the post-net log.
+
+## On-air check-in
+
+> [!WARNING]
+> **Submitting a check-in over RF is on-air transmission.** Once the
+> form is in the Outbox and the operator presses Connect with an RF
+> transport selected, the radio is keyed under the operator's callsign.
+> Net-check-in traffic is short — most check-ins fit in one B2F frame
+> exchange — but the Part 97 consent applies: pressing Connect is the
+> per-session licensee gate. A Telnet check-in does not transmit on air.
 
 ## Frequency and mode discipline
 

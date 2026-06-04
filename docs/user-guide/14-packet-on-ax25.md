@@ -78,6 +78,15 @@ the SSID convention is a local-network decision, not a hard rule.
 
 ## A Packet session, end to end
 
+> [!WARNING]
+> **Connect is on-air transmission.** Pressing Connect on a Packet
+> transport keys the radio via Dire Wolf and transmits an AX.25 SABM
+> frame on the configured frequency under the operator's callsign.
+> Confirm: (a) you're on a frequency you're licensed for, (b) the radio
+> is on a band-appropriate antenna, (c) the radio's power switch is
+> reachable. The Connect button is the per-session licensee consent
+> gate.
+
 ```mermaid
 sequenceDiagram
     participant Op as Operator
