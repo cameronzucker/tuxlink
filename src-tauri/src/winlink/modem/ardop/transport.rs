@@ -567,13 +567,35 @@ impl ModemTransport for ArdopTransport {
             })
     }
 
-    /// Expose a clone of the cmd-socket write half so a side channel
-    /// (`ModemSession::abort_in_flight`) can inject `ABORT\r` while
-    /// `connect_arq`'s recv loop is blocked (tuxlink-o3f2). Returns `None`
-    /// when `init()` has not been called and the cmd socket is therefore
-    /// not yet open.
-    fn try_clone_abort_writer(&self) -> Option<std::net::TcpStream> {
-        self.cmd.as_ref().and_then(|s| s.try_clone_writer().ok())
+    /// Expose a clone of the cmd-socket write half (cooperative path) +
+    /// a clone for hard-close (fallback path) so a side channel
+    /// (`ModemSession::abort_in_flight`) can inject `ABORT\r` and/or RST
+    /// the socket while `connect_arq`'s recv loop is blocked (tuxlink-o3f2;
+    /// hard-close fallback per tuxlink-0ye6 Task 4.1 / Codex Round 4 P1 #4).
+    ///
+    /// The cooperative writer is given a bounded `write_timeout`
+    /// ([`crate::modem_status::ABORT_WRITE_TIMEOUT`]) so a wedged ardopcf
+    /// cmd port cannot stall the abort budget past spec §2's ~2s contract.
+    ///
+    /// Returns `None` when `init()` has not been called and the cmd socket
+    /// is therefore not yet open.
+    fn try_clone_abort_writer(
+        &self,
+    ) -> Option<(
+        Box<dyn std::io::Write + Send>,
+        Box<dyn crate::modem_status::ShutdownableStream>,
+    )> {
+        let writer = self.cmd.as_ref()?.try_clone_writer().ok()?;
+        // Bound the cooperative write so a wedged peer can't stall the
+        // abort path. set_write_timeout is best-effort — if it errors,
+        // fall through unbounded rather than refuse to surface the writer
+        // (the hard-close fallback still bounds the overall budget).
+        let _ = writer.set_write_timeout(Some(crate::modem_status::ABORT_WRITE_TIMEOUT));
+        let stream_clone = writer.try_clone().ok()?;
+        Some((
+            Box::new(writer) as Box<dyn std::io::Write + Send>,
+            Box::new(stream_clone) as Box<dyn crate::modem_status::ShutdownableStream>,
+        ))
     }
 
     /// Wait for an inbound `Connected` event during listener mode.
@@ -1989,8 +2011,10 @@ mod tests {
         };
         t.init(&cfg).expect("init must succeed");
 
-        // After init: a live writer that can deliver bytes to the cmd mock.
-        let mut abort_writer = t
+        // After init: a live writer pair (cooperative + hard-close) that
+        // can deliver bytes to the cmd mock. tuxlink-0ye6 Task 4.1 widened
+        // the return type to the (writer, stream) pair.
+        let (mut abort_writer, _abort_stream) = t
             .try_clone_abort_writer()
             .expect("must return Some after init()");
         abort_writer

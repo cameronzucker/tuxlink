@@ -245,9 +245,11 @@ where
     // If the backend can't expose a writer (default trait impl returns
     // None), the install is silently skipped: graceful disconnect remains
     // the only path. For ardopcf the writer is always available after
-    // init() succeeds.
-    if let Some(writer) = transport.try_clone_abort_writer() {
-        session.install_abort_writer(writer);
+    // init() succeeds. tuxlink-0ye6 Task 4.1 widened to a (writer, stream)
+    // pair so the session can hard-close via the stream when the
+    // cooperative write fails (Codex Round 4 P1 #3).
+    if let Some((writer, stream)) = transport.try_clone_abort_writer() {
+        session.install_abort_writer(writer, stream);
     }
 
     // Status: Connecting (bounded by CONNECT_DEADLINE below).
@@ -341,8 +343,8 @@ where
         return Err(msg);
     }
 
-    if let Some(writer) = transport.try_clone_abort_writer() {
-        session.install_abort_writer(writer);
+    if let Some((writer, stream)) = transport.try_clone_abort_writer() {
+        session.install_abort_writer(writer, stream);
     }
 
     session.install_transport(transport);
@@ -1136,8 +1138,19 @@ mod tests {
         ) -> std::io::Result<&mut dyn crate::winlink::modem::ReadWrite> {
             Err(std::io::Error::other("stub"))
         }
-        fn try_clone_abort_writer(&self) -> Option<TcpStream> {
-            self.abort_writer.as_ref().and_then(|s| s.try_clone().ok())
+        fn try_clone_abort_writer(
+            &self,
+        ) -> Option<(
+            Box<dyn std::io::Write + Send>,
+            Box<dyn crate::modem_status::ShutdownableStream>,
+        )> {
+            let writer = self.abort_writer.as_ref()?.try_clone().ok()?;
+            let stream_clone = writer.try_clone().ok()?;
+            Some((
+                Box::new(writer) as Box<dyn std::io::Write + Send>,
+                Box::new(stream_clone)
+                    as Box<dyn crate::modem_status::ShutdownableStream>,
+            ))
         }
     }
 
@@ -1287,8 +1300,16 @@ mod tests {
     fn disconnect_in_flight_sends_abort_via_side_channel() {
         let (addr, listener_handle, _signal) = spawn_abort_listener();
         let writer = TcpStream::connect(addr).expect("connect to abort listener");
+        let stream_clone = writer.try_clone().expect("clone for shutdown handle");
         let session = Arc::new(ModemSession::new());
-        session.install_abort_writer(writer);
+        // tuxlink-0ye6 Task 4.1 two-arg form: cooperative writer + hard-close
+        // stream. The test's writer never errors (real TCP loopback drains),
+        // so the cooperative phase covers the assertion below.
+        session.install_abort_writer(
+            Box::new(writer) as Box<dyn std::io::Write + Send>,
+            Box::new(stream_clone)
+                as Box<dyn crate::modem_status::ShutdownableStream>,
+        );
 
         modem_ardop_disconnect_inner(&session).expect("disconnect must succeed");
 

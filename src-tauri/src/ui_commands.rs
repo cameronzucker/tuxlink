@@ -2684,7 +2684,11 @@ fn arq_disconnect_via_cmd_writer(
     transport: &dyn crate::winlink::modem::ModemTransport,
 ) -> std::io::Result<()> {
     use std::io::Write;
-    let mut writer = transport.try_clone_abort_writer().ok_or_else(|| {
+    // tuxlink-0ye6 Task 4.1 widened the return type to (writer, stream).
+    // The DISCONNECT path only needs the cooperative writer; the hard-close
+    // stream is discarded — graceful disconnect is the contract here, and
+    // an unresponsive peer just surfaces the write error to the caller.
+    let (mut writer, _stream) = transport.try_clone_abort_writer().ok_or_else(|| {
         std::io::Error::new(std::io::ErrorKind::NotConnected, "no cmd writer")
     })?;
     writer.write_all(b"DISCONNECT\r")?;

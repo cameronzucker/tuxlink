@@ -30,6 +30,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, State};
 
 use crate::config::{self, VaraUiConfig};
+use crate::modem_status::ShutdownableStream;
 use crate::session_log::SessionLogState;
 use crate::ui_commands::LogLineDto;
 use crate::winlink_backend::{LogLevel, LogLine, LogSource};
@@ -127,6 +128,24 @@ struct VaraSessionInner {
     /// touching the transport so a UI poll never blocks behind an in-flight
     /// start/stop.
     status: VaraStatus,
+    /// Cooperative cmd-port writer used by [`VaraSession::abort_in_flight`]
+    /// to send `ABORT\r` (NOT `DISCONNECT\r` — see [`OutboundCommand::Abort`]
+    /// vs [`OutboundCommand::Disconnect`]). Installed via
+    /// [`VaraSession::install_abort_writer`] BEFORE any blocking session-state
+    /// operation begins so the operator's Close Session click can interrupt
+    /// an active B2F within spec §2's ~2s budget (tuxlink-0ye6 Task 4.1
+    /// — spec §9 watched failure mode + Codex Round 1 P1 #4).
+    ///
+    /// Carries the bounded `write_timeout` from the transport-side
+    /// `try_clone_abort_writer`; the session layer doesn't re-bound here.
+    abort_writer: Option<Box<dyn std::io::Write + Send>>,
+    /// Hard-close fallback paired with [`abort_writer`]. When the
+    /// cooperative `ABORT\r` write fails (peer wedged past the bounded
+    /// `write_timeout`), [`VaraSession::abort_in_flight`] calls
+    /// `shutdown_both` on this handle to RST the underlying TCP stream so
+    /// the VARA modem notices via TCP and halts in-flight TX on its end
+    /// (tuxlink-0ye6 Task 4.1 — Codex Round 4 P1 #3).
+    abort_stream: Option<Box<dyn ShutdownableStream>>,
 }
 
 impl VaraSession {
@@ -135,6 +154,8 @@ impl VaraSession {
             inner: Mutex::new(VaraSessionInner {
                 transport: None,
                 status: VaraStatus::default(),
+                abort_writer: None,
+                abort_stream: None,
             }),
         }
     }
@@ -211,6 +232,98 @@ impl VaraSession {
         transport
             .send(&OutboundCommand::Listen(true))
             .map_err(|e| format!("LISTEN ON write failed: {e}"))
+    }
+
+    /// Install the side-channel cooperative writer + hard-close stream pair
+    /// used by [`abort_in_flight`]. Mirrors the ARDOP
+    /// `ModemSession::install_abort_writer` posture (tuxlink-0ye6 Task 4.1).
+    ///
+    /// Callers obtain the pair from
+    /// [`VaraTransport::try_clone_abort_writer`] AFTER the cmd port is open
+    /// but BEFORE any blocking session-state operation begins, so an
+    /// operator click on Close Session can interrupt an in-flight B2F
+    /// within spec §2's ~2s budget regardless of weak-signal latency on
+    /// VARA's graceful `DISCONNECT` path.
+    ///
+    /// Replaces any previously-installed pair.
+    pub fn install_abort_writer(
+        &self,
+        writer: Box<dyn std::io::Write + Send>,
+        stream: Box<dyn ShutdownableStream>,
+    ) {
+        if let Ok(mut guard) = self.inner.lock() {
+            guard.abort_writer = Some(writer);
+            guard.abort_stream = Some(stream);
+        }
+    }
+
+    /// Bounded VARA-side abort: cooperatively send `ABORT\r` (NOT
+    /// `DISCONNECT\r` — see spec §9 + Codex Round 1 P1 #4); on cooperative
+    /// write Err, fall back to `shutdown_both` on the paired stream so the
+    /// VARA modem notices via TCP RST and halts in-flight TX even when the
+    /// cmd port itself is unresponsive (Codex Round 4 P1 #3).
+    ///
+    /// Bounded by the writer's `write_timeout` (1500 ms on production
+    /// transports per [`crate::modem_status::ABORT_WRITE_TIMEOUT`]) + a
+    /// single `shutdown_both` syscall — total runtime fits under spec §2's
+    /// "abort within ~2s" contract (Codex Round 3 P1 #1).
+    ///
+    /// Returns:
+    /// - `Ok(())` when the cooperative write succeeded.
+    /// - `Err("VARA cmd port unresponsive; hard-closed")` when the
+    ///   cooperative write failed and the fallback ran. The error string
+    ///   stays operator-readable; callers surface it through the
+    ///   existing `Result<_, String>` Tauri-command shape.
+    /// - `Err("no abort writer installed")` when no writer is installed
+    ///   (caller can fall through to `vara_stop_session_inner` for the
+    ///   graceful TCP-only teardown).
+    ///
+    /// **VARA's `ABORT` vs `DISCONNECT` distinction:** the cmd codec
+    /// (`command.rs::OutboundCommand::Abort` vs `::Disconnect`) models
+    /// both because they have different semantics in the VARA host
+    /// protocol. `ABORT` interrupts in-flight TX (hard tear-down);
+    /// `DISCONNECT` waits for the current burst to complete (graceful).
+    /// Only `ABORT` satisfies the spec §2 interrupt contract — sending
+    /// `DISCONNECT` here would let an active B2F burst keep TXing for
+    /// 30+ seconds on weak-signal HF, which is the exact failure mode
+    /// the spec calls out as a Task 4.1 P1.
+    pub fn abort_in_flight(&self) -> Result<(), String> {
+        use std::io::Write;
+        let mut guard = self
+            .inner
+            .lock()
+            .map_err(|e| format!("session lock poisoned: {e}"))?;
+        if guard.abort_writer.is_none() {
+            return Err("no abort writer installed".into());
+        }
+        // Phase 1: cooperative bounded write of ABORT\r. The writer's
+        // write_timeout governs the upper bound here. Sending DISCONNECT
+        // as a secondary command after ABORT was considered but rejected
+        // — VARA may treat the subsequent DISCONNECT as a separate
+        // graceful tear-down request and reset the burst-completion
+        // counter (Codex Round 1 P1 #4: "ABORT must be sent FIRST" is
+        // the load-bearing assertion; a follow-on DISCONNECT is optional
+        // and not required for the interrupt contract).
+        let cooperative = {
+            let writer = guard.abort_writer.as_mut().expect("checked above");
+            writer
+                .write_all(b"ABORT\r")
+                .and_then(|()| writer.flush())
+        };
+        if cooperative.is_ok() {
+            return Ok(());
+        }
+        // Phase 2: cooperative write failed (timeout, WouldBlock,
+        // BrokenPipe, etc.) — take the stream and hard-close it. Drop the
+        // writer too: it's pointing at the same wedged socket and is no
+        // longer useful. Discard the shutdown_both result deliberately —
+        // even an Err here means the underlying socket is gone, which IS
+        // the effective tear-down.
+        guard.abort_writer = None;
+        if let Some(mut stream) = guard.abort_stream.take() {
+            let _ = stream.shutdown_both();
+        }
+        Err("VARA cmd port unresponsive; hard-closed".into())
     }
 }
 
@@ -721,6 +834,150 @@ mod tests {
         drop(session);
         cmd_handle.join().unwrap();
         data_handle.join().unwrap();
+    }
+
+    // ── tuxlink-0ye6 Task 4.1: VaraSession::abort_in_flight ──────────────
+    //
+    // VARA equivalent of ARDOP's `ModemSession::abort_in_flight` — sends
+    // VARA's `ABORT\r` (NOT `DISCONNECT\r`; the codec models both
+    // distinctly per command.rs OutboundCommand::Abort vs ::Disconnect),
+    // bounded by the cooperative write_timeout, with a hard-close fallback
+    // when the cooperative write fails (Codex Round 4 P1 #3).
+
+    /// Test helper: a writer that captures every byte written into a shared
+    /// buffer the test can inspect. Used in place of a real TCP loopback so
+    /// the ordering / content assertion doesn't depend on socket scheduling.
+    struct RecordingWriter {
+        captured: Arc<std::sync::Mutex<Vec<u8>>>,
+    }
+    impl std::io::Write for RecordingWriter {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.captured.lock().unwrap().extend_from_slice(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// Test helper: a writer that always errors with WouldBlock — models a
+    /// wedged VARA cmd port that isn't draining inside the bounded
+    /// write_timeout. Triggers the hard-close fallback path.
+    struct BlockedWriter;
+    impl std::io::Write for BlockedWriter {
+        fn write(&mut self, _buf: &[u8]) -> std::io::Result<usize> {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::WouldBlock,
+                "test: wedged VARA peer",
+            ))
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// Test helper: a ShutdownableStream spy that flips a flag the test
+    /// can read back. Lets us assert the fallback path RAN even when the
+    /// "stream" isn't a real TCP socket.
+    struct ShutdownSpy {
+        called: Arc<std::sync::Mutex<bool>>,
+    }
+    impl ShutdownableStream for ShutdownSpy {
+        fn shutdown_both(&mut self) -> std::io::Result<()> {
+            *self.called.lock().unwrap() = true;
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn vara_abort_in_flight_writes_abort_as_first_command() {
+        let session = VaraSession::new();
+        let captured: Arc<std::sync::Mutex<Vec<u8>>> =
+            Arc::new(std::sync::Mutex::new(Vec::new()));
+        let writer = RecordingWriter { captured: captured.clone() };
+        let shutdown_called = Arc::new(std::sync::Mutex::new(false));
+        let spy = ShutdownSpy { called: shutdown_called.clone() };
+        session.install_abort_writer(
+            Box::new(writer) as Box<dyn std::io::Write + Send>,
+            Box::new(spy) as Box<dyn ShutdownableStream>,
+        );
+
+        session.abort_in_flight().expect("abort writes succeed");
+
+        let bytes = captured.lock().unwrap().clone();
+        assert!(
+            bytes.starts_with(b"ABORT\r"),
+            "Codex Round 1 P1 #4: ABORT must be sent FIRST (got {:?}). \
+             DISCONNECT can wait for the current burst.",
+            String::from_utf8_lossy(&bytes),
+        );
+        // If the implementation ever appends a follow-on DISCONNECT (as a
+        // belt-and-suspenders graceful tear-down), assert ABORT still
+        // precedes it. Today the impl only sends ABORT — both branches of
+        // this conditional are safe.
+        if let Some(disc_idx) = bytes
+            .windows(b"DISCONNECT\r".len())
+            .position(|w| w == b"DISCONNECT\r")
+        {
+            let abort_idx = bytes
+                .windows(b"ABORT\r".len())
+                .position(|w| w == b"ABORT\r")
+                .unwrap();
+            assert!(
+                abort_idx < disc_idx,
+                "ABORT must precede any DISCONNECT"
+            );
+        }
+        // Cooperative path succeeded → fallback must NOT have run.
+        assert!(
+            !*shutdown_called.lock().unwrap(),
+            "shutdown_both must not run when cooperative write succeeded"
+        );
+    }
+
+    #[test]
+    fn vara_abort_in_flight_falls_back_to_hard_close_when_write_fails() {
+        let session = VaraSession::new();
+        let shutdown_called = Arc::new(std::sync::Mutex::new(false));
+        let spy = ShutdownSpy { called: shutdown_called.clone() };
+        session.install_abort_writer(
+            Box::new(BlockedWriter) as Box<dyn std::io::Write + Send>,
+            Box::new(spy) as Box<dyn ShutdownableStream>,
+        );
+
+        let start = std::time::Instant::now();
+        let result = session.abort_in_flight();
+        let elapsed = start.elapsed();
+
+        assert!(result.is_err(), "cooperative write must surface as Err");
+        assert!(
+            *shutdown_called.lock().unwrap(),
+            "Codex Round 4 P1 #3: hard-close fallback MUST run when cooperative write fails"
+        );
+        assert!(
+            elapsed < Duration::from_secs(2),
+            "Codex Round 3 P1 #1: bound is 2s even on hard-close fallback; got {:?}",
+            elapsed
+        );
+        // The Err message must be operator-readable so the Tauri-command
+        // surface can pass it through without re-shaping.
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("hard-closed"),
+            "Err must signal the fallback ran; got {err:?}"
+        );
+    }
+
+    #[test]
+    fn vara_abort_in_flight_returns_err_when_no_writer_installed() {
+        let session = VaraSession::new();
+        let err = session
+            .abort_in_flight()
+            .expect_err("must Err when no writer is installed");
+        assert!(
+            err.contains("no abort writer"),
+            "Err must say no writer; got {err:?}"
+        );
     }
 
     // tuxlink-rsus: MYCALL is sent on TCP connect when callsign is Some.

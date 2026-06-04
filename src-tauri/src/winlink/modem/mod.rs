@@ -88,10 +88,18 @@ pub trait ModemTransport: Send {
         // Default: no-op. Backends that emit live status events override.
     }
 
-    /// Return a cloneable side-channel writer that another thread can use to
-    /// inject an `ABORT`-style command while the main transport thread is
+    /// Return a side-channel writer + hard-close stream pair that another
+    /// thread can use to inject an `ABORT`-style command (cooperative path)
+    /// or RST the socket (fallback path) while the main transport thread is
     /// blocked inside [`connect_arq`]'s recv loop (tuxlink-o3f2 — P1
-    /// abort-during-connect fix).
+    /// abort-during-connect fix; tuxlink-0ye6 Task 4.1 — bounded write +
+    /// hard-close fallback per Codex Round 4 P1 #3).
+    ///
+    /// Implementations MUST set the writer's `write_timeout` to
+    /// [`crate::modem_status::ABORT_WRITE_TIMEOUT`] before returning so the
+    /// cooperative phase of `abort_in_flight` is bounded at the socket layer.
+    /// The session layer relies on the timeout to fit the spec §2 "~2s"
+    /// abort contract regardless of how unresponsive the peer is.
     ///
     /// The default impl returns `None` — backends that don't support
     /// side-channel abort fall back to whatever in-line cancellation they
@@ -99,8 +107,16 @@ pub trait ModemTransport: Send {
     /// [`std::net::TcpStream`] clone of its cmd-socket write half so
     /// `ModemSession::abort_in_flight` can write `ABORT\r` and unblock the
     /// `arq_connect` recv loop (ardopcf responds with `FAULT`/`NEWSTATE
-    /// DISC`, which the cmd reader thread delivers via the channel).
-    fn try_clone_abort_writer(&self) -> Option<std::net::TcpStream> {
+    /// DISC`, which the cmd reader thread delivers via the channel). The
+    /// VARA transport (Task 4.1) does the same with the cmd port and the
+    /// VARA-specific `ABORT` host command (distinct from VARA's
+    /// `DISCONNECT`, which is graceful).
+    fn try_clone_abort_writer(
+        &self,
+    ) -> Option<(
+        Box<dyn std::io::Write + Send>,
+        Box<dyn crate::modem_status::ShutdownableStream>,
+    )> {
         None
     }
 
