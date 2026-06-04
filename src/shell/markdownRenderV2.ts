@@ -9,9 +9,11 @@
 
 import { Marked } from 'marked';
 import { headingAnchors } from './markdownExtensions/headingAnchors';
+import { callouts } from './markdownExtensions/callouts';
 
 const marked = new Marked();
 marked.use(headingAnchors);
+marked.use(callouts);
 
 /**
  * Parse a markdown string and return HTML.
