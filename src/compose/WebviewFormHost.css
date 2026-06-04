@@ -1,0 +1,86 @@
+/* WebviewFormHost — minimal chrome around the child webview.
+ *
+ * The actual form HTML lives in a separate top-level webview window (see
+ * WebviewFormHost.tsx mount-mechanism note); this stylesheet only skins
+ * the inline pane in compose body that hosts status / error / fallback
+ * buttons. The form's own theming is handled by forms::skin on the
+ * Rust side before the HTML is served. */
+
+.webview-form-host {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 14px;
+}
+
+.webview-form-host__status {
+  color: var(--text-dim);
+  line-height: 1.5;
+}
+
+.webview-form-host__status code {
+  font-family: var(--mono);
+  color: var(--text);
+  background: var(--surface-2);
+  padding: 1px 6px;
+  border-radius: 3px;
+  border: 1px solid var(--border);
+}
+
+.webview-form-host__error {
+  background: var(--tux-danger-surface);
+  border: 1px solid var(--error);
+  color: var(--text);
+  padding: 10px 12px;
+  border-radius: 4px;
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.webview-form-host__chrome {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: auto;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-soft);
+}
+
+.webview-form-host__btn {
+  font-family: var(--sans);
+  font-size: 13px;
+  padding: 6px 14px;
+  background: var(--surface-2);
+  color: var(--text);
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.webview-form-host__btn:hover:not(:disabled) {
+  background: var(--elevated);
+}
+
+.webview-form-host__btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.webview-form-host__btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* Visually distinguish the diagnostic fallback button from the live
+ * Cancel button so the operator doesn't mistake it for the primary
+ * submit path (per design §5.4 — fallback is a rescue tool). */
+.webview-form-host__btn--fallback {
+  font-style: italic;
+}

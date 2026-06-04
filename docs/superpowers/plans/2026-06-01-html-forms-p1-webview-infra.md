@@ -1354,7 +1354,7 @@ pub async fn close_webview_form_server(
 
 Mounts a child Tauri `WebviewWindow` (label: `compose-form-<token>`) embedded in the compose body region (NOT a separate top-level window — design §8.2 has it inline). Subscribes to the `form-submitted` event on that webview; on receipt, dispatches the parsed FormPayload upward to Compose.tsx and triggers `close_webview_form_server`. Renders a tuxlink-chrome fallback submit button below the webview as a diagnostic (per design §5.4: "diagnostic / rescue tool").
 
-- [ ] **Step 1: Test scaffold (CSS-blind).**
+- [x] **Step 1: Test scaffold (CSS-blind).**
 
 ```tsx
 import { describe, it, expect, vi } from 'vitest';
@@ -1384,7 +1384,7 @@ describe('<WebviewFormHost>', () => {
 });
 ```
 
-- [ ] **Step 2: Implement the component skeleton.**
+- [x] **Step 2: Implement the component skeleton.**
 
 ```tsx
 import { useEffect, useState, useCallback } from 'react';
@@ -1464,7 +1464,7 @@ export function WebviewFormHost({ formId, onSubmit, onCancel }: Props) {
 }
 ```
 
-- [ ] **Step 3: Verify + commit.**
+- [x] **Step 3: Verify + commit.**
 
 ```bash
 pnpm exec vitest run src/compose/WebviewFormHost 2>&1 | tail -10
