@@ -36,6 +36,17 @@ impl Index {
         Ok(count == 0)
     }
 
+    /// Return the set of slugs currently in `docs_fts`. The caller compares
+    /// this against the bundled-topics slug set to decide whether the index
+    /// needs to be repopulated after a docs-bundle change (e.g. the PR #347
+    /// IA restructure renamed every slug; the old slugs would otherwise
+    /// stay in the index and produce dead search hits).
+    pub fn docs_slugs(&self) -> Result<Vec<String>, IndexError> {
+        let mut stmt = self.conn.prepare("SELECT slug FROM docs_fts")?;
+        let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(IndexError::from)
+    }
+
     /// Populate `docs_fts` from `topics`. Wipes the table first so re-calls
     /// (e.g. after a schema-drift recovery) start from a clean state.
     pub fn populate_docs(&self, topics: &[DocTopic<'_>]) -> Result<(), IndexError> {
@@ -139,5 +150,34 @@ mod tests {
         ]).unwrap();
         assert!(idx.search_docs("ARDOP").unwrap().is_empty());
         assert_eq!(idx.search_docs("VARA").unwrap().len(), 1);
+    }
+
+    #[test]
+    fn docs_slugs_returns_the_indexed_slug_set() {
+        let (_dir, idx) = fresh();
+        assert!(idx.docs_slugs().unwrap().is_empty());
+        idx.populate_docs(&[
+            DocTopic { slug: "01-foo", title: "Foo", markdown: "x" },
+            DocTopic { slug: "02-bar", title: "Bar", markdown: "y" },
+        ]).unwrap();
+        let mut slugs = idx.docs_slugs().unwrap();
+        slugs.sort();
+        assert_eq!(slugs, vec!["01-foo".to_string(), "02-bar".to_string()]);
+    }
+
+    #[test]
+    fn docs_slugs_reflects_repopulation_with_renamed_slugs() {
+        // Regression for the PR #347 search-stale-slug failure: an existing
+        // populated index gets repopulated with the new bundle's slugs, and
+        // a subsequent search returns ONLY the new slugs.
+        let (_dir, idx) = fresh();
+        idx.populate_docs(&[
+            DocTopic { slug: "01-getting-started", title: "Getting started", markdown: "ARDOP" },
+        ]).unwrap();
+        assert_eq!(idx.docs_slugs().unwrap(), vec!["01-getting-started".to_string()]);
+        idx.populate_docs(&[
+            DocTopic { slug: "01-what-is-tuxlink", title: "What is Tuxlink", markdown: "ARDOP" },
+        ]).unwrap();
+        assert_eq!(idx.docs_slugs().unwrap(), vec!["01-what-is-tuxlink".to_string()]);
     }
 }
