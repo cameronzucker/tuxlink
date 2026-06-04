@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { open as shellOpen } from '@tauri-apps/plugin-shell';
-import { renderMarkdown } from '../shell/markdownRenderV2';
+import { renderMarkdown } from '../shell/markdownRender';
 import { sanitizeHtml } from '../shell/sanitizeHtml';
 import { useMermaidRender } from './useMermaidRender';
 import { addCopyButtons } from './copyButton';

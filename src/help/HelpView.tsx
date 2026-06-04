@@ -20,8 +20,9 @@ const DEFAULT_SLUG = '01-getting-started';
  * Spec: docs/superpowers/specs/2026-06-03-help-window-design.md §4, §5, §7, §9.
  *
  * tuxlink-ew3k polish round 1: custom titlebar (HelpTitleBar), width-preset
- * toggle (useReadingWidth), scroll reset on topic switch, parseMarkdown
- * memoization, markdown list-continuation fix, font-size CSS-scope fix.
+ * toggle (useReadingWidth), scroll reset on topic switch, renderMarkdown
+ * memoization (marked + DOMPurify HTML pipeline), markdown list-continuation
+ * fix, font-size CSS-scope fix.
  */
 export function HelpView() {
   useHelpTheme();   // first — paint into the correct theme as early as possible
