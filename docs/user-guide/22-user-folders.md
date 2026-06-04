@@ -8,6 +8,11 @@ arrangement.
 
 ## Creating a folder
 
+<!-- screenshot-needed: docs/user-guide/images/22-user-folders/sidebar-context-menu.png
+     Show: the folder sidebar with the right-click context menu open,
+     "New folder", "Rename", "Delete" entries visible. Sidebar + context
+     menu, ~400x500. -->
+
 **Sidebar → right-click → New folder** opens a small dialog that captures
 the folder name. A new folder appears in the sidebar under the built-in
 folders, in alphabetical order with any other user folders. Folder names

@@ -41,7 +41,16 @@ fn forms_webview_capability_has_empty_permissions_acl() {
 }
 
 #[test]
-fn forms_webview_capability_scoped_to_compose_form_label_prefix() {
+fn forms_webview_capability_scoped_to_form_label_prefixes() {
+    // P1 Task 7 introduced compose-form-* for the send-side authoring webview.
+    // P1 Task 11 (commit 223c93c) extended the same zero-IPC capability scope
+    // to viewer-form-* for the receive-side Viewer fallback — the receive-side
+    // child webview inherits the identical threat model (loopback-HTTP-only,
+    // no Tauri IPC, no fs, no shell, no window control).
+    //
+    // Any future widening to a NEW label prefix changes the §10 threat model
+    // surface — file a bd issue and route through Codex adrev before flipping
+    // the assert.
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("capabilities/forms-webview.json");
     let raw = std::fs::read_to_string(&path).unwrap();
@@ -53,7 +62,7 @@ fn forms_webview_capability_scoped_to_compose_form_label_prefix() {
     let webviews: Vec<&str> = webviews.iter().filter_map(|v| v.as_str()).collect();
     assert_eq!(
         webviews,
-        vec!["compose-form-*"],
-        "forms-webview must scope to the compose-form-* label prefix only"
+        vec!["compose-form-*", "viewer-form-*"],
+        "forms-webview must scope to the compose-form-* (Task 7) and viewer-form-* (Task 11) label prefixes only"
     );
 }

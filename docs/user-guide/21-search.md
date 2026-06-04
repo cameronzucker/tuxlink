@@ -5,6 +5,11 @@ searches across every folder when used with the `FOLDER:all` token.
 
 ## Free text
 
+<!-- screenshot-needed: docs/user-guide/images/21-search/search-results-highlighted.png
+     Show: the search overlay with a query (e.g. "mountain rescue") and
+     several hits in the result list with the matched range highlighted
+     visually. Search overlay + results, ~600x500. -->
+
 A plain query matches against subject and from. Case-insensitive,
 substring match. The matched range highlights in the result row.
 

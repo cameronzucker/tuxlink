@@ -51,6 +51,25 @@ but the B2F handshake itself is:
    speaks — and an MD5-derived response to the password challenge.
 4. The server replies with its prompt: `CMS>` or `RMS>`.
 
+```mermaid
+sequenceDiagram
+    participant TX as Tuxlink (client)
+    participant SV as Server (CMS / RMS)
+
+    Note over TX,SV: Transport-layer connect already established
+    SV->>TX: Banner line
+    Note right of SV: WL2K-version and feature char set
+    SV->>TX: Password challenge line
+    Note right of SV: Info-line prefix marks an 8-digit nonce
+    TX->>SV: Callsign, features, MD5(challenge, password)
+    SV->>TX: CMS> prompt
+    Note over TX,SV: Authenticated. Exchange phase begins.
+```
+
+The literal lines on the wire — `[WL2K-5.0-B2FWIHJM$]`, `;PQ: 12345678`,
+the `CMS>` prompt — appear verbatim in the session log alongside the
+diagram-level shape shown above.
+
 At this point both sides have authenticated and the exchange phase begins.
 
 ## The exchange: proposals and answers
@@ -95,6 +114,22 @@ dropout, without retransmitting the bytes that already landed.
 
 Accepted messages then transfer, one after the other, in the order
 proposed.
+
+```mermaid
+sequenceDiagram
+    participant A as Side with prompt
+    participant B as Other side
+
+    A->>B: F<code> <type> <mid> <size> <csize> 0
+    A->>B: F<code> <type> <mid> <size> <csize> 0
+    A->>B: F<code> <type> <mid> <size> <csize> 0
+    A->>B: F> <checksum>
+    B->>A: FS YN+
+    Note right of B: Accept #1, reject #2, accept #3
+    A->>B: <compressed message #1>
+    A->>B: <compressed message #3>
+    Note over A,B: Roles can swap — the other side<br/>then proposes its outbound batch
+```
 
 ## End of exchange
 

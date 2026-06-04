@@ -17,6 +17,11 @@ installed Hamlib confirms the current number for any rig.
 
 ## Xiegu G90 (HF, 20 W)
 
+<!-- screenshot-needed: docs/user-guide/images/13-radio-specific-notes/g90-cable-pair.png
+     Show: the Xiegu G90's rear with both DigiRig cables connected
+     (audio mini-DIN to G90 ACC, CAT mini-DIN to G90 ACC2). Crop to
+     show the back of the radio + cable ends, ~800x500. -->
+
 The G90 is a small QRP HF transceiver popular for portable operating. It
 pairs cleanly with the DigiRig and has been operationally confirmed against
 real RMS gateways on VARA HF Standard.
@@ -43,6 +48,11 @@ Notes:
   signal cleanly.
 
 ## Icom IC-7300 (HF, 100 W)
+
+<!-- screenshot-needed: docs/user-guide/images/13-radio-specific-notes/ic7300-rear-usb.png
+     Show: the IC-7300's rear panel USB connection (single cable, no
+     external interface). Crop to show the USB port + connected cable,
+     ~600x400. -->
 
 The IC-7300 is a popular fixed-station HF transceiver with built-in USB
 audio + CAT in a single cable. No external interface required.

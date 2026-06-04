@@ -154,6 +154,27 @@ For an operator moving from Express or Pat to tuxlink:
 
 The whole sequence usually takes a day or two of part-time effort.
 
+```mermaid
+flowchart TD
+    A["Install tuxlink<br/>(side-by-side with prior client)"]
+    B["Run wizard<br/>(callsign + password)"]
+    C["Telnet round-trip-to-self"]
+    D{"CMS verify passes?"}
+    E["Configure transports<br/>(Telnet / Packet / ARDOP / VARA HF)"]
+    F["Parallel operation<br/>(real traffic, both clients reading)"]
+    G["Migrate local archive<br/>(optional)"]
+    H["Primary window<br/>(1-2 weeks)"]
+    I["Surprises?"]
+    J["Remove prior client"]
+
+    A --> B --> C --> D
+    D -- "Yes" --> E
+    D -- "No" --> B
+    E --> F --> G --> H --> I
+    I -- "No" --> J
+    I -- "Yes" --> E
+```
+
 ## When to stay with Express or Pat
 
 Stay with the prior client if:
