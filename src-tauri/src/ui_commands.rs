@@ -2572,7 +2572,7 @@ fn ardop_listener_consumer_task(
                     Ok(c) => c,
                     Err(e) => {
                         progress(&format!("ARDOP listener: config read failed {e}; dropping link"));
-                        let _ = arq_disconnect_via_cmd_writer(&transport);
+                        let _ = arq_disconnect_via_cmd_writer(&*transport);
                         continue;
                     }
                 };
@@ -2616,7 +2616,7 @@ fn ardop_listener_consumer_task(
                                      tempdir for protocol-only exchange ({e}); \
                                      dropping link."
                                 ));
-                                let _ = arq_disconnect_via_cmd_writer(&transport);
+                                let _ = arq_disconnect_via_cmd_writer(&*transport);
                                 continue;
                             }
                         }
@@ -2634,7 +2634,7 @@ fn ardop_listener_consumer_task(
                 // through the cmd-writer side-channel rather than the
                 // synchronous arq_disconnect that would need a CmdSocket
                 // reference (not exposed on ModemTransport trait).
-                let _ = arq_disconnect_via_cmd_writer(&transport);
+                let _ = arq_disconnect_via_cmd_writer(&*transport);
             }
             ListenerDecision::RejectAllowlist | ListenerDecision::RejectExpired
             | ListenerDecision::RejectPassword => {
@@ -2653,7 +2653,7 @@ fn ardop_listener_consumer_task(
                     &peer_id,
                 );
                 let _ = event.append_to_log(&log_path);
-                let _ = arq_disconnect_via_cmd_writer(&transport);
+                let _ = arq_disconnect_via_cmd_writer(&*transport);
                 // Codex review 2026-06-03 [P1 #4] (tuxlink-61yg): after
                 // DISCONNECT, drain modem events for a bounded window so
                 // any DISCONNECTED/NEWSTATE DISC ack is consumed before
@@ -2681,7 +2681,7 @@ fn ardop_listener_consumer_task(
 /// Best-effort cmd-writer DISCONNECT (sends "DISCONNECT\r"). Returns Err if
 /// the transport has no abort writer (modem not initialised).
 fn arq_disconnect_via_cmd_writer(
-    transport: &Box<dyn crate::winlink::modem::ModemTransport>,
+    transport: &dyn crate::winlink::modem::ModemTransport,
 ) -> std::io::Result<()> {
     use std::io::Write;
     let mut writer = transport.try_clone_abort_writer().ok_or_else(|| {
