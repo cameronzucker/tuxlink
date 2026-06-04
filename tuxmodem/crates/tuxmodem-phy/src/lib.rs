@@ -10,6 +10,8 @@
 pub mod modes;
 pub mod phy_api;
 pub mod audio_io;
+#[cfg(feature = "audio-device")]
+pub mod audio_device;
 pub mod constellations;
 pub mod sync;
 pub mod subcarrier_snr;
