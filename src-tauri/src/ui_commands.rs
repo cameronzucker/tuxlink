@@ -2263,66 +2263,128 @@ pub async fn ardop_allowed_stations_set_allow_all(allow_all: bool) -> Result<(),
 ///    cmd writer installed during modem-init. If the modem isn't running,
 ///    surface a clear "start the modem first" error.
 ///
-/// NOT YET DONE in this PR — separate follow-up (filed during execution as a
-/// new bd issue mirroring tuxlink-k3ru's Telnet symmetry): when ardopcf
-/// emits CONNECTED for an inbound peer, route the event through
-/// `gate_inbound_peer_now` and on Accept hand the modem data stream to the
-/// B2F answerer. Without that routing the modem accepts peers at the ARQ
-/// layer (operator can see it in the status display) but no mail exchange
-/// runs at the application layer.
+/// End-to-end (tuxlink-61yg): if the modem isn't running, this command
+/// starts ardopcf in listen-only mode (init with LISTEN TRUE, no outbound
+/// dial). If the modem IS running, sends LISTEN TRUE to the side channel.
+/// Either way, spawns a long-lived consumer task that:
+///   - Takes the transport from `ModemSession`
+///   - Loops on `transport.wait_for_listener_connect()` until disarm
+///   - On each inbound CONNECTED event, runs `gate_inbound_peer_now` against
+///     the operator's allowlist + arms record
+///   - On Accept: hands the modem data stream to `run_ardop_b2f_answer`
+///     (mailbox-symmetric)
+///   - On Reject: writes `DISCONNECT` via the cmd writer + appends a reject
+///     event to the forensics log
+///   - On disarm: sends LISTEN FALSE and returns the transport to the session
 #[tauri::command]
 pub async fn ardop_listen(
     app: AppHandle,
     log: State<'_, std::sync::Arc<SessionLogState>>,
     session: State<'_, std::sync::Arc<crate::modem_status::ModemSession>>,
+    listen_state: State<'_, std::sync::Arc<ArdopListenState>>,
 ) -> Result<(), UiError> {
     use crate::winlink::listener::{ListenerArmsRecord, TransportKind, DEFAULT_TTL};
 
+    // Refuse a second arm while one is in flight.
+    {
+        let guard = listen_state.inner.lock().unwrap();
+        if guard.is_some() {
+            return Err(UiError::Internal {
+                detail: "ARDOP listener is already armed".into(),
+            });
+        }
+    }
+
+    // Validate allowlist file loads.
     let allowlist_path = ardop_allowed_stations_path();
-    if let Err(e) = crate::winlink::listener::AllowedStations::load_from(&allowlist_path) {
-        return Err(UiError::Internal {
+    let allowed = crate::winlink::listener::AllowedStations::load_from(&allowlist_path)
+        .map_err(|e| UiError::Internal {
             detail: format!(
                 "ARDOP listener arm refused: allowlist file at {} could not be loaded: {e}. \
                  Repair or delete the file (a missing file is fine — it falls back to the \
                  tuxlink WLE-parity default of allow_all=true + empty list).",
                 allowlist_path.display()
             ),
-        });
-    }
+        })?;
 
-    // Codex review 2026-06-03 [P2] (tuxlink-7vea): append the arms record
-    // to the forensics log BEFORE flipping the modem's LISTEN flag. The
-    // prior order sent LISTEN TRUE first and then appended — if the
-    // forensics-log write failed (config dir unwritable, disk full), the
-    // command returned an error but ardopcf was left in LISTEN mode with
-    // no successful arm record. Now: log first, then toggle. If LISTEN
-    // TRUE fails, the operator sees a forensics-record-without-LISTEN
-    // (recoverable, the next disarm cleans up the record).
+    // Append arms record BEFORE flipping the modem (Codex 2026-06-03 P2).
     let arms = ListenerArmsRecord::arm(TransportKind::Ardop, DEFAULT_TTL);
     let log_path = ardop_arms_log_path();
     arms.append_to_log(&log_path)
         .map_err(|e| UiError::Internal { detail: e.to_string() })?;
 
-    // Send LISTEN TRUE to the running ardopcf modem. This requires the
-    // modem to already be running (the cmd writer is installed during
-    // `modem_ardop_connect`'s init path — i.e., after an outbound dial).
-    // Codex review 2026-06-03 [P3] (tuxlink-7vea): the prior error
-    // message told the operator to "open the ARDOP modem panel," but
-    // opening the panel does not start ardopcf — only an outbound
-    // Connect does. Tightened to the actually-available action; the full
-    // listen-only start flow is tracked at tuxlink-syqb.
-    session
-        .send_listen_command(true)
-        .map_err(|e| UiError::Internal {
-            detail: format!(
-                "ARDOP listener arm refused — the modem is not running. \
-                 In the current build the modem only starts when you Connect \
-                 to a peer (an outbound dial). Start the modem via an ARDOP \
-                 Connect first, then re-arm the listener. Listen-only \
-                 modem start is tracked at tuxlink-syqb. \
-                 Underlying error: {e}"
-            ),
+    // If the modem isn't already running, start it in listen-only mode.
+    let already_running = session.snapshot_transport_present();
+    if !already_running {
+        let cfg = config::read_config()
+            .map_err(|e| UiError::Internal { detail: e.to_string() })?;
+        let ardop_ui = cfg.modem_ardop.clone().unwrap_or_default();
+        let session_arc: std::sync::Arc<crate::modem_status::ModemSession> =
+            (*session).clone();
+        // Spawn the modem on a blocking thread (bind-wait + init can be slow).
+        let res = tokio::task::spawn_blocking(move || {
+            crate::modem_commands::start_modem_listen_only(
+                &session_arc,
+                &ardop_ui,
+                |cfg, _target| {
+                    crate::winlink::modem::ardop::transport::ArdopTransport::with_managed_modem(cfg)
+                        .map(|t| Box::new(t) as Box<dyn crate::winlink::modem::ModemTransport>)
+                        .map_err(|e| format!("{e:?}"))
+                },
+            )
+        })
+        .await
+        .map_err(|e| UiError::Internal { detail: format!("modem spawn task failed: {e}") })?;
+        if let Err(e) = res {
+            return Err(UiError::Internal {
+                detail: format!("ARDOP listener arm refused — could not start modem: {e}"),
+            });
+        }
+    } else {
+        // Modem already running — just flip LISTEN TRUE via the side channel.
+        session.send_listen_command(true).map_err(|e| UiError::Internal {
+            detail: format!("ARDOP listener arm — could not flip LISTEN: {e}"),
         })?;
+    }
+
+    // Build the mailbox for inbound-mail persistence.
+    let mailbox = match app.path().app_data_dir() {
+        Ok(dir) => {
+            let mut mb = crate::native_mailbox::Mailbox::new(dir.join("native-mbox"));
+            if let Some(svc) = app.try_state::<crate::search::commands::SearchService>() {
+                mb = mb.with_index(svc.index.clone());
+            }
+            Some(std::sync::Arc::new(mb))
+        }
+        Err(_) => None,
+    };
+
+    // Spawn the consumer task that owns the transport for the armed window.
+    let shutdown = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    {
+        let mut guard = listen_state.inner.lock().unwrap();
+        *guard = Some(ArdopListenHandle { shutdown: shutdown.clone() });
+    }
+    let arbiter: std::sync::Arc<crate::position::PositionArbiter> =
+        (*app.state::<std::sync::Arc<crate::position::PositionArbiter>>()).clone();
+    let session_arc: std::sync::Arc<crate::modem_status::ModemSession> = (*session).clone();
+    let arms_for_task = arms.clone();
+    let app_clone = app.clone();
+    let log_clone: std::sync::Arc<SessionLogState> = (*log).clone();
+    let listen_state_for_task = (*listen_state).clone();
+    tokio::task::spawn_blocking(move || {
+        ardop_listener_consumer_task(
+            session_arc,
+            mailbox,
+            allowed,
+            arms_for_task,
+            arbiter,
+            shutdown,
+            app_clone,
+            log_clone,
+            listen_state_for_task,
+        );
+    });
 
     let mins = arms.ttl.as_secs() / 60;
     emit_session_line(
@@ -2331,7 +2393,7 @@ pub async fn ardop_listen(
         LogLevel::Info,
         format!(
             "ARDOP listener armed for {mins} min (consent uuid {}). \
-             Modem is now in LISTEN TRUE mode at the modem layer.",
+             Modem is in LISTEN TRUE; waiting for inbound peers…",
             &arms.consent_uuid
         ),
     );
@@ -2339,32 +2401,245 @@ pub async fn ardop_listen(
 }
 
 /// Toggle the ARDOP listener on/off. `enabled == true` is equivalent to
-/// `ardop_listen()` (sends LISTEN TRUE + mints arms record). `enabled == false`
-/// sends LISTEN FALSE to the running ardopcf modem.
+/// `ardop_listen()`. `enabled == false` signals the consumer task to drain
+/// (LISTEN FALSE, transport returned to session, status → Stopped).
 #[tauri::command]
 pub async fn ardop_set_listen(
     app: AppHandle,
     log: State<'_, std::sync::Arc<SessionLogState>>,
     session: State<'_, std::sync::Arc<crate::modem_status::ModemSession>>,
+    listen_state: State<'_, std::sync::Arc<ArdopListenState>>,
     enabled: bool,
 ) -> Result<(), UiError> {
+    use std::sync::atomic::Ordering;
     if enabled {
-        return ardop_listen(app, log, session).await;
+        return ardop_listen(app, log, session, listen_state).await;
     }
-    session
-        .send_listen_command(false)
-        .map_err(|e| UiError::Internal {
-            detail: format!(
-                "ARDOP listener disarm error — modem may not be running. {e}"
-            ),
-        })?;
-    emit_session_line(
-        &app,
-        &log,
-        LogLevel::Info,
-        "ARDOP listener disarmed (LISTEN FALSE sent to modem).".to_string(),
-    );
+    let handle = {
+        let mut guard = listen_state.inner.lock().unwrap();
+        guard.take()
+    };
+    if let Some(h) = handle {
+        h.shutdown.store(true, Ordering::SeqCst);
+        // Best-effort LISTEN FALSE — the consumer task will also send this on
+        // its way out, but flipping it from here too means the modem stops
+        // accepting inbound peers immediately even if the consumer is mid-
+        // wait_for_listener_connect timeout.
+        let _ = session.send_listen_command(false);
+        emit_session_line(
+            &app,
+            &log,
+            LogLevel::Info,
+            "ARDOP listener disarming — sent LISTEN FALSE; waiting for consumer task to drain.".to_string(),
+        );
+    } else {
+        emit_session_line(
+            &app,
+            &log,
+            LogLevel::Warn,
+            "ARDOP listener disarm: no armed listener".to_string(),
+        );
+    }
     Ok(())
+}
+
+/// Shared state for the ARDOP listener consumer task — holds the disarm flag
+/// so `ardop_set_listen(false)` can signal the task to drain.
+#[derive(Default)]
+pub struct ArdopListenState {
+    pub inner: std::sync::Mutex<Option<ArdopListenHandle>>,
+}
+
+pub struct ArdopListenHandle {
+    pub shutdown: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn ardop_listener_consumer_task(
+    session: std::sync::Arc<crate::modem_status::ModemSession>,
+    mailbox: Option<std::sync::Arc<crate::native_mailbox::Mailbox>>,
+    allowed: crate::winlink::listener::AllowedStations,
+    arms: crate::winlink::listener::ListenerArmsRecord,
+    arbiter: std::sync::Arc<crate::position::PositionArbiter>,
+    shutdown: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    app: AppHandle,
+    log: std::sync::Arc<SessionLogState>,
+    listen_state: std::sync::Arc<ArdopListenState>,
+) {
+    use std::sync::atomic::Ordering;
+    use std::time::Duration;
+    use crate::winlink::listener::{
+        listener_decide_at, packet_gate, ListenerDecision, PeerId, StationPassword,
+    };
+    use crate::winlink_backend::run_ardop_b2f_answer;
+    use crate::winlink::modem::ardop::session::ConnectInfo;
+
+    let log_clone_for_progress = log.clone();
+    let app_clone_for_progress = app.clone();
+    let progress = move |line: &str| {
+        emit_session_line(
+            &app_clone_for_progress,
+            &log_clone_for_progress,
+            LogLevel::Info,
+            line.to_string(),
+        );
+    };
+
+    // Take the transport. If someone else has it (race), bail.
+    let mut transport = match session.take_transport() {
+        Some(t) => t,
+        None => {
+            progress("ARDOP listener consumer: transport not present at start; aborting.");
+            return;
+        }
+    };
+
+    let no_password = StationPassword::no_keyring();
+    let log_path = ardop_arms_log_path();
+
+    while !shutdown.load(Ordering::SeqCst) {
+        let evt = match transport.wait_for_listener_connect(Duration::from_secs(1)) {
+            Ok(Some(info)) => info,
+            Ok(None) => continue,
+            Err(e) => {
+                progress(&format!("ARDOP listener consumer: transport error {e}; stopping."));
+                break;
+            }
+        };
+        let ConnectInfo { peer_call, bandwidth_hz } = evt;
+        progress(&format!(
+            "ARDOP inbound: {} @ {} Hz; gating…",
+            peer_call, bandwidth_hz
+        ));
+
+        // Parse peer callsign into Address for PeerId.
+        let peer_addr = parse_peer_call_for_listener(&peer_call);
+        let peer_id = PeerId::Callsign(peer_addr.clone());
+
+        let decision = listener_decide_at(
+            &peer_id,
+            None,
+            &allowed,
+            &no_password,
+            &arms,
+            std::time::SystemTime::now(),
+        );
+
+        match decision {
+            ListenerDecision::Accept => {
+                // Read config + run B2F over the live transport.
+                progress(&format!("ARDOP listener: accepting {}; running B2F…", peer_call));
+                let cfg = match crate::config::read_config() {
+                    Ok(c) => c,
+                    Err(e) => {
+                        progress(&format!("ARDOP listener: config read failed {e}; dropping link"));
+                        let _ = arq_disconnect_via_cmd_writer(&transport);
+                        continue;
+                    }
+                };
+                let mb_ref = mailbox.as_deref();
+                let result = match mb_ref {
+                    Some(mb) => run_ardop_b2f_answer(
+                        transport.as_mut(),
+                        &peer_call,
+                        &cfg,
+                        mb,
+                        Some(arbiter.as_ref()),
+                    ),
+                    None => {
+                        // No mailbox state — skip persistence; just run the
+                        // exchange so the protocol completes cleanly.
+                        progress("ARDOP listener: no mailbox available; protocol-only exchange.");
+                        let tmp_mb = crate::native_mailbox::Mailbox::new(std::env::temp_dir());
+                        run_ardop_b2f_answer(
+                            transport.as_mut(),
+                            &peer_call,
+                            &cfg,
+                            &tmp_mb,
+                            Some(arbiter.as_ref()),
+                        )
+                    }
+                };
+                match result {
+                    Ok(()) => {
+                        progress(&format!("ARDOP listener: exchange with {} complete.", peer_call));
+                    }
+                    Err(e) => {
+                        progress(&format!("ARDOP listener: exchange with {} failed: {e}", peer_call));
+                    }
+                }
+                // Best-effort DISCONNECT to release the ARQ link. Run
+                // through the cmd-writer side-channel rather than the
+                // synchronous arq_disconnect that would need a CmdSocket
+                // reference (not exposed on ModemTransport trait).
+                let _ = arq_disconnect_via_cmd_writer(&transport);
+            }
+            ListenerDecision::RejectAllowlist | ListenerDecision::RejectExpired
+            | ListenerDecision::RejectPassword => {
+                let reason = match decision {
+                    ListenerDecision::RejectAllowlist => "allowlist",
+                    ListenerDecision::RejectExpired => "expired",
+                    _ => "password",
+                };
+                progress(&format!(
+                    "ARDOP listener: rejecting {} (reason: {})",
+                    peer_call, reason
+                ));
+                let event = packet_gate::ListenerRejectEvent::new(
+                    crate::winlink::listener::TransportKind::Ardop,
+                    reason,
+                    &peer_id,
+                );
+                let _ = event.append_to_log(&log_path);
+                let _ = arq_disconnect_via_cmd_writer(&transport);
+            }
+        }
+    }
+
+    // Shutdown path: send LISTEN FALSE + return transport.
+    progress("ARDOP listener consumer: draining; sending LISTEN FALSE.");
+    let _ = session.send_listen_command(false);
+    session.install_transport(transport);
+    let mut snap = session.status_snapshot();
+    snap.peer = None;
+    snap.last_error = None;
+    session.set_status(snap);
+    // Clear shared state.
+    *listen_state.inner.lock().unwrap() = None;
+    progress("ARDOP listener disarmed (transport returned).");
+}
+
+/// Best-effort cmd-writer DISCONNECT (sends "DISCONNECT\r"). Returns Err if
+/// the transport has no abort writer (modem not initialised).
+fn arq_disconnect_via_cmd_writer(
+    transport: &Box<dyn crate::winlink::modem::ModemTransport>,
+) -> std::io::Result<()> {
+    use std::io::Write;
+    let mut writer = transport.try_clone_abort_writer().ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::NotConnected, "no cmd writer")
+    })?;
+    writer.write_all(b"DISCONNECT\r")?;
+    writer.flush()
+}
+
+/// Parse the peer callsign from ardopcf's `CONNECTED <peer> <bw>` event into
+/// an [`Address`] suitable for the listener-arms gate. Tolerates trailing
+/// whitespace, SSID suffix (`N7CPZ-7`), and uppercases the base call to
+/// match the foundation's canonicalised allowlist storage.
+fn parse_peer_call_for_listener(raw: &str) -> crate::winlink::ax25::frame::Address {
+    let trimmed = raw.trim();
+    if let Some((call, ssid_str)) = trimmed.split_once('-') {
+        if let Ok(ssid) = ssid_str.parse::<u8>() {
+            return crate::winlink::ax25::frame::Address {
+                call: call.to_uppercase(),
+                ssid,
+            };
+        }
+    }
+    crate::winlink::ax25::frame::Address {
+        call: trimmed.to_uppercase(),
+        ssid: 0,
+    }
 }
 
 /// Resolve the cross-transport listener forensics JSONL log path:

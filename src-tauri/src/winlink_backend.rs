@@ -1905,6 +1905,67 @@ pub fn run_ardop_b2f_exchange(
     Ok(())
 }
 
+/// Run the ARDOP B2F exchange as the **answerer** for the ARDOP listener
+/// (tuxlink-61yg). Mirror of `run_ardop_b2f_exchange` but with
+/// `ExchangeRole::Answer` + `SessionIntent::P2p`, parameterised on the
+/// connected peer's callsign.
+///
+/// Loads operator Outbox BEFORE the exchange so pending mail rides the
+/// inbound session out to the peer. After the exchange completes, persists
+/// `result.received` to Inbox + moves `result.sent` MIDs from Outbox to
+/// Sent. Same Inbox-FIRST ordering as the dialer path's Codex P1.4 fix.
+pub fn run_ardop_b2f_answer(
+    transport: &mut dyn crate::winlink::modem::ModemTransport,
+    peer_callsign: &str,
+    config: &Config,
+    mailbox: &Mailbox,
+    position: Option<&crate::position::PositionArbiter>,
+) -> Result<(), BackendError> {
+    use crate::winlink::modem::ardop::b2f;
+    let callsign = config
+        .identity
+        .callsign
+        .clone()
+        .ok_or_else(|| BackendError::NotConfigured("identity.callsign".into()))?
+        .trim()
+        .to_uppercase();
+    let locator = crate::position::effective_broadcast_locator(config, position);
+
+    let outbound = build_outbound_proposals(mailbox)?;
+    let exchange_config = session::ExchangeConfig {
+        mycall: callsign,
+        targetcall: peer_callsign.to_string(),
+        locator,
+        password: None,
+        intent: SessionIntent::P2p,
+    };
+    let result = b2f::run_b2f_exchange(
+        transport,
+        ExchangeRole::Answer,
+        &exchange_config,
+        outbound,
+        |proposals| {
+            proposals
+                .iter()
+                .map(|_| Answer::Accept { resume_offset: 0 })
+                .collect()
+        },
+    )
+    .map_err(|e| BackendError::TransportFailed { reason: format!("{e}"), source: None })?;
+
+    for message in &result.received {
+        mailbox.store(MailboxFolder::Inbox, &message.to_bytes())?;
+    }
+    for mid in &result.sent {
+        mailbox.move_to(
+            MailboxFolder::Outbox,
+            MailboxFolder::Sent,
+            &MessageId(mid.clone()),
+        )?;
+    }
+    Ok(())
+}
+
 /// Seconds since the Unix epoch, now.
 fn now_unix_secs() -> u64 {
     use std::time::{SystemTime, UNIX_EPOCH};

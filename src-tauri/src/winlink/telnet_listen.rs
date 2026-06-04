@@ -70,8 +70,9 @@ use super::listener::{
     listener_decide, AllowedStations, ListenerArmsRecord, ListenerDecision, PeerId,
     StationPassword,
 };
-use super::proposal::Proposal;
 use super::session::{self, ExchangeConfig, ExchangeError, ExchangeResult, ExchangeRole};
+#[cfg(test)]
+use super::proposal::Proposal;
 
 /// Default TCP listen port — matches WLE's `Globals.strTelnetListeningPort`
 /// initial value `"8774"` at `Globals.cs:1518`. NOTE: 8772 is RMS-Relay's

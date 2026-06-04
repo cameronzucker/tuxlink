@@ -303,6 +303,16 @@ impl ModemSession {
         }
     }
 
+    /// Read-only check: is a transport currently installed? Used by the ARDOP
+    /// listener Tauri command to decide between "start modem in listen-only
+    /// mode" vs "modem already running — just flip LISTEN TRUE."
+    pub fn snapshot_transport_present(&self) -> bool {
+        self.inner
+            .lock()
+            .map(|g| g.transport.is_some())
+            .unwrap_or(false)
+    }
+
     /// Best-effort send of `LISTEN TRUE\r` or `LISTEN FALSE\r` to ardopcf via
     /// the side-channel writer (the same `abort_writer` used by
     /// [`abort_in_flight`] — both commands ride the same cmd-socket clone).

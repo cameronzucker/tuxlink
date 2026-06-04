@@ -576,6 +576,61 @@ impl ModemTransport for ArdopTransport {
         self.cmd.as_ref().and_then(|s| s.try_clone_writer().ok())
     }
 
+    /// Wait for an inbound `Connected` event during listener mode.
+    ///
+    /// Polls the cmd socket for the next `Command::Connected` event with a
+    /// bounded wait. Status-only events (`NewState`, `Buffer`, etc.) are
+    /// drained-and-discarded so the consumer thread doesn't have to handle
+    /// them. Returns:
+    /// - `Ok(Some(info))` on `Command::Connected { peer_call, bandwidth_hz }`
+    /// - `Ok(None)` on per-event timeout (caller loops); we collapse the
+    ///   recv-timeout into "no event yet"
+    /// - `Err(SessionError)` on socket close or FAULT
+    ///
+    /// bd: tuxlink-61yg
+    fn wait_for_listener_connect(
+        &mut self,
+        timeout: std::time::Duration,
+    ) -> Result<
+        Option<crate::winlink::modem::ardop::session::ConnectInfo>,
+        crate::winlink::modem::ardop::session::SessionError,
+    > {
+        use crate::winlink::modem::ardop::session::{ConnectInfo, SessionError};
+        use std::sync::mpsc::RecvTimeoutError;
+        let Some(cmd) = self.cmd.as_mut() else {
+            return Err(SessionError::Io(io::Error::new(
+                io::ErrorKind::NotConnected,
+                "ARDOP transport not initialized",
+            )));
+        };
+        let deadline = std::time::Instant::now() + timeout;
+        loop {
+            let remaining = match deadline.checked_duration_since(std::time::Instant::now()) {
+                Some(r) if !r.is_zero() => r,
+                _ => return Ok(None),
+            };
+            match cmd.recv_event(remaining) {
+                Ok(super::command::Command::Connected { peer_call, bandwidth_hz }) => {
+                    return Ok(Some(ConnectInfo { peer_call, bandwidth_hz }));
+                }
+                Ok(super::command::Command::Fault(msg)) => {
+                    return Err(SessionError::Fault(msg));
+                }
+                Ok(_) => {
+                    // Drain status / state events while waiting for Connected.
+                    continue;
+                }
+                Err(RecvTimeoutError::Timeout) => return Ok(None),
+                Err(RecvTimeoutError::Disconnected) => {
+                    return Err(SessionError::Io(io::Error::new(
+                        io::ErrorKind::ConnectionAborted,
+                        "ARDOP cmd socket reader exited",
+                    )));
+                }
+            }
+        }
+    }
+
     /// Drain pending cmd-socket events and fold them into `status`.
     ///
     /// Called by [`crate::modem_status::ModemStatusBroadcaster`] every

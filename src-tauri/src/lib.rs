@@ -137,6 +137,9 @@ pub fn run() {
         // listener's shutdown flag + bound socket addr. None when no listener
         // is armed; Some(...) when one is running.
         .manage(std::sync::Arc::new(crate::ui_commands::TelnetListenState::default()))
+        // tuxlink-61yg: ARDOP listener shared state — the in-flight consumer
+        // task's shutdown flag.
+        .manage(std::sync::Arc::new(crate::ui_commands::ArdopListenState::default()))
         .setup(|app| {
             use tauri::Manager as _;  // brings .state() into scope for the setup closure
             // Install system tray icon + menu (tuxlink-rit / Task 8).

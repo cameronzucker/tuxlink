@@ -307,6 +307,79 @@ where
     Ok(())
 }
 
+/// Start the ARDOP modem in **listen-only** mode for the listener
+/// (tuxlink-61yg). Mirrors [`modem_ardop_connect_post_consume_with_factory`]
+/// through `init` but DOES NOT call `connect_arq` — the modem is brought up
+/// with `LISTEN TRUE` and parked in `Idle` waiting for the listener
+/// consumer task to gate inbound `Connected` events.
+///
+/// On success the transport is installed in `session` (state = Idle) and
+/// the abort writer is installed for [`abort_in_flight`] /
+/// [`send_listen_command`]. The caller (`ardop_listen` Tauri command)
+/// follows by spawning the listener consumer task that takes the transport
+/// back out via [`ModemSession::take_transport`] and runs the
+/// gate + B2F + mailbox-persist loop.
+pub fn start_modem_listen_only<F>(
+    session: &Arc<ModemSession>,
+    ardop_ui: &ArdopUiConfig,
+    make_transport: F,
+) -> Result<(), String>
+where
+    F: FnOnce(ArdopConfig, &str) -> Result<Box<dyn ModemTransport>, String>,
+{
+    let extra_args = build_ardop_extra_args(ardop_ui);
+    let cfg = ArdopConfig {
+        binary: PathBuf::from(&ardop_ui.binary),
+        extra_args,
+        cmd_port: ardop_ui.cmd_port,
+        data_port: ardop_ui.cmd_port.saturating_add(1),
+        audio_device_path: None,
+    };
+
+    let mut snap = session.status_snapshot();
+    snap.state = ModemState::Spawning;
+    snap.peer = None;
+    snap.last_error = None;
+    session.set_status(snap);
+
+    let mut transport = match make_transport(cfg, "") {
+        Ok(t) => t,
+        Err(e) => {
+            let mut s = ModemStatus::stopped();
+            s.state = ModemState::Error;
+            s.last_error = Some(e.clone());
+            session.set_status(s);
+            return Err(e);
+        }
+    };
+
+    // Init with initial_listen = true so the modem comes up listening.
+    let mut init_cfg = init_config_from_persisted_config();
+    init_cfg.initial_listen = true;
+    if let Err(e) = transport.init(&init_cfg) {
+        let msg = format!("init failed: {e}");
+        let mut s = ModemStatus::stopped();
+        s.state = ModemState::Error;
+        s.last_error = Some(msg.clone());
+        session.set_status(s);
+        drop(transport);
+        return Err(msg);
+    }
+
+    if let Some(writer) = transport.try_clone_abort_writer() {
+        session.install_abort_writer(writer);
+    }
+
+    session.install_transport(transport);
+
+    let mut s = session.status_snapshot();
+    s.state = ModemState::Idle;
+    s.peer = None;
+    s.last_error = None;
+    session.set_status(s);
+    Ok(())
+}
+
 /// Build the [`InitConfig`] passed to `ModemTransport::init` from the
 /// operator's persisted identity config. Pulls `mycall` from
 /// `identity.callsign` (CMS path) or `identity.identifier` (offline path),
