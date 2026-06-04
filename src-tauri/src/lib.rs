@@ -350,6 +350,8 @@ pub fn run() {
             crate::ui_commands::position_set_source,  // Task 11 (tuxlink-686)
             crate::ui_commands::position_status,      // Task 11 (tuxlink-686)
             crate::ui_commands::position_current_fix, // tuxlink-hnkn P2 (PositionFormV2 pre-fill)
+            crate::ui_commands::messages_meta_query_for_log, // tuxlink-hnkn P2 Task 2 (ICS-309 log query)
+            crate::ui_commands::render_ics309_pdf,            // tuxlink-hnkn P2 Task 2 (ICS-309 PDF export)
             crate::ui_commands::config_set_privacy,    // tuxlink-39b (GPS privacy control surface)
             crate::ui_commands::config_set_connect,    // tuxlink-3o0 (CMS server endpoint control)
             // Task 10 (tuxlink-1hu): find-messages search commands

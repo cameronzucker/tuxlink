@@ -112,6 +112,250 @@ fn stringify_with_source(
 }
 
 // ============================================================================
+// ICS-309 log query (tuxlink-hnkn P2 Task 2)
+// ============================================================================
+
+/// One log row returned by `messages_meta_query_for_log`. Serialised to camelCase
+/// for the frontend; field names match the Ics309FormV2 `LogRow` interface.
+/// Also `Deserialize` so the frontend can pass rows back for `render_ics309_pdf`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LogRow {
+    /// RFC 3339 UTC datetime string, e.g. "2024-05-20T10:13:00Z".
+    pub datetime: String,
+    /// Sender callsign / address.
+    pub from: String,
+    /// First recipient callsign / address.
+    pub to: String,
+    /// Message subject.
+    pub subject: String,
+    /// Direction: `"in"` (received) or `"out"` (sent).
+    pub direction: String,
+}
+
+/// Query `messages_meta` for ICS-309 log rows in the given UTC epoch range
+/// [start_epoch, end_epoch] (inclusive). Rows are ordered chronologically.
+///
+/// `start_rfc3339` and `end_rfc3339` are ISO-8601 / RFC 3339 UTC strings
+/// (e.g. `"2024-05-20T00:00:00Z"`). They are converted to Unix epoch seconds
+/// before the SQL query so the INTEGER timestamp columns can be compared
+/// efficiently.
+///
+/// Returns `Err` if the search index is not installed (app launched offline
+/// and the setup hook failed) or if the timestamp strings are malformed.
+#[tauri::command]
+pub async fn messages_meta_query_for_log(
+    start_rfc3339: String,
+    end_rfc3339: String,
+    search: State<'_, crate::search::commands::SearchService>,
+) -> Result<Vec<LogRow>, String> {
+    let start_epoch = rfc3339_to_epoch(&start_rfc3339)
+        .ok_or_else(|| format!("invalid start timestamp: {start_rfc3339}"))?;
+    let end_epoch = rfc3339_to_epoch(&end_rfc3339)
+        .ok_or_else(|| format!("invalid end timestamp: {end_rfc3339}"))?;
+    search
+        .index
+        .lock()
+        .map_err(|e| format!("search index lock poisoned: {e}"))?
+        .query_log_rows(start_epoch, end_epoch)
+        .map_err(|e| e.to_string())
+}
+
+/// Parse an RFC 3339 UTC string into Unix epoch seconds.
+/// Accepts the `Z` UTC suffix only (no offset needed for this feature).
+/// Returns `None` if parsing fails.
+fn rfc3339_to_epoch(s: &str) -> Option<i64> {
+    // Lean on chrono (already in [dependencies]) for robust parsing.
+    chrono::DateTime::parse_from_rfc3339(s)
+        .ok()
+        .map(|dt| dt.timestamp())
+}
+
+/// Input to `render_ics309_pdf` — the fully resolved row set + metadata the
+/// form's frontend has already gathered.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Ics309PdfRequest {
+    pub rows: Vec<LogRow>,
+    /// RFC 3339 UTC range start (display only — not re-filtered here).
+    pub range_start: String,
+    /// RFC 3339 UTC range end (display only).
+    pub range_end: String,
+    /// Station callsign to print in the header, e.g. `"N7CPZ"`.
+    pub station_callsign: Option<String>,
+}
+
+/// Render an ICS-309 Communications Log to PDF bytes.
+///
+/// Returns the raw PDF as `Vec<u8>` (base64-encoded by Tauri's IPC layer).
+/// Page size is US Letter (216 × 279 mm). Uses the PDF built-in Helvetica
+/// font so no font file needs to be embedded or shipped.
+///
+/// Layout:
+///   - Header: "ICS-309 COMMUNICATIONS LOG" (centered)
+///   - Sub-header: station callsign + date range
+///   - Column headers: Datetime | Dir | From | To | Subject
+///   - Log rows (up to 30, one per line; auto-page-break)
+///   - Footer: "Rendered by tuxlink — <UTC timestamp>"
+#[tauri::command]
+pub async fn render_ics309_pdf(req: Ics309PdfRequest) -> Result<Vec<u8>, String> {
+    render_ics309_pdf_inner(req).map_err(|e| e.to_string())
+}
+
+fn render_ics309_pdf_inner(req: Ics309PdfRequest) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    use printpdf::{
+        BuiltinFont, Mm, Op, PdfDocument, PdfFontHandle, PdfPage, PdfSaveOptions, Point, Pt,
+        TextItem,
+    };
+
+    // US Letter: 216 × 279 mm. y=0 is the bottom of the page in PDF space.
+    const PAGE_W_MM: f32 = 216.0;
+    const PAGE_H_MM: f32 = 279.0;
+    // Convenience conversion: mm to pt (1 mm = 2.8346 pt).
+    fn mm_to_pt(mm: f32) -> Pt { Pt(mm * 2.8346) }
+
+    let normal_font  = PdfFontHandle::Builtin(BuiltinFont::Helvetica);
+    let bold_font    = PdfFontHandle::Builtin(BuiltinFont::HelveticaBold);
+
+    // Column x positions (pt from left margin)
+    let left_margin_pt = mm_to_pt(15.0);
+    let col_datetime_x = left_margin_pt;
+    let col_dir_x      = Pt(col_datetime_x.0 + mm_to_pt(45.0).0);
+    let col_from_x     = Pt(col_dir_x.0 + mm_to_pt(10.0).0);
+    let col_to_x       = Pt(col_from_x.0 + mm_to_pt(35.0).0);
+    let col_subject_x  = Pt(col_to_x.0 + mm_to_pt(35.0).0);
+
+    // Row height and starting y cursor
+    const ROW_H_PT: f32 = 14.0;      // pt per data row
+    const FONT_SIZE_TITLE: f32 = 14.0;
+    const FONT_SIZE_HEADER: f32 = 9.0;
+    const FONT_SIZE_DATA: f32 = 8.5;
+
+    let page_top_pt    = mm_to_pt(PAGE_H_MM - 15.0); // top margin
+    let footer_y_pt    = mm_to_pt(10.0);               // bottom margin
+
+    // How many data rows fit on a page (after title + headers consume ~4 rows).
+    let title_block_h  = mm_to_pt(25.0).0; // approx title + sub + col-headers height
+    let usable_h       = page_top_pt.0 - footer_y_pt.0 - title_block_h;
+    let rows_per_page  = (usable_h / ROW_H_PT).floor() as usize;
+    let rows_per_page  = rows_per_page.max(1);
+
+    let station_label = req.station_callsign.as_deref().unwrap_or("(unknown)");
+
+    let now_utc = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+
+    let total_pages = if req.rows.is_empty() {
+        1
+    } else {
+        req.rows.len().div_ceil(rows_per_page)
+    };
+
+    let mut pdf_doc = PdfDocument::new("ICS-309 Comms Log");
+
+    for page_idx in 0..total_pages {
+        let chunk_start = page_idx * rows_per_page;
+        let chunk_end   = (chunk_start + rows_per_page).min(req.rows.len());
+        let chunk       = &req.rows[chunk_start..chunk_end];
+
+        let mut ops: Vec<Op> = Vec::new();
+        ops.push(Op::StartTextSection);
+
+        // ── Title ──────────────────────────────────────────────────────────
+        ops.push(Op::SetFont { font: bold_font.clone(), size: Pt(FONT_SIZE_TITLE) });
+        ops.push(Op::SetTextCursor {
+            pos: Point { x: mm_to_pt(PAGE_W_MM / 2.0 - 50.0), y: Pt(page_top_pt.0) },
+        });
+        ops.push(Op::ShowText {
+            items: vec![TextItem::Text("ICS-309 COMMUNICATIONS LOG".to_string())],
+        });
+
+        // ── Sub-header (station + date range) ──────────────────────────────
+        ops.push(Op::SetFont { font: normal_font.clone(), size: Pt(FONT_SIZE_HEADER) });
+        ops.push(Op::SetTextCursor {
+            pos: Point { x: col_datetime_x, y: Pt(page_top_pt.0 - 18.0) },
+        });
+        ops.push(Op::ShowText {
+            items: vec![TextItem::Text(format!(
+                "Station: {station_label}   Period: {} — {}   Page {} of {total_pages}",
+                req.range_start, req.range_end,
+                page_idx + 1,
+            ))],
+        });
+
+        // ── Column headers ─────────────────────────────────────────────────
+        let col_hdr_y = Pt(page_top_pt.0 - 32.0);
+        ops.push(Op::SetFont { font: bold_font.clone(), size: Pt(FONT_SIZE_HEADER) });
+        for (x, label) in [
+            (col_datetime_x, "Datetime (UTC)"),
+            (col_dir_x,      "Dir"),
+            (col_from_x,     "From"),
+            (col_to_x,       "To"),
+            (col_subject_x,  "Subject"),
+        ] {
+            ops.push(Op::SetTextCursor { pos: Point { x, y: col_hdr_y } });
+            ops.push(Op::ShowText {
+                items: vec![TextItem::Text(label.to_string())],
+            });
+        }
+
+        // ── Data rows ──────────────────────────────────────────────────────
+        ops.push(Op::SetFont { font: normal_font.clone(), size: Pt(FONT_SIZE_DATA) });
+        let mut row_y = col_hdr_y.0 - ROW_H_PT;
+        for row in chunk {
+            // Truncate long fields to fit the column widths.
+            let dt      = &row.datetime;
+            let dir     = row.direction.as_str();
+            let from    = truncate_str(&row.from, 18);
+            let to      = truncate_str(&row.to, 18);
+            let subject = truncate_str(&row.subject, 40);
+
+            for (x, text) in [
+                (col_datetime_x, dt.as_str()),
+                (col_dir_x,      dir),
+                (col_from_x,     &from),
+                (col_to_x,       &to),
+                (col_subject_x,  &subject),
+            ] {
+                ops.push(Op::SetTextCursor { pos: Point { x, y: Pt(row_y) } });
+                ops.push(Op::ShowText {
+                    items: vec![TextItem::Text(text.to_string())],
+                });
+            }
+            row_y -= ROW_H_PT;
+        }
+
+        // ── Footer ─────────────────────────────────────────────────────────
+        ops.push(Op::SetFont { font: normal_font.clone(), size: Pt(7.0) });
+        ops.push(Op::SetTextCursor {
+            pos: Point { x: col_datetime_x, y: footer_y_pt },
+        });
+        ops.push(Op::ShowText {
+            items: vec![TextItem::Text(format!("Rendered by tuxlink — {now_utc}"))],
+        });
+
+        ops.push(Op::EndTextSection);
+
+        let page = PdfPage::new(Mm(PAGE_W_MM), Mm(PAGE_H_MM), ops);
+        pdf_doc.pages.push(page);
+    }
+
+    let bytes = pdf_doc.save(&PdfSaveOptions::default(), &mut Vec::new());
+    Ok(bytes)
+}
+
+/// Truncate a string to `max_chars` characters, appending "…" if truncated.
+fn truncate_str(s: &str, max_chars: usize) -> String {
+    // Handle multi-byte UTF-8 chars properly via char iteration.
+    let mut chars = s.chars();
+    let collected: String = chars.by_ref().take(max_chars).collect();
+    if chars.next().is_some() {
+        format!("{collected}…")
+    } else {
+        collected
+    }
+}
+
+// ============================================================================
 // Message metadata DTO (spec §2.1 / §3.2)
 // ============================================================================
 
@@ -6706,5 +6950,67 @@ hw:CARD=Device,DEV=0
         assert!(xml_str.contains("<display_form>ICS205_Viewer.html</display_form>"));
         assert!(xml_str.contains("<reply_template>ICS205_SendReply.0</reply_template>"));
         assert!(xml_str.contains("<incident_name>Test</incident_name>"));
+    }
+
+    // ========================================================================
+    // tuxlink-hnkn P2 Task 2: render_ics309_pdf unit tests
+    // ========================================================================
+
+    #[test]
+    fn render_ics309_pdf_with_two_rows_produces_nonempty_pdf() {
+        let req = Ics309PdfRequest {
+            rows: vec![
+                LogRow {
+                    datetime: "2024-05-20T10:13:00Z".to_string(),
+                    from: "N7CPZ".to_string(),
+                    to: "W1AW".to_string(),
+                    subject: "DAMAGE REPORT - SECTOR 7".to_string(),
+                    direction: "out".to_string(),
+                },
+                LogRow {
+                    datetime: "2024-05-20T10:15:00Z".to_string(),
+                    from: "W1AW".to_string(),
+                    to: "N7CPZ".to_string(),
+                    subject: "RE: DAMAGE REPORT ACK".to_string(),
+                    direction: "in".to_string(),
+                },
+            ],
+            range_start: "2024-05-20T10:00:00Z".to_string(),
+            range_end: "2024-05-20T11:00:00Z".to_string(),
+            station_callsign: Some("N7CPZ".to_string()),
+        };
+        let result = render_ics309_pdf_inner(req);
+        assert!(result.is_ok(), "render should succeed: {:?}", result.err());
+        let bytes = result.unwrap();
+        assert!(!bytes.is_empty(), "PDF must have bytes");
+        // PDF magic bytes: %PDF- (0x25 0x50 0x44 0x46 0x2D)
+        assert!(bytes.starts_with(b"%PDF-"), "output must start with PDF magic bytes");
+    }
+
+    #[test]
+    fn render_ics309_pdf_empty_rows_produces_valid_pdf() {
+        let req = Ics309PdfRequest {
+            rows: vec![],
+            range_start: "2024-05-20T00:00:00Z".to_string(),
+            range_end: "2024-05-20T23:59:59Z".to_string(),
+            station_callsign: None,
+        };
+        let bytes = render_ics309_pdf_inner(req).expect("empty rows must still produce a PDF");
+        assert!(bytes.starts_with(b"%PDF-"), "empty-row PDF must have PDF magic bytes");
+    }
+
+    #[test]
+    fn truncate_str_truncates_long_strings_with_ellipsis() {
+        assert_eq!(truncate_str("hello world", 5), "hello…");
+        assert_eq!(truncate_str("hi", 5), "hi");
+        assert_eq!(truncate_str("", 5), "");
+    }
+
+    #[test]
+    fn rfc3339_to_epoch_parses_utc_string() {
+        // 2024-05-20T10:13:00Z = 1_716_199_980 (from native_mailbox tests)
+        assert_eq!(rfc3339_to_epoch("2024-05-20T10:13:00Z"), Some(1_716_199_980));
+        assert_eq!(rfc3339_to_epoch("not-a-date"), None);
+        assert_eq!(rfc3339_to_epoch(""), None);
     }
 }
