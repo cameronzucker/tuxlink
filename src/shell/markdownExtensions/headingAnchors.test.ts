@@ -33,4 +33,15 @@ describe('headingAnchors extension', () => {
   it('preserves heading text content', () => {
     expect(render('## DigiRig')).toContain('>DigiRig</h2>');
   });
+
+  it('strips inline link markup so the slug uses rendered text, not raw url', () => {
+    expect(render('## See the [docs](https://example.com) for details'))
+      .toContain('id="see-the-docs-for-details"');
+  });
+
+  it('handles CJK characters via Unicode-aware slug rules', () => {
+    // The \p{Letter} class with the u flag treats CJK code points as letters,
+    // not non-alphanumeric — they survive slugification.
+    expect(render('## 無線局 station')).toContain('id="無線局-station"');
+  });
 });

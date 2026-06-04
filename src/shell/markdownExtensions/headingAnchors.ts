@@ -23,9 +23,13 @@ export function slugify(text: string): string {
 export const headingAnchors: MarkedExtension = {
   renderer: {
     heading(token: Tokens.Heading): string {
-      const text = token.text;
-      const id = slugify(text);
+      // Use the rendered inline HTML stripped of tags as the slug source.
+      // Using `token.text` directly leaks raw markdown syntax (e.g. link URLs
+      // inside `[text](url)`) into the anchor id. The rendered-text approach
+      // produces stable slugs across markdown-formatting variations.
       const inner = this.parser.parseInline(token.tokens);
+      const text = inner.replace(/<[^>]+>/g, '');
+      const id = slugify(text);
       return `<h${token.depth} id="${id}">${inner}</h${token.depth}>\n`;
     },
   },
