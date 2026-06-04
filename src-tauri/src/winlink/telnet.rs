@@ -25,6 +25,17 @@ use super::proposal::{Answer, Proposal};
 use super::session::{self, ExchangeConfig, ExchangeError, ExchangeResult, OutboundMessage};
 use super::wire;
 
+/// Insert credential-equivalent redaction between the WireTap and the
+/// caller's `wire_log` closure. Fixes the BLOCKER R2 #1 leak where the
+/// telnet WireTap was emitting `;PR: <token>` lines into the session log.
+///
+/// Made `pub(crate)` so other winlink modules (telnet_listen, telnet_p2p,
+/// telnet_p2p_login) can use the same redaction discipline (Task 7).
+pub(crate) fn wire_log_with_redaction(line: &str, wire_log: &dyn Fn(&str)) {
+    let redacted = super::redaction::redact_wire_line(line);
+    wire_log(&redacted);
+}
+
 /// How long to wait on a single read or write before giving up.
 const TIMEOUT: Duration = Duration::from_secs(60);
 
@@ -199,8 +210,13 @@ where
     // Tee both directions of the wire to `wire_log` so the raw B2F dialogue
     // (`[WL2K-...]`, `;PQ`, `;FW`, the client SID, `FF`/`FQ`) is visible in the
     // session log's Raw output, not just the human progress summary (tuxlink-nki).
-    let mut reader = BufReader::new(WireTap::new(ReadHalf(shared.clone()), wire_log, '<'));
-    let mut writer = WireTap::new(WriteHalf(shared), wire_log, '>');
+    //
+    // Route through `wire_log_with_redaction` so `;PR`/`;PQ` tokens are scrubbed
+    // before the session log buffer sees them (R2 #1 BLOCKER fix).
+    let read_redacted = |line: &str| wire_log_with_redaction(line, wire_log);
+    let write_redacted = |line: &str| wire_log_with_redaction(line, wire_log);
+    let mut reader = BufReader::new(WireTap::new(ReadHalf(shared.clone()), &read_redacted, '<'));
+    let mut writer = WireTap::new(WriteHalf(shared), &write_redacted, '>');
 
     // The CMS telnet "post office" greets with a callsign/password login that
     // precedes the B2F handshake; clear it first.
@@ -681,6 +697,32 @@ mod tests {
         assert!(
             lines.iter().any(|l| l == "< <5 bytes binary>"),
             "binary payload should be summarized, not dumped, got {lines:?}"
+        );
+    }
+
+    #[test]
+    fn wire_log_redacts_pr_token_per_blocker_fix() {
+        // R2 #1 BLOCKER: the WireTap was emitting `;PR: <token>\r` verbatim
+        // into the session log before this fix. Verify the helper scrubs it.
+        let captured: std::cell::RefCell<Vec<String>> = std::cell::RefCell::new(Vec::new());
+        let wire_log = |line: &str| {
+            captured.borrow_mut().push(line.to_string());
+        };
+        // Emulate WireTap's formatted output on a write of the canonical ;PR token.
+        // wl2k-go test vector: challenge "23753528", password "FOOBAR" → response "72768415".
+        let line = "> ;PR: 72768415\r";
+        wire_log_with_redaction(line, &wire_log);
+        let entries = captured.into_inner();
+        assert_eq!(entries.len(), 1);
+        assert!(
+            !entries[0].contains("72768415"),
+            "token must be scrubbed, got: {:?}",
+            entries[0]
+        );
+        assert!(
+            entries[0].contains(";PR:"),
+            "marker must remain for log readability, got: {:?}",
+            entries[0]
         );
     }
 }
