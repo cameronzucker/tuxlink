@@ -4,6 +4,13 @@ All notable changes to Tuxlink are documented here.
 
 This project adheres to [Semantic Versioning](https://semver.org) with project-specific rules described in [VERSIONING.md](VERSIONING.md). Entries from `v0.0.2` onward are generated automatically by [`release-please`](https://github.com/googleapis/release-please) from [Conventional Commits](https://www.conventionalcommits.org).
 
+## [0.28.0](https://github.com/cameronzucker/tuxlink/compare/v0.27.0...v0.28.0) (2026-06-04)
+
+
+### Features
+
+* **tuxmodem-phy:** audio_device module + tuxmodem-audio-play bench CLI (tuxlink-h8pp) ([05391b7](https://github.com/cameronzucker/tuxlink/commit/05391b79c9e9ee5b64f500b8fbf83b206dbc32b3))
+
 ## [0.27.0](https://github.com/cameronzucker/tuxlink/compare/v0.26.2...v0.27.0) (2026-06-04)
 
 
