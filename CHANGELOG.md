@@ -4,6 +4,14 @@ All notable changes to Tuxlink are documented here.
 
 This project adheres to [Semantic Versioning](https://semver.org) with project-specific rules described in [VERSIONING.md](VERSIONING.md). Entries from `v0.0.2` onward are generated automatically by [`release-please`](https://github.com/googleapis/release-please) from [Conventional Commits](https://www.conventionalcommits.org).
 
+## [0.30.0](https://github.com/cameronzucker/tuxlink/compare/v0.29.0...v0.30.0) (2026-06-04)
+
+
+### Features
+
+* **tuxmodem-phy:** multi-symbol + preamble composition (tuxlink-k2xv, Phase 10 slice 2) ([5ce564e](https://github.com/cameronzucker/tuxlink/commit/5ce564e636131e01691f983e2aa7cea62cbcac95))
+* **tuxmodem-phy:** multi-symbol framing primitive (tuxlink-cwjp, Phase 10 slice 1) ([23cfc93](https://github.com/cameronzucker/tuxlink/commit/23cfc93f7d2a805aeb7570a1e67d6608dad9496c))
+
 ## [0.29.0](https://github.com/cameronzucker/tuxlink/compare/v0.28.0...v0.29.0) (2026-06-04)
 
 
