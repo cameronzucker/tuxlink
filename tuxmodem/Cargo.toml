@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/tuxmodem-fec",
     "crates/tuxmodem-phy",
+    "crates/tux-rig-cm108",
 ]
 
 [workspace.package]
