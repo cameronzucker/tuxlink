@@ -55,12 +55,31 @@ pub fn build_service(data_dir: &Path) -> Result<SearchService, CommandError> {
         }
         Err(other) => return Err(other.into()),
     };
-    // tuxlink-0gsy (spec §9.1): populate the docs_fts table on first launch
-    // or after a schema-drift recreation. The bundled docs are baked into
-    // the binary via include_str! in docs_bundle.rs, so first-launch
-    // indexing has no I/O dependency on the install directory layout.
-    if index.docs_is_empty().map_err(CommandError::from)? {
-        index.populate_docs(crate::search::docs_bundle::BUNDLED_TOPICS)
+    // Repopulate the docs_fts table whenever the bundled topic set drifts
+    // from what's in the existing index. The previous "populate only when
+    // empty" gate produced a stale-slug regression after PR #347: the
+    // operator's existing index was non-empty with pre-IA-restructure
+    // slugs (e.g. `01-getting-started`); new builds skipped repopulation
+    // and search returned dead slugs that no TOPICS entry matched. The
+    // sidebar appeared to work (the hits rendered) but every click fell
+    // through to `getTopicBySlug(deadSlug)` → undefined → TOPICS[0].
+    //
+    // Drift check: compare the slug set in the index against the slug set
+    // bundled into this binary. Mismatch → DELETE + INSERT. Identical →
+    // no-op. The compare cost is one query + a hash-set diff; in the
+    // mismatch path the wipe+repopulate is ~32 small inserts inside one
+    // transaction. Either way the cost is sub-millisecond at startup.
+    let bundled_slugs: std::collections::HashSet<&str> =
+        crate::search::docs_bundle::BUNDLED_TOPICS
+            .iter()
+            .map(|t| t.slug)
+            .collect();
+    let indexed_slugs = index.docs_slugs().map_err(CommandError::from)?;
+    let indexed_slugs_set: std::collections::HashSet<&str> =
+        indexed_slugs.iter().map(String::as_str).collect();
+    if bundled_slugs != indexed_slugs_set {
+        index
+            .populate_docs(crate::search::docs_bundle::BUNDLED_TOPICS)
             .map_err(CommandError::from)?;
     }
 

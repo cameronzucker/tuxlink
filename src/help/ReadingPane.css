@@ -210,8 +210,41 @@
  * so we post-render-theme the SVG output through these selectors instead.
  * theme:'base' in initialize() leaves these classes unstyled, allowing full
  * CSS override without specificity fights. */
-.mermaid-diagram .label { color: var(--text); font-family: var(--sans); }
-.mermaid-diagram .label foreignObject > * { color: var(--text); }
+
+/* SVG <text> elements (sequence-diagram actor names, message labels,
+ * note text, etc.) use `fill` not `color`. Without this catch-all the
+ * text inherits Mermaid's base-theme black against our dark node fills
+ * — the regression that produced unreadable black-on-dark-blue. */
+.mermaid-diagram text {
+  fill: var(--text);
+  font-family: var(--sans);
+}
+
+/* HTML labels inside <foreignObject> wrappers — flowchart node labels,
+ * edge labels, cluster labels. Setting `color` on the outer wrapper
+ * cascades to inner <p>, <span>, <div>, which Mermaid nests several
+ * deep. */
+.mermaid-diagram .label,
+.mermaid-diagram .nodeLabel,
+.mermaid-diagram .edgeLabel,
+.mermaid-diagram foreignObject div,
+.mermaid-diagram foreignObject span,
+.mermaid-diagram foreignObject p {
+  color: var(--text);
+  font-family: var(--sans);
+}
+
+/* Edge label background — Mermaid emits a small rect / div behind each
+ * edge label so the label is readable over the connecting line. Default
+ * is white; override to surface so it blends with the diagram. */
+.mermaid-diagram .edgeLabel .labelBkg,
+.mermaid-diagram .edgeLabel rect,
+.mermaid-diagram .label-container {
+  background-color: var(--surface);
+  fill: var(--surface);
+}
+
+/* Flowchart node shapes. */
 .mermaid-diagram .node rect,
 .mermaid-diagram .node circle,
 .mermaid-diagram .node ellipse,
@@ -220,10 +253,55 @@
   fill: var(--elevated);
   stroke: var(--border);
 }
-.mermaid-diagram .edgePath path {
+
+/* Flowchart edges + arrow heads. Mermaid renders arrows via SVG
+ * `marker` elements; the marker's fill needs to match the edge stroke
+ * or arrowheads appear black against the dark theme. */
+.mermaid-diagram .edgePath path,
+.mermaid-diagram .flowchart-link {
   stroke: var(--border-strong);
 }
+.mermaid-diagram .marker,
+.mermaid-diagram marker path,
+.mermaid-diagram defs marker path {
+  fill: var(--border-strong);
+  stroke: var(--border-strong);
+}
+
+/* Flowchart clusters / subgraph boxes. */
 .mermaid-diagram .cluster rect {
+  fill: var(--surface);
+  stroke: var(--border);
+}
+
+/* Sequence diagrams — actor boxes, lifeline, activation bars, notes,
+ * loop / alt / opt label boxes. Sequence-diagram selectors are distinct
+ * from flowchart selectors; cover them explicitly. */
+.mermaid-diagram .actor {
+  fill: var(--elevated);
+  stroke: var(--border);
+}
+.mermaid-diagram .actor-line,
+.mermaid-diagram line.actor-line {
+  stroke: var(--border-strong);
+}
+.mermaid-diagram .messageLine0,
+.mermaid-diagram .messageLine1 {
+  stroke: var(--border-strong);
+}
+.mermaid-diagram .note,
+.mermaid-diagram rect.note {
+  fill: var(--surface);
+  stroke: var(--border);
+}
+.mermaid-diagram .activation0,
+.mermaid-diagram .activation1,
+.mermaid-diagram .activation2 {
+  fill: var(--elevated);
+  stroke: var(--border);
+}
+.mermaid-diagram .labelBox,
+.mermaid-diagram .loopLine {
   fill: var(--surface);
   stroke: var(--border);
 }
