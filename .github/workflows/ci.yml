@@ -1,0 +1,98 @@
+name: CI
+
+on:
+  pull_request:
+    branches:
+      - main
+      - feat/v0.0.1
+  push:
+    branches:
+      - main
+      - feat/v0.0.1
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            arch: amd64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install system dependencies
+        # libsecret-1-dev intentionally omitted: src-tauri/Cargo.toml
+        # configures keyring 3.6.3 with default-features = false and
+        # features = ["sync-secret-service", "crypto-rust"] — both
+        # pure-Rust, no build-time link against libsecret. Runtime
+        # secret-service is a user-session daemon (declared as a
+        # Depends on the .deb produced by release.yml).
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libax25-dev libudev-dev libwebkit2gtk-4.1-dev \
+            build-essential curl wget file libxdo-dev libssl-dev \
+            libayatana-appindicator3-dev librsvg2-dev
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Cache cargo
+        # Separate cache namespace from release.yml (which uses
+        # ${{ runner.os }}-${{ matrix.arch }}-tuxlink-...). Cargo's
+        # target/debug and target/release directories are fingerprint-
+        # separated, so cross-pollination is correctness-safe, but
+        # the eviction economics differ: CI cache fills with debug/
+        # test artifacts that don't help release builds and vice versa.
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+          key: ci-${{ runner.os }}-${{ matrix.arch }}-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: |
+            ci-${{ runner.os }}-${{ matrix.arch }}-
+
+      - name: Install JS dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Frontend typecheck
+        run: pnpm typecheck
+
+      - name: Frontend tests (vitest)
+        run: pnpm vitest run
+
+      - name: Frontend production build (tsc + vite build)
+        # Catches Vite production-build failures that tsc + vitest miss.
+        run: pnpm build
+
+      - name: Rust lint (clippy --all-targets --locked -D warnings)
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --locked -- -D warnings
+
+      - name: Rust tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml --locked --verbose

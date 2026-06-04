@@ -22,49 +22,51 @@ describe('READING_WIDTHS / READING_WIDTH_PX', () => {
   });
 
   it('maps each preset to the documented px value', () => {
-    expect(READING_WIDTH_PX).toEqual({ Narrow: '720px', Wide: '980px' });
+    // tuxlink-d7a7: Wide bumped 980→1280 for better 1080p use.
+    expect(READING_WIDTH_PX).toEqual({ Narrow: '720px', Wide: '1280px' });
   });
 });
 
 describe('useReadingWidth', () => {
-  it('defaults to Narrow when localStorage is empty', () => {
+  it('defaults to Wide when localStorage is empty (tuxlink-d7a7)', () => {
     const { result } = renderHook(() => useReadingWidth());
-    expect(result.current.width).toBe('Narrow');
+    expect(result.current.width).toBe('Wide');
   });
 
   it('reads a persisted preset from localStorage', () => {
-    localStorage.setItem(READING_WIDTH_STORAGE_KEY, 'Wide');
-    const { result } = renderHook(() => useReadingWidth());
-    expect(result.current.width).toBe('Wide');
-  });
-
-  it('falls back to Narrow when localStorage holds an unknown value', () => {
-    localStorage.setItem(READING_WIDTH_STORAGE_KEY, 'EXTRAWIDE');
+    localStorage.setItem(READING_WIDTH_STORAGE_KEY, 'Narrow');
     const { result } = renderHook(() => useReadingWidth());
     expect(result.current.width).toBe('Narrow');
   });
 
-  it('applies --help-reading-max-width on mount', () => {
+  it('falls back to Wide when localStorage holds an unknown value', () => {
+    localStorage.setItem(READING_WIDTH_STORAGE_KEY, 'EXTRAWIDE');
+    const { result } = renderHook(() => useReadingWidth());
+    expect(result.current.width).toBe('Wide');
+  });
+
+  it('applies --help-reading-max-width on mount (defaults to Wide → 1280px)', () => {
     renderHook(() => useReadingWidth());
     expect(
       document.documentElement.style.getPropertyValue('--help-reading-max-width'),
-    ).toBe('720px');
+    ).toBe('1280px');
   });
 
-  it('toggle flips Narrow ↔ Wide and persists', () => {
+  it('toggle flips Wide ↔ Narrow and persists', () => {
     const { result } = renderHook(() => useReadingWidth());
-    act(() => result.current.toggle());
-    expect(result.current.width).toBe('Wide');
-    expect(localStorage.getItem(READING_WIDTH_STORAGE_KEY)).toBe('Wide');
-    expect(
-      document.documentElement.style.getPropertyValue('--help-reading-max-width'),
-    ).toBe('980px');
-
+    // Default is now Wide, so first toggle → Narrow (was Narrow → Wide).
     act(() => result.current.toggle());
     expect(result.current.width).toBe('Narrow');
+    expect(localStorage.getItem(READING_WIDTH_STORAGE_KEY)).toBe('Narrow');
     expect(
       document.documentElement.style.getPropertyValue('--help-reading-max-width'),
     ).toBe('720px');
+
+    act(() => result.current.toggle());
+    expect(result.current.width).toBe('Wide');
+    expect(
+      document.documentElement.style.getPropertyValue('--help-reading-max-width'),
+    ).toBe('1280px');
   });
 
   it('setWidth applies + persists explicitly', () => {

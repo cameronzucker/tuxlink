@@ -70,8 +70,9 @@ use super::listener::{
     listener_decide, AllowedStations, ListenerArmsRecord, ListenerDecision, PeerId,
     StationPassword,
 };
-use super::proposal::{Answer, Proposal};
 use super::session::{self, ExchangeConfig, ExchangeError, ExchangeResult, ExchangeRole};
+#[cfg(test)]
+use super::proposal::Proposal;
 
 /// Default TCP listen port — matches WLE's `Globals.strTelnetListeningPort`
 /// initial value `"8774"` at `Globals.cs:1518`. NOTE: 8772 is RMS-Relay's
@@ -175,12 +176,13 @@ pub fn run_accept_loop<F>(
     password: StationPassword,
     arms: ListenerArmsRecord,
     config: ExchangeConfig,
+    mailbox: Option<Arc<crate::native_mailbox::Mailbox>>,
     shutdown: Arc<AtomicBool>,
     progress: &dyn Fn(&str),
     wire_log: &dyn Fn(&str),
     decide: F,
 ) where
-    F: Fn(&[Proposal]) -> Vec<Answer> + Clone,
+    F: Fn(&[crate::winlink::proposal::Proposal]) -> Vec<crate::winlink::proposal::Answer> + Clone,
 {
     let local = listener
         .local_addr()
@@ -240,6 +242,7 @@ pub fn run_accept_loop<F>(
             &password,
             &arms,
             &config,
+            mailbox.as_deref(),
             progress,
             wire_log,
             decide.clone(),
@@ -253,7 +256,11 @@ pub fn run_accept_loop<F>(
 }
 
 /// Handle one inbound peer end-to-end: CALLSIGN prompt → allowlist gate →
-/// Password prompt → password verify → handoff to B2F answerer.
+/// Password prompt → password verify → handoff to B2F answerer + mailbox
+/// persistence.
+///
+/// `mailbox` is plumbed through to `run_b2f_answerer` for Inbox-persist +
+/// Outbox-drain. `None` is for tests.
 ///
 /// On any reject path, send the appropriate WLE-compat reject message then
 /// drop the TCP connection. The TCP `Drop` impl closes the socket.
@@ -265,12 +272,13 @@ pub(crate) fn handle_one_session<F>(
     password: &StationPassword,
     arms: &ListenerArmsRecord,
     config: &ExchangeConfig,
+    mailbox: Option<&crate::native_mailbox::Mailbox>,
     progress: &dyn Fn(&str),
     wire_log: &dyn Fn(&str),
     decide: F,
 ) -> Result<ExchangeResult, TelnetListenError>
 where
-    F: Fn(&[Proposal]) -> Vec<Answer>,
+    F: Fn(&[crate::winlink::proposal::Proposal]) -> Vec<crate::winlink::proposal::Answer>,
 {
     // Bound the wire phase so a half-open peer can't pin the listener.
     stream.set_read_timeout(Some(PEER_TIMEOUT)).ok();
@@ -422,17 +430,31 @@ where
     // `parse_telnet_callsign`).
     let mut per_session_config = config.clone();
     per_session_config.targetcall = claimed.call.clone();
-    run_b2f_answerer(reader, writer, &per_session_config, progress, wire_log, decide)
+    run_b2f_answerer(
+        reader,
+        writer,
+        &per_session_config,
+        mailbox,
+        progress,
+        wire_log,
+        decide,
+    )
 }
 
 /// Drive `run_exchange_with_role(ExchangeRole::Answer)` over the connected
-/// stream. Returns the exchange's `received` + `sent` summary so the caller
-/// can persist any received messages into the mailbox.
+/// stream. Loads the operator's Outbox before the exchange so any pending
+/// messages get offered to the inbound peer. After the exchange completes,
+/// persists `result.received` to the operator's Inbox and moves `result.sent`
+/// MIDs from Outbox to Sent — the same mailbox symmetry the Packet listener
+/// inherits from `native_packet_exchange` (winlink_backend.rs:1323).
+///
+/// `mailbox` may be `None` for tests that don't need filesystem state.
 #[allow(clippy::too_many_arguments)]
 fn run_b2f_answerer<R, W, F>(
     mut reader: BufReader<R>,
     mut writer: W,
     config: &ExchangeConfig,
+    mailbox: Option<&crate::native_mailbox::Mailbox>,
     progress: &dyn Fn(&str),
     wire_log: &dyn Fn(&str),
     decide: F,
@@ -440,19 +462,67 @@ fn run_b2f_answerer<R, W, F>(
 where
     R: Read,
     W: Write,
-    F: Fn(&[Proposal]) -> Vec<Answer>,
+    F: Fn(&[crate::winlink::proposal::Proposal]) -> Vec<crate::winlink::proposal::Answer>,
 {
-    progress("Running B2F exchange (answerer role)…");
-    session::run_exchange_with_role(
+    use crate::winlink_backend::MailboxFolder;
+
+    // Tuxlink-7vea Telnet inbound-mail symmetry (closes tuxlink-k3ru):
+    // load the operator's Outbox BEFORE opening the B2F exchange so any
+    // pending mail rides the inbound session out to the peer. Empty Vec
+    // when no mailbox is plumbed (tests).
+    let outbound = match mailbox {
+        Some(mb) => match crate::winlink_backend::build_outbound_proposals(mb) {
+            Ok(v) => v,
+            Err(e) => {
+                progress(&format!("Outbox read failed (proceeding empty): {e}"));
+                Vec::new()
+            }
+        },
+        None => Vec::new(),
+    };
+    progress(&format!(
+        "Running B2F exchange (answerer role; {} outbound)…",
+        outbound.len()
+    ));
+
+    let result = session::run_exchange_with_role(
         &mut reader,
         &mut writer,
         ExchangeRole::Answer,
         config,
-        Vec::new(), // outbound is mailbox-driven; default empty for now (PR follow-up)
+        outbound,
         decide,
         Some(wire_log),
     )
-    .map_err(TelnetListenError::Exchange)
+    .map_err(TelnetListenError::Exchange)?;
+
+    // Persist received messages to Inbox + move sent MIDs from Outbox to Sent.
+    // Error-tolerant: a single message-store failure logs but doesn't fail the
+    // whole exchange — the peer's already gone, partial persistence is better
+    // than nothing. (Symmetric with native_packet_exchange's ordering: file
+    // accepted messages FIRST, then signal completion.)
+    if let Some(mb) = mailbox {
+        for message in &result.received {
+            match mb.store(MailboxFolder::Inbox, &message.to_bytes()) {
+                Ok(_) => {}
+                Err(e) => progress(&format!("Inbox store failed for one message: {e}")),
+            }
+        }
+        for mid in &result.sent {
+            let mid_obj = crate::winlink_backend::MessageId(mid.clone());
+            match mb.move_to(MailboxFolder::Outbox, MailboxFolder::Sent, &mid_obj) {
+                Ok(_) => {}
+                Err(e) => progress(&format!("Outbox→Sent move failed for {mid}: {e}")),
+            }
+        }
+        progress(&format!(
+            "Telnet inbound exchange persisted: {} received → Inbox, {} sent → Sent",
+            result.received.len(),
+            result.sent.len()
+        ));
+    }
+
+    Ok(result)
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -795,7 +865,10 @@ mod tests {
     }
 
     fn allowed_with(calls: &[(&str, u8)]) -> AllowedStations {
-        let mut a = AllowedStations::new();
+        // Restrict-mode so the allowlist gates on the callsign list.
+        // (Foundation default since tuxlink-7vea is allow_all=TRUE; tests
+        // exercising the allowlist gate must opt back into restrict-mode.)
+        let mut a = AllowedStations::new().with_allow_all(false);
         for (call, ssid) in calls {
             a.add_callsign(Address {
                 call: (*call).to_string(),
@@ -833,6 +906,7 @@ mod tests {
                 &password,
                 &arms,
                 &config,
+                None,
                 &|_| {},
                 &|_| {},
                 |_| Vec::new(),
@@ -908,6 +982,7 @@ mod tests {
                 &password,
                 &arms,
                 &config,
+                None,
                 &|_| {},
                 &|_| {},
                 |_| Vec::new(),
@@ -974,6 +1049,7 @@ mod tests {
                 &password,
                 &arms,
                 &config,
+                None,
                 &|_| {},
                 &|_| {},
                 |_| Vec::new(),
@@ -1033,6 +1109,7 @@ mod tests {
                 &password,
                 &arms,
                 &config,
+                None,
                 &|_| {},
                 &|_| {},
                 |_| Vec::new(),
@@ -1145,7 +1222,9 @@ mod tests {
 
     #[test]
     fn ipv4_per_octet_wildcard_matches_192_168_1_star() {
-        let mut a = AllowedStations::new();
+        // Restrict-mode to exercise the wildcard match logic (foundation
+        // default since tuxlink-7vea is allow_all=TRUE).
+        let mut a = AllowedStations::new().with_allow_all(false);
         a.add_ip_pattern("192.168.1.*");
 
         let peer = PeerId::SocketAddr("192.168.1.50:55000".parse().unwrap());
@@ -1160,7 +1239,7 @@ mod tests {
     fn ipv4_per_octet_wildcard_matches_middle_position() {
         // WLE supports wildcards in ANY position, not just the trailing one
         // (telnet-p2p.md §4.3 — `192.168.*.50` matches 192.168.x.50 for any x).
-        let mut a = AllowedStations::new();
+        let mut a = AllowedStations::new().with_allow_all(false);
         a.add_ip_pattern("192.168.*.50");
 
         let peer = PeerId::SocketAddr("192.168.7.50:55000".parse().unwrap());
@@ -1205,6 +1284,7 @@ mod tests {
                 &password,
                 &arms,
                 &config,
+                None,
                 &|_| {},
                 &|_| {},
                 |_| Vec::new(),
@@ -1262,6 +1342,7 @@ mod tests {
                 password,
                 arms,
                 config,
+                None, // mailbox — tests don't persist
                 shutdown_for_loop,
                 &|_| {},
                 &|_| {},

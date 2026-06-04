@@ -231,7 +231,21 @@ pub fn build_outbound_proposals(
 ) -> Result<Vec<session::OutboundMessage>, BackendError> {
     let mut outbound = Vec::new();
     for meta in mailbox.list(MailboxFolder::Outbox)? {
-        let body = mailbox.read(MailboxFolder::Outbox, &meta.id)?;
+        // Codex review 2026-06-03 [P2 #6] (tuxlink-61yg): per-message read
+        // failures used to propagate `?` and discard the entire batch.
+        // A single bad/missing file would silently withhold ALL readable
+        // mail from the session. Now: skip and continue. A folder-wide
+        // listing failure still propagates (the outer `?`).
+        let body = match mailbox.read(MailboxFolder::Outbox, &meta.id) {
+            Ok(b) => b,
+            Err(e) => {
+                eprintln!(
+                    "build_outbound_proposals: skipping outbox message {:?}: {e}",
+                    meta.id
+                );
+                continue;
+            }
+        };
         if let Ok(message) = Message::from_bytes(&body.raw_rfc5322) {
             if let Some((proposal, compressed)) = message.to_proposal() {
                 let title = message.header("Subject").unwrap_or_default().to_string();
@@ -1483,7 +1497,14 @@ fn native_packet_connect(
                             "Packet allowlist load failed: {reason_str}. Failing closed (reject all inbound until repaired)."
                         ));
                         load_failed_reason = Some(reason_str);
-                        AllowedStations::default()
+                        // Codex review 2026-06-03 [P1] (tuxlink-7vea): after the
+                        // foundation default flip to allow_all=TRUE,
+                        // AllowedStations::default() now accepts everyone — so
+                        // a corrupt allowlist file would silently widen the
+                        // gate to fail-OPEN. Explicit restrict-mode here keeps
+                        // the load-error path fail-CLOSED as the progress
+                        // message claims.
+                        AllowedStations::new().with_allow_all(false)
                     }
                 }
             };
@@ -1818,6 +1839,7 @@ fn native_connect(
 pub fn run_ardop_b2f_exchange(
     transport: &mut dyn crate::winlink::modem::ModemTransport,
     target: &str,
+    intent: SessionIntent,
     config: &Config,
     mailbox: &Mailbox,
     position: Option<&crate::position::PositionArbiter>,
@@ -1832,16 +1854,24 @@ pub fn run_ardop_b2f_exchange(
         .trim()
         .to_uppercase();
     let locator = crate::position::effective_broadcast_locator(config, position);
-    // The ARDOP B2F path connects to a CMS gateway OR a peer. Both speak the
-    // same B2F protocol; only the password differs (gateway dial may carry a
-    // ;PQ challenge — a peer never does). Pull the keyring entry for the
-    // gateway path; if the peer never challenges, the secret is simply unused.
-    // Note: this reuses the existing `tuxlink-pat` keyring entry — the cred
-    // store is shared with the legacy Pat flow (per ADR 0011 cred refactor).
-    let password = keyring::Entry::new("tuxlink-pat", &callsign)
-        .ok()
-        .and_then(|e| e.get_password().ok())
-        .filter(|p| !p.is_empty());
+    // The ARDOP B2F path can dial either a CMS gateway (intent=Cms) or a peer
+    // station (intent=P2p — added in tuxlink-9ls2). Only the gateway path may
+    // receive a `;PQ` challenge; peers never challenge per the FBB master/
+    // slave split. So the password fetch is gated on intent: for non-CMS
+    // dials we skip the keyring read entirely — both a hygiene win (no
+    // unnecessary keyring traffic) and a defensive guarantee that a stale
+    // CMS secret cannot leak into a peer handshake.
+    // The CMS path reuses the existing `tuxlink-pat` keyring entry — the
+    // cred store is shared with the legacy Pat flow (per ADR 0011 cred
+    // refactor).
+    let password = if intent == SessionIntent::Cms {
+        keyring::Entry::new("tuxlink-pat", &callsign)
+            .ok()
+            .and_then(|e| e.get_password().ok())
+            .filter(|p| !p.is_empty())
+    } else {
+        None
+    };
 
     // Turn each queued outbox message into a proposal + compressed body.
     let mut outbound = Vec::new();
@@ -1864,7 +1894,7 @@ pub fn run_ardop_b2f_exchange(
         targetcall: target.to_string(),
         locator,
         password,
-        intent: SessionIntent::Cms,
+        intent,
     };
 
     let result = b2f::run_b2f_exchange(
@@ -1885,6 +1915,166 @@ pub fn run_ardop_b2f_exchange(
     })?;
 
     // File received messages into the inbox; move delivered ones to sent.
+    for message in &result.received {
+        mailbox.store(MailboxFolder::Inbox, &message.to_bytes())?;
+    }
+    for mid in &result.sent {
+        mailbox.move_to(
+            MailboxFolder::Outbox,
+            MailboxFolder::Sent,
+            &MessageId(mid.clone()),
+        )?;
+    }
+    Ok(())
+}
+
+/// Run the ARDOP B2F exchange as the **answerer** for the ARDOP listener
+/// (tuxlink-61yg). Mirror of `run_ardop_b2f_exchange` but with
+/// `ExchangeRole::Answer` + `SessionIntent::P2p`, parameterised on the
+/// connected peer's callsign.
+///
+/// Loads operator Outbox BEFORE the exchange so pending mail rides the
+/// inbound session out to the peer. After the exchange completes, persists
+/// `result.received` to Inbox + moves `result.sent` MIDs from Outbox to
+/// Sent. Same Inbox-FIRST ordering as the dialer path's Codex P1.4 fix.
+pub fn run_ardop_b2f_answer(
+    transport: &mut dyn crate::winlink::modem::ModemTransport,
+    peer_callsign: &str,
+    config: &Config,
+    mailbox: &Mailbox,
+    position: Option<&crate::position::PositionArbiter>,
+) -> Result<(), BackendError> {
+    use crate::winlink::modem::ardop::b2f;
+    let callsign = config
+        .identity
+        .callsign
+        .clone()
+        .ok_or_else(|| BackendError::NotConfigured("identity.callsign".into()))?
+        .trim()
+        .to_uppercase();
+    let locator = crate::position::effective_broadcast_locator(config, position);
+
+    let outbound = build_outbound_proposals(mailbox)?;
+    let exchange_config = session::ExchangeConfig {
+        mycall: callsign,
+        targetcall: peer_callsign.to_string(),
+        locator,
+        password: None,
+        intent: SessionIntent::P2p,
+    };
+    let result = b2f::run_b2f_exchange(
+        transport,
+        ExchangeRole::Answer,
+        &exchange_config,
+        outbound,
+        |proposals| {
+            proposals
+                .iter()
+                .map(|_| Answer::Accept { resume_offset: 0 })
+                .collect()
+        },
+    )
+    .map_err(|e| BackendError::TransportFailed { reason: format!("{e}"), source: None })?;
+
+    for message in &result.received {
+        mailbox.store(MailboxFolder::Inbox, &message.to_bytes())?;
+    }
+    for mid in &result.sent {
+        mailbox.move_to(
+            MailboxFolder::Outbox,
+            MailboxFolder::Sent,
+            &MessageId(mid.clone()),
+        )?;
+    }
+    Ok(())
+}
+
+/// Run the VARA B2F exchange as the **answerer** for the VARA listener
+/// (tuxlink-9ls2). Mirror of `run_ardop_b2f_answer` but adapted for VARA:
+/// the VARA data socket carries raw bytes (no FEC/framing layer above TCP),
+/// so we drive `session::run_exchange_with_role` directly on
+/// `transport.data_stream()` rather than going through an intermediate
+/// B2F-over-X wrapper module.
+///
+/// VARA's host protocol exposes the connected-mode payload as a plain
+/// `TcpStream`; we `try_clone()` the writer half and wrap the reader half
+/// in `BufReader` so `run_exchange_with_role` (which takes separate
+/// `R: BufRead` and `W: Write` arguments) gets the duplex split it needs.
+/// Unlike ARDOP's `b2f::run_b2f_exchange` we don't need an `Arc<Mutex>`
+/// shared-handle pattern because VARA's data socket IS an OS-level TCP
+/// stream we can clone — the kernel arbitrates the duplex halves.
+///
+/// Loads operator Outbox BEFORE the exchange so pending mail rides the
+/// inbound session out to the peer. After the exchange completes,
+/// persists `result.received` to Inbox + moves `result.sent` MIDs from
+/// Outbox to Sent. Same Inbox-FIRST ordering as the ARDOP path.
+pub fn run_vara_b2f_answer(
+    transport: &mut crate::winlink::modem::vara::VaraTransport,
+    peer_callsign: &str,
+    config: &Config,
+    mailbox: &Mailbox,
+    position: Option<&crate::position::PositionArbiter>,
+) -> Result<(), BackendError> {
+    use std::io::BufReader;
+
+    let callsign = config
+        .identity
+        .callsign
+        .clone()
+        .ok_or_else(|| BackendError::NotConfigured("identity.callsign".into()))?
+        .trim()
+        .to_uppercase();
+    let locator = crate::position::effective_broadcast_locator(config, position);
+
+    let outbound = build_outbound_proposals(mailbox)?;
+    let exchange_config = session::ExchangeConfig {
+        mycall: callsign,
+        targetcall: peer_callsign.to_string(),
+        locator,
+        password: None,
+        intent: SessionIntent::P2p,
+    };
+
+    // Split the duplex VARA data socket into BufRead + Write halves.
+    // `try_clone` on a `TcpStream` returns a second handle to the same
+    // underlying socket; both halves share read+write buffers at the OS
+    // level. The B2F engine is strictly turn-based so the duplex split
+    // here is safe (only one side reads or writes at any instant).
+    let writer = transport
+        .data_stream()
+        .try_clone()
+        .map_err(|e| BackendError::TransportFailed {
+            reason: format!("VARA data-socket try_clone failed: {e}"),
+            source: None,
+        })?;
+    let reader = BufReader::new(
+        transport
+            .data_stream()
+            .try_clone()
+            .map_err(|e| BackendError::TransportFailed {
+                reason: format!("VARA data-socket try_clone (reader) failed: {e}"),
+                source: None,
+            })?,
+    );
+    let mut reader = reader;
+    let mut writer = writer;
+
+    let result = session::run_exchange_with_role(
+        &mut reader,
+        &mut writer,
+        ExchangeRole::Answer,
+        &exchange_config,
+        outbound,
+        |proposals| {
+            proposals
+                .iter()
+                .map(|_| Answer::Accept { resume_offset: 0 })
+                .collect()
+        },
+        None,
+    )
+    .map_err(|e| BackendError::TransportFailed { reason: format!("{e:?}"), source: None })?;
+
     for message in &result.received {
         mailbox.store(MailboxFolder::Inbox, &message.to_bytes())?;
     }

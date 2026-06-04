@@ -40,7 +40,7 @@ fn record_submitter_if_match(out: &mut ParsedBody, name: &str, value: &str) {
     if out.submitter.is_some() {
         return;
     }
-    if SUBMITTER_FIELD_NAMES.iter().any(|n| *n == name) {
+    if SUBMITTER_FIELD_NAMES.contains(&name) {
         out.submitter = Some(value.to_string());
     }
 }

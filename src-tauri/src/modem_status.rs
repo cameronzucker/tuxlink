@@ -302,6 +302,45 @@ impl ModemSession {
             ))
         }
     }
+
+    /// Read-only check: is a transport currently installed? Used by the ARDOP
+    /// listener Tauri command to decide between "start modem in listen-only
+    /// mode" vs "modem already running — just flip LISTEN TRUE."
+    pub fn snapshot_transport_present(&self) -> bool {
+        self.inner
+            .lock()
+            .map(|g| g.transport.is_some())
+            .unwrap_or(false)
+    }
+
+    /// Best-effort send of `LISTEN TRUE\r` or `LISTEN FALSE\r` to ardopcf via
+    /// the side-channel writer (the same `abort_writer` used by
+    /// [`abort_in_flight`] — both commands ride the same cmd-socket clone).
+    ///
+    /// Used by the listener Tauri commands (`ardop_listen` /
+    /// `ardop_set_listen`) to toggle the modem's inbound-accept flag on a
+    /// running modem. Returns `Err(NotConnected)` when no writer is installed
+    /// (i.e. the modem isn't running yet); the caller surfaces that as a
+    /// "start the modem first" message to the operator.
+    ///
+    /// Note: this only toggles the modem's LISTEN flag. CONNECTED-event
+    /// routing to the application-layer gate + B2F answerer is a separate
+    /// concern tracked under the inbound-mail symmetry follow-up bd issue.
+    pub fn send_listen_command(&self, enabled: bool) -> std::io::Result<()> {
+        use std::io::Write;
+        let mut inner = self.inner.lock().unwrap();
+        if let Some(writer) = inner.abort_writer.as_mut() {
+            let cmd: &[u8] = if enabled { b"LISTEN TRUE\r" } else { b"LISTEN FALSE\r" };
+            writer.write_all(cmd)?;
+            writer.flush()?;
+            Ok(())
+        } else {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::NotConnected,
+                "no cmd writer installed (modem not running)",
+            ))
+        }
+    }
 }
 
 impl Default for ModemSession {

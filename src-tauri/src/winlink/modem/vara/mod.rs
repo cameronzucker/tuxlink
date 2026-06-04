@@ -32,6 +32,7 @@
 
 pub mod command;
 pub mod commands;
+pub mod listener;
 pub mod transport;
 pub mod wire;
 
@@ -39,4 +40,7 @@ pub use command::{
     Bandwidth, CommandParseError, Compression, InboundCommand, OutboundCommand,
 };
 pub use commands::{PlatformInfo, VaraSession, VaraState, VaraStatus};
+pub use listener::{
+    allowed_stations_path, serve_inbound_one, set_listen, InboundOutcome, VaraListenerError,
+};
 pub use transport::{VaraConfig, VaraTransport};

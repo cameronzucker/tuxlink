@@ -14,19 +14,26 @@ export function useHelpTheme() {
     let cancelled = false;
     let unlisten: UnlistenFn | null = null;
 
+    // tuxlink-och6 (2026-06-03): both callsites pass `{ broadcast: false }`.
+    // We're RESPONDING to the main window's scheme (applying it locally).
+    // Without the guard, applyColorScheme's own broadcast would fan back
+    // out (Tauri `emit()` delivers to ALL windows including the sender),
+    // re-triggering this listener — infinite IPC loop that pegs WebKit +
+    // Rust at idle whenever the help window is open.
+
     // Initial: read whatever the main window last broadcast.
     invoke<string | null>('theme_get_scheme')
       .then((scheme) => {
         if (cancelled) return;
         if (scheme && typeof scheme === 'string') {
-          applyColorScheme(scheme as ColorScheme);
+          applyColorScheme(scheme as ColorScheme, { broadcast: false });
         }
       })
       .catch(() => {});  // ignore — theme falls back to defaults
 
     // Live: re-apply on broadcast events from the main window.
     listen<string>('color_scheme_changed', (e) => {
-      applyColorScheme(e.payload as ColorScheme);
+      applyColorScheme(e.payload as ColorScheme, { broadcast: false });
     }).then((unfn) => {
       if (cancelled) {
         unfn();

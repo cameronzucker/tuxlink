@@ -1035,9 +1035,11 @@ mod tests {
         // Operator pin: explicit webgui_port wins over the derivation. Lets
         // an operator point both ends (spawn + button) at a non-conventional
         // ardopcf build/configuration.
-        let mut cfg = ArdopUiConfig::default();
-        cfg.cmd_port = 8515;
-        cfg.webgui_port = Some(9999);
+        let cfg = ArdopUiConfig {
+            cmd_port: 8515,
+            webgui_port: Some(9999),
+            ..Default::default()
+        };
         assert_eq!(cfg.resolved_webgui_port(), Some(9999));
     }
 
@@ -1046,16 +1048,20 @@ mod tests {
         // cmd_port < 2 AND no explicit override → no valid port can be
         // derived; the spawn omits `-G` and the frontend surfaces an error.
         for low in [0u16, 1u16] {
-            let mut cfg = ArdopUiConfig::default();
-            cfg.cmd_port = low;
-            cfg.webgui_port = None;
+            let cfg = ArdopUiConfig {
+                cmd_port: low,
+                webgui_port: None,
+                ..Default::default()
+            };
             assert_eq!(cfg.resolved_webgui_port(), None,
                 "cmd_port={low}: must be unresolvable without override");
         }
         // ... but an explicit override still wins even when cmd_port is too low:
-        let mut cfg = ArdopUiConfig::default();
-        cfg.cmd_port = 0;
-        cfg.webgui_port = Some(8514);
+        let cfg = ArdopUiConfig {
+            cmd_port: 0,
+            webgui_port: Some(8514),
+            ..Default::default()
+        };
         assert_eq!(cfg.resolved_webgui_port(), Some(8514));
     }
 

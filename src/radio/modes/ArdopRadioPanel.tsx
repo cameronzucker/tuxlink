@@ -39,7 +39,11 @@ import { useConsent } from '../../modem/useConsent';
 import { ConsentModal } from '../../modem/ConsentModal';
 import type { ModemState, ModemStatus } from '../../modem/types';
 import type { ArdopFrameType } from '../charts/FrameRibbon';
+import { AllowedStationsEditor } from '../sections/AllowedStationsEditor';
+import { ListenArmButton } from '../sections/ListenArmButton';
+import { useListenerState } from '../sections/useListenerState';
 import './ArdopRadioPanel.css';
+import '../sections/ListenSection.css';
 
 export interface ArdopRadioPanelProps {
   onClose: () => void;
@@ -244,6 +248,12 @@ function resolveWebguiPort(cfg: Pick<ArdopFullConfig, 'cmd_port' | 'webgui_port'
 export function ArdopRadioPanel({ onClose }: ArdopRadioPanelProps) {
   const { status } = useModemStatus();
   const [target, setTarget] = useState('');
+  // Dial intent (tuxlink-9ls2). 'cms' = gateway dial (Winlink CMS via RMS),
+  // 'p2p' = peer-to-peer dial directly to another station. Backend default
+  // remains 'cms' to match the prior hardcoded behavior; the operator picks
+  // 'p2p' explicitly. The selector only matters at Send/Receive time —
+  // ConnectARQ doesn't care about intent.
+  const [intent, setIntent] = useState<'cms' | 'p2p'>('cms');
   // ARQ bandwidth (restored 2026-05-31 — Codex P1). Loaded from
   // config_get_ardop on mount; persisted via config_set_ardop on change.
   // null = "leave at ardopcf default."
@@ -285,6 +295,28 @@ export function ArdopRadioPanel({ onClose }: ArdopRadioPanelProps) {
   const [exchanging, setExchanging] = useState(false);
 
   const { entries: logEntries, clear: clearLog } = useSessionLog();
+
+  // ARDOP listener arms + allowlist plumbing (spec §1.3). ARDOP has no
+  // station-password layer (per ardop-p2p.md divergence 2) so the
+  // panel does NOT render the password expander. The set-allow-all
+  // arg-key is `allow_all` (snake_case to match the backend handler).
+  const ardopListener = useListenerState({
+    commands: {
+      listen: 'ardop_listen',
+      setListen: 'ardop_set_listen',
+      allowedGet: 'ardop_allowed_stations_get',
+      allowedAddCallsign: 'ardop_allowed_stations_add',
+      allowedAddCallsignArgKey: 'callsign',
+      allowedRemoveCallsign: 'ardop_allowed_stations_remove',
+      allowedRemoveCallsignArgKey: 'callsign',
+      allowedSetAllowAll: 'ardop_allowed_stations_set_allow_all',
+      // Tauri auto-camelCases Rust arg `allow_all: bool` → JS wire key `allowAll`.
+      // Codex review 2026-06-03 [P2] (tuxlink-7vea): the prior `allow_all` key
+      // here meant Tauri delivered no value to the Rust handler and the operator
+      // couldn't toggle.
+      allowedSetAllowAllArgKey: 'allowAll',
+    },
+  });
 
   // Rolling 60-sample buffers (1 Hz tick) for the S/N + throughput
   // sparklines. The hook reads the latest reading out of a ref every
@@ -514,6 +546,7 @@ export function ArdopRadioPanel({ onClose }: ArdopRadioPanelProps) {
       const tok = await invoke<string>('modem_mint_consent');
       await invoke('modem_ardop_b2f_exchange', {
         target: effectiveTarget,
+        intent,
         consentToken: tok,
       });
     } catch (e) {
@@ -588,7 +621,7 @@ export function ArdopRadioPanel({ onClose }: ArdopRadioPanelProps) {
 
   return (
     <RadioPanel
-      mode={{ kind: 'ardop-hf', intent: 'cms' }}
+      mode={{ kind: 'ardop-hf', intent }}
       state={mapModemStateToPanelState(status.state)}
       sub={headerSub}
       onClose={onClose}
@@ -597,6 +630,23 @@ export function ArdopRadioPanel({ onClose }: ArdopRadioPanelProps) {
         <section className="radio-panel-sec">
           <h5>Connect</h5>
           <label className="radio-panel-input-row">
+            <span>Dial as</span>
+            <select
+              className="radio-panel-input"
+              data-testid="ardop-intent-select"
+              value={intent}
+              onChange={(e) => setIntent(e.target.value as 'cms' | 'p2p')}
+              title={
+                intent === 'cms'
+                  ? 'Winlink CMS via an RMS gateway. Outbound mail tagged C-pool; the keyring password (if any) is offered on a ;PQ challenge.'
+                  : 'Peer-to-peer to a direct station. Outbound mail unpooled; no password offered (peers never challenge per FBB).'
+              }
+            >
+              <option value="cms">Winlink (CMS gateway)</option>
+              <option value="p2p">P2P (direct peer)</option>
+            </select>
+          </label>
+          <label className="radio-panel-input-row">
             <span>Target</span>
             <input
               type="text"
@@ -604,7 +654,7 @@ export function ArdopRadioPanel({ onClose }: ArdopRadioPanelProps) {
               data-testid="ardop-target-input"
               value={target}
               onChange={onTargetChange}
-              placeholder="W7RMS-10"
+              placeholder={intent === 'cms' ? 'W7RMS-10' : 'W4PHS'}
               spellCheck={false}
               autoCapitalize="characters"
               autoCorrect="off"
@@ -910,6 +960,55 @@ Up     ${fmtUptime(status.uptimeSec)}`}
         recentFrames={frameHistory}
         snrCurrent={status.snDb}
       />
+
+      {/* Listen (Accept Inbound) — spec §1.3. ARDOP modem TCP host/port
+          already lives in the Radio section above, so this section does
+          NOT carry a Listener-setup expander. ARDOP also has no
+          station-password layer (ardop-p2p.md divergence 2), so no
+          Station Password expander either — the allowlist is the only
+          application-layer gate. */}
+      <section className="radio-panel-sec" data-testid="ardop-listen-section">
+        <h5>Listen (Accept Inbound)</h5>
+        <ListenArmButton
+          armed={ardopListener.armed}
+          minutesRemaining={ardopListener.minutesRemaining}
+          busy={ardopListener.busy}
+          helpText="Accepts inbound ARDOP P2P sessions until disarmed or the TTL expires. The modem must be running before arming the listener."
+          onArm={ardopListener.arm}
+          onDisarm={ardopListener.disarm}
+          testIdPrefix="ardop-listen"
+        />
+        {ardopListener.error && (
+          <p
+            className="radio-panel-radio-help"
+            data-testid="ardop-listen-error"
+            style={{ color: 'var(--error, #f87171)' }}
+          >
+            {ardopListener.error}
+          </p>
+        )}
+        <details className="expander" data-testid="ardop-allowed-expander">
+          <summary className="expander-summary">
+            Allowed stations
+            <span className="expander-count" data-testid="ardop-allowed-count">
+              {ardopListener.allowed.allowAll
+                ? 'allow any'
+                : ardopListener.allowed.callsigns.length === 0
+                ? 'restrict to none'
+                : `${ardopListener.allowed.callsigns.length} callsign${ardopListener.allowed.callsigns.length === 1 ? '' : 's'}`}
+            </span>
+          </summary>
+          <AllowedStationsEditor
+            allowAll={ardopListener.allowed.allowAll}
+            callsigns={ardopListener.allowed.callsigns}
+            helpText="ARDOP has no station-password layer — the callsign allowlist is the only application-layer gate."
+            onSetAllowAll={ardopListener.setAllowAll}
+            onAddCallsign={ardopListener.addCallsign}
+            onRemoveCallsign={ardopListener.removeCallsign}
+            testIdPrefix="ardop-allowed"
+          />
+        </details>
+      </section>
 
       <SessionLogSection entries={logEntries} onClear={clearLog} />
 

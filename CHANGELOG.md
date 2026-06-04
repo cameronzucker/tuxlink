@@ -4,6 +4,42 @@ All notable changes to Tuxlink are documented here.
 
 This project adheres to [Semantic Versioning](https://semver.org) with project-specific rules described in [VERSIONING.md](VERSIONING.md). Entries from `v0.0.2` onward are generated automatically by [`release-please`](https://github.com/googleapis/release-please) from [Conventional Commits](https://www.conventionalcommits.org).
 
+## [0.26.0](https://github.com/cameronzucker/tuxlink/compare/v0.25.0...v0.26.0) (2026-06-04)
+
+
+### Features
+
+* **winlink/ardop:** ARDOP listener end-to-end (tuxlink-61yg) ([36936b8](https://github.com/cameronzucker/tuxlink/commit/36936b8cf70f42b514aba767bdd028d0bbc1871b))
+* **winlink/telnet:** Telnet listener inbound mailbox symmetry (tuxlink-61yg) ([ea52c38](https://github.com/cameronzucker/tuxlink/commit/ea52c387d63152141bb93d6e412c996ca7c2d6d5))
+
+
+### Bug Fixes
+
+* **listener:** address Codex review findings on end-to-end PR (tuxlink-61yg) ([73df469](https://github.com/cameronzucker/tuxlink/commit/73df469b5cb93d39b11c485f672678b0307ad47a))
+* **radio:** defend ModemLinkSection against undefined invoke responses (tuxlink-61yg) ([a897613](https://github.com/cameronzucker/tuxlink/commit/a8976133c69e96677f1365481c8cbf751510c0e5))
+* **winlink/ardop:** clippy borrowed_box on arq_disconnect_via_cmd_writer (tuxlink-61yg) ([d156a42](https://github.com/cameronzucker/tuxlink/commit/d156a423e37209698d72ec9493e0177fddfa77d3))
+
+## [0.25.0](https://github.com/cameronzucker/tuxlink/compare/v0.24.3...v0.25.0) (2026-06-03)
+
+
+### Features
+
+* **help:** widen reading column — Wide 980→1280 px, default to Wide (tuxlink-d7a7) ([8711908](https://github.com/cameronzucker/tuxlink/commit/87119088af67ab23a23bb747e90380ad918c8e34))
+
+## [0.24.3](https://github.com/cameronzucker/tuxlink/compare/v0.24.2...v0.24.3) (2026-06-03)
+
+
+### Bug Fixes
+
+* **examples:** add missing initial_listen field to ardop_connect ([fd8cecd](https://github.com/cameronzucker/tuxlink/commit/fd8cecd82f78094fab23a8536bff011c8df0904e))
+* **perf:** break infinite theme-broadcast loop pegging WebKit + Rust at idle (tuxlink-och6) [P0] ([a4329a5](https://github.com/cameronzucker/tuxlink/commit/a4329a58b2f61ecc42ca4d6bb81a0fc6c1859575))
+* **tests:** add missing intent field to ExchangeConfig (3 sites) ([fc7de9e](https://github.com/cameronzucker/tuxlink/commit/fc7de9eadd38e7c50bb67e2ee54d52dcc90be55d))
+
+
+### Refactors
+
+* address 15 clippy lints surfaced by new CI gate ([62d8797](https://github.com/cameronzucker/tuxlink/commit/62d879725f32125ec075a6168b3422b5ea5b73b0))
+
 ## [0.24.2](https://github.com/cameronzucker/tuxlink/compare/v0.24.1...v0.24.2) (2026-06-03)
 
 

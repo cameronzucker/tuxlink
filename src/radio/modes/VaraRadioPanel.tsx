@@ -25,7 +25,11 @@ import { useSessionLog } from '../sections/useSessionLog';
 import { useVaraConfig } from '../useVaraConfig';
 import type { VaraUiConfig } from '../useVaraConfig';
 import type { RadioPanelMode } from '../types';
+import { AllowedStationsEditor } from '../sections/AllowedStationsEditor';
+import { ListenArmButton } from '../sections/ListenArmButton';
+import { useListenerState } from '../sections/useListenerState';
 import './VaraRadioPanel.css';
+import '../sections/ListenSection.css';
 
 /** Mirror of Rust's `commands::VaraStatus`. camelCase per the Rust
  *  `#[serde(rename_all = "camelCase")]` on the struct. */
@@ -89,6 +93,36 @@ export function VaraRadioPanel({ mode, onClose }: VaraRadioPanelProps) {
   const [dataPortInput, setDataPortInput] = useState<string>('');
 
   const { entries: logEntries, clear: clearLog } = useSessionLog();
+
+  // VARA listener arms + allowlist plumbing (tuxlink-9ls2). VARA matches
+  // ARDOP's posture: no station-password layer (peers don't challenge per
+  // the clean-sheet decision), allowlist is the only application-layer
+  // gate. The TTL defaults to the hook's 1h (no get-config Tauri command
+  // for VARA listener yet — operator-tunable TTL is a follow-up).
+  const varaListener = useListenerState({
+    commands: {
+      listen: 'vara_listen',
+      setListen: 'vara_set_listen',
+      allowedGet: 'vara_allowed_stations_get',
+      allowedAddCallsign: 'vara_allowed_stations_add',
+      allowedAddCallsignArgKey: 'callsign',
+      allowedRemoveCallsign: 'vara_allowed_stations_remove',
+      allowedRemoveCallsignArgKey: 'callsign',
+      allowedSetAllowAll: 'vara_allowed_stations_set_allow_all',
+      // Tauri auto-camelCases Rust arg `allow_all: bool` → wire key `allowAll`.
+      // Mirrors the ARDOP fix at ArdopRadioPanel.tsx (Codex review
+      // 2026-06-03 [P2] tuxlink-7vea) — the prior snake_case key meant
+      // Tauri delivered no value to the Rust handler.
+      allowedSetAllowAllArgKey: 'allowAll',
+    },
+  });
+
+  const varaAllowedSummary = (() => {
+    if (varaListener.allowed.allowAll) return 'allow any';
+    const c = varaListener.allowed.callsigns.length;
+    if (c === 0) return 'restrict to none';
+    return `${c} callsign${c === 1 ? '' : 's'}`;
+  })();
 
   // Hydrate inputs from the loaded config. Re-runs when config changes (e.g.
   // a peer hook persisted an update via the same-window CustomEvent).
@@ -329,6 +363,61 @@ export function VaraRadioPanel({ mode, onClose }: VaraRadioPanelProps) {
             {status.lastError}
           </p>
         )}
+      </section>
+
+      {/* Listen (Accept Inbound) — VARA P2P listener arms + allowlist.
+          Mirrors the Telnet/Packet/ARDOP Listen sections per spec
+          2026-06-03-listener-ui-design.md §1.3, extended to VARA in
+          tuxlink-9ls2. The arm button is disabled when the VARA transport
+          is not Open because vara_listen refuses to arm without an open
+          session — the operator must press Start above first. */}
+      <section
+        className="radio-panel-sec"
+        data-testid="vara-listen-section"
+      >
+        <h5>Listen (Accept Inbound)</h5>
+
+        <ListenArmButton
+          armed={varaListener.armed}
+          minutesRemaining={varaListener.minutesRemaining}
+          busy={varaListener.busy || !isOpen}
+          helpText={
+            isOpen
+              ? 'Sends LISTEN ON to the VARA modem and accepts inbound peer CONNECTED events until disarmed or the TTL expires. VARA has no station-password layer (peers do not challenge); the allowlist below is the gate.'
+              : 'Start the VARA transport first (above) — the listener arm requires an open cmd socket so it can send LISTEN ON.'
+          }
+          onArm={varaListener.arm}
+          onDisarm={varaListener.disarm}
+          testIdPrefix="vara-listen"
+        />
+        {varaListener.error && (
+          <p
+            className="radio-panel-radio-help"
+            data-testid="vara-listen-error"
+            style={{ color: 'var(--error, #f87171)' }}
+          >
+            {varaListener.error}
+          </p>
+        )}
+
+        {/* Allowed stations — callsign-only (VARA is RF; no IP layer). */}
+        <details className="expander" data-testid="vara-allowed-expander">
+          <summary className="expander-summary">
+            Allowed stations
+            <span className="expander-count" data-testid="vara-allowed-count">
+              {varaAllowedSummary}
+            </span>
+          </summary>
+          <AllowedStationsEditor
+            allowAll={varaListener.allowed.allowAll}
+            callsigns={varaListener.allowed.callsigns}
+            helpText="Match logic: when Allow-any is OFF, only peers whose callsign matches the list are admitted. VARA is RF so there is no IP-pattern layer. No station-password layer either (peers do not challenge over VARA)."
+            onSetAllowAll={varaListener.setAllowAll}
+            onAddCallsign={varaListener.addCallsign}
+            onRemoveCallsign={varaListener.removeCallsign}
+            testIdPrefix="vara-allowed"
+          />
+        </details>
       </section>
 
       <SessionLogSection entries={logEntries} onClear={clearLog} />

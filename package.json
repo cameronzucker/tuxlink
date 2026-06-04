@@ -8,6 +8,7 @@
     "dev": "vite",
     "dev:converged": "bash scripts/converge-build.sh",
     "lint:docs": "tsx scripts/lint-docs-links.ts",
+    "typecheck": "tsc --noEmit",
     "preview": "vite preview",
     "tauri": "tauri"
   },
