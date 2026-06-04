@@ -123,6 +123,86 @@ the browser's native form controls — scrollbars, select dropdowns,
 selection highlights — so they match the theme on WebKitGTK. The
 designer's Mode toggle does the same for custom themes.
 
+## Credentials and the keyring
+
+Tuxlink stores your Winlink password in the **OS keyring** — the system
+service that GNOME Keyring, KWallet, KeePassXC, and other desktop
+credential managers all expose under the Linux **Secret Service** API.
+Tuxlink does not write the password to `~/.config/tuxlink/config.json`
+or to any other file under tuxlink's data directories.
+
+### What gets stored
+
+One keyring entry:
+
+- **Service name:** `tuxlink`
+- **Account:** your callsign (the same value the wizard captured)
+- **Secret:** your Winlink password
+
+That single entry is all of tuxlink's credential state. Everything
+else — callsign, grid, transport configuration, color scheme — lives
+in plaintext config files because none of it is secret.
+
+### Inspecting the entry
+
+On GNOME desktops, **Seahorse** (Passwords and Keys) shows the entry
+under the *Login* keyring with `Service: tuxlink`. On KDE, the
+**KWalletManager** GUI exposes the same entry via the Secret Service
+bridge. Command-line:
+
+```sh
+# Read the password (will prompt to unlock the keyring on first read):
+secret-tool lookup service tuxlink account <YOUR-CALLSIGN>
+
+# List all secret-service entries that mention "tuxlink":
+secret-tool search service tuxlink
+```
+
+### Surviving a tuxlink reinstall
+
+The keyring is a system service — it is not part of tuxlink's install
+footprint. `apt remove tuxlink`, `apt install tuxlink=<another-version>`,
+and `apt reinstall tuxlink` all leave the keyring entry untouched. On
+next launch the wizard sees credentials already configured and skips
+the password step.
+
+This is a deliberate design choice. The WLE-era pattern of storing
+the password in app-local state means reinstalling loses the password.
+The keyring-backed approach makes that failure mode go away — the
+password lives outside any tuxlink-owned file, in a system service
+that survives across tuxlink installs.
+
+### Moving to a new machine
+
+The keyring is per-Linux-user-account. Moving to a new machine (or a
+new Linux user account on the same machine) means re-entering the
+password once; tuxlink writes it to the new machine's keyring on
+wizard completion. The password value is unchanged — it's the same
+Winlink password your account was registered with at winlink.org.
+
+There is no "tuxlink backup file" that includes the password. The
+keyring backup story is your **desktop environment's** backup story:
+GNOME Keyring lives at `~/.local/share/keyrings/` (encrypted); KDE's
+KWallet stores at `~/.local/share/kwalletd/`. Backing those up + the
+login-keyring unlock secret (your Linux login password by default)
+restores credentials. Most operators don't need to do this
+explicitly — the password is short, you re-enter it on the new
+machine, and the keyring writes through.
+
+### Forgetting / rotating the password
+
+To remove tuxlink's keyring entry (e.g., rotating to a fresh password
+after suspected compromise):
+
+```sh
+secret-tool clear service tuxlink account <YOUR-CALLSIGN>
+```
+
+The next tuxlink launch re-prompts for the password through the
+wizard. If you also reset the password on Winlink's side (via
+winlink.org's password-reset flow), enter the new password in the
+wizard and tuxlink's keyring is now in sync with Winlink's.
+
 ## Where next
 
 - [Picking a transport](08-picking-a-transport.md) — what each transport needs.
