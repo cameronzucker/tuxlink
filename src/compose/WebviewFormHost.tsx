@@ -1,25 +1,38 @@
-// WebviewFormHost — opens a child Tauri WebviewWindow that renders a
-// WLE Standard Form via the per-session loopback http_server, then
-// bridges the form's parsed submission back to Compose via the
-// `form-submitted` Tauri event.
+// WebviewFormHost — embeds a child Tauri `Webview` INSIDE the current
+// Compose window that renders a WLE Standard Form via the per-session
+// loopback http_server, then bridges the form's parsed submission back
+// to Compose via the `form-submitted` Tauri event.
 //
-// Mount mechanism (P1 sub-decision, documented per the plan's TBD note):
+// Mount mechanism (P1 sub-decision, rework of commit 40a5a2a):
 //
-//   Tauri 2 supports two child-webview shapes: a separate top-level
-//   `WebviewWindow` (one webview per window), and `Webview` (multiple
-//   webviews positioned by x/y/width/height inside one parent `Window`).
-//   The latter is the literal interpretation of spec §8.2's "inline in
-//   the compose body" — but it requires hand-wiring pixel geometry
-//   against the compose layout, with resize/scroll handlers, on every
-//   theme change. The codebase's existing pattern (help_window.rs,
-//   compose_window.rs) uses `WebviewWindow` (separate top-level child
-//   windows) for everything; we follow that here for P1. The form opens
-//   as a sibling window of Compose with the `compose-form-<token>`
-//   label, and the chrome rendered INLINE in the compose body shows
-//   status + the Cancel + diagnostic Submit (fallback) buttons. Real
-//   in-window embedding is a future polish that can move the form
-//   rendering surface without re-architecting the host component or
-//   the backend's event-routing contract.
+//   Tauri 2 exposes two child-webview shapes:
+//
+//     - `WebviewWindow` (from @tauri-apps/api/webviewWindow) — spawns a
+//       NEW top-level OS window containing one webview. This is what
+//       help_window.rs + compose_window.rs use for their respective
+//       sibling windows.
+//
+//     - `Webview` (from @tauri-apps/api/webview) — attaches a child
+//       webview to an EXISTING parent `Window`, positioned by
+//       x/y/width/height (logical pixels) within the parent's content
+//       area. Tauri 2's `Webview` constructor takes `(parentWindow,
+//       label, options)`; navigation URL goes in `options.url`.
+//
+//   Spec §8.2 literally says "React WebviewFormHost mounts
+//   <webview src=url>" — i.e. an in-window embed inside the existing
+//   Compose window, not a sibling top-level window. The operator's
+//   sticky pet peeve (memory `feedback_inline_ui_no_window_clutter`:
+//   "tuxlink UI must be inline ... Compose is the lone settled
+//   exception") reinforces this — adding a second pop-up for the form
+//   would be exactly the anti-pattern.
+//
+//   We therefore use `Webview`, pixel-position it over a placeholder
+//   div rendered in the compose body, and re-measure + reposition on
+//   parent-window resize via `ResizeObserver`. The placeholder div
+//   reserves layout space; the child webview paints over it (child
+//   webviews are stacked above the parent's WebContents in z-order,
+//   so the placeholder is invisible at runtime — fine, it's a
+//   layout-reservation device).
 //
 // Event routing:
 //
@@ -27,19 +40,27 @@
 //   calls `app.emit_to("compose-form-<token>", "form-submitted",
 //   parsed)`. Tauri 2's event system delivers `emit_to(label, ...)`
 //   events only to listeners targeted to that label. We therefore pass
-//   `{ target: "compose-form-<token>" }` to `listen()` so the parent
-//   Compose window receives the event. A global `listen` with no target
-//   filter (target defaults to `{ kind: 'Any' }`) does NOT receive
+//   `{ target: "compose-form-<token>" }` to `listen()` so the Compose
+//   window receives the event. A global `listen` with no target filter
+//   (target defaults to `{ kind: 'Any' }`) does NOT receive
 //   target-scoped events in Tauri 2.x — verified against the
 //   `@tauri-apps/api/event` type surface (`Options.target` + the
 //   `EventTarget` union).
 //
+//   The capability scope (`src-tauri/capabilities/forms-webview.json`)
+//   matches webview labels `compose-form-*` — the same label space
+//   used here, so the Tauri runtime applies the zero-IPC restriction
+//   to the embedded child webview regardless of whether it lives in a
+//   new top-level window or as a Webview inside Compose.
+//
 // Plan: docs/superpowers/plans/2026-06-01-html-forms-p1-webview-infra.md Task 9.
 // Spec: docs/superpowers/specs/2026-05-31-html-forms-full-parity-design.md §8.2 + §5.4.
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { WebviewWindow } from '@tauri-apps/api/webviewWindow';
+import { Webview } from '@tauri-apps/api/webview';
+import { getCurrentWindow } from '@tauri-apps/api/window';
+import { LogicalPosition, LogicalSize } from '@tauri-apps/api/dpi';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import './WebviewFormHost.css';
 
@@ -77,11 +98,17 @@ export function WebviewFormHost({ formId, onSubmit, onCancel }: WebviewFormHostP
   // bundle template read complete. Becomes 'open' on success or 'error'
   // on failure; 'opening' is the initial state.
   const [status, setStatus] = useState<'opening' | 'open' | 'error'>('opening');
+  // Placeholder div in the compose body. The child Webview is pixel-
+  // positioned to overlay this rect. The ref is read inside the useEffect
+  // below (which runs AFTER the first paint, so getBoundingClientRect()
+  // returns real coordinates) and by the ResizeObserver callback.
+  const mountRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     let unlisten: UnlistenFn | null = null;
-    let webview: WebviewWindow | null = null;
+    let webview: Webview | null = null;
+    let resizeObserver: ResizeObserver | null = null;
     let activeToken: string | null = null;
 
     (async () => {
@@ -117,20 +144,69 @@ export function WebviewFormHost({ formId, onSubmit, onCancel }: WebviewFormHostP
         }
         unlisten = ul;
 
-        // WebviewWindow's constructor is synchronous on the JS side; the
-        // actual window creation is async on the Rust side and signals
-        // completion via the `tauri://created` event. We don't await
-        // that here — the form will become visible whenever it's ready,
-        // and if it fails the user sees an OS-level window error.
-        webview = new WebviewWindow(label, {
+        // Read the placeholder rect AFTER first paint. This useEffect
+        // fires post-commit, so getBoundingClientRect() returns real
+        // layout coordinates. If the element isn't mounted (component
+        // unmounted between paints), bail.
+        const mountEl = mountRef.current;
+        if (!mountEl) {
+          ul();
+          await invoke('close_webview_form_server', { token: res.token }).catch(() => {});
+          return;
+        }
+        const initialRect = mountEl.getBoundingClientRect();
+        // Defensively floor + max(1, _) to dodge sub-pixel and 0-rect
+        // edge cases that some Tauri versions reject.
+        const initialX = Math.max(0, Math.floor(initialRect.left));
+        const initialY = Math.max(0, Math.floor(initialRect.top));
+        const initialW = Math.max(1, Math.floor(initialRect.width));
+        const initialH = Math.max(1, Math.floor(initialRect.height));
+
+        // Construct the in-window Webview. The parent Window is the
+        // current Compose window; the label is the same as before so
+        // the capability scope + backend emit_to(label, ...) still
+        // resolve to this webview.
+        const parent = getCurrentWindow();
+        webview = new Webview(parent, label, {
           url: res.url,
-          title: `Form: ${formId}`,
-          width: 900,
-          height: 700,
-          minWidth: 480,
-          minHeight: 360,
-          resizable: true,
+          x: initialX,
+          y: initialY,
+          width: initialW,
+          height: initialH,
         });
+
+        // Re-measure + reposition on placeholder resize (parent window
+        // resize, layout shifts, etc.). ResizeObserver fires on element
+        // dimension changes — the same trigger we want for repositioning.
+        // We also want to track POSITION changes (e.g. the compose body
+        // is reshaped above the placeholder), so we observe the document
+        // body too via the same observer; the callback re-reads the
+        // placeholder's bounding rect, which catches both kinds of
+        // changes.
+        resizeObserver = new ResizeObserver(() => {
+          if (cancelled || !webview || !mountRef.current) return;
+          const rect = mountRef.current.getBoundingClientRect();
+          const x = Math.max(0, Math.floor(rect.left));
+          const y = Math.max(0, Math.floor(rect.top));
+          const w = Math.max(1, Math.floor(rect.width));
+          const h = Math.max(1, Math.floor(rect.height));
+          // Fire-and-forget: setPosition/setSize return promises but the
+          // failure mode is "webview is gone," which the cleanup path
+          // will handle on next teardown. We do not await here because
+          // ResizeObserver callbacks should remain synchronous.
+          void webview.setPosition(new LogicalPosition(x, y)).catch(() => {});
+          void webview.setSize(new LogicalSize(w, h)).catch(() => {});
+        });
+        resizeObserver.observe(mountEl);
+        // Also observe the document.body so global layout reflows that
+        // change the placeholder's POSITION (but not its size) still
+        // trigger a re-measure. Without this, a sibling element growing
+        // above the placeholder would shift the placeholder down but
+        // not change its size — the webview would stay at the stale
+        // (x, y) coords.
+        if (typeof document !== 'undefined' && document.body) {
+          resizeObserver.observe(document.body);
+        }
 
         setStatus('open');
       } catch (e) {
@@ -144,13 +220,14 @@ export function WebviewFormHost({ formId, onSubmit, onCancel }: WebviewFormHostP
     return () => {
       cancelled = true;
       unlisten?.();
+      resizeObserver?.disconnect();
       if (activeToken) {
         invoke('close_webview_form_server', { token: activeToken }).catch(() => {
           /* idempotent — backend treats unknown tokens as Ok(()) */
         });
       }
       webview?.close().catch(() => {
-        /* the webview may already be closed by the user or by the OS */
+        /* the webview may already be closed by the OS, or never created */
       });
     };
     // onSubmit is intentionally omitted from deps: the listener is
@@ -173,12 +250,15 @@ export function WebviewFormHost({ formId, onSubmit, onCancel }: WebviewFormHostP
           Form failed to open: {error}
         </div>
       )}
-      {status === 'open' && !error && (
-        <div className="webview-form-host__status">
-          The form opened in a separate window. Submit it there; this pane
-          will receive the result automatically.
-        </div>
-      )}
+      {/* The placeholder div the child Webview is pixel-positioned over.
+        * Layout-only; the webview paints above it at runtime. Sized to
+        * fill the available compose-body region so the form has room. */}
+      <div
+        ref={mountRef}
+        className="webview-form-host__embed"
+        data-testid="webview-form-host-embed"
+        aria-hidden="true"
+      />
       <div className="webview-form-host__chrome">
         <button
           type="button"
@@ -191,7 +271,7 @@ export function WebviewFormHost({ formId, onSubmit, onCancel }: WebviewFormHostP
           type="button"
           className="webview-form-host__btn webview-form-host__btn--fallback"
           disabled
-          title="Diagnostic only — use the form's own Submit button in the child window"
+          title="Diagnostic only — use the form's own Submit button (top of the embedded form)"
         >
           Submit (fallback)
         </button>
