@@ -84,4 +84,26 @@ describe('computePanelMode', () => {
     );
     expect(mode).toEqual({ kind: 'telnet', intent: 'p2p' });
   });
+
+  it('maps radio-only sidebar selection to radio-only intent for ardop/vara', () => {
+    const reasonArdop = {
+      sidebarSelected: { sessionType: 'radio-only', protocol: 'ardop-hf' } as const,
+      activeModem: null,
+      togglePinned: false,
+    };
+    expect(computePanelMode(reasonArdop)).toEqual({
+      kind: 'ardop-hf',
+      intent: 'radio-only',
+    });
+
+    const reasonVaraHf = {
+      sidebarSelected: { sessionType: 'radio-only', protocol: 'vara-hf' } as const,
+      activeModem: null,
+      togglePinned: false,
+    };
+    expect(computePanelMode(reasonVaraHf)).toEqual({
+      kind: 'vara-hf',
+      intent: 'radio-only',
+    });
+  });
 });

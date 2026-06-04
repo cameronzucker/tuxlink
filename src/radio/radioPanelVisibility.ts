@@ -30,11 +30,18 @@ export function computePanelMode(
   // Sidebar selection wins when present (operator's explicit context).
   if (reason.sidebarSelected !== null) {
     const { sessionType, protocol } = reason.sidebarSelected;
-    const intent: 'cms' | 'p2p' = sessionType === 'p2p' ? 'p2p' : 'cms';
+    const intent: 'cms' | 'p2p' | 'radio-only' =
+      sessionType === 'p2p' ? 'p2p' :
+      sessionType === 'radio-only' ? 'radio-only' :
+      'cms';
     switch (protocol) {
-      case 'telnet':   return { kind: 'telnet',   intent };
-      case 'packet':   return { kind: 'packet',   intent };
-      case 'ardop-hf': return { kind: 'ardop-hf', intent: 'cms' };
+      case 'telnet':
+        // telnet is not RF-bearing; radio-only degrades to cms
+        return { kind: 'telnet', intent: intent === 'radio-only' ? 'cms' : intent };
+      case 'packet':
+        // packet is not RF-bearing; radio-only degrades to cms
+        return { kind: 'packet', intent: intent === 'radio-only' ? 'cms' : intent };
+      case 'ardop-hf': return { kind: 'ardop-hf', intent };
       case 'vara-hf':  return { kind: 'vara-hf',  intent };
       case 'vara-fm':  return { kind: 'vara-fm',  intent };
     }
