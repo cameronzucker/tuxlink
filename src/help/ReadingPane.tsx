@@ -31,7 +31,7 @@ export function ReadingPane({ topic, onNavigate }: ReadingPaneProps) {
 
       // Case 2: cross-topic with anchor (e.g. 02-connections.md#vara-hf).
       // Must be tested before the bare .md case so the anchor is captured.
-      const mdWithAnchorMatch = href.match(/^(?:.*\/)?(\d{2}-[a-z-]+)\.md(#[\w-]+)$/);
+      const mdWithAnchorMatch = href.match(/^(?:.*\/)?(\d{2}-[a-z0-9-]+)\.md(#[\w-]+)$/);
       if (mdWithAnchorMatch) {
         event.preventDefault();
         const slug = mdWithAnchorMatch[1];
@@ -47,7 +47,7 @@ export function ReadingPane({ topic, onNavigate }: ReadingPaneProps) {
 
       // Case 3: cross-topic without anchor (existing behavior).
       // Accept bare ("03-mailbox.md") OR a relative prefix.
-      const mdMatch = href.match(/^(?:.*\/)?(\d{2}-[a-z-]+)\.md$/);
+      const mdMatch = href.match(/^(?:.*\/)?(\d{2}-[a-z0-9-]+)\.md$/);
       if (mdMatch) {
         event.preventDefault();
         onNavigate(mdMatch[1]);

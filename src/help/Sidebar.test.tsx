@@ -75,7 +75,7 @@ describe('Sidebar (search input)', () => {
     ];
     const { container } = render(
       <Sidebar
-        activeSlug="01-getting-started"
+        activeSlug="01-what-is-tuxlink"
         onSelect={vi.fn()}
         searchQuery="ardop"
         onSearchChange={vi.fn()}
@@ -93,7 +93,7 @@ describe('Sidebar (search input)', () => {
     ];
     const { container } = render(
       <Sidebar
-        activeSlug="01-getting-started"
+        activeSlug="01-what-is-tuxlink"
         onSelect={vi.fn()}
         searchQuery="ardop"
         onSearchChange={vi.fn()}
@@ -117,7 +117,7 @@ describe('Sidebar (search input)', () => {
     ];
     const { container } = render(
       <Sidebar
-        activeSlug="01-getting-started"
+        activeSlug="01-what-is-tuxlink"
         onSelect={vi.fn()}
         searchQuery="x"
         onSearchChange={vi.fn()}
@@ -133,7 +133,7 @@ describe('Sidebar (search input)', () => {
   it('renders a "Searching…" status when hits is undefined and query is non-empty', () => {
     render(
       <Sidebar
-        activeSlug="01-getting-started"
+        activeSlug="01-what-is-tuxlink"
         onSelect={vi.fn()}
         searchQuery="ardop"
         onSearchChange={vi.fn()}
@@ -146,7 +146,7 @@ describe('Sidebar (search input)', () => {
   it('renders "No matches." when hits is an empty array', () => {
     render(
       <Sidebar
-        activeSlug="01-getting-started"
+        activeSlug="01-what-is-tuxlink"
         onSelect={vi.fn()}
         searchQuery="zzz"
         onSearchChange={vi.fn()}
@@ -160,7 +160,7 @@ describe('Sidebar (search input)', () => {
     const onSearchChange = vi.fn();
     render(
       <Sidebar
-        activeSlug="01-getting-started"
+        activeSlug="01-what-is-tuxlink"
         onSelect={vi.fn()}
         searchQuery="ardop"
         onSearchChange={onSearchChange}
@@ -179,7 +179,7 @@ describe('Sidebar (search input)', () => {
     ];
     render(
       <Sidebar
-        activeSlug="01-getting-started"
+        activeSlug="01-what-is-tuxlink"
         onSelect={onSelect}
         searchQuery="ardop"
         onSearchChange={vi.fn()}

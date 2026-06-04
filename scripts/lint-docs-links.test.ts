@@ -87,4 +87,15 @@ describe('lintMarkdownLinks', () => {
     });
     expect(result.errors).toEqual([]);
   });
+
+  it('accepts a bare .md ref to a topic with digits in the slug', () => {
+    const result = lintMarkdownLinks({
+      files: {
+        'docs/user-guide/06-the-b2f-protocol.md': '# B2F',
+        'docs/user-guide/14-packet-on-ax25.md': '# Packet',
+        'docs/user-guide/01-foo.md': 'See [B2F](06-the-b2f-protocol.md) and [Packet](14-packet-on-ax25.md).',
+      },
+    });
+    expect(result.errors).toEqual([]);
+  });
 });

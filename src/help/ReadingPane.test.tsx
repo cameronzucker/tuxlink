@@ -76,6 +76,21 @@ describe('extended link interceptor', () => {
     expect(onNavigate).not.toHaveBeenCalled();
   });
 
+  it('intercepts .md links whose slug contains digits', () => {
+    const onNavigate = vi.fn();
+    const topic = makeTopic(
+      '01-intro',
+      '# Intro\n\nSee [B2F](06-the-b2f-protocol.md) for details.',
+    );
+    const { container } = render(<ReadingPane topic={topic} onNavigate={onNavigate} />);
+
+    const mdLink = container.querySelector('a[href="06-the-b2f-protocol.md"]');
+    expect(mdLink, 'expected a digit-bearing .md link in the rendered topic').not.toBeNull();
+    fireEvent.click(mdLink!);
+
+    expect(onNavigate).toHaveBeenCalledWith('06-the-b2f-protocol');
+  });
+
   it('navigates to slug + schedules scroll to anchor on combined link', () => {
     const onNavigate = vi.fn();
     // Spy on requestAnimationFrame so we can flush it synchronously.

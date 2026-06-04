@@ -28,7 +28,7 @@ interface LinterResult {
 
 const LINK_RE = /\[[^\]]*\]\(([^)]+)\)/g;
 const HEADING_RE = /^#+\s+(.+)$/gm;
-const MD_REF_RE = /^(?:.*\/)?(\d{2}-[a-z-]+)\.md(?:#([\w-]+))?$/;
+const MD_REF_RE = /^(?:.*\/)?(\d{2}-[a-z0-9-]+)\.md(?:#([\w-]+))?$/;
 const ANCHOR_ONLY_RE = /^#([\w-]+)$/;
 const OUT_OF_BUNDLE_RE = /^(?:\.\.\/|\/)/;
 const HTTP_RE = /^https?:\/\//;
@@ -58,7 +58,7 @@ export function lintMarkdownLinks(input: LinterInput): LinterResult {
   for (const [path, content] of Object.entries(input.files)) {
     anchorsByFile.set(path, extractAnchorsForFile(content));
     const fname = path.split('/').pop() || '';
-    const slugMatch = fname.match(/^(\d{2}-[a-z-]+)\.md$/);
+    const slugMatch = fname.match(/^(\d{2}-[a-z0-9-]+)\.md$/);
     if (slugMatch) topicSlugs.add(slugMatch[1]);
   }
 

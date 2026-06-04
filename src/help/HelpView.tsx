@@ -11,7 +11,7 @@ import { useHelpTheme } from './useHelpTheme';
 import { useHelpSearch } from './useHelpSearch';
 import './HelpView.css';
 
-const DEFAULT_SLUG = '01-getting-started';
+const DEFAULT_SLUG = '01-what-is-tuxlink';
 
 /**
  * HelpView — root component mounted at /help in a separate Tauri webview

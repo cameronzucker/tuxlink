@@ -10,6 +10,10 @@ on:
       - main
     paths:
       - 'src-tauri/**'
+      - 'src/**'
+      - 'scripts/**'
+      - 'docs/user-guide/**'
+      - 'scripts/lint-docs-links.ts'
       - 'package.json'
       - 'pnpm-lock.yaml'
       - '.github/workflows/release.yml'
