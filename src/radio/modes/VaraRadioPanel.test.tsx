@@ -302,4 +302,36 @@ describe('<VaraRadioPanel>', () => {
       });
     });
   });
+
+  // tuxlink-tccc: the Listen-section arm button must NOT show the in-flight
+  // "Arming…" label when the only reason it's disabled is the transport-not-
+  // Open precondition. The PR #348 shipping version conflated the two by
+  // passing busy={varaListener.busy || !isOpen}; ListenArmButton's label
+  // branches on busy alone, so the button perpetually read "Arming…" on
+  // mount despite no arm call ever firing.
+  it('shows "Arm listener" (not "Arming…") on mount when VARA transport is Closed', async () => {
+    // Default mock: vara_status returns closedStatus → status.state === "closed"
+    // → isOpen === false. Pre-fix: button label was "Arming…". Post-fix: the
+    // precondition gates `disabled`, not `busy`, so the label stays steady.
+    render(<VaraRadioPanel mode={HF_MODE} onClose={() => {}} />);
+    const armBtn = await waitFor(
+      () => screen.getByTestId('vara-listen-arm-btn') as HTMLButtonElement,
+    );
+    expect(armBtn.textContent).toBe('Arm listener');
+    expect(armBtn.disabled).toBe(true);
+  });
+
+  it('shows "Arm listener" enabled once the VARA transport is Open', async () => {
+    const core = await import('@tauri-apps/api/core');
+    (core.invoke as ReturnType<typeof vi.fn>).mockImplementation(
+      makeInvoke({ vara_status: openStatus }),
+    );
+    render(<VaraRadioPanel mode={HF_MODE} onClose={() => {}} />);
+    const armBtn = await waitFor(() => {
+      const b = screen.getByTestId('vara-listen-arm-btn') as HTMLButtonElement;
+      expect(b.disabled).toBe(false);
+      return b;
+    });
+    expect(armBtn.textContent).toBe('Arm listener');
+  });
 });
