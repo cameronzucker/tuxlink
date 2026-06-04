@@ -25,7 +25,8 @@ increments.
 
 In the folder sidebar, click the **Telnet** connection entry. The reading
 pane swaps from the compose draft view to the Telnet connection panel —
-status, host, and a small session log placeholder.
+status, host, and a session log area that fills with line-by-line progress
+once Connect runs.
 
 If the Telnet entry is missing, the wizard's CMS step was skipped. Open
 **Tools → Settings → Connection** and enter the published CMS Telnet
