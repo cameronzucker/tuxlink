@@ -178,6 +178,58 @@ Tuxlink's peer-to-peer flow uses the same VARA radio panel — the operator
 enters the partner station's callsign instead of an RMS callsign, and the
 session log identifies the connection as peer-to-peer.
 
+## VARA FM — the FM counterpart
+
+This topic is HF-focused, but tuxlink also supports **VARA FM** — the
+VHF / UHF FM-band variant. VARA FM uses the same TCP command + data
+protocol as VARA HF, which is why tuxlink's single Vara radio panel
+handles both modes. The operator chooses by pointing tuxlink at the
+appropriate VARA instance.
+
+What is different about VARA FM:
+
+| Property | VARA HF | VARA FM |
+|---|---|---|
+| RF band | HF SSB | VHF / UHF FM |
+| Bandwidth | 500 / 2300 / 2750 Hz tiers | Single tier, ~6800 Hz |
+| Licensing tier model | Standard (free) + Tactical (paid) | One mode, no on-wire tier negotiation |
+| Audio chain | USB / USB-D, clean 2700 Hz bandwidth, AGC off | FM repeater audio (wider, less critical to calibrate) |
+| Use cases | Long-distance HF emcomm + ham mail | Local emcomm faster than 1200-baud Packet on the same VHF chain |
+
+What is the same:
+
+- The TCP socket pair (`command` + `data` ports). Operators
+  conventionally run VARA FM on different ports than VARA HF (commonly
+  `8400/8401` vs the VARA HF default of `8300/8301`) so both binaries
+  can coexist on one host. The wire protocol on the ports is the same.
+- The B2F application layer runs over the data port unchanged.
+- The Wine-on-Linux constraint applies to both binaries (Pi 5
+  16k-page-kernel block included).
+- The licensing tier setting in VARA HF (paid Tactical) does not apply
+  to VARA FM; VARA FM is shipped as a single-tier free download from
+  the EA5HVK site at time of writing.
+
+The tuxlink radio panel's **Bandwidth** dropdown lists the HF presets
+(500, 2300, 2750). For VARA FM, the operator selects **Auto (VARA
+default)** — the panel does not currently surface a `6800 Hz` preset
+explicitly, but VARA FM's binary defaults to the right bandwidth on its
+own. The Auto setting means "don't send a `BW` command on session
+start, let VARA use whatever is configured in its GUI."
+
+Operationally, VARA FM is the mode of choice when:
+
+- A 1200-baud Packet gateway is the only Winlink option locally, and
+  the operator wants higher throughput on the same VHF chain.
+- The local repeater system happens to have a VARA FM RMS riding it
+  (this varies dramatically by region).
+- Local emcomm nets have standardized on VARA FM for higher-payload
+  exchanges than packet supports.
+
+Coverage is regional. Some areas have several VARA FM gateways; many
+areas have none. The catalog (see [topic 23](23-catalog-requests.md))
+identifies gateways by mode — `vara-fm` rows in the catalog are the
+ones to look for.
+
 ## Common failure modes
 
 | Symptom | Cause |
