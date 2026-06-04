@@ -4,11 +4,12 @@
   "version": "0.0.1",
   "type": "module",
   "scripts": {
-    "dev": "vite",
     "build": "tsc && vite build",
+    "dev": "vite",
+    "dev:converged": "bash scripts/converge-build.sh",
+    "lint:docs": "tsx scripts/lint-docs-links.ts",
     "preview": "vite preview",
-    "tauri": "tauri",
-    "dev:converged": "bash scripts/converge-build.sh"
+    "tauri": "tauri"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.0",
@@ -37,6 +38,7 @@
     "@vitejs/plugin-react": "^4.3.0",
     "@vitest/coverage-v8": "^2.1.9",
     "jsdom": "^29.1.1",
+    "tsx": "^4.22.4",
     "typescript": "^6.0.3",
     "vite": "^5.3.0",
     "vitest": "^2.1.9"
