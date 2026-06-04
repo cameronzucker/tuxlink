@@ -111,8 +111,19 @@ The shipped surface area as of the latest pre-alpha build:
   the transport over its command + data sockets.
 - **VARA TCP transport** (early: backend codec + smoke probe ship; UI
   integration remains in flight).
-- **HTML Forms.** Position report, ICS-213, ICS-309, Bulletin, Damage
-  Assessment compose + render. Catalog refresh path in progress.
+- **HTML Forms — full WLE catalog.** The complete Winlink Express
+  Standard Forms snapshot (251 templates, version 1.1.20.0) ships
+  bundled. Compose and view any form in the catalog through a
+  hierarchical CatalogBrowser; native React composers cover the
+  highest-volume forms (ICS-213, Bulletin), with the long tail
+  rendered via tuxlink-skinned child webviews. Received form-tagged
+  messages render their `*_Viewer.html` template inline. **Custom
+  forms**: drop a `.html` file into
+  `~/.local/share/tuxlink/forms/custom/` and it appears in the
+  CatalogBrowser on next launch — useful for club-specific forms or
+  WLE templates released after the bundled snapshot. Catalog
+  freshness (in-app refresh from winlink.org) + hot-reload of the
+  custom-forms directory are in progress.
 - **Compose.** New message / Reply / Reply All / Forward; Cc carried
   end-to-end via the native B2F path; drafts auto-save to a local
   store keyed by stable draft id; form-based composition shares the

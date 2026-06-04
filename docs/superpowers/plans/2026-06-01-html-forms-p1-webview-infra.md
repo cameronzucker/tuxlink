@@ -1714,30 +1714,15 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 
 Spec §6 P1 says "Custom-forms directory enumeration (`~/.local/share/tuxlink/forms/custom/` default; operator-overridable)". The first half (default location) lands here; the operator-overridable part is P3 alongside the catalog updater.
 
-- [ ] **Step 1: Verify `custom_root_for_app` resolves to the documented path.**
+- [x] **Step 1: Verify `custom_root_for_app` resolves to the documented path.**
 
-```bash
-# Integration test: run the binary briefly with TUXLINK_DATA_DIR pointed at a
-# tempdir and verify custom_root_for_app returns <tempdir>/tuxlink/forms/custom
-```
+Reviewed `src-tauri/src/forms/wle_templates.rs:126-132`: `custom_root_for_app(app)` returns `app.path().data_dir().join("tuxlink/forms/custom")` (Tauri's `data_dir()` resolves to `$XDG_DATA_HOME` or `~/.local/share` on Linux per XDG basedir spec). Existing `wle_templates::list` tests in `wle_templates.rs::tests` exercise the bundle+custom enumeration path. Integration with a real Tauri runtime falls under the operator browser-smoke gate in Task 13.
 
-- [ ] **Step 2: Document the path in `README.md`.**
+- [x] **Step 2: Document the path in `README.md` AND in `docs/user-guide/20-html-forms.md`.**
 
-```markdown
-## Custom HTML Forms
+README.md "Current features" section rewritten to describe the full WLE catalog (251 templates v1.1.20.0) + native and webview compose paths + custom-forms drop-in directory. User-guide forms page rewritten to reflect post-P1 capability: catalog scope, hierarchical CatalogBrowser, native + webview compose flows, custom-forms workflow with the `~/.local/share/tuxlink/forms/custom/` path called out, receive-side viewer with KeyValueView fallback.
 
-tuxlink reads custom HTML form templates from
-`~/.local/share/tuxlink/forms/custom/`. Drop a `*.html` file there; it
-appears in the CatalogBrowser as a Custom-folder entry on next launch
-(P1) or live (P3, planned).
-```
-
-- [ ] **Step 3: Commit.**
-
-```bash
-git add README.md
-git commit -m "docs: custom HTML forms drop-dir documentation (P1)"
-```
+- [x] **Step 3: Commit.** Landed under the alpha-forms umbrella on `bd-tuxlink-tzr5/forms-alpha-p1-frontend`.
 
 ---
 

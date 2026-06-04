@@ -2,43 +2,83 @@
 
 Winlink forms are HTML templates that capture structured fields and pack
 them into a B2F message body. The receiving client renders the same form
-to present the fields cleanly. Tuxlink bundles a working subset and is
-extending coverage; the design target is parity with Winlink Express.
+to present the fields cleanly. Tuxlink ships the entire Winlink Express
+Standard Forms catalog bundled in the binary; full WLE parity for compose
++ view is the design target.
 
-## Bundled forms
+## What's available
 
-The following forms have working compose + read paths in this build:
+The bundled snapshot is **Winlink Express Standard Forms version 1.1.20.0**
+(April 2026), 251 templates across 25 categories — ICS series, ARC, MARS,
+RACES, weather, search-and-rescue, hazmat, medical, RRI/Radiogram, and
+state-specific forms. Custom forms dropped into the operator's
+custom-forms directory appear alongside the bundle.
 
-- **Position report.** Coordinates from the configured grid or live GPS,
-  reduced to the operator's broadcast precision. Includes time, comments.
-- **ICS-213 general message.** The standard incident-command message
-  form; severity, to/from offices, subject, body.
-- **ICS-309 communications log.** A summary of session traffic.
-- **Bulletin.** Net-style broadcast to a callsign list.
-- **Damage assessment.** A short structured damage report.
+Two compose paths exist:
+
+- **Native compose** for the highest-volume forms: ICS-213 and Bulletin
+  render through dedicated React components, with form-validation and
+  the tuxlink theme applied directly. Position Report, ICS-309 Comms Log,
+  and Winlink Check-In are scheduled to move to native compose with
+  GPS auto-fill, message-aggregation, and save-slot features in a
+  follow-up phase.
+- **Webview compose** for every other catalog template: the WLE HTML
+  loads inside a tuxlink-skinned child webview embedded in the Compose
+  window. The form's native Submit button posts to a per-form loopback
+  HTTP server, the parsed submission is converted to a B2F XML
+  attachment, and the message goes out the same native B2F pipeline as
+  every other form.
+
+The on-air wire format is the same B2F envelope whether the form was
+composed natively in Tuxlink, in Winlink Express, or in Pat — receivers
+see the form rendered identically.
 
 ## Reading received forms
 
 A form-tagged message in the message list shows a colored form indicator.
 Selecting the message opens the reading pane with the form rendered
-inline: every field surfaces with its value alongside the raw body.
+inline:
+
+- Forms with a native React viewer (ICS-213, ICS-309, Bulletin, Position,
+  Damage Assessment) render through the dedicated component.
+- Every other form-tagged message renders its WLE `_Viewer.html` template
+  inside a tuxlink-skinned child webview with the received field values
+  pre-bound. The viewer is read-only.
+- If the `_Viewer.html` template is missing (e.g., a custom form that
+  doesn't ship a viewer), the reading pane falls back to a flat
+  field/value listing alongside the raw body.
 
 ## Composing a form
 
-Open Compose, click the **Forms** picker, choose a form. The compose
-window swaps the freeform body for the form's field set. Fill the
-required fields, optionally add free body text, and Send. The B2F payload
-on-air is the same shape whether composed in Tuxlink, Winlink Express, or
-Pat.
+Open Compose, click the **Forms** picker. The CatalogBrowser opens with
+a hierarchical folder tree (alphabetical, with the operator's Custom
+folder pinned last) plus a flat-search input that filters across folders
+by substring. Pick a form; the Compose body swaps to the form's field
+set (native or webview depending on the form). Fill the required fields,
+optionally add free body text, and Send.
 
-## Forms not in this build
+Escape closes the picker; the search input auto-focuses on open.
 
-Coverage is incremental. Forms in the catalog that this build does not
-yet render get a "form not available" notice with a pointer to the raw
-body (the operator can still read the underlying text).
+## Custom forms
 
-The full-parity work is tracked in the project's HTML Forms epic
-(`docs/superpowers/specs/2026-05-31-html-forms-full-parity-design.md`).
+Drop a Winlink Express-shaped HTML form template into
+
+```
+~/.local/share/tuxlink/forms/custom/
+```
+
+and it appears in the CatalogBrowser's **Custom** folder on the next
+tuxlink launch. The form composes through the webview path; submissions
+build a `RMS_Express_Form_<id>.xml` attachment using WLE filename
+conventions for `display_form` (`<id>_Viewer.html`) and `reply_template`
+(`<id>_SendReply.0`). If a corresponding `<id>_Viewer.html` ships
+alongside the form, received messages of that type render the viewer;
+otherwise the receive-side falls back to the key/value listing.
+
+Use cases: club-specific incident forms, WLE templates published after
+the bundled snapshot, or short-lived ad-hoc forms for an exercise. The
+operator-overridable custom-forms directory (a Settings UI) and live
+hot-reload of the directory are tracked as Phase 3 polish.
 
 ## Catalog request (WLE inquiry)
 
