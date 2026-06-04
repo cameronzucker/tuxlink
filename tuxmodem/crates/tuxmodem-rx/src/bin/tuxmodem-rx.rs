@@ -12,7 +12,8 @@ use std::time::Duration;
 use tuxmodem_phy::audio_device::{list_input_devices, AudioInput, RecordOutcome};
 
 use tuxmodem_rx::{
-    compute_ber, decode_one_symbol, read_wav, record_to_wav, resolve_expected, Args, Mode,
+    compute_ber, decode_one_symbol_with_offset, read_wav, record_to_wav, resolve_expected,
+    Args, FrameMode, Mode,
 };
 
 fn main() -> ExitCode {
@@ -52,7 +53,7 @@ fn run(args: Args) -> Result<(), String> {
     }
     if let Some(path) = args.decode_wav.as_deref() {
         let mode = parse_mode(&args)?;
-        return run_decode_wav(path, mode, args.expected.as_deref());
+        return run_decode_wav(path, mode, args.frame_mode, args.expected.as_deref());
     }
     if let Some(path) = args.record_wav.as_deref() {
         // validate() already enforced these are present
@@ -95,6 +96,7 @@ fn run_list_devices() -> Result<(), String> {
 fn run_decode_wav(
     path: &std::path::Path,
     mode: Mode,
+    frame_mode: FrameMode,
     expected: Option<&str>,
 ) -> Result<(), String> {
     let buffer = read_wav(path).map_err(|e| e.to_string())?;
@@ -106,12 +108,17 @@ fn run_decode_wav(
     );
     let needed = mode.symbol_size_samples();
     println!(
-        "decoding under mode {} (one symbol = {} samples)",
+        "decoding under mode {} (one symbol = {} samples, frame-mode: {})",
         mode.short_name(),
-        needed
+        needed,
+        frame_mode.short_name(),
     );
-    let decoded =
-        decode_one_symbol(mode, buffer.samples()).map_err(|e| e.to_string())?;
+    let (start, decoded) =
+        decode_one_symbol_with_offset(mode, buffer.samples(), frame_mode)
+            .map_err(|e| e.to_string())?;
+    if let Some(s) = start {
+        println!("  preamble detected at sample {s}");
+    }
     println!("decoded {} byte(s):", decoded.len());
     println!("  hex:  {}", hex(&decoded));
     println!("  text: {}", lossy_utf8(&decoded));

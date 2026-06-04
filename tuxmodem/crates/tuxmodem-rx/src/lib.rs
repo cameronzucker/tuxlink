@@ -96,6 +96,45 @@ impl Mode {
     }
 }
 
+/// Frame format selection. Mirrors `tuxmodem-tx`'s `FrameMode` —
+/// `Raw` decodes a bare OFDM symbol from the FIRST symbol_size samples
+/// of the input; `Sync` scans for the Zadoff-Chu preamble and decodes
+/// the symbol that follows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum FrameMode {
+    /// Bare OFDM symbol. The v0.0.1 wire format — operator must trim
+    /// the WAV manually to the symbol of interest.
+    #[default]
+    Raw,
+    /// Preamble + OFDM symbol. The receiver finds the preamble in the
+    /// input and decodes the symbol that follows; arbitrary-length
+    /// captures work without manual trimming. Pairs with
+    /// `tuxmodem-tx --frame-mode sync`.
+    Sync,
+}
+
+impl FrameMode {
+    /// Parse a `--frame-mode` argument value.
+    pub fn parse(name: &str) -> Result<Self, RxError> {
+        match name {
+            "raw" => Ok(Self::Raw),
+            "sync" => Ok(Self::Sync),
+            other => Err(RxError::UnknownFrameMode {
+                name: other.to_string(),
+            }),
+        }
+    }
+
+    /// Stable kebab-case identifier (matches what `FrameMode::parse`
+    /// accepts).
+    pub fn short_name(&self) -> &'static str {
+        match self {
+            Self::Raw => "raw",
+            Self::Sync => "sync",
+        }
+    }
+}
+
 // ─── Expected-payload resolution (mirrors tuxmodem-tx::resolve_payload) ──
 
 /// Resolve an `--expected` argument value to its byte sequence. Same
@@ -115,22 +154,65 @@ pub fn resolve_expected(arg: &str) -> Result<Vec<u8>, RxError> {
 
 // ─── Decoding ───────────────────────────────────────────────────────
 
-/// Demodulate one symbol's worth of samples into a byte payload. Takes
-/// the FIRST `mode.symbol_size_samples()` of the input; errors if the
-/// input is shorter than that.
-pub fn decode_one_symbol(mode: Mode, samples: &[f32]) -> Result<Vec<u8>, RxError> {
-    let needed = mode.symbol_size_samples();
-    if samples.len() < needed {
-        return Err(RxError::InsufficientSamples {
-            got: samples.len(),
-            needed,
-        });
+/// Demodulate one symbol's worth of samples into a byte payload.
+///
+/// For [`FrameMode::Raw`]: takes the FIRST `mode.symbol_size_samples()`
+/// of the input; errors with [`RxError::InsufficientSamples`] if the
+/// input is shorter than that. v0.0.1 behavior — requires manual
+/// trimming of arbitrary-length captures.
+///
+/// For [`FrameMode::Sync`]: scans for the Zadoff-Chu preamble via
+/// [`WidebandLowDensityFloor::receive_with_sync`] and decodes the
+/// symbol that follows; errors with [`RxError::Phy`] (wrapping
+/// `PhyError::FrameDetect`) if the preamble can't be found or the
+/// symbol is truncated.
+pub fn decode_one_symbol(
+    mode: Mode,
+    samples: &[f32],
+    frame_mode: FrameMode,
+) -> Result<Vec<u8>, RxError> {
+    match (mode, frame_mode) {
+        (Mode::WideFloor, FrameMode::Raw) => {
+            let needed = mode.symbol_size_samples();
+            if samples.len() < needed {
+                return Err(RxError::InsufficientSamples {
+                    got: samples.len(),
+                    needed,
+                });
+            }
+            let slice = &samples[..needed];
+            WidebandLowDensityFloor::new()
+                .receive(slice)
+                .map_err(RxError::Phy)
+        }
+        (Mode::WideFloor, FrameMode::Sync) => {
+            let (_start, bytes) = WidebandLowDensityFloor::new()
+                .receive_with_sync(samples)
+                .map_err(RxError::Phy)?;
+            Ok(bytes)
+        }
     }
-    let slice = &samples[..needed];
-    match mode {
-        Mode::WideFloor => WidebandLowDensityFloor::new()
-            .receive(slice)
-            .map_err(RxError::Phy),
+}
+
+/// Like [`decode_one_symbol`] but also returns the sample index where
+/// the preamble was detected (for `FrameMode::Sync` only). Returns
+/// `None` for the start index in `FrameMode::Raw`.
+pub fn decode_one_symbol_with_offset(
+    mode: Mode,
+    samples: &[f32],
+    frame_mode: FrameMode,
+) -> Result<(Option<usize>, Vec<u8>), RxError> {
+    match (mode, frame_mode) {
+        (Mode::WideFloor, FrameMode::Raw) => {
+            let bytes = decode_one_symbol(mode, samples, frame_mode)?;
+            Ok((None, bytes))
+        }
+        (Mode::WideFloor, FrameMode::Sync) => {
+            let (start, bytes) = WidebandLowDensityFloor::new()
+                .receive_with_sync(samples)
+                .map_err(RxError::Phy)?;
+            Ok((Some(start), bytes))
+        }
     }
 }
 
@@ -224,6 +306,12 @@ pub enum RxError {
         /// The unrecognized name.
         name: String,
     },
+    /// `--frame-mode <name>` referenced a name not in the catalogue.
+    #[error("unknown frame mode: {name} (try `raw` or `sync`)")]
+    UnknownFrameMode {
+        /// The unrecognized name.
+        name: String,
+    },
     /// `--expected @<path>` couldn't read the file.
     #[error("expected file {path:?} could not be read: {io_error}")]
     ExpectedFileRead {
@@ -266,6 +354,9 @@ pub struct Args {
     pub duration_secs: Option<u32>,
     /// Optional `--expected <ARG>` for BER reporting on `--decode-wav`.
     pub expected: Option<String>,
+    /// Frame format. `Raw` (default) decodes the first symbol-sized
+    /// window; `Sync` finds the preamble in arbitrary-length captures.
+    pub frame_mode: FrameMode,
     /// `--help` flag.
     pub help: bool,
 }
@@ -281,6 +372,7 @@ impl Args {
             device: None,
             duration_secs: None,
             expected: None,
+            frame_mode: FrameMode::Raw,
             help: false,
         };
         let mut iter = argv.iter().peekable();
@@ -305,6 +397,12 @@ impl Args {
                             .ok_or_else(|| "--mode requires a value".to_string())?
                             .clone(),
                     );
+                }
+                "--frame-mode" => {
+                    let v = iter
+                        .next()
+                        .ok_or_else(|| "--frame-mode requires a value (raw|sync)".to_string())?;
+                    a.frame_mode = FrameMode::parse(v).map_err(|e| e.to_string())?;
                 }
                 "--device" | "-d" => {
                     a.device = Some(
@@ -441,7 +539,7 @@ mod tests {
         // hardware, no WAV file, no audio device — purely lib-level.
         let payload = b"HELLO";
         let samples = WidebandLowDensityFloor::new().transmit(payload).unwrap();
-        let decoded = decode_one_symbol(Mode::WideFloor, &samples).unwrap();
+        let decoded = decode_one_symbol(Mode::WideFloor, &samples, FrameMode::Raw).unwrap();
         assert_eq!(decoded, payload);
     }
 
@@ -452,7 +550,7 @@ mod tests {
         // trailing zeros).
         let payload = b"ABCDEFGHI";
         let samples = WidebandLowDensityFloor::new().transmit(payload).unwrap();
-        let decoded = decode_one_symbol(Mode::WideFloor, &samples).unwrap();
+        let decoded = decode_one_symbol(Mode::WideFloor, &samples, FrameMode::Raw).unwrap();
         // The decoder trims trailing zeros so payloads ending in 0x00
         // would round-trip lossy; our ASCII payload has no NULs so
         // it round-trips clean.
@@ -462,7 +560,7 @@ mod tests {
     #[test]
     fn decode_insufficient_samples_errors() {
         let too_short = vec![0.0_f32; 10];
-        let err = decode_one_symbol(Mode::WideFloor, &too_short).unwrap_err();
+        let err = decode_one_symbol(Mode::WideFloor, &too_short, FrameMode::Raw).unwrap_err();
         assert!(matches!(err, RxError::InsufficientSamples { .. }));
     }
 
@@ -473,7 +571,7 @@ mod tests {
         let payload = b"hi";
         let mut samples = WidebandLowDensityFloor::new().transmit(payload).unwrap();
         samples.extend(std::iter::repeat(0.5_f32).take(10_000));
-        let decoded = decode_one_symbol(Mode::WideFloor, &samples).unwrap();
+        let decoded = decode_one_symbol(Mode::WideFloor, &samples, FrameMode::Raw).unwrap();
         assert_eq!(decoded, payload);
     }
 
@@ -492,7 +590,7 @@ mod tests {
         buf.write_wav(&path).unwrap();
         let read_back = read_wav(&path).unwrap();
         let _ = std::fs::remove_file(&path);
-        let decoded = decode_one_symbol(Mode::WideFloor, read_back.samples()).unwrap();
+        let decoded = decode_one_symbol(Mode::WideFloor, read_back.samples(), FrameMode::Raw).unwrap();
         assert_eq!(decoded, payload);
     }
 
@@ -620,5 +718,164 @@ mod tests {
     fn args_parse_rejects_non_numeric_duration() {
         let err = Args::parse(&s(&["--duration", "forever"])).unwrap_err();
         assert!(err.contains("--duration"));
+    }
+
+    // ─── FrameMode (Phase 12 slice 2, tuxlink-fxmc) ─────────────────
+
+    #[test]
+    fn frame_mode_default_is_raw() {
+        assert_eq!(FrameMode::default(), FrameMode::Raw);
+    }
+
+    #[test]
+    fn frame_mode_parse_accepts_raw_and_sync() {
+        assert_eq!(FrameMode::parse("raw").unwrap(), FrameMode::Raw);
+        assert_eq!(FrameMode::parse("sync").unwrap(), FrameMode::Sync);
+    }
+
+    #[test]
+    fn frame_mode_parse_rejects_unknown() {
+        let err = FrameMode::parse("upside-down").unwrap_err();
+        assert!(matches!(err, RxError::UnknownFrameMode { .. }));
+    }
+
+    #[test]
+    fn frame_mode_short_name_round_trips() {
+        for m in [FrameMode::Raw, FrameMode::Sync] {
+            assert_eq!(FrameMode::parse(m.short_name()).unwrap(), m);
+        }
+    }
+
+    #[test]
+    fn decode_sync_roundtrip_via_transmit_with_preamble() {
+        // The headline sync-side acceptance test: tuxmodem-phy's
+        // transmit_with_preamble produces preamble + symbol; we decode
+        // it via sync mode and recover the payload.
+        let payload = b"HELLO";
+        let samples = WidebandLowDensityFloor::new()
+            .transmit_with_preamble(payload)
+            .unwrap();
+        let decoded =
+            decode_one_symbol(Mode::WideFloor, &samples, FrameMode::Sync).unwrap();
+        assert_eq!(decoded, payload);
+    }
+
+    #[test]
+    fn decode_sync_handles_leading_silence() {
+        // The operational reason --frame-mode sync exists: arbitrary-
+        // length captures (e.g. an off-air WAV with silence before the
+        // signal) decode without manual trimming.
+        let payload = b"OFFSET";
+        let core = WidebandLowDensityFloor::new()
+            .transmit_with_preamble(payload)
+            .unwrap();
+        let mut samples = vec![0.0_f32; 1000];
+        samples.extend_from_slice(&core);
+        let decoded =
+            decode_one_symbol(Mode::WideFloor, &samples, FrameMode::Sync).unwrap();
+        assert_eq!(decoded, payload);
+    }
+
+    #[test]
+    fn decode_sync_with_offset_reports_start_sample() {
+        // decode_one_symbol_with_offset returns Some(start) in sync mode.
+        let payload = b"HELLO";
+        let core = WidebandLowDensityFloor::new()
+            .transmit_with_preamble(payload)
+            .unwrap();
+        let mut samples = vec![0.0_f32; 500];
+        samples.extend_from_slice(&core);
+        let (start, decoded) =
+            decode_one_symbol_with_offset(Mode::WideFloor, &samples, FrameMode::Sync).unwrap();
+        assert_eq!(decoded, payload);
+        let start = start.expect("sync mode should return Some(start)");
+        // Detector finds the preamble at sample ~500 (±2).
+        let offset_err = (start as i64 - 500).unsigned_abs() as usize;
+        assert!(
+            offset_err <= 2,
+            "detected start {start} should be within ±2 of expected 500"
+        );
+    }
+
+    #[test]
+    fn decode_sync_returns_phy_error_on_silence() {
+        let silence = vec![0.0_f32; 10_000];
+        let err =
+            decode_one_symbol(Mode::WideFloor, &silence, FrameMode::Sync).unwrap_err();
+        assert!(matches!(err, RxError::Phy(PhyError::FrameDetect(_))));
+    }
+
+    #[test]
+    fn decode_raw_still_returns_insufficient_samples_on_short_input() {
+        // Regression: the raw-mode error path is unchanged from PR #367.
+        let too_short = vec![0.0_f32; 10];
+        let err =
+            decode_one_symbol(Mode::WideFloor, &too_short, FrameMode::Raw).unwrap_err();
+        assert!(matches!(err, RxError::InsufficientSamples { .. }));
+    }
+
+    #[test]
+    fn decode_one_symbol_with_offset_raw_returns_none_start() {
+        // In raw mode the start sample concept doesn't apply; we
+        // return None.
+        let payload = b"hi";
+        let samples = WidebandLowDensityFloor::new().transmit(payload).unwrap();
+        let (start, decoded) =
+            decode_one_symbol_with_offset(Mode::WideFloor, &samples, FrameMode::Raw).unwrap();
+        assert_eq!(start, None);
+        assert_eq!(decoded, payload);
+    }
+
+    #[test]
+    fn args_parse_frame_mode_sync() {
+        let a = Args::parse(&s(&[
+            "--decode-wav", "/tmp/in.wav", "--frame-mode", "sync",
+        ]))
+        .unwrap();
+        assert_eq!(a.frame_mode, FrameMode::Sync);
+    }
+
+    #[test]
+    fn args_parse_frame_mode_default_is_raw_when_omitted() {
+        let a = Args::parse(&s(&["--decode-wav", "/tmp/in.wav"])).unwrap();
+        assert_eq!(a.frame_mode, FrameMode::Raw);
+    }
+
+    #[test]
+    fn args_parse_frame_mode_unknown_value_errors() {
+        let err = Args::parse(&s(&["--frame-mode", "interplanetary"])).unwrap_err();
+        assert!(err.contains("frame mode"));
+    }
+
+    #[test]
+    fn args_parse_frame_mode_without_value_errors() {
+        let err = Args::parse(&s(&["--frame-mode"])).unwrap_err();
+        assert!(err.contains("--frame-mode"));
+    }
+
+    #[test]
+    fn end_to_end_sync_roundtrip_via_wav_file() {
+        // End-to-end via WAV file: encode + preamble → write_wav →
+        // read_wav → decode sync → recover. Closes the CLI workflow
+        // story: tx --write-wav --frame-mode sync + rx --decode-wav
+        // --frame-mode sync produces a CLEAN MATCH without manual
+        // trimming.
+        let payload = b"WAVSYNC";
+        let buffer = AudioBuffer::from_samples(
+            WidebandLowDensityFloor::new()
+                .transmit_with_preamble(payload)
+                .unwrap(),
+        );
+        let dir = std::env::temp_dir();
+        let path = dir.join(format!(
+            "tuxmodem-rx-sync-roundtrip-{}.wav",
+            std::process::id()
+        ));
+        buffer.write_wav(&path).unwrap();
+        let read_back = read_wav(&path).unwrap();
+        let _ = std::fs::remove_file(&path);
+        let decoded =
+            decode_one_symbol(Mode::WideFloor, read_back.samples(), FrameMode::Sync).unwrap();
+        assert_eq!(decoded, payload);
     }
 }

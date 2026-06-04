@@ -113,6 +113,49 @@ impl Mode {
     }
 }
 
+/// Frame format selection. `Raw` emits only the OFDM symbol — the
+/// v0.0.1 wire format, used for back-to-back loopback where alignment
+/// is implicit. `Sync` prepends the [`PREAMBLE_LEN_SAMPLES`]-sample
+/// Zadoff-Chu preamble so a receiver can find the symbol in an
+/// arbitrary-length capture (PHY Phase 12 slice 1 / tuxlink-iyl9).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum FrameMode {
+    /// Bare OFDM symbol, no preamble. The v0.0.1 default — preserved
+    /// here so existing tooling stays bit-compatible.
+    #[default]
+    Raw,
+    /// Zadoff-Chu preamble (192 samples / 4 ms @ 48 kHz) prepended to
+    /// the OFDM symbol. The receiver-friendly format; pairs with
+    /// `tuxmodem-rx --frame-mode sync`.
+    Sync,
+}
+
+impl FrameMode {
+    /// Parse a `--frame-mode` argument value.
+    pub fn parse(name: &str) -> Result<Self, TxError> {
+        match name {
+            "raw" => Ok(Self::Raw),
+            "sync" => Ok(Self::Sync),
+            other => Err(TxError::UnknownFrameMode {
+                name: other.to_string(),
+            }),
+        }
+    }
+
+    /// Stable kebab-case identifier (matches what `FrameMode::parse`
+    /// accepts).
+    pub fn short_name(&self) -> &'static str {
+        match self {
+            Self::Raw => "raw",
+            Self::Sync => "sync",
+        }
+    }
+}
+
+/// Sample count of the preamble that `FrameMode::Sync` prepends. Mirrors
+/// [`tuxmodem_phy::robustness_floor::wideband_lowdensity::PREAMBLE_LEN_SAMPLES`].
+pub const PREAMBLE_LEN_SAMPLES: usize = 192;
+
 // ─── Payload resolution ─────────────────────────────────────────────
 
 /// Resolve a `--payload` argument value to its byte sequence. Two
@@ -135,18 +178,32 @@ pub fn resolve_payload(arg: &str) -> Result<Vec<u8>, TxError> {
 
 // ─── Encoding ───────────────────────────────────────────────────────
 
-/// Encode a payload into an [`AudioBuffer`] under the chosen mode.
+/// Encode a payload into an [`AudioBuffer`] under the chosen mode +
+/// frame format.
 ///
-/// For [`Mode::WideFloor`], delegates to
-/// [`WidebandLowDensityFloor::transmit`] and wraps its `Vec<f32>` in
-/// an `AudioBuffer`. Returns [`TxError::Phy`] when the payload exceeds
-/// the mode's per-symbol capacity (currently ~9 bytes at BPSK over
-/// the 74 data sub-carriers of the Wide-mode OFDM grid; multi-symbol
-/// framing arrives in PHY Phase 10).
-pub fn encode_payload(mode: Mode, payload: &[u8]) -> Result<AudioBuffer, TxError> {
-    let samples = match mode {
-        Mode::WideFloor => WidebandLowDensityFloor::new()
-            .transmit(payload)
+/// For [`Mode::WideFloor`]:
+/// - [`FrameMode::Raw`] delegates to [`WidebandLowDensityFloor::transmit`]
+///   (bare OFDM symbol; v0.0.1 wire format).
+/// - [`FrameMode::Sync`] delegates to
+///   [`WidebandLowDensityFloor::transmit_with_preamble`] (preamble +
+///   OFDM symbol; receiver-friendly format).
+///
+/// Returns [`TxError::Phy`] when the payload exceeds the mode's
+/// per-symbol capacity (currently ~9 bytes at BPSK over the 74 data
+/// sub-carriers of the Wide-mode OFDM grid; multi-symbol framing
+/// arrives in PHY Phase 10).
+pub fn encode_payload(
+    mode: Mode,
+    payload: &[u8],
+    frame_mode: FrameMode,
+) -> Result<AudioBuffer, TxError> {
+    let floor = WidebandLowDensityFloor::new();
+    let samples = match (mode, frame_mode) {
+        (Mode::WideFloor, FrameMode::Raw) => {
+            floor.transmit(payload).map_err(TxError::Phy)?
+        }
+        (Mode::WideFloor, FrameMode::Sync) => floor
+            .transmit_with_preamble(payload)
             .map_err(TxError::Phy)?,
     };
     Ok(AudioBuffer::from_samples(samples))
@@ -322,6 +379,12 @@ pub enum TxError {
         /// The unrecognized name.
         name: String,
     },
+    /// `--frame-mode <name>` referenced a name not in the catalogue.
+    #[error("unknown frame mode: {name} (try `raw` or `sync`)")]
+    UnknownFrameMode {
+        /// The unrecognized name.
+        name: String,
+    },
     /// `--payload @<path>` couldn't read the file.
     #[error("payload file {path:?} could not be read: {io_error}")]
     PayloadFileRead {
@@ -371,6 +434,9 @@ pub struct Args {
     /// PTT tty path requested via `--ptt-device`. Required unless
     /// `dry_run` is set.
     pub ptt_device: Option<String>,
+    /// Frame format. `Raw` (default) emits a bare OFDM symbol; `Sync`
+    /// prepends the Zadoff-Chu preamble for receiver-friendly framing.
+    pub frame_mode: FrameMode,
     /// Encode + report ONLY; don't open any device.
     pub dry_run: bool,
     /// Encode + write the waveform to a 48 kHz f32 mono WAV at this
@@ -394,6 +460,7 @@ impl Args {
             payload: None,
             device: None,
             ptt_device: None,
+            frame_mode: FrameMode::Raw,
             dry_run: false,
             write_wav: None,
             max_airtime: None,
@@ -408,6 +475,12 @@ impl Args {
                             .ok_or_else(|| "--mode requires a value".to_string())?
                             .clone(),
                     );
+                }
+                "--frame-mode" => {
+                    let v = iter
+                        .next()
+                        .ok_or_else(|| "--frame-mode requires a value (raw|sync)".to_string())?;
+                    args.frame_mode = FrameMode::parse(v).map_err(|e| e.to_string())?;
                 }
                 "--payload" => {
                     args.payload = Some(
@@ -574,7 +647,7 @@ mod tests {
 
     #[test]
     fn encode_payload_wide_floor_returns_nonzero_buffer() {
-        let buf = encode_payload(Mode::WideFloor, b"hi").unwrap();
+        let buf = encode_payload(Mode::WideFloor, b"hi", FrameMode::Raw).unwrap();
         assert!(buf.samples().len() > 0, "encoder should emit some samples");
     }
 
@@ -583,7 +656,7 @@ mod tests {
         // The wide-floor mode's single-symbol capacity is ~9 bytes
         // (per wideband_lowdensity.rs docstring). 64 bytes is well
         // over.
-        let err = encode_payload(Mode::WideFloor, &[0u8; 64]).unwrap_err();
+        let err = encode_payload(Mode::WideFloor, &[0u8; 64], FrameMode::Raw).unwrap_err();
         assert!(matches!(err, TxError::Phy(PhyError::PayloadTooLarge { .. })));
     }
 
@@ -823,7 +896,7 @@ mod tests {
 
         let payload = b"WAVTEST";
         let mode = Mode::WideFloor;
-        let buffer = encode_payload(mode, payload).unwrap();
+        let buffer = encode_payload(mode, payload, FrameMode::Raw).unwrap();
         let dir = std::env::temp_dir();
         let path = dir.join(format!(
             "tuxmodem-tx-write-wav-test-{}.wav",
@@ -1064,5 +1137,94 @@ mod tests {
         )
         .unwrap();
         assert_eq!(outcome, TxOutcome::Completed);
+    }
+
+    // ─── FrameMode (Phase 12 slice 2, tuxlink-fxmc) ─────────────────
+
+    #[test]
+    fn frame_mode_default_is_raw() {
+        assert_eq!(FrameMode::default(), FrameMode::Raw);
+    }
+
+    #[test]
+    fn frame_mode_parse_accepts_raw_and_sync() {
+        assert_eq!(FrameMode::parse("raw").unwrap(), FrameMode::Raw);
+        assert_eq!(FrameMode::parse("sync").unwrap(), FrameMode::Sync);
+    }
+
+    #[test]
+    fn frame_mode_parse_rejects_unknown() {
+        let err = FrameMode::parse("garbage").unwrap_err();
+        assert!(matches!(err, TxError::UnknownFrameMode { .. }));
+    }
+
+    #[test]
+    fn frame_mode_short_name_round_trips() {
+        for m in [FrameMode::Raw, FrameMode::Sync] {
+            assert_eq!(FrameMode::parse(m.short_name()).unwrap(), m);
+        }
+    }
+
+    #[test]
+    fn encode_payload_sync_is_longer_than_raw_by_preamble_len() {
+        // The headline correctness invariant: sync output = raw output
+        // + PREAMBLE_LEN_SAMPLES extra samples (the preamble) at the front.
+        let raw = encode_payload(Mode::WideFloor, b"hi", FrameMode::Raw).unwrap();
+        let sync = encode_payload(Mode::WideFloor, b"hi", FrameMode::Sync).unwrap();
+        assert_eq!(
+            sync.samples().len(),
+            raw.samples().len() + PREAMBLE_LEN_SAMPLES,
+            "sync should equal raw + {PREAMBLE_LEN_SAMPLES} preamble samples"
+        );
+    }
+
+    #[test]
+    fn encode_payload_sync_preserves_raw_tail() {
+        // The OFDM symbol portion of the sync output should be
+        // bit-identical to the corresponding raw output.
+        let raw = encode_payload(Mode::WideFloor, b"hi", FrameMode::Raw).unwrap();
+        let sync = encode_payload(Mode::WideFloor, b"hi", FrameMode::Sync).unwrap();
+        let sync_tail = &sync.samples()[PREAMBLE_LEN_SAMPLES..];
+        assert_eq!(
+            sync_tail.len(),
+            raw.samples().len(),
+            "tail length should match"
+        );
+        for (i, (&s, &r)) in sync_tail.iter().zip(raw.samples().iter()).enumerate() {
+            assert!(
+                (s - r).abs() < 1e-6,
+                "sync tail sample {i} differs from raw: sync={s}, raw={r}"
+            );
+        }
+    }
+
+    #[test]
+    fn args_parse_frame_mode_sync() {
+        let a = Args::parse(&s(&[
+            "--frame-mode", "sync", "--mode", "wide-floor", "--dry-run", "--payload", "hi",
+        ]))
+        .unwrap();
+        assert_eq!(a.frame_mode, FrameMode::Sync);
+    }
+
+    #[test]
+    fn args_parse_frame_mode_default_is_raw_when_omitted() {
+        let a = Args::parse(&s(&[
+            "--mode", "wide-floor", "--dry-run", "--payload", "hi",
+        ]))
+        .unwrap();
+        assert_eq!(a.frame_mode, FrameMode::Raw);
+    }
+
+    #[test]
+    fn args_parse_frame_mode_unknown_value_errors() {
+        let err = Args::parse(&s(&["--frame-mode", "twelve"])).unwrap_err();
+        assert!(err.contains("frame mode"));
+    }
+
+    #[test]
+    fn args_parse_frame_mode_without_value_errors() {
+        let err = Args::parse(&s(&["--frame-mode"])).unwrap_err();
+        assert!(err.contains("--frame-mode"));
     }
 }
