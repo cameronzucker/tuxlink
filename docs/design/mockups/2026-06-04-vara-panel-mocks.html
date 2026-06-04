@@ -1,0 +1,423 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Tuxlink — VARA + ARDOP panel alpha-polish (WLE-grounded, v2)</title>
+<style>
+:root {
+  --bg: #0d1318; --surface: #141c23; --surface-2: #1a2330; --elevated: #1e2832;
+  --border: #1f2832; --border-strong: #2c3744; --border-soft: #1a2028;
+  --text: #e4ebf2; --text-dim: #94a0ad; --text-faint: #5d6975;
+  --accent: #f59f3c; --accent-2: #ffba6e; --accent-soft: rgba(245, 159, 60, 0.12);
+  --good: #5dd6a0; --good-soft: rgba(93, 214, 160, 0.14);
+  --bad: #ee6b6b; --bad-soft: rgba(238, 107, 107, 0.14);
+  --warn: #ffd166; --info: #6bb8ee;
+  --mono: "JetBrains Mono", "Fira Code", "Source Code Pro", "Ubuntu Mono", Consolas, monospace;
+  --sans: "Inter", "Cantarell", "Ubuntu", "Segoe UI", system-ui, sans-serif;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; background: #060a0e; color: var(--text);
+  font-family: var(--sans); font-size: 14px; line-height: 1.5; -webkit-font-smoothing: antialiased; }
+.page { max-width: 1480px; margin: 0 auto; padding: 28px 24px 80px; }
+h1 { font-size: 22px; font-weight: 600; margin: 0 0 4px; }
+.subtitle { color: var(--text-dim); font-size: 14px; margin: 0 0 22px; }
+
+.legend { background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+  padding: 14px 18px; margin-bottom: 36px; font-size: 13px; }
+.legend h3 { margin: 0 0 8px; font-size: 13px; text-transform: uppercase;
+  letter-spacing: 0.04em; color: var(--text-faint); font-weight: 600; }
+.legend p { margin: 0 0 10px; color: var(--text-dim); }
+.legend strong { color: var(--text); }
+.legend code { font-family: var(--mono); color: var(--accent-2); font-size: 12px; }
+
+.legend table { border-collapse: collapse; margin-top: 6px; font-size: 12px; width: 100%; }
+.legend th { text-align: left; color: var(--text-faint); padding: 4px 10px; font-weight: 600;
+  border-bottom: 1px solid var(--border); text-transform: uppercase; letter-spacing: 0.04em; font-size: 11px; }
+.legend td { padding: 4px 10px; color: var(--text-dim); border-bottom: 1px solid var(--border-soft); vertical-align: top; }
+.legend td strong { color: var(--text); }
+.legend td code { color: var(--accent-2); }
+
+.section { margin-bottom: 56px; }
+.section-header { display: flex; align-items: baseline; gap: 14px; margin-bottom: 18px; padding: 0 4px; }
+.section-letter { font-size: 32px; font-weight: 800; color: var(--accent); letter-spacing: -0.02em; line-height: 1; }
+.section-title { font-size: 18px; font-weight: 600; margin: 0; }
+.section-desc { color: var(--text-dim); font-size: 13px; margin-left: auto; max-width: 760px; text-align: right; }
+
+.row { display: flex; gap: 24px; align-items: flex-start; flex-wrap: wrap; }
+
+.radio-panel { width: 380px; background: var(--surface); border: 1px solid var(--border-strong);
+  border-radius: 10px; overflow: hidden; flex-shrink: 0; }
+.panel-header { padding: 12px 14px 10px; border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; gap: 10px; }
+.panel-title { font-size: 14px; font-weight: 600; flex: 1; }
+.panel-sub { font-family: var(--mono); font-size: 12px; color: var(--text-dim); }
+.panel-state { display: inline-flex; align-items: center; gap: 6px;
+  font-size: 11px; padding: 3px 8px; border-radius: 4px;
+  font-family: var(--mono); text-transform: uppercase; letter-spacing: 0.04em; }
+.panel-state.idle    { background: rgba(148, 160, 173, 0.14); color: var(--text-dim); }
+.panel-state.open    { background: var(--good-soft); color: var(--good); }
+.panel-state.connecting { background: rgba(255, 209, 102, 0.14); color: var(--warn); }
+.panel-state.connected  { background: var(--accent-soft); color: var(--accent); }
+.panel-state.listening  { background: var(--accent-soft); color: var(--accent); }
+.panel-state.error      { background: var(--bad-soft); color: var(--bad); }
+.panel-state .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+
+.intent-pill { font-family: var(--mono); font-size: 10px; padding: 2px 6px; border-radius: 3px;
+  background: var(--surface-2); color: var(--text-dim); border: 1px solid var(--border-strong);
+  text-transform: uppercase; letter-spacing: 0.04em; }
+.intent-pill.cms { color: #6bb8ee; border-color: #2a4a6a; }
+.intent-pill.p2p { color: var(--accent); border-color: rgba(245, 159, 60, 0.4); }
+.intent-pill.radio-only { color: var(--good); border-color: rgba(93, 214, 160, 0.4); }
+
+.sec { padding: 12px 14px; border-bottom: 1px solid var(--border-soft); }
+.sec:last-child { border-bottom: none; }
+.sec h5 { margin: 0 0 8px; font-size: 11px; text-transform: uppercase;
+  letter-spacing: 0.06em; color: var(--text-faint); font-weight: 600; }
+.row-input { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+.row-input > span { font-size: 12px; color: var(--text-dim); width: 90px; flex-shrink: 0; }
+.input, .select { background: var(--bg); border: 1px solid var(--border-strong);
+  color: var(--text); padding: 5px 8px; border-radius: 4px; font-family: var(--mono);
+  font-size: 12px; flex: 1; min-width: 0; }
+.input::placeholder { color: var(--text-faint); }
+.input.callsign { text-transform: uppercase; }
+
+.btn { padding: 6px 14px; border-radius: 4px; border: none; cursor: pointer;
+  font-size: 13px; font-weight: 500; font-family: var(--sans); }
+.btn-primary { background: var(--accent); color: #0a0d10; }
+.btn-primary:hover { background: var(--accent-2); }
+.btn-bad { background: var(--bad); color: #fff; }
+.btn-ghost { background: transparent; border: 1px solid var(--border-strong); color: var(--text-dim); }
+.btn-ghost:hover { border-color: var(--accent); color: var(--accent); }
+.btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.btn-row { display: flex; gap: 8px; align-items: center; margin-top: 8px; flex-wrap: wrap; }
+
+.help { font-size: 11px; color: var(--text-faint); margin: 6px 0 0; line-height: 1.4; }
+
+.listen-status { display: inline-flex; align-items: center; gap: 6px; font-family: var(--mono);
+  font-size: 11px; padding: 3px 8px; border-radius: 4px; letter-spacing: 0.04em; }
+.listen-status.armed { background: var(--accent-soft); color: var(--accent); text-transform: uppercase; }
+.listen-status.disarmed { background: rgba(148, 160, 173, 0.12); color: var(--text-faint); }
+
+.chip { display: inline-flex; align-items: center; gap: 4px; padding: 3px 8px;
+  background: var(--surface-2); border: 1px solid var(--border-strong); border-radius: 12px;
+  font-family: var(--mono); font-size: 11px; }
+.chip .x { color: var(--text-faint); cursor: pointer; margin-left: 2px; font-size: 13px; line-height: 1; }
+.chip-row { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 4px; }
+.chip-add { color: var(--text-faint); cursor: pointer; border-style: dashed; }
+
+.expander { border-top: 1px solid var(--border-soft); margin-top: 8px; padding-top: 8px; }
+.expander.sec { padding: 12px 14px; }
+.expander-summary { display: flex; cursor: pointer; align-items: center; font-size: 12px; color: var(--text-dim);
+  list-style: none; }
+.expander-summary::-webkit-details-marker { display: none; }
+.expander-summary::before { content: '▸ '; margin-right: 4px; color: var(--text-faint); }
+.expander[open] .expander-summary::before { content: '▾ '; }
+.expander-count { margin-left: auto; color: var(--text-faint); font-family: var(--mono); font-size: 11px; }
+.expander-body { padding: 8px 0 0 14px; }
+
+.log { font-family: var(--mono); font-size: 11px; color: var(--text-dim); background: var(--bg);
+  padding: 8px 10px; border-radius: 4px; max-height: 140px; overflow: hidden; line-height: 1.6; }
+.log .ts { color: var(--text-faint); }
+.log .ok { color: var(--good); }
+.log .info { color: var(--info); }
+.log .warn { color: var(--warn); }
+.log .bad { color: var(--bad); }
+
+.note { font-size: 12px; color: var(--text-dim); max-width: 1180px; line-height: 1.6; }
+.note strong { color: var(--text); }
+
+/* Sidebar reference visual */
+.sidebar-ref { background: var(--surface); border: 1px solid var(--border-strong); border-radius: 8px;
+  width: 280px; padding: 12px 0; flex-shrink: 0; }
+.sidebar-ref h4 { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em;
+  color: var(--text-faint); margin: 8px 16px 6px; font-weight: 600; }
+.sidebar-group { padding: 6px 16px 4px; cursor: pointer; font-size: 13px; color: var(--text-dim);
+  display: flex; align-items: center; gap: 6px; }
+.sidebar-group::before { content: '▾ '; color: var(--text-faint); font-size: 10px; }
+.sidebar-protocol { padding: 4px 32px; font-size: 12px; color: var(--text-dim); cursor: pointer;
+  font-family: var(--mono); }
+.sidebar-protocol:hover { background: var(--surface-2); }
+.sidebar-protocol.selected { background: var(--accent-soft); color: var(--accent);
+  border-left: 2px solid var(--accent); padding-left: 30px; }
+.sidebar-protocol.stub { color: var(--text-faint); opacity: 0.6; }
+.sidebar-protocol.stub::after { content: ' (stub)'; font-style: italic; }
+</style>
+</head>
+<body>
+<div class="page">
+
+<h1>Tuxlink — VARA + ARDOP panel alpha-polish (WLE-grounded, v2)</h1>
+<p class="subtitle">2026-06-04 · willow-mesa-mink · brainstorming companion for tuxlink-fzl7 + tuxlink-tccc + ARDOP rewire</p>
+
+<div class="legend">
+  <h3>Reset on previous mocks</h3>
+  <p>v1 (mocks A/B/C) had an in-panel "Dial as: CMS / P2P" toggle. That's a category error: the tuxlink sidebar already picks <code>(sessionType, protocol)</code>, which is the same role WLE's <code>cmbSessionType</code> dropdown plays. PR #348's ARDOP intent toggle was wrong for the same reason. Both panels (ARDOP + VARA) should read <code>intent</code> from <code>RadioPanelMode</code> props and render accordingly. v2 rebuilds against the WLE-grounded model.</p>
+
+  <h3>Intent matrix (alpha-bound)</h3>
+  <table>
+    <tr><th>Intent</th><th>Sidebar entry</th><th>Outbound</th><th>Listener</th><th>Target</th><th>Creds</th><th>Routing flag</th></tr>
+    <tr><td><strong>cms</strong></td><td>Winlink (CMS)</td><td>Yes (gateway dial)</td><td>—</td><td>RMS callsign · <code>WB7VYH-10</code></td><td>keyring for <code>;PQ</code> challenge</td><td><code>C</code> (drains only C-tagged)</td></tr>
+    <tr><td><strong>p2p</strong></td><td>Peer-to-peer</td><td>Yes (peer dial)</td><td><strong>Yes</strong> (any peer)</td><td>Peer callsign · <code>K7LED-7</code></td><td>none</td><td>none (unflagged)</td></tr>
+    <tr><td><strong>radio-only</strong></td><td>Radio-only</td><td>Yes (R-pool RMS)</td><td><strong>Yes</strong> (R-pool peer · tuxlink divergence from WLE)</td><td>R-pool RMS callsign · <code>K6RR-10</code></td><td>none</td><td><code>R</code> (drains only R-tagged)</td></tr>
+  </table>
+
+  <h3>WLE reference fidelity (what we adopt; what we don't)</h3>
+  <p><strong>Adopt:</strong> single Start action (Connect + B2F + Disconnect as one bounded op, one RADIO-1 modal); target + bandwidth picked BEFORE Start; auto-managed transport (no separate "Open VARA TCP" step); per-intent routing-flag enforcement on outbound drain.</p>
+  <p><strong>Don't adopt for alpha:</strong> frequency displays (no CAT integration in tuxlink today); favorite channels combo (cmbFavoriteChannels — useful but post-alpha); WLE's bearing/distance/quality toolbar readouts (defer to ARDOP signal panel pattern).</p>
+  <p><strong>Tuxlink divergence:</strong> radio-only gets a listener (WLE doesn't). Operator opts in by clicking the "Radio-only" sidebar entry under VARA HF / VARA FM / ARDOP HF.</p>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════════════
+     The three intents — same panel component, intent from sidebar
+     ════════════════════════════════════════════════════════════════════════ -->
+
+<section class="section">
+  <div class="section-header">
+    <div class="section-letter">1</div>
+    <h2 class="section-title">Sidebar drives intent — same component, different render</h2>
+    <p class="section-desc">Operator clicks a sidebar entry. The right-pane panel reads <code>RadioPanelMode = { kind, intent }</code> from props and adapts: header pill shows the intent; Start form's target placeholder + helpText differ; the Listener section renders only when <code>intent in {p2p, radio-only}</code>.</p>
+  </div>
+  <div class="row">
+
+    <div class="sidebar-ref">
+      <h4>Sidebar (left rail)</h4>
+      <div class="sidebar-group">Winlink (CMS)</div>
+      <div class="sidebar-protocol">Telnet</div>
+      <div class="sidebar-protocol">Packet</div>
+      <div class="sidebar-protocol selected">ARDOP HF · cms</div>
+      <div class="sidebar-protocol">VARA HF</div>
+      <div class="sidebar-protocol">VARA FM</div>
+
+      <div class="sidebar-group">Radio-only</div>
+      <div class="sidebar-protocol stub">Telnet</div>
+      <div class="sidebar-protocol stub">Packet</div>
+      <div class="sidebar-protocol">ARDOP HF · radio-only</div>
+      <div class="sidebar-protocol">VARA HF</div>
+      <div class="sidebar-protocol">VARA FM</div>
+
+      <div class="sidebar-group">Peer-to-peer</div>
+      <div class="sidebar-protocol">Packet</div>
+      <div class="sidebar-protocol">Telnet</div>
+      <div class="sidebar-protocol">ARDOP HF · p2p</div>
+      <div class="sidebar-protocol">VARA HF</div>
+      <div class="sidebar-protocol">VARA FM</div>
+
+      <p style="font-size: 11px; color: var(--text-faint); margin: 10px 16px 0;">Right-pane swaps based on selection. Same component renders all 9 alpha combos (3 intents × 3 protocols).</p>
+    </div>
+
+    <!-- INTENT: cms -->
+    <div class="radio-panel">
+      <div class="panel-header">
+        <div class="panel-title">ARDOP HF</div>
+        <span class="intent-pill cms">cms · winlink</span>
+        <span class="panel-state idle" style="margin-left: auto;"><span class="dot"></span>idle</span>
+      </div>
+      <div class="sec">
+        <h5>Start session</h5>
+        <div class="row-input"><span>Target</span><input class="input callsign" value="WB7VYH-10" placeholder="W7RMS-10 (gateway)"></div>
+        <div class="row-input"><span>Bandwidth</span><select class="select"><option>2300 Hz (HF Standard)</option><option>500 Hz</option><option>2750 Hz</option></select></div>
+        <div class="btn-row"><button class="btn btn-primary">Start</button><span class="help" style="margin: 0;">⚠ RADIO-1 modal. Connect → B2F → disconnect as one operation.</span></div>
+        <p class="help">Outbound to a Winlink CMS gateway. Drains your C-tagged outbox; receives any C-tagged messages waiting at the RMS.</p>
+      </div>
+      <div class="sec">
+        <h5>Session log</h5>
+        <div class="log">
+<span class="ts">14:42:08</span> <span class="ok">B2F:</span> exchange with WB7VYH-10 complete: 1 sent, 0 received<br>
+<span class="ts">14:41:54</span> <span class="info">ARDOP:</span> CONNECTED W4PHS WB7VYH-10<br>
+<span class="ts">14:41:22</span> <span class="ok">RADIO-1:</span> consent confirmed for WB7VYH-10<br>
+        </div>
+      </div>
+      <details class="expander sec">
+        <summary class="expander-summary">Modem · <span style="color: var(--good); margin-left: 4px;">●</span> idle <span class="expander-count">ardopcf · /dev/tty.usbserial-A50285BI</span></summary>
+      </details>
+    </div>
+
+    <!-- INTENT: p2p, ARMED + previously dialed -->
+    <div class="radio-panel">
+      <div class="panel-header">
+        <div class="panel-title">VARA HF</div>
+        <span class="intent-pill p2p">p2p</span>
+        <span class="panel-state listening" style="margin-left: auto;"><span class="dot"></span>listening</span>
+      </div>
+      <div class="sec">
+        <h5>Start session</h5>
+        <div class="row-input"><span>Target</span><input class="input callsign" value="K7LED-7" placeholder="W4AUX (peer)"></div>
+        <div class="row-input"><span>Bandwidth</span><select class="select"><option>2300 Hz (HF Standard)</option><option>500 Hz</option><option>2750 Hz</option></select></div>
+        <div class="btn-row"><button class="btn btn-primary" disabled>Start</button><span class="help" style="margin: 0; color: var(--warn);">Listener armed — disarm to dial out.</span></div>
+        <p class="help">Peer-to-peer. Sends unflagged messages from your outbox; receives unflagged messages.</p>
+      </div>
+      <div class="sec">
+        <h5>Listen (accept inbound)</h5>
+        <div class="btn-row"><button class="btn btn-bad">Disarm</button><span class="listen-status armed">ARMED · 53 min</span></div>
+        <p class="help">Accepting inbound P2P CONNECTED events. Allowlist below decides who's admitted.</p>
+        <details class="expander">
+          <summary class="expander-summary">Allowed stations <span class="expander-count">allow any</span></summary>
+          <div class="expander-body">
+            <label style="font-size: 12px; color: var(--text-dim); display: flex; gap: 6px; align-items: center;">
+              <input type="checkbox" checked>Allow any peer
+            </label>
+            <div class="chip-row">
+              <span class="chip">K7LED-7 <span class="x">×</span></span>
+              <span class="chip">N7CPZ <span class="x">×</span></span>
+              <span class="chip chip-add">+ callsign</span>
+            </div>
+          </div>
+        </details>
+      </div>
+      <div class="sec">
+        <h5>Session log</h5>
+        <div class="log">
+<span class="ts">00:00:33</span> <span class="info">VARA:</span> LISTEN ON acknowledged<br>
+<span class="ts">00:00:32</span> <span class="info">VARA:</span> transport opened (auto)<br>
+<span class="ts">00:00:31</span> <span class="ok">listener:</span> armed for 60 min · consent uuid 7b3e...<br>
+        </div>
+      </div>
+    </div>
+
+    <!-- INTENT: radio-only -->
+    <div class="radio-panel">
+      <div class="panel-header">
+        <div class="panel-title">VARA HF</div>
+        <span class="intent-pill radio-only">radio-only · R-pool</span>
+        <span class="panel-state idle" style="margin-left: auto;"><span class="dot"></span>idle</span>
+      </div>
+      <div class="sec">
+        <h5>Start session</h5>
+        <div class="row-input"><span>Target</span><input class="input callsign" value="K6RR-10" placeholder="K6RR-10 (R-pool RMS)"></div>
+        <div class="row-input"><span>Bandwidth</span><select class="select"><option>2300 Hz (HF Standard)</option><option>500 Hz</option><option>2750 Hz</option></select></div>
+        <div class="btn-row"><button class="btn btn-primary">Start</button><span class="help" style="margin: 0;">⚠ RADIO-1 modal.</span></div>
+        <p class="help">RF-only Winlink (Hybrid network). Drains only R-tagged outbox; receives only R-tagged messages.</p>
+      </div>
+      <div class="sec">
+        <h5>Listen (accept inbound R-pool peer)</h5>
+        <div class="btn-row"><button class="btn btn-primary">Arm listener</button><span class="listen-status disarmed">disarmed</span></div>
+        <p class="help">Tuxlink divergence: accept inbound R-pool peer sessions. Exchange runs as R-pool (sends only R-tagged messages).</p>
+        <details class="expander">
+          <summary class="expander-summary">Allowed stations <span class="expander-count">allow any</span></summary>
+        </details>
+      </div>
+      <div class="sec">
+        <h5>Session log</h5>
+        <div class="log">
+<span class="ts">—</span> <span class="info">VARA:</span> idle. Click Start to dial an R-pool RMS, or Arm to accept inbound R-pool peers.<br>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <p class="note" style="max-width: 1180px; margin-top: 22px;"><strong>Notes:</strong>
+    <br>· <strong>Panel chrome is shared across all three intents</strong>: same component, same header, same session log, same auto-managed transport at the bottom. The intent pill in the header makes the chosen mode self-evident. The middle column shows an armed P2P listener with the Start button disabled (modem busy — one operation at a time).
+    <br>· <strong>The Start button drives the whole outbound flow</strong>: one click → RADIO-1 modal → backend mints a token → CONNECT → B2F exchange → DISCONNECT, all under one bounded-airtime cap. Matches WLE's <code>mnuStart</code> behavior in the session form. No separate "Connect" + "Send/Receive" affordance.
+    <br>· <strong>Listener and outbound are mutually exclusive in time</strong>: modem can only run one ARQ session at once. If listener is armed and operator clicks Start, the button is disabled with a "disarm to dial out" hint. If outbound is in flight and operator tries to Arm, same idea.
+    <br>· <strong>ARDOP gets the same rewire</strong>: PR #348's "Dial as" toggle goes away. ArdopRadioPanel reads <code>intent</code> from props; sidebar drives. <code>parse_b2f_intent</code> widens from <code>cms|p2p</code> to <code>cms|p2p|radio-only</code>.
+    <br>· <strong>Modem expander at panel bottom</strong>: host/port (VARA) or audio devices + binary path (ARDOP). Collapsed by default. Auto-opens transport on first Start/Arm click. No Start/Stop buttons for the transport itself.
+  </p>
+</section>
+
+<!-- ════════════════════════════════════════════════════════════════════════
+     Section 2 — In-flight states (same intent, time progression)
+     ════════════════════════════════════════════════════════════════════════ -->
+
+<section class="section">
+  <div class="section-header">
+    <div class="section-letter">2</div>
+    <h2 class="section-title">In-flight states — CMS outbound dial, time progression</h2>
+    <p class="section-desc">How the panel evolves during a single Start session. Same intent (CMS), same target, three moments in time. Status pill and Start/Stop affordance reshape; rest of the panel stays put.</p>
+  </div>
+  <div class="row">
+
+    <!-- Dialing -->
+    <div class="radio-panel">
+      <div class="panel-header">
+        <div class="panel-title">ARDOP HF</div>
+        <span class="intent-pill cms">cms</span>
+        <span class="panel-state connecting" style="margin-left: auto;"><span class="dot"></span>dialing</span>
+      </div>
+      <div class="sec">
+        <h5>Session</h5>
+        <p class="help">Dialing <strong>WB7VYH-10</strong> · 00:00:07 elapsed (cap 120 s) · waiting for CONNECTED</p>
+        <div class="btn-row"><button class="btn btn-bad">Abort</button></div>
+      </div>
+      <div class="sec">
+        <h5>Session log</h5>
+        <div class="log">
+<span class="ts">00:00:07</span> <span class="info">ARDOP:</span> NEWSTATE ISS<br>
+<span class="ts">00:00:04</span> <span class="info">ARDOP:</span> ARQCALL WB7VYH-10 2300<br>
+<span class="ts">00:00:03</span> <span class="info">ARDOP:</span> modem spawned, audio devices live<br>
+<span class="ts">00:00:02</span> <span class="ok">RADIO-1:</span> consent confirmed for cms dial WB7VYH-10<br>
+        </div>
+      </div>
+    </div>
+
+    <!-- Exchange -->
+    <div class="radio-panel">
+      <div class="panel-header">
+        <div class="panel-title">ARDOP HF</div>
+        <span class="intent-pill cms">cms</span>
+        <span class="panel-state connected" style="margin-left: auto;"><span class="dot"></span>exchange</span>
+      </div>
+      <div class="sec">
+        <h5>Session</h5>
+        <p class="help">CMS exchange · <strong>WB7VYH-10</strong> · 00:00:42 elapsed · 2 sent · 1 received · 1.4 kbps · TX active</p>
+        <div class="btn-row"><button class="btn btn-bad">Abort + Disconnect</button></div>
+      </div>
+      <div class="sec">
+        <h5>Session log</h5>
+        <div class="log">
+<span class="ts">00:00:42</span> <span class="info">B2F:</span> received 8KB into inbox<br>
+<span class="ts">00:00:33</span> <span class="info">B2F:</span> sent 14KB (msg 2 of 2)<br>
+<span class="ts">00:00:24</span> <span class="info">B2F:</span> proposal accepted by gateway<br>
+<span class="ts">00:00:21</span> <span class="info">B2F:</span> sent SID + proposals<br>
+<span class="ts">00:00:18</span> <span class="info">ARDOP:</span> CONNECTED W4PHS WB7VYH-10<br>
+        </div>
+      </div>
+    </div>
+
+    <!-- Idle (post-exchange) -->
+    <div class="radio-panel">
+      <div class="panel-header">
+        <div class="panel-title">ARDOP HF</div>
+        <span class="intent-pill cms">cms</span>
+        <span class="panel-state idle" style="margin-left: auto;"><span class="dot"></span>idle</span>
+      </div>
+      <div class="sec">
+        <h5>Start session</h5>
+        <div class="row-input"><span>Target</span><input class="input callsign" value="WB7VYH-10"></div>
+        <div class="row-input"><span>Bandwidth</span><select class="select"><option>2300 Hz (HF Standard)</option></select></div>
+        <div class="btn-row"><button class="btn btn-primary">Start</button><span class="help" style="margin: 0; color: var(--good);">Last exchange OK: 2 sent, 1 received · 14:42:08</span></div>
+      </div>
+      <div class="sec">
+        <h5>Session log</h5>
+        <div class="log">
+<span class="ts">14:42:14</span> <span class="info">ARDOP:</span> disconnected, modem idle<br>
+<span class="ts">14:42:08</span> <span class="ok">B2F:</span> exchange with WB7VYH-10 complete: 2 sent, 1 received<br>
+<span class="ts">14:41:54</span> <span class="info">ARDOP:</span> CONNECTED W4PHS WB7VYH-10<br>
+        </div>
+      </div>
+    </div>
+
+  </div>
+  <p class="note" style="max-width: 1180px; margin-top: 22px;"><strong>Notes:</strong>
+    <br>· Same intent throughout. The panel header doesn't switch tabs or modes; only the status pill + action surface changes.
+    <br>· <strong>Abort semantics matter</strong>: during dial, "Abort" sends DISARM to the modem (kills CONNECTING) — cheap. During exchange, "Abort + Disconnect" sends ABORT (force-end ARQ session) + DISCONNECT — what the tuxlink-12sc follow-up addresses for VARA's listener path. Same wire-form for outbound + inbound.
+    <br>· <strong>Auto-return to idle</strong>: after exchange completes (success or fail), session returns to idle with a one-line outcome banner ("Last exchange OK: 2 sent, 1 received"). Operator can re-Start with same or different target.
+    <br>· Bandwidth selector reappears in idle but is disabled mid-exchange (modem won't honor a change anyway).
+  </p>
+</section>
+
+<div class="legend">
+  <h3>Still-open shape decisions (we'll work through these one at a time)</h3>
+  <ul style="margin: 4px 0 0 0; padding-left: 18px; color: var(--text-dim);">
+    <li>RADIO-1 consent modal copy: the modal text should reflect the chosen intent (cms vs p2p vs radio-only) so the operator's confirmation is informed. Same modal component, intent-aware messaging.</li>
+    <li>Frequency / dial display: WLE has it, tuxlink has no CAT. Add operator-typed informational field for alpha or defer entirely?</li>
+    <li>Favorite Channels: useful for fast re-dialing common targets, but feels post-alpha. Skip for v1?</li>
+    <li>Per-intent outbox filter visibility: should the panel surface "0 C-tagged messages in outbox" to warn the operator before they dial a CMS session that won't drain anything?</li>
+    <li>ARDOP-specific transport expander: audio devices + cmd_port + binary path + WebGUI port. VARA's transport expander is much simpler (host/cmd_port/data_port). The expander content differs per protocol — same shell pattern.</li>
+  </ul>
+</div>
+
+</div>
+</body>
+</html>
