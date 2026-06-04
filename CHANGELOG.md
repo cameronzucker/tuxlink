@@ -4,6 +4,13 @@ All notable changes to Tuxlink are documented here.
 
 This project adheres to [Semantic Versioning](https://semver.org) with project-specific rules described in [VERSIONING.md](VERSIONING.md). Entries from `v0.0.2` onward are generated automatically by [`release-please`](https://github.com/googleapis/release-please) from [Conventional Commits](https://www.conventionalcommits.org).
 
+## [0.32.1](https://github.com/cameronzucker/tuxlink/compare/v0.32.0...v0.32.1) (2026-06-04)
+
+
+### Bug Fixes
+
+* **docs:** topic 06 mermaid sequence diagrams parse — remove `;` from message and note bodies ([a8918a1](https://github.com/cameronzucker/tuxlink/commit/a8918a1433922b4fe92c5ae39f55213736c19e16))
+
 ## [0.32.0](https://github.com/cameronzucker/tuxlink/compare/v0.31.0...v0.32.0) (2026-06-04)
 
 
