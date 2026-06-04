@@ -9,6 +9,7 @@
 
 import { Marked } from 'marked';
 import markedExtendedTables from 'marked-extended-tables';
+import markedFootnote from 'marked-footnote';
 import { headingAnchors } from './markdownExtensions/headingAnchors';
 import { callouts } from './markdownExtensions/callouts';
 
@@ -16,6 +17,7 @@ const marked = new Marked();
 marked.use(headingAnchors);
 marked.use(callouts);
 marked.use(markedExtendedTables());
+marked.use(markedFootnote());
 
 /**
  * Parse a markdown string and return HTML.

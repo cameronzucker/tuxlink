@@ -54,3 +54,20 @@ describe('tables', () => {
     expect(out).toMatch(/rowspan="?2"?/);
   });
 });
+
+describe('footnotes', () => {
+  it('renders inline ref + footnote body', () => {
+    const md = 'See note.[^1]\n\n[^1]: The footnote body.';
+    const out = renderMarkdown(md);
+    expect(out).toMatch(/sup.*1/);
+    expect(out).toContain('The footnote body.');
+  });
+
+  it('produces back-link from footnote body to inline ref', () => {
+    const md = 'See[^a].\n\n[^a]: Body.';
+    const out = renderMarkdown(md);
+    // marked-footnote emits href="#footnote-ref-<label>" as the back-link
+    // (not "#fnref" — the actual pattern the library produces)
+    expect(out).toMatch(/href="#footnote-ref-/);
+  });
+});
