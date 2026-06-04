@@ -125,9 +125,13 @@ pub enum FrameMode {
     #[default]
     Raw,
     /// Zadoff-Chu preamble (192 samples / 4 ms @ 48 kHz) prepended to
-    /// the OFDM symbol. The receiver-friendly format; pairs with
-    /// `tuxmodem-rx --frame-mode sync`.
+    /// a single OFDM symbol. Payload limited to one symbol's capacity
+    /// (~9 bytes for the Wide mode). Pairs with `tuxmodem-rx --frame-mode sync`.
     Sync,
+    /// Zadoff-Chu preamble + N OFDM symbols carrying a 2-byte length-
+    /// prefix header. Supports arbitrary-length payloads up to
+    /// u16::MAX bytes. Pairs with `tuxmodem-rx --frame-mode multi-sync`.
+    MultiSync,
 }
 
 impl FrameMode {
@@ -136,6 +140,7 @@ impl FrameMode {
         match name {
             "raw" => Ok(Self::Raw),
             "sync" => Ok(Self::Sync),
+            "multi-sync" => Ok(Self::MultiSync),
             other => Err(TxError::UnknownFrameMode {
                 name: other.to_string(),
             }),
@@ -148,6 +153,7 @@ impl FrameMode {
         match self {
             Self::Raw => "raw",
             Self::Sync => "sync",
+            Self::MultiSync => "multi-sync",
         }
     }
 }
@@ -204,6 +210,9 @@ pub fn encode_payload(
         }
         (Mode::WideFloor, FrameMode::Sync) => floor
             .transmit_with_preamble(payload)
+            .map_err(TxError::Phy)?,
+        (Mode::WideFloor, FrameMode::MultiSync) => floor
+            .transmit_multi_with_preamble(payload)
             .map_err(TxError::Phy)?,
     };
     Ok(AudioBuffer::from_samples(samples))
@@ -1226,5 +1235,57 @@ mod tests {
     fn args_parse_frame_mode_without_value_errors() {
         let err = Args::parse(&s(&["--frame-mode"])).unwrap_err();
         assert!(err.contains("--frame-mode"));
+    }
+
+    // ─── MultiSync (Phase 10 slice 3, tuxlink-ot37) ─────────────────
+
+    #[test]
+    fn frame_mode_parse_accepts_multi_sync() {
+        assert_eq!(FrameMode::parse("multi-sync").unwrap(), FrameMode::MultiSync);
+    }
+
+    #[test]
+    fn frame_mode_short_name_multi_sync_round_trips() {
+        assert_eq!(
+            FrameMode::parse(FrameMode::MultiSync.short_name()).unwrap(),
+            FrameMode::MultiSync
+        );
+    }
+
+    #[test]
+    fn encode_payload_multi_sync_routes_to_transmit_multi_with_preamble() {
+        // The bit-equivalence check: encode_payload(MultiSync, X) must
+        // produce the exact samples that
+        // WidebandLowDensityFloor::transmit_multi_with_preamble(X) does.
+        use tuxmodem_phy::robustness_floor::wideband_lowdensity::WidebandLowDensityFloor;
+        let payload = b"HELLO_MULTI_SYNC";
+        let got = encode_payload(Mode::WideFloor, payload, FrameMode::MultiSync).unwrap();
+        let want = WidebandLowDensityFloor::new()
+            .transmit_multi_with_preamble(payload)
+            .unwrap();
+        assert_eq!(got.samples().len(), want.len());
+        for (i, (&a, &b)) in got.samples().iter().zip(want.iter()).enumerate() {
+            assert!((a - b).abs() < 1e-6, "sample {i} differs: {a} vs {b}");
+        }
+    }
+
+    #[test]
+    fn encode_payload_multi_sync_accepts_large_payload() {
+        // 100-byte payload would fail in Sync (single-symbol cap ~9
+        // bytes); MultiSync handles it via length-prefix framing.
+        let payload: Vec<u8> = (0..100).map(|i| (i % 251) as u8).collect();
+        let buf = encode_payload(Mode::WideFloor, &payload, FrameMode::MultiSync).unwrap();
+        // Should be preamble (192) + 12 symbols × symbol_size.
+        assert!(buf.samples().len() > 192 + 11 * 2560);
+    }
+
+    #[test]
+    fn args_parse_frame_mode_multi_sync() {
+        let a = Args::parse(&s(&[
+            "--frame-mode", "multi-sync", "--mode", "wide-floor", "--dry-run",
+            "--payload", "hi",
+        ]))
+        .unwrap();
+        assert_eq!(a.frame_mode, FrameMode::MultiSync);
     }
 }

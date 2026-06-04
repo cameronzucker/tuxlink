@@ -217,6 +217,11 @@ OPTIONS:
         --write-wav <PATH>     encode + write WAV; no audio device, no PTT
     -d, --device <NAME>        CPAL audio device name (required for full TX)
     -p, --ptt-device <PATH>    serial TTY path for RTS PTT (required for full TX)
+        --frame-mode <NAME>    frame format: raw / sync / multi-sync (default: raw)
+                               - raw:        bare OFDM symbol, no preamble
+                               - sync:       preamble + single symbol (≤9 bytes)
+                               - multi-sync: preamble + N symbols, length-prefix
+                                             header, up to u16::MAX bytes
         --max-airtime <SECS>   override DEFAULT_MAX_AIRTIME (default 30; hard cap 60)
     -h, --help                 this usage
 
@@ -230,6 +235,12 @@ EXAMPLES:
     # Emit the waveform as a WAV for offline / agent loopback testing:
     tuxmodem-tx --write-wav /tmp/test.wav --payload \"TEST\" --mode wide-floor
     tuxmodem-rx --decode-wav /tmp/test.wav --expected \"TEST\"
+
+    # Long-payload loopback via multi-symbol framing (no length cap):
+    tuxmodem-tx --write-wav /tmp/long.wav --payload @./large-file.bin \\
+                --mode wide-floor --frame-mode multi-sync
+    tuxmodem-rx --decode-wav /tmp/long.wav --expected @./large-file.bin \\
+                --frame-mode multi-sync
 
     # Actual on-air TX (operator-only — agents must not run this):
     tuxmodem-tx --payload \"TEST\" --mode wide-floor \\
