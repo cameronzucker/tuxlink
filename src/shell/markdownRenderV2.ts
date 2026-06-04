@@ -13,6 +13,15 @@ import markedFootnote from 'marked-footnote';
 import { headingAnchors } from './markdownExtensions/headingAnchors';
 import { callouts } from './markdownExtensions/callouts';
 import { defLists } from './markdownExtensions/defLists';
+import { imageResolver } from './markdownExtensions/imageResolver';
+
+// Bundle all docs/user-guide images at build time. Vite's import.meta.glob
+// with { eager: true, query: '?url' } returns { '/docs/.../foo.png': '/assets/foo-hash.png' }.
+const IMAGE_MAPPING = import.meta.glob('/docs/user-guide/images/**/*.{png,svg,jpg,jpeg,webp}', {
+  eager: true,
+  query: '?url',
+  import: 'default',
+}) as Record<string, string>;
 
 const marked = new Marked();
 marked.use(headingAnchors);
@@ -20,6 +29,7 @@ marked.use(callouts);
 marked.use(markedExtendedTables());
 marked.use(markedFootnote());
 marked.use(defLists);
+marked.use(imageResolver(IMAGE_MAPPING));
 
 /**
  * Parse a markdown string and return HTML.
