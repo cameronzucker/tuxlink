@@ -40,4 +40,17 @@ describe('tables', () => {
     expect(out).toContain('line1');
     expect(out).toContain('line2');
   });
+
+  it('renders rowspan via marked-extended-tables (proves the extension is wired)', () => {
+    // Rowspan syntax per marked-extended-tables README: insert `^` immediately
+    // before the closing pipe of any cell that should merge with the cell above.
+    // A two-row span produces rowspan="2" on the first cell.
+    // This test FAILS when the extension is not wired (native marked does not
+    // produce rowspan attributes — it renders each row independently).
+    const md = '| H1           | H2      |\n|--------------|----------|\n| spans two    | Cell A  |\n| rows        ^| Cell B  |';
+    const out = renderMarkdown(md);
+    // The extension emits rowspan=2 (unquoted) — match either form to be
+    // forward-compatible, but the key assertion is that "rowspan" is present at all.
+    expect(out).toMatch(/rowspan="?2"?/);
+  });
 });
