@@ -1,8 +1,9 @@
 //! Tauri commands for modem (ARDOP) operations.
 //!
-//! RADIO-1: `modem_ardop_connect` requires a per-session consent token issued
-//! by the frontend's RADIO-1 modal. The backend rejects any connect attempt
-//! whose token doesn't match the current session token. See Phase 6.
+//! Connect lifecycle: `modem_ardop_connect` → `modem_ardop_b2f_exchange` →
+//! `modem_ardop_disconnect`. An in-process AtomicBool busy guard prevents
+//! duplicate concurrent connect invocations. The RADIO-1 consent-token gate
+//! was removed in Task 1.1 (spec §2 "No tuxlink-added safeguards"; bd tuxlink-0ye6).
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -108,97 +109,79 @@ pub fn modem_get_status(session: State<'_, Arc<ModemSession>>) -> ModemStatus {
     modem_get_status_inner(&session)
 }
 
-/// RADIO-1: mint a fresh per-session consent token on the BACKEND and return
-/// it to the frontend. The frontend invokes this from the consent-modal's
-/// Connect button (after the operator ticks the acknowledgement) so that the
-/// token authorizing the subsequent `modem_ardop_connect` was produced by
-/// the same trust boundary that validates it. A frontend-generated token
-/// would let a compromised renderer self-mint — the gate would be theater.
+/// Mint a fresh per-session consent token and return it to the frontend.
+/// Retained for the `modem_ardop_b2f_exchange` consent gate; the
+/// `modem_ardop_connect` path no longer requires a token (Task 1.1).
 /// See [`ModemSession::mint_consent_token`] for storage semantics.
 #[tauri::command]
 pub fn modem_mint_consent(session: State<'_, Arc<ModemSession>>) -> String {
     session.mint_consent_token()
 }
 
-/// Disconnect the modem: invalidates the RADIO-1 consent token, takes the
-/// live transport handle, resets status to Stopped, and shuts the transport
-/// down (best-effort `DISCONNECT` on the cmd socket).
+/// Disconnect the modem: takes the live transport handle, resets status to
+/// Stopped, and shuts the transport down (best-effort `DISCONNECT` on the
+/// cmd socket).
 #[tauri::command]
 pub fn modem_ardop_disconnect(session: State<'_, Arc<ModemSession>>) -> Result<(), String> {
     modem_ardop_disconnect_inner(&session)
 }
 
-/// Inner helper with a factory seam — RADIO-1-gated ARDOP connect.
+/// Inner helper with a factory seam — ARDOP connect with in-process busy guard.
 ///
 /// The factory closure constructs the `Box<dyn ModemTransport>` given an
 /// `ArdopConfig` and the target callsign. Production calls hand in
 /// `ArdopTransport::with_managed_modem`; tests hand in a stub.
 ///
-/// # RADIO-1
+/// # Busy guard
 ///
-/// The first action is [`ModemSession::consume_consent_token`] — atomic
-/// equality-check-and-clear under one lock. ANY call with a missing-or-wrong
-/// token returns `Err` BEFORE the factory runs, BEFORE `init`, BEFORE
-/// `connect_arq` — i.e., no spawn, no socket bind, no I/O whatsoever, AND
-/// no status mutation. A successful match consumes the token in the same
-/// lock acquisition, so a replay attempt (same token, second call) is
-/// indistinguishable from a wrong token from this point forward.
+/// The first action is [`ModemSession::try_begin_connect`] — atomic
+/// compare-exchange. If another connect is already in flight, returns `Err`
+/// BEFORE the factory runs, BEFORE `init`, BEFORE `connect_arq` — no spawn,
+/// no socket bind, no I/O whatsoever, AND no status mutation. The busy bit is
+/// cleared via RAII ([`ConnectGuard`]) on every exit path, so a failed or
+/// completed connect leaves the session ready for the next attempt.
 ///
-/// The token is in-process replay protection minted via
-/// `modem_mint_consent`; a compromised renderer cannot self-mint because
-/// the token is generated server-side. Plain string equality on the wire
-/// is the design. Per-invocation consent (Part 97) is enforced by the
-/// CONSUME semantics: one mint authorizes exactly one connect.
-///
-/// # Bounded airtime
-///
-/// `connect_arq` is bounded by [`CONNECT_DEADLINE`] (120s). The 2026-05-22
-/// runaway-connect incident is the calibration: a 110s no-abort runaway
-/// forced a radio power-off. There is NO retry loop in this function — if
-/// `init` or `connect_arq` fails, the status flips to `Error` and we
-/// return immediately. A retry must be a fresh user-initiated Connect
-/// with a fresh consent token (Part 97 per-invocation rule).
+/// This replaces the `consume_consent_token` dup-call defense that was a
+/// side-effect of the RADIO-1 consent modal (Task 1.1 — spec §2 "No
+/// tuxlink-added safeguards"; bd tuxlink-0ye6 / tuxlink-8gq3).
 pub fn modem_ardop_connect_gated_with_factory<F>(
     session: &Arc<ModemSession>,
     target: &str,
-    consent_token: &str,
     ardop_ui: &ArdopUiConfig,
     make_transport: F,
 ) -> Result<(), String>
 where
     F: FnOnce(ArdopConfig, &str) -> Result<Box<dyn ModemTransport>, String>,
 {
-    // ─── RADIO-1 consent gate ────────────────────────────────────────────
-    // FIRST CHECK: no I/O, no spawn, no status mutation if the token is
-    // wrong. Keeping the gate ahead of every other side effect is the
-    // whole point of the function — a compromised caller that bypasses
-    // the modal must NOT be able to even SPAWN ardopcf.
-    //
-    // `consume_consent_token` is atomic — equality check + clear under a
-    // single lock acquisition. After a successful return, the stored token
-    // is `None`, so a replay attempt (same `consent_token`, second call)
-    // takes this same branch and returns Err. Per-invocation consent
-    // (Part 97) is enforced by this consume, not by any caller-side
-    // discipline.
-    if !session.consume_consent_token(consent_token) {
+    // ─── In-process busy guard ───────────────────────────────────────────
+    // FIRST CHECK: no I/O, no spawn, no status mutation if another connect
+    // is already in flight. The compare_exchange is atomic — false→true in
+    // one operation. If the bit is already true, return Err immediately.
+    if !session.try_begin_connect() {
         return Err(
-            "RADIO-1: missing or invalid consent token; mint one via the Connect modal first"
-                .into(),
+            "connect already in progress; wait for the previous attempt to complete".into(),
         );
     }
+    // RAII guard: clear busy bit on every exit path.
+    struct ConnectGuard<'a>(&'a Arc<ModemSession>);
+    impl<'a> Drop for ConnectGuard<'a> {
+        fn drop(&mut self) {
+            self.0.clear_connect_in_progress();
+        }
+    }
+    let _guard = ConnectGuard(session);
 
     modem_ardop_connect_post_consume_with_factory(session, target, ardop_ui, make_transport)
 }
 
-/// Inner helper AFTER the consent gate has fired + consumed the token.
-/// Do NOT call this from anywhere that hasn't already validated + consumed
-/// the consent token via [`ModemSession::consume_consent_token`]. The
-/// `_post_consume` naming is the discipline contract: this function trusts
-/// its caller has gated.
+/// Inner helper that runs AFTER the busy guard has been acquired. Caller
+/// (`modem_ardop_connect_gated_with_factory`) holds the `ConnectGuard` RAII
+/// that clears the busy bit on drop. Do NOT call this from anywhere that
+/// hasn't already acquired the busy bit.
 ///
-/// Used by the Tauri `modem_ardop_connect` wrapper, which consumes the
-/// token FIRST (RADIO-1: no I/O before gate) and only then runs config
-/// I/O + delegates here.
+/// The `_post_consume` naming is legacy from the prior RADIO-1 consent-token
+/// design (Task 1.1 removed it). The function itself is unchanged; only the
+/// discipline contract is updated.
 pub fn modem_ardop_connect_post_consume_with_factory<F>(
     session: &Arc<ModemSession>,
     target: &str,
@@ -208,8 +191,8 @@ pub fn modem_ardop_connect_post_consume_with_factory<F>(
 where
     F: FnOnce(ArdopConfig, &str) -> Result<Box<dyn ModemTransport>, String>,
 {
-    // NO GATE here — caller MUST have consumed the consent token already.
-    // (Naming the function `_post_consume` is the discipline contract.)
+    // NO GATE here — caller MUST have acquired the busy bit already.
+    // (The `_post_consume` name is legacy; behavior is unchanged.)
 
     // ─── Translate ArdopUiConfig (frontend) → ArdopConfig (backend) ─────
     // See `build_ardop_extra_args` — extracted for unit testing.
@@ -550,56 +533,27 @@ pub fn check_identity_present(cfg: &Config) -> Result<(), String> {
     }
 }
 
-/// RADIO-1-gated ARDOP connect. Returns an actionable error when
+/// ARDOP connect Tauri command. Returns an actionable error when
 /// audio devices are not yet configured (operator must complete
 /// Settings → ARDOP before calling).
 ///
-/// # RADIO-1 invariant: gate BEFORE any I/O
-///
-/// The consent token is consumed at the very top of this function —
-/// before `config_get_ardop()` is called (disk read + audio-state leak),
-/// before any status mutation, before any spawn. A wrong/missing token
-/// returns Err without touching the filesystem or the session state.
-/// This closes the pre-gate-I/O bypass the 2026-05-30 Codex adrev round
-/// flagged.
-///
 /// # Pre-flight identity check (tuxlink-5738)
 ///
-/// AFTER the consent gate has consumed the token but BEFORE the
-/// audio-device check, this command verifies the operator's identity
-/// (callsign or identifier) is configured. Ordering rationale: a
-/// wrong-token attempt must STILL fail at the consent gate without
-/// leaking identity-state via the error message. Identity is more
-/// foundational than audio devices (no callsign → no on-air operation
-/// is legal under Part 97), so the identity check precedes the
-/// audio-device check.
+/// BEFORE the audio-device check, this command verifies the operator's
+/// identity (callsign or identifier) is configured. The wizard sets one of
+/// these; an unconfigured deployment must complete the wizard first.
 #[tauri::command]
 pub fn modem_ardop_connect(
     session: State<'_, Arc<ModemSession>>,
     target: String,
-    consent_token: String,
 ) -> Result<(), String> {
-    // ─── RADIO-1 gate FIRST ──────────────────────────────────────────────
-    // No config I/O, no status mutation, no error path that leaks state
-    // until the consent token is verified + consumed. `consume_consent_token`
-    // is atomic (equality check + clear in one lock). After this returns
-    // Ok, the stored token is `None` — a replay of `consent_token` would
-    // fail at this exact point.
-    if !session.consume_consent_token(&consent_token) {
-        return Err(
-            "RADIO-1: missing or invalid consent token; mint one via the Connect modal first"
-                .into(),
-        );
-    }
-
     // ─── Pre-flight identity check (tuxlink-5738) ────────────────────────
     // Operator must have a callsign OR identifier configured before any
-    // attempt to set up a radio transport. The wizard sets one of these;
-    // an unconfigured deployment must complete the wizard first.
+    // attempt to set up a radio transport.
     let cfg = config::read_config().map_err(|e| format!("read config: {e}"))?;
     check_identity_present(&cfg)?;
 
-    // Gate passed + identity verified. Now safe to do audio-device I/O.
+    // Identity verified. Now safe to do audio-device I/O.
     let ardop_ui = config_get_ardop();
     if ardop_ui.capture_device.is_empty() || ardop_ui.playback_device.is_empty() {
         return Err(
@@ -607,9 +561,8 @@ pub fn modem_ardop_connect(
         );
     }
 
-    // Delegate to the post-consume variant — the gate has already fired,
-    // and re-gating would always fail (the token has been consumed).
-    modem_ardop_connect_post_consume_with_factory(
+    // Delegate to the gated factory variant (busy guard inside).
+    modem_ardop_connect_gated_with_factory(
         &session,
         &target,
         &ardop_ui,
@@ -951,48 +904,58 @@ mod tests {
         }
     }
 
+    // ── Task 1.1 — busy-guard rejects concurrent connect ────────────────
+
+    /// Verify that a second concurrent call to `modem_ardop_connect_gated_with_factory`
+    /// is rejected with "connect already in progress" when the first call is still
+    /// in flight. The busy guard (`connect_in_progress: AtomicBool`) is the
+    /// dup-call defense that replaces the RADIO-1 consent token's implicit
+    /// "token consumed = can't replay" property.
     #[test]
-    fn modem_ardop_connect_rejects_when_token_missing() {
-        // No token minted → consume_consent_token returns false → the gate
-        // fires BEFORE the factory is invoked. If the factory ran, this test
-        // would still pass (the stub doesn't spawn anything), so the
-        // load-bearing assertion is the error string mentioning RADIO-1 /
-        // consent — that is the operator-visible signal.
+    fn connect_rejects_concurrent_call_when_already_in_progress() {
         let session = Arc::new(ModemSession::new());
-        // Use a tracker to assert the factory was never called even with
-        // a token that the session doesn't recognize.
-        let factory_ran = std::sync::atomic::AtomicBool::new(false);
-        let err = modem_ardop_connect_gated_with_factory(
-            &session,
-            "W7RMS-10",
-            "wrong-token",
-            &test_ardop_ui_config(),
-            |_cfg, _target| {
-                factory_ran.store(true, std::sync::atomic::Ordering::SeqCst);
-                Ok(stub_transport())
-            },
-        )
-        .unwrap_err();
-        assert!(
-            err.contains("consent") || err.contains("RADIO-1"),
-            "error must mention consent/RADIO-1; got: {err}"
-        );
-        assert!(
-            !factory_ran.load(std::sync::atomic::Ordering::SeqCst),
-            "factory MUST NOT run when the consent gate denies — no spawn before consent"
-        );
-        // Status must remain Stopped — the gate fires before any status mutation.
-        assert_eq!(session.status_snapshot().state, ModemState::Stopped);
+        let cfg = test_ardop_ui_config();
+        let cfg2 = test_ardop_ui_config(); // second copy for the concurrent call below
+
+        // Simulate the first connect having flipped the busy bit by calling the
+        // helper directly. The factory blocks until we drop the sentinel so the
+        // first call never completes during the test.
+        let (sentinel_tx, sentinel_rx) = std::sync::mpsc::channel::<()>();
+        let session_clone = Arc::clone(&session);
+        let h = std::thread::spawn(move || {
+            let factory = move |_: ArdopConfig, _: &str| -> Result<Box<dyn ModemTransport>, String> {
+                // Block until released; the test sends the sentinel to unblock.
+                sentinel_rx.recv().ok();
+                Err("test stub never connects".into())
+            };
+            modem_ardop_connect_gated_with_factory(&session_clone, "K7TEST", &cfg, factory)
+        });
+
+        // Give the worker a beat to enter the busy state. (No production code
+        // races on this — the busy guard is set before the factory call.)
+        std::thread::sleep(std::time::Duration::from_millis(50));
+
+        let factory_2 =
+            |_: ArdopConfig, _: &str| -> Result<Box<dyn ModemTransport>, String> {
+                panic!("factory must not run when a connect is already in progress");
+            };
+        let err = modem_ardop_connect_gated_with_factory(&session, "K7TEST", &cfg2, factory_2)
+            .expect_err("second concurrent call must reject");
+        assert!(err.contains("connect already in progress"), "got: {err}");
+
+        // Release the first worker so the test can exit.
+        sentinel_tx.send(()).ok();
+        let _ = h.join();
     }
 
+    /// Connect succeeds when no busy flag is set. Factory runs; transport is
+    /// installed; session reports a connected variant.
     #[test]
-    fn modem_ardop_connect_succeeds_with_valid_token() {
+    fn modem_ardop_connect_succeeds_when_not_busy() {
         let session = Arc::new(ModemSession::new());
-        let token = session.mint_consent_token();
         let result = modem_ardop_connect_gated_with_factory(
             &session,
             "W7RMS-10",
-            &token,
             &test_ardop_ui_config(),
             |_cfg, _target| Ok(stub_transport()),
         );
@@ -1012,89 +975,65 @@ mod tests {
             session.take_transport().is_some(),
             "successful connect must install a transport handle"
         );
-        // Per-invocation consent: the successful connect MUST have consumed
-        // the token. A subsequent has_valid_token check confirms the stored
-        // token is now gone — the 2026-05-30 Codex adrev "tokens not
-        // consumed atomically" P1 finding is closed.
+        // After success the busy bit must be cleared (RAII guard dropped).
         assert!(
-            !session.has_valid_token(&token),
-            "successful connect must consume the consent token (per-invocation rule)"
+            session.try_begin_connect(),
+            "busy bit must be clear after a completed connect"
         );
+        // Clean up to leave try_begin_connect balanced.
+        session.clear_connect_in_progress();
     }
 
+    /// After a successful connect completes, the session is no longer busy
+    /// and a second connect call is permitted (the busy bit was cleared by
+    /// the RAII guard).
     #[test]
-    fn modem_ardop_connect_rejects_replay_of_consumed_token() {
-        // RADIO-1 per-invocation consent: a single minted token authorizes
-        // EXACTLY ONE on-air connect. Replaying it (calling
-        // `_gated_with_factory` a second time with the same token) MUST be
-        // rejected at the gate — no spawn, no I/O, no status mutation —
-        // because the prior successful call consumed the token.
+    fn modem_ardop_connect_allows_sequential_calls() {
         let session = Arc::new(ModemSession::new());
-        let token = session.mint_consent_token();
 
-        // First call succeeds and consumes.
+        // First call succeeds.
         let r1 = modem_ardop_connect_gated_with_factory(
             &session,
             "W7RMS-10",
-            &token,
             &test_ardop_ui_config(),
             |_cfg, _target| Ok(stub_transport()),
         );
         assert!(r1.is_ok(), "first call must succeed; got: {r1:?}");
 
-        // Tear down the transport so the second call's stub install would
-        // be observable (otherwise the "transport still present" assertion
-        // could be satisfied by leftover state from the first call).
+        // Tear down the transport so the second call can install afresh.
         let _ = session.take_transport();
 
-        // Second call with the SAME token MUST be rejected, and the factory
-        // MUST NOT run. AtomicBool seam confirms the closure never fires.
+        // Second sequential call MUST succeed — the first call's guard
+        // cleared the busy bit on completion.
         let factory_ran = std::sync::atomic::AtomicBool::new(false);
         let r2 = modem_ardop_connect_gated_with_factory(
             &session,
             "W7RMS-10",
-            &token,
             &test_ardop_ui_config(),
             |_cfg, _target| {
                 factory_ran.store(true, std::sync::atomic::Ordering::SeqCst);
                 Ok(stub_transport())
             },
         );
-        let err = r2.expect_err("replay of consumed token must be rejected");
+        assert!(r2.is_ok(), "sequential second call must succeed; got: {r2:?}");
         assert!(
-            err.contains("consent") || err.contains("RADIO-1"),
-            "error must mention consent/RADIO-1; got: {err}"
-        );
-        assert!(
-            !factory_ran.load(std::sync::atomic::Ordering::SeqCst),
-            "factory MUST NOT run on replay — the gate fires first and consumes have already cleared the token"
-        );
-        // No second transport was installed.
-        assert!(
-            session.take_transport().is_none(),
-            "no transport must be installed on a rejected replay"
+            factory_ran.load(std::sync::atomic::Ordering::SeqCst),
+            "factory must run on sequential second call"
         );
     }
 
-    // ── Task 6.2 — mint + connect end-to-end via the same code path ──────
+    // ── Task 1.1 — sequential connect confirmed (no RADIO-1 token needed) ──
 
-    /// RADIO-1: prove the `modem_mint_consent` Tauri command path produces a
-    /// token that unlocks `modem_ardop_connect`. We test the underlying
-    /// `mint_consent_token()` call (the same function the command wraps) +
-    /// `modem_ardop_connect_gated_with_factory` so the end-to-end loop is
-    /// verified WITHOUT requiring a Tauri `State` constructor. If a future
-    /// refactor splits the two functions onto different storage, this test
-    /// will fail loudly — which is the desired signal.
+    /// Verify that `modem_ardop_connect_gated_with_factory` no longer requires
+    /// a consent token — it succeeds on the first call with no mint step.
     #[test]
-    fn mint_then_connect_with_matching_token_succeeds() {
+    fn connect_succeeds_without_consent_token() {
         use crate::modem_status::ModemSession;
         let session = std::sync::Arc::new(ModemSession::new());
-        // Directly testing the same path `modem_mint_consent` uses.
-        let token = session.mint_consent_token();
+        // No mint_consent_token call — the function must work without one.
         let result = modem_ardop_connect_gated_with_factory(
             &session,
             "W7RMS-10",
-            &token,
             &test_ardop_ui_config(),
             |_cfg, _t| Ok(stub_transport()),
         );
@@ -1274,7 +1213,7 @@ mod tests {
         let abort_writer = TcpStream::connect(addr).expect("connect to abort listener");
 
         let session = Arc::new(ModemSession::new());
-        let token = session.mint_consent_token();
+        // No consent token needed — the busy guard is the only gate now.
 
         // Run the connect call on a worker thread so the test thread can
         // call disconnect in parallel.
@@ -1284,7 +1223,6 @@ mod tests {
             modem_ardop_connect_gated_with_factory(
                 &session_for_connect,
                 "W7RMS-10",
-                &token,
                 &test_ardop_ui_config(),
                 move |_cfg, _target| {
                     Ok(Box::new(AbortableStubTransport::new(

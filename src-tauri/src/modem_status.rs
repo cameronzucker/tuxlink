@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -77,6 +78,12 @@ impl ModemStatus {
 #[derive(Debug)]
 pub struct ModemSession {
     inner: Mutex<ModemSessionInner>,
+    /// Busy guard: set to `true` while a connect is in flight.
+    /// Guards against duplicate concurrent connect invocations (the dup-call
+    /// defense previously provided as a side-effect by the consent token's
+    /// consume semantics). Set via [`try_begin_connect`] BEFORE any I/O;
+    /// cleared via [`clear_connect_in_progress`] on every exit path via RAII.
+    connect_in_progress: AtomicBool,
 }
 
 struct ModemSessionInner {
@@ -140,6 +147,7 @@ impl ModemSession {
                 transport: None,
                 abort_writer: None,
             }),
+            connect_in_progress: AtomicBool::new(false),
         }
     }
 
@@ -340,6 +348,21 @@ impl ModemSession {
                 "no cmd writer installed (modem not running)",
             ))
         }
+    }
+
+    /// Try to begin a connect. Returns `true` if the caller now owns the busy
+    /// bit; `false` if another connect is already in flight. Caller MUST call
+    /// [`clear_connect_in_progress`] in every exit path (use the RAII guard in
+    /// `modem_ardop_connect_gated_with_factory`).
+    pub fn try_begin_connect(&self) -> bool {
+        self.connect_in_progress
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+    }
+
+    /// Release the busy bit. Must pair with a successful [`try_begin_connect`].
+    pub fn clear_connect_in_progress(&self) {
+        self.connect_in_progress.store(false, Ordering::Release);
     }
 }
 
