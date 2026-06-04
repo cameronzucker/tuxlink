@@ -380,7 +380,13 @@ export function VaraRadioPanel({ mode, onClose }: VaraRadioPanelProps) {
         <ListenArmButton
           armed={varaListener.armed}
           minutesRemaining={varaListener.minutesRemaining}
-          busy={varaListener.busy || !isOpen}
+          // Separate concerns (tuxlink-tccc): `busy` is in-flight-call (drives
+          // the transient "Arming…" / "Disarming…" label), `disabled` is the
+          // precondition gate (transport must be Open). Folding both into
+          // `busy` made the button say "Arming…" on mount even when nothing
+          // was arming, because !isOpen is true at first render.
+          busy={varaListener.busy}
+          disabled={!isOpen}
           helpText={
             isOpen
               ? 'Sends LISTEN ON to the VARA modem and accepts inbound peer CONNECTED events until disarmed or the TTL expires. VARA has no station-password layer (peers do not challenge); the allowlist below is the gate.'

@@ -20,8 +20,16 @@ export interface ListenArmButtonProps {
   minutesRemaining: number | null;
   /** Optional armed-state label. Defaults to "ARMED". */
   armedLabel?: string;
-  /** Disabled while an in-flight arm/disarm call is settling. */
+  /** TRUE while an in-flight arm/disarm call is settling — drives BOTH the
+   *  disabled attribute AND the transient "Arming…" / "Disarming…" label. */
   busy?: boolean;
+  /** TRUE when the button should be greyed out due to a precondition that is
+   *  NOT an in-flight call (e.g. the VARA listener requires the transport to
+   *  be Open before arm is meaningful). Drives the disabled attribute but
+   *  leaves the label at the steady "Arm listener" / "Disarm" copy, so the
+   *  operator doesn't see "Arming…" describing a process that never started
+   *  (tuxlink-tccc). Pair with `helpText` to explain WHY it's disabled. */
+  disabled?: boolean;
   /** Optional help text rendered beneath the button. */
   helpText?: string;
   onArm: () => void;
@@ -34,6 +42,7 @@ export function ListenArmButton({
   minutesRemaining,
   armedLabel = 'ARMED',
   busy = false,
+  disabled = false,
   helpText,
   onArm,
   onDisarm,
@@ -49,7 +58,7 @@ export function ListenArmButton({
             type="button"
             className="radio-panel-btn radio-panel-btn-bad"
             data-testid={`${testIdPrefix}-disarm-btn`}
-            disabled={busy}
+            disabled={busy || disabled}
             onClick={onDisarm}
           >
             {busy ? 'Disarming…' : 'Disarm'}
@@ -59,7 +68,7 @@ export function ListenArmButton({
             type="button"
             className="radio-panel-btn radio-panel-btn-primary"
             data-testid={`${testIdPrefix}-arm-btn`}
-            disabled={busy}
+            disabled={busy || disabled}
             onClick={onArm}
           >
             {busy ? 'Arming…' : 'Arm listener'}
