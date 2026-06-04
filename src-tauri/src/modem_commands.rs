@@ -15,6 +15,7 @@ use crate::native_mailbox::Mailbox;
 use crate::winlink::modem::ardop::transport::ArdopTransport;
 use crate::winlink::modem::ardop::ArdopConfig;
 use crate::winlink::modem::{InitConfig, ModemTransport};
+use crate::winlink::session::SessionIntent;
 
 /// RADIO-1 bounded-airtime cap: the worst-case `connect_arq` wall-clock budget.
 ///
@@ -663,6 +664,7 @@ pub fn modem_ardop_b2f_exchange(
     app: AppHandle,
     session: State<'_, Arc<ModemSession>>,
     target: String,
+    intent: String,
     consent_token: String,
 ) -> Result<(), String> {
     // ─── RADIO-1 gate FIRST — no I/O / state mutation pre-gate ───────────
@@ -676,6 +678,13 @@ pub fn modem_ardop_b2f_exchange(
         );
     }
 
+    // Parse the operator-selected dial intent (CMS gateway vs P2P peer). The
+    // parse runs AFTER the consent gate so a bad-intent string from a stale
+    // build cannot leak via the error message, and BEFORE any transport take
+    // so a parse failure does not leave the transport stranded outside
+    // ModemSession.
+    let parsed_intent = parse_b2f_intent(&intent)?;
+
     // ─── Take the installed transport ────────────────────────────────────
     // The transport was installed by `modem_ardop_connect` after a
     // successful `init` + `connect_arq`. If it's missing, the operator
@@ -688,7 +697,7 @@ pub fn modem_ardop_b2f_exchange(
     // Wrap the exchange in a closure so a single point handles cleanup on
     // BOTH success and failure: disconnect the transport OUTSIDE any held
     // lock, then reset the session state.
-    let outcome = run_b2f_with_transport(&app, &mut *transport, &target);
+    let outcome = run_b2f_with_transport(&app, &mut *transport, &target, parsed_intent);
 
     // ─── Always disconnect + reset, regardless of outcome ────────────────
     // Best-effort: even if disconnect errors, the session must end in a
@@ -716,6 +725,7 @@ fn run_b2f_with_transport(
     app: &AppHandle,
     transport: &mut dyn ModemTransport,
     target: &str,
+    intent: SessionIntent,
 ) -> Result<(), String> {
     // Mailbox lives at <app_data_dir>/native-mbox (per `bootstrap::install_native`).
     let mbox_dir = app
@@ -737,11 +747,31 @@ fn run_b2f_with_transport(
     crate::winlink_backend::run_ardop_b2f_exchange(
         transport,
         target,
+        intent,
         &cfg,
         &mailbox,
         Some(&arbiter),
     )
     .map_err(|e| format!("ARDOP B2F exchange failed: {e}"))
+}
+
+/// Parse the operator-supplied B2F intent string into a [`SessionIntent`].
+///
+/// Accepts only the two operator-selectable dial intents (`"cms"` and
+/// `"p2p"`, case-insensitive after trimming). `RadioOnly`, `PostOffice`,
+/// and `Mesh` are accepted by the backend's exchange config but are not
+/// surfaced in the ARDOP HF panel — added only by the gateway-dial path
+/// once the matching UI lands. Returning an explicit allow-list keeps the
+/// wire contract narrow: a stray frontend value can't widen the dial
+/// surface silently.
+pub fn parse_b2f_intent(s: &str) -> Result<SessionIntent, String> {
+    match s.trim().to_ascii_lowercase().as_str() {
+        "cms" => Ok(SessionIntent::Cms),
+        "p2p" => Ok(SessionIntent::P2p),
+        other => Err(format!(
+            "unknown B2F intent {other:?}; expected \"cms\" or \"p2p\""
+        )),
+    }
 }
 
 #[cfg(test)]
@@ -1713,5 +1743,60 @@ mod tests {
                 None => std::env::remove_var("TUXLINK_CONFIG_DIR"),
             }
         }
+    }
+
+    // ── parse_b2f_intent (tuxlink-9ls2) ──────────────────────────────
+
+    #[test]
+    fn parse_b2f_intent_accepts_cms_lowercase() {
+        assert_eq!(parse_b2f_intent("cms"), Ok(SessionIntent::Cms));
+    }
+
+    #[test]
+    fn parse_b2f_intent_accepts_p2p_lowercase() {
+        assert_eq!(parse_b2f_intent("p2p"), Ok(SessionIntent::P2p));
+    }
+
+    #[test]
+    fn parse_b2f_intent_is_case_insensitive() {
+        assert_eq!(parse_b2f_intent("CMS"), Ok(SessionIntent::Cms));
+        assert_eq!(parse_b2f_intent("P2P"), Ok(SessionIntent::P2p));
+        assert_eq!(parse_b2f_intent("CmS"), Ok(SessionIntent::Cms));
+        assert_eq!(parse_b2f_intent("p2P"), Ok(SessionIntent::P2p));
+    }
+
+    #[test]
+    fn parse_b2f_intent_trims_whitespace() {
+        assert_eq!(parse_b2f_intent("  cms  "), Ok(SessionIntent::Cms));
+        assert_eq!(parse_b2f_intent("\tp2p\n"), Ok(SessionIntent::P2p));
+    }
+
+    #[test]
+    fn parse_b2f_intent_rejects_unknown_value() {
+        let err = parse_b2f_intent("gateway").unwrap_err();
+        assert!(err.contains("unknown B2F intent"), "got: {err}");
+        assert!(err.contains("gateway"), "must echo the bad input: {err}");
+    }
+
+    #[test]
+    fn parse_b2f_intent_rejects_empty() {
+        // Empty (or whitespace-only) input is operator error — not a Cms
+        // default — so the parse must surface the error, not silently
+        // route to CMS. The frontend always passes "cms" or "p2p"; an
+        // empty arrival means a stale build or a mis-wired test.
+        let err = parse_b2f_intent("").unwrap_err();
+        assert!(err.contains("unknown B2F intent"), "got: {err}");
+    }
+
+    #[test]
+    fn parse_b2f_intent_rejects_unsupported_intents() {
+        // RadioOnly / PostOffice / Mesh exist in SessionIntent but are
+        // NOT operator-selectable from the ARDOP HF panel yet. The parser
+        // narrows the surface so a stray "radioonly" from a future build
+        // can't widen the on-air dial scope without an explicit code
+        // change here.
+        assert!(parse_b2f_intent("radioonly").is_err());
+        assert!(parse_b2f_intent("postoffice").is_err());
+        assert!(parse_b2f_intent("mesh").is_err());
     }
 }

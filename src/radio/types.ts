@@ -19,7 +19,7 @@ import type { ConnectionKey } from '../mailbox/FolderSidebar';
 export type RadioPanelMode =
   | { kind: 'telnet'; intent: 'cms' | 'p2p' }
   | { kind: 'packet'; intent: 'cms' | 'p2p' }
-  | { kind: 'ardop-hf'; intent: 'cms' }
+  | { kind: 'ardop-hf'; intent: 'cms' | 'p2p' }
   | { kind: 'vara-hf'; intent: 'cms' | 'p2p' }
   | { kind: 'vara-fm'; intent: 'cms' | 'p2p' };
 

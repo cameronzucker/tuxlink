@@ -146,6 +146,72 @@ impl VaraSession {
             .map(|g| g.status.clone())
             .unwrap_or_else(|poison| poison.into_inner().status.clone())
     }
+
+    /// Take ownership of the open transport, leaving the session in
+    /// state=Closed. Used by the listener consumer task (tuxlink-9ls2)
+    /// to take the open transport for the armed window without holding
+    /// the session mutex for hours.
+    ///
+    /// Returns `None` if the session has no transport (already closed,
+    /// or another consumer raced and took it first). Mirrors the
+    /// `ModemSession::take_transport` posture used by ARDOP's listener
+    /// consumer task.
+    pub fn take_transport(&self) -> Option<VaraTransport> {
+        let mut guard = self.inner.lock().ok()?;
+        let t = guard.transport.take();
+        if t.is_some() {
+            guard.status = VaraStatus::closed();
+        }
+        t
+    }
+
+    /// Return a previously-taken transport to the session, restoring
+    /// state=Open. Called by the listener consumer task on disarm so
+    /// the operator's next `vara_stop_session` / `vara_status` sees the
+    /// transport as if the consumer never owned it.
+    ///
+    /// `bound_host` + `bound_cmd_port` should be the values the
+    /// transport was opened with — the consumer task captures them
+    /// from the session snapshot before calling `take_transport`.
+    pub fn return_transport(
+        &self,
+        t: VaraTransport,
+        bound_host: Option<String>,
+        bound_cmd_port: Option<u16>,
+    ) {
+        if let Ok(mut guard) = self.inner.lock() {
+            guard.status = VaraStatus {
+                state: VaraState::Open,
+                last_error: None,
+                bound_host,
+                bound_cmd_port,
+            };
+            guard.transport = Some(t);
+        }
+    }
+
+    /// Send `LISTEN ON` over the cmd socket while briefly holding the
+    /// session lock. Returns Err if the transport isn't Open or the TCP
+    /// write fails. Mirrors `ModemSession::send_listen_command(true)` —
+    /// the listener arm command flips LISTEN before spawning the
+    /// consumer task so an arm failure surfaces synchronously without
+    /// leaving a dangling consumer.
+    ///
+    /// Holds the lock only for the duration of one TCP write (~ms on
+    /// localhost). Does NOT hold it across the consumer task spawn.
+    pub fn send_listen_on(&self) -> Result<(), String> {
+        let mut guard = self
+            .inner
+            .lock()
+            .map_err(|e| format!("session lock poisoned: {e}"))?;
+        let transport = guard
+            .transport
+            .as_mut()
+            .ok_or_else(|| "VARA session is not Open — call vara_start_session first".to_string())?;
+        transport
+            .send(&OutboundCommand::Listen(true))
+            .map_err(|e| format!("LISTEN ON write failed: {e}"))
+    }
 }
 
 impl Default for VaraSession {
@@ -564,6 +630,97 @@ mod tests {
             err.contains("TCP connect failed"),
             "after a prior error, start should re-attempt and fail at TCP (not the double-start guard); got: {err}"
         );
+    }
+
+    // tuxlink-9ls2: take_transport / return_transport — the lifecycle
+    // primitives the listener consumer task uses to own the transport for
+    // the armed window.
+
+    #[test]
+    fn take_transport_from_empty_session_returns_none() {
+        let session = Arc::new(VaraSession::new());
+        // Fresh session: no transport open → take returns None.
+        assert!(session.take_transport().is_none());
+        // Snapshot remains Closed after a failed take.
+        assert_eq!(session.snapshot().state, VaraState::Closed);
+    }
+
+    #[test]
+    fn return_transport_restores_open_state() {
+        // We can't easily construct a real VaraTransport in a unit test
+        // (would require two live TcpListeners), but we CAN exercise the
+        // state-machine half: after a take from a fresh session returns
+        // None, the snapshot must be Closed; after a manual return_transport
+        // call with a real transport, state is Open. The wire half is
+        // covered by the listener.rs spawn_mock_vara tests.
+        //
+        // What we test here: the state transitions when a transport IS
+        // present. Bind a real TCP listener pair so we can build a real
+        // VaraTransport; install it into a session; then take + return.
+        use std::net::TcpListener;
+        use std::thread;
+        use std::time::Duration;
+
+        let cmd_l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let cmd_port = cmd_l.local_addr().unwrap().port();
+        let data_l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let data_port = data_l.local_addr().unwrap().port();
+
+        // Spawn acceptors so VaraTransport::connect's two TCP connects
+        // complete.
+        let cmd_handle = thread::spawn(move || {
+            let (_c, _) = cmd_l.accept().unwrap();
+            thread::sleep(Duration::from_millis(500));
+        });
+        let data_handle = thread::spawn(move || {
+            let (_c, _) = data_l.accept().unwrap();
+            thread::sleep(Duration::from_millis(500));
+        });
+
+        let cfg = VaraConfig {
+            host: "127.0.0.1".into(),
+            cmd_port,
+            data_port,
+            connect_timeout: Duration::from_secs(2),
+            read_timeout: Some(Duration::from_millis(100)),
+        };
+        let transport = VaraTransport::connect(cfg).expect("connect must succeed");
+
+        let session = Arc::new(VaraSession::new());
+        // Install: manually set state to Open + plant the transport.
+        {
+            let mut guard = session.inner.lock().unwrap();
+            guard.transport = Some(transport);
+            guard.status = VaraStatus {
+                state: VaraState::Open,
+                last_error: None,
+                bound_host: Some("127.0.0.1".into()),
+                bound_cmd_port: Some(cmd_port),
+            };
+        }
+        assert_eq!(session.snapshot().state, VaraState::Open);
+
+        // Take: snapshot transitions to Closed, transport handed to caller.
+        let taken = session.take_transport();
+        assert!(taken.is_some(), "take must return the transport");
+        assert_eq!(session.snapshot().state, VaraState::Closed);
+
+        // Return: state restored to Open with the bound info preserved.
+        session.return_transport(
+            taken.unwrap(),
+            Some("127.0.0.1".into()),
+            Some(cmd_port),
+        );
+        let snap = session.snapshot();
+        assert_eq!(snap.state, VaraState::Open);
+        assert_eq!(snap.bound_host.as_deref(), Some("127.0.0.1"));
+        assert_eq!(snap.bound_cmd_port, Some(cmd_port));
+
+        // Cleanup: drop the session (closes the transport's sockets) and
+        // join the acceptor threads.
+        drop(session);
+        cmd_handle.join().unwrap();
+        data_handle.join().unwrap();
     }
 
     // tuxlink-rsus: MYCALL is sent on TCP connect when callsign is Some.

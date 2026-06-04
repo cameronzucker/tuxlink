@@ -140,6 +140,11 @@ pub fn run() {
         // tuxlink-61yg: ARDOP listener shared state — the in-flight consumer
         // task's shutdown flag.
         .manage(std::sync::Arc::new(crate::ui_commands::ArdopListenState::default()))
+        // tuxlink-9ls2: VARA listener shared state — the in-flight consumer
+        // task's shutdown flag. Mirrors the ARDOP listener; VARA differs only
+        // in that the transport is externally-managed (operator must
+        // vara_start_session before vara_listen can arm).
+        .manage(std::sync::Arc::new(crate::ui_commands::VaraListenState::default()))
         .setup(|app| {
             use tauri::Manager as _;  // brings .state() into scope for the setup closure
             // Install system tray icon + menu (tuxlink-rit / Task 8).
@@ -306,6 +311,14 @@ pub fn run() {
             crate::ui_commands::ardop_allowed_stations_add,
             crate::ui_commands::ardop_allowed_stations_remove,
             crate::ui_commands::ardop_allowed_stations_set_allow_all,
+            // tuxlink-9ls2: VARA P2P listener — same shape as ARDOP but the
+            // operator-managed transport requires vara_start_session first.
+            crate::ui_commands::vara_listen,
+            crate::ui_commands::vara_set_listen,
+            crate::ui_commands::vara_allowed_stations_get,
+            crate::ui_commands::vara_allowed_stations_add,
+            crate::ui_commands::vara_allowed_stations_remove,
+            crate::ui_commands::vara_allowed_stations_set_allow_all,
             crate::ui_commands::config_set_grid,      // Task 5 (tuxlink-686)
             crate::ui_commands::position_set_source,  // Task 11 (tuxlink-686)
             crate::ui_commands::position_status,      // Task 11 (tuxlink-686)
