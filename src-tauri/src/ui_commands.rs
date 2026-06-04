@@ -2313,9 +2313,35 @@ pub async fn ardop_listen(
     arms.append_to_log(&log_path)
         .map_err(|e| UiError::Internal { detail: e.to_string() })?;
 
-    // If the modem isn't already running, start it in listen-only mode.
-    let already_running = session.snapshot_transport_present();
-    if !already_running {
+    // Codex review 2026-06-03 [P1 #1] (tuxlink-61yg): only flip the running
+    // modem into listen mode when it's IDLE. A modem in Connecting/Connected
+    // state belongs to an active outbound dial; the consumer task's
+    // `take_transport()` would yank the live connection out from under
+    // `modem_ardop_b2f_exchange` and any in-flight disconnect logic.
+    let cur_state = session.status_snapshot().state;
+    let already_running_idle = matches!(
+        cur_state,
+        crate::modem_status::ModemState::Idle
+    );
+    let modem_busy = matches!(
+        cur_state,
+        crate::modem_status::ModemState::Connecting
+            | crate::modem_status::ModemState::ConnectedIrs
+            | crate::modem_status::ModemState::ConnectedIss
+            | crate::modem_status::ModemState::Disconnecting
+            | crate::modem_status::ModemState::Spawning
+            | crate::modem_status::ModemState::Initializing
+    );
+    if modem_busy {
+        return Err(UiError::Internal {
+            detail: format!(
+                "ARDOP listener arm refused — modem is busy ({:?}). \
+                 Wait for the active session to end (or disconnect it) and re-arm.",
+                cur_state
+            ),
+        });
+    }
+    if !already_running_idle {
         let cfg = config::read_config()
             .map_err(|e| UiError::Internal { detail: e.to_string() })?;
         let ardop_ui = cfg.modem_ardop.clone().unwrap_or_default();
@@ -2421,16 +2447,21 @@ pub async fn ardop_set_listen(
     };
     if let Some(h) = handle {
         h.shutdown.store(true, Ordering::SeqCst);
-        // Best-effort LISTEN FALSE — the consumer task will also send this on
-        // its way out, but flipping it from here too means the modem stops
-        // accepting inbound peers immediately even if the consumer is mid-
-        // wait_for_listener_connect timeout.
+        // Codex review 2026-06-03 [P1 #3] (tuxlink-61yg): disarm during
+        // active B2F. The consumer is blocked inside run_ardop_b2f_answer
+        // (synchronous). LISTEN FALSE alone doesn't tear down the active
+        // ARQ link; the consumer's B2F can loop forever. Send ABORT via
+        // the cmd-side-channel to force the active session to fault out
+        // (ardopcf emits FAULT/NEWSTATE DISC which unwinds the B2F recv
+        // loop), then send LISTEN FALSE. Same pattern as
+        // modem_ardop_disconnect_inner.
+        let _ = session.abort_in_flight();
         let _ = session.send_listen_command(false);
         emit_session_line(
             &app,
             &log,
             LogLevel::Info,
-            "ARDOP listener disarming — sent LISTEN FALSE; waiting for consumer task to drain.".to_string(),
+            "ARDOP listener disarming — ABORT + LISTEN FALSE sent; waiting for consumer to drain.".to_string(),
         );
     } else {
         emit_session_line(
@@ -2485,11 +2516,19 @@ fn ardop_listener_consumer_task(
         );
     };
 
-    // Take the transport. If someone else has it (race), bail.
+    // Take the transport. If someone else has it (race), clean up cleanly.
+    // Codex review 2026-06-03 [P2 #5] (tuxlink-61yg): a stale take_transport
+    // result would leave listen_state populated → UI claims armed, no
+    // consumer running. Mirror the shutdown-cleanup before returning.
     let mut transport = match session.take_transport() {
         Some(t) => t,
         None => {
-            progress("ARDOP listener consumer: transport not present at start; aborting.");
+            progress(
+                "ARDOP listener consumer: transport not present at start; \
+                 clearing arm state.",
+            );
+            let _ = session.send_listen_command(false);
+            *listen_state.inner.lock().unwrap() = None;
             return;
         }
     };
@@ -2547,17 +2586,40 @@ fn ardop_listener_consumer_task(
                         Some(arbiter.as_ref()),
                     ),
                     None => {
-                        // No mailbox state — skip persistence; just run the
-                        // exchange so the protocol completes cleanly.
-                        progress("ARDOP listener: no mailbox available; protocol-only exchange.");
-                        let tmp_mb = crate::native_mailbox::Mailbox::new(std::env::temp_dir());
-                        run_ardop_b2f_answer(
-                            transport.as_mut(),
-                            &peer_call,
-                            &cfg,
-                            &tmp_mb,
-                            Some(arbiter.as_ref()),
-                        )
+                        // Codex review 2026-06-03 [P2 #7] (tuxlink-61yg): the
+                        // prior "Mailbox::new(temp_dir())" path rooted a real
+                        // mailbox at the world-readable /tmp directory. On a
+                        // multi-user host, a local user could pre-create
+                        // /tmp/outbox to inject outbound proposals into the
+                        // session. Use a fresh per-session private tempdir
+                        // (tempfile::tempdir cleans up on drop).
+                        progress(
+                            "ARDOP listener: no mailbox available; \
+                             protocol-only exchange in private tempdir.",
+                        );
+                        match tempfile::tempdir() {
+                            Ok(tmp) => {
+                                let tmp_mb = crate::native_mailbox::Mailbox::new(tmp.path());
+                                let r = run_ardop_b2f_answer(
+                                    transport.as_mut(),
+                                    &peer_call,
+                                    &cfg,
+                                    &tmp_mb,
+                                    Some(arbiter.as_ref()),
+                                );
+                                // `tmp` drops here → directory deletes.
+                                r
+                            }
+                            Err(e) => {
+                                progress(&format!(
+                                    "ARDOP listener: could not create private \
+                                     tempdir for protocol-only exchange ({e}); \
+                                     dropping link."
+                                ));
+                                let _ = arq_disconnect_via_cmd_writer(&transport);
+                                continue;
+                            }
+                        }
                     }
                 };
                 match result {
@@ -2592,6 +2654,13 @@ fn ardop_listener_consumer_task(
                 );
                 let _ = event.append_to_log(&log_path);
                 let _ = arq_disconnect_via_cmd_writer(&transport);
+                // Codex review 2026-06-03 [P1 #4] (tuxlink-61yg): after
+                // DISCONNECT, drain modem events for a bounded window so
+                // any DISCONNECTED/NEWSTATE DISC ack is consumed before
+                // we loop to wait for the NEXT inbound. Otherwise the
+                // rejected peer's ARQ link can still be holding the
+                // modem while wait_for_listener_connect blocks.
+                let _ = transport.wait_for_listener_connect(Duration::from_millis(500));
             }
         }
     }

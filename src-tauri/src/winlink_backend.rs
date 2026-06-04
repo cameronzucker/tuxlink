@@ -231,7 +231,21 @@ pub fn build_outbound_proposals(
 ) -> Result<Vec<session::OutboundMessage>, BackendError> {
     let mut outbound = Vec::new();
     for meta in mailbox.list(MailboxFolder::Outbox)? {
-        let body = mailbox.read(MailboxFolder::Outbox, &meta.id)?;
+        // Codex review 2026-06-03 [P2 #6] (tuxlink-61yg): per-message read
+        // failures used to propagate `?` and discard the entire batch.
+        // A single bad/missing file would silently withhold ALL readable
+        // mail from the session. Now: skip and continue. A folder-wide
+        // listing failure still propagates (the outer `?`).
+        let body = match mailbox.read(MailboxFolder::Outbox, &meta.id) {
+            Ok(b) => b,
+            Err(e) => {
+                eprintln!(
+                    "build_outbound_proposals: skipping outbox message {:?}: {e}",
+                    meta.id
+                );
+                continue;
+            }
+        };
         if let Ok(message) = Message::from_bytes(&body.raw_rfc5322) {
             if let Some((proposal, compressed)) = message.to_proposal() {
                 let title = message.header("Subject").unwrap_or_default().to_string();

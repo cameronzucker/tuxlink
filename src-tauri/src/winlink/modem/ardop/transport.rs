@@ -611,6 +611,18 @@ impl ModemTransport for ArdopTransport {
             };
             match cmd.recv_event(remaining) {
                 Ok(super::command::Command::Connected { peer_call, bandwidth_hz }) => {
+                    // Codex review 2026-06-03 [P1 #2] (tuxlink-61yg): mirror
+                    // connect_arq's post-CONNECTED state flush — stamp
+                    // `connected_at` (so uptime_sec is non-zero for the
+                    // listener session) and drain any OS-buffered bytes
+                    // from the data socket. ardopcf's cmd reader flips
+                    // ArqState BEFORE delivering the Connected event;
+                    // monitored pre-session bytes would otherwise
+                    // corrupt the B2F handshake's first read.
+                    self.accumulators.connected_at = Some(Instant::now());
+                    if let Some(data) = self.data.as_mut() {
+                        let _ = data.drain_pending();
+                    }
                     return Ok(Some(ConnectInfo { peer_call, bandwidth_hz }));
                 }
                 Ok(super::command::Command::Fault(msg)) => {
