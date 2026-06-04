@@ -110,8 +110,9 @@ pub fn modem_get_status(session: State<'_, Arc<ModemSession>>) -> ModemStatus {
 }
 
 /// Mint a fresh per-session consent token and return it to the frontend.
-/// Retained for the `modem_ardop_b2f_exchange` consent gate; the
-/// `modem_ardop_connect` path no longer requires a token (Task 1.1).
+/// The `modem_ardop_connect` and `modem_ardop_b2f_exchange` paths no longer
+/// require a token (Task 1.1 and Task 1.2 respectively).  This command is
+/// retained until Task 1.4 completes the full consent-token removal sweep.
 /// See [`ModemSession::mint_consent_token`] for storage semantics.
 #[tauri::command]
 pub fn modem_mint_consent(session: State<'_, Arc<ModemSession>>) -> String {
@@ -580,24 +581,19 @@ pub fn modem_ardop_connect(
 ///
 /// # Preconditions
 ///
-/// - The operator has already pressed Connect through the RADIO-1 modal, which
-///   minted a consent token, called `modem_ardop_connect`, and brought the
-///   ARQ link up. `ModemSession` now holds the live transport.
-/// - The operator has separately minted a NEW per-invocation consent token
-///   for THIS send/receive call (per-invocation Part 97 rule — the connect
-///   token was consumed by `modem_ardop_connect`).
+/// - The operator has already pressed Connect through the ARDOP panel, which
+///   called `modem_ardop_connect` and brought the ARQ link up.
+///   `ModemSession` now holds the live transport.
 ///
 /// # Flow
 ///
-/// 1. **Consent gate first** — `consume_consent_token` runs BEFORE any I/O.
-///    A missing/replayed token returns `Err` with no side effects.
-/// 2. **Take the installed transport** out of `ModemSession`.
-/// 3. **Read config + open the native mailbox** at the standard
+/// 1. **Take the installed transport** out of `ModemSession`.
+/// 2. **Read config + open the native mailbox** at the standard
 ///    `<app_data_dir>/native-mbox` path.
-/// 4. **Run the B2F exchange** via
+/// 3. **Run the B2F exchange** via
 ///    `winlink_backend::run_ardop_b2f_exchange` — builds outbound from the
 ///    mailbox Outbox, files received messages into Inbox, moves sent into Sent.
-/// 5. **Disconnect + reset** the transport and the session, regardless of
+/// 4. **Disconnect + reset** the transport and the session, regardless of
 ///    success/failure.
 ///
 /// # Lock + I/O discipline
@@ -618,24 +614,10 @@ pub fn modem_ardop_b2f_exchange(
     session: State<'_, Arc<ModemSession>>,
     target: String,
     intent: String,
-    consent_token: String,
 ) -> Result<(), String> {
-    // ─── RADIO-1 gate FIRST — no I/O / state mutation pre-gate ───────────
-    // `consume_consent_token` is atomic: equality check + clear in one lock.
-    // After a successful return, the stored token is None; a replay of the
-    // same token fails at this exact point. Per-invocation Part 97 rule.
-    if !session.consume_consent_token(&consent_token) {
-        return Err(
-            "RADIO-1: missing or invalid consent token; mint one via the Send/Receive modal first"
-                .into(),
-        );
-    }
-
-    // Parse the operator-selected dial intent (CMS gateway vs P2P peer). The
-    // parse runs AFTER the consent gate so a bad-intent string from a stale
-    // build cannot leak via the error message, and BEFORE any transport take
-    // so a parse failure does not leave the transport stranded outside
-    // ModemSession.
+    // Parse the operator-selected dial intent (CMS gateway vs P2P peer).
+    // Runs BEFORE the transport take so a parse failure does not leave the
+    // transport stranded outside ModemSession.
     let parsed_intent = parse_b2f_intent(&intent)?;
 
     // ─── Take the installed transport ────────────────────────────────────
@@ -658,9 +640,8 @@ pub fn modem_ardop_b2f_exchange(
     // `modem_ardop_disconnect_inner`'s policy.
     let _ = transport.disconnect(Duration::from_secs(5));
     drop(transport);
-    // `reset_to_stopped` clears the consent token (already None — we consumed
-    // it at the top), takes any still-installed transport (None — we already
-    // took it), and flips status to Stopped. A single lock acquisition.
+    // `reset_to_stopped` takes any still-installed transport (None — we already
+    // took it) and flips status to Stopped. A single lock acquisition.
     let _ = session.reset_to_stopped();
 
     outcome
@@ -1038,6 +1019,21 @@ mod tests {
             |_cfg, _t| Ok(stub_transport()),
         );
         assert!(result.is_ok(), "result: {result:?}");
+    }
+
+    // ── Task 1.2 — b2f_exchange signature has no consent_token ──────────
+
+    /// Compile-time assertion: if the wrapper still takes consent_token,
+    /// the fn-pointer coercion below won't compile.  The body is irrelevant
+    /// — the type check at the module boundary is the test.
+    #[test]
+    fn modem_ardop_b2f_exchange_signature_has_no_consent_token() {
+        let _f: fn(
+            AppHandle,
+            State<'_, Arc<ModemSession>>,
+            String, // target
+            String, // intent
+        ) -> Result<(), String> = modem_ardop_b2f_exchange;
     }
 
     // ── tuxlink-5738 — pre-flight identity check ─────────────────────────
