@@ -44,8 +44,7 @@
         "priority": "optional",
         "depends": ["libsecret-1-0"],
         "files": {
-          "/usr/share/applications/tuxlink.desktop": "../scripts/tuxlink.desktop",
-          "/usr/share/applications/com.tuxlink.app.desktop": "../scripts/com.tuxlink.app.desktop"
+          "/usr/share/applications/tuxlink.desktop": "../scripts/tuxlink.desktop"
         }
       },
       "rpm": {
