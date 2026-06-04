@@ -28,9 +28,10 @@ use std::time::Duration;
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, State};
+use tokio::sync::{mpsc, Notify};
 
 use crate::config::{self, VaraUiConfig};
-use crate::modem_status::ShutdownableStream;
+use crate::modem_status::{ShutdownableStream, TransportOwner, ARBITER_YIELD_TIMEOUT};
 use crate::session_log::SessionLogState;
 use crate::ui_commands::LogLineDto;
 use crate::winlink_backend::{LogLevel, LogLine, LogSource};
@@ -119,6 +120,53 @@ impl Default for VaraStatus {
 /// run concurrently from the UI without racing the transport handle.
 pub struct VaraSession {
     inner: Mutex<VaraSessionInner>,
+    /// Transport-arbiter signal: outbound calls `notify_one()` to ask the
+    /// listener consumer task to yield the transport. The consumer task
+    /// holds `notified()` while idle in its accept loop. Decoupled from
+    /// the mutex so the consumer never blocks waiting for outbound to
+    /// finish a state transition (tuxlink-0ye6 Task 4.3, Codex Round 2
+    /// P1 #4).
+    transport_yield_request: Arc<Notify>,
+    /// Transport-arbiter rendezvous: the listener consumer sends its held
+    /// transport here when it observes the yield request. Outbound awaits
+    /// this channel (with the std-mutex DROPPED) to receive the transport.
+    ///
+    /// Sender lives on the consumer task; receiver lives on the session
+    /// behind a tokio mutex so multiple async tasks could theoretically
+    /// contend on it (in practice only one outbound at a time per the
+    /// arbiter invariant, but the tokio mutex makes the lock-discipline
+    /// explicit).
+    transport_yield_rx: tokio::sync::Mutex<mpsc::Receiver<VaraTransport>>,
+    /// Cloneable sender for [`transport_yield_rx`]. Handed to the listener
+    /// consumer task when it spawns; the consumer keeps it for the
+    /// lifetime of the armed window so a `Sender::send` from the yield
+    /// path always succeeds when a consumer is alive.
+    ///
+    /// Held inside the session purely so the listener consumer can grab
+    /// a clone via accessor at spawn time without the spawning code
+    /// having to reach inside the session.
+    ///
+    /// `#[allow(dead_code)]`: the production accessor lands in the
+    /// Phase 3 listener-consumer wiring (task 3.4). This task ships
+    /// the arbiter primitives + tests in isolation; the wiring follows
+    /// in a sibling dispatch.
+    #[allow(dead_code)]
+    transport_yield_tx: mpsc::Sender<VaraTransport>,
+    /// Reverse-direction rendezvous: the arbiter sends the transport
+    /// here after outbound completes. The consumer task awaits on
+    /// `recv` to reclaim the transport and re-arm.
+    transport_return_tx: mpsc::Sender<VaraTransport>,
+    /// Receiver counterpart to [`transport_return_tx`]. Owned by the
+    /// consumer task (acquired via `take_transport_return_rx` at spawn).
+    /// Behind an `Option<Mutex<...>>` so the consumer can `take()` it
+    /// once at spawn time — there's exactly one consumer per session.
+    ///
+    /// `#[allow(dead_code)]`: the production accessor lands in the
+    /// Phase 3 listener-consumer wiring (task 3.4). The test-only
+    /// `take_transport_return_rx` accessor already reads this field
+    /// under `#[cfg(test)]`.
+    #[allow(dead_code)]
+    transport_return_rx: Mutex<Option<mpsc::Receiver<VaraTransport>>>,
 }
 
 struct VaraSessionInner {
@@ -146,17 +194,35 @@ struct VaraSessionInner {
     /// the VARA modem notices via TCP and halts in-flight TX on its end
     /// (tuxlink-0ye6 Task 4.1 — Codex Round 4 P1 #3).
     abort_stream: Option<Box<dyn ShutdownableStream>>,
+    /// Current ownership of the live transport (tuxlink-0ye6 Task 4.3,
+    /// Codex Round 1 P1 #5). Set as a side effect of `take_transport` /
+    /// `return_transport` (listener consumer) and `take_transport_for_outbound`
+    /// / `return_transport_from_outbound` (outbound). See [`TransportOwner`]
+    /// for the state machine; transitions are guarded by this mutex.
+    transport_owner: TransportOwner,
 }
 
 impl VaraSession {
     pub fn new() -> Self {
+        // mpsc channels are bounded; capacity 1 is sufficient — at most
+        // ONE transport handoff is in flight per direction at any moment
+        // (the arbiter invariant). Bounded so a regression doesn't silently
+        // queue stale transports.
+        let (yield_tx, yield_rx) = mpsc::channel::<VaraTransport>(1);
+        let (return_tx, return_rx) = mpsc::channel::<VaraTransport>(1);
         Self {
             inner: Mutex::new(VaraSessionInner {
                 transport: None,
                 status: VaraStatus::default(),
                 abort_writer: None,
                 abort_stream: None,
+                transport_owner: TransportOwner::None,
             }),
+            transport_yield_request: Arc::new(Notify::new()),
+            transport_yield_rx: tokio::sync::Mutex::new(yield_rx),
+            transport_yield_tx: yield_tx,
+            transport_return_tx: return_tx,
+            transport_return_rx: Mutex::new(Some(return_rx)),
         }
     }
 
@@ -177,11 +243,18 @@ impl VaraSession {
     /// or another consumer raced and took it first). Mirrors the
     /// `ModemSession::take_transport` posture used by ARDOP's listener
     /// consumer task.
+    ///
+    /// **Arbiter side effect (tuxlink-0ye6 Task 4.3):** on success, the
+    /// arbiter records the listener as the current owner via
+    /// `transport_owner = ListenerArmed`. Outbound's
+    /// [`Self::take_transport_for_outbound`] then sequences the yield
+    /// when needed.
     pub fn take_transport(&self) -> Option<VaraTransport> {
         let mut guard = self.inner.lock().ok()?;
         let t = guard.transport.take();
         if t.is_some() {
             guard.status = VaraStatus::closed();
+            guard.transport_owner = TransportOwner::ListenerArmed;
         }
         t
     }
@@ -194,6 +267,10 @@ impl VaraSession {
     /// `bound_host` + `bound_cmd_port` should be the values the
     /// transport was opened with — the consumer task captures them
     /// from the session snapshot before calling `take_transport`.
+    ///
+    /// **Arbiter side effect (tuxlink-0ye6 Task 4.3):** clears the
+    /// owner to `None` — the listener is no longer holding the transport
+    /// (it returned it to the session for shutdown / pre-Close cleanup).
     pub fn return_transport(
         &self,
         t: VaraTransport,
@@ -208,7 +285,223 @@ impl VaraSession {
                 bound_cmd_port,
             };
             guard.transport = Some(t);
+            guard.transport_owner = TransportOwner::None;
         }
+    }
+
+    // ── Arbiter (tuxlink-0ye6 Task 4.3, Codex Round 1 P1 #5) ────────────
+
+    /// Current transport owner — accessor for the arbiter state machine.
+    /// Returns [`TransportOwner::None`] if the session mutex is poisoned
+    /// (defensive — poisoning indicates a panic during a prior critical
+    /// section; treating the session as closed is the safe fallback).
+    pub fn transport_owner(&self) -> TransportOwner {
+        self.inner
+            .lock()
+            .map(|g| g.transport_owner)
+            .unwrap_or(TransportOwner::None)
+    }
+
+    /// Test-only helper: drive the owner state directly. Used by unit
+    /// tests to simulate "listener has the transport and is currently
+    /// running an inbound exchange" without spinning up a real consumer
+    /// task. Production code MUST drive the owner via the
+    /// `take_transport` / `return_transport` /
+    /// `take_transport_for_outbound` / `return_transport_from_outbound`
+    /// paths.
+    #[cfg(test)]
+    pub fn set_transport_owner_for_test(&self, owner: TransportOwner) {
+        if let Ok(mut guard) = self.inner.lock() {
+            guard.transport_owner = owner;
+        }
+    }
+
+    /// Test-only clone of the yield-notify handle. Lets a test spawn a
+    /// stub "consumer" task that calls `.notified().await` and then
+    /// sends a transport via [`Self::transport_yield_sender_clone`]
+    /// to simulate the real listener consumer's yield behavior.
+    #[cfg(test)]
+    pub fn transport_yield_notify_clone(&self) -> Arc<Notify> {
+        self.transport_yield_request.clone()
+    }
+
+    /// Test-only clone of the yield-channel sender. Lets a stub
+    /// consumer push a transport into the yield channel when it
+    /// receives the notify, mirroring what the real consumer task
+    /// will do once Phase 3 wires it.
+    #[cfg(test)]
+    pub fn transport_yield_sender_clone(&self) -> mpsc::Sender<VaraTransport> {
+        self.transport_yield_tx.clone()
+    }
+
+    /// Test-only: replace the yield receiver with one whose paired
+    /// sender has been dropped. After calling this, the next
+    /// `transport_yield_rx.recv()` returns `None`, exercising the
+    /// "listener consumer task exited" branch of
+    /// [`Self::take_transport_for_outbound`].
+    ///
+    /// Implementation note: this MUST be a separate path from the
+    /// normal `transport_yield_tx` because that sender is a fixed
+    /// field on the session. We swap the *receiver* (which sits behind
+    /// a `tokio::sync::Mutex`) so that even though the old sender
+    /// exists, the new receiver is bound to a dropped sender.
+    #[cfg(test)]
+    pub async fn install_closed_yield_channel_for_test(&self) {
+        let (closed_tx, closed_rx) = mpsc::channel::<VaraTransport>(1);
+        drop(closed_tx); // sender immediately gone → recv() returns None
+        let mut rx_guard = self.transport_yield_rx.lock().await;
+        *rx_guard = closed_rx;
+    }
+
+    /// Outbound request: snapshot+record under the std-mutex, drop the
+    /// mutex, then await the listener consumer's yield via the
+    /// transport-yield channel. Hands the transport to outbound.
+    ///
+    /// **Codex Round 2 P1 #4 — lock-drop-before-await.** The std mutex
+    /// is acquired only for the snapshot+notify+state-transition phase;
+    /// the .await happens with the lock released. Holding it across the
+    /// await would (a) deadlock against the listener consumer task that
+    /// needs session state to honor the yield, and (b) not even
+    /// compile (`std::sync::MutexGuard: !Send`).
+    ///
+    /// **Codex Round 3 P1 #2 — bounded wait.** If the listener consumer
+    /// task crashed, missed the notify, or is wedged in its accept loop,
+    /// an unbounded await would leave outbound stuck in
+    /// [`TransportOwner::OutboundPending`] forever. After
+    /// [`ARBITER_YIELD_TIMEOUT`] (3 s), we reset to
+    /// [`TransportOwner::None`] and surface "modem busy — listener did
+    /// not yield within {timeout}" so the operator can recover via
+    /// Close Session.
+    ///
+    /// ### Returns
+    ///
+    /// - `Ok(VaraTransport)` — yield succeeded; outbound now owns it.
+    /// - `Err("session not open")` — owner was `None`.
+    /// - `Err("modem busy — inbound exchange in progress")` — owner was
+    ///   `ListenerInbound`.
+    /// - `Err("outbound exchange already in flight")` — owner was
+    ///   `Outbound` (or `OutboundPending`).
+    /// - `Err("modem busy — listener did not yield within …")` — yield
+    ///   wait timed out.
+    /// - `Err("listener consumer task exited; session needs Close +
+    ///   reopen")` — yield channel closed (Sender dropped before send).
+    pub async fn take_transport_for_outbound(&self) -> Result<VaraTransport, String> {
+        // Phase 1: snapshot + record under the lock; drop before await.
+        {
+            let mut guard = self
+                .inner
+                .lock()
+                .map_err(|e| format!("session lock poisoned: {e}"))?;
+            match guard.transport_owner {
+                TransportOwner::None => return Err("session not open".into()),
+                TransportOwner::ListenerInbound => {
+                    return Err(
+                        "modem busy — inbound exchange in progress".into()
+                    )
+                }
+                TransportOwner::OutboundPending | TransportOwner::Outbound => {
+                    return Err("outbound exchange already in flight".into())
+                }
+                TransportOwner::ListenerArmed => {
+                    guard.transport_owner = TransportOwner::OutboundPending;
+                    // Drop the guard explicitly so the notify_one()
+                    // below is recorded after the lock release —
+                    // ordering is fine either way (the consumer holds
+                    // a clone of the Notify, not the mutex), but
+                    // dropping early documents the intent.
+                }
+            }
+        } // std-mutex guard dropped here — REQUIRED before .await
+
+        // Signal the listener consumer to yield.
+        self.transport_yield_request.notify_one();
+
+        // Phase 2: bounded await on the yield channel (no std-mutex
+        // held). Uses tokio::time::timeout so a wedged consumer
+        // doesn't strand outbound.
+        let yield_result = {
+            let mut rx_guard = self.transport_yield_rx.lock().await;
+            tokio::time::timeout(ARBITER_YIELD_TIMEOUT, rx_guard.recv()).await
+        };
+
+        let transport = match yield_result {
+            Ok(Some(t)) => t,
+            Ok(None) => {
+                // Channel closed — listener task is gone.
+                if let Ok(mut guard) = self.inner.lock() {
+                    guard.transport_owner = TransportOwner::None;
+                }
+                return Err(
+                    "listener consumer task exited; session needs Close + reopen"
+                        .into(),
+                );
+            }
+            Err(_elapsed) => {
+                // Timeout — consumer wedged. Reset to None so a clean
+                // Close+reopen can proceed.
+                if let Ok(mut guard) = self.inner.lock() {
+                    guard.transport_owner = TransportOwner::None;
+                }
+                return Err(format!(
+                    "modem busy — listener did not yield within {:?}; \
+                     Close Session and reopen to recover",
+                    ARBITER_YIELD_TIMEOUT,
+                ));
+            }
+        };
+
+        // Phase 3: finalize ownership transfer under the lock.
+        {
+            let mut guard = self
+                .inner
+                .lock()
+                .map_err(|e| format!("session lock poisoned: {e}"))?;
+            guard.transport_owner = TransportOwner::Outbound;
+        }
+
+        Ok(transport)
+    }
+
+    /// Outbound completes: return the transport to the consumer (if
+    /// alive) or drop it (if not). Transitions owner accordingly:
+    ///
+    /// - Consumer still listening → owner = `ListenerArmed`, transport
+    ///   pushed through `transport_return_tx`.
+    /// - Consumer gone (return_tx send fails) → owner = `None`,
+    ///   transport dropped. The caller's outbound is complete either
+    ///   way; the operator's next Close Session will tear down cleanly.
+    ///
+    /// Best-effort: ignores Mutex poisoning + send failures because the
+    /// outbound side has already completed; we're cleaning up.
+    pub fn return_transport_from_outbound(&self, transport: VaraTransport) {
+        // Try to hand it back to the consumer first. `try_send` so we
+        // don't await — `return_transport_from_outbound` is sync and
+        // shouldn't block on a wedged consumer.
+        match self.transport_return_tx.try_send(transport) {
+            Ok(()) => {
+                if let Ok(mut guard) = self.inner.lock() {
+                    guard.transport_owner = TransportOwner::ListenerArmed;
+                }
+            }
+            Err(_) => {
+                // Channel full, closed, or consumer gone. The transport
+                // was consumed by try_send's Err variant only in the
+                // `Full` case; for `Closed` we already lost it. Either
+                // way, mark owner as None — the listener can't re-arm
+                // without a fresh consumer + transport.
+                if let Ok(mut guard) = self.inner.lock() {
+                    guard.transport_owner = TransportOwner::None;
+                }
+            }
+        }
+    }
+
+    /// Test-only / future-consumer accessor: take the receiver half of
+    /// the return channel. Returns `None` if a prior caller already
+    /// took it (there can only be one consumer task per session).
+    #[cfg(test)]
+    pub fn take_transport_return_rx(&self) -> Option<mpsc::Receiver<VaraTransport>> {
+        self.transport_return_rx.lock().ok().and_then(|mut g| g.take())
     }
 
     /// Send `LISTEN ON` over the cmd socket while briefly holding the
@@ -1008,5 +1301,361 @@ mod tests {
         // call not panicking.
         let err3 = vara_start_session_inner(&session, &ui_cfg, Some("   ")).unwrap_err();
         assert!(err3.contains("TCP connect failed"), "got: {err3}");
+    }
+
+    // ── tuxlink-0ye6 Task 4.3: transport arbiter (TransportOwner state machine) ─
+    //
+    // Scope of this dispatch (per dune-bison-salamander task brief):
+    //   - TransportOwner enum + transport_owner() accessor
+    //   - take_transport_for_outbound() / return_transport_from_outbound()
+    //   - bounded 3s yield timeout (Codex Round 3 P1 #2)
+    //   - lock-drop-before-await (Codex Round 2 P1 #4)
+    //   - listener-yield + transport-return channels
+    //
+    // OUT OF SCOPE here:
+    //   - Integration with vara_open_session / modem_vara_b2f_exchange
+    //     (deferred to Phase 3 tasks 3.2 + 3.4, which create/rename those
+    //     commands)
+    //   - Listener consumer task changes (deferred)
+
+    /// Spin a real (loopback) `VaraTransport` for tests that need one. Uses the
+    /// same trick as `return_transport_restores_open_state`: spawn an acceptor
+    /// per port and let VaraTransport::connect succeed against them. Returns
+    /// the transport + the two thread handles the caller MUST join to release
+    /// the accept threads cleanly.
+    fn build_real_transport_for_test() -> (VaraTransport, std::thread::JoinHandle<()>, std::thread::JoinHandle<()>)
+    {
+        use std::net::TcpListener;
+        use std::thread;
+        use std::time::Duration;
+
+        let cmd_l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let cmd_port = cmd_l.local_addr().unwrap().port();
+        let data_l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let data_port = data_l.local_addr().unwrap().port();
+
+        let cmd_handle = thread::spawn(move || {
+            let (_c, _) = cmd_l.accept().unwrap();
+            thread::sleep(Duration::from_millis(500));
+        });
+        let data_handle = thread::spawn(move || {
+            let (_c, _) = data_l.accept().unwrap();
+            thread::sleep(Duration::from_millis(500));
+        });
+
+        let cfg = VaraConfig {
+            host: "127.0.0.1".into(),
+            cmd_port,
+            data_port,
+            connect_timeout: Duration::from_secs(2),
+            read_timeout: Some(Duration::from_millis(100)),
+        };
+        let transport = VaraTransport::connect(cfg).expect("connect must succeed");
+        (transport, cmd_handle, data_handle)
+    }
+
+    #[test]
+    fn vara_transport_owner_starts_none() {
+        let session = VaraSession::new();
+        assert_eq!(session.transport_owner(), TransportOwner::None);
+    }
+
+    #[test]
+    fn vara_take_transport_transitions_owner_to_listener_armed() {
+        // Simulates the listener consumer task taking the transport after
+        // vara_open_session + send_listen_on succeed. The owner moves from
+        // None → ListenerArmed.
+        let (transport, h1, h2) = build_real_transport_for_test();
+        let session = Arc::new(VaraSession::new());
+
+        // Install transport so take_transport has something to hand out.
+        {
+            let mut guard = session.inner.lock().unwrap();
+            guard.transport = Some(transport);
+            guard.status = VaraStatus {
+                state: VaraState::Open,
+                last_error: None,
+                bound_host: Some("127.0.0.1".into()),
+                bound_cmd_port: None,
+            };
+        }
+        assert_eq!(session.transport_owner(), TransportOwner::None);
+
+        let taken = session.take_transport().expect("must take");
+        assert_eq!(session.transport_owner(), TransportOwner::ListenerArmed);
+
+        drop(taken);
+        drop(session);
+        h1.join().ok();
+        h2.join().ok();
+    }
+
+    /// `.expect_err()` requires `T: Debug` and `VaraTransport` deliberately
+    /// does not derive Debug (the TCP socket internals would leak noise).
+    /// This helper extracts the Err arm by panicking-on-Ok with a clear
+    /// message — same diagnostic value as `expect_err`, no Debug bound.
+    fn unwrap_err_str<T>(r: Result<T, String>, ctx: &str) -> String {
+        match r {
+            Err(e) => e,
+            Ok(_) => panic!("{ctx}: expected Err, got Ok"),
+        }
+    }
+
+    #[tokio::test]
+    async fn vara_take_transport_for_outbound_from_none_errs_session_not_open() {
+        let session = VaraSession::new();
+        let err = unwrap_err_str(
+            session.take_transport_for_outbound().await,
+            "None → Err",
+        );
+        assert!(
+            err.contains("session not open"),
+            "expected 'session not open', got: {err}"
+        );
+        // Owner unchanged.
+        assert_eq!(session.transport_owner(), TransportOwner::None);
+    }
+
+    #[tokio::test]
+    async fn vara_take_transport_for_outbound_from_listener_inbound_errs_modem_busy() {
+        let session = VaraSession::new();
+        session.set_transport_owner_for_test(TransportOwner::ListenerInbound);
+        let err = unwrap_err_str(
+            session.take_transport_for_outbound().await,
+            "ListenerInbound → Err",
+        );
+        assert!(
+            err.contains("modem busy") && err.contains("inbound"),
+            "expected 'modem busy — inbound exchange in progress', got: {err}"
+        );
+        // Owner unchanged.
+        assert_eq!(
+            session.transport_owner(),
+            TransportOwner::ListenerInbound
+        );
+    }
+
+    #[tokio::test]
+    async fn vara_take_transport_for_outbound_from_outbound_errs_already_in_flight() {
+        let session = VaraSession::new();
+        session.set_transport_owner_for_test(TransportOwner::Outbound);
+        let err = unwrap_err_str(
+            session.take_transport_for_outbound().await,
+            "Outbound → Err",
+        );
+        assert!(
+            err.contains("outbound") && err.contains("already in flight"),
+            "expected 'outbound exchange already in flight', got: {err}"
+        );
+        assert_eq!(session.transport_owner(), TransportOwner::Outbound);
+    }
+
+    #[tokio::test]
+    async fn vara_take_transport_for_outbound_from_outbound_pending_also_errs() {
+        // OutboundPending should also reject — a duplicate outbound request
+        // while the first is still awaiting yield must not proceed.
+        let session = VaraSession::new();
+        session.set_transport_owner_for_test(TransportOwner::OutboundPending);
+        let err = unwrap_err_str(
+            session.take_transport_for_outbound().await,
+            "OutboundPending → Err",
+        );
+        assert!(
+            err.contains("outbound") && err.contains("already in flight"),
+            "expected 'outbound exchange already in flight', got: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn vara_take_transport_for_outbound_from_listener_armed_with_yield_succeeds() {
+        // Build a real transport, stage a stub "consumer" task that listens
+        // for the yield notify + sends the transport through the yield
+        // channel. Outbound then succeeds.
+        let (transport, h1, h2) = build_real_transport_for_test();
+        let session = Arc::new(VaraSession::new());
+        session.set_transport_owner_for_test(TransportOwner::ListenerArmed);
+
+        let notify = session.transport_yield_notify_clone();
+        let yield_tx = session.transport_yield_sender_clone();
+        let consumer = tokio::spawn(async move {
+            notify.notified().await;
+            // Real consumer would push the transport it's holding; we push
+            // the real one we built.
+            let _ = yield_tx.send(transport).await;
+        });
+
+        let out = session
+            .take_transport_for_outbound()
+            .await
+            .expect("yield-then-take must succeed");
+        // Owner transitioned to Outbound.
+        assert_eq!(session.transport_owner(), TransportOwner::Outbound);
+
+        consumer.await.ok();
+        drop(out);
+        drop(session);
+        h1.join().ok();
+        h2.join().ok();
+    }
+
+    #[tokio::test]
+    async fn vara_take_transport_for_outbound_times_out_when_consumer_does_not_yield() {
+        // No consumer spawned → notify lands but no transport ever arrives.
+        // After ARBITER_YIELD_TIMEOUT, take_transport_for_outbound must
+        // surface "modem busy — listener did not yield within {timeout}"
+        // and reset owner to None.
+        let session = VaraSession::new();
+        session.set_transport_owner_for_test(TransportOwner::ListenerArmed);
+
+        let start = std::time::Instant::now();
+        let err = unwrap_err_str(
+            session.take_transport_for_outbound().await,
+            "wedged consumer → timeout Err",
+        );
+        let elapsed = start.elapsed();
+
+        assert!(
+            elapsed >= ARBITER_YIELD_TIMEOUT,
+            "timeout must wait the full ARBITER_YIELD_TIMEOUT; got {elapsed:?}"
+        );
+        assert!(
+            elapsed < ARBITER_YIELD_TIMEOUT + Duration::from_secs(2),
+            "timeout must bound to ~{ARBITER_YIELD_TIMEOUT:?} (not unbounded); got {elapsed:?}"
+        );
+        assert!(
+            err.contains("modem busy") && err.contains("did not yield"),
+            "expected 'modem busy — listener did not yield', got: {err}"
+        );
+        // Owner reset to None so a clean Close + reopen can proceed.
+        assert_eq!(session.transport_owner(), TransportOwner::None);
+    }
+
+    #[tokio::test]
+    async fn vara_take_transport_for_outbound_errs_when_yield_channel_closed() {
+        // Closed channel (Sender dropped before send) models "listener
+        // consumer task exited". take_transport_for_outbound must surface
+        // "listener consumer task exited" and reset owner to None.
+        let session = VaraSession::new();
+        session.set_transport_owner_for_test(TransportOwner::ListenerArmed);
+
+        // Install a receiver whose paired sender was already dropped.
+        session.install_closed_yield_channel_for_test().await;
+
+        let err = unwrap_err_str(
+            session.take_transport_for_outbound().await,
+            "closed yield channel → Err",
+        );
+        assert!(
+            err.contains("listener consumer task exited"),
+            "expected 'listener consumer task exited', got: {err}"
+        );
+        assert_eq!(session.transport_owner(), TransportOwner::None);
+    }
+
+    #[tokio::test]
+    async fn vara_return_transport_from_outbound_transitions_to_listener_armed_when_consumer_alive(
+    ) {
+        // Spin a stub consumer that holds the return-channel receiver. When
+        // outbound returns the transport, the consumer receives it and
+        // owner transitions to ListenerArmed.
+        let (transport, h1, h2) = build_real_transport_for_test();
+        let session = Arc::new(VaraSession::new());
+        session.set_transport_owner_for_test(TransportOwner::Outbound);
+
+        // Stub consumer takes the return-rx and awaits.
+        let mut return_rx = session
+            .take_transport_return_rx()
+            .expect("first take must succeed");
+        let session_for_task = session.clone();
+        let consumer = tokio::spawn(async move {
+            let received = return_rx.recv().await;
+            // The stub consumer "reclaims" the transport — keep it alive
+            // so try_send didn't drop it.
+            let _ = received;
+            let _ = session_for_task; // keep session ref alive
+        });
+
+        // Outbound returns the transport.
+        session.return_transport_from_outbound(transport);
+
+        // The transition to ListenerArmed happens synchronously inside
+        // return_transport_from_outbound BEFORE the channel buffer drains.
+        assert_eq!(session.transport_owner(), TransportOwner::ListenerArmed);
+
+        consumer.await.ok();
+        drop(session);
+        h1.join().ok();
+        h2.join().ok();
+    }
+
+    #[tokio::test]
+    async fn vara_return_transport_from_outbound_transitions_to_none_when_channel_closed() {
+        // Take the return-rx and drop it immediately to simulate "consumer
+        // gone." return_transport_from_outbound's try_send fails; owner
+        // transitions to None (not ListenerArmed).
+        let (transport, h1, h2) = build_real_transport_for_test();
+        let session = Arc::new(VaraSession::new());
+        session.set_transport_owner_for_test(TransportOwner::Outbound);
+
+        // Drop the receiver so the sender channel sees Closed.
+        let rx = session
+            .take_transport_return_rx()
+            .expect("first take must succeed");
+        drop(rx);
+
+        session.return_transport_from_outbound(transport);
+
+        // Owner transitioned to None (consumer cannot reclaim).
+        assert_eq!(session.transport_owner(), TransportOwner::None);
+
+        drop(session);
+        h1.join().ok();
+        h2.join().ok();
+    }
+
+    #[tokio::test]
+    async fn vara_take_transport_for_outbound_does_not_hold_lock_across_await() {
+        // Codex Round 2 P1 #4: the std-mutex MUST be released before the
+        // .await on the yield channel. Verification: spawn an outbound that
+        // notifies + waits, then spawn a second task that calls
+        // transport_owner() (which takes the same std-mutex). The second
+        // call must return PROMPTLY — if outbound were holding the lock
+        // across .await, transport_owner() would block until outbound
+        // completed.
+        let session = Arc::new(VaraSession::new());
+        session.set_transport_owner_for_test(TransportOwner::ListenerArmed);
+
+        let session_for_outbound = session.clone();
+        let outbound = tokio::spawn(async move {
+            // No consumer → this will timeout after ARBITER_YIELD_TIMEOUT.
+            session_for_outbound.take_transport_for_outbound().await
+        });
+
+        // Give outbound a moment to enter the .await phase.
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // While outbound is awaiting yield, transport_owner() must NOT
+        // block. If the std-mutex were held across the await, this call
+        // would hang until outbound's timeout fires (~3s); we bound the
+        // test at 500ms to catch the regression cleanly.
+        let probe_start = std::time::Instant::now();
+        let owner = session.transport_owner();
+        let probe_elapsed = probe_start.elapsed();
+
+        assert!(
+            probe_elapsed < Duration::from_millis(500),
+            "Codex Round 2 P1 #4: transport_owner() blocked for {probe_elapsed:?} \
+             — the std-mutex is being held across the .await in \
+             take_transport_for_outbound. The lock MUST be dropped before await."
+        );
+        // Owner should be OutboundPending during the await.
+        assert_eq!(
+            owner,
+            TransportOwner::OutboundPending,
+            "owner should be OutboundPending while outbound is awaiting yield"
+        );
+
+        // Let outbound finish (timing out).
+        let _ = outbound.await;
     }
 }
