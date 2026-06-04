@@ -33,9 +33,18 @@ function stripCalloutMarker(token: Tokens.Blockquote): void {
   if (!firstText || firstText.type !== 'text') return;
   const t = firstText as Tokens.Text;
   // Remove the [!TYPE] marker and any leading whitespace/newline.
-  t.text = t.text.replace(/^\[!\w+\]\s*\n?/, '');
+  // Update both `text` and `raw` so downstream extensions reading either
+  // field see the post-strip content. Marked's render path uses `text`,
+  // but keeping `raw` consistent avoids latent surprises (e.g., position
+  // tracking or a future re-lex hook).
+  const stripRe = /^\[!\w+\]\s*\n?/;
+  t.text = t.text.replace(stripRe, '');
+  t.raw = t.raw.replace(stripRe, '');
   if (t.text === '') {
-    // Drop the now-empty leading text token.
+    // Drop the now-empty leading text token. The [!TYPE]-only callout
+    // (no body) renders as `<div class="callout callout-X"><p></p></div>`
+    // which is valid HTML; styling can `p:empty { display: none }` if
+    // a layout author cares.
     para.tokens.shift();
   }
 }
