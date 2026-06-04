@@ -237,6 +237,60 @@ impl WidebandLowDensityFloor {
         Ok(out)
     }
 
+    /// Modulate a multi-symbol payload prefixed with the Zadoff-Chu
+    /// preamble. Output layout:
+    ///
+    /// ```text
+    /// [ preamble (192 samples) ][ N OFDM symbols (multi-symbol body) ]
+    /// ```
+    ///
+    /// Composition of [`Self::transmit_multi`] + the preamble used by
+    /// [`Self::transmit_with_preamble`]. This is the **over-the-air
+    /// frame format for arbitrary-length payloads** — pairs with
+    /// [`Self::receive_multi_with_sync`] on the decode side.
+    pub fn transmit_multi_with_preamble(&self, payload: &[u8]) -> Result<Vec<f32>, PhyError> {
+        let preamble = PreambleGenerator::new().generate();
+        debug_assert_eq!(preamble.len(), PREAMBLE_LEN_SAMPLES);
+        let body = self.transmit_multi(payload)?;
+        let mut out = Vec::with_capacity(preamble.len() + body.len());
+        out.extend_from_slice(&preamble);
+        out.extend_from_slice(&body);
+        Ok(out)
+    }
+
+    /// Scan `samples` for the preamble, then decode the multi-symbol
+    /// body that follows. Returns `(preamble_start_sample, payload)`.
+    ///
+    /// Returns [`PhyError::FrameDetect`] when:
+    /// - no preamble is found above the detector's correlation
+    ///   threshold;
+    /// - the multi-symbol body after the preamble is truncated (the
+    ///   declared-length header from the first symbol implies more
+    ///   samples than the input provides).
+    pub fn receive_multi_with_sync(
+        &self,
+        samples: &[f32],
+    ) -> Result<(usize, Vec<u8>), PhyError> {
+        let detector = PreambleDetector::new();
+        let detection = detector.scan(samples).ok_or_else(|| {
+            PhyError::FrameDetect(
+                "preamble not detected in input (signal too weak or no preamble \
+                 present); pass a longer/cleaner capture"
+                    .to_string(),
+            )
+        })?;
+        let body_start = detection.start_sample + PREAMBLE_LEN_SAMPLES;
+        if body_start >= samples.len() {
+            return Err(PhyError::FrameDetect(format!(
+                "preamble detected at sample {} but no body samples follow",
+                detection.start_sample
+            )));
+        }
+        let body = &samples[body_start..];
+        let payload = self.receive_multi(body)?;
+        Ok((detection.start_sample, payload))
+    }
+
     /// Demodulate a multi-symbol framed payload produced by
     /// [`Self::transmit_multi`]. Reads the 2-byte length header from
     /// the first symbol, determines how many additional symbols to
@@ -623,5 +677,126 @@ mod tests {
             matches < 30,
             "multi output {matches}/50 samples match preamble — looks preamble-prefixed"
         );
+    }
+
+    // ─── Multi-symbol + preamble composition (Phase 10 slice 2, tuxlink-k2xv)
+
+    fn assert_multi_sync_roundtrip(payload: &[u8]) {
+        let floor = WidebandLowDensityFloor::new();
+        let samples = floor.transmit_multi_with_preamble(payload).unwrap();
+        let (start, decoded) = floor.receive_multi_with_sync(&samples).unwrap();
+        assert_eq!(start, 0, "preamble should start at sample 0");
+        assert_eq!(
+            decoded, payload,
+            "multi+preamble roundtrip failed for {}-byte payload",
+            payload.len()
+        );
+    }
+
+    #[test]
+    fn multi_with_preamble_length_equals_preamble_plus_multi() {
+        let floor = WidebandLowDensityFloor::new();
+        let multi = floor.transmit_multi(b"hi").unwrap();
+        let combined = floor.transmit_multi_with_preamble(b"hi").unwrap();
+        assert_eq!(combined.len(), PREAMBLE_LEN_SAMPLES + multi.len());
+    }
+
+    #[test]
+    fn multi_with_preamble_roundtrip_1_byte_payload() {
+        assert_multi_sync_roundtrip(b"X");
+    }
+
+    #[test]
+    fn multi_with_preamble_roundtrip_9_byte_payload_two_symbols() {
+        // 9 + 2 header = 11 bytes → 2 symbols.
+        assert_multi_sync_roundtrip(b"NINEBYTES");
+    }
+
+    #[test]
+    fn multi_with_preamble_roundtrip_100_byte_payload() {
+        let payload: Vec<u8> = (0..100).map(|i| (i % 251) as u8).collect();
+        assert_multi_sync_roundtrip(&payload);
+    }
+
+    #[test]
+    fn multi_with_preamble_roundtrip_1000_byte_payload() {
+        let payload: Vec<u8> = (0..1000).map(|i| (i % 251) as u8).collect();
+        assert_multi_sync_roundtrip(&payload);
+    }
+
+    #[test]
+    fn multi_with_preamble_roundtrip_empty_payload() {
+        assert_multi_sync_roundtrip(b"");
+    }
+
+    #[test]
+    fn multi_with_preamble_roundtrip_preserves_trailing_zeros() {
+        // Same headline invariant as receive_multi alone, but now
+        // through the preamble detection path.
+        assert_multi_sync_roundtrip(b"AB\x00\x00\x00");
+    }
+
+    #[test]
+    fn multi_with_preamble_handles_leading_silence() {
+        // The operational reason this composition exists: long
+        // captures with silence before the preamble decode correctly.
+        let floor = WidebandLowDensityFloor::new();
+        let payload: Vec<u8> = (0..50).map(|i| (i * 7 % 251) as u8).collect();
+        let core = floor.transmit_multi_with_preamble(&payload).unwrap();
+        let leading_silence = vec![0.0_f32; 2_000];
+        let mut samples = leading_silence.clone();
+        samples.extend_from_slice(&core);
+        let (start, decoded) = floor.receive_multi_with_sync(&samples).unwrap();
+        let offset_err =
+            (start as i64 - leading_silence.len() as i64).unsigned_abs() as usize;
+        assert!(
+            offset_err <= 2,
+            "detected start {start} should be within ±2 of leading silence {} samples",
+            leading_silence.len()
+        );
+        assert_eq!(decoded, payload);
+    }
+
+    #[test]
+    fn multi_with_preamble_returns_frame_detect_on_silence() {
+        let floor = WidebandLowDensityFloor::new();
+        let silence = vec![0.0_f32; 20_000];
+        let err = floor.receive_multi_with_sync(&silence).unwrap_err();
+        assert!(matches!(err, PhyError::FrameDetect(_)));
+    }
+
+    #[test]
+    fn multi_with_preamble_rejects_truncated_after_preamble() {
+        // Encode a large payload (many symbols), then truncate the
+        // output to only the preamble + first symbol. receive_multi
+        // should reject because the declared length implies more
+        // symbols.
+        let floor = WidebandLowDensityFloor::new();
+        let payload: Vec<u8> = (0..50).map(|i| (i % 251) as u8).collect();
+        let full = floor.transmit_multi_with_preamble(&payload).unwrap();
+        let trunc_len = PREAMBLE_LEN_SAMPLES + floor.symbol_size_samples();
+        let truncated = &full[..trunc_len];
+        let err = floor.receive_multi_with_sync(truncated).unwrap_err();
+        assert!(matches!(err, PhyError::FrameDetect(_)));
+    }
+
+    #[test]
+    fn multi_with_preamble_starts_with_preamble_samples() {
+        // Byte-equivalent of the slice 1 preamble check, now for the
+        // multi-symbol variant.
+        let floor = WidebandLowDensityFloor::new();
+        let preamble = PreambleGenerator::new().generate();
+        let combined = floor.transmit_multi_with_preamble(b"hi").unwrap();
+        for (i, (&got, &want)) in combined
+            .iter()
+            .take(PREAMBLE_LEN_SAMPLES)
+            .zip(preamble.iter())
+            .enumerate()
+        {
+            assert!(
+                (got - want).abs() < 1e-6,
+                "preamble sample {i} differs: got {got}, want {want}"
+            );
+        }
     }
 }
