@@ -183,7 +183,7 @@ pub async fn persist_cms_impl(
         telnet_listen: crate::config::TelnetListenUiConfig::default(),
     };
 
-    // Step 4: Create keyring entry handle.
+    // Step 4: Create keyring entry handle (needed for rollback in step 7).
     let entry = keyring::Entry::new("tuxlink", &callsign)
         .map_err(map_keyring_error)?;
 
@@ -202,9 +202,12 @@ pub async fn persist_cms_impl(
         Err(snapshot_err) => return Err(map_keyring_error(snapshot_err)),
     };
 
-    // Step 6: Write password to keyring FIRST.
+    // Step 6: Write password to keyring FIRST via the public credentials API.
     // Keyring failure aborts before any persistent disk state changes.
-    entry.set_password(&password).map_err(map_keyring_error)?;
+    // `write_password` performs its own read-first probe before the destructive
+    // set_password (R2 #4 / refactor(credentials): extract public write_password).
+    crate::winlink::credentials::write_password(&callsign, &password)
+        .map_err(|e| WizardError::Other { detail: format!("{e}") })?;
 
     // Step 7: Write config.json atomically.
     // On failure: best-effort rollback of the keyring write (snapshot-and-restore).
