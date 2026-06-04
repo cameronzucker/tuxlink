@@ -11,11 +11,10 @@
 // state come directly from ModemStatus (PINGACK-derived; tuxlink-1637,
 // P4.3) and from a derived state-driven frame history.
 //
-// RADIO-1 SAFETY: every connect path passes through the consent
-// modal + backend-minted token + atomic consume_consent_token gate.
-// The frontend never generates tokens. After a connect (success or
-// failure) the local token copy is cleared so the next Connect click
-// re-opens the modal — preserved from ArdopDock.
+// Operator click on Connect is the Part 97 consent (per memory
+// no-tuxlink-added-safeguards + operator decision bd tuxlink-8gq3).
+// The RADIO-1 per-invocation consent modal was a tuxlink-added
+// safeguard that has been dropped — preserved comment for rationale.
 //
 // Open WebGUI: ardopcf's built-in WebGUI listens on `cmd_port - 1`
 // per its USAGE doc. We read the live cmd_port from config rather
@@ -35,8 +34,6 @@ import { SignalSection } from '../sections/SignalSection';
 import { Sparkline } from '../charts/Sparkline';
 import { useSampleHistory } from '../useSampleHistory';
 import { useModemStatus } from '../../modem/useModemStatus';
-import { useConsent } from '../../modem/useConsent';
-import { ConsentModal } from '../../modem/ConsentModal';
 import type { ModemState, ModemStatus } from '../../modem/types';
 import type { ArdopFrameType } from '../charts/FrameRibbon';
 import { AllowedStationsEditor } from '../sections/AllowedStationsEditor';
@@ -287,8 +284,6 @@ export function ArdopRadioPanel({ onClose }: ArdopRadioPanelProps) {
   const [captureDevices, setCaptureDevices] = useState<AlsaDeviceDto[]>([]);
   const [playbackDevices, setPlaybackDevices] = useState<AlsaDeviceDto[]>([]);
   const [pttDevices, setPttDevices] = useState<SerialDeviceDto[]>([]);
-  const consent = useConsent();
-  const [showConsent, setShowConsent] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const [connectError, setConnectError] = useState<string | null>(null);
   const [disconnecting, setDisconnecting] = useState(false);
@@ -508,33 +503,23 @@ export function ArdopRadioPanel({ onClose }: ArdopRadioPanelProps) {
   // to the stopped-state `target` input).
   const effectiveTarget: string | null = status.peer?.trim() ?? null;
 
-  const doConnect = async (tok: string) => {
+  const doConnect = async () => {
     setConnecting(true);
     setConnectError(null);
     try {
       await invoke('modem_ardop_connect', {
         target: target.trim(),
-        consentToken: tok,
       });
     } catch (e) {
       setConnectError(String(e));
     } finally {
       setConnecting(false);
-      // RADIO-1 per-invocation consent: backend consumed the token in
-      // consume_consent_token (atomic equality-check-and-clear). Clear
-      // the local copy so the next Connect click re-opens the modal.
-      // Preserved from ArdopDock.
-      consent.clear();
     }
   };
 
   const onStartClick = () => {
     setConnectError(null);
-    if (consent.token) {
-      void doConnect(consent.token);
-    } else {
-      setShowConsent(true);
-    }
+    void doConnect();
   };
 
   const onSendReceiveClick = async () => {
@@ -542,12 +527,9 @@ export function ArdopRadioPanel({ onClose }: ArdopRadioPanelProps) {
     setExchanging(true);
     setConnectError(null);
     try {
-      // RADIO-1 SAFETY: token minted on BACKEND; frontend never generates.
-      const tok = await invoke<string>('modem_mint_consent');
       await invoke('modem_ardop_b2f_exchange', {
         target: effectiveTarget,
         intent,
-        consentToken: tok,
       });
     } catch (e) {
       setConnectError(`Send/Receive failed: ${e}`);
@@ -598,18 +580,6 @@ export function ArdopRadioPanel({ onClose }: ArdopRadioPanelProps) {
       setConnectError(
         `Failed to open WebGUI: ${e}. If the URL opens but reports "connection refused," ardopcf may not have bound the WebGUI — check that the binary on PATH supports the -G flag and that webgui_port matches its actual bind port.`,
       );
-    }
-  };
-
-  const onConsentConfirm = async () => {
-    setShowConsent(false);
-    try {
-      // RADIO-1 SAFETY: token minted on backend; frontend never generates.
-      const tok = await invoke<string>('modem_mint_consent');
-      consent.grant(tok);
-      void doConnect(tok);
-    } catch (e) {
-      setConnectError(`failed to mint consent token: ${e}`);
     }
   };
 
@@ -1065,13 +1035,6 @@ Up     ${fmtUptime(status.uptimeSec)}`}
         )}
       </section>
 
-      {showConsent && (
-        <ConsentModal
-          target={target.trim()}
-          onCancel={() => setShowConsent(false)}
-          onConfirm={onConsentConfirm}
-        />
-      )}
     </RadioPanel>
   );
 }
