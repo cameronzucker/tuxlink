@@ -45,6 +45,20 @@ We build a WLE-shaped lifecycle first. Once it's walkable, we revisit whether th
 
 **Radio-only listener divergence.** Tuxlink intentionally extends WLE's R-pool client semantics to include accepting inbound R-pool peer sessions. Allowlisted peer connects → B2F runs with `SessionIntent::RadioOnly` → message routing flag tagged `R`. **This is a tuxlink design choice, not WLE-evidence-backed.** Decompiled WLE evidence frames Radio-only as a client/RMS-Relay routing mode (`RoutingFlag::R`), not as an end-user peer listener. Allowing inbound R-pool peer answers turns tuxlink into a leaf-relay-shaped node that can tag messages into the WLE Hybrid pool in ways unmodified WLE peers may not expect. The allowlist (default `allow_all=true` per project memory `allowed-stations-default-true`; per-callsign restrictions opt-in) keeps the operational surface explicit. Operator decision 2026-06-04 (bd tuxlink-d8bq) is to ship this divergence as designed in alpha, with the divergence labeled in the panel UI ("Accept inbound R-pool peer · tuxlink divergence") and the build-walk-revise loop as the gate for revisiting if real-world operation shows interop friction.
 
+### 2.5 Sidebar navigation while session is open (Codex Round 3 P1 #3)
+
+Operator clicks a different sidebar entry while a session is open. **Default behavior (until a future operator decision overrides) is block nav + confirmation modal:** show "Session open for {intent}/{transport_kind}; Close Session before switching?" Cancel keeps the operator on the open-session panel. This avoids dropping an active inbound exchange.
+
+The backend status DTO exposes `active_intent` + `active_transport_kind` (Task 3.0) so the frontend can detect the open session without holding it in React local state. The shared panel renders the per-sidebar-selection mode unless the active session's intent/transport_kind differs from the sidebar's selection — in which case the open-session panel renders + a confirmation modal blocks nav.
+
+**Watched failure mode:** operator hard-refreshes the dev build (Ctrl+R in `pnpm tauri dev`); React unmounts but the backend session stays open. On remount the panel re-derives lifecycle from the status snapshot (§6.1 / Task 5.2 amendment) and renders the original session. The sidebar selection state may need backend storage to re-route to the right panel on hard-refresh — out of alpha scope unless operator escalates.
+
+### 2.6 Socket-liveness + crash recovery (Codex Round 3 P1 #4)
+
+A backend background task per session probes the cmd-port (VARA: benign cmd like `MYCALL\r` every 5s; ARDOP: cmd-port read + `Child::try_wait` every 5s). After 2 consecutive failed probes (or modem process exit), the state machine transitions to **`socket-lost`** (added to §5). Operator's only recovery from `socket-lost` is Close Session → reopen.
+
+The frontend hook `useRadioSessionLifecycle` (§6.1) maps `socket-lost` to its `crash-recovery` UI state, distinct from `error` (the latter is a per-action error like a failed connect; the former is an out-of-band death of the modem).
+
 ## 3. Capability matrix
 
 | Intent | Outbound | Listener | Target shape | Creds | Routing flag |
@@ -138,6 +152,8 @@ Transitions:
 - `open · idle → open · dialing → open · exchange → open · idle`: outbound flow
 - `open · idle → open · inbound-exchange → open · idle`: inbound flow (only when listener armed)
 - `open · {anything} → closed`: tear down
+- `open · {anything} → socket-lost`: cmd-port unresponsive or modem process exit (Codex Round 3 P1 #4 / §2.6 — backend heartbeat detects)
+- `socket-lost → closed`: operator clicks Close Session; backend tears down the dead handle
 
 ## 6. Implementation plan
 

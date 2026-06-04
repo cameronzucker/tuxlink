@@ -1087,6 +1087,59 @@ pub enum ExchangeState {
 
 `None` means "no exchange in flight."
 
+**Codex Round 3 P1 #3 — active session mode in status:** the status DTOs MUST also carry `active_intent: Option<SessionIntent>` and `active_transport_kind: Option<TransportKind>`. Without these, the operator can navigate the sidebar from VARA HF/P2p to VARA FM/Cms while the backend session is still open with the original intent + transport_kind; the UI then renders the new sidebar mode while the listener is still armed for the OLD mode. The frontend uses these fields to detect "sidebar nav drift" and surface a mismatch banner (or block nav with a confirmation), per the navigation-handler decision below.
+
+Add to both DTOs:
+
+```rust
+pub active_intent: Option<SessionIntent>,
+pub active_transport_kind: Option<TransportKind>,
+```
+
+`None` means "no session open."
+
+**Codex Round 3 P1 #3 also requires** that the plan defines sidebar-navigation-while-session-open behavior. Three viable choices (operator decision deferred to next session; for now the plan specifies the safe default):
+
+- **(a) Block nav** — clicking a different sidebar entry while a session is open shows a confirmation modal: "Session is open for {intent}/{transport_kind}; Close Session before switching?" Cancel keeps the operator on the open session's panel. **DEFAULT for the impl** unless a future operator decision overrides.
+- (b) Auto-close — clicking a different sidebar entry calls `*_close_session()` automatically.
+- (c) Mismatch banner — let the operator navigate; the new panel renders a banner saying "Session for {prev_intent} is still open in {prev_transport_kind} panel" with a quick-return link.
+
+The default (a) is the most conservative; it doesn't risk dropping an active inbound exchange. Default goes into a new spec § "Sidebar navigation while session open" added in this task's spec edit step (see Step 0 below).
+
+**Codex Round 3 P1 #4 — socket liveness:** polling `vara_status` / `modem_get_status` alone cannot detect a dead modem because the status snapshot is cached. Add a backend background task per session that probes the cmd-port:
+
+- VARA: send a benign cmd (e.g., `VERSION\r` if VARA acks it, or `MYCALL\r` which is idempotent) every 5s; if no reply in 3s for 2 consecutive probes → transition `state` to a new `VaraState::SocketLost` variant.
+- ARDOP: read from the cmd-port with a 5s heartbeat; if ardopcf process is gone (via `Child::try_wait` returning a non-None status) OR no FAULT/READY/PENDING received in 10s → transition `ModemState::SocketLost`.
+
+Add to `VaraState` and `ModemState`:
+
+```rust
+// VaraState (existing variants: Closed / Connecting / Open / Error):
+SocketLost,  // cmd-port unresponsive; operator should Close Session to recover
+
+// ModemState (existing): add SocketLost variant similarly
+```
+
+The frontend hook (`useRadioSessionLifecycle`, Task 5.2) translates these to its `'crash-recovery'` lifecycle state.
+
+**Spec edit for Task 3.0 (Step 0 below):** add a new section to `docs/superpowers/specs/2026-06-04-vara-ardop-panel-alpha-design.md`: "§2.5 Sidebar navigation while session open" explaining the default (a) behavior, plus add `SocketLost` to the §5 state machine.
+
+- [ ] **Step 0: Edit the spec to add §2.5 (sidebar-nav-while-session-open) + extend §5 state machine with `SocketLost`**
+
+Add to `docs/superpowers/specs/2026-06-04-vara-ardop-panel-alpha-design.md` between §2 and §3:
+
+```markdown
+### 2.5 Sidebar navigation while session is open
+
+Operator clicks a different sidebar entry while a session is open. Default behavior (until a future operator decision overrides) is **block nav + confirmation modal**: show "Session open for {intent}/{transport_kind}; Close Session before switching?" Cancel keeps the operator on the open-session panel. This avoids dropping an active inbound exchange. The backend `*_status` DTO exposes `active_intent` + `active_transport_kind` so the frontend can detect this state without holding it in React local state.
+
+Watched failure mode: operator hard-refreshes the dev build (Ctrl+R in `pnpm tauri dev`); React unmounts but the backend session stays open. On remount the panel re-derives lifecycle from the status snapshot (Task 5.2 amendment) and renders the original session. The sidebar selection state may need backend storage to re-route to the right panel on hard-refresh.
+```
+
+Append to §5 state machine the `socket-lost` state with transitions: `open · {anything} → socket-lost` (on cmd-port unresponsive / ardopcf exit) → `closed` (on operator Close).
+
+Commit the spec edit separately from the backend changes below for a clean audit trail.
+
 - [ ] **Step 1: Write the failing test — VaraStatus DTO carries listener_armed + exchange + transport_owner**
 
 ```rust
@@ -2002,36 +2055,108 @@ Expected: FAIL — methods don't exist.
 
 In `src-tauri/src/winlink/modem/vara/session.rs`:
 
+**Codex Round 3 P1 #1 amendment** (load-bearing): the synchronous `write_all` + `flush` path below can block Close Session if the VARA process is alive but no longer draining the cmd socket. The spec's ~2s interrupt guarantee is NOT met if `write_all` blocks for the OS TCP retransmission timeout (typically tens of seconds). Two fixes — apply BOTH:
+
+1. **Set a write deadline on the cloned cmd-port writer.** When `try_clone_abort_writer` returns the writer, call `TcpStream::set_write_timeout(Some(Duration::from_millis(1500)))` on it before boxing. This makes `write_all` return `Err(WouldBlock)` instead of blocking past the deadline.
+
+2. **`abort_in_flight` interprets the write error as "modem unresponsive"** — still hard-close the underlying TCP connection in that case (a non-graceful socket close forces the modem to notice and stop TX even when it's not draining the cmd channel).
+
 ```rust
 pub struct VaraSession {
     // ... existing fields ...
     abort_writer: Mutex<Option<Box<dyn Write + Send>>>,
+    // Codex Round 3 P1 #1: keep a separate handle for the hard-close fallback path.
+    abort_stream: Mutex<Option<Box<dyn ShutdownableStream + Send>>>,
 }
 
 impl VaraSession {
-    pub fn install_abort_writer(&self, writer: Box<dyn Write + Send>) {
+    /// `writer` MUST have a write_timeout (≤1500ms) set so this stays bounded.
+    /// `stream` is the underlying TcpStream-like handle used for the hard-close
+    /// fallback when the cooperative write fails.
+    pub fn install_abort_writer(
+        &self,
+        writer: Box<dyn Write + Send>,
+        stream: Box<dyn ShutdownableStream + Send>,
+    ) {
         *self.abort_writer.lock().unwrap() = Some(writer);
+        *self.abort_stream.lock().unwrap() = Some(stream);
     }
 
-    /// Hard-tear-down the current VARA ARQ link. Sends `ABORT\r` first (per
-    /// Codex Round 1 P1 #4 + spec §9 — VARA's codec models Abort as hard
-    /// tear-down distinct from Disconnect's graceful path). Optionally
-    /// follows with `DISCONNECT\r` to release the slot cleanly; ABORT alone
-    /// satisfies the spec's ~2s interrupt requirement.
+    /// Hard-tear-down the current VARA ARQ link. Sends `ABORT\r` first.
+    /// If the cooperative write fails (modem not draining cmd port), falls
+    /// back to a hard TCP shutdown so the modem notices and stops TX.
+    /// Codex Round 1 P1 #4 (ABORT cmd) + Codex Round 3 P1 #1 (bounded write).
     pub fn abort_in_flight(&self) -> Result<(), String> {
-        let mut guard = self.abort_writer.lock().unwrap();
-        let writer = guard.as_mut().ok_or("no abort writer installed")?;
-        writer.write_all(b"ABORT\r").map_err(|e| format!("abort write: {e}"))?;
-        // Best-effort follow-up DISCONNECT — if it fails we still consider
-        // the abort successful because ABORT alone halts TX. Don't propagate
-        // the error.
-        let _ = writer.write_all(b"DISCONNECT\r");
-        writer.flush().map_err(|e| format!("abort flush: {e}"))
+        // Phase 1: cooperative ABORT via the writer (bounded by its write_timeout).
+        let cooperative = {
+            let mut guard = self.abort_writer.lock().unwrap();
+            let writer = guard.as_mut().ok_or("no abort writer installed")?;
+            writer.write_all(b"ABORT\r")
+                .and_then(|_| {
+                    // Best-effort follow-up DISCONNECT for clean slot release.
+                    let _ = writer.write_all(b"DISCONNECT\r");
+                    writer.flush()
+                })
+        };
+
+        match cooperative {
+            Ok(()) => Ok(()),
+            Err(_) => {
+                // Codex Round 3 P1 #1: cooperative path failed — modem is wedged
+                // or not draining cmd. Hard-close the underlying stream to force
+                // the modem to notice (TCP RST → modem aborts TX on its end).
+                let mut guard = self.abort_stream.lock().unwrap();
+                if let Some(stream) = guard.as_mut() {
+                    let _ = stream.shutdown_both();
+                }
+                Err("VARA cmd port unresponsive; hard-closed".into())
+            }
+        }
     }
+}
+
+/// Trait the VARA transport's cmd-port stream implements so the session can
+/// hard-close it from the abort path without holding the full TcpStream type.
+pub trait ShutdownableStream {
+    fn shutdown_both(&mut self) -> std::io::Result<()>;
 }
 ```
 
-In `src-tauri/src/winlink/modem/vara/transport.rs`, add a `try_clone_abort_writer` method that hands out a clone of the cmd-port writer (mirror ARDOP's pattern; `TcpStream::try_clone()` is the obvious mechanism).
+**Tests for the failure path** (REQUIRED — extends Step 1's test list):
+
+```rust
+#[test]
+fn vara_abort_in_flight_completes_within_2s_when_peer_does_not_drain() {
+    // Set up a TCP listener that ACCEPTs but never recv()s — simulates the
+    // wedged VARA process case.
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let _peer = std::thread::spawn(move || {
+        let (_s, _) = listener.accept().unwrap();
+        std::thread::sleep(Duration::from_secs(30));  // never drain
+    });
+    let stream = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+    stream.set_write_timeout(Some(Duration::from_millis(1500))).unwrap();
+    let writer = Box::new(stream.try_clone().unwrap()) as Box<dyn Write + Send>;
+    let shutdown = Box::new(stream) as Box<dyn ShutdownableStream + Send>;
+    let session = VaraSession::new();
+    session.install_abort_writer(writer, shutdown);
+
+    let start = std::time::Instant::now();
+    let _ = session.abort_in_flight();  // Cooperative write times out → hard-close fallback.
+    let elapsed = start.elapsed();
+    assert!(elapsed < Duration::from_secs(2),
+            "abort_in_flight took {:?} — Codex Round 3 P1 #1 bound is 2s",
+            elapsed);
+}
+```
+
+In `src-tauri/src/winlink/modem/vara/transport.rs`, add `try_clone_abort_writer` that:
+1. Calls `TcpStream::try_clone()` to clone the cmd-port stream.
+2. Calls `set_write_timeout(Some(Duration::from_millis(1500)))` on the clone.
+3. Returns both the boxed writer AND the shutdown handle (or a tuple) for `install_abort_writer`.
+
+Mirror ARDOP's pattern; ARDOP's abort path also needs the same write-deadline treatment as part of this task's amendment (Codex Round 3 P1 #1 doesn't only affect VARA — both protocols' cooperative abort writes need bounded write timeouts + hard-close fallback).
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -2270,10 +2395,41 @@ impl VaraSession {
         } // lock dropped here
 
         // Phase 2: await the listener consumer's yield (no lock held).
-        let transport = self.transport_yield_rx
-            .recv()
-            .await
-            .ok_or("listener yield channel closed unexpectedly")?;
+        // Codex Round 3 P1 #2: bounded wait. If the listener consumer task
+        // crashed, missed the notify, or is wedged in its accept loop, an
+        // unbounded await leaves outbound stuck in OutboundPending forever.
+        // After YIELD_TIMEOUT, assume stale consumer; force-clean and surface.
+        const YIELD_TIMEOUT: Duration = Duration::from_secs(3);
+        let yield_result = tokio::time::timeout(
+            YIELD_TIMEOUT,
+            self.transport_yield_rx.recv(),
+        ).await;
+
+        let transport = match yield_result {
+            Ok(Some(t)) => t,
+            Ok(None) => {
+                // Channel closed — listener task is gone. Reset state, surface error.
+                let mut guard = self.inner.lock().unwrap();
+                guard.transport_owner = TransportOwner::None;
+                return Err("listener consumer task exited; session needs Close + reopen".into());
+            }
+            Err(_elapsed) => {
+                // Timeout — consumer wedged. Reset to None and surface so the
+                // operator can Close + reopen. This is a recovery path, not a
+                // normal one — log it loudly.
+                let mut guard = self.inner.lock().unwrap();
+                guard.transport_owner = TransportOwner::None;
+                tracing::error!(
+                    "arbiter yield wait timed out after {:?}; listener consumer appears wedged",
+                    YIELD_TIMEOUT,
+                );
+                return Err(format!(
+                    "modem busy — listener did not yield within {:?}; \
+                     Close Session and reopen to recover",
+                    YIELD_TIMEOUT,
+                ));
+            }
+        };
 
         // Phase 3: finalize state under the lock; ownership transfer is atomic
         // w.r.t. other arbiter operations.
@@ -2354,6 +2510,40 @@ async fn vara_close_session_during_outbound_aborts_outbound_and_disarms_listener
 ```
 
 Run + verify pass.
+
+- [ ] **Step 7b: Add bounded-yield failure-mode tests** (Codex Round 3 P1 #2)
+
+```rust
+#[tokio::test]
+async fn arbiter_yield_times_out_when_listener_consumer_wedged() {
+    let state = setup_test_state_listener_wedged_no_yield();
+    // Listener "armed" but its accept loop blocks forever on a stub.
+    let _ = vara_open_session(/* p2p */).await;
+    assert_eq!(state.vara_session.transport_owner(), TransportOwner::ListenerArmed);
+
+    let start = std::time::Instant::now();
+    let result = modem_vara_b2f_exchange(/* p2p */).await;
+    let elapsed = start.elapsed();
+
+    assert!(result.is_err());
+    assert!(elapsed >= Duration::from_secs(3) && elapsed < Duration::from_secs(5),
+            "yield wait should bound to ~3s; got {:?}", elapsed);
+    // After timeout, transport_owner reset to None so a clean reopen can proceed.
+    assert_eq!(state.vara_session.transport_owner(), TransportOwner::None);
+}
+
+#[tokio::test]
+async fn arbiter_yield_handles_listener_consumer_dropping_yield_channel() {
+    let state = setup_test_state_listener_drops_channel();
+    let _ = vara_open_session(/* p2p */).await;
+    let result = modem_vara_b2f_exchange(/* p2p */).await;
+    assert!(result.is_err());
+    assert!(result.unwrap_err().contains("listener consumer task exited"));
+    assert_eq!(state.vara_session.transport_owner(), TransportOwner::None);
+}
+```
+
+Run + verify both pass. The first test stubs a listener that never yields (consumer wedged); the second drops the channel sender mid-flight (consumer task exited).
 
 - [ ] **Step 8: Commit**
 
@@ -2629,7 +2819,11 @@ it('lifecycle recovers from backend status crash by reading next snapshot', asyn
     if (cmd === 'vara_status') {
       statusCallCount += 1;
       if (statusCallCount <= 2) throw new Error('socket closed');
-      return { state: 'open', listener_armed: true, exchange: null };
+      // Codex Round 3 P1 #5: production VARA status wire format is camelCase
+      // (Task 3.0 specifies `#[serde(rename_all = "camelCase")]` on VaraStatus).
+      // The mock MUST match the production wire shape or the hook will pass
+      // tests while reading the wrong field name in production.
+      return { state: 'open', listenerArmed: true, exchange: null, transportOwner: 'listenerArmed' };
     }
     return null;
   });
