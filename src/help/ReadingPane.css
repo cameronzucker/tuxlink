@@ -205,48 +205,97 @@
 }
 .mermaid-diagram svg { max-width: 100%; height: auto; }
 
-/* Mermaid theming via CSS — Mermaid v11's khroma color parser rejects
- * CSS custom-property strings at init time (see mermaidLoader.ts comment),
- * so we post-render-theme the SVG output through these selectors instead.
- * theme:'base' in initialize() leaves these classes unstyled, allowing full
- * CSS override without specificity fights.
+/* Mermaid theming via CSS — Mermaid v11 embeds its own <style> block
+ * inside the rendered SVG using ID-scoped selectors like
+ * `#mermaid-XXX .node rect { fill: #fff4dd }`. ID specificity (1,1,1)
+ * beats any plain class chain (0,N,M), so every rule below MUST use
+ * `!important` to win the cascade — class selectors alone won't.
  *
- * Diagnostic history: an earlier revision of this block added broader
- * selectors (`.label-container`, `.edgeLabel .labelBkg`, `foreignObject
- * div/span/p`, sequence-diagram specifics) trying to cover more cases.
- * The result rendered diagrams *entirely* invisible — `fill` inheritance
- * down SVG groups carried `var(--surface)` into descendants whose intent
- * was a different fill. This revision is the surgical minimum that
- * addresses the original black-on-dark-blue regression without breaking
- * other diagram structure: theme the shapes, theme the edges, color
- * the labels (both SVG <text> and foreignObject HTML), nothing else. */
+ * Diagnostic history:
+ * - First fix attempt added broader selectors (`.label-container`,
+ *   `foreignObject div/span/p`, sequence-diagram specifics) without
+ *   understanding the ID-specificity issue. Result: text was themed
+ *   (the !important on `.mermaid-diagram text` won) but everything
+ *   else stayed at Mermaid's base palette.
+ * - Second fix attempt (the "surgical revert") was the same minus the
+ *   broad selectors, still without `!important` on shapes/edges. Same
+ *   outcome: text themed, everything else stuck at base.
+ * - Third fix (this revision) keeps the surgical scope but adds
+ *   `!important` everywhere, and corrects the dead `.edgePath path`
+ *   selector — Mermaid v11 puts `.flowchart-link` on the edge path
+ *   itself; `.edgePath` (singular) doesn't exist as a class in v11
+ *   (the container is `.edgePaths`).
+ *
+ * Why we don't touch `.label-container`: it's a `<rect>` in v11 (not
+ * a group), so its fill doesn't propagate to descendants — but it's
+ * already covered by `.node rect`, so explicit targeting is redundant.
+ * Earlier disaster reports involving `.label-container` were from a
+ * Mermaid version where it was a `<g>` group; that's not the case in
+ * v11 (verified 2026-06-04 via dev/scratch/mermaid-probe.py).
+ */
 
-/* Flowchart node shapes. */
+/* Flowchart node shapes. !important required to beat Mermaid's
+ * `#mermaid-XXX .node rect { fill: ... }` ID-scoped rule. */
 .mermaid-diagram .node rect,
 .mermaid-diagram .node circle,
 .mermaid-diagram .node ellipse,
 .mermaid-diagram .node polygon,
 .mermaid-diagram .node path {
-  fill: var(--elevated);
-  stroke: var(--border-strong);
+  fill: var(--elevated) !important;
+  stroke: var(--border-strong) !important;
 }
 
 /* Flowchart cluster / subgraph boxes. */
 .mermaid-diagram .cluster rect {
-  fill: var(--surface);
-  stroke: var(--border-strong);
+  fill: var(--surface) !important;
+  stroke: var(--border-strong) !important;
 }
 
-/* Flowchart edges. */
-.mermaid-diagram .edgePath path,
-.mermaid-diagram .flowchart-link {
-  stroke: var(--border-strong);
+/* Flowchart edges. Mermaid v11 puts `.flowchart-link` on the path
+ * itself; the `.edgePath .path` selector matches a legacy structure
+ * not present in v11 but is kept for forward compatibility.
+ * --text-dim gives a clearly-visible stroke against dark surfaces
+ * (--border-strong was used previously but is too close to background
+ * for edge visibility). */
+.mermaid-diagram .flowchart-link,
+.mermaid-diagram .edgePath .path {
+  stroke: var(--text-dim) !important;
+  fill: none !important;
 }
 
-/* SVG <text> uses `fill`, not `color`. Mermaid's base theme leaves
- * text at near-black via an inline `fill="black"` attribute, which
- * means a plain CSS rule loses to the inline attribute. `!important`
- * is the minimum-friction defeat for the inline. */
+/* Arrow markers (the triangle heads on edges). Mermaid sets these
+ * to #0b0b0b which is invisible against dark surfaces. */
+.mermaid-diagram .marker,
+.mermaid-diagram .marker.cross,
+.mermaid-diagram .arrowheadPath {
+  fill: var(--text-dim) !important;
+  stroke: var(--text-dim) !important;
+}
+
+/* Edge label backgrounds. In Mermaid v11 these are NOT <rect> elements;
+ * they're HTML <div class="labelBkg"> + <span class="edgeLabel"> + <p>
+ * inside <foreignObject>, styled via `background-color` (HTML), not
+ * `fill` (SVG). Verified 2026-06-04 via dev/scratch/mermaid-probe.py.
+ *
+ * Mermaid's base palette sets these to a semi-transparent lavender via
+ * rules like `#mermaid-XXX .labelBkg { background-color: rgba(244,221,
+ * 255,0.5) }`. We retint to --elevated so labels render as small dark
+ * badges that interrupt the edge line cleanly, instead of clashing
+ * pink/lavender boxes. */
+.mermaid-diagram .edgeLabel rect,
+.mermaid-diagram .edgeLabel .labelBkg {
+  fill: var(--elevated) !important;
+  opacity: 1 !important;
+}
+.mermaid-diagram .labelBkg,
+.mermaid-diagram span.edgeLabel,
+.mermaid-diagram .edgeLabel p {
+  background-color: var(--elevated) !important;
+  background: var(--elevated) !important;
+}
+
+/* SVG <text> color. Mermaid base sets fill:#333 via the ID-scoped
+ * inner stylesheet; !important defeats it. */
 .mermaid-diagram text {
   fill: var(--text) !important;
   font-family: var(--sans);
@@ -263,4 +312,13 @@
 }
 .mermaid-diagram foreignObject div {
   color: var(--text);
+}
+
+/* Mermaid's inner stylesheet also sets `.label text, span { color:#333 }`
+ * on <span> elements specifically; the cascading `color` rules above
+ * lose to that ID-scoped rule. Defeat with !important on a span-
+ * targeted selector. */
+.mermaid-diagram .label span,
+.mermaid-diagram foreignObject span {
+  color: var(--text) !important;
 }
