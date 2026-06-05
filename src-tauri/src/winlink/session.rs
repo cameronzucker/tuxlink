@@ -1216,4 +1216,76 @@ mod tests {
         assert!(!events.iter().any(|e| matches!(e, B2fEvent::PostAuthExchangeStarted { .. })),
             "Mode 3 wrongly emitted Mode 5 discriminator — events: {events:?}");
     }
+
+    /// cms-z happy-path integration smoke — spec §8.4.
+    ///
+    /// Asserts the three invariants required by the tuxlink-7do4 smart auth
+    /// diagnostics spec §8.4 on a successful (Mode 5) connect:
+    ///
+    /// 1. `PostAuthExchangeStarted` IS emitted — the Mode 5 discriminator
+    ///    fired when the first non-`***` `F`-prefixed byte arrived.
+    /// 2. `RemoteErrorReceived` is NOT emitted — no `***` line was received
+    ///    (the server accepted our credentials without a rejection line).
+    /// 3. `AuthClassified` is NOT emitted — `AuthClassified` is emitted at
+    ///    the command layer (`ui_commands.rs`), not by the inner session
+    ///    function. `run_exchange_with_events` must be clean of it on the
+    ///    happy path; its absence here proves the event-layer boundary
+    ///    between session and command is intact.
+    ///
+    /// The scripted server emits the real cms-z.winlink.org happy-path
+    /// sequence (SID + `;PQ` challenge + `CMS>` prompt, then `FF` on the
+    /// first message turn), so this test exercises the full code path from
+    /// handshake through to the auth-only `FF + FQ` quit.
+    #[test]
+    fn cms_z_happy_path_smoke_post_auth_started_no_error_no_classified() {
+        use super::super::b2f_events::{B2fEvent, VecEventSink};
+
+        // Scripted in-memory CMS: SID with B2FHM, ;PQ challenge, CMS> prompt,
+        // then FF (no inbound messages — "no traffic" happy path).
+        let mut server = Vec::new();
+        server.extend_from_slice(b"[WL2K-5.0-B2FHM$]\r;PQ: 87654321\rCMS>\r");
+        server.extend_from_slice(b"FF\r");
+
+        let mut reader = std::io::Cursor::new(server);
+        let mut writer = Vec::new();
+        let config = ExchangeConfig {
+            mycall: "N7CPZ".into(),
+            targetcall: "SERVICE".into(),
+            locator: "CN87".into(),
+            password: Some("GOODPASS".into()),
+            intent: SessionIntent::Cms,
+        };
+
+        let sink = VecEventSink::new();
+        let result = run_exchange_with_events(
+            &mut reader, &mut writer, &config, vec![], |_| vec![], None, Some(&sink),
+        );
+        assert!(result.is_ok(), "happy-path exchange must not error: {result:?}");
+
+        let events = sink.snapshot();
+
+        // Invariant 1 (spec §8.4): PostAuthExchangeStarted MUST fire — proves
+        // the Mode 5 discriminator activated on the `FF` byte.
+        assert!(
+            events.iter().any(|e| matches!(e, B2fEvent::PostAuthExchangeStarted { .. })),
+            "spec §8.4: PostAuthExchangeStarted must fire on happy-path connect — events: {events:?}",
+        );
+
+        // Invariant 2 (spec §8.4): RemoteErrorReceived MUST NOT fire — no
+        // `***` line from the server means the credentials were accepted.
+        assert!(
+            !events.iter().any(|e| matches!(e, B2fEvent::RemoteErrorReceived { .. })),
+            "spec §8.4: RemoteErrorReceived must NOT fire on happy path — events: {events:?}",
+        );
+
+        // Invariant 3 (spec §8.4): AuthClassified MUST NOT fire — that event
+        // is emitted at the command layer (ui_commands.rs), never inside
+        // run_exchange_with_events. Its presence here would indicate a layering
+        // violation.
+        assert!(
+            !events.iter().any(|e| matches!(e, B2fEvent::AuthClassified { .. })),
+            "spec §8.4: AuthClassified must NOT fire inside run_exchange_with_events — \
+             it belongs to the command layer only — events: {events:?}",
+        );
+    }
 }
