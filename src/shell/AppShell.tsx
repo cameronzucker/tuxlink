@@ -985,7 +985,6 @@ export function AppShell() {
        *  drives visibility (idle = no DOM output); the component is tiny. */}
       <ReportIssueModal
         state={reportIssueState}
-        setState={setReportIssueState}
         onClose={() => setReportIssueState({ kind: 'idle' })}
       />
     </div>

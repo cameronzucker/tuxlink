@@ -55,7 +55,7 @@ function renderModal(initialState: ReportIssueState) {
   function Wrapper() {
     const [state, setState] = useState<ReportIssueState>(initialState);
     externalSetState = setState;
-    return <ReportIssueModal state={state} setState={setState} onClose={onClose} />;
+    return <ReportIssueModal state={state} onClose={onClose} />;
   }
 
   const utils = render(<Wrapper />);
@@ -261,7 +261,7 @@ describe('useReportIssueController — full flow', () => {
     return (
       <div>
         <button data-testid="start-btn" onClick={() => controller.start()}>Start</button>
-        <ReportIssueModal state={state} setState={setState} onClose={() => setState({ kind: 'idle' })} />
+        <ReportIssueModal state={state} onClose={() => setState({ kind: 'idle' })} />
       </div>
     );
   }

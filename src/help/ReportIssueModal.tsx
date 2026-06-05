@@ -51,7 +51,6 @@ export interface ReportIssueController {
 
 export interface ReportIssueModalProps {
   state: ReportIssueState;
-  setState: Dispatch<SetStateAction<ReportIssueState>>;
   onClose: () => void;
 }
 
@@ -255,6 +254,22 @@ export function ReportIssueModal({ state, onClose }: ReportIssueModalProps) {
                 Copy URL
               </button>
             </>
+          )}
+
+          {state.kind === 'success' && state.browserOpened && (
+            // Spec §8.5 step 3: clipboard fallback always present, regardless of
+            // browser success — even if the URL opened automatically, give the
+            // operator an explicit way to copy it (e.g., for filing on a
+            // different machine that has the log archive).
+            <button
+              type="button"
+              className="tux-about-button"
+              data-testid="report-issue-copy-url-btn-success"
+              onClick={() => void copyText(state.githubUrl)}
+              style={{ background: 'none', color: 'var(--text)', border: '1px solid var(--border)' }}
+            >
+              Copy URL
+            </button>
           )}
 
           {state.kind === 'success' && (
