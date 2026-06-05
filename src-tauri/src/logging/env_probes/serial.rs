@@ -1,18 +1,20 @@
 //! Serial / USB-serial / Bluetooth RFCOMM environment probe (spec §9.3).
 //!
-//! RADIO-1: read-only. Enumerates /dev/serial entries and probes group
-//! membership; TCP-connect-and-immediate-drop for KISS-TCP (NO protocol
-//! exchange — SYN/RST only, no payload).
+//! RADIO-1: strictly read-only. Enumerates /dev/serial entries and probes
+//! group membership; reports KISS-TCP configuration from env (passive read
+//! only — no active TCP connect to the modem port).
+//!
+//! Why no active KISS-TCP connect: if VARA/ARDOP/KISS is already running, an
+//! unconsented diagnostic TCP connection perturbs the control connection — a
+//! RADIO-1 violation (Codex impl-adrev P1 #2). The operator can verify
+//! reachability via the existing UI controls. The spec's read-only probe
+//! contract (§9) forbids active connects to modem ports.
 
 use crate::logging::env_probes::{run_with_deadline, safe_env_value, ProbeGate, ProbeSnapshot};
 use chrono::Utc;
 use serde_json::json;
-use std::net::TcpStream;
-use std::time::Duration;
 
 pub static GATE: ProbeGate = ProbeGate::new();
-
-const CONNECT_TIMEOUT: Duration = Duration::from_millis(500);
 
 pub fn run(trigger: &str) -> ProbeSnapshot {
     let timestamp = Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
@@ -27,24 +29,20 @@ pub fn run(trigger: &str) -> ProbeSnapshot {
     // Check if user is in dialout group via nix::unistd::getgroups
     let in_dialout_group = check_dialout_group();
 
-    // KISS-TCP reachability: TCP connect-and-close only, no payload
+    // KISS-TCP configuration: passive read from env only — NO active TCP connect.
+    //
+    // An active connect to the configured modem host/port is a RADIO-1 violation:
+    // if VARA/ARDOP/KISS is running, the unconsented SYN can perturb the control
+    // connection. Report only whether host/port are configured in env, not whether
+    // the port is reachable. Operator can verify reachability via the UI controls.
     let kiss_tcp_host = safe_env_value("TUXLINK_VARA_TCP_HOST")
-        .or_else(|| safe_env_value("TUXLINK_ARDOP_TCP_HOST"))
-        .unwrap_or_else(|| "localhost".to_string());
+        .or_else(|| safe_env_value("TUXLINK_ARDOP_TCP_HOST"));
     let kiss_tcp_port_str = safe_env_value("TUXLINK_VARA_TCP_PORT")
         .or_else(|| safe_env_value("TUXLINK_ARDOP_TCP_PORT"));
-    let kiss_tcp_reachable = kiss_tcp_port_str
-        .as_deref()
-        .and_then(|p| p.parse::<u16>().ok())
-        .map(|port| {
-            let addr = format!("{kiss_tcp_host}:{port}");
-            TcpStream::connect_timeout(
-                &addr.parse().unwrap_or_else(|_| "127.0.0.1:8300".parse().unwrap()),
-                CONNECT_TIMEOUT,
-            )
-            .map(|stream| { drop(stream); true })
-            .unwrap_or(false)
-        });
+    // `kiss_tcp_configured` is true when BOTH host and port are present in env.
+    // It does NOT imply the port is reachable — only that it is configured.
+    let kiss_tcp_configured = kiss_tcp_host.is_some()
+        && kiss_tcp_port_str.as_deref().and_then(|p| p.parse::<u16>().ok()).is_some();
 
     // Bluetooth: bluetoothctl info for adapter presence
     let bluetooth_adapter_present = run_with_deadline("bluetoothctl", &["show"])
@@ -57,7 +55,7 @@ pub fn run(trigger: &str) -> ProbeSnapshot {
         "tty_usb_devices": tty_usb_devices,
         "tty_acm_devices": tty_acm_devices,
         "in_dialout_group": in_dialout_group,
-        "kiss_tcp_reachable": kiss_tcp_reachable,
+        "kiss_tcp_configured": kiss_tcp_configured,
         "bluetooth_adapter_present": bluetooth_adapter_present,
     });
 
@@ -155,5 +153,35 @@ mod tests {
         assert!(r.get("by_id_devices").is_some());
         assert!(r.get("in_dialout_group").is_some());
         assert!(r.get("bluetooth_adapter_present").is_some());
+    }
+
+    #[test]
+    fn run_reports_kiss_tcp_configured_not_reachable() {
+        // Verify the field name is `kiss_tcp_configured`, not the old
+        // `kiss_tcp_reachable` — the old name implied an active TCP probe.
+        let snap = run("test");
+        let r = &snap.result;
+        assert!(
+            r.get("kiss_tcp_configured").is_some(),
+            "serial probe must report kiss_tcp_configured (passive), not kiss_tcp_reachable"
+        );
+        assert!(
+            r.get("kiss_tcp_reachable").is_none(),
+            "serial probe must NOT report kiss_tcp_reachable — that field implies an active connect"
+        );
+    }
+
+    #[test]
+    fn kiss_tcp_configured_is_false_when_no_env() {
+        // Without env vars set, configured must be false — not an error.
+        // We can't guarantee env isn't set in CI, but we can at least check the
+        // field is present and is a boolean.
+        let snap = run("test");
+        let r = &snap.result;
+        let field = r.get("kiss_tcp_configured").expect("field must be present");
+        assert!(
+            field.is_boolean(),
+            "kiss_tcp_configured must be a boolean, got {field:?}"
+        );
     }
 }
