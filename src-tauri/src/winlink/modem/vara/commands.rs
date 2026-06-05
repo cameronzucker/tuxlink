@@ -1032,6 +1032,30 @@ pub fn vara_open_session_inner(
         }
     }
 
+    // Install the ABORT side-channel BEFORE stashing the transport so any
+    // path that subsequently begins a blocking session-state op (auto-arm
+    // → listener consumer → run_vara_b2f_answer) finds the writer already
+    // installed. Without this, vara_close_session_inner's call to
+    // abort_in_flight (Task 3.3) returns Err("no abort writer installed")
+    // and silently no-ops, leaving the modem to keep TXing until the
+    // graceful timeout — the exact failure mode tuxlink-12sc tracks
+    // (spec §9 + Codex Round 1 P1 #4 → tuxlink-0ye6 Task 4.1 + 4.2).
+    //
+    // Writes directly into `guard.abort_writer` + `guard.abort_stream`
+    // instead of calling `session.install_abort_writer()` — the latter
+    // re-acquires `session.inner.lock()`, which would deadlock since we
+    // already hold the same guard here.
+    //
+    // Best-effort: try_clone_abort_writer Errs only on syscall failure
+    // (try_clone on the TCP socket); if it fails, the abort side-channel
+    // is absent for this session — vara_close_session_inner falls through
+    // to the graceful transport teardown, which is the pre-Task-4.x
+    // behavior. We don't fail the open over it.
+    if let Ok((writer, stream)) = transport.try_clone_abort_writer() {
+        guard.abort_writer = Some(writer);
+        guard.abort_stream = Some(stream);
+    }
+
     guard.transport = Some(transport);
     guard.active_intent = Some(intent);
     guard.active_transport_kind = Some(transport_kind);
@@ -2374,5 +2398,190 @@ mod tests {
             session.snapshot().transport_owner,
             TransportOwner::ListenerArmed
         );
+    }
+
+    // ── tuxlink-0ye6 Task 4.2: vara_open_session installs ABORT side-channel ──
+    //
+    // Scope: after vara_open_session_inner successfully opens the TCP
+    // transport, the cmd-port writer + shutdown handle MUST be cloned via
+    // VaraTransport::try_clone_abort_writer (Task 4.1) and installed on the
+    // session via VaraSession::install_abort_writer. This makes
+    // vara_close_session_inner's call to abort_in_flight (Task 3.3)
+    // load-bearing: previously the call returned the "no abort writer
+    // installed" Err and silently no-op'd; now the cooperative ABORT + hard-
+    // close fallback paths from Task 4.1 actually run.
+    //
+    // The full end-to-end "close interrupts active exchange in <2s" smoke
+    // needs `modem_vara_b2f_exchange` (Task 3.4 — not yet landed) plus a
+    // mocked long-blocking transport. Deferred to operator smoke once 3.4
+    // ships. Unit-layer coverage here pins the install + close-time abort
+    // wiring against a loopback TCP transport.
+
+    /// Spin a loopback `VaraTransport` whose peer cmd-port `TcpStream` is
+    /// returned to the test for byte-level read-back. Acceptors are kept
+    /// alive past the `vara_open_session_inner` call by handing their
+    /// sockets out via the returned tuple — the test's `drop` order
+    /// controls socket lifetime.
+    fn loopback_open_with_cmd_peer(
+        intent: SessionIntent,
+        transport_kind: TransportKind,
+    ) -> (
+        Arc<VaraSession>,
+        std::net::TcpStream, // peer cmd-port socket (the test reads from here)
+        std::net::TcpStream, // peer data-port socket (kept alive; test ignores)
+    ) {
+        use std::net::TcpListener;
+        use std::sync::mpsc as std_mpsc;
+        use std::thread;
+        use std::time::Duration;
+
+        let cmd_l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let cmd_port = cmd_l.local_addr().unwrap().port();
+        let data_l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let data_port = data_l.local_addr().unwrap().port();
+
+        // Spawn acceptors that hand the accepted peer sockets back to the
+        // test thread via a channel. Once accepted, the acceptor thread
+        // exits — the test owns the sockets and controls their lifetime.
+        let (cmd_tx, cmd_rx) = std_mpsc::channel::<std::net::TcpStream>();
+        let (data_tx, data_rx) = std_mpsc::channel::<std::net::TcpStream>();
+        thread::spawn(move || {
+            let (s, _) = cmd_l.accept().unwrap();
+            let _ = cmd_tx.send(s);
+        });
+        thread::spawn(move || {
+            let (s, _) = data_l.accept().unwrap();
+            let _ = data_tx.send(s);
+        });
+
+        let session = Arc::new(VaraSession::new());
+        let ui_cfg = VaraUiConfig {
+            host: "127.0.0.1".into(),
+            cmd_port,
+            data_port,
+            bandwidth_hz: None,
+        };
+        vara_open_session_inner(&session, &ui_cfg, None, intent, transport_kind)
+            .expect("loopback open must succeed");
+
+        // Now both connects have completed; the acceptor threads put the
+        // peer sockets on the channels. Receive them within a bounded
+        // window so test failure surfaces as a clear timeout rather than
+        // a deadlock.
+        let cmd_peer = cmd_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("cmd-port acceptor must hand off socket");
+        let data_peer = data_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("data-port acceptor must hand off socket");
+
+        (session, cmd_peer, data_peer)
+    }
+
+    #[test]
+    fn vara_open_session_installs_abort_writer() {
+        // After a successful open, the session's abort_in_flight() MUST NOT
+        // return the "no abort writer installed" sentinel — the writer +
+        // stream pair from VaraTransport::try_clone_abort_writer must be
+        // installed (Task 4.2).
+        let (session, _cmd_peer, _data_peer) =
+            loopback_open_with_cmd_peer(SessionIntent::Cms, TransportKind::VaraHf);
+
+        let abort_result = session.abort_in_flight();
+
+        let err_str = abort_result
+            .as_ref()
+            .err()
+            .map(|e| e.as_str())
+            .unwrap_or("");
+        assert!(
+            !err_str.contains("no abort writer installed"),
+            "Task 4.2: after vara_open_session_inner, abort_in_flight MUST NOT \
+             report 'no abort writer installed' (got: {:?}). The Task 4.1 \
+             install_abort_writer call is missing from the open path.",
+            abort_result
+        );
+    }
+
+    #[test]
+    fn vara_open_session_installed_writer_actually_sends_abort_on_wire() {
+        // Verify the installed writer is wired to the real cmd-port TCP
+        // socket: after open + abort_in_flight, the peer side of the cmd
+        // socket must see "ABORT\r" arrive. This is the byte-on-wire
+        // version of `vara_open_session_installs_abort_writer` — proves
+        // not just "installed" but "installed pointing at the right
+        // socket."
+        use std::io::Read;
+        use std::time::Duration;
+
+        let (session, mut cmd_peer, _data_peer) =
+            loopback_open_with_cmd_peer(SessionIntent::Cms, TransportKind::VaraHf);
+
+        // Drain any best-effort MYCALL/BW writes (open path sends none in
+        // this test — None callsign + bandwidth_hz: None — but the read
+        // below tolerates leading bytes via the contains() check below).
+        cmd_peer
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .ok();
+
+        // Fire abort against the freshly-installed writer.
+        let abort_result = session.abort_in_flight();
+        assert!(
+            abort_result.is_ok(),
+            "loopback cmd port is alive; cooperative abort must succeed; got: {:?}",
+            abort_result
+        );
+
+        // Read what arrived at the peer cmd socket. Read enough bytes to
+        // cover any incidental prelude + the "ABORT\r" itself.
+        let mut buf = [0u8; 64];
+        let n = cmd_peer.read(&mut buf).expect("peer read must yield bytes");
+        let s = String::from_utf8_lossy(&buf[..n]);
+        assert!(
+            s.contains("ABORT\r"),
+            "expected peer cmd-port to receive 'ABORT\\r' from the installed \
+             abort writer; got: {s:?}"
+        );
+    }
+
+    #[test]
+    fn vara_close_session_inner_fires_abort_through_installed_writer() {
+        // End-to-end at the unit layer: open via vara_open_session_inner,
+        // close via vara_close_session_inner, observe "ABORT\r" arriving on
+        // the peer side of the cmd port. Proves the Task 3.3 abort call is
+        // now load-bearing (the writer is installed by Task 4.2, so the
+        // close path's abort no longer hits the "no writer installed"
+        // fast-out path).
+        use crate::ui_commands::VaraListenState;
+        use std::io::Read;
+        use std::time::Duration;
+
+        let (session, mut cmd_peer, _data_peer) =
+            loopback_open_with_cmd_peer(SessionIntent::Cms, TransportKind::VaraHf);
+        let listen_state = Arc::new(VaraListenState::default());
+
+        cmd_peer
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .ok();
+
+        let result = vara_close_session_inner(&session, &listen_state);
+        assert!(result.is_ok(), "close must succeed: {result:?}");
+
+        // The close path's step 2 (abort_in_flight) MUST have sent ABORT\r
+        // through the installed writer to the peer cmd socket. Without
+        // Task 4.2's install, the abort would have returned Err("no
+        // writer") and no bytes would arrive.
+        let mut buf = [0u8; 64];
+        let n = cmd_peer.read(&mut buf).expect("peer read must yield bytes");
+        let s = String::from_utf8_lossy(&buf[..n]);
+        assert!(
+            s.contains("ABORT\r"),
+            "Task 4.2: vara_close_session_inner must abort via the installed \
+             writer (peer should see 'ABORT\\r'); got: {s:?}. If empty, the \
+             open path is not installing the writer."
+        );
+
+        // Transport is dropped post-close; the snapshot reflects Closed.
+        assert_eq!(session.snapshot().state, VaraState::Closed);
     }
 }
