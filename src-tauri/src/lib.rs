@@ -313,6 +313,12 @@ pub fn run() {
             crate::ui_commands::forms_list_catalog,
             crate::ui_commands::open_webview_form,
             crate::ui_commands::close_webview_form_server,
+            // HTML Forms Phase 3 (tuxlink-xipa): runtime-updateable WLE
+            // Standard Forms snapshot — operator-triggered refresh via
+            // CatalogBrowser "Refresh forms…" affordance. Check is read-only;
+            // refresh performs the download + atomic swap (forms::updater).
+            crate::ui_commands::forms_check_for_update,
+            crate::ui_commands::forms_refresh,
             // HTML Forms P1 Task 10 critical-fix (tuxlink-tzr5): catalog-form
             // submit pathway — `send_form` only knows the 5 BUNDLED_FORMS
             // FormDefs; the webview path needs a parallel command that

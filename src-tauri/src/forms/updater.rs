@@ -55,8 +55,11 @@ pub struct RemoteFormsInfo {
     pub archive_url: String,
 }
 
-/// Outcome of a successful `install`.
+/// Outcome of a successful `install`. Returned via the `forms_refresh` IPC,
+/// so the JSON shape is camelCased to match the rest of the frontend's IPC
+/// surface (see `ui_commands::OpenFormResult` for the same convention).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct InstallReport {
     pub installed_version: String,
     pub form_count: usize,
