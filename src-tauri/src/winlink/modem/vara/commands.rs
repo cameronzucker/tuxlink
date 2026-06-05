@@ -455,12 +455,23 @@ impl VaraSession {
     /// non-guarded `return_transport` is preserved for paths that
     /// legitimately do unconditional return-to-Open (e.g. tests that
     /// model the pre-close-generation behaviour).
+    ///
+    /// **`active_intent` + `active_transport_kind`** (tuxlink-0iqi —
+    /// Codex Phase 3-4 P1 #2): the b2f exchange path snapshots these
+    /// from the session BEFORE `take_transport` and passes them back
+    /// here so the install-back restores the session's active mode
+    /// (Spec §2 — "outbound dial is within-session"). A subsequent
+    /// Send/Receive or listener re-arm runs without re-opening the
+    /// session. The listener consumer's drain path passes `None`/`None`
+    /// — it's tearing down the session, not preserving it.
     pub fn install_transport_if_generation_matches(
         &self,
         t: VaraTransport,
         snapshot_gen: u64,
         bound_host: Option<String>,
         bound_cmd_port: Option<u16>,
+        active_intent: Option<SessionIntent>,
+        active_transport_kind: Option<TransportKind>,
     ) -> Result<(), VaraTransport> {
         // Generation check FIRST (no lock needed).
         let live = self.close_generation.load(Ordering::Acquire);
@@ -480,11 +491,13 @@ impl VaraSession {
                     listener_armed: false,
                     exchange: None,
                     transport_owner: TransportOwner::None,
-                    active_intent: None,
-                    active_transport_kind: None,
+                    active_intent,
+                    active_transport_kind,
                 };
                 guard.transport = Some(t);
                 guard.transport_owner = TransportOwner::None;
+                guard.active_intent = active_intent;
+                guard.active_transport_kind = active_transport_kind;
                 Ok(())
             }
             Err(_poisoned) => Err(t),
@@ -1432,16 +1445,34 @@ pub async fn modem_vara_b2f_exchange(
     );
 
     // tuxlink-pdnw (Codex Phase 3-4 P1 #4): snapshot the close-generation
-    // BEFORE the transport take. When tuxlink-0iqi's lifecycle fix replaces
-    // the current `vara_stop_session_inner` post-exchange call (which is
-    // the wrong shape per Codex P1 #2) with a proper return-to-session
-    // path, the install-back call MUST go through
-    // `install_transport_if_generation_matches(... , close_gen_snapshot)`
-    // so a concurrent `vara_close_session_inner` (which bumps the
-    // generation) makes the install-back drop the transport instead of
-    // restoring the session to `Open`. Snapshot lives here today so the
-    // lifecycle fix is a pure wire-in.
-    let _close_gen_snapshot = session.current_close_generation();
+    // BEFORE the transport take. If `vara_close_session_inner` runs during
+    // this exchange, it will bump the generation; the guarded install-back
+    // below sees the stale snapshot and drops the transport instead of
+    // restoring it into a session the operator just closed.
+    let close_gen_snapshot = session.current_close_generation();
+
+    // tuxlink-0iqi (Codex Phase 3-4 P1 #2): snapshot the open-session
+    // identity BEFORE the transport take so the install-back can restore
+    // active_intent + active_transport_kind. Spec §2 — "outbound dial is
+    // within-session": a successful (or failed) Send/Receive returns the
+    // session to Open with the SAME active intent + transport kind, so
+    // the listener (if armed by intent) can re-arm and a subsequent
+    // Send/Receive runs without re-opening. Without this snapshot, the
+    // install-back would clear active_intent/kind and force the operator
+    // to Close + Open before retrying — the bug Codex flagged.
+    //
+    // Snapshot bound_host + bound_cmd_port likewise so the install-back
+    // restores the status DTO with the same connection details the
+    // operator saw before the exchange.
+    let (snapshot_intent, snapshot_kind, snapshot_bound_host, snapshot_bound_cmd_port) = {
+        let guard = session.inner.lock().map_err(|e| format!("session lock poisoned: {e}"))?;
+        (
+            guard.active_intent,
+            guard.active_transport_kind,
+            guard.status.bound_host.clone(),
+            guard.status.bound_cmd_port,
+        )
+    };
 
     // ─── Take the installed transport ────────────────────────────────
     // The transport was installed by `vara_open_session`. If it's
@@ -1471,15 +1502,37 @@ pub async fn modem_vara_b2f_exchange(
         parsed_intent,
     );
 
-    // ─── Always disconnect + drop, regardless of outcome ─────────────
+    // ─── Always link-disconnect + install transport back ─────────────
     // Best-effort cmd-port `DISCONNECT` + bounded wait for the
-    // `Disconnected` event; even if the wind-down errors the session
-    // must end in a Closed state so a fresh Open Session can succeed.
+    // `Disconnected` event tears down the ARQ link (NOT the modem). The
+    // session must remain Open afterwards so the operator can retry
+    // Send/Receive (or a listener re-arm) without re-opening — per spec
+    // §2's "outbound dial is within-session" rule. ARDOP's
+    // `modem_ardop_b2f_exchange` follows the same pattern via
+    // `transport.disconnect(5s)` + `install_transport_if_generation_matches`.
     let _ = vara_dial_disconnect(&mut transport);
-    drop(transport);
-    // `vara_stop_session_inner` clears active_intent / active_transport_kind
-    // and flips status to Closed. Single lock acquisition.
-    let _ = vara_stop_session_inner(&session);
+
+    // tuxlink-0iqi + tuxlink-pdnw: guarded install-back. Stale snapshot
+    // (close intervened during the exchange) → drop the transport
+    // explicitly; the session is already in a Closed posture from
+    // `vara_close_session_inner` and a fresh open will spawn a new
+    // transport. Fresh snapshot → restore the session to Open with the
+    // SAME active intent + transport kind so the listener can re-arm
+    // (Codex P1 #2 — replaces the prior `vara_stop_session_inner` call
+    // that wrongly forced Closed).
+    if let Err(dropped) = session.install_transport_if_generation_matches(
+        transport,
+        close_gen_snapshot,
+        snapshot_bound_host,
+        snapshot_bound_cmd_port,
+        snapshot_intent,
+        snapshot_kind,
+    ) {
+        // Explicit drop — the session was closed since we took the
+        // transport, so re-installing would defeat the close. Letting
+        // the transport fall out of scope here is the correct behavior.
+        drop(dropped);
+    }
 
     match &outcome {
         Ok(()) => emit_vara_log(
@@ -3221,6 +3274,8 @@ mod tests {
             snapshot,
             Some("127.0.0.1".into()),
             Some(8300),
+            None,
+            None,
         );
 
         assert!(result.is_ok(), "matching generation must install");
@@ -3251,6 +3306,8 @@ mod tests {
             snapshot,
             Some("127.0.0.1".into()),
             Some(8300),
+            None,
+            None,
         );
 
         assert!(
@@ -3302,6 +3359,195 @@ mod tests {
                 panic!("return channel must be empty after stale-gen drop; got a transport")
             }
         }
+
+        drop(session);
+        h1.join().ok();
+        h2.join().ok();
+    }
+
+    /// tuxlink-0iqi (Codex Phase 3-4 P1 #2): the install-back path must
+    /// restore `active_intent` + `active_transport_kind` when the caller
+    /// supplies them, so a subsequent listener re-arm / Send/Receive can
+    /// proceed without re-opening. Mirrors the b2f exchange's preservation
+    /// contract; the listener consumer's drain path passes `None`/`None`
+    /// (covered by the existing -installs_when_snapshot_current test).
+    #[test]
+    fn vara_install_transport_preserves_active_intent_and_kind_when_supplied() {
+        let (transport, h1, h2) = build_real_transport_for_test();
+        let session = VaraSession::new();
+        let snapshot = session.current_close_generation();
+
+        let result = session.install_transport_if_generation_matches(
+            transport,
+            snapshot,
+            Some("127.0.0.1".into()),
+            Some(8300),
+            Some(SessionIntent::Cms),
+            Some(TransportKind::VaraHf),
+        );
+
+        assert!(result.is_ok(), "matching generation must install");
+        let snap = session.snapshot();
+        assert_eq!(snap.state, VaraState::Open);
+        assert_eq!(
+            snap.active_intent,
+            Some(SessionIntent::Cms),
+            "install-back must preserve the caller-supplied active_intent"
+        );
+        assert_eq!(
+            snap.active_transport_kind,
+            Some(TransportKind::VaraHf),
+            "install-back must preserve the caller-supplied active_transport_kind"
+        );
+        // bound_host + bound_cmd_port also preserved (the existing happy-path
+        // test covers this, asserted here for completeness with the new params).
+        assert_eq!(snap.bound_host.as_deref(), Some("127.0.0.1"));
+        assert_eq!(snap.bound_cmd_port, Some(8300));
+
+        drop(session);
+        h1.join().ok();
+        h2.join().ok();
+    }
+
+    /// tuxlink-0iqi: stale-generation install-back drops the transport AND
+    /// does NOT mutate the session's active mode — the session was just
+    /// closed by `vara_close_session_inner`, so `active_intent` /
+    /// `active_transport_kind` should remain whatever the close set them
+    /// to (None, via `vara_stop_session_inner`). This is the race-prevention
+    /// guarantee: a b2f exchange that finishes after the operator clicked
+    /// Close Session does NOT re-open the session.
+    #[test]
+    fn vara_install_transport_with_supplied_intent_still_drops_on_stale_generation() {
+        let (transport, h1, h2) = build_real_transport_for_test();
+        let session = VaraSession::new();
+        let snapshot = session.current_close_generation();
+        assert_eq!(snapshot, 0);
+
+        // Simulate vara_close_session_inner running concurrently: bump
+        // the generation. The b2f exchange's snapshot is now stale.
+        let _ = session.bump_close_generation();
+        assert_eq!(session.current_close_generation(), 1);
+
+        // The b2f exchange tries to install-back with its captured intent.
+        // The guard MUST drop the transport regardless — the close already
+        // won the race.
+        let result = session.install_transport_if_generation_matches(
+            transport,
+            snapshot,
+            Some("127.0.0.1".into()),
+            Some(8300),
+            Some(SessionIntent::Cms),
+            Some(TransportKind::VaraHf),
+        );
+
+        assert!(
+            result.is_err(),
+            "stale snapshot must Err — close intervened during the exchange"
+        );
+
+        // Session remains Closed; active mode untouched by the failed install.
+        let snap = session.snapshot();
+        assert_eq!(snap.state, VaraState::Closed);
+        assert_eq!(
+            snap.active_intent, None,
+            "stale-gen install must NOT restore active_intent into a closed session"
+        );
+        assert_eq!(
+            snap.active_transport_kind, None,
+            "stale-gen install must NOT restore active_transport_kind into a closed session"
+        );
+
+        // Drop the returned transport (mirrors production caller posture).
+        drop(result.err().unwrap());
+        drop(session);
+        h1.join().ok();
+        h2.join().ok();
+    }
+
+    /// tuxlink-0iqi end-to-end semantic test: walk the b2f exchange's
+    /// install-back call site directly. Simulates the post-exchange snapshot
+    /// + install-back with the operator's active intent intact. The session
+    /// must remain `Open` with `active_intent` + `active_transport_kind`
+    /// preserved — the Spec §2 within-session contract that replaced the
+    /// pre-fix `vara_stop_session_inner` lifecycle violation.
+    #[test]
+    fn vara_b2f_install_back_restores_open_with_active_mode_intact() {
+        // Build a session in the post-open state: transport installed,
+        // active_intent = Cms, active_transport_kind = VaraHf, bound_host
+        // + bound_cmd_port set. Mirrors what `vara_open_session_inner`
+        // leaves behind.
+        let (transport, h1, h2) = build_real_transport_for_test();
+        let session = Arc::new(VaraSession::new());
+        {
+            let mut guard = session.inner.lock().unwrap();
+            guard.transport = Some(transport);
+            guard.active_intent = Some(SessionIntent::Cms);
+            guard.active_transport_kind = Some(TransportKind::VaraHf);
+            guard.status = VaraStatus {
+                state: VaraState::Open,
+                last_error: None,
+                bound_host: Some("127.0.0.1".into()),
+                bound_cmd_port: Some(8300),
+                listener_armed: false,
+                exchange: None,
+                transport_owner: TransportOwner::None,
+                active_intent: Some(SessionIntent::Cms),
+                active_transport_kind: Some(TransportKind::VaraHf),
+            };
+        }
+
+        // Snapshot lifecycle inputs BEFORE take_transport (the exact
+        // sequence `modem_vara_b2f_exchange` runs).
+        let close_gen_snapshot = session.current_close_generation();
+        let (snapshot_intent, snapshot_kind, snapshot_bound_host, snapshot_bound_cmd_port) = {
+            let guard = session.inner.lock().unwrap();
+            (
+                guard.active_intent,
+                guard.active_transport_kind,
+                guard.status.bound_host.clone(),
+                guard.status.bound_cmd_port,
+            )
+        };
+        assert_eq!(snapshot_intent, Some(SessionIntent::Cms));
+        assert_eq!(snapshot_kind, Some(TransportKind::VaraHf));
+
+        // Take the transport — owner transitions to ListenerArmed (the
+        // legacy take-transport-bypass pattern).
+        let transport = session.take_transport().expect("must take");
+
+        // Sanity: session is in mid-exchange posture (transport gone but
+        // active_intent + active_transport_kind still set).
+        {
+            let guard = session.inner.lock().unwrap();
+            assert!(guard.transport.is_none());
+            assert_eq!(guard.active_intent, Some(SessionIntent::Cms));
+            assert_eq!(guard.active_transport_kind, Some(TransportKind::VaraHf));
+        }
+
+        // Install-back: the post-exchange call. Generation matches; the
+        // session must return to Open with active mode preserved.
+        let result = session.install_transport_if_generation_matches(
+            transport,
+            close_gen_snapshot,
+            snapshot_bound_host,
+            snapshot_bound_cmd_port,
+            snapshot_intent,
+            snapshot_kind,
+        );
+        assert!(result.is_ok(), "fresh-snapshot install-back must succeed");
+
+        // Spec §2 contract: session in Open, active_intent + transport_kind
+        // populated, bound_host + bound_cmd_port present. A subsequent
+        // Send/Receive can run without re-opening.
+        let snap = session.snapshot();
+        assert_eq!(snap.state, VaraState::Open);
+        assert_eq!(snap.active_intent, Some(SessionIntent::Cms));
+        assert_eq!(snap.active_transport_kind, Some(TransportKind::VaraHf));
+        assert_eq!(snap.bound_host.as_deref(), Some("127.0.0.1"));
+        assert_eq!(snap.bound_cmd_port, Some(8300));
+        // Transport-owner reset to None (the b2f exchange is over; a
+        // subsequent take re-claims).
+        assert_eq!(snap.transport_owner, TransportOwner::None);
 
         drop(session);
         h1.join().ok();

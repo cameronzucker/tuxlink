@@ -3375,11 +3375,19 @@ fn vara_listener_consumer_task(
     // tuxlink-pdnw (Codex Phase 3-4 P1 #4): guarded install. Stale snapshot
     // → close intervened (vara_close_session_inner ran since we took the
     // transport). Drop the transport instead of restoring `VaraState::Open`.
+    //
+    // tuxlink-0iqi: the listener consumer's drain path runs at shutdown —
+    // it's tearing down the session, not preserving the operator's active
+    // mode. Pass `None`/`None` for active_intent + active_transport_kind
+    // so the install-back (if it happens — fresh snapshot only) resets
+    // the active-mode fields, matching the legacy drain behavior.
     match vara_session.install_transport_if_generation_matches(
         transport,
         close_gen_snapshot,
         bound_host,
         bound_cmd_port,
+        None,
+        None,
     ) {
         Ok(()) => {}
         Err(dropped) => {
