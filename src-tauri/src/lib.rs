@@ -7,6 +7,7 @@ pub mod consent_gate;
 pub mod forms;
 pub mod grib;
 pub mod help_window;
+pub mod logging;
 pub mod theme_state;
 pub mod native_mailbox;
 pub mod position;
