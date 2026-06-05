@@ -4,6 +4,46 @@ All notable changes to Tuxlink are documented here.
 
 This project adheres to [Semantic Versioning](https://semver.org) with project-specific rules described in [VERSIONING.md](VERSIONING.md). Entries from `v0.0.2` onward are generated automatically by [`release-please`](https://github.com/googleapis/release-please) from [Conventional Commits](https://www.conventionalcommits.org).
 
+## [0.33.0](https://github.com/cameronzucker/tuxlink/compare/v0.32.1...v0.33.0) (2026-06-05)
+
+
+### Features
+
+* **auth-taxonomy:** classify CMS payloads + transport errors per §3/§6.4 ([c4aa1ef](https://github.com/cameronzucker/tuxlink/commit/c4aa1ef5def1a6e1903b5f44516290eb1b4687a6))
+* **b2f-events:** B2fEvent enum + B2fEventSink trait + serde-lockdown test ([109c8f5](https://github.com/cameronzucker/tuxlink/commit/109c8f5b867889ff256fce6af9bc7c3ce111a0db))
+* **b2f-events:** scaffold AttemptId + FailureMode + TransportFailureKind types ([fd4a5fd](https://github.com/cameronzucker/tuxlink/commit/fd4a5fde1451caccbebe8f43d78efa53252e8acd))
+* **banner:** AuthDiagnosticBanner component with 6 failure modes + 5 affordances + a11y ([4454d7c](https://github.com/cameronzucker/tuxlink/commit/4454d7c0891c030201d363bdde4b2268e810b369))
+* **capabilities:** scope shell:open allowlist to winlink.org + tuxlink repo (R2 [#9](https://github.com/cameronzucker/tuxlink/issues/9)) ([016edac](https://github.com/cameronzucker/tuxlink/commit/016edac811c385abf5b960cc78c2ef5b88baa075))
+* **copy:** banner headline + body mapping per spec §3/§4 (R5 revisions) ([1664b1b](https://github.com/cameronzucker/tuxlink/commit/1664b1b93e34919e07d0a6467f332c2280f6e400))
+* **css:** AuthDiagnosticBanner styles matching RadioPanel palette + reduced-motion variant ([87b54b7](https://github.com/cameronzucker/tuxlink/commit/87b54b7d74fd8cee4d1de65b0ba4e1ae413a8eb4))
+* **handshake:** surface *** lines via HandshakeError::RemoteError (R3 [#3](https://github.com/cameronzucker/tuxlink/issues/3)) ([392496d](https://github.com/cameronzucker/tuxlink/commit/392496d386f86a282c47f4b82eb4d4348d8e5650))
+* **hook:** useAuthDiagnostic subscribes to b2f-event + AttemptId correlation + retry counter + rate-limit ([e2922e4](https://github.com/cameronzucker/tuxlink/commit/e2922e46e991c4c8d55dccb55d34b52c9917a29a))
+* **panel:** insert AuthDiagnosticBanner above SessionLogSection (spec §4.1) ([56e0ffd](https://github.com/cameronzucker/tuxlink/commit/56e0ffdd1ded4669966fa0c28354c97214a60052))
+* **redaction:** add ;PQ symmetric + freeform scrubber for embedded tokens ([0c4527d](https://github.com/cameronzucker/tuxlink/commit/0c4527d360d5d1ea27ff5fa8d4102ba73b5b76f1))
+* **redaction:** scaffold credential-equivalent redaction module + canonical ;PR test ([d09a92d](https://github.com/cameronzucker/tuxlink/commit/d09a92d61092e6308c3f7a4b943dd24573a693ea))
+* **session:** additive run_exchange_with_events for auth diagnostics (§6.3) ([5ca19b4](https://github.com/cameronzucker/tuxlink/commit/5ca19b42396513455c45c47db098422e1b639a9a))
+* **types:** add B2fEvent + FailureMode TS shapes mirroring Rust serde ([b559242](https://github.com/cameronzucker/tuxlink/commit/b5592429712187fdf8eb8e490d1cd98b707f42a5))
+* **ui-commands:** add cms_connect_test (single-flight + auth-only contract) ([a5dc21d](https://github.com/cameronzucker/tuxlink/commit/a5dc21daa738d3505b727a09ba4557dbc5c3254d))
+* **ui-commands:** add credentials_write_password + wizard_reopen + auth_diagnostic_clear ([bffe460](https://github.com/cameronzucker/tuxlink/commit/bffe4601dcbd80279dd363282522ffda50923926))
+* **ui-commands:** add TauriEventSink + scaffold cms_connect event channel ([38dd4eb](https://github.com/cameronzucker/tuxlink/commit/38dd4eb0340d8b10dd367cf725a23218ad9906ea))
+* **ui-commands:** classify cms_connect result + emit AuthClassified event ([8696abc](https://github.com/cameronzucker/tuxlink/commit/8696abcc012a261ca2827a8fd11478814f712a15))
+* **urls:** add hardcoded winlink.org + tuxlink-repo URL constants (R2 [#9](https://github.com/cameronzucker/tuxlink/issues/9)) ([8ee7573](https://github.com/cameronzucker/tuxlink/commit/8ee75738859316268161c46ff1c73299fda552a1))
+
+
+### Bug Fixes
+
+* **ci:** address 3 clippy errors blocking PR [#391](https://github.com/cameronzucker/tuxlink/issues/391) build ([14cbfce](https://github.com/cameronzucker/tuxlink/commit/14cbfced73a00d629b50a32622537d44aafe2fd8))
+* **hook:** auto-clear test-creds circuit breaker after timeout (Codex MAJOR [#5](https://github.com/cameronzucker/tuxlink/issues/5)) ([09c4d43](https://github.com/cameronzucker/tuxlink/commit/09c4d4333954ed086166fee296047fe0ab17d167))
+* **redaction:** handle embedded + lowercase + whitespace token variants (Codex BLOCKER [#1](https://github.com/cameronzucker/tuxlink/issues/1)) ([14d9c4f](https://github.com/cameronzucker/tuxlink/commit/14d9c4fd6fa6779762dcea29732dc38dd09bb5c3))
+* **session:** thread caller-supplied AttemptId through run_exchange_with_events (Codex MAJOR [#2](https://github.com/cameronzucker/tuxlink/issues/2)) ([af6f1b9](https://github.com/cameronzucker/tuxlink/commit/af6f1b9f3d95365527d2c83dc8f91b051aa89363))
+* **telnet:** patch shipped ;PR leak in WireTap → wire_log path (R2 [#1](https://github.com/cameronzucker/tuxlink/issues/1) BLOCKER) ([321e384](https://github.com/cameronzucker/tuxlink/commit/321e3841b3a6b979e7e7344ab9579de4517e52ca))
+* **tests:** CI typecheck — type vi.fn mocks + drop unused STOPPED import ([5c56fa6](https://github.com/cameronzucker/tuxlink/commit/5c56fa6a90233d23183e98cfe5ea1dc13cdc2e9c))
+
+
+### Refactors
+
+* **credentials:** extract public write_password (R2 [#4](https://github.com/cameronzucker/tuxlink/issues/4)) ([2d9a001](https://github.com/cameronzucker/tuxlink/commit/2d9a00128a8d44b8c6c7f90ca87667a43c7fc692))
+
 ## [0.32.1](https://github.com/cameronzucker/tuxlink/compare/v0.32.0...v0.32.1) (2026-06-04)
 
 
