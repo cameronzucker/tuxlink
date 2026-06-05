@@ -1333,6 +1333,20 @@ pub fn vara_stop_session_inner(
     // clean slate for a subsequent open.
     guard.active_intent = None;
     guard.active_transport_kind = None;
+    // Codex Phase 3-4 boundary P2 #1 (tuxlink-u1r7): clear the ABORT
+    // side-channel + arbiter owner alongside the transport. Mirrors
+    // `ModemSession::reset_to_stopped`'s posture. The abort_writer +
+    // abort_stream point at the cmd socket that was just torn down;
+    // leaving them in place stranded a stale writer into the next
+    // session if `try_clone_abort_writer` failed on the next open
+    // (no replacement would happen — the `if let Ok(...)` branch in
+    // `vara_open_session_inner` only assigns on success). Likewise
+    // `transport_owner` carries leftover ListenerArmed/Inbound state
+    // after a `take_transport()`-based close, which the status overlay
+    // would surface as `listenerArmed = true` on a closed session.
+    guard.abort_writer = None;
+    guard.abort_stream = None;
+    guard.transport_owner = TransportOwner::None;
     guard.status = VaraStatus::closed();
     Ok(guard.status.clone())
 }
@@ -3574,6 +3588,112 @@ mod tests {
         assert!(
             after > before,
             "vara_close_session_inner must bump close_generation; before={before}, after={after}"
+        );
+    }
+
+    // ── tuxlink-u1r7 — Codex Phase 3-4 boundary P2 #1 ──────────────────
+    //
+    // `vara_stop_session_inner` must clear `abort_writer`, `abort_stream`,
+    // and `transport_owner` alongside the transport. Mirrors
+    // `ModemSession::reset_to_stopped`'s posture so stale ABORT side-channel
+    // handles can't leak into the next session and a status snapshot after
+    // close cannot report `listenerArmed` via a stale TransportOwner overlay.
+
+    #[test]
+    fn vara_stop_session_inner_clears_abort_writer_and_stream() {
+        let session = Arc::new(VaraSession::new());
+
+        // Install an abort-writer pair (the same shape vara_open_session_inner
+        // installs after a real TCP open). After stop, the pair must be cleared.
+        let captured: Arc<std::sync::Mutex<Vec<u8>>> =
+            Arc::new(std::sync::Mutex::new(Vec::new()));
+        let writer = RecordingWriter { captured };
+        let shutdown_called = Arc::new(std::sync::Mutex::new(false));
+        let spy = ShutdownSpy { called: shutdown_called };
+        session.install_abort_writer(
+            Box::new(writer) as Box<dyn std::io::Write + Send>,
+            Box::new(spy) as Box<dyn ShutdownableStream>,
+        );
+
+        // Sanity: pre-stop, abort_in_flight finds the writer (returns Ok
+        // because RecordingWriter accepts any write).
+        assert!(
+            session.abort_in_flight().is_ok(),
+            "pre-stop: abort_in_flight must succeed with the installed writer"
+        );
+
+        // Re-install (abort_in_flight consumed the success-path; the spy
+        // didn't fire so the stream stays. But we cleared the writer above
+        // in the cooperative-success path? No — cooperative success leaves
+        // both in place. Verify the writer is still present.)
+        // Actually, the cooperative-success path does NOT clear the writer;
+        // only the hard-close fallback does. So the writer is still
+        // installed at this point. We don't need to re-install.
+
+        // Now drive vara_stop_session_inner — the P2 #1 fix MUST clear both.
+        vara_stop_session_inner(&session).unwrap();
+
+        // After stop, abort_in_flight must Err with "no abort writer".
+        let err = session
+            .abort_in_flight()
+            .expect_err("after stop, the writer must be cleared");
+        assert!(
+            err.contains("no abort writer"),
+            "after vara_stop_session_inner, abort_writer must be None; got: {err}"
+        );
+
+        // Direct field inspection: abort_writer + abort_stream are None.
+        let guard = session.inner.lock().unwrap();
+        assert!(
+            guard.abort_writer.is_none(),
+            "P2 #1: abort_writer must be cleared by vara_stop_session_inner"
+        );
+        assert!(
+            guard.abort_stream.is_none(),
+            "P2 #1: abort_stream must be cleared by vara_stop_session_inner"
+        );
+    }
+
+    #[test]
+    fn vara_stop_session_inner_resets_transport_owner() {
+        let session = Arc::new(VaraSession::new());
+
+        // Synthesize a "listener has the transport" state — the closed-status
+        // overlay would surface this as `listenerArmed = true` if the owner
+        // weren't reset on stop (the bug Codex flagged).
+        session.set_transport_owner_for_test(TransportOwner::ListenerArmed);
+        assert_eq!(session.transport_owner(), TransportOwner::ListenerArmed);
+
+        let snap = vara_stop_session_inner(&session).unwrap();
+        // The stop's status return reflects Closed.
+        assert_eq!(snap.state, VaraState::Closed);
+
+        // Owner must be reset to None.
+        assert_eq!(
+            session.transport_owner(),
+            TransportOwner::None,
+            "P2 #1: vara_stop_session_inner must reset transport_owner to None"
+        );
+
+        // And the snapshot's transport_owner overlay must also be None,
+        // confirming the close-overlay state can't lie about a stale owner.
+        let snap_after = session.snapshot();
+        assert_eq!(snap_after.transport_owner, TransportOwner::None);
+    }
+
+    #[test]
+    fn vara_stop_session_inner_clears_owner_when_in_inbound_state() {
+        // ListenerInbound is the other owner state that survives a
+        // take_transport-style close path. Same fix; pin both branches.
+        let session = Arc::new(VaraSession::new());
+        session.set_transport_owner_for_test(TransportOwner::ListenerInbound);
+
+        vara_stop_session_inner(&session).unwrap();
+
+        assert_eq!(
+            session.transport_owner(),
+            TransportOwner::None,
+            "P2 #1: ListenerInbound owner must be reset on stop"
         );
     }
 }
