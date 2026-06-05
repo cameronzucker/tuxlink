@@ -5,10 +5,13 @@
 //! lives in `subscriber`; the Fanout Layer + redacting Visit live in `fanout`
 //! + `visit`; redaction policy in `redact` + `wire_sanitize`.
 
+pub mod disk_consumer;
 pub mod event;
 pub mod fanout;
 pub mod filter_layer;
+pub mod free_disk_guard;
 pub mod redact;
+pub mod retention;
 pub mod state_dir;
 pub mod subscriber;
 pub mod visit;
