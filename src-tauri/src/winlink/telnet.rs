@@ -24,6 +24,7 @@ use std::time::{Duration, Instant};
 use super::proposal::{Answer, Proposal};
 use super::session::{self, ExchangeConfig, ExchangeError, ExchangeResult, OutboundMessage};
 use super::wire;
+use crate::logging::wire_sanitize::{sanitize_wire_line, WireContext};
 
 /// How long to wait on a single read or write before giving up.
 const TIMEOUT: Duration = Duration::from_secs(60);
@@ -131,6 +132,15 @@ impl<'a, T> WireTap<'a, T> {
     /// a chunk containing non-ASCII bytes is a binary payload (e.g. an
     /// LZHUF-compressed message body) and is summarized as a byte count — never
     /// dumped as mojibake (tuxlink-nki re-smoke finding).
+    ///
+    /// Outbound lines (dir `>`) and inbound lines (dir `<`) are both routed
+    /// through `sanitize_wire_line` before reaching the sink. The outbound path
+    /// is the critical one: `handshake::build_handshake` writes the `;PR: <token>`
+    /// response to the wire, and without this sanitize step the `WireTap` would
+    /// forward the raw token bytes to the session-log sink — a credential leak in
+    /// Detailed-mode UI. The inbound path is sanitized symmetrically: the CMS
+    /// sends `;PQ: <challenge>` inbound; forwarding that unredacted is less
+    /// dangerous (the challenge is single-use) but still undesirable.
     fn flush(&mut self) {
         let raw = std::mem::take(&mut self.line);
         if raw.is_empty() {
@@ -142,7 +152,8 @@ impl<'a, T> WireTap<'a, T> {
         if is_ascii_text {
             let text = wire::clean_line(&String::from_utf8_lossy(&raw)).to_string();
             if !text.is_empty() {
-                (self.sink)(&format!("{} {}", self.dir, text));
+                let sanitized = sanitize_wire_line(&text, WireContext::Generic);
+                (self.sink)(&format!("{} {}", self.dir, sanitized));
             }
         } else {
             (self.sink)(&format!("{} <{} bytes binary>", self.dir, raw.len()));
@@ -681,6 +692,67 @@ mod tests {
         assert!(
             lines.iter().any(|l| l == "< <5 bytes binary>"),
             "binary payload should be summarized, not dumped, got {lines:?}"
+        );
+    }
+
+    #[test]
+    fn wire_tap_sanitizes_pr_token_before_forwarding_to_sink() {
+        // CRITICAL: WireTap must not forward raw ;PR: token bytes to the session-log
+        // sink. The outbound direction ('>') is the critical path because
+        // handshake::build_handshake writes ";PR: <token>\r" to the writer.
+        // This test verifies that the token is never present in sink captures.
+        //
+        // Uses the reference vector from wl2k-go secure_test.go:
+        // challenge="23753528", password="FOOBAR" → token="72768415".
+        let token = "72768415";
+        let pr_line = format!(";PR: {token}\r");
+
+        let recorded = std::cell::RefCell::new(Vec::<String>::new());
+        let sink = |l: &str| recorded.borrow_mut().push(l.to_string());
+
+        // Exercise the outbound arm ('>') — this is the critical direction.
+        let mut tap = WireTap::new(std::io::sink(), &sink, '>');
+        tap.observe(pr_line.as_bytes());
+
+        let lines = recorded.into_inner();
+        // The raw token must NOT appear in any captured line.
+        assert!(
+            lines.iter().all(|l| !l.contains(token)),
+            "WIRE LEAK: ;PR: token {token:?} appeared in session-log sink; got {lines:?}",
+        );
+        // The ;PR: prefix context must be preserved (redaction is context-preserving).
+        assert!(
+            lines.iter().any(|l| l.starts_with("> ;PR:")),
+            "the ;PR: prefix context must be preserved in the sink output; got {lines:?}",
+        );
+        // The redacted marker must be present so the operator knows sanitization fired.
+        assert!(
+            lines.iter().any(|l| l.contains("<redacted>")),
+            "the <redacted> marker must appear in the sink output; got {lines:?}",
+        );
+    }
+
+    #[test]
+    fn wire_tap_sanitizes_pq_challenge_inbound() {
+        // Symmetric sanitization: the CMS sends ";PQ: <challenge>\r" inbound.
+        // The challenge is single-use but still undesirable to log verbatim.
+        let challenge = "23753528";
+        let pq_line = format!(";PQ: {challenge}\r");
+
+        let recorded = std::cell::RefCell::new(Vec::<String>::new());
+        let sink = |l: &str| recorded.borrow_mut().push(l.to_string());
+
+        let mut tap = WireTap::new(std::io::sink(), &sink, '<');
+        tap.observe(pq_line.as_bytes());
+
+        let lines = recorded.into_inner();
+        assert!(
+            lines.iter().all(|l| !l.contains(challenge)),
+            "challenge {challenge:?} must not appear verbatim; got {lines:?}",
+        );
+        assert!(
+            lines.iter().any(|l| l.starts_with("< ;PQ:")),
+            "the ;PQ: prefix context must be preserved; got {lines:?}",
         );
     }
 }
