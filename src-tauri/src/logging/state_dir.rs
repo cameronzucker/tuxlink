@@ -70,10 +70,12 @@ fn resolve_base() -> Result<PathBuf, ResolveError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
     use std::os::unix::fs::PermissionsExt;
     use tempfile::tempdir;
 
     #[test]
+    #[serial]
     fn resolves_under_xdg_state_home() {
         let tmp = tempdir().unwrap();
         std::env::set_var("XDG_STATE_HOME", tmp.path());
@@ -85,6 +87,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn refuses_symlinked_log_dir() {
         let tmp = tempdir().unwrap();
         // Manually pre-create a symlink at the path we expect resolve() to create.
