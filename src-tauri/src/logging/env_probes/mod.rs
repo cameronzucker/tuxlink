@@ -221,42 +221,57 @@ pub fn spawn_runner(
             // `target:` to be a string literal — dynamic values via `target =`
             // (equals sign) would add `target` as a structured field while
             // leaving the macro's actual target as the module path.
+            //
+            // Codex P2 #8: include `result_json` as a structured-string field
+            // so probe diagnostic data lands in JSONL exports. The field is a
+            // compact JSON string (not a typed container), so it does not trip
+            // the no_opaque_container_emissions scan. Each per-probe arm
+            // serialises its own ProbeSnapshot.result before the match so the
+            // `result_json_str` local can be referenced inside each arm.
             for s in &snaps {
+                let result_json_str = serde_json::to_string(&s.result)
+                    .unwrap_or_else(|_| "null".to_string());
                 match s.probe.as_str() {
                     "keyring" => tracing::info!(
                         target: "tuxlink::logging::env_probes::keyring",
                         trigger = "first_paint",
                         probe = "keyring",
+                        result_json = %result_json_str,
                         "probe snapshot"
                     ),
                     "audio" => tracing::info!(
                         target: "tuxlink::logging::env_probes::audio",
                         trigger = "first_paint",
                         probe = "audio",
+                        result_json = %result_json_str,
                         "probe snapshot"
                     ),
                     "serial" => tracing::info!(
                         target: "tuxlink::logging::env_probes::serial",
                         trigger = "first_paint",
                         probe = "serial",
+                        result_json = %result_json_str,
                         "probe snapshot"
                     ),
                     "modem_process" => tracing::info!(
                         target: "tuxlink::logging::env_probes::modem_process",
                         trigger = "first_paint",
                         probe = "modem_process",
+                        result_json = %result_json_str,
                         "probe snapshot"
                     ),
                     "network" => tracing::info!(
                         target: "tuxlink::logging::env_probes::network",
                         trigger = "first_paint",
                         probe = "network",
+                        result_json = %result_json_str,
                         "probe snapshot"
                     ),
                     "display" => tracing::info!(
                         target: "tuxlink::logging::env_probes::display",
                         trigger = "first_paint",
                         probe = "display",
+                        result_json = %result_json_str,
                         "probe snapshot"
                     ),
                     _ => {} // unknown probe; no emission
