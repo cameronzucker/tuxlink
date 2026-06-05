@@ -298,11 +298,6 @@ mod tests {
         (lib, dir)
     }
 
-    // Alias kept for the persistence test that needs to drop and re-open.
-    fn open_tmp_with_dir() -> (DraftLibrary, tempfile::TempDir) {
-        open_tmp()
-    }
-
     // -----------------------------------------------------------------------
     // Schema / open tests
     // -----------------------------------------------------------------------
@@ -385,11 +380,13 @@ mod tests {
         assert_eq!(updated.slot_id, id);
         assert_eq!(updated.label, "Updated");
         assert_eq!(updated.payload, json!({"x": 2}));
-        // created_at must be preserved; updated_at must advance.
+        // created_at must be preserved; updated_at must strictly advance
+        // (the preceding sleep is > 1s, so the RFC 3339 second-precision
+        // timestamps must differ).
         assert_eq!(updated.created_at, created_at, "created_at must be preserved on update");
         assert!(
-            updated.updated_at >= created_at,
-            "updated_at must be >= created_at"
+            updated.updated_at > created_at,
+            "updated_at must strictly advance past created_at"
         );
 
         // Confirm only one row in DB.
@@ -492,7 +489,7 @@ mod tests {
 
     #[test]
     fn data_persists_across_open_calls() {
-        let (lib, dir) = open_tmp_with_dir();
+        let (lib, dir) = open_tmp();
         let slot = lib
             .upsert(None, "Winlink_Check-In".into(), "Persist".into(), json!({"x": 42}))
             .unwrap();

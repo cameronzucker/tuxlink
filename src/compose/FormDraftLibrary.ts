@@ -37,15 +37,21 @@ export interface FormDraftSlot {
   updated_at: string;
 }
 
-/** Arguments for {@link upsertSlot}. */
+/**
+ * Arguments for {@link upsertSlot}. camelCase here because Tauri auto-converts
+ * camelCase JS argv keys to snake_case Rust parameter names at the IPC
+ * boundary (matches the convention used by send_form, messages_meta_query_for_log,
+ * etc.). The returned {@link FormDraftSlot} uses snake_case because that is what
+ * the Rust struct's serde::Serialize emits.
+ */
 export interface UpsertSlotArgs {
   /**
    * If omitted (or `undefined`), a new slot is created with a backend-minted
    * UUID. If provided, the matching slot is updated in place (or inserted with
    * the given id if it does not yet exist).
    */
-  slot_id?: string;
-  form_id: string;
+  slotId?: string;
+  formId: string;
   label: string;
   payload: Record<string, unknown>;
 }
@@ -61,14 +67,14 @@ export interface UpsertSlotArgs {
  * ordered by `created_at` ascending (oldest / first-created first).
  */
 export async function listSlots(formId: string): Promise<FormDraftSlot[]> {
-  return invoke<FormDraftSlot[]>('form_draft_library_list', { form_id: formId });
+  return invoke<FormDraftSlot[]>('form_draft_library_list', { formId });
 }
 
 /**
  * Insert or update a draft slot.
  *
- * - `args.slot_id` omitted → new slot, backend mints a UUID.
- * - `args.slot_id` provided → update the matching row in place, or insert if
+ * - `args.slotId` omitted → new slot, backend mints a UUID.
+ * - `args.slotId` provided → update the matching row in place, or insert if
  *   it does not yet exist.
  *
  * Returns the final `FormDraftSlot`, including the assigned `slot_id` on
@@ -76,8 +82,8 @@ export async function listSlots(formId: string): Promise<FormDraftSlot[]> {
  */
 export async function upsertSlot(args: UpsertSlotArgs): Promise<FormDraftSlot> {
   return invoke<FormDraftSlot>('form_draft_library_upsert', {
-    slot_id: args.slot_id ?? null,
-    form_id: args.form_id,
+    slotId: args.slotId ?? null,
+    formId: args.formId,
     label: args.label,
     payload: args.payload,
   });
@@ -87,5 +93,5 @@ export async function upsertSlot(args: UpsertSlotArgs): Promise<FormDraftSlot> {
  * Delete a draft slot by its `slotId`. No-op-safe if the slot does not exist.
  */
 export async function deleteSlot(slotId: string): Promise<void> {
-  return invoke<void>('form_draft_library_delete', { slot_id: slotId });
+  return invoke<void>('form_draft_library_delete', { slotId });
 }

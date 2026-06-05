@@ -184,8 +184,11 @@ pub fn run() {
                         // store for save/reuse of form field-value sets. Lives as a
                         // sibling SQLite file to search.db (Option B schema-home
                         // decision: independent lifecycle, survives search-index
-                        // rebuild). Failure is non-fatal — the UI degrades gracefully
-                        // to "no saved slots"; the app always launches.
+                        // rebuild). Open failure is non-fatal at launch — the app
+                        // still starts. But subsequent IPC calls to
+                        // form_draft_library_* will error at State<Arc<DraftLibrary>>
+                        // extraction because .manage() never ran. This matches the
+                        // SearchService precedent above.
                         match crate::forms::draft_library::DraftLibrary::open(
                             search_root.join("form_draft_library.db"),
                         ) {

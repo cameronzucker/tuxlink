@@ -49,11 +49,11 @@ function makeSlot(overrides: Partial<FormDraftSlot> = {}): FormDraftSlot {
 describe('listSlots', () => {
   beforeEach(() => mocks.invoke.mockClear());
 
-  it('calls form_draft_library_list with the form_id param', async () => {
+  it('calls form_draft_library_list with the formId param', async () => {
     mocks.invoke.mockResolvedValueOnce([]);
     await listSlots('Winlink_Check-In');
     expect(mocks.invoke).toHaveBeenCalledWith('form_draft_library_list', {
-      form_id: 'Winlink_Check-In',
+      formId: 'Winlink_Check-In',
     });
   });
 
@@ -78,17 +78,17 @@ describe('listSlots', () => {
 describe('upsertSlot — new slot', () => {
   beforeEach(() => mocks.invoke.mockClear());
 
-  it('calls form_draft_library_upsert with slot_id=null when slot_id is omitted', async () => {
+  it('calls form_draft_library_upsert with slotId=null when slotId is omitted', async () => {
     const returned = makeSlot();
     mocks.invoke.mockResolvedValueOnce(returned);
     await upsertSlot({
-      form_id: 'Winlink_Check-In',
+      formId: 'Winlink_Check-In',
       label: 'Monday Night Net',
       payload: { callsign: 'N7CPZ' },
     });
     expect(mocks.invoke).toHaveBeenCalledWith('form_draft_library_upsert', {
-      slot_id: null,
-      form_id: 'Winlink_Check-In',
+      slotId: null,
+      formId: 'Winlink_Check-In',
       label: 'Monday Night Net',
       payload: { callsign: 'N7CPZ' },
     });
@@ -98,7 +98,7 @@ describe('upsertSlot — new slot', () => {
     const returned = makeSlot({ slot_id: 'backend-minted-uuid' });
     mocks.invoke.mockResolvedValueOnce(returned);
     const result = await upsertSlot({
-      form_id: 'Winlink_Check-In',
+      formId: 'Winlink_Check-In',
       label: 'Monday Night Net',
       payload: {},
     });
@@ -113,18 +113,18 @@ describe('upsertSlot — new slot', () => {
 describe('upsertSlot — update existing slot', () => {
   beforeEach(() => mocks.invoke.mockClear());
 
-  it('forwards the provided slot_id to the backend', async () => {
+  it('forwards the provided slotId to the backend', async () => {
     const existing = makeSlot({ slot_id: 'existing-uuid', label: 'Updated Label' });
     mocks.invoke.mockResolvedValueOnce(existing);
     await upsertSlot({
-      slot_id: 'existing-uuid',
-      form_id: 'Winlink_Check-In',
+      slotId: 'existing-uuid',
+      formId: 'Winlink_Check-In',
       label: 'Updated Label',
       payload: { callsign: 'N7CPZ' },
     });
     expect(mocks.invoke).toHaveBeenCalledWith('form_draft_library_upsert', {
-      slot_id: 'existing-uuid',
-      form_id: 'Winlink_Check-In',
+      slotId: 'existing-uuid',
+      formId: 'Winlink_Check-In',
       label: 'Updated Label',
       payload: { callsign: 'N7CPZ' },
     });
@@ -139,8 +139,8 @@ describe('upsertSlot — update existing slot', () => {
     });
     mocks.invoke.mockResolvedValueOnce(updated);
     const result = await upsertSlot({
-      slot_id: 'existing-uuid',
-      form_id: 'Winlink_Check-In',
+      slotId: 'existing-uuid',
+      formId: 'Winlink_Check-In',
       label: 'New Label',
       payload: {},
     });
@@ -157,11 +157,11 @@ describe('upsertSlot — update existing slot', () => {
 describe('deleteSlot', () => {
   beforeEach(() => mocks.invoke.mockClear());
 
-  it('calls form_draft_library_delete with the slot_id param', async () => {
+  it('calls form_draft_library_delete with the slotId param', async () => {
     mocks.invoke.mockResolvedValueOnce(undefined);
     await deleteSlot('some-slot-id');
     expect(mocks.invoke).toHaveBeenCalledWith('form_draft_library_delete', {
-      slot_id: 'some-slot-id',
+      slotId: 'some-slot-id',
     });
   });
 
@@ -188,7 +188,7 @@ describe('payload unicode and nested object round-trip', () => {
     mocks.invoke.mockResolvedValueOnce(returned);
 
     const result = await upsertSlot({
-      form_id: 'Winlink_Check-In',
+      formId: 'Winlink_Check-In',
       label: 'Unicode',
       payload: complexPayload,
     });
