@@ -1,10 +1,28 @@
 //! Winlink Check-In — operator net check-in form.
 //!
-//! Field schema mirrors `Winlink_Check-In.html` from the WLE Standard Templates
-//! catalog. Field IDs are lowercase (per spec §3 wire convention).
+//! **KNOWN LIMITATION (2026-06-04 Codex full-diff adrev P1):** the FIELDS /
+//! SUBJECT_TEMPLATE / BODY_TEMPLATE below were a simplified design choice and
+//! do NOT match the bundled WLE `Winlink_Check_In_Initial.html` template's
+//! `<var>` placeholder names — the WLE template uses CamelCase names that
+//! lower-case to ids like `msgto`, `newsubject`, `organization`, `datetime`,
+//! `msgsender`, `contactname`, `assigned`, `status`, `service`, `band`,
+//! `session`, `location`, `maplat`, `maplon`, `mgrs`, `grid`, `locationsource`,
+//! `comments`.
 //!
-//! Provisional field mapping (operator should validate against the actual WLE
-//! template during browser-smoke):
+//! Pending operator decision: (a) full WLE alignment (~18-field form),
+//! (b) keep simplified UI but map UI fields → WLE payload at submit time,
+//! or (c) ship the simplified subset and have CMS / other Winlink clients
+//! treat the form as a generic message instead of a Check-In. See bd
+//! follow-up filed alongside this PR.
+//!
+//! Until that decision lands, the CheckInForm React component is NOT
+//! registered in the form registry (`src/forms/index.ts`) — the picker
+//! falls through to the WLE webview Check-In template (P1 behavior). The
+//! BUNDLED_FORMS entry below stays so backend `find_form` parity tests
+//! continue to pass.
+//!
+//! Original provisional field mapping (kept for reference; rebuild against
+//! the WLE template when re-enabling):
 //!   tactical_call  — operator or station callsign checking in
 //!   op_name        — operator full name
 //!   group_net      — net or group name (e.g. "Cascadia ARES Net")
