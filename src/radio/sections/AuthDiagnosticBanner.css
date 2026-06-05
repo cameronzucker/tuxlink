@@ -1,0 +1,337 @@
+/* src/radio/sections/AuthDiagnosticBanner.css
+ *
+ * Smart Auth-Failure Diagnostic Banner styles, adapted from
+ * docs/design/mockups/2026-06-04-smart-auth-diagnostics-mocks.html
+ * to match src/radio/RadioPanel.css palette tokens.
+ *
+ * Implements the failure-mode banner UI per design spec §4.2 (banner layout)
+ * and §4.5 (animations + a11y). Variants include:
+ * - Error (password/callsign/network failures) — red left-border
+ * - Warning (uncategorized fallback) — yellow left-border
+ * - Success (credentials accepted) — green left-border
+ * - Testing (in-flight credential test) — blue left-border
+ *
+ * Spinner animation with prefers-reduced-motion: reduce pulse fallback per R4 #13.
+ * Focus-visible outlines per spec §4.5 a11y requirements.
+ */
+
+/* Error-mode banner (default, red left-border) */
+.diag-banner {
+  margin: 12px 14px;
+  background: color-mix(in srgb, var(--error) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--error) 28%, transparent);
+  border-left: 3px solid var(--error);
+  border-radius: 6px;
+  padding: 10px 12px;
+  box-sizing: border-box;
+  min-width: 0;
+}
+
+/* Warning variant (uncategorized fallback) — yellow left-border */
+.diag-banner.uncat {
+  background: color-mix(in srgb, var(--accent-2) 10%, transparent);
+  border-color: color-mix(in srgb, var(--accent-2) 28%, transparent);
+  border-left-color: var(--accent-2);
+}
+
+/* Success variant (credentials accepted) — green left-border */
+.diag-banner.success {
+  background: color-mix(in srgb, var(--success) 10%, transparent);
+  border-color: color-mix(in srgb, var(--success) 28%, transparent);
+  border-left-color: var(--success);
+}
+
+/* Testing variant (in-flight test) — blue left-border */
+.diag-banner.testing {
+  background: color-mix(in srgb, #6bb8ee 10%, transparent);
+  border-color: color-mix(in srgb, #6bb8ee 28%, transparent);
+  border-left-color: #6bb8ee;
+}
+
+/* Header row: icon + title + dismiss button */
+.diag-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+/* Icon (unicode glyph or SVG) */
+.diag-icon {
+  font-size: 16px;
+  line-height: 1.2;
+  flex-shrink: 0;
+}
+
+.diag-icon.bad {
+  color: var(--error);
+}
+
+.diag-icon.uncat {
+  color: var(--accent-2);
+}
+
+.diag-icon.success {
+  color: var(--success);
+}
+
+.diag-icon.info {
+  color: #6bb8ee;
+}
+
+/* Spinner animation for testing mode icon */
+@keyframes auth-diag-spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes auth-diag-pulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1.0; }
+}
+
+.diag-icon.spinning {
+  animation: auth-diag-spin 1.2s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .diag-icon.spinning {
+    animation: auth-diag-pulse 1.5s ease-in-out infinite;
+  }
+}
+
+/* Title text */
+.diag-title {
+  font-size: 13px;
+  font-weight: 600;
+  flex: 1;
+  line-height: 1.35;
+  color: var(--text);
+  min-width: 0;
+  word-break: break-word;
+}
+
+/* Dismiss button (top-right ×) */
+.diag-dismiss {
+  background: transparent;
+  border: none;
+  color: var(--text-faint);
+  cursor: pointer;
+  padding: 0;
+  font-size: 14px;
+  line-height: 1;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+}
+
+.diag-dismiss:hover {
+  color: var(--text);
+}
+
+.diag-dismiss:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Body paragraph text */
+.diag-body {
+  font-size: 12px;
+  color: var(--text-dim, #94a3b8);
+  margin: 4px 0 8px;
+  line-height: 1.45;
+}
+
+/* Action button row */
+.diag-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+/* Button base styles */
+.diag-btn {
+  padding: 4px 9px;
+  border-radius: 3px;
+  font-size: 11px;
+  font-weight: 500;
+  font-family: var(--sans);
+  cursor: pointer;
+  border: 1px solid;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  white-space: nowrap;
+}
+
+.diag-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.diag-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Primary action button (e.g., "Re-enter password", "Save to keyring") */
+.diag-btn-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #0a0d10;
+}
+
+.diag-btn-primary:hover:not(:disabled) {
+  filter: brightness(1.1);
+}
+
+/* Secondary action button (e.g., "Cancel", "Copy log") */
+.diag-btn-secondary {
+  background: transparent;
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+
+.diag-btn-secondary:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* Link-style button (e.g., "Reset on winlink.org", "Verify on winlink.org") */
+.diag-btn-link {
+  background: transparent;
+  border-color: var(--border);
+  color: #6bb8ee;
+}
+
+.diag-btn-link:hover:not(:disabled) {
+  background: color-mix(in srgb, #6bb8ee 8%, transparent);
+}
+
+.diag-btn-link::after {
+  content: " ↗";
+  opacity: 0.7;
+}
+
+/* Wire response / event log expandable section */
+.diag-raw {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--border);
+}
+
+/* Toggle control for expanding/collapsing raw content */
+.diag-raw-toggle {
+  font-size: 11px;
+  color: var(--text-faint);
+  cursor: pointer;
+  user-select: none;
+  font-family: ui-monospace, monospace;
+  display: inline-flex;
+  align-items: center;
+}
+
+.diag-raw-toggle::before {
+  content: "▸ ";
+  font-family: var(--sans);
+}
+
+.diag-raw-toggle.open::before {
+  content: "▾ ";
+}
+
+.diag-raw-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Expanded raw content box (wire response or structured events) */
+.diag-raw-content {
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  color: var(--text-dim, #94a3b8);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 6px 8px;
+  margin-top: 4px;
+  word-break: break-all;
+  line-height: 1.45;
+  max-height: 120px;
+  overflow-y: auto;
+  box-sizing: border-box;
+  min-width: 0;
+}
+
+/* Inline re-enter password form (Mode 3 expanded state) */
+.diag-form {
+  margin-top: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  background: var(--surface-2);
+  border-radius: 4px;
+  box-sizing: border-box;
+}
+
+.diag-form .row-input {
+  margin-bottom: 0;
+}
+
+.diag-form input[type='password'],
+.diag-form input[type='text'] {
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  color: var(--text);
+  padding: 5px 8px;
+  border-radius: 3px;
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+  flex: 1;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.diag-form input::placeholder {
+  color: var(--text-faint);
+}
+
+.diag-form input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--tux-focus-ring, var(--accent));
+}
+
+/* Helpful hint text inside form sections */
+.diag-help {
+  font-size: 11px;
+  color: var(--text-faint);
+  margin: 0;
+  line-height: 1.4;
+}
+
+/* Input row layout (label + input) used in .diag-form */
+.diag-form .row-input {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+  font-size: 12px;
+  min-width: 0;
+}
+
+.diag-form .row-input > span {
+  color: var(--text-faint);
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
+/* Button row inside form (e.g., "Save" + "Cancel") */
+.diag-form .btn-row {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
