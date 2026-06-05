@@ -23,7 +23,7 @@ const listenerRegistry = new Map<string, ((e: { payload: unknown }) => void)[]>(
 
 const { mockInvoke, mockListen } = vi.hoisted(() => ({
   mockInvoke: vi.fn(),
-  mockListen: vi.fn<Parameters<ListenFn>, ReturnType<ListenFn>>(),
+  mockListen: vi.fn<ListenFn>(),
 }));
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: mockInvoke }));

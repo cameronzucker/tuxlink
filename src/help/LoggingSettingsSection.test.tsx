@@ -34,9 +34,13 @@ const MOCK_STATUS_OFF = {
   bounded_remaining_seconds: null,
   retention_days: 14,
   retention_mb_cap: 500,
+  boot_id_short: 'testboot',
+  degraded: null,
 };
 
-function renderSettings(statusOverride?: Partial<typeof MOCK_STATUS_OFF>) {
+type SettingsOverride = Partial<Omit<typeof MOCK_STATUS_OFF, 'detailed_mode'> & { detailed_mode: 'off' | 'on' | 'bounded' }>;
+
+function renderSettings(statusOverride?: SettingsOverride) {
   const status = { ...MOCK_STATUS_OFF, ...statusOverride };
   mockInvoke.mockImplementation((cmd: string) => {
     if (cmd === 'logging_status') return Promise.resolve(status);
