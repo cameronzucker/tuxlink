@@ -239,3 +239,80 @@
   outline: 2px solid var(--tux-focus-ring);
   outline-offset: 1px;
 }
+
+.catalog-browser__btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.catalog-browser__btn--primary {
+  background: var(--tux-accent);
+  color: var(--tux-on-accent);
+  border-color: var(--tux-accent);
+}
+
+.catalog-browser__btn--primary:hover:not(:disabled) {
+  background: var(--tux-accent-hover, var(--tux-accent));
+  filter: brightness(1.08);
+}
+
+.catalog-browser__btn--secondary {
+  /* Reserve the visually-stronger primary slot for the destructive-ish
+   * "Refresh now" inside the confirmation; the picker-level "Refresh
+   * forms…" trigger is one of two siblings of the Cancel button, so
+   * matching their weight keeps the bottom bar balanced. */
+  margin-right: auto;
+}
+
+/* Refresh sub-flow — Phase 3 (tuxlink-xipa). Replaces the search +
+ * results area while active. Lives inside the same dialog so Escape
+ * unwinds one level (refresh → idle → close picker). */
+.catalog-browser__refresh {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 18px 16px;
+  background: var(--tux-bg);
+  border: 1px solid var(--tux-border);
+  border-radius: 4px;
+  min-height: 160px;
+}
+
+.catalog-browser__refresh-status {
+  color: var(--tux-fg);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.catalog-browser__refresh-meta {
+  margin-top: 6px;
+  color: var(--tux-fg-dim);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.catalog-browser__refresh-detail {
+  margin-top: 8px;
+  color: var(--tux-fg-dim);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.catalog-browser__refresh-error {
+  padding: 10px 12px;
+  background: var(--tux-danger-surface);
+  border: 1px solid var(--error);
+  color: var(--tux-fg);
+  border-radius: 4px;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.catalog-browser__refresh-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: auto;
+}
