@@ -708,9 +708,14 @@ fn addr_to_string(a: &mail_parser::Addr<'_>) -> String {
 /// Return the first text/plain body as a string.
 ///
 /// Uses `msg.body_text(0)` which returns the first text/plain body part
-/// (already decoded for charset + CTE). Falls back to a lossy decode of
-/// the root part's binary body if no text/plain part is registered (handles
-/// non-MIME messages with invalid UTF-8 bytes in the body).
+/// (already decoded for charset + CTE). When no text/plain part exists, falls
+/// back to either:
+/// - The root Text part's contents (non-MIME messages with a single text root).
+/// - A short placeholder pointing the user at the attachment surface
+///   (single-part binary messages — the canonical case is the CMS-Z Catalog
+///   reply that inlines a JPEG as the entire body). Raw bytes are never
+///   rendered as text; that produces a wall of REPLACEMENT CHARACTER glyphs
+///   interleaved with whatever bytes happen to be valid UTF-8 (tuxlink-9ylw).
 fn find_text_plain_body(msg: &mail_parser::Message<'_>) -> String {
     // body_text(0) returns the first text/plain part (as decoded Cow<str>).
     if let Some(text) = msg.body_text(0) {
@@ -720,7 +725,11 @@ fn find_text_plain_body(msg: &mail_parser::Message<'_>) -> String {
     match &msg.parts[0].body {
         mail_parser::PartType::Text(t) => t.to_string(),
         mail_parser::PartType::Binary(b) | mail_parser::PartType::InlineBinary(b) => {
-            String::from_utf8_lossy(b).into_owned()
+            // Don't render bytes as text. AttachmentStrip + the
+            // message_attachment_save command (tuxlink-0fyj) handle binary
+            // content; this placeholder points users at that surface instead
+            // of competing with it via a lossy-UTF-8 dump.
+            format!("[Binary content ({} bytes) — see attachments]", b.len())
         }
         _ => String::new(),
     }
@@ -5873,6 +5882,64 @@ hw:CARD=Device,DEV=0
              --BOUND--\r\n"
         )
         .into_bytes()
+    }
+
+    /// tuxlink-9ylw: regression test for the screenshot-bad rendering of CMS
+    /// image responses (the canonical example is the CMS-Z Catalog reply that
+    /// inlines a JPEG as the entire message body). When mail-parser hits a
+    /// single-part message whose root body is binary (no text/plain sibling
+    /// to fall back to), the prior implementation called
+    /// `String::from_utf8_lossy` on the raw bytes — which produces a wall of
+    /// REPLACEMENT CHARACTERs interleaved with whatever byte sequences happen
+    /// to be valid UTF-8. That made screenshots look broken and gave users no
+    /// pointer to the actual content path (the AttachmentStrip).
+    ///
+    /// Replacement contract: don't render bytes as text; emit a short
+    /// placeholder pointing the user at the attachment surface.
+    #[test]
+    fn find_text_plain_body_emits_placeholder_for_binary_root_body() {
+        // Synthetic single-part image/jpeg message — no text/plain sibling, so
+        // `msg.body_text(0)` returns None and the fallback runs.
+        let mut raw: Vec<u8> = Vec::new();
+        raw.extend_from_slice(
+            b"From: catalog@cms-z.winlink.org\r\n\
+              To: tuxlink@example.com\r\n\
+              Subject: CMS image response\r\n\
+              Date: Fri, 05 Jun 2026 03:30:00 +0000\r\n\
+              MIME-Version: 1.0\r\n\
+              Content-Type: image/jpeg\r\n\
+              \r\n",
+        );
+        // JPEG SOI + JFIF marker + a handful of high-entropy bytes —
+        // representative of the CMS-Z Catalog payload shape that surfaced the bug.
+        raw.extend_from_slice(&[
+            0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01,
+            0xcb, 0xa1, 0x12, 0xef, 0xc9, 0x97, 0xd4, 0xb2, 0x68, 0x5a, 0x80, 0xff,
+        ]);
+
+        let msg = mail_parser::MessageParser::new()
+            .parse(raw.as_slice())
+            .expect("synthetic MIME parses");
+        let body = find_text_plain_body(&msg);
+
+        // Failure mode under the prior implementation: REPLACEMENT CHARACTER
+        // glyphs leak through wherever the JPEG bytes aren't valid UTF-8.
+        assert!(
+            !body.contains('\u{FFFD}'),
+            "raw binary bytes leaked into body as U+FFFD replacement chars; got: {body:?}"
+        );
+        // JFIF magic happens to be valid ASCII (`JFIF`) and would survive
+        // a lossy-UTF-8 decode unchanged — assert it doesn't end up rendered.
+        assert!(
+            !body.contains("JFIF"),
+            "JPEG marker text leaked into rendered body; got: {body:?}"
+        );
+        // Placeholder must point the user at the attachment surface, where
+        // AttachmentStrip + Save As (tuxlink-0fyj) handle binary content.
+        assert!(
+            body.contains("attachments"),
+            "expected placeholder to direct users to the attachments surface; got: {body:?}"
+        );
     }
 
     #[test]
