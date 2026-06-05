@@ -1,0 +1,5 @@
+FAULT: no audio device available
+BUFFER overrun: input audio stream
+ARQTIMEOUT exceeded
+SOUNDCARD playback device disappeared
+ARDOPC process spawn failed: file not found
