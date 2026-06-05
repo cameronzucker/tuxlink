@@ -1676,7 +1676,7 @@ pub async fn cms_connect_test(
 
     let attempt_id = crate::winlink::b2f_events::AttemptId::fresh();
 
-    match backend.cms_connect_test(events_sink.clone()).await {
+    match backend.cms_connect_test(events_sink.clone(), attempt_id).await {
         Ok(()) => {
             emit_session_line(
                 &app,

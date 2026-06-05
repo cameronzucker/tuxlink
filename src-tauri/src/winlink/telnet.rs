@@ -251,6 +251,7 @@ pub(crate) fn connect_and_auth_test(
     wire_log: &dyn Fn(&str),
     register_socket: &dyn Fn(&TcpStream),
     events: Option<&dyn super::b2f_events::B2fEventSink>,
+    attempt_id: super::b2f_events::AttemptId,
 ) -> Result<ExchangeResult, TelnetError> {
     let shared: Shared = Arc::new(Mutex::new(connect_stream(
         host,
@@ -276,6 +277,7 @@ pub(crate) fn connect_and_auth_test(
         |_| vec![],
         None,
         events,
+        attempt_id,
     )
     .map_err(TelnetError::Exchange)
 }

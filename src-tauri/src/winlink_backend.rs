@@ -658,8 +658,10 @@ pub trait WinlinkBackend: Send + Sync {
     async fn cms_connect_test(
         &self,
         events: std::sync::Arc<dyn crate::winlink::b2f_events::B2fEventSink>,
+        attempt_id: crate::winlink::b2f_events::AttemptId,
     ) -> Result<(), BackendError> {
         let _ = events;
+        let _ = attempt_id;
         Err(BackendError::NotImplemented)
     }
 
@@ -1106,6 +1108,7 @@ impl WinlinkBackend for NativeBackend {
     async fn cms_connect_test(
         &self,
         events: std::sync::Arc<dyn crate::winlink::b2f_events::B2fEventSink>,
+        attempt_id: crate::winlink::b2f_events::AttemptId,
     ) -> Result<(), BackendError> {
         // Single-flight: shared with connect().
         if self
@@ -1190,6 +1193,7 @@ impl WinlinkBackend for NativeBackend {
                 &*wire,
                 &register_socket,
                 Some(events_arc.as_ref()),
+                attempt_id,
             )
             .map_err(|e| {
                 use telnet::TelnetError;
