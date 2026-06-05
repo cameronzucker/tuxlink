@@ -61,7 +61,16 @@ vi.mock('./help/HelpView', () => ({
 import { invoke } from '@tauri-apps/api/core';
 
 function routeInvoke(wizardCompleted: boolean) {
+  // tuxlink-9xy1 Task 4: App.tsx now reads BOTH `get_wizard_phase` and
+  // `get_wizard_completed`. Derive a phase value from the boolean so the
+  // pre-9xy1 test fixture (a single boolean) keeps producing the same
+  // routing decision: completed=true → phase='complete' (shell branch),
+  // completed=false → phase='none' (wizard branch). The legacy-compat path
+  // (phase='none' + completed=true → shell) has its own dedicated coverage
+  // in useWizardPhase.test.ts, so we don't need to vary it here.
+  const phase = wizardCompleted ? 'complete' : 'none';
   (invoke as ReturnType<typeof vi.fn>).mockImplementation((cmd: string) => {
+    if (cmd === 'get_wizard_phase') return Promise.resolve(phase);
     if (cmd === 'get_wizard_completed') return Promise.resolve(wizardCompleted);
     if (cmd === 'mailbox_list') return Promise.resolve([]);
     if (cmd === 'config_read') return Promise.resolve(null);
@@ -78,11 +87,17 @@ function setPath(pathname: string) {
   });
 }
 
-import App from './App';
+import App, { queryClient } from './App';
 
 describe('<App> main-window routing', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // tuxlink-9xy1 Task 4: App.tsx exports a module-singleton QueryClient so
+    // multiple sequential `render(<App />)` calls share its cache. Clear it
+    // between tests so the wizard-phase fixture from one test doesn't leak
+    // into the next (the original test pre-Task-4 used local useState, so
+    // cache leakage wasn't a concern).
+    queryClient.clear();
     currentLabel = 'main';
     setPath('/');
   });
@@ -99,8 +114,12 @@ describe('<App> main-window routing', () => {
     await waitFor(() => expect(screen.getByTestId('app-shell-root')).toBeInTheDocument());
   });
 
-  it('falls back to wizard when get_wizard_completed rejects', async () => {
+  it('falls back to wizard when get_wizard_phase + get_wizard_completed reject', async () => {
+    // tuxlink-9xy1 Task 4: NotConfigured / pre-install path — both probes
+    // reject and the hook treats this as phase='none' + completed=false,
+    // which routes to the wizard.
     (invoke as ReturnType<typeof vi.fn>).mockImplementation((cmd: string) => {
+      if (cmd === 'get_wizard_phase') return Promise.reject(new Error('no config'));
       if (cmd === 'get_wizard_completed') return Promise.reject(new Error('no config'));
       return Promise.resolve([]);
     });
@@ -123,6 +142,7 @@ describe('<App> main-window routing', () => {
 describe('<App> compose-window routing (spec §5.4 / Codex F7)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    queryClient.clear();
     listenMock.mockImplementation(async () => () => {});
   });
   afterEach(() => setPath('/'));
@@ -163,6 +183,7 @@ describe('<App> compose-window routing (spec §5.4 / Codex F7)', () => {
 describe('<App> help-window routing (tuxlink-0gsy / tuxlink-n4hz)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    queryClient.clear();
     listenMock.mockImplementation(async () => () => {});
   });
   afterEach(() => setPath('/'));
