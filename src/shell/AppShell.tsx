@@ -37,7 +37,6 @@ import { DashboardRibbon } from './DashboardRibbon';
 import { StatusBar } from './StatusBar';
 import { useStatusData } from './useStatus';
 import { applyColorScheme, saveColorScheme } from './colorScheme';
-import { open as shellOpen } from '@tauri-apps/plugin-shell';
 
 // tuxlink-perf-coldstart: lazy-load every overlay/dialog panel. None of these
 // are on the cold-start critical path — they only paint when the operator
@@ -76,6 +75,11 @@ const DeleteFolderDialog = lazy(() =>
 // AppShell uses the eager MessageViewEmpty as both the no-selection render
 // AND the Suspense fallback while the lazy chunk loads on first selection.
 import { MessageViewEmpty, MessageViewLoading } from '../mailbox/MessageViewEmpty';
+import {
+  ReportIssueModal,
+  useReportIssueController,
+  type ReportIssueState,
+} from '../help/ReportIssueModal';
 const MessageView = lazy(() => import('../mailbox/MessageView'));
 import { TitleBar } from './chrome/TitleBar';
 import { MenuBar } from './chrome/MenuBar';
@@ -243,6 +247,11 @@ export function AppShell() {
   // Inline GRIB request panel (tuxlink-vrpk), opened from Message → GRIB
   // File Request. Composes a Saildocs request and queues it in the outbox.
   const [gribRequestOpen, setGribRequestOpen] = useState(false);
+  // tuxlink-qjgx Task 8: Report Issue modal state. The controller drives the
+  // Save As → export → GitHub URL flow; AppShell owns the state so the modal
+  // can be positioned in the global overlay layer.
+  const [reportIssueState, setReportIssueState] = useState<ReportIssueState>({ kind: 'idle' });
+  const reportIssueController = useReportIssueController(setReportIssueState);
 
   // Message-list sort (tuxlink-2x0l). Lazy-init from localStorage so the
   // first render already uses the persisted preference (no flash of default).
@@ -553,20 +562,22 @@ export function AppShell() {
         console.error('help_window_open failed:', err);
       });
     },
-    reportIssue: () => {
-      // tuxlink-35g0: open the project's GitHub issue tracker in the
-      // operator's default browser. The URL is hard-coded — the source
-      // repo doesn't move per-deploy.
-      void shellOpen('https://github.com/cameronzucker/tuxlink/issues/new').catch(() => {
-        /* swallow — the alternative is a UI toast that the operator
-         * can't act on; the next session-log entry on a real CMS
-         * exchange surfaces shell-tool availability anyway. */
+    // tuxlink-qjgx Task 8: Help → Logging opens the Logging window.
+    openLogging: () => {
+      void invoke('logging_window_open').catch((err) => {
+        console.error('logging_window_open failed:', err);
       });
+    },
+    reportIssue: () => {
+      // tuxlink-qjgx Task 8: Report Issue flow — auto-export + pre-filled
+      // GitHub URL. The controller handles Save As → export → browser open
+      // and drives the ReportIssueModal state machine (spec §8.5).
+      reportIssueController.start();
     },
     openCatalogRequest: () => setCatalogRequestOpen(true),
     openGribRequest: () => setGribRequestOpen(true),
     quit: () => { void invoke('app_quit'); },
-  }), [onConnect, openMessage, archiveOpen]);
+  }), [onConnect, openMessage, archiveOpen, reportIssueController]);
 
   // The Archive button render gate: only show when something is selected AND
   // it's not already in Archive (where archive is a no-op). MessageView reads
@@ -968,6 +979,15 @@ export function AppShell() {
           <SavedSearchesPanel onClose={() => setSavedSearchesOpen(false)} />
         </Suspense>
       )}
+
+      {/* tuxlink-qjgx Task 8: Report Issue modal — auto-export + pre-filled
+       *  GitHub URL (spec §8.5). Not lazy-loaded: the modal state machine
+       *  drives visibility (idle = no DOM output); the component is tiny. */}
+      <ReportIssueModal
+        state={reportIssueState}
+        setState={setReportIssueState}
+        onClose={() => setReportIssueState({ kind: 'idle' })}
+      />
     </div>
   );
 }

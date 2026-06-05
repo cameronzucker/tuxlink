@@ -18,6 +18,7 @@ function handlers(): MenuHandlers {
     openThemeDesigner: vi.fn(),
     openAbout: vi.fn(),
     openHelp: vi.fn(),
+    openLogging: vi.fn(),
     reportIssue: vi.fn(),
     openCatalogRequest: vi.fn(),
     openGribRequest: vi.fn(),
@@ -147,6 +148,19 @@ describe('dispatchMenuAction', () => {
   });
 
   it('routes Help → Report Issue to reportIssue', () => {
+    const h = handlers();
+    dispatchMenuAction('menu:help:report_issue', h);
+    expect(h.reportIssue).toHaveBeenCalledOnce();
+  });
+
+  // tuxlink-qjgx Task 8: Logging window + Report Issue flow menu wiring.
+  it('routes Help → Logging to openLogging', () => {
+    const h = handlers();
+    dispatchMenuAction('menu:help:logging', h);
+    expect(h.openLogging).toHaveBeenCalledOnce();
+  });
+
+  it('routes Help → Report Issue… to reportIssue (modal flow)', () => {
     const h = handlers();
     dispatchMenuAction('menu:help:report_issue', h);
     expect(h.reportIssue).toHaveBeenCalledOnce();
