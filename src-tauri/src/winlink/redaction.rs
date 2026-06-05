@@ -6,86 +6,55 @@
 //! source of truth for that scrubbing.
 
 use std::borrow::Cow;
+use std::sync::LazyLock;
+
+use regex::Regex;
+
+// Case-insensitive `; PR :` or `; PQ :` with optional whitespace around the
+// colon. Captures the full matched token so replace_all can reconstruct the
+// marker and substitute <redacted> for the value. Works at any position in
+// the string — embedded, prefix-anchored, or in free-form error messages.
+static CRED_TOKEN_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i);\s*p[qr]\s*:\s*\S+").expect("static regex compiles")
+});
 
 /// Scrub credential-equivalent tokens from a B2F wire line. Returns a
 /// Cow because most lines (no `;PR`/`;PQ`) pass through unchanged.
+///
+/// Handles embedded, lowercase, and whitespace-variant markers (e.g.
+/// `; PR : 12345`, `;pr: 12345`, `debug saw ;PR: 72768415 from client`).
 pub fn redact_wire_line(line: &str) -> Cow<'_, str> {
-    if line.contains(";PR:") || line.contains(";PQ:") {
-        let mut out = String::with_capacity(line.len());
-        for raw in line.split_inclusive('\r') {
-            let token_prefix = if let Some(rest) = raw.strip_prefix("> ;PR:") {
-                Some(("> ;PR: ", rest))
-            } else if let Some(rest) = raw.strip_prefix(";PR:") {
-                Some((";PR: ", rest))
-            } else if let Some(rest) = raw.strip_prefix("> ;PQ:") {
-                Some(("> ;PQ: ", rest))
-            } else if let Some(rest) = raw.strip_prefix(";PQ:") {
-                Some((";PQ: ", rest))
-            } else if let Some(rest) = raw.strip_prefix("< ;PR:") {
-                Some(("< ;PR: ", rest))
-            } else if let Some(rest) = raw.strip_prefix("< ;PQ:") {
-                Some(("< ;PQ: ", rest))
-            } else {
-                None
-            };
-            if let Some((prefix, _)) = token_prefix {
-                out.push_str(prefix);
-                out.push_str("<redacted>");
-                if raw.ends_with('\r') {
-                    out.push('\r');
-                }
-            } else {
-                out.push_str(raw);
-            }
-        }
-        Cow::Owned(out)
-    } else {
-        Cow::Borrowed(line)
+    if !CRED_TOKEN_RE.is_match(line) {
+        return Cow::Borrowed(line);
     }
+    // Replace each match: preserve the ;PR:/;PQ: marker portion (everything
+    // up to and including the colon), then append " <redacted>".
+    Cow::Owned(
+        CRED_TOKEN_RE
+            .replace_all(line, |caps: &regex::Captures| {
+                let matched = caps.get(0).unwrap().as_str();
+                // Find the `:` and reproduce the marker portion.
+                if let Some(colon_pos) = matched.find(':') {
+                    let prefix = &matched[..=colon_pos]; // includes the colon
+                    format!("{prefix} <redacted>")
+                } else {
+                    "<redacted>".to_string()
+                }
+            })
+            .into_owned(),
+    )
 }
 
-/// Same as redact_wire_line but for any free-form text — finds and
+/// Same as `redact_wire_line` but for any free-form text — finds and
 /// scrubs ;PQ:/;PR: tokens anywhere in the string (not just at the
 /// start of a line). Used for the `B2fEvent::RemoteErrorReceived.raw`
 /// field per spec §6.2 finding R1 #10.
+///
+/// Implementation delegates to `redact_wire_line`; both functions now share
+/// the single regex-based scanner, which handles embedded + lowercase +
+/// whitespace variants uniformly.
 pub fn redact_freeform(text: &str) -> Cow<'_, str> {
-    if !(text.contains(";PR:") || text.contains(";PQ:")) {
-        return Cow::Borrowed(text);
-    }
-    // Strategy: split on ;PR: / ;PQ: markers, replace the next whitespace-
-    // delimited token. This handles tokens at any position in the string.
-    let mut out = String::with_capacity(text.len());
-    let mut rest = text;
-    while !rest.is_empty() {
-        let pq_pos = rest.find(";PQ:");
-        let pr_pos = rest.find(";PR:");
-        let (pos, marker_len) = match (pq_pos, pr_pos) {
-            (None, None) => {
-                out.push_str(rest);
-                break;
-            }
-            (Some(pq), None) => (pq, 4),
-            (None, Some(pr)) => (pr, 4),
-            (Some(pq), Some(pr)) => {
-                if pq < pr { (pq, 4) } else { (pr, 4) }
-            }
-        };
-        out.push_str(&rest[..pos + marker_len]);
-        rest = &rest[pos + marker_len..];
-        // Skip the single space (if present) then the token.
-        let after_space = rest.trim_start_matches(' ');
-        let space_len = rest.len() - after_space.len();
-        if space_len > 0 {
-            out.push(' ');
-        }
-        // Token ends at the next whitespace, CR, or LF.
-        let token_end = after_space
-            .find(|c: char| c.is_whitespace())
-            .unwrap_or(after_space.len());
-        out.push_str("<redacted>");
-        rest = &after_space[token_end..];
-    }
-    Cow::Owned(out)
+    redact_wire_line(text)
 }
 
 #[cfg(test)]
@@ -144,5 +113,36 @@ mod tests {
         let text = "Challenge ;PQ: 23753528 sent at 10:42 UTC";
         let redacted = redact_freeform(text);
         assert!(!redacted.contains("23753528"));
+    }
+
+    // --- New tests for Codex BLOCKER #1: embedded / lowercase / whitespace variants ---
+
+    #[test]
+    fn redacts_embedded_pr_token_not_at_line_start() {
+        // Codex finding #1: today's prefix-anchored matcher leaks this.
+        let line = "< *** debug saw ;PR: 72768415 from client; rejecting\r";
+        let redacted = redact_wire_line(line);
+        assert!(!redacted.contains("72768415"), "got: {redacted:?}");
+    }
+
+    #[test]
+    fn redacts_lowercase_marker() {
+        let line = ";pr: 72768415\r";
+        let redacted = redact_wire_line(line);
+        assert!(!redacted.contains("72768415"), "got: {redacted:?}");
+    }
+
+    #[test]
+    fn redacts_whitespace_variant() {
+        let line = "; PR : 72768415\r";
+        let redacted = redact_wire_line(line);
+        assert!(!redacted.contains("72768415"), "got: {redacted:?}");
+    }
+
+    #[test]
+    fn redacts_pq_lowercase_and_whitespace() {
+        let line = ";pq:  23753528\r"; // double-space (extra whitespace before value)
+        let redacted = redact_wire_line(line);
+        assert!(!redacted.contains("23753528"), "got: {redacted:?}");
     }
 }
