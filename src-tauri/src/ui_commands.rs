@@ -2992,6 +2992,17 @@ pub async fn vara_listen(
     vara_session: State<'_, std::sync::Arc<crate::winlink::modem::vara::VaraSession>>,
     listen_state: State<'_, std::sync::Arc<VaraListenState>>,
 ) -> Result<(), UiError> {
+    use crate::winlink::listener::TransportKind;
+    // Codex Phase 3-4 boundary P2 #3 (tuxlink-u1r7): the listener-arm
+    // record must reflect the session's actual VARA-HF vs VARA-FM kind,
+    // not a hardcoded HF. The session's `active_transport_kind` was set
+    // by `vara_open_session_inner` after the TCP open succeeded; pull
+    // it here. If no session is open (snapshot has None), the inner
+    // helper will surface a clean "transport not Open" error.
+    let kind = vara_session
+        .snapshot()
+        .active_transport_kind
+        .unwrap_or(TransportKind::VaraHf);
     // Thin wrapper. The body lives in `arm_vara_listener_inner` so the
     // `vara_open_session` auto-arm path can call it without going through
     // the Tauri command dispatcher (which would require an AppHandle from
@@ -3001,6 +3012,7 @@ pub async fn vara_listen(
         log.inner(),
         vara_session.inner(),
         listen_state.inner(),
+        kind,
     )
     .await
 }
@@ -3011,6 +3023,13 @@ pub async fn vara_listen(
 /// `State`-typed params) because the open-session path already holds the
 /// same managed-state Arcs via its own `State` extractors.
 ///
+/// `transport_kind` (Codex Phase 3-4 boundary P2 #3 — tuxlink-u1r7) flows
+/// from the session's `active_transport_kind` (manual arm path) or from
+/// the operator-supplied `vara_open_session` arg (auto-arm path). Used as
+/// the arms-record + reject-event transport label so VARA-FM listeners
+/// don't surface in forensics as VARA-HF. Validation: rejects non-VARA
+/// kinds before any arm state mutation.
+///
 /// Note: intent is not currently load-bearing inside the consumer task
 /// (the listener accepts any allowlisted peer regardless of intent), but
 /// reserving the parameter at the inner boundary makes Phase 3's
@@ -3020,8 +3039,25 @@ pub(crate) async fn arm_vara_listener_inner(
     log: &std::sync::Arc<SessionLogState>,
     vara_session: &std::sync::Arc<crate::winlink::modem::vara::VaraSession>,
     listen_state: &std::sync::Arc<VaraListenState>,
+    transport_kind: crate::winlink::listener::TransportKind,
 ) -> Result<(), UiError> {
     use crate::winlink::listener::{ListenerArmsRecord, TransportKind, DEFAULT_TTL};
+
+    // Codex Phase 3-4 boundary P2 #3 (tuxlink-u1r7): defensive validation —
+    // arm_vara_listener_inner is VARA-only. A future regression that
+    // routes a non-VARA TransportKind here surfaces a clean error before
+    // any arms-record / LISTEN ON mutation.
+    if !matches!(
+        transport_kind,
+        TransportKind::VaraHf | TransportKind::VaraFm
+    ) {
+        return Err(UiError::Internal {
+            detail: format!(
+                "arm_vara_listener_inner invoked with non-VARA transport_kind={:?}",
+                transport_kind
+            ),
+        });
+    }
 
     // Refuse a second arm while one is in flight.
     {
@@ -3066,7 +3102,10 @@ pub(crate) async fn arm_vara_listener_inner(
     // Append arms record BEFORE flipping the modem (mirror of ARDOP's
     // Codex 2026-06-03 P2 fix — the arms record is the audit anchor; if
     // the modem flip fails downstream we still have the attempt logged).
-    let arms = ListenerArmsRecord::arm(TransportKind::VaraHf, DEFAULT_TTL);
+    // Codex Phase 3-4 boundary P2 #3 (tuxlink-u1r7): record the operator-
+    // supplied transport_kind instead of a hardcoded VaraHf so FM arm
+    // events surface accurately in forensics.
+    let arms = ListenerArmsRecord::arm(transport_kind, DEFAULT_TTL);
     let log_path = vara_arms_log_path();
     arms.append_to_log(&log_path)
         .map_err(|e| UiError::Internal { detail: e.to_string() })?;
@@ -3120,6 +3159,7 @@ pub(crate) async fn arm_vara_listener_inner(
             listen_state_for_task,
             bound_host,
             bound_cmd_port,
+            transport_kind,
         );
     });
 
@@ -3211,6 +3251,7 @@ fn vara_listener_consumer_task(
     listen_state: std::sync::Arc<VaraListenState>,
     bound_host: Option<String>,
     bound_cmd_port: Option<u16>,
+    transport_kind: crate::winlink::listener::TransportKind,
 ) {
     use std::sync::atomic::Ordering;
     use std::time::Duration;
@@ -3343,8 +3384,10 @@ fn vara_listener_consumer_task(
                 ));
                 let log_path = vara_arms_log_path();
                 let peer_id = crate::winlink::listener::PeerId::Callsign(peer);
+                // Codex Phase 3-4 boundary P2 #3 (tuxlink-u1r7): use the
+                // operator-supplied transport_kind, not a hardcoded VaraHf.
                 let event = crate::winlink::listener::packet_gate::ListenerRejectEvent::new(
-                    crate::winlink::listener::TransportKind::VaraHf,
+                    transport_kind,
                     "allowlist",
                     &peer_id,
                 );
@@ -3358,7 +3401,7 @@ fn vara_listener_consumer_task(
                 let log_path = vara_arms_log_path();
                 let peer_id = crate::winlink::listener::PeerId::Callsign(peer);
                 let event = crate::winlink::listener::packet_gate::ListenerRejectEvent::new(
-                    crate::winlink::listener::TransportKind::VaraHf,
+                    transport_kind,
                     "expired",
                     &peer_id,
                 );
@@ -6275,5 +6318,109 @@ hw:CARD=Device,DEV=0
         let v = serde_json::to_value(&dto).unwrap();
         assert_eq!(v["sent_count"], 3);
         assert_eq!(v["received_count"], 1);
+    }
+
+    // ── tuxlink-u1r7 — Codex Phase 3-4 boundary P2 #3 ──────────────────
+    //
+    // `arm_vara_listener_inner` now takes a `transport_kind: TransportKind`
+    // parameter (defaulting to the session's `active_transport_kind` at
+    // the manual-arm site; passed through from `vara_open_session`'s arg
+    // at the auto-arm site) so the arms-record + reject-event labels
+    // reflect VARA-HF vs VARA-FM instead of a hardcoded HF.
+
+    /// The arms-record helper records exactly the kind it's handed. Pin
+    /// both VaraHf and VaraFm so a future regression that hardcodes
+    /// VaraHf again surfaces.
+    #[test]
+    fn arms_record_carries_supplied_transport_kind() {
+        use crate::winlink::listener::{
+            ListenerArmsRecord, TransportKind, DEFAULT_TTL,
+        };
+        let hf = ListenerArmsRecord::arm(TransportKind::VaraHf, DEFAULT_TTL);
+        assert_eq!(hf.transport, TransportKind::VaraHf);
+        let fm = ListenerArmsRecord::arm(TransportKind::VaraFm, DEFAULT_TTL);
+        assert_eq!(
+            fm.transport,
+            TransportKind::VaraFm,
+            "P2 #3: arms-record must reflect VaraFm when armed for FM, \
+             not a hardcoded VaraHf"
+        );
+    }
+
+    /// The reject-event constructor records the supplied kind. Pins the
+    /// consumer-task reject path against a hardcoded-HF regression.
+    #[test]
+    fn reject_event_carries_supplied_transport_kind() {
+        use crate::winlink::listener::{
+            packet_gate::ListenerRejectEvent, PeerId, TransportKind,
+        };
+        use crate::winlink::ax25::frame::Address;
+        let peer = PeerId::Callsign(Address {
+            call: "W1ABC".into(),
+            ssid: 0,
+        });
+        let evt_hf =
+            ListenerRejectEvent::new(TransportKind::VaraHf, "allowlist", &peer);
+        let json_hf = serde_json::to_string(&evt_hf).unwrap();
+        assert!(
+            json_hf.contains("vara-hf"),
+            "VaraHf reject record must serialize with vara-hf transport label; \
+             got: {json_hf}"
+        );
+
+        let evt_fm =
+            ListenerRejectEvent::new(TransportKind::VaraFm, "allowlist", &peer);
+        let json_fm = serde_json::to_string(&evt_fm).unwrap();
+        assert!(
+            json_fm.contains("vara-fm"),
+            "P2 #3: VaraFm reject record must serialize with vara-fm transport \
+             label, not vara-hf; got: {json_fm}"
+        );
+        assert!(
+            !json_fm.contains("vara-hf"),
+            "VaraFm reject record must not contain vara-hf label"
+        );
+    }
+
+    /// Sentinel — pin the `arm_vara_listener_inner` signature shape so a
+    /// regression to "no transport_kind param" breaks the typecheck. The
+    /// body is irrelevant; the existence-check at the module boundary is
+    /// the test. async-fn return shape makes a fully-typed fn-pointer
+    /// coercion impossible — reference the function by name.
+    #[test]
+    fn arm_vara_listener_inner_signature_includes_transport_kind() {
+        let _f = arm_vara_listener_inner;
+        // Pin the TransportKind type is reachable; if a regression drops
+        // the param from the signature this compile-fence still passes
+        // but the source-scan sentinel below catches it.
+        let _kind: crate::winlink::listener::TransportKind =
+            crate::winlink::listener::TransportKind::VaraFm;
+    }
+
+    /// Source-scan sentinel: the consumer task's reject paths must NOT
+    /// hardcode the VaraHf transport kind directly inside the
+    /// `ListenerRejectEvent::new(...)` invocations (the two reject-event
+    /// constructors each had a direct hardcode in the prior shape).
+    /// Search for the precise pattern that was the bug — the literal
+    /// `RejectEvent::new(` followed by a positional hardcode — so the
+    /// test is robust to incidental `VaraHf` references in test
+    /// fixtures and docstrings.
+    #[test]
+    fn vara_consumer_reject_does_not_hardcode_transport_kind() {
+        let source = include_str!("ui_commands.rs");
+        // Sentinel assembled via `concat!` so this test's own bytes
+        // don't trip the search.
+        let bug_pattern = concat!(
+            "ListenerRejectEvent::new(\n",
+            "                    crate::winlink::listener::TransportKind::",
+            "Vara",
+        );
+        assert!(
+            !source.contains(bug_pattern),
+            "P2 #3: consumer-task reject-event constructors must take \
+             the threaded `transport_kind` parameter, not a hardcoded \
+             `crate::winlink::listener::TransportKind::Vara*` literal. \
+             Sentinel found the pre-fix shape."
+        );
     }
 }

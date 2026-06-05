@@ -1037,6 +1037,7 @@ pub async fn vara_open_session(
             log.inner(),
             session.inner(),
             listen_state.inner(),
+            transport_kind,
         )
         .await
         {
