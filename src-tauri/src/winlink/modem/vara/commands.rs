@@ -3635,9 +3635,9 @@ mod tests {
     /// tuxlink-0iqi end-to-end semantic test: walk the b2f exchange's
     /// install-back call site directly. Simulates the post-exchange snapshot
     /// + install-back with the operator's active intent intact. The session
-    /// must remain `Open` with `active_intent` + `active_transport_kind`
-    /// preserved — the Spec §2 within-session contract that replaced the
-    /// pre-fix `vara_stop_session_inner` lifecycle violation.
+    ///   must remain `Open` with `active_intent` + `active_transport_kind`
+    ///   preserved — the Spec §2 within-session contract that replaced the
+    ///   pre-fix `vara_stop_session_inner` lifecycle violation.
     #[test]
     fn vara_b2f_install_back_restores_open_with_active_mode_intact() {
         // Build a session in the post-open state: transport installed,

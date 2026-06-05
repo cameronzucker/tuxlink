@@ -215,7 +215,7 @@ pub struct ModemStatus {
     ///
     /// Stub today: returns `None` until Phase 3.5 (outbound `b2f_exchange`)
     /// + Phase 3.4 (listener consumer task) wire this from the arbiter +
-    /// exchange-runner state.
+    ///   exchange-runner state.
     pub exchange: Option<ExchangeState>,
     /// Coarse ownership of the live transport — the arbiter's view
     /// (tuxlink-0ye6 Task 4.3). Real value, sourced from

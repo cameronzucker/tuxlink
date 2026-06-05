@@ -1451,6 +1451,7 @@ mod tests {
     /// removed `consent_token`, changes the `intent` type back to `String`),
     /// the fn-pointer coercion below fails to compile and this test fails.
     #[test]
+    #[allow(clippy::type_complexity)] // intentional: this test ASSERTS the fn signature shape
     fn modem_ardop_b2f_exchange_signature_accepts_intent_and_transport_kind() {
         let _f: fn(
             AppHandle,
