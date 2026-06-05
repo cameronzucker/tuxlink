@@ -108,6 +108,25 @@ const MAX_ARCHIVE_BYTES: u64 = 100 * 1024 * 1024;
 /// by `current_version` to compare against `RemoteFormsInfo.version`.
 pub const VERSION_FILENAME: &str = "VERSION";
 
+/// Maximum length of a `version` string used as a path component. 64
+/// chars accommodates semver + arbitrary release tags while bounding the
+/// blast radius of a malicious metadata response.
+const MAX_VERSION_LEN: usize = 64;
+
+/// Validate that a version string is safe to use as a filesystem path
+/// component. The `version` value comes from the metadata HTTP response —
+/// an external source whose contents tuxlink does NOT control. Without
+/// this check, a malicious or compromised metadata server could return
+/// `{"version": "../../etc/passwd"}` and cause `install()` to write into
+/// arbitrary filesystem locations via `staging.join(version)` and
+/// `format!("download-{version}.zip")`. Restrict to `[A-Za-z0-9._-]`
+/// (semver + common release-tag characters) and reject empty / oversized.
+fn is_safe_version(v: &str) -> bool {
+    !v.is_empty()
+        && v.len() <= MAX_VERSION_LEN
+        && v.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'))
+}
+
 /// GET the metadata endpoint + decode the JSON response. Pure I/O; no
 /// side effects on the local snapshot.
 pub async fn fetch_latest_info(metadata_url: &str) -> Result<RemoteFormsInfo, UpdaterError> {
@@ -178,8 +197,14 @@ pub async fn install(
     version: &str,
     runtime_root: &Path,
 ) -> Result<InstallReport, UpdaterError> {
-    if version.is_empty() {
-        return Err(UpdaterError::BadArchive("version string is empty".into()));
+    // Defense against a malicious or compromised metadata server: `version`
+    // is used as a path component (staging/<version>/) and inside a
+    // filename (download-<version>.zip). A response like `"../../etc/passwd"`
+    // would otherwise let install() write outside the runtime root.
+    if !is_safe_version(version) {
+        return Err(UpdaterError::BadArchive(format!(
+            "unsafe version string (rejected: must be [A-Za-z0-9._-]{{1,{MAX_VERSION_LEN}}}): {version:?}"
+        )));
     }
     let prev_version = current_version(runtime_root);
     let staging = runtime_root.join("staging");
@@ -731,5 +756,48 @@ mod tests {
             UpdaterError::BadArchive(msg) => assert!(msg.contains("version")),
             other => panic!("expected BadArchive, got {other:?}"),
         }
+    }
+
+    /// Path-traversal defense: the `version` string is untrusted (comes
+    /// from the metadata HTTP response). Reject any value that contains
+    /// path separators, parent-directory traversal, NUL bytes, or anything
+    /// outside the `[A-Za-z0-9._-]` whitelist. Without this guard, a
+    /// malicious metadata server could write into arbitrary filesystem
+    /// locations via `staging.join(version)`.
+    #[tokio::test]
+    async fn install_rejects_path_traversal_in_version() {
+        let td = TempDir::new().unwrap();
+        let cases = [
+            "../../etc/passwd",
+            "..",
+            "/absolute/path",
+            "v1.0.0/../escape",
+            "v1.0.0\0nul",
+            "with space",
+            "with;semi",
+            "1.0|pipe",
+            "back\\slash",
+        ];
+        for bad in cases {
+            let err = install("https://example.com/nope.zip", bad, td.path())
+                .await
+                .unwrap_err();
+            match err {
+                UpdaterError::BadArchive(msg) => {
+                    assert!(
+                        msg.contains("unsafe version"),
+                        "version {bad:?} should trip is_safe_version; got: {msg}"
+                    );
+                }
+                other => panic!("version {bad:?}: expected BadArchive, got {other:?}"),
+            }
+        }
+        // Sanity: the regex DOES accept legitimate version strings.
+        assert!(is_safe_version("1.0.0"));
+        assert!(is_safe_version("2.3.4-rc.1"));
+        assert!(is_safe_version("v5_alpha"));
+        // Length cap.
+        let oversize = "a".repeat(MAX_VERSION_LEN + 1);
+        assert!(!is_safe_version(&oversize));
     }
 }
