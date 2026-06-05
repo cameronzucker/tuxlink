@@ -382,7 +382,7 @@ export function CheckInForm({
           placeholder="Cascadia ARES Net"
         />
 
-        <label htmlFor="checkin-newsubject">Subject</label>
+        <label htmlFor="checkin-newsubject">Form subject</label>
         <input
           id="checkin-newsubject"
           type="text"
@@ -429,7 +429,7 @@ export function CheckInForm({
           placeholder="YYYY-MM-DD HH:MM"
         />
 
-        <label htmlFor="checkin-msgto">To</label>
+        <label htmlFor="checkin-msgto">Addressee (recipient)</label>
         <input
           id="checkin-msgto"
           type="text"

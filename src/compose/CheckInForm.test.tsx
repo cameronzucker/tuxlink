@@ -144,9 +144,9 @@ describe('<CheckInForm> — wire-format alignment (WLE Winlink_Check_In_Initial)
     render(<CheckInForm onSubmit={onSubmit} onCancel={vi.fn()} />);
     await screen.findByDisplayValue('W7CPZ');
     // Fill remaining required fields so Send is enabled.
-    fireEvent.change(screen.getByLabelText(/^Subject$/i),
+    fireEvent.change(screen.getByLabelText(/Form subject/i),
       { target: { value: 'Weekly check-in' } });
-    fireEvent.change(screen.getByLabelText(/^To$/i),
+    fireEvent.change(screen.getByLabelText(/Addressee.*recipient/i),
       { target: { value: 'WL-NET' } });
     // Location is required per WLE Winlink_Check_In_Initial.html.
     fireEvent.change(screen.getByLabelText(/Location description/i),
@@ -244,7 +244,7 @@ describe('<CheckInForm> — FormDraftLibrary slot integration', () => {
     });
     // Saveable fields applied
     expect((screen.getByLabelText(/^Organization$/i) as HTMLInputElement).value).toBe('Cascadia ARES Net');
-    expect((screen.getByLabelText(/^To$/i) as HTMLInputElement).value).toBe('WL-NET');
+    expect((screen.getByLabelText(/Addressee.*recipient/i) as HTMLInputElement).value).toBe('WL-NET');
     expect((screen.getByLabelText(/REAL EVENT/i) as HTMLInputElement).checked).toBe(true);
     expect((screen.getByLabelText(/^HF$/i) as HTMLInputElement).checked).toBe(true);
     expect((screen.getByLabelText(/^VARA HF$/i) as HTMLInputElement).checked).toBe(true);
@@ -259,7 +259,7 @@ describe('<CheckInForm> — FormDraftLibrary slot integration', () => {
     await screen.findByDisplayValue('W7CPZ');
     fireEvent.change(screen.getByLabelText(/^Organization$/i),
       { target: { value: 'Test Org' } });
-    fireEvent.change(screen.getByLabelText(/^To$/i),
+    fireEvent.change(screen.getByLabelText(/Addressee.*recipient/i),
       { target: { value: 'NET-CONTROL' } });
     fireEvent.click(screen.getByTestId('slot-save-btn'));
     await waitFor(() => {
@@ -339,9 +339,9 @@ describe('<CheckInForm> — required-field gating', () => {
   it('Send is enabled once all required fields are populated', async () => {
     render(<CheckInForm onSubmit={vi.fn()} onCancel={vi.fn()} />);
     await screen.findByDisplayValue('W7CPZ'); // msgsender + contactname auto-fill
-    fireEvent.change(screen.getByLabelText(/^Subject$/i),
+    fireEvent.change(screen.getByLabelText(/Form subject/i),
       { target: { value: 'Weekly check-in' } });
-    fireEvent.change(screen.getByLabelText(/^To$/i),
+    fireEvent.change(screen.getByLabelText(/Addressee.*recipient/i),
       { target: { value: 'WL-NET' } });
     fireEvent.change(screen.getByLabelText(/Location description/i),
       { target: { value: 'Home QTH' } });
@@ -353,9 +353,9 @@ describe('<CheckInForm> — required-field gating', () => {
   it('Send stays disabled when Location is empty (WLE required field)', async () => {
     render(<CheckInForm onSubmit={vi.fn()} onCancel={vi.fn()} />);
     await screen.findByDisplayValue('W7CPZ');
-    fireEvent.change(screen.getByLabelText(/^Subject$/i),
+    fireEvent.change(screen.getByLabelText(/Form subject/i),
       { target: { value: 'Weekly check-in' } });
-    fireEvent.change(screen.getByLabelText(/^To$/i),
+    fireEvent.change(screen.getByLabelText(/Addressee.*recipient/i),
       { target: { value: 'WL-NET' } });
     // Location intentionally left blank.
     await new Promise((r) => setTimeout(r, 50));

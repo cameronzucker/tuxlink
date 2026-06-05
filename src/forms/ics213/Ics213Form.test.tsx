@@ -47,8 +47,8 @@ describe('Ics213Form', () => {
   it('renders all ICS-213 input fields', () => {
     render(<Ics213Form onSubmit={noop} onCancel={noop} />);
     expect(screen.getByLabelText(/Incident Name/i)).toBeInTheDocument();
-    expect(screen.getByLabelText(/To.*Name and Position/i)).toBeInTheDocument();
-    expect(screen.getByLabelText(/From.*Name and Position/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/Addressee.*name and position/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/Originator.*name and position/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/Subject/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/Date/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/Time/i)).toBeInTheDocument();
@@ -67,8 +67,8 @@ describe('Ics213Form', () => {
   it('submits with field values when required fields filled', () => {
     const onSubmit = vi.fn();
     render(<Ics213Form onSubmit={onSubmit} onCancel={noop} />);
-    fireEvent.change(screen.getByLabelText(/To.*Name and Position/i), { target: { value: 'JOHN' } });
-    fireEvent.change(screen.getByLabelText(/From.*Name and Position/i), { target: { value: 'JANE' } });
+    fireEvent.change(screen.getByLabelText(/Addressee.*name and position/i), { target: { value: 'JOHN' } });
+    fireEvent.change(screen.getByLabelText(/Originator.*name and position/i), { target: { value: 'JANE' } });
     fireEvent.change(screen.getByLabelText(/Subject/i), { target: { value: 'TEST' } });
     fireEvent.change(screen.getByLabelText(/Date/i), { target: { value: '2026-05-30' } });
     fireEvent.change(screen.getByLabelText(/Time/i), { target: { value: '14:30Z' } });
@@ -142,7 +142,7 @@ describe('Ics213Form', () => {
     const select = screen.getByRole('combobox');
     fireEvent.change(select, { target: { value: 'slot-apply' } });
     // Field state should reflect the slot payload
-    expect((screen.getByLabelText(/To.*Name and Position/i) as HTMLInputElement).value).toBe('NET CONTROL');
+    expect((screen.getByLabelText(/Addressee.*name and position/i) as HTMLInputElement).value).toBe('NET CONTROL');
     expect((screen.getByLabelText(/Subject/i) as HTMLInputElement).value).toBe('Weekly check-in');
     expect((screen.getByLabelText(/Message/i) as HTMLTextAreaElement).value).toBe('All OK');
   });
@@ -153,8 +153,8 @@ describe('Ics213Form', () => {
     const mockInvoke = invoke as ReturnType<typeof vi.fn>;
     render(<Ics213Form onSubmit={noop} onCancel={noop} />);
     // Fill required saveable fields
-    fireEvent.change(screen.getByLabelText(/To.*Name and Position/i), { target: { value: 'NET CONTROL' } });
-    fireEvent.change(screen.getByLabelText(/From.*Name and Position/i), { target: { value: 'N7CPZ' } });
+    fireEvent.change(screen.getByLabelText(/Addressee.*name and position/i), { target: { value: 'NET CONTROL' } });
+    fireEvent.change(screen.getByLabelText(/Originator.*name and position/i), { target: { value: 'N7CPZ' } });
     fireEvent.change(screen.getByLabelText(/Subject/i), { target: { value: 'Check-in' } });
     fireEvent.change(screen.getByLabelText(/Message/i), { target: { value: 'All OK' } });
     mockInvoke.mockClear();
