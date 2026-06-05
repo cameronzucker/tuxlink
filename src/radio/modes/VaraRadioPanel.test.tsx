@@ -203,13 +203,13 @@ describe('<VaraRadioPanel>', () => {
     });
   });
 
-  it('invokes vara_stop_session on Stop click', async () => {
+  it('invokes vara_close_session on Stop click', async () => {
     const core = await import('@tauri-apps/api/core');
     const invokeSpy = core.invoke as ReturnType<typeof vi.fn>;
     invokeSpy.mockImplementation(
       makeInvoke({
         vara_status: openStatus,
-        vara_stop_session: closedStatus,
+        vara_close_session: closedStatus,
       }),
     );
     render(<VaraRadioPanel mode={HF_MODE} onClose={() => {}} />);
@@ -224,7 +224,11 @@ describe('<VaraRadioPanel>', () => {
     await waitFor(() => {
       expect(screen.getByTestId('vara-state-display')).toHaveTextContent('State: closed');
     });
-    expect(invokeSpy).toHaveBeenCalledWith('vara_stop_session');
+    // Task 3.3: backend renamed vara_stop_session → vara_close_session;
+    // the Stop button still says "Stop" in the UI (operator-facing label),
+    // but the underlying command is the renamed close-session lifecycle
+    // (disarm + abort + clear active mode + transport teardown).
+    expect(invokeSpy).toHaveBeenCalledWith('vara_close_session');
   });
 
   it('renders the Pi-availability banner on ARM but keeps controls editable (tuxlink-ze98)', async () => {

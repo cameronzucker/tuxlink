@@ -234,8 +234,9 @@ struct VaraSessionInner {
     transport_owner: TransportOwner,
     /// Intent of the currently-open session (tuxlink-0ye6 Task 3.2). Set by
     /// `vara_open_session` after a successful TCP open; cleared in
-    /// `vara_stop_session_inner` on transport teardown. `None` whenever
-    /// `transport.is_none()` — i.e., status is `Closed` or `Error`.
+    /// `vara_stop_session_inner` (now reached via `vara_close_session_inner`)
+    /// on transport teardown. `None` whenever `transport.is_none()` — i.e.,
+    /// status is `Closed` or `Error`.
     active_intent: Option<SessionIntent>,
     /// Transport-kind discriminator (vara-hf vs vara-fm) for the open
     /// session. Same lifecycle as [`Self::active_intent`]. The wire
@@ -325,8 +326,8 @@ impl VaraSession {
 
     /// Intent of the currently-open session (tuxlink-0ye6 Task 3.2). Set by
     /// `vara_open_session` on successful TCP open; cleared by
-    /// `vara_stop_session_inner`. Returns `None` when the session is closed
-    /// or the mutex is poisoned.
+    /// `vara_stop_session_inner` (reached via `vara_close_session_inner`).
+    /// Returns `None` when the session is closed or the mutex is poisoned.
     pub fn active_intent(&self) -> Option<SessionIntent> {
         self.inner.lock().ok().and_then(|g| g.active_intent)
     }
@@ -366,7 +367,7 @@ impl VaraSession {
 
     /// Return a previously-taken transport to the session, restoring
     /// state=Open. Called by the listener consumer task on disarm so
-    /// the operator's next `vara_stop_session` / `vara_status` sees the
+    /// the operator's next `vara_close_session` / `vara_status` sees the
     /// transport as if the consumer never owned it.
     ///
     /// `bound_host` + `bound_cmd_port` should be the values the
@@ -681,7 +682,7 @@ impl VaraSession {
     ///   stays operator-readable; callers surface it through the
     ///   existing `Result<_, String>` Tauri-command shape.
     /// - `Err("no abort writer installed")` when no writer is installed
-    ///   (caller can fall through to `vara_stop_session_inner` for the
+    ///   (caller can fall through to `vara_close_session_inner` for the
     ///   graceful TCP-only teardown).
     ///
     /// **VARA's `ABORT` vs `DISCONNECT` distinction:** the cmd codec
@@ -846,7 +847,7 @@ pub fn bandwidth_from_hz(hz: u32) -> Option<Bandwidth> {
 /// (the failure is logged but doesn't tear down the transport — the
 /// transport-open contract and the arm contract are distinct).
 ///
-/// If a session is already open, returns Err — operator must `vara_stop_session`
+/// If a session is already open, returns Err — operator must `vara_close_session`
 /// first. (This is conservative; a future iteration might re-open transparently.)
 #[tauri::command]
 pub async fn vara_open_session(
@@ -948,7 +949,8 @@ pub async fn vara_open_session(
 /// (before BW) so VARA's host protocol recognizes the App handshake.
 ///
 /// Records `intent` + `transport_kind` on `VaraSessionInner` after the open
-/// succeeds; cleared in [`vara_stop_session_inner`] on teardown.
+/// succeeds; cleared in [`vara_stop_session_inner`] (reached via
+/// [`vara_close_session_inner`]) on teardown.
 pub fn vara_open_session_inner(
     session: &std::sync::Arc<VaraSession>,
     ui_cfg: &VaraUiConfig,
@@ -963,7 +965,7 @@ pub fn vara_open_session_inner(
     let mut guard = session.inner.lock().map_err(|e| format!("session lock poisoned: {e}"))?;
 
     if guard.transport.is_some() {
-        return Err("VARA session already started — call vara_stop_session first".into());
+        return Err("VARA session already started — call vara_close_session first".into());
     }
 
     // Mark Connecting so any concurrent vara_status sees the in-flight state.
@@ -1053,16 +1055,37 @@ pub fn vara_open_session_inner(
     Ok(guard.status.clone())
 }
 
-/// Stop a VARA session: close the TCP sockets and clear the transport handle.
-/// Idempotent — calling on an already-closed session is a no-op that returns
-/// the closed status.
+/// Close a VARA session: full lifecycle teardown per spec §5.
+///
+/// Renamed from `vara_stop_session` (Task 3.3) to reflect the broader
+/// contract — close is the spec's canonical session-end verb covering
+/// listener disarm + in-flight abort + transport teardown, not just the
+/// transport-layer stop. The wrapped behavior:
+///
+/// 1. **Disarm listener** via [`crate::ui_commands::disarm_vara_listener_inner`]
+///    — idempotent; no-op when no listener is armed.
+/// 2. **Abort in-flight exchange** via [`VaraSession::abort_in_flight`] —
+///    Task 4.1's bounded `ABORT\r` cooperative write with hard-close
+///    fallback. Best-effort; the no-writer-installed Err is expected when
+///    no exchange is in flight, and is intentionally swallowed.
+/// 3. **Clear active session mode** (`active_intent` +
+///    `active_transport_kind`) as a side effect of step 4's transport
+///    teardown — `vara_stop_session_inner` clears both fields, and the
+///    rename preserves that behavior.
+/// 4. **Close transport** via [`vara_stop_session_inner`] — drops the
+///    `Option<VaraTransport>`, FINs both sockets, transitions to
+///    `VaraState::Closed`.
+///
+/// Idempotent across the whole chain — calling on an already-closed
+/// session is a no-op that returns the closed status.
 #[tauri::command]
-pub fn vara_stop_session(
+pub fn vara_close_session(
     app: AppHandle,
     session: State<'_, std::sync::Arc<VaraSession>>,
     log: State<'_, Arc<SessionLogState>>,
+    listen_state: State<'_, std::sync::Arc<crate::ui_commands::VaraListenState>>,
 ) -> Result<VaraStatus, String> {
-    // Capture whether the transport was open BEFORE the stop, so the log
+    // Capture whether the transport was open BEFORE the close, so the log
     // line distinguishes "actually closed something" from a no-op idempotent
     // call after an already-closed session.
     let was_open = session
@@ -1070,7 +1093,14 @@ pub fn vara_stop_session(
         .lock()
         .map(|g| g.transport.is_some())
         .unwrap_or(false);
-    let result = vara_stop_session_inner(&session);
+    // Note whether a listener was armed at entry so the log line can
+    // surface the disarm side-effect for the operator.
+    let was_armed = listen_state.is_armed();
+    if was_armed {
+        // Signal the consumer task to drain. Emits its own log line.
+        crate::ui_commands::disarm_vara_listener_inner(&app, &log, &listen_state);
+    }
+    let result = vara_close_session_inner(&session, &listen_state);
     if was_open {
         emit_vara_log(
             &app,
@@ -1082,7 +1112,58 @@ pub fn vara_stop_session(
     result
 }
 
-/// Inner helper for [`vara_stop_session`] so tests can drive without a Tauri runtime.
+/// Inner helper for [`vara_close_session`] so tests can drive without a Tauri
+/// runtime. Performs the spec §5 close sequence: disarm → abort → clear
+/// active mode → close transport.
+///
+/// The `listen_state` arg accepts the disarm responsibility at this level
+/// (rather than only the outer Tauri command) so unit tests can exercise
+/// the disarm path without an AppHandle. The disarm helper itself
+/// (`disarm_vara_listener_inner` in `ui_commands.rs`) is what emits the
+/// operator-visible log line; this inner replicates the take-handle +
+/// set-shutdown-flag logic directly so the inner doesn't depend on
+/// `AppHandle`/`SessionLogState`.
+pub fn vara_close_session_inner(
+    session: &std::sync::Arc<VaraSession>,
+    listen_state: &std::sync::Arc<crate::ui_commands::VaraListenState>,
+) -> Result<VaraStatus, String> {
+    use std::sync::atomic::Ordering;
+
+    // Step 1: Disarm listener (idempotent — no-op when not armed). We don't
+    // route through `disarm_vara_listener_inner` here because that helper
+    // needs an AppHandle + SessionLogState for the operator-facing log line;
+    // the outer `vara_close_session` command calls it BEFORE this inner so
+    // the log line surfaces. This inner replicates the take-handle +
+    // set-shutdown-flag mechanics so the unit-test path (no AppHandle)
+    // still exercises the disarm.
+    let handle = {
+        let mut guard = listen_state.inner.lock().unwrap();
+        guard.take()
+    };
+    if let Some(h) = handle {
+        h.shutdown.store(true, Ordering::SeqCst);
+    }
+
+    // Step 2: Abort any in-flight exchange (Task 4.1 — bounded cooperative
+    // ABORT\r with hard-close fallback). Best-effort: the
+    // "no abort writer installed" Err is the expected path when no
+    // exchange was in flight, and any other failure mode (poisoned lock,
+    // wedged peer) is recoverable via the transport teardown in step 4.
+    // Swallowing the Err here is intentional — the close contract is
+    // unconditional teardown.
+    let _ = session.abort_in_flight();
+
+    // Steps 3 + 4: Transport teardown clears `active_intent` +
+    // `active_transport_kind` and drops the transport. See
+    // `vara_stop_session_inner` for the rationale on why we don't send a
+    // farewell DISCONNECT before dropping the sockets.
+    vara_stop_session_inner(session)
+}
+
+/// Inner helper that performs the transport-only teardown (close TCP sockets,
+/// clear active session mode). Kept as a separate sync helper so
+/// [`vara_close_session_inner`] can chain after the listener-disarm + abort
+/// steps without re-implementing the field reset.
 pub fn vara_stop_session_inner(
     session: &std::sync::Arc<VaraSession>,
 ) -> Result<VaraStatus, String> {
@@ -1095,10 +1176,11 @@ pub fn vara_stop_session_inner(
     // case state is "MYCALL/BW set, no CONNECT issued" — pure TCP teardown
     // is the right semantics.
     guard.transport = None;
-    // Clear session-state recorded by `vara_open_session_inner`. The
-    // forthcoming `vara_close_session` rename (Task 3.3) will own this
-    // reset directly; today's `vara_stop_session` carries it transitionally
-    // so an open→stop→open cycle starts from a clean slate.
+    // Clear session-state recorded by `vara_open_session_inner`. Lives here
+    // (rather than only in `vara_close_session_inner`) because direct callers
+    // of this transport-teardown helper — including the open-failure
+    // rollback paths and the listener consumer's cleanup — also need a
+    // clean slate for a subsequent open.
     guard.active_intent = None;
     guard.active_transport_kind = None;
     guard.status = VaraStatus::closed();
@@ -1681,6 +1763,122 @@ mod tests {
         assert_eq!(
             snap_closed.active_transport_kind, None,
             "stop must clear active_transport_kind so a follow-up open starts clean"
+        );
+    }
+
+    // ── tuxlink-0ye6 Task 3.3: vara_close_session lifecycle ────────────────
+    //
+    // Scope: the close-session command must (1) disarm the listener idempotently,
+    // (2) call abort_in_flight on the session, (3) clear active_intent +
+    // active_transport_kind, (4) close the transport. Tests cover the three new
+    // behavior contracts (1) + (2) + (3); (4) is already covered by Task 3.2's
+    // `vara_stop_session_clears_active_intent_and_transport_kind` (the
+    // transport-teardown path is preserved unchanged through the rename).
+    //
+    // The inner helper `vara_close_session_inner` is sync (matching
+    // `vara_stop_session_inner`'s pattern) so tests can drive without a Tauri
+    // runtime. The outer `vara_close_session` Tauri command wraps the inner with
+    // log emission + the AppHandle plumbing (covered indirectly via the frontend
+    // integration test in VaraRadioPanel.test.tsx).
+
+    #[test]
+    fn vara_close_session_inner_disarms_listener_when_armed() {
+        // Set up a listen_state with an armed handle (no consumer task — we're
+        // testing the disarm signal path, not the consumer-drain behavior).
+        // The disarm contract is "shutdown flag is set + handle is taken" —
+        // observable via VaraListenState::is_armed() returning false.
+        use crate::ui_commands::{VaraListenHandle, VaraListenState};
+        use std::sync::atomic::AtomicBool;
+
+        let session = Arc::new(VaraSession::new());
+        let listen_state = Arc::new(VaraListenState::default());
+        {
+            let mut guard = listen_state.inner.lock().unwrap();
+            *guard = Some(VaraListenHandle {
+                shutdown: Arc::new(AtomicBool::new(false)),
+            });
+        }
+        assert!(listen_state.is_armed(), "precondition: listener inserted as armed");
+
+        vara_close_session_inner(&session, &listen_state).expect("close must succeed");
+
+        assert!(
+            !listen_state.is_armed(),
+            "Task 3.3: vara_close_session_inner must disarm the listener"
+        );
+    }
+
+    #[test]
+    fn vara_close_session_inner_disarm_is_idempotent_when_not_armed() {
+        // No listener armed; close must still succeed (the disarm is a no-op
+        // when not armed). Spec §5: close is the unconditional teardown — it
+        // must not fail because some optional precondition (armed listener)
+        // wasn't met.
+        use crate::ui_commands::VaraListenState;
+        let session = Arc::new(VaraSession::new());
+        let listen_state = Arc::new(VaraListenState::default());
+        assert!(!listen_state.is_armed(), "precondition: no listener armed");
+
+        let result = vara_close_session_inner(&session, &listen_state);
+
+        assert!(result.is_ok(), "close on un-armed listener must succeed: {result:?}");
+    }
+
+    #[test]
+    fn vara_close_session_inner_calls_abort_in_flight() {
+        // Install a BlockedWriter + ShutdownSpy on the session BEFORE close.
+        // The BlockedWriter Errs on write so abort_in_flight falls through to
+        // the hard-close fallback, which fires the spy. Asserting the spy
+        // fired proves vara_close_session_inner called abort_in_flight on the
+        // path (the abort_writer was installed, so the no-writer fast-path is
+        // not taken).
+        use crate::ui_commands::VaraListenState;
+        let session = Arc::new(VaraSession::new());
+        let listen_state = Arc::new(VaraListenState::default());
+
+        let shutdown_called = Arc::new(std::sync::Mutex::new(false));
+        let spy = ShutdownSpy { called: shutdown_called.clone() };
+        session.install_abort_writer(
+            Box::new(BlockedWriter) as Box<dyn std::io::Write + Send>,
+            Box::new(spy) as Box<dyn ShutdownableStream>,
+        );
+
+        let _ = vara_close_session_inner(&session, &listen_state);
+
+        assert!(
+            *shutdown_called.lock().unwrap(),
+            "Task 3.3: vara_close_session_inner must call abort_in_flight \
+             (with a BlockedWriter installed, the spy MUST fire via the \
+             hard-close fallback path — see Task 4.1)"
+        );
+    }
+
+    #[test]
+    fn vara_close_session_inner_clears_active_intent_and_transport_kind() {
+        // Same shape as the Task 3.2 test for `vara_stop_session_inner`,
+        // but exercises the new close-session path. The rename preserves the
+        // transport-teardown body (which clears the fields), so this test
+        // guards against a regression that drops the clear when refactoring
+        // the close-session inner.
+        use crate::ui_commands::VaraListenState;
+        let session = loopback_vara_open_session(SessionIntent::P2p, TransportKind::VaraFm);
+        let listen_state = Arc::new(VaraListenState::default());
+
+        let snap_open = session.snapshot();
+        assert_eq!(snap_open.active_intent, Some(SessionIntent::P2p));
+        assert_eq!(snap_open.active_transport_kind, Some(TransportKind::VaraFm));
+
+        vara_close_session_inner(&session, &listen_state).expect("close must succeed");
+
+        let snap_closed = session.snapshot();
+        assert_eq!(snap_closed.state, VaraState::Closed);
+        assert!(
+            snap_closed.active_intent.is_none(),
+            "Task 3.3: active_intent must be cleared on close"
+        );
+        assert!(
+            snap_closed.active_transport_kind.is_none(),
+            "Task 3.3: active_transport_kind must be cleared on close"
         );
     }
 

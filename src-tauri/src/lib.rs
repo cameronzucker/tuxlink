@@ -354,7 +354,7 @@ pub fn run() {
             crate::winlink::modem::vara::commands::config_get_vara,
             crate::winlink::modem::vara::commands::config_set_vara,
             crate::winlink::modem::vara::commands::vara_open_session,
-            crate::winlink::modem::vara::commands::vara_stop_session,
+            crate::winlink::modem::vara::commands::vara_close_session,
             crate::winlink::modem::vara::commands::vara_status,
             crate::winlink::modem::vara::commands::platform_info,
             // tuxlink-0pnb Task 4 (refactored): P2P-Telnet connect + abort + peer-password management.

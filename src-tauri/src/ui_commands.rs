@@ -3064,10 +3064,28 @@ pub async fn vara_set_listen(
     listen_state: State<'_, std::sync::Arc<VaraListenState>>,
     enabled: bool,
 ) -> Result<(), UiError> {
-    use std::sync::atomic::Ordering;
     if enabled {
         return vara_listen(app, log, vara_session, listen_state).await;
     }
+    disarm_vara_listener_inner(&app, log.inner(), listen_state.inner());
+    Ok(())
+}
+
+/// Inner body of [`vara_set_listen`] with `enabled == false` — factored out
+/// so [`crate::winlink::modem::vara::commands::vara_close_session`] (tuxlink-0ye6
+/// Task 3.3) can call it directly without re-dispatching through Tauri. Mirrors
+/// the shape of [`arm_vara_listener_inner`] (Task 3.2) so the close-session
+/// path's listener disarm is one helper call.
+///
+/// Idempotent: when no listener is armed, emits a Warn log line and returns
+/// without an error. The close-session contract is "unconditional teardown,"
+/// so a missing-listener-on-disarm is information, not a failure.
+pub(crate) fn disarm_vara_listener_inner(
+    app: &AppHandle,
+    log: &std::sync::Arc<SessionLogState>,
+    listen_state: &std::sync::Arc<VaraListenState>,
+) {
+    use std::sync::atomic::Ordering;
     let handle = {
         let mut guard = listen_state.inner.lock().unwrap();
         guard.take()
@@ -3081,20 +3099,19 @@ pub async fn vara_set_listen(
         // any send from here would race the consumer's transport.
         h.shutdown.store(true, Ordering::SeqCst);
         emit_session_line(
-            &app,
-            &log,
+            app,
+            log,
             LogLevel::Info,
             "VARA listener disarming — shutdown flag set; waiting for consumer to drain.".to_string(),
         );
     } else {
         emit_session_line(
-            &app,
-            &log,
+            app,
+            log,
             LogLevel::Warn,
             "VARA listener disarm: no armed listener".to_string(),
         );
     }
-    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -3260,7 +3277,7 @@ fn vara_listener_consumer_task(
     }
 
     // Shutdown path: send LISTEN OFF best-effort and return the transport
-    // to the session so the operator's vara_stop_session / vara_status
+    // to the session so the operator's vara_close_session / vara_status
     // sees the transport as if the consumer never owned it.
     progress("VARA listener consumer: draining; sending LISTEN OFF.");
     let _ = crate::winlink::modem::vara::set_listen(&mut transport, false);

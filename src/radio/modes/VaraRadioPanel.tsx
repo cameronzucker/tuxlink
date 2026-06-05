@@ -253,7 +253,7 @@ export function VaraRadioPanel({ mode, onClose }: VaraRadioPanelProps) {
     setBusy(true);
     setActionError(null);
     try {
-      const next = await invoke<VaraStatusDto>('vara_stop_session');
+      const next = await invoke<VaraStatusDto>('vara_close_session');
       setStatus(next);
     } catch (e) {
       setActionError(`Stop failed: ${String(e)}`);
