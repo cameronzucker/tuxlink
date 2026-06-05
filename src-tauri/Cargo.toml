@@ -20,7 +20,7 @@ tauri-plugin-fs = "2"
 tauri-plugin-dialog = "2"  # tuxlink-0fyj — native Save As dialog for MessageView attachment download
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-reqwest = { version = "0.12", features = ["json", "multipart"] }  # tuxlink-z5f: dropped "blocking" — PatClient is async to avoid runtime-drop panic in #[tokio::test] contexts
+reqwest = { version = "0.12", features = ["json", "multipart", "stream"] }  # tuxlink-z5f: dropped "blocking" — PatClient is async to avoid runtime-drop panic in #[tokio::test] contexts. tuxlink-xipa Codex P1 #1: "stream" added for forms::updater::download_archive chunked size enforcement.
 tokio = { version = "1", features = ["full"] }
 nix = { version = "0.31", features = ["signal", "process"] }
 thiserror = "2"            # NEW — for ConfigValidationError + ConfigReadError + ConfigWriteError

@@ -43,8 +43,19 @@
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
+use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+
+/// Process-wide install lock. Codex xipa adrev P2 #5: two concurrent
+/// `forms_refresh` IPCs can race on `staging/<version>/` (extraction
+/// path) and `active/` (atomic-swap path). The mutex serializes the
+/// full install body so the second caller waits for the first to
+/// finish (or fail) before touching the runtime root. Acceptable
+/// trade-off: refresh is operator-triggered, so the second caller
+/// just sees a brief delay rather than a corrupted snapshot.
+static INSTALL_LOCK: Lazy<tokio::sync::Mutex<()>> =
+    Lazy::new(|| tokio::sync::Mutex::new(()));
 
 /// JSON shape returned by `https://api.getpat.io/v1/forms/standard-templates/latest`.
 /// Mirrors Pat's `formsInfo` struct exactly so we consume the same endpoint
@@ -107,6 +118,15 @@ const HTTP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 /// generous-but-bounded.
 const MAX_ARCHIVE_BYTES: u64 = 100 * 1024 * 1024;
 
+/// Maximum aggregate decompressed size of all extracted ZIP entries.
+/// Codex xipa adrev P1 #2: without a decompression cap, a small deflated
+/// zip-bomb (~200:1 typical, ~1000:1 worst-case) could expand from a
+/// 100 MB download into 20–100 GB of writes, filling the runtime disk
+/// before the post-extract validation runs. 300 MB is ~60× the current
+/// Standard_Forms expanded size (~5 MB) — plenty of headroom for legit
+/// growth, well under "fill the operator's disk."
+const MAX_EXTRACT_BYTES: u64 = 300 * 1024 * 1024;
+
 /// File inside the active snapshot recording the installed version. Read
 /// by `current_version` to compare against `RemoteFormsInfo.version`.
 pub const VERSION_FILENAME: &str = "VERSION";
@@ -135,12 +155,41 @@ fn is_safe_version(v: &str) -> bool {
         && v.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'))
 }
 
+/// Classify a URL for transport-policy decisions. Codex xipa adrev
+/// P2 #8: production must use https; tests/dev proxies on loopback are
+/// permitted on http because an on-path attacker can't intercept
+/// loopback. Returns `Ok((is_loopback,))` on accept, `Err(_)` on reject.
+fn classify_transport(url_str: &str) -> Result<bool, String> {
+    let parsed = reqwest::Url::parse(url_str).map_err(|e| format!("invalid URL {url_str:?}: {e}"))?;
+    let is_loopback = matches!(
+        parsed.host_str(),
+        Some("127.0.0.1") | Some("localhost") | Some("::1") | Some("[::1]")
+    );
+    match parsed.scheme() {
+        "https" => Ok(is_loopback),
+        "http" if is_loopback => Ok(true),
+        "http" => Err(format!(
+            "refusing plaintext http on non-loopback host: {url_str:?}"
+        )),
+        other => Err(format!("refusing scheme {other:?}: {url_str:?}")),
+    }
+}
+
 /// GET the metadata endpoint + decode the JSON response. Pure I/O; no
 /// side effects on the local snapshot.
 pub async fn fetch_latest_info(metadata_url: &str) -> Result<RemoteFormsInfo, UpdaterError> {
+    // Codex xipa adrev P2 #8: require HTTPS on the metadata endpoint
+    // (loopback http exempt for tests + local proxies). The metadata
+    // response shapes the install entirely (version string + archive_url);
+    // a plaintext fetch lets an on-path attacker rewrite either field.
+    // Pair with `https_only(true)` so redirects can't downgrade — skipped
+    // on loopback so mockito-backed tests work.
+    let is_loopback = classify_transport(metadata_url)
+        .map_err(UpdaterError::HttpMetadata)?;
     let client = reqwest::Client::builder()
         .user_agent(HTTP_USER_AGENT)
         .timeout(HTTP_TIMEOUT)
+        .https_only(!is_loopback)
         .build()
         .map_err(|e| UpdaterError::HttpMetadata(format!("client build: {e}")))?;
     let resp = client
@@ -205,6 +254,12 @@ pub async fn install(
     version: &str,
     runtime_root: &Path,
 ) -> Result<InstallReport, UpdaterError> {
+    // Codex xipa adrev P2 #5: serialize concurrent installs so two
+    // simultaneous `forms_refresh` IPCs can't race on staging dirs or
+    // the active/ swap. Held for the entire install body — released on
+    // every return path (including error).
+    let _install_guard = INSTALL_LOCK.lock().await;
+
     // Defense against a malicious or compromised metadata server: `version`
     // is used as a path component (staging/<version>/) and inside a
     // filename (download-<version>.zip). A response like `"../../etc/passwd"`
@@ -290,9 +345,16 @@ pub async fn install(
 }
 
 async fn download_archive(url: &str, dest: &Path) -> Result<(), UpdaterError> {
+    // Codex xipa adrev P2 #8: archive_url is trusted-from-metadata, but
+    // metadata could return an http:// URL or a 30x redirect from https
+    // to http. Require https on the initial URL + ban downgrade-to-http
+    // redirects so an on-path attacker can't substitute the archive.
+    // Loopback http exempt (test + local-proxy use).
+    let is_loopback = classify_transport(url).map_err(UpdaterError::HttpArchive)?;
     let client = reqwest::Client::builder()
         .user_agent(HTTP_USER_AGENT)
         .timeout(HTTP_TIMEOUT)
+        .https_only(!is_loopback)
         .build()
         .map_err(|e| UpdaterError::HttpArchive(format!("client build: {e}")))?;
     let resp = client
@@ -313,17 +375,32 @@ async fn download_archive(url: &str, dest: &Path) -> Result<(), UpdaterError> {
             )));
         }
     }
-    let bytes = resp
-        .bytes()
-        .await
-        .map_err(|e| UpdaterError::HttpArchive(format!("read body: {e}")))?;
-    if bytes.len() as u64 > MAX_ARCHIVE_BYTES {
-        return Err(UpdaterError::BadArchive(format!(
-            "archive too large after download: {} > cap {MAX_ARCHIVE_BYTES}",
-            bytes.len()
-        )));
+
+    // Codex xipa adrev P1 #1: a hostile server can OMIT Content-Length and
+    // stream past the cap. Stream chunks to disk, check the running total
+    // every chunk; abort the moment we exceed MAX_ARCHIVE_BYTES so we
+    // bound peak memory + disk usage even when the server lies.
+    let mut total: u64 = 0;
+    let mut file = std::fs::File::create(dest)
+        .map_err(|e| UpdaterError::Io(format!("create {dest:?}: {e}")))?;
+    use futures::StreamExt;
+    let mut stream = resp.bytes_stream();
+    while let Some(chunk_res) = stream.next().await {
+        let chunk = chunk_res
+            .map_err(|e| UpdaterError::HttpArchive(format!("read chunk: {e}")))?;
+        total = total.saturating_add(chunk.len() as u64);
+        if total > MAX_ARCHIVE_BYTES {
+            // Drop the partial file so we don't leave attacker-controlled
+            // bytes behind on the runtime filesystem.
+            let _ = std::fs::remove_file(dest);
+            return Err(UpdaterError::BadArchive(format!(
+                "archive too large mid-stream: {total} bytes > cap {MAX_ARCHIVE_BYTES}"
+            )));
+        }
+        use std::io::Write;
+        file.write_all(&chunk)
+            .map_err(|e| UpdaterError::Io(format!("write chunk to {dest:?}: {e}")))?;
     }
-    std::fs::write(dest, &bytes).map_err(|e| UpdaterError::Io(format!("write {dest:?}: {e}")))?;
     Ok(())
 }
 
@@ -364,6 +441,7 @@ fn extract_zip(zip_path: &Path, dest_dir: &Path) -> Result<usize, UpdaterError> 
         .map_err(|e| UpdaterError::Io(format!("canonicalize dest: {e}")))?;
 
     let mut html_count = 0;
+    let mut total_decompressed: u64 = 0;
     for i in 0..archive.len() {
         let mut entry = archive
             .by_index(i)
@@ -379,9 +457,9 @@ fn extract_zip(zip_path: &Path, dest_dir: &Path) -> Result<usize, UpdaterError> 
         };
 
         let dest_path = if needs_wrap {
-            canonical_dest.join("Standard_Forms").join(entry_path)
+            canonical_dest.join("Standard_Forms").join(entry_path.clone())
         } else {
-            canonical_dest.join(entry_path)
+            canonical_dest.join(entry_path.clone())
         };
 
         // Defense in depth: even though enclosed_name() rejects ".." paths,
@@ -398,19 +476,61 @@ fn extract_zip(zip_path: &Path, dest_dir: &Path) -> Result<usize, UpdaterError> 
                 .map_err(|e| UpdaterError::Io(format!("mkdir {dest_path:?}: {e}")))?;
             continue;
         }
+
+        // Codex xipa adrev P1 #2: zip-bomb defense. Cap per-entry size
+        // by the remaining aggregate budget — `entry.size()` reports the
+        // declared uncompressed size from the central directory; we
+        // still need to enforce the budget during the copy because zip
+        // entries can lie about their size (or report 0 when "unknown").
+        let declared = entry.size();
+        let remaining = MAX_EXTRACT_BYTES.saturating_sub(total_decompressed);
+        if declared > remaining {
+            return Err(UpdaterError::BadArchive(format!(
+                "extracted size cap exceeded (declared {} for {:?} + already-extracted {} > cap {})",
+                declared, entry_path, total_decompressed, MAX_EXTRACT_BYTES
+            )));
+        }
+
         if let Some(parent) = dest_path.parent() {
             std::fs::create_dir_all(parent)
                 .map_err(|e| UpdaterError::Io(format!("mkdir parent {parent:?}: {e}")))?;
         }
         let mut out = std::fs::File::create(&dest_path)
             .map_err(|e| UpdaterError::Io(format!("create {dest_path:?}: {e}")))?;
-        std::io::copy(&mut entry, &mut out)
+        // Copy at most `remaining` bytes; if the entry actually produces
+        // more (a deflated zip-bomb that lies in its central-directory
+        // size), the take-limited copy returns short + we error out.
+        let mut limited = std::io::Read::take(&mut entry, remaining);
+        let written = std::io::copy(&mut limited, &mut out)
             .map_err(|e| UpdaterError::Io(format!("copy entry to {dest_path:?}: {e}")))?;
-        if dest_path
-            .extension()
-            .and_then(|x| x.to_str())
-            .map(|x| x.eq_ignore_ascii_case("html"))
-            .unwrap_or(false)
+        total_decompressed = total_decompressed.saturating_add(written);
+        // If we filled the budget AND the source still has more bytes,
+        // the entry is over the cap. Probe by reading one more byte.
+        if written == remaining {
+            let mut peek = [0u8; 1];
+            use std::io::Read;
+            if entry.read(&mut peek).map(|n| n > 0).unwrap_or(false) {
+                // Drop the partial file before erroring.
+                let _ = std::fs::remove_file(&dest_path);
+                return Err(UpdaterError::BadArchive(format!(
+                    "extracted size cap exceeded mid-copy on entry {:?} (cap {})",
+                    entry_path, MAX_EXTRACT_BYTES
+                )));
+            }
+        }
+        // Codex xipa adrev P2 #4: only HTML files that land UNDER the
+        // Standard_Forms/ subtree count toward form_count, since that's
+        // the directory `runtime_snapshot_present` actually consults. A
+        // malicious zip with a root-level README.html plus a junk
+        // Standard_Forms/notes.txt could otherwise pass `form_count > 0`
+        // even though no usable template ends up where the catalog reads.
+        let standard_forms_root = canonical_dest.join("Standard_Forms");
+        if dest_path.starts_with(&standard_forms_root)
+            && dest_path
+                .extension()
+                .and_then(|x| x.to_str())
+                .map(|x| x.eq_ignore_ascii_case("html"))
+                .unwrap_or(false)
         {
             html_count += 1;
         }
@@ -807,5 +927,124 @@ mod tests {
         // Length cap.
         let oversize = "a".repeat(MAX_VERSION_LEN + 1);
         assert!(!is_safe_version(&oversize));
+    }
+
+    // ========================================================================
+    // Codex xipa adrev — P2 #8: HTTPS-only with loopback exemption.
+    // ========================================================================
+
+    #[test]
+    fn classify_transport_accepts_https_anywhere() {
+        assert_eq!(classify_transport("https://api.example.com/x").unwrap(), false);
+        assert_eq!(classify_transport("https://127.0.0.1/x").unwrap(), true);
+    }
+
+    #[test]
+    fn classify_transport_accepts_http_loopback_only() {
+        assert_eq!(classify_transport("http://127.0.0.1/x").unwrap(), true);
+        assert_eq!(classify_transport("http://localhost:8080/x").unwrap(), true);
+    }
+
+    #[test]
+    fn classify_transport_rejects_http_non_loopback() {
+        let err = classify_transport("http://api.example.com/x").unwrap_err();
+        assert!(err.contains("plaintext http") && err.contains("non-loopback"), "got: {err}");
+    }
+
+    #[test]
+    fn classify_transport_rejects_other_schemes() {
+        let err = classify_transport("file:///etc/passwd").unwrap_err();
+        assert!(err.contains("refusing scheme"), "got: {err}");
+        let err = classify_transport("ftp://example.com/x").unwrap_err();
+        assert!(err.contains("refusing scheme"), "got: {err}");
+    }
+
+    #[test]
+    fn classify_transport_rejects_loopback_lookalike_hosts() {
+        // Defense: ensure a host like `127.0.0.1.evil.com` doesn't slip
+        // through. The classifier should reject because the host is NOT
+        // literally `127.0.0.1`.
+        let err = classify_transport("http://127.0.0.1.evil.com/x").unwrap_err();
+        assert!(err.contains("plaintext http"), "got: {err}");
+        let err = classify_transport("http://localhost.evil.com/x").unwrap_err();
+        assert!(err.contains("plaintext http"), "got: {err}");
+    }
+
+    #[tokio::test]
+    async fn fetch_latest_info_rejects_plain_http_non_loopback() {
+        let err = fetch_latest_info("http://example.com/forms/latest").await.unwrap_err();
+        match err {
+            UpdaterError::HttpMetadata(msg) => {
+                assert!(msg.contains("plaintext http"), "got: {msg}");
+            }
+            other => panic!("expected HttpMetadata, got {other:?}"),
+        }
+    }
+
+    // ========================================================================
+    // Codex xipa adrev — P1 #2: zip-bomb defense.
+    // ========================================================================
+
+    #[test]
+    fn extract_zip_rejects_oversized_archive() {
+        // Build a zip whose declared-size on a single entry exceeds the
+        // MAX_EXTRACT_BYTES cap. zip-rs's declared_size comes from the
+        // central directory, so this is the cheap-to-construct path.
+        let td = TempDir::new().unwrap();
+        // Single entry, 301 MiB of zeros — over the 300 MiB cap.
+        // Use Stored (no compression) so the central-directory size matches.
+        let mut buf = Vec::new();
+        {
+            let mut zip = zip::ZipWriter::new(std::io::Cursor::new(&mut buf));
+            let options = zip::write::SimpleFileOptions::default()
+                .compression_method(zip::CompressionMethod::Stored);
+            zip.start_file("Standard_Forms/giant.html", options).unwrap();
+            let payload = vec![0u8; (MAX_EXTRACT_BYTES + 1024) as usize];
+            zip.write_all(&payload).unwrap();
+            zip.finish().unwrap();
+        }
+        let zip_path = td.path().join("bomb.zip");
+        std::fs::write(&zip_path, &buf).unwrap();
+        let dest = td.path().join("extracted");
+        let err = extract_zip(&zip_path, &dest).unwrap_err();
+        match err {
+            UpdaterError::BadArchive(msg) => {
+                assert!(
+                    msg.contains("extracted size cap"),
+                    "expected size-cap error, got: {msg}"
+                );
+            }
+            other => panic!("expected BadArchive, got {other:?}"),
+        }
+    }
+
+    // ========================================================================
+    // Codex xipa adrev — P2 #4: HTML-count under Standard_Forms only.
+    // ========================================================================
+
+    #[test]
+    fn extract_zip_only_counts_html_under_standard_forms_subtree() {
+        // A malicious archive: legit-looking Standard_Forms/ with a
+        // non-html "form", plus a root-level README.html that would
+        // otherwise satisfy a naive "any HTML" count.
+        let td = TempDir::new().unwrap();
+        let zip_path = write_zip_to(
+            td.path(),
+            &[
+                ("Standard_Forms/General/notes.txt", b"not a form"),
+                ("README.html", b"<html>root readme</html>"),
+            ],
+        );
+        let dest = td.path().join("extracted");
+        let count = extract_zip(&zip_path, &dest).unwrap();
+        // README.html is OUTSIDE Standard_Forms/, so it doesn't count.
+        // notes.txt isn't html. → 0.
+        assert_eq!(
+            count, 0,
+            "form_count must reject HTML files outside Standard_Forms/"
+        );
+        // But the install-level validation (form_count == 0) will then
+        // reject this archive.
+        assert!(dest.join("README.html").exists(), "extraction still happens");
     }
 }
