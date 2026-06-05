@@ -608,8 +608,12 @@ pub fn parse_raw_rfc5322(mid: &str, raw: &[u8]) -> Result<ParsedMessageDto, UiEr
         })
         .unwrap_or_default();
 
-    // Body: find the first text/plain part; decode lossily.
-    let body = find_text_plain_body(&msg);
+    // Body: find the first text/plain part; decode lossily. The raw bytes
+    // are passed alongside so the function can detect B2F wire format
+    // (Winlink's native format, not RFC 5322) and dispatch to the
+    // project's B2F parser instead of letting mail-parser swallow the
+    // attachment payload into the text body (tuxlink-2hyf).
+    let body = find_text_plain_body(&msg, raw);
 
     // Attachments: non-inline named parts (MIME attachments).
     let attachments = collect_attachments(&msg);
@@ -705,30 +709,51 @@ fn addr_to_string(a: &mail_parser::Addr<'_>) -> String {
     }
 }
 
-/// Return the first text/plain body as a string.
+/// Return the message's displayable body text.
 ///
-/// Uses `msg.body_text(0)` which returns the first text/plain body part
-/// (already decoded for charset + CTE). When no text/plain part exists, falls
-/// back to either:
-/// - The root Text part's contents (non-MIME messages with a single text root).
-/// - A short placeholder pointing the user at the attachment surface
-///   (single-part binary messages — the canonical case is the CMS-Z Catalog
-///   reply that inlines a JPEG as the entire body). Raw bytes are never
-///   rendered as text; that produces a wall of REPLACEMENT CHARACTER glyphs
-///   interleaved with whatever bytes happen to be valid UTF-8 (tuxlink-9ylw).
-fn find_text_plain_body(msg: &mail_parser::Message<'_>) -> String {
-    // body_text(0) returns the first text/plain part (as decoded Cow<str>).
+/// Dispatch ladder, in order:
+///
+/// 1. **B2F wire format** (the canonical inbound-Winlink case): detected by
+///    the presence of both a `Mid:` and a `Body:` header in the parsed B2F
+///    message. mail_parser is RFC 5322-only and treats B2F's `Body: N`
+///    byte-count header as just another header line — then concatenates the
+///    declared text body AND each per-attachment binary payload into one
+///    blob, surfacing as a wall of REPLACEMENT CHARACTER glyphs in the UI
+///    (tuxlink-9ylw smoke walk → this is the real fix, tuxlink-2hyf).
+///    When B2F is detected, defer to `winlink::message::Message::body()`
+///    which respects the declared body byte-count and excludes attachments.
+///
+/// 2. **`mail_parser::body_text(0)`** — the first text/plain part of a true
+///    MIME message, already decoded for charset + CTE.
+///
+/// 3. **Root Text part** — for non-MIME, non-B2F single-text-root messages.
+///
+/// 4. **Binary placeholder** — single-part binary MIME messages without any
+///    text part fall through here. The placeholder points users at the
+///    attachment surface (`AttachmentStrip` + the `message_attachment_save`
+///    command shipped in tuxlink-0fyj) rather than dumping bytes as text.
+fn find_text_plain_body(msg: &mail_parser::Message<'_>, raw: &[u8]) -> String {
+    // Step 1 — B2F detection + dispatch. Use Message::from_bytes which
+    // already handles `Body: N` + `File: N filename` correctly.
+    if let Ok(b2f) = crate::winlink::message::Message::from_bytes(raw) {
+        // Require BOTH Mid: and Body: headers to qualify as B2F — either alone
+        // is ambiguous (some RFC 5322 messages could plausibly carry a Body:
+        // pseudo-header in malformed input; Mid: is rarer but possible).
+        if b2f.header("Mid").is_some() && b2f.header("Body").is_some() {
+            return String::from_utf8_lossy(b2f.body()).into_owned();
+        }
+    }
+
+    // Step 2 — true MIME text/plain happy path.
     if let Some(text) = msg.body_text(0) {
         return text.into_owned();
     }
-    // Non-MIME message: the root part body is all we have.
+
+    // Step 3 + 4 — non-MIME-non-B2F fall-back. Root part is all we have.
     match &msg.parts[0].body {
         mail_parser::PartType::Text(t) => t.to_string(),
         mail_parser::PartType::Binary(b) | mail_parser::PartType::InlineBinary(b) => {
-            // Don't render bytes as text. AttachmentStrip + the
-            // message_attachment_save command (tuxlink-0fyj) handle binary
-            // content; this placeholder points users at that surface instead
-            // of competing with it via a lossy-UTF-8 dump.
+            // Don't render bytes as text — see step-1 doc comment for why.
             format!("[Binary content ({} bytes) — see attachments]", b.len())
         }
         _ => String::new(),
@@ -5988,7 +6013,7 @@ hw:CARD=Device,DEV=0
         let msg = mail_parser::MessageParser::new()
             .parse(raw.as_slice())
             .expect("synthetic MIME parses");
-        let body = find_text_plain_body(&msg);
+        let body = find_text_plain_body(&msg, raw.as_slice());
 
         // Failure mode under the prior implementation: REPLACEMENT CHARACTER
         // glyphs leak through wherever the JPEG bytes aren't valid UTF-8.
@@ -6007,6 +6032,75 @@ hw:CARD=Device,DEV=0
         assert!(
             body.contains("attachments"),
             "expected placeholder to direct users to the attachments surface; got: {body:?}"
+        );
+    }
+
+    /// tuxlink-2hyf: regression-pin for the *real* broken case PR #401 did
+    /// not catch. Real Winlink inbound messages aren't MIME — they're B2F
+    /// wire format: a `Mid:` header, a `Body: <N>` byte-count declaring the
+    /// text body length, optional `File: <N> <filename>` headers declaring
+    /// per-attachment binary payloads, a blank line, then the declared text
+    /// body, then the declared attachment payloads concatenated.
+    ///
+    /// mail_parser is RFC 5322-only and:
+    /// - Sees `Mid:` / `Body:` / `File:` as ordinary RFC 5322 header lines.
+    /// - Default implicit Content-Type is text/plain.
+    /// - Treats everything after the blank line — text body PLUS binary
+    ///   attachment payloads — as one text body.
+    /// - `body_text(0)` returns Some(lossy-UTF-8 of text + binary bytes).
+    /// - PR #401's `PartType::Binary` fallback never triggers because the
+    ///   body is "text" from mail-parser's perspective.
+    ///
+    /// The fix dispatches to `winlink::message::Message::body()` (the
+    /// project's own B2F parser) when both `Mid:` and `Body:` headers
+    /// are present in the parsed B2F message.
+    #[test]
+    fn find_text_plain_body_dispatches_to_b2f_parser_for_winlink_messages() {
+        // Shape mirrors a real CMS-Z Catalog reply: B2F headers, a short
+        // text-body byte count, the text body, then a binary attachment.
+        // The attachment magic bytes (JFIF) MUST NOT leak into the rendered
+        // body — that's the screenshot-bad bug operators reported.
+        let text_body = "Resource URL: https://example.org/cat/img.jpg\r\n  Inquiry ID: WCCOL.JPG\r\n";
+        let attachment_bytes: &[u8] = &[
+            0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01,
+            0xcb, 0xa1, 0x12, 0xef, 0xc9, 0x97, 0xd4, 0xb2, 0x68, 0x5a, 0x80, 0xff,
+        ];
+        let mut raw: Vec<u8> = Vec::new();
+        raw.extend_from_slice(b"Mid: 9YMNP4GB4UOD\r\n");
+        raw.extend_from_slice(format!("Body: {}\r\n", text_body.len()).as_bytes());
+        raw.extend_from_slice(b"Date: 2026/06/05 11:24\r\n");
+        raw.extend_from_slice(format!("File: {} 600x600.jpg\r\n", attachment_bytes.len()).as_bytes());
+        raw.extend_from_slice(b"From: SERVICE\r\n");
+        raw.extend_from_slice(b"Mbo: SYSTEM\r\n");
+        raw.extend_from_slice(b"Subject: INQUIRY - https://example.org/cat/img.jpg\r\n");
+        raw.extend_from_slice(b"To: N7CPZ\r\n");
+        raw.extend_from_slice(b"\r\n");
+        raw.extend_from_slice(text_body.as_bytes());
+        raw.extend_from_slice(b"\r\n");
+        raw.extend_from_slice(attachment_bytes);
+        raw.extend_from_slice(b"\r\n");
+
+        let msg = mail_parser::MessageParser::new()
+            .parse(raw.as_slice())
+            .expect("synthetic B2F parses through mail-parser (as one big text body)");
+        let body = find_text_plain_body(&msg, raw.as_slice());
+
+        // The body must contain the declared text content — that's what
+        // operators are supposed to see.
+        assert!(
+            body.contains("Resource URL"),
+            "B2F dispatch should preserve the declared text body; got: {body:?}"
+        );
+        // Binary attachment bytes MUST NOT leak through. Two markers:
+        //   - JFIF is ASCII-valid and would survive a lossy decode unchanged.
+        //   - U+FFFD shows up wherever individual bytes weren't valid UTF-8.
+        assert!(
+            !body.contains("JFIF"),
+            "JPEG marker text leaked from binary attachment into body; got: {body:?}"
+        );
+        assert!(
+            !body.contains('\u{FFFD}'),
+            "U+FFFD replacement chars in body indicate binary bytes leaked through; got: {body:?}"
         );
     }
 
