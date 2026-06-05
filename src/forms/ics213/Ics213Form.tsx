@@ -71,6 +71,8 @@ export function Ics213Form({ initialValues = {}, onChange, onSubmit, onCancel }:
   async function saveSlot() {
     const label = window.prompt('Name this slot (e.g. "Net Check-In Template"):');
     if (!label) return;
+    // "Save as slot…" always creates a new slot — no slotId passed even when
+    // a slot is selected. Update-in-place is a P3 follow-up.
     const payload: Record<string, string> = {};
     for (const key of ICS213_SAVEABLE) {
       payload[key] = values[key] ?? '';

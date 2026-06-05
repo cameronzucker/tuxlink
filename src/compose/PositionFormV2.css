@@ -33,7 +33,7 @@
 .form-slot-toolbar label {
   font-size: 12px;
   font-weight: 500;
-  color: var(--tux-fg-dim);
+  color: var(--tux-fg-muted);
   white-space: nowrap;
 }
 
@@ -108,7 +108,7 @@
 .position-form-v2 label {
   font-size: 12px;
   font-weight: 500;
-  color: var(--tux-fg-dim);
+  color: var(--tux-fg-muted);
   margin-bottom: 2px;
 }
 

@@ -108,6 +108,10 @@ export function PositionFormV2({
   async function saveSlot() {
     const label = window.prompt('Name this slot (e.g. "Monday Night Net"):');
     if (!label) return;
+    // "Save as slot…" always creates a new slot — no slotId passed even when
+    // a slot is selected. Update-in-place over the selected slot is a P3
+    // follow-up (would require either a second "Update slot" button or a
+    // modal that disambiguates create-vs-update intent).
     // Only the remark is saveable; grid is volatile/GPS-derived.
     const newSlot = await upsertSlot({
       formId: FORM_ID,
