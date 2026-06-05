@@ -90,6 +90,36 @@ describe('<CatalogBrowser>', () => {
     expect(onPick).toHaveBeenCalledWith('ICS213_Initial');
   });
 
+  it('normalizes WLE catalog filename-stem ids to canonical native ids on pick', async () => {
+    // The Rust `forms_list_catalog` derives template ids from WLE filename
+    // stems — `GPS Position Report.html` → `GPS Position Report`. Our native
+    // PositionFormV2 is registered under the canonical `Position_Report`.
+    // `normalizeCatalogId` bridges them at pick time so Compose, send_form,
+    // and the receive-side View lookup all see the canonical id.
+    // (2026-06-04 Codex full-diff adrev P1 finding.)
+    mocks.invoke.mockImplementationOnce(async (cmd: string) => {
+      if (cmd === 'forms_list_catalog') {
+        return [
+          { id: 'GPS Position Report', label: 'GPS Position Report', folder: 'General Forms', source: 'Bundled', path: '' },
+          { id: 'Bulletin Initial', label: 'Bulletin Initial', folder: 'General Forms', source: 'Bundled', path: '' },
+          { id: 'Winlink_Check_In_Initial', label: 'Winlink_Check_In_Initial', folder: 'General Forms', source: 'Bundled', path: '' },
+        ];
+      }
+      return null;
+    });
+    const onPick = vi.fn();
+    render(<CatalogBrowser onPick={onPick} onCancel={vi.fn()} />);
+    fireEvent.click(await screen.findByText('General Forms'));
+    fireEvent.click(screen.getByText('GPS Position Report'));
+    expect(onPick).toHaveBeenCalledWith('Position_Report');
+    onPick.mockClear();
+    fireEvent.click(screen.getByText('Bulletin Initial'));
+    expect(onPick).toHaveBeenCalledWith('Bulletin_Initial');
+    onPick.mockClear();
+    fireEvent.click(screen.getByText('Winlink_Check_In_Initial'));
+    expect(onPick).toHaveBeenCalledWith('Winlink_Check-In');
+  });
+
   it('places the Custom folder last regardless of alphabetical order', async () => {
     render(<CatalogBrowser onPick={vi.fn()} onCancel={vi.fn()} />);
     // Wait for the catalog to load.

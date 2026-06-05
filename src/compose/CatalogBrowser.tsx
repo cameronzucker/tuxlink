@@ -20,6 +20,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { normalizeCatalogId } from '../forms';
 import './CatalogBrowser.css';
 
 /** Mirror of the Rust `forms::wle_templates::Template` struct (no serde
@@ -305,7 +306,7 @@ function FolderTree({ folders, expanded, onToggle, onPick }: FolderTreeProps) {
                     <button
                       type="button"
                       className="catalog-browser__template-btn"
-                      onClick={() => onPick(t.id)}
+                      onClick={() => onPick(normalizeCatalogId(t.id))}
                       data-testid={`catalog-template-${t.id}`}
                     >
                       {t.label}
@@ -342,7 +343,7 @@ function SearchResultsList({ results, onPick }: SearchResultsListProps) {
           <button
             type="button"
             className="catalog-browser__template-btn"
-            onClick={() => onPick(t.id)}
+            onClick={() => onPick(normalizeCatalogId(t.id))}
             data-testid={`catalog-template-${t.id}`}
           >
             <span className="catalog-browser__result-label">{t.label}</span>

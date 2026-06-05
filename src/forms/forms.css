@@ -162,6 +162,54 @@
   max-width: 100%;
 }
 
+/* Saved-slot toolbar — used by ICS-213, Bulletin, and any future P2 form
+   that imports forms.css. PositionFormV2 defines its own variant in
+   PositionFormV2.css because it does not import forms.css. */
+.form-slot-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 6px 0 8px;
+  border-bottom: 1px solid var(--tux-border);
+  margin-bottom: 2px;
+}
+
+.form-slot-toolbar label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--tux-fg-muted);
+  white-space: nowrap;
+}
+
+.form-slot-toolbar select {
+  font-family: inherit;
+  font-size: 12px;
+  padding: 4px 8px;
+  background: var(--tux-surface-2);
+  color: var(--tux-fg);
+  border: 1px solid var(--tux-border);
+  border-radius: 4px;
+  flex: 1;
+  min-width: 120px;
+}
+
+.form-slot-toolbar button {
+  font-family: inherit;
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 4px;
+  border: 1px solid var(--tux-border);
+  background: var(--tux-surface-2);
+  color: var(--tux-fg);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.form-slot-toolbar button:hover:not(:disabled) {
+  background: var(--tux-elevated);
+}
+
 /* form-actions — sticky to the bottom of the scrollable body so Send/Discard
    stay reachable when the form (ICS-309, Damage Assessment) is taller than
    the compose window. */

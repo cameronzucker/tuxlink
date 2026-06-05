@@ -10,6 +10,7 @@ pub const BUNDLED_FORMS: &[&FormDef] = &[
     &templates::position::POSITION_REPORT,
     &templates::bulletin::BULLETIN_INITIAL,
     &templates::damage_assessment::DAMAGE_ASSESSMENT_INITIAL,
+    &templates::checkin::WINLINK_CHECK_IN,
 ];
 
 /// Look up a bundled form by its canonical ID. Returns None if not known.
@@ -75,5 +76,16 @@ mod tests {
         assert!(f.fields.iter().any(|fd| fd.id == "surarea"));
         assert!(f.fields.iter().any(|fd| fd.id == "dollar16"));
         assert_eq!(f.display_form, "Damage_Assessment_Viewer.html");
+    }
+
+    #[test]
+    fn finds_winlink_check_in_by_id() {
+        let f = find_form("Winlink_Check-In").expect("Winlink_Check-In bundled");
+        assert_eq!(f.name, "Winlink Check-In");
+        assert!(f.fields.iter().any(|fd| fd.id == "tactical_call"));
+        assert!(f.fields.iter().any(|fd| fd.id == "status"));
+        assert!(f.fields.iter().any(|fd| fd.id == "group_net"));
+        assert!(f.fields.iter().any(|fd| fd.id == "grid"));
+        assert_eq!(f.display_form, "Winlink_Check-In_Viewer.html");
     }
 }

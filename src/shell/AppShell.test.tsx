@@ -74,6 +74,12 @@ vi.mock('@tauri-apps/api/core', () => ({
         n2Retries: 10,
       };
     }
+    // position_status: PositionStatusDto — no GPS fix, empty grids (null-state).
+    // Without this stub, react-query's queryFn receives `undefined` and emits
+    // "Query data cannot be undefined" warnings on every poll tick. The
+    // positionQuery.data ?? null guard in useStatusData already maps this to
+    // null downstream; the stub silences the contract violation (tuxlink-hnkn).
+    if (cmd === 'position_status') return { gps_ready: false, broadcast_grid: '', ui_grid: '' };
     // Search IPC stubs (Task 17 — find-messages wiring)
     if (cmd === 'tauri_search_list_saved') return [];
     if (cmd === 'tauri_search_list_recent') return [];
@@ -477,6 +483,7 @@ describe('AppShell — search → MessageList wiring (tuxlink-c7qz)', () => {
       }
       if (cmd === 'tauri_search_list_saved') return [];
       if (cmd === 'tauri_search_list_recent') return [];
+      if (cmd === 'position_status') return { gps_ready: false, broadcast_grid: '', ui_grid: '' };
       if (cmd === 'tauri_search_run') return {
         items: [
           {

@@ -179,6 +179,24 @@ pub fn run() {
                             Ok(svc) => { app.manage(svc); }
                             Err(e) => eprintln!("search: build_service failed: {e}"),
                         }
+
+                        // tuxlink-hnkn P2 Task 4: FormDraftLibrary — named slot
+                        // store for save/reuse of form field-value sets. Lives as a
+                        // sibling SQLite file to search.db (Option B schema-home
+                        // decision: independent lifecycle, survives search-index
+                        // rebuild). Open failure is non-fatal at launch — the app
+                        // still starts. But subsequent IPC calls to
+                        // form_draft_library_* will error at State<Arc<DraftLibrary>>
+                        // extraction because .manage() never ran. This matches the
+                        // SearchService precedent above.
+                        match crate::forms::draft_library::DraftLibrary::open(
+                            search_root.join("form_draft_library.db"),
+                        ) {
+                            Ok(lib) => {
+                                app.manage(std::sync::Arc::new(lib));
+                            }
+                            Err(e) => eprintln!("form-draft-library: open failed: {e}"),
+                        }
                     }
                 }
                 Err(e) => eprintln!("search: could not resolve app_data_dir: {e}"),
@@ -349,6 +367,9 @@ pub fn run() {
             crate::ui_commands::config_set_grid,      // Task 5 (tuxlink-686)
             crate::ui_commands::position_set_source,  // Task 11 (tuxlink-686)
             crate::ui_commands::position_status,      // Task 11 (tuxlink-686)
+            crate::ui_commands::position_current_fix, // tuxlink-hnkn P2 (PositionFormV2 pre-fill)
+            crate::ui_commands::messages_meta_query_for_log, // tuxlink-hnkn P2 Task 2 (ICS-309 log query)
+            crate::ui_commands::render_ics309_pdf,            // tuxlink-hnkn P2 Task 2 (ICS-309 PDF export)
             crate::ui_commands::config_set_privacy,    // tuxlink-39b (GPS privacy control surface)
             crate::ui_commands::config_set_connect,    // tuxlink-3o0 (CMS server endpoint control)
             // Task 10 (tuxlink-1hu): find-messages search commands
@@ -408,6 +429,10 @@ pub fn run() {
             crate::ui_commands::telnet_station_password_is_set,
             crate::ui_commands::telnet_listen_config_get,
             crate::ui_commands::telnet_listen_config_set,
+            // tuxlink-hnkn P2 Task 4: FormDraftLibrary — save/reuse named form slots.
+            crate::ui_commands::form_draft_library_list,
+            crate::ui_commands::form_draft_library_upsert,
+            crate::ui_commands::form_draft_library_delete,
             // tuxlink-7do4 Task 13: smart-auth-diagnostics banner recovery commands.
             crate::ui_commands::credentials_write_password, // spec §4.3 (i) — Mode 3 re-enter password
             crate::ui_commands::wizard_reopen,              // spec §4.3 (ii) — Mode 4 try different callsign
