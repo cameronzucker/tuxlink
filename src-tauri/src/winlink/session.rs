@@ -61,7 +61,7 @@ pub struct ReceiveOutcome {
 }
 
 /// What the caller must supply to run a full exchange.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ExchangeConfig {
     /// Our call sign.
     pub mycall: String,
@@ -79,6 +79,24 @@ pub struct ExchangeConfig {
     /// `B2Protocol.cs:860-900`). Defaults to [`SessionIntent::Cms`] —
     /// every existing caller predates §2.13 and behaves as a CMS dial.
     pub intent: SessionIntent,
+}
+
+/// Manual `Debug` impl for `ExchangeConfig`.
+///
+/// Redacts `password` per spec §5.3 / alpha-logging tuxlink-qjgx: the
+/// password field must never appear in `tracing::debug!(?config, ...)` output.
+/// All other fields render with their normal `Debug` output so consumers that
+/// grep on debug strings keep working.
+impl std::fmt::Debug for ExchangeConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ExchangeConfig")
+            .field("mycall", &self.mycall)
+            .field("targetcall", &self.targetcall)
+            .field("locator", &self.locator)
+            .field("password", &self.password.as_ref().map(|_| "<redacted>"))
+            .field("intent", &self.intent)
+            .finish()
+    }
 }
 
 /// Which message pool a B2F session belongs to.
@@ -570,6 +588,31 @@ mod tests {
     // ============================================================================
     // SessionIntent + RoutingFlag (tuxlink-kld3 — RMS-Relay client foundation)
     // ============================================================================
+
+    // ============================================================================
+    // ExchangeConfig::Debug redaction (alpha-logging §5.3 / tuxlink-qjgx Task 2)
+    // ============================================================================
+
+    #[test]
+    fn exchange_config_debug_redacts_password() {
+        let cfg = ExchangeConfig {
+            mycall: "K0ABC".into(),
+            targetcall: "K6XXX-10".into(),
+            locator: "CN87".into(),
+            password: Some("hunter2hunter2".into()),
+            intent: SessionIntent::Cms,
+        };
+        let dbg = format!("{cfg:?}");
+        assert!(
+            !dbg.contains("hunter2hunter2"),
+            "Debug must not contain the real password; got: {dbg}"
+        );
+        assert!(
+            dbg.contains("<redacted>") || dbg.contains("Some(\"<redacted>\")"),
+            "Debug must show redacted marker; got: {dbg}"
+        );
+        assert!(dbg.contains("K0ABC"), "Debug should still show callsign; got: {dbg}");
+    }
 
     #[test]
     fn session_intent_default_is_cms() {
