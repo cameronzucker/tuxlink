@@ -16,7 +16,7 @@ pub mod cms_health;
 
 use std::io::{BufRead, Write};
 
-use cms_health::CMS_HEALTH;
+use cms_health::{CmsAttemptOutcome, CMS_HEALTH};
 
 use super::message::{self, Message};
 use super::proposal::{self, Answer, Proposal};
@@ -308,7 +308,10 @@ where
                     );
                     Some(secure::secure_login_response(challenge, password))
                 }
-                (Some(_), None) => return Err(ExchangeError::PasswordRequired),
+                (Some(_), None) => {
+                    CMS_HEALTH.record_failure(CmsAttemptOutcome::Other("password_required".into()));
+                    return Err(ExchangeError::PasswordRequired);
+                }
                 (None, _) => None,
             };
             let our_handshake = handshake::build_handshake(
@@ -367,6 +370,7 @@ where
                 turns,
                 "exchange exceeded turn cap",
             );
+            CMS_HEALTH.record_failure(CmsAttemptOutcome::Other("too_many_turns".into()));
             return Err(ExchangeError::TooManyTurns);
         }
         if my_turn {
