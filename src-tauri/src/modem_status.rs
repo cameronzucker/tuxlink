@@ -366,6 +366,26 @@ struct ModemSessionInner {
     /// Codex Round 1 P1 #5). See [`TransportOwner`] for the state
     /// machine; transitions are guarded by the enclosing std-mutex.
     transport_owner: TransportOwner,
+    /// Operator-typed intent for the currently-open session, if any
+    /// (tuxlink-0ye6 Task 3.5 — ARDOP analog of VARA's
+    /// `VaraSessionInner::active_intent`). Set by
+    /// [`ardop_open_session_inner`](crate::modem_commands::ardop_open_session_inner)
+    /// after the spawn + init succeeds; cleared by
+    /// [`ModemSession::reset_to_stopped`] /
+    /// [`ModemSession::clear_active_session_mode`].
+    ///
+    /// Exposed read-only via [`ModemSession::active_intent`] (which today
+    /// is a Task 3.0 stub returning `None`; Task 3.5 wires it to this
+    /// field). Pairs with [`Self::active_transport_kind`] for the
+    /// frontend's sidebar-navigation drift guard (spec §2.5).
+    active_intent: Option<SessionIntent>,
+    /// Transport-kind of the currently-open session, if any. Same
+    /// lifecycle as [`Self::active_intent`]. For ARDOP this is always
+    /// `Some(TransportKind::Ardop)` after a successful open; the field
+    /// exists for shape parity with VARA (which discriminates `VaraHf`
+    /// vs `VaraFm`) so the frontend's sidebar-nav drift guard reads a
+    /// uniform `(intent, transport_kind)` pair across modems.
+    active_transport_kind: Option<TransportKind>,
 }
 
 // Manual `Debug` impl: `Box<dyn ModemTransport>` does not implement `Debug`,
@@ -391,6 +411,8 @@ impl std::fmt::Debug for ModemSessionInner {
                 &self.abort_stream.as_ref().map(|_| "Some(<dyn ShutdownableStream>)"),
             )
             .field("transport_owner", &self.transport_owner)
+            .field("active_intent", &self.active_intent)
+            .field("active_transport_kind", &self.active_transport_kind)
             .finish()
     }
 }
@@ -410,6 +432,8 @@ impl ModemSession {
                 abort_writer: None,
                 abort_stream: None,
                 transport_owner: TransportOwner::None,
+                active_intent: None,
+                active_transport_kind: None,
             }),
             connect_in_progress: AtomicBool::new(false),
             transport_yield_request: Arc::new(Notify::new()),
@@ -529,7 +553,47 @@ impl ModemSession {
         inner.abort_writer = None;
         inner.abort_stream = None;
         inner.transport_owner = TransportOwner::None;
+        // tuxlink-0ye6 Task 3.5: clear active session mode on full reset so
+        // a follow-up open starts with a clean slate. Mirrors VARA's
+        // `vara_stop_session_inner` clearing the same two fields.
+        inner.active_intent = None;
+        inner.active_transport_kind = None;
         inner.transport.take()
+    }
+
+    /// Record the operator-typed `intent` + `transport_kind` on the session
+    /// (tuxlink-0ye6 Task 3.5). Called by
+    /// [`crate::modem_commands::ardop_open_session_inner`] after the
+    /// spawn + init succeeds. After this returns,
+    /// [`Self::active_intent`] / [`Self::active_transport_kind`] report
+    /// the recorded values instead of the Task 3.0 stub `None`.
+    ///
+    /// Returns the prior `(intent, transport_kind)` pair if one was set —
+    /// callers can use this to detect a stale "open over an already-open
+    /// session" path (today the outer open helper rejects that case
+    /// before reaching this setter, so the return is informational only).
+    pub fn set_active_session_mode(
+        &self,
+        intent: SessionIntent,
+        transport_kind: TransportKind,
+    ) -> Option<(SessionIntent, TransportKind)> {
+        let mut inner = self.inner.lock().unwrap();
+        let prior = inner.active_intent.zip(inner.active_transport_kind);
+        inner.active_intent = Some(intent);
+        inner.active_transport_kind = Some(transport_kind);
+        prior
+    }
+
+    /// Clear the recorded session mode (tuxlink-0ye6 Task 3.5). Called by
+    /// [`crate::modem_commands::ardop_close_session_inner`] before the
+    /// transport teardown so a partial-close path still leaves the
+    /// session-mode fields consistent. The full
+    /// [`Self::reset_to_stopped`] also clears these, so a clean
+    /// open → close cycle resets via either path.
+    pub fn clear_active_session_mode(&self) {
+        let mut inner = self.inner.lock().unwrap();
+        inner.active_intent = None;
+        inner.active_transport_kind = None;
     }
 
     // ── Arbiter (tuxlink-0ye6 Task 4.3, Codex Round 1 P1 #5) ────────────
@@ -571,20 +635,25 @@ impl ModemSession {
         None
     }
 
-    /// Intent of the currently-open session. STUB: returns `None`.
-    // TODO: wire to listener state once Phase 3 commands land
-    // (tuxlink-0ye6 Task 3.2 — `ardop_open_session(intent)` captures
-    // the operator-selected intent into session state).
+    /// Intent of the currently-open session, or `None` if no session is
+    /// open. Wired to [`ModemSessionInner::active_intent`] by tuxlink-0ye6
+    /// Task 3.5 — `ardop_open_session(intent, transport_kind)` captures
+    /// the operator-typed intent via [`Self::set_active_session_mode`];
+    /// [`Self::clear_active_session_mode`] / [`Self::reset_to_stopped`]
+    /// clear it on close.
+    ///
+    /// Returns `None` if the session mutex is poisoned (defensive — same
+    /// posture as [`Self::transport_owner`]).
     pub fn active_intent(&self) -> Option<SessionIntent> {
-        None
+        self.inner.lock().ok().and_then(|g| g.active_intent)
     }
 
-    /// Transport-kind of the currently-open session. STUB: returns `None`.
-    // TODO: wire to listener state once Phase 3 commands land
-    // (tuxlink-0ye6 Task 3.2 — `ardop_open_session` captures the
-    // transport-kind into session state; pairs with active_intent).
+    /// Transport-kind of the currently-open session, or `None` if no
+    /// session is open. Same lifecycle + poisoning semantics as
+    /// [`Self::active_intent`]; for ARDOP this is always
+    /// `Some(TransportKind::Ardop)` after a successful open.
     pub fn active_transport_kind(&self) -> Option<TransportKind> {
-        None
+        self.inner.lock().ok().and_then(|g| g.active_transport_kind)
     }
 
     /// Test-only helper: drive the owner state directly. Used by unit
@@ -1703,17 +1772,97 @@ mod tests {
 
     #[test]
     fn modem_session_stub_accessors_return_defaults() {
-        // The stub accessors return defaults today; the test pins those
-        // defaults so the wire-in task (Phase 3.2 / 3.4 / 3.5) explicitly
-        // changes the contract rather than silently shifting it.
+        // `listener_armed` + `current_exchange` are still stubs (Phase 3.4 /
+        // 3.5 outbound wires them later). `active_intent` /
+        // `active_transport_kind` were wired by Task 3.5 — a fresh session
+        // with no open returns `None` for both, which matches the previous
+        // stub contract by coincidence. This test asserts the
+        // "no-session-open" baseline; the post-open behavior is covered by
+        // the Task 3.5 tests in `modem_commands.rs`.
         let session = ModemSession::new();
         assert!(!session.listener_armed(), "stub returns false");
         assert!(session.current_exchange().is_none(), "stub returns None");
-        assert!(session.active_intent().is_none(), "stub returns None");
+        assert!(
+            session.active_intent().is_none(),
+            "no-open baseline returns None"
+        );
         assert!(
             session.active_transport_kind().is_none(),
-            "stub returns None"
+            "no-open baseline returns None"
         );
+    }
+
+    // ── tuxlink-0ye6 Task 3.5: ModemSession active-session-mode wiring ──
+    //
+    // The stub accessors are now wired through `ModemSessionInner`. These
+    // tests cover the storage layer directly (set / clear / round-trip);
+    // the open/close commands that use them ship in `modem_commands.rs`.
+
+    #[test]
+    fn modem_session_set_active_session_mode_round_trips_via_accessors() {
+        let session = ModemSession::new();
+        assert!(session.active_intent().is_none());
+        assert!(session.active_transport_kind().is_none());
+
+        let prior = session.set_active_session_mode(SessionIntent::P2p, TransportKind::Ardop);
+        assert!(prior.is_none(), "no prior recorded on a fresh session");
+
+        assert_eq!(session.active_intent(), Some(SessionIntent::P2p));
+        assert_eq!(
+            session.active_transport_kind(),
+            Some(TransportKind::Ardop)
+        );
+    }
+
+    #[test]
+    fn modem_session_clear_active_session_mode_resets_accessors() {
+        let session = ModemSession::new();
+        session.set_active_session_mode(SessionIntent::Cms, TransportKind::Ardop);
+        assert_eq!(session.active_intent(), Some(SessionIntent::Cms));
+
+        session.clear_active_session_mode();
+
+        assert!(session.active_intent().is_none());
+        assert!(session.active_transport_kind().is_none());
+    }
+
+    #[test]
+    fn modem_session_reset_to_stopped_also_clears_active_session_mode() {
+        // The destructive reset path (e.g. disconnect-on-error) must clear
+        // the session mode along with the transport — a stale
+        // (intent, transport_kind) on a closed session would lie to the
+        // frontend's sidebar-nav guard.
+        let session = ModemSession::new();
+        session.set_active_session_mode(SessionIntent::RadioOnly, TransportKind::Ardop);
+        assert_eq!(
+            session.active_intent(),
+            Some(SessionIntent::RadioOnly)
+        );
+
+        let _ = session.reset_to_stopped();
+
+        assert!(
+            session.active_intent().is_none(),
+            "reset_to_stopped must clear active_intent"
+        );
+        assert!(
+            session.active_transport_kind().is_none(),
+            "reset_to_stopped must clear active_transport_kind"
+        );
+    }
+
+    #[test]
+    fn modem_session_status_snapshot_reflects_active_session_mode() {
+        // status_snapshot() overlays the active-session-mode fields the same
+        // way it overlays transport_owner — so a snapshot taken after
+        // set_active_session_mode reports the recorded values without
+        // requiring a full tick cycle.
+        let session = ModemSession::new();
+        session.set_active_session_mode(SessionIntent::P2p, TransportKind::Ardop);
+
+        let snap = session.status_snapshot();
+        assert_eq!(snap.active_intent, Some(SessionIntent::P2p));
+        assert_eq!(snap.active_transport_kind, Some(TransportKind::Ardop));
     }
 
     #[test]

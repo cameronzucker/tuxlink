@@ -348,6 +348,14 @@ pub fn run() {
             crate::modem_commands::modem_ardop_disconnect, // tuxlink-4ek Task 3.2 (clear consent + reset)
             crate::modem_commands::modem_ardop_connect, // tuxlink-4ek Task 3.3 (RADIO-1-gated spawn + ARQ connect)
             crate::modem_commands::modem_ardop_b2f_exchange, // tuxlink-ytg (B2F over ARDOP — Winlink mail flows)
+            // tuxlink-0ye6 Task 3.5: ARDOP session lifecycle commands —
+            // ardop_open_session spawns ardopcf + records (intent, transport_kind)
+            // + auto-arms the listener iff intent calls for it; ardop_close_session
+            // disarms + aborts + clears active mode + tears down the transport.
+            // modem_ardop_connect / modem_ardop_disconnect stay registered for the
+            // Connect button's path until Task 3.6 widens b2f_exchange.
+            crate::modem_commands::ardop_open_session,
+            crate::modem_commands::ardop_close_session,
             // tuxlink-dfmf Phase 2: VARA UI wiring. Minimal TCP-transport lifecycle —
             // open/close/status — plus persisted config + the Pi-availability gating
             // probe. RF connect-to-peer (RADIO-1-gated) lives in a Phase 3 follow-up.

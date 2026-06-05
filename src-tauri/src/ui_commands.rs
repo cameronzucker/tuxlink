@@ -2283,6 +2283,32 @@ pub async fn ardop_listen(
     session: State<'_, std::sync::Arc<crate::modem_status::ModemSession>>,
     listen_state: State<'_, std::sync::Arc<ArdopListenState>>,
 ) -> Result<(), UiError> {
+    // Thin wrapper. The body lives in `ardop_listen_inner` so the
+    // tuxlink-0ye6 Task 3.5 `ardop_open_session` auto-arm path can call
+    // it without going through the Tauri dispatcher (which would require
+    // re-extracting the same managed-state Arcs the outer caller already
+    // has). Mirror of the VARA Task 3.2 `arm_vara_listener_inner` pattern.
+    ardop_listen_inner(
+        &app,
+        log.inner(),
+        session.inner(),
+        listen_state.inner(),
+    )
+    .await
+}
+
+/// Inner body of [`ardop_listen`] — factored out so the
+/// `ardop_open_session` auto-arm path (tuxlink-0ye6 Task 3.5) can call
+/// it directly without re-dispatching through Tauri. Borrowed args (no
+/// `State`-typed params) because the open-session path already holds the
+/// same managed-state Arcs via its own `State` extractors. Mirror of the
+/// VARA `arm_vara_listener_inner` pattern (Task 3.2).
+pub(crate) async fn ardop_listen_inner(
+    app: &AppHandle,
+    log: &std::sync::Arc<SessionLogState>,
+    session: &std::sync::Arc<crate::modem_status::ModemSession>,
+    listen_state: &std::sync::Arc<ArdopListenState>,
+) -> Result<(), UiError> {
     use crate::winlink::listener::{ListenerArmsRecord, TransportKind, DEFAULT_TTL};
 
     // Refuse a second arm while one is in flight.
@@ -2414,8 +2440,8 @@ pub async fn ardop_listen(
 
     let mins = arms.ttl.as_secs() / 60;
     emit_session_line(
-        &app,
-        &log,
+        app,
+        log,
         LogLevel::Info,
         format!(
             "ARDOP listener armed for {mins} min (consent uuid {}). \
@@ -2437,9 +2463,32 @@ pub async fn ardop_set_listen(
     listen_state: State<'_, std::sync::Arc<ArdopListenState>>,
     enabled: bool,
 ) -> Result<(), UiError> {
+    ardop_set_listen_inner(
+        &app,
+        log.inner(),
+        session.inner(),
+        listen_state.inner(),
+        enabled,
+    )
+    .await
+}
+
+/// Inner body of [`ardop_set_listen`] — factored out so the tuxlink-0ye6
+/// Task 3.5 `ardop_close_session` path can disarm the listener without
+/// re-dispatching through Tauri. Mirror of the VARA Task 3.3
+/// `disarm_vara_listener_inner` pattern, but kept as a full set-listen
+/// (arm OR disarm) helper to preserve the `enabled == true` re-arm path
+/// the existing `ardop_set_listen` exposed.
+pub(crate) async fn ardop_set_listen_inner(
+    app: &AppHandle,
+    log: &std::sync::Arc<SessionLogState>,
+    session: &std::sync::Arc<crate::modem_status::ModemSession>,
+    listen_state: &std::sync::Arc<ArdopListenState>,
+    enabled: bool,
+) -> Result<(), UiError> {
     use std::sync::atomic::Ordering;
     if enabled {
-        return ardop_listen(app, log, session, listen_state).await;
+        return ardop_listen_inner(app, log, session, listen_state).await;
     }
     let handle = {
         let mut guard = listen_state.inner.lock().unwrap();
@@ -2458,15 +2507,15 @@ pub async fn ardop_set_listen(
         let _ = session.abort_in_flight();
         let _ = session.send_listen_command(false);
         emit_session_line(
-            &app,
-            &log,
+            app,
+            log,
             LogLevel::Info,
             "ARDOP listener disarming — ABORT + LISTEN FALSE sent; waiting for consumer to drain.".to_string(),
         );
     } else {
         emit_session_line(
-            &app,
-            &log,
+            app,
+            log,
             LogLevel::Warn,
             "ARDOP listener disarm: no armed listener".to_string(),
         );
@@ -2479,6 +2528,18 @@ pub async fn ardop_set_listen(
 #[derive(Default)]
 pub struct ArdopListenState {
     pub inner: std::sync::Mutex<Option<ArdopListenHandle>>,
+}
+
+impl ArdopListenState {
+    /// True iff a listener handle is currently registered (the consumer task
+    /// has been spawned and not yet drained). Mirror of
+    /// [`VaraListenState::is_armed`] — added for tuxlink-0ye6 Task 3.5 so
+    /// `ardop_open_session` can detect the auto-armed state in its
+    /// post-open snapshot and `ardop_close_session` can early-skip the
+    /// disarm side-channel when no listener is armed.
+    pub fn is_armed(&self) -> bool {
+        self.inner.lock().map(|g| g.is_some()).unwrap_or(false)
+    }
 }
 
 pub struct ArdopListenHandle {
