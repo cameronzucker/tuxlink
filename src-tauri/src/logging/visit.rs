@@ -51,7 +51,13 @@ fn cap_string(s: &str) -> String {
     if s.len() <= STRING_FIELD_CAP_BYTES {
         s.to_string()
     } else {
-        format!("{}…[truncated {} bytes]", &s[..STRING_FIELD_CAP_BYTES], s.len() - STRING_FIELD_CAP_BYTES)
+        // Use char-count truncation rather than a byte-index slice to avoid
+        // a panic when byte 4096 falls inside a multi-byte UTF-8 sequence
+        // (Codex impl-adrev P2 #5). A long Unicode form value, probe value,
+        // or protocol error message would otherwise crash the subscriber.
+        let truncated: String = s.chars().take(STRING_FIELD_CAP_BYTES).collect();
+        let truncated_bytes = s.len() - truncated.len();
+        format!("{truncated}…[truncated {truncated_bytes} bytes]")
     }
 }
 
@@ -124,6 +130,7 @@ impl Visit for RedactingVisitor {
 
 #[cfg(test)]
 mod tests {
+    use super::STRING_FIELD_CAP_BYTES;
     use crate::logging::event::LoggedEvent;
     use crate::logging::fanout::FanoutLayer;
     use crate::session_log::SessionLogState;
@@ -198,5 +205,41 @@ mod tests {
     fn benign_field_passes_through() {
         let ev = capture_one(|| tracing::info!(callsign = "K0ABC", "dial"));
         assert_eq!(ev.fields.get("callsign"), Some(&serde_json::json!("K0ABC")));
+    }
+
+    /// Regression test: a traced string >4096 bytes where the cap falls inside
+    /// a multi-byte UTF-8 sequence must NOT panic inside the subscriber.
+    ///
+    /// Codex impl-adrev P2 #5: the original `&s[..STRING_FIELD_CAP_BYTES]` byte-
+    /// index slice panics when byte 4096 is not a char boundary. "é" is 2 bytes
+    /// in UTF-8 (U+00E9, encoded as 0xC3 0xA9); 5000 repetitions = 10 000 bytes;
+    /// the 4096-byte boundary falls inside the second byte of some "é", causing
+    /// the slice to panic. The fix uses char-count truncation, which is always
+    /// safe regardless of multi-byte sequences.
+    #[test]
+    fn cap_string_does_not_panic_on_multibyte_utf8_at_boundary() {
+        // "é" is 2 bytes; 5000 repetitions = 10 000 bytes — well past 4096.
+        // The byte boundary at 4096 falls inside a 2-byte sequence for many
+        // offsets, which would panic with the old byte-index slice.
+        let long_unicode: String = "é".repeat(5000);
+        assert!(long_unicode.len() > STRING_FIELD_CAP_BYTES, "pre-condition");
+
+        // This must not panic.
+        let ev = capture_one(|| tracing::info!(field_value = %long_unicode, "unicode test"));
+
+        // The captured value must be truncated, not the full string.
+        let value = ev.fields.get("field_value")
+            .expect("field_value must be present")
+            .as_str()
+            .expect("field_value must be a string");
+        assert!(
+            value.contains("…[truncated"),
+            "long string must be truncated; got len={}", value.len()
+        );
+        // The truncated prefix must be valid UTF-8 (no broken sequences).
+        assert!(
+            std::str::from_utf8(value.as_bytes()).is_ok(),
+            "truncated string must be valid UTF-8"
+        );
     }
 }
