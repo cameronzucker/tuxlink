@@ -4,6 +4,18 @@ All notable changes to Tuxlink are documented here.
 
 This project adheres to [Semantic Versioning](https://semver.org) with project-specific rules described in [VERSIONING.md](VERSIONING.md). Entries from `v0.0.2` onward are generated automatically by [`release-please`](https://github.com/googleapis/release-please) from [Conventional Commits](https://www.conventionalcommits.org).
 
+## Unreleased
+
+### Added
+- Alpha-logging infrastructure: structured `tracing`-based diagnostic logging,
+  exported as a single `.tar.zst` archive via `Help → Logging → Export logs…`
+  or auto-attached via `Help → Report Issue`. Six environment probes (keyring,
+  audio, serial, modem-process, network, display) capture system state at
+  startup and on errors. Detailed-mode toggle (Off / On / Bounded for N hours)
+  controls per-target verbosity. Retention configurable from 1 day / 50 MB up
+  to 365 days / 10 GB. Logs live at `$XDG_STATE_HOME/tuxlink/logs/`.
+  Spec: `docs/superpowers/specs/2026-06-04-alpha-logging-design.md`.
+
 ## [0.32.1](https://github.com/cameronzucker/tuxlink/compare/v0.32.0...v0.32.1) (2026-06-04)
 
 
