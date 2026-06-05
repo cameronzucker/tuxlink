@@ -1,0 +1,25 @@
+[package]
+name = "xtask"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "gen-corpus"
+path = "src/bin/gen-corpus.rs"
+
+[[bin]]
+name = "train-log-dict"
+path = "src/bin/train-log-dict.rs"
+
+[dependencies]
+zstd = { version = "0.13", features = ["zdict_builder"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+chrono = { version = "0.4", features = ["clock"] }
+clap = { version = "4", features = ["derive"] }
+walkdir = "2"
+anyhow = "1"
