@@ -126,9 +126,16 @@ pub struct VecEventSink {
 }
 
 #[cfg(test)]
+impl Default for VecEventSink {
+    fn default() -> Self {
+        Self { inner: std::sync::Mutex::new(Vec::new()) }
+    }
+}
+
+#[cfg(test)]
 impl VecEventSink {
     pub fn new() -> Self {
-        Self { inner: std::sync::Mutex::new(Vec::new()) }
+        Self::default()
     }
     pub fn snapshot(&self) -> Vec<B2fEvent> {
         self.inner.lock().unwrap().clone()

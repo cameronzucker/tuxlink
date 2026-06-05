@@ -6,15 +6,19 @@
 //! source of truth for that scrubbing.
 
 use std::borrow::Cow;
-use std::sync::LazyLock;
 
+use once_cell::sync::Lazy;
 use regex::Regex;
 
 // Case-insensitive `; PR :` or `; PQ :` with optional whitespace around the
 // colon. Captures the full matched token so replace_all can reconstruct the
 // marker and substitute <redacted> for the value. Works at any position in
 // the string — embedded, prefix-anchored, or in free-form error messages.
-static CRED_TOKEN_RE: LazyLock<Regex> = LazyLock::new(|| {
+//
+// once_cell::sync::Lazy is used (not std::sync::LazyLock) to preserve the
+// `rust-version = "1.75"` MSRV declared in Cargo.toml — LazyLock is stable
+// since 1.80, and the clippy::incompatible_msrv lint is wired in CI.
+static CRED_TOKEN_RE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"(?i);\s*p[qr]\s*:\s*\S+").expect("static regex compiles")
 });
 

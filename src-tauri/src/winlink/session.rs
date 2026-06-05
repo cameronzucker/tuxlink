@@ -340,7 +340,11 @@ where
 /// proposal reading, no outbound message sending. The `_outbound`, `_decide`,
 /// and `_wire_log` parameters are present for signature consistency with
 /// [`run_exchange_with_role`]; they are unused in this auth-only path.
-#[allow(unused_variables)]
+// Auth-only path mirrors run_exchange_with_role's signature shape for
+// consistency, which puts it 1 over the clippy::too_many_arguments default
+// threshold of 7. Restructuring would diverge the two from each other
+// without making either clearer; allowing the lint locally is the right call.
+#[allow(unused_variables, clippy::too_many_arguments)]
 pub fn run_exchange_with_events<R, W, F>(
     reader: &mut R,
     writer: &mut W,
