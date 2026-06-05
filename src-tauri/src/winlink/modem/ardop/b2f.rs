@@ -186,7 +186,7 @@ mod tests {
             &mut self,
             _target: &str,
             _repeat: u32,
-            _deadline: Duration,
+            _deadline: Option<Duration>,
         ) -> Result<ConnectInfo, SessionError> {
             Ok(ConnectInfo {
                 peer_call: "W7RMS-10".into(),
@@ -213,7 +213,7 @@ mod tests {
             &mut self,
             _target: &str,
             _repeat: u32,
-            _deadline: Duration,
+            _deadline: Option<Duration>,
         ) -> Result<ConnectInfo, SessionError> {
             Err(SessionError::Io(std::io::Error::new(
                 std::io::ErrorKind::NotConnected,

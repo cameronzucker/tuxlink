@@ -1138,7 +1138,7 @@ mod tests {
             &mut self,
             _: &str,
             _: u32,
-            _: std::time::Duration,
+            _: Option<std::time::Duration>,
         ) -> Result<crate::winlink::modem::ConnectInfo, crate::winlink::modem::SessionError>
         {
             unimplemented!("stub")
@@ -1351,7 +1351,7 @@ mod tests {
             &mut self,
             _: &str,
             _: u32,
-            _: std::time::Duration,
+            _: Option<std::time::Duration>,
         ) -> Result<
             crate::winlink::modem::ConnectInfo,
             crate::winlink::modem::SessionError,

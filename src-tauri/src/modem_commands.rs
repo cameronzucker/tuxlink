@@ -18,29 +18,6 @@ use crate::winlink::modem::ardop::ArdopConfig;
 use crate::winlink::modem::{InitConfig, ModemTransport};
 use crate::winlink::session::SessionIntent;
 
-/// Worst-case `connect_arq` wall-clock budget (bounded-airtime cap) for the
-/// legacy `modem_ardop_connect` path. Retained for that path only.
-///
-/// 2026-05-22 incident: a ~110s runaway connect (no working abort) forced an
-/// operator radio power-off. The cap prevents the same pattern here — if
-/// `connect_arq` does not return CONNECTED / FAULT / DISC within the deadline,
-/// the call errors out and the session is reset.
-const CONNECT_DEADLINE: Duration = Duration::from_secs(120);
-
-/// Effective "no tuxlink wall-clock cap" deadline used by the new Phase-3
-/// lifecycle (`modem_ardop_b2f_exchange`'s widened body — Task 3.6). Per
-/// operator decision bd tuxlink-qtgg, the dial path no longer applies a
-/// tuxlink-layer wall-clock bound on `connect_arq`; the bound is ardopcf's
-/// own `ARQTIMEOUT` setter + the operator's ABORT side channel.
-///
-/// **Codex R2 P1 #2 — why not `Duration::MAX`:** `mpsc::Receiver::recv_timeout`
-/// internally calls `Instant::checked_add(now, deadline)` which returns `None`
-/// (and the call errors out / panics in older std) when the deadline overflows.
-/// Pick a value large enough to be effectively-unbounded across any realistic
-/// ARQCALL retry sequence (1 day comfortably exceeds any ardopcf scenario)
-/// but well within `Instant`'s addable range.
-const CONNECT_DEADLINE_EFFECTIVE_INFINITY: Duration = Duration::from_secs(60 * 60 * 24);
-
 /// Number of ARQ retries packed into the `ARQCALL` setter.
 const CONNECT_REPEAT: u32 = 3;
 
@@ -254,8 +231,9 @@ where
     // `session.abort_in_flight()` → which writes `ABORT\r` to ardopcf via
     // this writer. The recv loop then surfaces FAULT/NEWSTATE DISC and
     // returns Err, unwinding the connect path. Without this hook the
-    // 120s `CONNECT_DEADLINE` was the only abort path — see the
-    // 2026-05-22 runaway-connect incident (memory radio1-bounded-airtime-abort).
+    // legacy 120s connect cap (inlined below) was the only abort path —
+    // see the 2026-05-22 runaway-connect incident (memory
+    // radio1-bounded-airtime-abort).
     //
     // If the backend can't expose a writer (default trait impl returns
     // None), the install is silently skipped: graceful disconnect remains
@@ -267,13 +245,19 @@ where
         session.install_abort_writer(writer, stream);
     }
 
-    // Status: Connecting (bounded by CONNECT_DEADLINE below).
+    // Status: Connecting (bounded by the inlined legacy 120s cap below).
     let mut snap = session.status_snapshot();
     snap.state = ModemState::Connecting;
     session.set_status(snap);
 
     // ─── ARQ connect (bounded airtime) ───────────────────────────────────
-    let info = match transport.connect_arq(target, CONNECT_REPEAT, CONNECT_DEADLINE) {
+    // Legacy Start-button path: inline the historical 120s wall-clock cap.
+    // The new b2f_exchange path (modem_ardop_b2f_exchange) passes `None`
+    // (no tuxlink-layer wall-clock cap; bound is ardopcf's ARQTIMEOUT +
+    // operator ABORT). This command is slated for deletion in Phase 6
+    // when the panel migrates fully to `ardop_open_session` +
+    // `modem_ardop_b2f_exchange`.
+    let info = match transport.connect_arq(target, CONNECT_REPEAT, Some(Duration::from_secs(120))) {
         Ok(info) => info,
         Err(e) => {
             let msg = format!("ARQ connect failed: {e}");
@@ -907,11 +891,12 @@ pub fn modem_ardop_connect(
 /// # Flow (Codex R1 P1 #1 ordering + Codex R2 P1 #2/#3 cleanup semantics)
 ///
 /// 1. **Take the installed transport** out of `ModemSession`.
-/// 2. **`connect_arq`** with [`CONNECT_DEADLINE_EFFECTIVE_INFINITY`]
-///    (Codex R2 P1 #2 — no tuxlink wall-clock cap; ardopcf's own
-///    `ARQTIMEOUT` + operator ABORT bound the call). Sends ARQCALL on the
-///    cmd port BEFORE any B2F byte (Codex R1 P1 #1: ARQCALL ordering is
-///    load-bearing — B2F over an unconnected stream is undefined).
+/// 2. **`connect_arq`** with `deadline: None` (Codex R2 P1 #2 + operator
+///    decision bd tuxlink-qtgg — no tuxlink wall-clock cap; ardopcf's own
+///    `ARQTIMEOUT` × `CONNECT_REPEAT` + operator ABORT bound the call).
+///    Sends ARQCALL on the cmd port BEFORE any B2F byte (Codex R1 P1 #1:
+///    ARQCALL ordering is load-bearing — B2F over an unconnected stream
+///    is undefined).
 /// 3. **Run the B2F exchange** via
 ///    [`crate::winlink_backend::run_ardop_b2f_exchange`] — builds outbound
 ///    from the mailbox Outbox, files received messages into Inbox, moves
@@ -1029,12 +1014,13 @@ pub fn modem_ardop_b2f_exchange(
 /// longer true after Task 3.5's split of ardopcf-spawn from ARQ-connect.
 ///
 /// **Deadline (Codex R2 P1 #2 + operator decision tuxlink-qtgg):**
-/// `connect_arq` is called with [`CONNECT_DEADLINE_EFFECTIVE_INFINITY`]
-/// rather than [`CONNECT_DEADLINE`]. No tuxlink-layer wall-clock cap on
-/// the ARQCALL; the bound is ardopcf's `ARQTIMEOUT` setter (sent at init
-/// time, default 30 s) + the operator's ABORT side channel
-/// (`ModemSession::abort_in_flight`). `Duration::MAX` would overflow
-/// `mpsc::Receiver::recv_timeout`'s internal `Instant::checked_add`.
+/// `connect_arq` is called with `None` — no tuxlink-layer wall-clock cap
+/// on the ARQCALL. The bound is ardopcf's `ARQTIMEOUT` setter (sent at
+/// init time, default 30 s) × `CONNECT_REPEAT` retries + the operator's
+/// ABORT side channel (`ModemSession::abort_in_flight`). The `None`
+/// branch routes through `recv_event_blocking` rather than feeding
+/// `Duration::MAX` into `mpsc::Receiver::recv_timeout`, which would
+/// overflow the internal `Instant::checked_add`.
 ///
 /// Factored out so the Tauri command can run cleanup uniformly. Returns
 /// the error as a `String` so it surfaces to the frontend without exposing
@@ -1048,7 +1034,7 @@ fn run_ardop_connect_b2f_with_transport(
 ) -> Result<(), String> {
     // ─── ARQ connect FIRST (Codex R1 P1 #1: ARQCALL before any B2F byte) ──
     transport
-        .connect_arq(target, CONNECT_REPEAT, CONNECT_DEADLINE_EFFECTIVE_INFINITY)
+        .connect_arq(target, CONNECT_REPEAT, None)
         .map_err(|e| format!("ARDOP ARQ connect to {target} failed: {e}"))?;
 
     // ─── Run the B2F exchange over the now-connected data stream ─────────
@@ -1248,7 +1234,7 @@ mod tests {
             &mut self,
             _target: &str,
             _repeat: u32,
-            _deadline: Duration,
+            _deadline: Option<Duration>,
         ) -> Result<ConnectInfo, SessionError> {
             Ok(ConnectInfo {
                 peer_call: self.peer_call.to_string(),
@@ -1539,18 +1525,21 @@ mod tests {
             &mut self,
             _target: &str,
             _repeat: u32,
-            deadline: Duration,
+            deadline: Option<Duration>,
         ) -> Result<crate::winlink::modem::ConnectInfo, ArdopSessionError> {
-            // Spin (bounded by deadline) until abort_signal flips. In
-            // production this loop is the real `arq_connect` recv loop;
-            // here the signal stands in for "ardopcf emitted FAULT/DISC in
-            // response to ABORT and the cmd reader thread delivered it."
+            // Spin (bounded by deadline if Some, unbounded if None) until
+            // abort_signal flips. In production this loop is the real
+            // `arq_connect` recv loop; here the signal stands in for
+            // "ardopcf emitted FAULT/DISC in response to ABORT and the
+            // cmd reader thread delivered it."
             let start = std::time::Instant::now();
             while !self.abort_signal.load(Ordering::Acquire) {
-                if start.elapsed() >= deadline {
-                    return Err(ArdopSessionError::Timeout {
-                        cmd: "ARQCALL".into(),
-                    });
+                if let Some(d) = deadline {
+                    if start.elapsed() >= d {
+                        return Err(ArdopSessionError::Timeout {
+                            cmd: "ARQCALL".into(),
+                        });
+                    }
                 }
                 std::thread::sleep(Duration::from_millis(10));
             }
@@ -2442,7 +2431,7 @@ mod tests {
     #[derive(Clone, Debug, PartialEq, Eq)]
     enum RecordedCall {
         Init,
-        ConnectArq { target: String, repeat: u32, deadline: Duration },
+        ConnectArq { target: String, repeat: u32, deadline: Option<Duration> },
         Disconnect { deadline: Duration },
         DataWrite,
     }
@@ -2515,7 +2504,7 @@ mod tests {
             &mut self,
             target: &str,
             repeat: u32,
-            deadline: Duration,
+            deadline: Option<Duration>,
         ) -> Result<ConnectInfo, SessionError> {
             self.log.lock().unwrap().push(RecordedCall::ConnectArq {
                 target: target.to_string(),
@@ -2562,8 +2551,10 @@ mod tests {
         transport: &mut dyn ModemTransport,
         target: &str,
     ) -> Result<(), String> {
+        // Mirror the production helper's no-deadline argument so the
+        // recorded log captures the same `None` value.
         transport
-            .connect_arq(target, CONNECT_REPEAT, CONNECT_DEADLINE_EFFECTIVE_INFINITY)
+            .connect_arq(target, CONNECT_REPEAT, None)
             .map_err(|e| format!("connect_arq failed: {e}"))?;
         // Once connected, the B2F state machine begins writing on the data
         // stream. Mirror that with a single probe byte so the call-order log
@@ -2598,35 +2589,50 @@ mod tests {
                 "Codex R1 P1 #1: connect_arq (idx {arq_idx}) must precede first DataWrite (idx {write_idx}); log: {log:?}"
             );
         }
-        // Belt-and-suspenders: confirm the connect_arq used the no-cap deadline.
+        // Belt-and-suspenders: confirm the connect_arq used the no-cap
+        // deadline (operator decision bd tuxlink-qtgg: `None` rather than
+        // the prior placeholder constant).
         let RecordedCall::ConnectArq { target, repeat, deadline } = &log[arq_idx] else {
             unreachable!()
         };
         assert_eq!(target, "W7RMS-10");
         assert_eq!(*repeat, CONNECT_REPEAT);
         assert_eq!(
-            *deadline, CONNECT_DEADLINE_EFFECTIVE_INFINITY,
-            "Codex R2 P1 #2: deadline must be the effective-infinity constant, not CONNECT_DEADLINE"
+            *deadline, None,
+            "Codex R2 P1 #2 + operator decision bd tuxlink-qtgg: deadline \
+             must be None (no tuxlink wall-clock cap), not any Duration"
         );
     }
 
-    /// **Codex R2 P1 #2**: the deadline passed to `connect_arq` must NOT be
-    /// `Duration::MAX` (which overflows `mpsc::Receiver::recv_timeout`'s
-    /// internal `Instant::checked_add`). The constant
-    /// [`CONNECT_DEADLINE_EFFECTIVE_INFINITY`] is the agreed value.
+    /// **Codex R2 P1 #2 + operator decision bd tuxlink-qtgg**: the deadline
+    /// passed to `connect_arq` for the new b2f_exchange path must be
+    /// `None` — no tuxlink wall-clock cap at all. The prior placeholder
+    /// constant (a 1-day cap) was a Task 3.6 workaround; the canonical
+    /// fix is widening the trait to `Option<Duration>` and passing `None`
+    /// here. The `None` branch routes through `recv_event_blocking`
+    /// rather than feeding `Duration::MAX` into `recv_timeout`
+    /// (which would overflow `Instant::checked_add`).
     #[test]
-    fn b2f_exchange_inner_uses_effective_infinity_not_duration_max() {
-        // Two-way assertion: the constant exists with a sane value, AND it
-        // is NOT Duration::MAX. If a refactor reintroduces Duration::MAX,
-        // either assertion catches it.
-        assert!(
-            CONNECT_DEADLINE_EFFECTIVE_INFINITY < Duration::MAX,
-            "Codex R2 P1 #2: deadline must not be Duration::MAX (overflow)"
-        );
-        assert!(
-            CONNECT_DEADLINE_EFFECTIVE_INFINITY >= Duration::from_secs(3600),
-            "deadline must be 'effective infinity' for the dial path — at \
-             least an hour exceeds any realistic ARQCALL"
+    fn b2f_exchange_inner_uses_none_deadline_for_no_cap_path() {
+        // The load-bearing assertion is already in
+        // `b2f_exchange_inner_calls_connect_arq_before_any_data_write` —
+        // the recorded `deadline` field is `None`. This test exists as a
+        // sentinel for the operator-decision rationale so a future
+        // refactor that reintroduces a wall-clock cap (e.g. via a new
+        // tuxlink-side constant) is caught by name.
+        let mut transport = RecordingTransport::new();
+        let _ = drive_connect_then_b2f_probe(&mut transport, "K7TEST");
+        let log = transport.call_log();
+        let arq = log
+            .iter()
+            .find_map(|c| match c {
+                RecordedCall::ConnectArq { deadline, .. } => Some(*deadline),
+                _ => None,
+            })
+            .expect("drive must have recorded a ConnectArq");
+        assert_eq!(
+            arq, None,
+            "the b2f_exchange dial path must pass deadline=None to connect_arq"
         );
     }
 
@@ -2662,7 +2668,7 @@ mod tests {
         let connect_res = transport.connect_arq(
             "W7RMS-10",
             CONNECT_REPEAT,
-            CONNECT_DEADLINE_EFFECTIVE_INFINITY,
+            None,
         );
         assert!(
             connect_res.is_err(),
@@ -2711,6 +2717,40 @@ mod tests {
             !allowed,
             "the b2f_exchange transport_kind validation must reject \
              non-ARDOP kinds (VaraHf was passed in this test)"
+        );
+    }
+
+    // ── Task 1.5 — drop the legacy connect-cap symbol (operator decision bd tuxlink-qtgg) ──
+
+    /// Sentinel: `modem_commands.rs` must not (re)define a wall-clock
+    /// connect-cap constant or any tcp-wedge-guard substitute. Operator
+    /// decision bd tuxlink-qtgg + Codex Round 1 P1 #3 + Codex Round 2
+    /// P1 #2: no tuxlink-added wall-clock cap on the new
+    /// `b2f_exchange` ARQCALL path; the bound on keyed airtime is
+    /// ardopcf's `ARQTIMEOUT` × `CONNECT_REPEAT` plus the operator's
+    /// ABORT side channel.
+    ///
+    /// The sentinel strings are assembled via `concat!` so this test
+    /// file's own bytes don't match — without the split, `include_str!`
+    /// would always observe the literal strings the assertions search for.
+    /// For the same reason this docstring uses lowercase / hyphenated
+    /// phrasing rather than the literal token names.
+    #[test]
+    fn modem_commands_source_does_not_define_connect_deadline_symbol() {
+        let source = include_str!("modem_commands.rs");
+        let sentinel = concat!("CONNECT", "_DEADLINE");
+        let wedge_sentinel = concat!("CONNECT", "_TCP_WEDGE_GUARD");
+        assert!(
+            !source.contains(sentinel),
+            "modem_commands.rs still references {sentinel} — \
+             operator decision bd tuxlink-qtgg mandates removal of any \
+             tuxlink-layer wall-clock cap symbol on connect_arq"
+        );
+        assert!(
+            !source.contains(wedge_sentinel),
+            "modem_commands.rs introduces a {wedge_sentinel} substitute — \
+             Codex Round 1 P1 #3 + operator decision bd tuxlink-qtgg \
+             reject any tuxlink-added wall-clock cap"
         );
     }
 }

@@ -1235,9 +1235,10 @@ pub fn parse_vara_b2f_intent(s: &str) -> Result<SessionIntent, String> {
     }
 }
 
-/// Worst-case `CONNECT` wall-clock budget for the dial path
-/// (tuxlink-0ye6 Task 3.4). Bounded-airtime cap mirroring
-/// `modem_commands::CONNECT_DEADLINE` (120 s).
+/// Worst-case `CONNECT` wall-clock budget for the VARA dial path
+/// (tuxlink-0ye6 Task 3.4). 120 s cap — matches the legacy 120 s connect
+/// cap that `modem_ardop_connect` (Start-button, slated for Phase 6
+/// deletion) inlines.
 ///
 /// 2026-05-22 incident: a ~110s runaway connect (no working abort) forced an
 /// operator radio power-off. The cap prevents the same pattern here — if the

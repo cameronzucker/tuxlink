@@ -51,13 +51,27 @@ pub trait ModemTransport: Send {
     /// Must be called before [`connect_arq`] or [`data_stream`].
     fn init(&mut self, cfg: &InitConfig) -> Result<(), SessionError>;
 
-    /// Initiate an ARQ connection to `target` with `repeat` retries, bounded
-    /// by `deadline`.
+    /// Initiate an ARQ connection to `target` with `repeat` retries.
+    ///
+    /// `deadline` is `Option<Duration>`:
+    /// - `Some(d)` — bound the entire ARQCALL handshake by wall-clock `d`;
+    ///   if no CONNECTED / FAULT / DISCONNECTED arrives in time, return
+    ///   `Err(SessionError::Timeout)`. Used by the legacy
+    ///   `modem_ardop_connect` (Start-button) path to preserve its
+    ///   historical 120s cap.
+    /// - `None` — block until the modem emits CONNECTED / FAULT /
+    ///   DISCONNECTED (per operator decision bd tuxlink-qtgg + Codex
+    ///   Round 1 P1 #3: no tuxlink-added wall-clock cap on the new
+    ///   `b2f_exchange` dial path; the bound is the modem's own retry
+    ///   logic plus the operator's ABORT side channel). Implementations
+    ///   MUST NOT fake `None` via `Duration::MAX` — Codex Round 2 P1 #2
+    ///   flagged that `Duration::MAX` overflows
+    ///   `mpsc::Receiver::recv_timeout`'s internal `Instant::checked_add`.
     fn connect_arq(
         &mut self,
         target: &str,
         repeat: u32,
-        deadline: Duration,
+        deadline: Option<Duration>,
     ) -> Result<ConnectInfo, SessionError>;
 
     /// Tear down the ARQ link, bounded by `deadline`.
