@@ -86,6 +86,30 @@ impl SessionLogState {
             .unwrap_or_default()
     }
 
+    /// Allocate a fresh monotonic seq WITHOUT appending. The Fanout Layer
+    /// uses this to stamp a single seq onto every LoggedEvent before fanning
+    /// out to UI and disk consumers (so UI + disk events share the same seq;
+    /// spec §2.5).
+    ///
+    /// Returns 0 on a poisoned lock (no-op).
+    pub fn allocate_seq(&self) -> u64 {
+        let Ok(mut g) = self.inner.write() else { return 0; };
+        let seq = g.next_seq;
+        g.next_seq += 1;
+        seq
+    }
+
+    /// Append a line that already has its seq assigned (by `allocate_seq`).
+    /// Used by the Fanout Layer's UI consumer task — the seq comes from the
+    /// LoggedEvent, not from a fresh allocation.
+    pub fn append_with_seq(&self, line: LogLine) {
+        let Ok(mut g) = self.inner.write() else { return; };
+        if g.buf.len() == self.cap {
+            g.buf.pop_front();
+        }
+        g.buf.push_back(line);
+    }
+
     /// Drop every retained line. The `next_seq` counter is preserved so
     /// post-clear lines continue to get strictly-increasing identifiers
     /// (frontend snapshot-then-tail dedup still works; a panel that mounted
