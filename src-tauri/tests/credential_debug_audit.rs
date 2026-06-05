@@ -23,6 +23,10 @@ fn exchange_config_debug_does_not_leak_password() {
         !dbg.contains(SENTINEL_PASSWORD),
         "ExchangeConfig Debug leaked the sentinel password: {dbg}"
     );
+    assert!(
+        dbg.contains("<redacted>") || dbg.contains("Some(\"<redacted>\")"),
+        "ExchangeConfig Debug must show redacted marker; got: {dbg}"
+    );
 }
 
 #[test]
