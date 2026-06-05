@@ -100,7 +100,15 @@ describe('<CheckInForm> — plan-spec tests', () => {
 
   it('clicking a saved slot applies its payload to the form', async () => {
     render(<CheckInForm onSubmit={vi.fn()} onCancel={vi.fn()} />);
-    fireEvent.change(await screen.findByRole('combobox'), {
+    // Wait for the slot OPTION to appear before triggering the change event.
+    // `findByRole('combobox')` resolves immediately because <select> renders
+    // synchronously, but its <option> children come from async setSlots()
+    // after listSlots resolves. On slower CI hardware (amd64 GHA runner) the
+    // change event would fire before the option existed → applySlot found
+    // no matching slot → no-op → assertion failed. Wait for the option text
+    // to appear so we know setSlots has fired and React has re-rendered.
+    await screen.findByText(/Monday Night Net/);
+    fireEvent.change(screen.getByRole('combobox'), {
       target: { value: 'slot-monday-night-net' },
     });
     expect((screen.getByLabelText(/group/i) as HTMLInputElement).value).toBe('ARES Net');
