@@ -5,3 +5,4 @@ pub mod ics309;
 pub mod position;
 pub mod bulletin;
 pub mod damage_assessment;
+pub mod checkin;

@@ -2,6 +2,7 @@
 //! and the full-parity revision in docs/superpowers/specs/2026-05-31-html-forms-full-parity-design.md.
 
 pub mod catalog;
+pub mod draft_library; // tuxlink-hnkn P2 Task 4 — save/reuse named slots
 pub mod http_server;
 pub mod multipart;
 pub mod parse;
@@ -14,5 +15,5 @@ pub mod wle_templates;
 
 // Re-exports for ergonomic access.
 pub use parse::{detect_form_attachment, parse_form_xml};
-pub use serialize::{render_body_template, serialize_form_xml};
+pub use serialize::{render_body_template, serialize_catalog_form_xml, serialize_form_xml};
 pub use types::{FieldKind, FormDef, FormField, FormParameters, FormPayload};

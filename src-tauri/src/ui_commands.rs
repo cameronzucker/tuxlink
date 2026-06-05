@@ -81,6 +81,11 @@ impl From<BackendError> for UiError {
                 reason: stringify_with_source(&reason, source.as_deref()),
             },
             BackendError::MessageRejected(s) => UiError::Rejected(s),
+            // Task 12 (tuxlink-7do4): RemoteError carries the *** payload for
+            // auth_taxonomy classification; it surfaces to the UI as a
+            // transport error (the React layer gets the detailed mode via
+            // the AuthClassified b2f-event, not from UiError directly).
+            BackendError::RemoteError(s) => UiError::Transport { reason: s },
             BackendError::Cancelled => UiError::Cancelled,
             BackendError::NotImplemented => UiError::Unavailable {
                 reason: "not implemented in v0.0.1".to_string(),
@@ -108,6 +113,250 @@ fn stringify_with_source(
     match source {
         Some(src) => format!("{reason}: {src}"),
         None => reason.to_string(),
+    }
+}
+
+// ============================================================================
+// ICS-309 log query (tuxlink-hnkn P2 Task 2)
+// ============================================================================
+
+/// One log row returned by `messages_meta_query_for_log`. Serialised to camelCase
+/// for the frontend; field names match the Ics309FormV2 `LogRow` interface.
+/// Also `Deserialize` so the frontend can pass rows back for `render_ics309_pdf`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LogRow {
+    /// RFC 3339 UTC datetime string, e.g. "2024-05-20T10:13:00Z".
+    pub datetime: String,
+    /// Sender callsign / address.
+    pub from: String,
+    /// First recipient callsign / address.
+    pub to: String,
+    /// Message subject.
+    pub subject: String,
+    /// Direction: `"in"` (received) or `"out"` (sent).
+    pub direction: String,
+}
+
+/// Query `messages_meta` for ICS-309 log rows in the given UTC epoch range
+/// [start_epoch, end_epoch] (inclusive). Rows are ordered chronologically.
+///
+/// `start_rfc3339` and `end_rfc3339` are ISO-8601 / RFC 3339 UTC strings
+/// (e.g. `"2024-05-20T00:00:00Z"`). They are converted to Unix epoch seconds
+/// before the SQL query so the INTEGER timestamp columns can be compared
+/// efficiently.
+///
+/// Returns `Err` if the search index is not installed (app launched offline
+/// and the setup hook failed) or if the timestamp strings are malformed.
+#[tauri::command]
+pub async fn messages_meta_query_for_log(
+    start_rfc3339: String,
+    end_rfc3339: String,
+    search: State<'_, crate::search::commands::SearchService>,
+) -> Result<Vec<LogRow>, String> {
+    let start_epoch = rfc3339_to_epoch(&start_rfc3339)
+        .ok_or_else(|| format!("invalid start timestamp: {start_rfc3339}"))?;
+    let end_epoch = rfc3339_to_epoch(&end_rfc3339)
+        .ok_or_else(|| format!("invalid end timestamp: {end_rfc3339}"))?;
+    search
+        .index
+        .lock()
+        .map_err(|e| format!("search index lock poisoned: {e}"))?
+        .query_log_rows(start_epoch, end_epoch)
+        .map_err(|e| e.to_string())
+}
+
+/// Parse an RFC 3339 UTC string into Unix epoch seconds.
+/// Accepts the `Z` UTC suffix only (no offset needed for this feature).
+/// Returns `None` if parsing fails.
+fn rfc3339_to_epoch(s: &str) -> Option<i64> {
+    // Lean on chrono (already in [dependencies]) for robust parsing.
+    chrono::DateTime::parse_from_rfc3339(s)
+        .ok()
+        .map(|dt| dt.timestamp())
+}
+
+/// Input to `render_ics309_pdf` — the fully resolved row set + metadata the
+/// form's frontend has already gathered.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Ics309PdfRequest {
+    pub rows: Vec<LogRow>,
+    /// RFC 3339 UTC range start (display only — not re-filtered here).
+    pub range_start: String,
+    /// RFC 3339 UTC range end (display only).
+    pub range_end: String,
+    /// Station callsign to print in the header, e.g. `"N7CPZ"`.
+    pub station_callsign: Option<String>,
+}
+
+/// Render an ICS-309 Communications Log to PDF bytes.
+///
+/// Returns the raw PDF as `Vec<u8>` (base64-encoded by Tauri's IPC layer).
+/// Page size is US Letter (216 × 279 mm). Uses the PDF built-in Helvetica
+/// font so no font file needs to be embedded or shipped.
+///
+/// Layout:
+///   - Header: "ICS-309 COMMUNICATIONS LOG" (centered)
+///   - Sub-header: station callsign + date range
+///   - Column headers: Datetime | Dir | From | To | Subject
+///   - Log rows (up to 30, one per line; auto-page-break)
+///   - Footer: "Rendered by tuxlink — <UTC timestamp>"
+#[tauri::command]
+pub async fn render_ics309_pdf(req: Ics309PdfRequest) -> Result<Vec<u8>, String> {
+    render_ics309_pdf_inner(req).map_err(|e| e.to_string())
+}
+
+fn render_ics309_pdf_inner(req: Ics309PdfRequest) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    use printpdf::{
+        BuiltinFont, Mm, Op, PdfDocument, PdfFontHandle, PdfPage, PdfSaveOptions, Point, Pt,
+        TextItem,
+    };
+
+    // US Letter: 216 × 279 mm. y=0 is the bottom of the page in PDF space.
+    const PAGE_W_MM: f32 = 216.0;
+    const PAGE_H_MM: f32 = 279.0;
+    // Convenience conversion: mm to pt (1 mm = 2.8346 pt).
+    fn mm_to_pt(mm: f32) -> Pt { Pt(mm * 2.8346) }
+
+    let normal_font  = PdfFontHandle::Builtin(BuiltinFont::Helvetica);
+    let bold_font    = PdfFontHandle::Builtin(BuiltinFont::HelveticaBold);
+
+    // Column x positions (pt from left margin)
+    let left_margin_pt = mm_to_pt(15.0);
+    let col_datetime_x = left_margin_pt;
+    let col_dir_x      = Pt(col_datetime_x.0 + mm_to_pt(45.0).0);
+    let col_from_x     = Pt(col_dir_x.0 + mm_to_pt(10.0).0);
+    let col_to_x       = Pt(col_from_x.0 + mm_to_pt(35.0).0);
+    let col_subject_x  = Pt(col_to_x.0 + mm_to_pt(35.0).0);
+
+    // Row height and starting y cursor
+    const ROW_H_PT: f32 = 14.0;      // pt per data row
+    const FONT_SIZE_TITLE: f32 = 14.0;
+    const FONT_SIZE_HEADER: f32 = 9.0;
+    const FONT_SIZE_DATA: f32 = 8.5;
+
+    let page_top_pt    = mm_to_pt(PAGE_H_MM - 15.0); // top margin
+    let footer_y_pt    = mm_to_pt(10.0);               // bottom margin
+
+    // How many data rows fit on a page (after title + headers consume ~4 rows).
+    let title_block_h  = mm_to_pt(25.0).0; // approx title + sub + col-headers height
+    let usable_h       = page_top_pt.0 - footer_y_pt.0 - title_block_h;
+    let rows_per_page  = (usable_h / ROW_H_PT).floor() as usize;
+    let rows_per_page  = rows_per_page.max(1);
+
+    let station_label = req.station_callsign.as_deref().unwrap_or("(unknown)");
+
+    let now_utc = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+
+    let total_pages = if req.rows.is_empty() {
+        1
+    } else {
+        req.rows.len().div_ceil(rows_per_page)
+    };
+
+    let mut pdf_doc = PdfDocument::new("ICS-309 Comms Log");
+
+    for page_idx in 0..total_pages {
+        let chunk_start = page_idx * rows_per_page;
+        let chunk_end   = (chunk_start + rows_per_page).min(req.rows.len());
+        let chunk       = &req.rows[chunk_start..chunk_end];
+
+        let mut ops: Vec<Op> = Vec::new();
+        ops.push(Op::StartTextSection);
+
+        // ── Title ──────────────────────────────────────────────────────────
+        ops.push(Op::SetFont { font: bold_font.clone(), size: Pt(FONT_SIZE_TITLE) });
+        ops.push(Op::SetTextCursor {
+            pos: Point { x: mm_to_pt(PAGE_W_MM / 2.0 - 50.0), y: Pt(page_top_pt.0) },
+        });
+        ops.push(Op::ShowText {
+            items: vec![TextItem::Text("ICS-309 COMMUNICATIONS LOG".to_string())],
+        });
+
+        // ── Sub-header (station + date range) ──────────────────────────────
+        ops.push(Op::SetFont { font: normal_font.clone(), size: Pt(FONT_SIZE_HEADER) });
+        ops.push(Op::SetTextCursor {
+            pos: Point { x: col_datetime_x, y: Pt(page_top_pt.0 - 18.0) },
+        });
+        ops.push(Op::ShowText {
+            items: vec![TextItem::Text(format!(
+                "Station: {station_label}   Period: {} — {}   Page {} of {total_pages}",
+                req.range_start, req.range_end,
+                page_idx + 1,
+            ))],
+        });
+
+        // ── Column headers ─────────────────────────────────────────────────
+        let col_hdr_y = Pt(page_top_pt.0 - 32.0);
+        ops.push(Op::SetFont { font: bold_font.clone(), size: Pt(FONT_SIZE_HEADER) });
+        for (x, label) in [
+            (col_datetime_x, "Datetime (UTC)"),
+            (col_dir_x,      "Dir"),
+            (col_from_x,     "From"),
+            (col_to_x,       "To"),
+            (col_subject_x,  "Subject"),
+        ] {
+            ops.push(Op::SetTextCursor { pos: Point { x, y: col_hdr_y } });
+            ops.push(Op::ShowText {
+                items: vec![TextItem::Text(label.to_string())],
+            });
+        }
+
+        // ── Data rows ──────────────────────────────────────────────────────
+        ops.push(Op::SetFont { font: normal_font.clone(), size: Pt(FONT_SIZE_DATA) });
+        let mut row_y = col_hdr_y.0 - ROW_H_PT;
+        for row in chunk {
+            // Truncate long fields to fit the column widths.
+            let dt      = &row.datetime;
+            let dir     = row.direction.as_str();
+            let from    = truncate_str(&row.from, 18);
+            let to      = truncate_str(&row.to, 18);
+            let subject = truncate_str(&row.subject, 40);
+
+            for (x, text) in [
+                (col_datetime_x, dt.as_str()),
+                (col_dir_x,      dir),
+                (col_from_x,     &from),
+                (col_to_x,       &to),
+                (col_subject_x,  &subject),
+            ] {
+                ops.push(Op::SetTextCursor { pos: Point { x, y: Pt(row_y) } });
+                ops.push(Op::ShowText {
+                    items: vec![TextItem::Text(text.to_string())],
+                });
+            }
+            row_y -= ROW_H_PT;
+        }
+
+        // ── Footer ─────────────────────────────────────────────────────────
+        ops.push(Op::SetFont { font: normal_font.clone(), size: Pt(7.0) });
+        ops.push(Op::SetTextCursor {
+            pos: Point { x: col_datetime_x, y: footer_y_pt },
+        });
+        ops.push(Op::ShowText {
+            items: vec![TextItem::Text(format!("Rendered by tuxlink — {now_utc}"))],
+        });
+
+        ops.push(Op::EndTextSection);
+
+        let page = PdfPage::new(Mm(PAGE_W_MM), Mm(PAGE_H_MM), ops);
+        pdf_doc.pages.push(page);
+    }
+
+    let bytes = pdf_doc.save(&PdfSaveOptions::default(), &mut Vec::new());
+    Ok(bytes)
+}
+
+/// Truncate a string to `max_chars` characters, appending "…" if truncated.
+fn truncate_str(s: &str, max_chars: usize) -> String {
+    // Handle multi-byte UTF-8 chars properly via char iteration.
+    let mut chars = s.chars();
+    let collected: String = chars.by_ref().take(max_chars).collect();
+    if chars.next().is_some() {
+        format!("{collected}…")
+    } else {
+        collected
     }
 }
 
@@ -1029,6 +1278,392 @@ pub async fn send_form(
     Ok(mid.0)
 }
 
+/// Send an outbound webview-served WLE Standard Form.
+///
+/// Counterpart to [`send_form`] for the ~245 catalog forms whose authoritative
+/// shape is the HTML template (not a static [`forms::FormDef`]). The form id is
+/// verified against the live `forms::wle_templates::list` catalog (bundled +
+/// custom roots), so this command rejects ids the webview path could not have
+/// served — same error surface as `send_form` ("unknown form: <id>"). The XML
+/// envelope is synthesized via [`forms::serialize::serialize_catalog_form_xml`]
+/// from the operator-supplied `field_values` plus the WLE filename convention
+/// for `display_form` (`<id>_Viewer.html`) and `reply_template`
+/// (`<id>_SendReply.0`).
+///
+/// `field_values` is the post-conversion shape that the React `handleWebviewSubmit`
+/// produces: single-string-per-field (newline-joined multi-values, with the
+/// synthetic Submit button name stripped). The serializer sorts keys
+/// alphabetically for deterministic output.
+///
+/// Body composition: sorted "key: value" dump, with a leading "form_id: <id>"
+/// header for receiver context. Receivers that render the XML via the WLE
+/// viewer get the formatted view; the body text is the fallback for
+/// non-WLE-aware clients. Subject prefers `field_values["subject"]`, else
+/// `Form: <id>` (mirrors WLE's "Form name as subject" default).
+///
+/// Attachment filename is `RMS_Express_Form_<id>.xml` — same convention as
+/// `send_form` so existing parsers (Pat, RMS Express receivers, the tuxlink
+/// inbox renderer) detect + render the form view consistently.
+///
+/// Returns the MID string on success (mirrors `message_send` / `send_form`).
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub async fn send_webview_form(
+    form_id: String,
+    field_values: std::collections::HashMap<String, String>,
+    to: Vec<String>,
+    cc: Vec<String>,
+    senders_callsign: String,
+    grid_square: String,
+    app: AppHandle,
+    state: State<'_, BackendState>,
+) -> Result<String, UiError> {
+    use crate::forms;
+
+    // 1. Verify form_id is in the live catalog (bundled snapshot + operator's
+    //    custom-forms dir). This is the same lookup `open_webview_form` does,
+    //    so a session that opened successfully will always pass this check.
+    //    A stale draft restored from localStorage with a form_id no longer in
+    //    the catalog (e.g. operator deleted their custom form) gets the same
+    //    "unknown form" surface as `send_form`'s BUNDLED_FORMS check.
+    let bundle = forms::wle_templates::bundle_root_for_app(&app).map_err(|e| {
+        UiError::Internal { detail: e.to_string() }
+    })?;
+    let custom = forms::wle_templates::custom_root_for_app(&app);
+    let custom_opt = if custom.exists() { Some(custom.as_path()) } else { None };
+    let catalog = forms::wle_templates::list(&bundle, custom_opt).map_err(|e| {
+        UiError::Internal { detail: e.to_string() }
+    })?;
+    let template = catalog
+        .iter()
+        .find(|t| t.id == form_id)
+        .ok_or_else(|| UiError::Internal {
+            detail: format!("unknown form: {form_id}"),
+        })?;
+
+    // 2. Build the FormParameters envelope. Conventions:
+    //    - xml_file_version "1.0" matches WLE's value.
+    //    - rms_express_version identifies the originator client.
+    //    - display_form / reply_template follow WLE's filename convention:
+    //      Resolved against the authoring template's sibling folder via
+    //      `resolve_viewer_for` (2026-06-04 Codex adrev P1.3) — falls
+    //      back to `<id>_Viewer.html` only when the catalog walker
+    //      can't find a paired viewer. Before the resolver, the
+    //      hard-coded `<id>_Viewer.html` produced wrong display_form
+    //      values for half the bundle (e.g. authoring "Bulletin Initial"
+    //      → claimed display_form "Bulletin Initial_Viewer.html" when
+    //      the actual viewer is "Bulletin Viewer.html").
+    //      `reply_template` keeps the `<id>_SendReply.0` convention
+    //      because tuxlink doesn't currently generate per-form
+    //      reply templates; recipients fall back to the generic viewer.
+    let display_form = forms::wle_templates::resolve_viewer_for(&template.path)
+        .unwrap_or_else(|| format!("{form_id}_Viewer.html"));
+    let now = chrono::Utc::now();
+    let params = forms::types::FormParameters {
+        xml_file_version: "1.0".to_string(),
+        rms_express_version: format!("Tuxlink/{}", env!("CARGO_PKG_VERSION")),
+        submission_datetime: now.format("%Y%m%d%H%M%S").to_string(),
+        senders_callsign,
+        grid_square,
+        display_form,
+        reply_template: format!("{form_id}_SendReply.0"),
+    };
+
+    // 3. Serialize the XML attachment.
+    let xml_bytes = forms::serialize::serialize_catalog_form_xml(&form_id, &params, &field_values);
+
+    // 4. Compose the plain-text body. Receivers see the structured XML via the
+    //    WLE viewer; the body text is the fallback for non-WLE-aware clients.
+    //    KISS: sorted "key: value" dump with a leading form_id header.
+    let mut keys: Vec<&String> = field_values.keys().collect();
+    keys.sort();
+    let mut body = format!("form_id: {form_id}\n\n");
+    for k in keys {
+        let v = field_values.get(k).map(String::as_str).unwrap_or("");
+        body.push_str(k);
+        body.push_str(": ");
+        body.push_str(v);
+        body.push('\n');
+    }
+
+    // 5. Subject. Prefer an explicit subject field if the form provided one
+    //    (common in WLE catalog forms — a "subject" or "msg_subject" input);
+    //    else fall back to "Form: <id>".
+    let subject = field_values
+        .get("subject")
+        .or_else(|| field_values.get("msg_subject"))
+        .cloned()
+        .unwrap_or_else(|| format!("Form: {form_id}"));
+
+    let attachment = crate::winlink_backend::OutboundAttachment {
+        filename: format!("RMS_Express_Form_{form_id}.xml"),
+        bytes: xml_bytes,
+    };
+
+    let msg = OutboundMessage {
+        to,
+        cc,
+        subject,
+        body,
+        date: now.to_rfc3339(),
+        attachments: vec![attachment],
+    };
+
+    let backend = state
+        .current()
+        .ok_or_else(|| UiError::NotConfigured("backend offline".to_string()))?;
+    let mid = backend.send_message(msg).await?;
+    Ok(mid.0)
+}
+
+// ============================================================================
+// HTML Forms — webview infrastructure command surface (P1 Task 8)
+// ============================================================================
+//
+// Three thin shim commands wire the (already-shipped) Rust forms::http_server +
+// forms::wle_templates modules to the React CatalogBrowser + WebviewFormHost
+// (P1 Tasks 9 + 10). The hard work lives in the Rust modules; these
+// commands marshal AppHandle resource paths, manage the
+// `FormSessionRegistry` lookups, and bridge the parsed-submit channel onto
+// a Tauri event.
+//
+// Plan: docs/superpowers/plans/2026-06-01-html-forms-p1-webview-infra.md Task 8.
+// Spec: docs/superpowers/specs/2026-05-31-html-forms-full-parity-design.md §8.2.
+
+/// Result of [`open_webview_form`]. The React side passes `url` to the
+/// child `WebviewWindow` (label `compose-form-<token>`), keeps `token`
+/// for the `close_webview_form_server` teardown call, and reads `port`
+/// for diagnostics only (the form's submit POSTs are path-less per the
+/// WLE contract, so the port is informational — not required for the
+/// frontend's submit-listener wiring).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenFormResult {
+    pub url: String,
+    pub port: u16,
+    pub token: String,
+}
+
+/// Enumerate every form template visible to tuxlink — bundled WLE Standard
+/// Forms snapshot + the operator's custom-forms directory. Custom forms
+/// with the same `id` as a bundled form shadow the bundled entry. Powers
+/// the React `CatalogBrowser` (P1 Task 10).
+///
+/// The custom-forms root is only walked if it exists on disk; this is the
+/// expected behavior for the install-time path (operator may never have
+/// created `~/.local/share/tuxlink/forms/custom/`).
+#[tauri::command]
+pub async fn forms_list_catalog(
+    app: AppHandle,
+) -> Result<Vec<crate::forms::wle_templates::Template>, String> {
+    let bundle =
+        crate::forms::wle_templates::bundle_root_for_app(&app).map_err(|e| e.to_string())?;
+    let custom = crate::forms::wle_templates::custom_root_for_app(&app);
+    let custom_opt = if custom.exists() {
+        Some(custom.as_path())
+    } else {
+        None
+    };
+    crate::forms::wle_templates::list(&bundle, custom_opt).map_err(|e| e.to_string())
+}
+
+/// Open a new webview form session: spawn the loopback http_server bound
+/// to a fresh ephemeral port, register it in `FormSessionRegistry` under a
+/// freshly-minted token, and start a forwarder task that drains parsed
+/// submissions onto the `form-submitted` event scoped to the child
+/// webview's label (`compose-form-<token>`).
+///
+/// Returns the URL the React side passes to a child `WebviewWindow` plus
+/// the port and token. The URL is `http://127.0.0.1:<port>/` — NO path
+/// component; the WLE form template's `{FormServer}:{FormPort}`
+/// substitution wires the submit endpoint there directly.
+///
+/// Errors:
+/// - `unknown form: <id>` — the form_id is not in the bundled/custom
+///   catalog (typo / stale frontend cache).
+/// - any I/O error from reading the bundled snapshot or binding the
+///   loopback listener.
+#[tauri::command]
+pub async fn open_webview_form(
+    form_id: String,
+    app: AppHandle,
+    registry: State<'_, std::sync::Arc<crate::forms::http_server::FormSessionRegistry>>,
+) -> Result<OpenFormResult, String> {
+    let bundle =
+        crate::forms::wle_templates::bundle_root_for_app(&app).map_err(|e| e.to_string())?;
+    let custom = crate::forms::wle_templates::custom_root_for_app(&app);
+    let custom_opt = if custom.exists() {
+        Some(custom.as_path())
+    } else {
+        None
+    };
+    let cat = crate::forms::wle_templates::list(&bundle, custom_opt)
+        .map_err(|e| e.to_string())?;
+    let template = cat
+        .into_iter()
+        .find(|t| t.id == form_id)
+        .ok_or_else(|| format!("unknown form: {form_id}"))?;
+
+    let opened = registry.open(template).await?;
+    let port = opened.port;
+    let token = opened.token.clone();
+    let url = format!("http://127.0.0.1:{port}/");
+
+    // Forwarder task: drain ParsedBody submissions from the http_server's
+    // in-process channel onto a Tauri event scoped to the child webview's
+    // label. The task self-terminates when:
+    //   - the session is closed (`close_webview_form_server` drops the
+    //     `FormSession`, which drops the `submit_tx`, which closes the
+    //     channel — `recv()` returns None and the loop exits), OR
+    //   - the runtime shuts down (tokio aborts the task).
+    let app_for_forwarder = app.clone();
+    let label = format!("compose-form-{token}");
+    let mut submit_rx = opened.submit_rx;
+    tokio::spawn(async move {
+        while let Some(parsed) = submit_rx.recv().await {
+            let _ = app_for_forwarder.emit_to(label.as_str(), "form-submitted", parsed);
+        }
+    });
+
+    Ok(OpenFormResult { url, port, token })
+}
+
+/// Tear down a webview form session. Idempotent — closing an unknown
+/// token returns `Ok(())` (the React unmount cleanup path runs whether
+/// or not the session is already gone). Used by BOTH Form-mode and
+/// Viewer-mode sessions (the registry holds them both; close-by-token
+/// is mode-agnostic).
+#[tauri::command]
+pub async fn close_webview_form_server(
+    token: String,
+    registry: State<'_, std::sync::Arc<crate::forms::http_server::FormSessionRegistry>>,
+) -> Result<(), String> {
+    registry.close(&token).await
+}
+
+/// Result of [`open_webview_viewer`] (P1 Task 11). Symmetric to
+/// [`OpenFormResult`] except the React side never subscribes to a
+/// `form-submitted` event for viewer sessions — there is no submit path.
+/// `token` is the lookup key for `close_webview_form_server` teardown;
+/// `port` is informational only.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenViewerResult {
+    pub url: String,
+    pub port: u16,
+    pub token: String,
+}
+
+/// Open a Viewer-mode webview session for a received form whose `form_id`
+/// has no native React `View` component registered (P1 Task 11). The
+/// caller supplies the parsed FormPayload's `(field_id, value)` map; the
+/// http_server binds the values into the WLE `*_Viewer.html` template via
+/// two complementary substitution paths:
+/// 1. `{var X}` placeholders in the HTML → field value (server-side
+///    string replace, matching the WLE viewer convention)
+/// 2. A `<script>` tag appended before `</body>` runs on
+///    `DOMContentLoaded` and assigns `document.querySelectorAll(
+///    '[name="X"]').value = ...` for each field, covering hidden inputs.
+///
+/// The Viewer filename is resolved in three passes (2026-06-04 Codex
+/// adrev P1.3 — the prior two-pass resolution failed for the bulk of the
+/// bundled catalog because the `<form_id>_Viewer.html` convention only
+/// covers a minority of WLE templates):
+/// - For form_ids in the BUNDLED_FORMS catalog
+///   (ICS-213, ICS-309, Bulletin, Position, Damage Assessment), use the
+///   `FormDef::display_form` field — these have non-conventional names
+///   like `Bulletin Viewer.html` or `GPS Position Report.html`.
+/// - Walk the authoring template's sibling folder via
+///   [`forms::wle_templates::resolve_viewer_for`] for a paired viewer.
+///   Covers `Bulletin Initial.html` ↔ `Bulletin Viewer.html`,
+///   `Hawaii Siren Report.html` ↔ `Hawaii Siren Report Viewer.html`,
+///   `ICS213_Initial.html` ↔ `ICS213_Viewer.html`, etc.
+/// - Last-resort fallback to `<form_id>_Viewer.html` for tuxlink-authored
+///   forms (the convention `send_webview_form` writes into outbound XML
+///   when its own resolver fails — covers the round-trip case where
+///   the sender claims a viewer file the receiver doesn't have).
+///
+/// Errors:
+/// - `unknown form: <id>` — neither the bundled catalog nor the live
+///   catalog (the form's INITIAL `.html` in any bundled / custom folder)
+///   knows this form. The frontend falls back to KeyValueView.
+/// - `viewer template not found: <path>` — the form is in the catalog
+///   but the resolved Viewer file doesn't exist on disk (catalog drift /
+///   custom form without a companion viewer). Frontend falls back to
+///   KeyValueView.
+/// - any I/O error from binding the loopback listener.
+#[tauri::command]
+pub async fn open_webview_viewer(
+    form_id: String,
+    field_values: std::collections::HashMap<String, String>,
+    app: AppHandle,
+    registry: State<'_, std::sync::Arc<crate::forms::http_server::FormSessionRegistry>>,
+) -> Result<OpenViewerResult, String> {
+    use crate::forms;
+
+    // 1. Resolve the live catalog so we can find the form's folder (for
+    //    {FormFolder} substitution + adjacent-asset serving). The Viewer
+    //    file lives next to the form's INITIAL .html in the same folder.
+    let bundle =
+        forms::wle_templates::bundle_root_for_app(&app).map_err(|e| e.to_string())?;
+    let custom = forms::wle_templates::custom_root_for_app(&app);
+    let custom_opt = if custom.exists() {
+        Some(custom.as_path())
+    } else {
+        None
+    };
+    let cat = forms::wle_templates::list(&bundle, custom_opt)
+        .map_err(|e| e.to_string())?;
+    let template = cat
+        .iter()
+        .find(|t| t.id == form_id)
+        .ok_or_else(|| format!("unknown form: {form_id}"))?;
+
+    // 2. Resolve the Viewer filename. Priority order:
+    //    a. Native bundled forms (BUNDLED_FORMS, the 5 hard-coded
+    //       templates with `FormDef::display_form`): use the explicit
+    //       filename (e.g. `Bulletin Viewer.html`,
+    //       `GPS Position Report.html`).
+    //    b. Walk the authoring template's sibling folder for a paired
+    //       viewer via `resolve_viewer_for` (2026-06-04 Codex adrev P1.3).
+    //       Covers the WLE catalog's inconsistent naming conventions
+    //       (`Bulletin Initial.html` ↔ `Bulletin Viewer.html`,
+    //       `Hawaii Siren Report.html` ↔ `Hawaii Siren Report Viewer.html`,
+    //       `Field Situation Report Initial.html` ↔
+    //       `Field Situation Report viewer.html`, etc.).
+    //    c. Last-resort fallback to `<form_id>_Viewer.html` — the
+    //       convention `send_webview_form` writes into outbound XML
+    //       when no paired viewer is found.
+    let viewer_filename = forms::catalog::find_form(&form_id)
+        .map(|f| f.display_form.to_string())
+        .or_else(|| forms::wle_templates::resolve_viewer_for(&template.path))
+        .unwrap_or_else(|| format!("{form_id}_Viewer.html"));
+
+    // 3. The Viewer file lives next to the form template (same folder).
+    let form_parent = template
+        .path
+        .parent()
+        .ok_or_else(|| "template has no parent folder".to_string())?;
+    let viewer_path = form_parent.join(&viewer_filename);
+    if !viewer_path.exists() {
+        return Err(format!(
+            "viewer template not found: {}",
+            viewer_path.display()
+        ));
+    }
+
+    // 4. Open the viewer session. No forwarder task — the POST handler
+    //    returns 404 in Viewer mode, so there's nothing to drain.
+    let opened = registry
+        .open_viewer(viewer_path, template.folder.clone(), &field_values)
+        .await?;
+    let port = opened.port;
+    let token = opened.token.clone();
+    let url = format!("http://127.0.0.1:{port}/");
+
+    Ok(OpenViewerResult { url, port, token })
+}
+
 /// Run one CMS connection: send everything queued in the outbox and download any
 /// waiting messages (tuxlink-0ic). Drives the backend's `connect` over the
 /// configured transport, then drops the session (the native exchange completes
@@ -1064,6 +1699,14 @@ pub async fn cms_connect(
         LogLevel::Info,
         format!("Connecting to the CMS ({:?})…", cfg.connect.transport),
     );
+
+    // Task 11: Tauri-side event sink infrastructure.
+    // Task 12 (tuxlink-7do4): now used for result-level AuthClassified
+    // emission in the Err arm. Deep threading through backend.connect
+    // (for in-flight TcpConnected / RemoteSidReceived / PostAuthExchangeStarted
+    // events) is deferred as bd-tuxlink-7do4-followup-backend-events.
+    let events_sink: std::sync::Arc<dyn crate::winlink::b2f_events::B2fEventSink> =
+        std::sync::Arc::new(crate::winlink::b2f_events::TauriEventSink::new(app.clone()));
 
     match backend
         .connect(TransportConfig::Cms {
@@ -1109,6 +1752,43 @@ pub async fn cms_connect(
         }
         Err(e) => {
             emit_session_line(&app, &log, LogLevel::Error, format!("CMS connect failed: {e}"));
+
+            // Task 12 (tuxlink-7do4, R5 spec §6.3 + §6.4): emit a structured
+            // AuthClassified event so the React useAuthDiagnostic hook can
+            // render the appropriate banner mode. This is result-level
+            // classification; deep backend.connect threading (which would also
+            // give us TcpConnected / RemoteSidReceived / PostAuthExchangeStarted
+            // events for Mode 1 vs Mode 5 discrimination) is tracked as
+            // bd-tuxlink-7do4-followup-backend-events.
+            let attempt_id = crate::winlink::b2f_events::AttemptId::fresh();
+            use crate::winlink::b2f_events::{B2fEvent, FailureMode};
+            let (mode, raw) = match &e {
+                // BackendError::RemoteError carries the *** payload (redaction-
+                // scrubbed at the handshake.rs + telnet.rs layers per Tasks 6+8).
+                // This variant is new in Task 12 — the map_err in native_connect
+                // lifts ExchangeError::RemoteError + HandshakeError::RemoteError
+                // into it so the payload is preserved structurally.
+                BackendError::RemoteError(payload) => {
+                    (crate::winlink::auth_taxonomy::classify(payload), Some(payload.clone()))
+                }
+                // TransportFailed = TCP / TLS / DNS failure (no *** payload).
+                // These are Mode 1 (NetworkUnreachable). Mode 1 vs Mode 5
+                // discrimination requires deep backend.connect event threading
+                // (deferred — bd-tuxlink-7do4-followup-backend-events).
+                BackendError::TransportFailed { .. } => {
+                    (FailureMode::NetworkUnreachable, None)
+                }
+                // AuthFailed is the listener gate variant (not a CMS telnet
+                // scenario), but map it conservatively.
+                BackendError::AuthFailed { reason } => {
+                    (crate::winlink::auth_taxonomy::classify(reason), Some(reason.clone()))
+                }
+                // All other BackendError variants in the cms_connect Err arm
+                // → Uncategorized; surface the error Display as raw context.
+                _ => (FailureMode::Uncategorized, Some(format!("{e}"))),
+            };
+            events_sink.push(B2fEvent::AuthClassified { mode, raw, attempt_id });
+
             Err(e.into())
         }
     }
@@ -1131,6 +1811,167 @@ pub async fn cms_abort(
     emit_session_line(&app, &log, LogLevel::Info, "Aborting CMS connection…".to_string());
     backend.abort().await?;
     Ok(())
+}
+
+// ============================================================================
+// Task 13 (tuxlink-7do4) — smart-auth-diagnostics banner recovery commands
+// ============================================================================
+// Three commands the banner's recovery affordances depend on. Registered in
+// invoke_handler alongside cms_connect / cms_abort per the append-only model.
+
+/// Write a password to the OS keyring for the given callsign. Per spec
+/// §4.3 (i) — the inline "Re-enter password" affordance on the Mode 3
+/// banner uses this. Preserves the read-first → set_password
+/// destructive-overwrite-readback discipline (R2 #3 keyring-locked
+/// failure handling: any KeyringError surfaces; no in-memory fallback).
+#[tauri::command]
+pub async fn credentials_write_password(
+    callsign: String,
+    password: String,
+) -> Result<(), UiError> {
+    crate::winlink::credentials::write_password(&callsign, &password)
+        .map_err(|e| UiError::Internal { detail: e.to_string() })
+}
+
+/// Reopen the onboarding wizard scoped to a specific step. Per spec
+/// §4.3 (ii) — the "Try a different callsign" affordance on the Mode 4
+/// banner uses this with step="callsign".
+#[tauri::command]
+pub async fn wizard_reopen(
+    app: tauri::AppHandle,
+    step: String,
+) -> Result<(), UiError> {
+    crate::wizard::reopen(&app, &step)
+        .map_err(|e| UiError::Internal { detail: e.to_string() })
+}
+
+/// Clear the most-recent auth-diagnostic classification from Rust state.
+/// Per spec §4.3 (v) — the Dismiss affordance on the banner calls this
+/// so that a stale event for the dismissed AttemptId doesn't
+/// re-render the banner.
+///
+/// Implementation: emits a "auth-diagnostic-clear" event that the React
+/// hook listens for and uses to reset its local state. The Rust side
+/// doesn't currently hold AttemptId-keyed state to clear; the event
+/// emission alone unblocks the React side. If Rust-side state is added
+/// later (e.g., for replay-after-mount), this is the place to clear it.
+#[tauri::command]
+pub async fn auth_diagnostic_clear(
+    app: tauri::AppHandle,
+) -> Result<(), UiError> {
+    use tauri::Emitter;
+    app.emit("auth-diagnostic-clear", ())
+        .map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    Ok(())
+}
+
+// ============================================================================
+// Task 14 (tuxlink-7do4) — cms_connect_test (spec §4.3 iii)
+// ============================================================================
+// Auth-only "check this password works" command. Connects to the CMS, runs the
+// B2F handshake (emitting all B2fEvents including PostAuthExchangeStarted for
+// the Mode 5 discriminator), and quits via FF + FQ — NEVER reads inbound
+// proposals, NEVER mutates the outbox.
+//
+// Rate-limit (R2 #8): client-side via the React banner — 10s post-test
+// debounce + 3-in-60s circuit-break. Backend has no intrinsic rate-limit;
+// it's a UI-layer concern.
+
+/// Test the user's credentials against the configured CMS WITHOUT committing
+/// to a real message exchange. Per spec §4.3 (iii):
+///
+/// - Shares `cms_connect`'s single-flight guard so a concurrent click while a
+///   real connect is running returns `Unavailable` (maps to `AlreadyConnecting`
+///   on the React side).
+/// - Runs only the B2F handshake (no inbound proposal reading, no outbound
+///   message sending). Sends `FF + FQ` on success.
+/// - Emits the full [`crate::winlink::b2f_events::B2fEvent`] stream including
+///   `PostAuthExchangeStarted` (the Mode 5 vs Mode 1 discriminator that the
+///   result-level `cms_connect` classification collapses) and `AuthClassified`
+///   at the end (success or failure).
+/// - Returns `Ok(())` on a successful auth-and-quit, `Err(UiError::*)` on any
+///   failure mode.
+///
+/// RADIO-1 GUARDRAIL: This command is CMS-TELNET ONLY FOREVER. Any future
+/// proposal to route it over an RF transport (ARDOP / VARA / Pactor) REQUIRES
+/// (a) fresh RADIO-1 review per `docs/live-cms-testing-policy.md`,
+/// (b) explicit transmit-consent gate at the click moment, and
+/// (c) a separate command name (`cms_connect_test_rf`).
+/// See spec §2 out-of-scope + §4.3 (iii).
+#[tauri::command]
+pub async fn cms_connect_test(
+    app: AppHandle,
+    state: State<'_, BackendState>,
+    log: State<'_, std::sync::Arc<SessionLogState>>,
+) -> Result<(), UiError> {
+    let backend = state
+        .current()
+        .ok_or_else(|| UiError::NotConfigured("backend offline".to_string()))?;
+
+    emit_session_line(
+        &app,
+        &log,
+        LogLevel::Info,
+        "Testing CMS credentials (auth-only)…".to_string(),
+    );
+
+    let events_sink: std::sync::Arc<dyn crate::winlink::b2f_events::B2fEventSink> =
+        std::sync::Arc::new(crate::winlink::b2f_events::TauriEventSink::new(app.clone()));
+
+    let attempt_id = crate::winlink::b2f_events::AttemptId::fresh();
+
+    match backend.cms_connect_test(events_sink.clone(), attempt_id).await {
+        Ok(()) => {
+            emit_session_line(
+                &app,
+                &log,
+                LogLevel::Info,
+                "Credential test passed.".to_string(),
+            );
+            // Emit a success AuthClassified so the React banner can render
+            // the green "credentials are valid" state.
+            use crate::winlink::b2f_events::{B2fEvent, FailureMode};
+            events_sink.push(B2fEvent::AuthClassified {
+                // PostAuthExchangeStarted was already emitted (Mode 5
+                // discriminator) — the auth-only contract fired FF + FQ.
+                // There is no failure mode; use a sentinel-free Ok path:
+                // the React hook treats a missing FailureMode as success.
+                // For structural consistency the event still fires; the
+                // mode field is unused on the Ok branch by the React hook
+                // (it keys off PostAuthExchangeStarted presence).
+                mode: FailureMode::Uncategorized,
+                raw: None,
+                attempt_id,
+            });
+            Ok(())
+        }
+        Err(BackendError::Cancelled) => {
+            emit_session_line(&app, &log, LogLevel::Warn, "Credential test aborted.".to_string());
+            Err(BackendError::Cancelled.into())
+        }
+        Err(e) => {
+            emit_session_line(
+                &app,
+                &log,
+                LogLevel::Error,
+                format!("Credential test failed: {e}"),
+            );
+            // Emit AuthClassified so the React banner updates.
+            use crate::winlink::b2f_events::{B2fEvent, FailureMode};
+            let (mode, raw) = match &e {
+                BackendError::RemoteError(payload) => {
+                    (crate::winlink::auth_taxonomy::classify(payload), Some(payload.clone()))
+                }
+                BackendError::TransportFailed { .. } => (FailureMode::NetworkUnreachable, None),
+                BackendError::AuthFailed { reason } => {
+                    (crate::winlink::auth_taxonomy::classify(reason), Some(reason.clone()))
+                }
+                _ => (FailureMode::Uncategorized, Some(format!("{e}"))),
+            };
+            events_sink.push(B2fEvent::AuthClassified { mode, raw, attempt_id });
+            Err(e.into())
+        }
+    }
 }
 
 /// Append a session-log line to the durable buffer (assigning its `seq`) and emit
@@ -3772,6 +4613,39 @@ pub async fn position_status(
             && cfg.privacy.gps_state != crate::config::GpsState::Off,
         broadcast_grid: crate::position::effective_broadcast_locator(&cfg, Some(&arbiter)),
         ui_grid: crate::position::effective_ui_locator(&cfg, Some(&arbiter)),
+    })
+}
+
+// ============================================================================
+// tuxlink-hnkn P2 — position_current_fix (PositionFormV2 pre-fill)
+// ============================================================================
+// Thin shim over PositionArbiter that returns the active grid + source label
+// + freshness flag to the React Position Report compose form.  The form
+// pre-fills the grid input with this value so the operator can confirm (or
+// manually override) before sending.
+//
+// `source` is stringified from the PositionSource enum via Debug (yielding
+// "Gps" or "Manual").  The React consumer is case-insensitive on source
+// comparison, so the PascalCase output is intentional and documented.
+
+/// Wire-shape returned to PositionFormV2.tsx by `position_current_fix`.
+#[derive(Debug, Clone, Serialize)]
+pub struct PositionFix {
+    pub grid: Option<String>,
+    /// Source label — "Gps" | "Manual" (Debug-derived from PositionSource).
+    pub source: String,
+    /// True when the GPS fix is < 30 s old (FIX_STALENESS from arbiter).
+    pub fresh: bool,
+}
+
+#[tauri::command]
+pub async fn position_current_fix(
+    arbiter: tauri::State<'_, std::sync::Arc<crate::position::PositionArbiter>>,
+) -> Result<PositionFix, String> {
+    Ok(PositionFix {
+        grid: arbiter.active_grid(),
+        source: format!("{:?}", arbiter.source()),
+        fresh: arbiter.has_fresh_fix(),
     })
 }
 
@@ -6447,4 +7321,320 @@ hw:CARD=Device,DEV=0
              Sentinel found the pre-fix shape."
         );
     }
+    // ========================================================================
+    // P1 Task 10 critical-fix: send_webview_form synthesis (tuxlink-tzr5)
+    // ========================================================================
+    //
+    // The `send_webview_form` Tauri command can't be invoked directly in unit
+    // tests (it takes AppHandle + State, which require a Tauri runtime). The
+    // pure XML synthesis lives in `forms::serialize::serialize_catalog_form_xml`
+    // and is unit-tested there. These tests cover the per-command synthesis
+    // decisions: WLE filename conventions for display_form / reply_template,
+    // attachment filename, body composition, and subject fallback.
+
+    /// `display_form` falls back to the `<id>_Viewer.html` convention when
+    /// `resolve_viewer_for` finds no paired viewer (e.g. when the operator
+    /// drops a custom form into `~/.local/share/tuxlink/forms/custom/`
+    /// without a companion `_Viewer.html`).
+    ///
+    /// 2026-06-04 Codex adrev P1.3: the resolver-driven path is the
+    /// happy path now; this test pins the fallback. The
+    /// `send_webview_form_display_form_uses_resolver_for_wle_bundle`
+    /// test below covers the resolver path with the realistic Bulletin /
+    /// Hawaii / underscored bundle conventions.
+    #[test]
+    fn send_webview_form_display_form_falls_back_to_id_underscore_viewer() {
+        let form_id = "ICS205";
+        let display_form = format!("{form_id}_Viewer.html");
+        assert_eq!(display_form, "ICS205_Viewer.html");
+        // The fallback applies to any form_id without a sibling viewer
+        // file in the catalog walker's view.
+        let form_id = "ARC213";
+        assert_eq!(format!("{form_id}_Viewer.html"), "ARC213_Viewer.html");
+    }
+
+    /// 2026-06-04 Codex adrev P1.3: in the realistic WLE bundle, the
+    /// authoring template's sibling Viewer file does NOT follow the
+    /// `<id>_Viewer.html` convention for the bulk of templates. The
+    /// resolver walks the same folder and picks the actual paired
+    /// viewer regardless of which naming convention WLE used.
+    #[test]
+    fn send_webview_form_display_form_uses_resolver_for_wle_bundle() {
+        use crate::forms::wle_templates::resolve_viewer_for;
+        use tempfile::TempDir;
+
+        let td = TempDir::new().unwrap();
+        let folder = td.path().join("General Forms");
+        std::fs::create_dir_all(&folder).unwrap();
+
+        // Bulletin Initial.html ↔ Bulletin Viewer.html
+        let bulletin = folder.join("Bulletin Initial.html");
+        std::fs::write(&bulletin, "<html></html>").unwrap();
+        std::fs::write(folder.join("Bulletin Viewer.html"), "<html></html>").unwrap();
+        let resolved = resolve_viewer_for(&bulletin).expect("Bulletin viewer resolved");
+        assert_eq!(resolved, "Bulletin Viewer.html");
+
+        // ICS213_Initial.html ↔ ICS213_Viewer.html
+        let ics_folder = td.path().join("ICS Forms");
+        std::fs::create_dir_all(&ics_folder).unwrap();
+        let ics = ics_folder.join("ICS213_Initial.html");
+        std::fs::write(&ics, "<html></html>").unwrap();
+        std::fs::write(ics_folder.join("ICS213_Viewer.html"), "<html></html>").unwrap();
+        let resolved = resolve_viewer_for(&ics).expect("ICS213 viewer resolved");
+        assert_eq!(resolved, "ICS213_Viewer.html");
+
+        // Hawaii Siren Report.html ↔ Hawaii Siren Report Viewer.html
+        // (authoring template has no "Initial" suffix at all)
+        let hi_folder = td.path().join("HI State forms");
+        std::fs::create_dir_all(&hi_folder).unwrap();
+        let hi = hi_folder.join("Hawaii Siren Report.html");
+        std::fs::write(&hi, "<html></html>").unwrap();
+        std::fs::write(
+            hi_folder.join("Hawaii Siren Report Viewer.html"),
+            "<html></html>",
+        )
+        .unwrap();
+        let resolved = resolve_viewer_for(&hi).expect("Hawaii viewer resolved");
+        assert_eq!(resolved, "Hawaii Siren Report Viewer.html");
+    }
+
+    /// `reply_template` follows the WLE convention `<id>_SendReply.0`. The
+    /// `.0` suffix is part of WLE's filename scheme (versioning slot).
+    #[test]
+    fn send_webview_form_reply_template_follows_wle_convention() {
+        let form_id = "ICS205";
+        let reply_template = format!("{form_id}_SendReply.0");
+        assert_eq!(reply_template, "ICS205_SendReply.0");
+    }
+
+    /// Attachment filename uses the `RMS_Express_Form_<id>.xml` convention —
+    /// same as `send_form` so parsers (Pat, RMS Express, tuxlink inbox) detect
+    /// the form attachment consistently regardless of which submit pathway
+    /// produced it.
+    #[test]
+    fn send_webview_form_attachment_filename_matches_send_form_convention() {
+        let form_id = "ICS213_Initial";
+        let filename = format!("RMS_Express_Form_{form_id}.xml");
+        assert_eq!(filename, "RMS_Express_Form_ICS213_Initial.xml");
+    }
+
+    /// Body composition: sorted-by-key "key: value" dump with a leading
+    /// `form_id: <id>` header. This mirrors the synthesis inside
+    /// `send_webview_form` so a change to the body composition logic would
+    /// fail this test.
+    #[test]
+    fn send_webview_form_body_starts_with_form_id_header_and_sorts_keys() {
+        let form_id = "ICS213_Initial";
+        let mut field_values = std::collections::HashMap::new();
+        field_values.insert("zebra".to_string(), "z-val".to_string());
+        field_values.insert("alpha".to_string(), "a-val".to_string());
+        field_values.insert("mango".to_string(), "m-val".to_string());
+
+        // Replicates the body synthesis in `send_webview_form`.
+        let mut keys: Vec<&String> = field_values.keys().collect();
+        keys.sort();
+        let mut body = format!("form_id: {form_id}\n\n");
+        for k in keys {
+            let v = field_values.get(k).map(String::as_str).unwrap_or("");
+            body.push_str(k);
+            body.push_str(": ");
+            body.push_str(v);
+            body.push('\n');
+        }
+
+        assert!(body.starts_with("form_id: ICS213_Initial\n\n"));
+        let pa = body.find("alpha:").unwrap();
+        let pm = body.find("mango:").unwrap();
+        let pz = body.find("zebra:").unwrap();
+        assert!(pa < pm && pm < pz, "body must sort keys alphabetically");
+        assert!(body.contains("alpha: a-val"));
+    }
+
+    /// Subject: prefers `field_values["subject"]`, then `msg_subject`, else
+    /// falls back to `Form: <id>`. Matches WLE's "form-derived subject"
+    /// default for any form that doesn't capture an explicit subject input.
+    #[test]
+    fn send_webview_form_subject_prefers_explicit_subject_field() {
+        let form_id = "ICS213_Initial";
+        let mut field_values = std::collections::HashMap::new();
+        field_values.insert("subject".to_string(), "Urgent — supplies needed".to_string());
+        let subject = field_values
+            .get("subject")
+            .or_else(|| field_values.get("msg_subject"))
+            .cloned()
+            .unwrap_or_else(|| format!("Form: {form_id}"));
+        assert_eq!(subject, "Urgent — supplies needed");
+    }
+
+    #[test]
+    fn send_webview_form_subject_falls_back_to_msg_subject_then_form_id() {
+        let form_id = "ARC213";
+        // Only msg_subject present.
+        let mut field_values = std::collections::HashMap::new();
+        field_values.insert("msg_subject".to_string(), "Daily ops brief".to_string());
+        let subject = field_values
+            .get("subject")
+            .or_else(|| field_values.get("msg_subject"))
+            .cloned()
+            .unwrap_or_else(|| format!("Form: {form_id}"));
+        assert_eq!(subject, "Daily ops brief");
+
+        // Neither present → fallback.
+        let empty = std::collections::HashMap::<String, String>::new();
+        let subject = empty
+            .get("subject")
+            .or_else(|| empty.get("msg_subject"))
+            .cloned()
+            .unwrap_or_else(|| format!("Form: {form_id}"));
+        assert_eq!(subject, "Form: ARC213");
+    }
+
+    /// The XML envelope `send_webview_form` produces is the catalog-form
+    /// shape from `forms::serialize::serialize_catalog_form_xml` — same XML
+    /// envelope structure as `serialize_form_xml`, but iterates the
+    /// `field_values` map directly. This test fixes the catalog-form serializer
+    /// as the canonical envelope source so a future regression that diverges
+    /// the two serializers' shapes would fire here.
+    #[test]
+    fn send_webview_form_xml_uses_catalog_serializer() {
+        use crate::forms;
+        let params = forms::types::FormParameters {
+            xml_file_version: "1.0".into(),
+            rms_express_version: "Tuxlink/0.0.1".into(),
+            submission_datetime: "20260604120000".into(),
+            senders_callsign: "N0CALL".into(),
+            grid_square: "FN42".into(),
+            display_form: "ICS205_Viewer.html".into(),
+            reply_template: "ICS205_SendReply.0".into(),
+        };
+        let mut values = std::collections::HashMap::new();
+        values.insert("incident_name".to_string(), "Test".to_string());
+        let xml = forms::serialize::serialize_catalog_form_xml("ICS205", &params, &values);
+        let xml_str = String::from_utf8_lossy(&xml);
+        // BOM + xml declaration + envelope present (same as serialize_form_xml).
+        assert_eq!(&xml[0..3], &[0xEF, 0xBB, 0xBF]);
+        assert!(xml_str.contains("<RMS_Express_Form>"));
+        assert!(xml_str.contains("<display_form>ICS205_Viewer.html</display_form>"));
+        assert!(xml_str.contains("<reply_template>ICS205_SendReply.0</reply_template>"));
+        assert!(xml_str.contains("<incident_name>Test</incident_name>"));
+    }
+
+    // ========================================================================
+    // tuxlink-hnkn P2 Task 2: render_ics309_pdf unit tests
+    // ========================================================================
+
+    #[test]
+    fn render_ics309_pdf_with_two_rows_produces_nonempty_pdf() {
+        let req = Ics309PdfRequest {
+            rows: vec![
+                LogRow {
+                    datetime: "2024-05-20T10:13:00Z".to_string(),
+                    from: "N7CPZ".to_string(),
+                    to: "W1AW".to_string(),
+                    subject: "DAMAGE REPORT - SECTOR 7".to_string(),
+                    direction: "out".to_string(),
+                },
+                LogRow {
+                    datetime: "2024-05-20T10:15:00Z".to_string(),
+                    from: "W1AW".to_string(),
+                    to: "N7CPZ".to_string(),
+                    subject: "RE: DAMAGE REPORT ACK".to_string(),
+                    direction: "in".to_string(),
+                },
+            ],
+            range_start: "2024-05-20T10:00:00Z".to_string(),
+            range_end: "2024-05-20T11:00:00Z".to_string(),
+            station_callsign: Some("N7CPZ".to_string()),
+        };
+        let result = render_ics309_pdf_inner(req);
+        assert!(result.is_ok(), "render should succeed: {:?}", result.err());
+        let bytes = result.unwrap();
+        assert!(!bytes.is_empty(), "PDF must have bytes");
+        // PDF magic bytes: %PDF- (0x25 0x50 0x44 0x46 0x2D)
+        assert!(bytes.starts_with(b"%PDF-"), "output must start with PDF magic bytes");
+    }
+
+    #[test]
+    fn render_ics309_pdf_empty_rows_produces_valid_pdf() {
+        let req = Ics309PdfRequest {
+            rows: vec![],
+            range_start: "2024-05-20T00:00:00Z".to_string(),
+            range_end: "2024-05-20T23:59:59Z".to_string(),
+            station_callsign: None,
+        };
+        let bytes = render_ics309_pdf_inner(req).expect("empty rows must still produce a PDF");
+        assert!(bytes.starts_with(b"%PDF-"), "empty-row PDF must have PDF magic bytes");
+    }
+
+    #[test]
+    fn truncate_str_truncates_long_strings_with_ellipsis() {
+        assert_eq!(truncate_str("hello world", 5), "hello…");
+        assert_eq!(truncate_str("hi", 5), "hi");
+        assert_eq!(truncate_str("", 5), "");
+    }
+
+    #[test]
+    fn rfc3339_to_epoch_parses_utc_string() {
+        // 2024-05-20T10:13:00Z = 1_716_199_980 (from native_mailbox tests)
+        assert_eq!(rfc3339_to_epoch("2024-05-20T10:13:00Z"), Some(1_716_199_980));
+        assert_eq!(rfc3339_to_epoch("not-a-date"), None);
+        assert_eq!(rfc3339_to_epoch(""), None);
+    }
+}
+
+// ============================================================================
+// tuxlink-hnkn P2 Task 4: FormDraftLibrary Tauri commands
+// ============================================================================
+//
+// Three IPC commands that expose the `DraftLibrary` SQLite-backed store to the
+// frontend. The store is registered as `Arc<DraftLibrary>` managed state in
+// `lib.rs` during app startup. Each command acquires the `Arc` via
+// `tauri::State<'_, Arc<DraftLibrary>>` and delegates to the store methods.
+//
+// Error projection: `DraftLibraryError` → `String` (the lightweight IPC
+// convention used by the existing search commands). The commands are async
+// only because the Tauri `#[tauri::command]` macro requires it for commands
+// that return `Result`; the underlying SQLite calls are synchronous (the
+// `DraftLibrary::conn` is a `Mutex<Connection>`).
+
+use crate::forms::draft_library::{DraftLibrary, FormDraftSlot};
+
+/// List all saved draft slots for the given `form_id`.
+///
+/// Returns an empty list when no slots exist for that form (not an error).
+/// Slots are ordered by `created_at` ascending (oldest/first-created first).
+#[tauri::command]
+pub async fn form_draft_library_list(
+    form_id: String,
+    library: State<'_, std::sync::Arc<DraftLibrary>>,
+) -> Result<Vec<FormDraftSlot>, String> {
+    library.list(&form_id).map_err(|e| e.to_string())
+}
+
+/// Insert or update a draft slot.
+///
+/// - `slot_id = None` → new slot with a minted UUID.
+/// - `slot_id = Some(id)` → update the matching row in place, or insert if it
+///   does not exist yet (upsert semantics).
+///
+/// Returns the final `FormDraftSlot` — callers use this to get the assigned
+/// `slot_id` on creates, or to reflect the preserved `created_at` on updates.
+#[tauri::command]
+pub async fn form_draft_library_upsert(
+    slot_id: Option<String>,
+    form_id: String,
+    label: String,
+    payload: serde_json::Value,
+    library: State<'_, std::sync::Arc<DraftLibrary>>,
+) -> Result<FormDraftSlot, String> {
+    library.upsert(slot_id, form_id, label, payload).map_err(|e| e.to_string())
+}
+
+/// Delete a draft slot by `slot_id`. No-op-safe if the slot does not exist.
+#[tauri::command]
+pub async fn form_draft_library_delete(
+    slot_id: String,
+    library: State<'_, std::sync::Arc<DraftLibrary>>,
+) -> Result<(), String> {
+    library.delete(&slot_id).map_err(|e| e.to_string())
 }

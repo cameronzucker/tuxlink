@@ -33,13 +33,14 @@
 use std::process::ExitCode;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 
 use tux_rig_rts::{LinuxTty, RtsPtt};
 use tuxmodem_phy::audio_device::AudioOutput;
 
 use tuxmodem_tx::{
-    check_budget, encode_payload, resolve_payload, run_transmission, AirtimeBudget, Args,
-    Mode, TxOutcome, DEFAULT_LEAD_IN, DEFAULT_MAX_AIRTIME,
+    check_budget, encode_payload, resolve_payload, run_transmission, AbortablePlay,
+    AirtimeBudget, Args, Mode, TxOutcome, DEFAULT_LEAD_IN, DEFAULT_MAX_AIRTIME,
 };
 
 fn main() -> ExitCode {
@@ -78,13 +79,18 @@ fn run(args: Args) -> Result<(), String> {
     let payload = resolve_payload(args.payload.as_deref().unwrap())
         .map_err(|e| e.to_string())?;
     let mode = Mode::parse(args.mode.as_deref().unwrap()).map_err(|e| e.to_string())?;
-    let buffer = encode_payload(mode, &payload).map_err(|e| e.to_string())?;
+    let buffer = encode_payload(mode, &payload, args.frame_mode).map_err(|e| e.to_string())?;
 
     let budget = AirtimeBudget::from_buffer_defaults(&buffer);
     let max = args.max_airtime.unwrap_or(DEFAULT_MAX_AIRTIME);
     let effective = check_budget(&budget, max).map_err(|e| e.to_string())?;
 
-    println!("encoded {} byte(s) payload under mode {}", payload.len(), mode.short_name());
+    println!(
+        "encoded {} byte(s) payload under mode {} (frame-mode: {})",
+        payload.len(),
+        mode.short_name(),
+        args.frame_mode.short_name(),
+    );
     println!(
         "  buffer duration:      {:.3} s  ({} samples)",
         buffer.duration_seconds(),
@@ -104,6 +110,23 @@ fn run(args: Args) -> Result<(), String> {
         return Ok(());
     }
 
+    if let Some(path) = args.write_wav.as_deref() {
+        // ---- write-wav mode: emit the encoded waveform to a 48 kHz
+        //      f32 mono WAV. No audio device, no PTT. Pairs with
+        //      `tuxmodem-rx --decode-wav <PATH>` for a fully agent-
+        //      runnable loopback test.
+        buffer
+            .write_wav(path)
+            .map_err(|e| format!("writing WAV to {}: {e}", path.display()))?;
+        println!(
+            "--write-wav: wrote {} samples ({:.3} s) to {}",
+            buffer.samples().len(),
+            buffer.duration_seconds(),
+            path.display()
+        );
+        return Ok(());
+    }
+
     // ---- full mode: open device + ptt, install signal handlers, transmit ----
     let device = args.device.as_deref().unwrap();
     let ptt_path = args.ptt_device.as_deref().unwrap();
@@ -111,12 +134,20 @@ fn run(args: Args) -> Result<(), String> {
     let mut audio = AudioOutput::open(Some(device))
         .map_err(|e| format!("opening audio device {device:?}: {e}"))?;
 
-    let tty = LinuxTty::open(ptt_path).map_err(|e| format!("opening PTT device {ptt_path:?}: {e}"))?;
-    let mut ptt = RtsPtt::new(tty).map_err(|e| format!("initializing PTT: {e}"))?;
-
     let abort = Arc::new(AtomicBool::new(false));
     install_signal_flag(libc::SIGINT, Arc::clone(&abort))?;
     install_signal_flag(libc::SIGTERM, Arc::clone(&abort))?;
+
+    if args.watchdog {
+        // ---- watchdog mode (Phase 1.5 slice 2): spawn tux-rig-watchdog
+        //      to hold PTT. The watchdog asserts on startup, releases on
+        //      stdin EOF — which fires automatically when this process
+        //      exits, including under SIGKILL.
+        return run_via_watchdog(&args, ptt_path, &buffer, &mut audio, &abort, effective);
+    }
+
+    let tty = LinuxTty::open(ptt_path).map_err(|e| format!("opening PTT device {ptt_path:?}: {e}"))?;
+    let mut ptt = RtsPtt::new(tty).map_err(|e| format!("initializing PTT: {e}"))?;
 
     println!(
         "asserting PTT on {ptt_path}; waiting {} ms lead-in; playing {:.3} s; releasing",
@@ -138,6 +169,97 @@ fn run(args: Args) -> Result<(), String> {
         TxOutcome::AbortedEarly => println!("aborted early (signal received) — PTT released"),
     }
     Ok(())
+}
+
+/// Watchdog-mode orchestration. Spawns `tux-rig-watchdog` as a child
+/// process with stdin piped, opens audio, sleeps the lead-in, plays the
+/// buffer, then drops the stdin pipe so the watchdog detects EOF and
+/// releases PTT. Finally waits for the watchdog to exit.
+///
+/// SIGKILL safety: if this process is SIGKILL'd mid-play, the kernel
+/// closes the pipe to the watchdog automatically → watchdog sees EOF →
+/// releases PTT. That's the whole point — `RtsPtt::Drop` is bypassed
+/// under SIGKILL, but the OS still closes the pipe.
+fn run_via_watchdog(
+    args: &Args,
+    ptt_path: &str,
+    buffer: &tuxmodem_phy::audio_io::AudioBuffer,
+    audio: &mut AudioOutput,
+    abort: &AtomicBool,
+    effective_cap: Duration,
+) -> Result<(), String> {
+    use std::process::{Command, Stdio};
+
+    let watchdog_bin = args
+        .watchdog_bin
+        .as_deref()
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "tux-rig-watchdog".to_string());
+
+    let mut child = Command::new(&watchdog_bin)
+        .arg("--device")
+        .arg(ptt_path)
+        .arg("--max-seconds")
+        .arg(effective_cap.as_secs().to_string())
+        .stdin(Stdio::piped())
+        .stderr(Stdio::inherit())
+        .spawn()
+        .map_err(|e| format!("spawning watchdog {watchdog_bin:?}: {e}"))?;
+
+    // Keep the stdin pipe handle alive in scope; dropping it later closes
+    // the pipe and signals EOF to the watchdog.
+    let stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| "watchdog stdin pipe disappeared after spawn".to_string())?;
+
+    println!(
+        "spawned watchdog ({watchdog_bin}) on {ptt_path}; \
+         waiting {} ms for watchdog to assert + lead-in; playing {:.3} s",
+        DEFAULT_LEAD_IN.as_millis(),
+        buffer.duration_seconds(),
+    );
+
+    // Give the watchdog a moment to do OpenClearBoth + AssertRts, then
+    // the radio's TX chain time to fully key. The existing DEFAULT_LEAD_IN
+    // (~100 ms) covers both; the watchdog asserts within a few ms of
+    // spawn, so the dominant component is still the radio's TX-key delay.
+    std::thread::sleep(DEFAULT_LEAD_IN);
+
+    let play_result = AbortablePlay::play_blocking_with_abort(audio, buffer, abort);
+
+    // Drop the stdin pipe NOW so the watchdog sees EOF and releases PTT
+    // before we wait for it to exit.
+    drop(stdin);
+
+    let status = child
+        .wait()
+        .map_err(|e| format!("waiting for watchdog to exit: {e}"))?;
+
+    match play_result {
+        Ok(tuxmodem_phy::audio_device::PlayOutcome::Completed) => {
+            println!(
+                "transmission completed cleanly (watchdog exit: {})",
+                status_label(&status)
+            );
+            Ok(())
+        }
+        Ok(tuxmodem_phy::audio_device::PlayOutcome::Aborted) => {
+            println!(
+                "aborted early (signal received) — PTT released by watchdog (exit: {})",
+                status_label(&status)
+            );
+            Ok(())
+        }
+        Err(e) => Err(format!("playback error: {e} (watchdog exit: {})", status_label(&status))),
+    }
+}
+
+fn status_label(s: &std::process::ExitStatus) -> String {
+    match s.code() {
+        Some(c) => format!("code {c}"),
+        None => "signaled".to_string(),
+    }
 }
 
 /// Install a signal handler that sets the shared atomic. Matches the
@@ -173,11 +295,15 @@ fn install_signal_flag(sig: libc::c_int, flag: Arc<AtomicBool>) -> Result<(), St
 }
 
 const USAGE: &str = "\
-tuxmodem-tx — payload → PHY → PTT + audio composition (Phase 3, tuxlink-i3bz)
+tuxmodem-tx — payload → PHY → PTT + audio composition
 
 USAGE:
     tuxmodem-tx --dry-run --payload <TEXT|@FILE> --mode <NAME>
         Encode + report the airtime budget WITHOUT opening any device.
+
+    tuxmodem-tx --write-wav <PATH> --payload <TEXT|@FILE> --mode <NAME>
+        Encode + write the waveform to a 48 kHz f32 mono WAV file.
+        No audio device, no PTT. Pairs with `tuxmodem-rx --decode-wav`.
 
     tuxmodem-tx --payload <TEXT|@FILE> --mode <NAME> \\
                 --device <AUDIO> --ptt-device <TTY> \\
@@ -188,9 +314,19 @@ OPTIONS:
         --mode <NAME>          PHY mode (currently: `wide-floor` / `floor-wblo`)
         --payload <ARG>        payload text, or `@<path>` to read from a file
         --dry-run              encode + report only; no audio, no PTT
-    -d, --device <NAME>        CPAL audio device name (required without --dry-run)
-    -p, --ptt-device <PATH>    serial TTY path for RTS PTT (required without --dry-run)
+        --write-wav <PATH>     encode + write WAV; no audio device, no PTT
+    -d, --device <NAME>        CPAL audio device name (required for full TX)
+    -p, --ptt-device <PATH>    serial TTY path for RTS PTT (required for full TX)
+        --frame-mode <NAME>    frame format: raw / sync / multi-sync (default: raw)
+                               - raw:        bare OFDM symbol, no preamble
+                               - sync:       preamble + single symbol (≤9 bytes)
+                               - multi-sync: preamble + N symbols, length-prefix
+                                             header, up to u16::MAX bytes
         --max-airtime <SECS>   override DEFAULT_MAX_AIRTIME (default 30; hard cap 60)
+        --watchdog             spawn tux-rig-watchdog as a child process to hold PTT
+                               (Phase 1.5 SIGKILL-safe TX — recommended for production)
+        --watchdog-bin <PATH>  explicit path to the tux-rig-watchdog binary
+                               (default: looked up on PATH as `tux-rig-watchdog`)
     -h, --help                 this usage
 
 DISCOVERING AUDIO DEVICES:
@@ -200,9 +336,25 @@ EXAMPLES:
     # Validate the encode pipeline with no RF risk:
     tuxmodem-tx --dry-run --payload \"TEST\" --mode wide-floor
 
+    # Emit the waveform as a WAV for offline / agent loopback testing:
+    tuxmodem-tx --write-wav /tmp/test.wav --payload \"TEST\" --mode wide-floor
+    tuxmodem-rx --decode-wav /tmp/test.wav --expected \"TEST\"
+
+    # Long-payload loopback via multi-symbol framing (no length cap):
+    tuxmodem-tx --write-wav /tmp/long.wav --payload @./large-file.bin \\
+                --mode wide-floor --frame-mode multi-sync
+    tuxmodem-rx --decode-wav /tmp/long.wav --expected @./large-file.bin \\
+                --frame-mode multi-sync
+
     # Actual on-air TX (operator-only — agents must not run this):
     tuxmodem-tx --payload \"TEST\" --mode wide-floor \\
                 --device 'USB Audio Device' --ptt-device /dev/digirig
+
+    # On-air TX with SIGKILL-safe PTT via watchdog daemon (recommended):
+    tuxmodem-tx --payload \"TEST\" --mode wide-floor \\
+                --device 'USB Audio Device' --ptt-device /dev/digirig \\
+                --watchdog \\
+                --watchdog-bin /path/to/tux-rig-watchdog
 
 SAFETY (RADIO-1):
     The full mode emits real RF when the radio is wired to the chosen

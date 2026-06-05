@@ -10,7 +10,9 @@
 //! back-and-forth exchange with the CMS, the telnet connection, and the
 //! on-disk mailbox.
 
+pub mod auth_taxonomy;
 pub mod ax25;
+pub mod b2f_events;
 pub mod credentials;
 pub mod modem;
 pub mod compose;
@@ -19,6 +21,7 @@ pub mod listener;
 pub mod lzhuf;
 pub mod message;
 pub mod proposal;
+pub mod redaction;
 pub mod relay_banner;
 pub mod secure;
 pub mod session;

@@ -39,7 +39,7 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 use std::time::{Duration, Instant};
 
@@ -113,6 +113,55 @@ impl Mode {
     }
 }
 
+/// Frame format selection. `Raw` emits only the OFDM symbol — the
+/// v0.0.1 wire format, used for back-to-back loopback where alignment
+/// is implicit. `Sync` prepends the [`PREAMBLE_LEN_SAMPLES`]-sample
+/// Zadoff-Chu preamble so a receiver can find the symbol in an
+/// arbitrary-length capture (PHY Phase 12 slice 1 / tuxlink-iyl9).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum FrameMode {
+    /// Bare OFDM symbol, no preamble. The v0.0.1 default — preserved
+    /// here so existing tooling stays bit-compatible.
+    #[default]
+    Raw,
+    /// Zadoff-Chu preamble (192 samples / 4 ms @ 48 kHz) prepended to
+    /// a single OFDM symbol. Payload limited to one symbol's capacity
+    /// (~9 bytes for the Wide mode). Pairs with `tuxmodem-rx --frame-mode sync`.
+    Sync,
+    /// Zadoff-Chu preamble + N OFDM symbols carrying a 2-byte length-
+    /// prefix header. Supports arbitrary-length payloads up to
+    /// u16::MAX bytes. Pairs with `tuxmodem-rx --frame-mode multi-sync`.
+    MultiSync,
+}
+
+impl FrameMode {
+    /// Parse a `--frame-mode` argument value.
+    pub fn parse(name: &str) -> Result<Self, TxError> {
+        match name {
+            "raw" => Ok(Self::Raw),
+            "sync" => Ok(Self::Sync),
+            "multi-sync" => Ok(Self::MultiSync),
+            other => Err(TxError::UnknownFrameMode {
+                name: other.to_string(),
+            }),
+        }
+    }
+
+    /// Stable kebab-case identifier (matches what `FrameMode::parse`
+    /// accepts).
+    pub fn short_name(&self) -> &'static str {
+        match self {
+            Self::Raw => "raw",
+            Self::Sync => "sync",
+            Self::MultiSync => "multi-sync",
+        }
+    }
+}
+
+/// Sample count of the preamble that `FrameMode::Sync` prepends. Mirrors
+/// [`tuxmodem_phy::robustness_floor::wideband_lowdensity::PREAMBLE_LEN_SAMPLES`].
+pub const PREAMBLE_LEN_SAMPLES: usize = 192;
+
 // ─── Payload resolution ─────────────────────────────────────────────
 
 /// Resolve a `--payload` argument value to its byte sequence. Two
@@ -135,18 +184,35 @@ pub fn resolve_payload(arg: &str) -> Result<Vec<u8>, TxError> {
 
 // ─── Encoding ───────────────────────────────────────────────────────
 
-/// Encode a payload into an [`AudioBuffer`] under the chosen mode.
+/// Encode a payload into an [`AudioBuffer`] under the chosen mode +
+/// frame format.
 ///
-/// For [`Mode::WideFloor`], delegates to
-/// [`WidebandLowDensityFloor::transmit`] and wraps its `Vec<f32>` in
-/// an `AudioBuffer`. Returns [`TxError::Phy`] when the payload exceeds
-/// the mode's per-symbol capacity (currently ~9 bytes at BPSK over
-/// the 74 data sub-carriers of the Wide-mode OFDM grid; multi-symbol
-/// framing arrives in PHY Phase 10).
-pub fn encode_payload(mode: Mode, payload: &[u8]) -> Result<AudioBuffer, TxError> {
-    let samples = match mode {
-        Mode::WideFloor => WidebandLowDensityFloor::new()
-            .transmit(payload)
+/// For [`Mode::WideFloor`]:
+/// - [`FrameMode::Raw`] delegates to [`WidebandLowDensityFloor::transmit`]
+///   (bare OFDM symbol; v0.0.1 wire format).
+/// - [`FrameMode::Sync`] delegates to
+///   [`WidebandLowDensityFloor::transmit_with_preamble`] (preamble +
+///   OFDM symbol; receiver-friendly format).
+///
+/// Returns [`TxError::Phy`] when the payload exceeds the mode's
+/// per-symbol capacity (currently ~9 bytes at BPSK over the 74 data
+/// sub-carriers of the Wide-mode OFDM grid; multi-symbol framing
+/// arrives in PHY Phase 10).
+pub fn encode_payload(
+    mode: Mode,
+    payload: &[u8],
+    frame_mode: FrameMode,
+) -> Result<AudioBuffer, TxError> {
+    let floor = WidebandLowDensityFloor::new();
+    let samples = match (mode, frame_mode) {
+        (Mode::WideFloor, FrameMode::Raw) => {
+            floor.transmit(payload).map_err(TxError::Phy)?
+        }
+        (Mode::WideFloor, FrameMode::Sync) => floor
+            .transmit_with_preamble(payload)
+            .map_err(TxError::Phy)?,
+        (Mode::WideFloor, FrameMode::MultiSync) => floor
+            .transmit_multi_with_preamble(payload)
             .map_err(TxError::Phy)?,
     };
     Ok(AudioBuffer::from_samples(samples))
@@ -322,6 +388,12 @@ pub enum TxError {
         /// The unrecognized name.
         name: String,
     },
+    /// `--frame-mode <name>` referenced a name not in the catalogue.
+    #[error("unknown frame mode: {name} (try `raw` or `sync`)")]
+    UnknownFrameMode {
+        /// The unrecognized name.
+        name: String,
+    },
     /// `--payload @<path>` couldn't read the file.
     #[error("payload file {path:?} could not be read: {io_error}")]
     PayloadFileRead {
@@ -371,11 +443,29 @@ pub struct Args {
     /// PTT tty path requested via `--ptt-device`. Required unless
     /// `dry_run` is set.
     pub ptt_device: Option<String>,
+    /// Frame format. `Raw` (default) emits a bare OFDM symbol; `Sync`
+    /// prepends the Zadoff-Chu preamble for receiver-friendly framing.
+    pub frame_mode: FrameMode,
     /// Encode + report ONLY; don't open any device.
     pub dry_run: bool,
+    /// Encode + write the waveform to a 48 kHz f32 mono WAV at this
+    /// path. No audio device opens, no PTT asserts. Mutually exclusive
+    /// with full-TX mode (`--device` + `--ptt-device`); the dry-run
+    /// flag is a strict subset (also no device, also no PTT, but
+    /// additionally no file is written).
+    pub write_wav: Option<PathBuf>,
     /// Override [`DEFAULT_MAX_AIRTIME`] for this run. Hard-capped at
     /// [`HARD_CAP_AIRTIME`].
     pub max_airtime: Option<Duration>,
+    /// Spawn `tux-rig-watchdog` as a child process to hold PTT (Phase 1.5
+    /// SIGKILL-safe TX). When set, the parent does NOT touch the tty
+    /// device directly — the watchdog asserts on startup, releases on
+    /// stdin EOF (set when this process exits, including under SIGKILL).
+    pub watchdog: bool,
+    /// Optional explicit path to the `tux-rig-watchdog` binary. When
+    /// `None` and `watchdog` is set, the spawn falls back to looking up
+    /// `tux-rig-watchdog` on `PATH`.
+    pub watchdog_bin: Option<PathBuf>,
     /// User asked for `--help`.
     pub help: bool,
 }
@@ -388,8 +478,12 @@ impl Args {
             payload: None,
             device: None,
             ptt_device: None,
+            frame_mode: FrameMode::Raw,
             dry_run: false,
+            write_wav: None,
             max_airtime: None,
+            watchdog: false,
+            watchdog_bin: None,
             help: false,
         };
         let mut iter = argv.iter().peekable();
@@ -401,6 +495,12 @@ impl Args {
                             .ok_or_else(|| "--mode requires a value".to_string())?
                             .clone(),
                     );
+                }
+                "--frame-mode" => {
+                    let v = iter
+                        .next()
+                        .ok_or_else(|| "--frame-mode requires a value (raw|sync)".to_string())?;
+                    args.frame_mode = FrameMode::parse(v).map_err(|e| e.to_string())?;
                 }
                 "--payload" => {
                     args.payload = Some(
@@ -424,6 +524,12 @@ impl Args {
                     );
                 }
                 "--dry-run" => args.dry_run = true,
+                "--write-wav" => {
+                    let v = iter
+                        .next()
+                        .ok_or_else(|| "--write-wav requires a path".to_string())?;
+                    args.write_wav = Some(PathBuf::from(v));
+                }
                 "--max-airtime" => {
                     let v = iter
                         .next()
@@ -433,6 +539,13 @@ impl Args {
                     })?;
                     args.max_airtime = Some(Duration::from_secs(secs));
                 }
+                "--watchdog" => args.watchdog = true,
+                "--watchdog-bin" => {
+                    let v = iter
+                        .next()
+                        .ok_or_else(|| "--watchdog-bin requires a path".to_string())?;
+                    args.watchdog_bin = Some(PathBuf::from(v));
+                }
                 "--help" | "-h" => args.help = true,
                 other => return Err(format!("unknown argument: {other}")),
             }
@@ -440,9 +553,18 @@ impl Args {
         Ok(args)
     }
 
-    /// Validate the parsed args against the mode's requirements. Dry
-    /// runs only need mode + payload; full runs additionally need
-    /// device + ptt-device.
+    /// Validate the parsed args against the chosen output mode.
+    ///
+    /// Three output modes exist:
+    /// - **dry-run** (`--dry-run`): encode + report; no device, no
+    ///   PTT, no file written.
+    /// - **write-wav** (`--write-wav <PATH>`): encode + write waveform
+    ///   to a 48 kHz f32 mono WAV file; no device, no PTT.
+    /// - **full-tx** (default): encode + assert PTT + play to
+    ///   `--device`; requires `--device` + `--ptt-device`.
+    ///
+    /// `--dry-run` and `--write-wav` are mutually exclusive (they
+    /// disagree on whether to write the file). Setting both errors.
     pub fn validate(&self) -> Result<(), String> {
         if self.mode.is_none() {
             return Err("missing --mode <name> (try `--mode wide-floor`)".to_string());
@@ -450,17 +572,24 @@ impl Args {
         if self.payload.is_none() {
             return Err("missing --payload <text|@file>".to_string());
         }
-        if !self.dry_run {
+        if self.dry_run && self.write_wav.is_some() {
+            return Err(
+                "--dry-run and --write-wav are mutually exclusive — pick one"
+                    .to_string(),
+            );
+        }
+        if !self.dry_run && self.write_wav.is_none() {
+            // Full-TX mode: device + ptt-device required.
             if self.device.is_none() {
                 return Err(
-                    "missing --device <name> (required without --dry-run; \
-                     use --list via tuxmodem-audio-play to discover names)"
+                    "missing --device <name> (required for full TX; use \
+                     --dry-run or --write-wav for hardware-free runs)"
                         .to_string(),
                 );
             }
             if self.ptt_device.is_none() {
                 return Err(
-                    "missing --ptt-device <path> (required without --dry-run; \
+                    "missing --ptt-device <path> (required for full TX; \
                      e.g. /dev/digirig)"
                         .to_string(),
                 );
@@ -545,7 +674,7 @@ mod tests {
 
     #[test]
     fn encode_payload_wide_floor_returns_nonzero_buffer() {
-        let buf = encode_payload(Mode::WideFloor, b"hi").unwrap();
+        let buf = encode_payload(Mode::WideFloor, b"hi", FrameMode::Raw).unwrap();
         assert!(buf.samples().len() > 0, "encoder should emit some samples");
     }
 
@@ -554,7 +683,7 @@ mod tests {
         // The wide-floor mode's single-symbol capacity is ~9 bytes
         // (per wideband_lowdensity.rs docstring). 64 bytes is well
         // over.
-        let err = encode_payload(Mode::WideFloor, &[0u8; 64]).unwrap_err();
+        let err = encode_payload(Mode::WideFloor, &[0u8; 64], FrameMode::Raw).unwrap_err();
         assert!(matches!(err, TxError::Phy(PhyError::PayloadTooLarge { .. })));
     }
 
@@ -726,6 +855,87 @@ mod tests {
         let a = Args::parse(&s(&["--dry-run", "--payload", "hi"])).unwrap();
         let err = a.validate().unwrap_err();
         assert!(err.contains("--mode"));
+    }
+
+    // ─── --write-wav follow-up (tuxlink-4dv9) ───────────────────────
+
+    #[test]
+    fn args_parse_write_wav_with_path() {
+        let a = Args::parse(&s(&[
+            "--write-wav", "/tmp/foo.wav", "--mode", "wide-floor", "--payload", "TEST",
+        ]))
+        .unwrap();
+        assert_eq!(
+            a.write_wav.as_deref(),
+            Some(std::path::Path::new("/tmp/foo.wav"))
+        );
+        a.validate().unwrap();
+    }
+
+    #[test]
+    fn args_parse_write_wav_without_value_errors() {
+        let err = Args::parse(&s(&["--write-wav"])).unwrap_err();
+        assert!(err.contains("--write-wav"));
+    }
+
+    #[test]
+    fn args_parse_write_wav_doesnt_require_device_or_ptt() {
+        // The whole point: --write-wav is a hardware-free mode like
+        // --dry-run, so neither --device nor --ptt-device should be
+        // required when --write-wav is set.
+        let a = Args::parse(&s(&[
+            "--write-wav", "/tmp/x.wav", "--mode", "wide-floor", "--payload", "hi",
+        ]))
+        .unwrap();
+        a.validate().unwrap();
+        assert!(a.device.is_none());
+        assert!(a.ptt_device.is_none());
+    }
+
+    #[test]
+    fn args_parse_dry_run_and_write_wav_are_mutually_exclusive() {
+        let a = Args::parse(&s(&[
+            "--dry-run", "--write-wav", "/tmp/x.wav", "--mode", "wide-floor",
+            "--payload", "hi",
+        ]))
+        .unwrap();
+        let err = a.validate().unwrap_err();
+        assert!(err.contains("mutually exclusive"));
+    }
+
+    #[test]
+    fn args_parse_full_tx_default_when_neither_dry_run_nor_write_wav() {
+        // Sanity: without dry-run AND without write-wav, validate
+        // still requires device + ptt-device (the full-TX path).
+        let a = Args::parse(&s(&["--mode", "wide-floor", "--payload", "hi"])).unwrap();
+        let err = a.validate().unwrap_err();
+        assert!(err.contains("--device") || err.contains("--ptt-device"));
+    }
+
+    #[test]
+    fn write_wav_roundtrip_via_audiobuffer_write_then_read_then_decode() {
+        // The headline acceptance test for --write-wav: encode →
+        // write_wav → re-read_wav → demod via the floor's receive →
+        // assert payload recovered. Proves the CLI's --write-wav
+        // workflow without spawning the binary.
+        use tuxmodem_phy::audio_io::AudioBuffer;
+        use tuxmodem_phy::robustness_floor::wideband_lowdensity::WidebandLowDensityFloor;
+
+        let payload = b"WAVTEST";
+        let mode = Mode::WideFloor;
+        let buffer = encode_payload(mode, payload, FrameMode::Raw).unwrap();
+        let dir = std::env::temp_dir();
+        let path = dir.join(format!(
+            "tuxmodem-tx-write-wav-test-{}.wav",
+            std::process::id()
+        ));
+        buffer.write_wav(&path).unwrap();
+        let read_back = AudioBuffer::read_wav(&path).unwrap();
+        let _ = std::fs::remove_file(&path);
+        let decoded = WidebandLowDensityFloor::new()
+            .receive(read_back.samples())
+            .unwrap();
+        assert_eq!(decoded, payload);
     }
 
     // ─── run_transmission orchestration (mock PTT + mock player) ────
@@ -954,5 +1164,187 @@ mod tests {
         )
         .unwrap();
         assert_eq!(outcome, TxOutcome::Completed);
+    }
+
+    // ─── FrameMode (Phase 12 slice 2, tuxlink-fxmc) ─────────────────
+
+    #[test]
+    fn frame_mode_default_is_raw() {
+        assert_eq!(FrameMode::default(), FrameMode::Raw);
+    }
+
+    #[test]
+    fn frame_mode_parse_accepts_raw_and_sync() {
+        assert_eq!(FrameMode::parse("raw").unwrap(), FrameMode::Raw);
+        assert_eq!(FrameMode::parse("sync").unwrap(), FrameMode::Sync);
+    }
+
+    #[test]
+    fn frame_mode_parse_rejects_unknown() {
+        let err = FrameMode::parse("garbage").unwrap_err();
+        assert!(matches!(err, TxError::UnknownFrameMode { .. }));
+    }
+
+    #[test]
+    fn frame_mode_short_name_round_trips() {
+        for m in [FrameMode::Raw, FrameMode::Sync] {
+            assert_eq!(FrameMode::parse(m.short_name()).unwrap(), m);
+        }
+    }
+
+    #[test]
+    fn encode_payload_sync_is_longer_than_raw_by_preamble_len() {
+        // The headline correctness invariant: sync output = raw output
+        // + PREAMBLE_LEN_SAMPLES extra samples (the preamble) at the front.
+        let raw = encode_payload(Mode::WideFloor, b"hi", FrameMode::Raw).unwrap();
+        let sync = encode_payload(Mode::WideFloor, b"hi", FrameMode::Sync).unwrap();
+        assert_eq!(
+            sync.samples().len(),
+            raw.samples().len() + PREAMBLE_LEN_SAMPLES,
+            "sync should equal raw + {PREAMBLE_LEN_SAMPLES} preamble samples"
+        );
+    }
+
+    #[test]
+    fn encode_payload_sync_preserves_raw_tail() {
+        // The OFDM symbol portion of the sync output should be
+        // bit-identical to the corresponding raw output.
+        let raw = encode_payload(Mode::WideFloor, b"hi", FrameMode::Raw).unwrap();
+        let sync = encode_payload(Mode::WideFloor, b"hi", FrameMode::Sync).unwrap();
+        let sync_tail = &sync.samples()[PREAMBLE_LEN_SAMPLES..];
+        assert_eq!(
+            sync_tail.len(),
+            raw.samples().len(),
+            "tail length should match"
+        );
+        for (i, (&s, &r)) in sync_tail.iter().zip(raw.samples().iter()).enumerate() {
+            assert!(
+                (s - r).abs() < 1e-6,
+                "sync tail sample {i} differs from raw: sync={s}, raw={r}"
+            );
+        }
+    }
+
+    #[test]
+    fn args_parse_frame_mode_sync() {
+        let a = Args::parse(&s(&[
+            "--frame-mode", "sync", "--mode", "wide-floor", "--dry-run", "--payload", "hi",
+        ]))
+        .unwrap();
+        assert_eq!(a.frame_mode, FrameMode::Sync);
+    }
+
+    #[test]
+    fn args_parse_frame_mode_default_is_raw_when_omitted() {
+        let a = Args::parse(&s(&[
+            "--mode", "wide-floor", "--dry-run", "--payload", "hi",
+        ]))
+        .unwrap();
+        assert_eq!(a.frame_mode, FrameMode::Raw);
+    }
+
+    #[test]
+    fn args_parse_frame_mode_unknown_value_errors() {
+        let err = Args::parse(&s(&["--frame-mode", "twelve"])).unwrap_err();
+        assert!(err.contains("frame mode"));
+    }
+
+    #[test]
+    fn args_parse_frame_mode_without_value_errors() {
+        let err = Args::parse(&s(&["--frame-mode"])).unwrap_err();
+        assert!(err.contains("--frame-mode"));
+    }
+
+    // ─── MultiSync (Phase 10 slice 3, tuxlink-ot37) ─────────────────
+
+    #[test]
+    fn frame_mode_parse_accepts_multi_sync() {
+        assert_eq!(FrameMode::parse("multi-sync").unwrap(), FrameMode::MultiSync);
+    }
+
+    #[test]
+    fn frame_mode_short_name_multi_sync_round_trips() {
+        assert_eq!(
+            FrameMode::parse(FrameMode::MultiSync.short_name()).unwrap(),
+            FrameMode::MultiSync
+        );
+    }
+
+    #[test]
+    fn encode_payload_multi_sync_routes_to_transmit_multi_with_preamble() {
+        // The bit-equivalence check: encode_payload(MultiSync, X) must
+        // produce the exact samples that
+        // WidebandLowDensityFloor::transmit_multi_with_preamble(X) does.
+        use tuxmodem_phy::robustness_floor::wideband_lowdensity::WidebandLowDensityFloor;
+        let payload = b"HELLO_MULTI_SYNC";
+        let got = encode_payload(Mode::WideFloor, payload, FrameMode::MultiSync).unwrap();
+        let want = WidebandLowDensityFloor::new()
+            .transmit_multi_with_preamble(payload)
+            .unwrap();
+        assert_eq!(got.samples().len(), want.len());
+        for (i, (&a, &b)) in got.samples().iter().zip(want.iter()).enumerate() {
+            assert!((a - b).abs() < 1e-6, "sample {i} differs: {a} vs {b}");
+        }
+    }
+
+    #[test]
+    fn encode_payload_multi_sync_accepts_large_payload() {
+        // 100-byte payload would fail in Sync (single-symbol cap ~9
+        // bytes); MultiSync handles it via length-prefix framing.
+        let payload: Vec<u8> = (0..100).map(|i| (i % 251) as u8).collect();
+        let buf = encode_payload(Mode::WideFloor, &payload, FrameMode::MultiSync).unwrap();
+        // Should be preamble (192) + 12 symbols × symbol_size.
+        assert!(buf.samples().len() > 192 + 11 * 2560);
+    }
+
+    #[test]
+    fn args_parse_frame_mode_multi_sync() {
+        let a = Args::parse(&s(&[
+            "--frame-mode", "multi-sync", "--mode", "wide-floor", "--dry-run",
+            "--payload", "hi",
+        ]))
+        .unwrap();
+        assert_eq!(a.frame_mode, FrameMode::MultiSync);
+    }
+
+    // ─── Watchdog integration (Phase 1.5 slice 2, tuxlink-8xfa) ─────
+
+    #[test]
+    fn args_parse_watchdog_flag_default_false() {
+        let a = Args::parse(&s(&[
+            "--mode", "wide-floor", "--dry-run", "--payload", "hi",
+        ]))
+        .unwrap();
+        assert!(!a.watchdog);
+        assert!(a.watchdog_bin.is_none());
+    }
+
+    #[test]
+    fn args_parse_watchdog_flag_set() {
+        let a = Args::parse(&s(&[
+            "--watchdog", "--mode", "wide-floor", "--dry-run", "--payload", "hi",
+        ]))
+        .unwrap();
+        assert!(a.watchdog);
+    }
+
+    #[test]
+    fn args_parse_watchdog_bin_with_path() {
+        let a = Args::parse(&s(&[
+            "--watchdog", "--watchdog-bin", "/usr/local/bin/tux-rig-watchdog",
+            "--mode", "wide-floor", "--dry-run", "--payload", "hi",
+        ]))
+        .unwrap();
+        assert!(a.watchdog);
+        assert_eq!(
+            a.watchdog_bin.as_deref(),
+            Some(std::path::Path::new("/usr/local/bin/tux-rig-watchdog"))
+        );
+    }
+
+    #[test]
+    fn args_parse_watchdog_bin_without_value_errors() {
+        let err = Args::parse(&s(&["--watchdog-bin"])).unwrap_err();
+        assert!(err.contains("--watchdog-bin"));
     }
 }

@@ -10,6 +10,7 @@ pub const BUNDLED_FORMS: &[&FormDef] = &[
     &templates::position::POSITION_REPORT,
     &templates::bulletin::BULLETIN_INITIAL,
     &templates::damage_assessment::DAMAGE_ASSESSMENT_INITIAL,
+    &templates::checkin::WINLINK_CHECK_IN,
 ];
 
 /// Look up a bundled form by its canonical ID. Returns None if not known.
@@ -75,5 +76,43 @@ mod tests {
         assert!(f.fields.iter().any(|fd| fd.id == "surarea"));
         assert!(f.fields.iter().any(|fd| fd.id == "dollar16"));
         assert_eq!(f.display_form, "Damage_Assessment_Viewer.html");
+    }
+
+    #[test]
+    fn finds_winlink_check_in_by_id() {
+        let f = find_form("Winlink_Check-In").expect("Winlink_Check-In bundled");
+        assert_eq!(f.name, "Winlink Check-In");
+        // Spot-check every WLE-aligned section of the FIELDS array.
+        // 0. HEADER
+        assert!(f.fields.iter().any(|fd| fd.id == "organization"));
+        assert!(f.fields.iter().any(|fd| fd.id == "newsubject"));
+        assert!(f.fields.iter().any(|fd| fd.id == "exercise_id"));
+        // 1. STATION
+        assert!(f.fields.iter().any(|fd| fd.id == "datetime"));
+        assert!(f.fields.iter().any(|fd| fd.id == "msgto"));
+        assert!(f.fields.iter().any(|fd| fd.id == "msgsender"));
+        assert!(f.fields.iter().any(|fd| fd.id == "contactname"));
+        assert!(f.fields.iter().any(|fd| fd.id == "assigned"));
+        // 2. SESSION
+        assert!(f.fields.iter().any(|fd| fd.id == "status"));
+        assert!(f.fields.iter().any(|fd| fd.id == "service"));
+        assert!(f.fields.iter().any(|fd| fd.id == "band"));
+        assert!(f.fields.iter().any(|fd| fd.id == "session"));
+        // 3. LOCATION
+        assert!(f.fields.iter().any(|fd| fd.id == "maplat"));
+        assert!(f.fields.iter().any(|fd| fd.id == "maplon"));
+        assert!(f.fields.iter().any(|fd| fd.id == "mgrs"));
+        assert!(f.fields.iter().any(|fd| fd.id == "grid"));
+        assert!(f.fields.iter().any(|fd| fd.id == "locationsource"));
+        // 4. COMMENTS
+        assert!(f.fields.iter().any(|fd| fd.id == "comments"));
+        // Template metadata (auto-filled at submit, required for viewer body
+        // template substitution).
+        assert!(f.fields.iter().any(|fd| fd.id == "templateversion"));
+        assert!(f.fields.iter().any(|fd| fd.id == "mapfilename"));
+        // Viewer filename matches the actual bundled WLE file (with underscores,
+        // not hyphens) — the prior `Winlink_Check-In_Viewer.html` referenced a
+        // non-existent file (Codex 2026-06-04 P1 finding).
+        assert_eq!(f.display_form, "Winlink_Check_In_Viewer.html");
     }
 }

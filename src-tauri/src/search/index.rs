@@ -219,6 +219,95 @@ impl Index {
         let n: i64 = self.conn.query_row("SELECT COUNT(*) FROM messages_meta", [], |r| r.get(0))?;
         Ok(n as u32)
     }
+
+    /// Return sent + received messages in the half-open interval [start_epoch, end_epoch).
+    /// Results are ordered by the effective timestamp (date_sent for outbound, date_received
+    /// for inbound) ascending — matching ICS-309's chronological log convention.
+    ///
+    /// `start_epoch` and `end_epoch` are Unix seconds UTC.
+    ///
+    /// `direction` column stores `"sent"` (outbound) or `"received"` (inbound).
+    /// The returned `LogRow::direction` is `"out"` | `"in"`.
+    pub fn query_log_rows(
+        &self,
+        start_epoch: i64,
+        end_epoch: i64,
+    ) -> Result<Vec<crate::ui_commands::LogRow>, IndexError> {
+        // Use CASE to pick the appropriate timestamp column per row direction.
+        // `effective_ts` is used both for filtering and for ORDER BY.
+        let mut stmt = self.conn.prepare(
+            "SELECT
+                mid,
+                CASE direction WHEN 'sent' THEN date_sent ELSE date_received END AS effective_ts,
+                from_addr,
+                to_addrs,
+                subject,
+                direction
+             FROM messages_meta
+             WHERE direction IN ('sent', 'received')
+               AND CASE direction WHEN 'sent' THEN date_sent ELSE date_received END
+                   BETWEEN ?1 AND ?2
+             ORDER BY effective_ts ASC",
+        )?;
+        let rows = stmt.query_map(rusqlite::params![start_epoch, end_epoch], |r| {
+            let ts_epoch: i64 = r.get(1)?;
+            let from_addr: Option<String> = r.get(2)?;
+            let to_addrs_json: String = r.get(3).unwrap_or_else(|_| "[]".to_string());
+            let subject: String = r.get(4)?;
+            let direction_raw: String = r.get(5)?;
+
+            // Decode first recipient from the JSON array stored in to_addrs.
+            let first_to: String = serde_json::from_str::<Vec<String>>(&to_addrs_json)
+                .ok()
+                .and_then(|v| v.into_iter().next())
+                .unwrap_or_default();
+
+            // Format epoch as RFC 3339 UTC datetime for display.
+            let datetime = epoch_to_rfc3339(ts_epoch);
+
+            Ok(crate::ui_commands::LogRow {
+                datetime,
+                from: from_addr.unwrap_or_default(),
+                to: first_to,
+                subject,
+                direction: if direction_raw == "sent" {
+                    "out".to_string()
+                } else {
+                    "in".to_string()
+                },
+            })
+        })?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(IndexError::Sqlite)
+    }
+}
+
+/// Convert a Unix epoch (seconds UTC) to an RFC 3339 UTC string.
+/// e.g. 1716199980 → "2024-05-20T10:13:00Z"
+fn epoch_to_rfc3339(epoch: i64) -> String {
+    // Simple Gregorian calendar conversion — no external crate dependency.
+    // Uses the inverse of Howard Hinnant's days_from_civil algorithm.
+    let secs = epoch % 86_400;
+    let days = epoch / 86_400;
+    let (y, m, d) = civil_from_days(days);
+    let hour = secs / 3600;
+    let min = (secs % 3600) / 60;
+    let sec = secs % 60;
+    format!("{y:04}-{m:02}-{d:02}T{hour:02}:{min:02}:{sec:02}Z")
+}
+
+/// Inverse of Howard Hinnant's `days_from_civil` — convert days-since-1970 to (y, m, d).
+fn civil_from_days(z: i64) -> (i64, i64, i64) {
+    let z = z + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    (y, m, d)
 }
 
 use crate::search::query::{compose, SqlParam};
@@ -496,5 +585,121 @@ mod tests {
             IndexError::SchemaDrift { found: 0, current: SCHEMA_VERSION } => {}
             other => panic!("expected SchemaDrift {{ found: 0, current: {SCHEMA_VERSION} }}, got {other:?}"),
         }
+    }
+}
+
+// ============================================================================
+// tuxlink-hnkn P2 Task 2: query_log_rows unit tests
+// ============================================================================
+#[cfg(test)]
+mod log_query_tests {
+    use super::*;
+    use crate::search::extractor::{Direction, IndexRow};
+    use tempfile::tempdir;
+
+    /// Seed a minimal IndexRow for a SENT message with a given epoch ts.
+    fn sent_row(mid: &str, from: &str, to: &str, subject: &str, ts: i64) -> IndexRow {
+        IndexRow {
+            mid: mid.into(),
+            folder: "sent".into(),
+            subject: subject.into(),
+            body: "".into(),
+            form_field_values: "".into(),
+            from_addr: Some(from.into()),
+            to_addrs: vec![to.into()],
+            cc_addrs: vec![],
+            date_sent: Some(ts),
+            date_received: None,
+            unread: false,
+            form_type: None,
+            has_attachments: false,
+            attachment_count: 0,
+            transport_used: None,
+            direction: Direction::Sent,
+            message_size: 10,
+            routing_path: None,
+        }
+    }
+
+    /// Seed a minimal IndexRow for a RECEIVED (inbox) message.
+    fn recv_row(mid: &str, from: &str, to: &str, subject: &str, ts: i64) -> IndexRow {
+        IndexRow {
+            mid: mid.into(),
+            folder: "inbox".into(),
+            subject: subject.into(),
+            body: "".into(),
+            form_field_values: "".into(),
+            from_addr: Some(from.into()),
+            to_addrs: vec![to.into()],
+            cc_addrs: vec![],
+            date_sent: None,
+            date_received: Some(ts),
+            unread: true,
+            form_type: None,
+            has_attachments: false,
+            attachment_count: 0,
+            transport_used: None,
+            direction: Direction::Received,
+            message_size: 10,
+            routing_path: None,
+        }
+    }
+
+    // Base epoch: 2024-05-20T10:13:00Z = 1_716_199_980
+    const BASE: i64 = 1_716_199_980;
+
+    #[test]
+    fn query_log_rows_returns_inbound_and_outbound_in_range() {
+        let dir = tempdir().unwrap();
+        let idx = Index::open(dir.path().join("search.db")).unwrap();
+
+        // Seed: 2 sent + 2 inbox messages, half in-range, half out-of-range.
+        //   In-range  [BASE, BASE+3600]:
+        idx.upsert(&sent_row("SENT-IN",  "N7CPZ", "W1AW",  "Sent in-range",  BASE + 60)).unwrap();
+        idx.upsert(&recv_row("RECV-IN",  "W1AW",  "N7CPZ", "Recv in-range",  BASE + 120)).unwrap();
+        //   Out-of-range:
+        idx.upsert(&sent_row("SENT-OUT", "N7CPZ", "W1AW",  "Sent out-range", BASE - 100)).unwrap();
+        idx.upsert(&recv_row("RECV-OUT", "W1AW",  "N7CPZ", "Recv out-range", BASE + 7200)).unwrap();
+
+        let rows = idx.query_log_rows(BASE, BASE + 3600).unwrap();
+        assert_eq!(rows.len(), 2, "only the 2 in-range rows should be returned");
+
+        // Results are ASC by effective timestamp — SENT-IN (BASE+60) before RECV-IN (BASE+120).
+        assert_eq!(rows[0].subject, "Sent in-range");
+        assert_eq!(rows[1].subject, "Recv in-range");
+    }
+
+    #[test]
+    fn query_log_rows_direction_discriminator() {
+        let dir = tempdir().unwrap();
+        let idx = Index::open(dir.path().join("search.db")).unwrap();
+        idx.upsert(&sent_row("S1", "N7CPZ", "W1AW",  "out msg", BASE)).unwrap();
+        idx.upsert(&recv_row("R1", "W1AW",  "N7CPZ", "in msg",  BASE + 10)).unwrap();
+
+        let rows = idx.query_log_rows(BASE - 1, BASE + 3600).unwrap();
+        assert_eq!(rows.len(), 2);
+        // "sent" direction → "out"; "received" direction → "in"
+        let sent_row = rows.iter().find(|r| r.subject == "out msg").unwrap();
+        let recv_row = rows.iter().find(|r| r.subject == "in msg").unwrap();
+        assert_eq!(sent_row.direction, "out");
+        assert_eq!(recv_row.direction, "in");
+    }
+
+    #[test]
+    fn query_log_rows_empty_range_returns_empty() {
+        let dir = tempdir().unwrap();
+        let idx = Index::open(dir.path().join("search.db")).unwrap();
+        idx.upsert(&sent_row("S1", "N7CPZ", "W1AW", "msg", BASE)).unwrap();
+        // Range ends before the row's timestamp.
+        let rows = idx.query_log_rows(BASE - 1000, BASE - 1).unwrap();
+        assert!(rows.is_empty());
+    }
+
+    #[test]
+    fn epoch_to_rfc3339_round_trips_known_value() {
+        // 1_716_199_980 = 2024-05-20T10:13:00Z (validated against chrono in
+        // native_mailbox.rs tests).
+        let s = epoch_to_rfc3339(1_716_199_980);
+        assert_eq!(s, "2024-05-20T10:13:00Z");
     }
 }

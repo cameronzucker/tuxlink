@@ -140,6 +140,16 @@ pub fn run() {
         // tuxlink-61yg: ARDOP listener shared state — the in-flight consumer
         // task's shutdown flag.
         .manage(std::sync::Arc::new(crate::ui_commands::ArdopListenState::default()))
+        // HTML Forms P1 Task 8 (tuxlink-tzr5; original plan tuxlink-ytya): the
+        // shared registry of open `forms::http_server::FormSession`s. Owned
+        // here (process-lifetime) so the open + close Tauri commands and
+        // their forwarder tasks all reference the same map. Each open mints
+        // a fresh ephemeral port + a 16-hex-char token; close drops the
+        // session (its Drop impl aborts the serve task and releases the
+        // port).
+        .manage(std::sync::Arc::new(
+            crate::forms::http_server::FormSessionRegistry::new(),
+        ))
         // tuxlink-9ls2: VARA listener shared state — the in-flight consumer
         // task's shutdown flag. Mirrors the ARDOP listener; VARA differs only
         // in that the transport is externally-managed (operator must
@@ -168,6 +178,24 @@ pub fn run() {
                         match crate::search::build_service(&search_root) {
                             Ok(svc) => { app.manage(svc); }
                             Err(e) => eprintln!("search: build_service failed: {e}"),
+                        }
+
+                        // tuxlink-hnkn P2 Task 4: FormDraftLibrary — named slot
+                        // store for save/reuse of form field-value sets. Lives as a
+                        // sibling SQLite file to search.db (Option B schema-home
+                        // decision: independent lifecycle, survives search-index
+                        // rebuild). Open failure is non-fatal at launch — the app
+                        // still starts. But subsequent IPC calls to
+                        // form_draft_library_* will error at State<Arc<DraftLibrary>>
+                        // extraction because .manage() never ran. This matches the
+                        // SearchService precedent above.
+                        match crate::forms::draft_library::DraftLibrary::open(
+                            search_root.join("form_draft_library.db"),
+                        ) {
+                            Ok(lib) => {
+                                app.manage(std::sync::Arc::new(lib));
+                            }
+                            Err(e) => eprintln!("form-draft-library: open failed: {e}"),
                         }
                     }
                 }
@@ -279,6 +307,23 @@ pub fn run() {
             crate::ui_commands::message_attachment_save, // tuxlink-0fyj (Save As attachment)
             crate::ui_commands::message_send,          // Task 14 (tuxlink-dm8)
             crate::ui_commands::send_form,             // HTML Forms v0.1 (tuxlink-v1p Task 3.1)
+            // HTML Forms P1 Task 8 (tuxlink-tzr5; original plan tuxlink-ytya):
+            // webview-form command surface — catalog list + per-open
+            // http_server lifecycle.
+            crate::ui_commands::forms_list_catalog,
+            crate::ui_commands::open_webview_form,
+            crate::ui_commands::close_webview_form_server,
+            // HTML Forms P1 Task 10 critical-fix (tuxlink-tzr5): catalog-form
+            // submit pathway — `send_form` only knows the 5 BUNDLED_FORMS
+            // FormDefs; the webview path needs a parallel command that
+            // synthesizes the XML envelope from field_values + WLE conventions.
+            crate::ui_commands::send_webview_form,
+            // HTML Forms P1 Task 11 (tuxlink-tzr5): receive-side Viewer fallback.
+            // MessageView calls this for messages whose form_id has no native
+            // React View component; the http_server serves the WLE
+            // *_Viewer.html with the parsed FormPayload bound into its
+            // {var X} placeholders + hidden inputs.
+            crate::ui_commands::open_webview_viewer,
             crate::ui_commands::cms_connect,           // tuxlink-0ic (native connect)
             crate::ui_commands::cms_abort,             // tuxlink-9z2 (abort in-flight connect)
             crate::ui_commands::config_read,           // Task 16 (tuxlink-hvv)
@@ -322,6 +367,9 @@ pub fn run() {
             crate::ui_commands::config_set_grid,      // Task 5 (tuxlink-686)
             crate::ui_commands::position_set_source,  // Task 11 (tuxlink-686)
             crate::ui_commands::position_status,      // Task 11 (tuxlink-686)
+            crate::ui_commands::position_current_fix, // tuxlink-hnkn P2 (PositionFormV2 pre-fill)
+            crate::ui_commands::messages_meta_query_for_log, // tuxlink-hnkn P2 Task 2 (ICS-309 log query)
+            crate::ui_commands::render_ics309_pdf,            // tuxlink-hnkn P2 Task 2 (ICS-309 PDF export)
             crate::ui_commands::config_set_privacy,    // tuxlink-39b (GPS privacy control surface)
             crate::ui_commands::config_set_connect,    // tuxlink-3o0 (CMS server endpoint control)
             // Task 10 (tuxlink-1hu): find-messages search commands
@@ -392,6 +440,16 @@ pub fn run() {
             crate::ui_commands::telnet_station_password_is_set,
             crate::ui_commands::telnet_listen_config_get,
             crate::ui_commands::telnet_listen_config_set,
+            // tuxlink-hnkn P2 Task 4: FormDraftLibrary — save/reuse named form slots.
+            crate::ui_commands::form_draft_library_list,
+            crate::ui_commands::form_draft_library_upsert,
+            crate::ui_commands::form_draft_library_delete,
+            // tuxlink-7do4 Task 13: smart-auth-diagnostics banner recovery commands.
+            crate::ui_commands::credentials_write_password, // spec §4.3 (i) — Mode 3 re-enter password
+            crate::ui_commands::wizard_reopen,              // spec §4.3 (ii) — Mode 4 try different callsign
+            crate::ui_commands::auth_diagnostic_clear,      // spec §4.3 (v) — banner Dismiss
+            // tuxlink-7do4 Task 14: auth-only credential test command.
+            crate::ui_commands::cms_connect_test,           // spec §4.3 (iii) — "Check this password works"
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

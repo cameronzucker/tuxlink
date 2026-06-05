@@ -1,0 +1,241 @@
+/* ============================================================
+ * CatalogBrowser — hierarchical picker (modal overlay + folder
+ * tree + search). Mirrors the .compose-overlay / .compose-dialog
+ * tokens so the picker reads as the same dialog idiom users
+ * already know from the close-prompt flow and the legacy
+ * FormPicker it replaces.
+ * ============================================================ */
+
+.catalog-browser {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+.catalog-browser__card {
+  background: var(--tux-surface);
+  border: 1px solid var(--tux-border);
+  border-radius: 8px;
+  padding: 24px;
+  min-width: 420px;
+  max-width: 560px;
+  width: 90%;
+  /* Tall enough for the WLE catalog's 251 templates across 25
+   * folders without becoming a scroll-everything modal — the
+   * inner __results region scrolls, the chrome stays put. */
+  max-height: 80vh;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.catalog-browser__title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--tux-fg);
+}
+
+.catalog-browser__search {
+  font-family: inherit;
+  font-size: 13px;
+  padding: 8px 10px;
+  background: var(--tux-bg);
+  color: var(--tux-fg);
+  border: 1px solid var(--tux-border);
+  border-radius: 4px;
+}
+
+.catalog-browser__search:focus,
+.catalog-browser__search:focus-visible {
+  outline: 2px solid var(--tux-focus-ring);
+  outline-offset: 1px;
+}
+
+.catalog-browser__results {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  background: var(--tux-bg);
+  border: 1px solid var(--tux-border);
+  border-radius: 4px;
+}
+
+.catalog-browser__status,
+.catalog-browser__empty {
+  padding: 16px;
+  color: var(--tux-fg-dim);
+  font-size: 13px;
+  text-align: center;
+}
+
+.catalog-browser__error {
+  padding: 12px 14px;
+  margin: 8px;
+  background: var(--tux-danger-surface);
+  border: 1px solid var(--error);
+  color: var(--tux-fg);
+  border-radius: 4px;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+/* Folder tree. Each folder is a button row (chevron + name + count);
+ * expanding reveals an indented list of templates inside. */
+.catalog-browser__folders {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.catalog-browser__folder {
+  border-bottom: 1px solid var(--tux-border);
+}
+
+.catalog-browser__folder:last-child {
+  border-bottom: none;
+}
+
+.catalog-browser__folder-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 10px 14px;
+  border: none;
+  background: transparent;
+  color: var(--tux-fg);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.catalog-browser__folder-row:hover {
+  background: var(--tux-hover);
+}
+
+.catalog-browser__folder-row:focus-visible {
+  outline: 2px solid var(--tux-focus-ring);
+  outline-offset: -2px;
+}
+
+.catalog-browser__folder-chevron {
+  font-size: 10px;
+  width: 12px;
+  color: var(--tux-fg-dim);
+}
+
+.catalog-browser__folder-name {
+  flex: 1 1 auto;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.catalog-browser__folder-count {
+  font-size: 11px;
+  color: var(--tux-fg-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Indented template list inside an expanded folder. */
+.catalog-browser__templates {
+  list-style: none;
+  margin: 0;
+  padding: 0 0 8px 0;
+  background: var(--tux-surface);
+}
+
+.catalog-browser__template-row {
+  margin: 0;
+}
+
+.catalog-browser__template-btn {
+  display: block;
+  width: 100%;
+  padding: 7px 14px 7px 36px;
+  border: none;
+  background: transparent;
+  color: var(--tux-fg);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.catalog-browser__template-btn:hover {
+  background: var(--tux-hover);
+}
+
+.catalog-browser__template-btn:focus-visible {
+  outline: 2px solid var(--tux-focus-ring);
+  outline-offset: -2px;
+}
+
+/* Search-mode flat results: render `Label    Folder` with the
+ * folder ghosted to the right so the operator can disambiguate
+ * forms that share a label across folders. */
+.catalog-browser__search-results {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.catalog-browser__search-results li {
+  border-bottom: 1px solid var(--tux-border);
+}
+
+.catalog-browser__search-results li:last-child {
+  border-bottom: none;
+}
+
+.catalog-browser__search-results .catalog-browser__template-btn {
+  padding: 9px 14px;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.catalog-browser__result-label {
+  flex: 1 1 auto;
+}
+
+.catalog-browser__result-folder {
+  font-size: 11px;
+  color: var(--tux-fg-dim);
+  font-style: italic;
+}
+
+/* Cancel-row at the bottom of the card. Keeps the chrome anchored
+ * even if the __results region scrolls. */
+.catalog-browser__actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.catalog-browser__btn {
+  padding: 7px 14px;
+  border-radius: 4px;
+  border: 1px solid var(--tux-border);
+  background: var(--tux-surface-2);
+  color: var(--tux-fg);
+  cursor: pointer;
+  font-size: 13px;
+  font-family: inherit;
+}
+
+.catalog-browser__btn:hover:not(:disabled) {
+  background: var(--tux-elevated);
+}
+
+.catalog-browser__btn:focus-visible {
+  outline: 2px solid var(--tux-focus-ring);
+  outline-offset: 1px;
+}

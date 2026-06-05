@@ -1,0 +1,184 @@
+/* CheckInForm — native Winlink Check-In compose form.
+ *
+ * Shares .form-slot-toolbar rules from PositionFormV2.css (loaded globally
+ * via the PositionFormV2 import chain). Adds checkin-specific layout rules
+ * for the status fieldset and the form card. Uses the same --tux-* variable
+ * surface as the rest of the forms system. */
+
+.checkin-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px;
+  background: var(--tux-surface);
+  border: 1px solid var(--tux-border);
+  border-radius: 6px;
+  color: var(--tux-fg);
+  font-family: var(--sans, inherit);
+  font-size: 13px;
+}
+
+/* ── Header ── */
+
+.checkin-form__header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.checkin-form__header h2 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--tux-fg);
+}
+
+/* ── Form labels + text inputs ── */
+
+.checkin-form label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--tux-fg-muted);
+  margin-bottom: 2px;
+}
+
+.checkin-form input[type='text'],
+.checkin-form textarea {
+  font-family: inherit;
+  font-size: 13px;
+  padding: 7px 10px;
+  background: var(--tux-bg);
+  color: var(--tux-fg);
+  border: 1px solid var(--tux-border);
+  border-radius: 4px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.checkin-form input[type='text']:focus,
+.checkin-form input[type='text']:focus-visible,
+.checkin-form textarea:focus,
+.checkin-form textarea:focus-visible {
+  outline: 2px solid var(--tux-focus-ring);
+  outline-offset: 1px;
+}
+
+/* ── Section fieldsets (Net / Station / Session / Location / Comments) ── */
+
+.checkin-form__section {
+  border: 1px solid var(--tux-border);
+  border-radius: 4px;
+  padding: 10px 14px 12px;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.checkin-form__section > legend {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--tux-fg);
+  padding: 0 6px;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+
+.checkin-form__optional {
+  font-weight: 400;
+  font-style: italic;
+  color: var(--tux-fg-muted);
+}
+
+/* ── Nested radio fieldsets inside Session ── */
+
+.checkin-form__radios {
+  border: 1px solid var(--tux-border);
+  border-radius: 4px;
+  padding: 6px 10px;
+  margin: 4px 0 0 0;
+}
+
+.checkin-form__radios > legend {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--tux-fg-muted);
+  padding: 0 4px;
+}
+
+.checkin-form__radios label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-right: 14px;
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--tux-fg);
+  cursor: pointer;
+}
+
+.checkin-form__radios input[type='radio'] {
+  accent-color: var(--tux-accent, #2563eb);
+  cursor: pointer;
+}
+
+/* ── Location row: 4-up grid for Grid / Lat / Lon / MGRS ── */
+
+.checkin-form__location-row {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.checkin-form__location-row > div {
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── Action buttons ── */
+
+.checkin-form__actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  padding-top: 4px;
+  border-top: 1px solid var(--tux-border);
+  margin-top: 4px;
+}
+
+.checkin-form__actions button {
+  font-family: inherit;
+  font-size: 13px;
+  padding: 6px 14px;
+  border-radius: 4px;
+  border: 1px solid var(--tux-border);
+  background: var(--tux-surface-2);
+  color: var(--tux-fg);
+  cursor: pointer;
+}
+
+.checkin-form__actions button:hover:not(:disabled) {
+  background: var(--tux-elevated);
+}
+
+.checkin-form__actions button:focus-visible {
+  outline: 2px solid var(--tux-focus-ring);
+  outline-offset: 1px;
+}
+
+.checkin-form__actions button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.checkin-form__actions button.primary {
+  background: var(--tux-accent, #2563eb);
+  color: var(--tux-accent-fg, #fff);
+  border-color: var(--tux-accent, #2563eb);
+}
+
+.checkin-form__actions button.primary:hover:not(:disabled) {
+  background: var(--tux-accent-hover, #1d4ed8);
+  border-color: var(--tux-accent-hover, #1d4ed8);
+}

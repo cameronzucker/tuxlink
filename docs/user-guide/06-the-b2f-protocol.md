@@ -57,14 +57,18 @@ sequenceDiagram
     participant SV as Server (CMS / RMS)
 
     Note over TX,SV: Transport-layer connect already established
-    SV->>TX: [WL2K-5.0-B2FWIHJM$]
-    Note right of SV: Version + feature char set
-    SV->>TX: ;PQ: 12345678
-    Note right of SV: Password challenge
-    TX->>SV: <callsign>-<features> + MD5(challenge, password)
-    SV->>TX: CMS>
-    Note over TX,SV: Authenticated; exchange phase begins
+    SV->>TX: Banner line
+    Note right of SV: WL2K-version and feature char set
+    SV->>TX: Password challenge line
+    Note right of SV: Info-line prefix marks an 8-digit nonce
+    TX->>SV: Callsign, features, MD5(challenge, password)
+    SV->>TX: CMS> prompt
+    Note over TX,SV: Authenticated. Exchange phase begins.
 ```
+
+The literal lines on the wire — `[WL2K-5.0-B2FWIHJM$]`, `;PQ: 12345678`,
+the `CMS>` prompt — appear verbatim in the session log alongside the
+diagram-level shape shown above.
 
 At this point both sides have authenticated and the exchange phase begins.
 
@@ -124,7 +128,7 @@ sequenceDiagram
     Note right of B: Accept #1, reject #2, accept #3
     A->>B: <compressed message #1>
     A->>B: <compressed message #3>
-    Note over A,B: Roles can swap; the other side<br/>then proposes its outbound batch
+    Note over A,B: Roles can swap — the other side<br/>then proposes its outbound batch
 ```
 
 ## End of exchange

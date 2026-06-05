@@ -9,7 +9,7 @@ communications. No Windows. No browser tab to maintain. A Rust
 application that implements the Winlink B2F protocol directly.
 
 <p align="center">
-  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-green.svg" alt="License: MIT"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-GPL%20v3-blue.svg" alt="License: GPL v3"></a>
   <a href="CHANGELOG.md"><img src="https://img.shields.io/github/v/release/cameronzucker/tuxlink?label=release" alt="Latest release"></a>
   <a href="https://github.com/cameronzucker/tuxlink/actions/workflows/release.yml"><img src="https://img.shields.io/github/actions/workflow/status/cameronzucker/tuxlink/release.yml?label=build" alt="Build status"></a>
   <a href="https://www.rust-lang.org"><img src="https://img.shields.io/badge/rust-1.75+-orange.svg?logo=rust" alt="Rust 1.75+"></a>
@@ -111,8 +111,19 @@ The shipped surface area as of the latest pre-alpha build:
   the transport over its command + data sockets.
 - **VARA TCP transport** (early: backend codec + smoke probe ship; UI
   integration remains in flight).
-- **HTML Forms.** Position report, ICS-213, ICS-309, Bulletin, Damage
-  Assessment compose + render. Catalog refresh path in progress.
+- **HTML Forms — full WLE catalog.** The complete Winlink Express
+  Standard Forms snapshot (251 templates, version 1.1.20.0) ships
+  bundled. Compose and view any form in the catalog through a
+  hierarchical CatalogBrowser; native React composers cover the
+  highest-volume forms (ICS-213, Bulletin), with the long tail
+  rendered via tuxlink-skinned child webviews. Received form-tagged
+  messages render their `*_Viewer.html` template inline. **Custom
+  forms**: drop a `.html` file into
+  `~/.local/share/tuxlink/forms/custom/` and it appears in the
+  CatalogBrowser on next launch — useful for club-specific forms or
+  WLE templates released after the bundled snapshot. Catalog
+  freshness (in-app refresh from winlink.org) + hot-reload of the
+  custom-forms directory are in progress.
 - **Compose.** New message / Reply / Reply All / Forward; Cc carried
   end-to-end via the native B2F path; drafts auto-save to a local
   store keyed by stable draft id; form-based composition shares the
@@ -199,20 +210,33 @@ Tuxlink is honest about its edges:
 
 ## Architecture
 
-Tuxlink is a **single Rust crate** (`src-tauri/`) employing Tauri 2.x
-as the desktop framework, with a **React 18 + TypeScript frontend**
-(`src/`) that WebKitGTK 4.1 renders. The Winlink engine (CMS
-connection, the B2F exchange, the mailbox, and the AX.25 packet path)
-consists of native Rust; no external modem or sidecar process
-intervenes for CMS.
+Tuxlink is a **Rust workspace** with two roots: the desktop application
+(`src-tauri/` — Tauri 2.x with a **React 18 + TypeScript frontend** in
+`src/` rendered by WebKitGTK 4.1) and the in-progress clean-room HF
+modem (`tuxmodem/` — six standalone crates: `tuxmodem-phy`,
+`tuxmodem-fec`, `tuxmodem-tx`, `tuxmodem-rx`, `tux-rig-rts`,
+`tux-rig-cm108`). The Winlink engine (CMS connection, the B2F exchange,
+the mailbox, and the AX.25 packet path) consists of native Rust in
+`src-tauri/`; no external modem or sidecar process intervenes for CMS.
+
+The `tuxmodem/` workspace builds the v0.5+ clean-room HF modem
+referenced in [Not yet shipped](#not-yet-shipped). Working code paths
+today: OFDM encode/decode under the wide-band low-density floor mode,
+Zadoff-Chu preamble-based frame sync, multi-symbol length-prefix
+framing (payloads up to ~65 KB), CPAL audio I/O, serial-RTS PTT for
+Digirig-class adapters, a SIGKILL-safe PTT watchdog daemon, and
+operator-runnable CLIs (`tuxmodem-tx` / `tuxmodem-rx` /
+`tux-rig-watchdog` / `tuxmodem-audio-play` / `tux-rig-rts`). The modem
+is not yet wired into the desktop app's Winlink session lifecycle.
 
 The OS keyring (secret-service on Linux, Keychain on macOS,
 CredentialManager on Windows) holds the Winlink CMS password. Tuxlink
 never persists it to a config file on disk.
 
-Tuxlink will adopt a layered multi-crate workspace in v0.5+; the
-current v0.x series deliberately ships as a single crate (see
-[ADR 0002](docs/adr/0002-tauri-react-single-crate.md)).
+The desktop app (`src-tauri/`) deliberately ships as a single crate in
+the v0.x series — see [ADR 0002](docs/adr/0002-tauri-react-single-crate.md).
+The `tuxmodem/` workspace is the layered multi-crate target for the
+clean-room HF modem (v0.5+).
 
 See [CLAUDE.md](CLAUDE.md) for the agent workflow, ethos, and safety
 rails this project operates under.

@@ -1,0 +1,216 @@
+/* PositionFormV2 — native Position Report compose form.
+ *
+ * Card-style layout within the Compose body region. Uses the same
+ * CSS variable surface (--tux-*) as CatalogBrowser.css and the form
+ * idioms established in forms.css.  Keeps grid + badge + map stub +
+ * remark + actions in a simple column with consistent spacing. */
+
+.position-form-v2 {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px;
+  background: var(--tux-surface);
+  border: 1px solid var(--tux-border);
+  border-radius: 6px;
+  color: var(--tux-fg);
+  font-family: var(--sans, inherit);
+  font-size: 13px;
+}
+
+/* ── Saved-slot toolbar — shared class used by all P2 native forms ── */
+
+.form-slot-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 6px 0 8px;
+  border-bottom: 1px solid var(--tux-border);
+  margin-bottom: 2px;
+}
+
+.form-slot-toolbar label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--tux-fg-muted);
+  white-space: nowrap;
+}
+
+.form-slot-toolbar select {
+  font-family: inherit;
+  font-size: 12px;
+  padding: 4px 8px;
+  background: var(--tux-bg);
+  color: var(--tux-fg);
+  border: 1px solid var(--tux-border);
+  border-radius: 4px;
+  flex: 1;
+  min-width: 120px;
+}
+
+.form-slot-toolbar button {
+  font-family: inherit;
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 4px;
+  border: 1px solid var(--tux-border);
+  background: var(--tux-surface-2);
+  color: var(--tux-fg);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.form-slot-toolbar button:hover:not(:disabled) {
+  background: var(--tux-elevated);
+}
+
+/* ── Header row ── */
+
+.position-form-v2__header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.position-form-v2__header h2 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--tux-fg);
+}
+
+/* ── Fresh / stale fix badge ── */
+
+.position-form-v2__fix-badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 10px;
+  border: 1px solid transparent;
+}
+
+.position-form-v2__fix-badge.fresh {
+  background: var(--tux-success-surface, rgba(34, 197, 94, 0.12));
+  border-color: var(--tux-success-border, rgba(34, 197, 94, 0.35));
+  color: var(--tux-success-fg, #16a34a);
+}
+
+.position-form-v2__fix-badge.stale {
+  background: var(--tux-warn-surface, rgba(234, 179, 8, 0.12));
+  border-color: var(--tux-warn-border, rgba(234, 179, 8, 0.35));
+  color: var(--tux-warn-fg, #a16207);
+}
+
+/* ── Form labels + inputs ── */
+
+.position-form-v2 label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--tux-fg-muted);
+  margin-bottom: 2px;
+}
+
+.position-form-v2 input[type='text'],
+.position-form-v2 textarea {
+  font-family: inherit;
+  font-size: 13px;
+  padding: 7px 10px;
+  background: var(--tux-bg);
+  color: var(--tux-fg);
+  border: 1px solid var(--tux-border);
+  border-radius: 4px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.position-form-v2 input[type='text']:focus,
+.position-form-v2 input[type='text']:focus-visible,
+.position-form-v2 textarea:focus,
+.position-form-v2 textarea:focus-visible {
+  outline: 2px solid var(--tux-focus-ring);
+  outline-offset: 1px;
+}
+
+/* ── Inline grid validation error (submit-time only) ── */
+
+.position-form-v2__grid-error {
+  margin: 0;
+  font-size: 11px;
+  color: var(--error, #ee6b6b);
+}
+
+/* ── No-fix inline hint ── */
+
+.position-form-v2__no-fix-hint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--tux-warn-fg, #a16207);
+  font-style: italic;
+}
+
+/* ── Map widget (Leaflet) ──
+ *
+ * .position-form-v2__map collapses to 0 by default (no grid → no widget
+ * rendered → no phantom whitespace). The --active modifier is added by
+ * PositionFormV2 when grid is non-empty and sets an explicit 240px height.
+ *
+ * Explicit pixel height is required: Leaflet's MapContainer needs a
+ * concrete height on its container to render; auto / percentage heights
+ * produce a 0px tall map (blank black bar). */
+.position-form-v2__map {
+  overflow: hidden;
+}
+
+.position-form-v2__map--active {
+  height: 240px;
+  border-radius: 4px;
+}
+
+/* ── Action buttons ── */
+
+.position-form-v2__actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  padding-top: 4px;
+  border-top: 1px solid var(--tux-border);
+  margin-top: 4px;
+}
+
+.position-form-v2__actions button {
+  font-family: inherit;
+  font-size: 13px;
+  padding: 6px 14px;
+  border-radius: 4px;
+  border: 1px solid var(--tux-border);
+  background: var(--tux-surface-2);
+  color: var(--tux-fg);
+  cursor: pointer;
+}
+
+.position-form-v2__actions button:hover:not(:disabled) {
+  background: var(--tux-elevated);
+}
+
+.position-form-v2__actions button:focus-visible {
+  outline: 2px solid var(--tux-focus-ring);
+  outline-offset: 1px;
+}
+
+.position-form-v2__actions button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.position-form-v2__actions button.primary {
+  background: var(--tux-accent, #2563eb);
+  color: var(--tux-accent-fg, #fff);
+  border-color: var(--tux-accent, #2563eb);
+}
+
+.position-form-v2__actions button.primary:hover:not(:disabled) {
+  background: var(--tux-accent-hover, #1d4ed8);
+  border-color: var(--tux-accent-hover, #1d4ed8);
+}
