@@ -114,8 +114,10 @@ impl Visit for RedactingVisitor {
                 "neginf"
             };
             self.insert(field.name(), Value::Null);
-            self.fields
-                .insert(format!("{}_kind", field.name()), json!(kind));
+            if !crate::logging::redact::should_redact_field(field.name()) {
+                self.fields
+                    .insert(format!("{}_kind", field.name()), json!(kind));
+            }
         }
     }
 }
@@ -174,6 +176,15 @@ mod tests {
         let ev = capture_one(|| tracing::info!(rate = f64::NAN, "metric"));
         assert_eq!(ev.fields.get("rate"), Some(&serde_json::Value::Null));
         assert_eq!(ev.fields.get("rate_kind"), Some(&serde_json::json!("nan")));
+    }
+
+    #[test]
+    fn record_f64_nan_with_blocklisted_name_suppresses_kind_marker() {
+        let ev = capture_one(|| tracing::info!(nonce = f64::NAN, "auth"));
+        // Blocklisted field: value must be redacted (insert() routes through blocklist first)
+        assert_eq!(ev.fields.get("nonce"), Some(&serde_json::json!("<redacted>")));
+        // The _kind marker must NOT leak for a blocklisted field name
+        assert!(ev.fields.get("nonce_kind").is_none(), "blocklisted field's _kind marker must not leak");
     }
 
     #[test]
