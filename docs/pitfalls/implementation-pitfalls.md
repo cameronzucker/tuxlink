@@ -24,7 +24,7 @@ This document serves three audiences. Start here, then go directly to the sectio
 
 | § | Section | You're working on... | Entries | Checklist |
 |---|---------|---------------------|---------|-----------|
-| 0 | [Live Radio Network Operations](#0-live-radio-network-operations) | Any code path that can transmit under the project's callsign, OR any encryption decision touching tuxlink | RADIO-1, RADIO-2 | §0.C |
+| 0 | [Live Radio Network Operations](#0-live-radio-network-operations) | Any code path that can transmit under the project's callsign, OR any encryption decision touching tuxlink, OR any handling of Winlink credentials | RADIO-1, RADIO-2, CRED-1 | §0.C |
 | 1 | [Scope and Audience Boundaries](#1-scope-and-audience-boundaries) | Any feature, doc, or design decision touching what tuxlink does vs. what is out of scope | SCOPE-1 | §1.C |
 | 2 | [Safety-Stack Coordination and Cross-Component Parity](#2-safety-stack-coordination-and-cross-component-parity) | Any time a project hook denies a write op, OR you're tempted to add additional "session liveness" signals, OR you're writing a script that reads/writes the same state a hook does | HOOK-1, LEASE-1, PARITY-1 | §2.C |
 | 3 | [Plan and Documentation Discipline](#3-plan-and-documentation-discipline) | Any plan / spec amendment, especially when an AMENDMENT marker (AMD-N) lands in a previously-shipped task's plan body | DRIFT-1 | §3.C |
@@ -209,6 +209,99 @@ Notable specific cases this rule covers:
 
 ---
 
+### CRED-1: `(;PQ, ;PR)` token pair is brute-forceable
+
+**The Flaw:** Every sink that touches Winlink B2F wire bytes has access
+to the secure-login exchange: the challenge (`;PQ:`) and the response
+(`;PR:`). An attacker who captures BOTH from a single session can
+offline-brute-force the password because the response is only ~26.6
+effective bits (a 30-bit MD5 truncation rendered as 8 decimal digits)
+with a public, static 64-byte salt. At ~1 MD5 per guess, the password
+space is exhausted in minutes on commodity hardware.
+
+**Examples in the wild:**
+
+- The telnet WireTap emits `;PR:` lines verbatim through `wire_log`
+  into the session log (shipped bug on main as of 2026-06-03).
+- Error payloads displayed to the operator include unparsed B2F wire
+  bytes (`wire_log` excerpts in UI toasts).
+- Clipboard exports or session transcripts include `;PQ` + `;PR` pairs
+  without redaction.
+- Operator workflows that screenshot or export logs for debugging
+  inadvertently capture credential material.
+
+**Why It Matters:** The Winlink protocol itself is not the problem — the
+weak response is a known architectural constraint of the legacy B2F wire
+format. The problem is **containment**: credentials can leak into five
+categories of semi-public artifact:
+
+1. **Uncontrolled logging** (e.g., `wire_log` dumped to disk with world
+   visibility).
+2. **Session transcripts** (exported for troubleshooting, shared via
+   email or USB).
+3. **Error messages** (displayed on-screen or sent to support).
+4. **Clipboard exports** (operator copies wire bytes for pasting into
+   external tools).
+5. **Accidental screenshots** (included in bug reports or recovery
+   documents).
+
+An operator who exports a log or shares a transcript for debugging
+Winlink issues will nearly always include both `;PQ` and `;PR` — the
+protocol doesn't segment them. Once captured, the pair is a permanent
+oracle; the password is no longer a secret.
+
+**The Fix:** EVERY sink that touches B2F wire bytes MUST route through
+[`src-tauri/src/winlink/redaction.rs`](../../src-tauri/src/winlink/redaction.rs),
+which is the single source of truth for credential scrubbing. Use:
+
+- **`redact_wire_line(line: &str) → String`** — for wire-format lines
+  (`"B2F<...>;PQ:23753528;PR:72768415"`), strips challenge + response.
+- **`redact_freeform(text: &str) → String`** — for any free-form text
+  that might contain wire bytes (error payloads, banner-displayed wire
+  responses, user-visible excerpts).
+
+Both functions are deterministic: `redact_wire_line` and
+`redact_freeform` consume the line and return the same line with all
+`;PQ:*` and `;PR:*` tokens replaced by `;PQ:REDACTED` and
+`;PR:REDACTED`.
+
+**Testing discipline:** Every sink should have a unit test asserting
+that the canonical wl2k-go test vector produces redacted output:
+
+```rust
+#[test]
+fn redact_test_vector() {
+    let wire = "B2F<CALL>W<CALL>;PQ:23753528;PR:72768415<...>";
+    let result = redact_wire_line(wire);
+    assert!(!result.contains("23753528"), "challenge leaked");
+    assert!(!result.contains("72768415"), "response leaked");
+    assert!(result.contains(";PQ:REDACTED"), "challenge not properly redacted");
+    assert!(result.contains(";PR:REDACTED"), "response not properly redacted");
+}
+```
+
+Sinks include (incomplete list — audit during implementation):
+
+- WireTap telnet logger (`src-tauri/src/winlink/wire_tap.rs`).
+- Error message display (`src-tauri/src/ui/error_display.rs` and
+  similar).
+- Session transcript export (`src-tauri/src/export/transcript.rs` or
+  equivalent).
+- Live `wire_log` file on disk (ensure redaction BEFORE write, not
+  after).
+- Clipboard operations (redact before `.set_text()`).
+- Log file rotation + archival (redact at write time).
+
+**The Lesson:** Sensitive data in wire protocols is often a protocol
+constraint, not a design choice. You cannot fix the protocol; you CAN
+fix where it leaks. The redaction module is cheap insurance — it
+centralizes the decision, makes it testable, and ensures no sink
+accidentally emits a credential pair. If you're tempted to "just log the
+wire for debugging," route through redaction. If you're tempted to
+"show the operator the error line for context," redact it first.
+
+---
+
 ### Section 0 Review Checklist
 
 - [ ] **Check derived from RADIO-1** — No `#[test]` or `#[tokio::test]`
@@ -239,6 +332,18 @@ Notable specific cases this rule covers:
   (Cameron) for approval. Verify via PR-thread comments or in-code
   TODO with operator-approval reference. Do NOT silently apply a "no
   encryption" rule from a documentation source.
+- [ ] **Check derived from CRED-1** — Every code path that touches
+  Winlink B2F wire bytes (WireTap, error display, session export,
+  clipboard operations, logging) routes output through
+  [`redact_wire_line()`](../../src-tauri/src/winlink/redaction.rs) or
+  [`redact_freeform()`](../../src-tauri/src/winlink/redaction.rs). No
+  `;PQ:` or `;PR:` tokens appear verbatim in wire logs, error messages,
+  UI output, exported transcripts, or clipboard text.
+- [ ] **Check derived from CRED-1** — Unit tests exist for every sink
+  that uses `redact_wire_line()` or `redact_freeform()`, asserting that
+  the canonical test vector (challenge `23753528`, response `72768415`)
+  produces output with NEITHER value present and both replaced with
+  `REDACTED`.
 
 ---
 
