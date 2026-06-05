@@ -375,11 +375,25 @@ describe('<MessageViewLoaded> reply action bar', () => {
   // mappings in buildReplyDraft — hiding the button avoids the half-populated
   // form draft trap. Add per-form mappings + remove the gate in a follow-up
   // to light it up for these forms.
-  it('does NOT show the Reply-with-form button on Phase 9 forms without reply mappings', () => {
+  // bd tuxlink-ltkv (Phase 3 reply extension): Bulletin_Initial now has a
+  // per-form mapping in buildReplyDraft, so its Reply-with-form button is
+  // shown. Position / ICS-309 / Damage Assessment / Check-In remain
+  // intentionally unsupported (see REPLY_WITH_FORM_SUPPORTED for rationale).
+  it('shows the Reply-with-form button for Bulletin_Initial (tuxlink-ltkv)', () => {
     render(
       <MessageViewLoaded message={parsed({ isForm: true, formId: 'Bulletin_Initial' })} />,
     );
-    expect(screen.queryByTestId('reply-with-form-btn')).toBeNull();
+    expect(screen.queryByTestId('reply-with-form-btn')).not.toBeNull();
+  });
+
+  it('does NOT show the Reply-with-form button for forms without reply mappings (Position / 309 / DA / Check-In)', () => {
+    for (const formId of ['Position_Report', 'Form-309_Initial', 'Damage_Assessment_Initial', 'Winlink_Check-In']) {
+      const { unmount } = render(
+        <MessageViewLoaded message={parsed({ isForm: true, formId })} />,
+      );
+      expect(screen.queryByTestId('reply-with-form-btn'), `formId=${formId}`).toBeNull();
+      unmount();
+    }
   });
 });
 
