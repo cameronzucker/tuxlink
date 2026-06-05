@@ -259,6 +259,26 @@ struct VaraSessionInner {
     /// records the operator-meaningful distinction so the frontend can
     /// detect sidebar-nav drift mid-session (Codex Round 3 P1 #3).
     active_transport_kind: Option<TransportKind>,
+    /// In-flight ARQ exchange classification (Codex Phase 3-4 boundary
+    /// P2 #4 — tuxlink-u1r7). `Some(Outbound)` while a `b2f_exchange`
+    /// dial is running; `Some(Inbound)` while the listener consumer
+    /// task is running an inbound `b2f_answer`; `None` between
+    /// exchanges (transport may still be open + listener may still be
+    /// armed; this field tracks the exchange layer specifically).
+    ///
+    /// Wired by `VaraSession::begin_exchange` / `end_exchange` from the
+    /// outbound b2f command + the listener consumer task. Read by
+    /// [`Self::current_exchange`] (the DTO accessor) so the frontend
+    /// shared `useRadioSessionLifecycle` hook can gate the
+    /// "exchange in progress" UI surface accurately.
+    ///
+    /// Distinct from `transport_owner` (which models who holds the
+    /// transport — listener vs outbound) — an `Outbound` exchange
+    /// implies `transport_owner == ListenerArmed` (via the
+    /// take_transport bypass) but an `Inbound` exchange does NOT
+    /// transition the owner to `ListenerInbound` in today's consumer
+    /// task. The two fields are deliberately decoupled.
+    current_exchange: Option<ExchangeState>,
 }
 
 impl VaraSession {
@@ -278,6 +298,7 @@ impl VaraSession {
                 transport_owner: TransportOwner::None,
                 active_intent: None,
                 active_transport_kind: None,
+                current_exchange: None,
             }),
             transport_yield_request: Arc::new(Notify::new()),
             transport_yield_rx: tokio::sync::Mutex::new(yield_rx),
@@ -318,26 +339,83 @@ impl VaraSession {
         snap
     }
 
-    // ── Lifecycle stub accessors (tuxlink-0ye6 Task 3.0) ────────────────
+    // ── Lifecycle accessors (tuxlink-0ye6 Task 3.0 + Codex Phase 3-4
+    // boundary P2 #4 — tuxlink-u1r7) ────────────────────────────────
     //
     // See `ModemSession`'s parallel accessors in
-    // `src-tauri/src/modem_status.rs` for the shared contract. The real
-    // values are wired in by Phase 3.2 (open_session / close_session),
-    // 3.4 (listener consumer task), and 3.5 (`b2f_exchange` outbound).
+    // `src-tauri/src/modem_status.rs` for the shared contract. P2 #4
+    // (Codex 2026-06-04) wires `listener_armed` + `current_exchange`
+    // to real session state on the VARA side; the ARDOP side remains
+    // stubbed and is tracked separately. `active_intent` +
+    // `active_transport_kind` already wired by Task 3.2.
 
-    /// Listener-armed state. STUB: returns `false`.
-    // TODO: wire to listener state once Phase 3 commands land
-    // (tuxlink-0ye6 Task 3.4 — the listener consumer task is the
-    // authoritative source).
+    /// Listener-armed state. Reads through the arbiter's
+    /// [`TransportOwner`]: a listener consumer task that has called
+    /// `take_transport()` transitions the owner to
+    /// [`TransportOwner::ListenerArmed`] (idle in accept loop) or
+    /// [`TransportOwner::ListenerInbound`] (running an inbound exchange).
+    /// Both states are "the listener is armed" from the frontend's
+    /// perspective; the UI gates the LISTEN-ON affordance + the inbound-
+    /// exchange pill from this single boolean.
+    ///
+    /// Codex Phase 3-4 boundary P2 #4 (tuxlink-u1r7): wires this from
+    /// the prior Task 3.0 stub `false` return. There is a brief window
+    /// between `arm_vara_listener_inner` returning Ok and the spawned
+    /// consumer task's first `take_transport()` call during which the
+    /// transport_owner has not yet transitioned to `ListenerArmed` —
+    /// status polls in this window read `false`. Acceptable today: the
+    /// status broadcaster polls at sub-second cadence and the take
+    /// completes within ms of the spawn; a follow-up could close the
+    /// window via an explicit flag on the session if operator-visible
+    /// UI flicker is observed.
     pub fn listener_armed(&self) -> bool {
-        false
+        matches!(
+            self.transport_owner(),
+            TransportOwner::ListenerArmed | TransportOwner::ListenerInbound
+        )
     }
 
-    /// Current in-flight exchange classification. STUB: returns `None`.
-    // TODO: wire to listener state once Phase 3 commands land
-    // (tuxlink-0ye6 Task 3.5 outbound + 3.4 inbound).
+    /// Current in-flight exchange classification. Returns the
+    /// [`VaraSessionInner::current_exchange`] field, set by
+    /// [`Self::begin_exchange`] at the entry of an outbound dial or
+    /// inbound `b2f_answer` and cleared by [`Self::end_exchange`]
+    /// at the corresponding exit.
+    ///
+    /// Codex Phase 3-4 boundary P2 #4 (tuxlink-u1r7): wires this from
+    /// the prior Task 3.0 stub `None` return. Returns `None` if the
+    /// session mutex is poisoned (defensive — same posture as
+    /// [`Self::active_intent`]).
     pub fn current_exchange(&self) -> Option<ExchangeState> {
-        None
+        self.inner.lock().ok().and_then(|g| g.current_exchange)
+    }
+
+    /// Mark an exchange as in flight. Called by the outbound b2f path
+    /// with `ExchangeState::Outbound` after the operator's dial is
+    /// accepted and by the listener consumer task with
+    /// `ExchangeState::Inbound` when `serve_inbound_one` accepts a
+    /// peer. The DTO accessor [`Self::current_exchange`] surfaces this
+    /// to the frontend so the shared `useRadioSessionLifecycle` hook
+    /// can render the "exchange in progress" UI.
+    ///
+    /// Replaces any previously-set state — the arbiter ensures only
+    /// one exchange runs at a time, so a non-`None` prior state is a
+    /// regression that should not occur in production. The setter
+    /// nonetheless overwrites unconditionally (the next exchange's
+    /// classification is the authoritative reading).
+    pub fn begin_exchange(&self, state: ExchangeState) {
+        if let Ok(mut guard) = self.inner.lock() {
+            guard.current_exchange = Some(state);
+        }
+    }
+
+    /// Clear the in-flight exchange marker. Called at the exit of the
+    /// outbound dial and at the exit of the consumer task's inbound
+    /// b2f handling. Idempotent; safe to call when no exchange is in
+    /// flight.
+    pub fn end_exchange(&self) {
+        if let Ok(mut guard) = self.inner.lock() {
+            guard.current_exchange = None;
+        }
     }
 
     /// Intent of the currently-open session (tuxlink-0ye6 Task 3.2). Set by
@@ -416,6 +494,11 @@ impl VaraSession {
             };
             guard.transport = Some(t);
             guard.transport_owner = TransportOwner::None;
+            // Codex Phase 3-4 boundary P2 #4 (tuxlink-u1r7): clear the
+            // exchange marker on restoration — return_transport is the
+            // listener consumer's post-disarm restoration path; any
+            // prior in-flight exchange has already ended.
+            guard.current_exchange = None;
         }
     }
 
@@ -498,6 +581,10 @@ impl VaraSession {
                 guard.transport_owner = TransportOwner::None;
                 guard.active_intent = active_intent;
                 guard.active_transport_kind = active_transport_kind;
+                // Codex Phase 3-4 boundary P2 #4 (tuxlink-u1r7): clear
+                // exchange marker on install-back — the b2f exchange that
+                // owned the transport is over by the time we get here.
+                guard.current_exchange = None;
                 Ok(())
             }
             Err(_poisoned) => Err(t),
@@ -1348,6 +1435,11 @@ pub fn vara_stop_session_inner(
     guard.abort_writer = None;
     guard.abort_stream = None;
     guard.transport_owner = TransportOwner::None;
+    // Codex Phase 3-4 boundary P2 #4 (tuxlink-u1r7): also clear the
+    // in-flight exchange marker — a close that races a b2f path's
+    // entry should not leave Outbound/Inbound staring back at the
+    // operator after the transport is gone.
+    guard.current_exchange = None;
     guard.status = VaraStatus::closed();
     Ok(guard.status.clone())
 }
@@ -1514,6 +1606,12 @@ pub async fn modem_vara_b2f_exchange(
             .to_string()
     })?;
 
+    // Codex Phase 3-4 boundary P2 #4 (tuxlink-u1r7): mark the exchange
+    // as in flight (Outbound) so a status poll from the UI surfaces the
+    // dial state correctly. Cleared on the install-back path below so
+    // the marker tracks the actual b2f-runtime window.
+    session.begin_exchange(ExchangeState::Outbound);
+
     // Wrap the connect + exchange + disconnect in an inner so a single
     // point handles cleanup on BOTH success and failure. The disconnect
     // runs OUTSIDE any held lock (the lock was already released by
@@ -1525,6 +1623,12 @@ pub async fn modem_vara_b2f_exchange(
         &target_clean,
         intent,
     );
+
+    // Always clear the exchange marker — install_transport_if_generation_matches
+    // also clears it as a belt-and-suspenders measure, but explicit here so
+    // the marker is gone before the wind-down DISCONNECT (operator can read
+    // `exchange == None` as soon as the b2f code path returns).
+    session.end_exchange();
 
     // ─── Always link-disconnect + install transport back ─────────────
     // Best-effort cmd-port `DISCONNECT` + bounded wait for the
@@ -3754,5 +3858,196 @@ mod tests {
              removed — the widened command takes SessionIntent directly; \
              the string-parser helper has no remaining callers"
         );
+    }
+
+    // ── tuxlink-u1r7 — Codex Phase 3-4 boundary P2 #4 ──────────────────
+    //
+    // `VaraStatus.listener_armed` + `.exchange` accessors wired from
+    // their Task 3.0 stub returns to real session state. listener_armed
+    // reads through `transport_owner` (ListenerArmed | ListenerInbound);
+    // exchange reads through the new `current_exchange` field on
+    // VaraSessionInner, set by begin_exchange / end_exchange at the
+    // entry/exit of the b2f code paths.
+
+    #[test]
+    fn vara_listener_armed_reflects_transport_owner_listener_armed() {
+        let session = VaraSession::new();
+        assert!(
+            !session.listener_armed(),
+            "fresh session: listener_armed must be false"
+        );
+
+        session.set_transport_owner_for_test(TransportOwner::ListenerArmed);
+        assert!(
+            session.listener_armed(),
+            "P2 #4: ListenerArmed transport_owner must surface as \
+             listener_armed=true"
+        );
+
+        // Clearing the owner returns listener_armed to false.
+        session.set_transport_owner_for_test(TransportOwner::None);
+        assert!(
+            !session.listener_armed(),
+            "owner None: listener_armed must be false"
+        );
+    }
+
+    #[test]
+    fn vara_listener_armed_true_during_inbound_exchange() {
+        // ListenerInbound covers the "listener has the transport AND
+        // is running an inbound exchange" case. listener_armed must be
+        // true in this state too — the UI gates the "exchange in
+        // progress" pill from `exchange == Some(Inbound)` and the
+        // listener-armed surface from `listener_armed`; both should
+        // hold simultaneously.
+        let session = VaraSession::new();
+        session.set_transport_owner_for_test(TransportOwner::ListenerInbound);
+        assert!(
+            session.listener_armed(),
+            "P2 #4: ListenerInbound must surface as listener_armed=true"
+        );
+    }
+
+    #[test]
+    fn vara_listener_armed_false_for_outbound_owner_states() {
+        // OutboundPending + Outbound are not "listener-armed" states —
+        // outbound has taken the transport via the arbiter yield. Pin
+        // both branches so a future widening of listener_armed catches.
+        let session = VaraSession::new();
+        session.set_transport_owner_for_test(TransportOwner::OutboundPending);
+        assert!(
+            !session.listener_armed(),
+            "OutboundPending owner: listener_armed must be false"
+        );
+        session.set_transport_owner_for_test(TransportOwner::Outbound);
+        assert!(
+            !session.listener_armed(),
+            "Outbound owner: listener_armed must be false"
+        );
+    }
+
+    #[test]
+    fn vara_current_exchange_returns_begin_exchange_value() {
+        let session = VaraSession::new();
+        assert!(
+            session.current_exchange().is_none(),
+            "fresh session: current_exchange must be None"
+        );
+
+        session.begin_exchange(ExchangeState::Outbound);
+        assert_eq!(
+            session.current_exchange(),
+            Some(ExchangeState::Outbound),
+            "P2 #4: begin_exchange(Outbound) must surface via current_exchange"
+        );
+
+        session.begin_exchange(ExchangeState::Inbound);
+        assert_eq!(
+            session.current_exchange(),
+            Some(ExchangeState::Inbound),
+            "P2 #4: begin_exchange(Inbound) must replace prior state"
+        );
+
+        session.end_exchange();
+        assert!(
+            session.current_exchange().is_none(),
+            "P2 #4: end_exchange must clear the marker"
+        );
+    }
+
+    #[test]
+    fn vara_current_exchange_cleared_on_stop_session() {
+        // A close racing the entry of a b2f exchange must not leave a
+        // stale Outbound/Inbound marker on the closed session — the
+        // status overlay would lie to the operator.
+        let session = Arc::new(VaraSession::new());
+        session.begin_exchange(ExchangeState::Outbound);
+        assert_eq!(session.current_exchange(), Some(ExchangeState::Outbound));
+
+        vara_stop_session_inner(&session).unwrap();
+
+        assert!(
+            session.current_exchange().is_none(),
+            "P2 #4: vara_stop_session_inner must clear current_exchange"
+        );
+        // And the snapshot's overlaid `exchange` field must agree.
+        let snap = session.snapshot();
+        assert!(
+            snap.exchange.is_none(),
+            "snapshot.exchange must be None after stop"
+        );
+    }
+
+    #[test]
+    fn vara_snapshot_overlays_listener_armed_and_exchange_from_real_state() {
+        // Drive both fields concurrently and verify snapshot() reflects
+        // them both — the load-bearing DTO-wire-in for the panel.
+        let session = VaraSession::new();
+        session.set_transport_owner_for_test(TransportOwner::ListenerInbound);
+        session.begin_exchange(ExchangeState::Inbound);
+
+        let snap = session.snapshot();
+        assert!(
+            snap.listener_armed,
+            "P2 #4: snapshot.listener_armed must be true with ListenerInbound owner"
+        );
+        assert_eq!(
+            snap.exchange,
+            Some(ExchangeState::Inbound),
+            "P2 #4: snapshot.exchange must reflect current_exchange"
+        );
+        assert_eq!(snap.transport_owner, TransportOwner::ListenerInbound);
+    }
+
+    #[test]
+    fn vara_install_transport_if_generation_matches_clears_exchange_on_success() {
+        // The install-back path runs at b2f-exchange exit. It must clear
+        // current_exchange so a subsequent snapshot doesn't report a
+        // stale Outbound after the exchange completes.
+        let (transport, h1, h2) = build_real_transport_for_test();
+        let session = VaraSession::new();
+        session.begin_exchange(ExchangeState::Outbound);
+        assert_eq!(session.current_exchange(), Some(ExchangeState::Outbound));
+
+        let snapshot = session.current_close_generation();
+        let result = session.install_transport_if_generation_matches(
+            transport,
+            snapshot,
+            Some("127.0.0.1".into()),
+            Some(8300),
+            Some(SessionIntent::Cms),
+            Some(TransportKind::VaraHf),
+        );
+        assert!(result.is_ok(), "fresh generation install must succeed");
+        assert!(
+            session.current_exchange().is_none(),
+            "P2 #4: install_transport_if_generation_matches must clear \
+             current_exchange on success"
+        );
+
+        drop(session);
+        h1.join().ok();
+        h2.join().ok();
+    }
+
+    #[test]
+    fn vara_return_transport_clears_exchange() {
+        // return_transport is the listener consumer's post-disarm path;
+        // the prior inbound exchange (if any) is complete by then.
+        let (transport, h1, h2) = build_real_transport_for_test();
+        let session = VaraSession::new();
+        session.begin_exchange(ExchangeState::Inbound);
+        assert_eq!(session.current_exchange(), Some(ExchangeState::Inbound));
+
+        session.return_transport(transport, Some("127.0.0.1".into()), Some(8300));
+
+        assert!(
+            session.current_exchange().is_none(),
+            "P2 #4: return_transport must clear current_exchange"
+        );
+
+        drop(session);
+        h1.join().ok();
+        h2.join().ok();
     }
 }

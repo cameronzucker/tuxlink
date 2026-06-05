@@ -3318,11 +3318,21 @@ fn vara_listener_consumer_task(
                     "VARA inbound: {} accepted; running B2F…",
                     peer_call
                 ));
+                // Codex Phase 3-4 boundary P2 #4 (tuxlink-u1r7): mark
+                // the session as running an inbound exchange so a
+                // status poll surfaces Exchange::Inbound. Cleared at
+                // the bottom of this branch (success / config-read
+                // failure / tempdir failure all route through the
+                // continue or the end-of-branch end_exchange).
+                vara_session.begin_exchange(
+                    crate::modem_status::ExchangeState::Inbound,
+                );
                 let cfg = match crate::config::read_config() {
                     Ok(c) => c,
                     Err(e) => {
                         progress(&format!("VARA listener: config read failed {e}; dropping link"));
                         let _ = crate::winlink::modem::vara::set_listen(&mut transport, false);
+                        vara_session.end_exchange();
                         continue;
                     }
                 };
@@ -3358,6 +3368,7 @@ fn vara_listener_consumer_task(
                                      tempdir for protocol-only exchange ({e}); \
                                      dropping link."
                                 ));
+                                vara_session.end_exchange();
                                 continue;
                             }
                         }
@@ -3376,6 +3387,9 @@ fn vara_listener_consumer_task(
                 // best-effort DISCONNECT so the modem releases the ARQ
                 // link if it's still up.
                 let _ = transport.send(&crate::winlink::modem::vara::OutboundCommand::Disconnect);
+                // Codex Phase 3-4 boundary P2 #4: clear the exchange
+                // marker now that the b2f handling is fully done.
+                vara_session.end_exchange();
             }
             InboundOutcome::RejectedAllowlist { peer } => {
                 progress(&format!(
