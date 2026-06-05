@@ -9,6 +9,7 @@ pub mod event;
 pub mod fanout;
 pub mod filter_layer;
 pub mod redact;
+pub mod state_dir;
 pub mod subscriber;
 pub mod visit;
 pub mod wire_sanitize;
