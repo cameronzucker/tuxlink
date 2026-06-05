@@ -79,14 +79,29 @@ pub fn install<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
                 let id = event.id().as_ref().to_string();
                 match id.as_str() {
                     "tray:quit" => {
+                        tracing::info!(
+                            target: "tuxlink::tray",
+                            event = "quit",
+                            "tray menu event",
+                        );
                         app_clone.exit(0);
                     }
                     "tray:show_hide" => {
+                        tracing::debug!(
+                            target: "tuxlink::tray",
+                            event = "show_window",
+                            "tray menu event",
+                        );
                         // Unconditional show (tuxlink-9zd) — never toggle on the
                         // unreliable is_visible() state.
                         show_main_window(&app_clone);
                     }
                     "tray:new_message" => {
+                        tracing::debug!(
+                            target: "tuxlink::tray",
+                            event = "new_message",
+                            "tray menu event",
+                        );
                         // Show window first, then emit menu:file:new so the
                         // compose-window open handler (Task 14) is live.
                         show_main_window(&app_clone);

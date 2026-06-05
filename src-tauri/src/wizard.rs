@@ -208,6 +208,7 @@ pub async fn persist_cms_impl(
 
     // Step 7: Write config.json atomically.
     // On failure: best-effort rollback of the keyring write (snapshot-and-restore).
+    // NOTE: tracing::info! here logs only the callsign and outcome — never the password.
     if let Err(config_err) = crate::config::write_config_atomic(&new_config) {
         let rollback_result = match prior {
             // Prior entry existed: restore it (compensating transaction per spec §3.2).
@@ -222,6 +223,12 @@ pub async fn persist_cms_impl(
                 });
             }
             Err(rollback_err) => {
+                tracing::error!(
+                    target: "tuxlink::wizard",
+                    callsign = %callsign,
+                    outcome = "config_write_and_rollback_failed",
+                    "wizard CMS persist failed",
+                );
                 return Err(WizardError::ConfigWriteAndRollbackFailed {
                     config_error: format!("{config_err}"),
                     rollback_error: format!("{rollback_err}"),
@@ -230,6 +237,12 @@ pub async fn persist_cms_impl(
         }
     }
 
+    tracing::info!(
+        target: "tuxlink::wizard",
+        callsign = %callsign,
+        outcome = "ok",
+        "wizard CMS persist completed",
+    );
     Ok(())
 }
 
@@ -331,6 +344,13 @@ pub async fn persist_offline_impl(
     crate::config::write_config_atomic(&new_config)
         .map_err(|e| WizardError::ConfigWrite { detail: format!("{e}") })?;
 
+    tracing::info!(
+        target: "tuxlink::wizard",
+        has_identifier = new_config.identity.identifier.is_some(),
+        has_grid = new_config.identity.grid.is_some(),
+        outcome = "ok",
+        "wizard offline persist completed",
+    );
     Ok(())
 }
 
@@ -407,6 +427,11 @@ pub async fn verify_cms_connection_impl(_app: tauri::AppHandle) -> Result<(), Wi
             detail: format!("CMS disconnect failed: {e}"),
         })?;
 
+    tracing::info!(
+        target: "tuxlink::wizard",
+        outcome = "ok",
+        "wizard CMS verify completed",
+    );
     Ok(())
 }
 
