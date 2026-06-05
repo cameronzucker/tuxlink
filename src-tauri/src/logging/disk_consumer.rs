@@ -18,10 +18,14 @@ use std::sync::Arc;
 use tokio::sync::broadcast;
 use tokio::sync::Mutex;
 use tracing_appender::non_blocking::WorkerGuard;
-use tracing_appender::rolling::{RollingFileAppender, Rotation};
+use tracing_appender::rolling::{InitError, RollingFileAppender, Rotation};
 
 /// Spawn the disk consumer task. Returns the WorkerGuard (must live for
 /// process lifetime — store it in Tauri-managed state).
+///
+/// Returns `Err(InitError)` if the log directory is not writable at spawn
+/// time (e.g., permissions race, read-only remount after `state_dir::resolve()`).
+/// Callers fold this into `InitOutcome::Degraded` per Amendment D.
 ///
 /// Arguments:
 /// - `rx`: broadcast receiver from FanoutLayer.
@@ -35,13 +39,12 @@ pub fn spawn(
     active_file_tracker: Arc<Mutex<Option<PathBuf>>>,
     paused_flag: Arc<AtomicBool>,
     retention_config: RetentionConfig,
-) -> WorkerGuard {
+) -> Result<WorkerGuard, InitError> {
     let appender = RollingFileAppender::builder()
         .rotation(Rotation::HOURLY)
         .filename_prefix("tuxlink")
         .filename_suffix("jsonl")
-        .build(&log_dir)
-        .expect("log directory must be writable");
+        .build(&log_dir)?;
 
     let (writer, guard) = tracing_appender::non_blocking(appender);
     let writer = Arc::new(Mutex::new(writer));
@@ -117,5 +120,5 @@ pub fn spawn(
         }
     });
 
-    guard
+    Ok(guard)
 }
