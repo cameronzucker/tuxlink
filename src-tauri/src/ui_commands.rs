@@ -4018,7 +4018,17 @@ pub async fn telnet_p2p_connect(
     // tuxlink-l55l: read the outbox BEFORE opening the socket — same ordering
     // as `native_telnet_exchange` (P1.3 Codex review). A malformed outbox
     // fails fast without consuming an on-air slot or surprising the peer.
-    let outbound = match crate::winlink_backend::build_outbound_proposals(&mailbox) {
+    //
+    // tuxlink-u5hl (Codex Round 5 P1 #3): pass the explicit P2p intent so
+    // the safety gate fires. P2P-Telnet outbound is intentionally gated
+    // until the routing_flag schema lands — failing here (before the
+    // socket opens) keeps the alpha fail-closed against off-spec routing
+    // tags at the peer. The status is emitted as Disconnected via the
+    // existing error path below.
+    let outbound = match crate::winlink_backend::build_outbound_proposals(
+        &mailbox,
+        SessionIntent::P2p,
+    ) {
         Ok(v) => v,
         Err(e) => {
             p2p_state.in_progress.store(false, Ordering::SeqCst);
