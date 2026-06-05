@@ -4,6 +4,19 @@ All notable changes to Tuxlink are documented here.
 
 This project adheres to [Semantic Versioning](https://semver.org) with project-specific rules described in [VERSIONING.md](VERSIONING.md). Entries from `v0.0.2` onward are generated automatically by [`release-please`](https://github.com/googleapis/release-please) from [Conventional Commits](https://www.conventionalcommits.org).
 
+## [0.35.0](https://github.com/cameronzucker/tuxlink/compare/v0.34.2...v0.35.0) (2026-06-05)
+
+
+### Features
+
+* **mailbox:** surface Winlink message ID in MessageView header (tuxlink-gtno) ([459abb4](https://github.com/cameronzucker/tuxlink/commit/459abb4cfb857048ab0e0e3b27ef78f347b6ca41))
+
+
+### Bug Fixes
+
+* **search:** empty-star color from --border-strong to --text-dim (tuxlink-ojr7) ([0384784](https://github.com/cameronzucker/tuxlink/commit/038478405783671bdfd82da1d134075483dc8530))
+* **shell:** SSID picker min-width 72px → 60px (tuxlink-yn58) ([aa24018](https://github.com/cameronzucker/tuxlink/commit/aa24018e26993489f95a16376607812fa601bd03))
+
 ## [0.34.2](https://github.com/cameronzucker/tuxlink/compare/v0.34.1...v0.34.2) (2026-06-05)
 
 
