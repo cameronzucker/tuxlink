@@ -4,6 +4,13 @@ All notable changes to Tuxlink are documented here.
 
 This project adheres to [Semantic Versioning](https://semver.org) with project-specific rules described in [VERSIONING.md](VERSIONING.md). Entries from `v0.0.2` onward are generated automatically by [`release-please`](https://github.com/googleapis/release-please) from [Conventional Commits](https://www.conventionalcommits.org).
 
+## [0.34.2](https://github.com/cameronzucker/tuxlink/compare/v0.34.1...v0.34.2) (2026-06-05)
+
+
+### Bug Fixes
+
+* **mailbox:** emit placeholder for binary message bodies (tuxlink-9ylw) ([5a9945d](https://github.com/cameronzucker/tuxlink/commit/5a9945da509821e637eec30b6e89d09662c8b1e0))
+
 ## [0.34.1](https://github.com/cameronzucker/tuxlink/compare/v0.34.0...v0.34.1) (2026-06-05)
 
 
