@@ -357,6 +357,10 @@ pub fn run() {
             crate::winlink::modem::vara::commands::vara_close_session,
             crate::winlink::modem::vara::commands::vara_status,
             crate::winlink::modem::vara::commands::platform_info,
+            // tuxlink-0ye6 Task 3.4: VARA dial-path B2F exchange — CONNECT to peer
+            // + B2F handshake + intent-filtered mailbox drain + DISCONNECT, all
+            // in one Tauri call. Mirror of `modem_ardop_b2f_exchange`'s shape.
+            crate::winlink::modem::vara::commands::modem_vara_b2f_exchange,
             // tuxlink-0pnb Task 4 (refactored): P2P-Telnet connect + abort + peer-password management.
             // telnet_p2p_dial renamed to telnet_p2p_connect (StatusBar pipeline wiring);
             // telnet_p2p_abort added to mirror cms_abort (operator cancel semantics).

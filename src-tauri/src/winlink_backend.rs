@@ -2088,6 +2088,147 @@ pub fn run_vara_b2f_answer(
     Ok(())
 }
 
+/// Run a B2F mail exchange over an already-`CONNECTED` VARA transport
+/// (tuxlink-0ye6 Task 3.4 — VARA's dial-role analog of
+/// [`run_ardop_b2f_exchange`] / [`run_vara_b2f_answer`]).
+///
+/// The transport must already be in a `CONNECTED <mycall> <target> [bw]`
+/// state — the Tauri-command layer is responsible for sending `CONNECT` on
+/// the cmd port and waiting for the `CONNECTED` event before calling this
+/// function. This wrapper drives the B2F protocol over the VARA data socket
+/// only; it does NOT touch the cmd port.
+///
+/// Mirrors [`run_vara_b2f_answer`]'s data-socket plumbing (try_clone the
+/// underlying `TcpStream` to split duplex halves into a `BufReader` for
+/// reads + the raw stream for writes), but takes `ExchangeRole::Dial` so
+/// the slave/IRS turn order matches the dialer's view of the exchange.
+///
+/// Intent threads through `ExchangeConfig.intent` per
+/// [`SessionIntent::routing_flag`] — the operator's typed intent
+/// determines the routing-flag posture of the exchange (CMS → 'C', P2p →
+/// no flag, RadioOnly → 'R'). Outbox messages drain through
+/// `build_outbound_proposals` (same shape ARDOP uses); the per-message
+/// flag-aware filter is informational at this stage — the production
+/// mailbox does not yet stamp `RoutingFlag` on stored messages, so the
+/// existing outbox iteration is the correct drain set for any intent.
+///
+/// # CMS password
+///
+/// For `intent == Cms`, fetches the operator's CMS password from the
+/// shared `tuxlink-pat` keyring entry (same source the ARDOP path uses)
+/// so a `;PQ` challenge from the gateway can be answered. For non-CMS
+/// intents, skips the keyring read — peers never challenge per the FBB
+/// master/slave split and a stale CMS secret should not leak into a peer
+/// handshake.
+///
+/// # RADIO-1
+///
+/// The caller MUST have established the `CONNECTED` link via the cmd-port
+/// `CONNECT` flow (which is itself the RF-transmitting step). This
+/// function only drives the data-socket exchange — it does NOT initiate
+/// transmission on its own. Aborting an in-flight exchange is the
+/// session-layer `abort_in_flight` path (Task 4.1), not this function.
+pub fn run_vara_b2f_exchange(
+    transport: &mut crate::winlink::modem::vara::VaraTransport,
+    target: &str,
+    intent: SessionIntent,
+    config: &Config,
+    mailbox: &Mailbox,
+    position: Option<&crate::position::PositionArbiter>,
+) -> Result<(), BackendError> {
+    use std::io::BufReader;
+
+    let callsign = config
+        .identity
+        .callsign
+        .clone()
+        .ok_or_else(|| BackendError::NotConfigured("identity.callsign".into()))?
+        .trim()
+        .to_uppercase();
+    let locator = crate::position::effective_broadcast_locator(config, position);
+
+    // CMS gateway may issue a `;PQ` challenge — fetch the operator's CMS
+    // password from the shared `tuxlink-pat` keyring entry (per ADR 0011
+    // cred refactor; same source ARDOP uses). For peer intents the FBB
+    // master/slave split forbids challenges, so skip the keyring read:
+    // both a hygiene win and a defensive guarantee that a stale CMS
+    // secret cannot leak into a peer handshake.
+    let password = if intent == SessionIntent::Cms {
+        keyring::Entry::new("tuxlink-pat", &callsign)
+            .ok()
+            .and_then(|e| e.get_password().ok())
+            .filter(|p| !p.is_empty())
+    } else {
+        None
+    };
+
+    let outbound = build_outbound_proposals(mailbox)?;
+    let exchange_config = session::ExchangeConfig {
+        mycall: callsign,
+        targetcall: target.to_string(),
+        locator,
+        password,
+        intent,
+    };
+
+    // Split the duplex VARA data socket into BufRead + Write halves.
+    // Same pattern as `run_vara_b2f_answer` — VARA's data socket is an
+    // OS-level TCP stream we can clone; the kernel arbitrates the duplex
+    // halves. The B2F engine is strictly turn-based so the split is safe
+    // (only one side reads or writes at any instant).
+    let writer = transport
+        .data_stream()
+        .try_clone()
+        .map_err(|e| BackendError::TransportFailed {
+            reason: format!("VARA data-socket try_clone failed: {e}"),
+            source: None,
+        })?;
+    let reader = BufReader::new(
+        transport
+            .data_stream()
+            .try_clone()
+            .map_err(|e| BackendError::TransportFailed {
+                reason: format!("VARA data-socket try_clone (reader) failed: {e}"),
+                source: None,
+            })?,
+    );
+    let mut reader = reader;
+    let mut writer = writer;
+
+    let result = session::run_exchange_with_role(
+        &mut reader,
+        &mut writer,
+        ExchangeRole::Dial,
+        &exchange_config,
+        outbound,
+        |proposals| {
+            proposals
+                .iter()
+                .map(|_| Answer::Accept { resume_offset: 0 })
+                .collect()
+        },
+        None,
+    )
+    .map_err(|e| BackendError::TransportFailed {
+        reason: format!("{e:?}"),
+        source: None,
+    })?;
+
+    // File received messages into the inbox; move delivered ones to sent.
+    // Inbox-FIRST ordering matches the ARDOP path's Codex P1.4 fix.
+    for message in &result.received {
+        mailbox.store(MailboxFolder::Inbox, &message.to_bytes())?;
+    }
+    for mid in &result.sent {
+        mailbox.move_to(
+            MailboxFolder::Outbox,
+            MailboxFolder::Sent,
+            &MessageId(mid.clone()),
+        )?;
+    }
+    Ok(())
+}
+
 /// Seconds since the Unix epoch, now.
 fn now_unix_secs() -> u64 {
     use std::time::{SystemTime, UNIX_EPOCH};
