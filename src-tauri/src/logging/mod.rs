@@ -24,11 +24,13 @@ pub mod state_dir;
 pub mod subscriber;
 pub mod summary;
 pub mod visit;
+pub mod ui_consumer;
 pub mod wire_sanitize;
 
 pub use fanout::AttemptIdExt;
 pub use logging_handle::LoggingHandle;
 
+use crate::logging::export::FlushBarrier;
 use crate::session_log::SessionLogState;
 use chrono::Utc;
 use std::sync::{Arc, Mutex};
@@ -97,12 +99,17 @@ pub fn init(session_log: Arc<SessionLogState>) -> InitOutcome {
         retention::RetentionConfig { days: s.retention_days, mb_cap: s.retention_mb_cap }
     };
 
+    // Codex P2 #4: create the flush barrier. The receiver goes to disk_consumer;
+    // the sender lives on LoggingHandle for use by logging_export + report_issue_flow.
+    let (flush_barrier, flush_barrier_rx) = FlushBarrier::new();
+
     let appender_guard = match disk_consumer::spawn(
         handles.broadcast_rx,
         log_dir.clone(),
         active_file_path.clone(),
         free_disk_guard.paused.clone(),
         retention_cfg,
+        flush_barrier_rx,
     ) {
         Ok(g) => g,
         Err(e) => {
@@ -111,6 +118,13 @@ pub fn init(session_log: Arc<SessionLogState>) -> InitOutcome {
             };
         }
     };
+
+    // Codex P2 #3: spawn a second broadcast consumer that feeds the session-log
+    // ring buffer (SessionLogState::append_with_seq). The disk consumer above
+    // uses handles.broadcast_rx; the UI consumer gets a fresh receiver via
+    // broadcast_tx.subscribe() so the two consumers are independent.
+    let ui_rx = handles.fanout.broadcast_tx.subscribe();
+    ui_consumer::spawn(ui_rx, session_log.clone());
 
     let boot_id = handles.fanout.boot_id.clone();
     let boot_at = Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
@@ -140,6 +154,7 @@ pub fn init(session_log: Arc<SessionLogState>) -> InitOutcome {
         free_disk_paused: free_disk_guard.paused,
         revert_cancel: Arc::new(Mutex::new(None)),
         probe_listener_id: Mutex::new(None),
+        flush_barrier,
     };
 
     // Amendment C: schedule Bounded auto-revert timer if settings persisted
