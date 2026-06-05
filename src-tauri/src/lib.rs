@@ -168,8 +168,9 @@ pub fn run() {
             {
                 let session_log = (*app.state::<std::sync::Arc<crate::session_log::SessionLogState>>()).clone();
                 match crate::logging::init(session_log) {
-                    crate::logging::InitOutcome::Full(handle) => {
-                        let handle_arc = std::sync::Arc::new(handle);
+                    crate::logging::InitOutcome::Full(handle_arc) => {
+                        // handle_arc is Arc<LoggingHandle> — init() wraps it so the
+                        // bounded_timer clone doesn't cause a try_unwrap panic.
                         app.manage(handle_arc.clone());
                         // Amendment E.5.8: spawn probe runner that fires on first_paint_complete.
                         crate::logging::env_probes::spawn_runner(

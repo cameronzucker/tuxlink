@@ -35,8 +35,13 @@ use std::sync::{Arc, Mutex};
 
 /// Outcome of `init()` — either a full pipeline or degraded (no disk logging).
 /// Per Amendment D (spec §6.1 fail-soft).
+///
+/// `Full` carries an `Arc<LoggingHandle>` rather than a bare `LoggingHandle` so
+/// that `init()` can call `bounded_timer::schedule_revert(handle_arc.clone())`
+/// for persisted Bounded state without `Arc::try_unwrap` — which would panic
+/// because the timer task holds a clone (HIGH fix, Task 6 spec-compliance).
 pub enum InitOutcome {
-    Full(LoggingHandle),
+    Full(Arc<LoggingHandle>),
     Degraded { reason: String },
 }
 
@@ -138,11 +143,12 @@ pub fn init(session_log: Arc<SessionLogState>) -> InitOutcome {
 
     // Amendment C: schedule Bounded auto-revert timer if settings persisted
     // a Bounded state across a restart.
+    //
+    // The Arc is returned directly as InitOutcome::Full(Arc<LoggingHandle>) so
+    // the timer task's clone does not prevent the caller from using the handle.
+    // No Arc::try_unwrap here — the timer may hold a clone, and that's fine.
     let handle_arc = Arc::new(handle);
     bounded_timer::schedule_revert(handle_arc.clone());
 
-    InitOutcome::Full(
-        Arc::try_unwrap(handle_arc)
-            .unwrap_or_else(|_| panic!("logging::init: handle_arc had unexpected extra references"))
-    )
+    InitOutcome::Full(handle_arc)
 }
