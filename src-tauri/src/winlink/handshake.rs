@@ -14,6 +14,7 @@
 use std::io::BufRead;
 
 use super::wire;
+use crate::logging::wire_sanitize::{sanitize_wire_line, WireContext};
 
 /// The application name we put in our identifier line. Must contain no dash.
 const APP_NAME: &str = "tuxlink";
@@ -52,8 +53,24 @@ pub fn build_handshake(
         env!("CARGO_PKG_VERSION")
     ));
     if let Some(response) = secure_response {
-        out.push_str(&format!(";PR: {response}\r"));
+        let response_line = format!(";PR: {response}\r");
+        // Trace the SANITIZED form; send the UNSANITIZED bytes over the wire.
+        let sanitized = sanitize_wire_line(&response_line, WireContext::Generic);
+        tracing::trace!(
+            target: "tuxlink::winlink::handshake",
+            line = %sanitized,
+            direction = "tx",
+            "wire emission",
+        );
+        out.push_str(&response_line);
     }
+    tracing::debug!(
+        target: "tuxlink::winlink::handshake",
+        mycall,
+        targetcall,
+        has_secure_response = secure_response.is_some(),
+        "client handshake built",
+    );
     out.push_str(&format!("; {targetcall} DE {mycall} ({locator})\r"));
     out.into_bytes()
 }
@@ -75,6 +92,12 @@ pub fn build_master_handshake(mycall: &str, targetcall: &str, locator: &str) -> 
         env!("CARGO_PKG_VERSION")
     ));
     out.push_str(&format!("; {targetcall} DE {mycall} ({locator})>\r"));
+    tracing::debug!(
+        target: "tuxlink::winlink::handshake",
+        mycall,
+        targetcall,
+        "master handshake built",
+    );
     out.into_bytes()
 }
 
@@ -150,11 +173,21 @@ fn read_handshake<R: BufRead>(
     }
 
     match sid {
-        Some(sid) => Ok(RemoteHandshake {
-            sid,
-            forwarders,
-            challenge,
-        }),
+        Some(sid) => {
+            tracing::debug!(
+                target: "tuxlink::winlink::handshake",
+                remote_sid = %sid,
+                has_challenge = challenge.is_some(),
+                forwarder_count = forwarders.len(),
+                is_master_mode = master,
+                "handshake parsed",
+            );
+            Ok(RemoteHandshake {
+                sid,
+                forwarders,
+                challenge,
+            })
+        }
         None => Err(HandshakeError::NoSid),
     }
 }
