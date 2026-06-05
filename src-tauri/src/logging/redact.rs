@@ -1,4 +1,15 @@
 //! Field-name blocklist for the redacting Visit (spec §5.2).
+//!
+//! Discipline: name-based blocklist for fields that CARRY SECRETS BY NAME.
+//! `error`/`err`/`error_msg`/`err_msg` are diagnostic code fields and are NOT
+//! in this blocklist — blanket-redacting them would destroy diagnostic value.
+//! Error types use type-based redaction (manual Display/Debug impls on
+//! credential structs). See logging_blocklist_corpus.rs for the curated
+//! MUST_PASS list and Codex impl-adrev P2 #6 for the rationale.
+//!
+//! Credential-shaped compound error field names (`error_password`,
+//! `err_token`, etc.) ARE in the blocklist: their SUFFIX unambiguously
+//! identifies secret material even though they are error-flavoured.
 
 use once_cell::sync::Lazy;
 use regex::Regex;
@@ -30,6 +41,15 @@ static FIELD_BLOCKLIST: Lazy<Regex> = Lazy::new(|| {
             | signature | nonce | hmac | salt
             # Keyring-internal
             | keyring_value | keyring_secret
+            # Credential-shaped compound error field names (Codex impl-adrev P2 #6).
+            # These carry secrets by their SUFFIX even though they are error-flavoured.
+            # Do NOT add `error` or `err` here — those are diagnostic identifiers.
+            | error_password | err_password
+            | error_token | err_token
+            | error_value | err_value
+            | error_body | err_body
+            | error_secret | err_secret
+            | error_credential | err_credential
         )$
     ",
     )
@@ -172,5 +192,34 @@ mod tests {
         assert!(should_redact_field("PASSWORD"));
         assert!(should_redact_field("Token"));
         assert!(should_redact_field("API_KEY"));
+    }
+
+    /// Credential-shaped compound error field names must be blocked.
+    /// These carry secrets by their suffix even though they are error-flavoured.
+    /// Codex impl-adrev P2 #6: a callsite `tracing::error!(error_password = %e, ...)`
+    /// where `e` displays a credential string must be blocked by field name.
+    #[test]
+    fn matches_credential_shaped_error_field_names() {
+        for name in [
+            "error_password", "err_password",
+            "error_token", "err_token",
+            "error_value", "err_value",
+            "error_body", "err_body",
+            "error_secret", "err_secret",
+            "error_credential", "err_credential",
+        ] {
+            assert!(should_redact_field(name), "{name} should be redacted");
+        }
+    }
+
+    /// Plain `error`/`err`/`error_msg`/`err_msg` must NOT be redacted.
+    /// These are the most common diagnostic field names; blanket-redacting them
+    /// would destroy diagnostic value. Type-based redaction on Display impls is
+    /// the correct mechanism for error types that carry credentials.
+    #[test]
+    fn error_diagnostic_fields_pass_through() {
+        for name in ["error", "err", "error_msg", "err_msg", "error_kind", "error_count"] {
+            assert!(!should_redact_field(name), "{name} should NOT be redacted (diagnostic field)");
+        }
     }
 }

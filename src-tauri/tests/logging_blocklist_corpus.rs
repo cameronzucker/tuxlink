@@ -10,6 +10,12 @@ use tuxlink_lib::logging::redact::should_redact_field;
 /// Field names that MUST be blocked. Curated from grep of credential-related
 /// callsites + the spec's §5.2 blocklist. When the implementation adds new
 /// credential-adjacent fields, add them here.
+///
+/// Discipline (Codex impl-adrev P2 #6): name-based blocklist for fields that
+/// CARRY SECRETS BY NAME. `error`/`err`/`error_msg`/`err_msg` are diagnostic
+/// code fields — they stay in MUST_PASS. The compound names below
+/// (`error_password`, `err_token`, etc.) are credential-shaped and belong here
+/// because their SUFFIX unambiguously identifies secret material.
 const MUST_BLOCK: &[&str] = &[
     "password", "passwd", "pwd",
     "password_input", "peer_password", "station_password", "secure_response",
@@ -22,15 +28,32 @@ const MUST_BLOCK: &[&str] = &[
     "session_cookie", "sessionid", "session_id", "cookie",
     "signature", "nonce", "hmac", "salt",
     "keyring_value", "keyring_secret",
+    // Credential-shaped error field names (Codex impl-adrev P2 #6).
+    // These compound names carry secrets by their suffix even though they are
+    // error-flavoured. A callsite like `tracing::error!(error_password = %e, ...)`
+    // where `e` displays a credential string would leak without these entries.
+    "error_password", "err_password",
+    "error_token", "err_token",
+    "error_value", "err_value",
+    "error_body", "err_body",
+    "error_secret", "err_secret",
+    "error_credential", "err_credential",
 ];
 
 /// Plausibly-emitted field names that MUST pass through unredacted. Curated
 /// from grep of non-credential emission sites.
+///
+/// Error-class diagnostic fields (`error`, `err`, `error_msg`, `err_msg`) are
+/// explicitly in this list. Blanket-redacting `error = %e` callsites would
+/// destroy diagnostic value for benign errors. The spec §5.2 discipline is:
+/// name-based blocklist for fields that CARRY SECRETS BY NAME; error types use
+/// type-based redaction (Display impls on credential structs). See also the
+/// MUST_BLOCK comment for the credential-shaped compound names.
 const MUST_PASS: &[&str] = &[
     // Common operational fields
     "callsign", "gateway", "transport", "frequency_hz", "bandwidth",
     "attempt_id", "boot_id", "seq",
-    "error", "error_kind", "error_count",
+    "error", "err", "error_kind", "error_count", "error_msg", "err_msg",
     "duration_ms", "elapsed_ms", "byte_count", "frame_count",
     "device", "port", "host", "address", "protocol",
     "level", "target", "module", "file", "line",
