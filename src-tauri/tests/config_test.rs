@@ -699,6 +699,7 @@ fn config_skips_pat_mbo_address_on_write() {
     let cfg = Config {
         schema_version: CONFIG_SCHEMA_VERSION,
         wizard_completed: true,
+        wizard_phase: tuxlink_lib::wizard_phase::WizardPhase::Complete,
         connect: tuxlink_lib::config::ConnectConfig {
             connect_to_cms: true,
             transport: CmsTransport::CmsSsl,

@@ -2700,6 +2700,7 @@ mod native_read_state_tests {
         Config {
             schema_version: CONFIG_SCHEMA_VERSION,
             wizard_completed: true,
+            wizard_phase: crate::wizard_phase::WizardPhase::Complete,
             connect: ConnectConfig { connect_to_cms: false, transport: CmsTransport::Telnet, host: crate::config::default_cms_host() },
             identity: IdentityConfig { callsign: None, identifier: None, grid: None },
             privacy: PrivacyConfig {
@@ -3512,6 +3513,7 @@ mod native_read_state_tests {
         Config {
             schema_version: CONFIG_SCHEMA_VERSION,
             wizard_completed: true,
+            wizard_phase: crate::wizard_phase::WizardPhase::Complete,
             connect: ConnectConfig { connect_to_cms: true, transport: CmsTransport::Telnet, host: crate::config::default_cms_host() },
             identity: IdentityConfig { callsign: Some("N7CPZ".into()), identifier: None, grid: None },
             privacy: PrivacyConfig {

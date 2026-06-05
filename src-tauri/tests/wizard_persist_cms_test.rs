@@ -77,7 +77,16 @@ async fn persist_cms_happy_path_writes_keyring_and_config() {
 
     // Verify config.json was written correctly (no password material — AMD-11 + spec §3.6).
     let config = tuxlink_lib::config::read_config().expect("config should be readable after persist");
-    assert!(config.wizard_completed, "wizard_completed must be true");
+    // tuxlink-9xy1 Task 3 (Codex CODEX-1 fix): persist_cms_impl now writes
+    // wizard_phase = Identity (was: wizard_completed = true). wizard_completed
+    // is the derived view (= phase.is_complete()), so it MUST be false after
+    // Identity — the Location step has not run yet.
+    assert!(!config.wizard_completed, "wizard_completed must be false after Identity persist (Location pending)");
+    assert_eq!(
+        config.wizard_phase,
+        tuxlink_lib::wizard_phase::WizardPhase::Identity,
+        "wizard_phase must be Identity after CMS persist (Location is the next phase)"
+    );
     assert!(config.connect.connect_to_cms, "connect_to_cms must be true (CMS path)");
     assert_eq!(config.identity.callsign.as_deref(), Some("W4PHS"), "callsign must be normalized to uppercase");
     assert_eq!(config.identity.grid.as_deref(), Some("EM75"), "grid preserved");

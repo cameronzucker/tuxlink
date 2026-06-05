@@ -19,6 +19,7 @@ pub fn native_test_config() -> Config {
     Config {
         schema_version: 1,
         wizard_completed: true,
+        wizard_phase: crate::wizard_phase::WizardPhase::Complete,
         connect: ConnectConfig {
             connect_to_cms: true,
             transport: CmsTransport::CmsSsl,

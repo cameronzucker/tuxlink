@@ -16,7 +16,23 @@ pub const CONFIG_SCHEMA_VERSION: u32 = 1;
 pub struct Config {
     #[serde(deserialize_with = "deserialize_schema_version")]
     pub schema_version: u32,
+    /// Legacy boolean kept as a derived field while the wizard cluster migrates
+    /// to `wizard_phase` (Task 3 of tuxlink-9xy1). Existing readers (App.tsx via
+    /// `get_wizard_completed`) keep working; Task 4 migrates them to the new
+    /// `get_wizard_phase` command and Task 5+ will retire this field. New
+    /// persist code MUST set both: `wizard_completed = phase.is_complete()`.
     pub wizard_completed: bool,
+    /// First-class wizard phase introduced in Task 2 of tuxlink-9xy1 (Codex
+    /// CODEX-1 fix). The wizard now has three steps — Identity, Location,
+    /// Complete — and persistence MUST distinguish "Identity persisted but
+    /// Location not yet" from "fully complete" so a restart between the two
+    /// resumes at the right step instead of skipping Location. `#[serde(default)]`
+    /// migrates pre-9xy1 config files (no `wizard_phase` key) transparently;
+    /// such configs deserialize with `phase = None`, but their existing
+    /// `wizard_completed = true` keeps the legacy reader working until Task 4
+    /// flips App.tsx to read `wizard_phase` directly.
+    #[serde(default)]
+    pub wizard_phase: crate::wizard_phase::WizardPhase,
     pub connect: ConnectConfig,
     pub identity: IdentityConfig,
     pub privacy: PrivacyConfig,

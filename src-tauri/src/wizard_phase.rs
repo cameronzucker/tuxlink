@@ -3,21 +3,16 @@
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WizardPhase {
     /// User has not completed the wizard.
+    #[default]
     None,
     /// Callsign + Winlink account identity is persisted; location is next.
     Identity,
     /// Location is persisted; wizard is complete.
     Complete,
-}
-
-impl Default for WizardPhase {
-    fn default() -> Self {
-        Self::None
-    }
 }
 
 impl WizardPhase {

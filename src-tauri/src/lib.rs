@@ -293,6 +293,14 @@ pub fn run() {
             crate::wizard::wizard_persist_cms,
             crate::wizard::wizard_persist_offline,
             crate::wizard::verify_cms_connection,   // Task 5.4 (tuxlink-9phd): replaces wizard_run_test_send
+            // tuxlink-9xy1 Task 3 (Codex CODEX-1 fix): WizardPhase persistence.
+            // `wizard_persist_gps` finalizes the Location step (writes the grid
+            // + flips wizard_phase to Complete). `get_wizard_phase` returns the
+            // enum so App.tsx (Task 4) can route between Identity / Location /
+            // Complete. Registered ahead of Task 4's frontend wiring so the
+            // invoke() calls land — DRIFT-1 callout from the plan.
+            crate::wizard::wizard_persist_gps,
+            crate::wizard::get_wizard_phase,
             // Main-UI cluster commands. Task 12 (tuxlink-zsm) created
             // `mailbox_list`; Tasks 13/14/16 appended their command fns to
             // `ui_commands.rs` but deferred registration to this single

@@ -271,7 +271,16 @@ async fn integration_persist_cms_happy_path_real_keyring() {
     // The keyring write is exercised by persist_cms_impl; if it returned Ok(()),
     // the write succeeded. The direct round-trip is separately verified by Case 1.
     let config = tuxlink_lib::config::read_config().expect("config.json should exist after persist");
-    assert!(config.wizard_completed, "wizard_completed must be true after persist");
+    // tuxlink-9xy1 Task 3 (Codex CODEX-1 fix): persist_cms_impl now writes
+    // wizard_phase = Identity (was: wizard_completed = true). The legacy bool
+    // is the derived view (= phase.is_complete()), so it MUST be false after
+    // Identity — the Location step has not run yet.
+    assert!(!config.wizard_completed, "wizard_completed must be false after Identity persist (Location pending)");
+    assert_eq!(
+        config.wizard_phase,
+        tuxlink_lib::wizard_phase::WizardPhase::Identity,
+        "wizard_phase must be Identity after CMS persist (Location step is the next phase)"
+    );
     assert!(config.connect.connect_to_cms, "connect_to_cms must be true for CMS path");
     assert_eq!(config.identity.callsign.as_deref(), Some("INTTEST2"), "callsign normalized to uppercase");
     assert_eq!(config.identity.grid.as_deref(), Some("FM18"), "grid preserved");

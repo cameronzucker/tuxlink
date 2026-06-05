@@ -321,6 +321,7 @@ mod tests {
         Config {
             schema_version: CONFIG_SCHEMA_VERSION,
             wizard_completed: true,
+            wizard_phase: crate::wizard_phase::WizardPhase::Complete,
             connect: ConnectConfig {
                 connect_to_cms: true,
                 transport: CmsTransport::CmsSsl,

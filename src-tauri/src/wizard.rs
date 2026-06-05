@@ -152,9 +152,16 @@ pub async fn persist_cms_impl(
 
     // Step 3: Build the new Config struct in memory (no disk write yet).
     // Per spec §3.6: CMS path hardcodes connect_to_cms=true; NO password material.
+    //
+    // tuxlink-9xy1 Task 3 (Codex CODEX-1 fix): wizard_phase = Identity (NOT Complete),
+    // because the new Location step runs AFTER this Identity step. wizard_completed
+    // is the derived view (= phase.is_complete()), so it MUST be `false` here —
+    // setting it `true` would make App.tsx (legacy reader) skip the Location step
+    // on restart, which is precisely the regression CODEX-1 flagged.
     let new_config = crate::config::Config {
         schema_version: crate::config::CONFIG_SCHEMA_VERSION,
-        wizard_completed: true,
+        wizard_completed: false,
+        wizard_phase: crate::wizard_phase::WizardPhase::Identity,
         connect: crate::config::ConnectConfig {
             connect_to_cms: true,
             transport: crate::config::CmsTransport::CmsSsl,
@@ -302,9 +309,14 @@ pub async fn persist_offline_impl(
     //   identity.grid = from parameter (optional)
     //   privacy defaults per Principle 7 (GPS on, FourCharGrid broadcast precision)
     //   pat_mbo_address = null (not used in offline path)
+    //
+    // tuxlink-9xy1 Task 3: same wizard_phase = Identity treatment as the CMS path.
+    // The Location step is shared (both paths must persist a grid via the
+    // Location wizard step before reaching Complete).
     let new_config = crate::config::Config {
         schema_version: crate::config::CONFIG_SCHEMA_VERSION,
-        wizard_completed: true,
+        wizard_completed: false,
+        wizard_phase: crate::wizard_phase::WizardPhase::Identity,
         connect: crate::config::ConnectConfig {
             connect_to_cms: false,
             transport: crate::config::CmsTransport::CmsSsl,
@@ -431,6 +443,89 @@ pub async fn verify_cms_connection(
     verify_cms_connection_impl(app).await
 }
 
+/// Core logic for the Location (GPS) wizard step (Task 3 of tuxlink-9xy1,
+/// Codex CODEX-1 fix).
+///
+/// Reads the existing config (which `persist_cms_impl` or `persist_offline_impl`
+/// just wrote with `wizard_phase = Identity`), updates the grid + privacy fields,
+/// flips the phase to `Complete`, and writes back atomically.
+///
+/// Reading-existing-and-modifying (rather than constructing a fresh Config
+/// literal) is intentional: the Identity step established connect.connect_to_cms,
+/// identity.callsign / identifier, etc. — and we must not clobber them. The
+/// Location step ONLY owns the grid (and the `wizard_phase` transition).
+///
+/// Grid validation: Maidenhead via `grid_to_lat_lon` — accepts the 4-char and
+/// 6-char forms, rejects malformed input. Empty / blank grid is rejected too:
+/// the Location step is a positive choice to set a grid (the operator can pick
+/// "set later via SettingsPanel" from the wizard UI, which submits a different
+/// path — NOT this one).
+///
+/// Caller is responsible for holding the WizardMutex before calling this.
+pub async fn persist_gps_impl(grid: String) -> Result<(), WizardError> {
+    // Step 1: Normalize grid (trim).
+    let trimmed = grid.trim();
+    if trimmed.is_empty() {
+        return Err(WizardError::InvalidInput { field: "grid".into() });
+    }
+
+    // Step 2: Validate Maidenhead form. `grid_to_lat_lon` returns `Some` iff
+    // the input is a well-formed 4- or 6-char locator.
+    if crate::position::maidenhead::grid_to_lat_lon(trimmed).is_none() {
+        return Err(WizardError::InvalidInput { field: "grid".into() });
+    }
+    let grid_owned = trimmed.to_string();
+
+    // Step 3: Read the existing config. Identity step is the precondition:
+    // persist_cms_impl or persist_offline_impl ran first and wrote
+    // wizard_phase = Identity. If no config exists yet, the wizard skipped
+    // Identity — that's a UI sequencing bug; surface as ConfigWrite.
+    let mut cfg = crate::config::read_config()
+        .map_err(|e| WizardError::ConfigWrite { detail: format!("cannot read config for GPS persist: {e}") })?;
+
+    // Step 4: Update the grid + flip the phase to Complete.
+    cfg.identity.grid = Some(grid_owned);
+    cfg.wizard_phase = crate::wizard_phase::WizardPhase::Complete;
+    cfg.wizard_completed = true; // derived view (= phase.is_complete()) — kept for legacy readers.
+
+    // Step 5: Atomic write. No keyring involvement on this path.
+    crate::config::write_config_atomic(&cfg)
+        .map_err(|e| WizardError::ConfigWrite { detail: format!("{e}") })?;
+
+    Ok(())
+}
+
+/// Wizard Location (GPS) step — persist the operator's grid + finalize the
+/// wizard phase to `Complete` (Task 3 of tuxlink-9xy1).
+///
+/// - Reads the config left by the Identity step and modifies it in place.
+/// - Rejects empty / blank / malformed Maidenhead grids with `InvalidInput`.
+/// - Sets `wizard_phase = Complete` AND `wizard_completed = true` (derived).
+/// - NO keyring access. The Identity step already wrote the credential (CMS
+///   path) or skipped the keyring entirely (offline path); this step is
+///   config-only.
+/// - Second concurrent invocation returns `Busy` (shared WizardMutex per §3.7).
+#[tauri::command]
+pub async fn wizard_persist_gps(
+    state: tauri::State<'_, WizardMutex>,
+    grid: String,
+) -> Result<(), WizardError> {
+    let _guard = state.0.try_lock().map_err(|_| WizardError::Busy)?;
+    persist_gps_impl(grid).await
+}
+
+/// Returns the persisted `WizardPhase` for the operator's config. Used by
+/// App.tsx (Task 4 of tuxlink-9xy1) to route between Identity / Location /
+/// Complete steps. Any read error yields `Ok(WizardPhase::None)` so the wizard
+/// is the safe-default route on first launch (mirrors `get_wizard_completed`).
+#[tauri::command]
+pub async fn get_wizard_phase() -> Result<crate::wizard_phase::WizardPhase, WizardError> {
+    match crate::config::read_config() {
+        Ok(cfg) => Ok(cfg.wizard_phase),
+        Err(_) => Ok(crate::wizard_phase::WizardPhase::None),
+    }
+}
+
 /// Reopen the wizard scoped to a specific step. Per R1 #8 in R5 adrev:
 /// the prior spec assumed a "wizard-relaunch path" without naming a
 /// command; this is the concrete function called by the wizard_reopen
@@ -505,7 +600,12 @@ mod tests {
         assert!(result.is_ok(), "blank submit must succeed: {result:?}");
         let cfg = crate::config::read_config().expect("config readable after blank-submit write");
 
-        assert!(cfg.wizard_completed);
+        // tuxlink-9xy1 Task 3 (Codex CODEX-1 fix): persist_offline_impl now writes
+        // wizard_phase = Identity, not Complete. wizard_completed is the derived
+        // legacy view (= phase.is_complete()) — so it MUST be false after Identity.
+        assert!(!cfg.wizard_completed, "wizard_completed must be false after Identity (Location pending)");
+        assert_eq!(cfg.wizard_phase, crate::wizard_phase::WizardPhase::Identity,
+            "offline path must set wizard_phase = Identity (Location is next)");
         assert!(!cfg.connect.connect_to_cms, "offline path must set connect_to_cms=false");
         assert!(cfg.identity.callsign.is_none(), "offline path must NOT set callsign");
         assert!(cfg.identity.identifier.is_none(), "blank identifier → None");
@@ -627,5 +727,232 @@ mod tests {
         let wizard_error = WizardError::Busy;
         let json = serde_json::to_string(&wizard_error).expect("serialize");
         assert!(json.contains("Busy"), "WizardError::Busy must serialize to {{kind:'Busy',...}}");
+    }
+
+    // ── WizardPhase persistence tests (Task 3 of tuxlink-9xy1) ──────────────
+    //
+    // These verify the CODEX-1 fix: persist_cms_impl + persist_offline_impl
+    // now write `wizard_phase = Identity` (was: `wizard_completed = true`),
+    // and the new persist_gps_impl writes `wizard_phase = Complete` + flips
+    // the derived `wizard_completed` to true. All three persist functions
+    // mutate XDG_CONFIG_HOME state and run under #[serial] for the same
+    // reason as the persist_offline_* tests above.
+    //
+    // persist_cms_impl tests live ALSO here (not in tests/wizard_persist_cms_test.rs)
+    // because they don't need the mock-keyring scaffolding — they assert on the
+    // phase+completed bits that survive even when the keyring write succeeds.
+    // The keyring write does run (and would fail in a sandbox without one);
+    // these tests therefore use `use_mock_keyring()` to short-circuit it.
+
+    /// T3-2 — persist_offline_impl sets wizard_phase = Identity (not Complete).
+    /// This is the CODEX-1 fix for the offline path: the new Location step runs
+    /// AFTER Identity, so persisted state at this point must NOT claim completion.
+    #[tokio::test]
+    #[serial]
+    async fn persist_offline_impl_sets_phase_identity() {
+        let _xdg = xdg_temp();
+        persist_offline_impl("EOC-1".to_string(), "".to_string())
+            .await
+            .expect("offline persist ok");
+        let cfg = crate::config::read_config().expect("config readable");
+
+        assert_eq!(
+            cfg.wizard_phase,
+            crate::wizard_phase::WizardPhase::Identity,
+            "offline path must write wizard_phase = Identity (Location is next)"
+        );
+        assert!(
+            !cfg.wizard_completed,
+            "wizard_completed (derived = phase.is_complete()) must be false after Identity"
+        );
+    }
+
+    /// T3-3 — persist_gps_impl writes wizard_phase = Complete + grid.
+    /// Precondition: an Identity-phase config already exists. This test runs
+    /// persist_offline_impl first to set up that precondition.
+    #[tokio::test]
+    #[serial]
+    async fn persist_gps_impl_sets_phase_complete() {
+        let _xdg = xdg_temp();
+        // Precondition: Identity phase persisted (via offline path; cheaper than
+        // CMS path because no keyring write needed).
+        persist_offline_impl("EOC-1".to_string(), "".to_string())
+            .await
+            .expect("identity persist ok");
+
+        // Now finalize via the Location step.
+        persist_gps_impl("EM75".to_string()).await.expect("gps persist ok");
+        let cfg = crate::config::read_config().expect("config readable");
+
+        assert_eq!(
+            cfg.wizard_phase,
+            crate::wizard_phase::WizardPhase::Complete,
+            "Location step must finalize wizard_phase = Complete"
+        );
+        assert!(cfg.wizard_completed, "wizard_completed must flip to true after Complete");
+        assert_eq!(cfg.identity.grid.as_deref(), Some("EM75"), "grid persisted from Location step");
+        // The Identity-phase fields must be preserved (Location step doesn't own them).
+        assert!(!cfg.connect.connect_to_cms, "connect_to_cms preserved from Identity");
+        assert_eq!(cfg.identity.identifier.as_deref(), Some("EOC-1"), "identifier preserved from Identity");
+    }
+
+    /// T3-3b — persist_gps_impl trims whitespace from the grid before validating.
+    #[tokio::test]
+    #[serial]
+    async fn persist_gps_impl_trims_whitespace_from_grid() {
+        let _xdg = xdg_temp();
+        persist_offline_impl("".to_string(), "".to_string())
+            .await
+            .expect("identity persist ok");
+        persist_gps_impl("  EM75  ".to_string()).await.expect("gps persist ok");
+        let cfg = crate::config::read_config().expect("config readable");
+        assert_eq!(cfg.identity.grid.as_deref(), Some("EM75"), "grid must be trimmed before persist");
+    }
+
+    /// T3-3c — persist_gps_impl rejects an empty grid (Location step is a
+    /// positive choice — the "skip" path is a different wizard branch).
+    #[tokio::test]
+    #[serial]
+    async fn persist_gps_impl_rejects_empty_grid() {
+        let _xdg = xdg_temp();
+        persist_offline_impl("".to_string(), "".to_string())
+            .await
+            .expect("identity persist ok");
+        match persist_gps_impl("".to_string()).await {
+            Err(WizardError::InvalidInput { field }) => {
+                assert_eq!(field, "grid", "InvalidInput must name the offending field");
+            }
+            other => panic!("expected InvalidInput {{ field: \"grid\" }}, got {other:?}"),
+        }
+        // Precondition state preserved (no write occurred).
+        let cfg = crate::config::read_config().expect("config readable");
+        assert_eq!(cfg.wizard_phase, crate::wizard_phase::WizardPhase::Identity,
+            "failed persist_gps must NOT advance the phase");
+    }
+
+    /// T3-3d — persist_gps_impl rejects whitespace-only grid (same path as empty
+    /// after trim — defense-in-depth that distinct invalid inputs land on the
+    /// same field-name).
+    #[tokio::test]
+    #[serial]
+    async fn persist_gps_impl_rejects_whitespace_only_grid() {
+        let _xdg = xdg_temp();
+        persist_offline_impl("".to_string(), "".to_string())
+            .await
+            .expect("identity persist ok");
+        match persist_gps_impl("   ".to_string()).await {
+            Err(WizardError::InvalidInput { field }) => assert_eq!(field, "grid"),
+            other => panic!("expected InvalidInput, got {other:?}"),
+        }
+    }
+
+    /// T3-3e — persist_gps_impl rejects malformed Maidenhead (invalid field letter
+    /// out of A-R, wrong length, etc.). Uses the same `grid_to_lat_lon`-based
+    /// validator the position module uses.
+    #[tokio::test]
+    #[serial]
+    async fn persist_gps_impl_rejects_malformed_maidenhead() {
+        let _xdg = xdg_temp();
+        persist_offline_impl("".to_string(), "".to_string())
+            .await
+            .expect("identity persist ok");
+        // ZZ99 has field letters past R; rejected by grid_to_lat_lon.
+        match persist_gps_impl("ZZ99".to_string()).await {
+            Err(WizardError::InvalidInput { field }) => assert_eq!(field, "grid"),
+            other => panic!("expected InvalidInput for malformed grid, got {other:?}"),
+        }
+        // Wrong length (5 chars) — rejected too.
+        match persist_gps_impl("EM75x".to_string()).await {
+            Err(WizardError::InvalidInput { field }) => assert_eq!(field, "grid"),
+            other => panic!("expected InvalidInput for 5-char grid, got {other:?}"),
+        }
+    }
+
+    /// T3-3f — persist_gps_impl accepts both 4-char and 6-char Maidenhead forms.
+    #[tokio::test]
+    #[serial]
+    async fn persist_gps_impl_accepts_four_and_six_char_grids() {
+        let _xdg = xdg_temp();
+        // 4-char case
+        persist_offline_impl("".to_string(), "".to_string())
+            .await
+            .expect("identity persist ok");
+        persist_gps_impl("EM75".to_string()).await.expect("4-char grid accepted");
+        // 6-char case (overwrites — Location step rerun is fine).
+        persist_offline_impl("".to_string(), "".to_string())
+            .await
+            .expect("identity persist ok (reset)");
+        persist_gps_impl("EM75td".to_string()).await.expect("6-char grid accepted");
+        let cfg = crate::config::read_config().expect("config readable");
+        assert_eq!(cfg.identity.grid.as_deref(), Some("EM75td"));
+    }
+
+    /// T3-3g — persist_gps_impl errors when no Identity-phase config exists yet
+    /// (a UI sequencing bug — Location should never run before Identity).
+    #[tokio::test]
+    #[serial]
+    async fn persist_gps_impl_errors_without_identity_precondition() {
+        let _xdg = xdg_temp(); // fresh tempdir → no config.json exists
+        match persist_gps_impl("EM75".to_string()).await {
+            Err(WizardError::ConfigWrite { .. }) => {} // expected
+            other => panic!("expected ConfigWrite (read_config failed), got {other:?}"),
+        }
+    }
+
+    /// T3-4a — get_wizard_phase returns Identity after persist_offline_impl.
+    #[tokio::test]
+    #[serial]
+    async fn get_wizard_phase_returns_identity_after_offline_persist() {
+        let _xdg = xdg_temp();
+        persist_offline_impl("".to_string(), "".to_string())
+            .await
+            .expect("offline persist ok");
+        let phase = get_wizard_phase().await.expect("get_wizard_phase ok");
+        assert_eq!(phase, crate::wizard_phase::WizardPhase::Identity);
+    }
+
+    /// T3-4b — get_wizard_phase returns Complete after persist_gps_impl.
+    #[tokio::test]
+    #[serial]
+    async fn get_wizard_phase_returns_complete_after_gps_persist() {
+        let _xdg = xdg_temp();
+        persist_offline_impl("".to_string(), "".to_string())
+            .await
+            .expect("identity persist ok");
+        persist_gps_impl("EM75".to_string()).await.expect("gps persist ok");
+        let phase = get_wizard_phase().await.expect("get_wizard_phase ok");
+        assert_eq!(phase, crate::wizard_phase::WizardPhase::Complete);
+    }
+
+    /// T3-4c — get_wizard_phase returns None (the WizardPhase variant, not the
+    /// Rust Option) when no config exists. The Err path folds to Ok(None) so
+    /// the wizard is the safe-default route on first launch.
+    #[tokio::test]
+    #[serial]
+    async fn get_wizard_phase_returns_none_when_no_config() {
+        let _xdg = xdg_temp(); // fresh tempdir → no config.json
+        let phase = get_wizard_phase().await.expect("must not error");
+        assert_eq!(phase, crate::wizard_phase::WizardPhase::None);
+    }
+
+    /// T3-5 — get_wizard_completed compat: returns false after Identity (the
+    /// CODEX-1 fix surfaces correctly through the legacy reader), true after
+    /// Complete.
+    #[tokio::test]
+    #[serial]
+    async fn get_wizard_completed_compat_after_identity_persist() {
+        let _xdg = xdg_temp();
+        // After Identity persist: legacy reader sees false (so App.tsx stays in
+        // the wizard for the Location step instead of jumping to MainShell).
+        persist_offline_impl("".to_string(), "".to_string())
+            .await
+            .expect("identity persist ok");
+        let completed = get_wizard_completed().await.expect("get_wizard_completed ok");
+        assert!(!completed, "legacy reader must see false after Identity (Location pending)");
+
+        // After Location persist: legacy reader sees true (App.tsx routes to MainShell).
+        persist_gps_impl("EM75".to_string()).await.expect("gps persist ok");
+        let completed = get_wizard_completed().await.expect("get_wizard_completed ok");
+        assert!(completed, "legacy reader must see true after Complete");
     }
 }

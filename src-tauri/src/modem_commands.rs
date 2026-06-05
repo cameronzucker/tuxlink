@@ -1775,6 +1775,7 @@ mod tests {
         let cfg = Config {
             schema_version: crate::config::CONFIG_SCHEMA_VERSION,
             wizard_completed: true,
+            wizard_phase: crate::wizard_phase::WizardPhase::Complete,
             connect: crate::config::ConnectConfig {
                 connect_to_cms: false,
                 transport: crate::config::CmsTransport::Telnet,
