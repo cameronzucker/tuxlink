@@ -28,3 +28,8 @@ pub mod telnet_p2p;
 pub mod telnet_p2p_login;
 pub mod transfer;
 pub mod wire;
+
+// Re-export cms_health at this level so the network probe can access it
+// as crate::winlink::cms_health without touching crate::winlink::session::*
+// (which is on the RADIO-1 forbidden-import list for probe modules).
+pub use session::cms_health;
