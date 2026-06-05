@@ -4,6 +4,13 @@ All notable changes to Tuxlink are documented here.
 
 This project adheres to [Semantic Versioning](https://semver.org) with project-specific rules described in [VERSIONING.md](VERSIONING.md). Entries from `v0.0.2` onward are generated automatically by [`release-please`](https://github.com/googleapis/release-please) from [Conventional Commits](https://www.conventionalcommits.org).
 
+## [0.35.2](https://github.com/cameronzucker/tuxlink/compare/v0.35.1...v0.35.2) (2026-06-05)
+
+
+### Bug Fixes
+
+* **ui:** dispatch B2F messages to project parser instead of mail_parser (tuxlink-2hyf) ([5f0c14a](https://github.com/cameronzucker/tuxlink/commit/5f0c14aefa43c13d0345df980211a7fd4e1f35af))
+
 ## [0.35.1](https://github.com/cameronzucker/tuxlink/compare/v0.35.0...v0.35.1) (2026-06-05)
 
 
