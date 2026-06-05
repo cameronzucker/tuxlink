@@ -298,3 +298,69 @@ pub fn p2p_peer_password_delete(callsign: &str) -> Result<(), KeyringError> {
     };
     p2p_peer_password_delete_with_factory(callsign, &real_factory)
 }
+
+// ──────────────────────────────────────────────────────────────
+// CMS credential write
+// ──────────────────────────────────────────────────────────────
+
+/// Write a Winlink password for `callsign` to the OS keyring.
+///
+/// Preserves the read-first → set_password destructive-overwrite-readback
+/// discipline from `wizard.rs` (spec §3.2): the existing entry is read before
+/// `set_password` is called so that a backend error on read aborts early, before
+/// any destructive overwrite occurs.
+///
+/// This is the public seam used by:
+/// - the `credentials_write_password` Tauri command (Task 13, §4.3 (i))
+/// - the inline re-enter-password flow in the auth-diagnostics banner (Task 21)
+///
+/// R5 adrev R2 #4: the prior spec assumed a `credentials::set_password` API that
+/// did not exist; this function creates the correct public surface.
+///
+/// The wizard (`persist_cms_impl`) is refactored to delegate its keyring write
+/// (step 6) to this function while retaining its own snapshot read (step 5) for
+/// the config-write rollback path.
+///
+/// # Errors
+///
+/// - `KeyringError::Backend` — the underlying keyring backend returned an error
+///   on either the read-first probe or the write.
+pub fn write_password(callsign: &str, password: &str) -> Result<(), KeyringError> {
+    let entry = keyring::Entry::new(SERVICE, callsign)
+        .expect("keyring::Entry::new should not fail for valid service/account strings");
+    let entry = RealEntry(entry);
+
+    // Read-first: if the backend is unavailable / locked, abort BEFORE the
+    // destructive set_password so callers see the error without a partial write.
+    // `NoEntry` is fine — it just means we're creating a fresh credential.
+    match entry.get_password() {
+        Ok(_) | Err(keyring::Error::NoEntry) => {}
+        Err(other) => return Err(KeyringError::Backend(format!("{other}"))),
+    }
+
+    entry
+        .set_password(password)
+        .map_err(|e| KeyringError::Backend(format!("{e}")))
+}
+
+// ──────────────────────────────────────────────────────────────
+// Unit tests
+// ──────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Compile-time check that `write_password` exists with the documented
+    /// signature. Behavioral correctness is covered by the keyring mock tests
+    /// in `src-tauri/tests/winlink_credentials_test.rs`.
+    #[test]
+    fn write_password_signature_compiles() {
+        // We call the function but don't assert Ok/Err because the OS keyring
+        // state depends on the test environment (mock backend vs. real secretsd).
+        // The goal is that this compiles and the signature matches the seam
+        // expected by Task 13 (credentials_write_password Tauri command).
+        let result: Result<(), KeyringError> = write_password("TEST-CALL", "test-password");
+        let _ = result;
+    }
+}

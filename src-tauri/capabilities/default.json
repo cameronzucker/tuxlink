@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Capability for the main window. tuxlink-ng3: custom HTML chrome (decorations:false) needs the window-manipulation commands the native titlebar used to perform — minimize/toggle-maximize/close (controls), start-dragging (data-tauri-drag-region), start-resize-dragging (borderless resize handles), is-maximized (control icon state).",
+  "description": "Capability for the main window. tuxlink-ng3: custom HTML chrome (decorations:false) needs the window-manipulation commands the native titlebar used to perform — minimize/toggle-maximize/close (controls), start-dragging (data-tauri-drag-region), start-resize-dragging (borderless resize handles), is-maximized (control icon state). Shell:open is scoped to winlink.org + tuxlink repo for smart auth-failure diagnostics banner, report-issue action, AboutDialog.",
   "windows": ["main"],
   "permissions": [
     "core:default",
@@ -11,6 +11,14 @@
     "core:window:allow-start-dragging",
     "core:window:allow-start-resize-dragging",
     "core:window:allow-is-maximized",
-    "dialog:allow-save"
+    "dialog:allow-save",
+    {
+      "identifier": "shell:allow-open",
+      "allow": [
+        { "url": "https://winlink.org/**" },
+        { "url": "https://www.winlink.org/**" },
+        { "url": "https://github.com/cameronzucker/tuxlink/**" }
+      ]
+    }
   ]
 }

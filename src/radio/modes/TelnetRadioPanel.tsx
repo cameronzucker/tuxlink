@@ -17,6 +17,7 @@ import { useEffect, useState } from 'react';
 import type { KeyboardEvent } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { RadioPanel } from '../RadioPanel';
+import { AuthDiagnosticBanner } from '../sections/AuthDiagnosticBanner';
 import { SessionLogSection } from '../sections/SessionLogSection';
 import { useSessionLog } from '../sections/useSessionLog';
 
@@ -186,6 +187,8 @@ export function TelnetRadioPanel({ onClose }: TelnetRadioPanelProps) {
           </label>
         ))}
       </section>
+
+      <AuthDiagnosticBanner />
 
       <SessionLogSection entries={logEntries} onClear={clearLog} />
 

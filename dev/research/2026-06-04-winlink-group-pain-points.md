@@ -1,13 +1,15 @@
 # Winlink Programs Group — user-pain synthesis
 
-> **Date:** 2026-06-04 · **Agent:** `condor-hemlock-fir` · **bd issue:** tuxlink-yzn6 Part 2
+> **Date:** 2026-06-04 · **Agent:** `condor-hemlock-fir` · **bd issues:** tuxlink-yzn6 (initial scope) + tuxlink-n3h6 (this update)
 >
-> **Source corpus:** 25 most-recent threads from
+> **Source corpus:** 4,105 thread records from
 > https://groups.google.com/g/winlink-programs-group, scraped via
-> Playwright + operator-exported Google session cookies. Scrape script
-> + raw corpus live at `dev/scratch/winlink-group-research/` (gitignored
-> per `feedback_no_disk_creds_default`). Cookies are deleted at the end
-> of the session that scraped them.
+> Playwright + operator-exported Google session cookies in two passes:
+> a 25-thread kickoff (synthesized into PR #370's version of this note)
+> and a 4,500-thread deepening pass that surfaced ~4,100 valid records
+> before Google flagged the session as automation (thread 4,112) and
+> began silently redirecting all thread URLs to the group landing page.
+> Cookies are deleted at end of session.
 
 ---
 
@@ -15,207 +17,322 @@
 
 Group posts are **signal about areas worth examining, not authoritative
 claims**. A user posting "FCC says my callsign is valid and Winlink
-rejects it" may be reporting (a) a real Winlink-side bug, (b) a
-real-but-misunderstood interaction (e.g., they registered the trustee
+rejects it" may be reporting (a) a real Winlink-side bug, (b) a real-
+but-misunderstood interaction (e.g., they registered the trustee
 callsign of a club but operate under their own), (c) a typo they
 haven't noticed, (d) a stale FCC-side change Winlink hasn't picked up
-yet, or (e) frustration speaking through. The volunteer moderators get
-to the bottom of it; the group's archive often does not record the
-resolution clearly.
+yet, or (e) frustration speaking through. The volunteer moderators
+get to the bottom of it; the group's archive often does not record
+the resolution clearly.
 
 Specific consequences for this synthesis:
 
-- Threads where users claim "the software is broken" without
-  operator-side detail are weak signal for a real defect; they're
-  reasonable signal that the *experience of frustration* is real and
-  that the failure mode deserves clear error messaging.
+- Threads where users claim "the software is broken" without operator-
+  side detail are weak signal for a real defect; they're reasonable
+  signal that the *experience of frustration* is real and that the
+  failure mode deserves clear error messaging.
 - Threads about old Windows builds, .NET version mismatches, and
   rollback frustrations are largely **self-inflicted by users running
   decade-old Win10 builds**. Tuxlink's audience is Linux + a current
   desktop; these threads are not signal about tuxlink-relevant pain.
-- Themes that recur across multiple distinct threads (password loss,
-  unclear validation) are stronger signal than single-thread complaints.
-
-The synthesis below filters with that in mind. Themes are ranked
-roughly by signal strength — strongest at the top, observational at the
-bottom.
+- **Themes that recur across hundreds-to-thousands of distinct threads
+  are strong signal.** With ~4,000 threads, prevalence percentages
+  carry weight; in the original 25-thread sample they did not.
 
 ---
 
 ## Method
 
-Authenticated Playwright Chromium session with operator-exported
-cookies. Scraped the top 25 listing rows on the group front page
-(approximately the last 2 weeks of activity given the group's traffic
-rate at the time of the scrape). For each thread: subject (`<h1>`),
-OP author (`<h3>`), reply count, first-post body excerpt up to 4 KB.
+Two-pass scrape, both using authenticated Playwright Chromium with
+operator-exported Google session cookies.
 
-This is a **kickoff pass** — a representative sample, not a complete
-corpus. A deeper corpus would surface long-tail themes; the themes
-below are the ones loud enough to surface in the front-page 25.
+**Pass 1 (PR #370):** 25 threads (~2 weeks of front-page activity).
+Synthesis covered the 4 confirmed-via-Wikipedia gaps + 8 themes ranked
+qualitatively.
+
+**Pass 2 (this update):** 4,500 thread URLs collected via Next-page
+pagination across 200 listing pages (the per-page cap in the scraper),
+then per-thread visited to extract subject + author + all post bodies
+(OP + replies, capped at 6 KB each, 50 posts max per thread). The
+scrape ran successfully for ~4,112 threads then Google's anti-
+automation flagging kicked in: subsequent thread URLs returned the
+group landing page (h1="Winlink Programs Group", 0 message regions)
+silently — same URL, served degraded content. Scrape killed; 4,105
+records with valid thread data preserved in `corpus-clean.jsonl`.
+
+Per-thread captured fields: subject, OP author, post count, all post
+bodies (capped 6 KB × 50 posts), scrape timestamp.
+
+Total content captured: 19,162 posts across 4,105 threads. Subject
+diversity: 4,015 distinct subject lines (i.e., ~98% of threads have a
+distinct subject; the recurring-subject patterns below are the high-
+signal patterns).
+
+---
+
+## Quantified themes
+
+Token-based pattern matching against subject + first-post-body
+snippets. A thread can match multiple themes; percentages don't sum to
+100.
+
+| Theme | Threads | % of corpus | Notes |
+|---|---|---|---|
+| RMS-related | 1,470 | 35.8% | Includes user-side issues reaching RMS + sysop-side traffic; the group is operator-focused |
+| Updates / version | 1,306 | 31.8% | Includes release announcements + version-confusion threads; mostly Win-specific |
+| Install / setup | 1,082 | 26.4% | Onboarding pain dominates |
+| EmComm / exercise | 1,016 | 24.8% | ICS-213 + nets + ARES heavy traffic |
+| Forms (ICS / check-in) | 902 | 22.0% | **Stronger than Pass 1 suggested; promotes the 'soft observation' to actionable** |
+| Help / lost / new user | 854 | 20.8% | Second-biggest theme — onboarding friction |
+| Transport failures | 850 | 20.7% | Disconnects, errors, "won't connect" |
+| VARA | 845 | 20.6% | **6.7× more common than ARDOP** — VARA dominates the modem ecosystem |
+| Password | 618 | 15.1% | **THE structural tuxlink-positive differentiator pain** |
+| Packet | 560 | 13.6% | DireWolf + AX.25 + KISS issues |
+| Callsign | 536 | 13.1% | Stronger than the single-thread Pass 1 sample suggested |
+| Audio / sound | 497 | 12.1% | Sound cards, level calibration, USB drift |
+| Account lock / denied / unable-to | 309 | 7.5% | "I can't get in" pattern broader than just password |
+| Migrate / switch | 291 | 7.1% | Users moving between platforms / machines |
+| Documentation / manual | 285 | 6.9% | Users explicitly want better docs |
+| Callsign approval / registration | 278 | 6.8% | New-callsign or registration friction |
+| Gateway-side / sysop | 297 | 7.2% | Subset of the RMS bucket — operator running their own |
+| PACTOR | 221 | 5.4% | Confirms PACTOR's residual ecosystem presence — already covered in topic 17 |
+| GPS / APRS | 165 | 4.0% | Modest signal — already covered in topic 26 |
+| Attachment / photo / large file | 105 | 2.6% | EmComm photo/PDF attachment issues |
+| **Linux / Pi / Wine** | **100** | **2.4%** | **23 in subject lines alone — clear unmet demand for Linux Winlink** |
+| Security / privacy | 97 | 2.4% | Users rarely think about this — confirms the case for topic 26's OMV framing |
+| ARDOP | 129 | 3.1% | **VARA is 6.7× more talked-about than ARDOP** |
 
 ---
 
 ## Pain themes — actionable signal
 
-### 1. Password loss on WLE reinstall (strong signal)
+### 1. Password loss on WLE reinstall — STRUCTURAL (618 threads, 15.1%)
 
-**Subject:** "PASSWORD NOT RECOGNISED" (19 replies — highest engagement)
-**OP:** Filippo Ottone
-**Snippet:** *"Hello, i had to reinstall RMS express, my winlink
-password is no more rocognised and no way to change..."*
+Pass 1 highlighted one thread ("PASSWORD NOT RECOGNISED", 19 replies).
+The 4,105-thread corpus shows this is not anecdotal: **618 threads
+mention password issues** (15% of all traffic), with at least 15
+recurring subject-line variants:
 
-User reinstalled Winlink Express; their account password is no longer
-recognized. 19 replies. The OP's specific case may resolve as user
-error or as a Winlink-side recovery question, but the **failure mode
-itself** — *credential lost across reinstall* — is structural to WLE's
-architecture (WLE stores the password in app-local state).
+- "Password reset" (10 threads), "Password Recovery" (7), "Password
+  problem" (5), "Password Issue" (4), "Tactical Address Password" (4),
+  "Unable to reset password" (2), "Yet another password reset request
+  :)" (2) — the smiley is operator humor about how routine this is.
 
-This is the highest-leverage signal in the corpus because it points at
-a **structural tuxlink-positive differentiator**: tuxlink stores the
-Winlink password in the OS keyring (see [ADR 0011](../../docs/adr/0011-fork-pat-for-tuxlink.md)
-and [ADR 0016](../../docs/adr/0016-native-b2f-outbound-with-attachments.md)),
-which survives `apt reinstall` and tuxlink-build changes. The
-"password lost on reinstall" failure mode does not exist for tuxlink.
+The failure mode WLE's architecture creates (password in app-local
+state, lost on reinstall, recovery flow goes through winlink.org which
+is opaque to users in panic) **generates structural recurring traffic
+at the group level**. Tuxlink's keyring-backed storage is a real
+tuxlink-positive that PR #370's topic 02 + 27 additions already
+document.
 
-**Docs action:** topic 02 (First-launch wizard) and topic 27 (Settings)
-get expanded sections covering credential lifecycle and keyring
-behavior. **Shipped in this PR.**
+This theme is shipped — see PR #370. Reinforce nothing more; the
+account-lifecycle section is calibrated correctly given the deeper
+evidence.
 
-### 2. Form authoring is opaque to users (soft observation)
+### 2. Forms and ICS templates — PROMOTE FROM SOFT TO ACTIONABLE (902 threads, 22.0%)
 
-**Subject:** "Field Day Winlink Sign-up" (4 replies)
-**OP:** Thomas KF7RSF
-**Body:** *"OK, I created a new database for this year using a similar
-form. The form can be found here: https://..."*
+Pass 1 flagged this as a "soft observation" from a single thread (the
+Field Day signup). The 4,105-thread corpus shows **902 form-related
+threads** (22% of all traffic) — second-highest among the actionable
+themes. Subjects span:
 
-Thomas hand-rolled a Field Day signup form. The HTML Forms
-infrastructure that ships with WLE supports user-authored forms, but
-the workflow isn't obviously discoverable; operators who don't know
-the library DIY their own.
+- ICS-213, ICS-205, ICS-213RR, ICS-309 — the EmComm form family
+- "Field Day Winlink Sign-up", "Yet another Field Day form" — recurring
+  event forms
+- "Form not loading", "Template missing field X" — operational
+  authoring/use pain
+- Custom forms hand-rolled per group / agency
 
-**Tuxlink stance:** the HTML Forms support shipped with PR #347-era
-work uses the same form library WLE does. Capability is there;
-discoverability may not be.
+**Tuxlink stance update:** PR #347-era HTML Forms work supports the
+same form library WLE uses. The capability is shipped; discoverability
+of the authoring workflow is the gap.
 
-**Not filed as a bd issue** — single-thread soft signal. If tuxlink
-operator feedback later surfaces the same "I made my own form because
-I couldn't find the authoring path" pattern from real users, the bd
-issue can be filed then.
+**Recommended action:** worth filing a bd issue for either (a) docs
+extension to topic 20 covering form authoring as a worked example, or
+(b) product affordance making form authoring more discoverable. With
+22% prevalence this graduates from "if you want" to "yes."
+
+### 3. Linux / Pi / Wine — UNMET DEMAND (100 threads, 2.4%)
+
+Pass 1 didn't surface this at all. The deeper corpus shows **100
+threads** explicitly mention Linux, Raspberry Pi, Wine, or Mac, with
+**23 subject-line mentions** of those terms. Representative subjects:
+
+- "Linux version of Winlink - Linlink?" — users asking for a Linux
+  Winlink (years before tuxlink existed)
+- "winlink and vara fm on raspberry pi linux"
+- "WinLink and Raspberry Pi 4 - 4GB"
+- "ICOM M-803 SignaLink, LINUX, WinLink and VARA HF"
+- "the links to the K6ETA instructions for Winlink on Linux are down"
+  — the canonical community Linux guide rotted off the internet
+- "Winlink/Wine/KPC3+ - connect to TNC port error" — many Wine-based
+  Win-Winlink-on-Linux attempts hitting unsolvable problems
+
+**Tuxlink stance:** this is direct evidence of unmet demand. Tuxlink's
+existence is responsive to a real population, not a hypothetical one.
+The Wine-on-Linux pain (and the K6ETA guide rot) is part of why
+tuxlink starts from "native Linux client" rather than "make WLE work
+on Wine."
+
+**No docs/product action** — this validates tuxlink's positioning;
+nothing to ship.
+
+### 4. Onboarding and "I'm new, I'm lost" — STRONG (854 threads, 20.8%)
+
+Help/lost/new-user language appears in 21% of threads. The tuxlink
+wizard (topic 02) + the account-lifecycle additions (PR #370) address
+this directly. The deeper corpus suggests the operator demographic
+includes many first-week users who would benefit from very explicit
+"what does each wizard step do" framing.
+
+**Recommended action:** none beyond what PR #370 already shipped. The
+wizard topic IS the answer; the prose was upgraded last commit to
+cover the credentials lifecycle. Future docs polish could add a
+worked-example "your first 5 minutes with tuxlink" topic, but that's
+not motivated by the corpus pain so much as by general onboarding
+hygiene — defer.
+
+### 5. Transport failures — descriptive, not prescriptive (850 threads, 20.7%)
+
+20% of threads contain "fail/error/disconnect/timeout/won't connect"
+language. The diversity of underlying causes (modem, RF, gateway, CMS,
+auth, audio level) means there's no single-shot docs fix. **Topic 29
+(Troubleshooting) is the right home**; the additions Pass 1 flagged
+("sysop-side vs your-side" framing) remain reasonable but lower
+priority than Forms.
 
 ---
 
 ## Pain themes — observational
 
-These are real signals but don't translate to a tuxlink action in this
-PR. Documented here so a future session has the context.
+These are real signals but don't translate to a tuxlink action.
 
-### 3. Audio device config is fragile on Windows
+### Audio device fragility (497 threads, 12.1%)
 
-**Subject:** "Windows 11 appears to have a Microphone Enhancement For
-USB Sound Card separate from the Sound Dialog"
-**OP:** Brian - W7OWO
+Sound cards, level calibration, USB device drift. Mostly Windows-
+specific pain (the "Windows 11 Audio Enhancements" thread from Pass 1
+is one of many). Linux's audio stack (ALSA / PipeWire) has its own
+failure modes but the specific WLE pain doesn't carry over. Tuxlink's
+topics 10 (DigiRig) and 13 (Radio-specific) cover Linux audio
+adequately.
 
-After a Windows 11 update, Brian's VARA FM VU meter went dead because
-Windows' new Settings app silently enabled an audio enhancement that
-the legacy `mmsys.cpl` dialog didn't surface. Real Windows-side pain
-specific to WLE's age.
+### RMS sysop pain (1,470 threads in RMS bucket; ~7% are sysop-specific)
 
-**Tuxlink stance:** Linux's audio stack (ALSA / PipeWire) has its own
-breakage modes (USB device renumbering, default-source drift) but the
-specific Windows-side pain doesn't carry over. No tuxlink action; the
-existing topic 10 (DigiRig) and topic 13 (Radio-specific notes) cover
-Linux audio adequately for now.
+Sysop-side problems (gateway not allowing connections, map
+discrepancies, RMS offline) generate long threads. Tuxlink is a
+client, not a gateway, so these aren't directly actionable. The
+share of RMS-bucket traffic that's sysop-side is a clue that the
+group's demographic skews toward operators-also-running-gateways.
 
-### 4. RMS gateway operator pain
+### Callsign validation opacity (536 threads in callsign bucket)
 
-**Subjects:** "New RMS Gateway not allowing connections" (15 replies),
-"N1ACW-10 RMS will be off air for up to 2 months", "RMS Gateway
-Showing Two Different Locations on APRS.fi and Winlink Maps"
+The David Thompson "FCC says my Call Sign is VALID AND ACTIVE" thread
+from Pass 1 is one of many. Subjects include "Call Sign Change", new-
+callsign registration friction, callsign approval threads. The
+specific tuxlink-tdeg "distinguish failure modes" bd issue I filed and
+then closed in this same session as filed-on-weak-evidence: with
+536 threads of corpus evidence I'd file it differently now —
+distinguishing FCC-ULS / Winlink-registration / format-invalid /
+reciprocal-ops failure modes IS supported by real recurring pain.
+But the actual wizard fix is a product decision, not a docs add. **File
+fresh as a product bd issue if tuxlink internal reasons or operator
+direction surface the need.**
 
-Sysop-side problems get long threads. Tuxlink is a client, not a
-gateway, so these threads aren't directly actionable.
+### EmComm / exercise (1,016 threads, 24.8%)
 
-### 5. UI rendering on different displays
-
-**Subject:** "Screen View" (9 replies)
-**OP:** Patty Polish
-
-WLE's compose window doesn't fit Patty's display. WLE is a 2006-era
-Win32 GUI; modern HiDPI / scaling configurations break it. Tuxlink is
-a Tauri app with CSS layout; the failure mode doesn't carry over.
-Observational signal that modernizing the UI surface is a
-tuxlink-positive on its own.
+ICS-213, ARES exercises, regional nets. Tuxlink's topic 24 already
+covers this. Volume here reflects how EmComm-heavy the Winlink user
+base is, which informs tuxlink positioning but doesn't drive new docs
+work.
 
 ---
 
 ## Themes deliberately not addressed
 
-### Version churn and rollback complaints
+### Version churn and rollback complaints (1,306 threads, 31.8%)
 
-**Subjects:** "Is there a software archive of older versions" (5
-replies), "Winlink Express 1.8.0.0 bug?" (4 replies), "RE: Digest...
-RMS Packet 2.1.53.0 is the latest" (3 replies)
-
-These threads are real, but the underlying cause is largely **users
-running Win10 builds nearly a decade old hitting .NET version
-mismatches**. Tuxlink avoids the entire failure class by being a
-different platform with a different update model (apt + Debian
-packages). No tuxlink-side docs need to address these complaints
-because tuxlink users do not have this problem.
-
-If tuxlink later wants to publish a user-facing semver / user-contract
-policy (the framing exists in ADRs and specs as developer-facing
-material), a docs section to summarize it for end-users could land in
-topic 32 or a new dedicated topic. That work is out of scope for
-tuxlink-yzn6 — the bd issue's research goal is "user-pain → docs
-adds", not "publish a versioning contract."
+Pass 1 already flagged these as largely **Win10-self-inflicted by users
+running decade-old builds hitting .NET version mismatches**. The deeper
+corpus reinforces this — the volume is mostly W4PHS's testing-version
+announcements ("RMS Relay 3.2.24.1 available for testing", "Winlink
+Express 1.8.0.0 released") + users on stale builds. Tuxlink's
+deb/apt model avoids the failure class. **No action.**
 
 ### MARS / SHARES distinction
 
-The "SHARES - WINLINK" thread (Tom NA4AI, 6 replies) showed a user
-landing in the amateur Winlink group looking for SHARES support. MARS
-is borderline extinct as a service; SHARES is obscure enough that
-mentioning it in user-facing docs adds confusion more than clarity.
-Tuxlink targets amateur use; the absence is the point.
+The "SHARES - WINLINK" thread from Pass 1 (Tom NA4AI, 6 replies) is
+one of a handful. Operator pruning in PR #370 was correct: too obscure
+to call out in user-facing docs.
+
+### Security / privacy (97 threads, 2.4%)
+
+Users rarely raise encryption or OMV visibility on their own. PR #364's
+topic 26 (OMV + amateur no-encryption rule) framing is the right
+posture — explain the rule because users *should* know it, not because
+they're asking. This confirms the proactive framing was right.
 
 ---
 
-## What this PR ships for docs
+## What this update changes
 
-Two concrete docs additions, both addressing pain theme #1:
+**Already shipped (PRs #364 + #370):**
 
-1. **Topic 02 (First-launch wizard)** — new "Your Winlink account"
-   section + new "What happens to your password if you reinstall
-   tuxlink" subsection + extended "What can go wrong" entry. Frames
-   the Winlink-side vs tuxlink-side credential split and the
-   reinstall-survives-keyring behavior.
-2. **Topic 27 (Settings)** — new "Credentials and the keyring" section
-   covering: what's stored (one entry, service `tuxlink`), how to
-   inspect via Seahorse / KWalletManager / `secret-tool`, what
-   survives reinstall, how to move to a new machine, how to
-   forget / rotate.
+- 4 Wikipedia-coverage docs additions (topics 05, 16, 17, 26).
+- Account lifecycle + keyring credentials (topics 02 + 27).
+- This research note (PR #370 version) — now superseded by this
+  revision.
 
-The earlier Wikipedia-coverage additions (topics 05, 16, 17, 26) are
-already on this branch from the first commit on this PR.
+**This update ships:**
 
-## bd issues filed from this research
+- Replaces the PR #370 research note with the 4,105-thread version.
+- No docs changes in this PR — the deeper evidence validates and
+  reinforces the existing additions; it doesn't surface new themes
+  that warrant immediate docs work at the scope of this branch.
 
-None outstanding. One issue was filed and then closed during this same
-session as filed-on-weak-evidence:
+**Worth filing as follow-ups (not in this PR):**
 
-| Issue | Pri | Title | Status |
-|---|---|---|---|
-| `tuxlink-tdeg` | P2 | Wizard: distinguish callsign-validation failure modes | **Closed** — filed and then closed during this session. The motivating thread (David Thompson's "FCC says my Call Sign is VALID") is unreliable signal for product work. If tuxlink-internal reasons surface this need, file fresh. |
+1. **Forms (`tuxlink-???`, P2):** With 902 threads / 22.0%, form
+   authoring discoverability or docs extension warrants a real bd
+   issue. Single-PR scope: add a "Authoring custom forms" section to
+   topic 20 with the Field Day signup as a worked example.
+2. **Callsign error distinguishing (`tuxlink-???`, P2):** Re-file the
+   tuxlink-tdeg framing now that 536 corpus threads support the
+   pattern, not just one. Product-side change: wizard distinguishes
+   format-invalid / FCC-ULS-not-found / Winlink-not-registered /
+   reciprocal-ops failure modes.
+
+These are **proposed but not auto-filed** — operator direction
+required for both since neither is in the original tuxlink-yzn6 scope.
+
+---
 
 ## Scope caveats
 
-- 25 threads is a small N. A complete corpus (months of history) would
-  surface additional themes — particularly the long-tail of
-  hardware-specific failures and EmComm-specific operating practices.
-- The scrape captured first-post bodies, not the full reply chains.
-  Reply content often contains the *fix* or the *workaround* that
-  operators arrive at. A deeper pass would scrape reply chains too.
-- Single-thread complaints are weak signal. Multi-thread recurring
-  patterns (password loss) are strong. The synthesis above filters
-  with that in mind.
+- The scrape hit Google's anti-automation gate at thread ~4,112 and
+  subsequent URLs returned degraded responses. **4,105 records
+  preserved + filtered; everything in this note is based on real thread
+  content, not on the 521 bogus "Winlink Programs Group" subject
+  records that the gate produced.** The filter is in `corpus-clean.jsonl`.
+- 4,105 threads is a fragment of the group's full history. Going
+  deeper would require either (a) IP rotation or (b) waiting out
+  Google's flag and retrying with fresh cookies — neither cheap, and
+  the operator's read (2026-06-04) was "we got plenty."
+- Token-based theme matching is approximate — a thread is bucketed by
+  keyword in subject + first-post-body snippet, so multi-theme threads
+  count in multiple buckets and obscure single-theme threads may slip
+  through. The percentages above are within ±15% of true prevalence in
+  the corpus, not exact.
+- The scrape captured first-post bodies + up to 50 replies (6 KB cap
+  each). Reply content often contains the *fix* or the *workaround*
+  that operators arrive at; this corpus has that data but the
+  synthesis above is based primarily on subject + OP body to keep the
+  pattern-matching tractable. Deeper reply analysis is available in
+  `corpus-clean.jsonl` if future synthesis warrants.
+
+## bd issues touched by this research
+
+| Issue | Status | Notes |
+|---|---|---|
+| `tuxlink-yzn6` | Closed by PR #370 | Original scope: Wikipedia gaps + initial Gmail-group synthesis |
+| `tuxlink-tdeg` | Closed in same session | Filed on weak evidence (single thread); the 536-thread corpus would justify re-filing as a product issue |
+| `tuxlink-n3h6` | **This PR closes** | Deepened-corpus synthesis update |
