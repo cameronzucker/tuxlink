@@ -8,6 +8,7 @@ import './ics309';
 import './position';
 import './bulletin';
 import './damage_assessment';
+import './checkin';
 
 export * from './forms';
 export * from './types';
