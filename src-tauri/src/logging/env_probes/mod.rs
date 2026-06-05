@@ -166,21 +166,55 @@ pub fn run_with_deadline(cmd: &str, args: &[&str]) -> Option<String> {
 /// first-paint trigger is implemented here.
 pub fn spawn_runner(
     app: tauri::AppHandle,
-    _handle: std::sync::Arc<crate::logging::LoggingHandle>,
+    handle: std::sync::Arc<crate::logging::LoggingHandle>,
 ) {
     use tauri::Listener;
     let app2 = app.clone();
-    app.listen("first_paint_complete", move |_| {
+    let event_id = app.listen("first_paint_complete", move |_| {
         let a = app2.clone();
         tokio::spawn(async move {
-            let snaps = vec![
-                keyring::run("first_paint"),
-                audio::run("first_paint"),
-                serial::run("first_paint"),
-                modem_process::run("first_paint"),
-                network::run("first_paint"),
-                display::run("first_paint"),
-            ];
+            // Gate each probe with try_claim() / release() to enforce the 60s
+            // cooldown + single-flight invariant. Without gating, a double
+            // first_paint_complete (frontend dev-mode hot reload or rapid
+            // re-render) duplicates all six probe emissions. Probes whose gate
+            // is blocked are skipped; the event is never emitted for them on
+            // this trigger cycle.
+            //
+            // logging_env_probes_snapshot stays ungated — it is a read-only
+            // status display; gating would return empty data confusingly.
+            let mut snaps = Vec::with_capacity(6);
+
+            if keyring::GATE.try_claim() {
+                let s = keyring::run("first_paint");
+                keyring::GATE.release();
+                snaps.push(s);
+            }
+            if audio::GATE.try_claim() {
+                let s = audio::run("first_paint");
+                audio::GATE.release();
+                snaps.push(s);
+            }
+            if serial::GATE.try_claim() {
+                let s = serial::run("first_paint");
+                serial::GATE.release();
+                snaps.push(s);
+            }
+            if modem_process::GATE.try_claim() {
+                let s = modem_process::run("first_paint");
+                modem_process::GATE.release();
+                snaps.push(s);
+            }
+            if network::GATE.try_claim() {
+                let s = network::run("first_paint");
+                network::GATE.release();
+                snaps.push(s);
+            }
+            if display::GATE.try_claim() {
+                let s = display::run("first_paint");
+                display::GATE.release();
+                snaps.push(s);
+            }
+
             // Use per-probe static target: directives so the Fanout Layer's
             // target-based routing uses the correct per-cluster target
             // (spec §4.1 verbosity matrix). The tracing macro requires
@@ -232,6 +266,16 @@ pub fn spawn_runner(
             let _ = a.emit("logging://probes/snapshot-updated", &snaps);
         });
     });
+
+    // Store the EventId so a subsequent spawn_runner call (e.g., after
+    // dev-mode hot reload re-runs init) can unlisten the previous listener
+    // before registering a new one, preventing accumulating stale listeners.
+    if let Ok(mut slot) = handle.probe_listener_id.lock() {
+        if let Some(old_id) = slot.replace(event_id) {
+            use tauri::Listener;
+            app.unlisten(old_id);
+        }
+    }
 }
 
 #[cfg(test)]

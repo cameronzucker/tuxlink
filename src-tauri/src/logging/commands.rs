@@ -285,6 +285,13 @@ pub fn logging_open_directory(
         .try_state::<Arc<LoggingHandle>>()
         .ok_or_else(|| "logging not available (degraded or not initialized)".to_string())?;
 
+    // tauri_plugin_shell::Shell::open is deprecated upstream in favor of
+    // tauri-plugin-opener (Tauri 2.1+). Migrating to the new plugin requires
+    // adding tauri-plugin-opener to Cargo.toml + capabilities/*.json + lib.rs
+    // .plugin() registration — out of scope for the alpha-logging PR. Suppress
+    // the deprecation locally; the project-wide migration is a follow-up before
+    // the Tauri 3 upgrade.
+    #[allow(deprecated)]
     tauri_plugin_shell::ShellExt::shell(&app)
         .open(handle.log_dir.to_string_lossy().to_string(), None)
         .map_err(|e| format!("shell open: {e}"))
@@ -335,16 +342,47 @@ pub fn logging_env_probes_snapshot(
 }
 
 /// Re-run all environment probes and emit a push event to the Logging window.
+///
+/// Gate-guarded: each probe's ProbeGate prevents double-runs on rapid
+/// double-click. Only probes whose gate is successfully claimed are re-run;
+/// skipped probes are omitted from the result set. The gate does NOT apply to
+/// `logging_env_probes_snapshot` — that is a read-only status display where
+/// gating would confusingly return empty data.
 #[tauri::command]
 pub fn logging_env_probes_rerun(app: tauri::AppHandle) -> Result<Vec<ProbeSnapshot>, String> {
-    let snaps = vec![
-        keyring::run("rerun"),
-        audio::run("rerun"),
-        serial::run("rerun"),
-        modem_process::run("rerun"),
-        network::run("rerun"),
-        display::run("rerun"),
-    ];
+    let mut snaps = Vec::with_capacity(6);
+
+    if keyring::GATE.try_claim() {
+        let s = keyring::run("rerun");
+        keyring::GATE.release();
+        snaps.push(s);
+    }
+    if audio::GATE.try_claim() {
+        let s = audio::run("rerun");
+        audio::GATE.release();
+        snaps.push(s);
+    }
+    if serial::GATE.try_claim() {
+        let s = serial::run("rerun");
+        serial::GATE.release();
+        snaps.push(s);
+    }
+    if modem_process::GATE.try_claim() {
+        let s = modem_process::run("rerun");
+        modem_process::GATE.release();
+        snaps.push(s);
+    }
+    if network::GATE.try_claim() {
+        let s = network::run("rerun");
+        network::GATE.release();
+        snaps.push(s);
+    }
+    if display::GATE.try_claim() {
+        let s = display::run("rerun");
+        display::GATE.release();
+        snaps.push(s);
+    }
+
     use tauri::Emitter;
     let _ = app.emit("logging://probes/snapshot-updated", &snaps);
     Ok(snaps)
