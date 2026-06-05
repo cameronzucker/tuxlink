@@ -78,7 +78,14 @@
 
 .tux-ssp-row {
   display: grid;
-  grid-template-columns: 14px 1fr 1fr auto;
+  /* Three columns matching the JSX children: name, query, delete-icon button.
+     `minmax(0, ...)` lets the existing `text-overflow: ellipsis` on
+     .tux-ssp-name and .tux-ssp-query actually clip — grid items default to
+     min-width:auto which would otherwise expand to fit content and skip the
+     ellipsis. Queries are typically longer than names (e.g. name "Net
+     traffic", query "from:KX5DD subject:net has:attachment"), so the query
+     column gets twice the flex weight. tuxlink-i93f. */
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr) auto;
   gap: 10px;
   padding: 8px 0;
   border-bottom: 1px solid var(--border);
