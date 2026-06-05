@@ -463,6 +463,16 @@ pub enum BackendError {
     #[error("operation cancelled")]
     Cancelled,
 
+    /// CMS sent a `*** ...` rejection line (e.g. "Callsign not authorized",
+    /// "Secure login failed"). Payload is pre-redacted by
+    /// `redaction::redact_freeform` (done at the handshake/session layer before
+    /// it bubbles up here). Added by Task 12 (tuxlink-7do4) to give
+    /// `cms_connect`'s Err arm a structured handle on the `***` payload for
+    /// `auth_taxonomy::classify` — without this variant the payload was only
+    /// reachable via the debug string of `TransportFailed`.
+    #[error("remote error: {0}")]
+    RemoteError(String),
+
     #[error("not implemented (this backend does not support this operation)")]
     NotImplemented,
 
@@ -1789,9 +1799,27 @@ fn native_connect(
                 .collect()
         },
     )
-    .map_err(|e| BackendError::TransportFailed {
-        reason: format!("{e:?}"),
-        source: None,
+    .map_err(|e| {
+        // Task 12 (tuxlink-7do4): intercept *** payload variants so
+        // cms_connect's Err arm has a structured BackendError::RemoteError
+        // to classify via auth_taxonomy::classify. All other TelnetError
+        // variants (TCP/TLS failures, other exchange errors) → TransportFailed
+        // as before.
+        use telnet::TelnetError;
+        use session::ExchangeError;
+        use crate::winlink::handshake::HandshakeError;
+        match e {
+            TelnetError::Exchange(ExchangeError::RemoteError(payload)) => {
+                BackendError::RemoteError(payload)
+            }
+            TelnetError::Exchange(ExchangeError::Handshake(
+                HandshakeError::RemoteError(payload),
+            )) => BackendError::RemoteError(payload),
+            other => BackendError::TransportFailed {
+                reason: format!("{other:?}"),
+                source: None,
+            },
+        }
     })?;
 
     // P1.4 (Codex post-impl review): file accepted messages FIRST, then surface

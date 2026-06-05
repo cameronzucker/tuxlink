@@ -81,6 +81,11 @@ impl From<BackendError> for UiError {
                 reason: stringify_with_source(&reason, source.as_deref()),
             },
             BackendError::MessageRejected(s) => UiError::Rejected(s),
+            // Task 12 (tuxlink-7do4): RemoteError carries the *** payload for
+            // auth_taxonomy classification; it surfaces to the UI as a
+            // transport error (the React layer gets the detailed mode via
+            // the AuthClassified b2f-event, not from UiError directly).
+            BackendError::RemoteError(s) => UiError::Transport { reason: s },
             BackendError::Cancelled => UiError::Cancelled,
             BackendError::NotImplemented => UiError::Unavailable {
                 reason: "not implemented in v0.0.1".to_string(),
@@ -1451,11 +1456,12 @@ pub async fn cms_connect(
         format!("Connecting to the CMS ({:?})…", cfg.connect.transport),
     );
 
-    // Scaffold the Tauri-side event sink (Task 11). The sink will be
-    // threaded deeper through backend.connect in Task 12 so the
-    // run_exchange path emits structured events through it. For Task 11
-    // this is just channel infrastructure setup.
-    let _events_sink: std::sync::Arc<dyn crate::winlink::b2f_events::B2fEventSink> =
+    // Task 11: Tauri-side event sink infrastructure.
+    // Task 12 (tuxlink-7do4): now used for result-level AuthClassified
+    // emission in the Err arm. Deep threading through backend.connect
+    // (for in-flight TcpConnected / RemoteSidReceived / PostAuthExchangeStarted
+    // events) is deferred as bd-tuxlink-7do4-followup-backend-events.
+    let events_sink: std::sync::Arc<dyn crate::winlink::b2f_events::B2fEventSink> =
         std::sync::Arc::new(crate::winlink::b2f_events::TauriEventSink::new(app.clone()));
 
     match backend
@@ -1502,6 +1508,43 @@ pub async fn cms_connect(
         }
         Err(e) => {
             emit_session_line(&app, &log, LogLevel::Error, format!("CMS connect failed: {e}"));
+
+            // Task 12 (tuxlink-7do4, R5 spec §6.3 + §6.4): emit a structured
+            // AuthClassified event so the React useAuthDiagnostic hook can
+            // render the appropriate banner mode. This is result-level
+            // classification; deep backend.connect threading (which would also
+            // give us TcpConnected / RemoteSidReceived / PostAuthExchangeStarted
+            // events for Mode 1 vs Mode 5 discrimination) is tracked as
+            // bd-tuxlink-7do4-followup-backend-events.
+            let attempt_id = crate::winlink::b2f_events::AttemptId::fresh();
+            use crate::winlink::b2f_events::{B2fEvent, FailureMode};
+            let (mode, raw) = match &e {
+                // BackendError::RemoteError carries the *** payload (redaction-
+                // scrubbed at the handshake.rs + telnet.rs layers per Tasks 6+8).
+                // This variant is new in Task 12 — the map_err in native_connect
+                // lifts ExchangeError::RemoteError + HandshakeError::RemoteError
+                // into it so the payload is preserved structurally.
+                BackendError::RemoteError(payload) => {
+                    (crate::winlink::auth_taxonomy::classify(payload), Some(payload.clone()))
+                }
+                // TransportFailed = TCP / TLS / DNS failure (no *** payload).
+                // These are Mode 1 (NetworkUnreachable). Mode 1 vs Mode 5
+                // discrimination requires deep backend.connect event threading
+                // (deferred — bd-tuxlink-7do4-followup-backend-events).
+                BackendError::TransportFailed { .. } => {
+                    (FailureMode::NetworkUnreachable, None)
+                }
+                // AuthFailed is the listener gate variant (not a CMS telnet
+                // scenario), but map it conservatively.
+                BackendError::AuthFailed { reason } => {
+                    (crate::winlink::auth_taxonomy::classify(reason), Some(reason.clone()))
+                }
+                // All other BackendError variants in the cms_connect Err arm
+                // → Uncategorized; surface the error Display as raw context.
+                _ => (FailureMode::Uncategorized, Some(format!("{e}"))),
+            };
+            events_sink.push(B2fEvent::AuthClassified { mode, raw, attempt_id });
+
             Err(e.into())
         }
     }
