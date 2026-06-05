@@ -2,6 +2,7 @@
 //! and the full-parity revision in docs/superpowers/specs/2026-05-31-html-forms-full-parity-design.md.
 
 pub mod catalog;
+pub mod draft_library; // tuxlink-hnkn P2 Task 4 — save/reuse named slots
 pub mod http_server;
 pub mod multipart;
 pub mod parse;

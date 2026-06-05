@@ -179,6 +179,21 @@ pub fn run() {
                             Ok(svc) => { app.manage(svc); }
                             Err(e) => eprintln!("search: build_service failed: {e}"),
                         }
+
+                        // tuxlink-hnkn P2 Task 4: FormDraftLibrary — named slot
+                        // store for save/reuse of form field-value sets. Lives as a
+                        // sibling SQLite file to search.db (Option B schema-home
+                        // decision: independent lifecycle, survives search-index
+                        // rebuild). Failure is non-fatal — the UI degrades gracefully
+                        // to "no saved slots"; the app always launches.
+                        match crate::forms::draft_library::DraftLibrary::open(
+                            search_root.join("form_draft_library.db"),
+                        ) {
+                            Ok(lib) => {
+                                app.manage(std::sync::Arc::new(lib));
+                            }
+                            Err(e) => eprintln!("form-draft-library: open failed: {e}"),
+                        }
                     }
                 }
                 Err(e) => eprintln!("search: could not resolve app_data_dir: {e}"),
@@ -411,6 +426,10 @@ pub fn run() {
             crate::ui_commands::telnet_station_password_is_set,
             crate::ui_commands::telnet_listen_config_get,
             crate::ui_commands::telnet_listen_config_set,
+            // tuxlink-hnkn P2 Task 4: FormDraftLibrary — save/reuse named form slots.
+            crate::ui_commands::form_draft_library_list,
+            crate::ui_commands::form_draft_library_upsert,
+            crate::ui_commands::form_draft_library_delete,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

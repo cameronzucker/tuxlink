@@ -7014,3 +7014,60 @@ hw:CARD=Device,DEV=0
         assert_eq!(rfc3339_to_epoch(""), None);
     }
 }
+
+// ============================================================================
+// tuxlink-hnkn P2 Task 4: FormDraftLibrary Tauri commands
+// ============================================================================
+//
+// Three IPC commands that expose the `DraftLibrary` SQLite-backed store to the
+// frontend. The store is registered as `Arc<DraftLibrary>` managed state in
+// `lib.rs` during app startup. Each command acquires the `Arc` via
+// `tauri::State<'_, Arc<DraftLibrary>>` and delegates to the store methods.
+//
+// Error projection: `DraftLibraryError` → `String` (the lightweight IPC
+// convention used by the existing search commands). The commands are async
+// only because the Tauri `#[tauri::command]` macro requires it for commands
+// that return `Result`; the underlying SQLite calls are synchronous (the
+// `DraftLibrary::conn` is a `Mutex<Connection>`).
+
+use crate::forms::draft_library::{DraftLibrary, FormDraftSlot};
+
+/// List all saved draft slots for the given `form_id`.
+///
+/// Returns an empty list when no slots exist for that form (not an error).
+/// Slots are ordered by `created_at` ascending (oldest/first-created first).
+#[tauri::command]
+pub async fn form_draft_library_list(
+    form_id: String,
+    library: State<'_, std::sync::Arc<DraftLibrary>>,
+) -> Result<Vec<FormDraftSlot>, String> {
+    library.list(&form_id).map_err(|e| e.to_string())
+}
+
+/// Insert or update a draft slot.
+///
+/// - `slot_id = None` → new slot with a minted UUID.
+/// - `slot_id = Some(id)` → update the matching row in place, or insert if it
+///   does not exist yet (upsert semantics).
+///
+/// Returns the final `FormDraftSlot` — callers use this to get the assigned
+/// `slot_id` on creates, or to reflect the preserved `created_at` on updates.
+#[tauri::command]
+pub async fn form_draft_library_upsert(
+    slot_id: Option<String>,
+    form_id: String,
+    label: String,
+    payload: serde_json::Value,
+    library: State<'_, std::sync::Arc<DraftLibrary>>,
+) -> Result<FormDraftSlot, String> {
+    library.upsert(slot_id, form_id, label, payload).map_err(|e| e.to_string())
+}
+
+/// Delete a draft slot by `slot_id`. No-op-safe if the slot does not exist.
+#[tauri::command]
+pub async fn form_draft_library_delete(
+    slot_id: String,
+    library: State<'_, std::sync::Arc<DraftLibrary>>,
+) -> Result<(), String> {
+    library.delete(&slot_id).map_err(|e| e.to_string())
+}
