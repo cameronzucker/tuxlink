@@ -46,10 +46,11 @@ const INITIAL_STATE: AuthDiagnosticState = {
   },
 };
 
-const RETRY_IDLE_RESET_MS = 5 * 60 * 1000; // 5 minutes
-const RATE_LIMIT_DEBOUNCE_MS = 10 * 1000;   // 10 seconds
-const CIRCUIT_BREAK_WINDOW_MS = 60 * 1000;  // 60 seconds
+const RETRY_IDLE_RESET_MS = 5 * 60 * 1000;    // 5 minutes
+const RATE_LIMIT_DEBOUNCE_MS = 10 * 1000;     // 10 seconds
+const CIRCUIT_BREAK_WINDOW_MS = 60 * 1000;   // 60 seconds
 const CIRCUIT_BREAK_THRESHOLD = 3;
+const CIRCUIT_BREAK_DURATION_MS = 2 * 60 * 1000; // 2 minutes
 
 export function useAuthDiagnostic(): {
   state: AuthDiagnosticState;
@@ -100,6 +101,29 @@ export function useAuthDiagnostic(): {
     };
   }, []);
 
+  // Auto-clear rate-limit + circuit-break when disabledUntil elapses.
+  // Without this, circuitBroken=true is permanent — the button stays
+  // disabled forever (Codex MAJOR #5).
+  useEffect(() => {
+    const target = state.testRateLimit.disabledUntil;
+    if (target === null || target <= Date.now()) return;
+    const id = setTimeout(() => {
+      setState((prev) => {
+        // Re-check at fire time — may have already updated via another path.
+        if (prev.testRateLimit.disabledUntil !== target) return prev;
+        return {
+          ...prev,
+          testRateLimit: {
+            disabledUntil: null,
+            circuitBroken: false,
+            recentTestTimestamps: prev.testRateLimit.recentTestTimestamps,
+          },
+        };
+      });
+    }, target - Date.now());
+    return () => clearTimeout(id);
+  }, [state.testRateLimit.disabledUntil]);
+
   const dismiss = async () => {
     try {
       await invoke('auth_diagnostic_clear');
@@ -126,13 +150,18 @@ export function useAuthDiagnostic(): {
           (t) => now - t < CIRCUIT_BREAK_WINDOW_MS,
         );
         const updated = [...recentInWindow, now];
-        const circuitBroken = updated.length >= CIRCUIT_BREAK_THRESHOLD;
+        const isCircuitBreak = updated.length >= CIRCUIT_BREAK_THRESHOLD;
+        // Circuit-break: disable for CIRCUIT_BREAK_DURATION_MS (2 min); normal
+        // debounce: disable for RATE_LIMIT_DEBOUNCE_MS (10 s).
+        const disabledUntil = isCircuitBreak
+          ? now + CIRCUIT_BREAK_DURATION_MS
+          : now + RATE_LIMIT_DEBOUNCE_MS;
         return {
           ...prev,
           testingInFlight: false,
           testRateLimit: {
-            disabledUntil: now + RATE_LIMIT_DEBOUNCE_MS,
-            circuitBroken,
+            disabledUntil,
+            circuitBroken: isCircuitBreak,
             recentTestTimestamps: updated,
           },
         };

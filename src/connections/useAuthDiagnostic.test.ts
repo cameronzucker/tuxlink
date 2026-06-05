@@ -437,6 +437,34 @@ describe('useAuthDiagnostic', () => {
     expect(result.current.state.testRateLimit.recentTestTimestamps).toHaveLength(2);
   });
 
+  // --- circuit breaker auto-clear (Codex MAJOR #5) ---
+
+  it('circuit breaker auto-clears after 2 minutes', async () => {
+    // Pre-register the b2f handler with real timers before engaging fakes.
+    const { result } = renderHook(() => useAuthDiagnostic());
+    await waitFor(() => expect(b2fHandler).not.toBeNull());
+
+    vi.useFakeTimers();
+    try {
+      // Trip the circuit breaker with 3 tests in quick succession.
+      for (let i = 0; i < 3; i++) {
+        await act(async () => {
+          await result.current.testCredentials();
+        });
+      }
+      expect(result.current.state.testRateLimit.circuitBroken).toBe(true);
+
+      // Advance past the 2-minute circuit-break duration.
+      await act(async () => {
+        vi.advanceTimersByTime(2 * 60 * 1000 + 1000);
+      });
+
+      expect(result.current.state.testRateLimit.circuitBroken).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   // --- Unrelated B2fEvent variants are ignored ---
 
   it('ignores B2fEvent variants unrelated to auth classification', async () => {
