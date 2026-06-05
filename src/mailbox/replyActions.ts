@@ -114,7 +114,21 @@ function forwardBody(message: ParsedMessage): string {
 // safe to expose via the "Reply with form…" action — otherwise clicking the
 // button on, say, a Position Report opens a blank-ish form with no useful
 // pre-population. MessageView's button visibility consults this set.
-const REPLY_WITH_FORM_SUPPORTED: ReadonlySet<string> = new Set(['ICS213_Initial']);
+//
+// Intentionally NOT included:
+// - Position_Report: position reports are broadcast (no recipient field +
+//   no meaningful operator-text-content beyond the message — the reply
+//   value-add is nil over composing a new Position Report).
+// - Form-309_Initial: comms logs aren't reply-shaped (replying to a log
+//   has no meaningful semantics in WLE either).
+// - Winlink_Check-In: check-ins are fire-and-forget status updates; WLE
+//   has no _SendReply.0 template for them.
+// - Damage_Assessment_Initial: damage assessments are reports, not
+//   conversation threads.
+const REPLY_WITH_FORM_SUPPORTED: ReadonlySet<string> = new Set([
+  'ICS213_Initial',
+  'Bulletin_Initial',
+]);
 
 /// True iff `replyWithForm` produces a meaningfully-populated draft for the
 /// given form ID. Used by MessageView to gate the "Reply with form…" button.
@@ -135,9 +149,10 @@ export function buildReplyDraft(message: ParsedMessage, mode: ReplyMode): DraftP
 
   if (mode === 'replyWithForm') {
     // Only valid for messages that already carry a form payload AND have a
-    // per-form mapping defined below. Other forms (ICS-309, Bulletin,
-    // Position, Damage Assessment) fall back to a plain reply rather than
-    // producing a half-populated form draft (Codex r2 P2 #1).
+    // per-form mapping below. Unsupported forms (Position, ICS-309,
+    // Check-In, Damage Assessment — see REPLY_WITH_FORM_SUPPORTED for the
+    // rationale) fall back to a plain reply rather than producing a half-
+    // populated form draft (Codex r2 P2 #1).
     if (
       !message.isForm ||
       !message.formId ||
@@ -146,22 +161,52 @@ export function buildReplyDraft(message: ParsedMessage, mode: ReplyMode): DraftP
     ) {
       return buildReplyDraft(message, 'reply');
     }
-    // Sender↔recipient swap: original fm_name → new to_name; preserve
-    // subjectline + inc_name + isexercise.
     const origFields: Record<string, string> = Object.fromEntries(message.formPayload.fields);
-    const fmName = origFields['fm_name'] ?? '';
-    const formFields: Record<string, string> = {
-      // Pre-populate with the swap (don't carry approval / message body —
-      // those are response-specific).
-      to_name: fmName,
-      inc_name: origFields['inc_name'] ?? '',
-      subjectline: origFields['subjectline']
-        ? RE_PREFIX.test(origFields['subjectline'])
-          ? origFields['subjectline']
-          : `Re: ${origFields['subjectline']}`
-        : '',
-      isexercise: origFields['isexercise'] ?? '',
+    const carrySubject = (raw: string | undefined): string => {
+      if (!raw) return '';
+      return RE_PREFIX.test(raw) ? raw : `Re: ${raw}`;
     };
+
+    let formFields: Record<string, string>;
+    switch (message.formId) {
+      case 'ICS213_Initial':
+        // Sender↔recipient swap: original fm_name → new to_name; preserve
+        // subjectline + inc_name + isexercise. Don't carry approval /
+        // message body — those are response-specific.
+        formFields = {
+          to_name: origFields['fm_name'] ?? '',
+          inc_name: origFields['inc_name'] ?? '',
+          subjectline: carrySubject(origFields['subjectline']),
+          isexercise: origFields['isexercise'] ?? '',
+        };
+        break;
+      case 'Bulletin_Initial':
+        // Bulletin reply semantics: the original sender (from_name)
+        // becomes the new bulletin's recipient (`name` = "For"); leave
+        // bulletin number, datetime, and message blank for the operator
+        // to fill — they're per-bulletin volatile fields. Carry the
+        // precedence level + title so an acknowledgment bulletin matches
+        // the original's urgency + identity. `from_name` left blank so
+        // the operator's config / chrome callsign supplies it on send.
+        formFields = {
+          name: origFields['from_name'] ?? '',
+          from_name: '',
+          level: origFields['level'] ?? '',
+          title: origFields['title'] ?? '',
+          subjectline: carrySubject(origFields['subjectline']),
+          bullnr: '',
+          activitydatetime1: '',
+          message: '',
+        };
+        break;
+      default:
+        // hasReplyWithFormSupport gates entry, so this branch is
+        // unreachable in practice. Belt-and-suspenders: a stray formId
+        // (e.g. operator manually edited the registry) falls back to a
+        // plain reply rather than crashing.
+        return buildReplyDraft(message, 'reply');
+    }
+
     return {
       to: message.from,
       subject: RE_PREFIX.test(message.subject) ? message.subject : `Re: ${message.subject}`,
