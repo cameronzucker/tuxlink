@@ -10,6 +10,7 @@ pub mod serialize;
 pub mod skin;
 pub mod templates;
 pub mod types;
+pub mod updater; // tuxlink-xipa Phase 3 — winlink.org Standard Forms refresh (backend layer; IPC + UI in follow-up PRs)
 pub mod validation;
 pub mod wle_templates;
 

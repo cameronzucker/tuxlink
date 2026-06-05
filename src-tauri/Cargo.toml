@@ -63,6 +63,7 @@ sha2 = "0.10"                                    # NEW (tuxlink-3o2o) — fixed-
 printpdf = "0.9"                                 # NEW (tuxlink-hnkn P2 Task 2) — ICS-309 PDF export; operator decision 2026-06-04; ~500KB compiled
 regex = "1"                                      # NEW (tuxlink-7do4 Codex BLOCKER #1) — case-insensitive + embedded ;PR:/;PQ: scanner for redaction.rs
 once_cell = "1"                                  # NEW (tuxlink-7do4 CI fix) — Lazy<T> for sub-MSRV-1.80 LazyLock replacement in redaction.rs (rust-version = "1.75")
+zip = { version = "2", default-features = false, features = ["deflate"] }  # NEW (tuxlink-xipa Phase 3) — extract winlink.org Standard Forms zip into the runtime forms snapshot. default-features off + deflate-only keeps the dep weight down (bzip2 / aes / zstd not needed for WLE archives).
 
 [dev-dependencies]
 mockito = "1.5"
