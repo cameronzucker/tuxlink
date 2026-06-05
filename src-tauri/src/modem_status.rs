@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::{mpsc, Notify};
@@ -282,6 +282,25 @@ pub struct ModemSession {
     /// consume semantics). Set via [`try_begin_connect`] BEFORE any I/O;
     /// cleared via [`clear_connect_in_progress`] on every exit path via RAII.
     connect_in_progress: AtomicBool,
+    /// Monotonic close-generation counter (tuxlink-pdnw — Codex Phase 3-4
+    /// boundary P1 #1, #5). Bumped by every close path BEFORE the close
+    /// reaches `reset_to_stopped` / disarms the listener consumer. Workers
+    /// that take the transport (b2f exchange, listener consumer task)
+    /// snapshot the value before the take; on the return-to-session path
+    /// (`install_transport_if_generation_matches` /
+    /// `return_transport_from_outbound`) they check that the snapshot still
+    /// matches the live generation. If a close intervened, the snapshot is
+    /// stale and the transport is dropped instead of re-installed —
+    /// preventing the close-vs-armed-consumer race where the worker
+    /// reinstalls the transport into a session the operator just closed.
+    ///
+    /// Decoupled from the inner mutex so a snapshot is lock-free (the
+    /// `Acquire` load is faster than acquiring the std-mutex and gives the
+    /// same ordering guarantees against the `bump` path's `AcqRel`).
+    /// Monotonically growing — never reset, even on re-open — so each new
+    /// open's worker takes a fresh snapshot tied to that open's generation
+    /// number. Survives close → re-open cycles cleanly.
+    close_generation: AtomicU64,
     /// Transport-arbiter signal: outbound calls `notify_one()` to ask the
     /// listener consumer task to yield the transport. The consumer task
     /// holds `notified()` while idle in its accept loop. Decoupled from
@@ -436,6 +455,7 @@ impl ModemSession {
                 active_transport_kind: None,
             }),
             connect_in_progress: AtomicBool::new(false),
+            close_generation: AtomicU64::new(0),
             transport_yield_request: Arc::new(Notify::new()),
             transport_yield_rx: tokio::sync::Mutex::new(yield_rx),
             transport_yield_tx: yield_tx,
@@ -796,17 +816,42 @@ impl ModemSession {
     /// Outbound completes: return the transport to the consumer (if
     /// alive) or drop it (if not). Transitions owner accordingly:
     ///
+    /// - Generation mismatch (close intervened) → owner = `None`, transport
+    ///   dropped via the returned channel-send path NOT taken; the
+    ///   transport is moved into a local and dropped explicitly.
     /// - Consumer still listening → owner = `ListenerArmed`, transport
     ///   pushed through `transport_return_tx`.
     /// - Consumer gone (return_tx send fails) → owner = `None`,
     ///   transport dropped.
+    ///
+    /// **`snapshot_gen` (tuxlink-pdnw — Codex Phase 3-4 P1 #1, #5):** the
+    /// caller passes the value captured via
+    /// [`Self::current_close_generation`] BEFORE the outbound take. If a
+    /// close path bumped the generation while outbound was in flight, the
+    /// snapshot is stale and the transport is dropped instead of returned —
+    /// preventing the close-vs-armed-consumer race where the worker would
+    /// otherwise restore the transport into a session the operator just
+    /// closed.
     ///
     /// Best-effort: ignores Mutex poisoning + send failures because the
     /// outbound side has already completed; we're cleaning up.
     pub fn return_transport_from_outbound(
         &self,
         transport: Box<dyn crate::winlink::modem::ModemTransport>,
+        snapshot_gen: u64,
     ) {
+        // Generation check FIRST. Close intervened → drop the transport
+        // and set owner to None. The drop runs as `transport` falls out
+        // of scope at function return; we explicitly bind it here for
+        // clarity.
+        let live = self.close_generation.load(Ordering::Acquire);
+        if live != snapshot_gen {
+            if let Ok(mut inner) = self.inner.lock() {
+                inner.transport_owner = TransportOwner::None;
+            }
+            drop(transport);
+            return;
+        }
         match self.transport_return_tx.try_send(transport) {
             Ok(()) => {
                 if let Ok(mut inner) = self.inner.lock() {
@@ -965,6 +1010,69 @@ impl ModemSession {
         let mut inner = self.inner.lock().unwrap();
         inner.abort_writer = Some(writer);
         inner.abort_stream = None;
+    }
+
+    // ── Close-generation guards (tuxlink-pdnw — Codex Phase 3-4 P1 #1, #5) ──
+    //
+    // See the `close_generation` field docstring on `ModemSession` for the
+    // race the generation guards. Summary: a worker takes the transport
+    // (b2f exchange or listener consumer accept-loop) and then a close path
+    // runs; the worker's return-to-session path re-installs the transport
+    // into a session the operator just closed. The generation snapshot +
+    // check prevents that — close bumps; worker's snapshot is stale;
+    // install path drops the transport instead.
+
+    /// Read the live close-generation counter. Workers that intend to
+    /// re-install the transport snapshot this BEFORE the take.
+    pub fn current_close_generation(&self) -> u64 {
+        self.close_generation.load(Ordering::Acquire)
+    }
+
+    /// Bump the close-generation counter. Returns the PRIOR value (so the
+    /// caller can log the transition if useful); the new generation is
+    /// `prior + 1`. Called by every close path at the TOP, BEFORE
+    /// `reset_to_stopped` / `clear_active_session_mode` / disarm. Workers
+    /// already in flight after this point will observe the new generation
+    /// and their install-back will be a drop, not an install.
+    pub fn bump_close_generation(&self) -> u64 {
+        self.close_generation.fetch_add(1, Ordering::AcqRel)
+    }
+
+    /// Guarded install: install the transport iff `snapshot_gen` still
+    /// matches the live close-generation. Returns `Ok(())` when installed;
+    /// returns `Err(transport)` with the (un-installed) transport handed
+    /// back to the caller when a close intervened. The caller decides
+    /// whether to drop the transport or log + drop — production callers
+    /// drop unconditionally because the session is in a closed posture
+    /// and a leaked transport would tie up modem state.
+    ///
+    /// **Why the `Result` instead of a silent drop?** Returning the
+    /// transport lets the caller emit a diagnostic log line at the
+    /// install site (where the right context is in scope), rather than
+    /// the session doing it from inside a method without good context.
+    /// The drop happens at the caller's discretion.
+    pub fn install_transport_if_generation_matches(
+        &self,
+        t: Box<dyn crate::winlink::modem::ModemTransport>,
+        snapshot_gen: u64,
+    ) -> Result<(), Box<dyn crate::winlink::modem::ModemTransport>> {
+        // Generation check FIRST (no lock needed). Stale snapshot → hand
+        // the transport back so the caller drops it.
+        let live = self.close_generation.load(Ordering::Acquire);
+        if live != snapshot_gen {
+            return Err(t);
+        }
+        // Live generation still matches; acquire the inner mutex to
+        // install. Mutex-poisoned is treated as "session gone" — hand the
+        // transport back. (Poisoning indicates a panic in a prior critical
+        // section, same defensive posture as `transport_owner()`.)
+        match self.inner.lock() {
+            Ok(mut inner) => {
+                inner.transport = Some(t);
+                Ok(())
+            }
+            Err(_poisoned) => Err(t),
+        }
     }
 
     /// Try to begin a connect. Returns `true` if the caller now owns the busy
@@ -1555,7 +1663,8 @@ mod tests {
             let _ = session_for_task;
         });
 
-        session.return_transport_from_outbound(Box::new(ArbiterTestTransport));
+        // Fresh session — close_generation is 0; snapshot matches live.
+        session.return_transport_from_outbound(Box::new(ArbiterTestTransport), 0);
 
         assert_eq!(session.transport_owner(), TransportOwner::ListenerArmed);
         consumer.await.ok();
@@ -1571,7 +1680,8 @@ mod tests {
             .expect("first take must succeed");
         drop(rx);
 
-        session.return_transport_from_outbound(Box::new(ArbiterTestTransport));
+        // Fresh session — close_generation is 0; snapshot matches live.
+        session.return_transport_from_outbound(Box::new(ArbiterTestTransport), 0);
 
         assert_eq!(session.transport_owner(), TransportOwner::None);
     }
@@ -1881,5 +1991,136 @@ mod tests {
             session.status_snapshot().transport_owner,
             TransportOwner::ListenerArmed
         );
+    }
+
+    // ── tuxlink-pdnw — close-generation guards (Codex Phase 3-4 P1 #1, #5) ──
+    //
+    // The close-generation counter prevents the close-vs-armed-consumer
+    // race: a worker (b2f exchange or listener consumer) takes the
+    // transport, then a close path runs; the worker's install-back path
+    // would otherwise restore the transport into a session the operator
+    // just closed. Workers snapshot the generation before taking the
+    // transport; the guarded install-back path checks the snapshot is
+    // still current — if a close intervened, the transport is dropped
+    // instead of installed.
+
+    #[test]
+    fn ardop_close_generation_starts_at_zero() {
+        let session = ModemSession::new();
+        assert_eq!(
+            session.current_close_generation(),
+            0,
+            "fresh session must start at close_generation = 0"
+        );
+    }
+
+    #[test]
+    fn ardop_bump_close_generation_increments_monotonically() {
+        let session = ModemSession::new();
+        let prior_a = session.bump_close_generation();
+        assert_eq!(prior_a, 0, "first bump must report prior gen = 0");
+        assert_eq!(session.current_close_generation(), 1);
+
+        let prior_b = session.bump_close_generation();
+        assert_eq!(prior_b, 1, "second bump must report prior gen = 1");
+        assert_eq!(session.current_close_generation(), 2);
+
+        let prior_c = session.bump_close_generation();
+        assert_eq!(prior_c, 2);
+        assert_eq!(
+            session.current_close_generation(),
+            3,
+            "generation must grow monotonically across bumps"
+        );
+    }
+
+    #[test]
+    fn ardop_install_transport_if_generation_matches_installs_when_snapshot_current() {
+        // Happy path: snapshot taken at gen=0; no close intervened;
+        // install must succeed and the session must now have the
+        // transport.
+        let session = ModemSession::new();
+        let snapshot = session.current_close_generation();
+
+        let result = session
+            .install_transport_if_generation_matches(Box::new(ArbiterTestTransport), snapshot);
+
+        assert!(result.is_ok(), "matching generation must install");
+        assert!(
+            session.snapshot_transport_present(),
+            "session must have the transport after a successful install"
+        );
+    }
+
+    #[test]
+    fn ardop_install_transport_if_generation_matches_drops_when_close_intervened() {
+        // Race path: snapshot taken at gen=0; a close path bumps the
+        // generation; install must Err(transport) instead of installing.
+        // The returned transport is the one we handed in (caller drops).
+        let session = ModemSession::new();
+        let snapshot = session.current_close_generation();
+        assert_eq!(snapshot, 0);
+
+        // Simulate close: bump the generation.
+        let _ = session.bump_close_generation();
+        assert_eq!(session.current_close_generation(), 1);
+
+        let result = session
+            .install_transport_if_generation_matches(Box::new(ArbiterTestTransport), snapshot);
+
+        assert!(
+            result.is_err(),
+            "stale snapshot must Err — close intervened"
+        );
+        // The transport is handed back via Err so the caller can drop /
+        // log; verify it did NOT get installed into the session.
+        assert!(
+            !session.snapshot_transport_present(),
+            "session must NOT have a transport after a stale-gen install attempt"
+        );
+        // Drop the returned transport explicitly (mirrors production
+        // caller posture).
+        drop(result.err().unwrap());
+    }
+
+    #[tokio::test]
+    async fn ardop_return_transport_from_outbound_drops_when_close_intervened() {
+        // Race path on the arbiter return contract: outbound captured the
+        // generation, then a close path bumped it; return_transport_from_outbound
+        // must drop the transport instead of pushing it back onto the
+        // return channel. The owner must end up `None`.
+        let session = Arc::new(ModemSession::new());
+        session.set_transport_owner_for_test(TransportOwner::Outbound);
+
+        // Snapshot at gen=0, then simulate close intervening.
+        let snapshot = session.current_close_generation();
+        assert_eq!(snapshot, 0);
+        let _ = session.bump_close_generation();
+        assert_eq!(session.current_close_generation(), 1);
+
+        // Set up a return-channel receiver that we'll prove was NOT used.
+        let mut return_rx = session
+            .take_transport_return_rx()
+            .expect("first take must succeed");
+
+        session.return_transport_from_outbound(Box::new(ArbiterTestTransport), snapshot);
+
+        // Owner must be cleared to None (close intervened, session is gone).
+        assert_eq!(session.transport_owner(), TransportOwner::None);
+
+        // The return channel must NOT have received the transport — the
+        // stale-gen path drops the transport instead of pushing it. The
+        // recv with try_recv expects Empty. (Can't `{other:?}` because
+        // `Box<dyn ModemTransport>` doesn't implement Debug; we cover the
+        // outcomes by-hand.)
+        match return_rx.try_recv() {
+            Err(tokio::sync::mpsc::error::TryRecvError::Empty) => {}
+            Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => {
+                panic!("return channel disconnected — stale-gen path should not close the channel")
+            }
+            Ok(_t) => {
+                panic!("return channel must be empty after stale-gen drop; got a transport")
+            }
+        }
     }
 }
