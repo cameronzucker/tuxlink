@@ -5,6 +5,7 @@
 //! lives in `subscriber`; the Fanout Layer + redacting Visit live in `fanout`
 //! + `visit`; redaction policy in `redact` + `wire_sanitize`.
 
+pub mod dict;
 pub mod disk_consumer;
 pub mod event;
 pub mod fanout;
