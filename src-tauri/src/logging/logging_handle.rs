@@ -44,4 +44,8 @@ pub struct LoggingHandle {
     /// timer. Replacing the Some value closes the previous sender, which
     /// causes the waiting timer task to exit (cancel semantics via channel-closed).
     pub revert_cancel: Arc<Mutex<Option<tokio::sync::oneshot::Sender<()>>>>,
+    /// EventId from `app.listen("first_paint_complete", ...)` so spawn_runner
+    /// can unlisten the previous listener before registering a new one on
+    /// re-init (dev-mode hot-reload listener leak prevention).
+    pub probe_listener_id: Mutex<Option<tauri::EventId>>,
 }

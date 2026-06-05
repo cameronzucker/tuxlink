@@ -139,6 +139,7 @@ pub fn init(session_log: Arc<SessionLogState>) -> InitOutcome {
         filter_reload,
         free_disk_paused: free_disk_guard.paused,
         revert_cancel: Arc::new(Mutex::new(None)),
+        probe_listener_id: Mutex::new(None),
     };
 
     // Amendment C: schedule Bounded auto-revert timer if settings persisted

@@ -128,6 +128,7 @@ mod tests {
             filter_reload,
             free_disk_paused: Arc::new(AtomicBool::new(false)),
             revert_cancel: Arc::new(std::sync::Mutex::new(None)),
+            probe_listener_id: std::sync::Mutex::new(None),
         })
     }
 
