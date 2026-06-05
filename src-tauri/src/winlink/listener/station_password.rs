@@ -181,7 +181,10 @@ impl Default for StationPassword {
 impl std::fmt::Debug for StationPassword {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         // Never dump the inner factory or the stored password.
-        f.debug_struct("StationPassword").finish_non_exhaustive()
+        // Outputs "<redacted StationPassword>" so that audit tests and tracing
+        // consumers can confirm redaction without consulting the real value
+        // (spec §5.3 / alpha-logging tuxlink-qjgx Task 2).
+        write!(f, "<redacted StationPassword>")
     }
 }
 
