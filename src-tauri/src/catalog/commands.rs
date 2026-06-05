@@ -60,5 +60,11 @@ pub async fn catalog_send_inquiry(
     };
 
     let mid = backend.send_message(msg).await?;
+    tracing::info!(
+        target: "tuxlink::catalog",
+        mid = %mid.0,
+        filename_count = filenames.len(),
+        "catalog inquiry queued",
+    );
     Ok(mid.0)
 }

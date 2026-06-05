@@ -199,6 +199,12 @@ impl FormSession {
             port,
         });
 
+        tracing::info!(
+            target: "tuxlink::forms",
+            port,
+            kind = "form",
+            "form session opened",
+        );
         let router = build_router(state);
         let serve_handle: JoinHandle<()> = tokio::spawn(async move {
             let _ = axum::serve(listener, router).await;
@@ -277,6 +283,12 @@ impl FormSession {
             port,
         });
 
+        tracing::info!(
+            target: "tuxlink::forms",
+            port,
+            kind = "viewer",
+            "form session opened",
+        );
         let router = build_router(state);
         let serve_handle: JoinHandle<()> = tokio::spawn(async move {
             let _ = axum::serve(listener, router).await;
@@ -308,6 +320,11 @@ impl FormSession {
     /// Explicit shutdown. Aborts the serve task; the listener is dropped
     /// + port released. Idempotent.
     pub fn close(&mut self) {
+        tracing::info!(
+            target: "tuxlink::forms",
+            port = self.port,
+            "form session closed",
+        );
         self.abort.abort();
     }
 }
@@ -757,6 +774,14 @@ async fn submit_handler(state: Arc<SessionState>, req: Request<Body>) -> Respons
             Err(e) => return (StatusCode::BAD_REQUEST, format!("urlencoded parse: {e}")).into_response(),
         }
     };
+    // Log field count only — never field names or values (privacy boundary).
+    tracing::info!(
+        target: "tuxlink::forms",
+        port = state.port,
+        field_count = parsed.fields.len(),
+        has_submitter = parsed.submitter.is_some(),
+        "form submission received",
+    );
     if state.submit_tx.send(parsed).is_err() {
         // Receiver dropped; the session is closing. Return success anyway
         // so the form's onsubmit doesn't show a confusing error.

@@ -50,6 +50,12 @@ pub async fn grib_send_request(
     };
 
     let mid = backend.send_message(msg).await?;
+    tracing::info!(
+        target: "tuxlink::grib",
+        mid = %mid.0,
+        mode = ?request.mode,
+        "GRIB request queued",
+    );
     Ok(mid.0)
 }
 
