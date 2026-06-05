@@ -84,6 +84,10 @@ mod tests {
         assert!(resolved.ends_with("tuxlink/logs"));
         let mode = std::fs::metadata(&resolved).unwrap().permissions().mode();
         assert_eq!(mode & 0o777, 0o700, "directory mode must be 0700");
+        // Clean up: prevent the tempdir path from leaking into subsequent tests
+        // that run after the tempdir is dropped (where it would point to a
+        // deleted directory and cause spurious failures).
+        std::env::remove_var("XDG_STATE_HOME");
     }
 
     #[test]
@@ -101,5 +105,8 @@ mod tests {
         std::env::set_var("XDG_STATE_HOME", tmp.path());
         let result = resolve();
         assert!(matches!(result, Err(ResolveError::SymlinkComponent(_))));
+        // Clean up: prevent the now-deleted tempdir path from leaking into
+        // subsequent tests.
+        std::env::remove_var("XDG_STATE_HOME");
     }
 }
