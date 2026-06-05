@@ -181,12 +181,52 @@ pub fn spawn_runner(
                 network::run("first_paint"),
                 display::run("first_paint"),
             ];
+            // Use per-probe static target: directives so the Fanout Layer's
+            // target-based routing uses the correct per-cluster target
+            // (spec §4.1 verbosity matrix). The tracing macro requires
+            // `target:` to be a string literal — dynamic values via `target =`
+            // (equals sign) would add `target` as a structured field while
+            // leaving the macro's actual target as the module path.
             for s in &snaps {
-                tracing::info!(
-                    target = s.probe.as_str(),
-                    trigger = "first_paint",
-                    "probe snapshot"
-                );
+                match s.probe.as_str() {
+                    "keyring" => tracing::info!(
+                        target: "tuxlink::logging::env_probes::keyring",
+                        trigger = "first_paint",
+                        probe = "keyring",
+                        "probe snapshot"
+                    ),
+                    "audio" => tracing::info!(
+                        target: "tuxlink::logging::env_probes::audio",
+                        trigger = "first_paint",
+                        probe = "audio",
+                        "probe snapshot"
+                    ),
+                    "serial" => tracing::info!(
+                        target: "tuxlink::logging::env_probes::serial",
+                        trigger = "first_paint",
+                        probe = "serial",
+                        "probe snapshot"
+                    ),
+                    "modem_process" => tracing::info!(
+                        target: "tuxlink::logging::env_probes::modem_process",
+                        trigger = "first_paint",
+                        probe = "modem_process",
+                        "probe snapshot"
+                    ),
+                    "network" => tracing::info!(
+                        target: "tuxlink::logging::env_probes::network",
+                        trigger = "first_paint",
+                        probe = "network",
+                        "probe snapshot"
+                    ),
+                    "display" => tracing::info!(
+                        target: "tuxlink::logging::env_probes::display",
+                        trigger = "first_paint",
+                        probe = "display",
+                        "probe snapshot"
+                    ),
+                    _ => {} // unknown probe; no emission
+                }
             }
             use tauri::Emitter;
             let _ = a.emit("logging://probes/snapshot-updated", &snaps);
