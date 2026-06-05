@@ -522,9 +522,17 @@ export function ArdopRadioPanel({ onClose }: ArdopRadioPanelProps) {
     setExchanging(true);
     setConnectError(null);
     try {
+      // tuxlink-0ye6 Task 3.6: widened modem_ardop_b2f_exchange signature
+      // takes `intent: SessionIntent` + `transportKind: TransportKind`
+      // (Codex Round 2 P2 — match the new lifecycle command shape so the
+      // Phase 5 RadioSessionPanel can route uniformly with VARA).
+      // `intent: 'cms'` is hardcoded transitionally; Phase 5's
+      // RadioSessionPanel will derive the intent from RadioPanelMode props.
+      // `transportKind: 'ardop'` is the panel's mode.kind.
       await invoke('modem_ardop_b2f_exchange', {
         target: effectiveTarget,
         intent: 'cms',
+        transportKind: 'ardop',
       });
     } catch (e) {
       setConnectError(`Send/Receive failed: ${e}`);
