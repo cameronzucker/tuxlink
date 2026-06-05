@@ -12,6 +12,8 @@
 //! scripted in-memory transports — no network, no transmission. Mirrors
 //! `wl2k-go/fbb/b2f.go` (`handleOutbound` / `handleInbound`); no Go ships.
 
+pub mod cms_health;
+
 use std::io::{BufRead, Write};
 
 use super::message::{self, Message};
