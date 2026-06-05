@@ -23,6 +23,7 @@
 //! [`vara_status`] reads the snapshot WITHOUT acquiring the transport, so a
 //! UI poll never blocks on an in-flight start/stop.
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -199,6 +200,20 @@ pub struct VaraSession {
     /// under `#[cfg(test)]`.
     #[allow(dead_code)]
     transport_return_rx: Mutex<Option<mpsc::Receiver<VaraTransport>>>,
+    /// Monotonic close-generation counter (tuxlink-pdnw — Codex Phase 3-4
+    /// boundary P1 #4). VARA mirror of `ModemSession::close_generation`;
+    /// see that field's docstring in `src-tauri/src/modem_status.rs` for
+    /// the full semantics. Bumped by every close path BEFORE the disarm /
+    /// teardown reaches the consumer-shutdown flag; snapshotted by
+    /// workers that take the transport (b2f exchange, listener consumer
+    /// accept-loop); checked on the install-back path to drop the
+    /// transport when a close intervened.
+    ///
+    /// Decoupled from the std-mutex so a snapshot is lock-free.
+    /// Monotonically growing — never reset, even on re-open — so each
+    /// new open's worker takes a fresh snapshot tied to that open's
+    /// generation number.
+    close_generation: AtomicU64,
 }
 
 struct VaraSessionInner {
@@ -269,6 +284,7 @@ impl VaraSession {
             transport_yield_tx: yield_tx,
             transport_return_tx: return_tx,
             transport_return_rx: Mutex::new(Some(return_rx)),
+            close_generation: AtomicU64::new(0),
         }
     }
 
@@ -400,6 +416,78 @@ impl VaraSession {
             };
             guard.transport = Some(t);
             guard.transport_owner = TransportOwner::None;
+        }
+    }
+
+    // ── Close-generation guards (tuxlink-pdnw — Codex Phase 3-4 P1 #4) ──
+    //
+    // VARA mirror of `ModemSession`'s close-generation API; see the parent
+    // method docstrings in `src-tauri/src/modem_status.rs` for the race
+    // semantics. Summary: bump on close path BEFORE disarm; snapshot on
+    // worker take; check on install-back — stale snapshot drops the
+    // transport instead of installing into a closed session.
+
+    /// Read the live close-generation counter. Workers that intend to
+    /// re-install the transport snapshot this BEFORE the take.
+    pub fn current_close_generation(&self) -> u64 {
+        self.close_generation.load(Ordering::Acquire)
+    }
+
+    /// Bump the close-generation counter. Returns the PRIOR value;
+    /// the new generation is `prior + 1`. Called by every VARA close
+    /// path at the TOP, BEFORE the listener-consumer shutdown flag is
+    /// set and BEFORE the transport teardown runs.
+    pub fn bump_close_generation(&self) -> u64 {
+        self.close_generation.fetch_add(1, Ordering::AcqRel)
+    }
+
+    /// Guarded install: install the transport iff `snapshot_gen` still
+    /// matches the live close-generation. Returns `Ok(())` when installed
+    /// (transitions status to `Open` with the supplied bound host/port and
+    /// sets owner to `None` — mirroring `return_transport`); returns
+    /// `Err(transport)` when a close intervened, handing the transport
+    /// back to the caller so it can drop it (and optionally log) at the
+    /// install site.
+    ///
+    /// Replaces the bare `guard.transport = Some(t)` mutation inside
+    /// `return_transport` for the consumer-shutdown / b2f-return paths
+    /// where a race with `vara_close_session_inner` is possible. The
+    /// non-guarded `return_transport` is preserved for paths that
+    /// legitimately do unconditional return-to-Open (e.g. tests that
+    /// model the pre-close-generation behaviour).
+    pub fn install_transport_if_generation_matches(
+        &self,
+        t: VaraTransport,
+        snapshot_gen: u64,
+        bound_host: Option<String>,
+        bound_cmd_port: Option<u16>,
+    ) -> Result<(), VaraTransport> {
+        // Generation check FIRST (no lock needed).
+        let live = self.close_generation.load(Ordering::Acquire);
+        if live != snapshot_gen {
+            return Err(t);
+        }
+        // Live generation still matches; acquire the inner mutex to
+        // install. Mutex-poisoned → hand the transport back so the caller
+        // drops it (same defensive posture as `transport_owner()`).
+        match self.inner.lock() {
+            Ok(mut guard) => {
+                guard.status = VaraStatus {
+                    state: VaraState::Open,
+                    last_error: None,
+                    bound_host,
+                    bound_cmd_port,
+                    listener_armed: false,
+                    exchange: None,
+                    transport_owner: TransportOwner::None,
+                    active_intent: None,
+                    active_transport_kind: None,
+                };
+                guard.transport = Some(t);
+                guard.transport_owner = TransportOwner::None;
+                Ok(())
+            }
+            Err(_poisoned) => Err(t),
         }
     }
 
@@ -579,15 +667,30 @@ impl VaraSession {
     /// Outbound completes: return the transport to the consumer (if
     /// alive) or drop it (if not). Transitions owner accordingly:
     ///
+    /// - Generation mismatch (close intervened) → owner = `None`,
+    ///   transport dropped explicitly.
     /// - Consumer still listening → owner = `ListenerArmed`, transport
     ///   pushed through `transport_return_tx`.
     /// - Consumer gone (return_tx send fails) → owner = `None`,
     ///   transport dropped. The caller's outbound is complete either
     ///   way; the operator's next Close Session will tear down cleanly.
     ///
+    /// **`snapshot_gen` (tuxlink-pdnw — Codex Phase 3-4 P1 #4):** caller
+    /// passes the value from [`Self::current_close_generation`] captured
+    /// BEFORE the outbound take. Stale snapshot → drop the transport.
+    ///
     /// Best-effort: ignores Mutex poisoning + send failures because the
     /// outbound side has already completed; we're cleaning up.
-    pub fn return_transport_from_outbound(&self, transport: VaraTransport) {
+    pub fn return_transport_from_outbound(&self, transport: VaraTransport, snapshot_gen: u64) {
+        // Generation check FIRST. Close intervened → drop the transport.
+        let live = self.close_generation.load(Ordering::Acquire);
+        if live != snapshot_gen {
+            if let Ok(mut guard) = self.inner.lock() {
+                guard.transport_owner = TransportOwner::None;
+            }
+            drop(transport);
+            return;
+        }
         // Try to hand it back to the consumer first. `try_send` so we
         // don't await — `return_transport_from_outbound` is sync and
         // shouldn't block on a wedged consumer.
@@ -1153,6 +1256,16 @@ pub fn vara_close_session_inner(
 ) -> Result<VaraStatus, String> {
     use std::sync::atomic::Ordering;
 
+    // tuxlink-pdnw (Codex Phase 3-4 P1 #4): bump the close-generation
+    // BEFORE the disarm flag is set. Any in-flight worker (b2f exchange or
+    // listener consumer accept-loop) that has already snapshotted the prior
+    // generation will now see a stale snapshot on its install-back path —
+    // the guarded install drops the transport instead of restoring the
+    // session to `Open`. Without this, the consumer's drain path (which
+    // calls `return_transport` AFTER reading the shutdown flag) would race
+    // with this close and reopen the session.
+    let _ = session.bump_close_generation();
+
     // Step 1: Disarm listener (idempotent — no-op when not armed). We don't
     // route through `disarm_vara_listener_inner` here because that helper
     // needs an AppHandle + SessionLogState for the operator-facing log line;
@@ -1317,6 +1430,18 @@ pub async fn modem_vara_b2f_exchange(
             parsed_intent
         ),
     );
+
+    // tuxlink-pdnw (Codex Phase 3-4 P1 #4): snapshot the close-generation
+    // BEFORE the transport take. When tuxlink-0iqi's lifecycle fix replaces
+    // the current `vara_stop_session_inner` post-exchange call (which is
+    // the wrong shape per Codex P1 #2) with a proper return-to-session
+    // path, the install-back call MUST go through
+    // `install_transport_if_generation_matches(... , close_gen_snapshot)`
+    // so a concurrent `vara_close_session_inner` (which bumps the
+    // generation) makes the install-back drop the transport instead of
+    // restoring the session to `Open`. Snapshot lives here today so the
+    // lifecycle fix is a pure wire-in.
+    let _close_gen_snapshot = session.current_close_generation();
 
     // ─── Take the installed transport ────────────────────────────────
     // The transport was installed by `vara_open_session`. If it's
@@ -2577,8 +2702,9 @@ mod tests {
             let _ = session_for_task; // keep session ref alive
         });
 
-        // Outbound returns the transport.
-        session.return_transport_from_outbound(transport);
+        // Outbound returns the transport. Fresh session — close_generation
+        // is 0; snapshot matches live.
+        session.return_transport_from_outbound(transport, 0);
 
         // The transition to ListenerArmed happens synchronously inside
         // return_transport_from_outbound BEFORE the channel buffer drains.
@@ -2605,7 +2731,8 @@ mod tests {
             .expect("first take must succeed");
         drop(rx);
 
-        session.return_transport_from_outbound(transport);
+        // Fresh session — close_generation is 0; snapshot matches live.
+        session.return_transport_from_outbound(transport, 0);
 
         // Owner transitioned to None (consumer cannot reclaim).
         assert_eq!(session.transport_owner(), TransportOwner::None);
@@ -3052,5 +3179,155 @@ mod tests {
         );
         // The command's None-branch then surfaces a static string error;
         // see `modem_vara_b2f_exchange` for the exact wording.
+    }
+
+    // ── tuxlink-pdnw — close-generation guards (Codex Phase 3-4 P1 #4) ──
+    //
+    // VARA mirror of the ModemSession close-generation tests in
+    // `src-tauri/src/modem_status.rs`. The race + remediation are
+    // documented on the ModemSession tests; these encode the same
+    // semantics on the VaraSession surface.
+
+    #[test]
+    fn vara_close_generation_starts_at_zero() {
+        let session = VaraSession::new();
+        assert_eq!(
+            session.current_close_generation(),
+            0,
+            "fresh session must start at close_generation = 0"
+        );
+    }
+
+    #[test]
+    fn vara_bump_close_generation_increments_monotonically() {
+        let session = VaraSession::new();
+        let prior_a = session.bump_close_generation();
+        assert_eq!(prior_a, 0);
+        assert_eq!(session.current_close_generation(), 1);
+
+        let prior_b = session.bump_close_generation();
+        assert_eq!(prior_b, 1);
+        assert_eq!(session.current_close_generation(), 2);
+    }
+
+    #[test]
+    fn vara_install_transport_if_generation_matches_installs_when_snapshot_current() {
+        let (transport, h1, h2) = build_real_transport_for_test();
+        let session = VaraSession::new();
+        let snapshot = session.current_close_generation();
+
+        let result = session.install_transport_if_generation_matches(
+            transport,
+            snapshot,
+            Some("127.0.0.1".into()),
+            Some(8300),
+        );
+
+        assert!(result.is_ok(), "matching generation must install");
+        // After install the session is in Open state.
+        let snap = session.snapshot();
+        assert_eq!(snap.state, VaraState::Open);
+        assert_eq!(snap.bound_host.as_deref(), Some("127.0.0.1"));
+        assert_eq!(snap.bound_cmd_port, Some(8300));
+
+        drop(session);
+        h1.join().ok();
+        h2.join().ok();
+    }
+
+    #[test]
+    fn vara_install_transport_if_generation_matches_drops_when_close_intervened() {
+        let (transport, h1, h2) = build_real_transport_for_test();
+        let session = VaraSession::new();
+        let snapshot = session.current_close_generation();
+        assert_eq!(snapshot, 0);
+
+        // Simulate vara_close_session_inner: bump the generation.
+        let _ = session.bump_close_generation();
+        assert_eq!(session.current_close_generation(), 1);
+
+        let result = session.install_transport_if_generation_matches(
+            transport,
+            snapshot,
+            Some("127.0.0.1".into()),
+            Some(8300),
+        );
+
+        assert!(
+            result.is_err(),
+            "stale snapshot must Err — close intervened"
+        );
+        // Session must remain Closed (the install was a no-op).
+        let snap = session.snapshot();
+        assert_eq!(snap.state, VaraState::Closed);
+
+        // Drop returned transport (mirrors production caller posture).
+        drop(result.err().unwrap());
+        drop(session);
+        h1.join().ok();
+        h2.join().ok();
+    }
+
+    #[tokio::test]
+    async fn vara_return_transport_from_outbound_drops_when_close_intervened() {
+        // Mirror of the ARDOP close-vs-return race test: outbound captured
+        // the generation, then a close path bumped it; return_transport_from_outbound
+        // must drop the transport instead of pushing it onto the return
+        // channel. Owner ends up None.
+        let (transport, h1, h2) = build_real_transport_for_test();
+        let session = Arc::new(VaraSession::new());
+        session.set_transport_owner_for_test(TransportOwner::Outbound);
+
+        let snapshot = session.current_close_generation();
+        assert_eq!(snapshot, 0);
+        let _ = session.bump_close_generation();
+        assert_eq!(session.current_close_generation(), 1);
+
+        let mut return_rx = session
+            .take_transport_return_rx()
+            .expect("first take must succeed");
+
+        session.return_transport_from_outbound(transport, snapshot);
+
+        // Owner cleared to None.
+        assert_eq!(session.transport_owner(), TransportOwner::None);
+
+        // Return channel must be empty (transport was dropped, not pushed).
+        match return_rx.try_recv() {
+            Err(tokio::sync::mpsc::error::TryRecvError::Empty) => {}
+            Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => {
+                panic!("return channel disconnected — stale-gen path should not close the channel")
+            }
+            Ok(_t) => {
+                panic!("return channel must be empty after stale-gen drop; got a transport")
+            }
+        }
+
+        drop(session);
+        h1.join().ok();
+        h2.join().ok();
+    }
+
+    #[test]
+    fn vara_close_session_inner_bumps_close_generation() {
+        // The close-session inner must bump the generation BEFORE any
+        // consumer-shutdown / transport-teardown work. Verify by capturing
+        // the generation pre-close, calling the inner, and asserting the
+        // generation increased.
+        //
+        // Uses an empty session (no transport, no listener armed) so the
+        // close inner takes the idempotent fast path. The bump must run
+        // regardless — it's the load-bearing line for the race fix.
+        let session = Arc::new(VaraSession::new());
+        let listen_state = Arc::new(crate::ui_commands::VaraListenState::default());
+
+        let before = session.current_close_generation();
+        let _ = vara_close_session_inner(&session, &listen_state);
+        let after = session.current_close_generation();
+
+        assert!(
+            after > before,
+            "vara_close_session_inner must bump close_generation; before={before}, after={after}"
+        );
     }
 }
