@@ -2577,6 +2577,13 @@ fn ardop_listener_consumer_task(
         );
     };
 
+    // tuxlink-pdnw (Codex Phase 3-4 P1 #5): snapshot the close-generation
+    // BEFORE the transport take. If `ardop_close_session_inner` bumps the
+    // generation while this consumer is in flight, the shutdown-path
+    // install-back below sees the stale snapshot and drops the transport
+    // instead of restoring it into a session the operator just closed.
+    let close_gen_snapshot = session.current_close_generation();
+
     // Take the transport. If someone else has it (race), clean up cleanly.
     // Codex review 2026-06-03 [P2 #5] (tuxlink-61yg): a stale take_transport
     // result would leave listen_state populated → UI claims armed, no
@@ -2729,11 +2736,27 @@ fn ardop_listener_consumer_task(
     // Shutdown path: send LISTEN FALSE + return transport.
     progress("ARDOP listener consumer: draining; sending LISTEN FALSE.");
     let _ = session.send_listen_command(false);
-    session.install_transport(transport);
-    let mut snap = session.status_snapshot();
-    snap.peer = None;
-    snap.last_error = None;
-    session.set_status(snap);
+    // tuxlink-pdnw (Codex Phase 3-4 P1 #5): guarded install. Stale snapshot
+    // → close intervened (ardop_close_session_inner ran since we took the
+    // transport). Drop the transport instead of installing — the session
+    // is in a Stopped posture and a fresh open will spawn a new transport.
+    match session
+        .install_transport_if_generation_matches(transport, close_gen_snapshot)
+    {
+        Ok(()) => {
+            let mut snap = session.status_snapshot();
+            snap.peer = None;
+            snap.last_error = None;
+            session.set_status(snap);
+        }
+        Err(dropped) => {
+            progress(
+                "ARDOP listener consumer: close intervened during drain; \
+                 dropping transport instead of restoring session.",
+            );
+            drop(dropped);
+        }
+    }
     // Clear shared state.
     *listen_state.inner.lock().unwrap() = None;
     progress("ARDOP listener disarmed (transport returned).");
@@ -3205,6 +3228,13 @@ fn vara_listener_consumer_task(
         );
     };
 
+    // tuxlink-pdnw (Codex Phase 3-4 P1 #4): snapshot the close-generation
+    // BEFORE the transport take. If `vara_close_session_inner` bumps the
+    // generation while this consumer is in flight, the shutdown-path
+    // install-back below sees the stale snapshot and drops the transport
+    // instead of restoring the session to `Open`.
+    let close_gen_snapshot = vara_session.current_close_generation();
+
     // Take the transport. If someone else has it (race), clean up cleanly.
     // Mirror of ARDOP's tuxlink-61yg Codex P2 #5 fix.
     let mut transport = match vara_session.take_transport() {
@@ -3342,7 +3372,24 @@ fn vara_listener_consumer_task(
     // sees the transport as if the consumer never owned it.
     progress("VARA listener consumer: draining; sending LISTEN OFF.");
     let _ = crate::winlink::modem::vara::set_listen(&mut transport, false);
-    vara_session.return_transport(transport, bound_host, bound_cmd_port);
+    // tuxlink-pdnw (Codex Phase 3-4 P1 #4): guarded install. Stale snapshot
+    // → close intervened (vara_close_session_inner ran since we took the
+    // transport). Drop the transport instead of restoring `VaraState::Open`.
+    match vara_session.install_transport_if_generation_matches(
+        transport,
+        close_gen_snapshot,
+        bound_host,
+        bound_cmd_port,
+    ) {
+        Ok(()) => {}
+        Err(dropped) => {
+            progress(
+                "VARA listener consumer: close intervened during drain; \
+                 dropping transport instead of restoring session.",
+            );
+            drop(dropped);
+        }
+    }
     *listen_state.inner.lock().unwrap() = None;
     progress("VARA listener disarmed (transport returned).");
 }
