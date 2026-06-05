@@ -26,7 +26,7 @@ import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import type { ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { MessageMeta } from '../mailbox/types';
-import { STOPPED, type ModemStatus } from '../modem/types';
+import type { ModemStatus } from '../modem/types';
 import type { B2fEvent } from '../connections/sessionTypes';
 
 // ---------------------------------------------------------------------------

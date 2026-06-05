@@ -56,14 +56,14 @@ vi.mock('@tauri-apps/api/event', () => ({
 }));
 
 // @tauri-apps/plugin-shell — capture shellOpen calls.
-const mockShellOpen = vi.fn(() => Promise.resolve());
+const mockShellOpen = vi.fn((_url: string) => Promise.resolve());
 
 vi.mock('@tauri-apps/plugin-shell', () => ({
   open: (url: string) => mockShellOpen(url),
 }));
 
 // navigator.clipboard — jsdom doesn't implement it; stub out writeText.
-const mockClipboardWrite = vi.fn(() => Promise.resolve());
+const mockClipboardWrite = vi.fn((_text: string) => Promise.resolve());
 
 // ---------------------------------------------------------------------------
 // Subject under test (imported AFTER mocks are set up)
