@@ -62,8 +62,8 @@ session log, forms catalog — is a panel inside the main shell.
 Tuxlink treats Connect as the per-session on-the-record operator consent
 to transmit under the operator's callsign. Express treats Connect as a
 casual "go ahead and run this session" button. The difference matters
-for RADIO-1 / Part 97 compliance: tuxlink's UI is designed so the consent
-gate is unambiguous (one button click per session) rather than implicit.
+for Part 97 compliance: tuxlink's UI is designed so the consent gate is
+unambiguous (one button click per session) rather than implicit.
 
 In practice this changes nothing about how the operator works — clicking
 Connect once per session is what an Express operator already does. The

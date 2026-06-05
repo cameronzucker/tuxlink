@@ -87,9 +87,9 @@ alongside the form, received messages of that type render the viewer;
 otherwise the receive-side falls back to the key/value listing.
 
 Use cases: club-specific incident forms, WLE templates published after
-the bundled snapshot, or short-lived ad-hoc forms for an exercise. The
-operator-overridable custom-forms directory (a Settings UI) and live
-hot-reload of the directory are tracked as Phase 3 polish.
+the bundled snapshot, or short-lived ad-hoc forms for an exercise. An
+operator-overridable custom-forms directory and live hot-reload of that
+directory are planned but not yet shipped.
 
 ## Catalog request (WLE inquiry)
 
