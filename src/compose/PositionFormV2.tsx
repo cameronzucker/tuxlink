@@ -3,6 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import type { FormComposeProps } from '../forms/forms';
 import { gridToLatLon } from '../forms/position/maidenhead';
 import { PositionMapWidget } from './PositionMapWidget';
+import { listSlots, upsertSlot, deleteSlot, type FormDraftSlot } from './FormDraftLibrary';
 import './PositionFormV2.css';
 
 interface PositionFix {
@@ -11,6 +12,8 @@ interface PositionFix {
   source: string;
   fresh: boolean;
 }
+
+const FORM_ID = 'Position_Report';
 
 /** Compose-side Position Report form — pre-fills grid from PositionArbiter.
  *
@@ -32,6 +35,12 @@ interface PositionFix {
  *   useEffect dep on onChange would fire on every render → setFormMode →
  *   re-render → repeat (infinite loop in production). The event-handler
  *   pattern fires only when the operator actually edits a field.
+ *
+ * FormDraftLibrary integration:
+ *   Saveable field: `message` (operator's free-text remark). Grid is GPS-derived
+ *   (volatile, fresh per session) and is NOT persisted in slots. A slot payload
+ *   is { message: string }. On apply, only remark state is updated — grid is
+ *   left at whatever the GPS arbiter returned.
  */
 export function PositionFormV2({
   initialValues,
@@ -50,6 +59,10 @@ export function PositionFormV2({
   // from `error` so a bad grid doesn't replace the whole form with the fatal
   // GPS-IPC-failure alert. Cleared when the operator starts editing the grid.
   const [gridError, setGridError] = useState<string | null>(null);
+
+  // FormDraftLibrary slot state.
+  const [slots, setSlots] = useState<FormDraftSlot[]>([]);
+  const [selectedSlotId, setSelectedSlotId] = useState<string>('');
 
   // Pull current fix from PositionArbiter. Only sets grid if there is no
   // draft initialValues.grid — drafts win over GPS pull.
@@ -74,6 +87,44 @@ export function PositionFormV2({
     // when the parent re-renders with a new reference.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Load saved slots on mount. Error → empty list (non-fatal).
+  useEffect(() => {
+    listSlots(FORM_ID).then(setSlots).catch(() => setSlots([]));
+  }, []);
+
+  function applySlot(slotId: string) {
+    setSelectedSlotId(slotId);
+    if (!slotId) return;
+    const slot = slots.find((s) => s.slot_id === slotId);
+    if (!slot) return;
+    // Only apply the saveable field (message/remark). Grid is GPS-derived —
+    // applying a stale grid from a slot would be misleading.
+    const msg = typeof slot.payload.message === 'string' ? slot.payload.message : '';
+    setRemark(msg);
+    onChange?.({ grid, message: msg });
+  }
+
+  async function saveSlot() {
+    const label = window.prompt('Name this slot (e.g. "Monday Night Net"):');
+    if (!label) return;
+    // Only the remark is saveable; grid is volatile/GPS-derived.
+    const newSlot = await upsertSlot({
+      formId: FORM_ID,
+      label,
+      payload: { message: remark },
+    });
+    setSlots((prev) => [...prev, newSlot]);
+    setSelectedSlotId(newSlot.slot_id);
+  }
+
+  async function removeSlot() {
+    if (!selectedSlotId) return;
+    if (!window.confirm('Delete this saved slot?')) return;
+    await deleteSlot(selectedSlotId);
+    setSlots((prev) => prev.filter((s) => s.slot_id !== selectedSlotId));
+    setSelectedSlotId('');
+  }
 
   const noFixAvailable = fix !== null && fix.grid === null;
 
@@ -102,6 +153,29 @@ export function PositionFormV2({
 
   return (
     <div className="position-form-v2" data-testid="position-form-v2">
+      {/* ── Saved slots toolbar ── */}
+      <div className="form-slot-toolbar" data-testid="slot-toolbar">
+        <label htmlFor="position-slot-select">Saved slots:</label>
+        <select
+          id="position-slot-select"
+          value={selectedSlotId}
+          onChange={(e) => applySlot(e.target.value)}
+        >
+          <option value="">— None —</option>
+          {slots.map((s) => (
+            <option key={s.slot_id} value={s.slot_id}>{s.label}</option>
+          ))}
+        </select>
+        <button type="button" onClick={saveSlot} data-testid="slot-save-btn">
+          Save as slot…
+        </button>
+        {selectedSlotId && (
+          <button type="button" onClick={removeSlot} data-testid="slot-delete-btn">
+            Delete
+          </button>
+        )}
+      </div>
+
       <div className="position-form-v2__header">
         <h2>Position Report</h2>
         {fix && fix.grid !== null && (

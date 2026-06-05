@@ -18,6 +18,53 @@
   font-size: 13px;
 }
 
+/* ── Saved-slot toolbar — shared class used by all P2 native forms ── */
+
+.form-slot-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 6px 0 8px;
+  border-bottom: 1px solid var(--tux-border);
+  margin-bottom: 2px;
+}
+
+.form-slot-toolbar label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--tux-fg-dim);
+  white-space: nowrap;
+}
+
+.form-slot-toolbar select {
+  font-family: inherit;
+  font-size: 12px;
+  padding: 4px 8px;
+  background: var(--tux-bg);
+  color: var(--tux-fg);
+  border: 1px solid var(--tux-border);
+  border-radius: 4px;
+  flex: 1;
+  min-width: 120px;
+}
+
+.form-slot-toolbar button {
+  font-family: inherit;
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 4px;
+  border: 1px solid var(--tux-border);
+  background: var(--tux-surface-2);
+  color: var(--tux-fg);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.form-slot-toolbar button:hover:not(:disabled) {
+  background: var(--tux-elevated);
+}
+
 /* ── Header row ── */
 
 .position-form-v2__header {

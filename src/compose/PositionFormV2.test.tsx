@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { PositionFormV2 } from './PositionFormV2';
 
@@ -11,9 +11,46 @@ vi.mock('@tauri-apps/api/core', () => ({
       return { grid: 'CN87us', source: 'Gps', fresh: true };
     }
     if (cmd === 'send_form') return 'MID-MOCK-123';
+    if (cmd === 'form_draft_library_list') return [];
+    if (cmd === 'form_draft_library_upsert') {
+      return {
+        slot_id: 'mock-slot-id',
+        form_id: 'Position_Report',
+        label: 'Test Slot',
+        payload: { message: 'Test remark' },
+        created_at: '2026-06-04T12:00:00Z',
+        updated_at: '2026-06-04T12:00:00Z',
+      };
+    }
+    if (cmd === 'form_draft_library_delete') return undefined;
     return null;
   }),
 }));
+
+// Reset mock to defaults before each test so per-test overrides don't bleed.
+beforeEach(async () => {
+  const { invoke } = await import('@tauri-apps/api/core');
+  const mockInvoke = invoke as ReturnType<typeof vi.fn>;
+  mockInvoke.mockImplementation(async (cmd: string) => {
+    if (cmd === 'position_current_fix') {
+      return { grid: 'CN87us', source: 'Gps', fresh: true };
+    }
+    if (cmd === 'send_form') return 'MID-MOCK-123';
+    if (cmd === 'form_draft_library_list') return [];
+    if (cmd === 'form_draft_library_upsert') {
+      return {
+        slot_id: 'mock-slot-id',
+        form_id: 'Position_Report',
+        label: 'Test Slot',
+        payload: { message: 'Test remark' },
+        created_at: '2026-06-04T12:00:00Z',
+        updated_at: '2026-06-04T12:00:00Z',
+      };
+    }
+    if (cmd === 'form_draft_library_delete') return undefined;
+    return null;
+  });
+});
 
 describe('<PositionFormV2>', () => {
   it('renders the current GPS grid with a fresh-fix indicator', async () => {
@@ -174,5 +211,115 @@ describe('<PositionFormV2>', () => {
     const input = screen.getByLabelText(/Maidenhead grid/i);
     fireEvent.change(input, { target: { value: 'EM26' } });
     expect(screen.getByRole('button', { name: /send/i })).not.toBeDisabled();
+  });
+
+  // ── FormDraftLibrary slot tests ────────────────────────────────────────────
+
+  it('lists saved slots on mount', async () => {
+    const { invoke } = await import('@tauri-apps/api/core');
+    (invoke as ReturnType<typeof vi.fn>).mockImplementation(async (cmd: string) => {
+      if (cmd === 'position_current_fix') return { grid: 'CN87us', source: 'Gps', fresh: true };
+      if (cmd === 'form_draft_library_list') {
+        return [
+          {
+            slot_id: 'slot-1',
+            form_id: 'Position_Report',
+            label: 'Monday Night Net',
+            payload: { message: 'Check-in from home QTH' },
+            created_at: '2026-06-04T12:00:00Z',
+            updated_at: '2026-06-04T12:00:00Z',
+          },
+        ];
+      }
+      return null;
+    });
+    render(<PositionFormV2 onSubmit={vi.fn()} onCancel={vi.fn()} />);
+    expect(await screen.findByText('Monday Night Net')).toBeInTheDocument();
+  });
+
+  it('applies a slot payload (message field) when selected', async () => {
+    const { invoke } = await import('@tauri-apps/api/core');
+    (invoke as ReturnType<typeof vi.fn>).mockImplementation(async (cmd: string) => {
+      if (cmd === 'position_current_fix') return { grid: 'CN87us', source: 'Gps', fresh: true };
+      if (cmd === 'form_draft_library_list') {
+        return [
+          {
+            slot_id: 'slot-1',
+            form_id: 'Position_Report',
+            label: 'Home QTH',
+            payload: { message: 'Checking in from home' },
+            created_at: '2026-06-04T12:00:00Z',
+            updated_at: '2026-06-04T12:00:00Z',
+          },
+        ];
+      }
+      return null;
+    });
+    render(<PositionFormV2 onSubmit={vi.fn()} onCancel={vi.fn()} />);
+    await screen.findByText('Home QTH');
+    const select = screen.getByRole('combobox');
+    fireEvent.change(select, { target: { value: 'slot-1' } });
+    const textarea = screen.getByLabelText(/Remark/i) as HTMLTextAreaElement;
+    expect(textarea.value).toBe('Checking in from home');
+  });
+
+  it('saves a new slot via the Save as slot… button', async () => {
+    vi.spyOn(window, 'prompt').mockReturnValue('Monday Night Net');
+    const { invoke } = await import('@tauri-apps/api/core');
+    const mockInvoke = invoke as ReturnType<typeof vi.fn>;
+    render(<PositionFormV2 onSubmit={vi.fn()} onCancel={vi.fn()} />);
+    await screen.findByDisplayValue('CN87US');
+    // Type a remark so the payload is non-empty
+    const textarea = screen.getByLabelText(/Remark/i);
+    fireEvent.change(textarea, { target: { value: 'Checking in from home' } });
+    mockInvoke.mockClear();
+    fireEvent.click(screen.getByTestId('slot-save-btn'));
+    await waitFor(() => {
+      const upsertCall = mockInvoke.mock.calls.find((c) => c[0] === 'form_draft_library_upsert');
+      expect(upsertCall).toBeTruthy();
+      expect(upsertCall![1]).toMatchObject({
+        formId: 'Position_Report',
+        label: 'Monday Night Net',
+        payload: { message: 'Checking in from home' },
+      });
+    });
+    vi.restoreAllMocks();
+  });
+
+  it('deletes the selected slot', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const { invoke } = await import('@tauri-apps/api/core');
+    (invoke as ReturnType<typeof vi.fn>).mockImplementation(async (cmd: string) => {
+      if (cmd === 'position_current_fix') return { grid: 'CN87us', source: 'Gps', fresh: true };
+      if (cmd === 'form_draft_library_list') {
+        return [
+          {
+            slot_id: 'slot-to-delete',
+            form_id: 'Position_Report',
+            label: 'Stale slot',
+            payload: { message: '' },
+            created_at: '2026-06-04T12:00:00Z',
+            updated_at: '2026-06-04T12:00:00Z',
+          },
+        ];
+      }
+      if (cmd === 'form_draft_library_delete') return undefined;
+      return null;
+    });
+    render(<PositionFormV2 onSubmit={vi.fn()} onCancel={vi.fn()} />);
+    await screen.findByText('Stale slot');
+    const select = screen.getByRole('combobox');
+    fireEvent.change(select, { target: { value: 'slot-to-delete' } });
+    const deleteBtn = await screen.findByTestId('slot-delete-btn');
+    fireEvent.click(deleteBtn);
+    const { invoke: inv } = await import('@tauri-apps/api/core');
+    await waitFor(() => {
+      const deleteCalls = (inv as ReturnType<typeof vi.fn>).mock.calls.filter(
+        (c) => c[0] === 'form_draft_library_delete',
+      );
+      expect(deleteCalls.length).toBeGreaterThan(0);
+      expect(deleteCalls[0][1]).toEqual({ slotId: 'slot-to-delete' });
+    });
+    vi.restoreAllMocks();
   });
 });
