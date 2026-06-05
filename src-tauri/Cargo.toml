@@ -71,7 +71,6 @@ tar = "0.4"
 dirs = "5"
 hex = "0.4"
 strip-ansi-escapes = "0.2"
-filetime = "0.2"           # retention sweep clock-grace test fixtures (Task 3.3)
 toml = "0.8"               # Task 6.1 settings persistence
 urlencoding = "2"          # Task 8.1 GitHub URL body encoding
 # uuid and chrono features merged into existing entries above (v4+v7+serde, clock+serde)
@@ -79,6 +78,7 @@ once_cell = "1.20"
 regex = "1.10"
 
 [dev-dependencies]
+filetime = "0.2"           # retention sweep clock-grace test fixtures (unit + integration)
 mockito = "1.5"
 serial_test = "3"          # NEW — gates env-var-mutating tests
 proptest = "1.4"           # NEW (tuxlink-c79g T7) — state-space matrix tests for position arbiter invariants I1-I5
