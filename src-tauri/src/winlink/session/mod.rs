@@ -16,6 +16,8 @@ pub mod cms_health;
 
 use std::io::{BufRead, Write};
 
+use cms_health::CMS_HEALTH;
+
 use super::message::{self, Message};
 use super::proposal::{self, Answer, Proposal};
 use super::{handshake, lzhuf, secure, transfer, wire};
@@ -267,13 +269,43 @@ where
     W: Write,
     F: Fn(&[Proposal]) -> Vec<Answer>,
 {
+    let span = tracing::info_span!(
+        "b2f_exchange",
+        target = "tuxlink::winlink::session",
+        mycall = %config.mycall,
+        targetcall = %config.targetcall,
+        role = ?role,
+    );
+    let _guard = span.enter();
+
+    tracing::info!(
+        target: "tuxlink::winlink::session",
+        mycall = %config.mycall,
+        targetcall = %config.targetcall,
+        role = ?role,
+        outbound_count = outbound.len(),
+        "exchange started",
+    );
+
     let my_turn = match role {
         ExchangeRole::Dial => {
             // Slave: the remote speaks first; answer its challenge if present.
             let remote =
                 handshake::read_remote_handshake(reader).map_err(ExchangeError::Handshake)?;
+            tracing::debug!(
+                target: "tuxlink::winlink::session",
+                remote_sid = %remote.sid,
+                has_challenge = remote.challenge.is_some(),
+                forwarder_count = remote.forwarders.len(),
+                "remote handshake received",
+            );
             let token = match (&remote.challenge, &config.password) {
                 (Some(challenge), Some(password)) => {
+                    tracing::debug!(
+                        target: "tuxlink::winlink::session",
+                        challenge_len = challenge.len(),
+                        "secure-login challenge received; computing response",
+                    );
                     Some(secure::secure_login_response(challenge, password))
                 }
                 (Some(_), None) => return Err(ExchangeError::PasswordRequired),
@@ -286,6 +318,10 @@ where
                 token.as_deref(),
             );
             write_bytes(writer, &our_handshake)?;
+            tracing::debug!(
+                target: "tuxlink::winlink::session",
+                "dial handshake sent; taking first message turn",
+            );
             true // the dialer/slave takes the first message turn
         }
         ExchangeRole::Answer => {
@@ -298,11 +334,21 @@ where
                 &config.locator,
             );
             write_bytes(writer, &our_handshake)?;
+            tracing::debug!(
+                target: "tuxlink::winlink::session",
+                "master handshake sent; waiting for slave handshake",
+            );
             // Read the remote (slave) handshake. A slave sends no `>` prompt, so the
             // master detects its end by the start of the slave's message turn
             // (an `F`-prefixed line); `read_slave_handshake` handles that.
-            let _remote =
+            let remote =
                 handshake::read_slave_handshake(reader).map_err(ExchangeError::Handshake)?;
+            tracing::debug!(
+                target: "tuxlink::winlink::session",
+                remote_sid = %remote.sid,
+                forwarder_count = remote.forwarders.len(),
+                "slave handshake received; remote takes first turn",
+            );
             false // the remote/slave takes the first message turn
         }
     };
@@ -316,10 +362,24 @@ where
     loop {
         turns += 1;
         if turns > MAX_TURNS {
+            tracing::warn!(
+                target: "tuxlink::winlink::session",
+                turns,
+                "exchange exceeded turn cap",
+            );
             return Err(ExchangeError::TooManyTurns);
         }
         if my_turn {
             let outcome = send_turn(reader, writer, &remaining, remote_no_messages, wire_log)?;
+            tracing::debug!(
+                target: "tuxlink::winlink::session",
+                turn = turns,
+                sent_count = outcome.sent.len(),
+                rejected_count = outcome.rejected.len(),
+                deferred_count = outcome.deferred.len(),
+                quit_sent = outcome.quit_sent,
+                "send turn completed",
+            );
             result.sent.extend(outcome.sent);
             result.rejected.extend(outcome.rejected);
             result.deferred.extend(outcome.deferred);
@@ -329,6 +389,14 @@ where
             }
         } else {
             let outcome = receive_turn(reader, writer, &decide)?;
+            tracing::debug!(
+                target: "tuxlink::winlink::session",
+                turn = turns,
+                received_count = outcome.messages.len(),
+                remote_no_messages = outcome.remote_no_messages,
+                remote_quit = outcome.remote_quit,
+                "receive turn completed",
+            );
             result.received.extend(outcome.messages);
             remote_no_messages = outcome.remote_no_messages;
             if outcome.remote_quit {
@@ -337,6 +405,17 @@ where
         }
         my_turn = !my_turn;
     }
+
+    tracing::info!(
+        target: "tuxlink::winlink::session",
+        mycall = %config.mycall,
+        targetcall = %config.targetcall,
+        received_count = result.received.len(),
+        sent_count = result.sent.len(),
+        turns,
+        "exchange completed successfully",
+    );
+    CMS_HEALTH.record_success();
     Ok(result)
 }
 
