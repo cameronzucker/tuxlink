@@ -124,6 +124,11 @@ const MAX_VERSION_LEN: usize = 64;
 fn is_safe_version(v: &str) -> bool {
     !v.is_empty()
         && v.len() <= MAX_VERSION_LEN
+        // Reject `..` substring outright — `.` is in the per-char whitelist
+        // (semver dots), so `..` (parent-traversal) would otherwise slip
+        // through. Also reject a leading `.` (covers `.`, `..`, `.hidden`).
+        && !v.contains("..")
+        && !v.starts_with('.')
         && v.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'))
 }
 
