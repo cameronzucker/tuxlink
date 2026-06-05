@@ -620,6 +620,16 @@ pub async fn ardop_close_session_inner(
     session: &Arc<ModemSession>,
     listen_state: &Arc<crate::ui_commands::ArdopListenState>,
 ) -> Result<(), String> {
+    // tuxlink-pdnw (Codex Phase 3-4 P1 #5): bump the close-generation
+    // FIRST, before any consumer-shutdown signal or in-flight worker
+    // observation. Any worker already past `current_close_generation()`
+    // sees a stale snapshot and the guarded install-back path drops the
+    // transport instead of restoring it. Without this line, the listener
+    // consumer's drain path (which calls `install_transport` after
+    // observing the shutdown flag set by `ardop_set_listen_inner`) would
+    // race with this close and reopen the session.
+    let _ = session.bump_close_generation();
+
     // Step 1: Disarm listener (idempotent — emits Warn line if not armed).
     // ardop_set_listen_inner already calls session.abort_in_flight() +
     // session.send_listen_command(false) when armed; this covers the
@@ -958,6 +968,13 @@ pub fn modem_ardop_b2f_exchange(
         ));
     }
 
+    // tuxlink-pdnw (Codex Phase 3-4 P1 #1): snapshot the close-generation
+    // BEFORE the transport take. If `ardop_close_session_inner` runs
+    // during this exchange, it will bump the generation; the guarded
+    // install-back below sees the stale snapshot and drops the transport
+    // instead of restoring it into a session the operator just closed.
+    let close_gen_snapshot = session.current_close_generation();
+
     // ─── Take the installed transport ────────────────────────────────────
     // The transport was installed by `ardop_open_session` (Task 3.5) after
     // a successful spawn + init. If it's missing, the operator didn't open
@@ -997,7 +1014,18 @@ pub fn modem_ardop_b2f_exchange(
     // the transport so the operator's next action (retry Send/Receive or
     // Close Session) can proceed.
     let _ = transport.disconnect(Duration::from_secs(5));
-    session.install_transport(transport);
+    // tuxlink-pdnw (Codex Phase 3-4 P1 #1): guarded install. Stale snapshot
+    // (close intervened) → drop the transport explicitly. The drop closes
+    // the cmd socket; the session is in a Stopped posture from
+    // `reset_to_stopped` and a fresh open will spawn a new transport.
+    if let Err(dropped) =
+        session.install_transport_if_generation_matches(transport, close_gen_snapshot)
+    {
+        // Explicit drop — the session was closed since we took the
+        // transport, so re-installing would defeat the close. Letting the
+        // transport fall out of scope here is the correct behavior.
+        drop(dropped);
+    }
 
     outcome
 }
