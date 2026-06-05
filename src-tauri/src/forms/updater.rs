@@ -275,29 +275,56 @@ pub async fn install(
 
     // 1. Download to staging/<version>.zip (versioned filename eases
     //    debugging mid-install if extraction fails).
+    //
+    // Codex xipa adrev R2 P2 #1: on stream errors or write errors mid-
+    // download, the partial file is server-controlled bytes — delete it
+    // before propagating so retries don't accumulate failed downloads
+    // in `staging/`. `download_archive` cleans up on cap-exceeded; this
+    // catches the other failure modes (chunk error, write error).
     let dl_path = staging.join(format!("download-{version}.zip"));
-    download_archive(archive_url, &dl_path).await?;
+    if let Err(e) = download_archive(archive_url, &dl_path).await {
+        let _ = std::fs::remove_file(&dl_path);
+        return Err(e);
+    }
 
     // 2. Extract to staging/<version>/. The zip's expected top-level entry
     //    is "Standard_Forms/" per WLE's archive convention; if a future
     //    zip ships content at the root, we wrap it under Standard_Forms/
     //    during extraction (see `extract_zip`).
+    //
+    // Codex xipa adrev R2 P2 #2: extraction failures (zip-bomb cap trip,
+    // I/O error mid-copy, path-traversal entry) leave partial extracted
+    // trees behind. Without cleanup, repeated failed refreshes
+    // accumulate up to MAX_EXTRACT_BYTES per attempt and undermine the
+    // P1 #2 disk-pressure mitigation. Tear down both the partial
+    // extraction AND the zip on any error path.
     let extract_dest = staging.join(version);
     if extract_dest.exists() {
         std::fs::remove_dir_all(&extract_dest)
             .map_err(|e| UpdaterError::Io(format!("clear stale staging/{version}/: {e}")))?;
     }
-    let form_count = extract_zip(&dl_path, &extract_dest)?;
-    let _ = std::fs::remove_file(&dl_path); // best-effort cleanup
+    let form_count = match extract_zip(&dl_path, &extract_dest) {
+        Ok(c) => c,
+        Err(e) => {
+            let _ = std::fs::remove_dir_all(&extract_dest);
+            let _ = std::fs::remove_file(&dl_path);
+            return Err(e);
+        }
+    };
+    let _ = std::fs::remove_file(&dl_path); // best-effort cleanup on success
 
     // 3. Validate — must have Standard_Forms/ with at least one HTML.
+    //    On rejection, also tear down the staged extraction so we
+    //    don't accumulate bad snapshots under staging/.
     let std_forms_dir = extract_dest.join("Standard_Forms");
     if !std_forms_dir.is_dir() {
+        let _ = std::fs::remove_dir_all(&extract_dest);
         return Err(UpdaterError::BadArchive(
             "extracted archive missing Standard_Forms/ directory".into(),
         ));
     }
     if form_count == 0 {
+        let _ = std::fs::remove_dir_all(&extract_dest);
         return Err(UpdaterError::BadArchive(
             "extracted archive contains no HTML templates".into(),
         ));
@@ -380,26 +407,40 @@ async fn download_archive(url: &str, dest: &Path) -> Result<(), UpdaterError> {
     // stream past the cap. Stream chunks to disk, check the running total
     // every chunk; abort the moment we exceed MAX_ARCHIVE_BYTES so we
     // bound peak memory + disk usage even when the server lies.
+    //
+    // Codex xipa adrev R2 P2 #1: every error path inside this loop must
+    // also drop the partial file before propagating, so the caller's
+    // staging cleanup is not the only line of defense (defense in depth
+    // — if a future refactor in install() forgets the cleanup wrapper,
+    // we still don't leave server-controlled bytes on disk here).
     let mut total: u64 = 0;
     let mut file = std::fs::File::create(dest)
         .map_err(|e| UpdaterError::Io(format!("create {dest:?}: {e}")))?;
     use futures::StreamExt;
     let mut stream = resp.bytes_stream();
     while let Some(chunk_res) = stream.next().await {
-        let chunk = chunk_res
-            .map_err(|e| UpdaterError::HttpArchive(format!("read chunk: {e}")))?;
+        let chunk = match chunk_res {
+            Ok(c) => c,
+            Err(e) => {
+                drop(file);
+                let _ = std::fs::remove_file(dest);
+                return Err(UpdaterError::HttpArchive(format!("read chunk: {e}")));
+            }
+        };
         total = total.saturating_add(chunk.len() as u64);
         if total > MAX_ARCHIVE_BYTES {
-            // Drop the partial file so we don't leave attacker-controlled
-            // bytes behind on the runtime filesystem.
+            drop(file);
             let _ = std::fs::remove_file(dest);
             return Err(UpdaterError::BadArchive(format!(
                 "archive too large mid-stream: {total} bytes > cap {MAX_ARCHIVE_BYTES}"
             )));
         }
         use std::io::Write;
-        file.write_all(&chunk)
-            .map_err(|e| UpdaterError::Io(format!("write chunk to {dest:?}: {e}")))?;
+        if let Err(e) = file.write_all(&chunk) {
+            drop(file);
+            let _ = std::fs::remove_file(dest);
+            return Err(UpdaterError::Io(format!("write chunk to {dest:?}: {e}")));
+        }
     }
     Ok(())
 }
@@ -1021,6 +1062,58 @@ mod tests {
     // ========================================================================
     // Codex xipa adrev — P2 #4: HTML-count under Standard_Forms only.
     // ========================================================================
+
+    // ========================================================================
+    // Codex xipa adrev R2 — staging cleanup on failed install paths.
+    // ========================================================================
+
+    #[tokio::test]
+    async fn install_cleans_staging_on_extract_failure() {
+        // Archive that downloads fine (well under MAX_ARCHIVE_BYTES) but
+        // fails extract_zip's path-traversal check on its second entry.
+        // We then assert install() removed BOTH the downloaded zip AND
+        // the partial extraction tree from staging/.
+        let mut buf = Vec::new();
+        use std::io::Write as _;
+        {
+            let mut zip = zip::ZipWriter::new(std::io::Cursor::new(&mut buf));
+            let options = zip::write::SimpleFileOptions::default()
+                .compression_method(zip::CompressionMethod::Stored);
+            zip.start_file("Standard_Forms/good.html", options).unwrap();
+            zip.write_all(b"<html>good</html>").unwrap();
+            zip.start_file("../escape.txt", options).unwrap();
+            zip.write_all(b"pwned").unwrap();
+            zip.finish().unwrap();
+        }
+        let mut server = mockito::Server::new_async().await;
+        let _m = server
+            .mock("GET", "/bad.zip")
+            .with_status(200)
+            .with_body(&buf)
+            .create_async()
+            .await;
+        let runtime = TempDir::new().unwrap();
+        let err = install(
+            &format!("{}/bad.zip", server.url()),
+            "2.0.0",
+            runtime.path(),
+        )
+        .await
+        .unwrap_err();
+        match err {
+            UpdaterError::Zip(_) => {}
+            other => panic!("expected Zip error, got {other:?}"),
+        }
+        let staging = runtime.path().join("staging");
+        assert!(
+            !staging.join("download-2.0.0.zip").exists(),
+            "staging/download-2.0.0.zip should be removed after extract failure"
+        );
+        assert!(
+            !staging.join("2.0.0").exists(),
+            "staging/2.0.0/ should be removed after extract failure"
+        );
+    }
 
     #[test]
     fn extract_zip_only_counts_html_under_standard_forms_subtree() {
