@@ -40,14 +40,14 @@ tokio-stream = { version = "0.1", features = ["sync"] }  # NEW (tuxlink-z5f) —
 # feature; `Entry::new()` auto-resolves to the selected `default` module.
 keyring = { version = "3.6.3", default-features = false, features = ["sync-secret-service", "crypto-rust"] }
 mail-parser = "0.11"        # NEW (tuxlink-y5c Task 13) — pure-Rust RFC5322/MIME parser; spec §8
-chrono = { version = "0.4", default-features = false, features = ["clock"] }  # NEW (tuxlink-dm8, Task 14) — RFC3339 timestamp for message_send; `serde` unused (Codex fix)
+chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }  # NEW (tuxlink-dm8, Task 14) — RFC3339 timestamp + serde for alpha-logging Settings TOML (tuxlink-qjgx)
 tauri-plugin-window-state = "2"                            # NEW (tuxlink-dm8, Task 14) — per-compose-window geometry persistence (spec §8)
 md-5 = "0.11"              # NEW (tuxlink-0ic) — Winlink secure-login response is MD5 of challenge+password+salt; RustCrypto, pairs with the `digest` crate already present, pure-Rust (no C dep)
 native-tls = "0.2"         # NEW (tuxlink-0ic) — TLS-wrapped telnet to the CMS (CmsSsl, port 8773), the default transport like Winlink Express; reuses the OpenSSL already pulled in by reqwest's default-tls
 serialport = "4"           # NEW (tuxlink-7fr P2) — KISS over USB-serial COM and Bluetooth RFCOMM (/dev/rfcommN); pure-Rust, no libudev C dep needed for open/read/write
 libc = "0.2"               # NEW (tuxlink-nx2) — AF_BLUETOOTH/BTPROTO_RFCOMM socket for the in-app Bluetooth transport (no rfcomm bind / no root / no serialport TTY)
 rusqlite = { version = "0.40", features = ["bundled", "modern_sqlite"] }  # NEW (tuxlink-1hu) — FTS5-indexed search; bundled SQLite ≥ 3.9 ensures FTS5 is compiled in
-uuid = { version = "1.23", features = ["v4", "serde"] }  # NEW (tuxlink-1hu) — saved-search IDs
+uuid = { version = "1", features = ["v4", "v7", "serde"] }  # NEW (tuxlink-1hu) — saved-search IDs; v7 added for alpha-logging boot_id
 rand = "0.9"               # NEW (tuxlink-4ek Task 3.1) — RADIO-1 consent-token mint (16 hex chars); intra-process replay protection, not a secret
 quick-xml = { version = "0.40", default-features = false, features = ["serialize"] }  # NEW (tuxlink-v1p T1.3) — XML parse/serialize for HTML Forms; per spec §10 (hardening) + plan rev-4 T1.3
 axum = "0.8"                                     # NEW (tuxlink-ytya P1) — lazy loopback HTTP server for HTML Forms webview path; design §5.3
@@ -60,11 +60,30 @@ walkdir = "2"                                    # NEW (tuxlink-ytya P1) — bun
 bytes = "1"                                      # NEW (tuxlink-ytya P1) — request body buffer passed to multer's stream-once wrapper
 subtle = "2.6"                                   # NEW (tuxlink-3o2o) — constant-time byte comparison for StationPassword::verify; prevents timing side-channels on listener-mode password challenges
 sha2 = "0.10"                                    # NEW (tuxlink-3o2o) — fixed-size digest for password verify; eliminates length-oracle in ct_eq_strings (Codex 2026-06-03)
+# alpha-logging (tuxlink-qjgx) — tracing pipeline + export + redaction
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "registry", "fmt"] }
+tracing-appender = "0.2"
+# NOTE per plan-adrev v2 §1: zstd 0.13 exposes dictionary APIs via the DEFAULT
+# feature set. There is NO "zdict" cargo feature in zstd 0.13. Omit features.
+zstd = "0.13"
+tar = "0.4"
+dirs = "5"
+hex = "0.4"
+strip-ansi-escapes = "0.2"
+filetime = "0.2"           # retention sweep clock-grace test fixtures (Task 3.3)
+toml = "0.8"               # Task 6.1 settings persistence
+urlencoding = "2"          # Task 8.1 GitHub URL body encoding
+# uuid and chrono features merged into existing entries above (v4+v7+serde, clock+serde)
+once_cell = "1.20"
+regex = "1.10"
 
 [dev-dependencies]
 mockito = "1.5"
 serial_test = "3"          # NEW — gates env-var-mutating tests
 proptest = "1.4"           # NEW (tuxlink-c79g T7) — state-space matrix tests for position arbiter invariants I1-I5
+static_assertions = "1.1"  # alpha-logging (tuxlink-qjgx) — credential-struct Debug audit test
+tracing-test = "0.2"       # alpha-logging (tuxlink-qjgx) — Task 9.1 emission-coverage tests
 
 [lib]
 name = "tuxlink_lib"
