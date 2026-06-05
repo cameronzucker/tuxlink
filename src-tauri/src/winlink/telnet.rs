@@ -228,6 +228,58 @@ where
         .map_err(TelnetError::Exchange)
 }
 
+/// Auth-only connection: connect + telnet login + B2F handshake + quit. Does NOT
+/// run any inbound proposal reading or outbound message sending. Sends `FF` + `FQ`
+/// on successful auth to signal "nothing to exchange" and quit cleanly.
+///
+/// Emits the full [`super::b2f_events::B2fEvent`] stream via `events` when
+/// `Some`: `RemoteSidReceived`, `SecureChallengeReceived`, `SecureResponseSent`,
+/// `PostAuthExchangeStarted` (Mode 5 discriminator), `RemoteErrorReceived`, and
+/// `ConnectionClosed`. The caller emits `AuthClassified` after this returns.
+///
+/// Used by `ui_commands::cms_connect_test` per spec §4.3 (iii).
+///
+/// RADIO-1 GUARDRAIL: CMS-TELNET ONLY. Any RF-transport extension requires
+/// fresh RADIO-1 review + separate command name per spec §2 out-of-scope + §4.3 (iii).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn connect_and_auth_test(
+    host: &str,
+    port: u16,
+    transport: Transport,
+    config: &ExchangeConfig,
+    progress: &dyn Fn(&str),
+    wire_log: &dyn Fn(&str),
+    register_socket: &dyn Fn(&TcpStream),
+    events: Option<&dyn super::b2f_events::B2fEventSink>,
+) -> Result<ExchangeResult, TelnetError> {
+    let shared: Shared = Arc::new(Mutex::new(connect_stream(
+        host,
+        port,
+        transport,
+        progress,
+        register_socket,
+    )?));
+    let read_redacted = |line: &str| wire_log_with_redaction(line, wire_log);
+    let write_redacted = |line: &str| wire_log_with_redaction(line, wire_log);
+    let mut reader = BufReader::new(WireTap::new(ReadHalf(shared.clone()), &read_redacted, '<'));
+    let mut writer = WireTap::new(WriteHalf(shared), &write_redacted, '>');
+
+    telnet_login(&mut reader, &mut writer, &config.mycall)?;
+    progress("CMS login complete.");
+
+    progress("Checking credentials…");
+    session::run_exchange_with_events(
+        &mut reader,
+        &mut writer,
+        config,
+        vec![],
+        |_| vec![],
+        None,
+        events,
+    )
+    .map_err(TelnetError::Exchange)
+}
+
 /// Open the TCP connection and, for [`Transport::Tls`], complete the TLS
 /// handshake (verifying the server certificate against `host`).
 fn connect_stream(

@@ -1621,6 +1621,115 @@ pub async fn auth_diagnostic_clear(
     Ok(())
 }
 
+// ============================================================================
+// Task 14 (tuxlink-7do4) — cms_connect_test (spec §4.3 iii)
+// ============================================================================
+// Auth-only "check this password works" command. Connects to the CMS, runs the
+// B2F handshake (emitting all B2fEvents including PostAuthExchangeStarted for
+// the Mode 5 discriminator), and quits via FF + FQ — NEVER reads inbound
+// proposals, NEVER mutates the outbox.
+//
+// Rate-limit (R2 #8): client-side via the React banner — 10s post-test
+// debounce + 3-in-60s circuit-break. Backend has no intrinsic rate-limit;
+// it's a UI-layer concern.
+
+/// Test the user's credentials against the configured CMS WITHOUT committing
+/// to a real message exchange. Per spec §4.3 (iii):
+///
+/// - Shares `cms_connect`'s single-flight guard so a concurrent click while a
+///   real connect is running returns `Unavailable` (maps to `AlreadyConnecting`
+///   on the React side).
+/// - Runs only the B2F handshake (no inbound proposal reading, no outbound
+///   message sending). Sends `FF + FQ` on success.
+/// - Emits the full [`crate::winlink::b2f_events::B2fEvent`] stream including
+///   `PostAuthExchangeStarted` (the Mode 5 vs Mode 1 discriminator that the
+///   result-level `cms_connect` classification collapses) and `AuthClassified`
+///   at the end (success or failure).
+/// - Returns `Ok(())` on a successful auth-and-quit, `Err(UiError::*)` on any
+///   failure mode.
+///
+/// RADIO-1 GUARDRAIL: This command is CMS-TELNET ONLY FOREVER. Any future
+/// proposal to route it over an RF transport (ARDOP / VARA / Pactor) REQUIRES
+/// (a) fresh RADIO-1 review per `docs/live-cms-testing-policy.md`,
+/// (b) explicit transmit-consent gate at the click moment, and
+/// (c) a separate command name (`cms_connect_test_rf`).
+/// See spec §2 out-of-scope + §4.3 (iii).
+#[tauri::command]
+pub async fn cms_connect_test(
+    app: AppHandle,
+    state: State<'_, BackendState>,
+    log: State<'_, std::sync::Arc<SessionLogState>>,
+) -> Result<(), UiError> {
+    let backend = state
+        .current()
+        .ok_or_else(|| UiError::NotConfigured("backend offline".to_string()))?;
+
+    emit_session_line(
+        &app,
+        &log,
+        LogLevel::Info,
+        "Testing CMS credentials (auth-only)…".to_string(),
+    );
+
+    let events_sink: std::sync::Arc<dyn crate::winlink::b2f_events::B2fEventSink> =
+        std::sync::Arc::new(crate::winlink::b2f_events::TauriEventSink::new(app.clone()));
+
+    let attempt_id = crate::winlink::b2f_events::AttemptId::fresh();
+
+    match backend.cms_connect_test(events_sink.clone()).await {
+        Ok(()) => {
+            emit_session_line(
+                &app,
+                &log,
+                LogLevel::Info,
+                "Credential test passed.".to_string(),
+            );
+            // Emit a success AuthClassified so the React banner can render
+            // the green "credentials are valid" state.
+            use crate::winlink::b2f_events::{B2fEvent, FailureMode};
+            events_sink.push(B2fEvent::AuthClassified {
+                // PostAuthExchangeStarted was already emitted (Mode 5
+                // discriminator) — the auth-only contract fired FF + FQ.
+                // There is no failure mode; use a sentinel-free Ok path:
+                // the React hook treats a missing FailureMode as success.
+                // For structural consistency the event still fires; the
+                // mode field is unused on the Ok branch by the React hook
+                // (it keys off PostAuthExchangeStarted presence).
+                mode: FailureMode::Uncategorized,
+                raw: None,
+                attempt_id,
+            });
+            Ok(())
+        }
+        Err(BackendError::Cancelled) => {
+            emit_session_line(&app, &log, LogLevel::Warn, "Credential test aborted.".to_string());
+            Err(BackendError::Cancelled.into())
+        }
+        Err(e) => {
+            emit_session_line(
+                &app,
+                &log,
+                LogLevel::Error,
+                format!("Credential test failed: {e}"),
+            );
+            // Emit AuthClassified so the React banner updates.
+            use crate::winlink::b2f_events::{B2fEvent, FailureMode};
+            let (mode, raw) = match &e {
+                BackendError::RemoteError(payload) => {
+                    (crate::winlink::auth_taxonomy::classify(payload), Some(payload.clone()))
+                }
+                BackendError::TransportFailed { .. } => (FailureMode::NetworkUnreachable, None),
+                BackendError::AuthFailed { reason } => {
+                    (crate::winlink::auth_taxonomy::classify(reason), Some(reason.clone()))
+                }
+                _ => (FailureMode::Uncategorized, Some(format!("{e}"))),
+            };
+            events_sink.push(B2fEvent::AuthClassified { mode, raw, attempt_id });
+            Err(e.into())
+        }
+    }
+}
+
 /// Append a session-log line to the durable buffer (assigning its `seq`) and emit
 /// it live on `session_log:line`, so it lands in the bottom progress log
 /// (snapshot + tail). Used for connect progress/results (tuxlink-0ic).

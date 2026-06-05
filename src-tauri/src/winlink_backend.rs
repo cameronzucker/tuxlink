@@ -637,6 +637,32 @@ pub trait WinlinkBackend: Send + Sync {
         Ok(())
     }
 
+    /// Auth-only credential test per spec §4.3 (iii): connect to the CMS over
+    /// the configured TCP/TLS path, complete the B2F handshake, emit the full
+    /// [`crate::winlink::b2f_events::B2fEvent`] stream (including
+    /// `PostAuthExchangeStarted` for the Mode 5 discriminator), then quit via
+    /// `FF + FQ` without exchanging any messages. The outbox is NEVER read and
+    /// the mailbox is NEVER mutated.
+    ///
+    /// Single-flight: shares [`WinlinkBackend::connect`]'s in-progress guard.
+    /// A concurrent `connect` or `cms_connect_test` returns
+    /// [`BackendError::BackendUnavailable`].
+    ///
+    /// RADIO-1 GUARDRAIL: CMS-TELNET ONLY FOREVER. Any future RF-transport
+    /// extension requires (a) fresh RADIO-1 review per
+    /// `docs/live-cms-testing-policy.md`, (b) explicit transmit-consent gate
+    /// at the click moment, and (c) a separate command name
+    /// (`cms_connect_test_rf`). See spec §2 out-of-scope + §4.3 (iii).
+    ///
+    /// Default implementation returns [`BackendError::NotImplemented`].
+    async fn cms_connect_test(
+        &self,
+        events: std::sync::Arc<dyn crate::winlink::b2f_events::B2fEventSink>,
+    ) -> Result<(), BackendError> {
+        let _ = events;
+        Err(BackendError::NotImplemented)
+    }
+
     /// Refresh the live config the connect paths read (tuxlink-ka7 / tuxlink-p5u).
     /// `NativeBackend` originally froze its `config` at construction, so the connect
     /// path read that stale snapshot — a UI host/transport/packet-param change only
@@ -1067,6 +1093,145 @@ impl WinlinkBackend for NativeBackend {
         }
         self.set_status(BackendStatus::Disconnected);
         Ok(())
+    }
+
+    /// Auth-only credential test per spec §4.3 (iii). Shares the single-flight
+    /// guard with `connect` so a concurrent `cms_connect` or `cms_connect_test`
+    /// returns `BackendUnavailable`.  Mirrors `native_connect`'s TCP/TLS dial
+    /// path but calls `telnet::connect_and_auth_test` instead of
+    /// `connect_and_exchange`, so it never reads inbound proposals and never
+    /// mutates the mailbox.
+    ///
+    /// RADIO-1 GUARDRAIL: CMS-TELNET ONLY. See trait doc.
+    async fn cms_connect_test(
+        &self,
+        events: std::sync::Arc<dyn crate::winlink::b2f_events::B2fEventSink>,
+    ) -> Result<(), BackendError> {
+        // Single-flight: shared with connect().
+        if self
+            .connect_in_progress
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_err()
+        {
+            return Err(BackendError::BackendUnavailable {
+                reason: "a CMS connection is already in progress".to_string(),
+                source: None,
+            });
+        }
+        let _guard = ConnectGuard {
+            in_progress: self.connect_in_progress.clone(),
+            handle: self.abort_handle.clone(),
+        };
+
+        let config = self.live_config();
+
+        // Fresh abort epoch (mirrors native_connect).
+        self.aborting.store(false, Ordering::SeqCst);
+        if let Ok(mut slot) = self.abort_handle.lock() {
+            *slot = None;
+        }
+
+        self.set_status(BackendStatus::Connecting {
+            transport: "CmsAuthTest".to_string(),
+        });
+
+        let callsign = config
+            .identity
+            .callsign
+            .clone()
+            .ok_or_else(|| BackendError::NotConfigured("identity.callsign".into()))?
+            .trim()
+            .to_uppercase();
+        let locator = crate::position::effective_broadcast_locator(&config, self.position.as_deref());
+        let password = crate::winlink::credentials::read_password(&callsign)
+            .ok()
+            .filter(|p| !p.is_empty());
+
+        let plaintext_override = std::env::var("TUXLINK_CMS_PLAINTEXT").is_ok();
+        let port_override = std::env::var("TUXLINK_CMS_PORT")
+            .ok()
+            .and_then(|s| s.parse::<u16>().ok());
+        let transport_mode = config.connect.transport;
+        let (port, transport) = resolve_cms_endpoint(transport_mode, plaintext_override, port_override);
+        let host = resolve_cms_host(&config);
+
+        let exchange_config = session::ExchangeConfig {
+            mycall: callsign,
+            targetcall: telnet::CMS_TARGET_CALL.to_string(),
+            locator,
+            password,
+            intent: session::SessionIntent::Cms,
+        };
+
+        let progress = self.progress.clone();
+        let wire = self.wire.clone();
+        let abort_handle = self.abort_handle.clone();
+        let aborting = self.aborting.clone();
+        let events_arc = events.clone();
+
+        let outcome = tokio::task::spawn_blocking(move || {
+            let register_socket = |sock: &std::net::TcpStream| {
+                if let Ok(clone) = sock.try_clone() {
+                    if let Ok(mut slot) = abort_handle.lock() {
+                        if aborting.load(Ordering::SeqCst) {
+                            let _ = clone.shutdown(Shutdown::Both);
+                        } else {
+                            *slot = Some(clone);
+                        }
+                    }
+                }
+            };
+            telnet::connect_and_auth_test(
+                &host,
+                port,
+                transport,
+                &exchange_config,
+                &*progress,
+                &*wire,
+                &register_socket,
+                Some(events_arc.as_ref()),
+            )
+            .map_err(|e| {
+                use telnet::TelnetError;
+                use crate::winlink::handshake::HandshakeError;
+                use crate::winlink::session::ExchangeError;
+                match e {
+                    TelnetError::Exchange(ExchangeError::RemoteError(payload)) => {
+                        BackendError::RemoteError(payload)
+                    }
+                    TelnetError::Exchange(ExchangeError::Handshake(
+                        HandshakeError::RemoteError(payload),
+                    )) => BackendError::RemoteError(payload),
+                    other => BackendError::TransportFailed {
+                        reason: format!("{other:?}"),
+                        source: None,
+                    },
+                }
+            })
+        })
+        .await
+        .map_err(|e| BackendError::Internal {
+            msg: format!("cms_connect_test task failed: {e}"),
+            source: None,
+        })?;
+
+        // abort_aware_outcome expects Result<(), BackendError>; map the
+        // ExchangeResult to () since cms_connect_test discards message data.
+        let unit_outcome = outcome.map(|_| ());
+        match abort_aware_outcome(unit_outcome, self.aborting.load(Ordering::SeqCst)) {
+            Ok(()) => {
+                self.set_status(BackendStatus::Disconnected);
+                Ok(())
+            }
+            Err(BackendError::Cancelled) => {
+                self.set_status(BackendStatus::Disconnected);
+                Err(BackendError::Cancelled)
+            }
+            Err(e) => {
+                self.set_status(BackendStatus::Disconnected);
+                Err(e)
+            }
+        }
     }
 
     /// Refresh the live config the connect + send paths read (tuxlink-ka7 /
