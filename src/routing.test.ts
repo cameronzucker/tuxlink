@@ -5,7 +5,7 @@
 // that keeps compose windows from listening for menu:file:new.
 
 import { describe, it, expect } from 'vitest';
-import { parseComposeRoute, parseHelpRoute } from './routing';
+import { parseComposeRoute, parseHelpRoute, parseLoggingRoute } from './routing';
 
 describe('parseComposeRoute', () => {
   it('matches /compose/<draftId> and returns the draftId', () => {
@@ -71,5 +71,26 @@ describe('parseHelpRoute', () => {
 
   it('returns false for paths that merely start with "help"', () => {
     expect(parseHelpRoute('/helpful')).toBe(false);
+  });
+});
+
+// tuxlink-qjgx / spec §8.1: the logging window is single-instance with no
+// parameters, so parseLoggingRoute returns boolean (same shape as
+// parseHelpRoute).
+describe('parseLoggingRoute', () => {
+  it('returns true for /logging', () => {
+    expect(parseLoggingRoute('/logging')).toBe(true);
+  });
+  it('returns true for /logging/', () => {
+    expect(parseLoggingRoute('/logging/')).toBe(true);
+  });
+  it('returns false for /', () => {
+    expect(parseLoggingRoute('/')).toBe(false);
+  });
+  it('returns false for /help', () => {
+    expect(parseLoggingRoute('/help')).toBe(false);
+  });
+  it('returns false for /logging/extra', () => {
+    expect(parseLoggingRoute('/logging/extra')).toBe(false);
   });
 });
