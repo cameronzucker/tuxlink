@@ -64,36 +64,76 @@
   outline-offset: 1px;
 }
 
-/* ── Status radio fieldset ── */
+/* ── Section fieldsets (Net / Station / Session / Location / Comments) ── */
 
-.checkin-form__status-fieldset {
+.checkin-form__section {
   border: 1px solid var(--tux-border);
   border-radius: 4px;
-  padding: 8px 12px;
+  padding: 10px 14px 12px;
   margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 
-.checkin-form__status-fieldset legend {
+.checkin-form__section > legend {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--tux-fg);
+  padding: 0 6px;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+
+.checkin-form__optional {
+  font-weight: 400;
+  font-style: italic;
+  color: var(--tux-fg-muted);
+}
+
+/* ── Nested radio fieldsets inside Session ── */
+
+.checkin-form__radios {
+  border: 1px solid var(--tux-border);
+  border-radius: 4px;
+  padding: 6px 10px;
+  margin: 4px 0 0 0;
+}
+
+.checkin-form__radios > legend {
   font-size: 12px;
   font-weight: 500;
   color: var(--tux-fg-muted);
   padding: 0 4px;
 }
 
-.checkin-form__status-fieldset label {
+.checkin-form__radios label {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  margin-right: 16px;
+  margin-right: 14px;
   font-size: 13px;
   font-weight: 400;
   color: var(--tux-fg);
   cursor: pointer;
 }
 
-.checkin-form__status-fieldset input[type='radio'] {
+.checkin-form__radios input[type='radio'] {
   accent-color: var(--tux-accent, #2563eb);
   cursor: pointer;
+}
+
+/* ── Location row: 4-up grid for Grid / Lat / Lon / MGRS ── */
+
+.checkin-form__location-row {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.checkin-form__location-row > div {
+  display: flex;
+  flex-direction: column;
 }
 
 /* ── Action buttons ── */
