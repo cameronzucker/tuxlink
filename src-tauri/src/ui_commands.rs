@@ -1569,6 +1569,58 @@ pub async fn cms_abort(
     Ok(())
 }
 
+// ============================================================================
+// Task 13 (tuxlink-7do4) — smart-auth-diagnostics banner recovery commands
+// ============================================================================
+// Three commands the banner's recovery affordances depend on. Registered in
+// invoke_handler alongside cms_connect / cms_abort per the append-only model.
+
+/// Write a password to the OS keyring for the given callsign. Per spec
+/// §4.3 (i) — the inline "Re-enter password" affordance on the Mode 3
+/// banner uses this. Preserves the read-first → set_password
+/// destructive-overwrite-readback discipline (R2 #3 keyring-locked
+/// failure handling: any KeyringError surfaces; no in-memory fallback).
+#[tauri::command]
+pub async fn credentials_write_password(
+    callsign: String,
+    password: String,
+) -> Result<(), UiError> {
+    crate::winlink::credentials::write_password(&callsign, &password)
+        .map_err(|e| UiError::Internal { detail: e.to_string() })
+}
+
+/// Reopen the onboarding wizard scoped to a specific step. Per spec
+/// §4.3 (ii) — the "Try a different callsign" affordance on the Mode 4
+/// banner uses this with step="callsign".
+#[tauri::command]
+pub async fn wizard_reopen(
+    app: tauri::AppHandle,
+    step: String,
+) -> Result<(), UiError> {
+    crate::wizard::reopen(&app, &step)
+        .map_err(|e| UiError::Internal { detail: e.to_string() })
+}
+
+/// Clear the most-recent auth-diagnostic classification from Rust state.
+/// Per spec §4.3 (v) — the Dismiss affordance on the banner calls this
+/// so that a stale event for the dismissed AttemptId doesn't
+/// re-render the banner.
+///
+/// Implementation: emits a "auth-diagnostic-clear" event that the React
+/// hook listens for and uses to reset its local state. The Rust side
+/// doesn't currently hold AttemptId-keyed state to clear; the event
+/// emission alone unblocks the React side. If Rust-side state is added
+/// later (e.g., for replay-after-mount), this is the place to clear it.
+#[tauri::command]
+pub async fn auth_diagnostic_clear(
+    app: tauri::AppHandle,
+) -> Result<(), UiError> {
+    use tauri::Emitter;
+    app.emit("auth-diagnostic-clear", ())
+        .map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    Ok(())
+}
+
 /// Append a session-log line to the durable buffer (assigning its `seq`) and emit
 /// it live on `session_log:line`, so it lands in the bottom progress log
 /// (snapshot + tail). Used for connect progress/results (tuxlink-0ic).

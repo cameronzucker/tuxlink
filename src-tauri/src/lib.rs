@@ -408,6 +408,10 @@ pub fn run() {
             crate::ui_commands::telnet_station_password_is_set,
             crate::ui_commands::telnet_listen_config_get,
             crate::ui_commands::telnet_listen_config_set,
+            // tuxlink-7do4 Task 13: smart-auth-diagnostics banner recovery commands.
+            crate::ui_commands::credentials_write_password, // spec §4.3 (i) — Mode 3 re-enter password
+            crate::ui_commands::wizard_reopen,              // spec §4.3 (ii) — Mode 4 try different callsign
+            crate::ui_commands::auth_diagnostic_clear,      // spec §4.3 (v) — banner Dismiss
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

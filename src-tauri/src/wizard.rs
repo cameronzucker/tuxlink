@@ -431,6 +431,20 @@ pub async fn verify_cms_connection(
     verify_cms_connection_impl(app).await
 }
 
+/// Reopen the wizard scoped to a specific step. Per R1 #8 in R5 adrev:
+/// the prior spec assumed a "wizard-relaunch path" without naming a
+/// command; this is the concrete function called by the wizard_reopen
+/// Tauri command.
+///
+/// Emits a "wizard:reopen" event that the React wizard component listens
+/// for; the wizard mounts with the named step pre-selected.
+pub fn reopen(app: &tauri::AppHandle, step: &str) -> Result<(), String> {
+    use tauri::Emitter;
+    let payload = serde_json::json!({ "step": step });
+    app.emit("wizard:reopen", payload)
+        .map_err(|e| e.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
