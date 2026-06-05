@@ -40,7 +40,7 @@
 //! refresh ever performed reads from the bundle. After one successful
 //! refresh, all subsequent reads come from the runtime snapshot.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::SystemTime;
 
 use once_cell::sync::Lazy;
@@ -603,6 +603,7 @@ fn cleanup_old_backups(runtime_root: &Path, keep: &Path) {
 mod tests {
     use super::*;
     use std::io::Write;
+    use std::path::PathBuf;
     use tempfile::TempDir;
     use zip::write::SimpleFileOptions;
 
@@ -976,14 +977,17 @@ mod tests {
 
     #[test]
     fn classify_transport_accepts_https_anywhere() {
-        assert_eq!(classify_transport("https://api.example.com/x").unwrap(), false);
-        assert_eq!(classify_transport("https://127.0.0.1/x").unwrap(), true);
+        // is_loopback = false on a public-host https URL
+        assert!(!classify_transport("https://api.example.com/x").unwrap());
+        // is_loopback = true on a loopback-host https URL
+        assert!(classify_transport("https://127.0.0.1/x").unwrap());
     }
 
     #[test]
     fn classify_transport_accepts_http_loopback_only() {
-        assert_eq!(classify_transport("http://127.0.0.1/x").unwrap(), true);
-        assert_eq!(classify_transport("http://localhost:8080/x").unwrap(), true);
+        // is_loopback = true for both 127.0.0.1 and localhost
+        assert!(classify_transport("http://127.0.0.1/x").unwrap());
+        assert!(classify_transport("http://localhost:8080/x").unwrap());
     }
 
     #[test]
