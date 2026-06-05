@@ -253,17 +253,22 @@ pub fn resolve_packet_endpoint(
 /// today is composed against the keyring's CMS password assumption) keeps
 /// its current "drain all" behavior.
 ///
-/// Callers in the **dial** path (operator pressed Send/Receive) propagate
-/// the error and fail the session BEFORE the B2F exchange opens — fail-
-/// closed prevents an off-spec routing-flag tag at the peer.
+/// All callers (dial AND listen) catch the safety-gate error and degrade
+/// to an empty outbound list (Codex Phase 3-4 RE-REVIEW P2). The dial path
+/// previously fail-closed via `?` propagation; that posture blocked spec §8
+/// build-walk-revise validation for the 6 non-CMS×3-protocol combinations
+/// of the umbrella's alpha walkthrough. The new posture: degrade-to-empty
+/// on the gate-specific error, log the skip, exchange proceeds with no
+/// outbound proposed. The peer never sees an off-spec routing-flag tag
+/// because an empty outbound batch carries no proposals; the listen-side
+/// degrades identically.
 ///
-/// Callers in the **listen** path (auto-armed answerer, e.g.
-/// [`run_ardop_b2f_answer`] / [`run_vara_b2f_answer`] /
-/// [`crate::winlink::telnet_listen`]'s answerer) catch the error and
-/// degrade to an empty outbound list — inbound mail still files into
-/// Inbox, the peer just doesn't receive any outbound mail from us until
-/// the schema lands. Symmetric with the existing telnet_listen pattern
-/// (`progress("Outbox read failed (proceeding empty): ...")`).
+/// Concrete call sites:
+/// - **Dial:** [`run_ardop_b2f_exchange`] / [`run_vara_b2f_exchange`] /
+///   [`crate::ui_commands::telnet_p2p_connect`] — `unwrap_or_else` /
+///   `match` on `BackendError::MessageRejected` to empty Vec.
+/// - **Listen:** [`run_ardop_b2f_answer`] / [`run_vara_b2f_answer`] /
+///   [`crate::winlink::telnet_listen`] — same `unwrap_or_else` pattern.
 ///
 /// The gate will lift when bd issue **tuxlink-u5hl** ships the schema +
 /// per-message filter.
@@ -2027,15 +2032,21 @@ pub fn run_ardop_b2f_exchange(
 
     // Turn each queued outbox message into a proposal + compressed body.
     //
-    // Intent-filtered drain (tuxlink-u5hl Codex Round 5 P1 #3): route through
-    // the shared `build_outbound_proposals` helper so this ARDOP-dial path
-    // inherits the same safety gate the VARA-dial and listener paths use.
-    // For non-CMS intents the helper returns `MessageRejected` with a
-    // self-identifying diagnostic; we propagate the error so the dial fails
-    // before the B2F exchange opens — preventing a CMS-bound queued message
-    // from being offered over a peer/R-pool link. See helper docs for the
-    // full rationale + the schema work that will lift the gate.
-    let outbound = build_outbound_proposals(mailbox, intent)?;
+    // Intent-filtered drain (tuxlink-u5hl Codex Round 5 P1 #3 +
+    // Phase 3-4 RE-REVIEW P2): for non-CMS intents the safety gate fires
+    // and returns `MessageRejected`; degrade to an empty outbound list
+    // rather than failing the dial. The ARQ link is already up by the
+    // time we get here — failing closed would only orphan the operator's
+    // session, while degrading lets the spec §8 build-walk-revise loop
+    // exercise the non-CMS combos. Symmetric with `run_ardop_b2f_answer`'s
+    // all-errors-degrade pattern. The peer never sees off-spec routing
+    // flags either way because no proposal is sent when outbound is empty.
+    let outbound = build_outbound_proposals(mailbox, intent).unwrap_or_else(|e| {
+        eprintln!(
+            "run_ardop_b2f_exchange: outbound drain skipped ({e}); dial proceeds with empty outbound"
+        );
+        Vec::new()
+    });
 
     let exchange_config = session::ExchangeConfig {
         mycall: callsign,
@@ -2330,11 +2341,19 @@ pub fn run_vara_b2f_exchange(
         None
     };
 
-    // Intent-filtered drain (tuxlink-u5hl Codex Round 5 P1 #3). Dial path:
-    // propagate the safety-gate error so the operator's dialed session
-    // fails-closed BEFORE the B2F exchange opens. Symmetric with
-    // `run_ardop_b2f_exchange` — peer never sees off-spec routing flags.
-    let outbound = build_outbound_proposals(mailbox, intent)?;
+    // Intent-filtered drain (tuxlink-u5hl Codex Round 5 P1 #3 +
+    // Phase 3-4 RE-REVIEW P2): for non-CMS intents, degrade to empty
+    // outbound rather than failing the dial. The VARA CONNECT has already
+    // completed by the time we reach here; failing closed would only
+    // orphan the operator's session. The peer sees no proposal sent
+    // (empty outbound) so no off-spec routing flag rides out. Matches
+    // `run_vara_b2f_answer`'s all-errors-degrade pattern.
+    let outbound = build_outbound_proposals(mailbox, intent).unwrap_or_else(|e| {
+        eprintln!(
+            "run_vara_b2f_exchange: outbound drain skipped ({e}); dial proceeds with empty outbound"
+        );
+        Vec::new()
+    });
     let exchange_config = session::ExchangeConfig {
         mycall: callsign,
         targetcall: target.to_string(),

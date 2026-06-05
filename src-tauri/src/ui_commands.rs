@@ -4082,19 +4082,29 @@ pub async fn telnet_p2p_connect(
 
     // tuxlink-l55l: read the outbox BEFORE opening the socket — same ordering
     // as `native_telnet_exchange` (P1.3 Codex review). A malformed outbox
-    // fails fast without consuming an on-air slot or surprising the peer.
+    // surfaces an error before any peer interaction.
     //
-    // tuxlink-u5hl (Codex Round 5 P1 #3): pass the explicit P2p intent so
-    // the safety gate fires. P2P-Telnet outbound is intentionally gated
-    // until the routing_flag schema lands — failing here (before the
-    // socket opens) keeps the alpha fail-closed against off-spec routing
-    // tags at the peer. The status is emitted as Disconnected via the
-    // existing error path below.
+    // tuxlink-u5hl (Codex Round 5 P1 #3 + Phase 3-4 RE-REVIEW P2): for the
+    // safety-gate `MessageRejected` case (non-CMS intent, schema gate),
+    // degrade to empty outbound rather than failing — the operator's
+    // telnet walk through still completes the handshake, no proposal
+    // ships, and the peer sees an empty exchange (consistent with
+    // listener-answer pattern). Other outbox errors (corrupt mailbox,
+    // etc.) still fail-closed via the error path below.
     let outbound = match crate::winlink_backend::build_outbound_proposals(
         &mailbox,
         SessionIntent::P2p,
     ) {
         Ok(v) => v,
+        Err(crate::winlink_backend::BackendError::MessageRejected(reason)) => {
+            emit_session_line(
+                &app,
+                &log,
+                LogLevel::Info,
+                format!("Outbound drain skipped ({reason}); telnet proceeds with empty outbound"),
+            );
+            Vec::new()
+        }
         Err(e) => {
             p2p_state.in_progress.store(false, Ordering::SeqCst);
             emit_p2p_status(&app, StatusDto::Disconnected);
