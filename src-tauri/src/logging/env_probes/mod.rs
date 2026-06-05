@@ -153,6 +153,47 @@ pub fn run_with_deadline(cmd: &str, args: &[&str]) -> Option<String> {
     }
 }
 
+/// Amendment E.5.8 backend: subscribe to the `first_paint_complete` Tauri event
+/// and run all probes once in a background task. Results are emitted as
+/// structured `tracing::info!` events AND broadcast via
+/// `logging://probes/snapshot-updated` for the Logging window's live display.
+///
+/// RADIO-1: probes are read-only; no TX-touching paths (enforced at compile
+/// time by tests/probes_no_tx_apis.rs).
+///
+/// On-error subsystem trigger: deferred — the Fanout Layer would need to expose
+/// an error-broadcast tap (spec §9.2). Tracked as a follow-up gap; only the
+/// first-paint trigger is implemented here.
+pub fn spawn_runner(
+    app: tauri::AppHandle,
+    _handle: std::sync::Arc<crate::logging::LoggingHandle>,
+) {
+    use tauri::Listener;
+    let app2 = app.clone();
+    app.listen("first_paint_complete", move |_| {
+        let a = app2.clone();
+        tokio::spawn(async move {
+            let snaps = vec![
+                keyring::run("first_paint"),
+                audio::run("first_paint"),
+                serial::run("first_paint"),
+                modem_process::run("first_paint"),
+                network::run("first_paint"),
+                display::run("first_paint"),
+            ];
+            for s in &snaps {
+                tracing::info!(
+                    target = s.probe.as_str(),
+                    trigger = "first_paint",
+                    "probe snapshot"
+                );
+            }
+            use tauri::Emitter;
+            let _ = a.emit("logging://probes/snapshot-updated", &snaps);
+        });
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

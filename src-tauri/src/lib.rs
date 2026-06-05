@@ -8,6 +8,7 @@ pub mod forms;
 pub mod grib;
 pub mod help_window;
 pub mod logging;
+pub mod logging_window;
 pub mod theme_state;
 pub mod native_mailbox;
 pub mod position;
@@ -158,6 +159,32 @@ pub fn run() {
         .manage(std::sync::Arc::new(crate::ui_commands::VaraListenState::default()))
         .setup(|app| {
             use tauri::Manager as _;  // brings .state() into scope for the setup closure
+
+            // alpha-logging (tuxlink-qjgx Task 6): initialize the tracing pipeline.
+            // Pull the already-managed SessionLogState Arc, then init the full
+            // subscriber composition (Filter + Fanout layers), disk consumer,
+            // free-disk guard. Amendment D: fails soft — Degraded means the app
+            // continues without disk logging; Full installs the WorkerGuard.
+            {
+                let session_log = (*app.state::<std::sync::Arc<crate::session_log::SessionLogState>>()).clone();
+                match crate::logging::init(session_log) {
+                    crate::logging::InitOutcome::Full(handle) => {
+                        let handle_arc = std::sync::Arc::new(handle);
+                        app.manage(handle_arc.clone());
+                        // Amendment E.5.8: spawn probe runner that fires on first_paint_complete.
+                        crate::logging::env_probes::spawn_runner(
+                            app.handle().clone(),
+                            handle_arc,
+                        );
+                    }
+                    crate::logging::InitOutcome::Degraded { reason } => {
+                        app.manage(crate::logging::DegradedHandle { reason: reason.clone() });
+                        eprintln!("tuxlink: logging degraded — {reason}");
+                        // No probe runner in degraded mode (no LoggingHandle to pass).
+                    }
+                }
+            }
+
             // Install system tray icon + menu (tuxlink-rit / Task 8).
             // Close-to-tray: window close button hides to tray; only
             // File→Quit / tray→Quit / Ctrl+Q actually exit the process.
@@ -409,6 +436,17 @@ pub fn run() {
             crate::ui_commands::telnet_station_password_is_set,
             crate::ui_commands::telnet_listen_config_get,
             crate::ui_commands::telnet_listen_config_set,
+            // alpha-logging (tuxlink-qjgx Task 6): Logging window + commands.
+            crate::logging_window::logging_window_open,
+            crate::logging::commands::logging_status,
+            crate::logging::commands::logging_set_detailed_mode,
+            crate::logging::commands::logging_set_retention,
+            crate::logging::commands::logging_export,
+            crate::logging::commands::logging_open_directory,
+            crate::logging::commands::logging_clear_history,
+            crate::logging::commands::logging_env_probes_snapshot,
+            crate::logging::commands::logging_env_probes_rerun,
+            crate::logging::commands::emit_first_paint_complete,   // Amendment E.7.7
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
