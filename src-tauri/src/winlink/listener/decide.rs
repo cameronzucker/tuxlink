@@ -80,6 +80,12 @@ pub fn listener_decide_at(
 ) -> ListenerDecision {
     // 1. Allowlist gate (no secrets involved).
     if !allowed.accept(peer) {
+        tracing::info!(
+            target: "tuxlink::winlink::listener",
+            peer = ?peer,
+            decision = "reject_allowlist",
+            "inbound peer rejected — not on allowlist",
+        );
         return ListenerDecision::RejectAllowlist;
     }
 
@@ -89,6 +95,12 @@ pub fn listener_decide_at(
     //    expose information about the stored secret to an expired-session
     //    probe).
     if arms.is_expired(now) {
+        tracing::info!(
+            target: "tuxlink::winlink::listener",
+            peer = ?peer,
+            decision = "reject_expired",
+            "inbound peer rejected — listener arm window expired",
+        );
         return ListenerDecision::RejectExpired;
     }
 
@@ -101,13 +113,40 @@ pub fn listener_decide_at(
         // direction (per Codex review 2026-06-03).
         let supplied = match password_input {
             Some(s) => s,
-            None => return ListenerDecision::RejectPassword,
+            None => {
+                tracing::debug!(
+                    target: "tuxlink::winlink::listener",
+                    peer = ?peer,
+                    verification = "failed",
+                    reason = "no_input",
+                    "station-password check failed",
+                );
+                return ListenerDecision::RejectPassword;
+            }
         };
         if !password.verify(supplied) {
+            tracing::debug!(
+                target: "tuxlink::winlink::listener",
+                peer = ?peer,
+                verification = "failed",
+                "station-password check failed",
+            );
             return ListenerDecision::RejectPassword;
         }
+        tracing::debug!(
+            target: "tuxlink::winlink::listener",
+            peer = ?peer,
+            verification = "passed",
+            "station-password check passed",
+        );
     }
 
+    tracing::info!(
+        target: "tuxlink::winlink::listener",
+        peer = ?peer,
+        decision = "accept",
+        "inbound peer accepted",
+    );
     ListenerDecision::Accept
 }
 
