@@ -153,7 +153,7 @@ pub fn run() {
         // tuxlink-9ls2: VARA listener shared state — the in-flight consumer
         // task's shutdown flag. Mirrors the ARDOP listener; VARA differs only
         // in that the transport is externally-managed (operator must
-        // vara_start_session before vara_listen can arm).
+        // vara_open_session before vara_listen can arm).
         .manage(std::sync::Arc::new(crate::ui_commands::VaraListenState::default()))
         .setup(|app| {
             use tauri::Manager as _;  // brings .state() into scope for the setup closure
@@ -363,7 +363,7 @@ pub fn run() {
             crate::ui_commands::ardop_allowed_stations_remove,
             crate::ui_commands::ardop_allowed_stations_set_allow_all,
             // tuxlink-9ls2: VARA P2P listener — same shape as ARDOP but the
-            // operator-managed transport requires vara_start_session first.
+            // operator-managed transport requires vara_open_session first.
             crate::ui_commands::vara_listen,
             crate::ui_commands::vara_set_listen,
             crate::ui_commands::vara_allowed_stations_get,
@@ -401,17 +401,28 @@ pub fn run() {
             crate::modem_commands::modem_get_status,   // tuxlink-4ek Task 3.2 (session snapshot)
             crate::modem_commands::modem_ardop_disconnect, // tuxlink-4ek Task 3.2 (clear consent + reset)
             crate::modem_commands::modem_ardop_connect, // tuxlink-4ek Task 3.3 (RADIO-1-gated spawn + ARQ connect)
-            crate::modem_commands::modem_mint_consent, // tuxlink-4ek Task 6.2 (RADIO-1 token mint — backend-only)
             crate::modem_commands::modem_ardop_b2f_exchange, // tuxlink-ytg (B2F over ARDOP — Winlink mail flows)
+            // tuxlink-0ye6 Task 3.5: ARDOP session lifecycle commands —
+            // ardop_open_session spawns ardopcf + records (intent, transport_kind)
+            // + auto-arms the listener iff intent calls for it; ardop_close_session
+            // disarms + aborts + clears active mode + tears down the transport.
+            // modem_ardop_connect / modem_ardop_disconnect stay registered for the
+            // Connect button's path until Task 3.6 widens b2f_exchange.
+            crate::modem_commands::ardop_open_session,
+            crate::modem_commands::ardop_close_session,
             // tuxlink-dfmf Phase 2: VARA UI wiring. Minimal TCP-transport lifecycle —
             // open/close/status — plus persisted config + the Pi-availability gating
             // probe. RF connect-to-peer (RADIO-1-gated) lives in a Phase 3 follow-up.
             crate::winlink::modem::vara::commands::config_get_vara,
             crate::winlink::modem::vara::commands::config_set_vara,
-            crate::winlink::modem::vara::commands::vara_start_session,
-            crate::winlink::modem::vara::commands::vara_stop_session,
+            crate::winlink::modem::vara::commands::vara_open_session,
+            crate::winlink::modem::vara::commands::vara_close_session,
             crate::winlink::modem::vara::commands::vara_status,
             crate::winlink::modem::vara::commands::platform_info,
+            // tuxlink-0ye6 Task 3.4: VARA dial-path B2F exchange — CONNECT to peer
+            // + B2F handshake + intent-filtered mailbox drain + DISCONNECT, all
+            // in one Tauri call. Mirror of `modem_ardop_b2f_exchange`'s shape.
+            crate::winlink::modem::vara::commands::modem_vara_b2f_exchange,
             // tuxlink-0pnb Task 4 (refactored): P2P-Telnet connect + abort + peer-password management.
             // telnet_p2p_dial renamed to telnet_p2p_connect (StatusBar pipeline wiring);
             // telnet_p2p_abort added to mirror cms_abort (operator cancel semantics).

@@ -4,6 +4,25 @@ All notable changes to Tuxlink are documented here.
 
 This project adheres to [Semantic Versioning](https://semver.org) with project-specific rules described in [VERSIONING.md](VERSIONING.md). Entries from `v0.0.2` onward are generated automatically by [`release-please`](https://github.com/googleapis/release-please) from [Conventional Commits](https://www.conventionalcommits.org).
 
+## [0.34.1](https://github.com/cameronzucker/tuxlink/compare/v0.34.0...v0.34.1) (2026-06-05)
+
+
+### Bug Fixes
+
+* **ci:** resolve clippy + example compile errors surfaced by main merge ([990ef24](https://github.com/cameronzucker/tuxlink/commit/990ef24416abb470113d061e96cce28edb375bbb))
+
+## [0.34.0](https://github.com/cameronzucker/tuxlink/compare/v0.33.0...v0.34.0) (2026-06-05)
+
+
+### Features
+
+* **forms:** CheckInForm — WLE-aligned schema + OSM tile CSP allowlist (closes tuxlink-4ai0, tuxlink-bt2q) ([0918948](https://github.com/cameronzucker/tuxlink/commit/0918948e1de209571e4ae2f3274cc6556bb08e5e))
+
+
+### Bug Fixes
+
+* **forms:** apply Codex P1+P2 findings — CSP bare-host + WLE metadata + location-required + slot-leak ([3542e77](https://github.com/cameronzucker/tuxlink/commit/3542e7789be933131e609bd3e4fecccf011a051d))
+
 ## [0.33.0](https://github.com/cameronzucker/tuxlink/compare/v0.32.1...v0.33.0) (2026-06-05)
 
 

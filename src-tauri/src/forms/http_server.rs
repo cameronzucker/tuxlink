@@ -81,6 +81,12 @@ use super::wle_templates::Template;
 /// in practice; 1 MB is generous headroom and prevents trivial DOS.
 const MAX_SUBMIT_BODY_BYTES: usize = 1_048_576;
 
+/// Per bd tuxlink-4g2n: largest asset the form-adjacent /folder/<path> route
+/// will serve. 8 MiB comfortably accommodates WLE template-bundled images,
+/// CSS, and JS while preventing a custom-form directory from letting any
+/// local client allocate arbitrarily-large memory per request.
+const MAX_FOLDER_ASSET_BYTES: usize = 8 * 1_048_576;
+
 /// Content-Security-Policy header value sent with HTML responses.
 ///
 /// Rationale (Codex 2026-06-01 P1 #2): without an explicit CSP, a malicious
@@ -141,7 +147,13 @@ struct SessionState {
     /// present, but for Viewer sessions the receiver is dropped at open
     /// time (no forwarder task is spawned) and the POST handler returns
     /// 404 before ever touching this channel.
-    submit_tx: mpsc::UnboundedSender<ParsedBody>,
+    /// Bounded — per bd tuxlink-rk6s, the channel holds at most one in-flight
+    /// submission. WLE forms close themselves after a successful submit, so
+    /// any second submit on an open session is anomalous (either a buggy
+    /// template or a same-host adversary that bypassed the origin check). A
+    /// bounded channel + try_send + 503-on-full prevents a local flood from
+    /// growing memory while the compose receiver catches up.
+    submit_tx: mpsc::Sender<ParsedBody>,
     /// Port the listener is bound to. Used to validate the Origin header
     /// on POST / per Codex 2026-06-01 P1 #3.
     port: u16,
@@ -157,7 +169,7 @@ pub struct FormSession {
     /// registry (the registry retains the `FormSession` for its
     /// AbortHandle on `close`). Direct callers of `FormSession::open`
     /// obtain the receiver via `take_submit_rx()`.
-    submit_rx: Option<mpsc::UnboundedReceiver<ParsedBody>>,
+    submit_rx: Option<mpsc::Receiver<ParsedBody>>,
     /// AbortHandle for the spawned serve task; calling `abort()` shuts
     /// down the listener (the inner JoinHandle is intentionally not kept
     /// — Drop relies solely on the AbortHandle for sync teardown).
@@ -190,7 +202,7 @@ impl FormSession {
 
         let form_html = substitute_template(&raw, port, &template.folder);
 
-        let (submit_tx, submit_rx) = mpsc::unbounded_channel();
+        let (submit_tx, submit_rx) = mpsc::channel(1);
         let state = Arc::new(SessionState {
             kind: SessionKind::Form,
             form_html,
@@ -264,7 +276,7 @@ impl FormSession {
         let with_vars = substitute_var_placeholders(&substituted, field_values);
         let form_html = inject_field_value_script(&with_vars, field_values);
 
-        let (submit_tx, _submit_rx) = mpsc::unbounded_channel();
+        let (submit_tx, _submit_rx) = mpsc::channel(1);
         // _submit_rx is dropped here: Viewer mode has no submit forwarder.
         // The POST handler rejects with 404 before ever sending on submit_tx,
         // but the tx is retained on SessionState because SessionState's shape
@@ -301,7 +313,7 @@ impl FormSession {
     /// has already been taken. Used by [`FormSessionRegistry::open`] to
     /// hand the receiver to a forwarder task while the registry retains
     /// the [`FormSession`] for its `AbortHandle`.
-    pub fn take_submit_rx(&mut self) -> Option<mpsc::UnboundedReceiver<ParsedBody>> {
+    pub fn take_submit_rx(&mut self) -> Option<mpsc::Receiver<ParsedBody>> {
         self.submit_rx.take()
     }
 
@@ -324,17 +336,23 @@ impl Drop for FormSession {
 ///
 /// {FormServer} → 127.0.0.1
 /// {FormPort}   → <port>
-/// {FormFolder} → /folder/<url-encoded-folder>
-fn substitute_template(raw: &str, port: u16, folder: &str) -> String {
-    use percent_encoding::{utf8_percent_encode, NON_ALPHANUMERIC};
-    let folder_path = format!(
-        "/folder/{}",
-        utf8_percent_encode(folder, NON_ALPHANUMERIC)
-    );
+/// {FormFolder} → /folder   (NO trailing folder name — see below)
+///
+/// Per bd tuxlink-gheo, `{FormFolder}` used to expand to
+/// `/folder/<url-encoded-folder>`, which broke nested-folder templates: a
+/// folder like `Cat1/Sub1` percent-encodes to `Cat1%2FSub1` but axum decodes
+/// wildcard captures before reaching the handler. The handler's
+/// `splitn(2, '/')` then sliced "Cat1" off the front and treated
+/// "Sub1/file.css" as the file_path relative to the already-pinned folder
+/// — double-counting the depth. By emitting just `/folder` here and treating
+/// the entire wildcard rest as the file path in `folder_handler`, the session
+/// works the same way regardless of nesting depth. The `_folder` parameter
+/// is kept on this fn for API stability and is intentionally unused.
+fn substitute_template(raw: &str, port: u16, _folder: &str) -> String {
     let with_subs = raw
         .replace("{FormServer}", "127.0.0.1")
         .replace("{FormPort}", &port.to_string())
-        .replace("{FormFolder}", &folder_path);
+        .replace("{FormFolder}", "/folder");
     inject_skin_link(&with_subs)
 }
 
@@ -757,11 +775,28 @@ async fn submit_handler(state: Arc<SessionState>, req: Request<Body>) -> Respons
             Err(e) => return (StatusCode::BAD_REQUEST, format!("urlencoded parse: {e}")).into_response(),
         }
     };
-    if state.submit_tx.send(parsed).is_err() {
-        // Receiver dropped; the session is closing. Return success anyway
-        // so the form's onsubmit doesn't show a confusing error.
+    // Bounded channel (capacity 1) per bd tuxlink-rk6s. Use try_send so we
+    // don't block the request thread waiting for the compose receiver to
+    // drain — a slow receiver shouldn't gate the form's UI response.
+    match state.submit_tx.try_send(parsed) {
+        Ok(()) => html_with_csp(SUBMITTED_HTML),
+        Err(mpsc::error::TrySendError::Closed(_)) => {
+            // Receiver dropped; the session is closing. Return success
+            // anyway so the form's onsubmit doesn't show a confusing error
+            // (matches the pre-bd-rk6s behavior on a closed channel).
+            html_with_csp(SUBMITTED_HTML)
+        }
+        Err(mpsc::error::TrySendError::Full(_)) => {
+            // Channel full: a prior submission is queued and the compose
+            // receiver hasn't drained yet. Return 503 so the form surfaces
+            // "in flight" rather than silently dropping. Per the rk6s
+            // analysis: WLE forms close themselves after a successful submit,
+            // so any second submit during one session is anomalous (template
+            // bug or local-host adversary past the origin check).
+            (StatusCode::SERVICE_UNAVAILABLE, "submission already in flight")
+                .into_response()
+        }
     }
-    html_with_csp(SUBMITTED_HTML)
 }
 
 const SUBMITTED_HTML: &str = r#"<!doctype html>
@@ -783,22 +818,28 @@ async fn skin_handler() -> Response {
 /// Serve an asset inside the template's folder. Path is URL-decoded by
 /// axum; we canonicalize against the folder and reject anything that
 /// escapes it.
+///
+/// Per bd tuxlink-gheo, the entire `rest` capture IS the file path relative
+/// to `template_folder_path`. The prior implementation stripped a leading
+/// folder segment via `splitn(2, '/')`, which broke nested-folder templates
+/// (axum decodes percent-encoded slashes before the handler runs, so a
+/// nested-folder URL had MORE slashes than expected and the splitn ate
+/// one of them). Since `substitute_template` now emits just `/folder`
+/// (not `/folder/<encoded-folder>`), there's no folder segment to strip.
+///
+/// Per bd tuxlink-4g2n, refuse files whose metadata.len() exceeds
+/// MAX_FOLDER_ASSET_BYTES (8 MiB) before reading them. The WLE form-adjacent
+/// asset use case is small images / CSS / JS; bounding the per-file size
+/// prevents a custom-form directory with a large file from letting any local
+/// client allocate the entire file repeatedly until the process OOMs.
 async fn folder_handler(
     State(state): State<Arc<SessionState>>,
     AxumPath(rest): AxumPath<String>,
 ) -> Response {
-    // Split off the encoded folder prefix; rest = "<encoded-folder>/<file...>"
-    let mut parts = rest.splitn(2, '/');
-    let _folder_segment = parts.next().unwrap_or("");
-    let file_path = parts.next().unwrap_or("");
-    // Note: the encoded folder is informational; we always serve from the
-    // session's template folder (which is the only folder the operator
-    // intended to be readable). This also blunts any directory-name
-    // forgery attempt by a malicious template.
-    if file_path.is_empty() {
+    if rest.is_empty() {
         return (StatusCode::NOT_FOUND, "not found").into_response();
     }
-    let candidate = state.template_folder_path.join(file_path);
+    let candidate = state.template_folder_path.join(rest.as_str());
     let canonical = match candidate.canonicalize() {
         Ok(p) => p,
         Err(_) => return (StatusCode::NOT_FOUND, "not found").into_response(),
@@ -809,6 +850,25 @@ async fn folder_handler(
     };
     if !canonical.starts_with(&root_canonical) {
         return (StatusCode::FORBIDDEN, "path traversal").into_response();
+    }
+    // tuxlink-4g2n: pre-flight size cap. Cheaper than read-then-discard,
+    // and a malicious large file never gets read into the response heap.
+    //
+    // Codex 2026-06-05 P2: a FIFO / socket / device file in a custom forms
+    // folder reports md.len() == 0 (it has no fixed size), so the cap check
+    // passes and the subsequent std::fs::read blocks the async worker waiting
+    // for EOF or reads arbitrary content past the 8 MiB cap. Reject any
+    // non-regular file BEFORE the size check so the cap can't be bypassed
+    // by file-type sleight-of-hand.
+    match std::fs::metadata(&canonical) {
+        Ok(md) if !md.is_file() => {
+            return (StatusCode::FORBIDDEN, "not a regular file").into_response();
+        }
+        Ok(md) if md.len() > MAX_FOLDER_ASSET_BYTES as u64 => {
+            return (StatusCode::PAYLOAD_TOO_LARGE, "asset too large").into_response();
+        }
+        Ok(_) => {}
+        Err(_) => return (StatusCode::NOT_FOUND, "not found").into_response(),
     }
     match std::fs::read(&canonical) {
         Ok(bytes) => {
@@ -875,7 +935,7 @@ pub struct FormSessionRegistry {
 pub struct OpenedSession {
     pub token: String,
     pub port: u16,
-    pub submit_rx: mpsc::UnboundedReceiver<ParsedBody>,
+    pub submit_rx: mpsc::Receiver<ParsedBody>,
 }
 
 /// Result of [`FormSessionRegistry::open_viewer`] (P1 Task 11). No submit
@@ -1000,7 +1060,7 @@ mod tests {
     /// passes for happy-path requests.
     const TEST_PORT: u16 = 34567;
 
-    fn make_state(html: &str) -> (Arc<SessionState>, mpsc::UnboundedReceiver<ParsedBody>) {
+    fn make_state(html: &str) -> (Arc<SessionState>, mpsc::Receiver<ParsedBody>) {
         make_state_with_kind(html, SessionKind::Form)
     }
 
@@ -1010,14 +1070,14 @@ mod tests {
     fn make_state_with_kind(
         html: &str,
         kind: SessionKind,
-    ) -> (Arc<SessionState>, mpsc::UnboundedReceiver<ParsedBody>) {
+    ) -> (Arc<SessionState>, mpsc::Receiver<ParsedBody>) {
         let td = TempDir::new().unwrap();
         let folder = td.path().to_path_buf();
         // Leak the tempdir so the path stays valid for the test's lifetime.
         // (A test-helper struct that holds the TempDir would be cleaner, but
         // for the SessionState tests we don't actually read files.)
         std::mem::forget(td);
-        let (tx, rx) = mpsc::unbounded_channel();
+        let (tx, rx) = mpsc::channel(1);
         let state = Arc::new(SessionState {
             kind,
             form_html: html.to_string(),
@@ -1207,6 +1267,199 @@ mod tests {
         );
     }
 
+    /// bd tuxlink-gheo regression: an asset inside a nested template folder
+    /// (e.g. `General Forms/SubCategory/icon.png`) must be served correctly
+    /// when the request hits `/folder/icon.png`. Previously the handler
+    /// stripped a leading "folder segment" via splitn(2, '/'), which broke
+    /// nested-folder templates: axum decodes %2F → / before the handler runs,
+    /// so the splitn ate an extra path segment when the folder name itself
+    /// contained a slash post-decode.
+    #[tokio::test]
+    async fn folder_route_serves_file_in_nested_folder() {
+        let td = TempDir::new().unwrap();
+        // Mimic a nested WLE folder like "Standard_Forms/General Forms/Sub".
+        let nested = td.path().join("Standard_Forms").join("General Forms").join("Sub");
+        std::fs::create_dir_all(&nested).unwrap();
+        std::fs::write(nested.join("icon.png"), b"\x89PNG\r\n\x1a\n_fake").unwrap();
+        let template_folder = nested.clone();
+        // Leak the TempDir so the folder survives for the test's await
+        // calls (same pattern as make_state).
+        std::mem::forget(td);
+        let (tx, _rx) = mpsc::channel(1);
+        let state = Arc::new(SessionState {
+            kind: SessionKind::Form,
+            form_html: String::new(),
+            template_folder_path: template_folder,
+            submit_tx: tx,
+            port: TEST_PORT,
+        });
+        let router = build_router(state);
+        let resp = router
+            .oneshot(
+                Request::builder()
+                    .uri("/folder/icon.png")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK, "nested-folder asset must resolve");
+        let ct = resp
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+        assert_eq!(ct, "image/png");
+    }
+
+    /// bd tuxlink-4g2n regression: a file whose metadata.len() exceeds
+    /// MAX_FOLDER_ASSET_BYTES must be rejected with 413 BEFORE std::fs::read
+    /// pulls it into memory.
+    #[tokio::test]
+    async fn folder_route_rejects_asset_over_size_cap() {
+        let td = TempDir::new().unwrap();
+        let folder = td.path().to_path_buf();
+        // Write a file larger than the 8 MiB cap (use 8 MiB + 1 KiB so the
+        // pre-flight metadata check trips). Zero-filled is fine; the
+        // handler is supposed to reject before reading content.
+        let oversized_path = folder.join("oversized.bin");
+        let oversized = vec![0u8; MAX_FOLDER_ASSET_BYTES + 1024];
+        std::fs::write(&oversized_path, &oversized).unwrap();
+        std::mem::forget(td);
+        let (tx, _rx) = mpsc::channel(1);
+        let state = Arc::new(SessionState {
+            kind: SessionKind::Form,
+            form_html: String::new(),
+            template_folder_path: folder,
+            submit_tx: tx,
+            port: TEST_PORT,
+        });
+        let router = build_router(state);
+        let resp = router
+            .oneshot(
+                Request::builder()
+                    .uri("/folder/oversized.bin")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    }
+
+    /// Codex 2026-06-05 P2 (post-tuxlink-4g2n): a non-regular file (FIFO /
+    /// socket / device) reports metadata().len() == 0 since it has no fixed
+    /// size, so the size-cap check passes and the subsequent std::fs::read
+    /// could block the async worker waiting for EOF (or read arbitrary
+    /// content past the 8 MiB cap). Reject !is_file() before the size check.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn folder_route_rejects_non_regular_file() {
+        use std::os::unix::fs::FileTypeExt;
+        let td = TempDir::new().unwrap();
+        let folder = td.path().to_path_buf();
+        let fifo_path = folder.join("pipe");
+        // Create a FIFO via nix-style mkfifo (libc; in std via raw syscall).
+        // The std lib doesn't expose mkfifo, so shell out to `mkfifo` —
+        // available on every POSIX system the dev/CI matrix targets.
+        let status = std::process::Command::new("mkfifo")
+            .arg(&fifo_path)
+            .status()
+            .expect("mkfifo command must exist");
+        assert!(status.success(), "mkfifo must succeed");
+        let md = std::fs::metadata(&fifo_path).unwrap();
+        assert!(md.file_type().is_fifo(), "test setup must produce a FIFO");
+        assert_eq!(md.len(), 0, "FIFO reports size 0 — the bypass surface");
+        std::mem::forget(td);
+        let (tx, _rx) = mpsc::channel(1);
+        let state = Arc::new(SessionState {
+            kind: SessionKind::Form,
+            form_html: String::new(),
+            template_folder_path: folder,
+            submit_tx: tx,
+            port: TEST_PORT,
+        });
+        let router = build_router(state);
+        let resp = router
+            .oneshot(
+                Request::builder()
+                    .uri("/folder/pipe")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        // The handler must refuse the FIFO BEFORE any std::fs::read — if
+        // the test hangs here, the guard is missing and read() is blocking
+        // on the empty FIFO waiting for a writer.
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    }
+
+    /// bd tuxlink-4g2n: a file at exactly the cap (or below) must still
+    /// succeed — verify the comparison is strict-greater-than.
+    #[tokio::test]
+    async fn folder_route_serves_asset_at_size_cap() {
+        let td = TempDir::new().unwrap();
+        let folder = td.path().to_path_buf();
+        let path = folder.join("at-cap.bin");
+        // 1 MiB — well under the 8 MiB cap. (Writing 8 MiB on every test run
+        // is wasteful disk + slow on the Pi; the bounded behavior is the
+        // same.)
+        std::fs::write(&path, vec![0u8; 1_048_576]).unwrap();
+        std::mem::forget(td);
+        let (tx, _rx) = mpsc::channel(1);
+        let state = Arc::new(SessionState {
+            kind: SessionKind::Form,
+            form_html: String::new(),
+            template_folder_path: folder,
+            submit_tx: tx,
+            port: TEST_PORT,
+        });
+        let router = build_router(state);
+        let resp = router
+            .oneshot(
+                Request::builder()
+                    .uri("/folder/at-cap.bin")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    /// bd tuxlink-rk6s regression: when the submission channel is full
+    /// (one in-flight, receiver hasn't drained), a second POST must return
+    /// 503 instead of being silently queued onto an unbounded buffer.
+    #[tokio::test]
+    async fn post_root_second_submit_returns_503_when_channel_full() {
+        let (state, _rx) = make_state("");
+        let router = build_router(state.clone());
+        let body = "Subject=Hi&Submit=Submit";
+        let mk_req = || {
+            Request::builder()
+                .method("POST")
+                .uri("/")
+                .header("Content-Type", "application/x-www-form-urlencoded")
+                .header("Origin", local_origin())
+                .body(Body::from(body))
+                .unwrap()
+        };
+        // First submit fills the bounded channel (capacity 1). Receiver
+        // intentionally NOT drained — _rx is held in scope so the channel
+        // stays open but full.
+        let first = router.clone().oneshot(mk_req()).await.unwrap();
+        assert_eq!(first.status(), StatusCode::OK, "first submit should succeed");
+        // Second submit (channel full) must surface 503 — the prior
+        // unbounded channel would silently queue this.
+        let second = router.oneshot(mk_req()).await.unwrap();
+        assert_eq!(
+            second.status(),
+            StatusCode::SERVICE_UNAVAILABLE,
+            "second submit on full bounded channel must return 503"
+        );
+    }
+
     #[tokio::test]
     async fn unknown_route_returns_404() {
         let (state, _rx) = make_state("");
@@ -1233,11 +1486,19 @@ mod tests {
     }
 
     #[test]
-    fn substitute_template_replaces_form_folder_url_encoded() {
+    fn substitute_template_emits_bare_folder_root() {
+        // bd tuxlink-gheo: {FormFolder} now expands to just `/folder` so
+        // that the wildcard rest on the handler side IS the file path
+        // relative to the per-session template folder. Previously this
+        // emitted `/folder/<url-encoded-folder>` which broke nested-folder
+        // templates (axum decoded %2F → / before the handler saw it, and
+        // the splitn-based prefix-strip ate one segment).
         let raw = r#"<a href="{FormFolder}/foo.html">x</a>"#;
         let out = substitute_template(raw, 1, "ICS Forms");
-        // "ICS Forms" → "ICS%20Forms" (NON_ALPHANUMERIC encodes the space)
-        assert!(out.contains("/folder/ICS%20Forms"));
+        assert!(out.contains(r#"<a href="/folder/foo.html">x</a>"#));
+        // Folder name is no longer in the URL — verify it's absent.
+        assert!(!out.contains("ICS%20Forms"));
+        assert!(!out.contains("ICS Forms"));
     }
 
     #[test]

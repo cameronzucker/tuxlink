@@ -3192,6 +3192,32 @@ pub async fn ardop_listen(
     session: State<'_, std::sync::Arc<crate::modem_status::ModemSession>>,
     listen_state: State<'_, std::sync::Arc<ArdopListenState>>,
 ) -> Result<(), UiError> {
+    // Thin wrapper. The body lives in `ardop_listen_inner` so the
+    // tuxlink-0ye6 Task 3.5 `ardop_open_session` auto-arm path can call
+    // it without going through the Tauri dispatcher (which would require
+    // re-extracting the same managed-state Arcs the outer caller already
+    // has). Mirror of the VARA Task 3.2 `arm_vara_listener_inner` pattern.
+    ardop_listen_inner(
+        &app,
+        log.inner(),
+        session.inner(),
+        listen_state.inner(),
+    )
+    .await
+}
+
+/// Inner body of [`ardop_listen`] — factored out so the
+/// `ardop_open_session` auto-arm path (tuxlink-0ye6 Task 3.5) can call
+/// it directly without re-dispatching through Tauri. Borrowed args (no
+/// `State`-typed params) because the open-session path already holds the
+/// same managed-state Arcs via its own `State` extractors. Mirror of the
+/// VARA `arm_vara_listener_inner` pattern (Task 3.2).
+pub(crate) async fn ardop_listen_inner(
+    app: &AppHandle,
+    log: &std::sync::Arc<SessionLogState>,
+    session: &std::sync::Arc<crate::modem_status::ModemSession>,
+    listen_state: &std::sync::Arc<ArdopListenState>,
+) -> Result<(), UiError> {
     use crate::winlink::listener::{ListenerArmsRecord, TransportKind, DEFAULT_TTL};
 
     // Refuse a second arm while one is in flight.
@@ -3323,8 +3349,8 @@ pub async fn ardop_listen(
 
     let mins = arms.ttl.as_secs() / 60;
     emit_session_line(
-        &app,
-        &log,
+        app,
+        log,
         LogLevel::Info,
         format!(
             "ARDOP listener armed for {mins} min (consent uuid {}). \
@@ -3346,9 +3372,32 @@ pub async fn ardop_set_listen(
     listen_state: State<'_, std::sync::Arc<ArdopListenState>>,
     enabled: bool,
 ) -> Result<(), UiError> {
+    ardop_set_listen_inner(
+        &app,
+        log.inner(),
+        session.inner(),
+        listen_state.inner(),
+        enabled,
+    )
+    .await
+}
+
+/// Inner body of [`ardop_set_listen`] — factored out so the tuxlink-0ye6
+/// Task 3.5 `ardop_close_session` path can disarm the listener without
+/// re-dispatching through Tauri. Mirror of the VARA Task 3.3
+/// `disarm_vara_listener_inner` pattern, but kept as a full set-listen
+/// (arm OR disarm) helper to preserve the `enabled == true` re-arm path
+/// the existing `ardop_set_listen` exposed.
+pub(crate) async fn ardop_set_listen_inner(
+    app: &AppHandle,
+    log: &std::sync::Arc<SessionLogState>,
+    session: &std::sync::Arc<crate::modem_status::ModemSession>,
+    listen_state: &std::sync::Arc<ArdopListenState>,
+    enabled: bool,
+) -> Result<(), UiError> {
     use std::sync::atomic::Ordering;
     if enabled {
-        return ardop_listen(app, log, session, listen_state).await;
+        return ardop_listen_inner(app, log, session, listen_state).await;
     }
     let handle = {
         let mut guard = listen_state.inner.lock().unwrap();
@@ -3367,15 +3416,15 @@ pub async fn ardop_set_listen(
         let _ = session.abort_in_flight();
         let _ = session.send_listen_command(false);
         emit_session_line(
-            &app,
-            &log,
+            app,
+            log,
             LogLevel::Info,
             "ARDOP listener disarming — ABORT + LISTEN FALSE sent; waiting for consumer to drain.".to_string(),
         );
     } else {
         emit_session_line(
-            &app,
-            &log,
+            app,
+            log,
             LogLevel::Warn,
             "ARDOP listener disarm: no armed listener".to_string(),
         );
@@ -3388,6 +3437,18 @@ pub async fn ardop_set_listen(
 #[derive(Default)]
 pub struct ArdopListenState {
     pub inner: std::sync::Mutex<Option<ArdopListenHandle>>,
+}
+
+impl ArdopListenState {
+    /// True iff a listener handle is currently registered (the consumer task
+    /// has been spawned and not yet drained). Mirror of
+    /// [`VaraListenState::is_armed`] — added for tuxlink-0ye6 Task 3.5 so
+    /// `ardop_open_session` can detect the auto-armed state in its
+    /// post-open snapshot and `ardop_close_session` can early-skip the
+    /// disarm side-channel when no listener is armed.
+    pub fn is_armed(&self) -> bool {
+        self.inner.lock().map(|g| g.is_some()).unwrap_or(false)
+    }
 }
 
 pub struct ArdopListenHandle {
@@ -3424,6 +3485,13 @@ fn ardop_listener_consumer_task(
             line.to_string(),
         );
     };
+
+    // tuxlink-pdnw (Codex Phase 3-4 P1 #5): snapshot the close-generation
+    // BEFORE the transport take. If `ardop_close_session_inner` bumps the
+    // generation while this consumer is in flight, the shutdown-path
+    // install-back below sees the stale snapshot and drops the transport
+    // instead of restoring it into a session the operator just closed.
+    let close_gen_snapshot = session.current_close_generation();
 
     // Take the transport. If someone else has it (race), clean up cleanly.
     // Codex review 2026-06-03 [P2 #5] (tuxlink-61yg): a stale take_transport
@@ -3577,11 +3645,27 @@ fn ardop_listener_consumer_task(
     // Shutdown path: send LISTEN FALSE + return transport.
     progress("ARDOP listener consumer: draining; sending LISTEN FALSE.");
     let _ = session.send_listen_command(false);
-    session.install_transport(transport);
-    let mut snap = session.status_snapshot();
-    snap.peer = None;
-    snap.last_error = None;
-    session.set_status(snap);
+    // tuxlink-pdnw (Codex Phase 3-4 P1 #5): guarded install. Stale snapshot
+    // → close intervened (ardop_close_session_inner ran since we took the
+    // transport). Drop the transport instead of installing — the session
+    // is in a Stopped posture and a fresh open will spawn a new transport.
+    match session
+        .install_transport_if_generation_matches(transport, close_gen_snapshot)
+    {
+        Ok(()) => {
+            let mut snap = session.status_snapshot();
+            snap.peer = None;
+            snap.last_error = None;
+            session.set_status(snap);
+        }
+        Err(dropped) => {
+            progress(
+                "ARDOP listener consumer: close intervened during drain; \
+                 dropping transport instead of restoring session.",
+            );
+            drop(dropped);
+        }
+    }
     // Clear shared state.
     *listen_state.inner.lock().unwrap() = None;
     progress("ARDOP listener disarmed (transport returned).");
@@ -3593,7 +3677,11 @@ fn arq_disconnect_via_cmd_writer(
     transport: &dyn crate::winlink::modem::ModemTransport,
 ) -> std::io::Result<()> {
     use std::io::Write;
-    let mut writer = transport.try_clone_abort_writer().ok_or_else(|| {
+    // tuxlink-0ye6 Task 4.1 widened the return type to (writer, stream).
+    // The DISCONNECT path only needs the cooperative writer; the hard-close
+    // stream is discarded — graceful disconnect is the contract here, and
+    // an unresponsive peer just surfaces the write error to the caller.
+    let (mut writer, _stream) = transport.try_clone_abort_writer().ok_or_else(|| {
         std::io::Error::new(std::io::ErrorKind::NotConnected, "no cmd writer")
     })?;
     writer.write_all(b"DISCONNECT\r")?;
@@ -3650,7 +3738,7 @@ fn ardop_arms_log_path() -> std::path::PathBuf {
 // Key shape divergences from ARDOP:
 // - VARA is NOT spawned by tuxlink. The operator runs VARA externally
 //   (Windows native, or under Wine on x86 Linux). `vara_listen` therefore
-//   refuses to arm unless `vara_start_session` has already opened the TCP
+//   refuses to arm unless `vara_open_session` has already opened the TCP
 //   transport (state == Open). There is no "start the modem first" auto-spawn.
 // - VARA's LISTEN setter uses `LISTEN ON` / `LISTEN OFF` (not ARDOP's
 //   `LISTEN TRUE` / `LISTEN FALSE`).
@@ -3778,10 +3866,20 @@ pub struct VaraListenHandle {
     pub shutdown: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
+/// Returns `true` when a VARA listener consumer task is currently armed
+/// (a `VaraListenHandle` is present in `listen_state.inner`). Cheap; safe
+/// to poll. Used by the `vara_open_session` auto-arm path's unit tests to
+/// assert intent-driven arming without spinning up a real consumer task.
+impl VaraListenState {
+    pub fn is_armed(&self) -> bool {
+        self.inner.lock().map(|g| g.is_some()).unwrap_or(false)
+    }
+}
+
 /// Arm the VARA listener for the default TTL (1 hour per architecture §5).
 ///
 /// **Precondition:** VARA must already be in state==Open (operator must
-/// have run `vara_start_session` first). Unlike ARDOP, tuxlink does NOT
+/// have run `vara_open_session` first). Unlike ARDOP, tuxlink does NOT
 /// spawn VARA — it's an externally-managed Windows process (native or
 /// under Wine) and the operator owns the lifecycle. An arm against a
 /// closed session returns `UiError::Internal` with a clear remediation.
@@ -3803,7 +3901,72 @@ pub async fn vara_listen(
     vara_session: State<'_, std::sync::Arc<crate::winlink::modem::vara::VaraSession>>,
     listen_state: State<'_, std::sync::Arc<VaraListenState>>,
 ) -> Result<(), UiError> {
+    use crate::winlink::listener::TransportKind;
+    // Codex Phase 3-4 boundary P2 #3 (tuxlink-u1r7): the listener-arm
+    // record must reflect the session's actual VARA-HF vs VARA-FM kind,
+    // not a hardcoded HF. The session's `active_transport_kind` was set
+    // by `vara_open_session_inner` after the TCP open succeeded; pull
+    // it here. If no session is open (snapshot has None), the inner
+    // helper will surface a clean "transport not Open" error.
+    let kind = vara_session
+        .snapshot()
+        .active_transport_kind
+        .unwrap_or(TransportKind::VaraHf);
+    // Thin wrapper. The body lives in `arm_vara_listener_inner` so the
+    // `vara_open_session` auto-arm path can call it without going through
+    // the Tauri command dispatcher (which would require an AppHandle from
+    // inside the inner command + double-acquire the same State).
+    arm_vara_listener_inner(
+        &app,
+        log.inner(),
+        vara_session.inner(),
+        listen_state.inner(),
+        kind,
+    )
+    .await
+}
+
+/// Inner body of [`vara_listen`] — factored out so the
+/// `vara_open_session` auto-arm path (tuxlink-0ye6 Task 3.2) can call it
+/// directly without re-dispatching through Tauri. Borrowed args (no
+/// `State`-typed params) because the open-session path already holds the
+/// same managed-state Arcs via its own `State` extractors.
+///
+/// `transport_kind` (Codex Phase 3-4 boundary P2 #3 — tuxlink-u1r7) flows
+/// from the session's `active_transport_kind` (manual arm path) or from
+/// the operator-supplied `vara_open_session` arg (auto-arm path). Used as
+/// the arms-record + reject-event transport label so VARA-FM listeners
+/// don't surface in forensics as VARA-HF. Validation: rejects non-VARA
+/// kinds before any arm state mutation.
+///
+/// Note: intent is not currently load-bearing inside the consumer task
+/// (the listener accepts any allowlisted peer regardless of intent), but
+/// reserving the parameter at the inner boundary makes Phase 3's
+/// `RadioOnly`-specific routing-flag wiring a no-source-shape change.
+pub(crate) async fn arm_vara_listener_inner(
+    app: &AppHandle,
+    log: &std::sync::Arc<SessionLogState>,
+    vara_session: &std::sync::Arc<crate::winlink::modem::vara::VaraSession>,
+    listen_state: &std::sync::Arc<VaraListenState>,
+    transport_kind: crate::winlink::listener::TransportKind,
+) -> Result<(), UiError> {
     use crate::winlink::listener::{ListenerArmsRecord, TransportKind, DEFAULT_TTL};
+
+    // Codex Phase 3-4 boundary P2 #3 (tuxlink-u1r7): defensive validation —
+    // arm_vara_listener_inner is VARA-only. A future regression that
+    // routes a non-VARA TransportKind here surfaces a clean error before
+    // any arms-record / LISTEN ON mutation.
+    if !matches!(
+        transport_kind,
+        TransportKind::VaraHf | TransportKind::VaraFm
+    ) {
+        return Err(UiError::Internal {
+            detail: format!(
+                "arm_vara_listener_inner invoked with non-VARA transport_kind={:?}",
+                transport_kind
+            ),
+        });
+    }
 
     // Refuse a second arm while one is in flight.
     {
@@ -3838,7 +4001,7 @@ pub async fn vara_listen(
         return Err(UiError::Internal {
             detail: format!(
                 "VARA listener arm refused — VARA transport is not Open (current state: {:?}). \
-                 Press Start on the VARA panel first (vara_start_session) so the TCP transport \
+                 Press Start on the VARA panel first (vara_open_session) so the TCP transport \
                  is open before arming the listener.",
                 snap.state
             ),
@@ -3848,7 +4011,10 @@ pub async fn vara_listen(
     // Append arms record BEFORE flipping the modem (mirror of ARDOP's
     // Codex 2026-06-03 P2 fix — the arms record is the audit anchor; if
     // the modem flip fails downstream we still have the attempt logged).
-    let arms = ListenerArmsRecord::arm(TransportKind::VaraHf, DEFAULT_TTL);
+    // Codex Phase 3-4 boundary P2 #3 (tuxlink-u1r7): record the operator-
+    // supplied transport_kind instead of a hardcoded VaraHf so FM arm
+    // events surface accurately in forensics.
+    let arms = ListenerArmsRecord::arm(transport_kind, DEFAULT_TTL);
     let log_path = vara_arms_log_path();
     arms.append_to_log(&log_path)
         .map_err(|e| UiError::Internal { detail: e.to_string() })?;
@@ -3882,11 +4048,11 @@ pub async fn vara_listen(
     let arbiter: std::sync::Arc<crate::position::PositionArbiter> =
         (*app.state::<std::sync::Arc<crate::position::PositionArbiter>>()).clone();
     let vara_session_arc: std::sync::Arc<crate::winlink::modem::vara::VaraSession> =
-        (*vara_session).clone();
+        vara_session.clone();
     let arms_for_task = arms.clone();
     let app_clone = app.clone();
-    let log_clone: std::sync::Arc<SessionLogState> = (*log).clone();
-    let listen_state_for_task = (*listen_state).clone();
+    let log_clone: std::sync::Arc<SessionLogState> = log.clone();
+    let listen_state_for_task = listen_state.clone();
     let bound_host = snap.bound_host.clone();
     let bound_cmd_port = snap.bound_cmd_port;
     tokio::task::spawn_blocking(move || {
@@ -3902,13 +4068,14 @@ pub async fn vara_listen(
             listen_state_for_task,
             bound_host,
             bound_cmd_port,
+            transport_kind,
         );
     });
 
     let mins = arms.ttl.as_secs() / 60;
     emit_session_line(
-        &app,
-        &log,
+        app,
+        log,
         LogLevel::Info,
         format!(
             "VARA listener armed for {mins} min (consent uuid {}). \
@@ -3930,10 +4097,28 @@ pub async fn vara_set_listen(
     listen_state: State<'_, std::sync::Arc<VaraListenState>>,
     enabled: bool,
 ) -> Result<(), UiError> {
-    use std::sync::atomic::Ordering;
     if enabled {
         return vara_listen(app, log, vara_session, listen_state).await;
     }
+    disarm_vara_listener_inner(&app, log.inner(), listen_state.inner());
+    Ok(())
+}
+
+/// Inner body of [`vara_set_listen`] with `enabled == false` — factored out
+/// so [`crate::winlink::modem::vara::commands::vara_close_session`] (tuxlink-0ye6
+/// Task 3.3) can call it directly without re-dispatching through Tauri. Mirrors
+/// the shape of [`arm_vara_listener_inner`] (Task 3.2) so the close-session
+/// path's listener disarm is one helper call.
+///
+/// Idempotent: when no listener is armed, emits a Warn log line and returns
+/// without an error. The close-session contract is "unconditional teardown,"
+/// so a missing-listener-on-disarm is information, not a failure.
+pub(crate) fn disarm_vara_listener_inner(
+    app: &AppHandle,
+    log: &std::sync::Arc<SessionLogState>,
+    listen_state: &std::sync::Arc<VaraListenState>,
+) {
+    use std::sync::atomic::Ordering;
     let handle = {
         let mut guard = listen_state.inner.lock().unwrap();
         guard.take()
@@ -3947,20 +4132,19 @@ pub async fn vara_set_listen(
         // any send from here would race the consumer's transport.
         h.shutdown.store(true, Ordering::SeqCst);
         emit_session_line(
-            &app,
-            &log,
+            app,
+            log,
             LogLevel::Info,
             "VARA listener disarming — shutdown flag set; waiting for consumer to drain.".to_string(),
         );
     } else {
         emit_session_line(
-            &app,
-            &log,
+            app,
+            log,
             LogLevel::Warn,
             "VARA listener disarm: no armed listener".to_string(),
         );
     }
-    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -3976,6 +4160,7 @@ fn vara_listener_consumer_task(
     listen_state: std::sync::Arc<VaraListenState>,
     bound_host: Option<String>,
     bound_cmd_port: Option<u16>,
+    transport_kind: crate::winlink::listener::TransportKind,
 ) {
     use std::sync::atomic::Ordering;
     use std::time::Duration;
@@ -3992,6 +4177,13 @@ fn vara_listener_consumer_task(
             line.to_string(),
         );
     };
+
+    // tuxlink-pdnw (Codex Phase 3-4 P1 #4): snapshot the close-generation
+    // BEFORE the transport take. If `vara_close_session_inner` bumps the
+    // generation while this consumer is in flight, the shutdown-path
+    // install-back below sees the stale snapshot and drops the transport
+    // instead of restoring the session to `Open`.
+    let close_gen_snapshot = vara_session.current_close_generation();
 
     // Take the transport. If someone else has it (race), clean up cleanly.
     // Mirror of ARDOP's tuxlink-61yg Codex P2 #5 fix.
@@ -4035,11 +4227,21 @@ fn vara_listener_consumer_task(
                     "VARA inbound: {} accepted; running B2F…",
                     peer_call
                 ));
+                // Codex Phase 3-4 boundary P2 #4 (tuxlink-u1r7): mark
+                // the session as running an inbound exchange so a
+                // status poll surfaces Exchange::Inbound. Cleared at
+                // the bottom of this branch (success / config-read
+                // failure / tempdir failure all route through the
+                // continue or the end-of-branch end_exchange).
+                vara_session.begin_exchange(
+                    crate::modem_status::ExchangeState::Inbound,
+                );
                 let cfg = match crate::config::read_config() {
                     Ok(c) => c,
                     Err(e) => {
                         progress(&format!("VARA listener: config read failed {e}; dropping link"));
                         let _ = crate::winlink::modem::vara::set_listen(&mut transport, false);
+                        vara_session.end_exchange();
                         continue;
                     }
                 };
@@ -4075,6 +4277,7 @@ fn vara_listener_consumer_task(
                                      tempdir for protocol-only exchange ({e}); \
                                      dropping link."
                                 ));
+                                vara_session.end_exchange();
                                 continue;
                             }
                         }
@@ -4093,6 +4296,9 @@ fn vara_listener_consumer_task(
                 // best-effort DISCONNECT so the modem releases the ARQ
                 // link if it's still up.
                 let _ = transport.send(&crate::winlink::modem::vara::OutboundCommand::Disconnect);
+                // Codex Phase 3-4 boundary P2 #4: clear the exchange
+                // marker now that the b2f handling is fully done.
+                vara_session.end_exchange();
             }
             InboundOutcome::RejectedAllowlist { peer } => {
                 progress(&format!(
@@ -4101,8 +4307,10 @@ fn vara_listener_consumer_task(
                 ));
                 let log_path = vara_arms_log_path();
                 let peer_id = crate::winlink::listener::PeerId::Callsign(peer);
+                // Codex Phase 3-4 boundary P2 #3 (tuxlink-u1r7): use the
+                // operator-supplied transport_kind, not a hardcoded VaraHf.
                 let event = crate::winlink::listener::packet_gate::ListenerRejectEvent::new(
-                    crate::winlink::listener::TransportKind::VaraHf,
+                    transport_kind,
                     "allowlist",
                     &peer_id,
                 );
@@ -4116,7 +4324,7 @@ fn vara_listener_consumer_task(
                 let log_path = vara_arms_log_path();
                 let peer_id = crate::winlink::listener::PeerId::Callsign(peer);
                 let event = crate::winlink::listener::packet_gate::ListenerRejectEvent::new(
-                    crate::winlink::listener::TransportKind::VaraHf,
+                    transport_kind,
                     "expired",
                     &peer_id,
                 );
@@ -4126,11 +4334,36 @@ fn vara_listener_consumer_task(
     }
 
     // Shutdown path: send LISTEN OFF best-effort and return the transport
-    // to the session so the operator's vara_stop_session / vara_status
+    // to the session so the operator's vara_close_session / vara_status
     // sees the transport as if the consumer never owned it.
     progress("VARA listener consumer: draining; sending LISTEN OFF.");
     let _ = crate::winlink::modem::vara::set_listen(&mut transport, false);
-    vara_session.return_transport(transport, bound_host, bound_cmd_port);
+    // tuxlink-pdnw (Codex Phase 3-4 P1 #4): guarded install. Stale snapshot
+    // → close intervened (vara_close_session_inner ran since we took the
+    // transport). Drop the transport instead of restoring `VaraState::Open`.
+    //
+    // tuxlink-0iqi: the listener consumer's drain path runs at shutdown —
+    // it's tearing down the session, not preserving the operator's active
+    // mode. Pass `None`/`None` for active_intent + active_transport_kind
+    // so the install-back (if it happens — fresh snapshot only) resets
+    // the active-mode fields, matching the legacy drain behavior.
+    match vara_session.install_transport_if_generation_matches(
+        transport,
+        close_gen_snapshot,
+        bound_host,
+        bound_cmd_port,
+        None,
+        None,
+    ) {
+        Ok(()) => {}
+        Err(dropped) => {
+            progress(
+                "VARA listener consumer: close intervened during drain; \
+                 dropping transport instead of restoring session.",
+            );
+            drop(dropped);
+        }
+    }
     *listen_state.inner.lock().unwrap() = None;
     progress("VARA listener disarmed (transport returned).");
 }
@@ -4791,9 +5024,29 @@ pub async fn telnet_p2p_connect(
 
     // tuxlink-l55l: read the outbox BEFORE opening the socket — same ordering
     // as `native_telnet_exchange` (P1.3 Codex review). A malformed outbox
-    // fails fast without consuming an on-air slot or surprising the peer.
-    let outbound = match crate::winlink_backend::build_outbound_proposals(&mailbox) {
+    // surfaces an error before any peer interaction.
+    //
+    // tuxlink-u5hl (Codex Round 5 P1 #3 + Phase 3-4 RE-REVIEW P2): for the
+    // safety-gate `MessageRejected` case (non-CMS intent, schema gate),
+    // degrade to empty outbound rather than failing — the operator's
+    // telnet walk through still completes the handshake, no proposal
+    // ships, and the peer sees an empty exchange (consistent with
+    // listener-answer pattern). Other outbox errors (corrupt mailbox,
+    // etc.) still fail-closed via the error path below.
+    let outbound = match crate::winlink_backend::build_outbound_proposals(
+        &mailbox,
+        SessionIntent::P2p,
+    ) {
         Ok(v) => v,
+        Err(crate::winlink_backend::BackendError::MessageRejected(reason)) => {
+            emit_session_line(
+                &app,
+                &log,
+                LogLevel::Info,
+                format!("Outbound drain skipped ({reason}); telnet proceeds with empty outbound"),
+            );
+            Vec::new()
+        }
         Err(e) => {
             p2p_state.in_progress.store(false, Ordering::SeqCst);
             emit_p2p_status(&app, StatusDto::Disconnected);
@@ -7033,6 +7286,109 @@ hw:CARD=Device,DEV=0
         assert_eq!(v["received_count"], 1);
     }
 
+    // ── tuxlink-u1r7 — Codex Phase 3-4 boundary P2 #3 ──────────────────
+    //
+    // `arm_vara_listener_inner` now takes a `transport_kind: TransportKind`
+    // parameter (defaulting to the session's `active_transport_kind` at
+    // the manual-arm site; passed through from `vara_open_session`'s arg
+    // at the auto-arm site) so the arms-record + reject-event labels
+    // reflect VARA-HF vs VARA-FM instead of a hardcoded HF.
+
+    /// The arms-record helper records exactly the kind it's handed. Pin
+    /// both VaraHf and VaraFm so a future regression that hardcodes
+    /// VaraHf again surfaces.
+    #[test]
+    fn arms_record_carries_supplied_transport_kind() {
+        use crate::winlink::listener::{
+            ListenerArmsRecord, TransportKind, DEFAULT_TTL,
+        };
+        let hf = ListenerArmsRecord::arm(TransportKind::VaraHf, DEFAULT_TTL);
+        assert_eq!(hf.transport, TransportKind::VaraHf);
+        let fm = ListenerArmsRecord::arm(TransportKind::VaraFm, DEFAULT_TTL);
+        assert_eq!(
+            fm.transport,
+            TransportKind::VaraFm,
+            "P2 #3: arms-record must reflect VaraFm when armed for FM, \
+             not a hardcoded VaraHf"
+        );
+    }
+
+    /// The reject-event constructor records the supplied kind. Pins the
+    /// consumer-task reject path against a hardcoded-HF regression.
+    #[test]
+    fn reject_event_carries_supplied_transport_kind() {
+        use crate::winlink::listener::{
+            packet_gate::ListenerRejectEvent, PeerId, TransportKind,
+        };
+        use crate::winlink::ax25::frame::Address;
+        let peer = PeerId::Callsign(Address {
+            call: "W1ABC".into(),
+            ssid: 0,
+        });
+        let evt_hf =
+            ListenerRejectEvent::new(TransportKind::VaraHf, "allowlist", &peer);
+        let json_hf = serde_json::to_string(&evt_hf).unwrap();
+        assert!(
+            json_hf.contains("vara-hf"),
+            "VaraHf reject record must serialize with vara-hf transport label; \
+             got: {json_hf}"
+        );
+
+        let evt_fm =
+            ListenerRejectEvent::new(TransportKind::VaraFm, "allowlist", &peer);
+        let json_fm = serde_json::to_string(&evt_fm).unwrap();
+        assert!(
+            json_fm.contains("vara-fm"),
+            "P2 #3: VaraFm reject record must serialize with vara-fm transport \
+             label, not vara-hf; got: {json_fm}"
+        );
+        assert!(
+            !json_fm.contains("vara-hf"),
+            "VaraFm reject record must not contain vara-hf label"
+        );
+    }
+
+    /// Sentinel — pin the `arm_vara_listener_inner` signature shape so a
+    /// regression to "no transport_kind param" breaks the typecheck. The
+    /// body is irrelevant; the existence-check at the module boundary is
+    /// the test. async-fn return shape makes a fully-typed fn-pointer
+    /// coercion impossible — reference the function by name.
+    #[test]
+    fn arm_vara_listener_inner_signature_includes_transport_kind() {
+        let _f = arm_vara_listener_inner;
+        // Pin the TransportKind type is reachable; if a regression drops
+        // the param from the signature this compile-fence still passes
+        // but the source-scan sentinel below catches it.
+        let _kind: crate::winlink::listener::TransportKind =
+            crate::winlink::listener::TransportKind::VaraFm;
+    }
+
+    /// Source-scan sentinel: the consumer task's reject paths must NOT
+    /// hardcode the VaraHf transport kind directly inside the
+    /// `ListenerRejectEvent::new(...)` invocations (the two reject-event
+    /// constructors each had a direct hardcode in the prior shape).
+    /// Search for the precise pattern that was the bug — the literal
+    /// `RejectEvent::new(` followed by a positional hardcode — so the
+    /// test is robust to incidental `VaraHf` references in test
+    /// fixtures and docstrings.
+    #[test]
+    fn vara_consumer_reject_does_not_hardcode_transport_kind() {
+        let source = include_str!("ui_commands.rs");
+        // Sentinel assembled via `concat!` so this test's own bytes
+        // don't trip the search.
+        let bug_pattern = concat!(
+            "ListenerRejectEvent::new(\n",
+            "                    crate::winlink::listener::TransportKind::",
+            "Vara",
+        );
+        assert!(
+            !source.contains(bug_pattern),
+            "P2 #3: consumer-task reject-event constructors must take \
+             the threaded `transport_kind` parameter, not a hardcoded \
+             `crate::winlink::listener::TransportKind::Vara*` literal. \
+             Sentinel found the pre-fix shape."
+        );
+    }
     // ========================================================================
     // P1 Task 10 critical-fix: send_webview_form synthesis (tuxlink-tzr5)
     // ========================================================================

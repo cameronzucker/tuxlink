@@ -106,7 +106,8 @@ pub struct ExchangeConfig {
 ///   silently re-pool already-composed messages mid-session. The
 ///   banner parser surfaces what the remote IS so the UI can show a
 ///   persistent state strip; it does not mutate routing flags.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum SessionIntent {
     /// Default — talking to the global Winlink CMS, either directly
     /// (Telnet/TLS to `cms.winlink.org:8773`) or via a transparent
@@ -186,6 +187,14 @@ impl SessionIntent {
             Self::PostOffice => Some(RoutingFlag::PostOffice),
             Self::Mesh | Self::P2p => None,
         }
+    }
+
+    /// True for intents that auto-arm a listener at Open Session (per spec §2 + §3).
+    /// Driven by whether the intent has an inbound side: P2p (any peer) and RadioOnly
+    /// (R-pool peer) yes; Cms (CMS gateway is outbound-only from the client's view),
+    /// PostOffice and Mesh (out of alpha scope) no.
+    pub fn auto_arms_listener(self) -> bool {
+        matches!(self, SessionIntent::P2p | SessionIntent::RadioOnly)
     }
 }
 
@@ -802,6 +811,48 @@ mod tests {
         assert_eq!(RoutingFlag::from_char('l'), None);
         assert_eq!(RoutingFlag::from_char('X'), None);
         assert_eq!(RoutingFlag::from_char(' '), None);
+    }
+
+    // ============================================================================
+    // SessionIntent serde + auto_arms_listener (tuxlink-0ye6 — Phase 3, Task 3.1)
+    // ============================================================================
+
+    #[test]
+    fn session_intent_serializes_kebab_case() {
+        use serde_json;
+        assert_eq!(serde_json::to_string(&SessionIntent::Cms).unwrap(),         "\"cms\"");
+        assert_eq!(serde_json::to_string(&SessionIntent::P2p).unwrap(),         "\"p2p\"");
+        assert_eq!(serde_json::to_string(&SessionIntent::RadioOnly).unwrap(),   "\"radio-only\"");
+        assert_eq!(serde_json::to_string(&SessionIntent::PostOffice).unwrap(),  "\"post-office\"");
+        assert_eq!(serde_json::to_string(&SessionIntent::Mesh).unwrap(),        "\"mesh\"");
+    }
+
+    #[test]
+    fn session_intent_deserializes_kebab_case() {
+        use serde_json;
+        let cms: SessionIntent = serde_json::from_str("\"cms\"").unwrap();
+        let p2p: SessionIntent = serde_json::from_str("\"p2p\"").unwrap();
+        let ro:  SessionIntent = serde_json::from_str("\"radio-only\"").unwrap();
+        let po:  SessionIntent = serde_json::from_str("\"post-office\"").unwrap();
+        let me:  SessionIntent = serde_json::from_str("\"mesh\"").unwrap();
+        assert_eq!(cms, SessionIntent::Cms);
+        assert_eq!(p2p, SessionIntent::P2p);
+        assert_eq!(ro,  SessionIntent::RadioOnly);
+        assert_eq!(po,  SessionIntent::PostOffice);
+        assert_eq!(me,  SessionIntent::Mesh);
+    }
+
+    #[test]
+    fn auto_arms_listener_matches_spec_matrix() {
+        // Per spec §3 capability matrix — only intents that accept inbound auto-arm.
+        assert!(!SessionIntent::Cms.auto_arms_listener());
+        assert!( SessionIntent::P2p.auto_arms_listener());
+        assert!( SessionIntent::RadioOnly.auto_arms_listener());
+        // PostOffice + Mesh are out of alpha scope; their auto-arm behavior is
+        // defined-but-unused. Codify the current intent so a future change is
+        // a deliberate decision, not a silent flip.
+        assert!(!SessionIntent::PostOffice.auto_arms_listener());
+        assert!(!SessionIntent::Mesh.auto_arms_listener());
     }
 
     fn outbound_message(mid: &str, subject: &str, body: &[u8]) -> (OutboundMessage, Vec<u8>) {

@@ -119,9 +119,9 @@ export function Ics213Form({ initialValues = {}, onChange, onSubmit, onCancel }:
         )}
       </div>
       <label>Incident Name <input value={values.inc_name ?? ''} onChange={(e) => set('inc_name', e.target.value)} maxLength={30} /></label>
-      <label>To (Name and Position) <input value={values.to_name ?? ''} onChange={(e) => set('to_name', e.target.value)} maxLength={60} required /></label>
-      <label>From (Name and Position) <input value={values.fm_name ?? ''} onChange={(e) => set('fm_name', e.target.value)} maxLength={60} required /></label>
-      <label>Subject <input value={values.subjectline ?? ''} onChange={(e) => set('subjectline', e.target.value)} maxLength={50} required /></label>
+      <label>Addressee (name and position) <input value={values.to_name ?? ''} onChange={(e) => set('to_name', e.target.value)} maxLength={60} required /></label>
+      <label>Originator (name and position) <input value={values.fm_name ?? ''} onChange={(e) => set('fm_name', e.target.value)} maxLength={60} required /></label>
+      <label>Form subject <input value={values.subjectline ?? ''} onChange={(e) => set('subjectline', e.target.value)} maxLength={50} required /></label>
       <label>Date <input value={values.mdate ?? ''} onChange={(e) => set('mdate', e.target.value)} placeholder="YYYY-MM-DD" maxLength={10} required /></label>
       <label>Time <input value={values.mtime ?? ''} onChange={(e) => set('mtime', e.target.value)} placeholder="HH:MMZ" maxLength={6} required /></label>
       <label>Message <textarea value={values.message ?? ''} onChange={(e) => set('message', e.target.value)} rows={6} required /></label>

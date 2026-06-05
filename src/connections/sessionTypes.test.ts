@@ -53,6 +53,19 @@ describe('session-type catalog', () => {
   });
 });
 
+describe('radio-only session type', () => {
+  it('radio-only intent is built for ardop-hf, vara-hf, vara-fm', () => {
+    expect(isBuilt({ sessionType: 'radio-only', protocol: 'ardop-hf' })).toBe(true);
+    expect(isBuilt({ sessionType: 'radio-only', protocol: 'vara-hf'  })).toBe(true);
+    expect(isBuilt({ sessionType: 'radio-only', protocol: 'vara-fm'  })).toBe(true);
+  });
+
+  it('radio-only intent is NOT built for telnet, packet (not RF-bearing)', () => {
+    expect(isBuilt({ sessionType: 'radio-only', protocol: 'telnet' })).toBe(false);
+    expect(isBuilt({ sessionType: 'radio-only', protocol: 'packet' })).toBe(false);
+  });
+});
+
 describe('ARDOP HF catalog entry', () => {
   it('exposes ardop-hf as a built protocol under cms intent', () => {
     const protos = protocolsFor('cms');

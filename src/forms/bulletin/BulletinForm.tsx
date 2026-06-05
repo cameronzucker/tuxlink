@@ -103,7 +103,7 @@ export function BulletinForm({ initialValues = {}, onChange, onSubmit, onCancel 
         )}
       </div>
       <label>Precedence Level <input value={values.level ?? ''} onChange={(e) => set('level', e.target.value)} maxLength={20} required /></label>
-      <label>Subject <input value={values.subjectline ?? ''} onChange={(e) => set('subjectline', e.target.value)} maxLength={80} required /></label>
+      <label>Form subject <input value={values.subjectline ?? ''} onChange={(e) => set('subjectline', e.target.value)} maxLength={80} required /></label>
       <label>Bulletin # <input value={values.bullnr ?? ''} onChange={(e) => set('bullnr', e.target.value)} maxLength={10} required /></label>
       <label>Title <input value={values.title ?? ''} onChange={(e) => set('title', e.target.value)} maxLength={60} /></label>
       <label>For (Recipient) <input value={values.name ?? ''} onChange={(e) => set('name', e.target.value)} maxLength={60} required /></label>

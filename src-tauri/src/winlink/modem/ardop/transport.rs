@@ -505,7 +505,7 @@ impl ModemTransport for ArdopTransport {
         &mut self,
         target: &str,
         repeat: u32,
-        deadline: Duration,
+        deadline: Option<Duration>,
     ) -> Result<ConnectInfo, SessionError> {
         let cmd = self.cmd_or_err()?;
         let info = arq_connect(cmd, target, repeat, deadline)?;
@@ -567,13 +567,35 @@ impl ModemTransport for ArdopTransport {
             })
     }
 
-    /// Expose a clone of the cmd-socket write half so a side channel
-    /// (`ModemSession::abort_in_flight`) can inject `ABORT\r` while
-    /// `connect_arq`'s recv loop is blocked (tuxlink-o3f2). Returns `None`
-    /// when `init()` has not been called and the cmd socket is therefore
-    /// not yet open.
-    fn try_clone_abort_writer(&self) -> Option<std::net::TcpStream> {
-        self.cmd.as_ref().and_then(|s| s.try_clone_writer().ok())
+    /// Expose a clone of the cmd-socket write half (cooperative path) +
+    /// a clone for hard-close (fallback path) so a side channel
+    /// (`ModemSession::abort_in_flight`) can inject `ABORT\r` and/or RST
+    /// the socket while `connect_arq`'s recv loop is blocked (tuxlink-o3f2;
+    /// hard-close fallback per tuxlink-0ye6 Task 4.1 / Codex Round 4 P1 #4).
+    ///
+    /// The cooperative writer is given a bounded `write_timeout`
+    /// ([`crate::modem_status::ABORT_WRITE_TIMEOUT`]) so a wedged ardopcf
+    /// cmd port cannot stall the abort budget past spec §2's ~2s contract.
+    ///
+    /// Returns `None` when `init()` has not been called and the cmd socket
+    /// is therefore not yet open.
+    fn try_clone_abort_writer(
+        &self,
+    ) -> Option<(
+        Box<dyn std::io::Write + Send>,
+        Box<dyn crate::modem_status::ShutdownableStream>,
+    )> {
+        let writer = self.cmd.as_ref()?.try_clone_writer().ok()?;
+        // Bound the cooperative write so a wedged peer can't stall the
+        // abort path. set_write_timeout is best-effort — if it errors,
+        // fall through unbounded rather than refuse to surface the writer
+        // (the hard-close fallback still bounds the overall budget).
+        let _ = writer.set_write_timeout(Some(crate::modem_status::ABORT_WRITE_TIMEOUT));
+        let stream_clone = writer.try_clone().ok()?;
+        Some((
+            Box::new(writer) as Box<dyn std::io::Write + Send>,
+            Box::new(stream_clone) as Box<dyn crate::modem_status::ShutdownableStream>,
+        ))
     }
 
     /// Wait for an inbound `Connected` event during listener mode.
@@ -1584,7 +1606,7 @@ mod tests {
 
         // connect_arq
         let info = transport
-            .connect_arq("W7ABC", 3, Duration::from_secs(5))
+            .connect_arq("W7ABC", 3, Some(Duration::from_secs(5)))
             .expect("connect_arq must succeed");
         assert_eq!(info.peer_call, "W7ABC");
         assert_eq!(info.bandwidth_hz, 500);
@@ -1631,7 +1653,7 @@ mod tests {
         let addr: SocketAddr = "127.0.0.1:1".parse().unwrap();
         let mut t = ArdopTransport::with_addrs(addr, addr);
         let err = t
-            .connect_arq("W7ABC", 3, Duration::from_millis(100))
+            .connect_arq("W7ABC", 3, Some(Duration::from_millis(100)))
             .expect_err("connect_arq before init must return Err");
         // Should be a NotConnected or similar I/O error wrapped in SessionError.
         assert!(
@@ -1738,7 +1760,7 @@ mod tests {
         // something to discard.
         std::thread::sleep(Duration::from_millis(100));
 
-        t.connect_arq("W7ABC", 3, Duration::from_secs(5))
+        t.connect_arq("W7ABC", 3, Some(Duration::from_secs(5)))
             .expect("connect_arq must succeed");
 
         // The first read on the data stream must NOT yield the pre-connect
@@ -1796,7 +1818,7 @@ mod tests {
             "connected_at must be None before connect"
         );
 
-        t.connect_arq("W7ABC", 3, Duration::from_secs(5))
+        t.connect_arq("W7ABC", 3, Some(Duration::from_secs(5)))
             .expect("connect_arq must succeed");
 
         // Post-condition: the stamp was applied.
@@ -1825,6 +1847,95 @@ mod tests {
         data_server.join().unwrap();
     }
 
+    // ── tuxlink-0ye6 Task 1.5 — Option<Duration> connect_arq, None branch ──
+
+    /// Operator decision bd tuxlink-qtgg + Codex Round 1 P1 #3 + Codex
+    /// Round 2 P1 #2: the no-deadline branch of `connect_arq` must
+    /// complete on event arrival without panicking on arithmetic and
+    /// without wedging.
+    ///
+    /// Routes through [`CmdSocket::recv_event_blocking`] rather than
+    /// `recv_timeout(Duration::MAX)`; if a future refactor reintroduces
+    /// the latter, the spawned mock will still answer with `CONNECTED`
+    /// promptly and this test will still pass — but a `recv_timeout`
+    /// overflow on cold-call panics would be caught by the
+    /// `recv_event_blocking` unit test alongside this one. The
+    /// load-bearing behavior here is "passing `None` to `connect_arq`
+    /// returns `Ok(ConnectInfo)` rather than erroring out or panicking."
+    #[test]
+    fn connect_arq_with_none_deadline_completes_on_event_arrival() {
+        let connected_signal = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let (cmd_addr, cmd_server) =
+            spawn_mock_cmd_server_with_signal("W7ABC", 500, Some(connected_signal.clone()));
+        let received: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(Vec::new()));
+        let (data_addr, data_server) = spawn_mock_data_server_with_signal(
+            b"".to_vec(),
+            received.clone(),
+            Some(connected_signal),
+        );
+
+        let mut t = ArdopTransport::with_addrs(cmd_addr, data_addr);
+        let cfg = InitConfig {
+            mycall: "N7TST".into(),
+            gridsquare: "CN87".into(),
+            arq_timeout_s: 30,
+            arq_bandwidth_hz: None,
+            initial_listen: false,
+        };
+        t.init(&cfg).expect("init must succeed");
+
+        // The mock's CONNECTED reply comes back synchronously when it sees
+        // ARQCALL, so `recv_event_blocking` returns on the first iteration.
+        // The test bounds wall-clock by joining the worker thread with a
+        // generous outer timeout in case of regression.
+        let info = t
+            .connect_arq("W7ABC", 3, None)
+            .expect("no-deadline connect_arq must complete on event arrival");
+        assert_eq!(info.peer_call, "W7ABC");
+        assert_eq!(info.bandwidth_hz, 500);
+
+        // The connected_at stamp should still fire on the None path.
+        assert!(
+            t.accumulators.connected_at.is_some(),
+            "no-deadline connect_arq must stamp connected_at on success too"
+        );
+
+        t.disconnect(Duration::from_secs(5))
+            .expect("disconnect must succeed");
+        drop(t);
+        cmd_server.join().unwrap();
+        data_server.join().unwrap();
+    }
+
+    /// Companion unit test: `recv_event_blocking` returns the queued event
+    /// without panicking. This is the primitive the no-deadline
+    /// `connect_arq` branch composes against, so the unit-level proof
+    /// keeps the safety claim ("no `Duration::MAX` overflow exposure")
+    /// honest even if the integration test above is later refactored.
+    #[test]
+    fn recv_event_blocking_returns_queued_event() {
+        use crate::winlink::modem::ardop::command::Command;
+        let (addr, server) = spawn_server(move |conn| {
+            let mut writer = conn.try_clone().unwrap();
+            // Push a single state event the client can consume via
+            // recv_event_blocking, then exit so the reader thread closes.
+            write_reply(&mut writer, "NEWSTATE IDLE");
+            // Hold the socket open briefly so the client can read before
+            // the server closes (else the EOF could race the recv).
+            std::thread::sleep(Duration::from_millis(50));
+        });
+        let sock = CmdSocket::connect(addr).unwrap();
+        let event = sock
+            .recv_event_blocking()
+            .expect("recv_event_blocking must yield the queued event");
+        assert!(
+            matches!(event, Command::NewState(_)),
+            "expected NewState event, got {event:?}"
+        );
+        drop(sock);
+        server.join().unwrap();
+    }
+
     /// Companion to the stamp test: `disconnect` clears `connected_at` so a
     /// subsequent reconnect starts a fresh uptime rather than inheriting
     /// a stale stamp from the prior session.
@@ -1849,7 +1960,7 @@ mod tests {
             initial_listen: false,
         };
         t.init(&cfg).expect("init must succeed");
-        t.connect_arq("W7ABC", 3, Duration::from_secs(5))
+        t.connect_arq("W7ABC", 3, Some(Duration::from_secs(5)))
             .expect("connect_arq must succeed");
         assert!(t.accumulators.connected_at.is_some());
 
@@ -1914,7 +2025,7 @@ mod tests {
             initial_listen: false,
         };
         t.init(&cfg).unwrap();
-        let info = t.connect_arq("K7XYZ", 1, Duration::from_secs(5)).unwrap();
+        let info = t.connect_arq("K7XYZ", 1, Some(Duration::from_secs(5))).unwrap();
         assert_eq!(info.peer_call, "K7XYZ");
 
         // Read one payload through the trait object.
@@ -1989,8 +2100,10 @@ mod tests {
         };
         t.init(&cfg).expect("init must succeed");
 
-        // After init: a live writer that can deliver bytes to the cmd mock.
-        let mut abort_writer = t
+        // After init: a live writer pair (cooperative + hard-close) that
+        // can deliver bytes to the cmd mock. tuxlink-0ye6 Task 4.1 widened
+        // the return type to the (writer, stream) pair.
+        let (mut abort_writer, _abort_stream) = t
             .try_clone_abort_writer()
             .expect("must return Some after init()");
         abort_writer

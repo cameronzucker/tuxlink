@@ -140,7 +140,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // ── connect_arq ───────────────────────────────────────────────────────
     println!("ardop_connect: dialling {target} (repeat={repeat}, timeout=45s)...");
     let connect_deadline = Duration::from_secs(45);
-    let info = transport.connect_arq(&target, repeat, connect_deadline)?;
+    let info = transport.connect_arq(&target, repeat, Some(connect_deadline))?;
     println!(
         "ardop_connect: CONNECTED peer={} bandwidth_hz={}",
         info.peer_call, info.bandwidth_hz
