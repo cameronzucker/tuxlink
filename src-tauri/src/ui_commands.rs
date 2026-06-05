@@ -957,6 +957,11 @@ pub async fn message_send(
 
     // send_message returns MessageId directly. Map to String for IPC.
     let mid = backend.send_message(msg).await?;
+    tracing::info!(
+        target: "tuxlink::cms",
+        mid = %mid.0,
+        "message queued in outbox",
+    );
     Ok(mid.0)
 }
 
@@ -1451,6 +1456,11 @@ pub async fn cms_connect(
         detail: e.to_string(),
     })?;
 
+    tracing::info!(
+        target: "tuxlink::cms",
+        transport = ?cfg.connect.transport,
+        "CMS connect started",
+    );
     emit_session_line(
         &app,
         &log,
@@ -1465,6 +1475,11 @@ pub async fn cms_connect(
         .await
     {
         Ok(session) => {
+            tracing::info!(
+                target: "tuxlink::cms",
+                outcome = "ok",
+                "CMS exchange complete",
+            );
             emit_session_line(&app, &log, LogLevel::Info, "CMS exchange complete.".to_string());
             // 2026-05-31 operator-flagged: previously the session was
             // dropped without transitioning status back to Disconnected,
@@ -1497,10 +1512,21 @@ pub async fn cms_connect(
         }
         Err(BackendError::Cancelled) => {
             // Operator-initiated abort (tuxlink-9z2) — not a failure.
+            tracing::info!(
+                target: "tuxlink::cms",
+                outcome = "aborted",
+                "CMS connection aborted by operator",
+            );
             emit_session_line(&app, &log, LogLevel::Warn, "CMS connection aborted.".to_string());
             Err(BackendError::Cancelled.into())
         }
         Err(e) => {
+            tracing::warn!(
+                target: "tuxlink::cms",
+                error = %e,
+                outcome = "error",
+                "CMS connect failed",
+            );
             emit_session_line(&app, &log, LogLevel::Error, format!("CMS connect failed: {e}"));
             Err(e.into())
         }
@@ -1521,6 +1547,10 @@ pub async fn cms_abort(
         .current()
         .ok_or_else(|| UiError::NotConfigured("backend offline".to_string()))?;
 
+    tracing::info!(
+        target: "tuxlink::cms",
+        "CMS connection abort requested",
+    );
     emit_session_line(&app, &log, LogLevel::Info, "Aborting CMS connection…".to_string());
     backend.abort().await?;
     Ok(())

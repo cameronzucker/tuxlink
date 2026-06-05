@@ -181,12 +181,24 @@ where
     // (Part 97) is enforced by this consume, not by any caller-side
     // discipline.
     if !session.consume_consent_token(consent_token) {
+        tracing::warn!(
+            target: "tuxlink::modem",
+            target_callsign = %target,
+            outcome = "denied",
+            "RADIO-1 consent gate: denied (missing or invalid token)",
+        );
         return Err(
             "RADIO-1: missing or invalid consent token; mint one via the Connect modal first"
                 .into(),
         );
     }
 
+    tracing::info!(
+        target: "tuxlink::modem",
+        target_callsign = %target,
+        outcome = "consumed",
+        "RADIO-1 consent gate: token consumed",
+    );
     modem_ardop_connect_post_consume_with_factory(session, target, ardop_ui, make_transport)
 }
 
@@ -282,10 +294,22 @@ where
     session.set_status(snap);
 
     // ─── ARQ connect (bounded airtime) ───────────────────────────────────
+    tracing::info!(
+        target: "tuxlink::modem",
+        target_callsign = %target,
+        deadline_secs = CONNECT_DEADLINE.as_secs(),
+        "ARDOP ARQ connect starting",
+    );
     let info = match transport.connect_arq(target, CONNECT_REPEAT, CONNECT_DEADLINE) {
         Ok(info) => info,
         Err(e) => {
             let msg = format!("ARQ connect failed: {e}");
+            tracing::warn!(
+                target: "tuxlink::modem",
+                target_callsign = %target,
+                error = %e,
+                "ARDOP ARQ connect failed",
+            );
             let mut s = ModemStatus::stopped();
             s.state = ModemState::Error;
             s.last_error = Some(msg.clone());
@@ -298,6 +322,13 @@ where
     // ─── Install handle + publish initial connected snapshot ─────────────
     session.install_transport(transport);
 
+    tracing::info!(
+        target: "tuxlink::modem",
+        target_callsign = %target,
+        peer = %info.peer_call,
+        bandwidth_hz = info.bandwidth_hz,
+        "ARDOP ARQ link established",
+    );
     let mut s = session.status_snapshot();
     s.state = ModemState::ConnectedIrs;
     s.peer = Some(info.peer_call.clone());
@@ -509,9 +540,10 @@ fn validate_arq_bandwidth_hz(bw: u32) -> Option<u32> {
     match bw {
         200 | 500 | 1000 | 2000 => Some(bw),
         invalid => {
-            eprintln!(
-                "tuxlink-j0ij: ignoring invalid persisted bandwidth_hz={invalid}; \
-                 valid: 200/500/1000/2000"
+            tracing::warn!(
+                target: "tuxlink::modem",
+                bandwidth_hz = invalid,
+                "ignoring invalid persisted bandwidth_hz (valid: 200/500/1000/2000)",
             );
             None
         }
@@ -672,11 +704,25 @@ pub fn modem_ardop_b2f_exchange(
     // After a successful return, the stored token is None; a replay of the
     // same token fails at this exact point. Per-invocation Part 97 rule.
     if !session.consume_consent_token(&consent_token) {
+        tracing::warn!(
+            target: "tuxlink::modem",
+            target_callsign = %target,
+            intent = %intent,
+            outcome = "denied",
+            "RADIO-1 B2F consent gate: denied (missing or invalid token)",
+        );
         return Err(
             "RADIO-1: missing or invalid consent token; mint one via the Send/Receive modal first"
                 .into(),
         );
     }
+
+    tracing::info!(
+        target: "tuxlink::modem",
+        target_callsign = %target,
+        intent = %intent,
+        "ARDOP B2F exchange starting",
+    );
 
     // Parse the operator-selected dial intent (CMS gateway vs P2P peer). The
     // parse runs AFTER the consent gate so a bad-intent string from a stale
@@ -703,6 +749,23 @@ pub fn modem_ardop_b2f_exchange(
     // Best-effort: even if disconnect errors, the session must end in a
     // Stopped state so a fresh Connect can succeed. 5s deadline mirrors
     // `modem_ardop_disconnect_inner`'s policy.
+    match &outcome {
+        Ok(()) => tracing::info!(
+            target: "tuxlink::modem",
+            target_callsign = %target,
+            intent = %intent,
+            outcome = "ok",
+            "ARDOP B2F exchange completed",
+        ),
+        Err(e) => tracing::warn!(
+            target: "tuxlink::modem",
+            target_callsign = %target,
+            intent = %intent,
+            error = %e,
+            outcome = "error",
+            "ARDOP B2F exchange failed",
+        ),
+    }
     let _ = transport.disconnect(Duration::from_secs(5));
     drop(transport);
     // `reset_to_stopped` clears the consent token (already None — we consumed
