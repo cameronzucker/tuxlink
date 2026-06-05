@@ -151,6 +151,17 @@ function rowsToWireFields(
  * onChange pattern: fired inside input event handlers, NOT from a useEffect dep
  *   array (ICS-213 convention; avoids infinite loop — Compose.tsx's inline arrow
  *   creates a new reference on every render).
+ *
+ * FormDraftLibrary integration — INTENTIONALLY OMITTED:
+ *   ICS-309 has no operator-authored template fields. Every value displayed in
+ *   this form (rows, range times) is either derived from the live message store
+ *   (`messages_meta_query_for_log`) or is a session-time value (start/end RFC
+ *   3339 strings). A slot saved from a prior session would contain yesterday's
+ *   date range, which is actively misleading — the operator would need to
+ *   change the range immediately anyway. There are no free-text fields (e.g. a
+ *   "net name" header) to persist. If a "header preset" field (opname, operid,
+ *   net name) is added to this form in a future task, revisit FormDraftLibrary
+ *   integration at that time. (bd tuxlink-hnkn P2 Task 4 decision, 2026-06-04)
  */
 export function Ics309FormV2({
   initialValues,
