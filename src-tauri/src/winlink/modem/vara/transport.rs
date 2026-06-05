@@ -63,6 +63,13 @@ impl VaraTransport {
     /// NOT issue any VARA commands — caller is responsible for the
     /// `MYCALL` + `BW` + `LISTEN` initialization sequence.
     pub fn connect(cfg: VaraConfig) -> io::Result<Self> {
+        tracing::info!(
+            target: "tuxlink::winlink::modem::vara",
+            host = %cfg.host,
+            cmd_port = cfg.cmd_port,
+            data_port = cfg.data_port,
+            "VARA transport connecting",
+        );
         let cmd_addr = (cfg.host.as_str(), cfg.cmd_port)
             .to_socket_addrs()?
             .next()
@@ -90,6 +97,14 @@ impl VaraTransport {
         let data_stream = TcpStream::connect_timeout(&data_addr, cfg.connect_timeout)?;
         data_stream.set_read_timeout(cfg.read_timeout)?;
 
+        tracing::info!(
+            target: "tuxlink::winlink::modem::vara",
+            host = %cfg.host,
+            cmd_port = cfg.cmd_port,
+            data_port = cfg.data_port,
+            "VARA transport connected",
+        );
+
         Ok(Self {
             cfg,
             cmd_writer,
@@ -101,6 +116,11 @@ impl VaraTransport {
     /// Send one outbound command (auto-appends the `\r` terminator).
     pub fn send(&mut self, cmd: &OutboundCommand) -> io::Result<()> {
         let line = cmd.as_wire();
+        tracing::debug!(
+            target: "tuxlink::winlink::modem::vara",
+            command = %line,
+            "VARA command sent",
+        );
         write_line(&mut self.cmd_writer, &line)
     }
 
@@ -116,10 +136,22 @@ impl VaraTransport {
         match self.cmd_reader.read_line() {
             Ok(None) => Ok(None),
             Ok(Some(line)) => match InboundCommand::parse(&line) {
-                Ok(cmd) => Ok(Some(cmd)),
+                Ok(cmd) => {
+                    tracing::debug!(
+                        target: "tuxlink::winlink::modem::vara",
+                        command = %line,
+                        "VARA command received",
+                    );
+                    Ok(Some(cmd))
+                }
                 Err(_e) => {
                     // Surface unknown / malformed as Unknown so the
                     // caller can decide whether to log + continue.
+                    tracing::debug!(
+                        target: "tuxlink::winlink::modem::vara",
+                        raw_line = %line,
+                        "VARA unknown command received",
+                    );
                     Ok(Some(InboundCommand::Unknown(line)))
                 }
             },

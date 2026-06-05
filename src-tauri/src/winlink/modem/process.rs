@@ -72,13 +72,34 @@ impl ManagedModem {
     /// The caller must obtain per-invocation operator consent before calling
     /// this function when `program` is a radio-keying binary (e.g., `ardopcf`).
     pub fn spawn(program: &str, args: &[&str]) -> Result<ManagedModem, ProcessError> {
+        tracing::info!(
+            target: "tuxlink::winlink::modem::process",
+            program,
+            arg_count = args.len(),
+            "modem process spawning",
+        );
         let child = Command::new(program)
             .args(args)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
-            .map_err(ProcessError::Spawn)?;
+            .map_err(|e| {
+                tracing::error!(
+                    target: "tuxlink::winlink::modem::process",
+                    program,
+                    error = %e,
+                    "modem process spawn failed",
+                );
+                ProcessError::Spawn(e)
+            })?;
+
+        tracing::info!(
+            target: "tuxlink::winlink::modem::process",
+            program,
+            pid = child.id(),
+            "modem process spawned",
+        );
 
         Ok(ManagedModem {
             child: Some(child),
@@ -102,6 +123,11 @@ impl ManagedModem {
 
         match child.try_wait() {
             Ok(Some(status)) => {
+                tracing::warn!(
+                    target: "tuxlink::winlink::modem::process",
+                    exit_code = ?status.code(),
+                    "modem process exited",
+                );
                 self.exit_status = Some(status);
                 false
             }
