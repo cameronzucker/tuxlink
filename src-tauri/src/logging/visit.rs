@@ -124,8 +124,8 @@ impl Visit for RedactingVisitor {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::logging::event::LoggedEvent;
+    use crate::logging::fanout::FanoutLayer;
     use crate::session_log::SessionLogState;
     use std::sync::Arc;
     use tracing_subscriber::{Registry, layer::SubscriberExt};
@@ -133,7 +133,7 @@ mod tests {
     /// Helper: capture one event emitted while a fanout-driven subscriber is active.
     fn capture_one(emit: impl FnOnce()) -> LoggedEvent {
         let session_log = Arc::new(SessionLogState::new(100));
-        let (handle, mut rx) = crate::logging::fanout::FanoutLayer::new(session_log);
+        let (handle, mut rx) = FanoutLayer::new(session_log);
         let subscriber = Registry::default().with(handle.clone());
         tracing::subscriber::with_default(subscriber, emit);
         rx.try_recv().expect("event must be broadcast")
@@ -146,10 +146,17 @@ mod tests {
     }
 
     #[test]
-    fn record_debug_with_credential_struct_redacts() {
-        #[derive(Debug)] struct Fake;
-        impl std::fmt::Display for Fake { fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { write!(f, "fake") } }
+    fn record_str_token_field_is_redacted() {
         let ev = capture_one(|| tracing::info!(token = "abc123", "auth"));
+        assert_eq!(ev.fields.get("token"), Some(&serde_json::json!("<redacted>")));
+    }
+
+    #[test]
+    fn record_debug_via_question_mark_routes_field_value_through_blocklist() {
+        let ev = capture_one(|| {
+            let token_value = "abc123";
+            tracing::info!(token = ?token_value, "auth");
+        });
         assert_eq!(ev.fields.get("token"), Some(&serde_json::json!("<redacted>")));
     }
 

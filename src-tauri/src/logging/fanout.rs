@@ -239,4 +239,20 @@ mod tests {
         let line = event.to_jsonl();
         assert!(!line.contains("hunter2hunter2"), "JSONL must not contain real password");
     }
+
+    #[test]
+    fn attempt_id_in_span_is_promoted_to_logged_event() {
+        let session_log = Arc::new(SessionLogState::new(100));
+        let (layer, mut rx) = FanoutLayer::new(session_log);
+        let subscriber = Registry::default().with(layer.clone());
+
+        tracing::subscriber::with_default(subscriber, || {
+            let span = tracing::info_span!("dial", attempt_id = "att-abc1");
+            let _g = span.enter();
+            tracing::info!("dialing");
+        });
+
+        let event = rx.try_recv().expect("event must broadcast");
+        assert_eq!(event.attempt_id.as_deref(), Some("att-abc1"));
+    }
 }
