@@ -7,6 +7,11 @@
 //! Amendment B: tracks the current hour from event timestamps; on hour
 //! rotation, updates `active_file_tracker`, runs a retention sweep, and emits
 //! a structured `tracing::info!` event (spec §6.3).
+//!
+//! Amendment C (spec §6.4): polls the NonBlocking appender's dropped-lines
+//! error counter every 30 seconds; on any increment, emits a structured
+//! `tracing::warn!` event at target "tuxlink::logging::disk" so the frontend
+//! event bridge can surface a "disk-write-error" notification (spec §10.4 #23).
 
 use crate::logging::event::LoggedEvent;
 use crate::logging::retention::{self, RetentionConfig};
@@ -47,7 +52,35 @@ pub fn spawn(
         .build(&log_dir)?;
 
     let (writer, guard) = tracing_appender::non_blocking(appender);
+
+    // Capture the error counter BEFORE wrapping the writer in Arc+Mutex.
+    // ErrorCounter is a cheap Arc clone — the poller holds a direct reference
+    // and never needs the writer lock (spec §6.4 / Amendment C).
+    let error_counter = writer.error_counter();
+
     let writer = Arc::new(Mutex::new(writer));
+
+    // Amendment C: spawn a second task that polls the appender's dropped-lines
+    // counter every 30 seconds and emits a warn event on any increment.
+    // Required for spec §10.4 #23 (ENOSPC acceptance test).
+    tokio::spawn(async move {
+        let mut last_count: usize = 0;
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
+        loop {
+            interval.tick().await;
+            let current = error_counter.dropped_lines();
+            if current > last_count {
+                let new_dropped = current - last_count;
+                tracing::warn!(
+                    target: "tuxlink::logging::disk",
+                    new_dropped_lines = new_dropped,
+                    total_dropped_lines = current,
+                    "disk-write-error: appender dropped log lines"
+                );
+                last_count = current;
+            }
+        }
+    });
 
     let log_dir_for_task = log_dir.clone();
     let active_tracker_for_task = active_file_tracker.clone();
