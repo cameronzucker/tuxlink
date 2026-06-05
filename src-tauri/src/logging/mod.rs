@@ -8,6 +8,7 @@
 pub mod dict;
 pub mod disk_consumer;
 pub mod event;
+pub mod manifest;
 pub mod fanout;
 pub mod filter_layer;
 pub mod free_disk_guard;
