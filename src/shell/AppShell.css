@@ -210,10 +210,15 @@
 /* SSID-only picker variant — explicit min-width so the open popup is wide
    enough to fit `-15` next to the OS scrollbar gutter without clipping.
    Mono font is ~8.4px per char at 14px, so `-15` is ~25px; with 16px right
-   padding (chevron) + ~14px scrollbar gutter + 4px option padding, 72px
-   min keeps the second digit visible on WebKitGTK. */
+   padding (chevron) + ~14px scrollbar gutter + 4px option padding, the
+   calculated minimum is 59px. The earlier 72px setting (tuxlink-i63g)
+   overshot — operator smoke 2026-06-05 caught the closed control taking
+   far more horizontal space than its content warrants. Tightened to 60px
+   (1px buffer above the calculated minimum) — keeps `-15` visible in the
+   open popup while letting the closed control sit closer to its content
+   width on the dashboard ribbon. tuxlink-yn58. */
 .layout-b .dashboard .dash-ssid-select {
-  min-width: 72px;
+  min-width: 60px;
 }
 /* Option list itself (when the OS popup opens) uses the system color, but
    force a sane dark fallback so the dropdown isn't blinding white-on-white. */
