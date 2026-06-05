@@ -575,7 +575,12 @@ export function AppShell() {
     print: () => { if (openMessage) window.print(); },
     toggleStatusBar: () => setShowStatusBar((s) => !s),
     toggleRadioPanel: () => setPinRadioPanel((s) => !s),
-    selectFolder: (folder) => { setSelectedFolder(folder); setSelectedMessage(null); setSelectedConnection(null); },
+    // tuxlink-u4ky: don't clear selectedConnection on folder switch.
+    // selectedConnection drives the right-hand radio panel mount; the post-P2
+    // design (see comment below on onSelectConnection) says it's independent
+    // of folder navigation, but this pre-P2-era line was clobbering the
+    // running connection's panel any time the operator switched folders.
+    selectFolder: (folder) => { setSelectedFolder(folder); setSelectedMessage(null); },
     setScheme: (id) => { applyColorScheme(id); saveColorScheme(id); },
     openSettings: () => setSettingsOpen(true),
     openThemeDesigner: () => setThemeDesignerOpen(true),
@@ -619,7 +624,10 @@ export function AppShell() {
   const onSelectFolder = useCallback((folder: MailboxFolderRef) => {
     setSelectedFolder(folder);
     setSelectedMessage(null);
-    setSelectedConnection(null);
+    // tuxlink-u4ky: selectedConnection deliberately preserved — see the
+    // comment on onSelectConnection below for the post-P2 independence
+    // contract. Clearing it here closed the running radio panel on every
+    // sidebar folder click (smoke-walk regression 2026-06-05).
   }, []);
 
   // 2026-05-31 operator-flagged: selectedConnection and selectedMessage are
