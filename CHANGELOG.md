@@ -4,6 +4,13 @@ All notable changes to Tuxlink are documented here.
 
 This project adheres to [Semantic Versioning](https://semver.org) with project-specific rules described in [VERSIONING.md](VERSIONING.md). Entries from `v0.0.2` onward are generated automatically by [`release-please`](https://github.com/googleapis/release-please) from [Conventional Commits](https://www.conventionalcommits.org).
 
+## [0.34.1](https://github.com/cameronzucker/tuxlink/compare/v0.34.0...v0.34.1) (2026-06-05)
+
+
+### Bug Fixes
+
+* **ci:** resolve clippy + example compile errors surfaced by main merge ([990ef24](https://github.com/cameronzucker/tuxlink/commit/990ef24416abb470113d061e96cce28edb375bbb))
+
 ## [0.34.0](https://github.com/cameronzucker/tuxlink/compare/v0.33.0...v0.34.0) (2026-06-05)
 
 
