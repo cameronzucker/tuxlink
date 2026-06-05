@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useId, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import type { FormComposeProps } from '../forms/forms';
 import { listSlots, upsertSlot, deleteSlot, type FormDraftSlot } from './FormDraftLibrary';
@@ -62,6 +62,13 @@ export function CheckInForm({
   // FormDraftLibrary slot state.
   const [slots, setSlots] = useState<FormDraftSlot[]>([]);
   const [selectedSlotId, setSelectedSlotId] = useState<string>('');
+
+  // Per-instance suffix for the status radio-group `name`. Without this,
+  // two simultaneous CheckInForm mounts (e.g. two Compose windows) would
+  // share `name={statusGroupName}` and clicking a radio in one window
+  // would deselect the radio in the other (HTML radio groups are scoped
+  // by document, not by React tree).
+  const statusGroupName = `checkin-status-${useId()}`;
 
   // Pull callsign from config on mount; only sets if no draft value.
   // Note: does NOT fire onChange (same rationale as PositionFormV2 GPS effect).
@@ -129,7 +136,21 @@ export function CheckInForm({
     setGroupNet(newGroupNet);
     setComments(newComments);
     setInitials(newInitials);
-    onChange?.({ ...buildPayload(), op_name: newOpName, group_net: newGroupNet, comments: newComments, initials: newInitials });
+    // Construct the emitted payload inline (instead of spreading buildPayload()
+    // and overriding the slot fields). buildPayload() reads current React
+    // state, which is still pre-slot at this point because state setters are
+    // async — the spread + override worked here only because we list every
+    // slot-saveable field. Inline construction makes the contract explicit and
+    // future-proof against adding new slot-saveable fields.
+    onChange?.({
+      tactical_call: tacticalCall,
+      op_name: newOpName,
+      group_net: newGroupNet,
+      status,
+      comments: newComments,
+      grid,
+      initials: newInitials,
+    });
   }
 
   async function saveSlot() {
@@ -235,7 +256,7 @@ export function CheckInForm({
         <label>
           <input
             type="radio"
-            name="checkin-status"
+            name={statusGroupName}
             checked={status === 'Ready'}
             onChange={() => {
               setStatus('Ready');
@@ -247,7 +268,7 @@ export function CheckInForm({
         <label>
           <input
             type="radio"
-            name="checkin-status"
+            name={statusGroupName}
             checked={status === 'Standby'}
             onChange={() => {
               setStatus('Standby');
@@ -259,7 +280,7 @@ export function CheckInForm({
         <label>
           <input
             type="radio"
-            name="checkin-status"
+            name={statusGroupName}
             checked={status === 'Out'}
             onChange={() => {
               setStatus('Out');
