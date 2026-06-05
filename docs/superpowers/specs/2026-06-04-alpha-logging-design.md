@@ -893,12 +893,34 @@ Two distinct failure modes; clarification of where each is handled:
 
 **Build-time:** the `tuxlink-events-v1.zdict` asset is loaded via `include_bytes!`. If the file is missing at the source path, the build fails. This is enforced at compile time, not run time.
 
-**Export-time validation:** when the export pipeline builds an archive, it calls `dict::load_validated() -> Result<&[u8], DictError>`. The validation:
-1. Checks the embedded byte slice is non-empty.
-2. Parses the zstd dictionary magic + header via `zstd::dict::DecoderDictionary::copy(bytes)`.
-3. On error: the export emits a `warn`-level `dict-invalid: falling back to dict-free compression` event, then proceeds without dictionary. `manifest.json` records `inner_dict_version: null` for this archive.
+**Export-time validation (clarified per plan-adrev §1 Finding "Dictionary validation is claimed but not actually possible via this call"):** when the export pipeline initializes, it calls `dict::load_validated() -> Result<&[u8], DictError>`. The validation actually exercises the dictionary via a known-input roundtrip (NOT via `DecoderDictionary::copy`, which does not return a `Result`):
 
-The validation runs once at process start and the result is cached. Subsequent exports reuse the cached validation result.
+```rust
+pub fn load_validated() -> Result<&'static [u8], DictError> {
+    VALIDATED.get_or_init(|| {
+        if EVENT_DICT_V1.is_empty() {
+            return Err(DictError::Empty);
+        }
+        // Real validation: compress a known input WITH the dictionary, then
+        // decompress WITH the same dictionary, assert roundtrip equality.
+        const PROBE: &[u8] = b"tuxlink-dict-validation-probe-2026";
+        let compressed = zstd::stream::Encoder::with_dictionary(Vec::new(), 1, EVENT_DICT_V1)
+            .and_then(|mut e| { e.write_all(PROBE)?; e.finish() })
+            .map_err(|e| DictError::Invalid(format!("compress: {e}")))?;
+        let decompressed = zstd::stream::Decoder::with_dictionary(compressed.as_slice(), EVENT_DICT_V1)
+            .and_then(|mut d| { let mut out = Vec::new(); d.read_to_end(&mut out)?; Ok(out) })
+            .map_err(|e| DictError::Invalid(format!("decompress: {e}")))?;
+        if decompressed != PROBE {
+            return Err(DictError::Invalid("roundtrip mismatch".into()));
+        }
+        Ok(EVENT_DICT_V1)
+    }).clone()
+}
+```
+
+On error: the export pipeline catches the error, emits a `warn`-level `dict-invalid: falling back to dict-free compression` event with the underlying error message, then proceeds without dictionary. `manifest.json` records `inner_dict_version: null` for this archive.
+
+The validation runs once at process start and the result is cached in a `OnceCell`. Subsequent exports reuse the cached validation result.
 
 **Compression-ratio telemetry (added per Codex §5 Finding 2):** every export records in `manifest.json`:
 - `compression.raw_events_bytes` — uncompressed events.jsonl size (post-redaction)
@@ -1109,7 +1131,7 @@ Each probe runs:
 | **audio** | `tuxlink::logging::env_probes::audio` | PipeWire reachability (`pw-cli info 0` exit code + parse); ALSA reachability (`aplay -l` parse); active source/sink list (`pactl list short sinks` / `sources` when PipeWire's pulse compat is on); configured tuxlink audio device match by name OR alsa hw:N pattern; sample-rate support (`pactl list sinks | grep "Sample Specification"`); DigiRig detection (`pactl list short cards | grep -i digirig`); separately notes whether VARA-managed audio is "external" (VARA owns the device; tuxlink sees the device as in-use) versus ARDOP-managed audio (where ARDOP is a child process tuxlink spawned). |
 | **serial** | `tuxlink::logging::env_probes::serial` | `/dev/serial/by-id` listing with vendor/model strings; `/dev/ttyACM*` and `/dev/ttyUSB*` listing as fallback; configured tuxlink serial port existence; permissions (mode + owner uid + gid + match to `dialout` group); user `dialout` group membership (`getgroups` + `getgrnam`); KISS-transport-specific: TCP host:port reachability (TCP-connect close) for configured KISS-TCP, Bluetooth RFCOMM `/dev/rfcomm*` listing, configured Bluetooth MAC reachability via `hcitool name` (or `bluetoothctl info`). |
 | **modem_process** | `tuxlink::logging::env_probes::modem_process` | VARA / ARDOP process state from CACHED runtime state maintained by `winlink::modem::process` (the probe READS this cache; it does NOT spawn or query the modems). Cached state includes: last spawn args, last exit code + signal, stderr tail (256 bytes), uptime if running, last-known modem mode (if any). Plus `ps` / `procfs` enumeration of running processes by name to detect "modem running but tuxlink doesn't know about it" inconsistency. |
-| **network** | `tuxlink::logging::env_probes::network` | DNS resolution for `cms-z.winlink.org`, `cms-c.winlink.org`, `cms-vt.winlink.org` (multi-CMS); IP route to each CMS IP (parsed `ip route get` output); TCP-connect-and-close to ports 8772, 8773 (no protocol); cached `last_successful_cms_contact_at` from a NEW runtime state (`tuxlink::winlink::session::cms_health::SessionHealthState`) updated by actual CMS code on success/failure events — per Codex §4 Finding 5, this is NOT a one-shot probe observation. |
+| **network** | `tuxlink::logging::env_probes::network` | DNS resolution for `cms-z.winlink.org`, `cms-c.winlink.org`, `cms-vt.winlink.org` (multi-CMS); IP route to each CMS IP (parsed `ip route get` output); TCP-connect-and-close to ports 8772, 8773 (no protocol); cached `last_successful_cms_contact_at` from a NEW runtime state (`tuxlink::cms_health::CmsHealthState` — **top-level module at `src-tauri/src/cms_health.rs`, NOT under `winlink::session::*`**, to keep probes RADIO-1-isolated per §9.1) updated by actual CMS session code on success/failure events. Per Codex §4 Finding 5 + plan-adrev §5.1 (probe-isolation-conflicts-with-cms_health-placement): top-level module placement resolves the apparent conflict between §9.1's "probes never import winlink::session::*" rule and §9.2's "network probe reads CmsHealthState." |
 | **display** | `tuxlink::logging::env_probes::display` | `WAYLAND_DISPLAY` / `DISPLAY` presence; WebKitGTK version via `webkitgtk` package query or runtime; GPU vendor string via `glxinfo` or `eglinfo` parse; display server detected (sway / labwc / GNOME / KDE via `wmctrl -m` or process-name); `wlrctl toplevel list` reachability for the wayland-tool probe ecosystem the project's `linux-desktop-integration-validation` memory uses. |
 
 ### 9.4 Probe-specific redaction + env-var allowlist (expanded per Codex §4 Finding 2)
@@ -1170,11 +1192,12 @@ The Logging window's Environment-probes section displays the most recent snapsho
 
 Updates flow via the push subscription described in §8.8.
 
-### 9.7 Runtime CMS health state — supporting cache for the network probe (per Codex §4 Finding 5)
+### 9.7 Runtime CMS health state — supporting cache for the network probe (per Codex §4 Finding 5; placement amended per plan-adrev §5.1)
 
-A new lightweight runtime state at `src-tauri/src/winlink/session/cms_health.rs`:
+A new lightweight runtime state at `src-tauri/src/cms_health.rs` (**top-level crate module**, NOT under `winlink::session::*`):
 
 ```rust
+// src-tauri/src/cms_health.rs
 pub struct CmsHealthState {
     last_successful_contact_at: RwLock<Option<DateTime<Utc>>>,
     last_attempt_at: RwLock<Option<DateTime<Utc>>>,
@@ -1182,9 +1205,11 @@ pub struct CmsHealthState {
 }
 ```
 
-Updated by the actual CMS session code in `winlink::session::*` and `winlink::telnet*` on success/failure of connection attempts. The `network` probe reads from this state (not D-Bus, not a probe-time CMS query). State is stored in Tauri-managed state so it persists across probe runs.
+Updated by the actual CMS session code in `winlink::session::*` and `winlink::telnet*` on success/failure of connection attempts (those modules import `crate::cms_health::CmsHealthState` and call `record_success()` / `record_failure(...)`). The `network` probe reads from this state — and because the module sits at the crate root rather than under `winlink::session::*`, the probe's import is permitted by the §9.1 RADIO-1 isolation contract (which forbids `winlink::session::*` but does NOT forbid sibling top-level modules).
 
-This eliminates the "probe runs minutes after failure and infers from nothing" failure mode Codex flagged. The probe says "last CMS contact at T; X minutes ago" — accurate, not synthesized.
+**Why top-level placement matters (plan-adrev §5.1):** the original spec v2 placed `cms_health` under `winlink::session::cms_health`. That created an apparent contradiction with §9.1's "probes never import `winlink::session::*`" rule. The fix is structural — move the module to the crate root so the probe's read-only state dependency does not violate the isolation invariant. The TX-touching code still lives in `winlink::session::*`; only the state record (which carries no TX behavior, only timestamps and an outcome enum) is hoisted out.
+
+State is stored in Tauri-managed state so it persists across probe runs. This eliminates the "probe runs minutes after failure and infers from nothing" failure mode Codex flagged. The probe says "last CMS contact at T; X minutes ago" — accurate, not synthesized.
 
 ---
 
@@ -1491,6 +1516,32 @@ This spec underwent a Codex adversarial review in this session; the full transcr
 **Findings NOT adopted (with reasoning):**
 
 None outright rejected. A few findings had minor scope adjustments (e.g., Codex's "expand emission cluster" suggestions were partially adopted — added the orchestration cluster but kept `wizard`/`bootstrap`/`config` at info-default since they're one-shot lifecycle events without ongoing emission demand). Where Codex's exact recommendation would have over-scoped first-slice work (e.g., spawning a separate tuxmodem-logging subsystem), the spec defers via §12 with an explicit out-of-scope rationale.
+
+---
+
+## 17. Plan-adrev disposition (spec amendments)
+
+A separate Codex round reviewed the implementation plan that derives from this spec (transcript at `dev/adversarial/2026-06-04-alpha-logging-plan-codex-v2.md`, gitignored). Most findings landed in the plan v2. Two findings required spec amendments captured here:
+
+### 17.1 `cms_health` module placement (plan-adrev §5 Finding "Probe isolation conflicts with cms_health placement")
+
+**Original spec v2:** §9.7 placed `CmsHealthState` at `src-tauri/src/winlink/session/cms_health.rs`.
+
+**Problem:** §9.1's RADIO-1 isolation contract forbids probe modules from importing `crate::winlink::session::*`. §9.2 requires the network probe to read `CmsHealthState`. These are mutually exclusive when the state lives under the forbidden path.
+
+**Spec v2.1 amendment:** module placement moved to top-level crate root at `src-tauri/src/cms_health.rs`. Probe imports `crate::cms_health::CmsHealthState` (permitted). TX-touching session code remains under `winlink::session::*` (unchanged); it imports the state from its new top-level location. §9.7 prose updated to reflect this; the isolation test in §10.7 #32 remains as written (the forbidden-imports list still names `crate::winlink::session::`).
+
+### 17.2 Dictionary-validation mechanism clarification (plan-adrev §5 Finding "Dictionary validation approach needs spec clarification")
+
+**Original spec v2:** §7.5 stated "validation runs once at process start ... `zstd::dict::DecoderDictionary::copy(bytes)`".
+
+**Problem:** `DecoderDictionary::copy` does not return a `Result` — it cannot signal "the bytes are not a valid zstd dictionary." The acceptance criterion #21 ("corrupt dictionary export ... assert dictionary validation fails, fallback to dict-free compression succeeds") cannot be satisfied with the stated mechanism.
+
+**Spec v2.1 amendment:** §7.5 is amended to specify a concrete validation: at export-pipeline initialization, the bundled dictionary is exercised via a known-input compress + decompress roundtrip (e.g., `b"tuxlink-dict-check-2026"`). If either step errors, the dictionary is marked invalid; export falls back to dictionary-free compression with `inner_dict_version: null` in manifest; a `warn`-level `dict-invalid: falling back to dict-free compression` event records the fallback. Acceptance criterion #21 maps to this concrete mechanism.
+
+### 17.3 What's NOT amended
+
+Other plan-adrev findings (CRITICAL FanoutLayer-impl-shape, HIGH free-disk-pause-flag wiring, HIGH retention-sweep-rotation-trigger, etc.) are plan-shape issues addressed inline in the implementation plan v2, not spec-shape issues. The spec's architectural decisions stand; the plan's *encoding* of those decisions needed fixes.
 
 ---
 
