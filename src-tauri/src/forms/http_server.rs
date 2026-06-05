@@ -853,7 +853,17 @@ async fn folder_handler(
     }
     // tuxlink-4g2n: pre-flight size cap. Cheaper than read-then-discard,
     // and a malicious large file never gets read into the response heap.
+    //
+    // Codex 2026-06-05 P2: a FIFO / socket / device file in a custom forms
+    // folder reports md.len() == 0 (it has no fixed size), so the cap check
+    // passes and the subsequent std::fs::read blocks the async worker waiting
+    // for EOF or reads arbitrary content past the 8 MiB cap. Reject any
+    // non-regular file BEFORE the size check so the cap can't be bypassed
+    // by file-type sleight-of-hand.
     match std::fs::metadata(&canonical) {
+        Ok(md) if !md.is_file() => {
+            return (StatusCode::FORBIDDEN, "not a regular file").into_response();
+        }
         Ok(md) if md.len() > MAX_FOLDER_ASSET_BYTES as u64 => {
             return (StatusCode::PAYLOAD_TOO_LARGE, "asset too large").into_response();
         }
@@ -1335,6 +1345,54 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    }
+
+    /// Codex 2026-06-05 P2 (post-tuxlink-4g2n): a non-regular file (FIFO /
+    /// socket / device) reports metadata().len() == 0 since it has no fixed
+    /// size, so the size-cap check passes and the subsequent std::fs::read
+    /// could block the async worker waiting for EOF (or read arbitrary
+    /// content past the 8 MiB cap). Reject !is_file() before the size check.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn folder_route_rejects_non_regular_file() {
+        use std::os::unix::fs::FileTypeExt;
+        let td = TempDir::new().unwrap();
+        let folder = td.path().to_path_buf();
+        let fifo_path = folder.join("pipe");
+        // Create a FIFO via nix-style mkfifo (libc; in std via raw syscall).
+        // The std lib doesn't expose mkfifo, so shell out to `mkfifo` —
+        // available on every POSIX system the dev/CI matrix targets.
+        let status = std::process::Command::new("mkfifo")
+            .arg(&fifo_path)
+            .status()
+            .expect("mkfifo command must exist");
+        assert!(status.success(), "mkfifo must succeed");
+        let md = std::fs::metadata(&fifo_path).unwrap();
+        assert!(md.file_type().is_fifo(), "test setup must produce a FIFO");
+        assert_eq!(md.len(), 0, "FIFO reports size 0 — the bypass surface");
+        std::mem::forget(td);
+        let (tx, _rx) = mpsc::channel(1);
+        let state = Arc::new(SessionState {
+            kind: SessionKind::Form,
+            form_html: String::new(),
+            template_folder_path: folder,
+            submit_tx: tx,
+            port: TEST_PORT,
+        });
+        let router = build_router(state);
+        let resp = router
+            .oneshot(
+                Request::builder()
+                    .uri("/folder/pipe")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        // The handler must refuse the FIFO BEFORE any std::fs::read — if
+        // the test hangs here, the guard is missing and read() is blocking
+        // on the empty FIFO waiting for a writer.
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
     }
 
     /// bd tuxlink-4g2n: a file at exactly the cap (or below) must still
