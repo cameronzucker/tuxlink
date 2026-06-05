@@ -65,6 +65,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::logging::wire_sanitize::{sanitize_wire_line, WireContext};
+
 use super::ax25::frame::Address;
 use super::listener::{
     listener_decide, AllowedStations, ListenerArmsRecord, ListenerDecision, PeerId,
@@ -188,6 +190,14 @@ pub fn run_accept_loop<F>(
         .local_addr()
         .map(|a| a.to_string())
         .unwrap_or_else(|_| "?".to_string());
+    tracing::info!(
+        target: "tuxlink::winlink::listener::telnet",
+        bind_addr = %local,
+        allow_all = allowed.allow_all(),
+        callsign_count = allowed.callsigns().len(),
+        ip_count = allowed.ips().len(),
+        "telnet listener armed",
+    );
     progress(&format!(
         "Telnet listener armed on {local} (Allow All={}, allowlist={} callsigns + {} IPs)",
         allowed.allow_all(),
@@ -203,6 +213,7 @@ pub fn run_accept_loop<F>(
 
     loop {
         if shutdown.load(Ordering::SeqCst) {
+            tracing::info!(target: "tuxlink::winlink::listener::telnet", "telnet listener disarmed");
             progress("Telnet listener disarmed.");
             return;
         }
@@ -211,6 +222,11 @@ pub fn run_accept_loop<F>(
         let (stream, peer_addr) = match listener.accept() {
             Ok(pair) => pair,
             Err(e) => {
+                tracing::warn!(
+                    target: "tuxlink::winlink::listener::telnet",
+                    error = %e,
+                    "telnet listener accept failed",
+                );
                 progress(&format!("Telnet listener accept failed: {e}"));
                 return;
             }
@@ -232,6 +248,11 @@ pub fn run_accept_loop<F>(
             return;
         }
 
+        tracing::info!(
+            target: "tuxlink::winlink::listener::telnet",
+            peer = %peer_addr,
+            "inbound telnet connection",
+        );
         progress(&format!("Inbound Telnet connection from {peer_addr}…"));
 
         // Per-session: handle synchronously (MaxConnections=1 parity).
@@ -248,8 +269,18 @@ pub fn run_accept_loop<F>(
             decide.clone(),
         );
         match result {
-            Ok(_) => progress("Telnet session completed."),
-            Err(e) => progress(&format!("Telnet session ended: {e}")),
+            Ok(_) => {
+                tracing::info!(target: "tuxlink::winlink::listener::telnet", "telnet session completed");
+                progress("Telnet session completed.");
+            }
+            Err(e) => {
+                tracing::warn!(
+                    target: "tuxlink::winlink::listener::telnet",
+                    error = %e,
+                    "telnet session ended with error",
+                );
+                progress(&format!("Telnet session ended: {e}"));
+            }
         }
         // Loop back to accept the next peer (or exit if shutdown fired).
     }
@@ -382,18 +413,38 @@ where
     // (via `normalize_station_password` at write time) so the compare
     // succeeds for any case combination the operator + peer can type.
     let password_normalised = normalize_inbound_password(&password_raw);
+    // Route the password response through the wire sanitizer before any logging.
+    let _sanitized_pw = sanitize_wire_line(&password_raw, WireContext::PasswordResponse);
+    tracing::trace!(
+        target: "tuxlink::winlink::listener::telnet",
+        line = %_sanitized_pw,
+        direction = "rx",
+        "wire emission",
+    );
     // Do NOT wire-log the password value verbatim; only its presence.
     wire_log(&format!("< <{} byte password>", password_normalised.len()));
 
     let final_decision = listener_decide(&peer, Some(&password_normalised), allowed, password, arms);
     match final_decision {
         ListenerDecision::Accept => {
+            tracing::info!(
+                target: "tuxlink::winlink::listener::telnet",
+                peer = %peer_addr,
+                callsign = %claimed.call,
+                "station-password check passed; session accepted",
+            );
             progress(&format!(
                 "Accepted Telnet session from {peer_addr} (callsign={:?})",
                 claimed
             ));
         }
         ListenerDecision::RejectPassword => {
+            tracing::debug!(
+                target: "tuxlink::winlink::listener::telnet",
+                peer = %peer_addr,
+                verification = "failed",
+                "station-password check failed",
+            );
             progress(&format!(
                 "Rejecting {peer_addr} — incorrect station password"
             ));
@@ -404,6 +455,11 @@ where
         ListenerDecision::RejectExpired => {
             // Possible if the TTL elapsed between the pre-check and the
             // password gate (a slow peer + a short TTL).
+            tracing::warn!(
+                target: "tuxlink::winlink::listener::telnet",
+                peer = %peer_addr,
+                "listener arm window expired during exchange",
+            );
             progress(&format!(
                 "Rejecting {peer_addr} — listener arm window expired during exchange"
             ));
@@ -413,6 +469,11 @@ where
         }
         ListenerDecision::RejectAllowlist => {
             // Should be impossible — we passed the pre-check above.
+            tracing::warn!(
+                target: "tuxlink::winlink::listener::telnet",
+                peer = %peer_addr,
+                "allowlist re-check failed (race?)",
+            );
             progress(&format!(
                 "Rejecting {peer_addr} — allowlist re-check failed (race?)"
             ));
