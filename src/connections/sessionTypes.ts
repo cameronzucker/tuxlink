@@ -92,3 +92,54 @@ export function isBuilt(key: ConnectionKey): boolean {
   if (!intent?.built) return false;
   return intent.protocols.find((p) => p.id === key.protocol)?.built ?? false;
 }
+
+// === Smart auth-failure diagnostics types (tuxlink-7do4, spec §6.3) ===
+// These shapes mirror the Rust serde-tagged enums in
+// src-tauri/src/winlink/b2f_events.rs. Keep in sync.
+
+export type AttemptId = number;
+
+export type TransportFailureKind =
+  | 'dns'
+  | 'tcp_refused'
+  | 'tcp_timeout'
+  | 'tls_handshake';
+
+export type ConnectionPhase = 'pre_handshake' | 'during_handshake' | 'post_handshake';
+
+export type FailureMode =
+  | 'network_unreachable'
+  | 'client_rejected'
+  | 'password_rejected'
+  | 'callsign_rejected'
+  | 'session_dropped_after_auth'
+  | 'temporary_server_unavailability'
+  | 'uncategorized';
+
+export type CredentialScope =
+  | { kind: 'primary' }
+  | { kind: 'aux'; callsign: string }
+  | { kind: 'unknown' };
+
+export type B2fEvent =
+  | { kind: 'tcp_connected'; host: string; port: number; attempt_id: AttemptId }
+  | { kind: 'tls_handshake_started'; attempt_id: AttemptId }
+  | { kind: 'tls_handshake_completed'; attempt_id: AttemptId }
+  | { kind: 'remote_sid_received'; sid: string; attempt_id: AttemptId }
+  | { kind: 'secure_challenge_received'; attempt_id: AttemptId }
+  | { kind: 'secure_response_sent'; attempt_id: AttemptId }
+  | { kind: 'post_auth_exchange_started'; attempt_id: AttemptId }
+  | { kind: 'remote_error_received'; raw: string; attempt_id: AttemptId }
+  | { kind: 'handshake_completed'; attempt_id: AttemptId }
+  | {
+      kind: 'connection_closed';
+      phase: ConnectionPhase;
+      transport_kind: TransportFailureKind | null;
+      attempt_id: AttemptId;
+    }
+  | {
+      kind: 'auth_classified';
+      mode: FailureMode;
+      raw: string | null;
+      attempt_id: AttemptId;
+    };
