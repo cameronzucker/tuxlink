@@ -20,5 +20,6 @@ pub mod state_dir;
 pub mod subscriber;
 pub mod visit;
 pub mod wire_sanitize;
+pub mod env_probes;
 
 pub use fanout::AttemptIdExt;
