@@ -114,10 +114,16 @@ fn check_dialout_group() -> bool {
 }
 
 fn get_supplementary_groups() -> Option<Vec<u32>> {
-    // Use libc getgroups to retrieve the supplementary group list
-    const MAX_GROUPS: usize = 128;
-    let mut groups: Vec<libc::gid_t> = vec![0; MAX_GROUPS];
-    let count = unsafe { libc::getgroups(MAX_GROUPS as libc::c_int, groups.as_mut_ptr()) };
+    // Two-call pattern: first call with ngroups=0 returns the actual count
+    // (POSIX allows this; getgroups doesn't write to buf when ngroups=0).
+    // Then allocate exactly that size and call again. NGROUPS_MAX on Linux
+    // is 65536; a fixed 128 buffer fails with EINVAL on users in more groups.
+    let needed = unsafe { libc::getgroups(0, std::ptr::null_mut()) };
+    if needed < 0 {
+        return None;
+    }
+    let mut groups: Vec<libc::gid_t> = vec![0; needed as usize];
+    let count = unsafe { libc::getgroups(needed, groups.as_mut_ptr()) };
     if count < 0 {
         return None;
     }

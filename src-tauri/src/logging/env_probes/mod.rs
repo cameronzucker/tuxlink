@@ -127,16 +127,28 @@ pub fn run_with_deadline(cmd: &str, args: &[&str]) -> Option<String> {
     let deadline = Duration::from_millis(500);
     loop {
         if start.elapsed() >= deadline {
+            // Reap to avoid a zombie process accumulating on each deadline hit:
+            // std::process::Child::drop does NOT wait(), so kill() alone leaves
+            // the kernel process table entry alive until the parent exits.
             let _ = child.kill();
+            let _ = child.wait();
             return None;
         }
-        match child.try_wait().ok()? {
-            Some(_) => {
+        match child.try_wait() {
+            Ok(Some(_)) => {
                 let mut out = String::new();
                 child.stdout.take()?.read_to_string(&mut out).ok()?;
                 return Some(out);
             }
-            None => std::thread::sleep(Duration::from_millis(20)),
+            Ok(None) => std::thread::sleep(Duration::from_millis(20)),
+            Err(_) => {
+                // try_wait failure is rare (waitpid surfaced EINTR/ECHILD). Kill
+                // + reap so we don't leak an orphan child still running in the
+                // background.
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
         }
     }
 }
