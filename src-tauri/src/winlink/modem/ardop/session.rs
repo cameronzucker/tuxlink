@@ -160,6 +160,24 @@ impl CmdSocket {
         self.rx.recv_timeout(timeout)
     }
 
+    /// Block indefinitely for the next parsed TNC event.
+    ///
+    /// Unlike [`recv_event`] this never returns
+    /// `Err(RecvTimeoutError::Timeout)` — it blocks until either an event
+    /// arrives or the reader thread closes the channel (EOF / socket
+    /// closed), surfacing the latter as `Err(RecvTimeoutError::Disconnected)`
+    /// so callers can use a single match arm.
+    ///
+    /// Used by the no-deadline `arq_connect` path (operator decision bd
+    /// tuxlink-qtgg + Codex Round 1 P1 #3) instead of
+    /// `recv_event(Duration::MAX)` — `mpsc::Receiver::recv_timeout`
+    /// internally calls `Instant::checked_add(now, deadline)` which returns
+    /// `None` on overflow, so `Duration::MAX` is not a safe stand-in for
+    /// "no deadline" (Codex Round 2 P1 #2).
+    pub fn recv_event_blocking(&self) -> Result<Command, RecvTimeoutError> {
+        self.rx.recv().map_err(|_| RecvTimeoutError::Disconnected)
+    }
+
     /// Get a cloneable write handle to the cmd socket. Used by `ModemSession`
     /// so a side channel (e.g. `modem_ardop_disconnect`) can send `ABORT`
     /// while `arq_connect`'s recv loop is blocking on this socket's read
@@ -362,14 +380,23 @@ pub struct ConnectInfo {
 /// TNC emits `CONNECTED <peer_call> <bw>` (success), `FAULT <msg>` (error),
 /// or `DISCONNECTED`/`NEWSTATE DISC` (error — link dropped before connecting).
 ///
-/// The `deadline` is an **overall** deadline from the time the function is
-/// called; per-iteration remaining time is recomputed so the loop actually
-/// terminates.
+/// The `deadline` is an `Option<Duration>` (operator decision bd tuxlink-qtgg
+/// + Codex Round 1 P1 #3):
+/// - `Some(d)` — **overall** deadline from the time the function is called;
+///   per-iteration remaining time is recomputed so the loop actually
+///   terminates.
+/// - `None` — no wall-clock cap; each iteration blocks indefinitely via
+///   [`CmdSocket::recv_event_blocking`] until CONNECTED / FAULT /
+///   DISCONNECTED arrives or the cmd socket closes. The bound on keyed
+///   airtime is the modem's own `ARQTIMEOUT` × `CONNECT_REPEAT` plus the
+///   operator's ABORT side channel. Codex Round 2 P1 #2 explicitly rejects
+///   `Duration::MAX` as a stand-in here — that value overflows
+///   `mpsc::Receiver::recv_timeout`'s internal `Instant::checked_add`.
 pub fn arq_connect(
     sock: &mut CmdSocket,
     target: &str,
     repeat: u32,
-    deadline: Duration,
+    deadline: Option<Duration>,
 ) -> Result<ConnectInfo, SessionError> {
     // Drain stale events (e.g. NEWSTATE DISC from a prior phase) before
     // sending ARQCALL so they cannot be misread as a connect failure.
@@ -382,12 +409,19 @@ pub fn arq_connect(
         Some(&format!("{target} {repeat}")),
     ))?;
     loop {
-        let elapsed = start.elapsed();
-        if elapsed >= deadline {
-            return Err(SessionError::Timeout { cmd: "ARQCALL".into() });
-        }
-        let remaining = deadline - elapsed;
-        match sock.recv_event(remaining) {
+        // Branch on Some(deadline) (bounded wait) vs None (block indefinitely).
+        // Avoids passing Duration::MAX through recv_timeout (Codex R2 P1 #2).
+        let recv_result = match deadline {
+            Some(d) => {
+                let elapsed = start.elapsed();
+                if elapsed >= d {
+                    return Err(SessionError::Timeout { cmd: "ARQCALL".into() });
+                }
+                sock.recv_event(d - elapsed)
+            }
+            None => sock.recv_event_blocking(),
+        };
+        match recv_result {
             Ok(Command::Connected { peer_call, bandwidth_hz }) => {
                 return Ok(ConnectInfo { peer_call, bandwidth_hz });
             }
@@ -764,7 +798,7 @@ mod tests {
         });
 
         let mut sock = CmdSocket::connect(addr).unwrap();
-        let info = arq_connect(&mut sock, "W7ABC", 3, Duration::from_secs(10))
+        let info = arq_connect(&mut sock, "W7ABC", 3, Some(Duration::from_secs(10)))
             .expect("arq_connect must succeed on CONNECTED");
         assert_eq!(info.peer_call, "W7ABC");
         assert_eq!(info.bandwidth_hz, 500);
@@ -784,7 +818,7 @@ mod tests {
         });
 
         let mut sock = CmdSocket::connect(addr).unwrap();
-        let err = arq_connect(&mut sock, "W7ABC", 3, Duration::from_secs(10))
+        let err = arq_connect(&mut sock, "W7ABC", 3, Some(Duration::from_secs(10)))
             .expect_err("must fail on FAULT");
         assert!(
             matches!(err, SessionError::Fault(ref s) if s.contains("not from state DISC")),
@@ -806,7 +840,7 @@ mod tests {
         });
 
         let mut sock = CmdSocket::connect(addr).unwrap();
-        let err = arq_connect(&mut sock, "W7ABC", 3, Duration::from_secs(10))
+        let err = arq_connect(&mut sock, "W7ABC", 3, Some(Duration::from_secs(10)))
             .expect_err("must fail on DISC before CONNECTED");
         assert!(
             matches!(err, SessionError::Fault(_)),
@@ -828,7 +862,7 @@ mod tests {
         });
 
         let mut sock = CmdSocket::connect(addr).unwrap();
-        let err = arq_connect(&mut sock, "W7ABC", 3, Duration::from_secs(10))
+        let err = arq_connect(&mut sock, "W7ABC", 3, Some(Duration::from_secs(10)))
             .expect_err("must fail on DISCONNECTED before CONNECTED");
         assert!(
             matches!(err, SessionError::Fault(_)),
@@ -867,7 +901,7 @@ mod tests {
         // before we call arq_connect so it's queued in the channel.
         std::thread::sleep(Duration::from_millis(50));
 
-        let info = arq_connect(&mut sock, "W7ABC", 3, Duration::from_secs(10))
+        let info = arq_connect(&mut sock, "W7ABC", 3, Some(Duration::from_secs(10)))
             .expect("arq_connect must succeed when stale DISC is drained");
         assert_eq!(info.peer_call, "W7ABC");
         assert_eq!(info.bandwidth_hz, 500);

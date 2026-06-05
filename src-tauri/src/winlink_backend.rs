@@ -226,9 +226,74 @@ pub fn resolve_packet_endpoint(
 /// Pulled out so paths that bypass `NativeBackend::connect` (in particular
 /// `ui_commands::telnet_p2p_connect` for tuxlink-l55l) build the same shape
 /// of outbound without duplicating the loop.
+///
+/// # Intent-filtered drain (Codex Round 5 P1 #3 — tuxlink-u5hl)
+///
+/// Spec §3 capability matrix requires every B2F session to drain only the
+/// subset of Outbox whose routing-flag matches the session's
+/// [`SessionIntent::routing_flag`]:
+///
+/// - `Cms` (flag `C`)        → drains only C-tagged messages.
+/// - `RadioOnly` (flag `R`)  → drains only R-tagged messages.
+/// - `P2p` (no flag)          → drains only unflagged messages.
+///
+/// Today the on-disk [`MessageMeta`] schema carries NO `routing_flag`
+/// field; nothing is tagged. The full per-message filter requires
+/// (a) adding `MessageMeta::routing_flag`, (b) tagging at compose +
+/// inbound-dispatch time, and (c) filtering this drain by
+/// `meta.routing_flag == intent.routing_flag()`. That schema cascade was
+/// out of scope for the v0.0.1 alpha sprint that surfaced this bug.
+///
+/// As a **safety gate** in lieu of the full filter: for any intent whose
+/// `routing_flag()` is **not** `Some(RoutingFlag::Cms)` (i.e., the
+/// non-CMS intents `P2p`, `RadioOnly`, `PostOffice`, `Mesh`) this helper
+/// returns [`BackendError::MessageRejected`] with a diagnostic that names
+/// the gate + the bd issue tracking the schema work. The CMS path (alpha's
+/// only "drain everything is implicitly correct" case, because outbound
+/// today is composed against the keyring's CMS password assumption) keeps
+/// its current "drain all" behavior.
+///
+/// All callers (dial AND listen) catch the safety-gate error and degrade
+/// to an empty outbound list (Codex Phase 3-4 RE-REVIEW P2). The dial path
+/// previously fail-closed via `?` propagation; that posture blocked spec §8
+/// build-walk-revise validation for the 6 non-CMS×3-protocol combinations
+/// of the umbrella's alpha walkthrough. The new posture: degrade-to-empty
+/// on the gate-specific error, log the skip, exchange proceeds with no
+/// outbound proposed. The peer never sees an off-spec routing-flag tag
+/// because an empty outbound batch carries no proposals; the listen-side
+/// degrades identically.
+///
+/// Concrete call sites:
+/// - **Dial:** [`run_ardop_b2f_exchange`] / [`run_vara_b2f_exchange`] /
+///   [`crate::ui_commands::telnet_p2p_connect`] — `unwrap_or_else` /
+///   `match` on `BackendError::MessageRejected` to empty Vec.
+/// - **Listen:** [`run_ardop_b2f_answer`] / [`run_vara_b2f_answer`] /
+///   [`crate::winlink::telnet_listen`] — same `unwrap_or_else` pattern.
+///
+/// The gate will lift when bd issue **tuxlink-u5hl** ships the schema +
+/// per-message filter.
 pub fn build_outbound_proposals(
     mailbox: &Mailbox,
+    intent: SessionIntent,
 ) -> Result<Vec<session::OutboundMessage>, BackendError> {
+    // Safety gate — see fn docs (tuxlink-u5hl). Non-CMS intents refuse to
+    // drain Outbox until the per-message routing_flag schema lands; the
+    // current "drain everything" is off-spec for any session whose
+    // `routing_flag()` is not `Cms`. Treats `None` (P2p/Mesh) and
+    // `Some(R|L)` (RadioOnly/PostOffice) identically: only `Some(Cms)`
+    // passes.
+    if intent.routing_flag() != Some(crate::winlink::session::RoutingFlag::Cms) {
+        return Err(BackendError::MessageRejected(format!(
+            "safety gate: outbound mail filtering not yet implemented for \
+             non-CMS sessions (intent={intent:?}); gate will lift when \
+             MessageMeta.routing_flag lands (tracked as bd issue tuxlink-u5hl). \
+             Spec §3 capability matrix requires draining only messages whose \
+             routing flag matches the session intent — today the schema does \
+             not carry the flag, so the safe default is fail-closed for any \
+             intent other than CMS."
+        )));
+    }
+
     let mut outbound = Vec::new();
     for meta in mailbox.list(MailboxFolder::Outbox)? {
         // Codex review 2026-06-03 [P2 #6] (tuxlink-61yg): per-message read
@@ -267,7 +332,7 @@ mod build_outbound_proposals_tests {
     fn empty_outbox_returns_empty_vec() {
         let dir = tempdir().unwrap();
         let mailbox = Mailbox::new(dir.path());
-        let out = build_outbound_proposals(&mailbox).unwrap();
+        let out = build_outbound_proposals(&mailbox, SessionIntent::Cms).unwrap();
         assert!(out.is_empty(), "empty outbox should produce no proposals; got {out:?}");
     }
 
@@ -277,14 +342,19 @@ mod build_outbound_proposals_tests {
         let mailbox = Mailbox::new(dir.path());
 
         // tuxlink-l55l: two queued outbound drafts addressed to two different
-        // recipients — P2P semantics send ALL of them; recipient routing is
-        // the peer's job (WLE-as-Post-Office). Build via the same path the
+        // recipients — CMS semantics send ALL of them; recipient routing is
+        // the gateway's job (CMS-as-Post-Office). Build via the same path the
         // compose flow uses so the bytes are a valid Winlink message.
+        //
+        // (tuxlink-u5hl: this test originally exercised the P2P path, but the
+        // intent-filtered drain gate now refuses non-CMS drains until the
+        // routing_flag schema lands. The no-peer-filter invariant is the same
+        // for CMS and P2P intents; CMS exercises the unfiltered path today.)
         let m1 = compose_message(
             "N7CPZ",
             &["W7AUX"],
             &[],
-            "P2P-test-1",
+            "Drain-test-1",
             "first body",
             1_716_200_000,
         );
@@ -292,14 +362,14 @@ mod build_outbound_proposals_tests {
             "N7CPZ",
             &["cameronzucker@gmail.com"],
             &[],
-            "P2P-test-2",
+            "Drain-test-2",
             "second body",
             1_716_200_001,
         );
         mailbox.store(MailboxFolder::Outbox, &m1.to_bytes()).unwrap();
         mailbox.store(MailboxFolder::Outbox, &m2.to_bytes()).unwrap();
 
-        let out = build_outbound_proposals(&mailbox).unwrap();
+        let out = build_outbound_proposals(&mailbox, SessionIntent::Cms).unwrap();
         assert_eq!(
             out.len(),
             2,
@@ -307,17 +377,19 @@ mod build_outbound_proposals_tests {
             out.len()
         );
         let titles: Vec<&str> = out.iter().map(|o| o.title.as_str()).collect();
-        assert!(titles.contains(&"P2P-test-1"));
-        assert!(titles.contains(&"P2P-test-2"));
+        assert!(titles.contains(&"Drain-test-1"));
+        assert!(titles.contains(&"Drain-test-2"));
     }
 
     #[test]
     fn no_per_peer_filtering_ships_all_drafts() {
-        // P2P semantics (handoff): tuxlink should NOT filter outbox by peer
-        // callsign at dial-time. The peer (typically WLE) acts as the
+        // The drain helper MUST NOT filter outbox by recipient/peer
+        // callsign at dial-time. The peer (CMS gateway, WLE relay, or
+        // RMS Relay post-office, depending on intent) acts as the
         // post-office and routes via its own CMS uplink. This test pins the
-        // contract: queue a draft addressed to a third party, dial peer X,
-        // and the draft must still be offered.
+        // contract: queue a draft addressed to a third party, dial intent X,
+        // and the draft must still be offered (so long as the intent passes
+        // the safety gate — CMS today).
         let dir = tempdir().unwrap();
         let mailbox = Mailbox::new(dir.path());
 
@@ -333,13 +405,98 @@ mod build_outbound_proposals_tests {
             .store(MailboxFolder::Outbox, &third_party.to_bytes())
             .unwrap();
 
-        let out = build_outbound_proposals(&mailbox).unwrap();
+        let out = build_outbound_proposals(&mailbox, SessionIntent::Cms).unwrap();
         assert_eq!(
             out.len(),
             1,
             "drafts addressed to a third party MUST still be offered to the peer; got {out:?}"
         );
         assert_eq!(out[0].title, "Routed-through-peer");
+    }
+
+    // ────────────────────────────────────────────────────────────────────
+    // tuxlink-u5hl — Codex Round 5 P1 #3: intent-filtered drain safety gate.
+    // The full per-message routing-flag filter requires a MessageMeta schema
+    // change; until that lands, non-CMS intents must fail-closed at the
+    // drain helper rather than offer every Outbox message regardless of
+    // intent (which would tag spec-mismatched routing flags at the peer).
+    // ────────────────────────────────────────────────────────────────────
+
+    /// Helper: queue one valid outbox message so `build_outbound_proposals`
+    /// would have something to drain absent the safety gate. The gate must
+    /// fire BEFORE iterating the outbox, so the presence of a draft proves
+    /// the gate is intent-driven, not "no mail anyway."
+    fn outbox_with_one_draft() -> (tempfile::TempDir, Mailbox) {
+        let dir = tempdir().unwrap();
+        let mailbox = Mailbox::new(dir.path());
+        let m = compose_message(
+            "N7CPZ",
+            &["W7AUX"],
+            &[],
+            "Safety-gate fixture",
+            "body",
+            1_716_200_000,
+        );
+        mailbox.store(MailboxFolder::Outbox, &m.to_bytes()).unwrap();
+        (dir, mailbox)
+    }
+
+    #[test]
+    fn safety_gate_fires_for_p2p_intent() {
+        let (_dir, mailbox) = outbox_with_one_draft();
+        let err = build_outbound_proposals(&mailbox, SessionIntent::P2p)
+            .expect_err("safety gate must reject P2p drain — see tuxlink-u5hl");
+        assert!(
+            matches!(err, BackendError::MessageRejected(_)),
+            "expected MessageRejected (safety gate); got {err:?}"
+        );
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("safety gate"),
+            "error must self-identify as safety gate; got: {msg}"
+        );
+        assert!(
+            msg.contains("tuxlink-u5hl"),
+            "error must reference the tracking bd issue; got: {msg}"
+        );
+    }
+
+    #[test]
+    fn safety_gate_fires_for_radio_only_intent() {
+        let (_dir, mailbox) = outbox_with_one_draft();
+        let err = build_outbound_proposals(&mailbox, SessionIntent::RadioOnly)
+            .expect_err("safety gate must reject RadioOnly drain — see tuxlink-u5hl");
+        assert!(
+            matches!(err, BackendError::MessageRejected(_)),
+            "expected MessageRejected (safety gate); got {err:?}"
+        );
+    }
+
+    #[test]
+    fn safety_gate_fires_for_post_office_intent() {
+        let (_dir, mailbox) = outbox_with_one_draft();
+        let err = build_outbound_proposals(&mailbox, SessionIntent::PostOffice)
+            .expect_err("safety gate must reject PostOffice drain — see tuxlink-u5hl");
+        assert!(matches!(err, BackendError::MessageRejected(_)));
+    }
+
+    #[test]
+    fn safety_gate_fires_for_mesh_intent() {
+        let (_dir, mailbox) = outbox_with_one_draft();
+        let err = build_outbound_proposals(&mailbox, SessionIntent::Mesh)
+            .expect_err("safety gate must reject Mesh drain — see tuxlink-u5hl");
+        assert!(matches!(err, BackendError::MessageRejected(_)));
+    }
+
+    #[test]
+    fn cms_intent_drains_unchanged_through_safety_gate() {
+        // Status-quo invariant: CMS continues to drain all Outbox messages.
+        // The safety gate is non-CMS-only; this test pins that CMS is NOT
+        // accidentally regressed.
+        let (_dir, mailbox) = outbox_with_one_draft();
+        let out = build_outbound_proposals(&mailbox, SessionIntent::Cms)
+            .expect("CMS drain must NOT be gated");
+        assert_eq!(out.len(), 1, "CMS drain must yield all outbox messages");
     }
 }
 
@@ -2071,20 +2228,22 @@ pub fn run_ardop_b2f_exchange(
     };
 
     // Turn each queued outbox message into a proposal + compressed body.
-    let mut outbound = Vec::new();
-    for meta in mailbox.list(MailboxFolder::Outbox)? {
-        let body = mailbox.read(MailboxFolder::Outbox, &meta.id)?;
-        if let Ok(message) = Message::from_bytes(&body.raw_rfc5322) {
-            if let Some((proposal, compressed)) = message.to_proposal() {
-                let title = message.header("Subject").unwrap_or_default().to_string();
-                outbound.push(session::OutboundMessage {
-                    proposal,
-                    title,
-                    compressed,
-                });
-            }
-        }
-    }
+    //
+    // Intent-filtered drain (tuxlink-u5hl Codex Round 5 P1 #3 +
+    // Phase 3-4 RE-REVIEW P2): for non-CMS intents the safety gate fires
+    // and returns `MessageRejected`; degrade to an empty outbound list
+    // rather than failing the dial. The ARQ link is already up by the
+    // time we get here — failing closed would only orphan the operator's
+    // session, while degrading lets the spec §8 build-walk-revise loop
+    // exercise the non-CMS combos. Symmetric with `run_ardop_b2f_answer`'s
+    // all-errors-degrade pattern. The peer never sees off-spec routing
+    // flags either way because no proposal is sent when outbound is empty.
+    let outbound = build_outbound_proposals(mailbox, intent).unwrap_or_else(|e| {
+        eprintln!(
+            "run_ardop_b2f_exchange: outbound drain skipped ({e}); dial proceeds with empty outbound"
+        );
+        Vec::new()
+    });
 
     let exchange_config = session::ExchangeConfig {
         mycall: callsign,
@@ -2151,7 +2310,17 @@ pub fn run_ardop_b2f_answer(
         .to_uppercase();
     let locator = crate::position::effective_broadcast_locator(config, position);
 
-    let outbound = build_outbound_proposals(mailbox)?;
+    // Intent-filtered drain (tuxlink-u5hl). Listener answerer: catch the
+    // safety-gate error and degrade to empty outbound rather than failing
+    // the inbound session — the peer is already on the link and inbound
+    // mail filing still works without us shipping outbound. Symmetric with
+    // the telnet_listen answerer (`progress("Outbox read failed …")`).
+    let outbound = build_outbound_proposals(mailbox, SessionIntent::P2p).unwrap_or_else(|e| {
+        eprintln!(
+            "run_ardop_b2f_answer: outbound drain skipped ({e}); inbound continues with empty outbound"
+        );
+        Vec::new()
+    });
     let exchange_config = session::ExchangeConfig {
         mycall: callsign,
         targetcall: peer_callsign.to_string(),
@@ -2223,7 +2392,17 @@ pub fn run_vara_b2f_answer(
         .to_uppercase();
     let locator = crate::position::effective_broadcast_locator(config, position);
 
-    let outbound = build_outbound_proposals(mailbox)?;
+    // Intent-filtered drain (tuxlink-u5hl). Listener answerer: catch the
+    // safety-gate error and degrade to empty outbound rather than failing
+    // the inbound session — symmetric with `run_ardop_b2f_answer` above and
+    // the telnet_listen answerer. The peer is already on the link; inbound
+    // mail filing still works without us shipping outbound.
+    let outbound = build_outbound_proposals(mailbox, SessionIntent::P2p).unwrap_or_else(|e| {
+        eprintln!(
+            "run_vara_b2f_answer: outbound drain skipped ({e}); inbound continues with empty outbound"
+        );
+        Vec::new()
+    });
     let exchange_config = session::ExchangeConfig {
         mycall: callsign,
         targetcall: peer_callsign.to_string(),
@@ -2272,6 +2451,159 @@ pub fn run_vara_b2f_answer(
     )
     .map_err(|e| BackendError::TransportFailed { reason: format!("{e:?}"), source: None })?;
 
+    for message in &result.received {
+        mailbox.store(MailboxFolder::Inbox, &message.to_bytes())?;
+    }
+    for mid in &result.sent {
+        mailbox.move_to(
+            MailboxFolder::Outbox,
+            MailboxFolder::Sent,
+            &MessageId(mid.clone()),
+        )?;
+    }
+    Ok(())
+}
+
+/// Run a B2F mail exchange over an already-`CONNECTED` VARA transport
+/// (tuxlink-0ye6 Task 3.4 — VARA's dial-role analog of
+/// [`run_ardop_b2f_exchange`] / [`run_vara_b2f_answer`]).
+///
+/// The transport must already be in a `CONNECTED <mycall> <target> [bw]`
+/// state — the Tauri-command layer is responsible for sending `CONNECT` on
+/// the cmd port and waiting for the `CONNECTED` event before calling this
+/// function. This wrapper drives the B2F protocol over the VARA data socket
+/// only; it does NOT touch the cmd port.
+///
+/// Mirrors [`run_vara_b2f_answer`]'s data-socket plumbing (try_clone the
+/// underlying `TcpStream` to split duplex halves into a `BufReader` for
+/// reads + the raw stream for writes), but takes `ExchangeRole::Dial` so
+/// the slave/IRS turn order matches the dialer's view of the exchange.
+///
+/// Intent threads through `ExchangeConfig.intent` per
+/// [`SessionIntent::routing_flag`] — the operator's typed intent
+/// determines the routing-flag posture of the exchange (CMS → 'C', P2p →
+/// no flag, RadioOnly → 'R'). Outbox messages drain through
+/// `build_outbound_proposals` (same shape ARDOP uses); the per-message
+/// flag-aware filter is informational at this stage — the production
+/// mailbox does not yet stamp `RoutingFlag` on stored messages, so the
+/// existing outbox iteration is the correct drain set for any intent.
+///
+/// # CMS password
+///
+/// For `intent == Cms`, fetches the operator's CMS password from the
+/// shared `tuxlink-pat` keyring entry (same source the ARDOP path uses)
+/// so a `;PQ` challenge from the gateway can be answered. For non-CMS
+/// intents, skips the keyring read — peers never challenge per the FBB
+/// master/slave split and a stale CMS secret should not leak into a peer
+/// handshake.
+///
+/// # RADIO-1
+///
+/// The caller MUST have established the `CONNECTED` link via the cmd-port
+/// `CONNECT` flow (which is itself the RF-transmitting step). This
+/// function only drives the data-socket exchange — it does NOT initiate
+/// transmission on its own. Aborting an in-flight exchange is the
+/// session-layer `abort_in_flight` path (Task 4.1), not this function.
+pub fn run_vara_b2f_exchange(
+    transport: &mut crate::winlink::modem::vara::VaraTransport,
+    target: &str,
+    intent: SessionIntent,
+    config: &Config,
+    mailbox: &Mailbox,
+    position: Option<&crate::position::PositionArbiter>,
+) -> Result<(), BackendError> {
+    use std::io::BufReader;
+
+    let callsign = config
+        .identity
+        .callsign
+        .clone()
+        .ok_or_else(|| BackendError::NotConfigured("identity.callsign".into()))?
+        .trim()
+        .to_uppercase();
+    let locator = crate::position::effective_broadcast_locator(config, position);
+
+    // CMS gateway may issue a `;PQ` challenge — fetch the operator's CMS
+    // password from the shared `tuxlink-pat` keyring entry (per ADR 0011
+    // cred refactor; same source ARDOP uses). For peer intents the FBB
+    // master/slave split forbids challenges, so skip the keyring read:
+    // both a hygiene win and a defensive guarantee that a stale CMS
+    // secret cannot leak into a peer handshake.
+    let password = if intent == SessionIntent::Cms {
+        keyring::Entry::new("tuxlink-pat", &callsign)
+            .ok()
+            .and_then(|e| e.get_password().ok())
+            .filter(|p| !p.is_empty())
+    } else {
+        None
+    };
+
+    // Intent-filtered drain (tuxlink-u5hl Codex Round 5 P1 #3 +
+    // Phase 3-4 RE-REVIEW P2): for non-CMS intents, degrade to empty
+    // outbound rather than failing the dial. The VARA CONNECT has already
+    // completed by the time we reach here; failing closed would only
+    // orphan the operator's session. The peer sees no proposal sent
+    // (empty outbound) so no off-spec routing flag rides out. Matches
+    // `run_vara_b2f_answer`'s all-errors-degrade pattern.
+    let outbound = build_outbound_proposals(mailbox, intent).unwrap_or_else(|e| {
+        eprintln!(
+            "run_vara_b2f_exchange: outbound drain skipped ({e}); dial proceeds with empty outbound"
+        );
+        Vec::new()
+    });
+    let exchange_config = session::ExchangeConfig {
+        mycall: callsign,
+        targetcall: target.to_string(),
+        locator,
+        password,
+        intent,
+    };
+
+    // Split the duplex VARA data socket into BufRead + Write halves.
+    // Same pattern as `run_vara_b2f_answer` — VARA's data socket is an
+    // OS-level TCP stream we can clone; the kernel arbitrates the duplex
+    // halves. The B2F engine is strictly turn-based so the split is safe
+    // (only one side reads or writes at any instant).
+    let writer = transport
+        .data_stream()
+        .try_clone()
+        .map_err(|e| BackendError::TransportFailed {
+            reason: format!("VARA data-socket try_clone failed: {e}"),
+            source: None,
+        })?;
+    let reader = BufReader::new(
+        transport
+            .data_stream()
+            .try_clone()
+            .map_err(|e| BackendError::TransportFailed {
+                reason: format!("VARA data-socket try_clone (reader) failed: {e}"),
+                source: None,
+            })?,
+    );
+    let mut reader = reader;
+    let mut writer = writer;
+
+    let result = session::run_exchange_with_role(
+        &mut reader,
+        &mut writer,
+        ExchangeRole::Dial,
+        &exchange_config,
+        outbound,
+        |proposals| {
+            proposals
+                .iter()
+                .map(|_| Answer::Accept { resume_offset: 0 })
+                .collect()
+        },
+        None,
+    )
+    .map_err(|e| BackendError::TransportFailed {
+        reason: format!("{e:?}"),
+        source: None,
+    })?;
+
+    // File received messages into the inbox; move delivered ones to sent.
+    // Inbox-FIRST ordering matches the ARDOP path's Codex P1.4 fix.
     for message in &result.received {
         mailbox.store(MailboxFolder::Inbox, &message.to_bytes())?;
     }
