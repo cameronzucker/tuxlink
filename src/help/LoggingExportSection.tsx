@@ -23,7 +23,7 @@ export function LoggingExportSection() {
     setBusy('exporting');
     setFeedback(null);
     const ts = new Date().toISOString().replace(/[:.]/g, '-');
-    const attempt = status?.last_export?.correlation_id ?? `boot-${status?.boot_id_short ?? 'unknown'}`;
+    const attempt = status?.last_export?.correlation_id || `boot-${status?.boot_id_short || 'unknown'}`;
     const defaultName = `tuxlink-logs-${ts}-${attempt}.tar.zst`;
     const filePath = await saveDialog({
       defaultPath: defaultName,

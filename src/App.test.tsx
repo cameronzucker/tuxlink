@@ -57,6 +57,17 @@ vi.mock('./help/HelpView', () => ({
     return <div data-testid="help-root" />;
   },
 }));
+// tuxlink-qjgx / n4hz lesson applied to /logging: LoggingExportSection and
+// LoggingSettingsSection both call useQuery, which throws "No QueryClient set"
+// without a provider above them. Mock LoggingView to a sentinel that uses
+// useQueryClient() — the call throws if App.tsx's isLoggingWindow branch ever
+// loses its QueryClientProvider wrapper.
+vi.mock('./help/LoggingView', () => ({
+  LoggingView: () => {
+    useQueryClient();   // throws if no QueryClientProvider above us
+    return <div data-testid="logging-root" />;
+  },
+}));
 
 import { invoke } from '@tauri-apps/api/core';
 
@@ -178,5 +189,32 @@ describe('<App> help-window routing (tuxlink-0gsy / tuxlink-n4hz)', () => {
     expect(screen.queryByTestId('wizard-root')).not.toBeInTheDocument();
     expect(screen.queryByTestId('app-shell-root')).not.toBeInTheDocument();
     expect(screen.queryByTestId('compose-root')).not.toBeInTheDocument();
+  });
+});
+
+// tuxlink-qjgx / n4hz lesson: the /logging route (isLoggingWindow branch in
+// App.tsx) must have QueryClientProvider above LoggingView because
+// LoggingExportSection + LoggingSettingsSection both call useQuery. This test
+// enforces the structural constraint: the LoggingView mock uses useQueryClient()
+// which throws if no provider is above it.
+describe('<App> logging-window routing (tuxlink-qjgx)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    listenMock.mockImplementation(async () => () => {});
+  });
+  afterEach(() => setPath('/'));
+
+  it('renders <LoggingView> with QueryClientProvider above it for /logging', async () => {
+    currentLabel = 'logging';
+    setPath('/logging');
+    routeInvoke(true);
+    render(<App />);
+    // LoggingView mounts (which itself requires the QueryClient context per the
+    // sentinel mock above); main-window trees do NOT.
+    await waitFor(() => expect(screen.getByTestId('logging-root')).toBeInTheDocument());
+    expect(screen.queryByTestId('wizard-root')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('app-shell-root')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('compose-root')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('help-root')).not.toBeInTheDocument();
   });
 });
