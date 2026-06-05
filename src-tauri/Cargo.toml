@@ -84,7 +84,7 @@ serial_test = "3"          # NEW — gates env-var-mutating tests
 proptest = "1.4"           # NEW (tuxlink-c79g T7) — state-space matrix tests for position arbiter invariants I1-I5
 static_assertions = "1.1"  # alpha-logging (tuxlink-qjgx) — credential-struct Debug audit test
 tracing-test = "0.2"       # alpha-logging (tuxlink-qjgx) — Task 9.1 emission-coverage tests
-syn = { version = "2", features = ["full", "extra-traits", "parsing", "visit"] }  # alpha-logging (tuxlink-qjgx) — credential struct source-scan (§10.2 #9)
+syn = { version = "2", features = ["full", "parsing", "visit"] }  # alpha-logging (tuxlink-qjgx) — credential struct source-scan (§10.2 #9)
 quote = "1"                # alpha-logging (tuxlink-qjgx) — ToTokens for type normalization in source-scan
 
 [lib]

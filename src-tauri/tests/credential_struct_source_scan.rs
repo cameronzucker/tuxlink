@@ -27,6 +27,16 @@ use syn::{visit::Visit, Fields, ItemImpl, ItemStruct, Type};
 /// Conservative list of credential-shaped field names. Any struct field
 /// whose name exactly matches one of these AND whose type is String /
 /// Option<String> triggers the manual-Debug requirement.
+///
+/// This list is a SUBSET of the runtime blocklist regex in
+/// `src/logging/redact.rs`. The source-scan uses exact field-name matching
+/// (not regex) for predictability, so only the most specific/unambiguous
+/// names are listed here. The intentional gap covers generic blocklist
+/// names like `auth`, `bearer`, `credentials`, `token` (bare), `cookie` —
+/// the runtime redactor catches those in emission, but a NEW struct that
+/// embeds one as a typed field with derived Debug will NOT be caught by
+/// this scan. When extending, audit `redact.rs::FIELD_BLOCKLIST` for
+/// patterns the scan should additionally trip on.
 const CREDENTIAL_FIELD_NAMES: &[&str] = &[
     "password",
     "passwd",
@@ -84,7 +94,11 @@ struct ScanState {
     /// has #[derive(..., Debug, ...)] and NOT #[allow(credential_audit_skip)].
     derived_debug_credential_structs: Vec<(String, PathBuf)>,
     /// Set of struct names with a manual `impl Debug for X` somewhere in
-    /// the crate.
+    /// the crate. Keyed by bare struct name (no module path), so two
+    /// modules defining structs with the same short name would alias —
+    /// a manual Debug on one would silently exempt the other. No such
+    /// collision exists today; verify when adding new credential-bearing
+    /// structs that the name isn't reused elsewhere.
     manual_debug_impls: HashSet<String>,
 }
 
