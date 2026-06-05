@@ -1537,6 +1537,74 @@ pub async fn open_webview_form(
     Ok(OpenFormResult { url, port, token })
 }
 
+/// Shape returned by `forms_check_for_update` (Phase 3 — `forms::updater`
+/// surface to the React `CatalogBrowser` "Refresh forms…" affordance).
+/// `currentVersion` is `None` on a fresh install that has never run a
+/// refresh — the catalog is being served from the bundle's seed snapshot,
+/// whose version isn't recorded as a runtime VERSION file. `updateAvailable`
+/// is `currentVersion != Some(remoteVersion)`; a missing-current is treated
+/// as "update available" so the operator can opt into the runtime path.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FormsRefreshStatus {
+    pub current_version: Option<String>,
+    pub remote_version: String,
+    pub archive_url: String,
+    pub update_available: bool,
+}
+
+/// Check the Pat metadata endpoint for the latest WLE Standard Forms
+/// version. Pure read — no install side effect; pairs with
+/// `forms_refresh` (the React modal calls this first to render the
+/// confirmation, then calls `forms_refresh` if the operator confirms).
+///
+/// Errors surface the underlying network / decode failure verbatim so the
+/// React layer can route to a "couldn't reach forms server" UX rather
+/// than crashing.
+#[tauri::command]
+pub async fn forms_check_for_update(app: AppHandle) -> Result<FormsRefreshStatus, String> {
+    let runtime_root = crate::forms::wle_templates::runtime_root_for_app(&app)
+        .ok_or_else(|| "platform data dir unavailable — runtime forms root cannot be resolved".to_string())?;
+    let current_version = crate::forms::updater::current_version(&runtime_root);
+    let info = crate::forms::updater::fetch_latest_info(
+        crate::forms::updater::DEFAULT_METADATA_URL,
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+    let update_available = current_version.as_deref() != Some(info.version.as_str());
+    Ok(FormsRefreshStatus {
+        current_version,
+        remote_version: info.version,
+        archive_url: info.archive_url,
+        update_available,
+    })
+}
+
+/// Refresh the WLE Standard Forms snapshot from the Pat metadata
+/// endpoint. Downloads + extracts + atomically swaps into
+/// `<data_dir>/tuxlink/forms/standard/active/`. On any failure before
+/// the swap, the current `active/` is untouched; on swap failure, the
+/// prior `active/` is restored via the `.prev-<ts>/` rename.
+///
+/// Network or extraction errors propagate as the IPC error message so
+/// the React modal can render them inline. Operators triggering a
+/// successful refresh see the new `InstallReport` (version + form count
+/// + prior version) and the CatalogBrowser re-invokes `forms_list_catalog`
+/// to pick up the new entries.
+#[tauri::command]
+pub async fn forms_refresh(app: AppHandle) -> Result<crate::forms::updater::InstallReport, String> {
+    let runtime_root = crate::forms::wle_templates::runtime_root_for_app(&app)
+        .ok_or_else(|| "platform data dir unavailable — runtime forms root cannot be resolved".to_string())?;
+    let info = crate::forms::updater::fetch_latest_info(
+        crate::forms::updater::DEFAULT_METADATA_URL,
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+    crate::forms::updater::install(&info.archive_url, &info.version, &runtime_root)
+        .await
+        .map_err(|e| e.to_string())
+}
+
 /// Tear down a webview form session. Idempotent — closing an unknown
 /// token returns `Ok(())` (the React unmount cleanup path runs whether
 /// or not the session is already gone). Used by BOTH Form-mode and

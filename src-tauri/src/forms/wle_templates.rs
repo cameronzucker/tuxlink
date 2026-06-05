@@ -252,16 +252,41 @@ fn common_prefix_len(a: &str, b: &str) -> usize {
     a.chars().zip(b.chars()).take_while(|(x, y)| x == y).count()
 }
 
-/// Resolve the bundled snapshot's on-disk root from the Tauri AppHandle.
-/// Reads from the resource bundle at `resources/wle-forms/Standard_Forms/`.
+/// Resolve the WLE Standard Forms snapshot root that the form-server +
+/// catalog should read from. Runtime-first, bundle-fallback: if the
+/// `forms::updater` has installed a refreshed snapshot at
+/// `<data_dir>/tuxlink/forms/standard/active/Standard_Forms/`, that wins;
+/// otherwise the read-only resource bundle at
+/// `resources/wle-forms/Standard_Forms/` (baked into the app at build
+/// time) is the seed.
 ///
-/// In P3, this changes: the live snapshot moves to a writable data-dir and
-/// the resource becomes the seed. Until P3 lands, this returns the
-/// read-only resource path.
+/// `runtime_snapshot_present` is the precedence gate — a malformed or
+/// empty runtime root falls back to the bundle rather than serving an
+/// unusable catalog. Operators recovering from a bad refresh can manually
+/// move the staged `.prev-<ts>/` back into place (or just delete `active/`
+/// to drop back to the bundle until the next successful refresh).
 pub fn bundle_root_for_app(app: &tauri::AppHandle) -> Result<PathBuf, tauri::Error> {
+    if let Some(runtime_root) = runtime_root_for_app(app) {
+        if crate::forms::updater::runtime_snapshot_present(&runtime_root) {
+            return Ok(runtime_root.join("active").join("Standard_Forms"));
+        }
+    }
     use tauri::Manager;
     app.path()
         .resolve("resources/wle-forms/Standard_Forms", tauri::path::BaseDirectory::Resource)
+}
+
+/// Resolve the writable runtime root the `forms::updater` installs into:
+/// `<data_dir>/tuxlink/forms/standard/`. Returns `None` when the platform
+/// data dir is unavailable (rare — portable builds without HOME). Caller
+/// must handle the `None` case as "no refresh path available, stay on the
+/// bundle."
+pub fn runtime_root_for_app(app: &tauri::AppHandle) -> Option<PathBuf> {
+    use tauri::Manager;
+    app.path()
+        .data_dir()
+        .ok()
+        .map(|d| d.join("tuxlink/forms/standard"))
 }
 
 /// Resolve the operator's custom-forms directory.
