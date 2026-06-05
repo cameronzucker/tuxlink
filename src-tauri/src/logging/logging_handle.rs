@@ -5,6 +5,7 @@
 //! current Bounded auto-revert timer. Replacing it cancels the previous timer.
 
 use crate::logging::event::LoggedEvent;
+use crate::logging::export::FlushBarrier;
 use crate::logging::settings::Settings;
 use crate::session_log::SessionLogState;
 use std::path::PathBuf;
@@ -48,4 +49,9 @@ pub struct LoggingHandle {
     /// can unlisten the previous listener before registering a new one on
     /// re-init (dev-mode hot-reload listener leak prevention).
     pub probe_listener_id: Mutex<Option<tauri::EventId>>,
+    /// Codex P2 #4: flush barrier wired into the production export path.
+    /// `disk_consumer::spawn` holds the receiver side; `logging_export` and
+    /// `report_issue_flow` send via this sender before reading log files, so
+    /// all pending events are on disk before the reader opens files.
+    pub flush_barrier: FlushBarrier,
 }

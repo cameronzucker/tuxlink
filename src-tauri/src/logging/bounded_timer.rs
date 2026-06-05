@@ -129,6 +129,10 @@ mod tests {
             free_disk_paused: Arc::new(AtomicBool::new(false)),
             revert_cancel: Arc::new(std::sync::Mutex::new(None)),
             probe_listener_id: std::sync::Mutex::new(None),
+            flush_barrier: {
+                let (barrier, _rx) = crate::logging::export::FlushBarrier::new();
+                barrier
+            },
         })
     }
 

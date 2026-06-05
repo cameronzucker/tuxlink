@@ -270,7 +270,9 @@ pub fn logging_export(
         detailed_mode: detailed_label,
         retention_days: settings.retention_days,
         retention_mb_cap: settings.retention_mb_cap,
-        flush_barrier: None,
+        // Codex P2 #4: pass the live flush barrier so pending disk-consumer
+        // events are flushed before the archive reader opens files.
+        flush_barrier: Some(&handle.flush_barrier),
     })
     .map_err(|e| format!("export failed: {e}"))
 }
@@ -452,7 +454,9 @@ pub fn report_issue_flow(
         detailed_mode: detailed_label,
         retention_days: settings.retention_days,
         retention_mb_cap: settings.retention_mb_cap,
-        flush_barrier: None,
+        // Codex P2 #4: pass the live flush barrier so pending disk-consumer
+        // events are flushed before the archive reader opens files.
+        flush_barrier: Some(&handle.flush_barrier),
     })
     .map_err(|e| format!("export failed: {e}"))?;
     // Drop the settings lock before doing I/O.
