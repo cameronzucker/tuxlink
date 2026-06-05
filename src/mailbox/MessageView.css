@@ -101,6 +101,14 @@
   font-family: var(--mono);
   font-size: 12px;
 }
+/* Winlink message ID — same mono treatment as addresses for paste-target
+   alignment in support threads / log-correlation workflows. tuxlink-gtno. */
+.reading-pane .msg-meta dd .msg-id {
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 12px;
+  user-select: all;
+}
 
 /* 4 — body. pre-wrap preserves newlines; overflow-wrap wraps long radio/Base64
  * lines so they never force horizontal scroll (Codex Task-13 finding #4). */
