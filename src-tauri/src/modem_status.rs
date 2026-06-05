@@ -840,28 +840,32 @@ impl ModemSession {
         transport: Box<dyn crate::winlink::modem::ModemTransport>,
         snapshot_gen: u64,
     ) {
-        // Generation check FIRST. Close intervened → drop the transport
-        // and set owner to None. The drop runs as `transport` falls out
-        // of scope at function return; we explicitly bind it here for
-        // clarity.
-        let live = self.close_generation.load(Ordering::Acquire);
-        if live != snapshot_gen {
-            if let Ok(mut inner) = self.inner.lock() {
-                inner.transport_owner = TransportOwner::None;
-            }
-            drop(transport);
-            return;
-        }
-        match self.transport_return_tx.try_send(transport) {
-            Ok(()) => {
-                if let Ok(mut inner) = self.inner.lock() {
-                    inner.transport_owner = TransportOwner::ListenerArmed;
-                }
-            }
-            Err(_) => {
-                if let Ok(mut inner) = self.inner.lock() {
+        // Codex Phase 3-4 RE-REVIEW P1: same TOCTOU class as
+        // `install_transport_if_generation_matches` — the generation check
+        // MUST happen inside the mutex critical section so a concurrent
+        // close cannot bump-and-clear between our load and our hand-off
+        // attempt. The mutex serializes with `reset_to_stopped`'s
+        // clear-and-release; once we hold the mutex AND see a matching
+        // generation, close is either "fully done before us" (we drop) or
+        // "fully not started before us" (we proceed). No interleaved
+        // close-already-won-but-not-yet-applied state is observable.
+        match self.inner.lock() {
+            Ok(mut inner) => {
+                let live = self.close_generation.load(Ordering::Acquire);
+                if live != snapshot_gen {
                     inner.transport_owner = TransportOwner::None;
+                    drop(transport);
+                    return;
                 }
+                // gen still matches; try to hand off to consumer
+                match self.transport_return_tx.try_send(transport) {
+                    Ok(()) => inner.transport_owner = TransportOwner::ListenerArmed,
+                    Err(_) => inner.transport_owner = TransportOwner::None,
+                }
+            }
+            Err(_poisoned) => {
+                // Mutex poisoned; treat as session gone. Drop the transport.
+                drop(transport);
             }
         }
     }
@@ -1056,18 +1060,24 @@ impl ModemSession {
         t: Box<dyn crate::winlink::modem::ModemTransport>,
         snapshot_gen: u64,
     ) -> Result<(), Box<dyn crate::winlink::modem::ModemTransport>> {
-        // Generation check FIRST (no lock needed). Stale snapshot → hand
-        // the transport back so the caller drops it.
-        let live = self.close_generation.load(Ordering::Acquire);
-        if live != snapshot_gen {
-            return Err(t);
-        }
-        // Live generation still matches; acquire the inner mutex to
-        // install. Mutex-poisoned is treated as "session gone" — hand the
+        // Codex Phase 3-4 RE-REVIEW P1: the generation check MUST happen
+        // INSIDE the mutex critical section, not outside. Without this,
+        // a close path can bump close_generation + run reset_to_stopped
+        // (which takes the mutex, clears + releases) between our load and
+        // our lock — our stale worker then acquires the mutex and writes
+        // the transport into a now-closed session. Re-reading the
+        // generation while holding the mutex makes "close intervened"
+        // atomic with "install the transport."
+        //
+        // Mutex-poisoned is treated as "session gone" — hand the
         // transport back. (Poisoning indicates a panic in a prior critical
         // section, same defensive posture as `transport_owner()`.)
         match self.inner.lock() {
             Ok(mut inner) => {
+                let live = self.close_generation.load(Ordering::Acquire);
+                if live != snapshot_gen {
+                    return Err(t);
+                }
                 inner.transport = Some(t);
                 Ok(())
             }

@@ -556,16 +556,31 @@ impl VaraSession {
         active_intent: Option<SessionIntent>,
         active_transport_kind: Option<TransportKind>,
     ) -> Result<(), VaraTransport> {
-        // Generation check FIRST (no lock needed).
-        let live = self.close_generation.load(Ordering::Acquire);
-        if live != snapshot_gen {
-            return Err(t);
-        }
-        // Live generation still matches; acquire the inner mutex to
-        // install. Mutex-poisoned → hand the transport back so the caller
-        // drops it (same defensive posture as `transport_owner()`).
+        // Codex Phase 3-4 RE-REVIEW P1: generation check MUST happen INSIDE
+        // the mutex critical section, not outside. Otherwise a concurrent
+        // `vara_close_session_inner` can bump close_generation + finish
+        // `vara_stop_session_inner` (which takes the mutex) between our
+        // load and our lock; our stale worker then acquires the mutex and
+        // writes the transport back into a now-closed session, restoring
+        // `VaraState::Open` after Close has returned.
+        //
+        // Codex Phase 3-4 RE-REVIEW P2: `None` values for the preserve
+        // params (`active_intent`, `active_transport_kind`) now mean
+        // "preserve existing" rather than "overwrite with None". The
+        // listener-consumer drain path passes `None`/`None` on ordinary
+        // Listen Off (no close); the prior behavior wrote `None` which
+        // erased the operator's active mode while leaving the session
+        // Open. The new semantics: `Some(value)` writes; `None` preserves.
+        // Close-race protection is still load-bearing via the generation
+        // mismatch above.
         match self.inner.lock() {
             Ok(mut guard) => {
+                let live = self.close_generation.load(Ordering::Acquire);
+                if live != snapshot_gen {
+                    return Err(t);
+                }
+                let preserved_intent = active_intent.or(guard.active_intent);
+                let preserved_kind = active_transport_kind.or(guard.active_transport_kind);
                 guard.status = VaraStatus {
                     state: VaraState::Open,
                     last_error: None,
@@ -574,13 +589,13 @@ impl VaraSession {
                     listener_armed: false,
                     exchange: None,
                     transport_owner: TransportOwner::None,
-                    active_intent,
-                    active_transport_kind,
+                    active_intent: preserved_intent,
+                    active_transport_kind: preserved_kind,
                 };
                 guard.transport = Some(t);
                 guard.transport_owner = TransportOwner::None;
-                guard.active_intent = active_intent;
-                guard.active_transport_kind = active_transport_kind;
+                guard.active_intent = preserved_intent;
+                guard.active_transport_kind = preserved_kind;
                 // Codex Phase 3-4 boundary P2 #4 (tuxlink-u1r7): clear
                 // exchange marker on install-back — the b2f exchange that
                 // owned the transport is over by the time we get here.
@@ -782,33 +797,27 @@ impl VaraSession {
     /// Best-effort: ignores Mutex poisoning + send failures because the
     /// outbound side has already completed; we're cleaning up.
     pub fn return_transport_from_outbound(&self, transport: VaraTransport, snapshot_gen: u64) {
-        // Generation check FIRST. Close intervened → drop the transport.
-        let live = self.close_generation.load(Ordering::Acquire);
-        if live != snapshot_gen {
-            if let Ok(mut guard) = self.inner.lock() {
-                guard.transport_owner = TransportOwner::None;
-            }
-            drop(transport);
-            return;
-        }
-        // Try to hand it back to the consumer first. `try_send` so we
-        // don't await — `return_transport_from_outbound` is sync and
-        // shouldn't block on a wedged consumer.
-        match self.transport_return_tx.try_send(transport) {
-            Ok(()) => {
-                if let Ok(mut guard) = self.inner.lock() {
-                    guard.transport_owner = TransportOwner::ListenerArmed;
-                }
-            }
-            Err(_) => {
-                // Channel full, closed, or consumer gone. The transport
-                // was consumed by try_send's Err variant only in the
-                // `Full` case; for `Closed` we already lost it. Either
-                // way, mark owner as None — the listener can't re-arm
-                // without a fresh consumer + transport.
-                if let Ok(mut guard) = self.inner.lock() {
+        // Codex Phase 3-4 RE-REVIEW P1: generation check INSIDE the
+        // mutex critical section to prevent a close-race from
+        // bumping-and-clearing between our load and the consumer hand-off.
+        // Mirrors `ModemSession::return_transport_from_outbound`'s fix.
+        match self.inner.lock() {
+            Ok(mut guard) => {
+                let live = self.close_generation.load(Ordering::Acquire);
+                if live != snapshot_gen {
                     guard.transport_owner = TransportOwner::None;
+                    drop(transport);
+                    return;
                 }
+                // gen still matches; try to hand off to consumer
+                match self.transport_return_tx.try_send(transport) {
+                    Ok(()) => guard.transport_owner = TransportOwner::ListenerArmed,
+                    Err(_) => guard.transport_owner = TransportOwner::None,
+                }
+            }
+            Err(_poisoned) => {
+                // Mutex poisoned; treat as session gone. Drop the transport.
+                drop(transport);
             }
         }
     }
@@ -3567,6 +3576,57 @@ mod tests {
 
         // Drop the returned transport (mirrors production caller posture).
         drop(result.err().unwrap());
+        drop(session);
+        h1.join().ok();
+        h2.join().ok();
+    }
+
+    /// Codex Phase 3-4 RE-REVIEW P2 regression test: a listener-consumer
+    /// drain that re-installs with `None`/`None` for the preserve params
+    /// MUST preserve the session's existing active_intent +
+    /// active_transport_kind (not erase them). The pre-fix behavior wrote
+    /// `None` to both, which lost the operator's active mode on ordinary
+    /// Listen Off — leaving the session Open with a forensic-blanked
+    /// status. The new semantics: `Some(_)` writes; `None` preserves.
+    #[test]
+    fn vara_install_with_none_preserve_params_preserves_existing_active_mode() {
+        let (transport, h1, h2) = build_real_transport_for_test();
+        let session = Arc::new(VaraSession::new());
+        // Seed the session with an active mode the consumer is about to
+        // briefly hold + return without close.
+        {
+            let mut guard = session.inner.lock().unwrap();
+            guard.active_intent = Some(SessionIntent::P2p);
+            guard.active_transport_kind = Some(TransportKind::VaraFm);
+        }
+
+        let snapshot = session.current_close_generation();
+        let result = session.install_transport_if_generation_matches(
+            transport,
+            snapshot,
+            Some("127.0.0.1".into()),
+            Some(8300),
+            None, // listener drain: don't overwrite operator's active intent
+            None, // listener drain: don't overwrite operator's active kind
+        );
+        assert!(
+            result.is_ok(),
+            "matching generation must install on ordinary disarm (no close)"
+        );
+
+        let snap = session.snapshot();
+        assert_eq!(snap.state, VaraState::Open);
+        assert_eq!(
+            snap.active_intent,
+            Some(SessionIntent::P2p),
+            "None preserve-param must NOT erase existing active_intent on ordinary disarm"
+        );
+        assert_eq!(
+            snap.active_transport_kind,
+            Some(TransportKind::VaraFm),
+            "None preserve-param must NOT erase existing active_transport_kind on ordinary disarm"
+        );
+
         drop(session);
         h1.join().ok();
         h2.join().ok();
