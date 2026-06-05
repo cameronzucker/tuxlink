@@ -4,6 +4,14 @@ All notable changes to Tuxlink are documented here.
 
 This project adheres to [Semantic Versioning](https://semver.org) with project-specific rules described in [VERSIONING.md](VERSIONING.md). Entries from `v0.0.2` onward are generated automatically by [`release-please`](https://github.com/googleapis/release-please) from [Conventional Commits](https://www.conventionalcommits.org).
 
+## [0.35.1](https://github.com/cameronzucker/tuxlink/compare/v0.35.0...v0.35.1) (2026-06-05)
+
+
+### Bug Fixes
+
+* **ci:** clippy — unused PathBuf at lib + bool_assert_comparison in tests ([556b78e](https://github.com/cameronzucker/tuxlink/commit/556b78e307e8389917c33d907a1abaec5bd0236b))
+* **shell:** preserve selectedConnection across folder switch (tuxlink-u4ky) ([b715b73](https://github.com/cameronzucker/tuxlink/commit/b715b7373550fe05f3dd96313d2842b01b5a362c))
+
 ## [0.35.0](https://github.com/cameronzucker/tuxlink/compare/v0.34.2...v0.35.0) (2026-06-05)
 
 
