@@ -1451,6 +1451,13 @@ pub async fn cms_connect(
         format!("Connecting to the CMS ({:?})…", cfg.connect.transport),
     );
 
+    // Scaffold the Tauri-side event sink (Task 11). The sink will be
+    // threaded deeper through backend.connect in Task 12 so the
+    // run_exchange path emits structured events through it. For Task 11
+    // this is just channel infrastructure setup.
+    let _events_sink: std::sync::Arc<dyn crate::winlink::b2f_events::B2fEventSink> =
+        std::sync::Arc::new(crate::winlink::b2f_events::TauriEventSink::new(app.clone()));
+
     match backend
         .connect(TransportConfig::Cms {
             mode: cfg.connect.transport,

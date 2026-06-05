@@ -90,6 +90,35 @@ pub trait B2fEventSink: Send + Sync {
     fn push(&self, event: B2fEvent);
 }
 
+/// Sink that emits each pushed B2fEvent on the Tauri "b2f-event" channel.
+/// Used by ui_commands to forward backend events to the React shell.
+///
+/// The struct is NOT cfg(test) — it's used by ui_commands.rs at runtime
+/// to wire B2fEvent emission into the Tauri event channel that the React
+/// useAuthDiagnostic hook (Task 18) subscribes to.
+pub struct TauriEventSink {
+    app: tauri::AppHandle,
+}
+
+impl TauriEventSink {
+    pub fn new(app: tauri::AppHandle) -> Self {
+        Self { app }
+    }
+}
+
+impl B2fEventSink for TauriEventSink {
+    fn push(&self, event: B2fEvent) {
+        // Failures to emit are logged but don't propagate — the backend
+        // continues even if the React side missed an event.
+        if let Err(e) = tauri::Emitter::emit(&self.app, "b2f-event", event) {
+            // Use eprintln since b2f_events.rs doesn't have a logger yet;
+            // production code will plug in tracing once the wider tracing
+            // strategy is settled.
+            eprintln!("TauriEventSink: failed to emit b2f-event: {e}");
+        }
+    }
+}
+
 /// In-memory sink for unit tests. Records every push.
 #[cfg(test)]
 pub struct VecEventSink {
