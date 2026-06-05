@@ -398,6 +398,196 @@ pub fn emit_first_paint_complete(app: tauri::AppHandle) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+// ─── Report Issue flow ────────────────────────────────────────────────────────
+
+/// Result returned to the frontend after a successful `report_issue_flow` call.
+#[derive(serde::Serialize)]
+pub struct ReportIssueResult {
+    pub archive_path: String,
+    pub archive_size_bytes: u64,
+    pub github_url: String,
+    pub browser_opened: bool,
+    pub correlation_id: Option<String>,
+}
+
+/// Auto-export the logs archive, build a pre-filled GitHub Issues URL with a
+/// Markdown-safe body, and attempt to open it in the operator's default browser.
+///
+/// Called from the frontend's ReportIssueModal after the operator confirms the
+/// Save As path. Returns `ReportIssueResult` on success; the frontend handles
+/// each failure path (no browser, path copy, URL copy).
+///
+/// Signature mirrors `logging_export`: uses `app.try_state` for full/degraded
+/// handling so Tauri does not panic when logging is degraded.
+#[tauri::command]
+pub fn report_issue_flow(
+    app: tauri::AppHandle,
+    output_path: String,
+) -> Result<ReportIssueResult, String> {
+    use tauri::Manager;
+
+    // 1. Export the archive. Reuses the same build_archive path as logging_export
+    //    (spec §8.7 single-source-of-truth requirement).
+    let handle = app
+        .try_state::<Arc<LoggingHandle>>()
+        .ok_or_else(|| "logging not available (degraded or not initialized)".to_string())?;
+
+    let settings = handle
+        .settings
+        .lock()
+        .map_err(|e| format!("settings lock: {e}"))?;
+    let detailed_label = match &settings.detailed_mode {
+        DetailedMode::Off => "off",
+        DetailedMode::On => "on",
+        DetailedMode::Bounded { .. } => "bounded",
+    };
+    let active = handle.active_file_path.try_lock().ok().and_then(|g| g.clone());
+    let export = build_archive(ExportInputs {
+        log_dir: &handle.log_dir,
+        active_file_path: active.as_deref(),
+        output_path: std::path::Path::new(&output_path),
+        correlation_id: None,
+        boot_id: &handle.boot_id,
+        boot_at: &handle.boot_at,
+        detailed_mode: detailed_label,
+        retention_days: settings.retention_days,
+        retention_mb_cap: settings.retention_mb_cap,
+        flush_barrier: None,
+    })
+    .map_err(|e| format!("export failed: {e}"))?;
+    // Drop the settings lock before doing I/O.
+    drop(settings);
+
+    // 2. Build the pre-filled GitHub Issues URL with a Markdown-safe body.
+    let build = crate::logging::manifest::build_info();
+    let platform = crate::logging::manifest::platform_info();
+    let exported_at = chrono::Utc::now().to_rfc3339();
+    let correlation_id = export.correlation_id.as_deref().unwrap_or("(none)");
+    let archive_size = format_bytes(export.archive_size_bytes);
+
+    let body = format!(
+        r#"<!-- tuxlink auto-generated bug report template -->
+
+**Build:** tuxlink {} (git {}, {})
+**Platform:** {} · {}
+**Correlation ID:** {}
+**Exported at:** {}
+
+**📎 Log archive saved at:** `{}` ({})
+
+👉 **Please drag the file above into this comment box now** so it attaches to the issue.
+
+---
+
+## What happened
+(Describe what you were trying to do, what happened instead, and what you expected.)
+
+## Steps to reproduce
+1.
+2.
+3.
+
+## Anything else
+(Screenshots, related context, anything you noticed.)
+"#,
+        markdown_escape(&build.version),
+        markdown_escape(&build.git_sha),
+        markdown_escape(&build.profile),
+        markdown_escape(&platform.os),
+        markdown_escape(&platform.kernel),
+        markdown_escape(correlation_id),
+        markdown_escape(&exported_at),
+        markdown_escape(&export.output_path.display().to_string()),
+        markdown_escape(&archive_size),
+    );
+
+    // Truncate using char count to avoid UTF-8 byte-boundary panics.
+    let body_capped = if body.len() > 6 * 1024 {
+        let truncated: String = body.chars().take(6000).collect();
+        format!("{}…\n\n[body truncated; correlation ID: {}]", truncated, correlation_id)
+    } else {
+        body
+    };
+
+    let url = format!(
+        "https://github.com/cameronzucker/tuxlink/issues/new?labels=alpha-report&body={}",
+        urlencoding::encode(&body_capped)
+    );
+
+    // 3. Attempt to open the URL in the operator's default browser.
+    //    tauri_plugin_shell::Shell::open is deprecated upstream in favor of
+    //    tauri-plugin-opener (Tauri 2.1+). Suppress locally; project-wide
+    //    migration is a follow-up before the Tauri 3 upgrade. Same pattern
+    //    as logging_open_directory (Task 6 fix I4).
+    #[allow(deprecated)]
+    let browser_opened = tauri_plugin_shell::ShellExt::shell(&app)
+        .open(url.clone(), None)
+        .is_ok();
+
+    Ok(ReportIssueResult {
+        archive_path: export.output_path.display().to_string(),
+        archive_size_bytes: export.archive_size_bytes,
+        github_url: url,
+        browser_opened,
+        correlation_id: export.correlation_id,
+    })
+}
+
+/// Escape a runtime string for safe embedding in the GitHub Issues Markdown body.
+///
+/// Backticks are replaced with the HTML entity `&#96;` (renders as a backtick
+/// in GitHub but does not break the surrounding code-span). Newlines become
+/// the literal sequence `\n`. Carriage returns are stripped. ANSI escape
+/// sequences (ESC + `[` + params + letter) are stripped.
+fn markdown_escape(s: &str) -> String {
+    // Strip ANSI escape sequences first.
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\x1b' {
+            // Consume the CSI sequence: `[` + optional param bytes + final byte.
+            if chars.peek() == Some(&'[') {
+                chars.next(); // consume `[`
+                // Consume params (0x30–0x3F) and intermediates (0x20–0x2F).
+                while let Some(&p) = chars.peek() {
+                    if ('\x30'..='\x3f').contains(&p) || ('\x20'..='\x2f').contains(&p) {
+                        chars.next();
+                    } else {
+                        break;
+                    }
+                }
+                // Consume final byte (0x40–0x7E).
+                if let Some(&f) = chars.peek() {
+                    if ('\x40'..='\x7e').contains(&f) {
+                        chars.next();
+                    }
+                }
+            }
+            // Other ESC sequences (rare in log data) — skip the ESC itself.
+            continue;
+        }
+        match c {
+            '`' => out.push_str("&#96;"),
+            '\n' => out.push_str("\\n"),
+            '\r' => {}
+            other => out.push(other),
+        }
+    }
+    out
+}
+
+/// Human-readable byte size (B / KB / MB).
+fn format_bytes(bytes: u64) -> String {
+    if bytes < 1024 {
+        return format!("{bytes} B");
+    }
+    let kb = bytes as f64 / 1024.0;
+    if kb < 1024.0 {
+        return format!("{kb:.1} KB");
+    }
+    format!("{:.1} MB", kb / 1024.0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -441,5 +631,100 @@ mod tests {
         let short: String = boot_id.chars().take(8).collect();
         assert_eq!(short.len(), 8);
         assert_eq!(short, "01927a8b");
+    }
+
+    // ── markdown_escape tests ──────────────────────────────────────────────
+
+    #[test]
+    fn markdown_escape_passes_through_plain_text() {
+        assert_eq!(markdown_escape("hello world"), "hello world");
+    }
+
+    #[test]
+    fn markdown_escape_replaces_backtick() {
+        let input = "path/to/`file`";
+        let out = markdown_escape(input);
+        assert!(!out.contains('`'), "backtick should be gone: {out}");
+        assert!(out.contains("&#96;"), "entity should be present: {out}");
+    }
+
+    #[test]
+    fn markdown_escape_replaces_newline_with_literal_backslash_n() {
+        let out = markdown_escape("line1\nline2");
+        assert_eq!(out, r"line1\nline2");
+    }
+
+    #[test]
+    fn markdown_escape_strips_carriage_return() {
+        let out = markdown_escape("a\r\nb");
+        assert_eq!(out, r"a\nb");
+    }
+
+    #[test]
+    fn markdown_escape_strips_ansi_color_sequence() {
+        // ESC[32m = green; ESC[0m = reset
+        let input = "\x1b[32mgreen\x1b[0m text";
+        let out = markdown_escape(input);
+        assert_eq!(out, "green text");
+    }
+
+    #[test]
+    fn markdown_escape_strips_ansi_csi_multi_param() {
+        // ESC[1;31m = bold + red
+        let input = "\x1b[1;31merror\x1b[0m";
+        let out = markdown_escape(input);
+        assert_eq!(out, "error");
+    }
+
+    #[test]
+    fn markdown_escape_no_injection_via_archive_path() {
+        // Operator-chosen path that tries to break out of backtick span.
+        let path = "/home/user/my`archive`.tar.zst";
+        let out = markdown_escape(path);
+        assert!(!out.contains('`'), "no backtick in escaped output: {out}");
+    }
+
+    // ── format_bytes tests ────────────────────────────────────────────────
+
+    #[test]
+    fn format_bytes_bytes() {
+        assert_eq!(format_bytes(512), "512 B");
+    }
+
+    #[test]
+    fn format_bytes_kilobytes() {
+        assert_eq!(format_bytes(2048), "2.0 KB");
+    }
+
+    #[test]
+    fn format_bytes_megabytes() {
+        assert_eq!(format_bytes(2 * 1024 * 1024), "2.0 MB");
+    }
+
+    #[test]
+    fn format_bytes_boundary_1023() {
+        assert_eq!(format_bytes(1023), "1023 B");
+    }
+
+    #[test]
+    fn format_bytes_boundary_1024() {
+        assert_eq!(format_bytes(1024), "1.0 KB");
+    }
+
+    // ── body_truncation test ──────────────────────────────────────────────
+
+    #[test]
+    fn body_capped_uses_char_count_not_byte_count() {
+        // Build a body with multi-byte chars (a = U+00E0, 2 bytes in UTF-8).
+        // If we used byte slicing, this would panic at the char boundary.
+        let body: String = "à".repeat(7000); // 14000 bytes
+        let capped = if body.len() > 6 * 1024 {
+            let truncated: String = body.chars().take(6000).collect();
+            format!("{}…\n\n[body truncated; correlation ID: test]", truncated)
+        } else {
+            body.clone()
+        };
+        // Must not panic and must contain 6000 à chars.
+        assert_eq!(capped.chars().take(6000).count(), 6000);
     }
 }

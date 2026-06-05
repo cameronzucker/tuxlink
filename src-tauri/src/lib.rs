@@ -448,6 +448,7 @@ pub fn run() {
             crate::logging::commands::logging_env_probes_snapshot,
             crate::logging::commands::logging_env_probes_rerun,
             crate::logging::commands::emit_first_paint_complete,   // Amendment E.7.7
+            crate::logging::commands::report_issue_flow,           // Task 8 — Report Issue
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
