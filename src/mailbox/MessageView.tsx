@@ -346,6 +346,14 @@ export function MessageViewLoaded({
         <dt>Date</dt>
         <dd data-testid="message-date">{formatHeaderDate(message.date)}</dd>
 
+        {/* Winlink message ID — tuxlink-gtno. Surfaced for support / forensics
+            / log-correlation workflows where the operator needs to quote the
+            ID in a thread or grep wl2k-go logs. Mono so paste-targets line up. */}
+        <dt>ID</dt>
+        <dd data-testid="message-id">
+          <span className="msg-id">{message.id}</span>
+        </dd>
+
         {message.isForm && (
           <>
             <dt>Form</dt>
