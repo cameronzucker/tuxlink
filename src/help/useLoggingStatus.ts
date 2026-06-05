@@ -22,6 +22,8 @@ export interface LoggingStatus {
   bounded_remaining_seconds: number | null;
   retention_days: number;
   retention_mb_cap: number;
+  boot_id_short: string;        // Amendment H — first 8 chars of systemd boot_id
+  degraded: string | null;      // Amendment D — degradation reason or null when Full
 }
 
 export function useLoggingStatus() {

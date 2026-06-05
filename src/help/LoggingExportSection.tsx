@@ -23,7 +23,8 @@ export function LoggingExportSection() {
     setBusy('exporting');
     setFeedback(null);
     const ts = new Date().toISOString().replace(/[:.]/g, '-');
-    const defaultName = `tuxlink-logs-${ts}.tar.zst`;
+    const attempt = status?.last_export?.correlation_id ?? `boot-${status?.boot_id_short ?? 'unknown'}`;
+    const defaultName = `tuxlink-logs-${ts}-${attempt}.tar.zst`;
     const filePath = await saveDialog({
       defaultPath: defaultName,
       filters: [{ name: 'Tuxlink Log Archive', extensions: ['tar.zst'] }],
@@ -94,6 +95,19 @@ export function LoggingExportSection() {
             </tr>
           </tbody>
         </table>
+      )}
+      {status?.degraded && (
+        <p style={{
+          marginTop: 8,
+          padding: '8px 12px',
+          background: '#3a1a1a',
+          border: '1px solid #6a2a2a',
+          color: '#e89a9a',
+          fontSize: 13,
+          borderRadius: 2,
+        }}>
+          ⚠ Logging degraded: {status.degraded}
+        </p>
       )}
       <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
         <button onClick={onExport} disabled={!!busy}>

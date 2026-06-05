@@ -40,6 +40,8 @@ const MOCK_STATUS = {
   bounded_remaining_seconds: null,
   retention_days: 14,
   retention_mb_cap: 500,
+  boot_id_short: 'testboot',
+  degraded: null,
 };
 
 function renderExport() {
@@ -126,6 +128,35 @@ describe('LoggingExportSection — Export button', () => {
     await waitFor(() => {
       expect(screen.getByRole('status')).toHaveTextContent(/saved.*2\.0 KB/i);
     });
+  });
+
+  it('saveDialog defaultPath contains attempt-id segment (Amendment H)', async () => {
+    mockSaveDialog.mockResolvedValue('/tmp/tuxlink-logs.tar.zst');
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'logging_status') return Promise.resolve(MOCK_STATUS);
+      if (cmd === 'logging_export') return Promise.resolve({ archive_size_bytes: 2048, correlation_id: null });
+      return Promise.resolve(null);
+    });
+
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      React.createElement(QueryClientProvider, { client },
+        React.createElement(LoggingExportSection),
+      ),
+    );
+
+    // Wait for status to load so boot_id_short is available
+    await waitFor(() => expect(mockInvoke).toHaveBeenCalledWith('logging_status'));
+
+    const btn = screen.getByRole('button', { name: /export logs/i });
+    fireEvent.click(btn);
+
+    await waitFor(() => {
+      expect(mockSaveDialog).toHaveBeenCalledOnce();
+    });
+
+    const callArgs = mockSaveDialog.mock.calls[0][0] as { defaultPath: string };
+    expect(callArgs.defaultPath).toMatch(/tuxlink-logs-.+-(boot-testboot|[a-z0-9-]+)\.tar\.zst/);
   });
 
   it('shows "Export canceled." when saveDialog returns null', async () => {
