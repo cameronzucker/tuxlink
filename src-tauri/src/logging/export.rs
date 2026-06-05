@@ -71,18 +71,26 @@ impl FlushBarrier {
         self.req_tx
             .send(ack_tx)
             .map_err(|e| ExportError::Io(std::io::Error::new(std::io::ErrorKind::Other, format!("flush request send failed: {e}"))))?;
-        // Block on the oneshot with a timeout. We're a sync method on the
-        // export pipeline; use tokio::runtime::Handle::current().block_on
-        // when called from a Tauri command (which runs in tokio context).
+        // Block on the oneshot with a timeout. This is a sync method that may
+        // be invoked from inside a tokio async context (Tauri command thread).
+        // `Handle::block_on` panics when called from an async execution context;
+        // wrap in `block_in_place` so the call works correctly whether we're on
+        // a worker thread or a blocking thread. With no runtime (test fixture),
+        // we skip — there's nothing to block on.
         match tokio::runtime::Handle::try_current() {
-            Ok(handle) => match handle.block_on(tokio::time::timeout(timeout, ack_rx)) {
-                Ok(Ok(())) => Ok(()),
-                Ok(Err(_)) => Err(ExportError::Io(std::io::Error::new(std::io::ErrorKind::Other, "flush barrier ack channel closed".to_string()))),
-                Err(_) => {
-                    tracing::warn!("export-flush-barrier-timeout: proceeding without flush guarantee");
-                    Ok(())
+            Ok(handle) => {
+                let result = tokio::task::block_in_place(|| {
+                    handle.block_on(tokio::time::timeout(timeout, ack_rx))
+                });
+                match result {
+                    Ok(Ok(())) => Ok(()),
+                    Ok(Err(_)) => Err(ExportError::Io(std::io::Error::new(std::io::ErrorKind::Other, "flush barrier ack channel closed".to_string()))),
+                    Err(_) => {
+                        tracing::warn!("export-flush-barrier-timeout: proceeding without flush guarantee");
+                        Ok(())
+                    }
                 }
-            },
+            }
             Err(_) => Ok(()), // no tokio runtime (test fixture) — skip
         }
     }

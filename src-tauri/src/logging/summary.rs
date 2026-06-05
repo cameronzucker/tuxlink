@@ -68,8 +68,12 @@ fn clean(msg: &str) -> String {
         .chars()
         .map(|c| if c.is_control() && c != '\t' { ' ' } else { c })
         .collect();
-    if cleaned.len() > 120 {
-        format!("{}…", &cleaned[..117])
+    // Char-count truncation (not byte-index): byte-index slicing panics if the
+    // 117th byte lands inside a multi-byte UTF-8 sequence. VARA/ARDOP/BlueZ
+    // error strings can carry non-ASCII bytes.
+    if cleaned.chars().count() > 120 {
+        let truncated: String = cleaned.chars().take(117).collect();
+        format!("{truncated}…")
     } else {
         cleaned
     }
@@ -88,6 +92,19 @@ mod tests {
             attempt_id: None, spans: vec![], msg: msg.into(),
             fields: Default::default(),
         }
+    }
+
+    #[test]
+    fn clean_truncates_long_utf8_at_char_boundary() {
+        // A repeat of a multi-byte char that bypasses 120 chars by char count.
+        // Pre-fix: format!("{}…", &cleaned[..117]) panicked when byte index 117
+        // landed inside the 2-byte UTF-8 sequence for `é`. The char-based fix
+        // walks code points so the slice always lands on a boundary.
+        let long = "é".repeat(125);
+        let out = clean(&long);
+        // No panic + result fits in the "117 chars + ellipsis" budget.
+        assert!(out.ends_with('…'));
+        assert_eq!(out.chars().count(), 118);
     }
 
     #[test]
