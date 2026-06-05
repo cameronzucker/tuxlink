@@ -31,7 +31,7 @@ const FIELDS: &[FormField] = &[
 
     // 1. STATION
     FormField { id: "datetime",        label: "Date/Time",         kind: FieldKind::Text,     required: true,  max_length: Some(30) },
-    FormField { id: "msgto",           label: "To",                kind: FieldKind::Text,     required: true,  max_length: Some(60) },
+    FormField { id: "msgto",           label: "To",                kind: FieldKind::Text,     required: true,  max_length: Some(75) },
     FormField { id: "msgsender",       label: "From",              kind: FieldKind::Text,     required: true,  max_length: Some(12) },
     FormField { id: "contactname",     label: "Station Contact",   kind: FieldKind::Text,     required: true,  max_length: Some(60) },
     FormField { id: "assigned",        label: "Initial Operators", kind: FieldKind::Text,     required: false, max_length: Some(60) },
@@ -43,7 +43,7 @@ const FIELDS: &[FormField] = &[
     FormField { id: "session",         label: "Session",           kind: FieldKind::Text,     required: true,  max_length: Some(15) },
 
     // 3. LOCATION
-    FormField { id: "location",        label: "Location",          kind: FieldKind::Text,     required: false, max_length: Some(60) },
+    FormField { id: "location",        label: "Location",          kind: FieldKind::Text,     required: true,  max_length: Some(60) },
     FormField { id: "maplat",          label: "Latitude",          kind: FieldKind::Text,     required: false, max_length: Some(15) },
     FormField { id: "maplon",          label: "Longitude",         kind: FieldKind::Text,     required: false, max_length: Some(15) },
     FormField { id: "mgrs",            label: "MGRS",              kind: FieldKind::Text,     required: false, max_length: Some(20) },

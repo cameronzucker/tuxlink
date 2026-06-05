@@ -148,6 +148,9 @@ describe('<CheckInForm> — wire-format alignment (WLE Winlink_Check_In_Initial)
       { target: { value: 'Weekly check-in' } });
     fireEvent.change(screen.getByLabelText(/^To$/i),
       { target: { value: 'WL-NET' } });
+    // Location is required per WLE Winlink_Check_In_Initial.html.
+    fireEvent.change(screen.getByLabelText(/Location description/i),
+      { target: { value: 'Home QTH' } });
     fireEvent.click(screen.getByTestId('checkin-send-btn'));
     await waitFor(() => expect(onSubmit).toHaveBeenCalled());
 
@@ -175,7 +178,8 @@ describe('<CheckInForm> — wire-format alignment (WLE Winlink_Check_In_Initial)
     expect(payload.service).toBe('AMATEUR');          // default
     expect(payload.band).toBe('NA');                  // default
     expect(payload.session).toBe('Telnet');           // default
-    expect(payload.templateversion).toBe('Winlink_Check_In_Initial V5');
+    expect(payload.templateversion).toBe('Winlink Check-in 5.1.3');
+    expect(payload.location).toBe('Home QTH');
     expect(payload.mapfilename).toBe('Winlink Check-in V5');
     // datetime is auto-refreshed at submit time — assert format, not value
     expect(payload.datetime).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/);
@@ -339,8 +343,80 @@ describe('<CheckInForm> — required-field gating', () => {
       { target: { value: 'Weekly check-in' } });
     fireEvent.change(screen.getByLabelText(/^To$/i),
       { target: { value: 'WL-NET' } });
+    fireEvent.change(screen.getByLabelText(/Location description/i),
+      { target: { value: 'Home QTH' } });
     await waitFor(() => {
       expect((screen.getByTestId('checkin-send-btn') as HTMLButtonElement).disabled).toBe(false);
     });
+  });
+
+  it('Send stays disabled when Location is empty (WLE required field)', async () => {
+    render(<CheckInForm onSubmit={vi.fn()} onCancel={vi.fn()} />);
+    await screen.findByDisplayValue('W7CPZ');
+    fireEvent.change(screen.getByLabelText(/^Subject$/i),
+      { target: { value: 'Weekly check-in' } });
+    fireEvent.change(screen.getByLabelText(/^To$/i),
+      { target: { value: 'WL-NET' } });
+    // Location intentionally left blank.
+    await new Promise((r) => setTimeout(r, 50));
+    expect((screen.getByTestId('checkin-send-btn') as HTMLButtonElement).disabled).toBe(true);
+  });
+});
+
+describe('<CheckInForm> — slot-payload validation (old-schema migration)', () => {
+  beforeEach(() => {
+    mocks.invoke.mockClear();
+  });
+
+  it('rejects invalid radio values from an old-schema slot without leaking them via onChange', async () => {
+    // Simulate an old PR #392 slot saved under the simplified schema
+    // (status: "Ready" — not a valid WLE Check-In status). The state
+    // setter should refuse it AND the onChange spread should not emit it
+    // (else draft autosave would persist an invalid wire-format value).
+    mocks.invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'config_read') return { callsign: 'W7CPZ', identifier: 'John Smith' };
+      if (cmd === 'position_current_fix') return { grid: 'CN87us', source: 'gps', fresh: true };
+      if (cmd === 'form_draft_library_list') {
+        return [
+          {
+            slot_id: 'old-schema-slot',
+            form_id: 'Winlink_Check-In',
+            label: 'Old Slot',
+            payload: {
+              organization: 'Test Net',  // valid
+              status: 'Ready',            // INVALID under WLE schema
+              band: 'NotARealBand',       // INVALID
+              service: 'AMATEUR',         // valid
+            },
+            created_at: '2026-06-04T12:00:00Z',
+            updated_at: '2026-06-04T12:00:00Z',
+          },
+        ];
+      }
+      return null;
+    });
+    const onChange = vi.fn();
+    render(<CheckInForm onSubmit={vi.fn()} onChange={onChange} onCancel={vi.fn()} />);
+    await screen.findByText(/Old Slot/);
+    fireEvent.change(screen.getByLabelText(/saved slots/i), {
+      target: { value: 'old-schema-slot' },
+    });
+    // The valid fields applied.
+    expect((screen.getByLabelText(/^Organization$/i) as HTMLInputElement).value).toBe('Test Net');
+    expect((screen.getByLabelText(/^AMATEUR$/i) as HTMLInputElement).checked).toBe(true);
+    // The invalid status stayed at default EXERCISE.
+    expect((screen.getByLabelText(/^EXERCISE$/i) as HTMLInputElement).checked).toBe(true);
+    // The invalid band stayed at default NA.
+    expect((screen.getByLabelText(/^NA$/i) as HTMLInputElement).checked).toBe(true);
+    // The most recent onChange payload must NOT contain the invalid radio
+    // values — otherwise Compose's draft autosave would persist "Ready" /
+    // "NotARealBand" into the wire-format draft.
+    const calls = onChange.mock.calls;
+    expect(calls.length).toBeGreaterThan(0);
+    const lastPayload = calls[calls.length - 1][0] as Record<string, string>;
+    expect(lastPayload.status).toBe('EXERCISE');
+    expect(lastPayload.band).toBe('NA');
+    expect(lastPayload.organization).toBe('Test Net');
+    expect(lastPayload.service).toBe('AMATEUR');
   });
 });

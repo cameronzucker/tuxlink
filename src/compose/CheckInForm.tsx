@@ -33,7 +33,9 @@ type CheckInSession =
   | 'Mesh';
 
 const FORM_ID = 'Winlink_Check-In';
-const TEMPLATE_VERSION = 'Winlink_Check_In_Initial V5';
+// Exact string from the bundled WLE Winlink_Check_In_Initial.html
+// hidden field; rendered as a body line by the Viewer template.
+const TEMPLATE_VERSION = 'Winlink Check-in 5.1.3';
 const MAP_FILENAME = 'Winlink Check-in V5';
 const STATUS_OPTIONS: CheckInStatus[] = ['EXERCISE', 'REAL EVENT'];
 const SERVICE_OPTIONS: CheckInService[] = ['AMATEUR', 'SHARES'];
@@ -48,11 +50,13 @@ const SESSION_OPTIONS: CheckInSession[] = [
  *  datetime, msgsender, location/grid, comments) are intentionally excluded
  *  so a slot pre-fills the "net metadata" without overwriting current
  *  position or per-event details. */
-const SLOT_SAVEABLE = [
-  'organization', 'msgto', 'contactname', 'assigned',
-  'status', 'service', 'band', 'session',
-] as const;
-type SlotSaveableField = (typeof SLOT_SAVEABLE)[number];
+/* Slot-saveable fields (the "which net is this" metadata): organization,
+ * msgto, contactname, assigned, status, service, band, session. Volatile
+ * fields (newsubject, exercise_id, datetime, msgsender, location*, comments)
+ * are intentionally excluded — a slot pre-fills the net identity without
+ * overwriting per-checkin state or GPS-derived location. applySlot type-
+ * checks each field inline; saveSlot enumerates them explicitly when
+ * building the slot payload. */
 
 function currentDatetimeIsoMinute(): string {
   // WLE's DateTime field is operator-facing UTC; format YYYY-MM-DD HH:MM
@@ -236,42 +240,53 @@ export function CheckInForm({
     // Apply only saveable fields. The volatile fields stay at their current
     // values (datetime auto-now, position fields from GPS, etc.).
     const p = slot.payload;
-    const newVals: Partial<Record<SlotSaveableField, string>> = {};
-    for (const key of SLOT_SAVEABLE) {
-      if (key in p && typeof p[key] === 'string') {
-        newVals[key] = p[key] as string;
-      }
+
+    // Track what actually got applied so the onChange spread doesn't leak
+    // unvalidated radio values into draft autosave. Codex 2026-06-05 P2 #5:
+    // an old simplified-schema slot with `status: "Ready"` would have its
+    // state-setter call rejected by the type-narrowing guard, BUT the prior
+    // implementation still spread `newVals.status` into onChange — Compose
+    // would persist the invalid value into the draft. Fix: build `applied`
+    // alongside the setter calls, then spread only that.
+    const applied: Record<string, string> = {};
+
+    if (typeof p.organization === 'string') {
+      setOrganization(p.organization);
+      applied.organization = p.organization;
     }
-    if (newVals.organization !== undefined) setOrganization(newVals.organization);
-    if (newVals.msgto        !== undefined) setMsgto(newVals.msgto);
-    if (newVals.contactname  !== undefined) setContactname(newVals.contactname);
-    if (newVals.assigned     !== undefined) setAssigned(newVals.assigned);
-    if (newVals.status       !== undefined && (STATUS_OPTIONS as string[]).includes(newVals.status)) {
-      setStatus(newVals.status as CheckInStatus);
+    if (typeof p.msgto === 'string') {
+      setMsgto(p.msgto);
+      applied.msgto = p.msgto;
     }
-    if (newVals.service      !== undefined && (SERVICE_OPTIONS as string[]).includes(newVals.service)) {
-      setService(newVals.service as CheckInService);
+    if (typeof p.contactname === 'string') {
+      setContactname(p.contactname);
+      applied.contactname = p.contactname;
     }
-    if (newVals.band         !== undefined && (BAND_OPTIONS as string[]).includes(newVals.band)) {
-      setBand(newVals.band as CheckInBand);
+    if (typeof p.assigned === 'string') {
+      setAssigned(p.assigned);
+      applied.assigned = p.assigned;
     }
-    if (newVals.session      !== undefined && (SESSION_OPTIONS as string[]).includes(newVals.session)) {
-      setSession(newVals.session as CheckInSession);
+    if (typeof p.status === 'string' && (STATUS_OPTIONS as string[]).includes(p.status)) {
+      setStatus(p.status as CheckInStatus);
+      applied.status = p.status;
     }
+    if (typeof p.service === 'string' && (SERVICE_OPTIONS as string[]).includes(p.service)) {
+      setService(p.service as CheckInService);
+      applied.service = p.service;
+    }
+    if (typeof p.band === 'string' && (BAND_OPTIONS as string[]).includes(p.band)) {
+      setBand(p.band as CheckInBand);
+      applied.band = p.band;
+    }
+    if (typeof p.session === 'string' && (SESSION_OPTIONS as string[]).includes(p.session)) {
+      setSession(p.session as CheckInSession);
+      applied.session = p.session;
+    }
+
     // Construct the emitted payload inline. State setters are async, so
-    // buildPayload() here would read pre-slot values. Inline construction
-    // overlays the new slot values on the current state.
-    onChange?.({
-      ...buildPayload(),
-      organization:  newVals.organization  ?? organization,
-      msgto:         newVals.msgto         ?? msgto,
-      contactname:   newVals.contactname   ?? contactname,
-      assigned:      newVals.assigned      ?? assigned,
-      status:        newVals.status        ?? status,
-      service:       newVals.service       ?? service,
-      band:          newVals.band          ?? band,
-      session:       newVals.session       ?? session,
-    });
+    // buildPayload() here would read pre-slot values. Overlay only the
+    // validated `applied` keys on the current state.
+    onChange?.({ ...buildPayload(), ...applied });
   }
 
   async function saveSlot() {
@@ -308,15 +323,17 @@ export function CheckInForm({
     onSubmit(finalPayload);
   }
 
-  // Send is gated on the required fields per WLE: organization, newsubject,
-  // datetime (auto), msgto, msgsender, contactname. Optional fields can be
-  // empty.
+  // Send is gated on the WLE-required fields: organization, newsubject,
+  // datetime (auto), msgto, msgsender, contactname, location. The WLE
+  // authoring HTML marks Location as `required="required"`; matching that
+  // here so the native form's send-gate is no looser than the webview form.
   const canSubmit =
     organization.trim().length > 0 &&
     newsubject.trim().length > 0 &&
     msgto.trim().length > 0 &&
     msgsender.trim().length > 0 &&
-    contactname.trim().length > 0;
+    contactname.trim().length > 0 &&
+    location.trim().length > 0;
 
   return (
     <div className="checkin-form" data-testid="checkin-form">
@@ -417,7 +434,7 @@ export function CheckInForm({
           id="checkin-msgto"
           type="text"
           value={msgto}
-          maxLength={60}
+          maxLength={75}
           onChange={(e) => {
             const v = e.target.value;
             setMsgto(v);
