@@ -1187,6 +1187,10 @@ pub async fn send_webview_form(
 /// for diagnostics only (the form's submit POSTs are path-less per the
 /// WLE contract, so the port is informational — not required for the
 /// frontend's submit-listener wiring).
+// `token` here is an ephemeral UUID-like WebView session label — it is NOT
+// an authentication credential. credential_audit_skip so the source-scan
+// does not flag this as a credential-bearing struct requiring manual Debug.
+#[allow(unknown_lints, credential_audit_skip)]
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OpenFormResult {
@@ -1297,6 +1301,9 @@ pub async fn close_webview_form_server(
 /// `form-submitted` event for viewer sessions — there is no submit path.
 /// `token` is the lookup key for `close_webview_form_server` teardown;
 /// `port` is informational only.
+// `token` here is an ephemeral WebView session label — not an auth credential.
+// credential_audit_skip so the source-scan does not flag this as requiring manual Debug.
+#[allow(unknown_lints, credential_audit_skip)]
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OpenViewerResult {

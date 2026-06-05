@@ -22,6 +22,11 @@ const APP_NAME: &str = "tuxlink";
 const SID_CODES: &str = "B2FHM$";
 
 /// What the server told us during the handshake.
+// `challenge` is the server's nonce (a public value sent in plaintext); it is
+// NOT the station password. The credential_struct_source_scan would flag it
+// because the field name matches the scan's conservative keyword list, but
+// logging `challenge` is benign and expected.
+#[allow(unknown_lints, credential_audit_skip)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RemoteHandshake {
     /// The feature codes from the server's identifier line, e.g. `B2FWIHJM$`.
