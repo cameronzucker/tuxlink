@@ -821,3 +821,114 @@
   letter-spacing: 0.04em;
   margin-left: auto;
 }
+
+/* ============================================================================
+ * Print stylesheet — message-focused output (tuxlink-zdfj).
+ *
+ * The print command stays on the browser/webview-native window.print() path;
+ * these rules only remove app chrome and undo fixed viewport clipping so the
+ * selected MessageView flows across printed pages.
+ * ========================================================================== */
+@media print {
+  html,
+  body,
+  #root {
+    height: auto;
+    min-height: 0;
+    overflow: visible;
+    background: #fff;
+    color: #000;
+  }
+
+  .layout-b {
+    display: block;
+    width: auto;
+    height: auto;
+    min-height: 0;
+    overflow: visible;
+    background: #fff;
+    color: #000;
+  }
+
+  .layout-b .tux-titlebar,
+  .layout-b .tux-menubar,
+  .layout-b .tux-resize,
+  .layout-b .ribbon-with-search,
+  .layout-b .search-zone,
+  .layout-b .dashboard,
+  .layout-b .sidebar,
+  .layout-b .rows-pane,
+  .layout-b .statusbar,
+  .layout-b .radio-panel,
+  .layout-b .reading-pane .actions,
+  .layout-b .reading-pane .msg-attachment-save,
+  .tux-dropdown,
+  .message-list-sort-menu {
+    display: none !important;
+  }
+
+  .layout-b .panes,
+  .layout-b .panes--with-dock,
+  .layout-b .panes--with-dock.panes--with-legacy-dock {
+    display: block;
+    min-height: 0;
+    overflow: visible;
+  }
+
+  .layout-b .reading-pane {
+    display: block;
+    width: 100%;
+    max-width: none;
+    height: auto;
+    min-width: 0;
+    overflow: visible;
+    padding: 0;
+    background: #fff;
+    color: #000;
+  }
+
+  .layout-b .reading-pane .message-print-header {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  .layout-b .reading-pane h1.subject-line {
+    break-after: avoid;
+    page-break-after: avoid;
+  }
+
+  .layout-b .reading-pane h1.subject-line,
+  .layout-b .reading-pane .msg-meta,
+  .layout-b .reading-pane .msg-meta dt,
+  .layout-b .reading-pane .msg-meta dd,
+  .layout-b .reading-pane .msg-meta dd .addr,
+  .layout-b .reading-pane .msg-meta dd .msg-id,
+  .layout-b .reading-pane .msg-meta dd .form-kind-code,
+  .layout-b .reading-pane .msg-body,
+  .layout-b .reading-pane .form-attached,
+  .layout-b .reading-pane .msg-attachments,
+  .layout-b .reading-pane .msg-attachment-name,
+  .layout-b .reading-pane .msg-attachment-size {
+    color: #000;
+  }
+
+  .layout-b .reading-pane .msg-meta {
+    break-before: avoid;
+    break-inside: avoid;
+    page-break-before: avoid;
+    page-break-inside: avoid;
+  }
+
+  .layout-b .reading-pane .msg-meta,
+  .layout-b .reading-pane .msg-attachments {
+    border-color: #999;
+  }
+
+  .layout-b .reading-pane .form-attached,
+  .layout-b .reading-pane .msg-attachment-item {
+    break-inside: avoid;
+    page-break-inside: avoid;
+    background: #fff;
+    border-color: #999;
+  }
+}
