@@ -615,8 +615,10 @@ pub fn parse_raw_rfc5322(mid: &str, raw: &[u8]) -> Result<ParsedMessageDto, UiEr
     // attachment payload into the text body (tuxlink-2hyf).
     let body = find_text_plain_body(&msg, raw);
 
-    // Attachments: non-inline named parts (MIME attachments).
-    let attachments = collect_attachments(&msg);
+    // Attachments: non-inline named parts. Dispatches to the B2F parser for
+    // inbound Winlink messages — mail_parser returns zero attachments for
+    // those (tuxlink-4or5).
+    let attachments = collect_attachments(&msg, raw);
 
     // Winlink form detection: a RMS_Express_Form_<id>.xml attachment.
     // (Pre-T2.1 the heuristic was body.starts_with("<?xml"), which missed
@@ -632,7 +634,7 @@ pub fn parse_raw_rfc5322(mid: &str, raw: &[u8]) -> Result<ParsedMessageDto, UiEr
 
     let form_payload = if let Some(ref fid) = form_id {
         let attach_name = format!("RMS_Express_Form_{}.xml", fid);
-        extract_attachment_bytes(&msg, &attach_name)
+        extract_attachment_bytes(&msg, raw, &attach_name)
             .and_then(|bytes| crate::forms::parse_form_xml(&bytes).ok())
             .map(|mut p| {
                 // P2 #5 fix: backfill form_id from the attachment filename so the
@@ -733,15 +735,9 @@ fn addr_to_string(a: &mail_parser::Addr<'_>) -> String {
 ///    attachment surface (`AttachmentStrip` + the `message_attachment_save`
 ///    command shipped in tuxlink-0fyj) rather than dumping bytes as text.
 fn find_text_plain_body(msg: &mail_parser::Message<'_>, raw: &[u8]) -> String {
-    // Step 1 — B2F detection + dispatch. Use Message::from_bytes which
-    // already handles `Body: N` + `File: N filename` correctly.
-    if let Ok(b2f) = crate::winlink::message::Message::from_bytes(raw) {
-        // Require BOTH Mid: and Body: headers to qualify as B2F — either alone
-        // is ambiguous (some RFC 5322 messages could plausibly carry a Body:
-        // pseudo-header in malformed input; Mid: is rarer but possible).
-        if b2f.header("Mid").is_some() && b2f.header("Body").is_some() {
-            return String::from_utf8_lossy(b2f.body()).into_owned();
-        }
+    // Step 1 — B2F detection + dispatch.
+    if let Some(b2f) = parse_as_b2f(raw) {
+        return String::from_utf8_lossy(b2f.body()).into_owned();
     }
 
     // Step 2 — true MIME text/plain happy path.
@@ -760,10 +756,46 @@ fn find_text_plain_body(msg: &mail_parser::Message<'_>, raw: &[u8]) -> String {
     }
 }
 
-/// Collect named MIME attachments (name + decoded size in bytes).
-/// Parts without a filename are skipped (inline images without explicit names).
-/// Uses the `MimeHeaders` trait for `attachment_name()` + `content_type()`.
-fn collect_attachments(msg: &mail_parser::Message<'_>) -> Vec<AttachmentMetaDto> {
+/// B2F detection helper. Returns Some only when the parsed Winlink B2F message
+/// carries BOTH a `Mid:` header (Winlink message ID) AND a `Body:` header
+/// (decimal byte count of the declared text body). Either header alone is
+/// ambiguous — `Body:` could plausibly appear in malformed RFC 5322 input,
+/// `Mid:` is rare but not impossible. Both together is the reliable B2F
+/// signature (tuxlink-2hyf / tuxlink-4or5).
+fn parse_as_b2f(raw: &[u8]) -> Option<crate::winlink::message::Message> {
+    let msg = crate::winlink::message::Message::from_bytes(raw).ok()?;
+    if msg.header("Mid").is_some() && msg.header("Body").is_some() {
+        Some(msg)
+    } else {
+        None
+    }
+}
+
+/// Collect named attachments (filename + decoded size in bytes). Parts without
+/// a filename are skipped.
+///
+/// Dispatch ladder:
+/// 1. **B2F** — `winlink::Message::attachments()` returns the declared file
+///    list with already-decoded bytes. The canonical CMS-inbound case
+///    (tuxlink-4or5: catalog image responses, weather product replies,
+///    inbound forms). mail_parser sees B2F's `File:` headers as ordinary
+///    header lines and returns zero attachments for these messages, so this
+///    dispatch is required for the attachment surface to populate at all.
+/// 2. **MIME** — `msg.attachments()` iterator across Content-Disposition:
+///    attachment / Content-Type: name parts. Used for composed-and-
+///    roundtripped messages where the wire format is true MIME.
+fn collect_attachments(msg: &mail_parser::Message<'_>, raw: &[u8]) -> Vec<AttachmentMetaDto> {
+    if let Some(b2f) = parse_as_b2f(raw) {
+        return b2f
+            .attachments()
+            .iter()
+            .map(|a| AttachmentMetaDto {
+                filename: a.filename.clone(),
+                size: a.bytes.len() as u64,
+            })
+            .collect();
+    }
+
     msg.attachments()
         .filter_map(|part| {
             // attachment_name() checks Content-Disposition: filename first,
@@ -781,10 +813,25 @@ fn collect_attachments(msg: &mail_parser::Message<'_>) -> Vec<AttachmentMetaDto>
         .collect()
 }
 
-/// Extract the raw bytes of an attachment by filename match.
-/// Returns the decoded attachment bytes (mail-parser handles CTE decoding).
-/// Returns None when no attachment matches.
-fn extract_attachment_bytes(msg: &mail_parser::Message<'_>, filename: &str) -> Option<Vec<u8>> {
+/// Extract the raw bytes of an attachment by filename match. Returns the
+/// decoded attachment bytes. Returns None when no attachment matches.
+///
+/// Mirrors [`collect_attachments`]' B2F-then-MIME dispatch ladder so that
+/// AttachmentStrip → click → Save As → write-to-disk works end-to-end for
+/// inbound CMS messages (tuxlink-4or5).
+fn extract_attachment_bytes(
+    msg: &mail_parser::Message<'_>,
+    raw: &[u8],
+    filename: &str,
+) -> Option<Vec<u8>> {
+    if let Some(b2f) = parse_as_b2f(raw) {
+        return b2f
+            .attachments()
+            .iter()
+            .find(|a| a.filename == filename)
+            .map(|a| a.bytes.clone());
+    }
+
     msg.attachments().find_map(|part| {
         let name = part.attachment_name()?;
         if name != filename {
@@ -1016,9 +1063,10 @@ pub async fn message_attachment_save(
         .ok_or_else(|| UiError::Internal {
             detail: format!("could not parse message {id}"),
         })?;
-    let bytes = extract_attachment_bytes(&msg, &filename).ok_or_else(|| {
-        UiError::NotFound(format!("attachment '{filename}' not in message {id}"))
-    })?;
+    let bytes = extract_attachment_bytes(&msg, body.raw_rfc5322.as_slice(), &filename)
+        .ok_or_else(|| {
+            UiError::NotFound(format!("attachment '{filename}' not in message {id}"))
+        })?;
     std::fs::write(&dest_path, &bytes).map_err(|e| UiError::Internal {
         detail: format!("write {dest_path}: {e}"),
     })?;
@@ -6113,7 +6161,7 @@ hw:CARD=Device,DEV=0
         let msg = mail_parser::MessageParser::new()
             .parse(raw.as_slice())
             .expect("synthetic MIME parses");
-        let got = extract_attachment_bytes(&msg, "forecast.grb")
+        let got = extract_attachment_bytes(&msg, raw.as_slice(), "forecast.grb")
             .expect("named attachment found");
         assert_eq!(got, payload, "decoded bytes must match the source payload");
     }
@@ -6122,7 +6170,68 @@ hw:CARD=Device,DEV=0
     fn extract_attachment_bytes_returns_none_for_unknown_filename() {
         let raw = build_mime_with_attachment("a.bin", b"abc");
         let msg = mail_parser::MessageParser::new().parse(raw.as_slice()).unwrap();
-        assert!(extract_attachment_bytes(&msg, "missing.bin").is_none());
+        assert!(extract_attachment_bytes(&msg, raw.as_slice(), "missing.bin").is_none());
+    }
+
+    /// tuxlink-4or5: real CMS Catalog image messages arrive as B2F format —
+    /// `Mid:` + `Body: N` + `File: N filename` headers, then text body, then
+    /// per-attachment binary payloads. mail_parser is RFC 5322-only and
+    /// returns zero attachments for these messages, so AttachmentStrip stayed
+    /// empty and Save As had nothing to click — the image was visually clean
+    /// after PR #412 but functionally inaccessible.
+    ///
+    /// End-to-end check: parse_raw_rfc5322 against a real-shape B2F message
+    /// must surface the attachment in the DTO with the right filename + size
+    /// AND extract_attachment_bytes must return byte-identical bytes back
+    /// for that filename, so the AttachmentStrip → Save As chain works.
+    #[test]
+    fn parse_raw_rfc5322_surfaces_b2f_attachment_end_to_end() {
+        let text_body = "Resource URL: https://example.org/cat/img.jpg\r\n";
+        let attachment_bytes: &[u8] = &[
+            0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01,
+            0xcb, 0xa1, 0x12, 0xef, 0xc9, 0x97, 0xd4, 0xb2, 0x68, 0x5a, 0x80, 0xff,
+        ];
+        let filename = "600x600.jpg";
+
+        let mut raw: Vec<u8> = Vec::new();
+        raw.extend_from_slice(b"Mid: 9YMNP4GB4UOD\r\n");
+        raw.extend_from_slice(format!("Body: {}\r\n", text_body.len()).as_bytes());
+        raw.extend_from_slice(b"Date: 2026/06/05 11:24\r\n");
+        raw.extend_from_slice(
+            format!("File: {} {}\r\n", attachment_bytes.len(), filename).as_bytes(),
+        );
+        raw.extend_from_slice(b"From: SERVICE\r\n");
+        raw.extend_from_slice(b"Mbo: SYSTEM\r\n");
+        raw.extend_from_slice(b"Subject: INQUIRY - https://example.org/cat/img.jpg\r\n");
+        raw.extend_from_slice(b"To: N7CPZ\r\n");
+        raw.extend_from_slice(b"\r\n");
+        raw.extend_from_slice(text_body.as_bytes());
+        raw.extend_from_slice(b"\r\n");
+        raw.extend_from_slice(attachment_bytes);
+        raw.extend_from_slice(b"\r\n");
+
+        // End-to-end through the same code path the UI takes.
+        let dto = parse_raw_rfc5322("9YMNP4GB4UOD", raw.as_slice())
+            .expect("B2F parse succeeds end-to-end");
+
+        // 1. AttachmentStrip data: the attachment must be listed.
+        assert_eq!(
+            dto.attachments.len(),
+            1,
+            "AttachmentStrip needs the B2F attachment surfaced; got {:?}",
+            dto.attachments
+        );
+        assert_eq!(dto.attachments[0].filename, filename);
+        assert_eq!(dto.attachments[0].size, attachment_bytes.len() as u64);
+
+        // 2. Save As data: extract_attachment_bytes must return the exact bytes
+        //    so the on-disk file is byte-identical to the original.
+        let msg = mail_parser::MessageParser::new()
+            .parse(raw.as_slice())
+            .expect("mail-parser accepts B2F headers as RFC 5322");
+        let got = extract_attachment_bytes(&msg, raw.as_slice(), filename)
+            .expect("attachment lookup succeeds for B2F messages");
+        assert_eq!(got, attachment_bytes, "Save As bytes must round-trip");
     }
 
     #[test]
