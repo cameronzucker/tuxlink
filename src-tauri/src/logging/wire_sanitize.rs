@@ -6,19 +6,17 @@
 //! route through this helper.
 
 use once_cell::sync::Lazy;
-use regex::RegexSet;
+use regex::Regex;
 use std::borrow::Cow;
 
 /// Patterns that match wire-text lines carrying credential material.
 /// On match, the matched line is replaced with a context-preserving redaction.
-static WIRE_PATTERNS: Lazy<RegexSet> = Lazy::new(|| {
-    RegexSet::new(&[
-        r"(?i)^;PR:\s*\S+",
-        r"(?i)^;PQ:\s*\S+",
-        r"(?i)^auth\s+\S+\s+\S+",
-    ])
-    .expect("wire patterns must compile")
-});
+static PR_PATTERN: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?i);PR:\s*\S+").expect("PR wire pattern must compile"));
+static PQ_PATTERN: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?i);PQ:\s*\S+").expect("PQ wire pattern must compile"));
+static AUTH_PATTERN: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?i)auth\s+\S+\s+\S+").expect("AUTH wire pattern must compile"));
 
 /// Context tag identifying what kind of wire emission is happening.
 ///
@@ -41,28 +39,16 @@ pub fn sanitize_wire_line(raw: &str, ctx: WireContext) -> Cow<'_, str> {
             Cow::Owned("<redacted>".into())
         }
         WireContext::Generic => {
-            for idx in WIRE_PATTERNS.matches(raw).iter() {
-                return Cow::Owned(redact_match(raw, idx));
+            let redacted = PR_PATTERN.replace_all(raw, ";PR: <redacted>");
+            let redacted = PQ_PATTERN.replace_all(&redacted, ";PQ: <redacted>");
+            let redacted = AUTH_PATTERN.replace_all(&redacted, "<redacted AUTH>");
+            if redacted == raw {
+                Cow::Borrowed(raw)
+            } else {
+                Cow::Owned(redacted.into_owned())
             }
-            Cow::Borrowed(raw)
         }
     }
-}
-
-fn redact_match(raw: &str, pattern_idx: usize) -> String {
-    // Preserve protocol context (e.g., ";PR: ") + redact the credential value.
-    // The pattern indices correspond to the WIRE_PATTERNS slice order.
-    match pattern_idx {
-        0 => preserve_prefix_redact(raw, ";PR:"),
-        1 => preserve_prefix_redact(raw, ";PQ:"),
-        2 => "<redacted AUTH>".into(),
-        _ => "<redacted>".into(),
-    }
-}
-
-fn preserve_prefix_redact(raw: &str, prefix: &str) -> String {
-    let trailing = if raw.ends_with('\r') { "\r" } else { "" };
-    format!("{} <redacted>{}", prefix, trailing)
 }
 
 #[cfg(test)]

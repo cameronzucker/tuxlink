@@ -107,7 +107,7 @@ impl<'ast> Visit<'ast> for ScanState {
         // Has credential-shaped field?
         let has_cred_field = match &s.fields {
             Fields::Named(fields) => fields.named.iter().any(|f| {
-                f.ident.as_ref().map_or(false, |id| {
+                f.ident.as_ref().is_some_and(|id| {
                     CREDENTIAL_FIELD_NAMES.contains(&id.to_string().as_str())
                 }) && type_is_credential_carrier(&f.ty)
             }),
@@ -144,7 +144,7 @@ impl<'ast> Visit<'ast> for ScanState {
             if path
                 .segments
                 .last()
-                .map_or(false, |s| s.ident == "Debug")
+                .is_some_and(|s| s.ident == "Debug")
             {
                 if let Type::Path(p) = &*i.self_ty {
                     if let Some(seg) = p.path.segments.last() {

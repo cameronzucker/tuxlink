@@ -38,7 +38,7 @@ pub fn validate_dict_bytes(bytes: &[u8]) -> Result<(), DictError> {
     if bytes.is_empty() {
         return Err(DictError::Empty);
     }
-    if bytes.len() < 4 || &bytes[..4] != ZSTD_DICT_MAGIC {
+    if bytes.len() < 4 || bytes[..4] != ZSTD_DICT_MAGIC {
         return Err(DictError::Invalid(
             "missing zstd dictionary magic bytes (expected 0xEC 0x30 0xA4 0x37)".into(),
         ));

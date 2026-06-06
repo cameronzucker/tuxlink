@@ -4,18 +4,13 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum DetailedMode {
+    #[default]
     Off,
     On,
     Bounded { expires_at: DateTime<Utc> },
-}
-
-impl Default for DetailedMode {
-    fn default() -> Self {
-        DetailedMode::Off
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

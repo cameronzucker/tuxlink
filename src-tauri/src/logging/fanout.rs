@@ -30,7 +30,7 @@ pub struct FanoutLayer {
 }
 
 impl FanoutLayer {
-    pub fn new(session_log: Arc<SessionLogState>) -> (FanoutLayerHandle, broadcast::Receiver<LoggedEvent>) {
+    pub fn create(session_log: Arc<SessionLogState>) -> (FanoutLayerHandle, broadcast::Receiver<LoggedEvent>) {
         let (tx, rx) = broadcast::channel(BROADCAST_CAPACITY);
         let inner = Arc::new(Self {
             session_log,
@@ -210,7 +210,7 @@ mod tests {
     #[test]
     fn broadcasts_emitted_events() {
         let session_log = Arc::new(SessionLogState::new(100));
-        let (layer, mut rx) = FanoutLayer::new(session_log);
+        let (layer, mut rx) = FanoutLayer::create(session_log);
         let subscriber = Registry::default().with(layer.clone());
 
         tracing::subscriber::with_default(subscriber, || {
@@ -227,7 +227,7 @@ mod tests {
     #[test]
     fn password_field_is_redacted_in_broadcast() {
         let session_log = Arc::new(SessionLogState::new(100));
-        let (layer, mut rx) = FanoutLayer::new(session_log);
+        let (layer, mut rx) = FanoutLayer::create(session_log);
         let subscriber = Registry::default().with(layer.clone());
 
         tracing::subscriber::with_default(subscriber, || {
@@ -243,7 +243,7 @@ mod tests {
     #[test]
     fn attempt_id_in_span_is_promoted_to_logged_event() {
         let session_log = Arc::new(SessionLogState::new(100));
-        let (layer, mut rx) = FanoutLayer::new(session_log);
+        let (layer, mut rx) = FanoutLayer::create(session_log);
         let subscriber = Registry::default().with(layer.clone());
 
         tracing::subscriber::with_default(subscriber, || {

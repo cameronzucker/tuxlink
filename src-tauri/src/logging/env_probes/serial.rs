@@ -126,7 +126,7 @@ fn get_supplementary_groups() -> Option<Vec<u32>> {
         return None;
     }
     groups.truncate(count as usize);
-    Some(groups.into_iter().map(|g| g as u32).collect())
+    Some(groups.into_iter().collect())
 }
 
 fn read_group_gid(name: &str) -> Option<u32> {

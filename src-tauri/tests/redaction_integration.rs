@@ -19,7 +19,7 @@ use tracing_subscriber::{layer::SubscriberExt, Registry};
 /// Helper: capture one event emitted inside a closure with a fresh Fanout subscriber.
 fn capture_one(emit: impl FnOnce()) -> tuxlink_lib::logging::event::LoggedEvent {
     let session_log = Arc::new(SessionLogState::new(100));
-    let (layer, mut rx) = FanoutLayer::new(session_log);
+    let (layer, mut rx) = FanoutLayer::create(session_log);
     let subscriber = Registry::default().with(layer);
     tracing::subscriber::with_default(subscriber, emit);
     rx.try_recv().expect("event must be broadcast")

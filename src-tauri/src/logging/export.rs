@@ -70,7 +70,7 @@ impl FlushBarrier {
         let (ack_tx, ack_rx) = tokio::sync::oneshot::channel();
         self.req_tx
             .send(ack_tx)
-            .map_err(|e| ExportError::Io(std::io::Error::new(std::io::ErrorKind::Other, format!("flush request send failed: {e}"))))?;
+            .map_err(|e| ExportError::Io(std::io::Error::other(format!("flush request send failed: {e}"))))?;
         // Block on the oneshot with a timeout. This is a sync method that may
         // be invoked from inside a tokio async context (Tauri command thread).
         // `Handle::block_on` panics when called from an async execution context;
@@ -84,7 +84,7 @@ impl FlushBarrier {
                 });
                 match result {
                     Ok(Ok(())) => Ok(()),
-                    Ok(Err(_)) => Err(ExportError::Io(std::io::Error::new(std::io::ErrorKind::Other, "flush barrier ack channel closed".to_string()))),
+                    Ok(Err(_)) => Err(ExportError::Io(std::io::Error::other("flush barrier ack channel closed".to_string()))),
                     Err(_) => {
                         tracing::warn!("export-flush-barrier-timeout: proceeding without flush guarantee");
                         Ok(())
@@ -151,8 +151,10 @@ pub fn build_archive(inputs: ExportInputs<'_>) -> Result<ExportResult, ExportErr
     let raw_events_bytes = events_jsonl.len() as u64;
 
     // 3. Counts
-    let mut counts = Counts::default();
-    counts.events = all_events.len() as u64;
+    let mut counts = Counts {
+        events: all_events.len() as u64,
+        ..Counts::default()
+    };
     for ev in &all_events {
         match ev.level.as_str() {
             "info" => counts.info += 1,

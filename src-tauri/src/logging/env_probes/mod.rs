@@ -55,9 +55,29 @@ pub fn safe_env_value(name: &str) -> Option<String> {
         return Some("<redacted>".into());
     }
     if val.len() > PATH_LIKE_CAP_BYTES {
-        return Some(format!("{}…[truncated {} bytes]", &val[..PATH_LIKE_CAP_BYTES], val.len() - PATH_LIKE_CAP_BYTES));
+        let end = utf8_boundary_at_or_before(&val, PATH_LIKE_CAP_BYTES);
+        return Some(format!(
+            "{}…[truncated {} bytes]",
+            &val[..end],
+            val.len() - end
+        ));
     }
     Some(val)
+}
+
+fn utf8_boundary_at_or_before(s: &str, cap: usize) -> usize {
+    if s.len() <= cap {
+        return s.len();
+    }
+    let mut end = 0;
+    for (idx, ch) in s.char_indices() {
+        let next = idx + ch.len_utf8();
+        if next > cap {
+            break;
+        }
+        end = next;
+    }
+    end
 }
 
 /// Per-probe atomic state for debounce + single-flight.
@@ -98,6 +118,12 @@ impl ProbeGate {
             *last = Some(Instant::now());
         }
         self.state.store(0, Ordering::Release);
+    }
+}
+
+impl Default for ProbeGate {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

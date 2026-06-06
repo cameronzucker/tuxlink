@@ -47,17 +47,28 @@ impl RedactingVisitor {
     }
 }
 
+impl Default for RedactingVisitor {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 fn cap_string(s: &str) -> String {
     if s.len() <= STRING_FIELD_CAP_BYTES {
         s.to_string()
     } else {
-        // Use char-count truncation rather than a byte-index slice to avoid
-        // a panic when byte 4096 falls inside a multi-byte UTF-8 sequence
-        // (Codex impl-adrev P2 #5). A long Unicode form value, probe value,
-        // or protocol error message would otherwise crash the subscriber.
-        let truncated: String = s.chars().take(STRING_FIELD_CAP_BYTES).collect();
-        let truncated_bytes = s.len() - truncated.len();
-        format!("{truncated}…[truncated {truncated_bytes} bytes]")
+        // Find a UTF-8 boundary at or below the byte cap. This preserves the
+        // 4 KB field budget without slicing inside a multi-byte codepoint.
+        let mut end = 0;
+        for (idx, ch) in s.char_indices() {
+            let next = idx + ch.len_utf8();
+            if next > STRING_FIELD_CAP_BYTES {
+                break;
+            }
+            end = next;
+        }
+        let truncated = &s[..end];
+        format!("{truncated}…[truncated {} bytes]", s.len() - end)
     }
 }
 
@@ -140,7 +151,7 @@ mod tests {
     /// Helper: capture one event emitted while a fanout-driven subscriber is active.
     fn capture_one(emit: impl FnOnce()) -> LoggedEvent {
         let session_log = Arc::new(SessionLogState::new(100));
-        let (handle, mut rx) = FanoutLayer::new(session_log);
+        let (handle, mut rx) = FanoutLayer::create(session_log);
         let subscriber = Registry::default().with(handle.clone());
         tracing::subscriber::with_default(subscriber, emit);
         rx.try_recv().expect("event must be broadcast")
@@ -181,8 +192,8 @@ mod tests {
 
     #[test]
     fn record_f64_finite_preserves_value() {
-        let ev = capture_one(|| tracing::info!(rate = 3.14_f64, "metric"));
-        assert_eq!(ev.fields.get("rate"), Some(&serde_json::json!(3.14)));
+        let ev = capture_one(|| tracing::info!(rate = 1.25_f64, "metric"));
+        assert_eq!(ev.fields.get("rate"), Some(&serde_json::json!(1.25)));
     }
 
     #[test]
@@ -198,7 +209,7 @@ mod tests {
         // Blocklisted field: value must be redacted (insert() routes through blocklist first)
         assert_eq!(ev.fields.get("nonce"), Some(&serde_json::json!("<redacted>")));
         // The _kind marker must NOT leak for a blocklisted field name
-        assert!(ev.fields.get("nonce_kind").is_none(), "blocklisted field's _kind marker must not leak");
+        assert!(!ev.fields.contains_key("nonce_kind"), "blocklisted field's _kind marker must not leak");
     }
 
     #[test]

@@ -57,7 +57,7 @@ pub fn available_bytes(path: &std::path::Path) -> Option<u64> {
             return None;
         }
         let stat = unsafe { stat.assume_init() };
-        Some(stat.f_bavail as u64 * stat.f_frsize as u64)
+        Some(stat.f_bavail * stat.f_frsize)
     }
     #[cfg(not(target_os = "linux"))]
     {

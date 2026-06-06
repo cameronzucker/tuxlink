@@ -61,7 +61,7 @@ const EXPECTED_CLUSTERS: &[&str] = &[
 #[test]
 fn all_clusters_emit_at_least_one_event_through_fanout() {
     let session_log = Arc::new(SessionLogState::new(1024));
-    let (layer, mut rx) = FanoutLayer::new(session_log);
+    let (layer, mut rx) = FanoutLayer::create(session_log);
     let subscriber = Registry::default().with(layer);
 
     tracing::subscriber::with_default(subscriber, || {

@@ -218,7 +218,7 @@ mod tests {
         let tmp = tempdir().unwrap();
         let now = SystemTime::now();
         let old1 = now - Duration::from_secs(60 * 60 * 24 * 2); // 2 days ago
-        let old2 = now - Duration::from_secs(60 * 60 * 24 * 1); // 1 day ago
+        let old2 = now - Duration::from_secs(60 * 60 * 24); // 1 day ago
 
         let f_active = tmp.path().join(filename_for_test(now));
         let f_old1 = tmp.path().join(filename_for_test(old1));

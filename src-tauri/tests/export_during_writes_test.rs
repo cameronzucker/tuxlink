@@ -61,7 +61,7 @@ fn export_completes_without_panic_during_concurrent_writes() {
     // it fills to capacity and drops, which is the expected behavior during
     // tests. The subscriber must be active so tracing calls below go to it.
     let session_log = Arc::new(SessionLogState::new(100));
-    let (layer, _rx) = FanoutLayer::new(session_log);
+    let (layer, _rx) = FanoutLayer::create(session_log);
     let subscriber = Registry::default().with(layer);
 
     // Set the subscriber as default for this thread so concurrent tracing

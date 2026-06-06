@@ -115,15 +115,10 @@ pub fn spawn(
                     // before flushing, so the export reader sees everything.
                     {
                         let mut w = writer.lock().await;
-                        loop {
-                            match rx.try_recv() {
-                                Ok(event) => {
-                                    if !paused_flag.load(Ordering::Acquire) {
-                                        let line = event.to_jsonl();
-                                        let _ = w.write_all(line.as_bytes());
-                                    }
-                                }
-                                Err(_) => break,
+                        while let Ok(event) = rx.try_recv() {
+                            if !paused_flag.load(Ordering::Acquire) {
+                                let line = event.to_jsonl();
+                                let _ = w.write_all(line.as_bytes());
                             }
                         }
                         let _ = w.flush();

@@ -19,7 +19,7 @@ pub struct SubscriberHandles {
 
 pub fn build(session_log: Arc<SessionLogState>) -> (impl tracing::Subscriber + Send + Sync, SubscriberHandles) {
     let (filter, filter_reload) = filter_layer::build();
-    let (fanout, broadcast_rx) = FanoutLayer::new(session_log);
+    let (fanout, broadcast_rx) = FanoutLayer::create(session_log);
 
     let subscriber = Registry::default()
         .with(filter)

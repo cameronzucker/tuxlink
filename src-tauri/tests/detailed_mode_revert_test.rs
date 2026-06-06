@@ -36,7 +36,7 @@ fn make_test_handle(initial: DetailedMode) -> Arc<LoggingHandle> {
             let (tx, _) = broadcast::channel(16);
             tx
         },
-        log_dir: std::path::PathBuf::from(std::env::temp_dir()),
+        log_dir: std::env::temp_dir(),
         active_file_path: Arc::new(tokio::sync::Mutex::new(None)),
         boot_id: "test-boot".to_string(),
         boot_at: "2026-06-05T00:00:00.000Z".to_string(),
@@ -49,6 +49,10 @@ fn make_test_handle(initial: DetailedMode) -> Arc<LoggingHandle> {
         free_disk_paused: Arc::new(AtomicBool::new(false)),
         revert_cancel: Arc::new(std::sync::Mutex::new(None)),
         probe_listener_id: std::sync::Mutex::new(None),
+        flush_barrier: {
+            let (barrier, _rx) = tuxlink_lib::logging::export::FlushBarrier::new();
+            barrier
+        },
     })
 }
 
