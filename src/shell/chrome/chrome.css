@@ -29,7 +29,7 @@
 .tux-menubar {
   display: flex; height: 30px; background: var(--surface);
   border-bottom: 1px solid var(--border); padding: 0 8px; align-items: center;
-  font-size: 13px; color: var(--text); gap: 2px; position: relative; z-index: 50;
+  font-size: 13px; color: var(--text); gap: 2px; position: relative; z-index: 90;
 }
 .tux-menu { position: relative; }
 /* The top-level menu label is a <button> (for a11y/testing) but must read as a
