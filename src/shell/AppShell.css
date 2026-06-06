@@ -48,6 +48,11 @@
   grid-template-columns: 200px 380px 1fr;
   min-height: 0;
   overflow: hidden;
+  /* Keep Virtuoso/native scrollbar painting in the content layer; top-app
+     dropdowns live above this layer. */
+  position: relative;
+  z-index: 0;
+  isolation: isolate;
 }
 
 /* The Radio Panel is 400 px wide (spec §3.2, widened 2026-06-01 per
@@ -84,6 +89,8 @@
   align-items: stretch;
   background: linear-gradient(180deg, var(--surface-2) 0%, var(--surface) 100%);
   border-bottom: 1px solid var(--border);
+  position: relative;
+  z-index: 80;
 }
 
 /* Search zone — left side of the ribbon row; contains SearchBar + dropdown.

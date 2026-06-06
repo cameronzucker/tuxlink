@@ -2,6 +2,25 @@ import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { MenuBar } from './MenuBar';
 
+const CHROME_CSS_MODULES = import.meta.glob('./chrome.css', {
+  eager: true,
+  query: '?raw',
+  import: 'default',
+}) as Record<string, string>;
+const APP_SHELL_CSS_MODULES = import.meta.glob('../AppShell.css', {
+  eager: true,
+  query: '?raw',
+  import: 'default',
+}) as Record<string, string>;
+const chromeCss = CHROME_CSS_MODULES['./chrome.css'];
+const appShellCss = APP_SHELL_CSS_MODULES['../AppShell.css'];
+
+function requiredZIndex(css: string, selector: RegExp) {
+  const match = css.match(selector);
+  expect(match).not.toBeNull();
+  return Number(match?.[1]);
+}
+
 describe('MenuBar', () => {
   it('renders all seven top menus', () => {
     render(<MenuBar onAction={vi.fn()} />);
@@ -73,5 +92,25 @@ describe('MenuBar', () => {
     expect(print).not.toBeDisabled();
     fireEvent.click(print);
     expect(onAction).toHaveBeenCalledWith('menu:message:print');
+  });
+
+  it('keeps top-app dropdown layers above message-list scroll content', () => {
+    const panesZ = requiredZIndex(
+      appShellCss,
+      /\.layout-b \.panes\s*\{[^}]*z-index:\s*(\d+);/,
+    );
+    const ribbonZ = requiredZIndex(
+      appShellCss,
+      /\.layout-b \.ribbon-with-search\s*\{[^}]*z-index:\s*(\d+);/,
+    );
+    const menubarZ = requiredZIndex(
+      chromeCss,
+      /\.tux-menubar\s*\{[^}]*z-index:\s*(\d+);/,
+    );
+
+    expect(appShellCss).toMatch(/\.layout-b \.panes\s*\{[^}]*isolation:\s*isolate;/);
+    expect(ribbonZ).toBeGreaterThan(panesZ);
+    expect(menubarZ).toBeGreaterThan(ribbonZ);
+    expect(menubarZ).toBeLessThan(100);
   });
 });
