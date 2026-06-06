@@ -52,6 +52,13 @@ impl SearchService {
         let hits = self.index.lock().unwrap().query(&spec)?;
         let items: Vec<MessageMetaDto> = hits.into_iter().map(hit_to_dto).collect();
         let total_matches = items.len() as u32;
+        let query_ms = started.elapsed().as_millis() as u32;
+        tracing::debug!(
+            target: "tuxlink::search",
+            total_matches,
+            query_ms,
+            "search query executed",
+        );
         // Recent history is NOT recorded here. Each debounced keystroke would
         // commit (e.g., typing "service" leaves s/se/ser/serv/servi/servic in
         // recent). Frontend calls tauri_search_record_recent on explicit
@@ -59,7 +66,7 @@ impl SearchService {
         Ok(SearchResults {
             items,
             total_matches,
-            query_ms: started.elapsed().as_millis() as u32,
+            query_ms,
             effective_spec: spec,
         })
     }
@@ -129,6 +136,11 @@ impl SearchService {
         use crate::winlink_backend::MailboxFolder;
 
         let started = Instant::now();
+        tracing::info!(
+            target: "tuxlink::search",
+            mailbox_root = %mailbox_root.display(),
+            "search index rebuild started",
+        );
 
         // Delete existing index files.
         let db = mailbox_root.join("search.db");
@@ -177,9 +189,16 @@ impl SearchService {
             }
         }
 
+        let elapsed_ms = started.elapsed().as_millis() as u32;
+        tracing::info!(
+            target: "tuxlink::search",
+            messages_indexed = count,
+            elapsed_ms,
+            "search index rebuild completed",
+        );
         Ok(RebuildStats {
             messages_indexed: count,
-            elapsed_ms: started.elapsed().as_millis() as u32,
+            elapsed_ms,
         })
     }
 }

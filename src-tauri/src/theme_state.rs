@@ -38,6 +38,11 @@ pub fn theme_broadcast_scheme(
         return Err("scheme must not be empty".into());
     }
     *state.0.lock().unwrap() = Some(scheme.clone());
+    tracing::debug!(
+        target: "tuxlink::theme",
+        scheme = %scheme,
+        "theme scheme broadcast",
+    );
     app.emit("color_scheme_changed", scheme).map_err(|e| e.to_string())?;
     Ok(())
 }

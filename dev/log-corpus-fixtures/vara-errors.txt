@@ -1,0 +1,5 @@
+VARA HF License not detected; running in eval mode
+VARA process exited (signal SIGKILL)
+VARA TCP control connect: connection refused
+PTT failed: GPIO permission denied
+modem busy: cannot process CONNECT while in BUSY state

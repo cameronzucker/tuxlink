@@ -1288,6 +1288,11 @@ pub async fn message_send(
 
     // send_message returns MessageId directly. Map to String for IPC.
     let mid = backend.send_message(msg).await?;
+    tracing::info!(
+        target: "tuxlink::cms",
+        mid = %mid.0,
+        "message queued in outbox",
+    );
     Ok(mid.0)
 }
 
@@ -1518,6 +1523,10 @@ pub async fn send_webview_form(
 /// for diagnostics only (the form's submit POSTs are path-less per the
 /// WLE contract, so the port is informational — not required for the
 /// frontend's submit-listener wiring).
+// `token` here is an ephemeral UUID-like WebView session label — it is NOT
+// an authentication credential. credential_audit_skip so the source-scan
+// does not flag this as a credential-bearing struct requiring manual Debug.
+#[allow(unknown_lints, credential_audit_skip)]
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OpenFormResult {
@@ -1696,6 +1705,9 @@ pub async fn close_webview_form_server(
 /// `form-submitted` event for viewer sessions — there is no submit path.
 /// `token` is the lookup key for `close_webview_form_server` teardown;
 /// `port` is informational only.
+// `token` here is an ephemeral WebView session label — not an auth credential.
+// credential_audit_skip so the source-scan does not flag this as requiring manual Debug.
+#[allow(unknown_lints, credential_audit_skip)]
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OpenViewerResult {
@@ -1843,6 +1855,11 @@ pub async fn cms_connect(
         detail: e.to_string(),
     })?;
 
+    tracing::info!(
+        target: "tuxlink::cms",
+        transport = ?cfg.connect.transport,
+        "CMS connect started",
+    );
     emit_session_line(
         &app,
         &log,
@@ -1865,6 +1882,11 @@ pub async fn cms_connect(
         .await
     {
         Ok(session) => {
+            tracing::info!(
+                target: "tuxlink::cms",
+                outcome = "ok",
+                "CMS exchange complete",
+            );
             emit_session_line(&app, &log, LogLevel::Info, "CMS exchange complete.".to_string());
             // 2026-05-31 operator-flagged: previously the session was
             // dropped without transitioning status back to Disconnected,
@@ -1897,10 +1919,21 @@ pub async fn cms_connect(
         }
         Err(BackendError::Cancelled) => {
             // Operator-initiated abort (tuxlink-9z2) — not a failure.
+            tracing::info!(
+                target: "tuxlink::cms",
+                outcome = "aborted",
+                "CMS connection aborted by operator",
+            );
             emit_session_line(&app, &log, LogLevel::Warn, "CMS connection aborted.".to_string());
             Err(BackendError::Cancelled.into())
         }
         Err(e) => {
+            tracing::warn!(
+                target: "tuxlink::cms",
+                error = %e,
+                outcome = "error",
+                "CMS connect failed",
+            );
             emit_session_line(&app, &log, LogLevel::Error, format!("CMS connect failed: {e}"));
 
             // Task 12 (tuxlink-7do4, R5 spec §6.3 + §6.4): emit a structured
@@ -1958,6 +1991,10 @@ pub async fn cms_abort(
         .current()
         .ok_or_else(|| UiError::NotConfigured("backend offline".to_string()))?;
 
+    tracing::info!(
+        target: "tuxlink::cms",
+        "CMS connection abort requested",
+    );
     emit_session_line(&app, &log, LogLevel::Info, "Aborting CMS connection…".to_string());
     backend.abort().await?;
     Ok(())

@@ -1,0 +1,4 @@
+org.bluez.Error.NotReady: Adapter not powered
+org.bluez.Error.Failed: Connection refused
+RFCOMM bind: address already in use
+hcitool: no Bluetooth adapter

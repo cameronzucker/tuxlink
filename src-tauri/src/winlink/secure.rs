@@ -39,7 +39,18 @@ pub fn secure_login_response(challenge: &str, password: &str) -> String {
 
     // Render as decimal and keep the last eight digits.
     let digits = format!("{pr:08}");
-    digits[digits.len() - 8..].to_string()
+    let token = &digits[digits.len() - 8..];
+
+    // Defense-in-depth: log only lengths, never the challenge value or the token.
+    // The token IS the credential the wire sanitizer must redact in ;PR: lines.
+    tracing::debug!(
+        target: "tuxlink::winlink::secure",
+        challenge_len = challenge.len(),
+        response_len = token.len(),
+        "secure-login response computed",
+    );
+
+    token.to_string()
 }
 
 #[cfg(test)]

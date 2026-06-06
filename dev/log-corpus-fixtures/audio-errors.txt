@@ -1,0 +1,5 @@
+ALSA lib pcm_dmix.c:1052:(snd_pcm_dmix_open) unable to open slave
+PipeWire: pw_context_connect_fd failed: No such file or directory
+pactl: Failure: Connection refused
+DigiRig not found in current sink list
+sample rate 48000 not supported on hw:0,0

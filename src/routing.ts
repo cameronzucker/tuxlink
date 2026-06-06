@@ -50,3 +50,12 @@ export function newDraftId(): string {
 export function parseHelpRoute(pathname: string): boolean {
   return pathname === '/help' || pathname === '/help/';
 }
+
+/**
+ * If `pathname` is the logging route (`/logging` or `/logging/`), return true.
+ * The logging window is single-instance with no parameters (tuxlink-qjgx /
+ * spec §8.1); boolean suffices.
+ */
+export function parseLoggingRoute(pathname: string): boolean {
+  return /^\/logging\/?$/.test(pathname);
+}

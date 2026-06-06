@@ -32,8 +32,9 @@ export interface MenuHandlers {
   openAbout: () => void;
   /** Open the inline Help / Documentation panel (tuxlink-35g0). */
   openHelp: () => void;
-  /** Open the project's GitHub issue tracker in the operator's default
-   *  browser (tuxlink-35g0). */
+  /** Open the Logging window (tuxlink-qjgx Task 8). */
+  openLogging: () => void;
+  /** Open the Report Issue modal — auto-export + pre-filled GitHub URL (tuxlink-qjgx Task 8). */
   reportIssue: () => void;
   /** Open the inline Catalog Request panel (tuxlink-ddiq) — WLE catalog
    *  inquiry picker that routes through INQUIRY@winlink.org. */
@@ -73,12 +74,14 @@ export function dispatchMenuAction(id: MenuActionId, h: MenuHandlers): void {
     case 'menu:view:customize_theme':
       h.openThemeDesigner(); return;
     // tuxlink-35g0: Help menu wiring. About + Documentation are inline
-    // overlays; Report Issue opens the project's issue tracker in the
-    // operator's default browser via @tauri-apps/plugin-shell.
+    // overlays. tuxlink-qjgx Task 8: Logging opens the Logging window;
+    // Report Issue triggers the auto-export + GitHub URL flow (spec §8.5).
     case 'menu:help:about':
       h.openAbout(); return;
     case 'menu:help:docs':
       h.openHelp(); return;
+    case 'menu:help:logging':
+      h.openLogging(); return;
     case 'menu:help:report_issue':
       h.reportIssue(); return;
     case 'menu:mailbox:inbox':

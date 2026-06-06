@@ -111,7 +111,10 @@ export const MENU_TREE: TopMenu[] = [
   { label: 'Help', items: [
     { id: 'menu:help:about', label: 'About Tuxlink' },
     { id: 'menu:help:docs', label: 'Documentation' },
-    { id: 'menu:help:report_issue', label: 'Report Issue' },
+    { separator: true },
+    // tuxlink-qjgx alpha-logging Task 8: Logging window + Report Issue flow.
+    { id: 'menu:help:logging', label: 'Logging…' },
+    { id: 'menu:help:report_issue', label: 'Report Issue…' },
   ] },
 ];
 

@@ -62,23 +62,47 @@ pub async fn run_gpsd_client(arbiter: Arc<PositionArbiter>, addr: String) {
             Ok(mut stream) => {
                 backoff = Duration::ZERO;   // reset on successful connect — if connection succeeds then immediately drops, backoff resets to 1s (gpsd is up/restarting → fast reconnect is right); only CONSECUTIVE connect failures escalate toward the 30s cap
                 logged_down = false;
+                tracing::info!(
+                    target: "tuxlink::position::gpsd",
+                    addr = %addr,
+                    "gpsd connected",
+                );
                 // Enable JSON watch mode, then read fixes until EOF / error.
                 if stream
                     .write_all(b"?WATCH={\"enable\":true,\"json\":true}\n")
                     .await
                     .is_ok()
                 {
+                    let mut fix_count: u64 = 0;
                     let mut lines = BufReader::new(stream).lines();
                     while let Ok(Some(line)) = lines.next_line().await {
                         if let Some(fix) = parse_tpv(&line) {
+                            fix_count += 1;
+                            tracing::debug!(
+                                target: "tuxlink::position::gpsd",
+                                grid = %fix.grid,
+                                fix_count,
+                                "GPS fix received",
+                            );
                             arbiter.apply_gps_fix(fix);
                         }
                     }
                 }
+                tracing::info!(
+                    target: "tuxlink::position::gpsd",
+                    addr = %addr,
+                    "gpsd connection closed; will reconnect",
+                );
                 // Fell out of the read loop — connection closed; reconnect after backoff.
             }
             Err(e) => {
                 if !logged_down {
+                    tracing::warn!(
+                        target: "tuxlink::position::gpsd",
+                        addr = %addr,
+                        error = %e,
+                        "gpsd unavailable — will keep retrying (normal when no GPS is connected)",
+                    );
                     eprintln!(
                         "gpsd unavailable at {addr}: {e} — \
                          will keep retrying (this is normal when no GPS is connected)"

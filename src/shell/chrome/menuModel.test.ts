@@ -20,7 +20,7 @@ const EXPECTED_IDS = [
   'menu:view:customize_theme',
   'menu:tools:templates', 'menu:tools:rig_control',
   'menu:tools:settings_connection', 'menu:tools:settings_privacy',
-  'menu:help:about', 'menu:help:docs', 'menu:help:report_issue',
+  'menu:help:about', 'menu:help:docs', 'menu:help:logging', 'menu:help:report_issue',
 ];
 
 describe('menu model', () => {

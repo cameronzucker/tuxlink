@@ -158,8 +158,24 @@ impl ArdopTransport {
         let binary_str = cfg.binary.to_string_lossy().into_owned();
         let args_refs: Vec<&str> = cfg.extra_args.iter().map(|s| s.as_str()).collect();
 
+        tracing::info!(
+            target: "tuxlink::winlink::modem::ardop",
+            binary = %binary_str,
+            cmd_port = cfg.cmd_port,
+            data_port = cfg.data_port,
+            "ARDOP modem spawning",
+        );
+
         let modem = ManagedModem::spawn(&binary_str, &args_refs)
-            .map_err(|e: ProcessError| io::Error::other(format!("failed to spawn modem: {e}")))?;
+            .map_err(|e: ProcessError| {
+                tracing::error!(
+                    target: "tuxlink::winlink::modem::ardop",
+                    binary = %binary_str,
+                    error = %e,
+                    "ARDOP modem spawn failed",
+                );
+                io::Error::other(format!("failed to spawn modem: {e}"))
+            })?;
 
         let cmd_addr: SocketAddr = format!("127.0.0.1:{}", cfg.cmd_port)
             .parse()
@@ -180,9 +196,23 @@ impl ArdopTransport {
             let cmd_ok = std::net::TcpListener::bind(cmd_addr).is_err();
             let data_ok = std::net::TcpListener::bind(data_addr).is_err();
             if cmd_ok && data_ok {
+                tracing::info!(
+                    target: "tuxlink::winlink::modem::ardop",
+                    cmd_port = cfg.cmd_port,
+                    data_port = cfg.data_port,
+                    elapsed_ms = start.elapsed().as_millis(),
+                    "ARDOP modem ports ready",
+                );
                 break;
             }
             if start.elapsed() >= bind_wait {
+                tracing::error!(
+                    target: "tuxlink::winlink::modem::ardop",
+                    cmd_port = cfg.cmd_port,
+                    data_port = cfg.data_port,
+                    timeout_ms = bind_wait.as_millis(),
+                    "ARDOP modem bind-wait timed out",
+                );
                 return Err(SessionError::Io(io::Error::new(
                     io::ErrorKind::TimedOut,
                     format!(

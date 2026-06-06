@@ -23,6 +23,16 @@ use super::kiss::{kiss_data_frame, kiss_param, KissDecoder, KissParam};
 use super::link::ByteLink;
 use super::params::Ax25Params;
 
+/// Produce a short hex preview of a frame body for trace logging (first 8 bytes).
+fn hex_preview(bytes: &[u8]) -> String {
+    let preview_len = bytes.len().min(8);
+    bytes[..preview_len]
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect::<Vec<_>>()
+        .join("")
+}
+
 /// A connected AX.25 link presenting reliable in-order bytes.
 pub struct Ax25Stream {
     link: Box<dyn ByteLink>,
@@ -66,6 +76,13 @@ pub fn connect(
     digis: &[Address],
     params: &Ax25Params,
 ) -> std::io::Result<Ax25Stream> {
+    tracing::info!(
+        target: "tuxlink::winlink::ax25::link",
+        mycall = %mycall.call,
+        target_call = %target.call,
+        digi_count = digis.len(),
+        "ax25 connect attempt",
+    );
     let path = Path { dest: target.clone(), src: mycall.clone(), digis: digis.to_vec() };
     let mut stream = Ax25Stream {
         link,
@@ -116,9 +133,22 @@ pub fn connect(
                     Control::Ua { .. } => {
                         // Arm Drop teardown ONLY now — the link is established (tuxlink-2y4).
                         stream.established = true;
+                        tracing::info!(
+                            target: "tuxlink::winlink::ax25::link",
+                            mycall = %stream.mycall.call,
+                            peer = %stream.peer.call,
+                            sabms_sent,
+                            "ax25 link established (UA received)",
+                        );
                         return Ok(stream);
                     }
                     Control::Dm { .. } => {
+                        tracing::warn!(
+                            target: "tuxlink::winlink::ax25::link",
+                            mycall = %stream.mycall.call,
+                            peer = %stream.peer.call,
+                            "ax25 connect refused (DM received)",
+                        );
                         return Err(std::io::Error::new(
                             std::io::ErrorKind::ConnectionRefused,
                             "peer refused the connection (DM)",
@@ -151,7 +181,15 @@ impl Ax25Stream {
         let bytes = frame
             .encode()
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, format!("{e:?}")))?;
-        self.link.write_all(&kiss_data_frame(&bytes))
+        let kiss_bytes = kiss_data_frame(&bytes);
+        tracing::trace!(
+            target: "tuxlink::winlink::ax25::frame",
+            bytes_hex_preview = %hex_preview(&kiss_bytes),
+            bytes_len = kiss_bytes.len(),
+            direction = "tx",
+            "kiss frame",
+        );
+        self.link.write_all(&kiss_bytes)
     }
 
     /// Pull bytes from the link into the KISS decoder and return the next decoded,
@@ -186,6 +224,13 @@ impl Ax25Stream {
             )),
             Ok(n) => {
                 let mut completed = self.decoder.push(&buf[..n]);
+                tracing::trace!(
+                    target: "tuxlink::winlink::ax25::frame",
+                    bytes_hex_preview = %hex_preview(&buf[..n]),
+                    bytes_len = n,
+                    direction = "rx",
+                    "kiss frame",
+                );
                 // Buffer all but the first (which we return immediately if addressed to us).
                 let mut result = None;
                 for body in completed.drain(..) {
@@ -193,6 +238,17 @@ impl Ax25Stream {
                         if frame.path.dest.call == self.mycall.call
                             && frame.path.dest.ssid == self.mycall.ssid
                         {
+                            // Emit debug for I-frame reception (N(S)/N(R) tracking).
+                            if let Control::I { ns, nr, pf } = frame.control {
+                                tracing::debug!(
+                                    target: "tuxlink::winlink::ax25::frame",
+                                    ns,
+                                    nr,
+                                    pf,
+                                    src = %frame.path.src.call,
+                                    "i-frame received",
+                                );
+                            }
                             if result.is_none() {
                                 result = Some(frame);
                             } else {

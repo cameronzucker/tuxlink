@@ -10,6 +10,7 @@
 //! (WLE decompile `TelnetP2PSession.cs:1252-1340`).
 
 use std::io::{self, BufRead, Write};
+use crate::logging::wire_sanitize::{sanitize_wire_line, WireContext};
 
 /// Outcome of the dialer-side login.
 #[derive(Debug, PartialEq, Eq)]
@@ -100,6 +101,12 @@ pub fn dialer_login<R: BufRead, W: Write>(
     our_callsign: &str,
     password: Option<&str>,
 ) -> Result<DialerLoginOutcome, DialerLoginError> {
+    tracing::debug!(
+        target: "tuxlink::winlink::telnet_p2p",
+        our_callsign,
+        "dialer login started",
+    );
+
     // Phase 1: wait for the Callsign: prompt (WLE sends "Callsign :\r"; this is
     // case-insensitive to tolerate variants).
     let (_raw, trimmed) = read_non_empty_line(reader)?
@@ -108,6 +115,11 @@ pub fn dialer_login<R: BufRead, W: Write>(
         return Err(DialerLoginError::UnexpectedLine { line: trimmed });
     }
 
+    tracing::debug!(
+        target: "tuxlink::winlink::telnet_p2p",
+        "callsign prompt received; sending our callsign",
+    );
+
     // Send our callsign.
     write!(writer, "{}\r", our_callsign)?;
     writer.flush()?;
@@ -115,27 +127,57 @@ pub fn dialer_login<R: BufRead, W: Write>(
     // Phase 2: read the next line. Either Password: prompt or B2F handshake.
     let (next, next_trimmed) = match read_non_empty_line(reader)? {
         Some(pair) => pair,
-        None => return Ok(DialerLoginOutcome::Done), // Peer closed; no B2F coming.
+        None => {
+            tracing::debug!(
+                target: "tuxlink::winlink::telnet_p2p",
+                "peer closed after callsign; no B2F handshake",
+            );
+            return Ok(DialerLoginOutcome::Done); // Peer closed; no B2F coming.
+        }
     };
 
     if next_trimmed.eq_ignore_ascii_case("PASSWORD :")
         || next_trimmed.eq_ignore_ascii_case("PASSWORD:")
     {
+        tracing::debug!(
+            target: "tuxlink::winlink::telnet_p2p",
+            has_password = password.is_some(),
+            "password prompt received; sending password",
+        );
         // Password prompt. Send the configured password, or "CMSTelnet" as
         // the WLE-compat default (WLE-as-listener with empty station password
         // accepts anything; WLE-as-dialer sends "CMSTelnet" when its
         // favorites entry has no remote password — see TelnetP2PSession.cs:1341).
         let pw = password.unwrap_or(DEFAULT_PEER_PASSWORD);
+        // Sanitize before any tracing — the password must NOT appear in logs.
+        let _sanitized = sanitize_wire_line(pw, WireContext::PasswordResponse);
+        tracing::trace!(
+            target: "tuxlink::winlink::telnet_p2p",
+            line = %_sanitized,
+            direction = "tx",
+            "wire emission",
+        );
         write!(writer, "{}\r", pw)?;
         writer.flush()?;
         // After the password exchange the peer immediately starts the B2F
         // handshake; read and push back the first line so the session driver
         // sees it in its reader (same pattern as the no-password case).
         return match read_non_empty_line(reader)? {
-            Some((b2f_line, _)) => Ok(DialerLoginOutcome::DoneWithPushback { pushback: b2f_line }),
+            Some((b2f_line, _)) => {
+                tracing::debug!(
+                    target: "tuxlink::winlink::telnet_p2p",
+                    "password exchange complete; B2F handshake received",
+                );
+                Ok(DialerLoginOutcome::DoneWithPushback { pushback: b2f_line })
+            }
             None => Ok(DialerLoginOutcome::Done),
         };
     }
+
+    tracing::debug!(
+        target: "tuxlink::winlink::telnet_p2p",
+        "no password prompt; B2F handshake received directly",
+    );
 
     // Not a password prompt — this is the B2F handshake. Push it back.
     Ok(DialerLoginOutcome::DoneWithPushback { pushback: next })

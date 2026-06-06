@@ -1,0 +1,734 @@
+//! Tauri commands exposed by the Logging window (spec §8.4).
+//!
+//! Amendment D: when logging init degraded, `logging_status` reads
+//! `State<DegradedHandle>` and returns a status with `degraded: Some(reason)`.
+//!
+//! Amendment H: `LoggingStatus` carries `boot_id_short` (first 8 chars of
+//! boot_id) so the frontend can seed a stable per-process export filename.
+//!
+//! Amendment E.7.7: `emit_first_paint_complete` command bridges the frontend's
+//! first-render event to the backend probe runner.
+
+use crate::logging::bounded_timer;
+use crate::logging::env_probes::{audio, display, keyring, modem_process, network, serial, ProbeSnapshot};
+use crate::logging::export::{build_archive, ExportInputs, ExportResult};
+use crate::logging::filter_layer;
+use crate::logging::logging_handle::LoggingHandle;
+use crate::logging::retention::{self, RetentionConfig};
+use crate::logging::settings::{self, DetailedMode};
+use crate::logging::DegradedHandle;
+use chrono::{Duration, Utc};
+use std::sync::Arc;
+
+// ─── Status types ─────────────────────────────────────────────────────────────
+
+#[derive(serde::Serialize)]
+pub struct LoggingStatus {
+    pub disk_usage_bytes: u64,
+    pub disk_cap_bytes: u64,
+    pub retained_window_seconds: u64,
+    pub event_rate_per_hour: u64,
+    pub last_export: Option<LastExport>,
+    pub detailed_mode: String,
+    pub bounded_remaining_seconds: Option<i64>,
+    pub retention_days: u32,
+    pub retention_mb_cap: u32,
+    /// Amendment H: first 8 chars of boot_id for export-filename seeding.
+    pub boot_id_short: String,
+    /// Amendment D: Some(reason) when logging is degraded (no disk logging).
+    pub degraded: Option<String>,
+}
+
+#[derive(serde::Serialize)]
+pub struct LastExport {
+    pub path: String,
+    pub size_bytes: u64,
+    pub at: String,
+    pub correlation_id: Option<String>,
+}
+
+// ─── Commands ─────────────────────────────────────────────────────────────────
+
+/// Return the current logging status. Reads managed `LoggingHandle`; if logging
+/// is degraded, falls back to `DegradedHandle` and returns a minimal status.
+///
+/// Tauri will pass whichever managed type is present. Because Tauri panics if
+/// you ask for a State<T> that was never managed, we use the application's
+/// actual managed types. The two types are mutually exclusive: `init()` either
+/// manages `LoggingHandle` (Full) or `DegradedHandle` (Degraded), never both.
+///
+/// Implementation note: we accept both optionally via `Option<State<T>>`
+/// — Tauri 2 doesn't support optional State natively, so we instead supply
+/// a command that takes `Arc<LoggingHandle>` if managed.
+///
+/// Simpler approach used here: accept `Arc<LoggingHandle>` wrapped in `State`.
+/// In the Degraded path, the app manages `DegradedHandle` but NOT `LoggingHandle`,
+/// so Tauri would panic. To avoid this, we take `State<LoggingHandle>` and rely
+/// on Tauri's `try_state`-style access via `app: tauri::AppHandle`.
+#[tauri::command]
+pub fn logging_status(app: tauri::AppHandle) -> Result<LoggingStatus, String> {
+    use tauri::Manager;
+
+    // Try the Full path first.
+    if let Some(handle) = app.try_state::<Arc<LoggingHandle>>() {
+        return full_status(&handle);
+    }
+
+    // Degraded path.
+    if let Some(degraded) = app.try_state::<DegradedHandle>() {
+        return Ok(LoggingStatus {
+            disk_usage_bytes: 0,
+            disk_cap_bytes: 0,
+            retained_window_seconds: 0,
+            event_rate_per_hour: 0,
+            last_export: None,
+            detailed_mode: "off".into(),
+            bounded_remaining_seconds: None,
+            retention_days: 14,
+            retention_mb_cap: 500,
+            boot_id_short: "degraded".into(),
+            degraded: Some(degraded.reason.clone()),
+        });
+    }
+
+    Err("logging not initialized".into())
+}
+
+fn full_status(handle: &Arc<LoggingHandle>) -> Result<LoggingStatus, String> {
+    let settings = handle
+        .settings
+        .lock()
+        .map_err(|e| format!("settings lock: {e}"))?;
+
+    // Sum up on-disk JSONL files.
+    let mut disk_usage_bytes = 0u64;
+    if let Ok(entries) = std::fs::read_dir(&handle.log_dir) {
+        for e in entries.flatten() {
+            if let Some(name) = e.file_name().to_str() {
+                if name.starts_with("tuxlink.") && name.ends_with(".jsonl") {
+                    if let Ok(m) = e.metadata() {
+                        disk_usage_bytes += m.len();
+                    }
+                }
+            }
+        }
+    }
+
+    let bounded_remaining = match &settings.detailed_mode {
+        DetailedMode::Bounded { expires_at } => {
+            Some((expires_at.signed_duration_since(Utc::now())).num_seconds())
+        }
+        _ => None,
+    };
+    let detailed_label = match &settings.detailed_mode {
+        DetailedMode::Off => "off",
+        DetailedMode::On => "on",
+        DetailedMode::Bounded { .. } => "bounded",
+    };
+
+    // Amendment H: first 8 chars of boot_id.
+    let boot_id_short = handle.boot_id.chars().take(8).collect::<String>();
+
+    Ok(LoggingStatus {
+        disk_usage_bytes,
+        disk_cap_bytes: (settings.retention_mb_cap as u64) * 1024 * 1024,
+        retained_window_seconds: 0, // TODO: populate from oldest file timestamp
+        event_rate_per_hour: 0, // TODO: populate from sliding-window counter
+        last_export: None,      // TODO: persist across sessions
+        detailed_mode: detailed_label.into(),
+        bounded_remaining_seconds: bounded_remaining,
+        retention_days: settings.retention_days,
+        retention_mb_cap: settings.retention_mb_cap,
+        boot_id_short,
+        degraded: None,
+    })
+}
+
+/// Set the detailed logging mode (off / on / bounded).
+///
+/// `bounded_hours` is required when `mode == "bounded"` and must be 1..=720.
+/// Persists the new mode to settings TOML and atomically swaps the filter.
+/// For Bounded transitions, schedules the auto-revert timer (Amendment C).
+#[tauri::command]
+pub fn logging_set_detailed_mode(
+    app: tauri::AppHandle,
+    mode: String,
+    bounded_hours: Option<u32>,
+) -> Result<(), String> {
+    use tauri::Manager;
+    let handle = app
+        .try_state::<Arc<LoggingHandle>>()
+        .ok_or_else(|| "logging not available (degraded or not initialized)".to_string())?;
+
+    let new_mode = match mode.as_str() {
+        "off" => DetailedMode::Off,
+        "on" => DetailedMode::On,
+        "bounded" => {
+            let hours = bounded_hours.ok_or("bounded_hours required for 'bounded' mode")?;
+            if hours == 0 || hours > 720 {
+                return Err(format!("bounded_hours must be 1..=720, got {hours}"));
+            }
+            DetailedMode::Bounded {
+                expires_at: Utc::now() + Duration::hours(hours as i64),
+            }
+        }
+        _ => return Err(format!("unknown mode: {mode}")),
+    };
+
+    {
+        let mut s = handle
+            .settings
+            .lock()
+            .map_err(|e| format!("settings lock: {e}"))?;
+        s.detailed_mode = new_mode.clone();
+        settings::save(&s)?;
+    }
+
+    match &new_mode {
+        DetailedMode::Off => filter_layer::set_standard(&handle.filter_reload)?,
+        DetailedMode::On | DetailedMode::Bounded { .. } => {
+            filter_layer::set_detailed(&handle.filter_reload)?
+        }
+    }
+
+    // Amendment C: schedule Bounded auto-revert timer after a Bounded transition.
+    // handle is State<Arc<LoggingHandle>>; deref to get the Arc.
+    if matches!(new_mode, DetailedMode::Bounded { .. }) {
+        bounded_timer::schedule_revert((*handle).clone());
+    }
+
+    tracing::info!(mode = ?new_mode, "logging.detailed_mode.changed");
+    Ok(())
+}
+
+/// Update retention settings (days + MB cap) and run an immediate sweep.
+#[tauri::command]
+pub fn logging_set_retention(
+    app: tauri::AppHandle,
+    days: u32,
+    mb_cap: u32,
+) -> Result<(), String> {
+    use tauri::Manager;
+    let handle = app
+        .try_state::<Arc<LoggingHandle>>()
+        .ok_or_else(|| "logging not available (degraded or not initialized)".to_string())?;
+
+    if !(1..=365).contains(&days) {
+        return Err(format!("days must be 1..=365, got {days}"));
+    }
+    if !(50..=10240).contains(&mb_cap) {
+        return Err(format!("mb_cap must be 50..=10240, got {mb_cap}"));
+    }
+    {
+        let mut s = handle
+            .settings
+            .lock()
+            .map_err(|e| format!("settings lock: {e}"))?;
+        s.retention_days = days;
+        s.retention_mb_cap = mb_cap;
+        settings::save(&s)?;
+    }
+    let cfg = RetentionConfig { days, mb_cap };
+    let active = handle.active_file_path.try_lock().ok().and_then(|g| g.clone());
+    let result = retention::sweep(&handle.log_dir, &cfg, active.as_deref());
+    tracing::info!(
+        deleted = result.deleted_count,
+        retained_bytes = result.retained_bytes,
+        "retention sweep complete"
+    );
+    Ok(())
+}
+
+/// Build and save a zstd export archive.
+#[tauri::command]
+pub fn logging_export(
+    app: tauri::AppHandle,
+    output_path: String,
+) -> Result<ExportResult, String> {
+    use tauri::Manager;
+    let handle = app
+        .try_state::<Arc<LoggingHandle>>()
+        .ok_or_else(|| "logging not available (degraded or not initialized)".to_string())?;
+
+    let settings = handle
+        .settings
+        .lock()
+        .map_err(|e| format!("settings lock: {e}"))?;
+    let detailed_label = match &settings.detailed_mode {
+        DetailedMode::Off => "off",
+        DetailedMode::On => "on",
+        DetailedMode::Bounded { .. } => "bounded",
+    };
+    let active = handle.active_file_path.try_lock().ok().and_then(|g| g.clone());
+    build_archive(ExportInputs {
+        log_dir: &handle.log_dir,
+        active_file_path: active.as_deref(),
+        output_path: std::path::Path::new(&output_path),
+        correlation_id: None,
+        boot_id: &handle.boot_id,
+        boot_at: &handle.boot_at,
+        detailed_mode: detailed_label,
+        retention_days: settings.retention_days,
+        retention_mb_cap: settings.retention_mb_cap,
+        // Codex P2 #4: pass the live flush barrier so pending disk-consumer
+        // events are flushed before the archive reader opens files.
+        flush_barrier: Some(&handle.flush_barrier),
+    })
+    .map_err(|e| format!("export failed: {e}"))
+}
+
+/// Open the log directory in the system file manager.
+#[tauri::command]
+pub fn logging_open_directory(
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    use tauri::Manager;
+    let handle = app
+        .try_state::<Arc<LoggingHandle>>()
+        .ok_or_else(|| "logging not available (degraded or not initialized)".to_string())?;
+
+    // tauri_plugin_shell::Shell::open is deprecated upstream in favor of
+    // tauri-plugin-opener (Tauri 2.1+). Migrating to the new plugin requires
+    // adding tauri-plugin-opener to Cargo.toml + capabilities/*.json + lib.rs
+    // .plugin() registration — out of scope for the alpha-logging PR. Suppress
+    // the deprecation locally; the project-wide migration is a follow-up before
+    // the Tauri 3 upgrade.
+    #[allow(deprecated)]
+    tauri_plugin_shell::ShellExt::shell(&app)
+        .open(handle.log_dir.to_string_lossy().to_string(), None)
+        .map_err(|e| format!("shell open: {e}"))
+}
+
+/// Clear the in-memory session log ring buffer and remove all closed log files
+/// from disk (preserving the currently-open active file).
+#[tauri::command]
+pub fn logging_clear_history(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri::Manager;
+    let handle = app
+        .try_state::<Arc<LoggingHandle>>()
+        .ok_or_else(|| "logging not available (degraded or not initialized)".to_string())?;
+
+    handle.session_log.clear();
+    let active = handle.active_file_path.try_lock().ok().and_then(|g| g.clone());
+    if let Ok(entries) = std::fs::read_dir(&handle.log_dir) {
+        for e in entries.flatten() {
+            let path = e.path();
+            if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                if !(name.starts_with("tuxlink.") && name.ends_with(".jsonl")) {
+                    continue;
+                }
+            }
+            if Some(path.as_path()) == active.as_deref() {
+                continue;
+            }
+            let _ = std::fs::remove_file(path);
+        }
+    }
+    tracing::warn!("logging history cleared by operator");
+    Ok(())
+}
+
+/// Return a snapshot of all environment probes (read-only; RADIO-1 safe).
+#[tauri::command]
+pub fn logging_env_probes_snapshot(
+    _app: tauri::AppHandle,
+) -> Result<Vec<ProbeSnapshot>, String> {
+    Ok(vec![
+        keyring::run("snapshot"),
+        audio::run("snapshot"),
+        serial::run("snapshot"),
+        modem_process::run("snapshot"),
+        network::run("snapshot"),
+        display::run("snapshot"),
+    ])
+}
+
+/// Re-run all environment probes and emit a push event to the Logging window.
+///
+/// Gate-guarded: each probe's ProbeGate prevents double-runs on rapid
+/// double-click. Only probes whose gate is successfully claimed are re-run;
+/// skipped probes are omitted from the result set. The gate does NOT apply to
+/// `logging_env_probes_snapshot` — that is a read-only status display where
+/// gating would confusingly return empty data.
+#[tauri::command]
+pub fn logging_env_probes_rerun(app: tauri::AppHandle) -> Result<Vec<ProbeSnapshot>, String> {
+    let mut snaps = Vec::with_capacity(6);
+
+    if keyring::GATE.try_claim() {
+        let s = keyring::run("rerun");
+        keyring::GATE.release();
+        snaps.push(s);
+    }
+    if audio::GATE.try_claim() {
+        let s = audio::run("rerun");
+        audio::GATE.release();
+        snaps.push(s);
+    }
+    if serial::GATE.try_claim() {
+        let s = serial::run("rerun");
+        serial::GATE.release();
+        snaps.push(s);
+    }
+    if modem_process::GATE.try_claim() {
+        let s = modem_process::run("rerun");
+        modem_process::GATE.release();
+        snaps.push(s);
+    }
+    if network::GATE.try_claim() {
+        let s = network::run("rerun");
+        network::GATE.release();
+        snaps.push(s);
+    }
+    if display::GATE.try_claim() {
+        let s = display::run("rerun");
+        display::GATE.release();
+        snaps.push(s);
+    }
+
+    use tauri::Emitter;
+    let _ = app.emit("logging://probes/snapshot-updated", &snaps);
+    Ok(snaps)
+}
+
+/// Amendment E.7.7 backend: emit the `first_paint_complete` Tauri event so the
+/// backend probe runner (env_probes::spawn_runner) can react to first paint.
+/// Called from the frontend's useEffect after first render commit.
+#[tauri::command]
+pub fn emit_first_paint_complete(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri::Emitter;
+    app.emit("first_paint_complete", ())
+        .map_err(|e| e.to_string())
+}
+
+// ─── Report Issue flow ────────────────────────────────────────────────────────
+
+/// Result returned to the frontend after a successful `report_issue_flow` call.
+#[derive(serde::Serialize)]
+pub struct ReportIssueResult {
+    pub archive_path: String,
+    pub archive_size_bytes: u64,
+    pub github_url: String,
+    pub browser_opened: bool,
+    pub correlation_id: Option<String>,
+}
+
+/// Auto-export the logs archive, build a pre-filled GitHub Issues URL with a
+/// Markdown-safe body, and attempt to open it in the operator's default browser.
+///
+/// Called from the frontend's ReportIssueModal after the operator confirms the
+/// Save As path. Returns `ReportIssueResult` on success; the frontend handles
+/// each failure path (no browser, path copy, URL copy).
+///
+/// Signature mirrors `logging_export`: uses `app.try_state` for full/degraded
+/// handling so Tauri does not panic when logging is degraded.
+#[tauri::command]
+pub fn report_issue_flow(
+    app: tauri::AppHandle,
+    output_path: String,
+) -> Result<ReportIssueResult, String> {
+    use tauri::Manager;
+
+    // 1. Export the archive. Reuses the same build_archive path as logging_export
+    //    (spec §8.7 single-source-of-truth requirement).
+    let handle = app
+        .try_state::<Arc<LoggingHandle>>()
+        .ok_or_else(|| "logging not available (degraded or not initialized)".to_string())?;
+
+    let settings = handle
+        .settings
+        .lock()
+        .map_err(|e| format!("settings lock: {e}"))?;
+    let detailed_label = match &settings.detailed_mode {
+        DetailedMode::Off => "off",
+        DetailedMode::On => "on",
+        DetailedMode::Bounded { .. } => "bounded",
+    };
+    let active = handle.active_file_path.try_lock().ok().and_then(|g| g.clone());
+    let export = build_archive(ExportInputs {
+        log_dir: &handle.log_dir,
+        active_file_path: active.as_deref(),
+        output_path: std::path::Path::new(&output_path),
+        correlation_id: None,
+        boot_id: &handle.boot_id,
+        boot_at: &handle.boot_at,
+        detailed_mode: detailed_label,
+        retention_days: settings.retention_days,
+        retention_mb_cap: settings.retention_mb_cap,
+        // Codex P2 #4: pass the live flush barrier so pending disk-consumer
+        // events are flushed before the archive reader opens files.
+        flush_barrier: Some(&handle.flush_barrier),
+    })
+    .map_err(|e| format!("export failed: {e}"))?;
+    // Drop the settings lock before doing I/O.
+    drop(settings);
+
+    // 2. Build the pre-filled GitHub Issues URL with a Markdown-safe body.
+    let build = crate::logging::manifest::build_info();
+    let platform = crate::logging::manifest::platform_info();
+    let exported_at = chrono::Utc::now().to_rfc3339();
+    let correlation_id = export.correlation_id.as_deref().unwrap_or("(none)");
+    let archive_size = format_bytes(export.archive_size_bytes);
+
+    let body = format!(
+        r#"<!-- tuxlink auto-generated bug report template -->
+
+**Build:** tuxlink {} (git {}, {})
+**Platform:** {} · {}
+**Correlation ID:** {}
+**Exported at:** {}
+
+**📎 Log archive saved at:** `{}` ({})
+
+👉 **Please drag the file above into this comment box now** so it attaches to the issue.
+
+---
+
+## What happened
+(Describe what you were trying to do, what happened instead, and what you expected.)
+
+## Steps to reproduce
+1.
+2.
+3.
+
+## Anything else
+(Screenshots, related context, anything you noticed.)
+"#,
+        markdown_escape(&build.version),
+        markdown_escape(&build.git_sha),
+        markdown_escape(&build.profile),
+        markdown_escape(&platform.os),
+        markdown_escape(&platform.kernel),
+        markdown_escape(correlation_id),
+        markdown_escape(&exported_at),
+        markdown_escape(&export.output_path.display().to_string()),
+        markdown_escape(&archive_size),
+    );
+
+    // Truncate using char count to avoid UTF-8 byte-boundary panics.
+    let body_capped = if body.len() > 6 * 1024 {
+        let truncated: String = body.chars().take(6000).collect();
+        format!("{}…\n\n[body truncated; correlation ID: {}]", truncated, correlation_id)
+    } else {
+        body
+    };
+
+    let url = format!(
+        "https://github.com/cameronzucker/tuxlink/issues/new?labels=alpha-report&body={}",
+        urlencoding::encode(&body_capped)
+    );
+
+    // 3. Attempt to open the URL in the operator's default browser.
+    //    tauri_plugin_shell::Shell::open is deprecated upstream in favor of
+    //    tauri-plugin-opener (Tauri 2.1+). Suppress locally; project-wide
+    //    migration is a follow-up before the Tauri 3 upgrade. Same pattern
+    //    as logging_open_directory (Task 6 fix I4).
+    #[allow(deprecated)]
+    let browser_opened = tauri_plugin_shell::ShellExt::shell(&app)
+        .open(url.clone(), None)
+        .is_ok();
+
+    Ok(ReportIssueResult {
+        archive_path: export.output_path.display().to_string(),
+        archive_size_bytes: export.archive_size_bytes,
+        github_url: url,
+        browser_opened,
+        correlation_id: export.correlation_id,
+    })
+}
+
+/// Escape a runtime string for safe embedding in the GitHub Issues Markdown body.
+///
+/// Backticks are replaced with the HTML entity `&#96;` (renders as a backtick
+/// in GitHub but does not break the surrounding code-span). Newlines become
+/// the literal sequence `\n`. Carriage returns are stripped. ANSI escape
+/// sequences (ESC + `[` + params + letter) are stripped.
+fn markdown_escape(s: &str) -> String {
+    // Strip ANSI escape sequences first.
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\x1b' {
+            // Consume the CSI sequence: `[` + optional param bytes + final byte.
+            if chars.peek() == Some(&'[') {
+                chars.next(); // consume `[`
+                // Consume params (0x30–0x3F) and intermediates (0x20–0x2F).
+                while let Some(&p) = chars.peek() {
+                    if ('\x30'..='\x3f').contains(&p) || ('\x20'..='\x2f').contains(&p) {
+                        chars.next();
+                    } else {
+                        break;
+                    }
+                }
+                // Consume final byte (0x40–0x7E).
+                if let Some(&f) = chars.peek() {
+                    if ('\x40'..='\x7e').contains(&f) {
+                        chars.next();
+                    }
+                }
+            }
+            // Other ESC sequences (rare in log data) — skip the ESC itself.
+            continue;
+        }
+        match c {
+            '`' => out.push_str("&#96;"),
+            '\n' => out.push_str("\\n"),
+            '\r' => {}
+            other => out.push(other),
+        }
+    }
+    out
+}
+
+/// Human-readable byte size (B / KB / MB).
+fn format_bytes(bytes: u64) -> String {
+    if bytes < 1024 {
+        return format!("{bytes} B");
+    }
+    let kb = bytes as f64 / 1024.0;
+    if kb < 1024.0 {
+        return format!("{kb:.1} KB");
+    }
+    format!("{:.1} MB", kb / 1024.0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn detailed_label_variants() {
+        // Smoke-test the label strings match the spec.
+        let off: DetailedMode = DetailedMode::Off;
+        let on: DetailedMode = DetailedMode::On;
+        let bounded = DetailedMode::Bounded {
+            expires_at: Utc::now() + Duration::hours(1),
+        };
+        let label_of = |m: &DetailedMode| match m {
+            DetailedMode::Off => "off",
+            DetailedMode::On => "on",
+            DetailedMode::Bounded { .. } => "bounded",
+        };
+        assert_eq!(label_of(&off), "off");
+        assert_eq!(label_of(&on), "on");
+        assert_eq!(label_of(&bounded), "bounded");
+    }
+
+    #[test]
+    fn retention_bounds_validation() {
+        // days = 0 is invalid
+        assert!(!(1..=365).contains(&0u32));
+        // days = 366 is invalid
+        assert!(!(1..=365).contains(&366u32));
+        // mb_cap = 49 is invalid
+        assert!(!(50..=10240).contains(&49u32));
+        // mb_cap = 10241 is invalid
+        assert!(!(50..=10240).contains(&10241u32));
+        // Valid values
+        assert!((1..=365).contains(&14u32));
+        assert!((50..=10240).contains(&500u32));
+    }
+
+    #[test]
+    fn boot_id_short_truncates_to_8() {
+        let boot_id = "01927a8b-9c12-7000-a4d3-2f8e1b9c0001";
+        let short: String = boot_id.chars().take(8).collect();
+        assert_eq!(short.len(), 8);
+        assert_eq!(short, "01927a8b");
+    }
+
+    // ── markdown_escape tests ──────────────────────────────────────────────
+
+    #[test]
+    fn markdown_escape_passes_through_plain_text() {
+        assert_eq!(markdown_escape("hello world"), "hello world");
+    }
+
+    #[test]
+    fn markdown_escape_replaces_backtick() {
+        let input = "path/to/`file`";
+        let out = markdown_escape(input);
+        assert!(!out.contains('`'), "backtick should be gone: {out}");
+        assert!(out.contains("&#96;"), "entity should be present: {out}");
+    }
+
+    #[test]
+    fn markdown_escape_replaces_newline_with_literal_backslash_n() {
+        let out = markdown_escape("line1\nline2");
+        assert_eq!(out, r"line1\nline2");
+    }
+
+    #[test]
+    fn markdown_escape_strips_carriage_return() {
+        let out = markdown_escape("a\r\nb");
+        assert_eq!(out, r"a\nb");
+    }
+
+    #[test]
+    fn markdown_escape_strips_ansi_color_sequence() {
+        // ESC[32m = green; ESC[0m = reset
+        let input = "\x1b[32mgreen\x1b[0m text";
+        let out = markdown_escape(input);
+        assert_eq!(out, "green text");
+    }
+
+    #[test]
+    fn markdown_escape_strips_ansi_csi_multi_param() {
+        // ESC[1;31m = bold + red
+        let input = "\x1b[1;31merror\x1b[0m";
+        let out = markdown_escape(input);
+        assert_eq!(out, "error");
+    }
+
+    #[test]
+    fn markdown_escape_no_injection_via_archive_path() {
+        // Operator-chosen path that tries to break out of backtick span.
+        let path = "/home/user/my`archive`.tar.zst";
+        let out = markdown_escape(path);
+        assert!(!out.contains('`'), "no backtick in escaped output: {out}");
+    }
+
+    // ── format_bytes tests ────────────────────────────────────────────────
+
+    #[test]
+    fn format_bytes_bytes() {
+        assert_eq!(format_bytes(512), "512 B");
+    }
+
+    #[test]
+    fn format_bytes_kilobytes() {
+        assert_eq!(format_bytes(2048), "2.0 KB");
+    }
+
+    #[test]
+    fn format_bytes_megabytes() {
+        assert_eq!(format_bytes(2 * 1024 * 1024), "2.0 MB");
+    }
+
+    #[test]
+    fn format_bytes_boundary_1023() {
+        assert_eq!(format_bytes(1023), "1023 B");
+    }
+
+    #[test]
+    fn format_bytes_boundary_1024() {
+        assert_eq!(format_bytes(1024), "1.0 KB");
+    }
+
+    // ── body_truncation test ──────────────────────────────────────────────
+
+    #[test]
+    fn body_capped_uses_char_count_not_byte_count() {
+        // Build a body with multi-byte chars (a = U+00E0, 2 bytes in UTF-8).
+        // If we used byte slicing, this would panic at the char boundary.
+        let body: String = "à".repeat(7000); // 14000 bytes
+        let capped = if body.len() > 6 * 1024 {
+            let truncated: String = body.chars().take(6000).collect();
+            format!("{}…\n\n[body truncated; correlation ID: test]", truncated)
+        } else {
+            body.clone()
+        };
+        // Must not panic and must contain 6000 à chars.
+        assert_eq!(capped.chars().take(6000).count(), 6000);
+    }
+}

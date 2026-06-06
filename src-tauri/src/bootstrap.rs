@@ -96,6 +96,15 @@ pub fn run(app_handle: AppHandle) {
         let action = bootstrap_decision(crate::config::read_config());
         let state = app_handle.state::<BackendState>();
 
+        tracing::info!(
+            target: "tuxlink::bootstrap",
+            action = match &action {
+                BootstrapAction::NotConnected => "not_connected",
+                BootstrapAction::ConfigError(_) => "config_error",
+                BootstrapAction::Spawn(_) => "spawn",
+            },
+            "bootstrap action decided",
+        );
         match action {
             // Pre-wizard / wizard-rendering / offline: leave NotConfigured.
             BootstrapAction::NotConnected => {
@@ -104,6 +113,11 @@ pub fn run(app_handle: AppHandle) {
             // Config exists but unusable: explicit ConfigError + one synthetic
             // session-log line carrying the reason (spec §3.3, adrev #15).
             BootstrapAction::ConfigError(reason) => {
+                tracing::error!(
+                    target: "tuxlink::bootstrap",
+                    reason = %reason,
+                    "bootstrap config error",
+                );
                 state.set_phase(BackendPhase::ConfigError {
                     reason: reason.clone(),
                 });
@@ -218,6 +232,10 @@ fn install_native(app_handle: &AppHandle, state: &BackendState, cfg: Config) {
     });
 
     state.install(Arc::new(backend));
+    tracing::info!(
+        target: "tuxlink::bootstrap",
+        "native Winlink backend installed",
+    );
     emit_backend_line(
         app_handle,
         LogLevel::Info,

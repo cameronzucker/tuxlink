@@ -24,6 +24,7 @@ use std::time::{Duration, Instant};
 use super::proposal::{Answer, Proposal};
 use super::session::{self, ExchangeConfig, ExchangeError, ExchangeResult, OutboundMessage};
 use super::wire;
+use crate::logging::wire_sanitize::{sanitize_wire_line, WireContext};
 
 /// Insert credential-equivalent redaction between the WireTap and the
 /// caller's `wire_log` closure. Fixes the BLOCKER R2 #1 leak where the
@@ -142,6 +143,15 @@ impl<'a, T> WireTap<'a, T> {
     /// a chunk containing non-ASCII bytes is a binary payload (e.g. an
     /// LZHUF-compressed message body) and is summarized as a byte count — never
     /// dumped as mojibake (tuxlink-nki re-smoke finding).
+    ///
+    /// Outbound lines (dir `>`) and inbound lines (dir `<`) are both routed
+    /// through `sanitize_wire_line` before reaching the sink. The outbound path
+    /// is the critical one: `handshake::build_handshake` writes the `;PR: <token>`
+    /// response to the wire, and without this sanitize step the `WireTap` would
+    /// forward the raw token bytes to the session-log sink — a credential leak in
+    /// Detailed-mode UI. The inbound path is sanitized symmetrically: the CMS
+    /// sends `;PQ: <challenge>` inbound; forwarding that unredacted is less
+    /// dangerous (the challenge is single-use) but still undesirable.
     fn flush(&mut self) {
         let raw = std::mem::take(&mut self.line);
         if raw.is_empty() {
@@ -153,7 +163,8 @@ impl<'a, T> WireTap<'a, T> {
         if is_ascii_text {
             let text = wire::clean_line(&String::from_utf8_lossy(&raw)).to_string();
             if !text.is_empty() {
-                (self.sink)(&format!("{} {}", self.dir, text));
+                let sanitized = sanitize_wire_line(&text, WireContext::Generic);
+                (self.sink)(&format!("{} {}", self.dir, sanitized));
             }
         } else {
             (self.sink)(&format!("{} <{} bytes binary>", self.dir, raw.len()));
@@ -756,8 +767,10 @@ mod tests {
 
     #[test]
     fn wire_log_redacts_pr_token_per_blocker_fix() {
-        // R2 #1 BLOCKER: the WireTap was emitting `;PR: <token>\r` verbatim
-        // into the session log before this fix. Verify the helper scrubs it.
+        // R2 #1 BLOCKER (independently caught as Codex impl-adrev P1 #1 on the
+        // alpha-logging branch): the WireTap was emitting `;PR: <token>\r`
+        // verbatim into the session log before this fix. Verify the helper
+        // scrubs it.
         let captured: std::cell::RefCell<Vec<String>> = std::cell::RefCell::new(Vec::new());
         let wire_log = |line: &str| {
             captured.borrow_mut().push(line.to_string());

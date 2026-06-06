@@ -1,0 +1,30 @@
+.logging-view {
+  max-width: 820px;
+  margin: 0 auto;
+  padding: 24px;
+  font-family: system-ui, -apple-system, sans-serif;
+  color: var(--text-primary, #e8e8e8);
+  background: var(--bg-primary, #1a1d24);
+  min-height: 100vh;
+}
+.logging-view-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  border-bottom: 1px solid var(--border-color, #333);
+  padding-bottom: 12px;
+  margin-bottom: 20px;
+}
+.logging-view-header h1 { margin: 0; font-size: 18px; color: var(--text-primary, #fff); }
+.logging-view section {
+  padding: 14px 16px;
+  margin-bottom: 16px;
+  border-bottom: 1px solid var(--border-color-subtle, #222);
+}
+.logging-view section h2 {
+  font-size: 11px;
+  text-transform: uppercase;
+  color: var(--text-secondary, #888);
+  letter-spacing: 0.5px;
+  margin: 0 0 10px 0;
+}

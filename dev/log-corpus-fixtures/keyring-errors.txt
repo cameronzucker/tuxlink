@@ -1,0 +1,6 @@
+org.freedesktop.Secret.Error.IsLocked
+org.freedesktop.DBus.Error.ServiceUnknown: The name org.freedesktop.secrets was not provided by any .service files
+gnome-keyring-daemon: Failed to acquire bus connection
+KWallet not opened
+KeePassXC: secret service is not running
+Flatpak portal: org.freedesktop.portal.Secret unavailable
