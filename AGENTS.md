@@ -83,9 +83,13 @@ This is Part 97 regulatory compliance, not a style rule.
 
 Conventional commit types (`feat:`, `fix:`, `docs:`, etc.). Breaking changes get `!` + `BREAKING CHANGE:` footer. Update `dev/implementation-log.md` (once created) after any significant work item. **Squash-merge is banned** ([ADR 0010](docs/adr/0010-no-squash-merge.md)); all PRs into integration branches merge as merge-commit (no-ff) via `gh pr merge <#> --merge --delete-branch`. **Polish before push:** clean up WIP commits via non-interactive `git rebase <base>` on local un-pushed commits; once pushed, commits are immutable.
 
+## Documentation propagation + AGENTS parity
+
+See [CLAUDE.md](CLAUDE.md#documentation-propagation-contract) and [CLAUDE.md](CLAUDE.md#parity-with-agentsmd). Summary: canonical policy/spec claims live in their ADR or spec, while CLAUDE.md / AGENTS.md / templates / pitfalls docs are pointers or operational recipes. Every PR that changes a CLAUDE.md rule must perform the AGENTS.md parity check in the same PR; update AGENTS.md when the non-Claude summary becomes inaccurate or a new load-bearing non-Claude rule appears.
+
 ## Tool referee (overrides bd's CLAUDE.md defaults)
 
-This project employs bd (Beads) AND Claude Code's built-in primitives (TodoWrite, auto-memory). They are NOT substitutes. When bd's BEADS INTEGRATION section conflicts with project commitments, the `## Tool referee` table in [CLAUDE.md](CLAUDE.md#tool-referee--which-tool-owns-which-job) wins. Specifically: TodoWrite handles in-turn micro-progress; bd handles cross-session work; auto-memory at `~/.claude/projects/<slug>/memory/` is canonical for user/feedback memory. (The 2026-05-17 catalog retired the prior push-timing override; push is now mandatory at session end per the §Session Completion in CLAUDE.md, agreeing with bd's directive.) See [docs/adr/0006-override-bd-claude-md-defaults.md](docs/adr/0006-override-bd-claude-md-defaults.md) for rationale.
+This project employs bd (Beads) AND harness-native in-turn planning primitives (Claude TodoWrite, Codex `update_plan`, etc.). They are NOT substitutes. When bd's BEADS INTEGRATION section conflicts with project commitments, the `## Tool referee` table in [CLAUDE.md](CLAUDE.md#tool-referee--which-tool-owns-which-job) wins. Specifically: the harness-native in-turn planner handles micro-progress; bd handles cross-session work; auto-memory at `~/.claude/projects/<slug>/memory/` is canonical for user/feedback memory. (The 2026-05-17 catalog retired the prior push-timing override; push is now mandatory at session end per the §Session Completion in CLAUDE.md, agreeing with bd's directive.) See [docs/adr/0006-override-bd-claude-md-defaults.md](docs/adr/0006-override-bd-claude-md-defaults.md) for rationale.
 
 ## Extended capabilities on this Pi
 
