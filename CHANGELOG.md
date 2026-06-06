@@ -16,6 +16,22 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
   to 365 days / 10 GB. Logs live at `$XDG_STATE_HOME/tuxlink/logs/`.
   Spec: `docs/superpowers/specs/2026-06-04-alpha-logging-design.md`.
 
+## [0.35.3](https://github.com/cameronzucker/tuxlink/compare/v0.35.2...v0.35.3) (2026-06-06)
+
+
+### Bug Fixes
+
+* **about:** show GPL license metadata ([6a6a648](https://github.com/cameronzucker/tuxlink/commit/6a6a64877a8a7d2a5289ed76efb5f09a1acc0d4e))
+* **about:** show GPL license metadata ([5bb85a1](https://github.com/cameronzucker/tuxlink/commit/5bb85a1bfd0aaf03a7fce935eb9b555e53436150))
+* **ci:** restore alpha logging pipeline ([edc0a15](https://github.com/cameronzucker/tuxlink/commit/edc0a15e0a9639dd6051be8b10b0155b14189e1e))
+* **ci:** workspace target paths + menuModel expected actions list ([42ecbcf](https://github.com/cameronzucker/tuxlink/commit/42ecbcf6dfb436711dbf65c9012b5569f69ba0f5))
+* **mailbox:** refresh folders on native mailbox changes ([3570c0c](https://github.com/cameronzucker/tuxlink/commit/3570c0cab8247b88cedf62cd6d06dec6b6b23f3b))
+* **mailbox:** refresh folders on native mailbox changes ([46bea41](https://github.com/cameronzucker/tuxlink/commit/46bea41037c92f49dafcf0019bc9d1f76c7b5395))
+* **shell:** honor selected grid precision ([08f14be](https://github.com/cameronzucker/tuxlink/commit/08f14be9dfcd326b7a9f3007884980544adcddd2))
+* **shell:** honor selected grid precision ([9b922ce](https://github.com/cameronzucker/tuxlink/commit/9b922ce9e9a9d7c7fd48a6974f49188f35df4b2e))
+* **shell:** preserve active transport intent ([9b34938](https://github.com/cameronzucker/tuxlink/commit/9b34938c70713a5599f91c545e101ee37c3e3b1d))
+* **shell:** preserve active transport intent ([b73ecc9](https://github.com/cameronzucker/tuxlink/commit/b73ecc98aa3e0131fdd3d2ab6a3cc0bf8b1eb403))
+
 ## [0.35.2](https://github.com/cameronzucker/tuxlink/compare/v0.35.1...v0.35.2) (2026-06-05)
 
 
