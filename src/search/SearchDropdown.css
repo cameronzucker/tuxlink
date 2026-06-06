@@ -22,8 +22,15 @@
 }
 .layout-b .search-dropdown .dropdown-row.active { background: var(--accent-soft); }
 .layout-b .search-dropdown .dropdown-row .star { color: var(--accent); font-size: 14px; line-height: 1; background: transparent; border: 0; padding: 0; cursor: pointer; }
-.layout-b .search-dropdown .dropdown-row .star.empty { color: var(--border-strong); }
-.layout-b .search-dropdown .dropdown-row .star.empty:hover { color: var(--accent); }
+/* tuxlink-ojr7: empty-star (star-to-save CTA) previously used --border-strong,
+   a low-contrast border token tuned to blend with UI chrome. That made the
+   affordance read as a structural line, not an interactive element; smoke
+   walk confirmed users wouldn't discover it without hovering. --text-dim
+   gives baseline readability at rest while preserving the --accent jump on
+   hover/focus as the action-commitment signal. */
+.layout-b .search-dropdown .dropdown-row .star.empty { color: var(--text-dim); }
+.layout-b .search-dropdown .dropdown-row .star.empty:hover,
+.layout-b .search-dropdown .dropdown-row .star.empty:focus-visible { color: var(--accent); }
 .layout-b .search-dropdown .dropdown-row .body { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .layout-b .search-dropdown .dropdown-row .name { font-size: 13px; color: var(--text); font-weight: 500; }
 .layout-b .search-dropdown .dropdown-row.unsaved .name { color: var(--text-dim); font-family: var(--mono); font-size: 12px; font-weight: 400; }

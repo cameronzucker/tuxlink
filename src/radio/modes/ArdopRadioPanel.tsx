@@ -11,11 +11,10 @@
 // state come directly from ModemStatus (PINGACK-derived; tuxlink-1637,
 // P4.3) and from a derived state-driven frame history.
 //
-// RADIO-1 SAFETY: every connect path passes through the consent
-// modal + backend-minted token + atomic consume_consent_token gate.
-// The frontend never generates tokens. After a connect (success or
-// failure) the local token copy is cleared so the next Connect click
-// re-opens the modal — preserved from ArdopDock.
+// Operator click on Connect is the Part 97 consent (per memory
+// no-tuxlink-added-safeguards + operator decision bd tuxlink-8gq3).
+// The RADIO-1 per-invocation consent modal was a tuxlink-added
+// safeguard that has been dropped — preserved comment for rationale.
 //
 // Open WebGUI: ardopcf's built-in WebGUI listens on `cmd_port - 1`
 // per its USAGE doc. We read the live cmd_port from config rather
@@ -35,8 +34,6 @@ import { SignalSection } from '../sections/SignalSection';
 import { Sparkline } from '../charts/Sparkline';
 import { useSampleHistory } from '../useSampleHistory';
 import { useModemStatus } from '../../modem/useModemStatus';
-import { useConsent } from '../../modem/useConsent';
-import { ConsentModal } from '../../modem/ConsentModal';
 import type { ModemState, ModemStatus } from '../../modem/types';
 import type { ArdopFrameType } from '../charts/FrameRibbon';
 import { AllowedStationsEditor } from '../sections/AllowedStationsEditor';
@@ -248,12 +245,6 @@ function resolveWebguiPort(cfg: Pick<ArdopFullConfig, 'cmd_port' | 'webgui_port'
 export function ArdopRadioPanel({ onClose }: ArdopRadioPanelProps) {
   const { status } = useModemStatus();
   const [target, setTarget] = useState('');
-  // Dial intent (tuxlink-9ls2). 'cms' = gateway dial (Winlink CMS via RMS),
-  // 'p2p' = peer-to-peer dial directly to another station. Backend default
-  // remains 'cms' to match the prior hardcoded behavior; the operator picks
-  // 'p2p' explicitly. The selector only matters at Send/Receive time —
-  // ConnectARQ doesn't care about intent.
-  const [intent, setIntent] = useState<'cms' | 'p2p'>('cms');
   // ARQ bandwidth (restored 2026-05-31 — Codex P1). Loaded from
   // config_get_ardop on mount; persisted via config_set_ardop on change.
   // null = "leave at ardopcf default."
@@ -287,8 +278,6 @@ export function ArdopRadioPanel({ onClose }: ArdopRadioPanelProps) {
   const [captureDevices, setCaptureDevices] = useState<AlsaDeviceDto[]>([]);
   const [playbackDevices, setPlaybackDevices] = useState<AlsaDeviceDto[]>([]);
   const [pttDevices, setPttDevices] = useState<SerialDeviceDto[]>([]);
-  const consent = useConsent();
-  const [showConsent, setShowConsent] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const [connectError, setConnectError] = useState<string | null>(null);
   const [disconnecting, setDisconnecting] = useState(false);
@@ -504,37 +493,28 @@ export function ArdopRadioPanel({ onClose }: ArdopRadioPanelProps) {
     loadPttDevices();
   }, [isStopped, loadAudioDevices, loadPttDevices]);
   // Effective B2F target: ONLY the backend-reported peer authorizes a TX
-  // target (preserved from ArdopDock; RADIO-1 hazard if we ever fall back
-  // to the stopped-state `target` input).
+  // Operator-click is the Part 97 consent gate. effectiveTarget is always the
+  // backend-reported peer, not the stopped-state `target` input, so TX only
+  // fires when the modem has an active connection.
   const effectiveTarget: string | null = status.peer?.trim() ?? null;
 
-  const doConnect = async (tok: string) => {
+  const doConnect = async () => {
     setConnecting(true);
     setConnectError(null);
     try {
       await invoke('modem_ardop_connect', {
         target: target.trim(),
-        consentToken: tok,
       });
     } catch (e) {
       setConnectError(String(e));
     } finally {
       setConnecting(false);
-      // RADIO-1 per-invocation consent: backend consumed the token in
-      // consume_consent_token (atomic equality-check-and-clear). Clear
-      // the local copy so the next Connect click re-opens the modal.
-      // Preserved from ArdopDock.
-      consent.clear();
     }
   };
 
   const onStartClick = () => {
     setConnectError(null);
-    if (consent.token) {
-      void doConnect(consent.token);
-    } else {
-      setShowConsent(true);
-    }
+    void doConnect();
   };
 
   const onSendReceiveClick = async () => {
@@ -542,12 +522,17 @@ export function ArdopRadioPanel({ onClose }: ArdopRadioPanelProps) {
     setExchanging(true);
     setConnectError(null);
     try {
-      // RADIO-1 SAFETY: token minted on BACKEND; frontend never generates.
-      const tok = await invoke<string>('modem_mint_consent');
+      // tuxlink-0ye6 Task 3.6: widened modem_ardop_b2f_exchange signature
+      // takes `intent: SessionIntent` + `transportKind: TransportKind`
+      // (Codex Round 2 P2 — match the new lifecycle command shape so the
+      // Phase 5 RadioSessionPanel can route uniformly with VARA).
+      // `intent: 'cms'` is hardcoded transitionally; Phase 5's
+      // RadioSessionPanel will derive the intent from RadioPanelMode props.
+      // `transportKind: 'ardop'` is the panel's mode.kind.
       await invoke('modem_ardop_b2f_exchange', {
         target: effectiveTarget,
-        intent,
-        consentToken: tok,
+        intent: 'cms',
+        transportKind: 'ardop',
       });
     } catch (e) {
       setConnectError(`Send/Receive failed: ${e}`);
@@ -601,18 +586,6 @@ export function ArdopRadioPanel({ onClose }: ArdopRadioPanelProps) {
     }
   };
 
-  const onConsentConfirm = async () => {
-    setShowConsent(false);
-    try {
-      // RADIO-1 SAFETY: token minted on backend; frontend never generates.
-      const tok = await invoke<string>('modem_mint_consent');
-      consent.grant(tok);
-      void doConnect(tok);
-    } catch (e) {
-      setConnectError(`failed to mint consent token: ${e}`);
-    }
-  };
-
   const onTargetChange = (e: ChangeEvent<HTMLInputElement>) => {
     setTarget(e.target.value);
   };
@@ -621,7 +594,7 @@ export function ArdopRadioPanel({ onClose }: ArdopRadioPanelProps) {
 
   return (
     <RadioPanel
-      mode={{ kind: 'ardop-hf', intent }}
+      mode={{ kind: 'ardop-hf', intent: 'cms' }}
       state={mapModemStateToPanelState(status.state)}
       sub={headerSub}
       onClose={onClose}
@@ -630,23 +603,6 @@ export function ArdopRadioPanel({ onClose }: ArdopRadioPanelProps) {
         <section className="radio-panel-sec">
           <h5>Connect</h5>
           <label className="radio-panel-input-row">
-            <span>Dial as</span>
-            <select
-              className="radio-panel-input"
-              data-testid="ardop-intent-select"
-              value={intent}
-              onChange={(e) => setIntent(e.target.value as 'cms' | 'p2p')}
-              title={
-                intent === 'cms'
-                  ? 'Winlink CMS via an RMS gateway. Outbound mail tagged C-pool; the keyring password (if any) is offered on a ;PQ challenge.'
-                  : 'Peer-to-peer to a direct station. Outbound mail unpooled; no password offered (peers never challenge per FBB).'
-              }
-            >
-              <option value="cms">Winlink (CMS gateway)</option>
-              <option value="p2p">P2P (direct peer)</option>
-            </select>
-          </label>
-          <label className="radio-panel-input-row">
             <span>Target</span>
             <input
               type="text"
@@ -654,7 +610,7 @@ export function ArdopRadioPanel({ onClose }: ArdopRadioPanelProps) {
               data-testid="ardop-target-input"
               value={target}
               onChange={onTargetChange}
-              placeholder={intent === 'cms' ? 'W7RMS-10' : 'W4PHS'}
+              placeholder="W7RMS-10"
               spellCheck={false}
               autoCapitalize="characters"
               autoCorrect="off"
@@ -1065,13 +1021,6 @@ Up     ${fmtUptime(status.uptimeSec)}`}
         )}
       </section>
 
-      {showConsent && (
-        <ConsentModal
-          target={target.trim()}
-          onCancel={() => setShowConsent(false)}
-          onConfirm={onConsentConfirm}
-        />
-      )}
     </RadioPanel>
   );
 }

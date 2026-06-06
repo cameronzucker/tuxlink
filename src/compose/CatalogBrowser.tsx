@@ -18,8 +18,9 @@
 // Plan: docs/superpowers/plans/2026-06-01-html-forms-p1-webview-infra.md Task 10.
 // Spec: docs/superpowers/specs/2026-05-31-html-forms-full-parity-design.md §7.
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { normalizeCatalogId } from '../forms';
 import './CatalogBrowser.css';
 
 /** Mirror of the Rust `forms::wle_templates::Template` struct (no serde
@@ -47,6 +48,36 @@ export interface CatalogBrowserProps {
    *  a form. Compose returns to plain-text mode. */
   onCancel: () => void;
 }
+
+/** Result of `forms_check_for_update` (Phase 3 — tuxlink-xipa). camelCase
+ *  matches the Rust `FormsRefreshStatus` `#[serde(rename_all = ...)]`. */
+interface FormsRefreshStatus {
+  /** `null` when no runtime snapshot has ever been installed (catalog
+   *  served from the build-time bundle). */
+  currentVersion: string | null;
+  remoteVersion: string;
+  archiveUrl: string;
+  updateAvailable: boolean;
+}
+
+/** Result of `forms_refresh`. camelCase per the Rust serde rename. */
+interface InstallReport {
+  installedVersion: string;
+  formCount: number;
+  prevVersion: string | null;
+}
+
+/** Refresh sub-flow state. Mounted inline inside the CatalogBrowser
+ *  dialog (rather than a nested modal) so Escape unambiguously backs
+ *  out one level at a time: refreshing → idle → close picker. */
+type RefreshStep =
+  | { kind: 'idle' }
+  | { kind: 'checking' }
+  | { kind: 'up-to-date'; status: FormsRefreshStatus }
+  | { kind: 'confirming'; status: FormsRefreshStatus }
+  | { kind: 'refreshing'; status: FormsRefreshStatus }
+  | { kind: 'done'; report: InstallReport }
+  | { kind: 'error'; message: string };
 
 /** Folder bucket built client-side from the flat catalog. The
  *  `isCustom` flag drives the always-last sort placement. */
@@ -110,6 +141,7 @@ export function CatalogBrowser({ onPick, onCancel }: CatalogBrowserProps) {
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
+  const [refreshStep, setRefreshStep] = useState<RefreshStep>({ kind: 'idle' });
   // Ref + auto-focus for the search input. Important #7 from the P1 Task 10
   // code review: without an initial-focus target, assistive-tech users land
   // in an aria-modal="true" dialog with no announced focus position. Search
@@ -120,24 +152,44 @@ export function CatalogBrowser({ onPick, onCancel }: CatalogBrowserProps) {
     searchInputRef.current?.focus();
   }, []);
 
-  // Escape closes the picker. Important #6 from the P1 Task 10 code review:
-  // FormPicker had Escape→onCancel; CatalogBrowser was missing it. Use a
-  // document-level keydown so the operator doesn't have to tab into a
-  // specific control first. The keep-a-stable-ref pattern is overkill for
-  // a single-callback dependency; including onCancel in deps is correct
-  // (React re-creates the listener on each render if Compose's onCancel
-  // changes identity, but Compose passes a stable arrow there isn't a
-  // useCallback gap that matters in practice).
+  // Escape unwinds one level: refresh sub-flow → picker close. Important #6
+  // from the P1 Task 10 code review: FormPicker had Escape→onCancel;
+  // CatalogBrowser was missing it. The refresh sub-flow takes precedence
+  // so the operator can back out of the refresh confirmation/error without
+  // dismissing the whole picker.
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.preventDefault();
-        onCancel();
+        if (refreshStep.kind !== 'idle' && refreshStep.kind !== 'refreshing') {
+          setRefreshStep({ kind: 'idle' });
+        } else if (refreshStep.kind === 'idle') {
+          onCancel();
+        }
+        // refreshing: ignore Escape — the install is in flight and
+        // canceling mid-rename could leave the runtime root in a half-
+        // state. The install rollback covers genuine swap failures; the
+        // operator waits for completion (typically 5–10s).
       }
     };
     document.addEventListener('keydown', handleKey);
     return () => document.removeEventListener('keydown', handleKey);
-  }, [onCancel]);
+  }, [onCancel, refreshStep.kind]);
+
+  // Catalog fetch — extracted into a callable so the post-refresh path
+  // can re-run it. Returns a Promise so the refresh flow can chain.
+  const fetchCatalog = useCallback(async (): Promise<void> => {
+    setLoading(true);
+    setError(null);
+    try {
+      const result = await invoke<Template[]>('forms_list_catalog');
+      setCatalog(result ?? []);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -184,6 +236,49 @@ export function CatalogBrowser({ onPick, onCancel }: CatalogBrowserProps) {
     });
   };
 
+  // Refresh flow handlers. `kickOffCheck` runs the read-only check then
+  // routes to confirming/up-to-date/error. `confirmRefresh` runs the
+  // install on operator confirmation. `dismissRefresh` returns the
+  // dialog to idle (back-button semantics + the post-success "OK").
+  const kickOffCheck = useCallback(async () => {
+    setRefreshStep({ kind: 'checking' });
+    try {
+      const status = await invoke<FormsRefreshStatus>('forms_check_for_update');
+      setRefreshStep(
+        status.updateAvailable
+          ? { kind: 'confirming', status }
+          : { kind: 'up-to-date', status },
+      );
+    } catch (e: unknown) {
+      setRefreshStep({
+        kind: 'error',
+        message: e instanceof Error ? e.message : String(e),
+      });
+    }
+  }, []);
+
+  const confirmRefresh = useCallback(async () => {
+    if (refreshStep.kind !== 'confirming') return;
+    const inFlight = refreshStep.status;
+    setRefreshStep({ kind: 'refreshing', status: inFlight });
+    try {
+      const report = await invoke<InstallReport>('forms_refresh');
+      setRefreshStep({ kind: 'done', report });
+      // Re-fetch the catalog so the new entries appear without the
+      // operator having to close + reopen the picker.
+      await fetchCatalog();
+    } catch (e: unknown) {
+      setRefreshStep({
+        kind: 'error',
+        message: e instanceof Error ? e.message : String(e),
+      });
+    }
+  }, [refreshStep, fetchCatalog]);
+
+  const dismissRefresh = useCallback(() => {
+    setRefreshStep({ kind: 'idle' });
+  }, []);
+
   return (
     <div
       className="catalog-browser"
@@ -195,58 +290,228 @@ export function CatalogBrowser({ onPick, onCancel }: CatalogBrowserProps) {
       <div className="catalog-browser__card">
         <h3 className="catalog-browser__title">Pick a form to author</h3>
 
-        <input
-          ref={searchInputRef}
-          type="text"
-          className="catalog-browser__search"
-          placeholder="Search forms…"
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-          aria-label="Search forms"
-          data-testid="catalog-browser-search"
-        />
+        {refreshStep.kind !== 'idle' ? (
+          <RefreshPane
+            step={refreshStep}
+            onConfirm={confirmRefresh}
+            onDismiss={dismissRefresh}
+            data-testid="catalog-refresh-pane"
+          />
+        ) : (
+          <>
+            <input
+              ref={searchInputRef}
+              type="text"
+              className="catalog-browser__search"
+              placeholder="Search forms…"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              aria-label="Search forms"
+              data-testid="catalog-browser-search"
+            />
 
-        <div className="catalog-browser__results" data-testid="catalog-browser-results">
-          {loading && (
-            <div className="catalog-browser__status">Loading catalog…</div>
-          )}
-          {error && (
-            <div className="catalog-browser__error" role="alert">
-              Form catalog failed to load: {error}
+            <div className="catalog-browser__results" data-testid="catalog-browser-results">
+              {loading && (
+                <div className="catalog-browser__status">Loading catalog…</div>
+              )}
+              {error && (
+                <div className="catalog-browser__error" role="alert">
+                  Form catalog failed to load: {error}
+                </div>
+              )}
+              {!loading && !error && searchResults !== null && (
+                <SearchResultsList
+                  results={searchResults}
+                  onPick={onPick}
+                />
+              )}
+              {!loading && !error && searchResults === null && (
+                <FolderTree
+                  folders={folders}
+                  expanded={expandedFolders}
+                  onToggle={toggleFolder}
+                  onPick={onPick}
+                />
+              )}
+              {!loading && !error && catalog.length === 0 && (
+                <div className="catalog-browser__empty">
+                  No forms found. The WLE snapshot may be missing from this build.
+                </div>
+              )}
             </div>
-          )}
-          {!loading && !error && searchResults !== null && (
-            <SearchResultsList
-              results={searchResults}
-              onPick={onPick}
-            />
-          )}
-          {!loading && !error && searchResults === null && (
-            <FolderTree
-              folders={folders}
-              expanded={expandedFolders}
-              onToggle={toggleFolder}
-              onPick={onPick}
-            />
-          )}
-          {!loading && !error && catalog.length === 0 && (
-            <div className="catalog-browser__empty">
-              No forms found. The WLE snapshot may be missing from this build.
-            </div>
-          )}
-        </div>
+          </>
+        )}
 
         <div className="catalog-browser__actions">
+          {refreshStep.kind === 'idle' && (
+            <button
+              type="button"
+              className="catalog-browser__btn catalog-browser__btn--secondary"
+              onClick={kickOffCheck}
+              data-testid="catalog-browser-refresh"
+              title="Pull the latest WLE Standard Forms snapshot from winlink.org via getpat.io"
+            >
+              Refresh forms…
+            </button>
+          )}
           <button
             type="button"
             className="catalog-browser__btn"
             onClick={onCancel}
             data-testid="catalog-browser-cancel"
+            disabled={refreshStep.kind === 'refreshing'}
           >
             Cancel
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------
+// Sub-view: refresh flow (Phase 3 — tuxlink-xipa).
+// ---------------------------------------------------------------------
+
+interface RefreshPaneProps {
+  step: Exclude<RefreshStep, { kind: 'idle' }>;
+  onConfirm: () => void;
+  onDismiss: () => void;
+  'data-testid'?: string;
+}
+
+/** Renders one of the non-idle refresh states. Visually replaces the
+ *  search + results area while the refresh sub-flow is active; the
+ *  parent's footer keeps the Cancel button so Escape + Cancel still work
+ *  for closing the whole picker (refreshing state aside — install is
+ *  uninterruptible to avoid a half-renamed runtime root). */
+function RefreshPane({ step, onConfirm, onDismiss, ...rest }: RefreshPaneProps) {
+  const testid = rest['data-testid'];
+  return (
+    <div
+      className="catalog-browser__refresh"
+      role="region"
+      aria-label="Refresh WLE Standard Forms"
+      data-testid={testid}
+    >
+      {step.kind === 'checking' && (
+        <div className="catalog-browser__refresh-status">
+          Checking winlink.org for an updated forms snapshot…
+        </div>
+      )}
+
+      {step.kind === 'up-to-date' && (
+        <>
+          <div className="catalog-browser__refresh-status" data-testid="catalog-refresh-up-to-date">
+            Forms are up to date.
+            <div className="catalog-browser__refresh-meta">
+              Installed: {step.status.currentVersion ?? '(bundled)'}
+              {' · '}Available: {step.status.remoteVersion}
+            </div>
+          </div>
+          <div className="catalog-browser__refresh-actions">
+            <button
+              type="button"
+              className="catalog-browser__btn"
+              onClick={onDismiss}
+              data-testid="catalog-refresh-dismiss"
+            >
+              OK
+            </button>
+          </div>
+        </>
+      )}
+
+      {step.kind === 'confirming' && (
+        <>
+          <div className="catalog-browser__refresh-status" data-testid="catalog-refresh-confirm-prompt">
+            An updated forms snapshot is available.
+            <div className="catalog-browser__refresh-meta">
+              Installed: {step.status.currentVersion ?? '(bundled)'}
+              {' → '}Available: {step.status.remoteVersion}
+            </div>
+            <div className="catalog-browser__refresh-detail">
+              Download + install will swap the catalog atomically. The prior
+              snapshot is kept on disk for one cycle as a manual rollback.
+            </div>
+          </div>
+          <div className="catalog-browser__refresh-actions">
+            <button
+              type="button"
+              className="catalog-browser__btn catalog-browser__btn--primary"
+              onClick={onConfirm}
+              data-testid="catalog-refresh-confirm"
+            >
+              Refresh now
+            </button>
+            <button
+              type="button"
+              className="catalog-browser__btn"
+              onClick={onDismiss}
+              data-testid="catalog-refresh-back"
+            >
+              Not now
+            </button>
+          </div>
+        </>
+      )}
+
+      {step.kind === 'refreshing' && (
+        <div className="catalog-browser__refresh-status" data-testid="catalog-refresh-installing">
+          Installing {step.status.remoteVersion}…
+          <div className="catalog-browser__refresh-detail">
+            Downloading the archive, extracting templates, and swapping into
+            the runtime snapshot. This typically takes 5–10 seconds.
+          </div>
+        </div>
+      )}
+
+      {step.kind === 'done' && (
+        <>
+          <div className="catalog-browser__refresh-status" data-testid="catalog-refresh-done">
+            Refreshed to {step.report.installedVersion} ({step.report.formCount}
+            {' '}templates).
+            {step.report.prevVersion && (
+              <div className="catalog-browser__refresh-meta">
+                Previous snapshot ({step.report.prevVersion}) retained as a
+                manual rollback for one cycle.
+              </div>
+            )}
+          </div>
+          <div className="catalog-browser__refresh-actions">
+            <button
+              type="button"
+              className="catalog-browser__btn"
+              onClick={onDismiss}
+              data-testid="catalog-refresh-dismiss"
+            >
+              OK
+            </button>
+          </div>
+        </>
+      )}
+
+      {step.kind === 'error' && (
+        <>
+          <div
+            className="catalog-browser__refresh-error"
+            role="alert"
+            data-testid="catalog-refresh-error"
+          >
+            Refresh failed: {step.message}
+          </div>
+          <div className="catalog-browser__refresh-actions">
+            <button
+              type="button"
+              className="catalog-browser__btn"
+              onClick={onDismiss}
+              data-testid="catalog-refresh-dismiss"
+            >
+              OK
+            </button>
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -305,7 +570,7 @@ function FolderTree({ folders, expanded, onToggle, onPick }: FolderTreeProps) {
                     <button
                       type="button"
                       className="catalog-browser__template-btn"
-                      onClick={() => onPick(t.id)}
+                      onClick={() => onPick(normalizeCatalogId(t.id))}
                       data-testid={`catalog-template-${t.id}`}
                     >
                       {t.label}
@@ -342,7 +607,7 @@ function SearchResultsList({ results, onPick }: SearchResultsListProps) {
           <button
             type="button"
             className="catalog-browser__template-btn"
-            onClick={() => onPick(t.id)}
+            onClick={() => onPick(normalizeCatalogId(t.id))}
             data-testid={`catalog-template-${t.id}`}
           >
             <span className="catalog-browser__result-label">{t.label}</span>

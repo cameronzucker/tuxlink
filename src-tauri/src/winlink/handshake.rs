@@ -151,6 +151,12 @@ fn read_handshake<R: BufRead>(
         }
         let line = wire::read_line(reader).map_err(|_| HandshakeError::ConnectionClosed)?;
 
+        if let Some(rest) = line.strip_prefix("***") {
+            let raw = rest.trim().to_string();
+            let scrubbed = super::redaction::redact_freeform(&raw).into_owned();
+            return Err(HandshakeError::RemoteError(scrubbed));
+        }
+
         if is_identifier(&line) {
             let codes = parse_sid(&line)?;
             if !codes.contains("B2") {
@@ -221,6 +227,12 @@ pub enum HandshakeError {
     NoB2Support,
     /// The connection closed before the handshake finished.
     ConnectionClosed,
+    /// The CMS sent a `*** ...` error line during the handshake (e.g.,
+    /// callsign not authorized, secure login failed before our reply).
+    /// Payload is pre-redacted by `redaction::redact_freeform` to avoid
+    /// any echoed credential leakage. Takes precedence over NoSid /
+    /// ConnectionClosed.
+    RemoteError(String),
 }
 
 #[cfg(test)]
@@ -315,5 +327,38 @@ mod tests {
         let mut cursor = Cursor::new(&data[..]);
         let hs = read_slave_handshake(&mut cursor).unwrap();
         assert_eq!(hs.sid, "B2FHM$");
+    }
+
+    #[test]
+    fn handshake_surfaces_remote_error_taking_precedence_over_no_sid() {
+        // R3 #3: today's read_remote_handshake silently drops *** lines.
+        // A CMS rejection sent BEFORE the SID line was previously
+        // mis-classified as NoSid; the new HandshakeError::RemoteError
+        // variant captures it correctly.
+        let data = b"*** Callsign not authorized - Disconnecting\r";
+        let mut cursor = std::io::Cursor::new(&data[..]);
+        let result = read_remote_handshake(&mut cursor);
+        match result {
+            Err(HandshakeError::RemoteError(payload)) => {
+                assert!(payload.contains("Callsign not authorized"), "got: {payload}");
+            }
+            other => panic!("expected RemoteError, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn handshake_remote_error_payload_is_redacted() {
+        // Defense in depth: if a misbehaving CMS reflects credentials
+        // back in an error line, the handshake-error payload must be
+        // scrubbed by redaction::redact_freeform before construction.
+        let data = b"*** Rejected ;PR: 72768415 (debug echo)\r";
+        let mut cursor = std::io::Cursor::new(&data[..]);
+        let result = read_remote_handshake(&mut cursor);
+        match result {
+            Err(HandshakeError::RemoteError(payload)) => {
+                assert!(!payload.contains("72768415"), "got: {payload}");
+            }
+            other => panic!("expected RemoteError, got {other:?}"),
+        }
     }
 }

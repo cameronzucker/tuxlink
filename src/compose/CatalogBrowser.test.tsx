@@ -15,8 +15,12 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 
 // Hoist the invoke spy so the vi.mock factory can wire it; the
 // individual tests reach in via `mocks.invoke` to swap return values.
+// Return type explicitly widened to `unknown` so individual tests can
+// `mockImplementation` with payloads other than the catalog list
+// (e.g. tuxlink-xipa adds `forms_check_for_update` / `forms_refresh`
+// returning their own typed shapes).
 const mocks = vi.hoisted(() => {
-  const invoke = vi.fn(async (cmd: string) => {
+  const invoke = vi.fn(async (cmd: string): Promise<unknown> => {
     if (cmd === 'forms_list_catalog') {
       return [
         { id: 'ICS213_Initial', label: 'ICS213_Initial', folder: 'ICS Forms', source: 'Bundled', path: '' },
@@ -88,6 +92,36 @@ describe('<CatalogBrowser>', () => {
     fireEvent.click(await screen.findByText('ICS Forms'));
     fireEvent.click(screen.getByText('ICS213_Initial'));
     expect(onPick).toHaveBeenCalledWith('ICS213_Initial');
+  });
+
+  it('normalizes WLE catalog filename-stem ids to canonical native ids on pick', async () => {
+    // The Rust `forms_list_catalog` derives template ids from WLE filename
+    // stems — `GPS Position Report.html` → `GPS Position Report`. Our native
+    // PositionFormV2 is registered under the canonical `Position_Report`.
+    // `normalizeCatalogId` bridges them at pick time so Compose, send_form,
+    // and the receive-side View lookup all see the canonical id.
+    // (2026-06-04 Codex full-diff adrev P1 finding.)
+    mocks.invoke.mockImplementationOnce(async (cmd: string) => {
+      if (cmd === 'forms_list_catalog') {
+        return [
+          { id: 'GPS Position Report', label: 'GPS Position Report', folder: 'General Forms', source: 'Bundled', path: '' },
+          { id: 'Bulletin Initial', label: 'Bulletin Initial', folder: 'General Forms', source: 'Bundled', path: '' },
+          { id: 'Winlink_Check_In_Initial', label: 'Winlink_Check_In_Initial', folder: 'General Forms', source: 'Bundled', path: '' },
+        ];
+      }
+      return null;
+    });
+    const onPick = vi.fn();
+    render(<CatalogBrowser onPick={onPick} onCancel={vi.fn()} />);
+    fireEvent.click(await screen.findByText('General Forms'));
+    fireEvent.click(screen.getByText('GPS Position Report'));
+    expect(onPick).toHaveBeenCalledWith('Position_Report');
+    onPick.mockClear();
+    fireEvent.click(screen.getByText('Bulletin Initial'));
+    expect(onPick).toHaveBeenCalledWith('Bulletin_Initial');
+    onPick.mockClear();
+    fireEvent.click(screen.getByText('Winlink_Check_In_Initial'));
+    expect(onPick).toHaveBeenCalledWith('Winlink_Check-In');
   });
 
   it('places the Custom folder last regardless of alphabetical order', async () => {
@@ -164,5 +198,155 @@ describe('<CatalogBrowser>', () => {
     fireEvent.change(input, { target: { value: 'arc' } });
     expect(screen.queryByRole('listbox')).toBeNull();
     expect(screen.queryByRole('option')).toBeNull();
+  });
+});
+
+// ============================================================================
+// Refresh-forms sub-flow (Phase 3 — tuxlink-xipa).
+// ============================================================================
+//
+// Covers the four operator-visible terminal states reachable through the
+// "Refresh forms…" affordance: check-shows-up-to-date, check-shows-confirm,
+// confirm-then-install-success, and any-stage-error. The fifth state
+// (in-flight `refreshing`) is non-terminal — verified inline via the
+// promise resolution that drives the test to a terminal state.
+
+/** Compose a list-catalog reply so tests can override per-test. */
+const baseCatalog = () => [
+  { id: 'ICS213_Initial', label: 'ICS213_Initial', folder: 'ICS Forms', source: 'Bundled', path: '' },
+  { id: 'Bulletin_Initial', label: 'Bulletin_Initial', folder: 'General', source: 'Bundled', path: '' },
+];
+
+describe('<CatalogBrowser> refresh flow (tuxlink-xipa)', () => {
+  beforeEach(() => {
+    mocks.invoke.mockClear();
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('reports "up to date" when remote version matches installed version', async () => {
+    mocks.invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'forms_list_catalog') return baseCatalog();
+      if (cmd === 'forms_check_for_update') {
+        return {
+          currentVersion: '1.2.0',
+          remoteVersion: '1.2.0',
+          archiveUrl: 'https://example.invalid/forms.zip',
+          updateAvailable: false,
+        };
+      }
+      return null;
+    });
+    render(<CatalogBrowser onPick={vi.fn()} onCancel={vi.fn()} />);
+    await screen.findByText('ICS Forms');
+    fireEvent.click(screen.getByTestId('catalog-browser-refresh'));
+    await waitFor(() => {
+      expect(screen.getByTestId('catalog-refresh-up-to-date')).toBeInTheDocument();
+    });
+    expect(screen.getByText(/Forms are up to date/i)).toBeInTheDocument();
+  });
+
+  it('confirms-then-installs the new snapshot and re-fetches the catalog', async () => {
+    let listCalls = 0;
+    mocks.invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'forms_list_catalog') {
+        listCalls += 1;
+        // Second fetch returns an expanded set so we can assert the
+        // refetch reached the catalog.
+        return listCalls === 1
+          ? baseCatalog()
+          : [
+              ...baseCatalog(),
+              { id: 'NewForm_Initial', label: 'NewForm_Initial', folder: 'General', source: 'Bundled', path: '' },
+            ];
+      }
+      if (cmd === 'forms_check_for_update') {
+        return {
+          currentVersion: '1.1.0',
+          remoteVersion: '1.2.0',
+          archiveUrl: 'https://example.invalid/forms.zip',
+          updateAvailable: true,
+        };
+      }
+      if (cmd === 'forms_refresh') {
+        return { installedVersion: '1.2.0', formCount: 252, prevVersion: '1.1.0' };
+      }
+      return null;
+    });
+    render(<CatalogBrowser onPick={vi.fn()} onCancel={vi.fn()} />);
+    await screen.findByText('ICS Forms');
+    fireEvent.click(screen.getByTestId('catalog-browser-refresh'));
+    await screen.findByTestId('catalog-refresh-confirm-prompt');
+    expect(screen.getByText(/1\.1\.0/)).toBeInTheDocument();
+    expect(screen.getByText(/1\.2\.0/)).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('catalog-refresh-confirm'));
+    await screen.findByTestId('catalog-refresh-done');
+    expect(screen.getByText(/252/)).toBeInTheDocument();
+    // Catalog refetch on success — second call to forms_list_catalog.
+    expect(listCalls).toBeGreaterThanOrEqual(2);
+  });
+
+  it('shows missing-current-version as "(bundled)" so the operator knows', async () => {
+    mocks.invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'forms_list_catalog') return baseCatalog();
+      if (cmd === 'forms_check_for_update') {
+        return {
+          currentVersion: null,
+          remoteVersion: '1.2.0',
+          archiveUrl: 'https://example.invalid/forms.zip',
+          updateAvailable: true,
+        };
+      }
+      return null;
+    });
+    render(<CatalogBrowser onPick={vi.fn()} onCancel={vi.fn()} />);
+    await screen.findByText('ICS Forms');
+    fireEvent.click(screen.getByTestId('catalog-browser-refresh'));
+    await screen.findByTestId('catalog-refresh-confirm-prompt');
+    expect(screen.getByText(/\(bundled\)/)).toBeInTheDocument();
+  });
+
+  it('surfaces a check-stage error in the same dialog', async () => {
+    mocks.invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'forms_list_catalog') return baseCatalog();
+      if (cmd === 'forms_check_for_update') {
+        throw new Error('http error fetching metadata: timed out');
+      }
+      return null;
+    });
+    render(<CatalogBrowser onPick={vi.fn()} onCancel={vi.fn()} />);
+    await screen.findByText('ICS Forms');
+    fireEvent.click(screen.getByTestId('catalog-browser-refresh'));
+    await screen.findByTestId('catalog-refresh-error');
+    expect(screen.getByText(/timed out/)).toBeInTheDocument();
+  });
+
+  it('Escape backs out of the refresh sub-flow without closing the picker', async () => {
+    const onCancel = vi.fn();
+    mocks.invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'forms_list_catalog') return baseCatalog();
+      if (cmd === 'forms_check_for_update') {
+        return {
+          currentVersion: '1.2.0',
+          remoteVersion: '1.2.0',
+          archiveUrl: 'https://example.invalid/forms.zip',
+          updateAvailable: false,
+        };
+      }
+      return null;
+    });
+    render(<CatalogBrowser onPick={vi.fn()} onCancel={onCancel} />);
+    await screen.findByText('ICS Forms');
+    fireEvent.click(screen.getByTestId('catalog-browser-refresh'));
+    await screen.findByTestId('catalog-refresh-up-to-date');
+    fireEvent.keyDown(document, { key: 'Escape' });
+    await waitFor(() => {
+      expect(screen.queryByTestId('catalog-refresh-up-to-date')).toBeNull();
+    });
+    expect(onCancel).not.toHaveBeenCalled();
+    // Picker is back to idle — Cancel button is visible + enabled again.
+    expect(screen.getByTestId('catalog-browser-cancel')).not.toBeDisabled();
   });
 });

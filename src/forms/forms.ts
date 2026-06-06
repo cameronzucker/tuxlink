@@ -47,6 +47,36 @@ export function lookupForm(id: string): FormRegistryEntry | undefined {
   return REGISTRY.get(id);
 }
 
+/** Maps WLE catalog filename-stem IDs (what `forms_list_catalog` emits) to
+ *  the canonical native-registry IDs (what `BUNDLED_FORMS` / `send_form` /
+ *  `lookupForm` use). Most forms register under stem-matching IDs
+ *  (`ICS213_Initial`, `Damage_Assessment_Initial`), but a few — where the
+ *  WLE filename uses spaces or hyphens differently from our internal naming
+ *  — need explicit aliasing here.
+ *
+ *  Without this bridge, picking e.g. "GPS Position Report" from the
+ *  CatalogBrowser would emit `id="GPS Position Report"`, which the native
+ *  registry doesn't know about → CatalogBrowser falls through to the
+ *  webview form instead of mounting PositionFormV2 (2026-06-04 Codex
+ *  full-diff adrev P1 finding).
+ *
+ *  Picker callers should call `normalizeCatalogId(t.id)` before passing
+ *  the ID downstream so Compose, send_form, and the receive-side View
+ *  lookup all see the canonical ID.
+ *
+ *  When `Winlink_Check_In_Initial` re-enters the registry (pending operator
+ *  decision on WLE schema alignment, see bd follow-up), the entry below
+ *  will start resolving. */
+const CATALOG_ID_ALIASES: Record<string, string> = {
+  'GPS Position Report': 'Position_Report',
+  'Bulletin Initial': 'Bulletin_Initial',
+  'Winlink_Check_In_Initial': 'Winlink_Check-In',
+};
+
+export function normalizeCatalogId(catalogId: string): string {
+  return CATALOG_ID_ALIASES[catalogId] ?? catalogId;
+}
+
 export function allForms(): FormRegistryEntry[] {
   return Array.from(REGISTRY.values());
 }

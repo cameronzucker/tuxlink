@@ -1,0 +1,156 @@
+/* ICS-309 Comms Log native compose form — tuxlink-hnkn P2 Task 2 */
+
+.ics309-form-v2 {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  max-width: 700px;
+}
+
+.ics309-form-v2__header h2 {
+  margin: 0 0 4px;
+  font-size: 1.1rem;
+}
+
+.ics309-form-v2__subtitle {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--color-text-muted, #888);
+}
+
+/* ── Preset buttons ───────────────────────────────────────────────────────── */
+
+.ics309-form-v2__presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.ics309-form-v2__preset-btn {
+  padding: 6px 14px;
+  border: 1px solid var(--color-border, #555);
+  border-radius: 4px;
+  background: transparent;
+  cursor: pointer;
+  font-size: 0.9rem;
+  color: inherit;
+}
+
+.ics309-form-v2__preset-btn.active,
+.ics309-form-v2__preset-btn[aria-pressed="true"] {
+  background: var(--color-accent, #3d84f7);
+  border-color: var(--color-accent, #3d84f7);
+  color: #fff;
+}
+
+/* ── Custom range pickers ─────────────────────────────────────────────────── */
+
+.ics309-form-v2__custom-range {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.ics309-form-v2__custom-range label {
+  font-size: 0.85rem;
+}
+
+.ics309-form-v2__custom-range input[type="datetime-local"] {
+  font-size: 0.85rem;
+  padding: 4px 6px;
+  border: 1px solid var(--color-border, #555);
+  border-radius: 4px;
+  background: var(--color-input-bg, #1e1e1e);
+  color: inherit;
+}
+
+.ics309-form-v2__query-btn {
+  padding: 4px 12px;
+  border-radius: 4px;
+  border: 1px solid var(--color-border, #555);
+  background: transparent;
+  cursor: pointer;
+  color: inherit;
+}
+
+/* ── Preview ──────────────────────────────────────────────────────────────── */
+
+.ics309-form-v2__preview {
+  min-height: 64px;
+}
+
+.ics309-form-v2__loading,
+.ics309-form-v2__empty {
+  color: var(--color-text-muted, #888);
+  font-style: italic;
+  font-size: 0.9rem;
+}
+
+.ics309-form-v2__error {
+  color: var(--color-error, #e05252);
+  font-size: 0.9rem;
+}
+
+.ics309-form-v2__table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8rem;
+}
+
+.ics309-form-v2__table th,
+.ics309-form-v2__table td {
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--color-border, #333);
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 160px;
+}
+
+.ics309-form-v2__table th {
+  font-weight: 600;
+  color: var(--color-text-muted, #aaa);
+}
+
+.ics309-form-v2__table tr.dir-out td {
+  color: var(--color-sent, inherit);
+}
+
+.ics309-form-v2__overflow-note {
+  font-size: 0.8rem;
+  color: var(--color-text-muted, #888);
+  margin-top: 4px;
+}
+
+/* ── Actions ──────────────────────────────────────────────────────────────── */
+
+.ics309-form-v2__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.ics309-form-v2__actions button {
+  padding: 6px 16px;
+  border: 1px solid var(--color-border, #555);
+  border-radius: 4px;
+  background: transparent;
+  cursor: pointer;
+  color: inherit;
+  font-size: 0.9rem;
+}
+
+.ics309-form-v2__actions button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.ics309-form-v2__actions button.primary {
+  background: var(--color-accent, #3d84f7);
+  border-color: var(--color-accent, #3d84f7);
+  color: #fff;
+}

@@ -91,8 +91,7 @@ connecting socket so a slow TLS / login / exchange phase unblocks, then
 the backend reports Cancelled in the session log. Abort is a soft stop —
 it cannot pull a packet back off the air.
 
-For an emergency RF stop, the right call is the radio's power switch
-(see RADIO-1 in the pitfalls doc for the bounded-airtime contract).
+For an emergency RF stop, the right call is the radio's power switch.
 
 ## Where next
 

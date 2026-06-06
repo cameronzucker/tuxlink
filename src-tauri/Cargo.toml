@@ -20,7 +20,7 @@ tauri-plugin-fs = "2"
 tauri-plugin-dialog = "2"  # tuxlink-0fyj — native Save As dialog for MessageView attachment download
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-reqwest = { version = "0.12", features = ["json", "multipart"] }  # tuxlink-z5f: dropped "blocking" — PatClient is async to avoid runtime-drop panic in #[tokio::test] contexts
+reqwest = { version = "0.12", features = ["json", "multipart", "stream"] }  # tuxlink-z5f: dropped "blocking" — PatClient is async to avoid runtime-drop panic in #[tokio::test] contexts. tuxlink-xipa Codex P1 #1: "stream" added for forms::updater::download_archive chunked size enforcement.
 tokio = { version = "1", features = ["full"] }
 nix = { version = "0.31", features = ["signal", "process"] }
 thiserror = "2"            # NEW — for ConfigValidationError + ConfigReadError + ConfigWriteError
@@ -60,6 +60,8 @@ walkdir = "2"                                    # NEW (tuxlink-ytya P1) — bun
 bytes = "1"                                      # NEW (tuxlink-ytya P1) — request body buffer passed to multer's stream-once wrapper
 subtle = "2.6"                                   # NEW (tuxlink-3o2o) — constant-time byte comparison for StationPassword::verify; prevents timing side-channels on listener-mode password challenges
 sha2 = "0.10"                                    # NEW (tuxlink-3o2o) — fixed-size digest for password verify; eliminates length-oracle in ct_eq_strings (Codex 2026-06-03)
+printpdf = "0.9"                                 # NEW (tuxlink-hnkn P2 Task 2) — ICS-309 PDF export; operator decision 2026-06-04; ~500KB compiled
+zip = { version = "2", default-features = false, features = ["deflate"] }  # NEW (tuxlink-xipa Phase 3) — extract winlink.org Standard Forms zip into the runtime forms snapshot. default-features off + deflate-only keeps the dep weight down (bzip2 / aes / zstd not needed for WLE archives).
 # alpha-logging (tuxlink-qjgx) — tracing pipeline + export + redaction
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "registry", "fmt"] }
@@ -73,7 +75,10 @@ hex = "0.4"
 strip-ansi-escapes = "0.2"
 toml = "0.8"               # Task 6.1 settings persistence
 urlencoding = "2"          # Task 8.1 GitHub URL body encoding
-# uuid and chrono features merged into existing entries above (v4+v7+serde, clock+serde)
+# uuid and chrono features merged into existing entries above (v4+v7+serde, clock+serde).
+# regex + once_cell were added on main as part of tuxlink-7do4 (Codex BLOCKER #1
+# redaction scanner) — our stricter version pins (1.10 / 1.20) are compatible
+# with main's "1" / "1" and cover both alpha-logging + redaction use cases.
 once_cell = "1.20"
 regex = "1.10"
 

@@ -26,6 +26,17 @@ use super::session::{self, ExchangeConfig, ExchangeError, ExchangeResult, Outbou
 use super::wire;
 use crate::logging::wire_sanitize::{sanitize_wire_line, WireContext};
 
+/// Insert credential-equivalent redaction between the WireTap and the
+/// caller's `wire_log` closure. Fixes the BLOCKER R2 #1 leak where the
+/// telnet WireTap was emitting `;PR: <token>` lines into the session log.
+///
+/// Made `pub(crate)` so other winlink modules (telnet_listen, telnet_p2p,
+/// telnet_p2p_login) can use the same redaction discipline (Task 7).
+pub(crate) fn wire_log_with_redaction(line: &str, wire_log: &dyn Fn(&str)) {
+    let redacted = super::redaction::redact_wire_line(line);
+    wire_log(&redacted);
+}
+
 /// How long to wait on a single read or write before giving up.
 const TIMEOUT: Duration = Duration::from_secs(60);
 
@@ -210,8 +221,13 @@ where
     // Tee both directions of the wire to `wire_log` so the raw B2F dialogue
     // (`[WL2K-...]`, `;PQ`, `;FW`, the client SID, `FF`/`FQ`) is visible in the
     // session log's Raw output, not just the human progress summary (tuxlink-nki).
-    let mut reader = BufReader::new(WireTap::new(ReadHalf(shared.clone()), wire_log, '<'));
-    let mut writer = WireTap::new(WriteHalf(shared), wire_log, '>');
+    //
+    // Route through `wire_log_with_redaction` so `;PR`/`;PQ` tokens are scrubbed
+    // before the session log buffer sees them (R2 #1 BLOCKER fix).
+    let read_redacted = |line: &str| wire_log_with_redaction(line, wire_log);
+    let write_redacted = |line: &str| wire_log_with_redaction(line, wire_log);
+    let mut reader = BufReader::new(WireTap::new(ReadHalf(shared.clone()), &read_redacted, '<'));
+    let mut writer = WireTap::new(WriteHalf(shared), &write_redacted, '>');
 
     // The CMS telnet "post office" greets with a callsign/password login that
     // precedes the B2F handshake; clear it first.
@@ -221,6 +237,60 @@ where
     progress("Negotiating messages…");
     session::run_exchange(&mut reader, &mut writer, config, outbound, decide, None)
         .map_err(TelnetError::Exchange)
+}
+
+/// Auth-only connection: connect + telnet login + B2F handshake + quit. Does NOT
+/// run any inbound proposal reading or outbound message sending. Sends `FF` + `FQ`
+/// on successful auth to signal "nothing to exchange" and quit cleanly.
+///
+/// Emits the full [`super::b2f_events::B2fEvent`] stream via `events` when
+/// `Some`: `RemoteSidReceived`, `SecureChallengeReceived`, `SecureResponseSent`,
+/// `PostAuthExchangeStarted` (Mode 5 discriminator), `RemoteErrorReceived`, and
+/// `ConnectionClosed`. The caller emits `AuthClassified` after this returns.
+///
+/// Used by `ui_commands::cms_connect_test` per spec §4.3 (iii).
+///
+/// RADIO-1 GUARDRAIL: CMS-TELNET ONLY. Any RF-transport extension requires
+/// fresh RADIO-1 review + separate command name per spec §2 out-of-scope + §4.3 (iii).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn connect_and_auth_test(
+    host: &str,
+    port: u16,
+    transport: Transport,
+    config: &ExchangeConfig,
+    progress: &dyn Fn(&str),
+    wire_log: &dyn Fn(&str),
+    register_socket: &dyn Fn(&TcpStream),
+    events: Option<&dyn super::b2f_events::B2fEventSink>,
+    attempt_id: super::b2f_events::AttemptId,
+) -> Result<ExchangeResult, TelnetError> {
+    let shared: Shared = Arc::new(Mutex::new(connect_stream(
+        host,
+        port,
+        transport,
+        progress,
+        register_socket,
+    )?));
+    let read_redacted = |line: &str| wire_log_with_redaction(line, wire_log);
+    let write_redacted = |line: &str| wire_log_with_redaction(line, wire_log);
+    let mut reader = BufReader::new(WireTap::new(ReadHalf(shared.clone()), &read_redacted, '<'));
+    let mut writer = WireTap::new(WriteHalf(shared), &write_redacted, '>');
+
+    telnet_login(&mut reader, &mut writer, &config.mycall)?;
+    progress("CMS login complete.");
+
+    progress("Checking credentials…");
+    session::run_exchange_with_events(
+        &mut reader,
+        &mut writer,
+        config,
+        vec![],
+        |_| vec![],
+        None,
+        events,
+        attempt_id,
+    )
+    .map_err(TelnetError::Exchange)
 }
 
 /// Open the TCP connection and, for [`Transport::Tls`], complete the TLS
@@ -696,63 +766,30 @@ mod tests {
     }
 
     #[test]
-    fn wire_tap_sanitizes_pr_token_before_forwarding_to_sink() {
-        // CRITICAL: WireTap must not forward raw ;PR: token bytes to the session-log
-        // sink. The outbound direction ('>') is the critical path because
-        // handshake::build_handshake writes ";PR: <token>\r" to the writer.
-        // This test verifies that the token is never present in sink captures.
-        //
-        // Uses the reference vector from wl2k-go secure_test.go:
-        // challenge="23753528", password="FOOBAR" → token="72768415".
-        let token = "72768415";
-        let pr_line = format!(";PR: {token}\r");
-
-        let recorded = std::cell::RefCell::new(Vec::<String>::new());
-        let sink = |l: &str| recorded.borrow_mut().push(l.to_string());
-
-        // Exercise the outbound arm ('>') — this is the critical direction.
-        let mut tap = WireTap::new(std::io::sink(), &sink, '>');
-        tap.observe(pr_line.as_bytes());
-
-        let lines = recorded.into_inner();
-        // The raw token must NOT appear in any captured line.
+    fn wire_log_redacts_pr_token_per_blocker_fix() {
+        // R2 #1 BLOCKER (independently caught as Codex impl-adrev P1 #1 on the
+        // alpha-logging branch): the WireTap was emitting `;PR: <token>\r`
+        // verbatim into the session log before this fix. Verify the helper
+        // scrubs it.
+        let captured: std::cell::RefCell<Vec<String>> = std::cell::RefCell::new(Vec::new());
+        let wire_log = |line: &str| {
+            captured.borrow_mut().push(line.to_string());
+        };
+        // Emulate WireTap's formatted output on a write of the canonical ;PR token.
+        // wl2k-go test vector: challenge "23753528", password "FOOBAR" → response "72768415".
+        let line = "> ;PR: 72768415\r";
+        wire_log_with_redaction(line, &wire_log);
+        let entries = captured.into_inner();
+        assert_eq!(entries.len(), 1);
         assert!(
-            lines.iter().all(|l| !l.contains(token)),
-            "WIRE LEAK: ;PR: token {token:?} appeared in session-log sink; got {lines:?}",
-        );
-        // The ;PR: prefix context must be preserved (redaction is context-preserving).
-        assert!(
-            lines.iter().any(|l| l.starts_with("> ;PR:")),
-            "the ;PR: prefix context must be preserved in the sink output; got {lines:?}",
-        );
-        // The redacted marker must be present so the operator knows sanitization fired.
-        assert!(
-            lines.iter().any(|l| l.contains("<redacted>")),
-            "the <redacted> marker must appear in the sink output; got {lines:?}",
-        );
-    }
-
-    #[test]
-    fn wire_tap_sanitizes_pq_challenge_inbound() {
-        // Symmetric sanitization: the CMS sends ";PQ: <challenge>\r" inbound.
-        // The challenge is single-use but still undesirable to log verbatim.
-        let challenge = "23753528";
-        let pq_line = format!(";PQ: {challenge}\r");
-
-        let recorded = std::cell::RefCell::new(Vec::<String>::new());
-        let sink = |l: &str| recorded.borrow_mut().push(l.to_string());
-
-        let mut tap = WireTap::new(std::io::sink(), &sink, '<');
-        tap.observe(pq_line.as_bytes());
-
-        let lines = recorded.into_inner();
-        assert!(
-            lines.iter().all(|l| !l.contains(challenge)),
-            "challenge {challenge:?} must not appear verbatim; got {lines:?}",
+            !entries[0].contains("72768415"),
+            "token must be scrubbed, got: {:?}",
+            entries[0]
         );
         assert!(
-            lines.iter().any(|l| l.starts_with("< ;PQ:")),
-            "the ;PQ: prefix context must be preserved; got {lines:?}",
+            entries[0].contains(";PR:"),
+            "marker must remain for log readability, got: {:?}",
+            entries[0]
         );
     }
 }

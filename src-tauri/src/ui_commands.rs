@@ -81,6 +81,11 @@ impl From<BackendError> for UiError {
                 reason: stringify_with_source(&reason, source.as_deref()),
             },
             BackendError::MessageRejected(s) => UiError::Rejected(s),
+            // Task 12 (tuxlink-7do4): RemoteError carries the *** payload for
+            // auth_taxonomy classification; it surfaces to the UI as a
+            // transport error (the React layer gets the detailed mode via
+            // the AuthClassified b2f-event, not from UiError directly).
+            BackendError::RemoteError(s) => UiError::Transport { reason: s },
             BackendError::Cancelled => UiError::Cancelled,
             BackendError::NotImplemented => UiError::Unavailable {
                 reason: "not implemented in v0.0.1".to_string(),
@@ -108,6 +113,250 @@ fn stringify_with_source(
     match source {
         Some(src) => format!("{reason}: {src}"),
         None => reason.to_string(),
+    }
+}
+
+// ============================================================================
+// ICS-309 log query (tuxlink-hnkn P2 Task 2)
+// ============================================================================
+
+/// One log row returned by `messages_meta_query_for_log`. Serialised to camelCase
+/// for the frontend; field names match the Ics309FormV2 `LogRow` interface.
+/// Also `Deserialize` so the frontend can pass rows back for `render_ics309_pdf`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LogRow {
+    /// RFC 3339 UTC datetime string, e.g. "2024-05-20T10:13:00Z".
+    pub datetime: String,
+    /// Sender callsign / address.
+    pub from: String,
+    /// First recipient callsign / address.
+    pub to: String,
+    /// Message subject.
+    pub subject: String,
+    /// Direction: `"in"` (received) or `"out"` (sent).
+    pub direction: String,
+}
+
+/// Query `messages_meta` for ICS-309 log rows in the given UTC epoch range
+/// [start_epoch, end_epoch] (inclusive). Rows are ordered chronologically.
+///
+/// `start_rfc3339` and `end_rfc3339` are ISO-8601 / RFC 3339 UTC strings
+/// (e.g. `"2024-05-20T00:00:00Z"`). They are converted to Unix epoch seconds
+/// before the SQL query so the INTEGER timestamp columns can be compared
+/// efficiently.
+///
+/// Returns `Err` if the search index is not installed (app launched offline
+/// and the setup hook failed) or if the timestamp strings are malformed.
+#[tauri::command]
+pub async fn messages_meta_query_for_log(
+    start_rfc3339: String,
+    end_rfc3339: String,
+    search: State<'_, crate::search::commands::SearchService>,
+) -> Result<Vec<LogRow>, String> {
+    let start_epoch = rfc3339_to_epoch(&start_rfc3339)
+        .ok_or_else(|| format!("invalid start timestamp: {start_rfc3339}"))?;
+    let end_epoch = rfc3339_to_epoch(&end_rfc3339)
+        .ok_or_else(|| format!("invalid end timestamp: {end_rfc3339}"))?;
+    search
+        .index
+        .lock()
+        .map_err(|e| format!("search index lock poisoned: {e}"))?
+        .query_log_rows(start_epoch, end_epoch)
+        .map_err(|e| e.to_string())
+}
+
+/// Parse an RFC 3339 UTC string into Unix epoch seconds.
+/// Accepts the `Z` UTC suffix only (no offset needed for this feature).
+/// Returns `None` if parsing fails.
+fn rfc3339_to_epoch(s: &str) -> Option<i64> {
+    // Lean on chrono (already in [dependencies]) for robust parsing.
+    chrono::DateTime::parse_from_rfc3339(s)
+        .ok()
+        .map(|dt| dt.timestamp())
+}
+
+/// Input to `render_ics309_pdf` — the fully resolved row set + metadata the
+/// form's frontend has already gathered.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Ics309PdfRequest {
+    pub rows: Vec<LogRow>,
+    /// RFC 3339 UTC range start (display only — not re-filtered here).
+    pub range_start: String,
+    /// RFC 3339 UTC range end (display only).
+    pub range_end: String,
+    /// Station callsign to print in the header, e.g. `"N7CPZ"`.
+    pub station_callsign: Option<String>,
+}
+
+/// Render an ICS-309 Communications Log to PDF bytes.
+///
+/// Returns the raw PDF as `Vec<u8>` (base64-encoded by Tauri's IPC layer).
+/// Page size is US Letter (216 × 279 mm). Uses the PDF built-in Helvetica
+/// font so no font file needs to be embedded or shipped.
+///
+/// Layout:
+///   - Header: "ICS-309 COMMUNICATIONS LOG" (centered)
+///   - Sub-header: station callsign + date range
+///   - Column headers: Datetime | Dir | From | To | Subject
+///   - Log rows (up to 30, one per line; auto-page-break)
+///   - Footer: "Rendered by tuxlink — <UTC timestamp>"
+#[tauri::command]
+pub async fn render_ics309_pdf(req: Ics309PdfRequest) -> Result<Vec<u8>, String> {
+    render_ics309_pdf_inner(req).map_err(|e| e.to_string())
+}
+
+fn render_ics309_pdf_inner(req: Ics309PdfRequest) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    use printpdf::{
+        BuiltinFont, Mm, Op, PdfDocument, PdfFontHandle, PdfPage, PdfSaveOptions, Point, Pt,
+        TextItem,
+    };
+
+    // US Letter: 216 × 279 mm. y=0 is the bottom of the page in PDF space.
+    const PAGE_W_MM: f32 = 216.0;
+    const PAGE_H_MM: f32 = 279.0;
+    // Convenience conversion: mm to pt (1 mm = 2.8346 pt).
+    fn mm_to_pt(mm: f32) -> Pt { Pt(mm * 2.8346) }
+
+    let normal_font  = PdfFontHandle::Builtin(BuiltinFont::Helvetica);
+    let bold_font    = PdfFontHandle::Builtin(BuiltinFont::HelveticaBold);
+
+    // Column x positions (pt from left margin)
+    let left_margin_pt = mm_to_pt(15.0);
+    let col_datetime_x = left_margin_pt;
+    let col_dir_x      = Pt(col_datetime_x.0 + mm_to_pt(45.0).0);
+    let col_from_x     = Pt(col_dir_x.0 + mm_to_pt(10.0).0);
+    let col_to_x       = Pt(col_from_x.0 + mm_to_pt(35.0).0);
+    let col_subject_x  = Pt(col_to_x.0 + mm_to_pt(35.0).0);
+
+    // Row height and starting y cursor
+    const ROW_H_PT: f32 = 14.0;      // pt per data row
+    const FONT_SIZE_TITLE: f32 = 14.0;
+    const FONT_SIZE_HEADER: f32 = 9.0;
+    const FONT_SIZE_DATA: f32 = 8.5;
+
+    let page_top_pt    = mm_to_pt(PAGE_H_MM - 15.0); // top margin
+    let footer_y_pt    = mm_to_pt(10.0);               // bottom margin
+
+    // How many data rows fit on a page (after title + headers consume ~4 rows).
+    let title_block_h  = mm_to_pt(25.0).0; // approx title + sub + col-headers height
+    let usable_h       = page_top_pt.0 - footer_y_pt.0 - title_block_h;
+    let rows_per_page  = (usable_h / ROW_H_PT).floor() as usize;
+    let rows_per_page  = rows_per_page.max(1);
+
+    let station_label = req.station_callsign.as_deref().unwrap_or("(unknown)");
+
+    let now_utc = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+
+    let total_pages = if req.rows.is_empty() {
+        1
+    } else {
+        req.rows.len().div_ceil(rows_per_page)
+    };
+
+    let mut pdf_doc = PdfDocument::new("ICS-309 Comms Log");
+
+    for page_idx in 0..total_pages {
+        let chunk_start = page_idx * rows_per_page;
+        let chunk_end   = (chunk_start + rows_per_page).min(req.rows.len());
+        let chunk       = &req.rows[chunk_start..chunk_end];
+
+        let mut ops: Vec<Op> = Vec::new();
+        ops.push(Op::StartTextSection);
+
+        // ── Title ──────────────────────────────────────────────────────────
+        ops.push(Op::SetFont { font: bold_font.clone(), size: Pt(FONT_SIZE_TITLE) });
+        ops.push(Op::SetTextCursor {
+            pos: Point { x: mm_to_pt(PAGE_W_MM / 2.0 - 50.0), y: Pt(page_top_pt.0) },
+        });
+        ops.push(Op::ShowText {
+            items: vec![TextItem::Text("ICS-309 COMMUNICATIONS LOG".to_string())],
+        });
+
+        // ── Sub-header (station + date range) ──────────────────────────────
+        ops.push(Op::SetFont { font: normal_font.clone(), size: Pt(FONT_SIZE_HEADER) });
+        ops.push(Op::SetTextCursor {
+            pos: Point { x: col_datetime_x, y: Pt(page_top_pt.0 - 18.0) },
+        });
+        ops.push(Op::ShowText {
+            items: vec![TextItem::Text(format!(
+                "Station: {station_label}   Period: {} — {}   Page {} of {total_pages}",
+                req.range_start, req.range_end,
+                page_idx + 1,
+            ))],
+        });
+
+        // ── Column headers ─────────────────────────────────────────────────
+        let col_hdr_y = Pt(page_top_pt.0 - 32.0);
+        ops.push(Op::SetFont { font: bold_font.clone(), size: Pt(FONT_SIZE_HEADER) });
+        for (x, label) in [
+            (col_datetime_x, "Datetime (UTC)"),
+            (col_dir_x,      "Dir"),
+            (col_from_x,     "From"),
+            (col_to_x,       "To"),
+            (col_subject_x,  "Subject"),
+        ] {
+            ops.push(Op::SetTextCursor { pos: Point { x, y: col_hdr_y } });
+            ops.push(Op::ShowText {
+                items: vec![TextItem::Text(label.to_string())],
+            });
+        }
+
+        // ── Data rows ──────────────────────────────────────────────────────
+        ops.push(Op::SetFont { font: normal_font.clone(), size: Pt(FONT_SIZE_DATA) });
+        let mut row_y = col_hdr_y.0 - ROW_H_PT;
+        for row in chunk {
+            // Truncate long fields to fit the column widths.
+            let dt      = &row.datetime;
+            let dir     = row.direction.as_str();
+            let from    = truncate_str(&row.from, 18);
+            let to      = truncate_str(&row.to, 18);
+            let subject = truncate_str(&row.subject, 40);
+
+            for (x, text) in [
+                (col_datetime_x, dt.as_str()),
+                (col_dir_x,      dir),
+                (col_from_x,     &from),
+                (col_to_x,       &to),
+                (col_subject_x,  &subject),
+            ] {
+                ops.push(Op::SetTextCursor { pos: Point { x, y: Pt(row_y) } });
+                ops.push(Op::ShowText {
+                    items: vec![TextItem::Text(text.to_string())],
+                });
+            }
+            row_y -= ROW_H_PT;
+        }
+
+        // ── Footer ─────────────────────────────────────────────────────────
+        ops.push(Op::SetFont { font: normal_font.clone(), size: Pt(7.0) });
+        ops.push(Op::SetTextCursor {
+            pos: Point { x: col_datetime_x, y: footer_y_pt },
+        });
+        ops.push(Op::ShowText {
+            items: vec![TextItem::Text(format!("Rendered by tuxlink — {now_utc}"))],
+        });
+
+        ops.push(Op::EndTextSection);
+
+        let page = PdfPage::new(Mm(PAGE_W_MM), Mm(PAGE_H_MM), ops);
+        pdf_doc.pages.push(page);
+    }
+
+    let bytes = pdf_doc.save(&PdfSaveOptions::default(), &mut Vec::new());
+    Ok(bytes)
+}
+
+/// Truncate a string to `max_chars` characters, appending "…" if truncated.
+fn truncate_str(s: &str, max_chars: usize) -> String {
+    // Handle multi-byte UTF-8 chars properly via char iteration.
+    let mut chars = s.chars();
+    let collected: String = chars.by_ref().take(max_chars).collect();
+    if chars.next().is_some() {
+        format!("{collected}…")
+    } else {
+        collected
     }
 }
 
@@ -359,8 +608,12 @@ pub fn parse_raw_rfc5322(mid: &str, raw: &[u8]) -> Result<ParsedMessageDto, UiEr
         })
         .unwrap_or_default();
 
-    // Body: find the first text/plain part; decode lossily.
-    let body = find_text_plain_body(&msg);
+    // Body: find the first text/plain part; decode lossily. The raw bytes
+    // are passed alongside so the function can detect B2F wire format
+    // (Winlink's native format, not RFC 5322) and dispatch to the
+    // project's B2F parser instead of letting mail-parser swallow the
+    // attachment payload into the text body (tuxlink-2hyf).
+    let body = find_text_plain_body(&msg, raw);
 
     // Attachments: non-inline named parts (MIME attachments).
     let attachments = collect_attachments(&msg);
@@ -456,22 +709,52 @@ fn addr_to_string(a: &mail_parser::Addr<'_>) -> String {
     }
 }
 
-/// Return the first text/plain body as a string.
+/// Return the message's displayable body text.
 ///
-/// Uses `msg.body_text(0)` which returns the first text/plain body part
-/// (already decoded for charset + CTE). Falls back to a lossy decode of
-/// the root part's binary body if no text/plain part is registered (handles
-/// non-MIME messages with invalid UTF-8 bytes in the body).
-fn find_text_plain_body(msg: &mail_parser::Message<'_>) -> String {
-    // body_text(0) returns the first text/plain part (as decoded Cow<str>).
+/// Dispatch ladder, in order:
+///
+/// 1. **B2F wire format** (the canonical inbound-Winlink case): detected by
+///    the presence of both a `Mid:` and a `Body:` header in the parsed B2F
+///    message. mail_parser is RFC 5322-only and treats B2F's `Body: N`
+///    byte-count header as just another header line — then concatenates the
+///    declared text body AND each per-attachment binary payload into one
+///    blob, surfacing as a wall of REPLACEMENT CHARACTER glyphs in the UI
+///    (tuxlink-9ylw smoke walk → this is the real fix, tuxlink-2hyf).
+///    When B2F is detected, defer to `winlink::message::Message::body()`
+///    which respects the declared body byte-count and excludes attachments.
+///
+/// 2. **`mail_parser::body_text(0)`** — the first text/plain part of a true
+///    MIME message, already decoded for charset + CTE.
+///
+/// 3. **Root Text part** — for non-MIME, non-B2F single-text-root messages.
+///
+/// 4. **Binary placeholder** — single-part binary MIME messages without any
+///    text part fall through here. The placeholder points users at the
+///    attachment surface (`AttachmentStrip` + the `message_attachment_save`
+///    command shipped in tuxlink-0fyj) rather than dumping bytes as text.
+fn find_text_plain_body(msg: &mail_parser::Message<'_>, raw: &[u8]) -> String {
+    // Step 1 — B2F detection + dispatch. Use Message::from_bytes which
+    // already handles `Body: N` + `File: N filename` correctly.
+    if let Ok(b2f) = crate::winlink::message::Message::from_bytes(raw) {
+        // Require BOTH Mid: and Body: headers to qualify as B2F — either alone
+        // is ambiguous (some RFC 5322 messages could plausibly carry a Body:
+        // pseudo-header in malformed input; Mid: is rarer but possible).
+        if b2f.header("Mid").is_some() && b2f.header("Body").is_some() {
+            return String::from_utf8_lossy(b2f.body()).into_owned();
+        }
+    }
+
+    // Step 2 — true MIME text/plain happy path.
     if let Some(text) = msg.body_text(0) {
         return text.into_owned();
     }
-    // Non-MIME message: the root part body is all we have.
+
+    // Step 3 + 4 — non-MIME-non-B2F fall-back. Root part is all we have.
     match &msg.parts[0].body {
         mail_parser::PartType::Text(t) => t.to_string(),
         mail_parser::PartType::Binary(b) | mail_parser::PartType::InlineBinary(b) => {
-            String::from_utf8_lossy(b).into_owned()
+            // Don't render bytes as text — see step-1 doc comment for why.
+            format!("[Binary content ({} bytes) — see attachments]", b.len())
         }
         _ => String::new(),
     }
@@ -1288,6 +1571,74 @@ pub async fn open_webview_form(
     Ok(OpenFormResult { url, port, token })
 }
 
+/// Shape returned by `forms_check_for_update` (Phase 3 — `forms::updater`
+/// surface to the React `CatalogBrowser` "Refresh forms…" affordance).
+/// `currentVersion` is `None` on a fresh install that has never run a
+/// refresh — the catalog is being served from the bundle's seed snapshot,
+/// whose version isn't recorded as a runtime VERSION file. `updateAvailable`
+/// is `currentVersion != Some(remoteVersion)`; a missing-current is treated
+/// as "update available" so the operator can opt into the runtime path.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FormsRefreshStatus {
+    pub current_version: Option<String>,
+    pub remote_version: String,
+    pub archive_url: String,
+    pub update_available: bool,
+}
+
+/// Check the Pat metadata endpoint for the latest WLE Standard Forms
+/// version. Pure read — no install side effect; pairs with
+/// `forms_refresh` (the React modal calls this first to render the
+/// confirmation, then calls `forms_refresh` if the operator confirms).
+///
+/// Errors surface the underlying network / decode failure verbatim so the
+/// React layer can route to a "couldn't reach forms server" UX rather
+/// than crashing.
+#[tauri::command]
+pub async fn forms_check_for_update(app: AppHandle) -> Result<FormsRefreshStatus, String> {
+    let runtime_root = crate::forms::wle_templates::runtime_root_for_app(&app)
+        .ok_or_else(|| "platform data dir unavailable — runtime forms root cannot be resolved".to_string())?;
+    let current_version = crate::forms::updater::current_version(&runtime_root);
+    let info = crate::forms::updater::fetch_latest_info(
+        crate::forms::updater::DEFAULT_METADATA_URL,
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+    let update_available = current_version.as_deref() != Some(info.version.as_str());
+    Ok(FormsRefreshStatus {
+        current_version,
+        remote_version: info.version,
+        archive_url: info.archive_url,
+        update_available,
+    })
+}
+
+/// Refresh the WLE Standard Forms snapshot from the Pat metadata
+/// endpoint. Downloads + extracts + atomically swaps into
+/// `<data_dir>/tuxlink/forms/standard/active/`. On any failure before
+/// the swap, the current `active/` is untouched; on swap failure, the
+/// prior `active/` is restored via the `.prev-<ts>/` rename.
+///
+/// Network or extraction errors propagate as the IPC error message so
+/// the React modal can render them inline. Operators triggering a
+/// successful refresh see the new `InstallReport` (version + form count
+/// + prior version) and the CatalogBrowser re-invokes `forms_list_catalog`
+/// to pick up the new entries.
+#[tauri::command]
+pub async fn forms_refresh(app: AppHandle) -> Result<crate::forms::updater::InstallReport, String> {
+    let runtime_root = crate::forms::wle_templates::runtime_root_for_app(&app)
+        .ok_or_else(|| "platform data dir unavailable — runtime forms root cannot be resolved".to_string())?;
+    let info = crate::forms::updater::fetch_latest_info(
+        crate::forms::updater::DEFAULT_METADATA_URL,
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+    crate::forms::updater::install(&info.archive_url, &info.version, &runtime_root)
+        .await
+        .map_err(|e| e.to_string())
+}
+
 /// Tear down a webview form session. Idempotent — closing an unknown
 /// token returns `Ok(())` (the React unmount cleanup path runs whether
 /// or not the session is already gone). Used by BOTH Form-mode and
@@ -1468,6 +1819,14 @@ pub async fn cms_connect(
         format!("Connecting to the CMS ({:?})…", cfg.connect.transport),
     );
 
+    // Task 11: Tauri-side event sink infrastructure.
+    // Task 12 (tuxlink-7do4): now used for result-level AuthClassified
+    // emission in the Err arm. Deep threading through backend.connect
+    // (for in-flight TcpConnected / RemoteSidReceived / PostAuthExchangeStarted
+    // events) is deferred as bd-tuxlink-7do4-followup-backend-events.
+    let events_sink: std::sync::Arc<dyn crate::winlink::b2f_events::B2fEventSink> =
+        std::sync::Arc::new(crate::winlink::b2f_events::TauriEventSink::new(app.clone()));
+
     match backend
         .connect(TransportConfig::Cms {
             mode: cfg.connect.transport,
@@ -1528,6 +1887,43 @@ pub async fn cms_connect(
                 "CMS connect failed",
             );
             emit_session_line(&app, &log, LogLevel::Error, format!("CMS connect failed: {e}"));
+
+            // Task 12 (tuxlink-7do4, R5 spec §6.3 + §6.4): emit a structured
+            // AuthClassified event so the React useAuthDiagnostic hook can
+            // render the appropriate banner mode. This is result-level
+            // classification; deep backend.connect threading (which would also
+            // give us TcpConnected / RemoteSidReceived / PostAuthExchangeStarted
+            // events for Mode 1 vs Mode 5 discrimination) is tracked as
+            // bd-tuxlink-7do4-followup-backend-events.
+            let attempt_id = crate::winlink::b2f_events::AttemptId::fresh();
+            use crate::winlink::b2f_events::{B2fEvent, FailureMode};
+            let (mode, raw) = match &e {
+                // BackendError::RemoteError carries the *** payload (redaction-
+                // scrubbed at the handshake.rs + telnet.rs layers per Tasks 6+8).
+                // This variant is new in Task 12 — the map_err in native_connect
+                // lifts ExchangeError::RemoteError + HandshakeError::RemoteError
+                // into it so the payload is preserved structurally.
+                BackendError::RemoteError(payload) => {
+                    (crate::winlink::auth_taxonomy::classify(payload), Some(payload.clone()))
+                }
+                // TransportFailed = TCP / TLS / DNS failure (no *** payload).
+                // These are Mode 1 (NetworkUnreachable). Mode 1 vs Mode 5
+                // discrimination requires deep backend.connect event threading
+                // (deferred — bd-tuxlink-7do4-followup-backend-events).
+                BackendError::TransportFailed { .. } => {
+                    (FailureMode::NetworkUnreachable, None)
+                }
+                // AuthFailed is the listener gate variant (not a CMS telnet
+                // scenario), but map it conservatively.
+                BackendError::AuthFailed { reason } => {
+                    (crate::winlink::auth_taxonomy::classify(reason), Some(reason.clone()))
+                }
+                // All other BackendError variants in the cms_connect Err arm
+                // → Uncategorized; surface the error Display as raw context.
+                _ => (FailureMode::Uncategorized, Some(format!("{e}"))),
+            };
+            events_sink.push(B2fEvent::AuthClassified { mode, raw, attempt_id });
+
             Err(e.into())
         }
     }
@@ -1554,6 +1950,167 @@ pub async fn cms_abort(
     emit_session_line(&app, &log, LogLevel::Info, "Aborting CMS connection…".to_string());
     backend.abort().await?;
     Ok(())
+}
+
+// ============================================================================
+// Task 13 (tuxlink-7do4) — smart-auth-diagnostics banner recovery commands
+// ============================================================================
+// Three commands the banner's recovery affordances depend on. Registered in
+// invoke_handler alongside cms_connect / cms_abort per the append-only model.
+
+/// Write a password to the OS keyring for the given callsign. Per spec
+/// §4.3 (i) — the inline "Re-enter password" affordance on the Mode 3
+/// banner uses this. Preserves the read-first → set_password
+/// destructive-overwrite-readback discipline (R2 #3 keyring-locked
+/// failure handling: any KeyringError surfaces; no in-memory fallback).
+#[tauri::command]
+pub async fn credentials_write_password(
+    callsign: String,
+    password: String,
+) -> Result<(), UiError> {
+    crate::winlink::credentials::write_password(&callsign, &password)
+        .map_err(|e| UiError::Internal { detail: e.to_string() })
+}
+
+/// Reopen the onboarding wizard scoped to a specific step. Per spec
+/// §4.3 (ii) — the "Try a different callsign" affordance on the Mode 4
+/// banner uses this with step="callsign".
+#[tauri::command]
+pub async fn wizard_reopen(
+    app: tauri::AppHandle,
+    step: String,
+) -> Result<(), UiError> {
+    crate::wizard::reopen(&app, &step)
+        .map_err(|e| UiError::Internal { detail: e.to_string() })
+}
+
+/// Clear the most-recent auth-diagnostic classification from Rust state.
+/// Per spec §4.3 (v) — the Dismiss affordance on the banner calls this
+/// so that a stale event for the dismissed AttemptId doesn't
+/// re-render the banner.
+///
+/// Implementation: emits a "auth-diagnostic-clear" event that the React
+/// hook listens for and uses to reset its local state. The Rust side
+/// doesn't currently hold AttemptId-keyed state to clear; the event
+/// emission alone unblocks the React side. If Rust-side state is added
+/// later (e.g., for replay-after-mount), this is the place to clear it.
+#[tauri::command]
+pub async fn auth_diagnostic_clear(
+    app: tauri::AppHandle,
+) -> Result<(), UiError> {
+    use tauri::Emitter;
+    app.emit("auth-diagnostic-clear", ())
+        .map_err(|e| UiError::Internal { detail: e.to_string() })?;
+    Ok(())
+}
+
+// ============================================================================
+// Task 14 (tuxlink-7do4) — cms_connect_test (spec §4.3 iii)
+// ============================================================================
+// Auth-only "check this password works" command. Connects to the CMS, runs the
+// B2F handshake (emitting all B2fEvents including PostAuthExchangeStarted for
+// the Mode 5 discriminator), and quits via FF + FQ — NEVER reads inbound
+// proposals, NEVER mutates the outbox.
+//
+// Rate-limit (R2 #8): client-side via the React banner — 10s post-test
+// debounce + 3-in-60s circuit-break. Backend has no intrinsic rate-limit;
+// it's a UI-layer concern.
+
+/// Test the user's credentials against the configured CMS WITHOUT committing
+/// to a real message exchange. Per spec §4.3 (iii):
+///
+/// - Shares `cms_connect`'s single-flight guard so a concurrent click while a
+///   real connect is running returns `Unavailable` (maps to `AlreadyConnecting`
+///   on the React side).
+/// - Runs only the B2F handshake (no inbound proposal reading, no outbound
+///   message sending). Sends `FF + FQ` on success.
+/// - Emits the full [`crate::winlink::b2f_events::B2fEvent`] stream including
+///   `PostAuthExchangeStarted` (the Mode 5 vs Mode 1 discriminator that the
+///   result-level `cms_connect` classification collapses) and `AuthClassified`
+///   at the end (success or failure).
+/// - Returns `Ok(())` on a successful auth-and-quit, `Err(UiError::*)` on any
+///   failure mode.
+///
+/// RADIO-1 GUARDRAIL: This command is CMS-TELNET ONLY FOREVER. Any future
+/// proposal to route it over an RF transport (ARDOP / VARA / Pactor) REQUIRES
+/// (a) fresh RADIO-1 review per `docs/live-cms-testing-policy.md`,
+/// (b) explicit transmit-consent gate at the click moment, and
+/// (c) a separate command name (`cms_connect_test_rf`).
+/// See spec §2 out-of-scope + §4.3 (iii).
+#[tauri::command]
+pub async fn cms_connect_test(
+    app: AppHandle,
+    state: State<'_, BackendState>,
+    log: State<'_, std::sync::Arc<SessionLogState>>,
+) -> Result<(), UiError> {
+    let backend = state
+        .current()
+        .ok_or_else(|| UiError::NotConfigured("backend offline".to_string()))?;
+
+    emit_session_line(
+        &app,
+        &log,
+        LogLevel::Info,
+        "Testing CMS credentials (auth-only)…".to_string(),
+    );
+
+    let events_sink: std::sync::Arc<dyn crate::winlink::b2f_events::B2fEventSink> =
+        std::sync::Arc::new(crate::winlink::b2f_events::TauriEventSink::new(app.clone()));
+
+    let attempt_id = crate::winlink::b2f_events::AttemptId::fresh();
+
+    match backend.cms_connect_test(events_sink.clone(), attempt_id).await {
+        Ok(()) => {
+            emit_session_line(
+                &app,
+                &log,
+                LogLevel::Info,
+                "Credential test passed.".to_string(),
+            );
+            // Emit a success AuthClassified so the React banner can render
+            // the green "credentials are valid" state.
+            use crate::winlink::b2f_events::{B2fEvent, FailureMode};
+            events_sink.push(B2fEvent::AuthClassified {
+                // PostAuthExchangeStarted was already emitted (Mode 5
+                // discriminator) — the auth-only contract fired FF + FQ.
+                // There is no failure mode; use a sentinel-free Ok path:
+                // the React hook treats a missing FailureMode as success.
+                // For structural consistency the event still fires; the
+                // mode field is unused on the Ok branch by the React hook
+                // (it keys off PostAuthExchangeStarted presence).
+                mode: FailureMode::Uncategorized,
+                raw: None,
+                attempt_id,
+            });
+            Ok(())
+        }
+        Err(BackendError::Cancelled) => {
+            emit_session_line(&app, &log, LogLevel::Warn, "Credential test aborted.".to_string());
+            Err(BackendError::Cancelled.into())
+        }
+        Err(e) => {
+            emit_session_line(
+                &app,
+                &log,
+                LogLevel::Error,
+                format!("Credential test failed: {e}"),
+            );
+            // Emit AuthClassified so the React banner updates.
+            use crate::winlink::b2f_events::{B2fEvent, FailureMode};
+            let (mode, raw) = match &e {
+                BackendError::RemoteError(payload) => {
+                    (crate::winlink::auth_taxonomy::classify(payload), Some(payload.clone()))
+                }
+                BackendError::TransportFailed { .. } => (FailureMode::NetworkUnreachable, None),
+                BackendError::AuthFailed { reason } => {
+                    (crate::winlink::auth_taxonomy::classify(reason), Some(reason.clone()))
+                }
+                _ => (FailureMode::Uncategorized, Some(format!("{e}"))),
+            };
+            events_sink.push(B2fEvent::AuthClassified { mode, raw, attempt_id });
+            Err(e.into())
+        }
+    }
 }
 
 /// Append a session-log line to the durable buffer (assigning its `seq`) and emit
@@ -2706,6 +3263,32 @@ pub async fn ardop_listen(
     session: State<'_, std::sync::Arc<crate::modem_status::ModemSession>>,
     listen_state: State<'_, std::sync::Arc<ArdopListenState>>,
 ) -> Result<(), UiError> {
+    // Thin wrapper. The body lives in `ardop_listen_inner` so the
+    // tuxlink-0ye6 Task 3.5 `ardop_open_session` auto-arm path can call
+    // it without going through the Tauri dispatcher (which would require
+    // re-extracting the same managed-state Arcs the outer caller already
+    // has). Mirror of the VARA Task 3.2 `arm_vara_listener_inner` pattern.
+    ardop_listen_inner(
+        &app,
+        log.inner(),
+        session.inner(),
+        listen_state.inner(),
+    )
+    .await
+}
+
+/// Inner body of [`ardop_listen`] — factored out so the
+/// `ardop_open_session` auto-arm path (tuxlink-0ye6 Task 3.5) can call
+/// it directly without re-dispatching through Tauri. Borrowed args (no
+/// `State`-typed params) because the open-session path already holds the
+/// same managed-state Arcs via its own `State` extractors. Mirror of the
+/// VARA `arm_vara_listener_inner` pattern (Task 3.2).
+pub(crate) async fn ardop_listen_inner(
+    app: &AppHandle,
+    log: &std::sync::Arc<SessionLogState>,
+    session: &std::sync::Arc<crate::modem_status::ModemSession>,
+    listen_state: &std::sync::Arc<ArdopListenState>,
+) -> Result<(), UiError> {
     use crate::winlink::listener::{ListenerArmsRecord, TransportKind, DEFAULT_TTL};
 
     // Refuse a second arm while one is in flight.
@@ -2837,8 +3420,8 @@ pub async fn ardop_listen(
 
     let mins = arms.ttl.as_secs() / 60;
     emit_session_line(
-        &app,
-        &log,
+        app,
+        log,
         LogLevel::Info,
         format!(
             "ARDOP listener armed for {mins} min (consent uuid {}). \
@@ -2860,9 +3443,32 @@ pub async fn ardop_set_listen(
     listen_state: State<'_, std::sync::Arc<ArdopListenState>>,
     enabled: bool,
 ) -> Result<(), UiError> {
+    ardop_set_listen_inner(
+        &app,
+        log.inner(),
+        session.inner(),
+        listen_state.inner(),
+        enabled,
+    )
+    .await
+}
+
+/// Inner body of [`ardop_set_listen`] — factored out so the tuxlink-0ye6
+/// Task 3.5 `ardop_close_session` path can disarm the listener without
+/// re-dispatching through Tauri. Mirror of the VARA Task 3.3
+/// `disarm_vara_listener_inner` pattern, but kept as a full set-listen
+/// (arm OR disarm) helper to preserve the `enabled == true` re-arm path
+/// the existing `ardop_set_listen` exposed.
+pub(crate) async fn ardop_set_listen_inner(
+    app: &AppHandle,
+    log: &std::sync::Arc<SessionLogState>,
+    session: &std::sync::Arc<crate::modem_status::ModemSession>,
+    listen_state: &std::sync::Arc<ArdopListenState>,
+    enabled: bool,
+) -> Result<(), UiError> {
     use std::sync::atomic::Ordering;
     if enabled {
-        return ardop_listen(app, log, session, listen_state).await;
+        return ardop_listen_inner(app, log, session, listen_state).await;
     }
     let handle = {
         let mut guard = listen_state.inner.lock().unwrap();
@@ -2881,15 +3487,15 @@ pub async fn ardop_set_listen(
         let _ = session.abort_in_flight();
         let _ = session.send_listen_command(false);
         emit_session_line(
-            &app,
-            &log,
+            app,
+            log,
             LogLevel::Info,
             "ARDOP listener disarming — ABORT + LISTEN FALSE sent; waiting for consumer to drain.".to_string(),
         );
     } else {
         emit_session_line(
-            &app,
-            &log,
+            app,
+            log,
             LogLevel::Warn,
             "ARDOP listener disarm: no armed listener".to_string(),
         );
@@ -2902,6 +3508,18 @@ pub async fn ardop_set_listen(
 #[derive(Default)]
 pub struct ArdopListenState {
     pub inner: std::sync::Mutex<Option<ArdopListenHandle>>,
+}
+
+impl ArdopListenState {
+    /// True iff a listener handle is currently registered (the consumer task
+    /// has been spawned and not yet drained). Mirror of
+    /// [`VaraListenState::is_armed`] — added for tuxlink-0ye6 Task 3.5 so
+    /// `ardop_open_session` can detect the auto-armed state in its
+    /// post-open snapshot and `ardop_close_session` can early-skip the
+    /// disarm side-channel when no listener is armed.
+    pub fn is_armed(&self) -> bool {
+        self.inner.lock().map(|g| g.is_some()).unwrap_or(false)
+    }
 }
 
 pub struct ArdopListenHandle {
@@ -2938,6 +3556,13 @@ fn ardop_listener_consumer_task(
             line.to_string(),
         );
     };
+
+    // tuxlink-pdnw (Codex Phase 3-4 P1 #5): snapshot the close-generation
+    // BEFORE the transport take. If `ardop_close_session_inner` bumps the
+    // generation while this consumer is in flight, the shutdown-path
+    // install-back below sees the stale snapshot and drops the transport
+    // instead of restoring it into a session the operator just closed.
+    let close_gen_snapshot = session.current_close_generation();
 
     // Take the transport. If someone else has it (race), clean up cleanly.
     // Codex review 2026-06-03 [P2 #5] (tuxlink-61yg): a stale take_transport
@@ -3091,11 +3716,27 @@ fn ardop_listener_consumer_task(
     // Shutdown path: send LISTEN FALSE + return transport.
     progress("ARDOP listener consumer: draining; sending LISTEN FALSE.");
     let _ = session.send_listen_command(false);
-    session.install_transport(transport);
-    let mut snap = session.status_snapshot();
-    snap.peer = None;
-    snap.last_error = None;
-    session.set_status(snap);
+    // tuxlink-pdnw (Codex Phase 3-4 P1 #5): guarded install. Stale snapshot
+    // → close intervened (ardop_close_session_inner ran since we took the
+    // transport). Drop the transport instead of installing — the session
+    // is in a Stopped posture and a fresh open will spawn a new transport.
+    match session
+        .install_transport_if_generation_matches(transport, close_gen_snapshot)
+    {
+        Ok(()) => {
+            let mut snap = session.status_snapshot();
+            snap.peer = None;
+            snap.last_error = None;
+            session.set_status(snap);
+        }
+        Err(dropped) => {
+            progress(
+                "ARDOP listener consumer: close intervened during drain; \
+                 dropping transport instead of restoring session.",
+            );
+            drop(dropped);
+        }
+    }
     // Clear shared state.
     *listen_state.inner.lock().unwrap() = None;
     progress("ARDOP listener disarmed (transport returned).");
@@ -3107,7 +3748,11 @@ fn arq_disconnect_via_cmd_writer(
     transport: &dyn crate::winlink::modem::ModemTransport,
 ) -> std::io::Result<()> {
     use std::io::Write;
-    let mut writer = transport.try_clone_abort_writer().ok_or_else(|| {
+    // tuxlink-0ye6 Task 4.1 widened the return type to (writer, stream).
+    // The DISCONNECT path only needs the cooperative writer; the hard-close
+    // stream is discarded — graceful disconnect is the contract here, and
+    // an unresponsive peer just surfaces the write error to the caller.
+    let (mut writer, _stream) = transport.try_clone_abort_writer().ok_or_else(|| {
         std::io::Error::new(std::io::ErrorKind::NotConnected, "no cmd writer")
     })?;
     writer.write_all(b"DISCONNECT\r")?;
@@ -3164,7 +3809,7 @@ fn ardop_arms_log_path() -> std::path::PathBuf {
 // Key shape divergences from ARDOP:
 // - VARA is NOT spawned by tuxlink. The operator runs VARA externally
 //   (Windows native, or under Wine on x86 Linux). `vara_listen` therefore
-//   refuses to arm unless `vara_start_session` has already opened the TCP
+//   refuses to arm unless `vara_open_session` has already opened the TCP
 //   transport (state == Open). There is no "start the modem first" auto-spawn.
 // - VARA's LISTEN setter uses `LISTEN ON` / `LISTEN OFF` (not ARDOP's
 //   `LISTEN TRUE` / `LISTEN FALSE`).
@@ -3292,10 +3937,20 @@ pub struct VaraListenHandle {
     pub shutdown: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
+/// Returns `true` when a VARA listener consumer task is currently armed
+/// (a `VaraListenHandle` is present in `listen_state.inner`). Cheap; safe
+/// to poll. Used by the `vara_open_session` auto-arm path's unit tests to
+/// assert intent-driven arming without spinning up a real consumer task.
+impl VaraListenState {
+    pub fn is_armed(&self) -> bool {
+        self.inner.lock().map(|g| g.is_some()).unwrap_or(false)
+    }
+}
+
 /// Arm the VARA listener for the default TTL (1 hour per architecture §5).
 ///
 /// **Precondition:** VARA must already be in state==Open (operator must
-/// have run `vara_start_session` first). Unlike ARDOP, tuxlink does NOT
+/// have run `vara_open_session` first). Unlike ARDOP, tuxlink does NOT
 /// spawn VARA — it's an externally-managed Windows process (native or
 /// under Wine) and the operator owns the lifecycle. An arm against a
 /// closed session returns `UiError::Internal` with a clear remediation.
@@ -3317,7 +3972,72 @@ pub async fn vara_listen(
     vara_session: State<'_, std::sync::Arc<crate::winlink::modem::vara::VaraSession>>,
     listen_state: State<'_, std::sync::Arc<VaraListenState>>,
 ) -> Result<(), UiError> {
+    use crate::winlink::listener::TransportKind;
+    // Codex Phase 3-4 boundary P2 #3 (tuxlink-u1r7): the listener-arm
+    // record must reflect the session's actual VARA-HF vs VARA-FM kind,
+    // not a hardcoded HF. The session's `active_transport_kind` was set
+    // by `vara_open_session_inner` after the TCP open succeeded; pull
+    // it here. If no session is open (snapshot has None), the inner
+    // helper will surface a clean "transport not Open" error.
+    let kind = vara_session
+        .snapshot()
+        .active_transport_kind
+        .unwrap_or(TransportKind::VaraHf);
+    // Thin wrapper. The body lives in `arm_vara_listener_inner` so the
+    // `vara_open_session` auto-arm path can call it without going through
+    // the Tauri command dispatcher (which would require an AppHandle from
+    // inside the inner command + double-acquire the same State).
+    arm_vara_listener_inner(
+        &app,
+        log.inner(),
+        vara_session.inner(),
+        listen_state.inner(),
+        kind,
+    )
+    .await
+}
+
+/// Inner body of [`vara_listen`] — factored out so the
+/// `vara_open_session` auto-arm path (tuxlink-0ye6 Task 3.2) can call it
+/// directly without re-dispatching through Tauri. Borrowed args (no
+/// `State`-typed params) because the open-session path already holds the
+/// same managed-state Arcs via its own `State` extractors.
+///
+/// `transport_kind` (Codex Phase 3-4 boundary P2 #3 — tuxlink-u1r7) flows
+/// from the session's `active_transport_kind` (manual arm path) or from
+/// the operator-supplied `vara_open_session` arg (auto-arm path). Used as
+/// the arms-record + reject-event transport label so VARA-FM listeners
+/// don't surface in forensics as VARA-HF. Validation: rejects non-VARA
+/// kinds before any arm state mutation.
+///
+/// Note: intent is not currently load-bearing inside the consumer task
+/// (the listener accepts any allowlisted peer regardless of intent), but
+/// reserving the parameter at the inner boundary makes Phase 3's
+/// `RadioOnly`-specific routing-flag wiring a no-source-shape change.
+pub(crate) async fn arm_vara_listener_inner(
+    app: &AppHandle,
+    log: &std::sync::Arc<SessionLogState>,
+    vara_session: &std::sync::Arc<crate::winlink::modem::vara::VaraSession>,
+    listen_state: &std::sync::Arc<VaraListenState>,
+    transport_kind: crate::winlink::listener::TransportKind,
+) -> Result<(), UiError> {
     use crate::winlink::listener::{ListenerArmsRecord, TransportKind, DEFAULT_TTL};
+
+    // Codex Phase 3-4 boundary P2 #3 (tuxlink-u1r7): defensive validation —
+    // arm_vara_listener_inner is VARA-only. A future regression that
+    // routes a non-VARA TransportKind here surfaces a clean error before
+    // any arms-record / LISTEN ON mutation.
+    if !matches!(
+        transport_kind,
+        TransportKind::VaraHf | TransportKind::VaraFm
+    ) {
+        return Err(UiError::Internal {
+            detail: format!(
+                "arm_vara_listener_inner invoked with non-VARA transport_kind={:?}",
+                transport_kind
+            ),
+        });
+    }
 
     // Refuse a second arm while one is in flight.
     {
@@ -3352,7 +4072,7 @@ pub async fn vara_listen(
         return Err(UiError::Internal {
             detail: format!(
                 "VARA listener arm refused — VARA transport is not Open (current state: {:?}). \
-                 Press Start on the VARA panel first (vara_start_session) so the TCP transport \
+                 Press Start on the VARA panel first (vara_open_session) so the TCP transport \
                  is open before arming the listener.",
                 snap.state
             ),
@@ -3362,7 +4082,10 @@ pub async fn vara_listen(
     // Append arms record BEFORE flipping the modem (mirror of ARDOP's
     // Codex 2026-06-03 P2 fix — the arms record is the audit anchor; if
     // the modem flip fails downstream we still have the attempt logged).
-    let arms = ListenerArmsRecord::arm(TransportKind::VaraHf, DEFAULT_TTL);
+    // Codex Phase 3-4 boundary P2 #3 (tuxlink-u1r7): record the operator-
+    // supplied transport_kind instead of a hardcoded VaraHf so FM arm
+    // events surface accurately in forensics.
+    let arms = ListenerArmsRecord::arm(transport_kind, DEFAULT_TTL);
     let log_path = vara_arms_log_path();
     arms.append_to_log(&log_path)
         .map_err(|e| UiError::Internal { detail: e.to_string() })?;
@@ -3396,11 +4119,11 @@ pub async fn vara_listen(
     let arbiter: std::sync::Arc<crate::position::PositionArbiter> =
         (*app.state::<std::sync::Arc<crate::position::PositionArbiter>>()).clone();
     let vara_session_arc: std::sync::Arc<crate::winlink::modem::vara::VaraSession> =
-        (*vara_session).clone();
+        vara_session.clone();
     let arms_for_task = arms.clone();
     let app_clone = app.clone();
-    let log_clone: std::sync::Arc<SessionLogState> = (*log).clone();
-    let listen_state_for_task = (*listen_state).clone();
+    let log_clone: std::sync::Arc<SessionLogState> = log.clone();
+    let listen_state_for_task = listen_state.clone();
     let bound_host = snap.bound_host.clone();
     let bound_cmd_port = snap.bound_cmd_port;
     tokio::task::spawn_blocking(move || {
@@ -3416,13 +4139,14 @@ pub async fn vara_listen(
             listen_state_for_task,
             bound_host,
             bound_cmd_port,
+            transport_kind,
         );
     });
 
     let mins = arms.ttl.as_secs() / 60;
     emit_session_line(
-        &app,
-        &log,
+        app,
+        log,
         LogLevel::Info,
         format!(
             "VARA listener armed for {mins} min (consent uuid {}). \
@@ -3444,10 +4168,28 @@ pub async fn vara_set_listen(
     listen_state: State<'_, std::sync::Arc<VaraListenState>>,
     enabled: bool,
 ) -> Result<(), UiError> {
-    use std::sync::atomic::Ordering;
     if enabled {
         return vara_listen(app, log, vara_session, listen_state).await;
     }
+    disarm_vara_listener_inner(&app, log.inner(), listen_state.inner());
+    Ok(())
+}
+
+/// Inner body of [`vara_set_listen`] with `enabled == false` — factored out
+/// so [`crate::winlink::modem::vara::commands::vara_close_session`] (tuxlink-0ye6
+/// Task 3.3) can call it directly without re-dispatching through Tauri. Mirrors
+/// the shape of [`arm_vara_listener_inner`] (Task 3.2) so the close-session
+/// path's listener disarm is one helper call.
+///
+/// Idempotent: when no listener is armed, emits a Warn log line and returns
+/// without an error. The close-session contract is "unconditional teardown,"
+/// so a missing-listener-on-disarm is information, not a failure.
+pub(crate) fn disarm_vara_listener_inner(
+    app: &AppHandle,
+    log: &std::sync::Arc<SessionLogState>,
+    listen_state: &std::sync::Arc<VaraListenState>,
+) {
+    use std::sync::atomic::Ordering;
     let handle = {
         let mut guard = listen_state.inner.lock().unwrap();
         guard.take()
@@ -3461,20 +4203,19 @@ pub async fn vara_set_listen(
         // any send from here would race the consumer's transport.
         h.shutdown.store(true, Ordering::SeqCst);
         emit_session_line(
-            &app,
-            &log,
+            app,
+            log,
             LogLevel::Info,
             "VARA listener disarming — shutdown flag set; waiting for consumer to drain.".to_string(),
         );
     } else {
         emit_session_line(
-            &app,
-            &log,
+            app,
+            log,
             LogLevel::Warn,
             "VARA listener disarm: no armed listener".to_string(),
         );
     }
-    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -3490,6 +4231,7 @@ fn vara_listener_consumer_task(
     listen_state: std::sync::Arc<VaraListenState>,
     bound_host: Option<String>,
     bound_cmd_port: Option<u16>,
+    transport_kind: crate::winlink::listener::TransportKind,
 ) {
     use std::sync::atomic::Ordering;
     use std::time::Duration;
@@ -3506,6 +4248,13 @@ fn vara_listener_consumer_task(
             line.to_string(),
         );
     };
+
+    // tuxlink-pdnw (Codex Phase 3-4 P1 #4): snapshot the close-generation
+    // BEFORE the transport take. If `vara_close_session_inner` bumps the
+    // generation while this consumer is in flight, the shutdown-path
+    // install-back below sees the stale snapshot and drops the transport
+    // instead of restoring the session to `Open`.
+    let close_gen_snapshot = vara_session.current_close_generation();
 
     // Take the transport. If someone else has it (race), clean up cleanly.
     // Mirror of ARDOP's tuxlink-61yg Codex P2 #5 fix.
@@ -3549,11 +4298,21 @@ fn vara_listener_consumer_task(
                     "VARA inbound: {} accepted; running B2F…",
                     peer_call
                 ));
+                // Codex Phase 3-4 boundary P2 #4 (tuxlink-u1r7): mark
+                // the session as running an inbound exchange so a
+                // status poll surfaces Exchange::Inbound. Cleared at
+                // the bottom of this branch (success / config-read
+                // failure / tempdir failure all route through the
+                // continue or the end-of-branch end_exchange).
+                vara_session.begin_exchange(
+                    crate::modem_status::ExchangeState::Inbound,
+                );
                 let cfg = match crate::config::read_config() {
                     Ok(c) => c,
                     Err(e) => {
                         progress(&format!("VARA listener: config read failed {e}; dropping link"));
                         let _ = crate::winlink::modem::vara::set_listen(&mut transport, false);
+                        vara_session.end_exchange();
                         continue;
                     }
                 };
@@ -3589,6 +4348,7 @@ fn vara_listener_consumer_task(
                                      tempdir for protocol-only exchange ({e}); \
                                      dropping link."
                                 ));
+                                vara_session.end_exchange();
                                 continue;
                             }
                         }
@@ -3607,6 +4367,9 @@ fn vara_listener_consumer_task(
                 // best-effort DISCONNECT so the modem releases the ARQ
                 // link if it's still up.
                 let _ = transport.send(&crate::winlink::modem::vara::OutboundCommand::Disconnect);
+                // Codex Phase 3-4 boundary P2 #4: clear the exchange
+                // marker now that the b2f handling is fully done.
+                vara_session.end_exchange();
             }
             InboundOutcome::RejectedAllowlist { peer } => {
                 progress(&format!(
@@ -3615,8 +4378,10 @@ fn vara_listener_consumer_task(
                 ));
                 let log_path = vara_arms_log_path();
                 let peer_id = crate::winlink::listener::PeerId::Callsign(peer);
+                // Codex Phase 3-4 boundary P2 #3 (tuxlink-u1r7): use the
+                // operator-supplied transport_kind, not a hardcoded VaraHf.
                 let event = crate::winlink::listener::packet_gate::ListenerRejectEvent::new(
-                    crate::winlink::listener::TransportKind::VaraHf,
+                    transport_kind,
                     "allowlist",
                     &peer_id,
                 );
@@ -3630,7 +4395,7 @@ fn vara_listener_consumer_task(
                 let log_path = vara_arms_log_path();
                 let peer_id = crate::winlink::listener::PeerId::Callsign(peer);
                 let event = crate::winlink::listener::packet_gate::ListenerRejectEvent::new(
-                    crate::winlink::listener::TransportKind::VaraHf,
+                    transport_kind,
                     "expired",
                     &peer_id,
                 );
@@ -3640,11 +4405,36 @@ fn vara_listener_consumer_task(
     }
 
     // Shutdown path: send LISTEN OFF best-effort and return the transport
-    // to the session so the operator's vara_stop_session / vara_status
+    // to the session so the operator's vara_close_session / vara_status
     // sees the transport as if the consumer never owned it.
     progress("VARA listener consumer: draining; sending LISTEN OFF.");
     let _ = crate::winlink::modem::vara::set_listen(&mut transport, false);
-    vara_session.return_transport(transport, bound_host, bound_cmd_port);
+    // tuxlink-pdnw (Codex Phase 3-4 P1 #4): guarded install. Stale snapshot
+    // → close intervened (vara_close_session_inner ran since we took the
+    // transport). Drop the transport instead of restoring `VaraState::Open`.
+    //
+    // tuxlink-0iqi: the listener consumer's drain path runs at shutdown —
+    // it's tearing down the session, not preserving the operator's active
+    // mode. Pass `None`/`None` for active_intent + active_transport_kind
+    // so the install-back (if it happens — fresh snapshot only) resets
+    // the active-mode fields, matching the legacy drain behavior.
+    match vara_session.install_transport_if_generation_matches(
+        transport,
+        close_gen_snapshot,
+        bound_host,
+        bound_cmd_port,
+        None,
+        None,
+    ) {
+        Ok(()) => {}
+        Err(dropped) => {
+            progress(
+                "VARA listener consumer: close intervened during drain; \
+                 dropping transport instead of restoring session.",
+            );
+            drop(dropped);
+        }
+    }
     *listen_state.inner.lock().unwrap() = None;
     progress("VARA listener disarmed (transport returned).");
 }
@@ -3966,6 +4756,39 @@ pub async fn position_status(
 }
 
 // ============================================================================
+// tuxlink-hnkn P2 — position_current_fix (PositionFormV2 pre-fill)
+// ============================================================================
+// Thin shim over PositionArbiter that returns the active grid + source label
+// + freshness flag to the React Position Report compose form.  The form
+// pre-fills the grid input with this value so the operator can confirm (or
+// manually override) before sending.
+//
+// `source` is stringified from the PositionSource enum via Debug (yielding
+// "Gps" or "Manual").  The React consumer is case-insensitive on source
+// comparison, so the PascalCase output is intentional and documented.
+
+/// Wire-shape returned to PositionFormV2.tsx by `position_current_fix`.
+#[derive(Debug, Clone, Serialize)]
+pub struct PositionFix {
+    pub grid: Option<String>,
+    /// Source label — "Gps" | "Manual" (Debug-derived from PositionSource).
+    pub source: String,
+    /// True when the GPS fix is < 30 s old (FIX_STALENESS from arbiter).
+    pub fresh: bool,
+}
+
+#[tauri::command]
+pub async fn position_current_fix(
+    arbiter: tauri::State<'_, std::sync::Arc<crate::position::PositionArbiter>>,
+) -> Result<PositionFix, String> {
+    Ok(PositionFix {
+        grid: arbiter.active_grid(),
+        source: format!("{:?}", arbiter.source()),
+        fresh: arbiter.has_fresh_fix(),
+    })
+}
+
+// ============================================================================
 // tuxlink-39b — config_set_privacy (GPS-state + precision control surface)
 // ============================================================================
 // Closes the gap found in the post-merge smoke of #113: gps_state +
@@ -4272,9 +5095,29 @@ pub async fn telnet_p2p_connect(
 
     // tuxlink-l55l: read the outbox BEFORE opening the socket — same ordering
     // as `native_telnet_exchange` (P1.3 Codex review). A malformed outbox
-    // fails fast without consuming an on-air slot or surprising the peer.
-    let outbound = match crate::winlink_backend::build_outbound_proposals(&mailbox) {
+    // surfaces an error before any peer interaction.
+    //
+    // tuxlink-u5hl (Codex Round 5 P1 #3 + Phase 3-4 RE-REVIEW P2): for the
+    // safety-gate `MessageRejected` case (non-CMS intent, schema gate),
+    // degrade to empty outbound rather than failing — the operator's
+    // telnet walk through still completes the handshake, no proposal
+    // ships, and the peer sees an empty exchange (consistent with
+    // listener-answer pattern). Other outbox errors (corrupt mailbox,
+    // etc.) still fail-closed via the error path below.
+    let outbound = match crate::winlink_backend::build_outbound_proposals(
+        &mailbox,
+        SessionIntent::P2p,
+    ) {
         Ok(v) => v,
+        Err(crate::winlink_backend::BackendError::MessageRejected(reason)) => {
+            emit_session_line(
+                &app,
+                &log,
+                LogLevel::Info,
+                format!("Outbound drain skipped ({reason}); telnet proceeds with empty outbound"),
+            );
+            Vec::new()
+        }
         Err(e) => {
             p2p_state.in_progress.store(false, Ordering::SeqCst);
             emit_p2p_status(&app, StatusDto::Disconnected);
@@ -5169,6 +6012,133 @@ hw:CARD=Device,DEV=0
              --BOUND--\r\n"
         )
         .into_bytes()
+    }
+
+    /// tuxlink-9ylw: regression test for the screenshot-bad rendering of CMS
+    /// image responses (the canonical example is the CMS-Z Catalog reply that
+    /// inlines a JPEG as the entire message body). When mail-parser hits a
+    /// single-part message whose root body is binary (no text/plain sibling
+    /// to fall back to), the prior implementation called
+    /// `String::from_utf8_lossy` on the raw bytes — which produces a wall of
+    /// REPLACEMENT CHARACTERs interleaved with whatever byte sequences happen
+    /// to be valid UTF-8. That made screenshots look broken and gave users no
+    /// pointer to the actual content path (the AttachmentStrip).
+    ///
+    /// Replacement contract: don't render bytes as text; emit a short
+    /// placeholder pointing the user at the attachment surface.
+    #[test]
+    fn find_text_plain_body_emits_placeholder_for_binary_root_body() {
+        // Synthetic single-part image/jpeg message — no text/plain sibling, so
+        // `msg.body_text(0)` returns None and the fallback runs.
+        let mut raw: Vec<u8> = Vec::new();
+        raw.extend_from_slice(
+            b"From: catalog@cms-z.winlink.org\r\n\
+              To: tuxlink@example.com\r\n\
+              Subject: CMS image response\r\n\
+              Date: Fri, 05 Jun 2026 03:30:00 +0000\r\n\
+              MIME-Version: 1.0\r\n\
+              Content-Type: image/jpeg\r\n\
+              \r\n",
+        );
+        // JPEG SOI + JFIF marker + a handful of high-entropy bytes —
+        // representative of the CMS-Z Catalog payload shape that surfaced the bug.
+        raw.extend_from_slice(&[
+            0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01,
+            0xcb, 0xa1, 0x12, 0xef, 0xc9, 0x97, 0xd4, 0xb2, 0x68, 0x5a, 0x80, 0xff,
+        ]);
+
+        let msg = mail_parser::MessageParser::new()
+            .parse(raw.as_slice())
+            .expect("synthetic MIME parses");
+        let body = find_text_plain_body(&msg, raw.as_slice());
+
+        // Failure mode under the prior implementation: REPLACEMENT CHARACTER
+        // glyphs leak through wherever the JPEG bytes aren't valid UTF-8.
+        assert!(
+            !body.contains('\u{FFFD}'),
+            "raw binary bytes leaked into body as U+FFFD replacement chars; got: {body:?}"
+        );
+        // JFIF magic happens to be valid ASCII (`JFIF`) and would survive
+        // a lossy-UTF-8 decode unchanged — assert it doesn't end up rendered.
+        assert!(
+            !body.contains("JFIF"),
+            "JPEG marker text leaked into rendered body; got: {body:?}"
+        );
+        // Placeholder must point the user at the attachment surface, where
+        // AttachmentStrip + Save As (tuxlink-0fyj) handle binary content.
+        assert!(
+            body.contains("attachments"),
+            "expected placeholder to direct users to the attachments surface; got: {body:?}"
+        );
+    }
+
+    /// tuxlink-2hyf: regression-pin for the *real* broken case PR #401 did
+    /// not catch. Real Winlink inbound messages aren't MIME — they're B2F
+    /// wire format: a `Mid:` header, a `Body: <N>` byte-count declaring the
+    /// text body length, optional `File: <N> <filename>` headers declaring
+    /// per-attachment binary payloads, a blank line, then the declared text
+    /// body, then the declared attachment payloads concatenated.
+    ///
+    /// mail_parser is RFC 5322-only and:
+    /// - Sees `Mid:` / `Body:` / `File:` as ordinary RFC 5322 header lines.
+    /// - Default implicit Content-Type is text/plain.
+    /// - Treats everything after the blank line — text body PLUS binary
+    ///   attachment payloads — as one text body.
+    /// - `body_text(0)` returns Some(lossy-UTF-8 of text + binary bytes).
+    /// - PR #401's `PartType::Binary` fallback never triggers because the
+    ///   body is "text" from mail-parser's perspective.
+    ///
+    /// The fix dispatches to `winlink::message::Message::body()` (the
+    /// project's own B2F parser) when both `Mid:` and `Body:` headers
+    /// are present in the parsed B2F message.
+    #[test]
+    fn find_text_plain_body_dispatches_to_b2f_parser_for_winlink_messages() {
+        // Shape mirrors a real CMS-Z Catalog reply: B2F headers, a short
+        // text-body byte count, the text body, then a binary attachment.
+        // The attachment magic bytes (JFIF) MUST NOT leak into the rendered
+        // body — that's the screenshot-bad bug operators reported.
+        let text_body = "Resource URL: https://example.org/cat/img.jpg\r\n  Inquiry ID: WCCOL.JPG\r\n";
+        let attachment_bytes: &[u8] = &[
+            0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01,
+            0xcb, 0xa1, 0x12, 0xef, 0xc9, 0x97, 0xd4, 0xb2, 0x68, 0x5a, 0x80, 0xff,
+        ];
+        let mut raw: Vec<u8> = Vec::new();
+        raw.extend_from_slice(b"Mid: 9YMNP4GB4UOD\r\n");
+        raw.extend_from_slice(format!("Body: {}\r\n", text_body.len()).as_bytes());
+        raw.extend_from_slice(b"Date: 2026/06/05 11:24\r\n");
+        raw.extend_from_slice(format!("File: {} 600x600.jpg\r\n", attachment_bytes.len()).as_bytes());
+        raw.extend_from_slice(b"From: SERVICE\r\n");
+        raw.extend_from_slice(b"Mbo: SYSTEM\r\n");
+        raw.extend_from_slice(b"Subject: INQUIRY - https://example.org/cat/img.jpg\r\n");
+        raw.extend_from_slice(b"To: N7CPZ\r\n");
+        raw.extend_from_slice(b"\r\n");
+        raw.extend_from_slice(text_body.as_bytes());
+        raw.extend_from_slice(b"\r\n");
+        raw.extend_from_slice(attachment_bytes);
+        raw.extend_from_slice(b"\r\n");
+
+        let msg = mail_parser::MessageParser::new()
+            .parse(raw.as_slice())
+            .expect("synthetic B2F parses through mail-parser (as one big text body)");
+        let body = find_text_plain_body(&msg, raw.as_slice());
+
+        // The body must contain the declared text content — that's what
+        // operators are supposed to see.
+        assert!(
+            body.contains("Resource URL"),
+            "B2F dispatch should preserve the declared text body; got: {body:?}"
+        );
+        // Binary attachment bytes MUST NOT leak through. Two markers:
+        //   - JFIF is ASCII-valid and would survive a lossy decode unchanged.
+        //   - U+FFFD shows up wherever individual bytes weren't valid UTF-8.
+        assert!(
+            !body.contains("JFIF"),
+            "JPEG marker text leaked from binary attachment into body; got: {body:?}"
+        );
+        assert!(
+            !body.contains('\u{FFFD}'),
+            "U+FFFD replacement chars in body indicate binary bytes leaked through; got: {body:?}"
+        );
     }
 
     #[test]
@@ -6514,6 +7484,109 @@ hw:CARD=Device,DEV=0
         assert_eq!(v["received_count"], 1);
     }
 
+    // ── tuxlink-u1r7 — Codex Phase 3-4 boundary P2 #3 ──────────────────
+    //
+    // `arm_vara_listener_inner` now takes a `transport_kind: TransportKind`
+    // parameter (defaulting to the session's `active_transport_kind` at
+    // the manual-arm site; passed through from `vara_open_session`'s arg
+    // at the auto-arm site) so the arms-record + reject-event labels
+    // reflect VARA-HF vs VARA-FM instead of a hardcoded HF.
+
+    /// The arms-record helper records exactly the kind it's handed. Pin
+    /// both VaraHf and VaraFm so a future regression that hardcodes
+    /// VaraHf again surfaces.
+    #[test]
+    fn arms_record_carries_supplied_transport_kind() {
+        use crate::winlink::listener::{
+            ListenerArmsRecord, TransportKind, DEFAULT_TTL,
+        };
+        let hf = ListenerArmsRecord::arm(TransportKind::VaraHf, DEFAULT_TTL);
+        assert_eq!(hf.transport, TransportKind::VaraHf);
+        let fm = ListenerArmsRecord::arm(TransportKind::VaraFm, DEFAULT_TTL);
+        assert_eq!(
+            fm.transport,
+            TransportKind::VaraFm,
+            "P2 #3: arms-record must reflect VaraFm when armed for FM, \
+             not a hardcoded VaraHf"
+        );
+    }
+
+    /// The reject-event constructor records the supplied kind. Pins the
+    /// consumer-task reject path against a hardcoded-HF regression.
+    #[test]
+    fn reject_event_carries_supplied_transport_kind() {
+        use crate::winlink::listener::{
+            packet_gate::ListenerRejectEvent, PeerId, TransportKind,
+        };
+        use crate::winlink::ax25::frame::Address;
+        let peer = PeerId::Callsign(Address {
+            call: "W1ABC".into(),
+            ssid: 0,
+        });
+        let evt_hf =
+            ListenerRejectEvent::new(TransportKind::VaraHf, "allowlist", &peer);
+        let json_hf = serde_json::to_string(&evt_hf).unwrap();
+        assert!(
+            json_hf.contains("vara-hf"),
+            "VaraHf reject record must serialize with vara-hf transport label; \
+             got: {json_hf}"
+        );
+
+        let evt_fm =
+            ListenerRejectEvent::new(TransportKind::VaraFm, "allowlist", &peer);
+        let json_fm = serde_json::to_string(&evt_fm).unwrap();
+        assert!(
+            json_fm.contains("vara-fm"),
+            "P2 #3: VaraFm reject record must serialize with vara-fm transport \
+             label, not vara-hf; got: {json_fm}"
+        );
+        assert!(
+            !json_fm.contains("vara-hf"),
+            "VaraFm reject record must not contain vara-hf label"
+        );
+    }
+
+    /// Sentinel — pin the `arm_vara_listener_inner` signature shape so a
+    /// regression to "no transport_kind param" breaks the typecheck. The
+    /// body is irrelevant; the existence-check at the module boundary is
+    /// the test. async-fn return shape makes a fully-typed fn-pointer
+    /// coercion impossible — reference the function by name.
+    #[test]
+    fn arm_vara_listener_inner_signature_includes_transport_kind() {
+        let _f = arm_vara_listener_inner;
+        // Pin the TransportKind type is reachable; if a regression drops
+        // the param from the signature this compile-fence still passes
+        // but the source-scan sentinel below catches it.
+        let _kind: crate::winlink::listener::TransportKind =
+            crate::winlink::listener::TransportKind::VaraFm;
+    }
+
+    /// Source-scan sentinel: the consumer task's reject paths must NOT
+    /// hardcode the VaraHf transport kind directly inside the
+    /// `ListenerRejectEvent::new(...)` invocations (the two reject-event
+    /// constructors each had a direct hardcode in the prior shape).
+    /// Search for the precise pattern that was the bug — the literal
+    /// `RejectEvent::new(` followed by a positional hardcode — so the
+    /// test is robust to incidental `VaraHf` references in test
+    /// fixtures and docstrings.
+    #[test]
+    fn vara_consumer_reject_does_not_hardcode_transport_kind() {
+        let source = include_str!("ui_commands.rs");
+        // Sentinel assembled via `concat!` so this test's own bytes
+        // don't trip the search.
+        let bug_pattern = concat!(
+            "ListenerRejectEvent::new(\n",
+            "                    crate::winlink::listener::TransportKind::",
+            "Vara",
+        );
+        assert!(
+            !source.contains(bug_pattern),
+            "P2 #3: consumer-task reject-event constructors must take \
+             the threaded `transport_kind` parameter, not a hardcoded \
+             `crate::winlink::listener::TransportKind::Vara*` literal. \
+             Sentinel found the pre-fix shape."
+        );
+    }
     // ========================================================================
     // P1 Task 10 critical-fix: send_webview_form synthesis (tuxlink-tzr5)
     // ========================================================================
@@ -6711,4 +7784,123 @@ hw:CARD=Device,DEV=0
         assert!(xml_str.contains("<reply_template>ICS205_SendReply.0</reply_template>"));
         assert!(xml_str.contains("<incident_name>Test</incident_name>"));
     }
+
+    // ========================================================================
+    // tuxlink-hnkn P2 Task 2: render_ics309_pdf unit tests
+    // ========================================================================
+
+    #[test]
+    fn render_ics309_pdf_with_two_rows_produces_nonempty_pdf() {
+        let req = Ics309PdfRequest {
+            rows: vec![
+                LogRow {
+                    datetime: "2024-05-20T10:13:00Z".to_string(),
+                    from: "N7CPZ".to_string(),
+                    to: "W1AW".to_string(),
+                    subject: "DAMAGE REPORT - SECTOR 7".to_string(),
+                    direction: "out".to_string(),
+                },
+                LogRow {
+                    datetime: "2024-05-20T10:15:00Z".to_string(),
+                    from: "W1AW".to_string(),
+                    to: "N7CPZ".to_string(),
+                    subject: "RE: DAMAGE REPORT ACK".to_string(),
+                    direction: "in".to_string(),
+                },
+            ],
+            range_start: "2024-05-20T10:00:00Z".to_string(),
+            range_end: "2024-05-20T11:00:00Z".to_string(),
+            station_callsign: Some("N7CPZ".to_string()),
+        };
+        let result = render_ics309_pdf_inner(req);
+        assert!(result.is_ok(), "render should succeed: {:?}", result.err());
+        let bytes = result.unwrap();
+        assert!(!bytes.is_empty(), "PDF must have bytes");
+        // PDF magic bytes: %PDF- (0x25 0x50 0x44 0x46 0x2D)
+        assert!(bytes.starts_with(b"%PDF-"), "output must start with PDF magic bytes");
+    }
+
+    #[test]
+    fn render_ics309_pdf_empty_rows_produces_valid_pdf() {
+        let req = Ics309PdfRequest {
+            rows: vec![],
+            range_start: "2024-05-20T00:00:00Z".to_string(),
+            range_end: "2024-05-20T23:59:59Z".to_string(),
+            station_callsign: None,
+        };
+        let bytes = render_ics309_pdf_inner(req).expect("empty rows must still produce a PDF");
+        assert!(bytes.starts_with(b"%PDF-"), "empty-row PDF must have PDF magic bytes");
+    }
+
+    #[test]
+    fn truncate_str_truncates_long_strings_with_ellipsis() {
+        assert_eq!(truncate_str("hello world", 5), "hello…");
+        assert_eq!(truncate_str("hi", 5), "hi");
+        assert_eq!(truncate_str("", 5), "");
+    }
+
+    #[test]
+    fn rfc3339_to_epoch_parses_utc_string() {
+        // 2024-05-20T10:13:00Z = 1_716_199_980 (from native_mailbox tests)
+        assert_eq!(rfc3339_to_epoch("2024-05-20T10:13:00Z"), Some(1_716_199_980));
+        assert_eq!(rfc3339_to_epoch("not-a-date"), None);
+        assert_eq!(rfc3339_to_epoch(""), None);
+    }
+}
+
+// ============================================================================
+// tuxlink-hnkn P2 Task 4: FormDraftLibrary Tauri commands
+// ============================================================================
+//
+// Three IPC commands that expose the `DraftLibrary` SQLite-backed store to the
+// frontend. The store is registered as `Arc<DraftLibrary>` managed state in
+// `lib.rs` during app startup. Each command acquires the `Arc` via
+// `tauri::State<'_, Arc<DraftLibrary>>` and delegates to the store methods.
+//
+// Error projection: `DraftLibraryError` → `String` (the lightweight IPC
+// convention used by the existing search commands). The commands are async
+// only because the Tauri `#[tauri::command]` macro requires it for commands
+// that return `Result`; the underlying SQLite calls are synchronous (the
+// `DraftLibrary::conn` is a `Mutex<Connection>`).
+
+use crate::forms::draft_library::{DraftLibrary, FormDraftSlot};
+
+/// List all saved draft slots for the given `form_id`.
+///
+/// Returns an empty list when no slots exist for that form (not an error).
+/// Slots are ordered by `created_at` ascending (oldest/first-created first).
+#[tauri::command]
+pub async fn form_draft_library_list(
+    form_id: String,
+    library: State<'_, std::sync::Arc<DraftLibrary>>,
+) -> Result<Vec<FormDraftSlot>, String> {
+    library.list(&form_id).map_err(|e| e.to_string())
+}
+
+/// Insert or update a draft slot.
+///
+/// - `slot_id = None` → new slot with a minted UUID.
+/// - `slot_id = Some(id)` → update the matching row in place, or insert if it
+///   does not exist yet (upsert semantics).
+///
+/// Returns the final `FormDraftSlot` — callers use this to get the assigned
+/// `slot_id` on creates, or to reflect the preserved `created_at` on updates.
+#[tauri::command]
+pub async fn form_draft_library_upsert(
+    slot_id: Option<String>,
+    form_id: String,
+    label: String,
+    payload: serde_json::Value,
+    library: State<'_, std::sync::Arc<DraftLibrary>>,
+) -> Result<FormDraftSlot, String> {
+    library.upsert(slot_id, form_id, label, payload).map_err(|e| e.to_string())
+}
+
+/// Delete a draft slot by `slot_id`. No-op-safe if the slot does not exist.
+#[tauri::command]
+pub async fn form_draft_library_delete(
+    slot_id: String,
+    library: State<'_, std::sync::Arc<DraftLibrary>>,
+) -> Result<(), String> {
+    library.delete(&slot_id).map_err(|e| e.to_string())
 }

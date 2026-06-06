@@ -77,6 +77,14 @@ vi.mock('@tauri-apps/api/core', () => ({
         n2Retries: 10,
       };
     }
+    // position_status: PositionStatusDto — no GPS fix, empty grids (null-state).
+    // Without this stub, react-query's queryFn receives `undefined` and emits
+    // "Query data cannot be undefined" warnings on every poll tick (tuxlink-hnkn).
+    if (cmd === 'position_status') return { gps_ready: false, broadcast_grid: '', ui_grid: '' };
+    // Search IPC stubs — silence react-query's "undefined queryFn" warning for
+    // the useSavedSearches hook that mounts inside the SearchBar in the ribbon.
+    if (cmd === 'tauri_search_list_saved') return [];
+    if (cmd === 'tauri_search_list_recent') return [];
     return undefined;
   }),
 }));

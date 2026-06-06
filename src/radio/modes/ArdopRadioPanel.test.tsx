@@ -4,7 +4,7 @@
 // pair (P4.6 deletes both). Composes RadioPanel chrome + Connect form +
 // Live + Signal + SessionLog + Actions sections.
 //
-// These tests cover the structural mounts and RADIO-1 consent flow.
+// These tests cover the structural mounts and connect flow.
 // Live numeric / throughput-meter values are exercised by the underlying
 // SignalSection + Sparkline tests, not duplicated here.
 
@@ -56,7 +56,6 @@ const defaultInvokeImpl = async (cmd: string) => {
       webgui_port: null,
     };
   }
-  if (cmd === 'modem_mint_consent') return 'test-token';
   // Listener defaults (tuxlink-7vea backend default flip).
   if (cmd === 'ardop_allowed_stations_get') {
     return { allow_all: true, callsigns: [] };
@@ -126,44 +125,25 @@ describe('<ArdopRadioPanel>', () => {
     expect(start.disabled).toBe(true);
   });
 
-  it('Start button opens the RADIO-1 consent modal when clicked with a target', async () => {
+  it('Start button directly fires modem_ardop_connect without a consent modal (no-tuxlink-added-safeguards)', async () => {
+    const core = await import('@tauri-apps/api/core');
+    const invokeMock = core.invoke as ReturnType<typeof vi.fn>;
     render(<ArdopRadioPanel onClose={() => {}} />);
     const target = screen.getByTestId('ardop-target-input') as HTMLInputElement;
     fireEvent.change(target, { target: { value: 'W7RMS-10' } });
     const start = screen.getByTestId('ardop-start-btn') as HTMLButtonElement;
     expect(start.disabled).toBe(false);
     fireEvent.click(start);
-    expect(screen.getByRole('dialog')).toBeInTheDocument();
-  });
-
-  it('Consent confirm path mints a token via modem_mint_consent and fires modem_ardop_connect', async () => {
-    const core = await import('@tauri-apps/api/core');
-    const invokeMock = core.invoke as ReturnType<typeof vi.fn>;
-    render(<ArdopRadioPanel onClose={() => {}} />);
-    const target = screen.getByTestId('ardop-target-input') as HTMLInputElement;
-    fireEvent.change(target, { target: { value: 'W7RMS-10' } });
-    fireEvent.click(screen.getByTestId('ardop-start-btn'));
-    // Tick the ack checkbox in the modal (the modal is the only `role="dialog"`).
-    const dialog = screen.getByRole('dialog');
-    const ack = dialog.querySelector('input[type="checkbox"]') as HTMLInputElement;
-    fireEvent.click(ack);
-    const modalConnect = dialog.querySelector('button:not([disabled])') as HTMLButtonElement;
-    // The dialog has Cancel + Connect; pick the one labelled Connect.
-    const connectButton = Array.from(dialog.querySelectorAll('button')).find(
-      (b) => b.textContent === 'Connect',
-    )!;
-    expect(connectButton).not.toBe(undefined);
-    expect(modalConnect).not.toBe(null);
-    fireEvent.click(connectButton);
-    await waitFor(() => {
-      expect(invokeMock).toHaveBeenCalledWith('modem_mint_consent');
-    });
+    // No modal should appear.
+    expect(screen.queryByRole('dialog')).toBeNull();
     await waitFor(() => {
       expect(invokeMock).toHaveBeenCalledWith(
         'modem_ardop_connect',
-        expect.objectContaining({ target: 'W7RMS-10', consentToken: 'test-token' }),
+        expect.objectContaining({ target: 'W7RMS-10' }),
       );
     });
+    // modem_mint_consent must NOT be called — consent token dropped.
+    expect(invokeMock).not.toHaveBeenCalledWith('modem_mint_consent');
   });
 
   it('Stop button fires modem_ardop_disconnect when modem is running', async () => {
@@ -352,11 +332,54 @@ describe('<ArdopRadioPanel>', () => {
     });
   });
 
+  it('does not render a consent modal when Start is clicked', async () => {
+    // Mock invoke so config_get_ardop resolves; modem_ardop_connect is
+    // recorded; modem_mint_consent must NOT be invoked.
+    const core = await import('@tauri-apps/api/core');
+    const invokeMock = core.invoke as ReturnType<typeof vi.fn>;
+    const invokes: { cmd: string; args?: unknown }[] = [];
+    invokeMock.mockImplementation(async (cmd: string, args?: unknown) => {
+      invokes.push({ cmd, args });
+      if (cmd === 'config_get_ardop') {
+        return {
+          binary: 'ardopcf',
+          capture_device: 'plughw:1,0',
+          playback_device: 'plughw:1,0',
+          ptt_serial_path: null,
+          cmd_port: 8515,
+          bandwidth_hz: null,
+          webgui_port: null,
+        };
+      }
+      if (cmd === 'modem_ardop_connect') return null;
+      if (cmd === 'session_log_snapshot') return [];
+      if (cmd === 'ardop_allowed_stations_get') return { allow_all: true, callsigns: [] };
+      return null;
+    });
+
+    render(<ArdopRadioPanel onClose={() => {}} />);
+    const target = screen.getByTestId('ardop-target-input') as HTMLInputElement;
+    fireEvent.change(target, { target: { value: 'K7TEST' } });
+    fireEvent.click(screen.getByTestId('ardop-start-btn'));
+
+    expect(screen.queryByTestId('consent-modal')).toBeNull();
+    expect(invokes.find((i) => i.cmd === 'modem_mint_consent')).toBeUndefined();
+    await waitFor(() => {
+      expect(invokes.find((i) => i.cmd === 'modem_ardop_connect')).toBeDefined();
+    });
+  });
+
   it('close button fires onClose', () => {
     const onClose = vi.fn();
     render(<ArdopRadioPanel onClose={onClose} />);
     fireEvent.click(screen.getByTestId('radio-panel-close'));
     expect(onClose).toHaveBeenCalled();
+  });
+
+  it('does not render a "Dial as" intent toggle', () => {
+    render(<ArdopRadioPanel onClose={() => {}} />);
+    expect(screen.queryByTestId('ardop-intent-select')).toBeNull();
+    expect(screen.queryByText(/Dial as/i)).toBeNull();
   });
 
   // Operator smoke 2026-05-31: Radio section parity with AX.25's

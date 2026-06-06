@@ -245,20 +245,21 @@ describe("buildReplyDraft 'replyWithForm' mode", () => {
     expect(draft.formFields).toBeUndefined();
   });
 
-  // Codex r2 P2 #1: forms WITHOUT explicit field-mapping logic
-  // (Bulletin/Position/ICS-309/Damage Assessment) fall back to plain reply
-  // rather than producing a half-populated form draft.
-  it('falls back to a plain reply for non-ICS-213 forms (no per-form mapping)', () => {
-    const bulletinPayload = {
-      formId: 'Bulletin_Initial',
+  // Codex r2 P2 #1 (now extended in tuxlink-ltkv): forms WITHOUT explicit
+  // field-mapping logic fall back to plain reply. ICS-213 and Bulletin now
+  // both have per-form mappings — the unsupported set is Position, ICS-309,
+  // Check-In, Damage Assessment.
+  it('falls back to a plain reply for unsupported forms (Position, ICS-309, Check-In, Damage Assessment)', () => {
+    const positionPayload = {
+      formId: 'Position_Report',
       formParameters: {
         xmlFileVersion: '1.0', rmsExpressVersion: 'Tuxlink/0.3.0',
         submissionDatetime: '', sendersCallsign: '', gridSquare: '',
-        displayForm: 'Bulletin Viewer.html', replyTemplate: '',
+        displayForm: 'GPS Position Report.html', replyTemplate: '',
       },
-      fields: [['title', 'Test'], ['message', 'Body text']] as [string, string][],
+      fields: [['thetime', '20260530143000'], ['lat', '47.6'], ['lon', '-122.3'], ['message', 'OK']] as [string, string][],
     };
-    const msg = parsed({ isForm: true, formId: 'Bulletin_Initial', formPayload: bulletinPayload });
+    const msg = parsed({ isForm: true, formId: 'Position_Report', formPayload: positionPayload });
     const draft = buildReplyDraft(msg, 'replyWithForm');
     // Plain-reply fallback: no formId/formFields on the draft.
     expect(draft.formId).toBeUndefined();
@@ -266,17 +267,113 @@ describe("buildReplyDraft 'replyWithForm' mode", () => {
   });
 });
 
+// ============================================================================
+// Bulletin replyWithForm (tuxlink-ltkv Phase 3 extension)
+// ============================================================================
+
+describe("buildReplyDraft 'replyWithForm' mode — Bulletin_Initial", () => {
+  const BULLETIN_PAYLOAD = {
+    formId: 'Bulletin_Initial',
+    formParameters: {
+      xmlFileVersion: '1.0',
+      rmsExpressVersion: 'Tuxlink/0.3.0',
+      submissionDatetime: '20260605143000',
+      sendersCallsign: 'W7CPZ',
+      gridSquare: 'CN87us',
+      displayForm: 'Bulletin Viewer.html',
+      replyTemplate: '',
+    },
+    fields: [
+      ['level', 'PRIORITY'],
+      ['subjectline', 'ARES Activation'],
+      ['bullnr', 'ARES-001'],
+      ['title', 'EOC Notice'],
+      ['name', 'ALL ARES'],
+      ['from_name', 'W7CPZ'],
+      ['activitydatetime1', '20260605143000'],
+      ['message', 'Net frequency moved to 147.330.'],
+    ] as [string, string][],
+  };
+
+  it('swaps from_name into the new bulletin recipient (name field)', () => {
+    const msg = parsed({
+      isForm: true,
+      formId: 'Bulletin_Initial',
+      formPayload: BULLETIN_PAYLOAD,
+      from: 'W7CPZ',
+    });
+    const draft = buildReplyDraft(msg, 'replyWithForm');
+    expect(draft.formId).toBe('Bulletin_Initial');
+    expect(draft.formFields?.name).toBe('W7CPZ');
+  });
+
+  it('leaves from_name blank for the operator to populate at send time', () => {
+    const msg = parsed({ isForm: true, formId: 'Bulletin_Initial', formPayload: BULLETIN_PAYLOAD });
+    const draft = buildReplyDraft(msg, 'replyWithForm');
+    expect(draft.formFields?.from_name).toBe('');
+  });
+
+  it('carries level + title + subjectline (with Re: prefix)', () => {
+    const msg = parsed({ isForm: true, formId: 'Bulletin_Initial', formPayload: BULLETIN_PAYLOAD });
+    const draft = buildReplyDraft(msg, 'replyWithForm');
+    expect(draft.formFields?.level).toBe('PRIORITY');
+    expect(draft.formFields?.title).toBe('EOC Notice');
+    expect(draft.formFields?.subjectline).toBe('Re: ARES Activation');
+  });
+
+  it('blanks bullnr + activitydatetime1 + message (per-bulletin volatile fields)', () => {
+    const msg = parsed({ isForm: true, formId: 'Bulletin_Initial', formPayload: BULLETIN_PAYLOAD });
+    const draft = buildReplyDraft(msg, 'replyWithForm');
+    expect(draft.formFields?.bullnr).toBe('');
+    expect(draft.formFields?.activitydatetime1).toBe('');
+    expect(draft.formFields?.message).toBe('');
+  });
+
+  it('preserves an already-Re:-prefixed subjectline without double-prefixing', () => {
+    const payload = {
+      ...BULLETIN_PAYLOAD,
+      fields: BULLETIN_PAYLOAD.fields.map(([k, v]) =>
+        k === 'subjectline' ? [k, 'Re: ARES Activation'] : [k, v],
+      ) as [string, string][],
+    };
+    const msg = parsed({ isForm: true, formId: 'Bulletin_Initial', formPayload: payload });
+    const draft = buildReplyDraft(msg, 'replyWithForm');
+    expect(draft.formFields?.subjectline).toBe('Re: ARES Activation');
+  });
+
+  it('handles missing optional fields without throwing (sparse bulletin)', () => {
+    const sparsePayload = {
+      ...BULLETIN_PAYLOAD,
+      fields: [
+        ['level', 'ROUTINE'],
+        ['from_name', 'K7XYZ'],
+        // No title, no subjectline, no message — all optional or volatile.
+      ] as [string, string][],
+    };
+    const msg = parsed({ isForm: true, formId: 'Bulletin_Initial', formPayload: sparsePayload });
+    const draft = buildReplyDraft(msg, 'replyWithForm');
+    expect(draft.formFields?.name).toBe('K7XYZ');
+    expect(draft.formFields?.level).toBe('ROUTINE');
+    expect(draft.formFields?.title).toBe('');
+    expect(draft.formFields?.subjectline).toBe('');
+  });
+});
+
 // Codex r2 P2 #1 helper — gates the MessageView "Reply with form…" button.
 describe('hasReplyWithFormSupport', () => {
-  it('returns true for ICS213_Initial (the only currently mapped form)', () => {
+  it('returns true for ICS213_Initial', () => {
     expect(hasReplyWithFormSupport('ICS213_Initial')).toBe(true);
   });
 
-  it('returns false for Phase 9 forms (Bulletin / Position / ICS-309 / DA)', () => {
-    expect(hasReplyWithFormSupport('Bulletin_Initial')).toBe(false);
+  it('returns true for Bulletin_Initial (added in tuxlink-ltkv)', () => {
+    expect(hasReplyWithFormSupport('Bulletin_Initial')).toBe(true);
+  });
+
+  it('returns false for forms without reply semantics (Position / ICS-309 / DA / Check-In)', () => {
     expect(hasReplyWithFormSupport('Position_Report')).toBe(false);
     expect(hasReplyWithFormSupport('Form-309_Initial')).toBe(false);
     expect(hasReplyWithFormSupport('Damage_Assessment_Initial')).toBe(false);
+    expect(hasReplyWithFormSupport('Winlink_Check-In')).toBe(false);
   });
 
   it('returns false for null / undefined / unknown formIds', () => {

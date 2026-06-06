@@ -101,21 +101,29 @@ import { deparseQuery } from '../search/parseQuery';
 // overlays. All seven are conditionally mounted (mode-switch / dropdown
 // open / saved-search panel open), so React.lazy + Suspense with the
 // existing call-site gate is a free win — chunks only fetch on first open.
-const TelnetRadioPanel = lazy(() =>
-  import('../radio/modes/TelnetRadioPanel').then((m) => ({ default: m.TelnetRadioPanel })),
-);
-const TelnetP2pRadioPanel = lazy(() =>
-  import('../radio/modes/TelnetP2pRadioPanel').then((m) => ({ default: m.TelnetP2pRadioPanel })),
-);
-const PacketRadioPanel = lazy(() =>
-  import('../radio/modes/PacketRadioPanel').then((m) => ({ default: m.PacketRadioPanel })),
-);
-const ArdopRadioPanel = lazy(() =>
-  import('../radio/modes/ArdopRadioPanel').then((m) => ({ default: m.ArdopRadioPanel })),
-);
-const VaraRadioPanel = lazy(() =>
-  import('../radio/modes/VaraRadioPanel').then((m) => ({ default: m.VaraRadioPanel })),
-);
+//
+// Loaders are extracted as named functions so the AppShell-level idle
+// preload (radioPanelPreloadEffect below) can re-invoke them; React caches
+// the resolved module so the second invocation is a no-op, and the operator
+// no longer sees a blank Suspense fallback period when they first click a
+// radio mode in the sidebar. tuxlink-0ye6 operator report 2026-06-04:
+// opening VARA/ARDOP panels felt sluggish because the cold chunk had to
+// download + Vite-transform (≈1-3 s on Pi 5) under the Suspense fallback.
+const loadTelnetRadioPanel = () =>
+  import('../radio/modes/TelnetRadioPanel').then((m) => ({ default: m.TelnetRadioPanel }));
+const loadTelnetP2pRadioPanel = () =>
+  import('../radio/modes/TelnetP2pRadioPanel').then((m) => ({ default: m.TelnetP2pRadioPanel }));
+const loadPacketRadioPanel = () =>
+  import('../radio/modes/PacketRadioPanel').then((m) => ({ default: m.PacketRadioPanel }));
+const loadArdopRadioPanel = () =>
+  import('../radio/modes/ArdopRadioPanel').then((m) => ({ default: m.ArdopRadioPanel }));
+const loadVaraRadioPanel = () =>
+  import('../radio/modes/VaraRadioPanel').then((m) => ({ default: m.VaraRadioPanel }));
+const TelnetRadioPanel = lazy(loadTelnetRadioPanel);
+const TelnetP2pRadioPanel = lazy(loadTelnetP2pRadioPanel);
+const PacketRadioPanel = lazy(loadPacketRadioPanel);
+const ArdopRadioPanel = lazy(loadArdopRadioPanel);
+const VaraRadioPanel = lazy(loadVaraRadioPanel);
 const SearchDropdown = lazy(() =>
   import('../search/SearchDropdown').then((m) => ({ default: m.SearchDropdown })),
 );
@@ -285,6 +293,36 @@ export function AppShell() {
   }, [dropdownOpen]);
   // Saved-searches management panel (Task 18).
   const [savedSearchesOpen, setSavedSearchesOpen] = useState(false);
+
+  // Warm the lazy radio-panel chunks at app idle so the operator's first
+  // click on a sidebar connection doesn't sit on a blank Suspense fallback
+  // while Vite cold-transforms a ~1000-line TSX file. Loaders return cached
+  // module exports after the first call, so the eager preload's work is
+  // fully reused by React.lazy on the operator click. tuxlink-0ye6 operator
+  // report 2026-06-04 — opening VARA/ARDOP panels felt very sluggish; static
+  // analysis ruled out heavy module-scope side effects, leaving cold chunk
+  // load as the dominant first-open cost.
+  useEffect(() => {
+    const preload = () => {
+      void loadTelnetRadioPanel();
+      void loadTelnetP2pRadioPanel();
+      void loadPacketRadioPanel();
+      void loadArdopRadioPanel();
+      void loadVaraRadioPanel();
+    };
+    // WebKitGTK (Tauri's web view) supports requestIdleCallback; the
+    // setTimeout fallback covers test envs (jsdom) and older webviews.
+    const w = window as Window & {
+      requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
+      cancelIdleCallback?: (id: number) => void;
+    };
+    if (typeof w.requestIdleCallback === 'function') {
+      const id = w.requestIdleCallback(preload, { timeout: 2000 });
+      return () => w.cancelIdleCallback?.(id);
+    }
+    const id = window.setTimeout(preload, 500);
+    return () => window.clearTimeout(id);
+  }, []);
 
   const metaText = useMemo((): string | null => {
     if (!search.isActive) return null;
@@ -546,7 +584,12 @@ export function AppShell() {
     print: () => { if (openMessage) window.print(); },
     toggleStatusBar: () => setShowStatusBar((s) => !s),
     toggleRadioPanel: () => setPinRadioPanel((s) => !s),
-    selectFolder: (folder) => { setSelectedFolder(folder); setSelectedMessage(null); setSelectedConnection(null); },
+    // tuxlink-u4ky: don't clear selectedConnection on folder switch.
+    // selectedConnection drives the right-hand radio panel mount; the post-P2
+    // design (see comment below on onSelectConnection) says it's independent
+    // of folder navigation, but this pre-P2-era line was clobbering the
+    // running connection's panel any time the operator switched folders.
+    selectFolder: (folder) => { setSelectedFolder(folder); setSelectedMessage(null); },
     setScheme: (id) => { applyColorScheme(id); saveColorScheme(id); },
     openSettings: () => setSettingsOpen(true),
     openThemeDesigner: () => setThemeDesignerOpen(true),
@@ -592,7 +635,10 @@ export function AppShell() {
   const onSelectFolder = useCallback((folder: MailboxFolderRef) => {
     setSelectedFolder(folder);
     setSelectedMessage(null);
-    setSelectedConnection(null);
+    // tuxlink-u4ky: selectedConnection deliberately preserved — see the
+    // comment on onSelectConnection below for the post-P2 independence
+    // contract. Clearing it here closed the running radio panel on every
+    // sidebar folder click (smoke-walk regression 2026-06-05).
   }, []);
 
   // 2026-05-31 operator-flagged: selectedConnection and selectedMessage are

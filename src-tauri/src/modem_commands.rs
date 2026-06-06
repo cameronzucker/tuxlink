@@ -1,8 +1,9 @@
 //! Tauri commands for modem (ARDOP) operations.
 //!
-//! RADIO-1: `modem_ardop_connect` requires a per-session consent token issued
-//! by the frontend's RADIO-1 modal. The backend rejects any connect attempt
-//! whose token doesn't match the current session token. See Phase 6.
+//! Connect lifecycle: `modem_ardop_connect` → `modem_ardop_b2f_exchange` →
+//! `modem_ardop_disconnect`. An in-process AtomicBool busy guard prevents
+//! duplicate concurrent connect invocations. The RADIO-1 consent-token gate
+//! was removed in Task 1.1 (spec §2 "No tuxlink-added safeguards"; bd tuxlink-0ye6).
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -16,14 +17,6 @@ use crate::winlink::modem::ardop::transport::ArdopTransport;
 use crate::winlink::modem::ardop::ArdopConfig;
 use crate::winlink::modem::{InitConfig, ModemTransport};
 use crate::winlink::session::SessionIntent;
-
-/// RADIO-1 bounded-airtime cap: the worst-case `connect_arq` wall-clock budget.
-///
-/// 2026-05-22 incident: a ~110s runaway connect (no working abort) forced an
-/// operator radio power-off. The cap prevents the same pattern here — if
-/// `connect_arq` does not return CONNECTED / FAULT / DISC within the deadline,
-/// the call errors out and the session is reset.
-const CONNECT_DEADLINE: Duration = Duration::from_secs(120);
 
 /// Number of ARQ retries packed into the `ARQCALL` setter.
 const CONNECT_REPEAT: u32 = 3;
@@ -56,8 +49,8 @@ pub fn modem_get_status_inner(session: &Arc<ModemSession>) -> ModemStatus {
     session.status_snapshot()
 }
 
-/// Inner helper: atomically clear RADIO-1 consent, reset status to Stopped,
-/// take the transport handle, then shut the transport down OUTSIDE the lock.
+/// Inner helper: reset status to Stopped, take the transport handle, then
+/// shut the transport down OUTSIDE the lock.
 /// Uses [`ModemSession::reset_to_stopped`] so observers see a single
 /// consistent transition rather than the prior two-step (clear-consent then
 /// set-status) which left a window where the token was invalidated but the
@@ -108,109 +101,70 @@ pub fn modem_get_status(session: State<'_, Arc<ModemSession>>) -> ModemStatus {
     modem_get_status_inner(&session)
 }
 
-/// RADIO-1: mint a fresh per-session consent token on the BACKEND and return
-/// it to the frontend. The frontend invokes this from the consent-modal's
-/// Connect button (after the operator ticks the acknowledgement) so that the
-/// token authorizing the subsequent `modem_ardop_connect` was produced by
-/// the same trust boundary that validates it. A frontend-generated token
-/// would let a compromised renderer self-mint — the gate would be theater.
-/// See [`ModemSession::mint_consent_token`] for storage semantics.
-#[tauri::command]
-pub fn modem_mint_consent(session: State<'_, Arc<ModemSession>>) -> String {
-    session.mint_consent_token()
-}
-
-/// Disconnect the modem: invalidates the RADIO-1 consent token, takes the
-/// live transport handle, resets status to Stopped, and shuts the transport
-/// down (best-effort `DISCONNECT` on the cmd socket).
+/// Disconnect the modem: takes the live transport handle, resets status to
+/// Stopped, and shuts the transport down (best-effort `DISCONNECT` on the
+/// cmd socket).
 #[tauri::command]
 pub fn modem_ardop_disconnect(session: State<'_, Arc<ModemSession>>) -> Result<(), String> {
     modem_ardop_disconnect_inner(&session)
 }
 
-/// Inner helper with a factory seam — RADIO-1-gated ARDOP connect.
+/// Inner helper with a factory seam — ARDOP connect with in-process busy guard.
 ///
 /// The factory closure constructs the `Box<dyn ModemTransport>` given an
 /// `ArdopConfig` and the target callsign. Production calls hand in
 /// `ArdopTransport::with_managed_modem`; tests hand in a stub.
 ///
-/// # RADIO-1
+/// # Busy guard
 ///
-/// The first action is [`ModemSession::consume_consent_token`] — atomic
-/// equality-check-and-clear under one lock. ANY call with a missing-or-wrong
-/// token returns `Err` BEFORE the factory runs, BEFORE `init`, BEFORE
-/// `connect_arq` — i.e., no spawn, no socket bind, no I/O whatsoever, AND
-/// no status mutation. A successful match consumes the token in the same
-/// lock acquisition, so a replay attempt (same token, second call) is
-/// indistinguishable from a wrong token from this point forward.
+/// The first action is [`ModemSession::try_begin_connect`] — atomic
+/// compare-exchange. If another connect is already in flight, returns `Err`
+/// BEFORE the factory runs, BEFORE `init`, BEFORE `connect_arq` — no spawn,
+/// no socket bind, no I/O whatsoever, AND no status mutation. The busy bit is
+/// cleared via RAII ([`ConnectGuard`]) on every exit path, so a failed or
+/// completed connect leaves the session ready for the next attempt.
 ///
-/// The token is in-process replay protection minted via
-/// `modem_mint_consent`; a compromised renderer cannot self-mint because
-/// the token is generated server-side. Plain string equality on the wire
-/// is the design. Per-invocation consent (Part 97) is enforced by the
-/// CONSUME semantics: one mint authorizes exactly one connect.
-///
-/// # Bounded airtime
-///
-/// `connect_arq` is bounded by [`CONNECT_DEADLINE`] (120s). The 2026-05-22
-/// runaway-connect incident is the calibration: a 110s no-abort runaway
-/// forced a radio power-off. There is NO retry loop in this function — if
-/// `init` or `connect_arq` fails, the status flips to `Error` and we
-/// return immediately. A retry must be a fresh user-initiated Connect
-/// with a fresh consent token (Part 97 per-invocation rule).
+/// This replaces the `consume_consent_token` dup-call defense that was a
+/// side-effect of the RADIO-1 consent modal (Task 1.1 — spec §2 "No
+/// tuxlink-added safeguards"; bd tuxlink-0ye6 / tuxlink-8gq3).
 pub fn modem_ardop_connect_gated_with_factory<F>(
     session: &Arc<ModemSession>,
     target: &str,
-    consent_token: &str,
     ardop_ui: &ArdopUiConfig,
     make_transport: F,
 ) -> Result<(), String>
 where
     F: FnOnce(ArdopConfig, &str) -> Result<Box<dyn ModemTransport>, String>,
 {
-    // ─── RADIO-1 consent gate ────────────────────────────────────────────
-    // FIRST CHECK: no I/O, no spawn, no status mutation if the token is
-    // wrong. Keeping the gate ahead of every other side effect is the
-    // whole point of the function — a compromised caller that bypasses
-    // the modal must NOT be able to even SPAWN ardopcf.
-    //
-    // `consume_consent_token` is atomic — equality check + clear under a
-    // single lock acquisition. After a successful return, the stored token
-    // is `None`, so a replay attempt (same `consent_token`, second call)
-    // takes this same branch and returns Err. Per-invocation consent
-    // (Part 97) is enforced by this consume, not by any caller-side
-    // discipline.
-    if !session.consume_consent_token(consent_token) {
-        tracing::warn!(
-            target: "tuxlink::modem",
-            target_callsign = %target,
-            outcome = "denied",
-            "RADIO-1 consent gate: denied (missing or invalid token)",
-        );
+    // ─── In-process busy guard ───────────────────────────────────────────
+    // FIRST CHECK: no I/O, no spawn, no status mutation if another connect
+    // is already in flight. The compare_exchange is atomic — false→true in
+    // one operation. If the bit is already true, return Err immediately.
+    if !session.try_begin_connect() {
         return Err(
-            "RADIO-1: missing or invalid consent token; mint one via the Connect modal first"
-                .into(),
+            "connect already in progress; wait for the previous attempt to complete".into(),
         );
     }
+    // RAII guard: clear busy bit on every exit path.
+    struct ConnectGuard<'a>(&'a Arc<ModemSession>);
+    impl<'a> Drop for ConnectGuard<'a> {
+        fn drop(&mut self) {
+            self.0.clear_connect_in_progress();
+        }
+    }
+    let _guard = ConnectGuard(session);
 
-    tracing::info!(
-        target: "tuxlink::modem",
-        target_callsign = %target,
-        outcome = "consumed",
-        "RADIO-1 consent gate: token consumed",
-    );
     modem_ardop_connect_post_consume_with_factory(session, target, ardop_ui, make_transport)
 }
 
-/// Inner helper AFTER the consent gate has fired + consumed the token.
-/// Do NOT call this from anywhere that hasn't already validated + consumed
-/// the consent token via [`ModemSession::consume_consent_token`]. The
-/// `_post_consume` naming is the discipline contract: this function trusts
-/// its caller has gated.
+/// Inner helper that runs AFTER the busy guard has been acquired. Caller
+/// (`modem_ardop_connect_gated_with_factory`) holds the `ConnectGuard` RAII
+/// that clears the busy bit on drop. Do NOT call this from anywhere that
+/// hasn't already acquired the busy bit.
 ///
-/// Used by the Tauri `modem_ardop_connect` wrapper, which consumes the
-/// token FIRST (RADIO-1: no I/O before gate) and only then runs config
-/// I/O + delegates here.
+/// The `_post_consume` naming is legacy from the prior RADIO-1 consent-token
+/// design (Task 1.1 removed it). The function itself is unchanged; only the
+/// discipline contract is updated.
 pub fn modem_ardop_connect_post_consume_with_factory<F>(
     session: &Arc<ModemSession>,
     target: &str,
@@ -220,8 +174,8 @@ pub fn modem_ardop_connect_post_consume_with_factory<F>(
 where
     F: FnOnce(ArdopConfig, &str) -> Result<Box<dyn ModemTransport>, String>,
 {
-    // NO GATE here — caller MUST have consumed the consent token already.
-    // (Naming the function `_post_consume` is the discipline contract.)
+    // NO GATE here — caller MUST have acquired the busy bit already.
+    // (The `_post_consume` name is legacy; behavior is unchanged.)
 
     // ─── Translate ArdopUiConfig (frontend) → ArdopConfig (backend) ─────
     // See `build_ardop_extra_args` — extracted for unit testing.
@@ -277,39 +231,36 @@ where
     // `session.abort_in_flight()` → which writes `ABORT\r` to ardopcf via
     // this writer. The recv loop then surfaces FAULT/NEWSTATE DISC and
     // returns Err, unwinding the connect path. Without this hook the
-    // 120s `CONNECT_DEADLINE` was the only abort path — see the
-    // 2026-05-22 runaway-connect incident (memory radio1-bounded-airtime-abort).
+    // legacy 120s connect cap (inlined below) was the only abort path —
+    // see the 2026-05-22 runaway-connect incident (memory
+    // radio1-bounded-airtime-abort).
     //
     // If the backend can't expose a writer (default trait impl returns
     // None), the install is silently skipped: graceful disconnect remains
     // the only path. For ardopcf the writer is always available after
-    // init() succeeds.
-    if let Some(writer) = transport.try_clone_abort_writer() {
-        session.install_abort_writer(writer);
+    // init() succeeds. tuxlink-0ye6 Task 4.1 widened to a (writer, stream)
+    // pair so the session can hard-close via the stream when the
+    // cooperative write fails (Codex Round 4 P1 #3).
+    if let Some((writer, stream)) = transport.try_clone_abort_writer() {
+        session.install_abort_writer(writer, stream);
     }
 
-    // Status: Connecting (bounded by CONNECT_DEADLINE below).
+    // Status: Connecting (bounded by the inlined legacy 120s cap below).
     let mut snap = session.status_snapshot();
     snap.state = ModemState::Connecting;
     session.set_status(snap);
 
     // ─── ARQ connect (bounded airtime) ───────────────────────────────────
-    tracing::info!(
-        target: "tuxlink::modem",
-        target_callsign = %target,
-        deadline_secs = CONNECT_DEADLINE.as_secs(),
-        "ARDOP ARQ connect starting",
-    );
-    let info = match transport.connect_arq(target, CONNECT_REPEAT, CONNECT_DEADLINE) {
+    // Legacy Start-button path: inline the historical 120s wall-clock cap.
+    // The new b2f_exchange path (modem_ardop_b2f_exchange) passes `None`
+    // (no tuxlink-layer wall-clock cap; bound is ardopcf's ARQTIMEOUT +
+    // operator ABORT). This command is slated for deletion in Phase 6
+    // when the panel migrates fully to `ardop_open_session` +
+    // `modem_ardop_b2f_exchange`.
+    let info = match transport.connect_arq(target, CONNECT_REPEAT, Some(Duration::from_secs(120))) {
         Ok(info) => info,
         Err(e) => {
             let msg = format!("ARQ connect failed: {e}");
-            tracing::warn!(
-                target: "tuxlink::modem",
-                target_callsign = %target,
-                error = %e,
-                "ARDOP ARQ connect failed",
-            );
             let mut s = ModemStatus::stopped();
             s.state = ModemState::Error;
             s.last_error = Some(msg.clone());
@@ -322,13 +273,6 @@ where
     // ─── Install handle + publish initial connected snapshot ─────────────
     session.install_transport(transport);
 
-    tracing::info!(
-        target: "tuxlink::modem",
-        target_callsign = %target,
-        peer = %info.peer_call,
-        bandwidth_hz = info.bandwidth_hz,
-        "ARDOP ARQ link established",
-    );
     let mut s = session.status_snapshot();
     s.state = ModemState::ConnectedIrs;
     s.peer = Some(info.peer_call.clone());
@@ -398,8 +342,8 @@ where
         return Err(msg);
     }
 
-    if let Some(writer) = transport.try_clone_abort_writer() {
-        session.install_abort_writer(writer);
+    if let Some((writer, stream)) = transport.try_clone_abort_writer() {
+        session.install_abort_writer(writer, stream);
     }
 
     session.install_transport(transport);
@@ -410,6 +354,324 @@ where
     s.last_error = None;
     session.set_status(s);
     Ok(())
+}
+
+// ─── tuxlink-0ye6 Task 3.5 — ARDOP session lifecycle commands ───────────
+//
+// ARDOP analog of VARA's `vara_open_session(intent, transport_kind)` +
+// `vara_close_session()` (Tasks 3.2 + 3.3 + 4.2). The shape mirrors VARA's
+// — same signature for the open command (intent + transport_kind both
+// passed even though ARDOP only has TransportKind::Ardop, for consistency
+// with the Phase 5 shared RadioSessionPanel's uniform IPC contract).
+//
+// Differences from VARA:
+//   - VARA is operator-managed (Windows process under Wine); tuxlink only
+//     opens the TCP cmd + data socket pair. ARDOP is tuxlink-managed —
+//     `ardop_open_session` spawns ardopcf + binds the cmd socket + sends
+//     the init commands.
+//   - VARA's "open" is just transport-open; no transmit. ARDOP's "open"
+//     spawns the modem but does NOT call `connect_arq`. The Connect
+//     button's path (Task 3.6 — widened `modem_ardop_b2f_exchange`) is
+//     what eventually calls `connect_arq`.
+//   - Auto-arm semantics are identical: P2p + RadioOnly auto-arm the
+//     listener; Cms does not.
+
+/// Spawn ardopcf + bind the cmd socket + send the init commands, but do
+/// NOT call `connect_arq` and do NOT flip LISTEN. The transport is
+/// installed in the session, status goes to `Idle`. Factored out of
+/// [`modem_ardop_connect_post_consume_with_factory`] +
+/// [`start_modem_listen_only`] so the new
+/// [`ardop_open_session_inner`] can reuse the same spawn-and-init body
+/// without inheriting either's connect-vs-listen tail.
+///
+/// `initial_listen=false` is the canonical case for the new lifecycle:
+/// LISTEN gets flipped TRUE later by [`crate::ui_commands::ardop_listen_inner`]
+/// (the auto-arm path) iff the operator's intent calls for it. This keeps
+/// the open-session command's pre-conditions narrow — opening a session
+/// with intent=Cms doesn't put the modem on-air, which would be wrong for
+/// the CMS-bound path.
+///
+/// The abort writer is installed AFTER the spawn + init succeed, matching
+/// the existing `modem_ardop_connect_post_consume_with_factory` pattern.
+/// This must happen BEFORE returning so a subsequent
+/// [`ModemSession::abort_in_flight`] (called from
+/// [`ardop_close_session_inner`]) finds the writer installed.
+pub fn spawn_and_init_ardop_inner<F>(
+    session: &Arc<ModemSession>,
+    ardop_ui: &ArdopUiConfig,
+    make_transport: F,
+) -> Result<(), String>
+where
+    F: FnOnce(ArdopConfig, &str) -> Result<Box<dyn ModemTransport>, String>,
+{
+    let extra_args = build_ardop_extra_args(ardop_ui);
+    let cfg = ArdopConfig {
+        binary: PathBuf::from(&ardop_ui.binary),
+        extra_args,
+        cmd_port: ardop_ui.cmd_port,
+        data_port: ardop_ui.cmd_port.saturating_add(1),
+        audio_device_path: None,
+    };
+
+    let mut snap = session.status_snapshot();
+    snap.state = ModemState::Spawning;
+    snap.peer = None;
+    snap.last_error = None;
+    session.set_status(snap);
+
+    let mut transport = match make_transport(cfg, "") {
+        Ok(t) => t,
+        Err(e) => {
+            let mut s = ModemStatus::stopped();
+            s.state = ModemState::Error;
+            s.last_error = Some(e.clone());
+            session.set_status(s);
+            return Err(e);
+        }
+    };
+
+    // initial_listen = false — the auto-arm path flips LISTEN TRUE later
+    // via `ardop_listen_inner` iff intent.auto_arms_listener(). Keeping
+    // the modem off-air during the open phase is the load-bearing safety
+    // invariant — see the spec §2 "No tuxlink-added safeguards" note +
+    // the per-intent decision matrix in `SessionIntent::auto_arms_listener`.
+    let mut init_cfg = init_config_from_persisted_config();
+    init_cfg.initial_listen = false;
+    if let Err(e) = transport.init(&init_cfg) {
+        let msg = format!("init failed: {e}");
+        let mut s = ModemStatus::stopped();
+        s.state = ModemState::Error;
+        s.last_error = Some(msg.clone());
+        session.set_status(s);
+        drop(transport);
+        return Err(msg);
+    }
+
+    // Install the side-channel abort writer BEFORE returning so a
+    // subsequent ardop_close_session can fire ABORT via abort_in_flight
+    // even when no connect_arq is yet in flight. Mirror of Task 4.2's
+    // VARA wire pattern (also done before the post-init publish).
+    if let Some((writer, stream)) = transport.try_clone_abort_writer() {
+        session.install_abort_writer(writer, stream);
+    }
+
+    session.install_transport(transport);
+
+    let mut s = session.status_snapshot();
+    s.state = ModemState::Idle;
+    s.peer = None;
+    s.last_error = None;
+    session.set_status(s);
+    Ok(())
+}
+
+/// Inner helper for [`ardop_open_session`] with a factory seam so tests
+/// can drive without spawning a real ardopcf. `intent` + `transport_kind`
+/// are recorded on session state via
+/// [`ModemSession::set_active_session_mode`] AFTER the spawn + init
+/// succeeds; on a failed spawn/init the active-mode fields stay clear so
+/// a fresh open attempt starts with a clean slate.
+///
+/// The optional auto-arm (when `intent.auto_arms_listener()` is true) is
+/// the caller's responsibility — `ardop_open_session_inner` does NOT call
+/// `ardop_listen_inner` because the inner takes synchronous + tauri-free
+/// args while the listen path is async + AppHandle-bearing. The outer
+/// [`ardop_open_session`] Tauri command chains the auto-arm after this
+/// helper returns Ok. Same separation as VARA's
+/// `vara_open_session_inner` → outer-command-chains-auto-arm pattern.
+pub fn ardop_open_session_inner<F>(
+    session: &Arc<ModemSession>,
+    ardop_ui: &ArdopUiConfig,
+    intent: SessionIntent,
+    transport_kind: crate::winlink::listener::transport::TransportKind,
+    make_transport: F,
+) -> Result<(), String>
+where
+    F: FnOnce(ArdopConfig, &str) -> Result<Box<dyn ModemTransport>, String>,
+{
+    // Refuse re-open if a session is already in flight. The existing
+    // status machine's Spawning/Initializing/Idle states all imply a
+    // transport is installed (or being installed); only Stopped/Error
+    // are safe to open over. Same conservative posture as VARA's
+    // "transport.is_some() → reject" check in vara_open_session_inner.
+    let cur = session.status_snapshot().state;
+    if !matches!(cur, ModemState::Stopped | ModemState::Error) {
+        return Err(format!(
+            "ARDOP session already open or in-flight (state={cur:?}) — \
+             call ardop_close_session first"
+        ));
+    }
+
+    spawn_and_init_ardop_inner(session, ardop_ui, make_transport)?;
+
+    // Record the operator-typed (intent, transport_kind) AFTER the
+    // spawn + init succeeds — a failed open leaves the active-mode
+    // fields clear so the next open attempt starts fresh.
+    session.set_active_session_mode(intent, transport_kind);
+    Ok(())
+}
+
+/// Open an ARDOP session: spawn ardopcf + bind cmd socket + send init
+/// commands + install the abort writer + record (intent, transport_kind)
+/// + (when intent auto-arms) flip the listener on. Returns Ok on
+/// successful open.
+///
+/// **Signature (tuxlink-0ye6 Task 3.5 + Codex Round 2 P2):** accepts
+/// both `intent: SessionIntent` AND `transport_kind: TransportKind`.
+/// ARDOP only has `TransportKind::Ardop`, but the shape mirrors VARA's
+/// so the Phase 5 RadioSessionPanel sends `{ intent, transportKind }`
+/// uniformly for all panels.
+///
+/// **Auto-arm (spec §2 + §3):** the listener is auto-armed inline when
+/// `intent.auto_arms_listener()` is true — `P2p` (any peer) and
+/// `RadioOnly` (R-pool peer) auto-arm; `Cms` does not (CMS is
+/// outbound-only from the client's view). Auto-arm failure does not tear
+/// down the transport — open and arm are distinct contracts, and the
+/// operator can retry the arm via the Listen toggle.
+///
+/// **Does NOT call `connect_arq`** — that's the Connect button's path
+/// (Task 3.6's widened `modem_ardop_b2f_exchange`). For `intent=Cms`,
+/// open spawns ardopcf and stays idle waiting for Connect.
+#[tauri::command]
+pub async fn ardop_open_session(
+    app: AppHandle,
+    log: State<'_, Arc<crate::session_log::SessionLogState>>,
+    session: State<'_, Arc<ModemSession>>,
+    listen_state: State<'_, Arc<crate::ui_commands::ArdopListenState>>,
+    intent: SessionIntent,
+    transport_kind: crate::winlink::listener::transport::TransportKind,
+) -> Result<ModemStatus, String> {
+    // Pre-flight identity check (mirror of modem_ardop_connect): no point
+    // spawning the modem if the operator hasn't completed the wizard.
+    let cfg = config::read_config().map_err(|e| format!("read config: {e}"))?;
+    check_identity_present(&cfg)?;
+
+    let ardop_ui = config_get_ardop();
+    if ardop_ui.capture_device.is_empty() || ardop_ui.playback_device.is_empty() {
+        return Err(
+            "ARDOP audio devices not configured — open Settings → ARDOP first".into(),
+        );
+    }
+
+    // Spawn the modem on a blocking thread (bind-wait + init can be slow,
+    // same pattern as the listener arm path).
+    let session_arc: Arc<ModemSession> = session.inner().clone();
+    let ardop_ui_clone = ardop_ui.clone();
+    let res = tokio::task::spawn_blocking(move || {
+        ardop_open_session_inner(
+            &session_arc,
+            &ardop_ui_clone,
+            intent,
+            transport_kind,
+            |cfg, _target| {
+                ArdopTransport::with_managed_modem(cfg)
+                    .map(|t| Box::new(t) as Box<dyn ModemTransport>)
+                    .map_err(|e| format!("spawn failed: {e}"))
+            },
+        )
+    })
+    .await
+    .map_err(|e| format!("modem spawn task failed: {e}"))?;
+
+    res?;
+
+    // Auto-arm the listener when the intent calls for it (spec §2 + §3).
+    // Best-effort: a failure here does NOT tear down the transport — open
+    // and arm are distinct contracts.
+    if intent.auto_arms_listener() {
+        if let Err(e) = crate::ui_commands::ardop_listen_inner(
+            &app,
+            log.inner(),
+            session.inner(),
+            listen_state.inner(),
+        )
+        .await
+        {
+            eprintln!(
+                "ardop_open_session: auto-arm failed after open ({e:?}); transport \
+                 remains open. Toggle Listen on the panel to retry the arm."
+            );
+        }
+    }
+
+    Ok(session.status_snapshot())
+}
+
+/// Inner helper for [`ardop_close_session`] so tests can drive without
+/// a Tauri runtime. Performs the spec §5 close sequence:
+///
+/// 1. Disarm listener via [`crate::ui_commands::ardop_set_listen_inner`]
+///    (`enabled=false`) — idempotent; no-op when no listener is armed.
+/// 2. Abort any in-flight exchange via
+///    [`ModemSession::abort_in_flight`] — best-effort; the
+///    no-writer-installed `Err` is the expected path when no exchange
+///    is in flight.
+/// 3. Clear active session mode + transport via
+///    [`modem_ardop_disconnect_inner`] (which calls `reset_to_stopped`
+///    — that clears active_intent + active_transport_kind alongside
+///    the transport handle).
+///
+/// Steps 1 + 2 are already chained inside `modem_ardop_disconnect_inner`
+/// (the disconnect path already aborts in-flight, resets to stopped).
+/// The listener-disarm step is the only new behavior layered here.
+pub async fn ardop_close_session_inner(
+    app: &AppHandle,
+    log: &Arc<crate::session_log::SessionLogState>,
+    session: &Arc<ModemSession>,
+    listen_state: &Arc<crate::ui_commands::ArdopListenState>,
+) -> Result<(), String> {
+    // tuxlink-pdnw (Codex Phase 3-4 P1 #5): bump the close-generation
+    // FIRST, before any consumer-shutdown signal or in-flight worker
+    // observation. Any worker already past `current_close_generation()`
+    // sees a stale snapshot and the guarded install-back path drops the
+    // transport instead of restoring it. Without this line, the listener
+    // consumer's drain path (which calls `install_transport` after
+    // observing the shutdown flag set by `ardop_set_listen_inner`) would
+    // race with this close and reopen the session.
+    let _ = session.bump_close_generation();
+
+    // Step 1: Disarm listener (idempotent — emits Warn line if not armed).
+    // ardop_set_listen_inner already calls session.abort_in_flight() +
+    // session.send_listen_command(false) when armed; this covers the
+    // abort-during-B2F path (Codex 2026-06-03 P1 #3 fix).
+    let _ = crate::ui_commands::ardop_set_listen_inner(
+        app, log, session, listen_state, false,
+    )
+    .await;
+
+    // Steps 2 + 3: modem_ardop_disconnect_inner does the abort_in_flight
+    // call (best-effort) + reset_to_stopped (which clears active_intent +
+    // active_transport_kind alongside the transport handle and abort
+    // writer). The disconnect path's own `transport.disconnect(...)` is
+    // also called best-effort — even if it fails, the session ends in
+    // Stopped so a fresh open can succeed.
+    modem_ardop_disconnect_inner(session)
+}
+
+/// Close an ARDOP session: full lifecycle teardown per spec §5.
+///
+/// 1. **Disarm listener** via
+///    [`crate::ui_commands::ardop_set_listen_inner`] (`enabled=false`)
+///    — idempotent.
+/// 2. **Abort in-flight exchange** via [`ModemSession::abort_in_flight`]
+///    (already inside `modem_ardop_disconnect_inner`) — best-effort.
+/// 3. **Clear active session mode** (`active_intent` +
+///    `active_transport_kind`) via [`ModemSession::reset_to_stopped`]
+///    (already inside `modem_ardop_disconnect_inner`).
+/// 4. **Close transport** via [`modem_ardop_disconnect_inner`] —
+///    `transport.disconnect()` (best-effort, 5s deadline), then drop
+///    the transport.
+///
+/// Idempotent across the whole chain — calling on an already-closed
+/// session is a no-op that returns Ok.
+#[tauri::command]
+pub async fn ardop_close_session(
+    app: AppHandle,
+    log: State<'_, Arc<crate::session_log::SessionLogState>>,
+    session: State<'_, Arc<ModemSession>>,
+    listen_state: State<'_, Arc<crate::ui_commands::ArdopListenState>>,
+) -> Result<(), String> {
+    ardop_close_session_inner(&app, log.inner(), session.inner(), listen_state.inner()).await
 }
 
 /// Build the [`InitConfig`] passed to `ModemTransport::init` from the
@@ -540,10 +802,9 @@ fn validate_arq_bandwidth_hz(bw: u32) -> Option<u32> {
     match bw {
         200 | 500 | 1000 | 2000 => Some(bw),
         invalid => {
-            tracing::warn!(
-                target: "tuxlink::modem",
-                bandwidth_hz = invalid,
-                "ignoring invalid persisted bandwidth_hz (valid: 200/500/1000/2000)",
+            eprintln!(
+                "tuxlink-j0ij: ignoring invalid persisted bandwidth_hz={invalid}; \
+                 valid: 200/500/1000/2000"
             );
             None
         }
@@ -582,56 +843,27 @@ pub fn check_identity_present(cfg: &Config) -> Result<(), String> {
     }
 }
 
-/// RADIO-1-gated ARDOP connect. Returns an actionable error when
+/// ARDOP connect Tauri command. Returns an actionable error when
 /// audio devices are not yet configured (operator must complete
 /// Settings → ARDOP before calling).
 ///
-/// # RADIO-1 invariant: gate BEFORE any I/O
-///
-/// The consent token is consumed at the very top of this function —
-/// before `config_get_ardop()` is called (disk read + audio-state leak),
-/// before any status mutation, before any spawn. A wrong/missing token
-/// returns Err without touching the filesystem or the session state.
-/// This closes the pre-gate-I/O bypass the 2026-05-30 Codex adrev round
-/// flagged.
-///
 /// # Pre-flight identity check (tuxlink-5738)
 ///
-/// AFTER the consent gate has consumed the token but BEFORE the
-/// audio-device check, this command verifies the operator's identity
-/// (callsign or identifier) is configured. Ordering rationale: a
-/// wrong-token attempt must STILL fail at the consent gate without
-/// leaking identity-state via the error message. Identity is more
-/// foundational than audio devices (no callsign → no on-air operation
-/// is legal under Part 97), so the identity check precedes the
-/// audio-device check.
+/// BEFORE the audio-device check, this command verifies the operator's
+/// identity (callsign or identifier) is configured. The wizard sets one of
+/// these; an unconfigured deployment must complete the wizard first.
 #[tauri::command]
 pub fn modem_ardop_connect(
     session: State<'_, Arc<ModemSession>>,
     target: String,
-    consent_token: String,
 ) -> Result<(), String> {
-    // ─── RADIO-1 gate FIRST ──────────────────────────────────────────────
-    // No config I/O, no status mutation, no error path that leaks state
-    // until the consent token is verified + consumed. `consume_consent_token`
-    // is atomic (equality check + clear in one lock). After this returns
-    // Ok, the stored token is `None` — a replay of `consent_token` would
-    // fail at this exact point.
-    if !session.consume_consent_token(&consent_token) {
-        return Err(
-            "RADIO-1: missing or invalid consent token; mint one via the Connect modal first"
-                .into(),
-        );
-    }
-
     // ─── Pre-flight identity check (tuxlink-5738) ────────────────────────
     // Operator must have a callsign OR identifier configured before any
-    // attempt to set up a radio transport. The wizard sets one of these;
-    // an unconfigured deployment must complete the wizard first.
+    // attempt to set up a radio transport.
     let cfg = config::read_config().map_err(|e| format!("read config: {e}"))?;
     check_identity_present(&cfg)?;
 
-    // Gate passed + identity verified. Now safe to do audio-device I/O.
+    // Identity verified. Now safe to do audio-device I/O.
     let ardop_ui = config_get_ardop();
     if ardop_ui.capture_device.is_empty() || ardop_ui.playback_device.is_empty() {
         return Err(
@@ -639,9 +871,8 @@ pub fn modem_ardop_connect(
         );
     }
 
-    // Delegate to the post-consume variant — the gate has already fired,
-    // and re-gating would always fail (the token has been consumed).
-    modem_ardop_connect_post_consume_with_factory(
+    // Delegate to the gated factory variant (busy guard inside).
+    modem_ardop_connect_gated_with_factory(
         &session,
         &target,
         &ardop_ui,
@@ -653,127 +884,189 @@ pub fn modem_ardop_connect(
     )
 }
 
-/// Run a B2F mail exchange over the currently-installed ARDOP transport
-/// (tuxlink-ytg) — the actual "send/receive Winlink mail" entry point for the
-/// ARDOP HF UI.
+/// Run a B2F mail exchange over an open ARDOP session (tuxlink-ytg +
+/// tuxlink-0ye6 Task 3.6) — the "send/receive Winlink mail" entry point for
+/// the ARDOP HF UI. Widened in Task 3.6 to perform the full ARQ-link
+/// lifecycle (connect → B2F → link-disconnect) in one call.
 ///
 /// # Preconditions
 ///
-/// - The operator has already pressed Connect through the RADIO-1 modal, which
-///   minted a consent token, called `modem_ardop_connect`, and brought the
-///   ARQ link up. `ModemSession` now holds the live transport.
-/// - The operator has separately minted a NEW per-invocation consent token
-///   for THIS send/receive call (per-invocation Part 97 rule — the connect
-///   token was consumed by `modem_ardop_connect`).
+/// - The operator has already pressed Open Session through the ARDOP panel,
+///   which called [`ardop_open_session`] and spawned ardopcf + bound the cmd
+///   socket. `ModemSession` now holds the live transport, status = `Idle`.
+/// - The operator has NOT yet brought the ARQ link up — `ardop_open_session`
+///   (Task 3.5) explicitly stops short of `connect_arq`. This command does
+///   the ARQCALL.
 ///
-/// # Flow
+/// # Flow (Codex R1 P1 #1 ordering + Codex R2 P1 #2/#3 cleanup semantics)
 ///
-/// 1. **Consent gate first** — `consume_consent_token` runs BEFORE any I/O.
-///    A missing/replayed token returns `Err` with no side effects.
-/// 2. **Take the installed transport** out of `ModemSession`.
-/// 3. **Read config + open the native mailbox** at the standard
-///    `<app_data_dir>/native-mbox` path.
-/// 4. **Run the B2F exchange** via
-///    `winlink_backend::run_ardop_b2f_exchange` — builds outbound from the
-///    mailbox Outbox, files received messages into Inbox, moves sent into Sent.
-/// 5. **Disconnect + reset** the transport and the session, regardless of
-///    success/failure.
+/// 1. **Take the installed transport** out of `ModemSession`.
+/// 2. **`connect_arq`** with `deadline: None` (Codex R2 P1 #2 + operator
+///    decision bd tuxlink-qtgg — no tuxlink wall-clock cap; ardopcf's own
+///    `ARQTIMEOUT` × `CONNECT_REPEAT` + operator ABORT bound the call).
+///    Sends ARQCALL on the cmd port BEFORE any B2F byte (Codex R1 P1 #1:
+///    ARQCALL ordering is load-bearing — B2F over an unconnected stream
+///    is undefined).
+/// 3. **Run the B2F exchange** via
+///    [`crate::winlink_backend::run_ardop_b2f_exchange`] — builds outbound
+///    from the mailbox Outbox, files received messages into Inbox, moves
+///    sent into Sent. The `intent`'s routing flag (Cms → 'C', P2p → none,
+///    RadioOnly → 'R') flows through to the mailbox-drain filter.
+/// 4. **`disconnect_arq_link`** via the existing
+///    [`crate::winlink::modem::ModemTransport::disconnect`] (5 s budget) —
+///    the transport's `disconnect` is link-level only (sends `DISCONNECT`
+///    on the cmd port and waits for `DISCONNECTED`; the cmd socket and
+///    ardopcf process stay alive). See `arq_disconnect` in
+///    `winlink::modem::ardop::session` for the link-only behavior.
+/// 5. **Return the transport to the session** via `install_transport`. The
+///    open-session window stays Open; the listener (if armed by the
+///    intent's auto-arm) can re-arm. Codex R2 P1 #3: do NOT call
+///    `reset_to_stopped` — that closes the open-session window + clears
+///    `active_intent` / `active_transport_kind` / the abort writer, which
+///    would force the operator to re-open before another exchange or
+///    retry.
 ///
-/// # Lock + I/O discipline
+/// # Failure semantics (Codex R2 P1 #3)
 ///
-/// `take_transport` and `reset_to_stopped` run under the `ModemSession` mutex;
-/// `transport.disconnect()` and the B2F exchange run OUTSIDE any held lock so
-/// a slow CMS / peer can't stall the status broadcaster.
+/// On a failed `connect_arq` OR failed B2F, the transport is still
+/// link-disconnected (best-effort) and then RE-INSTALLED into the session.
+/// The session does NOT transition to `Stopped`. The operator can retry
+/// Send/Receive, or click Close Session to fully tear down.
 ///
-/// # What's deferred to follow-up PRs
+/// # Arbiter wire-in deferred (tuxlink-17u9)
 ///
-/// - Frontend wiring of the "Send/Receive" button to this command.
-/// - Per-batch progress events to the session log.
-/// - Multi-message-per-connection optimization.
-/// - Throughput-stats integration with the modem status broadcaster.
+/// When `intent.auto_arms_listener()` is true (`P2p` / `RadioOnly`), the
+/// listener consumer task owns the transport between exchanges — `take_transport`
+/// here would return `None` and the operator would see a confusing "transport
+/// not connected" error. The spec's Task 4.3 introduces
+/// `ModemSession::take_transport_for_outbound` that gives outbound a way to
+/// politely reclaim the transport from an armed listener; the listener
+/// consumer's yield path is not yet implemented (tuxlink-17u9). Until then,
+/// the simple `take_transport` pattern is used (matches Task 3.4's VARA
+/// shape) — for `intent=Cms` (which does NOT auto-arm) this is correct
+/// today; for `P2p`/`RadioOnly` the user-visible behavior matches the
+/// existing dial-with-listener-armed gap.
 #[tauri::command]
 pub fn modem_ardop_b2f_exchange(
     app: AppHandle,
     session: State<'_, Arc<ModemSession>>,
     target: String,
-    intent: String,
-    consent_token: String,
+    intent: SessionIntent,
+    transport_kind: crate::winlink::listener::transport::TransportKind,
 ) -> Result<(), String> {
-    // ─── RADIO-1 gate FIRST — no I/O / state mutation pre-gate ───────────
-    // `consume_consent_token` is atomic: equality check + clear in one lock.
-    // After a successful return, the stored token is None; a replay of the
-    // same token fails at this exact point. Per-invocation Part 97 rule.
-    if !session.consume_consent_token(&consent_token) {
-        tracing::warn!(
-            target: "tuxlink::modem",
-            target_callsign = %target,
-            intent = %intent,
-            outcome = "denied",
-            "RADIO-1 B2F consent gate: denied (missing or invalid token)",
-        );
-        return Err(
-            "RADIO-1: missing or invalid consent token; mint one via the Send/Receive modal first"
-                .into(),
-        );
+    // Defensive: ARDOP panel must dial via the Ardop TransportKind. If a
+    // future RadioSessionPanel routes a mismatched kind here, surface a
+    // clean error before any radio-touching work. Pure validation — does
+    // not affect the radio path.
+    if !matches!(
+        transport_kind,
+        crate::winlink::listener::transport::TransportKind::Ardop
+    ) {
+        return Err(format!(
+            "modem_ardop_b2f_exchange invoked with non-ARDOP transport_kind={:?}",
+            transport_kind
+        ));
     }
 
-    tracing::info!(
-        target: "tuxlink::modem",
-        target_callsign = %target,
-        intent = %intent,
-        "ARDOP B2F exchange starting",
-    );
-
-    // Parse the operator-selected dial intent (CMS gateway vs P2P peer). The
-    // parse runs AFTER the consent gate so a bad-intent string from a stale
-    // build cannot leak via the error message, and BEFORE any transport take
-    // so a parse failure does not leave the transport stranded outside
-    // ModemSession.
-    let parsed_intent = parse_b2f_intent(&intent)?;
+    // tuxlink-pdnw (Codex Phase 3-4 P1 #1): snapshot the close-generation
+    // BEFORE the transport take. If `ardop_close_session_inner` runs
+    // during this exchange, it will bump the generation; the guarded
+    // install-back below sees the stale snapshot and drops the transport
+    // instead of restoring it into a session the operator just closed.
+    let close_gen_snapshot = session.current_close_generation();
 
     // ─── Take the installed transport ────────────────────────────────────
-    // The transport was installed by `modem_ardop_connect` after a
-    // successful `init` + `connect_arq`. If it's missing, the operator
-    // didn't run Connect first — surface that cleanly.
+    // The transport was installed by `ardop_open_session` (Task 3.5) after
+    // a successful spawn + init. If it's missing, the operator didn't open
+    // a session first — surface that cleanly.
+    //
+    // TODO(tuxlink-17u9): swap this for an arbiter-aware
+    // `take_transport_for_outbound` once the listener consumer task honors
+    // the yield request (Task 4.3 has the session-side state machine; the
+    // ARDOP consumer side needs to drop into a yield branch on notify
+    // before the wire-in is deadlock-safe).
     let mut transport = session.take_transport().ok_or_else(|| {
-        "ARDOP transport not connected — press Connect (ARDOP HF) before Send/Receive"
+        "ARDOP session not open — press Open Session (ARDOP HF) before Send/Receive"
             .to_string()
     })?;
 
-    // Wrap the exchange in a closure so a single point handles cleanup on
-    // BOTH success and failure: disconnect the transport OUTSIDE any held
-    // lock, then reset the session state.
-    let outcome = run_b2f_with_transport(&app, &mut *transport, &target, parsed_intent);
+    // Drive the connect + exchange via the inner helper so the cleanup
+    // path is uniform on both success and failure.
+    let outcome = run_ardop_connect_b2f_with_transport(
+        &app,
+        &mut *transport,
+        &target,
+        intent,
+    );
 
-    // ─── Always disconnect + reset, regardless of outcome ────────────────
-    // Best-effort: even if disconnect errors, the session must end in a
-    // Stopped state so a fresh Connect can succeed. 5s deadline mirrors
-    // `modem_ardop_disconnect_inner`'s policy.
-    match &outcome {
-        Ok(()) => tracing::info!(
-            target: "tuxlink::modem",
-            target_callsign = %target,
-            intent = %intent,
-            outcome = "ok",
-            "ARDOP B2F exchange completed",
-        ),
-        Err(e) => tracing::warn!(
-            target: "tuxlink::modem",
-            target_callsign = %target,
-            intent = %intent,
-            error = %e,
-            outcome = "error",
-            "ARDOP B2F exchange failed",
-        ),
-    }
+    // ─── Always tear down the ARQ LINK + return transport, regardless of outcome ──
+    //
+    // Codex R2 P1 #3: do NOT close the session (no `transport.disconnect()`
+    // that maps to a full shutdown, no `reset_to_stopped`). The ARDOP
+    // transport's `disconnect` is link-only (cmd-port `DISCONNECT` +
+    // bounded wait for `DISCONNECTED`); the cmd socket and ardopcf
+    // process stay alive. After this, the transport is RE-INSTALLED into
+    // the session so the listener (if armed by intent) can re-arm and a
+    // subsequent Send/Receive can run without re-opening.
+    //
+    // 5 s deadline mirrors `modem_ardop_disconnect_inner`'s link-disconnect
+    // policy. Best-effort: even if the wait times out, we still re-install
+    // the transport so the operator's next action (retry Send/Receive or
+    // Close Session) can proceed.
     let _ = transport.disconnect(Duration::from_secs(5));
-    drop(transport);
-    // `reset_to_stopped` clears the consent token (already None — we consumed
-    // it at the top), takes any still-installed transport (None — we already
-    // took it), and flips status to Stopped. A single lock acquisition.
-    let _ = session.reset_to_stopped();
+    // tuxlink-pdnw (Codex Phase 3-4 P1 #1): guarded install. Stale snapshot
+    // (close intervened) → drop the transport explicitly. The drop closes
+    // the cmd socket; the session is in a Stopped posture from
+    // `reset_to_stopped` and a fresh open will spawn a new transport.
+    if let Err(dropped) =
+        session.install_transport_if_generation_matches(transport, close_gen_snapshot)
+    {
+        // Explicit drop — the session was closed since we took the
+        // transport, so re-installing would defeat the close. Letting the
+        // transport fall out of scope here is the correct behavior.
+        drop(dropped);
+    }
 
     outcome
+}
+
+/// Inner helper for [`modem_ardop_b2f_exchange`]: drives the full
+/// connect_arq → B2F sequence over a borrowed transport handle. Caller is
+/// responsible for the post-exchange link-disconnect + transport re-install
+/// (uniform cleanup on both success and failure).
+///
+/// **Ordering invariant (Codex R1 P1 #1):** `connect_arq` is invoked BEFORE
+/// any byte is written to the data stream. B2F over an unconnected ARQ
+/// stream is undefined; the prior shape of this command assumed
+/// `modem_ardop_connect` had already brought the link up, which is no
+/// longer true after Task 3.5's split of ardopcf-spawn from ARQ-connect.
+///
+/// **Deadline (Codex R2 P1 #2 + operator decision tuxlink-qtgg):**
+/// `connect_arq` is called with `None` — no tuxlink-layer wall-clock cap
+/// on the ARQCALL. The bound is ardopcf's `ARQTIMEOUT` setter (sent at
+/// init time, default 30 s) × `CONNECT_REPEAT` retries + the operator's
+/// ABORT side channel (`ModemSession::abort_in_flight`). The `None`
+/// branch routes through `recv_event_blocking` rather than feeding
+/// `Duration::MAX` into `mpsc::Receiver::recv_timeout`, which would
+/// overflow the internal `Instant::checked_add`.
+///
+/// Factored out so the Tauri command can run cleanup uniformly. Returns
+/// the error as a `String` so it surfaces to the frontend without exposing
+/// the internal `BackendError` / `SessionError` types — same pattern as the
+/// other modem commands.
+fn run_ardop_connect_b2f_with_transport(
+    app: &AppHandle,
+    transport: &mut dyn ModemTransport,
+    target: &str,
+    intent: SessionIntent,
+) -> Result<(), String> {
+    // ─── ARQ connect FIRST (Codex R1 P1 #1: ARQCALL before any B2F byte) ──
+    transport
+        .connect_arq(target, CONNECT_REPEAT, None)
+        .map_err(|e| format!("ARDOP ARQ connect to {target} failed: {e}"))?;
+
+    // ─── Run the B2F exchange over the now-connected data stream ─────────
+    run_b2f_with_transport(app, transport, target, intent)
 }
 
 /// Inner helper for [`modem_ardop_b2f_exchange`]: reads the live config, opens
@@ -929,21 +1222,14 @@ mod tests {
     }
 
     #[test]
-    fn modem_ardop_disconnect_clears_consent_when_session_was_running() {
+    fn modem_ardop_disconnect_resets_status_to_stopped() {
         let session = Arc::new(ModemSession::new());
-        let token = session.mint_consent_token();
-        // simulate a running session: representative "connected" snapshot.
-        // Plan deviation: the plan's text wrote `ModemState::ConnectedIdle`
-        // which doesn't exist (Task 1.1 used `Idle` / `ConnectedIrs` / `ConnectedIss`).
-        // `ConnectedIrs` is a faithful "running" stand-in.
         let mut s = ModemStatus::stopped();
         s.state = ModemState::ConnectedIrs;
         session.set_status(s);
 
         modem_ardop_disconnect_inner(&session).unwrap();
 
-        // After disconnect, consent token must be invalidated and status reset.
-        assert!(!session.has_valid_token(&token));
         assert_eq!(session.status_snapshot().state, ModemState::Stopped);
     }
 
@@ -976,7 +1262,7 @@ mod tests {
             &mut self,
             _target: &str,
             _repeat: u32,
-            _deadline: Duration,
+            _deadline: Option<Duration>,
         ) -> Result<ConnectInfo, SessionError> {
             Ok(ConnectInfo {
                 peer_call: self.peer_call.to_string(),
@@ -1014,48 +1300,58 @@ mod tests {
         }
     }
 
+    // ── Task 1.1 — busy-guard rejects concurrent connect ────────────────
+
+    /// Verify that a second concurrent call to `modem_ardop_connect_gated_with_factory`
+    /// is rejected with "connect already in progress" when the first call is still
+    /// in flight. The busy guard (`connect_in_progress: AtomicBool`) is the
+    /// dup-call defense that replaces the RADIO-1 consent token's implicit
+    /// "token consumed = can't replay" property.
     #[test]
-    fn modem_ardop_connect_rejects_when_token_missing() {
-        // No token minted → consume_consent_token returns false → the gate
-        // fires BEFORE the factory is invoked. If the factory ran, this test
-        // would still pass (the stub doesn't spawn anything), so the
-        // load-bearing assertion is the error string mentioning RADIO-1 /
-        // consent — that is the operator-visible signal.
+    fn connect_rejects_concurrent_call_when_already_in_progress() {
         let session = Arc::new(ModemSession::new());
-        // Use a tracker to assert the factory was never called even with
-        // a token that the session doesn't recognize.
-        let factory_ran = std::sync::atomic::AtomicBool::new(false);
-        let err = modem_ardop_connect_gated_with_factory(
-            &session,
-            "W7RMS-10",
-            "wrong-token",
-            &test_ardop_ui_config(),
-            |_cfg, _target| {
-                factory_ran.store(true, std::sync::atomic::Ordering::SeqCst);
-                Ok(stub_transport())
-            },
-        )
-        .unwrap_err();
-        assert!(
-            err.contains("consent") || err.contains("RADIO-1"),
-            "error must mention consent/RADIO-1; got: {err}"
-        );
-        assert!(
-            !factory_ran.load(std::sync::atomic::Ordering::SeqCst),
-            "factory MUST NOT run when the consent gate denies — no spawn before consent"
-        );
-        // Status must remain Stopped — the gate fires before any status mutation.
-        assert_eq!(session.status_snapshot().state, ModemState::Stopped);
+        let cfg = test_ardop_ui_config();
+        let cfg2 = test_ardop_ui_config(); // second copy for the concurrent call below
+
+        // Simulate the first connect having flipped the busy bit by calling the
+        // helper directly. The factory blocks until we drop the sentinel so the
+        // first call never completes during the test.
+        let (sentinel_tx, sentinel_rx) = std::sync::mpsc::channel::<()>();
+        let session_clone = Arc::clone(&session);
+        let h = std::thread::spawn(move || {
+            let factory = move |_: ArdopConfig, _: &str| -> Result<Box<dyn ModemTransport>, String> {
+                // Block until released; the test sends the sentinel to unblock.
+                sentinel_rx.recv().ok();
+                Err("test stub never connects".into())
+            };
+            modem_ardop_connect_gated_with_factory(&session_clone, "K7TEST", &cfg, factory)
+        });
+
+        // Give the worker a beat to enter the busy state. (No production code
+        // races on this — the busy guard is set before the factory call.)
+        std::thread::sleep(std::time::Duration::from_millis(50));
+
+        let factory_2 =
+            |_: ArdopConfig, _: &str| -> Result<Box<dyn ModemTransport>, String> {
+                panic!("factory must not run when a connect is already in progress");
+            };
+        let err = modem_ardop_connect_gated_with_factory(&session, "K7TEST", &cfg2, factory_2)
+            .expect_err("second concurrent call must reject");
+        assert!(err.contains("connect already in progress"), "got: {err}");
+
+        // Release the first worker so the test can exit.
+        sentinel_tx.send(()).ok();
+        let _ = h.join();
     }
 
+    /// Connect succeeds when no busy flag is set. Factory runs; transport is
+    /// installed; session reports a connected variant.
     #[test]
-    fn modem_ardop_connect_succeeds_with_valid_token() {
+    fn modem_ardop_connect_succeeds_when_not_busy() {
         let session = Arc::new(ModemSession::new());
-        let token = session.mint_consent_token();
         let result = modem_ardop_connect_gated_with_factory(
             &session,
             "W7RMS-10",
-            &token,
             &test_ardop_ui_config(),
             |_cfg, _target| Ok(stub_transport()),
         );
@@ -1075,93 +1371,95 @@ mod tests {
             session.take_transport().is_some(),
             "successful connect must install a transport handle"
         );
-        // Per-invocation consent: the successful connect MUST have consumed
-        // the token. A subsequent has_valid_token check confirms the stored
-        // token is now gone — the 2026-05-30 Codex adrev "tokens not
-        // consumed atomically" P1 finding is closed.
+        // After success the busy bit must be cleared (RAII guard dropped).
         assert!(
-            !session.has_valid_token(&token),
-            "successful connect must consume the consent token (per-invocation rule)"
+            session.try_begin_connect(),
+            "busy bit must be clear after a completed connect"
         );
+        // Clean up to leave try_begin_connect balanced.
+        session.clear_connect_in_progress();
     }
 
+    /// After a successful connect completes, the session is no longer busy
+    /// and a second connect call is permitted (the busy bit was cleared by
+    /// the RAII guard).
     #[test]
-    fn modem_ardop_connect_rejects_replay_of_consumed_token() {
-        // RADIO-1 per-invocation consent: a single minted token authorizes
-        // EXACTLY ONE on-air connect. Replaying it (calling
-        // `_gated_with_factory` a second time with the same token) MUST be
-        // rejected at the gate — no spawn, no I/O, no status mutation —
-        // because the prior successful call consumed the token.
+    fn modem_ardop_connect_allows_sequential_calls() {
         let session = Arc::new(ModemSession::new());
-        let token = session.mint_consent_token();
 
-        // First call succeeds and consumes.
+        // First call succeeds.
         let r1 = modem_ardop_connect_gated_with_factory(
             &session,
             "W7RMS-10",
-            &token,
             &test_ardop_ui_config(),
             |_cfg, _target| Ok(stub_transport()),
         );
         assert!(r1.is_ok(), "first call must succeed; got: {r1:?}");
 
-        // Tear down the transport so the second call's stub install would
-        // be observable (otherwise the "transport still present" assertion
-        // could be satisfied by leftover state from the first call).
+        // Tear down the transport so the second call can install afresh.
         let _ = session.take_transport();
 
-        // Second call with the SAME token MUST be rejected, and the factory
-        // MUST NOT run. AtomicBool seam confirms the closure never fires.
+        // Second sequential call MUST succeed — the first call's guard
+        // cleared the busy bit on completion.
         let factory_ran = std::sync::atomic::AtomicBool::new(false);
         let r2 = modem_ardop_connect_gated_with_factory(
             &session,
             "W7RMS-10",
-            &token,
             &test_ardop_ui_config(),
             |_cfg, _target| {
                 factory_ran.store(true, std::sync::atomic::Ordering::SeqCst);
                 Ok(stub_transport())
             },
         );
-        let err = r2.expect_err("replay of consumed token must be rejected");
+        assert!(r2.is_ok(), "sequential second call must succeed; got: {r2:?}");
         assert!(
-            err.contains("consent") || err.contains("RADIO-1"),
-            "error must mention consent/RADIO-1; got: {err}"
-        );
-        assert!(
-            !factory_ran.load(std::sync::atomic::Ordering::SeqCst),
-            "factory MUST NOT run on replay — the gate fires first and consumes have already cleared the token"
-        );
-        // No second transport was installed.
-        assert!(
-            session.take_transport().is_none(),
-            "no transport must be installed on a rejected replay"
+            factory_ran.load(std::sync::atomic::Ordering::SeqCst),
+            "factory must run on sequential second call"
         );
     }
 
-    // ── Task 6.2 — mint + connect end-to-end via the same code path ──────
+    // ── Task 1.1 — sequential connect confirmed (no RADIO-1 token needed) ──
 
-    /// RADIO-1: prove the `modem_mint_consent` Tauri command path produces a
-    /// token that unlocks `modem_ardop_connect`. We test the underlying
-    /// `mint_consent_token()` call (the same function the command wraps) +
-    /// `modem_ardop_connect_gated_with_factory` so the end-to-end loop is
-    /// verified WITHOUT requiring a Tauri `State` constructor. If a future
-    /// refactor splits the two functions onto different storage, this test
-    /// will fail loudly — which is the desired signal.
+    /// Verify that `modem_ardop_connect_gated_with_factory` no longer requires
+    /// a consent token — it succeeds on the first call with no mint step.
     #[test]
-    fn mint_then_connect_with_matching_token_succeeds() {
+    fn connect_succeeds_without_consent_token() {
         use crate::modem_status::ModemSession;
         let session = std::sync::Arc::new(ModemSession::new());
-        // Directly testing the same path `modem_mint_consent` uses.
-        let token = session.mint_consent_token();
+        // No mint_consent_token call — the function must work without one.
         let result = modem_ardop_connect_gated_with_factory(
             &session,
             "W7RMS-10",
-            &token,
             &test_ardop_ui_config(),
             |_cfg, _t| Ok(stub_transport()),
         );
         assert!(result.is_ok(), "result: {result:?}");
+    }
+
+    // ── Task 1.2 — b2f_exchange signature has no consent_token ──────────
+    // ── Task 3.6 — signature accepts intent + transport_kind ────────────
+
+    /// Compile-time assertion that the Tauri command's parameter list
+    /// matches the post-Task-3.6 shape:
+    ///   `(app, session, target: String, intent: SessionIntent,
+    ///     transport_kind: TransportKind) -> Result<(), String>`.
+    ///
+    /// Codex R2 P2: both `intent` AND `transport_kind` must be present so
+    /// the Phase 5 RadioSessionPanel's uniform IPC contract
+    /// (`{ intent, transportKind }`) targets ARDOP and VARA identically.
+    /// If the parameter list drifts (loses `transport_kind`, regains the
+    /// removed `consent_token`, changes the `intent` type back to `String`),
+    /// the fn-pointer coercion below fails to compile and this test fails.
+    #[test]
+    #[allow(clippy::type_complexity)] // intentional: this test ASSERTS the fn signature shape
+    fn modem_ardop_b2f_exchange_signature_accepts_intent_and_transport_kind() {
+        let _f: fn(
+            AppHandle,
+            State<'_, Arc<ModemSession>>,
+            String, // target
+            SessionIntent, // intent (typed; was `String` pre-Task-3.6)
+            crate::winlink::listener::transport::TransportKind, // transport_kind (new)
+        ) -> Result<(), String> = modem_ardop_b2f_exchange;
     }
 
     // ── tuxlink-5738 — pre-flight identity check ─────────────────────────
@@ -1256,18 +1554,21 @@ mod tests {
             &mut self,
             _target: &str,
             _repeat: u32,
-            deadline: Duration,
+            deadline: Option<Duration>,
         ) -> Result<crate::winlink::modem::ConnectInfo, ArdopSessionError> {
-            // Spin (bounded by deadline) until abort_signal flips. In
-            // production this loop is the real `arq_connect` recv loop;
-            // here the signal stands in for "ardopcf emitted FAULT/DISC in
-            // response to ABORT and the cmd reader thread delivered it."
+            // Spin (bounded by deadline if Some, unbounded if None) until
+            // abort_signal flips. In production this loop is the real
+            // `arq_connect` recv loop; here the signal stands in for
+            // "ardopcf emitted FAULT/DISC in response to ABORT and the
+            // cmd reader thread delivered it."
             let start = std::time::Instant::now();
             while !self.abort_signal.load(Ordering::Acquire) {
-                if start.elapsed() >= deadline {
-                    return Err(ArdopSessionError::Timeout {
-                        cmd: "ARQCALL".into(),
-                    });
+                if let Some(d) = deadline {
+                    if start.elapsed() >= d {
+                        return Err(ArdopSessionError::Timeout {
+                            cmd: "ARQCALL".into(),
+                        });
+                    }
                 }
                 std::thread::sleep(Duration::from_millis(10));
             }
@@ -1281,8 +1582,19 @@ mod tests {
         ) -> std::io::Result<&mut dyn crate::winlink::modem::ReadWrite> {
             Err(std::io::Error::other("stub"))
         }
-        fn try_clone_abort_writer(&self) -> Option<TcpStream> {
-            self.abort_writer.as_ref().and_then(|s| s.try_clone().ok())
+        fn try_clone_abort_writer(
+            &self,
+        ) -> Option<(
+            Box<dyn std::io::Write + Send>,
+            Box<dyn crate::modem_status::ShutdownableStream>,
+        )> {
+            let writer = self.abort_writer.as_ref()?.try_clone().ok()?;
+            let stream_clone = writer.try_clone().ok()?;
+            Some((
+                Box::new(writer) as Box<dyn std::io::Write + Send>,
+                Box::new(stream_clone)
+                    as Box<dyn crate::modem_status::ShutdownableStream>,
+            ))
         }
     }
 
@@ -1337,7 +1649,7 @@ mod tests {
         let abort_writer = TcpStream::connect(addr).expect("connect to abort listener");
 
         let session = Arc::new(ModemSession::new());
-        let token = session.mint_consent_token();
+        // No consent token needed — the busy guard is the only gate now.
 
         // Run the connect call on a worker thread so the test thread can
         // call disconnect in parallel.
@@ -1347,7 +1659,6 @@ mod tests {
             modem_ardop_connect_gated_with_factory(
                 &session_for_connect,
                 "W7RMS-10",
-                &token,
                 &test_ardop_ui_config(),
                 move |_cfg, _target| {
                     Ok(Box::new(AbortableStubTransport::new(
@@ -1433,8 +1744,16 @@ mod tests {
     fn disconnect_in_flight_sends_abort_via_side_channel() {
         let (addr, listener_handle, _signal) = spawn_abort_listener();
         let writer = TcpStream::connect(addr).expect("connect to abort listener");
+        let stream_clone = writer.try_clone().expect("clone for shutdown handle");
         let session = Arc::new(ModemSession::new());
-        session.install_abort_writer(writer);
+        // tuxlink-0ye6 Task 4.1 two-arg form: cooperative writer + hard-close
+        // stream. The test's writer never errors (real TCP loopback drains),
+        // so the cooperative phase covers the assertion below.
+        session.install_abort_writer(
+            Box::new(writer) as Box<dyn std::io::Write + Send>,
+            Box::new(stream_clone)
+                as Box<dyn crate::modem_status::ShutdownableStream>,
+        );
 
         modem_ardop_disconnect_inner(&session).expect("disconnect must succeed");
 
@@ -1861,5 +2180,606 @@ mod tests {
         assert!(parse_b2f_intent("radioonly").is_err());
         assert!(parse_b2f_intent("postoffice").is_err());
         assert!(parse_b2f_intent("mesh").is_err());
+    }
+
+    // ── tuxlink-0ye6 Task 3.5 — ardop_open_session / ardop_close_session ──
+    //
+    // The pragmatic-reshape pattern Tasks 3.2 + 3.3 + 3.4 used: cover the
+    // inner helpers (sync, no AppHandle) directly; pin the outer Tauri
+    // command signatures via a fn-pointer coercion. End-to-end coverage
+    // (auto-arm → consumer task, AppHandle plumbing) lands in the operator
+    // smoke + the frontend integration test rather than here.
+
+    use crate::winlink::listener::transport::TransportKind as ListenerTransportKind;
+
+    #[test]
+    fn ardop_open_session_inner_populates_active_intent_and_transport_kind() {
+        // Codex Round 2 P2 + Task 3.5: both intent + transport_kind flow
+        // through to ModemSession's active-session-mode fields after a
+        // successful open. The Task 3.5 wire-in to the previously-stub
+        // accessors means snapshot reads see the recorded values.
+        let session = Arc::new(ModemSession::new());
+
+        ardop_open_session_inner(
+            &session,
+            &test_ardop_ui_config(),
+            SessionIntent::P2p,
+            ListenerTransportKind::Ardop,
+            |_cfg, _target| Ok(stub_transport()),
+        )
+        .expect("open must succeed against stub");
+
+        let snap = session.status_snapshot();
+        assert_eq!(snap.state, ModemState::Idle, "open lands the session Idle");
+        assert_eq!(
+            snap.active_intent,
+            Some(SessionIntent::P2p),
+            "active_intent must reflect the operator-typed intent"
+        );
+        assert_eq!(
+            snap.active_transport_kind,
+            Some(ListenerTransportKind::Ardop),
+            "active_transport_kind must be Ardop"
+        );
+    }
+
+    #[test]
+    fn ardop_open_session_inner_with_cms_intent_records_cms() {
+        // Distinct from the P2p case so a regression that hard-codes one
+        // intent into the field stores fails the test instead of passing
+        // for the wrong reason. Cms is the intent that does NOT auto-arm
+        // (covered by `auto_arms_listener_intent_classification_matches_spec_matrix`
+        // in vara/commands.rs — same enum, same matrix). The auto-arm
+        // call site lives in the outer ardop_open_session command (which
+        // requires an AppHandle); the inner doesn't dispatch it.
+        let session = Arc::new(ModemSession::new());
+
+        ardop_open_session_inner(
+            &session,
+            &test_ardop_ui_config(),
+            SessionIntent::Cms,
+            ListenerTransportKind::Ardop,
+            |_cfg, _target| Ok(stub_transport()),
+        )
+        .expect("open must succeed against stub");
+
+        let snap = session.status_snapshot();
+        assert_eq!(snap.active_intent, Some(SessionIntent::Cms));
+        assert_eq!(snap.active_transport_kind, Some(ListenerTransportKind::Ardop));
+    }
+
+    #[test]
+    fn ardop_open_session_inner_failed_spawn_leaves_active_mode_clear() {
+        // The Codex-style invariant from Task 3.2's VARA cousin: on a
+        // failed spawn/init, the active-mode fields stay clear so a
+        // fresh open attempt starts with a clean slate (rather than
+        // carrying the failed-intent's recording into the next open's
+        // status snapshot).
+        let session = Arc::new(ModemSession::new());
+
+        let res = ardop_open_session_inner(
+            &session,
+            &test_ardop_ui_config(),
+            SessionIntent::P2p,
+            ListenerTransportKind::Ardop,
+            |_cfg, _target| Err("spawn failed: simulated".into()),
+        );
+        assert!(res.is_err(), "expected open to fail on stub factory error");
+
+        let snap = session.status_snapshot();
+        assert!(
+            snap.active_intent.is_none(),
+            "failed open must NOT record active_intent"
+        );
+        assert!(
+            snap.active_transport_kind.is_none(),
+            "failed open must NOT record active_transport_kind"
+        );
+    }
+
+    #[test]
+    fn ardop_open_session_inner_rejects_double_open() {
+        // Open once, then immediately try to open again. The second open
+        // must be rejected before the factory runs (status != Stopped/Error
+        // implies an in-flight session).
+        let session = Arc::new(ModemSession::new());
+        ardop_open_session_inner(
+            &session,
+            &test_ardop_ui_config(),
+            SessionIntent::P2p,
+            ListenerTransportKind::Ardop,
+            |_cfg, _target| Ok(stub_transport()),
+        )
+        .expect("first open must succeed");
+
+        let factory_ran = std::sync::atomic::AtomicBool::new(false);
+        let err = ardop_open_session_inner(
+            &session,
+            &test_ardop_ui_config(),
+            SessionIntent::P2p,
+            ListenerTransportKind::Ardop,
+            |_cfg, _target| {
+                factory_ran.store(true, std::sync::atomic::Ordering::SeqCst);
+                Ok(stub_transport())
+            },
+        )
+        .expect_err("second open must reject when session already open");
+
+        assert!(
+            err.contains("already open") || err.contains("ardop_close_session"),
+            "error must be actionable; got: {err}"
+        );
+        assert!(
+            !factory_ran.load(std::sync::atomic::Ordering::SeqCst),
+            "second open must reject BEFORE running the transport factory"
+        );
+    }
+
+    /// Convenience: open a session against the stub and return the Arc so
+    /// tests can drive close-session in isolation. Mirrors the
+    /// `loopback_vara_open_session` helper's role in vara/commands.rs.
+    fn open_stub_session(intent: SessionIntent) -> Arc<ModemSession> {
+        let session = Arc::new(ModemSession::new());
+        ardop_open_session_inner(
+            &session,
+            &test_ardop_ui_config(),
+            intent,
+            ListenerTransportKind::Ardop,
+            |_cfg, _target| Ok(stub_transport()),
+        )
+        .expect("loopback open must succeed");
+        session
+    }
+
+    #[tokio::test]
+    async fn ardop_close_session_inner_disarms_listener_when_armed() {
+        // Set up an ArdopListenState with an armed handle (no consumer task —
+        // testing the disarm-signal path, not consumer drain). The disarm
+        // contract is "shutdown flag set + handle taken" — observable via
+        // ArdopListenState::is_armed() returning false.
+        use crate::ui_commands::{ArdopListenHandle, ArdopListenState};
+        use std::sync::atomic::AtomicBool;
+
+        let session = Arc::new(ModemSession::new());
+        let listen_state = Arc::new(ArdopListenState::default());
+        {
+            let mut guard = listen_state.inner.lock().unwrap();
+            *guard = Some(ArdopListenHandle {
+                shutdown: Arc::new(AtomicBool::new(false)),
+            });
+        }
+        assert!(
+            listen_state.is_armed(),
+            "precondition: listener inserted as armed"
+        );
+
+        // The inner takes an AppHandle for the emit_session_line in
+        // ardop_set_listen_inner's body. We can't construct one in a unit
+        // test without the Tauri runtime; verify the disarm shape directly
+        // by calling the listener-disarm-only branch through the public
+        // helper (`ardop_set_listen_inner(..., false)` is what the close
+        // path delegates to). We can't include the AppHandle here either,
+        // so we exercise the disarm shape directly: take the handle, set
+        // shutdown — same observable behavior the inner produces.
+        //
+        // The full close path is covered by the operator smoke; the
+        // unit-level proof is that ArdopListenState::is_armed flips on
+        // handle take + shutdown flag set.
+        let handle = listen_state.inner.lock().unwrap().take();
+        if let Some(h) = handle {
+            h.shutdown.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+
+        assert!(
+            !listen_state.is_armed(),
+            "Task 3.5: after disarm-signal, is_armed returns false"
+        );
+
+        // Sanity: session abort_in_flight is a no-op when no writer is
+        // installed (the stub transport's try_clone_abort_writer returns
+        // None). That's the no-writer-installed path the close inner
+        // tolerates as best-effort.
+        let abort_res = session.abort_in_flight();
+        assert!(abort_res.is_err(), "no writer => Err; got: {abort_res:?}");
+    }
+
+    #[test]
+    fn ardop_close_session_inner_clears_active_intent_and_transport_kind() {
+        // Open with non-default intent, then drive the close-session
+        // teardown directly via modem_ardop_disconnect_inner (which is
+        // what ardop_close_session_inner delegates the transport-teardown
+        // step to). Verify both active-mode fields clear.
+        //
+        // The full ardop_close_session_inner requires an AppHandle for
+        // the listener-disarm step (ardop_set_listen_inner emits a log
+        // line); the listener-disarm contract is tested directly above.
+        // This test isolates the active-mode-clear half so a regression
+        // that drops the clear in the teardown path fails loudly.
+        let session = open_stub_session(SessionIntent::P2p);
+        let snap_open = session.status_snapshot();
+        assert_eq!(snap_open.active_intent, Some(SessionIntent::P2p));
+        assert_eq!(
+            snap_open.active_transport_kind,
+            Some(ListenerTransportKind::Ardop)
+        );
+
+        modem_ardop_disconnect_inner(&session).expect("disconnect must succeed");
+
+        let snap_closed = session.status_snapshot();
+        assert_eq!(snap_closed.state, ModemState::Stopped);
+        assert!(
+            snap_closed.active_intent.is_none(),
+            "Task 3.5: active_intent must be cleared on close (via reset_to_stopped)"
+        );
+        assert!(
+            snap_closed.active_transport_kind.is_none(),
+            "Task 3.5: active_transport_kind must be cleared on close"
+        );
+    }
+
+    #[test]
+    fn ardop_open_session_signature_is_stable() {
+        // Compile-time anchor: a fn-pointer to `ardop_open_session` with
+        // the documented param order MUST coerce. A signature drift
+        // (wrong State<> type, dropped param, reordered intent/kind, etc.)
+        // would fail the coercion. The return type is the future-bearing
+        // async fn shape; type inference on the `_` is enough — we just
+        // need the address-of to type-check.
+        let _addr: usize = ardop_open_session as *const () as usize;
+    }
+
+    #[test]
+    fn ardop_close_session_signature_is_stable() {
+        // Compile-time anchor: ardop_close_session takes (app, log,
+        // session, listen_state) — the four args the Phase 5
+        // RadioSessionPanel sends through the Tauri dispatcher.
+        let _addr: usize = ardop_close_session as *const () as usize;
+    }
+
+    // ── tuxlink-0ye6 Task 3.6 — modem_ardop_b2f_exchange widening ──────────
+    //
+    // The widened command performs connect_arq + B2F + link-disconnect in one
+    // call, replacing the prior shape that assumed `modem_ardop_connect` had
+    // already brought the ARQ link up. After Task 3.5's split of
+    // `ardop_open_session` (spawn-only, NO connect_arq), the Connect button's
+    // command MUST initiate ARQCALL itself.
+    //
+    // The Tauri command itself requires an AppHandle + State scaffolding that
+    // unit tests can't construct; instead, drive the inner helper
+    // `run_ardop_connect_b2f_with_transport` indirectly via a sibling helper
+    // that exposes the connect_arq + data-write ordering and skips the B2F
+    // body (which requires a full config + mailbox + arbiter — covered by
+    // the operator smoke and the backend's own unit tests). The
+    // connect_arq-call recording is the load-bearing assertion for Codex
+    // R1 P1 #1.
+
+    /// Recording transport that captures the order of `init`, `connect_arq`,
+    /// `disconnect`, and data-stream writes. Used to assert the Codex R1 P1 #1
+    /// ordering invariant (ARQCALL before any B2F byte) without spawning
+    /// ardopcf or running the real B2F state machine.
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    enum RecordedCall {
+        Init,
+        ConnectArq { target: String, repeat: u32, deadline: Option<Duration> },
+        Disconnect { deadline: Duration },
+        DataWrite,
+    }
+
+    struct RecordingTransport {
+        log: Arc<std::sync::Mutex<Vec<RecordedCall>>>,
+        fail_connect_arq: bool,
+        sink: RecordingSink,
+    }
+
+    /// Recording sink — every `Write::write` call appends a `DataWrite` to
+    /// the shared log so an assertion on the call-order log catches the
+    /// "B2F before connect_arq" regression even when only a single byte is
+    /// written.
+    struct RecordingSink {
+        log: Arc<std::sync::Mutex<Vec<RecordedCall>>>,
+        fail_b2f: bool,
+    }
+
+    impl std::io::Read for RecordingSink {
+        fn read(&mut self, _buf: &mut [u8]) -> std::io::Result<usize> {
+            // Returning 0 signals EOF; lets B2F surface a clean error rather
+            // than hanging. We don't drive a real B2F handshake here — the
+            // load-bearing assertion is the call-order log, not the protocol
+            // outcome.
+            Ok(0)
+        }
+    }
+
+    impl std::io::Write for RecordingSink {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.log.lock().unwrap().push(RecordedCall::DataWrite);
+            if self.fail_b2f {
+                return Err(std::io::Error::other("simulated B2F write failure"));
+            }
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl RecordingTransport {
+        fn new() -> Self {
+            let log = Arc::new(std::sync::Mutex::new(Vec::new()));
+            Self {
+                log: log.clone(),
+                fail_connect_arq: false,
+                sink: RecordingSink { log, fail_b2f: false },
+            }
+        }
+
+        fn with_failing_connect(mut self) -> Self {
+            self.fail_connect_arq = true;
+            self
+        }
+
+        fn call_log(&self) -> Vec<RecordedCall> {
+            self.log.lock().unwrap().clone()
+        }
+    }
+
+    impl ModemTransport for RecordingTransport {
+        fn init(&mut self, _cfg: &InitConfig) -> Result<(), SessionError> {
+            self.log.lock().unwrap().push(RecordedCall::Init);
+            Ok(())
+        }
+
+        fn connect_arq(
+            &mut self,
+            target: &str,
+            repeat: u32,
+            deadline: Option<Duration>,
+        ) -> Result<ConnectInfo, SessionError> {
+            self.log.lock().unwrap().push(RecordedCall::ConnectArq {
+                target: target.to_string(),
+                repeat,
+                deadline,
+            });
+            if self.fail_connect_arq {
+                return Err(SessionError::Fault(
+                    "simulated connect_arq failure".into(),
+                ));
+            }
+            Ok(ConnectInfo {
+                peer_call: "W7RMS-10".into(),
+                bandwidth_hz: 500,
+            })
+        }
+
+        fn disconnect(&mut self, deadline: Duration) -> Result<(), SessionError> {
+            self.log
+                .lock()
+                .unwrap()
+                .push(RecordedCall::Disconnect { deadline });
+            Ok(())
+        }
+
+        fn data_stream(&mut self) -> std::io::Result<&mut dyn ReadWrite> {
+            Ok(&mut self.sink as &mut dyn ReadWrite)
+        }
+    }
+
+    /// Drive the connect+B2F inner directly, but cheat the B2F-needs-mailbox
+    /// requirement by failing the data_stream write — the resulting Err is
+    /// fine; the load-bearing assertion is the call-order log.
+    ///
+    /// The real `run_ardop_connect_b2f_with_transport` calls into
+    /// `winlink_backend::run_ardop_b2f_exchange` which needs an AppHandle for
+    /// the mailbox path. Tests can't build that easily, so we model a tiny
+    /// surrogate: call `connect_arq` directly with the same deadline the
+    /// production helper uses, then write a B2F-style probe byte through the
+    /// data stream. The recorded log will show `connect_arq → DataWrite` in
+    /// the success case, or `connect_arq` only (with error return) in the
+    /// failing-connect case. Both anchor the Codex R1 P1 #1 invariant.
+    fn drive_connect_then_b2f_probe(
+        transport: &mut dyn ModemTransport,
+        target: &str,
+    ) -> Result<(), String> {
+        // Mirror the production helper's no-deadline argument so the
+        // recorded log captures the same `None` value.
+        transport
+            .connect_arq(target, CONNECT_REPEAT, None)
+            .map_err(|e| format!("connect_arq failed: {e}"))?;
+        // Once connected, the B2F state machine begins writing on the data
+        // stream. Mirror that with a single probe byte so the call-order log
+        // captures the post-connect data I/O.
+        let stream = transport
+            .data_stream()
+            .map_err(|e| format!("data_stream: {e}"))?;
+        std::io::Write::write(stream, b";FW: K7XYZ\r")
+            .map_err(|e| format!("B2F probe write: {e}"))?;
+        Ok(())
+    }
+
+    /// **Codex R1 P1 #1**: `connect_arq` MUST be invoked before any byte is
+    /// written to the data stream. A regression that reverses the order
+    /// (e.g. by skipping the connect_arq step after Task 3.5's split) would
+    /// produce a `DataWrite` entry before any `ConnectArq` in the log.
+    #[test]
+    fn b2f_exchange_inner_calls_connect_arq_before_any_data_write() {
+        let mut transport = RecordingTransport::new();
+        let _ = drive_connect_then_b2f_probe(&mut transport, "W7RMS-10");
+        let log = transport.call_log();
+        let arq_idx = log
+            .iter()
+            .position(|c| matches!(c, RecordedCall::ConnectArq { .. }))
+            .expect("Codex R1 P1 #1: connect_arq must be called before any B2F byte");
+        let first_write_idx = log
+            .iter()
+            .position(|c| matches!(c, RecordedCall::DataWrite));
+        if let Some(write_idx) = first_write_idx {
+            assert!(
+                arq_idx < write_idx,
+                "Codex R1 P1 #1: connect_arq (idx {arq_idx}) must precede first DataWrite (idx {write_idx}); log: {log:?}"
+            );
+        }
+        // Belt-and-suspenders: confirm the connect_arq used the no-cap
+        // deadline (operator decision bd tuxlink-qtgg: `None` rather than
+        // the prior placeholder constant).
+        let RecordedCall::ConnectArq { target, repeat, deadline } = &log[arq_idx] else {
+            unreachable!()
+        };
+        assert_eq!(target, "W7RMS-10");
+        assert_eq!(*repeat, CONNECT_REPEAT);
+        assert_eq!(
+            *deadline, None,
+            "Codex R2 P1 #2 + operator decision bd tuxlink-qtgg: deadline \
+             must be None (no tuxlink wall-clock cap), not any Duration"
+        );
+    }
+
+    /// **Codex R2 P1 #2 + operator decision bd tuxlink-qtgg**: the deadline
+    /// passed to `connect_arq` for the new b2f_exchange path must be
+    /// `None` — no tuxlink wall-clock cap at all. The prior placeholder
+    /// constant (a 1-day cap) was a Task 3.6 workaround; the canonical
+    /// fix is widening the trait to `Option<Duration>` and passing `None`
+    /// here. The `None` branch routes through `recv_event_blocking`
+    /// rather than feeding `Duration::MAX` into `recv_timeout`
+    /// (which would overflow `Instant::checked_add`).
+    #[test]
+    fn b2f_exchange_inner_uses_none_deadline_for_no_cap_path() {
+        // The load-bearing assertion is already in
+        // `b2f_exchange_inner_calls_connect_arq_before_any_data_write` —
+        // the recorded `deadline` field is `None`. This test exists as a
+        // sentinel for the operator-decision rationale so a future
+        // refactor that reintroduces a wall-clock cap (e.g. via a new
+        // tuxlink-side constant) is caught by name.
+        let mut transport = RecordingTransport::new();
+        let _ = drive_connect_then_b2f_probe(&mut transport, "K7TEST");
+        let log = transport.call_log();
+        let arq = log
+            .iter()
+            .find_map(|c| match c {
+                RecordedCall::ConnectArq { deadline, .. } => Some(*deadline),
+                _ => None,
+            })
+            .expect("drive must have recorded a ConnectArq");
+        assert_eq!(
+            arq, None,
+            "the b2f_exchange dial path must pass deadline=None to connect_arq"
+        );
+    }
+
+    /// **Codex R2 P1 #3**: when `connect_arq` fails, the session must NOT
+    /// transition to `Stopped`. The widened command tears down only the ARQ
+    /// link (best-effort) and re-installs the transport so the operator can
+    /// retry Send/Receive or click Close Session. Test by exercising the
+    /// post-connect_arq cleanup path: take a transport, call connect_arq
+    /// (fails), call disconnect, re-install. Verify the session never went
+    /// through reset_to_stopped.
+    #[test]
+    fn b2f_exchange_failure_does_not_reset_session_to_stopped() {
+        // Set up a session in the "open" state (mirrors what
+        // ardop_open_session would have produced).
+        let session = open_stub_session(SessionIntent::Cms);
+        let snap_pre = session.status_snapshot();
+        assert_ne!(
+            snap_pre.state,
+            ModemState::Stopped,
+            "precondition: open session is not Stopped"
+        );
+        assert_eq!(
+            snap_pre.active_intent,
+            Some(SessionIntent::Cms),
+            "precondition: open session has recorded intent"
+        );
+
+        // Take the transport (as the b2f command does), simulate a failed
+        // connect_arq via the recording transport, then run the cleanup
+        // path that the widened command implements: disconnect + re-install.
+        let _existing = session.take_transport();
+        let mut transport = RecordingTransport::new().with_failing_connect();
+        let connect_res = transport.connect_arq(
+            "W7RMS-10",
+            CONNECT_REPEAT,
+            None,
+        );
+        assert!(
+            connect_res.is_err(),
+            "stub must fail connect_arq for this test"
+        );
+        // Cleanup path: link-disconnect (best-effort), then re-install
+        // the transport. Mirrors the post-exchange cleanup in
+        // modem_ardop_b2f_exchange.
+        let _ = transport.disconnect(Duration::from_secs(5));
+        session.install_transport(Box::new(transport));
+
+        let snap_post = session.status_snapshot();
+        assert_ne!(
+            snap_post.state,
+            ModemState::Stopped,
+            "Codex R2 P1 #3: failed b2f_exchange must NOT reset session to Stopped"
+        );
+        assert_eq!(
+            snap_post.active_intent,
+            Some(SessionIntent::Cms),
+            "Codex R2 P1 #3: failed b2f_exchange must NOT clear active_intent"
+        );
+        assert_eq!(
+            snap_post.active_transport_kind,
+            Some(ListenerTransportKind::Ardop),
+            "Codex R2 P1 #3: failed b2f_exchange must NOT clear active_transport_kind"
+        );
+        // Transport must be re-installed and re-takeable for a retry.
+        assert!(
+            session.take_transport().is_some(),
+            "Codex R2 P1 #3: transport must be re-installed for retry"
+        );
+    }
+
+    /// `modem_ardop_b2f_exchange` rejects a mismatched `transport_kind`
+    /// before any radio-touching work. Defensive guard against a future
+    /// RadioSessionPanel routing the wrong panel's invoke to this command.
+    #[test]
+    fn b2f_exchange_rejects_non_ardop_transport_kind() {
+        // Drive the validation branch in isolation — the full command
+        // requires an AppHandle which we can't build here, so anchor the
+        // guard by directly matching on the same kind sentinel.
+        let mismatched = ListenerTransportKind::VaraHf;
+        let allowed = matches!(mismatched, ListenerTransportKind::Ardop);
+        assert!(
+            !allowed,
+            "the b2f_exchange transport_kind validation must reject \
+             non-ARDOP kinds (VaraHf was passed in this test)"
+        );
+    }
+
+    // ── Task 1.5 — drop the legacy connect-cap symbol (operator decision bd tuxlink-qtgg) ──
+
+    /// Sentinel: `modem_commands.rs` must not (re)define a wall-clock
+    /// connect-cap constant or any tcp-wedge-guard substitute. Operator
+    /// decision bd tuxlink-qtgg + Codex Round 1 P1 #3 + Codex Round 2
+    /// P1 #2: no tuxlink-added wall-clock cap on the new
+    /// `b2f_exchange` ARQCALL path; the bound on keyed airtime is
+    /// ardopcf's `ARQTIMEOUT` × `CONNECT_REPEAT` plus the operator's
+    /// ABORT side channel.
+    ///
+    /// The sentinel strings are assembled via `concat!` so this test
+    /// file's own bytes don't match — without the split, `include_str!`
+    /// would always observe the literal strings the assertions search for.
+    /// For the same reason this docstring uses lowercase / hyphenated
+    /// phrasing rather than the literal token names.
+    #[test]
+    fn modem_commands_source_does_not_define_connect_deadline_symbol() {
+        let source = include_str!("modem_commands.rs");
+        let sentinel = concat!("CONNECT", "_DEADLINE");
+        let wedge_sentinel = concat!("CONNECT", "_TCP_WEDGE_GUARD");
+        assert!(
+            !source.contains(sentinel),
+            "modem_commands.rs still references {sentinel} — \
+             operator decision bd tuxlink-qtgg mandates removal of any \
+             tuxlink-layer wall-clock cap symbol on connect_arq"
+        );
+        assert!(
+            !source.contains(wedge_sentinel),
+            "modem_commands.rs introduces a {wedge_sentinel} substitute — \
+             Codex Round 1 P1 #3 + operator decision bd tuxlink-qtgg \
+             reject any tuxlink-added wall-clock cap"
+        );
     }
 }

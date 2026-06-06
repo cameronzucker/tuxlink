@@ -16,6 +16,109 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
   to 365 days / 10 GB. Logs live at `$XDG_STATE_HOME/tuxlink/logs/`.
   Spec: `docs/superpowers/specs/2026-06-04-alpha-logging-design.md`.
 
+## [0.35.1](https://github.com/cameronzucker/tuxlink/compare/v0.35.0...v0.35.1) (2026-06-05)
+
+
+### Bug Fixes
+
+* **ci:** clippy — unused PathBuf at lib + bool_assert_comparison in tests ([556b78e](https://github.com/cameronzucker/tuxlink/commit/556b78e307e8389917c33d907a1abaec5bd0236b))
+* **shell:** preserve selectedConnection across folder switch (tuxlink-u4ky) ([b715b73](https://github.com/cameronzucker/tuxlink/commit/b715b7373550fe05f3dd96313d2842b01b5a362c))
+
+## [0.35.0](https://github.com/cameronzucker/tuxlink/compare/v0.34.2...v0.35.0) (2026-06-05)
+
+
+### Features
+
+* **mailbox:** surface Winlink message ID in MessageView header (tuxlink-gtno) ([459abb4](https://github.com/cameronzucker/tuxlink/commit/459abb4cfb857048ab0e0e3b27ef78f347b6ca41))
+
+
+### Bug Fixes
+
+* **search:** empty-star color from --border-strong to --text-dim (tuxlink-ojr7) ([0384784](https://github.com/cameronzucker/tuxlink/commit/038478405783671bdfd82da1d134075483dc8530))
+* **shell:** SSID picker min-width 72px → 60px (tuxlink-yn58) ([aa24018](https://github.com/cameronzucker/tuxlink/commit/aa24018e26993489f95a16376607812fa601bd03))
+
+## [0.34.2](https://github.com/cameronzucker/tuxlink/compare/v0.34.1...v0.34.2) (2026-06-05)
+
+
+### Bug Fixes
+
+* **mailbox:** emit placeholder for binary message bodies (tuxlink-9ylw) ([5a9945d](https://github.com/cameronzucker/tuxlink/commit/5a9945da509821e637eec30b6e89d09662c8b1e0))
+
+## [0.34.1](https://github.com/cameronzucker/tuxlink/compare/v0.34.0...v0.34.1) (2026-06-05)
+
+
+### Bug Fixes
+
+* **ci:** resolve clippy + example compile errors surfaced by main merge ([990ef24](https://github.com/cameronzucker/tuxlink/commit/990ef24416abb470113d061e96cce28edb375bbb))
+
+## [0.34.0](https://github.com/cameronzucker/tuxlink/compare/v0.33.0...v0.34.0) (2026-06-05)
+
+
+### Features
+
+* **forms:** CheckInForm — WLE-aligned schema + OSM tile CSP allowlist (closes tuxlink-4ai0, tuxlink-bt2q) ([0918948](https://github.com/cameronzucker/tuxlink/commit/0918948e1de209571e4ae2f3274cc6556bb08e5e))
+
+
+### Bug Fixes
+
+* **forms:** apply Codex P1+P2 findings — CSP bare-host + WLE metadata + location-required + slot-leak ([3542e77](https://github.com/cameronzucker/tuxlink/commit/3542e7789be933131e609bd3e4fecccf011a051d))
+
+## [0.33.0](https://github.com/cameronzucker/tuxlink/compare/v0.32.1...v0.33.0) (2026-06-05)
+
+
+### Features
+
+* **auth-taxonomy:** classify CMS payloads + transport errors per §3/§6.4 ([c4aa1ef](https://github.com/cameronzucker/tuxlink/commit/c4aa1ef5def1a6e1903b5f44516290eb1b4687a6))
+* **b2f-events:** B2fEvent enum + B2fEventSink trait + serde-lockdown test ([109c8f5](https://github.com/cameronzucker/tuxlink/commit/109c8f5b867889ff256fce6af9bc7c3ce111a0db))
+* **b2f-events:** scaffold AttemptId + FailureMode + TransportFailureKind types ([fd4a5fd](https://github.com/cameronzucker/tuxlink/commit/fd4a5fde1451caccbebe8f43d78efa53252e8acd))
+* **banner:** AuthDiagnosticBanner component with 6 failure modes + 5 affordances + a11y ([4454d7c](https://github.com/cameronzucker/tuxlink/commit/4454d7c0891c030201d363bdde4b2268e810b369))
+* **capabilities:** scope shell:open allowlist to winlink.org + tuxlink repo (R2 [#9](https://github.com/cameronzucker/tuxlink/issues/9)) ([016edac](https://github.com/cameronzucker/tuxlink/commit/016edac811c385abf5b960cc78c2ef5b88baa075))
+* **copy:** banner headline + body mapping per spec §3/§4 (R5 revisions) ([1664b1b](https://github.com/cameronzucker/tuxlink/commit/1664b1b93e34919e07d0a6467f332c2280f6e400))
+* **css:** AuthDiagnosticBanner styles matching RadioPanel palette + reduced-motion variant ([87b54b7](https://github.com/cameronzucker/tuxlink/commit/87b54b7d74fd8cee4d1de65b0ba4e1ae413a8eb4))
+* **forms:** checkin template + catalog registration (Rust) ([0363de2](https://github.com/cameronzucker/tuxlink/commit/0363de2cfecfb36e15ebe81395133a27d772ddcd))
+* **forms:** CheckInForm — native Winlink Check-In with PositionArbiter + slot library ([80c5ff5](https://github.com/cameronzucker/tuxlink/commit/80c5ff52510f5fcca00ddf5bdf97d791bd084d86))
+* **forms:** FormDraftLibrary backend + TS wrapper for save/reuse slots ([2f71dab](https://github.com/cameronzucker/tuxlink/commit/2f71dab6ba8a4b4906fbfa7ee241233e51bb4e7d))
+* **forms:** Ics309FormV2 — native ICS-309 comms log with messages_meta aggregation + PDF ([e38caad](https://github.com/cameronzucker/tuxlink/commit/e38caadef913cfc49d2e21b5025121260ed57f59))
+* **forms:** messages_meta_query_for_log + render_ics309_pdf Tauri commands ([561c342](https://github.com/cameronzucker/tuxlink/commit/561c342861c0ce01cda4b183e116654cd7697e22))
+* **forms:** position_current_fix Tauri command for PositionFormV2 ([583f90e](https://github.com/cameronzucker/tuxlink/commit/583f90e4d1218cebecc466c2ef06b9937eba6929))
+* **forms:** PositionFormV2 — native Position Report with PositionArbiter pull ([452cd53](https://github.com/cameronzucker/tuxlink/commit/452cd5322b6f6d07831b9d92212b8c5a8768a7f0))
+* **forms:** PositionMapWidget — Leaflet map for PositionFormV2 grid override ([717b76f](https://github.com/cameronzucker/tuxlink/commit/717b76f33d4dcc83af38c7c2bb838be15320995d))
+* **forms:** wire FormDraftLibrary into Ics213Form and BulletinForm (slot save/load) ([d75bac6](https://github.com/cameronzucker/tuxlink/commit/d75bac6531630f05fe0d0b4bc4e20bf4d213c0a3))
+* **forms:** wire FormDraftLibrary into PositionFormV2 (slot save/load) ([53a76ae](https://github.com/cameronzucker/tuxlink/commit/53a76aeb3079d67738a561ccc9c113b39f06a8c1))
+* **handshake:** surface *** lines via HandshakeError::RemoteError (R3 [#3](https://github.com/cameronzucker/tuxlink/issues/3)) ([392496d](https://github.com/cameronzucker/tuxlink/commit/392496d386f86a282c47f4b82eb4d4348d8e5650))
+* **hook:** useAuthDiagnostic subscribes to b2f-event + AttemptId correlation + retry counter + rate-limit ([e2922e4](https://github.com/cameronzucker/tuxlink/commit/e2922e46e991c4c8d55dccb55d34b52c9917a29a))
+* **panel:** insert AuthDiagnosticBanner above SessionLogSection (spec §4.1) ([56e0ffd](https://github.com/cameronzucker/tuxlink/commit/56e0ffdd1ded4669966fa0c28354c97214a60052))
+* **redaction:** add ;PQ symmetric + freeform scrubber for embedded tokens ([0c4527d](https://github.com/cameronzucker/tuxlink/commit/0c4527d360d5d1ea27ff5fa8d4102ba73b5b76f1))
+* **redaction:** scaffold credential-equivalent redaction module + canonical ;PR test ([d09a92d](https://github.com/cameronzucker/tuxlink/commit/d09a92d61092e6308c3f7a4b943dd24573a693ea))
+* **session:** additive run_exchange_with_events for auth diagnostics (§6.3) ([5ca19b4](https://github.com/cameronzucker/tuxlink/commit/5ca19b42396513455c45c47db098422e1b639a9a))
+* **types:** add B2fEvent + FailureMode TS shapes mirroring Rust serde ([b559242](https://github.com/cameronzucker/tuxlink/commit/b5592429712187fdf8eb8e490d1cd98b707f42a5))
+* **ui-commands:** add cms_connect_test (single-flight + auth-only contract) ([a5dc21d](https://github.com/cameronzucker/tuxlink/commit/a5dc21daa738d3505b727a09ba4557dbc5c3254d))
+* **ui-commands:** add credentials_write_password + wizard_reopen + auth_diagnostic_clear ([bffe460](https://github.com/cameronzucker/tuxlink/commit/bffe4601dcbd80279dd363282522ffda50923926))
+* **ui-commands:** add TauriEventSink + scaffold cms_connect event channel ([38dd4eb](https://github.com/cameronzucker/tuxlink/commit/38dd4eb0340d8b10dd367cf725a23218ad9906ea))
+* **ui-commands:** classify cms_connect result + emit AuthClassified event ([8696abc](https://github.com/cameronzucker/tuxlink/commit/8696abcc012a261ca2827a8fd11478814f712a15))
+* **urls:** add hardcoded winlink.org + tuxlink-repo URL constants (R2 [#9](https://github.com/cameronzucker/tuxlink/issues/9)) ([8ee7573](https://github.com/cameronzucker/tuxlink/commit/8ee75738859316268161c46ff1c73299fda552a1))
+
+
+### Bug Fixes
+
+* **ci:** address 3 clippy errors blocking PR [#391](https://github.com/cameronzucker/tuxlink/issues/391) build ([14cbfce](https://github.com/cameronzucker/tuxlink/commit/14cbfced73a00d629b50a32622537d44aafe2fd8))
+* **forms:** CheckInForm review nits — useId for radio group + inline payload ([c2ade5f](https://github.com/cameronzucker/tuxlink/commit/c2ade5fe3b6d0e1aa292477983ac69e6231269d5))
+* **forms:** Codex full-diff adrev P1+P2 findings — catalog id alias + Check-In schema deferral ([b22c533](https://github.com/cameronzucker/tuxlink/commit/b22c533c3dc28a6d66c8074b1b1c44aa8a0aac0f))
+* **forms:** FormDraftLibrary review nits — camelCase IPC args + comment + test polish ([d4c6962](https://github.com/cameronzucker/tuxlink/commit/d4c696250bebdf7ea308f4731c9507a153755ba9))
+* **forms:** PositionFormV2 — onChange in event handlers + inline grid error ([c1b122f](https://github.com/cameronzucker/tuxlink/commit/c1b122f6d09b6902c8fc46f955d912145077b783))
+* **forms:** PositionFormV2 — wire-format payload + draft restore + no-fix UX ([bd35559](https://github.com/cameronzucker/tuxlink/commit/bd3555966110fc26663d5c2611897120e7e79530))
+* **forms:** Task 4b review nits — CSS token + always-create intent comments ([58485a0](https://github.com/cameronzucker/tuxlink/commit/58485a04221d52ba18cfa4610324dde648eeee5f))
+* **hook:** auto-clear test-creds circuit breaker after timeout (Codex MAJOR [#5](https://github.com/cameronzucker/tuxlink/issues/5)) ([09c4d43](https://github.com/cameronzucker/tuxlink/commit/09c4d4333954ed086166fee296047fe0ab17d167))
+* **redaction:** handle embedded + lowercase + whitespace token variants (Codex BLOCKER [#1](https://github.com/cameronzucker/tuxlink/issues/1)) ([14d9c4f](https://github.com/cameronzucker/tuxlink/commit/14d9c4fd6fa6779762dcea29732dc38dd09bb5c3))
+* **session:** thread caller-supplied AttemptId through run_exchange_with_events (Codex MAJOR [#2](https://github.com/cameronzucker/tuxlink/issues/2)) ([af6f1b9](https://github.com/cameronzucker/tuxlink/commit/af6f1b9f3d95365527d2c83dc8f91b051aa89363))
+* **telnet:** patch shipped ;PR leak in WireTap → wire_log path (R2 [#1](https://github.com/cameronzucker/tuxlink/issues/1) BLOCKER) ([321e384](https://github.com/cameronzucker/tuxlink/commit/321e3841b3a6b979e7e7344ab9579de4517e52ca))
+* **tests:** CI typecheck — type vi.fn mocks + drop unused STOPPED import ([5c56fa6](https://github.com/cameronzucker/tuxlink/commit/5c56fa6a90233d23183e98cfe5ea1dc13cdc2e9c))
+
+
+### Refactors
+
+* **credentials:** extract public write_password (R2 [#4](https://github.com/cameronzucker/tuxlink/issues/4)) ([2d9a001](https://github.com/cameronzucker/tuxlink/commit/2d9a00128a8d44b8c6c7f90ca87667a43c7fc692))
+
 ## [0.32.1](https://github.com/cameronzucker/tuxlink/compare/v0.32.0...v0.32.1) (2026-06-04)
 
 

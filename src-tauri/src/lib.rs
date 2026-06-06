@@ -155,7 +155,7 @@ pub fn run() {
         // tuxlink-9ls2: VARA listener shared state — the in-flight consumer
         // task's shutdown flag. Mirrors the ARDOP listener; VARA differs only
         // in that the transport is externally-managed (operator must
-        // vara_start_session before vara_listen can arm).
+        // vara_open_session before vara_listen can arm).
         .manage(std::sync::Arc::new(crate::ui_commands::VaraListenState::default()))
         .setup(|app| {
             use tauri::Manager as _;  // brings .state() into scope for the setup closure
@@ -207,6 +207,24 @@ pub fn run() {
                         match crate::search::build_service(&search_root) {
                             Ok(svc) => { app.manage(svc); }
                             Err(e) => eprintln!("search: build_service failed: {e}"),
+                        }
+
+                        // tuxlink-hnkn P2 Task 4: FormDraftLibrary — named slot
+                        // store for save/reuse of form field-value sets. Lives as a
+                        // sibling SQLite file to search.db (Option B schema-home
+                        // decision: independent lifecycle, survives search-index
+                        // rebuild). Open failure is non-fatal at launch — the app
+                        // still starts. But subsequent IPC calls to
+                        // form_draft_library_* will error at State<Arc<DraftLibrary>>
+                        // extraction because .manage() never ran. This matches the
+                        // SearchService precedent above.
+                        match crate::forms::draft_library::DraftLibrary::open(
+                            search_root.join("form_draft_library.db"),
+                        ) {
+                            Ok(lib) => {
+                                app.manage(std::sync::Arc::new(lib));
+                            }
+                            Err(e) => eprintln!("form-draft-library: open failed: {e}"),
                         }
                     }
                 }
@@ -324,6 +342,12 @@ pub fn run() {
             crate::ui_commands::forms_list_catalog,
             crate::ui_commands::open_webview_form,
             crate::ui_commands::close_webview_form_server,
+            // HTML Forms Phase 3 (tuxlink-xipa): runtime-updateable WLE
+            // Standard Forms snapshot — operator-triggered refresh via
+            // CatalogBrowser "Refresh forms…" affordance. Check is read-only;
+            // refresh performs the download + atomic swap (forms::updater).
+            crate::ui_commands::forms_check_for_update,
+            crate::ui_commands::forms_refresh,
             // HTML Forms P1 Task 10 critical-fix (tuxlink-tzr5): catalog-form
             // submit pathway — `send_form` only knows the 5 BUNDLED_FORMS
             // FormDefs; the webview path needs a parallel command that
@@ -368,7 +392,7 @@ pub fn run() {
             crate::ui_commands::ardop_allowed_stations_remove,
             crate::ui_commands::ardop_allowed_stations_set_allow_all,
             // tuxlink-9ls2: VARA P2P listener — same shape as ARDOP but the
-            // operator-managed transport requires vara_start_session first.
+            // operator-managed transport requires vara_open_session first.
             crate::ui_commands::vara_listen,
             crate::ui_commands::vara_set_listen,
             crate::ui_commands::vara_allowed_stations_get,
@@ -378,6 +402,9 @@ pub fn run() {
             crate::ui_commands::config_set_grid,      // Task 5 (tuxlink-686)
             crate::ui_commands::position_set_source,  // Task 11 (tuxlink-686)
             crate::ui_commands::position_status,      // Task 11 (tuxlink-686)
+            crate::ui_commands::position_current_fix, // tuxlink-hnkn P2 (PositionFormV2 pre-fill)
+            crate::ui_commands::messages_meta_query_for_log, // tuxlink-hnkn P2 Task 2 (ICS-309 log query)
+            crate::ui_commands::render_ics309_pdf,            // tuxlink-hnkn P2 Task 2 (ICS-309 PDF export)
             crate::ui_commands::config_set_privacy,    // tuxlink-39b (GPS privacy control surface)
             crate::ui_commands::config_set_connect,    // tuxlink-3o0 (CMS server endpoint control)
             // Task 10 (tuxlink-1hu): find-messages search commands
@@ -403,17 +430,28 @@ pub fn run() {
             crate::modem_commands::modem_get_status,   // tuxlink-4ek Task 3.2 (session snapshot)
             crate::modem_commands::modem_ardop_disconnect, // tuxlink-4ek Task 3.2 (clear consent + reset)
             crate::modem_commands::modem_ardop_connect, // tuxlink-4ek Task 3.3 (RADIO-1-gated spawn + ARQ connect)
-            crate::modem_commands::modem_mint_consent, // tuxlink-4ek Task 6.2 (RADIO-1 token mint — backend-only)
             crate::modem_commands::modem_ardop_b2f_exchange, // tuxlink-ytg (B2F over ARDOP — Winlink mail flows)
+            // tuxlink-0ye6 Task 3.5: ARDOP session lifecycle commands —
+            // ardop_open_session spawns ardopcf + records (intent, transport_kind)
+            // + auto-arms the listener iff intent calls for it; ardop_close_session
+            // disarms + aborts + clears active mode + tears down the transport.
+            // modem_ardop_connect / modem_ardop_disconnect stay registered for the
+            // Connect button's path until Task 3.6 widens b2f_exchange.
+            crate::modem_commands::ardop_open_session,
+            crate::modem_commands::ardop_close_session,
             // tuxlink-dfmf Phase 2: VARA UI wiring. Minimal TCP-transport lifecycle —
             // open/close/status — plus persisted config + the Pi-availability gating
             // probe. RF connect-to-peer (RADIO-1-gated) lives in a Phase 3 follow-up.
             crate::winlink::modem::vara::commands::config_get_vara,
             crate::winlink::modem::vara::commands::config_set_vara,
-            crate::winlink::modem::vara::commands::vara_start_session,
-            crate::winlink::modem::vara::commands::vara_stop_session,
+            crate::winlink::modem::vara::commands::vara_open_session,
+            crate::winlink::modem::vara::commands::vara_close_session,
             crate::winlink::modem::vara::commands::vara_status,
             crate::winlink::modem::vara::commands::platform_info,
+            // tuxlink-0ye6 Task 3.4: VARA dial-path B2F exchange — CONNECT to peer
+            // + B2F handshake + intent-filtered mailbox drain + DISCONNECT, all
+            // in one Tauri call. Mirror of `modem_ardop_b2f_exchange`'s shape.
+            crate::winlink::modem::vara::commands::modem_vara_b2f_exchange,
             // tuxlink-0pnb Task 4 (refactored): P2P-Telnet connect + abort + peer-password management.
             // telnet_p2p_dial renamed to telnet_p2p_connect (StatusBar pipeline wiring);
             // telnet_p2p_abort added to mirror cms_abort (operator cancel semantics).
@@ -449,6 +487,16 @@ pub fn run() {
             crate::logging::commands::logging_env_probes_rerun,
             crate::logging::commands::emit_first_paint_complete,   // Amendment E.7.7
             crate::logging::commands::report_issue_flow,           // Task 8 — Report Issue
+            // tuxlink-hnkn P2 Task 4: FormDraftLibrary — save/reuse named form slots.
+            crate::ui_commands::form_draft_library_list,
+            crate::ui_commands::form_draft_library_upsert,
+            crate::ui_commands::form_draft_library_delete,
+            // tuxlink-7do4 Task 13: smart-auth-diagnostics banner recovery commands.
+            crate::ui_commands::credentials_write_password, // spec §4.3 (i) — Mode 3 re-enter password
+            crate::ui_commands::wizard_reopen,              // spec §4.3 (ii) — Mode 4 try different callsign
+            crate::ui_commands::auth_diagnostic_clear,      // spec §4.3 (v) — banner Dismiss
+            // tuxlink-7do4 Task 14: auth-only credential test command.
+            crate::ui_commands::cms_connect_test,           // spec §4.3 (iii) — "Check this password works"
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

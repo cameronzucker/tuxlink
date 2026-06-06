@@ -19,9 +19,9 @@ import type { ConnectionKey } from '../mailbox/FolderSidebar';
 export type RadioPanelMode =
   | { kind: 'telnet'; intent: 'cms' | 'p2p' }
   | { kind: 'packet'; intent: 'cms' | 'p2p' }
-  | { kind: 'ardop-hf'; intent: 'cms' | 'p2p' }
-  | { kind: 'vara-hf'; intent: 'cms' | 'p2p' }
-  | { kind: 'vara-fm'; intent: 'cms' | 'p2p' };
+  | { kind: 'ardop-hf'; intent: 'cms' | 'p2p' | 'radio-only' }
+  | { kind: 'vara-hf'; intent: 'cms' | 'p2p' | 'radio-only' }
+  | { kind: 'vara-fm'; intent: 'cms' | 'p2p' | 'radio-only' };
 
 /**
  * The reason the radio panel is currently mounted. Multiple reasons can
@@ -42,7 +42,10 @@ export interface RadioPanelMountReason {
  * from docs/scratch/winlink-re/decompiled/. Used in the panel header.
  */
 export function panelTitle(mode: RadioPanelMode): string {
-  const intentSuffix = mode.intent === 'cms' ? 'Winlink' : 'P2P';
+  const intentSuffix =
+    mode.intent === 'cms' ? 'Winlink' :
+    mode.intent === 'p2p' ? 'P2P' :
+    'Radio-only';
   switch (mode.kind) {
     case 'telnet':   return `Telnet ${intentSuffix}`;
     case 'packet':   return `Packet ${intentSuffix}`;

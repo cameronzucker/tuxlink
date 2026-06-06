@@ -205,11 +205,5 @@ wizard and tuxlink's keyring is now in sync with Winlink's.
 
 ## Where next
 
-- [Picking a transport](08-picking-a-transport.md) — what each transport needs.
+- [Picking a transport](08-picking-a-transport.md) — what each transport needs, including how Abort behaves and what an emergency RF stop actually looks like.
 - [Troubleshooting](29-troubleshooting.md) — when a setting does not take effect.
-
-The project tracks the bounded-airtime / abort discipline that gates
-every on-air operation under the internal "RADIO-1" pitfall. The
-operator's responsibility under that discipline is summarized in
-[Picking a transport — Aborting](08-picking-a-transport.md); the developer-facing
-contract lives outside the bundled user-guide.

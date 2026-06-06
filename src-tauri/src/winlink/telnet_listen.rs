@@ -531,8 +531,15 @@ where
     // load the operator's Outbox BEFORE opening the B2F exchange so any
     // pending mail rides the inbound session out to the peer. Empty Vec
     // when no mailbox is plumbed (tests).
+    //
+    // Intent-filtered drain (tuxlink-u5hl): pass through the session's
+    // intent so the helper's safety gate applies. Existing answerer
+    // semantics already degrade gracefully on Err — non-CMS intents will
+    // hit the gate, log via `progress`, and proceed with empty outbound
+    // (inbound mail still files into Inbox; we just don't ship any
+    // outbound until the routing_flag schema lands).
     let outbound = match mailbox {
-        Some(mb) => match crate::winlink_backend::build_outbound_proposals(mb) {
+        Some(mb) => match crate::winlink_backend::build_outbound_proposals(mb, config.intent) {
             Ok(v) => v,
             Err(e) => {
                 progress(&format!("Outbox read failed (proceeding empty): {e}"));

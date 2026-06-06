@@ -18,6 +18,7 @@ use std::time::Duration;
 
 use super::command::{InboundCommand, OutboundCommand};
 use super::wire::{write_line, LineReader};
+use crate::modem_status::{ShutdownableStream, ABORT_WRITE_TIMEOUT};
 
 /// Configuration for connecting to a VARA TCP instance.
 #[derive(Debug, Clone)]
@@ -185,5 +186,41 @@ impl VaraTransport {
         let _ = self.cmd_writer.flush();
         let _ = self.data_stream.flush();
         Ok(())
+    }
+
+    /// Return a side-channel writer + hard-close stream pair pointed at the
+    /// VARA cmd port (tuxlink-0ye6 Task 4.1 — spec §9 + Codex Round 1 P1 #4).
+    ///
+    /// The cooperative writer is a clone of the cmd-port write half with a
+    /// bounded [`ABORT_WRITE_TIMEOUT`] so a wedged VARA modem cannot stall
+    /// the abort budget. The stream is a separate clone of the same socket
+    /// used by [`VaraSession::abort_in_flight`]'s fallback path to call
+    /// `shutdown_both` when the cooperative `ABORT\r` write fails — a
+    /// TCP RST forces VARA to notice the teardown and halt TX on its end
+    /// even when the cmd port itself is unresponsive (Codex Round 4 P1 #3).
+    ///
+    /// Returns `Err` if either `try_clone` fails — the caller can fall
+    /// through to the graceful `OutboundCommand::Disconnect` path.
+    ///
+    /// **`ABORT` vs `DISCONNECT`:** the VARA cmd codec models both
+    /// commands distinctly (see [`super::command::OutboundCommand`]):
+    /// `ABORT` is hard tear-down (interrupts in-flight TX within ~2s);
+    /// `DISCONNECT` is graceful (waits for the current burst to finish,
+    /// can be slow on weak-signal modes). This handle's `ABORT\r` is the
+    /// only path that fits spec §2's interrupt contract.
+    pub fn try_clone_abort_writer(
+        &self,
+    ) -> io::Result<(Box<dyn Write + Send>, Box<dyn ShutdownableStream>)> {
+        let writer = self.cmd_writer.try_clone()?;
+        // Bound the cooperative write so a wedged peer can't stall the
+        // abort path past spec §2's ~2s contract. Best-effort: if the
+        // socket rejects the timeout, fall through unbounded — the
+        // hard-close fallback still bounds the overall budget.
+        let _ = writer.set_write_timeout(Some(ABORT_WRITE_TIMEOUT));
+        let stream_clone = writer.try_clone()?;
+        Ok((
+            Box::new(writer) as Box<dyn Write + Send>,
+            Box::new(stream_clone) as Box<dyn ShutdownableStream>,
+        ))
     }
 }

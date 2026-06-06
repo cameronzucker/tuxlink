@@ -74,6 +74,12 @@ vi.mock('@tauri-apps/api/core', () => ({
         n2Retries: 10,
       };
     }
+    // position_status: PositionStatusDto — no GPS fix, empty grids (null-state).
+    // Without this stub, react-query's queryFn receives `undefined` and emits
+    // "Query data cannot be undefined" warnings on every poll tick. The
+    // positionQuery.data ?? null guard in useStatusData already maps this to
+    // null downstream; the stub silences the contract violation (tuxlink-hnkn).
+    if (cmd === 'position_status') return { gps_ready: false, broadcast_grid: '', ui_grid: '' };
     // Search IPC stubs (Task 17 — find-messages wiring)
     if (cmd === 'tauri_search_list_saved') return [];
     if (cmd === 'tauri_search_list_recent') return [];
@@ -367,17 +373,22 @@ describe('<AppShell> — Mock B topology', () => {
     expect(screen.getByTestId('status-bar')).toBeInTheDocument();
   });
 
-  it('selecting a folder dismisses the PacketRadioPanel (selectedConnection clears)', async () => {
+  // tuxlink-u4ky: selecting a different folder must NOT dismiss the radio
+  // panel. Pre-fix, onSelectFolder cleared selectedConnection along with
+  // selectedMessage — leaking pre-P2-era reading-pane-contention behavior
+  // that the post-P2 design comment on onSelectConnection explicitly
+  // disavowed. Operator smoke walk 2026-06-05 flagged this as "switching
+  // folders closes the radio modem dock — not intended behavior."
+  it('selecting a folder preserves the active radio panel (selectedConnection is independent)', async () => {
     renderShell();
     fireEvent.click(screen.getByTestId('sess-cms'));
     fireEvent.click(screen.getByTestId('proto-cms-packet'));
     await screen.findByTestId('radio-panel-root', undefined, { timeout: 10000 });
     fireEvent.click(screen.getByTestId('folder-sent'));
-    // Folder switch clears selectedConnection (intentional — onSelectFolder
-    // resets the reading-pane context). Panel unmounts unless a modem is
-    // active. In this test there's no active modem, so the panel goes away.
-    expect(screen.queryByTestId('radio-panel-root')).toBeNull();
-    expect(screen.getByTestId('message-view-empty')).toBeInTheDocument();
+    // Panel stays mounted across folder navigation — the operator can
+    // browse mail without losing their connection panel context.
+    expect(screen.getByTestId('radio-panel-root')).toBeInTheDocument();
+    expect(await screen.findByTestId('radio-panel-title')).toHaveTextContent(/Packet/);
   });
 
   it('renders the TelnetRadioPanel when cms+telnet is selected (P2: panel moved to right-hand radio panel)', async () => {
@@ -477,6 +488,7 @@ describe('AppShell — search → MessageList wiring (tuxlink-c7qz)', () => {
       }
       if (cmd === 'tauri_search_list_saved') return [];
       if (cmd === 'tauri_search_list_recent') return [];
+      if (cmd === 'position_status') return { gps_ready: false, broadcast_grid: '', ui_grid: '' };
       if (cmd === 'tauri_search_run') return {
         items: [
           {

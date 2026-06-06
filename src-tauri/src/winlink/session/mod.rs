@@ -128,7 +128,8 @@ impl std::fmt::Debug for ExchangeConfig {
 ///   silently re-pool already-composed messages mid-session. The
 ///   banner parser surfaces what the remote IS so the UI can show a
 ///   persistent state strip; it does not mutate routing flags.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum SessionIntent {
     /// Default — talking to the global Winlink CMS, either directly
     /// (Telnet/TLS to `cms.winlink.org:8773`) or via a transparent
@@ -208,6 +209,14 @@ impl SessionIntent {
             Self::PostOffice => Some(RoutingFlag::PostOffice),
             Self::Mesh | Self::P2p => None,
         }
+    }
+
+    /// True for intents that auto-arm a listener at Open Session (per spec §2 + §3).
+    /// Driven by whether the intent has an inbound side: P2p (any peer) and RadioOnly
+    /// (R-pool peer) yes; Cms (CMS gateway is outbound-only from the client's view),
+    /// PostOffice and Mesh (out of alpha scope) no.
+    pub fn auto_arms_listener(self) -> bool {
+        matches!(self, SessionIntent::P2p | SessionIntent::RadioOnly)
     }
 }
 
@@ -421,6 +430,169 @@ where
     );
     CMS_HEALTH.record_success();
     Ok(result)
+}
+
+/// Additive entry point for the smart auth-failure diagnostics (spec §6.3).
+///
+/// Takes an optional [`B2fEventSink`] alongside the existing `wire_log`
+/// closure. Existing callers (telnet, P2P, ARDOP, VARA, packet backends)
+/// continue to use [`run_exchange`] / [`run_exchange_with_role`] unchanged —
+/// this entry point is ADDITIVE, not a replacement (R1 #2 + R3 #8 finding).
+///
+/// Per §6.3 + §6.4: emits structured events at each handshake phase, and
+/// emits [`PostAuthExchangeStarted`][crate::winlink::b2f_events::B2fEvent::PostAuthExchangeStarted]
+/// when the first non-`***` `F`-prefixed protocol byte arrives from the server
+/// (the Mode 5 discriminator). Without that event, a `;PR`-rejected drop would
+/// mis-classify as Mode 5 ("credentials are fine").
+///
+/// ## Auth-only contract
+///
+/// This entry point runs the handshake, classifies the auth result, then quits
+/// cleanly (FF + FQ). It does NOT run a full message exchange — no inbound
+/// proposal reading, no outbound message sending. The `_outbound`, `_decide`,
+/// and `_wire_log` parameters are present for signature consistency with
+/// [`run_exchange_with_role`]; they are unused in this auth-only path.
+// Auth-only path mirrors run_exchange_with_role's signature shape for
+// consistency, which puts it 1 over the clippy::too_many_arguments default
+// threshold of 7. Restructuring would diverge the two from each other
+// without making either clearer; allowing the lint locally is the right call.
+#[allow(unused_variables, clippy::too_many_arguments)]
+pub fn run_exchange_with_events<R, W, F>(
+    reader: &mut R,
+    writer: &mut W,
+    config: &ExchangeConfig,
+    _outbound: Vec<OutboundMessage>,
+    _decide: F,
+    _wire_log: Option<&dyn Fn(&str)>,
+    events: Option<&dyn super::b2f_events::B2fEventSink>,
+    attempt_id: super::b2f_events::AttemptId,
+) -> Result<ExchangeResult, ExchangeError>
+where
+    R: BufRead,
+    W: Write,
+    F: Fn(&[Proposal]) -> Vec<Answer>,
+{
+    use super::b2f_events::{B2fEvent, ConnectionPhase};
+
+    // Slave/Dial role: server speaks first.
+    let remote = match handshake::read_remote_handshake(reader) {
+        Ok(r) => r,
+        Err(e) => {
+            if let Some(s) = events {
+                if let handshake::HandshakeError::RemoteError(raw) = &e {
+                    s.push(B2fEvent::RemoteErrorReceived {
+                        raw: raw.clone(),
+                        attempt_id,
+                    });
+                }
+                s.push(B2fEvent::ConnectionClosed {
+                    phase: ConnectionPhase::DuringHandshake,
+                    transport_kind: None,
+                    attempt_id,
+                });
+            }
+            return Err(ExchangeError::Handshake(e));
+        }
+    };
+    if let Some(s) = events {
+        s.push(B2fEvent::RemoteSidReceived {
+            sid: remote.sid.clone(),
+            attempt_id,
+        });
+        if remote.challenge.is_some() {
+            s.push(B2fEvent::SecureChallengeReceived { attempt_id });
+        }
+    }
+
+    let token = match (&remote.challenge, &config.password) {
+        (Some(challenge), Some(password)) => {
+            Some(secure::secure_login_response(challenge, password))
+        }
+        (Some(_), None) => return Err(ExchangeError::PasswordRequired),
+        (None, _) => None,
+    };
+    let our_handshake = handshake::build_handshake(
+        &config.mycall,
+        &config.targetcall,
+        &config.locator,
+        token.as_deref(),
+    );
+    writer
+        .write_all(&our_handshake)
+        .map_err(|_| ExchangeError::ConnectionClosed)?;
+    if let Some(s) = events {
+        if token.is_some() {
+            s.push(B2fEvent::SecureResponseSent { attempt_id });
+        }
+    }
+
+    // Read the first protocol line from the server post-handshake.
+    //   `***` prefix  → CMS rejected (Mode 2/3/4/6): emit RemoteErrorReceived,
+    //                    do NOT emit PostAuthExchangeStarted.
+    //   `F` prefix    → CMS accepted (Mode 5 discriminator): emit
+    //                    PostAuthExchangeStarted, then quit cleanly (FF + FQ).
+    let first_line = match wire::read_line(reader) {
+        Ok(line) => line,
+        Err(_) => {
+            if let Some(s) = events {
+                s.push(B2fEvent::ConnectionClosed {
+                    phase: ConnectionPhase::PostHandshake,
+                    transport_kind: None,
+                    attempt_id,
+                });
+            }
+            return Err(ExchangeError::ConnectionClosed);
+        }
+    };
+
+    if let Some(rest) = first_line.strip_prefix("***") {
+        let raw = rest.trim().to_string();
+        let scrubbed = super::redaction::redact_freeform(&raw).into_owned();
+        if let Some(s) = events {
+            s.push(B2fEvent::RemoteErrorReceived {
+                raw: scrubbed.clone(),
+                attempt_id,
+            });
+            s.push(B2fEvent::ConnectionClosed {
+                phase: ConnectionPhase::PostHandshake,
+                transport_kind: None,
+                attempt_id,
+            });
+        }
+        return Err(ExchangeError::RemoteError(scrubbed));
+    }
+
+    // Validate the first post-auth line is a recognized B2F command.
+    // `starts_with('F')` is too permissive — a malformed server could send
+    // `FLOL\r` and trigger a false Mode 5 classification (Codex MAJOR #3).
+    let is_valid_b2f_command = first_line == "FF"
+        || first_line == "FQ"
+        || first_line.starts_with("FA ")
+        || first_line.starts_with("FB ")
+        || first_line.starts_with("FC ")
+        || first_line.starts_with("FD ")
+        || first_line.starts_with("F>");
+    if is_valid_b2f_command {
+        if let Some(s) = events {
+            // SPEC §6.4 invariant: PostAuthExchangeStarted fires ONLY here —
+            // when the first non-`***` F-prefixed byte proves CMS accepted.
+            s.push(B2fEvent::PostAuthExchangeStarted { attempt_id });
+        }
+        // Auth-only contract: no message exchange. Send FF (nothing to offer)
+        // then FQ (quit). The server's first F line is already consumed.
+        let _ = writer.write_all(b"FF\r");
+        let _ = writer.write_all(b"FQ\r");
+        if let Some(s) = events {
+            s.push(B2fEvent::ConnectionClosed {
+                phase: ConnectionPhase::PostHandshake,
+                transport_kind: None,
+                attempt_id,
+            });
+        }
+        return Ok(ExchangeResult::default());
+    }
+
+    Err(ExchangeError::UnexpectedResponse(first_line))
 }
 
 /// Our turn: offer the pending messages, read the answers, send the accepted
@@ -767,6 +939,48 @@ mod tests {
         assert_eq!(RoutingFlag::from_char('l'), None);
         assert_eq!(RoutingFlag::from_char('X'), None);
         assert_eq!(RoutingFlag::from_char(' '), None);
+    }
+
+    // ============================================================================
+    // SessionIntent serde + auto_arms_listener (tuxlink-0ye6 — Phase 3, Task 3.1)
+    // ============================================================================
+
+    #[test]
+    fn session_intent_serializes_kebab_case() {
+        use serde_json;
+        assert_eq!(serde_json::to_string(&SessionIntent::Cms).unwrap(),         "\"cms\"");
+        assert_eq!(serde_json::to_string(&SessionIntent::P2p).unwrap(),         "\"p2p\"");
+        assert_eq!(serde_json::to_string(&SessionIntent::RadioOnly).unwrap(),   "\"radio-only\"");
+        assert_eq!(serde_json::to_string(&SessionIntent::PostOffice).unwrap(),  "\"post-office\"");
+        assert_eq!(serde_json::to_string(&SessionIntent::Mesh).unwrap(),        "\"mesh\"");
+    }
+
+    #[test]
+    fn session_intent_deserializes_kebab_case() {
+        use serde_json;
+        let cms: SessionIntent = serde_json::from_str("\"cms\"").unwrap();
+        let p2p: SessionIntent = serde_json::from_str("\"p2p\"").unwrap();
+        let ro:  SessionIntent = serde_json::from_str("\"radio-only\"").unwrap();
+        let po:  SessionIntent = serde_json::from_str("\"post-office\"").unwrap();
+        let me:  SessionIntent = serde_json::from_str("\"mesh\"").unwrap();
+        assert_eq!(cms, SessionIntent::Cms);
+        assert_eq!(p2p, SessionIntent::P2p);
+        assert_eq!(ro,  SessionIntent::RadioOnly);
+        assert_eq!(po,  SessionIntent::PostOffice);
+        assert_eq!(me,  SessionIntent::Mesh);
+    }
+
+    #[test]
+    fn auto_arms_listener_matches_spec_matrix() {
+        // Per spec §3 capability matrix — only intents that accept inbound auto-arm.
+        assert!(!SessionIntent::Cms.auto_arms_listener());
+        assert!( SessionIntent::P2p.auto_arms_listener());
+        assert!( SessionIntent::RadioOnly.auto_arms_listener());
+        // PostOffice + Mesh are out of alpha scope; their auto-arm behavior is
+        // defined-but-unused. Codify the current intent so a future change is
+        // a deliberate decision, not a silent flip.
+        assert!(!SessionIntent::PostOffice.auto_arms_listener());
+        assert!(!SessionIntent::Mesh.auto_arms_listener());
     }
 
     fn outbound_message(mid: &str, subject: &str, body: &[u8]) -> (OutboundMessage, Vec<u8>) {
@@ -1124,5 +1338,220 @@ mod tests {
         // `FS +\r` then `FF\r`.
         let tail = &writer[our_handshake.len()..];
         assert_eq!(tail, b"FS +\rFF\r");
+    }
+
+    // ============================================================================
+    // run_exchange_with_events — auth-only contract + Mode 5 discriminator
+    // (tuxlink-7do4 smart auth diagnostics §6.3 / §6.4)
+    // ============================================================================
+
+    #[test]
+    fn run_exchange_with_events_emits_handshake_events_to_sink() {
+        use super::super::b2f_events::{AttemptId, B2fEvent, VecEventSink};
+        let mut server = Vec::new();
+        server.extend_from_slice(b"[WL2K-5.0-B2FHM$]\r;PQ: 23753528\rCMS>\r");
+        server.extend_from_slice(b"FF\r");
+        let mut reader = std::io::Cursor::new(server);
+        let mut writer = Vec::new();
+        let config = ExchangeConfig {
+            mycall: "N7CPZ".into(),
+            targetcall: "SERVICE".into(),
+            locator: "CN87".into(),
+            password: Some("FOOBAR".into()),
+            intent: SessionIntent::Cms,
+        };
+        let sink = VecEventSink::new();
+        let result = run_exchange_with_events(
+            &mut reader, &mut writer, &config, vec![], |_| vec![], None, Some(&sink),
+            AttemptId::fresh(),
+        ).unwrap();
+        assert!(result.received.is_empty());
+        let events = sink.snapshot();
+        let kinds: Vec<&str> = events.iter().map(|e| match e {
+            B2fEvent::RemoteSidReceived { .. } => "remote_sid_received",
+            B2fEvent::SecureChallengeReceived { .. } => "secure_challenge_received",
+            B2fEvent::SecureResponseSent { .. } => "secure_response_sent",
+            B2fEvent::PostAuthExchangeStarted { .. } => "post_auth_exchange_started",
+            B2fEvent::ConnectionClosed { .. } => "connection_closed",
+            _ => "other",
+        }).collect();
+        assert!(kinds.contains(&"remote_sid_received"), "events: {kinds:?}");
+        assert!(kinds.contains(&"secure_challenge_received"), "events: {kinds:?}");
+        assert!(kinds.contains(&"secure_response_sent"), "events: {kinds:?}");
+        assert!(kinds.contains(&"post_auth_exchange_started"),
+            "Mode 5 discriminator must fire on FF receipt — events: {kinds:?}");
+    }
+
+    #[test]
+    fn run_exchange_with_events_mode3_emits_remote_error_no_post_auth() {
+        use super::super::b2f_events::{AttemptId, B2fEvent, VecEventSink};
+        let mut server = Vec::new();
+        server.extend_from_slice(b"[WL2K-5.0-B2FHM$]\r;PQ: 23753528\rCMS>\r");
+        // After we send our ;PR, server rejects with *** then closes.
+        server.extend_from_slice(b"*** [1] Secure login failed - account password does not match\r");
+        let mut reader = std::io::Cursor::new(server);
+        let mut writer = Vec::new();
+        let config = ExchangeConfig {
+            mycall: "N7CPZ".into(),
+            targetcall: "SERVICE".into(),
+            locator: "CN87".into(),
+            password: Some("WRONGPW".into()),
+            intent: SessionIntent::Cms,
+        };
+        let sink = VecEventSink::new();
+        let _ = run_exchange_with_events(
+            &mut reader, &mut writer, &config, vec![], |_| vec![], None, Some(&sink),
+            AttemptId::fresh(),
+        );
+        let events = sink.snapshot();
+        // RemoteErrorReceived must fire; PostAuthExchangeStarted MUST NOT fire.
+        assert!(events.iter().any(|e| matches!(e, B2fEvent::RemoteErrorReceived { .. })),
+            "events: {events:?}");
+        assert!(!events.iter().any(|e| matches!(e, B2fEvent::PostAuthExchangeStarted { .. })),
+            "Mode 3 wrongly emitted Mode 5 discriminator — events: {events:?}");
+    }
+
+    /// cms-z happy-path integration smoke — spec §8.4.
+    ///
+    /// Asserts the three invariants required by the tuxlink-7do4 smart auth
+    /// diagnostics spec §8.4 on a successful (Mode 5) connect:
+    ///
+    /// 1. `PostAuthExchangeStarted` IS emitted — the Mode 5 discriminator
+    ///    fired when the first non-`***` `F`-prefixed byte arrived.
+    /// 2. `RemoteErrorReceived` is NOT emitted — no `***` line was received
+    ///    (the server accepted our credentials without a rejection line).
+    /// 3. `AuthClassified` is NOT emitted — `AuthClassified` is emitted at
+    ///    the command layer (`ui_commands.rs`), not by the inner session
+    ///    function. `run_exchange_with_events` must be clean of it on the
+    ///    happy path; its absence here proves the event-layer boundary
+    ///    between session and command is intact.
+    ///
+    /// The scripted server emits the real cms-z.winlink.org happy-path
+    /// sequence (SID + `;PQ` challenge + `CMS>` prompt, then `FF` on the
+    /// first message turn), so this test exercises the full code path from
+    /// handshake through to the auth-only `FF + FQ` quit.
+    #[test]
+    fn cms_z_happy_path_smoke_post_auth_started_no_error_no_classified() {
+        use super::super::b2f_events::{AttemptId, B2fEvent, VecEventSink};
+
+        // Scripted in-memory CMS: SID with B2FHM, ;PQ challenge, CMS> prompt,
+        // then FF (no inbound messages — "no traffic" happy path).
+        let mut server = Vec::new();
+        server.extend_from_slice(b"[WL2K-5.0-B2FHM$]\r;PQ: 87654321\rCMS>\r");
+        server.extend_from_slice(b"FF\r");
+
+        let mut reader = std::io::Cursor::new(server);
+        let mut writer = Vec::new();
+        let config = ExchangeConfig {
+            mycall: "N7CPZ".into(),
+            targetcall: "SERVICE".into(),
+            locator: "CN87".into(),
+            password: Some("GOODPASS".into()),
+            intent: SessionIntent::Cms,
+        };
+
+        let sink = VecEventSink::new();
+        let result = run_exchange_with_events(
+            &mut reader, &mut writer, &config, vec![], |_| vec![], None, Some(&sink),
+            AttemptId::fresh(),
+        );
+        assert!(result.is_ok(), "happy-path exchange must not error: {result:?}");
+
+        let events = sink.snapshot();
+
+        // Invariant 1 (spec §8.4): PostAuthExchangeStarted MUST fire — proves
+        // the Mode 5 discriminator activated on the `FF` byte.
+        assert!(
+            events.iter().any(|e| matches!(e, B2fEvent::PostAuthExchangeStarted { .. })),
+            "spec §8.4: PostAuthExchangeStarted must fire on happy-path connect — events: {events:?}",
+        );
+
+        // Invariant 2 (spec §8.4): RemoteErrorReceived MUST NOT fire — no
+        // `***` line from the server means the credentials were accepted.
+        assert!(
+            !events.iter().any(|e| matches!(e, B2fEvent::RemoteErrorReceived { .. })),
+            "spec §8.4: RemoteErrorReceived must NOT fire on happy path — events: {events:?}",
+        );
+
+        // Invariant 3 (spec §8.4): AuthClassified MUST NOT fire — that event
+        // is emitted at the command layer (ui_commands.rs), never inside
+        // run_exchange_with_events. Its presence here would indicate a layering
+        // violation.
+        assert!(
+            !events.iter().any(|e| matches!(e, B2fEvent::AuthClassified { .. })),
+            "spec §8.4: AuthClassified must NOT fire inside run_exchange_with_events — \
+             it belongs to the command layer only — events: {events:?}",
+        );
+    }
+
+    // ---- Codex MAJOR #2: caller-supplied AttemptId threading ----
+
+    #[test]
+    fn run_exchange_with_events_uses_caller_supplied_attempt_id() {
+        use super::super::b2f_events::{AttemptId, B2fEvent, VecEventSink};
+        let mut server = Vec::new();
+        server.extend_from_slice(b"[WL2K-5.0-B2FHM$]\r;PQ: 23753528\rCMS>\r");
+        server.extend_from_slice(b"FF\r");
+        let mut reader = std::io::Cursor::new(server);
+        let mut writer = Vec::new();
+        let config = ExchangeConfig {
+            mycall: "N7CPZ".into(),
+            targetcall: "SERVICE".into(),
+            locator: "CN87".into(),
+            password: Some("FOOBAR".into()),
+            intent: SessionIntent::Cms,
+        };
+        let sink = VecEventSink::new();
+        let supplied_id = AttemptId(99);
+        let _ = run_exchange_with_events(
+            &mut reader, &mut writer, &config, vec![], |_| vec![], None, Some(&sink), supplied_id,
+        );
+        let events = sink.snapshot();
+        for event in &events {
+            let id = match event {
+                B2fEvent::RemoteSidReceived { attempt_id, .. } => attempt_id,
+                B2fEvent::SecureChallengeReceived { attempt_id } => attempt_id,
+                B2fEvent::SecureResponseSent { attempt_id } => attempt_id,
+                B2fEvent::PostAuthExchangeStarted { attempt_id } => attempt_id,
+                B2fEvent::ConnectionClosed { attempt_id, .. } => attempt_id,
+                _ => continue,
+            };
+            assert_eq!(*id, supplied_id, "event {event:?} has wrong attempt_id");
+        }
+    }
+
+    // ---- Codex MAJOR #3: reject malformed F-prefix lines ----
+
+    #[test]
+    fn run_exchange_with_events_rejects_malformed_f_line() {
+        use super::super::b2f_events::{AttemptId, B2fEvent, VecEventSink};
+        // Server sends a malformed F-prefix line that isn't a valid B2F command.
+        let mut server = Vec::new();
+        server.extend_from_slice(b"[WL2K-5.0-B2FHM$]\rCMS>\r");
+        server.extend_from_slice(b"FLOL malformed\r");
+        let mut reader = std::io::Cursor::new(server);
+        let mut writer = Vec::new();
+        let config = ExchangeConfig {
+            mycall: "N7CPZ".into(),
+            targetcall: "SERVICE".into(),
+            locator: "CN87".into(),
+            password: None,
+            intent: SessionIntent::Cms,
+        };
+        let sink = VecEventSink::new();
+        let result = run_exchange_with_events(
+            &mut reader, &mut writer, &config, vec![], |_| vec![], None, Some(&sink), AttemptId(1),
+        );
+        // PostAuthExchangeStarted must NOT fire — the line is not a valid B2F command.
+        let events = sink.snapshot();
+        assert!(
+            !events.iter().any(|e| matches!(e, B2fEvent::PostAuthExchangeStarted { .. })),
+            "PostAuthExchangeStarted wrongly fired for malformed F-line — events: {events:?}",
+        );
+        // The function should return Err(UnexpectedResponse).
+        assert!(
+            matches!(result, Err(ExchangeError::UnexpectedResponse(_))),
+            "expected UnexpectedResponse, got: {result:?}",
+        );
     }
 }
