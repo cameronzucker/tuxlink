@@ -1,42 +1,139 @@
-# 2026-06-06 Print Stylesheet Handoff
+# Handoff - 2026-06-06 print stylesheet
 
-Agent: fjord-kite-badger
+**From agent:** `grouse-slate-vetch`
+**Session arc:** Implemented the `tuxlink-zdfj` print stylesheet slice and opened PR #424.
+**Status:** pushed branch + open PR; bd issue remains `IN_PROGRESS` because `bd close` is blocked by open dependency `tuxlink-j0m3`.
 
-## Branch / PR
+---
 
-- Worktree: `/home/administrator/Code/tuxlink/worktrees/bd-tuxlink-zdfj-print-stylesheet`
-- Branch: `bd-tuxlink-zdfj/print-stylesheet`
-- PR: https://github.com/cameronzucker/tuxlink/pull/424
-- Code commit at handoff time: `57d5c4e fix(shell): add message-focused print stylesheet`
+## Next session's starting prompt
 
-## Completed
+> I'm resuming the tuxlink project. `grouse-slate-vetch` handed off 2026-06-06 after opening PR #424 for `tuxlink-zdfj`. Read these before doing anything:
+>
+> 1. `dev/handoffs/2026-06-06-print-stylesheet.md` - this handoff.
+> 2. `CLAUDE.md` - especially Agent identity, Tool referee, worktree rules, destructive-git bans, and Session Completion.
+> 3. `AGENTS.md` - non-Claude summary and parity expectations.
+> 4. `bd show tuxlink-zdfj` and `bd show tuxlink-j0m3` - zdfj implementation is done, but close is blocked by j0m3.
+>
+> Once read:
+>
+> - Generate a fresh moniker via `python3 .claude/scripts/get_agent_moniker.py`.
+> - Check PR #424 and CI/review state before editing.
+> - Do not expand zdfj into a print-only route or full intelligent message-print feature; that is explicitly out of scope.
 
-- Added main-shell `@media print` rules in `src/shell/AppShell.css`.
-- Print now hides title/menu chrome, dashboard/search ribbon, sidebar, message list, status bar, radio panel, popups, and message action/save controls.
-- The selected `MessageView` prints full-width on a white page without the shell's `100vh` / `overflow: hidden` clipping.
-- Wrapped the subject + metadata in `src/mailbox/MessageView.tsx` with `.message-print-header` so the header block can avoid print page splits.
-- Added raw-CSS regression checks in `src/shell/AppShell.test.tsx`.
+---
 
-## Verification
+## What Landed
 
-- `pnpm install --offline`
-- `pnpm vitest run src/shell/AppShell.test.tsx` - 27 passed
-- `pnpm typecheck`
-- `pnpm build` - passed; existing Vite dynamic-import/chunk-size warnings emitted
-- `git diff --check`
+| Item | What | PR # | Status |
+|---|---|---|---|
+| `tuxlink-zdfj` | Added `@media print` shell rules that hide title/menu chrome, dashboard/search ribbon, sidebar, message list, status bar, radio panel, popups, and action/save buttons during print. MessageView prints full-width on a white page. | #424 | open |
+| `tuxlink-zdfj` | Wrapped the MessageView subject/meta area in `.message-print-header` so CSS can avoid splitting the header block across print pages. | #424 | open |
+| `tuxlink-zdfj` | Added raw AppShell CSS regression tests for the print selectors and print-flow rules. | #424 | open |
 
-## Issue State
+Feature commit before this handoff: `57d5c4e fix(shell): add message-focused print stylesheet`.
 
-- `bd close tuxlink-zdfj` was attempted but refused because open dependency `tuxlink-j0m3` still blocks closure.
-- `tuxlink-zdfj` remains `IN_PROGRESS` with a progress note; do not force-close unless the dependency state is intentionally overridden.
+## Validation
+
+Passed locally:
+
+```bash
+pnpm install --offline
+pnpm vitest run src/shell/AppShell.test.tsx
+pnpm typecheck
+pnpm build
+git diff --check
+```
+
+Notes:
+- `pnpm install --offline` initially hit sandbox EROFS because pnpm updates user-store project metadata; reran with escalated filesystem access and no downloads.
+- `pnpm build` passed and emitted existing Vite warnings about Tauri API dynamic/static import chunking and large chunks.
+- No browser/PDF visual print preview was performed in this session.
+
+## State At Pause
+
+### What's pushed to origin
+
+```text
+bd-tuxlink-zdfj/print-stylesheet  57d5c4e  fix(shell): add message-focused print stylesheet
+PR: https://github.com/cameronzucker/tuxlink/pull/424
+```
+
+This handoff doc is being committed and pushed as a follow-up commit on the same branch.
+
+### Working-tree state
+
+Before adding this handoff doc:
+
+```text
+## bd-tuxlink-zdfj/print-stylesheet...origin/bd-tuxlink-zdfj/print-stylesheet
+```
+
+Untracked files: none.
+
+Ignored/generated files present from validation:
+- `node_modules/` from `pnpm install --offline`.
+- `dist/` from `pnpm build`.
+
+Stashes visible from this worktree are pre-existing and not created by this session:
+
+```text
+stash@{0}: On bd-tuxlink-fl6e/plan-revision-codex-r1: round3-fixes-snapshot
+stash@{1}: On task-amd-main-ui: pre-recovery-2026-06-03
+stash@{2}: On task-amd-main-ui: untracked-handoff-pre-rebase
+stash@{3}: On task-amd-main-ui: bd-state-pre-rebase
+stash@{4}: On main: bd export 2026-05-31 - pre-checkout
+stash@{5}: On task-amd-main-ui: bd-jsonl-pre-main-switch
+stash@{6}: On task-amd-main-ui: task-amd-main-ui WIP pre-P1-smoke
+```
+
+### In-flight worktrees
+
+This session created and used:
+
+#### Worktree `/home/administrator/Code/tuxlink/worktrees/bd-tuxlink-zdfj-print-stylesheet`
+
+- **Claim:** bd `tuxlink-zdfj`
+- **Branch:** `bd-tuxlink-zdfj/print-stylesheet`
+- **Tracked dirty:** only this handoff doc before the follow-up commit.
+- **Untracked:** none.
+- **Gitignored-stateful:** `node_modules/`, `dist/` generated by validation.
+- **Stashes:** none created by this session.
+- **Disposition:** keep worktree until PR #424 is merged or closed; then dispose per ADR 0009.
+
+`git worktree list` shows many pre-existing worktrees in this checkout. This session did not touch or inventory those beyond observing the list; cleanup of pre-existing worktrees is outside this task.
+
+### bd state
+
+```text
+Total Issues: 484
+Open: 137
+In Progress: 158
+Blocked: 32
+Closed: 189
+Ready to Work: 105
+```
+
+`tuxlink-zdfj` remains `IN_PROGRESS`. I attempted `bd close tuxlink-zdfj --reason ...`; bd refused:
+
+```text
+cannot close tuxlink-zdfj: blocked by open issues [tuxlink-j0m3] (use --force to override)
+```
+
+I did not force-close it. I appended a bd note recording implementation/gate completion and the dependency blocker. `bd dolt push` was attempted; no Dolt remote is configured, so it skipped.
+
+## Open Decisions
+
+No product/design decision is needed for this slice. Review/CI should decide whether the CSS-only approach is sufficient.
 
 ## Remaining Print Limitations
 
-- This is still native `window.print()` for the current webview, not a print-only route or preview.
-- Multi-page/form-specific print rendering remains out of scope for this slice and belongs with the HTML Forms work.
-- Acceptance should still include an operator/browser smoke print or print-to-PDF check because jsdom tests only pin the stylesheet contract.
+- This remains native `window.print()` output, not a print-only route.
+- Multi-page HTML form rendering remains out of scope per `tuxlink-zdfj`.
+- Actual printed/PDF output still depends on WebKit/Tauri print engine behavior; only CSS selectors and build/test gates were verified here.
 
-## Worktree State
+## Reminders
 
-- Before handoff commit: source tree clean except this new handoff file.
-- Ignored/generated on disk from local gates: `node_modules/`, `dist/`.
+- PR #424 should not be expanded into a full intelligent message-print feature.
+- If `tuxlink-j0m3` closes, `tuxlink-zdfj` can be closed after PR #424 lands and any acceptance smoke is done.
+- Destructive git commands remain banned; dispose of the worktree with the ADR 0009 ritual after merge.
