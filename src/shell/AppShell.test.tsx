@@ -605,3 +605,47 @@ describe('AppShell.css radio-panel chrome width (tuxlink-8rng + tuxlink-40u8)', 
     );
   });
 });
+
+describe('AppShell.css print stylesheet (tuxlink-zdfj)', () => {
+  const printCss = appShellCss.slice(appShellCss.indexOf('@media print'));
+
+  it('hides app chrome and list columns for message-focused printing', () => {
+    expect(printCss).toContain('@media print');
+    for (const selector of [
+      '.layout-b .tux-titlebar',
+      '.layout-b .tux-menubar',
+      '.layout-b .tux-resize',
+      '.layout-b .ribbon-with-search',
+      '.layout-b .search-zone',
+      '.layout-b .dashboard',
+      '.layout-b .sidebar',
+      '.layout-b .rows-pane',
+      '.layout-b .statusbar',
+      '.layout-b .radio-panel',
+      '.layout-b .reading-pane .actions',
+      '.layout-b .reading-pane .msg-attachment-save',
+      '.tux-dropdown',
+      '.message-list-sort-menu',
+    ]) {
+      expect(printCss).toContain(selector);
+    }
+    expect(printCss).toMatch(/display:\s*none\s*!important;/);
+  });
+
+  it('lets the message reader print full-width with an unsplit header block', () => {
+    expect(printCss).toMatch(/\.layout-b\s*\{[\s\S]*height:\s*auto;[\s\S]*overflow:\s*visible;/);
+    expect(printCss).toMatch(
+      /\.layout-b \.panes,[\s\S]*\.layout-b \.panes--with-dock,[\s\S]*\.layout-b \.panes--with-dock\.panes--with-legacy-dock\s*\{[\s\S]*display:\s*block;[\s\S]*overflow:\s*visible;/,
+    );
+    expect(printCss).toMatch(/\.layout-b \.reading-pane\s*\{[^}]*width:\s*100%;/);
+    expect(printCss).toMatch(/\.layout-b \.reading-pane\s*\{[^}]*max-width:\s*none;/);
+    expect(printCss).toMatch(/\.layout-b \.reading-pane\s*\{[^}]*padding:\s*0;/);
+    expect(printCss).toMatch(/\.layout-b \.reading-pane\s*\{[^}]*overflow:\s*visible;/);
+    expect(printCss).toMatch(
+      /\.layout-b \.reading-pane \.message-print-header\s*\{[\s\S]*break-inside:\s*avoid;[\s\S]*page-break-inside:\s*avoid;/,
+    );
+    expect(printCss).toMatch(
+      /\.layout-b \.reading-pane \.msg-meta\s*\{[\s\S]*break-before:\s*avoid;[\s\S]*break-inside:\s*avoid;[\s\S]*page-break-inside:\s*avoid;/,
+    );
+  });
+});

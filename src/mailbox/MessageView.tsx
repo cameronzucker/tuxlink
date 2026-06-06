@@ -316,60 +316,62 @@ export function MessageViewLoaded({
         )}
       </div>
 
-      {/* 2 — subject heading */}
-      <h1 className="subject-line" data-testid="message-subject">
-        {message.subject}
-      </h1>
+      <div className="message-print-header">
+        {/* 2 — subject heading */}
+        <h1 className="subject-line" data-testid="message-subject">
+          {message.subject}
+        </h1>
 
-      {/* 3 — From / To / Date (+ Form when the message is a Winlink form) */}
-      <dl className="msg-meta">
-        <dt>From</dt>
-        <dd>
-          <span className="addr" data-testid="message-from">
-            {from.addr}
-          </span>
-          {from.name && <span className="from-name"> · {from.name}</span>}
-        </dd>
+        {/* 3 — From / To / Date (+ Form when the message is a Winlink form) */}
+        <dl className="msg-meta">
+          <dt>From</dt>
+          <dd>
+            <span className="addr" data-testid="message-from">
+              {from.addr}
+            </span>
+            {from.name && <span className="from-name"> · {from.name}</span>}
+          </dd>
 
-        <dt>To</dt>
-        <dd data-testid="message-to">
-          {toAddrs.length === 0
-            ? '—'
-            : toAddrs.map((a, i) => (
-                <span key={i}>
-                  {i > 0 && ', '}
-                  <span className="addr">{a.addr}</span>
-                </span>
-              ))}
-        </dd>
+          <dt>To</dt>
+          <dd data-testid="message-to">
+            {toAddrs.length === 0
+              ? '—'
+              : toAddrs.map((a, i) => (
+                  <span key={i}>
+                    {i > 0 && ', '}
+                    <span className="addr">{a.addr}</span>
+                  </span>
+                ))}
+          </dd>
 
-        <dt>Date</dt>
-        <dd data-testid="message-date">{formatHeaderDate(message.date)}</dd>
+          <dt>Date</dt>
+          <dd data-testid="message-date">{formatHeaderDate(message.date)}</dd>
 
-        {/* Winlink message ID — tuxlink-gtno. Surfaced for support / forensics
-            / log-correlation workflows where the operator needs to quote the
-            ID in a thread or grep wl2k-go logs. Mono so paste-targets line up. */}
-        <dt>ID</dt>
-        <dd data-testid="message-id">
-          <span className="msg-id">{message.id}</span>
-        </dd>
+          {/* Winlink message ID — tuxlink-gtno. Surfaced for support / forensics
+              / log-correlation workflows where the operator needs to quote the
+              ID in a thread or grep wl2k-go logs. Mono so paste-targets line up. */}
+          <dt>ID</dt>
+          <dd data-testid="message-id">
+            <span className="msg-id">{message.id}</span>
+          </dd>
 
-        {message.isForm && (
-          <>
-            <dt>Form</dt>
-            <dd data-testid="message-form-kind">
-              {formMeta ? (
-                <>
-                  <span className="form-kind-code">{formCode}</span>
-                  {formRest.length > 0 && ` · ${formRest.join(' · ')}`}
-                </>
-              ) : (
-                'Winlink form'
-              )}
-            </dd>
-          </>
-        )}
-      </dl>
+          {message.isForm && (
+            <>
+              <dt>Form</dt>
+              <dd data-testid="message-form-kind">
+                {formMeta ? (
+                  <>
+                    <span className="form-kind-code">{formCode}</span>
+                    {formRest.length > 0 && ` · ${formRest.join(' · ')}`}
+                  </>
+                ) : (
+                  'Winlink form'
+                )}
+              </dd>
+            </>
+          )}
+        </dl>
+      </div>
 
       {/* 4 — body. Form messages dispatch to a registered View component
           (e.g., Ics213View). If the form_id is not registered, the Viewer-
