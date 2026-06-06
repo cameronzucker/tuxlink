@@ -108,7 +108,7 @@ export function AboutDialog({ open, onClose }: AboutDialogProps) {
                 onClick={openLink(LICENSE_URL)}
                 data-testid="about-license-link"
               >
-                MIT
+                GPL-3.0-or-later
               </a>
             </dd>
             <dt>Source</dt>
@@ -145,7 +145,7 @@ export function AboutDialog({ open, onClose }: AboutDialogProps) {
 
           <p className="tux-about-credit">
             Built with Rust, Tauri, and React. © Cameron Zucker; released
-            under the MIT License.
+            under GPL-3.0-or-later.
           </p>
         </div>
 

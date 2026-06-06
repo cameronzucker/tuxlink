@@ -31,10 +31,17 @@ describe('AboutDialog', () => {
 
   it('renders links for license, repo, changelog, issues', () => {
     render(<AboutDialog open={true} onClose={() => {}} />);
-    expect(screen.getByTestId('about-license-link')).toBeInTheDocument();
+    expect(screen.getByTestId('about-license-link')).toHaveTextContent('GPL-3.0-or-later');
+    expect(screen.getByTestId('about-license-link')).toHaveAttribute(
+      'href',
+      'https://github.com/cameronzucker/tuxlink/blob/main/LICENSE',
+    );
     expect(screen.getByTestId('about-repo-link')).toBeInTheDocument();
     expect(screen.getByTestId('about-changelog-link')).toBeInTheDocument();
     expect(screen.getByTestId('about-issues-link')).toBeInTheDocument();
+    expect(screen.getByText(/released under GPL-3\.0-or-later/i)).toBeInTheDocument();
+    expect(screen.queryByText(/^MIT$/i)).toBeNull();
+    expect(screen.queryByText(/under the MIT License/i)).toBeNull();
   });
 
   it('clicking an outbound link calls shell-open with the URL (not in-app navigation)', async () => {
