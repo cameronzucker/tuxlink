@@ -392,6 +392,24 @@ describe('<AppShell> — Mock B topology', () => {
     expect(await screen.findByTestId('radio-panel-title')).toHaveTextContent(/Packet/);
   });
 
+  it('closing Packet keeps Packet as the ribbon transport intent and Connect does not start Telnet', async () => {
+    renderShell();
+    fireEvent.click(screen.getByTestId('sess-cms'));
+    fireEvent.click(screen.getByTestId('proto-cms-packet'));
+    await screen.findByTestId('radio-panel-root', undefined, { timeout: 10000 });
+
+    fireEvent.click(screen.getByTestId('radio-panel-close'));
+    await waitFor(() => expect(screen.queryByTestId('radio-panel-root')).toBeNull());
+    expect(screen.getByTestId('ribbon-connection')).toHaveTextContent('Packet 1200 · not connected');
+
+    vi.mocked(invoke).mockClear();
+    fireEvent.click(screen.getByTestId('connect-button'));
+
+    expect(vi.mocked(invoke).mock.calls.some(([cmd]) => cmd === 'cms_connect')).toBe(false);
+    expect(await screen.findByTestId('radio-panel-title', undefined, { timeout: 10000 }))
+      .toHaveTextContent(/Packet/);
+  });
+
   it('renders the TelnetRadioPanel when cms+telnet is selected (P2: panel moved to right-hand radio panel)', async () => {
     renderShell();
     fireEvent.click(screen.getByTestId('sess-cms'));

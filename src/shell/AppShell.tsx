@@ -272,6 +272,13 @@ export function AppShell() {
 
   // Connection panel: null = no panel; a {sessionType, protocol} key selects the reading-pane connection pane.
   const [selectedConnection, setSelectedConnection] = useState<ConnectionKey | null>(null);
+  // tuxlink-479c: remember the last operator-selected/open transport separately
+  // from panel visibility. Closing the right-hand panel should hide the panel,
+  // not reset the dashboard/ribbon intent back to Telnet.
+  const [activeConnection, setActiveConnection] = useState<ConnectionKey>({
+    sessionType: 'cms',
+    protocol: 'telnet',
+  });
 
   // Find-messages: search + saved-search state (Task 17).
   const search = useSearch();
@@ -434,8 +441,23 @@ export function AppShell() {
     [modemIsActive],
   );
 
+  useEffect(() => {
+    const status = statusData.status;
+    if (
+      status?.kind === 'Listening' ||
+      (status?.kind === 'Connected' && status.transport.startsWith('Packet'))
+    ) {
+      setActiveConnection((cur) => (
+        cur.protocol === 'packet' && cur.sessionType === 'cms'
+          ? cur
+          : { sessionType: 'cms', protocol: 'packet' }
+      ));
+    }
+  }, [statusData.status]);
+
+  const radioPanelSelectedConnection = selectedConnection ?? (pinRadioPanel ? activeConnection : null);
   const radioPanelMode = computePanelMode({
-    sidebarSelected: selectedConnection,
+    sidebarSelected: radioPanelSelectedConnection,
     activeModem,
     togglePinned: pinRadioPanel,
   });
@@ -453,6 +475,10 @@ export function AppShell() {
     // The backend single-flight guard is the hard guarantee; this just avoids a
     // spurious "already in progress" error line on a double-press.
     if (connecting) return;
+    if (!(activeConnection.sessionType === 'cms' && activeConnection.protocol === 'telnet')) {
+      setSelectedConnection(activeConnection);
+      return;
+    }
     setConnecting(true);
     try {
       await invoke('cms_connect');
@@ -463,7 +489,7 @@ export function AppShell() {
     } finally {
       setConnecting(false);
     }
-  }, [queryClient, connecting]);
+  }, [activeConnection, queryClient, connecting]);
 
   const onAbort = useCallback(() => {
     // Fire-and-forget (tuxlink-9z2): the abort shuts the connecting socket; the
@@ -653,6 +679,7 @@ export function AppShell() {
   // they navigate back.
   const onSelectConnection = useCallback((conn: ConnectionKey) => {
     setSelectedConnection(conn);
+    setActiveConnection(conn);
   }, []);
 
   // tuxlink-268k (Codex P3): stabilize the two inline FolderSidebar
@@ -695,14 +722,14 @@ export function AppShell() {
     () =>
       derivePacketUiState(
         statusData.status ?? null,
-        selectedConnection?.protocol === 'packet',
+        activeConnection.protocol === 'packet',
         // Operator smoke 2026-05-31: the prior hard-coded `0` made the ribbon
         // callsign show `<base>-0` regardless of the configured SSID. Source
         // the SSID from the shared packet config so the ribbon, status bar,
         // and PacketRadioPanel all agree on `<base>-<ssid>`.
         effectiveCall(statusData.callsign, packetConfig.ssid),
       ),
-    [statusData.status, selectedConnection, statusData.callsign, packetConfig.ssid],
+    [statusData.status, activeConnection, statusData.callsign, packetConfig.ssid],
   );
 
   return (
