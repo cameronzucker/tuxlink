@@ -22,7 +22,7 @@ use tauri::{AppHandle, Emitter, Manager};
 use crate::app_backend::{BackendPhase, BackendState};
 use crate::config::{Config, ConfigReadError};
 use crate::session_log::SessionLogState;
-use crate::winlink_backend::{LogLevel, LogLine, LogSource, NativeBackend, ProgressSink, WireSink};
+use crate::winlink_backend::{LogLevel, LogLine, LogSource, MailboxChangeSink, NativeBackend, ProgressSink, WireSink};
 
 /// What the bootstrap should do, decided purely from `read_config()`'s result.
 #[derive(Debug)]
@@ -192,6 +192,15 @@ fn install_native(app_handle: &AppHandle, state: &BackendState, cfg: Config) {
         let _ = wire_app.emit("session_log:line", crate::ui_commands::LogLineDto::from(line));
     });
 
+    // tuxlink-b2sk: mailbox mutations should reach the shell immediately. The
+    // frontend listens for this lightweight event and invalidates the
+    // `['mailbox']` query family instead of waiting for the 10s polling interval
+    // or for `cms_connect` to return after its connected-state hold.
+    let mailbox_app = app_handle.clone();
+    let mailbox_change: MailboxChangeSink = Arc::new(move || {
+        let _ = mailbox_app.emit("mailbox:changed", ());
+    });
+
     // tuxlink-686: inject the live PositionArbiter so the on-air CMS locator is
     // the arbiter's broadcast_grid() (live + precision-reduced) rather than the
     // stale config snapshot the backend was constructed with. The arbiter is
@@ -210,6 +219,7 @@ fn install_native(app_handle: &AppHandle, state: &BackendState, cfg: Config) {
 
     let mut backend = NativeBackend::with_progress(cfg, mbox_dir, progress)
         .with_wire_log(wire)
+        .with_mailbox_change(mailbox_change)
         .with_position(arbiter);
     if let Some(index) = search_index {
         backend = backend.with_index(index);

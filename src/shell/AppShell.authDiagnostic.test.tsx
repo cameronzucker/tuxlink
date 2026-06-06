@@ -140,6 +140,7 @@ vi.mock('react-virtuoso', () => ({
 }));
 
 vi.mock('../mailbox/useMailbox', () => ({
+  useMailboxChangeEvents: () => {},
   useMailbox: (_folder: string) => ({
     messages: [],
     isLoading: false,

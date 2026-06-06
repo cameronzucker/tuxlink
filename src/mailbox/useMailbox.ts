@@ -11,10 +11,15 @@
 // flow through the same hook + Tauri command — backend dispatches on the
 // string at parse time.
 
-import { useQuery } from '@tanstack/react-query';
+import { useEffect } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import type { MailboxFolder, MailboxFolderRef, MessageMeta } from './types';
 import { devFixtureFor } from './devFixture';
+
+export const MAILBOX_QUERY_KEY = ['mailbox'] as const;
+export const MAILBOX_CHANGED_EVENT = 'mailbox:changed';
 
 /// System folders that hit a backend command via the `MailboxFolder` enum.
 /// `drafts` (local store) and `deleted` (disabled placeholder) are excluded.
@@ -67,7 +72,7 @@ export interface UseMailboxResult {
 export function useMailbox(folder: MailboxFolderRef): UseMailboxResult {
   const enabled = isBackendFolder(folder);
   const query = useQuery({
-    queryKey: ['mailbox', folder],
+    queryKey: [...MAILBOX_QUERY_KEY, folder],
     queryFn: () => fetchMailbox(folder),
     refetchInterval: 10_000,
     enabled,
@@ -93,4 +98,35 @@ export function useMailbox(folder: MailboxFolderRef): UseMailboxResult {
     isError: usingFixture ? false : query.isError,
     error: usingFixture ? undefined : query.error,
   };
+}
+
+/// Subscribe once at the shell level so backend mailbox mutations invalidate
+/// folder queries immediately instead of waiting for the 10s poll.
+export function useMailboxChangeEvents(): void {
+  const queryClient = useQueryClient();
+
+  useEffect(() => {
+    let cancelled = false;
+    let unlisten: (() => void) | null = null;
+
+    listen<void>(MAILBOX_CHANGED_EVENT, () => {
+      void queryClient.invalidateQueries({ queryKey: MAILBOX_QUERY_KEY });
+    })
+      .then((fn) => {
+        if (cancelled) {
+          fn();
+        } else {
+          unlisten = fn;
+        }
+      })
+      .catch(() => {
+        // No Tauri runtime in some tests/dev harnesses; the 10s refetch remains
+        // the fallback path.
+      });
+
+    return () => {
+      cancelled = true;
+      if (unlisten) unlisten();
+    };
+  }, [queryClient]);
 }

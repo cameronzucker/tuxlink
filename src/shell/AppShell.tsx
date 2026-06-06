@@ -23,7 +23,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { MessageList } from '../mailbox/MessageList';
 import type { HighlightRange } from '../mailbox/MessageList';
 import { type SortState, loadSortState, saveSortState } from '../mailbox/messageSort';
-import { useMailbox } from '../mailbox/useMailbox';
+import { useMailbox, useMailboxChangeEvents } from '../mailbox/useMailbox';
 import { isNotConfigured } from '../mailbox/types';
 import type { MailboxFolder, MailboxFolderRef, MessageMeta } from '../mailbox/types';
 import { useUserFolders } from '../mailbox/useUserFolders';
@@ -344,6 +344,7 @@ export function AppShell() {
   // folders show total count (matching Sent), not unread — archived messages
   // are almost always already read; "0 unread / 180 total" would mislead.
   const archive = useMailbox('archive');
+  useMailboxChangeEvents();
   // tuxlink-f62f: operator-created user folders, rendered in the sidebar's
   // Folders section. Backend reads `<root>/.folders.json`.
   const { folders: userFolders } = useUserFolders();
