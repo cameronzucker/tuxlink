@@ -853,6 +853,11 @@ pub type ProgressSink = Arc<dyn Fn(&str) + Send + Sync>;
 /// the "Raw output" view. No-op by default (tests + the no-progress path).
 pub type WireSink = Arc<dyn Fn(&str) + Send + Sync>;
 
+/// A sink fired when native mailbox storage mutates. Production wires this to
+/// a lightweight Tauri `mailbox:changed` event so React can invalidate mailbox
+/// queries immediately instead of waiting for the 10s poll.
+pub type MailboxChangeSink = Arc<dyn Fn() + Send + Sync>;
+
 /// The native Winlink backend: speaks B2F directly (no Pat), stores messages in
 /// its own [`Mailbox`], and connects over plaintext or TLS telnet. `connect`
 /// runs the real CMS exchange on a blocking task; the actual on-air protocol is
@@ -877,6 +882,9 @@ pub struct NativeBackend {
     /// the session log as `LogSource::Wire` so it surfaces under "Raw output". No-op
     /// by default; production wires it in `bootstrap::install_native`.
     wire: WireSink,
+    /// Notifies the UI that mailbox storage changed. No-op in tests unless
+    /// injected via [`Self::with_mailbox_change`].
+    mailbox_change: MailboxChangeSink,
     /// Shutdown handle for the in-flight connect socket (tuxlink-9z2): a clone of
     /// the connecting `TcpStream`, set once TCP connects, taken + shut down by
     /// [`WinlinkBackend::abort`] to unblock a slow TLS/login/exchange phase.
@@ -952,6 +960,7 @@ impl NativeBackend {
             status_tx,
             progress,
             wire: Arc::new(|_: &str| {}),
+            mailbox_change: Arc::new(|| {}),
             abort_handle: Arc::new(Mutex::new(None)),
             aborting: Arc::new(AtomicBool::new(false)),
             connect_in_progress: Arc::new(AtomicBool::new(false)),
@@ -1006,6 +1015,14 @@ impl NativeBackend {
     /// constructors and tests are unaffected; no-op by default.
     pub fn with_wire_log(mut self, wire: WireSink) -> Self {
         self.wire = wire;
+        self
+    }
+
+    /// Attach a mailbox-change sink (tuxlink-b2sk). Builder-style so tests and
+    /// bootstrap can observe native mailbox mutations without changing the
+    /// WinlinkBackend trait surface.
+    pub fn with_mailbox_change(mut self, sink: MailboxChangeSink) -> Self {
+        self.mailbox_change = sink;
         self
     }
 
@@ -1108,7 +1125,9 @@ impl WinlinkBackend for NativeBackend {
         to: crate::native_mailbox::FolderRef,
         id: &MessageId,
     ) -> Result<(), BackendError> {
-        self.mailbox.move_between(from, to, id)
+        self.mailbox.move_between(from, to, id)?;
+        (self.mailbox_change)();
+        Ok(())
     }
 
     async fn send_message(
@@ -1135,6 +1154,7 @@ impl WinlinkBackend for NativeBackend {
         )
         .map_err(|e| BackendError::MessageRejected(e.to_string()))?;
         let id = self.mailbox.store(MailboxFolder::Outbox, &message.to_bytes())?;
+        (self.mailbox_change)();
         Ok(id)
     }
 
@@ -1193,8 +1213,19 @@ impl WinlinkBackend for NativeBackend {
         let abort_handle = self.abort_handle.clone();
         let aborting = self.aborting.clone();
         let position = self.position.clone();
+        let mailbox_change = self.mailbox_change.clone();
         let outcome = tokio::task::spawn_blocking(move || {
-            native_connect(&config, &mailbox, mode, &*progress, &*wire, &abort_handle, &aborting, position.as_deref())
+            native_connect(
+                &config,
+                &mailbox,
+                mode,
+                &*progress,
+                &*wire,
+                &*mailbox_change,
+                &abort_handle,
+                &aborting,
+                position.as_deref(),
+            )
         })
         .await
         .map_err(|e| BackendError::Internal {
@@ -2021,6 +2052,7 @@ fn native_connect(
     mode: CmsTransport,
     progress: &dyn Fn(&str),
     wire_log: &dyn Fn(&str),
+    mailbox_change: &dyn Fn(),
     abort_handle: &Mutex<Option<TcpStream>>,
     aborting: &AtomicBool,
     position: Option<&crate::position::PositionArbiter>,
@@ -2153,17 +2185,34 @@ fn native_connect(
     // successfully-sent MIDs in the Outbox where they would be re-offered on the
     // next connection (duplicate send). Moving them to Sent is idempotent even
     // when `result.sent` is empty (all-rejected batch); the error still surfaces.
-    for message in &result.received {
-        mailbox.store(MailboxFolder::Inbox, &message.to_bytes())?;
-    }
-    for mid in &result.sent {
-        mailbox.move_to(MailboxFolder::Outbox, MailboxFolder::Sent, &MessageId(mid.clone()))?;
-    }
+    file_exchange_result(mailbox, &result, mailbox_change)?;
     if !result.rejected.is_empty() {
         return Err(BackendError::MessageRejected(format!(
             "CMS rejected mid(s): {}",
             result.rejected.join(", ")
         )));
+    }
+    Ok(())
+}
+
+/// Persist a completed exchange into the mailbox and emit one change
+/// notification if at least one message was received or sent.
+fn file_exchange_result(
+    mailbox: &Mailbox,
+    result: &session::ExchangeResult,
+    mailbox_change: &dyn Fn(),
+) -> Result<(), BackendError> {
+    let mut changed = false;
+    for message in &result.received {
+        mailbox.store(MailboxFolder::Inbox, &message.to_bytes())?;
+        changed = true;
+    }
+    for mid in &result.sent {
+        mailbox.move_to(MailboxFolder::Outbox, MailboxFolder::Sent, &MessageId(mid.clone()))?;
+        changed = true;
+    }
+    if changed {
+        mailbox_change();
     }
     Ok(())
 }
@@ -2681,6 +2730,94 @@ impl NativeBackend {
         let tempdir = tempfile::tempdir().unwrap();
         let leaked_path = Box::leak(Box::new(tempdir)).path().to_path_buf();
         Self::new(crate::test_helpers::native_test_config(), leaked_path)
+    }
+}
+
+#[cfg(test)]
+mod mailbox_change_tests {
+    use super::*;
+    use crate::winlink::compose::compose_message;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use tempfile::tempdir;
+
+    #[tokio::test]
+    async fn send_message_notifies_mailbox_change() {
+        let dir = tempdir().unwrap();
+        let notified = Arc::new(AtomicUsize::new(0));
+        let notified_for_sink = notified.clone();
+        let backend = NativeBackend::new(crate::test_helpers::native_test_config(), dir.path())
+            .with_mailbox_change(Arc::new(move || {
+                notified_for_sink.fetch_add(1, Ordering::SeqCst);
+            }));
+
+        backend
+            .send_message(OutboundMessage {
+                to: vec!["W1AW".to_string()],
+                cc: vec![],
+                subject: "Queued".to_string(),
+                body: "body".to_string(),
+                date: "2026-06-06T00:00:00Z".to_string(),
+                attachments: vec![],
+            })
+            .await
+            .expect("message queues");
+
+        assert_eq!(notified.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn file_exchange_result_notifies_once_for_received_and_sent_changes() {
+        let dir = tempdir().unwrap();
+        let mailbox = Mailbox::new(dir.path());
+        let queued = compose_message(
+            "N7CPZ",
+            &["W1AW"],
+            &[],
+            "Outgoing",
+            "outbound body",
+            1_716_200_000,
+        );
+        let queued_id = mailbox.store(MailboxFolder::Outbox, &queued.to_bytes()).unwrap();
+        let received = compose_message(
+            "W1AW",
+            &["N7CPZ"],
+            &[],
+            "Incoming",
+            "inbound body",
+            1_716_200_001,
+        );
+        let result = session::ExchangeResult {
+            received: vec![received],
+            sent: vec![queued_id.0],
+            rejected: vec![],
+            deferred: vec![],
+        };
+        let notified = AtomicUsize::new(0);
+        let notify = || {
+            notified.fetch_add(1, Ordering::SeqCst);
+        };
+
+        file_exchange_result(&mailbox, &result, &notify).expect("files exchange result");
+
+        assert_eq!(notified.load(Ordering::SeqCst), 1);
+        assert_eq!(mailbox.list(MailboxFolder::Inbox).unwrap().len(), 1);
+        assert_eq!(mailbox.list(MailboxFolder::Sent).unwrap().len(), 1);
+        assert!(mailbox.list(MailboxFolder::Outbox).unwrap().is_empty());
+    }
+
+    #[test]
+    fn file_exchange_result_does_not_notify_when_nothing_changed() {
+        let dir = tempdir().unwrap();
+        let mailbox = Mailbox::new(dir.path());
+        let notified = AtomicUsize::new(0);
+        let notify = || {
+            notified.fetch_add(1, Ordering::SeqCst);
+        };
+
+        file_exchange_result(&mailbox, &session::ExchangeResult::default(), &notify)
+            .expect("empty exchange is valid");
+
+        assert_eq!(notified.load(Ordering::SeqCst), 0);
     }
 }
 

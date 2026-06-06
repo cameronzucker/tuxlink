@@ -164,6 +164,7 @@ const outboxMsgs: MessageMeta[] = [
 ];
 
 vi.mock('../mailbox/useMailbox', () => ({
+  useMailboxChangeEvents: () => {},
   useMailbox: (folder: string) => ({
     messages:
       folder === 'inbox'
