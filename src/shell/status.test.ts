@@ -181,30 +181,30 @@ describe('formatCallsign', () => {
 });
 
 // ============================================================================
-// (4) grid shows 4-char broadcast; 6-char tooltip only when SixCharGrid
+// (4) grid display honors selected precision
 // ============================================================================
 describe('formatGrid', () => {
-  it('truncates to 4-char broadcast grid when precision is FourCharGrid', () => {
+  it('displays 4-char grid when precision is FourCharGrid', () => {
     const result = formatGrid({ grid: 'EM10ab', precision: 'FourCharGrid' });
-    expect(result.broadcast).toBe('EM10');
+    expect(result.display).toBe('EM10');
     expect(result.tooltip).toBeNull();
   });
 
-  it('returns 4-char broadcast AND 6-char tooltip when precision is SixCharGrid', () => {
+  it('displays 6-char grid when precision is SixCharGrid', () => {
     const result = formatGrid({ grid: 'EM10ab', precision: 'SixCharGrid' });
-    expect(result.broadcast).toBe('EM10');
-    expect(result.tooltip).toBe('EM10ab');
+    expect(result.display).toBe('EM10ab');
+    expect(result.tooltip).toBeNull();
   });
 
-  it('returns null broadcast when grid is absent', () => {
+  it('returns null display when grid is absent', () => {
     const result = formatGrid({ grid: null, precision: 'FourCharGrid' });
-    expect(result.broadcast).toBeNull();
+    expect(result.display).toBeNull();
     expect(result.tooltip).toBeNull();
   });
 
   it('handles 4-char grid gracefully when precision is SixCharGrid (not enough chars)', () => {
     const result = formatGrid({ grid: 'EM10', precision: 'SixCharGrid' });
-    expect(result.broadcast).toBe('EM10');
+    expect(result.display).toBe('EM10');
     // tooltip only shown when length > 4
     expect(result.tooltip).toBeNull();
   });

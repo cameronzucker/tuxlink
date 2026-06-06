@@ -183,30 +183,25 @@ export function formatCallsign(opts: {
 /**
  * Format the grid locator for ribbon display.
  *
- * Returns the 4-char broadcast grid; the 6-char tooltip is only populated
- * when position_precision == 'SixCharGrid' AND the stored grid is > 4 chars.
+ * Returns the operator-visible locator. FourCharGrid displays only the
+ * privacy-reduced 4-char locator; SixCharGrid displays the opted-in 6-char
+ * locator.
  *
- * Per spec §5.6 + Principle 7: 4-char is the default broadcast; 6-char is
- * opt-in. The stored grid is always at full precision; we truncate for broadcast.
+ * The on-air privacy boundary lives in the backend's broadcast_grid /
+ * effective_broadcast_locator helpers. This formatter is display-only.
  */
 export function formatGrid(opts: {
   grid: string | null;
   precision: PositionPrecision;
-}): { broadcast: string | null; tooltip: string | null } {
+}): { display: string | null; tooltip: string | null } {
   if (!opts.grid) {
-    return { broadcast: null, tooltip: null };
+    return { display: null, tooltip: null };
   }
 
-  const broadcast = opts.grid.substring(0, 4) || null;
+  const keep = opts.precision === 'SixCharGrid' ? 6 : 4;
+  const display = opts.grid.substring(0, keep) || null;
 
-  // Show 6-char tooltip only when: precision is SixCharGrid AND stored grid
-  // has more than 4 chars (i.e. we actually have the 6-char form).
-  const tooltip =
-    opts.precision === 'SixCharGrid' && opts.grid.length > 4
-      ? opts.grid.substring(0, 6)
-      : null;
-
-  return { broadcast, tooltip };
+  return { display, tooltip: null };
 }
 
 /**
@@ -265,9 +260,9 @@ export function formatStatusState(status: StatusDto | null): { label: string; to
 export interface StatusBarData {
   /** Callsign (or offline identifier); '' until config loads. */
   callsign: string;
-  /** 4-char broadcast grid; null when unset. */
+  /** Operator-visible grid; null when unset. */
   grid: string | null;
-  /** 6-char grid for the tooltip when precision is opted up; else null. */
+  /** Optional grid hover context; null when display already matches precision. */
   gridTooltip: string | null;
   /** Short state word + dot tone derived from BackendStatus. */
   state: { label: string; tone: StatusTone };
@@ -403,7 +398,7 @@ export function useStatusData(): StatusBarData {
 
   const gridResult = config
     ? formatGrid({ grid: config.grid, precision: config.position_precision })
-    : { broadcast: null, tooltip: null };
+    : { display: null, tooltip: null };
 
   // Use the configured transport when building the connection string.  When
   // config hasn't loaded yet, fall back to 'CmsSsl' so the label is
@@ -423,7 +418,7 @@ export function useStatusData(): StatusBarData {
   const liveGrid = positionStatus?.ui_grid
     ? positionStatus.ui_grid
     : null;
-  const ribbonGrid = liveGrid ?? gridResult.broadcast;
+  const ribbonGrid = liveGrid ?? gridResult.display;
 
   // tuxlink-djnl: memoize the assembled StatusBarData so consumers
   // (DashboardRibbon, StatusBar, the `activeModem` useMemo in AppShell) see a
