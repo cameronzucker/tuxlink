@@ -63,8 +63,11 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            src-tauri/target
-          key: ${{ runner.os }}-${{ matrix.arch }}-tuxlink-${{ hashFiles('src-tauri/Cargo.lock') }}
+            target
+          # alpha-logging (tuxlink-qjgx) introduced the xtask crate as a
+          # workspace member, so cargo now writes Cargo.lock + target/ at the
+          # workspace root instead of src-tauri/.
+          key: ${{ runner.os }}-${{ matrix.arch }}-tuxlink-${{ hashFiles('Cargo.lock', 'src-tauri/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-${{ matrix.arch }}-tuxlink-
 
@@ -79,7 +82,10 @@ jobs:
 
       - name: Collect bundle artifacts
         run: |
-          bundle_dir=src-tauri/target/release/bundle
+          # alpha-logging (tuxlink-qjgx) workspace lives at the repo root,
+          # so cargo's target/ landed at the workspace root rather than
+          # src-tauri/target/. Tauri bundle output follows.
+          bundle_dir=target/release/bundle
           out_dir=dist-artifacts
           mkdir -p "$out_dir"
           find "$bundle_dir/deb" -name "*.deb" -exec cp {} "$out_dir/" \;
