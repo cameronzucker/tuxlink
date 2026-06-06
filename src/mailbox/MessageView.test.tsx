@@ -43,6 +43,15 @@ vi.mock('./replyActions', async (importOriginal) => {
 import { openReplyWindow } from './replyActions';
 import type { ParsedMessage } from './types';
 
+// Raw CSS import keeps layout-regression assertions inside Vitest without
+// using node:fs, matching the AppShell.css contract-test pattern.
+const MESSAGE_VIEW_CSS_MODULES = import.meta.glob('./MessageView.css', {
+  eager: true,
+  query: '?raw',
+  import: 'default',
+}) as Record<string, string>;
+const messageViewCss = MESSAGE_VIEW_CSS_MODULES['./MessageView.css'];
+
 function parsed(over: Partial<ParsedMessage> = {}): ParsedMessage {
   return {
     id: 'MID1',
@@ -97,6 +106,21 @@ describe('<MessageViewLoaded>', () => {
   it('shows subject in header', () => {
     render(<MessageViewLoaded message={parsed({ subject: 'ICS-213' })} />);
     expect(screen.getByTestId('message-subject')).toHaveTextContent('ICS-213');
+  });
+
+  it('renders long single-token subjects in the wrapped subject heading', () => {
+    const longSubject = `https://catalog.winlink.org/${'A'.repeat(180)}`;
+    render(<MessageViewLoaded message={parsed({ subject: longSubject })} />);
+    const subject = screen.getByTestId('message-subject');
+    expect(subject.tagName).toBe('H1');
+    expect(subject.className).toContain('subject-line');
+    expect(subject).toHaveTextContent(longSubject);
+  });
+
+  it('CSS allows the subject heading to break single-word titles', () => {
+    const subjectRule = messageViewCss.match(/\.reading-pane h1\.subject-line\s*\{[^}]+\}/)?.[0] ?? '';
+    expect(subjectRule).toContain('overflow-wrap: anywhere;');
+    expect(subjectRule).toContain('word-break: break-word;');
   });
 
   it('shows sender in header strip', () => {
