@@ -22,6 +22,7 @@ const APP_VERSION = `v${__APP_VERSION__}`;
 const REPO_URL = 'https://github.com/cameronzucker/tuxlink';
 const ISSUES_URL = `${REPO_URL}/issues`;
 const LICENSE_URL = `${REPO_URL}/blob/main/LICENSE`;
+const RELEASES_URL = `${REPO_URL}/releases`;
 const CHANGELOG_URL = `${REPO_URL}/blob/main/CHANGELOG.md`;
 
 export interface AboutDialogProps {
@@ -89,18 +90,22 @@ export function AboutDialog({ open, onClose }: AboutDialogProps) {
           </div>
 
           <p className="tux-about-tagline">
-            A native Linux desktop Winlink client for amateur-radio
-            emergency communications.
+            Linux-first Winlink email with a native desktop UI and a Rust
+            B2F engine for amateur-radio operators.
           </p>
 
           <p className="tux-about-prealpha" role="note">
-            <strong>Pre-alpha.</strong> Version tags are produced automatically
-            by release-please from conventional-commit activity — they reflect
-            repository velocity, not release readiness. Do not rely on this
-            build for live emergency communications.
+            <strong>Pre-alpha developer preview.</strong> Working code paths
+            exist, but this build is not release-ready: installable packages,
+            production CMS registration, and on-air RF validation remain
+            pending. Do not rely on Tuxlink for live emergency traffic.
           </p>
 
           <dl className="tux-about-meta">
+            <dt>Status</dt>
+            <dd>Pre-alpha; not for operational deployment</dd>
+            <dt>Build</dt>
+            <dd>Version from version.txt via release-please</dd>
             <dt>License</dt>
             <dd>
               <a
@@ -119,6 +124,16 @@ export function AboutDialog({ open, onClose }: AboutDialogProps) {
                 data-testid="about-repo-link"
               >
                 github.com/cameronzucker/tuxlink
+              </a>
+            </dd>
+            <dt>Releases</dt>
+            <dd>
+              <a
+                href={RELEASES_URL}
+                onClick={openLink(RELEASES_URL)}
+                data-testid="about-releases-link"
+              >
+                GitHub Releases
               </a>
             </dd>
             <dt>Changelog</dt>

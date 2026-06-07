@@ -26,10 +26,12 @@ describe('AboutDialog', () => {
     expect(screen.getByText('Tuxlink')).toBeInTheDocument();
     expect(screen.getByTestId('about-version').textContent ?? '').toMatch(/^v\d+\.\d+\.\d+/);
     // The pre-alpha disclaimer is load-bearing — the operator must see it.
-    expect(screen.getByText(/Pre-alpha/i)).toBeInTheDocument();
+    expect(screen.getByText(/Pre-alpha developer preview/i)).toBeInTheDocument();
+    expect(screen.getByText(/not for operational deployment/i)).toBeInTheDocument();
+    expect(screen.getByText(/version\.txt via release-please/i)).toBeInTheDocument();
   });
 
-  it('renders links for license, repo, changelog, issues', () => {
+  it('renders links for license, repo, releases, changelog, issues', () => {
     render(<AboutDialog open={true} onClose={() => {}} />);
     expect(screen.getByTestId('about-license-link')).toHaveTextContent('GPL-3.0-or-later');
     expect(screen.getByTestId('about-license-link')).toHaveAttribute(
@@ -37,6 +39,10 @@ describe('AboutDialog', () => {
       'https://github.com/cameronzucker/tuxlink/blob/main/LICENSE',
     );
     expect(screen.getByTestId('about-repo-link')).toBeInTheDocument();
+    expect(screen.getByTestId('about-releases-link')).toHaveAttribute(
+      'href',
+      'https://github.com/cameronzucker/tuxlink/releases',
+    );
     expect(screen.getByTestId('about-changelog-link')).toBeInTheDocument();
     expect(screen.getByTestId('about-issues-link')).toBeInTheDocument();
     expect(screen.getByText(/released under GPL-3\.0-or-later/i)).toBeInTheDocument();
