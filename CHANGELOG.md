@@ -16,6 +16,15 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
   to 365 days / 10 GB. Logs live at `$XDG_STATE_HOME/tuxlink/logs/`.
   Spec: `docs/superpowers/specs/2026-06-04-alpha-logging-design.md`.
 
+## [0.35.12](https://github.com/cameronzucker/tuxlink/compare/v0.35.11...v0.35.12) (2026-06-07)
+
+
+### Bug Fixes
+
+* **ci:** satisfy clippy in session log progress ([b9cd3fd](https://github.com/cameronzucker/tuxlink/commit/b9cd3fd32ee60e9f71857307630d0cad4d4f56fc))
+* **logging:** summarize B2F message movement ([2e98a10](https://github.com/cameronzucker/tuxlink/commit/2e98a1075babd8365bd1b8ebb277492acbbf213a))
+* **mailbox:** preview image attachments ([173188b](https://github.com/cameronzucker/tuxlink/commit/173188bd1e14822e9608d9ebcf22b51b673cb7bb))
+
 ## [0.35.11](https://github.com/cameronzucker/tuxlink/compare/v0.35.10...v0.35.11) (2026-06-07)
 
 
