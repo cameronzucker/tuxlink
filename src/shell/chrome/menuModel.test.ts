@@ -4,8 +4,8 @@ import { MENU_ACTION_IDS, ACCELERATORS } from './menuModel';
 // Parity with the former Rust menu_event_ids() (menu.rs) — the menu:* vocabulary
 // is the stable contract regardless of producer. Order matches the menu layout.
 const EXPECTED_IDS = [
-  'menu:file:quit',
-  'menu:message:new', 'menu:message:reply', 'menu:message:reply_all', 'menu:message:forward', 'menu:message:archive', 'menu:message:catalog_request', 'menu:message:grib_request', 'menu:message:print',
+  'menu:message:print', 'menu:file:quit',
+  'menu:message:new', 'menu:message:reply', 'menu:message:reply_all', 'menu:message:forward', 'menu:message:archive', 'menu:message:catalog_request', 'menu:message:grib_request',
   'menu:session:connect', 'menu:session:disconnect', 'menu:session:log',
   'menu:session:verify_cms', 'menu:session:show_transport',
   'menu:mailbox:inbox', 'menu:mailbox:sent', 'menu:mailbox:outbox', 'menu:mailbox:archive',
