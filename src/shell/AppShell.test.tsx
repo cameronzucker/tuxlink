@@ -3,6 +3,7 @@ import { render, screen, fireEvent, waitFor, within, act } from '@testing-librar
 import type { ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { MessageMeta } from '../mailbox/types';
+import { saveDraft } from '../compose/useDraft';
 
 // Vite-native raw-import of AppShell.css for the tuxlink-8rng chrome-width
 // assertions below. Uses the same pattern as src/forms/innerhtml-ban.test.ts:
@@ -250,6 +251,29 @@ describe('<AppShell> — Mock B topology', () => {
     // the status bar's "1 to send" derives from.
     expect(screen.getByTestId('folder-count-outbox')).toHaveTextContent('1');
     expect(screen.getByTestId('status-bar-outbox')).toHaveTextContent('1 to send');
+  });
+
+  it('Drafts lists local saved drafts and reopens a selected compose draft', async () => {
+    saveDraft({
+      draftId: 'draft-shell',
+      to: 'KK4XYZ@winlink.org',
+      subject: 'Saved local draft',
+      body: 'Return to this before the net.',
+      requestAck: false,
+    });
+
+    renderShell();
+    expect(screen.getByTestId('folder-drafts')).not.toBeDisabled();
+    expect(screen.getByTestId('folder-count-drafts')).toHaveTextContent('1');
+
+    fireEvent.click(screen.getByTestId('folder-drafts'));
+    const row = await screen.findByTestId('message-row-draft-shell');
+    expect(row).toHaveTextContent('Saved local draft');
+    expect(row).toHaveTextContent('Return to this before the net.');
+
+    vi.mocked(invoke).mockClear();
+    fireEvent.click(row);
+    expect(invoke).toHaveBeenCalledWith('compose_window_open', { draftId: 'draft-shell' });
   });
 
   it('selecting a row updates ONLY the reader and does not remount the shell', async () => {

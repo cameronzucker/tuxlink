@@ -30,6 +30,7 @@ const MAILBOX_ITEMS: readonly MailboxItem[] = [
   { id: 'inbox', label: 'Inbox', icon: '▣', enabled: true },
   { id: 'sent', label: 'Sent', icon: '▢', enabled: true },
   { id: 'outbox', label: 'Outbox', icon: '▢', enabled: true },
+  { id: 'drafts', label: 'Drafts', icon: '▢', enabled: true },
   { id: 'archive', label: 'Archive', icon: '▢', enabled: true },
 ];
 
