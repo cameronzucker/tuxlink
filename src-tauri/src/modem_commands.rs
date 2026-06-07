@@ -1099,6 +1099,18 @@ fn run_b2f_with_transport(
     // wiring.
     let arbiter_state = app.state::<Arc<crate::position::PositionArbiter>>();
     let arbiter: Arc<crate::position::PositionArbiter> = (*arbiter_state).clone();
+    let session_log_state = app.state::<Arc<crate::session_log::SessionLogState>>();
+    let session_log: Arc<crate::session_log::SessionLogState> = (*session_log_state).clone();
+    let app_for_progress = app.clone();
+    let progress = move |line: &str| {
+        crate::session_log_emit::emit(
+            &app_for_progress,
+            &session_log,
+            crate::winlink_backend::LogLevel::Info,
+            crate::winlink_backend::LogSource::Transport,
+            line,
+        );
+    };
 
     crate::winlink_backend::run_ardop_b2f_exchange(
         transport,
@@ -1107,6 +1119,7 @@ fn run_b2f_with_transport(
         &cfg,
         &mailbox,
         Some(&arbiter),
+        Some(&progress),
     )
     .map_err(|e| format!("ARDOP B2F exchange failed: {e}"))
 }

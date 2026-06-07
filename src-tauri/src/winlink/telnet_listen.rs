@@ -548,6 +548,7 @@ where
         },
         None => Vec::new(),
     };
+    let outbound_log = crate::winlink_backend::outbound_log_items(&outbound);
     progress(&format!(
         "Running B2F exchange (answerer role; {} outbound)…",
         outbound.len()
@@ -588,6 +589,7 @@ where
             result.received.len(),
             result.sent.len()
         ));
+        crate::winlink_backend::emit_exchange_result_progress(&result, &outbound_log, progress);
     }
 
     Ok(result)
