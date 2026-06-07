@@ -12,6 +12,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { useQueryClient } from '@tanstack/react-query';
 import type { StatusBarData, StatusTone } from './useStatus';
 import { GridEdit } from './GridEdit';
+import { formatGridClock } from './gridClock';
 import { DEV_FIXTURE, DEV_POSITION, DEV_CONNECTION_DASH } from '../mailbox/devFixture';
 import { formatPacketConnection, type PacketUiState } from '../packet/packetStatus';
 import { effectiveCall as renderEffectiveCall, ssidOptions } from '../packet/packetConfig';
@@ -22,21 +23,20 @@ import { effectiveCall as renderEffectiveCall, ssidOptions } from '../packet/pac
  * dashboard ribbon (which holds GridEdit, the SSID picker, the connect
  * controls, and the packet conn label, none of which depend on `now`).
  */
-function ClockCell() {
+function ClockCell({ grid }: { grid: string | null }) {
   const [now, setNow] = useState(() => new Date());
   useEffect(() => {
     const id = setInterval(() => setNow(new Date()), 1000);
     return () => clearInterval(id);
   }, []);
-  const utc = now.toISOString().substring(11, 16) + 'z';
-  const local = now.toLocaleTimeString(undefined, {
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-    timeZoneName: 'short',
-  });
+  const { utc, local, localTitle, source } = formatGridClock(now, grid);
   return (
-    <div className="dash-value" data-testid="ribbon-time">
+    <div
+      className="dash-value"
+      data-testid="ribbon-time"
+      data-time-source={source}
+      title={localTitle}
+    >
       {utc} · {local}
     </div>
   );
@@ -202,7 +202,7 @@ export const DashboardRibbon = memo(function DashboardRibbon({ data, onConnect, 
 
       <div className="dash-item">
         <div className="dash-label">UTC / Local</div>
-        <ClockCell />
+        <ClockCell grid={grid} />
       </div>
       <div className="dash-divider" />
 
