@@ -1,11 +1,67 @@
-# Moving from Winlink Express or Pat
+# Moving from other Winlink clients
 
-Operators coming from Winlink Express or Pat already know how Winlink works.
-What's different about tuxlink is the surface, the platform, and a small
-set of conceptual shifts where tuxlink deliberately departs from Express
-conventions. This topic covers the migration: settings mapping, conceptual
+Operators coming from another Winlink client already know how Winlink
+works. What's different about tuxlink is the surface, the platform, and a
+small set of conceptual shifts where tuxlink deliberately departs from
+existing client conventions. This topic covers the known client landscape,
+settings mapping for the two most likely migration sources, conceptual
 differences, parity gaps, and a recommended order for moving the operating
 environment over.
+
+## Known Winlink clients
+
+The official [Winlink client comparison](https://winlink.org/ClientSoftware)
+currently lists eight client programs: [Outpost](https://www.outpostpm.org/),
+[AirMail](https://www.siriuscyber.net/ham/),
+[WoAD](https://woad.sumusltd.com/),
+[Pat](https://getpat.io/),
+[RadioMail](https://radiomail.app/),
+[Paclink-Unix](https://paclink-unix.sourceforge.net/),
+Paclink, and [Winlink Express](https://winlink.org/WinlinkExpress).
+Tuxlink is not part of that official list yet; it is an independent Linux
+client in alpha.
+
+| Client | Main platform | Best fit | How it differs from tuxlink |
+|---|---|---|---|
+| **Winlink Express** | Windows; usable under Wine/VMs on Linux/macOS | Official reference client, broadest Winlink feature surface, forms, PACTOR, VARA, ARDOP, Packet, Telnet, Radio-only/Post Office workflows | Tuxlink is Linux-native, uses a single integrated desktop shell, stores credentials in the OS keyring, and is still closing parity gaps |
+| **Pat** | Linux, macOS, Windows | Open-source cross-platform Winlink with GUI, web UI, CLI, scripting, major transports, and strong Linux culture | Tuxlink is a desktop app rather than a web/API-first tool; it owns the native mailbox/UI experience instead of exposing Pat's config/API model |
+| **RadioMail** | iOS/iPadOS | Mobile field use, GPS-aware station directory, polished phone/tablet workflow, packet/Bluetooth and external VARA integrations | Tuxlink targets Linux laptops/tablets and integrated desktop operation; RadioMail is the better fit when the station is phone-first |
+| **WoAD** | Android | Android field operation with mobile Winlink access and evolving RF-mode support | Tuxlink is not mobile; WoAD is better when the operator wants an Android device as the primary client |
+| **AirMail** | Windows | Mature PACTOR/marine-style workflows and direct interoperability with Express-era peer clients | Tuxlink does not support PACTOR and is not aimed at legacy Windows/marine operating habits |
+| **Outpost** | Windows | Packet/BBS-style served-agency traffic, especially local ARES/RACES packet workflows | Tuxlink is a full Winlink mail client with native B2F mailbox handling, not a packet-message-manager front end |
+| **Paclink / Paclink-Unix** | Windows / Unix-like systems | Gatewaying a local POP/SMTP-style mail program or agency workstation into Winlink | Tuxlink is for a human operator at the Winlink console, not for bridging another mail client into the system |
+
+There are also important programs that are **not** operator mail clients in
+the same sense:
+
+- **RMS Trimode, RMS Packet, and RMS Relay** are sysop/gateway programs.
+  They run the stations clients connect to.
+- **VARA, ardopcf, Dire Wolf, AGWPE, and hardware TNC tools** are modems
+  or modem-control layers. They move bits; they do not replace the mail
+  client.
+- **SailMail** uses related radio-email technology for a different
+  service. It is not the amateur Winlink client target tuxlink is trying
+  to replace.
+
+## Where tuxlink fits
+
+Tuxlink is meant for a Linux operator who wants an attended, native desktop
+Winlink client with the radio/modem state visible in the same application
+as the mailbox. Its design center is a field laptop, Raspberry Pi-class
+Linux station, or Linux tablet used by an operator who wants less Wine,
+less browser-tab management, and less hand-editing of config files.
+
+That makes tuxlink complementary rather than universally superior:
+
+- Keep **Winlink Express** available when you need the official reference
+  behavior, PACTOR, or an event plan standardized on Express screenshots.
+- Keep **Pat** available when you need scriptable automation, a web UI, or
+  an HTTP/API surface.
+- Use **RadioMail** or **WoAD** when the phone/tablet is the station.
+- Use **Paclink/Paclink-Unix** when the goal is agency email integration,
+  not an operator-facing Winlink mailbox.
+- Use **Outpost** when a packet-message-manager workflow is part of the
+  local served-agency plan.
 
 ## Settings mapping
 
@@ -127,7 +183,7 @@ position model, and the inline-UI architecture.
 
 ## Recommended migration sequence
 
-For an operator moving from Express or Pat to tuxlink:
+For an operator moving from another client to tuxlink:
 
 1. **Install tuxlink** alongside Express / Pat. Don't uninstall the
    prior client yet.
@@ -135,10 +191,10 @@ For an operator moving from Express or Pat to tuxlink:
    prior client. The wizard's CMS verify step confirms credentials.
 3. **Send a round-trip-to-self via Telnet** ([topic 03](03-sending-your-first.md))
    to confirm the local mailbox and the CMS handshake work.
-4. **Configure the same transports** the prior client uses. Telnet,
-   Packet (Dire Wolf), ARDOP (ardopcf), VARA HF (existing Wine install).
-   The radio chain (DigiRig + radio) is unchanged — tuxlink talks to the
-   same modems.
+4. **Configure the same transports** the prior client uses, where tuxlink
+   supports them. Telnet, Packet (Dire Wolf), ARDOP (ardopcf), and VARA HF
+   are the normal migration targets. The radio chain (DigiRig + radio) is
+   unchanged — tuxlink talks to the same modems.
 5. **Run a few sessions in parallel.** Send a few real messages with
    tuxlink while still receiving via Express / Pat. Confirm tuxlink works
    the way the operator expects.
@@ -175,7 +231,7 @@ flowchart TD
     I -- "Yes" --> E
 ```
 
-## When to stay with Express or Pat
+## When to stay with another client
 
 Stay with the prior client if:
 
@@ -183,6 +239,10 @@ Stay with the prior client if:
 - The operator needs PACTOR — tuxlink does not support PACTOR.
 - The operator depends on Pat's web UI / API for integration with other
   systems — tuxlink does not provide either.
+- The operator's served agency has standardized on Outpost, Paclink, or a
+  specific Express workflow for an exercise.
+- The operator's practical station is a phone or tablet — RadioMail or
+  WoAD may be the better field client.
 - The operator runs unattended-station configurations Express specifically
   supports — tuxlink is currently designed for attended-operator use.
 
@@ -201,5 +261,5 @@ operating practice evolves.
 
 - [What is tuxlink](01-what-is-tuxlink.md) — the framing, including who tuxlink is for.
 - [First-launch wizard](02-first-launch-wizard.md) — the start of the install.
-- [Credits](31-credits.md) — what tuxlink draws from Express and Pat.
+- [Credits](31-credits.md) — what tuxlink draws from prior clients.
 - [Troubleshooting](29-troubleshooting.md) — what to check when something doesn't work.
