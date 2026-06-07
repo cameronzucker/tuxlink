@@ -16,6 +16,14 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
   to 365 days / 10 GB. Logs live at `$XDG_STATE_HOME/tuxlink/logs/`.
   Spec: `docs/superpowers/specs/2026-06-04-alpha-logging-design.md`.
 
+## [0.35.11](https://github.com/cameronzucker/tuxlink/compare/v0.35.10...v0.35.11) (2026-06-07)
+
+
+### Bug Fixes
+
+* **logging:** retain complete transport log history ([a9c7ddc](https://github.com/cameronzucker/tuxlink/commit/a9c7ddc39945bdfd98edfe1abb6cd9027a8691ad))
+* **shell:** derive ribbon local time from grid ([4cdc371](https://github.com/cameronzucker/tuxlink/commit/4cdc37190c5b806effcff0f6d5cad13db5f8b9e7))
+
 ## [0.35.10](https://github.com/cameronzucker/tuxlink/compare/v0.35.9...v0.35.10) (2026-06-07)
 
 
