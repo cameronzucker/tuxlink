@@ -6,7 +6,12 @@
 
 **Architecture:** Single `tracing` stream → Fanout Layer that formats events ONCE through a redacting `Visit` and broadcasts a `LoggedEvent` to UI + disk consumers (per spec §2.2). On-disk JSONL via `tracing-appender::rolling` hourly files under `$XDG_STATE_HOME/tuxlink/logs/`. New separate Tauri window (`logging` label) mirroring `help_window.rs` pattern, opened from `Help → Logging…`. Single-PR big-bang shape per operator direction.
 
-**Tech Stack:** Rust 2021 (Tauri 2) · `tracing` + `tracing-subscriber` + `tracing-appender` · `zstd` with dictionary support · `tar` · React 18 + TypeScript · Vitest · Cargo `xtask` pattern for the dictionary-training driver.
+**Tech Stack:** Rust 2021 (Tauri 2) · `tracing` + `tracing-subscriber` + `tracing-appender` · `zstd` with dictionary support · `tar` · React 18 + TypeScript · Vitest · standalone `xtask` helper crate for the dictionary-training driver.
+
+**Post-implementation correction (tuxlink-37ix):** keep `xtask/` as a
+standalone helper crate. Do not add a repo-root Cargo workspace for it; that
+redirects Tauri builds into `/target` at the repository root and breaks the
+converged-build disposable-worktree invariant.
 
 **Spec:** [docs/superpowers/specs/2026-06-04-alpha-logging-design.md](../specs/2026-06-04-alpha-logging-design.md) — all cross-references below cite the spec by section number.
 
@@ -95,16 +100,16 @@
 | `help/ReportIssueModal.test.tsx` | Create | Save-As cancel, no-browser fallback, copy-template behavior. |
 | `shell/chrome/dispatchMenuAction.test.ts` | Modify | Add cases for the two new menu actions. |
 
-### xtask crate (NEW at repo root)
+### xtask crate (NEW standalone helper under `xtask/`)
 
 | Path | Action | Responsibility |
 |---|---|---|
-| `xtask/Cargo.toml` | Create | New crate (workspace member). Deps: `zstd ^0.13` (zdict feature), `serde_json`, `chrono`, `clap` for CLI parsing, `walkdir`. |
+| `xtask/Cargo.toml` | Create | New standalone helper crate. Deps: `zstd ^0.13` (zdict feature), `serde_json`, `chrono`, `clap` for CLI parsing, `walkdir`. |
 | `xtask/src/lib.rs` | Create | Shared library: corpus loading + dictionary training helpers. |
 | `xtask/src/bin/gen-corpus.rs` | Create | Synthetic event-corpus generator with real-string fixtures. Output: `dev/log-corpus-synthetic/*.jsonl`. |
 | `xtask/src/bin/train-log-dict.rs` | Create | Driver — reads corpus dir, calls `zstd::dict::from_files()`, writes `.zdict`. |
 | `xtask/README.md` | Create | Documents both binaries + invocation examples. |
-| `Cargo.toml` (workspace root) | Modify | Add `xtask` as a workspace member; add `[workspace]` if not present. |
+| `Cargo.toml` (workspace root) | Do not create | Root Cargo workspaces are banned here because they generate `/target` and interfere with converged-build disposable worktrees. |
 
 ### Repo root / scripts / docs
 
@@ -123,10 +128,10 @@
 
 - **Worktree mandatory.** Per [ADR 0008](../adr/0008-worktrees-mandatory-under-bd-issue-ownership.md), this work runs in a per-bd-issue worktree. The plan assumes the executor has run `python3 .claude/scripts/new_tuxlink_worktree.py --bd <bd-id> --slug alpha-logging` and is `cd`'d into `worktrees/bd-tuxlink-<bd-id>-alpha-logging/`.
 - **Moniker discipline.** Every commit carries the executor's session moniker via `Agent: <moniker>` trailer. The plan templates the trailer placeholder; the executor substitutes their own moniker. Per `CLAUDE.md §"Agent identity"`.
-- **Pin paths in commands.** `pnpm -C .`, `cargo --manifest-path src-tauri/Cargo.toml`, `cargo --manifest-path xtask/Cargo.toml` per memory `feedback_pin_paths_in_worktree_sessions` — bash cwd can drift in worktree sessions.
+- **Pin paths in commands.** `pnpm -C .`, `cargo --manifest-path src-tauri/Cargo.toml`, `cargo run --manifest-path xtask/Cargo.toml --target-dir xtask/target` per memory `feedback_pin_paths_in_worktree_sessions` — bash cwd can drift in worktree sessions.
 - **TDD strictly.** Every code-bearing subtask writes the failing test first, runs to confirm failure, implements minimally to pass, re-runs to confirm pass. Skipping the failing-test step is a plan violation.
 - **No `--no-verify`, no `git rebase -i`, no destructive git.** Per CLAUDE.md "destructive commands are BANNED". If a hook denies a commit, fix the underlying issue.
-- **`pnpm -C . test` runs the Vitest suite. `cargo --manifest-path src-tauri/Cargo.toml test` runs the Rust suite.** Both must be green before each commit step. Build verification: `pnpm -C . build` (frontend), `cargo --manifest-path src-tauri/Cargo.toml build` (backend), `cargo --manifest-path xtask/Cargo.toml build` (xtask).
+- **`pnpm -C . test` runs the Vitest suite. `cargo --manifest-path src-tauri/Cargo.toml test` runs the Rust suite.** Both must be green before each commit step. Build verification: `pnpm -C . build` (frontend), `cargo --manifest-path src-tauri/Cargo.toml build` (backend), `cargo build --manifest-path xtask/Cargo.toml --target-dir xtask/target` (xtask).
 - **The commit sequence within this PR matters.** Per spec §15, redaction + tests land BEFORE any emission rollout. The Task ordering below preserves this; do NOT reorder tasks.
 - **Per-commit smoke is optional unless flagged.** The plan only flags operator smokes where they're load-bearing.
 - **RADIO-1.** Nothing in this plan transmits. Probes are read-only per spec §9.1. Tests use synthetic data only. The smoke script does NOT spawn VARA/ARDOP/native_cms_probe.
@@ -2342,11 +2347,11 @@ EOF
 - Create: `dev/log-corpus-fixtures/` (curated real-string fixtures, committed)
 - Create: `src-tauri/assets/logging/tuxlink-events-v1.zdict` (xtask output)
 - Create: `src-tauri/src/logging/dict.rs`, `manifest.rs`, `summary.rs`, `export.rs`
-- Modify: `Cargo.toml` (workspace root) — add `xtask` member
-- Modify: `.gitignore` — add `/dev/log-corpus-synthetic/`
+- Create: `xtask/Cargo.lock`
+- Modify: `.gitignore` — add `xtask/target/` and `/dev/log-corpus-synthetic/`
 - Modify: `src-tauri/src/logging/mod.rs` — add new modules
 
-### Subtask 4.1 — xtask crate skeleton + workspace integration
+### Subtask 4.1 — xtask standalone crate skeleton
 
 - [ ] **Step 4.1.1: Create the `xtask` crate**
 
@@ -2388,21 +2393,18 @@ Create empty `xtask/src/lib.rs`:
 
 Create `xtask/src/bin/gen-corpus.rs` and `xtask/src/bin/train-log-dict.rs` as empty `fn main() {}` stubs (filled in by 4.2 / 4.3).
 
-- [ ] **Step 4.1.2: Add `xtask` to the workspace**
+- [ ] **Step 4.1.2: Keep `xtask` out of the repository-root workspace**
 
-Open repo-root `Cargo.toml`. If a `[workspace]` block already exists, add `xtask` to the `members` list. If not, add:
+Do not create or modify a repo-root `Cargo.toml`. `xtask` is intentionally
+standalone. Generate its lockfile directly:
 
-```toml
-[workspace]
-members = ["src-tauri", "xtask", "tuxmodem/*"]
-resolver = "2"
+```bash
+cargo generate-lockfile --manifest-path xtask/Cargo.toml
 ```
 
-(Adjust the members list to reflect the actual existing workspace members.)
+- [ ] **Step 4.1.3: Verify the helper crate builds**
 
-- [ ] **Step 4.1.3: Verify the workspace builds**
-
-Run: `cargo --manifest-path xtask/Cargo.toml build`
+Run: `cargo build --manifest-path xtask/Cargo.toml --target-dir xtask/target`
 Expected: builds cleanly.
 
 - [ ] **Step 4.1.4: Create `xtask/README.md`**
@@ -2410,7 +2412,9 @@ Expected: builds cleanly.
 ```markdown
 # xtask
 
-Workspace-internal build helpers for tuxlink.
+Repository helper binaries for tuxlink. This crate is intentionally standalone:
+invoke it with an explicit manifest path and target directory so Cargo does not
+create build artifacts at the repository root.
 
 ## Binaries
 
@@ -2426,14 +2430,14 @@ Combines:
   committed; stderr captures from gnome-keyring / kwallet / KeePassXC /
   PipeWire / ALSA / VARA / ARDOP / BlueZ)
 
-Run: `cargo --manifest-path xtask/Cargo.toml run --bin gen-corpus -- --output dev/log-corpus-synthetic/`
+Run: `cargo run --manifest-path xtask/Cargo.toml --target-dir xtask/target --bin gen-corpus -- --output dev/log-corpus-synthetic/`
 
 ### `train-log-dict`
 
 Trains a zstd dictionary from a corpus directory. Outputs the dictionary
 asset bundled into the tuxlink binary via `include_bytes!`.
 
-Run: `cargo --manifest-path xtask/Cargo.toml run --bin train-log-dict -- --input dev/log-corpus-synthetic/ --output src-tauri/assets/logging/tuxlink-events-v1.zdict --size-kb 16`
+Run: `cargo run --manifest-path xtask/Cargo.toml --target-dir xtask/target --bin train-log-dict -- --input dev/log-corpus-synthetic/ --output src-tauri/assets/logging/tuxlink-events-v1.zdict --size-kb 16`
 ```
 
 - [ ] **Step 4.1.5: Update `.gitignore`**
@@ -2441,21 +2445,25 @@ Run: `cargo --manifest-path xtask/Cargo.toml run --bin train-log-dict -- --input
 Add to the project's `.gitignore`:
 
 ```
-# Synthetic logging corpus (re-generated by `cargo xtask gen-corpus`)
+xtask/target/
+
+# Synthetic logging corpus (re-generated by the xtask gen-corpus binary)
 /dev/log-corpus-synthetic/
 ```
 
 - [ ] **Step 4.1.6: Commit**
 
 ```bash
-git add Cargo.toml xtask/ .gitignore
+git add xtask/ .gitignore
 git commit -m "$(cat <<'EOF'
 chore(xtask): introduce xtask crate for gen-corpus + train-log-dict binaries
 
-New workspace member at xtask/. Two binaries (stubs in this commit): gen-corpus
-(synthetic event-corpus generator) and train-log-dict (zstd dictionary trainer).
-xtask/README.md documents invocation. .gitignore excludes the generated
-dev/log-corpus-synthetic/ output dir.
+Standalone helper crate at xtask/. Two binaries (stubs in this commit):
+gen-corpus (synthetic event-corpus generator) and train-log-dict (zstd
+dictionary trainer). xtask/README.md documents invocation with explicit
+--manifest-path and --target-dir so helper builds do not emit repository-root
+target/. .gitignore excludes xtask/target/ and generated
+dev/log-corpus-synthetic/ output.
 
 Subsequent commits implement gen-corpus, fixtures, train-log-dict.
 
@@ -2712,7 +2720,7 @@ fn next_synthetic_event(seq: u64, ts: DateTime<Utc>, fixtures: &Fixtures, idx: u
 
 - [ ] **Step 4.2.3: Run gen-corpus and verify output**
 
-Run: `cargo --manifest-path xtask/Cargo.toml run --bin gen-corpus`
+Run: `cargo run --manifest-path xtask/Cargo.toml --target-dir xtask/target --bin gen-corpus`
 Expected: prints "Generated ~1700000 bytes across ~27 files at dev/log-corpus-synthetic/".
 
 Verify: `ls dev/log-corpus-synthetic/ | head` shows `corpus-0000.jsonl` etc.
@@ -2802,7 +2810,7 @@ fn main() -> Result<()> {
 
 - [ ] **Step 4.3.2: Run train-log-dict and produce the v1 asset**
 
-Run: `mkdir -p src-tauri/assets/logging/ && cargo --manifest-path xtask/Cargo.toml run --bin train-log-dict -- --input dev/log-corpus-synthetic/ --output src-tauri/assets/logging/tuxlink-events-v1.zdict --size-kb 16`
+Run: `mkdir -p src-tauri/assets/logging/ && cargo run --manifest-path xtask/Cargo.toml --target-dir xtask/target --bin train-log-dict -- --input dev/log-corpus-synthetic/ --output src-tauri/assets/logging/tuxlink-events-v1.zdict --size-kb 16`
 
 Expected: prints "Wrote ~16384 byte dictionary to src-tauri/assets/logging/tuxlink-events-v1.zdict".
 
@@ -5856,7 +5864,7 @@ echo "zstd: $ZSTD_VER"
 
 # 2. Generate a synthetic corpus + train dict
 cd "$(dirname "$0")/.."
-cargo --manifest-path xtask/Cargo.toml run --bin gen-corpus -- \
+cargo run --manifest-path xtask/Cargo.toml --target-dir xtask/target --bin gen-corpus -- \
   --output "$WORKDIR/corpus" --fixtures dev/log-corpus-fixtures/ \
   --target-bytes 1700000 2>&1 | grep -v 'Compiling\|Finished'
 

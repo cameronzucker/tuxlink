@@ -21,7 +21,7 @@ echo "zstd: $ZSTD_VER"
 # 2. Generate a synthetic corpus + train dict (smoke just verifies the xtask runs)
 # Amendment F / Codex P2 #10: no || true masking — if xtask gen-corpus fails the smoke fails.
 cd "$(dirname "$0")/.."
-cargo run --manifest-path xtask/Cargo.toml --bin gen-corpus -- \
+cargo run --manifest-path xtask/Cargo.toml --target-dir xtask/target --bin gen-corpus -- \
   --output "$WORKDIR/corpus" --fixtures dev/log-corpus-fixtures/ \
   --target-bytes 1700000 2>&1 | grep -v 'Compiling\|Finished'
 
