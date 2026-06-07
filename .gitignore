@@ -75,6 +75,10 @@ lerna-debug.log*
 !dev/live-cms-sessions.log
 
 # Tauri / Rust build artifacts
+# The root Cargo workspace (Cargo.toml members = ["src-tauri", "xtask"]) writes
+# build output at /target/. src-tauri/target/ remains ignored for older local
+# checkouts and any direct-manifest invocations that still land there.
+/target/
 src-tauri/target/
 src-tauri/WixTools/
 src-tauri/gen/
