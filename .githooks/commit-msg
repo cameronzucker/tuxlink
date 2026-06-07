@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# commit-msg — require local commits to carry an Agent trailer.
+#
+# This is harness-independent forensics: Claude hooks, Codex CLI, and a human
+# shell all pass through the same git hook once scripts/install-githooks.sh has
+# activated .githooks.
+
+set -eu
+
+MESSAGE_FILE="${1:?commit message file required}"
+OVERRIDE_VAR="TUXLINK_AGENT_TRAILER_OVERRIDE"
+OVERRIDE_SENTINEL="I-know-what-Im-doing"
+
+if grep -Eq '^Agent: [a-z0-9]+(-[a-z0-9]+)*[[:space:]]*$' "${MESSAGE_FILE}"; then
+  exit 0
+fi
+
+if [ "${!OVERRIDE_VAR:-}" = "${OVERRIDE_SENTINEL}" ]; then
+  repo_root="$(git rev-parse --show-toplevel)"
+  mkdir -p "${repo_root}/dev/scratch"
+  subject="$(sed -n '1p' "${MESSAGE_FILE}")"
+  branch="$(git symbolic-ref --short HEAD 2>/dev/null || echo HEAD)"
+  printf '%s override=%s branch=%s subject=%s\n' \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${OVERRIDE_VAR}" "${branch}" "${subject}" \
+    >> "${repo_root}/dev/scratch/agent-trailer-overrides.log"
+  printf 'WARNING: Agent trailer override used; logged to dev/scratch/agent-trailer-overrides.log\n' >&2
+  exit 0
+elif [ -n "${!OVERRIDE_VAR:-}" ]; then
+  printf 'Agent trailer: %s was set but did not match sentinel %q — refusing\n' \
+    "${OVERRIDE_VAR}" "${OVERRIDE_SENTINEL}" >&2
+fi
+
+cat >&2 <<'EOF'
+Commit refused: missing Agent trailer.
+
+Add a trailer on its own line:
+
+  Agent: <session-moniker>
+
+Examples:
+  Agent: yew-sorrel-condor
+  Agent: cedar
+
+Generate a session moniker with:
+  python3 .claude/scripts/get_agent_moniker.py
+
+Documented emergency override:
+  TUXLINK_AGENT_TRAILER_OVERRIDE=I-know-what-Im-doing git commit ...
+EOF
+
+exit 1

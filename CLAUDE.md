@@ -149,6 +149,11 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
 
 **Also include in:** branch names when creating them (`agent-<moniker>/<topic>` for throwaway branches; regular `feat/` / `fix/` prefixes are fine for shared feature branches but still add the trailer inside commits), and PR titles if you open one (`[juniper] <subject>`).
 
+The repo-local `commit-msg` hook enforces `Agent: <moniker>` for local commits
+when `.githooks` is active. GitHub-generated merge/release commits do not pass
+through local hooks, so PR title monikers and branch names remain part of the
+forensics trail.
+
 **Why:** triage + forensics. When a session goes sideways — a mysterious `git reset --hard`, a stale regression, an unclear commit authorship — Cameron needs to grep the commit graph for "which agent did this" without reconstructing it from timestamps. `git log --grep="^Agent: juniper"` returns the full trail for this session. `git log --all --grep="^Agent:"` enumerates every agent that has ever touched the repo.
 
 **If you forget to set a moniker early in the session:** pick one now and apply it to all forward commits. Do not retroactively amend earlier commits (amending shared/recent commits is banned — see below).
@@ -246,6 +251,25 @@ TUXLINK_BRANCH_LIFECYCLE_OVERRIDE=I-know-what-Im-doing git commit ...
 
 **Full state model + classification heuristics + alternatives considered:** [ADR 0017](docs/adr/0017-branch-state-machine.md).
 
+## Disposable / converged build worktree quarantine
+
+`.local/converge-build-worktree/` is operator tooling state, not an agent task
+worktree. Agents must not edit source, stage files, commit, stash, rebase, or
+run cleanup commands there. Use bd-bound worktrees under `worktrees/` for agent
+code changes.
+
+If a converged-build script refuses to run because the disposable worktree has
+dirty or untracked source changes:
+
+1. Inspect only with read-only commands such as
+   `git -C .local/converge-build-worktree status --short`.
+2. Report the exact paths and whether they are tracked, untracked, or ignored.
+3. Do not delete, restore, clean, stash, or overwrite anything there unless the
+   operator explicitly authorizes the exact path-level cleanup.
+
+Build-cache directories such as `target/` and `node_modules/` may exist there,
+but they must not be treated as permission for agents to work in that tree.
+
 ## Live radio network operations — READ BEFORE ANY TRANSMISSION
 
 No automation, test, subagent, CI job, scheduled task, or AI agent
@@ -274,6 +298,36 @@ run a live-CMS binary to verify completion, your task is misspecified
 - Update `dev/implementation-log.md` (once created) after any significant work item: plan executed, feature shipped, bug hunt cycle completed, adversarial review completed. Entry goes at the top, reverse-chronological, keyed by date + topic.
 - **Polish before push.** Per [ADR 0010](docs/adr/0010-no-squash-merge.md): squash-merge is banned, so the integration branch will preserve every task-branch commit. Clean up WIP / fixup / "oops" commits via non-interactive `git rebase <base>` on **local un-pushed commits** before `git push`. Once pushed, commits are immutable (the destructive-git ban on `--amend` of pushed commits and on `git rebase -i` ensures this). The push gates the polish.
 
+## Remote, CI, release, and artifact evidence discipline
+
+Remote-state claims are evidence-bound. Before asserting anything about GitHub
+Actions, PR checks, release assets, tags, deleted branches, or workflow
+contents, inspect the remote source of truth with `gh` and/or `git show
+origin/main:<path>`.
+
+Required distinctions:
+
+- PR merge checks are not the same as post-merge push/tag workflows.
+- A release-please PR can pass CI without proving release artifacts were built
+  as a merge gate.
+- A GitHub Release page's current asset list may differ from what the operator
+  observed earlier; compare timestamps instead of contradicting the operator.
+- Local workflow files may be hundreds of commits stale. Do not infer remote
+  behavior from local files until the branch relationship to `origin/main` is
+  known.
+
+When a user challenges a factual claim, stop the line of argument, verify the
+claim against primary evidence, and surface the commands/results that support
+the corrected conclusion.
+
+## Verification provenance
+
+Every verification report must say what was tested and where: worktree path,
+branch, commit SHA when available, local vs CI, and whether the run exercised a
+branch build, converged build, packaged artifact, or release asset. Do not let a
+successful branch-local run imply that the operator's converged build or a
+published release artifact has been verified.
+
 ## Documentation propagation contract
 
 For any project-policy claim — an ADR, a spec section, an operator decision — the **canonical source is the ADR or spec itself**. CLAUDE.md, AGENTS.md, plan templates, pitfalls docs, and memory entries are **pointers**, not parallel statements.
@@ -293,6 +347,8 @@ Memory entries cite the ADR; they do not restate it. Narrowly-scoped operational
 ## Parity with `AGENTS.md`
 
 [AGENTS.md](AGENTS.md) is a deliberate **summary with links** to this file's sections, intended for non-Claude agent harnesses (Codex CLI, `codex review`, and future tooling that picks up the standard `AGENTS.md` convention) where pulling the whole CLAUDE.md inline would be wasteful. It is NOT a full mirror; the substantive rules live here and AGENTS.md points to them.
+
+Codex primary-agent checklist: [docs/agent-workflows/codex-primary-agent-parity.md](docs/agent-workflows/codex-primary-agent-parity.md). This checklist is procedural glue for non-Claude harnesses; it does not supersede CLAUDE.md.
 
 **Upkeep discipline.** Every PR that changes a rule in CLAUDE.md MUST also do the AGENTS.md parity check, in the same PR. The check:
 

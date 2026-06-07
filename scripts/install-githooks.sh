@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # install-githooks.sh — one-step activation of tuxlink's .githooks/ directory.
 #
-# Sets `core.hooksPath` to .githooks/ and verifies the pre-commit + pre-push
-# hooks are executable. Idempotent; safe to re-run.
+# Sets `core.hooksPath` to .githooks/ and verifies the commit-msg +
+# pre-commit + pre-push hooks are executable. Idempotent; safe to re-run.
 #
 # Implements docs/adr/0017-branch-state-machine.md activation instructions.
 #
@@ -35,7 +35,7 @@ fi
 
 # Make sure the hook scripts are executable. git config the hookspath does
 # not make non-executable scripts run.
-for hook in pre-commit pre-push; do
+for hook in commit-msg pre-commit pre-push; do
   hookpath="${HOOKS_DIR}/${hook}"
   if [ ! -f "${hookpath}" ]; then
     printf '✗ missing %s\n' "${hookpath}" >&2
@@ -49,7 +49,15 @@ for hook in pre-commit pre-push; do
   fi
 done
 
-# Sanity check: does the classifier library source cleanly?
+# Sanity check: do the hook scripts and classifier library parse cleanly?
+for hook in commit-msg pre-commit pre-push; do
+  if ! bash -n "${HOOKS_DIR}/${hook}" 2>&1; then
+    printf '✗ %s has syntax errors\n' "${HOOKS_DIR}/${hook}" >&2
+    exit 1
+  fi
+done
+printf '✓ hook script syntax OK\n'
+
 if ! bash -n "${HOOKS_DIR}/lib/branch-state.sh" 2>&1; then
   printf '✗ branch-state.sh has syntax errors\n' >&2
   exit 1
@@ -60,11 +68,15 @@ printf '✓ branch-state.sh syntax OK\n'
 cat <<EOF
 
 Branch lifecycle hooks active. Future commits + pushes go through:
+  ${HOOKS_DIR}/commit-msg
   ${HOOKS_DIR}/pre-commit
   ${HOOKS_DIR}/pre-push
 
-Override (documented escape hatch, loud + audited):
+Branch lifecycle override (documented escape hatch, loud + audited):
   TUXLINK_BRANCH_LIFECYCLE_OVERRIDE=I-know-what-Im-doing git commit ...
+
+Agent trailer override (documented escape hatch, loud + audited):
+  TUXLINK_AGENT_TRAILER_OVERRIDE=I-know-what-Im-doing git commit ...
 
 Audit log: dev/scratch/branch-lifecycle-overrides.log
 ADR:       docs/adr/0017-branch-state-machine.md
