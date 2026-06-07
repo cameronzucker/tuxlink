@@ -24,6 +24,14 @@ const { mockInvoke, mockListen } = vi.hoisted(() => ({
 vi.mock('@tauri-apps/api/core', () => ({ invoke: mockInvoke }));
 vi.mock('@tauri-apps/api/event', () => ({ listen: mockListen }));
 vi.mock('@tauri-apps/plugin-dialog', () => ({ save: vi.fn() }));
+vi.mock('@tauri-apps/api/window', () => ({
+  getCurrentWindow: () => ({
+    minimize: vi.fn(async () => {}),
+    toggleMaximize: vi.fn(async () => {}),
+    close: vi.fn(async () => {}),
+    startResizeDragging: vi.fn(async () => {}),
+  }),
+}));
 
 beforeEach(() => {
   vi.resetAllMocks();
@@ -51,6 +59,16 @@ describe('LoggingView — integration smoke', () => {
   it('renders the Logging h1', () => {
     renderLoggingView();
     expect(screen.getByRole('heading', { level: 1, name: /logging/i })).toBeInTheDocument();
+  });
+
+  it('renders Tuxlink window chrome with close controls', () => {
+    const { container } = renderLoggingView();
+
+    expect(screen.getByRole('button', { name: /close/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /minimize/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /maximize/i })).toBeInTheDocument();
+    expect(container.querySelector('[data-tauri-drag-region]')).not.toBeNull();
+    expect(container.querySelectorAll('.tux-resize')).toHaveLength(8);
   });
 
   it('renders all three section headings', () => {

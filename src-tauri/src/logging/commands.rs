@@ -20,6 +20,7 @@ use crate::logging::retention::{self, RetentionConfig};
 use crate::logging::settings::{self, DetailedMode};
 use crate::logging::DegradedHandle;
 use chrono::{Duration, Utc};
+use std::path::Path;
 use std::sync::Arc;
 
 // ─── Status types ─────────────────────────────────────────────────────────────
@@ -301,8 +302,8 @@ pub fn logging_open_directory(app: tauri::AppHandle) -> Result<(), String> {
         .map_err(|e| format!("shell open: {e}"))
 }
 
-/// Clear the in-memory session log ring buffer and remove all closed log files
-/// from disk (preserving the currently-open active file).
+/// Clear the in-memory session log ring buffer, delete closed log files, and
+/// truncate the currently-open active log file so visible disk usage resets.
 #[tauri::command]
 pub fn logging_clear_history(app: tauri::AppHandle) -> Result<(), String> {
     use tauri::Manager;
@@ -311,26 +312,45 @@ pub fn logging_clear_history(app: tauri::AppHandle) -> Result<(), String> {
         .ok_or_else(|| "logging not available (degraded or not initialized)".to_string())?;
 
     handle.session_log.clear();
+    handle
+        .flush_barrier
+        .flush_and_wait(std::time::Duration::from_millis(500))
+        .map_err(|e| format!("flush before clear failed: {e}"))?;
     let active = handle
         .active_file_path
         .try_lock()
-        .ok()
-        .and_then(|g| g.clone());
-    if let Ok(entries) = std::fs::read_dir(&handle.log_dir) {
-        for e in entries.flatten() {
-            let path = e.path();
-            if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                if !(name.starts_with("tuxlink.") && name.ends_with(".jsonl")) {
-                    continue;
-                }
-            }
-            if Some(path.as_path()) == active.as_deref() {
+        .map_err(|_| "active log path busy; retry clear history".to_string())?
+        .clone();
+    clear_history_files(&handle.log_dir, active.as_deref())
+}
+
+fn clear_history_files(log_dir: &Path, active_file_path: Option<&Path>) -> Result<(), String> {
+    let Ok(entries) = std::fs::read_dir(log_dir) else {
+        return Ok(());
+    };
+
+    for e in entries.flatten() {
+        let path = e.path();
+        if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+            if !(name.starts_with("tuxlink.") && name.ends_with(".jsonl")) {
                 continue;
             }
-            let _ = std::fs::remove_file(path);
+        } else {
+            continue;
+        }
+
+        if Some(path.as_path()) == active_file_path {
+            std::fs::OpenOptions::new()
+                .write(true)
+                .truncate(true)
+                .open(&path)
+                .map_err(|e| format!("truncate active log file {}: {e}", path.display()))?;
+        } else {
+            std::fs::remove_file(&path)
+                .map_err(|e| format!("remove log file {}: {e}", path.display()))?;
         }
     }
-    tracing::warn!("logging history cleared by operator");
+
     Ok(())
 }
 
@@ -607,6 +627,7 @@ fn format_bytes(bytes: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::tempdir;
 
     #[test]
     fn detailed_label_variants() {
@@ -647,6 +668,38 @@ mod tests {
         let short: String = boot_id.chars().take(8).collect();
         assert_eq!(short.len(), 8);
         assert_eq!(short, "01927a8b");
+    }
+
+    #[test]
+    fn clear_history_truncates_active_file_and_is_idempotent() {
+        let tmp = tempdir().unwrap();
+        let active = tmp.path().join("tuxlink.2026-06-07-08.jsonl");
+        let closed = tmp.path().join("tuxlink.2026-06-07-07.jsonl");
+        let unrelated = tmp.path().join("not-a-tuxlink-log.txt");
+        std::fs::write(&active, b"{\"msg\":\"active backlog\"}\n").unwrap();
+        std::fs::write(&closed, b"{\"msg\":\"closed backlog\"}\n").unwrap();
+        std::fs::write(&unrelated, b"keep me").unwrap();
+
+        clear_history_files(tmp.path(), Some(active.as_path())).unwrap();
+
+        assert!(active.exists(), "active appender path remains present");
+        assert_eq!(
+            std::fs::metadata(&active).unwrap().len(),
+            0,
+            "active file should be truncated so disk usage can reset"
+        );
+        assert!(!closed.exists(), "closed diagnostic files are deleted");
+        assert!(
+            unrelated.exists(),
+            "non-log files in the directory are preserved"
+        );
+
+        clear_history_files(tmp.path(), Some(active.as_path())).unwrap();
+        assert_eq!(
+            std::fs::metadata(&active).unwrap().len(),
+            0,
+            "repeated clears should not grow the active diagnostic log"
+        );
     }
 
     // ── markdown_escape tests ──────────────────────────────────────────────
