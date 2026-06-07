@@ -240,7 +240,7 @@ Part 97
 Pat
 :   The open-source Go Winlink client (cross-platform). Tuxlink's prior
     art for Linux Winlink. See
-    [Migration from Express or Pat](32-from-express-or-pat.md).
+    [Moving from other Winlink clients](32-from-express-or-pat.md).
 
 PR_
 :   Position Report. A Winlink catalog query returning recently-reported
@@ -354,7 +354,7 @@ Winlink
 Winlink Express
 :   The official Windows Winlink client. Reference for protocol
     behaviour. See
-    [Migration from Express or Pat](32-from-express-or-pat.md).
+    [Moving from other Winlink clients](32-from-express-or-pat.md).
 
 WL2K
 :   "Winlink 2000." Historical brand name; current rebranding is just

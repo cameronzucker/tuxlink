@@ -103,4 +103,4 @@ static snapshot.
 
 - [What is tuxlink](01-what-is-tuxlink.md) — the project's framing.
 - [The Winlink ecosystem](04-the-winlink-ecosystem.md) — the system tuxlink interoperates with.
-- [Migration from Express or Pat](32-from-express-or-pat.md) — the prior-art clients tuxlink takes operating conventions from.
+- [Moving from other Winlink clients](32-from-express-or-pat.md) — the prior-art clients tuxlink takes operating conventions from.
