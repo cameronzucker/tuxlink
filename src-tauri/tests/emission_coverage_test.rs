@@ -12,10 +12,8 @@
 //! RADIO-1: no live modem spawn, no PTT, no CMS telnet. This test is purely
 //! in-process and produces zero radio emissions.
 
-use std::sync::Arc;
-use tuxlink_lib::logging::fanout::FanoutLayer;
-use tuxlink_lib::session_log::SessionLogState;
 use tracing_subscriber::{layer::SubscriberExt, Registry};
+use tuxlink_lib::logging::fanout::FanoutLayer;
 
 /// All §4.1 clusters with their canonical tracing targets.
 /// For each cluster we emit one synthetic event; the test then asserts that
@@ -60,8 +58,7 @@ const EXPECTED_CLUSTERS: &[&str] = &[
 
 #[test]
 fn all_clusters_emit_at_least_one_event_through_fanout() {
-    let session_log = Arc::new(SessionLogState::new(1024));
-    let (layer, mut rx) = FanoutLayer::create(session_log);
+    let (layer, mut rx) = FanoutLayer::create();
     let subscriber = Registry::default().with(layer);
 
     tracing::subscriber::with_default(subscriber, || {
@@ -121,9 +118,7 @@ fn all_clusters_emit_at_least_one_event_through_fanout() {
     // Assert ≥1 event per cluster.
     let mut missing: Vec<&str> = Vec::new();
     for &expected in EXPECTED_CLUSTERS {
-        let found = collected
-            .iter()
-            .any(|ev| ev.target.starts_with(expected));
+        let found = collected.iter().any(|ev| ev.target.starts_with(expected));
         if !found {
             missing.push(expected);
         }
@@ -175,5 +170,5 @@ fn gap_documentation_clusters_with_radio_1_dependency_are_known() {
     // This test is documentation-only: it always passes. The cluster list is
     // human-readable and auditable in the commit history.
     let _ = RADIO_1_REQUIRED_CLUSTERS; // referenced so clippy doesn't elide it
-    // Pass unconditionally.
+                                       // Pass unconditionally.
 }

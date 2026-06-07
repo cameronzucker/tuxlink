@@ -14,6 +14,7 @@ pub mod native_mailbox;
 pub mod position;
 pub mod search;
 pub mod session_log;
+pub mod session_log_emit;
 pub mod tray;
 pub mod ui_commands;
 pub mod user_folders;

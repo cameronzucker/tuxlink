@@ -95,7 +95,11 @@ impl Visit for RedactingVisitor {
         let preview = &value[..value.len().min(BYTES_PREVIEW_CAP)];
         self.insert(
             field.name(),
-            json!(format!("{} bytes; preview: {}", value.len(), hex::encode(preview))),
+            json!(format!(
+                "{} bytes; preview: {}",
+                value.len(),
+                hex::encode(preview)
+            )),
         );
     }
 
@@ -144,14 +148,11 @@ mod tests {
     use super::STRING_FIELD_CAP_BYTES;
     use crate::logging::event::LoggedEvent;
     use crate::logging::fanout::FanoutLayer;
-    use crate::session_log::SessionLogState;
-    use std::sync::Arc;
-    use tracing_subscriber::{Registry, layer::SubscriberExt};
+    use tracing_subscriber::{layer::SubscriberExt, Registry};
 
     /// Helper: capture one event emitted while a fanout-driven subscriber is active.
     fn capture_one(emit: impl FnOnce()) -> LoggedEvent {
-        let session_log = Arc::new(SessionLogState::new(100));
-        let (handle, mut rx) = FanoutLayer::create(session_log);
+        let (handle, mut rx) = FanoutLayer::create();
         let subscriber = Registry::default().with(handle.clone());
         tracing::subscriber::with_default(subscriber, emit);
         rx.try_recv().expect("event must be broadcast")
@@ -160,13 +161,19 @@ mod tests {
     #[test]
     fn record_str_routes_through_blocklist() {
         let ev = capture_one(|| tracing::info!(password = "hunter2", "auth"));
-        assert_eq!(ev.fields.get("password"), Some(&serde_json::json!("<redacted>")));
+        assert_eq!(
+            ev.fields.get("password"),
+            Some(&serde_json::json!("<redacted>"))
+        );
     }
 
     #[test]
     fn record_str_token_field_is_redacted() {
         let ev = capture_one(|| tracing::info!(token = "abc123", "auth"));
-        assert_eq!(ev.fields.get("token"), Some(&serde_json::json!("<redacted>")));
+        assert_eq!(
+            ev.fields.get("token"),
+            Some(&serde_json::json!("<redacted>"))
+        );
     }
 
     #[test]
@@ -175,7 +182,10 @@ mod tests {
             let token_value = "abc123";
             tracing::info!(token = ?token_value, "auth");
         });
-        assert_eq!(ev.fields.get("token"), Some(&serde_json::json!("<redacted>")));
+        assert_eq!(
+            ev.fields.get("token"),
+            Some(&serde_json::json!("<redacted>"))
+        );
     }
 
     #[test]
@@ -207,9 +217,15 @@ mod tests {
     fn record_f64_nan_with_blocklisted_name_suppresses_kind_marker() {
         let ev = capture_one(|| tracing::info!(nonce = f64::NAN, "auth"));
         // Blocklisted field: value must be redacted (insert() routes through blocklist first)
-        assert_eq!(ev.fields.get("nonce"), Some(&serde_json::json!("<redacted>")));
+        assert_eq!(
+            ev.fields.get("nonce"),
+            Some(&serde_json::json!("<redacted>"))
+        );
         // The _kind marker must NOT leak for a blocklisted field name
-        assert!(!ev.fields.contains_key("nonce_kind"), "blocklisted field's _kind marker must not leak");
+        assert!(
+            !ev.fields.contains_key("nonce_kind"),
+            "blocklisted field's _kind marker must not leak"
+        );
     }
 
     #[test]
@@ -239,13 +255,16 @@ mod tests {
         let ev = capture_one(|| tracing::info!(field_value = %long_unicode, "unicode test"));
 
         // The captured value must be truncated, not the full string.
-        let value = ev.fields.get("field_value")
+        let value = ev
+            .fields
+            .get("field_value")
             .expect("field_value must be present")
             .as_str()
             .expect("field_value must be a string");
         assert!(
             value.contains("…[truncated"),
-            "long string must be truncated; got len={}", value.len()
+            "long string must be truncated; got len={}",
+            value.len()
         );
         // The truncated prefix must be valid UTF-8 (no broken sequences).
         assert!(

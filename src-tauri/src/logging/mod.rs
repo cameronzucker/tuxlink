@@ -24,7 +24,6 @@ pub mod state_dir;
 pub mod subscriber;
 pub mod summary;
 pub mod visit;
-pub mod ui_consumer;
 pub mod wire_sanitize;
 
 pub use fanout::AttemptIdExt;
@@ -72,7 +71,9 @@ pub fn init(session_log: Arc<SessionLogState>) -> InitOutcome {
                 .finish();
             let _ = tracing::subscriber::set_global_default(stderr_sub);
             tracing::warn!(error = %e, "logging:init degraded: state_dir unavailable");
-            return InitOutcome::Degraded { reason: e.to_string() };
+            return InitOutcome::Degraded {
+                reason: e.to_string(),
+            };
         }
     };
 
@@ -88,7 +89,7 @@ pub fn init(session_log: Arc<SessionLogState>) -> InitOutcome {
 
     let settings = Arc::new(Mutex::new(settings_loaded));
 
-    let (subscriber, handles) = subscriber::build(session_log.clone());
+    let (subscriber, handles) = subscriber::build();
     if let Err(e) = tracing::subscriber::set_global_default(subscriber) {
         return InitOutcome::Degraded {
             reason: format!("logging subscriber install failed: {e}"),
@@ -100,7 +101,10 @@ pub fn init(session_log: Arc<SessionLogState>) -> InitOutcome {
 
     let retention_cfg = {
         let s = settings.lock().expect("settings lock");
-        retention::RetentionConfig { days: s.retention_days, mb_cap: s.retention_mb_cap }
+        retention::RetentionConfig {
+            days: s.retention_days,
+            mb_cap: s.retention_mb_cap,
+        }
     };
 
     // Codex P2 #4: create the flush barrier. The receiver goes to disk_consumer;
@@ -122,13 +126,6 @@ pub fn init(session_log: Arc<SessionLogState>) -> InitOutcome {
             };
         }
     };
-
-    // Codex P2 #3: spawn a second broadcast consumer that feeds the session-log
-    // ring buffer (SessionLogState::append_with_seq). The disk consumer above
-    // uses handles.broadcast_rx; the UI consumer gets a fresh receiver via
-    // broadcast_tx.subscribe() so the two consumers are independent.
-    let ui_rx = handles.fanout.broadcast_tx.subscribe();
-    ui_consumer::spawn(ui_rx, session_log.clone());
 
     let boot_id = handles.fanout.boot_id.clone();
     let boot_at = Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);

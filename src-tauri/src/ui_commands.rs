@@ -2170,15 +2170,17 @@ fn emit_session_line(
     level: LogLevel,
     message: String,
 ) {
-    let mut line = LogLine {
-        seq: 0,
-        timestamp_iso: chrono::Utc::now().to_rfc3339(),
-        level,
-        source: LogSource::Transport,
-        message,
-    };
-    line.seq = buffer.append(line.clone());
-    let _ = app.emit("session_log:line", LogLineDto::from(line));
+    emit_session_line_with_source(app, buffer, level, LogSource::Transport, message);
+}
+
+fn emit_session_line_with_source(
+    app: &AppHandle,
+    buffer: &SessionLogState,
+    level: LogLevel,
+    source: LogSource,
+    message: String,
+) {
+    crate::session_log_emit::emit(app, buffer, level, source, message);
 }
 
 // ============================================================================
@@ -5236,7 +5238,13 @@ pub async fn telnet_p2p_connect(
                 emit_session_line(&app_progress, &log_progress, LogLevel::Info, line.to_string());
             },
             &move |line: &str| {
-                emit_session_line(&app_wire, &log_wire, LogLevel::Info, line.to_string());
+                emit_session_line_with_source(
+                    &app_wire,
+                    &log_wire,
+                    LogLevel::Info,
+                    LogSource::Wire,
+                    line.to_string(),
+                );
             },
             |_proposals| Vec::new(),
         )

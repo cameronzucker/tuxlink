@@ -15,14 +15,12 @@ use tuxlink_lib::logging::{
     logging_handle::LoggingHandle,
     retention::RetentionConfig,
     settings::{DetailedMode, Settings},
-    ui_consumer,
 };
 use tuxlink_lib::session_log::SessionLogState;
 
 const STARTUP_LOGGING_FILES: &[&str] = &[
     "src/logging/free_disk_guard.rs",
     "src/logging/disk_consumer.rs",
-    "src/logging/ui_consumer.rs",
     "src/logging/bounded_timer.rs",
     "src/logging/env_probes/mod.rs",
 ];
@@ -105,12 +103,6 @@ fn disk_consumer_spawn_does_not_require_current_tokio_reactor() {
         flush_rx,
     )
     .expect("disk consumer appender should initialize");
-}
-
-#[test]
-fn ui_consumer_spawn_does_not_require_current_tokio_reactor() {
-    let (_tx, rx) = tokio::sync::broadcast::channel(16);
-    ui_consumer::spawn(rx, Arc::new(SessionLogState::new(16)));
 }
 
 #[test]

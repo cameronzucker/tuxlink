@@ -10,7 +10,9 @@
 //! first-render event to the backend probe runner.
 
 use crate::logging::bounded_timer;
-use crate::logging::env_probes::{audio, display, keyring, modem_process, network, serial, ProbeSnapshot};
+use crate::logging::env_probes::{
+    audio, display, keyring, modem_process, network, serial, ProbeSnapshot,
+};
 use crate::logging::export::{build_archive, ExportInputs, ExportResult};
 use crate::logging::filter_layer;
 use crate::logging::logging_handle::LoggingHandle;
@@ -133,8 +135,8 @@ fn full_status(handle: &Arc<LoggingHandle>) -> Result<LoggingStatus, String> {
         disk_usage_bytes,
         disk_cap_bytes: (settings.retention_mb_cap as u64) * 1024 * 1024,
         retained_window_seconds: 0, // TODO: populate from oldest file timestamp
-        event_rate_per_hour: 0, // TODO: populate from sliding-window counter
-        last_export: None,      // TODO: persist across sessions
+        event_rate_per_hour: 0,     // TODO: populate from sliding-window counter
+        last_export: None,          // TODO: persist across sessions
         detailed_mode: detailed_label.into(),
         bounded_remaining_seconds: bounded_remaining,
         retention_days: settings.retention_days,
@@ -203,11 +205,7 @@ pub fn logging_set_detailed_mode(
 
 /// Update retention settings (days + MB cap) and run an immediate sweep.
 #[tauri::command]
-pub fn logging_set_retention(
-    app: tauri::AppHandle,
-    days: u32,
-    mb_cap: u32,
-) -> Result<(), String> {
+pub fn logging_set_retention(app: tauri::AppHandle, days: u32, mb_cap: u32) -> Result<(), String> {
     use tauri::Manager;
     let handle = app
         .try_state::<Arc<LoggingHandle>>()
@@ -229,7 +227,11 @@ pub fn logging_set_retention(
         settings::save(&s)?;
     }
     let cfg = RetentionConfig { days, mb_cap };
-    let active = handle.active_file_path.try_lock().ok().and_then(|g| g.clone());
+    let active = handle
+        .active_file_path
+        .try_lock()
+        .ok()
+        .and_then(|g| g.clone());
     let result = retention::sweep(&handle.log_dir, &cfg, active.as_deref());
     tracing::info!(
         deleted = result.deleted_count,
@@ -241,10 +243,7 @@ pub fn logging_set_retention(
 
 /// Build and save a zstd export archive.
 #[tauri::command]
-pub fn logging_export(
-    app: tauri::AppHandle,
-    output_path: String,
-) -> Result<ExportResult, String> {
+pub fn logging_export(app: tauri::AppHandle, output_path: String) -> Result<ExportResult, String> {
     use tauri::Manager;
     let handle = app
         .try_state::<Arc<LoggingHandle>>()
@@ -259,11 +258,16 @@ pub fn logging_export(
         DetailedMode::On => "on",
         DetailedMode::Bounded { .. } => "bounded",
     };
-    let active = handle.active_file_path.try_lock().ok().and_then(|g| g.clone());
+    let active = handle
+        .active_file_path
+        .try_lock()
+        .ok()
+        .and_then(|g| g.clone());
     build_archive(ExportInputs {
         log_dir: &handle.log_dir,
         active_file_path: active.as_deref(),
         output_path: std::path::Path::new(&output_path),
+        session_log: handle.session_log.as_ref(),
         correlation_id: None,
         boot_id: &handle.boot_id,
         boot_at: &handle.boot_at,
@@ -279,9 +283,7 @@ pub fn logging_export(
 
 /// Open the log directory in the system file manager.
 #[tauri::command]
-pub fn logging_open_directory(
-    app: tauri::AppHandle,
-) -> Result<(), String> {
+pub fn logging_open_directory(app: tauri::AppHandle) -> Result<(), String> {
     use tauri::Manager;
     let handle = app
         .try_state::<Arc<LoggingHandle>>()
@@ -309,7 +311,11 @@ pub fn logging_clear_history(app: tauri::AppHandle) -> Result<(), String> {
         .ok_or_else(|| "logging not available (degraded or not initialized)".to_string())?;
 
     handle.session_log.clear();
-    let active = handle.active_file_path.try_lock().ok().and_then(|g| g.clone());
+    let active = handle
+        .active_file_path
+        .try_lock()
+        .ok()
+        .and_then(|g| g.clone());
     if let Ok(entries) = std::fs::read_dir(&handle.log_dir) {
         for e in entries.flatten() {
             let path = e.path();
@@ -330,9 +336,7 @@ pub fn logging_clear_history(app: tauri::AppHandle) -> Result<(), String> {
 
 /// Return a snapshot of all environment probes (read-only; RADIO-1 safe).
 #[tauri::command]
-pub fn logging_env_probes_snapshot(
-    _app: tauri::AppHandle,
-) -> Result<Vec<ProbeSnapshot>, String> {
+pub fn logging_env_probes_snapshot(_app: tauri::AppHandle) -> Result<Vec<ProbeSnapshot>, String> {
     Ok(vec![
         keyring::run("snapshot"),
         audio::run("snapshot"),
@@ -443,11 +447,16 @@ pub fn report_issue_flow(
         DetailedMode::On => "on",
         DetailedMode::Bounded { .. } => "bounded",
     };
-    let active = handle.active_file_path.try_lock().ok().and_then(|g| g.clone());
+    let active = handle
+        .active_file_path
+        .try_lock()
+        .ok()
+        .and_then(|g| g.clone());
     let export = build_archive(ExportInputs {
         log_dir: &handle.log_dir,
         active_file_path: active.as_deref(),
         output_path: std::path::Path::new(&output_path),
+        session_log: handle.session_log.as_ref(),
         correlation_id: None,
         boot_id: &handle.boot_id,
         boot_at: &handle.boot_at,
@@ -508,7 +517,10 @@ pub fn report_issue_flow(
     // Truncate using char count to avoid UTF-8 byte-boundary panics.
     let body_capped = if body.len() > 6 * 1024 {
         let truncated: String = body.chars().take(6000).collect();
-        format!("{}…\n\n[body truncated; correlation ID: {}]", truncated, correlation_id)
+        format!(
+            "{}…\n\n[body truncated; correlation ID: {}]",
+            truncated, correlation_id
+        )
     } else {
         body
     };
@@ -552,7 +564,7 @@ fn markdown_escape(s: &str) -> String {
             // Consume the CSI sequence: `[` + optional param bytes + final byte.
             if chars.peek() == Some(&'[') {
                 chars.next(); // consume `[`
-                // Consume params (0x30–0x3F) and intermediates (0x20–0x2F).
+                              // Consume params (0x30–0x3F) and intermediates (0x20–0x2F).
                 while let Some(&p) = chars.peek() {
                     if ('\x30'..='\x3f').contains(&p) || ('\x20'..='\x2f').contains(&p) {
                         chars.next();

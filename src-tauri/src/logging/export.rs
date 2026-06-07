@@ -8,6 +8,9 @@ use crate::logging::dict;
 use crate::logging::event::LoggedEvent;
 use crate::logging::manifest::{self, Compression, Counts, LoggingMeta, Manifest, Runtime, Window};
 use crate::logging::summary::{self, SummaryInputs};
+use crate::session_log::SessionLogState;
+use crate::winlink::redaction::redact_freeform;
+use crate::winlink_backend::{LogLevel, LogLine, LogSource};
 use chrono::Utc;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -16,6 +19,7 @@ use tar::{Builder, Header};
 
 pub const OUTER_ZSTD_LEVEL: i32 = 19;
 pub const INNER_ZSTD_LEVEL: i32 = 19;
+const OPERATOR_SESSION_LOG_MESSAGE_CAP_CHARS: usize = 4096;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ExportError {
@@ -31,6 +35,7 @@ pub struct ExportInputs<'a> {
     pub log_dir: &'a Path,
     pub active_file_path: Option<&'a Path>,
     pub output_path: &'a Path,
+    pub session_log: &'a SessionLogState,
     pub correlation_id: Option<&'a str>,
     pub boot_id: &'a str,
     pub boot_at: &'a str,
@@ -61,16 +66,21 @@ pub struct FlushBarrier {
 }
 
 impl FlushBarrier {
-    pub fn new() -> (Self, tokio::sync::mpsc::UnboundedReceiver<tokio::sync::oneshot::Sender<()>>) {
+    pub fn new() -> (
+        Self,
+        tokio::sync::mpsc::UnboundedReceiver<tokio::sync::oneshot::Sender<()>>,
+    ) {
         let (req_tx, req_rx) = tokio::sync::mpsc::unbounded_channel();
         (Self { req_tx }, req_rx)
     }
 
     pub fn flush_and_wait(&self, timeout: std::time::Duration) -> Result<(), ExportError> {
         let (ack_tx, ack_rx) = tokio::sync::oneshot::channel();
-        self.req_tx
-            .send(ack_tx)
-            .map_err(|e| ExportError::Io(std::io::Error::other(format!("flush request send failed: {e}"))))?;
+        self.req_tx.send(ack_tx).map_err(|e| {
+            ExportError::Io(std::io::Error::other(format!(
+                "flush request send failed: {e}"
+            )))
+        })?;
         // Block on the oneshot with a timeout. This is a sync method that may
         // be invoked from inside a tokio async context (Tauri command thread).
         // `Handle::block_on` panics when called from an async execution context;
@@ -84,9 +94,13 @@ impl FlushBarrier {
                 });
                 match result {
                     Ok(Ok(())) => Ok(()),
-                    Ok(Err(_)) => Err(ExportError::Io(std::io::Error::other("flush barrier ack channel closed".to_string()))),
+                    Ok(Err(_)) => Err(ExportError::Io(std::io::Error::other(
+                        "flush barrier ack channel closed".to_string(),
+                    ))),
                     Err(_) => {
-                        tracing::warn!("export-flush-barrier-timeout: proceeding without flush guarantee");
+                        tracing::warn!(
+                            "export-flush-barrier-timeout: proceeding without flush guarantee"
+                        );
                         Ok(())
                     }
                 }
@@ -113,6 +127,10 @@ pub fn build_archive(inputs: ExportInputs<'_>) -> Result<ExportResult, ExportErr
     if let Some(barrier) = inputs.flush_barrier {
         barrier.flush_and_wait(std::time::Duration::from_millis(500))?;
     }
+
+    let operator_session_lines = inputs.session_log.snapshot();
+    let (operator_session_jsonl, operator_session_truncated) =
+        render_operator_session_log(&operator_session_lines);
 
     // 1. Enumerate JSONL files (closed + active), read events in order
     let mut all_events: Vec<LoggedEvent> = Vec::new();
@@ -153,6 +171,9 @@ pub fn build_archive(inputs: ExportInputs<'_>) -> Result<ExportResult, ExportErr
     // 3. Counts
     let mut counts = Counts {
         events: all_events.len() as u64,
+        operator_session_log_lines: operator_session_lines.len() as u64,
+        operator_session_log_bytes: operator_session_jsonl.len() as u64,
+        operator_session_log_truncated: operator_session_truncated,
         ..Counts::default()
     };
     for ev in &all_events {
@@ -211,14 +232,21 @@ pub fn build_archive(inputs: ExportInputs<'_>) -> Result<ExportResult, ExportErr
         counts_info: counts.info,
         counts_warn: counts.warn,
         counts_error: counts.error,
+        operator_session_log_lines: counts.operator_session_log_lines,
+        operator_session_log_bytes: counts.operator_session_log_bytes,
+        operator_session_log_truncated: counts.operator_session_log_truncated,
     });
 
     let manifest = Manifest {
         v: 1,
         exported_at: exported_at.clone(),
         correlation_id: inputs.correlation_id.map(String::from),
-        window: Window { start: window_start_s, end: window_end_s },
-        build, platform,
+        window: Window {
+            start: window_start_s,
+            end: window_end_s,
+        },
+        build,
+        platform,
         runtime: Runtime {
             boot_id: inputs.boot_id.to_string(),
             boot_at: inputs.boot_at.to_string(),
@@ -247,7 +275,10 @@ pub fn build_archive(inputs: ExportInputs<'_>) -> Result<ExportResult, ExportErr
             inner_compressed_bytes,
             outer_archive_bytes: 0, // placeholder; rewritten in pass 2
             inner_ratio: ratio(raw_events_bytes, inner_compressed_bytes),
-            dict_amortized_ratio: ratio(raw_events_bytes, inner_compressed_bytes + dict_bytes.map_or(0, |d| d.len() as u64)),
+            dict_amortized_ratio: ratio(
+                raw_events_bytes,
+                inner_compressed_bytes + dict_bytes.map_or(0, |d| d.len() as u64),
+            ),
         },
         counts,
     };
@@ -261,16 +292,25 @@ pub fn build_archive(inputs: ExportInputs<'_>) -> Result<ExportResult, ExportErr
         {
             let mut builder = Builder::new(&mut tar_buf);
             builder.mode(tar::HeaderMode::Deterministic);
-            let mtime = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)
+            let mtime = SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
                 .map(|d| d.as_secs())
                 .unwrap_or(0);
             append_member(&mut builder, "summary.txt", summary_str.as_bytes(), mtime)?;
             append_member(&mut builder, "events.jsonl.zst", &inner_compressed, mtime)?;
+            append_member(
+                &mut builder,
+                "operator_session_log.jsonl",
+                &operator_session_jsonl,
+                mtime,
+            )?;
             if let Some(d) = dict_bytes {
                 append_member(&mut builder, "dict.zdict", d, mtime)?;
             }
             append_member(&mut builder, "manifest.json", &manifest_bytes, mtime)?;
-            builder.finish().map_err(|e| ExportError::Tar(e.to_string()))?;
+            builder
+                .finish()
+                .map_err(|e| ExportError::Tar(e.to_string()))?;
         }
         zstd::stream::encode_all(tar_buf.as_slice(), OUTER_ZSTD_LEVEL)
             .map_err(|e| ExportError::Zstd(e.to_string()))
@@ -309,30 +349,118 @@ pub fn build_archive(inputs: ExportInputs<'_>) -> Result<ExportResult, ExportErr
 fn compress_inner(events_jsonl: &[u8], dict_bytes: Option<&[u8]>) -> Result<Vec<u8>, ExportError> {
     match dict_bytes {
         Some(d) => {
-            let mut encoder = zstd::stream::Encoder::with_dictionary(Vec::new(), INNER_ZSTD_LEVEL, d)
-                .map_err(|e| ExportError::Zstd(e.to_string()))?;
+            let mut encoder =
+                zstd::stream::Encoder::with_dictionary(Vec::new(), INNER_ZSTD_LEVEL, d)
+                    .map_err(|e| ExportError::Zstd(e.to_string()))?;
             encoder.write_all(events_jsonl).map_err(ExportError::Io)?;
-            encoder.finish().map_err(|e| ExportError::Zstd(e.to_string()))
+            encoder
+                .finish()
+                .map_err(|e| ExportError::Zstd(e.to_string()))
         }
         None => zstd::stream::encode_all(events_jsonl, INNER_ZSTD_LEVEL)
             .map_err(|e| ExportError::Zstd(e.to_string())),
     }
 }
 
-fn append_member(builder: &mut Builder<&mut Vec<u8>>, name: &str, bytes: &[u8], mtime: u64) -> Result<(), ExportError> {
+fn append_member(
+    builder: &mut Builder<&mut Vec<u8>>,
+    name: &str,
+    bytes: &[u8],
+    mtime: u64,
+) -> Result<(), ExportError> {
     let mut header = Header::new_ustar();
-    header.set_path(name).map_err(|e| ExportError::Tar(e.to_string()))?;
+    header
+        .set_path(name)
+        .map_err(|e| ExportError::Tar(e.to_string()))?;
     header.set_size(bytes.len() as u64);
     header.set_mode(0o600);
     header.set_uid(0);
     header.set_gid(0);
     header.set_mtime(mtime);
     header.set_cksum();
-    builder.append(&header, bytes).map_err(|e| ExportError::Tar(e.to_string()))
+    builder
+        .append(&header, bytes)
+        .map_err(|e| ExportError::Tar(e.to_string()))
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct OperatorSessionLine {
+    v: u32,
+    seq: u64,
+    timestamp_iso: String,
+    level: &'static str,
+    source: &'static str,
+    message: String,
+}
+
+fn render_operator_session_log(lines: &[LogLine]) -> (Vec<u8>, u64) {
+    let mut out = Vec::new();
+    let mut truncated = 0u64;
+
+    for line in lines {
+        let (message, was_truncated) = clean_operator_session_message(&line.message);
+        if was_truncated {
+            truncated += 1;
+        }
+        let record = OperatorSessionLine {
+            v: 1,
+            seq: line.seq,
+            timestamp_iso: line.timestamp_iso.clone(),
+            level: level_label(line.level),
+            source: source_label(line.source),
+            message,
+        };
+        if serde_json::to_writer(&mut out, &record).is_ok() {
+            out.push(b'\n');
+        }
+    }
+
+    (out, truncated)
+}
+
+fn clean_operator_session_message(message: &str) -> (String, bool) {
+    let stripped = strip_ansi_escapes::strip_str(message);
+    let redacted = redact_freeform(&stripped);
+    let cleaned: String = redacted
+        .chars()
+        .map(|c| if c.is_control() && c != '\t' { ' ' } else { c })
+        .collect();
+    if cleaned.chars().count() > OPERATOR_SESSION_LOG_MESSAGE_CAP_CHARS {
+        (
+            cleaned
+                .chars()
+                .take(OPERATOR_SESSION_LOG_MESSAGE_CAP_CHARS)
+                .collect(),
+            true,
+        )
+    } else {
+        (cleaned, false)
+    }
+}
+
+fn level_label(level: LogLevel) -> &'static str {
+    match level {
+        LogLevel::Trace => "trace",
+        LogLevel::Debug => "debug",
+        LogLevel::Info => "info",
+        LogLevel::Warn => "warn",
+        LogLevel::Error => "error",
+    }
+}
+
+fn source_label(source: LogSource) -> &'static str {
+    match source {
+        LogSource::Backend => "backend",
+        LogSource::Transport => "transport",
+        LogSource::Wire => "wire",
+    }
 }
 
 fn ratio(num: u64, denom: u64) -> f64 {
-    if denom == 0 { 0.0 } else {
+    if denom == 0 {
+        0.0
+    } else {
         ((num as f64 / denom as f64) * 100.0).round() / 100.0
     }
 }
@@ -354,6 +482,9 @@ fn compute_window_label(start: &str, end: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::session_log::SessionLogState;
+    use crate::winlink_backend::{LogLevel, LogSource};
+    use std::io::Read;
     use tempfile::tempdir;
 
     fn write_event(dir: &Path, ts_hour: u32, level: &str, msg: &str) {
@@ -376,12 +507,19 @@ mod tests {
         write_event(&log_dir, 10, "info", "first");
         write_event(&log_dir, 11, "warn", "second");
         write_event(&log_dir, 12, "error", "third");
+        let session_log = SessionLogState::new(8);
+        session_log.append_redacted(
+            LogLevel::Info,
+            LogSource::Wire,
+            "\x1b[31m< ;PQ: 23753528 ;PR: 72768415\r",
+        );
 
         let out_path = tmp.path().join("export.tar.zst");
         let result = build_archive(ExportInputs {
             log_dir: &log_dir,
             active_file_path: None,
             output_path: &out_path,
+            session_log: &session_log,
             correlation_id: Some("att-test"),
             boot_id: "test-boot",
             boot_at: "2026-06-04T10:00:00Z",
@@ -397,24 +535,60 @@ mod tests {
 
         // Verify the archive decompresses via stock zstd
         let archive_bytes = std::fs::read(&out_path).unwrap();
-        let tar_bytes = zstd::stream::decode_all(archive_bytes.as_slice()).expect("outer zstd should decode");
+        let tar_bytes =
+            zstd::stream::decode_all(archive_bytes.as_slice()).expect("outer zstd should decode");
         let mut archive = tar::Archive::new(tar_bytes.as_slice());
         let mut found_summary = false;
         let mut found_events = false;
         let mut found_manifest = false;
         let mut found_dict = false;
+        let mut found_operator_session = false;
+        let mut operator_text = String::new();
+        let mut manifest_text = String::new();
+        let mut summary_text = String::new();
         for entry in archive.entries().unwrap() {
-            let entry = entry.unwrap();
+            let mut entry = entry.unwrap();
             let path = entry.path().unwrap().to_path_buf();
             let name = path.to_string_lossy().to_string();
-            if name == "summary.txt" { found_summary = true; }
-            if name == "events.jsonl.zst" { found_events = true; }
-            if name == "manifest.json" { found_manifest = true; }
-            if name == "dict.zdict" { found_dict = true; }
+            if name == "summary.txt" {
+                found_summary = true;
+                let mut raw = Vec::new();
+                entry.read_to_end(&mut raw).unwrap();
+                summary_text = String::from_utf8(raw).unwrap();
+            }
+            if name == "events.jsonl.zst" {
+                found_events = true;
+            }
+            if name == "manifest.json" {
+                found_manifest = true;
+                let mut raw = Vec::new();
+                entry.read_to_end(&mut raw).unwrap();
+                manifest_text = String::from_utf8(raw).unwrap();
+            }
+            if name == "dict.zdict" {
+                found_dict = true;
+            }
+            if name == "operator_session_log.jsonl" {
+                found_operator_session = true;
+                let mut raw = Vec::new();
+                entry.read_to_end(&mut raw).unwrap();
+                operator_text = String::from_utf8(raw).unwrap();
+            }
         }
         assert!(found_summary);
         assert!(found_events);
         assert!(found_manifest);
         assert!(found_dict, "v1 dict must be embedded");
+        assert!(
+            found_operator_session,
+            "operator transcript must be embedded"
+        );
+        assert!(operator_text.contains("\"source\":\"wire\""));
+        assert!(operator_text.contains("\"timestampIso\""));
+        assert!(!operator_text.contains("23753528"));
+        assert!(!operator_text.contains("72768415"));
+        assert!(!operator_text.contains('\x1b'));
+        assert!(manifest_text.contains("\"operator_session_log_lines\": 1"));
+        assert!(summary_text.contains("operator_session_log: 1 retained lines"));
     }
 }

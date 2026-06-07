@@ -1,12 +1,14 @@
 //! Fanout Layer — formats each event ONCE through the RedactingVisitor,
-//! allocates the monotonic `seq` once, and broadcasts the redacted
-//! `LoggedEvent` to UI + disk consumers (spec §2.2).
+//! allocates the monotonic diagnostic `seq` once, and broadcasts the redacted
+//! `LoggedEvent` to diagnostic consumers (spec §2.2).
 
 use crate::logging::event::{LoggedEvent, SpanInfo, ThreadInfo};
 use crate::logging::visit::RedactingVisitor;
-use crate::session_log::SessionLogState;
 use chrono::Utc;
-use std::sync::Arc;
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    Arc,
+};
 use tokio::sync::broadcast;
 use tracing_subscriber::{
     layer::{Context, Layer},
@@ -23,17 +25,17 @@ pub const BROADCAST_CAPACITY: usize = 4096;
 pub const EVENT_SIZE_CAP_BYTES: usize = 32 * 1024;
 
 pub struct FanoutLayer {
-    pub session_log: Arc<SessionLogState>,
+    pub next_seq: AtomicU64,
     pub broadcast_tx: broadcast::Sender<LoggedEvent>,
     pub boot_id: String,
     pub pid: u32,
 }
 
 impl FanoutLayer {
-    pub fn create(session_log: Arc<SessionLogState>) -> (FanoutLayerHandle, broadcast::Receiver<LoggedEvent>) {
+    pub fn create() -> (FanoutLayerHandle, broadcast::Receiver<LoggedEvent>) {
         let (tx, rx) = broadcast::channel(BROADCAST_CAPACITY);
         let inner = Arc::new(Self {
-            session_log,
+            next_seq: AtomicU64::new(1),
             broadcast_tx: tx,
             boot_id: uuid::Uuid::now_v7().to_string(),
             pid: std::process::id(),
@@ -57,7 +59,9 @@ pub struct FanoutLayerHandle(pub Arc<FanoutLayer>);
 
 impl std::ops::Deref for FanoutLayerHandle {
     type Target = FanoutLayer;
-    fn deref(&self) -> &FanoutLayer { &self.0 }
+    fn deref(&self) -> &FanoutLayer {
+        &self.0
+    }
 }
 
 impl<S> Layer<S> for FanoutLayerHandle
@@ -86,18 +90,18 @@ where
             })
             .collect();
 
-        let attempt_id = spans
-            .iter()
-            .rev()
-            .find_map(|s| s.attempt_id.clone());
+        let attempt_id = spans.iter().rev().find_map(|s| s.attempt_id.clone());
 
         let thread = std::thread::current();
         let thread_info = ThreadInfo {
             id: thread_id_u64(),
-            name: thread.name().map(|n| n.to_string()).unwrap_or_else(|| "unnamed".into()),
+            name: thread
+                .name()
+                .map(|n| n.to_string())
+                .unwrap_or_else(|| "unnamed".into()),
         };
 
-        let seq = self.session_log.allocate_seq();
+        let seq = self.next_seq.fetch_add(1, Ordering::Relaxed);
 
         let logged = LoggedEvent {
             v: 1,
@@ -156,7 +160,12 @@ where
     /// these extensions when it constructs `SpanInfo.attempt_id` and the
     /// top-level `attempt_id` promotion. Without this hook, `attempt_id` would
     /// always be `None` even when spans declared the field.
-    fn on_new_span(&self, attrs: &tracing::span::Attributes<'_>, id: &tracing::span::Id, ctx: Context<'_, S>) {
+    fn on_new_span(
+        &self,
+        attrs: &tracing::span::Attributes<'_>,
+        id: &tracing::span::Id,
+        ctx: Context<'_, S>,
+    ) {
         let mut visitor = AttemptIdFieldVisitor(None);
         attrs.record(&mut visitor);
         if let Some(attempt_id) = visitor.0 {
@@ -203,14 +212,11 @@ fn thread_id_u64() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::session_log::SessionLogState;
-    use std::sync::Arc;
-    use tracing_subscriber::{Registry, layer::SubscriberExt};
+    use tracing_subscriber::{layer::SubscriberExt, Registry};
 
     #[test]
     fn broadcasts_emitted_events() {
-        let session_log = Arc::new(SessionLogState::new(100));
-        let (layer, mut rx) = FanoutLayer::create(session_log);
+        let (layer, mut rx) = FanoutLayer::create();
         let subscriber = Registry::default().with(layer.clone());
 
         tracing::subscriber::with_default(subscriber, || {
@@ -226,8 +232,7 @@ mod tests {
 
     #[test]
     fn password_field_is_redacted_in_broadcast() {
-        let session_log = Arc::new(SessionLogState::new(100));
-        let (layer, mut rx) = FanoutLayer::create(session_log);
+        let (layer, mut rx) = FanoutLayer::create();
         let subscriber = Registry::default().with(layer.clone());
 
         tracing::subscriber::with_default(subscriber, || {
@@ -235,15 +240,20 @@ mod tests {
         });
 
         let event = rx.try_recv().expect("event should be broadcast");
-        assert_eq!(event.fields.get("password"), Some(&serde_json::json!("<redacted>")));
+        assert_eq!(
+            event.fields.get("password"),
+            Some(&serde_json::json!("<redacted>"))
+        );
         let line = event.to_jsonl();
-        assert!(!line.contains("hunter2hunter2"), "JSONL must not contain real password");
+        assert!(
+            !line.contains("hunter2hunter2"),
+            "JSONL must not contain real password"
+        );
     }
 
     #[test]
     fn attempt_id_in_span_is_promoted_to_logged_event() {
-        let session_log = Arc::new(SessionLogState::new(100));
-        let (layer, mut rx) = FanoutLayer::create(session_log);
+        let (layer, mut rx) = FanoutLayer::create();
         let subscriber = Registry::default().with(layer.clone());
 
         tracing::subscriber::with_default(subscriber, || {

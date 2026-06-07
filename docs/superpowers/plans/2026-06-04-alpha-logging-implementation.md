@@ -13,6 +13,15 @@ standalone helper crate. Do not add a repo-root Cargo workspace for it; that
 redirects Tauri builds into `/target` at the repository root and breaks the
 converged-build disposable-worktree invariant.
 
+**Post-implementation correction (tuxlink-h1gh):** the diagnostic fanout must
+never append to `SessionLogState`. Any steps below that create
+`src/logging/ui_consumer.rs`, use `session_log=true`, add
+`SessionLogState::allocate_seq`, or add `SessionLogState::append_with_seq` are
+superseded by
+[2026-06-07-alpha-logging-session-transcript-boundary.md](2026-06-07-alpha-logging-session-transcript-boundary.md).
+The retained operator transcript is exported separately as
+`operator_session_log.jsonl`.
+
 **Spec:** [docs/superpowers/specs/2026-06-04-alpha-logging-design.md](../specs/2026-06-04-alpha-logging-design.md) — all cross-references below cite the spec by section number.
 
 **Spec-adrev disposition:** [dev/adversarial/2026-06-04-alpha-logging-spec-codex.md](../../../dev/adversarial/2026-06-04-alpha-logging-spec-codex.md) (gitignored). v2 of the spec addresses every Codex finding; the build-phase Codex round runs as Task 11 of this plan.

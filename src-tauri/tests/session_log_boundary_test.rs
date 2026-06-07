@@ -1,85 +1,111 @@
-use std::collections::BTreeMap;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
 
-use tokio::sync::broadcast;
-use tuxlink_lib::logging::{event::LoggedEvent, ui_consumer};
+use tracing_subscriber::{layer::SubscriberExt, Registry};
+use tuxlink_lib::logging::fanout::FanoutLayer;
 use tuxlink_lib::session_log::SessionLogState;
+use tuxlink_lib::winlink_backend::{LogLevel, LogLine, LogSource};
 
-fn event(
-    seq: u64,
-    target: &str,
-    msg: &str,
-    fields: BTreeMap<String, serde_json::Value>,
-) -> LoggedEvent {
-    LoggedEvent {
-        v: 1,
-        ts: "2026-06-07T04:52:00.000000Z".into(),
-        boot: "019a0000-0000-7000-8000-000000000001".into(),
-        seq,
-        level: "info".into(),
-        target: target.into(),
-        module: Some(target.into()),
-        file: None,
-        line: None,
-        pid: Some(1234),
-        thread: None,
-        attempt_id: None,
-        spans: vec![],
-        msg: msg.into(),
-        fields,
-    }
-}
-
-async fn wait_for_len(log: &SessionLogState, expected: usize) {
-    let deadline = Instant::now() + Duration::from_millis(500);
-    while Instant::now() < deadline {
-        if log.snapshot().len() == expected {
-            return;
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
-    assert_eq!(log.snapshot().len(), expected);
-}
-
-#[tokio::test(flavor = "current_thread")]
-async fn diagnostic_startup_events_do_not_reach_connection_session_log() {
-    let (tx, rx) = broadcast::channel(16);
+#[test]
+fn diagnostic_fanout_events_do_not_reach_connection_session_log() {
     let session_log = Arc::new(SessionLogState::new(16));
-    ui_consumer::spawn(rx, session_log.clone());
+    let (layer, mut rx) = FanoutLayer::create();
+    let subscriber = Registry::default().with(layer);
 
-    for (seq, target, msg) in [
-        (1, "tuxlink::position::gpsd", "gpsd connected"),
-        (2, "tuxlink::bootstrap", "bootstrap action decided"),
-        (3, "tuxlink::logging::env_probes::keyring", "probe snapshot"),
-    ] {
-        tx.send(event(seq, target, msg, BTreeMap::new()))
-            .expect("diagnostic event should broadcast");
-    }
+    tracing::subscriber::with_default(subscriber, || {
+        tracing::info!(target: "tuxlink::position::gpsd", "gpsd connected");
+        tracing::info!(target: "tuxlink::bootstrap", "bootstrap action decided");
+        tracing::info!(
+            target: "tuxlink::logging::env_probes::network",
+            "probe snapshot"
+        );
+    });
 
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    let first = rx.try_recv().expect("diagnostic event should broadcast");
+    assert_eq!(first.target, "tuxlink::position::gpsd");
+    assert_eq!(first.msg, "gpsd connected");
+
     assert!(
         session_log.snapshot().is_empty(),
-        "diagnostic tracing events must stay out of the operator-facing connection log"
+        "diagnostic fanout must not mutate the operator-facing connection log"
     );
 }
 
-#[tokio::test(flavor = "current_thread")]
-async fn explicit_session_log_opt_in_events_still_reach_session_log() {
-    let (tx, rx) = broadcast::channel(16);
+#[test]
+fn production_diagnostic_logging_cannot_opt_into_session_log() {
+    let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let src_root = manifest_dir.join("src");
+    let forbidden = [
+        "session_log=true",
+        "\"session_log\"",
+        "pub mod ui_consumer",
+        "ui_consumer::spawn",
+        "append_with_seq",
+    ];
+
+    for entry in walkdir::WalkDir::new(src_root) {
+        let entry = entry.expect("walk source tree");
+        if !entry.file_type().is_file()
+            || entry.path().extension().and_then(|e| e.to_str()) != Some("rs")
+        {
+            continue;
+        }
+
+        let src = std::fs::read_to_string(entry.path())
+            .unwrap_or_else(|e| panic!("read {}: {e}", entry.path().display()));
+        for needle in forbidden {
+            assert!(
+                !src.contains(needle),
+                "{} contains forbidden diagnostic-to-session-log bridge marker {needle:?}",
+                entry.path().display()
+            );
+        }
+    }
+}
+
+#[test]
+fn p2p_wire_callback_is_session_logged_as_wire_source() {
+    let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let src = std::fs::read_to_string(manifest_dir.join("src/ui_commands.rs"))
+        .expect("read ui_commands.rs");
+    let marker = "let app_wire = app.clone();";
+    let wire_section = src
+        .split_once(marker)
+        .map(|(_, rest)| rest)
+        .and_then(|rest| rest.split_once(")\n    .await"))
+        .map(|(section, _)| section)
+        .expect("P2P connect callback section should exist");
+
+    assert!(
+        wire_section.contains("LogSource::Wire"),
+        "P2P raw wire callback must retain LogSource::Wire for operator raw-output filtering"
+    );
+    assert!(
+        !wire_section.contains("LogSource::Transport"),
+        "P2P raw wire callback setup must not classify wire lines as transport progress"
+    );
+}
+
+#[test]
+fn diagnostic_fanout_does_not_consume_operator_session_log_sequence() {
     let session_log = Arc::new(SessionLogState::new(16));
-    ui_consumer::spawn(rx, session_log.clone());
+    let (layer, mut rx) = FanoutLayer::create();
+    let subscriber = Registry::default().with(layer);
 
-    let mut fields = BTreeMap::new();
-    fields.insert("session_log".into(), serde_json::json!(true));
-    tx.send(event(7, "tuxlink::winlink::session", "dial start", fields))
-        .expect("session event should broadcast");
+    tracing::subscriber::with_default(subscriber, || {
+        tracing::info!(target: "tuxlink::bootstrap", "bootstrap action decided");
+    });
+    rx.try_recv().expect("diagnostic event should broadcast");
 
-    wait_for_len(&session_log, 1).await;
-    let snapshot = session_log.snapshot();
-    assert_eq!(snapshot[0].seq, 7);
+    let seq = session_log.append(LogLine {
+        seq: 0,
+        timestamp_iso: "2026-06-07T05:14:00.000Z".into(),
+        level: LogLevel::Info,
+        source: LogSource::Transport,
+        message: "operator-visible connection line".into(),
+    });
+
     assert_eq!(
-        snapshot[0].message,
-        "[tuxlink::winlink::session] dial start"
+        seq, 1,
+        "diagnostic fanout must not advance the operator-facing session-log cursor"
     );
 }

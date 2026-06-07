@@ -7,13 +7,12 @@
 //! 3. All JSONL lines in the archive parse as well-formed `LoggedEvent` values.
 
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::time::Duration;
+use tracing_subscriber::{layer::SubscriberExt, Registry};
 use tuxlink_lib::logging::event::LoggedEvent;
 use tuxlink_lib::logging::export::{build_archive, ExportInputs};
 use tuxlink_lib::logging::fanout::FanoutLayer;
 use tuxlink_lib::session_log::SessionLogState;
-use tracing_subscriber::{layer::SubscriberExt, Registry};
 
 /// Write a synthetic JSONL event directly to a file (bypasses the disk consumer,
 /// which requires a live Tokio runtime + appender. For this test we write
@@ -50,6 +49,7 @@ fn export_completes_without_panic_during_concurrent_writes() {
     let tmp = tempfile::tempdir().expect("create tempdir");
     let log_dir = tmp.path().join("logs");
     std::fs::create_dir_all(&log_dir).expect("create log dir");
+    let session_log = SessionLogState::new(16);
 
     // Write a pre-seeded batch of events to give the export something to read.
     for i in 0..50u64 {
@@ -60,8 +60,7 @@ fn export_completes_without_panic_during_concurrent_writes() {
     // app's live event stream. The broadcast receiver is not drained here —
     // it fills to capacity and drops, which is the expected behavior during
     // tests. The subscriber must be active so tracing calls below go to it.
-    let session_log = Arc::new(SessionLogState::new(100));
-    let (layer, _rx) = FanoutLayer::create(session_log);
+    let (layer, _rx) = FanoutLayer::create();
     let subscriber = Registry::default().with(layer);
 
     // Set the subscriber as default for this thread so concurrent tracing
@@ -87,6 +86,7 @@ fn export_completes_without_panic_during_concurrent_writes() {
         log_dir: &log_dir,
         active_file_path: None,
         output_path: &out_path,
+        session_log: &session_log,
         correlation_id: Some("concurrent-test"),
         boot_id: "test-boot",
         boot_at: "2026-06-05T10:00:00Z",
@@ -104,14 +104,16 @@ fn export_completes_without_panic_during_concurrent_writes() {
     // Export must succeed (no panic, no error).
     let result = result.expect("export must succeed despite concurrent writes");
     assert!(out_path.exists(), "archive file must exist on disk");
-    assert!(result.archive_size_bytes > 0, "archive must have non-zero size");
+    assert!(
+        result.archive_size_bytes > 0,
+        "archive must have non-zero size"
+    );
 
     // Decompress and verify JSONL integrity — no truncated last line.
     // The archive uses inner zstd+dict compression on events.jsonl.zst.
     // We must extract the dict first, then decode events.
     let archive_bytes = std::fs::read(&out_path).expect("read archive");
-    let tar_bytes =
-        zstd::stream::decode_all(archive_bytes.as_slice()).expect("outer zstd decode");
+    let tar_bytes = zstd::stream::decode_all(archive_bytes.as_slice()).expect("outer zstd decode");
 
     // Pass 1: extract dict (may be absent if dict training failed/no dict).
     let mut dict_bytes: Option<Vec<u8>> = None;
@@ -141,15 +143,15 @@ fn export_completes_without_panic_during_concurrent_writes() {
                 found_events = true;
                 let mut compressed = Vec::new();
                 use std::io::Read;
-                entry.read_to_end(&mut compressed).expect("read events.jsonl.zst");
+                entry
+                    .read_to_end(&mut compressed)
+                    .expect("read events.jsonl.zst");
 
                 let raw_events = match &dict_bytes {
                     Some(d) => {
-                        let mut decoder = zstd::stream::Decoder::with_dictionary(
-                            compressed.as_slice(),
-                            d,
-                        )
-                        .expect("create zstd decoder with dict");
+                        let mut decoder =
+                            zstd::stream::Decoder::with_dictionary(compressed.as_slice(), d)
+                                .expect("create zstd decoder with dict");
                         let mut out = Vec::new();
                         std::io::copy(&mut decoder, &mut out).expect("decode events with dict");
                         out
@@ -157,8 +159,7 @@ fn export_completes_without_panic_during_concurrent_writes() {
                     None => zstd::stream::decode_all(compressed.as_slice())
                         .expect("decode events without dict"),
                 };
-                events_text =
-                    String::from_utf8(raw_events).expect("events must be valid UTF-8");
+                events_text = String::from_utf8(raw_events).expect("events must be valid UTF-8");
             }
         }
     }
@@ -191,6 +192,7 @@ fn export_with_no_events_produces_valid_archive() {
     let tmp = tempfile::tempdir().expect("create tempdir");
     let log_dir = tmp.path().join("logs");
     std::fs::create_dir_all(&log_dir).expect("create log dir");
+    let session_log = SessionLogState::new(16);
     // No log files written.
 
     let out_path = tmp.path().join("empty.tar.zst");
@@ -198,6 +200,7 @@ fn export_with_no_events_produces_valid_archive() {
         log_dir: &log_dir,
         active_file_path: None,
         output_path: &out_path,
+        session_log: &session_log,
         correlation_id: None,
         boot_id: "test-boot",
         boot_at: "2026-06-05T10:00:00Z",
@@ -213,8 +216,7 @@ fn export_with_no_events_produces_valid_archive() {
 
     // Archive must decompress cleanly.
     let archive_bytes = std::fs::read(&out_path).expect("read archive");
-    let tar_bytes =
-        zstd::stream::decode_all(archive_bytes.as_slice()).expect("outer zstd decode");
+    let tar_bytes = zstd::stream::decode_all(archive_bytes.as_slice()).expect("outer zstd decode");
     let mut archive = tar::Archive::new(tar_bytes.as_slice());
     let mut found_summary = false;
     let mut summary_text = String::new();
