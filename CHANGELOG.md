@@ -16,6 +16,13 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
   to 365 days / 10 GB. Logs live at `$XDG_STATE_HOME/tuxlink/logs/`.
   Spec: `docs/superpowers/specs/2026-06-04-alpha-logging-design.md`.
 
+## [0.35.6](https://github.com/cameronzucker/tuxlink/compare/v0.35.5...v0.35.6) (2026-06-07)
+
+
+### Bug Fixes
+
+* **cargo:** keep xtask out of root workspace ([1327fbb](https://github.com/cameronzucker/tuxlink/commit/1327fbb3d49a0b2dd5efa30e9862cfd0b4b6bcb5))
+
 ## [0.35.5](https://github.com/cameronzucker/tuxlink/compare/v0.35.4...v0.35.5) (2026-06-07)
 
 
